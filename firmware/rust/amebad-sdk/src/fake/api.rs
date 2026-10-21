@@ -2,29 +2,42 @@
 
 use super::*;
 
-pub fn gpio_clock_state() -> GpioClock {
-    with(|h| GpioClock {
-        function_before: h.gpio_function,
-        clock_before: h.gpio_clock,
-        function_after: h.gpio_function,
-        clock_after: h.gpio_clock,
+fn lp_clock_state(bit: u32) -> LpClock {
+    with(|h| LpClock {
+        bit,
+        function_before: h.lp_function,
+        clock_before: h.lp_clock,
+        function_after: h.lp_function,
+        clock_after: h.lp_clock,
     })
 }
 
-pub fn gpio_clock_enable() -> GpioClock {
+pub fn gpio_clock_state() -> LpClock {
+    lp_clock_state(crate::GPIO_ENABLE_BIT)
+}
+
+fn lp_clock_enable(bit: u32) -> LpClock {
     let _guard = crate::IrqGuard::lock();
-    let before = gpio_clock_state();
+    let before = lp_clock_state(bit);
     with(|h| {
         if !h.blocked_gpio_clock {
-            h.gpio_function |= crate::GPIO_ENABLE_BIT;
-            h.gpio_clock |= crate::GPIO_ENABLE_BIT;
+            h.lp_function |= bit;
+            h.lp_clock |= bit;
         }
     });
-    GpioClock {
+    LpClock {
         function_before: before.function_before,
         clock_before: before.clock_before,
-        ..gpio_clock_state()
+        ..lp_clock_state(bit)
     }
+}
+
+pub fn gpio_clock_enable() -> LpClock {
+    lp_clock_enable(crate::GPIO_ENABLE_BIT)
+}
+
+pub fn adc_clock_enable() -> LpClock {
+    lp_clock_enable(crate::ADC_ENABLE_BIT)
 }
 
 pub const GPIO_PORT_A: u32 = 0;
@@ -254,13 +267,19 @@ pub fn adc_sw_trigger(enabled: bool) {
 }
 
 pub fn adc_readable() -> bool {
-    let (delay, hook) = with(|h| {
+    let Some((delay, hook)) = with(|h| {
         assert!(h.adc_enabled && h.trigger);
         h.polls += 1;
+        // An unclocked ADC never converts.
+        if h.lp_function & h.lp_clock & crate::ADC_ENABLE_BIT == 0 {
+            return None;
+        }
         let delay = core::mem::take(&mut h.adc_delay_ticks);
         let hook = h.adc_hook.take().map(|hook| (hook, h.adc_hook_context));
-        (delay, hook)
-    });
+        Some((delay, hook))
+    }) else {
+        return false;
+    };
     if delay != 0 {
         advance(delay, true);
     }
@@ -510,7 +529,7 @@ pub fn panic_outputs_safe() {
     with(|h| {
         h.interrupts = 1;
         let enabled = crate::GPIO_ENABLE_BIT;
-        if h.gpio_function & enabled == 0 || h.gpio_clock & enabled == 0 {
+        if h.lp_function & enabled == 0 || h.lp_clock & enabled == 0 {
             return;
         }
         h.output[0] = (h.output[0] | MOTOR_MASK) & !(1 << 15);

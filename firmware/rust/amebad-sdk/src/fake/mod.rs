@@ -14,7 +14,7 @@
 use core::ffi::{CStr, c_void};
 use std::cell::RefCell;
 
-use super::{GpioClock, GpioRouting, Irq, Isr, TaskStep};
+use super::{GpioRouting, Irq, Isr, LpClock, TaskStep};
 
 const MOTOR_MASK: u32 = (1 << 13) | (1 << 14);
 pub const GPIOA_IRQ: usize = 4;
@@ -40,8 +40,10 @@ pub struct TimerRegisters {
 #[derive(Clone)]
 pub struct Hardware {
     pub gpio_routing: GpioRouting,
-    pub gpio_function: u32,
-    pub gpio_clock: u32,
+    /// LP SYSCTRL `REG_LP_FUNC_EN1` and `REG_LP_CLK_CTRL1`: GPIO and ADC enables.
+    pub lp_function: u32,
+    pub lp_clock: u32,
+    /// Writes to the two LP enable registers are ignored.
     pub blocked_gpio_clock: bool,
     pub output: [u32; 2],
     pub input: [u32; 2],
@@ -118,8 +120,8 @@ impl Default for Hardware {
     fn default() -> Self {
         Self {
             gpio_routing: GpioRouting::default(),
-            gpio_function: 0,
-            gpio_clock: 0,
+            lp_function: 0,
+            lp_clock: 0,
             blocked_gpio_clock: false,
             output: [0; 2],
             input: [(1 << 16) | (1 << 19), 0],

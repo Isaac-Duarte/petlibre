@@ -1,166 +1,111 @@
 //! KM4 application entry: logs and runs the synthetic diagnostic once.
-//! Stopped-output startup and a bounded indicator probe, then the FW15 probe:
-//! bind the KM0 peer, arm the SDK flash-lock hooks with the lease provider and
-//! stress the settings store on the owner-approved storage region for a
-//! physical power-cut test.
+//! Stopped-output startup and a bounded indicator probe, then the FW14 probe:
+//! open the board's sensors with the explicit LP ADC enable and sample the
+//! power inputs read-only, once a second.
 
 use core::cell::UnsafeCell;
 use core::ffi::c_void;
 use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-use crate::flash::hooks::{self, HookProvider, HookTicket};
-use crate::flash::park::Hardware;
-use crate::probes::flash::{FlashOps, Probe, Provider, Record};
+use crate::probes::adc::{Channel, Probe, Record};
 use crate::startup;
 use crate::{leds, sdk, stopped};
 
 static PHASE: AtomicU32 = AtomicU32::new(0);
 static INPUT_MISMATCH: AtomicBool = AtomicBool::new(false);
-static HANDSHAKE: AtomicBool = AtomicBool::new(false);
+static PROBING: AtomicBool = AtomicBool::new(false);
 
-/// Fixed-address storage touched only by the diagnostic task, except that
-/// the armed hooks reach the provider through its context pointer.
+/// Fixed-address probe storage touched only by the diagnostic task.
 struct Slot<T>(UnsafeCell<Option<T>>);
-// SAFETY: the diagnostic task is the only direct user; see `probe_step`.
+// SAFETY: the diagnostic task is the only user; see `probe_step`.
 unsafe impl<T> Sync for Slot<T> {}
 static PROBE: Slot<Probe> = Slot(UnsafeCell::new(None));
-static PROVIDER: Slot<Provider> = Slot(UnsafeCell::new(None));
-
-unsafe extern "C" fn hook_ready(context: *mut c_void) -> bool {
-    // SAFETY: the context is the fixed provider; called with no lease held.
-    unsafe { (*context.cast::<Provider>()).ready() }
-}
-
-unsafe extern "C" fn hook_acquire(context: *mut c_void, ticket: *mut HookTicket) -> bool {
-    // SAFETY: as above; the interposer passes a live ticket.
-    unsafe { (*context.cast::<Provider>()).acquire::<Hardware>(&mut *ticket) }
-}
-
-unsafe extern "C" fn hook_release(context: *mut c_void, ticket: *const HookTicket) -> bool {
-    // SAFETY: as above.
-    unsafe { (*context.cast::<Provider>()).release::<Hardware>(&*ticket) }
-}
-
-/// KM4 never parks for KM0: a flash IPC request from KM0 is a hook fault.
-unsafe extern "C" fn hook_peer(_context: *mut c_void, _status: u32, _channel: u32) -> bool {
-    false
-}
-
-struct SdkHooks;
-
-impl FlashOps for SdkHooks {
-    fn install(provider: *mut Provider) -> bool {
-        let callbacks = HookProvider {
-            context: provider.cast(),
-            ready: Some(hook_ready),
-            acquire: Some(hook_acquire),
-            release: Some(hook_release),
-            peer: Some(hook_peer),
-            fault: Some(hooks::wellfed_amebad_flash_provider_fault),
-        };
-        // SAFETY: the interposer copies the callbacks; the provider is static.
-        unsafe { hooks::wellfed_amebad_flash_hooks_install(&callbacks) }
-    }
-
-    fn read_id() -> [u8; 3] {
-        sdk::flash_read_jedec()
-    }
-
-    fn armed() -> bool {
-        hooks::wellfed_amebad_flash_hooks_armed()
-    }
-
-    fn erase(sector: u32) -> bool {
-        sdk::storage_erase(sector)
-    }
-
-    fn program(sector: u32, offset: u32, data: &[u8]) -> bool {
-        sdk::storage_program(sector, offset, data)
-    }
-
-    fn read(sector: u32, offset: u32, bytes: &mut [u8]) -> bool {
-        sdk::storage_read(sector, offset, bytes)
-    }
-}
 
 fn bit(value: bool) -> u8 {
     u8::from(value)
 }
 
+fn pass(value: bool) -> &'static str {
+    if value { "pass" } else { "fail" }
+}
+
+/// `min,max,mean,scaled`
+struct Values(Channel);
+
+impl core::fmt::Display for Values {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let c = self.0;
+        write!(f, "{},{},{},{}", c.min, c.max, c.mean, c.scaled)
+    }
+}
+
+/// The four efuse bytes in read order as hex, or `none`.
+struct Efuse(Option<[u8; 4]>);
+
+impl core::fmt::Display for Efuse {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self.0 {
+            Some(b) => write!(f, "{:02x}{:02x}{:02x}{:02x}", b[0], b[1], b[2], b[3]),
+            None => f.write_str("none"),
+        }
+    }
+}
+
 fn log_probe(record: Record) {
     let mut report = startup::Report::new();
     let line = match record {
-        Record::Hello { authority, count } => report.record(format_args!(
-            "PLFLS1 hello authority={authority:016x} count={count}\r\n"
-        )),
-        Record::Ready {
-            peer,
-            reply,
-            phase,
-            fault,
-            inactive,
-        } => report.record(format_args!(
-            "PLFLS1 ready peer={peer:016x} reply={} phase={} fault={} inactive={}\r\n",
-            reply.0,
-            phase.0,
-            fault.0,
-            bit(inactive),
-        )),
-        Record::Timeout { ms } => report.record(format_args!("PLFLS1 error timeout ms={ms}\r\n")),
-        Record::Foreign => report.record(format_args!("PLFLS1 foreign\r\n")),
-        Record::Start {
-            marker,
-            watchdog,
-            installed,
-            ..
-        } => report.record(format_args!(
-            "PLSET1 start marker={marker:08x} watchdog={} installed={}\r\n",
-            if watchdog { "pass" } else { "fail" },
-            bit(installed),
-        )),
-        Record::Skip { marker } => {
-            report.record(format_args!("PLSET1 skip marker={marker:08x}\r\n"))
-        }
         Record::Open {
-            status,
-            generation,
-            volume,
-            lights,
-            slot,
-            other,
-            consistent,
+            outputs,
+            clock,
+            efuse,
+            calibration,
+            ok,
+        } => {
+            // Two lines: one record exceeds the report buffer.
+            if let Ok(line) = report.record(format_args!(
+                "PLADC1 clock function_before={:08x} clock_before={:08x} function_after={:08x} clock_after={:08x} status={}\r\n",
+                clock.function_before,
+                clock.clock_before,
+                clock.function_after,
+                clock.clock_after,
+                pass(clock.verified()),
+            )) {
+                sdk::log(line);
+            }
+            report.record(format_args!(
+                "PLADC1 open outputs={} efuse={} offset={} gain={} default_offset={} default_gain={} status={}\r\n",
+                bit(outputs),
+                Efuse(efuse),
+                calibration.offset,
+                calibration.gain,
+                bit(calibration.default_offset),
+                bit(calibration.default_gain),
+                pass(ok),
+            ))
+        }
+        Record::Sample {
+            n,
+            ticks,
+            food,
+            outlet,
+            dc,
+            stopped,
+            current,
+            battery,
         } => report.record(format_args!(
-            "PLSET1 open status={} generation={generation} volume={volume} lights={} slot={slot} other={} consistent={}\r\n",
-            status.0,
-            bit(lights),
-            other.0,
-            bit(consistent),
+            "PLADC1 sample n={n} ticks={ticks} food={} outlet={} dc={} stopped={} current={} battery={}\r\n",
+            bit(food),
+            bit(outlet),
+            bit(dc),
+            bit(stopped),
+            Values(current),
+            Values(battery),
         )),
-        Record::Batch {
-            saves,
-            generation,
-            ticks_max,
-        } => report.record(format_args!(
-            "PLSET1 batch saves={saves} generation={generation} ticks_max={ticks_max}\r\n"
+        Record::Error { n, ticks, stopped } => report.record(format_args!(
+            "PLADC1 error n={n} ticks={ticks} stopped={}\r\n",
+            bit(stopped)
         )),
-        Record::SaveFailed { generation, status } => report.record(format_args!(
-            "PLSET1 error save generation={generation} status={}\r\n",
-            status.0
-        )),
-        Record::End {
-            saves,
-            generation,
-            leases,
-            frozen,
-            phase,
-            fault,
-        } => report.record(format_args!(
-            "PLSET1 end saves={saves} generation={generation} leases={leases} frozen={frozen} phase={} fault={}\r\n",
-            phase.0,
-            fault.0,
-        )),
-        Record::ClockError => report.record(format_args!("PLFLS1 error clock\r\n")),
     };
     if let Ok(line) = line {
         sdk::log(line);
@@ -168,13 +113,9 @@ fn log_probe(record: Record) {
 }
 
 fn probe_step() -> u32 {
-    // SAFETY: only this task creates references into the slots; the provider
-    // is reached by raw pointer so hook callbacks never alias a live borrow.
+    // SAFETY: only this task touches the slot; the probe stays at a fixed address.
     let probe = unsafe { &mut *PROBE.0.get() }.get_or_insert_with(Probe::default);
-    let provider =
-        unsafe { &mut *PROVIDER.0.get() }.get_or_insert_with(Provider::default) as *mut Provider;
-    // SAFETY: the provider slot is fixed for the program's lifetime.
-    let step = unsafe { probe.step::<Hardware, SdkHooks>(provider) };
+    let step = probe.step();
     if let Some(record) = step.record {
         log_probe(record);
     }
@@ -221,7 +162,7 @@ fn abort_led(led: leds::Led, high: bool, stage: &str, value: leds::Readback) {
 }
 
 unsafe extern "C" fn diagnostic_task(_: *mut c_void) -> u32 {
-    if HANDSHAKE.load(Ordering::Relaxed) {
+    if PROBING.load(Ordering::Relaxed) {
         return probe_step();
     }
     let phase = PHASE.fetch_add(1, Ordering::Relaxed);
@@ -232,7 +173,7 @@ unsafe extern "C" fn diagnostic_task(_: *mut c_void) -> u32 {
                     sdk::log(c"PLLED1 error finish=input_mismatch low=all\r\n");
                 } else {
                     sdk::log(c"PLLED1 done low=all\r\n");
-                    HANDSHAKE.store(true, Ordering::Relaxed);
+                    PROBING.store(true, Ordering::Relaxed);
                     return 1;
                 }
             } else {

@@ -7,7 +7,26 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
-**FW15 (durable settings and feeding journal) is done (storage scope). No card is in progress.** Real-motion journal wiring is carried to FW16.
+**FW14 (current, battery and external power inputs) is in progress.** FW15 is done (storage scope); real-motion journal wiring is carried to FW16.
+
+**FW14 read-only ADC probe (physical, passed).** It ran for one cold boot on
+adapter power, with no batteries and the motor stopped. Startup had already
+set the LP ADC function and clock bits, and the explicit enable read back
+unchanged. The efuse holds programmed calibration, not the defaults. 93
+samples came 1.02 s apart, each 32-conversion capture taking at most 10.1 ms.
+PA19 read 1 throughout. Both ADC channels read raw 239–243, just above the
+calibration offset. That fits no battery and no motor current, but it does not
+yet prove the channel select, since both read the same.
+
+**Next for FW14:** with batteries in, the battery channel should rise and
+differ from the current channel. Unplugging the adapter with batteries in
+should drop PA19. A meter reading of the pack voltage then scales the channel.
+Ask the owner which batteries the unit takes and whether a meter is available.
+
+**Install note.** The updater stopped after the marker commit: its 1 KiB
+packet was acknowledged, but the end-of-transfer got NAK `0x15`. No retry was
+made. A fresh read-only inspection, after the operator re-entered loader mode,
+found the exact target region and matching guards.
 
 The owner allocated `0x340000–0x350000` (64 KiB) for replacement-firmware storage.
 It is blank in the backup and not referenced by stock 1.1.15, and it lies clear
@@ -50,9 +69,6 @@ No cut left a partly erased slot; that case is host-tested.
 
 Both stores now enforce wear limits: 100 000 records, about half the part's
 rated erase life. The journal still lets a pending request finish.
-
-Before the next card, replace the stress image: every power-on of the
-installed build makes up to 1 500 settings saves (about 750 erases per slot).
 
 The FW06 plan has five stages, each with a write-free bench check until the last:
 
@@ -104,19 +120,18 @@ Bench lessons from stage C:
 
 ## What is actually installed
 
-The research feeder runs **FW15 settings back-to-back review 01** in bank 1,
-starting at flash offset `0x186000`. It was installed through the
-changed-sector updater (25 sectors verified).
+The research feeder runs **FW14 ADC read-only review 01** in bank 1, starting
+at flash offset `0x186000`. It was installed through the changed-sector
+updater (19 sectors verified; see the install note above).
 
 | Identity | Recorded value |
 | --- | --- |
-| OTA SHA-256 | `553052597ad8002abaf7651fd8dbfa9c8fbd4b324d6d959eda97710e8a8c5b2d` |
-| Embedded startup build ID | `b4a6634702b88d3ff32f2635a94d53b2f1847a27f43dceaf8848d4880d3e2e36` |
+| OTA SHA-256 | `e3d83aec3f79fe4da515396b0c1476154082d72e295a6e3451a28f68182d6664` |
+| Embedded startup build ID | `7d2f2849e1beb4957a08be2434c3c75e1409a4aaba2f8989d4a7cbdb517e3b44` |
 
-**Every power-on runs the settings stress**: it opens the store and reports
-it, then makes up to 1 500 back-to-back saves to `0x342000`/`0x343000`, then
-idles with the watchdog fed. It never commands motion. Its frozen review is
-the source of the next update.
+**Every power-on runs the read-only ADC probe**: after the LED sequence it
+samples PA16/PA17/PA19 and ADC channels 4 and 5 once a second without end. It
+never drives the motor or emitters and writes no flash.
 
 ## Last confirmed physical state
 
@@ -173,8 +188,7 @@ timer-repeat and stopped-output paths; the others have no hardware evidence:
 
 ## Next work and retained decisions
 
-The next card is open: FW13, FW14 and FW30 are Ready on the critical path to
-feeding, and FW07 and FW09 are Ready off it. Build and freeze each candidate, install through the
+FW14 continues with batteries and a meter (above). Build and freeze each candidate, install through the
 changed-sector updater after the operator enters loader mode, and capture boots
 receive-only. Start the recorder and confirm it holds the port before the
 operator powers on; a capture that begins mid-boot cannot be audited.

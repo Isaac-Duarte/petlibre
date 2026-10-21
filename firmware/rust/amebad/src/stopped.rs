@@ -12,7 +12,7 @@ const IR_A_MASK: u32 = 1 << 15;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Snapshot {
-    pub clock: sdk::GpioClock,
+    pub clock: sdk::LpClock,
     pub pa: u32,
     pub pb: u32,
     pub dira: u32,

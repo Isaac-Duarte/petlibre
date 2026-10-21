@@ -17,21 +17,27 @@ pub type TaskStep = unsafe extern "C" fn(context: *mut c_void) -> u32;
 
 /// Pinned GPIO enable bits, checked against SDK constants in target builds.
 pub const GPIO_ENABLE_BIT: u32 = 1 << 20;
+/// Pinned LP ADC function and clock enable bits, in the same two registers.
+pub const ADC_ENABLE_BIT: u32 = 1 << 8;
 
-#[derive(Clone, Copy, Debug)]
-pub struct GpioClock {
+/// One LP SYSCTRL function/clock enable pair (`REG_LP_FUNC_EN1`,
+/// `REG_LP_CLK_CTRL1`) around an enable of `bit`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LpClock {
+    pub bit: u32,
     pub function_before: u32,
     pub clock_before: u32,
     pub function_after: u32,
     pub clock_after: u32,
 }
 
-impl GpioClock {
+impl LpClock {
+    /// `bit` is set in both registers and no other bit changed.
     pub fn verified(self) -> bool {
-        self.function_after & GPIO_ENABLE_BIT != 0
-            && self.clock_after & GPIO_ENABLE_BIT != 0
-            && (self.function_after & !GPIO_ENABLE_BIT) == (self.function_before & !GPIO_ENABLE_BIT)
-            && (self.clock_after & !GPIO_ENABLE_BIT) == (self.clock_before & !GPIO_ENABLE_BIT)
+        self.function_after & self.bit != 0
+            && self.clock_after & self.bit != 0
+            && (self.function_after & !self.bit) == (self.function_before & !self.bit)
+            && (self.clock_after & !self.bit) == (self.clock_before & !self.bit)
     }
 }
 

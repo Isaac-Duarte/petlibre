@@ -4,8 +4,8 @@ This board tracks replacement-firmware integration, dependencies, and acceptance
 
 ## Current status
 
-- **Done:** FW01–FW07 and FW15, six of them with recorded scope limits (see carried items).
-- **In progress:** FW08 stages A and B passed: the feeder reports health to the local server and answers read-only requests on hardware; stage C (recovery) remains. FW14 waits for batteries: its ADC channel select and millivolt scaling are proven, but the battery channel, PA19 and the divider are not.
+- **Done:** FW01–FW08 and FW15, seven of them with recorded scope limits (see carried items).
+- **In progress:** FW14 waits for batteries: its ADC channel select and millivolt scaling are proven, but the battery channel, PA19 and the divider are not.
 - **Critical path to feeding:** FW13/FW14/FW15 → FW30 → FW16 → FW17.
 
 ### Carried items
@@ -22,6 +22,9 @@ Work a Done card deliberately handed to a later card. Close a row only with the 
 | KM0 SDK flash users (DLPS tickless lock path) unmediated; KM0 deny provider | FW06 | FW26 | Unreachable while KM0 holds its wakelock; mediate or deny before KM0 may sleep |
 | Exclusion for SDK flash users not yet exercised (OTA) | FW06 | FW10 | FW06 proved the hooked read, sector erase and page program paths. FW07 closed Wi-Fi: the link audit pins every write reference on both cores, and full-flash reads across a drill boot were identical. FTL is not compiled |
 | Wi-Fi DHCP-server loss, lease renewal and expiry | FW07 | FW27 | The 1 h bench lease outlasts FW07's captures; join-time DHCP failure and the static-fallback refusal are covered, renewal is not |
+| Plaintext transport over the shared hotspot trust | FW08 | FW10, FW17 | Read-only health only; either card adds authenticated or encrypted messages before carrying updates or feeding |
+| Transport credentials set without a rebuild | FW08 | FW25 | Broker credentials are a build input from a private file |
+| Server-side detection of an access-point outage | FW08 | FW27 | Bounded by the broker keepalive (45 s) and stale health (75 s); a 20 s outage was never marked offline |
 | Journal reservation before real motion and result after verified stop | FW15 | FW16 | Journal reserve, finish, pending refusal and torn-record recovery passed on NOR with no motion; the owner wiring around real motion belongs to FW16 |
 
 ## Using the board
@@ -49,7 +52,7 @@ Prioritize the UART development loop and build identity, stopped startup, LED di
 | Card | Status | Evidence | Prerequisites | Finish line |
 | --- | --- | --- | --- | --- |
 | **FW07 Wi-Fi join and reconnect** | **Done (no-renewal scope)** | Physical (UART + hotspot logs: scans, join, lease, AP loss and rejoin, DNS loss and recovery; full-flash A/B identical across a drill boot) | FW03, FW06 | Join the configured test network, obtain an address and recover from AP/DHCP/DNS loss without repeated uncontrolled resets. Define credential storage and audit SDK writes through the flash authority. Bringup credentials stay private; the full setup flow is FW25. |
-| **FW08 Local health and control transport** | In progress | Physical (UART + server status: connect, health, requests); host (codec, driver, auditors, codec against the real broker); [design](docs/firmware/local-transport.md) | FW02, FW07 | Expose build/bank/boot identity, uptime and fault state through a versioned local interface. Define authentication and compatibility with the existing Rust server. Health requests and diagnostic commands cannot dispense food. |
+| **FW08 Local health and control transport** | **Done (read-only scope)** | Physical (UART + server status: connect, health, requests, AP and server recovery; full-flash A/B identical); host (codec, driver, auditors, codec against the real broker); [design](docs/firmware/local-transport.md) | FW02, FW07 | Expose build/bank/boot identity, uptime and fault state through a versioned local interface. Define authentication and compatibility with the existing Rust server. Health requests and diagnostic commands cannot dispense food. |
 | **FW09 OTA bank selection and boot policy** | Ready | — | FW01, FW06 | Establish usable bank capacities, selection with two valid banks, image compatibility and activation rules. Define a failed-first-boot recovery mechanism that the actual factory loader can support. Document any limitation before relying on rollback; do not infer it from the presence of two banks. |
 | **FW10 Guarded OTA upload and activation** | Planned | — | FW03, FW06, FW07, FW08, FW09 | Authenticate updates, validate the manifest/image and size, refuse the running bank and preserve unrelated data. Verify the candidate before activation and reboot into the expected build. Test corrupt, truncated and interrupted transfers with a recoverable boot path. |
 | **FW11 Boot confirmation and failed update recovery** | Planned | — | FW09, FW10 | Implement and test the chosen trial/confirmation policy. Exercise a valid image that fails to start or confirm, and a lost confirmation response. Establish recovery on hardware; clearly distinguish automatic rollback from a path requiring UART. |
@@ -101,7 +104,7 @@ Prioritize the UART development loop and build identity, stopped startup, LED di
 | FW05 Clock, independent stop timer and watchdog | ✅ Done (motion-disabled scope) |
 | FW06 Real flash coordination across both cores | ✅ Done (mediated-path scope) |
 | FW07 Wi-Fi join and reconnect | ✅ Done (no-renewal scope) |
-| FW08 Local health and control transport | 🚧 In progress |
+| FW08 Local health and control transport | ✅ Done (read-only scope) |
 | FW09 OTA bank selection and boot policy | 🟢 Ready |
 | FW10 Guarded OTA upload and activation | ⬜ Planned |
 | FW11 Boot confirmation and failed update recovery | ⬜ Planned |

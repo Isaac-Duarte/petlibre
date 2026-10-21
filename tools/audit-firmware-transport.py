@@ -12,8 +12,8 @@ A passing capture is one startup whose LED probe completes, then
     FW07 DNS lookup (`PLWIF3 ev ... kind=dns ... result=0`).
 Stage b additionally needs no close, at least two period publishes, and an
 answered ping and health request. Stage c needs a close followed by a
-reconnect, ready and connect-triggered publish, and a refused unsupported
-request. The report never contains credentials; the capture has none.
+reconnect, ready and connect-triggered publish. (The server's API sends only
+allowlisted operations, so refusal of others is host-tested, not bench-tested.) The report never contains credentials; the capture has none.
 """
 import argparse
 import importlib.util
@@ -132,8 +132,6 @@ def check(rx, found, arrival, stage, result):
         if not reconnect or triggers['connect'] < 2:
             return 'transport_no_reconnect'
         result['transport_reconnect_seconds'] = round((reconnect['at'] - closes[0]['at']).total_seconds(), 2)
-        if ('unsupported', False) not in ops:
-            return 'transport_incomplete'
     return 'pass'
 
 

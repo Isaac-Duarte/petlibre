@@ -27,7 +27,7 @@ WRITE_TICKS = 9830  # 300 ms
 
 def startup(identity, reset):
     start = b'PLFW1 start build=' + identity.encode() + b' bank=1 reset=' + reset + b' mmu=00000003,0c000000,03e7a000\r\n'
-    return (POWER + CLOCK + ROUTING + OUTPUTS + b'Petlibro local firmware: Rust bringup\r\n' + start
+    return (POWER + CLOCK + ROUTING + OUTPUTS + b'Wellfed local firmware: Rust bringup\r\n' + start
             + b'Synthetic core diagnostic: PASS\r\nSynthetic diagnostic only; feeder backend stays unopened.\r\n' + S.PASS)
 
 

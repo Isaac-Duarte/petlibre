@@ -36,8 +36,8 @@ fn main() {
     status.extend(BUILD_INPUTS);
     let clean = commit.is_some() && git(&status).is_some_and(|s| s.is_empty());
     println!(
-        "cargo:rustc-env=PETLIBRO_BUILD_COMMIT={}",
+        "cargo:rustc-env=WELLFED_BUILD_COMMIT={}",
         commit.as_deref().unwrap_or("unknown")
     );
-    println!("cargo:rustc-env=PETLIBRO_BUILD_CLEAN={clean}");
+    println!("cargo:rustc-env=WELLFED_BUILD_CLEAN={clean}");
 }

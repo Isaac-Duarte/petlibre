@@ -1,4 +1,4 @@
-//! C ABI exports with the original `petlibro_*` names and signatures.
+//! C ABI exports with `wellfed_*` names and the original signatures.
 //!
 //! Each function accepts the nullable pointers the C headers allowed and
 //! reproduces the original null handling. Callers keep the C contracts:
@@ -12,7 +12,7 @@ pub mod core_abi;
 
 // The ports export their own C symbols (app entry, RAM park and SDK hooks).
 #[cfg(any(feature = "km0", feature = "km4"))]
-pub use petlibro_amebad;
+pub use wellfed_amebad;
 
 #[cfg(target_os = "none")]
 #[panic_handler]
@@ -21,7 +21,7 @@ fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     // STOP and infrared OFF with raw register writes before halting. KM0
     // drives neither, so it only halts.
     #[cfg(feature = "km4")]
-    petlibro_amebad::sdk::panic_outputs_safe();
+    wellfed_amebad::sdk::panic_outputs_safe();
     // Halt here. Only a watchdog that was already armed resets the core (the
     // diagnostic build arms none); otherwise recovery needs an external reset.
     loop {

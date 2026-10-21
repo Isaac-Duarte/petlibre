@@ -1327,33 +1327,33 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
-name = "petlibro-amebad"
+name = "wellfed-amebad"
 version = "0.1.0"
 dependencies = [
  "bindgen",
  "cortex-m",
- "petlibro-core",
- "petlibro-testkit",
+ "wellfed-core",
+ "wellfed-testkit",
 ]
 
 [[package]]
-name = "petlibro-core"
+name = "wellfed-core"
 version = "0.1.0"
 dependencies = [
- "petlibro-testkit",
+ "wellfed-testkit",
 ]
 
 [[package]]
-name = "petlibro-ffi"
+name = "wellfed-ffi"
 version = "0.1.0"
 dependencies = [
- "petlibro-amebad",
- "petlibro-core",
- "petlibro-testkit",
+ "wellfed-amebad",
+ "wellfed-core",
+ "wellfed-testkit",
 ]
 
 [[package]]
-name = "petlibro-local"
+name = "wellfed-local"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -1378,23 +1378,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "petlibro-probe"
+name = "wellfed-probe"
 version = "0.1.0"
 
 [[package]]
-name = "petlibro-sim"
+name = "wellfed-sim"
 version = "0.1.0"
 dependencies = [
- "petlibro-amebad",
- "petlibro-core",
- "petlibro-testkit",
+ "wellfed-amebad",
+ "wellfed-core",
+ "wellfed-testkit",
 ]
 
 [[package]]
-name = "petlibro-testkit"
+name = "wellfed-testkit"
 version = "0.1.0"
 dependencies = [
- "petlibro-core",
+ "wellfed-core",
 ]
 
 [[package]]

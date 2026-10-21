@@ -35,7 +35,7 @@ class RamParkTests(unittest.TestCase):
                 cls.listings.append((core, name, address, size, listing))
 
     def test_retained_functions_in_both_packaged_cores(self):
-        result = rampark.audit(BUILD / "sdk", Path("project/realtek_amebaD_va0_example/GCC-RELEASE"), BINUTILS, {"KM0": BUILD / "rust-lib/libpetlibro_km0.a", "KM4": BUILD / "rust-lib/libpetlibro_km4.a"})
+        result = rampark.audit(BUILD / "sdk", Path("project/realtek_amebaD_va0_example/GCC-RELEASE"), BINUTILS, {"KM0": BUILD / "rust-lib/libwellfed_km0.a", "KM4": BUILD / "rust-lib/libwellfed_km4.a"})
         self.assertEqual(set(result["images"]), {"KM0", "KM4"})
         self.assertFalse(result["activated"])
         for image in result["images"].values():

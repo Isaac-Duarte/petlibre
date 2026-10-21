@@ -1,6 +1,6 @@
-use petlibro_amebad::leds::{self, Led};
-use petlibro_amebad::sdk::fake;
-use petlibro_amebad::stopped;
+use wellfed_amebad::leds::{self, Led};
+use wellfed_amebad::sdk::fake;
+use wellfed_amebad::stopped;
 
 fn ready() {
     fake::reset_hardware();

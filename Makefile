@@ -17,9 +17,9 @@ check-rust:
 	cargo test --locked --workspace --all-targets
 
 check-cross:
-	cargo build --locked -p petlibro-ffi --release --target thumbv8m.main-none-eabihf
-	PETLIBRO_BUILD_ID=$$($(PYTHON) firmware/tools/build.py source-id) cargo build --locked -p petlibro-ffi --release --target thumbv8m.base-none-eabi --features km0
-	cargo build --locked -p petlibro-probe --profile firmware --target thumbv7em-none-eabi
+	cargo build --locked -p wellfed-ffi --release --target thumbv8m.main-none-eabihf
+	WELLFED_BUILD_ID=$$($(PYTHON) firmware/tools/build.py source-id) cargo build --locked -p wellfed-ffi --release --target thumbv8m.base-none-eabi --features km0
+	cargo build --locked -p wellfed-probe --profile firmware --target thumbv7em-none-eabi
 
 check-python:
 	$(PYTHON) tools/check-python.py

@@ -1,4 +1,4 @@
-use petlibro_core::tick_clock::TickClock;
+use wellfed_core::tick_clock::TickClock;
 
 #[test]
 fn frequent_reads_preserve_fraction() {

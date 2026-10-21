@@ -128,7 +128,7 @@ mod exported {
     /// Called every few milliseconds by the KM0 peer task only. Masks IRQs so
     /// the park handler never observes a half-updated peer.
     #[unsafe(no_mangle)]
-    pub extern "C" fn petlibro_amebad_flash_peer_step(boot_count: u32, ticks: u32) -> u32 {
+    pub extern "C" fn wellfed_amebad_flash_peer_step(boot_count: u32, ticks: u32) -> u32 {
         cortex_m::interrupt::free(|_| {
             // SAFETY: serialized with the IPC handler by the critical section.
             let peer = unsafe { &mut *PEER.0.get() };
@@ -140,7 +140,7 @@ mod exported {
     /// IPC channel handler (`IPC_IRQ_FUN`). Masks IRQs and stops SysTick
     /// around the park, then restores both.
     #[unsafe(no_mangle)]
-    pub unsafe extern "C" fn petlibro_amebad_flash_peer_irq(
+    pub unsafe extern "C" fn wellfed_amebad_flash_peer_irq(
         _data: *mut core::ffi::c_void,
         _status: u32,
         channel: u32,

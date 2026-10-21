@@ -1,6 +1,6 @@
-use petlibro_amebad::config::{FLASH_LIMITS, MAX_SAMPLE_PERIOD_MS, WATCHDOG};
-use petlibro_amebad::owner::OwnerConfig;
-use petlibro_amebad::watchdog::WatchdogConfig;
+use wellfed_amebad::config::{FLASH_LIMITS, MAX_SAMPLE_PERIOD_MS, WATCHDOG};
+use wellfed_amebad::owner::OwnerConfig;
+use wellfed_amebad::watchdog::WatchdogConfig;
 
 fn owner(sample_period_ms: u32) -> OwnerConfig {
     let mut c = OwnerConfig {

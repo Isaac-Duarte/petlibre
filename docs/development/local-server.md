@@ -1,12 +1,12 @@
 # Stock-firmware local server
 
-The `petlibro-local` executable provides an embedded authenticated broker, stock protocol handling, durable feed-request tracking, and a bearer-authenticated loopback API. It is separate from replacement firmware. Stock 1.1.15 local dispensing was demonstrated on the research unit; unattended reliability and measured portions remain unvalidated.
+The `wellfed-local` executable provides an embedded authenticated broker, stock protocol handling, durable feed-request tracking, and a bearer-authenticated loopback API. It is separate from replacement firmware. Stock 1.1.15 local dispensing was demonstrated on the research unit; unattended reliability and measured portions remain unvalidated.
 
 ## Build and try synthetic initialization
 
 ```sh
 cargo build --locked
-./target/debug/petlibro-local init \
+./target/debug/wellfed-local init \
   --credentials examples/mqtt-credentials.json \
   --capture examples/mqtt-capture.json \
   --mqtt-listen 127.0.0.1:18883 \
@@ -27,9 +27,9 @@ A typical decoded packet export is `tshark -r private/capture.pcap -Y mqtt -T js
 Run `init` with your own credential/capture paths, a specific IPv4 broker address reachable from the feeder, your gateway interface, and your timezone. Wildcard and IPv6 broker binds are rejected. `private/server.json` is the default output. The HTTP default is loopback `127.0.0.1:8765`; `max_portions` starts at 1. The configuration format remains version 1. Edit configuration while the service is stopped and retain the ledger beside it.
 
 ```sh
-./target/debug/petlibro-local serve --config private/server.json
-./target/debug/petlibro-local status --config private/server.json
-./target/debug/petlibro-local network preview --config private/server.json
+./target/debug/wellfed-local serve --config private/server.json
+./target/debug/wellfed-local status --config private/server.json
+./target/debug/wellfed-local network preview --config private/server.json
 ```
 
 Starting the service does not redirect traffic or command feeding. Linux gateway `network apply` is a separate privileged operation: it validates an nft transaction, redirects the configured feeder MAC's TCP/1883 traffic on the configured interface, and blocks its forwarded WAN traffic. Inspect preview and confirm device identity before explicitly invoking it. `network remove` removes Wellfed's dedicated table/tagged rule. AP setup, host-wide firewall policy, persistent services, and reboot persistence are outside this workflow. Do not assume WAN isolation without checking counters and actual traffic.

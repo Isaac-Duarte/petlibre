@@ -1,7 +1,7 @@
-use petlibro_core::feed_journal::{RECORD_BYTES, crc32};
-use petlibro_core::feed_progress::BowlMode;
-use petlibro_core::settings_store::{Settings, SettingsStatus, SettingsStore, WEAR_LIMIT};
-use petlibro_testkit::journal_flash::{FakeJournalFlash, UNIT};
+use wellfed_core::feed_journal::{RECORD_BYTES, crc32};
+use wellfed_core::feed_progress::BowlMode;
+use wellfed_core::settings_store::{Settings, SettingsStatus, SettingsStore, WEAR_LIMIT};
+use wellfed_testkit::journal_flash::{FakeJournalFlash, UNIT};
 
 const BINDING: u64 = 0x5046_5731_3502_0001;
 const UNITS: [usize; 3] = [UNIT, 4096, 148];

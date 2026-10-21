@@ -44,7 +44,7 @@ def done(cycles=3, leases=53, phase=1, fault=0, park=6, release=2, frozen=53):
 def capture(identity, write_seconds=10.0, tail=30.0, ready_delay=0.3):
     """(host seconds, bytes, label) receive chunks of one FW06 scratch-sector write boot, and the capture end."""
     start = b'PLFW1 start build=' + identity.encode() + b' bank=1 reset=00000000 mmu=00000003,0c000000,03e7a000\r\n'
-    boot = (POWER + CLOCK + ROUTING + OUTPUTS + b'Petlibro local firmware: Rust bringup\r\n' + start
+    boot = (POWER + CLOCK + ROUTING + OUTPUTS + b'Wellfed local firmware: Rust bringup\r\n' + start
             + b'Synthetic core diagnostic: PASS\r\nSynthetic diagnostic only; feeder backend stays unopened.\r\n' + S.PASS)
     out = [(0.0, boot, 'startup'), (3.0, LED_BEGIN, 'led'), (17.0, LED_REST, 'led'), (17.2, HELLO, 'hello'),
            (17.2 + ready_delay, READY, 'ready')]

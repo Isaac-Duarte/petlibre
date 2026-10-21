@@ -1,6 +1,6 @@
 mod common;
 
-use petlibro_local::network;
+use wellfed_local::network;
 
 #[test]
 fn routing_is_scoped_to_device_mac_and_hotspot_and_blocks_its_wan_only() {

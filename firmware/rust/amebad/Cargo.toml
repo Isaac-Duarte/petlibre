@@ -1,6 +1,6 @@
 [package]
 license = "MIT"
-name = "petlibro-amebad"
+name = "wellfed-amebad"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.99"
@@ -10,14 +10,14 @@ build = "build.rs"
 
 [features]
 # Generate SDK bindings from the pinned AmebaD headers (target builds only).
-# Requires PETLIBRO_SDK_DIR and PETLIBRO_NEWLIB_INCLUDE; set by firmware/tools.
+# Requires WELLFED_SDK_DIR and WELLFED_NEWLIB_INCLUDE; set by firmware/tools.
 sdk = ["dep:bindgen"]
 # Select the core whose MMIO map and semaphore owner encoding apply.
 km0 = []
 km4 = []
 
 [dependencies]
-petlibro-core = { path = "../core" }
+wellfed-core = { path = "../core" }
 
 [target.'cfg(target_os = "none")'.dependencies]
 cortex-m = "0.7.7"
@@ -26,7 +26,7 @@ cortex-m = "0.7.7"
 bindgen = { version = "0.72.1", optional = true, default-features = false, features = ["runtime"] }
 
 [dev-dependencies]
-petlibro-testkit = { path = "../testkit" }
+wellfed-testkit = { path = "../testkit" }
 
 [lints]
 workspace = true

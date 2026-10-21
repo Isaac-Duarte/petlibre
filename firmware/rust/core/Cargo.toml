@@ -1,6 +1,6 @@
 [package]
 license = "MIT"
-name = "petlibro-core"
+name = "wellfed-core"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.99"
@@ -11,4 +11,4 @@ publish = false
 workspace = true
 
 [dev-dependencies]
-petlibro-testkit = { path = "../testkit" }
+wellfed-testkit = { path = "../testkit" }

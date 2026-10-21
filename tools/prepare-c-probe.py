@@ -143,12 +143,12 @@ def build(output):
     cargo_environment = os.environ.copy()
     for key in ["RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS", "CARGO_BUILD_RUSTFLAGS", "CARGO_TARGET_DIR"]:
         cargo_environment.pop(key, None)
-    cargo = ["cargo", "build", "--locked", "--profile", "firmware", "-p", "petlibro-probe",
+    cargo = ["cargo", "build", "--locked", "--profile", "firmware", "-p", "wellfed-probe",
              "--target", RUST_TARGET, "--target-dir", str(output / "rust-target")]
     result = subprocess.run(cargo, cwd=ROOT, text=True, capture_output=True, env=cargo_environment)
     if result.returncode:
         raise ValueError(f"cargo failed ({result.returncode}): {result.stderr.strip()}")
-    archive = output / "rust-target" / RUST_TARGET / "firmware/libpetlibro_probe.a"
+    archive = output / "rust-target" / RUST_TARGET / "firmware/libwellfed_probe.a"
     command = ["-mcpu=cortex-m4", "-mthumb", "-mfloat-abi=soft", "-nostdlib",
                "-Wl,--gc-sections,--fatal-warnings", "-Wl,--undefined=probe_add_version",
                "-Wl,-Map=" + str(output / "probe.map"),

@@ -1,7 +1,7 @@
 mod common;
 
 use chrono::Utc;
-use petlibro_local::{
+use wellfed_local::{
     ota_image,
     ota_trial::{self, Image},
     storage,
@@ -103,12 +103,12 @@ async fn run_cycle(profile: ota_image::Profile) {
                         observed.fetch_add(1, Ordering::SeqCst);
                         let target = message["targetSoftwareVersion"].as_str().unwrap();
                         let (file, digest) = if target == "1.1.16" {
-                            ("test.bin", petlibro_local::ota_image::TEST_SHA256)
+                            ("test.bin", wellfed_local::ota_image::TEST_SHA256)
                         } else if target == "1.1.17" {
-                            ("probe.bin", petlibro_local::ota_image::C_PROBE_SHA256)
+                            ("probe.bin", wellfed_local::ota_image::C_PROBE_SHA256)
                         } else {
                             assert_eq!(target, "1.1.15");
-                            ("original.bin", petlibro_local::ota_image::ORIGINAL_SHA256)
+                            ("original.bin", wellfed_local::ota_image::ORIGINAL_SHA256)
                         };
                         assert_eq!(message["sha256"], digest);
                         assert!(message["url"].as_str().unwrap().ends_with(file));
@@ -128,7 +128,7 @@ async fn run_cycle(profile: ota_image::Profile) {
                             "ts":Utc::now().timestamp_millis(), "softwareVersion":version,"powerType":1});
                         if version == "1.1.17" {
                             reply["localReProbe"] =
-                                json!(petlibro_local::probe::expected(&id).unwrap());
+                                json!(wellfed_local::probe::expected(&id).unwrap());
                         }
                         client
                             .publish(
@@ -343,17 +343,17 @@ async fn run_cycle(profile: ota_image::Profile) {
 
 #[test]
 fn trial_mode_refuses_a_build_without_a_clean_source_commit() {
-    if petlibro_local::build_info::BUILD.reviewable() {
+    if wellfed_local::build_info::BUILD.reviewable() {
         return; // Built from a clean commit: the guard correctly permits it.
     }
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_petlibro-local"))
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_wellfed-local"))
         .args([
             "serve",
             "--config",
             "/nonexistent/server.json",
             "--enable-ota-trial",
         ])
-        .env_remove(petlibro_local::build_info::ALLOW_UNREVIEWED_ENV)
+        .env_remove(wellfed_local::build_info::ALLOW_UNREVIEWED_ENV)
         .output()
         .unwrap();
     assert!(!output.status.success());

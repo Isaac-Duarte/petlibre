@@ -1,18 +1,18 @@
 mod common;
 
 use common::*;
-use petlibro_amebad::board::{Board, MOTOR_MASK};
-use petlibro_amebad::events::{Events, EventsConfig, EventsFault};
-use petlibro_amebad::sdk::fake::{self, GPIOA_IRQ, TIMER2_IRQ};
-use petlibro_amebad::sdk::{self, Irq, TIM_CR_CNT_STS};
-use petlibro_core::feed_controller::{
+use wellfed_amebad::board::{Board, MOTOR_MASK};
+use wellfed_amebad::events::{Events, EventsConfig, EventsFault};
+use wellfed_amebad::sdk::fake::{self, GPIOA_IRQ, TIMER2_IRQ};
+use wellfed_amebad::sdk::{self, Irq, TIM_CR_CNT_STS};
+use wellfed_core::feed_controller::{
     FeedController, FeedLimits, FeedReason, FeedRequest, FeedSample, FeedStartResult, FeedState,
     MotorCommand,
 };
-use petlibro_core::feed_progress::{BowlMode, Direction};
-use petlibro_core::feedback_events::FeedbackFault;
-use petlibro_core::flash_coord::FlashCoord;
-use petlibro_core::motor_gate::MotorGateFault;
+use wellfed_core::feed_progress::{BowlMode, Direction};
+use wellfed_core::feedback_events::FeedbackFault;
+use wellfed_core::flash_coord::FlashCoord;
+use wellfed_core::motor_gate::MotorGateFault;
 
 const CONFIG: EventsConfig = EventsConfig {
     ticks_per_second: 32_000,

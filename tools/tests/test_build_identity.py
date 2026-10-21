@@ -134,13 +134,6 @@ class SdkWorktreeTests(unittest.TestCase):
         (self.sdk / managed[1]).unlink()
         self.assertEqual(self.changes(), sorted([f"M {managed[0]}", f"D {managed[1]}"]))
 
-    def test_retired_flat_sources_only_outside_baseline(self):
-        retired = self.sdk / "component/common/example/petlibro/old.c"
-        retired.parent.mkdir(parents=True)
-        retired.write_text("retired")
-        self.assertEqual(self.changes("bringup"), [])
-        self.assertEqual(self.changes("baseline"), ["?? component/common/example/petlibro/old.c"])
-
 
 class ToolchainTests(unittest.TestCase):
     def archive(self, directory, members):

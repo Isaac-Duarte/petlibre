@@ -76,7 +76,7 @@ class CheckCommandTests(unittest.TestCase):
                 self.assertIn("FAILED", result.stderr)
 
     def test_missing_or_wrong_dependency_fails_before_discovery(self):
-        for requirement in ("petlibro-missing-test-dependency==0\n", "unicorn==0\n"):
+        for requirement in ("wellfed-missing-test-dependency==0\n", "unicorn==0\n"):
             with self.subTest(requirement=requirement):
                 (self.root / "tools/requirements-probe.txt").write_text(requirement)
                 result = self.run_check("raise RuntimeError('must not discover')\n")

@@ -1,10 +1,10 @@
 mod common;
 
 use common::*;
-use petlibro_amebad::board::Board;
-use petlibro_amebad::sdk::{self, fake};
-use petlibro_amebad::watchdog::{Watchdog, WatchdogConfig, WatchdogFault};
-use petlibro_core::flash_coord::{FlashParty, FlashReply};
+use wellfed_amebad::board::Board;
+use wellfed_amebad::sdk::{self, fake};
+use wellfed_amebad::watchdog::{Watchdog, WatchdogConfig, WatchdogFault};
+use wellfed_core::flash_coord::{FlashParty, FlashReply};
 
 const CONFIG: WatchdogConfig = WatchdogConfig {
     systimer_hz: 32_000,

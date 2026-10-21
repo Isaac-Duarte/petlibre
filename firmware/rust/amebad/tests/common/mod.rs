@@ -3,9 +3,9 @@
 //! boot; board fixtures also verify fake GPIO after open.
 #![allow(dead_code)]
 
-use petlibro_amebad::board::{Board, MOTOR_MASK};
-use petlibro_amebad::sdk::{self, fake};
-use petlibro_core::flash_coord::{FlashCoord, FlashLimits, FlashReply};
+use wellfed_amebad::board::{Board, MOTOR_MASK};
+use wellfed_amebad::sdk::{self, fake};
+use wellfed_core::flash_coord::{FlashCoord, FlashLimits, FlashReply};
 
 /// A lease budget the owner fixture's watchdog supervises: 40 ms plus two
 /// 1 ms sample periods and two 2 ms timer periods stays below its 50 ms gap.

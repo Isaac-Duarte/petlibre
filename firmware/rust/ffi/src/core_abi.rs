@@ -1,4 +1,4 @@
-//! C ABI for `petlibro-core`, matching the original C firmware headers.
+//! C ABI for `wellfed-core`, matching the original C firmware headers.
 //!
 //! Enumeration ABI: every enumeration-typed field, argument and return value
 //! (`MotorCommand`, `FeedState`, `FeedReason`, `BowlMode`, `Direction`,
@@ -14,24 +14,24 @@
 
 use core::ffi::c_void;
 
-use petlibro_core::adc_scale::{AdcCalibration, SAMPLES};
-use petlibro_core::feed_controller::{
+use wellfed_core::adc_scale::{AdcCalibration, SAMPLES};
+use wellfed_core::feed_controller::{
     FeedController, FeedLimits, FeedReason, FeedRequest, FeedSample, FeedStartResult, MotorCommand,
 };
-use petlibro_core::feed_journal::{
+use wellfed_core::feed_journal::{
     FeedJournal, JournalConfig, JournalError, JournalIo, JournalView,
 };
-use petlibro_core::feed_progress::{BowlMode, Direction, FeedProgress, ProgressResult};
-use petlibro_core::feed_storage::OwnerStorage;
-use petlibro_core::feedback_events::{
+use wellfed_core::feed_progress::{BowlMode, Direction, FeedProgress, ProgressResult};
+use wellfed_core::feed_storage::OwnerStorage;
+use wellfed_core::feedback_events::{
     FeedbackDrive, FeedbackEvent, FeedbackEvents, FeedbackFault, FeedbackTakeResult,
 };
-use petlibro_core::flash_coord::{
+use wellfed_core::flash_coord::{
     FlashCoord, FlashFault, FlashLimits, FlashParty, FlashReply, FlashToken,
 };
-use petlibro_core::motor_gate::{MotorGate, MotorWritePair};
-use petlibro_core::sensor_inputs::{SensorInputs, SensorLimits, SensorReading};
-use petlibro_core::tick_clock::TickClock;
+use wellfed_core::motor_gate::{MotorGate, MotorWritePair};
+use wellfed_core::sensor_inputs::{SensorInputs, SensorLimits, SensorReading};
+use wellfed_core::tick_clock::TickClock;
 
 /// Store `value` through `out` when both are present.
 fn store<T>(out: Option<&mut T>, value: Option<T>) -> bool {
@@ -47,14 +47,14 @@ fn store<T>(out: Option<&mut T>, value: Option<T>) -> bool {
 // adc_scale.h
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn petlibro_adc_calibration_valid(
+pub unsafe extern "C" fn wellfed_adc_calibration_valid(
     calibration: *const AdcCalibration,
 ) -> bool {
     unsafe { calibration.as_ref() }.is_some_and(AdcCalibration::valid)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn petlibro_adc_calibration_decode(
+pub unsafe extern "C" fn wellfed_adc_calibration_decode(
     efuse: *const [u8; 4],
     calibration: *mut AdcCalibration,
 ) -> bool {
@@ -68,7 +68,7 @@ pub unsafe extern "C" fn petlibro_adc_calibration_decode(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn petlibro_adc_scale_16(
+pub unsafe extern "C" fn wellfed_adc_scale_16(
     calibration: *const AdcCalibration,
     samples: *const [u16; SAMPLES],
     value: *mut u32,
@@ -84,7 +84,7 @@ pub unsafe extern "C" fn petlibro_adc_scale_16(
 // feed_progress.h
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn petlibro_feed_progress_init(
+pub unsafe extern "C" fn wellfed_feed_progress_init(
     progress: *mut FeedProgress,
     mode: BowlMode,
     direction: Direction,
@@ -98,7 +98,7 @@ pub unsafe extern "C" fn petlibro_feed_progress_init(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn petlibro_feed_progress_accept(
+pub unsafe extern "C" fn wellfed_feed_progress_accept(
     progress: *mut FeedProgress,
 ) -> ProgressResult {
     unsafe { &mut *progress }.accept()
@@ -107,7 +107,7 @@ pub unsafe extern "C" fn petlibro_feed_progress_accept(
 // tick_clock.h
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn petlibro_tick_clock_init(
+pub unsafe extern "C" fn wellfed_tick_clock_init(
     clock: *mut TickClock,
     ticks_per_second: u32,
     raw: u32,
@@ -120,7 +120,7 @@ pub unsafe extern "C" fn petlibro_tick_clock_init(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn petlibro_tick_clock_read(
+pub unsafe extern "C" fn wellfed_tick_clock_read(
     clock: *mut TickClock,
     raw: u32,
     now_ms: *mut u32,
@@ -142,7 +142,7 @@ pub unsafe extern "C" fn petlibro_tick_clock_read(
 // feed_controller.h
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn petlibro_feed_controller_init(
+pub unsafe extern "C" fn wellfed_feed_controller_init(
     controller: *mut FeedController,
     limits: *const FeedLimits,
     last_request_id: u64,
@@ -157,7 +157,7 @@ pub unsafe extern "C" fn petlibro_feed_controller_init(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn petlibro_feed_controller_start(
+pub unsafe extern "C" fn wellfed_feed_controller_start(
     controller: *mut FeedController,
     request: *const FeedRequest,
     now_ms: u32,
@@ -176,7 +176,7 @@ pub unsafe extern "C" fn petlibro_feed_controller_start(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn petlibro_feed_controller_update(
+pub unsafe extern "C" fn wellfed_feed_controller_update(
     controller: *mut FeedController,
     now_ms: u32,
     sample: *const FeedSample,
@@ -187,7 +187,7 @@ pub unsafe extern "C" fn petlibro_feed_controller_update(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn petlibro_feed_controller_update_captured(
+pub unsafe extern "C" fn wellfed_feed_controller_update_captured(
     controller: *mut FeedController,
     now_ms: u32,
     sample: *const FeedSample,
@@ -199,7 +199,7 @@ pub unsafe extern "C" fn petlibro_feed_controller_update_captured(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn petlibro_feed_controller_trip(
+pub unsafe extern "C" fn wellfed_feed_controller_trip(
     controller: *mut FeedController,
     reason: FeedReason,
 ) -> bool {
@@ -207,7 +207,7 @@ pub unsafe extern "C" fn petlibro_feed_controller_trip(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn petlibro_feed_controller_cancel(
+pub unsafe extern "C" fn wellfed_feed_controller_cancel(
     controller: *mut FeedController,
     id: u64,
 ) -> bool {
@@ -215,14 +215,14 @@ pub unsafe extern "C" fn petlibro_feed_controller_cancel(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn petlibro_feed_controller_reset(controller: *mut FeedController) -> bool {
+pub unsafe extern "C" fn wellfed_feed_controller_reset(controller: *mut FeedController) -> bool {
     unsafe { controller.as_mut() }.is_some_and(FeedController::reset)
 }
 
 // motor_gate.h
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn petlibro_motor_gate_init(
+pub unsafe extern "C" fn wellfed_motor_gate_init(
     gate: *mut MotorGate,
     write_pair: Option<MotorWritePair>,
     context: *mut c_void,
@@ -238,7 +238,7 @@ pub unsafe extern "C" fn petlibro_motor_gate_init(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn petlibro_motor_gate_request(
+pub unsafe extern "C" fn wellfed_motor_gate_request(
     gate: *mut MotorGate,
     command: MotorCommand,
     now_ms: u32,
@@ -247,19 +247,19 @@ pub unsafe extern "C" fn petlibro_motor_gate_request(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn petlibro_motor_gate_tick(gate: *mut MotorGate, now_ms: u32) -> bool {
+pub unsafe extern "C" fn wellfed_motor_gate_tick(gate: *mut MotorGate, now_ms: u32) -> bool {
     unsafe { &mut *gate }.tick(now_ms)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn petlibro_motor_gate_trip(gate: *mut MotorGate, now_ms: u32) {
+pub unsafe extern "C" fn wellfed_motor_gate_trip(gate: *mut MotorGate, now_ms: u32) {
     unsafe { &mut *gate }.trip(now_ms);
 }
 
 // sensor_inputs.h
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn petlibro_sensor_inputs_init(
+pub unsafe extern "C" fn wellfed_sensor_inputs_init(
     inputs: *mut SensorInputs,
     limits: *const SensorLimits,
     calibration: *const AdcCalibration,
@@ -274,7 +274,7 @@ pub unsafe extern "C" fn petlibro_sensor_inputs_init(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn petlibro_sensor_inputs_update(
+pub unsafe extern "C" fn wellfed_sensor_inputs_update(
     inputs: *mut SensorInputs,
     now_ms: u32,
     reading: *const SensorReading,
@@ -283,7 +283,7 @@ pub unsafe extern "C" fn petlibro_sensor_inputs_update(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn petlibro_sensor_inputs_sample(
+pub unsafe extern "C" fn wellfed_sensor_inputs_sample(
     inputs: *const SensorInputs,
     now_ms: u32,
     feedback_edge: bool,
@@ -296,7 +296,7 @@ pub unsafe extern "C" fn petlibro_sensor_inputs_sample(
 // feedback_events.h
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn petlibro_feedback_events_init(
+pub unsafe extern "C" fn wellfed_feedback_events_init(
     events: *mut FeedbackEvents,
     capacity: u8,
     max_age_ms: u32,
@@ -309,7 +309,7 @@ pub unsafe extern "C" fn petlibro_feedback_events_init(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn petlibro_feedback_events_push(
+pub unsafe extern "C" fn wellfed_feedback_events_push(
     events: *mut FeedbackEvents,
     captured_at_ms: u32,
     high: bool,
@@ -318,7 +318,7 @@ pub unsafe extern "C" fn petlibro_feedback_events_push(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn petlibro_feedback_events_take(
+pub unsafe extern "C" fn wellfed_feedback_events_take(
     events: *mut FeedbackEvents,
     now_ms: u32,
     event: *mut FeedbackEvent,
@@ -338,7 +338,7 @@ pub unsafe extern "C" fn petlibro_feedback_events_take(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn petlibro_feedback_events_process(
+pub unsafe extern "C" fn wellfed_feedback_events_process(
     events: *mut FeedbackEvents,
     controller: *mut FeedController,
     now_ms: u32,
@@ -368,7 +368,7 @@ pub unsafe extern "C" fn petlibro_feedback_events_process(
 // feed_journal.h
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn petlibro_feed_journal_open(
+pub unsafe extern "C" fn wellfed_feed_journal_open(
     journal: *mut FeedJournal,
     io: *const JournalIo,
     config: *const JournalConfig,
@@ -384,7 +384,7 @@ pub unsafe extern "C" fn petlibro_feed_journal_open(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn petlibro_feed_journal_create(
+pub unsafe extern "C" fn wellfed_feed_journal_create(
     journal: *mut FeedJournal,
     io: *const JournalIo,
     config: *const JournalConfig,
@@ -402,7 +402,7 @@ pub unsafe extern "C" fn petlibro_feed_journal_create(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn petlibro_feed_journal_read(
+pub unsafe extern "C" fn wellfed_feed_journal_read(
     journal: *const FeedJournal,
     view: *mut JournalView,
 ) -> bool {
@@ -413,7 +413,7 @@ pub unsafe extern "C" fn petlibro_feed_journal_read(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn petlibro_feed_journal_storage(journal: *mut FeedJournal) -> OwnerStorage {
+pub unsafe extern "C" fn wellfed_feed_journal_storage(journal: *mut FeedJournal) -> OwnerStorage {
     match unsafe { journal.as_mut() } {
         Some(journal) => journal.storage(),
         None => OwnerStorage {
@@ -426,7 +426,7 @@ pub unsafe extern "C" fn petlibro_feed_journal_storage(journal: *mut FeedJournal
 // flash_coord.h
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn petlibro_flash_coord_init(
+pub unsafe extern "C" fn wellfed_flash_coord_init(
     coord: *mut FlashCoord,
     limits: *const FlashLimits,
     authority_session: u64,
@@ -442,7 +442,7 @@ pub unsafe extern "C" fn petlibro_flash_coord_init(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn petlibro_flash_coord_ready(
+pub unsafe extern "C" fn wellfed_flash_coord_ready(
     coord: *mut FlashCoord,
     authority_session: u64,
     peer_session: u64,
@@ -455,7 +455,7 @@ pub unsafe extern "C" fn petlibro_flash_coord_ready(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn petlibro_flash_coord_request(
+pub unsafe extern "C" fn wellfed_flash_coord_request(
     coord: *mut FlashCoord,
     requester: FlashParty,
     session: u64,
@@ -481,7 +481,7 @@ fn token_message(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn petlibro_flash_coord_quiesced(
+pub unsafe extern "C" fn wellfed_flash_coord_quiesced(
     coord: *mut FlashCoord,
     token: *const FlashToken,
     inactive: bool,
@@ -491,7 +491,7 @@ pub unsafe extern "C" fn petlibro_flash_coord_quiesced(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn petlibro_flash_coord_parked(
+pub unsafe extern "C" fn wellfed_flash_coord_parked(
     coord: *mut FlashCoord,
     token: *const FlashToken,
     party: FlashParty,
@@ -501,7 +501,7 @@ pub unsafe extern "C" fn petlibro_flash_coord_parked(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn petlibro_flash_coord_complete(
+pub unsafe extern "C" fn wellfed_flash_coord_complete(
     coord: *mut FlashCoord,
     token: *const FlashToken,
     party: FlashParty,
@@ -511,7 +511,7 @@ pub unsafe extern "C" fn petlibro_flash_coord_complete(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn petlibro_flash_coord_released(
+pub unsafe extern "C" fn wellfed_flash_coord_released(
     coord: *mut FlashCoord,
     token: *const FlashToken,
     party: FlashParty,
@@ -522,12 +522,12 @@ pub unsafe extern "C" fn petlibro_flash_coord_released(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn petlibro_flash_coord_poll(coord: *mut FlashCoord, now_ms: u32) -> bool {
+pub unsafe extern "C" fn wellfed_flash_coord_poll(coord: *mut FlashCoord, now_ms: u32) -> bool {
     unsafe { coord.as_mut() }.is_some_and(|c| c.poll(now_ms))
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn petlibro_flash_coord_may_access(
+pub unsafe extern "C" fn wellfed_flash_coord_may_access(
     coord: *mut FlashCoord,
     token: *const FlashToken,
     party: FlashParty,
@@ -540,7 +540,7 @@ pub unsafe extern "C" fn petlibro_flash_coord_may_access(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn petlibro_flash_coord_may_actuate(
+pub unsafe extern "C" fn wellfed_flash_coord_may_actuate(
     coord: *mut FlashCoord,
     now_ms: u32,
 ) -> bool {
@@ -548,12 +548,12 @@ pub unsafe extern "C" fn petlibro_flash_coord_may_actuate(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn petlibro_flash_coord_outputs_blocked(coord: *const FlashCoord) -> bool {
+pub unsafe extern "C" fn wellfed_flash_coord_outputs_blocked(coord: *const FlashCoord) -> bool {
     unsafe { coord.as_ref() }.is_none_or(FlashCoord::outputs_blocked)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn petlibro_flash_coord_close(
+pub unsafe extern "C" fn wellfed_flash_coord_close(
     coord: *mut FlashCoord,
     now_ms: u32,
 ) -> FlashReply {
@@ -561,7 +561,7 @@ pub unsafe extern "C" fn petlibro_flash_coord_close(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn petlibro_flash_coord_closed(
+pub unsafe extern "C" fn wellfed_flash_coord_closed(
     coord: *mut FlashCoord,
     token: *const FlashToken,
     peer_disabled: bool,
@@ -574,7 +574,7 @@ pub unsafe extern "C" fn petlibro_flash_coord_closed(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn petlibro_flash_coord_trip(coord: *mut FlashCoord, reason: FlashFault) {
+pub unsafe extern "C" fn wellfed_flash_coord_trip(coord: *mut FlashCoord, reason: FlashFault) {
     if let Some(c) = unsafe { coord.as_mut() } {
         c.trip(reason);
     }
@@ -584,8 +584,8 @@ pub unsafe extern "C" fn petlibro_flash_coord_trip(coord: *mut FlashCoord, reaso
 
 /// Synthetic observations and memory-only outputs; never accesses board I/O.
 #[unsafe(no_mangle)]
-pub extern "C" fn petlibro_diagnostic_run() -> bool {
-    petlibro_core::diagnostic::run()
+pub extern "C" fn wellfed_diagnostic_run() -> bool {
+    wellfed_core::diagnostic::run()
 }
 
 /// Compile-time lock of the exported `#[repr(C)]` layouts. These values were
@@ -594,25 +594,25 @@ pub extern "C" fn petlibro_diagnostic_run() -> bool {
 mod layout {
     use core::mem::{align_of, offset_of, size_of};
 
-    use petlibro_core::adc_scale::AdcCalibration;
-    use petlibro_core::feed_controller::{
+    use wellfed_core::adc_scale::AdcCalibration;
+    use wellfed_core::feed_controller::{
         FeedController, FeedLimits, FeedReason, FeedRequest, FeedSample, FeedStartResult,
         FeedState, MotorCommand,
     };
-    use petlibro_core::feed_journal::{
+    use wellfed_core::feed_journal::{
         FeedJournal, JournalConfig, JournalError, JournalIo, JournalView,
     };
-    use petlibro_core::feed_progress::{BowlMode, Direction, FeedProgress, ProgressResult};
-    use petlibro_core::feed_storage::{OwnerOutcome, OwnerRecovery, OwnerResult, OwnerStorage};
-    use petlibro_core::feedback_events::{
+    use wellfed_core::feed_progress::{BowlMode, Direction, FeedProgress, ProgressResult};
+    use wellfed_core::feed_storage::{OwnerOutcome, OwnerRecovery, OwnerResult, OwnerStorage};
+    use wellfed_core::feedback_events::{
         FeedbackDrive, FeedbackEvent, FeedbackEvents, FeedbackFault, FeedbackTakeResult,
     };
-    use petlibro_core::flash_coord::{
+    use wellfed_core::flash_coord::{
         FlashCoord, FlashFault, FlashLimits, FlashParty, FlashPhase, FlashReply, FlashToken,
     };
-    use petlibro_core::motor_gate::{MotorGate, MotorGateFault};
-    use petlibro_core::sensor_inputs::{SensorFilter, SensorInputs, SensorLimits, SensorReading};
-    use petlibro_core::tick_clock::TickClock;
+    use wellfed_core::motor_gate::{MotorGate, MotorGateFault};
+    use wellfed_core::sensor_inputs::{SensorFilter, SensorInputs, SensorLimits, SensorReading};
+    use wellfed_core::tick_clock::TickClock;
 
     /// Size and alignment, then `field = offset` pairs.
     macro_rules! lock {

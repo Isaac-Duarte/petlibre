@@ -385,7 +385,7 @@ def classify(rx, identity, require_stopped=False):
     outcome = 'timeout'
     if any(x in rx for x in (b'Hard Fault', b'HardFault', b'Fault on thread')):
         outcome = 'fault'
-    elif rx.count(b'PLFW1 start ') > 1 or rx.count(b'Petlibro local firmware: Rust bringup') > 1:
+    elif rx.count(b'PLFW1 start ') > 1 or rx.count(b'Wellfed local firmware: Rust bringup') > 1:
         outcome = 'repeated_startup'
     elif outputs and not stopped or b'PLFW1 error outputs=' in rx:
         outcome = 'outputs_failed'

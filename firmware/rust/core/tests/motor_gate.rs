@@ -1,7 +1,7 @@
 use core::ffi::c_void;
 
-use petlibro_core::feed_controller::MotorCommand;
-use petlibro_core::motor_gate::{MotorGate, MotorGateFault};
+use wellfed_core::feed_controller::MotorCommand;
+use wellfed_core::motor_gate::{MotorGate, MotorGateFault};
 
 #[derive(Default)]
 struct Output {

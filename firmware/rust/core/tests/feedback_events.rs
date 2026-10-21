@@ -1,14 +1,14 @@
 use core::ffi::c_void;
 
-use petlibro_core::feed_controller::{
+use wellfed_core::feed_controller::{
     FeedController, FeedLimits, FeedReason, FeedRequest, FeedSample, FeedStartResult, FeedState,
     MotorCommand,
 };
-use petlibro_core::feed_progress::{BowlMode, Direction};
-use petlibro_core::feedback_events::{
+use wellfed_core::feed_progress::{BowlMode, Direction};
+use wellfed_core::feedback_events::{
     CAPACITY, FeedbackDrive, FeedbackEvent, FeedbackEvents, FeedbackFault, FeedbackTakeResult,
 };
-use petlibro_core::motor_gate::{MotorGate, MotorGateFault};
+use wellfed_core::motor_gate::{MotorGate, MotorGateFault};
 
 /// Compressed intervals; none is a deployment default.
 const LIMITS: FeedLimits = FeedLimits {

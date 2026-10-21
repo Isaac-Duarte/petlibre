@@ -6,8 +6,8 @@ use serde_json::Value;
 
 use crate::config::Config;
 
-const TABLE: &str = "petlibro_local";
-const COMMENT: &str = "petlibro-local-broker";
+const TABLE: &str = "wellfed_local";
+const COMMENT: &str = "wellfed-local-broker";
 
 fn nft(args: &[&str]) -> Result<()> {
     ensure!(

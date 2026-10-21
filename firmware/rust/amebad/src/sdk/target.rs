@@ -17,38 +17,38 @@ use super::{GpioClock, GpioRouting, Irq, Isr, TaskStep};
 mod raw {
     include!(concat!(env!("OUT_DIR"), "/sdk.rs"));
 }
-use raw::petlibro_sdk_constant as k;
+use raw::wellfed_sdk_constant as k;
 
-pub const GPIO_PORT_A: u32 = k::PETLIBRO_GPIO_PORT_A;
-pub const PMU_USER_BASE: u32 = k::PETLIBRO_PMU_DEV_USER_BASE;
-pub const PMU_MAX: u32 = k::PETLIBRO_PMU_MAX;
-pub const TIM_CR_CNT_START: u32 = k::PETLIBRO_TIM_CR_CNT_START;
-pub const TIM_CR_CNT_RUN: u32 = k::PETLIBRO_TIM_CR_CNT_RUN;
-pub const TIM_CR_CNT_STS: u32 = k::PETLIBRO_TIM_CR_CNT_STS;
-pub const TIM_IT_UPDATE: u32 = k::PETLIBRO_TIM_IT_UPDATE;
-pub const WDG_BIT_ENABLE: u32 = k::PETLIBRO_WDG_BIT_ENABLE;
-pub const WDG_BIT_RST_MODE: u32 = k::PETLIBRO_WDG_BIT_RST_MODE;
-pub const WDG_BIT_ISR_CLEAR: u32 = k::PETLIBRO_WDG_BIT_ISR_CLEAR;
-pub const HS_WDTRST_OPT: u32 = k::PETLIBRO_BIT_HSYS_PLFM_WDTRST_OPT;
-pub const LP_WDT_RESET_HS_ALL: u32 = k::PETLIBRO_BIT_LSYS_WDT_RESET_HS_ALL;
-pub const BACKUP_USER: u32 = k::PETLIBRO_BKUP_REG1;
-pub const BOOT_KM4_WATCHDOG: u32 = k::PETLIBRO_BOOT_KM4WDG_RESET;
-pub const BOOT_KM4_SYSTEM: u32 = k::PETLIBRO_BOOT_KM4SYS_RESET;
+pub const GPIO_PORT_A: u32 = k::WELLFED_GPIO_PORT_A;
+pub const PMU_USER_BASE: u32 = k::WELLFED_PMU_DEV_USER_BASE;
+pub const PMU_MAX: u32 = k::WELLFED_PMU_MAX;
+pub const TIM_CR_CNT_START: u32 = k::WELLFED_TIM_CR_CNT_START;
+pub const TIM_CR_CNT_RUN: u32 = k::WELLFED_TIM_CR_CNT_RUN;
+pub const TIM_CR_CNT_STS: u32 = k::WELLFED_TIM_CR_CNT_STS;
+pub const TIM_IT_UPDATE: u32 = k::WELLFED_TIM_IT_UPDATE;
+pub const WDG_BIT_ENABLE: u32 = k::WELLFED_WDG_BIT_ENABLE;
+pub const WDG_BIT_RST_MODE: u32 = k::WELLFED_WDG_BIT_RST_MODE;
+pub const WDG_BIT_ISR_CLEAR: u32 = k::WELLFED_WDG_BIT_ISR_CLEAR;
+pub const HS_WDTRST_OPT: u32 = k::WELLFED_BIT_HSYS_PLFM_WDTRST_OPT;
+pub const LP_WDT_RESET_HS_ALL: u32 = k::WELLFED_BIT_LSYS_WDT_RESET_HS_ALL;
+pub const BACKUP_USER: u32 = k::WELLFED_BKUP_REG1;
+pub const BOOT_KM4_WATCHDOG: u32 = k::WELLFED_BOOT_KM4WDG_RESET;
+pub const BOOT_KM4_SYSTEM: u32 = k::WELLFED_BOOT_KM4SYS_RESET;
 
 const _: () = assert!(
-    k::PETLIBRO_WDG_BASE == 0x4000_2800,
+    k::WELLFED_WDG_BASE == 0x4000_2800,
     "requires the KM4 watchdog mapping"
 );
 const _: () = assert!(
-    k::PETLIBRO_TICK_RATE_HZ == 1000,
+    k::WELLFED_TICK_RATE_HZ == 1000,
     "owner polling requires the pinned 1 kHz SDK tick"
 );
 
 fn state(enabled: bool) -> u32 {
     if enabled {
-        k::PETLIBRO_ENABLE
+        k::WELLFED_ENABLE
     } else {
-        k::PETLIBRO_DISABLE
+        k::WELLFED_DISABLE
     }
 }
 
@@ -57,15 +57,15 @@ fn reg(address: u32) -> *mut u32 {
 }
 
 const _: () = assert!(
-    k::PETLIBRO_GPIO_FUNC_BIT == super::GPIO_ENABLE_BIT
-        && k::PETLIBRO_GPIO_CLOCK_BIT == super::GPIO_ENABLE_BIT
+    k::WELLFED_GPIO_FUNC_BIT == super::GPIO_ENABLE_BIT
+        && k::WELLFED_GPIO_CLOCK_BIT == super::GPIO_ENABLE_BIT
 );
 
 pub fn gpio_clock_state() -> GpioClock {
     let function =
-        unsafe { ptr::read_volatile(reg(k::PETLIBRO_SYSCTRL_LP + k::PETLIBRO_REG_GPIO_FUNC)) };
+        unsafe { ptr::read_volatile(reg(k::WELLFED_SYSCTRL_LP + k::WELLFED_REG_GPIO_FUNC)) };
     let clock =
-        unsafe { ptr::read_volatile(reg(k::PETLIBRO_SYSCTRL_LP + k::PETLIBRO_REG_GPIO_CLOCK)) };
+        unsafe { ptr::read_volatile(reg(k::WELLFED_SYSCTRL_LP + k::WELLFED_REG_GPIO_CLOCK)) };
     GpioClock {
         function_before: function,
         clock_before: clock,
@@ -82,12 +82,12 @@ pub fn gpio_clock_enable() -> GpioClock {
     // clock first, then function, preserving every other bit (no reset).
     unsafe {
         ptr::write_volatile(
-            reg(k::PETLIBRO_SYSCTRL_LP + k::PETLIBRO_REG_GPIO_CLOCK),
-            before.clock_before | k::PETLIBRO_GPIO_CLOCK_BIT,
+            reg(k::WELLFED_SYSCTRL_LP + k::WELLFED_REG_GPIO_CLOCK),
+            before.clock_before | k::WELLFED_GPIO_CLOCK_BIT,
         );
         ptr::write_volatile(
-            reg(k::PETLIBRO_SYSCTRL_LP + k::PETLIBRO_REG_GPIO_FUNC),
-            before.function_before | k::PETLIBRO_GPIO_FUNC_BIT,
+            reg(k::WELLFED_SYSCTRL_LP + k::WELLFED_REG_GPIO_FUNC),
+            before.function_before | k::WELLFED_GPIO_FUNC_BIT,
         );
     }
     cortex_m::asm::dsb();
@@ -137,17 +137,17 @@ pub fn gpio_port_read(port: u32, mask: u32) -> u32 {
 
 pub fn gpio_routing() -> GpioRouting {
     let _guard = super::IrqGuard::lock();
-    let gpio_a = k::PETLIBRO_GPIOA_BASE as usize as *const raw::GPIO_TypeDef;
-    let gpio_b = (k::PETLIBRO_GPIOA_BASE + 0x400) as usize as *const raw::GPIO_TypeDef;
+    let gpio_a = k::WELLFED_GPIOA_BASE as usize as *const raw::GPIO_TypeDef;
+    let gpio_b = (k::WELLFED_GPIOA_BASE + 0x400) as usize as *const raw::GPIO_TypeDef;
     GpioRouting {
         groups: unsafe {
-            ptr::read_volatile(reg(k::PETLIBRO_SYSCTRL_LP + k::PETLIBRO_REG_GPIO_GROUPS))
+            ptr::read_volatile(reg(k::WELLFED_SYSCTRL_LP + k::WELLFED_REG_GPIO_GROUPS))
         },
-        aon: unsafe { ptr::read_volatile(reg(k::PETLIBRO_SYSCTRL_LP + k::PETLIBRO_REG_AON_PAD)) },
+        aon: unsafe { ptr::read_volatile(reg(k::WELLFED_SYSCTRL_LP + k::WELLFED_REG_AON_PAD)) },
         control_a: unsafe { ptr::read_volatile(ptr::addr_of!((*gpio_a).PORT[0].CTRL)) },
         control_b: unsafe { ptr::read_volatile(ptr::addr_of!((*gpio_b).PORT[0].CTRL)) },
         share_pad: unsafe {
-            ptr::read_volatile(reg(k::PETLIBRO_SYSCTRL_LP + k::PETLIBRO_REG_SHARE_PAD))
+            ptr::read_volatile(reg(k::WELLFED_SYSCTRL_LP + k::WELLFED_REG_SHARE_PAD))
         },
         ext_a: gpioa_ext_port(),
     }
@@ -155,37 +155,37 @@ pub fn gpio_routing() -> GpioRouting {
 
 pub fn gpio_direction(port: u32) -> u32 {
     assert!(port < 2);
-    let gpio = (k::PETLIBRO_GPIOA_BASE + port * 0x400) as usize as *const raw::GPIO_TypeDef;
+    let gpio = (k::WELLFED_GPIOA_BASE + port * 0x400) as usize as *const raw::GPIO_TypeDef;
     unsafe { ptr::read_volatile(ptr::addr_of!((*gpio).PORT[0].DDR)) }
 }
 
 pub fn gpio_output_latch(port: u32) -> u32 {
     assert!(port < 2);
-    let gpio = (k::PETLIBRO_GPIOA_BASE + port * 0x400) as usize as *const raw::GPIO_TypeDef;
+    let gpio = (k::WELLFED_GPIOA_BASE + port * 0x400) as usize as *const raw::GPIO_TypeDef;
     unsafe { ptr::read_volatile(ptr::addr_of!((*gpio).PORT[0].DR)) }
 }
 
 pub fn pad_control(pin: u32) -> u32 {
     assert!(pin < 64);
-    let mux = k::PETLIBRO_PINMUX_BASE as usize as *const raw::PINMUX_TypeDef;
+    let mux = k::WELLFED_PINMUX_BASE as usize as *const raw::PINMUX_TypeDef;
     unsafe { ptr::read_volatile(ptr::addr_of!((*mux).PADCTR[pin as usize])) }
 }
 
 /// Remove pad pull resistors explicitly; ROM GPIO_Init skips this for outputs.
 pub fn gpio_no_pull(pin: u32) {
     assert!(pin < 64);
-    unsafe { raw::PAD_PullCtrl(pin as u8, k::PETLIBRO_GPIO_PUPD_NOPULL as u8) }
+    unsafe { raw::PAD_PullCtrl(pin as u8, k::WELLFED_GPIO_PUPD_NOPULL as u8) }
 }
 
 pub fn gpio_init(pin: u32, output: bool) {
     let mut settings = raw::GPIO_InitTypeDef {
         GPIO_Pin: pin,
         GPIO_Mode: if output {
-            k::PETLIBRO_GPIO_MODE_OUT
+            k::WELLFED_GPIO_MODE_OUT
         } else {
-            k::PETLIBRO_GPIO_MODE_IN
+            k::WELLFED_GPIO_MODE_IN
         },
-        GPIO_PuPd: k::PETLIBRO_GPIO_PUPD_NOPULL,
+        GPIO_PuPd: k::WELLFED_GPIO_PUPD_NOPULL,
         ..Default::default()
     };
     unsafe { raw::GPIO_Init(&mut settings) }
@@ -202,12 +202,12 @@ pub fn gpio_read_bit(pin: u32) -> bool {
 pub fn efuse_read8(address: u32) -> Option<u8> {
     let mut value = 0u8;
     let ok =
-        unsafe { raw::EFUSERead8(0, address, &mut value, k::PETLIBRO_L25EOUTVOLTAGE as u8) } != 0;
+        unsafe { raw::EFUSERead8(0, address, &mut value, k::WELLFED_L25EOUTVOLTAGE as u8) } != 0;
     ok.then_some(value)
 }
 
 pub fn pad_disable(pin: u8) {
-    unsafe { raw::PAD_CMD(pin, k::PETLIBRO_DISABLE as u8) }
+    unsafe { raw::PAD_CMD(pin, k::WELLFED_DISABLE as u8) }
 }
 
 /// Initialize the ADC with an empty conversion list (manual channel select).
@@ -223,7 +223,7 @@ pub fn adc_cmd(enabled: bool) {
 }
 
 pub fn adc_select(channel: u32) {
-    let adc = k::PETLIBRO_ADC_BASE as usize as *mut raw::ADC_TypeDef;
+    let adc = k::WELLFED_ADC_BASE as usize as *mut raw::ADC_TypeDef;
     unsafe { ptr::write_volatile(ptr::addr_of_mut!((*adc).ADC_CHSW_LIST[0]), channel) }
 }
 
@@ -250,9 +250,9 @@ pub fn systimer_ticks() -> u32 {
 pub fn gtimer_clock_enable() {
     unsafe {
         raw::RCC_PeriphClockCmd(
-            k::PETLIBRO_APB_GTIMER,
-            k::PETLIBRO_APB_GTIMER_CLOCK,
-            k::PETLIBRO_ENABLE as u8,
+            k::WELLFED_APB_GTIMER,
+            k::WELLFED_APB_GTIMER_CLOCK,
+            k::WELLFED_ENABLE as u8,
         )
     }
 }
@@ -267,15 +267,15 @@ pub fn gpio_int_mode(pin: u32, enabled: bool) {
         raw::GPIO_INTMode(
             pin,
             state(enabled),
-            k::PETLIBRO_GPIO_INT_BOTHEDGE,
-            k::PETLIBRO_GPIO_INT_ACTIVE_LOW,
-            k::PETLIBRO_GPIO_INT_DEBOUNCE,
+            k::WELLFED_GPIO_INT_BOTHEDGE,
+            k::WELLFED_GPIO_INT_ACTIVE_LOW,
+            k::WELLFED_GPIO_INT_DEBOUNCE,
         )
     }
 }
 
 fn gpioa() -> *mut raw::GPIO_TypeDef {
-    k::PETLIBRO_GPIOA_BASE as usize as *mut raw::GPIO_TypeDef
+    k::WELLFED_GPIOA_BASE as usize as *mut raw::GPIO_TypeDef
 }
 
 macro_rules! gpioa_read {
@@ -311,7 +311,7 @@ pub fn panic_outputs_safe() {
     {
         return;
     }
-    let gpio_b = (k::PETLIBRO_GPIOA_BASE + 0x400) as usize as *mut raw::GPIO_TypeDef;
+    let gpio_b = (k::WELLFED_GPIOA_BASE + 0x400) as usize as *mut raw::GPIO_TypeDef;
     unsafe {
         let a = ptr::addr_of_mut!((*gpioa()).PORT[0].DR);
         ptr::write_volatile(
@@ -325,7 +325,7 @@ pub fn panic_outputs_safe() {
 }
 
 fn tim2() -> *mut raw::RTIM_TypeDef {
-    k::PETLIBRO_TIM2_BASE as usize as *mut raw::RTIM_TypeDef
+    k::WELLFED_TIM2_BASE as usize as *mut raw::RTIM_TypeDef
 }
 
 pub fn tim2_en() -> u32 {
@@ -346,14 +346,14 @@ pub fn tim2_init(period: u32) {
     unsafe { raw::RTIM_TimeBaseStructInit(&mut settings) };
     settings.TIM_Idx = 2;
     settings.TIM_Period = period;
-    settings.TIM_UpdateEvent = k::PETLIBRO_ENABLE;
-    settings.TIM_UpdateSource = k::PETLIBRO_TIM_UPDATE_OVERFLOW;
-    settings.TIM_ARRProtection = k::PETLIBRO_DISABLE;
+    settings.TIM_UpdateEvent = k::WELLFED_ENABLE;
+    settings.TIM_UpdateSource = k::WELLFED_TIM_UPDATE_OVERFLOW;
+    settings.TIM_ARRProtection = k::WELLFED_DISABLE;
     unsafe { raw::RTIM_TimeBaseInit(tim2(), &mut settings, raw::TIMER2_IRQ, None, 0) }
 }
 
 pub fn tim2_int_config(enabled: bool) {
-    unsafe { raw::RTIM_INTConfig(tim2(), k::PETLIBRO_TIM_IT_UPDATE, state(enabled)) }
+    unsafe { raw::RTIM_INTConfig(tim2(), k::WELLFED_TIM_IT_UPDATE, state(enabled)) }
 }
 
 pub fn tim2_cmd(enabled: bool) {
@@ -373,7 +373,7 @@ fn irqn(irq: Irq) -> raw::IRQn_Type {
 
 /// `InterruptRegister`, i.e. the SDK's inline `irq_register_check`.
 pub fn irq_register(irq: Irq, isr: Isr, priority: u32) -> bool {
-    let priority = priority.min(k::PETLIBRO_MAX_IRQ_PRIORITY) << k::PETLIBRO_IRQ_PRIORITY_SHIFT;
+    let priority = priority.min(k::WELLFED_MAX_IRQ_PRIORITY) << k::WELLFED_IRQ_PRIORITY_SHIFT;
     unsafe { raw::irq_register(Some(isr), irqn(irq), 0, priority) != 0 }
 }
 
@@ -399,7 +399,7 @@ pub fn wakelock_release(id: u32) {
 }
 
 pub fn wdg_vendor() -> u32 {
-    let wdg = k::PETLIBRO_WDG_BASE as usize as *const raw::WDG_TypeDef;
+    let wdg = k::WELLFED_WDG_BASE as usize as *const raw::WDG_TypeDef;
     unsafe { ptr::read_volatile(ptr::addr_of!((*wdg).VENDOR)) }
 }
 
@@ -457,7 +457,7 @@ const _: () = assert!(
         && STORAGE_OFFSET >= 0x30_6000
         && STORAGE_OFFSET + STORAGE_SECTORS * SECTOR_BYTES <= 0x3e_8000
 );
-const _: () = assert!(k::PETLIBRO_SPI_FLASH_BASE == 0x0800_0000 && k::PETLIBRO_ERASE_SECTOR == 2);
+const _: () = assert!(k::WELLFED_SPI_FLASH_BASE == 0x0800_0000 && k::WELLFED_ERASE_SECTOR == 2);
 
 fn storage_span(sector: u32, offset: u32, len: usize) -> Option<u32> {
     let end = offset.checked_add(u32::try_from(len).ok()?)?;
@@ -471,7 +471,7 @@ pub fn storage_erase(sector: u32) -> bool {
     let Some(address) = storage_span(sector, 0, SECTOR_BYTES as usize) else {
         return false;
     };
-    unsafe { raw::FLASH_EraseXIP(k::PETLIBRO_ERASE_SECTOR, address) };
+    unsafe { raw::FLASH_EraseXIP(k::WELLFED_ERASE_SECTOR, address) };
     true
 }
 
@@ -503,7 +503,7 @@ pub fn storage_read(sector: u32, offset: u32, bytes: &mut [u8]) -> bool {
     let Some(address) = storage_span(sector, offset, bytes.len()) else {
         return false;
     };
-    let base = k::PETLIBRO_SPI_FLASH_BASE + address;
+    let base = k::WELLFED_SPI_FLASH_BASE + address;
     for (i, byte) in bytes.iter_mut().enumerate() {
         *byte = unsafe { ptr::read_volatile((base as usize + i) as *const u8) };
     }
@@ -515,14 +515,14 @@ pub fn storage_read(sector: u32, offset: u32, bytes: &mut [u8]) -> bool {
 /// request motor STOP (PA13/PA14 HIGH) and infrared OFF (PA15/PB3 LOW); the
 /// caller then halts in RAM for the watchdog.
 #[unsafe(no_mangle)]
-#[unsafe(link_section = ".image2.ram.text.petlibro_park")]
+#[unsafe(link_section = ".image2.ram.text.wellfed_park")]
 #[inline(never)]
-pub unsafe extern "C" fn petlibro_amebad_flash_provider_fault(
+pub unsafe extern "C" fn wellfed_amebad_flash_provider_fault(
     _context: *mut c_void,
     _reason: crate::flash_hooks::HookFault,
 ) {
-    let port_a = k::PETLIBRO_GPIOA_BASE as usize as *mut raw::GPIO_TypeDef;
-    let port_b = (k::PETLIBRO_GPIOA_BASE + 0x400) as usize as *mut raw::GPIO_TypeDef;
+    let port_a = k::WELLFED_GPIOA_BASE as usize as *mut raw::GPIO_TypeDef;
+    let port_b = (k::WELLFED_GPIOA_BASE + 0x400) as usize as *mut raw::GPIO_TypeDef;
     unsafe {
         let a = ptr::addr_of_mut!((*port_a).PORT[0].DR);
         let b = ptr::addr_of_mut!((*port_b).PORT[0].DR);
@@ -562,7 +562,7 @@ pub fn spin_once() {
 pub fn hs_platform_para() -> u32 {
     unsafe {
         ptr::read_volatile(reg(
-            k::PETLIBRO_SYSCTRL_HP + k::PETLIBRO_REG_HS_PLATFORM_PARA
+            k::WELLFED_SYSCTRL_HP + k::WELLFED_REG_HS_PLATFORM_PARA
         ))
     }
 }
@@ -570,20 +570,20 @@ pub fn hs_platform_para() -> u32 {
 pub fn set_hs_platform_para(value: u32) {
     unsafe {
         ptr::write_volatile(
-            reg(k::PETLIBRO_SYSCTRL_HP + k::PETLIBRO_REG_HS_PLATFORM_PARA),
+            reg(k::WELLFED_SYSCTRL_HP + k::WELLFED_REG_HS_PLATFORM_PARA),
             value,
         )
     }
 }
 
 pub fn lp_km0_ctrl() -> u32 {
-    unsafe { ptr::read_volatile(reg(k::PETLIBRO_SYSCTRL_LP + k::PETLIBRO_REG_LP_KM0_CTRL)) }
+    unsafe { ptr::read_volatile(reg(k::WELLFED_SYSCTRL_LP + k::WELLFED_REG_LP_KM0_CTRL)) }
 }
 
 pub fn set_lp_km0_ctrl(value: u32) {
     unsafe {
         ptr::write_volatile(
-            reg(k::PETLIBRO_SYSCTRL_LP + k::PETLIBRO_REG_LP_KM0_CTRL),
+            reg(k::WELLFED_SYSCTRL_LP + k::WELLFED_REG_LP_KM0_CTRL),
             value,
         )
     }
@@ -645,10 +645,10 @@ pub fn task_create(
             name.as_ptr(),
             stack_words,
             ptr::from_ref(slot).cast_mut().cast(),
-            k::PETLIBRO_IDLE_PRIORITY + priority,
+            k::WELLFED_IDLE_PRIORITY + priority,
             ptr::null_mut(),
         )
-    } == k::PETLIBRO_PD_PASS as raw::BaseType_t;
+    } == k::WELLFED_PD_PASS as raw::BaseType_t;
     if !created {
         slot.claimed.store(false, Ordering::Release);
     }
@@ -662,7 +662,7 @@ pub fn log(message: &CStr) {
 /// Read the live KM0 image mapping and the factory-preserved ROM reset flags.
 /// No flash/status/register writes are made by this observation.
 pub fn startup_snapshot() -> crate::startup::Snapshot {
-    let rsip = k::PETLIBRO_RSIP_BASE as usize as *const raw::RSIP_REG_TypeDef;
+    let rsip = k::WELLFED_RSIP_BASE as usize as *const raw::RSIP_REG_TypeDef;
     // SAFETY: fixed pinned SDK MMIO layout; these registers are read-only here.
     unsafe {
         crate::startup::Snapshot {

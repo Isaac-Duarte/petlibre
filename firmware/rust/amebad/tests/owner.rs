@@ -4,22 +4,22 @@ use core::ffi::c_void;
 use core::ptr;
 
 use common::*;
-use petlibro_amebad::board::MOTOR_MASK;
-use petlibro_amebad::events::EventsConfig;
-use petlibro_amebad::owner::{
+use wellfed_amebad::board::MOTOR_MASK;
+use wellfed_amebad::events::EventsConfig;
+use wellfed_amebad::owner::{
     Owner, OwnerConfig, OwnerFault, OwnerState, OwnerStatus, SubmitResult,
 };
-use petlibro_amebad::sdk::{self, fake};
-use petlibro_amebad::watchdog::{WatchdogConfig, WatchdogFault};
-use petlibro_core::feed_controller::{FeedLimits, FeedRequest};
-use petlibro_core::feed_journal::{FeedJournal, JournalConfig, JournalError, RECORD_BYTES};
-use petlibro_core::feed_progress::{BowlMode, Direction};
-use petlibro_core::feed_storage::{OwnerOutcome, OwnerRecovery, OwnerResult, OwnerStorage};
-use petlibro_core::flash_coord::{
+use wellfed_amebad::sdk::{self, fake};
+use wellfed_amebad::watchdog::{WatchdogConfig, WatchdogFault};
+use wellfed_core::feed_controller::{FeedLimits, FeedRequest};
+use wellfed_core::feed_journal::{FeedJournal, JournalConfig, JournalError, RECORD_BYTES};
+use wellfed_core::feed_progress::{BowlMode, Direction};
+use wellfed_core::feed_storage::{OwnerOutcome, OwnerRecovery, OwnerResult, OwnerStorage};
+use wellfed_core::flash_coord::{
     FlashCoord, FlashFault, FlashLimits, FlashParty, FlashPhase, FlashReply,
 };
-use petlibro_core::sensor_inputs::SensorLimits;
-use petlibro_testkit::journal_flash::{FakeJournalFlash, UNIT};
+use wellfed_core::sensor_inputs::SensorLimits;
+use wellfed_testkit::journal_flash::{FakeJournalFlash, UNIT};
 
 const CONFIG: OwnerConfig = OwnerConfig {
     feed: FeedLimits {

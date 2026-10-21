@@ -1,6 +1,6 @@
 [package]
 license = "MIT"
-name = "petlibro-ffi"
+name = "wellfed-ffi"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.99"
@@ -12,15 +12,15 @@ crate-type = ["staticlib", "rlib"]
 
 [features]
 # Link the AmebaD ports for one core (target builds from firmware/tools/build.py).
-km0 = ["dep:petlibro-amebad", "petlibro-amebad/km0"]
-km4 = ["dep:petlibro-amebad", "petlibro-amebad/km4", "petlibro-amebad/sdk"]
+km0 = ["dep:wellfed-amebad", "wellfed-amebad/km0"]
+km4 = ["dep:wellfed-amebad", "wellfed-amebad/km4", "wellfed-amebad/sdk"]
 
 [dependencies]
-petlibro-core = { path = "../core" }
-petlibro-amebad = { path = "../amebad", optional = true }
+wellfed-core = { path = "../core" }
+wellfed-amebad = { path = "../amebad", optional = true }
 
 [lints]
 workspace = true
 
 [dev-dependencies]
-petlibro-testkit = { path = "../testkit" }
+wellfed-testkit = { path = "../testkit" }

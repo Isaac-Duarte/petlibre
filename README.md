@@ -50,4 +50,4 @@ Initial setup downloads dependencies. Checks use host models and loopback networ
 | `examples/` | Synthetic configuration-import inputs |
 | `private/` | Ignored contributor-owned secrets, evidence, dependencies, and artifacts |
 
-The existing `petlibro-*` crate names and `petlibro-local` executable are retained for compatibility. [Contributions](CONTRIBUTING.md) are welcome. First-party material is [MIT licensed](LICENSE); see [third-party provenance](THIRD_PARTY.md). This repository contains no vendor firmware or device backups.
+The existing `wellfed-*` crate names and `wellfed-local` executable are retained for compatibility. [Contributions](CONTRIBUTING.md) are welcome. First-party material is [MIT licensed](LICENSE); see [third-party provenance](THIRD_PARTY.md). This repository contains no vendor firmware or device backups.

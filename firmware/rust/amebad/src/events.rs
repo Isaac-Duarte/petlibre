@@ -8,13 +8,13 @@
 use core::ffi::c_void;
 use core::ptr;
 
-use petlibro_core::feed_controller::{
+use wellfed_core::feed_controller::{
     FeedController, FeedReason, FeedRequest, FeedSample, FeedStartResult, MotorCommand,
 };
-use petlibro_core::feedback_events::{CAPACITY, FeedbackDrive, FeedbackEvents, FeedbackFault};
-use petlibro_core::motor_gate::MotorGateFault;
-use petlibro_core::sensor_inputs::SensorInputs;
-use petlibro_core::tick_clock::TickClock;
+use wellfed_core::feedback_events::{CAPACITY, FeedbackDrive, FeedbackEvents, FeedbackFault};
+use wellfed_core::motor_gate::MotorGateFault;
+use wellfed_core::sensor_inputs::SensorInputs;
+use wellfed_core::tick_clock::TickClock;
 
 use crate::active::active_pointer;
 use crate::board::{self, Board};

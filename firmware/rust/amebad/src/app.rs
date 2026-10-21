@@ -57,10 +57,10 @@ impl FlashOps for SdkHooks {
             acquire: Some(hook_acquire),
             release: Some(hook_release),
             peer: Some(hook_peer),
-            fault: Some(sdk::petlibro_amebad_flash_provider_fault),
+            fault: Some(sdk::wellfed_amebad_flash_provider_fault),
         };
         // SAFETY: the interposer copies the callbacks; the provider is static.
-        unsafe { flash_hooks::petlibro_amebad_flash_hooks_install(&hooks) }
+        unsafe { flash_hooks::wellfed_amebad_flash_hooks_install(&hooks) }
     }
 
     fn read_id() -> [u8; 3] {
@@ -68,7 +68,7 @@ impl FlashOps for SdkHooks {
     }
 
     fn armed() -> bool {
-        flash_hooks::petlibro_amebad_flash_hooks_armed()
+        flash_hooks::wellfed_amebad_flash_hooks_armed()
     }
 
     fn erase(sector: u32) -> bool {
@@ -274,12 +274,12 @@ unsafe extern "C" fn diagnostic_task(_: *mut c_void) -> u32 {
         }
         return step.delay_ms - leds::SETTLE_MS;
     }
-    sdk::log(c"\r\nPetlibro local firmware: Rust bringup\r\n");
+    sdk::log(c"\r\nWellfed local firmware: Rust bringup\r\n");
     let mut report = startup::Report::new();
     if let Ok(line) = report.start(sdk::startup_snapshot()) {
         sdk::log(line);
     }
-    let passed = petlibro_core::diagnostic::run();
+    let passed = wellfed_core::diagnostic::run();
     sdk::log(if passed {
         c"Synthetic core diagnostic: PASS\r\n"
     } else {
@@ -304,7 +304,7 @@ unsafe extern "C" fn diagnostic_task(_: *mut c_void) -> u32 {
 
 /// Called once by the SDK's `example_entry`, before the scheduler starts.
 #[unsafe(no_mangle)]
-pub extern "C" fn petlibro_app_start() {
+pub extern "C" fn wellfed_app_start() {
     let snapshot = stopped::initialize();
     let mut report = startup::Report::new();
     if let Ok(line) = report.record(format_args!(
@@ -330,8 +330,8 @@ pub extern "C" fn petlibro_app_start() {
         sdk::log(c"PLFW1 error outputs=unverified\r\n");
         return;
     }
-    if !sdk::task_create(c"petlibro", 1024, 1, diagnostic_task, ptr::null_mut()) {
-        sdk::log(c"Petlibro: diagnostic task creation failed\r\n");
+    if !sdk::task_create(c"wellfed", 1024, 1, diagnostic_task, ptr::null_mut()) {
+        sdk::log(c"Wellfed: diagnostic task creation failed\r\n");
         sdk::log(c"PLFW1 error task=create\r\n");
     }
 }

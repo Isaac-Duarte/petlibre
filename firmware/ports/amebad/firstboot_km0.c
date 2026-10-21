@@ -16,7 +16,7 @@
  * The raw Port A input is sampled after each step (read-only) to locate which
  * one disables PA0-PA7 input readback.
  */
-__attribute__((noinline)) void petlibro_shared_pad_power_init(void)
+__attribute__((noinline)) void wellfed_shared_pad_power_init(void)
 {
     u32 function_before = HAL_READ32(SYSTEM_CTRL_BASE_LP, REG_LP_FUNC_EN0);
     u32 pad_before = HAL_READ32(SYSTEM_CTRL_BASE_LP, REG_AUDIO_SHARE_PAD_CTRL);
@@ -43,29 +43,29 @@ __attribute__((noinline)) void petlibro_shared_pad_power_init(void)
                ext_a[0], ext_a[1], ext_a[2], ext_a[3]);
 }
 
-u32 petlibro_amebad_flash_peer_step(u32 boot_count, u32 ticks);
-void petlibro_amebad_flash_peer_irq(VOID *data, u32 status, u32 channel);
+u32 wellfed_amebad_flash_peer_step(u32 boot_count, u32 ticks);
+void wellfed_amebad_flash_peer_irq(VOID *data, u32 status, u32 channel);
 
 /* FW06 peer: the Rust step answers KM4's HELLO and bumps a heartbeat in backup
  * register 5 every tick; IPC channel 16 parks this core in RAM for a lease.
  * The boot count lives in user backup register 4, which survives a watchdog
  * platform reset but not power loss. */
-static void petlibro_flash_peer_task(void *context)
+static void wellfed_flash_peer_task(void *context)
 {
     (void)context;
     u32 count = BKUP_Read(BKUP_REG4) + 1;
     BKUP_Write(BKUP_REG4, count);
     for (;;) {
-        petlibro_amebad_flash_peer_step(count, SYSTIMER_TickGet());
+        wellfed_amebad_flash_peer_step(count, SYSTIMER_TickGet());
         vTaskDelay(1);
     }
 }
 
-__attribute__((noinline)) void petlibro_flash_peer_start(void)
+__attribute__((noinline)) void wellfed_flash_peer_start(void)
 {
-    IPC_INTUserHandler(16, (VOID *)petlibro_amebad_flash_peer_irq, NULL);
+    IPC_INTUserHandler(16, (VOID *)wellfed_amebad_flash_peer_irq, NULL);
     IPC_INTConfig(IPCM4_DEV, 16, ENABLE);
-    xTaskCreate(petlibro_flash_peer_task, "petlibro-peer", 256, NULL,
+    xTaskCreate(wellfed_flash_peer_task, "wellfed-peer", 256, NULL,
                 tskIDLE_PRIORITY + 1, NULL);
 }
 
@@ -76,9 +76,9 @@ int main(void)
     pmu_acquire_wakelock(PMU_OS);
     InterruptDis(UART_LOG_IRQ_LP);
     km4_flash_highspeed_init();
-    petlibro_shared_pad_power_init();
+    wellfed_shared_pad_power_init();
     km4_boot_on();
-    petlibro_flash_peer_start();
+    wellfed_flash_peer_start();
     vTaskStartScheduler();
     for (;;) {}
 }

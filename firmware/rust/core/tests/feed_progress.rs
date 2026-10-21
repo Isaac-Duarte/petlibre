@@ -1,4 +1,4 @@
-use petlibro_core::feed_progress::{BowlMode, Direction, FeedProgress, ProgressResult};
+use wellfed_core::feed_progress::{BowlMode, Direction, FeedProgress, ProgressResult};
 
 #[test]
 fn single_bowl_request() {

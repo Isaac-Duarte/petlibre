@@ -5,8 +5,8 @@ use core::ptr;
 use std::cell::RefCell;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use petlibro_amebad::flash_hooks::*;
-use petlibro_core::flash_coord::{
+use wellfed_amebad::flash_hooks::*;
+use wellfed_core::flash_coord::{
     FlashCoord, FlashFault, FlashLimits, FlashParty, FlashPhase, FlashReply,
 };
 

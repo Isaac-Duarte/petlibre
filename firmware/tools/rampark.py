@@ -11,11 +11,11 @@ import re
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[2]
-SYMBOLS = ("petlibro_amebad_flash_park_publish", "petlibro_amebad_flash_park_wait",
-           "petlibro_amebad_flash_sem_try_claim", "petlibro_amebad_flash_sem_release",
-           "petlibro_amebad_flash_owner_begin", "petlibro_amebad_flash_owner_end")
+SYMBOLS = ("wellfed_amebad_flash_park_publish", "wellfed_amebad_flash_park_wait",
+           "wellfed_amebad_flash_sem_try_claim", "wellfed_amebad_flash_sem_release",
+           "wellfed_amebad_flash_owner_begin", "wellfed_amebad_flash_owner_end")
 # KM4 only: the flash-lock provider's fault callback runs inside hook_fail.
-KM4_SYMBOLS = ("petlibro_amebad_flash_provider_fault",)
+KM4_SYMBOLS = ("wellfed_amebad_flash_provider_fault",)
 INSTRUCTION = re.compile(r"^\s*([0-9a-f]+):\s+(?:(?:[0-9a-f]{4}|[0-9a-f]{8})\s+)+([a-z.][a-z0-9.]*)\s*(.*)$")
 DIRECT_BRANCH = re.compile(r"b(?:eq|ne|cs|hs|cc|lo|mi|pl|vs|vc|hi|ls|ge|lt|gt|le)?(?:\.[nw])?$")
 # SPI flash is readable through the direct map at 0x08000000 and the RSIP

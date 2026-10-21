@@ -8,11 +8,11 @@
 use core::ffi::c_void;
 use core::ptr::{self, addr_of};
 
-use petlibro_core::adc_scale::{AdcCalibration, MAX_RAW, SAMPLES};
-use petlibro_core::feed_controller::MotorCommand;
-use petlibro_core::flash_coord::FlashCoord;
-use petlibro_core::motor_gate::{MotorGate, MotorGateFault};
-use petlibro_core::sensor_inputs::SensorReading;
+use wellfed_core::adc_scale::{AdcCalibration, MAX_RAW, SAMPLES};
+use wellfed_core::feed_controller::MotorCommand;
+use wellfed_core::flash_coord::FlashCoord;
+use wellfed_core::motor_gate::{MotorGate, MotorGateFault};
+use wellfed_core::sensor_inputs::SensorReading;
 
 use crate::sdk::{self, GPIO_PORT_A, IrqGuard};
 

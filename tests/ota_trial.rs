@@ -1,7 +1,7 @@
 mod common;
 
 use chrono::{DateTime, Duration, Utc};
-use petlibro_local::{
+use wellfed_local::{
     controller::{Controller, FeedInput, Rejection},
     ota_image::Lease,
     ota_trial::{self, Image, Phase, ResolveInput},
@@ -15,7 +15,7 @@ fn lease(token: Uuid, now: DateTime<Utc>) -> Lease {
         token,
         peer: "10.0.0.2".parse().unwrap(),
         expires_at: now + Duration::minutes(15),
-        profile: petlibro_local::ota_image::Profile::StockVersion,
+        profile: wellfed_local::ota_image::Profile::StockVersion,
     }
 }
 
@@ -146,7 +146,7 @@ fn journal_before_publish_duplicate_conflict_restart_and_timeout_never_replay() 
     assert_eq!(command.payload["upgradeType"], 1);
     assert_eq!(
         command.payload["sha256"],
-        petlibro_local::ota_image::TEST_SHA256
+        wellfed_local::ota_image::TEST_SHA256
     );
     assert!(
         command.payload["url"]
@@ -224,7 +224,7 @@ fn progress_and_stale_startup_cannot_confirm_trial_and_only_original_version_cle
     assert_eq!(command.payload["targetSoftwareVersion"], "1.1.15");
     assert_eq!(
         command.payload["sha256"],
-        petlibro_local::ota_image::ORIGINAL_SHA256
+        wellfed_local::ota_image::ORIGINAL_SHA256
     );
     assert!(
         command.payload["url"]

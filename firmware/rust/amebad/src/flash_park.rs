@@ -395,7 +395,7 @@ pub fn ram_wait<M: Mmio>(t: *const ParkToken, tick_limit: u32, poll_limit: u32) 
     #[cfg(target_os = "none")]
     {
         // SAFETY: the export takes the same arguments; `M` is the hardware here.
-        unsafe { petlibro_amebad_flash_park_wait(t, tick_limit, poll_limit) }
+        unsafe { wellfed_amebad_flash_park_wait(t, tick_limit, poll_limit) }
     }
     #[cfg(not(target_os = "none"))]
     {
@@ -409,7 +409,7 @@ pub fn ram_owner_begin<M: Mmio>(t: *const ParkToken, channel: u32, ticks: u32, p
     #[cfg(target_os = "none")]
     {
         // SAFETY: as for `ram_wait`.
-        unsafe { petlibro_amebad_flash_owner_begin(t, channel, ticks, polls) }
+        unsafe { wellfed_amebad_flash_owner_begin(t, channel, ticks, polls) }
     }
     #[cfg(not(target_os = "none"))]
     {
@@ -423,7 +423,7 @@ pub fn ram_owner_end<M: Mmio>(t: *const ParkToken, channel: u32, ticks: u32, pol
     #[cfg(target_os = "none")]
     {
         // SAFETY: as for `ram_wait`.
-        unsafe { petlibro_amebad_flash_owner_end(t, channel, ticks, polls) }
+        unsafe { wellfed_amebad_flash_owner_end(t, channel, ticks, polls) }
     }
     #[cfg(not(target_os = "none"))]
     {
@@ -585,9 +585,9 @@ mod exported {
     }
 
     #[unsafe(no_mangle)]
-    #[unsafe(link_section = ".image2.ram.text.petlibro_park")]
+    #[unsafe(link_section = ".image2.ram.text.wellfed_park")]
     #[inline(never)]
-    pub unsafe extern "C" fn petlibro_amebad_flash_park_publish(
+    pub unsafe extern "C" fn wellfed_amebad_flash_park_publish(
         token: *const ParkToken,
         command: u32,
     ) -> bool {
@@ -595,9 +595,9 @@ mod exported {
     }
 
     #[unsafe(no_mangle)]
-    #[unsafe(link_section = ".image2.ram.text.petlibro_park")]
+    #[unsafe(link_section = ".image2.ram.text.wellfed_park")]
     #[inline(never)]
-    pub unsafe extern "C" fn petlibro_amebad_flash_park_wait(
+    pub unsafe extern "C" fn wellfed_amebad_flash_park_wait(
         token: *const ParkToken,
         tick_limit: u32,
         poll_limit: u32,
@@ -606,23 +606,23 @@ mod exported {
     }
 
     #[unsafe(no_mangle)]
-    #[unsafe(link_section = ".image2.ram.text.petlibro_park")]
+    #[unsafe(link_section = ".image2.ram.text.wellfed_park")]
     #[inline(never)]
-    pub extern "C" fn petlibro_amebad_flash_sem_try_claim(index: u32) -> bool {
+    pub extern "C" fn wellfed_amebad_flash_sem_try_claim(index: u32) -> bool {
         sem_try_claim::<Hardware>(index)
     }
 
     #[unsafe(no_mangle)]
-    #[unsafe(link_section = ".image2.ram.text.petlibro_park")]
+    #[unsafe(link_section = ".image2.ram.text.wellfed_park")]
     #[inline(never)]
-    pub extern "C" fn petlibro_amebad_flash_sem_release(index: u32) -> bool {
+    pub extern "C" fn wellfed_amebad_flash_sem_release(index: u32) -> bool {
         sem_release::<Hardware>(index)
     }
 
     #[unsafe(no_mangle)]
-    #[unsafe(link_section = ".image2.ram.text.petlibro_park")]
+    #[unsafe(link_section = ".image2.ram.text.wellfed_park")]
     #[inline(never)]
-    pub unsafe extern "C" fn petlibro_amebad_flash_owner_begin(
+    pub unsafe extern "C" fn wellfed_amebad_flash_owner_begin(
         token: *const ParkToken,
         channel: u32,
         tick_limit: u32,
@@ -632,9 +632,9 @@ mod exported {
     }
 
     #[unsafe(no_mangle)]
-    #[unsafe(link_section = ".image2.ram.text.petlibro_park")]
+    #[unsafe(link_section = ".image2.ram.text.wellfed_park")]
     #[inline(never)]
-    pub unsafe extern "C" fn petlibro_amebad_flash_owner_end(
+    pub unsafe extern "C" fn wellfed_amebad_flash_owner_end(
         token: *const ParkToken,
         channel: u32,
         tick_limit: u32,

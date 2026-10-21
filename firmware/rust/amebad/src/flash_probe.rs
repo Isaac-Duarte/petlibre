@@ -23,13 +23,13 @@
 
 use core::ffi::{c_uint, c_void};
 
-use petlibro_core::feed_journal::JournalIo;
-use petlibro_core::feed_progress::BowlMode;
-use petlibro_core::flash_coord::{
+use wellfed_core::feed_journal::JournalIo;
+use wellfed_core::feed_progress::BowlMode;
+use wellfed_core::flash_coord::{
     FlashCoord, FlashFault, FlashParty, FlashPhase, FlashReply, FlashToken,
 };
-use petlibro_core::settings_store::{Settings, SettingsStatus, SettingsStore};
-use petlibro_core::tick_clock::TickClock;
+use wellfed_core::settings_store::{Settings, SettingsStatus, SettingsStore};
+use wellfed_core::tick_clock::TickClock;
 
 use crate::config::{FLASH_LIMITS, SYSTIMER_HZ, WATCHDOG};
 use crate::flash_hooks::HookTicket;

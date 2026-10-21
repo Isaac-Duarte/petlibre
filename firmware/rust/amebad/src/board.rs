@@ -322,6 +322,19 @@ impl Board {
         verified
     }
 
+    /// 16 bounded conversions of `channel`: 4 (current), 5 (battery) or 10
+    /// (the chip's internal supply measurement). Exclusive ADC ownership required.
+    pub fn sample_channel(&mut self, channel: u32, samples: &mut [u16; SAMPLES]) -> bool {
+        if !self.opened || self.faulted || !self.sensors_ready || !matches!(channel, 4 | 5 | 10) {
+            return false;
+        }
+        let ok = self.adc_channel(channel, samples);
+        if !ok {
+            self.trip_now();
+        }
+        ok
+    }
+
     fn adc_channel(&self, channel: u32, samples: &mut [u16; SAMPLES]) -> bool {
         for sample in samples.iter_mut() {
             sdk::adc_select(channel);

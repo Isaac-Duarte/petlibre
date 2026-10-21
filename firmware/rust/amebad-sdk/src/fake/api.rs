@@ -293,11 +293,11 @@ pub fn adc_read() -> u16 {
     with(|h| {
         assert!(!h.trigger);
         h.reads += 1;
-        assert!(h.adc_channel == 4 || h.adc_channel == 5);
-        if h.adc_channel == 4 {
-            h.current_adc
-        } else {
-            h.battery_adc
+        match h.adc_channel {
+            4 => h.current_adc,
+            5 => h.battery_adc,
+            10 => h.supply_adc,
+            channel => panic!("unmodelled ADC channel {channel}"),
         }
     })
 }

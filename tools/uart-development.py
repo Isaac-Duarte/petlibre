@@ -3,6 +3,8 @@
 
 Continue an already established helper session. Never upload a helper, enter a
 loader, change baud/status, boot an application or replay a stopped transaction.
+`--interrupted` plans afresh from a new inspection of a stopped update's region
+(see development-bank.py); it never reads or replays the stopped journal.
 """
 import argparse
 import json
@@ -76,7 +78,7 @@ def inputs(args):
     R.load_helper(ROOT / "private/upstream/ameba-rtos-d/tools/AmebaD/Image_Tool/imgtool_flashloader_amebad.bin")
     R.validate_rom_report(args.rom_report)
     R.validate_status_session(args.small_report, args.port)
-    bindings = {"schema_version": 1, "kind": B.KIND, "port": args.port,
+    bindings = {"schema_version": 1, "kind": B.KIND, "port": args.port, "interrupted": args.interrupted,
                 "source_review_sha256": source_review, "target_review_sha256": target_review,
                 "baseline_sha256": digest(baseline),
                 "rom_report_sha256": digest(private_file(args.rom_report)),
@@ -105,7 +107,7 @@ def inspected(path, bindings, source, target, baseline):
                 transfer["sha256"] == digest(value), "Inspection extent/hash differs")
         data.append(value)
     B.guards(baseline, data[:2])
-    B.images(source, target, data[2])
+    B.images(source, target, data[2], bindings["interrupted"])
     statuses = report.get("status_checks", [])
     require(len(statuses) == 1 and statuses[0].get("event") == "flash_status_checked" and
             statuses[0].get("assessment", {}).get("software_preconditions_met") is True,
@@ -118,7 +120,7 @@ def prepared(args):
     require(args.inspection is not None, "Completed inspection report required")
     current, report_sha = inspected(args.inspection, bindings, source, target, baseline)
     reviewed = {**bindings, "inspection_report_sha256": report_sha,
-                "operation_plan": B.plan(source, target, current)}
+                "operation_plan": B.plan(source, target, current, args.interrupted)}
     return baseline, source, target, current, reviewed
 
 
@@ -129,7 +131,7 @@ def session(args, baseline, source, target, bindings, current=None, reviewed=Non
                 digest(raw_plan) == args.expected_plan_sha256 and
                 canonical(json.loads(raw_plan)) == canonical(reviewed),
                 "Exact reviewed plan/hash required before serial access")
-        require(canonical(reviewed.get("operation_plan")) == canonical(B.plan(source, target, current)),
+        require(canonical(reviewed.get("operation_plan")) == canonical(B.plan(source, target, current, args.interrupted)),
                 "Operation differs before serial access")
         require(canonical({k: v for k, v in reviewed.items()
                            if k not in ("inspection_report_sha256", "operation_plan")}) == canonical(bindings),
@@ -189,7 +191,7 @@ def session(args, baseline, source, target, bindings, current=None, reviewed=Non
         if args.mode == "inspect":
             data, protected = acquire()
             B.guards(baseline, protected)
-            B.images(source, target, data)
+            B.images(source, target, data, args.interrupted)
             T.check_status(port, B.START, B.START + len(data), "inspection",
                            lambda event, **fields: report["status_checks"].append({"event": event, **fields}))
             report["status"] = "complete"
@@ -199,7 +201,7 @@ def session(args, baseline, source, target, bindings, current=None, reviewed=Non
                     print(f"Verified changed sectors: {n}/{total}", flush=True)
 
             result = B.run(port, baseline, source, target, current, reviewed["operation_plan"],
-                           acquire, directory / "transaction", progress)
+                           acquire, directory / "transaction", progress, args.interrupted)
             report.update(status="verified", result=result, reviewed_plan_sha256=digest(raw_plan))
         print("Completed; application boot remains a separate bench check", flush=True)
         return 0
@@ -228,6 +230,8 @@ def main():
     parser.add_argument("--inspection", type=Path)
     parser.add_argument("--plan", type=Path)
     parser.add_argument("--expected-plan-sha256")
+    parser.add_argument("--interrupted", action="store_true",
+                        help="Finish a stopped update: staged marker, every sector source, staged target or erased")
     args = parser.parse_args()
     os.umask(0o077)
     if args.mode == "inspect":

@@ -5,7 +5,9 @@
 //! and function enable with readback, the efuse calibration and the ADC.
 //! It then samples once a second, without end: PA16/PA17/PA19, and 16
 //! conversions each of channel 4 (motor current) and channel 5 (battery),
-//! timed against the SYSTIMER. Every sample re-verifies stopped outputs.
+//! timed against the SYSTIMER, then 16 of internal channel 10 (the chip's own
+//! supply), which reads well apart from the others and so shows the channel
+//! select takes effect. Every sample re-verifies stopped outputs.
 //! A failed capture trips the board and ends the probe.
 
 use wellfed_core::adc_scale::{AdcCalibration, SAMPLES};
@@ -56,7 +58,7 @@ pub enum Record {
     },
     Sample {
         n: u32,
-        /// SYSTIMER ticks for the whole capture (32 conversions).
+        /// SYSTIMER ticks for the whole capture (48 conversions).
         ticks: u32,
         food: bool,
         outlet: bool,
@@ -64,6 +66,7 @@ pub enum Record {
         stopped: bool,
         current: Channel,
         battery: Channel,
+        supply: Channel,
     },
     /// A capture failed (ADC timeout) or outputs did not read back stopped.
     Error { n: u32, ticks: u32, stopped: bool },
@@ -123,7 +126,8 @@ impl Probe {
         self.samples += 1;
         let mut reading = SensorReading::default();
         let begin = sdk::systimer_ticks();
-        let ok = self.board.capture(&mut reading);
+        let mut supply = [0u16; SAMPLES];
+        let ok = self.board.capture(&mut reading) && self.board.sample_channel(10, &mut supply);
         let ticks = sdk::systimer_ticks().wrapping_sub(begin);
         let stopped = stopped::observe().verified();
         if !ok || !stopped {
@@ -143,6 +147,7 @@ impl Probe {
                 stopped,
                 current: Channel::of(&reading.current, &calibration),
                 battery: Channel::of(&reading.battery, &calibration),
+                supply: Channel::of(&supply, &calibration),
             },
         )
     }

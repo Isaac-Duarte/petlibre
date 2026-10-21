@@ -54,8 +54,9 @@ A HIGH input mismatch remains a failed observation while permitting only the alr
 | `PLIO1` | Read-only pad-group/AON/GPIO routing observations; `read-only-v2` adds KM4's view of the shared-pad supply control and the raw Port A input word |
 | `PLDBG1` | Requested level, latch, input, directions, stopped state, pad control; `bounded-probe-v2` adds `highs=N/64` extra input samples |
 | `PLLED1` | Bounded sequence begin, individual results, terminal LOW/failure |
-| `PLFLS1` | FW06 KM4/KM0 boot handshake: HELLO authority session, READY peer session and flash-coordinator binding, injected peer change, terminal watch result; policy `fw06-hello-v1`; under `fw06-park-v1` only HELLO and READY |
+| `PLFLS1` | FW06 KM4/KM0 boot handshake: HELLO authority session, READY peer session and flash-coordinator binding, injected peer change, terminal watch result; policy `fw06-hello-v1`; under `fw06-park-v1` and `fw06-read-v1` only HELLO and READY |
 | `PLPRK1` | FW06 stage C park round trip: start mode/marker/watchdog, per-batch park/release maxima and frozen/alive counts, injected acknowledge/release faults, done or error/skip; policy `fw06-park-v1` |
+| `PLRDS1` | FW06 stage D mediated flash read: start marker/watchdog/installed, per-batch JEDEC ID, mismatches, park/release maxima and frozen/alive counts, done or skip; policy `fw06-read-v1` |
 
 ## FW05 supervision probe capture
 
@@ -96,6 +97,14 @@ Every batch needs frozen equal to leases and alive at least leases − 1. HELLO 
 
 `audit-firmware-park.py` takes the same `--capture/--manifest/--image/--output` arguments as the supervision auditor and requires `fw06-park-v1`. It splits each boot after its last `PLPRK1` line before the next `PLFW1 start` and runs every declared startup policy on each segment. Outcomes are `wrong_boot_count`, `boot1_*`/`boot2_*`/`boot3_*`, `park_sequence`, `park_start`, `park_batches`, `park_inject_ack`, `park_inject_release`, `park_reset_timing`, `park_done`, `park_sessions` and `pass`. It reports reset flags, HELLO counts, session high words, batch values, both reset intervals, the release timeout and the clean tail. This is UART timing evidence: host timestamps carry USB latency, and it does not establish the physical reset cause or that flash access was excluded during parks.
 
+## FW06 mediated flash read
+
+Policy `fw06-read-v1` is bound both ways to the `PLRDS1 start marker=` record format in the image and still requires the HELLO record format; a read image cannot be audited under `fw06-hello-v1` or `fw06-park-v1`, nor the reverse. It is a single-boot policy for the startup auditor: a reset shows up as `repeated_startup`. HELLO and READY are checked as under `fw06-park-v1` (one `PLFLS1 foreign` allowed, READY within 2.5 s of HELLO). No `PLPRK1`, `PLFLS1 peer` or `PLFLS1 done` record may appear.
+
+After READY, KM4 prints `PLRDS1 start marker=<hex8> watchdog=<pass|fail> installed=<0|1>`, four `PLRDS1 batch reads=<n> id=<6 hex> mismatches=<n> park_max=<ticks> release_max=<ticks> frozen=<n> alive=<n>` records at 25, 50, 75 and 100 reads, and `PLRDS1 done reads=<n> leases=<n> phase=<n> fault=<n>`. A pass needs `marker=00000000 watchdog=pass installed=1`, every batch with JEDEC ID `c84017` (the research unit's GigaDevice part), no mismatches, frozen equal to reads, alive at least reads − 1, and park/release maxima in 1–1310 ticks, then `done reads=100 leases=100 phase=1 fault=0`. Done must arrive within 30 s of start, and the capture must continue at least 30 s after done with no further `PLRDS1` or `PLFLS1` output. Failures print `PLRDS1 skip marker=<hex8>` or `PLFLS1 error ...`.
+
+Outcomes are `flash_read_missing`, `flash_read_malformed` (unparsed or repeated `PLRDS1` records, any `PLPRK1`), `flash_read_failed`, `flash_read_order` and `flash_read_timing`; HELLO/READY problems keep the `flash_handshake_*` outcomes. The report adds `flash_read_verified`, `flash_read_id`, `flash_read_reads`, `flash_read_leases`, `flash_read_park_max`, `flash_read_release_max`, `flash_read_frozen`, `flash_read_alive`, `flash_read_seconds` (start to done) and `flash_read_tail_seconds`. This is UART protocol and timing evidence for the mediated read; it does not show that any flash write path is safe.
+
 ## Shared-pad prerequisite and current physical findings
 
 The minimal KM0 main omitted a stock prerequisite for audio-shared pads used as GPIO. The port restores AMACRO and analog pad enables plus the SDK's calibrated `SOCPS_AudioLDO(ENABLE)` helper before entering the scheduler. It does not initialize audio playback.
@@ -131,3 +140,4 @@ These are physical results on the research unit; they concern UART-visible proto
   All 300 leases showed a frozen KM0 heartbeat while parked and an advancing one between leases. The worst park took 6 SYSTIMER ticks; release took 2.
 - **KM4 SysTick CLKSOURCE.** It reads 1 whatever is written, so park and hook context checks test only ENABLE and TICKINT.
 - **Watchdog clock.** The reset came about 4.0–4.2 s after the last rate-limited refresh, an effective clock near 31–33 kHz. FW05 measured about 43 kHz with the same counter, and the cause of the difference is unknown.
+- **Mediated flash read (`fw06-read-v1`).** Passed on one cold boot. With the lease provider installed in the SDK flash-lock hooks, 100 SDK `FLASH_RxCmdXIP` JEDEC reads all returned `c84017`, each inside its own lease, and KM0 was frozen for every one. The worst park took 4 SYSTIMER ticks and the worst release 2; the reads took 2.06 s in total. The coordinator ended idle and unfaulted, and no reset followed. This shows one read-only SDK path working through the hooks. It does not prove exclusive flash ownership for every SDK user.

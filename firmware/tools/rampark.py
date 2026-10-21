@@ -14,6 +14,8 @@ ROOT = Path(__file__).resolve().parents[2]
 SYMBOLS = ("petlibro_amebad_flash_park_publish", "petlibro_amebad_flash_park_wait",
            "petlibro_amebad_flash_sem_try_claim", "petlibro_amebad_flash_sem_release",
            "petlibro_amebad_flash_owner_begin", "petlibro_amebad_flash_owner_end")
+# KM4 only: the flash-lock provider's fault callback runs inside hook_fail.
+KM4_SYMBOLS = ("petlibro_amebad_flash_provider_fault",)
 INSTRUCTION = re.compile(r"^\s*([0-9a-f]+):\s+(?:(?:[0-9a-f]{4}|[0-9a-f]{8})\s+)+([a-z.][a-z0-9.]*)\s*(.*)$")
 DIRECT_BRANCH = re.compile(r"b(?:eq|ne|cs|hs|cc|lo|mi|pl|vs|vc|hi|ls|ge|lt|gt|le)?(?:\.[nw])?$")
 # SPI flash is readable through the direct map at 0x08000000 and the RSIP
@@ -125,21 +127,22 @@ def audit(sdk, project, binutils, objects):
         base = sdk / project / ("project_" + directory) / "asdk"
         elf = base / "image/target_img2.axf"
         paired = users.verify_packaged_code(elf, binutils / "arm-none-eabi-objdump", payload, regions, core)
+        expected = set(SYMBOLS) | (set(KM4_SYMBOLS) if core == "KM4" else set())
         symbols = {}
         for line in tool(binutils / "arm-none-eabi-objdump", "-t", elf).splitlines():
             fields = line.split()
-            if fields and fields[-1] in SYMBOLS and len(fields) == 6:
+            if fields and fields[-1] in expected and len(fields) == 6:
                 address, _, kind, section, size, name = fields
                 if kind != "F" or section != ".ram_image2.text":
                     raise ValueError("Parking function is not in application RAM: " + name)
                 symbols[name] = (int(address, 16), int(size, 16))
-        if set(symbols) != set(SYMBOLS):
+        if set(symbols) != expected:
             raise ValueError("Missing retained parking functions in " + core)
         checked = {}
         for name, (address, size) in symbols.items():
             listing = tool(binutils / "arm-none-eabi-objdump", "-d",
                            "--start-address=" + hex(address), "--stop-address=" + hex(address + size), elf)
-            minimum = 1 if "_sem_" in name else 3
+            minimum = 1 if "_sem_" in name or name in KM4_SYMBOLS else 3
             checked[name] = {"address": hex(address), "bytes": size,
                              **check_leaf(listing, address, size, minimum)}
         obj = objects[core]

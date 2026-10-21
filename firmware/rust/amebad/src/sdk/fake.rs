@@ -408,6 +408,10 @@ pub mod api {
         with(|h| h.boot_reason)
     }
 
+    pub fn flash_read_jedec() -> [u8; 3] {
+        [0xc8, 0x40, 0x17]
+    }
+
     pub fn ipc_interrupts() -> (u32, u32) {
         (0, 0)
     }

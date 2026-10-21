@@ -435,6 +435,39 @@ pub fn boot_reason() -> u32 {
     unsafe { raw::BOOT_Reason() }
 }
 
+/// The flash JEDEC ID through the SDK's RAM `FLASH_RxCmdXIP`, whose lock and
+/// unlock calls resolve to the hook interposer. Read-only (RDID, 0x9F).
+pub fn flash_read_jedec() -> [u8; 3] {
+    let mut id = [0u8; 3];
+    unsafe { raw::FLASH_RxCmdXIP(0x9f, 3, id.as_mut_ptr()) };
+    id
+}
+
+/// Flash-lock provider fault callback: runs from RAM inside `hook_fail`, so
+/// it is leaf code with no call or flash literal (audited). Raw latch writes
+/// request motor STOP (PA13/PA14 HIGH) and infrared OFF (PA15/PB3 LOW); the
+/// caller then halts in RAM for the watchdog.
+#[unsafe(no_mangle)]
+#[unsafe(link_section = ".image2.ram.text.petlibro_park")]
+#[inline(never)]
+pub unsafe extern "C" fn petlibro_amebad_flash_provider_fault(
+    _context: *mut c_void,
+    _reason: crate::flash_hooks::HookFault,
+) {
+    let port_a = k::PETLIBRO_GPIOA_BASE as usize as *mut raw::GPIO_TypeDef;
+    let port_b = (k::PETLIBRO_GPIOA_BASE + 0x400) as usize as *mut raw::GPIO_TypeDef;
+    unsafe {
+        let a = ptr::addr_of_mut!((*port_a).PORT[0].DR);
+        let b = ptr::addr_of_mut!((*port_b).PORT[0].DR);
+        // Separate volatile read-modify-writes (motor STOP first) keep the
+        // audited RAM code to plain loads, ORR/BIC and stores.
+        ptr::write_volatile(a, ptr::read_volatile(a) | (1 << 13) | (1 << 14));
+        ptr::write_volatile(a, ptr::read_volatile(a) & !(1 << 15));
+        ptr::write_volatile(b, ptr::read_volatile(b) & !(1 << 3));
+        core::arch::asm!("dsb", options(nostack, preserves_flags));
+    }
+}
+
 /// KM4 IPC block: current interrupt enables (IER_R) and status (ISR).
 pub fn ipc_interrupts() -> (u32, u32) {
     unsafe {

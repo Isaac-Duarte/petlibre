@@ -1,0 +1,13 @@
+/target/
+/private/
+/.venv/
+/.agents/
+/.codex/
+/.aws/
+__pycache__/
+*.py[cod]
+.env
+.env.*
+*.pcap
+*.pcapng
+.DS_Store

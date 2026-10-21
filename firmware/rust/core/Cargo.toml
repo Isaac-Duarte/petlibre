@@ -1,0 +1,14 @@
+[package]
+license = "MIT"
+name = "petlibro-core"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+description = "Hardware-independent PLAF103 feeding, sensing, journal and flash-lease logic"
+publish = false
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+petlibro-testkit = { path = "../testkit" }

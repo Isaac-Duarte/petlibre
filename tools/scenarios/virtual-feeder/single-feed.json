@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "name": "single-feed",
+  "profile": "single",
+  "feedback_period_ms": 10,
+  "end_ms": 35,
+  "actions": [
+    {
+      "at_ms": 1,
+      "op": "submit",
+      "args": [
+        1,
+        1
+      ]
+    },
+    {
+      "at_ms": 30,
+      "op": "expect",
+      "values": {
+        "state": "terminal",
+        "outcome": "done",
+        "completed": 1,
+        "durable": true,
+        "motor": 0,
+        "optics": 0
+      }
+    }
+  ]
+}

@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "name": "restart-after-completion",
+  "profile": "single",
+  "feedback_period_ms": 10,
+  "end_ms": 30,
+  "actions": [
+    {
+      "at_ms": 1,
+      "op": "submit",
+      "args": [
+        10,
+        1
+      ]
+    },
+    {
+      "at_ms": 25,
+      "op": "expect",
+      "values": {
+        "durable": true
+      }
+    },
+    {
+      "at_ms": 26,
+      "op": "power_cut",
+      "args": []
+    },
+    {
+      "at_ms": 27,
+      "op": "boot",
+      "args": []
+    },
+    {
+      "at_ms": 28,
+      "op": "submit",
+      "args": [
+        10,
+        1
+      ]
+    },
+    {
+      "at_ms": 28,
+      "op": "expect",
+      "values": {
+        "submission": "reject_id",
+        "high_water_id": 10,
+        "pending": false
+      }
+    }
+  ]
+}

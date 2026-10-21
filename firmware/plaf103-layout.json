@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "model": "PLAF103",
+  "stock_version": "1.1.15",
+  "stock_bytes": 1376288,
+  "stock_sha256": "05147476fc70c91cc77ad7da6d6772376b2081d460ac7b1912e2d73868a09498",
+  "flash_mapping_base": "0x08000000",
+  "sector_bytes": 4096,
+  "ota_bank_offsets": ["0x00006000", "0x00186000"],
+  "candidate_payload_cap_bytes": 1376256,
+  "bank_table_runtime_address": "0x0e0ec38c",
+  "bank_selector_entry": "0x0e02a1d4",
+  "known_preserve_ranges": [
+    {"name": "pre_application", "start": "0x00000000", "end_exclusive": "0x00006000"},
+    {"name": "observed_settings_sectors", "start": "0x003e8000", "end_exclusive": "0x003f0000"},
+    {"name": "observed_audio_start_sector", "start": "0x00400000", "end_exclusive": "0x00401000"},
+    {"name": "observed_log_sector", "start": "0x007cb000", "end_exclusive": "0x007cc000"},
+    {"name": "observed_plan_record_sectors", "start": "0x007d0000", "end_exclusive": "0x007d7000"},
+    {"name": "observed_error_record_sector", "start": "0x007da000", "end_exclusive": "0x007db000"}
+  ],
+  "complete_partition_map": false,
+  "flash_capacity_verified": false,
+  "boot_acceptance_verified": false
+}

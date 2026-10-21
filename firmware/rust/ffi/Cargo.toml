@@ -1,0 +1,26 @@
+[package]
+license = "MIT"
+name = "petlibro-ffi"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+description = "C ABI for linking the Rust replacement firmware into the AmebaD SDK"
+publish = false
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[features]
+# Link the AmebaD ports for one core (target builds from firmware/tools/build.py).
+km0 = ["dep:petlibro-amebad", "petlibro-amebad/km0"]
+km4 = ["dep:petlibro-amebad", "petlibro-amebad/km4", "petlibro-amebad/sdk"]
+
+[dependencies]
+petlibro-core = { path = "../core" }
+petlibro-amebad = { path = "../amebad", optional = true }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+petlibro-testkit = { path = "../testkit" }

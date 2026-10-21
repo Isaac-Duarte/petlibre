@@ -1,0 +1,14 @@
+[package]
+license = "MIT"
+name = "petlibro-probe"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+description = "Non-actuating stock 1.1.15 GET_CONFIG execution probe"
+publish = false
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[lints]
+workspace = true

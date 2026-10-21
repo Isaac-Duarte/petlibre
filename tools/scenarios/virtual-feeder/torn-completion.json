@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "name": "torn-completion",
+  "profile": "single",
+  "feedback_period_ms": 10,
+  "end_ms": 30,
+  "actions": [
+    {
+      "at_ms": 0,
+      "op": "cut",
+      "args": [
+        2,
+        270
+      ]
+    },
+    {
+      "at_ms": 1,
+      "op": "submit",
+      "args": [
+        1,
+        1
+      ]
+    },
+    {
+      "at_ms": 25,
+      "op": "expect",
+      "values": {
+        "online": false
+      }
+    },
+    {
+      "at_ms": 26,
+      "op": "boot",
+      "args": []
+    },
+    {
+      "at_ms": 27,
+      "op": "expect",
+      "values": {
+        "state": "fault",
+        "fault": "recovery",
+        "pending": true,
+        "motor": 0
+      }
+    }
+  ]
+}

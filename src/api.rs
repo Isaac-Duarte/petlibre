@@ -1,0 +1,161 @@
+use std::{sync::Arc, time::Duration};
+
+use axum::{
+    Json, Router,
+    extract::{DefaultBodyLimit, State},
+    http::{HeaderMap, StatusCode},
+    routing::{get, post},
+};
+use serde::Serialize;
+use serde_json::{Value, json};
+use subtle::ConstantTimeEq;
+use tokio::sync::{mpsc, oneshot, watch};
+
+use crate::{
+    build_info::BUILD,
+    controller::{FeedInput, FeedRecord, Rejection, ResolveInput, Status},
+    mqtt::Request,
+    ota_image, ota_trial, probe,
+};
+
+#[derive(Clone)]
+pub struct ApiState {
+    pub token: Arc<str>,
+    pub requests: mpsc::Sender<Request>,
+    pub status: watch::Receiver<Status>,
+    /// Config location; the image server's private lease is written beside it.
+    pub config_path: Arc<std::path::Path>,
+    pub image_host: std::net::IpAddr,
+}
+
+type ApiError = (StatusCode, Json<Value>);
+
+fn authenticate(headers: &HeaderMap, state: &ApiState) -> Result<(), ApiError> {
+    let supplied = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer "))
+        .unwrap_or("");
+    if bool::from(supplied.as_bytes().ct_eq(state.token.as_bytes())) {
+        Ok(())
+    } else {
+        Err((
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"error":"bearer token required"})),
+        ))
+    }
+}
+
+fn reject(error: Rejection) -> ApiError {
+    let status = match error {
+        Rejection::Offline => StatusCode::SERVICE_UNAVAILABLE,
+        Rejection::InvalidPortions => StatusCode::UNPROCESSABLE_ENTITY,
+        Rejection::InvalidOta | Rejection::ResolutionEvidence | Rejection::InvalidProbe => {
+            StatusCode::UNPROCESSABLE_ENTITY
+        }
+        Rejection::ImageServer => StatusCode::PRECONDITION_FAILED,
+        Rejection::OtaDisabled => StatusCode::FORBIDDEN,
+        Rejection::Storage => StatusCode::INTERNAL_SERVER_ERROR,
+        Rejection::Cooldown => StatusCode::TOO_MANY_REQUESTS,
+        _ => StatusCode::CONFLICT,
+    };
+    (status, Json(json!({"error":error.message()})))
+}
+
+async fn operation<T: Serialize>(
+    state: ApiState,
+    build: impl FnOnce(oneshot::Sender<Result<T, Rejection>>) -> Request,
+) -> Result<Json<T>, ApiError> {
+    let (send, receive) = oneshot::channel();
+    state
+        .requests
+        .try_send(build(send))
+        .map_err(|_| reject(Rejection::Offline))?;
+    let result = tokio::time::timeout(Duration::from_secs(5), receive)
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::GATEWAY_TIMEOUT,
+                Json(
+                    json!({"error":"outcome unknown; query status or repeat the SAME request ID"}),
+                ),
+            )
+        })?
+        .map_err(|_| reject(Rejection::Offline))?;
+    result.map(Json).map_err(reject)
+}
+
+async fn status(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+) -> Result<Json<Status>, ApiError> {
+    authenticate(&headers, &state)?;
+    Ok(Json(state.status.borrow().clone()))
+}
+
+async fn feed(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Json(input): Json<FeedInput>,
+) -> Result<Json<FeedRecord>, ApiError> {
+    authenticate(&headers, &state)?;
+    operation(state, |response| Request::Feed(input, response)).await
+}
+
+async fn resolve(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Json(input): Json<ResolveInput>,
+) -> Result<Json<FeedRecord>, ApiError> {
+    authenticate(&headers, &state)?;
+    operation(state, |response| Request::Resolve(input, response)).await
+}
+
+async fn ota_trial_request(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Json(input): Json<ota_trial::Input>,
+) -> Result<Json<ota_trial::Record>, ApiError> {
+    authenticate(&headers, &state)?;
+    let lease = ota_image::Lease::current(&state.config_path, state.image_host).await;
+    operation(state, |response| Request::OtaTrial(input, lease, response)).await
+}
+
+async fn ota_trial_resolve(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Json(input): Json<ota_trial::ResolveInput>,
+) -> Result<Json<ota_trial::Record>, ApiError> {
+    authenticate(&headers, &state)?;
+    operation(state, |response| Request::ResolveTrial(input, response)).await
+}
+
+pub fn router(state: ApiState) -> Router {
+    Router::new()
+        .route(
+            "/health",
+            get(|| async {
+                Json(
+                    json!({"service":"petlibro-local","version":env!("CARGO_PKG_VERSION"),
+                    "build_commit":BUILD.commit,"build_clean":BUILD.clean}),
+                )
+            }),
+        )
+        .route("/api/status", get(status))
+        .route("/api/feed", post(feed))
+        .route("/api/feed/resolve", post(resolve))
+        .route("/api/ota/trial", post(ota_trial_request))
+        .route("/api/ota/trial/resolve", post(ota_trial_resolve))
+        .route("/api/probe/query", post(probe_query))
+        .layer(DefaultBodyLimit::max(4096))
+        .with_state(state)
+}
+
+async fn probe_query(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Json(input): Json<probe::Input>,
+) -> Result<Json<probe::Record>, ApiError> {
+    authenticate(&headers, &state)?;
+    operation(state, |response| Request::ProbeQuery(input, response)).await
+}

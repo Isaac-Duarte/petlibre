@@ -54,6 +54,8 @@ pub struct Hardware {
     pub clears: u32,
     pub current_adc: u16,
     pub battery_adc: u16,
+    /// Internal channel 10: the chip's own supply measurement.
+    pub supply_adc: u16,
     pub output_hook: Option<fn()>,
     pub gpio_init_hook: Option<fn()>,
     pub blocked_gpio_write: [u32; 2],
@@ -132,6 +134,7 @@ impl Default for Hardware {
             clears: 0,
             current_adc: 500,
             battery_adc: 2800,
+            supply_adc: 3000,
             output_hook: None,
             gpio_init_hook: None,
             blocked_gpio_write: [0; 2],

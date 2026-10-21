@@ -32,6 +32,8 @@ For changed images, execution verifies preimage, staged, and activated applicati
 
 Readiness synchronization follows durable erase-intent fsync, immediately before transmission. This ports the fix for journal stalls crossing the helper's idle-ready interval. Missing ACKs, protocol errors, or drift stop terminally; there is no automatic resume, replay, fallback write, or boot command.
 
+`--interrupted` finishes a stopped development update from a fresh inspection, never from the stopped journal. It requires the marker sector to be staged, and every other sector to be exactly its source, its staged target or erased; a partial program or erase is refused. It then stages the remaining sectors and commits the marker with the same checks as a normal update. The flag is bound into the inspection, plan and execution, so a normal inspection cannot prepare an interrupted plan, nor the reverse.
+
 Settings/audio/log areas outside the declared application footprint are not reread during each development update. Their preservation relies on the bounded mutation sequence, giving narrower evidence than a full-flash preservation audit. Full-flash audits remain appropriate for layout changes, recovery investigations, or unexplained drift.
 
 ## Evidence and remaining work

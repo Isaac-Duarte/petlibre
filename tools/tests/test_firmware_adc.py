@@ -29,11 +29,11 @@ def startup(identity, reset=b'00000000'):
             + b'Synthetic core diagnostic: PASS\r\nSynthetic diagnostic only; feeder backend stays unopened.\r\n' + S.PASS)
 
 
-def sample(n, current=(290, 310, 300), battery=(2590, 2610, 2600), ticks=420, dc=1, stopped=1, scaled=None):
+def sample(n, current=(290, 310, 300), battery=(2590, 2610, 2600), ticks=420, dc=1, stopped=1, scaled=None, supply=None):
     def channel(low, high, mean):
         return b'%d,%d,%d,%d' % (low, high, mean, M.scaled(mean, 2480, 12050))
-    line = b'PLADC1 sample n=%d ticks=%d food=0 outlet=1 dc=%d stopped=%d current=%s battery=%s\r\n' % (
-        n, ticks, dc, stopped, channel(*current), channel(*battery))
+    line = b'PLADC1 sample n=%d ticks=%d food=0 outlet=1 dc=%d stopped=%d current=%s battery=%s%s\r\n' % (
+        n, ticks, dc, stopped, channel(*current), channel(*battery), b'' if supply is None else b' supply=' + channel(*supply))
     return line if scaled is None else line.replace(b',%d battery' % M.scaled(current[2], 2480, 12050), b',%d battery' % scaled)
 
 
@@ -152,6 +152,28 @@ class FirmwareAdc(unittest.TestCase):
         chunks.append((finished - 1, startup(self.identity)))
         self.assertEqual(self.audit((chunks, finished))['outcome'], 'startup_repeated_startup')
 
+    def test_supply_channel_policy_requires_distinct_channels(self):
+        self.policy('fw14-adc-v2')
+        self.image(self.base + b' ' + S.ADC_MARK + S.ADC_SUPPLY_MARK)
+        battery = (230, 250, 240)
+
+        def run(supply=(3480, 3500, 3490), battery=battery, n=40):
+            return self.audit(capture(self.identity, samples=n, line=lambda i: sample(i, current=battery, battery=battery,
+                                                                                         supply=supply)))
+        report = run()
+        self.assertEqual(report['outcome'], 'pass', report)
+        self.assertEqual((report['adc_supply']['mean_min'], report['adc_supply']['scaled_max']), (3490, M.scaled(3490, 2480, 12050)))
+        self.assertEqual(run(supply=(1130, 1150, 1139))['outcome'], 'adc_channels')
+        self.assertEqual(run(supply=(3480, 3500, 3490), battery=(2580, 2600, 2591))['outcome'], 'adc_channels')
+        self.assertEqual(run(supply=(3480, 3500, 4000))['outcome'], 'adc_values')
+        # A sample without the supply channel, under v2, or with it, under v1.
+        self.assertEqual(self.audit(capture(self.identity))['outcome'], 'adc_sequence')
+        self.policy('fw14-adc-v1')
+        with self.assertRaisesRegex(ValueError, 'ADC supply policy/artifact mismatch'):
+            run()
+        self.image(self.base + b' ' + S.ADC_MARK)
+        self.assertEqual(run()['outcome'], 'adc_sequence')
+
     def test_policy_binding_both_ways(self):
         good = capture(self.identity)
         self.policy(None)
@@ -161,7 +183,7 @@ class FirmwareAdc(unittest.TestCase):
         self.image(self.base)
         with self.assertRaisesRegex(ValueError, 'ADC policy/artifact mismatch'):
             self.audit(good)
-        self.policy('fw14-adc-v2')
+        self.policy('fw14-adc-v3')
         with self.assertRaisesRegex(ValueError, 'ADC policy required'):
             self.audit(good)
         self.manifest['startup_adc_policy'] = 'fw14-adc-v1'

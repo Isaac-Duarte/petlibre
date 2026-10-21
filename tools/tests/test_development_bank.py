@@ -96,6 +96,9 @@ class DevelopmentBankTests(unittest.TestCase):
                     self.uc.mem_write(at, bytes([self.uc.mem_read(at, 1)[0] ^ 1]))
                 if len(data) == 6 and data[0] == 0x17 and fault == "lost_erase_ack":
                     self.pending_lost_ack = True
+                if len(data) == 6 and data[0] == 0x17 and fault == "lost_second_erase_ack" and \
+                        int.from_bytes(data[1:4], "little") == planned["ordered_sectors"][1]["offset"]:
+                    self.pending_lost_ack = True
                 if len(data) == 1032 and fault == "lost_program_ack":
                     self.pending_lost_ack = True
                 if len(data) == 1032 and data[7:15] != b"\xff" * 8 and \
@@ -242,6 +245,67 @@ class DevelopmentBankTests(unittest.TestCase):
                 self.assertFalse(r["success"])
                 self.assertEqual(r["activation_calls"], 1)
                 self.assertFalse(B.C.inspect_journal(r["output"] / "journal.jsonl")["verified_terminal"])
+
+    def interrupted(self, snapshot, source, target):
+        """Finish from a fresh region acquisition of a stopped update's flash."""
+        current = snapshot[B.START:B.START + B.extent(source, target)]
+        planned = B.plan(source, target, current, interrupted=True)
+        offsets = [B.START] + [e["offset"] for e in planned["ordered_sectors"]]  # The commit programs START.
+        peer = SIM.EmulatedHelperPort(self.helper, snapshot, offsets, status_registers=(0, 2, 0))
+
+        def acquire():
+            data = peer.snapshot()
+            return data[B.START:B.START + len(current)], [data[o:o + n] for o, n in B.GUARDS]
+        report = B.run(peer, self.baseline, source, target, current, planned, acquire,
+                       self.temporary() / "transaction", interrupted=True)
+        return report, peer, planned
+
+    def test_interrupted_update_finishes_from_a_fresh_acquisition(self):
+        stopped = self.operation(fault="lost_second_erase_ack")
+        self.assertFalse(stopped["success"])
+        source, target = stopped["source"], stopped["target"]
+        snapshot = stopped["peer"].snapshot()
+        second = stopped["planned"]["ordered_sectors"][1]["offset"]
+        self.assertEqual(snapshot[second:second + B.SECTOR], b"\xff" * B.SECTOR)
+        with self.assertRaisesRegex(ValueError, "source image"):
+            B.plan(source, target, snapshot[B.START:B.START + B.extent(source, target)])
+        report, peer, planned = self.interrupted(snapshot, source, target)
+        self.assertEqual(report["status"], "verified_via_supplied_transports")
+        self.assertTrue(planned["interrupted"])
+        self.assertEqual([e["offset"] for e in planned["ordered_sectors"]],
+                         [e["offset"] for e in stopped["planned"]["ordered_sectors"][1:]])
+        after = peer.snapshot()
+        self.assertEqual(after[B.START:B.START + len(stopped["proposed"])], stopped["proposed"])
+        self.assertEqual(after[:B.START], snapshot[:B.START])
+        self.assertEqual(after[B.END:], snapshot[B.END:])
+        # The old sector (not yet erased) and a fully staged region commit too.
+        old = bytearray(snapshot)
+        old[second:second + B.SECTOR] = stopped["before"][second:second + B.SECTOR]
+        self.assertEqual(self.interrupted(bytes(old), source, target)[1].snapshot()[B.START:B.START + len(stopped["proposed"])],
+                         stopped["proposed"])
+        staged = bytearray(snapshot)
+        staged[B.START:B.START + len(stopped["staged"])] = stopped["staged"]
+        report, peer, planned = self.interrupted(bytes(staged), source, target)
+        self.assertEqual(planned["ordered_sectors"], [])
+        self.assertEqual(peer.snapshot()[B.START:B.START + len(stopped["proposed"])], stopped["proposed"])
+
+    def test_interrupted_update_refuses_anything_but_source_staged_or_erased(self):
+        stopped = self.operation(fault="lost_second_erase_ack")
+        source, target, snapshot = stopped["source"], stopped["target"], stopped["peer"].snapshot()
+        second = stopped["planned"]["ordered_sectors"][1]["offset"]
+        size = B.extent(source, target)
+        partial = bytearray(snapshot)
+        partial[second:second + 1024] = stopped["staged"][second - B.START:second - B.START + 1024]
+        committed = bytearray(snapshot)
+        committed[B.START:B.START + len(stopped["proposed"])] = stopped["proposed"]
+        unstaged = bytearray(snapshot)
+        unstaged[B.START:B.START + B.SECTOR] = b"\xff" * B.SECTOR
+        for name, image, message in (("partial program", partial, "neither source"),
+                                     ("already committed", committed, "staged marker"),
+                                     ("marker sector erased", unstaged, "staged marker"),
+                                     ("original source", stopped["before"], "staged marker")):
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, message):
+                B.plan(source, target, bytes(image)[B.START:B.START + size], interrupted=True)
 
     def test_altered_plan_is_refused_before_transport(self):
         for field, value in [("erase_sectors", True), ("bank", 0), ("current_region_sha256", "0" * 64)]:

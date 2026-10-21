@@ -47,6 +47,7 @@ fn opens_with_explicit_adc_enable_and_samples_read_only() {
             stopped,
             current,
             battery,
+            supply,
             ..
         }) = step.record
         else {
@@ -66,6 +67,7 @@ fn opens_with_explicit_adc_enable_and_samples_read_only() {
         );
         assert_eq!(battery.mean, 2600);
         assert_eq!(battery.scaled, (26000 - 2480) * 1000 / 12050);
+        assert_eq!(supply.mean, 3000);
     }
     // Motor pins never left STOP; emitters never enabled.
     fake::with(|h| assert_eq!(h.output[0] & MOTOR_MASK, MOTOR_MASK));

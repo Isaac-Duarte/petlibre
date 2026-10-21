@@ -5,7 +5,7 @@ This board tracks replacement-firmware integration, dependencies, and acceptance
 ## Current status
 
 - **Done:** FW01–FW06 and FW15, five of them with recorded scope limits (see carried items).
-- **In progress:** FW14. A read-only probe enables the LP ADC clock explicitly (startup had already enabled it) and samples both channels and PA19 once a second on hardware. On adapter power with no batteries, both channels sit just above the calibration offset; batteries and a meter are needed to show the battery channel moves and to scale it.
+- **In progress:** FW14. A read-only probe enables the LP ADC clock explicitly (startup had already enabled it) and samples once a second on hardware. The chip's internal supply channel reads about 3.3 V (raw 3918) while channels 4 and 5 sit near zero (raw 240), so the channel select works and the stock scaling looks like millivolts. With no batteries yet, the battery channel, the external-power pin PA19 and the divider scaling still need batteries and a meter.
 - **Critical path to feeding:** FW13/FW14/FW15 → FW30 → FW16 → FW17.
 
 ### Carried items
@@ -59,7 +59,7 @@ Prioritize the UART development loop and build identity, stopped startup, LED di
 | Card | Status | Evidence | Prerequisites | Finish line |
 | --- | --- | --- | --- | --- |
 | **FW13 Food, outlet and feedback inputs** | Ready | — | FW03, FW05, FW06 | Confirm emitter/receiver pairs and blocked/clear polarity. Measure settling, pulse capture and bounded emitter duty. Reject stale/invalid inputs; observe owner stalls with emitters active and motor disabled. |
-| **FW14 Current, battery and external power inputs** | In progress | Physical (UART readback, no batteries) | FW03, FW05 | Enable the LP ADC clock explicitly, then verify ADC readiness/calibration, voltage scaling and external-power detection against measurements. Establish sample freshness and report unknown values honestly. Calibrate loaded motor current during FW16/FW19. |
+| **FW14 Current, battery and external power inputs** | In progress | Physical (UART readback, internal supply channel, no batteries) | FW03, FW05 | Enable the LP ADC clock explicitly, then verify ADC readiness/calibration, voltage scaling and external-power detection against measurements. Establish sample freshness and report unknown values honestly. Calibrate loaded motor current during FW16/FW19. |
 | **FW15 Durable settings and feeding journal** | **Done (storage scope)** | Physical (UART protocol, NOR power cuts) | FW06 | Establish explicit storage allocation, implement real NOR I/O and schema/version recovery, and bound wear. Persist reservation before motion and result after verified stop. Test interrupted writes and block ambiguous pending feeds after restart. |
 | **FW30 Electrical output verification** | Ready | — | FW03 | Before any intended motion, measure motor driver inputs at STOP, infrared emitter OFF, and startup/reset transients across repeated measured power-ons and resets (multimeter; scope or logic analyzer for transients). Confirm stock-derived polarity electrically. |
 | **FW16 Supervised motor controller and feeding owner** | Planned | — | FW05, FW06, FW13, FW14, FW15, FW30 | Wire the existing owner/controller to real ports. Show owner-lease expiry under a stalled owner with motion disabled, then verify a bounded pulse, direction, feedback and STOP under supervision before a portion test. Exercise cancellation, lease expiry and failed stop; a failed reservation cannot start motion. |

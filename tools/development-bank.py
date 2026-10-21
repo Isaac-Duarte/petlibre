@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 """Region-scoped bank-1 development transactions; injected transport only.
 
-Both complete source/target OTA images are explicit inputs. This is not a
-partial-write resume path, inactive-bank OTA implementation or boot controller.
-Unchanged data after a shorter target remains in place, outside its mapping.
+Both complete source/target OTA images are explicit inputs. This is not an
+inactive-bank OTA implementation or boot controller. Unchanged data after a
+shorter target remains in place, outside its mapping.
+
+`interrupted=True` finishes a stopped transaction of this kind from a fresh
+acquisition, never from the stopped journal: the marker sector must already be
+staged, and every sector must exactly equal its source, its staged target or
+erased flash. Anything else (a partial program or erase) is refused.
 """
 import importlib.util
 from pathlib import Path
@@ -50,23 +55,34 @@ def guards(baseline, observed):
             "Other bank must be invalid for this development path")
 
 
-def images(source, target, current):
+def images(source, target, current, interrupted=False):
     old, new = payload(source), payload(target)
     require(type(current) is bytes and len(current) == max(len(old), len(new)),
             "Exact source/target union acquisition required")
-    require(current[:len(old)] == old, "Current application is not the reviewed source image")
-    proposed = new + current[len(new):]
+    if not interrupted:
+        require(current[:len(old)] == old, "Current application is not the reviewed source image")
+        proposed = new + current[len(new):]
+        staged = b"\xff" * 8 + proposed[8:]
+        return proposed, staged
+    # The tail beyond the target is never written, so it must still be the source's.
+    union = old + current[len(old):]
+    proposed = new + union[len(new):]
     staged = b"\xff" * 8 + proposed[8:]
+    require(current[:SECTOR] == staged[:SECTOR], "Interrupted update requires the staged marker sector")
+    for at in range(0, len(current), SECTOR):
+        sector = current[at:at + SECTOR]
+        require(sector in (union[at:at + SECTOR], staged[at:at + SECTOR], b"\xff" * SECTOR),
+                f"Sector {START + at:#x} is neither source, staged target nor erased")
     return proposed, staged
 
 
-def plan(source, target, current):
-    proposed, staged = images(source, target, current)
+def plan(source, target, current, interrupted=False):
+    proposed, staged = images(source, target, current, interrupted)
     changed = current != proposed
     offsets = [i for i in range(0, len(current), SECTOR)
                if current[i:i + SECTOR] != staged[i:i + SECTOR]] if changed else []
-    require(not changed or offsets[0] == 0, "Marker must be staged first")
-    return {"schema_version": 1, "kind": KIND, "bank": 1,
+    require(interrupted or not changed or offsets[0] == 0, "Marker must be staged first")
+    return {"schema_version": 1, "kind": KIND, "bank": 1, "interrupted": interrupted,
             "source_ota_sha256": digest(source), "target_ota_sha256": digest(target),
             "source_payload_bytes": len(payload(source)), "target_payload_bytes": len(payload(target)),
             "region": {"offset": START, "bytes": len(current)},
@@ -81,12 +97,12 @@ def plan(source, target, current):
             "scope": "Application union and factory/other-bank guards read back; other flash is not scanned"}
 
 
-def run(port, baseline, source, target, current, reviewed, acquire, output, progress=None):
+def run(port, baseline, source, target, current, reviewed, acquire, output, progress=None, interrupted=False):
     """acquire returns (application union, factory/other-bank guard byte arrays)."""
-    expected = plan(source, target, current)
+    expected = plan(source, target, current, interrupted)
     require(canonical(reviewed) == canonical(expected), "Reviewed development plan differs")
     require(callable(acquire), "Region acquisition callback required")
-    proposed, staged = images(source, target, current)
+    proposed, staged = images(source, target, current, interrupted)
     # Freeze all packets before creating durable intent or talking to transport.
     sectors = []
     for entry in expected["ordered_sectors"]:
@@ -131,7 +147,7 @@ def run(port, baseline, source, target, current, reviewed, acquire, output, prog
             sector_record("sector_staged", sha256=digest(data))
             if progress:
                 progress(number, len(sectors))
-        if sectors:
+        if sectors or interrupted:
             check(staged, "staged")
             require(T.read_sector(port, START) == staged[:SECTOR], "Marker sector drift")
 

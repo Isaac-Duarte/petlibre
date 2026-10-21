@@ -93,14 +93,16 @@ fn log_probe(record: Record) {
             stopped,
             current,
             battery,
+            supply,
         } => report.record(format_args!(
-            "PLADC1 sample n={n} ticks={ticks} food={} outlet={} dc={} stopped={} current={} battery={}\r\n",
+            "PLADC1 sample n={n} ticks={ticks} food={} outlet={} dc={} stopped={} current={} battery={} supply={}\r\n",
             bit(food),
             bit(outlet),
             bit(dc),
             bit(stopped),
             Values(current),
             Values(battery),
+            Values(supply),
         )),
         Record::Error { n, ticks, stopped } => report.record(format_args!(
             "PLADC1 error n={n} ticks={ticks} stopped={}\r\n",

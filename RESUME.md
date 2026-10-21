@@ -15,18 +15,22 @@ set the LP ADC function and clock bits, and the explicit enable read back
 unchanged. The efuse holds programmed calibration, not the defaults. 93
 samples came 1.02 s apart, each 32-conversion capture taking at most 10.1 ms.
 PA19 read 1 throughout. Both ADC channels read raw 239–243, just above the
-calibration offset. That fits no battery and no motor current, but it does not
-yet prove the channel select, since both read the same.
+calibration offset. That fits no battery and no motor current. A second build
+(`fw14-adc-v2`) also reads internal channel 10, the chip's supply. It read raw
+about 3918 (scaled 3316, which looks like 3.3 V in millivolts) while channels 4
+and 5 stayed at 240, so the channel select works.
 
 **Next for FW14:** with batteries in, the battery channel should rise and
 differ from the current channel. Unplugging the adapter with batteries in
 should drop PA19. A meter reading of the pack voltage then scales the channel.
-Ask the owner which batteries the unit takes and whether a meter is available.
+The owner has a meter but no batteries yet. A meter reading of the 3.3 V rail
+would confirm the millivolt reading of the scaled value.
 
-**Install note.** The updater stopped after the marker commit: its 1 KiB
-packet was acknowledged, but the end-of-transfer got NAK `0x15`. No retry was
-made. A fresh read-only inspection, after the operator re-entered loader mode,
-found the exact target region and matching guards.
+**Install notes.** Two updates hit loader NAKs, most likely from a partly
+seated UART header (owner's finding). The first stopped after its marker
+commit, which had landed. The second stopped after 8 of 19 sectors, with bank 1
+unbootable. It was finished with `uart-development.py --interrupted` (11
+sectors plus the marker) after reseating, from a fresh read-only scan.
 
 The owner allocated `0x340000–0x350000` (64 KiB) for replacement-firmware storage.
 It is blank in the backup and not referenced by stock 1.1.15, and it lies clear
@@ -120,17 +124,17 @@ Bench lessons from stage C:
 
 ## What is actually installed
 
-The research feeder runs **FW14 ADC read-only review 01** in bank 1, starting
-at flash offset `0x186000`. It was installed through the changed-sector
-updater (19 sectors verified; see the install note above).
+The research feeder runs **FW14 ADC supply-channel review 01** in bank 1,
+starting at flash offset `0x186000`. It was installed through the
+changed-sector updater, finished in interrupted mode (see the install notes).
 
 | Identity | Recorded value |
 | --- | --- |
-| OTA SHA-256 | `e3d83aec3f79fe4da515396b0c1476154082d72e295a6e3451a28f68182d6664` |
-| Embedded startup build ID | `7d2f2849e1beb4957a08be2434c3c75e1409a4aaba2f8989d4a7cbdb517e3b44` |
+| OTA SHA-256 | `11a44ce62d6b19a39d37b01799aeb0324dbae9d0df016b80701294804da78228` |
+| Embedded startup build ID | `da6db3898a273bc05d41030c9bc128cf117d8da5c230c66a073613e393ceae26` |
 
 **Every power-on runs the read-only ADC probe**: after the LED sequence it
-samples PA16/PA17/PA19 and ADC channels 4 and 5 once a second without end. It
+samples PA16/PA17/PA19 and ADC channels 4, 5 and 10 once a second without end. It
 never drives the motor or emitters and writes no flash.
 
 ## Last confirmed physical state

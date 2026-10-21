@@ -6,8 +6,11 @@ probe: the explicit LP ADC clock and function enable reads back with no other bi
 changed; the efuse calibration bytes decode to the reported offset and gain; and at
 least 30 samples follow, numbered from 0, about a second apart, each with stopped
 outputs, every value in range, and each scaled value matching the stock formula on
-its mean. The input values themselves are observations, not checked against
-anything: their electrical meaning needs a measurement.
+its mean. Under fw14-adc-v2 every sample also carries internal channel 10 (the
+chip's own supply), and its mean must differ from both external channels' means
+by at least 1000 raw: evidence that the channel select takes effect. The input
+values themselves are otherwise observations: their electrical meaning needs a
+measurement.
 """
 import argparse
 import importlib.util
@@ -20,7 +23,8 @@ SPEC = importlib.util.spec_from_file_location('firmware_startup', ROOT / 'tools/
 STARTUP = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(STARTUP)
 EVIDENCE = STARTUP.EVIDENCE
-POLICY = 'fw14-adc-v1'
+POLICIES = ('fw14-adc-v1', 'fw14-adc-v2')  # v2 adds the internal supply channel
+DISTINCT_RAW = 1000
 ADC_BIT = 1 << 8  # BIT_LSYS_ADC_FEN / BIT_LSYS_ADC_CKE
 MIN_SAMPLES = 30
 SAMPLE_SECONDS = (0.8, 1.5)  # mean host spacing of samples; firmware waits 1000 ms after each
@@ -35,7 +39,7 @@ RECORDS = {  # letter -> fixed record format
     'O': (rb'PLADC1 open outputs=([01]) efuse=([0-9a-f]{8}|none) offset=' + DEC + rb' gain=' + DEC
           + rb' default_offset=([01]) default_gain=([01]) status=(pass|fail)\r\n'),
     'S': (rb'PLADC1 sample n=' + DEC + rb' ticks=' + DEC + rb' food=([01]) outlet=([01]) dc=([01]) stopped=([01]) current='
-          + CHANNEL + rb' battery=' + CHANNEL + rb'\r\n'),
+          + CHANNEL + rb' battery=' + CHANNEL + rb'(?: supply=' + CHANNEL + rb')?\r\n'),
     'E': rb'PLADC1 error n=' + DEC + rb' ticks=' + DEC + rb' stopped=([01])\r\n',
 }
 ANY = re.compile(b'|'.join(b'(?P<%s>%s)' % (k.encode(), v) for k, v in RECORDS.items()))
@@ -63,7 +67,7 @@ def calibration(efuse):
             int(offset == 0xffff), int(gain == 0xffff))
 
 
-def check_adc(rx, found, arrival, result):
+def check_adc(rx, found, arrival, result, supply=False):
     """Return the ADC outcome for one startup's parsed records, filling fixed report fields."""
     kinds = ''.join(kind for kind, _ in found)
     if not re.fullmatch(r'COS*', kinds):
@@ -83,7 +87,9 @@ def check_adc(rx, found, arrival, result):
     result['adc_calibration'] = dict(zip(('offset', 'gain', 'default_offset', 'default_gain'), reported))
     if outputs != b'1' or status != b'pass' or efuse == b'none' or calibration(efuse.decode()) != reported:
         return 'adc_open'
-    samples = [tuple(int(v) for v in re.fullmatch(RECORDS['S'], m[0]).groups()) for _, m in found[2:]]
+    samples = [tuple(-1 if v is None else int(v) for v in re.fullmatch(RECORDS['S'], m[0]).groups()) for _, m in found[2:]]
+    if any((s[14] >= 0) != supply for s in samples):
+        return 'adc_sequence'
     result['adc_samples'] = len(samples)
     if not samples:
         return 'adc_samples'
@@ -91,7 +97,8 @@ def check_adc(rx, found, arrival, result):
     result['adc_capture_ms_max'] = round(result['adc_ticks_max'] * 1000 / 32768, 2)
     for name, index in (('food', 2), ('outlet', 3), ('dc', 4)):
         result[f'adc_{name}_levels'] = sorted({s[index] for s in samples})
-    for name, base in (('current', 6), ('battery', 10)):
+    channels = (('current', 6), ('battery', 10)) + ((('supply', 14),) if supply else ())
+    for name, base in channels:
         values = [s[base:base + 4] for s in samples]
         result[f'adc_{name}'] = {'min': min(v[0] for v in values), 'max': max(v[1] for v in values),
                                  'mean_min': min(v[2] for v in values), 'mean_max': max(v[2] for v in values),
@@ -100,10 +107,12 @@ def check_adc(rx, found, arrival, result):
     for number, s in enumerate(samples):
         if s[0] != number or s[5] != 1 or not 0 < s[1] <= CAPTURE_TICKS:
             return 'adc_samples'
-        for base in (6, 10):
+        for _, base in channels:
             low, high, mean, value = s[base:base + 4]
             if not low <= mean <= high <= MAX_RAW or value != scaled(mean, reported[0], reported[1]):
                 return 'adc_values'
+    if supply and any(abs(s[16] - s[base + 2]) < DISTINCT_RAW for s in samples for base in (6, 10)):
+        return 'adc_channels'
     if len(samples) < MIN_SAMPLES:
         return 'adc_samples'
     first, last = arrival(found[2][1].start()), arrival(found[-1][1].start())
@@ -116,7 +125,8 @@ def check_adc(rx, found, arrival, result):
 def verify(capture, manifest_path, image_path):
     require = EVIDENCE.require
     manifest, identity, image, metadata, rx, tx, events = STARTUP.load(capture, manifest_path, image_path)
-    require(manifest.get('startup_adc_policy') == POLICY, 'ADC policy required')
+    policy = manifest.get('startup_adc_policy')
+    require(policy in POLICIES, 'ADC policy required')
     chunks = [(e['offset'], e['offset'] + e['bytes'], e['utc']) for e in events if e['direction'] == 'rx']
 
     def arrival(offset):
@@ -125,7 +135,7 @@ def verify(capture, manifest_path, image_path):
     result = {'outcome': 'pass', 'startups': len(re.findall(rb'PLFW1 start ', rx)), 'adc_enabled_before': None, 'adc_clock': None,
               'adc_calibration': None, 'adc_samples': None, 'adc_ticks_max': None, 'adc_capture_ms_max': None,
               'adc_sample_seconds': None, 'adc_food_levels': None, 'adc_outlet_levels': None, 'adc_dc_levels': None,
-              'adc_current': None, 'adc_battery': None}
+              'adc_current': None, 'adc_battery': None, 'adc_supply': None}
     check = STARTUP.startup(rx, manifest, image, identity, arrival, EVIDENCE.timestamp(metadata['end_utc']))
     check.pop('start_offset', None)
     result['startup'] = check
@@ -135,7 +145,7 @@ def verify(capture, manifest_path, image_path):
     elif not intact or any(f in rx for f in FOREIGN) or any(kind == 'E' for kind, _ in found):
         result['outcome'] = 'adc_sequence'
     else:
-        result['outcome'] = check_adc(rx, found, arrival, result)
+        result['outcome'] = check_adc(rx, found, arrival, result, policy == 'fw14-adc-v2')
     return {**result, 'build_id': identity, 'ota_sha256': STARTUP.digest(image), 'rx_sha256': STARTUP.digest(rx),
             'tx_bytes': len(tx), 'limit': LIMIT}
 

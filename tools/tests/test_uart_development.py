@@ -44,7 +44,7 @@ class UartDevelopmentTests(unittest.TestCase):
     def args(self, output, mode="inspect"):
         return SimpleNamespace(mode=mode, baseline=BASELINE, source=SOURCE, target=TARGET,
                                rom_report=ROM, small_report=SMALL, port="/dev/ttyUSB0", output=output,
-                               inspection=None, plan=None, expected_plan_sha256=None)
+                               inspection=None, plan=None, expected_plan_sha256=None, interrupted=False)
 
     def test_frozen_review_binds_ota_manifest_and_required_audits(self):
         original = CLI.frozen(TARGET)[0]
@@ -122,6 +122,49 @@ class UartDevelopmentTests(unittest.TestCase):
         after = peer.snapshot()
         self.assertEqual(after[:CLI.B.START], before[:CLI.B.START])
         self.assertEqual(after[CLI.B.START + len(current):], before[CLI.B.START + len(current):])
+        self.assertEqual(after[CLI.B.START:CLI.B.START + len(CLI.B.payload(target))], CLI.B.payload(target))
+        self.assertTrue(CLI.C.inspect_journal(args.output / "transaction/journal.jsonl")["verified_terminal"])
+
+    def test_interrupted_update_inspects_plans_and_finishes_through_the_cli(self):
+        root = self.temporary()
+        args = self.args(root / "inspect")
+        args.interrupted = True
+        baseline, source, target, bindings = CLI.inputs(args)
+        self.assertTrue(bindings["interrupted"])
+        full = bytearray(baseline)
+        full[CLI.B.START:CLI.B.START + len(CLI.B.payload(source))] = CLI.B.payload(source)
+        size = CLI.B.extent(source, target)
+        _, staged = CLI.B.images(source, target, bytes(full[CLI.B.START:CLI.B.START + size]))
+        normal = CLI.B.plan(source, target, bytes(full[CLI.B.START:CLI.B.START + size]))
+        offsets = [x["offset"] for x in normal["ordered_sectors"]]
+        self.assertGreater(len(offsets), 1)
+        # Stopped after staging the marker, with the next sector's erase uncertain.
+        full[CLI.B.START:CLI.B.START + CLI.B.SECTOR] = staged[:CLI.B.SECTOR]
+        full[offsets[1]:offsets[1] + CLI.B.SECTOR] = b"\xff" * CLI.B.SECTOR
+        before = bytes(full)
+        peer = SIM.EmulatedHelperPort(SIM.HELPER.read_bytes(), before, offsets, status_registers=(0, 2, 0))
+        peer.open = peer.close = lambda: None
+        serial = SimpleNamespace(Serial=lambda **_: peer)
+        with patch.dict(sys.modules, {"serial": serial}), patch("sys.stdout", new_callable=io.StringIO):
+            self.assertEqual(CLI.session(args, baseline, source, target, bindings), 0)
+        args.mode, args.inspection, args.output = "execute", args.output / "report.json", root / "execute"
+        # The same inspection cannot prepare a normal update, nor the reverse.
+        args.interrupted = False
+        with self.assertRaisesRegex(ValueError, "matching inspection"):
+            CLI.prepared(args)
+        args.interrupted = True
+        baseline, source, target, current, reviewed = CLI.prepared(args)
+        self.assertTrue(reviewed["operation_plan"]["interrupted"])
+        self.assertEqual([x["offset"] for x in reviewed["operation_plan"]["ordered_sectors"]], offsets[1:])
+        raw = CLI.canonical(reviewed) + b"\n"
+        args.expected_plan_sha256 = CLI.digest(raw)
+        bindings = {k: v for k, v in reviewed.items() if k not in ("inspection_report_sha256", "operation_plan")}
+        with patch.dict(sys.modules, {"serial": serial}), patch("sys.stdout", new_callable=io.StringIO):
+            self.assertEqual(CLI.session(args, baseline, source, target, bindings, current, reviewed, raw), 0)
+        self.assertEqual(json.loads((args.output / "report.json").read_text())["status"], "verified")
+        after = peer.snapshot()
+        self.assertEqual(after[:CLI.B.START], before[:CLI.B.START])
+        self.assertEqual(after[CLI.B.START + size:], before[CLI.B.START + size:])
         self.assertEqual(after[CLI.B.START:CLI.B.START + len(CLI.B.payload(target))], CLI.B.payload(target))
         self.assertTrue(CLI.C.inspect_journal(args.output / "transaction/journal.jsonl")["verified_terminal"])
 

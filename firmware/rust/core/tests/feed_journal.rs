@@ -4,6 +4,11 @@ use petlibro_core::feed_progress::{BowlMode, Direction};
 use petlibro_core::feed_storage::{OwnerOutcome, OwnerResult};
 use petlibro_testkit::journal_flash::{FakeJournalFlash, UNIT};
 
+/// Unit sizes for torn-write/restart coverage: the virtual feeder's 256, a
+/// 4 KiB sector, and units whose blank tail ends in a chunk shorter than the
+/// journal's 64-byte scan buffer (4116: 62 full chunks + 20; 148: 20 only).
+const UNITS: [usize; 4] = [UNIT, 4096, 4116, 148];
+
 const CONFIG: JournalConfig = JournalConfig {
     binding: 0x91a5_7320_ae11_c008,
     mode: BowlMode::SINGLE,
@@ -56,7 +61,11 @@ fn finish(j: &mut FeedJournal, done: bool, motion: bool) -> bool {
 }
 
 fn create(f: &mut FakeJournalFlash, dual: bool) -> FeedJournal {
-    *f = FakeJournalFlash::default();
+    create_unit(f, dual, UNIT)
+}
+
+fn create_unit(f: &mut FakeJournalFlash, dual: bool, unit: usize) -> FeedJournal {
+    *f = FakeJournalFlash::with_unit(unit);
     let config = JournalConfig {
         mode: if dual {
             BowlMode::DOUBLE
@@ -209,6 +218,23 @@ fn corruption_and_binding() {
     let mut f = original.clone();
     f.bytes[0][200] = 0;
     assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::CORRUPT);
+    // Every blank-tail chunk is checked, including a short final chunk.
+    for unit in UNITS {
+        let mut original = FakeJournalFlash::default();
+        let mut j = create_unit(&mut original, false, unit);
+        assert!(reserve(&mut j, 41) && finish(&mut j, true, true));
+        let bytes = [RECORD_BYTES, RECORD_BYTES + 64, unit - 20, unit - 1];
+        for byte in bytes.into_iter().filter(|&byte| byte < unit) {
+            for slot in 0..2 {
+                let mut f = original.clone();
+                f.bytes[slot][byte] = 0xfe;
+                assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::CORRUPT);
+            }
+        }
+        let mut f = original.clone();
+        assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::OK);
+        assert_eq!(j.view.recovery.high_water_id, 41);
+    }
     let c = JournalConfig {
         binding: CONFIG.binding + 1,
         ..CONFIG
@@ -226,16 +252,22 @@ fn corruption_and_binding() {
     assert_eq!(reopen(&mut original, &mut j, &c), JournalError::CORRUPT);
 }
 
-fn byte_cuts(completing: bool, reused: bool) {
+fn byte_cuts(completing: bool, reused: bool, unit: usize) {
     let mut original = FakeJournalFlash::default();
-    let mut original_j = create(&mut original, false);
+    let mut original_j = create_unit(&mut original, false, unit);
     if reused {
         assert!(reserve(&mut original_j, 9) && finish(&mut original_j, true, true));
     }
     if completing {
         assert!(reserve(&mut original_j, 42));
     }
-    for cut in 0..=(UNIT + RECORD_BYTES + 1) as i64 {
+    // Erase is `unit` mutations, then the body and the commit marker. Every
+    // cut near the erase boundaries and through the record; large units sample
+    // the middle of the erase.
+    let end = (unit + RECORD_BYTES + 1) as i64;
+    let edge = 2 * RECORD_BYTES as i64;
+    let cuts = (0..=end).filter(|&cut| cut <= edge || cut >= unit as i64 - edge || cut % 61 == 0);
+    for cut in cuts {
         let mut f = original.clone();
         let mut j = original_j;
         f.budget = cut;
@@ -276,18 +308,23 @@ fn byte_cuts(completing: bool, reused: bool) {
 
 #[test]
 fn byte_cut_recovery() {
-    byte_cuts(false, false);
-    byte_cuts(false, true);
-    byte_cuts(true, false);
-    byte_cuts(true, true);
+    for unit in UNITS {
+        byte_cuts(false, false, unit);
+        byte_cuts(false, true, unit);
+        byte_cuts(true, false, unit);
+        byte_cuts(true, true, unit);
+    }
 }
 
 #[test]
 fn create_cuts() {
-    for cut in 0..=(RECORD_BYTES + 1) as i64 {
+    for (unit, cut) in UNITS
+        .into_iter()
+        .flat_map(|unit| (0..=(RECORD_BYTES + 1) as i64).map(move |cut| (unit, cut)))
+    {
         let mut f = FakeJournalFlash {
             budget: cut,
-            ..FakeJournalFlash::default()
+            ..FakeJournalFlash::with_unit(unit)
         };
         let mut j = FeedJournal::default();
         let before = unsafe { j.create(f.io(), CONFIG, Direction::D0, true, true) };
@@ -305,8 +342,14 @@ fn create_cuts() {
 
 #[test]
 fn io_failures() {
+    for unit in UNITS {
+        io_failures_at(unit);
+    }
+}
+
+fn io_failures_at(unit: usize) {
     let mut original = FakeJournalFlash::default();
-    let original_j = create(&mut original, false);
+    let original_j = create_unit(&mut original, false, unit);
     for completing in [false, true] {
         let mut base = original.clone();
         let mut source = original_j;
@@ -314,8 +357,22 @@ fn io_failures() {
         if completing {
             assert!(reserve(&mut source, 42));
         }
-        // Includes reads before/after body and before/after final commit.
-        for failure in 1..=20 {
+        // Every call of the write (erase, blank scan in 64-byte chunks, body,
+        // verify, commit, verify), so larger units cover all their scan reads.
+        let calls = {
+            let mut f = base.clone();
+            let mut j = source;
+            bind(&mut j, &mut f);
+            let start = f.calls;
+            assert!(if completing {
+                finish(&mut j, true, true)
+            } else {
+                reserve(&mut j, 42)
+            });
+            f.calls - start
+        };
+        assert!(calls >= 6);
+        for failure in 1..=calls {
             let mut f = base.clone();
             f.fail_call = f.calls + failure;
             let mut j = source;
@@ -393,7 +450,7 @@ fn wire_format_and_invalid_transitions() {
     repair_crc(&mut f.bytes[0]);
     assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::CORRUPT);
     let mut f = original.clone();
-    f.bytes[1] = f.bytes[0];
+    f.bytes[1] = f.bytes[0].clone();
     assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::CORRUPT);
 }
 

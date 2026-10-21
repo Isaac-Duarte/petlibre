@@ -7,14 +7,18 @@ use petlibro_amebad::board::{Board, MOTOR_MASK};
 use petlibro_amebad::sdk::{self, fake};
 use petlibro_core::flash_coord::{FlashCoord, FlashLimits, FlashReply};
 
+/// A lease budget the owner fixture's watchdog supervises: 40 ms plus two
+/// 1 ms sample periods and two 2 ms timer periods stays below its 50 ms gap.
+pub const FLASH_LIMITS: FlashLimits = FlashLimits {
+    quiesce_ms: 10,
+    park_ms: 10,
+    active_ms: 20,
+    release_ms: 10,
+    total_ms: 40,
+};
+
 pub fn flash_ready() -> Box<FlashCoord> {
-    let limits = FlashLimits {
-        quiesce_ms: 100,
-        park_ms: 100,
-        active_ms: 100,
-        release_ms: 100,
-        total_ms: 300,
-    };
+    let limits = FLASH_LIMITS;
     let mut c = Box::new(FlashCoord::new(&limits, 17, 0).unwrap());
     assert_eq!(c.ready(17, 29, true, 0), FlashReply::ACCEPTED);
     c
@@ -32,8 +36,12 @@ pub fn motor_pins() -> u32 {
     sdk::gpio_port_read(0, MOTOR_MASK)
 }
 
+/// Both emitters OFF: LOW pad input AND LOW output latch.
 pub fn optics_off() -> bool {
-    !sdk::gpio_read_bit(15) && !sdk::gpio_read_bit(35)
+    !sdk::gpio_read_bit(15)
+        && !sdk::gpio_read_bit(35)
+        && sdk::gpio_output_latch(0) & (1 << 15) == 0
+        && sdk::gpio_output_latch(1) & (1 << 3) == 0
 }
 
 pub fn hw<R>(f: impl FnOnce(&mut fake::Hardware) -> R) -> R {

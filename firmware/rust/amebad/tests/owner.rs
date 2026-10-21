@@ -914,6 +914,94 @@ fn start_requires_an_external_ready_authority() {
     let config = f.config;
     assert!(!f.try_start(&config));
     f.bind_authority();
+    f.authority = FlashCoord::new(&FLASH_LIMITS, 17, 0).unwrap();
+    let config = f.config;
+    assert!(!f.try_start(&config));
+    assert_eq!(f.authority.ready(17, 29, true, 0), FlashReply::ACCEPTED);
+    f.authority.trip(FlashFault::PEER_LOST);
+    assert!(!f.try_start(&config));
+    assert!(!hw(|h| h.task_live) && hw(|h| h.watchdog_init_calls) == 0 && hw(|h| h.output[0]) == 0);
+}
+
+#[test]
+fn determined_initialization_failure_holds_stopped_without_reset_loop() {
+    for case in 0..2 {
+        fake::reset_hardware();
+        let mut f = Box::new(Fixture::new(if case == 0 {
+            OwnerRecovery {
+                high_water_id: 7,
+                pending_request: true, // Power loss mid-feed.
+                ..OwnerRecovery::default()
+            }
+        } else {
+            PHASE_KNOWN
+        }));
+        if case == 1 {
+            hw(|h| h.efuse_fail = true); // SETUP after the watchdog is armed.
+        }
+        f.create();
+        fake::run_task();
+        let fault = if case == 0 {
+            OwnerFault::RECOVERY
+        } else {
+            OwnerFault::SETUP
+        };
+        assert!(f.status().state == OwnerState::FAULT && f.status().fault == fault);
+        f.advance(400); // Several hardware watchdog periods.
+        let s = f.status();
+        assert!(s.state == OwnerState::FAULT && s.fault == fault && s.stopped && s.optics_off);
+        assert!(s.watchdog_armed && s.watchdog_claimed && s.watchdog_fault == WatchdogFault::OK);
+        assert!(hw(|h| h.watchdog_refreshes) > 0 && hw(|h| h.watchdog_reset_requests) == 0);
+        // Latched: no request is taken and the pending feed is never retried.
+        assert_eq!(f.owner.submit(8, 1), SubmitResult::REJECT_STOPPED);
+        assert!(f.reserve_calls == 0 && f.finish_calls == 0);
+        assert_eq!(f.recover_calls, u32::from(case == 0));
+
+        // Losing verified STOP readback ends the refreshes, so the watchdog resets.
+        hw(|h| {
+            h.readback_override_mask[0] = MOTOR_MASK;
+            h.readback_override[0] = 0;
+        });
+        let refreshes = hw(|h| h.watchdog_refreshes);
+        f.advance(200);
+        assert_eq!(hw(|h| h.watchdog_refreshes), refreshes);
+        assert_eq!(hw(|h| h.watchdog_reset_requests), 1);
+        hw(|h| h.readback_override_mask[0] = 0);
+        f.stop();
+    }
+
+    // A hang during recovery still expires the progress deadline: no refresh.
+    fake::reset_hardware();
+    let mut f = Box::new(Fixture::new(OwnerRecovery {
+        pending_request: true,
+        ..OwnerRecovery::default()
+    }));
+    f.recover_delay_ticks = 51 * 32;
+    f.create();
+    fake::run_task();
+    f.advance(200);
+    assert!(f.status().fault == OwnerFault::RECOVERY && f.status().stopped);
+    assert!(f.status().watchdog_fault == WatchdogFault::PROGRESS);
+    assert!(hw(|h| h.watchdog_refreshes) == 0 && hw(|h| h.watchdog_reset_requests) == 1);
+    f.stop();
+}
+
+#[test]
+fn flash_lease_budget_must_fit_watchdog_supervision() {
+    // A lease using its whole budget no longer faults an idle owner.
+    let mut f = boot();
+    f.advance(2);
+    f.hold();
+    f.advance(FLASH_LIMITS.total_ms);
+    assert!(f.status().fault == OwnerFault::OK && f.status().state == OwnerState::IDLE);
+    let refreshes = hw(|h| h.watchdog_refreshes);
+    f.release_hold();
+    f.advance(2);
+    assert!(f.status().fault == OwnerFault::OK && hw(|h| h.watchdog_refreshes) > refreshes);
+    assert_eq!(f.owner.submit(1, 1), SubmitResult::ENQUEUED);
+    f.stop();
+
+    // An authority whose budget can outlast the progress gap is refused.
     let limits = FlashLimits {
         quiesce_ms: 100,
         park_ms: 100,
@@ -921,11 +1009,24 @@ fn start_requires_an_external_ready_authority() {
         release_ms: 100,
         total_ms: 300,
     };
+    let config = CONFIG;
+    assert!(config.valid() && config.lease_fits(&FLASH_LIMITS) && !config.lease_fits(&limits));
+    // The bound includes two sample periods and two timer periods of margin.
+    let edge = FlashLimits {
+        total_ms: 50 - 2 - 4,
+        ..FLASH_LIMITS
+    };
+    assert!(!config.lease_fits(&edge));
+    assert!(config.lease_fits(&FlashLimits {
+        total_ms: edge.total_ms - 1,
+        ..edge
+    }));
+    fake::reset_hardware();
+    let mut f = Box::new(Fixture::new(PHASE_KNOWN));
     f.authority = FlashCoord::new(&limits, 17, 0).unwrap();
-    let config = f.config;
-    assert!(!f.try_start(&config));
     assert_eq!(f.authority.ready(17, 29, true, 0), FlashReply::ACCEPTED);
-    f.authority.trip(FlashFault::PEER_LOST);
+    f.config.flash = &raw mut f.authority;
+    let config = f.config;
     assert!(!f.try_start(&config));
     assert!(!hw(|h| h.task_live) && hw(|h| h.watchdog_init_calls) == 0 && hw(|h| h.output[0]) == 0);
 }

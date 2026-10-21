@@ -108,6 +108,13 @@ fn w() -> *mut World {
     unsafe { WORLD }
 }
 
+/// The fake flash, through the same pointer the journal I/O context holds.
+/// Journal callbacks never keep a reference to it while they call back here.
+fn flash_ptr() -> *mut FakeJournalFlash {
+    // SAFETY: see `w`; a raw place projection creates no reference.
+    unsafe { &raw mut (*w()).flash }
+}
+
 fn fail(message: &str) -> ! {
     eprintln!("{message}");
     exit(2);
@@ -146,10 +153,11 @@ fn outputs() {
 fn save() {
     // SAFETY: see `w`.
     let ok = unsafe {
-        let bytes = (*w()).flash.bytes;
+        let bytes = &(*flash_ptr()).bytes;
         let disk = &mut (*w()).disk;
         disk.seek(SeekFrom::Start(0)).is_ok()
-            && disk.write_all(bytes.as_flattened()).is_ok()
+            && disk.write_all(&bytes[0]).is_ok()
+            && disk.write_all(&bytes[1]).is_ok()
             && disk.flush().is_ok()
     };
     if !ok {
@@ -168,7 +176,7 @@ fn cut() -> ! {
             r#"{{"event":"power_cut","device_ms":{},"phase":{},"mutations":{}}}"#,
             (*w()).device_ms,
             (*w()).active_phase,
-            (*w()).flash.mutations
+            (*flash_ptr()).mutations
         );
     }
     let _ = std::io::stdout().flush();
@@ -240,7 +248,7 @@ fn storage_begin(phase: u32) {
     unsafe {
         let world = w();
         (*world).active_phase = phase;
-        (*world).phase_start_mutations = (*world).flash.mutations;
+        (*world).phase_start_mutations = (*flash_ptr()).mutations;
         println!(
             r#"{{"event":"storage_begin","device_ms":{},"phase":{phase}}}"#,
             (*world).device_ms
@@ -259,7 +267,7 @@ fn storage_end(ok: bool) {
             r#"{{"event":"storage_end","device_ms":{},"phase":{},"mutations":{},"ok":{ok}}}"#,
             (*world).device_ms,
             (*world).active_phase,
-            (*world).flash.mutations - (*world).phase_start_mutations
+            (*flash_ptr()).mutations - (*world).phase_start_mutations
         );
         (*world).active_phase = 0;
     }
@@ -421,6 +429,8 @@ fn main() {
         flash.bytes[0].copy_from_slice(&image[..UNIT]);
         flash.bytes[1].copy_from_slice(&image[UNIT..]);
     }
+    // Installed before any I/O is bound; the flash is not written directly later.
+    flash.after_mutation = Some(mutation);
     let world = Box::into_raw(Box::new(World {
         owner: Owner::default(),
         journal: FeedJournal::default(),
@@ -446,7 +456,7 @@ fn main() {
     // SAFETY: the world is leaked for the process lifetime; single-threaded.
     unsafe {
         WORLD = world;
-        let io = (*world).flash.io();
+        let io = FakeJournalFlash::io_at(flash_ptr());
         let jc = JournalConfig {
             binding: 17,
             mode: BowlMode(mode as u32),
@@ -466,15 +476,15 @@ fn main() {
             ..io
         };
         (*world).opened = (*world).journal.open(wrapped, jc) == JournalError::OK;
-        (*world).flash.after_mutation = Some(mutation);
         fake::reset_hardware();
         fake::with(|h| h.output_hook = Some(outputs));
         let limits = FlashLimits {
-            quiesce_ms: 100,
-            park_ms: 100,
-            active_ms: 100,
-            release_ms: 100,
-            total_ms: 300,
+            // The whole lease must fit inside the 50 ms watchdog progress gap.
+            quiesce_ms: 10,
+            park_ms: 10,
+            active_ms: 20,
+            release_ms: 10,
+            total_ms: 40,
         };
         (*world).authority = FlashCoord::new(&limits, 17, 0).unwrap();
         assert_eq!(

@@ -12,6 +12,11 @@ use core::ptr;
 
 c_enum!(HookFault { CONTEXT = 1, ACQUIRE = 2, RELEASE = 3, PEER = 4, ORDER = 5 });
 
+/// SysTick CTRL ENABLE/TICKINT/CLKSOURCE. COUNTFLAG (bit 16) is ignored: a
+/// CTRL=0 write leaves it set until the next read, so it never shows that
+/// SysTick is running.
+pub const SYSTICK_CONTROL_BITS: u32 = 7;
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct HookTicket {
@@ -254,8 +259,8 @@ pub fn write_lock<C: HookCpu>() {
         || C::ipsr() != 0
         || ticket.id == 0
         || ticket.id <= get(s.last_id)
-        || ticket.saved_systick & !7 != 0
-        || C::tick_read() != 0
+        || ticket.saved_systick & !SYSTICK_CONTROL_BITS != 0
+        || C::tick_read() & SYSTICK_CONTROL_BITS != 0
         || get(s.lease_held)
     {
         C::fail(HookFault::ACQUIRE);
@@ -278,7 +283,7 @@ pub fn write_unlock<C: HookCpu>() {
     if get(s.faulted) || !get(s.lease_held) {
         C::fail(HookFault::ORDER);
     }
-    if saved != 1 || C::ipsr() != 0 || C::tick_read() != 0 {
+    if saved != 1 || C::ipsr() != 0 || C::tick_read() & SYSTICK_CONTROL_BITS != 0 {
         C::fail(HookFault::CONTEXT);
     }
     let t = copy_provider(s.transport);
@@ -288,7 +293,7 @@ pub fn write_unlock<C: HookCpu>() {
         .is_some_and(|release| unsafe { release(t.context, s.ticket) });
     let returned_mask = C::mask();
     C::disable();
-    if !ok || returned_mask != 1 || C::ipsr() != 0 || C::tick_read() != 0 {
+    if !ok || returned_mask != 1 || C::ipsr() != 0 || C::tick_read() & SYSTICK_CONTROL_BITS != 0 {
         C::fail(HookFault::RELEASE);
     }
     let systick = get(s.ticket).saved_systick;
@@ -312,7 +317,7 @@ pub fn write_ipc<C: HookCpu>(data: *mut c_void, status: u32, channel: u32) {
     if get(s.faulted) || get(s.lease_held) {
         C::fail(HookFault::ORDER);
     }
-    let systick = C::tick_read() & 7;
+    let systick = C::tick_read() & SYSTICK_CONTROL_BITS;
     C::restore(saved);
     let t = copy_provider(s.transport);
     // SAFETY: the installed provider's contract.
@@ -320,7 +325,7 @@ pub fn write_ipc<C: HookCpu>(data: *mut c_void, status: u32, channel: u32) {
         .peer
         .is_some_and(|peer| unsafe { peer(t.context, status, channel) });
     let returned_mask = C::mask();
-    let returned_tick = C::tick_read() & 7;
+    let returned_tick = C::tick_read() & SYSTICK_CONTROL_BITS;
     C::disable();
     if !ok || returned_mask != saved || returned_tick != systick || C::ipsr() != entered_ipsr {
         C::fail(HookFault::PEER);

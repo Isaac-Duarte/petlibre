@@ -14,6 +14,7 @@ import struct
 import subprocess
 import sys
 import tarfile
+import tempfile
 import urllib.request
 
 import pinmap
@@ -29,6 +30,7 @@ SOURCE = PRIVATE / "upstream/ameba-rtos-d"
 TOOLCHAINS = PRIVATE / "toolchains"
 PROJECT = Path("project/realtek_amebaD_va0_example/GCC-RELEASE")
 LOCK = json.loads((FIRMWARE / "sdk.lock.json").read_text())
+TOOL_LOCK = FIRMWARE / "probe/toolchain.lock.json"
 LAYOUT = FIRMWARE / "plaf103-layout.json"
 AUDITOR = ROOT / "tools/audit-ota-layout.py"
 STOCK = PRIVATE / "firmware/PLAF103_OTA_010115.bin"
@@ -68,6 +70,217 @@ def revision(path):
                capture_output=True, text=True).stdout.strip()
 
 
+# Exact SDK worktree changes the pinned vendor recipes make themselves, observed
+# in every profile's worktree: `check_execute_permission` sets the executable
+# bit on these helpers (content must stay identical to the pinned revision) ...
+VENDOR_MODE_ONLY = frozenset(
+    str(PROJECT / f"project_{core}/asdk/gnu_utility" / name)
+    for core in ("hp", "lp")
+    for name in ("checksum", "image_tool/imagetool.sh", "pad.sh", "prepend_header.sh",
+                 "prepend_ota_header.sh"))
+# ... the KM4 recipe re-archives this tracked library on every build ...
+VENDOR_REBUILT = frozenset({str(PROJECT / "project_hp/asdk/lib/application/lib_user.a")})
+# ... and these untracked paths are the wrapper's toolchain links (checked
+# separately) and two KM0 loader outputs copied by the vendor recipe.
+VENDOR_UNTRACKED = frozenset({
+    str(PROJECT / "project_hp/toolchain/linux"), str(PROJECT / "project_lp/toolchain/linux"),
+    str(PROJECT / "project_lp/asdk/gnu_utility/gnu_script/acut_loader/flash_loader_ram_1.bin"),
+    str(PROJECT / "project_lp/asdk/gnu_utility/gnu_script/acut_loader/target_FPGA.axf")})
+RUST_ENVIRONMENT = frozenset({
+    "RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS", "CARGO_BUILD_RUSTFLAGS", "RUSTC", "RUSTC_WRAPPER",
+    "RUSTC_WORKSPACE_WRAPPER", "CARGO_BUILD_RUSTC", "CARGO_BUILD_RUSTC_WRAPPER",
+    "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER", "RUSTUP_TOOLCHAIN", "RUSTC_BOOTSTRAP",
+    "CARGO_INCREMENTAL", "CARGO_BUILD_INCREMENTAL"})
+RUST_ENVIRONMENT_PREFIXES = ("CARGO_PROFILE_", "CARGO_UNSTABLE_")
+
+
+def managed_sdk_paths(profile):
+    """SDK paths this wrapper regenerates from the pinned revision for a profile."""
+    paths = set()
+    if profile in MODEL_PROFILES:
+        paths |= {"component/soc/realtek/amebad/fwlib/include/rtl8721d_ota.h",
+                  "component/soc/realtek/amebad/fwlib/usrcfg/rtl8721dlp_pinmapcfg.c"}
+    if profile != "baseline":
+        paths |= {"component/common/example/example_entry.c", str(sdkhooks.SOURCE),
+                  str(PROJECT / "project_lp/asdk/Makefile"), str(PROJECT / "project_hp/asdk/Makefile"),
+                  str(PROJECT / "project_lp/asdk/ld/rlx8721d_img2.ld"),
+                  str(PROJECT / "project_hp/asdk/ld/rlx8721d_img2_is.ld"),
+                  # Restored from the pinned revision before every application build.
+                  str(PROJECT / "project_hp/asdk/make/utilities_example/Makefile"),
+                  "project/realtek_amebaD_va0_example/src/src_lp/Makefile"}
+    if profile == "plaf103-firstboot":
+        paths |= {f"project/realtek_amebaD_va0_example/src/src_{core}/main.c" for core in ("lp", "hp")}
+    return paths
+
+
+def unexpected_sdk_changes(sdk, profile):
+    """Return worktree changes outside the wrapper's overrides and known vendor outputs.
+
+    Ignored files are governed by the pinned SDK's own ignore rules and are not listed.
+    """
+    status = run("git", "status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames",
+                 cwd=sdk, capture_output=True).stdout.decode("utf-8", "surrogateescape")
+    managed = managed_sdk_paths(profile)
+    unexpected = []
+    for entry in filter(None, status.split("\0")):
+        code, path = entry[:2], entry[3:]
+        if code == "??":
+            # Flat C inputs staged by earlier wrappers are retired before compilation.
+            retired = profile != "baseline" and re.fullmatch(r"component/common/example/petlibro/[^/]+\.[ch]", path)
+            allowed = path in VENDOR_UNTRACKED or bool(retired)
+        elif code == " M":
+            allowed = path in managed or path in VENDOR_REBUILT or (
+                path in VENDOR_MODE_ONLY and os.access(sdk / path, os.X_OK) and
+                run("git", "hash-object", "--", path, cwd=sdk, capture_output=True, text=True).stdout.strip()
+                == run("git", "rev-parse", "HEAD:" + path, cwd=sdk, capture_output=True, text=True).stdout.strip())
+        else:
+            allowed = False  # Staged, deleted, type-changed or conflicted entries.
+        if not allowed:
+            unexpected.append(f"{code.strip() or code} {path}")
+    return sorted(unexpected)
+
+
+def check_sdk_worktree(sdk, profile):
+    unexpected = unexpected_sdk_changes(sdk, profile)
+    if unexpected:
+        shown = ", ".join(unexpected[:20]) + (f" (+{len(unexpected) - 20} more)" if len(unexpected) > 20 else "")
+        raise RuntimeError("SDK worktree has changes outside this profile's overrides; left unchanged. "
+                           f"Review, then restore or recreate {sdk}: {shown}")
+
+
+def cargo_config_files(environment):
+    """Cargo configuration files that apply to a build run from ROOT."""
+    home = Path(environment.get("CARGO_HOME") or Path.home() / ".cargo")
+    directories = [ROOT, *ROOT.parents]
+    candidates = [d / ".cargo" / name for d in directories for name in ("config.toml", "config")]
+    candidates += [home / "config.toml", home / "config"]
+    return [p for p in dict.fromkeys(candidates) if p.is_file()]
+
+
+def cargo_config_overrides(text):
+    """Return dotted keys that can change firmware codegen or the selected compiler.
+
+    A small line-oriented reader: TOML table headers and `key = value` lines.
+    Inline tables for `build`, `profile`, `target` or `unstable` are refused whole.
+    Host-only `[target.<host triple>]` settings (such as a host linker) are allowed.
+    """
+    table = []
+    found = []
+    for raw in text.splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        header = re.fullmatch(r"\[\[?\s*([^\]]+?)\s*\]\]?", line)
+        if header:
+            table = keys(header[1])
+            continue
+        match = re.match(r"([^=]+?)\s*=", line)
+        if not match:
+            continue  # Continuation of a multi-line value.
+        key = table + keys(match[1])
+        if forbidden_cargo_key(key, line[match.end():].lstrip().startswith("{")):
+            found.append(".".join(key))
+    return found
+
+
+def keys(dotted):
+    return [part.strip().strip("\"'") for part in re.findall(r"\"[^\"]*\"|'[^']*'|[^.]+", dotted)]
+
+
+def forbidden_cargo_key(key, inline):
+    head = key[0] if key else ""
+    if head in ("profile", "unstable"):
+        return True
+    if head == "build":
+        return len(key) == 1 or key[1] in ("rustflags", "rustc", "rustc-wrapper",
+                                           "rustc-workspace-wrapper", "incremental")
+    if head == "target" and len(key) >= 2:
+        selector = key[1]
+        firmware = selector.startswith("cfg(") or selector in {t for t, _ in RUST_CORES.values()}
+        return firmware and (len(key) == 2 and inline or len(key) > 2 and key[2] == "rustflags")
+    if head == "target":
+        return inline
+    return False
+
+
+def rust_environment():
+    """The cargo environment, refusing output-affecting overrides rather than scrubbing them.
+
+    Refusing keeps an explicit user choice visible; silently dropping it would
+    make the build differ from what the caller asked for.
+    """
+    environment = dict(os.environ)
+    names = sorted(name for name in environment if name in RUST_ENVIRONMENT or
+                   name.startswith(RUST_ENVIRONMENT_PREFIXES) or
+                   re.fullmatch(r"CARGO_TARGET_THUMBV8M_[A-Z_]+_RUSTFLAGS", name))
+    if names:
+        raise RuntimeError("Unset compiler/profile overrides before a firmware build: " + ", ".join(names))
+    for path in cargo_config_files(environment):
+        found = cargo_config_overrides(path.read_text(errors="replace"))
+        if found:
+            raise RuntimeError(f"Cargo configuration overrides firmware compilation in {path}: " + ", ".join(found))
+    return environment
+
+
+def rust_compiler(environment):
+    """Describe the rustc that cargo resolves from ROOT, and require the pinned channel."""
+    channel = re.search(r'(?m)^channel\s*=\s*"([^"]+)"', (ROOT / "rust-toolchain.toml").read_text())
+    verbose = run("rustc", "-vV", cwd=ROOT, env=environment, capture_output=True, text=True).stdout
+    release = re.search(r"(?m)^release:\s*(\S+)$", verbose)
+    if not channel or not release or release[1] != channel[1]:
+        raise RuntimeError("rustc selected from the repository does not match rust-toolchain.toml")
+    path = None
+    if shutil.which("rustup", path=environment.get("PATH")):
+        path = run("rustup", "which", "rustc", cwd=ROOT, env=environment,
+                   capture_output=True, text=True).stdout.strip()
+    return {"version": verbose.splitlines()[0], "verbose": verbose.strip().splitlines(), "path": path}
+
+
+def toolchain_lock():
+    """Per-file hashes of the executables the SDK build and audits invoke."""
+    pinned = json.loads(TOOL_LOCK.read_text())
+    if pinned["archive_sha256"] != LOCK["toolchain"]["sha256"] or not pinned["files"]:
+        raise RuntimeError("Toolchain file pins do not describe the pinned SDK archive")
+    return pinned["files"]
+
+
+def verify_toolchain(toolchain):
+    """Fail closed unless every pinned compiler/binutils file matches, on every run."""
+    base = toolchain.resolve()
+    for name, expected in toolchain_lock().items():
+        path = (toolchain / name).resolve()
+        if not path.is_relative_to(base) or not path.is_file():
+            raise RuntimeError(f"Pinned toolchain file is missing or escapes its directory: {name}")
+        if digest(path) != expected:
+            raise RuntimeError(f"Pinned toolchain file changed: {name}; reinstall after review")
+
+
+def extract_toolchain(archive, destination, directory):
+    """Extract into a private temporary directory, verify, then rename into place.
+
+    An interrupted extraction leaves only an ignored `.extract-*` directory and
+    never a partial tree that later runs would accept.
+    """
+    # Python's data filter rejects archive paths escaping the destination.
+    if not hasattr(tarfile, "data_filter"):
+        raise RuntimeError("Use a patched Python with tarfile's data filter (3.10.12+)")
+    top = Path(directory).parts[0]
+    if (destination / top).exists() or (destination / top).is_symlink():
+        raise RuntimeError(f"Partial or unexpected toolchain tree; review and remove it: {destination / top}")
+    staging = Path(tempfile.mkdtemp(prefix=".extract-", dir=destination))
+    try:
+        with tarfile.open(archive) as bundle:
+            names = bundle.getnames()
+            if not names or any(Path(name).parts[:1] != (top,) for name in names):
+                raise RuntimeError("Toolchain archive has entries outside its pinned directory")
+            bundle.extractall(staging, filter="data")
+        verify_toolchain(staging / directory)
+        os.rename(staging / top, destination / top)
+    finally:
+        # Only this run's private staging directory is removed.
+        shutil.rmtree(staging)
+
+
 def bootstrap():
     if platform.system() != "Linux" or platform.machine() != "x86_64":
         raise RuntimeError("This initial toolchain setup supports Linux x86_64 only")
@@ -99,11 +312,8 @@ def bootstrap():
         raise RuntimeError(f"Toolchain checksum mismatch: {archive}")
     toolchain = TOOLCHAINS / LOCK["toolchain"]["directory"]
     if not toolchain.exists():
-        # Python's data filter rejects archive paths escaping the destination.
-        if not hasattr(tarfile, "data_filter"):
-            raise RuntimeError("Use a patched Python with tarfile's data filter (3.10.12+)")
-        with tarfile.open(archive) as bundle:
-            bundle.extractall(TOOLCHAINS, filter="data")
+        extract_toolchain(archive, TOOLCHAINS, LOCK["toolchain"]["directory"])
+    verify_toolchain(toolchain)
     compiler = toolchain / "bin/arm-none-eabi-gcc"
     try:
         version = run(str(compiler), "--version", capture_output=True, text=True)
@@ -116,13 +326,38 @@ def bootstrap():
     return toolchain
 
 
+def rust_sources():
+    """Tracked plus untracked, non-ignored files under firmware/rust.
+
+    Ignored files (editor backups, caches, build output) do not change the
+    identity; `target` is excluded only as a directory below firmware/rust, so
+    the checkout's own location never matters.
+    """
+    try:
+        listing = run("git", "ls-files", "-z", "--cached", "--others", "--exclude-standard",
+                      "--", str(RUST.relative_to(ROOT)), cwd=ROOT, capture_output=True).stdout
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise RuntimeError("Source identity requires a Git checkout of this repository") from error
+    paths = set()
+    for name in listing.decode("utf-8", "surrogateescape").split("\0"):
+        if not name:
+            continue
+        path = ROOT / name
+        # Tracked files deleted from the working tree are simply not inputs.
+        if "target" not in path.relative_to(RUST).parts and path.is_file():
+            paths.add(path)
+    if not paths:
+        raise RuntimeError("No Rust firmware sources found for the source identity")
+    return sorted(paths)
+
+
 def source_inputs(profile):
-    paths = [FIRMWARE / "sdk.lock.json", Path(__file__).resolve()]
+    paths = [FIRMWARE / "sdk.lock.json", TOOL_LOCK, Path(__file__).resolve()]
     if profile != "baseline":
         paths += [FIRMWARE / "tools/rampark.py", FIRMWARE / "tools/sdkhooks.py", AUDITOR,
                   ROOT / "tools/audit-sdk-flash-users.py"]
         paths += [ENTRY, ROOT / "Cargo.toml", ROOT / "Cargo.lock", ROOT / "rust-toolchain.toml"]
-        paths += sorted(p for p in RUST.rglob("*") if p.is_file() and "target" not in p.parts)
+        paths += rust_sources()
     if profile in MODEL_PROFILES:
         paths += [LAYOUT, AUDITOR, FIRMWARE / "tools/pinmap.py"]
     if profile == "plaf103-firstboot":
@@ -150,10 +385,10 @@ def rust_archive(sdk, core):
     return sdk.parent / "rust-lib" / f"libpetlibro_{RUST_CORES[core][1]}.a"
 
 
-def build_rust(sdk, toolchain, stream, identity):
+def build_rust(sdk, toolchain, stream, identity, base_environment):
     """Cross-compile one firmware archive per core and stage it beside the SDK."""
     target_dir = sdk.parent / "rust-target"
-    environment = dict(os.environ, PETLIBRO_BUILD_ID=identity, PETLIBRO_SDK_DIR=str(sdk),
+    environment = dict(base_environment, PETLIBRO_BUILD_ID=identity, PETLIBRO_SDK_DIR=str(sdk),
                        PETLIBRO_NEWLIB_INCLUDE=str(toolchain / "arm-none-eabi/include"))
     archives = {}
     for core, (triple, feature) in RUST_CORES.items():
@@ -185,6 +420,7 @@ def prepare(profile, toolchain, expected):
             LOCK["sdk"]["revision"], cwd=SOURCE)
     if revision(sdk) != LOCK["sdk"]["revision"]:
         raise RuntimeError("Build worktree has an unexpected SDK revision")
+    check_sdk_worktree(sdk, profile)
     # Both cores use the same verified toolchain, rather than downloading copies.
     for core in ("lp", "hp"):
         link = sdk / PROJECT / f"project_{core}/toolchain/linux"
@@ -297,6 +533,8 @@ def build(profile, toolchain):
     output = PRIVATE / "firmware-build" / profile
     output.mkdir(parents=True, exist_ok=True)
     (output / "manifest.json").unlink(missing_ok=True)
+    rust_env = rust_environment() if profile != "baseline" else None
+    compiler = rust_compiler(rust_env) if profile != "baseline" else None
     expected = {p: digest(p) for p in source_inputs(profile)}
     identity = source_identity(profile, expected)
     if profile in MODEL_PROFILES:
@@ -314,7 +552,7 @@ def build(profile, toolchain):
         if profile != "baseline":
             print("Building Rust firmware archives...", flush=True)
             try:
-                archives = build_rust(sdk, toolchain, stream, identity)
+                archives = build_rust(sdk, toolchain, stream, identity, rust_env)
             except subprocess.CalledProcessError:
                 raise RuntimeError(f"Rust firmware build failed; see {log}") from None
         for core in ("lp", "hp"):
@@ -392,6 +630,10 @@ def build(profile, toolchain):
     for relative, checksum in overrides.items():
         if digest(sdk / relative) != checksum:
             raise RuntimeError("Generated SDK layout override changed during compilation")
+    check_sdk_worktree(sdk, profile)
+    verify_toolchain(toolchain)
+    if profile != "baseline" and rust_compiler(rust_env) != compiler:
+        raise RuntimeError("Selected rustc changed during the build")
     layout_audit = audit_image(image_directory / "OTA_All.bin") if profile in MODEL_PROFILES else None
     pinmap_audit = None
     if profile in MODEL_PROFILES:
@@ -420,8 +662,9 @@ def build(profile, toolchain):
         "inputs": {str(p.relative_to(ROOT)): checksum for p, checksum in expected.items()},
         "sdk_overrides": overrides,
         "compiled_archives": compiled_archives,
-        "rust_toolchain": run("rustc", "--version", cwd=ROOT, capture_output=True,
-                              text=True).stdout.strip() if profile != "baseline" else None,
+        "rust_toolchain": compiler["version"] if compiler else None,
+        "rust_compiler": compiler,
+        "toolchain_files": toolchain_lock(),
         "layout_audit": layout_audit,
         "km0_pinmap_audit": pinmap_audit,
         "ram_park_audit": ram_park_audit,
@@ -433,6 +676,7 @@ def build(profile, toolchain):
                    "bringup_banner_present": banner_present,
                    "required_core_symbols": required_symbols,
                    "source_snapshot_unchanged": True,
+                   "sdk_worktree_within_allowlist": True,
                    "staged_sources_without_diagnostics": True},
         "device_compatibility": "Unverified SDK development image; desktop build only",
     }

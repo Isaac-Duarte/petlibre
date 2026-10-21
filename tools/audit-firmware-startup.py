@@ -78,13 +78,19 @@ def classify_routing(rx, version=1):
 
 
 OUTPUT_ONLY = (b'PA0', b'PA2', b'PA4')
+LED_PINS = (b'PA0', b'PA2', b'PA4', b'PB22')
+# The KM0 printf format of the before-KM4 (v3) shared-pad record, as linked.
+POWER_V3_FORMAT = b'after_pad=%08x ext_a=%08x,%08x,%08x,%08x'
 
 
 def classify_led(rx, version=1):
     """Independent expected bounded GPIO sequence; no installer/firmware imports.
 
     Version 3 labels PA0/PA2/PA4 output-only (no input readback); they report
-    status=output, never pass.
+    status=output, never pass. The sequence outcome can still be 'pass', but
+    `led_probe_verified` means every pin was input-verified, so it stays False
+    whenever output-only pins are present; `led_input_verified_pins` lists the
+    pins whose levels were read back.
     """
     output_only = OUTPUT_ONLY if version >= 3 else ()
     expected = [b'PLLED1 begin output_only=' + b','.join(OUTPUT_ONLY) + b'\r\n' if output_only else b'PLLED1 begin\r\n']
@@ -112,7 +118,9 @@ def classify_led(rx, version=1):
                             **({'input_high_samples': int(m[6]), 'input_samples': 64} if version > 1 else {}),
                             'directions_ok': bool(int(m[7])), 'stopped_ok': bool(int(m[8])),
                             'pad_control': m[9].decode()})
-    return {'outcome': outcome, 'led_probe_verified': outcome == 'pass', 'led_readbacks': diagnostics,
+    verified = [p.decode() for p in LED_PINS if p not in output_only] if outcome == 'pass' else []
+    return {'outcome': outcome, 'led_probe_verified': outcome == 'pass' and not output_only,
+            'led_input_verified_pins': verified, 'led_readbacks': diagnostics,
             **({'led_output_only_pins': [p.decode() for p in output_only]} if output_only else {})}
 
 
@@ -192,10 +200,11 @@ def verify(capture, manifest_path, image_path, minimum_seconds):
         led_result = classify_led(rx, {'bounded-probe-v2': 2, 'bounded-probe-v3': 3}.get(led_policy, 1))
         if result['outcome'] == 'pass':
             if led_result['outcome'] == 'pass' and rx.index(b'PLLED1 begin') < rx.index(PASS) + len(PASS):
-                led_result = {'outcome': 'led_unexpected_sequence', 'led_probe_verified': False, 'led_readbacks': led_result['led_readbacks']}
+                led_result = {**led_result, 'outcome': 'led_unexpected_sequence', 'led_probe_verified': False, 'led_input_verified_pins': []}
             result.update(led_result)
         else:
-            result.update(led_readbacks=led_result['led_readbacks'], led_probe_verified=False, led_outcome=led_result['outcome'])
+            result.update(led_readbacks=led_result['led_readbacks'], led_probe_verified=False, led_input_verified_pins=[],
+                          led_outcome=led_result['outcome'])
     routing_policy = manifest.get('startup_gpio_routing_policy')
     require(routing_policy in (None, 'read-only-v1', 'read-only-v2'), 'Unknown GPIO routing policy')
     require(bool(routing_policy) == (b'PLIO1 stage=' in image), 'GPIO routing policy/artifact mismatch')
@@ -210,6 +219,9 @@ def verify(capture, manifest_path, image_path, minimum_seconds):
     require(power_policy in (None, 'before-km4-v1', 'before-km4-v2', 'before-km4-v3'), 'Unknown shared-pad policy')
     # Review 06 and earlier print PLPWR1 after KM4 boot without declaring this policy.
     require(not power_policy or b'PLPWR1 before_func=' in image, 'Shared-pad policy/artifact mismatch')
+    # Checked both ways: a before-KM4 v3 image cannot be audited without its policy.
+    require((power_policy == 'before-km4-v3') == (b'PLPWR1 before_func=' in image and POWER_V3_FORMAT in image),
+            'Shared-pad v3 policy/artifact mismatch')
     if power_policy:
         power = classify_power(rx, {'before-km4-v2': 2, 'before-km4-v3': 3}.get(power_policy, 1))
         if result['outcome'] == 'pass':

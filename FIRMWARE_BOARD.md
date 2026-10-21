@@ -4,6 +4,8 @@ This board tracks replacement-firmware integration, dependencies, and acceptance
 
 FW01 and FW02 have physical development-update/startup evidence. FW03 reached its recorded STOP/off software/readback and observed-motion scope; electrical voltages, repeated measured resets, and transients remain open in FW27. FW04 is **Done (output-only scope)**: the operator observed all four indicators and HIGH-on polarity, and a single artifact-bound boot passed the auditor under `bounded-probe-v3` with an intact, ordered supply report. PA0–PA7 have no usable input readback on the tested unit, so by owner decision the three Port A indicators are output-only (latch/pad/stopped-state checks plus visual observation, never input-verified); PB22 is input-verified. FW05 is next. See [RESUME.md](RESUME.md).
 
+Host-tested review fixes after `c8bb49f` touch FW03/FW27 (infrared OFF now also requires LOW latches), FW05 (no reset loop on a determined init/recovery fault; timer repeat tolerance; KM4 panic STOP) and FW06 (flash lease budget must fit the watchdog progress gap). They carry no hardware evidence and change no card status.
+
 For the installed artifact, last confirmed bench state, local evidence index,
 next task, and retained scope decisions, start with [RESUME.md](RESUME.md).
 

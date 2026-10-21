@@ -28,7 +28,7 @@ FW02 passed artifact-bound physical startup verification. This evidence does not
 
 ## Stopped-output startup
 
-The initializer explicitly enables/checks LP GPIO clock/function bits while preserving unrelated controls. With the interrupt mask held/restored, it preloads motor PA13/PA14 HIGH/HIGH and infrared PA15/PB3 LOW/LOW before output direction. It verifies masked values and directions before scheduling diagnostics. Failure logs an error and does not start the diagnostic task. This requests the stock-derived STOP/off state; physical polarity and startup transients remain acceptance work.
+The initializer explicitly enables/checks LP GPIO clock/function bits while preserving unrelated controls. With the interrupt mask held/restored, it preloads motor PA13/PA14 HIGH/HIGH and infrared PA15/PB3 LOW/LOW before output direction. It verifies masked values and directions before scheduling diagnostics. Infrared OFF requires LOW output latches as well as LOW pad inputs, because a pad with a dead input path reads LOW whatever is driven (as PA0–PA7 do on the tested unit). Failure logs an error and does not start the diagnostic task. This requests the stock-derived STOP/off state; physical polarity and startup transients remain acceptance work.
 
 `PLCLK1` records before/after clock/function words. `PLFW1 outputs` reports PA/PB values and directions before the startup banner. Manifest policies must match record formats in the hashed image. An output mismatch cannot be hidden by a synthetic diagnostic PASS.
 
@@ -42,13 +42,13 @@ After startup and diagnostic PASS, the sequence waits nominally 3 seconds, then 
 
 The 64 extra input samples distinguish a dead input path (0/64) from a marginal threshold (a partial count). They are informational: verification still uses the single input read, so a high count cannot verify a failed step.
 
-PA0, PA2 and PA4 are **output-only** on the tested unit (owner scope decision after the Port A traces below). Their steps report `status=output` when latch, pad control, directions and stopped state agree, and the begin line names them (`PLLED1 begin output_only=PA0,PA2,PA4`). `output` is never `pass`: it does not establish an electrical level, which rests on the operator's visual observation. PB22 keeps full input verification. Policy `bounded-probe-v3` expects exactly this sequence.
+PA0, PA2 and PA4 are **output-only** on the tested unit (owner scope decision after the Port A traces below). Their steps report `status=output` when latch, pad control, directions and stopped state agree, and the begin line names them (`PLLED1 begin output_only=PA0,PA2,PA4`). `output` is never `pass`: it does not establish an electrical level, which rests on the operator's visual observation. PB22 keeps full input verification. Policy `bounded-probe-v3` expects exactly this sequence. The auditor's sequence outcome is `pass`, but `led_probe_verified` stays `false` whenever output-only pins are present; `led_input_verified_pins` (`PB22`) and `led_output_only_pins` (`PA0`, `PA2`, `PA4`) state what was read back.
 
 A HIGH input mismatch remains a failed observation while permitting only the already bounded visible interval; a LOW mismatch, changed latch/mux/direction, or lost stopped state aborts. Terminal `finish=input_mismatch low=all` is a failure, never a verified success. Loss of stopped readback requests STOP/off again.
 
 | Record prefix | Meaning |
 | --- | --- |
-| `PLPWR1` | KM0 shared-pad supply before/after controls; policy `before-km4-v1` requires one intact record before any KM4 report, `v2` adds the LDO trim, `v3` the raw Port A input after each supply step |
+| `PLPWR1` | KM0 shared-pad supply before/after controls; policy `before-km4-v1` requires one intact record before any KM4 report, `v2` adds the LDO trim, `v3` the raw Port A input after each supply step; an image linking the `v3` record format is refused unless its manifest declares `before-km4-v3` |
 | `PLCLK1` | GPIO clock/function enable and preservation |
 | `PLFW1` | Stopped outputs, source identity, bank/reset, diagnostic result/errors |
 | `PLIO1` | Read-only pad-group/AON/GPIO routing observations; `read-only-v2` adds KM4's view of the shared-pad supply control and the raw Port A input word |

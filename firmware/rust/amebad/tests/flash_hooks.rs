@@ -15,6 +15,8 @@ struct Model {
     irq_mask: u32,
     ipsr: u32,
     systick: u32,
+    /// SysTick COUNTFLAG: set by a counter wrap, cleared only by reading CTRL.
+    countflag: bool,
     legacy_tick: u32,
     legacy_locks: u32,
     legacy_unlocks: u32,
@@ -100,7 +102,14 @@ impl HookCpu for Fake {
         m(|m| m.irq_mask = value);
     }
     fn tick_read() -> u32 {
-        m(|m| m.systick)
+        m(|m| {
+            m.systick
+                | if core::mem::take(&mut m.countflag) {
+                    1 << 16
+                } else {
+                    0
+                }
+        })
     }
     fn tick_write(value: u32) {
         m(|m| m.systick = value);
@@ -508,4 +517,27 @@ fn bad_context_order_and_peer_failure_halt() {
     assert!(m(|m| m.peer_calls == 1
         && m.irq_mask == 0
         && m.systick == 7));
+}
+
+#[test]
+fn countflag_left_by_a_disabled_systick_is_not_a_context_fault() {
+    reset();
+    assert!(install_provider(&provider()));
+    // The counter wrapped before the provider wrote CTRL=0; the flag survives.
+    m(|m| m.countflag = true);
+    write_lock::<Fake>();
+    assert!(
+        m(|m| m.irq_mask == 1 && m.systick == 0) && authority(|a| a.phase) == FlashPhase::ACTIVE
+    );
+    m(|m| m.countflag = true);
+    write_unlock::<Fake>();
+    assert!(m(|m| m.release_calls == 1
+        && m.irq_mask == 0
+        && m.systick == 7));
+    assert_eq!(authority(|a| a.phase), FlashPhase::IDLE);
+    // An enabled SysTick after acquire still halts.
+    reset();
+    m(|m| m.bad_acquire = 3);
+    assert!(install_provider(&provider()));
+    halts(write_lock::<Fake>);
 }

@@ -4,7 +4,7 @@ use common::*;
 use petlibro_amebad::board::{Board, MOTOR_MASK};
 use petlibro_amebad::events::{Events, EventsConfig, EventsFault};
 use petlibro_amebad::sdk::fake::{self, GPIOA_IRQ, TIMER2_IRQ};
-use petlibro_amebad::sdk::{self, TIM_CR_CNT_STS};
+use petlibro_amebad::sdk::{self, Irq, TIM_CR_CNT_STS};
 use petlibro_core::feed_controller::{
     FeedController, FeedLimits, FeedReason, FeedRequest, FeedSample, FeedStartResult, FeedState,
     MotorCommand,
@@ -138,8 +138,25 @@ fn missed_timer_heartbeat_blocks_renewal() {
 fn clock_failures_stop_in_irq_or_task_context() {
     let mut f = begin();
     f.drive();
-    fake::irq(TIMER2_IRQ); // Timer interrupt with a frozen reference clock.
+    let timer_at = f.events.timer_at;
+    // One interrupt without SYSTIMER advance is a coalesced pending update:
+    // skipped without advancing, while the drive stays supervised.
+    fake::irq(TIMER2_IRQ);
+    assert!(f.events.fault == EventsFault::OK && f.events.timer_at == timer_at);
+    assert_eq!(motor_pins(), 1 << 13);
+    // A second consecutive one is a frozen reference clock.
+    fake::irq(TIMER2_IRQ);
     assert!(f.events.fault == EventsFault::CLOCK && motor_pins() == MOTOR_MASK);
+    f.finish();
+    // An advancing reading between two repeats resets the tolerance.
+    let mut f = begin();
+    f.drive();
+    for _ in 0..3 {
+        fake::irq(TIMER2_IRQ);
+        fake::advance(32, true);
+    }
+    assert!(f.events.fault == EventsFault::OK && motor_pins() == 1 << 13);
+    assert!(f.events.motor(MotorCommand::DRIVE_0));
     f.finish();
     let mut f = begin();
     f.drive();
@@ -331,4 +348,69 @@ fn infrared_budget_cannot_be_extended_by_renewal() {
     fake::advance(32, true);
     assert!(f.events.fault == EventsFault::OPTICS && !f.board.optics_enabled);
     f.finish();
+}
+
+#[test]
+fn close_turns_infrared_off_before_removing_supervision() {
+    let mut f = begin();
+    f.arm();
+    assert!(f.events.optics(true, 120) && f.board.optics_enabled);
+    assert!(f.events.close());
+    assert!(optics_off() && !f.board.optics_enabled && motor_pins() == MOTOR_MASK);
+    assert!(!f.events.opened && sdk::tim2_en() == 0);
+    f.board.close();
+
+    // If OFF cannot be verified, close fails and keeps the timer for retries.
+    let mut f = begin();
+    f.arm();
+    assert!(f.events.optics(true, 120));
+    hw(|h| h.blocked_optics_off = true);
+    assert!(!f.events.close());
+    assert!(f.events.opened && f.events.fault == EventsFault::OUTPUT);
+    assert!(sdk::tim2_en() != 0 && hw(|h| h.irq[TIMER2_IRQ].is_some()));
+    hw(|h| h.blocked_optics_off = false);
+    fake::advance(64, true); // The retained ISR retries the OFF request.
+    assert!(optics_off());
+    f.finish();
+}
+
+#[test]
+fn masked_interrupts_stay_pending_until_unmasked() {
+    let mut f = begin();
+    f.arm();
+    let (timer_irqs, timer_at) = (hw(|h| h.timer_irqs), f.events.timer_at);
+    sdk::disable_irq();
+    fake::advance(3 * 32, true); // Updates coalesce into one pending interrupt.
+    fake::edge(true);
+    assert!(hw(|h| h.timer_irqs) == timer_irqs && hw(|h| h.gpio_irqs) == 0);
+    assert_eq!(f.events.feedback.count, 0);
+    sdk::set_primask(0);
+    assert_eq!(hw(|h| h.timer_irqs), timer_irqs + 1);
+    assert!(hw(|h| h.gpio_irqs) == 1 && f.events.feedback.count == 1);
+    assert!(f.events.timer_at > timer_at && f.events.fault == EventsFault::OK);
+    // A line disabled while pending runs once it is re-enabled.
+    sdk::irq_disable(Irq::Timer2);
+    fake::advance(2 * 32, true);
+    assert_eq!(hw(|h| h.timer_irqs), timer_irqs + 1);
+    sdk::irq_enable(Irq::Timer2, 4);
+    assert_eq!(hw(|h| h.timer_irqs), timer_irqs + 2);
+    f.finish();
+}
+
+#[test]
+fn port_reads_follow_the_pad_not_the_latch() {
+    fake::reset_hardware();
+    hw(|h| {
+        h.direction = [1 | (1 << 13), 1 << 22];
+        h.output = [1 | (1 << 13), 1 << 22];
+    });
+    // PA0-PA7 have a dead input path on the tested unit; PA13 and PB22 follow.
+    assert!(!sdk::gpio_read_bit(0) && sdk::gpio_output_latch(0) & 1 != 0);
+    assert!(sdk::gpio_read_bit(13) && sdk::gpio_read_bit(54));
+    assert_eq!(sdk::gpioa_ext_port() & ((1 << 13) | 1), 1 << 13);
+    hw(|h| {
+        h.readback_override_mask[0] = 1 << 13;
+        h.readback_override[0] = 0;
+    });
+    assert!(!sdk::gpio_read_bit(13) && sdk::gpioa_ext_port() & (1 << 13) == 0);
 }

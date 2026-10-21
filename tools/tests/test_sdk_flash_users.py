@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
-from support import evidence
+from support import current_build, evidence
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -20,14 +20,15 @@ def module(name, filename):
 users = module("sdk_flash_users", "tools/audit-sdk-flash-users.py")
 layout = module("ota_layout_for_flash_users", "tools/audit-ota-layout.py")
 BUILD = ROOT / "private/firmware-build/plaf103"
+FRESH, STALE = current_build(BUILD)
 ELFS = {core: BUILD / users.PROJECT / project / "asdk/image/target_img2.axf"
         for core, project in (("KM0", "project_lp"), ("KM4", "project_hp"))}
 
 
-@evidence((BUILD / "manifest.json").is_file() and
+@evidence(FRESH and
                      all(path.is_file() for path in ELFS.values()) and
                      (users.DEFAULT_TOOLS / "arm-none-eabi-objdump").is_file(),
-                     "Requires ignored completed SDK build and pinned binutils")
+                     STALE or "Requires ignored completed SDK build and pinned binutils")
 class PackagedCodeTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

@@ -1,16 +1,28 @@
 //! Two-unit NOR model enforcing aligned 1->0 programming, with power-cut and
 //! call-failure injection.
+//!
+//! Programming is byte-ordered: a cut leaves a durable prefix of the bytes.
+//! Erase raises every bit of the unit in a deterministic pseudo-random order,
+//! so a cut during erase leaves old data with an arbitrary subset of bits
+//! raised rather than a clean 0xFF prefix. Neither model covers weakly
+//! programmed or weakly erased cells that read back inconsistently.
 
+use core::cell::RefCell;
 use core::ffi::{c_uint, c_void};
+use std::rc::Rc;
 
 use petlibro_core::feed_journal::JournalIo;
 
+/// Default unit size, as used by the virtual feeder image.
 pub const UNIT: usize = 256;
 
 #[derive(Clone)]
 pub struct FakeJournalFlash {
-    pub bytes: [[u8; UNIT]; 2],
-    /// Remaining byte mutations before power is cut; negative is unlimited.
+    /// Two equal-sized units; see [`FakeJournalFlash::with_unit`].
+    pub bytes: [Vec<u8>; 2],
+    /// Remaining mutations before power is cut; negative is unlimited. A
+    /// programmed byte is one mutation; erase is `unit` mutations of eight
+    /// raised bits each.
     pub budget: i64,
     pub calls: u32,
     /// Fail this 1-based call number; zero disables injection.
@@ -18,15 +30,25 @@ pub struct FakeJournalFlash {
     pub mutations: u32,
     pub silent_program: bool,
     pub silent_erase: bool,
+    /// Runs after every durable mutation. No reference to the flash is live
+    /// while it runs, so it may read the flash through the I/O context.
     pub after_mutation: Option<fn(*mut c_void)>,
     pub mutation_context: *mut c_void,
 }
 
 impl Default for FakeJournalFlash {
-    /// Fully erased units with no fault injection.
+    /// Fully erased 256-byte units with no fault injection.
     fn default() -> Self {
+        Self::with_unit(UNIT)
+    }
+}
+
+impl FakeJournalFlash {
+    /// Fully erased units of `unit` bytes with no fault injection.
+    pub fn with_unit(unit: usize) -> Self {
+        assert!(unit >= 4 && unit.is_multiple_of(4) && u32::try_from(unit).is_ok());
         Self {
-            bytes: [[u8::MAX; UNIT]; 2],
+            bytes: [vec![u8::MAX; unit], vec![u8::MAX; unit]],
             budget: -1,
             calls: 0,
             fail_call: 0,
@@ -37,14 +59,30 @@ impl Default for FakeJournalFlash {
             mutation_context: core::ptr::null_mut(),
         }
     }
-}
 
-impl FakeJournalFlash {
-    /// I/O bound to this flash. The flash must not move while the I/O is used.
+    pub fn unit(&self) -> usize {
+        self.bytes[0].len()
+    }
+
+    /// I/O bound to this flash. The flash must not move while the I/O is used,
+    /// and writing its fields directly invalidates the I/O: bind a new one.
     pub fn io(&mut self) -> JournalIo {
+        // SAFETY: `self` is a live, exclusive flash.
+        unsafe { Self::io_at(self) }
+    }
+
+    /// I/O whose context is exactly `flash`, without an intermediate
+    /// reference, so the owner of `flash` can keep reading it through the
+    /// same pointer between calls.
+    ///
+    /// # Safety
+    /// `flash` must point to a live flash that stays in place, and no
+    /// reference to it may be live while the returned callbacks run.
+    pub unsafe fn io_at(flash: *mut Self) -> JournalIo {
         JournalIo {
-            context: (self as *mut Self).cast(),
-            unit_bytes: UNIT as u32,
+            context: flash.cast(),
+            // SAFETY: the caller guarantees a live flash; this is a read only.
+            unit_bytes: unsafe { (*flash).unit() } as u32,
             read: Some(read_bytes),
             program: Some(program),
             erase: Some(erase),
@@ -56,27 +94,73 @@ impl FakeJournalFlash {
         self.fail_call == 0 || self.calls != self.fail_call
     }
 
-    fn mutate(&mut self, slot: usize, index: usize, value: u8) -> bool {
-        if self.budget == 0 {
-            return false;
-        }
-        self.bytes[slot][index] = value;
-        self.mutations += 1;
-        if let Some(hook) = self.after_mutation {
-            hook(self.mutation_context);
-        }
-        if self.budget > 0 {
-            self.budget -= 1;
-        }
-        // Includes failure after the last durable byte.
-        self.budget != 0
+    fn bounds(&self, slot: c_uint, offset: u32, size: usize) -> (usize, usize) {
+        let (slot, offset) = (slot as usize, offset as usize);
+        let unit = self.unit();
+        assert!(slot < 2 && offset <= unit && size <= unit - offset);
+        (slot, offset)
     }
 }
 
-fn bounds(slot: c_uint, offset: u32, size: usize) -> (usize, usize) {
-    let (slot, offset) = (slot as usize, offset as usize);
-    assert!(slot < 2 && offset <= UNIT && size <= UNIT - offset);
-    (slot, offset)
+/// Apply one mutation, then run the hook with no reference to the flash live.
+///
+/// # Safety
+/// `flash` is a callback context created by [`FakeJournalFlash::io_at`].
+unsafe fn mutate(flash: *mut FakeJournalFlash, apply: impl FnOnce(&mut FakeJournalFlash)) -> bool {
+    let (hook, context) = {
+        // SAFETY: the context is live; this reference ends before the hook.
+        let f = unsafe { &mut *flash };
+        if f.budget == 0 {
+            return false;
+        }
+        apply(f);
+        f.mutations += 1;
+        (f.after_mutation, f.mutation_context)
+    };
+    if let Some(hook) = hook {
+        hook(context);
+    }
+    // SAFETY: as above; a fresh reference after the hook returned.
+    let f = unsafe { &mut *flash };
+    if f.budget > 0 {
+        f.budget -= 1;
+    }
+    // Includes failure after the last durable mutation.
+    f.budget != 0
+}
+
+/// Slot, unit size and erase order.
+type CachedOrder = (usize, usize, Rc<Vec<u32>>);
+
+/// Deterministic order in which erase raises the unit's bits, cached per
+/// slot and unit size.
+fn erase_order(slot: usize, unit: usize) -> Rc<Vec<u32>> {
+    thread_local! {
+        static ORDERS: RefCell<Vec<CachedOrder>> = const { RefCell::new(Vec::new()) };
+    }
+    ORDERS.with_borrow_mut(|orders| {
+        if let Some((_, _, order)) = orders.iter().find(|(s, u, _)| *s == slot && *u == unit) {
+            return order.clone();
+        }
+        let order = Rc::new(shuffled_bits(slot, unit));
+        orders.push((slot, unit, order.clone()));
+        order
+    })
+}
+
+fn shuffled_bits(slot: usize, unit: usize) -> Vec<u32> {
+    let mut order: Vec<u32> = (0..(unit * 8) as u32).collect();
+    let mut state =
+        0x9e37_79b9_7f4a_7c15u64 ^ (slot as u64 + 1).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    for i in (1..order.len()).rev() {
+        // xorshift64*: reproducible across runs and platforms.
+        state ^= state >> 12;
+        state ^= state << 25;
+        state ^= state >> 27;
+        let j = (state.wrapping_mul(0x2545_f491_4f6c_dd1d) >> 32) as usize % (i + 1);
+        order.swap(i, j);
+    }
+    order
 }
 
 unsafe extern "C" fn read_bytes(
@@ -86,8 +170,9 @@ unsafe extern "C" fn read_bytes(
     bytes: *mut c_void,
     size: usize,
 ) -> bool {
+    // SAFETY: the context was created by `io_at`; no other reference is live.
     let f = unsafe { &mut *context.cast::<FakeJournalFlash>() };
-    let (slot, offset) = bounds(slot, offset, size);
+    let (slot, offset) = f.bounds(slot, offset, size);
     if !f.call() {
         return false;
     }
@@ -103,23 +188,35 @@ unsafe extern "C" fn program(
     bytes: *const c_void,
     size: usize,
 ) -> bool {
-    let f = unsafe { &mut *context.cast::<FakeJournalFlash>() };
-    let (slot, offset) = bounds(slot, offset, size);
-    assert!(offset % 4 == 0 && size.is_multiple_of(4));
-    if !f.call() {
-        return false;
-    }
-    if f.silent_program {
-        return true;
-    }
+    let flash = context.cast::<FakeJournalFlash>();
+    let (slot, offset) = {
+        // SAFETY: the context was created by `io_at`; ends before any hook.
+        let f = unsafe { &mut *flash };
+        let (slot, offset) = f.bounds(slot, offset, size);
+        assert!(offset.is_multiple_of(4) && size.is_multiple_of(4));
+        if !f.call() {
+            return false;
+        }
+        if f.silent_program {
+            return true;
+        }
+        (slot, offset)
+    };
+    // The caller's buffer is distinct from the flash.
     let input = unsafe { core::slice::from_raw_parts(bytes.cast::<u8>(), size) };
     for (i, &value) in input.iter().enumerate() {
-        assert_eq!(
-            f.bytes[slot][offset + i] & value,
-            value,
-            "NOR programming only clears bits"
-        );
-        if !f.mutate(slot, offset + i, value) {
+        let index = offset + i;
+        let more = unsafe {
+            mutate(flash, |f| {
+                assert_eq!(
+                    f.bytes[slot][index] & value,
+                    value,
+                    "NOR programming only clears bits"
+                );
+                f.bytes[slot][index] = value;
+            })
+        };
+        if !more {
             return false;
         }
     }
@@ -127,13 +224,107 @@ unsafe extern "C" fn program(
 }
 
 unsafe extern "C" fn erase(context: *mut c_void, slot: c_uint) -> bool {
-    let f = unsafe { &mut *context.cast::<FakeJournalFlash>() };
+    let flash = context.cast::<FakeJournalFlash>();
     assert!(slot < 2);
-    if !f.call() {
-        return false;
+    let slot = slot as usize;
+    let unit = {
+        // SAFETY: the context was created by `io_at`; ends before any hook.
+        let f = unsafe { &mut *flash };
+        if !f.call() {
+            return false;
+        }
+        if f.silent_erase {
+            return true;
+        }
+        f.unit()
+    };
+    let order = erase_order(slot, unit);
+    order.chunks(8).all(|bits| unsafe {
+        mutate(flash, |f| {
+            for &bit in bits {
+                f.bytes[slot][bit as usize / 8] |= 1 << (bit % 8);
+            }
+        })
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn erase_with_budget(unit: usize, budget: i64) -> (FakeJournalFlash, bool) {
+        let mut f = FakeJournalFlash::with_unit(unit);
+        f.bytes[0].fill(0);
+        f.budget = budget;
+        let io = f.io();
+        // SAFETY: `f` stays in place and is not otherwise used during the call.
+        let ok = unsafe { io.erase.unwrap()(io.context, 0) };
+        (f, ok)
     }
-    if f.silent_erase {
-        return true;
+
+    #[test]
+    fn complete_erase_and_programming_rules() {
+        let (f, ok) = erase_with_budget(4096, -1);
+        assert!(ok && f.bytes[0].iter().all(|&b| b == u8::MAX));
+        assert_eq!(f.mutations, 4096);
+        let mut f = FakeJournalFlash::default();
+        let io = f.io();
+        let data = [0x0fu8, 0xf0, 0x00, 0xff];
+        assert!(unsafe { io.program.unwrap()(io.context, 1, 4, data.as_ptr().cast(), 4) });
+        assert_eq!(f.bytes[1][4..8], data);
+        assert_eq!(f.io().unit_bytes, UNIT as u32);
     }
-    (0..UNIT).all(|i| f.mutate(slot as usize, i, u8::MAX))
+
+    #[test]
+    fn torn_erase_is_deterministic_and_not_a_prefix() {
+        for unit in [256, 4096] {
+            for cut in [1, unit as i64 / 3, unit as i64 - 1] {
+                let (f, ok) = erase_with_budget(unit, cut);
+                let (again, _) = erase_with_budget(unit, cut);
+                assert!(!ok && f.bytes[0] == again.bytes[0]);
+                let raised: u32 = f.bytes[0].iter().map(|b| b.count_ones()).sum();
+                assert_eq!(u64::from(raised), cut as u64 * 8);
+                // Raised bits are spread across the unit, not a byte prefix.
+                let prefix = f.bytes[0].iter().take_while(|&&b| b == u8::MAX).count();
+                assert!(prefix < unit / 2 && f.bytes[0].iter().any(|&b| b != 0 && b != u8::MAX));
+            }
+        }
+        // The two units tear differently.
+        assert_ne!(erase_order(0, UNIT), erase_order(1, UNIT));
+    }
+
+    #[test]
+    fn hook_runs_without_live_reference_and_cut_stops_mutation() {
+        fn hook(context: *mut c_void) {
+            // Reads the flash through the same pointer as the I/O context.
+            let f = context.cast::<FakeJournalFlash>();
+            let seen = unsafe { (&(*f).bytes)[0][0] };
+            assert!(seen == 0x0f || seen == u8::MAX);
+        }
+        let mut f = Box::new(FakeJournalFlash::default());
+        let raw: *mut FakeJournalFlash = &raw mut *f;
+        unsafe {
+            (*raw).after_mutation = Some(hook);
+            (*raw).mutation_context = raw.cast();
+            (*raw).budget = 2;
+            let io = FakeJournalFlash::io_at(raw);
+            let data = [0x0fu8, 0x0f, 0x0f, 0x0f];
+            assert!(!io.program.unwrap()(
+                io.context,
+                0,
+                0,
+                data.as_ptr().cast(),
+                4
+            ));
+            assert_eq!((&(*raw).bytes)[0][..4], [0x0f, 0x0f, 0xff, 0xff]);
+            assert!(!io.program.unwrap()(
+                io.context,
+                0,
+                4,
+                data.as_ptr().cast(),
+                4
+            ));
+            assert_eq!((*raw).mutations, 2);
+        }
+    }
 }

@@ -3,7 +3,13 @@
 //! Each thread owns independent hardware so tests can run in parallel. The
 //! model asserts how the ports drive the SDK (pins, priorities, task shape),
 //! models coalesced timer interrupts and GPIO edges, and runs registered
-//! interrupt handlers synchronously when interrupts are unmasked.
+//! interrupt handlers synchronously when interrupts are unmasked. As on the
+//! NVIC, an interrupt raised while masked or disabled stays pending (one
+//! coalesced pend per line) and runs as soon as it is unmasked and enabled.
+//!
+//! Pin reads model the pad input path (EXT_PORT), not the output latch: an
+//! output pad normally follows its latch, except pads in `dead_input`, which
+//! read LOW whatever is driven (PA0-PA7 on the tested unit).
 
 use core::ffi::{CStr, c_void};
 use std::cell::RefCell;
@@ -21,7 +27,6 @@ pub struct GpioRegisters {
     pub int_bothedge: u32,
     pub int_status: u32,
     pub porta_eoi: u32,
-    pub ext_port: u32,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -52,6 +57,8 @@ pub struct Hardware {
     pub blocked_gpio_write: [u32; 2],
     pub readback_override_mask: [u32; 2],
     pub readback_override: [u32; 2],
+    /// Pads whose input path reads LOW regardless of the driven level.
+    pub dead_input: [u32; 2],
     pub pad_control: [u32; 64],
     pub adc_enabled: bool,
     pub trigger: bool,
@@ -90,6 +97,7 @@ pub struct Hardware {
     pub adc_hook_context: *mut c_void,
     pub irq: [Option<Isr>; 32],
     pub irq_enabled: [bool; 32],
+    pub irq_pending: [bool; 32],
     pub adc_channel: u32,
     pub gpio: GpioRegisters,
     pub timer: TimerRegisters,
@@ -118,6 +126,8 @@ impl Default for Hardware {
             blocked_gpio_write: [0; 2],
             readback_override_mask: [0; 2],
             readback_override: [0; 2],
+            // Physical observation on the research unit: PA0-PA7 read LOW.
+            dead_input: [0xff, 0],
             pad_control: [0; 64],
             adc_enabled: false,
             trigger: false,
@@ -156,6 +166,7 @@ impl Default for Hardware {
             adc_hook_context: core::ptr::null_mut(),
             irq: [None; 32],
             irq_enabled: [false; 32],
+            irq_pending: [false; 32],
             adc_channel: 0,
             gpio: GpioRegisters::default(),
             timer: TimerRegisters::default(),
@@ -184,11 +195,31 @@ fn irq_index(irq: Irq) -> usize {
     }
 }
 
-/// Deliver an interrupt when it is registered, enabled and unmasked.
+/// Raise an interrupt line: it runs now when enabled, unmasked and no
+/// handler is active; otherwise it stays pending until it can run.
 pub fn irq(index: usize) {
+    with(|h| h.irq_pending[index] = true);
+    deliver_pending();
+}
+
+/// Run pending interrupts that can now be taken, lowest line first. The
+/// ports' handlers share one priority, so none runs inside another.
+pub fn deliver_pending() {
+    while let Some(index) = with(|h| {
+        if h.interrupts != 0 || h.ipsr != 0 {
+            return None;
+        }
+        (0..32).find(|&i| h.irq_pending[i] && h.irq_enabled[i])
+    }) {
+        run_irq(index);
+    }
+}
+
+fn run_irq(index: usize) {
     let handler = with(|h| {
-        let ready = h.irq_enabled[index] && h.interrupts == 0;
-        let handler = h.irq[index].filter(|_| ready)?;
+        h.irq_pending[index] = false;
+        // An unregistered line reaches the SDK default handler: nothing to model.
+        let handler = h.irq[index]?;
         let previous = h.ipsr;
         h.ipsr = index as u32 + 16;
         if index == TIMER2_IRQ {
@@ -210,6 +241,14 @@ pub fn irq(index: usize) {
             }
         });
     }
+}
+
+/// Pad input word for one port: driven outputs follow the latch, inputs the
+/// external level; dead pads read LOW; test overrides replace either.
+fn pad_input(h: &Hardware, p: usize) -> u32 {
+    let normal =
+        ((h.output[p] & h.direction[p]) | (h.input[p] & !h.direction[p])) & !h.dead_input[p];
+    (normal & !h.readback_override_mask[p]) | (h.readback_override[p] & h.readback_override_mask[p])
 }
 
 /// Independent watchdog clock; does not advance SYSTIMER or run an ISR.
@@ -262,7 +301,6 @@ pub fn edge(high: bool) {
         } else {
             h.input[0] &= !mask;
         }
-        h.gpio.ext_port = h.input[0];
         let raise = h.gpio.int_en & mask != 0 && h.gpio.int_mask & mask == 0;
         if raise {
             h.gpio.int_status |= mask;
@@ -335,6 +373,8 @@ pub mod api {
     pub const WDG_BIT_ENABLE: u32 = 1 << 16;
     pub const WDG_BIT_RST_MODE: u32 = 1 << 30;
     pub const WDG_BIT_ISR_CLEAR: u32 = 1 << 31;
+    /// Counter-restart action bit written by WDG_Init and WDG_Refresh.
+    const WDG_BIT_CLEAR: u32 = 1 << 24;
     pub const HS_WDTRST_OPT: u32 = 1 << 23;
     pub const LP_WDT_RESET_HS_ALL: u32 = 1 << 15;
 
@@ -352,6 +392,7 @@ pub mod api {
 
     pub fn set_primask(mask: u32) {
         with(|h| h.interrupts = mask);
+        deliver_pending();
     }
 
     pub fn gpio_port_write(port: u32, mask: u32, value: u32) {
@@ -373,11 +414,7 @@ pub mod api {
     pub fn gpio_port_read(port: u32, mask: u32) -> u32 {
         with(|h| {
             assert!(port < 2);
-            let p = port as usize;
-            let normal = (h.output[p] & h.direction[p]) | (h.input[p] & !h.direction[p]);
-            ((normal & !h.readback_override_mask[p])
-                | (h.readback_override[p] & h.readback_override_mask[p]))
-                & mask
+            pad_input(h, port as usize) & mask
         })
     }
 
@@ -539,7 +576,7 @@ pub mod api {
     }
 
     pub fn gpioa_ext_port() -> u32 {
-        with(|h| h.gpio.ext_port)
+        with(|h| pad_input(h, 0))
     }
 
     pub fn gpioa_eoi(mask: u32) {
@@ -605,6 +642,7 @@ pub mod api {
     pub fn irq_enable(irq: Irq, priority: u32) {
         assert_eq!(priority, 4);
         with(|h| h.irq_enabled[irq_index(irq)] = true);
+        deliver_pending();
     }
 
     pub fn irq_disable(irq: Irq) {
@@ -637,7 +675,11 @@ pub mod api {
             h.watchdog_period = ((1u32 << (count_id + 1)) - 1) * (divisor + 1);
             h.watchdog_ticks = 0;
             h.watchdog_expired = false;
-            h.watchdog_vendor = (count_id << 25) | divisor | WDG_BIT_RST_MODE;
+            // The SDK writes CLEAR (bit 24) and ISR_CLEAR (bit 31) with the
+            // configuration; both are write-1 actions that read back as 0.
+            let written =
+                (count_id << 25) | divisor | WDG_BIT_CLEAR | WDG_BIT_RST_MODE | WDG_BIT_ISR_CLEAR;
+            h.watchdog_vendor = written & !(WDG_BIT_CLEAR | WDG_BIT_ISR_CLEAR);
         });
         set_lp_km0_ctrl(lp_km0_ctrl() | LP_WDT_RESET_HS_ALL);
     }
@@ -707,6 +749,20 @@ pub mod api {
             h.task_live = true;
             true
         })
+    }
+
+    /// Mirrors the target's panic-path stop: mask, then raw latch writes only
+    /// when the GPIO block is clocked and enabled.
+    pub fn panic_outputs_safe() {
+        with(|h| {
+            h.interrupts = 1;
+            let enabled = crate::sdk::GPIO_ENABLE_BIT;
+            if h.gpio_function & enabled == 0 || h.gpio_clock & enabled == 0 {
+                return;
+            }
+            h.output[0] = (h.output[0] | MOTOR_MASK) & !(1 << 15);
+            h.output[1] &= !(1 << 3);
+        });
     }
 
     pub fn log(message: &CStr) {

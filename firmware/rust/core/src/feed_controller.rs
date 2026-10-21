@@ -298,6 +298,8 @@ impl FeedController {
             if now_ms.wrapping_sub(self.state_at) >= self.limits.direction_pause_ms {
                 self.state = FeedState::RUNNING;
                 self.motor = MotorCommand::drive(self.progress.direction);
+                // Edges captured while stopped or coasting must not count.
+                self.inhibit_at = now_ms;
             }
             return;
         }

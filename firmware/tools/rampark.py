@@ -16,6 +16,9 @@ SYMBOLS = ("petlibro_amebad_flash_park_publish", "petlibro_amebad_flash_park_wai
            "petlibro_amebad_flash_owner_begin", "petlibro_amebad_flash_owner_end")
 INSTRUCTION = re.compile(r"^\s*([0-9a-f]+):\s+(?:(?:[0-9a-f]{4}|[0-9a-f]{8})\s+)+([a-z.][a-z0-9.]*)\s*(.*)$")
 DIRECT_BRANCH = re.compile(r"b(?:eq|ne|cs|hs|cc|lo|mi|pl|vs|vc|hi|ls|ge|lt|gt|le)?(?:\.[nw])?$")
+# SPI flash is readable through the direct map at 0x08000000 and the RSIP
+# XIP windows at 0x0c000000/0x0e000000; parked code must not address any of it.
+FLASH_MAPPING = range(0x08000000, 0x10000000)
 INTEGER = set("adc adcs add adds addw and ands asr asrs bic bics clz cmn cmp eor eors "
               "ldm ldmia ldr ldrb ldrd ldrh ldrsb ldrsh lsl lsls lsr lsrs mov movs "
               "movw movt mul muls mvn mvns negs nop orr orrs pop push rev rev16 ror rors "
@@ -34,9 +37,21 @@ def module(name, relative):
     return value
 
 
+def immediate(text):
+    value = re.match(r"#(-?(?:0x[0-9a-f]+|\d+))\b", text.strip())
+    return int(value[1], 0) & 0xFFFFFFFF if value else None
+
+
 def check_leaf(disassembly, address, size, minimum_barriers=3):
-    """Fail closed on calls, foreign branches, indirect jumps or XIP literals."""
+    """Fail closed on calls, foreign branches, indirect jumps or flash addresses.
+
+    Flash addresses are refused as literal-pool words and as movw/movt pairs (a
+    movt high half in the flash map is refused even without a movw). Bit-mask
+    immediates are not treated as addresses, and values computed by other
+    arithmetic are not proven.
+    """
     count = barriers = 0
+    low_halves = {}
     for line in disassembly.splitlines():
         match = INSTRUCTION.match(line)
         if not match:
@@ -49,8 +64,8 @@ def check_leaf(disassembly, address, size, minimum_barriers=3):
             raise ValueError("Instruction outside expected function")
         if mnemonic == ".word":
             value = int(operands.split()[0], 16)
-            if 0x0c000000 <= value < 0x10000000:
-                raise ValueError("XIP literal in RAM parking code")
+            if value in FLASH_MAPPING:
+                raise ValueError("Flash/XIP literal in RAM parking code")
             continue
         base = mnemonic.split(".")[0]
         conditional = base[:-2] if base[-2:] in ("eq", "ne", "cs", "hs", "cc", "lo", "mi", "pl",
@@ -63,6 +78,16 @@ def check_leaf(disassembly, address, size, minimum_barriers=3):
         if conditional == "bx" and operands.strip() != "lr":
             raise ValueError("Indirect branch in RAM parking code")
         code_operands = operands.split(";")[0]
+        fields = [field.strip() for field in code_operands.split(",")]
+        if conditional == "movw" and len(fields) == 2 and immediate(fields[1]) is not None:
+            low_halves[fields[0]] = immediate(fields[1]) & 0xFFFF
+        elif conditional == "movt" and len(fields) == 2 and immediate(fields[1]) is not None:
+            value = (immediate(fields[1]) & 0xFFFF) << 16 | low_halves.pop(fields[0], 0)
+            if value in FLASH_MAPPING:
+                raise ValueError("Flash/XIP address formed by movw/movt in RAM parking code")
+        elif fields and fields[0]:
+            # Any other write to the register discards a pending low half.
+            low_halves.pop(fields[0], None)
         if code_operands.split(",")[0].strip() == "pc":
             raise ValueError("Indirect PC destination in RAM parking code")
         pc = re.search(r"\bpc\b", code_operands)
@@ -85,7 +110,7 @@ def check_leaf(disassembly, address, size, minimum_barriers=3):
     if count == 0 or barriers < minimum_barriers:
         raise ValueError("Missing parking instructions/barriers")
     return {"instructions": count, "barriers": barriers, "calls": 0,
-            "foreign_branches": 0, "xip_literals": 0}
+            "foreign_branches": 0, "xip_literals": 0, "flash_address_constants": 0}
 
 
 def audit(sdk, project, binutils, objects):

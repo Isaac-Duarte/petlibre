@@ -125,14 +125,14 @@ Bench lessons from stage C:
 
 ## What is actually installed
 
-The research feeder runs **FW07 Wi-Fi join review 01** in bank 1, starting at
+The research feeder runs **FW07 Wi-Fi join review 02** in bank 1, starting at
 flash offset `0x186000`. It was installed through the changed-sector updater
-(111 sectors verified).
+(134 sectors verified).
 
 | Identity | Recorded value |
 | --- | --- |
-| OTA SHA-256 | `4c4bc5ff18be0f157c7192dfb619f352bd2a5108d263e34966e5b8d65976c869` |
-| Embedded startup build ID | `2e70b1d95c5ba3899eedee70be995881c14506f5653d1110746e43a0769fb760` |
+| OTA SHA-256 | `6905e6822688be1b4f1d40bc4df21d0ded1915faae84e9a758bb71f7f24076cc` |
+| Embedded startup build ID | `a8d0deb4f6da93b4a6b90a9c8658b0d22426e2ca737a3f6955606bd314e54894` |
 
 **Every power-on runs the Wi-Fi join probe**: after the LED sequence it turns
 the radio on (station mode) and keeps trying to join the owner's hotspot
@@ -200,27 +200,31 @@ FW14 continues once batteries are available (above).
 **FW07 stage B (physical, passed).** Radio on and scanning work on our
 firmware: `wifi_on(STA)` took about 235 ms, and three scans took 4.0–4.3 s each,
 hearing 51–63 networks; outputs stayed stopped. The driver prints
-`FW Enable failed`, suspected to be the skipped KM0 `wifi_FW_init_ram()`
-(power-save); unconfirmed. The owner's hotspot was not among the 32 strongest
-networks kept, and whether it was on was not recorded. KM4 log lines now print
+`FW Enable failed`, caused by the KM0 WLAN firmware not running (fixed in
+stage C). The owner's hotspot was most likely off during those scans (it
+was off when checked before stage C). KM4 log lines now print
 with the scheduler suspended, because a driver print split one in the first
 capture.
 
-**FW07 stage C (physical, blocked).** The join build associates with the
-owner's hotspot: SAE, association and the 4-way handshake complete, and it
-rejoins after the hotspot comes back. But no DHCP request ever reaches the
-hotspot's dnsmasq. The driver prints `fw cmd fifo full` and `FW Enable failed`.
-The KM0 WLAN firmware (`lib_wifi_fw.a`, `wifi_FW_init_ram()`) never runs, so
-driver firmware commands are not consumed; the data path most likely needs it
-(static analysis). Details are in docs/firmware/startup-diagnostics.md.
+**FW07 stage C (physical, passed).** Review 02 joins the owner's hotspot,
+gets a DHCP lease, notices the hotspot going away, and rejoins with bounded
+backoff when it comes back. Two fixes got it there:
+- KM0 now starts the WLAN firmware (`wifi_FW_init_ram()`), whose absence
+  caused `FW Enable failed` and `fw cmd fifo full`.
+- The bench host's nftables input policy (`/etc/computer-security.nft`) dropped
+  everything on the hotspot interface. The owner allowed DHCP from it; DNS and
+  forwarding from the hotspot are still blocked there.
 
-**Next for FW07:** start the KM0 WLAN firmware. The vendor gates it on
-`BKUP_Read(0) & BIT_WIFI_ENABLE`. Review first what its tasks and power-save
-do while KM0 is parked in RAM for an FW06 flash lease. Then rerun the join
-capture. The hotspot is a NetworkManager connection on the bench host
-(`nmcli connection up|down <connection>`, named in `private/hotspot.json`)
-and is off unless the owner starts it. The UART recorder caps a capture at 180 s,
-so schedule the outage inside that.
+Details are in docs/firmware/startup-diagnostics.md. The hotspot is a
+NetworkManager connection on the bench host (`nmcli connection up|down
+<connection>`, named in `private/hotspot.json`) and is off unless the owner
+starts it. The UART recorder caps a capture at 180 s. A host packet capture
+(`sudo tcpdump -i <hotspot interface>`) is the quickest way to tell feeder
+problems from host problems.
+
+**Next for FW07:** decide the closure scope. Recovery from DHCP or DNS loss and
+real egress need the host firewall to allow DNS and forwarding, which is the
+owner's decision.
 
 The FW07 plan from the static survey, written before stage A (stages A and B are
 now done; the "Today" item describes the build before them):
@@ -253,8 +257,8 @@ now done; the "Today" item describes the build before them):
   exists) into an ignored generated source, with only a hash in the manifest.
   Review the SDK's own logs for the SSID.
 - **Open decisions.**
-  - Whether KM4 STA works without KM0 `wifi_FW_init_ram()`. Adding it puts
-    KM0 Wi-Fi power-save code next to our park/peer task.
+  - Settled: KM4 STA needs KM0 `wifi_FW_init_ram()`. It now runs next to
+    our park/peer task, and a park masks it along with everything else on KM0.
   - Hidden flash users that bypass `flash_api` (and so the FW06 hooks).
   - Driver interrupt load against the owner's supervision timing.
 

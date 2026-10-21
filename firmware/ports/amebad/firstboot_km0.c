@@ -69,6 +69,20 @@ __attribute__((noinline)) void petlibre_flash_peer_start(void)
                 tskIDLE_PRIORITY + 1, NULL);
 }
 
+/* FW07: on AmebaD the WLAN firmware runs on KM0 (lib_wifi_fw.a). Without
+ * it the KM4 driver's firmware commands are never consumed ("fw cmd fifo
+ * full", "FW Enable failed") and DHCP never reaches the access point. The
+ * vendor main starts it under the same backup-register bit, which app_start
+ * sets from ps_config.km0_config_wifi_enable. It only creates its tasks
+ * here; they run once the scheduler starts. An FW06 park masks interrupts,
+ * so none of its code runs while KM4 owns flash. */
+__attribute__((noinline)) void petlibre_wifi_fw_start(void)
+{
+    if ((BKUP_Read(0) & BIT_WIFI_ENABLE) != 0) {
+        wifi_FW_init_ram();
+    }
+}
+
 int main(void)
 {
     InterruptRegister((IRQ_FUN)IPC_INTHandler, IPC_IRQ_LP, (u32)IPCM4_DEV, 2);
@@ -77,6 +91,7 @@ int main(void)
     InterruptDis(UART_LOG_IRQ_LP);
     km4_flash_highspeed_init();
     petlibre_shared_pad_power_init();
+    petlibre_wifi_fw_start();
     km4_boot_on();
     petlibre_flash_peer_start();
     vTaskStartScheduler();

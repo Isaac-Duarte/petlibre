@@ -1,0 +1,14 @@
+[package]
+license = "MIT"
+name = "petlibro-testkit"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+description = "Host fakes shared by firmware tests and the virtual feeder"
+publish = false
+
+[dependencies]
+petlibro-core = { path = "../core" }
+
+[lints]
+workspace = true

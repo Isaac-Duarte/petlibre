@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "name": "double-feed",
+  "profile": "double",
+  "feedback_period_ms": 10,
+  "end_ms": 95,
+  "actions": [
+    {
+      "at_ms": 1,
+      "op": "submit",
+      "args": [
+        1,
+        3
+      ]
+    },
+    {
+      "at_ms": 90,
+      "op": "expect",
+      "values": {
+        "state": "terminal",
+        "outcome": "done",
+        "completed": 3,
+        "durable": true,
+        "phase_known": true
+      }
+    }
+  ]
+}

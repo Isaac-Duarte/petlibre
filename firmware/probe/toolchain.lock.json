@@ -1,0 +1,15 @@
+{
+  "archive_sha256": "eeaef0c05f842bd50166158df166150fecb84b4137141e79427e4d32b45153bc",
+  "files": {
+    "bin/arm-none-eabi-gcc": "a5ad74626143c38d669a2cb571bfb084d39a44eecb3e3e6afb9554144feb7ffa",
+    "bin/arm-none-eabi-as": "ce4aa1a00a3df5c7ed7a19842c20220b9d877c969f11d9164933d763d24854c9",
+    "bin/arm-none-eabi-ld": "f912f0de43b29607790f6baab0168167a5dbbecc5894532673b3f9857d5725f9",
+    "bin/arm-none-eabi-objcopy": "1b867d9ec453a42f6e8b2f195e662570c870f3980fb95f932b791cd7588c94cc",
+    "bin/arm-none-eabi-objdump": "7580e5600bfcb1dcd738235b4b67d2dd04e677a27d4dd9bf19f4a02e055334a8",
+    "bin/arm-none-eabi-nm": "23bba4c977bf0e89ab0bb2def838f8f48311e63f48090ad9d84d6d25fec2d221",
+    "libexec/gcc/arm-none-eabi/6.4.1/cc1": "12996b9733ee56decc590249cfc8966cc6f7efaf24e447eba37019476c539f05",
+    "libexec/gcc/arm-none-eabi/6.4.1/collect2": "495b5dba7e5d4b665da6aafb7353d741ba9b6cdf4e6a1b20cae451ec87e850df",
+    "arm-none-eabi/bin/as": "ce4aa1a00a3df5c7ed7a19842c20220b9d877c969f11d9164933d763d24854c9",
+    "arm-none-eabi/bin/ld": "f912f0de43b29607790f6baab0168167a5dbbecc5894532673b3f9857d5725f9"
+  }
+}

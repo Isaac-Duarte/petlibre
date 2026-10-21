@@ -1,0 +1,17 @@
+name: Contributor checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Prepare Python environment
+        run: |
+          python3 -m venv .venv
+          .venv/bin/python -m pip install -r tools/requirements-probe.txt
+      - name: Check pinned Rust toolchain
+        run: rustup show active-toolchain
+      - name: Run contributor checks without private inputs
+        run: make check PYTHON=.venv/bin/python

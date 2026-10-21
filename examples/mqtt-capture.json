@@ -1,0 +1,24 @@
+[
+  {
+    "_source": {
+      "layers": {
+        "mqtt": {
+          "mqtt.topic": "dl/PLAF103/SYNTHETIC_FEEDER/device/grain/post"
+        },
+        "eth": {
+          "eth.src": "02:00:00:00:00:42"
+        }
+      }
+    }
+  },
+  {
+    "_source": {
+      "layers": {
+        "mqtt": {
+          "mqtt.topic": "dl/PLAF103/SYNTHETIC_FEEDER/device/grain/sub",
+          "mqtt.msg": "7b22636d64223a20224745545f46454544494e475f504c414e5f4556454e54222c2022706c616e73223a205b5d7d"
+        }
+      }
+    }
+  }
+]

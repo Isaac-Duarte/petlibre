@@ -1,0 +1,31 @@
+# Experimental recovery reference
+
+The retained conservative UART writers are deliberately pinned to the tested research-unit baseline and one reviewed diagnostic image. They are **not general PLAF103 installers**. A new backup or a freshly compiled diagnostic will normally fail their exact hash checks. Wellfed does not include those private binary inputs.
+
+## Established and unresolved behavior
+
+Physical research demonstrated independent loader entry, bounded body-sector write-back, marker activation with preservation checks, execution of a small stock-image Rust probe, and installation/boot of the UART-only synthetic diagnostic. The later source update records exact stock restoration and subsequent normal stock 1.1.15 boot, completing that conservative round trip. Full-bank restoration and power-cut recovery remain physically unverified.
+
+Later diagnostics also added artifact-bound startup, physical STOP/off requests, and bounded indicator control while leaving the full feeding backend unopened. This does not validate motor operation, schedules, networking, watchdog timing, or sustained runtime reliability.
+
+## Retained tools and gates
+
+| Tools | Purpose |
+| --- | --- |
+| `uart-flash-read.py`, `flash-status.py`, `audit-flash-backup.py` | Restricted inspection/read transport, protection decoding, and independent backup comparison |
+| `plan-stock-recovery.py`, `recovery-transaction.py`, `uart-stock-recovery.py` | Offline plan and explicit stock-bank transport; ordinary recovery refuses a still-bootable target bank |
+| `prepare-firstboot.py`, `standalone-bank.py`, `uart-standalone.py` | Candidate audit and guarded transition between the exact pinned diagnostic and stock |
+| `inspect-recovery-transaction.py`, wire-policy tools | Journal and transmitted-byte verification |
+| Recovery emulators and fixture tests | Supplied helper/NOR fault scenarios; no hardware operation |
+
+Writers require source-bound plans, current-image evidence, explicit serial identity, immutable inputs, and full preimage verification. Sector writes have durable intent records and exact readback. Activation withholds the first eight marker bytes until staged image and preserved ranges match; the final marker write adds no erase. The standalone transition invalidates the marker sector first and has a fixed 26-sector footprint. Lost ACKs or uncertain writes stop without automatic retry or resume.
+
+Preserve current bytes outside the allowed application region, including unclassified bytes. Do not substitute blanket chip erases, protection clearing, arbitrary images, or disabled checks. Hash equality does not prove physical device identity.
+
+## Using the reference
+
+Read tool help without a device attached. Inspect [fixture requirements](../development/fixtures.md) and the source restrictions before preparing any plan. Historical plans and captures cannot authorize a new bench session. Changing the profile requires a separately reviewed compatibility/recovery design and hardware acceptance, rather than editing a hash until the writer accepts an input.
+
+No contributor check performs serial operations. No SDK build automatically flashes an image or starts the feeding owner.
+
+A separate [UART development updater](../development/uart-development.md) now accepts frozen reviewed source/target images within the tested bank layout. It verifies application regions and guard ranges rather than scanning all flash, and does not relax these conservative writers. Stock return through that newer updater remains untested.

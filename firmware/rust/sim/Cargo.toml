@@ -1,0 +1,20 @@
+[package]
+license = "MIT"
+name = "petlibro-sim"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+description = "Virtual feeder worker: the real owner on the fake SDK with a file-backed journal"
+publish = false
+
+[[bin]]
+name = "virtual-feeder-worker"
+path = "src/main.rs"
+
+[dependencies]
+petlibro-amebad = { path = "../amebad" }
+petlibro-core = { path = "../core" }
+petlibro-testkit = { path = "../testkit" }
+
+[lints]
+workspace = true

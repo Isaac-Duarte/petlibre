@@ -1,0 +1,12 @@
+{
+  "sdk": {
+    "url": "https://github.com/Ameba-AIoT/ameba-rtos-d.git",
+    "revision": "7569200fb8304daa61a9f09ccf439ada38d6de2e"
+  },
+  "toolchain": {
+    "url": "https://github.com/Ameba-AIoT/ameba-toolchain/releases/download/6.4.1/asdk-6.4.1-linux-newlib-build-2773-i686.tar.bz2",
+    "sha256": "eeaef0c05f842bd50166158df166150fecb84b4137141e79427e4d32b45153bc",
+    "directory": "asdk-6.4.1/linux/newlib",
+    "checksum_provenance": "Computed from the official GitHub release download; upstream release API supplies no digest."
+  }
+}

@@ -1,0 +1,47 @@
+# Development setup and checks
+
+Linux is the initial development platform. Ordinary checks require Rust **1.99.1** through rustup, Python **3.10.12 or newer** with venv/pip, GNU Make, and loopback socket access. [rust-toolchain.toml](../../rust-toolchain.toml) pins rustfmt, Clippy, and the three ARM targets. SDK-backed builds have [additional prerequisites](firmware-builds.md).
+
+## Fresh checkout
+
+Run from the repository root:
+
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install -r tools/requirements-probe.txt
+cargo build --locked
+make check PYTHON=.venv/bin/python
+```
+
+Rustup/Cargo and pip download dependencies on initial setup. Check targets do not install packages, fetch SDKs, contact a device, change firewall rules, or start persistent services. Network tests bind loopback sockets with synthetic identities. Environments that prohibit local sockets need permission to run those tests; skipping them is not a passing result.
+
+## Check targets
+
+| Target | Coverage |
+| --- | --- |
+| `check-rust` | Formatting, Clippy with warnings denied, workspace host tests |
+| `check-cross` | SDK-independent KM0/KM4 FFI static libraries and stock-image Rust probe |
+| `check-python` | Curated synthetic transport, backup, journal, configuration/check-runner, and simulator tests |
+| `check-virtual-feeder` | Rust worker plus deterministic feeding, faults, journal cuts, and restart scenarios |
+| `check-docs` | Local Markdown links, curated tool dependencies, and repository portability checks |
+| `check-fixtures` | Explicit optional binary/SDK evidence suite; missing inputs or skips fail |
+| `check` | All contributor checks except optional fixture validation |
+
+`check-cross` checks portable compilation, not SDK-linked hardware ports. Default Python selection excludes explicitly marked evidence tests regardless of whether inputs exist. It rejects unexpected skips. One Rust evidence test is explicitly ignored in the ordinary suite and selected by `check-fixtures`; that ignored test is not passing evidence.
+
+Generated Rust artifacts live in `target/`; the simulator worker and temporary verification outputs can create ignored `private/` subdirectories. No existing backups or evidence are required. Use [.gitignore](../../.gitignore) as the storage boundary, and keep secrets out of the tracked examples.
+
+## Work on a component
+
+```sh
+cargo fmt --all
+make check-rust
+make -C firmware test
+make check-virtual-feeder PYTHON=.venv/bin/python
+```
+
+The simulator connects the real Rust owner/controller/ports to fake SDK inputs and NOR storage. It covers command IDs, sensor faults, blocked outlet, missing feedback, watchdog stalls, and interrupted journal writes. It does not model all electrical behavior. Example scenarios are in [tools/scenarios/virtual-feeder](../../tools/scenarios/virtual-feeder).
+
+The repository is self-contained: SDK/toolchain copies and fixtures resolve locally. Original research documents/tools/history are retained in ignored `private/research-archive/`; see [provenance](provenance.md). Historical evidence paths are records, not instructions to access another checkout.
+
+See [local server](local-server.md), [SDK builds](firmware-builds.md), [optional fixtures](fixtures.md), and [contribution guidance](../../CONTRIBUTING.md).

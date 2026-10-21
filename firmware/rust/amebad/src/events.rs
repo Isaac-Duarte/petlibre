@@ -69,6 +69,8 @@ pub struct Events {
     /// is a pending interrupt coalesced with the next update after a masked
     /// window; a second consecutive one is a frozen clock.
     pub timer_raw_repeat: bool,
+    /// Accepted timer interrupts (SYSTIMER advanced); wraps. Diagnostic only.
+    pub timer_count: u32,
 }
 
 impl Default for Events {
@@ -91,6 +93,7 @@ impl Default for Events {
             owner_seen: false,
             optics_armed: false,
             timer_raw_repeat: false,
+            timer_count: 0,
         }
     }
 }
@@ -559,6 +562,7 @@ unsafe extern "C" fn timer_interrupt(_: *mut c_void) -> u32 {
         return 0;
     };
     events.timer_raw_at = raw;
+    events.timer_count = events.timer_count.wrapping_add(1);
     events.timer_at = value;
     events.timer_seen = true;
     if events.fault != EventsFault::OK {

@@ -32,6 +32,8 @@ pub struct Board {
     pub optics_enabled: bool,
     pub optics_initialized: bool,
     pub flash: *mut FlashCoord,
+    /// Sensor inputs, calibration and ADC initialized by `open`.
+    pub sensors_ready: bool,
 }
 
 impl Default for Board {
@@ -45,6 +47,7 @@ impl Default for Board {
             optics_enabled: false,
             optics_initialized: false,
             flash: ptr::null_mut(),
+            sensors_ready: false,
         }
     }
 }
@@ -105,18 +108,48 @@ impl Board {
         adc_poll_limit: u32,
         now_ms: u32,
     ) -> bool {
-        if deadtime_ms == 0
-            || lease_ms <= deadtime_ms
-            || lease_ms >= 0x8000_0000
-            || adc_poll_limit == 0
-            || adc_poll_limit > 1_000_000
-        {
+        if adc_poll_limit == 0 || adc_poll_limit > 1_000_000 {
             return false;
         }
-        *self = Self {
-            adc_poll_limit,
-            ..Self::default()
+        if !self.open_outputs(deadtime_ms, lease_ms, now_ms) {
+            return false;
+        }
+        self.opened = false;
+        self.adc_poll_limit = adc_poll_limit;
+        for pin in 16..=19 {
+            sdk::gpio_init(pin, false);
+        }
+        let mut efuse = [0u8; 4];
+        for (i, byte) in efuse.iter_mut().enumerate() {
+            match sdk::efuse_read8(0x1d0 + i as u32) {
+                Some(value) => *byte = value,
+                None => {
+                    self.faulted = true;
+                    return false;
+                }
+            }
+        }
+        let Some(calibration) = AdcCalibration::decode(&efuse) else {
+            self.faulted = true;
+            return false;
         };
+        self.calibration = calibration;
+        sdk::pad_disable(33);
+        sdk::pad_disable(34);
+        sdk::adc_init_manual();
+        sdk::adc_cmd(true);
+        self.sensors_ready = true;
+        self.opened = true;
+        true
+    }
+
+    /// Motor STOP and emitters OFF only: no sensor inputs, efuse or ADC, so
+    /// `capture` refuses. For supervision checks with motion disabled.
+    pub fn open_outputs(&mut self, deadtime_ms: u32, lease_ms: u32, now_ms: u32) -> bool {
+        if deadtime_ms == 0 || lease_ms <= deadtime_ms || lease_ms >= 0x8000_0000 {
+            return false;
+        }
+        *self = Self::default();
         if !sdk::gpio_clock_enable().verified() {
             self.faulted = true;
             return false;
@@ -142,28 +175,6 @@ impl Board {
             self.faulted = true;
             return false;
         }
-        for pin in 16..=19 {
-            sdk::gpio_init(pin, false);
-        }
-        let mut efuse = [0u8; 4];
-        for (i, byte) in efuse.iter_mut().enumerate() {
-            match sdk::efuse_read8(0x1d0 + i as u32) {
-                Some(value) => *byte = value,
-                None => {
-                    self.faulted = true;
-                    return false;
-                }
-            }
-        }
-        let Some(calibration) = AdcCalibration::decode(&efuse) else {
-            self.faulted = true;
-            return false;
-        };
-        self.calibration = calibration;
-        sdk::pad_disable(33);
-        sdk::pad_disable(34);
-        sdk::adc_init_manual();
-        sdk::adc_cmd(true);
         self.opened = true;
         true
     }
@@ -302,7 +313,7 @@ impl Board {
     /// Timestamp at acquisition START, so its execution time counts toward age.
     pub fn capture(&mut self, reading: &mut SensorReading) -> bool {
         *reading = SensorReading::default();
-        if !self.opened || self.faulted {
+        if !self.opened || self.faulted || !self.sensors_ready {
             return false;
         }
         let pins = sdk::gpio_port_read(GPIO_PORT_A, SENSOR_MASK);
@@ -329,8 +340,10 @@ impl Board {
         }
         self.trip_now();
         self.optics(false);
-        sdk::adc_sw_trigger(false);
-        sdk::adc_cmd(false);
+        if self.sensors_ready {
+            sdk::adc_sw_trigger(false);
+            sdk::adc_cmd(false);
+        }
         self.opened = false;
     }
 }

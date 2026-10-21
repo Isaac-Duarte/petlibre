@@ -102,6 +102,11 @@ pub struct Hardware {
     pub gpio: GpioRegisters,
     pub timer: TimerRegisters,
     pub watchdog_vendor: u32,
+    pub backup: [u32; 8],
+    pub boot_reason: u32,
+    /// SYSTIMER ticks that pass during each busy-wait iteration.
+    pub spin_ticks: u32,
+    pub spins: u32,
 }
 
 impl Default for Hardware {
@@ -171,6 +176,10 @@ impl Default for Hardware {
             gpio: GpioRegisters::default(),
             timer: TimerRegisters::default(),
             watchdog_vendor: 0,
+            backup: [0; 8],
+            boot_reason: 0,
+            spin_ticks: 33,
+            spins: 0,
         }
     }
 }
@@ -377,6 +386,34 @@ pub mod api {
     const WDG_BIT_CLEAR: u32 = 1 << 24;
     pub const HS_WDTRST_OPT: u32 = 1 << 23;
     pub const LP_WDT_RESET_HS_ALL: u32 = 1 << 15;
+    pub const BACKUP_USER: u32 = 1;
+    pub const BOOT_KM4_WATCHDOG: u32 = 1 << 20;
+    pub const BOOT_KM4_SYSTEM: u32 = 1 << 19;
+
+    pub fn backup_read(index: u32) -> u32 {
+        with(|h| h.backup[index as usize])
+    }
+
+    pub fn backup_write(index: u32, value: u32) {
+        assert!(
+            (1..=5).contains(&index),
+            "REG0, REG6 and REG7 belong to the system"
+        );
+        with(|h| h.backup[index as usize] = value);
+    }
+
+    pub fn boot_reason() -> u32 {
+        with(|h| h.boot_reason)
+    }
+
+    /// Time passes while the caller spins: SYSTIMER, TIM2 and the watchdog advance.
+    pub fn spin_once() {
+        let ticks = with(|h| {
+            h.spins += 1;
+            h.spin_ticks
+        });
+        advance(ticks, true);
+    }
 
     pub fn primask() -> u32 {
         with(|h| h.interrupts)

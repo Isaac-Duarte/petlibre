@@ -24,6 +24,7 @@ READBACK = {1: rb'PLDBG1 pin=(PA0|PA2|PA4|PB22) stage=(request|verify|initialize
             2: rb'PLDBG1 pin=(PA0|PA2|PA4|PB22) stage=(request|verify|initialize) want=([01]) latch=([01]) input=([01]) highs=([0-9]|[1-5][0-9]|6[0-4])/64 directions=([01]) stopped=([01]) pad=([0-9a-f]{8})\r\n'}
 AMACRO = 1 << 28
 SHARE_PAD_HELPER = 0x3ff  # PORB, MBIAS and LDO trim/power, per the stock trace
+SUPERVISION_MARK = b'PLTMR1 open board='
 CLOCK = re.compile(rb'PLCLK1 function_before=([0-9a-f]{8}) clock_before=([0-9a-f]{8}) function_after=([0-9a-f]{8}) clock_after=([0-9a-f]{8}) status=(pass|fail)\r\n')
 
 
@@ -161,7 +162,8 @@ def classify(rx, identity, require_stopped=False):
     return {'outcome': outcome}
 
 
-def verify(capture, manifest_path, image_path, minimum_seconds):
+def load(capture, manifest_path, image_path):
+    """Bind the image to its source-bound manifest and validate a receive-only capture."""
     require = EVIDENCE.require
     manifest = json.loads(manifest_path.read_bytes())
     identity = digest(json.dumps({'profile': manifest['profile'], 'inputs': manifest['inputs']}, sort_keys=True, separators=(',', ':')).encode())
@@ -175,6 +177,15 @@ def verify(capture, manifest_path, image_path, minimum_seconds):
     events = [json.loads(line) for line in (capture / 'serial-events.jsonl').read_text().splitlines()]
     EVIDENCE.analyze(rx, tx, events, metadata)
     require(not tx and metadata.get('mode') == 'observe', 'Receive-only observation required')
+    return manifest, identity, image, metadata, rx, tx, events
+
+
+def startup(rx, manifest, image, identity):
+    """Classify one startup segment under every policy the manifest declares."""
+    require = EVIDENCE.require
+    supervision = manifest.get('startup_supervision_policy')
+    require(supervision in (None, 'fw05-probe-v1'), 'Unknown startup supervision policy')
+    require((supervision == 'fw05-probe-v1') == (SUPERVISION_MARK in image), 'Supervision policy/artifact mismatch')
     policy = manifest.get('startup_output_policy')
     require(policy in (None, 'stop-only'), 'Unknown startup output policy')
     require((policy == 'stop-only') == (b'PLFW1 outputs pa=' in image), 'Output policy/artifact mismatch')
@@ -228,6 +239,12 @@ def verify(capture, manifest_path, image_path, minimum_seconds):
             result.update(power)
         else:
             result.update({k: v for k, v in power.items() if k != 'outcome'})
+    return result
+
+
+def verify(capture, manifest_path, image_path, minimum_seconds):
+    manifest, identity, image, metadata, rx, tx, events = load(capture, manifest_path, image_path)
+    result = startup(rx, manifest, image, identity)
     if result['outcome'] == 'pass':
         at = result.pop('start_offset')
         received = next(e for e in events if e['direction'] == 'rx' and e['offset'] <= at < e['offset'] + e['bytes'])

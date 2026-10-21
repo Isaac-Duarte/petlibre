@@ -128,11 +128,13 @@ fn log_probe(record: Record) {
             volume,
             lights,
             slot,
+            other,
             consistent,
         } => report.record(format_args!(
-            "PLSET1 open status={} generation={generation} volume={volume} lights={} slot={slot} consistent={}\r\n",
+            "PLSET1 open status={} generation={generation} volume={volume} lights={} slot={slot} other={} consistent={}\r\n",
             status.0,
             bit(lights),
+            other.0,
             bit(consistent),
         )),
         Record::Batch {

@@ -3,11 +3,13 @@
 
 The capture is one receive-only recording during which the operator repeatedly cuts
 and restores feeder power while each boot saves settings (up to 300 saves per
-boot). Boots are separated by power cuts, so every startup must report reset flags
+boot under fw15-settings-v1; 1500 back to back under fw15-settings-v2). Boots are separated by power cuts, so every startup must report reset flags
 00000000, and a boot's output may stop anywhere, mid-line included. A passing capture
 holds at least three boots that opened the store consistently, each recovering a
 generation no older than the previous boot's last report and at most 25 newer, with
-at least two boots cut between their open and end records.
+at least two boots cut between their open and end records. Under fw15-settings-v2 each
+open also reports the slot it did not load, which must agree with its status, and at
+least one boot after the first must find that slot unfinished: a cut inside a save.
 """
 import argparse
 import importlib.util
@@ -20,13 +22,14 @@ SPEC = importlib.util.spec_from_file_location('firmware_startup', ROOT / 'tools/
 STARTUP = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(STARTUP)
 EVIDENCE = STARTUP.EVIDENCE
-POLICY = 'fw15-settings-v1'
+POLICIES = {'fw15-settings-v1': 300, 'fw15-settings-v2': 1500}  # policy -> saves per boot; v2 reports the other slot
 TICK_HZ = 32768
 LOADED, EMPTY, RECOVERED = 0, 1, 2  # also 3 CORRUPT, 4 FUTURE, 5 IO, 6 WORN
 OPENED_BOOTS = 3
 CUT_BOOTS = 2
 BATCH = 25
-SAVES = 300  # the end record replaces the batch record at the 300th save
+ERASED, VALID, DIRTY, INVALID = 1, 2, 4, 5  # the other slot's state (0 UNREAD, 3 FUTURE)
+MIDSAVE_BOOTS = 1
 RECOVERY_WINDOW = 25  # up to 24 saves after the last batch plus one interrupted save
 SAVE_TICKS = 26214  # 800 ms: one settings save is an erase, a program and verify reads, each in a lease
 POWER_OFF_SECONDS = 0.5  # a power cut leaves at least this reception gap before the next boot's output
@@ -34,7 +37,7 @@ DEC, HEX8 = rb'(\d{1,20})', rb'([0-9a-f]{8})'
 RECORDS = {  # letter -> fixed record format
     'S': rb'PLSET1 start marker=' + HEX8 + rb' watchdog=(pass|fail) installed=([01])\r\n',
     'O': (rb'PLSET1 open status=' + DEC + rb' generation=' + DEC + rb' volume=' + DEC + rb' lights=([01]) slot=' + DEC
-          + rb' consistent=([01])\r\n'),
+          + rb'(?: other=(\d))? consistent=([01])\r\n'),
     'B': rb'PLSET1 batch saves=' + DEC + rb' generation=' + DEC + rb' ticks_max=' + DEC + rb'\r\n',
     'E': (rb'PLSET1 end saves=' + DEC + rb' generation=' + DEC + rb' leases=' + DEC + rb' frozen=' + DEC + rb' phase=' + DEC
           + rb' fault=' + DEC + rb'\r\n'),
@@ -45,7 +48,7 @@ ANY = re.compile(b'|'.join(b'(?P<%s>%s)' % (k.encode(), v) for k, v in RECORDS.i
 SEQUENCE = re.compile(r'(?:S(?:OB*E?)?)?')
 FAILURES = (b'PLSET1 error', b'PLSET1 skip', b'PLFLS1 error')
 FOREIGN = (b'PLPRK1', b'PLRDS1', b'PLWRS1', b'PLJNL1')
-OPEN_FIELDS = ('status', 'generation', 'volume', 'lights', 'slot', 'consistent')
+OPEN_FIELDS = ('status', 'generation', 'volume', 'lights', 'slot', 'other', 'consistent')
 END_FIELDS = ('saves', 'generation', 'leases', 'frozen', 'phase', 'fault')
 LIMIT = ('UART protocol evidence; host timestamps carry USB latency and receive-chunk granularity. '
          'The power-cut instants are operator-chosen and not measured, and flash retention beyond the capture is not established.')
@@ -63,7 +66,7 @@ def records(segment):
         m = ANY.match(segment, at)
         if m:
             fields = re.fullmatch(RECORDS[m.lastgroup], m[0]).groups()
-            found.append((m.lastgroup, m, fields if m.lastgroup in 'SK' else tuple(int(v) for v in fields)))
+            found.append((m.lastgroup, m, fields if m.lastgroup in 'SK' else tuple(None if v is None else int(v) for v in fields)))
         elif index == len(marks) - 1 and b'\r\n' not in segment[at:]:
             fragment = at
         else:
@@ -88,8 +91,10 @@ def boundaries(starts, chunks):
     return bounds
 
 
-def check_settings(opened, result):
-    """Return the settings outcome for the opened boots: (boot number, parsed records, cut)."""
+def check_settings(opened, result, saves=300, reports_other=False):
+    """Return the settings outcome for the opened boots: (boot number, parsed records, cut).
+
+    The end record replaces the batch record at the last save."""
     if len(opened) < OPENED_BOOTS:
         return 'settings_boots'
     lasts, deltas, ticks, ends = [], [], [], []
@@ -108,32 +113,41 @@ def check_settings(opened, result):
     result['settings_cuts'] = sum(cut for _, _, cut in opened)
     result['boot_ends'] = ends
     for index, ((_, found, _), fields) in enumerate(zip(opened, opens)):
-        status, generation, _, _, _, consistent = fields
+        status, generation, _, _, _, other, consistent = fields
         if found[0][2] != (b'00000000', b'pass', b'1') or consistent != 1 or not (
                 status in (LOADED, RECOVERED) or (index == 0 and status == EMPTY and generation == 0)):
+            return 'settings_open'
+        if (other is not None) != reports_other or (reports_other and other not in {
+                LOADED: (ERASED, VALID), RECOVERED: (DIRTY, INVALID), EMPTY: (ERASED,)}[status]):
             return 'settings_open'
     if any(not 0 <= delta <= RECOVERY_WINDOW for delta in result['settings_recovery_deltas']):
         return 'settings_recovery'
     for (_, found, _), (_, generation, *_) in zip(opened, opens):
         batches = [fields for kind, _, fields in found if kind == 'B']
-        if [b[0] for b in batches] != list(range(BATCH, BATCH * len(batches) + 1, BATCH)) or len(batches) >= SAVES // BATCH:
+        if [b[0] for b in batches] != list(range(BATCH, BATCH * len(batches) + 1, BATCH)) or len(batches) >= saves // BATCH:
             return 'settings_batches'
         if any(b[1] != generation + b[0] or not 0 < b[2] <= SAVE_TICKS for b in batches):
             return 'settings_batches'
     for (_, found, _), (_, generation, *_), end in zip(opened, opens, ends):
         batches = sum(kind == 'B' for kind, _, _ in found)
-        if end and ((end['saves'], end['generation'], end['phase'], end['fault']) != (SAVES, generation + SAVES, 1, 0)
-                    or end['leases'] <= 0 or end['frozen'] != end['leases'] or batches != SAVES // BATCH - 1):
+        if end and ((end['saves'], end['generation'], end['phase'], end['fault']) != (saves, generation + saves, 1, 0)
+                    or end['leases'] <= 0 or end['frozen'] != end['leases'] or batches != saves // BATCH - 1):
             return 'settings_end'
     if result['settings_cuts'] < CUT_BOOTS:
         return 'settings_cuts'
+    if reports_other:
+        # The first open's state predates the capture.
+        result['settings_midsave_cuts'] = sum(o[5] != VALID for o in opens[1:])
+        if result['settings_midsave_cuts'] < MIDSAVE_BOOTS:
+            return 'settings_midsave'
     return 'pass'
 
 
 def verify(capture, manifest_path, image_path):
     require = EVIDENCE.require
     manifest, identity, image, metadata, rx, tx, events = STARTUP.load(capture, manifest_path, image_path)
-    require(manifest.get('startup_flash_handshake_policy') == POLICY, 'Settings policy required')
+    policy = manifest.get('startup_flash_handshake_policy')
+    require(policy in POLICIES, 'Settings policy required')
     require(STARTUP.SETTINGS_MARK in image, 'Settings records absent from artifact')
     chunks = [(e['offset'], e['offset'] + e['bytes'], EVIDENCE.timestamp(e['utc'])) for e in events if e['direction'] == 'rx']
 
@@ -143,7 +157,7 @@ def verify(capture, manifest_path, image_path):
     starts = [m.start() for m in re.finditer(rb'PLFW1 start ', rx)]
     result = {'outcome': 'pass', 'startups': len(starts), 'boot_reset_flags': None, 'boot_opened': None, 'boot_startups': None,
               'boot_opens': None, 'boot_last_generations': None, 'settings_recovery_deltas': None, 'settings_ticks_max': None,
-              'settings_save_ms_max': None, 'settings_cuts': None, 'boot_ends': None}
+              'settings_save_ms_max': None, 'settings_cuts': None, 'settings_midsave_cuts': None, 'boot_ends': None}
     bounds = boundaries(starts, chunks) if starts else None
     parsed = []
     if bounds is not None:
@@ -178,7 +192,7 @@ def verify(capture, manifest_path, image_path):
         cut = number < len(parsed) and found[-1][0] != 'E'
         opened.append((number, found, cut))
     result['boot_startups'] = checks
-    outcome = check_settings(opened, result)
+    outcome = check_settings(opened, result, POLICIES[policy], policy != 'fw15-settings-v1')
     if result['outcome'] == 'pass':
         result['outcome'] = outcome
     return finish(result, identity, image, rx, tx)

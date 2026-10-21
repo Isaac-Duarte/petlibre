@@ -1,5 +1,7 @@
 use petlibre_core::feed_progress::BowlMode;
-use petlibre_core::settings_store::{Settings, SettingsStatus, SettingsStore, WEAR_LIMIT};
+use petlibre_core::settings_store::{
+    Settings, SettingsStatus, SettingsStore, SlotState, WEAR_LIMIT,
+};
 use petlibre_core::storage::{RECORD_BYTES, crc32};
 use petlibre_testkit::journal_flash::{FakeJournalFlash, UNIT};
 
@@ -110,6 +112,15 @@ fn power_cut_at_every_byte_keeps_old_or_new() {
                     "unit {unit} history {history} cut {cut}: {:?}",
                     r.status
                 );
+                // A save cut after its first mutation leaves the slot it was
+                // writing visibly unfinished.
+                if cut > 0 && history > 0 && r.settings == old {
+                    assert_ne!(
+                        r.slots[1 - r.slot as usize],
+                        SlotState::VALID,
+                        "unit {unit} history {history} cut {cut}"
+                    );
+                }
                 // Still writable afterwards.
                 let mut r = r;
                 assert!(r.save(&custom(77)));
@@ -169,6 +180,20 @@ fn torn_newer_slot_falls_back_and_reports_recovered() {
     assert_eq!(
         (r.status, r.settings, r.generation),
         (SettingsStatus::RECOVERED, custom(1), 1)
+    );
+    assert_eq!(r.slots, [SlotState::VALID, SlotState::DIRTY]);
+    // An erase cut short leaves old bits behind the record: invalid.
+    f.bytes[1].fill(u8::MAX);
+    f.bytes[1][200] = 0;
+    assert_eq!(open(&mut f).slots, [SlotState::VALID, SlotState::INVALID]);
+    f.bytes[1].fill(u8::MAX);
+    let r = open(&mut f);
+    assert_eq!(
+        (r.status, r.slots),
+        (
+            SettingsStatus::LOADED,
+            [SlotState::VALID, SlotState::ERASED]
+        )
     );
 }
 

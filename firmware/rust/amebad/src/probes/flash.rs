@@ -8,9 +8,10 @@
 //! NOR for a physical power-cut test. Each boot opens the store and reports
 //! its status, generation and contents; every saved value is derived from its
 //! generation, so a recovered record can be checked for consistency. It then
-//! saves continuously, capped at `STRESS_SAVES` per boot to bound wear, while
+//! saves back to back, capped at `STRESS_SAVES` per boot to bound wear, while
 //! the operator cuts power at random. Every reopen must be consistent and
-//! must hold the last completed save or the one in progress.
+//! must hold the last completed save or the one in progress. Each open also
+//! reports the slot it did not load, so a cut inside a save is visible.
 //!
 //! Arming sets `ATTEMPT_BIT` (survives a watchdog reset, cleared by power
 //! loss); a boot that finds it set skips, so a hook fault resets at most once.
@@ -27,7 +28,7 @@ use petlibre_core::feed_progress::BowlMode;
 use petlibre_core::flash_coord::{
     FlashCoord, FlashFault, FlashParty, FlashPhase, FlashReply, FlashToken,
 };
-use petlibre_core::settings_store::{Settings, SettingsStatus, SettingsStore};
+use petlibre_core::settings_store::{Settings, SettingsStatus, SettingsStore, SlotState};
 use petlibre_core::storage::JournalIo;
 use petlibre_core::tick_clock::TickClock;
 
@@ -50,9 +51,10 @@ pub const ATTEMPT_BIT: u32 = 0x100;
 pub const SETTINGS_BASE: u32 = 2;
 /// Installation binding for the research unit's settings.
 pub const SETTINGS_BINDING: u64 = 0x5046_5731_3502_0001;
-pub const STRESS_SAVES: u32 = 300;
+/// Saves run back to back, so most cuts land inside one.
+pub const STRESS_SAVES: u32 = 1500;
 pub const STRESS_BATCH: u32 = 25;
-pub const SAVE_GAP_MS: u32 = 100;
+pub const SAVE_GAP_MS: u32 = 1;
 /// The research unit's boot log reports flash ID c8 40 17 (GigaDevice, 8 MiB).
 pub const EXPECTED_ID: [u8; 3] = [0xc8, 0x40, 0x17];
 /// Begin and end waits, inside the coordinator's 50 ms park/release limits.
@@ -315,6 +317,8 @@ pub enum Record {
         volume: u8,
         lights: bool,
         slot: u32,
+        /// The slot not loaded: anything but VALID shows a save was cut.
+        other: SlotState,
         consistent: bool,
     },
     /// Every `STRESS_BATCH` completed saves.
@@ -525,6 +529,7 @@ impl Probe {
                 volume: s.volume,
                 lights: s.lights,
                 slot: self.settings.slot,
+                other: self.settings.slots[1 - self.settings.slot as usize],
                 consistent: s == stress_settings(generation),
             };
             let usable = matches!(

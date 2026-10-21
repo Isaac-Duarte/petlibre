@@ -20,6 +20,19 @@ pub const MOTOR_MASK: u32 = (1 << 13) | (1 << 14);
 const SENSOR_MASK: u32 = (1 << 16) | (1 << 17) | (1 << 19);
 const OPTICS: [u32; 2] = [15, 35];
 
+/// Polls per conversion accepted by `open` and `open_sensors`.
+pub const MAX_ADC_POLLS: u32 = 1_000_000;
+
+/// What `Board::open_sensors` did, for diagnostics.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SensorsOpen {
+    /// The LP ADC enable, with the registers before and after.
+    pub clock: sdk::LpClock,
+    /// Efuse calibration bytes 0x1d0..0x1d3, when all four read.
+    pub efuse: Option<[u8; 4]>,
+    pub ok: bool,
+}
+
 /// Keep this object at a fixed address while opened; its gate refers back to it.
 #[repr(C)]
 #[derive(Debug)]
@@ -108,39 +121,55 @@ impl Board {
         adc_poll_limit: u32,
         now_ms: u32,
     ) -> bool {
-        if adc_poll_limit == 0 || adc_poll_limit > 1_000_000 {
+        if adc_poll_limit == 0 || adc_poll_limit > MAX_ADC_POLLS {
             return false;
         }
-        if !self.open_outputs(deadtime_ms, lease_ms, now_ms) {
-            return false;
+        self.open_outputs(deadtime_ms, lease_ms, now_ms) && self.open_sensors(adc_poll_limit).ok
+    }
+
+    /// After `open_outputs`: sensor inputs, the explicit LP ADC clock and
+    /// function enable with readback, efuse calibration and the ADC. A
+    /// failure after the outputs opened faults the board.
+    pub fn open_sensors(&mut self, adc_poll_limit: u32) -> SensorsOpen {
+        let mut result = SensorsOpen::default();
+        if !self.opened
+            || self.sensors_ready
+            || adc_poll_limit == 0
+            || adc_poll_limit > MAX_ADC_POLLS
+        {
+            return result;
         }
         self.opened = false;
         self.adc_poll_limit = adc_poll_limit;
         for pin in 16..=19 {
             sdk::gpio_init(pin, false);
         }
+        result.clock = sdk::adc_clock_enable();
         let mut efuse = [0u8; 4];
         for (i, byte) in efuse.iter_mut().enumerate() {
             match sdk::efuse_read8(0x1d0 + i as u32) {
                 Some(value) => *byte = value,
                 None => {
                     self.faulted = true;
-                    return false;
+                    return result;
                 }
             }
         }
-        let Some(calibration) = AdcCalibration::decode(&efuse) else {
+        result.efuse = Some(efuse);
+        let calibration = AdcCalibration::decode(&efuse);
+        if !result.clock.verified() || calibration.is_none() {
             self.faulted = true;
-            return false;
-        };
-        self.calibration = calibration;
+            return result;
+        }
+        self.calibration = calibration.unwrap_or_default();
         sdk::pad_disable(33);
         sdk::pad_disable(34);
         sdk::adc_init_manual();
         sdk::adc_cmd(true);
         self.sensors_ready = true;
         self.opened = true;
-        true
+        result.ok = true;
+        result
     }
 
     /// Motor STOP and emitters OFF only: no sensor inputs, efuse or ADC, so

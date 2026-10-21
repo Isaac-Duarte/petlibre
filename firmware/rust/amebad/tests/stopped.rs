@@ -4,8 +4,8 @@ use petlibre_amebad::stopped::{self, PA_MASK, PB_MASK};
 
 fn check_preloaded() {
     fake::with(|h| {
-        assert_ne!(h.gpio_function & petlibre_amebad::sdk::GPIO_ENABLE_BIT, 0);
-        assert_ne!(h.gpio_clock & petlibre_amebad::sdk::GPIO_ENABLE_BIT, 0);
+        assert_ne!(h.lp_function & petlibre_amebad::sdk::GPIO_ENABLE_BIT, 0);
+        assert_ne!(h.lp_clock & petlibre_amebad::sdk::GPIO_ENABLE_BIT, 0);
         assert_eq!(h.output[0] & PA_MASK, MOTOR_MASK);
         assert_eq!(h.output[1] & PB_MASK, 0);
         assert_eq!(h.interrupts, 1);
@@ -16,8 +16,8 @@ fn check_preloaded() {
 fn clock_enable_preserves_other_flags_and_blocked_enable_touches_no_gpio() {
     fake::reset_hardware();
     fake::with(|h| {
-        h.gpio_function = 0x41;
-        h.gpio_clock = 0x82;
+        h.lp_function = 0x41;
+        h.lp_clock = 0x82;
         h.interrupts = 1;
     });
     let snapshot = stopped::initialize();
@@ -25,11 +25,8 @@ fn clock_enable_preserves_other_flags_and_blocked_enable_touches_no_gpio() {
     assert_eq!(snapshot.clock.function_before, 0x41);
     assert_eq!(snapshot.clock.clock_before, 0x82);
     fake::with(|h| {
-        assert_eq!(
-            h.gpio_function,
-            0x41 | petlibre_amebad::sdk::GPIO_ENABLE_BIT
-        );
-        assert_eq!(h.gpio_clock, 0x82 | petlibre_amebad::sdk::GPIO_ENABLE_BIT);
+        assert_eq!(h.lp_function, 0x41 | petlibre_amebad::sdk::GPIO_ENABLE_BIT);
+        assert_eq!(h.lp_clock, 0x82 | petlibre_amebad::sdk::GPIO_ENABLE_BIT);
         assert_eq!(h.interrupts, 1);
     });
     fake::reset_hardware();

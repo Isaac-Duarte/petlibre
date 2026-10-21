@@ -5,7 +5,7 @@ use core::ffi::{CStr, c_void};
 use core::ptr;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use super::{FlashMmuEntry, GpioClock, GpioRouting, Irq, Isr, TaskStep};
+use super::{FlashMmuEntry, GpioRouting, Irq, Isr, LpClock, TaskStep};
 
 #[allow(
     non_camel_case_types,
@@ -61,12 +61,18 @@ const _: () = assert!(
         && k::PETLIBRE_GPIO_CLOCK_BIT == super::GPIO_ENABLE_BIT
 );
 
-pub fn gpio_clock_state() -> GpioClock {
+const _: () = assert!(
+    k::PETLIBRE_ADC_FUNC_BIT == super::ADC_ENABLE_BIT
+        && k::PETLIBRE_ADC_CLOCK_BIT == super::ADC_ENABLE_BIT
+);
+
+fn lp_clock_state(bit: u32) -> LpClock {
     let function =
-        unsafe { ptr::read_volatile(reg(k::PETLIBRE_SYSCTRL_LP + k::PETLIBRE_REG_GPIO_FUNC)) };
+        unsafe { ptr::read_volatile(reg(k::PETLIBRE_SYSCTRL_LP + k::PETLIBRE_REG_LP_FUNC)) };
     let clock =
-        unsafe { ptr::read_volatile(reg(k::PETLIBRE_SYSCTRL_LP + k::PETLIBRE_REG_GPIO_CLOCK)) };
-    GpioClock {
+        unsafe { ptr::read_volatile(reg(k::PETLIBRE_SYSCTRL_LP + k::PETLIBRE_REG_LP_CLOCK)) };
+    LpClock {
+        bit,
         function_before: function,
         clock_before: clock,
         function_after: function,
@@ -74,28 +80,40 @@ pub fn gpio_clock_state() -> GpioClock {
     }
 }
 
-pub fn gpio_clock_enable() -> GpioClock {
+pub fn gpio_clock_state() -> LpClock {
+    lp_clock_state(super::GPIO_ENABLE_BIT)
+}
+
+/// The KM4 RCC entry controls HS registers. GPIO and the ADC belong to LP
+/// SYSCTRL; use its SDK register constants directly. Match the LP ROM enable
+/// order: clock first, then function, preserving every other bit (no reset).
+fn lp_clock_enable(bit: u32) -> LpClock {
     let _guard = super::IrqGuard::lock();
-    let before = gpio_clock_state();
-    // The KM4 RCC entry controls HS registers. GPIO belongs to LP SYSCTRL;
-    // use its SDK register constants directly. Match the LP ROM enable order:
-    // clock first, then function, preserving every other bit (no reset).
+    let before = lp_clock_state(bit);
     unsafe {
         ptr::write_volatile(
-            reg(k::PETLIBRE_SYSCTRL_LP + k::PETLIBRE_REG_GPIO_CLOCK),
-            before.clock_before | k::PETLIBRE_GPIO_CLOCK_BIT,
+            reg(k::PETLIBRE_SYSCTRL_LP + k::PETLIBRE_REG_LP_CLOCK),
+            before.clock_before | bit,
         );
         ptr::write_volatile(
-            reg(k::PETLIBRE_SYSCTRL_LP + k::PETLIBRE_REG_GPIO_FUNC),
-            before.function_before | k::PETLIBRE_GPIO_FUNC_BIT,
+            reg(k::PETLIBRE_SYSCTRL_LP + k::PETLIBRE_REG_LP_FUNC),
+            before.function_before | bit,
         );
     }
     cortex_m::asm::dsb();
-    GpioClock {
+    LpClock {
         function_before: before.function_before,
         clock_before: before.clock_before,
-        ..gpio_clock_state()
+        ..lp_clock_state(bit)
     }
+}
+
+pub fn gpio_clock_enable() -> LpClock {
+    lp_clock_enable(super::GPIO_ENABLE_BIT)
+}
+
+pub fn adc_clock_enable() -> LpClock {
+    lp_clock_enable(super::ADC_ENABLE_BIT)
 }
 
 // SAFETY (module-wide): every call below is a bounded SDK/ROM routine or a

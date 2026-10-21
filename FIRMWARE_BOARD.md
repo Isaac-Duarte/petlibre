@@ -5,7 +5,7 @@ This board tracks replacement-firmware integration, dependencies, and acceptance
 ## Current status
 
 - **Done:** FW01–FW06 and FW15, five of them with recorded scope limits (see carried items).
-- **In progress:** none. FW15 closed with storage scope: the journal and settings stores ran on real NOR in the owner-approved region `0x340000–0x350000`, with wear limits enforced. In a back-to-back save run, six of six random operator power cuts landed inside a save, and every reopen recovered consistent settings.
+- **In progress:** FW14. A read-only probe enables the LP ADC clock explicitly (startup had already enabled it) and samples both channels and PA19 once a second on hardware. On adapter power with no batteries, both channels sit just above the calibration offset; batteries and a meter are needed to show the battery channel moves and to scale it.
 - **Critical path to feeding:** FW13/FW14/FW15 → FW30 → FW16 → FW17.
 
 ### Carried items
@@ -22,7 +22,6 @@ Work a Done card deliberately handed to a later card. Close a row only with the 
 | KM0 SDK flash users (DLPS tickless lock path) unmediated; KM0 deny provider | FW06 | FW26 | Unreachable while KM0 holds its wakelock; mediate or deny before KM0 may sleep |
 | Exclusion for SDK flash users not yet exercised (Wi-Fi, OTA, FTL) | FW06 | FW07 | FW06 proved the hooked read, sector erase and page program paths only |
 | Journal reservation before real motion and result after verified stop | FW15 | FW16 | Journal reserve, finish, pending refusal and torn-record recovery passed on NOR with no motion; the owner wiring around real motion belongs to FW16 |
-| ADC clock enable on the minimal KM0 main | FW05 | FW14 | `Board::open` initializes the LP ADC without enabling its clock; the FW05 probe uses `open_outputs` instead |
 
 ## Using the board
 
@@ -60,7 +59,7 @@ Prioritize the UART development loop and build identity, stopped startup, LED di
 | Card | Status | Evidence | Prerequisites | Finish line |
 | --- | --- | --- | --- | --- |
 | **FW13 Food, outlet and feedback inputs** | Ready | — | FW03, FW05, FW06 | Confirm emitter/receiver pairs and blocked/clear polarity. Measure settling, pulse capture and bounded emitter duty. Reject stale/invalid inputs; observe owner stalls with emitters active and motor disabled. |
-| **FW14 Current, battery and external power inputs** | Ready | — | FW03, FW05 | Enable the LP ADC clock explicitly, then verify ADC readiness/calibration, voltage scaling and external-power detection against measurements. Establish sample freshness and report unknown values honestly. Calibrate loaded motor current during FW16/FW19. |
+| **FW14 Current, battery and external power inputs** | In progress | Physical (UART readback, no batteries) | FW03, FW05 | Enable the LP ADC clock explicitly, then verify ADC readiness/calibration, voltage scaling and external-power detection against measurements. Establish sample freshness and report unknown values honestly. Calibrate loaded motor current during FW16/FW19. |
 | **FW15 Durable settings and feeding journal** | **Done (storage scope)** | Physical (UART protocol, NOR power cuts) | FW06 | Establish explicit storage allocation, implement real NOR I/O and schema/version recovery, and bound wear. Persist reservation before motion and result after verified stop. Test interrupted writes and block ambiguous pending feeds after restart. |
 | **FW30 Electrical output verification** | Ready | — | FW03 | Before any intended motion, measure motor driver inputs at STOP, infrared emitter OFF, and startup/reset transients across repeated measured power-ons and resets (multimeter; scope or logic analyzer for transients). Confirm stock-derived polarity electrically. |
 | **FW16 Supervised motor controller and feeding owner** | Planned | — | FW05, FW06, FW13, FW14, FW15, FW30 | Wire the existing owner/controller to real ports. Show owner-lease expiry under a stalled owner with motion disabled, then verify a bounded pulse, direction, feedback and STOP under supervision before a portion test. Exercise cancellation, lease expiry and failed stop; a failed reservation cannot start motion. |
@@ -107,7 +106,7 @@ Prioritize the UART development loop and build identity, stopped startup, LED di
 | FW11 Boot confirmation and failed update recovery | ⬜ Planned |
 | FW12 Automated development loop | ⬜ Planned |
 | FW13 Food, outlet and feedback inputs | 🟢 Ready |
-| FW14 Current, battery and external power inputs | 🟢 Ready |
+| FW14 Current, battery and external power inputs | 🚧 In progress |
 | FW15 Durable settings and feeding journal | ✅ Done (storage scope) |
 | FW16 Supervised motor controller and feeding owner | ⬜ Planned |
 | FW17 Local manual feeding and durable results | ⬜ Planned |

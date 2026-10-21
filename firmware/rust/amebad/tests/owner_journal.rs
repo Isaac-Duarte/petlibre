@@ -5,9 +5,9 @@ mod common;
 use common::owner::*;
 use petlibre_amebad::owner::{OwnerFault, OwnerState, SubmitResult};
 use petlibre_amebad::sdk::fake;
-use petlibre_core::feed_journal::RECORD_BYTES;
 use petlibre_core::feed_progress::Direction;
 use petlibre_core::feed_storage::OwnerOutcome;
+use petlibre_core::storage::RECORD_BYTES;
 use petlibre_testkit::journal_flash::UNIT;
 
 #[test]

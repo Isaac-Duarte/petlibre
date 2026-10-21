@@ -1,7 +1,8 @@
 use petlibre_core::feed_controller::{FeedReason, FeedRequest};
-use petlibre_core::feed_journal::{FeedJournal, JournalConfig, JournalError, RECORD_BYTES};
+use petlibre_core::feed_journal::{FeedJournal, JournalConfig, JournalError};
 use petlibre_core::feed_progress::{BowlMode, Direction};
 use petlibre_core::feed_storage::{OwnerOutcome, OwnerResult};
+use petlibre_core::storage::RECORD_BYTES;
 use petlibre_testkit::journal_flash::{FakeJournalFlash, UNIT};
 
 /// Unit sizes for torn-write/restart coverage: the virtual feeder's 256, a

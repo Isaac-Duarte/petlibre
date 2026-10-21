@@ -17,11 +17,12 @@ use petlibre_amebad::owner::{Owner, OwnerConfig};
 use petlibre_amebad::sdk::fake;
 use petlibre_amebad::watchdog::WatchdogConfig;
 use petlibre_core::feed_controller::{FeedLimits, FeedRequest};
-use petlibre_core::feed_journal::{FeedJournal, JournalConfig, JournalError, JournalIo};
+use petlibre_core::feed_journal::{FeedJournal, JournalConfig, JournalError};
 use petlibre_core::feed_progress::{BowlMode, Direction};
 use petlibre_core::feed_storage::{OwnerRecovery, OwnerResult, OwnerStorage};
 use petlibre_core::flash_coord::{FlashCoord, FlashLimits, FlashReply};
 use petlibre_core::sensor_inputs::SensorLimits;
+use petlibre_core::storage::JournalIo;
 use petlibre_testkit::journal_flash::{FakeJournalFlash, UNIT};
 
 /// Synthetic profile copied from the owner tests; not hardware calibration.

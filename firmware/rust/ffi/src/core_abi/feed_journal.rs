@@ -1,10 +1,9 @@
 //! Exports declared by `feed_journal.h`.
 
-use petlibre_core::feed_journal::{
-    FeedJournal, JournalConfig, JournalError, JournalIo, JournalView,
-};
+use petlibre_core::feed_journal::{FeedJournal, JournalConfig, JournalError, JournalView};
 use petlibre_core::feed_progress::Direction;
 use petlibre_core::feed_storage::OwnerStorage;
+use petlibre_core::storage::JournalIo;
 
 use super::store;
 

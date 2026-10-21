@@ -14,12 +14,11 @@
 
 use core::ffi::c_uint;
 
-use crate::feed_journal::{JournalIo, RECORD_BYTES, crc32};
 use crate::feed_progress::BowlMode;
+use crate::storage::{COMMIT, JournalIo, RECORD_BYTES, crc32, get, put};
 
 pub const VERSION: u16 = 1;
 const MAGIC: [u8; 8] = *b"PLFSET01";
-const COMMIT: [u8; 4] = *b"CMIT";
 /// Generations written before saves are refused: about 50 000 erases per
 /// unit, half a typical NOR part's 100 000-cycle rating.
 pub const WEAR_LIMIT: u64 = 100_000;
@@ -106,20 +105,6 @@ impl Default for SettingsStore {
             writable: false,
         }
     }
-}
-
-fn put(p: &mut [u8], mut value: u64, count: usize) {
-    for byte in &mut p[..count] {
-        *byte = value as u8;
-        value >>= 8;
-    }
-}
-
-fn get(p: &[u8], count: usize) -> u64 {
-    p[..count]
-        .iter()
-        .enumerate()
-        .fold(0, |value, (i, &b)| value | (u64::from(b) << (i * 8)))
 }
 
 /// Programming lays bytes down in order, so a save cut short leaves a prefix

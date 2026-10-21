@@ -8,9 +8,7 @@ use petlibre_core::feed_controller::{
     FeedController, FeedLimits, FeedReason, FeedRequest, FeedSample, FeedStartResult, FeedState,
     MotorCommand,
 };
-use petlibre_core::feed_journal::{
-    FeedJournal, JournalConfig, JournalError, JournalIo, JournalView,
-};
+use petlibre_core::feed_journal::{FeedJournal, JournalConfig, JournalError, JournalView};
 use petlibre_core::feed_progress::{BowlMode, Direction, FeedProgress, ProgressResult};
 use petlibre_core::feed_storage::{OwnerOutcome, OwnerRecovery, OwnerResult, OwnerStorage};
 use petlibre_core::feedback_events::{
@@ -21,6 +19,7 @@ use petlibre_core::flash_coord::{
 };
 use petlibre_core::motor_gate::{MotorGate, MotorGateFault};
 use petlibre_core::sensor_inputs::{SensorFilter, SensorInputs, SensorLimits, SensorReading};
+use petlibre_core::storage::JournalIo;
 use petlibre_core::tick_clock::TickClock;
 
 /// Size and alignment, then `field = offset` pairs.

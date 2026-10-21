@@ -10,7 +10,7 @@ import sdkhooks
 
 EXPECTED = {
     "lp": ("irq_register", "irq_enable", "pmu_acquire_wakelock", "irq_disable",
-           "km4_flash_highspeed_init", "km4_boot_on", "petlibro_shared_pad_power_init",
+           "km4_flash_highspeed_init", "petlibro_shared_pad_power_init", "km4_boot_on",
            "vTaskStartScheduler"),
     "hp": ("irq_register", "irq_enable", "ipc_table_init", "pmu_acquire_wakelock",
            "pre_example_entry", "example_entry", "vTaskStartScheduler"),

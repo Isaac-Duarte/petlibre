@@ -41,6 +41,10 @@ pub struct GpioRouting {
     pub aon: u32,
     pub control_a: u32,
     pub control_b: u32,
+    /// KM4's view of the KM0-owned shared-pad supply control.
+    pub share_pad: u32,
+    /// Raw Port A input word, including non-indicator pads.
+    pub ext_a: u32,
 }
 
 /// Interrupt lines claimed by the ports.

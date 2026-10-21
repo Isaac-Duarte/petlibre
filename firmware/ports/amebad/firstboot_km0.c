@@ -7,21 +7,40 @@
 /* Stock KM0 0x0c000328 and SDK app_audio_pad_enable supply the audio-shared
  * pads even when they are used as GPIO. Keep the SDK's calibrated LDO helper;
  * this does not initialize playback or change feeder output commands.
+ * Stock and the SDK run this after KM4 boot; running it first powers the pads
+ * before KM4 configures them and keeps PLPWR1 from interleaving with KM4 logs.
+ *
+ * SOCPS_AudioLDO(ENABLE) restores a trim saved only by its disable path, so a
+ * cold start leaves the LDO voltage at 0. Apply the trim stock KM4 CODEC_Init
+ * (0x0e029134) and SDK CODEC_Init write: 0x68 on 1.8 V supply, else 0x2A.
+ * The raw Port A input is sampled after each step (read-only) to locate which
+ * one disables PA0-PA7 input readback.
  */
 __attribute__((noinline)) void petlibro_shared_pad_power_init(void)
 {
     u32 function_before = HAL_READ32(SYSTEM_CTRL_BASE_LP, REG_LP_FUNC_EN0);
     u32 pad_before = HAL_READ32(SYSTEM_CTRL_BASE_LP, REG_AUDIO_SHARE_PAD_CTRL);
+    u32 ext_a[4];
+
+    ext_a[0] = GPIOA_BASE->EXT_PORT[0];
 
     HAL_WRITE32(SYSTEM_CTRL_BASE_LP, REG_LP_FUNC_EN0,
                 function_before | BIT_SYS_AMACRO_EN);
     HAL_WRITE32(SYSTEM_CTRL_BASE_LP, REG_AUDIO_SHARE_PAD_CTRL,
                 pad_before | BIT_LSYS_AC_ANA_PORB);
+    ext_a[1] = GPIOA_BASE->EXT_PORT[0];
     SOCPS_AudioLDO(ENABLE);
-    DiagPrintf("PLPWR1 before_func=%08x before_pad=%08x after_func=%08x after_pad=%08x\n",
+    ext_a[2] = GPIOA_BASE->EXT_PORT[0];
+    u32 pad = HAL_READ32(SYSTEM_CTRL_BASE_LP, REG_AUDIO_SHARE_PAD_CTRL);
+    pad &= ~(BIT_LSYS_MASK_AC_LDO_REG << BIT_LSYS_SHIFT_AC_LDO_REG);
+    pad |= (is_power_supply18() ? 0x68U : 0x2AU) << BIT_LSYS_SHIFT_AC_LDO_REG;
+    HAL_WRITE32(SYSTEM_CTRL_BASE_LP, REG_AUDIO_SHARE_PAD_CTRL, pad);
+    ext_a[3] = GPIOA_BASE->EXT_PORT[0];
+    DiagPrintf("PLPWR1 before_func=%08x before_pad=%08x after_func=%08x after_pad=%08x ext_a=%08x,%08x,%08x,%08x\n",
                function_before, pad_before,
                HAL_READ32(SYSTEM_CTRL_BASE_LP, REG_LP_FUNC_EN0),
-               HAL_READ32(SYSTEM_CTRL_BASE_LP, REG_AUDIO_SHARE_PAD_CTRL));
+               HAL_READ32(SYSTEM_CTRL_BASE_LP, REG_AUDIO_SHARE_PAD_CTRL),
+               ext_a[0], ext_a[1], ext_a[2], ext_a[3]);
 }
 
 int main(void)
@@ -31,8 +50,8 @@ int main(void)
     pmu_acquire_wakelock(PMU_OS);
     InterruptDis(UART_LOG_IRQ_LP);
     km4_flash_highspeed_init();
-    km4_boot_on();
     petlibro_shared_pad_power_init();
+    km4_boot_on();
     vTaskStartScheduler();
     for (;;) {}
 }

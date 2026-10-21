@@ -143,6 +143,10 @@ pub fn gpio_routing() -> GpioRouting {
         aon: unsafe { ptr::read_volatile(reg(k::PETLIBRO_SYSCTRL_LP + k::PETLIBRO_REG_AON_PAD)) },
         control_a: unsafe { ptr::read_volatile(ptr::addr_of!((*gpio_a).PORT[0].CTRL)) },
         control_b: unsafe { ptr::read_volatile(ptr::addr_of!((*gpio_b).PORT[0].CTRL)) },
+        share_pad: unsafe {
+            ptr::read_volatile(reg(k::PETLIBRO_SYSCTRL_LP + k::PETLIBRO_REG_SHARE_PAD))
+        },
+        ext_a: gpioa_ext_port(),
     }
 }
 

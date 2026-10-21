@@ -193,7 +193,44 @@ timer-repeat and stopped-output paths; the others have no hardware evidence:
 
 ## Next work and retained decisions
 
-FW14 continues with batteries and a meter (above). Build and freeze each candidate, install through the
+FW14 continues once batteries are available (above). The owner chose **FW07
+(Wi-Fi join and reconnect)** next; no bench work has started. Plan from a static
+survey of the build and the pinned SDK:
+
+- **Today.** Wi-Fi is compiled and linked but garbage-collected: neither our
+  KM4 main nor our `example_entry` calls `wlan_network()`, and KM0 skips
+  `wifi_FW_init_ram()`. The bindings have no Wi-Fi or LwIP functions, and
+  FTL is not compiled.
+- **Hazards to close before the radio runs.**
+  - The SDK's default `FAST_RECONNECT_DATA` (0x105000), `AP_SETTING` and FTL
+    sectors lie inside the application region. Override
+    `CONFIG_EXAMPLE_WLAN_FAST_CONNECT 0` (which also disables fast DHCP), and
+    audit that the image has no flash erase/stream-write callers and a NULL
+    reconnect-write hook.
+  - Never link or call `rtw_efuse_boot_write`. The stock main calls it, and
+    it can program a random MAC into OTP, which is irreversible.
+  - `LwIP_DHCP` falls back to a static 192.168.1.80 after 5 tries. Treat
+    that as a failure. The SDK's own reconnect gives up after 8 tries, so our
+    own bounded loop must own recovery, with no resets or flash writes (unlike
+    stock).
+- **Stages.**
+  - A, offline: our own init task (LwIP, then `wifi_on(STA)`), a small C shim
+    for join and status, the `firstboot.py` call-order audit, the platform
+    options override, and the flash/eFuse link audit.
+  - B, bench: radio on and a scan reporting only whether the configured
+    network is present and its RSSI.
+  - C, bench: join, DHCP and reconnect after the access point goes away and
+    comes back.
+- **Credentials.** Build-time injection from `private/` (`private/hotspot.json`
+  exists) into an ignored generated source, with only a hash in the manifest.
+  Review the SDK's own logs for the SSID.
+- **Open decisions.**
+  - Whether KM4 STA works without KM0 `wifi_FW_init_ram()`. Adding it puts
+    KM0 Wi-Fi power-save code next to our park/peer task.
+  - Hidden flash users that bypass `flash_api` (and so the FW06 hooks).
+  - Driver interrupt load against the owner's supervision timing.
+
+Build and freeze each candidate, install through the
 changed-sector updater after the operator enters loader mode, and capture boots
 receive-only. Start the recorder and confirm it holds the port before the
 operator powers on; a capture that begins mid-boot cannot be audited.

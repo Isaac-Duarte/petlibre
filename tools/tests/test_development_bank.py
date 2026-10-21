@@ -289,6 +289,20 @@ class DevelopmentBankTests(unittest.TestCase):
         self.assertEqual(planned["ordered_sectors"], [])
         self.assertEqual(peer.snapshot()[B.START:B.START + len(stopped["proposed"])], stopped["proposed"])
 
+    def test_interrupted_update_finishes_one_stopped_program(self):
+        stopped = self.operation(fault="lost_second_erase_ack")
+        source, target, snapshot = stopped["source"], stopped["target"], stopped["peer"].snapshot()
+        second = stopped["planned"]["ordered_sectors"][1]["offset"]
+        for frames in (1, 2, 3):
+            with self.subTest(frames=frames):
+                partial = bytearray(snapshot)
+                n = frames * 1024
+                partial[second:second + n] = stopped["staged"][second - B.START:second - B.START + n]
+                report, peer, planned = self.interrupted(bytes(partial), source, target)
+                self.assertEqual(report["status"], "verified_via_supplied_transports")
+                self.assertIn(second, [e["offset"] for e in planned["ordered_sectors"]])
+                self.assertEqual(peer.snapshot()[B.START:B.START + len(stopped["proposed"])], stopped["proposed"])
+
     def test_interrupted_update_refuses_anything_but_source_staged_or_erased(self):
         stopped = self.operation(fault="lost_second_erase_ack")
         source, target, snapshot = stopped["source"], stopped["target"], stopped["peer"].snapshot()
@@ -300,7 +314,18 @@ class DevelopmentBankTests(unittest.TestCase):
         committed[B.START:B.START + len(stopped["proposed"])] = stopped["proposed"]
         unstaged = bytearray(snapshot)
         unstaged[B.START:B.START + B.SECTOR] = b"\xff" * B.SECTOR
-        for name, image, message in (("partial program", partial, "neither source"),
+        torn = bytearray(snapshot)  # Staged frames out of order: not a stopped program.
+        torn[second + 1024:second + 2048] = stopped["staged"][second - B.START + 1024:second - B.START + 2048]
+        unerased = bytearray(snapshot)  # A staged frame over unerased flash.
+        unerased[second:second + B.SECTOR] = b"\x00" * B.SECTOR
+        unerased[second:second + 1024] = stopped["staged"][second - B.START:second - B.START + 1024]
+        third = stopped["planned"]["ordered_sectors"][2]["offset"]
+        twice = bytearray(partial)
+        twice[third:third + B.SECTOR] = b"\xff" * B.SECTOR
+        twice[third:third + 1024] = stopped["staged"][third - B.START:third - B.START + 1024]
+        for name, image, message in (("frames out of order", torn, "neither source"),
+                                     ("program over an unerased sector", unerased, "neither source"),
+                                     ("two partial programs", twice, "More than one"),
                                      ("already committed", committed, "staged marker"),
                                      ("marker sector erased", unstaged, "staged marker"),
                                      ("original source", stopped["before"], "staged marker")):

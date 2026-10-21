@@ -31,6 +31,33 @@ pub fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
     result
 }
 
+/// Write a new private file; refuses to replace an existing one.
+pub fn write_new_json(path: &Path, value: &impl Serialize) -> Result<()> {
+    let mut options = fs::OpenOptions::new();
+    options.create_new(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(path)
+        .with_context(|| format!("create {}", path.display()))?;
+    let result = (|| {
+        serde_json::to_writer_pretty(&mut file, value)?;
+        file.write_all(b"\n")?;
+        file.sync_all()?;
+        if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+            fs::File::open(parent)?.sync_all()?;
+        }
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(path);
+    }
+    result
+}
+
 /// Hold an exclusive process lock beside the ledger for the controller lifetime.
 pub fn lock(path: &Path) -> Result<fs::File> {
     fs::create_dir_all(path.parent().context("lock path needs a parent")?)?;

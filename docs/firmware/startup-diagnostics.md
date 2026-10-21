@@ -63,6 +63,7 @@ A HIGH input mismatch remains a failed observation while permitting only the alr
 | `PLWIF1` | FW07 radio on and scan only: task start, `wifi_on(STA)` result and time, three scans with result, time, count, dropped and stopped readback, one record per kept network (SSID CRC-32, RSSI, channel, security), done or timeout; policy `fw07-scan-v1` |
 | `PLWIF2` | FW07 join and keep: task start, then one record per shim event (radio on, scan, connect, DHCP, link lost, backoff) with sequence, attempt, result, value, RSSI, security, time and stopped readback, or an overrun; policy `fw07-join-v1` |
 | `PLWIF3` | FW07 join, DNS and keep: the `PLWIF2` records plus a `dns` event per lookup (result, resolved IPv4, time); a loss carries its cause (link or DNS); policy `fw07-dns-v1` |
+| `PLMQT1` | FW08 health transport: task start, broker connect attempts, session ready, health publishes with trigger, request outcomes, closes with reason, or a config error; policy `fw08-transport-v1` (see [the transport design](local-transport.md)) |
 | `PLSET1` | FW15 settings store power-cut stress: start marker/watchdog/installed, open status/generation/slot/consistency, a batch every 25 saves with generation and save-time maximum, end with save, lease, frozen, phase and fault counts, or save error/skip; policy `fw15-settings-v1` (300 saves at about 8 per second) or `fw15-settings-v2` (1500 back to back, and the open reports the slot it did not load) |
 
 ## FW05 supervision probe capture
@@ -217,6 +218,10 @@ DHCP-server loss and lease expiry are not exercised; the lease is 1 h. Traffic b
 ### FW07 runtime flash check
 
 A full 8 MiB flash read in loader mode, one boot of this build, then a second full read (physical, UART loader reads). The boot ran for 3 minutes with a hotspot outage (24 s) and a DNS block (41 s), and passed `fw07-dns-v1`. The outage surfaced as a DNS-cause loss before the driver's beacon-loss detection, and backoffs ran 1, 2, 4 and 8 s, then 1 and 2 s. The two reads were byte-identical, so nothing wrote to flash during that boot by any path, whether hooked, ROM or indirect. This covers one boot of a few minutes, not long-running operation or other Wi-Fi events such as lease renewal.
+
+## FW08 transport records
+
+Policy `fw08-transport-v1` is bound both ways to the `PLMQT1 start created=` record format, and requires `fw07-dns-v1`. After the LED probe, KM4 starts a second task beside the Wi-Fi probe; it connects to the local server's broker once DNS works and reports health. The formats, timing and pass criteria are in [the transport design](local-transport.md). `audit-firmware-transport.py --stage b|c` checks a capture against them: grammar and ordering, connect within 15 s of the first good DNS lookup, ready within 10 s of a connect, contiguous publish numbers, period publishes 30 ± 5 s apart, and a publish after each health request. Stage b also needs no close, two period publishes and an answered ping and health request. Stage c needs a close, a reconnect and a refused unsupported request. It does not establish what the server received; that is read from the server's status.
 
 ## Shared-pad prerequisite and current physical findings
 

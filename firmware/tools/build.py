@@ -4,6 +4,7 @@
 import argparse
 from datetime import datetime, timezone
 import hashlib
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -42,6 +43,9 @@ PLATFORM_OPTS = Path("project/realtek_amebaD_va0_example/inc/inc_hp/platform_opt
 # generated SDK header. Only the private file's hash reaches the manifest.
 WIFI_CREDENTIALS = ROOT / "private/hotspot.json"
 WIFI_HEADER = Path("component/common/example/petlibre_wifi_credentials.h")
+# FW08 broker credentials, from `petlibre-local firmware-credential`, the same way.
+TRANSPORT_CREDENTIALS = ROOT / "private/fw-mqtt.json"
+TRANSPORT_HEADER = Path("component/common/example/petlibre_transport_credentials.h")
 MODEL_PROFILES = ("plaf103", "plaf103-firstboot")
 # Cargo target and features for each SDK core project.
 RUST_CORES = {"lp": ("thumbv8m.base-none-eabi", "km0"), "hp": ("thumbv8m.main-none-eabihf", "km4")}
@@ -139,6 +143,33 @@ def wifi_header(raw):
             f"#define PETLIBRE_WIFI_SSID {c_string(ssid)}\n#define PETLIBRE_WIFI_PASSWORD {c_string(password)}\n")
 
 
+def transport_header(raw):
+    """The generated broker settings header; refuses anything the server would not have written."""
+    config = json.loads(raw)
+    fields = ("version", "broker", "port", "device_id", "client_id", "username", "password", "namespace")
+    if not isinstance(config, dict) or set(config) != set(fields) or config["version"] != 1:
+        raise RuntimeError("Transport credentials need exactly the version 1 fields")
+    device = config["device_id"]
+    if not (isinstance(device, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,64}", device)):
+        raise RuntimeError("Transport credentials need a plain device ID")
+    broker = ipaddress.IPv4Address(config["broker"])
+    if broker.is_unspecified or broker.is_multicast or broker == ipaddress.IPv4Address("255.255.255.255"):
+        raise RuntimeError("Transport broker must be a unicast IPv4 address")
+    port = config["port"]
+    if not (type(port) is int and 1 <= port <= 65535):
+        raise RuntimeError("Transport port out of range")
+    if (config["client_id"], config["username"], config["namespace"]) != (
+            f"petlibre-fw-{device}", "petlibre-fw", f"petlibre/1/{device}/"):
+        raise RuntimeError("Transport identity does not match the device ID")
+    password = config["password"]
+    if not (isinstance(password, str) and re.fullmatch(r"[0-9a-f]{32,128}", password)):
+        raise RuntimeError("Transport password must be 32-128 lowercase hex characters")
+    values = {"BROKER": f"0x{int(broker):08x}U", "PORT": f"{port}U",
+              **{key.upper(): c_string(config[key].encode()) for key in ("client_id", "username", "password", "namespace")}}
+    return ("/* Generated from a private file by firmware/tools/build.py; never tracked. */\n"
+            + "".join(f"#define PETLIBRE_MQTT_{key} {value}\n" for key, value in values.items()))
+
+
 def unexpected_sdk_changes(sdk, profile):
     """Return worktree changes outside the wrapper's overrides and known vendor outputs.
 
@@ -151,7 +182,8 @@ def unexpected_sdk_changes(sdk, profile):
     for entry in filter(None, status.split("\0")):
         code, path = entry[:2], entry[3:]
         if code == "??":
-            allowed = path in VENDOR_UNTRACKED or (profile == "plaf103-firstboot" and path == str(WIFI_HEADER))
+            allowed = path in VENDOR_UNTRACKED or (profile == "plaf103-firstboot"
+                                                   and path in (str(WIFI_HEADER), str(TRANSPORT_HEADER)))
         elif code == " M":
             allowed = path in managed or path in VENDOR_REBUILT or (
                 path in VENDOR_MODE_ONLY and os.access(sdk / path, os.X_OK) and
@@ -385,7 +417,7 @@ def source_inputs(profile):
     if profile in MODEL_PROFILES:
         paths += [LAYOUT, AUDITOR, FIRMWARE / "tools/pinmap.py"]
     if profile == "plaf103-firstboot":
-        paths += [FIRMWARE / "tools/firstboot.py", FIRMWARE / "tools/wifiaudit.py", WIFI_CREDENTIALS,
+        paths += [FIRMWARE / "tools/firstboot.py", FIRMWARE / "tools/wifiaudit.py", WIFI_CREDENTIALS, TRANSPORT_CREDENTIALS,
                   *firstboot.sources(FIRMWARE).values()]
     return list(dict.fromkeys(paths))
 
@@ -552,6 +584,9 @@ def prepare(profile, toolchain, expected):
         (sdk / WIFI_HEADER).write_text(wifi_header(WIFI_CREDENTIALS.read_bytes()))
         if digest(WIFI_CREDENTIALS) != expected[WIFI_CREDENTIALS]:
             raise RuntimeError("Wi-Fi credentials changed while staging")
+        (sdk / TRANSPORT_HEADER).write_text(transport_header(TRANSPORT_CREDENTIALS.read_bytes()))
+        if digest(TRANSPORT_CREDENTIALS) != expected[TRANSPORT_CREDENTIALS]:
+            raise RuntimeError("Transport credentials changed while staging")
         for core, source in firstboot.sources(FIRMWARE).items():
             relative = Path("project/realtek_amebaD_va0_example/src") / f"src_{core}" / "main.c"
             shutil.copyfile(source, sdk / relative)
@@ -693,6 +728,7 @@ def build(profile, toolchain):
         "startup_flash_handshake_policy": None,
         "startup_adc_policy": None,
         "startup_wifi_policy": "fw07-dns-v1" if profile == "plaf103-firstboot" else None,
+        "startup_transport_policy": "fw08-transport-v1" if profile == "plaf103-firstboot" else None,
         "toolchain_sha256": LOCK["toolchain"]["sha256"],
         "built_at": datetime.now(timezone.utc).isoformat(),
         "inputs": {str(p.relative_to(ROOT)): checksum for p, checksum in expected.items()},

@@ -18,6 +18,7 @@ pub fn config() -> Config {
         binding_response: None,
         hotspot_interface: "wlan1".to_owned(),
         target_mac: "02:00:00:00:00:42".to_owned(),
+        firmware: None,
     }
 }
 

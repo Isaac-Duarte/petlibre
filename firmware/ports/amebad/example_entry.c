@@ -12,6 +12,10 @@
  * probe drains. The SSID and password come from a generated header built
  * from a private file; neither is ever logged here. Nothing registers fast
  * connect or calls rtw_efuse_boot_write.
+ *
+ * FW08: blocking TCP helpers for the Rust transport client, and the broker
+ * settings from a second generated header. The client and its protocol are
+ * Rust (petlibre-core transport); nothing here parses network data.
  */
 #include "FreeRTOS.h"
 #include "task.h"
@@ -22,6 +26,7 @@
 #include "lwip/sockets.h"
 #include <platform/platform_stdlib.h>
 #include "petlibre_wifi_credentials.h"
+#include "petlibre_transport_credentials.h"
 
 void petlibre_app_start(void);
 
@@ -346,6 +351,109 @@ int petlibre_wifi_event(unsigned int seq, struct petlibre_wifi_event *out)
     }
     taskEXIT_CRITICAL();
     return status;
+}
+
+/* Broker settings; shared with Rust (`sdk::TransportConfig`). */
+struct petlibre_transport_config {
+    unsigned int broker; /* IPv4, host order */
+    unsigned int port;
+    const char *client_id;
+    const char *username;
+    const char *password;
+    unsigned int password_len;
+    const char *namespace_;
+};
+
+void petlibre_transport_config(struct petlibre_transport_config *out)
+{
+    out->broker = PETLIBRE_MQTT_BROKER;
+    out->port = PETLIBRE_MQTT_PORT;
+    out->client_id = PETLIBRE_MQTT_CLIENT_ID;
+    out->username = PETLIBRE_MQTT_USERNAME;
+    out->password = PETLIBRE_MQTT_PASSWORD;
+    out->password_len = sizeof(PETLIBRE_MQTT_PASSWORD) - 1;
+    out->namespace_ = PETLIBRE_MQTT_NAMESPACE;
+}
+
+/* A pending socket error, cleared by reading it. */
+static int petlibre_socket_error(int s)
+{
+    int error = 0;
+    socklen_t size = sizeof(error);
+    if (lwip_getsockopt(s, SOL_SOCKET, SO_ERROR, &error, &size) != 0) {
+        return -1;
+    }
+    return error;
+}
+
+/* Connect within `timeout_ms`: a socket, or -1. */
+int petlibre_tcp_connect(unsigned int ip, unsigned int port, unsigned int timeout_ms)
+{
+    int s = lwip_socket(AF_INET, SOCK_STREAM, 0);
+    if (s < 0) {
+        return -1;
+    }
+    struct sockaddr_in to;
+    memset(&to, 0, sizeof(to));
+    to.sin_family = AF_INET;
+    to.sin_port = lwip_htons((u16_t)port);
+    to.sin_addr.s_addr = lwip_htonl(ip);
+    int flags = lwip_fcntl(s, F_GETFL, 0);
+    lwip_fcntl(s, F_SETFL, flags | O_NONBLOCK);
+    int connected = lwip_connect(s, (struct sockaddr *)&to, sizeof(to)) == 0;
+    if (!connected) {
+        fd_set writable;
+        FD_ZERO(&writable);
+        FD_SET(s, &writable);
+        struct timeval wait = {timeout_ms / 1000, (timeout_ms % 1000) * 1000};
+        connected = lwip_select(s + 1, NULL, &writable, NULL, &wait) == 1 && petlibre_socket_error(s) == 0;
+    }
+    if (!connected) {
+        lwip_close(s);
+        return -1;
+    }
+    lwip_fcntl(s, F_SETFL, flags);
+    int send_timeout = 3000;
+    lwip_setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, &send_timeout, sizeof(send_timeout));
+    return s;
+}
+
+/* Send all of `data`: 0, or -1 on error or a stalled peer. */
+int petlibre_tcp_send(int s, const void *data, unsigned int length)
+{
+    const char *at = data;
+    while (length > 0) {
+        int sent = lwip_send(s, at, length, 0);
+        if (sent <= 0) {
+            return -1;
+        }
+        at += sent;
+        length -= (unsigned int)sent;
+    }
+    return 0;
+}
+
+/* Bytes received, 0 when `timeout_ms` passed with none, -1 when closed. */
+int petlibre_tcp_recv(int s, void *buffer, unsigned int length, unsigned int timeout_ms)
+{
+    int timeout = (int)timeout_ms;
+    lwip_setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    int got = lwip_recv(s, buffer, length, 0);
+    if (got > 0) {
+        return got;
+    }
+    if (got < 0) {
+        int error = petlibre_socket_error(s);
+        if (error == EAGAIN || error == EWOULDBLOCK) {
+            return 0;
+        }
+    }
+    return -1;
+}
+
+void petlibre_tcp_close(int s)
+{
+    lwip_close(s);
 }
 
 void pre_example_entry(void)

@@ -13,8 +13,11 @@
 
 use core::ffi::{CStr, c_void};
 use std::cell::RefCell;
+use std::collections::VecDeque;
 
-use super::{GpioRouting, Irq, Isr, LpClock, TaskStep, WifiEvent, WifiPoll};
+use super::{
+    GpioRouting, Irq, Isr, LpClock, TaskStep, TcpRecv, TransportConfig, WifiEvent, WifiPoll,
+};
 
 const MOTOR_MASK: u32 = (1 << 13) | (1 << 14);
 pub const GPIOA_IRQ: usize = 4;
@@ -35,6 +38,14 @@ pub struct TimerRegisters {
     pub dier: u32,
     pub arr: u32,
     pub sr: u32,
+}
+
+/// One scripted `tcp_recv` result.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TcpRecvScript {
+    Data(Vec<u8>),
+    Timeout,
+    Closed,
 }
 
 #[derive(Clone)]
@@ -61,6 +72,16 @@ pub struct Hardware {
     pub wifi_ring: u32,
     /// Internal channel 10: the chip's own supply measurement.
     pub supply_adc: u16,
+    /// FW08 TCP script: each connect takes the next result (default: refused).
+    pub tcp_connects: VecDeque<Option<i32>>,
+    /// Each receive takes the next item; an empty queue is a timeout.
+    pub tcp_rx: VecDeque<TcpRecvScript>,
+    /// Every send, in order, with its socket.
+    pub tcp_tx: Vec<(i32, Vec<u8>)>,
+    pub tcp_closed: Vec<i32>,
+    pub tcp_send_fails: bool,
+    /// Milliseconds; a timed-out receive advances it by its timeout.
+    pub uptime_ms: u32,
     pub output_hook: Option<fn()>,
     pub gpio_init_hook: Option<fn()>,
     pub blocked_gpio_write: [u32; 2],
@@ -140,6 +161,12 @@ impl Default for Hardware {
             current_adc: 500,
             battery_adc: 2800,
             supply_adc: 3000,
+            tcp_connects: VecDeque::new(),
+            tcp_rx: VecDeque::new(),
+            tcp_tx: Vec::new(),
+            tcp_closed: Vec::new(),
+            tcp_send_fails: false,
+            uptime_ms: 0,
             wifi_started: false,
             wifi_events: Vec::new(),
             wifi_ring: 16,

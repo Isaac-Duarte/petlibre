@@ -42,8 +42,14 @@ pub mod config;
 pub mod events;
 pub mod flash;
 #[cfg(any(not(target_os = "none"), feature = "km4"))]
+pub mod health;
+#[cfg(any(not(target_os = "none"), feature = "km4"))]
+pub mod net_status;
+#[cfg(any(not(target_os = "none"), feature = "km4"))]
 pub mod owner;
 #[cfg(any(not(target_os = "none"), feature = "km4"))]
 pub mod probes;
+#[cfg(any(not(target_os = "none"), feature = "km4"))]
+pub mod transport;
 #[cfg(any(not(target_os = "none"), feature = "km4"))]
 pub mod watchdog;

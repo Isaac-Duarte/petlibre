@@ -67,6 +67,7 @@ impl Probe {
             WifiPoll::Pending => step(POLL_MS, None),
             WifiPoll::Event(event) => {
                 self.next += 1;
+                crate::net_status::observe(&event);
                 let stopped = stopped::observe().verified();
                 // Drain quickly; the ring holds 16.
                 step(1, Some(Record::Event { event, stopped }))

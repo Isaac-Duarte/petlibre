@@ -99,6 +99,8 @@ pub struct Status {
     pub ota_trials: Vec<ota_trial::Record>,
     pub probe_queries: Vec<probe::Record>,
     pub feeds: Vec<FeedRecord>,
+    /// Replacement-firmware health (FW08); null without a firmware role.
+    pub replacement: Option<crate::replacement::Snapshot>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

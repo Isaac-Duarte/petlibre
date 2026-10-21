@@ -5,7 +5,10 @@ use core::ffi::{CStr, c_void};
 use core::ptr;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use super::{FlashMmuEntry, GpioRouting, Irq, Isr, LpClock, TaskStep, WifiEvent, WifiPoll};
+use super::{
+    FlashMmuEntry, GpioRouting, Irq, Isr, LpClock, TaskStep, TcpRecv, TransportConfig, WifiEvent,
+    WifiPoll,
+};
 
 #[allow(
     non_camel_case_types,
@@ -685,6 +688,82 @@ pub fn wifi_event(seq: u32) -> WifiPoll {
         0 => WifiPoll::Pending,
         _ => WifiPoll::Lost,
     }
+}
+
+#[repr(C)]
+struct RawTransportConfig {
+    broker: u32,
+    port: u32,
+    client_id: *const core::ffi::c_char,
+    username: *const core::ffi::c_char,
+    password: *const core::ffi::c_char,
+    password_len: u32,
+    namespace: *const core::ffi::c_char,
+}
+
+unsafe extern "C" {
+    fn petlibre_transport_config(out: *mut RawTransportConfig);
+    fn petlibre_tcp_connect(ip: u32, port: u32, timeout_ms: u32) -> i32;
+    fn petlibre_tcp_send(socket: i32, data: *const u8, length: u32) -> i32;
+    fn petlibre_tcp_recv(socket: i32, buffer: *mut u8, length: u32, timeout_ms: u32) -> i32;
+    fn petlibre_tcp_close(socket: i32);
+}
+
+/// The broker settings compiled into this image; `None` when a string field
+/// is not UTF-8 (the build validates them, so that is a build defect).
+pub fn transport_config() -> Option<TransportConfig> {
+    let mut raw = RawTransportConfig {
+        broker: 0,
+        port: 0,
+        client_id: ptr::null(),
+        username: ptr::null(),
+        password: ptr::null(),
+        password_len: 0,
+        namespace: ptr::null(),
+    };
+    unsafe { petlibre_transport_config(&mut raw) };
+    // SAFETY: the shim returns pointers to NUL-terminated string literals.
+    let text = |p: *const core::ffi::c_char| unsafe { CStr::from_ptr(p) }.to_str().ok();
+    Some(TransportConfig {
+        broker: raw.broker,
+        port: u16::try_from(raw.port).ok()?,
+        client_id: text(raw.client_id)?,
+        username: text(raw.username)?,
+        // SAFETY: a string literal of exactly `password_len` bytes.
+        password: unsafe {
+            core::slice::from_raw_parts(raw.password.cast(), raw.password_len as usize)
+        },
+        namespace: text(raw.namespace)?,
+    })
+}
+
+/// A connected TCP socket, or `None` after `timeout_ms`.
+pub fn tcp_connect(ip: u32, port: u16, timeout_ms: u32) -> Option<i32> {
+    let socket = unsafe { petlibre_tcp_connect(ip, u32::from(port), timeout_ms) };
+    (socket >= 0).then_some(socket)
+}
+
+/// Send all of `data`; false on error or a stalled peer.
+pub fn tcp_send(socket: i32, data: &[u8]) -> bool {
+    unsafe { petlibre_tcp_send(socket, data.as_ptr(), data.len() as u32) == 0 }
+}
+
+pub fn tcp_recv(socket: i32, buffer: &mut [u8], timeout_ms: u32) -> TcpRecv {
+    match unsafe { petlibre_tcp_recv(socket, buffer.as_mut_ptr(), buffer.len() as u32, timeout_ms) }
+    {
+        0 => TcpRecv::Timeout,
+        n if n > 0 => TcpRecv::Data(n as usize),
+        _ => TcpRecv::Closed,
+    }
+}
+
+pub fn tcp_close(socket: i32) {
+    unsafe { petlibre_tcp_close(socket) }
+}
+
+/// Milliseconds since the scheduler started (configTICK_RATE_HZ is 1000).
+pub fn uptime_ms() -> u32 {
+    unsafe { raw::xTaskGetTickCount() }
 }
 
 /// One line, not split by another task's print: from a task, the scheduler

@@ -55,6 +55,7 @@ mod sdk {
         "vTaskSuspendAll",
         "xTaskResumeAll",
         "xTaskGetSchedulerState",
+        "xTaskGetTickCount",
         "BOOT_Reason",
         "BKUP_Read",
         "FLASH_RxCmdXIP",

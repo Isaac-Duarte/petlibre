@@ -1,15 +1,98 @@
 //! KM4 application entry: logs and runs the synthetic diagnostic once.
-//! Stopped-output startup and a bounded indicator probe; the backend stays unopened.
+//! Stopped-output startup and a bounded indicator probe, then the FW05
+//! supervision probe, which opens the board stopped and never drives.
 
+use core::cell::UnsafeCell;
 use core::ffi::c_void;
 use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use crate::startup;
+use crate::supervision_probe::{self, Probe, Record};
 use crate::{leds, sdk, stopped};
 
 static PHASE: AtomicU32 = AtomicU32::new(0);
 static INPUT_MISMATCH: AtomicBool = AtomicBool::new(false);
+static SUPERVISION: AtomicBool = AtomicBool::new(false);
+
+/// Fixed-address probe storage, touched only by the diagnostic task.
+struct ProbeSlot(UnsafeCell<Option<Probe>>);
+// SAFETY: only the single diagnostic task accesses the slot.
+unsafe impl Sync for ProbeSlot {}
+static PROBE: ProbeSlot = ProbeSlot(UnsafeCell::new(None));
+
+fn bit(value: bool) -> u8 {
+    u8::from(value)
+}
+
+fn log_probe(record: Record) {
+    let mut report = startup::Report::new();
+    let line = match record {
+        Record::Skip { reset, marker } => report.record(format_args!(
+            "PLWDG1 skip reset={reset:08x} marker={marker:08x}\r\n"
+        )),
+        Record::Open { board, events } => report.record(format_args!(
+            "PLTMR1 open board={} events={} hz={} period_ms={} status={}\r\n",
+            bit(board),
+            bit(events),
+            supervision_probe::TICKS_PER_SECOND,
+            supervision_probe::EVENTS.timer_period_ms,
+            if board && events { "pass" } else { "fail" },
+        )),
+        Record::Sample(s) | Record::StallBegin(s) | Record::StallEnd(s) => {
+            report.record(format_args!(
+                "PLTMR1 {} raw={:08x} ms={} irqs={} ready={} healthy={} stopped={}\r\n",
+                match record {
+                    Record::Sample(_) => "sample",
+                    Record::StallBegin(_) => "stall_begin",
+                    _ => "stall_end",
+                },
+                s.raw,
+                s.ms,
+                s.irqs,
+                bit(s.ready),
+                bit(s.healthy),
+                bit(s.stopped),
+            ))
+        }
+        Record::Arm { ok, vendor, marker } => report.record(format_args!(
+            "PLWDG1 arm status={} vendor={vendor:08x} count={} divisor={} marker={marker:08x}\r\n",
+            if ok { "pass" } else { "fail" },
+            supervision_probe::WATCHDOG.count_id,
+            supervision_probe::WATCHDOG.divisor,
+        )),
+        Record::Fed {
+            ms,
+            checkpoints,
+            ok,
+        } => report.record(format_args!(
+            "PLWDG1 fed ms={ms} checkpoints={checkpoints} status={}\r\n",
+            if ok { "pass" } else { "fail" },
+        )),
+        Record::WatchdogStall { ms } => {
+            report.record(format_args!("PLWDG1 stall_begin ms={ms}\r\n"))
+        }
+        Record::Stalled { ms, fault, enabled } => report.record(format_args!(
+            "PLWDG1 stalled ms={ms} fault={fault} enabled={}\r\n",
+            bit(enabled)
+        )),
+        Record::NoReset { ms } => report.record(format_args!("PLWDG1 error no_reset ms={ms}\r\n")),
+        Record::ClockError => report.record(format_args!("PLTMR1 error clock\r\n")),
+    };
+    if let Ok(line) = line {
+        sdk::log(line);
+    }
+}
+
+fn probe_step() -> u32 {
+    // SAFETY: only this task touches the slot; the probe never moves once stored.
+    let probe = unsafe { &mut *PROBE.0.get() }.get_or_insert_with(Probe::default);
+    let step = probe.step();
+    if let Some(record) = step.record {
+        log_probe(record);
+    }
+    step.delay_ms
+}
 
 fn log_gpio_routing(stage: &str) {
     let value = sdk::gpio_routing();
@@ -51,6 +134,9 @@ fn abort_led(led: leds::Led, high: bool, stage: &str, value: leds::Readback) {
 }
 
 unsafe extern "C" fn diagnostic_task(_: *mut c_void) -> u32 {
+    if SUPERVISION.load(Ordering::Relaxed) {
+        return probe_step();
+    }
     let phase = PHASE.fetch_add(1, Ordering::Relaxed);
     if phase != 0 {
         let Some(step) = leds::probe_step((phase - 1) / 2) else {
@@ -59,6 +145,8 @@ unsafe extern "C" fn diagnostic_task(_: *mut c_void) -> u32 {
                     sdk::log(c"PLLED1 error finish=input_mismatch low=all\r\n");
                 } else {
                     sdk::log(c"PLLED1 done low=all\r\n");
+                    SUPERVISION.store(true, Ordering::Relaxed);
+                    return 1;
                 }
             } else {
                 sdk::log(c"PLLED1 error finish=unverified\r\n");
@@ -157,7 +245,7 @@ pub extern "C" fn petlibro_app_start() {
         sdk::log(c"PLFW1 error outputs=unverified\r\n");
         return;
     }
-    if !sdk::task_create(c"petlibro", 512, 1, diagnostic_task, ptr::null_mut()) {
+    if !sdk::task_create(c"petlibro", 1024, 1, diagnostic_task, ptr::null_mut()) {
         sdk::log(c"Petlibro: diagnostic task creation failed\r\n");
         sdk::log(c"PLFW1 error task=create\r\n");
     }

@@ -41,4 +41,6 @@ pub mod flash_park;
 #[cfg(any(not(target_os = "none"), feature = "km4"))]
 pub mod owner;
 #[cfg(any(not(target_os = "none"), feature = "km4"))]
+pub mod supervision_probe;
+#[cfg(any(not(target_os = "none"), feature = "km4"))]
 pub mod watchdog;

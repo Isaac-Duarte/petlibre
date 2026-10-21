@@ -67,6 +67,8 @@ mod sdk {
         "vTaskDelete",
         "_rtl_printf",
         "BOOT_Reason",
+        "BKUP_Read",
+        "BKUP_Write",
     ];
     const TYPES: &[&str] = &[
         "GPIO_InitTypeDef",

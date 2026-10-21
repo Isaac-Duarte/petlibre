@@ -32,7 +32,7 @@ The initializer explicitly enables/checks LP GPIO clock/function bits while pres
 
 `PLCLK1` records before/after clock/function words. `PLFW1 outputs` reports PA/PB values and directions before the startup banner. Manifest policies must match record formats in the hashed image. An output mismatch cannot be hidden by a synthetic diagnostic PASS.
 
-FW03 has exact GPIO readback, artifact-bound normal boot, and operator-reported no-motion evidence. Independent voltage/infrared-off measurements, repeated measured resets, and transient checks were deferred to FW27. The inspected CON3 harness carries both motor leads and board power; disconnecting it is not an established way to isolate the motor while retaining board power.
+FW03 has exact GPIO readback, artifact-bound normal boot, and operator-reported no-motion evidence. Independent voltage/infrared-off measurements, repeated measured resets, and transient checks were deferred to FW30 (electrical output verification, required before supervised motion). The inspected CON3 harness carries both motor leads and board power; disconnecting it is not an established way to isolate the motor while retaining board power.
 
 ## Bounded indicator probe
 
@@ -54,6 +54,27 @@ A HIGH input mismatch remains a failed observation while permitting only the alr
 | `PLIO1` | Read-only pad-group/AON/GPIO routing observations; `read-only-v2` adds KM4's view of the shared-pad supply control and the raw Port A input word |
 | `PLDBG1` | Requested level, latch, input, directions, stopped state, pad control; `bounded-probe-v2` adds `highs=N/64` extra input samples |
 | `PLLED1` | Bounded sequence begin, individual results, terminal LOW/failure |
+
+## FW05 supervision probe capture
+
+Policy `fw05-probe-v1` binds `PLTMR1`/`PLWDG1` records in the image; the startup auditor refuses a mismatch either way and still treats a two-boot capture as `repeated_startup`. After the LED probe, a cold boot opens the stopped board and TIM2, logs 13 `PLTMR1 sample` snapshots (SYSTIMER raw, supervision ms, accepted TIM2 interrupts, ready/healthy/stopped), a 2 s busy stall, then arms the watchdog (`PLWDG1 arm`), feeds it for 15 s (`fed`), and withholds progress (`stall_begin`, `stalled`) until one watchdog reset. The following boot repeats startup and the LED probe, then prints only `PLWDG1 skip`.
+
+Motion stays disabled. The probe opens only the board's outputs (motor STOP, emitters OFF); it never configures sensor inputs, reads efuse calibration or touches the LP-domain ADC, whose clock the minimal KM0 main does not enable. No drive or emitter is requested. Before arming, it writes a marker to SDK user backup register 1 and reads it back. Any boot that sees a nonzero marker or boot reason clears the marker and skips the probe, so a reset cannot repeat the watchdog test until power is removed. Whether the marker survives the platform reset, and which boot-reason bits the reset sets, are bench observations. If both were lost, the board would repeat the probe on each boot, roughly every 100 s, until power is removed. The UART loader remains available at power-on. Clock values are nominal: SYSTIMER and TIM2 at 32 768 Hz (SDK: 31 µs ticks) and a watchdog of 4095 × 32 counts at about 33.3 kHz (`WDG_Scalar`), bounded to 2.9–5.3 s by 25–45 kHz limits. The capture measures them.
+
+`audit-firmware-supervision.py` takes the same `--capture/--manifest/--image/--output` arguments as the startup auditor. It splits the capture at the second `PLFW1 start`, runs every declared startup policy on both boots, checks ms/irq consistency against SYSTIMER ticks, the stall, the watchdog vendor word and marker, and the 2.5–7 s reset interval, and estimates SYSTIMER and watchdog clock rates from host receive times. Failures have distinct outcomes (`wrong_boot_count`, `boot1_*`/`boot2_*`, `supervision_sequence`, `timer_clock`, `timer_open`, `timer_samples`, `timer_consistency`, `systimer_rate`, `stall_failed`, `watchdog_arm`, `watchdog_feed`, `watchdog_stall`, `watchdog_no_reset`, `reset_timing`, `boot2_skip`). Host timestamps carry USB latency; the estimates are UART timing evidence and do not establish electrical outputs or the physical reset cause.
+
+### FW05 bench result
+
+One physical receive-only capture of a cold boot passed the supervision auditor, and the operator saw the LED sequence twice. Both boots passed every startup policy.
+
+- **SYSTIMER:** about 32 752 Hz against host receive times over 60 s. That is −475 ppm from 32 768 Hz, within the host timestamp uncertainty of roughly ±0.1%. It only moved forward.
+- **TIM2:** a 10.015 ms period, against 10.010 ms nominal for 328 ticks.
+- **Stall:** a 2 s busy stall (65 536 ticks) kept TIM2 interrupts running, and supervision stayed ready, healthy and stopped.
+- **Watchdog:** armed with vendor word `5601001f` and fed for 15 s with 60 checkpoints, without a reset. The loop that stopped making progress latched fault 4 (PROGRESS) and never refreshed again.
+- **Reset timing:** the reset followed about 3.0–3.1 s after the last refresh. A `stalled ms=3015` line arrived in the same receive chunk as the next boot's ROM output. That implies an effective watchdog clock near 43 kHz rather than the nominal 33.3 kHz. This is inside the configured 25–45 kHz bounds but close to the upper one, so tighten the clock bounds and counter choice before any production configuration relies on them.
+- **Next boot:** reported boot reason `00100000` (`BIT_BOOT_KM4WDG_RESET_HAPPEN`) and the surviving marker, then skipped the probe. Both reset-loop guards worked on this unit.
+
+Not yet exercised on hardware: owner-lease expiry while a task stalls. The probe never ran owner-side processing, so `owner_ready` was never established. Motion-path stop timing belongs to FW19.
 
 ## Shared-pad prerequisite and current physical findings
 

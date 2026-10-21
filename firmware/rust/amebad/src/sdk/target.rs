@@ -31,6 +31,9 @@ pub const WDG_BIT_RST_MODE: u32 = k::PETLIBRO_WDG_BIT_RST_MODE;
 pub const WDG_BIT_ISR_CLEAR: u32 = k::PETLIBRO_WDG_BIT_ISR_CLEAR;
 pub const HS_WDTRST_OPT: u32 = k::PETLIBRO_BIT_HSYS_PLFM_WDTRST_OPT;
 pub const LP_WDT_RESET_HS_ALL: u32 = k::PETLIBRO_BIT_LSYS_WDT_RESET_HS_ALL;
+pub const BACKUP_USER: u32 = k::PETLIBRO_BKUP_REG1;
+pub const BOOT_KM4_WATCHDOG: u32 = k::PETLIBRO_BOOT_KM4WDG_RESET;
+pub const BOOT_KM4_SYSTEM: u32 = k::PETLIBRO_BOOT_KM4SYS_RESET;
 
 const _: () = assert!(
     k::PETLIBRO_WDG_BASE == 0x4000_2800,
@@ -416,6 +419,25 @@ pub fn wdg_cmd(enabled: bool) {
 
 pub fn wdg_refresh() {
     unsafe { raw::WDG_Refresh() }
+}
+
+/// KM0 backup register; the SDK leaves REG1-REG5 to the user. Expected to
+/// survive a watchdog platform reset but not power loss (to be observed).
+pub fn backup_read(index: u32) -> u32 {
+    unsafe { raw::BKUP_Read(index) }
+}
+
+pub fn backup_write(index: u32, value: u32) {
+    unsafe { raw::BKUP_Write(index, value) }
+}
+
+pub fn boot_reason() -> u32 {
+    unsafe { raw::BOOT_Reason() }
+}
+
+/// One busy-wait iteration with interrupts left as they are.
+pub fn spin_once() {
+    cortex_m::asm::nop();
 }
 
 pub fn hs_platform_para() -> u32 {

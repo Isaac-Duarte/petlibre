@@ -183,3 +183,21 @@ fn infrared_off_checks_the_latch_behind_a_dead_input() {
     assert!(b.optics(false) && b.flash_quiesce());
     b.close();
 }
+
+#[test]
+fn outputs_only_open_leaves_sensors_and_adc_untouched() {
+    fake::reset_hardware();
+    let mut board = Box::<Board>::default();
+    hw(|h| h.efuse_fail = true);
+    assert!(board.open_outputs(3, 10, 0));
+    assert!(board.opened && !board.sensors_ready && !board.faulted);
+    assert_eq!(motor_pins(), MOTOR_MASK);
+    assert!(optics_off());
+    // A failing efuse would refuse a full open: neither it nor the ADC is touched.
+    assert!(!hw(|h| h.adc_enabled));
+    let mut reading = SensorReading::default();
+    assert!(!board.capture(&mut reading) && !reading.gpio_valid && hw(|h| h.polls) == 0);
+    assert!(board.motor_tick(3) && motor_pins() == MOTOR_MASK);
+    board.close();
+    assert!(!board.opened && !hw(|h| h.adc_enabled) && motor_pins() == MOTOR_MASK);
+}

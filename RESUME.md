@@ -7,10 +7,30 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
-**FW04 is Done (output-only scope). FW05 is next.** The operator observed
-Wi-Fi → low food → locked → warning, each blinking twice, then all dark.
-Mapping: PA0 Wi-Fi, PA2 low food, PA4 locked, PB22 warning; HIGH on, LOW off.
-Only the warning's red color is explicitly recorded.
+**FW05 is Done (motion-disabled scope). FW06 is next.** The FW05 supervision probe (OTA
+`279c645c087e8333a58fc51edfe8a02e0bdc3df490ab488bfa7c9ff08b6d5188`, startup
+identity `9e953f1c…e912`) is installed in bank 1. It went on through the
+changed-sector updater: 30 sectors verified. One receive-only capture of a cold
+boot through its deliberate watchdog reset passed `tools/audit-firmware-supervision.py`.
+The motor was never commanded. Results are in
+[startup diagnostics](docs/firmware/startup-diagnostics.md#fw05-bench-result).
+
+- **SYSTIMER:** about 32 752 Hz, within host timing uncertainty of 32 768 Hz.
+- **TIM2:** 10.015 ms.
+- **Stall:** TIM2 interrupts kept running during a 2 s stall.
+- **Watchdog:** fed for 15 s without a reset. The loop that stopped making
+  progress never refreshed, and the reset came about 3.0–3.1 s after the last
+  refresh. That puts the watchdog clock near **43 kHz**, not the 33.3 kHz assumed.
+- **Next boot:** reported `00100000` (KM4 watchdog reset) and the backup marker,
+  then skipped the probe.
+
+FW05 handed three items to later cards: hardware lease expiry under a stall
+(FW16), production watchdog bounds (FW06) and stop timing under motion (FW19).
+The board's carried-items table tracks these. The board was also restructured:
+FW30 (electrical output verification) now gates FW16, FW14 no longer waits on
+FW06, and FW31 (bench automation) is available.
+
+FW04 is Done (output-only scope):
 
 A single artifact-bound boot of the output-only build passed the startup
 auditor (physical capture, receive-only, 152 s observed after startup):
@@ -42,18 +62,18 @@ unchanged. See [startup diagnostics](docs/firmware/startup-diagnostics.md).
 
 ## What is actually installed
 
-The research feeder runs the **output-only build** in bank 1, starting at
-flash offset `0x186000`, installed over the Port A trace build by the
-changed-sector updater (18 sectors verified).
+The research feeder runs the **FW05 supervision probe** in bank 1, starting at
+flash offset `0x186000`. It was installed over the FW04 output-only build
+(OTA `947dc797…0f29`), which remains the previous image.
 
 | Identity | Recorded value |
 | --- | --- |
-| OTA SHA-256 | `947dc797876509d42dfc0c8c1d7e6630525cdd56cc0988684596ef9ea8520f29` |
-| Embedded startup build ID | `5f00cb16bb88d4baaff6145ae4a963b0af087296fe518548751700979151168d` |
+| OTA SHA-256 | `279c645c087e8333a58fc51edfe8a02e0bdc3df490ab488bfa7c9ff08b6d5188` |
+| Embedded startup build ID | `9e953f1ce152233278cc226088a793d423a47920cf0da09e2390aa137f02e912` |
 
-Its frozen review is the source of the next update. New builds change source
-identity; freeze each candidate separately and never rewrite old manifests.
-The updater still checks the actual current application before accepting a plan.
+**Every cold boot of this image deliberately triggers one watchdog reset**, about
+100 s in. Expect two startups per power-on. Its frozen review is the source of
+the next update.
 
 ## Last confirmed physical state
 
@@ -89,10 +109,11 @@ continuing this particular bench session requires the private evidence bundles.
 Their absence does not require inventing a new baseline or weakening writer checks.
 See [fixtures](docs/development/fixtures.md) and [preserved research](docs/development/provenance.md).
 
-## Host-only changes after the installed artifact
+## Review fixes included since FW04
 
-Review fixes landed on top of `c8bb49f` with static/host evidence only; the
-installed artifact predates them and none has hardware evidence:
+These review fixes landed on top of `c8bb49f` with static and host evidence. The
+installed FW05 probe build includes them. The FW05 capture exercised only the
+timer-repeat and stopped-output paths; the others have no hardware evidence:
 
 - Infrared OFF requires LOW output latches as well as LOW inputs, because Port A
   input readback is not trustworthy. PA15/PB3 readback is still unmeasured.
@@ -104,13 +125,13 @@ installed artifact predates them and none has hardware evidence:
 - `Events::close()` turns infrared off; the KM4 panic handler requests STOP
   and infrared off; SysTick checks ignore COUNTFLAG.
 - `build.py` refuses SDK worktree drift outside an allowlist, Rust build
-  overrides, and toolchain file-hash mismatches. Private builds made before
-  this change read as stale; rebuild before fixture evidence counts again.
+  overrides, and toolchain file-hash mismatches. The `plaf103` and
+  `plaf103-firstboot` private builds were rebuilt afterwards.
 
 ## Next work and retained decisions
 
-FW05 (clock, independent stop timer, watchdog) is next; initial stall tests run
-with motion disabled. Build and freeze each candidate, install through the
+FW06 (real flash coordination) is next. It also fixes the production watchdog
+configuration from the FW05 measurement. Build and freeze each candidate, install through the
 changed-sector updater after the operator enters loader mode, and capture boots
 receive-only. Start the recorder and confirm it holds the port before the
 operator powers on; a capture that begins mid-boot cannot be audited.
@@ -126,7 +147,7 @@ Retain the owner's development preferences:
 - OTA can wait because UART iteration is faster now; it remains planned for
   later autonomous development iterations.
 - FW03 electrical voltage, infrared-off, measured-reset and transient checks were
-  deferred to FW27; visible LEDs and software STOP readback do not complete them.
+  deferred to FW30, which now gates supervised motion; visible LEDs and software STOP readback do not complete them.
 
 These are recorded scope decisions, not authorization to operate hardware or
 publish changes. Follow the current user task and repository instructions.

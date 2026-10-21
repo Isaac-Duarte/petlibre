@@ -61,6 +61,7 @@ A HIGH input mismatch remains a failed observation while permitting only the alr
 | `PLJNL1` | FW15 flash journal on NOR: start mode/marker/watchdog/installed, preimage JEDEC ID and blank sectors, per-operation kind/id/result/ticks, recovered view, refused reservation, end with reset, lease, frozen, erase, phase and fault counts, or skip; policy `fw15-journal-v1` |
 | `PLADC1` | FW14 read-only power inputs: explicit LP ADC clock/function enable before and after, efuse calibration with decoded offset/gain, then once-a-second samples of PA16/PA17/PA19, stopped readback and 16 conversions each of ADC channels 4 and 5 (min, max, mean, stock-scaled), or a capture error; policy `fw14-adc-v1`, or `fw14-adc-v2`, which adds internal channel 10 (the chip's supply) to each sample |
 | `PLWIF1` | FW07 radio on and scan only: task start, `wifi_on(STA)` result and time, three scans with result, time, count, dropped and stopped readback, one record per kept network (SSID CRC-32, RSSI, channel, security), done or timeout; policy `fw07-scan-v1` |
+| `PLWIF2` | FW07 join and keep: task start, then one record per shim event (radio on, scan, connect, DHCP, link lost, backoff) with sequence, attempt, result, value, RSSI, security, time and stopped readback, or an overrun; policy `fw07-join-v1` |
 | `PLSET1` | FW15 settings store power-cut stress: start marker/watchdog/installed, open status/generation/slot/consistency, a batch every 25 saves with generation and save-time maximum, end with save, lease, frozen, phase and fault counts, or save error/skip; policy `fw15-settings-v1` (300 saves at about 8 per second) or `fw15-settings-v2` (1500 back to back, and the open reports the slot it did not load) |
 
 ## FW05 supervision probe capture
@@ -173,6 +174,22 @@ KM4 log lines print with the scheduler suspended when called from a task, so ano
 ### FW07 bench result
 
 Two cold boots on adapter power (physical, UART). In both, `wifi_on(STA)` succeeded in 234–236 ms and all three scans completed in 4.0–4.3 s with stopped outputs, hearing 51–63 networks. The driver printed `FW Enable failed` up to three times per boot. The suspected cause is the skipped KM0 `wifi_FW_init_ram()`, which would leave power-save unavailable; that is unconfirmed. In the first boot, that print split the `PLWIF1 start` line, and the auditor rejected the capture (`wifi_sequence`). The second boot, with scheduler-suspended logging and strongest-32 retention, passed. The owner's configured hotspot was not among the networks kept in either boot; whether it was broadcasting was not recorded.
+
+## FW07 join probe
+
+Policy `fw07-join-v1` is bound both ways to the `PLWIF2 start created=` record format and requires the LED probe policy. The KM4 shim in `example_entry.c` runs `LwIP_Init()` and `wifi_on(RTW_MODE_STA)`, then repeats one attempt: scan for the configured SSID (learning its security and RSSI), `wifi_connect`, then `LwIP_DHCP(0, DHCP_START)`. Any DHCP state other than assigned, including the SDK's static 192.168.1.80 fallback, stops DHCP, releases the address and disconnects. A joined link is polled every 500 ms; when it drops, the shim records the loss, stops DHCP and releases the address. Between attempts it waits 1 s, doubling to 30 s, and resets to 1 s after a join. Nothing resets, writes flash or registers the SDK's own reconnect. Events go to a 16-entry numbered ring that the Rust probe drains, printing `PLWIF2 ev seq=<n> kind=<on|scan|connect|dhcp|lost|backoff> attempt=<n> result=<n> value=<hex8> rssi=<dBm> security=<hex8> ms=<n> stopped=<0|1>`, or `PLWIF2 error overrun seq=<n>`.
+
+The SSID and password come from the ignored `private/hotspot.json`, which `build.py` turns into an ignored generated header in the SDK worktree. Only the file's hash reaches the manifest, and our records never print either value. The SDK driver does print the SSID (`set ssid [...]`), so join captures stay private.
+
+`audit-firmware-wifi-join.py` requires one passing startup, events numbered from 1 with stopped outputs and no overrun, and `wifi_on` success. Each attempt must be scan, then connect only if found, DHCP only if connected, a loss only if assigned, then a backoff; only the last attempt may be cut off by the capture end. It also checks the backoff sequence and that an assigned address is neither 0.0.0.0 nor the static fallback. A pass needs a join, a loss after it, and a rejoin after the first loss. The address stays in the private report.
+
+The vendor makefiles track no header dependencies. Objects compiled before the platform options override still linked `restore_wifi_info_to_flash`, which the link audit caught. The build now records the override digest and deletes every KM4 object when it changes.
+
+### FW07 join bench result
+
+One cold boot on adapter power, with the owner's NetworkManager hotspot (physical, UART plus the host's hotspot journal). Startup passed and `wifi_on` took 234 ms. The first attempt found the network at -21 dBm. SAE authentication, association and the 4-way handshake completed, and the hotspot logged the station connected. But dnsmasq logged no DHCP request from the feeder. `LwIP_DHCP` waited 44.6 s until the operator turned the hotspot off. After it came back, the handshake completed again (after one association reject, status 53, on a cached PMKSA), and DHCP again got nothing. The auditor outcome was `wifi_no_join`. The same hotspot leased addresses to this feeder under stock firmware.
+
+The driver printed `fw cmd fifo full` 98 times, as well as `FW Enable failed`. On AmebaD the WLAN firmware runs on KM0, from `lib_wifi_fw.a` through `wifi_FW_init_ram()`: `TaskInit_8721D` and the IPC command task `TaskFW_IPCMD_8721D`. Our KM0 main never starts it, so the driver's firmware commands are never consumed. The vendor KM0 main starts it when `BKUP_Read(0) & BIT_WIFI_ENABLE`, which `app_start` sets from `ps_config.km0_config_wifi_enable`. The static reading is that data frames depend on this firmware while management frames and EAPOL do not. That is unconfirmed until KM0 runs it.
 
 ## Shared-pad prerequisite and current physical findings
 

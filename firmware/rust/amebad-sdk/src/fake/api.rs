@@ -541,15 +541,24 @@ pub fn log(message: &CStr) {
     print!("{}", message.to_string_lossy());
 }
 
-/// Starts once; `Hardware::wifi` is the state the shim would report.
+/// Starts once; tests push `Hardware::wifi_events` as the shim would.
 pub fn wifi_start() -> bool {
     with(|h| {
-        let first = h.wifi.started == 0;
-        h.wifi.started = 1;
+        let first = !h.wifi_started;
+        h.wifi_started = true;
         first
     })
 }
 
-pub fn wifi_snapshot() -> WifiState {
-    with(|h| h.wifi)
+pub fn wifi_event(seq: u32) -> WifiPoll {
+    with(|h| {
+        let recorded = h.wifi_events.len() as u32;
+        if seq == 0 || seq > recorded {
+            WifiPoll::Pending
+        } else if recorded - seq >= h.wifi_ring {
+            WifiPoll::Lost
+        } else {
+            WifiPoll::Event(h.wifi_events[seq as usize - 1])
+        }
+    })
 }

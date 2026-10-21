@@ -125,19 +125,20 @@ Bench lessons from stage C:
 
 ## What is actually installed
 
-The research feeder runs **FW07 Wi-Fi scan review 02** in bank 1, starting at
+The research feeder runs **FW07 Wi-Fi join review 01** in bank 1, starting at
 flash offset `0x186000`. It was installed through the changed-sector updater
-(109 sectors verified).
+(111 sectors verified).
 
 | Identity | Recorded value |
 | --- | --- |
-| OTA SHA-256 | `42f00b3acc26db946a6fc109f574511f63b947aa596a7c66dd58fdf13ecc5ea6` |
-| Embedded startup build ID | `6e833ca1bdf98d12991384747069a59a52a87f737578f77b20c2f88bcde8bc0c` |
+| OTA SHA-256 | `4c4bc5ff18be0f157c7192dfb619f352bd2a5108d263e34966e5b8d65976c869` |
+| Embedded startup build ID | `2e70b1d95c5ba3899eedee70be995881c14506f5653d1110746e43a0769fb760` |
 
-**Every power-on runs the Wi-Fi scan probe**: after the LED sequence it turns
-the radio on (station mode) and runs three scans, logging networks only by SSID
-CRC. It never joins a network, holds no credentials, drives no motor or emitter
-and writes no flash.
+**Every power-on runs the Wi-Fi join probe**: after the LED sequence it turns
+the radio on (station mode) and keeps trying to join the owner's hotspot
+(credentials compiled in from `private/hotspot.json`; the image stays under
+`private/`), with backoff up to 30 s. It drives no motor or emitter and writes no
+flash.
 
 ## Last confirmed physical state
 
@@ -205,10 +206,21 @@ networks kept, and whether it was on was not recorded. KM4 log lines now print
 with the scheduler suspended, because a driver print split one in the first
 capture.
 
-**Next for FW07: stage C**, join, DHCP and reconnect. It needs build-time
-credential injection from `private/hotspot.json` (never tracked; only a hash in
-the manifest). Treat the SDK's static DHCP fallback as failure, and run our own
-bounded reconnect. Confirm first that the hotspot is visible to a scan.
+**FW07 stage C (physical, blocked).** The join build associates with the
+owner's hotspot: SAE, association and the 4-way handshake complete, and it
+rejoins after the hotspot comes back. But no DHCP request ever reaches the
+hotspot's dnsmasq. The driver prints `fw cmd fifo full` and `FW Enable failed`.
+The KM0 WLAN firmware (`lib_wifi_fw.a`, `wifi_FW_init_ram()`) never runs, so
+driver firmware commands are not consumed; the data path most likely needs it
+(static analysis). Details are in docs/firmware/startup-diagnostics.md.
+
+**Next for FW07:** start the KM0 WLAN firmware. The vendor gates it on
+`BKUP_Read(0) & BIT_WIFI_ENABLE`. Review first what its tasks and power-save
+do while KM0 is parked in RAM for an FW06 flash lease. Then rerun the join
+capture. The hotspot is a NetworkManager connection on the bench host
+(`nmcli connection up|down <connection>`, named in `private/hotspot.json`)
+and is off unless the owner starts it. The UART recorder caps a capture at 180 s,
+so schedule the outage inside that.
 
 The FW07 plan from the static survey, written before stage A (stages A and B are
 now done; the "Today" item describes the build before them):

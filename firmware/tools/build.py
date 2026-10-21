@@ -38,6 +38,10 @@ STOCK = PRIVATE / "firmware/PLAF103_OTA_010115.bin"
 RUST = FIRMWARE / "rust"
 ENTRY = FIRMWARE / "ports/amebad/example_entry.c"
 PLATFORM_OPTS = Path("project/realtek_amebaD_va0_example/inc/inc_hp/platform_opts.h")
+# FW07 join credentials: read from an ignored private file into an untracked,
+# generated SDK header. Only the private file's hash reaches the manifest.
+WIFI_CREDENTIALS = ROOT / "private/hotspot.json"
+WIFI_HEADER = Path("component/common/example/petlibre_wifi_credentials.h")
 MODEL_PROFILES = ("plaf103", "plaf103-firstboot")
 # Cargo target and features for each SDK core project.
 RUST_CORES = {"lp": ("thumbv8m.base-none-eabi", "km0"), "hp": ("thumbv8m.main-none-eabihf", "km4")}
@@ -116,6 +120,25 @@ def managed_sdk_paths(profile):
     return paths
 
 
+def c_string(value):
+    """Octal-escape everything but plain printable ASCII; never a trigraph or quote break."""
+    return '"' + "".join(chr(b) if 0x20 <= b < 0x7f and chr(b) not in '"\\?' else f"\\{b:03o}"
+                         for b in value) + '"'
+
+
+def wifi_header(raw):
+    """The generated credentials header; refuses anything but a WPA2-sized PSK."""
+    config = json.loads(raw)
+    ssid, password = (config.get(k) for k in ("ssid", "password"))
+    if not (isinstance(ssid, str) and isinstance(password, str)):
+        raise RuntimeError("Wi-Fi credentials need string ssid and password")
+    ssid, password = ssid.encode(), password.encode()
+    if not 1 <= len(ssid) <= 32 or not 8 <= len(password) <= 63:
+        raise RuntimeError("Wi-Fi credentials need a 1-32 byte SSID and an 8-63 byte passphrase")
+    return ("/* Generated from a private file by firmware/tools/build.py; never tracked. */\n"
+            f"#define PETLIBRE_WIFI_SSID {c_string(ssid)}\n#define PETLIBRE_WIFI_PASSWORD {c_string(password)}\n")
+
+
 def unexpected_sdk_changes(sdk, profile):
     """Return worktree changes outside the wrapper's overrides and known vendor outputs.
 
@@ -128,7 +151,7 @@ def unexpected_sdk_changes(sdk, profile):
     for entry in filter(None, status.split("\0")):
         code, path = entry[:2], entry[3:]
         if code == "??":
-            allowed = path in VENDOR_UNTRACKED
+            allowed = path in VENDOR_UNTRACKED or (profile == "plaf103-firstboot" and path == str(WIFI_HEADER))
         elif code == " M":
             allowed = path in managed or path in VENDOR_REBUILT or (
                 path in VENDOR_MODE_ONLY and os.access(sdk / path, os.X_OK) and
@@ -362,7 +385,8 @@ def source_inputs(profile):
     if profile in MODEL_PROFILES:
         paths += [LAYOUT, AUDITOR, FIRMWARE / "tools/pinmap.py"]
     if profile == "plaf103-firstboot":
-        paths += [FIRMWARE / "tools/firstboot.py", FIRMWARE / "tools/wifiaudit.py", *firstboot.sources(FIRMWARE).values()]
+        paths += [FIRMWARE / "tools/firstboot.py", FIRMWARE / "tools/wifiaudit.py", WIFI_CREDENTIALS,
+                  *firstboot.sources(FIRMWARE).values()]
     return list(dict.fromkeys(paths))
 
 
@@ -517,6 +541,17 @@ def prepare(profile, toolchain, expected):
             raise RuntimeError("Pinned fast-connect option changed")
         (sdk / PLATFORM_OPTS).write_text(original.replace(anchor, anchor.replace("\t1\n", "\t0\n")))
         overrides[str(PLATFORM_OPTS)] = digest(sdk / PLATFORM_OPTS)
+        # The vendor makefiles track no header dependencies, so objects compiled
+        # under other platform options would be linked as they are. Recompile
+        # every KM4 object (all untracked build outputs) when these options change.
+        stamp = sdk.parent / "hp-platform-opts.sha256"
+        if not stamp.is_file() or stamp.read_text().strip() != overrides[str(PLATFORM_OPTS)]:
+            for path in (sdk / PROJECT / "project_hp/asdk").rglob("*.o"):
+                path.unlink()
+            stamp.write_text(overrides[str(PLATFORM_OPTS)] + "\n")
+        (sdk / WIFI_HEADER).write_text(wifi_header(WIFI_CREDENTIALS.read_bytes()))
+        if digest(WIFI_CREDENTIALS) != expected[WIFI_CREDENTIALS]:
+            raise RuntimeError("Wi-Fi credentials changed while staging")
         for core, source in firstboot.sources(FIRMWARE).items():
             relative = Path("project/realtek_amebaD_va0_example/src") / f"src_{core}" / "main.c"
             shutil.copyfile(source, sdk / relative)
@@ -657,7 +692,7 @@ def build(profile, toolchain):
         "startup_gpio_clock_policy": "explicit-enable-v1" if profile != "baseline" else None,
         "startup_flash_handshake_policy": None,
         "startup_adc_policy": None,
-        "startup_wifi_policy": "fw07-scan-v1" if profile == "plaf103-firstboot" else None,
+        "startup_wifi_policy": "fw07-join-v1" if profile == "plaf103-firstboot" else None,
         "toolchain_sha256": LOCK["toolchain"]["sha256"],
         "built_at": datetime.now(timezone.utc).isoformat(),
         "inputs": {str(p.relative_to(ROOT)): checksum for p, checksum in expected.items()},

@@ -1,6 +1,6 @@
 # FW08 local health and control transport (design)
 
-Status: stage A (offline) implemented; stages B and C need the bench. Choices marked **decision** are this design's; changes made while building are noted where they apply.
+Status: stages A (offline) and B (bench) passed; stage C needs the bench. Choices marked **decision** are this design's; changes made while building are noted where they apply.
 
 ## Goal and non-goals
 
@@ -131,12 +131,19 @@ The bench host's firewall needs one more input rule for the broker port from the
 - The structural no-dispense check.
 - The UART auditor for `PLMQT1`.
 
-**B, bench.** One boot on the FW07 bench. Pass criteria:
+**B, bench (passed).** One boot on the FW07 bench. Pass criteria:
 - The feeder connects within 15 s of its first successful DNS check.
 - `/api/status` shows health with the build ID that UART printed.
 - Periodic publishes arrive at 30 s (±5 s).
 - A `ping` and a `health` request round-trip.
 - Nothing resets, and UART shows no credential.
+
+Result (physical, UART plus the server's `/api/status`):
+- The feeder connected 0.1 s after its first good DNS lookup: an 8 ms TCP connect, ready 3 ms later.
+- It published health six times in 3 minutes: on connect, after a request, and four times on the 30 s period.
+- A `ping` and a `health` request sent through the API were answered, with matching IDs.
+- The health the server held had the build ID the UART printed, with outputs stopped and no faults.
+- Nothing closed, and no credential appears in the UART output.
 
 **C, bench recovery.**
 - Restart the server while the feeder runs: the server sees the will or goes stale, then sees a reconnect within 30 s of the broker returning.

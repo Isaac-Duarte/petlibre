@@ -125,22 +125,21 @@ Bench lessons from stage C:
 
 ## What is actually installed
 
-The research feeder runs **FW07 Wi-Fi DNS review 02** in bank 1, starting at
-flash offset `0x186000`. It was installed through the changed-sector updater,
-which stopped on a loader NAK at 56 of 113 sectors; `--interrupted` finished the
-remaining 56 and the marker, all verified.
+The research feeder runs **FW08 transport review 01** in bank 1, starting at
+flash offset `0x186000`. It was installed through the changed-sector updater
+(138 sectors verified).
 
 | Identity | Recorded value |
 | --- | --- |
-| OTA SHA-256 | `ad63df45a0d5185a63faa5585fac2a8d8230f9b443167787b71f2ce4b078b72c` |
-| Embedded startup build ID | `8528d9cb6a9e869c2c53debc4cffc619bfaf6a4b7e548c313d9308fe42bf9472` |
+| OTA SHA-256 | `ec5dedbd71e9d361fc3b4bab818d487c8872f3d779a1424b9f71cc5c6d6bf95c` |
+| Embedded startup build ID | `00133ae12740f7657f203ce4dfb045a51e06a2cfc0d7db67886ae5608bfd4f53` |
 
-**Every power-on runs the Wi-Fi DNS probe**: after the LED sequence it turns
-the radio on (station mode), keeps trying to join the owner's hotspot, and while
-joined checks DNS every 5 s, rejoining after two failures
-(credentials compiled in from `private/hotspot.json`; the image stays under
-`private/`), with backoff up to 30 s. It drives no motor or emitter and writes no
-flash.
+**Every power-on runs the Wi-Fi DNS probe and the FW08 transport**: after the
+LED sequence it joins the owner's hotspot, checks DNS every 5 s, and once DNS
+works it connects to the local server's broker. There it publishes health
+every 30 s and answers `health` and `ping`. Wi-Fi and broker credentials come
+from private files; the image stays under `private/`. It drives no motor or
+emitter and writes no flash.
 
 ## Last confirmed physical state
 
@@ -253,9 +252,16 @@ to FW27.
 section; `private/server.json.before-fw08` is the copy from before. Health and
 the will are not retained, because the broker has retain off.
 
-**Next: FW08 stage B.** The owner adds a firewall input rule for the broker port
-from the hotspot subnet, and restarts `wellfed-local serve`. Then freeze and
-install the build, and capture one boot while watching `/api/status`.
+**FW08 stage B (physical, passed).** The installed image is FW08 transport
+review 01. The owner's firewall now also allows the broker port from the
+hotspot subnet. `wellfed-local serve` runs in the owner's terminal.
+
+**Next: FW08 stage C**, recovery:
+- a server restart, seen as the will or stale health, then a reconnect;
+- a hotspot outage;
+- an unsupported request. The API accepts only `health` and `ping`, so this
+  needs a server-role publish;
+- full-flash A/B reads.
 
 `--interrupted` now also accepts one sector holding the staged target's first
 1–3 program frames followed by erased flash, the state a NAK during programming

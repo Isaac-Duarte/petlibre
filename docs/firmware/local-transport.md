@@ -1,6 +1,6 @@
 # FW08 local health and control transport (design)
 
-Status: stages A (offline) and B (bench) passed; stage C needs the bench. Choices marked **decision** are this design's; changes made while building are noted where they apply.
+Status: Done. Stages A (offline), B and C (bench) passed; the carried items are on the board. Choices marked **decision** are this design's; changes made while building are noted where they apply.
 
 ## Goal and non-goals
 
@@ -148,12 +148,19 @@ Result (physical, UART plus the server's `/api/status`):
 **C, bench recovery.**
 - Restart the server while the feeder runs: the server sees the will or goes stale, then sees a reconnect within 30 s of the broker returning.
 - A hotspot outage: reconnect after Wi-Fi rejoins.
-- An unsupported request: refused and logged.
+- An unsupported request is refused and logged. This is host-tested (driver tests, and the codec against the real broker), because the server's API sends only allowlisted operations and widening it for a test would weaken that guard.
 - Full-flash A/B reads across the boot are identical, as in FW07.
 
-**Done when** A–C pass and the carried items below are on the board.
+Result (physical, UART plus a once-a-second watch of the server's `/api/status`), one boot with a hotspot outage and then a server restart:
+- **Hotspot outage (20 s):** the feeder saw its broker connection close, then reported the Wi-Fi loss. It rejoined 42 s after the close and reconnected to the broker immediately after the rejoin.
+- **Server stop:** the connection closed. Three refused connects followed, 1, 2 and 4 s apart. The feeder reconnected 15 s after the stop, within 5 s of the server returning, and the server showed fresh health.
+- **Integrity:** full 8 MiB flash reads before and after the boot were byte-identical. Nothing reset, and no credential appears in the UART output.
 
-## Carried items (to record when FW08 closes)
+Limit: during the hotspot outage the server kept showing the feeder online for the whole outage. With the hotspot down, the broker gets no close for the feeder's connection; it notices only when the keepalive expires (45 s) or the health goes stale (75 s after the last publish). The feeder reconnected first, so the server never marked it offline. Server-side detection of an access-point outage is therefore bounded by those timeouts, not immediate.
+
+**Done when** A–C pass and the carried items below are on the board (done).
+
+## Carried items (on the board)
 
 - **Plaintext transport and shared Wi-Fi trust**, owned by FW10 and FW17. Either card adds authenticated or encrypted messages before carrying updates or feeding.
 - **Credential provisioning without a rebuild**, owned by FW25.

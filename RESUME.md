@@ -256,12 +256,13 @@ the will are not retained, because the broker has retain off.
 review 01. The owner's firewall now also allows the broker port from the
 hotspot subnet. `wellfed-local serve` runs in the owner's terminal.
 
-**Next: FW08 stage C**, recovery:
-- a server restart, seen as the will or stale health, then a reconnect;
-- a hotspot outage;
-- an unsupported request. The API accepts only `health` and `ping`, so this
-  needs a server-role publish;
-- full-flash A/B reads.
+**FW08 stage C (physical, passed); FW08 is Done (read-only scope).** One boot
+survived a 20 s hotspot outage and a server restart, reconnecting each time.
+Full-flash reads before and after were identical. The server can't see an
+access-point outage faster than the 45 s keepalive or 75 s stale timeout.
+Refusal of unsupported requests is host-tested only.
+
+**Next:** the owner plans FW31 (bench automation).
 
 `--interrupted` now also accepts one sector holding the staged target's first
 1–3 program frames followed by erased flash, the state a NAK during programming

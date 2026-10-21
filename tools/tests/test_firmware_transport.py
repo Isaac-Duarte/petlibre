@@ -122,7 +122,7 @@ class FirmwareTransport(unittest.TestCase):
             with self.subTest(index=index, outcome=outcome):
                 self.assertEqual(self.audit(lines, 'b')['outcome'], outcome)
         self.assertEqual(self.audit(b, 'b', start=b'PLMQT1 start created=0\r\n')['outcome'], 'transport_start')
-        self.assertEqual(self.audit(stage_c()[:-1], 'c')['outcome'], 'transport_incomplete')
+        self.assertEqual(self.audit(stage_c()[:4] + stage_c()[4:5], 'c')['outcome'], 'transport_no_reconnect')
 
     def test_policy_binding_both_ways(self):
         self.manifest['startup_transport_policy'] = None

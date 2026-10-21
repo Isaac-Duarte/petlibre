@@ -28,6 +28,8 @@ The tested setup branched feeder TX through a **4.7 kΩ resistor and normally-op
 
 Manufacturer/SDK analysis associates download selection with active-low **PA7**, the LOGUART TX route; an SDK comment naming PA30 conflicts with that analysis. Physical continuity from the accessible header all the way to PA7 is not established. The observed header/R30/module route includes approximately 100 Ω in circuit. No direct TX-to-ground short is part of the documented setup.
 
+The [relay bench](bench.md) automates this entry: a relay replaces the button and another switches feeder power.
+
 This describes the tested research arrangement, not a universal strap recipe. Establish your board identity, voltage levels, wiring, entry observation, and original backups before considering active operations. A working stock application's console loader does not prove application-independent entry.
 
 ## Backup boundaries

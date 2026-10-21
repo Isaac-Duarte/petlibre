@@ -157,7 +157,7 @@ Policies `fw14-adc-v1` and `fw14-adc-v2` are bound both ways to the `PLADC1 open
 
 One cold boot on adapter power, no batteries, motor stopped (physical, UART): startup had already set the ADC function and clock bits (`001115f7`, `00131557`); the explicit enable read back unchanged. The efuse holds programmed calibration (not the erased defaults). 93 samples arrived 1.02 s apart; each 32-conversion capture took at most 10.1 ms. PA19 read 1 throughout; PA16 and PA17 read 0 with emitters off. Both channels read raw 239–243 (mean 240, scaled 16), barely above the calibration offset: consistent with no battery and no motor current, but it does not yet show that the channel select works, since both channels read the same.
 
-A second boot under `fw14-adc-v2` (same conditions, 95 samples) settled that: channel 10 read raw 3911–3924 while channels 4 and 5 stayed at 239–244. Its stock-scaled value was 3315–3317, which matches a 3.3 V supply if the scaled unit is millivolts at the ADC. That reading of the unit is an inference; a meter on the 3.3 V rail would confirm it. Each 48-conversion capture took at most 15.1 ms.
+A second boot under `fw14-adc-v2` (same conditions, 95 samples) settled that: channel 10 read raw 3911–3924 while channels 4 and 5 stayed at 239–244. Its stock-scaled value was 3315–3317. Channel 10 measures the I/O supply (the SDK's 3.3 V detection reads it), and the feeder's idle UART TX, which sits at that supply, measured about 3.29 V with a meter ([UART notes](../hardware/uart.md)). So the stock scaling gives millivolts, within about 1%, at least for this channel; the external channels' dividers remain unmeasured. Each 48-conversion capture took at most 15.1 ms.
 
 ## Shared-pad prerequisite and current physical findings
 

@@ -7,10 +7,37 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
-**FW06 (real flash coordination) is done (mediated-path scope); the next card is open for choice.**
-FW05 is done (motion-disabled scope) and FW04 is done (output-only scope); their
-results are in [startup diagnostics](docs/firmware/startup-diagnostics.md) and
-the board's carried-items table.
+**FW15 (durable settings and feeding journal) is in Bench check. FW06 is done (mediated-path scope).**
+
+The owner allocated `0x340000–0x350000` (64 KiB) for replacement-firmware storage.
+It is blank in the backup and not referenced by stock 1.1.15, and it lies clear
+of both banks and of the stock settings:
+
+| Sectors | Use |
+| --- | --- |
+| `0x340000`, `0x341000` | Journal slots |
+| `0x342000`, `0x343000` | Settings slots (store not yet written) |
+| Remaining 12 | Reserved |
+
+**Journal on NOR (physical, passed).** The feed journal ran through mediated
+erase/program and mapped reads. One power-on gave three boots:
+
+1. Create the journal; reserve and finish requests 1 and 2 (recorded honestly
+   as CANCELLED before motion; nothing moved); reserve request 3; reset.
+2. Request 3 read back pending and request 4 was refused; a torn record (half
+   a record, no commit) went into the other slot; reset.
+3. The journal reopened past the torn record, still pending and still
+   refusing, then wiped blank.
+
+Every lease froze KM0. Journal writes took 19–25 ms.
+
+**Remaining for FW15:**
+
+- the settings store;
+- a physical power cut during writes (the reset and torn record above were
+  deliberate injections);
+- enforced wear bounds (one sector erase per journal write, about two per
+  feed).
 
 The FW06 plan has five stages, each with a write-free bench check until the last:
 
@@ -62,19 +89,22 @@ Bench lessons from stage C:
 
 ## What is actually installed
 
-The research feeder runs **FW06 write review 01** (stage E) in bank 1, starting at
-flash offset `0x186000`. It was installed through the changed-sector updater
-(20 sectors verified).
+The research feeder runs **FW15 journal review 01** in bank 1, starting at flash
+offset `0x186000`. It was installed through the changed-sector updater (22
+sectors verified).
 
 | Identity | Recorded value |
 | --- | --- |
-| OTA SHA-256 | `2e4aa8c527d3c2d626c280ef812da0b0bbd64ea6c16166aeb7fd110182a914b5` |
-| Embedded startup build ID | `d629387adf8ec23c2f5a6345ab89b7e755cb60ea35b14553a10ce0031770fe8d` |
+| OTA SHA-256 | `f046dc5d3297cdee94886bef1434673e4d7700444f10490754fd933c91acc62d` |
+| Embedded startup build ID | `d08bf75d1b95f028c459ff1d6c2fab3e58ecb1becf312707f09a3101604eb70f` |
 
-**Every power-on re-runs the scratch cycles** on `0x185000` (the blank tail of the
-inactive bank 0) and leaves it blank. The image refuses to write over a
-non-blank sector. Replace this image before long unattended use. It never
-commands motion. Its frozen review is the source of the next update.
+**Every cold power-on runs the three-boot journal test**:
+
+1. It requires the region to be blank, then creates and exercises the journal.
+2. It deliberately resets twice.
+3. It wipes the journal sectors.
+
+It never commands motion. Its frozen review is the source of the next update.
 
 ## Last confirmed physical state
 

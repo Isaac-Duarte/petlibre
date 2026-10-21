@@ -443,41 +443,71 @@ pub fn flash_read_jedec() -> [u8; 3] {
     id
 }
 
-/// The one flash sector the FW06 stage E probe may erase or program: the
-/// last 4 KiB of the inactive bank 0, blank in the research unit's backup.
-/// Owner-approved scratch; nothing takes an address argument.
-pub const SCRATCH_OFFSET: u32 = 0x18_5000;
-pub const SCRATCH_WORDS: u32 = 1024;
-pub const SCRATCH_PAGES: u32 = 16;
+/// Owner-approved replacement-firmware storage (FW15): 16 sectors at
+/// 0x340000-0x350000, blank in the research unit's backup and referenced
+/// nowhere in stock 1.1.15. Clear of bank 0, of a full-size bank 1 (ends no
+/// later than 0x306000) and of the stock settings (0x3e8000). Callers name a
+/// sector index; nothing takes a flash address.
+pub const STORAGE_OFFSET: u32 = 0x34_0000;
+pub const STORAGE_SECTORS: u32 = 16;
+pub const SECTOR_BYTES: u32 = 0x1000;
 
-const _: () = assert!(SCRATCH_OFFSET % 0x1000 == 0 && SCRATCH_OFFSET + 0x1000 <= 0x18_6000);
+const _: () = assert!(
+    STORAGE_OFFSET.is_multiple_of(SECTOR_BYTES)
+        && STORAGE_OFFSET >= 0x30_6000
+        && STORAGE_OFFSET + STORAGE_SECTORS * SECTOR_BYTES <= 0x3e_8000
+);
 const _: () = assert!(k::PETLIBRO_SPI_FLASH_BASE == 0x0800_0000 && k::PETLIBRO_ERASE_SECTOR == 2);
 
-/// Sector erase of the scratch sector through the SDK's RAM `FLASH_EraseXIP`
-/// (hooked lock, erase, cache flush, unlock).
-pub fn scratch_erase() {
-    unsafe { raw::FLASH_EraseXIP(k::PETLIBRO_ERASE_SECTOR, SCRATCH_OFFSET) }
+fn storage_span(sector: u32, offset: u32, len: usize) -> Option<u32> {
+    let end = offset.checked_add(u32::try_from(len).ok()?)?;
+    (sector < STORAGE_SECTORS && end <= SECTOR_BYTES)
+        .then(|| STORAGE_OFFSET + sector * SECTOR_BYTES + offset)
 }
 
-/// Program one 256-byte page of the scratch sector through the SDK's RAM
-/// `FLASH_TxData256BXIP`. Pages outside 0..16 are refused.
-pub fn scratch_program(page: u32, data: &[u8; 256]) -> bool {
-    if page >= SCRATCH_PAGES {
+/// Sector erase through the SDK's RAM `FLASH_EraseXIP` (hooked lock, erase,
+/// cache flush, unlock).
+pub fn storage_erase(sector: u32) -> bool {
+    let Some(address) = storage_span(sector, 0, SECTOR_BYTES as usize) else {
         return false;
-    }
-    let mut buffer = *data;
-    unsafe { raw::FLASH_TxData256BXIP(SCRATCH_OFFSET + page * 256, 256, buffer.as_mut_ptr()) };
+    };
+    unsafe { raw::FLASH_EraseXIP(k::PETLIBRO_ERASE_SECTOR, address) };
     true
 }
 
-/// One word of the scratch sector through the memory-mapped flash window;
-/// the SDK wrappers flush the cache after every erase or program.
-pub fn scratch_read(word: u32) -> u32 {
-    if word >= SCRATCH_WORDS {
-        return 0;
+/// Program through the SDK's RAM `FLASH_TxData256BXIP`, split at 256-byte
+/// pages. Offset and length must be 4-byte aligned and stay in the sector.
+pub fn storage_program(sector: u32, offset: u32, data: &[u8]) -> bool {
+    if storage_span(sector, offset, data.len()).is_none()
+        || !offset.is_multiple_of(4)
+        || !data.len().is_multiple_of(4)
+    {
+        return false;
     }
-    let address = k::PETLIBRO_SPI_FLASH_BASE + SCRATCH_OFFSET + word * 4;
-    unsafe { ptr::read_volatile(address as usize as *const u32) }
+    let mut done = 0;
+    while done < data.len() {
+        let at = offset + done as u32;
+        let chunk = (256 - (at % 256) as usize).min(data.len() - done);
+        let mut page = [0u8; 256];
+        page[..chunk].copy_from_slice(&data[done..done + chunk]);
+        let address = STORAGE_OFFSET + sector * SECTOR_BYTES + at;
+        unsafe { raw::FLASH_TxData256BXIP(address, chunk as u32, page.as_mut_ptr()) };
+        done += chunk;
+    }
+    true
+}
+
+/// Read through the memory-mapped flash window; the SDK wrappers flush the
+/// cache after every erase or program.
+pub fn storage_read(sector: u32, offset: u32, bytes: &mut [u8]) -> bool {
+    let Some(address) = storage_span(sector, offset, bytes.len()) else {
+        return false;
+    };
+    let base = k::PETLIBRO_SPI_FLASH_BASE + address;
+    for (i, byte) in bytes.iter_mut().enumerate() {
+        *byte = unsafe { ptr::read_volatile((base as usize + i) as *const u8) };
+    }
+    true
 }
 
 /// Flash-lock provider fault callback: runs from RAM inside `hook_fail`, so

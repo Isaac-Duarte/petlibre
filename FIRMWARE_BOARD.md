@@ -5,7 +5,7 @@ This board tracks replacement-firmware integration, dependencies, and acceptance
 ## Current status
 
 - **Done:** FW01–FW06 and FW15, five of them with recorded scope limits (see carried items).
-- **In progress:** FW14. A read-only probe enables the LP ADC clock explicitly (startup had already enabled it) and samples once a second on hardware. The chip's internal supply channel reads about 3.3 V (raw 3918) while channels 4 and 5 sit near zero (raw 240), so the channel select works and the stock scaling looks like millivolts. With no batteries yet, the battery channel, the external-power pin PA19 and the divider scaling still need batteries and a meter.
+- **In progress:** FW14. A read-only probe enables the LP ADC clock explicitly (startup had already enabled it) and samples once a second on hardware. The chip's internal supply channel reads about 3.3 V (raw 3918) while channels 4 and 5 sit near zero (raw 240), so the channel select works; the stock scaling gives millivolts, matching the 3.29 V measured on the idle UART TX line. With no batteries yet, the battery channel, the external-power pin PA19 and the divider scaling still need batteries and a meter.
 - **Critical path to feeding:** FW13/FW14/FW15 → FW30 → FW16 → FW17.
 
 ### Carried items

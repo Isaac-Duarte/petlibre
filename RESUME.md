@@ -17,14 +17,15 @@ samples came 1.02 s apart, each 32-conversion capture taking at most 10.1 ms.
 PA19 read 1 throughout. Both ADC channels read raw 239–243, just above the
 calibration offset. That fits no battery and no motor current. A second build
 (`fw14-adc-v2`) also reads internal channel 10, the chip's supply. It read raw
-about 3918 (scaled 3316, which looks like 3.3 V in millivolts) while channels 4
+about 3918 (scaled 3316: millivolts, matching the 3.29 V measured on the idle TX line) while channels 4
 and 5 stayed at 240, so the channel select works.
 
 **Next for FW14:** with batteries in, the battery channel should rise and
 differ from the current channel. Unplugging the adapter with batteries in
 should drop PA19. A meter reading of the pack voltage then scales the channel.
-The owner has a meter but no batteries yet. A meter reading of the 3.3 V rail
-would confirm the millivolt reading of the scaled value.
+The owner has a meter but no batteries yet. The millivolt reading of the
+scaled value is confirmed: channel 10 gave 3316 against the feeder TX idle
+level measured earlier at about 3.29 V.
 
 **Install notes.** Two updates hit loader NAKs, most likely from a partly
 seated UART header (owner's finding). The first stopped after its marker

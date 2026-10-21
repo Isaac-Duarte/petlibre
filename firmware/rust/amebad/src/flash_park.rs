@@ -18,6 +18,9 @@ pub const RELEASED: u32 = 0x504b_0004;
 pub const TIMEOUT: u32 = 0x504b_0081;
 pub const PEER_LOST: u32 = 0x504b_0082;
 pub const CLOCK: u32 = 0x504b_0083;
+/// Boot handshake: KM4 names its authority session; KM0 echoes it with its own.
+pub const HELLO: u32 = 0x504b_0010;
+pub const READY: u32 = 0x504b_0011;
 
 const HALF: u32 = 0x8000_0000;
 pub const KM0_IPC: u32 = 0x4800_6000;
@@ -88,10 +91,12 @@ fn valid(t: &ParkToken) -> bool {
         && (t.lease_lo | t.lease_hi) != 0
 }
 
-/// SysTick CTRL ENABLE/TICKINT/CLKSOURCE. Bit 16 (COUNTFLAG) is excluded: it
-/// stays set after a CTRL=0 write until CTRL is read, so it says nothing about
-/// whether SysTick is disabled.
-pub const SYSTICK_CONTROL_BITS: u32 = 7;
+/// SysTick CTRL ENABLE and TICKINT: clear means SysTick neither counts nor
+/// interrupts. CLKSOURCE (bit 2) is excluded: on the KM4 Cortex-M33 it is
+/// read-only 1 without an external reference clock (physical FW06 capture:
+/// a 0-2 mask refused every park before publishing). COUNTFLAG (bit 16) is
+/// excluded too: it stays set after a CTRL=0 write until CTRL is read.
+pub const SYSTICK_CONTROL_BITS: u32 = 3;
 
 #[inline(always)]
 fn context<M: Mmio>() -> bool {
@@ -381,6 +386,155 @@ pub fn owner_end<M: Mmio>(
     poll_limit: u32,
 ) -> bool {
     owner_exchange::<M>(t, RELEASE, RELEASED, channel, tick_limit, poll_limit)
+}
+
+/// `wait` through the RAM-resident export on target, so the parked loop never
+/// executes from XIP; the generic routine on the host.
+#[inline(always)]
+pub fn ram_wait<M: Mmio>(t: *const ParkToken, tick_limit: u32, poll_limit: u32) -> bool {
+    #[cfg(target_os = "none")]
+    {
+        // SAFETY: the export takes the same arguments; `M` is the hardware here.
+        unsafe { petlibro_amebad_flash_park_wait(t, tick_limit, poll_limit) }
+    }
+    #[cfg(not(target_os = "none"))]
+    {
+        wait::<M>(t, tick_limit, poll_limit)
+    }
+}
+
+/// `owner_begin` through the RAM-resident export on target.
+#[inline(always)]
+pub fn ram_owner_begin<M: Mmio>(t: *const ParkToken, channel: u32, ticks: u32, polls: u32) -> bool {
+    #[cfg(target_os = "none")]
+    {
+        // SAFETY: as for `ram_wait`.
+        unsafe { petlibro_amebad_flash_owner_begin(t, channel, ticks, polls) }
+    }
+    #[cfg(not(target_os = "none"))]
+    {
+        owner_begin::<M>(t, channel, ticks, polls)
+    }
+}
+
+/// `owner_end` through the RAM-resident export on target.
+#[inline(always)]
+pub fn ram_owner_end<M: Mmio>(t: *const ParkToken, channel: u32, ticks: u32, polls: u32) -> bool {
+    #[cfg(target_os = "none")]
+    {
+        // SAFETY: as for `ram_wait`.
+        unsafe { petlibro_amebad_flash_owner_end(t, channel, ticks, polls) }
+    }
+    #[cfg(not(target_os = "none"))]
+    {
+        owner_end::<M>(t, channel, ticks, polls)
+    }
+}
+
+/// Nonzero per-boot session: a boot count (kept by the caller in a backup
+/// register, which survives a single-core reset) above a SYSTIMER sample
+/// mixed with a core tag. Distinct per core; two cold boots may repeat one,
+/// which is harmless because a cold boot clears both cores' IPC words.
+pub const fn session(boot_count: u32, ticks: u32, km0: bool) -> u64 {
+    let tag = if km0 { 0x4b30_0000 } else { 0x4b34_0000 };
+    ((boot_count as u64) << 32) | ((ticks ^ tag) | 1) as u64
+}
+
+#[inline(always)]
+fn handshake(authority: u64, peer: u64) -> ParkToken {
+    ParkToken {
+        authority_lo: authority as u32,
+        authority_hi: (authority >> 32) as u32,
+        peer_lo: peer as u32,
+        peer_hi: (peer >> 32) as u32,
+        lease_lo: 0,
+        lease_hi: 0,
+    }
+}
+
+/// Stable peer publication: command and payload unchanged across one read.
+pub fn peer_words<M: Mmio>() -> Option<(u32, u64, u64, u64)> {
+    let base = peer::<M>();
+    let first = M::load(slot(base, 10));
+    M::barrier();
+    let word = |i| u64::from(M::load(slot(base, i)));
+    let authority = word(2) | (word(3) << 32);
+    let peer = word(4) | (word(5) << 32);
+    let lease = word(6) | (word(9) << 32);
+    M::barrier();
+    (first != 0 && M::load(slot(base, 10)) == first).then_some((first, authority, peer, lease))
+}
+
+/// The peer's REQUEST as a park token, when it names `authority` and `peer`.
+pub fn requested<M: Mmio>(authority: u64, peer: u64) -> Option<ParkToken> {
+    match peer_words::<M>() {
+        Some((REQUEST, a, p, lease)) if a == authority && p == peer && lease != 0 => {
+            Some(ParkToken {
+                lease_lo: lease as u32,
+                lease_hi: (lease >> 32) as u32,
+                ..handshake(a, p)
+            })
+        }
+        _ => None,
+    }
+}
+
+/// KM4 authority: announce a fresh session before any lease. Task context;
+/// the coordinator is created only once the matching READY is in hand.
+pub fn hello<M: Mmio>(authority: u64) -> bool {
+    if M::KM0 || authority == 0 {
+        return false;
+    }
+    publish_raw::<M>(&handshake(authority, 0), HELLO);
+    true
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reply {
+    Waiting,
+    /// KM0 echoed this authority with its nonzero session.
+    Ready(u64),
+    /// A READY for another authority, or a malformed one.
+    Foreign,
+}
+
+/// KM4: read KM0's current handshake reply for `authority`.
+pub fn reply<M: Mmio>(authority: u64) -> Reply {
+    if M::KM0 {
+        return Reply::Foreign;
+    }
+    match peer_words::<M>() {
+        Some((READY, a, p, 0)) if a == authority && p != 0 => Reply::Ready(p),
+        Some((READY, ..)) => Reply::Foreign,
+        _ => Reply::Waiting,
+    }
+}
+
+/// KM0 peer: answer a new HELLO with READY naming `peer`. Returns the newly
+/// answered authority, or zero when there is nothing new. `answered` keeps
+/// the last authority answered by this core.
+pub fn answer<M: Mmio>(peer: u64, answered: &mut u64) -> u64 {
+    if !M::KM0 || peer == 0 {
+        return 0;
+    }
+    match peer_words::<M>() {
+        Some((HELLO, a, 0, 0)) if a != 0 && a != *answered => {
+            publish_raw::<M>(&handshake(a, peer), READY);
+            *answered = a;
+            a
+        }
+        _ => 0,
+    }
+}
+
+/// KM0 peer: republish READY for the answered authority with `peer`, as a
+/// rebooted peer would. Fault injection only.
+pub fn reannounce<M: Mmio>(peer: u64, answered: u64) -> bool {
+    if !M::KM0 || peer == 0 || answered == 0 {
+        return false;
+    }
+    publish_raw::<M>(&handshake(answered, peer), READY);
+    true
 }
 
 /// Exported RAM-resident routines for one core's hardware.

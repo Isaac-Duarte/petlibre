@@ -7,73 +7,64 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
-**FW05 is Done (motion-disabled scope). FW06 is next.** The FW05 supervision probe (OTA
-`279c645c087e8333a58fc51edfe8a02e0bdc3df490ab488bfa7c9ff08b6d5188`, startup
-identity `9e953f1c…e912`) is installed in bank 1. It went on through the
-changed-sector updater: 30 sectors verified. One receive-only capture of a cold
-boot through its deliberate watchdog reset passed `tools/audit-firmware-supervision.py`.
-The motor was never commanded. Results are in
-[startup diagnostics](docs/firmware/startup-diagnostics.md#fw05-bench-result).
+**FW06 (real flash coordination) is in progress: stages A–C are done, and stage D is next.**
+FW05 is done (motion-disabled scope) and FW04 is done (output-only scope); their
+results are in [startup diagnostics](docs/firmware/startup-diagnostics.md) and
+the board's carried-items table.
 
-- **SYSTIMER:** about 32 752 Hz, within host timing uncertainty of 32 768 Hz.
-- **TIM2:** 10.015 ms.
-- **Stall:** TIM2 interrupts kept running during a 2 s stall.
-- **Watchdog:** fed for 15 s without a reset. The loop that stopped making
-  progress never refreshed, and the reset came about 3.0–3.1 s after the last
-  refresh. That puts the watchdog clock near **43 kHz**, not the 33.3 kHz assumed.
-- **Next boot:** reported `00100000` (KM4 watchdog reset) and the backup marker,
-  then skipped the probe.
+The FW06 plan has five stages, each with a write-free bench check until the last:
 
-FW05 handed three items to later cards: hardware lease expiry under a stall
-(FW16), production watchdog bounds (FW06) and stop timing under motion (FW19).
-The board's carried-items table tracks these. The board was also restructured:
-FW30 (electrical output verification) now gates FW16, FW14 no longer waits on
-FW06, and FW31 (bench automation) is available.
+- **A, production constants (host).** `config.rs` defines the production
+  watchdog and a 700 ms flash-lease budget. The owner's sample period must
+  then stay at or under 139 ms.
+- **B, boot handshake (physical, passed).** KM4 announces a fresh session
+  (HELLO); KM0 answers with its own (READY). KM4 binds the coordinator only after
+  reading back STOP and infrared OFF. A deliberately changed KM0 session
+  latched PEER_LOST with outputs blocked. Backup registers were cleared by
+  power loss.
+- **C, park round trip (physical, passed).** One power-on produced three
+  boots:
+  1. 100 leases, then KM0 withheld its ACK; the watchdog reset 3.9 s later.
+  2. 100 leases, then KM4 withheld its RELEASE; KM0 published TIMEOUT
+     after 705 ms (budget 700), and the watchdog reset.
+  3. 100 clean leases, then idle with the watchdog fed.
 
-FW04 is Done (output-only scope):
+  Across every lease, KM0's heartbeat stayed frozen while parked and advanced
+  between leases. The worst park took 6 ticks (about 0.2 ms) and the worst
+  release 2. No flash was touched; the park loops run from RAM on both cores.
+- **D, next.** A real mediated SDK flash call that writes nothing (status or
+  JEDEC ID read through the armed hooks).
+- **E.** One scratch-sector write. It needs the owner's decision first.
 
-A single artifact-bound boot of the output-only build passed the startup
-auditor (physical capture, receive-only, 152 s observed after startup):
-correct build/bank, stopped motor/infrared outputs, clock, complete routing,
-an intact `PLPWR1` ahead of all KM4 reports with LDO trim 0x2A
-(`share_pad=00000355`), and LED policy `bounded-probe-v3`.
+Bench lessons from stage C:
 
-What was resolved along the way:
-
-1. **Interleaved reports.** KM0 now runs the shared-pad initializer before
-   `km4_boot_on()` (stock and the SDK run it after), so `PLPWR1` completes
-   before KM4 logs. Verified on hardware.
-2. **LDO trim zero.** `SOCPS_AudioLDO(ENABLE)` restores a trim that only its
-   disable path saves, so a cold start got zero. KM0 now writes the stock
-   `CODEC_Init` value (0x2A, or 0x68 on a 1.8 V supply). Verified on hardware;
-   it did not change the readback.
-3. **Port A readback.** Raw Port A input sampled after each KM0 supply step
-   read `e1c40e00` every time: PA0–PA7 read 0 before any supply change, even
-   PA7 (`UART_LOG_TXD`, idles HIGH). PA13/PA14 and PB22 read back correctly.
-   The low Port A pads have no usable input readback on this unit (physical
-   observation plus register traces; cause not established). By owner decision
-   PA0/PA2/PA4 are **output-only**: `status=output`, never `pass`, resting on
-   latch/pad/stopped-state checks and visual observation. PB22 keeps input
-   verification.
-
-Earlier captures of review 06 and intermediate builds remain as recorded
-(including review 06's intentional two-boot capture); keep raw evidence
-unchanged. See [startup diagnostics](docs/firmware/startup-diagnostics.md).
+- **SysTick on KM4.** CLKSOURCE (bit 2) is read-only 1 on the Cortex-M33, so
+  the park and hook context checks now test only ENABLE and TICKINT. The
+  narrower mask refused every park in the first stage C build; diagnostics
+  located the cause.
+- **Watchdog clock.** The resets came about 4.0–4.2 s after the last refresh,
+  an effective clock near 31–33 kHz. FW05 measured about 43 kHz with the same
+  counter, and the cause is unknown. The production bounds are now 24–54 kHz in
+  source; the installed image predates that change.
+- **Interrupted capture.** One capture was cut off by a host crash and is
+  kept only as an observation. The first audit of the good capture hit an
+  auditor timing bug, now fixed; both results are retained.
 
 ## What is actually installed
 
-The research feeder runs the **FW05 supervision probe** in bank 1, starting at
-flash offset `0x186000`. It was installed over the FW04 output-only build
-(OTA `947dc797…0f29`), which remains the previous image.
+The research feeder runs **FW06 park review 03** in bank 1, starting at flash
+offset `0x186000`. It was installed through the changed-sector updater (8 sectors
+verified).
 
 | Identity | Recorded value |
 | --- | --- |
-| OTA SHA-256 | `279c645c087e8333a58fc51edfe8a02e0bdc3df490ab488bfa7c9ff08b6d5188` |
-| Embedded startup build ID | `9e953f1ce152233278cc226088a793d423a47920cf0da09e2390aa137f02e912` |
+| OTA SHA-256 | `caa1e390e4c198d5190d9d67d8e338fc51fee9845924b1e67d6f1bea2bd1b8e9` |
+| Embedded startup build ID | `ba8ff75832ddfa8dde4000a39c7876936b78447e517e74a432acde23654befa9` |
 
-**Every cold boot of this image deliberately triggers one watchdog reset**, about
-100 s in. Expect two startups per power-on. Its frozen review is the source of
-the next update.
+**Every cold power-on runs the injected faults:** expect three boots about 25 s
+apart, then idle. The image runs no feeding code and never commands motion.
+Current source has widened watchdog bounds, so it differs from the installed
+artifact. Its frozen review is the source of the next update.
 
 ## Last confirmed physical state
 

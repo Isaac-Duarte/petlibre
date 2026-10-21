@@ -1,4 +1,5 @@
 import importlib.util
+from datetime import timedelta
 import json
 from pathlib import Path
 import tempfile
@@ -296,3 +297,127 @@ class FirmwareStartup(unittest.TestCase):
             manifest['inputs']['source'] = 'e' * 64
             (p / 'manifest.json').write_text(json.dumps(manifest))
             with self.assertRaises(ValueError): call()
+
+    def test_flash_handshake_records_order_fields_and_timing(self):
+        led = b'PLLED1 done low=all\r\n'
+        hello = b'PLFLS1 hello authority=000000030000a1b2 count=3\r\n'
+        ready = b'PLFLS1 ready peer=000000070000c3d4 reply=0 phase=1 fault=0 inactive=1\r\n'
+        peer = b'PLFLS1 peer peer=000000080000e5f6 reply=5 phase=8 fault=7 blocked=1\r\n'
+        done = b'PLFLS1 done phase=8 fault=7 blocked=1\r\n'
+        foreign = b'PLFLS1 foreign\r\n'
+        base = M.EVIDENCE.timestamp('2026-10-20T10:00:00+00:00')
+
+        def run(lines, times=(0, 1, 11, 31)):
+            # A line arrives at the time of the latest flash record up to and including it.
+            rx, spans, at = b'', [], 0
+            for line in lines:
+                for kind, seconds in zip((b'hello', b'ready', b'peer', b'done'), times):
+                    if line.startswith(b'PLFLS1 ' + kind + b' '):
+                        at = seconds
+                spans.append((len(rx), len(rx) + len(line), at))
+                rx += line
+            return M.classify_flash(rx, lambda offset: base + timedelta(seconds=next(t for a, b, t in spans if a <= offset < b)))
+
+        good = [led, hello, ready, peer, done]
+        report = run(good)
+        self.assertEqual(report['outcome'], 'pass')
+        self.assertTrue(report['flash_handshake_verified'])
+        self.assertEqual(report['flash_authority_session'], '000000030000a1b2')
+        self.assertEqual(report['flash_boot_count'], 3)
+        self.assertEqual(report['flash_peer_session'], '000000070000c3d4')
+        self.assertEqual(report['flash_injected_peer_session'], '000000080000e5f6')
+        self.assertEqual((report['flash_ready_seconds'], report['flash_peer_change_seconds'], report['flash_done_seconds']), (1, 10, 30))
+        self.assertEqual(run([led, hello, foreign, ready, peer, done])['outcome'], 'pass')
+        self.assertEqual(run([led, hello, ready, peer, foreign, done])['outcome'], 'pass')
+        for lines, outcome in [
+                ([led], 'flash_handshake_missing'), ([led, hello, ready], 'flash_handshake_missing'),
+                ([led, hello, ready, peer, done, done], 'flash_handshake_malformed'),
+                ([led, hello, foreign, foreign, ready, peer, done], 'flash_handshake_malformed'),
+                ([led, hello, ready, peer, done, b'PLFLS1 untrusted\r\n'], 'flash_handshake_malformed'),
+                ([led, hello.replace(b'count=3', b'count=x3'), ready, peer, done], 'flash_handshake_malformed'),
+                ([led, hello, ready.replace(b'000000070000c3d4', b'0000000700c3d4'), peer, done], 'flash_handshake_malformed'),
+                ([led, hello, b'PLFLS1 error timeout ms=2500\r\n'], 'flash_handshake_failed'),
+                ([led, hello, ready, peer, done, b'PLFLS1 error clock\r\n'], 'flash_handshake_failed'),
+                ([led, hello.replace(b'count=3', b'count=4'), ready, peer, done], 'flash_handshake_failed'),
+                ([led, hello.replace(b'000000030000a1b2', b'0000000000000000').replace(b'count=3', b'count=0'), ready, peer, done], 'flash_handshake_failed'),
+                ([led, hello, ready.replace(b'000000070000c3d4', b'000000030000a1b2'), peer, done], 'flash_handshake_failed'),
+                ([led, hello, ready.replace(b'000000070000c3d4', b'000000000000c3d4'), peer.replace(b'0000000800', b'0000000100'), done], 'flash_handshake_failed'),
+                ([led, hello, ready.replace(b'inactive=1', b'inactive=0'), peer, done], 'flash_handshake_failed'),
+                ([led, hello, ready.replace(b'reply=0', b'reply=1'), peer, done], 'flash_handshake_failed'),
+                ([led, hello, ready.replace(b'phase=1', b'phase=2'), peer, done], 'flash_handshake_failed'),
+                ([led, hello, ready, peer.replace(b'000000080000e5f6', b'000000070000c3d4'), done], 'flash_handshake_failed'),
+                ([led, hello, ready, peer.replace(b'000000080000e5f6', b'000000090000e5f6'), done], 'flash_handshake_failed'),
+                ([led, hello, ready, peer.replace(b'reply=5', b'reply=0'), done], 'flash_handshake_failed'),
+                ([led, hello, ready, peer.replace(b'fault=7', b'fault=6'), done], 'flash_handshake_failed'),
+                ([led, hello, ready, peer.replace(b'blocked=1', b'blocked=0'), done], 'flash_handshake_failed'),
+                ([led, hello, ready, peer, done.replace(b'phase=8', b'phase=1')], 'flash_handshake_failed'),
+                ([led, hello, ready, peer, done.replace(b'blocked=1', b'blocked=0')], 'flash_handshake_failed'),
+                ([hello, led, ready, peer, done], 'flash_handshake_order'), ([hello, ready, peer, done], 'flash_handshake_order'),
+                ([led, hello, peer, ready, done], 'flash_handshake_order'), ([led, foreign, hello, ready, peer, done], 'flash_handshake_order'),
+                ([led, hello, done, ready, peer], 'flash_handshake_order')]:
+            with self.subTest(outcome=outcome, lines=lines):
+                result = run(lines)
+                self.assertEqual(result['outcome'], outcome)
+                self.assertFalse(result['flash_handshake_verified'])
+                self.assertNotIn('untrusted', repr(result))
+        for times in [(0, 2.6, 12.6, 32.6), (0, 1, 9.9, 31), (0, 1, 13.1, 31), (0, 1, 11, 29.9), (0, 1, 11, 33.1)]:
+            with self.subTest(times=times):
+                self.assertEqual(run(good, times)['outcome'], 'flash_handshake_timing')
+        self.assertEqual(run(good, (0, 2.5, 11.5, 34.5))['outcome'], 'pass')
+
+    def test_flash_handshake_policy_binding_and_legacy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp)
+            manifest = {'profile': 'plaf103-firstboot', 'inputs': {}}
+            identity = M.digest(json.dumps(manifest, sort_keys=True, separators=(',', ':')).encode())
+            manifest.update(startup_identity=identity, startup_led_policy='bounded-probe-v1')
+            sequence = b'PLLED1 begin\r\n'
+            for pin in (b'PA0', b'PA2', b'PA4', b'PB22'):
+                sequence += b''.join(b'PLLED1 pin=' + pin + b' level=' + n + b' status=pass\r\n' for n in (b'1', b'0', b'1', b'0'))
+            sequence += b'PLLED1 done low=all\r\n'
+            records = [b'PLFLS1 hello authority=000000010000a1b2 count=1\r\n',
+                       b'PLFLS1 ready peer=000000010000c3d4 reply=0 phase=1 fault=0 inactive=1\r\n',
+                       b'PLFLS1 peer peer=000000020000e5f6 reply=5 phase=8 fault=7 blocked=1\r\n',
+                       b'PLFLS1 done phase=8 fault=7 blocked=1\r\n']
+
+            def write(image, chunks, seconds):
+                rx = b''.join(chunks)
+                manifest['artifacts'] = [{'path': 'OTA_All.bin', 'sha256': M.digest(image), 'bytes': len(image)}]
+                (p / 'manifest.json').write_text(json.dumps(manifest)); (p / 'image.bin').write_bytes(image)
+                (p / 'serial-rx.bin').write_bytes(rx); (p / 'serial-tx.bin').write_bytes(b'')
+                metadata = {'mode': 'observe', 'status': 'complete', 'end_utc': '2026-10-20T10:02:00+00:00', 'serial-rx.bin_sha256': M.digest(rx), 'serial-tx.bin_sha256': M.digest(b'')}
+                (p / 'report.json').write_text(json.dumps(metadata))
+                events, offset = [], 0
+                for chunk, at in zip(chunks, seconds):
+                    events.append({'direction': 'rx', 'offset': offset, 'bytes': len(chunk), 'utc': f'2026-10-20T10:00:{at:02d}+00:00'})
+                    offset += len(chunk)
+                (p / 'serial-events.jsonl').write_text(''.join(json.dumps(e) + '\n' for e in events))
+                return M.verify(p, p / 'manifest.json', p / 'image.bin', 60)
+
+            legacy_image = f'PLFW1 start build={identity} PLLED1 begin'.encode()
+            legacy = write(legacy_image, [boot(identity) + sequence], [0])
+            self.assertEqual(legacy['outcome'], 'pass')
+            self.assertFalse(any(key.startswith('flash_') for key in legacy))
+            image = legacy_image + b' ' + M.FLASH_MARK
+            chunks = [boot(identity) + sequence + records[0], records[1], records[2], records[3]]
+            # Image carries the records but the manifest omits the policy.
+            with self.assertRaisesRegex(ValueError, 'Flash handshake policy/artifact mismatch'): write(image, chunks, [0, 1, 11, 31])
+            manifest['startup_flash_handshake_policy'] = 'fw06-hello-v1'
+            report = write(image, chunks, [0, 1, 11, 31])
+            self.assertEqual(report['outcome'], 'pass')
+            self.assertTrue(report['flash_handshake_verified'])
+            self.assertEqual(report['flash_done_seconds'], 30)
+            self.assertEqual(write(image, chunks, [0, 1, 5, 31])['outcome'], 'flash_handshake_timing')
+            self.assertEqual(write(image, chunks[:2], [0, 1])['outcome'], 'flash_handshake_missing')
+            # A failing startup keeps its outcome and still reports the flash fields.
+            failed = write(image, [boot(identity) + M.FAIL + sequence + records[0], records[1], records[2], records[3]], [0, 1, 11, 31])
+            self.assertEqual(failed['outcome'], 'diagnostic_failed')
+            self.assertTrue(failed['flash_handshake_verified'])
+            # Manifest declares the policy but the image lacks the records.
+            with self.assertRaisesRegex(ValueError, 'Flash handshake policy/artifact mismatch'): write(legacy_image, chunks, [0, 1, 11, 31])
+            manifest['startup_flash_handshake_policy'] = 'fw06-hello-v2'
+            with self.assertRaisesRegex(ValueError, 'Unknown flash handshake policy'): write(image, chunks, [0, 1, 11, 31])
+            manifest['startup_flash_handshake_policy'] = 'fw06-hello-v1'
+            manifest.pop('startup_led_policy')
+            with self.assertRaisesRegex(ValueError, 'requires the LED probe policy'):
+                write(f'PLFW1 start build={identity} '.encode() + M.FLASH_MARK, chunks, [0, 1, 11, 31])

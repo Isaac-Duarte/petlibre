@@ -43,6 +43,32 @@ __attribute__((noinline)) void petlibro_shared_pad_power_init(void)
                ext_a[0], ext_a[1], ext_a[2], ext_a[3]);
 }
 
+u32 petlibro_amebad_flash_peer_step(u32 boot_count, u32 ticks);
+void petlibro_amebad_flash_peer_irq(VOID *data, u32 status, u32 channel);
+
+/* FW06 peer: the Rust step answers KM4's HELLO and bumps a heartbeat in backup
+ * register 5 every tick; IPC channel 16 parks this core in RAM for a lease.
+ * The boot count lives in user backup register 4, which survives a watchdog
+ * platform reset but not power loss. */
+static void petlibro_flash_peer_task(void *context)
+{
+    (void)context;
+    u32 count = BKUP_Read(BKUP_REG4) + 1;
+    BKUP_Write(BKUP_REG4, count);
+    for (;;) {
+        petlibro_amebad_flash_peer_step(count, SYSTIMER_TickGet());
+        vTaskDelay(1);
+    }
+}
+
+__attribute__((noinline)) void petlibro_flash_peer_start(void)
+{
+    IPC_INTUserHandler(16, (VOID *)petlibro_amebad_flash_peer_irq, NULL);
+    IPC_INTConfig(IPCM4_DEV, 16, ENABLE);
+    xTaskCreate(petlibro_flash_peer_task, "petlibro-peer", 256, NULL,
+                tskIDLE_PRIORITY + 1, NULL);
+}
+
 int main(void)
 {
     InterruptRegister((IRQ_FUN)IPC_INTHandler, IPC_IRQ_LP, (u32)IPCM4_DEV, 2);
@@ -52,6 +78,7 @@ int main(void)
     km4_flash_highspeed_init();
     petlibro_shared_pad_power_init();
     km4_boot_on();
+    petlibro_flash_peer_start();
     vTaskStartScheduler();
     for (;;) {}
 }

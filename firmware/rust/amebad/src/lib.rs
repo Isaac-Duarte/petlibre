@@ -35,9 +35,14 @@ mod active;
 #[cfg(all(target_os = "none", feature = "km4"))]
 pub mod app;
 #[cfg(any(not(target_os = "none"), feature = "km4"))]
+pub mod config;
+#[cfg(any(not(target_os = "none"), feature = "km4"))]
 pub mod events;
 pub mod flash_hooks;
 pub mod flash_park;
+pub mod flash_peer;
+#[cfg(any(not(target_os = "none"), feature = "km4"))]
+pub mod flash_probe;
 #[cfg(any(not(target_os = "none"), feature = "km4"))]
 pub mod owner;
 #[cfg(any(not(target_os = "none"), feature = "km4"))]

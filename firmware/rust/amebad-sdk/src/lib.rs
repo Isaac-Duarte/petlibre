@@ -1,8 +1,10 @@
-//! The SDK surface used by the ports.
+//! The SDK surface used by the PLAF103 AmebaD ports.
 //!
 //! Target builds call the pinned AmebaD SDK through bindgen-generated
 //! declarations; host builds use [`fake`], a deterministic model of the same
 //! calls for tests and the virtual feeder. Both expose identical functions.
+#![cfg_attr(target_os = "none", no_std)]
+#![allow(clippy::missing_safety_doc)]
 
 use core::ffi::c_void;
 

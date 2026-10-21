@@ -10,20 +10,17 @@ build = "build.rs"
 
 [features]
 # Generate SDK bindings from the pinned AmebaD headers (target builds only).
-# Requires PETLIBRE_SDK_DIR and PETLIBRE_NEWLIB_INCLUDE; set by firmware/tools.
-sdk = ["dep:bindgen"]
+sdk = ["petlibre-amebad-sdk/sdk"]
 # Select the core whose MMIO map and semaphore owner encoding apply.
-km0 = []
-km4 = []
+km0 = ["petlibre-amebad-sdk/km0"]
+km4 = ["petlibre-amebad-sdk/km4"]
 
 [dependencies]
+petlibre-amebad-sdk = { path = "../amebad-sdk" }
 petlibre-core = { path = "../core" }
 
 [target.'cfg(target_os = "none")'.dependencies]
 cortex-m = "0.7.7"
-
-[build-dependencies]
-bindgen = { version = "0.72.1", optional = true, default-features = false, features = ["runtime"] }
 
 [dev-dependencies]
 petlibre-testkit = { path = "../testkit" }

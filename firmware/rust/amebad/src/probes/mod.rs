@@ -3,3 +3,4 @@
 pub mod adc;
 pub mod flash;
 pub mod supervision;
+pub mod wifi;

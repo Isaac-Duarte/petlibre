@@ -5,7 +5,7 @@ use core::ffi::{CStr, c_void};
 use core::ptr;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use super::{FlashMmuEntry, GpioRouting, Irq, Isr, LpClock, TaskStep};
+use super::{FlashMmuEntry, GpioRouting, Irq, Isr, LpClock, TaskStep, WifiState};
 
 #[allow(
     non_camel_case_types,
@@ -667,8 +667,36 @@ pub fn task_create(
     created
 }
 
+unsafe extern "C" {
+    fn petlibre_wifi_start() -> i32;
+    fn petlibre_wifi_snapshot(out: *mut WifiState);
+}
+
+/// Start the KM4 Wi-Fi shim's task (LwIP, `wifi_on(STA)`, bounded scans);
+/// true once, when the task was created.
+pub fn wifi_start() -> bool {
+    unsafe { petlibre_wifi_start() != 0 }
+}
+
+pub fn wifi_snapshot() -> WifiState {
+    let mut state = WifiState::default();
+    unsafe { petlibre_wifi_snapshot(&mut state) };
+    state
+}
+
+/// One line, not split by another task's print: from a task, the scheduler
+/// is paused for the print (interrupts keep running). Before the scheduler
+/// starts, or from an interrupt, it prints directly.
 pub fn log(message: &CStr) {
+    let task = ipsr() == 0
+        && unsafe { raw::xTaskGetSchedulerState() } == k::PETLIBRE_SCHEDULER_RUNNING as _;
+    if task {
+        unsafe { raw::vTaskSuspendAll() };
+    }
     unsafe { raw::_rtl_printf(c"%s".as_ptr(), message.as_ptr()) };
+    if task {
+        unsafe { raw::xTaskResumeAll() };
+    }
 }
 
 /// Read the live KM0 image mapping. No flash/status/register writes are made

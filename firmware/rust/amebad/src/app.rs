@@ -1,14 +1,13 @@
 //! KM4 application entry: logs and runs the synthetic diagnostic once.
-//! Stopped-output startup and a bounded indicator probe, then the FW14 probe:
-//! open the board's sensors with the explicit LP ADC enable and sample the
-//! power inputs read-only, once a second.
+//! Stopped-output startup and a bounded indicator probe, then the FW07 stage
+//! B probe: radio on and scan only, networks reported by SSID CRC.
 
 use core::cell::UnsafeCell;
 use core::ffi::c_void;
 use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-use crate::probes::adc::{Channel, Probe, Record};
+use crate::probes::wifi::{Probe, Record};
 use crate::startup;
 use crate::{leds, sdk, stopped};
 
@@ -26,87 +25,33 @@ fn bit(value: bool) -> u8 {
     u8::from(value)
 }
 
-fn pass(value: bool) -> &'static str {
-    if value { "pass" } else { "fail" }
-}
-
-/// `min,max,mean,scaled`
-struct Values(Channel);
-
-impl core::fmt::Display for Values {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let c = self.0;
-        write!(f, "{},{},{},{}", c.min, c.max, c.mean, c.scaled)
-    }
-}
-
-/// The four efuse bytes in read order as hex, or `none`.
-struct Efuse(Option<[u8; 4]>);
-
-impl core::fmt::Display for Efuse {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self.0 {
-            Some(b) => write!(f, "{:02x}{:02x}{:02x}{:02x}", b[0], b[1], b[2], b[3]),
-            None => f.write_str("none"),
-        }
-    }
-}
-
 fn log_probe(record: Record) {
     let mut report = startup::Report::new();
     let line = match record {
-        Record::Open {
-            outputs,
-            clock,
-            efuse,
-            calibration,
-            ok,
-        } => {
-            // Two lines: one record exceeds the report buffer.
-            if let Ok(line) = report.record(format_args!(
-                "PLADC1 clock function_before={:08x} clock_before={:08x} function_after={:08x} clock_after={:08x} status={}\r\n",
-                clock.function_before,
-                clock.clock_before,
-                clock.function_after,
-                clock.clock_after,
-                pass(clock.verified()),
-            )) {
-                sdk::log(line);
-            }
-            report.record(format_args!(
-                "PLADC1 open outputs={} efuse={} offset={} gain={} default_offset={} default_gain={} status={}\r\n",
-                bit(outputs),
-                Efuse(efuse),
-                calibration.offset,
-                calibration.gain,
-                bit(calibration.default_offset),
-                bit(calibration.default_gain),
-                pass(ok),
-            ))
+        Record::Start { created } => {
+            report.record(format_args!("PLWIF1 start created={}\r\n", bit(created)))
         }
-        Record::Sample {
+        Record::On { result, ms } => {
+            report.record(format_args!("PLWIF1 on result={result} ms={ms}\r\n"))
+        }
+        Record::Scan {
             n,
-            ticks,
-            food,
-            outlet,
-            dc,
+            result,
+            ms,
+            count,
+            dropped,
             stopped,
-            current,
-            battery,
-            supply,
         } => report.record(format_args!(
-            "PLADC1 sample n={n} ticks={ticks} food={} outlet={} dc={} stopped={} current={} battery={} supply={}\r\n",
-            bit(food),
-            bit(outlet),
-            bit(dc),
-            bit(stopped),
-            Values(current),
-            Values(battery),
-            Values(supply),
-        )),
-        Record::Error { n, ticks, stopped } => report.record(format_args!(
-            "PLADC1 error n={n} ticks={ticks} stopped={}\r\n",
+            "PLWIF1 scan n={n} result={result} ms={ms} count={count} dropped={dropped} stopped={}\r\n",
             bit(stopped)
+        )),
+        Record::Ap { n, index, ap } => report.record(format_args!(
+            "PLWIF1 ap n={n} i={index} ssid_crc={:08x} rssi={} channel={} security={:08x}\r\n",
+            ap.ssid_crc, ap.rssi, ap.channel, ap.security
+        )),
+        Record::Done { scans } => report.record(format_args!("PLWIF1 done scans={scans}\r\n")),
+        Record::Timeout { stage, ms } => report.record(format_args!(
+            "PLWIF1 error timeout stage={stage} ms={ms}\r\n"
         )),
     };
     if let Ok(line) = line {
@@ -115,7 +60,7 @@ fn log_probe(record: Record) {
 }
 
 fn probe_step() -> u32 {
-    // SAFETY: only this task touches the slot; the probe stays at a fixed address.
+    // SAFETY: only this task touches the slot.
     let probe = unsafe { &mut *PROBE.0.get() }.get_or_insert_with(Probe::default);
     let step = probe.step();
     if let Some(record) = step.record {

@@ -43,6 +43,7 @@ JOURNAL_MARK = b'PLJNL1 start mode='  # FW15 flash journal on NOR follows READY
 SETTINGS_MARK = b'PLSET1 start marker='  # FW15 settings-store power-cut stress follows READY
 ADC_MARK = b'PLADC1 open outputs='  # FW14 read-only power-input samples follow the LED probe
 ADC_SUPPLY_MARK = b' supply='  # fw14-adc-v2 samples add internal channel 10
+WIFI_MARK = b'PLWIF1 start created='  # FW07 radio-on and scan records follow the LED probe
 WRITE = {'start': re.compile(rb'PLWRS1 start marker=([0-9a-f]{8}) watchdog=(pass|fail) installed=([01])\r\n'),
          'preimage': re.compile(rb'PLWRS1 preimage id=([0-9a-f]{6}) blank=' + DEC + rb'\r\n'),
          'cycle': re.compile(rb'PLWRS1 cycle n=' + DEC + rb' erase_ticks=' + DEC + rb' blank=' + DEC + rb' program_max=' + DEC
@@ -496,6 +497,10 @@ def startup(rx, manifest, image, identity, arrival=None, end=None):
             result.update(power)
         else:
             result.update({k: v for k, v in power.items() if k != 'outcome'})
+    wifi_policy = manifest.get('startup_wifi_policy')
+    require(wifi_policy in (None, 'fw07-scan-v1'), 'Unknown Wi-Fi policy')
+    require(bool(wifi_policy) == (WIFI_MARK in image), 'Wi-Fi policy/artifact mismatch')
+    require(not wifi_policy or led_policy, 'Wi-Fi probe requires the LED probe policy')
     adc_policy = manifest.get('startup_adc_policy')
     require(adc_policy in (None, 'fw14-adc-v1', 'fw14-adc-v2'), 'Unknown ADC policy')
     require(bool(adc_policy) == (ADC_MARK in image), 'ADC policy/artifact mismatch')

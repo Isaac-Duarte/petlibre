@@ -125,18 +125,19 @@ Bench lessons from stage C:
 
 ## What is actually installed
 
-The research feeder runs **FW14 ADC supply-channel review 01** in bank 1,
-starting at flash offset `0x186000`. It was installed through the
-changed-sector updater, finished in interrupted mode (see the install notes).
+The research feeder runs **FW07 Wi-Fi scan review 02** in bank 1, starting at
+flash offset `0x186000`. It was installed through the changed-sector updater
+(109 sectors verified).
 
 | Identity | Recorded value |
 | --- | --- |
-| OTA SHA-256 | `11a44ce62d6b19a39d37b01799aeb0324dbae9d0df016b80701294804da78228` |
-| Embedded startup build ID | `da6db3898a273bc05d41030c9bc128cf117d8da5c230c66a073613e393ceae26` |
+| OTA SHA-256 | `42f00b3acc26db946a6fc109f574511f63b947aa596a7c66dd58fdf13ecc5ea6` |
+| Embedded startup build ID | `6e833ca1bdf98d12991384747069a59a52a87f737578f77b20c2f88bcde8bc0c` |
 
-**Every power-on runs the read-only ADC probe**: after the LED sequence it
-samples PA16/PA17/PA19 and ADC channels 4, 5 and 10 once a second without end. It
-never drives the motor or emitters and writes no flash.
+**Every power-on runs the Wi-Fi scan probe**: after the LED sequence it turns
+the radio on (station mode) and runs three scans, logging networks only by SSID
+CRC. It never joins a network, holds no credentials, drives no motor or emitter
+and writes no flash.
 
 ## Last confirmed physical state
 
@@ -193,9 +194,24 @@ timer-repeat and stopped-output paths; the others have no hardware evidence:
 
 ## Next work and retained decisions
 
-FW14 continues once batteries are available (above). The owner chose **FW07
-(Wi-Fi join and reconnect)** next; no bench work has started. Plan from a static
-survey of the build and the pinned SDK:
+FW14 continues once batteries are available (above).
+
+**FW07 stage B (physical, passed).** Radio on and scanning work on our
+firmware: `wifi_on(STA)` took about 235 ms, and three scans took 4.0–4.3 s each,
+hearing 51–63 networks; outputs stayed stopped. The driver prints
+`FW Enable failed`, suspected to be the skipped KM0 `wifi_FW_init_ram()`
+(power-save); unconfirmed. The owner's hotspot was not among the 32 strongest
+networks kept, and whether it was on was not recorded. KM4 log lines now print
+with the scheduler suspended, because a driver print split one in the first
+capture.
+
+**Next for FW07: stage C**, join, DHCP and reconnect. It needs build-time
+credential injection from `private/hotspot.json` (never tracked; only a hash in
+the manifest). Treat the SDK's static DHCP fallback as failure, and run our own
+bounded reconnect. Confirm first that the hotspot is visible to a scan.
+
+The FW07 plan from the static survey, written before stage A (stages A and B are
+now done; the "Today" item describes the build before them):
 
 - **Today.** Wi-Fi is compiled and linked but garbage-collected: neither our
   KM4 main nor our `example_entry` calls `wlan_network()`, and KM0 skips

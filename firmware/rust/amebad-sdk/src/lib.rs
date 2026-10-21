@@ -63,6 +63,40 @@ pub struct FlashMmuEntry {
     pub offset: u32,
 }
 
+/// Networks kept per scan by the KM4 Wi-Fi shim (`example_entry.c`).
+pub const WIFI_APS: usize = 32;
+
+/// One scanned network: a CRC-32 of its SSID, never the SSID itself.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WifiAp {
+    pub ssid_crc: u32,
+    /// `rtw_security_t`.
+    pub security: u32,
+    /// dBm.
+    pub rssi: i32,
+    pub channel: u32,
+}
+
+/// The shim's `struct petlibre_wifi_state`, copied under a critical section.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WifiState {
+    pub started: u32,
+    pub on_done: u32,
+    /// `wifi_on` result: 0 (`RTW_SUCCESS`) or an SDK error.
+    pub on_result: i32,
+    pub on_ms: u32,
+    pub scans_done: u32,
+    /// The last scan: 0 or an SDK error (`RTW_TIMEOUT` when incomplete).
+    pub scan_result: i32,
+    pub scan_ms: u32,
+    pub count: u32,
+    /// Networks beyond `WIFI_APS` in the last scan.
+    pub dropped: u32,
+    pub aps: [WifiAp; WIFI_APS],
+}
+
 /// Interrupt lines claimed by the ports.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Irq {

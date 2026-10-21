@@ -47,7 +47,7 @@ Useful stock instruction anchors: motor initialization `0x0e0091ac`, drive helpe
 
 Stock writes are sequential, and startup passes through input configuration. This table does not establish electrically safe transitions or clockwise/counterclockwise direction. Replacement hardware output support remains experimental.
 
-See [UART wiring](uart.md), [boot/flash layout](../firmware/boot-and-flash.md), and [replacement architecture](../firmware/README.md).
+See [UART wiring](uart.md), [relay bench control](bench.md), [boot/flash layout](../firmware/boot-and-flash.md), and [replacement architecture](../firmware/README.md).
 
 ## Later physical observations
 

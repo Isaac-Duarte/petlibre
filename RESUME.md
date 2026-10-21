@@ -147,12 +147,19 @@ This describes the last operator-confirmed session, not a live observation.
 Reconfirm it with the operator before any bench operation.
 
 - Scope is the **research PLAF103 only**. The existing household feeder is excluded.
-- Feeder power and adapter USB connected; adapter TXD jumper disconnected;
-  adapter RXD and common GND connected; breadboard button released.
-- Black is feeder GND on the negative rail; grey is feeder TX at row 2a;
-  white is feeder RX at row 1a. Feeder TX connects to adapter RXD.
-- Loader entry uses feeder TX through a measured approximately 4.72 kΩ resistor
-  and normally-open momentary button to GND. No direct TX-to-ground short.
+- Feeder USB 5V runs through relay 1 of a DSD TECH SH-UR04A USB relay board
+  (CP2102, 9600 8N1, `AT+CHn=1`/`AT+CHn=0`, `AT+CHn=?`): male + to COM1, NO1 to
+  female +; GND, D+ and D- pass straight through. Relay off means feeder off.
+- Feeder TX (breadboard row 1) goes to adapter RXD and, through the 4.7 kΩ
+  resistor (row 5), to COM2; NO2 is on the GND rail. Relay 2 replaces the button,
+  which is removed. Feeder RX (row 2) goes to adapter TXD. Relays 3 and 4 are spare.
+- `tools/bench.py` drives the relays and the UART tools ([bench control](docs/hardware/bench.md));
+  ports are `/dev/serial/by-id/` paths in ignored `private/bench.json`. The relay
+  board can take `/dev/ttyUSB0`.
+- Physical, October 21, 2026: relay-1 boots reached the Rust bring-up banner and
+  relay-2-held boots printed `Flash Download Start` and NAKs, 16 of 16 each, off
+  times 0.3-2 s, with or without UART break held during the off time. The earlier
+  stuck-entry symptom (fixed by replugging the adapter) did not reproduce.
 - Adapter power/VCC and flow-control pins remain unwired. No batteries were in use.
 - CON3 remains connected: this motor harness also carries board power.
   The front indicator PCB is difficult to access; no disassembly or wire cutting

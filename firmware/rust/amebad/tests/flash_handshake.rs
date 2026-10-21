@@ -3,7 +3,7 @@
 
 use std::cell::RefCell;
 
-use wellfed_amebad::flash_park::{
+use wellfed_amebad::flash::park::{
     HELLO, Mmio, READY, REQUEST, Reply, answer, hello, reannounce, reply, session,
 };
 

@@ -519,7 +519,7 @@ pub fn storage_read(sector: u32, offset: u32, bytes: &mut [u8]) -> bool {
 #[inline(never)]
 pub unsafe extern "C" fn wellfed_amebad_flash_provider_fault(
     _context: *mut c_void,
-    _reason: crate::flash_hooks::HookFault,
+    _reason: crate::flash::hooks::HookFault,
 ) {
     let port_a = k::WELLFED_GPIOA_BASE as usize as *mut raw::GPIO_TypeDef;
     let port_b = (k::WELLFED_GPIOA_BASE + 0x400) as usize as *mut raw::GPIO_TypeDef;

@@ -7,12 +7,12 @@
 //! rebooted KM0 would, once per boot.
 //!
 //! FW06 stage C: an IPC channel-16 request parks this core in RAM through
-//! `flash_park::wait` until the exact RELEASE. A task-driven heartbeat in a
+//! `park::wait` until the exact RELEASE. A task-driven heartbeat in a
 //! backup register lets KM4 see that the core really stopped. When the
 //! backup marker reads `WITHHOLD_MARKER`, lease `INJECT_LEASE` is ignored
 //! without ACK, once, so the authority's begin must time out.
 
-use crate::flash_park::{self, Mmio};
+use crate::flash::park::{self, Mmio};
 
 /// SDK SYSTIMER rate, as measured in FW05.
 const TICKS_PER_SECOND: u32 = 32_768;
@@ -56,9 +56,9 @@ impl Peer {
         M::store(BACKUP_BASE + HEARTBEAT_REGISTER * 4, beat);
         if self.session == 0 {
             self.boot_count = boot_count;
-            self.session = flash_park::session(boot_count, ticks, true);
+            self.session = park::session(boot_count, ticks, true);
         }
-        if flash_park::answer::<M>(self.session, &mut self.answered) != 0 {
+        if park::answer::<M>(self.session, &mut self.answered) != 0 {
             self.answered_at = ticks;
             return PeerEvent::ANSWERED;
         }
@@ -69,8 +69,8 @@ impl Peer {
                 >= u64::from(ms) * u64::from(TICKS_PER_SECOND)
         {
             self.injected = true;
-            self.session = flash_park::session(self.boot_count.wrapping_add(1), ticks, true);
-            flash_park::reannounce::<M>(self.session, self.answered);
+            self.session = park::session(self.boot_count.wrapping_add(1), ticks, true);
+            park::reannounce::<M>(self.session, self.answered);
             return PeerEvent::INJECTED;
         }
         PeerEvent::NONE
@@ -79,13 +79,13 @@ impl Peer {
 
 impl Peer {
     /// IPC request handler body: IRQs masked and SysTick disabled by the
-    /// caller, as `flash_park::wait` requires. Only a REQUEST naming this
+    /// caller, as `park::wait` requires. Only a REQUEST naming this
     /// boot's sessions and a lease newer than the last one parks the core.
     pub fn on_request<M: Mmio>(&mut self) -> ParkEvent {
         if self.answered == 0 {
             return ParkEvent::IGNORED;
         }
-        let Some(token) = flash_park::requested::<M>(self.answered, self.session) else {
+        let Some(token) = park::requested::<M>(self.answered, self.session) else {
             return ParkEvent::IGNORED;
         };
         let lease = u64::from(token.lease_lo) | (u64::from(token.lease_hi) << 32);
@@ -96,7 +96,7 @@ impl Peer {
             self.last_lease = lease;
             return ParkEvent::WITHHELD;
         }
-        if flash_park::ram_wait::<M>(&token, PARK_TICK_LIMIT, PARK_POLL_LIMIT) {
+        if park::ram_wait::<M>(&token, PARK_TICK_LIMIT, PARK_POLL_LIMIT) {
             self.last_lease = lease;
             ParkEvent::RELEASED
         } else {
@@ -110,8 +110,8 @@ mod exported {
     use core::cell::UnsafeCell;
 
     use super::{Peer, PeerEvent};
-    use crate::flash_park;
-    use crate::flash_park::Hardware;
+    use crate::flash::park;
+    use crate::flash::park::Hardware;
 
     struct Slot(UnsafeCell<Peer>);
     // SAFETY: only the single KM0 peer task calls the step.
@@ -145,13 +145,11 @@ mod exported {
         _status: u32,
         channel: u32,
     ) {
-        let systick = flash_park::SYSTICK_CTRL as usize as *mut u32;
+        let systick = park::SYSTICK_CTRL as usize as *mut u32;
         cortex_m::interrupt::free(|_| {
             // SAFETY: fixed SysTick CTRL register; restored below.
             let saved = unsafe { core::ptr::read_volatile(systick) };
-            unsafe {
-                core::ptr::write_volatile(systick, saved & !flash_park::SYSTICK_CONTROL_BITS)
-            };
+            unsafe { core::ptr::write_volatile(systick, saved & !park::SYSTICK_CONTROL_BITS) };
             // SAFETY: serialized with the task step by the critical section.
             let peer = unsafe { &mut *PEER.0.get() };
             let event = peer.on_request::<Hardware>();

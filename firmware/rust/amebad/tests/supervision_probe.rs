@@ -2,10 +2,10 @@ mod common;
 
 use common::{hw, motor_pins, optics_off};
 use wellfed_amebad::board::MOTOR_MASK;
-use wellfed_amebad::sdk::{self, fake};
-use wellfed_amebad::supervision_probe::{
+use wellfed_amebad::probes::supervision::{
     FEED_MS, MARKER, Probe, RESET_DEADLINE_MS, Record, SAMPLES, STALL_MS, Sample,
 };
+use wellfed_amebad::sdk::{self, fake};
 use wellfed_amebad::watchdog::WatchdogFault;
 
 /// About 1 ms of the nominal 32 kHz SYSTIMER per delay millisecond.

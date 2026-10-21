@@ -32,9 +32,9 @@ use wellfed_core::settings_store::{Settings, SettingsStatus, SettingsStore};
 use wellfed_core::tick_clock::TickClock;
 
 use crate::config::{FLASH_LIMITS, SYSTIMER_HZ, WATCHDOG};
-use crate::flash_hooks::HookTicket;
-use crate::flash_park::{self, Mmio, ParkToken, Reply};
-use crate::flash_peer::{HEARTBEAT_REGISTER, MARKER_REGISTER, PARK_CHANNEL};
+use crate::flash::hooks::HookTicket;
+use crate::flash::park::{self, Mmio, ParkToken, Reply};
+use crate::flash::peer::{HEARTBEAT_REGISTER, MARKER_REGISTER, PARK_CHANNEL};
 use crate::sdk;
 use crate::stopped;
 use crate::watchdog::Watchdog;
@@ -141,11 +141,11 @@ impl Provider {
         }
         sdk::disable_irq();
         let systick = sdk::systick_ctrl();
-        sdk::set_systick_ctrl(systick & !flash_park::SYSTICK_CONTROL_BITS);
+        sdk::set_systick_ctrl(systick & !park::SYSTICK_CONTROL_BITS);
         let begin_at = sdk::systimer_ticks();
-        let park = park_token(&token);
+        let ram_token = park_token(&token);
         let acked =
-            flash_park::ram_owner_begin::<M>(&park, PARK_CHANNEL, EXCHANGE_TICKS, EXCHANGE_POLLS);
+            park::ram_owner_begin::<M>(&ram_token, PARK_CHANNEL, EXCHANGE_TICKS, EXCHANGE_POLLS);
         let acked_at = sdk::systimer_ticks();
         if !acked {
             return self.fail(LeaseStage::BEGIN, FlashReply::FAILED);
@@ -157,7 +157,7 @@ impl Provider {
         }
         self.parked_beat = beat();
         self.park_max = self.park_max.max(acked_at.wrapping_sub(begin_at));
-        self.saved_systick = systick & crate::flash_hooks::SYSTICK_SAVED_BITS;
+        self.saved_systick = systick & crate::flash::hooks::SYSTICK_SAVED_BITS;
         *ticket = HookTicket {
             id: token.lease,
             saved_systick: self.saved_systick,
@@ -179,10 +179,10 @@ impl Provider {
         if reply != FlashReply::ACCEPTED {
             return self.fail(LeaseStage::COMPLETE, reply);
         }
-        let park = park_token(&token);
+        let ram_token = park_token(&token);
         let end_at = sdk::systimer_ticks();
         let ended =
-            flash_park::ram_owner_end::<M>(&park, PARK_CHANNEL, EXCHANGE_TICKS, EXCHANGE_POLLS);
+            park::ram_owner_end::<M>(&ram_token, PARK_CHANNEL, EXCHANGE_TICKS, EXCHANGE_POLLS);
         let released_at = sdk::systimer_ticks();
         if !ended {
             return self.fail(LeaseStage::END, FlashReply::FAILED);
@@ -411,8 +411,8 @@ impl Probe {
                 sdk::backup_write(BOOT_COUNT_REGISTER, count);
                 let raw = sdk::systimer_ticks();
                 self.clock = TickClock::new(SYSTIMER_HZ, raw, 0).unwrap_or_default();
-                self.authority = flash_park::session(count, raw, false);
-                if !flash_park::hello::<M>(self.authority) {
+                self.authority = park::session(count, raw, false);
+                if !park::hello::<M>(self.authority) {
                     return self.end(Record::ClockError);
                 }
                 self.stage = Stage::Wait;
@@ -428,7 +428,7 @@ impl Probe {
                 let Some(now) = self.now() else {
                     return self.end(Record::ClockError);
                 };
-                match flash_park::reply::<M>(self.authority) {
+                match park::reply::<M>(self.authority) {
                     Reply::Ready(peer) => {
                         // Bind only with verified STOP and infrared OFF readback.
                         let inactive = stopped::observe().verified();

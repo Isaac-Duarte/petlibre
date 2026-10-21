@@ -3,10 +3,10 @@
 
 use std::cell::RefCell;
 
-use wellfed_amebad::flash_park::{
+use wellfed_amebad::flash::park::{
     ACK, HELLO, Mmio, RELEASE, RELEASED, REQUEST, SYSTICK_CTRL, TICKS,
 };
-use wellfed_amebad::flash_peer::{BACKUP_BASE, INJECT_LEASE, MARKER_REGISTER, ParkEvent, Peer};
+use wellfed_amebad::flash::peer::{BACKUP_BASE, INJECT_LEASE, MARKER_REGISTER, ParkEvent, Peer};
 
 #[derive(Default)]
 struct Model {

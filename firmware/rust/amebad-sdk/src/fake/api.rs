@@ -12,12 +12,12 @@ pub fn gpio_clock_state() -> GpioClock {
 }
 
 pub fn gpio_clock_enable() -> GpioClock {
-    let _guard = crate::sdk::IrqGuard::lock();
+    let _guard = crate::IrqGuard::lock();
     let before = gpio_clock_state();
     with(|h| {
         if !h.blocked_gpio_clock {
-            h.gpio_function |= crate::sdk::GPIO_ENABLE_BIT;
-            h.gpio_clock |= crate::sdk::GPIO_ENABLE_BIT;
+            h.gpio_function |= crate::GPIO_ENABLE_BIT;
+            h.gpio_clock |= crate::GPIO_ENABLE_BIT;
         }
     });
     GpioClock {
@@ -509,7 +509,7 @@ pub fn task_create(
 pub fn panic_outputs_safe() {
     with(|h| {
         h.interrupts = 1;
-        let enabled = crate::sdk::GPIO_ENABLE_BIT;
+        let enabled = crate::GPIO_ENABLE_BIT;
         if h.gpio_function & enabled == 0 || h.gpio_clock & enabled == 0 {
             return;
         }

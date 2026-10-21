@@ -1,0 +1,26 @@
+[package]
+license = "MIT"
+name = "wellfed-amebad-sdk"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+description = "Pinned AmebaD SDK calls for the PLAF103 ports, with a deterministic host fake"
+publish = false
+build = "build.rs"
+
+[features]
+# Generate SDK bindings from the pinned AmebaD headers (target builds only).
+# Requires WELLFED_SDK_DIR and WELLFED_NEWLIB_INCLUDE; set by firmware/tools.
+sdk = ["dep:bindgen"]
+# Select the core; only KM4 calls the SDK.
+km0 = []
+km4 = []
+
+[target.'cfg(target_os = "none")'.dependencies]
+cortex-m = "0.7.7"
+
+[build-dependencies]
+bindgen = { version = "0.72.1", optional = true, default-features = false, features = ["runtime"] }
+
+[lints]
+workspace = true

@@ -1,10 +1,13 @@
 //! EXPERIMENTAL AmebaD ports for the PLAF103 research board.
 //!
 //! Host builds run against [`sdk::fake`]; KM4 target builds need the `sdk`
-//! feature and the pinned SDK headers. KM0 builds contain only the
-//! SDK-independent flash-park and hook routines.
+//! feature and the pinned SDK headers, both from `wellfed-amebad-sdk`. KM0
+//! builds contain only the SDK-independent flash-park and hook routines.
 #![cfg_attr(target_os = "none", no_std)]
 #![allow(clippy::missing_safety_doc)]
+
+// The ports' public types carry SDK types, so the SDK crate is part of this API.
+pub use wellfed_amebad_sdk as sdk;
 
 /// Declare a C-compatible enumeration that tolerates out-of-range values.
 macro_rules! c_enum {
@@ -22,7 +25,6 @@ macro_rules! c_enum {
 
 #[cfg(any(not(target_os = "none"), feature = "km4"))]
 pub mod leds;
-pub mod sdk;
 pub mod startup;
 #[cfg(any(not(target_os = "none"), feature = "km4"))]
 pub mod stopped;

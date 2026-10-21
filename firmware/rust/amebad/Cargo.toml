@@ -10,20 +10,17 @@ build = "build.rs"
 
 [features]
 # Generate SDK bindings from the pinned AmebaD headers (target builds only).
-# Requires WELLFED_SDK_DIR and WELLFED_NEWLIB_INCLUDE; set by firmware/tools.
-sdk = ["dep:bindgen"]
+sdk = ["wellfed-amebad-sdk/sdk"]
 # Select the core whose MMIO map and semaphore owner encoding apply.
-km0 = []
-km4 = []
+km0 = ["wellfed-amebad-sdk/km0"]
+km4 = ["wellfed-amebad-sdk/km4"]
 
 [dependencies]
+wellfed-amebad-sdk = { path = "../amebad-sdk" }
 wellfed-core = { path = "../core" }
 
 [target.'cfg(target_os = "none")'.dependencies]
 cortex-m = "0.7.7"
-
-[build-dependencies]
-bindgen = { version = "0.72.1", optional = true, default-features = false, features = ["runtime"] }
 
 [dev-dependencies]
 wellfed-testkit = { path = "../testkit" }

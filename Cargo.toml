@@ -37,7 +37,7 @@ dbg_macro = "deny"
 print_stdout = "warn"
 
 [workspace]
-members = [".", "firmware/rust/core", "firmware/rust/ffi", "firmware/rust/testkit", "firmware/rust/amebad", "firmware/rust/sim", "firmware/rust/probe"]
+members = [".", "firmware/rust/core", "firmware/rust/ffi", "firmware/rust/testkit", "firmware/rust/amebad", "firmware/rust/amebad-sdk", "firmware/rust/sim", "firmware/rust/probe"]
 resolver = "3"
 
 # Firmware crates permit audited `unsafe` at the C ABI and MMIO boundaries only.

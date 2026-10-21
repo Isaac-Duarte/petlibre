@@ -7,7 +7,8 @@ The local server talks to **stock 1.1.15** over its existing MQTT protocol. It d
 | Crate | Responsibility |
 | --- | --- |
 | `wellfed-core` | `no_std` controller, portion accounting, sensor qualification, ADC scaling, motor gate, feedback queue, monotonic clock, journal, and flash authority |
-| `wellfed-amebad` | GPIO/ADC board port, interrupt/timer supervision, watchdog, FreeRTOS owner, RAM parking, SDK flash hooks, build-bound startup reports, stopped outputs, and LED diagnostics; host fake SDK for tests |
+| `wellfed-amebad` | GPIO/ADC board port, interrupt/timer supervision, watchdog, FreeRTOS owner, RAM parking, SDK flash hooks, build-bound startup reports, stopped outputs, and LED diagnostics |
+| `wellfed-amebad-sdk` | Bindgen-backed KM4 calls into the pinned AmebaD SDK, and the deterministic host fake SDK used by tests and the simulator |
 | `wellfed-ffi` | C ABI and per-core static libraries joining Rust to SDK startup |
 | `wellfed-testkit`, `wellfed-sim` | Fake NOR journal storage and deterministic host worker |
 | `wellfed-probe` | Small non-actuating GET_CONFIG execution probe embedded into a fixed stock-image slot |

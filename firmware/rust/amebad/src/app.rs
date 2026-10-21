@@ -1,19 +1,20 @@
 //! KM4 application entry: logs and runs the synthetic diagnostic once.
-//! Stopped-output startup and a bounded indicator probe, then the FW05
-//! supervision probe, which opens the board stopped and never drives.
+//! Stopped-output startup and a bounded indicator probe, then the FW06 boot
+//! handshake probe, which binds the KM0 peer without any lease or flash access.
 
 use core::cell::UnsafeCell;
 use core::ffi::c_void;
 use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
+use crate::flash_park::Hardware;
+use crate::flash_probe::{Probe, Record};
 use crate::startup;
-use crate::supervision_probe::{self, Probe, Record};
 use crate::{leds, sdk, stopped};
 
 static PHASE: AtomicU32 = AtomicU32::new(0);
 static INPUT_MISMATCH: AtomicBool = AtomicBool::new(false);
-static SUPERVISION: AtomicBool = AtomicBool::new(false);
+static HANDSHAKE: AtomicBool = AtomicBool::new(false);
 
 /// Fixed-address probe storage, touched only by the diagnostic task.
 struct ProbeSlot(UnsafeCell<Option<Probe>>);
@@ -28,56 +29,74 @@ fn bit(value: bool) -> u8 {
 fn log_probe(record: Record) {
     let mut report = startup::Report::new();
     let line = match record {
-        Record::Skip { reset, marker } => report.record(format_args!(
-            "PLWDG1 skip reset={reset:08x} marker={marker:08x}\r\n"
+        Record::Hello { authority, count } => report.record(format_args!(
+            "PLFLS1 hello authority={authority:016x} count={count}\r\n"
         )),
-        Record::Open { board, events } => report.record(format_args!(
-            "PLTMR1 open board={} events={} hz={} period_ms={} status={}\r\n",
-            bit(board),
-            bit(events),
-            supervision_probe::TICKS_PER_SECOND,
-            supervision_probe::EVENTS.timer_period_ms,
-            if board && events { "pass" } else { "fail" },
-        )),
-        Record::Sample(s) | Record::StallBegin(s) | Record::StallEnd(s) => {
-            report.record(format_args!(
-                "PLTMR1 {} raw={:08x} ms={} irqs={} ready={} healthy={} stopped={}\r\n",
-                match record {
-                    Record::Sample(_) => "sample",
-                    Record::StallBegin(_) => "stall_begin",
-                    _ => "stall_end",
-                },
-                s.raw,
-                s.ms,
-                s.irqs,
-                bit(s.ready),
-                bit(s.healthy),
-                bit(s.stopped),
-            ))
-        }
-        Record::Arm { ok, vendor, marker } => report.record(format_args!(
-            "PLWDG1 arm status={} vendor={vendor:08x} count={} divisor={} marker={marker:08x}\r\n",
-            if ok { "pass" } else { "fail" },
-            supervision_probe::WATCHDOG.count_id,
-            supervision_probe::WATCHDOG.divisor,
-        )),
-        Record::Fed {
-            ms,
-            checkpoints,
-            ok,
+        Record::Ready {
+            peer,
+            reply,
+            phase,
+            fault,
+            inactive,
         } => report.record(format_args!(
-            "PLWDG1 fed ms={ms} checkpoints={checkpoints} status={}\r\n",
-            if ok { "pass" } else { "fail" },
+            "PLFLS1 ready peer={peer:016x} reply={} phase={} fault={} inactive={}\r\n",
+            reply.0,
+            phase.0,
+            fault.0,
+            bit(inactive),
         )),
-        Record::WatchdogStall { ms } => {
-            report.record(format_args!("PLWDG1 stall_begin ms={ms}\r\n"))
+        Record::Timeout { ms } => report.record(format_args!("PLFLS1 error timeout ms={ms}\r\n")),
+        Record::Foreign => report.record(format_args!("PLFLS1 foreign\r\n")),
+        Record::Start {
+            mode,
+            marker,
+            watchdog,
+        } => report.record(format_args!(
+            "PLPRK1 start mode={} marker={marker:08x} watchdog={}\r\n",
+            mode.0,
+            if watchdog { "pass" } else { "fail" },
+        )),
+        Record::Skip { marker } => {
+            report.record(format_args!("PLPRK1 skip marker={marker:08x}\r\n"))
         }
-        Record::Stalled { ms, fault, enabled } => report.record(format_args!(
-            "PLWDG1 stalled ms={ms} fault={fault} enabled={}\r\n",
-            bit(enabled)
+        Record::Batch {
+            leases,
+            park_max,
+            release_max,
+            frozen,
+            alive,
+        } => report.record(format_args!(
+            "PLPRK1 batch leases={leases} park_max={park_max} release_max={release_max} frozen={frozen} alive={alive}\r\n"
         )),
-        Record::NoReset { ms } => report.record(format_args!("PLWDG1 error no_reset ms={ms}\r\n")),
-        Record::ClockError => report.record(format_args!("PLTMR1 error clock\r\n")),
+        Record::LeaseError {
+            lease,
+            stage,
+            reply,
+            phase,
+            fault,
+            diag,
+        } => report.record(format_args!(
+            "PLPRK1 error lease={lease} stage={} reply={} phase={} fault={} own={:08x} peer={:08x} km0={:08x} ier={:08x} isr={:08x} ticks={}\r\n",
+            stage.0, reply.0, phase.0, fault.0, diag.own, diag.peer, diag.km0, diag.ier, diag.isr, diag.ticks,
+        )),
+        Record::Inject {
+            mode,
+            lease,
+            begin,
+            peer,
+            ms,
+        } => report.record(format_args!(
+            "PLPRK1 inject mode={} lease={lease} begin={} peer={peer:08x} ms={ms}\r\n",
+            mode.0,
+            bit(begin),
+        )),
+        Record::Done { leases, marker } => report.record(format_args!(
+            "PLPRK1 done leases={leases} marker={marker:08x}\r\n"
+        )),
+        Record::NoReset { ms } => {
+            report.record(format_args!("PLPRK1 error no_reset ms={ms}\r\n"))
+        }
+        Record::ClockError => report.record(format_args!("PLFLS1 error clock\r\n")),
     };
     if let Ok(line) = line {
         sdk::log(line);
@@ -87,7 +106,7 @@ fn log_probe(record: Record) {
 fn probe_step() -> u32 {
     // SAFETY: only this task touches the slot; the probe never moves once stored.
     let probe = unsafe { &mut *PROBE.0.get() }.get_or_insert_with(Probe::default);
-    let step = probe.step();
+    let step = probe.step::<Hardware>();
     if let Some(record) = step.record {
         log_probe(record);
     }
@@ -134,7 +153,7 @@ fn abort_led(led: leds::Led, high: bool, stage: &str, value: leds::Readback) {
 }
 
 unsafe extern "C" fn diagnostic_task(_: *mut c_void) -> u32 {
-    if SUPERVISION.load(Ordering::Relaxed) {
+    if HANDSHAKE.load(Ordering::Relaxed) {
         return probe_step();
     }
     let phase = PHASE.fetch_add(1, Ordering::Relaxed);
@@ -145,7 +164,7 @@ unsafe extern "C" fn diagnostic_task(_: *mut c_void) -> u32 {
                     sdk::log(c"PLLED1 error finish=input_mismatch low=all\r\n");
                 } else {
                     sdk::log(c"PLLED1 done low=all\r\n");
-                    SUPERVISION.store(true, Ordering::Relaxed);
+                    HANDSHAKE.store(true, Ordering::Relaxed);
                     return 1;
                 }
             } else {

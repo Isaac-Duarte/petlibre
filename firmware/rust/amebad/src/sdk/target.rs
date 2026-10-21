@@ -435,6 +435,25 @@ pub fn boot_reason() -> u32 {
     unsafe { raw::BOOT_Reason() }
 }
 
+/// KM4 IPC block: current interrupt enables (IER_R) and status (ISR).
+pub fn ipc_interrupts() -> (u32, u32) {
+    unsafe {
+        (
+            ptr::read_volatile(reg(0x4000_601c)),
+            ptr::read_volatile(reg(0x4000_6014)),
+        )
+    }
+}
+
+/// SysTick CTRL; a lease stops it while the peer is parked.
+pub fn systick_ctrl() -> u32 {
+    unsafe { ptr::read_volatile(reg(0xe000_e010)) }
+}
+
+pub fn set_systick_ctrl(value: u32) {
+    unsafe { ptr::write_volatile(reg(0xe000_e010), value) }
+}
+
 /// One busy-wait iteration with interrupts left as they are.
 pub fn spin_once() {
     cortex_m::asm::nop();

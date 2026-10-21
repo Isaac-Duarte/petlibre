@@ -107,6 +107,7 @@ pub struct Hardware {
     /// SYSTIMER ticks that pass during each busy-wait iteration.
     pub spin_ticks: u32,
     pub spins: u32,
+    pub systick: u32,
 }
 
 impl Default for Hardware {
@@ -180,6 +181,7 @@ impl Default for Hardware {
             boot_reason: 0,
             spin_ticks: 33,
             spins: 0,
+            systick: 7,
         }
     }
 }
@@ -404,6 +406,19 @@ pub mod api {
 
     pub fn boot_reason() -> u32 {
         with(|h| h.boot_reason)
+    }
+
+    pub fn ipc_interrupts() -> (u32, u32) {
+        (0, 0)
+    }
+
+    pub fn systick_ctrl() -> u32 {
+        with(|h| h.systick)
+    }
+
+    /// CLKSOURCE (bit 2) reads 1 whatever is written, as on the KM4 Cortex-M33.
+    pub fn set_systick_ctrl(value: u32) {
+        with(|h| h.systick = value | 4);
     }
 
     /// Time passes while the caller spins: SYSTIMER, TIM2 and the watchdog advance.

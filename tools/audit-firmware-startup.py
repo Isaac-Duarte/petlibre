@@ -25,6 +25,18 @@ READBACK = {1: rb'PLDBG1 pin=(PA0|PA2|PA4|PB22) stage=(request|verify|initialize
 AMACRO = 1 << 28
 SHARE_PAD_HELPER = 0x3ff  # PORB, MBIAS and LDO trim/power, per the stock trace
 SUPERVISION_MARK = b'PLTMR1 open board='
+FLASH_MARK = b'PLFLS1 hello authority='
+PARK_MARK = b'PLPRK1 start mode='  # FW06 stage C park round trip follows READY
+FLASH = {'hello': re.compile(rb'PLFLS1 hello authority=([0-9a-f]{16}) count=([0-9]{1,10})\r\n'),
+         'foreign': re.compile(rb'PLFLS1 foreign\r\n'),
+         'ready': re.compile(rb'PLFLS1 ready peer=([0-9a-f]{16}) reply=([0-9]{1,10}) phase=([0-9]{1,10}) fault=([0-9]{1,10}) inactive=([01])\r\n'),
+         'peer': re.compile(rb'PLFLS1 peer peer=([0-9a-f]{16}) reply=([0-9]{1,10}) phase=([0-9]{1,10}) fault=([0-9]{1,10}) blocked=([01])\r\n'),
+         'done': re.compile(rb'PLFLS1 done phase=([0-9]{1,10}) fault=([0-9]{1,10}) blocked=([01])\r\n'),
+         'error': re.compile(rb'PLFLS1 error (?:timeout ms=[0-9]{1,10}|clock)\r\n')}
+# reply ACCEPTED/FAILED, phase IDLE/FAULT, fault PEER_LOST; the test KM0 republishes its session ~10 s after READY.
+FLASH_READY = (0, 1, 0, 1)
+FLASH_PEER = (5, 8, 7, 1)
+FLASH_DONE = (8, 7, 1)
 CLOCK = re.compile(rb'PLCLK1 function_before=([0-9a-f]{8}) clock_before=([0-9a-f]{8}) function_after=([0-9a-f]{8}) clock_after=([0-9a-f]{8}) status=(pass|fail)\r\n')
 
 
@@ -125,6 +137,83 @@ def classify_led(rx, version=1):
             **({'led_output_only_pins': [p.decode() for p in output_only]} if output_only else {})}
 
 
+def classify_flash(rx, arrival, version=1):
+    """FW06 HELLO/READY binding, then one injected peer change and the 30 s watch.
+
+    Version 2 (fw06-park-v1) checks only HELLO/READY: it refuses peer/done records
+    and requires the park round trip's start record after READY instead.
+    `arrival(offset)` returns the host receive time of the rx chunk holding `offset`."""
+    kinds = ('hello', 'ready', 'peer', 'done') if version == 1 else ('hello', 'ready')
+    found = {kind: list(pattern.finditer(rx)) for kind, pattern in FLASH.items()}
+    report = {'flash_handshake_verified': False, 'flash_authority_session': None, 'flash_boot_count': None,
+              'flash_peer_session': None, 'flash_injected_peer_session': None,
+              'flash_ready_seconds': None, 'flash_peer_change_seconds': None, 'flash_done_seconds': None}
+    single = {kind: found[kind][0] for kind in ('hello', 'ready', 'peer', 'done') if len(found[kind]) == 1}
+    if 'hello' in single:
+        report.update(flash_authority_session=single['hello'][1].decode(), flash_boot_count=int(single['hello'][2]))
+    if 'ready' in single:
+        report['flash_peer_session'] = single['ready'][1].decode()
+    if 'peer' in single:
+        report['flash_injected_peer_session'] = single['peer'][1].decode()
+    if b'PLFLS1' not in rx:
+        return {'outcome': 'flash_handshake_missing', **report}
+    if rx.count(b'PLFLS1') != sum(len(v) for v in found.values()) or len(found['foreign']) > 1 or any(
+            len(found[kind]) > 1 for kind in ('hello', 'ready', 'peer', 'done')):
+        return {'outcome': 'flash_handshake_malformed', **report}
+    if version >= 2 and (found['peer'] or found['done']):
+        return {'outcome': 'flash_handshake_malformed', **report}
+    if found['error']:
+        return {'outcome': 'flash_handshake_failed', **report}
+    if len(single) != len(kinds):
+        return {'outcome': 'flash_handshake_missing', **report}
+    led_done = rx.find(b'PLLED1 done low=all\r\n')
+    if version >= 2:
+        return classify_flash_park(rx, arrival, single['hello'], single['ready'], found['foreign'], led_done, report)
+    hello, ready, peer, done = (single[kind] for kind in kinds)
+    if not (0 <= led_done < hello.start() < hello.end() <= ready.start() < ready.end() <= peer.start() < peer.end() <= done.start()) or any(
+            m.start() < hello.end() for m in found['foreign']):
+        return {'outcome': 'flash_handshake_order', **report}
+    first, second = int(ready[1], 16), int(peer[1], 16)
+    ok = (ready_fields_ok(hello, ready)
+          and second != first and second >> 32 == (first >> 32) + 1
+          and tuple(int(v) for v in peer.groups()[1:]) == FLASH_PEER
+          and tuple(int(v) for v in done.groups()) == FLASH_DONE)
+    if not ok:
+        return {'outcome': 'flash_handshake_failed', **report}
+    at = {kind: arrival(m.end() - 1) for kind, m in single.items()}
+    report.update(flash_ready_seconds=(at['ready'] - at['hello']).total_seconds(),
+                  flash_peer_change_seconds=(at['peer'] - at['ready']).total_seconds(),
+                  flash_done_seconds=(at['done'] - at['ready']).total_seconds())
+    if not (0 <= report['flash_ready_seconds'] <= 2.5 and 9.0 <= report['flash_peer_change_seconds'] <= 12.0
+            and 29.0 <= report['flash_done_seconds'] <= 32.0):
+        return {'outcome': 'flash_handshake_timing', **report}
+    return {'outcome': 'pass', **report, 'flash_handshake_verified': True}
+
+
+def ready_fields_ok(hello, ready):
+    """HELLO authority carries the boot count; READY binds a distinct, nonzero peer session while stopped."""
+    authority, count, peer = int(hello[1], 16), int(hello[2]), int(ready[1], 16)
+    return (authority != 0 and authority >> 32 == count and count >= 1
+            and peer != 0 and peer != authority and peer >> 32 >= 1
+            and tuple(int(v) for v in ready.groups()[1:]) == FLASH_READY)
+
+
+def classify_flash_park(rx, arrival, hello, ready, foreign, led_done, report):
+    """fw06-park-v1: HELLO/READY fields and timing, then the first park start record after READY."""
+    start = rx.find(PARK_MARK)
+    if start < 0:
+        return {'outcome': 'flash_handshake_missing', **report}
+    if not (0 <= led_done < hello.start() < hello.end() <= ready.start() < ready.end() <= start) or any(
+            m.start() < hello.end() for m in foreign):
+        return {'outcome': 'flash_handshake_order', **report}
+    if not ready_fields_ok(hello, ready):
+        return {'outcome': 'flash_handshake_failed', **report}
+    report['flash_ready_seconds'] = (arrival(ready.end() - 1) - arrival(hello.end() - 1)).total_seconds()
+    if not 0 <= report['flash_ready_seconds'] <= 2.5:
+        return {'outcome': 'flash_handshake_timing', **report}
+    return {'outcome': 'pass', **report, 'flash_handshake_verified': True}
+
+
 def classify(rx, identity, require_stopped=False):
     """Parse only fixed public fields; never return arbitrary device text."""
     starts = list(START.finditer(rx))
@@ -180,8 +269,10 @@ def load(capture, manifest_path, image_path):
     return manifest, identity, image, metadata, rx, tx, events
 
 
-def startup(rx, manifest, image, identity):
-    """Classify one startup segment under every policy the manifest declares."""
+def startup(rx, manifest, image, identity, arrival=None):
+    """Classify one startup segment under every policy the manifest declares.
+
+    `arrival(offset)` gives host receive times for timing-bound policies."""
     require = EVIDENCE.require
     supervision = manifest.get('startup_supervision_policy')
     require(supervision in (None, 'fw05-probe-v1'), 'Unknown startup supervision policy')
@@ -239,16 +330,33 @@ def startup(rx, manifest, image, identity):
             result.update(power)
         else:
             result.update({k: v for k, v in power.items() if k != 'outcome'})
+    flash_policy = manifest.get('startup_flash_handshake_policy')
+    require(flash_policy in (None, 'fw06-hello-v1', 'fw06-park-v1'), 'Unknown flash handshake policy')
+    require(bool(flash_policy) == (FLASH_MARK in image), 'Flash handshake policy/artifact mismatch')
+    # Checked both ways: a park image cannot be audited as a hello-only build, nor the reverse.
+    require((flash_policy == 'fw06-park-v1') == (PARK_MARK in image), 'Flash park policy/artifact mismatch')
+    if flash_policy:
+        require(led_policy, 'Flash handshake requires the LED probe policy')
+        require(arrival is not None, 'Flash handshake requires host receive times')
+        flash = classify_flash(rx, arrival, 2 if flash_policy == 'fw06-park-v1' else 1)
+        if result['outcome'] == 'pass':
+            result.update(flash)
+        else:
+            result.update({k: v for k, v in flash.items() if k != 'outcome'})
     return result
 
 
 def verify(capture, manifest_path, image_path, minimum_seconds):
     manifest, identity, image, metadata, rx, tx, events = load(capture, manifest_path, image_path)
-    result = startup(rx, manifest, image, identity)
+    chunks = [(e['offset'], e['offset'] + e['bytes'], e['utc']) for e in events if e['direction'] == 'rx']
+
+    def arrival(offset):
+        return EVIDENCE.timestamp(next(utc for start, end, utc in chunks if start <= offset < end))
+
+    result = startup(rx, manifest, image, identity, arrival)
     if result['outcome'] == 'pass':
         at = result.pop('start_offset')
-        received = next(e for e in events if e['direction'] == 'rx' and e['offset'] <= at < e['offset'] + e['bytes'])
-        seconds = (EVIDENCE.timestamp(metadata['end_utc']) - EVIDENCE.timestamp(received['utc'])).total_seconds()
+        seconds = (EVIDENCE.timestamp(metadata['end_utc']) - arrival(at)).total_seconds()
         result['seconds_after_startup'] = seconds
         if seconds < minimum_seconds:
             result['outcome'] = 'observation_too_short'

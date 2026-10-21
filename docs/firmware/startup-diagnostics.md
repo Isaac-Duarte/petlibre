@@ -54,6 +54,8 @@ A HIGH input mismatch remains a failed observation while permitting only the alr
 | `PLIO1` | Read-only pad-group/AON/GPIO routing observations; `read-only-v2` adds KM4's view of the shared-pad supply control and the raw Port A input word |
 | `PLDBG1` | Requested level, latch, input, directions, stopped state, pad control; `bounded-probe-v2` adds `highs=N/64` extra input samples |
 | `PLLED1` | Bounded sequence begin, individual results, terminal LOW/failure |
+| `PLFLS1` | FW06 KM4/KM0 boot handshake: HELLO authority session, READY peer session and flash-coordinator binding, injected peer change, terminal watch result; policy `fw06-hello-v1`; under `fw06-park-v1` only HELLO and READY |
+| `PLPRK1` | FW06 stage C park round trip: start mode/marker/watchdog, per-batch park/release maxima and frozen/alive counts, injected acknowledge/release faults, done or error/skip; policy `fw06-park-v1` |
 
 ## FW05 supervision probe capture
 
@@ -76,6 +78,24 @@ One physical receive-only capture of a cold boot passed the supervision auditor,
 
 Not yet exercised on hardware: owner-lease expiry while a task stalls. The probe never ran owner-side processing, so `owner_ready` was never established. Motion-path stop timing belongs to FW19.
 
+## FW06 boot handshake
+
+After `PLLED1 done low=all`, KM4 prints `PLFLS1 hello authority=<16 hex> count=<n>`: its authority session is the boot count in the high word and a fresh low word. KM0 answers READY with its own session, and KM4 binds a flash coordinator only while outputs are stopped, printing `PLFLS1 ready peer=<16 hex> reply=0 phase=1 fault=0 inactive=1` (ACCEPTED, IDLE, no fault). The test build's KM0 republishes a new session about 10 s later to simulate a rebooted peer. KM4 then reports `PLFLS1 peer peer=<16 hex> reply=5 phase=8 fault=7 blocked=1` (FAILED, FAULT, PEER_LOST), with the new session's high word one above the first. After a 30 s watch from READY it prints `PLFLS1 done phase=8 fault=7 blocked=1`. One `PLFLS1 foreign` line may appear after HELLO. Failures print `PLFLS1 error timeout ms=<n>` or `PLFLS1 error clock`. Policy `fw06-hello-v1` is bound to the HELLO record format in the image both ways. It requires the LED probe policy and exactly one fully parsed HELLO, READY, peer and done record, in that order. It checks the session and field values, and the host receive times: READY within 2.5 s of HELLO, the peer change 9–12 s after READY, and done 29–32 s after READY. Outcomes are `flash_handshake_missing`, `flash_handshake_malformed`, `flash_handshake_failed`, `flash_handshake_order` and `flash_handshake_timing`. The session values are reported as fixed hex fields. This is UART protocol evidence: it does not show that any flash write path is safe.
+
+## FW06 park round trip
+
+Policy `fw06-park-v1` is bound both ways to the `PLPRK1 start mode=` record format in the image, and still requires the HELLO record format. Under it the startup auditor checks only the handshake part of each boot: one HELLO and one READY (one `PLFLS1 foreign` allowed), after `PLLED1 done low=all`, with the `fw06-hello-v1` field values and READY within 2.5 s of HELLO. It refuses `PLFLS1 peer` and `PLFLS1 done` records and requires a `PLPRK1 start` record after READY.
+
+After READY, KM4 prints `PLPRK1 start mode=<0|1|2> marker=<hex8> watchdog=<pass|fail>` and four `PLPRK1 batch leases=<n> park_max=<ticks> release_max=<ticks> frozen=<n> alive=<n>` records at 25, 50, 75 and 100 leases. Park and release maxima are 32 768 Hz ticks, bounded by the 40 ms exchange limit (1310). A passing capture is one power-on with exactly three startups:
+
+- **Boot 1** (mode 0) injects `PLPRK1 inject mode=0 lease=101 begin=0 ... ms=0`: KM4 stops acknowledging a park, and the watchdog resets 2–6 s later.
+- **Boot 2** (mode 1) injects `inject mode=1 lease=101 begin=1 ... ms=0` and withholds the release. KM0 publishes TIMEOUT (`peer=504b0081`) after its 700 ms park budget, reported as a second inject line with `ms` within 650–760. The watchdog resets 2–6 s after the first inject line.
+- **Boot 3** (mode 2) prints `PLPRK1 done leases=100 marker=00000002`, then nothing more from `PLPRK1`/`PLFLS1` for at least 20 s.
+
+Every batch needs frozen equal to leases and alive at least leases − 1. HELLO counts must be 1, 2 and 3, and the KM0 peer session high words must be nonzero and strictly increasing. Failures print `PLPRK1 error lease=... stage=... reply=... phase=... fault=...`, `PLPRK1 error no_reset ms=<n>` or `PLPRK1 skip marker=<hex8>`.
+
+`audit-firmware-park.py` takes the same `--capture/--manifest/--image/--output` arguments as the supervision auditor and requires `fw06-park-v1`. It splits each boot after its last `PLPRK1` line before the next `PLFW1 start` and runs every declared startup policy on each segment. Outcomes are `wrong_boot_count`, `boot1_*`/`boot2_*`/`boot3_*`, `park_sequence`, `park_start`, `park_batches`, `park_inject_ack`, `park_inject_release`, `park_reset_timing`, `park_done`, `park_sessions` and `pass`. It reports reset flags, HELLO counts, session high words, batch values, both reset intervals, the release timeout and the clean tail. This is UART timing evidence: host timestamps carry USB latency, and it does not establish the physical reset cause or that flash access was excluded during parks.
+
 ## Shared-pad prerequisite and current physical findings
 
 The minimal KM0 main omitted a stock prerequisite for audio-shared pads used as GPIO. The port restores AMACRO and analog pad enables plus the SDK's calibrated `SOCPS_AudioLDO(ENABLE)` helper before entering the scheduler. It does not initialize audio playback.
@@ -97,3 +117,17 @@ readback on the tested unit. `trace-stock-pad-power.py` executes the stock initi
 With that prerequisite restored, the operator observed all four indicators blink twice and finish dark: **PA0 Wi-Fi, PA2 low food, PA4 locked, PB22 warning**. The sequence establishes HIGH-on/LOW-off on the tested unit; only the warning's red color is recorded.
 
 Review 06's earlier capture (HIGH latch with LOW Port A input, two intentional operator boots, interleaved KM0/KM4 reports) keeps its failing verdicts; do not reconstruct a clean stream or relabel them. The output-only build later passed the auditor on a single boot: intact `PLPWR1` before KM4 output with trim 0x2A, PA0/PA2/PA4 `status=output`, PB22 `pass`, terminal LOW. **FW04 is Done within this output-only scope** (physical capture plus operator observation); see the [feature board](../../FIRMWARE_BOARD.md).
+
+### FW06 bench results
+
+These are physical results on the research unit; they concern UART-visible protocol and timing, with nothing written to flash.
+
+- **Boot handshake (`fw06-hello-v1`).** Passed on one cold boot. KM0 answered within one receive chunk. A deliberately changed KM0 session latched PEER_LOST 10.0 s later, with outputs blocked.
+- **Park round trip (`fw06-park-v1`).** One power-on produced three boots, as designed:
+  1. The withheld ACK reset 3.91 s later.
+  2. After the withheld RELEASE, KM0 published TIMEOUT at 705 ms, and the platform reset.
+  3. A clean run followed.
+
+  All 300 leases showed a frozen KM0 heartbeat while parked and an advancing one between leases. The worst park took 6 SYSTIMER ticks; release took 2.
+- **KM4 SysTick CLKSOURCE.** It reads 1 whatever is written, so park and hook context checks test only ENABLE and TICKINT.
+- **Watchdog clock.** The reset came about 4.0–4.2 s after the last rate-limited refresh, an effective clock near 31–33 kHz. FW05 measured about 43 kHz with the same counter, and the cause of the difference is unknown.

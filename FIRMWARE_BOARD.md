@@ -5,7 +5,7 @@ This board tracks replacement-firmware integration, dependencies, and acceptance
 ## Current status
 
 - **Done:** FW01–FW05, three of them with recorded scope limits (see carried items).
-- **Next:** FW06, real flash coordination. It also fixes the production watchdog configuration.
+- **In progress:** FW06, real flash coordination. Stages A–C are done: production watchdog and lease constants, a boot handshake, and a park round trip with injected faults. Stage C passed on hardware. Next is stage D, a mediated SDK flash call that writes nothing.
 - **Critical path to feeding:** FW06 → FW13/FW14/FW15 → FW30 → FW16 → FW17.
 
 ### Carried items
@@ -16,7 +16,7 @@ Work a Done card deliberately handed to a later card. Close a row only with the 
 | --- | --- | --- | --- |
 | Motor STOP and infrared-off voltages, startup transients, repeated measured resets | FW03 | FW30 | Software readback and observed no-motion only |
 | Port A indicators PA0/PA2/PA4 output-only | FW04 | FW23 | No input readback on the tested unit; levels rest on visual observation |
-| Production watchdog clock bounds and counter choice | FW05 | FW06 | Measured effective clock near 43 kHz, not the assumed 33.3 kHz; reset about 3 s after the last refresh |
+| Production watchdog clock bounds and counter choice | FW05 | FW06 | Effective clock measured near 43 kHz (FW05) and near 31–33 kHz (FW06 stage C) with the same counter; the cause is unknown. Bounds widened to 24–54 kHz; explain the spread before FW16 relies on it |
 | Owner-lease expiry while a task stalls, on hardware | FW05 | FW16 | Host-tested; FW05 proved the supervision timer keeps running during a stall |
 | Stop timing under supervised motion | FW05 | FW19 | FW05 stall tests ran with motion disabled |
 | ADC clock enable on the minimal KM0 main | FW05 | FW14 | `Board::open` initializes the LP ADC without enabling its clock; the FW05 probe uses `open_outputs` instead |
@@ -39,7 +39,7 @@ Prioritize the UART development loop and build identity, stopped startup, LED di
 | **FW04 First LED controller** | **Done (output-only scope)** | Physical (capture, observation) | FW03 | Identify LED pins, colors and polarity physically. Exercise off/on/blink from a small diagnostic, with bounded timing and no motor or infrared enable. This is the first visible feature experiment. |
 | **FW05 Clock, independent stop timer and watchdog** | **Done (motion-disabled scope)** | Physical (UART timing) | FW03 | With motion disabled: measure the SYSTIMER rate against host time and confirm it only moves forward; show the supervision timer interrupt keeps running while a task stalls; show the watchdog refreshes only on real progress and resets the platform when progress stops; show a deliberate reset cannot become a reset loop. Lease expiry under a stall on hardware, production watchdog bounds and stop timing under motion are carried to FW16, FW06 and FW19. |
 | **FW31 Bench automation** | Ready | — | FW01 | Software-controlled feeder power and loader entry (for example a USB relay, and the adapter's spare control lines driving the loader button through a transistor), so the host can flash, power-cycle and capture without manual steps. Never powers the motor path while flashing; the operator can always cut power by hand. Record the wiring and its failure modes. |
-| **FW06 Real flash coordination across both cores** | Ready | — | FW03, FW05 | Implement the missing transport/provider and fresh boot handshake, RAM parking and mediated SDK flash operations. Verify stopped outputs before granting writes, bounded failure handling and no access from the other core during a lease. Inject peer loss and timeout. Fix the production watchdog configuration from the FW05 measurement, with margin for clock spread, and size the lease budget against it. |
+| **FW06 Real flash coordination across both cores** | In progress | — | FW03, FW05 | Implement the missing transport/provider and fresh boot handshake, RAM parking and mediated SDK flash operations. Verify stopped outputs before granting writes, bounded failure handling and no access from the other core during a lease. Inject peer loss and timeout. Fix the production watchdog configuration from the FW05 measurement, with margin for clock spread, and size the lease budget against it. |
 
 ## Early Wi-Fi and OTA
 

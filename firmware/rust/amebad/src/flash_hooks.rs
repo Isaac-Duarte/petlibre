@@ -12,10 +12,12 @@ use core::ptr;
 
 c_enum!(HookFault { CONTEXT = 1, ACQUIRE = 2, RELEASE = 3, PEER = 4, ORDER = 5 });
 
-/// SysTick CTRL ENABLE/TICKINT/CLKSOURCE. COUNTFLAG (bit 16) is ignored: a
-/// CTRL=0 write leaves it set until the next read, so it never shows that
-/// SysTick is running.
-pub const SYSTICK_CONTROL_BITS: u32 = 7;
+/// SysTick CTRL ENABLE and TICKINT, as in `flash_park`: CLKSOURCE is
+/// read-only 1 on the KM4 Cortex-M33 and says nothing about whether SysTick
+/// runs. COUNTFLAG (bit 16) is ignored as well.
+pub const SYSTICK_CONTROL_BITS: u32 = 3;
+/// Bits a saved CTRL value may hold for restore: ENABLE, TICKINT, CLKSOURCE.
+pub const SYSTICK_SAVED_BITS: u32 = 7;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -259,7 +261,7 @@ pub fn write_lock<C: HookCpu>() {
         || C::ipsr() != 0
         || ticket.id == 0
         || ticket.id <= get(s.last_id)
-        || ticket.saved_systick & !SYSTICK_CONTROL_BITS != 0
+        || ticket.saved_systick & !SYSTICK_SAVED_BITS != 0
         || C::tick_read() & SYSTICK_CONTROL_BITS != 0
         || get(s.lease_held)
     {

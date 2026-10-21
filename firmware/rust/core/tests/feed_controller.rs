@@ -1,8 +1,8 @@
-use petlibro_core::feed_controller::{
+use petlibre_core::feed_controller::{
     FeedController, FeedLimits, FeedReason, FeedRequest, FeedSample, FeedStartResult, FeedState,
     MotorCommand,
 };
-use petlibro_core::feed_progress::{BowlMode, Direction};
+use petlibre_core::feed_progress::{BowlMode, Direction};
 
 /// Compressed test intervals; these are not deployable hardware settings.
 const LIMITS: FeedLimits = FeedLimits {

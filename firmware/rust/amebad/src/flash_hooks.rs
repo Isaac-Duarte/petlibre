@@ -1,6 +1,6 @@
 //! RAM interposer for the SDK's `FLASH_Write_Lock`, `FLASH_Write_Unlock` and
 //! `FLASH_Write_IPC_Int`. The pinned SDK definitions are renamed to
-//! `petlibro_sdk_flash_legacy_*` by the build overlay; all existing callers and
+//! `petlibre_sdk_flash_legacy_*` by the build overlay; all existing callers and
 //! the IPC configuration table keep using the public symbols.
 //!
 //! Until a provider is installed every call routes to the legacy SDK code.
@@ -368,9 +368,9 @@ mod exported {
     static mut hook_lease_held: bool = false;
 
     unsafe extern "C" {
-        fn petlibro_sdk_flash_legacy_lock();
-        fn petlibro_sdk_flash_legacy_unlock();
-        fn petlibro_sdk_flash_legacy_ipc(data: *mut c_void, status: u32, channel: u32);
+        fn petlibre_sdk_flash_legacy_lock();
+        fn petlibre_sdk_flash_legacy_unlock();
+        fn petlibre_sdk_flash_legacy_ipc(data: *mut c_void, status: u32, channel: u32);
     }
 
     pub struct Hardware;
@@ -449,61 +449,61 @@ mod exported {
         #[inline(always)]
         fn legacy_lock() {
             // SAFETY: the renamed pinned SDK routine.
-            unsafe { petlibro_sdk_flash_legacy_lock() }
+            unsafe { petlibre_sdk_flash_legacy_lock() }
         }
 
         #[inline(always)]
         fn legacy_unlock() {
             // SAFETY: as for `legacy_lock`.
-            unsafe { petlibro_sdk_flash_legacy_unlock() }
+            unsafe { petlibre_sdk_flash_legacy_unlock() }
         }
 
         #[inline(always)]
         fn legacy_ipc(data: *mut c_void, status: u32, channel: u32) {
             // SAFETY: as for `legacy_lock`.
-            unsafe { petlibro_sdk_flash_legacy_ipc(data, status, channel) }
+            unsafe { petlibre_sdk_flash_legacy_ipc(data, status, channel) }
         }
     }
 
     #[unsafe(no_mangle)]
-    #[unsafe(link_section = ".image2.ram.text.petlibro_hooks")]
+    #[unsafe(link_section = ".image2.ram.text.petlibre_hooks")]
     #[inline(never)]
     pub extern "C" fn hook_fail(reason: HookFault) -> ! {
         fail_body::<Hardware>(reason)
     }
 
     #[unsafe(no_mangle)]
-    #[unsafe(link_section = ".image2.ram.text.petlibro_hooks")]
+    #[unsafe(link_section = ".image2.ram.text.petlibre_hooks")]
     #[inline(never)]
-    pub unsafe extern "C" fn petlibro_amebad_flash_hooks_install(
+    pub unsafe extern "C" fn petlibre_amebad_flash_hooks_install(
         provider: *const HookProvider,
     ) -> bool {
         install::<Hardware>(provider)
     }
 
     #[unsafe(no_mangle)]
-    #[unsafe(link_section = ".image2.ram.text.petlibro_hooks")]
+    #[unsafe(link_section = ".image2.ram.text.petlibre_hooks")]
     #[inline(never)]
-    pub extern "C" fn petlibro_amebad_flash_hooks_armed() -> bool {
+    pub extern "C" fn petlibre_amebad_flash_hooks_armed() -> bool {
         armed::<Hardware>()
     }
 
     #[unsafe(no_mangle)]
-    #[unsafe(link_section = ".image2.ram.text.petlibro_hooks")]
+    #[unsafe(link_section = ".image2.ram.text.petlibre_hooks")]
     #[inline(never)]
     pub extern "C" fn FLASH_Write_Lock() {
         write_lock::<Hardware>()
     }
 
     #[unsafe(no_mangle)]
-    #[unsafe(link_section = ".image2.ram.text.petlibro_hooks")]
+    #[unsafe(link_section = ".image2.ram.text.petlibre_hooks")]
     #[inline(never)]
     pub extern "C" fn FLASH_Write_Unlock() {
         write_unlock::<Hardware>()
     }
 
     #[unsafe(no_mangle)]
-    #[unsafe(link_section = ".image2.ram.text.petlibro_hooks")]
+    #[unsafe(link_section = ".image2.ram.text.petlibre_hooks")]
     #[inline(never)]
     pub unsafe extern "C" fn FLASH_Write_IPC_Int(data: *mut c_void, status: u32, channel: u32) {
         write_ipc::<Hardware>(data, status, channel)

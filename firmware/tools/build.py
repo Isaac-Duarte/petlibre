@@ -42,12 +42,12 @@ RUST_CORES = {"lp": ("thumbv8m.base-none-eabi", "km0"), "hp": ("thumbv8m.main-no
 # C ABI symbols every KM4 archive must define; the core ABI is a C interface
 # for tests and later C consumers, retained in the archive, not the image.
 ARCHIVE_SYMBOLS = {
-    "hp": ["petlibro_app_start", "petlibro_diagnostic_run", "petlibro_feed_controller_update",
-           "petlibro_sensor_inputs_update", "petlibro_adc_scale_16", "petlibro_motor_gate_request",
-           "petlibro_feedback_events_process", "petlibro_tick_clock_read", "petlibro_flash_coord_init",
-           "petlibro_flash_coord_request", "petlibro_flash_coord_parked", "petlibro_flash_coord_released",
-           "petlibro_flash_coord_outputs_blocked", "petlibro_feed_journal_open",
-           "petlibro_feed_journal_create", "petlibro_feed_journal_read", "petlibro_feed_journal_storage"]
+    "hp": ["petlibre_app_start", "petlibre_diagnostic_run", "petlibre_feed_controller_update",
+           "petlibre_sensor_inputs_update", "petlibre_adc_scale_16", "petlibre_motor_gate_request",
+           "petlibre_feedback_events_process", "petlibre_tick_clock_read", "petlibre_flash_coord_init",
+           "petlibre_flash_coord_request", "petlibre_flash_coord_parked", "petlibre_flash_coord_released",
+           "petlibre_flash_coord_outputs_blocked", "petlibre_feed_journal_open",
+           "petlibre_feed_journal_create", "petlibre_feed_journal_read", "petlibre_feed_journal_storage"]
         + sorted(rampark.SYMBOLS) + ["FLASH_Write_Lock", "FLASH_Write_Unlock", "FLASH_Write_IPC_Int"],
     "lp": sorted(rampark.SYMBOLS) + ["FLASH_Write_Lock", "FLASH_Write_Unlock", "FLASH_Write_IPC_Int"],
 }
@@ -125,9 +125,7 @@ def unexpected_sdk_changes(sdk, profile):
     for entry in filter(None, status.split("\0")):
         code, path = entry[:2], entry[3:]
         if code == "??":
-            # Flat C inputs staged by earlier wrappers are retired before compilation.
-            retired = profile != "baseline" and re.fullmatch(r"component/common/example/petlibro/[^/]+\.[ch]", path)
-            allowed = path in VENDOR_UNTRACKED or bool(retired)
+            allowed = path in VENDOR_UNTRACKED
         elif code == " M":
             allowed = path in managed or path in VENDOR_REBUILT or (
                 path in VENDOR_MODE_ONLY and os.access(sdk / path, os.X_OK) and
@@ -382,20 +380,20 @@ def audit_image(image):
 
 
 def rust_archive(sdk, core):
-    return sdk.parent / "rust-lib" / f"libpetlibro_{RUST_CORES[core][1]}.a"
+    return sdk.parent / "rust-lib" / f"libpetlibre_{RUST_CORES[core][1]}.a"
 
 
 def build_rust(sdk, toolchain, stream, identity, base_environment):
     """Cross-compile one firmware archive per core and stage it beside the SDK."""
     target_dir = sdk.parent / "rust-target"
-    environment = dict(base_environment, PETLIBRO_BUILD_ID=identity, PETLIBRO_SDK_DIR=str(sdk),
-                       PETLIBRO_NEWLIB_INCLUDE=str(toolchain / "arm-none-eabi/include"))
+    environment = dict(base_environment, PETLIBRE_BUILD_ID=identity, PETLIBRE_SDK_DIR=str(sdk),
+                       PETLIBRE_NEWLIB_INCLUDE=str(toolchain / "arm-none-eabi/include"))
     archives = {}
     for core, (triple, feature) in RUST_CORES.items():
-        run("cargo", "build", "--locked", "--profile", "firmware", "-p", "petlibro-ffi",
+        run("cargo", "build", "--locked", "--profile", "firmware", "-p", "petlibre-ffi",
             "--target", triple, "--features", feature, "--target-dir", str(target_dir),
             cwd=ROOT, env=environment, stdout=stream, stderr=subprocess.STDOUT)
-        built = target_dir / triple / "firmware/libpetlibro_ffi.a"
+        built = target_dir / triple / "firmware/libpetlibre_ffi.a"
         staged = rust_archive(sdk, core)
         staged.parent.mkdir(exist_ok=True)
         shutil.copyfile(built, staged)
@@ -452,23 +450,9 @@ def prepare(profile, toolchain, expected):
         overrides[str(relative)] = digest(sdk / relative)
     if profile != "baseline":
         example = sdk / "component/common/example"
-        application = example / "petlibro"
-        previous = list(application.rglob("*.[ch]")) if application.exists() else []
-        wanted = set()  # The application is the Rust archive; no C is staged here.
-        # Preserve retired generated inputs outside the SDK's basename-based
-        # vpath search. Otherwise old flat sources can shadow their replacements.
-        retired = sdk.parent / "retired-app-inputs"
-        for path in previous:
-            if path not in wanted:
-                retired.mkdir(exist_ok=True)
-                archive = retired / (digest(path) + "-" + path.name)
-                if not archive.exists():
-                    shutil.copyfile(path, archive)
-                path.unlink()
         # The vendor makefiles name objects by basename and include old .d files.
-        # Rebuild only our objects, including retired ones, to avoid stale links.
-        names = {p.stem for p in previous if p.suffix == ".c"}
-        names |= {"plaf103_flash_park", "plaf103_flash_hooks"}
+        # Rebuild only our objects to avoid stale links.
+        names = {"plaf103_flash_park", "plaf103_flash_hooks"}
         object_root = sdk / PROJECT / "project_hp/asdk"
         for name in names:
             for suffix in (".o", ".d", ".i", ".s", ".su"):
@@ -508,7 +492,7 @@ def prepare(profile, toolchain, expected):
             if original.count(anchor) != 1:
                 raise RuntimeError("Pinned RAM linker section changed")
             (sdk / relative).write_text(original.replace(anchor,
-                "KEEP(*(.image2.ram.text.petlibro_park))\n\t\t" + anchor))
+                "KEEP(*(.image2.ram.text.petlibre_park))\n\t\t" + anchor))
             overrides[str(relative)] = digest(sdk / relative)
         original = run("git", "show", "HEAD:" + str(sdkhooks.SOURCE), cwd=sdk,
                        capture_output=True, text=True).stdout
@@ -571,7 +555,7 @@ def build(profile, toolchain):
                     print(line if len(line) <= 600 else line[:597] + "...")
                 raise RuntimeError(f"SDK build failed; see {log}") from None
     staged_diagnostics = [line for line in log.read_text(errors="replace").splitlines()
-                          if re.search(r"(?:/petlibro/.*\.[ch]|example_entry\.c):.*(?:warning|error):", line)]
+                          if re.search(r"example_entry\.c:.*(?:warning|error):", line)]
     if profile == "plaf103-firstboot":
         staged_diagnostics += [line for line in log.read_text(errors="replace").splitlines()
                                if re.search(r"/src_(?:lp|hp)/main\.c:.*(?:warning|error):", line)]
@@ -602,7 +586,7 @@ def build(profile, toolchain):
         raise RuntimeError("OTA container does not match the combined image")
     if sum(combined) & 0xFFFFFFFF != checksum:
         raise RuntimeError("OTA container checksum does not match")
-    banner_present = b"Petlibro local firmware: Rust bringup" in combined
+    banner_present = b"Petlibre local firmware: Rust bringup" in combined
     if banner_present != (profile != "baseline"):
         raise RuntimeError("Linked image does not match the requested application profile")
     if profile != "baseline" and f"PLFW1 start build={identity} ".encode() not in combined:
@@ -612,7 +596,7 @@ def build(profile, toolchain):
     if profile != "baseline":
         # The linked KM4 image must contain the Rust application entry and the
         # SDK interposer; park routines are checked by the RAM park audit.
-        required_symbols = ["petlibro_app_start", "FLASH_Write_Lock", "FLASH_Write_Unlock",
+        required_symbols = ["petlibre_app_start", "FLASH_Write_Lock", "FLASH_Write_Unlock",
                             "FLASH_Write_IPC_Int"]
         symbols = run(str(toolchain / "bin/arm-none-eabi-nm"), "--defined-only",
                       str(image_directory / "target_img2.axf"), capture_output=True, text=True)

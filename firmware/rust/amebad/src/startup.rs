@@ -3,7 +3,7 @@
 use core::ffi::CStr;
 use core::fmt::{self, Write};
 
-pub const BUILD_ID: &str = env!("PETLIBRO_BUILD_ID");
+pub const BUILD_ID: &str = env!("PETLIBRE_BUILD_ID");
 
 /// Raw live mapping registers and the factory-preserved reset flags.
 #[derive(Clone, Copy, Debug)]
@@ -62,7 +62,7 @@ impl Report {
         self.record(format_args!(
             concat!(
                 "PLFW1 start build=",
-                env!("PETLIBRO_BUILD_ID"),
+                env!("PETLIBRE_BUILD_ID"),
                 " bank={} reset={:08x} mmu={:08x},{:08x},{:08x}\r\n"
             ),
             bank, snapshot.reset, snapshot.control, snapshot.start, snapshot.offset

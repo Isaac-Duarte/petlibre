@@ -1,6 +1,6 @@
 use std::{fs, process::Command};
 
-use petlibro_local::config::Config;
+use petlibre_local::config::Config;
 use tempfile::TempDir;
 
 fn inputs(dir: &TempDir) -> Vec<String> {
@@ -28,7 +28,7 @@ fn inputs(dir: &TempDir) -> Vec<String> {
 }
 
 fn init(args: &[String]) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_petlibro-local"))
+    Command::new(env!("CARGO_BIN_EXE_petlibre-local"))
         .args(args)
         .output()
         .unwrap()

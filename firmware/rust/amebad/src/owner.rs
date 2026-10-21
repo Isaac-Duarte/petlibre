@@ -8,15 +8,15 @@
 use core::ffi::c_void;
 use core::ptr;
 
-use petlibro_core::adc_scale::AdcCalibration;
-use petlibro_core::feed_controller::{
+use petlibre_core::adc_scale::AdcCalibration;
+use petlibre_core::feed_controller::{
     FeedController, FeedLimits, FeedReason, FeedRequest, FeedStartResult, FeedState, MotorCommand,
 };
-use petlibro_core::feed_progress::{BowlMode, Direction};
-use petlibro_core::feed_storage::{OwnerOutcome, OwnerRecovery, OwnerResult, OwnerStorage};
-use petlibro_core::feedback_events::CAPACITY;
-use petlibro_core::flash_coord::{FlashCoord, FlashFault, FlashLimits, FlashPhase};
-use petlibro_core::sensor_inputs::{SensorInputs, SensorLimits, SensorReading};
+use petlibre_core::feed_progress::{BowlMode, Direction};
+use petlibre_core::feed_storage::{OwnerOutcome, OwnerRecovery, OwnerResult, OwnerStorage};
+use petlibre_core::feedback_events::CAPACITY;
+use petlibre_core::flash_coord::{FlashCoord, FlashFault, FlashLimits, FlashPhase};
+use petlibre_core::sensor_inputs::{SensorInputs, SensorLimits, SensorReading};
 
 use crate::active::active_pointer;
 use crate::board::{self, Board};

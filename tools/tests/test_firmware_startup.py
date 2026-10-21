@@ -16,7 +16,7 @@ def start(identity=ID, bank=b'1', control=b'00000003', offset=b'03e7a000'):
 
 
 def boot(identity=ID):
-    return b'Petlibro local firmware: Rust bringup\r\n' + start(identity) + b'Synthetic core diagnostic: PASS\r\nSynthetic diagnostic only; feeder backend stays unopened.\r\n' + M.PASS
+    return b'Petlibre local firmware: Rust bringup\r\n' + start(identity) + b'Synthetic core diagnostic: PASS\r\nSynthetic diagnostic only; feeder backend stays unopened.\r\n' + M.PASS
 
 
 class FirmwareStartup(unittest.TestCase):

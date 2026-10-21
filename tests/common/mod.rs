@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-use petlibro_local::config::Config;
+use petlibre_local::config::Config;
 
 pub fn config() -> Config {
     Config {
@@ -57,13 +57,13 @@ pub fn start(path: &std::path::Path) -> Service {
 }
 
 pub fn start_mode(path: &std::path::Path, ota: bool) -> Service {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_petlibro-local"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_petlibre-local"));
     command.args(["serve", "--config"]).arg(path);
     if ota {
         // Tests run from uncommitted trees; production refuses such builds.
         command
             .arg("--enable-ota-trial")
-            .env(petlibro_local::build_info::ALLOW_UNREVIEWED_ENV, "1");
+            .env(petlibre_local::build_info::ALLOW_UNREVIEWED_ENV, "1");
     }
     Service(
         command

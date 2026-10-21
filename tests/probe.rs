@@ -1,7 +1,7 @@
 mod common;
 
 use chrono::{DateTime, Duration, Utc};
-use petlibro_local::{
+use petlibre_local::{
     controller::{Controller, Rejection},
     ota_image::{C_PROBE_SHA256, Lease, ORIGINAL_SHA256, Profile},
     ota_trial::{self, Image},

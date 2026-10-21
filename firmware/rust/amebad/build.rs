@@ -1,8 +1,8 @@
 //! Generates AmebaD SDK bindings for target builds with the `sdk` feature.
 
 fn main() {
-    println!("cargo:rerun-if-env-changed=PETLIBRO_BUILD_ID");
-    let identity = std::env::var("PETLIBRO_BUILD_ID").unwrap_or_else(|_| "host".into());
+    println!("cargo:rerun-if-env-changed=PETLIBRE_BUILD_ID");
+    let identity = std::env::var("PETLIBRE_BUILD_ID").unwrap_or_else(|_| "host".into());
     assert!(
         identity == "host"
             || (identity.len() == 64
@@ -14,10 +14,10 @@ fn main() {
         std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("none") || identity != "host",
         "target builds require the reviewed build wrapper's identity"
     );
-    println!("cargo:rustc-env=PETLIBRO_BUILD_ID={identity}");
+    println!("cargo:rustc-env=PETLIBRE_BUILD_ID={identity}");
     println!("cargo:rerun-if-changed=sdk_wrapper.h");
-    println!("cargo:rerun-if-env-changed=PETLIBRO_SDK_DIR");
-    println!("cargo:rerun-if-env-changed=PETLIBRO_NEWLIB_INCLUDE");
+    println!("cargo:rerun-if-env-changed=PETLIBRE_SDK_DIR");
+    println!("cargo:rerun-if-env-changed=PETLIBRE_NEWLIB_INCLUDE");
     #[cfg(feature = "sdk")]
     sdk::generate();
 }
@@ -96,10 +96,10 @@ mod sdk {
             return;
         }
         let sdk = PathBuf::from(
-            env::var("PETLIBRO_SDK_DIR").expect("PETLIBRO_SDK_DIR names the staged SDK"),
+            env::var("PETLIBRE_SDK_DIR").expect("PETLIBRE_SDK_DIR names the staged SDK"),
         );
-        let newlib = env::var("PETLIBRO_NEWLIB_INCLUDE")
-            .expect("PETLIBRO_NEWLIB_INCLUDE names newlib headers");
+        let newlib = env::var("PETLIBRE_NEWLIB_INCLUDE")
+            .expect("PETLIBRE_NEWLIB_INCLUDE names newlib headers");
         let km4 = env::var("CARGO_FEATURE_KM4").is_ok();
         assert!(
             km4 != env::var("CARGO_FEATURE_KM0").is_ok(),
@@ -168,8 +168,8 @@ mod sdk {
             .ctypes_prefix("core::ffi")
             .layout_tests(false)
             .derive_default(true)
-            .allowlist_type("petlibro_sdk_constant|IRQn")
-            .constified_enum_module("petlibro_sdk_constant")
+            .allowlist_type("petlibre_sdk_constant|IRQn")
+            .constified_enum_module("petlibre_sdk_constant")
             .prepend_enum_name(false)
             .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()));
         for name in FUNCTIONS {

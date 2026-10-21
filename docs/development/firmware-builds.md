@@ -32,7 +32,7 @@ make -C firmware plaf103
 make -C firmware plaf103-firstboot
 ```
 
-Those two profiles require a contributor-supplied exact stock reference at `private/firmware/PLAF103_OTA_010115.bin`; see [fixtures](fixtures.md). Builds proceed KM0 before KM4 and retain input hashes, artifact hashes, logs, and successful manifests. Bindgen gets SDK/newlib paths from the wrapper through `PETLIBRO_SDK_DIR` and `PETLIBRO_NEWLIB_INCLUDE`.
+Those two profiles require a contributor-supplied exact stock reference at `private/firmware/PLAF103_OTA_010115.bin`; see [fixtures](fixtures.md). Builds proceed KM0 before KM4 and retain input hashes, artifact hashes, logs, and successful manifests. Bindgen gets SDK/newlib paths from the wrapper through `PETLIBRE_SDK_DIR` and `PETLIBRE_NEWLIB_INCLUDE`.
 
 | Ignored location | Contents |
 | --- | --- |

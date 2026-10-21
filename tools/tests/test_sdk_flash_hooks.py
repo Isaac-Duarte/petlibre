@@ -64,7 +64,7 @@ class RoutingTests(unittest.TestCase):
             cls.images.append((core, elf, names, listing))
 
     def test_real_hooks_and_ipc_tables_are_interposed(self):
-        result = sdkhooks.audit(BUILD / "sdk", PROJECT, BINUTILS, {"KM0": BUILD / "rust-lib/libpetlibro_km0.a", "KM4": BUILD / "rust-lib/libpetlibro_km4.a"})
+        result = sdkhooks.audit(BUILD / "sdk", PROJECT, BINUTILS, {"KM0": BUILD / "rust-lib/libpetlibre_km0.a", "KM4": BUILD / "rust-lib/libpetlibre_km4.a"})
         self.assertEqual(set(result["images"]), {"KM0", "KM4"})
         self.assertFalse(result["protocol_installed"])
         self.assertFalse(result["global_exclusion_proven"])
@@ -83,7 +83,7 @@ class RoutingTests(unittest.TestCase):
                 address = names["ipc_init_config"]["address"] + 28
                 offset = sdkhooks.file_offset(elf, BINUTILS / "arm-none-eabi-objdump", address, 4)
                 damaged = bytearray(elf.read_bytes())
-                struct.pack_into("<I", damaged, offset, names["petlibro_sdk_flash_legacy_ipc"]["address"] | 1)
+                struct.pack_into("<I", damaged, offset, names["petlibre_sdk_flash_legacy_ipc"]["address"] | 1)
                 path = Path(directory) / "bypassed.axf"
                 path.write_bytes(damaged)
                 with self.assertRaisesRegex(ValueError, "bypasses the public hook"):

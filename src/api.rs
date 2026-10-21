@@ -136,7 +136,7 @@ pub fn router(state: ApiState) -> Router {
             "/health",
             get(|| async {
                 Json(
-                    json!({"service":"petlibro-local","version":env!("CARGO_PKG_VERSION"),
+                    json!({"service":"petlibre-local","version":env!("CARGO_PKG_VERSION"),
                     "build_commit":BUILD.commit,"build_clean":BUILD.clean}),
                 )
             }),

@@ -1,11 +1,11 @@
-use petlibro_amebad::board::MOTOR_MASK;
-use petlibro_amebad::sdk::fake;
-use petlibro_amebad::stopped::{self, PA_MASK, PB_MASK};
+use petlibre_amebad::board::MOTOR_MASK;
+use petlibre_amebad::sdk::fake;
+use petlibre_amebad::stopped::{self, PA_MASK, PB_MASK};
 
 fn check_preloaded() {
     fake::with(|h| {
-        assert_ne!(h.gpio_function & petlibro_amebad::sdk::GPIO_ENABLE_BIT, 0);
-        assert_ne!(h.gpio_clock & petlibro_amebad::sdk::GPIO_ENABLE_BIT, 0);
+        assert_ne!(h.gpio_function & petlibre_amebad::sdk::GPIO_ENABLE_BIT, 0);
+        assert_ne!(h.gpio_clock & petlibre_amebad::sdk::GPIO_ENABLE_BIT, 0);
         assert_eq!(h.output[0] & PA_MASK, MOTOR_MASK);
         assert_eq!(h.output[1] & PB_MASK, 0);
         assert_eq!(h.interrupts, 1);
@@ -27,9 +27,9 @@ fn clock_enable_preserves_other_flags_and_blocked_enable_touches_no_gpio() {
     fake::with(|h| {
         assert_eq!(
             h.gpio_function,
-            0x41 | petlibro_amebad::sdk::GPIO_ENABLE_BIT
+            0x41 | petlibre_amebad::sdk::GPIO_ENABLE_BIT
         );
-        assert_eq!(h.gpio_clock, 0x82 | petlibro_amebad::sdk::GPIO_ENABLE_BIT);
+        assert_eq!(h.gpio_clock, 0x82 | petlibre_amebad::sdk::GPIO_ENABLE_BIT);
         assert_eq!(h.interrupts, 1);
     });
     fake::reset_hardware();
@@ -98,7 +98,7 @@ fn infrared_off_requires_a_low_latch_not_only_a_low_input() {
             h.readback_override_mask[port] = mask;
             h.readback_override[port] = 0;
         });
-        assert_eq!(petlibro_amebad::sdk::gpio_port_read(port as u32, mask), 0);
+        assert_eq!(petlibre_amebad::sdk::gpio_port_read(port as u32, mask), 0);
         assert!(!stopped::observe().verified());
         fake::with(|h| h.output[port] &= !mask);
         assert!(stopped::observe().verified());
@@ -109,12 +109,12 @@ fn infrared_off_requires_a_low_latch_not_only_a_low_input() {
 fn panic_stop_requests_stop_and_infrared_off_only_when_gpio_is_clocked() {
     fake::reset_hardware();
     fake::with(|h| h.output = [1 << 15 | 1 << 2, 1 << 3 | 1 << 22]);
-    petlibro_amebad::sdk::panic_outputs_safe();
+    petlibre_amebad::sdk::panic_outputs_safe();
     fake::with(|h| assert!(h.interrupts == 1 && h.output == [1 << 15 | 1 << 2, 1 << 3 | 1 << 22]));
     fake::reset_hardware();
     assert!(stopped::initialize().verified());
     fake::with(|h| h.output = [1 << 13 | 1 << 15 | 1 << 2, 1 << 3 | 1 << 22]);
-    petlibro_amebad::sdk::panic_outputs_safe();
+    petlibre_amebad::sdk::panic_outputs_safe();
     fake::with(|h| {
         assert_eq!(h.interrupts, 1);
         assert_eq!(h.output, [MOTOR_MASK | 1 << 2, 1 << 22]);

@@ -1,4 +1,4 @@
-use petlibro_core::flash_coord::{
+use petlibre_core::flash_coord::{
     FlashCoord, FlashFault, FlashLimits, FlashParty, FlashReply, FlashToken,
 };
 

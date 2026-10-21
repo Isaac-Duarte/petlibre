@@ -3,7 +3,7 @@ mod common;
 
 use std::time::Duration;
 
-use petlibro_local::{config::Config, storage};
+use petlibre_local::{config::Config, storage};
 use serde_json::{Value, json};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},

@@ -1,7 +1,7 @@
 mod common;
 
 use chrono::Utc;
-use petlibro_local::protocol;
+use petlibre_local::protocol;
 use serde_json::json;
 
 #[test]

@@ -2,7 +2,7 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
-use petlibro_local::{
+use petlibre_local::{
     api::{self, ApiState},
     broker,
     build_info::{self, BUILD},
@@ -148,7 +148,7 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "petlibro_local=info,mqtt5=warn".into()),
+                .unwrap_or_else(|_| "petlibre_local=info,mqtt5=warn".into()),
         )
         .with_writer(std::io::stderr)
         .init();

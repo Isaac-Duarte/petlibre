@@ -6,11 +6,11 @@ The local server talks to **stock 1.1.15** over its existing MQTT protocol. It d
 
 | Crate | Responsibility |
 | --- | --- |
-| `petlibro-core` | `no_std` controller, portion accounting, sensor qualification, ADC scaling, motor gate, feedback queue, monotonic clock, journal, and flash authority |
-| `petlibro-amebad` | GPIO/ADC board port, interrupt/timer supervision, watchdog, FreeRTOS owner, RAM parking, SDK flash hooks, build-bound startup reports, stopped outputs, and LED diagnostics; host fake SDK for tests |
-| `petlibro-ffi` | C ABI and per-core static libraries joining Rust to SDK startup |
-| `petlibro-testkit`, `petlibro-sim` | Fake NOR journal storage and deterministic host worker |
-| `petlibro-probe` | Small non-actuating GET_CONFIG execution probe embedded into a fixed stock-image slot |
+| `petlibre-core` | `no_std` controller, portion accounting, sensor qualification, ADC scaling, motor gate, feedback queue, monotonic clock, journal, and flash authority |
+| `petlibre-amebad` | GPIO/ADC board port, interrupt/timer supervision, watchdog, FreeRTOS owner, RAM parking, SDK flash hooks, build-bound startup reports, stopped outputs, and LED diagnostics; host fake SDK for tests |
+| `petlibre-ffi` | C ABI and per-core static libraries joining Rust to SDK startup |
+| `petlibre-testkit`, `petlibre-sim` | Fake NOR journal storage and deterministic host worker |
+| `petlibre-probe` | Small non-actuating GET_CONFIG execution probe embedded into a fixed stock-image slot |
 
 Minimal C hooks call the Rust entrypoint. The SDK still supplies startup, FreeRTOS, radio code, linker scripts, and image packaging. KM0 and KM4 are built separately. Header-derived bindings are generated for SDK-backed KM4 builds; host tests use fake bindings.
 

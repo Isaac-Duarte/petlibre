@@ -5,9 +5,9 @@
 
 use core::ptr;
 
-use petlibro_core::feed_controller::MotorCommand;
-use petlibro_core::flash_coord::FlashCoord;
-use petlibro_core::tick_clock::TickClock;
+use petlibre_core::feed_controller::MotorCommand;
+use petlibre_core::flash_coord::FlashCoord;
+use petlibre_core::tick_clock::TickClock;
 
 use crate::active::active_pointer;
 use crate::board::{self, Board, MOTOR_MASK};

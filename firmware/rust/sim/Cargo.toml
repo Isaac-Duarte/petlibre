@@ -1,6 +1,6 @@
 [package]
 license = "MIT"
-name = "petlibro-sim"
+name = "petlibre-sim"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.99"
@@ -12,9 +12,9 @@ name = "virtual-feeder-worker"
 path = "src/main.rs"
 
 [dependencies]
-petlibro-amebad = { path = "../amebad" }
-petlibro-core = { path = "../core" }
-petlibro-testkit = { path = "../testkit" }
+petlibre-amebad = { path = "../amebad" }
+petlibre-core = { path = "../core" }
+petlibre-testkit = { path = "../testkit" }
 
 [lints]
 workspace = true

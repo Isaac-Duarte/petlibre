@@ -1,7 +1,7 @@
 mod common;
 
 use chrono::{Duration, Utc};
-use petlibro_local::{
+use petlibre_local::{
     controller::{Controller, FeedInput, FeedPhase, Rejection},
     protocol::Message,
 };
@@ -53,7 +53,7 @@ fn ota_reports_keep_distinct_phases_with_shared_ids_and_bound_history() {
     assert!(c.status.feeds.is_empty());
     // Observations cannot manufacture an outgoing command or imply a boot.
     assert!(
-        petlibro_local::protocol::reply(
+        petlibre_local::protocol::reply(
             &c.config,
             "system",
             &serde_json::from_value(json!({"cmd":"OTA_INFORM","state":5})).unwrap(),

@@ -8,12 +8,12 @@ pub struct Build {
 }
 
 pub const BUILD: Build = Build {
-    commit: env!("PETLIBRO_BUILD_COMMIT"),
-    clean: matches!(env!("PETLIBRO_BUILD_CLEAN").as_bytes(), b"true"),
+    commit: env!("PETLIBRE_BUILD_COMMIT"),
+    clean: matches!(env!("PETLIBRE_BUILD_CLEAN").as_bytes(), b"true"),
 };
 
 /// Test-only escape hatch: integration tests run from uncommitted trees.
-pub const ALLOW_UNREVIEWED_ENV: &str = "PETLIBRO_ALLOW_UNREVIEWED_OTA_BUILD";
+pub const ALLOW_UNREVIEWED_ENV: &str = "PETLIBRE_ALLOW_UNREVIEWED_OTA_BUILD";
 
 impl Build {
     pub fn reviewable(self) -> bool {

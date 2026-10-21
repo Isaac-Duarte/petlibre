@@ -12,11 +12,11 @@ import struct
 import rampark
 
 SOURCE = Path("component/soc/realtek/amebad/fwlib/ram_common/rtl8721d_flash_ram.c")
-RENAMES = {"FLASH_Write_Lock": "petlibro_sdk_flash_legacy_lock",
-           "FLASH_Write_Unlock": "petlibro_sdk_flash_legacy_unlock",
-           "FLASH_Write_IPC_Int": "petlibro_sdk_flash_legacy_ipc"}
+RENAMES = {"FLASH_Write_Lock": "petlibre_sdk_flash_legacy_lock",
+           "FLASH_Write_Unlock": "petlibre_sdk_flash_legacy_unlock",
+           "FLASH_Write_IPC_Int": "petlibre_sdk_flash_legacy_ipc"}
 FUNCTIONS = set(RENAMES) | set(RENAMES.values()) | {
-    "petlibro_amebad_flash_hooks_install", "petlibro_amebad_flash_hooks_armed", "hook_fail"}
+    "petlibre_amebad_flash_hooks_install", "petlibre_amebad_flash_hooks_armed", "hook_fail"}
 STATE = {"hook_transport", "hook_ticket", "hook_last_id", "hook_armed", "hook_faulted",
          "hook_legacy_locked", "hook_lease_held"}
 

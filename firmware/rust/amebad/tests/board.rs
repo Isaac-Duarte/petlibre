@@ -1,11 +1,11 @@
 mod common;
 
 use common::*;
-use petlibro_amebad::board::{Board, MOTOR_MASK};
-use petlibro_amebad::sdk::fake;
-use petlibro_core::feed_controller::MotorCommand;
-use petlibro_core::flash_coord::{FlashFault, FlashParty, FlashReply};
-use petlibro_core::sensor_inputs::SensorReading;
+use petlibre_amebad::board::{Board, MOTOR_MASK};
+use petlibre_amebad::sdk::fake;
+use petlibre_core::feed_controller::MotorCommand;
+use petlibre_core::flash_coord::{FlashFault, FlashParty, FlashReply};
+use petlibre_core::sensor_inputs::SensorReading;
 
 #[test]
 fn startup_capture_and_stop() {

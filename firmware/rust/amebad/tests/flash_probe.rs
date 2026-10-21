@@ -9,20 +9,20 @@
 
 use std::cell::{Cell, RefCell};
 
-use petlibro_amebad::flash_hooks::HookTicket;
-use petlibro_amebad::flash_park::{
+use petlibre_amebad::flash_hooks::HookTicket;
+use petlibre_amebad::flash_park::{
     self, ACK, Mmio, RELEASE, RELEASED, REQUEST, SYSTICK_CTRL, TICKS, TIMEOUT,
 };
-use petlibro_amebad::flash_peer::{
+use petlibre_amebad::flash_peer::{
     BACKUP_BASE, MARKER_REGISTER, PARK_CHANNEL, PARK_TICK_LIMIT, Peer,
 };
-use petlibro_amebad::flash_probe::{
+use petlibre_amebad::flash_probe::{
     ATTEMPT_BIT, EXPECTED_ID, FlashOps, LeaseStage, Probe, Provider, Record, STRESS_SAVES,
 };
-use petlibro_amebad::sdk::{self, fake};
-use petlibro_amebad::stopped;
-use petlibro_core::flash_coord::{FlashFault, FlashPhase, FlashReply};
-use petlibro_core::settings_store::SettingsStatus;
+use petlibre_amebad::sdk::{self, fake};
+use petlibre_amebad::stopped;
+use petlibre_core::flash_coord::{FlashFault, FlashPhase, FlashReply};
+use petlibre_core::settings_store::SettingsStatus;
 
 #[derive(Default)]
 struct Km0 {

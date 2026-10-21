@@ -1,8 +1,8 @@
-use petlibro_core::feed_controller::{FeedReason, FeedRequest};
-use petlibro_core::feed_journal::{FeedJournal, JournalConfig, JournalError, RECORD_BYTES};
-use petlibro_core::feed_progress::{BowlMode, Direction};
-use petlibro_core::feed_storage::{OwnerOutcome, OwnerResult};
-use petlibro_testkit::journal_flash::{FakeJournalFlash, UNIT};
+use petlibre_core::feed_controller::{FeedReason, FeedRequest};
+use petlibre_core::feed_journal::{FeedJournal, JournalConfig, JournalError, RECORD_BYTES};
+use petlibre_core::feed_progress::{BowlMode, Direction};
+use petlibre_core::feed_storage::{OwnerOutcome, OwnerResult};
+use petlibre_testkit::journal_flash::{FakeJournalFlash, UNIT};
 
 /// Unit sizes for torn-write/restart coverage: the virtual feeder's 256, a
 /// 4 KiB sector, and units whose blank tail ends in a chunk shorter than the
@@ -484,7 +484,7 @@ fn id_and_sequence_exhaustion() {
 
 #[test]
 fn wear_limit_refuses_new_reservations_but_never_strands_a_pending_one() {
-    use petlibro_core::feed_journal::WEAR_LIMIT;
+    use petlibre_core::feed_journal::WEAR_LIMIT;
     let mut f = FakeJournalFlash::default();
     let mut j = FeedJournal::default();
     // SAFETY: the fake flash outlives the journal.

@@ -12,17 +12,17 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufRead, Read, Seek, SeekFrom, Write};
 use std::process::exit;
 
-use petlibro_amebad::events::EventsConfig;
-use petlibro_amebad::owner::{Owner, OwnerConfig};
-use petlibro_amebad::sdk::fake;
-use petlibro_amebad::watchdog::WatchdogConfig;
-use petlibro_core::feed_controller::{FeedLimits, FeedRequest};
-use petlibro_core::feed_journal::{FeedJournal, JournalConfig, JournalError, JournalIo};
-use petlibro_core::feed_progress::{BowlMode, Direction};
-use petlibro_core::feed_storage::{OwnerRecovery, OwnerResult, OwnerStorage};
-use petlibro_core::flash_coord::{FlashCoord, FlashLimits, FlashReply};
-use petlibro_core::sensor_inputs::SensorLimits;
-use petlibro_testkit::journal_flash::{FakeJournalFlash, UNIT};
+use petlibre_amebad::events::EventsConfig;
+use petlibre_amebad::owner::{Owner, OwnerConfig};
+use petlibre_amebad::sdk::fake;
+use petlibre_amebad::watchdog::WatchdogConfig;
+use petlibre_core::feed_controller::{FeedLimits, FeedRequest};
+use petlibre_core::feed_journal::{FeedJournal, JournalConfig, JournalError, JournalIo};
+use petlibre_core::feed_progress::{BowlMode, Direction};
+use petlibre_core::feed_storage::{OwnerRecovery, OwnerResult, OwnerStorage};
+use petlibre_core::flash_coord::{FlashCoord, FlashLimits, FlashReply};
+use petlibre_core::sensor_inputs::SensorLimits;
+use petlibre_testkit::journal_flash::{FakeJournalFlash, UNIT};
 
 /// Synthetic profile copied from the owner tests; not hardware calibration.
 fn config() -> OwnerConfig {

@@ -4,6 +4,6 @@ BUILD := ../../private/firmware-tests
 CARGO_TARGET_DIR ?= ../../target
 .PHONY: all
 all:
-	cargo build --locked --release -p petlibro-sim
+	cargo build --locked --release -p petlibre-sim
 	mkdir -p $(BUILD)
 	cp $(CARGO_TARGET_DIR)/release/virtual-feeder-worker $(BUILD)/virtual-feeder-worker

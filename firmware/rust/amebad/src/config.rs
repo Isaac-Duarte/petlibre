@@ -7,7 +7,7 @@
 //! difference is unknown. The bounds cover both with margin; they are not a
 //! characterization of the clock.
 
-use petlibro_core::flash_coord::FlashLimits;
+use petlibre_core::flash_coord::FlashLimits;
 
 use crate::watchdog::WatchdogConfig;
 

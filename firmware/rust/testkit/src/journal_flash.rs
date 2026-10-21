@@ -11,7 +11,7 @@ use core::cell::RefCell;
 use core::ffi::{c_uint, c_void};
 use std::rc::Rc;
 
-use petlibro_core::feed_journal::JournalIo;
+use petlibre_core::feed_journal::JournalIo;
 
 /// Default unit size, as used by the virtual feeder image.
 pub const UNIT: usize = 256;

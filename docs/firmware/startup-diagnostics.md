@@ -4,7 +4,7 @@ The current diagnostic initializes limited physical GPIO, then runs the syntheti
 
 ## Build-bound startup reports
 
-The SDK wrapper hashes canonical JSON containing the profile and complete root-relative source-input hash map. This becomes `startup_identity` in the manifest and `PETLIBRO_BUILD_ID` in the firmware. It excludes timestamps; the final OTA hash remains a separate artifact identity. Target compilation of the port requires a lowercase 64-digit ID; host tests use `host`.
+The SDK wrapper hashes canonical JSON containing the profile and complete root-relative source-input hash map. This becomes `startup_identity` in the manifest and `PETLIBRE_BUILD_ID` in the firmware. It excludes timestamps; the final OTA hash remains a separate artifact identity. Target compilation of the port requires a lowercase 64-digit ID; host tests use `host`.
 
 ```text
 PLFW1 start build=<64 lowercase hex digits> bank=1 reset=00000000 mmu=00000003,0c000000,03e7a000

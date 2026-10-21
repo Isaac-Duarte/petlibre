@@ -692,7 +692,7 @@ def build(profile, toolchain):
         "startup_gpio_clock_policy": "explicit-enable-v1" if profile != "baseline" else None,
         "startup_flash_handshake_policy": None,
         "startup_adc_policy": None,
-        "startup_wifi_policy": "fw07-join-v1" if profile == "plaf103-firstboot" else None,
+        "startup_wifi_policy": "fw07-dns-v1" if profile == "plaf103-firstboot" else None,
         "toolchain_sha256": LOCK["toolchain"]["sha256"],
         "built_at": datetime.now(timezone.utc).isoformat(),
         "inputs": {str(p.relative_to(ROOT)): checksum for p, checksum in expected.items()},

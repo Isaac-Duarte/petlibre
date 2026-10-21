@@ -125,17 +125,19 @@ Bench lessons from stage C:
 
 ## What is actually installed
 
-The research feeder runs **FW07 Wi-Fi join review 02** in bank 1, starting at
-flash offset `0x186000`. It was installed through the changed-sector updater
-(134 sectors verified).
+The research feeder runs **FW07 Wi-Fi DNS review 02** in bank 1, starting at
+flash offset `0x186000`. It was installed through the changed-sector updater,
+which stopped on a loader NAK at 56 of 113 sectors; `--interrupted` finished the
+remaining 56 and the marker, all verified.
 
 | Identity | Recorded value |
 | --- | --- |
-| OTA SHA-256 | `6905e6822688be1b4f1d40bc4df21d0ded1915faae84e9a758bb71f7f24076cc` |
-| Embedded startup build ID | `a8d0deb4f6da93b4a6b90a9c8658b0d22426e2ca737a3f6955606bd314e54894` |
+| OTA SHA-256 | `ad63df45a0d5185a63faa5585fac2a8d8230f9b443167787b71f2ce4b078b72c` |
+| Embedded startup build ID | `8528d9cb6a9e869c2c53debc4cffc619bfaf6a4b7e548c313d9308fe42bf9472` |
 
-**Every power-on runs the Wi-Fi join probe**: after the LED sequence it turns
-the radio on (station mode) and keeps trying to join the owner's hotspot
+**Every power-on runs the Wi-Fi DNS probe**: after the LED sequence it turns
+the radio on (station mode), keeps trying to join the owner's hotspot, and while
+joined checks DNS every 5 s, rejoining after two failures
 (credentials compiled in from `private/hotspot.json`; the image stays under
 `private/`), with backoff up to 30 s. It drives no motor or emitter and writes no
 flash.
@@ -222,9 +224,21 @@ starts it. The UART recorder caps a capture at 180 s. A host packet capture
 (`sudo tcpdump -i <hotspot interface>`) is the quickest way to tell feeder
 problems from host problems.
 
-**Next for FW07:** decide the closure scope. Recovery from DHCP or DNS loss and
-real egress need the host firewall to allow DNS and forwarding, which is the
-owner's decision.
+**FW07 stage D (physical, passed).** The owner's host firewall now allows DHCP
+and DNS from the hotspot subnet; forwarding stays blocked (the feeder has no
+internet). The probe sends its own DNS query every 5 s, since lwIP's resolver
+cache hid the first DNS outage. Two failures are a DNS loss and trigger a
+rejoin, and the backoff resets only after a successful lookup. An operator DNS
+block (`sudo nft insert rule inet computer_security input iifname "<hotspot
+interface>" udp dport 53 drop`, undone with `sudo systemctl reload
+computer-security`) was detected in 11 s and recovered 10 s after unblocking.
+
+**Next for FW07:** DHCP-server loss and lease expiry (the lease is 1 h), and
+runtime evidence that the Wi-Fi stack writes no flash. Then decide closure.
+
+`--interrupted` now also accepts one sector holding the staged target's first
+1–3 program frames followed by erased flash, the state a NAK during programming
+leaves. The owner approved this narrow change after a stop at 0x1d6000.
 
 The FW07 plan from the static survey, written before stage A (stages A and B are
 now done; the "Today" item describes the build before them):

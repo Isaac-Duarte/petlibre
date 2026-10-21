@@ -5,7 +5,7 @@ This board tracks replacement-firmware integration, dependencies, and acceptance
 ## Current status
 
 - **Done:** FW01–FW06 and FW15, five of them with recorded scope limits (see carried items).
-- **In progress:** FW07 (stage B passed: radio on and scanning on hardware, with fast connect off and a link audit pinning every flash/eFuse write reference; stage C passed: joins, gets a DHCP lease, and rejoins after the access point returns, with KM0 now running the WLAN firmware; DNS and egress untested). FW14 waits for batteries: its ADC channel select and millivolt scaling are proven, but the battery channel, PA19 and the divider are not.
+- **In progress:** FW07 (stage B passed: radio on and scanning on hardware, with fast connect off and a link audit pinning every flash/eFuse write reference; stage C passed: joins, gets a DHCP lease, and rejoins after the access point returns, with KM0 now running the WLAN firmware; stage D passed: periodic DNS checks detect a DNS outage and recover after it; DHCP-server loss, lease expiry and runtime flash-write evidence remain). FW14 waits for batteries: its ADC channel select and millivolt scaling are proven, but the battery channel, PA19 and the divider are not.
 - **Critical path to feeding:** FW13/FW14/FW15 → FW30 → FW16 → FW17.
 
 ### Carried items
@@ -47,7 +47,7 @@ Prioritize the UART development loop and build identity, stopped startup, LED di
 
 | Card | Status | Evidence | Prerequisites | Finish line |
 | --- | --- | --- | --- | --- |
-| **FW07 Wi-Fi join and reconnect** | In progress | Physical (UART + hotspot DHCP log: scans, join, lease, loss and rejoin) | FW03, FW06 | Join the configured test network, obtain an address and recover from AP/DHCP/DNS loss without repeated uncontrolled resets. Define credential storage and audit SDK writes through the flash authority. Bringup credentials stay private; the full setup flow is FW25. |
+| **FW07 Wi-Fi join and reconnect** | In progress | Physical (UART + hotspot logs: scans, join, lease, AP loss and rejoin, DNS loss and recovery) | FW03, FW06 | Join the configured test network, obtain an address and recover from AP/DHCP/DNS loss without repeated uncontrolled resets. Define credential storage and audit SDK writes through the flash authority. Bringup credentials stay private; the full setup flow is FW25. |
 | **FW08 Local health and control transport** | Planned | — | FW02, FW07 | Expose build/bank/boot identity, uptime and fault state through a versioned local interface. Define authentication and compatibility with the existing Rust server. Health requests and diagnostic commands cannot dispense food. |
 | **FW09 OTA bank selection and boot policy** | Ready | — | FW01, FW06 | Establish usable bank capacities, selection with two valid banks, image compatibility and activation rules. Define a failed-first-boot recovery mechanism that the actual factory loader can support. Document any limitation before relying on rollback; do not infer it from the presence of two banks. |
 | **FW10 Guarded OTA upload and activation** | Planned | — | FW03, FW06, FW07, FW08, FW09 | Authenticate updates, validate the manifest/image and size, refuse the running bank and preserve unrelated data. Verify the candidate before activation and reboot into the expected build. Test corrupt, truncated and interrupted transfers with a recoverable boot path. |

@@ -1,19 +1,25 @@
 #!/usr/bin/env python3
-"""Verify a finalized receive-only FW07 join-and-reconnect capture against its build artifact.
+"""Verify a finalized receive-only FW07 join capture against its build artifact.
 
-The capture is one boot during which the operator switches the configured access
-point off after the feeder has joined, then on again. A passing capture is one
-startup whose LED probe completes, then the join probe's events, numbered from 1
-with none overwritten and outputs stopped at every one:
+The capture is one boot. A passing capture is one startup whose LED probe
+completes, then the probe's events, numbered from 1 with none overwritten and
+outputs stopped at every one:
   - wifi_on succeeds;
   - every attempt runs scan, then connect only when the network was found, then
     DHCP only when connect succeeded, then (when an address was assigned) a loss,
     then a backoff; the attempt number increases by one each time;
   - an assigned address is never 0.0.0.0 nor the SDK's static fallback 192.168.1.80;
-  - backoffs double from 1 s to at most 30 s and reset to 1 s after a join;
-  - there is a join, a loss after it, and a rejoin after that first loss.
-The report gives the join, loss and rejoin times; the address stays in this private
-report. The SSID and password never appear in these records.
+  - backoffs double from 1 s to at most 30 s.
+fw07-join-v1 (PLWIF2): backoffs reset after a join, and losses are link drops.
+The operator switches the access point off after the join, then on again; a
+pass needs a join, a loss after it, and a rejoin after that first loss.
+fw07-dns-v1 (PLWIF3): a joined attempt runs DNS lookups before its loss. A loss
+is a link drop, or a DNS loss after exactly DNS_FAILURES consecutive failed
+lookups; backoffs reset after a successful lookup. The operator blocks DNS at the
+access point after a lookup succeeds, then unblocks it; a pass needs a
+successful lookup, a DNS loss after it, and a successful lookup after that loss.
+The report gives the join, loss and recovery times; the address stays in this
+private report. The SSID and password never appear in these records.
 """
 import argparse
 import importlib.util
@@ -27,33 +33,80 @@ SPEC = importlib.util.spec_from_file_location('firmware_startup', ROOT / 'tools/
 STARTUP = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(STARTUP)
 EVIDENCE = STARTUP.EVIDENCE
-POLICY = 'fw07-join-v1'
+POLICIES = {'fw07-join-v1': b'PLWIF2', 'fw07-dns-v1': b'PLWIF3'}
 FALLBACK = ipaddress.IPv4Address('192.168.1.80')
 BACKOFF_MS = (1000, 30000)
+DNS_FAILURES = 2  # example_entry.c PETLIBRE_DNS_FAILURES
 DEC, SDEC, HEX8 = rb'(\d{1,10})', rb'(-?\d{1,10})', rb'([0-9a-f]{8})'
-KINDS = ('on', 'scan', 'connect', 'dhcp', 'lost', 'backoff')
-RECORDS = {
-    'S': rb'PLWIF2 start created=([01])\r\n',
-    'E': (rb'PLWIF2 ev seq=' + DEC + rb' kind=(' + b'|'.join(k.encode() for k in KINDS) + rb') attempt=' + DEC
-          + rb' result=' + SDEC + rb' value=' + HEX8 + rb' rssi=' + SDEC + rb' security=' + HEX8 + rb' ms=' + DEC
-          + rb' stopped=([01])\r\n'),
-    'O': rb'PLWIF2 error overrun seq=' + DEC + rb'\r\n',
-}
-ANY = re.compile(b'|'.join(b'(?P<%s>%s)' % (k.encode(), v) for k, v in RECORDS.items()))
+KINDS = ('on', 'scan', 'connect', 'dhcp', 'lost', 'backoff', 'dns')
 FOREIGN = (b'PLFLS1', b'PLPRK1', b'PLRDS1', b'PLWRS1', b'PLJNL1', b'PLSET1', b'PLTMR1', b'PLADC1', b'PLWIF1')
-LIMIT = ('UART evidence of the firmware\'s own join, DHCP, loss and backoff events; the access point\'s outage '
-         'instants are operator-chosen and not measured. Traffic beyond DHCP, flash and eFuse behavior at runtime '
-         'and credential handling inside the SDK are not established by this capture.')
+LIMIT = ('UART evidence of the firmware\'s own join, DHCP, DNS, loss and backoff events; the access point\'s outage '
+         'and DNS block instants are operator-chosen and not measured. Traffic beyond DHCP and DNS, flash and eFuse '
+         'behavior at runtime and credential handling inside the SDK are not established by this capture.')
 # lwip_netconf.h: DHCP_START=0, DHCP_WAIT_ADDRESS, DHCP_ADDRESS_ASSIGNED, DHCP_RELEASE_IP, DHCP_STOP, DHCP_TIMEOUT
 DHCP_ASSIGNED = 2
 
 
-def records(rx):
-    found = [(m.lastgroup, m, re.fullmatch(RECORDS[m.lastgroup], m[0]).groups()) for m in ANY.finditer(rx)]
-    return found, len(found) == rx.count(b'PLWIF2')
+def formats(prefix):
+    return {
+        'S': prefix + rb' start created=([01])\r\n',
+        'E': (prefix + rb' ev seq=' + DEC + rb' kind=(' + b'|'.join(k.encode() for k in KINDS) + rb') attempt=' + DEC
+              + rb' result=' + SDEC + rb' value=' + HEX8 + rb' rssi=' + SDEC + rb' security=' + HEX8 + rb' ms=' + DEC
+              + rb' stopped=([01])\r\n'),
+        'O': prefix + rb' error overrun seq=' + DEC + rb'\r\n',
+    }
 
 
-def check_join(rx, found, arrival, result):
+def records(rx, prefix):
+    known = formats(prefix)
+    pattern = re.compile(b'|'.join(b'(?P<%s>%s)' % (k.encode(), v) for k, v in known.items()))
+    found = [(m.lastgroup, m, re.fullmatch(known[m.lastgroup], m[0]).groups()) for m in pattern.finditer(rx)]
+    return found, len(found) == rx.count(prefix)
+
+
+def check_attempt(attempt, last, dns):
+    """The attempt's grammar; None when it is well formed."""
+    kinds = ''.join('n' if e['kind'] == 'dns' else e['kind'][0] for e in attempt)  # s c d n l b
+    scan = attempt[0]
+    connect = next((e for e in attempt if e['kind'] == 'connect'), None)
+    dhcp = next((e for e in attempt if e['kind'] == 'dhcp'), None)
+    joined = scan['result'] == 0 and scan['value'] == 1 and connect and connect['result'] == 0 \
+        and dhcp and dhcp['result'] == DHCP_ASSIGNED
+    lookups = [e for e in attempt if e['kind'] == 'dns']
+    if dns and joined:
+        shape = re.fullmatch(r'scdn*(lb?)?', kinds) if last else re.fullmatch(r'scdn*lb', kinds)
+    else:
+        expected = 's'
+        if scan['result'] == 0 and scan['value'] == 1:
+            expected += 'c'
+            if connect and connect['result'] == 0:
+                expected += 'd'
+                if joined:
+                    expected += 'l'
+        shape = kinds == expected + 'b' or (last and (expected + 'b').startswith(kinds))
+    if not shape:
+        return 'wifi_attempts'
+    for e in lookups:
+        if (e['result'] == 0) != (e['value'] != 0):
+            return 'wifi_dns'
+    trailing = 0
+    for e in reversed(lookups):
+        if e['result'] == 0:
+            break
+        trailing += 1
+    lost = next((e for e in attempt if e['kind'] == 'lost'), None)
+    if lost and lost['result'] not in ((0, 1) if dns else (0,)):
+        return 'wifi_attempts'
+    if lost and lost['result'] == 1:
+        if trailing != DNS_FAILURES:
+            return 'wifi_dns'
+    elif trailing >= DNS_FAILURES:
+        # A link loss, or still joined at the capture end, after recovery was due.
+        return 'wifi_dns'
+    return None
+
+
+def check_join(rx, found, arrival, result, dns):
     if not found or found[0][0] != 'S' or any(kind != 'E' for kind, _, _ in found[1:]):
         return 'wifi_sequence'
     led_done = rx.find(b'PLLED1 done low=all\r\n')
@@ -73,10 +126,10 @@ def check_join(rx, found, arrival, result):
     result['wifi_on_ms'] = events[0]['ms']
     if events[0]['result'] != 0:
         return 'wifi_on'
-    attempts, joins, losses, backoffs = [], [], [], []
+    attempts, joins, losses, backoffs, lookups = [], [], [], [], []
     previous, expected_backoff = 0, BACKOFF_MS[0]
     for e in events[1:]:
-        if e['kind'] == 'on':
+        if e['kind'] == 'on' or (e['kind'] == 'dns' and not dns):
             return 'wifi_sequence'
         if e['kind'] == 'scan':
             if e['attempt'] != previous + 1:
@@ -88,30 +141,28 @@ def check_join(rx, found, arrival, result):
             return 'wifi_attempts'
         attempts[-1].append(e)
     for attempt in attempts:
-        kinds = ''.join(e['kind'][0] for e in attempt)  # s c d l b
-        scan = attempt[0]
+        problem = check_attempt(attempt, attempt is attempts[-1], dns)
+        if problem:
+            return problem
         connect = next((e for e in attempt if e['kind'] == 'connect'), None)
         dhcp = next((e for e in attempt if e['kind'] == 'dhcp'), None)
-        expected = 's'
-        if scan['result'] == 0 and scan['value'] == 1:
-            expected += 'c'
-            if connect and connect['result'] == 0:
-                expected += 'd'
-                if dhcp and dhcp['result'] == DHCP_ASSIGNED:
-                    expected += 'l'
-        # Only the last attempt may still be in progress when the capture ends.
-        if kinds != expected + 'b' and not (attempt is attempts[-1] and (expected + 'b').startswith(kinds)):
-            return 'wifi_attempts'
         if dhcp and dhcp['result'] == DHCP_ASSIGNED:
             address = ipaddress.IPv4Address(dhcp['value'])
             if address in (ipaddress.IPv4Address(0), FALLBACK):
                 return 'wifi_address'
             joins.append({'attempt': dhcp['attempt'], 'address': str(address), 'dhcp_ms': dhcp['ms'],
-                          'connect_ms': connect['ms'], 'rssi': scan['rssi'], 'at': dhcp['at']})
-            expected_backoff = BACKOFF_MS[0]
+                          'connect_ms': connect['ms'], 'rssi': attempt[0]['rssi'], 'at': dhcp['at']})
+            if not dns:
+                expected_backoff = BACKOFF_MS[0]
+        for e in attempt:
+            if e['kind'] == 'dns':
+                lookups.append(e)
+                if e['result'] == 0:
+                    expected_backoff = BACKOFF_MS[0]
         lost = next((e for e in attempt if e['kind'] == 'lost'), None)
         if lost:
-            losses.append({'attempt': lost['attempt'], 'connected_ms': lost['value'], 'at': lost['at']})
+            losses.append({'attempt': lost['attempt'], 'cause': 'dns' if lost['result'] else 'link',
+                           'connected_ms': lost['value'], 'at': lost['at']})
         backoff = next((e for e in attempt if e['kind'] == 'backoff'), None)
         if backoff:
             if backoff['value'] != expected_backoff:
@@ -125,20 +176,39 @@ def check_join(rx, found, arrival, result):
     if not joins:
         return 'wifi_no_join'
     result['wifi_first_join_seconds'] = round((joins[0]['at'] - events[0]['at']).total_seconds(), 2)
-    if not losses or losses[0]['at'] < joins[0]['at']:
-        return 'wifi_no_loss'
-    # The operator's outage is the first loss; later ones are reported only.
-    rejoin = next((j for j in joins if j['at'] > losses[0]['at']), None)
-    if rejoin is None:
-        return 'wifi_no_rejoin'
-    result['wifi_rejoin_seconds_after_loss'] = round((rejoin['at'] - losses[0]['at']).total_seconds(), 2)
+    if not dns:
+        if not losses or losses[0]['at'] < joins[0]['at']:
+            return 'wifi_no_loss'
+        # The operator's outage is the first loss; later ones are reported only.
+        rejoin = next((j for j in joins if j['at'] > losses[0]['at']), None)
+        if rejoin is None:
+            return 'wifi_no_rejoin'
+        result['wifi_rejoin_seconds_after_loss'] = round((rejoin['at'] - losses[0]['at']).total_seconds(), 2)
+        return 'pass'
+    ok = [e for e in lookups if e['result'] == 0]
+    result['wifi_dns_lookups'] = len(lookups)
+    result['wifi_dns_failures'] = len(lookups) - len(ok)
+    result['wifi_dns_ms_max'] = max((e['ms'] for e in lookups), default=None)
+    if not ok:
+        return 'wifi_no_dns'
+    # The operator's DNS block is the first DNS loss after a successful lookup.
+    loss = next((x for x in losses if x['cause'] == 'dns' and x['at'] > ok[0]['at']), None)
+    if loss is None:
+        return 'wifi_no_dns_loss'
+    recovered = next((e for e in ok if e['at'] > loss['at']), None)
+    if recovered is None:
+        return 'wifi_no_dns_recovery'
+    result['wifi_dns_loss_seconds_after_first_lookup'] = round((loss['at'] - ok[0]['at']).total_seconds(), 2)
+    result['wifi_dns_recovery_seconds_after_loss'] = round((recovered['at'] - loss['at']).total_seconds(), 2)
     return 'pass'
 
 
 def verify(capture, manifest_path, image_path):
     require = EVIDENCE.require
     manifest, identity, image, metadata, rx, tx, events = STARTUP.load(capture, manifest_path, image_path)
-    require(manifest.get('startup_wifi_policy') == POLICY, 'Wi-Fi join policy required')
+    policy = manifest.get('startup_wifi_policy')
+    require(policy in POLICIES, 'Wi-Fi join policy required')
+    prefix, dns = POLICIES[policy], policy == 'fw07-dns-v1'
     chunks = [(e['offset'], e['offset'] + e['bytes'], e['utc']) for e in events if e['direction'] == 'rx']
 
     def arrival(offset):
@@ -147,17 +217,21 @@ def verify(capture, manifest_path, image_path):
     result = {'outcome': 'pass', 'startups': len(re.findall(rb'PLFW1 start ', rx)), 'wifi_on_ms': None,
               'wifi_attempts': None, 'wifi_backoffs_ms': None, 'wifi_joins': None, 'wifi_losses': None,
               'wifi_first_join_seconds': None, 'wifi_rejoin_seconds_after_loss': None}
+    if dns:
+        result.update({'wifi_dns_lookups': None, 'wifi_dns_failures': None, 'wifi_dns_ms_max': None,
+                       'wifi_dns_loss_seconds_after_first_lookup': None, 'wifi_dns_recovery_seconds_after_loss': None})
     check = STARTUP.startup(rx, manifest, image, identity, arrival, EVIDENCE.timestamp(metadata['end_utc']))
     check.pop('start_offset', None)
     result['startup'] = check
-    found, intact = records(rx)
+    found, intact = records(rx, prefix)
+    foreign = FOREIGN + tuple(p for p in POLICIES.values() if p != prefix)
     if check['outcome'] != 'pass':
         result['outcome'] = f"startup_{check['outcome']}"
-    elif not intact or any(f in rx for f in FOREIGN) or any(kind == 'O' for kind, _, _ in found):
+    elif not intact or any(f in rx for f in foreign) or any(kind == 'O' for kind, _, _ in found):
         result['outcome'] = 'wifi_sequence'
     else:
-        result['outcome'] = check_join(rx, found, arrival, result)
-    return {**result, 'build_id': identity, 'ota_sha256': STARTUP.digest(image), 'rx_sha256': STARTUP.digest(rx),
+        result['outcome'] = check_join(rx, found, arrival, result, dns)
+    return {**result, 'policy': policy, 'build_id': identity, 'ota_sha256': STARTUP.digest(image), 'rx_sha256': STARTUP.digest(rx),
             'tx_bytes': len(tx), 'limit': LIMIT}
 
 

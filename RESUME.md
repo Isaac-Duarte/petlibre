@@ -89,6 +89,24 @@ continuing this particular bench session requires the private evidence bundles.
 Their absence does not require inventing a new baseline or weakening writer checks.
 See [fixtures](docs/development/fixtures.md) and [preserved research](docs/development/provenance.md).
 
+## Host-only changes after the installed artifact
+
+Review fixes landed on top of `c8bb49f` with static/host evidence only; the
+installed artifact predates them and none has hardware evidence:
+
+- Infrared OFF requires LOW output latches as well as LOW inputs, because Port A
+  input readback is not trustworthy. PA15/PB3 readback is still unmeasured.
+- A determined initialization or recovery fault holds verified STOP and keeps
+  refreshing the watchdog instead of reset-looping; a hang still resets.
+- The owner refuses flash limits whose total lease can exceed the watchdog
+  progress gap. Production limits need measured erase/program times (FW06).
+- One timer IRQ without systimer advance is tolerated; two consecutive fault.
+- `Events::close()` turns infrared off; the KM4 panic handler requests STOP
+  and infrared off; SysTick checks ignore COUNTFLAG.
+- `build.py` refuses SDK worktree drift outside an allowlist, Rust build
+  overrides, and toolchain file-hash mismatches. Private builds made before
+  this change read as stale; rebuild before fixture evidence counts again.
+
 ## Next work and retained decisions
 
 FW05 (clock, independent stop timer, watchdog) is next; initial stall tests run

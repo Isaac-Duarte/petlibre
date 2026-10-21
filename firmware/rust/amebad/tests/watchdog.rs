@@ -260,3 +260,14 @@ fn flash_hold_cannot_refresh_or_extend_progress() {
     assert!(w.fault == WatchdogFault::PROGRESS && hw(|h| h.watchdog_refreshes) == 1);
     close_port(&mut w);
 }
+
+#[test]
+fn sdk_init_action_bits_read_back_clear() {
+    // WDG_Init writes CLEAR (24) and ISR_CLEAR (31); both are write-1 actions.
+    let mut w = fresh();
+    assert!(w.open(&CONFIG));
+    let vendor = hw(|h| h.watchdog_vendor);
+    assert!(vendor & sdk::WDG_BIT_ISR_CLEAR == 0 && vendor & (1 << 24) == 0);
+    assert!(vendor & sdk::WDG_BIT_ENABLE != 0 && vendor & sdk::WDG_BIT_RST_MODE != 0);
+    close_port(&mut w);
+}

@@ -56,8 +56,15 @@ pub(crate) fn outputs_blocked(flash: *const FlashCoord) -> bool {
     unsafe { flash.as_ref() }.is_none_or(FlashCoord::outputs_blocked)
 }
 
+/// Output latch and pad input of one emitter both at `level`. A LOW input
+/// alone cannot prove OFF: a pad whose input path is dead also reads LOW.
+fn optic_is(pin: u32, level: bool) -> bool {
+    let latch = sdk::gpio_output_latch(pin >> 5) & (1 << (pin & 31)) != 0;
+    latch == level && sdk::gpio_read_bit(pin) == level
+}
+
 pub(crate) fn optics_off() -> bool {
-    !sdk::gpio_read_bit(OPTICS[0]) && !sdk::gpio_read_bit(OPTICS[1])
+    OPTICS.iter().all(|&pin| optic_is(pin, false))
 }
 
 /// Motor pins callback. Reads board fields through the raw context pointer so
@@ -264,7 +271,7 @@ impl Board {
         for pin in OPTICS {
             sdk::gpio_write_bit(pin, enabled);
         }
-        let verified = OPTICS.iter().all(|&pin| sdk::gpio_read_bit(pin) == enabled);
+        let verified = OPTICS.iter().all(|&pin| optic_is(pin, enabled));
         self.optics_enabled = verified && enabled;
         if !verified {
             for pin in OPTICS {
@@ -304,7 +311,7 @@ impl Board {
         reading.outlet_high = pins & (1 << 16) != 0;
         reading.dc_present = pins & (1 << 19) != 0;
         reading.optics_enabled =
-            self.optics_enabled && OPTICS.iter().all(|&pin| sdk::gpio_read_bit(pin));
+            self.optics_enabled && OPTICS.iter().all(|&pin| optic_is(pin, true));
         reading.current_adc_valid = self.adc_channel(4, &mut reading.current);
         if reading.current_adc_valid {
             reading.battery_adc_valid = self.adc_channel(5, &mut reading.battery);

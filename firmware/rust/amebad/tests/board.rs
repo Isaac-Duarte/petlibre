@@ -164,3 +164,22 @@ fn failed_quiescence_cannot_acknowledge_flash_permission() {
         b.close();
     }
 }
+
+#[test]
+fn infrared_off_checks_the_latch_behind_a_dead_input() {
+    let mut b = open_board();
+    let _authority = flash_attach(&mut b);
+    assert!(b.optics(true));
+    // Pads whose input reads LOW while the latch stays HIGH are not OFF.
+    hw(|h| {
+        h.blocked_optics_off = true;
+        h.readback_override_mask[1] = 1 << 3;
+        h.readback_override[1] = 0;
+    });
+    assert!(!b.optics(false));
+    assert!(b.faulted && !optics_off() && !b.flash_quiesce());
+    assert!(hw(|h| h.output[1] & (1 << 3) != 0));
+    hw(|h| h.blocked_optics_off = false);
+    assert!(b.optics(false) && b.flash_quiesce());
+    b.close();
+}

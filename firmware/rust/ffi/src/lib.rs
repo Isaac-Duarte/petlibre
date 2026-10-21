@@ -17,7 +17,13 @@ pub use petlibro_amebad;
 #[cfg(target_os = "none")]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
-    // Stop here; the independent hardware watchdog resets the core.
+    // KM4 owns the motor and infrared GPIO: mask interrupts and request motor
+    // STOP and infrared OFF with raw register writes before halting. KM0
+    // drives neither, so it only halts.
+    #[cfg(feature = "km4")]
+    petlibro_amebad::sdk::panic_outputs_safe();
+    // Halt here. Only a watchdog that was already armed resets the core (the
+    // diagnostic build arms none); otherwise recovery needs an external reset.
     loop {
         core::hint::spin_loop();
     }

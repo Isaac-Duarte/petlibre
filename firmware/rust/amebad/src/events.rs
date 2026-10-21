@@ -65,6 +65,10 @@ pub struct Events {
     pub timer_seen: bool,
     pub owner_seen: bool,
     pub optics_armed: bool,
+    /// The previous timer interrupt saw no SYSTIMER advance. One such reading
+    /// is a pending interrupt coalesced with the next update after a masked
+    /// window; a second consecutive one is a frozen clock.
+    pub timer_raw_repeat: bool,
 }
 
 impl Default for Events {
@@ -86,6 +90,7 @@ impl Default for Events {
             timer_seen: false,
             owner_seen: false,
             optics_armed: false,
+            timer_raw_repeat: false,
         }
     }
 }
@@ -493,7 +498,8 @@ impl Events {
         self.board().motor(command, value) || self.fail(EventsFault::OUTPUT)
     }
 
-    /// If STOP cannot be verified, returns false and retains the retry timer.
+    /// If STOP or infrared OFF cannot be verified, returns false and retains
+    /// the retry timer; supervision is never removed from an active output.
     pub fn close(&mut self) -> bool {
         if !self.opened {
             return false;
@@ -503,7 +509,9 @@ impl Events {
         self.board().motor(MotorCommand::STOP, millis);
         sdk::gpio_int_config(FEEDBACK_PIN, false);
         self.capture_enabled = false;
-        if !self.stopped_applied() {
+        let optics_off = self.board().optics(false) && board::optics_off();
+        self.optics_armed = false;
+        if !self.stopped_applied() || !optics_off {
             self.fail(EventsFault::OUTPUT);
             return false;
         }
@@ -534,11 +542,18 @@ unsafe extern "C" fn timer_interrupt(_: *mut c_void) -> u32 {
         return 0;
     };
     let raw = sdk::systimer_ticks();
-    let value = if raw == events.timer_raw_at {
-        None
-    } else {
-        events.clock.read(raw)
-    };
+    if raw == events.timer_raw_at {
+        if !events.timer_raw_repeat {
+            // A pending update taken at unmask can coincide with the next one
+            // within a SYSTIMER tick: skip once without advancing anything.
+            events.timer_raw_repeat = true;
+            return 0;
+        }
+        events.fail(EventsFault::CLOCK);
+        return 0;
+    }
+    events.timer_raw_repeat = false;
+    let value = events.clock.read(raw);
     let Some(value) = value else {
         events.fail(EventsFault::CLOCK);
         return 0;

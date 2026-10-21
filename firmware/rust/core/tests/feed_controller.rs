@@ -142,7 +142,11 @@ fn double_bowl_pause_and_direction() {
     f.edge(true);
     f.advance(3);
     assert_eq!(f.controller.motor, MotorCommand::DRIVE_0);
+    assert_eq!(f.controller.inhibit_at, f.now); // Resume re-arms inhibition.
     f.advance(2);
+    f.edge(true); // Too soon after resuming drive.
+    assert_eq!(f.controller.progress.pending_events, 0);
+    f.advance(3);
     f.edge(true);
     assert_eq!(f.controller.progress.completed, 2);
     f.advance(5);
@@ -377,6 +381,37 @@ fn invalid_configuration_and_requests() {
     );
     assert_eq!(controller.last_request_id, 0);
     assert_eq!(controller.motor, MotorCommand::STOP);
+}
+
+#[test]
+fn pause_completion_cannot_consume_old_edges() {
+    let settings = FeedLimits {
+        direction_pause_ms: 10,
+        ..LIMITS
+    };
+    let mut f = begin_with(&settings, BowlMode::DOUBLE, Direction::D1, 3, 0);
+    f.advance(5);
+    f.edge(false);
+    assert_eq!(f.controller.state, FeedState::DIRECTION_PAUSE);
+    assert_eq!(f.controller.motor, MotorCommand::STOP);
+    f.advance(10);
+    assert_eq!(f.controller.state, FeedState::RUNNING);
+    assert_eq!(f.controller.motor, MotorCommand::DRIVE_0);
+    assert_eq!(f.controller.inhibit_at, 15);
+    // Captured while stopped, past the old inhibit window, delivered after resume.
+    let edge = FeedSample {
+        feedback_edge: true,
+        feedback_high: true,
+        ..f.sample
+    };
+    f.controller.update_captured(f.now, Some(&edge), 11);
+    assert_eq!(f.controller.progress.pending_events, 0);
+    assert_eq!(f.controller.last_feedback_at, 5);
+    assert_eq!(f.controller.state, FeedState::RUNNING);
+    // A fresh edge after the re-armed window still counts.
+    f.advance(5);
+    f.edge(true);
+    assert_eq!(f.controller.progress.pending_events, 1);
 }
 
 #[test]

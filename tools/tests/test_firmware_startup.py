@@ -139,6 +139,32 @@ class FirmwareStartup(unittest.TestCase):
             (p / 'manifest.json').write_text(json.dumps(manifest))
             with self.assertRaises(ValueError): M.verify(p, p / 'manifest.json', p / 'image.bin', 60)
             manifest.pop('startup_shared_pad_policy')
+            power_image = routed_image + b'PLPWR1 before_func=%08x before_pad=%08x after_func=%08x ' + M.POWER_V3_FORMAT
+            power = b'PLPWR1 before_func=1201019a before_pad=00000000 after_func=1201019a after_pad=00000355 ext_a=e1c46e80,e1c46e00,e1c46e00,e1c46e00\n\r'
+            manifest['artifacts'] = [{'path': 'OTA_All.bin', 'sha256': M.digest(power_image), 'bytes': len(power_image)}]
+            (p / 'image.bin').write_bytes(power_image)
+            rx = power + clock + b''.join(records) + outputs + boot(identity)
+            (p / 'serial-rx.bin').write_bytes(rx)
+            metadata['serial-rx.bin_sha256'] = M.digest(rx)
+            (p / 'report.json').write_text(json.dumps(metadata))
+            (p / 'serial-events.jsonl').write_text(json.dumps({'direction': 'rx', 'offset': 0, 'bytes': len(rx), 'utc': '2026-10-20T10:00:00+00:00'}) + '\n')
+            manifest['startup_shared_pad_policy'] = 'before-km4-v3'
+            (p / 'manifest.json').write_text(json.dumps(manifest))
+            report = M.verify(p, p / 'manifest.json', p / 'image.bin', 60)
+            self.assertEqual(report['outcome'], 'pass')
+            self.assertTrue(report['shared_pad_verified'])
+            # Downgrades: omitting the policy, or declaring an older one, is refused for a v3 image.
+            for policy in (None, 'before-km4-v1', 'before-km4-v2'):
+                with self.subTest(policy=policy):
+                    if policy:
+                        manifest['startup_shared_pad_policy'] = policy
+                    else:
+                        manifest.pop('startup_shared_pad_policy')
+                    (p / 'manifest.json').write_text(json.dumps(manifest))
+                    with self.assertRaisesRegex(ValueError, 'Shared-pad v3'): M.verify(p, p / 'manifest.json', p / 'image.bin', 60)
+            manifest.pop('startup_shared_pad_policy', None)
+            manifest['artifacts'] = [{'path': 'OTA_All.bin', 'sha256': M.digest(routed_image), 'bytes': len(routed_image)}]
+            (p / 'image.bin').write_bytes(routed_image)
             manifest.pop('startup_gpio_clock_policy')
             (p / 'manifest.json').write_text(json.dumps(manifest))
             with self.assertRaises(ValueError): M.verify(p, p / 'manifest.json', p / 'image.bin', 60)
@@ -150,6 +176,8 @@ class FirmwareStartup(unittest.TestCase):
         records += [b'PLLED1 done low=all\r\n']
         full = b''.join(records)
         self.assertTrue(M.classify_led(full)['led_probe_verified'])
+        self.assertEqual(M.classify_led(full)['led_input_verified_pins'], ['PA0', 'PA2', 'PA4', 'PB22'])
+        self.assertEqual(M.classify_led(b''.join(records[:-1]))['led_input_verified_pins'], [])
         self.assertEqual(M.classify_led(full.replace(b'status=pass', b'status=fail', 1))['outcome'], 'led_failed')
         self.assertEqual(M.classify_led(full + b'PLLED1 error finish=input_mismatch low=all\r\n')['outcome'], 'led_failed')
         detail = b'PLDBG1 pin=PA0 stage=verify want=1 latch=1 input=0 directions=1 stopped=1 pad=00000000\r\n'
@@ -168,6 +196,9 @@ class FirmwareStartup(unittest.TestCase):
         report = M.classify_led(full, 3)
         self.assertEqual(report['outcome'], 'pass')
         self.assertEqual(report['led_output_only_pins'], ['PA0', 'PA2', 'PA4'])
+        # FW04 accepts the sequence, but only PB22 was input-verified.
+        self.assertFalse(report['led_probe_verified'])
+        self.assertEqual(report['led_input_verified_pins'], ['PB22'])
         for bad, outcome in [(full.replace(b'pin=PA0 level=1 status=output', b'pin=PA0 level=1 status=pass'), 'led_unexpected_sequence'),
                              (full.replace(b'pin=PB22 level=1 status=pass', b'pin=PB22 level=1 status=output', 1), 'led_unexpected_sequence'),
                              (full.replace(b' output_only=PA0,PA2,PA4', b''), 'led_unexpected_sequence'),

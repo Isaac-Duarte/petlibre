@@ -10,6 +10,8 @@ struct Model {
     regs: [[u32; 12]; 2],
     mask: u32,
     systick: u32,
+    /// SysTick COUNTFLAG: set by a counter wrap, cleared only by reading CTRL.
+    countflag: bool,
     ticks: u32,
     stores: u32,
     barriers: u32,
@@ -88,7 +90,12 @@ impl<const KM0: bool> Mmio for Fake<KM0> {
     fn load(address: u32) -> u32 {
         with(|m| {
             if address == SYSTICK_CTRL {
-                return m.systick;
+                let flag = if core::mem::take(&mut m.countflag) {
+                    1 << 16
+                } else {
+                    0
+                };
+                return m.systick | flag;
             }
             if address == SEM {
                 return m.semaphore;
@@ -483,6 +490,21 @@ fn owner_bad_context_stale_reply_and_deadlines_never_grant<const KM0: bool>() {
     assert!(m(|m| m.regs[m.own][10] == PEER_LOST && m.mask == 1));
 }
 
+/// A disabled SysTick whose COUNTFLAG is still set is a valid park context.
+fn countflag_is_not_an_enabled_systick<const KM0: bool>() {
+    reset::<KM0>();
+    with(|m| m.countflag = true);
+    assert!(wait::<Fake<KM0>>(input(), 20, 30));
+    assert!(m(|m| m.acked && m.regs[m.own][10] == RELEASED));
+    reset::<KM0>();
+    with(|m| {
+        m.countflag = true;
+        m.systick = 1; // Enabled: still refused.
+    });
+    assert!(!wait::<Fake<KM0>>(input(), 20, 30));
+    assert!(m(|m| !m.acked && m.stores == 0));
+}
+
 macro_rules! both_cores {
     ($($name:ident),*) => {
         mod km0 { $(#[test] fn $name() { super::$name::<true>(); })* }
@@ -497,5 +519,6 @@ both_cores!(
     publication_tearing_and_reserved_slots,
     bounded_semaphore_attempts_and_ownership,
     owner_requires_current_ack_and_verified_release,
-    owner_bad_context_stale_reply_and_deadlines_never_grant
+    owner_bad_context_stale_reply_and_deadlines_never_grant,
+    countflag_is_not_an_enabled_systick
 );

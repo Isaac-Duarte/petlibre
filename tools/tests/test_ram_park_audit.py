@@ -3,7 +3,7 @@ import importlib.util
 import json
 from pathlib import Path
 import unittest
-from support import evidence
+from support import current_build, evidence
 
 ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location("rampark", ROOT / "firmware/tools/rampark.py")
@@ -13,10 +13,11 @@ BUILD = ROOT / "private/firmware-build/plaf103"
 MANIFEST = BUILD / "manifest.json"
 LOCK = json.loads((ROOT / "firmware/sdk.lock.json").read_text())
 BINUTILS = ROOT / "private/toolchains" / LOCK["toolchain"]["directory"] / "bin"
+FRESH, STALE = current_build(BUILD)
 
 
-@evidence(MANIFEST.is_file() and (BINUTILS / "arm-none-eabi-objdump").is_file(),
-                     "Requires completed ignored SDK build and pinned binutils")
+@evidence(FRESH and (BINUTILS / "arm-none-eabi-objdump").is_file(),
+          STALE or "Requires completed ignored SDK build and pinned binutils")
 class RamParkTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -61,6 +62,47 @@ class RamParkTests(unittest.TestCase):
                     damaged = listing + f"\n {address:x}: {instruction}\n"
                     with self.assertRaises(ValueError):
                         rampark.check_leaf(damaged, address, size, 1 if "_sem_" in name else 3)
+
+
+class FlashAddressTests(unittest.TestCase):
+    """Synthetic listings in the pinned objdump format; no SDK build required."""
+    ADDRESS = 0x10005000
+
+    def listing(self, *body):
+        lines = [*body, "f3bf 8f4f dsb sy", "f3bf 8f4f dsb sy", "f3bf 8f4f dsb sy", "4770 bx lr"]
+        return "".join(f"{self.ADDRESS + 4 * i:x}:\t{line}\n" for i, line in enumerate(lines))
+
+    def check(self, *body):
+        return rampark.check_leaf(self.listing(*body), self.ADDRESS, 4 * (len(body) + 4))
+
+    def test_mmio_and_ram_constants_are_accepted(self):
+        result = self.check("f242 0014 movw r0, #8212 ; 0x2014", "f6c4 0000 movt r0, #18432 ; 0x4800",
+                            "f241 0100 movw r1, #4096 ; 0x1000", "f2c1 0100 movt r1, #4096 ; 0x1000",
+                            "f04f 6300 mov.w r3, #134217728 ; 0x8000000")
+        self.assertEqual(result["flash_address_constants"], 0)
+        self.assertEqual(result["barriers"], 3)
+
+    def test_flash_literal_words_are_rejected_across_the_whole_mapping(self):
+        for value in (0x08000000, 0x08186000, 0x0BFFFFFF, 0x0C000020, 0x0E000020, 0x0FFFFFFF):
+            with self.subTest(value=hex(value)), self.assertRaisesRegex(ValueError, "Flash/XIP literal"):
+                self.check(f"{value:08x} .word 0x{value:08x}")
+        for value in (0x07FFFFFF, 0x10000000, 0x48002014):
+            with self.subTest(value=hex(value)):
+                self.check(f"{value:08x} .word 0x{value:08x}")
+
+    def test_movw_movt_flash_addresses_are_rejected(self):
+        for body in (("f246 0000 movw r0, #24576 ; 0x6000", "f6c0 0000 movt r0, #2048 ; 0x800"),
+                     ("f6c0 6000 movt r0, #3584 ; 0xe00",),
+                     ("f240 0320 movw r3, #32 ; 0x20", "2200 movs r2, #0",
+                      "f6c0 4300 movt r3, #3072 ; 0xc00"),
+                     ("f6c0 0300 movteq r3, #2048 ; 0x800",)):
+            with self.subTest(body=body), self.assertRaisesRegex(ValueError, "movw/movt"):
+                self.check(*body)
+
+    def test_unrelated_register_write_discards_low_half(self):
+        # r0's low half is overwritten before movt; the high half alone is RAM.
+        self.check("f246 0000 movw r0, #24576 ; 0x6000", "2000 movs r0, #0",
+                   "f2c1 0000 movt r0, #4096 ; 0x1000")
 
 
 if __name__ == "__main__":

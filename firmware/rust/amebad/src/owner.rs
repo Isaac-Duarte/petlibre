@@ -15,7 +15,7 @@ use petlibro_core::feed_controller::{
 use petlibro_core::feed_progress::{BowlMode, Direction};
 use petlibro_core::feed_storage::{OwnerOutcome, OwnerRecovery, OwnerResult, OwnerStorage};
 use petlibro_core::feedback_events::CAPACITY;
-use petlibro_core::flash_coord::{FlashCoord, FlashFault, FlashPhase};
+use petlibro_core::flash_coord::{FlashCoord, FlashFault, FlashLimits, FlashPhase};
 use petlibro_core::sensor_inputs::{SensorInputs, SensorLimits, SensorReading};
 
 use crate::active::active_pointer;
@@ -147,6 +147,11 @@ pub struct Owner {
     pub finish_attempted: bool,
     pub optics_started: bool,
     pub result_durable: bool,
+    /// Initialization failed after the watchdog was armed (SETUP or RECOVERY).
+    /// The fault stays latched; the watchdog is refreshed only while each
+    /// iteration re-verifies STOP and infrared OFF, so a determined failure
+    /// does not reset-loop while a hang or output loss still resets.
+    pub init_failed: bool,
 }
 
 active_pointer!(Owner);
@@ -201,6 +206,23 @@ impl OwnerConfig {
         events::period_ticks(&c.events).is_some()
             && FeedController::new(&c.feed, 0).is_some()
             && SensorInputs::new(&c.sensors, &calibration).is_some()
+    }
+
+    /// Whether a whole flash lease fits inside watchdog supervision. During a
+    /// lease the owner cannot checkpoint, so the gap between two checkpoints
+    /// spans up to one sample period before the lease, the entire lease
+    /// budget, one sample period after it, and two timer periods of
+    /// scheduling/timer granularity before the first post-lease checkpoint
+    /// (it also needs a fresh timer interrupt). That sum must stay below
+    /// `max_progress_gap_ms`. The hardware counter, whose shortest expiry
+    /// `WatchdogConfig::valid` already requires to exceed twice the progress
+    /// gap, then also covers an IRQ-masked lease plus the rate-limited refresh
+    /// offset (`min_refresh_ms`, below the gap).
+    pub fn lease_fits(&self, limits: &FlashLimits) -> bool {
+        let needed = u64::from(limits.total_ms)
+            + 2 * u64::from(self.sample_period_ms)
+            + 2 * u64::from(self.events.timer_period_ms);
+        limits.total_ms != 0 && needed < u64::from(self.watchdog.max_progress_gap_ms)
     }
 }
 
@@ -411,6 +433,7 @@ impl Owner {
             && unsafe { self.events.open(board, &c.events) };
         if !opened {
             self.fail(OwnerFault::SETUP);
+            self.init_failed = true;
             return false;
         }
         // SAFETY: as for `finish_result`.
@@ -423,12 +446,14 @@ impl Owner {
         {
             self.fail(OwnerFault::RECOVERY);
             self.recovery.phase_known = false;
+            self.init_failed = true;
             return false;
         }
         let controller = FeedController::new(&c.feed, self.recovery.high_water_id);
         let sensors = SensorInputs::new(&c.sensors, &self.board.calibration);
         let (Some(controller), Some(sensors)) = (controller, sensors) else {
             self.fail(OwnerFault::SETUP);
+            self.init_failed = true;
             return false;
         };
         self.controller = controller;
@@ -575,6 +600,34 @@ impl Owner {
         true
     }
 
+    /// Terminal stopped fault after a determined initialization failure: no
+    /// request is ever taken, and the watchdog is refreshed only after `quiet`
+    /// verified STOP and infrared OFF in this same iteration. The progress
+    /// deadline still applies, so a hang before or during this state resets.
+    fn hold_init_fault(&mut self) {
+        let mut s = EventsSnapshot::default();
+        self.snapshot(&mut s);
+        // Gate state alone is not enough here: also read back the pins.
+        if !s.stopped
+            || !s.optics_off
+            || !self.board.inactive()
+            || self.watchdog.fault != WatchdogFault::OK
+        {
+            return;
+        }
+        let progress = if self.watchdog_progress == u64::MAX {
+            0
+        } else {
+            self.watchdog_progress += 1;
+            self.watchdog_progress
+        };
+        // SAFETY: as for `flash`; a blocked authority refreshes nothing.
+        unsafe {
+            self.watchdog
+                .checkpoint_if_ready(progress, self.config.flash)
+        };
+    }
+
     fn active_phase(&self) -> bool {
         self.state == OwnerState::PREPARING || self.state == OwnerState::FEEDING
     }
@@ -693,7 +746,10 @@ impl Owner {
                 }
             }
             if (*this).state == OwnerState::FAULT {
-                (*this).quiet();
+                let quiet = (*this).quiet();
+                if quiet && (*this).init_failed {
+                    (*this).hold_init_fault();
+                }
             }
             let ended = (*this).stop_requested()
                 && (*this).state != OwnerState::REPORTING
@@ -717,7 +773,10 @@ impl Owner {
         }
         {
             let _guard = IrqGuard::lock();
-            if !active().is_null() || board::outputs_blocked(config.flash) {
+            // SAFETY: the contract requires a live authority; null fails here.
+            let fits =
+                unsafe { config.flash.as_ref() }.is_some_and(|f| config.lease_fits(&f.limits));
+            if !active().is_null() || board::outputs_blocked(config.flash) || !fits {
                 return false;
             }
             *self = Self {

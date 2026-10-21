@@ -88,9 +88,14 @@ fn valid(t: &ParkToken) -> bool {
         && (t.lease_lo | t.lease_hi) != 0
 }
 
+/// SysTick CTRL ENABLE/TICKINT/CLKSOURCE. Bit 16 (COUNTFLAG) is excluded: it
+/// stays set after a CTRL=0 write until CTRL is read, so it says nothing about
+/// whether SysTick is disabled.
+pub const SYSTICK_CONTROL_BITS: u32 = 7;
+
 #[inline(always)]
 fn context<M: Mmio>() -> bool {
-    M::mask() == 1 && M::load(SYSTICK_CTRL) == 0
+    M::mask() == 1 && M::load(SYSTICK_CTRL) & SYSTICK_CONTROL_BITS == 0
 }
 
 #[inline(always)]

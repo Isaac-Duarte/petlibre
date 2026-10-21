@@ -7,7 +7,7 @@ import struct
 import sys
 import tempfile
 import unittest
-from support import evidence
+from support import current_build, evidence
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "firmware/tools"))
@@ -21,10 +21,11 @@ PROJECT = Path("project/realtek_amebaD_va0_example/GCC-RELEASE")
 LOCK = json.loads((ROOT / "firmware/sdk.lock.json").read_text())
 BINUTILS = ROOT / "private/toolchains" / LOCK["toolchain"]["directory"] / "bin"
 CURRENT = ROOT / "private/fixtures/current-read/flash-read.bin"
+FRESH, STALE = current_build(BUILD)
 
 
-@evidence((BUILD / "manifest.json").is_file() and CURRENT.is_file(),
-                     "Requires UART-only first-boot build and fresh ignored backup")
+@evidence(FRESH and CURRENT.is_file(),
+          STALE or "Requires UART-only first-boot build and fresh ignored backup")
 class FirstBootTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

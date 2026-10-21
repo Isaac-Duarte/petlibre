@@ -86,3 +86,37 @@ fn lost_direction_or_later_pin_drift_is_not_stopped() {
     });
     assert!(!stopped::observe().verified());
 }
+
+#[test]
+fn infrared_off_requires_a_low_latch_not_only_a_low_input() {
+    // A dead input path reads LOW while the emitter latch is HIGH.
+    for (port, mask) in [(0usize, 1u32 << 15), (1, PB_MASK)] {
+        fake::reset_hardware();
+        assert!(stopped::initialize().verified());
+        fake::with(|h| {
+            h.output[port] |= mask;
+            h.readback_override_mask[port] = mask;
+            h.readback_override[port] = 0;
+        });
+        assert_eq!(petlibro_amebad::sdk::gpio_port_read(port as u32, mask), 0);
+        assert!(!stopped::observe().verified());
+        fake::with(|h| h.output[port] &= !mask);
+        assert!(stopped::observe().verified());
+    }
+}
+
+#[test]
+fn panic_stop_requests_stop_and_infrared_off_only_when_gpio_is_clocked() {
+    fake::reset_hardware();
+    fake::with(|h| h.output = [1 << 15 | 1 << 2, 1 << 3 | 1 << 22]);
+    petlibro_amebad::sdk::panic_outputs_safe();
+    fake::with(|h| assert!(h.interrupts == 1 && h.output == [1 << 15 | 1 << 2, 1 << 3 | 1 << 22]));
+    fake::reset_hardware();
+    assert!(stopped::initialize().verified());
+    fake::with(|h| h.output = [1 << 13 | 1 << 15 | 1 << 2, 1 << 3 | 1 << 22]);
+    petlibro_amebad::sdk::panic_outputs_safe();
+    fake::with(|h| {
+        assert_eq!(h.interrupts, 1);
+        assert_eq!(h.output, [MOTOR_MASK | 1 << 2, 1 << 22]);
+    });
+}

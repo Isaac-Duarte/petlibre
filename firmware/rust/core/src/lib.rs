@@ -10,6 +10,10 @@
 #![deny(unsafe_code)]
 
 /// Declare a C-compatible enumeration that tolerates out-of-range values.
+///
+/// In the C ABI each such type is a 32-bit unsigned integer: C declarations
+/// must use `uint32_t`, not an `enum` type, because the AmebaD GCC may lay out
+/// a C `enum` in one byte (no `-fno-short-enums`).
 macro_rules! c_enum {
     ($(#[$meta:meta])* $name:ident { $($(#[$vmeta:meta])* $variant:ident = $value:expr),+ $(,)? }) => {
         $(#[$meta])*

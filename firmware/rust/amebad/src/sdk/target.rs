@@ -293,6 +293,34 @@ pub fn gpioa_eoi(mask: u32) {
     unsafe { ptr::write_volatile(ptr::addr_of_mut!((*gpioa()).PORTA_EOI), mask) }
 }
 
+/// Best-effort output stop for the panic handler. Masks interrupts, then, only
+/// when the LP GPIO block reads clocked and enabled, sets the motor latches
+/// PA13/PA14 HIGH (STOP) and the infrared latches PA15/PB3 LOW with direct
+/// read-modify-write of the data registers. It makes no SDK/ROM call, takes no
+/// lock and has no panic path; directions are left unchanged, so a pad not
+/// yet configured as an output is not newly driven. KM0 can still race these
+/// registers, and nothing is verified: the caller stops here regardless.
+pub fn panic_outputs_safe() {
+    cortex_m::interrupt::disable();
+    let clock = gpio_clock_state();
+    if clock.function_after & super::GPIO_ENABLE_BIT == 0
+        || clock.clock_after & super::GPIO_ENABLE_BIT == 0
+    {
+        return;
+    }
+    let gpio_b = (k::PETLIBRO_GPIOA_BASE + 0x400) as usize as *mut raw::GPIO_TypeDef;
+    unsafe {
+        let a = ptr::addr_of_mut!((*gpioa()).PORT[0].DR);
+        ptr::write_volatile(
+            a,
+            (ptr::read_volatile(a) | (1 << 13) | (1 << 14)) & !(1 << 15),
+        );
+        let b = ptr::addr_of_mut!((*gpio_b).PORT[0].DR);
+        ptr::write_volatile(b, ptr::read_volatile(b) & !(1 << 3));
+    }
+    cortex_m::asm::dsb();
+}
+
 fn tim2() -> *mut raw::RTIM_TypeDef {
     k::PETLIBRO_TIM2_BASE as usize as *mut raw::RTIM_TypeDef
 }

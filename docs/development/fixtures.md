@@ -14,7 +14,7 @@ It fails for missing fixtures, incompatible hashes, errors, or skips. It does no
 | --- | --- |
 | `private/firmware/PLAF103_OTA_010115.bin` | Contributor-obtained stock 1.1.15 OTA; exact hash is recorded in the layout file |
 | `private/upstream/ameba-rtos-d/` | SDK checkout obtained by explicit bootstrap; supplies candidate ROM/helper inputs |
-| `private/toolchains/` and `private/firmware-build/` | Explicit SDK build artifacts and audited tools |
+| `private/toolchains/` and `private/firmware-build/` | Explicit SDK build artifacts and audited tools; a build whose manifest inputs differ from the current sources is stale and its suites skip (so `check-fixtures` fails) until rebuilt |
 | `private/fixtures/baseline.bin` | Exact historical 8 MiB research baseline required by pinned recovery checks |
 | `private/fixtures/current-read/flash-read.bin` | Recorded current full snapshot required by firstboot/reference tests |
 | `private/fixtures/diagnostic-ota.bin` | Exact reviewed UART-only diagnostic, not an arbitrary new build |

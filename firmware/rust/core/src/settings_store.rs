@@ -73,6 +73,18 @@ c_enum!(SettingsStatus {
     UNOPENED = 7,
 });
 
+c_enum!(SlotState {
+    /// Not read by the last open.
+    UNREAD = 0,
+    ERASED = 1,
+    VALID = 2,
+    FUTURE = 3,
+    /// A prefix of our own record without its commit: a save cut short.
+    DIRTY = 4,
+    /// Anything else, including a unit whose erase was cut short.
+    INVALID = 5,
+});
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Scan {
     Erased,
@@ -80,6 +92,18 @@ enum Scan {
     Future,
     Dirty,
     Invalid,
+}
+
+impl Scan {
+    fn state(self) -> SlotState {
+        match self {
+            Scan::Erased => SlotState::ERASED,
+            Scan::Valid(..) => SlotState::VALID,
+            Scan::Future => SlotState::FUTURE,
+            Scan::Dirty => SlotState::DIRTY,
+            Scan::Invalid => SlotState::INVALID,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -90,6 +114,8 @@ pub struct SettingsStore {
     pub status: SettingsStatus,
     pub generation: u64,
     pub slot: c_uint,
+    /// What the last open found in each slot.
+    pub slots: [SlotState; 2],
     writable: bool,
 }
 
@@ -102,6 +128,7 @@ impl Default for SettingsStore {
             status: SettingsStatus::UNOPENED,
             generation: 0,
             slot: 0,
+            slots: [SlotState::UNREAD; 2],
             writable: false,
         }
     }
@@ -218,6 +245,7 @@ impl SettingsStore {
             self.status = SettingsStatus::IO;
             return self.status;
         };
+        self.slots = [a.state(), b.state()];
         let pick = match (a, b) {
             (Scan::Valid(ga, sa), Scan::Valid(gb, sb)) if ga != gb => {
                 Some(if ga > gb { (0, ga, sa) } else { (1, gb, sb) })

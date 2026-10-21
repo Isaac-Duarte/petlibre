@@ -1,13 +1,13 @@
 # Resume firmware development
 
-Handoff checkpoint: **October 20, 2026, Mountain time**. Read this, then
+Handoff checkpoint: **October 21, 2026, Mountain time**. Read this, then
 [AGENTS.md](AGENTS.md), the [development guide](docs/development/README.md),
 and [FIRMWARE_BOARD.md](FIRMWARE_BOARD.md). Update this handoff when the installed
 image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
-**FW15 (durable settings and feeding journal) is in Bench check. FW06 is done (mediated-path scope).**
+**FW15 (durable settings and feeding journal) is done (storage scope). No card is in progress.** Real-motion journal wiring is carried to FW16.
 
 The owner allocated `0x340000–0x350000` (64 KiB) for replacement-firmware storage.
 It is blank in the backup and not referenced by stock 1.1.15, and it lies clear
@@ -16,7 +16,7 @@ of both banks and of the stock settings:
 | Sectors | Use |
 | --- | --- |
 | `0x340000`, `0x341000` | Journal slots |
-| `0x342000`, `0x343000` | Settings slots (store not yet written) |
+| `0x342000`, `0x343000` | Settings slots (hold stress values, generation about 1 460) |
 | Remaining 12 | Reserved |
 
 **Journal on NOR (physical, passed).** The feed journal ran through mediated
@@ -39,20 +39,20 @@ newer-schema data until an explicit reset.
 In one capture of 8 cold boots, the operator cut power at random during
 continuous saves. All six reopens were LOADED and consistent, and each landed
 6–16 generations past the last reported save (bound 25). Saves took at most
-28 ms. No cut landed inside a save; mid-write cuts are host-tested at every
-byte.
+28 ms. No cut landed inside a save.
+
+A second run saved back to back (policy `fw15-settings-v2`), and each open
+reported the slot it did not load. Across 8 cold boots, six of six cuts
+landed inside a save: five found the slot being written erased, and one found
+it torn mid-program and reported RECOVERED. Every reopen was consistent,
+7–23 generations past the last report (bound 25). Saves took at most 30 ms.
+No cut left a partly erased slot; that case is host-tested.
 
 Both stores now enforce wear limits: 100 000 records, about half the part's
 rated erase life. The journal still lets a pending request finish.
 
-**Remaining for FW15:** optionally, a rerun with back-to-back saves so that
-physical cuts land mid-write.
-
-- the settings store;
-- a physical power cut during writes (the reset and torn record above were
-  deliberate injections);
-- enforced wear bounds (one sector erase per journal write, about two per
-  feed).
+Before the next card, replace the stress image: every power-on of the
+installed build makes up to 1 500 settings saves (about 750 erases per slot).
 
 The FW06 plan has five stages, each with a write-free bench check until the last:
 
@@ -104,22 +104,19 @@ Bench lessons from stage C:
 
 ## What is actually installed
 
-The research feeder runs **FW15 journal review 01** in bank 1, starting at flash
-offset `0x186000`. It was installed through the changed-sector updater (22
-sectors verified).
+The research feeder runs **FW15 settings back-to-back review 01** in bank 1,
+starting at flash offset `0x186000`. It was installed through the
+changed-sector updater (25 sectors verified).
 
 | Identity | Recorded value |
 | --- | --- |
-| OTA SHA-256 | `f046dc5d3297cdee94886bef1434673e4d7700444f10490754fd933c91acc62d` |
-| Embedded startup build ID | `d08bf75d1b95f028c459ff1d6c2fab3e58ecb1becf312707f09a3101604eb70f` |
+| OTA SHA-256 | `553052597ad8002abaf7651fd8dbfa9c8fbd4b324d6d959eda97710e8a8c5b2d` |
+| Embedded startup build ID | `b4a6634702b88d3ff32f2635a94d53b2f1847a27f43dceaf8848d4880d3e2e36` |
 
-**Every cold power-on runs the three-boot journal test**:
-
-1. It requires the region to be blank, then creates and exercises the journal.
-2. It deliberately resets twice.
-3. It wipes the journal sectors.
-
-It never commands motion. Its frozen review is the source of the next update.
+**Every power-on runs the settings stress**: it opens the store and reports
+it, then makes up to 1 500 back-to-back saves to `0x342000`/`0x343000`, then
+idles with the watchdog fed. It never commands motion. Its frozen review is
+the source of the next update.
 
 ## Last confirmed physical state
 
@@ -176,8 +173,8 @@ timer-repeat and stopped-output paths; the others have no hardware evidence:
 
 ## Next work and retained decisions
 
-FW06 (real flash coordination) is next. It also fixes the production watchdog
-configuration from the FW05 measurement. Build and freeze each candidate, install through the
+The next card is open: FW13, FW14 and FW30 are Ready on the critical path to
+feeding, and FW07 and FW09 are Ready off it. Build and freeze each candidate, install through the
 changed-sector updater after the operator enters loader mode, and capture boots
 receive-only. Start the recorder and confirm it holds the port before the
 operator powers on; a capture that begins mid-boot cannot be audited.

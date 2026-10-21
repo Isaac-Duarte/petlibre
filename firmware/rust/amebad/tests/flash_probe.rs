@@ -22,7 +22,7 @@ use wellfed_amebad::probes::flash::{
 use wellfed_amebad::sdk::{self, fake};
 use wellfed_amebad::stopped;
 use wellfed_core::flash_coord::{FlashFault, FlashPhase, FlashReply};
-use wellfed_core::settings_store::SettingsStatus;
+use wellfed_core::settings_store::{SettingsStatus, SlotState};
 
 #[derive(Default)]
 struct Km0 {
@@ -340,9 +340,15 @@ fn blank() -> Vec<u8> {
 }
 
 fn opened(boot: &Boot) -> (SettingsStatus, u64, bool) {
+    let (status, generation, _, consistent) = opened_other(boot);
+    (status, generation, consistent)
+}
+
+fn opened_other(boot: &Boot) -> (SettingsStatus, u64, SlotState, bool) {
     let Some(Record::Open {
         status,
         generation,
+        other,
         consistent,
         ..
     }) = boot
@@ -353,7 +359,7 @@ fn opened(boot: &Boot) -> (SettingsStatus, u64, bool) {
     else {
         panic!("no open: {:?}", boot.records);
     };
-    (status, generation, consistent)
+    (status, generation, other, consistent)
 }
 
 /// The generation of the last save the probe reported complete.
@@ -415,8 +421,12 @@ fn every_cut_point_reopens_at_the_last_or_the_interrupted_save() {
         );
         let completed = u64::from(cut / 3);
         let next = platform_boot([0; 8], cut_boot.storage, false, EXPECTED_ID);
-        let (status, generation, consistent) = opened(&next);
+        let (status, generation, other, consistent) = opened_other(&next);
         assert!(consistent, "cut {cut}: {:?}", next.records);
+        // A cut inside a save that did not complete shows in the other slot.
+        if cut % 3 != 0 && generation == completed {
+            assert_ne!(other, SlotState::VALID, "cut {cut}");
+        }
         assert!(
             generation == completed || generation == completed + 1,
             "cut {cut}: generation {generation}, completed {completed}"

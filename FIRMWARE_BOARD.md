@@ -4,8 +4,8 @@ This board tracks replacement-firmware integration, dependencies, and acceptance
 
 ## Current status
 
-- **Done:** FW01–FW06, four of them with recorded scope limits (see carried items).
-- **In progress:** FW15 is in Bench check. The journal and settings stores ran on real NOR in the owner-approved region `0x340000–0x350000`, with wear limits enforced. The journal passed three boots of reserve and finish across resets, a pending request blocking new ones, and a torn record ignored. The settings store survived six random operator power cuts during continuous saves, and every reopen was consistent. No physical cut landed inside a save; that case is covered only by host tests that cut at every byte.
+- **Done:** FW01–FW06 and FW15, five of them with recorded scope limits (see carried items).
+- **In progress:** none. FW15 closed with storage scope: the journal and settings stores ran on real NOR in the owner-approved region `0x340000–0x350000`, with wear limits enforced. In a back-to-back save run, six of six random operator power cuts landed inside a save, and every reopen recovered consistent settings.
 - **Critical path to feeding:** FW13/FW14/FW15 → FW30 → FW16 → FW17.
 
 ### Carried items
@@ -21,6 +21,7 @@ Work a Done card deliberately handed to a later card. Close a row only with the 
 | Stop timing under supervised motion | FW05 | FW19 | FW05 stall tests ran with motion disabled |
 | KM0 SDK flash users (DLPS tickless lock path) unmediated; KM0 deny provider | FW06 | FW26 | Unreachable while KM0 holds its wakelock; mediate or deny before KM0 may sleep |
 | Exclusion for SDK flash users not yet exercised (Wi-Fi, OTA, FTL) | FW06 | FW07 | FW06 proved the hooked read, sector erase and page program paths only |
+| Journal reservation before real motion and result after verified stop | FW15 | FW16 | Journal reserve, finish, pending refusal and torn-record recovery passed on NOR with no motion; the owner wiring around real motion belongs to FW16 |
 | ADC clock enable on the minimal KM0 main | FW05 | FW14 | `Board::open` initializes the LP ADC without enabling its clock; the FW05 probe uses `open_outputs` instead |
 
 ## Using the board
@@ -60,7 +61,7 @@ Prioritize the UART development loop and build identity, stopped startup, LED di
 | --- | --- | --- | --- | --- |
 | **FW13 Food, outlet and feedback inputs** | Ready | — | FW03, FW05, FW06 | Confirm emitter/receiver pairs and blocked/clear polarity. Measure settling, pulse capture and bounded emitter duty. Reject stale/invalid inputs; observe owner stalls with emitters active and motor disabled. |
 | **FW14 Current, battery and external power inputs** | Ready | — | FW03, FW05 | Enable the LP ADC clock explicitly, then verify ADC readiness/calibration, voltage scaling and external-power detection against measurements. Establish sample freshness and report unknown values honestly. Calibrate loaded motor current during FW16/FW19. |
-| **FW15 Durable settings and feeding journal** | Bench check | Physical (UART protocol, journal on NOR) | FW06 | Establish explicit storage allocation, implement real NOR I/O and schema/version recovery, and bound wear. Persist reservation before motion and result after verified stop. Test interrupted writes and block ambiguous pending feeds after restart. |
+| **FW15 Durable settings and feeding journal** | **Done (storage scope)** | Physical (UART protocol, NOR power cuts) | FW06 | Establish explicit storage allocation, implement real NOR I/O and schema/version recovery, and bound wear. Persist reservation before motion and result after verified stop. Test interrupted writes and block ambiguous pending feeds after restart. |
 | **FW30 Electrical output verification** | Ready | — | FW03 | Before any intended motion, measure motor driver inputs at STOP, infrared emitter OFF, and startup/reset transients across repeated measured power-ons and resets (multimeter; scope or logic analyzer for transients). Confirm stock-derived polarity electrically. |
 | **FW16 Supervised motor controller and feeding owner** | Planned | — | FW05, FW06, FW13, FW14, FW15, FW30 | Wire the existing owner/controller to real ports. Show owner-lease expiry under a stalled owner with motion disabled, then verify a bounded pulse, direction, feedback and STOP under supervision before a portion test. Exercise cancellation, lease expiry and failed stop; a failed reservation cannot start motion. |
 | **FW17 Local manual feeding and durable results** | Planned | — | FW08, FW15, FW16 | Validate command IDs, quantities and bowl modes; serialize requests and prevent duplicate/replayed delivery across reboot. Distinguish accepted, durably reserved, completed and uncertain results. Local status remains usable during a feed. |
@@ -107,7 +108,7 @@ Prioritize the UART development loop and build identity, stopped startup, LED di
 | FW12 Automated development loop | ⬜ Planned |
 | FW13 Food, outlet and feedback inputs | 🟢 Ready |
 | FW14 Current, battery and external power inputs | 🟢 Ready |
-| FW15 Durable settings and feeding journal | 🧪 Bench check |
+| FW15 Durable settings and feeding journal | ✅ Done (storage scope) |
 | FW16 Supervised motor controller and feeding owner | ⬜ Planned |
 | FW17 Local manual feeding and durable results | ⬜ Planned |
 | FW18 Portion and bowl calibration | ⬜ Planned |

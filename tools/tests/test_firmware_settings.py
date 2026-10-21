@@ -40,9 +40,9 @@ def startup(identity, reset):
             + b'Synthetic core diagnostic: PASS\r\nSynthetic diagnostic only; feeder backend stays unopened.\r\n' + S.PASS)
 
 
-def opened(status, generation, consistent=1):
-    return b'PLSET1 open status=%d generation=%d volume=%d lights=%d slot=%d consistent=%d\r\n' % (
-        status, generation, generation % 101, generation % 2, generation % 2, consistent)
+def opened(status, generation, consistent=1, other=None):
+    return b'PLSET1 open status=%d generation=%d volume=%d lights=%d slot=%d%s consistent=%d\r\n' % (
+        status, generation, generation % 101, generation % 2, generation % 2, b'' if other is None else b' other=%d' % other, consistent)
 
 
 def batch(saves, generation, ticks):
@@ -54,7 +54,7 @@ def end(generation, leases=1503, frozen=None, saves=300, phase=1, fault=0):
         saves, generation, leases, leases if frozen is None else frozen, phase, fault)
 
 
-def capture(identity, boots=BOOTS, resets=None, off=OFF_SECONDS, tail=20.0):
+def capture(identity, boots=BOOTS, resets=None, off=OFF_SECONDS, tail=20.0, saves_per_boot=300, others=None):
     """(host seconds, bytes, boot, label) receive chunks of a realistic power-cut settings capture."""
     out, t0 = [], 0.0
     for number, spec in enumerate(boots, 1):
@@ -73,13 +73,13 @@ def capture(identity, boots=BOOTS, resets=None, off=OFF_SECONDS, tail=20.0):
         t += 0.05
         out.append((t, START, number, 'start'))
         t += 0.06
-        out.append((t, opened(status, generation), number, 'open'))
-        for n in range(1, min(saves, 299) + 1):
+        out.append((t, opened(status, generation, other=(others or {}).get(number)), number, 'open'))
+        for n in range(1, min(saves, saves_per_boot - 1) + 1):
             if n % 25 == 0:
                 out.append((t + n * SAVE_SECONDS, batch(n, generation + n, 3900 + n), number, f'batch{n}'))
         t += saves * SAVE_SECONDS
-        if saves == 300:
-            out.append((t, end(generation + 300), number, 'end'))
+        if saves == saves_per_boot:
+            out.append((t, end(generation + saves, saves=saves), number, 'end'))
         if fragment is None:
             t += 1.0  # idle, then cut
         elif number % 2:
@@ -309,7 +309,7 @@ class FirmwareSettings(unittest.TestCase):
         self.policy(None)
         with self.assertRaisesRegex(ValueError, 'Flash handshake policy/artifact mismatch'):
             self.startup_audit(good)
-        self.policy('fw15-settings-v2')
+        self.policy('fw15-settings-v3')
         with self.assertRaisesRegex(ValueError, 'Unknown flash handshake policy'):
             self.startup_audit(good)
         # A hello-only, park or journal image cannot be audited under the settings policy.
@@ -329,6 +329,41 @@ class FirmwareSettings(unittest.TestCase):
         for call in (self.audit, self.startup_audit):
             with self.assertRaisesRegex(ValueError, 'Flash handshake policy/artifact mismatch'):
                 call(good)
+
+    def test_back_to_back_policy_requires_a_midsave_cut(self):
+        self.policy('fw15-settings-v2')
+        # Boot 3 recovers from a torn slot; boot 5 finds the slot it was writing erased.
+        others = {1: 1, 3: 4, 4: 2, 5: 1, 6: 2}
+        boots = ((1, 0, 130, b'PLSET1 batch sa'), None, (2, 131, 60, b''), (0, 192, 1500, None), (0, 1692, 40, b'PLSE'),
+                 (0, 1732, 17, b'PLSET1 ba'))
+
+        def run(others=others, boots=boots, saves=1500):
+            return self.audit(capture(self.identity, boots, saves_per_boot=saves, others=others))
+        report = run()
+        self.assertEqual(report['outcome'], 'pass', report)
+        self.assertEqual(report['settings_midsave_cuts'], 2)
+        self.assertEqual([o and o['other'] for o in report['boot_opens']], [1, None, 4, 2, 1, 2])
+        self.assertEqual(report['boot_ends'][2]['saves'], 1500)
+        cases = [
+            ({**others, 3: 2, 5: 2}, boots[:2] + ((0, 131, 60, b''),) + boots[3:], 1500, 'settings_midsave'),
+            ({**others, 1: None}, boots, 1500, 'settings_open'),
+            ({**others, 3: 1}, boots, 1500, 'settings_open'),  # RECOVERED needs a torn or invalid slot
+            ({**others, 5: 5}, boots, 1500, 'settings_open'),  # LOADED needs an erased or valid slot
+            ({**others, 1: 2}, boots, 1500, 'settings_open'),  # EMPTY needs an erased slot
+            ({**others, 5: 3}, boots, 1500, 'settings_open'),
+            (others, ((1, 0, 130, b''), None, (2, 131, 60, b''), (0, 192, 300, None), (0, 492, 40, b''), (0, 532, 17, b'')),
+             300, 'settings_end'),
+        ]
+        for index, (o, b, saves, outcome) in enumerate(cases):
+            with self.subTest(index=index):
+                self.assertEqual(run(o, b, saves)['outcome'], outcome)
+        # The startup auditor accepts the v2 settings image as one boot.
+        chunks, finished = capture(self.identity, ((0, 192, 1500, None),), saves_per_boot=1500, others={1: 2})
+        self.assertEqual(self.startup_audit((chunks, finished))['outcome'], 'pass')
+        # A v1 capture cannot pass under v2, nor a v2 capture under v1.
+        self.assertEqual(self.audit(capture(self.identity))['outcome'], 'settings_open')
+        self.policy('fw15-settings-v1')
+        self.assertEqual(run()['outcome'], 'settings_open')
 
     def test_other_policies_refuse_settings_records_and_keep_their_outcomes(self):
         # A journal image carrying the settings start format is refused under the journal policy.

@@ -20,6 +20,7 @@ import urllib.request
 import pinmap
 import rampark
 import sdkhooks
+import wifiaudit
 import firstboot
 
 
@@ -36,6 +37,7 @@ AUDITOR = ROOT / "tools/audit-ota-layout.py"
 STOCK = PRIVATE / "firmware/PLAF103_OTA_010115.bin"
 RUST = FIRMWARE / "rust"
 ENTRY = FIRMWARE / "ports/amebad/example_entry.c"
+PLATFORM_OPTS = Path("project/realtek_amebaD_va0_example/inc/inc_hp/platform_opts.h")
 MODEL_PROFILES = ("plaf103", "plaf103-firstboot")
 # Cargo target and features for each SDK core project.
 RUST_CORES = {"lp": ("thumbv8m.base-none-eabi", "km0"), "hp": ("thumbv8m.main-none-eabihf", "km4")}
@@ -110,6 +112,7 @@ def managed_sdk_paths(profile):
                   "project/realtek_amebaD_va0_example/src/src_lp/Makefile"}
     if profile == "plaf103-firstboot":
         paths |= {f"project/realtek_amebaD_va0_example/src/src_{core}/main.c" for core in ("lp", "hp")}
+        paths.add(str(PLATFORM_OPTS))
     return paths
 
 
@@ -359,7 +362,7 @@ def source_inputs(profile):
     if profile in MODEL_PROFILES:
         paths += [LAYOUT, AUDITOR, FIRMWARE / "tools/pinmap.py"]
     if profile == "plaf103-firstboot":
-        paths += [FIRMWARE / "tools/firstboot.py", *firstboot.sources(FIRMWARE).values()]
+        paths += [FIRMWARE / "tools/firstboot.py", FIRMWARE / "tools/wifiaudit.py", *firstboot.sources(FIRMWARE).values()]
     return list(dict.fromkeys(paths))
 
 
@@ -504,6 +507,16 @@ def prepare(profile, toolchain, expected):
                 if path.suffix in (".o", ".d", ".i", ".s", ".su"):
                     path.unlink()
     if profile == "plaf103-firstboot":
+        # Fast connect saves reconnect data to FAST_RECONNECT_DATA (0x105000), inside
+        # the application bank; it also enables fast DHCP's read of that sector.
+        original = run("git", "show", "HEAD:" + str(PLATFORM_OPTS), cwd=sdk,
+                       capture_output=True, text=True).stdout
+        # Other enabling lines sit inside examples this build leaves disabled.
+        anchor = "/*For fast reconnection*/\n#define CONFIG_EXAMPLE_WLAN_FAST_CONNECT\t1\n"
+        if original.count(anchor) != 1:
+            raise RuntimeError("Pinned fast-connect option changed")
+        (sdk / PLATFORM_OPTS).write_text(original.replace(anchor, anchor.replace("\t1\n", "\t0\n")))
+        overrides[str(PLATFORM_OPTS)] = digest(sdk / PLATFORM_OPTS)
         for core, source in firstboot.sources(FIRMWARE).items():
             relative = Path("project/realtek_amebaD_va0_example/src") / f"src_{core}" / "main.c"
             shutil.copyfile(source, sdk / relative)
@@ -633,6 +646,7 @@ def build(profile, toolchain):
     ram_park_audit = rampark.audit(sdk, PROJECT, toolchain / "bin", objects) if profile != "baseline" else None
     sdk_hook_audit = sdkhooks.audit(sdk, PROJECT, toolchain / "bin", objects) if profile != "baseline" else None
     startup_audit = firstboot.audit(sdk, PROJECT, toolchain / "bin") if profile == "plaf103-firstboot" else None
+    wifi_audit = wifiaudit.audit(sdk, PROJECT, toolchain / "bin") if profile == "plaf103-firstboot" else None
     manifest = {
         "profile": profile, "sdk_revision": LOCK["sdk"]["revision"],
         "startup_identity": identity if profile != "baseline" else None,
@@ -642,7 +656,8 @@ def build(profile, toolchain):
         "startup_shared_pad_policy": "before-km4-v3" if profile == "plaf103-firstboot" else None,
         "startup_gpio_clock_policy": "explicit-enable-v1" if profile != "baseline" else None,
         "startup_flash_handshake_policy": None,
-        "startup_adc_policy": "fw14-adc-v2" if profile != "baseline" else None,
+        "startup_adc_policy": None,
+        "startup_wifi_policy": "fw07-scan-v1" if profile == "plaf103-firstboot" else None,
         "toolchain_sha256": LOCK["toolchain"]["sha256"],
         "built_at": datetime.now(timezone.utc).isoformat(),
         "inputs": {str(p.relative_to(ROOT)): checksum for p, checksum in expected.items()},
@@ -656,6 +671,7 @@ def build(profile, toolchain):
         "ram_park_audit": ram_park_audit,
         "sdk_hook_audit": sdk_hook_audit,
         "firstboot_startup_audit": startup_audit,
+        "wifi_link_audit": wifi_audit,
         "bootloader_replacement_supported": False,
         "artifacts": artifacts,
         "checks": {"ota_payload_matches": True, "ota_checksum_matches": True,

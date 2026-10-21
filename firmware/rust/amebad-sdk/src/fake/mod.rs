@@ -14,7 +14,7 @@
 use core::ffi::{CStr, c_void};
 use std::cell::RefCell;
 
-use super::{GpioRouting, Irq, Isr, LpClock, TaskStep};
+use super::{GpioRouting, Irq, Isr, LpClock, TaskStep, WifiState};
 
 const MOTOR_MASK: u32 = (1 << 13) | (1 << 14);
 pub const GPIOA_IRQ: usize = 4;
@@ -54,6 +54,8 @@ pub struct Hardware {
     pub clears: u32,
     pub current_adc: u16,
     pub battery_adc: u16,
+    /// What the Wi-Fi shim reports; tests script it.
+    pub wifi: WifiState,
     /// Internal channel 10: the chip's own supply measurement.
     pub supply_adc: u16,
     pub output_hook: Option<fn()>,
@@ -135,6 +137,7 @@ impl Default for Hardware {
             current_adc: 500,
             battery_adc: 2800,
             supply_adc: 3000,
+            wifi: WifiState::default(),
             output_hook: None,
             gpio_init_hook: None,
             blocked_gpio_write: [0; 2],

@@ -540,3 +540,16 @@ pub fn panic_outputs_safe() {
 pub fn log(message: &CStr) {
     print!("{}", message.to_string_lossy());
 }
+
+/// Starts once; `Hardware::wifi` is the state the shim would report.
+pub fn wifi_start() -> bool {
+    with(|h| {
+        let first = h.wifi.started == 0;
+        h.wifi.started = 1;
+        first
+    })
+}
+
+pub fn wifi_snapshot() -> WifiState {
+    with(|h| h.wifi)
+}

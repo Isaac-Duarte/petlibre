@@ -1,0 +1,3 @@
+# Keep host tooling (bench, audit and build scripts) out of GitHub's language
+# statistics, so the repository reports its firmware languages.
+*.py linguist-detectable=false

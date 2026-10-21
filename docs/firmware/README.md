@@ -31,7 +31,7 @@ The core diagnostic uses synthetic inputs and memory-only motor outputs. Separat
 | Inputs and power | Host-tested filtering, stale/invalid-input rejection, ADC scaling | Calibration, optical timing/polarity, current limits, battery/brownout behavior |
 | Request persistence | Host-tested journal and owner integration | Physical flash provider, durable writes, power cuts |
 | Runtime reliability | Host-tested leases, ISR supervision, watchdog, and flash coordination | Real timing, reset/sleep behavior, sustained runs and complete flash mediation |
-| Networking and local protocol | Stock server implemented separately | Replacement provisioning, networking, commands, telemetry, reconnect |
+| Networking and local protocol | Stock server implemented separately; replacement Wi-Fi join, DHCP, DNS checks and reconnect on hardware (FW07); health transport [designed](local-transport.md) (FW08) | Health/diagnostic transport, provisioning, commands, authenticated channel |
 | Schedules | Stock semantics investigated | Replacement persistence, timezone/DST, occurrence identity, interrupted-meal policy |
 | Panel and audio | Stock roles partially recovered | Replacement buttons/lock/reset, complete indicator policies, audio playback and deadlines |
 | Home Assistant | Deferred | Interface and integration after useful standalone operation |

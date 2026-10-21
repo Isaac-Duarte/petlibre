@@ -236,8 +236,15 @@ computer-security`) was detected in 11 s and recovered 10 s after unblocking.
 **FW07 runtime flash check (physical, passed).** Full 8 MiB reads before and
 after one drill boot (hotspot outage plus DNS block) were byte-identical.
 
-**Next for FW07:** DHCP-server loss and lease expiry (the lease is 1 h). Then
-decide closure and move to FW08.
+FW07 is Done (no-renewal scope). DHCP-server loss and lease renewal are carried
+to FW27.
+
+**Next: FW08**, the local health and control transport. The design is in
+docs/firmware/local-transport.md: an outbound MQTT 3.1.1 client of the server's
+broker in a new firmware role, a retained health message, and a read-only
+`health`/`ping` request allowlist. Stage A is offline: a core codec, the server
+role, ACL and API, and the no-dispense check. The owner will need one more
+firewall rule (the broker port from the hotspot subnet) before stage B.
 
 `--interrupted` now also accepts one sector holding the staged target's first
 1–3 program frames followed by erased flash, the state a NAK during programming

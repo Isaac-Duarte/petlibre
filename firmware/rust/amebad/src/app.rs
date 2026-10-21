@@ -1,7 +1,7 @@
 //! KM4 application entry: logs and runs the synthetic diagnostic once.
-//! Stopped-output startup and a bounded indicator probe, then the FW06 stage E
-//! probe: bind the KM0 peer, arm the SDK flash-lock hooks with the lease
-//! provider, and cycle the one owner-approved scratch sector through them.
+//! Stopped-output startup and a bounded indicator probe, then the FW15 probe:
+//! bind the KM0 peer, arm the SDK flash-lock hooks with the lease provider and
+//! run the feed journal on the owner-approved storage region through them.
 
 use core::cell::UnsafeCell;
 use core::ffi::c_void;
@@ -70,16 +70,16 @@ impl FlashOps for SdkHooks {
         flash_hooks::petlibro_amebad_flash_hooks_armed()
     }
 
-    fn erase_scratch() {
-        sdk::scratch_erase();
+    fn erase(sector: u32) -> bool {
+        sdk::storage_erase(sector)
     }
 
-    fn program_scratch(page: u32, data: &[u8; 256]) -> bool {
-        sdk::scratch_program(page, data)
+    fn program(sector: u32, offset: u32, data: &[u8]) -> bool {
+        sdk::storage_program(sector, offset, data)
     }
 
-    fn read_scratch(word: u32) -> u32 {
-        sdk::scratch_read(word)
+    fn read(sector: u32, offset: u32, bytes: &mut [u8]) -> bool {
+        sdk::storage_read(sector, offset, bytes)
     }
 }
 
@@ -109,44 +109,63 @@ fn log_probe(record: Record) {
         Record::Timeout { ms } => report.record(format_args!("PLFLS1 error timeout ms={ms}\r\n")),
         Record::Foreign => report.record(format_args!("PLFLS1 foreign\r\n")),
         Record::Start {
+            mode,
             marker,
             watchdog,
             installed,
         } => report.record(format_args!(
-            "PLWRS1 start marker={marker:08x} watchdog={} installed={}\r\n",
+            "PLJNL1 start mode={mode} marker={marker:08x} watchdog={} installed={}\r\n",
             if watchdog { "pass" } else { "fail" },
             bit(installed),
         )),
         Record::Skip { marker } => {
-            report.record(format_args!("PLWRS1 skip marker={marker:08x}\r\n"))
+            report.record(format_args!("PLJNL1 skip marker={marker:08x}\r\n"))
         }
-        Record::Preimage { id, blank } => report.record(format_args!(
-            "PLWRS1 preimage id={:02x}{:02x}{:02x} blank={blank}\r\n",
+        Record::Preimage { id, blank_sectors } => report.record(format_args!(
+            "PLJNL1 preimage id={:02x}{:02x}{:02x} blank_sectors={blank_sectors}\r\n",
             id[0], id[1], id[2],
         )),
-        Record::Cycle {
-            cycle,
-            erase_ticks,
-            blank,
-            program_max_ticks,
-            errors,
+        Record::Op {
+            op,
+            id,
+            ok,
+            error,
+            ticks,
         } => report.record(format_args!(
-            "PLWRS1 cycle n={cycle} erase_ticks={erase_ticks} blank={blank} program_max={program_max_ticks} errors={errors}\r\n"
+            "PLJNL1 op kind={} id={id} ok={} error={} ticks={ticks}\r\n",
+            op.0,
+            bit(ok),
+            error.0,
         )),
-        Record::Restore { erase_ticks, blank } => report.record(format_args!(
-            "PLWRS1 restore erase_ticks={erase_ticks} blank={blank}\r\n"
+        Record::View {
+            sequence,
+            high_water,
+            pending,
+            result_id,
+            outcome,
+            slot,
+        } => report.record(format_args!(
+            "PLJNL1 view sequence={sequence} high_water={high_water} pending={} result={result_id} outcome={} slot={slot}\r\n",
+            bit(pending),
+            outcome.0,
         )),
-        Record::Done {
-            cycles,
+        Record::Refuse { id, reserved } => report.record(format_args!(
+            "PLJNL1 refuse id={id} reserved={}\r\n",
+            bit(reserved)
+        )),
+        Record::End {
+            mode,
+            reset,
             leases,
+            frozen,
+            erases,
             phase,
             fault,
-            park_max,
-            release_max,
-            frozen,
         } => report.record(format_args!(
-            "PLWRS1 done cycles={cycles} leases={leases} phase={} fault={} park_max={park_max} release_max={release_max} frozen={frozen}\r\n",
-            phase.0, fault.0,
+            "PLJNL1 end mode={mode} reset={} leases={leases} frozen={frozen} erases={erases} phase={} fault={}\r\n",
+            bit(reset),
+            phase.0,
+            fault.0,
         )),
         Record::ClockError => report.record(format_args!("PLFLS1 error clock\r\n")),
     };

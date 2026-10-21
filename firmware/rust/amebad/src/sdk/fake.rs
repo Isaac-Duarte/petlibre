@@ -108,8 +108,9 @@ pub struct Hardware {
     pub spin_ticks: u32,
     pub spins: u32,
     pub systick: u32,
-    /// The scratch sector, modelled as NOR: erase sets 1s, program clears bits.
-    pub scratch: [u32; 1024],
+    /// The 64 KiB storage region as NOR: erase sets 1s, program clears bits.
+    pub storage: Vec<u8>,
+    pub storage_erases: [u32; 16],
 }
 
 impl Default for Hardware {
@@ -184,7 +185,8 @@ impl Default for Hardware {
             spin_ticks: 33,
             spins: 0,
             systick: 7,
-            scratch: [u32::MAX; 1024],
+            storage: vec![u8::MAX; 16 * 4096],
+            storage_erases: [0; 16],
         }
     }
 }
@@ -411,29 +413,48 @@ pub mod api {
         with(|h| h.boot_reason)
     }
 
-    pub const SCRATCH_OFFSET: u32 = 0x18_5000;
-    pub const SCRATCH_WORDS: u32 = 1024;
-    pub const SCRATCH_PAGES: u32 = 16;
+    pub const STORAGE_OFFSET: u32 = 0x34_0000;
+    pub const STORAGE_SECTORS: u32 = 16;
+    pub const SECTOR_BYTES: u32 = 0x1000;
 
-    pub fn scratch_erase() {
-        with(|h| h.scratch = [u32::MAX; 1024]);
+    fn storage_span(sector: u32, offset: u32, len: usize) -> Option<usize> {
+        let end = offset as usize + len;
+        (sector < STORAGE_SECTORS && end <= SECTOR_BYTES as usize)
+            .then(|| (sector * SECTOR_BYTES + offset) as usize)
     }
 
-    pub fn scratch_program(page: u32, data: &[u8; 256]) -> bool {
-        if page >= SCRATCH_PAGES {
+    pub fn storage_erase(sector: u32) -> bool {
+        let Some(at) = storage_span(sector, 0, SECTOR_BYTES as usize) else {
+            return false;
+        };
+        with(|h| {
+            h.storage[at..at + SECTOR_BYTES as usize].fill(u8::MAX);
+            h.storage_erases[sector as usize] += 1;
+        });
+        true
+    }
+
+    pub fn storage_program(sector: u32, offset: u32, data: &[u8]) -> bool {
+        let Some(at) = storage_span(sector, offset, data.len()) else {
+            return false;
+        };
+        if !offset.is_multiple_of(4) || !data.len().is_multiple_of(4) {
             return false;
         }
         with(|h| {
-            for (i, word) in data.as_chunks::<4>().0.iter().enumerate() {
-                let value = u32::from_le_bytes(*word);
-                h.scratch[page as usize * 64 + i] &= value;
+            for (cell, &byte) in h.storage[at..at + data.len()].iter_mut().zip(data) {
+                *cell &= byte;
             }
         });
         true
     }
 
-    pub fn scratch_read(word: u32) -> u32 {
-        with(|h| h.scratch.get(word as usize).copied().unwrap_or(0))
+    pub fn storage_read(sector: u32, offset: u32, bytes: &mut [u8]) -> bool {
+        let Some(at) = storage_span(sector, offset, bytes.len()) else {
+            return false;
+        };
+        with(|h| bytes.copy_from_slice(&h.storage[at..at + bytes.len()]));
+        true
     }
 
     pub fn flash_read_jedec() -> [u8; 3] {

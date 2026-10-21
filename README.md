@@ -16,6 +16,7 @@ The replacement is experimental. A diagnostic PASS does not establish working ph
 
 ## Start here
 
+- [Resume the current firmware work](RESUME.md): installed image, last bench state, evidence, and next task
 - [Hardware identification and signal map](docs/hardware/README.md)
 - [UART wiring and loader entry](docs/hardware/uart.md)
 - [Stock firmware and replacement architecture](docs/firmware/README.md)

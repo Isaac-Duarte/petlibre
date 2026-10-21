@@ -4,6 +4,9 @@ This board tracks replacement-firmware integration, dependencies, and acceptance
 
 FW01 and FW02 have physical development-update/startup evidence. FW03 reached its recorded STOP/off software/readback and observed-motion scope; electrical voltages, repeated measured resets, and transients remain open in FW27. FW04 stays in **Bench check**: all four visible indicator roles and HIGH-on polarity were observed, but Port A input-readback disagreement and interleaved UART reports remain unresolved.
 
+For the installed artifact, last confirmed bench state, local evidence index,
+next task, and retained scope decisions, start with [RESUME.md](RESUME.md).
+
 ## Using the board
 
 Move cards through **Planned → Ready → In progress → Bench check → Done**. Ready requires completed dependencies. Update the board when meaningful implementation or acceptance evidence changes. Keep one integration card in progress; independent software preparation can proceed in parallel.

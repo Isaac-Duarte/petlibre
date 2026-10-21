@@ -1,5 +1,6 @@
 # Contributor and agent instructions
 
+- Read [RESUME.md](RESUME.md) when continuing firmware work. Keep its checkpoint and ignored local evidence index current when bench state changes; reconfirm physical state rather than assuming the handoff is live.
 - Keep FIRMWARE_BOARD.md current when implementation, dependencies, or acceptance evidence changes. Card status never authorizes physical operations.
 - Read README.md and docs/development/README.md before changing behavior. Use docs/hardware/ and docs/firmware/ for hardware assumptions and component contracts.
 - Work within this repository. A neighboring research archive is not a build dependency or an authorized mutation target.

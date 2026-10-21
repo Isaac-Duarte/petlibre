@@ -71,7 +71,7 @@ impl Default for JournalIo {
 impl JournalIo {
     // SAFETY (all three): `FeedJournal::open`/`create` require the callbacks
     // to be sound for `context`; the buffers are live Rust slices.
-    fn read(&self, slot: c_uint, offset: u32, bytes: &mut [u8]) -> bool {
+    pub(crate) fn read(&self, slot: c_uint, offset: u32, bytes: &mut [u8]) -> bool {
         self.read.is_some_and(|f| unsafe {
             f(
                 self.context,
@@ -83,7 +83,7 @@ impl JournalIo {
         })
     }
 
-    fn program(&self, slot: c_uint, offset: u32, bytes: &[u8]) -> bool {
+    pub(crate) fn program(&self, slot: c_uint, offset: u32, bytes: &[u8]) -> bool {
         self.program.is_some_and(|f| unsafe {
             f(
                 self.context,
@@ -95,7 +95,7 @@ impl JournalIo {
         })
     }
 
-    fn erase(&self, slot: c_uint) -> bool {
+    pub(crate) fn erase(&self, slot: c_uint) -> bool {
         self.erase.is_some_and(|f| unsafe { f(self.context, slot) })
     }
 }
@@ -111,7 +111,13 @@ pub struct JournalConfig {
     pub max_portions: u16,
 }
 
-c_enum!(JournalError { OK = 0, ARGUMENT = 1, EMPTY = 2, IO = 3, CORRUPT = 4, STATE = 5, EXHAUSTED = 6 });
+c_enum!(JournalError { OK = 0, ARGUMENT = 1, EMPTY = 2, IO = 3, CORRUPT = 4, STATE = 5, EXHAUSTED = 6, WORN = 7 });
+
+/// Records written before new reservations are refused: one unit erase per
+/// record, alternating, so about 50 000 erases per unit, half a typical NOR
+/// part's 100 000-cycle rating. Finishing an existing reservation is always
+/// allowed, so a request is never stranded pending.
+pub const WEAR_LIMIT: u64 = 100_000;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -536,6 +542,11 @@ impl FeedJournal {
         }
         if v.sequence == u64::MAX {
             self.fail(JournalError::EXHAUSTED);
+            return false;
+        }
+        if v.sequence >= WEAR_LIMIT {
+            // Refuse without closing: the recovery state stays readable.
+            self.error = JournalError::WORN;
             return false;
         }
         let mut next = JournalView {

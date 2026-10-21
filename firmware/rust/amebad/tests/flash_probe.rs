@@ -1,5 +1,7 @@
-//! KM4 handshake and FW15 journal probe against the fake SDK (with a NOR
-//! model of the storage region) and a shared IPC model. KM0 is modelled
+//! KM4 handshake and FW15 settings stress probe against the fake SDK (with a
+//! NOR model of the storage region) and a shared IPC model. Power cuts are
+//! injected at a chosen mutating flash call: that call takes half effect and
+//! the boot ends with backup registers cleared, as unplugging would. KM0 is modelled
 //! inline: it answers HELLO through the real `Peer::step` and acknowledges or
 //! releases park requests on SYSTIMER reads, as the parked core's RAM loop
 //! would. The fake hooks enforce the interposer's acquire/release context
@@ -15,13 +17,12 @@ use petlibro_amebad::flash_peer::{
     BACKUP_BASE, MARKER_REGISTER, PARK_CHANNEL, PARK_TICK_LIMIT, Peer,
 };
 use petlibro_amebad::flash_probe::{
-    ATTEMPT_BIT, EXPECTED_ID, FlashOps, JournalOp, LeaseStage, Probe, Provider, Record,
+    ATTEMPT_BIT, EXPECTED_ID, FlashOps, LeaseStage, Probe, Provider, Record, STRESS_SAVES,
 };
 use petlibro_amebad::sdk::{self, fake};
 use petlibro_amebad::stopped;
-use petlibro_core::feed_journal::JournalError;
-use petlibro_core::feed_storage::OwnerOutcome;
 use petlibro_core::flash_coord::{FlashFault, FlashPhase, FlashReply};
+use petlibro_core::settings_store::SettingsStatus;
 
 #[derive(Default)]
 struct Km0 {
@@ -39,6 +40,10 @@ thread_local! {
     static PROVIDER: Cell<*mut Provider> = const { Cell::new(std::ptr::null_mut()) };
     static READ_ID: Cell<[u8; 3]> = const { Cell::new(EXPECTED_ID) };
     static ERASES: Cell<u32> = const { Cell::new(0) };
+    /// Mutating calls left before a power cut; `None` never cuts.
+    static CUT: Cell<Option<u32>> = const { Cell::new(None) };
+    /// Power is gone: flash calls have no effect and fail.
+    static POWER_LOST: Cell<bool> = const { Cell::new(false) };
 }
 
 fn km0<R>(f: impl FnOnce(&mut Km0) -> R) -> R {
@@ -130,6 +135,27 @@ fn locate(address: u32) -> (usize, usize) {
 
 /// A hook fault: the target halts in RAM; the model stops the boot here.
 struct HookFault;
+/// True when this mutating call is the one the power cut interrupts; it then
+/// marks power lost. Callbacks are `extern "C"`, so the cut cannot unwind.
+fn cut_now() -> bool {
+    let hit = CUT.with(|c| match c.get() {
+        Some(0) => true,
+        Some(n) => {
+            c.set(Some(n - 1));
+            false
+        }
+        None => false,
+    });
+    if hit {
+        POWER_LOST.with(|p| p.set(true));
+        CUT.with(|c| c.set(None));
+    }
+    hit
+}
+
+fn power_lost() -> bool {
+    POWER_LOST.with(Cell::get)
+}
 
 /// The interposer's contract around one SDK lock/unlock pair.
 struct Hooks;
@@ -177,11 +203,31 @@ impl FlashOps for Hooks {
     }
 
     fn erase(sector: u32) -> bool {
+        if power_lost() {
+            return false;
+        }
         ERASES.with(|e| e.set(e.get() + 1));
+        if cut_now() {
+            // An interrupted erase: half the sector raised to ones.
+            fake::with(|h| {
+                let at = sector as usize * 4096;
+                h.storage[at..at + 2048].fill(u8::MAX);
+            });
+            return false;
+        }
         leased(|| sdk::storage_erase(sector))
     }
 
     fn program(sector: u32, offset: u32, data: &[u8]) -> bool {
+        if power_lost() {
+            return false;
+        }
+        if cut_now() {
+            // An interrupted program: the first half of the bytes landed.
+            let half = data.len() / 2 / 4 * 4;
+            let _ = sdk::storage_program(sector, offset, &data[..half]);
+            return false;
+        }
         leased(|| sdk::storage_program(sector, offset, data))
     }
 
@@ -199,11 +245,22 @@ struct Boot {
     storage: Vec<u8>,
     erases: u32,
     reset: bool,
+    power_cut: bool,
 }
 
 /// One boot in a fresh thread (registration pointers are thread-local, and
 /// a platform reset clears RAM); backup registers carry across.
 fn platform_boot(backup: [u32; 8], storage: Vec<u8>, deaf: bool, id: [u8; 3]) -> Boot {
+    platform_boot_cut(backup, storage, deaf, id, None)
+}
+
+fn platform_boot_cut(
+    backup: [u32; 8],
+    storage: Vec<u8>,
+    deaf: bool,
+    id: [u8; 3],
+    cut: Option<u32>,
+) -> Boot {
     std::thread::spawn(move || {
         fake::reset_hardware();
         fake::with(|h| {
@@ -220,11 +277,14 @@ fn platform_boot(backup: [u32; 8], storage: Vec<u8>, deaf: bool, id: [u8; 3]) ->
         });
         READ_ID.with(|c| c.set(id));
         fake::with(|h| h.storage = storage);
+        CUT.with(|c| c.set(cut));
+        POWER_LOST.with(|p| p.set(false));
         let mut probe = Box::<Probe>::default();
         let mut provider = Box::<Provider>::default();
         let mut peer = Peer::default();
         let mut records = Vec::new();
         let mut faulted = false;
+        let mut power_cut = false;
         let mut reset = false;
         // Stop after 40 quiet iterations: idle (fed) or holding for a reset.
         let mut quiet = 0;
@@ -237,6 +297,11 @@ fn platform_boot(backup: [u32; 8], storage: Vec<u8>, deaf: bool, id: [u8; 3]) ->
                 faulted = true;
                 break;
             };
+            if power_lost() {
+                // Records printed after the cut never left the board.
+                power_cut = true;
+                break;
+            }
             quiet = if step.record.is_some() { 0 } else { quiet + 1 };
             records.extend(step.record);
             if step.delay_ms == 0 || quiet > 40 {
@@ -263,6 +328,7 @@ fn platform_boot(backup: [u32; 8], storage: Vec<u8>, deaf: bool, id: [u8; 3]) ->
             storage: fake::with(|h| h.storage.clone()),
             erases: ERASES.with(Cell::get),
             reset,
+            power_cut,
         }
     })
     .join()
@@ -273,179 +339,108 @@ fn blank() -> Vec<u8> {
     vec![u8::MAX; 16 * 4096]
 }
 
-fn op(kind: JournalOp, id: u64) -> Record {
-    Record::Op {
-        op: kind,
-        id,
-        ok: true,
-        error: JournalError::OK,
-        ticks: 0,
-    }
-}
-
-/// Records with timing zeroed, for exact comparison.
-fn shape(records: &[Record]) -> Vec<Record> {
-    records
+fn opened(boot: &Boot) -> (SettingsStatus, u64, bool) {
+    let Some(Record::Open {
+        status,
+        generation,
+        consistent,
+        ..
+    }) = boot
+        .records
         .iter()
-        .map(|r| match *r {
-            Record::Op {
-                op, id, ok, error, ..
-            } => Record::Op {
-                op,
-                id,
-                ok,
-                error,
-                ticks: 0,
-            },
-            Record::End {
-                mode,
-                reset,
-                erases,
-                phase,
-                fault,
-                ..
-            } => Record::End {
-                mode,
-                reset,
-                leases: 0,
-                frozen: 0,
-                erases,
-                phase,
-                fault,
-            },
-            other => other,
-        })
-        .collect()
-}
-
-fn view(sequence: u64, pending: bool, result: u64, outcome: OwnerOutcome, slot: u32) -> Record {
-    Record::View {
-        sequence,
-        high_water: 3,
-        pending,
-        result_id: result,
-        outcome,
-        slot,
-    }
-}
-
-fn end(mode: u32, reset: bool, erases: u32) -> Record {
-    Record::End {
-        mode,
-        reset,
-        leases: 0,
-        frozen: 0,
-        erases,
-        phase: FlashPhase::IDLE,
-        fault: FlashFault::OK,
-    }
-}
-
-#[test]
-fn journal_survives_resets_blocks_pending_and_ignores_a_torn_record() {
-    let first = platform_boot([0; 8], blank(), false, EXPECTED_ID);
-    let r = shape(&first.records);
-    assert!(matches!(r[0], Record::Hello { count: 1, .. }));
-    assert_eq!(
-        r[2..],
-        [
-            Record::Start {
-                mode: 0,
-                marker: 0,
-                watchdog: true,
-                installed: true
-            },
-            Record::Preimage {
-                id: EXPECTED_ID,
-                blank_sectors: 16
-            },
-            op(JournalOp::CREATE, 0),
-            op(JournalOp::RESERVE, 1),
-            op(JournalOp::FINISH, 1),
-            op(JournalOp::RESERVE, 2),
-            op(JournalOp::FINISH, 2),
-            op(JournalOp::RESERVE, 3),
-            view(6, true, 3, OwnerOutcome::PENDING, 1),
-            end(0, true, 5),
-        ]
-    );
-    assert!(first.reset && first.backup[MARKER_REGISTER as usize] == 1);
-
-    let second = platform_boot(first.backup, first.storage, false, EXPECTED_ID);
-    let r = shape(&second.records);
-    assert_eq!(
-        r[2..],
-        [
-            Record::Start {
-                mode: 1,
-                marker: 1,
-                watchdog: true,
-                installed: true
-            },
-            op(JournalOp::OPEN, 0),
-            view(6, true, 3, OwnerOutcome::PENDING, 1),
-            Record::Refuse {
-                id: 4,
-                reserved: false
-            },
-            op(JournalOp::TORN, 0),
-            end(1, true, 1),
-        ],
-        "{:?}",
-        second.records
-    );
-    assert!(second.reset && second.backup[MARKER_REGISTER as usize] == 2);
-
-    let third = platform_boot(second.backup, second.storage, false, EXPECTED_ID);
-    let r = shape(&third.records);
-    assert_eq!(
-        r[2..],
-        [
-            Record::Start {
-                mode: 2,
-                marker: 2,
-                watchdog: true,
-                installed: true
-            },
-            op(JournalOp::OPEN, 0),
-            view(6, true, 3, OwnerOutcome::PENDING, 1),
-            Record::Refuse {
-                id: 4,
-                reserved: false
-            },
-            op(JournalOp::WIPE, 0),
-            end(2, false, 2),
-        ],
-        "{:?}",
-        third.records
-    );
-    assert!(!third.reset && third.backup[MARKER_REGISTER as usize] == 0);
-    assert!(third.storage.iter().all(|&b| b == u8::MAX));
-    let Some(Record::End { leases, frozen, .. }) = third.records.last() else {
-        unreachable!()
+        .find(|r| matches!(r, Record::Open { .. }))
+        .copied()
+    else {
+        panic!("no open: {:?}", boot.records);
     };
-    assert!(*leases > 0 && leases == frozen);
-    // Every park request KM0 saw is one recorded lease.
-    assert_eq!(u64::from(third.rings), *leases);
+    (status, generation, consistent)
+}
+
+/// The generation of the last save the probe reported complete.
+fn last_reported(boot: &Boot) -> u64 {
+    boot.records
+        .iter()
+        .filter_map(|r| match r {
+            Record::Batch { generation, .. } | Record::End { generation, .. } => Some(*generation),
+            Record::Open { generation, .. } => Some(*generation),
+            _ => None,
+        })
+        .max()
+        .unwrap()
 }
 
 #[test]
-fn non_blank_region_or_wrong_part_writes_nothing() {
-    let mut storage = blank();
-    storage[0x5000] = 0;
-    let boot = platform_boot([0; 8], storage.clone(), false, EXPECTED_ID);
+fn stress_saves_survive_power_loss_and_reopen_consistently() {
+    let first = platform_boot([0; 8], blank(), false, EXPECTED_ID);
+    assert_eq!(opened(&first), (SettingsStatus::EMPTY, 0, true));
+    let Some(Record::End {
+        saves,
+        generation,
+        leases,
+        frozen,
+        phase,
+        fault,
+    }) = first.records.last().copied()
+    else {
+        panic!("{:?}", first.records);
+    };
+    assert_eq!((saves, generation), (STRESS_SAVES, u64::from(STRESS_SAVES)));
+    assert!(leases > 0 && leases == frozen && phase == FlashPhase::IDLE && fault == FlashFault::OK);
+    // Every park request KM0 saw is one recorded lease.
+    assert_eq!(u64::from(first.rings), leases);
+    assert!(!first.reset && first.backup[MARKER_REGISTER as usize] == 0);
+    // Only sectors 2 and 3 were touched.
+    assert!(first.storage[..2 * 4096].iter().all(|&b| b == u8::MAX));
+    assert!(first.storage[4 * 4096..].iter().all(|&b| b == u8::MAX));
+    // Power loss clears the backup registers; the settings remain.
+    let second = platform_boot([0; 8], first.storage, false, EXPECTED_ID);
     assert_eq!(
-        boot.records.last(),
-        Some(&Record::Preimage {
-            id: EXPECTED_ID,
-            blank_sectors: 15
-        })
+        opened(&second),
+        (SettingsStatus::LOADED, u64::from(STRESS_SAVES), true)
     );
+    assert_eq!(last_reported(&second), u64::from(2 * STRESS_SAVES));
+}
+
+/// Cut power at each of the first erase/program calls: every next boot opens
+/// consistently, at the last completed save or the one in progress.
+#[test]
+fn every_cut_point_reopens_at_the_last_or_the_interrupted_save() {
+    // Each save is one erase and two programs.
+    for cut in 0..30 {
+        let cut_boot = platform_boot_cut([0; 8], blank(), false, EXPECTED_ID, Some(cut));
+        assert!(
+            cut_boot.power_cut,
+            "cut {cut} did not land: {:?}",
+            cut_boot.records
+        );
+        let completed = u64::from(cut / 3);
+        let next = platform_boot([0; 8], cut_boot.storage, false, EXPECTED_ID);
+        let (status, generation, consistent) = opened(&next);
+        assert!(consistent, "cut {cut}: {:?}", next.records);
+        assert!(
+            generation == completed || generation == completed + 1,
+            "cut {cut}: generation {generation}, completed {completed}"
+        );
+        assert!(
+            matches!(
+                status,
+                SettingsStatus::LOADED | SettingsStatus::RECOVERED | SettingsStatus::EMPTY
+            ),
+            "cut {cut}: {status:?}"
+        );
+        // The interrupted boot's stress continues on the next one.
+        assert!(matches!(next.records.last(), Some(Record::End { .. })));
+    }
+}
+
+#[test]
+fn unknown_data_in_the_settings_sectors_is_never_written_over() {
+    let mut storage = blank();
+    storage[2 * 4096 + 9] = 0x12;
+    let boot = platform_boot([0; 8], storage.clone(), false, EXPECTED_ID);
+    assert_eq!(opened(&boot).0, SettingsStatus::CORRUPT);
     assert!(boot.erases == 0 && boot.storage == storage && !boot.reset);
     assert_eq!(boot.backup[MARKER_REGISTER as usize], 0);
-    let boot = platform_boot([0; 8], blank(), false, [0xef, 0x40, 0x18]);
-    assert!(matches!(boot.records.last(), Some(Record::Preimage { .. })));
-    assert_eq!(boot.erases, 0);
 }
 
 #[test]

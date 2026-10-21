@@ -481,3 +481,26 @@ fn id_and_sequence_exhaustion() {
     let writes = f.mutations;
     assert!(!reserve(&mut j, 2) && j.error == JournalError::EXHAUSTED && f.mutations == writes);
 }
+
+#[test]
+fn wear_limit_refuses_new_reservations_but_never_strands_a_pending_one() {
+    use petlibro_core::feed_journal::WEAR_LIMIT;
+    let mut f = FakeJournalFlash::default();
+    let mut j = FeedJournal::default();
+    // SAFETY: the fake flash outlives the journal.
+    assert_eq!(
+        unsafe { j.create(f.io(), CONFIG, Direction::D0, false, true) },
+        JournalError::OK
+    );
+    assert!(reserve(&mut j, 1));
+    j.view.sequence = WEAR_LIMIT;
+    // The pending request can still finish.
+    assert!(finish(&mut j, false, false));
+    let writes = f.mutations;
+    assert!(!reserve(&mut j, 2));
+    assert_eq!(
+        (j.error, j.opened, f.mutations),
+        (JournalError::WORN, true, writes)
+    );
+    assert!(j.read().is_some());
+}

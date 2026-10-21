@@ -5,7 +5,7 @@ This board tracks replacement-firmware integration, dependencies, and acceptance
 ## Current status
 
 - **Done:** FW01–FW06, four of them with recorded scope limits (see carried items).
-- **In progress:** FW15 is in Bench check. The feed journal ran on real NOR in the owner-approved region `0x340000–0x350000`. A three-boot capture showed reserve and finish across resets, a pending request blocking new requests, and a torn record ignored. The settings store, a physical power-cut test and enforced wear bounds remain.
+- **In progress:** FW15 is in Bench check. The journal and settings stores ran on real NOR in the owner-approved region `0x340000–0x350000`, with wear limits enforced. The journal passed three boots of reserve and finish across resets, a pending request blocking new ones, and a torn record ignored. The settings store survived six random operator power cuts during continuous saves, and every reopen was consistent. No physical cut landed inside a save; that case is covered only by host tests that cut at every byte.
 - **Critical path to feeding:** FW13/FW14/FW15 → FW30 → FW16 → FW17.
 
 ### Carried items

@@ -4,30 +4,31 @@
 //! into a `FlashCoord` only after stopped-output readback.
 //!
 //! FW15 (owner-approved region `sdk::STORAGE_OFFSET`): with `Provider`
-//! installed in the SDK flash-lock hooks, run the feed journal on real NOR
-//! through mediated erase/program and mapped reads. One power-on gives three
-//! boots, chosen by the backup marker (survives a watchdog reset, cleared by
-//! power loss):
+//! installed in the SDK flash-lock hooks, stress the settings store on real
+//! NOR for a physical power-cut test. Each boot opens the store and reports
+//! its status, generation and contents; every saved value is derived from its
+//! generation, so a recovered record can be checked for consistency. It then
+//! saves continuously, capped at `STRESS_SAVES` per boot to bound wear, while
+//! the operator cuts power at random. Every reopen must be consistent and
+//! must hold the last completed save or the one in progress.
 //!
-//! - mode 0: require the whole region blank, create the journal, reserve and
-//!   finish two requests (CANCELLED before motion: nothing moves), reserve a
-//!   third and reset deliberately with it pending.
-//! - mode 1: reopen; the third request must read pending and new requests
-//!   must be refused. Write a torn record (half a record, no commit) into the
-//!   inactive slot and reset.
-//! - mode 2: reopen past the torn record; still pending and refusing. Then
-//!   wipe the journal sectors back to blank and idle.
+//! Arming sets `ATTEMPT_BIT` (survives a watchdog reset, cleared by power
+//! loss); a boot that finds it set skips, so a hook fault resets at most once.
 //!
-//! Arming sets `ATTEMPT_BIT` with the mode; only a boot's planned end replaces
-//! the marker, so an unexpected fault resets once and the next boot skips.
-//!
+//! The FW15 journal sequence (create, reserve/finish across resets, pending
+//! refusal, torn record) passed on hardware and is retained in history.
 //! FW06 stages C-E (park round trip, mediated reads, scratch-sector cycles)
 //! passed on hardware and are retained in history; their lease sequence
 //! lives in `Provider`.
 
+use core::ffi::{c_uint, c_void};
+
+use petlibro_core::feed_journal::JournalIo;
+use petlibro_core::feed_progress::BowlMode;
 use petlibro_core::flash_coord::{
     FlashCoord, FlashFault, FlashParty, FlashPhase, FlashReply, FlashToken,
 };
+use petlibro_core::settings_store::{Settings, SettingsStatus, SettingsStore};
 use petlibro_core::tick_clock::TickClock;
 
 use crate::config::{FLASH_LIMITS, SYSTIMER_HZ, WATCHDOG};
@@ -37,13 +38,6 @@ use crate::flash_peer::{HEARTBEAT_REGISTER, MARKER_REGISTER, PARK_CHANNEL};
 use crate::sdk;
 use crate::stopped;
 use crate::watchdog::Watchdog;
-use core::ffi::{c_uint, c_void};
-use petlibro_core::feed_controller::{FeedReason, FeedRequest};
-use petlibro_core::feed_journal::{
-    FeedJournal, JournalConfig, JournalError, JournalIo, RECORD_BYTES,
-};
-use petlibro_core::feed_progress::{BowlMode, Direction};
-use petlibro_core::feed_storage::{OwnerOutcome, OwnerRecovery, OwnerResult};
 
 /// KM4 boot count; KM0 keeps its own in backup register 4.
 pub const BOOT_COUNT_REGISTER: u32 = 3;
@@ -52,11 +46,13 @@ pub const READY_TIMEOUT_MS: u32 = 2000;
 pub const OP_GAP_MS: u32 = 10;
 pub const FEED_PERIOD_MS: u32 = 250;
 pub const ATTEMPT_BIT: u32 = 0x100;
-/// Journal sectors within the storage region: slot 0 and slot 1.
-pub const JOURNAL_SECTORS: [u32; 2] = [0, 1];
-/// Installation binding for the research unit's bench journal.
-pub const JOURNAL_BINDING: u64 = 0x5046_5731_3501_0001;
-pub const MAX_PORTIONS: u16 = 12;
+/// Settings slots within the storage region: sectors 2 and 3 (0x342000).
+pub const SETTINGS_BASE: u32 = 2;
+/// Installation binding for the research unit's settings.
+pub const SETTINGS_BINDING: u64 = 0x5046_5731_3502_0001;
+pub const STRESS_SAVES: u32 = 300;
+pub const STRESS_BATCH: u32 = 25;
+pub const SAVE_GAP_MS: u32 = 100;
 /// The research unit's boot log reports flash ID c8 40 17 (GigaDevice, 8 MiB).
 pub const EXPECTED_ID: [u8; 3] = [0xc8, 0x40, 0x17];
 /// Begin and end waits, inside the coordinator's 50 ms park/release limits.
@@ -216,34 +212,35 @@ pub trait FlashOps {
     fn read(sector: u32, offset: u32, bytes: &mut [u8]) -> bool;
 }
 
-fn journal_sector(slot: c_uint) -> Option<u32> {
-    JOURNAL_SECTORS.get(slot as usize).copied()
+/// Slot `slot` of the pair starting at region sector `BASE`.
+fn slot_sector<const BASE: u32>(slot: c_uint) -> Option<u32> {
+    (slot < 2).then_some(BASE + slot)
 }
 
-// Journal callbacks: the context is unused; slots map to fixed sectors.
-unsafe extern "C" fn io_read<F: FlashOps>(
+// Slot I/O callbacks: the context is unused; slots map to fixed sectors.
+unsafe extern "C" fn io_read<F: FlashOps, const BASE: u32>(
     _context: *mut c_void,
     slot: c_uint,
     offset: u32,
     bytes: *mut c_void,
     size: usize,
 ) -> bool {
-    let Some(sector) = journal_sector(slot) else {
+    let Some(sector) = slot_sector::<BASE>(slot) else {
         return false;
     };
-    // SAFETY: the journal passes a live buffer of `size` bytes.
+    // SAFETY: the store passes a live buffer of `size` bytes.
     let bytes = unsafe { core::slice::from_raw_parts_mut(bytes.cast::<u8>(), size) };
     F::read(sector, offset, bytes)
 }
 
-unsafe extern "C" fn io_program<F: FlashOps>(
+unsafe extern "C" fn io_program<F: FlashOps, const BASE: u32>(
     _context: *mut c_void,
     slot: c_uint,
     offset: u32,
     bytes: *const c_void,
     size: usize,
 ) -> bool {
-    let Some(sector) = journal_sector(slot) else {
+    let Some(sector) = slot_sector::<BASE>(slot) else {
         return false;
     };
     // SAFETY: as for `io_read`.
@@ -251,59 +248,37 @@ unsafe extern "C" fn io_program<F: FlashOps>(
     F::program(sector, offset, bytes)
 }
 
-unsafe extern "C" fn io_erase<F: FlashOps>(_context: *mut c_void, slot: c_uint) -> bool {
-    journal_sector(slot).is_some_and(F::erase)
+unsafe extern "C" fn io_erase<F: FlashOps, const BASE: u32>(
+    _context: *mut c_void,
+    slot: c_uint,
+) -> bool {
+    slot_sector::<BASE>(slot).is_some_and(F::erase)
 }
 
-fn journal_io<F: FlashOps>() -> JournalIo {
+/// Two-unit slot I/O for the sector pair starting at `BASE`.
+pub fn slot_io<F: FlashOps, const BASE: u32>() -> JournalIo {
     JournalIo {
         context: core::ptr::null_mut(),
         unit_bytes: sdk::SECTOR_BYTES,
-        read: Some(io_read::<F>),
-        program: Some(io_program::<F>),
-        erase: Some(io_erase::<F>),
+        read: Some(io_read::<F, BASE>),
+        program: Some(io_program::<F, BASE>),
+        erase: Some(io_erase::<F, BASE>),
     }
 }
 
-const CONFIG: JournalConfig = JournalConfig {
-    binding: JOURNAL_BINDING,
-    mode: BowlMode::SINGLE,
-    max_portions: MAX_PORTIONS,
-};
-
-fn request(id: u64) -> FeedRequest {
-    FeedRequest {
-        id,
-        portions: 1,
-        mode: BowlMode::SINGLE,
-        direction: Direction::D0,
-        credit_next_event: false,
-        phase_known: true,
+/// The stress value for generation `g`; generation 0 is the defaults.
+pub fn stress_settings(generation: u64) -> Settings {
+    if generation == 0 {
+        return Settings::default();
+    }
+    Settings {
+        bowl_mode: BowlMode::SINGLE,
+        lights: generation % 2 == 1,
+        sound: true,
+        volume: (generation % 100) as u8,
+        utc_offset_minutes: 0,
     }
 }
-
-/// An honest bench result: cancelled before any motion.
-fn cancelled(id: u64) -> (OwnerResult, OwnerRecovery) {
-    (
-        OwnerResult {
-            id,
-            requested: 1,
-            completed: 0,
-            outcome: OwnerOutcome::CANCELLED,
-            reason: FeedReason::CANCELLED,
-            motion_possible: false,
-        },
-        OwnerRecovery {
-            high_water_id: id,
-            direction: Direction::D0,
-            credit_next_event: false,
-            phase_known: true,
-            pending_request: false,
-        },
-    )
-}
-
-c_enum!(JournalOp { CREATE = 0, RESERVE = 1, FINISH = 2, OPEN = 3, TORN = 4, WIPE = 5 });
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Record {
@@ -333,40 +308,32 @@ pub enum Record {
     Skip {
         marker: u32,
     },
-    /// Blank sectors of the region and the flash ID before mode 0 writes.
-    Preimage {
-        id: [u8; 3],
-        blank_sectors: u32,
-    },
-    /// One journal operation, its result and the time it took.
-    Op {
-        op: JournalOp,
-        id: u64,
-        ok: bool,
-        error: JournalError,
-        ticks: u32,
-    },
-    /// The journal state after open or an operation.
-    View {
-        sequence: u64,
-        high_water: u64,
-        pending: bool,
-        result_id: u64,
-        outcome: OwnerOutcome,
+    /// The settings store as opened by this boot.
+    Open {
+        status: SettingsStatus,
+        generation: u64,
+        volume: u8,
+        lights: bool,
         slot: u32,
+        consistent: bool,
     },
-    /// A new request while one is pending must be refused.
-    Refuse {
-        id: u64,
-        reserved: bool,
+    /// Every `STRESS_BATCH` completed saves.
+    Batch {
+        saves: u32,
+        generation: u64,
+        ticks_max: u32,
     },
-    /// The planned end of this boot: deliberate reset (`reset`) or idle.
+    /// A save that did not complete: stops the stress.
+    SaveFailed {
+        generation: u64,
+        status: SettingsStatus,
+    },
+    /// `STRESS_SAVES` completed: idle with the watchdog fed.
     End {
-        mode: u32,
-        reset: bool,
+        saves: u32,
+        generation: u64,
         leases: u64,
         frozen: u64,
-        erases: u32,
         phase: FlashPhase,
         fault: FlashFault,
     },
@@ -386,8 +353,7 @@ enum Stage {
     Start,
     Wait,
     Arm,
-    Run(u32),
-    Hold,
+    Run,
     Idle,
     Done,
 }
@@ -396,25 +362,19 @@ enum Stage {
 #[derive(Debug, Default)]
 pub struct Probe {
     pub watchdog: Watchdog,
-    pub journal: FeedJournal,
+    pub settings: SettingsStore,
     clock: TickClock,
     stage: Stage,
-    mode: u32,
     authority: u64,
     progress: u64,
     foreign_seen: bool,
-    erases: u32,
-    pending: [Option<Record>; 2],
+    opened: bool,
+    saves: u32,
+    ticks_max: u32,
 }
 
 fn next(delay_ms: u32, record: Option<Record>) -> Step {
     Step { delay_ms, record }
-}
-
-fn sector_blank<F: FlashOps>(sector: u32) -> bool {
-    let mut chunk = [0u8; 64];
-    (0..sdk::SECTOR_BYTES / 64)
-        .all(|i| F::read(sector, i * 64, &mut chunk) && chunk.iter().all(|&b| b == u8::MAX))
 }
 
 impl Probe {
@@ -432,49 +392,6 @@ impl Probe {
         let _ = self.watchdog.checkpoint(self.progress);
     }
 
-    fn view(&self) -> Record {
-        let v = self.journal.read().unwrap_or_default();
-        Record::View {
-            sequence: v.sequence,
-            high_water: v.recovery.high_water_id,
-            pending: v.recovery.pending_request,
-            result_id: v.result.id,
-            outcome: v.result.outcome,
-            slot: self.journal.slot,
-        }
-    }
-
-    fn op(&mut self, op: JournalOp, id: u64, run: impl FnOnce(&mut FeedJournal) -> bool) -> Record {
-        let begin = sdk::systimer_ticks();
-        let ok = run(&mut self.journal);
-        let ticks = sdk::systimer_ticks().wrapping_sub(begin);
-        self.feed();
-        Record::Op {
-            op,
-            id,
-            ok,
-            error: self.journal.error,
-            ticks,
-        }
-    }
-
-    /// The boot's planned end: `marker` replaces the attempt marker.
-    fn finish(&mut self, provider: *const Provider, marker: u32, reset: bool) -> Record {
-        sdk::backup_write(MARKER_REGISTER, marker);
-        // SAFETY: the caller's contract; no hook call is in progress.
-        let p = unsafe { &*provider };
-        self.stage = if reset { Stage::Hold } else { Stage::Idle };
-        Record::End {
-            mode: self.mode,
-            reset,
-            leases: p.leases,
-            frozen: p.frozen,
-            erases: self.erases,
-            phase: p.coord.phase,
-            fault: p.coord.fault,
-        }
-    }
-
     /// Stop on an unexpected result: clear the marker and idle, fed.
     fn stop(&mut self, record: Record) -> Step {
         sdk::backup_write(MARKER_REGISTER, 0);
@@ -488,10 +405,6 @@ impl Probe {
     /// # Safety
     /// `provider` is valid for the probe's lifetime and not otherwise borrowed.
     pub unsafe fn step<M: Mmio, F: FlashOps>(&mut self, provider: *mut Provider) -> Step {
-        if let Some(record) = self.pending[0].take() {
-            self.pending.rotate_left(1);
-            return next(OP_GAP_MS, Some(record));
-        }
         match self.stage {
             Stage::Start => {
                 let count = sdk::backup_read(BOOT_COUNT_REGISTER).wrapping_add(1);
@@ -555,16 +468,15 @@ impl Probe {
             }
             Stage::Arm => {
                 let marker = sdk::backup_read(MARKER_REGISTER);
-                if marker & ATTEMPT_BIT != 0 || marker > 2 {
+                if marker != 0 {
                     sdk::backup_write(MARKER_REGISTER, 0);
                     return self.end(Record::Skip { marker });
                 }
-                self.mode = marker;
-                sdk::backup_write(MARKER_REGISTER, marker | ATTEMPT_BIT);
+                sdk::backup_write(MARKER_REGISTER, ATTEMPT_BIT);
                 let watchdog = self.watchdog.open(&WATCHDOG);
                 let installed = watchdog && F::install(provider);
                 let record = Record::Start {
-                    mode: self.mode,
+                    mode: 0,
                     marker,
                     watchdog,
                     installed,
@@ -576,14 +488,10 @@ impl Probe {
                     sdk::backup_write(MARKER_REGISTER, 0);
                     return self.end(record);
                 }
-                self.stage = Stage::Run(0);
+                self.stage = Stage::Run;
                 next(OP_GAP_MS, Some(record))
             }
-            Stage::Run(step) => self.run::<F>(provider, step),
-            Stage::Hold => {
-                // Deliberate reset: no checkpoint, so the watchdog fires.
-                next(FEED_PERIOD_MS, None)
-            }
+            Stage::Run => self.run::<F>(provider),
             Stage::Idle => {
                 // Feed only while every iteration re-verifies stopped outputs,
                 // and, once the hooks are armed, an idle unfaulted coordinator.
@@ -598,123 +506,74 @@ impl Probe {
         }
     }
 
-    fn run<F: FlashOps>(&mut self, provider: *mut Provider, step: u32) -> Step {
-        self.stage = Stage::Run(step + 1);
-        let io = journal_io::<F>();
-        let gap = |record| next(OP_GAP_MS, Some(record));
-        match (self.mode, step) {
-            // Mode 0: blank region, create, two finished requests, one pending.
-            (0, 0) => {
-                let id = F::read_id();
-                self.feed();
-                let blank_sectors = (0..sdk::STORAGE_SECTORS)
-                    .filter(|&s| sector_blank::<F>(s))
-                    .count() as u32;
-                let record = Record::Preimage { id, blank_sectors };
-                if id != EXPECTED_ID || blank_sectors != sdk::STORAGE_SECTORS {
-                    return self.stop(record);
-                }
-                gap(record)
+    fn run<F: FlashOps>(&mut self, provider: *mut Provider) -> Step {
+        if !self.opened {
+            self.opened = true;
+            let id = F::read_id();
+            self.feed();
+            // SAFETY: `slot_io` callbacks are sound for any context.
+            let status = unsafe {
+                self.settings
+                    .open(slot_io::<F, SETTINGS_BASE>(), SETTINGS_BINDING)
+            };
+            self.feed();
+            let s = self.settings.settings;
+            let generation = self.settings.generation;
+            let record = Record::Open {
+                status,
+                generation,
+                volume: s.volume,
+                lights: s.lights,
+                slot: self.settings.slot,
+                consistent: s == stress_settings(generation),
+            };
+            let usable = matches!(
+                status,
+                SettingsStatus::LOADED | SettingsStatus::EMPTY | SettingsStatus::RECOVERED
+            );
+            if id != EXPECTED_ID || !usable || s != stress_settings(generation) {
+                return self.stop(record);
             }
-            (0, 1) => {
-                // SAFETY: `journal_io` callbacks are sound for any context.
-                let record = self.op(JournalOp::CREATE, 0, |j| unsafe {
-                    j.create(io, CONFIG, Direction::D0, false, true) == JournalError::OK
-                });
-                self.checked(record)
-            }
-            (0, 2) | (0, 4) | (0, 6) => {
-                let id = u64::from(step / 2);
-                self.erases += 1;
-                let record = self.op(JournalOp::RESERVE, id, |j| j.reserve(&request(id)));
-                self.checked(record)
-            }
-            (0, 3) | (0, 5) => {
-                let id = u64::from(step / 2);
-                let (result, phase) = cancelled(id);
-                self.erases += 1;
-                let record = self.op(JournalOp::FINISH, id, |j| j.finish(&result, &phase));
-                self.checked(record)
-            }
-            (0, 7) => {
-                self.pending[0] = Some(self.finish(provider, 1, true));
-                gap(self.view())
-            }
-            // Modes 1 and 2: reopen, require the pending request, refuse new ones.
-            (1 | 2, 0) => {
-                // SAFETY: as for create.
-                let record = self.op(JournalOp::OPEN, 0, |j| unsafe {
-                    j.open(io, CONFIG) == JournalError::OK
-                });
-                self.pending[0] = Some(self.view());
-                self.checked(record)
-            }
-            (1 | 2, 1) => {
-                let v = self.journal.read().unwrap_or_default();
-                if !v.recovery.pending_request || v.recovery.high_water_id != 3 {
-                    return self.stop(self.view());
-                }
-                let id = v.recovery.high_water_id + 1;
-                let reserved = self.journal.reserve(&request(id));
-                self.feed();
-                let record = Record::Refuse { id, reserved };
-                if reserved {
-                    return self.stop(record);
-                }
-                gap(record)
-            }
-            (1, 2) => {
-                // A torn record in the inactive slot: the first half of a copy of
-                // the current record, without its commit marker.
-                let slot = 1 - self.journal.slot;
-                let sector = JOURNAL_SECTORS[slot as usize];
-                let mut torn = [0u8; RECORD_BYTES / 2];
-                let ok = F::read(JOURNAL_SECTORS[self.journal.slot as usize], 0, &mut torn)
-                    && F::erase(sector)
-                    && F::program(sector, 0, &torn);
-                self.erases += 1;
-                self.feed();
-                let record = Record::Op {
-                    op: JournalOp::TORN,
-                    id: u64::from(slot),
-                    ok,
-                    error: self.journal.error,
-                    ticks: 0,
-                };
-                if !ok {
-                    return self.stop(record);
-                }
-                self.pending[0] = Some(self.finish(provider, 2, true));
-                gap(record)
-            }
-            (2, 2) => {
-                let begin = sdk::systimer_ticks();
-                let ok = JOURNAL_SECTORS.iter().all(|&s| F::erase(s))
-                    && JOURNAL_SECTORS.iter().all(|&s| sector_blank::<F>(s));
-                self.erases += 2;
-                self.feed();
-                let record = Record::Op {
-                    op: JournalOp::WIPE,
-                    id: 0,
-                    ok,
-                    error: JournalError::OK,
-                    ticks: sdk::systimer_ticks().wrapping_sub(begin),
-                };
-                if !ok {
-                    return self.stop(record);
-                }
-                self.pending[0] = Some(self.finish(provider, 0, false));
-                gap(record)
-            }
-            _ => self.stop(Record::ClockError),
+            return next(SAVE_GAP_MS, Some(record));
         }
-    }
-
-    /// Continue after a successful journal operation; stop otherwise.
-    fn checked(&mut self, record: Record) -> Step {
-        match record {
-            Record::Op { ok: true, .. } => next(OP_GAP_MS, Some(record)),
-            _ => self.stop(record),
+        let generation = self.settings.generation + 1;
+        let begin = sdk::systimer_ticks();
+        let ok = self.settings.save(&stress_settings(generation));
+        let ticks = sdk::systimer_ticks().wrapping_sub(begin);
+        self.feed();
+        if !ok {
+            return self.stop(Record::SaveFailed {
+                generation: self.settings.generation,
+                status: self.settings.status,
+            });
         }
+        self.saves += 1;
+        self.ticks_max = self.ticks_max.max(ticks);
+        if self.saves >= STRESS_SAVES {
+            sdk::backup_write(MARKER_REGISTER, 0);
+            // SAFETY: the caller's contract; no hook call is in progress.
+            let p = unsafe { &*provider };
+            self.stage = Stage::Idle;
+            return next(
+                FEED_PERIOD_MS,
+                Some(Record::End {
+                    saves: self.saves,
+                    generation: self.settings.generation,
+                    leases: p.leases,
+                    frozen: p.frozen,
+                    phase: p.coord.phase,
+                    fault: p.coord.fault,
+                }),
+            );
+        }
+        let record = self
+            .saves
+            .is_multiple_of(STRESS_BATCH)
+            .then_some(Record::Batch {
+                saves: self.saves,
+                generation: self.settings.generation,
+                ticks_max: self.ticks_max,
+            });
+        next(SAVE_GAP_MS, record)
     }
 }

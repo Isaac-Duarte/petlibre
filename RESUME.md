@@ -31,7 +31,22 @@ erase/program and mapped reads. One power-on gave three boots:
 
 Every lease froze KM0. Journal writes took 19–25 ms.
 
-**Remaining for FW15:**
+**Settings store (physical, passed).** The store is two slots at `0x342000`
+and `0x343000`, with a schema version, CRC and commit marker. It falls back to
+the older copy when the newer one is torn. It refuses to write over invalid or
+newer-schema data until an explicit reset.
+
+In one capture of 8 cold boots, the operator cut power at random during
+continuous saves. All six reopens were LOADED and consistent, and each landed
+6–16 generations past the last reported save (bound 25). Saves took at most
+28 ms. No cut landed inside a save; mid-write cuts are host-tested at every
+byte.
+
+Both stores now enforce wear limits: 100 000 records, about half the part's
+rated erase life. The journal still lets a pending request finish.
+
+**Remaining for FW15:** optionally, a rerun with back-to-back saves so that
+physical cuts land mid-write.
 
 - the settings store;
 - a physical power cut during writes (the reset and torn record above were

@@ -40,6 +40,7 @@ EXCHANGE_TICKS = 1310  # 40 ms park/release exchange limit at 32 768 Hz
 WRITE_MARK = b'PLWRS1 start marker='  # FW06 stage E owner-approved scratch-sector write follows READY
 DEC = rb'([0-9]{1,10})'
 JOURNAL_MARK = b'PLJNL1 start mode='  # FW15 flash journal on NOR follows READY
+SETTINGS_MARK = b'PLSET1 start marker='  # FW15 settings-store power-cut stress follows READY
 WRITE = {'start': re.compile(rb'PLWRS1 start marker=([0-9a-f]{8}) watchdog=(pass|fail) installed=([01])\r\n'),
          'preimage': re.compile(rb'PLWRS1 preimage id=([0-9a-f]{6}) blank=' + DEC + rb'\r\n'),
          'cycle': re.compile(rb'PLWRS1 cycle n=' + DEC + rb' erase_ticks=' + DEC + rb' blank=' + DEC + rb' program_max=' + DEC
@@ -174,6 +175,8 @@ def classify_flash(rx, arrival, version=1, end=None):
     Version 4 (fw06-write-v1) does the same for the scratch-sector write (`classify_flash_write`).
     Version 5 (fw15-journal-v1) checks HELLO/READY as version 2, then requires the journal's
     start record after READY; the multi-boot journal records are left to its own auditor.
+    Version 6 (fw15-settings-v1) does the same with the settings store's start record and
+    also refuses journal records; the power-cut settings records are left to its own auditor.
     `arrival(offset)` returns the host receive time of the rx chunk holding `offset`."""
     kinds = ('hello', 'ready', 'peer', 'done') if version == 1 else ('hello', 'ready')
     found = {kind: list(pattern.finditer(rx)) for kind, pattern in FLASH.items()}
@@ -217,6 +220,10 @@ def classify_flash(rx, arrival, version=1, end=None):
         if any(mark in rx for mark in (b'PLPRK1', b'PLRDS1', b'PLWRS1')):
             return {'outcome': 'flash_handshake_malformed', **report}
         return classify_flash_park(rx, arrival, single['hello'], single['ready'], found['foreign'], led_done, report, JOURNAL_MARK)
+    if version == 6:
+        if any(mark in rx for mark in (b'PLPRK1', b'PLRDS1', b'PLWRS1', b'PLJNL1')):
+            return {'outcome': 'flash_handshake_malformed', **report}
+        return classify_flash_park(rx, arrival, single['hello'], single['ready'], found['foreign'], led_done, report, SETTINGS_MARK)
     if version >= 2:
         return classify_flash_park(rx, arrival, single['hello'], single['ready'], found['foreign'], led_done, report)
     hello, ready, peer, done = (single[kind] for kind in kinds)
@@ -251,7 +258,7 @@ def ready_fields_ok(hello, ready):
 def classify_flash_park(rx, arrival, hello, ready, foreign, led_done, report, mark=PARK_MARK):
     """fw06-park-v1: HELLO/READY fields and timing, then the first park start record after READY.
 
-    fw15-journal-v1 applies the same checks with the journal start record as `mark`."""
+    fw15-journal-v1 and fw15-settings-v1 apply the same checks with their start record as `mark`."""
     start = rx.find(mark)
     if start < 0:
         return {'outcome': 'flash_handshake_missing', **report}
@@ -488,20 +495,22 @@ def startup(rx, manifest, image, identity, arrival=None, end=None):
         else:
             result.update({k: v for k, v in power.items() if k != 'outcome'})
     flash_policy = manifest.get('startup_flash_handshake_policy')
-    require(flash_policy in (None, 'fw06-hello-v1', 'fw06-park-v1', 'fw06-read-v1', 'fw06-write-v1', 'fw15-journal-v1'),
-            'Unknown flash handshake policy')
+    require(flash_policy in (None, 'fw06-hello-v1', 'fw06-park-v1', 'fw06-read-v1', 'fw06-write-v1', 'fw15-journal-v1',
+                            'fw15-settings-v1'), 'Unknown flash handshake policy')
     require(bool(flash_policy) == (FLASH_MARK in image), 'Flash handshake policy/artifact mismatch')
     # Checked both ways: a park image cannot be audited as a hello-only build, nor the reverse.
     require((flash_policy == 'fw06-park-v1') == (PARK_MARK in image), 'Flash park policy/artifact mismatch')
     require((flash_policy == 'fw06-read-v1') == (READ_MARK in image), 'Flash read policy/artifact mismatch')
     require((flash_policy == 'fw06-write-v1') == (WRITE_MARK in image), 'Flash write policy/artifact mismatch')
     require((flash_policy == 'fw15-journal-v1') == (JOURNAL_MARK in image), 'Flash journal policy/artifact mismatch')
+    require((flash_policy == 'fw15-settings-v1') == (SETTINGS_MARK in image), 'Flash settings policy/artifact mismatch')
     if flash_policy:
         require(led_policy, 'Flash handshake requires the LED probe policy')
         require(arrival is not None, 'Flash handshake requires host receive times')
         require(flash_policy != 'fw06-read-v1' or end is not None, 'Flash read requires the capture end time')
         require(flash_policy != 'fw06-write-v1' or end is not None, 'Flash write requires the capture end time')
-        flash = classify_flash(rx, arrival, {'fw06-park-v1': 2, 'fw06-read-v1': 3, 'fw06-write-v1': 4, 'fw15-journal-v1': 5}.get(flash_policy, 1), end)
+        flash = classify_flash(rx, arrival, {'fw06-park-v1': 2, 'fw06-read-v1': 3, 'fw06-write-v1': 4, 'fw15-journal-v1': 5,
+                                           'fw15-settings-v1': 6}.get(flash_policy, 1), end)
         if result['outcome'] == 'pass':
             result.update(flash)
         else:

@@ -1,7 +1,8 @@
 //! KM4 application entry: logs and runs the synthetic diagnostic once.
 //! Stopped-output startup and a bounded indicator probe, then the FW15 probe:
 //! bind the KM0 peer, arm the SDK flash-lock hooks with the lease provider and
-//! run the feed journal on the owner-approved storage region through them.
+//! stress the settings store on the owner-approved storage region for a
+//! physical power-cut test.
 
 use core::cell::UnsafeCell;
 use core::ffi::c_void;
@@ -109,61 +110,51 @@ fn log_probe(record: Record) {
         Record::Timeout { ms } => report.record(format_args!("PLFLS1 error timeout ms={ms}\r\n")),
         Record::Foreign => report.record(format_args!("PLFLS1 foreign\r\n")),
         Record::Start {
-            mode,
             marker,
             watchdog,
             installed,
+            ..
         } => report.record(format_args!(
-            "PLJNL1 start mode={mode} marker={marker:08x} watchdog={} installed={}\r\n",
+            "PLSET1 start marker={marker:08x} watchdog={} installed={}\r\n",
             if watchdog { "pass" } else { "fail" },
             bit(installed),
         )),
         Record::Skip { marker } => {
-            report.record(format_args!("PLJNL1 skip marker={marker:08x}\r\n"))
+            report.record(format_args!("PLSET1 skip marker={marker:08x}\r\n"))
         }
-        Record::Preimage { id, blank_sectors } => report.record(format_args!(
-            "PLJNL1 preimage id={:02x}{:02x}{:02x} blank_sectors={blank_sectors}\r\n",
-            id[0], id[1], id[2],
-        )),
-        Record::Op {
-            op,
-            id,
-            ok,
-            error,
-            ticks,
-        } => report.record(format_args!(
-            "PLJNL1 op kind={} id={id} ok={} error={} ticks={ticks}\r\n",
-            op.0,
-            bit(ok),
-            error.0,
-        )),
-        Record::View {
-            sequence,
-            high_water,
-            pending,
-            result_id,
-            outcome,
+        Record::Open {
+            status,
+            generation,
+            volume,
+            lights,
             slot,
+            consistent,
         } => report.record(format_args!(
-            "PLJNL1 view sequence={sequence} high_water={high_water} pending={} result={result_id} outcome={} slot={slot}\r\n",
-            bit(pending),
-            outcome.0,
+            "PLSET1 open status={} generation={generation} volume={volume} lights={} slot={slot} consistent={}\r\n",
+            status.0,
+            bit(lights),
+            bit(consistent),
         )),
-        Record::Refuse { id, reserved } => report.record(format_args!(
-            "PLJNL1 refuse id={id} reserved={}\r\n",
-            bit(reserved)
+        Record::Batch {
+            saves,
+            generation,
+            ticks_max,
+        } => report.record(format_args!(
+            "PLSET1 batch saves={saves} generation={generation} ticks_max={ticks_max}\r\n"
+        )),
+        Record::SaveFailed { generation, status } => report.record(format_args!(
+            "PLSET1 error save generation={generation} status={}\r\n",
+            status.0
         )),
         Record::End {
-            mode,
-            reset,
+            saves,
+            generation,
             leases,
             frozen,
-            erases,
             phase,
             fault,
         } => report.record(format_args!(
-            "PLJNL1 end mode={mode} reset={} leases={leases} frozen={frozen} erases={erases} phase={} fault={}\r\n",
-            bit(reset),
+            "PLSET1 end saves={saves} generation={generation} leases={leases} frozen={frozen} phase={} fault={}\r\n",
             phase.0,
             fault.0,
         )),

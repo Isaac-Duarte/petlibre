@@ -5,7 +5,7 @@ use core::ffi::{CStr, c_void};
 use core::ptr;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use super::{GpioClock, GpioRouting, Irq, Isr, TaskStep};
+use super::{FlashMmuEntry, GpioClock, GpioRouting, Irq, Isr, TaskStep};
 
 #[allow(
     non_camel_case_types,
@@ -510,17 +510,11 @@ pub fn storage_read(sector: u32, offset: u32, bytes: &mut [u8]) -> bool {
     true
 }
 
-/// Flash-lock provider fault callback: runs from RAM inside `hook_fail`, so
-/// it is leaf code with no call or flash literal (audited). Raw latch writes
-/// request motor STOP (PA13/PA14 HIGH) and infrared OFF (PA15/PB3 LOW); the
-/// caller then halts in RAM for the watchdog.
-#[unsafe(no_mangle)]
-#[unsafe(link_section = ".image2.ram.text.wellfed_park")]
-#[inline(never)]
-pub unsafe extern "C" fn wellfed_amebad_flash_provider_fault(
-    _context: *mut c_void,
-    _reason: crate::flash::hooks::HookFault,
-) {
+/// Raw latch writes requesting motor STOP (PA13/PA14 HIGH) and infrared OFF
+/// (PA15/PB3 LOW). Always inlined so a RAM-resident caller stays leaf code
+/// with no call or flash literal (audited).
+#[inline(always)]
+pub fn ram_outputs_safe() {
     let port_a = k::WELLFED_GPIOA_BASE as usize as *mut raw::GPIO_TypeDef;
     let port_b = (k::WELLFED_GPIOA_BASE + 0x400) as usize as *mut raw::GPIO_TypeDef;
     unsafe {
@@ -659,17 +653,16 @@ pub fn log(message: &CStr) {
     unsafe { raw::_rtl_printf(c"%s".as_ptr(), message.as_ptr()) };
 }
 
-/// Read the live KM0 image mapping and the factory-preserved ROM reset flags.
-/// No flash/status/register writes are made by this observation.
-pub fn startup_snapshot() -> crate::startup::Snapshot {
+/// Read the live KM0 image mapping. No flash/status/register writes are made
+/// by this observation.
+pub fn flash_mmu_entry0() -> FlashMmuEntry {
     let rsip = k::WELLFED_RSIP_BASE as usize as *const raw::RSIP_REG_TypeDef;
     // SAFETY: fixed pinned SDK MMIO layout; these registers are read-only here.
     unsafe {
-        crate::startup::Snapshot {
+        FlashMmuEntry {
             control: ptr::read_volatile(ptr::addr_of!((*rsip).FLASH_MMU[0].MMU_ENTRYx_CTRL)),
             start: ptr::read_volatile(ptr::addr_of!((*rsip).FLASH_MMU[0].MMU_ENTRYx_STRADDR)),
             offset: ptr::read_volatile(ptr::addr_of!((*rsip).FLASH_MMU[0].MMU_ENTRYx_OFFSET)),
-            reset: raw::BOOT_Reason(),
         }
     }
 }

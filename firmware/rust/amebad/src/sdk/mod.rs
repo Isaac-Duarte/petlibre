@@ -47,6 +47,14 @@ pub struct GpioRouting {
     pub ext_a: u32,
 }
 
+/// One flash MMU entry's control, start and offset registers.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct FlashMmuEntry {
+    pub control: u32,
+    pub start: u32,
+    pub offset: u32,
+}
+
 /// Interrupt lines claimed by the ports.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Irq {

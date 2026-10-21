@@ -57,7 +57,7 @@ impl FlashOps for SdkHooks {
             acquire: Some(hook_acquire),
             release: Some(hook_release),
             peer: Some(hook_peer),
-            fault: Some(sdk::wellfed_amebad_flash_provider_fault),
+            fault: Some(hooks::wellfed_amebad_flash_provider_fault),
         };
         // SAFETY: the interposer copies the callbacks; the provider is static.
         unsafe { hooks::wellfed_amebad_flash_hooks_install(&callbacks) }
@@ -276,7 +276,7 @@ unsafe extern "C" fn diagnostic_task(_: *mut c_void) -> u32 {
     }
     sdk::log(c"\r\nWellfed local firmware: Rust bringup\r\n");
     let mut report = startup::Report::new();
-    if let Ok(line) = report.start(sdk::startup_snapshot()) {
+    if let Ok(line) = report.start(startup::snapshot()) {
         sdk::log(line);
     }
     let passed = wellfed_core::diagnostic::run();

@@ -171,3 +171,17 @@ pub extern "C" fn FLASH_Write_Unlock() {
 pub unsafe extern "C" fn FLASH_Write_IPC_Int(data: *mut c_void, status: u32, channel: u32) {
     write_ipc::<Hardware>(data, status, channel)
 }
+
+/// Lease provider fault callback: runs from RAM inside `hook_fail`, so it is
+/// leaf code with no call or flash literal (audited). It requests motor STOP
+/// and infrared OFF; the caller then halts in RAM for the watchdog.
+#[cfg(feature = "km4")]
+#[unsafe(no_mangle)]
+#[unsafe(link_section = ".image2.ram.text.wellfed_park")]
+#[inline(never)]
+pub unsafe extern "C" fn wellfed_amebad_flash_provider_fault(
+    _context: *mut c_void,
+    _reason: HookFault,
+) {
+    crate::sdk::ram_outputs_safe();
+}

@@ -14,6 +14,18 @@ pub struct Snapshot {
     pub reset: u32,
 }
 
+/// Read the live KM0 image mapping and the factory-preserved ROM reset flags.
+#[cfg(all(target_os = "none", feature = "km4"))]
+pub fn snapshot() -> Snapshot {
+    let entry = crate::sdk::flash_mmu_entry0();
+    Snapshot {
+        control: entry.control,
+        start: entry.start,
+        offset: entry.offset,
+        reset: crate::sdk::boot_reason(),
+    }
+}
+
 impl Snapshot {
     /// Zero-based research-board bank, or unknown for an unrecognized mapping.
     pub fn bank(self) -> Option<u8> {

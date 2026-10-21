@@ -15,6 +15,15 @@ START = re.compile(rb'PLFW1 start build=([0-9a-f]{64}) bank=(0|1|unknown) reset=
 PASS = b'PLFW1 result diagnostic=pass backend=unopened\r\n'
 FAIL = b'PLFW1 result diagnostic=fail backend=unopened\r\n'
 OUTPUTS = re.compile(rb'PLFW1 outputs pa=([0-9a-f]{8}) pb=([0-9a-f]{8}) dira=([0-9a-f]{8}) dirb=([0-9a-f]{8}) status=(pass|fail)\r\n')
+POWER = {1: re.compile(rb'PLPWR1 before_func=([0-9a-f]{8}) before_pad=([0-9a-f]{8}) after_func=([0-9a-f]{8}) after_pad=([0-9a-f]{8})()\n\r'),
+         3: re.compile(rb'PLPWR1 before_func=([0-9a-f]{8}) before_pad=([0-9a-f]{8}) after_func=([0-9a-f]{8}) after_pad=([0-9a-f]{8}) ext_a=((?:[0-9a-f]{8},){3}[0-9a-f]{8})\n\r')}
+ROUTING = {1: rb'PLIO1 stage=(startup|PA0|PA2|PA4|PB22) groups=([0-9a-f]{8}) aon=([0-9a-f]{8}) control_a=([0-9a-f]{8}) control_b=([0-9a-f]{8})\r\n',
+           2: rb'PLIO1 stage=(startup|PA0|PA2|PA4|PB22) groups=([0-9a-f]{8}) aon=([0-9a-f]{8}) control_a=([0-9a-f]{8}) control_b=([0-9a-f]{8}) share_pad=([0-9a-f]{8}) ext_a=([0-9a-f]{8})\r\n'}
+ROUTING_FIELDS = ('stage', 'groups', 'aon', 'control_a', 'control_b', 'share_pad', 'ext_a')
+READBACK = {1: rb'PLDBG1 pin=(PA0|PA2|PA4|PB22) stage=(request|verify|initialize) want=([01]) latch=([01]) input=([01])() directions=([01]) stopped=([01]) pad=([0-9a-f]{8})\r\n',
+            2: rb'PLDBG1 pin=(PA0|PA2|PA4|PB22) stage=(request|verify|initialize) want=([01]) latch=([01]) input=([01]) highs=([0-9]|[1-5][0-9]|6[0-4])/64 directions=([01]) stopped=([01]) pad=([0-9a-f]{8})\r\n'}
+AMACRO = 1 << 28
+SHARE_PAD_HELPER = 0x3ff  # PORB, MBIAS and LDO trim/power, per the stock trace
 CLOCK = re.compile(rb'PLCLK1 function_before=([0-9a-f]{8}) clock_before=([0-9a-f]{8}) function_after=([0-9a-f]{8}) clock_after=([0-9a-f]{8}) status=(pass|fail)\r\n')
 
 
@@ -35,11 +44,32 @@ def classify_clock(rx):
             'gpio_function_after': m[3].decode(), 'gpio_clock_after': m[4].decode()}
 
 
-def classify_routing(rx):
+def classify_power(rx, version=1):
+    """One intact KM0 supply record, preserving unrelated bits, before any KM4 report.
+
+    Version 2 also requires the stock CODEC_Init LDO trim (0x2A or 0x68); version 3
+    adds read-only raw Port A samples after each supply step."""
+    values = list(POWER[3 if version >= 3 else 1].finditer(rx))
+    if len(values) != 1 or rx.count(b'PLPWR1') != 1:
+        return {'outcome': 'shared_pad_missing' if b'PLPWR1' not in rx else 'shared_pad_malformed', 'shared_pad_verified': False}
+    m = values[0]
+    before_func, before_pad, func, pad = [int(v, 16) for v in m.groups()[:4]]
+    km4 = [rx.find(marker) for marker in (b'PLCLK1', b'PLIO1', b'PLFW1') if marker in rx]
+    ok = (func == before_func | AMACRO and pad & 0x301 == 0x301
+          and pad & ~SHARE_PAD_HELPER == before_pad & ~SHARE_PAD_HELPER
+          and (version < 2 or (pad >> 1) & 0x7f in (0x2A, 0x68)))
+    outcome = 'shared_pad_failed' if not ok else 'shared_pad_order' if km4 and min(km4) < m.end() else 'pass'
+    return {'outcome': outcome, 'shared_pad_verified': outcome == 'pass', 'shared_pad_ldo_trim': f'{(pad >> 1) & 0x7f:02x}',
+            **dict(zip(('shared_pad_function_before', 'shared_pad_control_before', 'shared_pad_function_after', 'shared_pad_control_after'),
+                       (v.decode() for v in m.groups()[:4]))),
+            **({'shared_pad_port_a_samples': m[5].decode().split(',')} if version >= 3 else {})}
+
+
+def classify_routing(rx, version=1):
     """Keep fixed numeric observations without inferring pin-group membership."""
     records = []
-    for m in re.finditer(rb'PLIO1 stage=(startup|PA0|PA2|PA4|PB22) groups=([0-9a-f]{8}) aon=([0-9a-f]{8}) control_a=([0-9a-f]{8}) control_b=([0-9a-f]{8})\r\n', rx):
-        records.append(dict(zip(('stage', 'groups', 'aon', 'control_a', 'control_b'), (v.decode() for v in m.groups()))))
+    for m in re.finditer(ROUTING[version], rx):
+        records.append(dict(zip(ROUTING_FIELDS, (v.decode() for v in m.groups()))))
     stages = [r['stage'] for r in records]
     expected = ['startup', 'PA0', 'PA0', 'PA2', 'PA2', 'PA4', 'PA4', 'PB22', 'PB22']
     complete = stages == expected and rx.count(b'PLIO1') == len(records)
@@ -47,12 +77,21 @@ def classify_routing(rx):
             'gpio_routing_complete': complete, 'gpio_routing_records': records}
 
 
-def classify_led(rx):
-    """Independent expected bounded GPIO sequence; no installer/firmware imports."""
-    expected = [b'PLLED1 begin\r\n']
+OUTPUT_ONLY = (b'PA0', b'PA2', b'PA4')
+
+
+def classify_led(rx, version=1):
+    """Independent expected bounded GPIO sequence; no installer/firmware imports.
+
+    Version 3 labels PA0/PA2/PA4 output-only (no input readback); they report
+    status=output, never pass.
+    """
+    output_only = OUTPUT_ONLY if version >= 3 else ()
+    expected = [b'PLLED1 begin output_only=' + b','.join(OUTPUT_ONLY) + b'\r\n' if output_only else b'PLLED1 begin\r\n']
     for pin in (b'PA0', b'PA2', b'PA4', b'PB22'):
+        status = b'output' if pin in output_only else b'pass'
         for level in (b'1', b'0', b'1', b'0'):
-            expected.append(b'PLLED1 pin=' + pin + b' level=' + level + b' status=pass\r\n')
+            expected.append(b'PLLED1 pin=' + pin + b' level=' + level + b' status=' + status + b'\r\n')
     expected.append(b'PLLED1 done low=all\r\n')
     actual = re.findall(rb'PLLED1[^\r\n]*\r\n', rx)
     if b'PLLED1 error ' in rx or re.search(rb'PLLED1 pin=[^\r\n]* status=fail\r\n', rx):
@@ -66,12 +105,15 @@ def classify_led(rx):
     else:
         outcome = 'pass'
     diagnostics = []
-    for m in re.finditer(rb'PLDBG1 pin=(PA0|PA2|PA4|PB22) stage=(request|verify|initialize) want=([01]) latch=([01]) input=([01]) directions=([01]) stopped=([01]) pad=([0-9a-f]{8})\r\n', rx):
+    for m in re.finditer(READBACK[min(version, 2)], rx):
         diagnostics.append({'pin': m[1].decode(), 'stage': m[2].decode(),
                             **{key: bool(int(m[index])) for index, key in enumerate(
-                                ('want_high', 'latch_high', 'input_high', 'directions_ok', 'stopped_ok'), 3)},
-                            'pad_control': m[8].decode()})
-    return {'outcome': outcome, 'led_probe_verified': outcome == 'pass', 'led_readbacks': diagnostics}
+                                ('want_high', 'latch_high', 'input_high'), 3)},
+                            **({'input_high_samples': int(m[6]), 'input_samples': 64} if version > 1 else {}),
+                            'directions_ok': bool(int(m[7])), 'stopped_ok': bool(int(m[8])),
+                            'pad_control': m[9].decode()})
+    return {'outcome': outcome, 'led_probe_verified': outcome == 'pass', 'led_readbacks': diagnostics,
+            **({'led_output_only_pins': [p.decode() for p in output_only]} if output_only else {})}
 
 
 def classify(rx, identity, require_stopped=False):
@@ -142,10 +184,12 @@ def verify(capture, manifest_path, image_path, minimum_seconds):
         else:
             result.update({k: v for k, v in clock_result.items() if k != 'outcome'})
     led_policy = manifest.get('startup_led_policy')
-    require(led_policy in (None, 'bounded-probe-v1'), 'Unknown startup LED policy')
-    require((led_policy == 'bounded-probe-v1') == (b'PLLED1 begin' in image), 'LED policy/artifact mismatch')
+    require(led_policy in (None, 'bounded-probe-v1', 'bounded-probe-v2', 'bounded-probe-v3'), 'Unknown startup LED policy')
+    require(bool(led_policy) == (b'PLLED1 begin' in image), 'LED policy/artifact mismatch')
+    require((led_policy in ('bounded-probe-v2', 'bounded-probe-v3')) == (b' highs=' in image), 'LED readback format/artifact mismatch')
+    require((led_policy == 'bounded-probe-v3') == (b'PLLED1 begin output_only=' in image), 'LED output-only policy/artifact mismatch')
     if led_policy:
-        led_result = classify_led(rx)
+        led_result = classify_led(rx, {'bounded-probe-v2': 2, 'bounded-probe-v3': 3}.get(led_policy, 1))
         if result['outcome'] == 'pass':
             if led_result['outcome'] == 'pass' and rx.index(b'PLLED1 begin') < rx.index(PASS) + len(PASS):
                 led_result = {'outcome': 'led_unexpected_sequence', 'led_probe_verified': False, 'led_readbacks': led_result['led_readbacks']}
@@ -153,14 +197,25 @@ def verify(capture, manifest_path, image_path, minimum_seconds):
         else:
             result.update(led_readbacks=led_result['led_readbacks'], led_probe_verified=False, led_outcome=led_result['outcome'])
     routing_policy = manifest.get('startup_gpio_routing_policy')
-    require(routing_policy in (None, 'read-only-v1'), 'Unknown GPIO routing policy')
-    require((routing_policy == 'read-only-v1') == (b'PLIO1 stage=' in image), 'GPIO routing policy/artifact mismatch')
+    require(routing_policy in (None, 'read-only-v1', 'read-only-v2'), 'Unknown GPIO routing policy')
+    require(bool(routing_policy) == (b'PLIO1 stage=' in image), 'GPIO routing policy/artifact mismatch')
+    require((routing_policy == 'read-only-v2') == (b' share_pad=' in image), 'GPIO routing format/artifact mismatch')
     if routing_policy:
-        routing = classify_routing(rx)
+        routing = classify_routing(rx, 2 if routing_policy == 'read-only-v2' else 1)
         if result['outcome'] == 'pass':
             result.update(routing)
         else:
             result.update({k: v for k, v in routing.items() if k != 'outcome'})
+    power_policy = manifest.get('startup_shared_pad_policy')
+    require(power_policy in (None, 'before-km4-v1', 'before-km4-v2', 'before-km4-v3'), 'Unknown shared-pad policy')
+    # Review 06 and earlier print PLPWR1 after KM4 boot without declaring this policy.
+    require(not power_policy or b'PLPWR1 before_func=' in image, 'Shared-pad policy/artifact mismatch')
+    if power_policy:
+        power = classify_power(rx, {'before-km4-v2': 2, 'before-km4-v3': 3}.get(power_policy, 1))
+        if result['outcome'] == 'pass':
+            result.update(power)
+        else:
+            result.update({k: v for k, v in power.items() if k != 'outcome'})
     if result['outcome'] == 'pass':
         at = result.pop('start_offset')
         received = next(e for e in events if e['direction'] == 'rx' and e['offset'] <= at < e['offset'] + e['bytes'])

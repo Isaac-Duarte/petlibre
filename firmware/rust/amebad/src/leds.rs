@@ -34,6 +34,12 @@ impl Led {
             Self::Fault => "PB22",
         }
     }
+
+    /// PA0-PA7 read LOW at KM0 startup before any supply step and while lit, so
+    /// these indicators are output-only on the tested unit. Only PB22 has input readback.
+    pub const fn input_readable(self) -> bool {
+        matches!(self, Self::Fault)
+    }
 }
 
 fn directions() -> bool {
@@ -62,7 +68,7 @@ pub fn initialize() -> bool {
         sdk::gpio_no_pull(led.pin());
         sdk::gpio_init(led.pin(), true);
     }
-    directions() && all_low() && Led::ALL.into_iter().all(|led| observe(led).matches(false))
+    directions() && all_low() && Led::ALL.into_iter().all(|led| observe(led).accepted(false))
 }
 
 /// Request an indicator level. The caller must wait and verify with `observe`.
@@ -83,16 +89,22 @@ pub fn request(led: Led, high: bool) -> bool {
 pub struct Readback {
     pub latch_high: bool,
     pub input_high: bool,
+    /// Extra input samples that read HIGH; informational, never used to verify.
+    pub input_highs: u32,
+    pub input_readable: bool,
     pub directions_ok: bool,
     pub stopped_ok: bool,
     pub pad: u32,
 }
 
-/// Whether a settled request is verified, remains a bounded input experiment,
-/// or must stop immediately. An input mismatch is never a successful step.
+/// Whether a settled request is verified, output-only, remains a bounded input
+/// experiment, or must stop immediately. An input mismatch is never a successful
+/// step, and an output-only step is never a verified electrical level.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Decision {
     Verified,
+    /// Latch, pad, direction and stopped state agree; the pad has no input readback.
+    OutputOnly,
     InputMismatch,
     Abort,
 }
@@ -106,7 +118,9 @@ impl Readback {
         {
             return Decision::Abort;
         }
-        if self.input_high == high {
+        if !self.input_readable {
+            Decision::OutputOnly
+        } else if self.input_high == high {
             Decision::Verified
         } else if high {
             // Hold only the scheduled HIGH interval, then require LOW readback.
@@ -116,8 +130,17 @@ impl Readback {
         }
     }
 
+    /// True only for an input-verified level.
     pub fn matches(self, high: bool) -> bool {
         self.decision(high) == Decision::Verified
+    }
+
+    /// True for an input-verified level or a consistent output-only request.
+    pub fn accepted(self, high: bool) -> bool {
+        matches!(
+            self.decision(high),
+            Decision::Verified | Decision::OutputOnly
+        )
     }
 }
 
@@ -127,6 +150,10 @@ pub fn observe(led: Led) -> Readback {
     Readback {
         latch_high: sdk::gpio_output_latch(pin >> 5) & (1 << (pin & 31)) != 0,
         input_high: sdk::gpio_read_bit(pin),
+        input_highs: (0..INPUT_SAMPLES)
+            .filter(|_| sdk::gpio_read_bit(pin))
+            .count() as u32,
+        input_readable: led.input_readable(),
         directions_ok: directions(),
         stopped_ok: stopped::observe().verified(),
         pad: sdk::pad_control(pin),
@@ -134,6 +161,8 @@ pub fn observe(led: Led) -> Readback {
 }
 
 pub const SETTLE_MS: u32 = 10;
+/// Back-to-back input reads per observation, to separate a dead path from a marginal one.
+pub const INPUT_SAMPLES: u32 = 64;
 
 #[derive(Clone, Copy, Debug)]
 pub struct ProbeStep {

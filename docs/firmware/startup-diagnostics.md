@@ -40,21 +40,39 @@ The controller preloads indicator latches LOW and selects stock-derived GPIO/no-
 
 After startup and diagnostic PASS, the sequence waits nominally 3 seconds, then gives each pin two HIGH pulses in PA0/PA2/PA4/PB22 order: HIGH 1 s, LOW 0.5 s, HIGH 1 s, LOW 1 s. All lines are then requested LOW and the task ends. Logging/scheduling add time. There is no indefinite blinking, feeding request, or autonomous retry.
 
+The 64 extra input samples distinguish a dead input path (0/64) from a marginal threshold (a partial count). They are informational: verification still uses the single input read, so a high count cannot verify a failed step.
+
+PA0, PA2 and PA4 are **output-only** on the tested unit (owner scope decision after the Port A traces below). Their steps report `status=output` when latch, pad control, directions and stopped state agree, and the begin line names them (`PLLED1 begin output_only=PA0,PA2,PA4`). `output` is never `pass`: it does not establish an electrical level, which rests on the operator's visual observation. PB22 keeps full input verification. Policy `bounded-probe-v3` expects exactly this sequence.
+
 A HIGH input mismatch remains a failed observation while permitting only the already bounded visible interval; a LOW mismatch, changed latch/mux/direction, or lost stopped state aborts. Terminal `finish=input_mismatch low=all` is a failure, never a verified success. Loss of stopped readback requests STOP/off again.
 
 | Record prefix | Meaning |
 | --- | --- |
-| `PLPWR1` | KM0 shared-pad supply before/after controls |
+| `PLPWR1` | KM0 shared-pad supply before/after controls; policy `before-km4-v1` requires one intact record before any KM4 report, `v2` adds the LDO trim, `v3` the raw Port A input after each supply step |
 | `PLCLK1` | GPIO clock/function enable and preservation |
 | `PLFW1` | Stopped outputs, source identity, bank/reset, diagnostic result/errors |
-| `PLIO1` | Read-only pad-group/AON/GPIO routing observations |
-| `PLDBG1` | Requested level, latch, input, directions, stopped state, pad control |
+| `PLIO1` | Read-only pad-group/AON/GPIO routing observations; `read-only-v2` adds KM4's view of the shared-pad supply control and the raw Port A input word |
+| `PLDBG1` | Requested level, latch, input, directions, stopped state, pad control; `bounded-probe-v2` adds `highs=N/64` extra input samples |
 | `PLLED1` | Bounded sequence begin, individual results, terminal LOW/failure |
 
 ## Shared-pad prerequisite and current physical findings
 
-The minimal KM0 main omitted a stock prerequisite for audio-shared pads used as GPIO. The port restores AMACRO and analog pad enables plus the SDK's calibrated `SOCPS_AudioLDO(ENABLE)` helper before entering the scheduler. It does not initialize audio playback. `trace-stock-pad-power.py` executes the stock initializer and LDO instructions against modeled registers/delays; its fixture tests distinguish LDO power from the separate pad-enable bit. This is instruction-level evidence, not an electrical supply measurement.
+The minimal KM0 main omitted a stock prerequisite for audio-shared pads used as GPIO. The port restores AMACRO and analog pad enables plus the SDK's calibrated `SOCPS_AudioLDO(ENABLE)` helper before entering the scheduler. It does not initialize audio playback.
+Stock and the SDK run this after booting KM4; source after review 06 runs it
+before `km4_boot_on()` so the pads are powered before KM4 configures them and
+`PLPWR1` completes before KM4 logs. A bench capture of that order showed an
+intact `PLPWR1` ahead of KM4 output, with `after_pad=00000301`: the LDO is
+powered, but its voltage trim (bits 7:1) is zero. `SOCPS_AudioLDO(ENABLE)`
+restores a trim saved only by its disable path, so a cold start gets zero. Stock
+KM4 `CODEC_Init` and the SDK's `CODEC_Init` write 0x2A, or 0x68 on a 1.8 V supply.
+The port now writes that trim after the enable, and policy `before-km4-v2`
+requires it. With the trim applied, Port A inputs
+still read LOW. A later build sampled raw Port A input after each KM0 supply step
+and got the same word every time, with PA0–PA7 already reading 0 before the first
+step. The shared-pad supply therefore does not explain the readback. PA13/PA14
+and PB22 read back correctly; the low Port A pads appear to have no usable input
+readback on the tested unit. `trace-stock-pad-power.py` executes the stock initializer and LDO instructions against modeled registers/delays; its fixture tests distinguish LDO power from the separate pad-enable bit. This is instruction-level evidence, not an electrical supply measurement.
 
 With that prerequisite restored, the operator observed all four indicators blink twice and finish dark: **PA0 Wi-Fi, PA2 low food, PA4 locked, PB22 warning**. The sequence establishes HIGH-on/LOW-off on the tested unit; only the warning's red color is recorded.
 
-Port A HIGH requests still return a HIGH latch but LOW input despite visible light. PB22 readbacks pass. The captured two starts were intentional operator reboots, but the strict verifier correctly returns repeated startup rather than treating that capture as one accepted boot. KM0/KM4 UART log interleaving also prevents accepting some numeric reports as intact. Do not reconstruct a clean stream or relabel those failures. **FW04 remains in Bench check** pending readback diagnosis and serialized reporting; see the [feature board](../../FIRMWARE_BOARD.md).
+Review 06's earlier capture (HIGH latch with LOW Port A input, two intentional operator boots, interleaved KM0/KM4 reports) keeps its failing verdicts; do not reconstruct a clean stream or relabel them. The output-only build later passed the auditor on a single boot: intact `PLPWR1` before KM4 output with trim 0x2A, PA0/PA2/PA4 `status=output`, PB22 `pass`, terminal LOW. **FW04 is Done within this output-only scope** (physical capture plus operator observation); see the [feature board](../../FIRMWARE_BOARD.md).

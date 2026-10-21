@@ -15,8 +15,8 @@ fn log_gpio_routing(stage: &str) {
     let value = sdk::gpio_routing();
     let mut report = startup::Report::new();
     if let Ok(line) = report.record(format_args!(
-        "PLIO1 stage={} groups={:08x} aon={:08x} control_a={:08x} control_b={:08x}\r\n",
-        stage, value.groups, value.aon, value.control_a, value.control_b,
+        "PLIO1 stage={} groups={:08x} aon={:08x} control_a={:08x} control_b={:08x} share_pad={:08x} ext_a={:08x}\r\n",
+        stage, value.groups, value.aon, value.control_a, value.control_b, value.share_pad, value.ext_a,
     )) {
         sdk::log(line);
     }
@@ -25,12 +25,14 @@ fn log_gpio_routing(stage: &str) {
 fn log_led_readback(led: leds::Led, high: bool, stage: &str, value: leds::Readback) {
     let mut report = startup::Report::new();
     if let Ok(line) = report.record(format_args!(
-        "PLDBG1 pin={} stage={} want={} latch={} input={} directions={} stopped={} pad={:08x}\r\n",
+        "PLDBG1 pin={} stage={} want={} latch={} input={} highs={}/{} directions={} stopped={} pad={:08x}\r\n",
         led.name(),
         stage,
         u8::from(high),
         u8::from(value.latch_high),
         u8::from(value.input_high),
+        value.input_highs,
+        leds::INPUT_SAMPLES,
         u8::from(value.directions_ok),
         u8::from(value.stopped_ok),
         value.pad,
@@ -77,6 +79,7 @@ unsafe extern "C" fn diagnostic_task(_: *mut c_void) -> u32 {
         let observed = leds::observe(step.led);
         let status = match observed.decision(step.high) {
             leds::Decision::Verified => "pass",
+            leds::Decision::OutputOnly => "output",
             leds::Decision::InputMismatch => {
                 INPUT_MISMATCH.store(true, Ordering::Relaxed);
                 log_led_readback(step.led, step.high, "verify", observed);
@@ -122,7 +125,7 @@ unsafe extern "C" fn diagnostic_task(_: *mut c_void) -> u32 {
         sdk::log(c"PLLED1 error initialize=unverified\r\n");
         return 0;
     }
-    sdk::log(c"PLLED1 begin\r\n");
+    sdk::log(c"PLLED1 begin output_only=PA0,PA2,PA4\r\n");
     3000
 }
 

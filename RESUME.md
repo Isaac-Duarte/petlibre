@@ -7,50 +7,53 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
-**FW04 is in Bench check. All four physical indicators work.** The operator
-observed Wi-Fi → low food → locked → warning, each blinking twice, then all
-remaining dark. Mapping: PA0 Wi-Fi, PA2 low food, PA4 locked, PB22 warning;
-HIGH on, LOW off in this bounded experiment. Only the warning's red color is
-explicitly recorded.
+**FW04 is Done (output-only scope). FW05 is next.** The operator observed
+Wi-Fi → low food → locked → warning, each blinking twice, then all dark.
+Mapping: PA0 Wi-Fi, PA2 low food, PA4 locked, PB22 warning; HIGH on, LOW off.
+Only the warning's red color is explicitly recorded.
 
-The three Port A indicators became visible after restoring the stock/SDK
-shared-pad supply initializer in minimal KM0 startup. The current diagnostic
-requests motor STOP and infrared off, runs a synthetic feeding-core test, then
-the bounded LED sequence. The full feeding backend and networking remain unopened.
+A single artifact-bound boot of the output-only build passed the startup
+auditor (physical capture, receive-only, 152 s observed after startup):
+correct build/bank, stopped motor/infrared outputs, clock, complete routing,
+an intact `PLPWR1` ahead of all KM4 reports with LDO trim 0x2A
+(`share_pad=00000355`), and LED policy `bounded-probe-v3`.
 
-Two issues remain:
+What was resolved along the way:
 
-1. PA0/PA2/PA4 HIGH requests have a HIGH output latch but a LOW input readback,
-   despite visible light. PB22 readbacks pass. Both captured sequences terminate
-   LOW with `finish=input_mismatch low=all`; the diagnostic has not fully passed.
-2. KM0's `PLPWR1` supply report interleaves with KM4's `PLCLK1` clock report.
-   Those numeric records cannot be accepted as intact evidence.
+1. **Interleaved reports.** KM0 now runs the shared-pad initializer before
+   `km4_boot_on()` (stock and the SDK run it after), so `PLPWR1` completes
+   before KM4 logs. Verified on hardware.
+2. **LDO trim zero.** `SOCPS_AudioLDO(ENABLE)` restores a trim that only its
+   disable path saves, so a cold start got zero. KM0 now writes the stock
+   `CODEC_Init` value (0x2A, or 0x68 on a 1.8 V supply). Verified on hardware;
+   it did not change the readback.
+3. **Port A readback.** Raw Port A input sampled after each KM0 supply step
+   read `e1c40e00` every time: PA0–PA7 read 0 before any supply change, even
+   PA7 (`UART_LOG_TXD`, idles HIGH). PA13/PA14 and PB22 read back correctly.
+   The low Port A pads have no usable input readback on this unit (physical
+   observation plus register traces; cause not established). By owner decision
+   PA0/PA2/PA4 are **output-only**: `status=output`, never `pass`, resting on
+   latch/pad/stopped-state checks and visual observation. PB22 keeps input
+   verification.
 
-The capture contains two expected build/bank startups. The operator explicitly
-rebooted to write down the sequence; do not infer a spontaneous boot loop. The
-strict verifier returns `repeated_startup`, retaining the LED failures. Keep the
-raw evidence unchanged. See [startup diagnostics](docs/firmware/startup-diagnostics.md).
+Earlier captures of review 06 and intermediate builds remain as recorded
+(including review 06's intentional two-boot capture); keep raw evidence
+unchanged. See [startup diagnostics](docs/firmware/startup-diagnostics.md).
 
 ## What is actually installed
 
-The research feeder last ran **review 06**, a 114,688-byte application payload
-in bank 1, starting at flash offset `0x186000`.
+The research feeder runs the **output-only build** in bank 1, starting at
+flash offset `0x186000`, installed over the Port A trace build by the
+changed-sector updater (18 sectors verified).
 
 | Identity | Recorded value |
 | --- | --- |
-| OTA SHA-256 | `f19f9ed2df19b59dd83a8bb8b65b878561facdd8b3bf1ab06966a5dc0dd05093` |
-| Embedded startup build ID | `9d2cc4de2fbe1ff57bb3789c659121fb3fd7b50bf485918d4cc06f72c5b56b17` |
+| OTA SHA-256 | `947dc797876509d42dfc0c8c1d7e6630525cdd56cc0988684596ef9ea8520f29` |
+| Embedded startup build ID | `5f00cb16bb88d4baaff6145ae4a963b0af087296fe518548751700979151168d` |
 
-The installation independently verified 12 changed sectors, three application/
-guard snapshots, 25 status pairs, and the exact transmitted commands in 109.1 s.
-Visible LED acceptance and successful installation are distinct from full
-startup-verifier acceptance.
-
-**Current Wellfed source and new builds are not the installed artifact.**
-Migration changed source/input identities. Preserve the frozen installed review
-as the source of any next update; build and freeze a separate new target.
-Do not rewrite old manifests to match current source. The updater still checks
-the actual current application before accepting a plan.
+Its frozen review is the source of the next update. New builds change source
+identity; freeze each candidate separately and never rewrite old manifests.
+The updater still checks the actual current application before accepting a plan.
 
 ## Last confirmed physical state
 
@@ -88,18 +91,12 @@ See [fixtures](docs/development/fixtures.md) and [preserved research](docs/devel
 
 ## Next work and retained decisions
 
-Start offline: investigate the shared-pad input-readback disagreement and
-serialize startup reporting. Relevant code is
-`firmware/rust/amebad/src/leds.rs`, `firmware/rust/amebad/src/sdk/target.rs`,
-`firmware/ports/amebad/firstboot_km0.c`, and `tools/audit-firmware-startup.py`.
+FW05 (clock, independent stop timer, watchdog) is next; initial stall tests run
+with motion disabled. Build and freeze each candidate, install through the
+changed-sector updater after the operator enters loader mode, and capture boots
+receive-only. Start the recorder and confirm it holds the port before the
+operator powers on; a capture that begins mid-boot cannot be audited.
 Do not silently turn a failed input observation into a verified electrical level.
-No additional reboot is needed to establish the already recorded visible result.
-
-After focused changes and applicable checks, build/review a separate candidate.
-A later operator-supervised bench check should capture an unambiguous single boot,
-intact reports, and the bounded sequence. Keep FW04 in Bench check until its
-remaining acceptance work is resolved. FW05 timer/watchdog work follows; the board
-tracks the longer feature plan.
 
 Retain the owner's development preferences:
 
@@ -108,8 +105,8 @@ Retain the owner's development preferences:
   Keep fresh helper/source/guard/status checks, exact plans, and readback verification.
 - Preserve the demonstrated conservative recovery path. Stock return through the
   newer development updater remains untested; no automatic retry/replay is allowed.
-- Finish this LED work before moving on. OTA can wait because UART iteration is
-  faster now; it remains planned for later autonomous development iterations.
+- OTA can wait because UART iteration is faster now; it remains planned for
+  later autonomous development iterations.
 - FW03 electrical voltage, infrared-off, measured-reset and transient checks were
   deferred to FW27; visible LEDs and software STOP readback do not complete them.
 

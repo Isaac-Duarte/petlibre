@@ -8,7 +8,10 @@ shorter target remains in place, outside its mapping.
 `interrupted=True` finishes a stopped transaction of this kind from a fresh
 acquisition, never from the stopped journal: the marker sector must already be
 staged, and every sector must exactly equal its source, its staged target or
-erased flash. Anything else (a partial program or erase) is refused.
+erased flash. One sector may instead hold the staged target's first 1-3
+program frames followed by erased flash, the only state a stopped program of
+an erased sector leaves. Anything else (a partial erase, another partial
+program, other content) is refused.
 """
 import importlib.util
 from pathlib import Path
@@ -29,6 +32,7 @@ L = module("development_layout", "audit-ota-layout.py")
 require, digest, canonical = C.require, C.digest, C.canonical
 START, END, SECTOR = T.START, T.END, T.SECTOR
 GUARDS = ((0, 0x6000), (0x6000, SECTOR))
+FRAME = 1024  # Program frames per sector, written in order after its erase.
 KIND = "plaf103_bank1_development_update"
 
 
@@ -69,10 +73,15 @@ def images(source, target, current, interrupted=False):
     proposed = new + union[len(new):]
     staged = b"\xff" * 8 + proposed[8:]
     require(current[:SECTOR] == staged[:SECTOR], "Interrupted update requires the staged marker sector")
+    partial = []
     for at in range(0, len(current), SECTOR):
-        sector = current[at:at + SECTOR]
-        require(sector in (union[at:at + SECTOR], staged[at:at + SECTOR], b"\xff" * SECTOR),
-                f"Sector {START + at:#x} is neither source, staged target nor erased")
+        sector, want = current[at:at + SECTOR], staged[at:at + SECTOR]
+        if sector in (union[at:at + SECTOR], want, b"\xff" * SECTOR):
+            continue
+        frames = [want[:n] + b"\xff" * (SECTOR - n) for n in range(FRAME, SECTOR, FRAME)]
+        require(sector in frames, f"Sector {START + at:#x} is neither source, staged target nor erased")
+        partial.append(at)
+    require(len(partial) <= 1, "More than one partially programmed sector")
     return proposed, staged
 
 

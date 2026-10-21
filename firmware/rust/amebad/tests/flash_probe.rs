@@ -1,8 +1,9 @@
-//! KM4 handshake and hooked flash-read probe against the fake SDK and a shared
-//! IPC model. KM0 is modelled inline: it answers HELLO through the real
-//! `Peer::step` and acknowledges/releases park requests on SYSTIMER reads, as
-//! the parked core's RAM loop would. The fake hooks enforce the interposer's
-//! acquire/release context checks around each read.
+//! KM4 handshake and hooked scratch-sector probe against the fake SDK (with a
+//! NOR model of the scratch sector) and a shared IPC model. KM0 is modelled
+//! inline: it answers HELLO through the real `Peer::step` and acknowledges or
+//! releases park requests on SYSTIMER reads, as the parked core's RAM loop
+//! would. The fake hooks enforce the interposer's acquire/release context
+//! checks around every mediated operation.
 
 use std::cell::{Cell, RefCell};
 
@@ -14,7 +15,7 @@ use petlibro_amebad::flash_peer::{
     BACKUP_BASE, MARKER_REGISTER, PARK_CHANNEL, PARK_TICK_LIMIT, Peer,
 };
 use petlibro_amebad::flash_probe::{
-    ATTEMPT_MARKER, EXPECTED_ID, FlashOps, LeaseStage, Probe, Provider, READS, Record,
+    ATTEMPT_MARKER, CYCLES, EXPECTED_ID, FlashOps, LeaseStage, Probe, Provider, Record,
 };
 use petlibro_amebad::sdk::{self, fake};
 use petlibro_amebad::stopped;
@@ -35,6 +36,9 @@ thread_local! {
     static KM0: RefCell<Km0> = RefCell::new(Km0::default());
     static PROVIDER: Cell<*mut Provider> = const { Cell::new(std::ptr::null_mut()) };
     static READ_ID: Cell<[u8; 3]> = const { Cell::new(EXPECTED_ID) };
+    /// Bits that read 1 after programming (a stuck cell), applied per program.
+    static STUCK: Cell<u32> = const { Cell::new(0) };
+    static ERASES: Cell<u32> = const { Cell::new(0) };
 }
 
 fn km0<R>(f: impl FnOnce(&mut Km0) -> R) -> R {
@@ -130,6 +134,30 @@ struct HookFault;
 /// The interposer's contract around one SDK lock/unlock pair.
 struct Hooks;
 
+fn leased<R>(op: impl FnOnce() -> R) -> R {
+    let provider = PROVIDER.with(Cell::get);
+    assert!(!provider.is_null());
+    let mut ticket = HookTicket::default();
+    // SAFETY: the provider is live; the probe does not hold it across this.
+    let p = unsafe { &mut *provider };
+    if !p.acquire::<Core<false>>(&mut ticket) {
+        std::panic::panic_any(HookFault);
+    }
+    assert_eq!(sdk::primask(), 1, "acquire returns with IRQs masked");
+    assert_eq!(sdk::systick_ctrl() & flash_park::SYSTICK_CONTROL_BITS, 0);
+    assert!(ticket.id != 0 && ticket.saved_systick & !7 == 0);
+    // The operation runs with XIP unavailable: KM0 must be parked.
+    assert!(km0(|m| m.parked_lease.is_some()));
+    let result = op();
+    if !p.release::<Core<false>>(&ticket) {
+        std::panic::panic_any(HookFault);
+    }
+    assert_eq!(sdk::primask(), 1, "release keeps IRQs masked");
+    sdk::set_systick_ctrl(ticket.saved_systick);
+    sdk::set_primask(0);
+    result
+}
+
 impl FlashOps for Hooks {
     fn install(provider: *mut Provider) -> bool {
         // SAFETY: the test's provider outlives the boot.
@@ -141,31 +169,27 @@ impl FlashOps for Hooks {
     }
 
     fn read_id() -> [u8; 3] {
-        let provider = PROVIDER.with(Cell::get);
-        assert!(!provider.is_null());
-        let mut ticket = HookTicket::default();
-        // SAFETY: the provider is live; the probe does not hold it across this.
-        let p = unsafe { &mut *provider };
-        if !p.acquire::<Core<false>>(&mut ticket) {
-            std::panic::panic_any(HookFault);
-        }
-        assert_eq!(sdk::primask(), 1, "acquire returns with IRQs masked");
-        assert_eq!(sdk::systick_ctrl() & flash_park::SYSTICK_CONTROL_BITS, 0);
-        assert!(ticket.id != 0 && ticket.saved_systick & !7 == 0);
-        // The ROM command runs with XIP unavailable: KM0 must be parked.
-        assert!(km0(|m| m.parked_lease.is_some()));
-        let id = READ_ID.with(Cell::get);
-        if !p.release::<Core<false>>(&ticket) {
-            std::panic::panic_any(HookFault);
-        }
-        assert_eq!(sdk::primask(), 1, "release keeps IRQs masked");
-        sdk::set_systick_ctrl(ticket.saved_systick);
-        sdk::set_primask(0);
-        id
+        leased(|| READ_ID.with(Cell::get))
     }
 
     fn armed() -> bool {
         !PROVIDER.with(Cell::get).is_null()
+    }
+
+    fn erase_scratch() {
+        ERASES.with(|e| e.set(e.get() + 1));
+        leased(sdk::scratch_erase);
+    }
+
+    fn program_scratch(page: u32, data: &[u8; 256]) -> bool {
+        let ok = leased(|| sdk::scratch_program(page, data));
+        let stuck = STUCK.with(Cell::get);
+        fake::with(|h| h.scratch[page as usize * 64] |= stuck);
+        ok
+    }
+
+    fn read_scratch(word: u32) -> u32 {
+        sdk::scratch_read(word)
     }
 }
 
@@ -175,11 +199,23 @@ struct Boot {
     backup: [u32; 8],
     rings: u32,
     provider: Provider,
+    scratch: [u32; 1024],
+    erases: u32,
 }
 
 /// One boot in a fresh thread (registration pointers are thread-local, and
 /// a platform reset clears RAM); backup registers carry across.
 fn platform_boot(backup: [u32; 8], deaf: bool, id: [u8; 3]) -> Boot {
+    platform_boot_with(backup, deaf, id, |_| {}, 0)
+}
+
+fn platform_boot_with(
+    backup: [u32; 8],
+    deaf: bool,
+    id: [u8; 3],
+    prepare: fn(&mut fake::Hardware),
+    stuck: u32,
+) -> Boot {
     std::thread::spawn(move || {
         fake::reset_hardware();
         fake::with(|h| {
@@ -195,6 +231,8 @@ fn platform_boot(backup: [u32; 8], deaf: bool, id: [u8; 3]) -> Boot {
             }
         });
         READ_ID.with(|c| c.set(id));
+        STUCK.with(|c| c.set(stuck));
+        fake::with(prepare);
         let mut probe = Box::<Probe>::default();
         let mut provider = Box::<Provider>::default();
         let mut peer = Peer::default();
@@ -243,14 +281,24 @@ fn platform_boot(backup: [u32; 8], deaf: bool, id: [u8; 3]) -> Boot {
             backup: fake::with(|h| h.backup),
             rings: km0(|m| m.rings),
             provider: std::mem::take(&mut *provider),
+            scratch: fake::with(|h| h.scratch),
+            erases: ERASES.with(Cell::get),
         }
     })
     .join()
     .unwrap()
 }
 
+fn cycles(records: &[Record]) -> Vec<Record> {
+    records
+        .iter()
+        .copied()
+        .filter(|r| matches!(r, Record::Cycle { .. }))
+        .collect()
+}
+
 #[test]
-fn hooked_reads_lease_park_and_release_every_time() {
+fn scratch_cycles_verify_and_restore_blank_through_leases() {
     let boot = platform_boot([0; 8], false, EXPECTED_ID);
     let r = &boot.records;
     assert!(matches!(r[0], Record::Hello { count: 1, .. }));
@@ -259,7 +307,6 @@ fn hooked_reads_lease_park_and_release_every_time() {
         Record::Ready {
             reply: FlashReply::ACCEPTED,
             phase: FlashPhase::IDLE,
-            fault: FlashFault::OK,
             inactive: true,
             ..
         }
@@ -272,61 +319,88 @@ fn hooked_reads_lease_park_and_release_every_time() {
             installed: true
         }
     );
-    let batches: Vec<_> = r
+    assert_eq!(
+        r[3],
+        Record::Preimage {
+            id: EXPECTED_ID,
+            blank: 1024
+        }
+    );
+    let c = cycles(r);
+    assert_eq!(c.len() as u32, CYCLES, "{r:?}");
+    for (i, record) in c.iter().enumerate() {
+        let Record::Cycle {
+            cycle,
+            blank,
+            errors,
+            ..
+        } = *record
+        else {
+            unreachable!()
+        };
+        assert_eq!((cycle, blank, errors), (i as u32 + 1, 1024, 0));
+    }
+    let restore = r
         .iter()
-        .filter_map(|x| match x {
-            Record::Batch {
-                reads,
-                id,
-                mismatches,
-                frozen,
-                alive,
-                park_max,
-                release_max,
-            } => Some((
-                *reads,
-                *id,
-                *mismatches,
-                *frozen,
-                *alive,
-                *park_max,
-                *release_max,
-            )),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(batches.len(), 4, "{r:?}");
-    let (reads, id, mismatches, frozen, alive, park, release) = batches[3];
+        .position(|x| matches!(x, Record::Restore { .. }))
+        .unwrap();
+    assert!(matches!(r[restore], Record::Restore { blank: 1024, .. }));
+    // One ID read, then per cycle one erase and 16 programs, then the restore.
+    let leases = 1 + u64::from(CYCLES) * 17 + 1;
+    let Record::Done {
+        cycles,
+        leases: done_leases,
+        phase,
+        fault,
+        frozen,
+        ..
+    } = r[restore + 1]
+    else {
+        panic!("{r:?}");
+    };
     assert_eq!(
-        (reads, id, mismatches, frozen),
-        (READS, EXPECTED_ID, 0, u64::from(READS))
+        (cycles, done_leases, phase, fault, frozen),
+        (CYCLES, leases, FlashPhase::IDLE, FlashFault::OK, leases)
     );
-    assert!(alive >= READS - 1 && park > 0 && release > 0);
-    assert_eq!(
-        r.last(),
-        Some(&Record::Done {
-            reads: READS,
-            leases: u64::from(READS),
-            phase: FlashPhase::IDLE,
-            fault: FlashFault::OK
-        })
-    );
+    assert!(boot.scratch.iter().all(|&w| w == u32::MAX));
     assert!(!boot.faulted && boot.backup[MARKER_REGISTER as usize] == 0);
-    assert_eq!(boot.rings, READS);
+    assert_eq!(u64::from(boot.rings), leases);
+    assert_eq!(boot.erases, CYCLES + 1);
 }
 
 #[test]
-fn wrong_id_is_counted_not_hidden() {
-    let boot = platform_boot([0; 8], false, [0xef, 0x40, 0x17]);
-    let Some(Record::Batch { mismatches, .. }) = boot
-        .records
-        .iter()
-        .rev()
-        .find(|x| matches!(x, Record::Batch { .. }))
-    else {
-        panic!("{:?}", boot.records);
-    };
-    assert_eq!(*mismatches, READS);
+fn non_blank_preimage_or_wrong_part_writes_nothing() {
+    let boot = platform_boot_with([0; 8], false, EXPECTED_ID, |h| h.scratch[5] = 0x1234, 0);
+    assert_eq!(
+        boot.records.last(),
+        Some(&Record::Preimage {
+            id: EXPECTED_ID,
+            blank: 1023
+        })
+    );
+    assert_eq!((boot.erases, boot.scratch[5]), (0, 0x1234));
+    assert_eq!(boot.backup[MARKER_REGISTER as usize], 0);
+    let boot = platform_boot([0; 8], false, [0xef, 0x40, 0x18]);
+    assert!(matches!(boot.records.last(), Some(Record::Preimage { .. })));
+    assert_eq!(boot.erases, 0);
+}
+
+#[test]
+fn verify_mismatch_stops_all_writing_and_keeps_feeding() {
+    let boot = platform_boot_with([0; 8], false, EXPECTED_ID, |_| {}, 1 << 31);
+    let c = cycles(&boot.records);
+    assert_eq!(c.len(), 1, "{:?}", boot.records);
+    assert!(matches!(c[0], Record::Cycle { cycle: 1, errors, .. } if errors > 0));
+    // No restore erase: the evidence stays; the marker is cleared and the
+    // watchdog stays fed (no reset).
+    assert_eq!(boot.erases, 1);
+    assert!(
+        !boot
+            .records
+            .iter()
+            .any(|x| matches!(x, Record::Restore { .. }))
+    );
+    assert!(!boot.faulted && boot.backup[MARKER_REGISTER as usize] == 0);
 }
 
 #[test]

@@ -69,6 +69,8 @@ mod sdk {
         "BOOT_Reason",
         "BKUP_Read",
         "FLASH_RxCmdXIP",
+        "FLASH_EraseXIP",
+        "FLASH_TxData256BXIP",
         "BKUP_Write",
     ];
     const TYPES: &[&str] = &[

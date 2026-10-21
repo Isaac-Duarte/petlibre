@@ -3,14 +3,18 @@
 //! Stage B: announce a fresh authority session and bind the KM0 peer's READY
 //! into a `FlashCoord` only after stopped-output readback.
 //!
-//! Stage D: install `Provider` into the SDK flash-lock hooks, then read the
-//! flash JEDEC ID `READS` times through them. Each read takes the hooked
-//! `FLASH_Write_Lock`, which runs a full lease (quiesce, park KM0 in RAM),
-//! sends the ROM read-ID command in SPIC user mode (no XIP while it runs) and
-//! releases through `FLASH_Write_Unlock`. Nothing is erased or programmed.
+//! Stage E (owner-approved): with `Provider` installed in the SDK flash-lock
+//! hooks, confirm the flash JEDEC ID with one mediated read, require the one
+//! scratch sector (`sdk::SCRATCH_OFFSET`, blank tail of the inactive bank 0)
+//! to read blank, then run `CYCLES` cycles of sector erase, blank check,
+//! sixteen 256-byte page programs and full verify, and finally erase it back
+//! to blank. Every erase and page program is an SDK RAM wrapper whose hooked
+//! lock runs a full lease with KM0 parked in RAM. Erase time is measured
+//! against the lease's active budget. Any mismatch stops all writing.
 //!
-//! Stage C's park round trip with injected faults passed on hardware and is
-//! retained in history; its lease sequence now lives in `Provider`.
+//! Stages C (park round trip with injected faults) and D (100 mediated ID
+//! reads) passed on hardware and are retained in history; their lease
+//! sequence lives in `Provider`.
 //!
 //! A hook fault halts in RAM until the watchdog resets the platform. The backup
 //! marker is set to `ATTEMPT_MARKER` before arming, so the next boot skips the
@@ -33,9 +37,8 @@ use crate::watchdog::Watchdog;
 pub const BOOT_COUNT_REGISTER: u32 = 3;
 pub const POLL_MS: u32 = 10;
 pub const READY_TIMEOUT_MS: u32 = 2000;
-pub const READS: u32 = 100;
-pub const BATCH: u32 = 25;
-pub const READ_GAP_MS: u32 = 20;
+pub const CYCLES: u32 = 3;
+pub const OP_GAP_MS: u32 = 10;
 pub const FEED_PERIOD_MS: u32 = 250;
 pub const ATTEMPT_MARKER: u32 = 3;
 /// The research unit's boot log reports flash ID c8 40 17 (GigaDevice, 8 MiB).
@@ -185,12 +188,21 @@ impl Provider {
     }
 }
 
-/// One mediated read of the flash JEDEC ID through the hooked SDK lock.
+/// Mediated flash operations through the hooked SDK lock. Only the scratch
+/// sector can be erased or programmed; there is no address argument.
 pub trait FlashOps {
     /// Install `provider` into the hooks; task context, IRQs enabled.
     fn install(provider: *mut Provider) -> bool;
     fn read_id() -> [u8; 3];
     fn armed() -> bool;
+    fn erase_scratch();
+    fn program_scratch(page: u32, data: &[u8; 256]) -> bool;
+    fn read_scratch(word: u32) -> u32;
+}
+
+/// The cycle's test pattern: distinct per cycle and word, never all ones.
+pub fn pattern(cycle: u32, word: u32) -> u32 {
+    0x5a00_0000 ^ (cycle << 16) ^ word
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -210,7 +222,7 @@ pub enum Record {
         ms: u32,
     },
     Foreign,
-    /// Watchdog and hook installation before the reads.
+    /// Watchdog and hook installation before any operation.
     Start {
         marker: u32,
         watchdog: bool,
@@ -220,20 +232,31 @@ pub enum Record {
     Skip {
         marker: u32,
     },
-    Batch {
-        reads: u32,
+    /// The ID and blank words found before any write; anything other than
+    /// the expected part and 1024 blank words stops here without writing.
+    Preimage {
         id: [u8; 3],
-        mismatches: u32,
-        park_max: u32,
-        release_max: u32,
-        frozen: u64,
-        alive: u32,
+        blank: u32,
+    },
+    Cycle {
+        cycle: u32,
+        erase_ticks: u32,
+        blank: u32,
+        program_max_ticks: u32,
+        errors: u32,
+    },
+    Restore {
+        erase_ticks: u32,
+        blank: u32,
     },
     Done {
-        reads: u32,
+        cycles: u32,
         leases: u64,
         phase: FlashPhase,
         fault: FlashFault,
+        park_max: u32,
+        release_max: u32,
+        frozen: u64,
     },
     ClockError,
 }
@@ -251,7 +274,11 @@ enum Stage {
     Start,
     Wait,
     Arm,
-    Read,
+    Preimage,
+    Erase(u32),
+    Program(u32, u32),
+    Verify(u32),
+    Restore,
     Idle,
     Done,
 }
@@ -263,18 +290,22 @@ pub struct Probe {
     clock: TickClock,
     stage: Stage,
     authority: u64,
-    reads: u32,
-    mismatches: u32,
-    alive: u32,
-    last_id: [u8; 3],
-    last_beat: u32,
     progress: u64,
     foreign_seen: bool,
-    pending_done: Option<Record>,
+    erase_ticks: u32,
+    blank: u32,
+    program_max: u32,
+    pending: Option<Record>,
 }
 
 fn next(delay_ms: u32, record: Option<Record>) -> Step {
     Step { delay_ms, record }
+}
+
+fn blank_words<F: FlashOps>() -> u32 {
+    (0..sdk::SCRATCH_WORDS)
+        .filter(|&w| F::read_scratch(w) == u32::MAX)
+        .count() as u32
 }
 
 impl Probe {
@@ -285,6 +316,26 @@ impl Probe {
 
     fn now(&mut self) -> Option<u32> {
         self.clock.read(sdk::systimer_ticks())
+    }
+
+    fn feed(&mut self) {
+        self.progress += 1;
+        let _ = self.watchdog.checkpoint(self.progress);
+    }
+
+    /// Stop all writing: clear the marker and idle with the watchdog fed.
+    fn stop(&mut self, record: Record) -> Step {
+        sdk::backup_write(MARKER_REGISTER, 0);
+        self.stage = Stage::Idle;
+        next(FEED_PERIOD_MS, Some(record))
+    }
+
+    fn erase<F: FlashOps>(&mut self) {
+        let begin = sdk::systimer_ticks();
+        F::erase_scratch();
+        self.erase_ticks = sdk::systimer_ticks().wrapping_sub(begin);
+        self.feed();
+        self.blank = blank_words::<F>();
     }
 
     /// One task iteration in task context. `provider` stays at a fixed
@@ -369,66 +420,120 @@ impl Probe {
                     installed,
                 };
                 if !installed {
-                    // Nothing is armed for a hook fault; a fed or closed
-                    // watchdog means the next boot may run the reads again.
-                    sdk::backup_write(MARKER_REGISTER, 0);
                     if watchdog {
-                        self.stage = Stage::Idle;
-                        return next(FEED_PERIOD_MS, Some(record));
+                        return self.stop(record);
                     }
+                    sdk::backup_write(MARKER_REGISTER, 0);
                     return self.end(record);
                 }
-                self.last_beat = beat();
-                self.stage = Stage::Read;
-                next(READ_GAP_MS, Some(record))
+                self.stage = Stage::Preimage;
+                next(OP_GAP_MS, Some(record))
             }
-            Stage::Read => {
-                let beat_before = beat();
+            Stage::Preimage => {
                 let id = F::read_id();
-                self.reads += 1;
-                self.mismatches += u32::from(id != EXPECTED_ID);
-                self.last_id = id;
-                self.alive += u32::from(beat_before != self.last_beat);
-                self.last_beat = beat();
-                self.progress += 1;
-                let _ = self.watchdog.checkpoint(self.progress);
+                self.feed();
+                let blank = blank_words::<F>();
+                let record = Record::Preimage { id, blank };
+                if id != EXPECTED_ID || blank != sdk::SCRATCH_WORDS {
+                    return self.stop(record);
+                }
+                self.stage = Stage::Erase(1);
+                next(OP_GAP_MS, Some(record))
+            }
+            Stage::Erase(cycle) => {
+                self.erase::<F>();
+                if self.blank != sdk::SCRATCH_WORDS {
+                    return self.stop(Record::Cycle {
+                        cycle,
+                        erase_ticks: self.erase_ticks,
+                        blank: self.blank,
+                        program_max_ticks: 0,
+                        errors: 0,
+                    });
+                }
+                self.program_max = 0;
+                self.stage = Stage::Program(cycle, 0);
+                next(OP_GAP_MS, None)
+            }
+            Stage::Program(cycle, page) => {
+                let mut data = [0u8; 256];
+                for (i, bytes) in data.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+                    *bytes = pattern(cycle, page * 64 + i as u32).to_le_bytes();
+                }
+                let begin = sdk::systimer_ticks();
+                let ok = F::program_scratch(page, &data);
+                self.program_max = self
+                    .program_max
+                    .max(sdk::systimer_ticks().wrapping_sub(begin));
+                self.feed();
+                if !ok {
+                    return self.stop(Record::Cycle {
+                        cycle,
+                        erase_ticks: self.erase_ticks,
+                        blank: self.blank,
+                        program_max_ticks: self.program_max,
+                        errors: u32::MAX,
+                    });
+                }
+                self.stage = if page + 1 < sdk::SCRATCH_PAGES {
+                    Stage::Program(cycle, page + 1)
+                } else {
+                    Stage::Verify(cycle)
+                };
+                next(OP_GAP_MS, None)
+            }
+            Stage::Verify(cycle) => {
+                let errors = (0..sdk::SCRATCH_WORDS)
+                    .filter(|&w| F::read_scratch(w) != pattern(cycle, w))
+                    .count() as u32;
+                self.feed();
+                let record = Record::Cycle {
+                    cycle,
+                    erase_ticks: self.erase_ticks,
+                    blank: self.blank,
+                    program_max_ticks: self.program_max,
+                    errors,
+                };
+                if errors != 0 {
+                    // Leave the pattern for inspection; never write over a mismatch.
+                    return self.stop(record);
+                }
+                self.stage = if cycle < CYCLES {
+                    Stage::Erase(cycle + 1)
+                } else {
+                    Stage::Restore
+                };
+                next(OP_GAP_MS, Some(record))
+            }
+            Stage::Restore => {
+                self.erase::<F>();
                 // SAFETY: the caller's contract; the hook call has returned.
                 let p = unsafe { &*provider };
-                let record = self.reads.is_multiple_of(BATCH).then_some(Record::Batch {
-                    reads: self.reads,
-                    id,
-                    mismatches: self.mismatches,
-                    park_max: p.park_max,
-                    release_max: p.release_max,
-                    frozen: p.frozen,
-                    alive: self.alive,
-                });
-                if self.reads < READS {
-                    return next(READ_GAP_MS, record);
-                }
-                let done = Record::Done {
-                    reads: self.reads,
+                self.pending = Some(Record::Done {
+                    cycles: CYCLES,
                     leases: p.leases,
                     phase: p.coord.phase,
                     fault: p.coord.fault,
-                };
-                sdk::backup_write(MARKER_REGISTER, 0);
-                self.stage = Stage::Idle;
-                // Two records: the final batch now, the summary next iteration.
-                self.pending_done = Some(done);
-                next(1, record)
+                    park_max: p.park_max,
+                    release_max: p.release_max,
+                    frozen: p.frozen,
+                });
+                self.stop(Record::Restore {
+                    erase_ticks: self.erase_ticks,
+                    blank: self.blank,
+                })
             }
             Stage::Idle => {
-                if let Some(done) = self.pending_done.take() {
-                    return next(FEED_PERIOD_MS, Some(done));
+                if let Some(record) = self.pending.take() {
+                    return next(FEED_PERIOD_MS, Some(record));
                 }
-                // Feed only while every iteration re-verifies stopped outputs
-                // and the hooks stay armed with an idle coordinator.
+                // Feed only while every iteration re-verifies stopped outputs,
+                // and, once the hooks are armed, an idle unfaulted coordinator.
+                // An unarmed stop keeps feeding too, so it never reset-loops.
                 // SAFETY: the caller's contract.
                 let idle = unsafe { (*provider).ready() };
-                if stopped::observe().verified() && idle && (F::armed() || self.reads == 0) {
-                    self.progress += 1;
-                    let _ = self.watchdog.checkpoint(self.progress);
+                if stopped::observe().verified() && (idle || !F::armed()) {
+                    self.feed();
                 }
                 next(FEED_PERIOD_MS, None)
             }

@@ -37,6 +37,22 @@ READ_BATCHES = (25, 50, 75, 100)
 READ_ID = 'c84017'  # JEDEC ID of the research unit's GigaDevice flash (boot log `Flash ID:c8, 40, 17`)
 READ_DONE = (100, 100, 1, 0)  # reads, leases, phase IDLE, no fault
 EXCHANGE_TICKS = 1310  # 40 ms park/release exchange limit at 32 768 Hz
+WRITE_MARK = b'PLWRS1 start marker='  # FW06 stage E owner-approved scratch-sector write follows READY
+DEC = rb'([0-9]{1,10})'
+WRITE = {'start': re.compile(rb'PLWRS1 start marker=([0-9a-f]{8}) watchdog=(pass|fail) installed=([01])\r\n'),
+         'preimage': re.compile(rb'PLWRS1 preimage id=([0-9a-f]{6}) blank=' + DEC + rb'\r\n'),
+         'cycle': re.compile(rb'PLWRS1 cycle n=' + DEC + rb' erase_ticks=' + DEC + rb' blank=' + DEC + rb' program_max=' + DEC
+                             + rb' errors=' + DEC + rb'\r\n'),
+         'restore': re.compile(rb'PLWRS1 restore erase_ticks=' + DEC + rb' blank=' + DEC + rb'\r\n'),
+         'done': re.compile(rb'PLWRS1 done cycles=' + DEC + rb' leases=' + DEC + rb' phase=' + DEC + rb' fault=' + DEC
+                            + rb' park_max=' + DEC + rb' release_max=' + DEC + rb' frozen=' + DEC + rb'\r\n'),
+         'skip': re.compile(rb'PLWRS1 skip marker=([0-9a-f]{8})\r\n')}
+WRITE_CYCLES = (1, 2, 3)
+WRITE_BLANK = 1024  # every sampled word of the 4 KiB scratch sector reads erased
+WRITE_DONE = (3, 53, 1, 0)  # cycles, leases, phase IDLE, no fault; frozen equals leases
+TICK_HZ = 32768
+ERASE_TICKS = 16384  # 500 ms lease active budget
+PROGRAM_TICKS = 1638  # 50 ms
 FLASH = {'hello': re.compile(rb'PLFLS1 hello authority=([0-9a-f]{16}) count=([0-9]{1,10})\r\n'),
          'foreign': re.compile(rb'PLFLS1 foreign\r\n'),
          'ready': re.compile(rb'PLFLS1 ready peer=([0-9a-f]{16}) reply=([0-9]{1,10}) phase=([0-9]{1,10}) fault=([0-9]{1,10}) inactive=([01])\r\n'),
@@ -154,6 +170,7 @@ def classify_flash(rx, arrival, version=1, end=None):
     and requires the park round trip's start record after READY instead.
     Version 3 (fw06-read-v1) checks HELLO/READY the same way, then the mediated
     flash read records (`classify_flash_read`); `end` is the capture end time.
+    Version 4 (fw06-write-v1) does the same for the scratch-sector write (`classify_flash_write`).
     `arrival(offset)` returns the host receive time of the rx chunk holding `offset`."""
     kinds = ('hello', 'ready', 'peer', 'done') if version == 1 else ('hello', 'ready')
     found = {kind: list(pattern.finditer(rx)) for kind, pattern in FLASH.items()}
@@ -164,6 +181,11 @@ def classify_flash(rx, arrival, version=1, end=None):
         report.update(flash_read_verified=False, flash_read_id=None, flash_read_reads=None, flash_read_leases=None,
                       flash_read_park_max=None, flash_read_release_max=None, flash_read_frozen=None,
                       flash_read_alive=None, flash_read_seconds=None, flash_read_tail_seconds=None)
+    if version == 4:
+        report.update(flash_write_verified=False, flash_write_id=None, flash_write_preimage_blank=None, flash_write_cycles=[],
+                      flash_write_restore_erase_ticks=None, flash_write_restore_blank=None, flash_write_leases=None,
+                      flash_write_park_max=None, flash_write_release_max=None, flash_write_frozen=None,
+                      flash_write_erase_ms_max=None, flash_write_seconds=None, flash_write_tail_seconds=None)
     single = {kind: found[kind][0] for kind in ('hello', 'ready', 'peer', 'done') if len(found[kind]) == 1}
     if 'hello' in single:
         report.update(flash_authority_session=single['hello'][1].decode(), flash_boot_count=int(single['hello'][2]))
@@ -178,14 +200,16 @@ def classify_flash(rx, arrival, version=1, end=None):
         return {'outcome': 'flash_handshake_malformed', **report}
     if version >= 2 and (found['peer'] or found['done']):
         return {'outcome': 'flash_handshake_malformed', **report}
-    # Under the read policy an error after READY belongs to the read; earlier ones fail the handshake.
-    if found['error'] and (version != 3 or 'ready' not in single or found['error'][0].start() < single['ready'].end()):
+    # Under the read and write policies an error after READY belongs to that stage; earlier ones fail the handshake.
+    if found['error'] and (version not in (3, 4) or 'ready' not in single or found['error'][0].start() < single['ready'].end()):
         return {'outcome': 'flash_handshake_failed', **report}
     if len(single) != len(kinds):
         return {'outcome': 'flash_handshake_missing', **report}
     led_done = rx.find(b'PLLED1 done low=all\r\n')
     if version == 3:
         return classify_flash_read(rx, arrival, end, single['hello'], single['ready'], found, led_done, report)
+    if version == 4:
+        return classify_flash_write(rx, arrival, end, single['hello'], single['ready'], found, led_done, report)
     if version >= 2:
         return classify_flash_park(rx, arrival, single['hello'], single['ready'], found['foreign'], led_done, report)
     hello, ready, peer, done = (single[kind] for kind in kinds)
@@ -279,6 +303,64 @@ def classify_flash_read(rx, arrival, end, hello, ready, flash, led_done, report)
     return {'outcome': 'pass', **report, 'flash_handshake_verified': True, 'flash_read_verified': True}
 
 
+def classify_flash_write(rx, arrival, end, hello, ready, flash, led_done, report):
+    """fw06-write-v1: HELLO/READY as in park-v1, then start, preimage, three erase/program/verify cycles, restore and done."""
+    found = {kind: list(pattern.finditer(rx)) for kind, pattern in WRITE.items()}
+    cycles = found['cycle']
+    single = {kind: found[kind][0] for kind in ('start', 'preimage', 'restore', 'done') if len(found[kind]) == 1}
+    report['flash_write_cycles'] = [dict(zip(('n', 'erase_ticks', 'blank', 'program_max', 'errors'), (int(v) for v in m.groups())))
+                                    for m in cycles]
+    if 'preimage' in single:
+        report.update(flash_write_id=single['preimage'][1].decode(), flash_write_preimage_blank=int(single['preimage'][2]))
+    if 'restore' in single:
+        report.update(flash_write_restore_erase_ticks=int(single['restore'][1]), flash_write_restore_blank=int(single['restore'][2]))
+    if 'done' in single:
+        done = [int(v) for v in single['done'].groups()]
+        report.update(flash_write_leases=done[1], flash_write_park_max=done[4], flash_write_release_max=done[5], flash_write_frozen=done[6])
+    erase = [c['erase_ticks'] for c in report['flash_write_cycles']] + (
+        [report['flash_write_restore_erase_ticks']] if 'restore' in single else [])
+    if erase:
+        report['flash_write_erase_ms_max'] = round(max(erase) * 1000 / TICK_HZ, 1)
+    numbers = [c['n'] for c in report['flash_write_cycles']]
+    if (rx.count(b'PLWRS1') != sum(len(v) for v in found.values()) or b'PLPRK1' in rx or b'PLRDS1' in rx
+            or any(len(found[kind]) > 1 for kind in ('start', 'preimage', 'restore', 'done', 'skip')) or len(set(numbers)) != len(numbers)):
+        return {'outcome': 'flash_write_malformed', **report}
+    if found['skip'] or flash['error']:
+        return {'outcome': 'flash_write_failed', **report}
+    if not (0 <= led_done < hello.start() < hello.end() <= ready.start()) or any(m.start() < hello.end() for m in flash['foreign']):
+        return {'outcome': 'flash_handshake_order', **report}
+    if not ready_fields_ok(hello, ready):
+        return {'outcome': 'flash_handshake_failed', **report}
+    report['flash_ready_seconds'] = (arrival(ready.end() - 1) - arrival(hello.end() - 1)).total_seconds()
+    if not 0 <= report['flash_ready_seconds'] <= 2.5:
+        return {'outcome': 'flash_handshake_timing', **report}
+    if len(single) != 4:
+        return {'outcome': 'flash_write_missing', **report}
+    start, preimage, restore, done = (single[kind] for kind in ('start', 'preimage', 'restore', 'done'))
+    # start, preimage, ascending cycles, restore, done; no PLFLS1 record follows done.
+    if not (ready.end() <= start.start() < start.end() <= preimage.start() < preimage.end() <= restore.start() < restore.end() <= done.start()) or (
+            numbers != sorted(numbers) or any(not preimage.end() <= m.start() < restore.start() for m in cycles)
+            or any(m.start() > done.start() for m in flash['foreign'])):
+        return {'outcome': 'flash_write_order', **report}
+    done_fields = tuple(int(v) for v in done.groups())
+    ok = (start.groups() == (b'00000000', b'pass', b'1')
+          and preimage[1].decode() == READ_ID and int(preimage[2]) == WRITE_BLANK
+          and tuple(numbers) == WRITE_CYCLES
+          and all(c['blank'] == WRITE_BLANK and c['errors'] == 0 and 0 < c['erase_ticks'] <= ERASE_TICKS
+                  and 0 < c['program_max'] <= PROGRAM_TICKS for c in report['flash_write_cycles'])
+          and int(restore[2]) == WRITE_BLANK and 0 < int(restore[1]) <= ERASE_TICKS
+          and done_fields[:4] == WRITE_DONE and done_fields[6] == WRITE_DONE[1]
+          and 0 < done_fields[4] <= EXCHANGE_TICKS and 0 < done_fields[5] <= EXCHANGE_TICKS)
+    if not ok:
+        return {'outcome': 'flash_write_failed', **report}
+    finished = arrival(done.end() - 1)
+    report.update(flash_write_seconds=(finished - arrival(start.end() - 1)).total_seconds(),
+                  flash_write_tail_seconds=(end - finished).total_seconds())
+    if not (0 <= report['flash_write_seconds'] <= 60.0 and report['flash_write_tail_seconds'] >= 30.0):
+        return {'outcome': 'flash_write_timing', **report}
+    return {'outcome': 'pass', **report, 'flash_handshake_verified': True, 'flash_write_verified': True}
+
+
 def classify(rx, identity, require_stopped=False):
     """Parse only fixed public fields; never return arbitrary device text."""
     starts = list(START.finditer(rx))
@@ -338,7 +420,7 @@ def startup(rx, manifest, image, identity, arrival=None, end=None):
     """Classify one startup segment under every policy the manifest declares.
 
     `arrival(offset)` gives host receive times for timing-bound policies; `end`
-    is the capture end time, needed for the flash read's clean tail."""
+    is the capture end time, needed for the flash read's and write's clean tail."""
     require = EVIDENCE.require
     supervision = manifest.get('startup_supervision_policy')
     require(supervision in (None, 'fw05-probe-v1'), 'Unknown startup supervision policy')
@@ -397,16 +479,19 @@ def startup(rx, manifest, image, identity, arrival=None, end=None):
         else:
             result.update({k: v for k, v in power.items() if k != 'outcome'})
     flash_policy = manifest.get('startup_flash_handshake_policy')
-    require(flash_policy in (None, 'fw06-hello-v1', 'fw06-park-v1', 'fw06-read-v1'), 'Unknown flash handshake policy')
+    require(flash_policy in (None, 'fw06-hello-v1', 'fw06-park-v1', 'fw06-read-v1', 'fw06-write-v1'),
+            'Unknown flash handshake policy')
     require(bool(flash_policy) == (FLASH_MARK in image), 'Flash handshake policy/artifact mismatch')
     # Checked both ways: a park image cannot be audited as a hello-only build, nor the reverse.
     require((flash_policy == 'fw06-park-v1') == (PARK_MARK in image), 'Flash park policy/artifact mismatch')
     require((flash_policy == 'fw06-read-v1') == (READ_MARK in image), 'Flash read policy/artifact mismatch')
+    require((flash_policy == 'fw06-write-v1') == (WRITE_MARK in image), 'Flash write policy/artifact mismatch')
     if flash_policy:
         require(led_policy, 'Flash handshake requires the LED probe policy')
         require(arrival is not None, 'Flash handshake requires host receive times')
         require(flash_policy != 'fw06-read-v1' or end is not None, 'Flash read requires the capture end time')
-        flash = classify_flash(rx, arrival, {'fw06-park-v1': 2, 'fw06-read-v1': 3}.get(flash_policy, 1), end)
+        require(flash_policy != 'fw06-write-v1' or end is not None, 'Flash write requires the capture end time')
+        flash = classify_flash(rx, arrival, {'fw06-park-v1': 2, 'fw06-read-v1': 3, 'fw06-write-v1': 4}.get(flash_policy, 1), end)
         if result['outcome'] == 'pass':
             result.update(flash)
         else:

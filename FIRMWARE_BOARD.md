@@ -4,9 +4,9 @@ This board tracks replacement-firmware integration, dependencies, and acceptance
 
 ## Current status
 
-- **Done:** FW01–FW05, three of them with recorded scope limits (see carried items).
-- **In progress:** FW06, real flash coordination. Stages A–D are done and the last three passed on hardware: production constants, a boot handshake, a park round trip with injected faults, and 100 SDK-mediated flash ID reads through the armed hooks. Stage E, one scratch-sector write, waits on an owner decision.
-- **Critical path to feeding:** FW06 → FW13/FW14/FW15 → FW30 → FW16 → FW17.
+- **Done:** FW01–FW06, four of them with recorded scope limits (see carried items).
+- **Next:** pick from FW15 (durable storage), FW13/FW14 (inputs), FW30 (electrical checks) or FW07 (Wi-Fi). FW06 passed every stage on hardware: handshake, park round trip with injected faults, mediated reads, and owner-approved scratch-sector erase and program.
+- **Critical path to feeding:** FW13/FW14/FW15 → FW30 → FW16 → FW17.
 
 ### Carried items
 
@@ -16,9 +16,11 @@ Work a Done card deliberately handed to a later card. Close a row only with the 
 | --- | --- | --- | --- |
 | Motor STOP and infrared-off voltages, startup transients, repeated measured resets | FW03 | FW30 | Software readback and observed no-motion only |
 | Port A indicators PA0/PA2/PA4 output-only | FW04 | FW23 | No input readback on the tested unit; levels rest on visual observation |
-| Production watchdog clock bounds and counter choice | FW05 | FW06 | Effective clock measured near 43 kHz (FW05) and near 31–33 kHz (FW06 stage C) with the same counter; the cause is unknown. Bounds widened to 24–54 kHz; explain the spread before FW16 relies on it |
+| Production watchdog clock bounds and counter choice | FW05 | FW16 | Effective clock measured near 43 kHz (FW05) and near 31–33 kHz (FW06 stage C) with the same counter; the cause is unknown. Bounds widened to 24–54 kHz; explain the spread before FW16 relies on it |
 | Owner-lease expiry while a task stalls, on hardware | FW05 | FW16 | Host-tested; FW05 proved the supervision timer keeps running during a stall |
 | Stop timing under supervised motion | FW05 | FW19 | FW05 stall tests ran with motion disabled |
+| KM0 SDK flash users (DLPS tickless lock path) unmediated; KM0 deny provider | FW06 | FW26 | Unreachable while KM0 holds its wakelock; mediate or deny before KM0 may sleep |
+| Exclusion for SDK flash users not yet exercised (Wi-Fi, OTA, FTL) | FW06 | FW07 | FW06 proved the hooked read, sector erase and page program paths only |
 | ADC clock enable on the minimal KM0 main | FW05 | FW14 | `Board::open` initializes the LP ADC without enabling its clock; the FW05 probe uses `open_outputs` instead |
 
 ## Using the board
@@ -39,15 +41,15 @@ Prioritize the UART development loop and build identity, stopped startup, LED di
 | **FW04 First LED controller** | **Done (output-only scope)** | Physical (capture, observation) | FW03 | Identify LED pins, colors and polarity physically. Exercise off/on/blink from a small diagnostic, with bounded timing and no motor or infrared enable. This is the first visible feature experiment. |
 | **FW05 Clock, independent stop timer and watchdog** | **Done (motion-disabled scope)** | Physical (UART timing) | FW03 | With motion disabled: measure the SYSTIMER rate against host time and confirm it only moves forward; show the supervision timer interrupt keeps running while a task stalls; show the watchdog refreshes only on real progress and resets the platform when progress stops; show a deliberate reset cannot become a reset loop. Lease expiry under a stall on hardware, production watchdog bounds and stop timing under motion are carried to FW16, FW06 and FW19. |
 | **FW31 Bench automation** | Ready | — | FW01 | Software-controlled feeder power and loader entry (for example a USB relay, and the adapter's spare control lines driving the loader button through a transistor), so the host can flash, power-cycle and capture without manual steps. Never powers the motor path while flashing; the operator can always cut power by hand. Record the wiring and its failure modes. |
-| **FW06 Real flash coordination across both cores** | In progress | — | FW03, FW05 | Implement the missing transport/provider and fresh boot handshake, RAM parking and mediated SDK flash operations. Verify stopped outputs before granting writes, bounded failure handling and no access from the other core during a lease. Inject peer loss and timeout. Fix the production watchdog configuration from the FW05 measurement, with margin for clock spread, and size the lease budget against it. |
+| **FW06 Real flash coordination across both cores** | **Done (mediated-path scope)** | Physical (UART protocol and timing) | FW03, FW05 | Implement the missing transport/provider and fresh boot handshake, RAM parking and mediated SDK flash operations. Verify stopped outputs before granting writes, bounded failure handling and no access from the other core during a lease. Inject peer loss and timeout. Fix the production watchdog configuration from the FW05 measurement, with margin for clock spread, and size the lease budget against it. |
 
 ## Early Wi-Fi and OTA
 
 | Card | Status | Evidence | Prerequisites | Finish line |
 | --- | --- | --- | --- | --- |
-| **FW07 Wi-Fi join and reconnect** | Planned | — | FW03, FW06 | Join the configured test network, obtain an address and recover from AP/DHCP/DNS loss without repeated uncontrolled resets. Define credential storage and audit SDK writes through the flash authority. Bringup credentials stay private; the full setup flow is FW25. |
+| **FW07 Wi-Fi join and reconnect** | Ready | — | FW03, FW06 | Join the configured test network, obtain an address and recover from AP/DHCP/DNS loss without repeated uncontrolled resets. Define credential storage and audit SDK writes through the flash authority. Bringup credentials stay private; the full setup flow is FW25. |
 | **FW08 Local health and control transport** | Planned | — | FW02, FW07 | Expose build/bank/boot identity, uptime and fault state through a versioned local interface. Define authentication and compatibility with the existing Rust server. Health requests and diagnostic commands cannot dispense food. |
-| **FW09 OTA bank selection and boot policy** | Planned | — | FW01, FW06 | Establish usable bank capacities, selection with two valid banks, image compatibility and activation rules. Define a failed-first-boot recovery mechanism that the actual factory loader can support. Document any limitation before relying on rollback; do not infer it from the presence of two banks. |
+| **FW09 OTA bank selection and boot policy** | Ready | — | FW01, FW06 | Establish usable bank capacities, selection with two valid banks, image compatibility and activation rules. Define a failed-first-boot recovery mechanism that the actual factory loader can support. Document any limitation before relying on rollback; do not infer it from the presence of two banks. |
 | **FW10 Guarded OTA upload and activation** | Planned | — | FW03, FW06, FW07, FW08, FW09 | Authenticate updates, validate the manifest/image and size, refuse the running bank and preserve unrelated data. Verify the candidate before activation and reboot into the expected build. Test corrupt, truncated and interrupted transfers with a recoverable boot path. |
 | **FW11 Boot confirmation and failed update recovery** | Planned | — | FW09, FW10 | Implement and test the chosen trial/confirmation policy. Exercise a valid image that fails to start or confirm, and a lost confirmation response. Establish recovery on hardware; clearly distinguish automatic rollback from a path requiring UART. |
 | **FW12 Automated development loop** | Planned | — | FW02, FW08, FW10, FW11 | Script build → checks → upload → reboot → verify build identity and health. Retain artifacts/results, detect loops/timeouts and stop on uncertain updates. Demonstrate consecutive changed builds without manual power cycles on the successful path; record duration and recovery limits. |
@@ -56,9 +58,9 @@ Prioritize the UART development loop and build identity, stopped startup, LED di
 
 | Card | Status | Evidence | Prerequisites | Finish line |
 | --- | --- | --- | --- | --- |
-| **FW13 Food, outlet and feedback inputs** | Planned | — | FW03, FW05, FW06 | Confirm emitter/receiver pairs and blocked/clear polarity. Measure settling, pulse capture and bounded emitter duty. Reject stale/invalid inputs; observe owner stalls with emitters active and motor disabled. |
+| **FW13 Food, outlet and feedback inputs** | Ready | — | FW03, FW05, FW06 | Confirm emitter/receiver pairs and blocked/clear polarity. Measure settling, pulse capture and bounded emitter duty. Reject stale/invalid inputs; observe owner stalls with emitters active and motor disabled. |
 | **FW14 Current, battery and external power inputs** | Ready | — | FW03, FW05 | Enable the LP ADC clock explicitly, then verify ADC readiness/calibration, voltage scaling and external-power detection against measurements. Establish sample freshness and report unknown values honestly. Calibrate loaded motor current during FW16/FW19. |
-| **FW15 Durable settings and feeding journal** | Planned | — | FW06 | Establish explicit storage allocation, implement real NOR I/O and schema/version recovery, and bound wear. Persist reservation before motion and result after verified stop. Test interrupted writes and block ambiguous pending feeds after restart. |
+| **FW15 Durable settings and feeding journal** | Ready | — | FW06 | Establish explicit storage allocation, implement real NOR I/O and schema/version recovery, and bound wear. Persist reservation before motion and result after verified stop. Test interrupted writes and block ambiguous pending feeds after restart. |
 | **FW30 Electrical output verification** | Ready | — | FW03 | Before any intended motion, measure motor driver inputs at STOP, infrared emitter OFF, and startup/reset transients across repeated measured power-ons and resets (multimeter; scope or logic analyzer for transients). Confirm stock-derived polarity electrically. |
 | **FW16 Supervised motor controller and feeding owner** | Planned | — | FW05, FW06, FW13, FW14, FW15, FW30 | Wire the existing owner/controller to real ports. Show owner-lease expiry under a stalled owner with motion disabled, then verify a bounded pulse, direction, feedback and STOP under supervision before a portion test. Exercise cancellation, lease expiry and failed stop; a failed reservation cannot start motion. |
 | **FW17 Local manual feeding and durable results** | Planned | — | FW08, FW15, FW16 | Validate command IDs, quantities and bowl modes; serialize requests and prevent duplicate/replayed delivery across reboot. Distinguish accepted, durably reserved, completed and uncertain results. Local status remains usable during a feed. |
@@ -84,3 +86,41 @@ Prioritize the UART development loop and build identity, stopped startup, LED di
 | **FW27 Combined fault and sustained-operation tests** | Planned | — | FW11, FW18, FW19, FW20, FW22, FW23, FW24, FW25, FW26 | Run recorded scenarios for network loss/replay, task stalls, sensor faults, jams, low power and supervised power cuts during journal/OTA/feeding phases. Verify recovery, inactive outputs and explicit uncertainty. Define and complete a sustained-run duration and success criteria before the run. |
 | **FW28 Home Assistant integration** | Planned | — | FW17, FW18, FW19, FW22, FW25 | After useful standalone local behavior is established, add discovery, availability, sensors, settings and feed commands using the documented local interface. Reconnect or automation replay cannot duplicate a feed. Core feeding continues without Home Assistant. |
 | **FW29 Research firmware release** | Planned | — | FW27 | Freeze a build and compatibility manifest, record supported features and measured limits, and publish repository installation/update/recovery instructions. State unresolved risks and preserve a tested recovery path. Deployment beyond the tested research unit needs separate hardware acceptance. |
+
+## Status at a glance
+
+✅ Done · 🚧 In progress · 🧪 Bench check · 🟢 Ready · ⬜ Planned. The cards above are authoritative.
+
+| Card | Status |
+| --- | --- |
+| FW01 Faster UART application updates | ✅ Done |
+| FW02 Build identity and repeatable startup reports | ✅ Done |
+| FW03 Stopped startup and GPIO readback | ✅ Done (revised scope) |
+| FW04 First LED controller | ✅ Done (output-only scope) |
+| FW05 Clock, independent stop timer and watchdog | ✅ Done (motion-disabled scope) |
+| FW06 Real flash coordination across both cores | ✅ Done (mediated-path scope) |
+| FW07 Wi-Fi join and reconnect | 🟢 Ready |
+| FW08 Local health and control transport | ⬜ Planned |
+| FW09 OTA bank selection and boot policy | 🟢 Ready |
+| FW10 Guarded OTA upload and activation | ⬜ Planned |
+| FW11 Boot confirmation and failed update recovery | ⬜ Planned |
+| FW12 Automated development loop | ⬜ Planned |
+| FW13 Food, outlet and feedback inputs | 🟢 Ready |
+| FW14 Current, battery and external power inputs | 🟢 Ready |
+| FW15 Durable settings and feeding journal | 🟢 Ready |
+| FW16 Supervised motor controller and feeding owner | ⬜ Planned |
+| FW17 Local manual feeding and durable results | ⬜ Planned |
+| FW18 Portion and bowl calibration | ⬜ Planned |
+| FW19 Jams, missing feedback and sensor faults | ⬜ Planned |
+| FW20 Buttons, panel lock and reset behavior | ⬜ Planned |
+| FW21 Clock, timezone and missed time policy | ⬜ Planned |
+| FW22 Persistent local schedules | ⬜ Planned |
+| FW23 Complete indicator behavior | ⬜ Planned |
+| FW24 Buzzer and audio playback | ⬜ Planned |
+| FW25 Local setup and configuration | ⬜ Planned |
+| FW26 Battery transitions, brownout and sleep | ⬜ Planned |
+| FW27 Combined fault and sustained-operation tests | ⬜ Planned |
+| FW28 Home Assistant integration | ⬜ Planned |
+| FW29 Research firmware release | ⬜ Planned |
+| FW30 Electrical output verification | 🟢 Ready |
+| FW31 Bench automation | 🟢 Ready |

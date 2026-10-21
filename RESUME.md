@@ -7,7 +7,7 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
-**FW06 (real flash coordination) is in progress: stages A–D are done, and stage E needs an owner decision.**
+**FW06 (real flash coordination) is done (mediated-path scope); the next card is open for choice.**
 FW05 is done (motion-disabled scope) and FW04 is done (output-only scope); their
 results are in [startup diagnostics](docs/firmware/startup-diagnostics.md) and
 the board's carried-items table.
@@ -37,7 +37,14 @@ The FW06 plan has five stages, each with a write-free bench check until the last
   RAM `FLASH_RxCmdXIP` (lock, ROM read-ID in SPIC user mode, unlock). All
   reads returned `c84017` in 100 leases, with KM0 frozen during each. The
   coordinator stayed idle and unfaulted, and the platform did not reset.
-- **E.** One scratch-sector write. It needs the owner's decision first.
+- **E, scratch write (physical, passed; owner-approved sector `0x185000`).**
+  1. The ID read `c84017` and the sector read blank (1024 words).
+  2. Three cycles each erased to blank, programmed 16 pages and verified with
+     zero errors.
+  3. The final erase left the sector blank.
+
+  All 53 leases froze KM0. Sector erase took 27–35 ms, including lease
+  overhead, against the 500 ms active budget; page programs took at most 0.7 ms.
 
 Bench lessons from stage C:
 
@@ -55,19 +62,19 @@ Bench lessons from stage C:
 
 ## What is actually installed
 
-The research feeder runs **FW06 read review 01** (stage D) in bank 1, starting
-at flash offset `0x186000`. It was installed through the changed-sector updater
+The research feeder runs **FW06 write review 01** (stage E) in bank 1, starting at
+flash offset `0x186000`. It was installed through the changed-sector updater
 (20 sectors verified).
 
 | Identity | Recorded value |
 | --- | --- |
-| OTA SHA-256 | `2499d11f006144d1fc3104cfa0494827ee77f6cb0fc61704910ad9e4fbf5b612` |
-| Embedded startup build ID | `8bec2903c46f3734d02f9bb427ba3d11ffe368214e3c8b1bbb74f0f5365ea8db` |
+| OTA SHA-256 | `2e4aa8c527d3c2d626c280ef812da0b0bbd64ea6c16166aeb7fd110182a914b5` |
+| Embedded startup build ID | `d629387adf8ec23c2f5a6345ab89b7e755cb60ea35b14553a10ce0031770fe8d` |
 
-Each power-on runs the startup, the LED sequence, the handshake and 100
-mediated ID reads, then idles with the watchdog fed. Nothing is erased or
-written, and the image never commands motion. Its frozen review is the source
-of the next update.
+**Every power-on re-runs the scratch cycles** on `0x185000` (the blank tail of the
+inactive bank 0) and leaves it blank. The image refuses to write over a
+non-blank sector. Replace this image before long unattended use. It never
+commands motion. Its frozen review is the source of the next update.
 
 ## Last confirmed physical state
 

@@ -214,6 +214,10 @@ Three cold boots on adapter power, with the owner's hotspot (physical, UART plus
 
 DHCP-server loss and lease expiry are not exercised; the lease is 1 h. Traffic beyond the access point is still blocked by the bench host's firewall.
 
+### FW07 runtime flash check
+
+A full 8 MiB flash read in loader mode, one boot of this build, then a second full read (physical, UART loader reads). The boot ran for 3 minutes with a hotspot outage (24 s) and a DNS block (41 s), and passed `fw07-dns-v1`. The outage surfaced as a DNS-cause loss before the driver's beacon-loss detection, and backoffs ran 1, 2, 4 and 8 s, then 1 and 2 s. The two reads were byte-identical, so nothing wrote to flash during that boot by any path, whether hooked, ROM or indirect. This covers one boot of a few minutes, not long-running operation or other Wi-Fi events such as lease renewal.
+
 ## Shared-pad prerequisite and current physical findings
 
 The minimal KM0 main omitted a stock prerequisite for audio-shared pads used as GPIO. The port restores AMACRO and analog pad enables plus the SDK's calibrated `SOCPS_AudioLDO(ENABLE)` helper before entering the scheduler. It does not initialize audio playback.

@@ -233,8 +233,11 @@ block (`sudo nft insert rule inet computer_security input iifname "<hotspot
 interface>" udp dport 53 drop`, undone with `sudo systemctl reload
 computer-security`) was detected in 11 s and recovered 10 s after unblocking.
 
-**Next for FW07:** DHCP-server loss and lease expiry (the lease is 1 h), and
-runtime evidence that the Wi-Fi stack writes no flash. Then decide closure.
+**FW07 runtime flash check (physical, passed).** Full 8 MiB reads before and
+after one drill boot (hotspot outage plus DNS block) were byte-identical.
+
+**Next for FW07:** DHCP-server loss and lease expiry (the lease is 1 h). Then
+decide closure and move to FW08.
 
 `--interrupted` now also accepts one sector holding the staged target's first
 1–3 program frames followed by erased flash, the state a NAK during programming

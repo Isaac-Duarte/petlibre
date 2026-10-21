@@ -63,38 +63,31 @@ pub struct FlashMmuEntry {
     pub offset: u32,
 }
 
-/// Networks kept per scan by the KM4 Wi-Fi shim (`example_entry.c`).
-pub const WIFI_APS: usize = 32;
-
-/// One scanned network: a CRC-32 of its SSID, never the SSID itself.
+/// One event from the KM4 Wi-Fi shim's ring (`example_entry.c`), numbered
+/// from 1. `kind`: 1 on, 2 scan, 3 connect, 4 DHCP, 5 lost, 6 backoff.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct WifiAp {
-    pub ssid_crc: u32,
-    /// `rtw_security_t`.
-    pub security: u32,
-    /// dBm.
+pub struct WifiEvent {
+    pub seq: u32,
+    pub kind: u32,
+    pub attempt: u32,
+    /// SDK result: `RTW_SUCCESS` (0) or an error; for DHCP the `LwIP_DHCP` state.
+    pub result: i32,
+    /// Scan: network found; DHCP: assigned IPv4; lost: ms connected; backoff: ms.
+    pub value: u32,
+    /// Scan only: the network's RSSI (dBm) and `rtw_security_t`.
     pub rssi: i32,
-    pub channel: u32,
+    pub security: u32,
+    pub ms: u32,
 }
 
-/// The shim's `struct wellfed_wifi_state`, copied under a critical section.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct WifiState {
-    pub started: u32,
-    pub on_done: u32,
-    /// `wifi_on` result: 0 (`RTW_SUCCESS`) or an SDK error.
-    pub on_result: i32,
-    pub on_ms: u32,
-    pub scans_done: u32,
-    /// The last scan: 0 or an SDK error (`RTW_TIMEOUT` when incomplete).
-    pub scan_result: i32,
-    pub scan_ms: u32,
-    pub count: u32,
-    /// Networks beyond `WIFI_APS` in the last scan.
-    pub dropped: u32,
-    pub aps: [WifiAp; WIFI_APS],
+/// `wifi_event(seq)` outcome.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WifiPoll {
+    Pending,
+    Event(WifiEvent),
+    /// The ring overwrote it before it was read.
+    Lost,
 }
 
 /// Interrupt lines claimed by the ports.

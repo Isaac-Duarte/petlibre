@@ -5,7 +5,7 @@ use core::ffi::{CStr, c_void};
 use core::ptr;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use super::{FlashMmuEntry, GpioRouting, Irq, Isr, LpClock, TaskStep, WifiState};
+use super::{FlashMmuEntry, GpioRouting, Irq, Isr, LpClock, TaskStep, WifiEvent, WifiPoll};
 
 #[allow(
     non_camel_case_types,
@@ -669,19 +669,22 @@ pub fn task_create(
 
 unsafe extern "C" {
     fn wellfed_wifi_start() -> i32;
-    fn wellfed_wifi_snapshot(out: *mut WifiState);
+    fn wellfed_wifi_event(seq: u32, out: *mut WifiEvent) -> i32;
 }
 
-/// Start the KM4 Wi-Fi shim's task (LwIP, `wifi_on(STA)`, bounded scans);
+/// Start the KM4 Wi-Fi shim's task (join and keep the configured network);
 /// true once, when the task was created.
 pub fn wifi_start() -> bool {
     unsafe { wellfed_wifi_start() != 0 }
 }
 
-pub fn wifi_snapshot() -> WifiState {
-    let mut state = WifiState::default();
-    unsafe { wellfed_wifi_snapshot(&mut state) };
-    state
+pub fn wifi_event(seq: u32) -> WifiPoll {
+    let mut event = WifiEvent::default();
+    match unsafe { wellfed_wifi_event(seq, &mut event) } {
+        1 => WifiPoll::Event(event),
+        0 => WifiPoll::Pending,
+        _ => WifiPoll::Lost,
+    }
 }
 
 /// One line, not split by another task's print: from a task, the scheduler

@@ -1,6 +1,6 @@
 //! KM4 application entry: logs and runs the synthetic diagnostic once.
 //! Stopped-output startup and a bounded indicator probe, then the FW07 stage
-//! B probe: radio on and scan only, networks reported by SSID CRC.
+//! C probe: join the configured network and keep it, logging the shim's events.
 
 use core::cell::UnsafeCell;
 use core::ffi::c_void;
@@ -25,34 +25,39 @@ fn bit(value: bool) -> u8 {
     u8::from(value)
 }
 
+fn kind(kind: u32) -> &'static str {
+    match kind {
+        1 => "on",
+        2 => "scan",
+        3 => "connect",
+        4 => "dhcp",
+        5 => "lost",
+        6 => "backoff",
+        _ => "unknown",
+    }
+}
+
 fn log_probe(record: Record) {
     let mut report = startup::Report::new();
     let line = match record {
         Record::Start { created } => {
-            report.record(format_args!("PLWIF1 start created={}\r\n", bit(created)))
+            report.record(format_args!("PLWIF2 start created={}\r\n", bit(created)))
         }
-        Record::On { result, ms } => {
-            report.record(format_args!("PLWIF1 on result={result} ms={ms}\r\n"))
-        }
-        Record::Scan {
-            n,
-            result,
-            ms,
-            count,
-            dropped,
-            stopped,
-        } => report.record(format_args!(
-            "PLWIF1 scan n={n} result={result} ms={ms} count={count} dropped={dropped} stopped={}\r\n",
+        Record::Event { event: e, stopped } => report.record(format_args!(
+            "PLWIF2 ev seq={} kind={} attempt={} result={} value={:08x} rssi={} security={:08x} ms={} stopped={}\r\n",
+            e.seq,
+            kind(e.kind),
+            e.attempt,
+            e.result,
+            e.value,
+            e.rssi,
+            e.security,
+            e.ms,
             bit(stopped)
         )),
-        Record::Ap { n, index, ap } => report.record(format_args!(
-            "PLWIF1 ap n={n} i={index} ssid_crc={:08x} rssi={} channel={} security={:08x}\r\n",
-            ap.ssid_crc, ap.rssi, ap.channel, ap.security
-        )),
-        Record::Done { scans } => report.record(format_args!("PLWIF1 done scans={scans}\r\n")),
-        Record::Timeout { stage, ms } => report.record(format_args!(
-            "PLWIF1 error timeout stage={stage} ms={ms}\r\n"
-        )),
+        Record::Overrun { seq } => {
+            report.record(format_args!("PLWIF2 error overrun seq={seq}\r\n"))
+        }
     };
     if let Ok(line) = line {
         sdk::log(line);

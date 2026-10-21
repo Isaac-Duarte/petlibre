@@ -108,6 +108,8 @@ pub struct Hardware {
     pub spin_ticks: u32,
     pub spins: u32,
     pub systick: u32,
+    /// The scratch sector, modelled as NOR: erase sets 1s, program clears bits.
+    pub scratch: [u32; 1024],
 }
 
 impl Default for Hardware {
@@ -182,6 +184,7 @@ impl Default for Hardware {
             spin_ticks: 33,
             spins: 0,
             systick: 7,
+            scratch: [u32::MAX; 1024],
         }
     }
 }
@@ -406,6 +409,31 @@ pub mod api {
 
     pub fn boot_reason() -> u32 {
         with(|h| h.boot_reason)
+    }
+
+    pub const SCRATCH_OFFSET: u32 = 0x18_5000;
+    pub const SCRATCH_WORDS: u32 = 1024;
+    pub const SCRATCH_PAGES: u32 = 16;
+
+    pub fn scratch_erase() {
+        with(|h| h.scratch = [u32::MAX; 1024]);
+    }
+
+    pub fn scratch_program(page: u32, data: &[u8; 256]) -> bool {
+        if page >= SCRATCH_PAGES {
+            return false;
+        }
+        with(|h| {
+            for (i, word) in data.as_chunks::<4>().0.iter().enumerate() {
+                let value = u32::from_le_bytes(*word);
+                h.scratch[page as usize * 64 + i] &= value;
+            }
+        });
+        true
+    }
+
+    pub fn scratch_read(word: u32) -> u32 {
+        with(|h| h.scratch.get(word as usize).copied().unwrap_or(0))
     }
 
     pub fn flash_read_jedec() -> [u8; 3] {

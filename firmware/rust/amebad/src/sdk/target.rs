@@ -443,6 +443,43 @@ pub fn flash_read_jedec() -> [u8; 3] {
     id
 }
 
+/// The one flash sector the FW06 stage E probe may erase or program: the
+/// last 4 KiB of the inactive bank 0, blank in the research unit's backup.
+/// Owner-approved scratch; nothing takes an address argument.
+pub const SCRATCH_OFFSET: u32 = 0x18_5000;
+pub const SCRATCH_WORDS: u32 = 1024;
+pub const SCRATCH_PAGES: u32 = 16;
+
+const _: () = assert!(SCRATCH_OFFSET % 0x1000 == 0 && SCRATCH_OFFSET + 0x1000 <= 0x18_6000);
+const _: () = assert!(k::PETLIBRO_SPI_FLASH_BASE == 0x0800_0000 && k::PETLIBRO_ERASE_SECTOR == 2);
+
+/// Sector erase of the scratch sector through the SDK's RAM `FLASH_EraseXIP`
+/// (hooked lock, erase, cache flush, unlock).
+pub fn scratch_erase() {
+    unsafe { raw::FLASH_EraseXIP(k::PETLIBRO_ERASE_SECTOR, SCRATCH_OFFSET) }
+}
+
+/// Program one 256-byte page of the scratch sector through the SDK's RAM
+/// `FLASH_TxData256BXIP`. Pages outside 0..16 are refused.
+pub fn scratch_program(page: u32, data: &[u8; 256]) -> bool {
+    if page >= SCRATCH_PAGES {
+        return false;
+    }
+    let mut buffer = *data;
+    unsafe { raw::FLASH_TxData256BXIP(SCRATCH_OFFSET + page * 256, 256, buffer.as_mut_ptr()) };
+    true
+}
+
+/// One word of the scratch sector through the memory-mapped flash window;
+/// the SDK wrappers flush the cache after every erase or program.
+pub fn scratch_read(word: u32) -> u32 {
+    if word >= SCRATCH_WORDS {
+        return 0;
+    }
+    let address = k::PETLIBRO_SPI_FLASH_BASE + SCRATCH_OFFSET + word * 4;
+    unsafe { ptr::read_volatile(address as usize as *const u32) }
+}
+
 /// Flash-lock provider fault callback: runs from RAM inside `hook_fail`, so
 /// it is leaf code with no call or flash literal (audited). Raw latch writes
 /// request motor STOP (PA13/PA14 HIGH) and infrared OFF (PA15/PB3 LOW); the

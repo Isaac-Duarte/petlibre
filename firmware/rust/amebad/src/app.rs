@@ -1,6 +1,7 @@
 //! KM4 application entry: logs and runs the synthetic diagnostic once.
 //! Stopped-output startup and a bounded indicator probe, then the FW07 stage
-//! C probe: join the configured network and keep it, logging the shim's events.
+//! D probe: join the configured network, check DNS and keep both, logging the
+//! shim's events.
 
 use core::cell::UnsafeCell;
 use core::ffi::c_void;
@@ -33,6 +34,7 @@ fn kind(kind: u32) -> &'static str {
         4 => "dhcp",
         5 => "lost",
         6 => "backoff",
+        7 => "dns",
         _ => "unknown",
     }
 }
@@ -41,10 +43,10 @@ fn log_probe(record: Record) {
     let mut report = startup::Report::new();
     let line = match record {
         Record::Start { created } => {
-            report.record(format_args!("PLWIF2 start created={}\r\n", bit(created)))
+            report.record(format_args!("PLWIF3 start created={}\r\n", bit(created)))
         }
         Record::Event { event: e, stopped } => report.record(format_args!(
-            "PLWIF2 ev seq={} kind={} attempt={} result={} value={:08x} rssi={} security={:08x} ms={} stopped={}\r\n",
+            "PLWIF3 ev seq={} kind={} attempt={} result={} value={:08x} rssi={} security={:08x} ms={} stopped={}\r\n",
             e.seq,
             kind(e.kind),
             e.attempt,
@@ -56,7 +58,7 @@ fn log_probe(record: Record) {
             bit(stopped)
         )),
         Record::Overrun { seq } => {
-            report.record(format_args!("PLWIF2 error overrun seq={seq}\r\n"))
+            report.record(format_args!("PLWIF3 error overrun seq={seq}\r\n"))
         }
     };
     if let Ok(line) = line {

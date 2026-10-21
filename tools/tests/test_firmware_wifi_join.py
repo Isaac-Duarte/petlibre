@@ -21,10 +21,11 @@ LED = b'PLLED1 begin output_only=PA0,PA2,PA4\r\n' + b''.join(
     for pin, status in ((b'PA0', b'output'), (b'PA2', b'output'), (b'PA4', b'output'), (b'PB22', b'pass')) for n in (b'1', b'0', b'1', b'0')) + b'PLLED1 done low=all\r\n'
 KIND = {'on': 0, 'scan': 0, 'connect': 0, 'dhcp': 0, 'lost': 0, 'backoff': 0}
 IP = 0x0a2a0005  # 10.42.0.5
+EXAMPLE = 0x5db8d822  # a public address
 
 
-def ev(seq, kind, attempt=0, result=0, value=0, rssi=0, ms=100, stopped=1):
-    return b'PLWIF2 ev seq=%d kind=%s attempt=%d result=%d value=%08x rssi=%d security=%08x ms=%d stopped=%d\r\n' % (
+def ev(seq, kind, attempt=0, result=0, value=0, rssi=0, ms=100, stopped=1, prefix=b'PLWIF2'):
+    return prefix + b' ev seq=%d kind=%s attempt=%d result=%d value=%08x rssi=%d security=%08x ms=%d stopped=%d\r\n' % (
         seq, kind.encode(), attempt, result, value, rssi, 0x00400004 if kind == 'scan' else 0, ms, stopped)
 
 
@@ -37,10 +38,20 @@ def script():
             (80, 'scan', 4, 0, 1), (82, 'connect', 4, 0, 0), (84, 'dhcp', 4, 2, IP)]
 
 
-def lines(steps=None, edit=None):
+def dns_script():
+    """Join, lookups, the operator's DNS block (two failures, a DNS loss), a rejoin that fails DNS, then recovery."""
+    return [(0, 'on', 0, 0, 0), (4, 'scan', 1, 0, 1), (6, 'connect', 1, 0, 0), (8, 'dhcp', 1, 2, IP),
+            (9, 'dns', 1, 0, EXAMPLE), (14, 'dns', 1, 0, EXAMPLE), (30, 'dns', 1, -3, 0), (45, 'dns', 1, -3, 0),
+            (45, 'lost', 1, 1, 37000), (45, 'backoff', 1, 0, 1000),
+            (50, 'scan', 2, 0, 1), (52, 'connect', 2, 0, 0), (53, 'dhcp', 2, 2, IP), (63, 'dns', 2, -3, 0),
+            (73, 'dns', 2, -3, 0), (73, 'lost', 2, 1, 20000), (73, 'backoff', 2, 0, 2000),
+            (79, 'scan', 3, 0, 1), (81, 'connect', 3, 0, 0), (82, 'dhcp', 3, 2, IP), (83, 'dns', 3, 0, EXAMPLE)]
+
+
+def lines(steps=None, edit=None, prefix=b'PLWIF2'):
     steps = script() if steps is None else steps
-    out = [(6.0, b'PLWIF2 start created=1\r\n')]
-    out += [(7.0 + t, ev(n, k, a, r, v, -45 if k == 'scan' else 0)) for n, (t, k, a, r, v) in enumerate(steps, 1)]
+    out = [(6.0, prefix + b' start created=1\r\n')]
+    out += [(7.0 + t, ev(n, k, a, r, v, -45 if k == 'scan' else 0, prefix=prefix)) for n, (t, k, a, r, v) in enumerate(steps, 1)]
     return edit(out) if edit else out
 
 
@@ -103,7 +114,7 @@ class FirmwareWifiJoin(unittest.TestCase):
         self.assertEqual(report['wifi_attempts'], 4)
         self.assertEqual(report['wifi_backoffs_ms'], [1000, 2000, 4000])
         self.assertEqual([j['address'] for j in report['wifi_joins']], ['10.42.0.5'] * 2)
-        self.assertEqual(report['wifi_losses'], [{'attempt': 1, 'connected_ms': 52000}])
+        self.assertEqual(report['wifi_losses'], [{'attempt': 1, 'cause': 'link', 'connected_ms': 52000}])
         self.assertEqual(report['wifi_first_join_seconds'], 8.0)
         self.assertEqual(report['wifi_rejoin_seconds_after_loss'], 24.0)
         self.assertNotIn('PLWIF2', json.dumps(report))
@@ -148,6 +159,61 @@ class FirmwareWifiJoin(unittest.TestCase):
         chunks.append((finished - 1, startup(self.identity)))
         self.assertEqual(self.audit((chunks, finished))['outcome'], 'startup_repeated_startup')
 
+    def dns(self):
+        self.policy('fw07-dns-v1')
+        self.image(self.base + b' ' + S.WIFI_DNS_MARK)
+
+    def test_dns_loss_and_recovery_pass(self):
+        self.dns()
+        report = self.audit(capture(self.identity, lines(dns_script(), prefix=b'PLWIF3')))
+        self.assertEqual(report['outcome'], 'pass', report)
+        self.assertEqual(report['policy'], 'fw07-dns-v1')
+        self.assertEqual(report['wifi_backoffs_ms'], [1000, 2000])
+        self.assertEqual([x['cause'] for x in report['wifi_losses']], ['dns', 'dns'])
+        self.assertEqual((report['wifi_dns_lookups'], report['wifi_dns_failures']), (7, 4))
+        self.assertEqual(report['wifi_dns_loss_seconds_after_first_lookup'], 36.0)
+        self.assertEqual(report['wifi_dns_recovery_seconds_after_loss'], 38.0)
+        # A hotspot outage while DNS works is a link loss and resets nothing extra.
+        link = dns_script()[:6] + [(20, 'lost', 1, 0, 12000), (20, 'backoff', 1, 0, 1000)] + [
+            (t, k, a, r, v) for t, k, a, r, v in dns_script()[10:]]
+        self.assertEqual(self.audit(capture(self.identity, lines(link, prefix=b'PLWIF3')))['outcome'], 'pass')
+
+    def test_dns_failures_have_distinct_outcomes(self):
+        self.dns()
+        base = dns_script()
+
+        def run(steps, edit=None):
+            return self.audit(capture(self.identity, lines(steps, edit=edit, prefix=b'PLWIF3')))['outcome']
+
+        def at(index, **change):
+            steps = list(base)
+            t, k, a, r, v = steps[index]
+            steps[index] = (t, change.get('kind', k), change.get('attempt', a), change.get('result', r), change.get('value', v))
+            return steps
+        cases = [
+            (base[:4], 'wifi_no_dns'),
+            (base[:6], 'wifi_no_dns_loss'),
+            (base[:-1], 'wifi_no_dns_recovery'),
+            (at(4, value=0), 'wifi_dns'),
+            (at(6, result=0), 'wifi_dns'),
+            (base[:7] + base[8:], 'wifi_dns'),
+            (base[:8] + [(45, 'dns', 1, -3, 0)] + base[8:], 'wifi_dns'),
+            (base[:8], 'wifi_dns'),
+            (at(8, result=0), 'wifi_dns'),
+            (at(8, result=2), 'wifi_attempts'),
+            (at(16, value=1000), 'wifi_backoff'),
+            (base[:4] + base[6:], 'wifi_no_dns_loss'),
+        ]
+        for index, (steps, outcome) in enumerate(cases):
+            with self.subTest(index=index, outcome=outcome):
+                self.assertEqual(run(steps), outcome)
+        self.assertEqual(run(base, edit=lambda o: o + [(200, b'PLWIF2 start created=1\r\n')]), 'wifi_sequence')
+        # DNS events are not part of the join policy.
+        self.policy('fw07-join-v1')
+        self.image(self.base + b' ' + S.WIFI_JOIN_MARK)
+        self.assertEqual(self.audit(capture(self.identity, lines(script()[:4] + [(9, 'dns', 1, 0, EXAMPLE)])))['outcome'],
+                         'wifi_sequence')
+
     def test_policy_binding_both_ways(self):
         good = capture(self.identity)
         self.policy('fw07-scan-v1')
@@ -155,6 +221,10 @@ class FirmwareWifiJoin(unittest.TestCase):
             self.audit(good)
         self.manifest['startup_wifi_policy'] = 'fw07-join-v1'
         self.image(self.base + b' ' + S.WIFI_MARK)
+        with self.assertRaisesRegex(ValueError, 'Wi-Fi'):
+            self.audit(good)
+        self.manifest['startup_wifi_policy'] = 'fw07-dns-v1'
+        self.image(self.base + b' ' + S.WIFI_JOIN_MARK)
         with self.assertRaisesRegex(ValueError, 'Wi-Fi'):
             self.audit(good)
 

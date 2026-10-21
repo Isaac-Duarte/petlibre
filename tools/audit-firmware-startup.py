@@ -45,6 +45,7 @@ ADC_MARK = b'PLADC1 open outputs='  # FW14 read-only power-input samples follow 
 ADC_SUPPLY_MARK = b' supply='  # fw14-adc-v2 samples add internal channel 10
 WIFI_MARK = b'PLWIF1 start created='  # FW07 radio-on and scan records follow the LED probe
 WIFI_JOIN_MARK = b'PLWIF2 start created='  # FW07 join and reconnect events follow the LED probe
+WIFI_DNS_MARK = b'PLWIF3 start created='  # FW07 join, DNS and reconnect events follow the LED probe
 WRITE = {'start': re.compile(rb'PLWRS1 start marker=([0-9a-f]{8}) watchdog=(pass|fail) installed=([01])\r\n'),
          'preimage': re.compile(rb'PLWRS1 preimage id=([0-9a-f]{6}) blank=' + DEC + rb'\r\n'),
          'cycle': re.compile(rb'PLWRS1 cycle n=' + DEC + rb' erase_ticks=' + DEC + rb' blank=' + DEC + rb' program_max=' + DEC
@@ -499,9 +500,10 @@ def startup(rx, manifest, image, identity, arrival=None, end=None):
         else:
             result.update({k: v for k, v in power.items() if k != 'outcome'})
     wifi_policy = manifest.get('startup_wifi_policy')
-    require(wifi_policy in (None, 'fw07-scan-v1', 'fw07-join-v1'), 'Unknown Wi-Fi policy')
+    require(wifi_policy in (None, 'fw07-scan-v1', 'fw07-join-v1', 'fw07-dns-v1'), 'Unknown Wi-Fi policy')
     require((wifi_policy == 'fw07-scan-v1') == (WIFI_MARK in image), 'Wi-Fi policy/artifact mismatch')
     require((wifi_policy == 'fw07-join-v1') == (WIFI_JOIN_MARK in image), 'Wi-Fi join policy/artifact mismatch')
+    require((wifi_policy == 'fw07-dns-v1') == (WIFI_DNS_MARK in image), 'Wi-Fi DNS policy/artifact mismatch')
     require(not wifi_policy or led_policy, 'Wi-Fi probe requires the LED probe policy')
     adc_policy = manifest.get('startup_adc_policy')
     require(adc_policy in (None, 'fw14-adc-v1', 'fw14-adc-v2'), 'Unknown ADC policy')

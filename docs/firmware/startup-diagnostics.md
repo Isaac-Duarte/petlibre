@@ -62,6 +62,7 @@ A HIGH input mismatch remains a failed observation while permitting only the alr
 | `PLADC1` | FW14 read-only power inputs: explicit LP ADC clock/function enable before and after, efuse calibration with decoded offset/gain, then once-a-second samples of PA16/PA17/PA19, stopped readback and 16 conversions each of ADC channels 4 and 5 (min, max, mean, stock-scaled), or a capture error; policy `fw14-adc-v1`, or `fw14-adc-v2`, which adds internal channel 10 (the chip's supply) to each sample |
 | `PLWIF1` | FW07 radio on and scan only: task start, `wifi_on(STA)` result and time, three scans with result, time, count, dropped and stopped readback, one record per kept network (SSID CRC-32, RSSI, channel, security), done or timeout; policy `fw07-scan-v1` |
 | `PLWIF2` | FW07 join and keep: task start, then one record per shim event (radio on, scan, connect, DHCP, link lost, backoff) with sequence, attempt, result, value, RSSI, security, time and stopped readback, or an overrun; policy `fw07-join-v1` |
+| `PLWIF3` | FW07 join, DNS and keep: the `PLWIF2` records plus a `dns` event per lookup (result, resolved IPv4, time); a loss carries its cause (link or DNS); policy `fw07-dns-v1` |
 | `PLSET1` | FW15 settings store power-cut stress: start marker/watchdog/installed, open status/generation/slot/consistency, a batch every 25 saves with generation and save-time maximum, end with save, lease, frozen, phase and fault counts, or save error/skip; policy `fw15-settings-v1` (300 saves at about 8 per second) or `fw15-settings-v2` (1500 back to back, and the open reports the slot it did not load) |
 
 ## FW05 supervision probe capture
@@ -196,6 +197,22 @@ Review 02 starts the WLAN firmware on KM0. `wellfed_wifi_fw_start()` calls `wifi
 With review 02, `FW Enable failed` and `fw cmd fifo full` no longer appear, and the feeder's DHCP DISCOVERs reached the hotspot interface: a host packet capture showed them well formed, with valid checksums. dnsmasq still answered nothing, because the bench host's own nftables input policy dropped all inbound traffic on the hotspot interface. A host firewall is part of the bench setup to check before blaming the firmware.
 
 After the owner allowed DHCP from the hotspot interface, one cold boot passed `fw07-join-v1` (physical, UART plus the dnsmasq journal). `wifi_on` took 149 ms. The first association was rejected with status 30 (try again later), because the access point still held the previous boot's protected association. One 1 s backoff later, attempt 2 joined 24.3 s after radio on: connect took 5.9 s, and DHCP took 3.8 s with a dnsmasq-acknowledged lease. The operator outage was seen as a loss after 30.5 s connected. Backoffs ran 1, 2, 4 and 8 s, and the feeder rejoined 41.7 s after the loss, renewing the same lease in 39 ms. The password never appears in the UART output; the driver prints the SSID. DNS and traffic beyond the hotspot are untested, and the bench host's firewall still blocks them.
+
+## FW07 DNS probe
+
+Policy `fw07-dns-v1` is bound both ways to the `PLWIF3 start created=` record format and requires the LED probe policy. The shim joins as under `fw07-join-v1`. Once it holds a lease, it sends its own A query for `example.com` to the DHCP-provided DNS server (`dns_getserver(0)`) every 5 s, over a UDP socket with a 3 s timeout. It doesn't use lwIP's resolver, whose cache answered the first build's lookups without any network traffic. A lookup succeeds on a response with the query's ID, no truncation, rcode 0 and an A record. Failures are -1 (no server), -2 (socket), -3 (send), -4 (timeout), -5 (mismatch or truncation), -6 (rcode) and -7 (no address). Two consecutive failures are a DNS loss (`lost` with result 1): the shim stops DHCP, releases the address, disconnects and rejoins. A link drop is a loss with result 0, as before. The backoff resets only after a successful lookup, so a network that leases addresses but has no working DNS backs off to 30 s. Records are the `PLWIF2` set under the `PLWIF3` prefix, plus `kind=dns`.
+
+`audit-firmware-wifi-join.py` handles both policies. Under `fw07-dns-v1` a joined attempt is DHCP, lookups, then a loss. A DNS loss must follow exactly two trailing failed lookups. A link loss, or an attempt still joined at the capture end, may not have two. A pass needs a successful lookup, a DNS loss after it, and a successful lookup after that loss. The operator blocks DNS at the access point and then unblocks it; the report gives the loss and recovery times.
+
+### FW07 DNS bench result
+
+Three cold boots on adapter power, with the owner's hotspot (physical, UART plus the bench host's `sudo` journal for block and unblock times).
+
+- The first build, using lwIP's resolver, passed every lookup through a 51 s DNS block, each in 0 ms from its cache.
+- With the explicit query, a boot with no block made 27 lookups in 1–63 ms. One spontaneous 3 s timeout was absorbed, because the next lookup succeeded.
+- The passing boot joined 21.5 s after radio on (the first association was rejected, as before), and three lookups succeeded. The operator blocked DNS on the host. Two timeouts later, 11 s after the block, the feeder declared a DNS loss and rejoined. Each rejoin got a lease and then failed DNS twice, with backoffs of 1, 2 and 4 s. The operator unblocked DNS 50 s after blocking it. The next attempt resolved 10 s later, 48.4 s after the first DNS loss, and the backoff reset; 14 more lookups succeeded. Nothing reset, and the password never appears in the UART output.
+
+DHCP-server loss and lease expiry are not exercised; the lease is 1 h. Traffic beyond the access point is still blocked by the bench host's firewall.
 
 ## Shared-pad prerequisite and current physical findings
 

@@ -17,11 +17,12 @@ use wellfed_amebad::owner::{Owner, OwnerConfig};
 use wellfed_amebad::sdk::fake;
 use wellfed_amebad::watchdog::WatchdogConfig;
 use wellfed_core::feed_controller::{FeedLimits, FeedRequest};
-use wellfed_core::feed_journal::{FeedJournal, JournalConfig, JournalError, JournalIo};
+use wellfed_core::feed_journal::{FeedJournal, JournalConfig, JournalError};
 use wellfed_core::feed_progress::{BowlMode, Direction};
 use wellfed_core::feed_storage::{OwnerRecovery, OwnerResult, OwnerStorage};
 use wellfed_core::flash_coord::{FlashCoord, FlashLimits, FlashReply};
 use wellfed_core::sensor_inputs::SensorLimits;
+use wellfed_core::storage::JournalIo;
 use wellfed_testkit::journal_flash::{FakeJournalFlash, UNIT};
 
 /// Synthetic profile copied from the owner tests; not hardware calibration.

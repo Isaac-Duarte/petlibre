@@ -1,6 +1,6 @@
-use wellfed_core::feed_journal::{RECORD_BYTES, crc32};
 use wellfed_core::feed_progress::BowlMode;
 use wellfed_core::settings_store::{Settings, SettingsStatus, SettingsStore, WEAR_LIMIT};
+use wellfed_core::storage::{RECORD_BYTES, crc32};
 use wellfed_testkit::journal_flash::{FakeJournalFlash, UNIT};
 
 const BINDING: u64 = 0x5046_5731_3502_0001;

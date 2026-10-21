@@ -38,6 +38,7 @@ pub mod flash_coord;
 pub mod motor_gate;
 pub mod sensor_inputs;
 pub mod settings_store;
+pub mod storage;
 pub mod tick_clock;
 
 /// Distances at or beyond this are ambiguous for wrapping millisecond clocks.

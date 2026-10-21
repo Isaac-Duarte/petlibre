@@ -5,9 +5,9 @@ mod common;
 use common::owner::*;
 use wellfed_amebad::owner::{OwnerFault, OwnerState, SubmitResult};
 use wellfed_amebad::sdk::fake;
-use wellfed_core::feed_journal::RECORD_BYTES;
 use wellfed_core::feed_progress::Direction;
 use wellfed_core::feed_storage::OwnerOutcome;
+use wellfed_core::storage::RECORD_BYTES;
 use wellfed_testkit::journal_flash::UNIT;
 
 #[test]

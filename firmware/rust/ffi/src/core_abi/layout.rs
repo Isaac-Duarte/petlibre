@@ -8,9 +8,7 @@ use wellfed_core::feed_controller::{
     FeedController, FeedLimits, FeedReason, FeedRequest, FeedSample, FeedStartResult, FeedState,
     MotorCommand,
 };
-use wellfed_core::feed_journal::{
-    FeedJournal, JournalConfig, JournalError, JournalIo, JournalView,
-};
+use wellfed_core::feed_journal::{FeedJournal, JournalConfig, JournalError, JournalView};
 use wellfed_core::feed_progress::{BowlMode, Direction, FeedProgress, ProgressResult};
 use wellfed_core::feed_storage::{OwnerOutcome, OwnerRecovery, OwnerResult, OwnerStorage};
 use wellfed_core::feedback_events::{
@@ -21,6 +19,7 @@ use wellfed_core::flash_coord::{
 };
 use wellfed_core::motor_gate::{MotorGate, MotorGateFault};
 use wellfed_core::sensor_inputs::{SensorFilter, SensorInputs, SensorLimits, SensorReading};
+use wellfed_core::storage::JournalIo;
 use wellfed_core::tick_clock::TickClock;
 
 /// Size and alignment, then `field = offset` pairs.

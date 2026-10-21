@@ -40,6 +40,7 @@ pub mod sensor_inputs;
 pub mod settings_store;
 pub mod storage;
 pub mod tick_clock;
+pub mod transport;
 
 /// Distances at or beyond this are ambiguous for wrapping millisecond clocks.
 pub const HALF_RANGE: u32 = 0x8000_0000;

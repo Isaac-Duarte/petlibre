@@ -16,6 +16,7 @@ use crate::{
     controller::{FeedInput, FeedRecord, Rejection, ResolveInput, Status},
     mqtt::Request,
     ota_image, ota_trial, probe,
+    replacement::{self, RequestError},
 };
 
 #[derive(Clone)]
@@ -147,8 +148,43 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/ota/trial", post(ota_trial_request))
         .route("/api/ota/trial/resolve", post(ota_trial_resolve))
         .route("/api/probe/query", post(probe_query))
+        .route("/api/replacement/request", post(replacement_request))
         .layer(DefaultBodyLimit::max(4096))
         .with_state(state)
+}
+
+/// One read-only diagnostic request to the replacement firmware. The body is
+/// parsed here so any unsupported operation is a plain 400.
+async fn replacement_request(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Result<Json<Value>, ApiError> {
+    authenticate(&headers, &state)?;
+    let input: replacement::Input = serde_json::from_slice(&body).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error":"expected {\"op\":\"health\"|\"ping\"}"})),
+        )
+    })?;
+    let (send, receive) = oneshot::channel();
+    let offline = |error: RequestError| {
+        let status = match error {
+            RequestError::Unconfigured => StatusCode::NOT_FOUND,
+            RequestError::Offline => StatusCode::SERVICE_UNAVAILABLE,
+        };
+        (status, Json(json!({"error":error.message()})))
+    };
+    state
+        .requests
+        .try_send(Request::Replacement(input.op, send))
+        .map_err(|_| offline(RequestError::Offline))?;
+    let id = tokio::time::timeout(Duration::from_secs(5), receive)
+        .await
+        .map_err(|_| offline(RequestError::Offline))?
+        .map_err(|_| offline(RequestError::Offline))?
+        .map_err(offline)?;
+    Ok(Json(json!({"id":id,"op":input.op})))
 }
 
 async fn probe_query(

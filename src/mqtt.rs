@@ -2,7 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use anyhow::Result;
 use chrono::Utc;
-use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS};
+use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS, SubscribeFilter};
 use tokio::sync::{mpsc, oneshot, watch};
 use tracing::{info, warn};
 
@@ -10,11 +10,13 @@ use crate::{
     config::Config,
     controller::{Controller, FeedInput, FeedRecord, Rejection, ResolveInput, Status},
     ota_image, ota_trial, probe, protocol,
+    replacement::{self, RequestError},
 };
 
 pub type OperationResult = std::result::Result<FeedRecord, Rejection>;
 pub type TrialResult = std::result::Result<ota_trial::Record, Rejection>;
 pub type ProbeResult = std::result::Result<probe::Record, Rejection>;
+pub type ReplacementResult = std::result::Result<uuid::Uuid, RequestError>;
 pub enum Request {
     Feed(FeedInput, oneshot::Sender<OperationResult>),
     Resolve(ResolveInput, oneshot::Sender<OperationResult>),
@@ -25,6 +27,48 @@ pub enum Request {
     ),
     ResolveTrial(ota_trial::ResolveInput, oneshot::Sender<TrialResult>),
     ProbeQuery(probe::Input, oneshot::Sender<ProbeResult>),
+    Replacement(replacement::Op, oneshot::Sender<ReplacementResult>),
+}
+
+/// The controller's status plus the replacement-firmware snapshot at `now`.
+fn publish_status(
+    status: &watch::Sender<Status>,
+    controller: &Controller,
+    tracker: &replacement::Tracker,
+) {
+    let mut value = controller.status.clone();
+    if controller.config.firmware.is_some() {
+        value.replacement = Some(tracker.snapshot(Utc::now()));
+    }
+    status.send_replace(value);
+}
+
+/// Send one allowlisted request on QoS 0 only to fresh, online firmware; never
+/// queued for a later connection.
+fn replacement_request(
+    config: &Config,
+    client: &AsyncClient,
+    tracker: &replacement::Tracker,
+    op: replacement::Op,
+) -> ReplacementResult {
+    if config.firmware.is_none() {
+        return Err(RequestError::Unconfigured);
+    }
+    if !tracker.snapshot(Utc::now()).online {
+        return Err(RequestError::Offline);
+    }
+    let id = uuid::Uuid::new_v4();
+    let payload = serde_json::to_vec(&serde_json::json!({"id": id, "op": op}))
+        .map_err(|_| RequestError::Offline)?;
+    client
+        .try_publish(
+            config.firmware_topic("request"),
+            QoS::AtMostOnce,
+            false,
+            payload,
+        )
+        .map_err(|_| RequestError::Offline)?;
+    Ok(id)
 }
 
 pub async fn run(
@@ -33,6 +77,8 @@ pub async fn run(
     mut requests: mpsc::Receiver<Request>,
     status: watch::Sender<Status>,
 ) -> Result<()> {
+    // Survives reconnects: health ages out rather than vanishing.
+    let mut tracker = replacement::Tracker::default();
     loop {
         let mut options = MqttOptions::new(
             config.server_client_id(),
@@ -50,7 +96,13 @@ pub async fn run(
                 event = eventloop.poll() => {
                     match event {
                         Ok(Event::Incoming(Packet::ConnAck(_))) => {
-                            client.subscribe(config.topic("+/post"),QoS::AtLeastOnce).await?;
+                            // One SUBSCRIBE, so one SUBACK starts the session below.
+                            let mut filters = vec![SubscribeFilter::new(config.topic("+/post"),QoS::AtLeastOnce)];
+                            if config.firmware.is_some() {
+                                filters.push(SubscribeFilter::new(config.firmware_topic("health"),QoS::AtMostOnce));
+                                filters.push(SubscribeFilter::new(config.firmware_topic("reply"),QoS::AtMostOnce));
+                            }
+                            client.subscribe_many(filters).await?;
                             info!("local MQTT server connected");
                         }
                         Ok(Event::Incoming(Packet::SubAck(ack))) => {
@@ -61,6 +113,16 @@ pub async fn run(
                         }
                         Ok(Event::Incoming(Packet::Publish(publish))) => {
                             if publish.retain { warn!("ignored retained device message"); continue; }
+                            if config.firmware.is_some() && publish.topic == config.firmware_topic("health") {
+                                if !tracker.observe_health(&publish.payload,Utc::now()) { warn!("ignored invalid replacement health"); }
+                                publish_status(&status,&controller,&tracker);
+                                continue;
+                            }
+                            if config.firmware.is_some() && publish.topic == config.firmware_topic("reply") {
+                                if !tracker.observe_reply(&publish.payload,Utc::now()) { warn!("ignored invalid replacement reply"); }
+                                publish_status(&status,&controller,&tracker);
+                                continue;
+                            }
                             match protocol::parse(&config,&publish.topic,&publish.payload) {
                                 Ok((channel,message)) => {
                                     let first_seen=controller.status.last_seen.is_none();
@@ -81,7 +143,7 @@ pub async fn run(
                         Err(_) => {
                             warn!("MQTT disconnected; discarding pending outgoing messages");
                             controller.disconnected(Utc::now())?;
-                            status.send_replace(controller.status.clone());
+                            publish_status(&status,&controller,&tracker);
                             break;
                         }
                     }
@@ -107,6 +169,7 @@ pub async fn run(
                         }
                         Request::Resolve(input,response) => { let _ = response.send(controller.resolve(input,Utc::now())); }
                         Request::ResolveTrial(input,response) => { let _ = response.send(controller.resolve_trial(input,Utc::now())); }
+                        Request::Replacement(op,response) => { let _ = response.send(replacement_request(&config,&client,&tracker,op)); }
                         Request::ProbeQuery(input,response) => {
                             let result = match controller.probe_query(input,Utc::now()) {
                                 Ok((record,Some(command))) => {
@@ -137,7 +200,7 @@ pub async fn run(
                 }
                 _ = tick.tick() => { controller.expire(Utc::now())?; }
             }
-            status.send_replace(controller.status.clone());
+            publish_status(&status, &controller, &tracker);
         }
         // Serve API requests while offline without accumulating commands for a
         // future session. All newly submitted feeds are rejected by the controller.
@@ -161,6 +224,10 @@ pub async fn run(
                         Some(Request::ProbeQuery(input,response)) => {
                             let result = controller.probe_query(input,Utc::now()).map(|(record,_)|record);
                             let _ = response.send(result);
+                        }
+                        Some(Request::Replacement(_,response)) => {
+                            let error = if config.firmware.is_some() { RequestError::Offline } else { RequestError::Unconfigured };
+                            let _ = response.send(Err(error));
                         }
                         None => return Ok(()),
                     }

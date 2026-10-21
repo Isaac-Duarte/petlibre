@@ -541,6 +541,66 @@ pub fn log(message: &CStr) {
     print!("{}", message.to_string_lossy());
 }
 
+/// Fixed synthetic broker settings.
+pub fn transport_config() -> Option<TransportConfig> {
+    Some(FAKE_TRANSPORT)
+}
+
+pub const FAKE_TRANSPORT: TransportConfig = TransportConfig {
+    broker: 0x0a2a_6701,
+    port: 1883,
+    client_id: "wellfed-fw-dev1",
+    username: "wellfed-fw",
+    password: b"0123456789abcdef0123456789abcdef",
+    namespace: "wellfed/1/dev1/",
+};
+
+pub fn tcp_connect(_ip: u32, _port: u16, timeout_ms: u32) -> Option<i32> {
+    with(|h| {
+        let result = h.tcp_connects.pop_front().flatten();
+        if result.is_none() {
+            h.uptime_ms = h.uptime_ms.wrapping_add(timeout_ms);
+        }
+        result
+    })
+}
+
+pub fn tcp_send(socket: i32, data: &[u8]) -> bool {
+    with(|h| {
+        if h.tcp_send_fails {
+            return false;
+        }
+        h.tcp_tx.push((socket, data.to_vec()));
+        true
+    })
+}
+
+pub fn tcp_recv(_socket: i32, buffer: &mut [u8], timeout_ms: u32) -> TcpRecv {
+    with(|h| match h.tcp_rx.pop_front() {
+        None | Some(TcpRecvScript::Timeout) => {
+            h.uptime_ms = h.uptime_ms.wrapping_add(timeout_ms);
+            TcpRecv::Timeout
+        }
+        Some(TcpRecvScript::Closed) => TcpRecv::Closed,
+        Some(TcpRecvScript::Data(mut data)) => {
+            let n = data.len().min(buffer.len());
+            buffer[..n].copy_from_slice(&data[..n]);
+            if n < data.len() {
+                h.tcp_rx.push_front(TcpRecvScript::Data(data.split_off(n)));
+            }
+            TcpRecv::Data(n)
+        }
+    })
+}
+
+pub fn tcp_close(socket: i32) {
+    with(|h| h.tcp_closed.push(socket));
+}
+
+pub fn uptime_ms() -> u32 {
+    with(|h| h.uptime_ms)
+}
+
 /// Starts once; tests push `Hardware::wifi_events` as the shim would.
 pub fn wifi_start() -> bool {
     with(|h| {

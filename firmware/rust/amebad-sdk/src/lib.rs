@@ -90,6 +90,29 @@ pub enum WifiPoll {
     Lost,
 }
 
+/// FW08 broker settings, from the generated credentials header the build
+/// writes into the SDK worktree (`example_entry.c`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TransportConfig {
+    /// IPv4, host order.
+    pub broker: u32,
+    pub port: u16,
+    pub client_id: &'static str,
+    pub username: &'static str,
+    pub password: &'static [u8],
+    /// Topic prefix, ending in `/`.
+    pub namespace: &'static str,
+}
+
+/// `tcp_recv` outcome.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TcpRecv {
+    Data(usize),
+    Timeout,
+    /// The peer closed the connection, or the socket failed.
+    Closed,
+}
+
 /// Interrupt lines claimed by the ports.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Irq {

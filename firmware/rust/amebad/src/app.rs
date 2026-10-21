@@ -1,16 +1,18 @@
 //! KM4 application entry: logs and runs the synthetic diagnostic once.
 //! Stopped-output startup and a bounded indicator probe, then the FW07 stage
 //! D probe: join the configured network, check DNS and keep both, logging the
-//! shim's events.
+//! shim's events. Beside it, the FW08 transport task reports health to the
+//! local server's broker.
 
 use core::cell::UnsafeCell;
 use core::ffi::c_void;
 use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
+use crate::health::Boot;
 use crate::probes::wifi::{Probe, Record};
-use crate::startup;
-use crate::{leds, sdk, stopped};
+use crate::transport::{self, Link};
+use crate::{leds, sdk, startup, stopped};
 
 static PHASE: AtomicU32 = AtomicU32::new(0);
 static INPUT_MISMATCH: AtomicBool = AtomicBool::new(false);
@@ -21,6 +23,47 @@ struct Slot<T>(UnsafeCell<Option<T>>);
 // SAFETY: the diagnostic task is the only user; see `probe_step`.
 unsafe impl<T> Sync for Slot<T> {}
 static PROBE: Slot<Probe> = Slot(UnsafeCell::new(None));
+/// Touched only by the transport task; see `net_task`.
+static NET: Slot<Link> = Slot(UnsafeCell::new(None));
+
+/// A transport record as the body of a `PLMQT1` line.
+struct Line(transport::Record);
+
+impl core::fmt::Display for Line {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        transport::describe(self.0, f)
+    }
+}
+
+fn log_transport(record: transport::Record) {
+    let mut report = startup::Report::new();
+    if let Ok(line) = report.record(format_args!("PLMQT1 {}\r\n", Line(record))) {
+        sdk::log(line);
+    }
+}
+
+unsafe extern "C" fn net_task(_: *mut c_void) -> u32 {
+    // SAFETY: only this task touches the slot.
+    let slot = unsafe { &mut *NET.0.get() };
+    if slot.is_none() {
+        let Some(config) = sdk::transport_config() else {
+            sdk::log(c"PLMQT1 error config\r\n");
+            return 0;
+        };
+        *slot = Some(Link::new(config, Boot::read(startup::snapshot())));
+    }
+    slot.as_mut()
+        .map_or(0, |link| link.step(&mut log_transport))
+}
+
+fn start_transport() {
+    let created = sdk::task_create(c"wellfed-net", 1536, 2, net_task, ptr::null_mut());
+    sdk::log(if created {
+        c"PLMQT1 start created=1\r\n"
+    } else {
+        c"PLMQT1 start created=0\r\n"
+    });
+}
 
 fn bit(value: bool) -> u8 {
     u8::from(value)
@@ -128,6 +171,7 @@ unsafe extern "C" fn diagnostic_task(_: *mut c_void) -> u32 {
                 } else {
                     sdk::log(c"PLLED1 done low=all\r\n");
                     PROBING.store(true, Ordering::Relaxed);
+                    start_transport();
                     return 1;
                 }
             } else {

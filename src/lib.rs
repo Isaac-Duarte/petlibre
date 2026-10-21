@@ -12,4 +12,5 @@ pub mod ota_image;
 pub mod ota_trial;
 pub mod probe;
 pub mod protocol;
+pub mod replacement;
 pub mod storage;

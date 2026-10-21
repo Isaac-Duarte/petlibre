@@ -122,6 +122,14 @@ enum Action {
         #[arg(long)]
         note: String,
     },
+    /// Add the replacement-firmware broker role to a stopped server's config and
+    /// write the firmware build's private credential file; never rotates one.
+    FirmwareCredential {
+        #[arg(long, default_value = "private/server.json")]
+        config: PathBuf,
+        #[arg(long, default_value = "private/fw-mqtt.json")]
+        output: PathBuf,
+    },
     /// Explicit feeder-only gateway routing and WAN isolation; needs sudo.
     Network {
         #[command(subcommand)]
@@ -263,6 +271,14 @@ async fn main() -> Result<()> {
                 })?),
             )
             .await?;
+        }
+        Action::FirmwareCredential { config, output } => {
+            config::add_firmware_credential(&config, &output)?;
+            println!(
+                "Added the replacement-firmware role to {} and wrote {}. Restart serve to use it.",
+                config.display(),
+                output.display()
+            );
         }
         Action::Network { action } => match action {
             NetworkAction::Apply { config } => {

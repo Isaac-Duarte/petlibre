@@ -27,7 +27,23 @@ pub struct Config {
     pub binding_response: Option<Value>,
     pub hotspot_interface: String,
     pub target_mac: String,
+    /// Replacement-firmware MQTT role (FW08); absent for stock-only setups.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub firmware: Option<FirmwareConfig>,
 }
+
+// Intentionally no Debug: holds the replacement firmware's broker password.
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FirmwareConfig {
+    pub client_id: String,
+    pub username: String,
+    pub password: String,
+}
+
+pub const FIRMWARE_USERNAME: &str = "wellfed-fw";
+/// Topic-layout version of the replacement-firmware namespace.
+pub const FIRMWARE_TOPIC_VERSION: u32 = 1;
 
 impl Config {
     pub fn load(path: &Path) -> Result<Self> {
@@ -83,6 +99,18 @@ impl Config {
                     .all(|part| part.len() == 2 && u8::from_str_radix(part, 16).is_ok()),
             "invalid target MAC"
         );
+        if let Some(firmware) = &self.firmware {
+            ensure!(
+                firmware.client_id == self.firmware_client_id()
+                    && firmware.username == FIRMWARE_USERNAME,
+                "invalid replacement-firmware identity"
+            );
+            ensure!(
+                firmware.password.len() == 64
+                    && firmware.password.bytes().all(|b| b.is_ascii_hexdigit()),
+                "replacement-firmware password must be 64 hex characters"
+            );
+        }
         Ok(())
     }
 
@@ -93,6 +121,73 @@ impl Config {
     pub fn server_client_id(&self) -> String {
         format!("local-server-{}", self.device_id)
     }
+
+    pub fn firmware_client_id(&self) -> String {
+        format!("wellfed-fw-{}", self.device_id)
+    }
+
+    /// The replacement firmware's namespace, with a trailing slash.
+    pub fn firmware_namespace(&self) -> String {
+        format!("wellfed/{FIRMWARE_TOPIC_VERSION}/{}/", self.device_id)
+    }
+
+    pub fn firmware_topic(&self, suffix: &str) -> String {
+        self.firmware_namespace() + suffix
+    }
+}
+
+/// The private file the replacement-firmware build reads (FW08).
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FirmwareCredential {
+    pub version: u32,
+    pub broker: std::net::Ipv4Addr,
+    pub port: u16,
+    pub device_id: String,
+    pub client_id: String,
+    pub username: String,
+    pub password: String,
+    pub namespace: String,
+}
+
+/// Add the replacement-firmware role to a stopped server's configuration and
+/// write the firmware's private credential file. Refuses an existing role or
+/// output file, so a credential never rotates silently. The output is written
+/// first: if the configuration update then fails, delete it and rerun.
+pub fn add_firmware_credential(config_path: &Path, output: &Path) -> Result<()> {
+    let mut config = Config::load(config_path)?;
+    ensure!(
+        config.firmware.is_none(),
+        "configuration already has a replacement-firmware credential; refusing to rotate it"
+    );
+    ensure!(
+        !output.exists(),
+        "credential file already exists; refusing to replace it"
+    );
+    let std::net::IpAddr::V4(broker) = config.mqtt_listen.ip() else {
+        bail!("MQTT must bind to a specific IPv4 address");
+    };
+    // Same source as the other server secrets: 2 x 122 random bits.
+    let password = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+    let firmware = FirmwareConfig {
+        client_id: config.firmware_client_id(),
+        username: FIRMWARE_USERNAME.to_owned(),
+        password,
+    };
+    let credential = FirmwareCredential {
+        version: 1,
+        broker,
+        port: config.mqtt_listen.port(),
+        device_id: config.device_id.clone(),
+        client_id: firmware.client_id.clone(),
+        username: firmware.username.clone(),
+        password: firmware.password.clone(),
+        namespace: config.firmware_namespace(),
+    };
+    config.firmware = Some(firmware);
+    config.validate()?;
+    storage::write_new_json(output, &credential)?;
+    storage::write_json(config_path, &config)
 }
 
 /// Contributor-specific settings that cannot be inferred from a packet capture.
@@ -194,6 +289,7 @@ pub fn import(
         binding_response,
         hotspot_interface: options.hotspot_interface,
         target_mac: target_mac.context("capture lacks a device source MAC")?,
+        firmware: None,
     };
     config.validate()?;
     storage::write_json(output, &config)

@@ -239,12 +239,23 @@ after one drill boot (hotspot outage plus DNS block) were byte-identical.
 FW07 is Done (no-renewal scope). DHCP-server loss and lease renewal are carried
 to FW27.
 
-**Next: FW08**, the local health and control transport. The design is in
-docs/firmware/local-transport.md: an outbound MQTT 3.1.1 client of the server's
-broker in a new firmware role, a retained health message, and a read-only
-`health`/`ping` request allowlist. Stage A is offline: a core codec, the server
-role, ACL and API, and the no-dispense check. The owner will need one more
-firewall rule (the broker port from the hotspot subnet) before stage B.
+**FW08 stage A (offline, done).** The pieces:
+- `wellfed-core` `transport.rs`: the MQTT subset, session, request parser and
+  health/reply writers.
+- KM4 `transport.rs`, `health.rs` and `net_status.rs`: a second task beside the
+  Wi-Fi probe.
+- C TCP helpers in `example_entry.c`.
+- The server's firmware role, `firmware-credential` command and API.
+- A structural no-dispense check in `tools/check-repository.py`.
+- `audit-firmware-transport.py`.
+
+`private/fw-mqtt.json` now exists. `private/server.json` gained a `firmware`
+section; `private/server.json.before-fw08` is the copy from before. Health and
+the will are not retained, because the broker has retain off.
+
+**Next: FW08 stage B.** The owner adds a firewall input rule for the broker port
+from the hotspot subnet, and restarts `wellfed-local serve`. Then freeze and
+install the build, and capture one boot while watching `/api/status`.
 
 `--interrupted` now also accepts one sector holding the staged target's first
 1–3 program frames followed by erased flash, the state a NAK during programming

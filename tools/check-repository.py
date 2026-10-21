@@ -11,6 +11,51 @@ import sys
 from urllib.parse import unquote, urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
+# FW08 no-dispense rule: network-facing transport code may name only these
+# paths (full matches), so nothing reachable from the network can touch
+# feeding, outputs, settings, flash or updates. Paths whose first segment is
+# capitalized (types, enum variants, Self) are local and always allowed.
+TRANSPORT_ISOLATION = {
+    "firmware/rust/core/src/transport.rs": (r"core::(fmt|str)(::\w+)*", r"fmt::\w+"),
+    "firmware/rust/amebad/src/transport.rs": (
+        r"core::fmt::Write", r"core::str::from_utf8", r"core::fmt::(Result|Formatter|Display)",
+        r"wellfed_core::transport(::\w+)?", r"mqtt::\w+(::\w+)?",
+        r"crate::health(::(Boot|Link|self))?", r"health::(snapshot|Link|Boot)(::default)?",
+        r"crate::net_status", r"net_status::read",
+        r"crate::sdk(::(TcpRecv|TransportConfig|self))?",
+        r"sdk::(tcp_connect|tcp_send|tcp_recv|tcp_close|uptime_ms|TcpRecv|TransportConfig)",
+    ),
+}
+PRIMITIVES = {"u8", "u16", "u32", "u64", "usize", "i8", "i16", "i32", "i64", "isize", "bool", "char", "str"}
+PATH = re.compile(r"\b([A-Za-z_]\w*(?:::\w+)+)")
+USE_GROUP = re.compile(r"\buse\s+([\w:]+)::\{([^}]*)\}")
+
+
+def transport_isolation(errors):
+    for name, allowed in TRANSPORT_ISOLATION.items():
+        path = ROOT / name
+        if not path.is_file():
+            errors.append(f"{name}: transport isolation target missing")
+            continue
+        # Code only: comments may name other modules.
+        code = "\n".join(line.split("//", 1)[0] for line in path.read_text().splitlines())
+        if re.search(r"\b(?:unsafe|extern|mod|include!|static\s+mut)\b", code):
+            errors.append(f"{name}: transport code may not declare modules, externs, unsafe or mutable statics")
+        if re.search(r"\buse\s+[^;]*\*", code):
+            errors.append(f"{name}: transport code may not glob-import")
+        paths = []
+        for base, items in USE_GROUP.findall(code):
+            for item in items.split(","):
+                item = item.strip().split(" as ")[0].strip()
+                if item:
+                    paths.append(base if item == "self" else f"{base}::{item}")
+        code = USE_GROUP.sub("", code)
+        paths += PATH.findall(code)
+        for found in paths:
+            if found[0].isupper() or found.split("::")[0] in PRIMITIVES:
+                continue
+            if not any(re.fullmatch(rule, found) for rule in allowed):
+                errors.append(f"{name}: transport code reaches {found}")
 
 
 def main():
@@ -68,6 +113,7 @@ def main():
                     continue
                 if not dest.is_file():
                     errors.append(f"{path.relative_to(ROOT)}: missing tool dependency {value}")
+    transport_isolation(errors)
     if errors:
         print("\n".join(errors), file=sys.stderr)
         return 1

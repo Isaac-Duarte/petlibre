@@ -103,3 +103,131 @@ fn missing_inputs_or_invalid_network_settings_do_not_write_configuration() {
         assert!(!dir.path().join("server.json").exists());
     }
 }
+
+#[test]
+fn firmware_credential_adds_one_role_writes_a_private_file_and_never_rotates() {
+    let dir = TempDir::new().unwrap();
+    assert!(init(&inputs(&dir)).status.success());
+    let config_path = dir.path().join("server.json");
+    let before = Config::load(&config_path).unwrap();
+    assert!(before.firmware.is_none());
+    // A stock-only configuration has no firmware key at all.
+    let raw: serde_json::Value = serde_json::from_slice(&fs::read(&config_path).unwrap()).unwrap();
+    assert!(raw.get("firmware").is_none());
+
+    let output = dir.path().join("fw-mqtt.json");
+    let args = |out: &std::path::Path| -> Vec<String> {
+        vec![
+            "firmware-credential".into(),
+            "--config".into(),
+            config_path.display().to_string(),
+            "--output".into(),
+            out.display().to_string(),
+        ]
+    };
+    assert!(init(&args(&output)).status.success());
+    let config = Config::load(&config_path).unwrap();
+    let firmware = config.firmware.as_ref().unwrap();
+    assert_eq!(
+        firmware.client_id,
+        format!("wellfed-fw-{}", config.device_id)
+    );
+    assert_eq!(firmware.username, "wellfed-fw");
+    assert_eq!(firmware.password.len(), 64);
+    let credential: serde_json::Value =
+        serde_json::from_slice(&fs::read(&output).unwrap()).unwrap();
+    assert_eq!(credential["version"], 1);
+    assert_eq!(credential["broker"], "127.0.0.1");
+    assert_eq!(credential["port"], 18883);
+    assert_eq!(credential["device_id"], config.device_id.as_str());
+    assert_eq!(credential["client_id"], firmware.client_id.as_str());
+    assert_eq!(credential["username"], "wellfed-fw");
+    assert_eq!(credential["password"], firmware.password.as_str());
+    assert_eq!(
+        credential["namespace"],
+        format!("wellfed/1/{}/", config.device_id).as_str()
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            fs::metadata(&output).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+    // The stock role and its secrets are untouched.
+    assert_eq!(config.device_password, before.device_password);
+    assert_eq!(config.server_password, before.server_password);
+
+    // A second run refuses, whether or not the output exists, and changes nothing.
+    let saved = fs::read(&config_path).unwrap();
+    assert!(!init(&args(&output)).status.success());
+    assert!(!init(&args(&dir.path().join("other.json"))).status.success());
+    assert!(!dir.path().join("other.json").exists());
+    assert_eq!(fs::read(&config_path).unwrap(), saved);
+}
+
+#[test]
+fn firmware_credential_refuses_an_existing_output_without_touching_the_config() {
+    let dir = TempDir::new().unwrap();
+    assert!(init(&inputs(&dir)).status.success());
+    let config_path = dir.path().join("server.json");
+    let output = dir.path().join("fw-mqtt.json");
+    fs::write(&output, "keep").unwrap();
+    let saved = fs::read(&config_path).unwrap();
+    let result = init(&[
+        "firmware-credential".into(),
+        "--config".into(),
+        config_path.display().to_string(),
+        "--output".into(),
+        output.display().to_string(),
+    ]);
+    assert!(!result.status.success());
+    assert_eq!(fs::read(&output).unwrap(), b"keep");
+    assert_eq!(fs::read(&config_path).unwrap(), saved);
+}
+
+#[test]
+fn an_invalid_firmware_section_is_refused() {
+    let mut config = {
+        let dir = TempDir::new().unwrap();
+        assert!(init(&inputs(&dir)).status.success());
+        Config::load(&dir.path().join("server.json")).unwrap()
+    };
+    let good = wellfed_local::config::FirmwareConfig {
+        client_id: config.firmware_client_id(),
+        username: "wellfed-fw".into(),
+        password: "a".repeat(64),
+    };
+    config.firmware = Some(good.clone());
+    assert!(config.validate().is_ok());
+    for (client_id, username, password) in [
+        (
+            "wellfed-fw-other".to_owned(),
+            good.username.clone(),
+            good.password.clone(),
+        ),
+        (
+            good.client_id.clone(),
+            "device".to_owned(),
+            good.password.clone(),
+        ),
+        (
+            good.client_id.clone(),
+            good.username.clone(),
+            "short".to_owned(),
+        ),
+        (
+            good.client_id.clone(),
+            good.username.clone(),
+            "g".repeat(64),
+        ),
+    ] {
+        config.firmware = Some(wellfed_local::config::FirmwareConfig {
+            client_id,
+            username,
+            password,
+        });
+        assert!(config.validate().is_err());
+    }
+}

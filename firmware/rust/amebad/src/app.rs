@@ -1,14 +1,16 @@
 //! KM4 application entry: logs and runs the synthetic diagnostic once.
-//! Stopped-output startup and a bounded indicator probe, then the FW06 boot
-//! handshake probe, which binds the KM0 peer without any lease or flash access.
+//! Stopped-output startup and a bounded indicator probe, then the FW06 stage D
+//! probe: bind the KM0 peer, arm the SDK flash-lock hooks with the lease
+//! provider and read the flash ID through them. Nothing is erased or written.
 
 use core::cell::UnsafeCell;
 use core::ffi::c_void;
 use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
+use crate::flash_hooks::{self, HookProvider, HookTicket};
 use crate::flash_park::Hardware;
-use crate::flash_probe::{Probe, Record};
+use crate::flash_probe::{FlashOps, Probe, Provider, Record};
 use crate::startup;
 use crate::{leds, sdk, stopped};
 
@@ -16,11 +18,58 @@ static PHASE: AtomicU32 = AtomicU32::new(0);
 static INPUT_MISMATCH: AtomicBool = AtomicBool::new(false);
 static HANDSHAKE: AtomicBool = AtomicBool::new(false);
 
-/// Fixed-address probe storage, touched only by the diagnostic task.
-struct ProbeSlot(UnsafeCell<Option<Probe>>);
-// SAFETY: only the single diagnostic task accesses the slot.
-unsafe impl Sync for ProbeSlot {}
-static PROBE: ProbeSlot = ProbeSlot(UnsafeCell::new(None));
+/// Fixed-address storage touched only by the diagnostic task, except that
+/// the armed hooks reach the provider through its context pointer.
+struct Slot<T>(UnsafeCell<Option<T>>);
+// SAFETY: the diagnostic task is the only direct user; see `probe_step`.
+unsafe impl<T> Sync for Slot<T> {}
+static PROBE: Slot<Probe> = Slot(UnsafeCell::new(None));
+static PROVIDER: Slot<Provider> = Slot(UnsafeCell::new(None));
+
+unsafe extern "C" fn hook_ready(context: *mut c_void) -> bool {
+    // SAFETY: the context is the fixed provider; called with no lease held.
+    unsafe { (*context.cast::<Provider>()).ready() }
+}
+
+unsafe extern "C" fn hook_acquire(context: *mut c_void, ticket: *mut HookTicket) -> bool {
+    // SAFETY: as above; the interposer passes a live ticket.
+    unsafe { (*context.cast::<Provider>()).acquire::<Hardware>(&mut *ticket) }
+}
+
+unsafe extern "C" fn hook_release(context: *mut c_void, ticket: *const HookTicket) -> bool {
+    // SAFETY: as above.
+    unsafe { (*context.cast::<Provider>()).release::<Hardware>(&*ticket) }
+}
+
+/// KM4 never parks for KM0: a flash IPC request from KM0 is a hook fault.
+unsafe extern "C" fn hook_peer(_context: *mut c_void, _status: u32, _channel: u32) -> bool {
+    false
+}
+
+struct SdkHooks;
+
+impl FlashOps for SdkHooks {
+    fn install(provider: *mut Provider) -> bool {
+        let hooks = HookProvider {
+            context: provider.cast(),
+            ready: Some(hook_ready),
+            acquire: Some(hook_acquire),
+            release: Some(hook_release),
+            peer: Some(hook_peer),
+            fault: Some(sdk::petlibro_amebad_flash_provider_fault),
+        };
+        // SAFETY: the interposer copies the callbacks; the provider is static.
+        unsafe { flash_hooks::petlibro_amebad_flash_hooks_install(&hooks) }
+    }
+
+    fn read_id() -> [u8; 3] {
+        sdk::flash_read_jedec()
+    }
+
+    fn armed() -> bool {
+        flash_hooks::petlibro_amebad_flash_hooks_armed()
+    }
+}
 
 fn bit(value: bool) -> u8 {
     u8::from(value)
@@ -48,54 +97,38 @@ fn log_probe(record: Record) {
         Record::Timeout { ms } => report.record(format_args!("PLFLS1 error timeout ms={ms}\r\n")),
         Record::Foreign => report.record(format_args!("PLFLS1 foreign\r\n")),
         Record::Start {
-            mode,
             marker,
             watchdog,
+            installed,
         } => report.record(format_args!(
-            "PLPRK1 start mode={} marker={marker:08x} watchdog={}\r\n",
-            mode.0,
+            "PLRDS1 start marker={marker:08x} watchdog={} installed={}\r\n",
             if watchdog { "pass" } else { "fail" },
+            bit(installed),
         )),
         Record::Skip { marker } => {
-            report.record(format_args!("PLPRK1 skip marker={marker:08x}\r\n"))
+            report.record(format_args!("PLRDS1 skip marker={marker:08x}\r\n"))
         }
         Record::Batch {
-            leases,
+            reads,
+            id,
+            mismatches,
             park_max,
             release_max,
             frozen,
             alive,
         } => report.record(format_args!(
-            "PLPRK1 batch leases={leases} park_max={park_max} release_max={release_max} frozen={frozen} alive={alive}\r\n"
+            "PLRDS1 batch reads={reads} id={:02x}{:02x}{:02x} mismatches={mismatches} park_max={park_max} release_max={release_max} frozen={frozen} alive={alive}\r\n",
+            id[0], id[1], id[2],
         )),
-        Record::LeaseError {
-            lease,
-            stage,
-            reply,
+        Record::Done {
+            reads,
+            leases,
             phase,
             fault,
-            diag,
         } => report.record(format_args!(
-            "PLPRK1 error lease={lease} stage={} reply={} phase={} fault={} own={:08x} peer={:08x} km0={:08x} ier={:08x} isr={:08x} ticks={}\r\n",
-            stage.0, reply.0, phase.0, fault.0, diag.own, diag.peer, diag.km0, diag.ier, diag.isr, diag.ticks,
+            "PLRDS1 done reads={reads} leases={leases} phase={} fault={}\r\n",
+            phase.0, fault.0,
         )),
-        Record::Inject {
-            mode,
-            lease,
-            begin,
-            peer,
-            ms,
-        } => report.record(format_args!(
-            "PLPRK1 inject mode={} lease={lease} begin={} peer={peer:08x} ms={ms}\r\n",
-            mode.0,
-            bit(begin),
-        )),
-        Record::Done { leases, marker } => report.record(format_args!(
-            "PLPRK1 done leases={leases} marker={marker:08x}\r\n"
-        )),
-        Record::NoReset { ms } => {
-            report.record(format_args!("PLPRK1 error no_reset ms={ms}\r\n"))
-        }
         Record::ClockError => report.record(format_args!("PLFLS1 error clock\r\n")),
     };
     if let Ok(line) = line {
@@ -104,9 +137,13 @@ fn log_probe(record: Record) {
 }
 
 fn probe_step() -> u32 {
-    // SAFETY: only this task touches the slot; the probe never moves once stored.
+    // SAFETY: only this task creates references into the slots; the provider
+    // is reached by raw pointer so hook callbacks never alias a live borrow.
     let probe = unsafe { &mut *PROBE.0.get() }.get_or_insert_with(Probe::default);
-    let step = probe.step::<Hardware>();
+    let provider =
+        unsafe { &mut *PROVIDER.0.get() }.get_or_insert_with(Provider::default) as *mut Provider;
+    // SAFETY: the provider slot is fixed for the program's lifetime.
+    let step = unsafe { probe.step::<Hardware, SdkHooks>(provider) };
     if let Some(record) = step.record {
         log_probe(record);
     }

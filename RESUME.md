@@ -7,7 +7,7 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
-**FW06 (real flash coordination) is in progress: stages A–C are done, and stage D is next.**
+**FW06 (real flash coordination) is in progress: stages A–D are done, and stage E needs an owner decision.**
 FW05 is done (motion-disabled scope) and FW04 is done (output-only scope); their
 results are in [startup diagnostics](docs/firmware/startup-diagnostics.md) and
 the board's carried-items table.
@@ -32,8 +32,11 @@ The FW06 plan has five stages, each with a write-free bench check until the last
   Across every lease, KM0's heartbeat stayed frozen while parked and advanced
   between leases. The worst park took 6 ticks (about 0.2 ms) and the worst
   release 2. No flash was touched; the park loops run from RAM on both cores.
-- **D, next.** A real mediated SDK flash call that writes nothing (status or
-  JEDEC ID read through the armed hooks).
+- **D, mediated read (physical, passed).** KM4 installed its lease provider in
+  the SDK flash-lock hooks, then read the JEDEC ID 100 times through the SDK's
+  RAM `FLASH_RxCmdXIP` (lock, ROM read-ID in SPIC user mode, unlock). All
+  reads returned `c84017` in 100 leases, with KM0 frozen during each. The
+  coordinator stayed idle and unfaulted, and the platform did not reset.
 - **E.** One scratch-sector write. It needs the owner's decision first.
 
 Bench lessons from stage C:
@@ -52,19 +55,19 @@ Bench lessons from stage C:
 
 ## What is actually installed
 
-The research feeder runs **FW06 park review 03** in bank 1, starting at flash
-offset `0x186000`. It was installed through the changed-sector updater (8 sectors
-verified).
+The research feeder runs **FW06 read review 01** (stage D) in bank 1, starting
+at flash offset `0x186000`. It was installed through the changed-sector updater
+(20 sectors verified).
 
 | Identity | Recorded value |
 | --- | --- |
-| OTA SHA-256 | `caa1e390e4c198d5190d9d67d8e338fc51fee9845924b1e67d6f1bea2bd1b8e9` |
-| Embedded startup build ID | `ba8ff75832ddfa8dde4000a39c7876936b78447e517e74a432acde23654befa9` |
+| OTA SHA-256 | `2499d11f006144d1fc3104cfa0494827ee77f6cb0fc61704910ad9e4fbf5b612` |
+| Embedded startup build ID | `8bec2903c46f3734d02f9bb427ba3d11ffe368214e3c8b1bbb74f0f5365ea8db` |
 
-**Every cold power-on runs the injected faults:** expect three boots about 25 s
-apart, then idle. The image runs no feeding code and never commands motion.
-Current source has widened watchdog bounds, so it differs from the installed
-artifact. Its frozen review is the source of the next update.
+Each power-on runs the startup, the LED sequence, the handshake and 100
+mediated ID reads, then idles with the watchdog fed. Nothing is erased or
+written, and the image never commands motion. Its frozen review is the source
+of the next update.
 
 ## Last confirmed physical state
 

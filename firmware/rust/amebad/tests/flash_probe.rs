@@ -1,19 +1,21 @@
-//! KM4 handshake and lease probe against the fake SDK and a shared IPC model.
-//! The KM0 side is modelled inline: it answers HELLO through the real
-//! `Peer::step`, and acknowledges/releases park requests on SYSTIMER reads,
-//! as the parked core's RAM loop would. Watchdog expiry ends a boot; backup
-//! registers survive it and are cleared by power loss.
+//! KM4 handshake and hooked flash-read probe against the fake SDK and a shared
+//! IPC model. KM0 is modelled inline: it answers HELLO through the real
+//! `Peer::step` and acknowledges/releases park requests on SYSTIMER reads, as
+//! the parked core's RAM loop would. The fake hooks enforce the interposer's
+//! acquire/release context checks around each read.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
+use petlibro_amebad::flash_hooks::HookTicket;
 use petlibro_amebad::flash_park::{
     self, ACK, Mmio, RELEASE, RELEASED, REQUEST, SYSTICK_CTRL, TICKS, TIMEOUT,
 };
 use petlibro_amebad::flash_peer::{
-    BACKUP_BASE, HEARTBEAT_REGISTER, INJECT_LEASE, MARKER_REGISTER, PARK_CHANNEL, PARK_TICK_LIMIT,
-    Peer,
+    BACKUP_BASE, MARKER_REGISTER, PARK_CHANNEL, PARK_TICK_LIMIT, Peer,
 };
-use petlibro_amebad::flash_probe::{FAILED_MARKER, LEASES, LeaseStage, Mode, Probe, Record};
+use petlibro_amebad::flash_probe::{
+    ATTEMPT_MARKER, EXPECTED_ID, FlashOps, LeaseStage, Probe, Provider, READS, Record,
+};
 use petlibro_amebad::sdk::{self, fake};
 use petlibro_amebad::stopped;
 use petlibro_core::flash_coord::{FlashFault, FlashPhase, FlashReply};
@@ -31,6 +33,8 @@ struct Km0 {
 
 thread_local! {
     static KM0: RefCell<Km0> = RefCell::new(Km0::default());
+    static PROVIDER: Cell<*mut Provider> = const { Cell::new(std::ptr::null_mut()) };
+    static READ_ID: Cell<[u8; 3]> = const { Cell::new(EXPECTED_ID) };
 }
 
 fn km0<R>(f: impl FnOnce(&mut Km0) -> R) -> R {
@@ -39,7 +43,6 @@ fn km0<R>(f: impl FnOnce(&mut Km0) -> R) -> R {
 
 /// The parked KM0's behaviour, run whenever KM4 samples the shared counter.
 fn react() {
-    let marker = fake::with(|h| h.backup[MARKER_REGISTER as usize]);
     km0(|m| {
         if m.halted {
             return;
@@ -48,13 +51,11 @@ fn react() {
         match m.parked_lease {
             None if km4[10] == REQUEST && !m.deaf => {
                 let lease = km4[6];
-                let fresh = m.regs[0][6] != lease || m.regs[0][10] == RELEASED;
-                if fresh && !(u64::from(lease) == INJECT_LEASE && marker == 1) {
-                    let mut reply = km4;
-                    reply[10] = ACK;
-                    for i in [2, 3, 4, 5, 6, 9, 10] {
-                        m.regs[0][i] = reply[i];
+                if m.regs[0][6] != lease || m.regs[0][10] == RELEASED {
+                    for i in [2, 3, 4, 5, 6, 9] {
+                        m.regs[0][i] = km4[i];
                     }
+                    m.regs[0][10] = ACK;
                     m.parked_lease = Some(lease);
                     m.parked_at = sdk::systimer_ticks();
                 }
@@ -123,112 +124,138 @@ fn locate(address: u32) -> (usize, usize) {
     (core, (((address & 0xfff) - 0x20) / 4) as usize)
 }
 
-/// Fresh hardware for one boot with the given backup registers. Host
-/// registration pointers are thread-local, so each boot runs in a new thread
-/// (see `platform_boot`), as a platform reset clears RAM.
-fn boot(backup: [u32; 8], deaf: bool) -> (Box<Probe>, Peer) {
-    fake::reset_hardware();
-    fake::with(|h| {
-        h.backup = backup;
-        h.interrupts = 1;
-    });
-    assert!(stopped::initialize().verified());
-    fake::with(|h| h.interrupts = 0);
-    km0(|m| {
-        *m = Km0 {
-            deaf,
-            ..Km0::default()
+/// A hook fault: the target halts in RAM; the model stops the boot here.
+struct HookFault;
+
+/// The interposer's contract around one SDK lock/unlock pair.
+struct Hooks;
+
+impl FlashOps for Hooks {
+    fn install(provider: *mut Provider) -> bool {
+        // SAFETY: the test's provider outlives the boot.
+        let ready = unsafe { (*provider).ready() };
+        if ready {
+            PROVIDER.with(|p| p.set(provider));
         }
-    });
-    (Box::default(), Peer::default())
+        ready && sdk::primask() == 0
+    }
+
+    fn read_id() -> [u8; 3] {
+        let provider = PROVIDER.with(Cell::get);
+        assert!(!provider.is_null());
+        let mut ticket = HookTicket::default();
+        // SAFETY: the provider is live; the probe does not hold it across this.
+        let p = unsafe { &mut *provider };
+        if !p.acquire::<Core<false>>(&mut ticket) {
+            std::panic::panic_any(HookFault);
+        }
+        assert_eq!(sdk::primask(), 1, "acquire returns with IRQs masked");
+        assert_eq!(sdk::systick_ctrl() & flash_park::SYSTICK_CONTROL_BITS, 0);
+        assert!(ticket.id != 0 && ticket.saved_systick & !7 == 0);
+        // The ROM command runs with XIP unavailable: KM0 must be parked.
+        assert!(km0(|m| m.parked_lease.is_some()));
+        let id = READ_ID.with(Cell::get);
+        if !p.release::<Core<false>>(&ticket) {
+            std::panic::panic_any(HookFault);
+        }
+        assert_eq!(sdk::primask(), 1, "release keeps IRQs masked");
+        sdk::set_systick_ctrl(ticket.saved_systick);
+        sdk::set_primask(0);
+        id
+    }
+
+    fn armed() -> bool {
+        !PROVIDER.with(Cell::get).is_null()
+    }
 }
 
 struct Boot {
     records: Vec<Record>,
-    reset: bool,
+    faulted: bool,
     backup: [u32; 8],
     rings: u32,
-    km0_halted: bool,
-    watchdog_armed: bool,
+    provider: Provider,
 }
 
-fn platform_boot(backup: [u32; 8], deaf: bool) -> Boot {
+/// One boot in a fresh thread (registration pointers are thread-local, and
+/// a platform reset clears RAM); backup registers carry across.
+fn platform_boot(backup: [u32; 8], deaf: bool, id: [u8; 3]) -> Boot {
     std::thread::spawn(move || {
-        let (mut probe, mut peer) = boot(backup, deaf);
-        let (records, reset) = run(&mut probe, &mut peer);
+        fake::reset_hardware();
+        fake::with(|h| {
+            h.backup = backup;
+            h.interrupts = 1;
+        });
+        assert!(stopped::initialize().verified());
+        fake::with(|h| h.interrupts = 0);
+        km0(|m| {
+            *m = Km0 {
+                deaf,
+                ..Km0::default()
+            }
+        });
+        READ_ID.with(|c| c.set(id));
+        let mut probe = Box::<Probe>::default();
+        let mut provider = Box::<Provider>::default();
+        let mut peer = Peer::default();
+        let mut records = Vec::new();
+        let mut faulted = false;
+        let mut idle = 0;
+        'boot: for _ in 0..100_000 {
+            let raw: *mut Provider = &mut *provider;
+            let step = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
+                probe.step::<Core<false>, Hooks>(raw)
+            }));
+            let Ok(step) = step else {
+                faulted = true;
+                break;
+            };
+            if matches!(
+                records.last(),
+                Some(
+                    Record::Done { .. }
+                        | Record::Start {
+                            installed: false,
+                            ..
+                        }
+                )
+            ) {
+                idle += 1;
+            }
+            records.extend(step.record);
+            if step.delay_ms == 0 || idle > 20 {
+                break;
+            }
+            for _ in 0..step.delay_ms {
+                fake::advance(33, false);
+                react();
+                if fake::with(|h| h.watchdog_expired) {
+                    break 'boot;
+                }
+                if !km0(|m| m.halted || m.parked_lease.is_some()) {
+                    peer.step::<Core<true>>(1, sdk::systimer_ticks());
+                }
+            }
+        }
         Boot {
             records,
-            reset,
+            faulted,
             backup: fake::with(|h| h.backup),
             rings: km0(|m| m.rings),
-            km0_halted: km0(|m| m.halted),
-            watchdog_armed: probe.watchdog.armed,
+            provider: std::mem::take(&mut *provider),
         }
     })
     .join()
     .unwrap()
 }
 
-/// Run one boot until the probe ends, the watchdog expires, or it idles.
-fn run(probe: &mut Probe, peer: &mut Peer) -> (Vec<Record>, bool) {
-    let mut records = Vec::new();
-    let mut idle_steps = 0;
-    for _ in 0..200_000 {
-        let step = probe.step::<Core<false>>();
-        if matches!(records.last(), Some(Record::Done { .. })) {
-            idle_steps += 1;
-        }
-        records.extend(step.record);
-        if step.delay_ms == 0 || idle_steps > 40 {
-            break;
-        }
-        for _ in 0..step.delay_ms {
-            fake::advance(33, false);
-            react();
-            if fake::with(|h| h.watchdog_expired) {
-                return (records, true);
-            }
-            if !km0(|m| m.halted || m.parked_lease.is_some()) {
-                peer.step::<Core<true>>(1, sdk::systimer_ticks());
-            }
-        }
-    }
-    (records, false)
-}
-
-fn batches(records: &[Record]) -> Vec<Record> {
-    records
-        .iter()
-        .copied()
-        .filter(|r| matches!(r, Record::Batch { .. }))
-        .collect()
-}
-
-fn assert_clean_leases(records: &[Record]) {
-    let b = batches(records);
-    assert_eq!(b.len(), (LEASES / 25) as usize, "{records:?}");
-    let Record::Batch {
-        leases,
-        frozen,
-        alive,
-        park_max,
-        release_max,
-    } = b[3]
-    else {
-        unreachable!()
-    };
-    assert_eq!((leases, frozen), (LEASES, LEASES));
-    assert!(alive >= LEASES - 1, "{records:?}");
-    assert!(park_max > 0 && release_max > 0);
-}
-
 #[test]
-fn three_boots_inject_both_faults_then_run_clean() {
-    let first = platform_boot([0; 8], false);
-    let records = &first.records;
-    assert!(matches!(records[0], Record::Hello { count: 1, .. }));
+fn hooked_reads_lease_park_and_release_every_time() {
+    let boot = platform_boot([0; 8], false, EXPECTED_ID);
+    let r = &boot.records;
+    assert!(matches!(r[0], Record::Hello { count: 1, .. }));
     assert!(matches!(
-        records[1],
+        r[1],
         Record::Ready {
             reply: FlashReply::ACCEPTED,
             phase: FlashPhase::IDLE,
@@ -238,118 +265,100 @@ fn three_boots_inject_both_faults_then_run_clean() {
         }
     ));
     assert_eq!(
-        records[2],
+        r[2],
         Record::Start {
-            mode: Mode::WITHHELD_ACK,
             marker: 0,
-            watchdog: true
+            watchdog: true,
+            installed: true
         }
     );
-    assert_clean_leases(records);
-    let Some(Record::Inject {
-        mode: Mode::WITHHELD_ACK,
-        lease,
-        begin: false,
-        ..
-    }) = records.last()
-    else {
-        panic!("{records:?}");
-    };
-    assert_eq!(*lease, INJECT_LEASE);
-    assert!(first.reset && first.backup[MARKER_REGISTER as usize] == 1);
-    assert_eq!(first.rings, INJECT_LEASE as u32);
-
-    let second = platform_boot(first.backup, false);
-    let records = &second.records;
-    assert!(matches!(records[0], Record::Hello { count: 2, .. }));
-    assert!(matches!(
-        records[2],
-        Record::Start {
-            mode: Mode::WITHHELD_RELEASE,
-            marker: 1,
-            ..
-        }
-    ));
-    assert_clean_leases(records);
-    let injections: Vec<_> = records
+    let batches: Vec<_> = r
         .iter()
-        .filter(|r| matches!(r, Record::Inject { .. }))
+        .filter_map(|x| match x {
+            Record::Batch {
+                reads,
+                id,
+                mismatches,
+                frozen,
+                alive,
+                park_max,
+                release_max,
+            } => Some((
+                *reads,
+                *id,
+                *mismatches,
+                *frozen,
+                *alive,
+                *park_max,
+                *release_max,
+            )),
+            _ => None,
+        })
         .collect();
-    assert!(
-        matches!(
-            injections[..],
-            [
-                Record::Inject {
-                    mode: Mode::WITHHELD_RELEASE,
-                    begin: true,
-                    ..
-                },
-                Record::Inject {
-                    mode: Mode::WITHHELD_RELEASE,
-                    begin: true,
-                    peer: TIMEOUT,
-                    ..
-                },
-            ]
-        ),
-        "{records:?}"
-    );
-    assert!(second.reset && second.km0_halted && second.backup[MARKER_REGISTER as usize] == 2);
-
-    let third = platform_boot(second.backup, false);
-    let records = &third.records;
-    assert!(matches!(
-        records[2],
-        Record::Start {
-            mode: Mode::NONE,
-            marker: 2,
-            ..
-        }
-    ));
-    assert_clean_leases(records);
+    assert_eq!(batches.len(), 4, "{r:?}");
+    let (reads, id, mismatches, frozen, alive, park, release) = batches[3];
     assert_eq!(
-        records.last(),
+        (reads, id, mismatches, frozen),
+        (READS, EXPECTED_ID, 0, u64::from(READS))
+    );
+    assert!(alive >= READS - 1 && park > 0 && release > 0);
+    assert_eq!(
+        r.last(),
         Some(&Record::Done {
-            leases: LEASES,
-            marker: 2
+            reads: READS,
+            leases: u64::from(READS),
+            phase: FlashPhase::IDLE,
+            fault: FlashFault::OK
         })
     );
-    // Idle keeps feeding: no reset, and the marker is cleared for the next power-on.
-    assert!(!third.reset && third.backup[MARKER_REGISTER as usize] == 0);
+    assert!(!boot.faulted && boot.backup[MARKER_REGISTER as usize] == 0);
+    assert_eq!(boot.rings, READS);
 }
 
 #[test]
-fn lease_failure_resets_once_then_the_next_boot_skips() {
-    let first = platform_boot([0; 8], true);
-    assert!(
-        matches!(
-            first.records.last(),
-            Some(Record::LeaseError {
-                lease: 1,
-                stage: LeaseStage::BEGIN,
-                ..
-            })
-        ),
-        "{:?}",
-        first.records
+fn wrong_id_is_counted_not_hidden() {
+    let boot = platform_boot([0; 8], false, [0xef, 0x40, 0x17]);
+    let Some(Record::Batch { mismatches, .. }) = boot
+        .records
+        .iter()
+        .rev()
+        .find(|x| matches!(x, Record::Batch { .. }))
+    else {
+        panic!("{:?}", boot.records);
+    };
+    assert_eq!(*mismatches, READS);
+}
+
+#[test]
+fn silent_peer_faults_the_hook_then_the_next_boot_skips() {
+    let first = platform_boot([0; 8], true, EXPECTED_ID);
+    assert!(first.faulted, "{:?}", first.records);
+    assert_eq!(
+        first.provider.failure,
+        Some((LeaseStage::BEGIN, FlashReply::FAILED))
     );
-    assert!(first.reset && first.backup[MARKER_REGISTER as usize] == FAILED_MARKER);
-    let second = platform_boot(first.backup, true);
+    assert_eq!(first.backup[MARKER_REGISTER as usize], ATTEMPT_MARKER);
+    let second = platform_boot(first.backup, false, EXPECTED_ID);
     assert_eq!(
         second.records.last(),
         Some(&Record::Skip {
-            marker: FAILED_MARKER
+            marker: ATTEMPT_MARKER
         })
     );
-    assert!(!second.reset && second.backup[MARKER_REGISTER as usize] == 0);
-    assert!(!second.watchdog_armed);
+    assert_eq!(second.backup[MARKER_REGISTER as usize], 0);
 }
 
 #[test]
-fn peer_heartbeat_register_is_the_one_km4_reads() {
-    let (_, mut peer) = boot([0; 8], false);
-    peer.step::<Core<true>>(1, 0);
-    peer.step::<Core<true>>(1, 1);
-    assert_eq!(sdk::backup_read(HEARTBEAT_REGISTER), 2);
-    assert_eq!(flash_park::peer_words::<Core<false>>(), None);
+fn stale_ticket_is_refused() {
+    let boot = platform_boot([0; 8], false, EXPECTED_ID);
+    let mut provider = boot.provider;
+    let ticket = HookTicket {
+        id: provider.coord.token.lease + 7,
+        saved_systick: 0,
+    };
+    assert!(!provider.release::<Core<false>>(&ticket));
+    assert_eq!(
+        provider.failure,
+        Some((LeaseStage::TICKET, FlashReply::STALE))
+    );
 }

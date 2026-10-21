@@ -5,7 +5,7 @@ This board tracks replacement-firmware integration, dependencies, and acceptance
 ## Current status
 
 - **Done:** FW01–FW05, three of them with recorded scope limits (see carried items).
-- **In progress:** FW06, real flash coordination. Stages A–C are done: production watchdog and lease constants, a boot handshake, and a park round trip with injected faults. Stage C passed on hardware. Next is stage D, a mediated SDK flash call that writes nothing.
+- **In progress:** FW06, real flash coordination. Stages A–D are done and the last three passed on hardware: production constants, a boot handshake, a park round trip with injected faults, and 100 SDK-mediated flash ID reads through the armed hooks. Stage E, one scratch-sector write, waits on an owner decision.
 - **Critical path to feeding:** FW06 → FW13/FW14/FW15 → FW30 → FW16 → FW17.
 
 ### Carried items

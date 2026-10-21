@@ -68,6 +68,7 @@ mod sdk {
         "_rtl_printf",
         "BOOT_Reason",
         "BKUP_Read",
+        "FLASH_RxCmdXIP",
         "BKUP_Write",
     ];
     const TYPES: &[&str] = &[

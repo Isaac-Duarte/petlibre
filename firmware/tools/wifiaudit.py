@@ -1,8 +1,9 @@
-"""Audit flash-write and eFuse-write reachability in the KM4 image (FW07).
+"""Audit flash-write and eFuse-write reachability in both core images (FW07).
 
 Linking the Wi-Fi driver brings in code that can program eFuse, which is
 one-time programmable, and the SDK's Wi-Fi flash users default to sectors
-inside the application bank. This checks the linked image, not runtime
+inside the application bank. KM0 now also links the WLAN firmware
+(lib_wifi_fw.a). This checks the linked images, not runtime
 behavior: references are direct branches (through veneers too) and 32-bit
 words anywhere in loaded bytes equal to a function's address, attributed to
 the enclosing symbol. Register-computed calls are not visible here.
@@ -31,7 +32,7 @@ WRITES = re.compile(r"^(EFUSE_LogicalMap_Write|EFUSE_PG_Packet|EFUSEWrite8|EFUSE
 # cmd_flash and cmd_efuse_protect live in the vendor shell command table, which
 # the linker script keeps; no shell entry is linked, and the table's only other
 # reference is the empty init arrays that share its address.
-EXPECTED = {
+EXPECTED_HP = {
     "EFUSE_LogicalMap_Write": {"rtw_config_map_write", "cmd_efuse_protect"},
     "EFUSEWrite8": {"cmd_efuse_protect"},
     "rtw_config_map_write": {"rtw_ex_set"},
@@ -50,6 +51,35 @@ EXPECTED = {
     "shell_cmd_table": {"__libc_init_array", "CmdRamHelp"},
     "CmdRamHelp": {"shell_cmd_table"},
 }
+# KM0 with the WLAN firmware linked: lib_wifi_fw.a itself imports no flash,
+# eFuse or shell symbol. The SDK's flash setup (flash_operation_config,
+# flash_rx_mode_switch) writes the status register at boot, before KM4 runs.
+# The ROM shell is a symbol only; nothing references its entries.
+EXPECTED_LP = {
+    "EFUSE_LogicalMap_Write": {"cmd_efuse_protect"},
+    "EFUSEWrite8": {"cmd_efuse_extpath_write", "cmd_efuse_protect"},
+    "EFUSE_PG_Packet": set(),
+    "FLASH_Erase": {"FLASH_EraseXIP"},
+    "FLASH_SetStatus": {"FLASH_SetStatusXIP", "flash_operation_config", "flash_rx_mode_switch"},
+    "FLASH_SetStatusBits": {"FLASH_SetStatusBitsXIP"},
+    "FLASH_TxData12B": {"FLASH_TxData12BXIP", "FLASH_WriteStream"},
+    "FLASH_TxData256B": {"FLASH_TxData256BXIP"},
+    "FLASH_EraseXIP": {"FLASH_EreaseDwordsXIP"},
+    "FLASH_TxData12BXIP": {"FLASH_EreaseDwordsXIP"},
+    "FLASH_EreaseDwordsXIP": set(),
+    "FLASH_WriteStream": set(),
+    "cmd_flash": {"shell_cmd_table"},
+    "cmd_efuse_protect": {"shell_cmd_table"},
+    "cmd_efuse_extpath_write": {"cmd_efuse_protect"},
+    "shell_cmd_table": {"CmdRamHelp"},
+    "CmdRamHelp": {"shell_cmd_table"},
+    "shell_init_rom": set(),
+    "shell_task_rom": set(),
+}
+# KM0 needs the WLAN firmware entry for FW07; KM4 must not carry it.
+CORES = {"hp": (ABSENT, EXPECTED_HP, (".ram_image2.text", ".xip_image2.text"), "wifi_FW_init_ram", False),
+         "lp": (tuple(n for n in ABSENT if n not in EXPECTED_LP), EXPECTED_LP,
+                (".ram_image2.text", ".xip_image2.text", ".ram_retention.text"), "wifi_FW_init_ram", True)}
 BRANCH = re.compile(r"\b(?:bl|blx|b(?:\.w)?)\s+([0-9a-f]+)\s+<([^>+]+)>")
 
 
@@ -78,7 +108,7 @@ def loaded(elf, objdump):
             yield start, data[offset:offset + size]
 
 
-def references(elf, objdump, names, targets):
+def references(elf, objdump, names, targets, sections):
     """{target: set of enclosing symbols that reference it}."""
     starts = sorted((address & ~1, name) for name, (address, section) in names.items()
                     if section not in ("*ABS*",) and address)
@@ -100,7 +130,7 @@ def references(elf, objdump, names, targets):
                 found[wanted[value]].add(owner(start + at))
     current = None
     veneers = {}
-    listing = rampark.tool(objdump, "-d", "-j", ".ram_image2.text", "-j", ".xip_image2.text", elf)
+    listing = rampark.tool(objdump, "-d", *(a for s in sections for a in ("-j", s)), elf)
     for line in listing.splitlines():
         header = re.match(r"^([0-9a-f]+) <([^>]+)>:$", line)
         if header:
@@ -122,27 +152,34 @@ def references(elf, objdump, names, targets):
     return found
 
 
-def audit(sdk, project, binutils):
-    objdump = binutils / "arm-none-eabi-objdump"
-    elf = sdk / project / "project_hp/asdk/image/target_img2.axf"
+def audit_core(elf, objdump, absent, expected, sections, required, present):
     names = table(elf, objdump)
-    present = sorted(name for name in ABSENT if name in names)
-    if present:
-        raise ValueError("Forbidden flash/eFuse writer linked: " + ", ".join(present))
-    targets = sorted({name for name in names if WRITES.match(name)} | (set(EXPECTED) & set(names)))
-    found = references(elf, objdump, names, targets)
-    unexpected = {target: sorted(callers - EXPECTED.get(target, set()))
-                  for target, callers in found.items() if callers - EXPECTED.get(target, set())}
+    linked = sorted(name for name in absent if name in names)
+    if linked:
+        raise ValueError("Forbidden flash/eFuse writer linked: " + ", ".join(linked))
+    if (required in names) != present:
+        raise ValueError(("Missing " if present else "Unexpected ") + required)
+    targets = sorted({name for name in names if WRITES.match(name)} | (set(expected) & set(names)))
+    found = references(elf, objdump, names, targets, sections)
+    unexpected = {target: sorted(callers - expected.get(target, set()))
+                  for target, callers in found.items() if callers - expected.get(target, set())}
     if unexpected:
         raise ValueError("Unreviewed flash/eFuse write reference: " + repr(unexpected))
-    for target, callers in EXPECTED.items():
+    for target, callers in expected.items():
         if target in names and found.get(target) != callers:
             raise ValueError("Pinned flash/eFuse reference changed: " + target)
     return {"elf_sha256": hashlib.sha256(elf.read_bytes()).hexdigest(),
-            "absent": list(ABSENT), "write_targets": targets,
-            "references": {k: sorted(v) for k, v in found.items() if v},
-            "scope": "Linked direct and stored-address references only; register-computed calls, "
-                     "ROM-internal paths and runtime behavior are not established."}
+            "absent": list(absent), "write_targets": targets,
+            "references": {k: sorted(v) for k, v in found.items() if v}}
+
+
+def audit(sdk, project, binutils):
+    objdump = binutils / "arm-none-eabi-objdump"
+    result = {core: audit_core(sdk / project / f"project_{core}/asdk/image/target_img2.axf", objdump, *spec)
+              for core, spec in CORES.items()}
+    return {**result, "scope": "Linked direct and stored-address references only; register-computed calls, "
+                               "ROM-internal paths (including the WLAN firmware's ROM half) and runtime behavior "
+                               "are not established."}
 
 
 if __name__ == "__main__":

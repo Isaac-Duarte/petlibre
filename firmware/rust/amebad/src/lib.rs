@@ -38,14 +38,10 @@ pub mod app;
 pub mod config;
 #[cfg(any(not(target_os = "none"), feature = "km4"))]
 pub mod events;
-pub mod flash_hooks;
-pub mod flash_park;
-pub mod flash_peer;
-#[cfg(any(not(target_os = "none"), feature = "km4"))]
-pub mod flash_probe;
+pub mod flash;
 #[cfg(any(not(target_os = "none"), feature = "km4"))]
 pub mod owner;
 #[cfg(any(not(target_os = "none"), feature = "km4"))]
-pub mod supervision_probe;
+pub mod probes;
 #[cfg(any(not(target_os = "none"), feature = "km4"))]
 pub mod watchdog;

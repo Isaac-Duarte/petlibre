@@ -3,6 +3,8 @@
 //! boot; board fixtures also verify fake GPIO after open.
 #![allow(dead_code)]
 
+pub mod owner;
+
 use petlibre_amebad::board::{Board, MOTOR_MASK};
 use petlibre_amebad::sdk::{self, fake};
 use petlibre_core::flash_coord::{FlashCoord, FlashLimits, FlashReply};

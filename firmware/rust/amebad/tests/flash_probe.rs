@@ -9,14 +9,14 @@
 
 use std::cell::{Cell, RefCell};
 
-use petlibre_amebad::flash_hooks::HookTicket;
-use petlibre_amebad::flash_park::{
+use petlibre_amebad::flash::hooks::HookTicket;
+use petlibre_amebad::flash::park::{
     self, ACK, Mmio, RELEASE, RELEASED, REQUEST, SYSTICK_CTRL, TICKS, TIMEOUT,
 };
-use petlibre_amebad::flash_peer::{
+use petlibre_amebad::flash::peer::{
     BACKUP_BASE, MARKER_REGISTER, PARK_CHANNEL, PARK_TICK_LIMIT, Peer,
 };
-use petlibre_amebad::flash_probe::{
+use petlibre_amebad::probes::flash::{
     ATTEMPT_BIT, EXPECTED_ID, FlashOps, LeaseStage, Probe, Provider, Record, STRESS_SAVES,
 };
 use petlibre_amebad::sdk::{self, fake};
@@ -170,7 +170,7 @@ fn leased<R>(op: impl FnOnce() -> R) -> R {
         std::panic::panic_any(HookFault);
     }
     assert_eq!(sdk::primask(), 1, "acquire returns with IRQs masked");
-    assert_eq!(sdk::systick_ctrl() & flash_park::SYSTICK_CONTROL_BITS, 0);
+    assert_eq!(sdk::systick_ctrl() & park::SYSTICK_CONTROL_BITS, 0);
     assert!(ticket.id != 0 && ticket.saved_systick & !7 == 0);
     // The operation runs with XIP unavailable: KM0 must be parked.
     assert!(km0(|m| m.parked_lease.is_some()));

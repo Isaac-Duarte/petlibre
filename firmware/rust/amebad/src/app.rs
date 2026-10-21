@@ -9,9 +9,9 @@ use core::ffi::c_void;
 use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-use crate::flash_hooks::{self, HookProvider, HookTicket};
-use crate::flash_park::Hardware;
-use crate::flash_probe::{FlashOps, Probe, Provider, Record};
+use crate::flash::hooks::{self, HookProvider, HookTicket};
+use crate::flash::park::Hardware;
+use crate::probes::flash::{FlashOps, Probe, Provider, Record};
 use crate::startup;
 use crate::{leds, sdk, stopped};
 
@@ -51,7 +51,7 @@ struct SdkHooks;
 
 impl FlashOps for SdkHooks {
     fn install(provider: *mut Provider) -> bool {
-        let hooks = HookProvider {
+        let callbacks = HookProvider {
             context: provider.cast(),
             ready: Some(hook_ready),
             acquire: Some(hook_acquire),
@@ -60,7 +60,7 @@ impl FlashOps for SdkHooks {
             fault: Some(sdk::petlibre_amebad_flash_provider_fault),
         };
         // SAFETY: the interposer copies the callbacks; the provider is static.
-        unsafe { flash_hooks::petlibre_amebad_flash_hooks_install(&hooks) }
+        unsafe { hooks::petlibre_amebad_flash_hooks_install(&callbacks) }
     }
 
     fn read_id() -> [u8; 3] {
@@ -68,7 +68,7 @@ impl FlashOps for SdkHooks {
     }
 
     fn armed() -> bool {
-        flash_hooks::petlibre_amebad_flash_hooks_armed()
+        hooks::petlibre_amebad_flash_hooks_armed()
     }
 
     fn erase(sector: u32) -> bool {

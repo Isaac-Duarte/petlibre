@@ -2,10 +2,10 @@ mod common;
 
 use common::{hw, motor_pins, optics_off};
 use petlibre_amebad::board::MOTOR_MASK;
-use petlibre_amebad::sdk::{self, fake};
-use petlibre_amebad::supervision_probe::{
+use petlibre_amebad::probes::supervision::{
     FEED_MS, MARKER, Probe, RESET_DEADLINE_MS, Record, SAMPLES, STALL_MS, Sample,
 };
+use petlibre_amebad::sdk::{self, fake};
 use petlibre_amebad::watchdog::WatchdogFault;
 
 /// About 1 ms of the nominal 32 kHz SYSTIMER per delay millisecond.

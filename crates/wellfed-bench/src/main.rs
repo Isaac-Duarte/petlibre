@@ -14,8 +14,8 @@ use std::sync::atomic::Ordering;
 use clap::{Parser, Subcommand};
 
 use wellfed_bench::commands::{
-    self, Bench, DemoArgs, ExecuteArgs, GiveWayArgs, GiveWayExecuteArgs, OtaArgs, TransientArgs,
-    UpdateArgs, check_name, pattern_name,
+    self, Bench, DemoArgs, ExecuteArgs, GiveWayArgs, GiveWayExecuteArgs, ItestArgs, OtaArgs,
+    TransientArgs, UpdateArgs, check_name, pattern_name,
 };
 use wellfed_bench::config::{Config, STATUS_DIR};
 use wellfed_bench::relay::Relay;
@@ -45,7 +45,7 @@ struct Cli {
     /// The wellfed-flash binary (default: beside this one).
     #[arg(long, global = true)]
     flash_bin: Option<PathBuf>,
-    /// The wellfed-local binary for `ota` (default: beside this one).
+    /// The wellfed-local binary for `ota` and `itest` (default: beside this one).
     #[arg(long, global = true)]
     local_bin: Option<PathBuf>,
 
@@ -110,6 +110,10 @@ enum Command {
     /// server, watch the UART until it confirms or falls back, then check the
     /// server's health; never touches power.
     Ota(OtaArgs),
+    /// Real-device integration scenarios: runs its own hotspot, server and
+    /// UART capture, installs over the air, restores the bench afterwards.
+    /// Cold boots only with --power; never flashes over UART.
+    Itest(ItestArgs),
 
     /// Click the spare relays 3 and 4 in patterns; never switches power or the strap.
     Demo(DemoArgs),
@@ -131,6 +135,7 @@ impl Command {
             Self::GiveWayPrepare(_) => "give-way-prepare",
             Self::GiveWayExecute(_) => "give-way-execute",
             Self::Ota(_) => "ota",
+            Self::Itest(_) => "itest",
             Self::Demo(_) => "demo",
         }
     }
@@ -148,6 +153,7 @@ impl Command {
             Self::GiveWayPrepare(args) => Some(&args.name),
             Self::GiveWayExecute(args) => Some(&args.give_way.name),
             Self::Ota(args) => Some(&args.name),
+            Self::Itest(args) => args.name.as_deref(),
         }
     }
 }
@@ -193,6 +199,14 @@ fn run(cli: Cli) -> wellfed_bench::Result<u8> {
         }
         return Ok(0);
     };
+    if let Command::Itest(args) = &command
+        && args.list
+    {
+        for line in commands::itest::listing() {
+            wellfed_bench::say!("{line}");
+        }
+        return Ok(0);
+    }
     if let Some(name) = command.name() {
         check_name(name)?;
     }
@@ -208,16 +222,18 @@ fn run(cli: Cli) -> wellfed_bench::Result<u8> {
     }
 
     let config = Config::load(&root)?;
-    // The over-the-air loop only captures, so it leaves the relay board free.
-    let relay = if matches!(command, Command::Ota(_)) {
-        Relay::detached()
-    } else {
-        Relay::open(&config.relay_port)?
+    // The over-the-air loop only captures, so it leaves the relay board free;
+    // the integration suite holds it only for --power's cold boots.
+    let relay = match &command {
+        Command::Ota(_) => Relay::detached(),
+        Command::Itest(args) if !args.power => Relay::detached(),
+        _ => Relay::open(&config.relay_port)?,
     };
+    let local_bin = cli.local_bin.clone().unwrap_or_else(default_local_bin);
     let tools = Processes {
         root: root.clone(),
         flash_bin,
-        local_bin: cli.local_bin.clone().unwrap_or_else(default_local_bin),
+        local_bin: local_bin.clone(),
     };
     let flash_tool = tools.flash_tool();
     let mut bench = Bench {
@@ -241,6 +257,10 @@ fn run(cli: Cli) -> wellfed_bench::Result<u8> {
                 .collect(),
             Command::Capture { .. } => vec!["capture"],
             Command::Ota(args) => commands::ota::steps(args.build),
+            Command::Itest(args) => commands::itest::select(&args.only)?
+                .iter()
+                .map(|scenario| scenario.name)
+                .collect(),
             _ => commands::steps(label).to_vec(),
         };
         bench.status.begin(label, command.name(), &steps)?;
@@ -249,7 +269,7 @@ fn run(cli: Cli) -> wellfed_bench::Result<u8> {
         }
     }
 
-    let result = dispatch(&mut bench, &command);
+    let result = dispatch(&mut bench, &command, local_bin);
     let (code, error) = match &result {
         Ok(code) => (*code, None),
         Err(error) => (1, Some(error.to_string())),
@@ -258,7 +278,11 @@ fn run(cli: Cli) -> wellfed_bench::Result<u8> {
     result
 }
 
-fn dispatch(bench: &mut Bench, command: &Command) -> wellfed_bench::Result<u8> {
+fn dispatch(
+    bench: &mut Bench,
+    command: &Command,
+    local_bin: PathBuf,
+) -> wellfed_bench::Result<u8> {
     let captures = bench.root.join(wellfed_bench::config::CAPTURES);
     match command {
         Command::Status => bench.status_report(),
@@ -277,6 +301,7 @@ fn dispatch(bench: &mut Bench, command: &Command) -> wellfed_bench::Result<u8> {
         Command::GiveWayPrepare(args) => bench.give_way_prepare(args),
         Command::GiveWayExecute(args) => bench.give_way_execute(args),
         Command::Ota(args) => bench.ota(args),
+        Command::Itest(args) => bench.itest(args, local_bin),
         Command::Demo(args) => bench.demo(args),
     }
 }
@@ -309,6 +334,46 @@ mod tests {
         assert!(!args.attended_motion && !args.build);
         assert_eq!(args.config, PathBuf::from("private/server.json"));
         assert_eq!(cli.local_bin, Some(PathBuf::from("bin/wellfed-local")));
+    }
+
+    #[test]
+    fn itest_lists_without_a_name_and_takes_its_scenarios() {
+        let cli = Cli::try_parse_from(["wellfed-bench", "itest", "--list"]).unwrap();
+        let Some(Command::Itest(args)) = &cli.command else {
+            panic!("not itest")
+        };
+        assert!(args.list && args.name.is_none());
+
+        let cli = Cli::try_parse_from([
+            "wellfed-bench",
+            "itest",
+            "run1",
+            "--build",
+            "--power",
+            "--only",
+            "requests,network-bounce",
+        ])
+        .unwrap();
+        let Some(Command::Itest(args)) = &cli.command else {
+            panic!("not itest")
+        };
+        assert_eq!(args.only, ["requests", "network-bounce"]);
+        assert!(args.build && args.power && !args.keep_going);
+        assert_eq!(cli.command.as_ref().unwrap().name(), Some("run1"));
+
+        for argv in [
+            &["wellfed-bench", "itest"][..],
+            &[
+                "wellfed-bench",
+                "itest",
+                "run1",
+                "--build",
+                "--review",
+                "r",
+            ],
+        ] {
+            assert!(Cli::try_parse_from(argv).is_err(), "{argv:?}");
+        }
     }
 
     fn ota(extra: &[&str]) -> Result<Cli, clap::Error> {

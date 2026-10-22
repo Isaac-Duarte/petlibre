@@ -49,6 +49,7 @@ The relay board also enumerates as a USB serial port and can take the name the U
 | `flash-execute NAME` | Checks relay 1 stayed on and the strap is released, runs `update execute` with the reviewed hash, then `boot` |
 | `give-way-prepare NAME`, `give-way-execute NAME` | The same pair for `give-way` (`--fallback` names bank 0's frozen review) |
 | `ota NAME --review DIR`, `ota NAME --build` | With `--build`, first runs `build.py` and the review freeze. Signs the review with `wellfed-local ota-sign`, offers it with `ota-offer` to the server already running, takes receive-only UART captures until the new build confirms, falls back or `--minutes` (20) pass, then polls `wellfed-local status` until the server's health shows the build. Prints a timing summary. Never touches power or opens the relay board |
+| `itest NAME` | Real-device integration scenarios ([below](#integration-suite)): runs its own hotspot, `serve` and receive-only UART capture, installs over the air, and restores the bench at the end. Opens the relay board only with `--power`, for cold boots |
 | `demo [PATTERN…]` | Clicks spare relays 3 and 4 (chase, blink, heartbeat, Morse); reads but never sets power or the strap; refuses while another bench command runs; at most 120 toggles, and both spares end off |
 
 `wellfed-bench <command> --help` lists the flags. `flash-prepare`/`flash-execute` take the updater's `--bank`, `--source`, `--original-read`, `--target`, `--interrupted` and `--restore-marker`, and `--attended-motion` for a target whose manifest names a motion policy.
@@ -102,6 +103,50 @@ It reports the health's `seq`, `outputs`, `faults` and, when present, whether th
 **Timing.** Once any child has run, the command ends with a timing summary: build, review, sign + offer, give-way to activation (the download), activation to confirmation, the health check, and the total. This is the FW12 duration record. Build, review and offer times are measured by the bench. The two feeder phases come from each capture's `serial-events.jsonl` chunk times. Without that file they fall back to the end of the 60 s segment and say so.
 
 The server serves each offer to completion once, so after a fallback, retry with a new version. Ctrl+C stops the child, the capture or the poll, and the command. The classifier, the health check and the sequence are host-tested with real log lines, status documents and fake tools (October 22, 2026); neither the command nor `--build` has yet run on hardware.
+
+## Integration suite
+
+`itest` runs named real-device scenarios against the feeder on the bench. It is a bench command, not a test target: `cargo test` and `make check` never reach it. Builds go in over the air. The UART stays attached, receive-only, for the whole run. It is what the scenarios assert on, it is the evidence, and it is the way back when the feeder stops answering.
+
+```sh
+cargo build --release -p wellfed-bench -p wellfed-flash -p wellfed-local --bins --examples
+target/release/wellfed-bench itest --list
+target/release/wellfed-bench itest itest-20261022-01 --build                 # no cold boots
+target/release/wellfed-bench itest itest-20261022-02 --build --power         # everything
+target/release/wellfed-bench itest itest-20261022-03 --review private/verification/<review> --only requests,request-auth
+```
+
+| Scenario | Checks | Needs |
+| --- | --- | --- |
+| `ota-update` | The build under test (`--build` or `--review`) installs over the air and confirms, unless health already shows it. It always runs first, and every other scenario needs it. | |
+| `requests` | `ping` and `health` replies, with `PLMQT1 request op=ping ok=1`. The FW21 clock has synced and is within 5 s of the server. A lights change saves a newer generation (`PLCFG1 saved`) and reads back, then is restored. | |
+| `request-auth` | Beside the bare broker, `request_forger` sends four requests. The unsigned `wifi` clear, the wrongly keyed request and the replay are all refused with `auth`. The valid one is answered. The UART shows at least three `op=unauthenticated ok=0`. `serve` comes back afterwards. | |
+| `settings-persist` | Lights, sound and volume changed, then a cold boot, then read back; the originals are restored. | `--power` |
+| `wifi-fallback` | Credentials stored for an absent SSID (`PLCFG1 net saved stored=1`). After a cold boot, health shows `wifi.source` `fallback`. A signed clear and another cold boot return it to `build`. It refuses to start while credentials are stored. | `--power` |
+| `network-bounce` | The hotspot goes down for 20 s after `PLMQT1 closed`. It comes back up, then `PLMQT1 ready` and fresh health with more `transport.connects`. | |
+| `trial-fallback` | The `fw11-fail` variant installs and fails its trial, and KM0 gives way. Bank 0's recovery role then installs the baseline, re-signed and offered once the variant activated. | `--build` |
+| `ota-faults` | The variant's offer makes the confirmed build give way. `ota_fault_server` then serves the re-signed baseline with one fault per boot: corrupt → `stage=hash`, truncated → `range`, stalled → `timeout`, none of them activating. A clean download then confirms. | `--build --power` |
+
+A scenario whose flag is missing is reported as **skipped**, never as passed.
+
+**Bench state.** Before changing anything, the suite refuses if any of these is wrong: the UART port is missing, `wellfed-local` or its examples are not built, an evidence name is in use, or anything already answers on the server's `http_listen` (stop that `serve`; the suite runs its own). It then:
+- records whether the hotspot connection named in `private/hotspot.json` is active, and brings it up;
+- with `--power`, records relay 1 and switches the supply on;
+- starts the UART capture;
+- starts `wellfed-local serve --config private/server.json` as a child.
+
+Scenarios swap `serve` for `wellfed-local broker` plus `ota_fault_server` or `request_forger` and back again. All server output goes to `private/verification/NAME-servers.log`. At the end, or on an error or Ctrl+C, the suite stops its children and puts the hotspot and the supply back as it found them. Without `--power` the relay board is never opened. The suite never flashes over UART and never changes the firewall or routing. Motion builds are not offered.
+
+**Failures.** A failed scenario stops the rest (they are recorded as skipped), unless `--keep-going` is given. Scenarios that change device state restore it on failure too, while the feeder still answers. If there is no `PL…` record and no fresh health for 180 s, the feeder counts as silent; every wait checks this, so an unpowered feeder stops an install watch within 3 minutes rather than at its 15-minute deadline. Only the wrong-credential wait in `wifi-fallback`, where the feeder is unreachable on purpose, is exempt. The suite then stops whatever `--keep-going` says, prints the last confirmed review and the `flash-prepare` command to recover it over UART, and exits 2. A scenario failure exits 1.
+
+**Evidence.**
+- **Captures:** receive-only, in back-to-back 180 s segments `private/captures/NAME-uart-01`, `-02`, … They are read while they record, so a record arrives within about a second. A segment chains to the next only while the suite polls, so a build (about a minute, while nothing is expected) leaves a gap; the forger runs as a child while the chain is pumped, because its refusals are counted.
+- **Reviews and manifests:** `NAME-good`, `NAME-fail`, `NAME-restore`, `NAME-trigger` and `NAME-fault`, in `private/verification/`. Each signs the next version, so a run uses up several.
+- **Record:** `private/verification/NAME-itest.json` holds each scenario's verdict, reason and duration, any silence, and the capture list, marked `"evidence": "physical"`.
+
+**Cold boots.** After a supply cut the server keeps reporting the old session's health as online and fresh until the broker's keepalive lapses, and a request sent then is lost. So after a cold boot the suite waits for `PLMQT1 ready` and accepts only health received after it.
+
+**Status (October 22, 2026).** **Physical:** `itest-20261022-06 --build --power` passed all eight scenarios in 26 minutes (OTA v28–v32). The good build (`877b2c9b…`) confirmed. `request-auth` saw three refusals on the UART. The Wi-Fi fallback took about 2 minutes. `trial-fallback` counted trial boots 1–3, and KM0 gave way. `ota-faults` saw `stage=hash`, `range` and `timeout`, then a clean install. The bench state came back as found. Runs 01–05 found the harness bugs fixed above: no silence check during waits, the capture gap and offset during the forger, stale health after a cold boot. They also found that the `fw11-fail` variant no longer passed the link audit, because its constant failure let LTO drop the image's writers. **Host:** the scenarios, the UART log and the HTTP parsing run against a scripted feeder that emits the firmware's record formats and models the boot window.
 
 ## Progress page
 

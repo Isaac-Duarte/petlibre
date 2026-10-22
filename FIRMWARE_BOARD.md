@@ -92,7 +92,7 @@ Prioritize the UART development loop and build identity, stopped startup, LED di
 
 | Card | Status | Evidence | Prerequisites | Finish line |
 | --- | --- | --- | --- | --- |
-| **FW27 Combined fault and sustained-operation tests** | Planned | — | FW11, FW18, FW19, FW20, FW22, FW23, FW24, FW25, FW26 | Run recorded scenarios for network loss/replay, task stalls, sensor faults, jams, low power and supervised power cuts during journal/OTA/feeding phases. Verify recovery, inactive outputs and explicit uncertainty. Define and complete a sustained-run duration and success criteria before the run. |
+| **FW27 Combined fault and sustained-operation tests** | In progress | **Physical (Oct 22):** `wellfed-bench itest` ([bench](docs/hardware/bench.md#integration-suite)) installs over the air and asserts on receive-only UART. Run `itest-20261022-06` passed all eight scenarios in 26 minutes: OTA update; request round trip and clock; refusal of unsigned, wrongly keyed and replayed requests; settings across a cold boot; wrong-credential Wi-Fi fallback; hotspot loss and reconnection; a failed trial falling back to bank 0; and corrupt, truncated and stalled downloads, each stopping before activation. The `fw11-fail` variant is fixed so that it links the audited image again. **Remaining:** task stalls, sensor faults, jams, low power, power cuts during journal or feeding phases, and a defined sustained run. | FW11, FW18, FW19, FW20, FW22, FW23, FW24, FW25, FW26 | Run recorded scenarios for network loss/replay, task stalls, sensor faults, jams, low power and supervised power cuts during journal/OTA/feeding phases. Verify recovery, inactive outputs and explicit uncertainty. Define and complete a sustained-run duration and success criteria before the run. |
 | **FW28 Home Assistant integration** | Planned | — | FW17, FW18, FW19, FW22, FW25 | After useful standalone local behavior is established, add discovery, availability, sensors, settings and feed commands using the documented local interface. Reconnect or automation replay cannot duplicate a feed. Core feeding continues without Home Assistant. |
 | **FW29 Research firmware release** | Planned | — | FW27 | Freeze a build and compatibility manifest, record supported features and measured limits, and publish repository installation/update/recovery instructions. State unresolved risks and preserve a tested recovery path. Deployment beyond the tested research unit needs separate hardware acceptance. |
 
@@ -128,7 +128,7 @@ Prioritize the UART development loop and build identity, stopped startup, LED di
 | FW24 Buzzer and audio playback | 🚧 In progress |
 | FW25 Local setup and configuration | 🚧 In progress |
 | FW26 Battery transitions, brownout and sleep | ⬜ Planned |
-| FW27 Combined fault and sustained-operation tests | ⬜ Planned |
+| FW27 Combined fault and sustained-operation tests | 🚧 In progress |
 | FW28 Home Assistant integration | ⬜ Planned |
 | FW29 Research firmware release | ⬜ Planned |
 | FW30 Electrical output verification | 🚧 In progress |

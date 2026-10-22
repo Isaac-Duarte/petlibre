@@ -2,14 +2,17 @@
 //! Stopped-output startup and a bounded indicator probe, then the FW07 stage
 //! D probe: join the configured network, check DNS and keep both, logging the
 //! shim's events. Beside it, the FW08 transport task reports health to the
-//! local server's broker.
+//! local server's broker, and the FW13 optics task exercises the emitters and
+//! reads the food, outlet and feedback inputs, motor STOP throughout.
 
 use core::cell::UnsafeCell;
 use core::ffi::c_void;
 use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
+use crate::flash::park::Hardware;
 use crate::health::Boot;
+use crate::probes::optics;
 use crate::probes::wifi::{Probe, Record};
 use crate::transport::{self, Link};
 use crate::{leds, sdk, startup, stopped};
@@ -25,6 +28,40 @@ unsafe impl<T> Sync for Slot<T> {}
 static PROBE: Slot<Probe> = Slot(UnsafeCell::new(None));
 /// Touched only by the transport task; see `net_task`.
 static NET: Slot<Link> = Slot(UnsafeCell::new(None));
+/// Touched only by the optics task; see `optics_task`.
+static OPTICS: Slot<optics::Probe> = Slot(UnsafeCell::new(None));
+
+struct OpticsLine(optics::Record);
+
+impl core::fmt::Display for OpticsLine {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        optics::describe(self.0, f)
+    }
+}
+
+unsafe extern "C" fn optics_task(_: *mut c_void) -> u32 {
+    // SAFETY: only this task touches the slot; the probe stays in place.
+    let probe = unsafe { &mut *OPTICS.0.get() }.get_or_insert_with(optics::Probe::default);
+    let step = probe.step::<Hardware>();
+    if let Some(record) = step.record {
+        let mut report = startup::Report::new();
+        if let Ok(line) = report.record(format_args!("PLOPT1 {}\r\n", OpticsLine(record))) {
+            sdk::log(line);
+        }
+    }
+    step.delay_ms
+}
+
+/// Above the diagnostic and transport tasks, so their logging cannot hold
+/// off the owner lease the supervisor enforces.
+fn start_optics() {
+    let created = sdk::task_create(c"petlibre-optics", 1024, 3, optics_task, ptr::null_mut());
+    sdk::log(if created {
+        c"PLOPT1 start created=1\r\n"
+    } else {
+        c"PLOPT1 start created=0\r\n"
+    });
+}
 
 /// A transport record as the body of a `PLMQT1` line.
 struct Line(transport::Record);
@@ -172,6 +209,7 @@ unsafe extern "C" fn diagnostic_task(_: *mut c_void) -> u32 {
                     sdk::log(c"PLLED1 done low=all\r\n");
                     PROBING.store(true, Ordering::Relaxed);
                     start_transport();
+                    start_optics();
                     return 1;
                 }
             } else {

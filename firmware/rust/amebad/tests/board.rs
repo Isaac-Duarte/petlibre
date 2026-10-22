@@ -2,7 +2,7 @@ mod common;
 
 use common::*;
 use petlibre_amebad::board::{Board, MOTOR_MASK};
-use petlibre_amebad::sdk::fake;
+use petlibre_amebad::sdk::{self, fake};
 use petlibre_core::feed_controller::MotorCommand;
 use petlibre_core::flash_coord::{FlashFault, FlashParty, FlashReply};
 use petlibre_core::sensor_inputs::SensorReading;
@@ -200,4 +200,35 @@ fn outputs_only_open_leaves_sensors_and_adc_untouched() {
     assert!(board.motor_tick(3) && motor_pins() == MOTOR_MASK);
     board.close();
     assert!(!board.opened && !hw(|h| h.adc_enabled) && motor_pins() == MOTOR_MASK);
+}
+
+#[test]
+fn optics_select_drives_each_emitter_alone_with_readback() {
+    let mut b = open_board();
+    let _authority = flash_attach(&mut b);
+    assert!(b.optics_select(true, false));
+    assert!(sdk::gpio_read_bit(15) && !sdk::gpio_read_bit(35) && b.optics_enabled);
+    assert!(b.optics_select(false, true));
+    assert!(!sdk::gpio_read_bit(15) && sdk::gpio_read_bit(35) && b.optics_enabled);
+    let mut reading = SensorReading::default();
+    hw(|h| h.input[0] |= 1 << 18 | 1 << 16);
+    let pins = b.capture_gpio(&mut reading).unwrap();
+    // One emitter is not "optics enabled" for qualification; no ADC read.
+    assert!(reading.gpio_valid && !reading.optics_enabled && reading.outlet_high);
+    assert!(!reading.current_adc_valid && !reading.battery_adc_valid);
+    assert_eq!(pins & (1 << 18 | 1 << 16), 1 << 18 | 1 << 16);
+    // A dead emitter pad fails readback: both off, board tripped.
+    hw(|h| h.dead_input[0] |= 1 << 15);
+    assert!(!b.optics_select(true, false));
+    assert!(optics_off() && b.faulted);
+    assert!(b.capture_gpio(&mut reading).is_none());
+}
+
+#[test]
+fn open_refuses_while_swd_holds_pb3() {
+    fake::reset_hardware();
+    hw(|h| h.swd_stuck = true);
+    let mut b = Box::<Board>::default();
+    assert!(!b.open(3, 10, 8, 0));
+    assert!(b.faulted && !b.opened && optics_off());
 }

@@ -588,6 +588,16 @@ pub enum Loss {
     Dns,
 }
 
+/// Output state as health reports it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Outputs {
+    /// Motor STOP and both emitters OFF, freshly read back.
+    Stopped,
+    /// Motor STOP read back; emitters on under the supervised sensor probe.
+    Sensing,
+    Unverified,
+}
+
 /// Everything a health message reports. Built by the board port from data it
 /// already has; the transport only formats it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -600,7 +610,7 @@ pub struct Health {
     pub bank: u8,
     pub reset_flags: u32,
     pub boot_count: u32,
-    pub outputs_stopped: bool,
+    pub outputs: Outputs,
     /// Bit set of [`FAULTS`].
     pub faults: u32,
     pub rssi: i32,
@@ -632,10 +642,10 @@ impl Health {
             self.bank,
             self.reset_flags,
             self.boot_count,
-            if self.outputs_stopped {
-                "stopped"
-            } else {
-                "unverified"
+            match self.outputs {
+                Outputs::Stopped => "stopped",
+                Outputs::Sensing => "sensing",
+                Outputs::Unverified => "unverified",
             },
         )?;
         let mut first = true;

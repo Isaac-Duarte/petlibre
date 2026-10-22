@@ -68,7 +68,7 @@ fn health(online: bool, seq: u32) -> Vec<u8> {
         bank: 1,
         reset_flags: 0,
         boot_count: 1,
-        outputs_stopped: true,
+        outputs: mqtt::Outputs::Stopped,
         faults: 0,
         rssi: -20,
         wifi_attempt: 1,

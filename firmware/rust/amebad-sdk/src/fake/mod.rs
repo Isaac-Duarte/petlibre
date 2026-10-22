@@ -53,6 +53,10 @@ pub struct Hardware {
     pub gpio_routing: GpioRouting,
     /// LP SYSCTRL `REG_LP_FUNC_EN1` and `REG_LP_CLK_CTRL1`: GPIO and ADC enables.
     pub lp_function: u32,
+    /// `REG_SWD_PMUX_EN`; reset 1, so PB3 is undriven (reads its pull-down).
+    pub swd_pmux: u32,
+    /// The SWD release write does not take effect.
+    pub swd_stuck: bool,
     pub lp_clock: u32,
     /// Writes to the two LP enable registers are ignored.
     pub blocked_gpio_clock: bool,
@@ -149,6 +153,8 @@ impl Default for Hardware {
         Self {
             gpio_routing: GpioRouting::default(),
             lp_function: 0,
+            swd_pmux: 1,
+            swd_stuck: false,
             lp_clock: 0,
             blocked_gpio_clock: false,
             output: [0; 2],
@@ -302,8 +308,12 @@ fn run_irq(index: usize) {
 /// Pad input word for one port: driven outputs follow the latch, inputs the
 /// external level; dead pads read LOW; test overrides replace either.
 fn pad_input(h: &Hardware, p: usize) -> u32 {
-    let normal =
+    let mut normal =
         ((h.output[p] & h.direction[p]) | (h.input[p] & !h.direction[p])) & !h.dead_input[p];
+    if p == 1 && h.swd_pmux & crate::SWD_PMUX_BIT != 0 {
+        // SWD owns PB3 (SWD_CLK): the GPIO latch never reaches the pad.
+        normal &= !(1 << 3);
+    }
     (normal & !h.readback_override_mask[p]) | (h.readback_override[p] & h.readback_override_mask[p])
 }
 

@@ -1,5 +1,5 @@
 use petlibre_amebad::board::MOTOR_MASK;
-use petlibre_amebad::sdk::fake;
+use petlibre_amebad::sdk::{self, fake};
 use petlibre_amebad::stopped::{self, PA_MASK, PB_MASK};
 
 fn check_preloaded() {
@@ -116,4 +116,28 @@ fn panic_stop_requests_stop_and_infrared_off_only_when_gpio_is_clocked() {
         assert_eq!(h.interrupts, 1);
         assert_eq!(h.output, [MOTOR_MASK | 1 << 2, 1 << 22]);
     });
+}
+
+#[test]
+fn pb3_is_driven_only_after_swd_is_released() {
+    fake::reset_hardware();
+    // Reset state: SWD holds PB3, so a HIGH latch never reaches the pad.
+    fake::with(|h| {
+        h.direction[1] |= 1 << 3;
+        h.output[1] |= 1 << 3;
+    });
+    assert!(!sdk::gpio_read_bit(35));
+    fake::with(|h| h.output[1] = 0);
+    assert!(stopped::initialize().verified());
+    assert_eq!(sdk::swd_pinmux() & sdk::SWD_PMUX_BIT, 0);
+    fake::with(|h| h.output[1] |= 1 << 3);
+    assert!(sdk::gpio_read_bit(35));
+}
+
+#[test]
+fn a_stuck_swd_release_fails_stopped_startup() {
+    fake::reset_hardware();
+    fake::with(|h| h.swd_stuck = true);
+    let snapshot = stopped::initialize();
+    assert!(!snapshot.verified() && !snapshot.motor_verified());
 }

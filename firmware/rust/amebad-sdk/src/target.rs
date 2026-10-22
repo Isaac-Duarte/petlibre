@@ -64,6 +64,27 @@ const _: () = assert!(
         && k::PETLIBRE_GPIO_CLOCK_BIT == super::GPIO_ENABLE_BIT
 );
 
+const _: () = assert!(k::PETLIBRE_BIT_SWD_PMUX == super::SWD_PMUX_BIT);
+
+/// LP `REG_SWD_PMUX_EN`.
+pub fn swd_pinmux() -> u32 {
+    unsafe { ptr::read_volatile(reg(k::PETLIBRE_SYSCTRL_LP + k::PETLIBRE_REG_SWD_PMUX)) }
+}
+
+/// Release PA27/PB3 from SWD as stock does (`sys_jtag_off`, before it
+/// configures PB3), preserving the other bits. Returns the readback.
+pub fn swd_off() -> u32 {
+    let _guard = super::IrqGuard::lock();
+    let before = swd_pinmux();
+    unsafe {
+        ptr::write_volatile(
+            reg(k::PETLIBRE_SYSCTRL_LP + k::PETLIBRE_REG_SWD_PMUX),
+            before & !super::SWD_PMUX_BIT,
+        )
+    };
+    swd_pinmux()
+}
+
 const _: () = assert!(
     k::PETLIBRE_ADC_FUNC_BIT == super::ADC_ENABLE_BIT
         && k::PETLIBRE_ADC_CLOCK_BIT == super::ADC_ENABLE_BIT
@@ -618,7 +639,7 @@ const EMPTY: TaskSlot = TaskSlot {
     step: core::cell::UnsafeCell::new(None),
     context: core::cell::UnsafeCell::new(ptr::null_mut()),
 };
-static TASKS: [TaskSlot; 2] = [EMPTY, EMPTY];
+static TASKS: [TaskSlot; 3] = [EMPTY, EMPTY, EMPTY];
 
 unsafe extern "C" fn trampoline(argument: *mut c_void) {
     let slot = unsafe { &*argument.cast::<TaskSlot>() };

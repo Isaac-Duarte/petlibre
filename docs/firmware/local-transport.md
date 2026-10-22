@@ -67,7 +67,7 @@ Compact JSON, one object, at most 512 bytes, schema `petlibre.health`, version 1
 | `bank`, `reset_flags` | startup report (FW02) |
 | `boot_count` | KM0 backup register 4 (FW06 peer; survives watchdog reset, not power loss) |
 | `uptime_ms` | monotonic clock |
-| `outputs` | `stopped` only after a fresh stopped-output readback passes, else `unverified` |
+| `outputs` | `stopped` only after a fresh stopped-output readback passes; `sensing` when the motor reads back STOP and the emitters are exactly those the [FW13 probe](optical-inputs.md) holds on under supervision; else `unverified` |
 | `faults` | latched fault names, for example `watchdog`, `flash_hook`, `stopped_readback`; empty when none |
 | `wifi` | the FW07 shim's event counters |
 | `transport` | this client's own connect count and last error |

@@ -1,6 +1,12 @@
 # FW10/FW11 over-the-air update design
 
-Status: the recovery-role updater is implemented (`petlibre-amebad/src/updater.rs`, host-tested in `petlibre-amebad/tests/updater.rs`). On hardware (October 22, physical), the build booted from bank 0 after a UART give-way. It bound KM0, opened the watchdog, installed the lease provider into the flash-lock hooks and ran 180 s on one boot with the watchdog fed and no network; bank 1 was then restored. No update has been downloaded on hardware yet: that needs the hotspot and the local server running with an offer. The normal role's give-way trigger and FW11's trial counter are not implemented.
+Status: the recovery-role updater is implemented (`petlibre-amebad/src/updater.rs`, host-tested in `petlibre-amebad/tests/updater.rs`). On hardware (October 22, physical), the build booted from bank 0 after a UART give-way. It bound KM0, opened the watchdog, installed the lease provider into the flash-lock hooks and ran 180 s on one boot with the watchdog fed and no network; bank 1 was then restored. **First live update (October 22, physical).** With the hotspot up and `petlibre-local serve` holding an offer, a UART give-way booted bank 0, and the recovery role then:
+- joined the hotspot, connected, and verified manifest version 1 (663 552 bytes);
+- wrote 162 sectors under 2 703 leases, reading back every page;
+- programmed the marker last and logged `activated`;
+- let the watchdog reset it. The loader then booted the offered build (`ed15a3ff…`) from bank 1, and its health reached the server.
+
+The whole run, boot included, fit in the 180 s capture. The first attempt HardFaulted on its first manifest: the signature check needs about 12 KiB of stack, more than the task's 10 KiB. The watchdog reset it, the attempt marker skipped the next try, and the normal transport took over, as designed. The task now has 24 KiB, with the manifest step out of line. The normal role's give-way trigger and FW11's trial counter are not implemented.
 
 The updater: booted from bank 0, with a key built in (`PETLIBRE_OTA_PUBLIC_KEY`, the public half of `private/ota-key.json`), it runs in place of the transport and optics tasks. It sets an attempt marker (a boot that finds it set skips the update), and each erase and page program is one FW06 lease. A feeder task feeds the watchdog while the updater keeps stepping (10 s liveness); a hang, a hook fault or the activation stops it, and the watchdog reset boots the new bank 1. Without a key, or after a stop, the normal transport starts so health stays visible. Records are `PLOTA1` lines.
 

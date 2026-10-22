@@ -426,3 +426,157 @@ fn records_describe_without_credentials() {
     describe(Record::Closed { reason: "silence" }, &mut text).unwrap();
     assert_eq!(text, "closed reason=silence");
 }
+
+fn signed_publish(key: &[u8; 32], prefix: &str) -> Vec<u8> {
+    use wellfed_core::request_auth::hmac_sha256;
+    let mac: String = hmac_sha256(key, &[prefix.as_bytes()])
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    encoded(&format!("{prefix},\"mac\":\"{mac}\"}}"))
+}
+
+/// A request PUBLISH of any length, by the core encoder.
+fn encoded(payload: &str) -> Vec<u8> {
+    let mut out = [0; wellfed_core::transport::MAX_PACKET];
+    let n = wellfed_core::transport::encode_publish(
+        &mut out,
+        "wellfed/1/dev1/request",
+        payload.as_bytes(),
+        false,
+    )
+    .unwrap();
+    out[..n].to_vec()
+}
+
+fn health_nonce() -> String {
+    let (_, health) = published()
+        .into_iter()
+        .rfind(|(t, _)| t.ends_with("/health"))
+        .unwrap();
+    let at = health.find(r#""nonce":""#).expect("health names its nonce") + 9;
+    health[at..at + 16].to_owned()
+}
+
+#[test]
+fn state_changes_need_a_fresh_signature_from_this_session() {
+    use wellfed_amebad::sdk::fake::api::FAKE_REQUEST_KEY;
+    let (_guard, mut link) = start();
+    connect(&mut link);
+    let nonce = health_nonce();
+    let time = r#""unix_ms":1792674000000,"offset_s":-21600,"next_change_s":1793520000,"next_offset_s":-25200"#;
+    let refused = Record::Request {
+        kind: RequestKind::Unauthenticated,
+        ok: false,
+    };
+
+    // Unsigned: refused, the clock untouched.
+    let syncs = wellfed_amebad::clock::health().1;
+    rx(&encoded(&format!(r#"{{"id":"{ID}","op":"time",{time}}}"#)));
+    assert_eq!(run(&mut link, 1), vec![refused]);
+    assert_eq!(wellfed_amebad::clock::health().1, syncs);
+
+    // Signed for this session: accepted once.
+    let prefix = format!(r#"{{"id":"{ID}","op":"time",{time},"nonce":"{nonce}","seq":1"#);
+    let request = signed_publish(&FAKE_REQUEST_KEY, &prefix);
+    rx(&request);
+    assert_eq!(
+        run(&mut link, 1),
+        vec![Record::Request {
+            kind: RequestKind::Time,
+            ok: true
+        }]
+    );
+    assert_eq!(wellfed_amebad::clock::health().1, syncs + 1);
+    rx(&request);
+    assert_eq!(run(&mut link, 1), vec![refused], "a replay");
+
+    // A wrong key, even on a read-only request.
+    let ping = format!(r#"{{"id":"{ID}","op":"ping","nonce":"{nonce}","seq":2"#);
+    rx(&signed_publish(&[9; 32], &ping));
+    assert_eq!(run(&mut link, 1), vec![refused]);
+    rx(&signed_publish(&FAKE_REQUEST_KEY, &ping));
+    assert_eq!(
+        run(&mut link, 1),
+        vec![Record::Request {
+            kind: RequestKind::Ping,
+            ok: true
+        }]
+    );
+
+    let replies: Vec<String> = published()
+        .into_iter()
+        .filter(|(t, _)| t.ends_with("/reply"))
+        .map(|(_, p)| p)
+        .collect();
+    assert_eq!(
+        replies[0],
+        format!(r#"{{"id":"{ID}","ok":false,"error":"auth"}}"#)
+    );
+    assert!(replies[1].starts_with(&format!(r#"{{"id":"{ID}","op":"time","ok":true"#)));
+    assert!(link.ready(), "refusals keep the session");
+}
+
+#[test]
+fn settings_read_unsigned_but_change_only_signed() {
+    use wellfed_amebad::sdk::fake::api::FAKE_REQUEST_KEY;
+    use wellfed_amebad::settings;
+    use wellfed_core::transport::SettingsView;
+    let (_guard, mut link) = start();
+    settings::reset();
+    settings::publish(SettingsView {
+        lights: true,
+        sound: true,
+        volume: 50,
+        generation: 4,
+        writable: true,
+    });
+    connect(&mut link);
+    let nonce = health_nonce();
+
+    rx(&encoded(&format!(r#"{{"id":"{ID}","op":"settings"}}"#)));
+    assert_eq!(
+        run(&mut link, 1),
+        vec![Record::Request {
+            kind: RequestKind::Settings,
+            ok: true
+        }]
+    );
+
+    rx(&encoded(&format!(
+        r#"{{"id":"{ID}","op":"settings","volume":10}}"#
+    )));
+    assert_eq!(
+        run(&mut link, 1),
+        vec![Record::Request {
+            kind: RequestKind::Unauthenticated,
+            ok: false
+        }]
+    );
+    assert_eq!(settings::pending(), None);
+
+    let prefix = format!(r#"{{"id":"{ID}","op":"settings","volume":10,"nonce":"{nonce}","seq":1"#);
+    rx(&signed_publish(&FAKE_REQUEST_KEY, &prefix));
+    assert_eq!(
+        run(&mut link, 1),
+        vec![Record::Request {
+            kind: RequestKind::Settings,
+            ok: true
+        }]
+    );
+    assert_eq!(settings::pending().and_then(|f| f.volume), Some(10));
+
+    let replies: Vec<String> = published()
+        .into_iter()
+        .filter(|(t, _)| t.ends_with("/reply"))
+        .map(|(_, p)| p)
+        .collect();
+    assert_eq!(
+        replies[0],
+        format!(
+            r#"{{"id":"{ID}","op":"settings","ok":true,"pending":false,"lights":1,"sound":1,"volume":50,"generation":4,"writable":true}}"#
+        )
+    );
+    assert!(replies[2].contains(r#""pending":true"#));
+    settings::reset();
+}

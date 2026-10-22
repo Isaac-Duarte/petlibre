@@ -362,6 +362,7 @@ struct wellfed_transport_config {
     const char *password;
     unsigned int password_len;
     const char *namespace_;
+    const char *request_key; /* 64 lowercase hex characters, or "" */
 };
 
 void wellfed_transport_config(struct wellfed_transport_config *out)
@@ -373,6 +374,21 @@ void wellfed_transport_config(struct wellfed_transport_config *out)
     out->password = WELLFED_MQTT_PASSWORD;
     out->password_len = sizeof(WELLFED_MQTT_PASSWORD) - 1;
     out->namespace_ = WELLFED_MQTT_NAMESPACE;
+    out->request_key = WELLFED_MQTT_REQUEST_KEY;
+}
+
+u32 Rand(void); /* ROM (swlib/string/rand.h): a seeded software generator */
+
+/* Inputs for a session's request nonce (wellfed-core request_auth): the ROM
+ * generator, the CPU-rate SysTick count and the tick count at the moment of a
+ * connect, whose timing varies with the network. Not a vetted RNG; the nonce
+ * only has to differ between sessions. */
+void wellfed_entropy(unsigned int out[4])
+{
+    out[0] = Rand();
+    out[1] = *(volatile unsigned int *)0xE000E018; /* SysTick current value */
+    out[2] = xTaskGetTickCount();
+    out[3] = Rand();
 }
 
 /* A pending socket error, cleared by reading it. */

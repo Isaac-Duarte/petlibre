@@ -37,11 +37,13 @@ pub mod feedback_events;
 pub mod flash_coord;
 pub mod motor_gate;
 pub mod ota;
+pub mod request_auth;
 pub mod sensor_inputs;
 pub mod settings_store;
 pub mod storage;
 pub mod tick_clock;
 pub mod transport;
+pub mod wall_clock;
 
 /// Distances at or beyond this are ambiguous for wrapping millisecond clocks.
 pub const HALF_RANGE: u32 = 0x8000_0000;

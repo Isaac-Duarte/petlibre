@@ -825,10 +825,13 @@ struct RawTransportConfig {
     password: *const core::ffi::c_char,
     password_len: u32,
     namespace: *const core::ffi::c_char,
+    /// 64 lowercase hex characters, or empty without a key.
+    request_key: *const core::ffi::c_char,
 }
 
 unsafe extern "C" {
     fn wellfed_transport_config(out: *mut RawTransportConfig);
+    fn wellfed_entropy(out: *mut [u32; 4]);
     fn wellfed_tcp_connect(ip: u32, port: u32, timeout_ms: u32) -> i32;
     fn wellfed_tcp_send(socket: i32, data: *const u8, length: u32) -> i32;
     fn wellfed_tcp_recv(socket: i32, buffer: *mut u8, length: u32, timeout_ms: u32) -> i32;
@@ -846,6 +849,7 @@ pub fn transport_config() -> Option<TransportConfig> {
         password: ptr::null(),
         password_len: 0,
         namespace: ptr::null(),
+        request_key: ptr::null(),
     };
 
     unsafe { wellfed_transport_config(&mut raw) };
@@ -862,7 +866,37 @@ pub fn transport_config() -> Option<TransportConfig> {
             core::slice::from_raw_parts(raw.password.cast(), raw.password_len as usize)
         },
         namespace: text(raw.namespace)?,
+        // The build writes 64 hex characters or nothing; anything else is a defect.
+        request_key: match text(raw.request_key)? {
+            "" => None,
+            key => Some(hex_key(key.as_bytes())?),
+        },
     })
+}
+
+fn hex_key(hex: &[u8]) -> Option<[u8; 32]> {
+    let nibble = |c: u8| match c {
+        b'0'..=b'9' => Some(c - b'0'),
+        b'a'..=b'f' => Some(c - b'a' + 10),
+        _ => None,
+    };
+    if hex.len() != 64 {
+        return None;
+    }
+    let mut key = [0u8; 32];
+    for (i, pair) in hex.as_chunks::<2>().0.iter().enumerate() {
+        key[i] = (nibble(pair[0])? << 4) | nibble(pair[1])?;
+    }
+    Some(key)
+}
+
+/// Inputs for a session's request nonce: the ROM generator and timer values
+/// at the moment of a connect (`wellfed_entropy` in `example_entry.c`).
+/// Not a vetted RNG; the nonce only has to differ between sessions.
+pub fn entropy() -> [u32; 4] {
+    let mut out = [0; 4];
+    unsafe { wellfed_entropy(&mut out) };
+    out
 }
 
 /// A connected TCP socket, or `None` after `timeout_ms`.

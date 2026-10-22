@@ -34,7 +34,10 @@ pub mod stopped;
 
 pub mod arming;
 pub mod board;
+pub mod clock;
 pub mod confirm;
+pub mod settings;
+pub mod supervise;
 
 mod active;
 pub mod config;

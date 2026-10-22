@@ -12,3 +12,4 @@ compile_error!("wellfed-firstboot target builds are KM4-only");
 #[cfg(target_os = "none")]
 pub mod app;
 pub mod probes;
+pub mod settings;

@@ -14,20 +14,19 @@
 use core::cell::UnsafeCell;
 use core::ffi::c_void;
 use core::ptr;
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
-#[cfg(not(feature = "fw11-reset"))]
 use wellfed_amebad::confirm::{self, Confirm, HookedStorage};
 use wellfed_amebad::flash::hooks::{self, HookProvider, HookTicket};
 use wellfed_amebad::flash::park::Hardware;
 use wellfed_amebad::health::Boot;
 use wellfed_amebad::provider::Provider;
+use wellfed_amebad::supervise::{self, LIVENESS_MS, Startup};
 use wellfed_amebad::transport::{self, Link};
 use wellfed_amebad::updater::{self, Hooked, Hooks, Updater};
-#[cfg(not(feature = "fw11-reset"))]
 use wellfed_amebad::watch::{self, SdkGiveWay, Watch};
 use wellfed_amebad::watchdog::Watchdog;
-use wellfed_amebad::{config, leds, sdk, startup, stopped};
+use wellfed_amebad::{config, leds, sdk, startup, stopped, trial};
 
 use crate::probes::optics;
 use crate::probes::wifi::{Probe, Record};
@@ -40,6 +39,43 @@ static PROBING: AtomicBool = AtomicBool::new(false);
 struct Slot<T>(UnsafeCell<Option<T>>);
 // SAFETY: the diagnostic task is the only user; see `probe_step`.
 unsafe impl<T> Sync for Slot<T> {}
+
+impl<T> Slot<T> {
+    /// The value, built on first use by `make` in a frame of its own. Built
+    /// inline, a large value's temporary stays reserved in the task's frame
+    /// beneath every later step: after the crate split, LTO inlined the
+    /// optics probe's 3 KiB default and the task overflowed its 4 KiB stack.
+    ///
+    /// # Safety
+    /// Only the slot's owning task calls this, with no other reference into
+    /// the slot live.
+    unsafe fn get_or_try_init(&self, make: impl FnOnce() -> Option<T>) -> Option<&mut T> {
+        // SAFETY: the caller is the slot's only user.
+        let slot = unsafe { &mut *self.0.get() };
+        if slot.is_none() {
+            fill(slot, make);
+        }
+        slot.as_mut()
+    }
+
+    /// As `get_or_try_init`, for a constructor that cannot fail.
+    ///
+    /// # Safety
+    /// As for `get_or_try_init`.
+    unsafe fn get_or_init(&self, make: impl FnOnce() -> T) -> &mut T {
+        // SAFETY: the caller's contract.
+        match unsafe { self.get_or_try_init(|| Some(make())) } {
+            Some(value) => value,
+            None => unreachable!(),
+        }
+    }
+}
+
+#[inline(never)]
+#[cold]
+fn fill<T>(slot: &mut Option<T>, make: impl FnOnce() -> Option<T>) {
+    *slot = make();
+}
 static PROBE: Slot<Probe> = Slot(UnsafeCell::new(None));
 /// Touched only by the transport task; see `net_task`.
 static NET: Slot<Link> = Slot(UnsafeCell::new(None));
@@ -56,7 +92,7 @@ impl core::fmt::Display for OpticsLine {
 
 unsafe extern "C" fn optics_task(_: *mut c_void) -> u32 {
     // SAFETY: only this task touches the slot; the probe stays in place.
-    let probe = unsafe { &mut *OPTICS.0.get() }.get_or_insert_with(optics::Probe::default);
+    let probe = unsafe { OPTICS.get_or_init(optics::Probe::default) };
     let step = probe.step::<Hardware>();
     if let Some(record) = step.record {
         let mut report = startup::Report::new();
@@ -67,6 +103,11 @@ unsafe extern "C" fn optics_task(_: *mut c_void) -> u32 {
     PROBE_DONE.store(step.delay_ms == 0, Ordering::Release);
     step.delay_ms
 }
+
+/// The optics and pulse probes' stacks. Building a probe in place copies it
+/// through two constructor frames (about 3.6 KiB), so 4 KiB overflowed once
+/// LTO inlined differently after the crate split.
+const PROBE_STACK_WORDS: u16 = 2048;
 
 /// Touched only by the pulse task; see `pulse_task`.
 #[cfg(feature = "fw16-pulse")]
@@ -85,7 +126,7 @@ impl core::fmt::Display for PulseLine {
 #[cfg(feature = "fw16-pulse")]
 unsafe extern "C" fn pulse_task(_: *mut c_void) -> u32 {
     // SAFETY: only this task touches the slot; the probe stays in place.
-    let probe = unsafe { &mut *PULSE.0.get() }.get_or_insert_with(Default::default);
+    let probe = unsafe { PULSE.get_or_init(Default::default) };
     let step = probe.step::<Hardware>();
     if let Some(record) = step.record {
         let mut report = startup::Report::new();
@@ -100,7 +141,13 @@ unsafe extern "C" fn pulse_task(_: *mut c_void) -> u32 {
 /// FW16 builds run the motor pulse in place of the optics probe.
 #[cfg(feature = "fw16-pulse")]
 fn start_optics() {
-    let created = sdk::task_create(c"wellfed-pulse", 1024, 3, pulse_task, ptr::null_mut());
+    let created = sdk::task_create(
+        c"wellfed-pulse",
+        PROBE_STACK_WORDS,
+        3,
+        pulse_task,
+        ptr::null_mut(),
+    );
     sdk::log(if created {
         c"PLMOT1 start created=1\r\n"
     } else {
@@ -112,7 +159,13 @@ fn start_optics() {
 /// off the owner lease the supervisor enforces.
 #[cfg(not(any(feature = "fw16-pulse", feature = "fw11-reset")))]
 fn start_optics() {
-    let created = sdk::task_create(c"wellfed-optics", 1024, 3, optics_task, ptr::null_mut());
+    let created = sdk::task_create(
+        c"wellfed-optics",
+        PROBE_STACK_WORDS,
+        3,
+        optics_task,
+        ptr::null_mut(),
+    );
     sdk::log(if created {
         c"PLOPT1 start created=1 plan=2\r\n"
     } else {
@@ -139,20 +192,23 @@ fn log_transport(record: transport::Record) {
 
 unsafe extern "C" fn net_task(_: *mut c_void) -> u32 {
     // SAFETY: only this task touches the slot.
-    let slot = unsafe { &mut *NET.0.get() };
-    if slot.is_none() {
-        let Some(config) = sdk::transport_config() else {
-            sdk::log(c"PLMQT1 error config\r\n");
-            return 0;
-        };
-        *slot = Some(Link::new(config, Boot::read(startup::snapshot())));
-    }
+    let link = unsafe {
+        NET.get_or_try_init(|| {
+            let link = sdk::transport_config()
+                .map(|config| Link::new(config, Boot::read(startup::snapshot())));
+            if link.is_none() {
+                sdk::log(c"PLMQT1 error config\r\n");
+            }
+            link
+        })
+    };
+    let Some(link) = link else {
+        return 0;
+    };
 
     NET_RUNNING.store(true, Ordering::Release);
-    let delay = slot
-        .as_mut()
-        .map_or(0, |link| link.step(&mut log_transport));
-    NET_READY.store(slot.as_ref().is_some_and(Link::ready), Ordering::Release);
+    let delay = link.step(&mut log_transport);
+    NET_READY.store(link.ready(), Ordering::Release);
     NET_BEAT.store(sdk::uptime_ms(), Ordering::Release);
 
     if delay == 0 {
@@ -197,9 +253,33 @@ static WATCH_RUNNING: AtomicBool = AtomicBool::new(false);
 /// handshake, so another writer may bind it.
 static PROBE_DONE: AtomicBool = AtomicBool::new(false);
 
-/// A task step longer than this (a hang) stops the feeding.
-const LIVENESS_MS: u32 = 10_000;
 const FEED_MS: u32 = 250;
+
+/// FW11 supervision state for the feeder (`supervise.rs`).
+static STARTUP: AtomicU8 = AtomicU8::new(STARTUP_RUNNING);
+const STARTUP_RUNNING: u8 = 0;
+const STARTUP_STARTED: u8 = 1;
+const STARTUP_FAILED: u8 = 2;
+/// The diagnostic task's last step, while startup runs.
+static STARTUP_BEAT: AtomicU32 = AtomicU32::new(0);
+/// Bank 1 without a confirmation record for this build.
+static TRIAL: AtomicBool = AtomicBool::new(false);
+/// This boot confirmed the build.
+static CONFIRMED: AtomicBool = AtomicBool::new(false);
+
+/// Startup stopped on a determined failure; ends the diagnostic task.
+fn startup_failed() -> u32 {
+    STARTUP.store(STARTUP_FAILED, Ordering::Release);
+    0
+}
+
+/// Running bank 1 with no confirmation record naming this build.
+fn on_trial() -> bool {
+    let mut record = [0u8; wellfed_core::ota::CONFIRM_LEN];
+    startup::snapshot().bank() == Some(1)
+        && sdk::storage_read(trial::CONFIRM_SECTOR, 0, &mut record)
+        && wellfed_core::ota::confirmed(&record, &trial::identity()).is_none()
+}
 /// 24 KiB: Ed25519 verification under the manifest step needs about 12 KiB,
 /// and 10 KiB overflowed on hardware.
 const UPDATER_STACK_WORDS: u16 = 6144;
@@ -233,7 +313,7 @@ impl Hooks for SdkHooks {
         }
 
         // SAFETY: the feeder touches the slot only once WATCHDOG_OPEN is set.
-        let watchdog = unsafe { &mut *WATCHDOG.0.get() }.get_or_insert_with(Watchdog::default);
+        let watchdog = unsafe { WATCHDOG.get_or_init(Watchdog::default) };
         let opened = watchdog.open(&config::WATCHDOG);
         WATCHDOG_OPEN.store(opened, Ordering::Release);
         opened
@@ -269,22 +349,22 @@ unsafe extern "C" fn updater_task(_: *mut c_void) -> u32 {
     HEARTBEAT.store(sdk::uptime_ms(), Ordering::Release);
     // SAFETY: only this task creates references into the slots; the provider
     // is reached by raw pointer so hook callbacks never alias a live borrow.
-    let slot = unsafe { &mut *UPDATER.0.get() };
-    if slot.is_none() {
-        let Some(config) = sdk::transport_config() else {
-            sdk::log(c"PLOTA1 error stage=config\r\n");
-            UPDATER_DONE.store(true, Ordering::Release);
-            return 0;
-        };
-        *slot = Some(Updater::new(config, updater::public_key()));
-    }
-
-    let Some(updater) = slot.as_mut() else {
+    let updater = unsafe {
+        UPDATER.get_or_try_init(|| {
+            let updater =
+                sdk::transport_config().map(|config| Updater::new(config, updater::public_key()));
+            if updater.is_none() {
+                sdk::log(c"PLOTA1 error stage=config\r\n");
+                UPDATER_DONE.store(true, Ordering::Release);
+            }
+            updater
+        })
+    };
+    let Some(updater) = updater else {
         return 0;
     };
 
-    let provider =
-        unsafe { &mut *PROVIDER.0.get() }.get_or_insert_with(Provider::default) as *mut Provider;
+    let provider = unsafe { PROVIDER.get_or_init(Provider::default) } as *mut Provider;
     let mut flash = Hooked::<SdkHooks>::new();
     // SAFETY: the provider slot is fixed for the program's lifetime.
     let step = unsafe { updater.step::<Hardware, SdkHooks>(provider, &mut flash) };
@@ -310,26 +390,74 @@ unsafe extern "C" fn updater_task(_: *mut c_void) -> u32 {
     step.delay_ms
 }
 
-/// Feeds the watchdog while the transport and the flash writer keep stepping
-/// (or have ended) and outputs stay stopped. A hung task, a hook fault (IRQs
-/// masked) or an activation all stop the feeding, and the watchdog resets
-/// the platform, which KM0's FW11 trial counts.
+/// Opens the watchdog on its first step, before the startup diagnostic and
+/// probes run, then feeds it as `supervise::feed` decides: while startup and
+/// then the role's tasks keep stepping and outputs stay stopped. A hang, a
+/// hook fault (IRQs masked), an activation, or a trial image that fails or
+/// never confirms all stop the feeding, and the watchdog resets the
+/// platform, which KM0's FW11 trial counts.
 unsafe extern "C" fn feeder_task(_: *mut c_void) -> u32 {
     static PROGRESS: AtomicU32 = AtomicU32::new(0);
-    if !WATCHDOG_OPEN.load(Ordering::Acquire) || RESTART.load(Ordering::Acquire) {
-        return FEED_MS;
+    static STOPPED: AtomicBool = AtomicBool::new(false);
+    if !WATCHDOG_OPEN.load(Ordering::Acquire) {
+        let trial = on_trial();
+        TRIAL.store(trial, Ordering::Release);
+        let opened = SdkHooks::watchdog();
+        let mut report = startup::Report::new();
+        if let Ok(line) = report.record(format_args!(
+            "PLSUP1 open watchdog={} trial={}\r\n",
+            bit(opened),
+            bit(trial)
+        )) {
+            sdk::log(line);
+        }
+        if !opened {
+            return 0; // Unsupervised, as before FW11; nothing to feed.
+        }
     }
 
     let now = sdk::uptime_ms();
     let fresh = |beat: &AtomicU32| now.wrapping_sub(beat.load(Ordering::Acquire)) < LIVENESS_MS;
     let alive = (!NET_RUNNING.load(Ordering::Acquire) || fresh(&NET_BEAT))
         && (!WATCH_RUNNING.load(Ordering::Acquire) || fresh(&WATCH_BEAT))
+        && (!SETTINGS_RUNNING.load(Ordering::Acquire) || fresh(&SETTINGS_BEAT))
         && (UPDATER_DONE.load(Ordering::Acquire) || fresh(&HEARTBEAT));
 
     // Stopped, or motor STOP with exactly the supervised emitters lit (the
     // optics probe): the feeder must not trip on a sensing window (observed).
     let outputs = stopped::observe();
-    if alive && (outputs.verified() || outputs.sensing()) {
+    let inputs = supervise::Inputs {
+        now_ms: now,
+        startup: match STARTUP.load(Ordering::Acquire) {
+            STARTUP_RUNNING => Startup::Running,
+            STARTUP_STARTED => Startup::Started,
+            _ => Startup::Failed,
+        },
+        startup_beat_ms: STARTUP_BEAT.load(Ordering::Acquire),
+        trial: TRIAL.load(Ordering::Acquire),
+        confirmed: CONFIRMED.load(Ordering::Acquire),
+        tasks_alive: alive,
+        outputs_ok: outputs.verified() || outputs.sensing(),
+    };
+    if RESTART.load(Ordering::Acquire) || !supervise::feed(&inputs) {
+        if !STOPPED.swap(true, Ordering::Relaxed) {
+            let mut report = startup::Report::new();
+            if let Ok(line) = report.record(format_args!(
+                "PLSUP1 stop startup={} trial={} confirmed={} alive={} outputs={} restart={} ms={}\r\n",
+                STARTUP.load(Ordering::Relaxed),
+                bit(inputs.trial),
+                bit(inputs.confirmed),
+                bit(alive),
+                bit(inputs.outputs_ok),
+                bit(RESTART.load(Ordering::Relaxed)),
+                now
+            )) {
+                sdk::log(line);
+            }
+        }
+        return FEED_MS;
+    }
+    {
         // SAFETY: the updater task no longer touches the slot once open.
         if let Some(watchdog) = unsafe { &mut *WATCHDOG.0.get() }.as_mut() {
             let progress = PROGRESS.fetch_add(1, Ordering::Relaxed) + 1;
@@ -340,13 +468,10 @@ unsafe extern "C" fn feeder_task(_: *mut c_void) -> u32 {
 }
 
 /// Touched only by the confirmation task; see `confirm_task`.
-#[cfg(not(feature = "fw11-reset"))]
 static CONFIRM: Slot<Confirm> = Slot(UnsafeCell::new(None));
 
-#[cfg(not(feature = "fw11-reset"))]
 struct ConfirmLine(confirm::Record);
 
-#[cfg(not(feature = "fw11-reset"))]
 impl core::fmt::Display for ConfirmLine {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         confirm::describe(self.0, f)
@@ -355,15 +480,13 @@ impl core::fmt::Display for ConfirmLine {
 
 /// FW11: confirm this build once it has stayed healthy, after the startup
 /// probe has released the KM0 handshake.
-#[cfg(not(feature = "fw11-reset"))]
 unsafe extern "C" fn confirm_task(_: *mut c_void) -> u32 {
     let now = sdk::uptime_ms();
     HEARTBEAT.store(now, Ordering::Release);
     // SAFETY: only this task creates references into the slots; the provider
     // is reached by raw pointer so hook callbacks never alias a live borrow.
-    let confirm = unsafe { &mut *CONFIRM.0.get() }.get_or_insert_with(Confirm::default);
-    let provider =
-        unsafe { &mut *PROVIDER.0.get() }.get_or_insert_with(Provider::default) as *mut Provider;
+    let confirm = unsafe { CONFIRM.get_or_init(Confirm::default) };
+    let provider = unsafe { PROVIDER.get_or_init(Provider::default) } as *mut Provider;
     let healthy = NET_READY.load(Ordering::Acquire)
         && PROBE_DONE.load(Ordering::Acquire)
         && stopped::observe().verified();
@@ -382,24 +505,26 @@ unsafe extern "C" fn confirm_task(_: *mut c_void) -> u32 {
     HEARTBEAT.store(sdk::uptime_ms(), Ordering::Release);
     if step.delay_ms == 0 {
         UPDATER_DONE.store(true, Ordering::Release);
+        if matches!(step.record, Some(confirm::Record::Confirmed { .. })) {
+            CONFIRMED.store(true, Ordering::Release);
+        }
         if matches!(
             step.record,
             Some(confirm::Record::Already | confirm::Record::Confirmed { .. })
         ) {
-            start_watch();
+            // The settings writer arms the hooks first; the offer check
+            // starts once that settles, so the two never arm at once.
+            start_settings();
         }
     }
     step.delay_ms
 }
 
 /// Touched only by the offer-check task; see `watch_task`.
-#[cfg(not(feature = "fw11-reset"))]
 static WATCH: Slot<Watch> = Slot(UnsafeCell::new(None));
 
-#[cfg(not(feature = "fw11-reset"))]
 struct WatchLine(watch::Record);
 
-#[cfg(not(feature = "fw11-reset"))]
 impl core::fmt::Display for WatchLine {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         watch::describe(self.0, f)
@@ -408,27 +533,26 @@ impl core::fmt::Display for WatchLine {
 
 /// FW10: once confirmed, check for an offer and give way to bank 0's
 /// updater when one names another build.
-#[cfg(not(feature = "fw11-reset"))]
 unsafe extern "C" fn watch_task(_: *mut c_void) -> u32 {
     let now = sdk::uptime_ms();
     WATCH_BEAT.store(now, Ordering::Release);
     // SAFETY: only this task creates references into the slot; the provider
     // is reached by raw pointer (the confirmation task has ended).
-    let slot = unsafe { &mut *WATCH.0.get() };
-    if slot.is_none() {
-        let Some(config) = sdk::transport_config() else {
-            WATCH_RUNNING.store(false, Ordering::Release);
-            return 0;
-        };
-        *slot = Some(Watch::new(config, updater::public_key()));
-    }
-
-    let Some(watch) = slot.as_mut() else {
+    let watch = unsafe {
+        WATCH.get_or_try_init(|| {
+            let watch =
+                sdk::transport_config().map(|config| Watch::new(config, updater::public_key()));
+            if watch.is_none() {
+                WATCH_RUNNING.store(false, Ordering::Release);
+            }
+            watch
+        })
+    };
+    let Some(watch) = watch else {
         return 0;
     };
 
-    let provider =
-        unsafe { &mut *PROVIDER.0.get() }.get_or_insert_with(Provider::default) as *mut Provider;
+    let provider = unsafe { PROVIDER.get_or_init(Provider::default) } as *mut Provider;
     let mut bank = SdkGiveWay::<SdkHooks>::new();
     // SAFETY: the provider slot is fixed for the program's lifetime.
     let step = unsafe { watch.step::<Hardware, SdkHooks>(provider, &mut bank, now) };
@@ -451,7 +575,96 @@ unsafe extern "C" fn watch_task(_: *mut c_void) -> u32 {
 }
 
 /// 24 KiB, as the updater: the manifest check verifies Ed25519.
-#[cfg(not(feature = "fw11-reset"))]
+/// The settings writer's storage: the SDK wrappers, refused unless the
+/// hooks are armed (reads are mapped and need no lease).
+struct SdkStorage;
+
+impl crate::probes::flash::FlashOps for SdkStorage {
+    fn install(provider: *mut Provider) -> bool {
+        SdkHooks::install(provider)
+    }
+    fn read_id() -> [u8; 3] {
+        [0; 3] // Unused by the settings writer.
+    }
+    fn armed() -> bool {
+        SdkHooks::armed()
+    }
+    fn erase(sector: u32) -> bool {
+        SdkHooks::armed() && sdk::storage_erase(sector)
+    }
+    fn program(sector: u32, offset: u32, data: &[u8]) -> bool {
+        SdkHooks::armed() && sdk::storage_program(sector, offset, data)
+    }
+    fn read(sector: u32, offset: u32, bytes: &mut [u8]) -> bool {
+        sdk::storage_read(sector, offset, bytes)
+    }
+}
+
+/// Touched only by the settings task; see `settings_task`.
+static SETTINGS: Slot<crate::settings::Writer> = Slot(UnsafeCell::new(None));
+/// The settings task's last step, while it runs.
+static SETTINGS_BEAT: AtomicU32 = AtomicU32::new(0);
+static SETTINGS_RUNNING: AtomicBool = AtomicBool::new(false);
+
+struct SettingsLine(crate::settings::Record);
+
+impl core::fmt::Display for SettingsLine {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        crate::settings::describe(self.0, f)
+    }
+}
+
+/// FW25: load the device settings, arm the hooks, then save signed changes.
+unsafe extern "C" fn settings_task(_: *mut c_void) -> u32 {
+    SETTINGS_BEAT.store(sdk::uptime_ms(), Ordering::Release);
+    // SAFETY: only this task creates references into the slot; the provider
+    // is reached by raw pointer so hook callbacks never alias a live borrow.
+    let writer = unsafe { SETTINGS.get_or_init(Default::default) };
+    let provider = unsafe { PROVIDER.get_or_init(Provider::default) } as *mut Provider;
+    // SAFETY: the provider slot is fixed for the program's lifetime.
+    let step = unsafe { writer.step::<Hardware, SdkHooks, SdkStorage>(provider) };
+
+    if let Some(record) = step.record {
+        let mut report = startup::Report::new();
+        if let Ok(line) = report.record(format_args!("PLCFG1 {}\r\n", SettingsLine(record))) {
+            sdk::log(line);
+        }
+    }
+    if step.settled {
+        start_watch();
+    }
+    SETTINGS_BEAT.store(sdk::uptime_ms(), Ordering::Release);
+    if step.delay_ms == 0 {
+        SETTINGS_RUNNING.store(false, Ordering::Release);
+    }
+    step.delay_ms
+}
+
+fn start_settings() {
+    SETTINGS_BEAT.store(sdk::uptime_ms(), Ordering::Release);
+    SETTINGS_RUNNING.store(true, Ordering::Release);
+    let created = sdk::task_create(
+        c"wellfed-cfg",
+        SETTINGS_STACK_WORDS,
+        2,
+        settings_task,
+        ptr::null_mut(),
+    );
+    if !created {
+        SETTINGS_RUNNING.store(false, Ordering::Release);
+        start_watch();
+    }
+    sdk::log(if created {
+        c"PLCFG1 start created=1\r\n"
+    } else {
+        c"PLCFG1 start created=0\r\n"
+    });
+}
+
+/// The store's 128-byte records and the arming state; 4 KiB like the
+/// confirmation task (the build's stack audit checks the bound).
+const SETTINGS_STACK_WORDS: u16 = 1024;
+
 fn start_watch() {
     WATCH_BEAT.store(sdk::uptime_ms(), Ordering::Release);
     WATCH_RUNNING.store(true, Ordering::Release);
@@ -473,14 +686,12 @@ fn start_watch() {
     });
 }
 
-/// The normal role's FW11 supervision: the confirmation task, the feeder,
-/// then the watchdog, so a hang becomes a reset KM0 counts.
-#[cfg(not(feature = "fw11-reset"))]
+/// The normal role's FW11 confirmation task. The feeder, started with the
+/// application, already supervises it.
 fn start_confirm() {
     HEARTBEAT.store(sdk::uptime_ms(), Ordering::Release);
-    let created = sdk::task_create(c"wellfed-cnf", 1024, 2, confirm_task, ptr::null_mut())
-        && sdk::task_create(c"wellfed-wdg", 512, 3, feeder_task, ptr::null_mut());
-    let opened = created && SdkHooks::watchdog();
+    let created = sdk::task_create(c"wellfed-cnf", 1024, 2, confirm_task, ptr::null_mut());
+    let opened = WATCHDOG_OPEN.load(Ordering::Acquire);
     sdk::log(match (created, opened) {
         (true, true) => c"PLCNF1 start created=1 watchdog=1\r\n",
         (true, false) => c"PLCNF1 start created=1 watchdog=0\r\n",
@@ -488,19 +699,17 @@ fn start_confirm() {
     });
 }
 
-#[cfg(feature = "fw11-reset")]
-fn start_confirm() {}
-
-/// The recovery role: the updater, and the feeder above it so a long
-/// network wait cannot starve the watchdog.
+/// The recovery role: the updater, below the feeder so a long network wait
+/// cannot starve the watchdog.
 fn start_updater() {
+    HEARTBEAT.store(sdk::uptime_ms(), Ordering::Release);
     let created = sdk::task_create(
         c"wellfed-ota",
         UPDATER_STACK_WORDS,
         2,
         updater_task,
         ptr::null_mut(),
-    ) && sdk::task_create(c"wellfed-wdg", 512, 3, feeder_task, ptr::null_mut());
+    );
     sdk::log(if created {
         c"PLOTA1 tasks created=1\r\n"
     } else {
@@ -508,14 +717,13 @@ fn start_updater() {
     });
 }
 
-/// FW11 trial test, in place of the optics probe: open the watchdog and
-/// never feed it, as a hung candidate would, so KM0 counts the reset.
-/// Outputs stay stopped.
+/// FW11 trial test, in place of the optics probe: stop feeding the
+/// watchdog, as a hung candidate would, so KM0 counts the reset. Outputs
+/// stay stopped.
 #[cfg(feature = "fw11-reset")]
 fn start_optics() {
-    // SAFETY: nothing else touches the slot in this variant.
-    let watchdog = unsafe { &mut *WATCHDOG.0.get() }.get_or_insert_with(Watchdog::default);
-    sdk::log(if watchdog.open(&config::WATCHDOG) {
+    RESTART.store(true, Ordering::Release);
+    sdk::log(if WATCHDOG_OPEN.load(Ordering::Acquire) {
         c"PLTRL1 test=reset watchdog=1\r\n"
     } else {
         c"PLTRL1 test=reset watchdog=0\r\n"
@@ -569,7 +777,7 @@ fn log_probe(record: Record) {
 
 fn probe_step() -> u32 {
     // SAFETY: only this task touches the slot.
-    let probe = unsafe { &mut *PROBE.0.get() }.get_or_insert_with(Probe::default);
+    let probe = unsafe { PROBE.get_or_init(Probe::default) };
     let step = probe.step();
     if let Some(record) = step.record {
         log_probe(record);
@@ -617,6 +825,7 @@ fn abort_led(led: leds::Led, high: bool, stage: &str, value: leds::Readback) {
 }
 
 unsafe extern "C" fn diagnostic_task(_: *mut c_void) -> u32 {
+    STARTUP_BEAT.store(sdk::uptime_ms(), Ordering::Release);
     if PROBING.load(Ordering::Relaxed) {
         return probe_step();
     }
@@ -640,18 +849,19 @@ unsafe extern "C" fn diagnostic_task(_: *mut c_void) -> u32 {
                         start_optics();
                         start_confirm();
                     }
+                    STARTUP.store(STARTUP_STARTED, Ordering::Release);
                     return 1;
                 }
             } else {
                 sdk::log(c"PLLED1 error finish=unverified\r\n");
             }
-            return 0;
+            return startup_failed();
         };
 
         if (phase - 1).is_multiple_of(2) {
             if !leds::request(step.led, step.high) {
                 abort_led(step.led, step.high, "request", leds::observe(step.led));
-                return 0;
+                return startup_failed();
             }
             // Yield with IRQs restored; do not inspect pad input immediately after DR.
             return leds::SETTLE_MS;
@@ -672,7 +882,7 @@ unsafe extern "C" fn diagnostic_task(_: *mut c_void) -> u32 {
             }
             leds::Decision::Abort => {
                 abort_led(step.led, step.high, "verify", observed);
-                return 0;
+                return startup_failed();
             }
         };
 
@@ -694,7 +904,9 @@ unsafe extern "C" fn diagnostic_task(_: *mut c_void) -> u32 {
         sdk::log(line);
     }
 
-    let passed = wellfed_core::diagnostic::run();
+    // FW11 test variant: a determined startup failure, which a trial image
+    // must turn into a counted reset.
+    let passed = wellfed_core::diagnostic::run() && !cfg!(feature = "fw11-fail");
     sdk::log(if passed {
         c"Synthetic core diagnostic: PASS\r\n"
     } else {
@@ -712,7 +924,7 @@ unsafe extern "C" fn diagnostic_task(_: *mut c_void) -> u32 {
             log_led_readback(led, false, "initialize", leds::observe(led));
         }
         sdk::log(c"PLLED1 error initialize=unverified\r\n");
-        return 0;
+        return startup_failed();
     }
 
     sdk::log(c"PLLED1 begin output_only=PA0,PA2,PA4\r\n");
@@ -723,6 +935,11 @@ unsafe extern "C" fn diagnostic_task(_: *mut c_void) -> u32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn wellfed_app_start() {
     let snapshot = stopped::initialize();
+    // FW11: supervise from the first scheduled step, so a startup fault or
+    // hang is a reset KM0 can count.
+    if !sdk::task_create(c"wellfed-wdg", 512, 3, feeder_task, ptr::null_mut()) {
+        sdk::log(c"PLSUP1 error task=create\r\n");
+    }
     let mut report = startup::Report::new();
     if let Ok(line) = report.record(format_args!(
         "PLCLK1 function_before={:08x} clock_before={:08x} function_after={:08x} clock_after={:08x} status={}\r\n",
@@ -747,11 +964,13 @@ pub extern "C" fn wellfed_app_start() {
 
     if !snapshot.verified() {
         sdk::log(c"PLFW1 error outputs=unverified\r\n");
+        startup_failed();
         return;
     }
 
     if !sdk::task_create(c"wellfed", 1024, 1, diagnostic_task, ptr::null_mut()) {
         sdk::log(c"Wellfed: diagnostic task creation failed\r\n");
         sdk::log(c"PLFW1 error task=create\r\n");
+        startup_failed();
     }
 }

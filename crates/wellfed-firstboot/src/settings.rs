@@ -9,8 +9,10 @@ use core::fmt;
 
 use wellfed_amebad::arming::{self, Arming, Hooks, Poll};
 use wellfed_amebad::flash::park::Mmio;
+use wellfed_amebad::network::{self, NET_BASE};
 use wellfed_amebad::provider::Provider;
 use wellfed_amebad::settings;
+use wellfed_core::net_store::{NetStatus, NetStore};
 use wellfed_core::settings_store::{Settings, SettingsStatus, SettingsStore};
 use wellfed_core::transport::{SettingsFields, SettingsView};
 
@@ -33,6 +35,19 @@ pub enum Record {
     Error {
         stage: &'static str,
         status: SettingsStatus,
+    },
+    /// FW25 Wi-Fi credentials (sectors 5 and 6): what the store holds.
+    NetOpen {
+        status: NetStatus,
+        generation: u64,
+        stored: bool,
+    },
+    NetSaved {
+        generation: u64,
+        stored: bool,
+    },
+    NetError {
+        stage: &'static str,
     },
 }
 
@@ -79,6 +94,23 @@ pub fn describe(record: Record, f: &mut impl fmt::Write) -> fmt::Result {
             values(f, &settings)
         }
         Record::Error { stage, status } => write!(f, "error stage={stage} status={}", status.0),
+        // Never the SSID or passphrase.
+        Record::NetOpen {
+            status,
+            generation,
+            stored,
+        } => write!(
+            f,
+            "net open status={} generation={generation} stored={}",
+            status as u8,
+            u8::from(stored)
+        ),
+        Record::NetSaved { generation, stored } => write!(
+            f,
+            "net saved generation={generation} stored={}",
+            u8::from(stored)
+        ),
+        Record::NetError { stage } => write!(f, "net error stage={stage}"),
     }
 }
 
@@ -114,6 +146,9 @@ pub struct Writer {
     stage: Stage,
     arming: Arming,
     store: SettingsStore,
+    net: NetStore,
+    /// The credential store's open record, logged on the next step.
+    net_opened: bool,
     armed: bool,
 }
 
@@ -140,6 +175,7 @@ impl Writer {
             generation: self.store.generation as u32,
             writable,
         });
+        network::publish(&self.net, self.armed);
     }
 
     /// One task iteration.
@@ -155,6 +191,8 @@ impl Writer {
                     self.store
                         .open(slot_io::<F, SETTINGS_BASE>(), SETTINGS_BINDING)
                 };
+                // SAFETY: as above.
+                unsafe { self.net.open(slot_io::<F, NET_BASE>()) };
                 self.armed = H::armed();
                 self.stage = if self.armed { Stage::Idle } else { Stage::Arm };
                 self.publish();
@@ -197,6 +235,37 @@ impl Writer {
             },
 
             Stage::Idle | Stage::Serve => {
+                if !self.net_opened {
+                    self.net_opened = true;
+                    return next(
+                        POLL_MS,
+                        Some(Record::NetOpen {
+                            status: self.net.status,
+                            generation: self.net.generation,
+                            stored: self.net.credentials.is_some(),
+                        }),
+                    );
+                }
+                if let Some(credentials) = network::pending() {
+                    let record = if self.stage == Stage::Serve || !H::armed() {
+                        Record::NetError { stage: "unarmed" }
+                    } else {
+                        arming::set_attempt();
+                        let saved = self.net.save(credentials.as_ref());
+                        arming::clear_attempt();
+                        if saved {
+                            Record::NetSaved {
+                                generation: self.net.generation,
+                                stored: self.net.credentials.is_some(),
+                            }
+                        } else {
+                            Record::NetError { stage: "save" }
+                        }
+                    };
+                    self.publish();
+                    network::finish();
+                    return next(POLL_MS, Some(record));
+                }
                 let Some(fields) = settings::pending() else {
                     return next(POLL_MS, None);
                 };

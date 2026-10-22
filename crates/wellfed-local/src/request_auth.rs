@@ -19,8 +19,9 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 /// The firmware's request limit (wellfed-core `MAX_REQUEST`), raised from
-/// 256 because a signed `time` request needs about 260 bytes.
-pub const MAX_REQUEST: usize = 320;
+/// 256 for signed `time` requests (about 260 bytes) and again for signed
+/// `wifi` requests with hex credentials (up to 383 bytes).
+pub const MAX_REQUEST: usize = 448;
 /// Hex characters in a request key.
 pub const KEY_HEX_LEN: usize = 64;
 /// Hex characters in a health nonce.
@@ -117,6 +118,13 @@ pub struct Request(String);
 impl Request {
     pub fn new(id: Uuid, op: &str) -> Self {
         Self(format!(r#"{{"id":"{id}","op":"{op}""#))
+    }
+
+    /// Append a lowercase-hex string field (FW25 credentials); names are
+    /// fixed identifiers from this crate.
+    pub fn hex_field(mut self, name: &str, bytes: &[u8]) -> Self {
+        let _ = write!(self.0, r#","{name}":"{}""#, hex(bytes));
+        self
     }
 
     /// Append an integer field; names are fixed identifiers from this crate.

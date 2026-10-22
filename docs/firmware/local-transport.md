@@ -146,6 +146,18 @@ Server-to-firmware requests can carry an HMAC so that a party with only the Wi-F
 - **Startup:** after `wellfed-local firmware-request-key`, an image built with the key reported its nonce in health. It accepted the server's signed `time` sync and a signed API `ping` (`seq` 2).
 - **Refusal:** over a bare broker, an unsigned `time` was refused (`error: auth`, the clock unchanged), and a signed one at `seq` 1 was accepted.
 
+## Wi-Fi credentials (FW25)
+
+`{"id":…,"op":"wifi"}` reads which credentials joined this boot (`source`: `build`, `stored` or `fallback`), the stored SSID's CRC-32 (`stored`, or null) and the record generation; never the SSID or passphrase themselves. `"ssid":"<hex>","psk":"<hex>"` (1-32 bytes; 8-63 printable ASCII) stores credentials for the **next boot**, and `"clear":1` returns to the build's. Both must be signed, and requests may be up to 448 bytes for the hex.
+- **Store:** `wellfed-core/src/net_store.rs`, two 128-byte records in storage sectors 5 and 6, written by the settings task inside a marked attempt. A power cut at every mutation reopens to the old or the new value and stays writable (host).
+- **Join:** before each attempt the C shim takes the build's credentials, and Rust (`amebad/src/network.rs`) substitutes the stored ones. After 5 failed attempts in a row with no success this boot, the build's credentials take over until the next boot. The connect event's value names the source; health reports `wifi.source`.
+- **API:** `{"op":"wifi","ssid":"…","psk":"…"}` or `{"op":"wifi","clear":true}`; the server hex-encodes and signs it and never logs the values.
+- **Physical (October 22):**
+  - **Stored:** storing the hotspot's own credentials, then a cold boot, joined with `source: stored`.
+  - **Wrong passphrase:** stored attempts 1 to 5 failed, the build's credentials took over from attempt 6, and the feeder came online on attempt 7 (`source: fallback`).
+  - **Recovery:** a signed clear then returned to the build's credentials.
+  - **No leak:** neither passphrase appeared in any capture.
+
 ## Device settings (FW25)
 
 `{"id":…,"op":"settings"}` reads the device settings: lights, sound, volume, the record generation, and whether NOR may be written. With `"lights":0|1`, `"sound":0|1` or `"volume":0..100` it queues one change, which **must be signed**. The reply reports the current values and `"pending":true`. A second change while one is queued gets `error: busy`, and an unwritable store gets `error: read_only`.

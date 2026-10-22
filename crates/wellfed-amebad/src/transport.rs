@@ -16,6 +16,7 @@ use wellfed_core::transport::{
 use crate::clock;
 use crate::health::{self, Boot};
 use crate::net_status;
+use crate::network;
 use crate::sdk::{self, TcpRecv, TransportConfig};
 use crate::settings;
 
@@ -43,6 +44,7 @@ pub enum RequestKind {
     Ping,
     Time,
     Settings,
+    Wifi,
     /// Refused: a bad signature, or a state change that came unsigned.
     Unauthenticated,
     Unsupported,
@@ -441,8 +443,9 @@ impl Link {
         };
         // A bad signature is refused whatever it asks; a state change needs a
         // good one, and an image without a request key refuses every change.
-        let changes =
-            request.op == Ok(Op::Time) || request.settings.is_some_and(|fields| fields.changes());
+        let changes = request.op == Ok(Op::Time)
+            || request.settings.is_some_and(|fields| fields.changes())
+            || request.wifi.is_some_and(|fields| fields.changes());
         let refused = (signed.is_some() || changes) && !authentic;
 
         let kind = match request.op {
@@ -451,6 +454,7 @@ impl Link {
             Ok(Op::Ping) => RequestKind::Ping,
             Ok(Op::Time) => RequestKind::Time,
             Ok(Op::Settings) => RequestKind::Settings,
+            Ok(Op::Wifi) => RequestKind::Wifi,
             Err(_) => RequestKind::Unsupported,
         };
 
@@ -459,6 +463,14 @@ impl Link {
         // FW21: the clock is the one thing a request may change (see clock.rs).
         let (written, ok) = match request.time {
             _ if refused => (mqtt::write_auth_refusal(&mut writer, &request), false),
+            // FW25: queue credentials for the writer, or read; never echoes the passphrase.
+            _ if request.wifi.is_some() => {
+                let result = network::request(request.wifi.unwrap_or_default());
+                (
+                    mqtt::write_wifi_reply(&mut writer, &request, result),
+                    matches!(result, mqtt::WifiResult::Current { .. }),
+                )
+            }
             // FW25: queue a change for the settings writer, or read.
             _ if request.settings.is_some() => {
                 let result = settings::request(request.settings.unwrap_or_default());
@@ -588,6 +600,7 @@ pub fn describe(record: Record, out: &mut impl Write) -> core::fmt::Result {
                 RequestKind::Ping => "ping",
                 RequestKind::Time => "time",
                 RequestKind::Settings => "settings",
+                RequestKind::Wifi => "wifi",
                 RequestKind::Unauthenticated => "unauthenticated",
                 RequestKind::Unsupported => "unsupported",
                 RequestKind::Malformed => "malformed",

@@ -4,7 +4,7 @@
 
 use wellfed_core::transport::{Health, Loss, Outputs};
 
-use crate::{clock, net_status, sdk, startup, stopped};
+use crate::{clock, net_status, network, sdk, startup, stopped};
 
 /// KM0 user backup register 4: the FW06 peer's boot count.
 const BOOT_COUNT_REGISTER: u32 = 4;
@@ -76,6 +76,7 @@ pub fn snapshot(boot: Boot, link: Link, online: bool) -> Health {
             _ => Loss::None,
         },
         connects: link.connects,
+        wifi_source: network::source(),
         last_error: link.last_error,
         clock,
         clock_syncs,

@@ -103,6 +103,20 @@ static unsigned int wellfed_ms(TickType_t since)
     return (unsigned int)((xTaskGetTickCount() - since) * portTICK_PERIOD_MS);
 }
 
+/* FW25 join credentials, shared with Rust (`network::JoinCredentials`):
+ * prefilled with the build's, replaced by stored ones unless the fallback
+ * has taken over (wellfed-amebad network.rs). */
+struct wellfed_join_credentials {
+    const unsigned char *ssid;
+    unsigned int ssid_len;
+    const unsigned char *psk;
+    unsigned int psk_len;
+    unsigned int source; /* 0 build, 1 stored, 2 fallback */
+};
+void wellfed_wifi_select(struct wellfed_join_credentials *out);
+void wellfed_wifi_outcome(int joined);
+static struct wellfed_join_credentials wellfed_creds;
+
 static rtw_result_t wellfed_scan_result(rtw_scan_handler_result_t *result)
 {
     if (result->scan_complete == RTW_TRUE) {
@@ -110,8 +124,8 @@ static rtw_result_t wellfed_scan_result(rtw_scan_handler_result_t *result)
         return RTW_SUCCESS;
     }
     rtw_scan_result_t *ap = &result->ap_details;
-    unsigned int length = sizeof(WELLFED_WIFI_SSID) - 1;
-    if (ap->SSID.len == length && memcmp(ap->SSID.val, WELLFED_WIFI_SSID, length) == 0 &&
+    unsigned int length = wellfed_creds.ssid_len;
+    if (ap->SSID.len == length && memcmp(ap->SSID.val, wellfed_creds.ssid, length) == 0 &&
         (!wellfed_found || ap->signal_strength > wellfed_found_rssi)) {
         wellfed_found_rssi = ap->signal_strength;
         wellfed_found_security = (unsigned int)ap->security;
@@ -121,7 +135,7 @@ static rtw_result_t wellfed_scan_result(rtw_scan_handler_result_t *result)
 }
 
 /* One join attempt: scan, connect, DHCP. 1 when an address was assigned. */
-static int wellfed_join(unsigned int attempt)
+static int wellfed_join_once(unsigned int attempt)
 {
     wellfed_found = 0;
     wellfed_scan_done = 0;
@@ -138,9 +152,11 @@ static int wellfed_join(unsigned int attempt)
         return 0;
     }
     begin = xTaskGetTickCount();
-    result = wifi_connect(WELLFED_WIFI_SSID, (rtw_security_t)wellfed_found_security, WELLFED_WIFI_PASSWORD,
-                          sizeof(WELLFED_WIFI_SSID) - 1, sizeof(WELLFED_WIFI_PASSWORD) - 1, -1, NULL);
-    wellfed_event(WELLFED_EV_CONNECT, attempt, result, 0, wellfed_ms(begin));
+    result = wifi_connect((char *)wellfed_creds.ssid, (rtw_security_t)wellfed_found_security,
+                          (char *)wellfed_creds.psk, (int)wellfed_creds.ssid_len, (int)wellfed_creds.psk_len,
+                          -1, NULL);
+    /* The event's value names the credentials' source, never the credentials. */
+    wellfed_event(WELLFED_EV_CONNECT, attempt, result, wellfed_creds.source, wellfed_ms(begin));
     if (result != RTW_SUCCESS) {
         return 0;
     }
@@ -160,6 +176,20 @@ static int wellfed_join(unsigned int attempt)
         return 0;
     }
     return 1;
+}
+
+/* One attempt with the credentials Rust selects, reporting the outcome. */
+static int wellfed_join(unsigned int attempt)
+{
+    wellfed_creds.ssid = (const unsigned char *)WELLFED_WIFI_SSID;
+    wellfed_creds.ssid_len = sizeof(WELLFED_WIFI_SSID) - 1;
+    wellfed_creds.psk = (const unsigned char *)WELLFED_WIFI_PASSWORD;
+    wellfed_creds.psk_len = sizeof(WELLFED_WIFI_PASSWORD) - 1;
+    wellfed_creds.source = 0;
+    wellfed_wifi_select(&wellfed_creds);
+    int joined = wellfed_join_once(attempt);
+    wellfed_wifi_outcome(joined);
+    return joined;
 }
 
 /* Skip a possibly compressed name at `at`; the offset after it, or -1. */

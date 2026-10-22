@@ -37,6 +37,8 @@ pub enum Op {
     Ping,
     /// FW25: read the device settings, or change them (signed).
     Settings,
+    /// FW25: read, store or clear the Wi-Fi credentials (signed).
+    Wifi,
 }
 
 impl Op {
@@ -46,11 +48,12 @@ impl Op {
             Self::Health => "health",
             Self::Ping => "ping",
             Self::Settings => "settings",
+            Self::Wifi => "wifi",
         }
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Input {
     pub op: Op,
@@ -61,6 +64,23 @@ pub struct Input {
     pub sound: Option<bool>,
     #[serde(default)]
     pub volume: Option<u8>,
+    /// `wifi` only: credentials to use from the next boot, or `clear` to
+    /// return to the build's. Never logged or echoed.
+    #[serde(default)]
+    pub ssid: Option<String>,
+    #[serde(default)]
+    pub psk: Option<String>,
+    #[serde(default)]
+    pub clear: Option<bool>,
+}
+
+impl std::fmt::Debug for Input {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The credentials stay out of every log.
+        f.debug_struct("Input")
+            .field("op", &self.op)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Input {
@@ -70,6 +90,9 @@ impl Input {
             lights: None,
             sound: None,
             volume: None,
+            ssid: None,
+            psk: None,
+            clear: None,
         }
     }
 
@@ -77,7 +100,18 @@ impl Input {
     /// as the firmware's parser requires.
     pub fn valid(&self) -> bool {
         let fields = self.lights.is_some() || self.sound.is_some() || self.volume.is_some();
-        (self.op == Op::Settings || !fields) && self.volume.is_none_or(|v| v <= 100)
+        let wifi = match (&self.ssid, &self.psk, self.clear) {
+            (None, None, None) => true,
+            (None, None, Some(true)) => self.op == Op::Wifi,
+            (Some(ssid), Some(psk), None) => {
+                self.op == Op::Wifi
+                    && (1..=32).contains(&ssid.len())
+                    && (8..=63).contains(&psk.len())
+                    && psk.bytes().all(|b| (0x20..0x7f).contains(&b))
+            }
+            _ => false,
+        };
+        (self.op == Op::Settings || !fields) && self.volume.is_none_or(|v| v <= 100) && wifi
     }
 
     /// The request without its closing brace, fields in the firmware's order.
@@ -92,6 +126,14 @@ impl Input {
         }
         if let Some(volume) = self.volume {
             request = request.field("volume", i64::from(volume));
+        }
+        if let (Some(ssid), Some(psk)) = (&self.ssid, &self.psk) {
+            request = request
+                .hex_field("ssid", ssid.as_bytes())
+                .hex_field("psk", psk.as_bytes());
+        }
+        if self.clear == Some(true) {
+            request = request.field("clear", 1);
         }
         request
     }
@@ -336,6 +378,63 @@ impl Tracker {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn wifi_inputs_are_checked_and_sent_as_hex() {
+        let parse = |text: &str| {
+            serde_json::from_str::<Input>(text)
+                .ok()
+                .filter(Input::valid)
+        };
+        let set = parse(r#"{"op":"wifi","ssid":"Lab \"2\"","psk":"pass word!"}"#).unwrap();
+        // `Lab "2"` and `pass word!` as hex: no escaping reaches the firmware.
+        assert_eq!(
+            set.wire(Uuid::nil()).unsigned(),
+            format!(
+                r#"{{"id":"{}","op":"wifi","ssid":"4c616220223222","psk":"7061737320776f726421"}}"#,
+                Uuid::nil()
+            )
+        );
+        assert!(
+            !format!("{set:?}").contains("pass"),
+            "no credentials in Debug"
+        );
+        let clear = parse(r#"{"op":"wifi","clear":true}"#).unwrap();
+        assert!(
+            clear
+                .wire(Uuid::nil())
+                .unsigned()
+                .ends_with(r#","clear":1}"#)
+        );
+        for bad in [
+            r#"{"op":"wifi","ssid":"x"}"#,
+            r#"{"op":"wifi","ssid":"x","psk":"short"}"#,
+            r#"{"op":"wifi","ssid":"","psk":"password"}"#,
+            r#"{"op":"wifi","ssid":"x","psk":"pass\tword"}"#,
+            r#"{"op":"wifi","clear":false}"#,
+            r#"{"op":"wifi","clear":true,"ssid":"x","psk":"password"}"#,
+            r#"{"op":"ping","clear":true}"#,
+        ] {
+            assert!(parse(bad).is_none(), "{bad}");
+        }
+
+        // The largest signed request fits the firmware's limit.
+        let big = parse(&format!(
+            r#"{{"op":"wifi","ssid":"{}","psk":"{}"}}"#,
+            "s".repeat(32),
+            "p".repeat(63)
+        ))
+        .unwrap();
+        let key = crate::request_auth::RequestKey::parse(&"ab".repeat(32)).unwrap();
+        let signed = big
+            .wire(Uuid::max())
+            .signed(&key, "0123456789abcdef", u32::MAX);
+        assert!(
+            signed.len() <= crate::request_auth::MAX_REQUEST,
+            "{}",
+            signed.len()
+        );
+    }
 
     #[test]
     fn settings_inputs_are_checked_and_written_in_firmware_order() {

@@ -13,8 +13,8 @@ use core::fmt::{self, Write};
 pub const MAX_PACKET: usize = 768;
 /// Health payload limit (512 bytes in FW08; 640 since the clock and nonce).
 pub const MAX_HEALTH: usize = 640;
-/// Request payload limit (256 bytes in FW08; 320 since signed requests).
-pub const MAX_REQUEST: usize = 320;
+/// Request payload limit (256 bytes in FW08; 448 since signed Wi-Fi requests).
+pub const MAX_REQUEST: usize = 448;
 
 pub const KEEPALIVE_S: u16 = 30;
 /// Send PINGREQ after this long without sending anything.
@@ -550,6 +550,31 @@ pub enum Op {
     Time,
     /// FW25: read, or with fields change, the device settings.
     Settings,
+    /// FW25: read, store or clear the Wi-Fi credentials used from next boot.
+    Wifi,
+}
+
+/// The fields of a `wifi` request: hex `ssid` and `psk` together, or
+/// `"clear":1`, or nothing to read.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WifiFields<'a> {
+    /// Lowercase hex of 1-32 bytes.
+    pub ssid: Option<&'a str>,
+    /// Lowercase hex of 8-63 bytes (checked as printable by the store).
+    pub psk: Option<&'a str>,
+    pub clear: bool,
+}
+
+impl WifiFields<'_> {
+    pub fn changes(&self) -> bool {
+        self.ssid.is_some() || self.clear
+    }
+}
+
+fn hex_of(text: &str, min: usize, max: usize) -> bool {
+    text.len().is_multiple_of(2)
+        && (2 * min..=2 * max).contains(&text.len())
+        && text.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 /// The fields of a `settings` request; none present reads the settings.
@@ -590,6 +615,8 @@ pub struct Request<'a> {
     pub time: Option<TimeFields>,
     /// Present exactly when `op` is `settings`.
     pub settings: Option<SettingsFields>,
+    /// Present exactly when `op` is `wifi`.
+    pub wifi: Option<WifiFields<'a>>,
     /// The session nonce and sequence number of a signed request
     /// ([`crate::request_auth`] checks them with the MAC).
     pub auth: Option<(&'a str, u32)>,
@@ -645,6 +672,7 @@ pub fn parse_request(payload: &[u8]) -> Result<Request<'_>, RequestError> {
     }
 
     let (mut id, mut op, mut nonce) = (None, None, None);
+    let (mut ssid, mut psk, mut clear) = (None, None, None);
     let mut numbers: [Option<i64>; 4] = [None; 4];
     let mut seq = None;
     let mut options: [Option<i64>; 3] = [None; 3];
@@ -672,6 +700,13 @@ pub fn parse_request(payload: &[u8]) -> Result<Request<'_>, RequestError> {
             }
             continue;
         }
+        if key == "clear" {
+            let value = integer(value).ok_or(RequestError::Malformed)?;
+            if clear.replace(value).is_some() {
+                return Err(RequestError::Malformed);
+            }
+            continue;
+        }
         if key == "seq" {
             let value = integer(value).ok_or(RequestError::Malformed)?;
             if seq.replace(value).is_some() {
@@ -692,6 +727,8 @@ pub fn parse_request(payload: &[u8]) -> Result<Request<'_>, RequestError> {
             "id" => &mut id,
             "op" => &mut op,
             "nonce" => &mut nonce,
+            "ssid" => &mut ssid,
+            "psk" => &mut psk,
             _ => return Err(RequestError::Malformed),
         };
         if slot.replace(value).is_some() {
@@ -712,7 +749,27 @@ pub fn parse_request(payload: &[u8]) -> Result<Request<'_>, RequestError> {
         "ping" => Ok(Op::Ping),
         "time" => Ok(Op::Time),
         "settings" => Ok(Op::Settings),
+        "wifi" => Ok(Op::Wifi),
         other => Err(other),
+    };
+
+    let wifi = match (op, ssid, psk, clear) {
+        (Ok(Op::Wifi), None, None, None) => Some(WifiFields::default()),
+        (Ok(Op::Wifi), None, None, Some(1)) => Some(WifiFields {
+            clear: true,
+            ..WifiFields::default()
+        }),
+        (Ok(Op::Wifi), Some(ssid), Some(psk), None)
+            if hex_of(ssid, 1, 32) && hex_of(psk, 8, 63) =>
+        {
+            Some(WifiFields {
+                ssid: Some(ssid),
+                psk: Some(psk),
+                clear: false,
+            })
+        }
+        (_, None, None, None) => None,
+        _ => return Err(RequestError::Malformed),
     };
 
     let flag = |value: Option<i64>| match value {
@@ -775,6 +832,7 @@ pub fn parse_request(payload: &[u8]) -> Result<Request<'_>, RequestError> {
         op,
         time,
         settings,
+        wifi,
         auth,
     })
 }
@@ -858,6 +916,8 @@ pub struct Health {
     pub last_loss: Loss,
 
     pub connects: u32,
+    /// FW25: which credentials joined this boot.
+    pub wifi_source: WifiSource,
     /// Fault code of the last closed session, if any.
     pub last_error: Option<&'static str>,
 
@@ -922,9 +982,14 @@ impl Health {
         };
         write!(
             out,
-            "],\"wifi\":{{\"rssi\":{},\"attempt\":{},\"losses\":{{\"link\":{},\"dns\":{}}},\"last_loss\":{loss}}},\
+            "],\"wifi\":{{\"rssi\":{},\"attempt\":{},\"losses\":{{\"link\":{},\"dns\":{}}},\"last_loss\":{loss},\"source\":\"{}\"}},\
              \"transport\":{{\"connects\":{},\"last_error\":",
-            self.rssi, self.wifi_attempt, self.link_losses, self.dns_losses, self.connects,
+            self.rssi,
+            self.wifi_attempt,
+            self.link_losses,
+            self.dns_losses,
+            self.wifi_source.name(),
+            self.connects,
         )?;
 
         match self.last_error {
@@ -1025,6 +1090,90 @@ pub fn write_settings_reply(
     }
 }
 
+/// Which credentials the Wi-Fi join uses this boot.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WifiSource {
+    #[default]
+    Build,
+    Stored,
+    /// Stored credentials failed to join; the build's took over this boot.
+    Fallback,
+}
+
+impl WifiSource {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Build => "build",
+            Self::Stored => "stored",
+            Self::Fallback => "fallback",
+        }
+    }
+}
+
+/// The Wi-Fi credentials as a `wifi` reply reports them: never the passphrase.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WifiView {
+    /// CRC-32 of the stored SSID; `None` when the build's credentials apply.
+    pub stored_ssid_crc: Option<u32>,
+    pub generation: u32,
+    pub writable: bool,
+    pub source: WifiSource,
+}
+
+/// How a `wifi` request ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WifiResult {
+    /// The current state; `pending` once a change is queued for the writer.
+    Current {
+        view: WifiView,
+        pending: bool,
+    },
+    Busy,
+    ReadOnly,
+    /// The SSID or passphrase failed the store's checks.
+    Invalid,
+}
+
+/// The reply to a `wifi` request.
+pub fn write_wifi_reply(
+    out: &mut impl Write,
+    request: &Request,
+    result: WifiResult,
+) -> fmt::Result {
+    let id = request.id;
+    match result {
+        WifiResult::Current { view, pending } => {
+            write!(
+                out,
+                "{{\"id\":\"{id}\",\"op\":\"wifi\",\"ok\":true,\"pending\":{pending},\"stored\":"
+            )?;
+            match view.stored_ssid_crc {
+                Some(crc) => write!(out, "\"{crc:08x}\"")?,
+                None => out.write_str("null")?,
+            }
+            write!(
+                out,
+                ",\"generation\":{},\"writable\":{},\"source\":\"{}\"}}",
+                view.generation,
+                view.writable,
+                view.source.name()
+            )
+        }
+        WifiResult::Busy => write!(
+            out,
+            "{{\"id\":\"{id}\",\"op\":\"wifi\",\"ok\":false,\"error\":\"busy\"}}"
+        ),
+        WifiResult::ReadOnly => write!(
+            out,
+            "{{\"id\":\"{id}\",\"op\":\"wifi\",\"ok\":false,\"error\":\"read_only\"}}"
+        ),
+        WifiResult::Invalid => write!(
+            out,
+            "{{\"id\":\"{id}\",\"op\":\"wifi\",\"ok\":false,\"error\":\"invalid\"}}"
+        ),
+    }
+}
+
 /// The reply to a `time` request.
 pub fn write_time_reply(
     out: &mut impl Write,
@@ -1066,6 +1215,7 @@ pub fn write_reply(out: &mut impl Write, request: &Request, uptime_ms: u32) -> f
                 Op::Ping => "ping",
                 Op::Time => "time",
                 Op::Settings => "settings",
+                Op::Wifi => "wifi",
             };
             write!(
                 out,

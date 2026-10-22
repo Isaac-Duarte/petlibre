@@ -2,13 +2,14 @@
 //! armed (arming itself is covered by the confirmation and updater tests).
 
 use std::cell::Cell;
+use std::sync::{Mutex, MutexGuard};
 
 use wellfed_amebad::arming::Hooks;
 use wellfed_amebad::flash::park::Mmio;
 use wellfed_amebad::flash::peer::MARKER_REGISTER;
 use wellfed_amebad::provider::Provider;
 use wellfed_amebad::sdk::{self, fake};
-use wellfed_amebad::settings;
+use wellfed_amebad::{network, settings};
 use wellfed_core::settings_store::SettingsStatus;
 use wellfed_core::transport::{SettingsFields, SettingsResult};
 use wellfed_firstboot::probes::flash::{FlashOps, SETTINGS_BASE};
@@ -75,11 +76,16 @@ impl FlashOps for Armed {
     }
 }
 
-fn start() -> (Writer, Provider) {
+/// The settings and network views are process-wide; the fake hardware is per thread.
+static SERIAL: Mutex<()> = Mutex::new(());
+
+fn start() -> (MutexGuard<'static, ()>, Writer, Provider) {
+    let guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     fake::reset_hardware();
     settings::reset();
+    network::reset();
     ARMED.with(|a| a.set(true));
-    (Writer::default(), Provider::default())
+    (guard, Writer::default(), Provider::default())
 }
 
 fn step(writer: &mut Writer, provider: &mut Provider) -> Option<Record> {
@@ -102,7 +108,7 @@ fn current() -> (bool, bool, u8, u32, bool) {
 
 #[test]
 fn changes_are_saved_once_each_inside_a_marked_attempt() {
-    let (mut writer, mut provider) = start();
+    let (_guard, mut writer, mut provider) = start();
     assert_eq!(
         settings::request(SettingsFields::default()),
         SettingsResult::Busy,
@@ -117,6 +123,10 @@ fn changes_are_saved_once_each_inside_a_marked_attempt() {
     };
     assert_eq!((status, generation), (SettingsStatus::EMPTY, 0));
     assert_eq!(current(), (true, true, 50, 0, true));
+    assert!(matches!(
+        step(&mut writer, &mut provider),
+        Some(Record::NetOpen { stored: false, .. })
+    ));
     assert_eq!(
         step(&mut writer, &mut provider),
         None,
@@ -184,7 +194,7 @@ fn changes_are_saved_once_each_inside_a_marked_attempt() {
 
 #[test]
 fn an_unwritable_store_reads_but_refuses_changes() {
-    let (mut writer, mut provider) = start();
+    let (_guard, mut writer, mut provider) = start();
     // Garbage in both slots: CORRUPT, defaults, read-only until a reset.
     let base = SETTINGS_BASE as usize * 4096;
     fake::with(|h| h.storage[base..base + 2 * 4096].fill(0x5a));
@@ -201,4 +211,48 @@ fn an_unwritable_store_reads_but_refuses_changes() {
         SettingsResult::ReadOnly
     );
     assert_eq!(fake::with(|h| h.storage[base]), 0x5a, "nothing written");
+}
+
+#[test]
+fn wifi_credentials_are_saved_inside_a_marked_attempt_and_cleared() {
+    use wellfed_core::transport::{WifiFields, WifiResult};
+    let (_guard, mut writer, mut provider) = start();
+    step(&mut writer, &mut provider); // open
+    step(&mut writer, &mut provider); // net open
+
+    let set = WifiFields {
+        ssid: Some("6e6574"),
+        psk: Some("70617373776f7264"),
+        clear: false,
+    };
+    assert!(matches!(
+        network::request(set),
+        WifiResult::Current { pending: true, .. }
+    ));
+    assert_eq!(
+        step(&mut writer, &mut provider),
+        Some(Record::NetSaved {
+            generation: 1,
+            stored: true
+        })
+    );
+    assert!(ATTEMPT_SEEN.with(Cell::get));
+    assert_eq!(sdk::backup_read(MARKER_REGISTER), 0);
+    assert!(matches!(
+        network::request(WifiFields::default()),
+        WifiResult::Current { view, pending: false } if view.stored_ssid_crc.is_some()
+    ));
+
+    let clear = WifiFields {
+        clear: true,
+        ..WifiFields::default()
+    };
+    network::request(clear);
+    assert_eq!(
+        step(&mut writer, &mut provider),
+        Some(Record::NetSaved {
+            generation: 2,
+            stored: false
+        })
+    );
 }

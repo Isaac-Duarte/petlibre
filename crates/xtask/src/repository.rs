@@ -41,6 +41,8 @@ const TRANSPORT_ISOLATION: [(&str, &[&str]); 2] = [
             // FW25: queue a settings change for the writer; no flash access.
             r"crate::settings",
             r"settings::request",
+            r"crate::network",
+            r"network::request",
             // Signed requests: verification only (request_auth.rs).
             r"wellfed_core::request_auth",
             r"request_auth::(split|Session)(::(new|nonce_hex))?",

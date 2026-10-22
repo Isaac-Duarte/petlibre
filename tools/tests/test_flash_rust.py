@@ -1,9 +1,12 @@
-"""The Rust flash client (crates/wellfed-flash) against the Python tools.
+"""The Rust flash client (crates/wellfed-flash) with the remaining Python tools.
 
 Without fixtures: status decoding and journal hashing agree with the Python
-modules. With fixtures: the binary drives the pinned vendor helper under
-emulation, and its plan, wire and journal match the Python planner, the
-independent wire policy and the Python journal inspector. No device opens.
+stock-recovery modules, which still read the same journals. With fixtures: the
+binary drives the pinned vendor helper under emulation, writes exactly the
+target, and its journal passes the Python journal inspector. No device opens.
+The plan and wire comparisons against the former Python updater are retired:
+the client matched it in emulation and on the research unit (FW32), and
+crates/wellfed-flash/src/tests.rs restates the wire policy independently.
 """
 import hashlib
 import importlib.util
@@ -36,6 +39,7 @@ SOURCE = ROOT / "private/fixtures/development-source"
 TARGET = ROOT / "private/fixtures/development-target"
 SMALL = ROOT / "private/fixtures/development-bounded-read/report.json"
 ROM = ROOT / "private/fixtures/rom-inspection/report.json"
+BANK1, SECTOR = 0x186000, 0x1000
 HELPER = ROOT / "private/upstream/ameba-rtos-d/tools/AmebaD/Image_Tool/imgtool_flashloader_amebad.bin"
 
 
@@ -143,8 +147,7 @@ class EmulatedHelperTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.SIM = module("rust_flash_peer", "emulate/emulate-recovery-session.py")
-        cls.CLI = module("rust_flash_cli", "flash/uart-development.py")
-        cls.WIRE = module("rust_flash_wire", "flash/development-wire-policy.py")
+        cls.L = module("rust_flash_layout", "audit/audit-ota-layout.py")
         cls.port = json.loads(SMALL.read_text())["port"]
 
     def temporary(self):
@@ -152,16 +155,17 @@ class EmulatedHelperTests(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         return Path(directory.name)
 
+    def payload(self, review):
+        return self.L.container((review / "image.bin").read_bytes())
+
     def unit(self):
-        B = self.CLI.B
         baseline = BASELINE.read_bytes()
-        source, _ = self.CLI.frozen(SOURCE)
-        target, _ = self.CLI.frozen(TARGET)
+        source, target = self.payload(SOURCE), self.payload(TARGET)
         full = bytearray(baseline)
-        full[B.START:B.START + len(B.payload(source))] = B.payload(source)
+        full[BANK1:BANK1 + len(source)] = source
         full[0x650000] ^= 1
-        length = B.extent(source, target)
-        sectors = list(range(B.START, B.START + length, B.SECTOR))
+        length = max(len(source), len(target))
+        sectors = list(range(BANK1, BANK1 + length, SECTOR))
         peer = self.SIM.EmulatedHelperPort(HELPER.read_bytes(), bytes(full), sectors, status_registers=(0, 2, 0))
         emulator = Emulator(peer)
         self.addCleanup(emulator.close)
@@ -193,8 +197,7 @@ class EmulatedHelperTests(unittest.TestCase):
         self.assertIn("different transport", summary["error"])
         self.assertFalse(emulator.peer.host_tx)
 
-    def test_update_plans_writes_and_journals_like_the_python_client(self):
-        B = self.CLI.B
+    def test_update_plans_writes_and_journals_through_the_cli(self):
         emulator, before, source, target, length = self.unit()
         root = self.temporary()
         images = ["--source", SOURCE, "--target", TARGET]
@@ -208,11 +211,7 @@ class EmulatedHelperTests(unittest.TestCase):
                                     "--inspection", root / "inspect/report.json", env=emulator.env())
         self.assertEqual(code, 0, stderr)
         plan = json.loads((root / "plan.json").read_text())
-        current = before[B.START:B.START + length]
-        other = before[0x6000:0x7000]
         self.assertGreater(len(plan["operation_plan"]["ordered_sectors"]), 1)
-        # The Rust plan is the Python planner's, byte for byte.
-        self.assertEqual(C.canonical(plan["operation_plan"]), C.canonical(B.plan(source, target, current, other=other)))
         self.assertEqual(hashlib.sha256((root / "plan.json").read_bytes()).hexdigest(), summary["plan_sha256"])
         emulator.peer.host_tx.clear()
         code, summary, stderr = run("update", "execute", *self.evidence(root / "execute"), *images,
@@ -221,15 +220,14 @@ class EmulatedHelperTests(unittest.TestCase):
         self.assertEqual((code, summary["status"]), (0, "verified"), stderr)
         self.assertIsNone(emulator.error)
         tx = (root / "execute/serial-tx.bin").read_bytes()
-        self.assertEqual(tx, self.WIRE.expected(source, target, current))
         self.assertEqual(bytes(emulator.peer.host_tx), tx)
         erases = [c for c in emulator.peer.calls if c["name"] == "erase"]
         self.assertEqual([c["offset"] for c in erases], [s["offset"] for s in plan["operation_plan"]["ordered_sectors"]])
-        self.assertNotEqual(B.payload(source), B.payload(target))
+        self.assertNotEqual(source, target)
         after = emulator.peer.snapshot()
-        self.assertEqual(after[:B.START], before[:B.START])
-        self.assertEqual(after[B.START + length:], before[B.START + length:])
-        self.assertEqual(after[B.START:B.START + len(B.payload(target))], B.payload(target))
+        self.assertEqual(after[:BANK1], before[:BANK1])
+        self.assertEqual(after[BANK1 + length:], before[BANK1 + length:])
+        self.assertEqual(after[BANK1:BANK1 + len(target)], target)
         receipt = C.inspect_journal(root / "execute/transaction/journal.jsonl")
         self.assertTrue(receipt["verified_terminal"])
         self.assertEqual(receipt["erase_order"], [s["offset"] for s in plan["operation_plan"]["ordered_sectors"]])
@@ -241,10 +239,9 @@ class EmulatedHelperTests(unittest.TestCase):
         self.assertFalse((root / "again").exists())
 
     def test_give_way_then_restore_marker_through_the_cli(self):
-        B = self.CLI.B
         emulator, before, source, _, _ = self.unit()
         # Bank 0 holds exactly the reviewed fallback; bank 1 the reviewed source.
-        fallback = B.payload(self.CLI.frozen(TARGET, B.BANK0)[0], B.BANK0)
+        fallback = self.payload(TARGET)
         flash = bytearray(before)
         flash[0x6000:0x6000 + len(fallback)] = fallback
         emulator.peer.uc.mem_write(0x08000000, bytes(flash))
@@ -260,9 +257,9 @@ class EmulatedHelperTests(unittest.TestCase):
                                     "--expected-plan-sha256", summary["plan_sha256"], env=emulator.env())
         self.assertEqual((code, summary["status"]), (0, "verified"), stderr)
         after = emulator.peer.snapshot()
-        self.assertEqual(after[B.START], 0)
-        self.assertEqual(after[B.START + 1:], bytes(flash)[B.START + 1:])
-        self.assertEqual(after[:B.START], bytes(flash)[:B.START])
+        self.assertEqual(after[BANK1], 0)
+        self.assertEqual(after[BANK1 + 1:], bytes(flash)[BANK1 + 1:])
+        self.assertEqual(after[:BANK1], bytes(flash)[:BANK1])
         self.assertFalse([c for c in emulator.peer.calls if c["name"] == "erase"])
         # Restoring bank 1 is a development update of the source onto itself.
         images = ["--source", SOURCE, "--target", SOURCE, "--restore-marker"]

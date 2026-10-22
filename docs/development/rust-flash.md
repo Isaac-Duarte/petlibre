@@ -8,7 +8,7 @@
 - `give-way`, then `update --restore-marker`, booted bank 0 and then bank 1.
 - `update --bank 0` installed a changed image: 140 sectors, verified.
 
-Both clients are now accepted writers. A reviewed bench procedure is still required for any device session; a passing check here does not authorize one.
+It is the accepted writer: the Python development updater and give-way client were removed on October 22, 2026, after these checks. The Python reader and stock-recovery client remain, also accepted. A reviewed bench procedure is still required for any device session; a passing check here does not authorize one.
 
 Caution: run the bench from a checkout whose `private/` is a real directory. In a worktree where `private/` is a symlink, the evidence paths do not resolve inside the checkout, and the old Python bench's capture check refused there. The firmware build likewise refuses there, because the shared SDK tree records the main checkout's paths.
 
@@ -19,8 +19,8 @@ Build with `cargo build --locked -p wellfed-flash`; the binary is `target/debug/
 | Python client | Rust command |
 | --- | --- |
 | `uart-flash-read.py observe\|inspect-rom\|read-small\|read-full\|read-status` | `wellfed-flash read observe\|inspect-rom\|small\|full\|status` |
-| `uart-development.py inspect\|prepare\|execute` (`--bank`, `--interrupted`, `--restore-marker`, `--original-read`) | `wellfed-flash update inspect\|prepare\|execute` (the same flags) |
-| `uart-give-way.py inspect\|prepare\|execute` | `wellfed-flash give-way inspect\|prepare\|execute` |
+| `uart-development.py inspect\|prepare\|execute` (removed) (`--bank`, `--interrupted`, `--restore-marker`, `--original-read`) | `wellfed-flash update inspect\|prepare\|execute` (the same flags) |
+| `uart-give-way.py inspect\|prepare\|execute` (removed) | `wellfed-flash give-way inspect\|prepare\|execute` |
 | `uart-stock-recovery.py prepare\|execute` | `wellfed-flash stock-recovery prepare\|execute` |
 | `plan-stock-recovery.py` | `wellfed-flash plan-stock-recovery` |
 | `flash-status.py` | `wellfed-flash decode-status` |
@@ -30,7 +30,7 @@ Build with `cargo build --locked -p wellfed-flash`; the binary is `target/debug/
 
 Frozen image reviews still come from `tools/flash/review-development-image.py`, which re-runs the build's linked-code and factory-mapping audits. The Rust client only checks that a frozen review is complete and still matches its image.
 
-Not ported: the stock write-back acceptance tests (`uart-stock-recovery.py prepare-activation-test`, `bank-writeback-test`) and the standalone diagnostic installer (`uart-standalone.py`). The relay bench, [`wellfed-bench`](../hardware/bench.md), chains this client as a separate process, so plans stay bound to the `wellfed-flash` binary itself.
+Not ported: the stock write-back acceptance tests (`uart-stock-recovery.py prepare-activation-test`, `bank-writeback-test`); the standalone diagnostic installer was removed instead. The relay bench, [`wellfed-bench`](../hardware/bench.md), chains this client as a separate process, so plans stay bound to the `wellfed-flash` binary itself.
 
 ## Output for scripts and agents
 
@@ -47,6 +47,6 @@ Ctrl-C stops a session terminally and records the stop, as the Python clients' `
 ## Verification
 
 - `cargo test -p wellfed-flash` runs every transaction against a modeled helper with a synthetic baseline, which only test builds accept. It covers wire order checked against an independently restated policy, sector scope, lost ACKs, the interrupted mode, both banks, give-way with restore, stock recovery and refusals.
-- `tools/tests/test_flash_rust.py` checks status decoding and journal hashing against the Python modules. With fixtures (`make check-fixtures`), it serves the pinned vendor helper under unicorn on a Unix socket (`WELLFED_FLASH_EMULATOR`) and drives the binary through update and give-way/restore. The test requires the Rust plan to equal the Python planner's, the transmitted bytes to equal `development-wire-policy.py`, and the journal to pass the Python inspector, all using the real frozen reviews and session reports. When `WELLFED_FLASH_EMULATOR` is set, reports record `"transport": "emulator"`, and a session continues only evidence from the same transport (Python reports count as serial).
+- `tools/tests/test_flash_rust.py` checks status decoding and journal hashing against the Python stock-recovery modules. With fixtures (`make check-fixtures`), it serves the pinned vendor helper under unicorn on a Unix socket (`WELLFED_FLASH_EMULATOR`) and drives the binary through update and give-way/restore with the real frozen reviews and session reports: exactly the target is written, and the journal passes the Python inspector. Until October 22, 2026 it also required the Rust plan and wire to equal the Python updater's; those passed, together with the FW32 hardware checks, and the Python updater (`uart-development.py`, `development-bank.py`, `development-wire-policy.py`) was then removed. When `WELLFED_FLASH_EMULATOR` is set, reports record `"transport": "emulator"`, and a session continues only evidence from the same transport (Python reports count as serial).
 
 Emulation runs the helper's command parser and packet checks as ARM code. It models the ROM UART and flash calls, so it does not establish physical write acceptance, timing or power-cut behavior. Stock recovery is not exercised under emulation, because each verification reads the full 8 MiB.

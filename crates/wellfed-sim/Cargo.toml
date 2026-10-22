@@ -12,9 +12,14 @@ name = "virtual-feeder-worker"
 path = "src/main.rs"
 
 [dependencies]
+clap.workspace = true
 wellfed-amebad.workspace = true
 wellfed-core.workspace = true
 wellfed-testkit.workspace = true
+serde_json.workspace = true
+sha2 = "0.11"
+tempfile.workspace = true
+thiserror.workspace = true
 
 [lints]
 workspace = true

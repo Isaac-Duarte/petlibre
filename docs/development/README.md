@@ -13,7 +13,7 @@ cargo build --locked
 make check PYTHON=.venv/bin/python
 ```
 
-The Python scripts are grouped into `tools/flash`, `tools/audit` and `tools/emulate`; the [tools index](../../tools/README.md) lists what each does and which ones open a serial port. The Rust crates live in `crates/`, one folder per package; `wellfed-flash` is the [Rust UART flash client](rust-flash.md), and `wellfed-bench` the [relay bench](../hardware/bench.md).
+The Python scripts are grouped into `tools/flash`, `tools/audit` and `tools/emulate`; the [tools index](../../tools/README.md) lists what each does and which ones open a serial port. The Rust crates live in `crates/`, one folder per package; `wellfed-flash` is the [Rust UART flash client](rust-flash.md), `wellfed-bench` the [relay bench](../hardware/bench.md), and `wellfed-audit` the offline evidence audits (startup, FW14 ADC, FW30 transients, full-flash comparison). `cargo xtask check-repository` is the repository check.
 
 Rustup/Cargo and pip download dependencies on initial setup. Check targets do not install packages, fetch SDKs, contact a device, change firewall rules, or start persistent services. Network tests bind loopback sockets with synthetic identities. Environments that prohibit local sockets need permission to run those tests; skipping them is not a passing result.
 
@@ -22,14 +22,14 @@ Rustup/Cargo and pip download dependencies on initial setup. Check targets do no
 | Target | Coverage |
 | --- | --- |
 | `check-rust` | Formatting, Clippy with warnings denied, workspace host tests |
-| `check-cross` | SDK-independent KM0/KM4 FFI static libraries and stock-image Rust probe |
-| `check-python` | Curated synthetic transport, backup, journal, configuration/check-runner, and simulator tests |
-| `check-virtual-feeder` | Rust worker plus deterministic feeding, faults, journal cuts, and restart scenarios |
+| `check-cross` | SDK-independent KM0/KM4 FFI static libraries |
+| `check-python` | The remaining Python tools: stock recovery, unicorn emulations, the image review and the firmware build helpers |
+| `check-virtual-feeder` | The `wellfed-sim` worker and harness: deterministic feeding, faults, journal cuts, and restart scenarios (also part of `check-rust`) |
 | `check-docs` | Local Markdown links, curated tool dependencies, and repository portability checks |
 | `check-fixtures` | Explicit optional binary/SDK evidence suite; missing inputs or skips fail |
 | `check` | All contributor checks except optional fixture validation |
 
-`check-cross` checks portable compilation, not SDK-linked hardware ports. Default Python selection excludes explicitly marked evidence tests regardless of whether inputs exist. It rejects unexpected skips. One Rust evidence test is explicitly ignored in the ordinary suite and selected by `check-fixtures`; that ignored test is not passing evidence.
+`check-cross` checks portable compilation, not SDK-linked hardware ports. Default Python selection excludes explicitly marked evidence tests regardless of whether inputs exist. It rejects unexpected skips. Rust evidence tests are explicitly ignored in the ordinary suite and selected by `check-fixtures`; an ignored test is not passing evidence.
 
 Generated Rust artifacts live in `target/`; the simulator worker and temporary verification outputs can create ignored `private/` subdirectories. No existing backups or evidence are required. Use [.gitignore](../../.gitignore) as the storage boundary, and keep secrets out of the tracked examples.
 
@@ -39,10 +39,10 @@ Generated Rust artifacts live in `target/`; the simulator worker and temporary v
 cargo fmt --all
 make check-rust
 make -C firmware test
-make check-virtual-feeder PYTHON=.venv/bin/python
+make check-virtual-feeder
 ```
 
-The simulator connects the real Rust owner/controller/ports to fake SDK inputs and NOR storage. It covers command IDs, sensor faults, blocked outlet, missing feedback, watchdog stalls, and interrupted journal writes. It does not model all electrical behavior. Example scenarios are in [tools/emulate/scenarios/virtual-feeder](../../tools/emulate/scenarios/virtual-feeder).
+The simulator connects the real Rust owner/controller/ports to fake SDK inputs and NOR storage. It covers command IDs, sensor faults, blocked outlet, missing feedback, watchdog stalls, and interrupted journal writes. It does not model all electrical behavior. Example scenarios are in [firmware/sim/scenarios](../../firmware/sim/scenarios); run one with `cargo run -p wellfed-sim --bin virtual-feeder -- --scenario FILE --report NEW-FILE`.
 
 The repository is self-contained: SDK/toolchain copies and fixtures resolve locally. Original research documents/tools/history are retained in ignored `private/research-archive/`; see [provenance](provenance.md). Historical evidence paths are records, not instructions to access another checkout.
 

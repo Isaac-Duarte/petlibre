@@ -19,18 +19,17 @@ check-rust:
 check-cross:
 	cargo build --locked -p wellfed-ffi --release --target thumbv8m.main-none-eabihf
 	WELLFED_BUILD_ID=$$($(PYTHON) firmware/tools/build.py source-id) cargo build --locked -p wellfed-ffi --release --target thumbv8m.base-none-eabi --features km0
-	cargo build --locked -p wellfed-probe --profile firmware --target thumbv7em-none-eabi
 
 check-python:
 	$(PYTHON) tools/check-python.py
 
 check-virtual-feeder:
-	$(MAKE) -C firmware/sim
-	$(PYTHON) -m unittest discover -s tools/tests -p test_virtual_feeder.py -v
+	cargo test --locked -p wellfed-sim --test virtual_feeder
 
 check-docs:
-	$(PYTHON) tools/check-repository.py
+	cargo xtask check-repository
 
 check-fixtures:
 	$(PYTHON) tools/check-python.py --fixtures
 	cargo test --locked --lib ota_image::tests::pinned_real_images_are_immutable_after_load_and_mutated_files_are_refused -- --ignored --exact
+	cargo test --locked -p wellfed-audit --lib -- --ignored

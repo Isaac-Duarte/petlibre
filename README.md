@@ -43,7 +43,7 @@ Initial setup downloads dependencies. Checks use host models and loopback networ
 
 | Location | Contents |
 | --- | --- |
-| `crates/` | Every Rust crate, one folder per package: `wellfed-local` (stock-firmware local server), `wellfed-flash` (UART flash reads, updates and recovery), `wellfed-bench` (relay bench and its progress page), and the replacement-firmware crates |
+| `crates/` | Every Rust crate, one folder per package: `wellfed-local` (stock-firmware local server), `wellfed-flash` (UART flash reads, updates and recovery), `wellfed-bench` (relay bench and its progress page), `wellfed-audit` (offline evidence audits), `xtask` (`cargo xtask check-repository`), and the replacement-firmware crates, including `wellfed-sim` (the virtual feeder) |
 | `firmware/` | SDK hooks and C ports, pinned builds, layout, and simulator build |
 | `tools/` | Build audits, simulation, and experimental recovery tools/tests |
 | `docs/` | Hardware findings, firmware contracts, and contributor workflows |

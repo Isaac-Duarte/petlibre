@@ -7,11 +7,21 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
-**October 22, crate split (offline, nothing flashed; branch `crate-split`, not merged).** `wellfed-amebad` is split three ways. `wellfed-amebad-common` holds the flash park, hooks, peer and trial, and is all KM0 links. `wellfed-amebad` holds the KM4 ports, and the lease `Provider` moved from `probes/flash.rs` to `provider.rs`. `wellfed-firstboot` holds the app entry, the probes and the `fw16-pulse`/`fw11-reset` features. Static comparison of the firmware archives:
+**October 22, crate split (offline, nothing flashed; merged from the `crate-split` worktree).** `wellfed-amebad` is split three ways. `wellfed-amebad-common` holds the flash park, hooks, peer and trial, and is all KM0 links. `wellfed-amebad` holds the KM4 ports, and the lease `Provider` moved from `probes/flash.rs` to `provider.rs`. `wellfed-firstboot` holds the app entry, the probes and the `fw16-pulse`/`fw11-reset` features. Static comparison of the firmware archives:
 - **C symbols:** the exported set is identical for km0, km4 and both variants.
 - **RAM-park code:** it disassembles identically on both cores.
 - **Sizes:** only `wellfed_app_start` changed (0x178 to 0x1a6). It calls the same functions; the difference is LTO register allocation.
 - **Rebuild needed:** the firmware source ID changed, so every ignored build is stale. Rebuild and review before any install.
+
+**October 22, Python to Rust (offline, nothing run on the bench).** The owner's direction is Rust wherever it makes sense; once a Rust version is shown equivalent, the Python tool and its tests go ([tools/README.md](tools/README.md) lists what went and what stays).
+- **Ported, with equivalence shown before deletion:**
+  - `wellfed-audit` replaces the startup, FW14 ADC, FW30 transient and full-flash auditors. Every call the old tests made, plus 227 real captures and 2 real read pairs, gave identical reports.
+  - `wellfed-sim`'s `virtual-feeder` replaces the Python harness: identical reports on all 8 scenarios.
+  - `cargo xtask check-repository` replaces `check-repository.py`: identical on the tree and on injected faults.
+  - `wellfed-flash` is now the only development updater, after its FW32 parity.
+- **Removed as finished:** the FW05–FW15 auditors, the stock C-probe research (with the `wellfed-probe` crate) and the standalone diagnostic.
+- **Kept in Python on purpose:** stock recovery, the unicorn emulations, the image review and the build helpers.
+- **Rebuild before relying on the private builds:** the firmware build inputs changed (`Cargo.lock`, the probe crate removed). The fixture suite skips 14 stale-build checks until the builds are refreshed; frozen reviews stay valid.
 
 **October 22, latest (offline, nothing run on the bench).** FW33: the relay bench is now the Rust `wellfed-bench` (crate `crates/wellfed-bench`). It chains `wellfed-flash` as a child process and serves the read-only page with `--ui`. `bench.py`, `bench-dashboard.py`, `relay-demo.py`, `uart-give-way.py` and seven finished one-off Python analyses are removed (list in [tools/README.md](tools/README.md)). It is host-tested only. **Next:** with the owner, build both binaries (`cargo build --locked --release -p wellfed-bench -p wellfed-flash`), then run `status`, `on`/`off`, `loader` and a no-op `flash-prepare`/`flash-execute` with `--ui` ([bench](docs/hardware/bench.md)).
 
@@ -298,8 +308,8 @@ to FW27.
   Wi-Fi probe.
 - C TCP helpers in `example_entry.c`.
 - The server's firmware role, `firmware-credential` command and API.
-- A structural no-dispense check in `tools/check-repository.py`.
-- `audit-firmware-transport.py`.
+- A structural no-dispense check in `cargo xtask check-repository` (formerly `tools/check-repository.py`).
+- `audit-firmware-transport.py` (removed after FW08 closed; its reports remain).
 
 `private/fw-mqtt.json` now exists. `private/server.json` gained a `firmware`
 section; `private/server.json.before-fw08` is the copy from before. Health and

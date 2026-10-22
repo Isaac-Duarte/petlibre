@@ -56,13 +56,13 @@ The loader offers none of its own. An image with a valid marker that crashes aft
 
 ## Hardware confirmation (needs the owner)
 
-This needs an owner-reviewed procedure, because every step writes outside the bank-1 application region:
+The owner authorized writes anywhere in flash (October 22). The tools now cover each step with the bank-1 updater's checks, and the factory region stays unwritable ([updater](../development/uart-development.md)):
 
-1. Install a known-good replacement image in **bank 0** with a valid marker, and confirm that bank 1 still boots (both valid).
-2. Clear bank 1's marker, and confirm that bank 0 boots (fallback).
-3. Restore bank 1, and confirm that it boots again.
+1. **Both valid:** `bench.py flash-prepare/flash-execute --bank 0` installs a reviewed replacement image into bank 0. It overwrites the pinned baseline contents there (an invalidated marker), with bank 1 required valid throughout. The boot must report bank 1.
+2. **Fallback:** `bench.py give-way-prepare/give-way-execute --fallback <bank-0 review>` clears bank 1's first marker byte. It runs only while bank 0 is exactly that review. The boot must report bank 0.
+3. **Restore:** `bench.py flash-prepare/flash-execute --restore-marker` rewrites bank 1's first sector, marker last. The boot must report bank 1 again.
 
-Each step ends with a full-flash read, and the UART loader path stays available throughout. The current tools refuse these writes by design. A bank-0 path needs its own reviewed writer rules, preservation checks and stop conditions, on the model of the bank-1 updater.
+Each step ends with a full-flash read, compared with the one before it, and the UART loader path stays available throughout. The chained sequence passes in emulation: the real helper instructions perform each write, and the factory loader's own selection code picks each boot (`tools/tests/test_development_bank0.py`).
 
 ## Limits
 

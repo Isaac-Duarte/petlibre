@@ -20,14 +20,15 @@ Scripts are grouped by what they do. Run them from the repository root with the 
 
 ## Flash: reads, updates and recovery
 
-The four `uart-*` clients own the serial port. The rest are the components they load, plus offline planners and reviewers. See the [development updater](../docs/development/uart-development.md) and [recovery limits](../docs/hardware/recovery.md).
+The five `uart-*` clients own the serial port. The rest are the components they load, plus offline planners and reviewers. See the [development updater](../docs/development/uart-development.md) and [recovery limits](../docs/hardware/recovery.md).
 
 | Script | Device | Purpose |
 | --- | --- | --- |
 | [flash/uart-flash-read.py](flash/uart-flash-read.py) | yes | Restricted reader: observe captures, bounded and full reads; never programs or erases |
-| [flash/uart-development.py](flash/uart-development.py) | yes | Inspect, prepare and execute reviewed bank-1 application updates (`--interrupted` finishes a stopped one) |
+| [flash/uart-development.py](flash/uart-development.py) | yes | Inspect, prepare and execute reviewed application updates of bank 1, or bank 0 with `--bank 0` (`--interrupted` finishes a stopped one, `--restore-marker` undoes a give-way) |
 | [flash/uart-standalone.py](flash/uart-standalone.py) | yes | Install the pinned UART diagnostic, or restore the original |
 | [flash/uart-stock-recovery.py](flash/uart-stock-recovery.py) | yes | Exact original bank-1 stock recovery |
+| [flash/uart-give-way.py](flash/uart-give-way.py) | yes | Clear bank 1's first marker byte so the loader falls back to an exactly reviewed bank 0 |
 | [flash/review-development-image.py](flash/review-development-image.py) | no | Freeze a reviewed stock OTA or `plaf103-firstboot` build as an update source/target |
 | [flash/development-bank.py](flash/development-bank.py) | no | Region-scoped bank-1 update transactions (injected transport) |
 | [flash/development-wire-policy.py](flash/development-wire-policy.py) | no | Independent expected TX for development updates |

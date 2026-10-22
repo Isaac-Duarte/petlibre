@@ -87,7 +87,7 @@ __attribute__((noinline)) void petlibre_wifi_fw_start(void)
 
 u32 petlibre_amebad_trial_decide(const u8 *bank1, const u8 *bank0, const u8 *record, u32 *reg);
 
-/* FW11 boot trial (amebad/src/trial.rs decides): before KM4 runs, count an
+/* FW11 boot trial (amebad-common/src/trial.rs decides): before KM4 runs, count an
  * unconfirmed bank-1 image's boots in backup register 4 and, at the limit
  * with a valid bank 0, clear bank 1's first marker byte and reset so the
  * loader falls back to bank 0. KM4 is off, so the SDK flash lock only masks

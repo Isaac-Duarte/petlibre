@@ -58,7 +58,7 @@ If anything fails before step 4, bank 1's marker is still clear, so the loader k
 
 ## Boot confirmation and fallback (FW11)
 
-Implemented on KM0 (`petlibre-amebad/src/trial.rs`, `petlibre_trial_step` in `firstboot_km0.c`), before `km4_boot_on`:
+Implemented on KM0 (`petlibre-amebad-common/src/trial.rs`, `petlibre_trial_step` in `firstboot_km0.c`), before `km4_boot_on`:
 - **Running bank:** read from bank 1's physical marker.
 - **Confirmation:** keyed by the build identity, not the image hash, since the normal image does not know its own OTA hash. The record lives in storage sector 4 (`0x344000`).
 - **Count:** backup register 4. Bits 0–15 hold the peer boot count, bits 16–23 the trial count, and bits 24–31 an identity tag.

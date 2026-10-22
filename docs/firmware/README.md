@@ -7,7 +7,9 @@ The local server talks to **stock 1.1.15** over its existing MQTT protocol. It d
 | Crate | Responsibility |
 | --- | --- |
 | `petlibre-core` | `no_std` controller, portion accounting, sensor qualification, ADC scaling, motor gate, feedback queue, monotonic clock, journal, and flash authority |
-| `petlibre-amebad` | GPIO/ADC board port, interrupt/timer supervision, watchdog, FreeRTOS owner, RAM parking, SDK flash hooks, build-bound startup reports, stopped outputs, and LED diagnostics |
+| `petlibre-amebad-common` | The routines both cores link: RAM parking, SDK flash hooks, the KM0 park peer, and the OTA boot-trial step. The KM0 image contains only this crate |
+| `petlibre-amebad` | KM4 ports: GPIO/ADC board port, interrupt/timer supervision, watchdog, FreeRTOS owner, flash lease provider, transport, updater, build-bound startup reports, stopped outputs, and LED diagnostics. It re-exports the common crate's `flash` and `trial` |
+| `petlibre-firstboot` | The KM4 first-boot application entry and its bench probes (Wi-Fi, optics, ADC, supervision, flash stress, and the opt-in `fw16-pulse` motion variant) |
 | `petlibre-amebad-sdk` | Bindgen-backed KM4 calls into the pinned AmebaD SDK, and the deterministic host fake SDK used by tests and the simulator |
 | `petlibre-ffi` | C ABI and per-core static libraries joining Rust to SDK startup |
 | `petlibre-testkit`, `petlibre-sim` | Fake NOR journal storage and deterministic host worker |

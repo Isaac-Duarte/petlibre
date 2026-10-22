@@ -461,7 +461,9 @@ def rust_archive(sdk, core):
 
 # Explicit opt-in image variants. A motion variant drives the motor; it is
 # never built unless named, and its manifest says so.
-VARIANTS = {"fw16-pulse": {"feature": "fw16-pulse", "policy": "fw16-pulse-v1"}}
+VARIANTS = {"fw16-pulse": {"feature": "fw16-pulse", "policy": "fw16-pulse-v1"},
+            # FW11: never confirms and lets the watchdog reset it; no motion.
+            "fw11-reset": {"feature": "fw11-reset", "policy": None, "trial": "fw11-reset-v1"}}
 
 
 def build_rust(sdk, toolchain, stream, identity, base_environment, variant=None, ota_key=None):
@@ -761,6 +763,7 @@ def build(profile, toolchain, variant=None):
         "startup_transport_policy": "fw08-transport-v1" if profile == "plaf103-firstboot" else None,
         "startup_optics_policy": "fw13-optics-v2" if profile == "plaf103-firstboot" and not variant else None,
         "startup_motion_policy": VARIANTS[variant]["policy"] if variant else None,
+        "startup_trial_policy": VARIANTS[variant].get("trial") if variant else None,
         "variant": variant,
         "startup_update_policy": "fw10-recovery-v1" if ota_key else None,
         "ota_public_key": ota_key,
@@ -797,6 +800,8 @@ def main():
     parser.add_argument("command", choices=("source-id", "bootstrap", "baseline", "bringup", *MODEL_PROFILES))
     parser.add_argument("--motion-probe", action="store_true",
                         help="Build the FW16 motor-pulse variant (drives the motor once per cold boot)")
+    parser.add_argument("--trial-reset", action="store_true",
+                        help="Build the FW11 trial-test variant (watchdog resets it after startup)")
     args = parser.parse_args()
     try:
         if args.command == "source-id":
@@ -806,7 +811,10 @@ def main():
         os.umask(0o077)
         toolchain = bootstrap()
         if args.command != "bootstrap":
-            build(args.command, toolchain, "fw16-pulse" if args.motion_probe else None)
+            if args.motion_probe and args.trial_reset:
+                raise ValueError("Choose one image variant")
+            variant = "fw16-pulse" if args.motion_probe else "fw11-reset" if args.trial_reset else None
+            build(args.command, toolchain, variant)
     except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
         parser.exit(1, f"error: {error}\n")
 

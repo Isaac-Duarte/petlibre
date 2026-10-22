@@ -15,6 +15,7 @@ crate-type = ["staticlib", "rlib"]
 km0 = ["dep:petlibre-amebad", "petlibre-amebad/km0"]
 km4 = ["dep:petlibre-amebad", "petlibre-amebad/km4", "petlibre-amebad/sdk"]
 fw16-pulse = ["km4", "petlibre-amebad/fw16-pulse"]
+fw11-reset = ["km4", "petlibre-amebad/fw11-reset"]
 
 [dependencies]
 petlibre-core = { path = "../core" }

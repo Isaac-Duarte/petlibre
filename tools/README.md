@@ -17,6 +17,7 @@ Scripts are grouped by what they do. Run them from the repository root with the 
 | --- | --- | --- |
 | [bench/bench.py](bench/bench.py) | yes | Relay power and loader strap; chains captures, dumps and updates through the flash tools ([guide](../docs/hardware/bench.md)) |
 | [bench/bench-dashboard.py](bench/bench-dashboard.py) | no | Read-only localhost page: progress, ETAs, latest RX log, timed operator steps |
+| [bench/relay-demo.py](bench/relay-demo.py) | yes (spare relays 3–4 only) | Clicks the spare relays in chase, blink, heartbeat and Morse patterns; refuses while a bench command runs |
 
 ## Flash: reads, updates and recovery
 

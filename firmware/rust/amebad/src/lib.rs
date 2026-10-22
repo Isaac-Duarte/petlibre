@@ -59,4 +59,6 @@ pub mod trial;
 #[cfg(any(not(target_os = "none"), feature = "km4"))]
 pub mod updater;
 #[cfg(any(not(target_os = "none"), feature = "km4"))]
+pub mod watch;
+#[cfg(any(not(target_os = "none"), feature = "km4"))]
 pub mod watchdog;

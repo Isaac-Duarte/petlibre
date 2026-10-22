@@ -23,6 +23,8 @@ use crate::probes::optics;
 use crate::probes::wifi::{Probe, Record};
 use crate::transport::{self, Link};
 use crate::updater::{self, Hooked, Hooks, Updater};
+#[cfg(not(feature = "fw11-reset"))]
+use crate::watch::{self, SdkGiveWay, Watch};
 use crate::watchdog::Watchdog;
 use crate::{config, leds, sdk, startup, stopped};
 
@@ -180,6 +182,9 @@ static RESTART: AtomicBool = AtomicBool::new(false);
 static NET_BEAT: AtomicU32 = AtomicU32::new(0);
 static NET_RUNNING: AtomicBool = AtomicBool::new(false);
 static NET_READY: AtomicBool = AtomicBool::new(false);
+/// The offer-check task's last step, while it runs.
+static WATCH_BEAT: AtomicU32 = AtomicU32::new(0);
+static WATCH_RUNNING: AtomicBool = AtomicBool::new(false);
 /// The startup optics (or pulse) probe has ended and released the KM0
 /// handshake, so another writer may bind it.
 static PROBE_DONE: AtomicBool = AtomicBool::new(false);
@@ -303,6 +308,7 @@ unsafe extern "C" fn feeder_task(_: *mut c_void) -> u32 {
     let now = sdk::uptime_ms();
     let fresh = |beat: &AtomicU32| now.wrapping_sub(beat.load(Ordering::Acquire)) < LIVENESS_MS;
     let alive = (!NET_RUNNING.load(Ordering::Acquire) || fresh(&NET_BEAT))
+        && (!WATCH_RUNNING.load(Ordering::Acquire) || fresh(&WATCH_BEAT))
         && (UPDATER_DONE.load(Ordering::Acquire) || fresh(&HEARTBEAT));
     // Stopped, or motor STOP with exactly the supervised emitters lit (the
     // optics probe): the feeder must not trip on a sensing window (observed).
@@ -357,8 +363,90 @@ unsafe extern "C" fn confirm_task(_: *mut c_void) -> u32 {
     HEARTBEAT.store(sdk::uptime_ms(), Ordering::Release);
     if step.delay_ms == 0 {
         UPDATER_DONE.store(true, Ordering::Release);
+        if matches!(
+            step.record,
+            Some(confirm::Record::Already | confirm::Record::Confirmed { .. })
+        ) {
+            start_watch();
+        }
     }
     step.delay_ms
+}
+
+/// Touched only by the offer-check task; see `watch_task`.
+#[cfg(not(feature = "fw11-reset"))]
+static WATCH: Slot<Watch> = Slot(UnsafeCell::new(None));
+
+#[cfg(not(feature = "fw11-reset"))]
+struct WatchLine(watch::Record);
+
+#[cfg(not(feature = "fw11-reset"))]
+impl core::fmt::Display for WatchLine {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        watch::describe(self.0, f)
+    }
+}
+
+/// FW10: once confirmed, check for an offer and give way to bank 0's
+/// updater when one names another build.
+#[cfg(not(feature = "fw11-reset"))]
+unsafe extern "C" fn watch_task(_: *mut c_void) -> u32 {
+    let now = sdk::uptime_ms();
+    WATCH_BEAT.store(now, Ordering::Release);
+    // SAFETY: only this task creates references into the slot; the provider
+    // is reached by raw pointer (the confirmation task has ended).
+    let slot = unsafe { &mut *WATCH.0.get() };
+    if slot.is_none() {
+        let Some(config) = sdk::transport_config() else {
+            WATCH_RUNNING.store(false, Ordering::Release);
+            return 0;
+        };
+        *slot = Some(Watch::new(config, updater::public_key()));
+    }
+    let Some(watch) = slot.as_mut() else {
+        return 0;
+    };
+    let provider =
+        unsafe { &mut *PROVIDER.0.get() }.get_or_insert_with(Provider::default) as *mut Provider;
+    let mut bank = SdkGiveWay::<SdkHooks>::new();
+    // SAFETY: the provider slot is fixed for the program's lifetime.
+    let step = unsafe { watch.step::<Hardware, SdkHooks>(provider, &mut bank, now) };
+    if let Some(record) = step.record {
+        let mut report = startup::Report::new();
+        if let Ok(line) = report.record(format_args!("PLWCH1 {}\r\n", WatchLine(record))) {
+            sdk::log(line);
+        }
+    }
+    WATCH_BEAT.store(sdk::uptime_ms(), Ordering::Release);
+    if step.delay_ms == 0 {
+        if step.restart {
+            RESTART.store(true, Ordering::Release);
+        }
+        WATCH_RUNNING.store(false, Ordering::Release);
+    }
+    step.delay_ms
+}
+
+/// 24 KiB, as the updater: the manifest check verifies Ed25519.
+#[cfg(not(feature = "fw11-reset"))]
+fn start_watch() {
+    WATCH_BEAT.store(sdk::uptime_ms(), Ordering::Release);
+    WATCH_RUNNING.store(true, Ordering::Release);
+    let created = sdk::task_create(
+        c"petlibre-wch",
+        UPDATER_STACK_WORDS,
+        2,
+        watch_task,
+        ptr::null_mut(),
+    );
+    if !created {
+        WATCH_RUNNING.store(false, Ordering::Release);
+    }
+    sdk::log(if created {
+        c"PLWCH1 start created=1\r\n"
+    } else {
+        c"PLWCH1 start created=0\r\n"
+    });
 }
 
 /// The normal role's FW11 supervision: the confirmation task, the feeder,

@@ -32,11 +32,23 @@ impl AuthProvider for DeviceAuth {
         let server = connect.client_id == config.server_client_id()
             && username == "local-server"
             && bool::from(password.ct_eq(config.server_password.as_bytes()));
-        let firmware = config.firmware.as_ref().is_some_and(|firmware| {
-            connect.client_id == firmware.client_id
-                && username == firmware.username
-                && bool::from(password.ct_eq(firmware.password.as_bytes()))
-        });
+        let firmware_login = |client_id: &str| {
+            config.firmware.as_ref().is_some_and(|firmware| {
+                connect.client_id == client_id
+                    && username == firmware.username
+                    && bool::from(password.ct_eq(firmware.password.as_bytes()))
+            })
+        };
+        let firmware = config
+            .firmware
+            .as_ref()
+            .is_some_and(|f| firmware_login(&f.client_id));
+        // FW10: the normal role's offer check, a second session beside the
+        // transport's, so it needs its own client ID.
+        let watcher = config
+            .firmware
+            .as_ref()
+            .is_some_and(|f| firmware_login(&format!("{}-ota", f.client_id)));
         Box::pin(async move {
             Ok(if device {
                 AuthResult::success_with_user("device")
@@ -44,6 +56,8 @@ impl AuthProvider for DeviceAuth {
                 AuthResult::success_with_user("server")
             } else if firmware {
                 AuthResult::success_with_user("firmware")
+            } else if watcher {
+                AuthResult::success_with_user("firmware-watch")
             } else {
                 AuthResult::fail(ReasonCode::NotAuthorized)
             })
@@ -84,7 +98,10 @@ fn publish_allowed(config: &Config, user: Option<&str>, topic: &str) -> bool {
     let firmware = firmware_suffix(config, topic);
     match user {
         Some("firmware") => matches!(firmware, Some("health" | "reply" | "ota/get")),
-        Some("server") if firmware.is_some() => matches!(firmware, Some("request" | "ota/data")),
+        Some("firmware-watch") => matches!(firmware, Some("ota/check")),
+        Some("server") if firmware.is_some() => {
+            matches!(firmware, Some("request" | "ota/data" | "ota/offered"))
+        }
         Some("device") => suffix.is_some_and(|s| {
             matches!(
                 s,
@@ -113,8 +130,9 @@ fn subscribe_allowed(config: &Config, user: Option<&str>, topic: &str) -> bool {
     let firmware = firmware_suffix(config, topic);
     match user {
         Some("firmware") => matches!(firmware, Some("request" | "ota/data")),
+        Some("firmware-watch") => matches!(firmware, Some("ota/offered")),
         Some("server") if firmware.is_some() => {
-            matches!(firmware, Some("health" | "reply" | "ota/get"))
+            matches!(firmware, Some("health" | "reply" | "ota/get" | "ota/check"))
         }
         Some("device") => suffix.is_some_and(|s| {
             matches!(
@@ -257,6 +275,38 @@ mod tests {
         }
         assert!(publish_allowed(&c, device, &format!("{STOCK}event/post")));
         assert!(!publish_allowed(&c, None, &format!("{FW}health")));
+    }
+
+    #[test]
+    fn the_offer_watcher_reaches_only_the_check_topics() {
+        let c = config(true);
+        let watcher = Some("firmware-watch");
+        for (topic, publish, subscribe) in [
+            ("ota/check", true, false),
+            ("ota/offered", false, true),
+            ("health", false, false),
+            ("request", false, false),
+            ("ota/get", false, false),
+            ("ota/data", false, false),
+            ("ota/#", false, false),
+        ] {
+            let topic = format!("{FW}{topic}");
+            assert_eq!(publish_allowed(&c, watcher, &topic), publish, "{topic}");
+            assert_eq!(subscribe_allowed(&c, watcher, &topic), subscribe, "{topic}");
+        }
+        // The transport role cannot use them, and the server answers them.
+        let firmware = Some("firmware");
+        assert!(!publish_allowed(&c, firmware, &format!("{FW}ota/check")));
+        assert!(!subscribe_allowed(
+            &c,
+            firmware,
+            &format!("{FW}ota/offered")
+        ));
+        let server = Some("server");
+        assert!(subscribe_allowed(&c, server, &format!("{FW}ota/check")));
+        assert!(publish_allowed(&c, server, &format!("{FW}ota/offered")));
+        let c = config(false);
+        assert!(!publish_allowed(&c, watcher, &format!("{FW}ota/check")));
     }
 
     #[test]

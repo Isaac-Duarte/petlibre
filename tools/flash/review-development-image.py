@@ -30,7 +30,7 @@ STOCK = ROOT / "private/firmware/PLAF103_OTA_010115.bin"
 FACTORY = None
 
 
-def payload(image):
+def bank_payload(image):
     """The application payload, sector aligned within the reviewed bank footprint."""
     require(type(image) is bytes, "Immutable complete OTA bytes required")
     data = L.container(image)
@@ -112,7 +112,7 @@ def review(build):
                 digest(data) == artifact["sha256"], "Build artifact differs")
         files[Path(artifact["path"]).name] = data
     image = files["OTA_All.bin"]
-    payload = payload(image)
+    payload = bank_payload(image)
     require(payload == files["km0_km4_image2.bin"] and
             payload == files["km0_image2_all.bin"] + files["km4_image2_all.bin"],
             "Both core packages must exactly compose the OTA payload")
@@ -163,7 +163,7 @@ def freeze(mode, build, output):
     else:
         require(build.resolve().is_relative_to((ROOT / "private").resolve()), "Private build required")
         image, manifest, details = review(build)
-    data = payload(image)
+    data = bank_payload(image)
     result = {"schema_version": 1, "kind": "plaf103_development_image_review", "image_kind": mode,
               "ota_sha256": digest(image), "payload_sha256": digest(data), "payload_bytes": len(data),
               "manifest_sha256": digest(manifest) if manifest else None, "review": details,

@@ -145,6 +145,9 @@ def table(elf, objdump):
     return names
 
 
+INSTRUCTION = re.compile(r"^\s*([0-9a-f]+):\t((?:[0-9a-f]{2,8} ?)+)\s*\t(\S+)")
+
+
 def loaded(elf, objdump):
     """(address, bytes) of every section with file contents that loads."""
     data = elf.read_bytes()
@@ -172,14 +175,24 @@ def references(elf, objdump, names, targets, sections):
         for value in (address | 1, address & ~1):
             wanted[value] = name
     found = {name: set() for name in targets}
+    listing = rampark.tool(objdump, "-d", *(a for s in sections for a in ("-j", s)), elf)
+    # Bytes of decoded instructions. A stored address in code is a literal-pool
+    # word, which the disassembler shows as data (.word); an instruction whose
+    # encoding happens to equal an address is not a reference (observed: an
+    # eor.w in SHA-512 spelled shell_cmd_table's address).
+    code = set()
+    for line in listing.splitlines():
+        insn = INSTRUCTION.match(line)
+        if insn and not insn[3].startswith("."):
+            at = int(insn[1], 16)
+            code.update(range(at, at + len(insn[2].replace(" ", "")) // 2))
     for start, data in loaded(elf, objdump):
         for at in range(0, len(data) - 3, 4):
             value = int.from_bytes(data[at:at + 4], "little")
-            if value in wanted:
+            if value in wanted and not all(start + at + i in code for i in range(4)):
                 found[wanted[value]].add(owner(start + at))
     current = None
     veneers = {}
-    listing = rampark.tool(objdump, "-d", *(a for s in sections for a in ("-j", s)), elf)
     for line in listing.splitlines():
         header = re.match(r"^([0-9a-f]+) <([^>]+)>:$", line)
         if header:

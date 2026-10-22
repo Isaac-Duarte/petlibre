@@ -25,9 +25,9 @@ class ReviewTests(unittest.TestCase):
 
     def test_payload_must_fit_the_aligned_bank(self):
         with self.assertRaisesRegex(ValueError, "Immutable complete OTA bytes"):
-            REVIEW.payload(bytearray(b"OTA"))
+            REVIEW.bank_payload(bytearray(b"OTA"))
         with self.assertRaises(ValueError):
-            REVIEW.payload(b"\0" * 64)
+            REVIEW.bank_payload(b"\0" * 64)
 
 
 if __name__ == "__main__":

@@ -21,6 +21,16 @@ class BranchTests(unittest.TestCase):
         self.assertIsNone(W.BRANCH.search(" 1000:\t4770 \tbx\tlr"))
 
 
+class InstructionTests(unittest.TestCase):
+    def test_instructions_are_code_and_literal_words_are_not(self):
+        # This eor.w's encoding equals shell_cmd_table's address in one build.
+        insn = W.INSTRUCTION.match(" e014a28:\tea80 0e06 \teor.w\tlr, r0, r6")
+        self.assertEqual((insn[1], insn[2].replace(" ", ""), insn[3]), ("e014a28", "ea800e06", "eor.w"))
+        self.assertEqual(W.INSTRUCTION.match(" e014a2c:\t989e      \tldr\tr0, [sp, #632]")[3], "ldr")
+        word = W.INSTRUCTION.match("100057bc:\t100210f8 \t.word\t0x100210f8")
+        self.assertTrue(word[3].startswith("."))
+
+
 class DemangleTests(unittest.TestCase):
     def test_rust_paths_drop_the_crate_hash(self):
         self.assertEqual(W.demangle("_RNvNtCseBw8xjNrJWj_19petlibre_amebad_sdk6target13bank1_program"),

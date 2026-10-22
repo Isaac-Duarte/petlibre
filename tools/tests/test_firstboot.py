@@ -97,11 +97,11 @@ class FirstBootTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             firstboot.audit(ROOT / "private/firmware-build/plaf103/sdk", PROJECT, BINUTILS)
 
-    def test_actual_factory_accepts_short_diagnostic_in_both_banks(self):
+    def test_actual_factory_accepts_diagnostic_in_both_banks(self):
         factory = review.factory()
         cases = review.mapping_cases(CURRENT.read_bytes(), factory.ROM.read_bytes(), self.image)
         self.assertEqual([case["selection"]["result"] for case in cases], [1, 2])
-        self.assertLess(len(self.image), 200000)
+        self.assertLessEqual(len(review.bank_payload(self.image)), review.BANK_BYTES)
 
 
 if __name__ == "__main__":

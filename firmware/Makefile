@@ -15,4 +15,4 @@ bootstrap baseline bringup plaf103 plaf103-firstboot:
 	$(PYTHON) tools/build.py $@
 
 test:
-	cargo test --locked -p petlibre-core -p petlibre-amebad -p petlibre-ffi
+	cargo test --locked -p petlibre-core -p petlibre-amebad-common -p petlibre-amebad -p petlibre-ffi

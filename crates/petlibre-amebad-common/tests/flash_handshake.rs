@@ -3,7 +3,7 @@
 
 use std::cell::RefCell;
 
-use petlibre_amebad::flash::park::{
+use petlibre_amebad_common::flash::park::{
     HELLO, Mmio, READY, REQUEST, Reply, answer, hello, reannounce, reply, session,
 };
 

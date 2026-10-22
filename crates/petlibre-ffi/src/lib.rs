@@ -10,9 +10,12 @@
 
 pub mod core_abi;
 
-// The ports export their own C symbols (app entry, RAM park and SDK hooks).
-#[cfg(any(feature = "km0", feature = "km4"))]
+// The ports export their own C symbols: KM0 the RAM park, SDK hooks and
+// trial step; KM4 those (through petlibre-amebad) and the app entry.
+#[cfg(feature = "km4")]
 pub use petlibre_amebad;
+#[cfg(feature = "km0")]
+pub use petlibre_amebad_common;
 
 #[cfg(target_os = "none")]
 #[panic_handler]

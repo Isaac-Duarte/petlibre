@@ -1,6 +1,6 @@
 //! FW11 KM0 boot-trial decisions: no flash or register access here.
 
-use petlibre_amebad::trial::{Decision, LIMIT, decide};
+use petlibre_amebad_common::trial::{Decision, LIMIT, decide};
 use petlibre_core::ota::{CONFIRM_LEN, MARKER, confirm_record};
 
 const ID: [u8; 32] = [0x5a; 32];

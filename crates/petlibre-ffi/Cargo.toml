@@ -12,7 +12,7 @@ crate-type = ["staticlib", "rlib"]
 
 [features]
 # Link the AmebaD ports for one core (target builds from firmware/tools/build.py).
-km0 = ["dep:petlibre-amebad", "petlibre-amebad/km0"]
+km0 = ["dep:petlibre-amebad-common", "petlibre-amebad-common/km0"]
 km4 = ["dep:petlibre-amebad", "petlibre-amebad/km4", "petlibre-amebad/sdk"]
 fw16-pulse = ["km4", "petlibre-amebad/fw16-pulse"]
 fw11-reset = ["km4", "petlibre-amebad/fw11-reset"]
@@ -20,6 +20,7 @@ fw11-reset = ["km4", "petlibre-amebad/fw11-reset"]
 [dependencies]
 petlibre-core.workspace = true
 petlibre-amebad = { workspace = true, optional = true }
+petlibre-amebad-common = { workspace = true, optional = true }
 
 [lints]
 workspace = true

@@ -12,6 +12,7 @@ publish = false
 
 [workspace.dependencies]
 petlibre-amebad = { path = "crates/petlibre-amebad" }
+petlibre-amebad-common = { path = "crates/petlibre-amebad-common" }
 petlibre-amebad-sdk = { path = "crates/petlibre-amebad-sdk" }
 petlibre-core = { path = "crates/petlibre-core" }
 petlibre-testkit = { path = "crates/petlibre-testkit" }

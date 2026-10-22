@@ -3,7 +3,7 @@
 use std::cell::RefCell;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use petlibre_amebad::flash::park::*;
+use petlibre_amebad_common::flash::park::*;
 
 #[derive(Default)]
 struct Model {

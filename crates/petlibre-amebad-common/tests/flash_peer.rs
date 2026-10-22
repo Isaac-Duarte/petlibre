@@ -3,10 +3,12 @@
 
 use std::cell::RefCell;
 
-use petlibre_amebad::flash::park::{
+use petlibre_amebad_common::flash::park::{
     ACK, HELLO, Mmio, RELEASE, RELEASED, REQUEST, SYSTICK_CTRL, TICKS,
 };
-use petlibre_amebad::flash::peer::{BACKUP_BASE, INJECT_LEASE, MARKER_REGISTER, ParkEvent, Peer};
+use petlibre_amebad_common::flash::peer::{
+    BACKUP_BASE, INJECT_LEASE, MARKER_REGISTER, ParkEvent, Peer,
+};
 
 #[derive(Default)]
 struct Model {

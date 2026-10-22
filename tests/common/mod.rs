@@ -83,8 +83,10 @@ pub fn start_in(path: &std::path::Path, ota: bool, cwd: Option<&std::path::Path>
     )
 }
 
+/// Waits up to 10 s: a loaded host (a parallel test binary, a bench update)
+/// can delay the spawned server's broker connection past 5 s.
 pub async fn ready(config: &Config, client: &reqwest::Client) {
-    for _ in 0..100 {
+    for _ in 0..200 {
         if let Ok(response) = client
             .get(format!("http://{}/api/status", config.http_listen))
             .bearer_auth(&config.api_token)

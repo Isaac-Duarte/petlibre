@@ -8,8 +8,7 @@ const dur = s => { s = Math.max(0, Math.round(s)); const m = Math.floor(s / 60);
 const when = t => new Date(t * 1000).toLocaleTimeString();
 const clock = t => new Date(t * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 const short = h => h ? String(h).slice(0, 12) + "…" : "?";
-const TOKEN = new URLSearchParams(location.search).get("token");
-const api = path => path + (TOKEN ? (path.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(TOKEN) : "");
+const api = path => path;
 
 // Server clock minus ours, so timers agree with the bench host.
 let skew = 0;
@@ -56,36 +55,40 @@ function renderScript(d) {
   $("script").innerHTML = `<div class="card op"><div class="title">What to do now${s.title ? " · " + esc(s.title) : ""}</div>${body}${soundControls()}</div>`;
 }
 
-// ---- Now: the running (or last) command.
+// ---- Now: one summary line (state, elapsed, overall progress), then steps beside the meters.
+function meter(label, value, done, total) { return `<div class="meter"><div class="row"><span>${label}</span><span>${value}</span></div>${bar(done, total)}</div>`; }
 function renderNow(d) {
   const c = d.current;
-  if (!c) { $("now").innerHTML = '<div class="card muted">No bench command recorded yet.</div>'; return; }
+  if (!c) { $("now").innerHTML = '<div class="card empty">No bench command recorded yet.</div>'; document.title = "Feeder Bench"; return; }
   const now = nowS(), end = c.finished || now;
   const relay = (n, label) => `<span class="pill ${c.relay[n] ? "on" : ""}">${label} ${c.relay[n] === undefined ? "—" : c.relay[n] ? "on" : "off"}</span>`;
-  const total = c.steps.length, done = c.steps.filter(s => s.state === "done").length;
-  const overall = total ? `<div class="muted" style="margin-top:10px">Overall: ${done} of ${total} steps</div>` + bar(c.outcome === "pass" ? total : done, total) : "";
-  let xfer = "";
+  const total = c.steps.length, done = c.outcome === "pass" ? total : c.steps.filter(s => s.state === "done").length;
+  const meters = [];
   if (c.transfer) {
     const x = c.transfer, got = x.tx + x.rx, want = x.tx_expected + x.rx_expected, pct = Math.min(99, 100 * got / want);
-    xfer = `<div class="muted" style="margin-top:10px">Install (estimated): sent ${(x.tx / 1024).toFixed(0)} of ~${(x.tx_expected / 1024).toFixed(0)} KiB, read back ${(x.rx / 1048576).toFixed(2)} of ~${(x.rx_expected / 1048576).toFixed(2)} MiB</div>` +
-      bar(pct, 100) + `<div class="muted">~${pct.toFixed(0)}%${etaText(eta(now, x.started, 0, got, want))}</div>`;
+    meters.push(meter(`Install (estimated) · sent ${(x.tx / 1024).toFixed(0)} of ~${(x.tx_expected / 1024).toFixed(0)} KiB, read back ${(x.rx / 1048576).toFixed(2)} of ~${(x.rx_expected / 1048576).toFixed(2)} MiB`,
+      `~${pct.toFixed(0)}%${etaText(eta(now, x.started, 0, got, want))}`, pct, 100));
   }
-  let prog = "";
   if (c.progress) {
     const p = c.progress;
     const val = p.unit === "bytes" ? `${(p.done / 1048576).toFixed(2)} / ${(p.total / 1048576).toFixed(2)} MiB` : `${p.done} / ${p.total} ${p.unit}`;
-    prog = bar(p.done, p.total) + `<div class="muted">${val} (${(100 * p.done / p.total).toFixed(1)}%)${c.outcome === "running" ? etaText(eta(now, p.since, p.since_done, p.done, p.total)) : ""}</div>`;
+    meters.push(meter(esc(val), `${(100 * p.done / p.total).toFixed(1)}%${c.outcome === "running" ? etaText(eta(now, p.since, p.since_done, p.done, p.total)) : ""}`, p.done, p.total));
   }
   const cap = c.capture;
-  const capture = cap ? `<div class="muted" style="margin-top:10px">Capture ${esc(cap.path)} · ${cap.bytes} bytes · ${dur(cap.elapsed)} of ${dur(cap.seconds)} · ends ${clock(now + cap.seconds - cap.elapsed)}</div>${bar(cap.elapsed, cap.seconds)}` : "";
-  const next = c.next ? commandBox("Next, after review", c.next) : "";
-  $("now").innerHTML = `<div class="card"><div class="row"><div class="title">${esc(c.command)} ${esc(c.name || "")}</div>
-    <span class="badge ${esc(c.outcome)}">${esc(c.outcome)}</span></div>
-    <div class="muted">Started ${when(c.started)} · ${c.finished ? "took" : "running for"} ${dur(end - c.started)}${c.flash_tool ? ` · wellfed-flash <span class="hash">${esc(short(c.flash_tool.sha256))}</span>` : ""}</div>
-    ${c.error ? `<div class="stopped" style="margin-top:6px">${esc(c.error)}</div>` : ""}
-    <div class="pills" style="margin-top:10px">${relay("1", "Power")}${relay("2", "Loader strap")}</div>
-    <ol>${c.steps.map(s => `<li class="${esc(s.state)}">${esc(s.label)} <span class="muted">· ${esc(s.state)}</span></li>`).join("")}</ol>
-    ${overall}${xfer}${prog}${capture}${next}</div>`;
+  if (cap) meters.push(meter(`Capture ${esc(cap.path)} · ${cap.bytes} bytes`, `${dur(cap.elapsed)} of ${dur(cap.seconds)} · ends ${clock(now + cap.seconds - cap.elapsed)}`, cap.elapsed, cap.seconds));
+  const steps = c.steps.map((s, i) => `<li class="${esc(s.state)}"><span class="n">${i + 1}</span><span>${esc(s.label)}</span><span class="st">${esc(s.state)}</span></li>`).join("");
+  document.title = `${c.outcome} · ${c.command} — Feeder Bench`;
+  $("now").innerHTML = `<div class="card"><div class="summary">
+      <span class="badge ${stateClass(c.outcome)}">${esc(c.outcome)}</span>
+      <span class="title">${esc(c.command)} <span class="muted">${esc(c.name || "")}</span></span>
+      <span class="elapsed" title="${c.finished ? "took" : "running for"}">${dur(end - c.started)}</span>
+      ${total ? `<span class="mini" title="${done} of ${total} steps">${bar(done, total)}</span><span class="muted">${done}/${total} steps</span>` : ""}
+    </div>
+    <div class="muted">Started ${when(c.started)}${c.flash_tool ? ` · wellfed-flash <span class="hash">${esc(short(c.flash_tool.sha256))}</span>` : ""}</div>
+    ${c.error ? `<div class="stopped error">${esc(c.error)}</div>` : ""}
+    <div class="now-body ${meters.length ? "" : "solo"}"><div><ol class="stepper">${steps}</ol><div class="pills">${relay("1", "Power")}${relay("2", "Loader strap")}</div></div>
+      ${meters.length ? `<div>${meters.join("")}</div>` : ""}</div>
+    ${c.next ? commandBox("Next, after review", c.next) : ""}</div>`;
 }
 
 function commandBox(label, text) {
@@ -93,15 +96,31 @@ function commandBox(label, text) {
 }
 
 function renderRx(d) {
-  const rx = d.rx;
-  $("rx").innerHTML = rx ? `<div class="card"><h2>Latest RX log</h2><div class="muted">${esc(rx.path)} · ${rx.bytes} bytes${rx.modified ? " · updated " + when(rx.modified) : ""}</div>
-    <pre id="rxpre">${esc(rx.tail.join("\n")) || "No output yet."}</pre></div>` : "";
-  const pre = $("rxpre"); if (pre) pre.scrollTop = pre.scrollHeight;
+  const rx = d.rx, pre = rx ? `<pre class="rx" data-empty="No output yet.">${esc(rx.tail.join("\n"))}</pre>` : '<pre class="rx" data-empty="No capture yet."></pre>';
+  $("rx").innerHTML = `<h2>Latest RX log</h2>${rx ? `<div class="muted">${esc(rx.path)} · ${rx.bytes} bytes${rx.modified ? " · updated " + when(rx.modified) : ""}</div>` : ""}${pre}`;
+  const el = $("rx").querySelector("pre"); el.scrollTop = el.scrollHeight;
 }
 
+// Long lists show the newest few until "Show all"; the choice survives refreshes.
+const SHORT = { sessions: 10, history: 8 }, showAll = { sessions: false, history: false };
+function more(list, key, n) {
+  const b = $(key + "-more"); b.hidden = n <= SHORT[key];
+  b.textContent = showAll[key] ? "Show fewer" : `Show all ${n}`;
+  return showAll[key] ? list : list.slice(0, SHORT[key]);
+}
+const ago = t => { const s = nowS() - t; return s < 60 ? "now" : s < 3600 ? `${Math.floor(s / 60)}m` : s < 86400 ? `${Math.floor(s / 3600)}h` : `${Math.floor(s / 86400)}d`; };
+const full = t => new Date(t * 1000).toLocaleString();
+// Colour by meaning, since reports spell states many ways ("read complete", "verified_via_supplied_transports").
+const stateClass = o => (o = String(o || ""), /^(running|started)/.test(o) ? "running" : /stopped|failed|refused|interrupted|fault/.test(o) ? "stopped"
+  : /^ended/.test(o) ? "ended" : /verified|complete|^pass|^done|^ok/.test(o) ? "pass" : /prepared|planned/.test(o) ? "prepared" : "unknown");
+
 function renderHistory(d) {
-  $("history").innerHTML = d.history.length ? `<div class="card"><h2>Recent commands</h2><table><tr><th>Command</th><th>Name</th><th>Started</th><th>Took</th><th>Outcome</th></tr>
-    ${d.history.map(h => `<tr><td>${esc(h.command)}</td><td>${esc(h.name || "")}</td><td>${when(h.started)}</td><td>${h.finished ? dur(h.finished - h.started) : "—"}</td><td class="${esc(h.outcome)}">${esc(h.outcome)}${h.error ? " · " + esc(h.error) : ""}</td></tr>`).join("")}</table></div>` : "";
+  $("history-meta").textContent = d.history.length ? `${d.history.length} newest` : "";
+  $("history").innerHTML = d.history.length ? `<table><tr><th>Command</th><th class="r">Started</th><th class="r wide">Took</th><th>Outcome</th></tr>
+    ${more(d.history, "history", d.history.length).map(h => `<tr><td class="wrap">${esc(h.command)}${h.name ? `<span class="sub-name">${esc(h.name)}</span>` : ""}</td>
+      <td class="age" title="${full(h.started)}">${clock(h.started)}</td><td class="took wide">${h.finished ? dur(h.finished - h.started) : "—"}</td>
+      <td class="state why ${stateClass(h.outcome)}" title="${esc(h.outcome + (h.error ? " · " + h.error : ""))}">${esc(h.outcome)}${h.error ? " · " + esc(h.error) : ""}</td></tr>`).join("")}</table>`
+    : '<div class="empty">No commands recorded yet.</div>';
 }
 
 let data = null;
@@ -113,8 +132,19 @@ function render() {
 // ---- Live log: full scrollback of the current command, filtered locally.
 const LOG_LINES = 20000;
 let logLines = [];
+// The flash client's one-line JSON summaries carry "error":null on success, so
+// judge those by their fields rather than by the words in them.
+function classifyJson(line) {
+  let v; try { v = JSON.parse(line); } catch (e) { return null; }
+  if (!v || typeof v !== "object") return null;
+  if (v.error) return "l-bad";
+  if (/^(stopped|failed|refused|interrupted)/.test(v.status || "")) return "l-bad";
+  if (/^(complete|verified|prepared)/.test(v.status || "")) return "l-ok";
+  return "";
+}
 function classify(line) {
   if (/^\+ /.test(line)) return "l-cmd";
+  if (line.startsWith("{")) { const c = classifyJson(line); if (c !== null) return c; }
   if (/\b(stopped|refused|fault|failed|error|not confirmed|interrupted)\b/i.test(line)) return "l-bad";
   if (/\bNAK/i.test(line)) return "l-warn";
   if (/\b(complete|completed|verified|confirmed|captured|prepared)\b/i.test(line)) return "l-ok";
@@ -124,7 +154,7 @@ function renderLog() {
   const pre = $("log"), filter = $("filter").value.trim().toLowerCase();
   const shown = filter ? logLines.filter(l => l.toLowerCase().includes(filter)) : logLines;
   pre.innerHTML = shown.map(l => { const c = classify(l); return c ? `<span class="${c}">${esc(l)}</span>` : esc(l); }).join("\n");
-  $("log-meta").textContent = logLines.length ? `${logLines.length} lines${filter ? `, ${shown.length} shown` : ""}` : "No output yet.";
+  $("log-meta").textContent = logLines.length ? `${logLines.length} lines${filter ? `, ${shown.length} shown` : ""}` : "";
   if ($("follow").checked) pre.scrollTop = pre.scrollHeight;
 }
 $("filter").addEventListener("input", renderLog);
@@ -136,15 +166,20 @@ $("log").addEventListener("scroll", () => {
 $("copy-log").addEventListener("click", () => copy(logLines.join("\n")));
 
 // ---- Sessions: evidence per session name, with the reviewed next command.
-let selected = null;
+let selected = null, sessionList = null;
+function renderSessions() {
+  const all = sessionList; if (!all) return;
+  $("sessions-meta").textContent = all.length ? `${all.length} recent` : "";
+  $("sessions").innerHTML = all.length ? `<table><tr><th>Name</th><th class="wide">Evidence</th><th>State</th><th class="r">Age</th></tr>${more(all, "sessions", all.length).map(s =>
+    `<tr class="session-row ${s.name === selected ? "sel" : ""}" data-session="${esc(s.name)}"><td class="name wrap">${esc(s.name)}</td>
+     <td class="wide"><div class="parts">${s.parts.map(p => `<span class="part">${esc(p)}</span>`).join("")}</div></td>
+     <td class="state ${stateClass(s.outcome)}">${esc(s.outcome)}</td><td class="age" title="${s.modified ? full(s.modified) : ""}">${s.modified ? ago(s.modified) : ""}</td></tr>`).join("")}</table>`
+    : '<div class="empty">No session evidence under private/ yet.</div>';
+}
 async function loadSessions() {
   try {
     const r = await fetch(api("/api/sessions"), { cache: "no-store" }); const d = await r.json();
-    $("sessions-meta").textContent = d.sessions.length ? `${d.sessions.length} recent` : "";
-    $("sessions").innerHTML = d.sessions.length ? `<table><tr><th>Name</th><th>Evidence</th><th>State</th><th>Updated</th></tr>${d.sessions.map(s =>
-      `<tr class="session-row ${s.name === selected ? "sel" : ""}" data-session="${esc(s.name)}"><td>${esc(s.name)}</td><td><div class="parts">${s.parts.map(p => `<span class="part">${esc(p)}</span>`).join("")}</div></td>
-       <td class="${esc(s.outcome.split(" ").pop())}">${esc(s.outcome)}</td><td class="muted">${s.modified ? when(s.modified) : ""}</td></tr>`).join("")}</table>`
-      : '<div class="muted">No session evidence under private/ yet.</div>';
+    sessionList = d.sessions; renderSessions();
     if (selected) loadSession(selected);
   } catch (e) { }
 }
@@ -158,7 +193,7 @@ async function loadSession(name) {
       ${d.parts.map(p => {
         const report = p.report || {}, state = p.plan ? "prepared" : (report.status || "no report");
         const facts = p.plan ? p.plan : { ...(report.error ? { error: report.error } : {}), ...(report.result || {}), ...(p.serial ? { serial_tx: p.serial.tx, serial_rx: p.serial.rx } : {}) };
-        return `<div style="margin-top:10px"><div class="row"><span><b>${esc(p.kind)}</b> <span class="muted">${esc(p.path)}</span></span><span class="badge ${esc(state)}">${esc(state)}</span></div>${kv(facts)}</div>`;
+        return `<div style="margin-top:10px"><div class="row"><span><b>${esc(p.kind)}</b> <span class="muted">${esc(p.path)}</span></span><span class="badge ${stateClass(state)}">${esc(state)}</span></div>${kv(facts)}</div>`;
       }).join("")}
       ${d.next ? commandBox("Execute after review", d.next) : ""}</div>`;
   } catch (e) { }
@@ -190,6 +225,9 @@ document.addEventListener("click", e => {
   else if (t.dataset.act === "sound") enableSound();
   else if (t.dataset.act === "close") { selected = null; $("session").innerHTML = ""; loadSessions(); }
   else if (t.dataset.session) { selected = t.dataset.session; loadSessions(); }
+});
+for (const key of ["sessions", "history"]) $(key + "-more").addEventListener("click", () => {
+  showAll[key] = !showAll[key]; if (key === "sessions") renderSessions(); else if (data) renderHistory(data);
 });
 document.addEventListener("change", e => { if (e.target.dataset && e.target.dataset.act === "speak") speak = e.target.checked; });
 

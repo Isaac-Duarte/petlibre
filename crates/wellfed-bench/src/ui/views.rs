@@ -272,12 +272,23 @@ pub fn sessions(sources: &Sources) -> Value {
     list.sort_by(|a, b| b.1.0.total_cmp(&a.1.0));
     list.truncate(SESSIONS_SHOWN);
 
+    // A report left "running" by a process that exited without finishing it.
+    let live = fs::read_to_string(sources.status().join(CURRENT))
+        .ok()
+        .and_then(|text| serde_json::from_str::<Current>(&text).ok())
+        .filter(|current| current.outcome == "running" && alive(current.pid))
+        .and_then(|current| current.name);
     let list: Vec<Value> = list
         .into_iter()
         .map(|(name, (modified, parts))| {
             let p = Paths::new(root, &name);
             let outcome = if parts.contains(&"execute") {
-                report_status(&p.execute).unwrap_or_else(|| "unknown".into())
+                match report_status(&p.execute) {
+                    Some(status) if status == "running" && live.as_deref() != Some(&name) => {
+                        "ended".into()
+                    }
+                    status => status.unwrap_or_else(|| "unknown".into()),
+                }
             } else if parts.contains(&"plan") {
                 "prepared".into()
             } else if parts.contains(&"full") {
@@ -599,6 +610,20 @@ mod tests {
             Some(expected.timestamp_millis() as f64 / 1e3)
         );
         assert_eq!(script["capture_exists"], true);
+    }
+
+    #[test]
+    fn a_running_report_reads_as_ended_unless_its_command_is_live() {
+        let (_tmp, sources) = sources();
+        let p = Paths::new(&sources.root, "s2");
+        fs::create_dir_all(&p.execute).unwrap();
+        fs::write(p.execute.join("report.json"), r#"{"status": "running"}"#).unwrap();
+        assert_eq!(sessions(&sources)["sessions"][0]["outcome"], "ended");
+
+        let mut status = Status::new(&sources.root, sources.status());
+        status.begin("flash-execute", Some("s2"), &[]).unwrap();
+        assert_eq!(sessions(&sources)["sessions"][0]["outcome"], "running");
+        status.finish(0, None);
     }
 
     #[test]

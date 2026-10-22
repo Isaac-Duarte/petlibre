@@ -20,14 +20,12 @@ chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 clap.workspace = true
 ctrlc.workspace = true
 futures-util = { version = "0.3", default-features = false }
-getrandom = "0.4"
 rust-embed = { version = "8.13.0", features = ["debug-embed"] }
 rustix = { version = "1", features = ["fs", "process"] }
 serde.workspace = true
 serde_json.workspace = true
 serialport.workspace = true
 sha2 = "0.11"
-subtle.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "net", "time", "macros"] }
 

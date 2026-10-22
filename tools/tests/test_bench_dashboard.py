@@ -36,6 +36,25 @@ class DashboardTests(unittest.TestCase):
                 "capture": None, "relay": {}, "lines": []}
         (self.status / "current.json").write_text(json.dumps({**base, **state}))
 
+    def test_remote_listen_requires_the_token(self):
+        import threading, urllib.request, urllib.error
+        DASH.Handler.token = "s3cret-token"
+        self.addCleanup(setattr, DASH.Handler, "token", None)
+        server = DASH.ThreadingHTTPServer(("127.0.0.1", 0), DASH.Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.shutdown)
+        base = f"http://127.0.0.1:{server.server_address[1]}"
+        for path in ("/", "/api/status", "/?token=wrong", "/api/status?token="):
+            with self.subTest(path=path), self.assertRaises(urllib.error.HTTPError) as caught:
+                urllib.request.urlopen(base + path, timeout=3)
+            self.assertEqual(caught.exception.code, 403)
+        with urllib.request.urlopen(base + "/api/status?token=s3cret-token", timeout=3) as response:
+            self.assertIn("history", json.loads(response.read()))
+
+    def test_wildcard_listen_is_refused(self):
+        with self.assertRaises(SystemExit):
+            DASH.main(["--listen", "0.0.0.0"])
+
     def test_empty(self):
         self.assertEqual(DASH.snapshot()["current"], None)
 

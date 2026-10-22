@@ -35,8 +35,17 @@ const TRANSPORT_ISOLATION: [(&str, &[&str]); 2] = [
             r"health::(snapshot|Link|Boot)(::default)?",
             r"crate::net_status",
             r"net_status::read",
+            // FW21: a `time` request sets the wall clock, and nothing else.
+            r"crate::clock",
+            r"clock::sync",
+            // FW25: queue a settings change for the writer; no flash access.
+            r"crate::settings",
+            r"settings::request",
+            // Signed requests: verification only (request_auth.rs).
+            r"petlibre_core::request_auth",
+            r"request_auth::(split|Session)(::(new|nonce_hex))?",
             r"crate::sdk(::(TcpRecv|TransportConfig|self))?",
-            r"sdk::(tcp_connect|tcp_send|tcp_recv|tcp_close|uptime_ms|TcpRecv|TransportConfig)",
+            r"sdk::(tcp_connect|tcp_send|tcp_recv|tcp_close|uptime_ms|entropy|TcpRecv|TransportConfig)",
         ],
     ),
 ];

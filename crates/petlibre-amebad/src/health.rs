@@ -4,7 +4,7 @@
 
 use petlibre_core::transport::{Health, Loss, Outputs};
 
-use crate::{net_status, sdk, startup, stopped};
+use crate::{clock, net_status, sdk, startup, stopped};
 
 /// KM0 user backup register 4: the FW06 peer's boot count.
 const BOOT_COUNT_REGISTER: u32 = 4;
@@ -34,10 +34,15 @@ pub struct Link {
     pub seq: u32,
     pub connects: u32,
     pub last_error: Option<&'static str>,
+    /// The open session's request nonce, when the image has a request key.
+    pub nonce: Option<[u8; 16]>,
 }
 
+/// The will (`online` false) is built at connect, so it carries no clock
+/// reading, which would be stale by the time the broker sends it.
 pub fn snapshot(boot: Boot, link: Link, online: bool) -> Health {
     let wifi = net_status::read();
+    let (clock, clock_syncs) = if online { clock::health() } else { (None, 0) };
     let observed = stopped::observe();
     let outputs = if observed.verified() {
         Outputs::Stopped
@@ -72,5 +77,8 @@ pub fn snapshot(boot: Boot, link: Link, online: bool) -> Health {
         },
         connects: link.connects,
         last_error: link.last_error,
+        clock,
+        clock_syncs,
+        nonce: if online { link.nonce } else { None },
     }
 }

@@ -10,11 +10,11 @@
 use core::fmt::{self, Write};
 
 /// Largest packet either side may send; bigger input closes the session.
-pub const MAX_PACKET: usize = 640;
-/// Health payload limit (design: 512 bytes).
-pub const MAX_HEALTH: usize = 512;
-/// Request payload limit (design: 256 bytes).
-pub const MAX_REQUEST: usize = 256;
+pub const MAX_PACKET: usize = 768;
+/// Health payload limit (512 bytes in FW08; 640 since the clock and nonce).
+pub const MAX_HEALTH: usize = 640;
+/// Request payload limit (256 bytes in FW08; 320 since signed requests).
+pub const MAX_REQUEST: usize = 320;
 
 pub const KEEPALIVE_S: u16 = 30;
 /// Send PINGREQ after this long without sending anything.
@@ -541,19 +541,58 @@ impl Session {
     }
 }
 
-/// A v1 diagnostic operation.
+/// An allowlisted operation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Op {
     Health,
     Ping,
+    /// FW21: set the wall clock from the server.
+    Time,
+    /// FW25: read, or with fields change, the device settings.
+    Settings,
 }
 
-/// A request: `{"id":"<uuid>","op":"<name>"}`, nothing else.
+/// The fields of a `settings` request; none present reads the settings.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SettingsFields {
+    pub lights: Option<bool>,
+    pub sound: Option<bool>,
+    pub volume: Option<u8>,
+}
+
+impl SettingsFields {
+    /// Whether the request changes anything (and so must be signed).
+    pub fn changes(&self) -> bool {
+        self.lights.is_some() || self.sound.is_some() || self.volume.is_some()
+    }
+}
+
+/// Largest `volume` a `settings` request may set.
+pub const MAX_VOLUME: u8 = 100;
+
+/// The fields of a `time` request, as sent (validated by the clock).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TimeFields {
+    pub unix_ms: u64,
+    pub offset_s: i32,
+    pub next_change_s: u64,
+    pub next_offset_s: i32,
+}
+
+/// A request: `{"id":"<uuid>","op":"<name>"}`, nothing else, except that
+/// `time` also carries exactly the four integer fields of [`TimeFields`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Request<'a> {
     pub id: &'a str,
     /// `Err(name)` for an operation outside the allowlist.
     pub op: Result<Op, &'a str>,
+    /// Present exactly when `op` is `time`.
+    pub time: Option<TimeFields>,
+    /// Present exactly when `op` is `settings`.
+    pub settings: Option<SettingsFields>,
+    /// The session nonce and sequence number of a signed request
+    /// ([`crate::request_auth`] checks them with the MAC).
+    pub auth: Option<(&'a str, u32)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -577,8 +616,19 @@ fn unquote(s: &str) -> Option<&str> {
     (!s.contains('"')).then_some(s)
 }
 
-/// Parse a flat JSON object of exactly two string fields, `id` and `op`, in
-/// either order. Escapes, nesting and extra fields are refused.
+/// A JSON integer of at most 15 digits, so it fits every field exactly.
+fn integer(s: &str) -> Option<i64> {
+    let s = s.trim();
+    let digits = s.strip_prefix('-').unwrap_or(s);
+    if digits.is_empty() || digits.len() > 15 || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    s.parse().ok()
+}
+
+/// Parse a flat JSON object of string fields `id` and `op`, in any order,
+/// plus the integer time fields when `op` is `time`. Escapes, nesting and
+/// any other field are refused.
 pub fn parse_request(payload: &[u8]) -> Result<Request<'_>, RequestError> {
     if payload.len() > MAX_REQUEST {
         return Err(RequestError::TooLong);
@@ -594,17 +644,54 @@ pub fn parse_request(payload: &[u8]) -> Result<Request<'_>, RequestError> {
         return Err(RequestError::Malformed);
     }
 
-    let (mut id, mut op) = (None, None);
+    let (mut id, mut op, mut nonce) = (None, None, None);
+    let mut numbers: [Option<i64>; 4] = [None; 4];
+    let mut seq = None;
+    let mut options: [Option<i64>; 3] = [None; 3];
     for pair in inner.split(',') {
         let (key, value) = pair.split_once(':').ok_or(RequestError::Malformed)?;
-        let (key, value) = (
-            unquote(key).ok_or(RequestError::Malformed)?,
-            unquote(value).ok_or(RequestError::Malformed)?,
-        );
+        let key = unquote(key).ok_or(RequestError::Malformed)?;
 
+        let number = match key {
+            "unix_ms" => Some(0),
+            "offset_s" => Some(1),
+            "next_change_s" => Some(2),
+            "next_offset_s" => Some(3),
+            _ => None,
+        };
+        let option = match key {
+            "lights" => Some(0),
+            "sound" => Some(1),
+            "volume" => Some(2),
+            _ => None,
+        };
+        if let Some(index) = option {
+            let value = integer(value).ok_or(RequestError::Malformed)?;
+            if options[index].replace(value).is_some() {
+                return Err(RequestError::Malformed);
+            }
+            continue;
+        }
+        if key == "seq" {
+            let value = integer(value).ok_or(RequestError::Malformed)?;
+            if seq.replace(value).is_some() {
+                return Err(RequestError::Malformed);
+            }
+            continue;
+        }
+        if let Some(index) = number {
+            let value = integer(value).ok_or(RequestError::Malformed)?;
+            if numbers[index].replace(value).is_some() {
+                return Err(RequestError::Malformed);
+            }
+            continue;
+        }
+
+        let value = unquote(value).ok_or(RequestError::Malformed)?;
         let slot = match key {
             "id" => &mut id,
             "op" => &mut op,
+            "nonce" => &mut nonce,
             _ => return Err(RequestError::Malformed),
         };
         if slot.replace(value).is_some() {
@@ -623,10 +710,73 @@ pub fn parse_request(payload: &[u8]) -> Result<Request<'_>, RequestError> {
     let op = match op {
         "health" => Ok(Op::Health),
         "ping" => Ok(Op::Ping),
+        "time" => Ok(Op::Time),
+        "settings" => Ok(Op::Settings),
         other => Err(other),
     };
 
-    Ok(Request { id, op })
+    let flag = |value: Option<i64>| match value {
+        None => Ok(None),
+        Some(0) => Ok(Some(false)),
+        Some(1) => Ok(Some(true)),
+        Some(_) => Err(RequestError::Malformed),
+    };
+    let settings = match op {
+        Ok(Op::Settings) => Some(SettingsFields {
+            lights: flag(options[0])?,
+            sound: flag(options[1])?,
+            volume: match options[2] {
+                None => None,
+                Some(v) if (0..=i64::from(MAX_VOLUME)).contains(&v) => Some(v as u8),
+                Some(_) => return Err(RequestError::Malformed),
+            },
+        }),
+        _ if options.iter().any(Option::is_some) => return Err(RequestError::Malformed),
+        _ => None,
+    };
+
+    let time = match (op, numbers) {
+        (
+            Ok(Op::Time),
+            [
+                Some(unix_ms),
+                Some(offset_s),
+                Some(next_change_s),
+                Some(next_offset_s),
+            ],
+        ) => Some(TimeFields {
+            unix_ms: u64::try_from(unix_ms).map_err(|_| RequestError::Malformed)?,
+            offset_s: i32::try_from(offset_s).map_err(|_| RequestError::Malformed)?,
+            next_change_s: u64::try_from(next_change_s).map_err(|_| RequestError::Malformed)?,
+            next_offset_s: i32::try_from(next_offset_s).map_err(|_| RequestError::Malformed)?,
+        }),
+        (_, [None, None, None, None]) if op != Ok(Op::Time) => None,
+        _ => return Err(RequestError::Malformed),
+    };
+
+    let auth = match (nonce, seq) {
+        (None, None) => None,
+        (Some(nonce), Some(seq))
+            if nonce.len() == 16
+                && nonce
+                    .bytes()
+                    .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) =>
+        {
+            match u32::try_from(seq) {
+                Ok(seq) if seq > 0 => Some((nonce, seq)),
+                _ => return Err(RequestError::Malformed),
+            }
+        }
+        _ => return Err(RequestError::Malformed),
+    };
+
+    Ok(Request {
+        id,
+        op,
+        time,
+        settings,
+        auth,
+    })
 }
 
 /// `fmt::Write` into a fixed buffer; overflow is an error, not truncation.
@@ -710,6 +860,21 @@ pub struct Health {
     pub connects: u32,
     /// Fault code of the last closed session, if any.
     pub last_error: Option<&'static str>,
+
+    /// FW21: the wall clock, `None` while invalid.
+    pub clock: Option<ClockHealth>,
+    pub clock_syncs: u32,
+    /// This session's request nonce, 16 lowercase hex characters, when the
+    /// image has a request key.
+    pub nonce: Option<[u8; 16]>,
+}
+
+/// A valid wall-clock reading as health reports it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ClockHealth {
+    pub unix_ms: u64,
+    pub offset_s: i32,
+    pub uncertainty_ms: u64,
 }
 
 /// Fault names by bit, in health order.
@@ -764,11 +929,131 @@ impl Health {
 
         match self.last_error {
             Some(code) if code.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') => {
-                write!(out, "\"{code}\"}}}}")
+                write!(out, "\"{code}\"}}")?
             }
-            Some(_) => Err(fmt::Error),
-            None => out.write_str("null}}"),
+            Some(_) => return Err(fmt::Error),
+            None => out.write_str("null}")?,
         }
+
+        if let Some(nonce) = self.nonce {
+            let text = core::str::from_utf8(&nonce).map_err(|_| fmt::Error)?;
+            if !text.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+                return Err(fmt::Error);
+            }
+            write!(out, ",\"nonce\":\"{text}\"")?;
+        }
+
+        match self.clock {
+            Some(clock) => write!(
+                out,
+                ",\"clock\":{{\"syncs\":{},\"unix_ms\":{},\"offset_s\":{},\"uncertainty_ms\":{}}}}}",
+                self.clock_syncs, clock.unix_ms, clock.offset_s, clock.uncertainty_ms
+            ),
+            None => write!(out, ",\"clock\":{{\"syncs\":{}}}}}", self.clock_syncs),
+        }
+    }
+}
+
+/// How a `time` request ended, for its reply: the jump against the running
+/// clock in milliseconds (`None` for a first sync), or the refusal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TimeResult {
+    Synced { jump_ms: Option<i64> },
+    Refused(&'static str),
+}
+
+/// The reply to a request whose MAC, nonce or sequence failed, or to a
+/// state-changing request that came unsigned.
+pub fn write_auth_refusal(out: &mut impl Write, request: &Request) -> fmt::Result {
+    write!(
+        out,
+        "{{\"id\":\"{}\",\"ok\":false,\"error\":\"auth\"}}",
+        request.id
+    )
+}
+
+/// The settings as a `settings` reply reports them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SettingsView {
+    pub lights: bool,
+    pub sound: bool,
+    pub volume: u8,
+    /// The stored record's generation; 0 for defaults never saved.
+    pub generation: u32,
+    /// Whether NOR holds a record this firmware can update.
+    pub writable: bool,
+}
+
+/// How a `settings` request ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SettingsResult {
+    /// The current settings; `pending` once a change is queued for the writer.
+    Current { view: SettingsView, pending: bool },
+    /// Not loaded yet, or a change already pending.
+    Busy,
+    /// The store cannot be written (corrupt, newer schema, worn or unarmed).
+    ReadOnly,
+}
+
+/// The reply to a `settings` request.
+pub fn write_settings_reply(
+    out: &mut impl Write,
+    request: &Request,
+    result: SettingsResult,
+) -> fmt::Result {
+    match result {
+        SettingsResult::Current { view, pending } => write!(
+            out,
+            "{{\"id\":\"{}\",\"op\":\"settings\",\"ok\":true,\"pending\":{pending},\"lights\":{},\"sound\":{},\"volume\":{},\"generation\":{},\"writable\":{}}}",
+            request.id,
+            u8::from(view.lights),
+            u8::from(view.sound),
+            view.volume,
+            view.generation,
+            view.writable,
+        ),
+        SettingsResult::Busy => write!(
+            out,
+            "{{\"id\":\"{}\",\"op\":\"settings\",\"ok\":false,\"error\":\"busy\"}}",
+            request.id
+        ),
+        SettingsResult::ReadOnly => write!(
+            out,
+            "{{\"id\":\"{}\",\"op\":\"settings\",\"ok\":false,\"error\":\"read_only\"}}",
+            request.id
+        ),
+    }
+}
+
+/// The reply to a `time` request.
+pub fn write_time_reply(
+    out: &mut impl Write,
+    request: &Request,
+    result: TimeResult,
+) -> fmt::Result {
+    match result {
+        TimeResult::Synced {
+            jump_ms: Some(jump),
+        } => write!(
+            out,
+            "{{\"id\":\"{}\",\"op\":\"time\",\"ok\":true,\"jump_ms\":{jump}}}",
+            request.id
+        ),
+        TimeResult::Synced { jump_ms: None } => write!(
+            out,
+            "{{\"id\":\"{}\",\"op\":\"time\",\"ok\":true,\"jump_ms\":null}}",
+            request.id
+        ),
+        TimeResult::Refused(reason)
+            if reason.bytes().all(|b| b.is_ascii_lowercase() || b == b'_') =>
+        {
+            write!(
+                out,
+                "{{\"id\":\"{}\",\"op\":\"time\",\"ok\":false,\"error\":\"{reason}\"}}",
+                request.id
+            )
+        }
+        TimeResult::Refused(_) => Err(fmt::Error),
     }
 }
 
@@ -779,6 +1064,8 @@ pub fn write_reply(out: &mut impl Write, request: &Request, uptime_ms: u32) -> f
             let name = match op {
                 Op::Health => "health",
                 Op::Ping => "ping",
+                Op::Time => "time",
+                Op::Settings => "settings",
             };
             write!(
                 out,

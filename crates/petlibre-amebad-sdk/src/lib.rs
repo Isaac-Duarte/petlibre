@@ -137,6 +137,8 @@ pub struct TransportConfig {
     pub password: &'static [u8],
     /// Topic prefix, ending in `/`.
     pub namespace: &'static str,
+    /// The key that signs server requests, when the image has one.
+    pub request_key: Option<[u8; 32]>,
 }
 
 /// `tcp_recv` outcome.

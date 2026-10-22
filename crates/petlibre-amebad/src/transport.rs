@@ -8,13 +8,16 @@
 
 use core::fmt::Write;
 
+use petlibre_core::request_auth;
 use petlibre_core::transport::{
     self as mqtt, Buffer, Event, Fault, Op, Packet, Session, State, Tick,
 };
 
+use crate::clock;
 use crate::health::{self, Boot};
 use crate::net_status;
 use crate::sdk::{self, TcpRecv, TransportConfig};
+use crate::settings;
 
 pub const CONNECT_TIMEOUT_MS: u32 = 3000;
 /// Each receive waits at most this long, so ticks and publishes stay timely.
@@ -38,6 +41,10 @@ pub enum Trigger {
 pub enum RequestKind {
     Health,
     Ping,
+    Time,
+    Settings,
+    /// Refused: a bad signature, or a state change that came unsigned.
+    Unauthenticated,
     Unsupported,
     Malformed,
 }
@@ -86,6 +93,8 @@ struct Open {
     session: Session,
     since: u32,
     generation: u32,
+    /// Verifies signed requests; `None` without a request key.
+    auth: Option<request_auth::Session>,
 }
 
 /// The connection and its counters; one per boot.
@@ -252,6 +261,17 @@ impl Link {
             ms: sdk::uptime_ms().wrapping_sub(now),
         });
 
+        // A fresh nonce for every session, so no earlier request replays.
+        let auth = self.config.request_key.map(|key| {
+            let mut entropy = [0u8; 20];
+            let words = sdk::entropy();
+            for (i, word) in words.iter().chain(&[n]).enumerate() {
+                entropy[4 * i..4 * i + 4].copy_from_slice(&word.to_le_bytes());
+            }
+            request_auth::Session::new(key, &entropy)
+        });
+        self.counters.nonce = auth.as_ref().map(request_auth::Session::nonce_hex);
+
         let sent = self.send_connect(socket);
         let now = sdk::uptime_ms();
         self.open = Some(Open {
@@ -259,6 +279,7 @@ impl Link {
             session: Session::connecting(now),
             since: now,
             generation: wifi.generation,
+            auth,
         });
 
         self.rx_len = 0;
@@ -383,7 +404,22 @@ impl Link {
     }
 
     fn answer(&mut self, payload: &[u8], log: &mut impl FnMut(Record)) -> bool {
-        let request = match mqtt::parse_request(payload) {
+        // A signed request is parsed without its MAC; the MAC, nonce and
+        // sequence are then checked together (request_auth.rs).
+        let signed = request_auth::split(payload);
+        let mut unsigned = [0; mqtt::MAX_REQUEST];
+        let text = match signed {
+            Some(signed) if signed.prefix.len() < unsigned.len() => {
+                let len = signed.prefix.len();
+                unsigned[..len].copy_from_slice(signed.prefix);
+                unsigned[len] = b'}';
+                &unsigned[..=len]
+            }
+            Some(_) => &[][..],
+            None => payload,
+        };
+
+        let request = match mqtt::parse_request(text) {
             Ok(request) => request,
             Err(_) => {
                 // Nothing to correlate a reply with; refuse and keep going.
@@ -395,15 +431,55 @@ impl Link {
             }
         };
 
+        let authentic = match (
+            signed,
+            request.auth,
+            self.open.as_mut().and_then(|o| o.auth.as_mut()),
+        ) {
+            (Some(signed), Some((nonce, seq)), Some(auth)) => auth.verify(&signed, nonce, seq),
+            _ => false,
+        };
+        // A bad signature is refused whatever it asks; a state change needs a
+        // good one, and an image without a request key refuses every change.
+        let changes =
+            request.op == Ok(Op::Time) || request.settings.is_some_and(|fields| fields.changes());
+        let refused = (signed.is_some() || changes) && !authentic;
+
         let kind = match request.op {
+            _ if refused => RequestKind::Unauthenticated,
             Ok(Op::Health) => RequestKind::Health,
             Ok(Op::Ping) => RequestKind::Ping,
+            Ok(Op::Time) => RequestKind::Time,
+            Ok(Op::Settings) => RequestKind::Settings,
             Err(_) => RequestKind::Unsupported,
         };
 
         let mut body = [0; mqtt::MAX_REQUEST];
         let mut writer = Buffer::new(&mut body);
-        if mqtt::write_reply(&mut writer, &request, sdk::uptime_ms()).is_err() {
+        // FW21: the clock is the one thing a request may change (see clock.rs).
+        let (written, ok) = match request.time {
+            _ if refused => (mqtt::write_auth_refusal(&mut writer, &request), false),
+            // FW25: queue a change for the settings writer, or read.
+            _ if request.settings.is_some() => {
+                let result = settings::request(request.settings.unwrap_or_default());
+                (
+                    mqtt::write_settings_reply(&mut writer, &request, result),
+                    matches!(result, mqtt::SettingsResult::Current { .. }),
+                )
+            }
+            Some(fields) => {
+                let result = clock::sync(fields);
+                (
+                    mqtt::write_time_reply(&mut writer, &request, result),
+                    matches!(result, mqtt::TimeResult::Synced { .. }),
+                )
+            }
+            None => (
+                mqtt::write_reply(&mut writer, &request, sdk::uptime_ms()),
+                request.op.is_ok(),
+            ),
+        };
+        if written.is_err() {
             return true;
         }
 
@@ -413,10 +489,7 @@ impl Link {
             return false;
         }
 
-        log(Record::Request {
-            kind,
-            ok: request.op.is_ok(),
-        });
+        log(Record::Request { kind, ok });
         if kind == RequestKind::Health {
             return self.publish(Trigger::Request, log);
         }
@@ -513,6 +586,9 @@ pub fn describe(record: Record, out: &mut impl Write) -> core::fmt::Result {
             let kind = match kind {
                 RequestKind::Health => "health",
                 RequestKind::Ping => "ping",
+                RequestKind::Time => "time",
+                RequestKind::Settings => "settings",
+                RequestKind::Unauthenticated => "unauthenticated",
                 RequestKind::Unsupported => "unsupported",
                 RequestKind::Malformed => "malformed",
             };

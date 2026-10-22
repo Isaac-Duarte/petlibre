@@ -630,7 +630,17 @@ pub const FAKE_TRANSPORT: TransportConfig = TransportConfig {
     username: "petlibre-fw",
     password: b"0123456789abcdef0123456789abcdef",
     namespace: "petlibre/1/dev1/",
+    request_key: Some(FAKE_REQUEST_KEY),
 };
+
+pub const FAKE_REQUEST_KEY: [u8; 32] = [0x42; 32];
+
+/// Distinct on every call, like the board's connect-time inputs.
+pub fn entropy() -> [u32; 4] {
+    static CALLS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+    let call = CALLS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    [call, uptime_ms(), systimer_ticks(), 0x5eed]
+}
 
 pub fn tcp_connect(_ip: u32, _port: u16, timeout_ms: u32) -> Option<i32> {
     with(|h| {

@@ -159,3 +159,9 @@ impl Arming {
 pub fn clear_attempt() {
     sdk::backup_write(MARKER_REGISTER, 0);
 }
+
+/// Mark a write attempt on hooks armed earlier this boot, so a hang inside
+/// it is skipped after the reset, as during arming.
+pub fn set_attempt() {
+    sdk::backup_write(MARKER_REGISTER, ATTEMPT_BIT);
+}

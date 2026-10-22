@@ -21,12 +21,15 @@ import urllib.request
 import pinmap
 import rampark
 import sdkhooks
+import stackaudit
 import wifiaudit
 import firstboot
 
 
 FIRMWARE = Path(__file__).resolve().parents[1]
 ROOT = FIRMWARE.parent
+# The KM4 application's task table, which the stack audit reads.
+APP_SOURCE = ROOT / "crates/petlibre-firstboot/src/app.rs"
 PRIVATE = ROOT / "private"
 SOURCE = PRIVATE / "upstream/ameba-rtos-d"
 TOOLCHAINS = PRIVATE / "toolchains"
@@ -155,8 +158,13 @@ def transport_header(raw):
     """The generated broker settings header; refuses anything the server would not have written."""
     config = json.loads(raw)
     fields = ("version", "broker", "port", "device_id", "client_id", "username", "password", "namespace")
-    if not isinstance(config, dict) or set(config) != set(fields) or config["version"] != 1:
+    # `request_key` (petlibre-local firmware-request-key) is optional.
+    if (not isinstance(config, dict) or not set(fields) <= set(config) <= {*fields, "request_key"}
+            or config["version"] != 1):
         raise RuntimeError("Transport credentials need exactly the version 1 fields")
+    request_key = config.get("request_key", "")
+    if request_key and not (isinstance(request_key, str) and re.fullmatch(r"[0-9a-f]{64}", request_key)):
+        raise RuntimeError("Transport request key must be 64 lowercase hex characters")
     device = config["device_id"]
     if not (isinstance(device, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,64}", device)):
         raise RuntimeError("Transport credentials need a plain device ID")
@@ -173,7 +181,8 @@ def transport_header(raw):
     if not (isinstance(password, str) and re.fullmatch(r"[0-9a-f]{32,128}", password)):
         raise RuntimeError("Transport password must be 32-128 lowercase hex characters")
     values = {"BROKER": f"0x{int(broker):08x}U", "PORT": f"{port}U",
-              **{key.upper(): c_string(config[key].encode()) for key in ("client_id", "username", "password", "namespace")}}
+              **{key.upper(): c_string(config[key].encode()) for key in ("client_id", "username", "password", "namespace")},
+              "REQUEST_KEY": c_string(request_key.encode())}
     return ("/* Generated from a private file by firmware/tools/build.py; never tracked. */\n"
             + "".join(f"#define PETLIBRE_MQTT_{key} {value}\n" for key, value in values.items()))
 
@@ -190,7 +199,7 @@ def unexpected_sdk_changes(sdk, profile):
     for entry in filter(None, status.split("\0")):
         code, path = entry[:2], entry[3:]
         if code == "??":
-            allowed = path in VENDOR_UNTRACKED or (profile == "plaf103-firstboot"
+            allowed = path in VENDOR_UNTRACKED or (profile != "baseline"
                                                    and path in (str(WIFI_HEADER), str(TRANSPORT_HEADER)))
         elif code == " M":
             allowed = path in managed or path in VENDOR_REBUILT or (
@@ -421,11 +430,13 @@ def source_inputs(profile):
         paths += [FIRMWARE / "tools/rampark.py", FIRMWARE / "tools/sdkhooks.py", AUDITOR,
                   ROOT / "tools/audit/audit-sdk-flash-users.py"]
         paths += [ENTRY, ROOT / "Cargo.toml", ROOT / "Cargo.lock", ROOT / "rust-toolchain.toml"]
+        # ENTRY includes both generated credential headers.
+        paths += [WIFI_CREDENTIALS, TRANSPORT_CREDENTIALS]
         paths += rust_sources()
     if profile in MODEL_PROFILES:
         paths += [LAYOUT, AUDITOR, FIRMWARE / "tools/pinmap.py"]
     if profile == "plaf103-firstboot":
-        paths += [FIRMWARE / "tools/firstboot.py", FIRMWARE / "tools/wifiaudit.py", WIFI_CREDENTIALS, TRANSPORT_CREDENTIALS,
+        paths += [FIRMWARE / "tools/firstboot.py", FIRMWARE / "tools/wifiaudit.py", FIRMWARE / "tools/stackaudit.py",
                   *firstboot.sources(FIRMWARE).values()]
     return list(dict.fromkeys(paths))
 
@@ -468,7 +479,9 @@ def rust_archive(sdk, core):
 # never built unless named, and its manifest says so.
 VARIANTS = {"fw16-pulse": {"feature": "fw16-pulse", "policy": "fw16-pulse-v1"},
             # FW11: never confirms and lets the watchdog reset it; no motion.
-            "fw11-reset": {"feature": "fw11-reset", "policy": None, "trial": "fw11-reset-v1"}}
+            "fw11-reset": {"feature": "fw11-reset", "policy": None, "trial": "fw11-reset-v1"},
+            # FW11: fails its startup diagnostic on purpose; no motion.
+            "fw11-fail": {"feature": "fw11-fail", "policy": None, "trial": "fw11-fail-v1"}}
 
 
 def build_rust(sdk, toolchain, stream, identity, base_environment, variant=None, ota_key=None):
@@ -596,6 +609,13 @@ def prepare(profile, toolchain, expected):
             for path in (sdk / PROJECT / f"project_{core}/asdk").rglob("rtl8721d_flash_ram.*"):
                 if path.suffix in (".o", ".d", ".i", ".s", ".su"):
                     path.unlink()
+    if profile != "baseline":
+        (sdk / WIFI_HEADER).write_text(wifi_header(WIFI_CREDENTIALS.read_bytes()))
+        if digest(WIFI_CREDENTIALS) != expected[WIFI_CREDENTIALS]:
+            raise RuntimeError("Wi-Fi credentials changed while staging")
+        (sdk / TRANSPORT_HEADER).write_text(transport_header(TRANSPORT_CREDENTIALS.read_bytes()))
+        if digest(TRANSPORT_CREDENTIALS) != expected[TRANSPORT_CREDENTIALS]:
+            raise RuntimeError("Transport credentials changed while staging")
     if profile == "plaf103-firstboot":
         # Fast connect saves reconnect data to FAST_RECONNECT_DATA (0x105000), inside
         # the application bank; it also enables fast DHCP's read of that sector.
@@ -615,12 +635,6 @@ def prepare(profile, toolchain, expected):
             for path in (sdk / PROJECT / "project_hp/asdk").rglob("*.o"):
                 path.unlink()
             stamp.write_text(overrides[str(PLATFORM_OPTS)] + "\n")
-        (sdk / WIFI_HEADER).write_text(wifi_header(WIFI_CREDENTIALS.read_bytes()))
-        if digest(WIFI_CREDENTIALS) != expected[WIFI_CREDENTIALS]:
-            raise RuntimeError("Wi-Fi credentials changed while staging")
-        (sdk / TRANSPORT_HEADER).write_text(transport_header(TRANSPORT_CREDENTIALS.read_bytes()))
-        if digest(TRANSPORT_CREDENTIALS) != expected[TRANSPORT_CREDENTIALS]:
-            raise RuntimeError("Transport credentials changed while staging")
         for core, source in firstboot.sources(FIRMWARE).items():
             relative = Path("project/realtek_amebaD_va0_example/src") / f"src_{core}" / "main.c"
             shutil.copyfile(source, sdk / relative)
@@ -754,6 +768,9 @@ def build(profile, toolchain, variant=None):
     sdk_hook_audit = sdkhooks.audit(sdk, PROJECT, toolchain / "bin", objects) if profile != "baseline" else None
     startup_audit = firstboot.audit(sdk, PROJECT, toolchain / "bin") if profile == "plaf103-firstboot" else None
     wifi_audit = wifiaudit.audit(sdk, PROJECT, toolchain / "bin") if profile == "plaf103-firstboot" else None
+    stack_audit = stackaudit.audit(sdk / PROJECT / "project_hp/asdk/image/target_img2.axf",
+                                   toolchain / "bin/arm-none-eabi-objdump",
+                                   APP_SOURCE.read_text()) if profile == "plaf103-firstboot" else None
     manifest = {
         "profile": profile, "sdk_revision": LOCK["sdk"]["revision"],
         "startup_identity": identity if profile != "baseline" else None,
@@ -786,6 +803,7 @@ def build(profile, toolchain, variant=None):
         "sdk_hook_audit": sdk_hook_audit,
         "firstboot_startup_audit": startup_audit,
         "wifi_link_audit": wifi_audit,
+        "stack_audit": stack_audit,
         "bootloader_replacement_supported": False,
         "artifacts": artifacts,
         "checks": {"ota_payload_matches": True, "ota_checksum_matches": True,
@@ -807,6 +825,8 @@ def main():
                         help="Build the FW16 motor-pulse variant (drives the motor once per cold boot)")
     parser.add_argument("--trial-reset", action="store_true",
                         help="Build the FW11 trial-test variant (watchdog resets it after startup)")
+    parser.add_argument("--trial-fail", action="store_true",
+                        help="Build the FW11 failed-start variant (its startup diagnostic fails)")
     args = parser.parse_args()
     try:
         if args.command == "source-id":
@@ -816,9 +836,12 @@ def main():
         os.umask(0o077)
         toolchain = bootstrap()
         if args.command != "bootstrap":
-            if args.motion_probe and args.trial_reset:
+            chosen = [name for name, flag in (("fw16-pulse", args.motion_probe),
+                                              ("fw11-reset", args.trial_reset),
+                                              ("fw11-fail", args.trial_fail)) if flag]
+            if len(chosen) > 1:
                 raise ValueError("Choose one image variant")
-            variant = "fw16-pulse" if args.motion_probe else "fw11-reset" if args.trial_reset else None
+            variant = chosen[0] if chosen else None
             build(args.command, toolchain, variant)
     except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
         parser.exit(1, f"error: {error}\n")

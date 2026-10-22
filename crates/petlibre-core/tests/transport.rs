@@ -158,7 +158,8 @@ fn decode_accepts_only_the_expected_packets() {
         decode(&[0x30, 0x80, 0x80, 0x80, 0x80, 1]),
         Err(Error::Malformed)
     );
-    assert_eq!(decode(&[0x30, 0x80, 0x05]), Err(Error::TooLong));
+    // One byte over MAX_PACKET (769).
+    assert_eq!(decode(&[0x30, 0x81, 0x06]), Err(Error::TooLong));
     assert_eq!(decode(&[0x30, 3, 0, 5, b't']), Err(Error::Malformed));
     assert_eq!(decode(&[0x30, 3, 0, 1, 0xff]), Err(Error::Malformed));
 }
@@ -362,7 +363,10 @@ fn requests_parse_only_the_fixed_shape() {
         parse_request(good.as_bytes()),
         Ok(Request {
             id: ID,
-            op: Ok(Op::Health)
+            op: Ok(Op::Health),
+            time: None,
+            settings: None,
+            auth: None
         })
     );
 
@@ -371,7 +375,10 @@ fn requests_parse_only_the_fixed_shape() {
         parse_request(swapped.as_bytes()),
         Ok(Request {
             id: ID,
-            op: Ok(Op::Ping)
+            op: Ok(Op::Ping),
+            time: None,
+            settings: None,
+            auth: None
         })
     );
 
@@ -380,7 +387,10 @@ fn requests_parse_only_the_fixed_shape() {
         parse_request(other.as_bytes()),
         Ok(Request {
             id: ID,
-            op: Err("feed")
+            op: Err("feed"),
+            time: None,
+            settings: None,
+            auth: None
         })
     );
 
@@ -441,6 +451,9 @@ fn health() -> Health {
         last_loss: Loss::Dns,
         connects: 1,
         last_error: None,
+        clock: None,
+        clock_syncs: 0,
+        nonce: None,
     }
 }
 
@@ -458,7 +471,7 @@ fn health_renders_the_v1_schema_within_its_limit() {
     assert_eq!(
         text,
         format!(
-            r#"{{"schema":"petlibre.health","v":1,"online":true,"seq":12,"uptime_ms":61234,"build":"{build}","bank":1,"reset_flags":"00000000","boot_count":7,"outputs":"stopped","faults":[],"wifi":{{"rssi":-20,"attempt":2,"losses":{{"link":0,"dns":1}},"last_loss":"dns"}},"transport":{{"connects":1,"last_error":null}}}}"#
+            r#"{{"schema":"petlibre.health","v":1,"online":true,"seq":12,"uptime_ms":61234,"build":"{build}","bank":1,"reset_flags":"00000000","boot_count":7,"outputs":"stopped","faults":[],"wifi":{{"rssi":-20,"attempt":2,"losses":{{"link":0,"dns":1}},"last_loss":"dns"}},"transport":{{"connects":1,"last_error":null}},"clock":{{"syncs":0}}}}"#
         )
     );
 
@@ -477,6 +490,14 @@ fn health_renders_the_v1_schema_within_its_limit() {
         last_loss: Loss::Link,
         connects: u32::MAX,
         last_error: Some("protocol_malformed"),
+        // The clock's own bounds (`wall_clock`).
+        clock: Some(ClockHealth {
+            unix_ms: 4_102_444_799_999,
+            offset_s: -43_200,
+            uncertainty_ms: 60_000,
+        }),
+        clock_syncs: u32::MAX,
+        nonce: Some(*b"ffffffffffffffff"),
         ..health()
     };
 
@@ -484,7 +505,12 @@ fn health_renders_the_v1_schema_within_its_limit() {
     assert!(text.len() <= MAX_HEALTH, "{}", text.len());
     assert!(text.contains(r#""faults":["watchdog","flash_hook","stopped_readback"]"#));
     assert!(text.contains(r#""outputs":"unverified""#) && text.contains(r#""last_loss":"link""#));
-    assert!(text.ends_with(r#""last_error":"protocol_malformed"}}"#));
+    assert!(
+        text.contains(
+            r#""last_error":"protocol_malformed"},"nonce":"ffffffffffffffff","clock":{"syncs":4294967295,"unix_ms":"#
+        )
+    );
+    assert!(text.ends_with(r#""uncertainty_ms":60000}}"#));
 
     let sensing = render(&Health {
         outputs: Outputs::Sensing,
@@ -537,6 +563,9 @@ fn replies_never_echo_unsupported_names() {
         &Request {
             id: ID,
             op: Ok(Op::Ping),
+            time: None,
+            settings: None,
+            auth: None,
         },
         5,
     )
@@ -552,6 +581,9 @@ fn replies_never_echo_unsupported_names() {
         &Request {
             id: ID,
             op: Ok(Op::Health),
+            time: None,
+            settings: None,
+            auth: None,
         },
         5,
     )
@@ -567,6 +599,9 @@ fn replies_never_echo_unsupported_names() {
         &Request {
             id: ID,
             op: Err("feed"),
+            time: None,
+            settings: None,
+            auth: None,
         },
         5,
     )
@@ -683,4 +718,216 @@ fn the_updater_subscribes_a_data_topic_and_only_it_receives_data() {
         ),
         Event::Closed(Fault::SubscribeRefused(0x80))
     );
+}
+
+#[test]
+fn time_requests_carry_exactly_their_integer_fields() {
+    let good = format!(
+        r#"{{"id":"{ID}","op":"time","unix_ms":1792674000000,"offset_s":-21600,"next_change_s":1793520000,"next_offset_s":-25200}}"#
+    );
+    assert_eq!(
+        parse_request(good.as_bytes()),
+        Ok(Request {
+            id: ID,
+            op: Ok(Op::Time),
+            time: Some(TimeFields {
+                unix_ms: 1_792_674_000_000,
+                offset_s: -21_600,
+                next_change_s: 1_793_520_000,
+                next_offset_s: -25_200,
+            }),
+            settings: None,
+            auth: None,
+        })
+    );
+    assert!(good.len() <= MAX_REQUEST);
+
+    let fields = r#""unix_ms":1,"offset_s":0,"next_change_s":0,"next_offset_s":0"#;
+    for bad in [
+        // Time without all four fields, or with a repeat.
+        format!(r#"{{"id":"{ID}","op":"time"}}"#),
+        format!(r#"{{"id":"{ID}","op":"time","unix_ms":1,"offset_s":0,"next_change_s":0}}"#),
+        format!(r#"{{"id":"{ID}","op":"time",{fields},"unix_ms":2}}"#),
+        // Numbers on other operations, or quoted, fractional, huge or negative where unsigned.
+        format!(r#"{{"id":"{ID}","op":"ping",{fields}}}"#),
+        format!(r#"{{"id":"{ID}","op":"health","unix_ms":1}}"#),
+        format!(
+            r#"{{"id":"{ID}","op":"time","unix_ms":"1","offset_s":0,"next_change_s":0,"next_offset_s":0}}"#
+        ),
+        format!(
+            r#"{{"id":"{ID}","op":"time","unix_ms":1.5,"offset_s":0,"next_change_s":0,"next_offset_s":0}}"#
+        ),
+        format!(
+            r#"{{"id":"{ID}","op":"time","unix_ms":1234567890123456,"offset_s":0,"next_change_s":0,"next_offset_s":0}}"#
+        ),
+        format!(
+            r#"{{"id":"{ID}","op":"time","unix_ms":-1,"offset_s":0,"next_change_s":0,"next_offset_s":0}}"#
+        ),
+        format!(
+            r#"{{"id":"{ID}","op":"time","unix_ms":1,"offset_s":99999999999,"next_change_s":0,"next_offset_s":0}}"#
+        ),
+        format!(
+            r#"{{"id":"{ID}","op":"time","unix_ms":1,"offset_s":-,"next_change_s":0,"next_offset_s":0}}"#
+        ),
+    ] {
+        assert_eq!(
+            parse_request(bad.as_bytes()),
+            Err(RequestError::Malformed),
+            "{bad}"
+        );
+    }
+}
+
+#[test]
+fn time_replies_report_the_jump_or_the_refusal() {
+    let request = Request {
+        id: ID,
+        op: Ok(Op::Time),
+        time: Some(TimeFields::default()),
+        settings: None,
+        auth: None,
+    };
+    let mut buf = [0; MAX_REQUEST];
+    for (result, tail) in [
+        (
+            TimeResult::Synced { jump_ms: None },
+            r#""ok":true,"jump_ms":null}"#,
+        ),
+        (
+            TimeResult::Synced {
+                jump_ms: Some(-3_600_000),
+            },
+            r#""ok":true,"jump_ms":-3600000}"#,
+        ),
+        (
+            TimeResult::Refused("offset"),
+            r#""ok":false,"error":"offset"}"#,
+        ),
+    ] {
+        let mut out = Buffer::new(&mut buf);
+        write_time_reply(&mut out, &request, result).unwrap();
+        assert_eq!(
+            out.as_bytes(),
+            format!(r#"{{"id":"{ID}","op":"time",{tail}"#).as_bytes()
+        );
+    }
+    let mut out = Buffer::new(&mut buf);
+    assert!(write_time_reply(&mut out, &request, TimeResult::Refused("a\"b")).is_err());
+}
+
+#[test]
+fn signed_fields_parse_together_or_not_at_all() {
+    let good = format!(r#"{{"id":"{ID}","op":"ping","nonce":"0123456789abcdef","seq":7}}"#);
+    assert_eq!(
+        parse_request(good.as_bytes()).unwrap().auth,
+        Some(("0123456789abcdef", 7))
+    );
+    for bad in [
+        format!(r#"{{"id":"{ID}","op":"ping","nonce":"0123456789abcdef"}}"#),
+        format!(r#"{{"id":"{ID}","op":"ping","seq":7}}"#),
+        format!(r#"{{"id":"{ID}","op":"ping","nonce":"0123456789ABCDEF","seq":7}}"#),
+        format!(r#"{{"id":"{ID}","op":"ping","nonce":"0123456789abcde","seq":7}}"#),
+        format!(r#"{{"id":"{ID}","op":"ping","nonce":"0123456789abcdef","seq":0}}"#),
+        format!(r#"{{"id":"{ID}","op":"ping","nonce":"0123456789abcdef","seq":4294967296}}"#),
+        format!(r#"{{"id":"{ID}","op":"ping","nonce":"0123456789abcdef","seq":1,"seq":2}}"#),
+        format!(r#"{{"id":"{ID}","op":"ping","mac":"00"}}"#),
+    ] {
+        assert_eq!(
+            parse_request(bad.as_bytes()),
+            Err(RequestError::Malformed),
+            "{bad}"
+        );
+    }
+
+    let request = parse_request(good.as_bytes()).unwrap();
+    let mut buf = [0; MAX_REQUEST];
+    let mut out = Buffer::new(&mut buf);
+    write_auth_refusal(&mut out, &request).unwrap();
+    assert_eq!(
+        out.as_bytes(),
+        format!(r#"{{"id":"{ID}","ok":false,"error":"auth"}}"#).as_bytes()
+    );
+}
+
+#[test]
+fn health_carries_the_session_nonce() {
+    let text = render(&Health {
+        nonce: Some(*b"0123456789abcdef"),
+        ..health()
+    })
+    .unwrap();
+    assert!(text.contains(r#","nonce":"0123456789abcdef","clock":"#));
+    assert!(
+        render(&Health {
+            nonce: Some(*b"0123456789abcdeG"),
+            ..health()
+        })
+        .is_err()
+    );
+}
+
+#[test]
+fn settings_requests_read_or_change_known_options() {
+    let read = format!(r#"{{"id":"{ID}","op":"settings"}}"#);
+    let request = parse_request(read.as_bytes()).unwrap();
+    assert_eq!(request.settings, Some(SettingsFields::default()));
+    assert!(!request.settings.unwrap().changes());
+
+    let change = format!(r#"{{"id":"{ID}","op":"settings","lights":0,"volume":100}}"#);
+    let fields = parse_request(change.as_bytes()).unwrap().settings.unwrap();
+    assert_eq!(
+        fields,
+        SettingsFields {
+            lights: Some(false),
+            sound: None,
+            volume: Some(100)
+        }
+    );
+    assert!(fields.changes());
+
+    for bad in [
+        format!(r#"{{"id":"{ID}","op":"settings","lights":2}}"#),
+        format!(r#"{{"id":"{ID}","op":"settings","volume":101}}"#),
+        format!(r#"{{"id":"{ID}","op":"settings","volume":-1}}"#),
+        format!(r#"{{"id":"{ID}","op":"settings","sound":"1"}}"#),
+        format!(r#"{{"id":"{ID}","op":"settings","sound":1,"sound":0}}"#),
+        format!(r#"{{"id":"{ID}","op":"ping","lights":1}}"#),
+        format!(r#"{{"id":"{ID}","op":"settings","bowl":1}}"#),
+    ] {
+        assert_eq!(
+            parse_request(bad.as_bytes()),
+            Err(RequestError::Malformed),
+            "{bad}"
+        );
+    }
+
+    let mut buf = [0; MAX_REQUEST];
+    let request = parse_request(read.as_bytes()).unwrap();
+    for (result, tail) in [
+        (
+            SettingsResult::Current {
+                view: SettingsView {
+                    lights: true,
+                    sound: false,
+                    volume: 50,
+                    generation: 3,
+                    writable: true,
+                },
+                pending: true,
+            },
+            r#""ok":true,"pending":true,"lights":1,"sound":0,"volume":50,"generation":3,"writable":true}"#,
+        ),
+        (SettingsResult::Busy, r#""ok":false,"error":"busy"}"#),
+        (
+            SettingsResult::ReadOnly,
+            r#""ok":false,"error":"read_only"}"#,
+        ),
+    ] {
+        let mut out = Buffer::new(&mut buf);
+        write_settings_reply(&mut out, &request, result).unwrap();
+        assert_eq!(
+            out.as_bytes(),
+            format!(r#"{{"id":"{ID}","op":"settings",{tail}"#).as_bytes()
+        );
+    }
 }

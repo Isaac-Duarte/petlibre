@@ -1,6 +1,6 @@
 # Boot and external flash
 
-The inspected unit uses dual-core AmebaD startup with factory loader/configuration before the application banks. Stock 1.1.15 loads KM0/KM4 image regions and selects an application bank using validity markers. Actual loader instruction execution with modeled ROM/MMIO accepts the reviewed diagnostic in both bank fixtures; it is not a full reset-path or power-cut simulation.
+The inspected unit uses dual-core AmebaD startup with factory loader/configuration before the application banks. Stock 1.1.15 loads KM0/KM4 image regions and selects an application bank using validity markers; the factory loader checks bank 1 first and falls back to bank 0 ([bank policy](bank-policy.md)). Actual loader instruction execution with modeled ROM/MMIO accepts the reviewed diagnostic in both bank fixtures; it is not a full reset-path or power-cut simulation.
 
 [plaf103-layout.json](../../firmware/plaf103-layout.json) contains the machine-readable stock-derived application layout. Values below are flash offsets with exclusive ends; mapped external flash begins at `0x08000000`.
 

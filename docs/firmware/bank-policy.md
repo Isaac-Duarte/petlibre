@@ -1,0 +1,70 @@
+# FW09 bank selection and boot policy
+
+Status: In progress. Selection, capacities, compatibility and activation rules are established offline: emulation of the research unit's actual factory loader, plus static analysis of stock 1.1.15. Hardware confirmation needs a write to bank 0, which requires an owner-reviewed procedure; the bank-1 development updater deliberately refuses it.
+
+## How the factory loader chooses (simulation)
+
+`tools/audit/audit-factory-mapping.py` executes the factory loader's own instructions, taken from the verified 8 MiB backup, with the candidate B-cut ROM's mapping routines. The ordinary selection slice (`0x080003f4`) runs with this unit's initialized configuration: no selection or firmware-check callback, and the force-bank GPIO disabled (`0xff`).
+
+| Bank 1 (`0x186000`) | Bank 0 (`0x006000`) | Boots |
+| --- | --- | --- |
+| valid | invalid | bank 1 (the unit's state today) |
+| valid | valid | **bank 1**, whatever either image holds |
+| invalid | valid | bank 0 |
+| invalid | invalid | neither: a wait loop at `0x08000482`, no automatic UART fallback |
+| KM0 valid, KM4 invalid | — | neither: a warning loop at `0x08000182`, the other bank is not tried |
+
+The instructions explain the priority. With the force GPIO disabled, the loader checks bank index 1 first (`0x08000456`) and returns it if its signatures pass. Only on failure does it check bank 0 (`0x0800043a`). **Bank 1 has fixed priority; bank 0 is only a fallback.** The both-valid row held for stock in both banks, for our image in both, and for each mix. The audit now requires it.
+
+A bank counts as valid when its image starts with the 8-byte marker `81958711` (ASCII), followed by valid KM0 and KM4 signatures. Stock 1.1.15's activation (`0x0e02a648`) writes the new image's marker last, then clears the first byte of the opposite bank's marker. Given bank 1's priority, that clearing is what lets stock move from bank 1 to bank 0.
+
+## Capacities
+
+| Bank | Start | Reviewed limit | Space |
+| --- | --- | --- | --- |
+| 0 | `0x006000` | `0x186000` (bank 1 start) | 1.5 MiB |
+| 1 | `0x186000` | `0x2d6000` (stock footprint, the development updater's bound) | 1.3125 MiB |
+
+Bank 1 may extend further: the next known use is the replacement storage at `0x340000`. Unknown gaps are not free space, though, so the reviewed bound stands. The current replacement image is 593 920 bytes (`0x91000`), about 44 % of the smaller bank. The factory mapper sizes its windows from the image headers, rounded up to 4 KiB. KM4 maps at `0x0e000000` and KM0 at `0x0c000000` in either bank.
+
+## Compatibility
+
+Both banks map to the same virtual addresses: the mapper translates each bank's physical start to `0x0c000000` (KM0) and `0x0e000000` (KM4). One image therefore runs from either bank without relinking. The emulated mapping is identical for stock and for the probe image in both banks, and stock's updater writes the same container to either one.
+
+Physically, the replacement firmware has only run from bank 1. The `plaf103` build profile's OTA-address header matters only to the SDK's own OTA writer, which the replacement does not use.
+
+## Activation rules for the replacement
+
+From the selection logic:
+
+1. **The candidate goes into bank 1, with its marker written last** after the rest of the image is verified. This is what the development updater does today.
+2. **A known-good image in bank 0 is a fallback,** not a peer. It boots only when bank 1's marker or signatures fail.
+3. **Never leave both banks invalid.** The loader then waits forever, and only the UART loader recovers. Any marker write must keep at least one valid bank.
+4. **Clearing bank 1's marker is how to give way to bank 0.** Bank 0 cannot win while bank 1 is valid.
+
+## Failed-first-boot recovery
+
+The loader offers none of its own. An image with a valid marker that crashes after boot is selected again on every reset. Two mechanisms are available:
+
+- **UART (proven):** the ROM loader is in ROM and independent of flash, so the relay bench can always enter it and reinstall bank 1. Today's two `--interrupted` recoveries used this path.
+- **Firmware-driven fallback (design, for FW11):** bank 0 holds a confirmed known-good replacement image. A new candidate in bank 1 starts unconfirmed:
+  - **Count:** early on every boot, before KM4 starts, KM0 counts unconfirmed boots in a backup register. Backup registers survive the watchdog reset but not power loss, so a power cut only restarts the count.
+  - **Give way:** after a bound (for example three), KM0 clears the first byte of bank 1's marker, one page program before any other core runs, and resets. The loader then boots bank 0.
+  - **Confirm:** the candidate confirms itself only after its startup report, stopped outputs, Wi-Fi and the local transport are healthy.
+
+  Limits: this only helps if the candidate's KM0 code works. A broken KM0 or a broken factory configuration still needs UART. The FW05 watchdog is what turns a KM4 hang into a counted reset.
+
+## Hardware confirmation (needs the owner)
+
+This needs an owner-reviewed procedure, because every step writes outside the bank-1 application region:
+
+1. Install a known-good replacement image in **bank 0** with a valid marker, and confirm that bank 1 still boots (both valid).
+2. Clear bank 1's marker, and confirm that bank 0 boots (fallback).
+3. Restore bank 1, and confirm that it boots again.
+
+Each step ends with a full-flash read, and the UART loader path stays available throughout. The current tools refuse these writes by design. A bank-0 path needs its own reviewed writer rules, preservation checks and stop conditions, on the model of the bank-1 updater.
+
+## Limits
+
+- **Simulation, not the full reset:** this is the selection slice from supplied state, not a full reset or a power cut mid-write. It does not cover force-GPIO, non-null callbacks, security checks beyond the observed null callback, or damaged factory configuration.
+- **Sampled ROM correspondence:** the candidate ROM matches sampled device words; its mapping routines were not among the words verified physically.

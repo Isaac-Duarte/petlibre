@@ -23,6 +23,7 @@ class FactoryMappingTests(unittest.TestCase):
         report = TOOL.audit(self.flash, self.rom, self.stock, self.probe)
         self.assertEqual(report["actual_backup_selection"]["result"], 2)
         self.assertEqual(report["fallback_selection_fixture"]["result"], 1)
+        self.assertEqual(report["both_valid_fixture"]["result"], 2)
         self.assertEqual(len(report["stock_and_probe_mapping_fixtures"]), 4)
         for fixture in report["stock_and_probe_mapping_fixtures"]:
             self.assertEqual(fixture["slot_ota_file_offset"], "0x14fca0")

@@ -90,6 +90,17 @@ class SequenceTests(unittest.TestCase):
                 BENCH.loader(self.relay, CONFIG, Path("out"), 2)
             self.assertEqual(self.port.state, {1: False, 2: False, 3: False, 4: False})
 
+    def test_reused_capture_names_are_refused_before_any_relay_change(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp, patch.object(BENCH, "ROOT", Path(tmp)):
+            existing = Path(tmp) / "private/captures/used"
+            existing.mkdir(parents=True)
+            for call in (lambda: BENCH.boot(self.relay, CONFIG, existing, 10, 2),
+                         lambda: BENCH.loader(self.relay, CONFIG, existing, 2)):
+                with self.assertRaisesRegex(BENCH.BenchError, "Refusing to reuse"):
+                    call()
+        self.assertEqual(self.port.log, [])
+
     def test_boot_refuses_loader_output(self):
         start, finish = self.observer(loader_result())
         with start, finish, self.assertRaises(BENCH.BenchError):
@@ -152,6 +163,7 @@ class TransientSequenceTests(unittest.TestCase):
 
         args = SimpleNamespace(name="unit", cycles=2, mode=mode, seconds=8.0, samplerate=1000, off_seconds=2)
         with patch.object(BENCH, "ROOT", Path(tmp.name)), \
+                patch.object(BENCH.shutil, "which", return_value="/usr/bin/sigrok-cli"), \
                 patch.object(BENCH, "analyzer", side_effect=lambda f, s, r: FakeAnalyzer(f)):
             code = BENCH.transients(self.relay, CONFIG, args)
         return code, log, Path(tmp.name) / "private/captures/unit"
@@ -170,6 +182,14 @@ class TransientSequenceTests(unittest.TestCase):
         code, log, _ = self.run_session("loader")
         self.assertEqual(log[:5], [(2, False), (1, False), (2, True), (1, True), (2, False)])
         self.assertFalse(self.port.state[1] or self.port.state[2])
+
+    def test_missing_sigrok_refuses_before_any_relay_change(self):
+        args = SimpleNamespace(name="unit-missing", cycles=1, mode="boot", seconds=8.0, samplerate=1000, off_seconds=2)
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp, patch.object(BENCH, "ROOT", Path(tmp)), \
+                patch.object(BENCH.shutil, "which", return_value=None), self.assertRaisesRegex(BENCH.BenchError, "sigrok-cli"):
+            BENCH.transients(self.relay, CONFIG, args)
+        self.assertEqual(self.port.log, [])
 
     def test_a_failed_capture_stops_with_power_off(self):
         with self.assertRaises(BENCH.BenchError):

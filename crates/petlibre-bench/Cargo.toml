@@ -1,11 +1,11 @@
 [package]
-license = "MIT"
+license.workspace = true
 name = "petlibre-bench"
 version = "0.1.0"
-edition = "2024"
-rust-version = "1.99"
+edition.workspace = true
+rust-version.workspace = true
 description = "Relay bench for the PLAF103 research unit: feeder power, loader strap, chained petlibre-flash sessions and a read-only progress page"
-publish = false
+publish.workspace = true
 
 [lints.rust]
 unsafe_code = "forbid"
@@ -14,23 +14,23 @@ unsafe_code = "forbid"
 dbg_macro = "deny"
 
 [dependencies]
-anyhow = "1.0.104"
-axum = "0.8.9"
+anyhow.workspace = true
+axum.workspace = true
 chrono = { version = "0.4.45", default-features = false, features = ["std"] }
-clap = { version = "4.6.7", features = ["derive"] }
-ctrlc = "3.5.2"
+clap.workspace = true
+ctrlc.workspace = true
 futures-util = { version = "0.3", default-features = false }
 getrandom = "0.4"
 rust-embed = { version = "8.13.0", features = ["debug-embed"] }
 rustix = { version = "1", features = ["fs", "process"] }
-serde = { version = "1.0.229", features = ["derive"] }
-serde_json = "1.0.154"
-serialport = { version = "4.10.1", default-features = false }
+serde.workspace = true
+serde_json.workspace = true
+serialport.workspace = true
 sha2 = "0.11"
-subtle = "2.6.1"
-thiserror = "2.0.21"
-tokio = { version = "1.53.3", features = ["rt-multi-thread", "net", "time", "macros"] }
+subtle.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "time", "macros"] }
 
 [dev-dependencies]
-tempfile = "3.27.0"
+tempfile.workspace = true
 tower = { version = "0.5", features = ["util"] }

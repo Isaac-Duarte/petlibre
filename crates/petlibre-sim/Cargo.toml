@@ -1,20 +1,20 @@
 [package]
-license = "MIT"
+license.workspace = true
 name = "petlibre-sim"
 version = "0.1.0"
-edition = "2024"
-rust-version = "1.99"
+edition.workspace = true
+rust-version.workspace = true
 description = "Virtual feeder worker: the real owner on the fake SDK with a file-backed journal"
-publish = false
+publish.workspace = true
 
 [[bin]]
 name = "virtual-feeder-worker"
 path = "src/main.rs"
 
 [dependencies]
-petlibre-amebad = { path = "../petlibre-amebad" }
-petlibre-core = { path = "../petlibre-core" }
-petlibre-testkit = { path = "../petlibre-testkit" }
+petlibre-amebad.workspace = true
+petlibre-core.workspace = true
+petlibre-testkit.workspace = true
 
 [lints]
 workspace = true

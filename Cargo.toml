@@ -4,6 +4,33 @@ members = ["crates/*"]
 default-members = ["crates/petlibre-local"]
 resolver = "3"
 
+[workspace.package]
+edition = "2024"
+rust-version = "1.99"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+petlibre-amebad = { path = "crates/petlibre-amebad" }
+petlibre-amebad-sdk = { path = "crates/petlibre-amebad-sdk" }
+petlibre-core = { path = "crates/petlibre-core" }
+petlibre-testkit = { path = "crates/petlibre-testkit" }
+# Host tools.
+anyhow = "1.0.104"
+axum = "0.8.9"
+clap = { version = "4.6.7", features = ["derive"] }
+ctrlc = "3.5.2"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+serialport = { version = "4.10.1", default-features = false }
+subtle = "2.6.1"
+tempfile = "3.27.0"
+thiserror = "2.0.21"
+tokio = "1.53.3"
+uuid = "1.28.0"
+# Firmware targets.
+cortex-m = "0.7.7"
+
 # Firmware crates permit audited `unsafe` at the C ABI and MMIO boundaries only.
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

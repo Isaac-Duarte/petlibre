@@ -1,18 +1,18 @@
 [package]
-license = "MIT"
+license.workspace = true
 name = "petlibre-core"
 version = "0.1.0"
-edition = "2024"
-rust-version = "1.99"
+edition.workspace = true
+rust-version.workspace = true
 description = "Hardware-independent PLAF103 feeding, sensing, journal and flash-lease logic"
-publish = false
+publish.workspace = true
 
 [lints]
 workspace = true
 
 [dev-dependencies]
 ed25519-dalek = "2"
-petlibre-testkit = { path = "../petlibre-testkit" }
+petlibre-testkit.workspace = true
 sha2 = "0.10"
 
 [dependencies]

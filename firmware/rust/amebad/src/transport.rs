@@ -349,6 +349,12 @@ impl Link {
             }
             Event::Pong => true,
             Event::Request(payload) => self.answer(payload, log),
+            // This driver never subscribes a data topic (only the recovery
+            // role's updater does), so these cannot arrive here.
+            Event::DataReady | Event::Data(_) => {
+                self.close("out_of_order", log);
+                false
+            }
             Event::Closed(fault) => {
                 self.close(fault_name(fault), log);
                 false

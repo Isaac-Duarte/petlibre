@@ -306,6 +306,10 @@ pub enum Event<'a> {
     Pong,
     /// A request payload on the request topic, not yet parsed.
     Request(&'a [u8]),
+    /// SUBACK for [`Session::subscribe_data`]: data publishes may now arrive.
+    DataReady,
+    /// A payload on the data topic named to [`Session::on_packet_with`].
+    Data(&'a [u8]),
     Closed(Fault),
 }
 
@@ -318,6 +322,8 @@ pub enum Tick {
 }
 
 const SUBSCRIBE_ID: u16 = 1;
+/// The optional second subscription (the updater's `ota/data`).
+const DATA_SUBSCRIBE_ID: u16 = 2;
 
 /// One connection's protocol state. A new connection gets a new session.
 #[derive(Clone, Copy, Debug)]
@@ -353,6 +359,23 @@ impl Session {
     /// Write the SUBSCRIBE that must follow [`Event::Connected`].
     pub fn subscribe(&mut self, now: u32, buf: &mut [u8], topic: &str) -> Result<usize, Error> {
         let used = encode_subscribe(buf, SUBSCRIBE_ID, topic)?;
+        self.sent(now);
+        self.waiting_since = Some(now);
+        Ok(used)
+    }
+
+    /// After [`Event::Ready`]: subscribe the data topic too (packet ID 2).
+    /// Only the updater does this; [`Event::DataReady`] follows its SUBACK.
+    pub fn subscribe_data(
+        &mut self,
+        now: u32,
+        buf: &mut [u8],
+        topic: &str,
+    ) -> Result<usize, Error> {
+        if self.state != State::Ready || self.waiting_since.is_some() {
+            return Err(Error::Malformed);
+        }
+        let used = encode_subscribe(buf, DATA_SUBSCRIBE_ID, topic)?;
         self.sent(now);
         self.waiting_since = Some(now);
         Ok(used)
@@ -395,6 +418,18 @@ impl Session {
         packet: Packet<'a>,
         request_topic: &str,
     ) -> Event<'a> {
+        self.on_packet_with(now, packet, request_topic, None)
+    }
+
+    /// As [`Session::on_packet`], also accepting publishes on `data_topic`
+    /// (once subscribed) as [`Event::Data`]. Any other topic still closes.
+    pub fn on_packet_with<'a>(
+        &mut self,
+        now: u32,
+        packet: Packet<'a>,
+        request_topic: &str,
+        data_topic: Option<&str>,
+    ) -> Event<'a> {
         if let State::Closed(fault) = self.state {
             return Event::Closed(fault);
         }
@@ -432,6 +467,23 @@ impl Session {
                     code,
                 },
             ) => Event::Closed(self.close(Fault::SubscribeRefused(code))),
+            (
+                State::Ready,
+                Packet::SubAck {
+                    packet_id: DATA_SUBSCRIBE_ID,
+                    code: 0,
+                },
+            ) if data_topic.is_some() && self.waiting_since.is_some() => {
+                self.waiting_since = None;
+                Event::DataReady
+            }
+            (
+                State::Ready,
+                Packet::SubAck {
+                    packet_id: DATA_SUBSCRIBE_ID,
+                    code,
+                },
+            ) if data_topic.is_some() => Event::Closed(self.close(Fault::SubscribeRefused(code))),
             (State::Ready, Packet::PingResp) if self.waiting_since.is_some() => {
                 self.waiting_since = None;
                 Event::Pong
@@ -444,6 +496,9 @@ impl Session {
                     retain: false,
                 },
             ) => {
+                if data_topic == Some(topic) {
+                    return Event::Data(payload);
+                }
                 if topic != request_topic {
                     return Event::Closed(self.close(Fault::ForeignTopic));
                 }

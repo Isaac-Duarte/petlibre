@@ -10,7 +10,8 @@ import sdkhooks
 
 EXPECTED = {
     "lp": ("irq_register", "irq_enable", "pmu_acquire_wakelock", "irq_disable",
-           "km4_flash_highspeed_init", "wellfed_shared_pad_power_init", "wellfed_wifi_fw_start", "km4_boot_on",
+           "km4_flash_highspeed_init", "wellfed_shared_pad_power_init", "wellfed_trial_step",
+           "wellfed_wifi_fw_start", "km4_boot_on",
            "wellfed_flash_peer_start", "vTaskStartScheduler"),
     "hp": ("irq_register", "irq_enable", "ipc_table_init", "pmu_acquire_wakelock",
            "pre_example_entry", "example_entry", "vTaskStartScheduler"),

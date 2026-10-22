@@ -15,6 +15,7 @@ crate-type = ["staticlib", "rlib"]
 km0 = ["dep:wellfed-amebad", "wellfed-amebad/km0"]
 km4 = ["dep:wellfed-amebad", "wellfed-amebad/km4", "wellfed-amebad/sdk"]
 fw16-pulse = ["km4", "wellfed-amebad/fw16-pulse"]
+fw11-reset = ["km4", "wellfed-amebad/fw11-reset"]
 
 [dependencies]
 wellfed-core = { path = "../core" }

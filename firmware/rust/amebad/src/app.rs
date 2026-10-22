@@ -100,7 +100,7 @@ fn start_optics() {
 
 /// Above the diagnostic and transport tasks, so their logging cannot hold
 /// off the owner lease the supervisor enforces.
-#[cfg(not(feature = "fw16-pulse"))]
+#[cfg(not(any(feature = "fw16-pulse", feature = "fw11-reset")))]
 fn start_optics() {
     let created = sdk::task_create(c"wellfed-optics", 1024, 3, optics_task, ptr::null_mut());
     sdk::log(if created {
@@ -295,6 +295,20 @@ fn start_updater() {
         c"PLOTA1 tasks created=1\r\n"
     } else {
         c"PLOTA1 tasks created=0\r\n"
+    });
+}
+
+/// FW11 trial test, in place of the optics probe: open the watchdog and
+/// never feed it, as a hung candidate would, so KM0 counts the reset.
+/// Outputs stay stopped.
+#[cfg(feature = "fw11-reset")]
+fn start_optics() {
+    // SAFETY: nothing else touches the slot in this variant.
+    let watchdog = unsafe { &mut *WATCHDOG.0.get() }.get_or_insert_with(Watchdog::default);
+    sdk::log(if watchdog.open(&config::WATCHDOG) {
+        c"PLTRL1 test=reset watchdog=1\r\n"
+    } else {
+        c"PLTRL1 test=reset watchdog=0\r\n"
     });
 }
 

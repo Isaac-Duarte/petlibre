@@ -47,6 +47,7 @@ WIFI_MARK = b'PLWIF1 start created='  # FW07 radio-on and scan records follow th
 WIFI_JOIN_MARK = b'PLWIF2 start created='  # FW07 join and reconnect events follow the LED probe
 WIFI_DNS_MARK = b'PLWIF3 start created='  # FW07 join, DNS and reconnect events follow the LED probe
 TRANSPORT_MARK = b'PLMQT1 start created='  # FW08 health transport records follow the LED probe
+TRIAL_RESET_MARK = b'PLTRL1 test=reset watchdog='  # FW11 trial test: the watchdog resets it after startup
 OPTICS_MARK = b'PLOPT1 start created='  # FW13 emitter windows and input records follow the LED probe
 OPTICS_PLAN2_MARK = b' plan=2\r\n'  # fw13-optics-v2: 5 s windows
 MOTION_MARK = b'PLMOT1 start created='  # FW16 single supervised pulse follows the LED probe
@@ -524,6 +525,10 @@ def startup(rx, manifest, image, identity, arrival=None, end=None):
     require(bool(motion_policy) == (MOTION_MARK in image), 'Motion policy/artifact mismatch')
     require(not (motion_policy and optics_policy), 'Motion and optics probes are exclusive')
     require(not motion_policy or led_policy, 'Motion probe requires the LED probe policy')
+    trial_policy = manifest.get('startup_trial_policy')
+    require(trial_policy in (None, 'fw11-reset-v1'), 'Unknown trial policy')
+    require(bool(trial_policy) == (TRIAL_RESET_MARK in image), 'Trial policy/artifact mismatch')
+    require(not (trial_policy and (optics_policy or motion_policy)), 'The trial test runs alone')
     adc_policy = manifest.get('startup_adc_policy')
     require(adc_policy in (None, 'fw14-adc-v1', 'fw14-adc-v2'), 'Unknown ADC policy')
     require(bool(adc_policy) == (ADC_MARK in image), 'ADC policy/artifact mismatch')

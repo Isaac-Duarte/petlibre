@@ -51,6 +51,7 @@ pub mod owner;
 pub mod probes;
 #[cfg(any(not(target_os = "none"), feature = "km4"))]
 pub mod transport;
+pub mod trial;
 #[cfg(any(not(target_os = "none"), feature = "km4"))]
 pub mod updater;
 #[cfg(any(not(target_os = "none"), feature = "km4"))]

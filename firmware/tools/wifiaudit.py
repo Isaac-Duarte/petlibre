@@ -66,7 +66,8 @@ EXPECTED_LP = {
     "FLASH_SetStatus": {"FLASH_SetStatusXIP", "flash_operation_config", "flash_rx_mode_switch"},
     "FLASH_SetStatusBits": {"FLASH_SetStatusBitsXIP"},
     "FLASH_TxData12B": {"FLASH_TxData12BXIP", "FLASH_WriteStream"},
-    "FLASH_TxData256B": {"FLASH_TxData256BXIP"},
+    # FW11: the boot trial clears bank 1's first marker byte, before KM4 runs.
+    "FLASH_TxData256B": {"FLASH_TxData256BXIP", "wellfed_trial_program"},
     "FLASH_EraseXIP": {"FLASH_EreaseDwordsXIP"},
     "FLASH_TxData12BXIP": {"FLASH_EreaseDwordsXIP"},
     "FLASH_EreaseDwordsXIP": set(),

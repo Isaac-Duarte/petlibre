@@ -53,8 +53,10 @@ void wellfed_amebad_flash_peer_irq(VOID *data, u32 status, u32 channel);
 static void wellfed_flash_peer_task(void *context)
 {
     (void)context;
-    u32 count = BKUP_Read(BKUP_REG4) + 1;
-    BKUP_Write(BKUP_REG4, count);
+    /* Bits 16-31 belong to the FW11 trial (wellfed_trial_step). */
+    u32 reg = BKUP_Read(BKUP_REG4);
+    u32 count = (reg + 1) & 0xFFFFU;
+    BKUP_Write(BKUP_REG4, (reg & 0xFFFF0000U) | count);
     for (;;) {
         wellfed_amebad_flash_peer_step(count, SYSTIMER_TickGet());
         vTaskDelay(1);
@@ -83,6 +85,76 @@ __attribute__((noinline)) void wellfed_wifi_fw_start(void)
     }
 }
 
+u32 wellfed_amebad_trial_decide(const u8 *bank1, const u8 *bank0, const u8 *record, u32 *reg);
+
+/* FW11 boot trial (amebad/src/trial.rs decides): before KM4 runs, count an
+ * unconfirmed bank-1 image's boots in backup register 4 and, at the limit
+ * with a valid bank 0, clear bank 1's first marker byte and reset so the
+ * loader falls back to bank 0. KM4 is off, so the SDK flash lock only masks
+ * this core's interrupts (wellfed_trial_program).
+ * Physical reads go through the direct SPIC window. */
+#define WELLFED_BANK0_OFFSET 0x006000U
+#define WELLFED_BANK1_OFFSET 0x186000U
+#define WELLFED_CONFIRM_OFFSET 0x344000U
+/* FLASH_TxData256BXIP without FLASH_Write_Lock: that lock's KM0 branch
+ * asks KM4 to sleep whenever km4_status_on(), and after a watchdog reset the
+ * HS clock bit it reads stays set while KM4 is not yet booted, so the lock
+ * waits forever (observed). KM4 is not running here; mask this core's
+ * interrupts and SysTick as the lock would, program, flush, restore. */
+IMAGE2_RAM_TEXT_SECTION __attribute__((noinline, noclone))
+static void wellfed_trial_program(u32 address, u32 length, u8 *data)
+{
+    u32 primask = __get_PRIMASK();
+    __disable_irq();
+    u32 systick = SysTick->CTRL;
+    SysTick->CTRL = 0;
+    FLASH_TxData256B(address, length, data);
+    Cache_Flush();
+    SysTick->CTRL = systick;
+    __set_PRIMASK(primask);
+}
+
+__attribute__((noinline)) void wellfed_trial_step(void)
+{
+    const u8 *bank1 = (const u8 *)(SPI_FLASH_BASE + WELLFED_BANK1_OFFSET);
+    const u8 *bank0 = (const u8 *)(SPI_FLASH_BASE + WELLFED_BANK0_OFFSET);
+    const u8 *record = (const u8 *)(SPI_FLASH_BASE + WELLFED_CONFIRM_OFFSET);
+    u32 reg = BKUP_Read(BKUP_REG4);
+    u32 code = wellfed_amebad_trial_decide(bank1, bank0, record, &reg);
+    BKUP_Write(BKUP_REG4, reg);
+    switch (code & 0xFFU) {
+    case 0:
+        DiagPrintf("PLTRL1 bank=0\n");
+        return;
+    case 1:
+        DiagPrintf("PLTRL1 confirmed=1\n");
+        return;
+    case 2:
+        DiagPrintf("PLTRL1 confirmed=0 boot=%d limit=3\n", code >> 8);
+        return;
+    case 4:
+        DiagPrintf("PLTRL1 error fallback=invalid boot=%d\n", code >> 8);
+        return;
+    default:
+        break;
+    }
+    /* Clear only byte 0 ('8' -> 0x00); bytes 1-3 are rewritten unchanged,
+     * since programming only clears bits. */
+    u8 word[4] = {0x00, bank1[1], bank1[2], bank1[3]};
+    wellfed_trial_program(WELLFED_BANK1_OFFSET, sizeof(word), word);
+    DiagPrintf("PLTRL1 give_way=1 marker=%02x reset=1\n", bank1[0]);
+    /* The vendor OTA reset: a short watchdog expiry resets the platform. */
+    WDG_InitTypeDef wdg;
+    u32 count_process, div_process;
+    WDG_Scalar(50, &count_process, &div_process);
+    wdg.CountProcess = count_process;
+    wdg.DivFacProcess = div_process;
+    wdg.RstAllPERI = 1;
+    WDG_Init(&wdg);
+    WDG_Cmd(ENABLE);
+    for (;;) {}
+}
+
 int main(void)
 {
     InterruptRegister((IRQ_FUN)IPC_INTHandler, IPC_IRQ_LP, (u32)IPCM4_DEV, 2);
@@ -91,6 +163,7 @@ int main(void)
     InterruptDis(UART_LOG_IRQ_LP);
     km4_flash_highspeed_init();
     wellfed_shared_pad_power_init();
+    wellfed_trial_step();
     wellfed_wifi_fw_start();
     km4_boot_on();
     wellfed_flash_peer_start();

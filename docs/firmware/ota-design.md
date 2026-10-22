@@ -36,6 +36,18 @@ If anything fails before step 4, bank 1's marker is still clear, so the loader k
 
 ## Boot confirmation and fallback (FW11)
 
+Implemented on KM0 (`amebad/src/trial.rs`, `wellfed_trial_step` in `firstboot_km0.c`), before `km4_boot_on`:
+- **Running bank:** read from bank 1's physical marker.
+- **Confirmation:** keyed by the build identity, not the image hash, since the normal image does not know its own OTA hash. The record lives in storage sector 4 (`0x344000`).
+- **Count:** backup register 4. Bits 0–15 hold the peer boot count, bits 16–23 the trial count, and bits 24–31 an identity tag.
+- **Give way:** at boot 4, only if bank 0's marker is valid, KM0 clears byte 0 and resets with its own watchdog.
+
+The program step bypasses `FLASH_Write_Lock`. After a watchdog reset, that lock's KM0 branch waits forever for an absent KM4, because `km4_status_on` still reads the HS clock bit set. This was observed on hardware, then fixed.
+
+Physical (October 22): the `fw11-reset` test variant (`build.py --trial-reset`) was counted 1, 2, 3, then gave way and booted bank 0's recovery role. The KM4 confirmation write is not implemented yet, so a normal image is never confirmed. It only gives way after three resets within one power-on, and the normal role does not yet open the watchdog.
+
+The original design:
+
 - **Counting:** KM0 runs first on every boot. If bank 1's image is unconfirmed, KM0 increments a trial count in a backup register. Backup registers survive the watchdog reset but not power loss, so a power cut only restarts the count.
 - **Fallback:** when the count reaches 3, KM0 clears the first byte of bank 1's marker before releasing KM4, then resets. The loader boots bank 0, and the recovery image reports a failed trial.
 - **Confirmation:** a confirmation record, written once per installed image (keyed by the image's SHA-256) in the replacement storage region at `0x340000`. An image is confirmed only when the record names its exact hash.

@@ -21,7 +21,7 @@ Scripts are grouped by what they do. Run them from the repository root with the 
 
 ## Flash: reads, updates and recovery
 
-The five `uart-*` clients own the serial port. The rest are the components they load, plus offline planners and reviewers. See the [development updater](../docs/development/uart-development.md) and [recovery limits](../docs/hardware/recovery.md).
+The five `uart-*` clients own the serial port. The [Rust client](../docs/development/rust-flash.md) `wellfed-flash` ports the reader, development update, give-way and stock recovery with the same evidence formats; it is host- and emulation-tested only, so these Python clients remain the accepted writers. The rest are the components they load, plus offline planners and reviewers. See the [development updater](../docs/development/uart-development.md) and [recovery limits](../docs/hardware/recovery.md).
 
 | Script | Device | Purpose |
 | --- | --- | --- |

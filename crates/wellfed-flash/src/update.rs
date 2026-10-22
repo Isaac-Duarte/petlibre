@@ -276,7 +276,7 @@ fn session_run(
         "mode": args.mode.name(), "status": "prepared", "start_utc": utc(),
         "bindings": loaded.bindings, "helper_upload_attempted": false, "baud": 115200,
         "observations": [], "status_checks": [], "application_boot_verified": false,
-        "tool": "wellfed-flash",
+        "tool": "wellfed-flash", "transport": context.transport(),
         "scope": "Application union and factory/other-bank guards only; unscanned flash preserved by write scope",
     }));
     let save = || evidence::save_report(&report_path, &report.borrow());
@@ -520,7 +520,7 @@ fn give_way_session(
     let report = RefCell::new(json!({
         "mode": args.mode.name(), "status": "prepared", "start_utc": utc(),
         "bindings": loaded.bindings, "helper_upload_attempted": false, "observations": [],
-        "status_checks": [], "application_boot_verified": false, "tool": "wellfed-flash",
+        "status_checks": [], "application_boot_verified": false, "tool": "wellfed-flash", "transport": context.transport(),
     }));
     let save = || evidence::save_report(&report_path, &report.borrow());
     save()?;

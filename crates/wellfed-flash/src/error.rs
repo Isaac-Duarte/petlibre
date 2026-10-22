@@ -7,9 +7,9 @@ pub enum Error {
     /// A pinned check, protocol expectation or evidence binding failed.
     #[error("{0}")]
     Refused(String),
-    #[error("I/O: {0}")]
+    #[error("{0}")]
     Io(#[from] io::Error),
-    #[error("JSON: {0}")]
+    #[error("{0}")]
     Json(#[from] serde_json::Error),
 }
 

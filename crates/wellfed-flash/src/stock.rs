@@ -141,7 +141,7 @@ fn execute(
         "status": "prepared", "start_utc": utc(), "port": args.evidence.port, "operation": KIND,
         "reviewed_plan_sha256": sha256(raw), "helper_upload_attempted": false,
         "snapshots": [], "transaction_directory": "transaction",
-        "physical_recovery_verified": false, "tool": "wellfed-flash",
+        "physical_recovery_verified": false, "tool": "wellfed-flash", "transport": context.transport(),
         "scope": "Supervised serial stock restore; physical acceptance requires external bench evidence",
     }));
     let save = || evidence::save_report(&path, &state.borrow());

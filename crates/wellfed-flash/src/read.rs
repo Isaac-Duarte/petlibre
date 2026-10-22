@@ -129,7 +129,7 @@ pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
         "start_utc": utc(), "status": "prepared",
         "helper_sha256": helper.as_ref().map(|_| HELPER_SHA256),
         "flash_write_or_erase_commands": false, "capacity_bytes": CAPACITY,
-        "tool": "wellfed-flash", "tool_sha256": context.tool_sha256,
+        "tool": "wellfed-flash", "transport": context.transport(), "tool_sha256": context.tool_sha256,
         "limitations": ["No failed-boot recovery established",
                         "Actual ROM side effects not exhaustively verified",
                         "Helper disables OTF; a raw dump may contain ciphertext",

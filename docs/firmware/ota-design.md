@@ -68,6 +68,17 @@ The program step bypasses `FLASH_Write_Lock`. After a watchdog reset, that lock'
 
 Physical (October 22): the `fw11-reset` test variant (`build.py --trial-reset`) was counted 1, 2, 3, then gave way and booted bank 0's recovery role. The normal role now confirms itself (`amebad/src/confirm.rs`). Once the startup probe has ended, the transport is ready and outputs are verified stopped for 30 s continuously, it arms the hooks and writes the record to sector 4, then reads it back. The normal role also opens the watchdog at startup. A feeder task feeds it while the transport and confirmation tasks keep stepping, and while outputs are stopped or sensing, so a hang becomes a reset that KM0 counts.
 
+**Supervision from startup (October 22, physical).** The normal role used to open the watchdog only after its startup probes, so a fault before then hung with nothing to count it. That happened once: a crate-split build overflowed a task stack in early startup and needed a UART give-way. The feeder task now starts with the application and opens the watchdog on its first step (`PLSUP1 open watchdog=1 trial=N`), before the startup diagnostic. The decision is `amebad/src/supervise.rs`:
+- **Startup:** feed while the startup task keeps stepping.
+- **Determined startup failure:** a trial image stops feeding, so the failure is a counted reset. A confirmed image keeps feeding and holds STOP, so there is no reset loop.
+- **Running:** feed while every running task steps and outputs stay stopped or sensing.
+- **Trial deadline:** a trial image that has not confirmed within 10 minutes of boot stops feeding.
+
+Each stop logs `PLSUP1 stop …` once. On hardware, over the air, each of these was counted 1, 2, 3 and then gave way to bank 0:
+- a failed-start variant (`build.py --trial-fail`), stopped 253 ms into each boot;
+- the hang variant (`--trial-reset`);
+- a normal build whose server was stopped after activation, which reset at `ms=600192` on each boot.
+
 Physical (October 22), over the air:
 1. The first build with this code had a feeder bug: it demanded all outputs stopped and tripped during the optics windows. KM0 counted three resets and gave way. The recovery role then installed the fixed build (version 3) over the air.
 2. The fixed build confirmed after 30 s healthy (`PLCNF1 confirmed=1 healthy_ms=30000`).

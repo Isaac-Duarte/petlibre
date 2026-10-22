@@ -51,7 +51,7 @@ The will is a non-retained `health` message with `"online": false`, so the broke
 
 ## Health message
 
-Compact JSON, one object, at most 512 bytes, schema `petlibre.health`, version 1. A consumer must ignore unknown fields and refuse an unknown major version. Field values come from data the firmware already has; nothing new is measured.
+Compact JSON, one object, at most 512 bytes (576 since FW21 added `clock`), schema `petlibre.health`, version 1. A consumer must ignore unknown fields and refuse an unknown major version. Field values come from data the firmware already has; nothing new is measured.
 
 ```json
 {"schema":"petlibre.health","v":1,"online":true,"seq":12,"uptime_ms":61234,
@@ -95,6 +95,8 @@ v1 allowlist:
 - `health`: publish health now, then reply `ok`.
 - `ping`: reply `ok` with `uptime_ms`.
 
+- `time` (FW21): set the wall clock; the only request that carries fields and the only one that changes state, so it must be signed (see [Authenticated requests](#authenticated-requests)). See [wall clock](clock.md).
+
 Anything else gets `ok:false`, `error:"unsupported"`, and is logged. Requests carry no arguments in v1. Replays are harmless because both operations are read-only; the ID is only for correlation.
 
 **Decision:** no reboot, no log dump and no settings read in v1. A remote reboot could make a fault hard to see, so it waits for FW11's boot policy. Log streaming needs a size and rate budget.
@@ -109,6 +111,49 @@ Anything else gets `ok:false`, `error:"unsupported"`, and is logged. Requests ca
 - The credential never appears in UART output, the build manifest (hash only, as with Wi-Fi) or tracked files.
 
 The bench host's firewall needs one more input rule for the broker port from the hotspot subnet, for example `iifname "wlan1" ip saddr 10.42.103.0/24 tcp dport 1883 accept`. That is the owner's change, as before. Forwarding stays blocked.
+
+## Authenticated requests
+
+Server-to-firmware requests can carry an HMAC so that a party with only the Wi-Fi and broker passwords can't send them. This section is the wire format and the server's part.
+
+- **Key:** 32 random bytes, shared by the server configuration (`firmware.request_key`) and the firmware build's credential file (`request_key`), each as 64 lowercase hex characters. `petlibre-local firmware-request-key` creates it; see the [local server](../development/local-server.md#request-signing).
+- **Nonce:** health from a firmware built with a key has `"nonce":"<16 lowercase hex>"`, a fresh 64-bit value for each MQTT session. Firmware without a key sends no `nonce`.
+- **Signed request:** the normal request with `nonce` and `seq` appended and the MAC as the last field, compact JSON with no whitespace:
+
+  ```text
+  {"id":"<uuid>","op":"<op>"[,<op fields>],"nonce":"<16 hex>","seq":<n>,"mac":"<64 lowercase hex>"}
+  ```
+
+  - `nonce` is the latest health's nonce.
+  - `seq` is a plain integer from 1 to 4294967295. It starts at 1 for each new nonce and rises with each request; the firmware refuses any `seq` not above the last one it accepted in the session.
+  - `mac` is HMAC-SHA256(key, P), where P is the exact payload bytes before the literal `,"mac":"`: the object up to and including the `seq` value, without the closing brace.
+  - Field order is fixed: `id`, `op`, the op's fields, `nonce`, `seq`, `mac`.
+- **Size:** a request may be up to 320 bytes (256 before authentication). The largest is a signed `time` request: about 257 bytes in America/Denver at `seq` 1, and under 270 at the largest `seq`.
+- **Refusal:** a bad or missing MAC, an unknown nonce or a stale `seq` gets `{"id":"<uuid>","ok":false,"error":"auth"}`.
+
+**Server:** with a key configured, every request the server sends is signed: API `health` and `ping` and the FW21 `time` sync. The per-nonce `seq` counter lives in the server's in-memory replacement tracker and restarts at 1 when the health nonce changes. If the latest health has no nonce, the server sends unsigned requests as before; without a key it never signs. It builds the payload as text in the fixed order rather than through a JSON map, so P is exactly what it MACs. HMAC-SHA256 is implemented over the `sha2` crate already in use (checked against RFC 4231 cases 1, 2 and 6). Health with a malformed `nonce` is rejected and counted like other invalid health. The counter is not persisted: `serve` runs the broker as its child, so a server restart also ends the firmware's MQTT session, and the reconnect brings a new nonce. A tool that sends requests beside a running broker (the `time_jump` example) starts at `seq` 1 and is refused with `auth` if the session already accepted requests.
+
+**Firmware** (`petlibre-core/src/request_auth.rs`, KM4 `transport.rs`):
+- **Nonce:** each connect draws a session nonce. It is the HMAC under the key of the ROM generator, the SysTick count, the tick count and the connect count at that moment (`petlibre_entropy` in `example_entry.c`). That is not a vetted random source, but the nonce only has to differ between sessions.
+- **Checks:** the MAC is checked in constant time over the prefix, then the nonce and `seq`. Nothing changes on a refusal.
+- **What needs a signature:**
+  - A request carrying a MAC is refused unless all three checks pass, whatever it asks.
+  - A state-changing request, today only `time`, is refused unless it is signed and valid. An image built without a key refuses every state change.
+  - `health` and `ping` still work unsigned.
+- **Logging:** refusals log `PLMQT1 request op=unauthenticated ok=0`.
+
+**On hardware (October 22, physical):**
+- **Startup:** after `petlibre-local firmware-request-key`, an image built with the key reported its nonce in health. It accepted the server's signed `time` sync and a signed API `ping` (`seq` 2).
+- **Refusal:** over a bare broker, an unsigned `time` was refused (`error: auth`, the clock unchanged), and a signed one at `seq` 1 was accepted.
+
+## Device settings (FW25)
+
+`{"id":…,"op":"settings"}` reads the device settings: lights, sound, volume, the record generation, and whether NOR may be written. With `"lights":0|1`, `"sound":0|1` or `"volume":0..100` it queues one change, which **must be signed**. The reply reports the current values and `"pending":true`. A second change while one is queued gets `error: busy`, and an unwritable store gets `error: read_only`.
+- **Writer:** the firmware's settings task (`petlibre-firstboot/src/settings.rs`) owns the FW15 store in storage sectors 2 and 3. It starts after the boot is confirmed, arms the flash-lock hooks if the confirmation did not, and only then lets the offer check start, so the two never arm at once. Each save sets the arming attempt marker and clears it after.
+- **Transport isolation:** the transport may only call `settings::request`, which queues and reads atomics and never touches flash.
+- **Records:** `PLCFG1 start`, `open status=… generation=… lights=… sound=… volume=…`, the arming records, `saved …` and `error stage=unarmed|save status=…`.
+- **API:** `POST /api/replacement/request` takes `{"op":"settings"}` or `{"op":"settings","lights":true,"volume":40}`; the server signs it.
+- **Physical (October 22):** a signed change from generation 2978 to 2979 (lights on, volume 40) was saved and read back after a cold boot.
 
 ## Server side
 

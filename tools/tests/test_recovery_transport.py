@@ -14,8 +14,8 @@ def module(name, filename):
     return result
 
 
-TOOL = module("recovery_transport", "recovery-sector-transport.py")
-SIM = module("recovery_peer", "emulate-recovery-session.py")
+TOOL = module("recovery_transport", "flash/recovery-sector-transport.py")
+SIM = module("recovery_peer", "emulate/emulate-recovery-session.py")
 BASELINE = ROOT / "private/fixtures/baseline.bin"
 
 

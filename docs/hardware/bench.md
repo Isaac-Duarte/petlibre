@@ -1,6 +1,6 @@
 # Relay bench control
 
-`tools/bench.py` powers the feeder, enters the ROM loader and chains the existing UART tools. It adds power and strap control only: serial reads, inspections, plans and writes still go through [uart-flash-read.py](../../tools/uart-flash-read.py) and [uart-development.py](../../tools/uart-development.py) with their pinned checks. Running it is a physical bench operation; build and check targets never call it.
+`tools/bench/bench.py` powers the feeder, enters the ROM loader and chains the existing UART tools. It adds power and strap control only: serial reads, inspections, plans and writes still go through [uart-flash-read.py](../../tools/flash/uart-flash-read.py) and [uart-development.py](../../tools/flash/uart-development.py) with their pinned checks. Running it is a physical bench operation; build and check targets never call it.
 
 ## Wiring
 
@@ -44,7 +44,7 @@ Session evidence goes to new directories under `private/captures/`, `private/fla
 
 ## Progress dashboard
 
-Each command except `status` records its steps, the tools' progress lines (bytes read, sectors verified), relay changes and the active capture in `private/bench-status/` (`current.json`, and one `history.jsonl` line per command). `tools/bench-dashboard.py` serves that as a page on `http://127.0.0.1:8780/`, refreshed every second, with the tail of a running capture. It only reads those files and the capture's received bytes. It never opens a serial port, so it can run beside any command, and it binds to loopback only because the page shows private UART output. Start it in its own terminal and stop it with Ctrl+C.
+Each command except `status` records its steps, the tools' progress lines (bytes read, sectors verified), relay changes and the active capture in `private/bench-status/` (`current.json`, and one `history.jsonl` line per command). `tools/bench/bench-dashboard.py` serves that as a page on `http://127.0.0.1:8780/`, refreshed every second, with the tail of a running capture. It only reads those files and the capture's received bytes. It never opens a serial port, so it can run beside any command, and it binds to loopback only because the page shows private UART output. Start it in its own terminal and stop it with Ctrl+C.
 
 Bars show the overall steps, the tools' own counts (sectors verified, bytes read) and, for an update, an estimate from the bytes sent and read back against the reviewed plan. Each has an ETA by straight-line extrapolation; a loader NAK still stops the run outright. A latest-RX card shows the tail of the newest capture. For a timed operator run, an optional `private/bench-status/script.json` lists steps (`{"title", "capture", "anchor", "steps": [{"at", "text"}]}`); the page shows the current step large with a countdown, starting when the anchor bytes (for example `PLOPT1 open`) arrive in that capture.
 

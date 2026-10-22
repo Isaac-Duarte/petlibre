@@ -10,7 +10,7 @@ from support import evidence
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
-SPEC = importlib.util.spec_from_file_location("stock_recovery_plan", ROOT / "tools/plan-stock-recovery.py")
+SPEC = importlib.util.spec_from_file_location("stock_recovery_plan", ROOT / "tools/flash/plan-stock-recovery.py")
 TOOL = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(TOOL)
 BASELINE = ROOT / "private/fixtures/baseline.bin"
@@ -73,7 +73,7 @@ class StockRecoveryPlanTests(unittest.TestCase):
             current[TOOL.START] = 0
             current[0x3E8000] ^= 1
             (root / "current.bin").write_bytes(current)
-            argv = ["plan-stock-recovery.py", "--baseline", str(root / "baseline.bin"),
+            argv = ["flash/plan-stock-recovery.py", "--baseline", str(root / "baseline.bin"),
                     "--current", str(root / "current.bin"), "--output", str(root / "plan")]
             with patch.object(sys, "argv", argv), patch("sys.stdout", new_callable=io.StringIO):
                 TOOL.main()

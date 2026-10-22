@@ -17,7 +17,7 @@ Optional serial support is installed explicitly:
 
 ```sh
 .venv/bin/python -m pip install -r tools/requirements-hardware.txt
-.venv/bin/python tools/uart-flash-read.py --help
+.venv/bin/python tools/flash/uart-flash-read.py --help
 ```
 
 The `observe` mode receives without serial writes and records raw bytes plus metadata. Choose your own stable device path and a new output directory under `private/`. Close other serial clients first. Other modes can execute commands or upload a RAM helper; they are separate operations.

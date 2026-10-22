@@ -6,7 +6,7 @@ import tempfile
 import unittest
 
 TOOLS = Path(__file__).resolve().parents[1]
-SPEC = importlib.util.spec_from_file_location('firmware_journal', TOOLS / 'audit-firmware-journal.py')
+SPEC = importlib.util.spec_from_file_location('firmware_journal', TOOLS / 'audit/audit-firmware-journal.py')
 M = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(M)
 S = M.STARTUP

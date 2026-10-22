@@ -15,7 +15,7 @@ def load(name, path):
     return module
 
 
-M = load('firmware_transport', TOOLS / 'audit-firmware-transport.py')
+M = load('firmware_transport', TOOLS / 'audit/audit-firmware-transport.py')
 J = load('firmware_wifi_join_tests', TOOLS / 'tests/test_firmware_wifi_join.py')  # startup/LED capture helpers
 S = M.STARTUP
 DNS = b'PLWIF3 ev seq=5 kind=dns attempt=1 result=0 value=5db8d822 rssi=0 security=00000000 ms=3 stopped=1\r\n'

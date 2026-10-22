@@ -11,13 +11,13 @@ It is not replacement OTA, automatic rollback, a boot controller, or a partial-w
 Offline build/review commands use new output directories:
 
 ```sh
-.venv/bin/python tools/review-development-image.py stock \
+.venv/bin/python tools/flash/review-development-image.py stock \
   --output private/verification/stock-review
 make -C firmware plaf103-firstboot
-.venv/bin/python tools/review-development-image.py build \
+.venv/bin/python tools/flash/review-development-image.py build \
   --build private/firmware-build/plaf103-firstboot \
   --output private/verification/development-review
-.venv/bin/python tools/uart-development.py --help
+.venv/bin/python tools/flash/uart-development.py --help
 ```
 
 These commands do not open a serial port. Build snapshots copied from the research archive can be stale against Wellfed's changed source/input hashes. Rebuild and freeze new targets rather than editing manifests or substituting expected hashes. Retain a frozen source matching the actually installed application.

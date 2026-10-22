@@ -18,9 +18,9 @@ def module(name, filename):
     return value
 
 
-B = module("development_bank_test", "development-bank.py")
-SIM = module("development_peer_test", "emulate-recovery-session.py")
-W = module("development_wire_test", "development-wire-policy.py")
+B = module("development_bank_test", "flash/development-bank.py")
+SIM = module("development_peer_test", "emulate/emulate-recovery-session.py")
+W = module("development_wire_test", "flash/development-wire-policy.py")
 BASELINE = ROOT / "private/fixtures/baseline.bin"
 SEED = ROOT / "private/fixtures/diagnostic-ota.bin"
 

@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import patch
 
 SPEC = importlib.util.spec_from_file_location(
-    "uart_flash_read", Path(__file__).resolve().parents[1] / "uart-flash-read.py")
+    "uart_flash_read", Path(__file__).resolve().parents[1] / "flash/uart-flash-read.py")
 TOOL = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(TOOL)
 
@@ -101,7 +101,7 @@ class ReaderTests(unittest.TestCase):
                 report[name + "_sha256"] = TOOL.sha256(b"evidence")
             (bounded / "report.json").write_text(json.dumps(report))
             fake = SimpleNamespace(open=lambda: None, close=lambda: None)
-            argv = ["uart-flash-read.py", "read-status", "--port", "/fixture", "--output",
+            argv = ["flash/uart-flash-read.py", "read-status", "--port", "/fixture", "--output",
                     str(root / "private/status"), "--small-report", str(bounded / "report.json"),
                     "--rom-report", str(root / "private/rom/report.json")]
             with patch.object(TOOL, "ROOT", root), patch.object(sys, "argv", argv), \
@@ -139,7 +139,7 @@ class ReaderTests(unittest.TestCase):
             root = Path(temporary)
             output = root / "private/observation"
             fake = SimpleNamespace(open=lambda: None, close=lambda: None)
-            argv = ["uart-flash-read.py", "observe", "--port", "/fixture", "--output", str(output)]
+            argv = ["flash/uart-flash-read.py", "observe", "--port", "/fixture", "--output", str(output)]
             with patch.object(TOOL, "ROOT", root), patch.object(sys, "argv", argv), \
                     patch.object(TOOL.os, "umask"), patch("sys.stdout", new_callable=io.StringIO), \
                     patch.dict(sys.modules, {"serial": SimpleNamespace(Serial=lambda **_kw: fake)}), \
@@ -325,7 +325,7 @@ class ReaderTests(unittest.TestCase):
                 output.write(b"x" * length)
                 return {"bytes": length, "packets": length // 1024, "duplicate_packets": 0}
 
-            argv = ["uart-flash-read.py", "read-full", "--port", "/fixture", "--output",
+            argv = ["flash/uart-flash-read.py", "read-full", "--port", "/fixture", "--output",
                     str(private / "full"), "--small-report", str(bounded / "report.json"),
                     "--rom-report", str(private / "rom" / "report.json")]
             with patch.object(TOOL, "ROOT", root), patch.object(sys, "argv", argv), \

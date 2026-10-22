@@ -34,7 +34,7 @@ PROJECT = Path("project/realtek_amebaD_va0_example/GCC-RELEASE")
 LOCK = json.loads((FIRMWARE / "sdk.lock.json").read_text())
 TOOL_LOCK = FIRMWARE / "probe/toolchain.lock.json"
 LAYOUT = FIRMWARE / "plaf103-layout.json"
-AUDITOR = ROOT / "tools/audit-ota-layout.py"
+AUDITOR = ROOT / "tools/audit/audit-ota-layout.py"
 STOCK = PRIVATE / "firmware/PLAF103_OTA_010115.bin"
 RUST = FIRMWARE / "rust"
 ENTRY = FIRMWARE / "ports/amebad/example_entry.c"
@@ -411,7 +411,7 @@ def source_inputs(profile):
     paths = [FIRMWARE / "sdk.lock.json", TOOL_LOCK, Path(__file__).resolve()]
     if profile != "baseline":
         paths += [FIRMWARE / "tools/rampark.py", FIRMWARE / "tools/sdkhooks.py", AUDITOR,
-                  ROOT / "tools/audit-sdk-flash-users.py"]
+                  ROOT / "tools/audit/audit-sdk-flash-users.py"]
         paths += [ENTRY, ROOT / "Cargo.toml", ROOT / "Cargo.lock", ROOT / "rust-toolchain.toml"]
         paths += rust_sources()
     if profile in MODEL_PROFILES:

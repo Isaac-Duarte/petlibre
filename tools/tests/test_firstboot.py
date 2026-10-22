@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "firmware/tools"))
 import firstboot
 sys.path.pop(0)
-spec = importlib.util.spec_from_file_location("firstboot_preflight", ROOT / "tools/prepare-firstboot.py")
+spec = importlib.util.spec_from_file_location("firstboot_preflight", ROOT / "tools/flash/prepare-firstboot.py")
 preflight = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(preflight)
 BUILD = ROOT / "private/firmware-build/plaf103-firstboot"

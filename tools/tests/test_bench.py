@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 
 SPEC = importlib.util.spec_from_file_location(
-    "bench", Path(__file__).resolve().parents[1] / "bench.py")
+    "bench", Path(__file__).resolve().parents[1] / "bench/bench.py")
 BENCH = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(BENCH)
 CONFIG = {"relay_port": "relay", "uart_port": "uart", "baseline": "b", "rom_report": "r"}

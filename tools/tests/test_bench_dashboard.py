@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import patch
 
 SPEC = importlib.util.spec_from_file_location(
-    "bench_dashboard", Path(__file__).resolve().parents[1] / "bench-dashboard.py")
+    "bench_dashboard", Path(__file__).resolve().parents[1] / "bench/bench-dashboard.py")
 DASH = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(DASH)
 

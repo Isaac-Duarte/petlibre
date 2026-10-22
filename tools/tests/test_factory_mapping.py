@@ -5,7 +5,7 @@ import unittest
 from support import evidence
 
 ROOT = Path(__file__).resolve().parents[2]
-SPEC = importlib.util.spec_from_file_location("factory_mapping", ROOT / "tools/audit-factory-mapping.py")
+SPEC = importlib.util.spec_from_file_location("factory_mapping", ROOT / "tools/audit/audit-factory-mapping.py")
 TOOL = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(TOOL)
 

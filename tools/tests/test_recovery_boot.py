@@ -6,7 +6,7 @@ import unittest
 from support import evidence
 
 ROOT = Path(__file__).resolve().parents[2]
-SPEC = importlib.util.spec_from_file_location("recovery_boot", ROOT / "tools/audit-recovery-boot.py")
+SPEC = importlib.util.spec_from_file_location("recovery_boot", ROOT / "tools/audit/audit-recovery-boot.py")
 TOOL = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(TOOL)
 ROM = ROOT / "private/upstream/ameba-rtos-d/project/realtek_amebaD_va0_example/GCC-RELEASE/project_lp/asdk/lib/rom_bcut/km0_irom.bin"

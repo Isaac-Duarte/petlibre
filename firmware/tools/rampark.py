@@ -117,8 +117,8 @@ def check_leaf(disassembly, address, size, minimum_barriers=3):
 
 def audit(sdk, project, binutils, objects):
     """`objects` maps KM0/KM4 to the linked Rust archive containing this code."""
-    users = module("rampark_flash_users", "tools/audit-sdk-flash-users.py")
-    layout = module("rampark_ota_layout", "tools/audit-ota-layout.py")
+    users = module("rampark_flash_users", "tools/audit/audit-sdk-flash-users.py")
+    layout = module("rampark_ota_layout", "tools/audit/audit-ota-layout.py")
     image = sdk / project / "project_hp/asdk/image/OTA_All.bin"
     payload = layout.container(image.read_bytes())
     regions = layout.regions(payload)

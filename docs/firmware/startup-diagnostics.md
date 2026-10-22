@@ -16,7 +16,7 @@ Live RSIP mapping entry 0 identifies bank 0 or 1 when virtual `0x0c000000` maps 
 `audit-firmware-startup.py` verifies the frozen OTA/manifest, embedded identity, finalized receive-only capture hashes, event coverage, actual bank mapping, ordering, and observation interval. Missing/wrong build, faults, incomplete or malformed records, repeated startup, and policy-specific failures are distinct failing outcomes. It emits fixed fields rather than arbitrary device text. Example using your own complete evidence bundles:
 
 ```sh
-.venv/bin/python tools/audit-firmware-startup.py \
+.venv/bin/python tools/audit/audit-firmware-startup.py \
   --capture private/captures/normal-boot \
   --manifest private/verification/review/build-manifest.json \
   --image private/verification/review/image.bin \

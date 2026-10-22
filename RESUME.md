@@ -17,7 +17,7 @@ levels to FW30. See [optical inputs](docs/firmware/optical-inputs.md). FW31:
 the relay bench installed a changed image (one loader NAK, finished with
 `--interrupted`) and ran a full 8 MiB dump. Only bank 1 differs from the FW08
 read B, and it matches the installed review byte for byte.
-`tools/bench-dashboard.py` shows bench progress on localhost.
+`tools/bench/bench-dashboard.py` shows bench progress on localhost.
 
 **FW14 (current, battery and external power inputs) is in progress.** FW15 is done (storage scope); real-motion journal wiring is carried to FW16.
 
@@ -166,7 +166,7 @@ Reconfirm it with the operator before any bench operation.
 - Feeder TX (breadboard row 1) goes to adapter RXD and, through the 4.7 kΩ
   resistor (row 5), to COM2; NO2 is on the GND rail. Relay 2 replaces the button,
   which is removed. Feeder RX (row 2) goes to adapter TXD. Relays 3 and 4 are spare.
-- `tools/bench.py` drives the relays and the UART tools ([bench control](docs/hardware/bench.md));
+- `tools/bench/bench.py` drives the relays and the UART tools ([bench control](docs/hardware/bench.md));
   ports are `/dev/serial/by-id/` paths in ignored `private/bench.json`. The relay
   board can take `/dev/ttyUSB0`.
 - Physical, October 21, 2026: relay-1 boots reached the Rust bring-up banner and

@@ -9,7 +9,7 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
-SPEC = importlib.util.spec_from_file_location("virtual_feeder", ROOT / "tools/virtual-feeder.py")
+SPEC = importlib.util.spec_from_file_location("virtual_feeder", ROOT / "tools/emulate/virtual-feeder.py")
 VF = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(VF)
 
@@ -186,7 +186,7 @@ class VirtualFeederTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir=ROOT / "private/verification") as scratch:
             data = Path(scratch) / "scenario.json"
             report = Path(scratch) / "report.json"
-            command = ["python3", str(ROOT / "tools/virtual-feeder.py"), "--scenario", str(data), "--report", str(report)]
+            command = ["python3", str(ROOT / "tools/emulate/virtual-feeder.py"), "--scenario", str(data), "--report", str(report)]
             data.write_text(json.dumps(scenario([action(1, "expect", online=True)], end=2)))
             self.assertEqual(subprocess.run(command, capture_output=True).returncode, 0)
             self.assertEqual(subprocess.run(command, capture_output=True).returncode, 2)
@@ -197,7 +197,7 @@ class VirtualFeederTests(unittest.TestCase):
             self.assertEqual(subprocess.run(command, capture_output=True).returncode, 2)
 
     def test_checked_in_examples(self):
-        paths = sorted((ROOT / "tools/scenarios/virtual-feeder").glob("*.json"))
+        paths = sorted((ROOT / "tools/emulate/scenarios/virtual-feeder").glob("*.json"))
         self.assertGreaterEqual(len(paths), 8)
         for path in paths:
             with self.subTest(scenario=path.name):

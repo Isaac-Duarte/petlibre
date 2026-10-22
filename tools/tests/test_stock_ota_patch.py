@@ -7,7 +7,7 @@ import unittest
 from support import evidence
 
 ROOT = Path(__file__).resolve().parents[2]
-SPEC = importlib.util.spec_from_file_location("stock_patch", ROOT / "tools/prepare-stock-ota-test.py")
+SPEC = importlib.util.spec_from_file_location("stock_patch", ROOT / "tools/flash/prepare-stock-ota-test.py")
 PATCH = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(PATCH)
 

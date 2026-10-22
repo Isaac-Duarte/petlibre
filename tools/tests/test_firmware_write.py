@@ -6,7 +6,7 @@ import tempfile
 import unittest
 
 TOOLS = Path(__file__).resolve().parents[1]
-SPEC = importlib.util.spec_from_file_location('firmware_startup_write', TOOLS / 'audit-firmware-startup.py')
+SPEC = importlib.util.spec_from_file_location('firmware_startup_write', TOOLS / 'audit/audit-firmware-startup.py')
 S = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(S)
 T0 = datetime(2026, 10, 21, 10, 0, tzinfo=timezone.utc)

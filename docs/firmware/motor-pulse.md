@@ -4,7 +4,7 @@ Status: prepared offline: probe, host tests, build variant and guards. Not insta
 
 ## What the image does
 
-`build.py plaf103-firstboot --motion-probe` builds the `fw16-pulse` variant. It records `startup_motion_policy: fw16-pulse-v1` and `variant: fw16-pulse` in the manifest, gets its own build ID, and replaces the FW13 optics probe. Nothing else builds it.
+`petlibre-build plaf103-firstboot --motion-probe` builds the `fw16-pulse` variant. It records `startup_motion_policy: fw16-pulse-v1` and `variant: fw16-pulse` in the manifest, gets its own build ID, and replaces the FW13 optics probe. Nothing else builds it.
 
 After the LED probe, `probes/pulse.rs`:
 1. Skips everything unless this is a clean cold boot: reset reason 0 and its backup-register marker clear.

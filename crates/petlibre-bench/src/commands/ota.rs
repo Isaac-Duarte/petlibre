@@ -69,7 +69,7 @@ pub enum Variant {
 }
 
 impl Variant {
-    /// The `firmware/tools/build.py` flag that selects it.
+    /// The `petlibre-build` flag that selects it.
     pub fn flag(self) -> &'static str {
         match self {
             Self::Fw11Reset => "--trial-reset",
@@ -111,7 +111,7 @@ pub struct OtaArgs {
     /// No-motion variant for --build: fw11-reset, fw11-fail or speaker.
     #[arg(long, value_parser = parse_variant)]
     pub variant: Option<Variant>,
-    /// Python for --build's tools (default: .venv/bin/python under --root).
+    /// Python for --build's review (default: .venv/bin/python under --root).
     #[arg(long)]
     pub python: Option<PathBuf>,
     /// petlibre-local config for the health check's `status` (root-relative).
@@ -708,12 +708,22 @@ impl Bench {
         self.status.line(text);
     }
 
-    /// Run one Python tool from the root; its exit status and duration.
-    fn run_python(&mut self, python: &Path, args: &[String], step: &str) -> Result<(i32, f64)> {
-        say!("+ {} {}", self.rel(python), args.join(" "));
+    /// Run one build step from the root, `petlibre-build` or with `python` a
+    /// Python tool; its exit status and duration.
+    fn run_step(
+        &mut self,
+        step: &str,
+        python: Option<&Path>,
+        args: &[String],
+    ) -> Result<(i32, f64)> {
+        let program = python.map_or_else(|| "petlibre-build".into(), |p| self.rel(p));
+        say!("+ {program} {}", args.join(" "));
         self.status.step(step);
         let started = Instant::now();
-        let code = self.tools.python(python, args, &mut self.status)?;
+        let code = match python {
+            Some(python) => self.tools.python(python, args, &mut self.status)?,
+            None => self.tools.build(args, &mut self.status)?,
+        };
 
         if crate::interrupted() {
             return Err(Error::Interrupted);
@@ -810,7 +820,7 @@ impl Bench {
                     self.rel(&python)
                 ),
             )?;
-            cached = self.cached_review(args, &python)?;
+            cached = self.cached_review(args)?;
             match &cached {
                 Some(found) => {
                     self.note(&format!(
@@ -893,17 +903,13 @@ impl Bench {
     /// The newest complete review in private/verification whose identity is
     /// the one a build of these sources would embed (sources, variant and
     /// update key all feed it), root-relative; `None` means build.
-    fn cached_review(&mut self, args: &OtaArgs, python: &Path) -> Result<Option<PathBuf>> {
+    fn cached_review(&mut self, args: &OtaArgs) -> Result<Option<PathBuf>> {
         if args.rebuild {
             return Ok(None);
         }
-        let mut query = vec![
-            "firmware/tools/build.py".to_string(),
-            "source-id".into(),
-            "--image".into(),
-        ];
+        let mut query = vec!["source-id".to_string(), "--image".into()];
         query.extend(args.variant.map(|v| v.flag().to_string()));
-        let answer = self.tools.python_query(python, &query)?;
+        let answer = self.tools.build_query(&query)?;
         let identity = answer.stdout.trim();
         if answer.code != 0 || !is_build_id(identity) {
             say!("Could not compute the source identity; building");
@@ -940,13 +946,10 @@ impl Bench {
         review: &Path,
         timing: &mut Timing,
     ) -> Result<bool> {
-        let mut build = vec![
-            "firmware/tools/build.py".to_string(),
-            "plaf103-firstboot".into(),
-        ];
+        let mut build = vec!["plaf103-firstboot".to_string()];
         build.extend(args.variant.map(|v| v.flag().to_string()));
         timing.ran = true;
-        let (code, seconds) = self.run_python(python, &build, BUILD_STEPS[0])?;
+        let (code, seconds) = self.run_step(BUILD_STEPS[0], None, &build)?;
         timing.build = Some(seconds);
         self.note(&format!("Build took {}", duration(seconds)));
         if code != 0 {
@@ -962,7 +965,7 @@ impl Bench {
             "--output".into(),
             review.display().to_string(),
         ];
-        let (code, seconds) = self.run_python(python, &freeze, BUILD_STEPS[1])?;
+        let (code, seconds) = self.run_step(BUILD_STEPS[1], Some(python), &freeze)?;
         timing.review = Some(seconds);
         self.note(&format!("Review took {}", duration(seconds)));
         if code != 0 {

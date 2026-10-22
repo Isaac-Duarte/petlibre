@@ -351,11 +351,9 @@ fn python_files(directory: &Path, recursive: bool, out: &mut Vec<PathBuf>) {
 /// before an optional fixture test can mask it through an unavailable input.
 fn tool_dependencies(root: &Path, errors: &mut Vec<String>) {
     let tools = root.join("tools");
-    let firmware_tools = root.join("firmware/tools");
 
     let mut scripts = Vec::new();
     python_files(&tools, true, &mut scripts);
-    python_files(&firmware_tools, false, &mut scripts);
     scripts.sort();
 
     for path in scripts {
@@ -369,16 +367,11 @@ fn tool_dependencies(root: &Path, errors: &mut Vec<String>) {
                 continue;
             }
 
-            // Resolve as the Python loader does: a repository-relative `tools/...`
-            // (firmware tools fall back to `firmware/tools/...`), then a bare name
-            // beside the script or in `tools/`, then a category-qualified name.
+            // Resolve as the Python loader does: a repository-relative `tools/...`,
+            // then a bare name beside the script or in `tools/`, then a
+            // category-qualified name.
             let dest = if value.starts_with("tools/") {
-                let dest = root.join(&value);
-                if !dest.exists() && directory == firmware_tools {
-                    root.join("firmware").join(&value)
-                } else {
-                    dest
-                }
+                root.join(&value)
             } else if !value.contains('/') {
                 let dest = directory.join(&value);
                 if dest.exists() {

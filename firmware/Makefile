@@ -1,5 +1,3 @@
-PYTHON ?= python3
-
 .PHONY: help bootstrap baseline bringup plaf103 plaf103-firstboot test
 
 help:
@@ -11,8 +9,11 @@ help:
 	@echo "test: run hardware-independent Rust firmware tests on the host"
 	@echo "These targets only build desktop artifacts; there is no flash target."
 
+# petlibre-build runs as its own executable: `cargo run` would set
+# RUSTUP_TOOLCHAIN, which a firmware build refuses as a compiler override.
 bootstrap baseline bringup plaf103 plaf103-firstboot:
-	$(PYTHON) tools/build.py $@
+	cargo build --locked --release -p petlibre-build
+	../target/release/petlibre-build $@
 
 test:
 	cargo test --locked -p petlibre-core -p petlibre-amebad-common -p petlibre-amebad -p petlibre-firstboot -p petlibre-ffi

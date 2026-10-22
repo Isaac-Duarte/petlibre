@@ -10,7 +10,7 @@ build = "build.rs"
 
 [features]
 # Generate SDK bindings from the pinned AmebaD headers (target builds only).
-# Requires PETLIBRE_SDK_DIR and PETLIBRE_NEWLIB_INCLUDE; set by firmware/tools.
+# Requires PETLIBRE_SDK_DIR and PETLIBRE_NEWLIB_INCLUDE; set by petlibre-build.
 sdk = ["dep:bindgen"]
 # Select the core; only KM4 calls the SDK.
 km0 = []

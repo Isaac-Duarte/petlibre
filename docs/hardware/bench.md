@@ -48,7 +48,7 @@ The relay board also enumerates as a USB serial port and can take the name the U
 | `flash-prepare NAME` | `loader`, `read small`, `update inspect` and `update prepare`; prints the plan summary and the exact `flash-execute` line, then stops |
 | `flash-execute NAME` | Checks relay 1 stayed on and the strap is released, runs `update execute` with the reviewed hash, then `boot` |
 | `give-way-prepare NAME`, `give-way-execute NAME` | The same pair for `give-way` (`--fallback` names bank 0's frozen review) |
-| `ota NAME --review DIR`, `ota NAME --build` | With `--build`, first runs `build.py` and the review freeze. Signs the review with `petlibre-local ota-sign`, offers it with `ota-offer` to the server already running, takes receive-only UART captures until the new build confirms, falls back or `--minutes` (20) pass, then polls `petlibre-local status` until the server's health shows the build. Prints a timing summary. Never touches power or opens the relay board |
+| `ota NAME --review DIR`, `ota NAME --build` | With `--build`, first runs `petlibre-build` and the review freeze. Signs the review with `petlibre-local ota-sign`, offers it with `ota-offer` to the server already running, takes receive-only UART captures until the new build confirms, falls back or `--minutes` (20) pass, then polls `petlibre-local status` until the server's health shows the build. Prints a timing summary. Never touches power or opens the relay board |
 | `itest NAME` | Real-device integration scenarios ([below](#integration-suite)): runs its own hotspot, `serve` and receive-only UART capture, installs over the air, and restores the bench at the end. Opens the relay board only with `--power`, for cold boots |
 | `demo [PATTERN…]` | Clicks spare relays 3 and 4 (chase, blink, heartbeat, Morse); reads but never sets power or the strap; refuses while another bench command runs; at most 120 toggles, and both spares end off |
 
@@ -71,7 +71,7 @@ target/release/petlibre-bench ota fw12-unit-01 --build                     # bui
 target/release/petlibre-bench ota fw12-unit-02 --review private/verification/<review>
 ```
 
-- **Build (`--build`):** runs two Python children from the root, their output streamed to the progress log. First `firmware/tools/build.py plaf103-firstboot`, then `tools/flash/review-development-image.py build --build private/firmware-build/plaf103-firstboot --output private/verification/NAME-review`. The run then continues as with `--review` on that directory.
+- **Build (`--build`):** runs two children from the root, their output streamed to the progress log. First `petlibre-build plaf103-firstboot` (beside the bench binary, or `--build-bin`), then the Python review `tools/flash/review-development-image.py build --build private/firmware-build/plaf103-firstboot --output private/verification/NAME-review`. The run then continues as with `--review` on that directory.
   - The interpreter is `.venv/bin/python` unless `--python` names another.
   - `--variant fw11-reset|fw11-fail` adds `--trial-reset` or `--trial-fail`. `fw16-pulse` is refused: motion builds stay manual, then go through `--review` with `--attended-motion`.
   - A nonzero exit from either child stops without signing or offering.
@@ -109,7 +109,7 @@ The server serves each offer to completion once, so after a fallback, retry with
 `itest` runs named real-device scenarios against the feeder on the bench. It is a bench command, not a test target: `cargo test` and `make check` never reach it. Builds go in over the air. The UART stays attached, receive-only, for the whole run. It is what the scenarios assert on, it is the evidence, and it is the way back when the feeder stops answering.
 
 ```sh
-cargo build --release -p petlibre-bench -p petlibre-flash -p petlibre-local --bins --examples
+cargo build --release --bins --examples
 target/release/petlibre-bench itest --list
 target/release/petlibre-bench itest itest-20261022-01 --build --tier smoke    # a few minutes
 target/release/petlibre-bench itest itest-20261022-02 --build --power         # standard (default tier)
@@ -119,7 +119,7 @@ target/release/petlibre-bench itest itest-20261022-04 --review private/verificat
 
 **Tiers.** `--tier smoke` runs `ota-update`, `requests` and `request-auth`, which takes minutes once the build under test is running. `standard` (the default) runs the whole functional suite. `soak` adds long runs. `--only` picks scenarios whatever their tier.
 
-**Builds.** `--build` first asks `build.py source-id --image` for the identity a build of these sources would embed. That identity covers every source input, the variant and the update key. If a complete review with that `startup_identity` is already in `private/verification`, the suite signs it rather than building again. `petlibre-bench ota --build` does the same, and `--rebuild` builds anyway. So after the first run on unchanged sources, neither the build under test nor the `fw11-fail` variant is rebuilt.
+**Builds.** `--build` first asks `petlibre-build source-id --image` for the identity a build of these sources would embed. That identity covers every source input, the variant and the update key. If a complete review with that `startup_identity` is already in `private/verification`, the suite signs it rather than building again. `petlibre-bench ota --build` does the same, and `--rebuild` builds anyway. So after the first run on unchanged sources, neither the build under test nor the `fw11-fail` variant is rebuilt.
 
 | Scenario | Checks | Needs |
 | --- | --- | --- |

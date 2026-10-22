@@ -1,7 +1,5 @@
 [workspace]
 members = ["crates/*"]
-# `cargo build`/`cargo run` at the root mean the local server, as before the move.
-default-members = ["crates/petlibre-local"]
 resolver = "3"
 
 [workspace.package]

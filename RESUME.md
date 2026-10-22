@@ -7,10 +7,28 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
+**October 22, late night: the firmware build is Rust (physical, autonomous).**
+- **`petlibre-build`** (`crates/petlibre-build`) replaces `firmware/tools/build.py` and its six audit modules (pad table, RAM park, SDK hooks, first-boot mains, flash/eFuse writers, task stacks), plus the OTA layout audit it ran as a child. `make -C firmware <profile>` and `check-cross` call it; run the executable itself, since `cargo run` sets `RUSTUP_TOOLCHAIN`, which a build refuses.
+- **Equivalence shown before deleting the Python:**
+  - Static: on the same Python-built speaker tree, all seven Rust audits equal the manifest's.
+  - Static: identities equal Python's `source_identity` for the same inputs (bare, image, speaker, fw11-fail).
+  - A Rust build of the same variant matches the Python manifest except for content hashes, which follow from the new identity. Overlays (`sdk_overrides`), policies, sizes, symbols and verdicts are identical, and the generated credential headers are byte-identical apart from the banner.
+- **Identity inputs changed:** the builder's `src/` replaces the Python tools, so every build ID is new and cached reviews are rebuilt once.
+- **Review stays Python** (unicorn factory-mapping emulation); it now asks `petlibre-build inputs` and `petlibre-build audit` for the inputs and the linked-code audits.
+- **Real-build fixture tests:** `cargo test -p petlibre-build -- --ignored` (in `make check-fixtures`, never `make check`).
+- **Physical:** `itest-20261022-12 --build --tier smoke --power` passed: ota-update in 4 min 45 s, requests, request-auth.
+- **Flash now:**
+  - **Bank 1:** Rust-built normal image `0f8b3ad851fc…` (OTA v45, confirmed).
+  - **Bank 0:** `36c9a086…`.
+  - **Next manifest version:** 46.
+  - **Settings:** restored by the suite.
+- **Bench state:** restored. Feeder off, hotspot down, no server.
+- **Next:** port the image review (needs a Rust answer for the unicorn factory-mapping emulation), a run-history page, and more scenarios.
+
 **October 22, night: integration suite scaled (physical, autonomous).**
 - **Faster runs:**
   - `--tier smoke|standard|soak`.
-  - `--build` reuses a review of the same sources: `build.py source-id --image`, with `--rebuild` to force a build.
+  - `--build` reuses a review of the same sources: `petlibre-build source-id --image`, with `--rebuild` to force a build.
   - The UART capture chains on its own thread.
   - After every scenario the suite checks settings, stored Wi-Fi, build and bank, and puts back what it can.
 - **New scenarios:** `soak` (soak tier), and `ota-power-cuts` (needs `--destructive`).
@@ -27,7 +45,7 @@ image, bench state, next task, or acceptance evidence changes.
   - **Next manifest version:** 45.
 - **Bench state:** restored. The hotspot is down, no server is running and the feeder is off.
 - **Bench page:** stopped when its 8-hour bound ran out. Restarting it was refused by Claude Code's auto mode, so the owner restarts it. It needs a restart to show the fixed scenario steps.
-- **Next:** port `build.py` and the review tool to Rust (the bench's remaining Python), a run-history page, and more scenarios: transport faults through a proxy, settings power cuts, boot loops.
+- **Next (superseded above):** port `build.py` and the review tool to Rust, a run-history page, and more scenarios: transport faults through a proxy, settings power cuts, boot loops.
 
 **October 22, late evening: FW27 integration suite (physical over the air, autonomous).**
 - **Built:** `petlibre-bench itest NAME` runs eight real-device scenarios. It installs over the air and asserts on receive-only UART, and it owns the hotspot, `serve` and, with `--power`, the supply relay, restoring all three afterwards ([bench](docs/hardware/bench.md#integration-suite)). Merged from the `bench-itest` worktree.
@@ -45,7 +63,7 @@ image, bench state, next task, or acceptance evidence changes.
 - **Finding (static, stock):** the "buzzer" is a real speaker. Stock decodes AAC into the codec's line output by SPORT/GDMA and holds PB23 HIGH while it plays.
 - **Built:** a codec shim (16 kHz mono, 8-page DMA ring) and Rust tunes (`petlibre-core/src/tone.rs`). There is a speaker task (`petlibre-amebad/src/audio.rs`) with a startup chime, and a signed `play` request. Design and evidence: [audio](docs/firmware/audio.md).
 - **Heard on the unit:** the chime, `coin`, `twinkle` and `meal`. A second request during playback gets `busy`, and `sound` off gives `muted`. Volume is now on a decibel scale, after the linear one made 40 and 80 sound alike.
-- **Speaker variant (the owner's first "alternate build"):** `build.py --speaker` adds a signed TCP audio stream (port 7700). `petlibre-local speak FILE` decodes any format with ffmpeg and plays it ([audio](docs/firmware/audio.md#speaker-variant-network-audio)).
+- **Speaker variant (the owner's first "alternate build"):** `petlibre-build plaf103-firstboot --speaker` adds a signed TCP audio stream (port 7700). `petlibre-local speak FILE` decodes any format with ffmpeg and plays it ([audio](docs/firmware/audio.md#speaker-variant-network-audio)).
 - **Stock clips:** the 11 voice clips from the stock FAT (`0x4B0000`) are extracted for the owner only, in ignored `private/stock-audio-clips/`.
 - **Flash now:**
   - **Bank 1:** `fw24-speaker-ota-20261022-01` (`c286fbac…`, OTA v22, speaker variant, confirmed). Install a normal build to leave it.
@@ -61,7 +79,7 @@ image, bench state, next task, or acceptance evidence changes.
   - A rebuilt image went into bank 0 over UART: 158 sectors, no NAK.
   - Then OTA. Regressions found and fixed:
     - **Review tool:** `review-development-image.py` shadowed its own `payload` function.
-    - **Optics stack overflow:** LTO inlined a 3 KiB probe temporary into the optics task, overflowing its 4 KiB stack. The first trial overflowed and KM0 gave way. The next build (out-of-line init, still 4 KiB) overflowed during init, before the watchdog opened, and hung; that needed a UART give-way. Now: out-of-line slot init, an 8 KiB stack, and a build-time per-task stack audit (`firmware/tools/stackaudit.py`).
+    - **Optics stack overflow:** LTO inlined a 3 KiB probe temporary into the optics task, overflowing its 4 KiB stack. The first trial overflowed and KM0 gave way. The next build (out-of-line init, still 4 KiB) overflowed during init, before the watchdog opened, and hung; that needed a UART give-way. Now: out-of-line slot init, an 8 KiB stack, and a build-time per-task stack audit (now `petlibre-build`'s `audit/stack.rs`).
     - **Build and fixture tools:** `plaf103` and `bringup` hadn't built since FW07 (credential headers). The `fw11-reset` variant no longer passed the link audit. The link audit flagged an instruction whose bytes equal an address (now only literal and data words count). Two fixture tests were stale.
 - **FW11:** the feeder task now opens the watchdog before the startup diagnostic, with a 10-minute trial deadline (`amebad/src/supervise.rs`). Over the air: failed start (`fw11-fail`), hang after start (`fw11-reset`) and never-confirms (server stopped) each counted 1-2-3 and gave way to bank 0.
 - **FW11 and FW12 are Done.** FW11 adds a lost confirmation (a power cut mid-trial). FW12: `petlibre-bench ota NAME --build` runs build, review, sign, offer, watch and health in 6 minutes.

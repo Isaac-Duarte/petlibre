@@ -181,7 +181,7 @@ Server-to-firmware requests can carry an HMAC so that a party with only the Wi-F
 
 ## Firmware build side
 
-`build.py` reads `private/fw-mqtt.json` (broker address, port, device ID and password) into an ignored generated header, like the Wi-Fi credentials, and records only its hash in the manifest. A new startup policy `fw08-transport-v1` binds the `PLMQT1` record format both ways, as FW07's policies do.
+The builder (`petlibre-build`) reads `private/fw-mqtt.json` (broker address, port, device ID and password) into an ignored generated header, like the Wi-Fi credentials, and records only its hash in the manifest. A new startup policy `fw08-transport-v1` binds the `PLMQT1` record format both ways, as FW07's policies do.
 
 ## Stages and acceptance
 

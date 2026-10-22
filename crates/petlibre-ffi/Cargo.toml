@@ -11,7 +11,7 @@ publish.workspace = true
 crate-type = ["staticlib", "rlib"]
 
 [features]
-# Link the AmebaD ports for one core (target builds from firmware/tools/build.py).
+# Link the AmebaD ports for one core (target builds from petlibre-build).
 km0 = ["dep:petlibre-amebad-common", "petlibre-amebad-common/km0"]
 km4 = ["dep:petlibre-amebad", "dep:petlibre-firstboot", "petlibre-firstboot/km4"]
 fw16-pulse = ["km4", "petlibre-firstboot/fw16-pulse"]

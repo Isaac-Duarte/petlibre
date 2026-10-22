@@ -29,19 +29,12 @@ pub fn snapshot() -> Snapshot {
 impl Snapshot {
     /// Zero-based research-board bank, or unknown for an unrecognized mapping.
     pub fn bank(self) -> Option<u8> {
-        if self.control & 1 == 0 || self.start != 0x0c00_0000 {
-            return None;
+        crate::sdk::FlashMmuEntry {
+            control: self.control,
+            start: self.start,
+            offset: self.offset,
         }
-        let physical = if self.control & 2 != 0 {
-            self.start.checked_sub(self.offset)?
-        } else {
-            self.start.checked_add(self.offset)?
-        };
-        match physical {
-            0x0800_6000 => Some(0),
-            0x0818_6000 => Some(1),
-            _ => None,
-        }
+        .bank()
     }
 }
 

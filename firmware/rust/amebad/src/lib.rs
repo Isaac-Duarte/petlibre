@@ -52,4 +52,6 @@ pub mod probes;
 #[cfg(any(not(target_os = "none"), feature = "km4"))]
 pub mod transport;
 #[cfg(any(not(target_os = "none"), feature = "km4"))]
+pub mod updater;
+#[cfg(any(not(target_os = "none"), feature = "km4"))]
 pub mod watchdog;

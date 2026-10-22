@@ -66,6 +66,31 @@ pub struct FlashMmuEntry {
     pub offset: u32,
 }
 
+impl FlashMmuEntry {
+    /// Zero-based research-board bank this KM0 mapping runs from, or `None`
+    /// for an unrecognized mapping.
+    pub fn bank(self) -> Option<u8> {
+        if self.control & 1 == 0 || self.start != 0x0c00_0000 {
+            return None;
+        }
+        let physical = if self.control & 2 != 0 {
+            self.start.checked_sub(self.offset)?
+        } else {
+            self.start.checked_add(self.offset)?
+        };
+        match physical {
+            0x0800_6000 => Some(0),
+            0x0818_6000 => Some(1),
+            _ => None,
+        }
+    }
+}
+
+/// Bank 1 as the updater may write it: the reviewed 0x150000-byte footprint
+/// from 0x186000, in 4 KiB sectors. Only while running from bank 0.
+pub const BANK1_OFFSET: u32 = 0x18_6000;
+pub const BANK1_SECTORS: u32 = 0x15_0000 / 0x1000;
+
 /// One event from the KM4 Wi-Fi shim's ring (`example_entry.c`), numbered
 /// from 1. `kind`: 1 on, 2 scan, 3 connect, 4 DHCP, 5 lost, 6 backoff.
 #[repr(C)]

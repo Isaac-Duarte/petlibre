@@ -144,6 +144,10 @@ pub struct Hardware {
     pub systick: u32,
     /// The 64 KiB storage region as NOR: erase sets 1s, program clears bits.
     pub storage: Vec<u8>,
+    /// Bank 1's reviewed footprint, for the updater.
+    pub bank1: Vec<u8>,
+    /// The bank the modeled image runs from (the MMU's view).
+    pub running_bank: Option<u8>,
     pub storage_erases: [u32; 16],
 }
 
@@ -232,6 +236,8 @@ impl Default for Hardware {
             spins: 0,
             systick: 7,
             storage: vec![u8::MAX; 16 * 4096],
+            bank1: vec![u8::MAX; 0x15_0000],
+            running_bank: Some(1),
             storage_erases: [0; 16],
         }
     }

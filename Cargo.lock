@@ -1404,9 +1404,11 @@ name = "wellfed-amebad"
 version = "0.1.0"
 dependencies = [
  "cortex-m",
+ "ed25519-dalek",
  "wellfed-amebad-sdk",
  "wellfed-core",
  "wellfed-testkit",
+ "sha2 0.10.9",
 ]
 
 [[package]]

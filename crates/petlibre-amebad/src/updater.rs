@@ -28,7 +28,7 @@ pub use crate::arming::Hooks;
 use crate::arming::{self, Arming, Poll};
 use crate::flash::park::Mmio;
 use crate::net_status;
-use crate::probes::flash::Provider;
+use crate::provider::Provider;
 use crate::sdk::{self, TcpRecv, TransportConfig};
 
 pub const CONNECT_TIMEOUT_MS: u32 = 3000;

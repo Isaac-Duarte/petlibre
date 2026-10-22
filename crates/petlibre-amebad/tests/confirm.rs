@@ -7,7 +7,7 @@ use petlibre_amebad::arming::{self, Hooks};
 use petlibre_amebad::confirm::*;
 use petlibre_amebad::flash::park::{self, Mmio};
 use petlibre_amebad::flash::peer::MARKER_REGISTER;
-use petlibre_amebad::probes::flash::{ATTEMPT_BIT, Provider};
+use petlibre_amebad::provider::{ATTEMPT_BIT, Provider};
 use petlibre_amebad::sdk::fake;
 use petlibre_amebad::stopped;
 use petlibre_amebad::trial::{CONFIRM_SECTOR, identity};

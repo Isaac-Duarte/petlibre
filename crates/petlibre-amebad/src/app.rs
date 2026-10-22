@@ -18,9 +18,9 @@ use crate::confirm::{self, Confirm, HookedStorage};
 use crate::flash::hooks::{self, HookProvider, HookTicket};
 use crate::flash::park::Hardware;
 use crate::health::Boot;
-use crate::probes::flash::Provider;
 use crate::probes::optics;
 use crate::probes::wifi::{Probe, Record};
+use crate::provider::Provider;
 use crate::transport::{self, Link};
 use crate::updater::{self, Hooked, Hooks, Updater};
 #[cfg(not(feature = "fw11-reset"))]

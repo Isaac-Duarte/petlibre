@@ -8,7 +8,7 @@ use ed25519_dalek::{Signer, SigningKey};
 use petlibre_amebad::arming::Hooks;
 use petlibre_amebad::flash::park::{self, Mmio};
 use petlibre_amebad::flash::peer::MARKER_REGISTER;
-use petlibre_amebad::probes::flash::{ATTEMPT_BIT, Provider};
+use petlibre_amebad::provider::{ATTEMPT_BIT, Provider};
 use petlibre_amebad::sdk::fake::api::FAKE_TRANSPORT;
 use petlibre_amebad::sdk::fake::{self, TcpRecvScript};
 use petlibre_amebad::sdk::{self, WifiEvent};

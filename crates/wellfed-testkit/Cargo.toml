@@ -1,14 +1,14 @@
 [package]
-license = "MIT"
+license.workspace = true
 name = "wellfed-testkit"
 version = "0.1.0"
-edition = "2024"
-rust-version = "1.99"
+edition.workspace = true
+rust-version.workspace = true
 description = "Host fakes shared by firmware tests and the virtual feeder"
-publish = false
+publish.workspace = true
 
 [dependencies]
-wellfed-core = { path = "../wellfed-core" }
+wellfed-core.workspace = true
 
 [lints]
 workspace = true

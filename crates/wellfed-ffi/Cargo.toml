@@ -1,11 +1,11 @@
 [package]
-license = "MIT"
+license.workspace = true
 name = "wellfed-ffi"
 version = "0.1.0"
-edition = "2024"
-rust-version = "1.99"
+edition.workspace = true
+rust-version.workspace = true
 description = "C ABI for linking the Rust replacement firmware into the AmebaD SDK"
-publish = false
+publish.workspace = true
 
 [lib]
 crate-type = ["staticlib", "rlib"]
@@ -18,11 +18,11 @@ fw16-pulse = ["km4", "wellfed-amebad/fw16-pulse"]
 fw11-reset = ["km4", "wellfed-amebad/fw11-reset"]
 
 [dependencies]
-wellfed-core = { path = "../wellfed-core" }
-wellfed-amebad = { path = "../wellfed-amebad", optional = true }
+wellfed-core.workspace = true
+wellfed-amebad = { workspace = true, optional = true }
 
 [lints]
 workspace = true
 
 [dev-dependencies]
-wellfed-testkit = { path = "../wellfed-testkit" }
+wellfed-testkit.workspace = true

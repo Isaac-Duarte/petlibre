@@ -1,11 +1,11 @@
 [package]
-license = "MIT"
+license.workspace = true
 name = "wellfed-amebad-sdk"
 version = "0.1.0"
-edition = "2024"
-rust-version = "1.99"
+edition.workspace = true
+rust-version.workspace = true
 description = "Pinned AmebaD SDK calls for the PLAF103 ports, with a deterministic host fake"
-publish = false
+publish.workspace = true
 build = "build.rs"
 
 [features]
@@ -17,7 +17,7 @@ km0 = []
 km4 = []
 
 [target.'cfg(target_os = "none")'.dependencies]
-cortex-m = "0.7.7"
+cortex-m.workspace = true
 
 [build-dependencies]
 bindgen = { version = "0.72.1", optional = true, default-features = false, features = ["runtime"] }

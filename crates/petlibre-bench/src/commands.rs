@@ -23,7 +23,9 @@ use crate::status::{Status, relative};
 use crate::tools::{Analyzer, Observer, Tools};
 use crate::{Error, Result, now, require, sha256_hex};
 
+pub mod itest;
 pub mod ota;
+pub use itest::ItestArgs;
 pub use ota::{OtaArgs, Variant};
 
 pub const STRAP_SECONDS: f64 = 2.0;

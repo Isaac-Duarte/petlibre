@@ -584,8 +584,19 @@ pub fn health_matches(status: &Value, build: &str) -> std::result::Result<String
     Ok(report)
 }
 
+/// A signed update ready to offer: root-relative paths under private/, as
+/// the server's offer takes them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Staged {
+    pub build: String,
+    pub version: u32,
+    pub review: PathBuf,
+    pub manifest: String,
+    pub image: String,
+}
+
 /// A frozen review's startup identity, or a refusal.
-fn build_id(manifest: &Value) -> Result<String> {
+pub(crate) fn build_id(manifest: &Value) -> Result<String> {
     let id = manifest["startup_identity"].as_str().unwrap_or("");
     require(
         id.len() == 64 && id.bytes().all(|b| b.is_ascii_hexdigit()),
@@ -710,6 +721,50 @@ impl Bench {
     }
 
     fn ota_run(&mut self, args: &OtaArgs, timing: &mut Timing) -> Result<u8> {
+        let Some(staged) = self.ota_stage(args, timing)? else {
+            return Ok(1);
+        };
+
+        let offering = Instant::now();
+        let offer = [
+            "ota-offer",
+            "--manifest",
+            &staged.manifest,
+            "--image",
+            &staged.image,
+        ];
+        let offered = self.local(&offer.map(String::from))?;
+        timing.sign_offer =
+            Some(timing.sign_offer.unwrap_or(0.0) + offering.elapsed().as_secs_f64());
+        if offered != 0 {
+            say!(
+                "Offer failed; nothing captured. petlibre-local serve and the hotspot must already be up: the bench never starts them."
+            );
+            return Ok(1);
+        }
+
+        say!(
+            "Offered version {}; watching the UART for up to {} min",
+            staged.version,
+            args.minutes
+        );
+        self.ota_watch(args, &staged.build, staged.version, timing)?;
+
+        let checking = Instant::now();
+        let health = self.ota_health(args, &staged.build);
+        timing.health = Some(checking.elapsed().as_secs_f64());
+        health?;
+        Ok(0)
+    }
+
+    /// Everything before the offer: refusals, the optional build and review,
+    /// then signing the next version. `None` when a child failed (it said why);
+    /// the integration suite offers the result through its own server.
+    pub(crate) fn ota_stage(
+        &mut self,
+        args: &OtaArgs,
+        timing: &mut Timing,
+    ) -> Result<Option<Staged>> {
         require(args.minutes > 0.0, "--minutes must be positive")?;
         // clap counts a flag as always present, so this pairing is checked here.
         require(
@@ -748,7 +803,7 @@ impl Bench {
         self.fresh(&signed)?;
 
         if args.build && !self.ota_build(args, &python, &review_arg, timing)? {
-            return Ok(1);
+            return Ok(None);
         }
 
         let image = review.join("image.bin");
@@ -788,40 +843,21 @@ impl Bench {
             &signed_arg,
         ];
         timing.ran = true;
-        let offering = Instant::now();
-        if self.local(&sign.map(String::from))? != 0 {
-            timing.sign_offer = Some(offering.elapsed().as_secs_f64());
+        let signing = Instant::now();
+        let code = self.local(&sign.map(String::from))?;
+        timing.sign_offer = Some(signing.elapsed().as_secs_f64());
+        if code != 0 {
             say!("Signing failed; nothing was offered.");
-            return Ok(1);
+            return Ok(None);
         }
 
-        let offer = [
-            "ota-offer",
-            "--manifest",
-            &signed_arg,
-            "--image",
-            &image_arg,
-        ];
-        let offered = self.local(&offer.map(String::from))?;
-        timing.sign_offer = Some(offering.elapsed().as_secs_f64());
-        if offered != 0 {
-            say!(
-                "Offer failed; nothing captured. petlibre-local serve and the hotspot must already be up: the bench never starts them."
-            );
-            return Ok(1);
-        }
-
-        say!(
-            "Offered version {version}; watching the UART for up to {} min",
-            args.minutes
-        );
-        self.ota_watch(args, &build, version, timing)?;
-
-        let checking = Instant::now();
-        let health = self.ota_health(args, &build);
-        timing.health = Some(checking.elapsed().as_secs_f64());
-        health?;
-        Ok(0)
+        Ok(Some(Staged {
+            build,
+            version,
+            review: review_arg,
+            manifest: signed_arg,
+            image: image_arg,
+        }))
     }
 
     /// Build the firmware and freeze its review; false if either failed.

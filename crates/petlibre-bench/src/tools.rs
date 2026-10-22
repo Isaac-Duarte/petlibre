@@ -59,6 +59,11 @@ pub trait Observer {
     /// Wait for the capture to end; its report's `result` on success.
     fn finish(&mut self) -> Result<Value>;
     fn kill(&mut self);
+    /// Whether the capture is still recording; one that cannot tell says
+    /// no, so a reader waits for [`Self::finish`].
+    fn running(&mut self) -> bool {
+        false
+    }
 }
 
 pub trait Analyzer {
@@ -355,6 +360,10 @@ impl Observer for Observing {
     fn kill(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+    }
+
+    fn running(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(None))
     }
 }
 

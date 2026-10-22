@@ -7,6 +7,18 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
+**October 22, late evening: FW27 integration suite (physical over the air, autonomous).**
+- **Built:** `petlibre-bench itest NAME` runs eight real-device scenarios. It installs over the air and asserts on receive-only UART, and it owns the hotspot, `serve` and, with `--power`, the supply relay, restoring all three afterwards ([bench](docs/hardware/bench.md#integration-suite)). Merged from the `bench-itest` worktree.
+- **Result:** `itest-20261022-06 --build --power` passed all eight in 26 minutes. Runs 01–05 found and fixed harness bugs, plus one firmware build bug: the `fw11-fail` variant's constant failure let LTO drop the image's flash writers, so it failed the pinned link audit. The forced failure is now opaque (`black_box`), and the audit pins are unchanged.
+- **Bench before the run:** the speaker session's `serve` (2-hour timeout) was still running, and I stopped it with SIGTERM. That session then put its own state back: hotspot down, feeder off.
+- **Flash now:**
+  - **Bank 1:** the normal build `877b2c9b…`, re-signed as `itest-20261022-06-fault` (OTA v32), confirmed.
+  - **Bank 0:** unchanged (`36c9a086…`).
+  - **NOR settings:** generation 3001 (lights 1, sound 1, volume 40).
+  - **Wi-Fi:** no stored credentials (generation 7).
+  - **Next manifest version:** 33.
+- **Bench state:** restored. The hotspot is down, no server is running and the feeder is off.
+
 **October 22, evening: FW24 speaker (physical over the air, owner listening).**
 - **Finding (static, stock):** the "buzzer" is a real speaker. Stock decodes AAC into the codec's line output by SPORT/GDMA and holds PB23 HIGH while it plays.
 - **Built:** a codec shim (16 kHz mono, 8-page DMA ring) and Rust tunes (`petlibre-core/src/tone.rs`). There is a speaker task (`petlibre-amebad/src/audio.rs`) with a startup chime, and a signed `play` request. Design and evidence: [audio](docs/firmware/audio.md).

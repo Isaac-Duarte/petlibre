@@ -1,0 +1,619 @@
+//! The live [`Rig`]: the bench's real hotspot, `petlibre-local` children,
+//! UART captures and, with `--power`, the feeder supply relay.
+//!
+//! The owner's standing authorization (AGENTS.md) covers bringing the
+//! hotspot up and running `serve` as a bounded foreground process, provided
+//! the prior network and service state comes back afterwards. So the rig
+//! records the hotspot's and the supply's state before touching either,
+//! refuses to start beside a `serve` it did not start, and restores
+//! everything in [`LiveRig::restore`], which `Drop` also runs.
+//!
+//! The UART is held by back-to-back receive-only `petlibre-flash read
+//! observe` segments of [`SEGMENT_SECONDS`]. The capture writer flushes each
+//! received chunk, so the growing `serial-rx.bin` is read while the segment
+//! runs. A segment only chains to the next when the rig is polled, so a
+//! call that blocks (a build) leaves a gap in the capture; the forger, whose
+//! refusals the suite counts, runs as a child while the chain is pumped.
+
+use std::fs::{self, File};
+use std::io::{Read, Seek, SeekFrom, Write};
+use std::net::{SocketAddr, TcpStream};
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::time::{Duration, Instant};
+
+use serde_json::Value;
+
+use super::{Fault, ItestArgs, Rig, Server};
+use crate::commands::Bench;
+use crate::commands::ota::{OtaArgs, Staged, Timing};
+use crate::config::{CAPTURES, VERIFICATION};
+use crate::relay::{POWER, STRAP};
+use crate::tools::Observer;
+use crate::{Error, Result, require};
+
+/// The observer's own limit for one capture.
+pub const SEGMENT_SECONDS: f64 = 180.0;
+const START_SECONDS: f64 = 20.0;
+const STOP_SECONDS: f64 = 10.0;
+const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
+/// The forger waits up to 90 s for health, then 10 s per case.
+const FORGE_SECONDS: u64 = 90;
+
+struct Segment {
+    observer: Box<dyn Observer>,
+    rx: PathBuf,
+    offset: u64,
+}
+
+#[derive(Default)]
+struct Children {
+    serve: Option<Child>,
+    broker: Option<Child>,
+    fault: Option<Child>,
+}
+
+pub struct LiveRig<'b> {
+    bench: &'b mut Bench,
+    name: String,
+    started: Instant,
+    config_arg: String,
+    http: SocketAddr,
+    mqtt: SocketAddr,
+    token: String,
+    connection: String,
+    /// The hotspot's state before the run; `None` until recorded.
+    hotspot_was_up: Option<bool>,
+    hotspot_up: bool,
+    power: bool,
+    power_was_on: Option<bool>,
+    children: Children,
+    local_bin: PathBuf,
+    uart: Option<Segment>,
+    segments: u32,
+    /// Bytes pumped during a child's run, not yet handed to the suite.
+    held: Vec<u8>,
+    /// Root-relative capture directories, for the summary.
+    pub captures: Vec<String>,
+    server_log: PathBuf,
+    restored: bool,
+}
+
+fn read_json(root: &Path, path: &Path) -> Result<Value> {
+    let text = fs::read_to_string(root.join(path))
+        .map_err(|error| Error::Bench(format!("{}: {error}", path.display())))?;
+    serde_json::from_str(&text)
+        .map_err(|error| Error::Bench(format!("{}: {error}", path.display())))
+}
+
+fn address(config: &Value, key: &str) -> Result<SocketAddr> {
+    config[key]
+        .as_str()
+        .and_then(|text| text.parse().ok())
+        .ok_or_else(|| Error::Bench(format!("The server config has no usable {key}")))
+}
+
+impl<'b> LiveRig<'b> {
+    /// Check everything that can refuse before the bench changes: configs,
+    /// binaries, ports, unused evidence names and no `serve` running.
+    pub fn open(bench: &'b mut Bench, args: &ItestArgs, local_bin: PathBuf) -> Result<Self> {
+        let root = bench.root.clone();
+        let name = args.name().to_string();
+        let config = read_json(&root, &args.config)?;
+        let hotspot = read_json(&root, &args.hotspot)?;
+
+        let connection = hotspot["connection"]
+            .as_str()
+            .filter(|c| !c.is_empty())
+            .ok_or_else(|| Error::Bench(format!("{} has no connection", args.hotspot.display())))?
+            .to_string();
+        let token = config["api_token"]
+            .as_str()
+            .ok_or_else(|| Error::Bench("The server config has no api_token".into()))?
+            .to_string();
+
+        let rig = Self {
+            name: name.clone(),
+            started: Instant::now(),
+            config_arg: args.config.display().to_string(),
+            http: address(&config, "http_listen")?,
+            mqtt: address(&config, "mqtt_listen")?,
+            token,
+            connection,
+            hotspot_was_up: None,
+            hotspot_up: false,
+            power: args.power,
+            power_was_on: None,
+            children: Children::default(),
+            uart: None,
+            segments: 0,
+            held: Vec::new(),
+            captures: Vec::new(),
+            server_log: root.join(VERIFICATION).join(format!("{name}-servers.log")),
+            local_bin,
+            restored: false,
+            bench,
+        };
+
+        require(
+            Path::new(&rig.bench.config.uart_port).exists(),
+            format!("UART port {} is missing", rig.bench.config.uart_port),
+        )?;
+        require(
+            rig.local_bin().is_file(),
+            format!(
+                "{} not found; cargo build --release -p petlibre-local --examples",
+                rig.local_bin().display()
+            ),
+        )?;
+        for example in ["ota_fault_server", "request_forger"] {
+            let path = rig.example(example);
+            require(
+                path.is_file(),
+                format!(
+                    "{} not found; cargo build --release -p petlibre-local --examples",
+                    path.display()
+                ),
+            )?;
+        }
+        rig.bench.fresh(&rig.server_log)?;
+        rig.bench.fresh(&rig.segment_path(1))?;
+        require(
+            rig.get("/health", false).is_err(),
+            format!(
+                "Something already answers on {}; stop that serve first (the suite runs its own)",
+                rig.http
+            ),
+        )?;
+        Ok(rig)
+    }
+
+    /// Bring the bench to its test state: hotspot up, feeder powered (with
+    /// `--power`), the UART held and `serve` answering.
+    pub fn start(&mut self) -> Result<()> {
+        let up = self.hotspot_active()?;
+        self.hotspot_was_up = Some(up);
+        if up {
+            self.hotspot_up = true;
+        } else {
+            self.hotspot(true)?;
+        }
+
+        if self.power {
+            let on = self.bench.get(POWER)?;
+            self.power_was_on = Some(on);
+            if !on {
+                self.note("Feeder supply was off; switching it on");
+                self.bench.set(STRAP, false)?;
+                self.bench.set(POWER, true)?;
+            }
+        }
+
+        self.uart()?;
+        self.server(Server::Serve)
+    }
+
+    fn local_bin(&self) -> PathBuf {
+        self.local_bin.clone()
+    }
+
+    /// `cargo build --examples` puts them in `examples/` beside the binary.
+    fn example(&self, name: &str) -> PathBuf {
+        let bin = self.local_bin();
+        bin.parent()
+            .unwrap_or(Path::new("."))
+            .join("examples")
+            .join(name)
+    }
+
+    fn segment_path(&self, n: u32) -> PathBuf {
+        self.bench
+            .root
+            .join(CAPTURES)
+            .join(format!("{}-uart-{n:02}", self.name))
+    }
+
+    fn hotspot_active(&self) -> Result<bool> {
+        let output = Command::new("nmcli")
+            .args(["-t", "-f", "NAME", "connection", "show", "--active"])
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|error| Error::Bench(format!("nmcli: {error}")))?;
+        require(
+            output.status.success(),
+            format!(
+                "nmcli could not list connections: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ),
+        )?;
+        Ok(String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .any(|line| line == self.connection))
+    }
+
+    fn spawn(&self, program: &Path, args: &[&str]) -> Result<Child> {
+        let log = File::options()
+            .create(true)
+            .append(true)
+            .open(&self.server_log)?;
+        let child = Command::new(program)
+            .current_dir(&self.bench.root)
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(log.try_clone()?)
+            .stderr(log)
+            .spawn()?;
+        Ok(child)
+    }
+
+    /// Wait for `ready`, failing early if `child` exits first.
+    fn until_ready(&self, child: &mut Child, what: &str, ready: impl Fn() -> bool) -> Result<()> {
+        let deadline = Instant::now() + Duration::from_secs_f64(START_SECONDS);
+        while Instant::now() < deadline {
+            if crate::interrupted() {
+                return Err(Error::Interrupted);
+            }
+            if let Some(status) = child.try_wait()? {
+                return Err(Error::Bench(format!(
+                    "{what} exited ({status}); see {}",
+                    self.bench.rel(&self.server_log)
+                )));
+            }
+            if ready() {
+                return Ok(());
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        Err(Error::Bench(format!(
+            "{what} did not become ready in {START_SECONDS:.0} s"
+        )))
+    }
+
+    fn start_serve(&mut self) -> Result<()> {
+        let mut child = self.spawn(&self.local_bin(), &["serve", "--config", &self.config_arg])?;
+        let ready = self.until_ready(&mut child, "petlibre-local serve", || {
+            self.get("/health", false).is_ok()
+        });
+        self.children.serve = Some(child);
+        ready
+    }
+
+    fn start_broker(&mut self) -> Result<()> {
+        let mut child = self.spawn(&self.local_bin(), &["broker", "--config", &self.config_arg])?;
+        let mqtt = self.mqtt;
+        let ready = self.until_ready(&mut child, "petlibre-local broker", || {
+            TcpStream::connect_timeout(&mqtt, Duration::from_millis(500)).is_ok()
+        });
+        self.children.broker = Some(child);
+        ready
+    }
+
+    fn start_fault(&mut self, fault: Fault, staged: &Staged) -> Result<()> {
+        let at = fault.at().to_string();
+        let args = [
+            "--config",
+            &self.config_arg,
+            "--manifest",
+            &staged.manifest,
+            "--image",
+            &staged.image,
+            "--fault",
+            fault.arg(),
+            "--at",
+            &at,
+        ];
+        let child = self.spawn(&self.example("ota_fault_server"), &args)?;
+        self.children.fault = Some(child);
+        Ok(())
+    }
+
+    /// SIGTERM, which `serve` handles by stopping its broker child too; a
+    /// kill if it is still running after [`STOP_SECONDS`].
+    fn stop(child: Option<Child>) {
+        let Some(mut child) = child else { return };
+        let pid = rustix::process::Pid::from_child(&child);
+        let _ = rustix::process::kill_process(pid, rustix::process::Signal::TERM);
+
+        let deadline = Instant::now() + Duration::from_secs_f64(STOP_SECONDS);
+        while Instant::now() < deadline {
+            if matches!(child.try_wait(), Ok(Some(_))) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    fn stop_servers(&mut self) {
+        Self::stop(self.children.fault.take());
+        Self::stop(self.children.serve.take());
+        Self::stop(self.children.broker.take());
+    }
+
+    /// One HTTP/1.1 exchange with `serve`'s loopback API; the status code
+    /// and JSON body.
+    fn http(
+        &self,
+        method: &str,
+        path: &str,
+        auth: bool,
+        body: Option<&Value>,
+    ) -> Result<(u16, Value)> {
+        let mut stream = TcpStream::connect_timeout(&self.http, Duration::from_secs(2))?;
+        stream.set_read_timeout(Some(HTTP_TIMEOUT))?;
+        stream.set_write_timeout(Some(HTTP_TIMEOUT))?;
+
+        let body = body.map(|b| b.to_string()).unwrap_or_default();
+        let mut request = format!(
+            "{method} {path} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n",
+            self.http,
+            body.len()
+        );
+        if auth {
+            request += &format!("Authorization: Bearer {}\r\n", self.token);
+        }
+        request += "\r\n";
+        stream.write_all(request.as_bytes())?;
+        stream.write_all(body.as_bytes())?;
+
+        let mut response = Vec::new();
+        stream.read_to_end(&mut response)?;
+        parse_response(&response)
+    }
+
+    fn get(&self, path: &str, auth: bool) -> Result<Value> {
+        match self.http("GET", path, auth, None)? {
+            (200, value) => Ok(value),
+            (code, value) => Err(Error::Bench(format!("GET {path}: {code} {value}"))),
+        }
+    }
+
+    fn post(&self, path: &str, body: &Value) -> Result<Value> {
+        match self.http("POST", path, true, Some(body))? {
+            (200, value) => Ok(value),
+            (code, value) => Err(Error::Bench(format!("POST {path}: {code} {value}"))),
+        }
+    }
+
+    /// Put the bench back as [`Self::start`] found it. Safe to repeat.
+    pub fn restore(&mut self) {
+        if self.restored {
+            return;
+        }
+        self.restored = true;
+
+        self.stop_servers();
+        if let Some(mut segment) = self.uart.take() {
+            segment.observer.kill();
+        }
+        if let Some(was) = self.hotspot_was_up
+            && was != self.hotspot_up
+            && let Err(error) = self.hotspot(was)
+        {
+            eprintln!("Could not restore the hotspot {}: {error}", self.connection);
+        }
+        if self.power_was_on == Some(false)
+            && let Err(error) = self.bench.cut_power()
+        {
+            eprintln!("Could not switch the feeder supply back off: {error}");
+        }
+    }
+}
+
+impl Drop for LiveRig<'_> {
+    fn drop(&mut self) {
+        self.restore();
+    }
+}
+
+/// Split an HTTP/1.1 response into its status code and JSON body, decoding
+/// a chunked body.
+pub fn parse_response(response: &[u8]) -> Result<(u16, Value)> {
+    let text = String::from_utf8_lossy(response);
+    let (head, body) = text
+        .split_once("\r\n\r\n")
+        .ok_or_else(|| Error::Bench("Malformed HTTP response".into()))?;
+    let code = head
+        .split_whitespace()
+        .nth(1)
+        .and_then(|code| code.parse().ok())
+        .ok_or_else(|| Error::Bench("HTTP response has no status code".into()))?;
+
+    let chunked = head.lines().any(|line| {
+        let line = line.to_ascii_lowercase();
+        line.starts_with("transfer-encoding:") && line.contains("chunked")
+    });
+    let body = if chunked {
+        dechunk(body)
+    } else {
+        body.to_string()
+    };
+    let value = if body.trim().is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_str(&body)?
+    };
+    Ok((code, value))
+}
+
+fn dechunk(mut body: &str) -> String {
+    let mut out = String::new();
+    while let Some((size, rest)) = body.split_once("\r\n") {
+        let Ok(size) = usize::from_str_radix(size.trim(), 16) else {
+            break;
+        };
+        if size == 0 || rest.len() < size {
+            break;
+        }
+        out += &rest[..size];
+        body = rest[size..].trim_start_matches("\r\n");
+    }
+    out
+}
+
+impl Rig for LiveRig<'_> {
+    fn stage(&mut self, args: &OtaArgs) -> Result<Option<Staged>> {
+        self.bench.ota_stage(args, &mut Timing::default())
+    }
+
+    fn review_build(&mut self, review: &Path) -> Result<String> {
+        let manifest = read_json(&self.bench.root, &review.join("build-manifest.json"))?;
+        crate::commands::ota::build_id(&manifest)
+    }
+
+    fn server(&mut self, server: Server) -> Result<()> {
+        self.stop_servers();
+        let label = match &server {
+            Server::Serve => "petlibre-local serve".to_string(),
+            Server::Broker => "petlibre-local broker alone".to_string(),
+            Server::Faulty { fault, staged } => format!(
+                "broker + ota_fault_server ({}, version {})",
+                fault.arg(),
+                staged.version
+            ),
+        };
+        self.note(&format!("  Server: {label}"));
+
+        match server {
+            Server::Serve => self.start_serve(),
+            Server::Broker => self.start_broker(),
+            Server::Faulty { fault, staged } => {
+                self.start_broker()?;
+                self.start_fault(fault, &staged)
+            }
+        }
+    }
+
+    fn forge(&mut self) -> Result<Vec<Value>> {
+        require(
+            self.children.serve.is_none(),
+            "request_forger runs beside the bare broker only",
+        )?;
+        let seconds = FORGE_SECONDS.to_string();
+        let mut child = Command::new(self.example("request_forger"))
+            .current_dir(&self.bench.root)
+            .args(["--config", &self.config_arg, "--seconds", &seconds])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()?;
+
+        // Its four short lines fit the pipe, so stdout is read after it exits.
+        let status = loop {
+            if let Some(status) = child.try_wait()? {
+                break status;
+            }
+            if crate::interrupted() {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(Error::Interrupted);
+            }
+            let bytes = self.uart()?;
+            self.held.extend(bytes);
+            std::thread::sleep(Duration::from_millis(500));
+        };
+        require(status.success(), format!("request_forger exited {status}"))?;
+
+        let mut stdout = String::new();
+        if let Some(mut pipe) = child.stdout.take() {
+            pipe.read_to_string(&mut stdout)?;
+        }
+        stdout
+            .lines()
+            .map(|line| Ok(serde_json::from_str(line)?))
+            .collect()
+    }
+
+    fn offer(&mut self, staged: Option<&Staged>) -> Result<()> {
+        let body = match staged {
+            Some(staged) => serde_json::json!({"manifest": staged.manifest, "image": staged.image}),
+            None => serde_json::json!({}),
+        };
+        self.post("/api/replacement/ota/offer", &body).map(|_| ())
+    }
+
+    fn request(&mut self, body: &Value) -> Result<String> {
+        let answer = self.post("/api/replacement/request", body)?;
+        answer["id"]
+            .as_str()
+            .map(str::to_string)
+            .ok_or_else(|| Error::Bench(format!("Request answer has no id: {answer}")))
+    }
+
+    fn status(&mut self) -> Result<Value> {
+        self.get("/api/status", true)
+    }
+
+    fn hotspot(&mut self, up: bool) -> Result<()> {
+        let verb = if up { "up" } else { "down" };
+        self.note(&format!("  nmcli connection {verb} {}", self.connection));
+        let output = Command::new("nmcli")
+            .args(["connection", verb, &self.connection])
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|error| Error::Bench(format!("nmcli: {error}")))?;
+        require(
+            output.status.success(),
+            format!(
+                "nmcli connection {verb} failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ),
+        )?;
+        self.hotspot_up = up;
+        Ok(())
+    }
+
+    fn power_cycle(&mut self) -> Result<()> {
+        require(self.power, "A power cycle needs --power")?;
+        self.note("  Cold boot: supply off, then on");
+        self.bench.cut_power()?;
+        (self.bench.sleep)(self.bench.off_seconds)?;
+        self.bench.set(POWER, true)
+    }
+
+    fn uart(&mut self) -> Result<Vec<u8>> {
+        if self.uart.is_none() {
+            self.segments += 1;
+            let output = self.segment_path(self.segments);
+            self.bench.fresh(&output)?;
+            let observer = self.bench.start_observer(&output, SEGMENT_SECONDS)?;
+            self.captures.push(self.bench.rel(&output));
+            self.uart = Some(Segment {
+                observer,
+                rx: output.join("serial-rx.bin"),
+                offset: 0,
+            });
+        }
+
+        let segment = self.uart.as_mut().expect("a segment was just started");
+        let running = segment.observer.running();
+        let mut bytes = std::mem::take(&mut self.held);
+        if let Ok(mut file) = File::open(&segment.rx) {
+            file.seek(SeekFrom::Start(segment.offset))?;
+            let read = file.read_to_end(&mut bytes)?;
+            segment.offset += read as u64;
+        }
+
+        if !running {
+            // The segment ended; its last bytes are in hand. The next call
+            // starts another.
+            let mut segment = self.uart.take().expect("checked above");
+            self.bench.finish_observer(segment.observer.as_mut())?;
+        }
+        Ok(bytes)
+    }
+
+    fn wait(&mut self, seconds: f64) -> Result<()> {
+        (self.bench.sleep)(seconds)
+    }
+
+    fn clock(&self) -> f64 {
+        self.started.elapsed().as_secs_f64()
+    }
+
+    fn note(&mut self, text: &str) {
+        say!("{text}");
+        self.bench.status.line(text);
+    }
+}

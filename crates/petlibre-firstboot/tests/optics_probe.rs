@@ -7,11 +7,11 @@ use std::cell::RefCell;
 use petlibre_amebad::board::MOTOR_MASK;
 use petlibre_amebad::events::EventsFault;
 use petlibre_amebad::flash::park::{self, Mmio};
-use petlibre_amebad::probes::optics::{
-    self, CYCLES, Emitters, LEASE_MS, Probe, Record, State, WINDOWS, Window, plan,
-};
 use petlibre_amebad::sdk::fake;
 use petlibre_amebad::stopped;
+use petlibre_firstboot::probes::optics::{
+    self, CYCLES, Emitters, LEASE_MS, Probe, Record, State, WINDOWS, Window, plan,
+};
 
 thread_local! {
     static REGS: RefCell<[[u32; 12]; 2]> = const { RefCell::new([[0; 12]; 2]) };

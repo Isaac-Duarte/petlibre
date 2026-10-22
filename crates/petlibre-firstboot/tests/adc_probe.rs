@@ -1,7 +1,7 @@
 use petlibre_amebad::board::MOTOR_MASK;
-use petlibre_amebad::probes::adc::{Channel, Probe, Record, SAMPLE_MS};
 use petlibre_amebad::sdk::{ADC_ENABLE_BIT, GPIO_ENABLE_BIT, fake};
 use petlibre_amebad::stopped;
+use petlibre_firstboot::probes::adc::{Channel, Probe, Record, SAMPLE_MS};
 
 fn start() -> Probe {
     fake::reset_hardware();

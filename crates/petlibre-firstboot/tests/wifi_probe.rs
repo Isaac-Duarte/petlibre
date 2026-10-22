@@ -1,6 +1,6 @@
-use petlibre_amebad::probes::wifi::{POLL_MS, Probe, Record, Step};
 use petlibre_amebad::sdk::{WifiEvent, fake};
 use petlibre_amebad::stopped;
+use petlibre_firstboot::probes::wifi::{POLL_MS, Probe, Record, Step};
 
 fn start() -> Probe {
     fake::reset_hardware();

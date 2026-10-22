@@ -79,12 +79,13 @@ fn optic_is(pin: u32, level: bool) -> bool {
     latch == level && sdk::gpio_read_bit(pin) == level
 }
 
-pub(crate) fn optics_off() -> bool {
+/// Both emitters OFF, latch and pad input each.
+pub fn optics_off() -> bool {
     OPTICS.iter().all(|&pin| optic_is(pin, false))
 }
 
 /// PA15 at `a` and PB3 at `b`, latch and pad input each.
-pub(crate) fn optics_are(a: bool, b: bool) -> bool {
+pub fn optics_are(a: bool, b: bool) -> bool {
     optic_is(OPTICS[0], a) && optic_is(OPTICS[1], b)
 }
 

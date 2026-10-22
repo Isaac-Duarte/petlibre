@@ -13,9 +13,9 @@
 use petlibre_core::adc_scale::{AdcCalibration, SAMPLES};
 use petlibre_core::sensor_inputs::SensorReading;
 
-use crate::board::Board;
-use crate::sdk;
-use crate::stopped;
+use petlibre_amebad::board::Board;
+use petlibre_amebad::sdk;
+use petlibre_amebad::stopped;
 
 const DEADTIME_MS: u32 = 50;
 const LEASE_MS: u32 = 300;

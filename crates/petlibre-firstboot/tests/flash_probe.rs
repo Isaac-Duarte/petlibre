@@ -16,12 +16,12 @@ use petlibre_amebad::flash::park::{
 use petlibre_amebad::flash::peer::{
     BACKUP_BASE, MARKER_REGISTER, PARK_CHANNEL, PARK_TICK_LIMIT, Peer,
 };
-use petlibre_amebad::probes::flash::{EXPECTED_ID, FlashOps, Probe, Record, STRESS_SAVES};
 use petlibre_amebad::provider::{ATTEMPT_BIT, LeaseStage, Provider};
 use petlibre_amebad::sdk::{self, fake};
 use petlibre_amebad::stopped;
 use petlibre_core::flash_coord::{FlashFault, FlashPhase, FlashReply};
 use petlibre_core::settings_store::{SettingsStatus, SlotState};
+use petlibre_firstboot::probes::flash::{EXPECTED_ID, FlashOps, Probe, Record, STRESS_SAVES};
 
 #[derive(Default)]
 struct Km0 {

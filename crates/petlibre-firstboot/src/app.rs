@@ -14,19 +14,20 @@ use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 #[cfg(not(feature = "fw11-reset"))]
-use crate::confirm::{self, Confirm, HookedStorage};
-use crate::flash::hooks::{self, HookProvider, HookTicket};
-use crate::flash::park::Hardware;
-use crate::health::Boot;
+use petlibre_amebad::confirm::{self, Confirm, HookedStorage};
+use petlibre_amebad::flash::hooks::{self, HookProvider, HookTicket};
+use petlibre_amebad::flash::park::Hardware;
+use petlibre_amebad::health::Boot;
+use petlibre_amebad::provider::Provider;
+use petlibre_amebad::transport::{self, Link};
+use petlibre_amebad::updater::{self, Hooked, Hooks, Updater};
+#[cfg(not(feature = "fw11-reset"))]
+use petlibre_amebad::watch::{self, SdkGiveWay, Watch};
+use petlibre_amebad::watchdog::Watchdog;
+use petlibre_amebad::{config, leds, sdk, startup, stopped};
+
 use crate::probes::optics;
 use crate::probes::wifi::{Probe, Record};
-use crate::provider::Provider;
-use crate::transport::{self, Link};
-use crate::updater::{self, Hooked, Hooks, Updater};
-#[cfg(not(feature = "fw11-reset"))]
-use crate::watch::{self, SdkGiveWay, Watch};
-use crate::watchdog::Watchdog;
-use crate::{config, leds, sdk, startup, stopped};
 
 static PHASE: AtomicU32 = AtomicU32::new(0);
 static INPUT_MISMATCH: AtomicBool = AtomicBool::new(false);

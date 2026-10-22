@@ -37,14 +37,11 @@ pub mod board;
 pub mod confirm;
 
 mod active;
-#[cfg(target_os = "none")]
-pub mod app;
 pub mod config;
 pub mod events;
 pub mod health;
 pub mod net_status;
 pub mod owner;
-pub mod probes;
 pub mod provider;
 pub mod transport;
 pub mod updater;

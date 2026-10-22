@@ -30,13 +30,13 @@ use petlibre_core::feed_controller::{FeedController, FeedLimits};
 use petlibre_core::flash_coord::{FlashCoord, FlashReply};
 use petlibre_core::sensor_inputs::{SensorFilter, SensorInputs, SensorLimits, SensorReading};
 
-use crate::board::{self, Board, MOTOR_MASK};
-use crate::config::{FLASH_LIMITS, SYSTIMER_HZ};
-use crate::events::{Events, EventsConfig, EventsFault, EventsSnapshot};
-use crate::flash::park::{self, Mmio, Reply};
-use crate::provider::BOOT_COUNT_REGISTER;
-use crate::sdk::{self, GPIO_PORT_A};
-use crate::stopped;
+use petlibre_amebad::board::{self, Board, MOTOR_MASK};
+use petlibre_amebad::config::{FLASH_LIMITS, SYSTIMER_HZ};
+use petlibre_amebad::events::{Events, EventsConfig, EventsFault, EventsSnapshot};
+use petlibre_amebad::flash::park::{self, Mmio, Reply};
+use petlibre_amebad::provider::BOOT_COUNT_REGISTER;
+use petlibre_amebad::sdk::{self, GPIO_PORT_A};
+use petlibre_amebad::stopped;
 
 pub const POLL_MS: u32 = 2;
 /// Handshake polling before the supervisor (and its clock) is open.

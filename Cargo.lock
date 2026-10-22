@@ -1579,7 +1579,16 @@ dependencies = [
  "petlibre-amebad",
  "petlibre-amebad-common",
  "petlibre-core",
+ "petlibre-firstboot",
  "petlibre-testkit",
+]
+
+[[package]]
+name = "petlibre-firstboot"
+version = "0.1.0"
+dependencies = [
+ "petlibre-amebad",
+ "petlibre-core",
 ]
 
 [[package]]

@@ -6,9 +6,11 @@ use std::cell::RefCell;
 use petlibre_amebad::board::MOTOR_MASK;
 use petlibre_amebad::events::EventsFault;
 use petlibre_amebad::flash::park::{self, Mmio};
-use petlibre_amebad::probes::pulse::{self, DELAY_MS, LEASE_MS, MARKER, PULSE_MS, Probe, Record};
 use petlibre_amebad::sdk::{self, fake};
 use petlibre_amebad::stopped;
+use petlibre_firstboot::probes::pulse::{
+    self, DELAY_MS, LEASE_MS, MARKER, PULSE_MS, Probe, Record,
+};
 
 thread_local! {
     static REGS: RefCell<[[u32; 12]; 2]> = const { RefCell::new([[0; 12]; 2]) };

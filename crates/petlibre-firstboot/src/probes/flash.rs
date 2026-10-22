@@ -30,13 +30,13 @@ use petlibre_core::settings_store::{Settings, SettingsStatus, SettingsStore, Slo
 use petlibre_core::storage::JournalIo;
 use petlibre_core::tick_clock::TickClock;
 
-use crate::config::{FLASH_LIMITS, SYSTIMER_HZ, WATCHDOG};
-use crate::flash::park::{self, Mmio, Reply};
-use crate::flash::peer::MARKER_REGISTER;
-use crate::provider::{ATTEMPT_BIT, BOOT_COUNT_REGISTER, Provider, READY_TIMEOUT_MS};
-use crate::sdk;
-use crate::stopped;
-use crate::watchdog::Watchdog;
+use petlibre_amebad::config::{FLASH_LIMITS, SYSTIMER_HZ, WATCHDOG};
+use petlibre_amebad::flash::park::{self, Mmio, Reply};
+use petlibre_amebad::flash::peer::MARKER_REGISTER;
+use petlibre_amebad::provider::{ATTEMPT_BIT, BOOT_COUNT_REGISTER, Provider, READY_TIMEOUT_MS};
+use petlibre_amebad::sdk;
+use petlibre_amebad::stopped;
+use petlibre_amebad::watchdog::Watchdog;
 
 pub const POLL_MS: u32 = 10;
 pub const OP_GAP_MS: u32 = 10;

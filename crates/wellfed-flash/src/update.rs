@@ -99,12 +99,9 @@ impl Loaded {
 fn continued(context: &Context, evidence: &Evidence) -> Result<(Baseline, Vec<u8>, Vec<u8>)> {
     let baseline = context.baseline(&evidence.baseline)?;
     context.helper(evidence.helper.as_deref())?;
-    let rom = session::validate_rom_report(&context.root, &evidence.rom_report)?;
-    let small = session::validate_status_session(
-        &context.root,
-        Some(&evidence.small_report),
-        &evidence.port,
-    )?;
+    let rom = session::validate_rom_report(context, &evidence.rom_report)?;
+    let small =
+        session::validate_status_session(context, Some(&evidence.small_report), &evidence.port)?;
     Ok((baseline, rom, small))
 }
 
@@ -175,7 +172,7 @@ fn inspected(
     loaded: &Loaded,
 ) -> Result<(Vec<u8>, Vec<u8>, String)> {
     let (path, report, sha) = session::inspection(
-        &context.root,
+        context,
         args.evidence.inspection.as_deref(),
         &loaded.bindings,
     )?;
@@ -407,13 +404,14 @@ fn finish(
         report["end_utc"] = json!(utc());
         evidence::stream_hashes(directory, &mut report);
     }
-    evidence::save_report(&directory.join("report.json"), &report.borrow())?;
+    let saved = evidence::save_report(&directory.join("report.json"), &report.borrow());
     let report = report.borrow();
-    Ok(Outcome {
+    Ok(session::closed(
         complete,
-        summary: json!({"status": report["status"], "mode": report["mode"], "output": directory,
-                        "result": report.get("result"), "error": report.get("error")}),
-    })
+        json!({"status": report["status"], "mode": report["mode"], "output": directory,
+               "result": report.get("result"), "error": report.get("error")}),
+        saved,
+    ))
 }
 
 /// What an execution acts on, all checked before serial access: two
@@ -468,7 +466,7 @@ pub fn give_way(context: &Context, args: &GiveWayArgs) -> Result<Outcome> {
         return give_way_session(context, args, &loaded, None);
     }
     let (path, report, report_sha) = session::inspection(
-        &context.root,
+        context,
         args.evidence.inspection.as_deref(),
         &loaded.bindings,
     )?;

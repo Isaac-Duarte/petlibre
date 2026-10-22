@@ -86,7 +86,7 @@ fn string(text: &str, out: &mut Vec<u8>) {
             '\t' => out.extend_from_slice(b"\\t"),
             '\u{8}' => out.extend_from_slice(b"\\b"),
             '\u{c}' => out.extend_from_slice(b"\\f"),
-            ' '..='~' | '\u{7f}' => out.push(c as u8),
+            ' '..='~' => out.push(c as u8),
             _ => {
                 let mut units = [0u16; 2];
                 for unit in c.encode_utf16(&mut units) {
@@ -110,6 +110,11 @@ mod tests {
             String::from_utf8(canonical(&value).unwrap()).unwrap(),
             "{\"A\":{},\"a\":\"\\u00e9\\\"\\n\\u0001\\ud83d\\ude00\",\"b\":[1,-2,null,true]}"
         );
+    }
+
+    #[test]
+    fn delete_is_escaped_like_python() {
+        assert_eq!(canonical(&json!("\u{7f}~")).unwrap(), b"\"\\u007f~\"");
     }
 
     #[test]

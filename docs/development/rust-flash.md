@@ -34,11 +34,11 @@ Progress goes to stderr. Stdout carries exactly one JSON object: `status`, the o
 | 1 | Stopped after the port opened: inspect the report and journal; nothing was retried |
 | 2 | Refused before any serial access: no port opened, and no output directory was created unless the error says otherwise |
 
-Ctrl-C stops a session terminally and records the stop, as the Python clients' `KeyboardInterrupt` handling does.
+Ctrl-C stops a session terminally and records the stop, as the Python clients' `KeyboardInterrupt` handling does: it is checked before every transmission, so no frame follows the interrupt. A final report that cannot be saved after the port opened is a stop (exit 1, `report_error`), never a refusal.
 
 ## Verification
 
 - `cargo test -p wellfed-flash` runs every transaction against a modeled helper with a synthetic baseline, which only test builds accept. It covers wire order checked against an independently restated policy, sector scope, lost ACKs, the interrupted mode, both banks, give-way with restore, stock recovery and refusals.
-- `tools/tests/test_flash_rust.py` checks status decoding and journal hashing against the Python modules. With fixtures (`make check-fixtures`), it serves the pinned vendor helper under unicorn on a Unix socket (`WELLFED_FLASH_EMULATOR`) and drives the binary through update and give-way/restore. The test requires the Rust plan to equal the Python planner's, the transmitted bytes to equal `development-wire-policy.py`, and the journal to pass the Python inspector, all using the real frozen reviews and session reports. When `WELLFED_FLASH_EMULATOR` is set, reports record `"transport": "emulator"`.
+- `tools/tests/test_flash_rust.py` checks status decoding and journal hashing against the Python modules. With fixtures (`make check-fixtures`), it serves the pinned vendor helper under unicorn on a Unix socket (`WELLFED_FLASH_EMULATOR`) and drives the binary through update and give-way/restore. The test requires the Rust plan to equal the Python planner's, the transmitted bytes to equal `development-wire-policy.py`, and the journal to pass the Python inspector, all using the real frozen reviews and session reports. When `WELLFED_FLASH_EMULATOR` is set, reports record `"transport": "emulator"`, and a session continues only evidence from the same transport (Python reports count as serial).
 
 Emulation runs the helper's command parser and packet checks as ARM code. It models the ROM UART and flash calls, so it does not establish physical write acceptance, timing or power-cut behavior. Stock recovery is not exercised under emulation, because each verification reads the full 8 MiB.

@@ -62,7 +62,7 @@ function renderNow(d) {
   if (!c) { $("now").innerHTML = '<div class="card empty">No bench command recorded yet.</div>'; document.title = "Feeder Bench"; return; }
   const now = nowS(), end = c.finished || now;
   const relay = (n, label) => `<span class="pill ${c.relay[n] ? "on" : ""}">${label} ${c.relay[n] === undefined ? "—" : c.relay[n] ? "on" : "off"}</span>`;
-  const total = c.steps.length, done = c.outcome === "pass" ? total : c.steps.filter(s => s.state === "done").length;
+  const total = c.steps.length, done = c.outcome === "pass" ? total : c.steps.filter(s => !["pending", "running"].includes(s.state)).length;
   const meters = [];
   if (c.transfer) {
     const x = c.transfer, got = x.tx + x.rx, want = x.tx_expected + x.rx_expected, pct = Math.min(99, 100 * got / want);

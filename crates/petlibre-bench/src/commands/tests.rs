@@ -7,7 +7,7 @@ use std::rc::Rc;
 use super::*;
 use crate::relay::FakeBoard;
 use crate::status::FlashTool;
-use crate::tools::Captured;
+use crate::tools::{Capture, Captured};
 
 const PLAN: &str = r#"{"operation_plan": {"bank": 1, "ordered_sectors": [{}], "erase_sectors": 1,
     "target_ota_sha256": "t", "fallback_ota_sha256": "f"}}"#;
@@ -36,6 +36,9 @@ struct Calls {
     /// Python runs: the interpreter, then its arguments.
     python: Vec<Vec<String>>,
     python_codes: VecDeque<i32>,
+    /// What `build.py source-id --image` prints; none fails the query.
+    source_id: Option<String>,
+    python_queries: Vec<Vec<String>>,
     /// `petlibre-local status` queries and their answers; then the default.
     queries: Vec<Vec<String>>,
     statuses: VecDeque<Captured>,
@@ -61,6 +64,19 @@ impl Observer for FakeObserver {
         Ok(self.0.clone())
     }
     fn kill(&mut self) {}
+}
+
+/// The bench commands never chain captures; the suite's own tests use a rig.
+struct NoCapture;
+
+impl Capture for NoCapture {
+    fn segments(&mut self) -> Vec<PathBuf> {
+        Vec::new()
+    }
+    fn failure(&mut self) -> Option<String> {
+        None
+    }
+    fn stop(&mut self) {}
 }
 
 struct FakeAnalyzer {
@@ -149,6 +165,31 @@ impl Tools for FakeTools {
             fs::write(review.join("build-manifest.json"), manifest.to_string())?;
         }
         Ok(code)
+    }
+
+    fn python_query(&mut self, _: &Path, args: &[String]) -> Result<Captured> {
+        let mut calls = self.0.borrow_mut();
+        calls.python_queries.push(args.to_vec());
+        Ok(match &calls.source_id {
+            Some(id) => Captured {
+                code: 0,
+                stdout: format!("{id}\n"),
+                stderr: String::new(),
+            },
+            None => Captured {
+                code: 1,
+                ..Captured::default()
+            },
+        })
+    }
+
+    fn capture(
+        &mut self,
+        _: &str,
+        _: f64,
+        _: Box<dyn Fn(u32) -> PathBuf + Send>,
+    ) -> Result<Box<dyn Capture>> {
+        Ok(Box::new(NoCapture))
     }
 
     fn analyzer(&mut self, output: &Path, _: f64, _: u64) -> Result<Box<dyn Analyzer>> {
@@ -634,6 +675,7 @@ fn ota_review(rig: &Rig, manifest: Value) -> OtaArgs {
         name: "unit".into(),
         review: Some("private/verification/review".into()),
         build: false,
+        rebuild: false,
         variant: None,
         python: None,
         config: "private/server.json".into(),
@@ -889,6 +931,7 @@ fn build_args(rig: &Rig) -> OtaArgs {
         name: "unit".into(),
         review: None,
         build: true,
+        rebuild: false,
         variant: Some(Variant::Fw11Reset),
         python: None,
         config: "private/server.json".into(),
@@ -990,6 +1033,90 @@ fn ota_build_builds_reviews_offers_and_checks_health_in_order() {
     }
     assert_eq!(summary.len(), 7);
     assert!(rig.board.log().is_empty(), "no relay change");
+}
+
+/// A frozen review in private/verification; `complete` adds its review.json.
+fn old_review(rig: &Rig, name: &str, identity: &str, complete: bool) {
+    let review = rig.bench.root.join(VERIFICATION).join(name);
+    fs::create_dir_all(&review).unwrap();
+    fs::write(review.join("image.bin"), [0u8; 16]).unwrap();
+    let manifest = json!({"startup_identity": identity, "startup_motion_policy": null});
+    fs::write(review.join("build-manifest.json"), manifest.to_string()).unwrap();
+    if complete {
+        fs::write(review.join("review.json"), "{}").unwrap();
+    }
+}
+
+#[test]
+fn ota_build_reuses_a_review_of_the_same_sources() {
+    let mut rig = rig();
+    with_status(&mut rig, true);
+    let args = build_args(&rig);
+    old_review(&rig, "earlier-review", BUILD, true);
+    rig.tools.0.borrow_mut().source_id = Some(BUILD.into());
+    timed_pass(&rig);
+
+    assert_eq!(rig.bench.ota(&args).unwrap(), 0);
+
+    let calls = rig.tools.0.borrow();
+    assert_eq!(
+        calls.python_queries,
+        [[
+            "firmware/tools/build.py",
+            "source-id",
+            "--image",
+            "--trial-reset"
+        ]]
+    );
+    assert!(calls.python.is_empty(), "nothing built or reviewed");
+    assert!(
+        calls.ran[0].starts_with(
+            "local ota-sign --image private/verification/earlier-review/image.bin --version 1"
+        ),
+        "{:?}",
+        calls.ran
+    );
+    drop(calls);
+
+    let lines = recorded(&rig);
+    let row = |label: &str| {
+        lines
+            .iter()
+            .find(|l| l.trim_start().starts_with(label))
+            .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
+    };
+    assert_eq!(row("Build").as_deref(), Some("Build reused (same sources)"));
+    assert_eq!(
+        row("Review").as_deref(),
+        Some("Review reused (same sources)")
+    );
+}
+
+#[test]
+fn ota_build_builds_when_no_complete_review_matches_or_asked_to() {
+    for (identity, complete, rebuild) in [
+        ("ab".repeat(32), true, false),
+        (BUILD.to_string(), false, false),
+        (BUILD.to_string(), true, true),
+    ] {
+        let mut rig = rig();
+        with_status(&mut rig, true);
+        let mut args = build_args(&rig);
+        args.rebuild = rebuild;
+        old_review(&rig, "earlier-review", &identity, complete);
+        rig.tools.0.borrow_mut().source_id = Some(BUILD.into());
+        timed_pass(&rig);
+
+        assert_eq!(rig.bench.ota(&args).unwrap(), 0);
+
+        let calls = rig.tools.0.borrow();
+        assert!(
+            calls.ran[0].starts_with("python firmware/tools/build.py plaf103-firstboot"),
+            "{identity} {complete} {rebuild}: {:?}",
+            calls.ran
+        );
+        assert_eq!(calls.python_queries.is_empty(), rebuild);
+    }
 }
 
 #[test]

@@ -832,22 +832,30 @@ def main():
                         help="Build the FW11 failed-start variant (its startup diagnostic fails)")
     parser.add_argument("--speaker", action="store_true",
                         help="Build the speaker variant (plays signed network audio streams)")
+    parser.add_argument("--image", action="store_true",
+                        help="source-id: the identity a build of the chosen variant would embed "
+                             "(with the update key), so a reviewed build can be reused")
     args = parser.parse_args()
     try:
+        chosen = [name for name, flag in (("fw16-pulse", args.motion_probe),
+                                          ("fw11-reset", args.trial_reset),
+                                          ("fw11-fail", args.trial_fail),
+                                          ("speaker", args.speaker)) if flag]
+        if len(chosen) > 1:
+            raise ValueError("Choose one image variant")
+        variant = chosen[0] if chosen else None
         if args.command == "source-id":
             profile = "plaf103-firstboot"
-            print(source_identity(profile, {p: digest(p) for p in source_inputs(profile)}))
+            inputs = {p: digest(p) for p in source_inputs(profile)}
+            # check-cross compiles against the bare ID; --image matches build().
+            if args.image:
+                print(source_identity(profile, inputs, variant, ota_public_key(profile)))
+            else:
+                print(source_identity(profile, inputs))
             return
         os.umask(0o077)
         toolchain = bootstrap()
         if args.command != "bootstrap":
-            chosen = [name for name, flag in (("fw16-pulse", args.motion_probe),
-                                              ("fw11-reset", args.trial_reset),
-                                              ("fw11-fail", args.trial_fail),
-                                              ("speaker", args.speaker)) if flag]
-            if len(chosen) > 1:
-                raise ValueError("Choose one image variant")
-            variant = chosen[0] if chosen else None
             build(args.command, toolchain, variant)
     except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
         parser.exit(1, f"error: {error}\n")

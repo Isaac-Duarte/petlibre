@@ -19,6 +19,7 @@ axum.workspace = true
 chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 clap.workspace = true
 ctrlc.workspace = true
+petlibre-core.workspace = true
 futures-util = { version = "0.3", default-features = false }
 rust-embed = { version = "8.13.0", features = ["debug-embed"] }
 rustix = { version = "1", features = ["fs", "process"] }

@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use clap::Args;
+use petlibre_core::record::{Record, tag};
 use serde_json::Value;
 
 use super::{Bench, truthy};
@@ -100,9 +101,13 @@ pub struct OtaArgs {
     /// Frozen review to offer (its image.bin and build-manifest.json).
     #[arg(long, required_unless_present = "build", conflicts_with = "build")]
     pub review: Option<PathBuf>,
-    /// Build plaf103-firstboot and freeze it as private/verification/NAME-review first.
+    /// Build plaf103-firstboot and freeze it as private/verification/NAME-review
+    /// first, unless a review built from the same sources is already there.
     #[arg(long)]
     pub build: bool,
+    /// With --build: build even when a review of the same sources exists.
+    #[arg(long, requires = "build")]
+    pub rebuild: bool,
     /// No-motion variant for --build: fw11-reset, fw11-fail or speaker.
     #[arg(long, value_parser = parse_variant)]
     pub variant: Option<Variant>,
@@ -270,19 +275,15 @@ pub struct Watch {
 }
 
 /// Records the bench reads; SDK output between them is ignored.
-const TAGS: [&str; 5] = ["PLWCH1 ", "PLOTA1 ", "PLFW1 ", "PLTRL1 ", "PLCNF1 "];
+const TAGS: [&str; 5] = [
+    tag::WATCH,
+    tag::UPDATE,
+    tag::START,
+    tag::TRIAL,
+    tag::CONFIRM,
+];
 /// A longer run without a line break is noise, not a record.
 const MAX_LINE: usize = 4096;
-
-fn field<'a>(record: &'a str, key: &str) -> Option<&'a str> {
-    record
-        .split_whitespace()
-        .find_map(|word| word.strip_prefix(key)?.strip_prefix('='))
-}
-
-fn number<T: std::str::FromStr>(record: &str, key: &str) -> Option<T> {
-    field(record, key)?.parse().ok()
-}
 
 impl Watch {
     pub fn new(build: &str) -> Self {
@@ -334,29 +335,25 @@ impl Watch {
     }
 
     fn line(&mut self, line: &str) -> Option<Event> {
-        let (at, tag) = TAGS
-            .iter()
-            .filter_map(|tag| Some((line.find(tag)?, *tag)))
-            .min_by_key(|(at, _)| *at)?;
-        let record = line[at + tag.len()..].trim();
-        let first = record.split_whitespace().next().unwrap_or("");
+        let record = Record::all(line).find(|record| TAGS.contains(&record.tag))?;
+        let first = record.first;
 
-        match tag.trim_end() {
-            "PLWCH1" if field(record, "give_way") == Some("1") => Some(Event::GiveWay {
-                version: number(record, "version"),
+        match record.tag {
+            tag::WATCH if record.field("give_way") == Some("1") => Some(Event::GiveWay {
+                version: record.number("version"),
             }),
-            "PLWCH1" if field(record, "offer") == Some("1") => Some(Event::Offer {
-                version: number(record, "version"),
-                same: field(record, "same") == Some("1"),
+            tag::WATCH if record.field("offer") == Some("1") => Some(Event::Offer {
+                version: record.number("version"),
+                same: record.field("same") == Some("1"),
             }),
 
-            "PLOTA1" => match first {
+            tag::UPDATE => match first {
                 "manifest" => Some(Event::Manifest {
-                    version: number(record, "version"),
-                    bytes: number(record, "bytes"),
+                    version: record.number("version"),
+                    bytes: record.number("bytes"),
                 }),
                 "progress" => {
-                    let (done, total) = field(record, "sectors")?.split_once('/')?;
+                    let (done, total) = record.field("sectors")?.split_once('/')?;
                     Some(Event::Progress {
                         done: done.parse().ok()?,
                         total: total.parse().ok()?,
@@ -366,11 +363,11 @@ impl Watch {
                     self.activated = true;
                     self.trial_boot = None;
                     Some(Event::Activated {
-                        version: number(record, "version"),
+                        version: record.number("version"),
                     })
                 }
                 "error" => {
-                    let stage = field(record, "stage").unwrap_or("?").to_string();
+                    let stage = record.field("stage").unwrap_or("?").to_string();
                     self.outcome = Some(Outcome::Failed {
                         stage: stage.clone(),
                     });
@@ -380,15 +377,15 @@ impl Watch {
                 _ => None,
             },
 
-            "PLFW1" if first == "start" => {
-                let build = field(record, "build")?.to_ascii_lowercase();
-                let bank = number(record, "bank");
+            tag::START if first == "start" => {
+                let build = record.field("build")?.to_ascii_lowercase();
+                let bank = record.number("bank");
                 let new = build == self.build && bank == Some(1);
                 self.started |= new;
                 Some(Event::Started { build, bank, new })
             }
 
-            "PLTRL1" if field(record, "give_way") == Some("1") => {
+            tag::TRIAL if record.field("give_way") == Some("1") => {
                 if self.started || self.activated {
                     self.outcome = Some(Outcome::FellBack {
                         boot: self.trial_boot,
@@ -400,19 +397,19 @@ impl Watch {
                     Some(Event::EarlyGiveWay)
                 }
             }
-            "PLTRL1" if field(record, "confirmed") == Some("0") => {
-                let boot = number(record, "boot")?;
+            tag::TRIAL if record.field("confirmed") == Some("0") => {
+                let boot = record.number("boot")?;
                 self.trial_boot = Some(boot);
                 Some(Event::Trial {
                     boot,
-                    limit: number(record, "limit"),
+                    limit: record.number("limit"),
                 })
             }
 
             // A confirmation counts only from the offered build.
-            "PLCNF1" if self.started && field(record, "confirmed") == Some("1") => {
+            tag::CONFIRM if self.started && record.field("confirmed") == Some("1") => {
                 self.outcome = Some(Outcome::Passed);
-                let detail = match field(record, "healthy_ms") {
+                let detail = match record.field("healthy_ms") {
                     Some(ms) => format!("healthy_ms={ms}"),
                     None => "already confirmed".into(),
                 };
@@ -454,6 +451,8 @@ pub struct Stamp {
 pub struct Timing {
     /// Some child ran, so there is something to report.
     pub ran: bool,
+    /// `--build` found a review of the same sources and skipped the build.
+    pub reused: bool,
     pub build: Option<f64>,
     pub review: Option<f64>,
     pub sign_offer: Option<f64>,
@@ -482,6 +481,7 @@ impl Timing {
     /// The summary lines, one per phase; a phase not reached shows `-`.
     pub fn summary(&self, built: bool) -> Vec<String> {
         let skipped = || if built { "-" } else { "skipped (--review)" }.to_string();
+        let reused = || "reused (same sources)".to_string();
         let plain = |value: Option<f64>| value.map_or_else(|| "-".into(), duration);
         let span = |value: Option<(f64, bool)>| match value {
             None => "-".to_string(),
@@ -492,8 +492,22 @@ impl Timing {
         };
 
         let rows = [
-            ("Build", if built { plain(self.build) } else { skipped() }),
-            ("Review", if built { plain(self.review) } else { skipped() }),
+            (
+                "Build",
+                match (built, self.reused) {
+                    (true, true) => reused(),
+                    (true, false) => plain(self.build),
+                    (false, _) => skipped(),
+                },
+            ),
+            (
+                "Review",
+                match (built, self.reused) {
+                    (true, true) => reused(),
+                    (true, false) => plain(self.review),
+                    (false, _) => skipped(),
+                },
+            ),
             ("Sign + offer", plain(self.sign_offer)),
             (
                 "Give-way to activation (download)",
@@ -599,10 +613,14 @@ pub struct Staged {
 pub(crate) fn build_id(manifest: &Value) -> Result<String> {
     let id = manifest["startup_identity"].as_str().unwrap_or("");
     require(
-        id.len() == 64 && id.bytes().all(|b| b.is_ascii_hexdigit()),
+        is_build_id(id),
         "Review build-manifest.json has no 64-hex startup_identity",
     )?;
     Ok(id.to_ascii_lowercase())
+}
+
+fn is_build_id(text: &str) -> bool {
+    text.len() == 64 && text.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 impl Bench {
@@ -771,12 +789,11 @@ impl Bench {
             args.build || (args.variant.is_none() && args.python.is_none()),
             "--variant and --python apply to --build only",
         )?;
-        let review_arg = match (&args.review, args.build) {
+        let mut review_arg = match (&args.review, args.build) {
             (_, true) => PathBuf::from(VERIFICATION).join(format!("{}-review", args.name)),
             (Some(review), false) => review.clone(),
             (None, false) => return Err(Error::Bench("Give --review DIR or --build".into())),
         };
-        let review = self.root.join(&review_arg);
 
         // Everything that can refuse does so before the build starts.
         let python = self.root.join(
@@ -784,8 +801,8 @@ impl Bench {
                 .as_deref()
                 .unwrap_or(Path::new(".venv/bin/python")),
         );
+        let mut cached = None;
         if args.build {
-            self.fresh(&review)?;
             require(
                 python.is_file(),
                 format!(
@@ -793,7 +810,20 @@ impl Bench {
                     self.rel(&python)
                 ),
             )?;
+            cached = self.cached_review(args, &python)?;
+            match &cached {
+                Some(found) => {
+                    self.note(&format!(
+                        "Reusing {}: built from these sources (--rebuild to build anyway)",
+                        found.display()
+                    ));
+                    review_arg = found.clone();
+                    timing.reused = true;
+                }
+                None => self.fresh(&self.root.join(&review_arg))?,
+            }
         }
+        let review = self.root.join(&review_arg);
         self.unused_segments(&args.name)?;
         let version = self.ota_version(args.version)?;
         let signed = self
@@ -802,7 +832,7 @@ impl Bench {
             .join(format!("{}-v{version}.manifest", args.name));
         self.fresh(&signed)?;
 
-        if args.build && !self.ota_build(args, &python, &review_arg, timing)? {
+        if args.build && cached.is_none() && !self.ota_build(args, &python, &review_arg, timing)? {
             return Ok(None);
         }
 
@@ -858,6 +888,48 @@ impl Bench {
             manifest: signed_arg,
             image: image_arg,
         }))
+    }
+
+    /// The newest complete review in private/verification whose identity is
+    /// the one a build of these sources would embed (sources, variant and
+    /// update key all feed it), root-relative; `None` means build.
+    fn cached_review(&mut self, args: &OtaArgs, python: &Path) -> Result<Option<PathBuf>> {
+        if args.rebuild {
+            return Ok(None);
+        }
+        let mut query = vec![
+            "firmware/tools/build.py".to_string(),
+            "source-id".into(),
+            "--image".into(),
+        ];
+        query.extend(args.variant.map(|v| v.flag().to_string()));
+        let answer = self.tools.python_query(python, &query)?;
+        let identity = answer.stdout.trim();
+        if answer.code != 0 || !is_build_id(identity) {
+            say!("Could not compute the source identity; building");
+            return Ok(None);
+        }
+
+        let newest = fs::read_dir(self.root.join(VERIFICATION))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|dir| {
+                dir.file_name()
+                    .is_some_and(|name| name.to_string_lossy().ends_with("-review"))
+                    && ["image.bin", "review.json"]
+                        .iter()
+                        .all(|file| dir.join(file).is_file())
+            })
+            .filter(|dir| {
+                fs::read_to_string(dir.join("build-manifest.json"))
+                    .ok()
+                    .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+                    .is_some_and(|manifest| manifest["startup_identity"] == identity)
+            })
+            .max_by_key(|dir| dir.metadata().and_then(|m| m.modified()).ok());
+        Ok(newest.map(|dir| PathBuf::from(VERIFICATION).join(dir.file_name().unwrap_or_default())))
     }
 
     /// Build the firmware and freeze its review; false if either failed.

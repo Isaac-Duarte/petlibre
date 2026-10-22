@@ -33,7 +33,7 @@ main > section:empty { display: none; }
 .title { font-weight: 600; font-size: 16px; overflow-wrap: anywhere; }
 .badge { font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 99px; border: 1px solid currentColor; white-space: nowrap; }
 .running, .started { color: var(--accent); } .pass, .done, .complete, .verified { color: var(--ok); }
-.stopped, .failed, .refused { color: var(--bad); } .pending, .unknown, .report { color: var(--muted); }
+.stopped, .failed, .refused { color: var(--bad); } .pending, .skipped, .unknown, .report { color: var(--muted); }
 .prepared { color: var(--warn); }
 /* A command or report left "running" by a process that is gone: outcome unknown, not a failure. */
 .ended { color: var(--muted); font-style: italic; } .badge.ended { border-style: dashed; }

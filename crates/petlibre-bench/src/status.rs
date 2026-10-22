@@ -128,6 +128,9 @@ pub struct Status {
     pub state: Option<Current>,
     written: Option<Instant>,
     log: Option<File>,
+    /// The steps are the command's own (the suite's scenarios); a child's
+    /// step, such as a build inside one, does not add to them.
+    fixed: bool,
 }
 
 impl Status {
@@ -138,6 +141,7 @@ impl Status {
             state: None,
             written: None,
             log: None,
+            fixed: false,
         }
     }
 
@@ -180,6 +184,11 @@ impl Status {
     /// Mark `label` running and any running step done.
     pub fn step(&mut self, label: &str) {
         let Some(state) = &mut self.state else { return };
+        if self.fixed {
+            state.progress = None;
+            self.write_quietly(true);
+            return;
+        }
         for s in &mut state.steps {
             if s.state == "running" {
                 s.state = "done".into();
@@ -202,6 +211,28 @@ impl Status {
         };
         state.steps[index].state = "running".into();
         state.progress = None;
+        self.write_quietly(true);
+    }
+
+    /// Keep the steps [`Self::begin`] gave: children's steps no longer add
+    /// rows, and the command marks its own with [`Self::mark`].
+    pub fn fix_steps(&mut self) {
+        self.fixed = true;
+    }
+
+    /// Set the first unfinished step named `label` to `state` (`running`,
+    /// `done`, `failed` or `skipped`).
+    pub fn mark(&mut self, label: &str, state: &str) {
+        let Some(current) = &mut self.state else {
+            return;
+        };
+        if let Some(step) = current
+            .steps
+            .iter_mut()
+            .find(|s| s.label == label && matches!(s.state.as_str(), "pending" | "running"))
+        {
+            step.state = state.into();
+        }
         self.write_quietly(true);
     }
 
@@ -507,6 +538,31 @@ mod tests {
         );
         assert_eq!(progress_count("Read the ROM"), None);
         assert_eq!(progress_count("Region acquisition 1 complete"), None);
+    }
+
+    #[test]
+    fn fixed_steps_ignore_child_steps_and_take_marks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut status = Status::new(tmp.path(), tmp.path().join("status"));
+        status
+            .begin("itest", Some("run1"), &["ota-update", "requests"])
+            .unwrap();
+        status.fix_steps();
+
+        status.mark("ota-update", "running");
+        status.step("firmware build");
+        status.mark("ota-update", "done");
+        status.mark("requests", "failed");
+
+        let steps: Vec<_> = status
+            .state
+            .as_ref()
+            .unwrap()
+            .steps
+            .iter()
+            .map(|s| (s.label.as_str(), s.state.as_str()))
+            .collect();
+        assert_eq!(steps, [("ota-update", "done"), ("requests", "failed")]);
     }
 
     #[test]

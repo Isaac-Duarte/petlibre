@@ -15,7 +15,7 @@
 
 use std::path::{Path, PathBuf};
 
-use clap::Args;
+use clap::{Args, ValueEnum};
 use serde_json::{Value, json};
 
 use super::ota::{Outcome, Staged, Watch, health_matches};
@@ -29,7 +29,7 @@ mod scenarios;
 mod tests;
 
 use log::{Log, Record};
-pub use scenarios::{SCENARIOS, Scenario};
+pub use scenarios::{DeviceState, SCENARIOS, Scenario};
 
 /// How often waits look at the UART and the server again.
 const POLL_SECONDS: f64 = 1.0;
@@ -45,6 +45,51 @@ pub const INSTALL_SECONDS: f64 = 15.0 * 60.0;
 /// With no record for this long the feeder is presumed hung or bricked.
 pub const SILENT_SECONDS: f64 = 180.0;
 
+/// How much of the suite a run takes on; each tier includes the cheaper ones.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
+pub enum Tier {
+    /// Minutes, no cold boots or installs beyond the build under test.
+    Smoke,
+    /// The whole functional suite (about half an hour).
+    Standard,
+    /// Standard, then long runs (`--soak-minutes`).
+    Soak,
+}
+
+/// A session flag a scenario cannot run without.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Need {
+    Power,
+    Build,
+    Destructive,
+}
+
+impl Need {
+    fn flag(self) -> &'static str {
+        match self {
+            Self::Power => "--power",
+            Self::Build => "--build",
+            Self::Destructive => "--destructive",
+        }
+    }
+
+    fn why(self) -> &'static str {
+        match self {
+            Self::Power => "it cold-boots the feeder",
+            Self::Build => "it builds a variant",
+            Self::Destructive => "it cuts power during an update",
+        }
+    }
+
+    fn met(self, args: &ItestArgs) -> bool {
+        match self {
+            Self::Power => args.power,
+            Self::Build => args.build,
+            Self::Destructive => args.destructive,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Args)]
 pub struct ItestArgs {
     /// Session name: private/captures/NAME-uart-01, …, private/verification/NAME-*.
@@ -56,18 +101,32 @@ pub struct ItestArgs {
     /// Build plaf103-firstboot from this checkout and freeze it as NAME-good-review first.
     #[arg(long)]
     pub build: bool,
-    /// Only these scenarios, comma-separated; ota-update always runs first.
+    /// Only these scenarios, comma-separated, whatever their tier; ota-update
+    /// always runs first.
     #[arg(long, value_delimiter = ',')]
     pub only: Vec<String>,
+    /// How much of the suite to run.
+    #[arg(long, value_enum, default_value_t = Tier::Standard)]
+    pub tier: Tier,
+    /// How long `soak` runs.
+    #[arg(long, default_value_t = 60.0)]
+    pub soak_minutes: f64,
     /// List the scenarios and what each needs, then exit.
     #[arg(long)]
     pub list: bool,
     /// Allow relay power cycles (cold boots), which some scenarios need.
     #[arg(long)]
     pub power: bool,
+    /// Allow power cuts in the middle of an update. The design recovers
+    /// from them over the air; if it does not, recovery is a UART flash.
+    #[arg(long, requires = "power")]
+    pub destructive: bool,
     /// Run the remaining scenarios after one fails (never after the feeder goes silent).
     #[arg(long)]
     pub keep_going: bool,
+    /// With --build: build even when a review of the same sources exists.
+    #[arg(long, requires = "build")]
+    pub rebuild: bool,
     /// Python for --build's tools (default: .venv/bin/python under --root).
     #[arg(long)]
     pub python: Option<PathBuf>,
@@ -153,6 +212,9 @@ pub trait Rig {
     fn clock(&self) -> f64;
     /// One line for the operator and the progress page.
     fn note(&mut self, text: &str);
+    /// Show a scenario's state on the bench page (`running`, `done`,
+    /// `failed`, `skipped`).
+    fn scenario(&mut self, _name: &str, _state: &str) {}
 }
 
 /// The build the suite installed (or found running) and every later
@@ -172,8 +234,8 @@ pub struct Ctx<'r> {
     pub args: ItestArgs,
     pub log: Log,
     pub baseline: Option<Baseline>,
-    /// The fw11-fail variant's review, once built.
-    failing: Option<PathBuf>,
+    /// Each variant's review, once this run has built or found it.
+    variants: Vec<(super::Variant, PathBuf)>,
     /// Silence counts from here (the run's start, or the end of an expected
     /// offline window) until a later record.
     heard: f64,
@@ -189,7 +251,7 @@ impl<'r> Ctx<'r> {
             args: args.clone(),
             log: Log::default(),
             baseline: None,
-            failing: None,
+            variants: Vec::new(),
             heard: rig.clock(),
             offline: false,
             went_silent: None,
@@ -233,6 +295,28 @@ impl<'r> Ctx<'r> {
             }
             if self.rig.clock() >= deadline {
                 return Err(Error::Bench(format!("No {what} within {seconds:.0} s")));
+            }
+            self.alive()?;
+            self.rig.wait(POLL_SECONDS)?;
+        }
+    }
+
+    /// Wait up to `seconds` for `n` records at or after `since` that
+    /// `matches`; how many there were. The firmware logs a request after
+    /// publishing its reply, so its record can trail the reply by a chunk.
+    pub fn expect_count(
+        &mut self,
+        since: usize,
+        n: usize,
+        seconds: f64,
+        matches: impl Fn(&Record) -> bool,
+    ) -> Result<usize> {
+        let deadline = self.rig.clock() + seconds;
+        loop {
+            self.pull()?;
+            let found = self.log.count(since, &matches);
+            if found >= n || self.rig.clock() >= deadline {
+                return Ok(found);
             }
             self.alive()?;
             self.rig.wait(POLL_SECONDS)?;
@@ -299,8 +383,21 @@ impl<'r> Ctx<'r> {
     }
 
     /// Send one request through the server and wait for the feeder's reply.
+    /// Requests go out at QoS 0, so one sent as the transport reconnects is
+    /// lost; with no reply it is sent once more. Every request the suite
+    /// makes reads, or sets a value again, so a repeat is harmless.
     pub fn ask(&mut self, body: Value) -> Result<Value> {
-        let id = self.rig.request(&body)?;
+        match self.ask_once(&body) {
+            Err(Error::Bench(reason)) if reason.starts_with("No reply") => {
+                self.note(&format!("  {reason}; asking again"));
+                self.ask_once(&body)
+            }
+            other => other,
+        }
+    }
+
+    fn ask_once(&mut self, body: &Value) -> Result<Value> {
+        let id = self.rig.request(body)?;
         let deadline = self.rig.clock() + REPLY_SECONDS;
         loop {
             self.pull()?;
@@ -356,6 +453,11 @@ impl<'r> Ctx<'r> {
                 next += 1;
                 for event in watch.feed(text.as_bytes()) {
                     self.note(&format!("  {event}"));
+                    // The confirmed build already is the offered one: the
+                    // server's health then says so.
+                    if let super::ota::Event::Offer { same: true, .. } = event {
+                        return Ok(Outcome::Passed);
+                    }
                 }
                 if let Some(outcome) = watch.outcome() {
                     return Ok(outcome.clone());
@@ -408,17 +510,32 @@ impl<'r> Ctx<'r> {
     /// The fw11-fail variant signed at the next version: built once, then
     /// re-signed from its review.
     pub fn failing(&mut self, label: &str) -> Result<Staged> {
-        let mut args = match self.failing.clone() {
+        self.variant(label, super::Variant::Fw11Fail)
+    }
+
+    /// `variant` signed at the next version: built (or found by the review
+    /// cache) once, then re-signed from its review.
+    pub fn variant(&mut self, label: &str, variant: super::Variant) -> Result<Staged> {
+        let known = self
+            .variants
+            .iter()
+            .find(|(v, _)| *v == variant)
+            .map(|(_, review)| review.clone());
+        let mut args = match known {
             Some(review) => self.ota_args(label, Some(review), false),
             None => self.ota_args(label, None, true),
         };
         if args.build {
-            args.variant = Some(super::Variant::Fw11Fail);
+            args.variant = Some(variant);
         }
         let staged = self.rig.stage(&args)?.ok_or_else(|| {
-            Error::Bench("Building or signing the fw11-fail variant failed".into())
+            Error::Bench(format!(
+                "Building or signing the {variant:?} variant failed"
+            ))
         })?;
-        self.failing = Some(staged.review.clone());
+        if args.build {
+            self.variants.push((variant, staged.review.clone()));
+        }
         Ok(staged)
     }
 
@@ -427,6 +544,7 @@ impl<'r> Ctx<'r> {
             name: format!("{}-{label}", self.args.name()),
             review,
             build,
+            rebuild: build && self.args.rebuild,
             variant: None,
             python: self.args.python.clone(),
             config: self.args.config.clone(),
@@ -434,6 +552,18 @@ impl<'r> Ctx<'r> {
             minutes: INSTALL_SECONDS / 60.0,
             attended_motion: false,
         }
+    }
+
+    /// Let `seconds` pass with the UART drained and the feeder watched.
+    pub fn idle(&mut self, seconds: f64) -> Result<()> {
+        let end = self.rig.clock() + seconds;
+        while self.rig.clock() < end {
+            self.pull()?;
+            self.alive()?;
+            self.rig
+                .wait(POLL_SECONDS.min(end - self.rig.clock()).max(0.0))?;
+        }
+        Ok(())
     }
 
     /// Fail a wait early when the feeder has gone silent, rather than let a
@@ -533,7 +663,8 @@ pub struct Report {
 }
 
 /// The scenarios `--only` names, in suite order; ota-update always first.
-pub fn select(only: &[String]) -> Result<Vec<&'static Scenario>> {
+pub fn select(args: &ItestArgs) -> Result<Vec<&'static Scenario>> {
+    let only = &args.only;
     for name in only {
         require(
             SCENARIOS.iter().any(|s| s.name == name),
@@ -549,17 +680,17 @@ pub fn select(only: &[String]) -> Result<Vec<&'static Scenario>> {
     }
     Ok(SCENARIOS
         .iter()
-        .filter(|s| only.is_empty() || s.baseline || only.iter().any(|n| n == s.name))
+        .filter(|s| match only.is_empty() {
+            true => s.baseline || s.tier <= args.tier,
+            false => s.baseline || only.iter().any(|n| n == s.name),
+        })
         .collect())
 }
 
 /// Why a scenario cannot run in this session, if it cannot.
 fn unmet(scenario: &Scenario, ctx: &Ctx) -> Option<String> {
-    if scenario.power && !ctx.args.power {
-        return Some("needs --power (it cold-boots the feeder)".into());
-    }
-    if scenario.build && !ctx.args.build {
-        return Some("needs --build (it builds a variant)".into());
+    if let Some(need) = scenario.needs.iter().find(|need| !need.met(&ctx.args)) {
+        return Some(format!("needs {} ({})", need.flag(), need.why()));
     }
     if !scenario.baseline && ctx.baseline.is_none() {
         return Some("no confirmed baseline build".into());
@@ -576,11 +707,14 @@ pub fn run(
     let mut reports = Vec::new();
     let mut stop: Option<String> = None;
     let mut silent = None;
+    // Read once the baseline confirms; every later scenario is held to it.
+    let mut expected: Option<DeviceState> = None;
 
     for scenario in scenarios {
         let skip = stop.clone().or_else(|| unmet(scenario, ctx));
         if let Some(reason) = skip {
             ctx.note(&format!("- {}: skipped, {reason}", scenario.name));
+            ctx.rig.scenario(scenario.name, "skipped");
             reports.push(Report {
                 scenario: scenario.name,
                 verdict: Verdict::Skip(reason),
@@ -590,22 +724,56 @@ pub fn run(
         }
 
         ctx.note(&format!("- {}: {}", scenario.name, scenario.about));
+        ctx.rig.scenario(scenario.name, "running");
         let started = ctx.rig.clock();
         let result = (scenario.run)(ctx);
         let seconds = ctx.rig.clock() - started;
 
-        let verdict = match result {
+        let mut verdict = match result {
             Ok(()) => Verdict::Pass,
             Err(Error::Interrupted) => return Err(Error::Interrupted),
             Err(error) => Verdict::Fail(error.to_string()),
         };
+        if let Some(found) = ctx.silent() {
+            if verdict == Verdict::Pass {
+                verdict = Verdict::Fail(found.0.clone());
+            }
+            silent = Some(found);
+        } else if scenario.baseline {
+            expected = scenarios::device_state(ctx).ok();
+        } else if let Some(want) = &expected {
+            let leaked = match scenarios::device_state(ctx) {
+                Ok(now) if now == *want => None,
+                Ok(now) => Some(format!(
+                    "left the feeder changed: {}",
+                    scenarios::restore_state(ctx, want, &now).join("; ")
+                )),
+                Err(Error::Interrupted) => return Err(Error::Interrupted),
+                Err(error) => Some(format!(
+                    "could not read the feeder's state after it: {error}"
+                )),
+            };
+            verdict = match (verdict, leaked) {
+                (verdict, None) => verdict,
+                (Verdict::Fail(reason), Some(leaked)) => {
+                    Verdict::Fail(format!("{reason}; {leaked}"))
+                }
+                (_, Some(leaked)) => Verdict::Fail(leaked),
+            };
+        }
+
+        let shown = if verdict == Verdict::Pass {
+            "done"
+        } else {
+            "failed"
+        };
+        ctx.rig.scenario(scenario.name, shown);
         match &verdict {
             Verdict::Pass => ctx.note(&format!("  {}: pass", scenario.name)),
             Verdict::Fail(reason) => {
                 ctx.note(&format!("  {}: FAIL: {reason}", scenario.name));
-                if let Some(found) = ctx.silent() {
+                if silent.is_some() {
                     stop = Some(format!("the feeder went silent in {}", scenario.name));
-                    silent = Some(found);
                 } else if scenario.baseline {
                     stop = Some("the baseline build did not install".into());
                 } else if !ctx.args.keep_going {
@@ -686,11 +854,17 @@ pub fn listing() -> Vec<String> {
     SCENARIOS
         .iter()
         .map(|s| {
-            let needs: Vec<&str> = [(s.power, "--power"), (s.build, "--build")]
-                .iter()
-                .filter(|(needed, _)| *needed)
-                .map(|(_, flag)| *flag)
-                .collect();
+            let mut needs: Vec<&str> = s.needs.iter().map(|need| need.flag()).collect();
+            if s.tier > Tier::Smoke {
+                needs.insert(
+                    0,
+                    if s.tier == Tier::Soak {
+                        "soak"
+                    } else {
+                        "standard"
+                    },
+                );
+            }
             let needs = if needs.is_empty() {
                 String::new()
             } else {
@@ -705,7 +879,7 @@ impl super::Bench {
     /// Run the selected scenarios on the live bench, restore it, then print
     /// and record the verdicts.
     pub fn itest(&mut self, args: &ItestArgs, local_bin: PathBuf) -> Result<u8> {
-        let scenarios = select(&args.only)?;
+        let scenarios = select(args)?;
         let name = args.name().to_string();
         let record = self
             .root

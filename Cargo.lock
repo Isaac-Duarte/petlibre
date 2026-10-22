@@ -1563,6 +1563,7 @@ dependencies = [
  "clap",
  "ctrlc",
  "futures-util",
+ "petlibre-core",
  "rust-embed",
  "rustix",
  "serde",

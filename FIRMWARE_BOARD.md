@@ -5,7 +5,7 @@ This board tracks replacement-firmware integration, dependencies, and acceptance
 ## Current status
 
 - **Done:** FW01–FW08, FW13, FW15 and FW31, eight of them with recorded scope limits (see carried items).
-- **In progress:** FW30: the motor driver (TC118AH) reads standby in the ROM loader and brake at firmware STOP; emitter OFF levels, transients and the GPIO-to-input mapping remain. FW14 waits for batteries: its ADC channel select and millivolt scaling are proven, but the battery channel, PA19 and the divider are not.
+- **In progress:** FW09: the factory loader always prefers a valid bank 1 and falls back to bank 0 (simulation); hardware confirmation needs an owner-reviewed bank-0 write. FW30: the motor driver (TC118AH) reads standby in the ROM loader and brake at firmware STOP; emitter OFF levels, transients and the GPIO-to-input mapping remain. FW14 waits for batteries: its ADC channel select and millivolt scaling are proven, but the battery channel, PA19 and the divider are not.
 - **Critical path to feeding:** FW14 → FW30 → FW16 → FW17.
 
 ### Carried items
@@ -55,7 +55,7 @@ Prioritize the UART development loop and build identity, stopped startup, LED di
 | --- | --- | --- | --- | --- |
 | **FW07 Wi-Fi join and reconnect** | **Done (no-renewal scope)** | Physical (UART + hotspot logs: scans, join, lease, AP loss and rejoin, DNS loss and recovery; full-flash A/B identical across a drill boot) | FW03, FW06 | Join the configured test network, obtain an address and recover from AP/DHCP/DNS loss without repeated uncontrolled resets. Define credential storage and audit SDK writes through the flash authority. Bringup credentials stay private; the full setup flow is FW25. |
 | **FW08 Local health and control transport** | **Done (read-only scope)** | Physical (UART + server status: connect, health, requests, AP and server recovery; full-flash A/B identical); host (codec, driver, auditors, codec against the real broker); [design](docs/firmware/local-transport.md) | FW02, FW07 | Expose build/bank/boot identity, uptime and fault state through a versioned local interface. Define authentication and compatibility with the existing Rust server. Health requests and diagnostic commands cannot dispense food. |
-| **FW09 OTA bank selection and boot policy** | Ready | — | FW01, FW06 | Establish usable bank capacities, selection with two valid banks, image compatibility and activation rules. Define a failed-first-boot recovery mechanism that the actual factory loader can support. Document any limitation before relying on rollback; do not infer it from the presence of two banks. |
+| **FW09 OTA bank selection and boot policy** | In progress | Simulation (actual factory loader: bank 1 has fixed priority, bank 0 is the fallback); static (stock activation); [policy](docs/firmware/bank-policy.md) | FW01, FW06 | Establish usable bank capacities, selection with two valid banks, image compatibility and activation rules. Define a failed-first-boot recovery mechanism that the actual factory loader can support. Document any limitation before relying on rollback; do not infer it from the presence of two banks. |
 | **FW10 Guarded OTA upload and activation** | Planned | — | FW03, FW06, FW07, FW08, FW09 | Authenticate updates, validate the manifest/image and size, refuse the running bank and preserve unrelated data. Verify the candidate before activation and reboot into the expected build. Test corrupt, truncated and interrupted transfers with a recoverable boot path. |
 | **FW11 Boot confirmation and failed update recovery** | Planned | — | FW09, FW10 | Implement and test the chosen trial/confirmation policy. Exercise a valid image that fails to start or confirm, and a lost confirmation response. Establish recovery on hardware; clearly distinguish automatic rollback from a path requiring UART. |
 | **FW12 Automated development loop** | Planned | — | FW02, FW08, FW10, FW11 | Script build → checks → upload → reboot → verify build identity and health. Retain artifacts/results, detect loops/timeouts and stop on uncertain updates. Demonstrate consecutive changed builds without manual power cycles on the successful path; record duration and recovery limits. |
@@ -107,7 +107,7 @@ Prioritize the UART development loop and build identity, stopped startup, LED di
 | FW06 Real flash coordination across both cores | ✅ Done (mediated-path scope) |
 | FW07 Wi-Fi join and reconnect | ✅ Done (no-renewal scope) |
 | FW08 Local health and control transport | ✅ Done (read-only scope) |
-| FW09 OTA bank selection and boot policy | 🟢 Ready |
+| FW09 OTA bank selection and boot policy | 🚧 In progress |
 | FW10 Guarded OTA upload and activation | ⬜ Planned |
 | FW11 Boot confirmation and failed update recovery | ⬜ Planned |
 | FW12 Automated development loop | ⬜ Planned |

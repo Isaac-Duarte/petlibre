@@ -150,6 +150,9 @@ def audit(flash, rom, original, probe):
             fixtures.append(check_mapping(execute(modified, rom, bank), image, bank))
     fallback = bytearray(flash)
     fallback[BANKS[0]:BANKS[0] + len(original) - 32] = original[32:]
+    # With both banks valid the ordinary path checks bank 1 first and keeps it.
+    both = execute(fallback, rom)
+    BOOT.require(both["result"] == 2 and both["stop"] == "0x80004a0", "Both-valid selection is not bank 1")
     fallback[BANKS[1]] = 0
     chosen = execute(fallback, rom)
     BOOT.require(chosen["result"] == 1 and chosen["stop"] == "0x80004a0", "Fallback bank selection differs")
@@ -160,8 +163,8 @@ def audit(flash, rom, original, probe):
             "candidate_rom_sha256": BOOT.digest(rom), "actual_backup_valid_bank": valid,
             "actual_backup_invalid_bank": invalid, "actual_backup_selection": actual,
             "stock_and_probe_mapping_fixtures": fixtures, "fallback_selection_fixture": chosen,
-            "neither_valid_fixture": neither,
-            "conclusion": "Actual factory mapping includes the full probe slot in either bank; executable permission/live execution remain unverified.",
+            "neither_valid_fixture": neither, "both_valid_fixture": both,
+            "conclusion": "Actual factory mapping includes the full probe slot in either bank; with both banks valid the ordinary path selects bank 1 (it checks bank 1 first; bank 0 is the fallback). Executable permission/live execution remain unverified.",
             "limits": ["Supplied-state loader functions/slice, not complete reset or hardware MMU emulation",
                        "Candidate ROM RSIP instructions execute, but device correspondence is sampled only",
                        "Only bounded virtual header contents are supplied; MPU/TrustZone/cache enforcement is not modeled",

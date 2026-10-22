@@ -41,6 +41,7 @@ pub mod ota;
 pub mod request_auth;
 pub mod sensor_inputs;
 pub mod settings_store;
+pub mod speaker_stream;
 pub mod storage;
 pub mod tick_clock;
 pub mod tone;

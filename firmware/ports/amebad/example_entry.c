@@ -503,11 +503,52 @@ void wellfed_tcp_close(int s)
     lwip_close(s);
 }
 
+/* The speaker variant's listener (wellfed-amebad stream.rs): a socket on
+ * `port` for every local address, or -1. */
+int wellfed_tcp_listen(unsigned int port)
+{
+    int s = lwip_socket(AF_INET, SOCK_STREAM, 0);
+    if (s < 0) {
+        return -1;
+    }
+    int reuse = 1;
+    lwip_setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+    struct sockaddr_in at;
+    memset(&at, 0, sizeof(at));
+    at.sin_family = AF_INET;
+    at.sin_port = lwip_htons((u16_t)port);
+    at.sin_addr.s_addr = lwip_htonl(INADDR_ANY);
+    if (lwip_bind(s, (struct sockaddr *)&at, sizeof(at)) != 0 || lwip_listen(s, 1) != 0) {
+        lwip_close(s);
+        return -1;
+    }
+    return s;
+}
+
+/* One connection within `timeout_ms`: a socket, or -1. */
+int wellfed_tcp_accept(int listener, unsigned int timeout_ms)
+{
+    fd_set readable;
+    FD_ZERO(&readable);
+    FD_SET(listener, &readable);
+    struct timeval wait = {timeout_ms / 1000, (timeout_ms % 1000) * 1000};
+    if (lwip_select(listener + 1, &readable, NULL, NULL, &wait) != 1) {
+        return -1;
+    }
+    int s = lwip_accept(listener, NULL, NULL);
+    if (s < 0) {
+        return -1;
+    }
+    int send_timeout = 3000;
+    lwip_setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, &send_timeout, sizeof(send_timeout));
+    return s;
+}
+
 /* FW24: the speaker. Stock 1.1.15 plays through the codec's line output
  * (CODEC_Init application 8) from SPORT by GDMA and holds PB23 HIGH while it
  * plays, the amplifier enable that Rust drives (wellfed-amebad audio.rs).
- * This shim owns only the codec, SPORT and an 8-page DMA ring at 16 kHz,
- * 16-bit mono. Rust fills pages and decides when to open and close. When no
+ * This shim owns only the codec, SPORT and an 8-page DMA ring of 16-bit mono
+ * at 8, 16, 32 or 48 kHz (the rates the I2S PLL divides to). Rust fills pages and decides when to open and close. When no
  * filled page is ready the DMA plays a zero page and counts an underrun, so
  * the stream never stops on its own. */
 /* Defined in the pinned fwlib (rtl8721d_pll.c, rtl8721dhp_audio.c) with no
@@ -515,7 +556,7 @@ void wellfed_tcp_close(int s)
 void PLL_Div(u32 div);
 BOOL AUDIO_SP_TXGDMA_Restart(u8 GDMA_Index, u8 GDMA_ChNum, u32 tx_addr, u32 tx_length);
 
-#define WELLFED_AUDIO_PAGE 512 /* bytes: 256 samples, 16 ms */
+#define WELLFED_AUDIO_PAGE 512 /* bytes: 256 samples, 16 ms at 16 kHz */
 #define WELLFED_AUDIO_PAGES 8
 
 /* Multiples of 32 bytes at 32-byte alignment: the restart cleans the cache
@@ -550,10 +591,32 @@ static u32 wellfed_audio_done(void *data)
     return 0;
 }
 
-/* Clocks, codec and SPORT as stock sets them for 16 kHz; the DMA starts on
- * the zero page. 1 when streaming. */
-int wellfed_audio_open(void)
+/* Clocks, codec and SPORT as stock sets them for `rate_hz`; the DMA starts
+ * on the zero page. 1 when streaming, 0 when open or the rate is unsupported. */
+int wellfed_audio_open(unsigned int rate_hz)
 {
+    u32 rate;
+    u32 divider; /* 98.304 MHz down to 256 x rate */
+    switch (rate_hz) {
+    case 8000:
+        rate = SR_8K;
+        divider = 48;
+        break;
+    case 16000:
+        rate = SR_16K;
+        divider = 24;
+        break;
+    case 32000:
+        rate = SR_32K;
+        divider = 12;
+        break;
+    case 48000:
+        rate = SR_48K;
+        divider = 8;
+        break;
+    default:
+        return 0;
+    }
     if (wellfed_audio_opened) {
         return 0;
     }
@@ -569,8 +632,8 @@ int wellfed_audio_open(void)
     PLL_I2S_Set(ENABLE); /* 98.304 MHz */
     RCC_PeriphClockCmd(APBPeriph_AUDIOC, APBPeriph_AUDIOC_CLOCK, ENABLE);
     RCC_PeriphClockCmd(APBPeriph_SPORT, APBPeriph_SPORT_CLOCK, ENABLE);
-    PLL_Div(24); /* 256 x 16 kHz */
-    CODEC_Init(SR_16K, WL_16, CH_MONO, APP_LINE_OUT);
+    PLL_Div(divider);
+    CODEC_Init(rate, WL_16, CH_MONO, APP_LINE_OUT);
 
     SP_InitTypeDef sport;
     AUDIO_SP_StructInit(&sport);

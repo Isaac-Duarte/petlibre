@@ -86,6 +86,7 @@ fn health_with(online: bool, seq: u32, nonce: Option<[u8; 16]>) -> Vec<u8> {
         last_loss: Loss::None,
         connects: 1,
         last_error: None,
+        wifi_source: mqtt::WifiSource::Build,
         clock: None,
         clock_syncs: 0,
         nonce,

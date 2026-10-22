@@ -36,6 +36,7 @@ pub mod arming;
 pub mod board;
 pub mod clock;
 pub mod confirm;
+pub mod network;
 pub mod settings;
 pub mod supervise;
 

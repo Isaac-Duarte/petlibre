@@ -366,6 +366,7 @@ fn requests_parse_only_the_fixed_shape() {
             op: Ok(Op::Health),
             time: None,
             settings: None,
+            wifi: None,
             auth: None
         })
     );
@@ -378,6 +379,7 @@ fn requests_parse_only_the_fixed_shape() {
             op: Ok(Op::Ping),
             time: None,
             settings: None,
+            wifi: None,
             auth: None
         })
     );
@@ -390,6 +392,7 @@ fn requests_parse_only_the_fixed_shape() {
             op: Err("feed"),
             time: None,
             settings: None,
+            wifi: None,
             auth: None
         })
     );
@@ -450,6 +453,7 @@ fn health() -> Health {
         dns_losses: 1,
         last_loss: Loss::Dns,
         connects: 1,
+        wifi_source: WifiSource::Build,
         last_error: None,
         clock: None,
         clock_syncs: 0,
@@ -471,7 +475,7 @@ fn health_renders_the_v1_schema_within_its_limit() {
     assert_eq!(
         text,
         format!(
-            r#"{{"schema":"petlibre.health","v":1,"online":true,"seq":12,"uptime_ms":61234,"build":"{build}","bank":1,"reset_flags":"00000000","boot_count":7,"outputs":"stopped","faults":[],"wifi":{{"rssi":-20,"attempt":2,"losses":{{"link":0,"dns":1}},"last_loss":"dns"}},"transport":{{"connects":1,"last_error":null}},"clock":{{"syncs":0}}}}"#
+            r#"{{"schema":"petlibre.health","v":1,"online":true,"seq":12,"uptime_ms":61234,"build":"{build}","bank":1,"reset_flags":"00000000","boot_count":7,"outputs":"stopped","faults":[],"wifi":{{"rssi":-20,"attempt":2,"losses":{{"link":0,"dns":1}},"last_loss":"dns","source":"build"}},"transport":{{"connects":1,"last_error":null}},"clock":{{"syncs":0}}}}"#
         )
     );
 
@@ -489,6 +493,7 @@ fn health_renders_the_v1_schema_within_its_limit() {
         dns_losses: u32::MAX,
         last_loss: Loss::Link,
         connects: u32::MAX,
+        wifi_source: WifiSource::Fallback,
         last_error: Some("protocol_malformed"),
         // The clock's own bounds (`wall_clock`).
         clock: Some(ClockHealth {
@@ -504,7 +509,10 @@ fn health_renders_the_v1_schema_within_its_limit() {
     let text = render(&worst).unwrap();
     assert!(text.len() <= MAX_HEALTH, "{}", text.len());
     assert!(text.contains(r#""faults":["watchdog","flash_hook","stopped_readback"]"#));
-    assert!(text.contains(r#""outputs":"unverified""#) && text.contains(r#""last_loss":"link""#));
+    assert!(
+        text.contains(r#""outputs":"unverified""#)
+            && text.contains(r#""last_loss":"link","source":"fallback""#)
+    );
     assert!(
         text.contains(
             r#""last_error":"protocol_malformed"},"nonce":"ffffffffffffffff","clock":{"syncs":4294967295,"unix_ms":"#
@@ -565,6 +573,7 @@ fn replies_never_echo_unsupported_names() {
             op: Ok(Op::Ping),
             time: None,
             settings: None,
+            wifi: None,
             auth: None,
         },
         5,
@@ -583,6 +592,7 @@ fn replies_never_echo_unsupported_names() {
             op: Ok(Op::Health),
             time: None,
             settings: None,
+            wifi: None,
             auth: None,
         },
         5,
@@ -601,6 +611,7 @@ fn replies_never_echo_unsupported_names() {
             op: Err("feed"),
             time: None,
             settings: None,
+            wifi: None,
             auth: None,
         },
         5,
@@ -737,6 +748,7 @@ fn time_requests_carry_exactly_their_integer_fields() {
                 next_offset_s: -25_200,
             }),
             settings: None,
+            wifi: None,
             auth: None,
         })
     );
@@ -785,6 +797,7 @@ fn time_replies_report_the_jump_or_the_refusal() {
         op: Ok(Op::Time),
         time: Some(TimeFields::default()),
         settings: None,
+        wifi: None,
         auth: None,
     };
     let mut buf = [0; MAX_REQUEST];
@@ -928,6 +941,90 @@ fn settings_requests_read_or_change_known_options() {
         assert_eq!(
             out.as_bytes(),
             format!(r#"{{"id":"{ID}","op":"settings",{tail}"#).as_bytes()
+        );
+    }
+}
+
+#[test]
+fn wifi_requests_set_clear_or_read() {
+    let read = format!(r#"{{"id":"{ID}","op":"wifi"}}"#);
+    assert_eq!(
+        parse_request(read.as_bytes()).unwrap().wifi,
+        Some(WifiFields::default())
+    );
+
+    let set = format!(r#"{{"id":"{ID}","op":"wifi","ssid":"4c6162","psk":"70617373776f7264"}}"#);
+    let fields = parse_request(set.as_bytes()).unwrap().wifi.unwrap();
+    assert_eq!(
+        (fields.ssid, fields.psk, fields.clear),
+        (Some("4c6162"), Some("70617373776f7264"), false)
+    );
+    assert!(fields.changes());
+
+    let clear = format!(r#"{{"id":"{ID}","op":"wifi","clear":1}}"#);
+    assert!(parse_request(clear.as_bytes()).unwrap().wifi.unwrap().clear);
+
+    // The largest signed form fits.
+    let biggest = format!(
+        r#"{{"id":"{ID}","op":"wifi","ssid":"{}","psk":"{}","nonce":"0123456789abcdef","seq":4294967295,"mac":"{}"}}"#,
+        "a".repeat(64),
+        "b".repeat(126),
+        "c".repeat(64)
+    );
+    assert!(biggest.len() <= MAX_REQUEST, "{}", biggest.len());
+
+    for bad in [
+        format!(r#"{{"id":"{ID}","op":"wifi","ssid":"4c6162"}}"#),
+        format!(r#"{{"id":"{ID}","op":"wifi","ssid":"4c6162","psk":"7061737377"}}"#),
+        format!(r#"{{"id":"{ID}","op":"wifi","ssid":"4C6162","psk":"70617373776f7264"}}"#),
+        format!(r#"{{"id":"{ID}","op":"wifi","ssid":"4c616","psk":"70617373776f7264"}}"#),
+        format!(
+            r#"{{"id":"{ID}","op":"wifi","ssid":"{}","psk":"70617373776f7264"}}"#,
+            "a".repeat(66)
+        ),
+        format!(r#"{{"id":"{ID}","op":"wifi","clear":0}}"#),
+        format!(
+            r#"{{"id":"{ID}","op":"wifi","clear":1,"ssid":"4c6162","psk":"70617373776f7264"}}"#
+        ),
+        format!(r#"{{"id":"{ID}","op":"ping","clear":1}}"#),
+        format!(r#"{{"id":"{ID}","op":"settings","ssid":"4c6162","psk":"70617373776f7264"}}"#),
+    ] {
+        assert_eq!(
+            parse_request(bad.as_bytes()),
+            Err(RequestError::Malformed),
+            "{bad}"
+        );
+    }
+
+    let request = parse_request(read.as_bytes()).unwrap();
+    let mut buf = [0; MAX_REQUEST];
+    for (result, tail) in [
+        (
+            WifiResult::Current {
+                view: WifiView {
+                    stored_ssid_crc: Some(0xdead_beef),
+                    generation: 2,
+                    writable: true,
+                    source: WifiSource::Fallback,
+                },
+                pending: false,
+            },
+            r#""ok":true,"pending":false,"stored":"deadbeef","generation":2,"writable":true,"source":"fallback"}"#,
+        ),
+        (
+            WifiResult::Current {
+                view: WifiView::default(),
+                pending: true,
+            },
+            r#""ok":true,"pending":true,"stored":null,"generation":0,"writable":false,"source":"build"}"#,
+        ),
+        (WifiResult::Invalid, r#""ok":false,"error":"invalid"}"#),
+    ] {
+        let mut out = Buffer::new(&mut buf);
+        write_wifi_reply(&mut out, &request, result).unwrap();
+        assert_eq!(
+            out.as_bytes(),
+            format!(r#"{{"id":"{ID}","op":"wifi",{tail}"#).as_bytes()
         );
     }
 }

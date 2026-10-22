@@ -103,6 +103,20 @@ static unsigned int petlibre_ms(TickType_t since)
     return (unsigned int)((xTaskGetTickCount() - since) * portTICK_PERIOD_MS);
 }
 
+/* FW25 join credentials, shared with Rust (`network::JoinCredentials`):
+ * prefilled with the build's, replaced by stored ones unless the fallback
+ * has taken over (petlibre-amebad network.rs). */
+struct petlibre_join_credentials {
+    const unsigned char *ssid;
+    unsigned int ssid_len;
+    const unsigned char *psk;
+    unsigned int psk_len;
+    unsigned int source; /* 0 build, 1 stored, 2 fallback */
+};
+void petlibre_wifi_select(struct petlibre_join_credentials *out);
+void petlibre_wifi_outcome(int joined);
+static struct petlibre_join_credentials petlibre_creds;
+
 static rtw_result_t petlibre_scan_result(rtw_scan_handler_result_t *result)
 {
     if (result->scan_complete == RTW_TRUE) {
@@ -110,8 +124,8 @@ static rtw_result_t petlibre_scan_result(rtw_scan_handler_result_t *result)
         return RTW_SUCCESS;
     }
     rtw_scan_result_t *ap = &result->ap_details;
-    unsigned int length = sizeof(PETLIBRE_WIFI_SSID) - 1;
-    if (ap->SSID.len == length && memcmp(ap->SSID.val, PETLIBRE_WIFI_SSID, length) == 0 &&
+    unsigned int length = petlibre_creds.ssid_len;
+    if (ap->SSID.len == length && memcmp(ap->SSID.val, petlibre_creds.ssid, length) == 0 &&
         (!petlibre_found || ap->signal_strength > petlibre_found_rssi)) {
         petlibre_found_rssi = ap->signal_strength;
         petlibre_found_security = (unsigned int)ap->security;
@@ -121,7 +135,7 @@ static rtw_result_t petlibre_scan_result(rtw_scan_handler_result_t *result)
 }
 
 /* One join attempt: scan, connect, DHCP. 1 when an address was assigned. */
-static int petlibre_join(unsigned int attempt)
+static int petlibre_join_once(unsigned int attempt)
 {
     petlibre_found = 0;
     petlibre_scan_done = 0;
@@ -138,9 +152,11 @@ static int petlibre_join(unsigned int attempt)
         return 0;
     }
     begin = xTaskGetTickCount();
-    result = wifi_connect(PETLIBRE_WIFI_SSID, (rtw_security_t)petlibre_found_security, PETLIBRE_WIFI_PASSWORD,
-                          sizeof(PETLIBRE_WIFI_SSID) - 1, sizeof(PETLIBRE_WIFI_PASSWORD) - 1, -1, NULL);
-    petlibre_event(PETLIBRE_EV_CONNECT, attempt, result, 0, petlibre_ms(begin));
+    result = wifi_connect((char *)petlibre_creds.ssid, (rtw_security_t)petlibre_found_security,
+                          (char *)petlibre_creds.psk, (int)petlibre_creds.ssid_len, (int)petlibre_creds.psk_len,
+                          -1, NULL);
+    /* The event's value names the credentials' source, never the credentials. */
+    petlibre_event(PETLIBRE_EV_CONNECT, attempt, result, petlibre_creds.source, petlibre_ms(begin));
     if (result != RTW_SUCCESS) {
         return 0;
     }
@@ -160,6 +176,20 @@ static int petlibre_join(unsigned int attempt)
         return 0;
     }
     return 1;
+}
+
+/* One attempt with the credentials Rust selects, reporting the outcome. */
+static int petlibre_join(unsigned int attempt)
+{
+    petlibre_creds.ssid = (const unsigned char *)PETLIBRE_WIFI_SSID;
+    petlibre_creds.ssid_len = sizeof(PETLIBRE_WIFI_SSID) - 1;
+    petlibre_creds.psk = (const unsigned char *)PETLIBRE_WIFI_PASSWORD;
+    petlibre_creds.psk_len = sizeof(PETLIBRE_WIFI_PASSWORD) - 1;
+    petlibre_creds.source = 0;
+    petlibre_wifi_select(&petlibre_creds);
+    int joined = petlibre_join_once(attempt);
+    petlibre_wifi_outcome(joined);
+    return joined;
 }
 
 /* Skip a possibly compressed name at `at`; the offset after it, or -1. */

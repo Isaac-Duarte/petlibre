@@ -181,7 +181,7 @@ async fn replacement_request(
         .ok_or_else(|| {
             (
                 StatusCode::BAD_REQUEST,
-                Json(json!({"error":"expected {\"op\":\"health\"|\"ping\"|\"settings\"}; settings may set lights, sound (booleans) and volume (0-100)"})),
+                Json(json!({"error":"expected {\"op\":\"health\"|\"ping\"|\"settings\"|\"wifi\"}; settings may set lights, sound (booleans) and volume (0-100); wifi may set ssid (1-32 bytes) with psk (8-63 printable ASCII), or clear: true"})),
             )
         })?;
 
@@ -194,6 +194,7 @@ async fn replacement_request(
         (status, Json(json!({"error":error.message()})))
     };
 
+    let op = input.op;
     state
         .requests
         .try_send(Request::Replacement(input, send))
@@ -204,7 +205,7 @@ async fn replacement_request(
         .map_err(|_| offline(RequestError::Offline))?
         .map_err(offline)?;
 
-    Ok(Json(json!({"id":id,"op":input.op})))
+    Ok(Json(json!({"id":id,"op":op})))
 }
 
 #[derive(serde::Deserialize)]

@@ -250,6 +250,48 @@ unsafe extern "C" fn audio_task(_: *mut c_void) -> u32 {
     step.delay_ms
 }
 
+/// Speaker variant: touched only by the stream task; see `stream_task`.
+#[cfg(feature = "speaker")]
+static STREAMER: Slot<wellfed_amebad::stream::Streamer> = Slot(UnsafeCell::new(None));
+
+#[cfg(feature = "speaker")]
+struct StreamLine(wellfed_amebad::stream::Record);
+
+#[cfg(feature = "speaker")]
+impl core::fmt::Display for StreamLine {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        wellfed_amebad::stream::describe(self.0, f)
+    }
+}
+
+/// Speaker variant: plays signed network audio streams.
+#[cfg(feature = "speaker")]
+unsafe extern "C" fn stream_task(_: *mut c_void) -> u32 {
+    // SAFETY: only this task touches the slot.
+    let streamer = unsafe { STREAMER.get_or_init(Default::default) };
+    let step = streamer.step();
+    if let Some(record) = step.record {
+        let mut report = startup::Report::new();
+        if let Ok(line) = report.record(format_args!("PLSPK1 {}\r\n", StreamLine(record))) {
+            sdk::log(line);
+        }
+    }
+    step.delay_ms
+}
+
+#[cfg(feature = "speaker")]
+fn start_stream() {
+    let created = sdk::task_create(c"wellfed-spk", 1024, 2, stream_task, ptr::null_mut());
+    sdk::log(if created {
+        c"PLSPK1 start created=1\r\n"
+    } else {
+        c"PLSPK1 start created=0\r\n"
+    });
+}
+
+#[cfg(not(feature = "speaker"))]
+fn start_stream() {}
+
 /// Below the feeder and the optics probe: a late page is an audible gap,
 /// never a missed lease.
 fn start_audio() {
@@ -902,6 +944,7 @@ unsafe extern "C" fn diagnostic_task(_: *mut c_void) -> u32 {
         start_optics();
         start_confirm();
         start_audio();
+        start_stream();
     }
     STARTUP.store(STARTUP_STARTED, Ordering::Release);
     1

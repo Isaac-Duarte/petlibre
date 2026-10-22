@@ -63,6 +63,8 @@ pub enum Variant {
     Fw11Reset,
     /// FW11: fails its startup diagnostic on purpose.
     Fw11Fail,
+    /// The normal image plus a signed network audio stream.
+    Speaker,
 }
 
 impl Variant {
@@ -71,6 +73,7 @@ impl Variant {
         match self {
             Self::Fw11Reset => "--trial-reset",
             Self::Fw11Fail => "--trial-fail",
+            Self::Speaker => "--speaker",
         }
     }
 }
@@ -80,10 +83,13 @@ pub fn parse_variant(text: &str) -> std::result::Result<Variant, String> {
     match text {
         "fw11-reset" => Ok(Variant::Fw11Reset),
         "fw11-fail" => Ok(Variant::Fw11Fail),
+        "speaker" => Ok(Variant::Speaker),
         "fw16-pulse" => Err(
             "fw16-pulse drives the motor; motion builds stay manual (build and review it yourself, then use --review with --attended-motion)".into(),
         ),
-        other => Err(format!("unknown variant {other:?}; use fw11-reset or fw11-fail")),
+        other => Err(format!(
+            "unknown variant {other:?}; use fw11-reset, fw11-fail or speaker"
+        )),
     }
 }
 
@@ -97,7 +103,7 @@ pub struct OtaArgs {
     /// Build plaf103-firstboot and freeze it as private/verification/NAME-review first.
     #[arg(long)]
     pub build: bool,
-    /// No-motion variant for --build: fw11-reset or fw11-fail.
+    /// No-motion variant for --build: fw11-reset, fw11-fail or speaker.
     #[arg(long, value_parser = parse_variant)]
     pub variant: Option<Variant>,
     /// Python for --build's tools (default: .venv/bin/python under --root).

@@ -142,6 +142,12 @@ impl Tune {
     }
 }
 
+/// The `volume` scale applied to a full-scale signal (a network stream),
+/// Q15: the tunes' decibel curve, with 100 at about 0 dB.
+pub fn gain_q15(volume: u8) -> i32 {
+    i32::from(GAIN[usize::from(volume.min(100))]) * 2
+}
+
 /// A quarter sine period in 64 steps, Q15.
 const QUARTER: [i16; 65] = [
     0, 804, 1608, 2410, 3212, 4011, 4808, 5602, 6393, 7179, 7962, 8739, 9512, 10278, 11039, 11793,

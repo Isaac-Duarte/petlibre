@@ -15,4 +15,5 @@ pub mod probe;
 pub mod protocol;
 pub mod replacement;
 pub mod request_auth;
+pub mod speak;
 pub mod storage;

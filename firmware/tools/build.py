@@ -481,7 +481,9 @@ VARIANTS = {"fw16-pulse": {"feature": "fw16-pulse", "policy": "fw16-pulse-v1"},
             # FW11: never confirms and lets the watchdog reset it; no motion.
             "fw11-reset": {"feature": "fw11-reset", "policy": None, "trial": "fw11-reset-v1"},
             # FW11: fails its startup diagnostic on purpose; no motion.
-            "fw11-fail": {"feature": "fw11-fail", "policy": None, "trial": "fw11-fail-v1"}}
+            "fw11-fail": {"feature": "fw11-fail", "policy": None, "trial": "fw11-fail-v1"},
+            # The normal image plus a signed network audio stream; no motion.
+            "speaker": {"feature": "speaker", "policy": None}}
 
 
 def build_rust(sdk, toolchain, stream, identity, base_environment, variant=None, ota_key=None):
@@ -828,6 +830,8 @@ def main():
                         help="Build the FW11 trial-test variant (watchdog resets it after startup)")
     parser.add_argument("--trial-fail", action="store_true",
                         help="Build the FW11 failed-start variant (its startup diagnostic fails)")
+    parser.add_argument("--speaker", action="store_true",
+                        help="Build the speaker variant (plays signed network audio streams)")
     args = parser.parse_args()
     try:
         if args.command == "source-id":
@@ -839,7 +843,8 @@ def main():
         if args.command != "bootstrap":
             chosen = [name for name, flag in (("fw16-pulse", args.motion_probe),
                                               ("fw11-reset", args.trial_reset),
-                                              ("fw11-fail", args.trial_fail)) if flag]
+                                              ("fw11-fail", args.trial_fail),
+                                              ("speaker", args.speaker)) if flag]
             if len(chosen) > 1:
                 raise ValueError("Choose one image variant")
             variant = chosen[0] if chosen else None

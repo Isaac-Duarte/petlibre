@@ -78,6 +78,10 @@ pub fn valid_nonce(text: &str) -> bool {
 pub struct RequestKey([u8; 32]);
 
 impl RequestKey {
+    pub fn bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+
     pub fn parse(text: &str) -> Option<Self> {
         if !valid_key_hex(text) {
             return None;

@@ -19,6 +19,9 @@ fw11-reset = []
 # FW11 trial test: a candidate whose startup fails on a determined error.
 # Only `build.py --trial-fail` sets it.
 fw11-fail = []
+# Speaker variant: the normal image plus a signed network audio stream
+# (wellfed-amebad stream.rs). Only `build.py --speaker` sets it.
+speaker = []
 
 [dependencies]
 wellfed-amebad.workspace = true

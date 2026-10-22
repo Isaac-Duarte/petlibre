@@ -121,6 +121,9 @@ pub struct Offer {
     pub manifest: [u8; MANIFEST_LEN],
     pub payload: Vec<u8>,
     pub version: u32,
+    /// The last chunk has been served once: a later manifest request means
+    /// the candidate fell back and the firmware is starting over.
+    pub delivered: bool,
 }
 
 impl Offer {
@@ -143,10 +146,37 @@ impl Offer {
             manifest,
             payload,
             version: field(8),
+            delivered: false,
         })
     }
 
     /// The `ota/data` answer to one `ota/get`, or `None` for a malformed request.
+    /// As `answer`, serving each offer to completion once. A manifest request
+    /// after the last chunk went out drops the offer: the candidate was
+    /// delivered and the firmware fell back (observed on hardware: a failing
+    /// build was re-served after every fallback). Re-asks of chunks, such as
+    /// a lost last answer, are still served. The owner re-offers to retry.
+    /// Returns the answer and whether the offer was dropped.
+    pub fn serve(offer: &mut Option<Self>, request: &[u8]) -> (Option<Vec<u8>>, bool) {
+        let (part, offset, len) = match ota::decode_get(request) {
+            Some(get) => get,
+            None => return (None, false),
+        };
+        let dropped = part == ota::Part::Manifest && offer.as_ref().is_some_and(|o| o.delivered);
+        if dropped {
+            *offer = None;
+        }
+        let answer = Self::answer(offer.as_ref(), request);
+        if let Some(o) = offer.as_mut()
+            && part == ota::Part::Chunk
+            && offset as usize + len as usize == o.payload.len()
+            && answer.as_ref().is_some_and(|a| a.get(1) == Some(&0))
+        {
+            o.delivered = true;
+        }
+        (answer, dropped)
+    }
+
     pub fn answer(offer: Option<&Self>, request: &[u8]) -> Option<Vec<u8>> {
         let (part, offset, len) = ota::decode_get(request)?;
         let refuse = |status| ota::encode_data_header(part, status, offset, 0).to_vec();

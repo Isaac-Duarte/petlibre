@@ -124,7 +124,9 @@ pub async fn run(
                                 continue;
                             }
                             if config.firmware.is_some() && publish.topic == config.firmware_topic("ota/get") {
-                                match firmware_ota::Offer::answer(offer.as_ref(),&publish.payload) {
+                                let (answer,dropped) = firmware_ota::Offer::serve(&mut offer,&publish.payload);
+                                if dropped { warn!("replacement update offer dropped: delivered once, then asked for again after a fallback; offer again to retry"); }
+                                match answer {
                                     Some(answer) => { let _ = client.try_publish(config.firmware_topic("ota/data"),QoS::AtMostOnce,false,answer); }
                                     None => warn!("ignored malformed replacement update request"),
                                 }

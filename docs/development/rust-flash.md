@@ -2,7 +2,15 @@
 
 `petlibre-flash` ([crates/petlibre-flash](../../crates/petlibre-flash)) is a Rust port of the UART clients in `tools/flash/`. It ships as a single binary with no Python or pyserial dependency. It keeps the Python clients' pinned helper, ROM and baseline checks, marker-last sequencing and terminal no-retry stops. Its reports, plans and journals use the same fields, so either implementation's later sessions accept the other's saved evidence.
 
-**Evidence: host simulation only.** The Rust client has not run on the research unit. Until FW32 closes on the bench, the Python clients remain the accepted writers. A reviewed bench procedure is still required for any device session; a passing check here does not authorize one.
+**Evidence: physical (October 22, 2026) and host simulation.** On the research unit, after `tools/bench/bench.py loader`:
+- `read small` and `read status` matched a Python session byte for byte: data, bytes sent and bytes received.
+- A no-op `update` erased nothing and verified the region.
+- `give-way`, then `update --restore-marker`, booted bank 0 and then bank 1.
+- `update --bank 0` installed a changed image: 140 sectors, verified.
+
+Both clients are now accepted writers. A reviewed bench procedure is still required for any device session; a passing check here does not authorize one.
+
+Caution: run `bench.py` from a checkout whose `private/` is a real directory. In a worktree where `private/` is a symlink, its capture path check refuses. The firmware build likewise refuses there, because the shared SDK tree records the main checkout's paths.
 
 ## Commands
 

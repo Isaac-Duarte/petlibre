@@ -280,22 +280,13 @@ Bench lessons from stage C:
 
 ## What is actually installed
 
-The research feeder runs the **bench live target review 01** build (FW13 plan 2 probe, identity `8d67a407…`) in **both** banks; it boots bank 1. Before October 22 it ran **FW13 optics review 02** in bank 1, starting at
-flash offset `0x186000`. It was installed through the relay bench (122
-sectors: 31 before a loader NAK, 91 more with `--interrupted`).
+Per the latest checkpoint at the top of this file (reconfirm before relying on it):
 
-| Identity | Recorded value |
-| --- | --- |
-| OTA SHA-256 | `064b76290486ca774f28dce826ca2a0e079b84e768b7d2d35cdf0646d8a03842` |
-| Embedded startup build ID | `fb1769937b77edbcc092897b8a201fe1ff51f14868b3ee9bd0382e44156f9747` |
+- **Bank 1 (boots):** the Rust-built normal image `0f8b3ad851fc…`, OTA v45, confirmed. It carries FW11 supervision, the FW21 clock, signed requests, the FW25 settings writer and the FW24 built-in tunes. It drives no motor.
+- **Bank 0 (recovery):** `final-review-20261022-01` (`36c9a086…`), installed by UART. It lacks the Wi-Fi credential store and the low-only LEDs, but its recovery role is fine.
+- **Next manifest version:** 46.
 
-**Every power-on runs the Wi-Fi DNS probe, the FW08 transport and the FW13
-optics probe**: after the LED sequence it joins the owner's hotspot and reports
-health to the local broker as before. For about two minutes the optics task
-pulses the infrared emitters in budgeted windows (motor STOP throughout), then
-stalls on purpose until the supervisor cuts them, and leaves them off. Wi-Fi and
-broker credentials come from private files; the image stays under `private/`.
-It drives no motor and writes no flash.
+Wi-Fi and broker credentials come from private files; images stay under `private/`.
 
 ## Last confirmed physical state
 
@@ -316,7 +307,7 @@ Reconfirm it with the operator before any bench operation.
   relay-2-held boots printed `Flash Download Start` and NAKs, 16 of 16 each, off
   times 0.3-2 s, with or without UART break held during the off time. The earlier
   stuck-entry symptom (fixed by replugging the adapter) did not reproduce.
-- Adapter power/VCC and flow-control pins remain unwired. No batteries were in use.
+- Adapter power/VCC and flow-control pins remain unwired. Until October 22 no batteries were in use; the owner now has batteries, not yet installed as of this note. With batteries in, relay 1 off no longer means feeder off.
 - CON3 remains connected: this motor harness also carries board power.
   The front indicator PCB is difficult to access; no disassembly or wire cutting
   was needed for the successful LED test.

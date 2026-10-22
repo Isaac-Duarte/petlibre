@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Feeder Bench</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <div class="brand">
+    <h1>Feeder bench</h1>
+    <span class="sub">Read-only view of <code>wellfed-bench</code>. It never touches the relays or the UART.</span>
+  </div>
+  <div id="health" class="health" aria-live="polite"></div>
+</header>
+<main>
+  <section id="script"></section>
+  <section id="now"></section>
+  <div class="columns">
+    <div class="col">
+      <section class="card log-card">
+        <div class="row">
+          <h2>Live log</h2>
+          <div class="controls">
+            <input id="filter" type="search" placeholder="Filter" aria-label="Filter log lines">
+            <label><input id="follow" type="checkbox" checked> Follow</label>
+            <button id="copy-log" type="button">Copy</button>
+          </div>
+        </div>
+        <div class="muted" id="log-meta">Waiting for output…</div>
+        <pre id="log" class="log" tabindex="0"></pre>
+      </section>
+      <section id="rx"></section>
+    </div>
+    <div class="col">
+      <section class="card">
+        <div class="row"><h2>Sessions</h2><span class="muted" id="sessions-meta"></span></div>
+        <div id="sessions"></div>
+        <div id="session"></div>
+      </section>
+      <section id="history"></section>
+    </div>
+  </div>
+</main>
+<script src="app.js"></script>
+</body>
+</html>

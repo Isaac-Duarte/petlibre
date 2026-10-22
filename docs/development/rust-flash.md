@@ -10,7 +10,7 @@
 
 Both clients are now accepted writers. A reviewed bench procedure is still required for any device session; a passing check here does not authorize one.
 
-Caution: run `bench.py` from a checkout whose `private/` is a real directory. In a worktree where `private/` is a symlink, its capture path check refuses. The firmware build likewise refuses there, because the shared SDK tree records the main checkout's paths.
+Caution: run the bench from a checkout whose `private/` is a real directory. In a worktree where `private/` is a symlink, the evidence paths do not resolve inside the checkout, and the old Python bench's capture check refused there. The firmware build likewise refuses there, because the shared SDK tree records the main checkout's paths.
 
 ## Commands
 
@@ -30,7 +30,7 @@ Build with `cargo build --locked -p wellfed-flash`; the binary is `target/debug/
 
 Frozen image reviews still come from `tools/flash/review-development-image.py`, which re-runs the build's linked-code and factory-mapping audits. The Rust client only checks that a frozen review is complete and still matches its image.
 
-Not ported: the stock write-back acceptance tests (`uart-stock-recovery.py prepare-activation-test`, `bank-writeback-test`) and the standalone diagnostic installer (`uart-standalone.py`). `tools/bench/bench.py` still chains the Python clients.
+Not ported: the stock write-back acceptance tests (`uart-stock-recovery.py prepare-activation-test`, `bank-writeback-test`) and the standalone diagnostic installer (`uart-standalone.py`). The relay bench, [`wellfed-bench`](../hardware/bench.md), chains this client as a separate process, so plans stay bound to the `wellfed-flash` binary itself.
 
 ## Output for scripts and agents
 

@@ -28,13 +28,13 @@ Records (`PLMOT1`):
 
 ## Guards
 
-- **`bench.py`:** `flash-prepare` and `flash-execute` refuse a target whose manifest names a motion policy unless `--attended-motion` is given.
+- **`wellfed-bench`:** `flash-prepare` and `flash-execute` refuse a target whose manifest names a motion policy unless `--attended-motion` is given.
 - **Startup audit:** binds `fw16-pulse-v1` to the `PLMOT1 start created=` format both ways, and refuses motion and optics policies together.
 - **Prerequisites:** the board makes FW30 (transients) and FW14 (current channel) prerequisites. Do not install this before both pass.
 
 ## Procedure (owner present)
 
-1. FW30 transients pass (`bench.py transients`), and FW14 confirms the current channel reads apart from the battery channel.
+1. FW30 transients pass (`wellfed-bench transients`), and FW14 confirms the current channel reads apart from the battery channel.
 2. Hopper empty, the outlet clear, hands away from the mechanism. The owner can cut USB power at any moment.
 3. Install the frozen review with `--attended-motion` and `--boot-seconds` short (10). Power off right after the install.
 4. Load a dashboard script anchored on `PLMOT1 armed`, with a countdown to the pulse at 60 s.

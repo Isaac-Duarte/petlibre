@@ -2,7 +2,7 @@
 //! (default) or bank 0, and bank-1 give-ways. The factory region is never
 //! written.
 //!
-//! Port of `tools/flash/uart-development.py` and `uart-give-way.py`. Each
+//! Port of `tools/flash/uart-development.py` and the former `uart-give-way.py`. Each
 //! continues an established helper session: none uploads a helper, enters a
 //! loader, changes baud or status, boots an application or replays a stopped
 //! transaction. An interrupted update is planned afresh from a new

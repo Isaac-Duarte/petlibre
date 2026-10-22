@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check FW30 logic-analyzer captures of the motor driver for any drive.
 
-Reads a `bench.py transients` session: raw sigrok bytes (one byte per sample,
+Reads a `wellfed-bench transients` session: raw sigrok bytes (one byte per sample,
 bit n = channel Dn) plus its manifest naming the INA, INB, OUTA and OUTB
 channels. The TC118AH drives the motor only when its inputs differ (forward
 H/L, reverse L/H); L/L is standby and H/H is brake. Its outputs differ only

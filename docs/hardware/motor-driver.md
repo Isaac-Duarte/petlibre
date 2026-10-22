@@ -67,7 +67,7 @@ The food emitter's OFF state is therefore confirmed electrically: TP20 at 3.3 V,
 2. **Transients:** across relay power-ons, resets and loader entries, between power-up and our stopped startup. A meter cannot catch these. Tooling is ready for the owner's 24 MHz fx2lafw analyzer:
    1. Install `sigrok-cli`.
    2. Wire D0 to INA (pin 2), D1 to INB (pin 3), D2 to OUTA (pin 8), D3 to OUTB (pin 5), and analyzer GND to board GND. Check the analyzer's input rating before connecting the 5 V outputs.
-   3. Run `tools/bench/bench.py transients NAME --cycles 50` and `--mode loader`.
+   3. Run `wellfed-bench transients NAME --cycles 50` and `--mode loader`.
    4. Audit with `tools/audit/audit-driver-transients.py`.
 
    A pass needs, on every cycle: an unpowered start, no sample with INA ≠ INB or OUTA ≠ OUTB, and the brake reached and held after boot, or standby held throughout a loader entry.

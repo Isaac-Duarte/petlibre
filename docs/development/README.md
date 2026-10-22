@@ -13,7 +13,7 @@ cargo build --locked
 make check PYTHON=.venv/bin/python
 ```
 
-The Python scripts are grouped into `tools/bench`, `tools/flash`, `tools/audit` and `tools/emulate`; the [tools index](../../tools/README.md) lists what each does and which ones open a serial port. The Rust crates live in `crates/`, one folder per package; `wellfed-flash` is the [Rust UART flash client](rust-flash.md).
+The Python scripts are grouped into `tools/flash`, `tools/audit` and `tools/emulate`; the [tools index](../../tools/README.md) lists what each does and which ones open a serial port. The Rust crates live in `crates/`, one folder per package; `wellfed-flash` is the [Rust UART flash client](rust-flash.md), and `wellfed-bench` the [relay bench](../hardware/bench.md).
 
 Rustup/Cargo and pip download dependencies on initial setup. Check targets do not install packages, fetch SDKs, contact a device, change firewall rules, or start persistent services. Network tests bind loopback sockets with synthetic identities. Environments that prohibit local sockets need permission to run those tests; skipping them is not a passing result.
 

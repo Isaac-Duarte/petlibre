@@ -7,6 +7,8 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
+**October 22, latest (offline, nothing run on the bench).** FW33: the relay bench is now the Rust `wellfed-bench` (crate `crates/wellfed-bench`). It chains `wellfed-flash` as a child process and serves the read-only page with `--ui`. `bench.py`, `bench-dashboard.py`, `relay-demo.py`, `uart-give-way.py` and seven finished one-off Python analyses are removed (list in [tools/README.md](tools/README.md)). It is host-tested only. **Next:** with the owner, build both binaries (`cargo build --locked --release -p wellfed-bench -p wellfed-flash`), then run `status`, `on`/`off`, `loader` and a no-op `flash-prepare`/`flash-execute` with `--ui` ([bench](docs/hardware/bench.md)).
+
 **October 22, later (physical).** The **first live OTA** and a **hands-off OTA** both succeeded (FW10). The second was started by the running normal image, with no UART. FW11 trial, fallback and confirmation work on hardware (see the board).
 - **Flash now:** bank 1 holds OTA-installed `fw10-watch-review-20261022-01` (`4d37c21a…`, v6, confirmed, offer watcher running). Bank 0 holds the same build, installed by the Rust client (FW32). Bank 0 holds `fw10-recovery-review-20261022-02` (`635476bd…`), the fixed updater.
 - **Idle state:** the feeder is off, the hotspot down, and the server stopped.
@@ -191,7 +193,7 @@ Reconfirm it with the operator before any bench operation.
 - Feeder TX (breadboard row 1) goes to adapter RXD and, through the 4.7 kΩ
   resistor (row 5), to COM2; NO2 is on the GND rail. Relay 2 replaces the button,
   which is removed. Feeder RX (row 2) goes to adapter TXD. Relays 3 and 4 are spare.
-- `tools/bench/bench.py` drives the relays and the UART tools ([bench control](docs/hardware/bench.md));
+- `wellfed-bench` drives the relays and chains `wellfed-flash` ([bench control](docs/hardware/bench.md));
   ports are `/dev/serial/by-id/` paths in ignored `private/bench.json`. The relay
   board can take `/dev/ttyUSB0`.
 - Physical, October 21, 2026: relay-1 boots reached the Rust bring-up banner and

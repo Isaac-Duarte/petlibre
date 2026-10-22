@@ -1,6 +1,6 @@
 # Python tools
 
-Scripts are grouped by what they do. Run them from the repository root with the project environment, for example `.venv/bin/python tools/bench/bench.py status`. Install `requirements-probe.txt` for checks and emulation, and also `requirements-hardware.txt` for serial access.
+Scripts are grouped by what they do. Run them from the repository root with the project environment, for example `.venv/bin/python tools/flash/review-development-image.py --help`. Install `requirements-probe.txt` for checks and emulation, and also `requirements-hardware.txt` for serial access.
 
 **Device** marks the only scripts that open a serial port. Everything else works offline. Physical operations need an explicit task and a reviewed procedure (see [AGENTS.md](../AGENTS.md)); a script being here does not authorize running it against the feeder.
 
@@ -13,15 +13,11 @@ Scripts are grouped by what they do. Run them from the repository root with the 
 
 ## Bench: relay control and progress
 
-| Script | Device | Purpose |
-| --- | --- | --- |
-| [bench/bench.py](bench/bench.py) | yes | Relay power and loader strap; chains captures, dumps and updates through the flash tools ([guide](../docs/hardware/bench.md)) |
-| [bench/bench-dashboard.py](bench/bench-dashboard.py) | no | Read-only localhost page: progress, ETAs, latest RX log, timed operator steps |
-| [bench/relay-demo.py](bench/relay-demo.py) | yes (spare relays 3–4 only) | Clicks the spare relays in chase, blink, heartbeat and Morse patterns; refuses while a bench command runs |
+The relay bench is the Rust binary `wellfed-bench` ([crates/wellfed-bench](../crates/wellfed-bench), [guide](../docs/hardware/bench.md)). It switches power and the loader strap, chains `wellfed-flash` for captures, dumps and updates, and serves the read-only progress page with `--ui`. `wellfed-bench demo` clicks the spare relays.
 
 ## Flash: reads, updates and recovery
 
-The five `uart-*` clients own the serial port. The [Rust client](../docs/development/rust-flash.md) `wellfed-flash` ports the reader, development update, give-way and stock recovery with the same evidence formats; it is host- and emulation-tested only, so these Python clients remain the accepted writers. The rest are the components they load, plus offline planners and reviewers. See the [development updater](../docs/development/uart-development.md) and [recovery limits](../docs/hardware/recovery.md).
+The four `uart-*` clients own the serial port. The [Rust client](../docs/development/rust-flash.md) `wellfed-flash` ports the reader, development update, give-way and stock recovery with the same evidence formats. It passed on the research unit (FW32), and both it and these Python clients are accepted writers; the relay bench drives the Rust client. The Python reader and updater also serve as references for the Rust client's tests. The rest are the components they load, plus offline planners and reviewers. See the [development updater](../docs/development/uart-development.md) and [recovery limits](../docs/hardware/recovery.md).
 
 | Script | Device | Purpose |
 | --- | --- | --- |
@@ -29,7 +25,6 @@ The five `uart-*` clients own the serial port. The [Rust client](../docs/develop
 | [flash/uart-development.py](flash/uart-development.py) | yes | Inspect, prepare and execute reviewed application updates of bank 1, or bank 0 with `--bank 0` (`--interrupted` finishes a stopped one, `--restore-marker` undoes a give-way) |
 | [flash/uart-standalone.py](flash/uart-standalone.py) | yes | Install the pinned UART diagnostic, or restore the original |
 | [flash/uart-stock-recovery.py](flash/uart-stock-recovery.py) | yes | Exact original bank-1 stock recovery |
-| [flash/uart-give-way.py](flash/uart-give-way.py) | yes | Clear bank 1's first marker byte so the loader falls back to an exactly reviewed bank 0 |
 | [flash/review-development-image.py](flash/review-development-image.py) | no | Freeze a reviewed stock OTA or `plaf103-firstboot` build as an update source/target |
 | [flash/development-bank.py](flash/development-bank.py) | no | Region-scoped bank-1 update transactions (injected transport) |
 | [flash/development-wire-policy.py](flash/development-wire-policy.py) | no | Independent expected TX for development updates |
@@ -43,7 +38,6 @@ The five `uart-*` clients own the serial port. The [Rust client](../docs/develop
 | [flash/marker-activation-test.py](flash/marker-activation-test.py) | no | Original-stock write-back test transactions |
 | [flash/flash-status.py](flash/flash-status.py) | no | GD25Q64E status decoding and reads over an injected transport |
 | [flash/prepare-firstboot.py](flash/prepare-firstboot.py) | no | Freeze and review the UART-only standalone diagnostic |
-| [flash/prepare-stock-ota-test.py](flash/prepare-stock-ota-test.py) | no | Prepare the fixed stock-version experiment |
 
 ## Audit: captures, images and flash
 
@@ -67,8 +61,6 @@ Capture auditors check a finalized receive-only UART capture against the build m
 | [audit/audit-ota-layout.py](audit/audit-ota-layout.py) | OTA container and placement profile |
 | [audit/audit-factory-mapping.py](audit/audit-factory-mapping.py) | Execute the factory flash mapper offline |
 | [audit/audit-recovery-boot.py](audit/audit-recovery-boot.py) | Factory-loader and ROM recovery route |
-| [audit/audit-recovery-program.py](audit/audit-recovery-program.py) | Vendor-helper sector-program semantics |
-| [audit/audit-probe-memory.py](audit/audit-probe-memory.py) | Stock startup MPU configuration |
 | [audit/audit-sdk-flash-users.py](audit/audit-sdk-flash-users.py) | Flash/IPC branches in both linked SDK images |
 
 ## Emulate: offline execution and simulation
@@ -77,14 +69,10 @@ Capture auditors check a finalized receive-only UART capture against the build m
 | --- | --- |
 | [emulate/virtual-feeder.py](emulate/virtual-feeder.py) | Replacement Rust feeder scenarios on synthetic hardware ([scenarios](emulate/scenarios/)) |
 | [emulate/emulate-uart-read.py](emulate/emulate-uart-read.py) | Pinned vendor UART helper on synthetic flash |
-| [emulate/emulate-development.py](emulate/emulate-development.py) | Development-update round trip through the actual helper |
-| [emulate/emulate-standalone.py](emulate/emulate-standalone.py) | Pinned-diagnostic install and restore receipts |
 | [emulate/emulate-recovery-session.py](emulate/emulate-recovery-session.py) | Helper erase/program/read transport on synthetic NOR |
-| [emulate/emulate-recovery-transaction.py](emulate/emulate-recovery-transaction.py) | A complete planned restore in memory |
 | [emulate/prepare-c-probe.py](emulate/prepare-c-probe.py) | Build the non-actuating stock execution probe |
 | [emulate/emulate-c-probe.py](emulate/emulate-c-probe.py) | Run stock GET_CONFIG and the compiled probe on real ARM code |
 | [emulate/emulate-ota-markers.py](emulate/emulate-ota-markers.py) | The FW10/FW11 marker sequence through the actual factory loader's bank selection |
-| [emulate/trace-stock-pad-power.py](emulate/trace-stock-pad-power.py) | Execute the stock KM0 shared-pad supply initializer |
 
 ## Layout notes
 
@@ -92,3 +80,4 @@ Capture auditors check a finalized receive-only UART capture against the build m
 - Tests are in [tests/](tests/), one `test_*.py` per tool or feature. `check-python.py` discovers them.
 - Scripts load their siblings by path, because hyphenated names are not importable. A folder-qualified name such as `flash/uart-flash-read.py` is relative to `tools/`, and `check-repository.py` verifies every such reference.
 - Reports record their tool hashes under these folder-qualified names. Evidence from before October 21, 2026 names the old flat paths (`tools/<script>.py`).
+- Removed October 22, 2026, and still named by older evidence: `bench/bench.py`, `bench/bench-dashboard.py` and `bench/relay-demo.py` (now `wellfed-bench`), `flash/uart-give-way.py` (now `wellfed-flash give-way`), and the finished one-off analyses `audit-probe-memory.py`, `audit-recovery-program.py`, `emulate-development.py`, `emulate-recovery-transaction.py`, `emulate-standalone.py`, `prepare-stock-ota-test.py` and `trace-stock-pad-power.py`. Their last versions are in Git history.

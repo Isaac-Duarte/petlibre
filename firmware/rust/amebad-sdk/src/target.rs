@@ -688,7 +688,7 @@ const EMPTY: TaskSlot = TaskSlot {
     step: core::cell::UnsafeCell::new(None),
     context: core::cell::UnsafeCell::new(ptr::null_mut()),
 };
-static TASKS: [TaskSlot; 4] = [EMPTY, EMPTY, EMPTY, EMPTY];
+static TASKS: [TaskSlot; 6] = [EMPTY; 6];
 
 unsafe extern "C" fn trampoline(argument: *mut c_void) {
     let slot = unsafe { &*argument.cast::<TaskSlot>() };

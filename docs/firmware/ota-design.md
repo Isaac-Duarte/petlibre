@@ -50,7 +50,14 @@ Implemented on KM0 (`amebad/src/trial.rs`, `petlibre_trial_step` in `firstboot_k
 
 The program step bypasses `FLASH_Write_Lock`. After a watchdog reset, that lock's KM0 branch waits forever for an absent KM4, because `km4_status_on` still reads the HS clock bit set. This was observed on hardware, then fixed.
 
-Physical (October 22): the `fw11-reset` test variant (`build.py --trial-reset`) was counted 1, 2, 3, then gave way and booted bank 0's recovery role. The KM4 confirmation write is not implemented yet, so a normal image is never confirmed. It only gives way after three resets within one power-on, and the normal role does not yet open the watchdog.
+Physical (October 22): the `fw11-reset` test variant (`build.py --trial-reset`) was counted 1, 2, 3, then gave way and booted bank 0's recovery role. The normal role now confirms itself (`amebad/src/confirm.rs`). Once the startup probe has ended, the transport is ready and outputs are verified stopped for 30 s continuously, it arms the hooks and writes the record to sector 4, then reads it back. The normal role also opens the watchdog at startup. A feeder task feeds it while the transport and confirmation tasks keep stepping, and while outputs are stopped or sensing, so a hang becomes a reset that KM0 counts.
+
+Physical (October 22), over the air:
+1. The first build with this code had a feeder bug: it demanded all outputs stopped and tripped during the optics windows. KM0 counted three resets and gave way. The recovery role then installed the fixed build (version 3) over the air.
+2. The fixed build confirmed after 30 s healthy (`PLCNF1 confirmed=1 healthy_ms=30000`).
+3. On the next cold boot KM0 reported `PLTRL1 confirmed=1`.
+
+Caution, observed: while an offer stays loaded, a candidate that keeps failing is re-downloaded after every fallback. The server should drop an offer once its version has been activated or has failed.
 
 The original design:
 

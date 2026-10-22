@@ -13,6 +13,8 @@ use core::ffi::c_void;
 use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
+#[cfg(not(feature = "fw11-reset"))]
+use crate::confirm::{self, Confirm, HookedStorage};
 use crate::flash::hooks::{self, HookProvider, HookTicket};
 use crate::flash::park::Hardware;
 use crate::health::Boot;
@@ -56,6 +58,7 @@ unsafe extern "C" fn optics_task(_: *mut c_void) -> u32 {
             sdk::log(line);
         }
     }
+    PROBE_DONE.store(step.delay_ms == 0, Ordering::Release);
     step.delay_ms
 }
 
@@ -84,6 +87,7 @@ unsafe extern "C" fn pulse_task(_: *mut c_void) -> u32 {
             sdk::log(line);
         }
     }
+    PROBE_DONE.store(step.delay_ms == 0, Ordering::Release);
     step.delay_ms
 }
 
@@ -137,8 +141,16 @@ unsafe extern "C" fn net_task(_: *mut c_void) -> u32 {
         };
         *slot = Some(Link::new(config, Boot::read(startup::snapshot())));
     }
-    slot.as_mut()
-        .map_or(0, |link| link.step(&mut log_transport))
+    NET_RUNNING.store(true, Ordering::Release);
+    let delay = slot
+        .as_mut()
+        .map_or(0, |link| link.step(&mut log_transport));
+    NET_READY.store(slot.as_ref().is_some_and(Link::ready), Ordering::Release);
+    NET_BEAT.store(sdk::uptime_ms(), Ordering::Release);
+    if delay == 0 {
+        NET_RUNNING.store(false, Ordering::Release);
+    }
+    delay
 }
 
 fn start_transport() {
@@ -157,13 +169,21 @@ static PROVIDER: Slot<Provider> = Slot(UnsafeCell::new(None));
 /// Opened by the updater task, then touched only by the feeder task.
 static WATCHDOG: Slot<Watchdog> = Slot(UnsafeCell::new(None));
 static WATCHDOG_OPEN: AtomicBool = AtomicBool::new(false);
-/// The updater's last step, in uptime milliseconds.
+/// The flash writer's (updater or FW11 confirmation) last step, in uptime
+/// milliseconds.
 static HEARTBEAT: AtomicU32 = AtomicU32::new(0);
-/// The updater ended without activating: feed while outputs stay stopped.
+/// The writer ended without activating: feed while outputs stay stopped.
 static UPDATER_DONE: AtomicBool = AtomicBool::new(false);
 /// Bank 1 is activated: stop feeding so the watchdog resets the platform.
 static RESTART: AtomicBool = AtomicBool::new(false);
-/// An updater step longer than this (a hang) stops the feeding.
+/// The transport task's last step and state, for the feeder and FW11.
+static NET_BEAT: AtomicU32 = AtomicU32::new(0);
+static NET_RUNNING: AtomicBool = AtomicBool::new(false);
+static NET_READY: AtomicBool = AtomicBool::new(false);
+/// The startup optics (or pulse) probe has ended and released the KM0
+/// handshake, so another writer may bind it.
+static PROBE_DONE: AtomicBool = AtomicBool::new(false);
+/// A task step longer than this (a hang) stops the feeding.
 const LIVENESS_MS: u32 = 10_000;
 const FEED_MS: u32 = 250;
 /// 24 KiB: Ed25519 verification under the manifest step needs about 12 KiB,
@@ -194,6 +214,9 @@ struct SdkHooks;
 
 impl Hooks for SdkHooks {
     fn watchdog() -> bool {
+        if WATCHDOG_OPEN.load(Ordering::Acquire) {
+            return true; // The normal role opened it at startup.
+        }
         // SAFETY: the feeder touches the slot only once WATCHDOG_OPEN is set.
         let watchdog = unsafe { &mut *WATCHDOG.0.get() }.get_or_insert_with(Watchdog::default);
         let opened = watchdog.open(&config::WATCHDOG);
@@ -268,18 +291,23 @@ unsafe extern "C" fn updater_task(_: *mut c_void) -> u32 {
     step.delay_ms
 }
 
-/// Feeds the watchdog while the updater keeps stepping (or has ended) and
-/// outputs stay stopped. A hung updater, a hook fault (IRQs masked) or an
-/// activation all stop the feeding, and the watchdog resets the platform.
+/// Feeds the watchdog while the transport and the flash writer keep stepping
+/// (or have ended) and outputs stay stopped. A hung task, a hook fault (IRQs
+/// masked) or an activation all stop the feeding, and the watchdog resets
+/// the platform, which KM0's FW11 trial counts.
 unsafe extern "C" fn feeder_task(_: *mut c_void) -> u32 {
     static PROGRESS: AtomicU32 = AtomicU32::new(0);
     if !WATCHDOG_OPEN.load(Ordering::Acquire) || RESTART.load(Ordering::Acquire) {
         return FEED_MS;
     }
-    let beat = HEARTBEAT.load(Ordering::Acquire);
-    let alive =
-        UPDATER_DONE.load(Ordering::Acquire) || sdk::uptime_ms().wrapping_sub(beat) < LIVENESS_MS;
-    if alive && stopped::observe().verified() {
+    let now = sdk::uptime_ms();
+    let fresh = |beat: &AtomicU32| now.wrapping_sub(beat.load(Ordering::Acquire)) < LIVENESS_MS;
+    let alive = (!NET_RUNNING.load(Ordering::Acquire) || fresh(&NET_BEAT))
+        && (UPDATER_DONE.load(Ordering::Acquire) || fresh(&HEARTBEAT));
+    // Stopped, or motor STOP with exactly the supervised emitters lit (the
+    // optics probe): the feeder must not trip on a sensing window (observed).
+    let outputs = stopped::observe();
+    if alive && (outputs.verified() || outputs.sensing()) {
         // SAFETY: the updater task no longer touches the slot once open.
         if let Some(watchdog) = unsafe { &mut *WATCHDOG.0.get() }.as_mut() {
             let progress = PROGRESS.fetch_add(1, Ordering::Relaxed) + 1;
@@ -288,6 +316,68 @@ unsafe extern "C" fn feeder_task(_: *mut c_void) -> u32 {
     }
     FEED_MS
 }
+
+/// Touched only by the confirmation task; see `confirm_task`.
+#[cfg(not(feature = "fw11-reset"))]
+static CONFIRM: Slot<Confirm> = Slot(UnsafeCell::new(None));
+
+#[cfg(not(feature = "fw11-reset"))]
+struct ConfirmLine(confirm::Record);
+
+#[cfg(not(feature = "fw11-reset"))]
+impl core::fmt::Display for ConfirmLine {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        confirm::describe(self.0, f)
+    }
+}
+
+/// FW11: confirm this build once it has stayed healthy, after the startup
+/// probe has released the KM0 handshake.
+#[cfg(not(feature = "fw11-reset"))]
+unsafe extern "C" fn confirm_task(_: *mut c_void) -> u32 {
+    let now = sdk::uptime_ms();
+    HEARTBEAT.store(now, Ordering::Release);
+    // SAFETY: only this task creates references into the slots; the provider
+    // is reached by raw pointer so hook callbacks never alias a live borrow.
+    let confirm = unsafe { &mut *CONFIRM.0.get() }.get_or_insert_with(Confirm::default);
+    let provider =
+        unsafe { &mut *PROVIDER.0.get() }.get_or_insert_with(Provider::default) as *mut Provider;
+    let healthy = NET_READY.load(Ordering::Acquire)
+        && PROBE_DONE.load(Ordering::Acquire)
+        && stopped::observe().verified();
+    let mut storage = HookedStorage::<SdkHooks>::new();
+    // SAFETY: the provider slot is fixed for the program's lifetime.
+    let step = unsafe { confirm.step::<Hardware, SdkHooks>(provider, &mut storage, healthy, now) };
+    if let Some(record) = step.record {
+        let mut report = startup::Report::new();
+        if let Ok(line) = report.record(format_args!("PLCNF1 {}\r\n", ConfirmLine(record))) {
+            sdk::log(line);
+        }
+    }
+    HEARTBEAT.store(sdk::uptime_ms(), Ordering::Release);
+    if step.delay_ms == 0 {
+        UPDATER_DONE.store(true, Ordering::Release);
+    }
+    step.delay_ms
+}
+
+/// The normal role's FW11 supervision: the confirmation task, the feeder,
+/// then the watchdog, so a hang becomes a reset KM0 counts.
+#[cfg(not(feature = "fw11-reset"))]
+fn start_confirm() {
+    HEARTBEAT.store(sdk::uptime_ms(), Ordering::Release);
+    let created = sdk::task_create(c"petlibre-cnf", 1024, 2, confirm_task, ptr::null_mut())
+        && sdk::task_create(c"petlibre-wdg", 512, 3, feeder_task, ptr::null_mut());
+    let opened = created && SdkHooks::watchdog();
+    sdk::log(match (created, opened) {
+        (true, true) => c"PLCNF1 start created=1 watchdog=1\r\n",
+        (true, false) => c"PLCNF1 start created=1 watchdog=0\r\n",
+        _ => c"PLCNF1 start created=0 watchdog=0\r\n",
+    });
+}
+
+#[cfg(feature = "fw11-reset")]
+fn start_confirm() {}
 
 /// The recovery role: the updater, and the feeder above it so a long
 /// network wait cannot starve the watchdog.
@@ -431,6 +521,7 @@ unsafe extern "C" fn diagnostic_task(_: *mut c_void) -> u32 {
                     } else {
                         start_transport();
                         start_optics();
+                        start_confirm();
                     }
                     return 1;
                 }

@@ -44,8 +44,12 @@ EXPECTED_HP = {
     "FLASH_TxData256B": {"FLASH_TxData256BXIP"},
     # FW10: the recovery updater's bank-1 wrappers, which refuse unless the
     # image runs from bank 0 and stay inside bank 1 (amebad-sdk target.rs).
-    "FLASH_EraseXIP": {"FLASH_EreaseDwordsXIP", "petlibre_amebad_sdk::target::bank1_erase"},
-    "FLASH_TxData256BXIP": {"petlibre_amebad_sdk::target::bank1_program"},
+    # FW11: the storage-region wrappers (0x340000-0x350000), which the
+    # normal role's confirmation write uses.
+    "FLASH_EraseXIP": {"FLASH_EreaseDwordsXIP", "petlibre_amebad_sdk::target::bank1_erase",
+                       "petlibre_amebad_sdk::target::storage_erase"},
+    "FLASH_TxData256BXIP": {"petlibre_amebad_sdk::target::bank1_program",
+                            "petlibre_amebad_sdk::target::storage_program"},
     "FLASH_TxData12BXIP": {"FLASH_EreaseDwordsXIP"},
     "FLASH_EreaseDwordsXIP": set(),
     "cmd_flash": {"shell_cmd_table"},

@@ -3,10 +3,14 @@
 
 `tools/bench/bench.py` records each command in private/bench-status/ (current.json
 and history.jsonl). This server reads those files and the active capture's
-received bytes, and serves them on 127.0.0.1 only. It never opens a serial
-port, so it cannot disturb an update, a dump or a capture, and it never
-writes. Stop it with Ctrl+C. The page shows private UART output: keep it
-on this machine.
+received bytes, and serves them on 127.0.0.1 by default. It never opens a
+serial port, so it cannot disturb an update, a dump or a capture, and it
+never writes. Stop it with Ctrl+C. The page shows private UART output.
+
+`--listen ADDRESS` serves on another address, for example this machine's
+Tailscale address to reach it from a phone. Any non-loopback address
+requires a random access token, generated at start and printed in the URL;
+requests without it are refused. Wildcard addresses are refused.
 
 An optional private/bench-status/script.json gives the operator timed
 instructions for a capture: {"title", "capture" (a private/captures/ path),
@@ -16,10 +20,13 @@ instructions for a capture: {"title", "capture" (a private/captures/ path),
 import argparse
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import ipaddress
 import json
 import os
 from pathlib import Path
+import secrets
 import time
+from urllib.parse import parse_qs, urlsplit
 
 ROOT = Path(__file__).resolve().parents[2]
 STATUS_DIR = ROOT / "private/bench-status"
@@ -233,17 +240,32 @@ function render(d){
     ${d.history.map(h=>`<tr><td>${esc(h.command)}</td><td>${esc(h.name||"")}</td><td>${when(h.started)}</td><td>${dur(h.finished-h.started)}</td><td class="${esc(h.outcome)}">${esc(h.outcome)}${h.error?" · "+esc(h.error):""}</td></tr>`).join("")}</table></div>`:"";
 }
 let timer=null;
-async function tick(){clearTimeout(timer);let fast=false;try{const r=await fetch("/api/status",{cache:"no-store"});const d=await r.json();fast=!!(d.script&&d.script.started);render(d)}catch(e){}timer=setTimeout(tick,fast?250:1000)}
+const TOKEN=new URLSearchParams(location.search).get("token");
+const STATUS_URL="/api/status"+(TOKEN?"?token="+encodeURIComponent(TOKEN):"");
+async function tick(){clearTimeout(timer);let fast=false;try{const r=await fetch(STATUS_URL,{cache:"no-store"});const d=await r.json();fast=!!(d.script&&d.script.started);render(d)}catch(e){}timer=setTimeout(tick,fast?250:1000)}
 tick();
 </script></body></html>
 """
 
 
 class Handler(BaseHTTPRequestHandler):
+    # Set by main: None on loopback, else the access token every request must carry.
+    token = None
+
+    def allowed(self, query):
+        if self.token is None:
+            return True
+        supplied = parse_qs(query).get("token", [""])[0]
+        return secrets.compare_digest(supplied.encode(), self.token.encode())
+
     def do_GET(self):
-        if self.path == "/":
+        url = urlsplit(self.path)
+        if not self.allowed(url.query):
+            self.send_error(403)
+            return
+        if url.path == "/":
             body, kind = PAGE.encode(), "text/html; charset=utf-8"
-        elif self.path == "/api/status":
+        elif url.path == "/api/status":
             body, kind = json.dumps(snapshot()).encode(), "application/json"
         else:
             self.send_error(404)
@@ -262,9 +284,19 @@ class Handler(BaseHTTPRequestHandler):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--port", type=int, default=8780)
+    parser.add_argument("--listen", default="127.0.0.1", help="Address to serve on (default loopback)")
     args = parser.parse_args(argv)
-    server = ThreadingHTTPServer(("0.0.0.0", args.port), Handler)
-    print(f"Bench dashboard on http://127.0.0.1:{args.port}/ (Ctrl+C to stop)", flush=True)
+    try:
+        address = ipaddress.ip_address(args.listen)
+    except ValueError:
+        parser.error("--listen needs a literal IP address")
+    if address.is_unspecified:
+        parser.error("Refusing a wildcard address; name the interface address to serve on")
+    Handler.token = None if address.is_loopback else secrets.token_urlsafe(24)
+    server = ThreadingHTTPServer((str(address), args.port), Handler)
+    host = f"[{address}]" if address.version == 6 else str(address)
+    suffix = f"?token={Handler.token}" if Handler.token else ""
+    print(f"Bench dashboard on http://{host}:{args.port}/{suffix} (Ctrl+C to stop)", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

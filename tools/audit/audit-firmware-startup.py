@@ -49,6 +49,7 @@ WIFI_DNS_MARK = b'PLWIF3 start created='  # FW07 join, DNS and reconnect events 
 TRANSPORT_MARK = b'PLMQT1 start created='  # FW08 health transport records follow the LED probe
 OPTICS_MARK = b'PLOPT1 start created='  # FW13 emitter windows and input records follow the LED probe
 OPTICS_PLAN2_MARK = b' plan=2\r\n'  # fw13-optics-v2: 5 s windows
+MOTION_MARK = b'PLMOT1 start created='  # FW16 single supervised pulse follows the LED probe
 WRITE = {'start': re.compile(rb'PLWRS1 start marker=([0-9a-f]{8}) watchdog=(pass|fail) installed=([01])\r\n'),
          'preimage': re.compile(rb'PLWRS1 preimage id=([0-9a-f]{6}) blank=' + DEC + rb'\r\n'),
          'cycle': re.compile(rb'PLWRS1 cycle n=' + DEC + rb' erase_ticks=' + DEC + rb' blank=' + DEC + rb' program_max=' + DEC
@@ -518,6 +519,11 @@ def startup(rx, manifest, image, identity, arrival=None, end=None):
     require((optics_policy == 'fw13-optics-v2') == (OPTICS_MARK + b'1' + OPTICS_PLAN2_MARK in image),
             'Optics plan/artifact mismatch')
     require(not optics_policy or led_policy, 'Optics probe requires the LED probe policy')
+    motion_policy = manifest.get('startup_motion_policy')
+    require(motion_policy in (None, 'fw16-pulse-v1'), 'Unknown motion policy')
+    require(bool(motion_policy) == (MOTION_MARK in image), 'Motion policy/artifact mismatch')
+    require(not (motion_policy and optics_policy), 'Motion and optics probes are exclusive')
+    require(not motion_policy or led_policy, 'Motion probe requires the LED probe policy')
     adc_policy = manifest.get('startup_adc_policy')
     require(adc_policy in (None, 'fw14-adc-v1', 'fw14-adc-v2'), 'Unknown ADC policy')
     require(bool(adc_policy) == (ADC_MARK in image), 'ADC policy/artifact mismatch')

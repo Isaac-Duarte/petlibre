@@ -52,8 +52,48 @@ unsafe extern "C" fn optics_task(_: *mut c_void) -> u32 {
     step.delay_ms
 }
 
+/// Touched only by the pulse task; see `pulse_task`.
+#[cfg(feature = "fw16-pulse")]
+static PULSE: Slot<crate::probes::pulse::Probe> = Slot(UnsafeCell::new(None));
+
+#[cfg(feature = "fw16-pulse")]
+struct PulseLine(crate::probes::pulse::Record);
+
+#[cfg(feature = "fw16-pulse")]
+impl core::fmt::Display for PulseLine {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        crate::probes::pulse::describe(self.0, f)
+    }
+}
+
+#[cfg(feature = "fw16-pulse")]
+unsafe extern "C" fn pulse_task(_: *mut c_void) -> u32 {
+    // SAFETY: only this task touches the slot; the probe stays in place.
+    let probe = unsafe { &mut *PULSE.0.get() }.get_or_insert_with(Default::default);
+    let step = probe.step::<Hardware>();
+    if let Some(record) = step.record {
+        let mut report = startup::Report::new();
+        if let Ok(line) = report.record(format_args!("PLMOT1 {}\r\n", PulseLine(record))) {
+            sdk::log(line);
+        }
+    }
+    step.delay_ms
+}
+
+/// FW16 builds run the motor pulse in place of the optics probe.
+#[cfg(feature = "fw16-pulse")]
+fn start_optics() {
+    let created = sdk::task_create(c"wellfed-pulse", 1024, 3, pulse_task, ptr::null_mut());
+    sdk::log(if created {
+        c"PLMOT1 start created=1\r\n"
+    } else {
+        c"PLMOT1 start created=0\r\n"
+    });
+}
+
 /// Above the diagnostic and transport tasks, so their logging cannot hold
 /// off the owner lease the supervisor enforces.
+#[cfg(not(feature = "fw16-pulse"))]
 fn start_optics() {
     let created = sdk::task_create(c"wellfed-optics", 1024, 3, optics_task, ptr::null_mut());
     sdk::log(if created {

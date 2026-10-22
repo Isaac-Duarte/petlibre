@@ -14,6 +14,9 @@ sdk = ["wellfed-amebad-sdk/sdk"]
 # Select the core whose MMIO map and semaphore owner encoding apply.
 km0 = ["wellfed-amebad-sdk/km0"]
 km4 = ["wellfed-amebad-sdk/km4"]
+# FW16 first supervised motor pulse instead of the FW13 optics probe. Only
+# `build.py plaf103-firstboot --motion-probe` sets it; never a default.
+fw16-pulse = []
 
 [dependencies]
 wellfed-amebad-sdk = { path = "../amebad-sdk" }

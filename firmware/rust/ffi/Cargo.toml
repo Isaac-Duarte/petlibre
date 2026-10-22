@@ -14,6 +14,7 @@ crate-type = ["staticlib", "rlib"]
 # Link the AmebaD ports for one core (target builds from firmware/tools/build.py).
 km0 = ["dep:wellfed-amebad", "wellfed-amebad/km0"]
 km4 = ["dep:wellfed-amebad", "wellfed-amebad/km4", "wellfed-amebad/sdk"]
+fw16-pulse = ["km4", "wellfed-amebad/fw16-pulse"]
 
 [dependencies]
 wellfed-core = { path = "../core" }

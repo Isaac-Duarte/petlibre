@@ -422,10 +422,12 @@ def source_inputs(profile):
     return list(dict.fromkeys(paths))
 
 
-def source_identity(profile, inputs):
-    """Bind the build identity to a profile and root-relative input hashes."""
+def source_identity(profile, inputs, variant=None):
+    """Bind the build identity to a profile, variant and root-relative input hashes."""
     snapshot = {"profile": profile,
                 "inputs": {str(p.relative_to(ROOT)): checksum for p, checksum in inputs.items()}}
+    if variant:
+        snapshot["variant"] = variant
     return hashlib.sha256(json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
@@ -442,13 +444,20 @@ def rust_archive(sdk, core):
     return sdk.parent / "rust-lib" / f"libwellfed_{RUST_CORES[core][1]}.a"
 
 
-def build_rust(sdk, toolchain, stream, identity, base_environment):
+# Explicit opt-in image variants. A motion variant drives the motor; it is
+# never built unless named, and its manifest says so.
+VARIANTS = {"fw16-pulse": {"feature": "fw16-pulse", "policy": "fw16-pulse-v1"}}
+
+
+def build_rust(sdk, toolchain, stream, identity, base_environment, variant=None):
     """Cross-compile one firmware archive per core and stage it beside the SDK."""
     target_dir = sdk.parent / "rust-target"
     environment = dict(base_environment, WELLFED_BUILD_ID=identity, WELLFED_SDK_DIR=str(sdk),
                        WELLFED_NEWLIB_INCLUDE=str(toolchain / "arm-none-eabi/include"))
     archives = {}
     for core, (triple, feature) in RUST_CORES.items():
+        if variant and core == "hp":
+            feature = VARIANTS[variant]["feature"]
         run("cargo", "build", "--locked", "--profile", "firmware", "-p", "wellfed-ffi",
             "--target", triple, "--features", feature, "--target-dir", str(target_dir),
             cwd=ROOT, env=environment, stdout=stream, stderr=subprocess.STDOUT)
@@ -596,14 +605,16 @@ def prepare(profile, toolchain, expected):
     return sdk, overrides
 
 
-def build(profile, toolchain):
+def build(profile, toolchain, variant=None):
+    if variant and profile != "plaf103-firstboot":
+        raise ValueError("Image variants apply to plaf103-firstboot only")
     output = PRIVATE / "firmware-build" / profile
     output.mkdir(parents=True, exist_ok=True)
     (output / "manifest.json").unlink(missing_ok=True)
     rust_env = rust_environment() if profile != "baseline" else None
     compiler = rust_compiler(rust_env) if profile != "baseline" else None
     expected = {p: digest(p) for p in source_inputs(profile)}
-    identity = source_identity(profile, expected)
+    identity = source_identity(profile, expected, variant)
     if profile in MODEL_PROFILES:
         audit_image(STOCK)
     sdk, overrides = prepare(profile, toolchain, expected)
@@ -613,13 +624,13 @@ def build(profile, toolchain):
     environment = dict(os.environ)
     environment.pop("MAKEFLAGS", None)
     environment.pop("MFLAGS", None)
-    print(f"Building {profile}; log: {log}", flush=True)
+    print(f"Building {profile}{' variant ' + variant if variant else ''}; log: {log}", flush=True)
     with log.open("w") as stream:
         archives = {}
         if profile != "baseline":
             print("Building Rust firmware archives...", flush=True)
             try:
-                archives = build_rust(sdk, toolchain, stream, identity, rust_env)
+                archives = build_rust(sdk, toolchain, stream, identity, rust_env, variant)
             except subprocess.CalledProcessError:
                 raise RuntimeError(f"Rust firmware build failed; see {log}") from None
         for core in ("lp", "hp"):
@@ -729,7 +740,9 @@ def build(profile, toolchain):
         "startup_adc_policy": None,
         "startup_wifi_policy": "fw07-dns-v1" if profile == "plaf103-firstboot" else None,
         "startup_transport_policy": "fw08-transport-v1" if profile == "plaf103-firstboot" else None,
-        "startup_optics_policy": "fw13-optics-v2" if profile == "plaf103-firstboot" else None,
+        "startup_optics_policy": "fw13-optics-v2" if profile == "plaf103-firstboot" and not variant else None,
+        "startup_motion_policy": VARIANTS[variant]["policy"] if variant else None,
+        "variant": variant,
         "toolchain_sha256": LOCK["toolchain"]["sha256"],
         "built_at": datetime.now(timezone.utc).isoformat(),
         "inputs": {str(p.relative_to(ROOT)): checksum for p, checksum in expected.items()},
@@ -761,6 +774,8 @@ def build(profile, toolchain):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("source-id", "bootstrap", "baseline", "bringup", *MODEL_PROFILES))
+    parser.add_argument("--motion-probe", action="store_true",
+                        help="Build the FW16 motor-pulse variant (drives the motor once per cold boot)")
     args = parser.parse_args()
     try:
         if args.command == "source-id":
@@ -770,7 +785,7 @@ def main():
         os.umask(0o077)
         toolchain = bootstrap()
         if args.command != "bootstrap":
-            build(args.command, toolchain)
+            build(args.command, toolchain, "fw16-pulse" if args.motion_probe else None)
     except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
         parser.exit(1, f"error: {error}\n")
 

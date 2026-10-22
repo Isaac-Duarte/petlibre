@@ -31,6 +31,15 @@ fn manifest_bytes(signing: &SigningKey, version: u32, payload: &[u8], bank: u32)
 }
 
 #[test]
+fn manifest_body_matches_the_parser() {
+    let (signing, public) = key();
+    let payload = image(SECTOR);
+    let bytes = manifest_bytes(&signing, 3, &payload, 1);
+    let parsed = parse_manifest(&bytes, &public, 0).unwrap();
+    assert_eq!(manifest_body(&parsed).as_slice(), &bytes[..MANIFEST_BODY]);
+}
+
+#[test]
 fn rfc8032_vector_one_verifies() {
     // RFC 8032 section 7.1, test 1 (empty message).
     let public: [u8; 32] = hex("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a");

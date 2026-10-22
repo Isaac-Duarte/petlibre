@@ -8,7 +8,7 @@ use wellfed_local::{
     build_info::{self, BUILD},
     config::{self, Config},
     controller::{Controller, FeedInput, ResolveInput},
-    mqtt, network, ota_image, ota_trial, probe,
+    firmware_ota, mqtt, network, ota_image, ota_trial, probe,
 };
 use tokio::{
     process::Command,
@@ -128,6 +128,28 @@ enum Action {
         #[arg(long, default_value = "private/server.json")]
         config: PathBuf,
         #[arg(long, default_value = "private/fw-mqtt.json")]
+        output: PathBuf,
+    },
+    /// Create the replacement firmware's update-signing key (FW10); never
+    /// replaces one. Prints the public key the firmware build embeds.
+    OtaKeygen {
+        #[arg(long, default_value = "private/ota-key.json")]
+        output: PathBuf,
+    },
+    /// Sign a reviewed replacement image's update manifest (FW10).
+    OtaSign {
+        #[arg(long, default_value = "private/ota-key.json")]
+        key: PathBuf,
+        /// The reviewed OTA container (a frozen review's image.bin).
+        #[arg(long)]
+        image: PathBuf,
+        /// Must exceed the installed image's version.
+        #[arg(long)]
+        version: u32,
+        /// The image's startup build ID (64 hex characters).
+        #[arg(long)]
+        build_id: String,
+        #[arg(long)]
         output: PathBuf,
     },
     /// Explicit feeder-only gateway routing and WAN isolation; needs sudo.
@@ -277,6 +299,30 @@ async fn main() -> Result<()> {
             println!(
                 "Added the replacement-firmware role to {} and wrote {}. Restart serve to use it.",
                 config.display(),
+                output.display()
+            );
+        }
+        Action::OtaKeygen { output } => {
+            let public = firmware_ota::keygen(&output)?;
+            println!("Wrote {}; public key {public}", output.display());
+        }
+        Action::OtaSign {
+            key,
+            image,
+            version,
+            build_id,
+            output,
+        } => {
+            let manifest = firmware_ota::sign(
+                &firmware_ota::load_key(&key)?,
+                &std::fs::read(&image)?,
+                version,
+                firmware_ota::parse_build_id(&build_id)?,
+            )?;
+            anyhow::ensure!(!output.exists(), "refusing to replace {}", output.display());
+            std::fs::write(&output, manifest)?;
+            println!(
+                "Signed manifest for version {version} in {}",
                 output.display()
             );
         }

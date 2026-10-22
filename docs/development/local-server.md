@@ -56,6 +56,22 @@ The server accepts health of schema `wellfed.health` version 1 with a boolean `o
 
 The firmware channel is plaintext MQTT on the isolated hotspot. Anyone with the Wi-Fi password could read it or impersonate either end, which is accepted only because the channel carries read-only health. Feeding or update commands must not use it until it is authenticated or encrypted.
 
+## Replacement-firmware update signing (FW10)
+
+The replacement firmware will accept only updates signed by an owner-held key ([design](../firmware/ota-design.md)). These commands run offline and never contact a device:
+
+```sh
+./target/debug/wellfed-local ota-keygen --output private/ota-key.json
+./target/debug/wellfed-local ota-sign --key private/ota-key.json \
+  --image private/verification/<review>/image.bin --version 2 \
+  --build-id <startup identity, 64 hex> --output private/<name>.manifest
+```
+
+- **`ota-keygen`:** writes the Ed25519 seed (mode 600) and prints the public key that firmware builds embed. It refuses to replace an existing key.
+- **`ota-sign`:** checks that the image's bank contents start with the loader marker and fit the reviewed bank-1 bound, then writes the manifest in the exact format `wellfed-core::ota` verifies.
+
+Delivering a manifest and image to the firmware is not implemented yet.
+
 ## Manual requests and uncertainty
 
 The `feed` command requires a caller-generated UUID and portion count. `new-request-id` prints a UUID without contacting a device. Reuse the same request ID after a lost response; never create a new ID merely to retry. Offline/stale devices are refused, commands are not retained, and the controller does not replay a persisted request.

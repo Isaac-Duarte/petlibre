@@ -5,6 +5,7 @@ pub mod build_info;
 pub mod compat;
 pub mod config;
 pub mod controller;
+pub mod firmware_ota;
 pub mod mqtt;
 pub mod network;
 pub mod ota;

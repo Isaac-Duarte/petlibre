@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -232,9 +233,15 @@ def finish_observer(process, output):
     return json.loads((Path(output) / "report.json").read_text())["result"]
 
 
+def fresh(output):
+    """Captures never reuse a directory; refuse before any relay change."""
+    require(not Path(output).exists(), f"Refusing to reuse {Path(output).resolve().relative_to(ROOT)}")
+
+
 def boot(relay, config, output, seconds, off_seconds):
     """Cold boot into the installed application while recording it from the start."""
     STATUS.step("boot capture")
+    fresh(output)
     power_off(relay, off_seconds)
     observer = start_observer(config, output, seconds)
     try:
@@ -252,6 +259,7 @@ def boot(relay, config, output, seconds, off_seconds):
 def loader(relay, config, output, off_seconds):
     """Cold boot with the strap held; leave the feeder powered in the ROM loader."""
     STATUS.step("loader entry")
+    fresh(output)
     power_off(relay, off_seconds)
     observer = start_observer(config, output, LOADER_SECONDS)
     try:
@@ -290,6 +298,7 @@ def transients(relay, config, args):
     out = ROOT / "private/captures" / args.name
     require(not out.exists(), f"Refusing to reuse {out.relative_to(ROOT)}")
     require(args.cycles >= 1 and args.seconds > ANALYZER_ARMING_SECONDS, "Need cycles >= 1 and a capture longer than arming")
+    require(shutil.which("sigrok-cli"), "sigrok-cli not found; install it before a transient session")
     out.mkdir(parents=True)
     manifest = {"schema_version": 1, "mode": args.mode, "samplerate": args.samplerate, "seconds": args.seconds,
                 "arming_seconds": ANALYZER_ARMING_SECONDS,
@@ -514,6 +523,7 @@ def dispatch(relay, config, args):
         relay.set(POWER, True)
     elif args.command == "capture":
         output = ROOT / "private/captures" / args.name
+        fresh(output)
         result = finish_observer(start_observer(config, output, args.seconds), output)
         print(f"Captured {result['bytes']} bytes in {output}", flush=True)
     elif args.command == "boot":

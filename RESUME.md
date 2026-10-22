@@ -7,6 +7,12 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
+**October 22, later (physical).** The **first live OTA** succeeded (FW10). FW11's KM0 trial fallback works on hardware too (see the board).
+- **Flash now:** bank 1 holds the OTA-installed build `ed15a3ff…`, valid and unconfirmed. Bank 0 holds `fw10-recovery-review-20261022-02` (`635476bd…`), the fixed updater.
+- **Idle state:** the feeder is off, the hotspot down, and the server stopped.
+- **Loader NAKs:** 2 in the last 3 large UART installs, one with the host idle. Ask the owner to reseat the UART header.
+- **Next:** the KM4 confirmation write and the normal role's watchdog (FW11), the normal-role give-way trigger (FW10), and failure-mode OTA tests.
+
 **October 22 (autonomous, physical through the relay bench).** The FW10 recovery-role updater is in (`d541c80` plus the audit fix). Bank 0 now holds `fw10-recovery-review-20261022-01` (identity `d2ed7d93…`); bank 1 still holds bench live target review 01 and boots normally. A UART give-way booted bank 0: `PLOTA1 start role=recovery key=1`, `ready`, then `armed watchdog=1 installed=1`. It ran 180 s on one boot, scanning for the hotspot, which was off. The bank-1 marker was restored, and bank 1 booted again. **Next:** a live download needs the hotspot up and `wellfed-local serve` running with `ota-offer` (owner approval: routing and a service), then give-way and watch `PLOTA1 progress`/`activated`.
 
 **October 21–22 overnight (autonomous, offline, nothing flashed).** The owner set the goal of doing what needs no owner, committing and pushing as I go:

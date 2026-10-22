@@ -46,6 +46,9 @@ WIFI_HEADER = Path("component/common/example/petlibre_wifi_credentials.h")
 # FW08 broker credentials, from `petlibre-local firmware-credential`, the same way.
 TRANSPORT_CREDENTIALS = ROOT / "private/fw-mqtt.json"
 TRANSPORT_HEADER = Path("component/common/example/petlibre_transport_credentials.h")
+# FW10 update-signing key from `petlibre-local ota-keygen`. Only its public half
+# reaches the build (as PETLIBRE_OTA_PUBLIC_KEY), the identity and the manifest.
+OTA_KEY = ROOT / "private/ota-key.json"
 MODEL_PROFILES = ("plaf103", "plaf103-firstboot")
 # Cargo target and features for each SDK core project.
 RUST_CORES = {"lp": ("thumbv8m.base-none-eabi", "km0"), "hp": ("thumbv8m.main-none-eabihf", "km4")}
@@ -422,12 +425,24 @@ def source_inputs(profile):
     return list(dict.fromkeys(paths))
 
 
-def source_identity(profile, inputs, variant=None):
-    """Bind the build identity to a profile, variant and root-relative input hashes."""
+def ota_public_key(profile):
+    """The update-signing public key built into recovery-role images, or None without a key file."""
+    if profile != "plaf103-firstboot" or not OTA_KEY.is_file():
+        return None
+    key = json.loads(OTA_KEY.read_text()).get("public_key")
+    if not (isinstance(key, str) and re.fullmatch(r"[0-9a-f]{64}", key)):
+        raise RuntimeError("Update key file needs a 64-character lowercase hex public key")
+    return key
+
+
+def source_identity(profile, inputs, variant=None, ota_key=None):
+    """Bind the build identity to a profile, variant, update key and root-relative input hashes."""
     snapshot = {"profile": profile,
                 "inputs": {str(p.relative_to(ROOT)): checksum for p, checksum in inputs.items()}}
     if variant:
         snapshot["variant"] = variant
+    if ota_key:
+        snapshot["ota_public_key"] = ota_key
     return hashlib.sha256(json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
@@ -449,11 +464,14 @@ def rust_archive(sdk, core):
 VARIANTS = {"fw16-pulse": {"feature": "fw16-pulse", "policy": "fw16-pulse-v1"}}
 
 
-def build_rust(sdk, toolchain, stream, identity, base_environment, variant=None):
+def build_rust(sdk, toolchain, stream, identity, base_environment, variant=None, ota_key=None):
     """Cross-compile one firmware archive per core and stage it beside the SDK."""
     target_dir = sdk.parent / "rust-target"
     environment = dict(base_environment, PETLIBRE_BUILD_ID=identity, PETLIBRE_SDK_DIR=str(sdk),
                        PETLIBRE_NEWLIB_INCLUDE=str(toolchain / "arm-none-eabi/include"))
+    environment.pop("PETLIBRE_OTA_PUBLIC_KEY", None)
+    if ota_key:
+        environment["PETLIBRE_OTA_PUBLIC_KEY"] = ota_key
     archives = {}
     for core, (triple, feature) in RUST_CORES.items():
         if variant and core == "hp":
@@ -614,7 +632,8 @@ def build(profile, toolchain, variant=None):
     rust_env = rust_environment() if profile != "baseline" else None
     compiler = rust_compiler(rust_env) if profile != "baseline" else None
     expected = {p: digest(p) for p in source_inputs(profile)}
-    identity = source_identity(profile, expected, variant)
+    ota_key = ota_public_key(profile)
+    identity = source_identity(profile, expected, variant, ota_key)
     if profile in MODEL_PROFILES:
         audit_image(STOCK)
     sdk, overrides = prepare(profile, toolchain, expected)
@@ -630,7 +649,7 @@ def build(profile, toolchain, variant=None):
         if profile != "baseline":
             print("Building Rust firmware archives...", flush=True)
             try:
-                archives = build_rust(sdk, toolchain, stream, identity, rust_env, variant)
+                archives = build_rust(sdk, toolchain, stream, identity, rust_env, variant, ota_key)
             except subprocess.CalledProcessError:
                 raise RuntimeError(f"Rust firmware build failed; see {log}") from None
         for core in ("lp", "hp"):
@@ -743,6 +762,8 @@ def build(profile, toolchain, variant=None):
         "startup_optics_policy": "fw13-optics-v2" if profile == "plaf103-firstboot" and not variant else None,
         "startup_motion_policy": VARIANTS[variant]["policy"] if variant else None,
         "variant": variant,
+        "startup_update_policy": "fw10-recovery-v1" if ota_key else None,
+        "ota_public_key": ota_key,
         "toolchain_sha256": LOCK["toolchain"]["sha256"],
         "built_at": datetime.now(timezone.utc).isoformat(),
         "inputs": {str(p.relative_to(ROOT)): checksum for p, checksum in expected.items()},

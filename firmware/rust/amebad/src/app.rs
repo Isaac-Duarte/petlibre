@@ -4,18 +4,25 @@
 //! shim's events. Beside it, the FW08 transport task reports health to the
 //! local server's broker, and the FW13 optics task exercises the emitters and
 //! reads the food, outlet and feedback inputs, motor STOP throughout.
+//!
+//! Booted from bank 0 (the recovery role), the FW10 updater runs in place of
+//! the transport and optics tasks, with a watchdog feeder beside it.
 
 use core::cell::UnsafeCell;
 use core::ffi::c_void;
 use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
+use crate::flash::hooks::{self, HookProvider, HookTicket};
 use crate::flash::park::Hardware;
 use crate::health::Boot;
+use crate::probes::flash::Provider;
 use crate::probes::optics;
 use crate::probes::wifi::{Probe, Record};
 use crate::transport::{self, Link};
-use crate::{leds, sdk, startup, stopped};
+use crate::updater::{self, Hooked, Hooks, Updater};
+use crate::watchdog::Watchdog;
+use crate::{config, leds, sdk, startup, stopped};
 
 static PHASE: AtomicU32 = AtomicU32::new(0);
 static INPUT_MISMATCH: AtomicBool = AtomicBool::new(false);
@@ -143,6 +150,154 @@ fn start_transport() {
     });
 }
 
+/// Touched only by the updater task, except that the armed hooks reach the
+/// provider through its context pointer.
+static UPDATER: Slot<Updater> = Slot(UnsafeCell::new(None));
+static PROVIDER: Slot<Provider> = Slot(UnsafeCell::new(None));
+/// Opened by the updater task, then touched only by the feeder task.
+static WATCHDOG: Slot<Watchdog> = Slot(UnsafeCell::new(None));
+static WATCHDOG_OPEN: AtomicBool = AtomicBool::new(false);
+/// The updater's last step, in uptime milliseconds.
+static HEARTBEAT: AtomicU32 = AtomicU32::new(0);
+/// The updater ended without activating: feed while outputs stay stopped.
+static UPDATER_DONE: AtomicBool = AtomicBool::new(false);
+/// Bank 1 is activated: stop feeding so the watchdog resets the platform.
+static RESTART: AtomicBool = AtomicBool::new(false);
+/// An updater step longer than this (a hang) stops the feeding.
+const LIVENESS_MS: u32 = 10_000;
+const FEED_MS: u32 = 250;
+
+unsafe extern "C" fn hook_ready(context: *mut c_void) -> bool {
+    // SAFETY: the context is the fixed provider; called with no lease held.
+    unsafe { (*context.cast::<Provider>()).ready() }
+}
+
+unsafe extern "C" fn hook_acquire(context: *mut c_void, ticket: *mut HookTicket) -> bool {
+    // SAFETY: as above; the interposer passes a live ticket.
+    unsafe { (*context.cast::<Provider>()).acquire::<Hardware>(&mut *ticket) }
+}
+
+unsafe extern "C" fn hook_release(context: *mut c_void, ticket: *const HookTicket) -> bool {
+    // SAFETY: as above.
+    unsafe { (*context.cast::<Provider>()).release::<Hardware>(&*ticket) }
+}
+
+/// KM4 never parks for KM0: a flash IPC request from KM0 is a hook fault.
+unsafe extern "C" fn hook_peer(_context: *mut c_void, _status: u32, _channel: u32) -> bool {
+    false
+}
+
+struct SdkHooks;
+
+impl Hooks for SdkHooks {
+    fn watchdog() -> bool {
+        // SAFETY: the feeder touches the slot only once WATCHDOG_OPEN is set.
+        let watchdog = unsafe { &mut *WATCHDOG.0.get() }.get_or_insert_with(Watchdog::default);
+        let opened = watchdog.open(&config::WATCHDOG);
+        WATCHDOG_OPEN.store(opened, Ordering::Release);
+        opened
+    }
+
+    fn install(provider: *mut Provider) -> bool {
+        let callbacks = HookProvider {
+            context: provider.cast(),
+            ready: Some(hook_ready),
+            acquire: Some(hook_acquire),
+            release: Some(hook_release),
+            peer: Some(hook_peer),
+            fault: Some(hooks::petlibre_amebad_flash_provider_fault),
+        };
+        // SAFETY: the interposer copies the callbacks; the provider is static.
+        unsafe { hooks::petlibre_amebad_flash_hooks_install(&callbacks) }
+    }
+
+    fn armed() -> bool {
+        hooks::petlibre_amebad_flash_hooks_armed()
+    }
+}
+
+struct UpdateLine(updater::Record);
+
+impl core::fmt::Display for UpdateLine {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        updater::describe(self.0, f)
+    }
+}
+
+unsafe extern "C" fn updater_task(_: *mut c_void) -> u32 {
+    HEARTBEAT.store(sdk::uptime_ms(), Ordering::Release);
+    // SAFETY: only this task creates references into the slots; the provider
+    // is reached by raw pointer so hook callbacks never alias a live borrow.
+    let slot = unsafe { &mut *UPDATER.0.get() };
+    if slot.is_none() {
+        let Some(config) = sdk::transport_config() else {
+            sdk::log(c"PLOTA1 error stage=config\r\n");
+            UPDATER_DONE.store(true, Ordering::Release);
+            return 0;
+        };
+        *slot = Some(Updater::new(config, updater::public_key()));
+    }
+    let Some(updater) = slot.as_mut() else {
+        return 0;
+    };
+    let provider =
+        unsafe { &mut *PROVIDER.0.get() }.get_or_insert_with(Provider::default) as *mut Provider;
+    let mut flash = Hooked::<SdkHooks>::new();
+    // SAFETY: the provider slot is fixed for the program's lifetime.
+    let step = unsafe { updater.step::<Hardware, SdkHooks>(provider, &mut flash) };
+    if let Some(record) = step.record {
+        let mut report = startup::Report::new();
+        if let Ok(line) = report.record(format_args!("PLOTA1 {}\r\n", UpdateLine(record))) {
+            sdk::log(line);
+        }
+    }
+    HEARTBEAT.store(sdk::uptime_ms(), Ordering::Release);
+    if step.delay_ms == 0 {
+        if step.restart {
+            RESTART.store(true, Ordering::Release);
+            sdk::log(c"PLOTA1 restart watchdog=1\r\n");
+        } else {
+            // No update this boot: report health as the normal role would.
+            UPDATER_DONE.store(true, Ordering::Release);
+            start_transport();
+        }
+    }
+    step.delay_ms
+}
+
+/// Feeds the watchdog while the updater keeps stepping (or has ended) and
+/// outputs stay stopped. A hung updater, a hook fault (IRQs masked) or an
+/// activation all stop the feeding, and the watchdog resets the platform.
+unsafe extern "C" fn feeder_task(_: *mut c_void) -> u32 {
+    static PROGRESS: AtomicU32 = AtomicU32::new(0);
+    if !WATCHDOG_OPEN.load(Ordering::Acquire) || RESTART.load(Ordering::Acquire) {
+        return FEED_MS;
+    }
+    let beat = HEARTBEAT.load(Ordering::Acquire);
+    let alive =
+        UPDATER_DONE.load(Ordering::Acquire) || sdk::uptime_ms().wrapping_sub(beat) < LIVENESS_MS;
+    if alive && stopped::observe().verified() {
+        // SAFETY: the updater task no longer touches the slot once open.
+        if let Some(watchdog) = unsafe { &mut *WATCHDOG.0.get() }.as_mut() {
+            let progress = PROGRESS.fetch_add(1, Ordering::Relaxed) + 1;
+            let _ = watchdog.checkpoint(u64::from(progress));
+        }
+    }
+    FEED_MS
+}
+
+/// The recovery role: the updater, and the feeder above it so a long
+/// network wait cannot starve the watchdog.
+fn start_updater() {
+    let created = sdk::task_create(c"petlibre-ota", 2560, 2, updater_task, ptr::null_mut())
+        && sdk::task_create(c"petlibre-wdg", 512, 3, feeder_task, ptr::null_mut());
+    sdk::log(if created {
+        c"PLOTA1 tasks created=1\r\n"
+    } else {
+        c"PLOTA1 tasks created=0\r\n"
+    });
+}
+
 fn bit(value: bool) -> u8 {
     u8::from(value)
 }
@@ -249,8 +404,12 @@ unsafe extern "C" fn diagnostic_task(_: *mut c_void) -> u32 {
                 } else {
                     sdk::log(c"PLLED1 done low=all\r\n");
                     PROBING.store(true, Ordering::Relaxed);
-                    start_transport();
-                    start_optics();
+                    if startup::snapshot().bank() == Some(0) {
+                        start_updater();
+                    } else {
+                        start_transport();
+                        start_optics();
+                    }
                     return 1;
                 }
             } else {

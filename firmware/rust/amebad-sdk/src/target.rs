@@ -539,6 +539,55 @@ pub fn storage_program(sector: u32, offset: u32, data: &[u8]) -> bool {
     true
 }
 
+/// A bank-1 address for `sector`/`offset`/`len`, only while running from
+/// bank 0: the updater never writes the bank it executes from.
+fn bank1_span(sector: u32, offset: u32, len: usize) -> Option<u32> {
+    let end = offset.checked_add(u32::try_from(len).ok()?)?;
+    (flash_mmu_entry0().bank() == Some(0) && sector < super::BANK1_SECTORS && end <= SECTOR_BYTES)
+        .then(|| super::BANK1_OFFSET + sector * SECTOR_BYTES + offset)
+}
+
+/// Erase one bank-1 sector through the hooked `FLASH_EraseXIP`.
+pub fn bank1_erase(sector: u32) -> bool {
+    let Some(address) = bank1_span(sector, 0, SECTOR_BYTES as usize) else {
+        return false;
+    };
+    unsafe { raw::FLASH_EraseXIP(k::PETLIBRE_ERASE_SECTOR, address) };
+    true
+}
+
+/// Program within one bank-1 sector, split at 256-byte pages; 4-byte aligned.
+pub fn bank1_program(sector: u32, offset: u32, data: &[u8]) -> bool {
+    let Some(base) = bank1_span(sector, offset, data.len()) else {
+        return false;
+    };
+    if !offset.is_multiple_of(4) || !data.len().is_multiple_of(4) {
+        return false;
+    }
+    let mut done = 0;
+    while done < data.len() {
+        let at = base + done as u32;
+        let chunk = (256 - (at % 256) as usize).min(data.len() - done);
+        let mut page = [0u8; 256];
+        page[..chunk].copy_from_slice(&data[done..done + chunk]);
+        unsafe { raw::FLASH_TxData256BXIP(at, chunk as u32, page.as_mut_ptr()) };
+        done += chunk;
+    }
+    true
+}
+
+/// Read bank 1 through the physical flash window.
+pub fn bank1_read(sector: u32, offset: u32, bytes: &mut [u8]) -> bool {
+    let Some(address) = bank1_span(sector, offset, bytes.len()) else {
+        return false;
+    };
+    let base = k::PETLIBRE_SPI_FLASH_BASE + address;
+    for (i, byte) in bytes.iter_mut().enumerate() {
+        *byte = unsafe { ptr::read_volatile((base as usize + i) as *const u8) };
+    }
+    true
+}
+
 /// Read through the memory-mapped flash window; the SDK wrappers flush the
 /// cache after every erase or program.
 pub fn storage_read(sector: u32, offset: u32, bytes: &mut [u8]) -> bool {
@@ -639,7 +688,7 @@ const EMPTY: TaskSlot = TaskSlot {
     step: core::cell::UnsafeCell::new(None),
     context: core::cell::UnsafeCell::new(ptr::null_mut()),
 };
-static TASKS: [TaskSlot; 3] = [EMPTY, EMPTY, EMPTY];
+static TASKS: [TaskSlot; 4] = [EMPTY, EMPTY, EMPTY, EMPTY];
 
 unsafe extern "C" fn trampoline(argument: *mut c_void) {
     let slot = unsafe { &*argument.cast::<TaskSlot>() };

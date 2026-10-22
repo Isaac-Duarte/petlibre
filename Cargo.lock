@@ -1404,9 +1404,11 @@ name = "petlibre-amebad"
 version = "0.1.0"
 dependencies = [
  "cortex-m",
+ "ed25519-dalek",
  "petlibre-amebad-sdk",
  "petlibre-core",
  "petlibre-testkit",
+ "sha2 0.10.9",
 ]
 
 [[package]]

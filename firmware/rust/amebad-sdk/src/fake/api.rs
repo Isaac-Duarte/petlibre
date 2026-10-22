@@ -118,6 +118,45 @@ pub fn storage_read(sector: u32, offset: u32, bytes: &mut [u8]) -> bool {
     true
 }
 
+fn bank1_span(sector: u32, offset: u32, len: usize) -> Option<usize> {
+    let end = offset as usize + len;
+    with(|h| h.running_bank == Some(0))
+        .then_some(())
+        .filter(|_| sector < crate::BANK1_SECTORS && end <= SECTOR_BYTES as usize)
+        .map(|_| (sector * SECTOR_BYTES + offset) as usize)
+}
+
+pub fn bank1_erase(sector: u32) -> bool {
+    let Some(at) = bank1_span(sector, 0, SECTOR_BYTES as usize) else {
+        return false;
+    };
+    with(|h| h.bank1[at..at + SECTOR_BYTES as usize].fill(u8::MAX));
+    true
+}
+
+pub fn bank1_program(sector: u32, offset: u32, data: &[u8]) -> bool {
+    let Some(at) = bank1_span(sector, offset, data.len()) else {
+        return false;
+    };
+    if !offset.is_multiple_of(4) || !data.len().is_multiple_of(4) {
+        return false;
+    }
+    with(|h| {
+        for (cell, &byte) in h.bank1[at..at + data.len()].iter_mut().zip(data) {
+            *cell &= byte;
+        }
+    });
+    true
+}
+
+pub fn bank1_read(sector: u32, offset: u32, bytes: &mut [u8]) -> bool {
+    let Some(at) = bank1_span(sector, offset, bytes.len()) else {
+        return false;
+    };
+    with(|h| bytes.copy_from_slice(&h.bank1[at..at + bytes.len()]));
+    true
+}
+
 pub fn flash_read_jedec() -> [u8; 3] {
     [0xc8, 0x40, 0x17]
 }

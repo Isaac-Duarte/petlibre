@@ -26,7 +26,9 @@ petlibre-core = { path = "../core" }
 cortex-m = "0.7.7"
 
 [dev-dependencies]
+ed25519-dalek = "2"
 petlibre-testkit = { path = "../testkit" }
+sha2 = "0.10"
 
 [lints]
 workspace = true

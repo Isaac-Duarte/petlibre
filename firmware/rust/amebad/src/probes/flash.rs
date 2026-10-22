@@ -105,6 +105,16 @@ pub struct Provider {
 }
 
 impl Provider {
+    /// A provider for `coord`, already bound to the KM0 peer.
+    pub fn bound(coord: FlashCoord, clock: TickClock, authority: u64) -> Self {
+        Self {
+            coord,
+            clock,
+            authority,
+            ..Self::default()
+        }
+    }
+
     fn now(&mut self) -> u32 {
         self.clock
             .read(sdk::systimer_ticks())
@@ -450,12 +460,7 @@ impl Probe {
                         };
                         // SAFETY: the caller's contract; no hook is armed yet.
                         let p = unsafe { &mut *provider };
-                        *p = Provider {
-                            coord,
-                            clock: self.clock,
-                            authority: self.authority,
-                            ..Provider::default()
-                        };
+                        *p = Provider::bound(coord, self.clock, self.authority);
                         if reply != FlashReply::ACCEPTED {
                             return self.end(record);
                         }

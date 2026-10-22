@@ -18,11 +18,11 @@ fw16-pulse = ["km4", "wellfed-amebad/fw16-pulse"]
 fw11-reset = ["km4", "wellfed-amebad/fw11-reset"]
 
 [dependencies]
-wellfed-core = { path = "../core" }
-wellfed-amebad = { path = "../amebad", optional = true }
+wellfed-core = { path = "../wellfed-core" }
+wellfed-amebad = { path = "../wellfed-amebad", optional = true }
 
 [lints]
 workspace = true
 
 [dev-dependencies]
-wellfed-testkit = { path = "../testkit" }
+wellfed-testkit = { path = "../wellfed-testkit" }

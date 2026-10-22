@@ -22,15 +22,15 @@ fw16-pulse = []
 fw11-reset = []
 
 [dependencies]
-wellfed-amebad-sdk = { path = "../amebad-sdk" }
-wellfed-core = { path = "../core" }
+wellfed-amebad-sdk = { path = "../wellfed-amebad-sdk" }
+wellfed-core = { path = "../wellfed-core" }
 
 [target.'cfg(target_os = "none")'.dependencies]
 cortex-m = "0.7.7"
 
 [dev-dependencies]
 ed25519-dalek = "2"
-wellfed-testkit = { path = "../testkit" }
+wellfed-testkit = { path = "../wellfed-testkit" }
 sha2 = "0.10"
 
 [lints]

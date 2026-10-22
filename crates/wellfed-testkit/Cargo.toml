@@ -8,7 +8,7 @@ description = "Host fakes shared by firmware tests and the virtual feeder"
 publish = false
 
 [dependencies]
-wellfed-core = { path = "../core" }
+wellfed-core = { path = "../wellfed-core" }
 
 [lints]
 workspace = true

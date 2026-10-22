@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build the fixed non-actuating stock execution probe offline; never contacts a feeder.
 
-The probe is Rust (`firmware/rust/probe`), compiled for soft-float Cortex-M4 and
+The probe is Rust (`crates/wellfed-probe`), compiled for soft-float Cortex-M4 and
 linked by the pinned ASDK linker with `firmware/probe/probe.ld`.
 """
 
@@ -20,7 +20,7 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[2]
 STOCK = ROOT / "private/firmware/PLAF103_OTA_010115.bin"
 PROBE = ROOT / "firmware/probe"
-RUST_PROBE = ROOT / "firmware/rust/probe"
+RUST_PROBE = ROOT / "crates/wellfed-probe"
 RUST_TARGET = "thumbv7em-none-eabi"
 TOOLS = ROOT / "private/toolchains/asdk-6.4.1/linux/newlib/bin"
 SLOT_OFFSET = 0x14FCA0

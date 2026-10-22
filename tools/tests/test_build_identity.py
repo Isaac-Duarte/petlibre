@@ -49,31 +49,32 @@ def git(directory, *args):
 
 
 class SourceInputTests(unittest.TestCase):
-    def test_rust_sources_follow_git_and_exclude_target_only_below_rust(self):
+    def test_rust_sources_follow_git_and_exclude_target_and_host_crates(self):
         with tempfile.TemporaryDirectory() as temporary:
             # The checkout itself lives below a directory named `target`.
             root = Path(temporary) / "target" / "checkout"
-            rust = root / "firmware/rust"
-            for name in ("core/src/lib.rs", "core/src/new.rs", "core/src/lib.rs.swp",
-                         "core/target/out.rs", "core/src/target/mod.rs"):
+            rust = root / "crates"
+            for name in ("wellfed-core/src/lib.rs", "wellfed-core/src/new.rs", "wellfed-core/src/lib.rs.swp",
+                         "wellfed-core/target/out.rs", "wellfed-core/src/target/mod.rs",
+                         "wellfed-local/src/main.rs"):
                 (rust / name).parent.mkdir(parents=True, exist_ok=True)
                 (rust / name).write_text(name)
             (root / ".gitignore").write_text("*.swp\n")
             git(root, "init", "-q")
-            git(root, "add", ".gitignore", "firmware/rust/core/src/lib.rs")
+            git(root, "add", ".gitignore", "crates/wellfed-core/src/lib.rs")
             with patch.object(BUILD, "ROOT", root), patch.object(BUILD, "RUST", rust):
                 names = [str(p.relative_to(rust)) for p in BUILD.rust_sources()]
-                self.assertEqual(names, ["core/src/lib.rs", "core/src/new.rs"])
-                (rust / "core/src/new.rs").unlink()
-                (rust / "core/src/lib.rs").unlink()
+                self.assertEqual(names, ["wellfed-core/src/lib.rs", "wellfed-core/src/new.rs"])
+                (rust / "wellfed-core/src/new.rs").unlink()
+                (rust / "wellfed-core/src/lib.rs").unlink()
                 with self.assertRaises(RuntimeError):
                     BUILD.rust_sources()
 
     def test_source_identity_requires_git_checkout(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            (root / "firmware/rust").mkdir(parents=True)
-            with patch.object(BUILD, "ROOT", root), patch.object(BUILD, "RUST", root / "firmware/rust"), \
+            (root / "crates").mkdir(parents=True)
+            with patch.object(BUILD, "ROOT", root), patch.object(BUILD, "RUST", root / "crates"), \
                     patch.dict(os.environ, {"GIT_CEILING_DIRECTORIES": str(root.parent)}):
                 with self.assertRaisesRegex(RuntimeError, "Git checkout"):
                     BUILD.rust_sources()

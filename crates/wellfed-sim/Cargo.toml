@@ -12,9 +12,9 @@ name = "virtual-feeder-worker"
 path = "src/main.rs"
 
 [dependencies]
-wellfed-amebad = { path = "../amebad" }
-wellfed-core = { path = "../core" }
-wellfed-testkit = { path = "../testkit" }
+wellfed-amebad = { path = "../wellfed-amebad" }
+wellfed-core = { path = "../wellfed-core" }
+wellfed-testkit = { path = "../wellfed-testkit" }
 
 [lints]
 workspace = true

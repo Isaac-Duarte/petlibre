@@ -36,7 +36,11 @@ TOOL_LOCK = FIRMWARE / "probe/toolchain.lock.json"
 LAYOUT = FIRMWARE / "plaf103-layout.json"
 AUDITOR = ROOT / "tools/audit/audit-ota-layout.py"
 STOCK = PRIVATE / "firmware/PLAF103_OTA_010115.bin"
-RUST = FIRMWARE / "rust"
+RUST = ROOT / "crates"
+# Crates linked into, or testing, the firmware. Host tools such as
+# wellfed-local and wellfed-flash never change a firmware build's identity.
+FIRMWARE_CRATES = ("wellfed-core", "wellfed-ffi", "wellfed-testkit", "wellfed-amebad",
+                   "wellfed-amebad-sdk", "wellfed-sim", "wellfed-probe")
 ENTRY = FIRMWARE / "ports/amebad/example_entry.c"
 PLATFORM_OPTS = Path("project/realtek_amebaD_va0_example/inc/inc_hp/platform_opts.h")
 # FW07 join credentials: read from an ignored private file into an untracked,
@@ -386,15 +390,15 @@ def bootstrap():
 
 
 def rust_sources():
-    """Tracked plus untracked, non-ignored files under firmware/rust.
+    """Tracked plus untracked, non-ignored files of the firmware crates.
 
     Ignored files (editor backups, caches, build output) do not change the
-    identity; `target` is excluded only as a directory below firmware/rust, so
-    the checkout's own location never matters.
+    identity; `target` is excluded only as a directory below crates/, so the
+    checkout's own location never matters.
     """
     try:
         listing = run("git", "ls-files", "-z", "--cached", "--others", "--exclude-standard",
-                      "--", str(RUST.relative_to(ROOT)), cwd=ROOT, capture_output=True).stdout
+                      "--", *(str((RUST / crate).relative_to(ROOT)) for crate in FIRMWARE_CRATES), cwd=ROOT, capture_output=True).stdout
     except (OSError, subprocess.CalledProcessError) as error:
         raise RuntimeError("Source identity requires a Git checkout of this repository") from error
     paths = set()

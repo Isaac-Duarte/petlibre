@@ -20,18 +20,16 @@
 
 use core::fmt;
 
-use wellfed_core::flash_coord::{FlashCoord, FlashReply};
+use wellfed_core::flash_coord::FlashReply;
 use wellfed_core::ota::{self, Manifest, Part, SECTOR, Status, Writer};
-use wellfed_core::tick_clock::TickClock;
 use wellfed_core::transport::{self as mqtt, Event, Session, Tick};
 
-use crate::config::{FLASH_LIMITS, SYSTIMER_HZ};
-use crate::flash::park::{self, Mmio, Reply};
-use crate::flash::peer::MARKER_REGISTER;
+pub use crate::arming::Hooks;
+use crate::arming::{self, Arming, Poll};
+use crate::flash::park::Mmio;
 use crate::net_status;
-use crate::probes::flash::{ATTEMPT_BIT, BOOT_COUNT_REGISTER, Provider, READY_TIMEOUT_MS};
+use crate::probes::flash::Provider;
 use crate::sdk::{self, TcpRecv, TransportConfig};
-use crate::stopped;
 
 pub const CONNECT_TIMEOUT_MS: u32 = 3000;
 pub const POLL_MS: u32 = 50;
@@ -52,15 +50,6 @@ pub trait BankFlash {
     fn erase(&mut self, sector: u32) -> bool;
     fn program(&mut self, sector: u32, offset: u32, data: &[u8]) -> bool;
     fn read(&mut self, sector: u32, offset: u32, bytes: &mut [u8]) -> bool;
-}
-
-/// The SDK flash-lock hooks and the watchdog, as the target glue wires them.
-pub trait Hooks {
-    /// Open the watchdog; from here on the glue's feeder task feeds it.
-    fn watchdog() -> bool;
-    /// Install `provider` into the hooks; task context, IRQs enabled.
-    fn install(provider: *mut Provider) -> bool;
-    fn armed() -> bool;
 }
 
 /// Bank 1 through the SDK wrappers, refused unless the hooks are armed (an
@@ -160,6 +149,24 @@ pub enum Record {
     },
 }
 
+impl From<arming::Event> for Record {
+    fn from(event: arming::Event) -> Self {
+        match event {
+            arming::Event::Ready { reply, inactive } => Self::Ready { reply, inactive },
+            arming::Event::Timeout => Self::Timeout,
+            arming::Event::Skip { marker } => Self::Skip { marker },
+            arming::Event::Armed {
+                watchdog,
+                installed,
+            } => Self::Armed {
+                watchdog,
+                installed,
+            },
+            arming::Event::Clock => Self::Error { stage: "clock" },
+        }
+    }
+}
+
 /// The body of a `PLOTA1` line. No record carries a credential.
 pub fn describe(record: Record, f: &mut impl fmt::Write) -> fmt::Result {
     match record {
@@ -218,19 +225,19 @@ fn next(delay_ms: u32, record: Option<Record>) -> Step {
     }
 }
 
-struct Topic {
+pub(crate) struct Topic {
     buf: [u8; ota::TOPIC_BUDGET],
     len: usize,
 }
 
 impl Topic {
-    fn new(namespace: &str, suffix: &str) -> Option<Self> {
+    pub(crate) fn new(namespace: &str, suffix: &str) -> Option<Self> {
         let mut buf = [0; ota::TOPIC_BUDGET];
         let len = mqtt::topic(&mut buf, namespace, suffix).ok()?.len();
         Some(Self { buf, len })
     }
 
-    fn as_str(&self) -> &str {
+    pub(crate) fn as_str(&self) -> &str {
         core::str::from_utf8(&self.buf[..self.len]).unwrap_or("")
     }
 }
@@ -257,7 +264,6 @@ struct Open {
 enum Stage {
     #[default]
     Start,
-    Wait,
     Arm,
     Net,
     Done,
@@ -268,8 +274,7 @@ pub struct Updater {
     config: TransportConfig,
     key: Option<[u8; 32]>,
     stage: Stage,
-    clock: TickClock,
-    authority: u64,
+    arming: Arming,
     open: Option<Open>,
     rx: [u8; 2 * mqtt::MAX_PACKET],
     rx_len: usize,
@@ -286,8 +291,7 @@ impl Updater {
             config,
             key,
             stage: Stage::Start,
-            clock: TickClock::default(),
-            authority: 0,
+            arming: Arming::default(),
             open: None,
             rx: [0; 2 * mqtt::MAX_PACKET],
             rx_len: 0,
@@ -313,7 +317,7 @@ impl Updater {
     /// attempt marker is cleared.
     fn fail(&mut self, stage: &'static str) -> Step {
         self.close();
-        sdk::backup_write(MARKER_REGISTER, 0);
+        arming::clear_attempt();
         self.end(Record::Error { stage })
     }
 
@@ -346,38 +350,18 @@ impl Updater {
                 if self.key.is_none() {
                     return self.end(Record::Start { key: false });
                 }
-                let count = sdk::backup_read(BOOT_COUNT_REGISTER).wrapping_add(1);
-                sdk::backup_write(BOOT_COUNT_REGISTER, count);
-                let raw = sdk::systimer_ticks();
-                self.clock = TickClock::new(SYSTIMER_HZ, raw, 0).unwrap_or_default();
-                self.authority = park::session(count, raw, false);
-                if !park::hello::<M>(self.authority) {
-                    return self.end(Record::Error { stage: "clock" });
-                }
-                self.stage = Stage::Wait;
+                self.stage = Stage::Arm;
                 next(POLL_MS, Some(Record::Start { key: true }))
             }
-            Stage::Wait => self.wait::<M>(provider),
-            Stage::Arm => {
-                let marker = sdk::backup_read(MARKER_REGISTER);
-                if marker != 0 {
-                    sdk::backup_write(MARKER_REGISTER, 0);
-                    return self.end(Record::Skip { marker });
+            // SAFETY: the caller's contract.
+            Stage::Arm => match unsafe { self.arming.step::<M, H>(provider) } {
+                Poll::Pending(event) => next(POLL_MS, event.map(Record::from)),
+                Poll::Armed(event) => {
+                    self.stage = Stage::Net;
+                    next(POLL_MS, Some(event.into()))
                 }
-                sdk::backup_write(MARKER_REGISTER, ATTEMPT_BIT);
-                let watchdog = H::watchdog();
-                let installed = watchdog && H::install(provider);
-                let record = Record::Armed {
-                    watchdog,
-                    installed,
-                };
-                if !installed {
-                    sdk::backup_write(MARKER_REGISTER, 0);
-                    return self.end(record);
-                }
-                self.stage = Stage::Net;
-                next(POLL_MS, Some(record))
-            }
+                Poll::Failed(event) => self.end(event.into()),
+            },
             Stage::Net => {
                 let step = self.net(flash);
                 // SAFETY: the caller's contract; no hook call is in progress.
@@ -385,32 +369,6 @@ impl Updater {
                 step
             }
             Stage::Done => next(0, None),
-        }
-    }
-
-    fn wait<M: Mmio>(&mut self, provider: *mut Provider) -> Step {
-        let Some(now) = self.clock.read(sdk::systimer_ticks()) else {
-            return self.end(Record::Error { stage: "clock" });
-        };
-        match park::reply::<M>(self.authority) {
-            Reply::Ready(peer) => {
-                // Bind only with verified STOP and infrared OFF readback.
-                let inactive = stopped::observe().verified();
-                let Some(mut coord) = FlashCoord::new(&FLASH_LIMITS, self.authority, now) else {
-                    return self.end(Record::Error { stage: "clock" });
-                };
-                let reply = coord.ready(self.authority, peer, inactive, now);
-                // SAFETY: the caller's contract; no hook is armed yet.
-                unsafe { *provider = Provider::bound(coord, self.clock, self.authority) };
-                let record = Record::Ready { reply, inactive };
-                if reply != FlashReply::ACCEPTED {
-                    return self.end(record);
-                }
-                self.stage = Stage::Arm;
-                next(POLL_MS, Some(record))
-            }
-            _ if now >= READY_TIMEOUT_MS => self.end(Record::Timeout),
-            _ => next(POLL_MS, None),
         }
     }
 
@@ -699,7 +657,7 @@ impl Updater {
             return self.fail("marker");
         }
         self.close();
-        sdk::backup_write(MARKER_REGISTER, 0);
+        arming::clear_attempt();
         self.stage = Stage::Done;
         Step {
             delay_ms: 0,

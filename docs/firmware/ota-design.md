@@ -14,6 +14,18 @@ The updater: booted from bank 0, with a key built in (`PETLIBRE_OTA_PUBLIC_KEY`,
 - **The offer check:** a confirmed normal build runs `amebad/src/watch.rs`. Every minute it opens a short MQTT session of its own, as `<client_id>-ota`, publishes `ota/check`, and the server answers `ota/offered`.
 - **On hardware:** build W checked and found its own build on offer (`same=1`). After the owner side loaded signed v5 for another build, the next check made W clear its bank-1 marker (`sdk::bank1_give_way`, refused unless bank 0 is valid) and restart. Bank 0 installed v5, which confirmed itself after 30 s. Nothing went over UART.
 
+**Failure modes (October 22, physical).** `crates/petlibre-local/examples/ota_fault_server.rs` answers `ota/get` as the server role, beside `petlibre-local broker` only, with one injected fault:
+
+| Fault | Result |
+| --- | --- |
+| One bit flipped in the chunk at 8192 | Full download, then `error stage=hash` |
+| `Range` from 200 000 | `error stage=range` after 48 sectors |
+| No answers from 300 000 | Five asks 3 s apart, then `error stage=timeout` |
+| Broker and server restarted at 300 032 | `closed`, three refused connects, then resumed at 300 544 and activated |
+| Relay power cut at 201 728 | Next boot on bank 0, re-downloaded from 0, activated |
+
+After each stop, the marker was never written: the loader kept booting bank 0, and the recovery role handed over to the normal transport. The transfer runs at about 6.5 KB/s, a 672 KB image in about 100 s.
+
 The original design follows. It came from the FW09 bank policy (simulation and static analysis). Every write it describes is outside the bank-1 development updater's reviewed region, so the first hardware step needs an owner-reviewed procedure.
 
 ## Constraints

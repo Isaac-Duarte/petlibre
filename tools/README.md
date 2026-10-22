@@ -81,6 +81,7 @@ Capture auditors check a finalized receive-only UART capture against the build m
 | [emulate/emulate-recovery-transaction.py](emulate/emulate-recovery-transaction.py) | A complete planned restore in memory |
 | [emulate/prepare-c-probe.py](emulate/prepare-c-probe.py) | Build the non-actuating stock execution probe |
 | [emulate/emulate-c-probe.py](emulate/emulate-c-probe.py) | Run stock GET_CONFIG and the compiled probe on real ARM code |
+| [emulate/emulate-ota-markers.py](emulate/emulate-ota-markers.py) | The FW10/FW11 marker sequence through the actual factory loader's bank selection |
 | [emulate/trace-stock-pad-power.py](emulate/trace-stock-pad-power.py) | Execute the stock KM0 shared-pad supply initializer |
 
 ## Layout notes

@@ -7,6 +7,18 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
+**FW13 and FW31 are Done (October 21).** FW13 (motion-free scope): PA15 lights
+the food receiver (PA17), PB3 the outlet receiver (PA16), and a blocked beam
+reads LOW on both. Receivers settle within one 2 ms poll, and the supervisor
+cut the emitters 300–305 ms into a deliberate owner stall. PB3 is SWD_CLK:
+startup now releases SWD as stock does, and before that PB3 was never driven.
+Passage pulses and PA18 feedback are carried to FW16; emitter duty and OFF
+levels to FW30. See [optical inputs](docs/firmware/optical-inputs.md). FW31:
+the relay bench installed a changed image (one loader NAK, finished with
+`--interrupted`) and ran a full 8 MiB dump. Only bank 1 differs from the FW08
+read B, and it matches the installed review byte for byte.
+`tools/bench-dashboard.py` shows bench progress on localhost.
+
 **FW14 (current, battery and external power inputs) is in progress.** FW15 is done (storage scope); real-motion journal wiring is carried to FW16.
 
 **FW14 read-only ADC probe (physical, passed).** It ran for one cold boot on
@@ -125,21 +137,22 @@ Bench lessons from stage C:
 
 ## What is actually installed
 
-The research feeder runs **FW08 transport review 01** in bank 1, starting at
-flash offset `0x186000`. It was installed through the changed-sector updater
-(138 sectors verified).
+The research feeder runs **FW13 optics review 02** in bank 1, starting at
+flash offset `0x186000`. It was installed through the relay bench (122
+sectors: 31 before a loader NAK, 91 more with `--interrupted`).
 
 | Identity | Recorded value |
 | --- | --- |
-| OTA SHA-256 | `ec5dedbd71e9d361fc3b4bab818d487c8872f3d779a1424b9f71cc5c6d6bf95c` |
-| Embedded startup build ID | `00133ae12740f7657f203ce4dfb045a51e06a2cfc0d7db67886ae5608bfd4f53` |
+| OTA SHA-256 | `064b76290486ca774f28dce826ca2a0e079b84e768b7d2d35cdf0646d8a03842` |
+| Embedded startup build ID | `fb1769937b77edbcc092897b8a201fe1ff51f14868b3ee9bd0382e44156f9747` |
 
-**Every power-on runs the Wi-Fi DNS probe and the FW08 transport**: after the
-LED sequence it joins the owner's hotspot, checks DNS every 5 s, and once DNS
-works it connects to the local server's broker. There it publishes health
-every 30 s and answers `health` and `ping`. Wi-Fi and broker credentials come
-from private files; the image stays under `private/`. It drives no motor or
-emitter and writes no flash.
+**Every power-on runs the Wi-Fi DNS probe, the FW08 transport and the FW13
+optics probe**: after the LED sequence it joins the owner's hotspot and reports
+health to the local broker as before. For about two minutes the optics task
+pulses the infrared emitters in budgeted windows (motor STOP throughout), then
+stalls on purpose until the supervisor cuts them, and leaves them off. Wi-Fi and
+broker credentials come from private files; the image stays under `private/`.
+It drives no motor and writes no flash.
 
 ## Last confirmed physical state
 
@@ -269,7 +282,9 @@ Full-flash reads before and after were identical. The server can't see an
 access-point outage faster than the 45 s keepalive or 75 s stale timeout.
 Refusal of unsupported requests is host-tested only.
 
-**Next:** the owner plans FW31 (bench automation).
+**FW13 and FW31 Done** (see the top of this file). **Next:** FW14 needs
+batteries; FW30 (electrical output checks with a meter) is ready and now
+includes PB3's driven OFF level and emitter current.
 
 `--interrupted` now also accepts one sector holding the staged target's first
 1–3 program frames followed by erased flash, the state a NAK during programming

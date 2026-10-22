@@ -4,9 +4,9 @@ This board tracks replacement-firmware integration, dependencies, and acceptance
 
 ## Current status
 
-- **Done:** FW01–FW08 and FW15, seven of them with recorded scope limits (see carried items).
+- **Done:** FW01–FW08, FW13, FW15 and FW31, eight of them with recorded scope limits (see carried items).
 - **In progress:** FW14 waits for batteries: its ADC channel select and millivolt scaling are proven, but the battery channel, PA19 and the divider are not.
-- **Critical path to feeding:** FW13/FW14/FW15 → FW30 → FW16 → FW17.
+- **Critical path to feeding:** FW14 → FW30 → FW16 → FW17.
 
 ### Carried items
 
@@ -14,7 +14,7 @@ Work a Done card deliberately handed to a later card. Close a row only with the 
 
 | Item | From | Owner | Notes |
 | --- | --- | --- | --- |
-| Motor STOP and infrared-off voltages, startup transients, repeated measured resets | FW03 | FW30 | Software readback and observed no-motion only |
+| Motor STOP and infrared-off voltages, startup transients, repeated measured resets | FW03 | FW30 | Software readback and observed no-motion only. Until FW13 released SWD, PB3 was undriven and read its pull-down; measure its OFF level on a current build |
 | Port A indicators PA0/PA2/PA4 output-only | FW04 | FW23 | No input readback on the tested unit; levels rest on visual observation |
 | Production watchdog clock bounds and counter choice | FW05 | FW16 | Effective clock measured near 43 kHz (FW05) and near 31–33 kHz (FW06 stage C) with the same counter; the cause is unknown. Bounds widened to 24–54 kHz; explain the spread before FW16 relies on it |
 | Owner-lease expiry while a task stalls, on hardware | FW05 | FW16 | Host-tested; FW05 proved the supervision timer keeps running during a stall |
@@ -25,6 +25,8 @@ Work a Done card deliberately handed to a later card. Close a row only with the 
 | Plaintext transport over the shared hotspot trust | FW08 | FW10, FW17 | Read-only health only; either card adds authenticated or encrypted messages before carrying updates or feeding |
 | Transport credentials set without a rebuild | FW08 | FW25 | Broker credentials are a build input from a private file |
 | Server-side detection of an access-point outage | FW08 | FW27 | Bounded by the broker keepalive (45 s) and stale health (75 s); a 20 s outage was never marked offline |
+| Food passage pulses through the outlet beam, and the PA18 feedback input | FW13 | FW16 | Both need motion; FW13 resolves LOW runs to about 2 ms but saw no real pulse, and PA18 read HIGH throughout |
+| Emitter current, thermal duty limits and electrical OFF levels | FW13 | FW30 | FW13's 40 % budgeted windows are a bound, not a characterization |
 | Journal reservation before real motion and result after verified stop | FW15 | FW16 | Journal reserve, finish, pending refusal and torn-record recovery passed on NOR with no motion; the owner wiring around real motion belongs to FW16 |
 
 ## Using the board
@@ -44,7 +46,7 @@ Prioritize the UART development loop and build identity, stopped startup, LED di
 | **FW03 Stopped startup and GPIO readback** | **Done (revised scope)** | Physical (readback, observation) | FW01, FW02 | Establish stock-derived STOP/off startup, exact GPIO values/directions, artifact-bound normal boot and operator movement observation while the backend stays unopened. The recorded scope defers independent voltage, repeated measured reset and transient checks to FW30; these remain unverified. |
 | **FW04 First LED controller** | **Done (output-only scope)** | Physical (capture, observation) | FW03 | Identify LED pins, colors and polarity physically. Exercise off/on/blink from a small diagnostic, with bounded timing and no motor or infrared enable. This is the first visible feature experiment. |
 | **FW05 Clock, independent stop timer and watchdog** | **Done (motion-disabled scope)** | Physical (UART timing) | FW03 | With motion disabled: measure the SYSTIMER rate against host time and confirm it only moves forward; show the supervision timer interrupt keeps running while a task stalls; show the watchdog refreshes only on real progress and resets the platform when progress stops; show a deliberate reset cannot become a reset loop. Lease expiry under a stall on hardware, production watchdog bounds and stop timing under motion are carried to FW16, FW06 and FW19. |
-| **FW31 Bench automation** | Bench check | Physical (relay boots, loader entry, no-op update) | FW01 | Software-controlled feeder power and loader entry (a USB relay switches feeder 5V and replaces the loader button), so the host can flash, power-cycle and capture without manual steps. Board power also feeds the motor harness, so the guarantee is that no motor-driving firmware runs while flashing: only the ROM and the flash helper. FW30 measures the driver inputs across relay-driven loader entries. The operator can always cut power by hand. Record the wiring and its failure modes. Done after a changed-image install and a full flash dump run through the bench. |
+| **FW31 Bench automation** | **Done** | Physical (relay boots, loader entry, no-op update, changed-image install finished with `--interrupted` after a loader NAK, full 8 MiB dump matching the prior read outside bank 1); [bench](docs/hardware/bench.md) | FW01 | Software-controlled feeder power and loader entry (a USB relay switches feeder 5V and replaces the loader button), so the host can flash, power-cycle and capture without manual steps. Board power also feeds the motor harness, so the guarantee is that no motor-driving firmware runs while flashing: only the ROM and the flash helper. FW30 measures the driver inputs across relay-driven loader entries. The operator can always cut power by hand. Record the wiring and its failure modes. Done after a changed-image install and a full flash dump run through the bench. |
 | **FW06 Real flash coordination across both cores** | **Done (mediated-path scope)** | Physical (UART protocol and timing) | FW03, FW05 | Implement the missing transport/provider and fresh boot handshake, RAM parking and mediated SDK flash operations. Verify stopped outputs before granting writes, bounded failure handling and no access from the other core during a lease. Inject peer loss and timeout. Fix the production watchdog configuration from the FW05 measurement, with margin for clock spread, and size the lease budget against it. |
 
 ## Early Wi-Fi and OTA
@@ -62,7 +64,7 @@ Prioritize the UART development loop and build identity, stopped startup, LED di
 
 | Card | Status | Evidence | Prerequisites | Finish line |
 | --- | --- | --- | --- | --- |
-| **FW13 Food, outlet and feedback inputs** | Ready | — | FW03, FW05, FW06 | Confirm emitter/receiver pairs and blocked/clear polarity. Measure settling, pulse capture and bounded emitter duty. Reject stale/invalid inputs; observe owner stalls with emitters active and motor disabled. |
+| **FW13 Food, outlet and feedback inputs** | **Done (motion-free scope)** | Physical (UART: pairing, blocked/clear polarity, settling, supervised windows, owner-stall cut); host (probe, auditor); [notes](docs/firmware/optical-inputs.md) | FW03, FW05, FW06 | Confirm emitter/receiver pairs and blocked/clear polarity. Measure settling, pulse capture and bounded emitter duty. Reject stale/invalid inputs; observe owner stalls with emitters active and motor disabled. |
 | **FW14 Current, battery and external power inputs** | In progress | Physical (UART readback, internal supply channel, no batteries) | FW03, FW05 | Enable the LP ADC clock explicitly, then verify ADC readiness/calibration, voltage scaling and external-power detection against measurements. Establish sample freshness and report unknown values honestly. Calibrate loaded motor current during FW16/FW19. |
 | **FW15 Durable settings and feeding journal** | **Done (storage scope)** | Physical (UART protocol, NOR power cuts) | FW06 | Establish explicit storage allocation, implement real NOR I/O and schema/version recovery, and bound wear. Persist reservation before motion and result after verified stop. Test interrupted writes and block ambiguous pending feeds after restart. |
 | **FW30 Electrical output verification** | Ready | — | FW03 | Before any intended motion, measure motor driver inputs at STOP, infrared emitter OFF, and startup/reset transients across repeated measured power-ons, resets and relay-driven loader entries (multimeter; scope or logic analyzer for transients). Confirm stock-derived polarity electrically. |
@@ -109,7 +111,7 @@ Prioritize the UART development loop and build identity, stopped startup, LED di
 | FW10 Guarded OTA upload and activation | ⬜ Planned |
 | FW11 Boot confirmation and failed update recovery | ⬜ Planned |
 | FW12 Automated development loop | ⬜ Planned |
-| FW13 Food, outlet and feedback inputs | 🟢 Ready |
+| FW13 Food, outlet and feedback inputs | ✅ Done (motion-free scope) |
 | FW14 Current, battery and external power inputs | 🚧 In progress |
 | FW15 Durable settings and feeding journal | ✅ Done (storage scope) |
 | FW16 Supervised motor controller and feeding owner | ⬜ Planned |
@@ -127,4 +129,4 @@ Prioritize the UART development loop and build identity, stopped startup, LED di
 | FW28 Home Assistant integration | ⬜ Planned |
 | FW29 Research firmware release | ⬜ Planned |
 | FW30 Electrical output verification | 🟢 Ready |
-| FW31 Bench automation | 🧪 Bench check |
+| FW31 Bench automation | ✅ Done |

@@ -119,5 +119,41 @@ class SequenceTests(unittest.TestCase):
         self.assertTrue(self.port.state[1])
 
 
+class StatusTests(unittest.TestCase):
+    def test_records_steps_progress_relays_and_history(self):
+        import json, tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            status = BENCH.Status(Path(tmp))
+            status.begin("dump", "unit", ["loader entry", "uart-flash-read read-full"])
+            status.relay(1, True)
+            status.step("loader entry")
+            status.step("uart-flash-read read-full")
+            status.line("Read 4096/8388608 bytes\n")
+            status.write(force=True)
+            current = json.loads((Path(tmp) / "current.json").read_text())
+            self.assertEqual([s["state"] for s in current["steps"]], ["done", "running"])
+            progress = current["progress"]
+            self.assertEqual((progress["done"], progress["total"], progress["unit"]), (4096, 8388608, "bytes"))
+            status.line("Read 8192/8388608 bytes\n")
+            later = status.state["progress"]
+            # The rate baseline stays at the first report of this count.
+            self.assertEqual((later["done"], later["since"], later["since_done"]),
+                             (8192, progress["since"], 4096))
+            self.assertEqual(current["relay"], {"1": True})
+            status.finish(1, "Observer failed")
+            current = json.loads((Path(tmp) / "current.json").read_text())
+            self.assertEqual((current["outcome"], current["steps"][1]["state"]), ("stopped", "failed"))
+            history = [json.loads(line) for line in (Path(tmp) / "history.jsonl").read_text().splitlines()]
+            self.assertEqual([(h["command"], h["outcome"], h["error"]) for h in history],
+                             [("dump", "stopped", "Observer failed")])
+
+    def test_disabled_status_writes_nothing(self):
+        status = BENCH.Status()
+        status.begin("boot", "unit", [])
+        status.line("Read 1/2 bytes")
+        status.finish(0)
+        self.assertEqual(status.state["outcome"], "pass")
+
+
 if __name__ == "__main__":
     unittest.main()

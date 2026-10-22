@@ -11,9 +11,8 @@
 //! The UART is held by back-to-back receive-only `wellfed-flash read
 //! observe` segments of [`SEGMENT_SECONDS`]. The capture writer flushes each
 //! received chunk, so the growing `serial-rx.bin` is read while the segment
-//! runs. A segment only chains to the next when the rig is polled, so a
-//! call that blocks (a build) leaves a gap in the capture; the forger, whose
-//! refusals the suite counts, runs as a child while the chain is pumped.
+//! runs. The chain runs on its own thread ([`Capture`]), so the port stays
+//! held while the suite blocks on a build or the forger.
 
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -29,7 +28,7 @@ use crate::commands::Bench;
 use crate::commands::ota::{OtaArgs, Staged, Timing};
 use crate::config::{CAPTURES, VERIFICATION};
 use crate::relay::{POWER, STRAP};
-use crate::tools::Observer;
+use crate::tools::Capture;
 use crate::{Error, Result, require};
 
 /// The observer's own limit for one capture.
@@ -39,12 +38,6 @@ const STOP_SECONDS: f64 = 10.0;
 const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
 /// The forger waits up to 90 s for health, then 10 s per case.
 const FORGE_SECONDS: u64 = 90;
-
-struct Segment {
-    observer: Box<dyn Observer>,
-    rx: PathBuf,
-    offset: u64,
-}
 
 #[derive(Default)]
 struct Children {
@@ -69,10 +62,9 @@ pub struct LiveRig<'b> {
     power_was_on: Option<bool>,
     children: Children,
     local_bin: PathBuf,
-    uart: Option<Segment>,
-    segments: u32,
-    /// Bytes pumped during a child's run, not yet handed to the suite.
-    held: Vec<u8>,
+    capture: Option<Box<dyn Capture>>,
+    /// The segment being read, by index, and how far into it.
+    reading: (usize, u64),
     /// Root-relative capture directories, for the summary.
     pub captures: Vec<String>,
     server_log: PathBuf,
@@ -125,9 +117,8 @@ impl<'b> LiveRig<'b> {
             power: args.power,
             power_was_on: None,
             children: Children::default(),
-            uart: None,
-            segments: 0,
-            held: Vec::new(),
+            capture: None,
+            reading: (0, 0),
             captures: Vec::new(),
             server_log: root.join(VERIFICATION).join(format!("{name}-servers.log")),
             local_bin,
@@ -189,6 +180,14 @@ impl<'b> LiveRig<'b> {
             }
         }
 
+        let (root, name) = (self.bench.root.clone(), self.name.clone());
+        let segment = move |n: u32| root.join(CAPTURES).join(format!("{name}-uart-{n:02}"));
+        let port = self.bench.config.uart_port.clone();
+        self.capture = Some(
+            self.bench
+                .tools
+                .capture(&port, SEGMENT_SECONDS, Box::new(segment))?,
+        );
         self.uart()?;
         self.server(Server::Serve)
     }
@@ -384,9 +383,10 @@ impl<'b> LiveRig<'b> {
         self.restored = true;
 
         self.stop_servers();
-        if let Some(mut segment) = self.uart.take() {
-            segment.observer.kill();
+        if let Some(mut capture) = self.capture.take() {
+            capture.stop();
         }
+        self.bench.status.capture(None, 0.0);
         if let Some(was) = self.hotspot_was_up
             && was != self.hotspot_up
             && let Err(error) = self.hotspot(was)
@@ -491,35 +491,17 @@ impl Rig for LiveRig<'_> {
             "request_forger runs beside the bare broker only",
         )?;
         let seconds = FORGE_SECONDS.to_string();
-        let mut child = Command::new(self.example("request_forger"))
+        let output = Command::new(self.example("request_forger"))
             .current_dir(&self.bench.root)
             .args(["--config", &self.config_arg, "--seconds", &seconds])
             .stdin(Stdio::null())
-            .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
-            .spawn()?;
-
-        // Its four short lines fit the pipe, so stdout is read after it exits.
-        let status = loop {
-            if let Some(status) = child.try_wait()? {
-                break status;
-            }
-            if crate::interrupted() {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(Error::Interrupted);
-            }
-            let bytes = self.uart()?;
-            self.held.extend(bytes);
-            std::thread::sleep(Duration::from_millis(500));
-        };
-        require(status.success(), format!("request_forger exited {status}"))?;
-
-        let mut stdout = String::new();
-        if let Some(mut pipe) = child.stdout.take() {
-            pipe.read_to_string(&mut stdout)?;
-        }
-        stdout
+            .output()?;
+        require(
+            output.status.success(),
+            format!("request_forger exited {}", output.status),
+        )?;
+        String::from_utf8_lossy(&output.stdout)
             .lines()
             .map(|line| Ok(serde_json::from_str(line)?))
             .collect()
@@ -573,33 +555,33 @@ impl Rig for LiveRig<'_> {
     }
 
     fn uart(&mut self) -> Result<Vec<u8>> {
-        if self.uart.is_none() {
-            self.segments += 1;
-            let output = self.segment_path(self.segments);
-            self.bench.fresh(&output)?;
-            let observer = self.bench.start_observer(&output, SEGMENT_SECONDS)?;
-            self.captures.push(self.bench.rel(&output));
-            self.uart = Some(Segment {
-                observer,
-                rx: output.join("serial-rx.bin"),
-                offset: 0,
-            });
+        let capture = self
+            .capture
+            .as_mut()
+            .ok_or_else(|| Error::Bench("The UART capture is not running".into()))?;
+        let segments = capture.segments();
+        if let Some(reason) = capture.failure() {
+            return Err(Error::Bench(format!("The UART capture stopped: {reason}")));
+        }
+        for segment in segments.iter().skip(self.captures.len()) {
+            self.captures.push(self.bench.rel(segment));
+            self.bench.status.capture(Some(segment), SEGMENT_SECONDS);
         }
 
-        let segment = self.uart.as_mut().expect("a segment was just started");
-        let running = segment.observer.running();
-        let mut bytes = std::mem::take(&mut self.held);
-        if let Ok(mut file) = File::open(&segment.rx) {
-            file.seek(SeekFrom::Start(segment.offset))?;
-            let read = file.read_to_end(&mut bytes)?;
-            segment.offset += read as u64;
-        }
-
-        if !running {
-            // The segment ended; its last bytes are in hand. The next call
-            // starts another.
-            let mut segment = self.uart.take().expect("checked above");
-            self.bench.finish_observer(segment.observer.as_mut())?;
+        let mut bytes = Vec::new();
+        while let Some(segment) = segments.get(self.reading.0) {
+            let (index, offset) = &mut self.reading;
+            if let Ok(mut file) = File::open(segment.join("serial-rx.bin")) {
+                file.seek(SeekFrom::Start(*offset))?;
+                *offset += file.read_to_end(&mut bytes)? as u64;
+            }
+            // The next segment starts only once this one's observe exited,
+            // after its last flush, so nothing more arrives here.
+            if *index + 1 >= segments.len() {
+                break;
+            }
+            *index += 1;
+            *offset = 0;
         }
         Ok(bytes)
     }
@@ -615,5 +597,9 @@ impl Rig for LiveRig<'_> {
     fn note(&mut self, text: &str) {
         say!("{text}");
         self.bench.status.line(text);
+    }
+
+    fn scenario(&mut self, name: &str, state: &str) {
+        self.bench.status.mark(name, state);
     }
 }

@@ -257,13 +257,16 @@ fn run(cli: Cli) -> wellfed_bench::Result<u8> {
                 .collect(),
             Command::Capture { .. } => vec!["capture"],
             Command::Ota(args) => commands::ota::steps(args.build),
-            Command::Itest(args) => commands::itest::select(&args.only)?
+            Command::Itest(args) => commands::itest::select(args)?
                 .iter()
                 .map(|scenario| scenario.name)
                 .collect(),
             _ => commands::steps(label).to_vec(),
         };
         bench.status.begin(label, command.name(), &steps)?;
+        if matches!(command, Command::Itest(_)) {
+            bench.status.fix_steps();
+        }
         if let Some(tool) = flash_tool {
             bench.status.flash_tool(tool);
         }

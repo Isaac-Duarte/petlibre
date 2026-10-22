@@ -111,10 +111,15 @@ The server serves each offer to completion once, so after a fallback, retry with
 ```sh
 cargo build --release -p wellfed-bench -p wellfed-flash -p wellfed-local --bins --examples
 target/release/wellfed-bench itest --list
-target/release/wellfed-bench itest itest-20261022-01 --build                 # no cold boots
-target/release/wellfed-bench itest itest-20261022-02 --build --power         # everything
-target/release/wellfed-bench itest itest-20261022-03 --review private/verification/<review> --only requests,request-auth
+target/release/wellfed-bench itest itest-20261022-01 --build --tier smoke    # a few minutes
+target/release/wellfed-bench itest itest-20261022-02 --build --power         # standard (default tier)
+target/release/wellfed-bench itest itest-20261022-03 --build --power --destructive --tier soak --soak-minutes 120
+target/release/wellfed-bench itest itest-20261022-04 --review private/verification/<review> --only requests,request-auth
 ```
+
+**Tiers.** `--tier smoke` runs `ota-update`, `requests` and `request-auth`, which takes minutes once the build under test is running. `standard` (the default) runs the whole functional suite. `soak` adds long runs. `--only` picks scenarios whatever their tier.
+
+**Builds.** `--build` first asks `build.py source-id --image` for the identity a build of these sources would embed. That identity covers every source input, the variant and the update key. If a complete review with that `startup_identity` is already in `private/verification`, the suite signs it rather than building again. `wellfed-bench ota --build` does the same, and `--rebuild` builds anyway. So after the first run on unchanged sources, neither the build under test nor the `fw11-fail` variant is rebuilt.
 
 | Scenario | Checks | Needs |
 | --- | --- | --- |
@@ -126,8 +131,12 @@ target/release/wellfed-bench itest itest-20261022-03 --review private/verificati
 | `network-bounce` | The hotspot goes down for 20 s after `PLMQT1 closed`. It comes back up, then `PLMQT1 ready` and fresh health with more `transport.connects`. | |
 | `trial-fallback` | The `fw11-fail` variant installs and fails its trial, and KM0 gives way. Bank 0's recovery role then installs the baseline, re-signed and offered once the variant activated. | `--build` |
 | `ota-faults` | The variant's offer makes the confirmed build give way. `ota_fault_server` then serves the re-signed baseline with one fault per boot: corrupt → `stage=hash`, truncated → `range`, stalled → `timeout`, none of them activating. A clean download then confirms. | `--build --power` |
+| `ota-power-cuts` | Installs the speaker variant (no motion). It has to be a build the feeder has not confirmed, because a confirmed one skips the trial. Two cuts follow. **Mid-download** (48 sectors in), the next boot must be bank 0 and its first progress record must show the download starting again. **10 s into trial boot 1**, before the 30 s confirmation, KM0 must count boot 1 again (backup registers clear on power loss), and the build must still confirm. A cut during activation itself is not attempted, since the marker write and reset take milliseconds. The re-signed baseline then goes back on. | `--build --power --destructive` |
+| `soak` | Pings every 30 s for `--soak-minutes` (default 60). It fails on any restart (`PLFW1 start`), any reconnect (`transport.connects`) or any missed reply, and reports the slowest reply. | soak tier |
 
-A scenario whose flag is missing is reported as **skipped**, never as passed.
+A scenario whose flag is missing is reported as **skipped**, never as passed. `--destructive` requires `--power`. The design recovers from both power cuts over the air (FW10, FW11); if it ever does not, recovery is the UART flash the suite prints.
+
+**Device state.** Once the baseline confirms, the suite reads the settings, whether Wi-Fi credentials are stored, and the build and bank. After every later scenario it reads them again. A scenario that leaves any of them changed fails, even if its own checks passed. The suite puts back what a request can: settings at once, stored credentials from the next boot.
 
 **Bench state.** Before changing anything, the suite refuses if any of these is wrong: the UART port is missing, `wellfed-local` or its examples are not built, an evidence name is in use, or anything already answers on the server's `http_listen` (stop that `serve`; the suite runs its own). It then:
 - records whether the hotspot connection named in `private/hotspot.json` is active, and brings it up;
@@ -140,13 +149,20 @@ Scenarios swap `serve` for `wellfed-local broker` plus `ota_fault_server` or `re
 **Failures.** A failed scenario stops the rest (they are recorded as skipped), unless `--keep-going` is given. Scenarios that change device state restore it on failure too, while the feeder still answers. If there is no `PL…` record and no fresh health for 180 s, the feeder counts as silent; every wait checks this, so an unpowered feeder stops an install watch within 3 minutes rather than at its 15-minute deadline. Only the wrong-credential wait in `wifi-fallback`, where the feeder is unreachable on purpose, is exempt. The suite then stops whatever `--keep-going` says, prints the last confirmed review and the `flash-prepare` command to recover it over UART, and exits 2. A scenario failure exits 1.
 
 **Evidence.**
-- **Captures:** receive-only, in back-to-back 180 s segments `private/captures/NAME-uart-01`, `-02`, … They are read while they record, so a record arrives within about a second. A segment chains to the next only while the suite polls, so a build (about a minute, while nothing is expected) leaves a gap; the forger runs as a child while the chain is pumped, because its refusals are counted.
-- **Reviews and manifests:** `NAME-good`, `NAME-fail`, `NAME-restore`, `NAME-trigger` and `NAME-fault`, in `private/verification/`. Each signs the next version, so a run uses up several.
+- **Captures:** receive-only, in back-to-back 180 s segments `private/captures/NAME-uart-01`, `-02`, … (the flash client's limit for one observe). A thread starts each segment as the last exits, so the port stays held while the suite blocks on a build or a child. Segments are read while they record, so a record arrives within about a second.
+- **Reviews and manifests:** `NAME-good`, `NAME-fail`, `NAME-restore`, `NAME-trigger`, `NAME-fault`, `NAME-cut-speaker` and `NAME-cut-restore`, in `private/verification/`. Each signs the next version, so a run uses up several. A reused review keeps its original name.
 - **Record:** `private/verification/NAME-itest.json` holds each scenario's verdict, reason and duration, any silence, and the capture list, marked `"evidence": "physical"`.
 
 **Cold boots.** After a supply cut the server keeps reporting the old session's health as online and fresh until the broker's keepalive lapses, and a request sent then is lost. So after a cold boot the suite waits for `PLMQT1 ready` and accepts only health received after it.
 
-**Status (October 22, 2026).** **Physical:** `itest-20261022-06 --build --power` passed all eight scenarios in 26 minutes (OTA v28–v32). The good build (`877b2c9b…`) confirmed. `request-auth` saw three refusals on the UART. The Wi-Fi fallback took about 2 minutes. `trial-fallback` counted trial boots 1–3, and KM0 gave way. `ota-faults` saw `stage=hash`, `range` and `timeout`, then a clean install. The bench state came back as found. Runs 01–05 found the harness bugs fixed above: no silence check during waits, the capture gap and offset during the forger, stale health after a cold boot. They also found that the `fw11-fail` variant no longer passed the link audit, because its constant failure let LTO drop the image's writers. **Host:** the scenarios, the UART log and the HTTP parsing run against a scripted feeder that emits the firmware's record formats and models the boot window.
+**Status (October 22, 2026).** **Physical, scaled suite:**
+- `itest-20261022-09 --build --power --destructive` passed the eight functional scenarios. It showed the build cache, the continuous capture and the device-state check after every scenario working on hardware.
+- `ota-power-cuts` then failed: a reinstalled confirmed build gets no trial. It was rebuilt around the speaker variant, and `itest-20261022-10` passed it in 10 minutes (OTA v42–v44):
+  - a cut at 48/171 sectors booted bank 0, and the download began again at 16/171;
+  - a cut 10 s into trial boot 1 was counted as boot 1 again, and the build confirmed.
+- Further harness fixes on hardware: refusal records trail their replies by about half a second, so the suite waits for them. A feeder the suite has just powered on is heard before it is offered its own build (`same=1`).
+
+**Physical, first suite:** `itest-20261022-06 --build --power` passed all eight scenarios in 26 minutes (OTA v28–v32). The good build (`877b2c9b…`) confirmed. `request-auth` saw three refusals on the UART. The Wi-Fi fallback took about 2 minutes. `trial-fallback` counted trial boots 1–3, and KM0 gave way. `ota-faults` saw `stage=hash`, `range` and `timeout`, then a clean install. The bench state came back as found. Runs 01–05 found the harness bugs fixed above: no silence check during waits, the capture gap and offset during the forger, stale health after a cold boot. They also found that the `fw11-fail` variant no longer passed the link audit, because its constant failure let LTO drop the image's writers. **Host:** the scenarios, the UART log and the HTTP parsing run against a scripted feeder that emits the firmware's record formats and models the boot window.
 
 ## Progress page
 

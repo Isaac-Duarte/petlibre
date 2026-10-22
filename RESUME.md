@@ -7,6 +7,28 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
+**October 22, night: integration suite scaled (physical, autonomous).**
+- **Faster runs:**
+  - `--tier smoke|standard|soak`.
+  - `--build` reuses a review of the same sources: `build.py source-id --image`, with `--rebuild` to force a build.
+  - The UART capture chains on its own thread.
+  - After every scenario the suite checks settings, stored Wi-Fi, build and bank, and puts back what it can.
+- **New scenarios:** `soak` (soak tier), and `ota-power-cuts` (needs `--destructive`).
+- **Shared record parser:** `wellfed_core::record`, used by the bench. `wellfed-amebad/tests/records.rs` runs the firmware's `describe` output through it.
+- **Firmware finding (physical):** a reinstalled build that is already confirmed skips the trial (confirmation is keyed by build identity), so trial tests install the speaker variant.
+- **Runs:**
+  - `itest-20261022-09` passed eight scenarios; the power-cut design failed as above.
+  - `itest-20261022-10` passed `ota-power-cuts`.
+- **Flash now:**
+  - **Bank 1:** the normal build `4db3e012…`, re-signed as `itest-20261022-10-cut-restore` (OTA v44), confirmed.
+  - **Bank 0:** unchanged (`36c9a086…`).
+  - **NOR settings:** generation 3007 (lights 1, sound 1, volume 40).
+  - **Wi-Fi:** no stored credentials (generation 9).
+  - **Next manifest version:** 45.
+- **Bench state:** restored. The hotspot is down, no server is running and the feeder is off.
+- **Bench page:** stopped when its 8-hour bound ran out. Restarting it was refused by Claude Code's auto mode, so the owner restarts it. It needs a restart to show the fixed scenario steps.
+- **Next:** port `build.py` and the review tool to Rust (the bench's remaining Python), a run-history page, and more scenarios: transport faults through a proxy, settings power cuts, boot loops.
+
 **October 22, late evening: FW27 integration suite (physical over the air, autonomous).**
 - **Built:** `wellfed-bench itest NAME` runs eight real-device scenarios. It installs over the air and asserts on receive-only UART, and it owns the hotspot, `serve` and, with `--power`, the supply relay, restoring all three afterwards ([bench](docs/hardware/bench.md#integration-suite)). Merged from the `bench-itest` worktree.
 - **Result:** `itest-20261022-06 --build --power` passed all eight in 26 minutes. Runs 01–05 found and fixed harness bugs, plus one firmware build bug: the `fw11-fail` variant's constant failure let LTO drop the image's flash writers, so it failed the pinned link audit. The forced failure is now opaque (`black_box`), and the audit pins are unchanged.

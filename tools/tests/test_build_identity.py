@@ -39,6 +39,21 @@ class BuildIdentityTests(unittest.TestCase):
             BUILD.main()
         self.assertTrue(re.fullmatch(r"[0-9a-f]{64}\n", output.getvalue()))
 
+    def test_image_identity_binds_the_variant_and_update_key(self):
+        def identity(*flags):
+            output = io.StringIO()
+            with patch.object(sys, "argv", ["build.py", "source-id", *flags]), \
+                    patch.object(BUILD, "bootstrap", side_effect=AssertionError("must stay offline")), \
+                    patch.object(BUILD, "ota_public_key", return_value="ab" * 32), \
+                    contextlib.redirect_stdout(output):
+                BUILD.main()
+            return output.getvalue().strip()
+
+        bare, image, failing = identity(), identity("--image"), identity("--image", "--trial-fail")
+        self.assertEqual(len({bare, image, failing}), 3)
+        inputs = {p: BUILD.digest(p) for p in BUILD.source_inputs("plaf103-firstboot")}
+        self.assertEqual(failing, BUILD.source_identity("plaf103-firstboot", inputs, "fw11-fail", "ab" * 32))
+
 
 GIT = ["git", "-c", "user.name=wellfed-test", "-c", "user.email=test@example.invalid",
        "-c", "init.defaultBranch=main", "-c", "commit.gpgsign=false"]

@@ -10,7 +10,8 @@ use std::fs;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
@@ -36,6 +37,16 @@ pub trait Tools {
     /// Run a Python tool from the checkout root, streaming both of its
     /// outputs as they come; returns its exit status.
     fn python(&mut self, python: &Path, args: &[String], status: &mut Status) -> Result<i32>;
+    /// Run a Python tool from the checkout root and keep its output.
+    fn python_query(&mut self, python: &Path, args: &[String]) -> Result<Captured>;
+    /// Hold the UART with back-to-back receive-only captures of `seconds`
+    /// each, the `n`th (from 1) into `segment(n)`, until stopped.
+    fn capture(
+        &mut self,
+        port: &str,
+        seconds: f64,
+        segment: Box<dyn Fn(u32) -> PathBuf + Send>,
+    ) -> Result<Box<dyn Capture>>;
     /// Start one bounded sigrok capture of all eight channels as raw bytes.
     fn analyzer(
         &mut self,
@@ -59,11 +70,19 @@ pub trait Observer {
     /// Wait for the capture to end; its report's `result` on success.
     fn finish(&mut self) -> Result<Value>;
     fn kill(&mut self);
-    /// Whether the capture is still recording; one that cannot tell says
-    /// no, so a reader waits for [`Self::finish`].
-    fn running(&mut self) -> bool {
-        false
-    }
+}
+
+/// A chain of receive-only captures on its own thread. Each observe is still
+/// bounded (the flash client caps one at 180 s), but the next starts as soon
+/// as the last exits, so the port stays held while the caller blocks on a
+/// build or a child of its own.
+pub trait Capture {
+    /// The segment directories started so far, in order.
+    fn segments(&mut self) -> Vec<PathBuf>;
+    /// Why the chain stopped on its own (an observe failed, a name was taken).
+    fn failure(&mut self) -> Option<String>;
+    /// Stop the running observe and the chain; safe to repeat.
+    fn stop(&mut self);
 }
 
 pub trait Analyzer {
@@ -306,6 +325,77 @@ impl Tools for Processes {
         stream_both(command, status)
     }
 
+    fn python_query(&mut self, python: &Path, args: &[String]) -> Result<Captured> {
+        let output = Command::new(python)
+            .current_dir(&self.root)
+            .args(args)
+            .stdin(Stdio::null())
+            .output()?;
+        Ok(Captured {
+            code: exit_code(output.status),
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        })
+    }
+
+    fn capture(
+        &mut self,
+        port: &str,
+        seconds: f64,
+        segment: Box<dyn Fn(u32) -> PathBuf + Send>,
+    ) -> Result<Box<dyn Capture>> {
+        // Checked here, so a missing binary refuses before anything starts.
+        self.flash_command()?;
+        let shared = Arc::new(Chained::default());
+        let chain = Arc::clone(&shared);
+        let port = port.to_string();
+        let (flash, root) = (self.flash_bin.clone(), self.root.clone());
+
+        let thread = std::thread::spawn(move || {
+            for n in 1.. {
+                let output = segment(n);
+                if output.exists() {
+                    chain.fail(format!("Refusing to reuse {}", output.display()));
+                    return;
+                }
+                let mut command = Command::new(&flash);
+                command.current_dir(&root).arg("--root").arg(&root);
+                let child = command
+                    .args(["read", "observe", "--port", &port, "--output"])
+                    .arg(&output)
+                    .args(["--seconds", &seconds.to_string()])
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .spawn();
+                let mut child = match child {
+                    Ok(child) => child,
+                    Err(error) => return chain.fail(format!("wellfed-flash: {error}")),
+                };
+                chain.started(output);
+
+                let status = loop {
+                    if chain.stopping() || interrupted() {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        return;
+                    }
+                    match child.try_wait() {
+                        Ok(Some(status)) => break status,
+                        Ok(None) => std::thread::sleep(Duration::from_millis(50)),
+                        Err(error) => return chain.fail(format!("observe: {error}")),
+                    }
+                };
+                if !status.success() {
+                    return chain.fail(format!("Observe segment {n} exited {status}"));
+                }
+            }
+        });
+        Ok(Box::new(Chain {
+            shared,
+            thread: Some(thread),
+        }))
+    }
+
     fn analyzer(
         &mut self,
         output: &Path,
@@ -340,6 +430,66 @@ impl Tools for Processes {
     }
 }
 
+#[derive(Default)]
+struct Chained {
+    segments: Mutex<Vec<PathBuf>>,
+    failure: Mutex<Option<String>>,
+    stop: AtomicBool,
+}
+
+impl Chained {
+    fn started(&self, output: PathBuf) {
+        self.segments
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(output);
+    }
+
+    fn fail(&self, reason: String) {
+        *self.failure.lock().unwrap_or_else(|e| e.into_inner()) = Some(reason);
+    }
+
+    fn stopping(&self) -> bool {
+        self.stop.load(Ordering::SeqCst)
+    }
+}
+
+struct Chain {
+    shared: Arc<Chained>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Capture for Chain {
+    fn segments(&mut self) -> Vec<PathBuf> {
+        self.shared
+            .segments
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    fn failure(&mut self) -> Option<String> {
+        self.shared
+            .failure
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    fn stop(&mut self) {
+        self.shared.stop.store(true, Ordering::SeqCst);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+impl Drop for Chain {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
 struct Observing {
     child: Child,
     output: PathBuf,
@@ -360,10 +510,6 @@ impl Observer for Observing {
     fn kill(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
-    }
-
-    fn running(&mut self) -> bool {
-        matches!(self.child.try_wait(), Ok(None))
     }
 }
 
@@ -519,6 +665,86 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
         tools.local_bin = tmp.path().join("absent");
         let error = tools.local(&[], &mut Status::disabled()).unwrap_err();
         assert!(error.to_string().contains("--local-bin"));
+    }
+
+    /// A chain over a stand-in observe that records one line per segment
+    /// and fails the third; `body` runs first (a sleep, say).
+    fn chain(tmp: &Path, body: &str) -> Box<dyn Capture> {
+        let script = format!(
+            "{body}\nmkdir -p \"$8\" && echo \"seg $8\" > \"$8/serial-rx.bin\"\n\
+             n=$(cat \"$2/count\" 2>/dev/null || echo 0); n=$((n + 1)); echo $n > \"$2/count\"\n\
+             [ $n -lt 3 ] || exit 3"
+        );
+        let mut tools = Processes {
+            root: tmp.into(),
+            flash_bin: fake_flash(tmp, &script),
+            local_bin: "/bin/sh".into(),
+        };
+        let root = tmp.to_path_buf();
+        tools
+            .capture(
+                "/dev/null",
+                180.0,
+                Box::new(move |n| root.join(format!("uart-{n:02}"))),
+            )
+            .unwrap()
+    }
+
+    fn until(mut done: impl FnMut() -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !done() {
+            assert!(Instant::now() < deadline, "timed out");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    #[test]
+    fn a_capture_chain_starts_each_segment_as_the_last_exits() {
+        let _serial = serial();
+        let tmp = tempfile::tempdir().unwrap();
+        let mut capture = chain(tmp.path(), "");
+
+        until(|| capture.failure().is_some());
+
+        let segments = capture.segments();
+        assert_eq!(segments.len(), 3);
+        for (n, segment) in segments.iter().enumerate() {
+            assert_eq!(*segment, tmp.path().join(format!("uart-{:02}", n + 1)));
+            assert!(segment.join("serial-rx.bin").is_file());
+        }
+        assert!(
+            capture.failure().unwrap().contains("segment 3 exited"),
+            "{:?}",
+            capture.failure()
+        );
+    }
+
+    #[test]
+    fn stopping_a_capture_chain_ends_the_running_observe() {
+        let _serial = serial();
+        let tmp = tempfile::tempdir().unwrap();
+        let mut capture = chain(tmp.path(), "sleep 30");
+        until(|| !capture.segments().is_empty());
+
+        let started = Instant::now();
+        capture.stop();
+
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert_eq!(capture.segments().len(), 1);
+        assert!(capture.failure().is_none());
+    }
+
+    #[test]
+    fn a_capture_chain_refuses_a_used_segment_name() {
+        let _serial = serial();
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir(tmp.path().join("uart-01")).unwrap();
+        let mut capture = chain(tmp.path(), "");
+
+        until(|| capture.failure().is_some());
+
+        assert!(capture.segments().is_empty());
+        assert!(capture.failure().unwrap().starts_with("Refusing to reuse"));
     }
 
     #[test]

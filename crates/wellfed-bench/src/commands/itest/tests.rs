@@ -11,6 +11,7 @@ use crate::commands::ota::{OtaArgs, Variant};
 
 const GOOD: &str = "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90";
 const FAILING: &str = "f00df00df00df00df00df00df00df00df00df00df00df00df00df00df00df00d";
+const SPEAKER: &str = "5eaa5eaa5eaa5eaa5eaa5eaa5eaa5eaa5eaa5eaa5eaa5eaa5eaa5eaa5eaa5eaa";
 const OLD: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
 enum Event {
@@ -19,6 +20,8 @@ enum Event {
     Online(bool),
     /// The booted image reports where its Wi-Fi credentials came from.
     Source(&'static str),
+    /// The transport drops and reconnects on its own.
+    Reconnect,
     /// Bank 0's recovery role asks for the offer: it installs it only if
     /// `serve` (not a fault server) answers then.
     Recovery,
@@ -30,6 +33,8 @@ struct Feeder {
     pending: Vec<(f64, Event)>,
     uart: Vec<u8>,
     running: String,
+    /// The build bank 1 last confirmed; reinstalling it skips the trial.
+    confirmed: String,
     online: bool,
     connects: u64,
     /// Transport sessions so far; each one's health is a new `received_at`.
@@ -48,6 +53,8 @@ struct Feeder {
     offered: Option<Staged>,
     /// When a failing trial gives way; a later offer installs after it.
     fallback_at: Option<f64>,
+    /// The last install's start and build, so a power cut can land in it.
+    installing: Option<(f64, String)>,
     server: String,
     actions: Vec<String>,
     notes: Vec<String>,
@@ -56,6 +63,8 @@ struct Feeder {
     silent: bool,
     replay_accepted: bool,
     settings_lost_on_boot: bool,
+    /// A hotspot bounce changes the volume, which nothing in it checks.
+    volume_drifts: bool,
 }
 
 impl Feeder {
@@ -65,6 +74,7 @@ impl Feeder {
             pending: Vec::new(),
             uart: Vec::new(),
             running: running.into(),
+            confirmed: running.into(),
             online: true,
             connects: 1,
             sessions: 1,
@@ -80,11 +90,13 @@ impl Feeder {
             version: 19,
             offered: None,
             fallback_at: None,
+            installing: None,
             server: "serve".into(),
             actions: Vec::new(),
             notes: Vec::new(),
             silent: false,
             replay_accepted: false,
+            volume_drifts: false,
             settings_lost_on_boot: false,
         }
     }
@@ -112,11 +124,18 @@ impl Feeder {
                     self.uart.extend_from_slice(text.as_bytes());
                     self.uart.extend_from_slice(b"\r\n");
                 }
-                Event::Running(build) => self.running = build,
+                Event::Running(build) => {
+                    self.confirmed = build.clone();
+                    self.running = build;
+                }
                 Event::Source(source) => self.source = source,
                 Event::Online(online) => {
                     self.sessions += u64::from(online && !self.online);
                     self.online = online;
+                }
+                Event::Reconnect => {
+                    self.connects += 1;
+                    self.uart.extend_from_slice(b"PLMQT1 ready ms=8\r\n");
                 }
                 Event::Recovery => {
                     if let Some(offer) = self.offered.clone().filter(|_| self.server == "serve") {
@@ -131,15 +150,28 @@ impl Feeder {
     /// confirm (or, for the failing build, give way three boots later).
     fn install(&mut self, start: f64, version: u32, build: &str) {
         let delay = start - self.now;
+        self.installing = Some((start, build.to_string()));
         self.line(
             delay + 20.0,
             &format!("PLOTA1 manifest version={version} bytes=663552"),
         );
+        self.line(delay + 30.0, "PLOTA1 progress sectors=16/162 leases=260");
         self.line(delay + 50.0, "PLOTA1 progress sectors=81/162 leases=1300");
         self.line(
             delay + 100.0,
             &format!("PLOTA1 activated version={version} sectors=162"),
         );
+        if build == self.confirmed {
+            // As on the bench: KM0 takes a build it confirmed before at once.
+            self.line(delay + 104.0, "PLTRL1 confirmed=1");
+            self.line(
+                delay + 105.0,
+                &format!("PLFW1 start build={build} bank=1 reset=0x0 mmu=1"),
+            );
+            self.line(delay + 106.0, "PLCNF1 confirmed=1 already=1");
+            self.at(delay + 107.0, Event::Running(build.into()));
+            return;
+        }
         self.line(
             delay + 105.0,
             &format!("PLFW1 start build={build} bank=1 reset=0x0 mmu=1"),
@@ -202,7 +234,13 @@ impl Rig for Feeder {
         // A re-signed review keeps its build.
         let failing = args.variant == Some(Variant::Fw11Fail)
             || review.to_string_lossy().ends_with("-fail-review");
-        let build = if failing { FAILING } else { GOOD };
+        let speaker =
+            args.variant == Some(Variant::Speaker) || review.to_string_lossy().contains("speaker");
+        let build = match (failing, speaker) {
+            (true, _) => FAILING,
+            (_, true) => SPEAKER,
+            _ => GOOD,
+        };
         self.actions
             .push(format!("stage {} v{}", args.name, self.version));
         Ok(Some(Staged {
@@ -261,8 +299,10 @@ impl Rig for Feeder {
             refused.clone()
         };
         let refusals = if self.replay_accepted { 2 } else { 3 };
+        // As on the bench: each record is logged after its reply is
+        // published, so the UART chunk lands after the forger has its answers.
         for _ in 0..refusals {
-            self.line(0.0, "PLMQT1 request op=unauthenticated ok=0");
+            self.line(1.5, "PLMQT1 request op=unauthenticated ok=0");
         }
         Ok(vec![
             json!({"case": "unsigned", "reply": refused}),
@@ -381,6 +421,9 @@ impl Rig for Feeder {
         self.actions
             .push(format!("hotspot {}", if up { "up" } else { "down" }));
         if up {
+            if self.volume_drifts {
+                self.volume = 50;
+            }
             self.line(15.0, "PLMQT1 connect n=3 ok=1 ms=50");
             self.line(16.0, "PLMQT1 ready ms=10");
             self.connects += 1;
@@ -394,7 +437,39 @@ impl Rig for Feeder {
 
     fn power_cycle(&mut self) -> Result<()> {
         self.actions.push("power cycle".into());
-        self.boot();
+        let since = self
+            .installing
+            .clone()
+            .map(|(start, build)| (self.now - start, build));
+        match since {
+            // Mid-download, bank 1's marker is still clear: bank 0 boots and
+            // downloads whatever is offered from the start.
+            Some((at, _)) if (20.0..100.0).contains(&at) => {
+                self.pending.clear();
+                self.line(
+                    3.0,
+                    &format!("PLFW1 start build={OLD} bank=0 reset=0x0 mmu=0"),
+                );
+                if let Some(offer) = self.offered.clone() {
+                    self.install(self.now + 10.0, offer.version, &offer.build);
+                }
+            }
+            // Early in a good build's trial: the count restarts at boot 1.
+            Some((at, build))
+                if (105.0..140.0).contains(&at) && build != FAILING && build != self.confirmed =>
+            {
+                self.pending.clear();
+                self.installing = None;
+                self.line(
+                    3.0,
+                    &format!("PLFW1 start build={build} bank=1 reset=0x0 mmu=1"),
+                );
+                self.line(4.0, "PLTRL1 confirmed=0 boot=1 limit=3");
+                self.line(39.0, "PLCNF1 confirmed=1 healthy_ms=30000");
+                self.at(40.0, Event::Running(build));
+            }
+            _ => self.boot(),
+        }
         Ok(())
     }
 
@@ -430,7 +505,7 @@ fn args(extra: &[&str]) -> ItestArgs {
 
 fn suite(feeder: &mut Feeder, flags: &[&str]) -> (Vec<Report>, Option<Silent>) {
     let args = args(flags);
-    let scenarios = select(&args.only).unwrap();
+    let scenarios = select(&args).unwrap();
     let mut ctx = Ctx::new(feeder, &args);
     run(&mut ctx, &scenarios).unwrap()
 }
@@ -452,7 +527,16 @@ fn verdicts(reports: &[Report]) -> Vec<(&str, &str)> {
 #[test]
 fn the_full_suite_passes_on_a_well_behaved_feeder() {
     let mut feeder = Feeder::new(OLD);
-    let (reports, silent) = suite(&mut feeder, &["--build", "--power"]);
+    let flags = [
+        "--build",
+        "--power",
+        "--destructive",
+        "--tier",
+        "soak",
+        "--soak-minutes",
+        "5",
+    ];
+    let (reports, silent) = suite(&mut feeder, &flags);
 
     let failures: Vec<_> = reports
         .iter()
@@ -493,9 +577,90 @@ fn without_power_or_build_those_scenarios_are_skipped_not_passed() {
             ("network-bounce", "pass"),
             ("trial-fallback", "skip"),
             ("ota-faults", "skip"),
+            ("ota-power-cuts", "skip"),
         ]
     );
     assert!(!feeder.actions.iter().any(|a| a == "power cycle"));
+}
+
+#[test]
+fn tiers_take_on_more_of_the_suite() {
+    let names = |tier: &str| -> Vec<&str> {
+        select(&args(&["--tier", tier]))
+            .unwrap()
+            .iter()
+            .map(|s| s.name)
+            .collect()
+    };
+
+    assert_eq!(names("smoke"), ["ota-update", "requests", "request-auth"]);
+    assert_eq!(names("standard").len(), SCENARIOS.len() - 1);
+    assert!(!names("standard").contains(&"soak"));
+    assert_eq!(names("soak").len(), SCENARIOS.len());
+}
+
+#[test]
+fn a_scenario_that_leaves_the_feeder_changed_fails_and_is_put_right() {
+    let mut feeder = Feeder::new(GOOD);
+    feeder.volume_drifts = true;
+    let (reports, _) = suite(
+        &mut feeder,
+        &[
+            "--review",
+            "private/verification/x-review",
+            "--only",
+            "network-bounce",
+        ],
+    );
+
+    let Verdict::Fail(reason) = &reports[1].verdict else {
+        panic!("{:?}", reports[1]);
+    };
+    assert!(
+        reason.starts_with("left the feeder changed: settings"),
+        "{reason}"
+    );
+    assert_eq!(feeder.volume, 40);
+}
+
+#[test]
+fn a_soak_fails_on_a_reconnect() {
+    let mut feeder = Feeder::new(GOOD);
+    feeder.at(200.0, Event::Reconnect);
+    let (reports, _) = suite(
+        &mut feeder,
+        &[
+            "--review",
+            "private/verification/x-review",
+            "--only",
+            "soak",
+            "--soak-minutes",
+            "10",
+        ],
+    );
+
+    assert_eq!(
+        verdicts(&reports),
+        [("ota-update", "pass"), ("soak", "fail")]
+    );
+    let Verdict::Fail(reason) = &reports[1].verdict else {
+        unreachable!()
+    };
+    assert!(reason.contains("reconnected"), "{reason}");
+}
+
+#[test]
+fn a_feeder_just_powered_on_is_heard_before_offering_it_its_own_build() {
+    let mut feeder = Feeder::new(GOOD);
+    feeder.online = false;
+    feeder.at(25.0, Event::Online(true));
+    let (reports, _) = suite(&mut feeder, &["--build", "--only", "requests"]);
+
+    assert_eq!(
+        verdicts(&reports),
+        [("ota-update", "pass"), ("requests", "pass")]
+    );
+    assert!(!feeder.actions.iter().any(|a| a.starts_with("offer")));
 }
 
 #[test]
@@ -525,14 +690,17 @@ fn a_running_review_is_not_reinstalled() {
 
 #[test]
 fn only_selects_in_suite_order_and_refuses_unknown_names() {
-    let names: Vec<_> = select(&["network-bounce".into(), "requests".into()])
+    let names: Vec<_> = select(&args(&["--only", "network-bounce,requests"]))
         .unwrap()
         .iter()
         .map(|s| s.name)
         .collect();
     assert_eq!(names, ["ota-update", "requests", "network-bounce"]);
 
-    let error = select(&["reboot".into()]).err().unwrap().to_string();
+    let error = select(&args(&["--only", "reboot"]))
+        .err()
+        .unwrap()
+        .to_string();
     assert!(error.contains("Unknown scenario \"reboot\""), "{error}");
 }
 
@@ -605,25 +773,6 @@ fn a_silent_feeder_stops_the_suite_with_uart_recovery() {
         hint.contains("wellfed-bench flash-prepare run1-recover"),
         "{hint}"
     );
-}
-
-#[test]
-fn records_parse_after_sdk_noise() {
-    let record = Record::parse("[sdk] x PLMQT1 request op=ping ok=1").unwrap();
-    assert_eq!((record.tag, record.first), ("PLMQT1", "request"));
-    assert!(record.is("PLMQT1", &[("op", "ping"), ("ok", "1")]));
-    assert!(!record.is("PLMQT1", &[("ok", "0")]));
-
-    let start = Record::parse("PLFW1 start build=ab bank=1").unwrap();
-    assert_eq!(start.tag, "PLFW1");
-    assert_eq!(start.number::<u32>("bank"), Some(1));
-
-    let saved = Record::parse("PLCFG1 net saved generation=4 stored=1").unwrap();
-    assert!(saved.body_starts("net saved"));
-
-    for noise in ["PLAIN text", "PLMQT1request", "PLX1 short", "nothing"] {
-        assert!(Record::parse(noise).is_none(), "{noise}");
-    }
 }
 
 #[test]

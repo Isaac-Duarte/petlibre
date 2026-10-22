@@ -154,9 +154,9 @@ class Worker:
 
 
 def identities(executable):
-    rust = ROOT / "firmware/rust"
+    rust = ROOT / "crates"
     paths = sorted(set(
-        [p for crate in ("core", "amebad", "testkit", "sim") for p in (rust / crate).rglob("*")
+        [p for crate in ("core", "amebad", "testkit", "sim") for p in (rust / f"petlibre-{crate}").rglob("*")
          if p.suffix in (".rs", ".toml", ".h")]
         + list((ROOT / "firmware/sim").glob("*"))
         + [ROOT / "Cargo.lock", Path(__file__)]

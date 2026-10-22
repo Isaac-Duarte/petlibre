@@ -1,6 +1,6 @@
 # FW10/FW11 over-the-air update design
 
-Status: the recovery-role updater is implemented (`amebad/src/updater.rs`, host-tested in `amebad/tests/updater.rs`). On hardware (October 22, physical), the build booted from bank 0 after a UART give-way. It bound KM0, opened the watchdog, installed the lease provider into the flash-lock hooks and ran 180 s on one boot with the watchdog fed and no network; bank 1 was then restored. No update has been downloaded on hardware yet: that needs the hotspot and the local server running with an offer. The normal role's give-way trigger and FW11's trial counter are not implemented.
+Status: the recovery-role updater is implemented (`petlibre-amebad/src/updater.rs`, host-tested in `petlibre-amebad/tests/updater.rs`). On hardware (October 22, physical), the build booted from bank 0 after a UART give-way. It bound KM0, opened the watchdog, installed the lease provider into the flash-lock hooks and ran 180 s on one boot with the watchdog fed and no network; bank 1 was then restored. No update has been downloaded on hardware yet: that needs the hotspot and the local server running with an offer. The normal role's give-way trigger and FW11's trial counter are not implemented.
 
 The updater: booted from bank 0, with a key built in (`PETLIBRE_OTA_PUBLIC_KEY`, the public half of `private/ota-key.json`), it runs in place of the transport and optics tasks. It sets an attempt marker (a boot that finds it set skips the update), and each erase and page program is one FW06 lease. A feeder task feeds the watchdog while the updater keeps stepping (10 s liveness); a hang, a hook fault or the activation stops it, and the watchdog reset boots the new bank 1. Without a key, or after a stop, the normal transport starts so health stays visible. Records are `PLOTA1` lines.
 
@@ -36,7 +36,7 @@ If anything fails before step 4, bank 1's marker is still clear, so the loader k
 
 ## Boot confirmation and fallback (FW11)
 
-Implemented on KM0 (`amebad/src/trial.rs`, `petlibre_trial_step` in `firstboot_km0.c`), before `km4_boot_on`:
+Implemented on KM0 (`petlibre-amebad/src/trial.rs`, `petlibre_trial_step` in `firstboot_km0.c`), before `km4_boot_on`:
 - **Running bank:** read from bank 1's physical marker.
 - **Confirmation:** keyed by the build identity, not the image hash, since the normal image does not know its own OTA hash. The record lives in storage sector 4 (`0x344000`).
 - **Count:** backup register 4. Bits 0–15 hold the peer boot count, bits 16–23 the trial count, and bits 24–31 an identity tag.

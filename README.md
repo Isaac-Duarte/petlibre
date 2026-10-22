@@ -43,11 +43,10 @@ Initial setup downloads dependencies. Checks use host models and loopback networ
 
 | Location | Contents |
 | --- | --- |
-| `src/`, `tests/` | Stock-firmware local server and Rust tests |
-| `firmware/` | Replacement Rust crates, SDK hooks, pinned builds, and simulator |
+| `crates/` | Every Rust crate, one folder per package: `petlibre-local` (stock-firmware local server), `petlibre-flash` (UART flash reads, updates and recovery), and the replacement-firmware crates |
+| `firmware/` | SDK hooks and C ports, pinned builds, layout, and simulator build |
 | `tools/` | Build audits, simulation, and experimental recovery tools/tests |
 | `docs/` | Hardware findings, firmware contracts, and contributor workflows |
-| `examples/` | Synthetic configuration-import inputs |
 | `private/` | Ignored contributor-owned secrets, evidence, dependencies, and artifacts |
 
 The existing `petlibre-*` crate names and `petlibre-local` executable are retained for compatibility. [Contributions](CONTRIBUTING.md) are welcome. First-party material is [MIT licensed](LICENSE); see [third-party provenance](THIRD_PARTY.md). This repository contains no vendor firmware or device backups.

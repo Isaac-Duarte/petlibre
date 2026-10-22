@@ -8,7 +8,7 @@ description = "Host fakes shared by firmware tests and the virtual feeder"
 publish = false
 
 [dependencies]
-petlibre-core = { path = "../core" }
+petlibre-core = { path = "../petlibre-core" }
 
 [lints]
 workspace = true

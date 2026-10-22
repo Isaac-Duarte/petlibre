@@ -12,9 +12,9 @@ name = "virtual-feeder-worker"
 path = "src/main.rs"
 
 [dependencies]
-petlibre-amebad = { path = "../amebad" }
-petlibre-core = { path = "../core" }
-petlibre-testkit = { path = "../testkit" }
+petlibre-amebad = { path = "../petlibre-amebad" }
+petlibre-core = { path = "../petlibre-core" }
+petlibre-testkit = { path = "../petlibre-testkit" }
 
 [lints]
 workspace = true

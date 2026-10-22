@@ -18,11 +18,11 @@ fw16-pulse = ["km4", "petlibre-amebad/fw16-pulse"]
 fw11-reset = ["km4", "petlibre-amebad/fw11-reset"]
 
 [dependencies]
-petlibre-core = { path = "../core" }
-petlibre-amebad = { path = "../amebad", optional = true }
+petlibre-core = { path = "../petlibre-core" }
+petlibre-amebad = { path = "../petlibre-amebad", optional = true }
 
 [lints]
 workspace = true
 
 [dev-dependencies]
-petlibre-testkit = { path = "../testkit" }
+petlibre-testkit = { path = "../petlibre-testkit" }

@@ -12,7 +12,7 @@ workspace = true
 
 [dev-dependencies]
 ed25519-dalek = "2"
-petlibre-testkit = { path = "../testkit" }
+petlibre-testkit = { path = "../petlibre-testkit" }
 sha2 = "0.10"
 
 [dependencies]

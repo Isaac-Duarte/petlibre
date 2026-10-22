@@ -16,8 +16,8 @@ ROOT = Path(__file__).resolve().parents[1]
 # feeding, outputs, settings, flash or updates. Paths whose first segment is
 # capitalized (types, enum variants, Self) are local and always allowed.
 TRANSPORT_ISOLATION = {
-    "firmware/rust/core/src/transport.rs": (r"core::(fmt|str)(::\w+)*", r"fmt::\w+"),
-    "firmware/rust/amebad/src/transport.rs": (
+    "crates/petlibre-core/src/transport.rs": (r"core::(fmt|str)(::\w+)*", r"fmt::\w+"),
+    "crates/petlibre-amebad/src/transport.rs": (
         r"core::fmt::Write", r"core::str::from_utf8", r"core::fmt::(Result|Formatter|Display)",
         r"petlibre_core::transport(::\w+)?", r"mqtt::\w+(::\w+)?",
         r"crate::health(::(Boot|Link|self))?", r"health::(snapshot|Link|Boot)(::default)?",

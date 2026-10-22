@@ -503,7 +503,7 @@ mod tests {
     #[test]
     #[ignore = "requires the private prepared stock-version experiment; run explicitly"]
     fn pinned_real_images_are_immutable_after_load_and_mutated_files_are_refused() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."));
         for (profile, name) in [
             (Profile::StockVersion, "stock-version-1.1.16"),
             (Profile::CExecution, "rust-probe-1.1.17"),

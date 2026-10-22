@@ -62,7 +62,7 @@ The owner authorized writes anywhere in flash (October 22). The tools now cover 
 2. **Fallback:** `petlibre-bench give-way-prepare/give-way-execute --fallback <bank-0 review>` clears bank 1's first marker byte. It runs only while bank 0 is exactly that review. The boot must report bank 0.
 3. **Restore:** `petlibre-bench flash-prepare/flash-execute --restore-marker` rewrites bank 1's first sector, marker last. The boot must report bank 1 again.
 
-Each step ends with a full-flash read, compared with the one before it, and the UART loader path stays available throughout. The chained sequence passes in emulation: the real helper instructions perform each write, and the factory loader's own selection code picks each boot (`tools/tests/test_development_bank0.py`).
+Each step ends with a full-flash read, compared with the one before it, and the UART loader path stays available throughout. The chained sequence passed in emulation: the real helper instructions performed each write, and the factory loader's own selection code picked each boot (the former `tools/tests/test_development_bank0.py`, removed with the Python updater on October 22, 2026). It then passed on the research unit with both clients (FW09, FW32).
 
 ## Hardware result
 

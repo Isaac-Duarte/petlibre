@@ -40,7 +40,7 @@ RUST = ROOT / "crates"
 # Crates linked into, or testing, the firmware. Host tools such as
 # petlibre-local and petlibre-flash never change a firmware build's identity.
 FIRMWARE_CRATES = ("petlibre-core", "petlibre-ffi", "petlibre-testkit", "petlibre-amebad",
-                   "petlibre-amebad-sdk", "petlibre-sim", "petlibre-probe")
+                   "petlibre-amebad-sdk", "petlibre-sim")
 ENTRY = FIRMWARE / "ports/amebad/example_entry.c"
 PLATFORM_OPTS = Path("project/realtek_amebaD_va0_example/inc/inc_hp/platform_opts.h")
 # FW07 join credentials: read from an ignored private file into an untracked,

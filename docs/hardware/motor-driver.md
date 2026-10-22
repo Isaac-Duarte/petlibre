@@ -68,7 +68,7 @@ The food emitter's OFF state is therefore confirmed electrically: TP20 at 3.3 V,
    1. Install `sigrok-cli`.
    2. Wire D0 to INA (pin 2), D1 to INB (pin 3), D2 to OUTA (pin 8), D3 to OUTB (pin 5), and analyzer GND to board GND. Check the analyzer's input rating before connecting the 5 V outputs.
    3. Run `petlibre-bench transients NAME --cycles 50` and `--mode loader`.
-   4. Audit with `tools/audit/audit-driver-transients.py`.
+   4. Audit with `petlibre-audit transients --capture private/captures/NAME --output NEW-REPORT`.
 
    A pass needs, on every cycle: an unpowered start, no sample with INA ≠ INB or OUTA ≠ OUTB, and the brake reached and held after boot, or standby held throughout a loader entry.
 3. **Polarity:** confirm the stock-derived polarity electrically, by tracing PA13/PA14 to INA/INB.

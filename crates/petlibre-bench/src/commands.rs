@@ -411,7 +411,7 @@ impl Bench {
         session?;
         cut?;
         println!(
-            "Transient captures in {}; audit them with tools/audit/audit-driver-transients.py",
+            "Transient captures in {}; audit them with petlibre-audit transients",
             self.rel(&out)
         );
         Ok(0)

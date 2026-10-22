@@ -7,6 +7,16 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
+**October 22, Python to Rust (offline, nothing run on the bench).** The owner's direction is Rust wherever it makes sense; once a Rust version is shown equivalent, the Python tool and its tests go ([tools/README.md](tools/README.md) lists what went and what stays).
+- **Ported, with equivalence shown before deletion:**
+  - `petlibre-audit` replaces the startup, FW14 ADC, FW30 transient and full-flash auditors. Every call the old tests made, plus 227 real captures and 2 real read pairs, gave identical reports.
+  - `petlibre-sim`'s `virtual-feeder` replaces the Python harness: identical reports on all 8 scenarios.
+  - `cargo xtask check-repository` replaces `check-repository.py`: identical on the tree and on injected faults.
+  - `petlibre-flash` is now the only development updater, after its FW32 parity.
+- **Removed as finished:** the FW05–FW15 auditors, the stock C-probe research (with the `petlibre-probe` crate) and the standalone diagnostic.
+- **Kept in Python on purpose:** stock recovery, the unicorn emulations, the image review and the build helpers.
+- **Rebuild before relying on the private builds:** the firmware build inputs changed (`Cargo.lock`, the probe crate removed). The fixture suite skips 14 stale-build checks until the builds are refreshed; frozen reviews stay valid.
+
 **October 22, latest (offline, nothing run on the bench).** FW33: the relay bench is now the Rust `petlibre-bench` (crate `crates/petlibre-bench`). It chains `petlibre-flash` as a child process and serves the read-only page with `--ui`. `bench.py`, `bench-dashboard.py`, `relay-demo.py`, `uart-give-way.py` and seven finished one-off Python analyses are removed (list in [tools/README.md](tools/README.md)). It is host-tested only. **Next:** with the owner, build both binaries (`cargo build --locked --release -p petlibre-bench -p petlibre-flash`), then run `status`, `on`/`off`, `loader` and a no-op `flash-prepare`/`flash-execute` with `--ui` ([bench](docs/hardware/bench.md)).
 
 **October 22, later (physical).** The **first live OTA** and a **hands-off OTA** both succeeded (FW10). The second was started by the running normal image, with no UART. FW11 trial, fallback and confirmation work on hardware (see the board).
@@ -292,8 +302,8 @@ to FW27.
   Wi-Fi probe.
 - C TCP helpers in `example_entry.c`.
 - The server's firmware role, `firmware-credential` command and API.
-- A structural no-dispense check in `tools/check-repository.py`.
-- `audit-firmware-transport.py`.
+- A structural no-dispense check in `cargo xtask check-repository` (formerly `tools/check-repository.py`).
+- `audit-firmware-transport.py` (removed after FW08 closed; its reports remain).
 
 `private/fw-mqtt.json` now exists. `private/server.json` gained a `firmware`
 section; `private/server.json.before-fw08` is the copy from before. Health and

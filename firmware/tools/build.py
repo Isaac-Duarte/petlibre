@@ -775,8 +775,9 @@ def build(profile, toolchain, variant=None):
         "profile": profile, "sdk_revision": LOCK["sdk"]["revision"],
         "startup_identity": identity if profile != "baseline" else None,
         "startup_output_policy": "stop-only" if profile != "baseline" else None,
-        "startup_led_policy": "bounded-probe-v3" if profile != "baseline" else None,
-        "startup_gpio_routing_policy": "read-only-v2" if profile != "baseline" else None,
+        # The FW04 pulse probe is gone; startup only drives the indicators LOW.
+        "startup_led_policy": "low-only-v1" if profile != "baseline" else None,
+        "startup_gpio_routing_policy": "read-only-v3" if profile != "baseline" else None,
         "startup_shared_pad_policy": "before-km4-v3" if profile == "plaf103-firstboot" else None,
         "startup_gpio_clock_policy": "explicit-enable-v1" if profile != "baseline" else None,
         "startup_flash_handshake_policy": None,

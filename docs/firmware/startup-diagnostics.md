@@ -38,7 +38,9 @@ FW03 has exact GPIO readback, artifact-bound normal boot, and operator-reported 
 
 The controller preloads indicator latches LOW and selects stock-derived GPIO/no-pull configuration. It changes only PA0, PA2, PA4, and PB22. Every request requires valid indicator directions and stopped-output readback. Requests yield for 10 ms before observing the output latch, input, pad control, and direction state. Timing requests include the settle interval.
 
-After startup and diagnostic PASS, the sequence waits nominally 3 seconds, then gives each pin two HIGH pulses in PA0/PA2/PA4/PB22 order: HIGH 1 s, LOW 0.5 s, HIGH 1 s, LOW 1 s. All lines are then requested LOW and the task ends. Logging/scheduling add time. There is no indefinite blinking, feeding request, or autonomous retry.
+**Since October 22 (policy `low-only-v1`, with GPIO routing `read-only-v3`)** startup no longer pulses the indicators. After startup and diagnostic PASS, it verifies every indicator LOW with stopped outputs, prints `PLLED1 begin low_only` and `PLLED1 done low=all`, and starts the role's tasks at once. The FW04 probe had already proved the pins, and it cost every boot about 15 s before Wi-Fi, the transport and the OTA watcher could start. FW23 will give the indicators meaning. The startup audit accepts the new policies, and routing has only the `startup` stage.
+
+Before that (`bounded-probe-v3`, kept for older captures), the sequence waited nominally 3 seconds, then gave each pin two HIGH pulses in PA0/PA2/PA4/PB22 order: HIGH 1 s, LOW 0.5 s, HIGH 1 s, LOW 1 s. All lines were then requested LOW and the task ended. There was no indefinite blinking, feeding request, or autonomous retry.
 
 The 64 extra input samples distinguish a dead input path (0/64) from a marginal threshold (a partial count). They are informational: verification still uses the single input read, so a high count cannot verify a failed step.
 

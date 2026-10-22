@@ -5,7 +5,7 @@ use core::ptr;
 use std::cell::RefCell;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use wellfed_amebad::flash::hooks::*;
+use wellfed_amebad_common::flash::hooks::*;
 use wellfed_core::flash_coord::{
     FlashCoord, FlashFault, FlashLimits, FlashParty, FlashPhase, FlashReply,
 };

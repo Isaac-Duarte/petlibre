@@ -15,7 +15,7 @@ pub struct Snapshot {
 }
 
 /// Read the live KM0 image mapping and the factory-preserved ROM reset flags.
-#[cfg(all(target_os = "none", feature = "km4"))]
+#[cfg(target_os = "none")]
 pub fn snapshot() -> Snapshot {
     let entry = crate::sdk::flash_mmu_entry0();
     Snapshot {

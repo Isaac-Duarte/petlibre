@@ -4,16 +4,15 @@ name = "wellfed-amebad"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
-description = "Experimental PLAF103 AmebaD board, supervision, owner and flash-park ports"
+description = "Experimental PLAF103 AmebaD KM4 ports: board, supervision, owner, transport and updater"
 publish.workspace = true
 build = "build.rs"
 
 [features]
 # Generate SDK bindings from the pinned AmebaD headers (target builds only).
 sdk = ["wellfed-amebad-sdk/sdk"]
-# Select the core whose MMIO map and semaphore owner encoding apply.
-km0 = ["wellfed-amebad-sdk/km0"]
-km4 = ["wellfed-amebad-sdk/km4"]
+# KM4 target builds; the KM0 image links only wellfed-amebad-common.
+km4 = ["wellfed-amebad-common/km4", "wellfed-amebad-sdk/km4"]
 # FW16 first supervised motor pulse instead of the FW13 optics probe. Only
 # `build.py plaf103-firstboot --motion-probe` sets it; never a default.
 fw16-pulse = []
@@ -22,11 +21,9 @@ fw16-pulse = []
 fw11-reset = []
 
 [dependencies]
+wellfed-amebad-common.workspace = true
 wellfed-amebad-sdk.workspace = true
 wellfed-core.workspace = true
-
-[target.'cfg(target_os = "none")'.dependencies]
-cortex-m.workspace = true
 
 [dev-dependencies]
 ed25519-dalek = "2"

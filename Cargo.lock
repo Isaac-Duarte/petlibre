@@ -1514,12 +1514,21 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 name = "wellfed-amebad"
 version = "0.1.0"
 dependencies = [
- "cortex-m",
  "ed25519-dalek",
+ "wellfed-amebad-common",
  "wellfed-amebad-sdk",
  "wellfed-core",
  "wellfed-testkit",
  "sha2 0.10.9",
+]
+
+[[package]]
+name = "wellfed-amebad-common"
+version = "0.1.0"
+dependencies = [
+ "cortex-m",
+ "wellfed-amebad-sdk",
+ "wellfed-core",
 ]
 
 [[package]]
@@ -1568,6 +1577,7 @@ name = "wellfed-ffi"
 version = "0.1.0"
 dependencies = [
  "wellfed-amebad",
+ "wellfed-amebad-common",
  "wellfed-core",
  "wellfed-testkit",
 ]

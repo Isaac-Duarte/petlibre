@@ -36,6 +36,7 @@ pub mod feed_storage;
 pub mod feedback_events;
 pub mod flash_coord;
 pub mod motor_gate;
+pub mod ota;
 pub mod sensor_inputs;
 pub mod settings_store;
 pub mod storage;

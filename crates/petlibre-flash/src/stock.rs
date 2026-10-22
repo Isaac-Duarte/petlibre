@@ -38,9 +38,9 @@ fn prepare_inputs(
     let current = root.private_file(&args.current)?;
     let plan = recovery::plan(&baseline, &current)?;
     context.helper(evidence.helper.as_deref())?;
-    let rom = session::validate_rom_report(root, &evidence.rom_report)?;
+    let rom = session::validate_rom_report(context, &evidence.rom_report)?;
     let small =
-        session::validate_status_session(root, Some(&evidence.small_report), &evidence.port)?;
+        session::validate_status_session(context, Some(&evidence.small_report), &evidence.port)?;
     let report_path = args
         .current
         .parent()
@@ -48,6 +48,7 @@ fn prepare_inputs(
         .unwrap_or_default();
     let raw_report = root.private_file(&report_path)?;
     let report: Value = serde_json::from_slice(&raw_report)?;
+    context.same_transport(&report)?;
     let result = &report["result"];
     require(
         report["mode"] == "read-full"
@@ -211,13 +212,14 @@ fn execute(
         state["end_utc"] = json!(utc());
         evidence::stream_hashes(&directory, &mut state);
     }
-    save()?;
+    let saved = save();
     let state = state.into_inner();
-    Ok(Outcome {
+    Ok(session::closed(
         complete,
-        summary: json!({"status": state["status"], "operation": KIND, "output": directory,
-                        "snapshot_sha256": state.get("snapshot_sha256"), "error": state.get("error")}),
-    })
+        json!({"status": state["status"], "operation": KIND, "output": directory,
+               "snapshot_sha256": state.get("snapshot_sha256"), "error": state.get("error")}),
+        saved,
+    ))
 }
 
 /// Offline: write a recovery plan and its sector payloads; no device I/O.

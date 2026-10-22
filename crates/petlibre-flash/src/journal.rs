@@ -107,12 +107,16 @@ impl Journal {
     /// error; a failing disk here is more evidence, never a replay trigger.
     pub fn stopped(&mut self, error: &crate::Error, extra: Map<String, Value>) {
         let possible = self.mutation_possible;
-        let _ = self.append(
+        let appended = self.append(
             "transaction_stopped",
             crate::status::fields(
                 json!({"error_type": error.kind(), "mutation_possible": possible}),
             ),
         );
+        if appended.is_err() {
+            // As in Python: no report a terminal record does not back.
+            return;
+        }
         let mut report = json!({"status": "stopped", "error_type": error.kind(),
                                 "mutation_possible": possible});
         for (key, value) in extra {

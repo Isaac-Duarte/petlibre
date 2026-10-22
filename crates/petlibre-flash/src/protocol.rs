@@ -38,7 +38,7 @@ pub const ROM_SHA256: [&str; 2] = [
 /// terminally, as Python's `KeyboardInterrupt` does; nothing is retried.
 pub static INTERRUPTED: AtomicBool = AtomicBool::new(false);
 
-fn interrupted() -> Result<()> {
+pub fn interrupted() -> Result<()> {
     require(
         !INTERRUPTED.load(Ordering::SeqCst),
         "Interrupted by the operator; no retry",
@@ -145,6 +145,9 @@ pub fn exact_read(port: &mut dyn Port, count: usize, timeout: f64) -> Result<Vec
 }
 
 pub fn send(port: &mut dyn Port, data: &[u8]) -> Result<()> {
+    // Checked after the intent's fsync and before the bytes, as Python's
+    // KeyboardInterrupt lands before `send` runs.
+    interrupted()?;
     require(
         port.write(data)? == data.len(),
         "Partial serial write; aborting without replay",

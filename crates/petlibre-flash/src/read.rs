@@ -106,10 +106,10 @@ pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
                     "A reviewed successful ROM inspection report is required".into(),
                 )
             })?;
-            session::validate_rom_report(root, rom)?;
+            session::validate_rom_report(context, rom)?;
             if args.mode == Mode::Status {
                 continued = Some(session::validate_status_session(
-                    root,
+                    context,
                     args.small_report.as_deref(),
                     &args.port,
                 )?);
@@ -118,7 +118,9 @@ pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
                 let small = args.small_report.as_deref().ok_or_else(|| {
                     crate::Error::Refused("A completed bounded read is required first".into())
                 })?;
-                continued = Some(session::validate_small_for_full(root, small, &args.port)?);
+                continued = Some(session::validate_small_for_full(
+                    context, small, &args.port,
+                )?);
             }
         }
     }
@@ -204,14 +206,15 @@ pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
         metadata["end_utc"] = json!(utc());
         evidence::stream_hashes(&directory, &mut metadata);
     }
-    save()?;
+    let saved = save();
     let metadata = metadata.into_inner();
-    Ok(Outcome {
+    Ok(session::closed(
         complete,
-        summary: json!({"status": metadata["status"], "mode": args.mode.name(),
-                        "output": directory, "result": metadata.get("result"),
-                        "error": metadata.get("error")}),
-    })
+        json!({"status": metadata["status"], "mode": args.mode.name(),
+               "output": directory, "result": metadata.get("result"),
+               "error": metadata.get("error")}),
+        saved,
+    ))
 }
 
 fn full_or_small(port: &mut dyn Port, directory: &Path, mode: Mode) -> Result<Value> {

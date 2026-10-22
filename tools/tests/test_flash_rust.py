@@ -10,6 +10,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import socket
 import subprocess
 import tempfile
@@ -166,9 +167,31 @@ class EmulatedHelperTests(unittest.TestCase):
         self.addCleanup(emulator.close)
         return emulator, bytes(full), source, target, length
 
+    def emulated(self, report):
+        """A copy of a real session report marked as emulator evidence, which
+        is all an emulated session may continue."""
+        directory = self.temporary() / report.parent.name
+        shutil.copytree(report.parent, directory)
+        value = json.loads(report.read_text())
+        value["transport"] = "emulator"
+        (directory / report.name).write_text(json.dumps(value))
+        return directory / report.name
+
     def evidence(self, output):
-        return ["--port", self.port, "--baseline", BASELINE, "--rom-report", ROM,
-                "--small-report", SMALL, "--output", output]
+        if not hasattr(self, "rom"):
+            self.rom, self.small = self.emulated(ROM), self.emulated(SMALL)
+        return ["--port", self.port, "--baseline", BASELINE, "--rom-report", self.rom,
+                "--small-report", self.small, "--output", output]
+
+    def test_serial_evidence_never_continues_an_emulated_session(self):
+        emulator, *_ = self.unit()
+        root = self.temporary()
+        code, summary, _ = run("update", "inspect", "--port", self.port, "--baseline", BASELINE,
+                               "--rom-report", ROM, "--small-report", SMALL, "--output", root / "inspect",
+                               "--source", SOURCE, "--target", TARGET, env=emulator.env())
+        self.assertEqual((code, summary["status"]), (2, "refused"))
+        self.assertIn("different transport", summary["error"])
+        self.assertFalse(emulator.peer.host_tx)
 
     def test_update_plans_writes_and_journals_like_the_python_client(self):
         B = self.CLI.B
@@ -182,7 +205,7 @@ class EmulatedHelperTests(unittest.TestCase):
         self.assertEqual(report["transport"], "emulator")
         self.assertEqual(report["status_checks"][0]["event"], "flash_status_checked")
         code, summary, stderr = run("update", "prepare", *self.evidence(root / "plan.json"), *images,
-                                    "--inspection", root / "inspect/report.json")
+                                    "--inspection", root / "inspect/report.json", env=emulator.env())
         self.assertEqual(code, 0, stderr)
         plan = json.loads((root / "plan.json").read_text())
         current = before[B.START:B.START + length]
@@ -230,7 +253,7 @@ class EmulatedHelperTests(unittest.TestCase):
         code, _, stderr = run("give-way", "inspect", *self.evidence(root / "inspect"), *give, env=emulator.env())
         self.assertEqual(code, 0, stderr)
         code, summary, stderr = run("give-way", "prepare", *self.evidence(root / "plan.json"), *give,
-                                    "--inspection", root / "inspect/report.json")
+                                    "--inspection", root / "inspect/report.json", env=emulator.env())
         self.assertEqual(code, 0, stderr)
         code, summary, stderr = run("give-way", "execute", *self.evidence(root / "execute"), *give,
                                     "--inspection", root / "inspect/report.json", "--plan", root / "plan.json",
@@ -247,7 +270,7 @@ class EmulatedHelperTests(unittest.TestCase):
                               env=emulator.env())
         self.assertEqual(code, 0, stderr)
         code, summary, stderr = run("update", "prepare", *self.evidence(root / "restore.json"), *images,
-                                    "--inspection", root / "restore-inspect/report.json")
+                                    "--inspection", root / "restore-inspect/report.json", env=emulator.env())
         self.assertEqual(code, 0, stderr)
         code, summary, stderr = run("update", "execute", *self.evidence(root / "restore"), *images,
                                     "--inspection", root / "restore-inspect/report.json",
@@ -259,8 +282,9 @@ class EmulatedHelperTests(unittest.TestCase):
     def test_status_read_continues_the_session_with_whitelisted_reads_only(self):
         emulator, *_ = self.unit()
         root = self.temporary()
-        code, summary, stderr = run("read", "status", "--port", self.port, "--rom-report", ROM,
-                                    "--small-report", SMALL, "--helper", HELPER, "--output", root / "status",
+        rom, small = self.emulated(ROM), self.emulated(SMALL)
+        code, summary, stderr = run("read", "status", "--port", self.port, "--rom-report", rom,
+                                    "--small-report", small, "--helper", HELPER, "--output", root / "status",
                                     env=emulator.env())
         self.assertEqual((code, summary["status"]), (0, "complete"), stderr)
         report = json.loads((root / "status/report.json").read_text())

@@ -63,6 +63,15 @@ impl Context {
         })
     }
 
+    /// Evidence from an emulated session never continues a serial one, nor
+    /// the reverse. Python reports carry no transport: they are serial.
+    pub fn same_transport(&self, report: &Value) -> Result<()> {
+        require(
+            report["transport"].as_str().unwrap_or("serial") == self.transport(),
+            "Report comes from a different transport than this session",
+        )
+    }
+
     /// The transport sessions record in their reports.
     pub fn transport(&self) -> &'static str {
         if std::env::var_os(EMULATOR).is_some() {
@@ -92,6 +101,7 @@ impl Context {
 
     /// A new private output directory and the recorded port inside it.
     pub fn record(&self, port: &str, directory: &Path) -> Result<EvidencePort<Box<dyn Port>>> {
+        protocol::interrupted()?;
         EvidencePort::new((self.open)(port)?, directory)
     }
 }
@@ -118,6 +128,24 @@ impl<P: Port + ?Sized> Port for Box<P> {
 pub struct Outcome {
     pub complete: bool,
     pub summary: Value,
+}
+
+/// A session's end once its port was opened. A failed final report save is
+/// a stop too, never a refusal: the device may already have been written.
+pub fn closed(complete: bool, mut summary: Value, saved: Result<()>) -> Outcome {
+    match saved {
+        Ok(()) => Outcome { complete, summary },
+        Err(error) => {
+            progress(&format!(
+                "Final report not saved: {error}; inspect the journal"
+            ));
+            summary["report_error"] = json!(error.to_string());
+            Outcome {
+                complete: false,
+                summary,
+            }
+        }
+    }
 }
 
 pub fn progress(line: &str) {
@@ -147,12 +175,14 @@ pub fn streams_match(root: &Root, path: &Path, report: &Value, message: &str) ->
 }
 
 /// A successful ROM inspection that identified a pinned SDK ROM.
-pub fn validate_rom_report(root: &Root, path: &Path) -> Result<Vec<u8>> {
+pub fn validate_rom_report(context: &Context, path: &Path) -> Result<Vec<u8>> {
+    let root = &context.root;
     require(
         root.is_private(path),
         "ROM report must refer to private evidence",
     )?;
     let (raw, report) = report(root, path)?;
+    context.same_transport(&report)?;
     let result = &report["result"];
     require(
         report["status"] == "complete"
@@ -194,7 +224,12 @@ fn bounded_read(report: &Value, port: &str) -> bool {
 /// A completed bounded read and its raw evidence, which a later session
 /// continues. This checks saved evidence, not live helper identity or power
 /// continuity; the supervised caller establishes those.
-pub fn validate_status_session(root: &Root, path: Option<&Path>, port: &str) -> Result<Vec<u8>> {
+pub fn validate_status_session(
+    context: &Context,
+    path: Option<&Path>,
+    port: &str,
+) -> Result<Vec<u8>> {
+    let root = &context.root;
     let path = path.ok_or_else(|| {
         crate::Error::Refused("A completed bounded-read report is required".into())
     })?;
@@ -203,6 +238,7 @@ pub fn validate_status_session(root: &Root, path: Option<&Path>, port: &str) -> 
         "Bounded-read report must refer to private evidence",
     )?;
     let (raw, report) = report(root, path)?;
+    context.same_transport(&report)?;
     require(
         bounded_read(&report, port) && report["result"]["offset"].as_u64() == Some(0),
         "Bounded-read session does not validate",
@@ -223,8 +259,10 @@ pub fn validate_status_session(root: &Root, path: Option<&Path>, port: &str) -> 
 
 /// The full read's precondition: the bounded read it continues. Unlike
 /// `validate_status_session`, Python checks no serial hashes here.
-pub fn validate_small_for_full(root: &Root, path: &Path, port: &str) -> Result<Vec<u8>> {
+pub fn validate_small_for_full(context: &Context, path: &Path, port: &str) -> Result<Vec<u8>> {
+    let root = &context.root;
     let (raw, report) = report(root, path)?;
+    context.same_transport(&report)?;
     let image = fs::read(parent(path).join("flash-read.bin"))?;
     require(
         root.is_private(path)
@@ -339,13 +377,15 @@ pub fn inspected_transfers(
 
 /// A finished inspection whose bindings match this run's.
 pub fn inspection(
-    root: &Root,
+    context: &Context,
     path: Option<&Path>,
     bindings: &Value,
 ) -> Result<(PathBuf, Value, String)> {
+    let root = &context.root;
     let path =
         path.ok_or_else(|| crate::Error::Refused("Completed inspection report required".into()))?;
     let (raw, report) = report(root, path)?;
+    context.same_transport(&report)?;
     require(
         report["status"] == "complete"
             && report["mode"] == "inspect"

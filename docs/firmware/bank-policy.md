@@ -1,6 +1,6 @@
 # FW09 bank selection and boot policy
 
-Status: In progress. Selection, capacities, compatibility and activation rules are established offline: emulation of the research unit's actual factory loader, plus static analysis of stock 1.1.15. Hardware confirmation needs a write to bank 0, which requires an owner-reviewed procedure; the bank-1 development updater deliberately refuses it.
+Status: Done. Selection, compatibility and activation were established offline (emulation of the research unit's actual factory loader, and static analysis of stock 1.1.15), then confirmed on hardware on October 22, 2026.
 
 ## How the factory loader chooses (simulation)
 
@@ -63,6 +63,20 @@ The owner authorized writes anywhere in flash (October 22). The tools now cover 
 3. **Restore:** `bench.py flash-prepare/flash-execute --restore-marker` rewrites bank 1's first sector, marker last. The boot must report bank 1 again.
 
 Each step ends with a full-flash read, compared with the one before it, and the UART loader path stays available throughout. The chained sequence passes in emulation: the real helper instructions perform each write, and the factory loader's own selection code picks each boot (`tools/tests/test_development_bank0.py`).
+
+## Hardware result
+
+Physical, research unit, October 22 2026, through the relay bench. The same replacement build (startup identity `8d67a407…`) was used in both banks:
+
+| Step | Write | Boot report |
+| --- | --- | --- |
+| A | That image into bank 0 (145 sectors, marker last), over the invalidated October 19 probe residue | `bank=1`: both valid, bank 1 kept |
+| B | Give-way: bank 1's first marker byte cleared (one frame, no erase), with bank 0 read in full and equal to the review | `bank=0`, MMU offset `03ffa000`: the fallback works, and the image runs unchanged from bank 0 |
+| C | Restore: bank 1's first sector rewritten, marker last | `bank=1`, MMU offset `03e7a000` |
+
+Every step verified its readback, and every boot passed stopped-output startup and ran the LED and optics probes. No loader NAK occurred. Full-flash reads before step A and after step C differ only in bank 0's application region (`0x6000`–`0x97000`). Bank 1, the factory region, settings and storage are byte-identical.
+
+This is also the first physical run of the replacement firmware from bank 0. The design's recovery primitive works: clearing bank 1's marker makes the loader boot bank 0. It is the step FW11's trial counter will take.
 
 ## Limits
 

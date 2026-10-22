@@ -7,6 +7,12 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
+**October 22, crate split (offline, nothing flashed; branch `crate-split`, not merged).** `wellfed-amebad` is split three ways. `wellfed-amebad-common` holds the flash park, hooks, peer and trial, and is all KM0 links. `wellfed-amebad` holds the KM4 ports, and the lease `Provider` moved from `probes/flash.rs` to `provider.rs`. `wellfed-firstboot` holds the app entry, the probes and the `fw16-pulse`/`fw11-reset` features. Static comparison of the firmware archives:
+- **C symbols:** the exported set is identical for km0, km4 and both variants.
+- **RAM-park code:** it disassembles identically on both cores.
+- **Sizes:** only `wellfed_app_start` changed (0x178 to 0x1a6). It calls the same functions; the difference is LTO register allocation.
+- **Rebuild needed:** the firmware source ID changed, so every ignored build is stale. Rebuild and review before any install.
+
 **October 22, latest (offline, nothing run on the bench).** FW33: the relay bench is now the Rust `wellfed-bench` (crate `crates/wellfed-bench`). It chains `wellfed-flash` as a child process and serves the read-only page with `--ui`. `bench.py`, `bench-dashboard.py`, `relay-demo.py`, `uart-give-way.py` and seven finished one-off Python analyses are removed (list in [tools/README.md](tools/README.md)). It is host-tested only. **Next:** with the owner, build both binaries (`cargo build --locked --release -p wellfed-bench -p wellfed-flash`), then run `status`, `on`/`off`, `loader` and a no-op `flash-prepare`/`flash-execute` with `--ui` ([bench](docs/hardware/bench.md)).
 
 **October 22, later (physical).** The **first live OTA** and a **hands-off OTA** both succeeded (FW10). The second was started by the running normal image, with no UART. FW11 trial, fallback and confirmation work on hardware (see the board).

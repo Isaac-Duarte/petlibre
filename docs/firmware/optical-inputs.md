@@ -25,6 +25,10 @@ Records (`PLOPT1`, policy `fw13-optics-v1`, bound both ways to `PLOPT1 start cre
 
 A window's records are logged at least 300 ms into the next window, so logging never delays settling samples. `tools/audit/audit-firmware-optics.py --stage b|c` checks them. It requires the sequence and timing above, every gap within the filter's 100 ms limit, `stopped=1` throughout, a cut 300–340 ms after the last renewal with the OWNER fault, and the supervisor closed. Stage b (unattended) also requires the same inputs lit by each selection in every cycle. Stage c requires the operator's blocking seen through the filter: food both present and empty, and the outlet both clear and blocked.
 
+## Plan 2 (5 s windows)
+
+The FW13 acceptance ran plan 1 (`fw13-optics-v1`): 2/2/4 s emitter windows, 4 s off, six cycles. For FW30's meter readings the image now runs plan 2 (`fw13-optics-v2`): every window 5 s, three cycles, about 95 s, then the same stall. The start record announces it (`PLOPT1 start created=1 plan=2`), the startup policy binds that string both ways, and the auditor checks each policy's own schedule, so plan 1 evidence still audits.
+
 ## PB3 is SWD_CLK
 
 The first bench run stopped when PB3 failed its enable readback. PB3 is the SWD clock pin (`SWD_CLK` in the SDK pin map), and `REG_SWD_PMUX_EN` bit 0 resets to 1, giving the pad to SWD. Stock's sensor GPIO setup calls the SDK's `sys_jtag_off()` (clear that bit) immediately before it configures PB3. Our startup did not, so the latch never reached the pad, which read its pull-down. Every earlier "PB3 off" readback (FW03 onward) therefore reflected the pull-down, not a driven LOW.

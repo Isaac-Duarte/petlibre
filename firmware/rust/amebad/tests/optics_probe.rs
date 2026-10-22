@@ -194,7 +194,7 @@ fn full_run_pairs_emitters_measures_settling_and_cuts_a_stalled_owner() {
     });
     assert!(sensing_seen[0] && sensing_seen[1]);
     // The longest on-time is a both window or the stall's warm-up and cut.
-    assert!(max_on <= 4000 + 20, "{max_on}");
+    assert!(max_on <= optics::CYCLE[2].1 + 20, "{max_on}");
 
     let Record::Open {
         board,

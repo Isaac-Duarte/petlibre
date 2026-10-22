@@ -175,17 +175,31 @@ function eta(now,t0,v0,v,total){if(!t0||v<=v0||now-t0<3)return null;return now+(
 const clock=t=>new Date(t*1000).toLocaleTimeString([], {hour:"numeric",minute:"2-digit"});
 const etaText=t=>t?` · ETA ${clock(t)}`:"";
 function bar(done,total){const p=total?Math.min(100,100*done/total):0;return `<div class="bar"><div style="width:${p.toFixed(1)}%"></div></div>`}
+// Sound: browsers allow audio only after a click, so the card offers a button.
+let audio=null, speak=false, lastStep=null;
+function enableSound(){audio=audio||new (window.AudioContext||window.webkitAudioContext)();audio.resume();tone(880,0.12,0)}
+function tone(freq,len,at){if(!audio)return;const o=audio.createOscillator(),g=audio.createGain(),t0=audio.currentTime+at;
+  o.frequency.value=freq;o.connect(g);g.connect(audio.destination);g.gain.setValueAtTime(0.25,t0);g.gain.exponentialRampToValueAtTime(0.001,t0+len);o.start(t0);o.stop(t0+len+0.02)}
+function cue(text){
+  if(/^done/i.test(text))tone(660,0.9,0);
+  else if(/move the probe/i.test(text)){tone(520,0.15,0);tone(520,0.15,0.25)}
+  else tone(880,0.18,0);
+  if(speak&&window.speechSynthesis){speechSynthesis.cancel();speechSynthesis.speak(new SpeechSynthesisUtterance(text.replace(/[():]/g," ")))}
+}
+function soundControls(){return `<div class="row" style="margin-top:8px">${audio?'<span class="muted">Sound on</span>':'<button onclick="enableSound();tick()">Enable sound</button>'}
+  <label class="muted"><input type="checkbox" ${speak?"checked":""} onchange="speak=this.checked"> Speak steps</label></div>`}
 function renderScript(d){
-  const s=d.script;if(!s){$("script").innerHTML="";return}
+  const s=d.script;if(!s){$("script").innerHTML="";lastStep=null;return}
   const fmt=x=>{x=Math.max(0,Math.ceil(x));return Math.floor(x/60)+":"+String(x%60).padStart(2,"0")};
   let body;
   if(!s.started){body=`<div class="now">Get ready</div><div class="next">${s.capture_exists?"Waiting for the feeder to start the test (LEDs blinking)…":"Waiting for the capture to start…"}</div>`}
   else{const t=d.now-s.started;let i=-1;s.steps.forEach((st,k)=>{if(t>=st.at)i=k});
     const cur=i>=0?s.steps[i]:null,next=s.steps[i+1];
+    const key=s.started+":"+i;if(cur&&key!==lastStep){if(lastStep!==null||t-cur.at<2)cue(cur.text);lastStep=key}
     body=`<div class="muted">Test clock ${fmt(t)}</div><div class="now">${esc(cur?cur.text:"Get ready")}</div>`+
       (next?`<div class="next">Next in ${fmt(next.at-t)}: ${esc(next.text)}</div>`+bar(t-(cur?cur.at:0),next.at-(cur?cur.at:0)):"")+
       `<div class="steps">${s.steps.map((st,k)=>`<div class="${k===i?"cur":k<i?"past":""}">${fmt(st.at)} · ${esc(st.text)}</div>`).join("")}</div>`}
-  $("script").innerHTML=`<div class="card op"><div class="title">What to do now${s.title?" · "+esc(s.title):""}</div>${body}</div>`;
+  $("script").innerHTML=`<div class="card op"><div class="title">What to do now${s.title?" · "+esc(s.title):""}</div>${body}${soundControls()}</div>`;
 }
 function render(d){
   renderScript(d);
@@ -218,7 +232,8 @@ function render(d){
   $("history").innerHTML=d.history.length?`<div class="card"><div class="title">Recent commands</div><table><tr><th>Command</th><th>Name</th><th>Started</th><th>Took</th><th>Outcome</th></tr>
     ${d.history.map(h=>`<tr><td>${esc(h.command)}</td><td>${esc(h.name||"")}</td><td>${when(h.started)}</td><td>${dur(h.finished-h.started)}</td><td class="${esc(h.outcome)}">${esc(h.outcome)}${h.error?" · "+esc(h.error):""}</td></tr>`).join("")}</table></div>`:"";
 }
-async function tick(){try{const r=await fetch("/api/status",{cache:"no-store"});render(await r.json())}catch(e){}setTimeout(tick,1000)}
+let timer=null;
+async function tick(){clearTimeout(timer);let fast=false;try{const r=await fetch("/api/status",{cache:"no-store"});const d=await r.json();fast=!!(d.script&&d.script.started);render(d)}catch(e){}timer=setTimeout(tick,fast?250:1000)}
 tick();
 </script></body></html>
 """

@@ -5,7 +5,7 @@ This board tracks replacement-firmware integration, dependencies, and acceptance
 ## Current status
 
 - **Done:** FW01–FW08, FW13, FW15 and FW31, eight of them with recorded scope limits (see carried items).
-- **In progress:** FW14 waits for batteries: its ADC channel select and millivolt scaling are proven, but the battery channel, PA19 and the divider are not.
+- **In progress:** FW30: the motor driver (TC118AH) reads standby in the ROM loader and brake at firmware STOP; emitter OFF levels, transients and the GPIO-to-input mapping remain. FW14 waits for batteries: its ADC channel select and millivolt scaling are proven, but the battery channel, PA19 and the divider are not.
 - **Critical path to feeding:** FW14 → FW30 → FW16 → FW17.
 
 ### Carried items
@@ -67,7 +67,7 @@ Prioritize the UART development loop and build identity, stopped startup, LED di
 | **FW13 Food, outlet and feedback inputs** | **Done (motion-free scope)** | Physical (UART: pairing, blocked/clear polarity, settling, supervised windows, owner-stall cut); host (probe, auditor); [notes](docs/firmware/optical-inputs.md) | FW03, FW05, FW06 | Confirm emitter/receiver pairs and blocked/clear polarity. Measure settling, pulse capture and bounded emitter duty. Reject stale/invalid inputs; observe owner stalls with emitters active and motor disabled. |
 | **FW14 Current, battery and external power inputs** | In progress | Physical (UART readback, internal supply channel, no batteries) | FW03, FW05 | Enable the LP ADC clock explicitly, then verify ADC readiness/calibration, voltage scaling and external-power detection against measurements. Establish sample freshness and report unknown values honestly. Calibrate loaded motor current during FW16/FW19. |
 | **FW15 Durable settings and feeding journal** | **Done (storage scope)** | Physical (UART protocol, NOR power cuts) | FW06 | Establish explicit storage allocation, implement real NOR I/O and schema/version recovery, and bound wear. Persist reservation before motion and result after verified stop. Test interrupted writes and block ambiguous pending feeds after restart. |
-| **FW30 Electrical output verification** | Ready | — | FW03 | Before any intended motion, measure motor driver inputs at STOP, infrared emitter OFF, and startup/reset transients across repeated measured power-ons, resets and relay-driven loader entries (multimeter; scope or logic analyzer for transients). Confirm stock-derived polarity electrically. |
+| **FW30 Electrical output verification** | In progress | Physical (meter: TC118AH driver in standby in the ROM loader, brake at firmware STOP); [notes](docs/hardware/motor-driver.md) | FW03 | Before any intended motion, measure motor driver inputs at STOP, infrared emitter OFF, and startup/reset transients across repeated measured power-ons, resets and relay-driven loader entries (multimeter; scope or logic analyzer for transients). Confirm stock-derived polarity electrically. |
 | **FW16 Supervised motor controller and feeding owner** | Planned | — | FW05, FW06, FW13, FW14, FW15, FW30 | Wire the existing owner/controller to real ports. Show owner-lease expiry under a stalled owner with motion disabled, then verify a bounded pulse, direction, feedback and STOP under supervision before a portion test. Exercise cancellation, lease expiry and failed stop; a failed reservation cannot start motion. |
 | **FW17 Local manual feeding and durable results** | Planned | — | FW08, FW15, FW16 | Validate command IDs, quantities and bowl modes; serialize requests and prevent duplicate/replayed delivery across reboot. Distinguish accepted, durably reserved, completed and uncertain results. Local status remains usable during a feed. |
 | **FW18 Portion and bowl calibration** | Planned | — | FW16, FW17 | Measure delivered food separately from requested counts. Establish supported single/double-bowl direction and phase behavior. An unknown phase blocks unsafe requests; calibration parameters persist with documented limits. |
@@ -128,5 +128,5 @@ Prioritize the UART development loop and build identity, stopped startup, LED di
 | FW27 Combined fault and sustained-operation tests | ⬜ Planned |
 | FW28 Home Assistant integration | ⬜ Planned |
 | FW29 Research firmware release | ⬜ Planned |
-| FW30 Electrical output verification | 🟢 Ready |
+| FW30 Electrical output verification | 🚧 In progress |
 | FW31 Bench automation | ✅ Done |

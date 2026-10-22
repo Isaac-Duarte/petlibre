@@ -17,6 +17,13 @@ image, bench state, next task, or acceptance evidence changes.
 The installed image is the FW13 plan 2 build (5 s emitter windows; see below).
 
 
+**FW09 is Done (October 22, physical).** Both banks now hold the same replacement image (identity `8d67a407…`). Through the relay bench:
+- **Both valid:** the feeder booted bank 1.
+- **Give-way:** clearing bank 1's first marker byte made it boot bank 0, the first replacement run from bank 0.
+- **Restore:** it booted bank 1 again.
+
+Full-flash reads before and after differ only in bank 0's application region. The updater now has `--bank 0`, `give-way` and `--restore-marker`, with the factory region never writable ([bank policy](docs/firmware/bank-policy.md)).
+
 **FW13 and FW31 are Done (October 21).** FW13 (motion-free scope): PA15 lights
 the food receiver (PA17), PB3 the outlet receiver (PA16), and a blocked beam
 reads LOW on both. Receivers settle within one 2 ms poll, and the supervisor
@@ -147,7 +154,7 @@ Bench lessons from stage C:
 
 ## What is actually installed
 
-The research feeder runs **FW13 optics review 02** in bank 1, starting at
+The research feeder runs the **bench live target review 01** build (FW13 plan 2 probe, identity `8d67a407…`) in **both** banks; it boots bank 1. Before October 22 it ran **FW13 optics review 02** in bank 1, starting at
 flash offset `0x186000`. It was installed through the relay bench (122
 sectors: 31 before a loader NAK, 91 more with `--interrupted`).
 

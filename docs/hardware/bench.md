@@ -64,4 +64,21 @@ Stock recovery and standalone diagnostics keep their own pinned tools. Use `load
 
 ## Evidence
 
+**Full live test (physical, October 22, 2026).** Every command was exercised on the research unit, except `transients`, which needs the analyzer:
+- **Commands:** `status`, `on`, `capture` (power untouched), `off`, `boot`, `loader` and `dump`. The dump was a full 8 MiB read, and comparing it with the previous one showed exactly the expected changes.
+- **Updates:**
+  - `flash-prepare` and `flash-execute`: a changed-image install of 142 sectors, finished with `--interrupted` after a loader NAK, then a verified boot.
+  - `--bank 0`: an install of 145 sectors.
+  - `give-way-prepare/give-way-execute` and `--restore-marker`: the FW09 sequence. Each step booted the expected bank.
+- **Refusals,** none of which changed a relay or wrote flash:
+  - a reused capture name (fixed during the test; it used to power-cycle first)
+  - a motion image without `--attended-motion`
+  - `flash-execute` without a prepared plan
+  - `flash-execute` after the feeder was powered off since prepare
+  - a wrong plan hash (refused before any serial write; the feeder stayed powered and was not booted)
+- **Dashboard:** it read the live install's steps, sector count and transfer estimate.
+
+Two loader NAKs occurred in this session. One came while `make check` ran beside an install; none came over three installs and four dumps with the host otherwise idle. Keep heavy host work away from updates.
+
+
 Physical, October 2026: with the UART adapter connected throughout, relay-1 boots reached the application banner and strap-held boots printed the download banner and NAKs in 16 of 16 trials each. Off times were 0.3–2 s, with and without a UART break held while off. A `flash-prepare`/`flash-execute` pair with the installed image as both source and target ran end to end: no-op plan, one verified acquisition, no writes, then a captured application boot. The earlier symptom of loader entry failing until the adapter was replugged did not recur in these trials.

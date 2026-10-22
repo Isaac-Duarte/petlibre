@@ -243,7 +243,7 @@ still read LOW. A later build sampled raw Port A input after each KM0 supply ste
 and got the same word every time, with PA0–PA7 already reading 0 before the first
 step. The shared-pad supply therefore does not explain the readback. PA13/PA14
 and PB22 read back correctly; the low Port A pads appear to have no usable input
-readback on the tested unit. `trace-stock-pad-power.py` executes the stock initializer and LDO instructions against modeled registers/delays; its fixture tests distinguish LDO power from the separate pad-enable bit. This is instruction-level evidence, not an electrical supply measurement.
+readback on the tested unit. `trace-stock-pad-power.py` (removed October 22, 2026; in Git history) executed the stock initializer and LDO instructions against modeled registers/delays; its fixture tests distinguished LDO power from the separate pad-enable bit. This is instruction-level evidence, not an electrical supply measurement.
 
 With that prerequisite restored, the operator observed all four indicators blink twice and finish dark: **PA0 Wi-Fi, PA2 low food, PA4 locked, PB22 warning**. The sequence establishes HIGH-on/LOW-off on the tested unit; only the warning's red color is recorded.
 

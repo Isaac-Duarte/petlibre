@@ -1,0 +1,36 @@
+[package]
+license = "MIT"
+name = "petlibre-bench"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+description = "Relay bench for the PLAF103 research unit: feeder power, loader strap, chained petlibre-flash sessions and a read-only progress page"
+publish = false
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+dbg_macro = "deny"
+
+[dependencies]
+anyhow = "1.0.104"
+axum = "0.8.9"
+chrono = { version = "0.4.45", default-features = false, features = ["std"] }
+clap = { version = "4.6.7", features = ["derive"] }
+ctrlc = "3.5.2"
+futures-util = { version = "0.3", default-features = false }
+getrandom = "0.4"
+rust-embed = { version = "8.13.0", features = ["debug-embed"] }
+rustix = { version = "1", features = ["fs", "process"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+serialport = { version = "4.10.1", default-features = false }
+sha2 = "0.11"
+subtle = "2.6.1"
+thiserror = "2.0.21"
+tokio = { version = "1.53.3", features = ["rt-multi-thread", "net", "time", "macros"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"
+tower = { version = "0.5", features = ["util"] }

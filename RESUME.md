@@ -8,10 +8,10 @@ image, bench state, next task, or acceptance evidence changes.
 ## Where we stopped
 
 **October 22, later (physical).** The **first live OTA** and a **hands-off OTA** both succeeded (FW10). The second was started by the running normal image, with no UART. FW11 trial, fallback and confirmation work on hardware (see the board).
-- **Flash now:** bank 1 holds OTA-installed `fw10-watch-review-20261022-01` (`4d37c21a…`, v6, confirmed, offer watcher running). Bank 0 holds `fw10-recovery-review-20261022-02` (`635476bd…`), the fixed updater.
+- **Flash now:** bank 1 holds OTA-installed `fw10-watch-review-20261022-01` (`4d37c21a…`, v6, confirmed, offer watcher running). Bank 0 holds the same build, installed by the Rust client (FW32). Bank 0 holds `fw10-recovery-review-20261022-02` (`635476bd…`), the fixed updater.
 - **Idle state:** the feeder is off, the hotspot down, and the server stopped.
 - **Loader NAKs:** 2 in the last 3 large UART installs, one with the host idle. Ask the owner to reseat the UART header.
-- **Next:** failure-mode OTA tests (corrupt, truncated, interrupted, power cut), then merging the owner's `rust-flash` worktree (crates move to `crates/`).
+- **Next:** failure-mode OTA tests (corrupt, truncated, interrupted, power cut), The `rust-flash` worktree is merged with master (crates in `crates/`), and FW32 is done.
 
 **October 22 (autonomous, physical through the relay bench).** The FW10 recovery-role updater is in (`d541c80` plus the audit fix). Bank 0 now holds `fw10-recovery-review-20261022-01` (identity `d2ed7d93…`); bank 1 still holds bench live target review 01 and boots normally. A UART give-way booted bank 0: `PLOTA1 start role=recovery key=1`, `ready`, then `armed watchdog=1 installed=1`. It ran 180 s on one boot, scanning for the hotspot, which was off. The bank-1 marker was restored, and bank 1 booted again. **Next:** a live download needs the hotspot up and `petlibre-local serve` running with `ota-offer` (owner approval: routing and a service), then give-way and watch `PLOTA1 progress`/`activated`.
 

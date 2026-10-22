@@ -177,6 +177,19 @@ class TransientSequenceTests(unittest.TestCase):
         self.assertFalse(self.port.state[1] or self.port.state[2])
 
 
+class MotionGuardTests(unittest.TestCase):
+    def test_motion_targets_need_the_attended_flag(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            (target / "build-manifest.json").write_text(json.dumps({"startup_motion_policy": "fw16-pulse-v1"}))
+            with self.assertRaisesRegex(BENCH.BenchError, "attended-motion"):
+                BENCH.require_attended_motion(SimpleNamespace(target=target, attended_motion=False))
+            BENCH.require_attended_motion(SimpleNamespace(target=target, attended_motion=True))
+            (target / "build-manifest.json").write_text(json.dumps({"startup_motion_policy": None}))
+            BENCH.require_attended_motion(SimpleNamespace(target=target, attended_motion=False))
+
+
 class StatusTests(unittest.TestCase):
     def test_records_steps_progress_relays_and_history(self):
         import json, tempfile

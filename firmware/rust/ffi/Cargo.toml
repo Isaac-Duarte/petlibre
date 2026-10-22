@@ -14,6 +14,7 @@ crate-type = ["staticlib", "rlib"]
 # Link the AmebaD ports for one core (target builds from firmware/tools/build.py).
 km0 = ["dep:petlibre-amebad", "petlibre-amebad/km0"]
 km4 = ["dep:petlibre-amebad", "petlibre-amebad/km4", "petlibre-amebad/sdk"]
+fw16-pulse = ["km4", "petlibre-amebad/fw16-pulse"]
 
 [dependencies]
 petlibre-core = { path = "../core" }

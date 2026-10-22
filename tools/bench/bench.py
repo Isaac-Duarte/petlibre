@@ -338,6 +338,19 @@ def paths(name):
             "boot": ROOT / f"private/captures/{name}-boot"}
 
 
+def require_attended_motion(args):
+    """A target whose manifest names a motion policy drives the motor after boot."""
+    try:
+        manifest = json.loads((Path(args.target) / "build-manifest.json").read_text())
+    except (OSError, ValueError):
+        return
+    policy = manifest.get("startup_motion_policy")
+    require(not policy or args.attended_motion,
+            f"Target drives the motor ({policy}); rerun with --attended-motion only with the owner watching")
+    if policy:
+        print(f"Attended motion image ({policy}): the motor will move after boot", flush=True)
+
+
 def update_args(config, args, p):
     common = ["--baseline", ROOT / config["baseline"], "--source", args.source, "--target", args.target,
               "--rom-report", ROOT / config["rom_report"], "--small-report", p["bounded"] / "report.json",
@@ -348,6 +361,7 @@ def update_args(config, args, p):
 def flash_prepare(relay, config, args):
     """Loader, helper bounded read, inspection and plan; stop for plan review."""
     p = paths(args.name)
+    require_attended_motion(args)
     for key in ("loader", "bounded", "inspect", "plan"):
         require(not p[key].exists(), f"Refusing to reuse {p[key].relative_to(ROOT)}")
     loader(relay, config, p["loader"], args.off_seconds)
@@ -392,6 +406,7 @@ def dump(relay, config, args):
 def flash_execute(relay, config, args):
     """Execute a reviewed plan in the still-powered helper session, then boot."""
     p = paths(args.name)
+    require_attended_motion(args)
     require(p["plan"].is_file() and not p["execute"].exists(), "Prepared plan required; execution is single-use")
     # Relay state shows the supply was not switched off; it cannot rule out a brownout.
     require(relay.get(POWER) and not relay.get(STRAP), "Feeder power was cycled since prepare; start over")
@@ -445,6 +460,8 @@ def main(argv=None):
         command.add_argument("--source", type=Path, required=True, help="Frozen review of the installed image")
         command.add_argument("--target", type=Path, required=True, help="Frozen review to install")
         command.add_argument("--interrupted", action="store_true")
+        command.add_argument("--attended-motion", action="store_true",
+                             help="Allow a target whose manifest names a motion policy (owner present)")
         if name == "flash-execute":
             command.add_argument("--expected-plan-sha256", required=True)
             command.add_argument("--boot-seconds", type=float, default=30)

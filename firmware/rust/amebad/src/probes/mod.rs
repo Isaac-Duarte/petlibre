@@ -3,5 +3,6 @@
 pub mod adc;
 pub mod flash;
 pub mod optics;
+pub mod pulse;
 pub mod supervision;
 pub mod wifi;

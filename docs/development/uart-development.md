@@ -20,7 +20,7 @@ make -C firmware plaf103-firstboot
 .venv/bin/python tools/flash/uart-development.py --help
 ```
 
-These commands do not open a serial port. Build snapshots copied from the research archive can be stale against Petlibre's changed source/input hashes. Rebuild and freeze new targets rather than editing manifests or substituting expected hashes. Retain a frozen source matching the actually installed application.
+The [Rust client](rust-flash.md) runs the same inspect, prepare and execute sequence as `petlibre-flash update`; it has no hardware acceptance yet. These commands do not open a serial port. Build snapshots copied from the research archive can be stale against Petlibre's changed source/input hashes. Rebuild and freeze new targets rather than editing manifests or substituting expected hashes. Retain a frozen source matching the actually installed application.
 
 ## Inspection, planning, and execution
 

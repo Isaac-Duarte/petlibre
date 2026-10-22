@@ -22,10 +22,28 @@ impl Serial {
             .open_native()
             .map_err(io::Error::from)?;
         port.set_exclusive(true).map_err(io::Error::from)?;
-        port.write_request_to_send(false).map_err(io::Error::from)?;
-        port.write_data_terminal_ready(false)
-            .map_err(io::Error::from)?;
+        modem_line(port.write_request_to_send(false))?;
+        modem_line(port.write_data_terminal_ready(false))?;
         Ok(Self(port))
+    }
+}
+
+/// Like pyserial, accept a device without modem lines (EINVAL or ENOTTY, as
+/// on a pseudo-terminal); any other failure stops before transmission.
+fn modem_line(result: serialport::Result<()>) -> io::Result<()> {
+    match result {
+        Err(error)
+            if error.kind() == serialport::ErrorKind::Unknown
+                && [
+                    "Invalid argument",
+                    "Inappropriate ioctl for device",
+                    "Not a typewriter",
+                ]
+                .contains(&error.description.as_str()) =>
+        {
+            Ok(())
+        }
+        other => other.map_err(io::Error::from),
     }
 }
 
@@ -58,5 +76,61 @@ impl Port for Serial {
 
     fn in_waiting(&mut self) -> io::Result<usize> {
         Ok(self.0.bytes_to_read().map_err(io::Error::from)? as usize)
+    }
+}
+
+/// An emulated helper served over a Unix socket (offline tests only; see
+/// `tools/tests/test_flash_rust.py`). Each read asks the emulator to run the
+/// helper until it has output, as the in-process Python peers do.
+pub struct Emulated(std::os::unix::net::UnixStream);
+
+impl Emulated {
+    pub fn connect(path: &std::path::Path) -> crate::Result<Self> {
+        Ok(Self(std::os::unix::net::UnixStream::connect(path)?))
+    }
+
+    fn call(&mut self, op: u8, argument: usize, data: &[u8]) -> io::Result<Vec<u8>> {
+        let mut request = vec![op];
+        request.extend_from_slice(&(argument as u32).to_le_bytes());
+        request.extend_from_slice(data);
+        self.0.write_all(&request)?;
+        let mut length = [0u8; 4];
+        self.0.read_exact(&mut length)?;
+        let mut reply = vec![0; u32::from_le_bytes(length) as usize];
+        self.0.read_exact(&mut reply)?;
+        Ok(reply)
+    }
+
+    fn number(reply: &[u8]) -> io::Result<usize> {
+        let bytes: [u8; 4] = reply
+            .try_into()
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "malformed emulator reply"))?;
+        Ok(u32::from_le_bytes(bytes) as usize)
+    }
+}
+
+impl Port for Emulated {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        let reply = self.call(b'R', buffer.len(), &[])?;
+        if reply.len() > buffer.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "emulator returned too many bytes",
+            ));
+        }
+        buffer[..reply.len()].copy_from_slice(&reply);
+        Ok(reply.len())
+    }
+
+    fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+        Self::number(&self.call(b'W', data.len(), data)?)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.call(b'F', 0, &[]).map(drop)
+    }
+
+    fn in_waiting(&mut self) -> io::Result<usize> {
+        Self::number(&self.call(b'I', 0, &[])?)
     }
 }

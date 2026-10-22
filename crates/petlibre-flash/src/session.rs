@@ -17,6 +17,9 @@ pub const DEFAULT_HELPER: &str =
 
 pub type Opener = dyn Fn(&str) -> Result<Box<dyn Port>>;
 
+/// A Unix socket serving an emulated helper; set only by offline tests.
+pub const EMULATOR: &str = "PETLIBRE_FLASH_EMULATOR";
+
 /// Which baseline a session accepts. Only host tests can name another.
 #[derive(Clone, Copy)]
 pub enum Pin {
@@ -37,12 +40,36 @@ pub struct Context {
 impl Context {
     pub fn new(root: &Path) -> Result<Self> {
         let executable = std::env::current_exe()?;
+        let open: Box<Opener> = match std::env::var_os(EMULATOR) {
+            // Offline only: every session talks to an emulated helper instead.
+            Some(socket) => {
+                progress(&format!(
+                    "{EMULATOR} is set: using the emulated helper at {}, not a device",
+                    Path::new(&socket).display()
+                ));
+                Box::new(move |_| {
+                    Ok(Box::new(crate::serial::Emulated::connect(Path::new(
+                        &socket,
+                    ))?))
+                })
+            }
+            None => Box::new(|path| Ok(Box::new(crate::serial::Serial::open(path)?))),
+        };
         Ok(Self {
             root: Root::new(root)?,
             tool_sha256: sha256(&fs::read(executable)?),
-            open: Box::new(|path| Ok(Box::new(crate::serial::Serial::open(path)?))),
+            open,
             pin: Pin::Research,
         })
+    }
+
+    /// The transport sessions record in their reports.
+    pub fn transport(&self) -> &'static str {
+        if std::env::var_os(EMULATOR).is_some() {
+            "emulator"
+        } else {
+            "serial"
+        }
     }
 
     pub fn tools(&self) -> Value {

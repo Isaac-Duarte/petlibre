@@ -537,3 +537,98 @@ fn replies_never_echo_unsupported_names() {
     let mut small = [0; 4];
     assert_eq!(topic(&mut small, NS, "health"), Err(Error::TooLong));
 }
+
+#[test]
+fn the_updater_subscribes_a_data_topic_and_only_it_receives_data() {
+    let (req, data) = ("wellfed/1/X/request", "wellfed/1/X/ota/data");
+    let mut buf = [0; MAX_PACKET];
+    let mut s = Session::connecting(0);
+    assert_eq!(
+        s.on_packet(
+            1,
+            Packet::ConnAck {
+                session_present: false,
+                code: 0
+            },
+            req
+        ),
+        Event::Connected
+    );
+    assert!(
+        s.subscribe_data(1, &mut buf, data).is_err(),
+        "not before ready"
+    );
+    s.subscribe(1, &mut buf, req).unwrap();
+    assert_eq!(
+        s.on_packet(
+            2,
+            Packet::SubAck {
+                packet_id: 1,
+                code: 0
+            },
+            req
+        ),
+        Event::Ready
+    );
+    let n = s.subscribe_data(3, &mut buf, data).unwrap();
+    assert_eq!(&buf[..2], &[0x82, (n - 2) as u8]);
+    assert_eq!(
+        s.on_packet_with(
+            4,
+            Packet::SubAck {
+                packet_id: 2,
+                code: 0
+            },
+            req,
+            Some(data)
+        ),
+        Event::DataReady
+    );
+    let publish = Packet::Publish {
+        topic: data,
+        payload: &[1, 2, 3],
+        retain: false,
+    };
+    assert_eq!(
+        s.on_packet_with(5, publish, req, Some(data)),
+        Event::Data(&[1, 2, 3])
+    );
+    // The normal role never names a data topic: the same publish is foreign.
+    let mut normal = s;
+    assert_eq!(
+        normal.on_packet(6, publish, req),
+        Event::Closed(Fault::ForeignTopic)
+    );
+    // A refused data subscription closes.
+    let mut refused = Session::connecting(0);
+    refused.on_packet(
+        1,
+        Packet::ConnAck {
+            session_present: false,
+            code: 0,
+        },
+        req,
+    );
+    refused.subscribe(1, &mut buf, req).unwrap();
+    refused.on_packet(
+        2,
+        Packet::SubAck {
+            packet_id: 1,
+            code: 0,
+        },
+        req,
+    );
+    refused.subscribe_data(3, &mut buf, data).unwrap();
+    assert_eq!(
+        refused.on_packet_with(
+            4,
+            Packet::SubAck {
+                packet_id: 2,
+                code: 0x80
+            },
+            req,
+            Some(data)
+        ),
+        Event::Closed(Fault::SubscribeRefused(0x80))
+    );
+}

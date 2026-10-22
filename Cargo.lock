@@ -1444,6 +1444,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "clap",
+ "ed25519-dalek",
  "hyper",
  "hyper-util",
  "mqtt5",

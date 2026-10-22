@@ -38,6 +38,19 @@ pub enum ManifestError {
     Downgrade,
 }
 
+/// The signed part of a manifest, as `parse_manifest` reads it. The signer
+/// (the owner's server tool) appends the 64-byte Ed25519 signature.
+pub fn manifest_body(manifest: &Manifest) -> [u8; MANIFEST_BODY] {
+    let mut out = [0u8; MANIFEST_BODY];
+    out[..8].copy_from_slice(&MAGIC);
+    out[8..12].copy_from_slice(&manifest.version.to_le_bytes());
+    out[12..16].copy_from_slice(&manifest.image_len.to_le_bytes());
+    out[16..20].copy_from_slice(&manifest.target_bank.to_le_bytes());
+    out[20..52].copy_from_slice(&manifest.image_sha256);
+    out[52..84].copy_from_slice(&manifest.build_id);
+    out
+}
+
 fn u32_at(bytes: &[u8], at: usize) -> u32 {
     u32::from_le_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]])
 }

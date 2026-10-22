@@ -98,6 +98,12 @@ pub const BANK0_OFFSET: u32 = 0x6000;
 /// The factory loader's valid-image marker at the start of each bank.
 pub const MARKER: [u8; 8] = *b"81958711";
 
+/// FW24: samples in one codec DMA page (16 ms at 16 kHz, 16-bit mono),
+/// `WELLFED_AUDIO_PAGE` in `example_entry.c`.
+pub const AUDIO_PAGE_SAMPLES: usize = 256;
+/// Pages in the ring.
+pub const AUDIO_PAGES: usize = 8;
+
 /// One event from the KM4 Wi-Fi shim's ring (`example_entry.c`), numbered
 /// from 1. `kind`: 1 on, 2 scan, 3 connect, 4 DHCP, 5 lost, 6 backoff.
 #[repr(C)]

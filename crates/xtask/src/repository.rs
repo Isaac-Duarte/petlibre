@@ -21,7 +21,12 @@ use regex::Regex;
 const TRANSPORT_ISOLATION: [(&str, &[&str]); 2] = [
     (
         "crates/wellfed-core/src/transport.rs",
-        &[r"core::(fmt|str)(::\w+)*", r"fmt::\w+"],
+        &[
+            r"core::(fmt|str)(::\w+)*",
+            r"fmt::\w+",
+            // FW24: a `play` request names one built-in tune.
+            r"crate::tone::Tune",
+        ],
     ),
     (
         "crates/wellfed-amebad/src/transport.rs",
@@ -43,6 +48,9 @@ const TRANSPORT_ISOLATION: [(&str, &[&str]); 2] = [
             r"settings::request",
             r"crate::network",
             r"network::request",
+            // FW24: queue a built-in tune for the speaker; no other output.
+            r"crate::audio",
+            r"audio::request",
             // Signed requests: verification only (request_auth.rs).
             r"wellfed_core::request_auth",
             r"request_auth::(split|Session)(::(new|nonce_hex))?",

@@ -367,6 +367,7 @@ fn requests_parse_only_the_fixed_shape() {
             time: None,
             settings: None,
             wifi: None,
+            tune: None,
             auth: None
         })
     );
@@ -380,6 +381,7 @@ fn requests_parse_only_the_fixed_shape() {
             time: None,
             settings: None,
             wifi: None,
+            tune: None,
             auth: None
         })
     );
@@ -393,6 +395,7 @@ fn requests_parse_only_the_fixed_shape() {
             time: None,
             settings: None,
             wifi: None,
+            tune: None,
             auth: None
         })
     );
@@ -574,6 +577,7 @@ fn replies_never_echo_unsupported_names() {
             time: None,
             settings: None,
             wifi: None,
+            tune: None,
             auth: None,
         },
         5,
@@ -593,6 +597,7 @@ fn replies_never_echo_unsupported_names() {
             time: None,
             settings: None,
             wifi: None,
+            tune: None,
             auth: None,
         },
         5,
@@ -612,6 +617,7 @@ fn replies_never_echo_unsupported_names() {
             time: None,
             settings: None,
             wifi: None,
+            tune: None,
             auth: None,
         },
         5,
@@ -749,6 +755,7 @@ fn time_requests_carry_exactly_their_integer_fields() {
             }),
             settings: None,
             wifi: None,
+            tune: None,
             auth: None,
         })
     );
@@ -798,6 +805,7 @@ fn time_replies_report_the_jump_or_the_refusal() {
         time: Some(TimeFields::default()),
         settings: None,
         wifi: None,
+        tune: None,
         auth: None,
     };
     let mut buf = [0; MAX_REQUEST];
@@ -1026,5 +1034,41 @@ fn wifi_requests_set_clear_or_read() {
             out.as_bytes(),
             format!(r#"{{"id":"{ID}","op":"wifi",{tail}"#).as_bytes()
         );
+    }
+}
+
+#[test]
+fn play_requests_name_one_known_tune() {
+    use wellfed_core::tone::Tune;
+
+    let play = format!(r#"{{"id":"{ID}","op":"play","tune":"coin"}}"#);
+    let request = parse_request(play.as_bytes()).unwrap();
+    assert_eq!(request.op, Ok(Op::Play));
+    assert_eq!(request.tune, Some(Tune::Coin));
+
+    for bad in [
+        format!(r#"{{"id":"{ID}","op":"play"}}"#),
+        format!(r#"{{"id":"{ID}","op":"play","tune":"siren"}}"#),
+        format!(r#"{{"id":"{ID}","op":"play","tune":1}}"#),
+        format!(r#"{{"id":"{ID}","op":"play","tune":"coin","tune":"meal"}}"#),
+        format!(r#"{{"id":"{ID}","op":"ping","tune":"coin"}}"#),
+    ] {
+        assert_eq!(
+            parse_request(bad.as_bytes()),
+            Err(RequestError::Malformed),
+            "{bad}"
+        );
+    }
+
+    let mut buf = [0; MAX_REQUEST];
+    for (result, tail) in [
+        (PlayResult::Started, r#""ok":true,"tune":"coin"}"#),
+        (PlayResult::Muted, r#""ok":false,"error":"muted"}"#),
+        (PlayResult::Busy, r#""ok":false,"error":"busy"}"#),
+    ] {
+        let mut out = Buffer::new(&mut buf);
+        write_play_reply(&mut out, &request, result).unwrap();
+        let expected = format!(r#"{{"id":"{ID}","op":"play",{tail}"#);
+        assert_eq!(core::str::from_utf8(out.as_bytes()).unwrap(), expected);
     }
 }

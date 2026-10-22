@@ -33,6 +33,7 @@ pub mod startup;
 pub mod stopped;
 
 pub mod arming;
+pub mod audio;
 pub mod board;
 pub mod clock;
 pub mod confirm;

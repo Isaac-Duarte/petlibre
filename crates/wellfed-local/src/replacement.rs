@@ -7,6 +7,7 @@ use std::collections::VecDeque;
 
 use chrono::{DateTime, Offset, TimeDelta, TimeZone, Utc};
 use chrono_tz::Tz;
+use wellfed_core::tone::Tune;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use uuid::Uuid;
@@ -39,6 +40,8 @@ pub enum Op {
     Settings,
     /// FW25: read, store or clear the Wi-Fi credentials (signed).
     Wifi,
+    /// FW24: play one built-in tune (signed).
+    Play,
 }
 
 impl Op {
@@ -49,6 +52,7 @@ impl Op {
             Self::Ping => "ping",
             Self::Settings => "settings",
             Self::Wifi => "wifi",
+            Self::Play => "play",
         }
     }
 }
@@ -72,6 +76,9 @@ pub struct Input {
     pub psk: Option<String>,
     #[serde(default)]
     pub clear: Option<bool>,
+    /// `play` only: a built-in tune's name (`wellfed_core::tone`).
+    #[serde(default)]
+    pub tune: Option<String>,
 }
 
 impl std::fmt::Debug for Input {
@@ -93,11 +100,12 @@ impl Input {
             ssid: None,
             psk: None,
             clear: None,
+            tune: None,
         }
     }
 
-    /// Setting fields only with `settings`, and a volume of at most 100,
-    /// as the firmware's parser requires.
+    /// Setting fields only with `settings`, a volume of at most 100, and a
+    /// known tune exactly with `play`, as the firmware's parser requires.
     pub fn valid(&self) -> bool {
         let fields = self.lights.is_some() || self.sound.is_some() || self.volume.is_some();
         let wifi = match (&self.ssid, &self.psk, self.clear) {
@@ -111,7 +119,11 @@ impl Input {
             }
             _ => false,
         };
-        (self.op == Op::Settings || !fields) && self.volume.is_none_or(|v| v <= 100) && wifi
+        let tune = match &self.tune {
+            None => self.op != Op::Play,
+            Some(name) => self.op == Op::Play && Tune::from_name(name).is_some(),
+        };
+        (self.op == Op::Settings || !fields) && self.volume.is_none_or(|v| v <= 100) && wifi && tune
     }
 
     /// The request without its closing brace, fields in the firmware's order.
@@ -134,6 +146,9 @@ impl Input {
         }
         if self.clear == Some(true) {
             request = request.field("clear", 1);
+        }
+        if let Some(tune) = self.tune.as_deref().and_then(Tune::from_name) {
+            request = request.name_field("tune", tune.name());
         }
         request
     }
@@ -434,6 +449,28 @@ mod tests {
             "{}",
             signed.len()
         );
+    }
+
+    #[test]
+    fn play_inputs_name_a_known_tune() {
+        let parse = |text: &str| {
+            serde_json::from_str::<Input>(text)
+                .ok()
+                .filter(Input::valid)
+        };
+        let play = parse(r#"{"op":"play","tune":"twinkle"}"#).unwrap();
+        assert_eq!(
+            play.wire(Uuid::nil()).unsigned(),
+            format!(r#"{{"id":"{}","op":"play","tune":"twinkle"}}"#, Uuid::nil())
+        );
+        for bad in [
+            r#"{"op":"play"}"#,
+            r#"{"op":"play","tune":"siren"}"#,
+            r#"{"op":"play","tune":"coin\"}"#,
+            r#"{"op":"ping","tune":"coin"}"#,
+        ] {
+            assert!(parse(bad).is_none(), "{bad}");
+        }
     }
 
     #[test]

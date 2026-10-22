@@ -642,6 +642,56 @@ pub fn entropy() -> [u32; 4] {
     [call, uptime_ms(), systimer_ticks(), 0x5eed]
 }
 
+pub fn audio_open() -> bool {
+    with(|h| {
+        if h.audio_open || h.audio_open_fails {
+            return false;
+        }
+        h.audio_open = true;
+        h.audio_opens += 1;
+        h.audio_underruns = 0;
+        true
+    })
+}
+
+pub fn audio_page() -> Option<&'static mut [i16; AUDIO_PAGE_SAMPLES]> {
+    let page = with(|h| {
+        if !h.audio_open || h.audio_queue.len() >= AUDIO_PAGES {
+            return None;
+        }
+        if h.audio_scratch.is_null() {
+            h.audio_scratch = Box::into_raw(Box::new([0; AUDIO_PAGE_SAMPLES]));
+        }
+        Some(h.audio_scratch)
+    })?;
+    // SAFETY: leaked for the thread; the port fills one page at a time.
+    Some(unsafe { &mut *page })
+}
+
+pub fn audio_submit() {
+    with(|h| {
+        assert!(h.audio_open, "submit with the codec closed");
+        // SAFETY: handed out by `audio_page` on this thread.
+        let page = unsafe { *h.audio_scratch };
+        h.audio_queue.push_back(page);
+    });
+}
+
+pub fn audio_drained() -> bool {
+    with(|h| h.audio_queue.is_empty())
+}
+
+pub fn audio_underruns() -> u32 {
+    with(|h| h.audio_underruns)
+}
+
+pub fn audio_close() {
+    with(|h| {
+        h.audio_open = false;
+        h.audio_queue.clear();
+    });
+}
+
 pub fn tcp_connect(_ip: u32, _port: u16, timeout_ms: u32) -> Option<i32> {
     with(|h| {
         let result = h.tcp_connects.pop_front().flatten();

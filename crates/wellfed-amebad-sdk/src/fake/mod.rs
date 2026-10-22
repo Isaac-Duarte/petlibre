@@ -16,7 +16,8 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 
 use super::{
-    GpioRouting, Irq, Isr, LpClock, TaskStep, TcpRecv, TransportConfig, WifiEvent, WifiPoll,
+    AUDIO_PAGE_SAMPLES, AUDIO_PAGES, GpioRouting, Irq, Isr, LpClock, TaskStep, TcpRecv,
+    TransportConfig, WifiEvent, WifiPoll,
 };
 
 const MOTOR_MASK: u32 = (1 << 13) | (1 << 14);
@@ -166,6 +167,17 @@ pub struct Hardware {
     /// Bank 0's first 8 bytes, for the give-way guard.
     pub bank0_marker: [u8; 8],
     pub storage_erases: [u32; 16],
+
+    /// FW24: the codec ring. Filled pages wait in `audio_queue` until
+    /// [`play_audio`] moves them to `audio_played`.
+    pub audio_open: bool,
+    pub audio_open_fails: bool,
+    pub audio_opens: u32,
+    pub audio_queue: VecDeque<[i16; AUDIO_PAGE_SAMPLES]>,
+    pub audio_played: Vec<i16>,
+    pub audio_underruns: u32,
+    /// The page handed out by `audio_page`, leaked once per thread.
+    pub audio_scratch: *mut [i16; AUDIO_PAGE_SAMPLES],
 }
 
 impl Default for Hardware {
@@ -269,6 +281,14 @@ impl Default for Hardware {
             running_bank: Some(1),
             bank0_marker: crate::MARKER,
             storage_erases: [0; 16],
+
+            audio_open: false,
+            audio_open_fails: false,
+            audio_opens: 0,
+            audio_queue: VecDeque::new(),
+            audio_played: Vec::new(),
+            audio_underruns: 0,
+            audio_scratch: core::ptr::null_mut(),
         }
     }
 }
@@ -280,6 +300,22 @@ thread_local! {
 /// Access this thread's hardware. Never call SDK functions inside `f`.
 pub fn with<R>(f: impl FnOnce(&mut Hardware) -> R) -> R {
     HARDWARE.with(|h| f(&mut h.borrow_mut()))
+}
+
+/// The DMA plays up to `pages` ring pages; a page it finds no filled one
+/// for plays silence and counts an underrun, as the shim does.
+pub fn play_audio(pages: usize) {
+    with(|h| {
+        if !h.audio_open {
+            return;
+        }
+        for _ in 0..pages {
+            match h.audio_queue.pop_front() {
+                Some(page) => h.audio_played.extend_from_slice(&page),
+                None => h.audio_underruns += 1,
+            }
+        }
+    });
 }
 
 pub fn reset_hardware() {

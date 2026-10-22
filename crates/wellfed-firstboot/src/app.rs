@@ -16,6 +16,7 @@ use core::ffi::c_void;
 use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
+use wellfed_amebad::audio;
 use wellfed_amebad::confirm::{self, Confirm, HookedStorage};
 use wellfed_amebad::flash::hooks::{self, HookProvider, HookTicket};
 use wellfed_amebad::flash::park::Hardware;
@@ -221,6 +222,42 @@ fn start_transport() {
         c"PLMQT1 start created=1\r\n"
     } else {
         c"PLMQT1 start created=0\r\n"
+    });
+}
+
+/// Touched only by the audio task; see `audio_task`.
+static SPEAKER: Slot<audio::Speaker> = Slot(UnsafeCell::new(None));
+
+struct AudioLine(audio::Record);
+
+impl core::fmt::Display for AudioLine {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        audio::describe(self.0, f)
+    }
+}
+
+/// FW24: the startup chime, then tunes the transport queues.
+unsafe extern "C" fn audio_task(_: *mut c_void) -> u32 {
+    // SAFETY: only this task touches the slot.
+    let speaker = unsafe { SPEAKER.get_or_init(Default::default) };
+    let step = speaker.step();
+    if let Some(record) = step.record {
+        let mut report = startup::Report::new();
+        if let Ok(line) = report.record(format_args!("PLAUD1 {}\r\n", AudioLine(record))) {
+            sdk::log(line);
+        }
+    }
+    step.delay_ms
+}
+
+/// Below the feeder and the optics probe: a late page is an audible gap,
+/// never a missed lease.
+fn start_audio() {
+    let created = sdk::task_create(c"wellfed-aud", 1024, 2, audio_task, ptr::null_mut());
+    sdk::log(if created {
+        c"PLAUD1 start created=1\r\n"
+    } else {
+        c"PLAUD1 start created=0\r\n"
     });
 }
 
@@ -864,6 +901,7 @@ unsafe extern "C" fn diagnostic_task(_: *mut c_void) -> u32 {
         start_transport();
         start_optics();
         start_confirm();
+        start_audio();
     }
     STARTUP.store(STARTUP_STARTED, Ordering::Release);
     1

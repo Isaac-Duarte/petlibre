@@ -29,7 +29,8 @@ The table records stock 1.1.15 software roles. The SDK pin encoding is `(port <<
 | PA19 | External-power presence input | Electrical transition behavior |
 | PB1 | ADC current estimate | Current scaling and trip thresholds |
 | PB2 | ADC battery/power measurement | Divider scaling, calibration, and battery percentage |
-| PA25 | Buzzer output; initially low | Real buzzer characteristics |
+| PA25 | Buzzer output; initially low | Real buzzer characteristics; FW24 plays through the speaker instead |
+| PB23 | Audio amplifier enable: stock holds it HIGH while the codec plays; FW24 does the same and the speaker plays (physical) | Electrical level and the amplifier part |
 | PB5 / PB4 / PB7 / PB6 | Four button inputs | Printed-label mapping and physical debounce |
 | PA2 / PA0 / PA4 / PB22 | Food warning / connection-OTA / lock / fault indicators | Only PB22 warning red is recorded; remaining colors unknown |
 

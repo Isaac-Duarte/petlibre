@@ -43,6 +43,7 @@ pub mod sensor_inputs;
 pub mod settings_store;
 pub mod storage;
 pub mod tick_clock;
+pub mod tone;
 pub mod transport;
 pub mod wall_clock;
 

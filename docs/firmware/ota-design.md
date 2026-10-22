@@ -1,6 +1,10 @@
 # FW10/FW11 over-the-air update design
 
-Status: design, from the FW09 bank policy (simulation and static analysis). Nothing here has run on hardware. Every write it describes is outside the bank-1 development updater's reviewed region, so the first hardware step needs an owner-reviewed procedure.
+Status: the recovery-role updater is implemented (`amebad/src/updater.rs`, host-tested in `amebad/tests/updater.rs`). On hardware (October 22, physical), the build booted from bank 0 after a UART give-way. It bound KM0, opened the watchdog, installed the lease provider into the flash-lock hooks and ran 180 s on one boot with the watchdog fed and no network; bank 1 was then restored. No update has been downloaded on hardware yet: that needs the hotspot and the local server running with an offer. The normal role's give-way trigger and FW11's trial counter are not implemented.
+
+The updater: booted from bank 0, with a key built in (`PETLIBRE_OTA_PUBLIC_KEY`, the public half of `private/ota-key.json`), it runs in place of the transport and optics tasks. It sets an attempt marker (a boot that finds it set skips the update), and each erase and page program is one FW06 lease. A feeder task feeds the watchdog while the updater keeps stepping (10 s liveness); a hang, a hook fault or the activation stops it, and the watchdog reset boots the new bank 1. Without a key, or after a stop, the normal transport starts so health stays visible. Records are `PLOTA1` lines.
+
+The original design follows. It came from the FW09 bank policy (simulation and static analysis). Every write it describes is outside the bank-1 development updater's reviewed region, so the first hardware step needs an owner-reviewed procedure.
 
 ## Constraints
 

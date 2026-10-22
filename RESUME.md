@@ -7,6 +7,8 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
+**October 22 (autonomous, physical through the relay bench).** The FW10 recovery-role updater is in (`d541c80` plus the audit fix). Bank 0 now holds `fw10-recovery-review-20261022-01` (identity `d2ed7d93…`); bank 1 still holds bench live target review 01 and boots normally. A UART give-way booted bank 0: `PLOTA1 start role=recovery key=1`, `ready`, then `armed watchdog=1 installed=1`. It ran 180 s on one boot, scanning for the hotspot, which was off. The bank-1 marker was restored, and bank 1 booted again. **Next:** a live download needs the hotspot up and `petlibre-local serve` running with `ota-offer` (owner approval: routing and a service), then give-way and watch `PLOTA1 progress`/`activated`.
+
 **October 21–22 overnight (autonomous, offline, nothing flashed).** The owner set the goal of doing what needs no owner, committing and pushing as I go:
 - **FW09:** the actual factory loader always prefers a valid bank 1 and only falls back to bank 0 (simulation). See [bank policy](docs/firmware/bank-policy.md).
 - **FW10/FW11:** designed around that: bank 0 holds a recovery/updater role, and bank 1 the normal role ([OTA design](docs/firmware/ota-design.md)). Every marker step and partial marker write keeps a bootable bank in emulation.

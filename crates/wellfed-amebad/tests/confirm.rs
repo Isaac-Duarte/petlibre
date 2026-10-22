@@ -7,7 +7,7 @@ use wellfed_amebad::arming::{self, Hooks};
 use wellfed_amebad::confirm::*;
 use wellfed_amebad::flash::park::{self, Mmio};
 use wellfed_amebad::flash::peer::MARKER_REGISTER;
-use wellfed_amebad::probes::flash::{ATTEMPT_BIT, Provider};
+use wellfed_amebad::provider::{ATTEMPT_BIT, Provider};
 use wellfed_amebad::sdk::fake;
 use wellfed_amebad::stopped;
 use wellfed_amebad::trial::{CONFIRM_SECTOR, identity};

@@ -11,7 +11,7 @@ use wellfed_core::tick_clock::TickClock;
 use crate::config::{FLASH_LIMITS, SYSTIMER_HZ};
 use crate::flash::park::{self, Mmio, Reply};
 use crate::flash::peer::MARKER_REGISTER;
-use crate::probes::flash::{ATTEMPT_BIT, BOOT_COUNT_REGISTER, Provider, READY_TIMEOUT_MS};
+use crate::provider::{ATTEMPT_BIT, BOOT_COUNT_REGISTER, Provider, READY_TIMEOUT_MS};
 use crate::sdk;
 use crate::stopped;
 

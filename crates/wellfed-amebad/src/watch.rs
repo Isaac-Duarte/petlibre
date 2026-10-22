@@ -22,7 +22,7 @@ use wellfed_core::transport::{self as mqtt, Event, Session, Tick};
 use crate::arming::{self, Arming, Hooks, Poll};
 use crate::flash::park::Mmio;
 use crate::net_status;
-use crate::probes::flash::Provider;
+use crate::provider::Provider;
 use crate::sdk::{self, TcpRecv, TransportConfig};
 use crate::trial;
 use crate::updater::Topic;

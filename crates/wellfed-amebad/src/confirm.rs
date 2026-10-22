@@ -15,7 +15,7 @@ use wellfed_core::ota::{self, CONFIRM_LEN};
 
 use crate::arming::{self, Arming, Hooks, Poll};
 use crate::flash::park::Mmio;
-use crate::probes::flash::Provider;
+use crate::provider::Provider;
 use crate::sdk;
 use crate::trial::{self, CONFIRM_SECTOR};
 

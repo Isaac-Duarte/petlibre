@@ -16,9 +16,8 @@ use wellfed_amebad::flash::park::{
 use wellfed_amebad::flash::peer::{
     BACKUP_BASE, MARKER_REGISTER, PARK_CHANNEL, PARK_TICK_LIMIT, Peer,
 };
-use wellfed_amebad::probes::flash::{
-    ATTEMPT_BIT, EXPECTED_ID, FlashOps, LeaseStage, Probe, Provider, Record, STRESS_SAVES,
-};
+use wellfed_amebad::probes::flash::{EXPECTED_ID, FlashOps, Probe, Record, STRESS_SAVES};
+use wellfed_amebad::provider::{ATTEMPT_BIT, LeaseStage, Provider};
 use wellfed_amebad::sdk::{self, fake};
 use wellfed_amebad::stopped;
 use wellfed_core::flash_coord::{FlashFault, FlashPhase, FlashReply};

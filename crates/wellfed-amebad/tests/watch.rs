@@ -8,7 +8,7 @@ use ed25519_dalek::{Signer, SigningKey};
 use wellfed_amebad::arming::Hooks;
 use wellfed_amebad::flash::park::{self, Mmio};
 use wellfed_amebad::flash::peer::MARKER_REGISTER;
-use wellfed_amebad::probes::flash::{ATTEMPT_BIT, Provider};
+use wellfed_amebad::provider::{ATTEMPT_BIT, Provider};
 use wellfed_amebad::sdk::fake::api::FAKE_TRANSPORT;
 use wellfed_amebad::sdk::fake::{self, TcpRecvScript};
 use wellfed_amebad::sdk::{self, WifiEvent};

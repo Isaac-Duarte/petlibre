@@ -34,7 +34,7 @@ use crate::board::{self, Board, MOTOR_MASK};
 use crate::config::{FLASH_LIMITS, SYSTIMER_HZ};
 use crate::events::{Events, EventsConfig, EventsFault, EventsSnapshot};
 use crate::flash::park::{self, Mmio, Reply};
-use crate::probes::flash::BOOT_COUNT_REGISTER;
+use crate::provider::BOOT_COUNT_REGISTER;
 use crate::sdk::{self, GPIO_PORT_A};
 use crate::stopped;
 

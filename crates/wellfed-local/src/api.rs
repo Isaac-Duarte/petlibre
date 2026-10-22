@@ -175,25 +175,28 @@ async fn replacement_request(
 ) -> Result<Json<Value>, ApiError> {
     authenticate(&headers, &state)?;
 
-    let input: replacement::Input = serde_json::from_slice(&body).map_err(|_| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error":"expected {\"op\":\"health\"|\"ping\"}"})),
-        )
-    })?;
+    let input: replacement::Input = serde_json::from_slice(&body)
+        .ok()
+        .filter(replacement::Input::valid)
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error":"expected {\"op\":\"health\"|\"ping\"|\"settings\"}; settings may set lights, sound (booleans) and volume (0-100)"})),
+            )
+        })?;
 
     let (send, receive) = oneshot::channel();
     let offline = |error: RequestError| {
         let status = match error {
             RequestError::Unconfigured => StatusCode::NOT_FOUND,
-            RequestError::Offline => StatusCode::SERVICE_UNAVAILABLE,
+            RequestError::Offline | RequestError::Exhausted => StatusCode::SERVICE_UNAVAILABLE,
         };
         (status, Json(json!({"error":error.message()})))
     };
 
     state
         .requests
-        .try_send(Request::Replacement(input.op, send))
+        .try_send(Request::Replacement(input, send))
         .map_err(|_| offline(RequestError::Offline))?;
     let id = tokio::time::timeout(Duration::from_secs(5), receive)
         .await

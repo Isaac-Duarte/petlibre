@@ -82,6 +82,7 @@ async fn firmware_pulls_a_signed_update_through_the_real_broker() {
         client_id: config.firmware_client_id(),
         username: "wellfed-fw".to_owned(),
         password: "0123456789abcdef".repeat(4),
+        request_key: None,
     });
     storage::write_json(&path, &config).unwrap();
 

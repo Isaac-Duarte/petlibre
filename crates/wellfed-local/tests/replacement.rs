@@ -104,6 +104,7 @@ async fn firmware_role_reports_health_answers_requests_and_stays_in_its_namespac
         client_id: config.firmware_client_id(),
         username: "wellfed-fw".to_owned(),
         password: "0123456789abcdef".repeat(4),
+        request_key: None,
     });
     storage::write_json(&path, &config).unwrap();
 

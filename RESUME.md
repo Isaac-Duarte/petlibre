@@ -1,11 +1,39 @@
 # Resume firmware development
 
-Handoff checkpoint: **October 21, 2026, Mountain time**. Read this, then
+Handoff checkpoint: **October 22, 2026, Mountain time**. Read this, then
 [AGENTS.md](AGENTS.md), the [development guide](docs/development/README.md),
 and [FIRMWARE_BOARD.md](FIRMWARE_BOARD.md). Update this handoff when the installed
 image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
+
+**October 22, afternoon: post-FW10 re-verification and FW11/FW12/FW21 bring-up (autonomous, physical through the relay bench and over the air).**
+- **Re-verified after the crate split and the Python→Rust ports.**
+  - `make check` and `make check-fixtures` (100 tests, no skips) both pass.
+  - FW33 passed on hardware.
+  - A rebuilt image went into bank 0 over UART: 158 sectors, no NAK.
+  - Then OTA. Regressions found and fixed:
+    - **Review tool:** `review-development-image.py` shadowed its own `payload` function.
+    - **Optics stack overflow:** LTO inlined a 3 KiB probe temporary into the optics task, overflowing its 4 KiB stack. The first trial overflowed and KM0 gave way. The next build (out-of-line init, still 4 KiB) overflowed during init, before the watchdog opened, and hung; that needed a UART give-way. Now: out-of-line slot init, an 8 KiB stack, and a build-time per-task stack audit (`firmware/tools/stackaudit.py`).
+    - **Build and fixture tools:** `plaf103` and `bringup` hadn't built since FW07 (credential headers). The `fw11-reset` variant no longer passed the link audit. The link audit flagged an instruction whose bytes equal an address (now only literal and data words count). Two fixture tests were stale.
+- **FW11:** the feeder task now opens the watchdog before the startup diagnostic, with a 10-minute trial deadline (`amebad/src/supervise.rs`). Over the air: failed start (`fw11-fail`), hang after start (`fw11-reset`) and never-confirms (server stopped) each counted 1-2-3 and gave way to bank 0.
+- **FW11 and FW12 are Done.** FW11 adds a lost confirmation (a power cut mid-trial). FW12: `wellfed-bench ota NAME --build` runs build, review, sign, offer, watch and health in 6 minutes.
+- **FW25 (in progress):** signed `settings` requests read and change lights, sound and volume in the FW15 store; persistence across a cold boot is proven.
+- **FW21:** server-set wall clock over the FW08 channel ([clock](docs/firmware/clock.md)).
+- **Bench page:** reworked; token removed; served on the Tailscale address on request.
+- **Authenticated requests:** server→firmware requests are HMAC-signed with a per-session nonce and sequence ([design](docs/firmware/local-transport.md#authenticated-requests)). Over a bare broker on hardware, an unsigned `time` was refused and a signed one accepted. The key was added with `wellfed-local firmware-request-key`. Backups of both private files from before are `private/server.json.before-request-key` and `private/fw-mqtt.json.before-request-key`.
+- **Server fix:** `serve` now handles SIGTERM. Before, `kill` or `timeout` left its broker child orphaned (observed).
+- **Flash now:**
+  - **Both banks:** `final-review-20261022-01` (`36c9a086…`). Bank 0 was installed by UART (166 sectors, no NAK), then bank 1 over the air as v17, downloaded by the new recovery role. Bank 1 is confirmed.
+  - **What the build carries:** FW11 supervision, the FW21 clock (2000 ppm bound), signed requests and the FW25 settings writer.
+  - **NOR settings:** generation 2979 (lights 1, sound 1, volume 40).
+  - **Next manifest version:** 18 (`wellfed-bench ota` picks it).
+- **Bench state at this checkpoint:** restored to before the session.
+  - The hotspot is down, `serve` is stopped and the feeder is off.
+  - The read-only bench page still runs on the Tailscale address at the owner's request (bounded to 8 h).
+- **FW27:** DHCP renewal was observed about 30 minutes into a lease (host DHCP log), with no loss.
+- **Next (autonomous):** FW25 Wi-Fi and broker credentials without a rebuild. This needs a request format that fits a hex SSID and PSK, a runtime join in the C shim, and a fallback to the build-time credentials after failed joins. Testable without host changes: store wrong credentials and prove the fallback.
+- **Needs the owner:** FW14 (batteries), FW30 (meter or analyzer, PB3 test points), FW16 and later (motion), FW23 and FW24 (eyes and ears for LEDs and audio).
 
 **October 22, crate split (offline, nothing flashed; merged from the `crate-split` worktree).** `wellfed-amebad` is split three ways. `wellfed-amebad-common` holds the flash park, hooks, peer and trial, and is all KM0 links. `wellfed-amebad` holds the KM4 ports, and the lease `Provider` moved from `probes/flash.rs` to `provider.rs`. `wellfed-firstboot` holds the app entry, the probes and the `fw16-pulse`/`fw11-reset` features. Static comparison of the firmware archives:
 - **C symbols:** the exported set is identical for km0, km4 and both variants.

@@ -48,6 +48,7 @@ The relay board also enumerates as a USB serial port and can take the name the U
 | `flash-prepare NAME` | `loader`, `read small`, `update inspect` and `update prepare`; prints the plan summary and the exact `flash-execute` line, then stops |
 | `flash-execute NAME` | Checks relay 1 stayed on and the strap is released, runs `update execute` with the reviewed hash, then `boot` |
 | `give-way-prepare NAME`, `give-way-execute NAME` | The same pair for `give-way` (`--fallback` names bank 0's frozen review) |
+| `ota NAME --review DIR`, `ota NAME --build` | With `--build`, first runs `build.py` and the review freeze. Signs the review with `wellfed-local ota-sign`, offers it with `ota-offer` to the server already running, takes receive-only UART captures until the new build confirms, falls back or `--minutes` (20) pass, then polls `wellfed-local status` until the server's health shows the build. Prints a timing summary. Never touches power or opens the relay board |
 | `demo [PATTERN…]` | Clicks spare relays 3 and 4 (chase, blink, heartbeat, Morse); reads but never sets power or the strap; refuses while another bench command runs; at most 120 toggles, and both spares end off |
 
 `wellfed-bench <command> --help` lists the flags. `flash-prepare`/`flash-execute` take the updater's `--bank`, `--source`, `--original-read`, `--target`, `--interrupted` and `--restore-marker`, and `--attended-motion` for a target whose manifest names a motion policy.
@@ -59,6 +60,48 @@ Session evidence goes to new directories under `private/captures/`, `private/fla
 Ctrl+C stops the running sequence: the `wellfed-flash` child stops itself terminally and records it, and the bench runs the same cleanup as for any stop (the loader and transient sequences power off, and the demo turns the spares off).
 
 Stock recovery keeps its own commands. Use `loader` to enter the ROM, then run `wellfed-flash stock-recovery` directly.
+
+## Over-the-air iteration (FW12)
+
+`ota` runs one [over-the-air update](../firmware/ota-design.md) of the feeder that is already running: build → checks → upload → reboot → build identity and health. The server and the hotspot must already be up: the bench never starts `wellfed-local serve` or the hotspot, and a failed offer stops before any capture. A bank-0 change still needs the UART updater.
+
+```sh
+target/release/wellfed-bench ota fw12-unit-01 --build                     # build, review, offer, verify
+target/release/wellfed-bench ota fw12-unit-02 --review private/verification/<review>
+```
+
+- **Build (`--build`):** runs two Python children from the root, their output streamed to the progress log. First `firmware/tools/build.py plaf103-firstboot`, then `tools/flash/review-development-image.py build --build private/firmware-build/plaf103-firstboot --output private/verification/NAME-review`. The run then continues as with `--review` on that directory.
+  - The interpreter is `.venv/bin/python` unless `--python` names another.
+  - `--variant fw11-reset|fw11-fail` adds `--trial-reset` or `--trial-fail`. `fw16-pulse` is refused: motion builds stay manual, then go through `--review` with `--attended-motion`.
+  - A nonzero exit from either child stops without signing or offering.
+  - Refused before anything runs: an existing `NAME-review`, a missing interpreter, `--variant` or `--python` without `--build`, and `--build` with `--review`.
+
+- **Version:** `--version`, or one more than the highest version among the signed manifests in `private/verification/`. The manifest is written to `private/verification/NAME-vN.manifest`.
+- **Build ID:** the review's `startup_identity`. A review whose `startup_motion_policy` is set needs `--attended-motion`, as for `flash-prepare`.
+- **Tools:** `wellfed-local` runs beside the bench unless `--local-bin` names another; its output goes to the progress log.
+- **Captures:** 60 s segments `private/captures/NAME-01`, `-02`, … A name with any numbered segment is refused before building or signing.
+
+The `PL…` lines are read as each segment ends. Progress shows on stdout and the page: the give-way, the manifest, written sectors as a bar, activation, the new build's start and trial boots. The outcomes:
+
+| Outcome | Lines | Exit |
+| --- | --- | --- |
+| Passed | `PLFW1 start build=<ID> bank=1`, then `PLCNF1 confirmed=1`, then the health check below | 0 |
+| Health missing | confirmed on the UART, but the server's health never showed the build within 90 s | 1 |
+| Fell back | `PLTRL1 give_way=1` after activation or the new build's start; reports the last `PLTRL1 confirmed=0 boot=N` | 1 |
+| Update error | `PLOTA1 error stage=…` | 1 |
+| Timeout | none of these within `--minutes` | 1 |
+
+**Health check.** After the confirmation, `wellfed-local status --config private/server.json` runs every 5 s for up to 90 s; `--config` names another file. The firmware publishes health every 30 s. The check requires all of:
+- `replacement.health.build` is the offered build
+- `replacement.health.bank` is 1
+- `replacement.online` is true
+- `replacement.stale` is false
+
+It reports the health's `seq`, `outputs`, `faults` and, when present, whether the `clock` is valid. A changed reason for waiting (an older build, stale health, the status call failing) is logged once.
+
+**Timing.** Once any child has run, the command ends with a timing summary: build, review, sign + offer, give-way to activation (the download), activation to confirmation, the health check, and the total. This is the FW12 duration record. Build, review and offer times are measured by the bench. The two feeder phases come from each capture's `serial-events.jsonl` chunk times. Without that file they fall back to the end of the 60 s segment and say so.
+
+The server serves each offer to completion once, so after a fallback, retry with a new version. Ctrl+C stops the child, the capture or the poll, and the command. The classifier, the health check and the sequence are host-tested with real log lines, status documents and fake tools (October 22, 2026); neither the command nor `--build` has yet run on hardware.
 
 ## Progress page
 
@@ -74,14 +117,14 @@ The fields match what the Python bench wrote, so older history still shows.
 - `wellfed-bench --ui` alone runs until Ctrl+C.
 - `wellfed-bench --ui flash-execute …` serves it while that command runs.
 
-The page only reads the status files and evidence directories. It never opens a serial port, so it can run beside any command. Its assets are embedded in the binary. It binds to loopback by default because the page shows private UART output. `--listen ADDRESS` serves another interface, for example the Tailscale address to reach it from a phone. Any non-loopback address requires a random token, printed in the start URL, and wildcard addresses are refused. Allowing that port through the host firewall is the owner's change. `--ui-port` changes the port.
+The page only reads the status files and evidence directories. It never opens a serial port, so it can run beside any command. Its assets are embedded in the binary. It binds to loopback by default because the page shows private UART output. `--listen ADDRESS` serves another interface, for example the Tailscale address to reach it from a phone. There is no access token: anyone who can reach that address can read the page, so name only a private interface such as Tailscale. Wildcard addresses are refused. Allowing that port through the host firewall is the owner's change. `--ui-port` changes the port.
 
 The page shows:
-- **Now:** steps, relays, bars with straight-line ETAs for the overall steps, the tool's own counts and an update's estimated transfer, plus the active capture and the next command to run after review.
-- **Live log:** the command's full output, streamed as it arrives. You can filter it, pause following, or copy it; stops, refusals, faults and NAKs are highlighted.
-- **Sessions:** each recent session name with its evidence parts and report statuses. Selecting one shows the plan (bank, sectors, erases, image hashes, plan SHA-256) and a copyable execute line.
-- **Health:** relay and UART port presence, the last recorded relay states (not queried), the `wellfed-flash` hash, and the build and bank from the newest replacement-firmware start banner in a capture.
-- **Latest RX log and recent commands.**
+- **Header:** relay and UART port presence, the last recorded relay states (not queried), the `wellfed-flash` hash, the build and bank from the newest replacement-firmware start banner in a capture, and the running command. It does not stay pinned while scrolling.
+- **Now:** a summary line with the state, elapsed time and step count, then the steps and relays beside bars with straight-line ETAs for the tool's own counts, an update's estimated transfer and the active capture, plus the next command to run after review. The tab title carries the state.
+- **Live log** and **Latest RX log** side by side at the same height. The live log streams the command's full output; you can filter it, pause following, or copy it. Stops, refusals, faults and NAKs are highlighted; the flash client's JSON summaries are coloured by their `error` and `status` fields, so a successful summary with `"error":null` reads as success.
+- **Sessions:** the ten newest session names (**Show all** for the rest) with evidence parts, report state and age. Selecting one shows the plan (bank, sectors, erases, image hashes, plan SHA-256) and a copyable execute line above the list. A report still marked `running` whose command is no longer live reads as `ended` (grey, italic): the process stopped without recording an outcome.
+- **Recent commands:** the newest eight (**Show all** for up to 15) with start time, duration and outcome.
 
 For a timed operator run, an optional `private/bench-status/script.json` lists steps (`{"title", "capture", "anchor", "steps": [{"at", "text"}]}`). The page shows the current step large with a countdown, starting when the anchor bytes (for example `PLOPT1 open`) arrive in that capture. After **Enable sound** (browsers need a click), each step beeps (a double beep to move a probe, a long tone at the end), and **Speak steps** reads it aloud.
 

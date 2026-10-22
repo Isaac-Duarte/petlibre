@@ -52,9 +52,24 @@ This adds an optional `firmware` section to the configuration and writes the fir
 
 Every allowed topic is literal: wildcards in this namespace are refused. The firmware role cannot reach the stock `dl/PLAF103/...` topics, and the stock device role cannot reach this namespace. The broker has retained messages disabled, so the firmware publishes health without retain, and its will (`"online": false`) is not retained either. After a server restart, health appears with the next periodic publish.
 
-The server accepts health of schema `wellfed.health` version 1 with a boolean `online`, up to 512 bytes, and replies up to 256 bytes with a UUID `id`. It counts and ignores anything else. Health older than 75 s is stale. A request is sent with QoS 0 only while health is fresh and online; otherwise the API refuses it instead of losing it unseen.
+The server accepts health of schema `wellfed.health` version 1 with a boolean `online` and, if present, a `nonce` of 16 lowercase hex characters, up to 640 bytes, and replies up to 256 bytes with a UUID `id`. It counts and ignores anything else. Health older than 75 s is stale. A request is sent with QoS 0 only while health is fresh and online; otherwise the API refuses it instead of losing it unseen.
 
 The firmware channel is plaintext MQTT on the isolated hotspot. Anyone with the Wi-Fi password could read it or impersonate either end, which is accepted only because the channel carries read-only health. Feeding or update commands must not use it until it is authenticated or encrypted.
+
+### Request signing
+
+Requests from the server to the firmware can be authenticated with a shared key ([wire format](../firmware/local-transport.md#authenticated-requests)). With the service stopped, after `firmware-credential`:
+
+```sh
+./target/debug/wellfed-local firmware-request-key --config private/server.json --credential private/fw-mqtt.json
+```
+
+- **What it does:** generates 32 random bytes from the operating system's CSPRNG (`/dev/urandom`) and adds them as `request_key` (64 lowercase hex characters) to the configuration's `firmware` section and to the credential file. It prints only that the key was added, never the key.
+- **Refusals:** a configuration without a firmware role, a configuration or credential file that already has a key (a key never rotates silently), and a credential file whose fields don't match the role (version, broker, port, device ID, client ID, username, password, namespace) or that has unknown fields.
+- **Order:** the credential file is rewritten first (atomically, mode 0600), then the configuration. If the configuration update fails, remove `request_key` from the credential file and rerun.
+- **Then:** rebuild the firmware so it embeds the key, and restart `serve`.
+
+With a key configured, the server signs every request it sends to the firmware: API `health` and `ping` requests and the FW21 `time` sync. It signs under the `nonce` of the latest health, with a `seq` that starts at 1 for each new nonce and rises by one per request; it refuses (503) rather than wrap once `seq` would pass 4294967295. Firmware whose health has no `nonce` (built without a key) gets unsigned requests, as before. Without a configured key the server never signs. A refused request comes back as a reply with `"error":"auth"`, which the status shows like any other reply. The key is validated on load and never appears in the API, status or logs; the nonce is not secret and shows in the health.
 
 ## Replacement-firmware update signing (FW10)
 
@@ -98,7 +113,7 @@ Write bodies are bounded to 4096 bytes. Use bearer authentication from the priva
 | `POST /api/ota/trial` | Experimental fixed-image install/restore; explicit trial mode and image lease required |
 | `POST /api/ota/trial/resolve` | Explicit uncertain-trial reconciliation; sends no command |
 | `POST /api/probe/query` | Explicit diagnostic request for a confirmed pinned probe installation |
-| `POST /api/replacement/request` | `{ "op": "health" }` or `{ "op": "ping" }` to the replacement firmware; returns the generated request ID. Other bodies get 400, no firmware role 404, and stale or offline health 503 |
+| `POST /api/replacement/request` | `{ "op": "health" }`, `{ "op": "ping" }` or `{ "op": "settings" }` (optionally with `lights`, `sound` booleans and `volume` 0–100 to change them; FW25) to the replacement firmware, signed when a request key is configured and the health has a nonce; returns the generated request ID. Other bodies get 400, no firmware role 404, and stale or offline health or an exhausted `seq` 503 |
 
 Normal `serve` mode keeps OTA trial/probe dispatch disabled. `ota-images` is a separate fixed-image HTTP transfer service; it does not command an update. Production trial dispatch requires a clean identifiable source commit. Test-only bypasses are not a deployment procedure. Retained OTA/probe helpers accept only their reviewed inputs; see [fixtures](fixtures.md) and [recovery limits](../hardware/recovery.md).
 

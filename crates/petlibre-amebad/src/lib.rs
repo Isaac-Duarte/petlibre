@@ -30,7 +30,11 @@ pub mod startup;
 pub mod stopped;
 
 #[cfg(any(not(target_os = "none"), feature = "km4"))]
+pub mod arming;
+#[cfg(any(not(target_os = "none"), feature = "km4"))]
 pub mod board;
+#[cfg(any(not(target_os = "none"), feature = "km4"))]
+pub mod confirm;
 
 #[cfg(any(not(target_os = "none"), feature = "km4"))]
 mod active;
@@ -54,5 +58,7 @@ pub mod transport;
 pub mod trial;
 #[cfg(any(not(target_os = "none"), feature = "km4"))]
 pub mod updater;
+#[cfg(any(not(target_os = "none"), feature = "km4"))]
+pub mod watch;
 #[cfg(any(not(target_os = "none"), feature = "km4"))]
 pub mod watchdog;

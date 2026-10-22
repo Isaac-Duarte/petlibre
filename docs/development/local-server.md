@@ -77,7 +77,7 @@ Offer a signed update to the running server, or clear it:
 ./target/debug/petlibre-local ota-offer --clear
 ```
 
-The offer lives only in the server's memory. The server answers the firmware's `ota/get` requests on `ota/data` with the manifest or a chunk of at most 512 bytes, and never pushes anything. On load it checks that the image matches the manifest's length and hash; authenticity is the firmware's signature check. Paths must be relative and under `private/`. The broker lets the firmware role publish only `ota/get` and subscribe only `ota/data`, and the server role the reverse.
+The offer lives only in the server's memory. Each offer is served to completion once. After its last chunk has gone out, a new manifest request means the candidate fell back to bank 0, so the server drops the offer and answers that it has none. Offer it again to retry. Re-asks of chunks, such as a lost last answer, are still served. The server answers the firmware's `ota/get` requests on `ota/data` with the manifest or a chunk of at most 512 bytes, and never pushes anything. On load it checks that the image matches the manifest's length and hash; authenticity is the firmware's signature check. Paths must be relative and under `private/`. The broker lets the firmware role publish only `ota/get` and subscribe only `ota/data`, and the server role the reverse. A confirmed normal image checks for an offer as `<client_id>-ota`, with the same credentials. That identity may only publish `ota/check` and subscribe `ota/offered`. The server answers with the manifest or no offer, and a check never counts as a delivery.
 
 ## Manual requests and uncertainty
 

@@ -10,6 +10,10 @@ The whole run, boot included, fit in the 180 s capture. The first attempt HardFa
 
 The updater: booted from bank 0, with a key built in (`PETLIBRE_OTA_PUBLIC_KEY`, the public half of `private/ota-key.json`), it runs in place of the transport and optics tasks. It sets an attempt marker (a boot that finds it set skips the update), and each erase and page program is one FW06 lease. A feeder task feeds the watchdog while the updater keeps stepping (10 s liveness); a hang, a hook fault or the activation stops it, and the watchdog reset boots the new bank 1. Without a key, or after a stop, the normal transport starts so health stays visible. Records are `PLOTA1` lines.
 
+**Hands-off update (October 22, physical).**
+- **The offer check:** a confirmed normal build runs `amebad/src/watch.rs`. Every minute it opens a short MQTT session of its own, as `<client_id>-ota`, publishes `ota/check`, and the server answers `ota/offered`.
+- **On hardware:** build W checked and found its own build on offer (`same=1`). After the owner side loaded signed v5 for another build, the next check made W clear its bank-1 marker (`sdk::bank1_give_way`, refused unless bank 0 is valid) and restart. Bank 0 installed v5, which confirmed itself after 30 s. Nothing went over UART.
+
 The original design follows. It came from the FW09 bank policy (simulation and static analysis). Every write it describes is outside the bank-1 development updater's reviewed region, so the first hardware step needs an owner-reviewed procedure.
 
 ## Constraints
@@ -50,7 +54,14 @@ Implemented on KM0 (`petlibre-amebad/src/trial.rs`, `petlibre_trial_step` in `fi
 
 The program step bypasses `FLASH_Write_Lock`. After a watchdog reset, that lock's KM0 branch waits forever for an absent KM4, because `km4_status_on` still reads the HS clock bit set. This was observed on hardware, then fixed.
 
-Physical (October 22): the `fw11-reset` test variant (`build.py --trial-reset`) was counted 1, 2, 3, then gave way and booted bank 0's recovery role. The KM4 confirmation write is not implemented yet, so a normal image is never confirmed. It only gives way after three resets within one power-on, and the normal role does not yet open the watchdog.
+Physical (October 22): the `fw11-reset` test variant (`build.py --trial-reset`) was counted 1, 2, 3, then gave way and booted bank 0's recovery role. The normal role now confirms itself (`amebad/src/confirm.rs`). Once the startup probe has ended, the transport is ready and outputs are verified stopped for 30 s continuously, it arms the hooks and writes the record to sector 4, then reads it back. The normal role also opens the watchdog at startup. A feeder task feeds it while the transport and confirmation tasks keep stepping, and while outputs are stopped or sensing, so a hang becomes a reset that KM0 counts.
+
+Physical (October 22), over the air:
+1. The first build with this code had a feeder bug: it demanded all outputs stopped and tripped during the optics windows. KM0 counted three resets and gave way. The recovery role then installed the fixed build (version 3) over the air.
+2. The fixed build confirmed after 30 s healthy (`PLCNF1 confirmed=1 healthy_ms=30000`).
+3. On the next cold boot KM0 reported `PLTRL1 confirmed=1`.
+
+Caution, observed: while an offer stays loaded, a candidate that keeps failing is re-downloaded after every fallback. The server now serves each offer to completion only once ([local server](../development/local-server.md)).
 
 The original design:
 

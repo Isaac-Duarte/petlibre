@@ -588,6 +588,32 @@ pub fn bank1_read(sector: u32, offset: u32, bytes: &mut [u8]) -> bool {
     true
 }
 
+/// FW10 give-way from the running normal image: clear only the first byte
+/// of bank 1's marker (one page program; bytes 1-3 rewritten unchanged, as
+/// NOR programming only clears bits), through the hooked lock. Refused
+/// unless running from bank 1 with bank 1's marker intact and bank 0's
+/// marker valid, so the loader always has a bank to boot.
+pub fn bank1_give_way() -> bool {
+    let read = |offset: u32| {
+        let mut out = [0u8; 8];
+        for (i, byte) in out.iter_mut().enumerate() {
+            let at = k::PETLIBRE_SPI_FLASH_BASE + offset + i as u32;
+            *byte = unsafe { ptr::read_volatile(at as usize as *const u8) };
+        }
+        out
+    };
+    let bank1 = read(super::BANK1_OFFSET);
+    if flash_mmu_entry0().bank() != Some(1)
+        || bank1 != super::MARKER
+        || read(super::BANK0_OFFSET) != super::MARKER
+    {
+        return false;
+    }
+    let mut word = [0x00, bank1[1], bank1[2], bank1[3]];
+    unsafe { raw::FLASH_TxData256BXIP(super::BANK1_OFFSET, 4, word.as_mut_ptr()) };
+    read(super::BANK1_OFFSET)[0] == 0
+}
+
 /// Read through the memory-mapped flash window; the SDK wrappers flush the
 /// cache after every erase or program.
 pub fn storage_read(sector: u32, offset: u32, bytes: &mut [u8]) -> bool {
@@ -688,7 +714,7 @@ const EMPTY: TaskSlot = TaskSlot {
     step: core::cell::UnsafeCell::new(None),
     context: core::cell::UnsafeCell::new(ptr::null_mut()),
 };
-static TASKS: [TaskSlot; 4] = [EMPTY, EMPTY, EMPTY, EMPTY];
+static TASKS: [TaskSlot; 8] = [EMPTY; 8];
 
 unsafe extern "C" fn trampoline(argument: *mut c_void) {
     let slot = unsafe { &*argument.cast::<TaskSlot>() };

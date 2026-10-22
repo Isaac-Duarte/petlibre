@@ -7,6 +7,16 @@
 //! retries, and never boots after a stopped update. Ports and evidence paths
 //! come from the ignored `private/bench.json`; see docs/hardware/bench.md.
 
+/// `println!` that ignores a closed stdout. A reader such as `head` exiting
+/// must not panic a sequence partway, past its power-off cleanup.
+#[macro_export]
+macro_rules! say {
+    ($($arg:tt)*) => {{
+        use std::io::Write as _;
+        let _ = writeln!(std::io::stdout(), $($arg)*);
+    }};
+}
+
 pub mod commands;
 pub mod config;
 pub mod relay;

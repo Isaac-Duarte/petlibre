@@ -3,8 +3,8 @@
 //! It reads the status files and evidence directories only. It never opens a
 //! serial port, so it cannot disturb an update, a dump or a capture, and it
 //! never writes. The page shows private UART output, so it binds loopback by
-//! default. Any other address needs the random access token printed in the
-//! start URL, and wildcard addresses are refused.
+//! default. `--listen` serves one named interface instead, such as the
+//! Tailscale address; wildcard addresses are refused.
 
 pub mod views;
 
@@ -26,7 +26,6 @@ use axum::routing::get;
 use futures_util::stream::{self, Stream};
 use rust_embed::Embed;
 use serde_json::Value;
-use subtle::ConstantTimeEq;
 
 use crate::config::STATUS_DIR;
 use crate::status::{CURRENT, Current, LOG};
@@ -45,14 +44,12 @@ const LOG_BACKLOG: u64 = 512 << 10;
 #[derive(Clone)]
 struct Ui {
     sources: Sources,
-    token: Option<Arc<str>>,
     flash: Arc<Mutex<FlashCache>>,
 }
 
-/// Where the page listens and whether it needs a token.
+/// Where the page listens.
 pub struct Listen {
     pub address: SocketAddr,
-    pub token: Option<String>,
 }
 
 impl Listen {
@@ -65,32 +62,14 @@ impl Listen {
                 "Refusing a wildcard address; name the interface address to serve on".into(),
             ));
         }
-
-        let token = if ip.is_loopback() {
-            None
-        } else {
-            Some(new_token()?)
-        };
         Ok(Self {
             address: SocketAddr::new(ip, port),
-            token,
         })
     }
 
     pub fn url(&self) -> String {
-        let suffix = self
-            .token
-            .as_ref()
-            .map_or_else(String::new, |token| format!("?token={token}"));
-        format!("http://{}/{suffix}", self.address)
+        format!("http://{}/", self.address)
     }
-}
-
-fn new_token() -> Result<String> {
-    let mut bytes = [0u8; 24];
-    getrandom::fill(&mut bytes)
-        .map_err(|error| Error::Bench(format!("No randomness for the access token: {error}")))?;
-    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
 fn router(ui: Ui) -> Router {
@@ -102,25 +81,11 @@ fn router(ui: Ui) -> Router {
         .route("/api/sessions/{name}", get(session))
         .route("/api/health", get(health))
         .fallback(asset)
-        .layer(middleware::from_fn_with_state(ui.clone(), authorize))
+        .layer(middleware::from_fn(no_store))
         .with_state(ui)
 }
 
-async fn authorize(State(ui): State<Ui>, request: Request, next: Next) -> Response {
-    if let Some(token) = &ui.token {
-        let supplied = request
-            .uri()
-            .query()
-            .unwrap_or("")
-            .split('&')
-            .find_map(|pair| pair.strip_prefix("token="))
-            .unwrap_or("");
-        // Constant-time, so response timing does not reveal the token.
-        if !bool::from(supplied.as_bytes().ct_eq(token.as_bytes())) {
-            return StatusCode::FORBIDDEN.into_response();
-        }
-    }
-
+async fn no_store(request: Request, next: Next) -> Response {
     let mut response = next.run(request).await;
     response
         .headers_mut()
@@ -298,7 +263,6 @@ pub fn start(
 
     let ui = Ui {
         sources: Sources { root, flash_bin },
-        token: listen.token.as_deref().map(Arc::from),
         flash: Arc::default(),
     };
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -334,14 +298,13 @@ mod tests {
     use axum::body::Body;
     use tower::ServiceExt;
 
-    fn ui(token: Option<&str>) -> (tempfile::TempDir, Router) {
+    fn ui() -> (tempfile::TempDir, Router) {
         let tmp = tempfile::tempdir().unwrap();
         let ui = Ui {
             sources: Sources {
                 root: tmp.path().into(),
                 flash_bin: tmp.path().join("petlibre-flash"),
             },
-            token: token.map(Arc::from),
             flash: Arc::default(),
         };
         (tmp, router(ui))
@@ -357,7 +320,7 @@ mod tests {
 
     #[tokio::test]
     async fn loopback_serves_the_page_and_api() {
-        let (_tmp, router) = ui(None);
+        let (_tmp, router) = ui();
         for (uri, kind) in [
             ("/", "text/html; charset=utf-8"),
             ("/app.js", "text/javascript; charset=utf-8"),
@@ -382,44 +345,15 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn remote_listen_requires_the_token() {
-        let (_tmp, router) = ui(Some("secret"));
-        for uri in [
-            "/",
-            "/api/status",
-            "/app.js",
-            "/api/status?token=wrong",
-            "/?token=",
-        ] {
-            assert_eq!(
-                get(&router, uri).await.status(),
-                StatusCode::FORBIDDEN,
-                "{uri}"
-            );
-        }
-
-        assert_eq!(
-            get(&router, "/api/status?token=secret").await.status(),
-            StatusCode::OK
-        );
-        assert_eq!(
-            get(&router, "/?x=1&token=secret").await.status(),
-            StatusCode::OK
-        );
-    }
-
     #[test]
-    fn wildcard_listen_is_refused_and_remote_gets_a_token() {
+    fn wildcard_listen_is_refused() {
         assert!(Listen::new("0.0.0.0", 8780).is_err());
         assert!(Listen::new("::", 8780).is_err());
         assert!(Listen::new("localhost", 8780).is_err());
-        assert!(Listen::new("127.0.0.1", 8780).unwrap().token.is_none());
-
-        let remote = Listen::new("100.64.0.1", 8780).unwrap();
-        let token = remote.token.clone().unwrap();
-        assert_eq!(token.len(), 48);
-        assert!(remote.url().ends_with(&format!("?token={token}")));
+        assert_eq!(
+            Listen::new("100.64.0.1", 8780).unwrap().url(),
+            "http://100.64.0.1:8780/"
+        );
 
         assert!(
             Listen::new("::1", 8780)

@@ -7,6 +7,7 @@ use std::rc::Rc;
 use super::*;
 use crate::relay::FakeBoard;
 use crate::status::FlashTool;
+use crate::tools::Captured;
 
 const PLAN: &str = r#"{"operation_plan": {"bank": 1, "ordered_sectors": [{}], "erase_sectors": 1,
     "target_ota_sha256": "t", "fallback_ota_sha256": "f"}}"#;
@@ -24,15 +25,39 @@ struct Calls {
     results: VecDeque<Value>,
     analyzer_code: i32,
     sigrok: bool,
+    local: Vec<Vec<String>>,
+    local_codes: VecDeque<i32>,
+    /// UART bytes each capture records, in order.
+    rx: VecDeque<Vec<u8>>,
+    /// Each capture's serial-events.jsonl, in order; none when empty.
+    chunks: VecDeque<String>,
+    /// The checkout, where a successful fake review writes its output.
+    root: PathBuf,
+    /// Python runs: the interpreter, then its arguments.
+    python: Vec<Vec<String>>,
+    python_codes: VecDeque<i32>,
+    /// `petlibre-local status` queries and their answers; then the default.
+    queries: Vec<Vec<String>>,
+    statuses: VecDeque<Captured>,
+    status_default: String,
+    /// Every child in order: `python <args>`, `local <args>`, `query <args>`.
+    ran: Vec<String>,
 }
 
 #[derive(Clone, Default)]
 struct FakeTools(Rc<RefCell<Calls>>);
 
-struct FakeObserver(Value);
+struct FakeObserver(Value, PathBuf, Option<Vec<u8>>, Option<String>);
 
 impl Observer for FakeObserver {
     fn finish(&mut self) -> Result<Value> {
+        if let Some(rx) = self.2.take() {
+            fs::create_dir_all(&self.1)?;
+            fs::write(self.1.join("serial-rx.bin"), rx)?;
+        }
+        if let Some(chunks) = self.3.take() {
+            fs::write(self.1.join("serial-events.jsonl"), chunks)?;
+        }
         Ok(self.0.clone())
     }
     fn kill(&mut self) {}
@@ -63,7 +88,14 @@ impl Tools for FakeTools {
         let mut calls = self.0.borrow_mut();
         calls.observed.push(output.to_path_buf());
         let result = calls.results.pop_front().unwrap_or_else(loader_result);
-        Ok(Box::new(FakeObserver(result)))
+        let rx = calls.rx.pop_front();
+        let chunks = calls.chunks.pop_front();
+        Ok(Box::new(FakeObserver(
+            result,
+            output.to_path_buf(),
+            rx,
+            chunks,
+        )))
     }
 
     fn flash(&mut self, args: &[String], _: &mut Status) -> Result<i32> {
@@ -74,6 +106,47 @@ impl Tools for FakeTools {
         if code == 0 && args[1] == "prepare" {
             let at = args.iter().position(|a| a == "--output").unwrap();
             fs::write(&args[at + 1], PLAN)?;
+        }
+        Ok(code)
+    }
+
+    fn local(&mut self, args: &[String], _: &mut Status) -> Result<i32> {
+        let mut calls = self.0.borrow_mut();
+        calls.local.push(args.to_vec());
+        calls.ran.push(format!("local {}", args.join(" ")));
+        Ok(calls.local_codes.pop_front().unwrap_or(0))
+    }
+
+    fn local_query(&mut self, args: &[String]) -> Result<Captured> {
+        let mut calls = self.0.borrow_mut();
+        calls.queries.push(args.to_vec());
+        calls.ran.push(format!("query {}", args.join(" ")));
+        let default = Captured {
+            code: 0,
+            stdout: calls.status_default.clone(),
+            stderr: String::new(),
+        };
+        Ok(calls.statuses.pop_front().unwrap_or(default))
+    }
+
+    fn python(&mut self, python: &Path, args: &[String], _: &mut Status) -> Result<i32> {
+        let mut calls = self.0.borrow_mut();
+        calls.python.push(
+            [python.display().to_string()]
+                .into_iter()
+                .chain(args.iter().cloned())
+                .collect(),
+        );
+        calls.ran.push(format!("python {}", args.join(" ")));
+        let code = calls.python_codes.pop_front().unwrap_or(0);
+        // A successful review freezes the build at --output.
+        if code == 0 && args[0].ends_with("review-development-image.py") {
+            let review = calls.root.join(flag(args, "--output"));
+            fs::create_dir_all(&review)?;
+            fs::write(review.join("image.bin"), [0u8; 16])?;
+            let manifest = json!({"startup_identity": BUILD, "startup_motion_policy": null,
+                                  "variant": "fw11-reset"});
+            fs::write(review.join("build-manifest.json"), manifest.to_string())?;
         }
         Ok(code)
     }
@@ -104,7 +177,12 @@ fn rig() -> Rig {
     let tmp = tempfile::tempdir().unwrap();
     let board = FakeBoard::default();
     let tools = FakeTools::default();
-    tools.0.borrow_mut().sigrok = true;
+    {
+        let mut calls = tools.0.borrow_mut();
+        calls.sigrok = true;
+        calls.root = tmp.path().to_path_buf();
+        calls.status_default = server_status(BUILD, 1, true, false);
+    }
 
     let bench = Bench {
         root: tmp.path().to_path_buf(),
@@ -542,4 +620,492 @@ fn update_traffic_matches_observed_installs() {
 
     let (tx, rx) = update_traffic(&plan(0, 0)).unwrap();
     assert!(tx == 0 && close(rx, 703_173), "{rx}");
+}
+
+const BUILD: &str = "8a13e59efa15e56b5f5e32825909dc45e381a2027abc65d8de6658c40b302447";
+
+/// A frozen review under private/verification, and `ota` arguments for it.
+fn ota_review(rig: &Rig, manifest: Value) -> OtaArgs {
+    let review = rig.bench.root.join(VERIFICATION).join("review");
+    fs::create_dir_all(&review).unwrap();
+    fs::write(review.join("image.bin"), [0u8; 16]).unwrap();
+    fs::write(review.join("build-manifest.json"), manifest.to_string()).unwrap();
+    OtaArgs {
+        name: "unit".into(),
+        review: Some("private/verification/review".into()),
+        build: false,
+        variant: None,
+        python: None,
+        config: "private/server.json".into(),
+        version: None,
+        minutes: 20.0,
+        attended_motion: false,
+    }
+}
+
+fn plain_review(rig: &Rig) -> OtaArgs {
+    ota_review(
+        rig,
+        json!({"startup_identity": BUILD, "startup_motion_policy": null, "variant": "trial-reset"}),
+    )
+}
+
+fn signed_manifest(rig: &Rig, file: &str, version: u32) {
+    let mut bytes = b"PLOTA1\0\0".to_vec();
+    bytes.extend(version.to_le_bytes());
+    bytes.resize(148, 0);
+    fs::write(rig.bench.root.join(VERIFICATION).join(file), bytes).unwrap();
+}
+
+fn flag<'a>(args: &'a [String], name: &str) -> &'a str {
+    let at = args.iter().position(|a| a == name).unwrap();
+    &args[at + 1]
+}
+
+fn captured(rig: &Rig) -> Vec<String> {
+    rig.tools
+        .0
+        .borrow()
+        .observed
+        .iter()
+        .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+        .collect()
+}
+
+#[test]
+fn ota_signs_one_above_the_highest_signed_version_then_offers() {
+    let mut rig = rig();
+    let args = plain_review(&rig);
+    signed_manifest(&rig, "old-v3.manifest", 3);
+    signed_manifest(&rig, "old-v12.manifest", 12);
+    // Neither a full-length header nor a manifest name: ignored.
+    fs::write(
+        rig.bench.root.join(VERIFICATION).join("junk.manifest"),
+        b"PLOTA1\0\0\xff\xff\xff\xff",
+    )
+    .unwrap();
+    rig.tools.0.borrow_mut().rx.push_back(
+        format!("PLFW1 start build={BUILD} bank=1\r\nPLCNF1 confirmed=1 healthy_ms=30000\r\n")
+            .into_bytes(),
+    );
+
+    assert_eq!(rig.bench.ota(&args).unwrap(), 0);
+
+    let calls = rig.tools.0.borrow();
+    let [sign, offer] = &calls.local[..] else {
+        panic!("{:?}", calls.local)
+    };
+    assert_eq!(sign[0], "ota-sign");
+    assert_eq!(flag(sign, "--version"), "13");
+    assert_eq!(flag(sign, "--build-id"), BUILD);
+    assert_eq!(
+        flag(sign, "--image"),
+        "private/verification/review/image.bin"
+    );
+    assert_eq!(
+        flag(sign, "--output"),
+        "private/verification/unit-v13.manifest"
+    );
+    assert_eq!(offer[0], "ota-offer");
+    assert_eq!(
+        flag(offer, "--manifest"),
+        "private/verification/unit-v13.manifest"
+    );
+    drop(calls);
+    assert!(rig.board.log().is_empty(), "no relay change");
+}
+
+#[test]
+fn ota_takes_a_given_version() {
+    let mut rig = rig();
+    let mut args = plain_review(&rig);
+    args.version = Some(40);
+    rig.tools.0.borrow_mut().local_codes.extend([1]);
+
+    assert_eq!(rig.bench.ota(&args).unwrap(), 1);
+    assert_eq!(flag(&rig.tools.0.borrow().local[0], "--version"), "40");
+    assert!(captured(&rig).is_empty());
+}
+
+#[test]
+fn ota_refuses_a_motion_review_without_the_attended_flag() {
+    let mut rig = rig();
+    let mut args = ota_review(
+        &rig,
+        json!({"startup_identity": BUILD, "startup_motion_policy": "fw16-pulse-v1"}),
+    );
+
+    let error = rig.bench.ota(&args).unwrap_err();
+    assert!(error.to_string().contains("attended-motion"));
+    assert!(rig.tools.0.borrow().local.is_empty());
+
+    args.attended_motion = true;
+    rig.tools.0.borrow_mut().local_codes.extend([1]);
+    assert_eq!(rig.bench.ota(&args).unwrap(), 1);
+}
+
+#[test]
+fn ota_refuses_a_review_without_a_build_id() {
+    let mut rig = rig();
+    let args = ota_review(&rig, json!({"startup_identity": "abc"}));
+
+    let error = rig.bench.ota(&args).unwrap_err();
+    assert!(error.to_string().contains("startup_identity"));
+    assert!(rig.tools.0.borrow().local.is_empty());
+}
+
+#[test]
+fn ota_refuses_used_capture_names_before_signing() {
+    let mut rig = rig();
+    let args = plain_review(&rig);
+    fs::create_dir_all(rig.bench.root.join(CAPTURES).join("unit-03")).unwrap();
+
+    let error = rig.bench.ota(&args).unwrap_err();
+    assert!(error.to_string().contains("unit-03"));
+    assert!(rig.tools.0.borrow().local.is_empty());
+}
+
+#[test]
+fn a_failed_offer_stops_without_capturing() {
+    let mut rig = rig();
+    let args = plain_review(&rig);
+    rig.tools.0.borrow_mut().local_codes.extend([0, 1]);
+
+    assert_eq!(rig.bench.ota(&args).unwrap(), 1);
+    assert_eq!(rig.tools.0.borrow().local.len(), 2);
+    assert!(captured(&rig).is_empty());
+}
+
+#[test]
+fn ota_passes_across_segments_and_records_steps() {
+    let mut rig = rig();
+    rig.bench.status = Status::new(&rig.bench.root, rig.bench.root.join("status"));
+    rig.bench
+        .status
+        .begin("ota", Some("unit"), steps("ota"))
+        .unwrap();
+    let args = plain_review(&rig);
+    {
+        let mut calls = rig.tools.0.borrow_mut();
+        calls.rx.push_back(b"PLWCH1 give_way=1 version=1 restart=1\r\nPLOTA1 manifest version=1 bytes=671744\r\nPLOTA1 progress sec".to_vec());
+        calls.rx.push_back(format!("tors=16/164 leases=255\r\nPLOTA1 activated version=1\r\nPLTRL1 confirmed=0 boot=1 limit=3\r\nPLFW1 start build={BUILD} bank=1 reset=0\r\n").into_bytes());
+        calls
+            .rx
+            .push_back(b"[SDK] noise\r\nPLCNF1 confirmed=1 healthy_ms=30000\r\n".to_vec());
+    }
+
+    assert_eq!(rig.bench.ota(&args).unwrap(), 0);
+
+    assert_eq!(captured(&rig), ["unit-01", "unit-02", "unit-03"]);
+    let state = rig.bench.status.state.as_ref().unwrap();
+    let steps: Vec<_> = state
+        .steps
+        .iter()
+        .map(|s| (s.label.as_str(), s.state.as_str()))
+        .collect();
+    assert_eq!(
+        steps,
+        [
+            ("petlibre-local ota-sign", "done"),
+            ("petlibre-local ota-offer", "done"),
+            ("give way", "done"),
+            ("download", "done"),
+            ("new build boot", "done"),
+            ("confirm", "done"),
+            ("health", "running"),
+        ]
+    );
+    assert!(state.lines.iter().any(|l| l == "Written sectors: 16/164"));
+}
+
+#[test]
+fn ota_reports_a_fallback_with_its_boot_count() {
+    let mut rig = rig();
+    let args = plain_review(&rig);
+    rig.tools.0.borrow_mut().rx.push_back(
+        format!("PLOTA1 activated version=1\nPLTRL1 confirmed=0 boot=3 limit=3\nPLFW1 start build={BUILD} bank=1\nPLTRL1 give_way=1 marker=00 reset=1\n").into_bytes(),
+    );
+
+    let error = rig.bench.ota(&args).unwrap_err().to_string();
+    assert!(
+        error.contains("Fell back") && error.contains("boot 3"),
+        "{error}"
+    );
+    assert_eq!(captured(&rig), ["unit-01"]);
+}
+
+#[test]
+fn ota_reports_an_update_error_stage() {
+    let mut rig = rig();
+    let args = plain_review(&rig);
+    rig.tools
+        .0
+        .borrow_mut()
+        .rx
+        .push_back(b"PLOTA1 error stage=hash\r\n".to_vec());
+
+    let error = rig.bench.ota(&args).unwrap_err().to_string();
+    assert!(error.contains("stage hash"), "{error}");
+}
+
+#[test]
+fn ota_stops_when_time_runs_out() {
+    let mut rig = rig();
+    let mut args = plain_review(&rig);
+    args.minutes = 2.5;
+
+    let error = rig.bench.ota(&args).unwrap_err().to_string();
+    assert!(error.contains("No outcome within 2.5 min"), "{error}");
+    assert_eq!(captured(&rig), ["unit-01", "unit-02", "unit-03"]);
+}
+
+const OTHER: &str = "5b8433a4f795cb2178c7a38a45087a6727e7a2621fc557d146cff607556f991e";
+
+/// `petlibre-local status` output with one replacement health message.
+fn server_status(build: &str, bank: u8, online: bool, stale: bool) -> String {
+    json!({"broker_connected": true, "replacement": {
+        "health": {"schema": "petlibre.health", "v": 1, "online": true, "seq": 7,
+                   "build": build, "bank": bank, "outputs": "stopped", "faults": [],
+                   "clock": {"syncs": 1, "unix_ms": 1_792_674_000_000_u64}},
+        "age_ms": if stale { 80_000 } else { 1_000 }, "online": online, "stale": stale,
+        "rejected": 0, "replies": []}})
+    .to_string()
+}
+
+fn answer(stdout: String) -> Captured {
+    Captured {
+        code: 0,
+        stdout,
+        stderr: String::new(),
+    }
+}
+
+/// `ota --build` arguments with the default interpreter in place.
+fn build_args(rig: &Rig) -> OtaArgs {
+    let python = rig.bench.root.join(".venv/bin/python");
+    fs::create_dir_all(python.parent().unwrap()).unwrap();
+    fs::write(&python, "").unwrap();
+    OtaArgs {
+        name: "unit".into(),
+        review: None,
+        build: true,
+        variant: Some(Variant::Fw11Reset),
+        python: None,
+        config: "private/server.json".into(),
+        version: None,
+        minutes: 20.0,
+        attended_motion: false,
+    }
+}
+
+fn recorded(rig: &Rig) -> Vec<String> {
+    rig.bench.status.state.as_ref().unwrap().lines.clone()
+}
+
+fn with_status(rig: &mut Rig, build: bool) {
+    rig.bench.status = Status::new(&rig.bench.root, rig.bench.root.join("status"));
+    rig.bench
+        .status
+        .begin("ota", Some("unit"), &ota::steps(build))
+        .unwrap();
+}
+
+/// A passing run in one segment, with chunk times: the give-way at 12:00:00,
+/// activation 200 s later, confirmation 45 s after that.
+fn timed_pass(rig: &Rig) {
+    let lines = [
+        "PLWCH1 give_way=1 version=1 restart=1\r\n".to_string(),
+        "PLOTA1 activated version=1\r\n".into(),
+        format!("PLFW1 start build={BUILD} bank=1\r\nPLCNF1 confirmed=1 healthy_ms=30000\r\n"),
+    ];
+    let times = ["12:00:00", "12:03:20", "12:04:05.5"];
+    let mut offset = 0;
+    let mut chunks = String::new();
+    for (line, time) in lines.iter().zip(times) {
+        chunks += &format!(
+            "{}\n",
+            json!({"utc": format!("2026-10-22T{time}+00:00"), "direction": "rx",
+                   "offset": offset, "bytes": line.len()})
+        );
+        offset += line.len();
+    }
+    let mut calls = rig.tools.0.borrow_mut();
+    calls.rx.push_back(lines.concat().into_bytes());
+    calls.chunks.push_back(chunks);
+}
+
+#[test]
+fn ota_build_builds_reviews_offers_and_checks_health_in_order() {
+    let mut rig = rig();
+    with_status(&mut rig, true);
+    let args = build_args(&rig);
+    timed_pass(&rig);
+
+    assert_eq!(rig.bench.ota(&args).unwrap(), 0);
+
+    let calls = rig.tools.0.borrow();
+    assert_eq!(
+        calls.ran,
+        [
+            "python firmware/tools/build.py plaf103-firstboot --trial-reset",
+            "python tools/flash/review-development-image.py build --build private/firmware-build/plaf103-firstboot --output private/verification/unit-review",
+            "local ota-sign --image private/verification/unit-review/image.bin --version 1 --build-id 8a13e59efa15e56b5f5e32825909dc45e381a2027abc65d8de6658c40b302447 --output private/verification/unit-v1.manifest",
+            "local ota-offer --manifest private/verification/unit-v1.manifest --image private/verification/unit-review/image.bin",
+            "query status --config private/server.json",
+        ]
+    );
+    let python = rig.bench.root.join(".venv/bin/python");
+    assert!(
+        calls
+            .python
+            .iter()
+            .all(|run| run[0] == python.display().to_string())
+    );
+    drop(calls);
+
+    let lines = recorded(&rig);
+    let has = |text: &str| lines.iter().any(|l| l.contains(text));
+    assert!(has("Build took ") && has("Review took "), "{lines:?}");
+    assert!(
+        has(
+            "Health: build 8a13e59efa15 on bank 1, seq 7, outputs stopped, faults none, clock valid (syncs 1)"
+        ),
+        "{lines:?}"
+    );
+    let at = lines.iter().position(|l| l == "Timing:").unwrap();
+    let summary: Vec<_> = lines[at + 1..]
+        .iter()
+        .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
+        .collect();
+    for (row, expected) in summary.iter().zip([
+        "Build ",
+        "Review ",
+        "Sign + offer ",
+        "Give-way to activation (download) 3 min 20 s",
+        "Activation to confirmation 45.5 s",
+        "Health check ",
+        "Total ",
+    ]) {
+        assert!(row.starts_with(expected), "{row:?} vs {expected:?}");
+    }
+    assert_eq!(summary.len(), 7);
+    assert!(rig.board.log().is_empty(), "no relay change");
+}
+
+#[test]
+fn a_failed_build_or_review_stops_before_offering() {
+    for codes in [&[1][..], &[0, 2]] {
+        let mut rig = rig();
+        with_status(&mut rig, true);
+        let args = build_args(&rig);
+        rig.tools.0.borrow_mut().python_codes.extend(codes);
+
+        assert_eq!(rig.bench.ota(&args).unwrap(), 1, "{codes:?}");
+
+        let calls = rig.tools.0.borrow();
+        assert_eq!(calls.python.len(), codes.len());
+        assert!(calls.local.is_empty() && calls.queries.is_empty());
+        drop(calls);
+        assert!(captured(&rig).is_empty());
+        let lines = recorded(&rig);
+        assert!(lines.iter().any(|l| l.starts_with("Build took ")));
+        assert!(lines.iter().any(|l| l == "Timing:"), "{lines:?}");
+    }
+}
+
+#[test]
+fn ota_build_refuses_an_existing_review_or_missing_python_up_front() {
+    let mut rig = rig();
+    let args = build_args(&rig);
+    fs::create_dir_all(rig.bench.root.join(VERIFICATION).join("unit-review")).unwrap();
+
+    let error = rig.bench.ota(&args).unwrap_err().to_string();
+    assert!(
+        error.contains("Refusing to reuse private/verification/unit-review"),
+        "{error}"
+    );
+    assert!(rig.tools.0.borrow().ran.is_empty());
+
+    let mut other = self::rig();
+    let mut args = build_args(&other);
+    args.python = Some("absent/python".into());
+    let error = other.bench.ota(&args).unwrap_err().to_string();
+    assert!(error.contains("--python"), "{error}");
+    assert!(other.tools.0.borrow().ran.is_empty());
+}
+
+#[test]
+fn build_options_without_build_are_refused() {
+    let mut rig = rig();
+    let mut args = plain_review(&rig);
+    args.variant = Some(Variant::Fw11Fail);
+
+    let error = rig.bench.ota(&args).unwrap_err().to_string();
+    assert!(error.contains("--build only"), "{error}");
+    assert!(rig.tools.0.borrow().ran.is_empty());
+}
+
+#[test]
+fn the_motion_variant_is_refused() {
+    let error = ota::parse_variant("fw16-pulse").unwrap_err();
+    assert!(error.contains("motion builds stay manual"), "{error}");
+    assert_eq!(ota::parse_variant("fw11-fail"), Ok(Variant::Fw11Fail));
+    assert!(ota::parse_variant("pulse").is_err());
+}
+
+#[test]
+fn health_that_never_shows_the_build_fails_after_confirmation() {
+    let mut rig = rig();
+    with_status(&mut rig, false);
+    let args = plain_review(&rig);
+    timed_pass(&rig);
+    rig.tools.0.borrow_mut().status_default = server_status(OTHER, 0, true, false);
+
+    let error = rig.bench.ota(&args).unwrap_err().to_string();
+    assert!(
+        error.contains("Confirmed on UART but health did not report the build")
+            && error.contains("health reports build 5b8433a4f795"),
+        "{error}"
+    );
+
+    // Every 5 s from 0 to 90 s, and the unchanged reason is shown once.
+    assert_eq!(rig.tools.0.borrow().queries.len(), 19);
+    let lines = recorded(&rig);
+    let waits = lines
+        .iter()
+        .filter(|l| l.starts_with("Waiting for health"))
+        .count();
+    assert_eq!(waits, 1);
+    let health = lines
+        .iter()
+        .find(|l| l.trim_start().starts_with("Health check"))
+        .unwrap();
+    assert!(!health.ends_with('-'), "{health}");
+}
+
+#[test]
+fn stale_or_failed_health_is_waited_out_until_it_matches() {
+    let mut rig = rig();
+    with_status(&mut rig, false);
+    let args = plain_review(&rig);
+    timed_pass(&rig);
+    rig.tools.0.borrow_mut().statuses.extend([
+        Captured {
+            code: 1,
+            stdout: String::new(),
+            stderr: "Error: local API returned 503\n".into(),
+        },
+        answer(server_status(BUILD, 1, false, true)),
+        answer(server_status(BUILD, 1, true, false)),
+    ]);
+
+    assert_eq!(rig.bench.ota(&args).unwrap(), 0);
+
+    assert_eq!(rig.tools.0.borrow().queries.len(), 3);
+    let lines = recorded(&rig);
+    let has = |text: &str| lines.iter().any(|l| l.contains(text));
+    assert!(has("exited 1: Error: local API returned 503"), "{lines:?}");
+    assert!(has("health reports the firmware offline"), "{lines:?}");
+    // A review run has nothing to report for the build.
+    assert!(has("skipped (--review)"), "{lines:?}");
 }

@@ -14,13 +14,13 @@ use std::sync::atomic::Ordering;
 use clap::{Parser, Subcommand};
 
 use petlibre_bench::commands::{
-    self, Bench, DemoArgs, ExecuteArgs, GiveWayArgs, GiveWayExecuteArgs, TransientArgs, UpdateArgs,
-    check_name, pattern_name,
+    self, Bench, DemoArgs, ExecuteArgs, GiveWayArgs, GiveWayExecuteArgs, OtaArgs, TransientArgs,
+    UpdateArgs, check_name, pattern_name,
 };
 use petlibre_bench::config::{Config, STATUS_DIR};
 use petlibre_bench::relay::Relay;
 use petlibre_bench::status::{self, Status};
-use petlibre_bench::tools::{Processes, Tools, default_flash_bin};
+use petlibre_bench::tools::{Processes, Tools, default_flash_bin, default_local_bin};
 use petlibre_bench::{Error, INTERRUPTED, ui};
 
 #[derive(Parser)]
@@ -45,11 +45,14 @@ struct Cli {
     /// The petlibre-flash binary (default: beside this one).
     #[arg(long, global = true)]
     flash_bin: Option<PathBuf>,
+    /// The petlibre-local binary for `ota` (default: beside this one).
+    #[arg(long, global = true)]
+    local_bin: Option<PathBuf>,
 
     /// Serve the read-only progress page: alone until Ctrl+C, or while a command runs.
     #[arg(long, global = true)]
     ui: bool,
-    /// Address for the page; anything but loopback requires a printed token.
+    /// Address for the page: loopback, or one named interface such as Tailscale.
     #[arg(long, global = true, default_value = "127.0.0.1", requires = "ui")]
     listen: String,
     #[arg(long, global = true, default_value_t = 8780, requires = "ui")]
@@ -103,6 +106,10 @@ enum Command {
     GiveWayPrepare(GiveWayArgs),
     /// Clear bank 1's first marker byte, then boot.
     GiveWayExecute(GiveWayExecuteArgs),
+    /// Sign and offer a review (or `--build` one first) to the running local
+    /// server, watch the UART until it confirms or falls back, then check the
+    /// server's health; never touches power.
+    Ota(OtaArgs),
 
     /// Click the spare relays 3 and 4 in patterns; never switches power or the strap.
     Demo(DemoArgs),
@@ -123,6 +130,7 @@ impl Command {
             Self::FlashExecute(_) => "flash-execute",
             Self::GiveWayPrepare(_) => "give-way-prepare",
             Self::GiveWayExecute(_) => "give-way-execute",
+            Self::Ota(_) => "ota",
             Self::Demo(_) => "demo",
         }
     }
@@ -139,6 +147,7 @@ impl Command {
             Self::FlashExecute(args) => Some(&args.update.name),
             Self::GiveWayPrepare(args) => Some(&args.name),
             Self::GiveWayExecute(args) => Some(&args.give_way.name),
+            Self::Ota(args) => Some(&args.name),
         }
     }
 }
@@ -171,7 +180,7 @@ fn run(cli: Cli) -> petlibre_bench::Result<u8> {
     let page = if cli.ui {
         let listen = ui::Listen::new(&cli.listen, cli.ui_port)?;
         let handle = ui::start(root.clone(), flash_bin.clone(), &listen)?;
-        println!("Bench page on {} (Ctrl+C to stop)", listen.url());
+        petlibre_bench::say!("Bench page on {} (Ctrl+C to stop)", listen.url());
         Some(handle)
     } else {
         None
@@ -199,10 +208,16 @@ fn run(cli: Cli) -> petlibre_bench::Result<u8> {
     }
 
     let config = Config::load(&root)?;
-    let relay = Relay::open(&config.relay_port)?;
+    // The over-the-air loop only captures, so it leaves the relay board free.
+    let relay = if matches!(command, Command::Ota(_)) {
+        Relay::detached()
+    } else {
+        Relay::open(&config.relay_port)?
+    };
     let tools = Processes {
         root: root.clone(),
         flash_bin,
+        local_bin: cli.local_bin.clone().unwrap_or_else(default_local_bin),
     };
     let flash_tool = tools.flash_tool();
     let mut bench = Bench {
@@ -225,6 +240,7 @@ fn run(cli: Cli) -> petlibre_bench::Result<u8> {
                 .map(pattern_name)
                 .collect(),
             Command::Capture { .. } => vec!["capture"],
+            Command::Ota(args) => commands::ota::steps(args.build),
             _ => commands::steps(label).to_vec(),
         };
         bench.status.begin(label, command.name(), &steps)?;
@@ -260,6 +276,78 @@ fn dispatch(bench: &mut Bench, command: &Command) -> petlibre_bench::Result<u8> 
         Command::FlashExecute(args) => bench.flash_execute(args),
         Command::GiveWayPrepare(args) => bench.give_way_prepare(args),
         Command::GiveWayExecute(args) => bench.give_way_execute(args),
+        Command::Ota(args) => bench.ota(args),
         Command::Demo(args) => bench.demo(args),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ota_takes_its_flags_and_the_global_local_bin() {
+        let cli = Cli::try_parse_from([
+            "petlibre-bench",
+            "ota",
+            "fw12-x",
+            "--review",
+            "private/verification/r",
+            "--version",
+            "14",
+            "--minutes",
+            "5",
+            "--local-bin",
+            "bin/petlibre-local",
+        ])
+        .unwrap();
+
+        let Some(Command::Ota(args)) = &cli.command else {
+            panic!("not ota")
+        };
+        assert_eq!((args.version, args.minutes), (Some(14), 5.0));
+        assert!(!args.attended_motion && !args.build);
+        assert_eq!(args.config, PathBuf::from("private/server.json"));
+        assert_eq!(cli.local_bin, Some(PathBuf::from("bin/petlibre-local")));
+    }
+
+    fn ota(extra: &[&str]) -> Result<Cli, clap::Error> {
+        Cli::try_parse_from(["petlibre-bench", "ota", "fw12-x"].iter().chain(extra))
+    }
+
+    #[test]
+    fn ota_build_takes_a_no_motion_variant_python_and_config() {
+        let cli = ota(&[
+            "--build",
+            "--variant",
+            "fw11-fail",
+            "--python",
+            "/usr/bin/python3",
+            "--config",
+            "private/other.json",
+        ])
+        .unwrap();
+
+        let Some(Command::Ota(args)) = &cli.command else {
+            panic!("not ota")
+        };
+        assert!(args.build && args.review.is_none());
+        assert_eq!(args.variant, Some(commands::Variant::Fw11Fail));
+        assert_eq!(args.python, Some(PathBuf::from("/usr/bin/python3")));
+        assert_eq!(args.config, PathBuf::from("private/other.json"));
+    }
+
+    #[test]
+    fn ota_refuses_the_motion_variant_and_mixed_sources() {
+        let error = ota(&["--build", "--variant", "fw16-pulse"])
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(error.contains("motion builds stay manual"), "{error}");
+
+        // --variant and --python without --build are refused by the command.
+        for extra in [&["--build", "--review", "private/verification/r"][..], &[]] {
+            assert!(ota(extra).is_err(), "{extra:?}");
+        }
     }
 }

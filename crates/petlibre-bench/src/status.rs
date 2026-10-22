@@ -396,7 +396,8 @@ pub fn relative(root: &Path, path: &Path) -> String {
         .to_string()
 }
 
-/// `Read N/M bytes` or `Verified changed sectors: N/M` in a tool's output.
+/// `Read N/M bytes`, `Verified changed sectors: N/M` or the over-the-air
+/// loop's `Written sectors: N/M` in a tool's output.
 pub fn progress_count(text: &str) -> Option<(u64, u64, &'static str)> {
     fn pair(text: &str) -> Option<(u64, u64)> {
         let (done, rest) = text.split_once('/')?;
@@ -413,8 +414,12 @@ pub fn progress_count(text: &str) -> Option<(u64, u64, &'static str)> {
             return pair(counts).map(|(d, t)| (d, t, "bytes"));
         }
     }
-    let at = text.find("Verified changed sectors: ")?;
-    pair(&text[at + 26..]).map(|(d, t)| (d, t, "sectors"))
+    for prefix in ["Verified changed sectors: ", "Written sectors: "] {
+        if let Some(at) = text.find(prefix) {
+            return pair(&text[at + prefix.len()..]).map(|(d, t)| (d, t, "sectors"));
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -495,6 +500,10 @@ mod tests {
         assert_eq!(
             progress_count("Verified changed sectors: 3/19"),
             Some((3, 19, "sectors"))
+        );
+        assert_eq!(
+            progress_count("Written sectors: 16/164"),
+            Some((16, 164, "sectors"))
         );
         assert_eq!(progress_count("Read the ROM"), None);
         assert_eq!(progress_count("Region acquisition 1 complete"), None);

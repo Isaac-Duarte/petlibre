@@ -3,7 +3,9 @@
 //!
 //! `main` dispatches each subcommand to a [`Bench`] method. Bench only
 //! switches relays and orders steps; serial reads, inspections, plans and
-//! writes go through [`Tools`] as separate `petlibre-flash` runs. Evidence
+//! writes go through [`Tools`] as separate `petlibre-flash` runs (and the
+//! over-the-air loop's build and review as Python runs, its signing, offer
+//! and health check as `petlibre-local` runs). Evidence
 //! directories are never reused, and an execute refuses once its output
 //! exists, so each prepared plan runs at most once.
 
@@ -20,6 +22,9 @@ use crate::relay::{POWER, Relay, SPARES, STRAP};
 use crate::status::{Status, relative};
 use crate::tools::{Analyzer, Observer, Tools};
 use crate::{Error, Result, now, require, sha256_hex};
+
+pub mod ota;
+pub use ota::{OtaArgs, Variant};
 
 pub const STRAP_SECONDS: f64 = 2.0;
 pub const LOADER_SECONDS: f64 = 5.0;
@@ -255,7 +260,7 @@ impl Bench {
     /// Run one `petlibre-flash` command; its exit status. An interrupt during
     /// it stops the sequence even if the child finished, so no step follows.
     fn run(&mut self, args: &[String]) -> Result<i32> {
-        println!("+ petlibre-flash {}", args.join(" "));
+        say!("+ petlibre-flash {}", args.join(" "));
         self.status
             .step(&format!("petlibre-flash {} {}", args[0], args[1]));
         let code = self.tools.flash(args, &mut self.status)?;
@@ -269,7 +274,7 @@ impl Bench {
     fn run_all(&mut self, steps: &[Vec<String>]) -> Result<bool> {
         for step in steps {
             if self.run(step)? != 0 {
-                println!("{STOPPED_POWERED}");
+                say!("{STOPPED_POWERED}");
                 return Ok(false);
             }
         }
@@ -279,7 +284,7 @@ impl Bench {
     pub fn status_report(&mut self) -> Result<u8> {
         for channel in 1..=4 {
             let on = self.get(channel)?;
-            println!("Relay {channel}: {}", if on { "on" } else { "off" });
+            say!("Relay {channel}: {}", if on { "on" } else { "off" });
         }
 
         for (key, port) in [
@@ -287,7 +292,7 @@ impl Bench {
             ("uart_port", &self.config.uart_port),
         ] {
             let present = Path::new(port).exists();
-            println!("{key}: {}", if present { "present" } else { "missing" });
+            say!("{key}: {}", if present { "present" } else { "missing" });
         }
         Ok(0)
     }
@@ -309,7 +314,7 @@ impl Bench {
         self.fresh(&output)?;
         let mut observer = self.start_observer(&output, seconds)?;
         let result = self.finish_observer(observer.as_mut())?;
-        println!(
+        say!(
             "Captured {} bytes in {}",
             result["bytes"],
             self.rel(&output)
@@ -334,7 +339,7 @@ impl Bench {
             "Boot reached the ROM loader, not the application",
         )?;
 
-        println!(
+        say!(
             "Boot captured: {} bytes in {}; fault marker {}",
             result["bytes"],
             self.rel(output),
@@ -374,7 +379,7 @@ impl Bench {
 
         match entered {
             Ok(result) => {
-                println!(
+                say!(
                     "Loader confirmed: banner and {} NAKs in {}",
                     result["nak_bytes"],
                     self.rel(output)
@@ -433,7 +438,7 @@ impl Bench {
         session?;
         cut?;
 
-        println!(
+        say!(
             "Transient captures in {}; audit them with petlibre-audit transients",
             self.rel(&out)
         );
@@ -472,7 +477,7 @@ impl Bench {
                 out.join("manifest.json"),
                 serde_json::to_string_pretty(manifest)?,
             )?;
-            println!("Cycle {n}/{}: {bytes} bytes", args.cycles);
+            say!("Cycle {n}/{}: {bytes} bytes", args.cycles);
         }
         Ok(())
     }
@@ -539,7 +544,7 @@ impl Bench {
             return Ok(1);
         }
 
-        println!(
+        say!(
             "Full read in {}; compare it before relying on it",
             self.rel(&p.full)
         );
@@ -621,6 +626,11 @@ impl Bench {
         else {
             return Ok(());
         };
+        self.attended_motion(&manifest, args.attended_motion)
+    }
+
+    /// Refuse a build manifest naming a motion policy unless `allowed`.
+    fn attended_motion(&self, manifest: &Value, allowed: bool) -> Result<()> {
         let policy = &manifest["startup_motion_policy"];
         if !truthy(policy) {
             return Ok(());
@@ -630,12 +640,12 @@ impl Bench {
             .as_str()
             .map_or_else(|| policy.to_string(), str::to_string);
         require(
-            args.attended_motion,
+            allowed,
             format!(
                 "Target drives the motor ({policy}); rerun with --attended-motion only with the owner watching"
             ),
         )?;
-        println!("Attended motion image ({policy}): the motor will move after boot");
+        say!("Attended motion image ({policy}): the motor will move after boot");
         Ok(())
     }
 
@@ -677,7 +687,7 @@ impl Bench {
         let (raw, sha) = self.prepared(&p)?;
         let plan: Value = serde_json::from_slice(&raw)?;
         let plan = &plan["operation_plan"];
-        println!(
+        say!(
             "Plan {}: bank {}, {} sectors staged, {} erases, target {}",
             self.rel(&p.plan),
             plan["bank"],
@@ -687,7 +697,7 @@ impl Bench {
         );
 
         let next = execute_line(args, &sha);
-        println!("Review it, then: {next}");
+        say!("Review it, then: {next}");
         self.status.next(next);
         Ok(0)
     }
@@ -728,7 +738,7 @@ impl Bench {
             ],
         );
         if self.run(&command)? != 0 {
-            println!("Update stopped; the feeder stays powered and is not booted. No retry.");
+            say!("Update stopped; the feeder stays powered and is not booted. No retry.");
             return Ok(1);
         }
 
@@ -780,7 +790,7 @@ impl Bench {
 
         let (raw, sha) = self.prepared(&p)?;
         let plan: Value = serde_json::from_slice(&raw)?;
-        println!(
+        say!(
             "Give-way plan {}: clears bank 1's first marker byte; bank 0 is {}",
             self.rel(&p.plan),
             plan["operation_plan"]["fallback_ota_sha256"]
@@ -793,7 +803,7 @@ impl Bench {
             args.name,
             args.fallback.display()
         );
-        println!("Review it, then: {next}");
+        say!("Review it, then: {next}");
         self.status.next(next);
         Ok(0)
     }
@@ -823,7 +833,7 @@ impl Bench {
             ],
         );
         if self.run(&command)? != 0 {
-            println!("Give-way stopped; the feeder stays powered and is not booted. No retry.");
+            say!("Give-way stopped; the feeder stays powered and is not booted. No retry.");
             return Ok(1);
         }
 
@@ -835,7 +845,7 @@ impl Bench {
     pub fn demo(&mut self, args: &DemoArgs) -> Result<u8> {
         let power = self.get(POWER)?;
         let strap = self.get(STRAP)?;
-        println!(
+        say!(
             "Feeder power {}, strap {}: left as is",
             if power { "on" } else { "off" },
             if strap { "held" } else { "released" }
@@ -853,7 +863,7 @@ impl Bench {
             for pattern in &patterns {
                 let label = pattern_name(*pattern);
                 show.bench.status.step(label);
-                println!("{label}...");
+                say!("{label}...");
                 match pattern {
                     Pattern::Chase => show.chase(4)?,
                     Pattern::Blink => show.blink(3)?,
@@ -878,7 +888,7 @@ impl Bench {
         match failure {
             Some(error) => Err(error),
             None => {
-                println!("Done: {toggles} toggles");
+                say!("Done: {toggles} toggles");
                 Ok(0)
             }
         }
@@ -959,6 +969,15 @@ pub fn steps(command: &str) -> &'static [&'static str] {
             "petlibre-flash give-way prepare",
         ],
         "give-way-execute" => &["petlibre-flash give-way execute", "boot capture"],
+        "ota" => &[
+            "petlibre-local ota-sign",
+            "petlibre-local ota-offer",
+            ota::STAGES[0],
+            ota::STAGES[1],
+            ota::STAGES[2],
+            ota::STAGES[3],
+            ota::HEALTH_STEP,
+        ],
         _ => &[],
     }
 }

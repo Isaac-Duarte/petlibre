@@ -82,6 +82,12 @@ impl Relay {
         Ok(Self::new(Box::new(SerialLink::open(path)?)))
     }
 
+    /// No board: every command fails. For a command that never switches a
+    /// relay, so it does not hold the board's port while it runs.
+    pub fn detached() -> Self {
+        Self::new(Box::new(Detached))
+    }
+
     fn command(&mut self, text: &str) -> Result<Vec<u8>> {
         let raw = self.link.transact(text)?;
         let reply = trim(&raw).to_vec();
@@ -118,6 +124,16 @@ impl Relay {
             ),
         )?;
         Ok(on)
+    }
+}
+
+struct Detached;
+
+impl Link for Detached {
+    fn transact(&mut self, line: &str) -> io::Result<Vec<u8>> {
+        Err(io::Error::other(format!(
+            "This command does not open the relay board; refused {line}"
+        )))
     }
 }
 
@@ -200,6 +216,11 @@ mod tests {
         let mut relay = Relay::new(Box::new(board));
 
         assert!(relay.set(1, true).is_err());
+    }
+
+    #[test]
+    fn a_detached_relay_switches_nothing() {
+        assert!(Relay::detached().set(1, false).is_err());
     }
 
     #[test]

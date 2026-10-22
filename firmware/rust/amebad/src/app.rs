@@ -166,6 +166,9 @@ static RESTART: AtomicBool = AtomicBool::new(false);
 /// An updater step longer than this (a hang) stops the feeding.
 const LIVENESS_MS: u32 = 10_000;
 const FEED_MS: u32 = 250;
+/// 24 KiB: Ed25519 verification under the manifest step needs about 12 KiB,
+/// and 10 KiB overflowed on hardware.
+const UPDATER_STACK_WORDS: u16 = 6144;
 
 unsafe extern "C" fn hook_ready(context: *mut c_void) -> bool {
     // SAFETY: the context is the fixed provider; called with no lease held.
@@ -289,8 +292,13 @@ unsafe extern "C" fn feeder_task(_: *mut c_void) -> u32 {
 /// The recovery role: the updater, and the feeder above it so a long
 /// network wait cannot starve the watchdog.
 fn start_updater() {
-    let created = sdk::task_create(c"petlibre-ota", 2560, 2, updater_task, ptr::null_mut())
-        && sdk::task_create(c"petlibre-wdg", 512, 3, feeder_task, ptr::null_mut());
+    let created = sdk::task_create(
+        c"petlibre-ota",
+        UPDATER_STACK_WORDS,
+        2,
+        updater_task,
+        ptr::null_mut(),
+    ) && sdk::task_create(c"petlibre-wdg", 512, 3, feeder_task, ptr::null_mut());
     sdk::log(if created {
         c"PLOTA1 tasks created=1\r\n"
     } else {

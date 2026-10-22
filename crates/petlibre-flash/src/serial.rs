@@ -21,6 +21,7 @@ impl Serial {
             .dtr_on_open(false)
             .open_native()
             .map_err(io::Error::from)?;
+
         port.set_exclusive(true).map_err(io::Error::from)?;
         modem_line(port.write_request_to_send(false))?;
         modem_line(port.write_data_terminal_ready(false))?;
@@ -94,6 +95,7 @@ impl Emulated {
         request.extend_from_slice(&(argument as u32).to_le_bytes());
         request.extend_from_slice(data);
         self.0.write_all(&request)?;
+
         let mut length = [0u8; 4];
         self.0.read_exact(&mut length)?;
         let mut reply = vec![0; u32::from_le_bytes(length) as usize];

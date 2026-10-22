@@ -55,6 +55,7 @@ fn react() {
         if m.halted {
             return;
         }
+
         let km4 = m.regs[1];
         match m.parked_lease {
             None if km4[10] == REQUEST && !m.deaf => {
@@ -68,6 +69,7 @@ fn react() {
                     m.parked_at = sdk::systimer_ticks();
                 }
             }
+
             Some(lease) => {
                 if km4[10] == RELEASE && km4[6] == lease {
                     m.regs[0][10] = RELEASED;
@@ -92,12 +94,15 @@ impl<const KM0: bool> Mmio for Core<KM0> {
             fake::advance(1, false);
             return sdk::systimer_ticks();
         }
+
         if address == SYSTICK_CTRL {
             return sdk::systick_ctrl();
         }
+
         if (BACKUP_BASE..BACKUP_BASE + 32).contains(&address) {
             return fake::with(|h| h.backup[((address - BACKUP_BASE) / 4) as usize]);
         }
+
         let (core, index) = locate(address);
         km0(|m| m.regs[core][index])
     }
@@ -106,11 +111,13 @@ impl<const KM0: bool> Mmio for Core<KM0> {
             fake::with(|h| h.backup[((address - BACKUP_BASE) / 4) as usize] = value);
             return;
         }
+
         if address == 0x4000_6008 {
             assert_eq!(value, 1 << PARK_CHANNEL);
             km0(|m| m.rings += 1);
             return;
         }
+
         let (core, index) = locate(address);
         km0(|m| m.regs[core][index] = value);
     }
@@ -134,6 +141,7 @@ fn locate(address: u32) -> (usize, usize) {
 
 /// A hook fault: the target halts in RAM; the model stops the boot here.
 struct HookFault;
+
 /// True when this mutating call is the one the power cut interrupts; it then
 /// marks power lost. Callbacks are `extern "C"`, so the cut cannot unwind.
 fn cut_now() -> bool {
@@ -145,6 +153,7 @@ fn cut_now() -> bool {
         }
         None => false,
     });
+
     if hit {
         POWER_LOST.with(|p| p.set(true));
         CUT.with(|c| c.set(None));
@@ -165,18 +174,23 @@ fn leased<R>(op: impl FnOnce() -> R) -> R {
     let mut ticket = HookTicket::default();
     // SAFETY: the provider is live; the probe does not hold it across this.
     let p = unsafe { &mut *provider };
+
     if !p.acquire::<Core<false>>(&mut ticket) {
         std::panic::panic_any(HookFault);
     }
+
     assert_eq!(sdk::primask(), 1, "acquire returns with IRQs masked");
     assert_eq!(sdk::systick_ctrl() & park::SYSTICK_CONTROL_BITS, 0);
     assert!(ticket.id != 0 && ticket.saved_systick & !7 == 0);
     // The operation runs with XIP unavailable: KM0 must be parked.
     assert!(km0(|m| m.parked_lease.is_some()));
+
     let result = op();
+
     if !p.release::<Core<false>>(&ticket) {
         std::panic::panic_any(HookFault);
     }
+
     assert_eq!(sdk::primask(), 1, "release keeps IRQs masked");
     sdk::set_systick_ctrl(ticket.saved_systick);
     sdk::set_primask(0);
@@ -205,6 +219,7 @@ impl FlashOps for Hooks {
         if power_lost() {
             return false;
         }
+
         ERASES.with(|e| e.set(e.get() + 1));
         if cut_now() {
             // An interrupted erase: half the sector raised to ones.
@@ -221,6 +236,7 @@ impl FlashOps for Hooks {
         if power_lost() {
             return false;
         }
+
         if cut_now() {
             // An interrupted program: the first half of the bytes landed.
             let half = data.len() / 2 / 4 * 4;
@@ -268,16 +284,19 @@ fn platform_boot_cut(
         });
         assert!(stopped::initialize().verified());
         fake::with(|h| h.interrupts = 0);
+
         km0(|m| {
             *m = Km0 {
                 deaf,
                 ..Km0::default()
             }
         });
+
         READ_ID.with(|c| c.set(id));
         fake::with(|h| h.storage = storage);
         CUT.with(|c| c.set(cut));
         POWER_LOST.with(|p| p.set(false));
+
         let mut probe = Box::<Probe>::default();
         let mut provider = Box::<Provider>::default();
         let mut peer = Peer::default();
@@ -287,6 +306,7 @@ fn platform_boot_cut(
         let mut reset = false;
         // Stop after 40 quiet iterations: idle (fed) or holding for a reset.
         let mut quiet = 0;
+
         'boot: for _ in 0..100_000 {
             let raw: *mut Provider = &mut *provider;
             let step = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
@@ -296,16 +316,19 @@ fn platform_boot_cut(
                 faulted = true;
                 break;
             };
+
             if power_lost() {
                 // Records printed after the cut never left the board.
                 power_cut = true;
                 break;
             }
+
             quiet = if step.record.is_some() { 0 } else { quiet + 1 };
             records.extend(step.record);
             if step.delay_ms == 0 || quiet > 40 {
                 break;
             }
+
             for _ in 0..step.delay_ms {
                 fake::advance(33, false);
                 react();
@@ -318,6 +341,7 @@ fn platform_boot_cut(
                 }
             }
         }
+
         Boot {
             records,
             faulted,
@@ -389,20 +413,24 @@ fn stress_saves_survive_power_loss_and_reopen_consistently() {
     else {
         panic!("{:?}", first.records);
     };
+
     assert_eq!((saves, generation), (STRESS_SAVES, u64::from(STRESS_SAVES)));
     assert!(leases > 0 && leases == frozen && phase == FlashPhase::IDLE && fault == FlashFault::OK);
     // Every park request KM0 saw is one recorded lease.
     assert_eq!(u64::from(first.rings), leases);
     assert!(!first.reset && first.backup[MARKER_REGISTER as usize] == 0);
+
     // Only sectors 2 and 3 were touched.
     assert!(first.storage[..2 * 4096].iter().all(|&b| b == u8::MAX));
     assert!(first.storage[4 * 4096..].iter().all(|&b| b == u8::MAX));
+
     // Power loss clears the backup registers; the settings remain.
     let second = platform_boot([0; 8], first.storage, false, EXPECTED_ID);
     assert_eq!(
         opened(&second),
         (SettingsStatus::LOADED, u64::from(STRESS_SAVES), true)
     );
+
     assert_eq!(last_reported(&second), u64::from(2 * STRESS_SAVES));
 }
 
@@ -418,14 +446,17 @@ fn every_cut_point_reopens_at_the_last_or_the_interrupted_save() {
             "cut {cut} did not land: {:?}",
             cut_boot.records
         );
+
         let completed = u64::from(cut / 3);
         let next = platform_boot([0; 8], cut_boot.storage, false, EXPECTED_ID);
         let (status, generation, other, consistent) = opened_other(&next);
         assert!(consistent, "cut {cut}: {:?}", next.records);
+
         // A cut inside a save that did not complete shows in the other slot.
         if cut % 3 != 0 && generation == completed {
             assert_ne!(other, SlotState::VALID, "cut {cut}");
         }
+
         assert!(
             generation == completed || generation == completed + 1,
             "cut {cut}: generation {generation}, completed {completed}"
@@ -437,6 +468,7 @@ fn every_cut_point_reopens_at_the_last_or_the_interrupted_save() {
             ),
             "cut {cut}: {status:?}"
         );
+
         // The interrupted boot's stress continues on the next one.
         assert!(matches!(next.records.last(), Some(Record::End { .. })));
     }
@@ -447,6 +479,7 @@ fn unknown_data_in_the_settings_sectors_is_never_written_over() {
     let mut storage = blank();
     storage[2 * 4096 + 9] = 0x12;
     let boot = platform_boot([0; 8], storage.clone(), false, EXPECTED_ID);
+
     assert_eq!(opened(&boot).0, SettingsStatus::CORRUPT);
     assert!(boot.erases == 0 && boot.storage == storage && !boot.reset);
     assert_eq!(boot.backup[MARKER_REGISTER as usize], 0);
@@ -463,11 +496,13 @@ fn unknown_marker_skips() {
 fn silent_peer_faults_the_hook_then_the_next_boot_skips() {
     let first = platform_boot([0; 8], blank(), true, EXPECTED_ID);
     assert!(first.faulted, "{:?}", first.records);
+
     assert_eq!(
         first.provider.failure,
         Some((LeaseStage::BEGIN, FlashReply::FAILED))
     );
     assert_eq!(first.backup[MARKER_REGISTER as usize], ATTEMPT_BIT);
+
     let second = platform_boot(first.backup, first.storage, false, EXPECTED_ID);
     assert_eq!(
         second.records.last(),
@@ -486,6 +521,7 @@ fn stale_ticket_is_refused() {
         id: provider.coord.token.lease + 7,
         saved_systick: 0,
     };
+
     assert!(!provider.release::<Core<false>>(&ticket));
     assert_eq!(
         provider.failure,

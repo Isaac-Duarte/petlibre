@@ -1,11 +1,19 @@
 //! DSD TECH SH-UR04A relay board: CP2102, 9600 8N1, `AT+CHn=0/1` and `AT+CHn=?`.
+//!
+//! The bench commands drive the feeder's power and boot strap through
+//! [`Relay`]. Every command must come back with `OK`, and a set must echo the
+//! exact channel and value; anything else is an error, so a sequence stops
+//! rather than assuming a relay moved. [`FakeBoard`] stands in for the board
+//! in tests.
 
 use std::io::{self, Read, Write};
 use std::time::{Duration, Instant};
 
 use crate::{Result, require};
 
+/// Switches the feeder's USB 5V.
 pub const POWER: u8 = 1;
+/// Holds feeder TX to GND through the 4.7 kΩ strap.
 pub const STRAP: u8 = 2;
 pub const SPARES: [u8; 2] = [3, 4];
 
@@ -39,6 +47,7 @@ impl Link for SerialLink {
         self.0.clear(serialport::ClearBuffer::Input)?;
         self.0.write_all(format!("{line}\r\n").as_bytes())?;
         self.0.flush()?;
+
         let deadline = Instant::now() + Duration::from_secs(1);
         let mut reply = Vec::new();
         let mut byte = [0u8];
@@ -55,6 +64,7 @@ impl Link for SerialLink {
                 Err(error) => return Err(error),
             }
         }
+
         Ok(reply)
     }
 }
@@ -127,6 +137,7 @@ pub struct FakeBoard {
 
 #[derive(Default)]
 pub struct FakeState {
+    /// Indexed by channel number; slot 0 is unused.
     pub on: [bool; 5],
     /// Every set, in order: (channel, on).
     pub log: Vec<(u8, bool)>,
@@ -157,6 +168,7 @@ impl Link for FakeBoard {
         let Some((channel, value)) = parsed.filter(|_| !s.refuse) else {
             return Ok(b"Error\r\n\0".to_vec());
         };
+
         if value != "?" {
             s.on[channel] = value == "1";
             s.log.push((channel as u8, value == "1"));
@@ -173,7 +185,9 @@ mod tests {
     fn set_and_query_match_device_replies() {
         let board = FakeBoard::default();
         let mut relay = Relay::new(Box::new(board.clone()));
+
         relay.set(1, true).unwrap();
+
         assert!(relay.get(1).unwrap());
         assert!(!relay.get(2).unwrap());
         assert_eq!(board.log(), [(1, true)]);
@@ -184,6 +198,7 @@ mod tests {
         let board = FakeBoard::default();
         board.inner.lock().unwrap().refuse = true;
         let mut relay = Relay::new(Box::new(board));
+
         assert!(relay.set(1, true).is_err());
     }
 

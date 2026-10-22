@@ -1,9 +1,17 @@
 //! Feeding state machine: inhibit windows, pauses, reversal, deadlines and faults.
+//!
+//! The single serialized owner drives it with fresh input samples and captured
+//! feedback edges. It only computes the desired motor command; the board
+//! adapter applies it and backs it with the output gate and watchdog. Faults
+//! and deadlines are checked before feedback, and every terminal state
+//! commands STOP. No physical limits are built in: board validation must
+//! supply [`FeedLimits`].
 
 use crate::feed_progress::{BowlMode, Direction, FeedProgress, ProgressResult};
 use crate::{HALF_RANGE, interval_valid};
 
 c_enum!(MotorCommand { STOP = 0, DRIVE_0 = 1, DRIVE_1 = 2 });
+
 c_enum!(FeedState {
     IDLE = 0,
     RUNNING = 1,
@@ -13,6 +21,7 @@ c_enum!(FeedState {
     FAULT = 5,
     CANCELLED = 6,
 });
+
 c_enum!(
     /// Persistent journal v1 encodes these values; never renumber without migration.
     FeedReason {
@@ -31,6 +40,7 @@ c_enum!(
         OUTPUT = 12,
     }
 );
+
 c_enum!(FeedStartResult {
     ACCEPTED = 0,
     REJECT_BUSY = 1,
@@ -65,6 +75,7 @@ pub struct FeedLimits {
     pub reverse_ms: u32,
     pub max_duration_ms: u32,
     pub max_observation_gap_ms: u32,
+
     pub current_limit_ma: u32,
     pub max_portions: u16,
     pub max_reverse_attempts: u8,
@@ -136,11 +147,13 @@ pub struct FeedController {
     pub limits: FeedLimits,
     pub progress: FeedProgress,
     pub last_request_id: u64,
+
     pub started_at: u32,
     pub last_update_at: u32,
     pub last_feedback_at: u32,
     pub inhibit_at: u32,
     pub state_at: u32,
+
     pub reverse_attempts: u8,
     pub state: FeedState,
     pub reason: FeedReason,
@@ -187,6 +200,7 @@ impl FeedController {
         if request.id == 0 || request.id <= self.last_request_id {
             return FeedStartResult::REJECT_ID;
         }
+
         let progress = if request.portions > self.limits.max_portions
             || (request.mode == BowlMode::SINGLE && request.direction != Direction::D0)
             || (request.mode == BowlMode::DOUBLE && !request.phase_known)
@@ -203,11 +217,13 @@ impl FeedController {
         let Some(progress) = progress else {
             return FeedStartResult::REJECT_REQUEST;
         };
+
         if sample.input_fault() != FeedReason::NONE
             || sample.current_ma > self.limits.current_limit_ma
         {
             return FeedStartResult::REJECT_INPUT;
         }
+
         self.progress = progress;
         self.last_request_id = request.id;
         self.started_at = now_ms;
@@ -219,6 +235,7 @@ impl FeedController {
         self.state = FeedState::RUNNING;
         self.reason = FeedReason::NONE;
         self.motor = MotorCommand::drive(progress.direction);
+
         FeedStartResult::ACCEPTED
     }
 
@@ -247,6 +264,7 @@ impl FeedController {
         if !self.active() {
             return;
         }
+
         let gap = now_ms.wrapping_sub(self.last_update_at);
         self.last_update_at = now_ms;
         let mut reason = if gap >= HALF_RANGE {
@@ -261,6 +279,7 @@ impl FeedController {
                 Some(sample) => sample.input_fault(),
             }
         };
+
         if reason == FeedReason::NONE
             && sample.is_some_and(|s| s.feedback_edge)
             && now_ms.wrapping_sub(captured_at_ms) >= HALF_RANGE
@@ -272,6 +291,7 @@ impl FeedController {
         {
             reason = FeedReason::FEEDBACK_TIMEOUT;
         }
+
         let Some(sample) = sample.filter(|_| reason == FeedReason::NONE) else {
             self.stop(FeedState::FAULT, reason);
             return;
@@ -290,6 +310,7 @@ impl FeedController {
             }
             return;
         }
+
         if self.state == FeedState::DIRECTION_PAUSE {
             if overcurrent {
                 self.stop(FeedState::FAULT, FeedReason::OVERCURRENT);
@@ -303,6 +324,7 @@ impl FeedController {
             }
             return;
         }
+
         if overcurrent {
             if self.reverse_attempts >= self.limits.max_reverse_attempts {
                 self.stop(FeedState::FAULT, FeedReason::OVERCURRENT);
@@ -314,6 +336,7 @@ impl FeedController {
             }
             return;
         }
+
         let inhibition = captured_at_ms.wrapping_sub(self.inhibit_at);
         if !sample.feedback_edge
             || inhibition >= HALF_RANGE
@@ -321,6 +344,7 @@ impl FeedController {
         {
             return;
         }
+
         let expected_high =
             self.progress.mode == BowlMode::SINGLE || self.progress.direction == Direction::D0;
         if sample.feedback_high != expected_high {

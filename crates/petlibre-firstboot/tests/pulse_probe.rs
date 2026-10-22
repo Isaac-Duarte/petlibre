@@ -79,6 +79,7 @@ impl Bench {
         if let Some(record) = step.record {
             self.records.push(record);
         }
+
         for _ in 0..step.delay_ms {
             fake::advance(MS_TICKS, true);
             self.trace.push(motor());
@@ -120,6 +121,7 @@ fn one_bounded_pulse_after_the_delay_with_feedback_and_current() {
             }
         }
     });
+
     let opened = b.records.iter().find_map(|r| match r {
         Record::Open {
             board,
@@ -132,6 +134,7 @@ fn one_bounded_pulse_after_the_delay_with_feedback_and_current() {
         _ => None,
     });
     assert_eq!(opened, Some(true), "{:?}", b.records);
+
     // Exactly one drive interval, in direction 0 (PA13 high, PA14 low).
     let driven: Vec<usize> = (0..b.trace.len())
         .filter(|&i| b.trace[i] != MOTOR_MASK)
@@ -147,9 +150,11 @@ fn one_bounded_pulse_after_the_delay_with_feedback_and_current() {
         "{}",
         driven.len()
     );
+
     // Never before the operator delay. Each trace step is 33 SYSTIMER ticks
     // (about 1.007 ms), so the probe's 60 s arrive about 0.7 % sooner here.
     assert!(driven[0] as u32 >= DELAY_MS * 99 / 100, "{}", driven[0]);
+
     let Some(Record::Pulse {
         direction,
         applied_ms,
@@ -165,6 +170,7 @@ fn one_bounded_pulse_after_the_delay_with_feedback_and_current() {
     else {
         panic!("{:?}", b.records);
     };
+
     assert_eq!(direction, 1);
     assert!(applied_ms <= 2, "{applied_ms}");
     assert!((PULSE_MS..PULSE_MS + 4).contains(&on_ms), "{on_ms}");
@@ -172,14 +178,17 @@ fn one_bounded_pulse_after_the_delay_with_feedback_and_current() {
     assert!(first_edge_ms.is_some_and(|ms| (18..=22).contains(&ms)));
     // Fake ADC 500 with default calibration: (5000 - 2480) * 1000 / 12050.
     assert!(current.samples >= 8 && current.max == 209, "{current:?}");
+
     let after = b.records.iter().find_map(|r| match r {
         Record::After { edges, stopped, .. } => Some((*edges, *stopped)),
         _ => None,
     });
     assert_eq!(after, Some((0, true)));
+
     assert_eq!(b.records.last(), Some(&Record::Done));
     assert_eq!(sdk::backup_read(sdk::BACKUP_USER), MARKER);
     assert!(stopped::observe().verified());
+
     for record in &b.records {
         assert!(line(*record).len() < 192, "{}", line(*record));
     }
@@ -192,6 +201,7 @@ fn a_stalled_task_mid_pulse_is_stopped_by_the_timer_within_the_lease() {
     while motor() == MOTOR_MASK {
         assert_ne!(b.step(&mut during), 0, "{:?}", b.records);
     }
+
     // The task stops running: only the timer interrupt is left.
     let mut ms = 0;
     while motor() != MOTOR_MASK {
@@ -199,8 +209,10 @@ fn a_stalled_task_mid_pulse_is_stopped_by_the_timer_within_the_lease() {
         ms += 1;
         assert!(ms <= LEASE_MS + 12, "motor still driven after {ms} ms");
     }
+
     assert!(ms >= LEASE_MS - 4, "stopped early at {ms} ms");
     assert_ne!(b.probe.events.fault, EventsFault::OK);
+
     // The probe then ends with an error and the motor stopped.
     assert_eq!(b.step(&mut during), 0);
     assert!(matches!(
@@ -217,7 +229,9 @@ fn only_a_clean_cold_boot_pulses() {
             h.boot_reason = reset;
             h.backup[sdk::BACKUP_USER as usize] = marker;
         });
+
         b.run(|_| {});
+
         assert_eq!(b.records, [Record::Skip { reset, marker }]);
         assert!(b.trace.iter().all(|&pins| pins == MOTOR_MASK));
         assert_eq!(sdk::backup_read(sdk::BACKUP_USER), 0);
@@ -228,6 +242,7 @@ fn only_a_clean_cold_boot_pulses() {
 fn no_peer_never_drives() {
     let mut b = bench();
     let during = |_| {};
+
     for _ in 0..1000 {
         // No KM0 answer.
         let step = b.probe.step::<Core<false>>();
@@ -243,6 +258,7 @@ fn no_peer_never_drives() {
             assert_eq!(motor(), MOTOR_MASK);
         }
     }
+
     assert!(
         matches!(b.records.as_slice(), [Record::Timeout { .. }]),
         "{:?}",

@@ -54,6 +54,7 @@ pub fn observe(event: &WifiEvent) {
             } else {
                 (&LINK_LOSSES, 1)
             };
+
             counter.fetch_add(1, Ordering::Relaxed);
             LAST_LOSS.store(cause, Ordering::Relaxed);
             GENERATION.fetch_add(1, Ordering::Release);

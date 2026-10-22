@@ -1,3 +1,7 @@
+//! FW05 supervision probe against the fake SDK: timer and SYSTIMER samples,
+//! a task stall, then a supervised watchdog reset. A backup-register marker
+//! or a nonzero boot reason must skip the probe, so a reset cannot repeat it.
+
 use petlibre_amebad::board::MOTOR_MASK;
 use petlibre_amebad::sdk::{self, fake};
 use petlibre_amebad::watchdog::WatchdogFault;
@@ -63,6 +67,7 @@ fn samples(records: &[Record]) -> Vec<Sample> {
 fn cold_boot_measures_stalls_and_resets_through_the_watchdog() {
     let mut probe = cold();
     let records = run(&mut probe);
+
     assert_eq!(
         records[0],
         Record::Open {
@@ -118,6 +123,7 @@ fn cold_boot_measures_stalls_and_resets_through_the_watchdog() {
     else {
         panic!("expected fed after arm: {records:?}");
     };
+
     assert!(ok && ms >= FEED_MS && checkpoints >= FEED_MS / 250);
     assert!(matches!(records[arm + 2], Record::WatchdogStall { .. }));
 
@@ -129,6 +135,7 @@ fn cold_boot_measures_stalls_and_resets_through_the_watchdog() {
             Record::Stalled { fault, enabled: true, .. } if *fault == WatchdogFault::PROGRESS.0
         ));
     }
+
     // Expired in reset mode while stopped, with the marker set for the next boot.
     assert!(hw(|h| h.watchdog_expired && h.watchdog_reset_requests == 1));
     assert_eq!(sdk::backup_read(sdk::BACKUP_USER), MARKER);
@@ -140,6 +147,7 @@ fn cold_boot_measures_stalls_and_resets_through_the_watchdog() {
 fn stuck_loop_never_refreshes() {
     let mut probe = cold();
     let mut refreshes_at_stall = None;
+
     for _ in 0..10_000 {
         let step = probe.step();
         if matches!(step.record, Some(Record::WatchdogStall { .. })) {
@@ -152,6 +160,7 @@ fn stuck_loop_never_refreshes() {
             fake::advance(TICKS_PER_MS, true);
         }
     }
+
     assert!(hw(|h| h.watchdog_expired));
     assert_eq!(hw(|h| h.watchdog_refreshes), refreshes_at_stall.unwrap());
 }
@@ -160,6 +169,7 @@ fn stuck_loop_never_refreshes() {
 fn boot_with_marker_skips_and_clears_it() {
     let mut probe = cold();
     hw(|h| h.backup[1] = MARKER);
+
     assert_eq!(
         run(&mut probe),
         [Record::Skip {
@@ -167,6 +177,7 @@ fn boot_with_marker_skips_and_clears_it() {
             marker: MARKER
         }]
     );
+
     assert_eq!(sdk::backup_read(sdk::BACKUP_USER), 0);
     assert!(!probe.board.opened && !probe.events.opened);
     assert_eq!(
@@ -193,6 +204,7 @@ fn watchdog_boot_reason_skips() {
 fn already_enabled_watchdog_refuses_arm_and_clears_marker() {
     let mut probe = cold();
     let mut records = Vec::new();
+
     for _ in 0..10_000 {
         let step = probe.step();
         if matches!(step.record, Some(Record::StallEnd(_))) {
@@ -206,6 +218,7 @@ fn already_enabled_watchdog_refuses_arm_and_clears_marker() {
             fake::advance(TICKS_PER_MS, true);
         }
     }
+
     assert!(matches!(
         records.last(),
         Some(Record::Arm { ok: false, .. })
@@ -217,6 +230,7 @@ fn already_enabled_watchdog_refuses_arm_and_clears_marker() {
 fn watchdog_that_never_expires_is_reported_and_released() {
     let mut probe = cold();
     let mut records = Vec::new();
+
     for _ in 0..10_000 {
         let step = probe.step();
         if matches!(step.record, Some(Record::Arm { ok: true, .. })) {
@@ -230,9 +244,11 @@ fn watchdog_that_never_expires_is_reported_and_released() {
             fake::advance(TICKS_PER_MS, true);
         }
     }
+
     let Some(Record::NoReset { ms }) = records.last() else {
         panic!("expected no_reset: {records:?}");
     };
+
     assert!(*ms >= RESET_DEADLINE_MS);
     assert!(!probe.watchdog.claimed);
     assert_eq!(hw(|h| h.watchdog_vendor) & sdk::WDG_BIT_ENABLE, 0);

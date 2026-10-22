@@ -95,6 +95,7 @@ unsafe extern "C" fn motor_pair(context: *mut c_void, a: bool, b: bool) -> bool 
     let board = context.cast::<Board>().cast_const();
     let stopped = a && b;
     let guard = IrqGuard::lock();
+
     // SAFETY: `context` is the opened board, serialized by the guard.
     let (opened, faulted, flash) = unsafe {
         (
@@ -106,10 +107,12 @@ unsafe extern "C" fn motor_pair(context: *mut c_void, a: bool, b: bool) -> bool 
     if (!a && !b) || (!stopped && (!opened || faulted || outputs_blocked(flash))) {
         return false;
     }
+
     let value = if a { 1 << 13 } else { 0 } | if b { 1 << 14 } else { 0 };
     sdk::gpio_port_write(GPIO_PORT_A, MOTOR_MASK, value);
     let verified = sdk::gpio_port_read(GPIO_PORT_A, MOTOR_MASK) & MOTOR_MASK == value;
     drop(guard);
+
     if !verified {
         // SAFETY: as above; a single bool store.
         unsafe { ptr::addr_of_mut!((*context.cast::<Board>()).faulted).write(true) };
@@ -145,11 +148,14 @@ impl Board {
         {
             return result;
         }
+
         self.opened = false;
         self.adc_poll_limit = adc_poll_limit;
+
         for pin in 16..=19 {
             sdk::gpio_init(pin, false);
         }
+
         result.clock = sdk::adc_clock_enable();
         let mut efuse = [0u8; 4];
         for (i, byte) in efuse.iter_mut().enumerate() {
@@ -161,12 +167,14 @@ impl Board {
                 }
             }
         }
+
         result.efuse = Some(efuse);
         let calibration = AdcCalibration::decode(&efuse);
         if !result.clock.verified() || calibration.is_none() {
             self.faulted = true;
             return result;
         }
+
         self.calibration = calibration.unwrap_or_default();
         sdk::pad_disable(33);
         sdk::pad_disable(34);
@@ -184,11 +192,13 @@ impl Board {
         if deadtime_ms == 0 || lease_ms <= deadtime_ms || lease_ms >= 0x8000_0000 {
             return false;
         }
+
         *self = Self::default();
         if !sdk::gpio_clock_enable().verified() {
             self.faulted = true;
             return false;
         }
+
         // Preload before output enable; actual reset/ROM-init behavior needs measurement.
         sdk::gpio_port_write(GPIO_PORT_A, MOTOR_MASK, MOTOR_MASK);
         sdk::gpio_init(13, true);
@@ -199,6 +209,7 @@ impl Board {
             self.motor
                 .init(Some(motor_pair), context, deadtime_ms, lease_ms, now_ms)
         };
+
         // PB3 is SWD_CLK: release it first, as stock does, or the latch
         // never reaches the pad.
         let swd_released = sdk::swd_off() & sdk::SWD_PMUX_BIT == 0;
@@ -208,11 +219,13 @@ impl Board {
         for pin in OPTICS {
             sdk::gpio_init(pin, true);
         }
+
         self.optics_initialized = true;
         if !motor_ok || !swd_released || !optics_off() {
             self.faulted = true;
             return false;
         }
+
         self.opened = true;
         true
     }
@@ -324,9 +337,11 @@ impl Board {
         if enabled && self.flash_hold() {
             return false;
         }
+
         for (pin, level) in OPTICS.into_iter().zip([a, b]) {
             sdk::gpio_write_bit(pin, level);
         }
+
         let verified = optics_are(a, b);
         self.optics_enabled = verified && enabled;
         if !verified {

@@ -65,6 +65,7 @@ impl Tools for FakeTools {
         let result = calls.results.pop_front().unwrap_or_else(loader_result);
         Ok(Box::new(FakeObserver(result)))
     }
+
     fn flash(&mut self, args: &[String], _: &mut Status) -> Result<i32> {
         let mut calls = self.0.borrow_mut();
         calls.flash.push(args.to_vec());
@@ -76,12 +77,14 @@ impl Tools for FakeTools {
         }
         Ok(code)
     }
+
     fn analyzer(&mut self, output: &Path, _: f64, _: u64) -> Result<Box<dyn Analyzer>> {
         Ok(Box::new(FakeAnalyzer {
             output: output.to_path_buf(),
             code: self.0.borrow().analyzer_code,
         }))
     }
+
     fn sigrok_available(&self) -> bool {
         self.0.borrow().sigrok
     }
@@ -102,6 +105,7 @@ fn rig() -> Rig {
     let board = FakeBoard::default();
     let tools = FakeTools::default();
     tools.0.borrow_mut().sigrok = true;
+
     let bench = Bench {
         root: tmp.path().to_path_buf(),
         config: Config {
@@ -117,6 +121,7 @@ fn rig() -> Rig {
         sleep: |_| Ok(()),
         off_seconds: 2.0,
     };
+
     Rig {
         bench,
         board,
@@ -156,7 +161,9 @@ fn prepare_plan(rig: &Rig, name: &str) {
 fn loader_holds_strap_across_power_on_and_leaves_feeder_powered() {
     let mut rig = rig();
     let out = rig.bench.root.join("out");
+
     rig.bench.loader(&out).unwrap();
+
     assert_eq!(rig.tools.0.borrow().observed, [out]);
     assert_eq!(
         rig.board.log(),
@@ -178,6 +185,7 @@ fn unconfirmed_loader_powers_off() {
         result[field] = value;
         rig.tools.0.borrow_mut().results.push_back(result);
         let out = rig.bench.root.join("out");
+
         assert!(rig.bench.loader(&out).is_err(), "{field}");
         assert_eq!(rig.board.state(), [false; 4], "{field}");
     }
@@ -188,11 +196,13 @@ fn reused_capture_names_are_refused_before_any_relay_change() {
     let mut rig = rig();
     let existing = rig.bench.root.join(CAPTURES).join("used");
     fs::create_dir_all(&existing).unwrap();
+
     let error = rig.bench.boot(&existing, 10.0).unwrap_err();
     assert!(error.to_string().contains("Refusing to reuse"));
     let error = rig.bench.loader(&existing).unwrap_err();
     assert!(error.to_string().contains("Refusing to reuse"));
     assert!(rig.bench.capture("used", 5.0).is_err());
+
     assert!(rig.board.log().is_empty());
 }
 
@@ -200,6 +210,7 @@ fn reused_capture_names_are_refused_before_any_relay_change() {
 fn boot_refuses_loader_output() {
     let mut rig = rig();
     let out = rig.bench.root.join("out");
+
     let error = rig.bench.boot(&out, 10.0).unwrap_err();
     assert!(error.to_string().contains("ROM loader"));
 }
@@ -208,6 +219,7 @@ fn boot_refuses_loader_output() {
 fn execute_requires_uninterrupted_power() {
     let mut rig = rig();
     prepare_plan(&rig, "unit");
+
     assert!(rig.bench.flash_execute(&execute("unit")).is_err());
     assert!(rig.tools.0.borrow().flash.is_empty());
 }
@@ -216,8 +228,11 @@ fn execute_requires_uninterrupted_power() {
 fn execute_requires_a_prepared_single_use_plan() {
     let mut rig = rig();
     rig.bench.on().unwrap();
+
     let error = rig.bench.flash_execute(&execute("unit")).unwrap_err();
     assert!(error.to_string().contains("Prepared plan required"));
+
+    // An existing execute directory means the plan already ran.
     prepare_plan(&rig, "unit");
     fs::create_dir_all(Paths::new(&rig.bench.root, "unit").execute).unwrap();
     assert!(rig.bench.flash_execute(&execute("unit")).is_err());
@@ -230,7 +245,9 @@ fn stopped_execute_never_boots_or_cuts_power() {
     rig.bench.on().unwrap();
     prepare_plan(&rig, "unit");
     rig.tools.0.borrow_mut().flash_codes.push_back(1);
+
     assert_eq!(rig.bench.flash_execute(&execute("unit")).unwrap(), 1);
+
     let calls = rig.tools.0.borrow();
     assert_eq!(calls.flash.len(), 1);
     assert_eq!(calls.flash[0][..2], ["update", "execute"]);
@@ -248,7 +265,9 @@ fn completed_execute_passes_the_reviewed_hash_and_boots() {
         .borrow_mut()
         .results
         .push_back(json!({"download_banner_seen": false, "bytes": 10, "fault_marker_seen": false}));
+
     assert_eq!(rig.bench.flash_execute(&execute("unit")).unwrap(), 0);
+
     let calls = rig.tools.0.borrow();
     let args = &calls.flash[0];
     let at = args
@@ -263,7 +282,9 @@ fn completed_execute_passes_the_reviewed_hash_and_boots() {
 fn prepare_stops_at_the_first_failed_step_with_power_on() {
     let mut rig = rig();
     rig.tools.0.borrow_mut().flash_codes.extend([0, 1]);
+
     assert_eq!(rig.bench.flash_prepare(&update("unit")).unwrap(), 1);
+
     let calls = rig.tools.0.borrow();
     let ran: Vec<_> = calls.flash.iter().map(|a| a[..2].join(" ")).collect();
     assert_eq!(ran, ["read small", "update inspect"]);
@@ -279,7 +300,9 @@ fn prepare_records_the_matching_execute_line() {
         .begin("flash-prepare", Some("unit"), &[])
         .unwrap();
     fs::create_dir_all(rig.bench.root.join(VERIFICATION)).unwrap();
+
     assert_eq!(rig.bench.flash_prepare(&update("unit")).unwrap(), 0);
+
     let ran: Vec<_> = rig
         .tools
         .0
@@ -289,6 +312,7 @@ fn prepare_records_the_matching_execute_line() {
         .map(|a| a[..2].join(" "))
         .collect();
     assert_eq!(ran, ["read small", "update inspect", "update prepare"]);
+
     let sha = sha256_hex(PLAN.as_bytes());
     assert_eq!(
         rig.bench.status.state.as_ref().unwrap().next.as_deref(),
@@ -296,6 +320,7 @@ fn prepare_records_the_matching_execute_line() {
             "petlibre-bench flash-execute unit --bank 1 --source s --target t --expected-plan-sha256 {sha}"
         ).as_str())
     );
+
     let mut restore = update("unit");
     restore.restore_marker = true;
     restore.interrupted = true;
@@ -311,6 +336,7 @@ fn give_way_prepare_then_execute() {
         fallback: "f".into(),
     };
     assert_eq!(rig.bench.give_way_prepare(&args).unwrap(), 0);
+
     rig.tools
         .0
         .borrow_mut()
@@ -322,6 +348,7 @@ fn give_way_prepare_then_execute() {
         boot_seconds: 10.0,
     };
     assert_eq!(rig.bench.give_way_execute(&execute).unwrap(), 0);
+
     let calls = rig.tools.0.borrow();
     let last = calls.flash.last().unwrap();
     assert_eq!(last[..2], ["give-way", "execute"]);
@@ -333,6 +360,7 @@ fn bank_1_needs_a_source_before_any_relay_change() {
     let mut rig = rig();
     let mut args = update("unit");
     args.source = None;
+
     let error = rig.bench.flash_prepare(&args).unwrap_err();
     assert!(error.to_string().contains("--source is required"));
     assert!(rig.board.log().is_empty());
@@ -350,10 +378,12 @@ fn motion_targets_need_the_attended_flag() {
         r#"{"startup_motion_policy": "fw16-pulse-v1"}"#,
     )
     .unwrap();
+
     let error = rig.bench.require_attended_motion(&args).unwrap_err();
     assert!(error.to_string().contains("attended-motion"));
     args.attended_motion = true;
     rig.bench.require_attended_motion(&args).unwrap();
+
     args.attended_motion = false;
     fs::write(
         target.join("build-manifest.json"),
@@ -368,6 +398,7 @@ fn session_names_are_single_components() {
     for name in ["ok", "fw10-review-01"] {
         check_name(name).unwrap();
     }
+
     for name in ["", "..", "a/b", "/abs", "."] {
         assert!(check_name(name).is_err(), "{name}");
     }
@@ -392,12 +423,14 @@ fn boot_cycles_power_on_after_arming_and_end_off() {
             .unwrap(),
         0
     );
+
     // Each cycle: strap released and power off, then power on, then off.
     assert_eq!(
         rig.board.log()[..4],
         [(2, false), (1, false), (1, true), (2, false)]
     );
     assert!(!rig.board.state()[0]);
+
     let out = rig.bench.root.join(CAPTURES).join("unit");
     let manifest: Value =
         serde_json::from_str(&fs::read_to_string(out.join("manifest.json")).unwrap()).unwrap();
@@ -421,6 +454,7 @@ fn loader_cycles_hold_the_strap_across_power_on() {
     rig.bench
         .transients(&transients(TransientMode::Loader))
         .unwrap();
+
     assert_eq!(
         rig.board.log()[..5],
         [(2, false), (1, false), (2, true), (1, true), (2, false)]
@@ -432,10 +466,12 @@ fn loader_cycles_hold_the_strap_across_power_on() {
 fn missing_sigrok_refuses_before_any_relay_change() {
     let mut rig = rig();
     rig.tools.0.borrow_mut().sigrok = false;
+
     let error = rig
         .bench
         .transients(&transients(TransientMode::Boot))
         .unwrap_err();
+
     assert!(error.to_string().contains("sigrok-cli"));
     assert!(rig.board.log().is_empty());
 }
@@ -444,6 +480,7 @@ fn missing_sigrok_refuses_before_any_relay_change() {
 fn a_failed_capture_stops_with_power_off() {
     let mut rig = rig();
     rig.tools.0.borrow_mut().analyzer_code = 1;
+
     assert!(
         rig.bench
             .transients(&transients(TransientMode::Boot))
@@ -462,7 +499,9 @@ fn demo_switches_only_spares_and_ends_them_off() {
         speed: 1.0,
         text: "SOS".into(),
     };
+
     assert_eq!(rig.bench.demo(&args).unwrap(), 0);
+
     let log = rig.board.log();
     assert!(
         log[before..]
@@ -481,6 +520,7 @@ fn demo_stops_at_the_toggle_cap_and_still_ends_off() {
         // Each E is two toggles: more than the cap allows.
         text: "E".repeat(70),
     };
+
     let error = rig.bench.demo(&args).unwrap_err();
     assert!(error.to_string().contains("Toggle cap"));
     assert_eq!(rig.board.state()[2..], [false, false]);

@@ -1,3 +1,13 @@
+//! The embedded MQTT broker, which `serve` runs as its `broker` child process.
+//!
+//! The broker itself listens only on an ephemeral loopback port. The
+//! configured feeder-facing address is served by `compat`, which normalizes
+//! the stock firmware's first CONNECT and relays it. `DeviceAuth` admits four
+//! fixed identities (stock device, server, replacement firmware and its `-ota`
+//! offer watcher) and allows each only an allowlist of topics; the firmware
+//! namespace takes no wildcards. Retained messages, persistent sessions and
+//! offline queues are disabled, so no command can wait for a later connection.
+
 use std::{future::Future, net::SocketAddr, pin::Pin, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
@@ -26,12 +36,14 @@ impl AuthProvider for DeviceAuth {
         let config = &self.0;
         let username = connect.username.as_deref().unwrap_or("");
         let password = connect.password.as_deref().unwrap_or(&[]);
+
         let device = connect.client_id == config.device_client_id
             && username == config.device_username
             && bool::from(password.ct_eq(config.device_password.as_bytes()));
         let server = connect.client_id == config.server_client_id()
             && username == "local-server"
             && bool::from(password.ct_eq(config.server_password.as_bytes()));
+
         let firmware_login = |client_id: &str| {
             config.firmware.as_ref().is_some_and(|firmware| {
                 connect.client_id == client_id
@@ -49,6 +61,7 @@ impl AuthProvider for DeviceAuth {
             .firmware
             .as_ref()
             .is_some_and(|f| firmware_login(&format!("{}-ota", f.client_id)));
+
         Box::pin(async move {
             Ok(if device {
                 AuthResult::success_with_user("device")
@@ -96,6 +109,7 @@ fn publish_allowed(config: &Config, user: Option<&str>, topic: &str) -> bool {
     let prefix = config.topic("");
     let suffix = topic.strip_prefix(&prefix);
     let firmware = firmware_suffix(config, topic);
+
     match user {
         Some("firmware") => matches!(firmware, Some("health" | "reply" | "ota/get")),
         Some("firmware-watch") => matches!(firmware, Some("ota/check")),
@@ -128,6 +142,7 @@ fn subscribe_allowed(config: &Config, user: Option<&str>, topic: &str) -> bool {
     let prefix = config.topic("");
     let suffix = topic.strip_prefix(&prefix);
     let firmware = firmware_suffix(config, topic);
+
     match user {
         Some("firmware") => matches!(firmware, Some("request" | "ota/data")),
         Some("firmware-watch") => matches!(firmware, Some("ota/offered")),
@@ -154,6 +169,7 @@ fn subscribe_allowed(config: &Config, user: Option<&str>, topic: &str) -> bool {
 
 pub async fn run(config: Config) -> Result<()> {
     let listener = tokio::net::TcpListener::bind(config.mqtt_listen).await?;
+
     let settings = BrokerConfig {
         bind_addresses: vec!["127.0.0.1:0".parse()?],
         max_clients: 8,
@@ -175,20 +191,24 @@ pub async fn run(config: Config) -> Result<()> {
         },
         ..Default::default()
     };
+
     // The builder validates its file-based auth configuration before accepting
     // a custom provider. Replace that default provider BEFORE run() accepts
     // any clients. DeviceAuth rejects anonymous clients and scopes every topic.
     let mut broker = MqttBroker::with_config(settings)
         .await?
         .with_auth_provider(Arc::new(DeviceAuth(config)));
+
     let broker_address = broker
         .local_addr()
         .context("broker has no loopback listener")?;
+
     let shutdown = broker.shutdown_handle();
     tokio::spawn(async move {
         let _ = tokio::signal::ctrl_c().await;
         shutdown.shutdown();
     });
+
     tokio::select! {
         result=broker.run()=>{result?;Ok(())},
         result=compat::run(listener,broker_address)=>result,
@@ -208,11 +228,13 @@ mod tests {
             "timezone":"UTC","max_portions":1,"plans":[],"binding_response":null,
             "hotspot_interface":"wlan1","target_mac":"02:00:00:00:00:01"
         });
+
         if firmware {
             value["firmware"] = serde_json::json!({
                 "client_id":"petlibre-fw-AF_TEST","username":"petlibre-fw","password":"a".repeat(64)
             });
         }
+
         let config: Config = serde_json::from_value(value).unwrap();
         config.validate().unwrap();
         config
@@ -225,6 +247,7 @@ mod tests {
     fn firmware_role_reaches_only_its_literal_topics() {
         let c = config(true);
         let user = Some("firmware");
+
         for (topic, publish, subscribe) in [
             ("health", true, false),
             ("reply", true, false),
@@ -241,10 +264,12 @@ mod tests {
             assert_eq!(publish_allowed(&c, user, &topic), publish, "{topic}");
             assert_eq!(subscribe_allowed(&c, user, &topic), subscribe, "{topic}");
         }
+
         for topic in ["event/post", "event/sub", "+/sub", "+/post"] {
             let topic = format!("{STOCK}{topic}");
             assert!(!publish_allowed(&c, user, &topic) && !subscribe_allowed(&c, user, &topic));
         }
+
         assert!(!subscribe_allowed(&c, user, "petlibre/#"));
         assert!(!subscribe_allowed(&c, user, "petlibre/1/OTHER/request"));
     }
@@ -253,6 +278,7 @@ mod tests {
     fn server_gains_the_reverse_topics_and_stock_device_gains_none() {
         let c = config(true);
         let server = Some("server");
+
         assert!(publish_allowed(&c, server, &format!("{FW}request")));
         assert!(!publish_allowed(&c, server, &format!("{FW}health")));
         assert!(subscribe_allowed(&c, server, &format!("{FW}health")));
@@ -263,9 +289,11 @@ mod tests {
         assert!(!publish_allowed(&c, server, &format!("{FW}ota/get")));
         assert!(subscribe_allowed(&c, server, &format!("{FW}ota/get")));
         assert!(!subscribe_allowed(&c, server, &format!("{FW}ota/data")));
+
         // Existing server access is unchanged.
         assert!(subscribe_allowed(&c, server, &format!("{STOCK}+/post")));
         assert!(publish_allowed(&c, server, &format!("{STOCK}service/sub")));
+
         let device = Some("device");
         for topic in [
             "health", "reply", "request", "ota/get", "ota/data", "+", "#",
@@ -273,6 +301,7 @@ mod tests {
             let topic = format!("{FW}{topic}");
             assert!(!publish_allowed(&c, device, &topic) && !subscribe_allowed(&c, device, &topic));
         }
+
         assert!(publish_allowed(&c, device, &format!("{STOCK}event/post")));
         assert!(!publish_allowed(&c, None, &format!("{FW}health")));
     }
@@ -281,6 +310,7 @@ mod tests {
     fn the_offer_watcher_reaches_only_the_check_topics() {
         let c = config(true);
         let watcher = Some("firmware-watch");
+
         for (topic, publish, subscribe) in [
             ("ota/check", true, false),
             ("ota/offered", false, true),
@@ -294,6 +324,7 @@ mod tests {
             assert_eq!(publish_allowed(&c, watcher, &topic), publish, "{topic}");
             assert_eq!(subscribe_allowed(&c, watcher, &topic), subscribe, "{topic}");
         }
+
         // The transport role cannot use them, and the server answers them.
         let firmware = Some("firmware");
         assert!(!publish_allowed(&c, firmware, &format!("{FW}ota/check")));
@@ -302,9 +333,11 @@ mod tests {
             firmware,
             &format!("{FW}ota/offered")
         ));
+
         let server = Some("server");
         assert!(subscribe_allowed(&c, server, &format!("{FW}ota/check")));
         assert!(publish_allowed(&c, server, &format!("{FW}ota/offered")));
+
         let c = config(false);
         assert!(!publish_allowed(&c, watcher, &format!("{FW}ota/check")));
     }
@@ -312,6 +345,7 @@ mod tests {
     #[test]
     fn without_a_firmware_role_the_namespace_is_closed_to_everyone() {
         let c = config(false);
+
         for user in ["firmware", "server", "device"] {
             for topic in ["health", "reply", "request", "ota/get", "ota/data"] {
                 let topic = format!("{FW}{topic}");

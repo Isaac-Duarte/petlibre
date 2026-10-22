@@ -55,6 +55,7 @@ impl Context {
             }
             None => Box::new(|path| Ok(Box::new(crate::serial::Serial::open(path)?))),
         };
+
         Ok(Self {
             root: Root::new(root)?,
             tool_sha256: sha256(&fs::read(executable)?),
@@ -181,6 +182,7 @@ pub fn validate_rom_report(context: &Context, path: &Path) -> Result<Vec<u8>> {
         root.is_private(path),
         "ROM report must refer to private evidence",
     )?;
+
     let (raw, report) = report(root, path)?;
     context.same_transport(&report)?;
     let result = &report["result"];
@@ -190,6 +192,7 @@ pub fn validate_rom_report(context: &Context, path: &Path) -> Result<Vec<u8>> {
             && result["returned_to_km4"] == true,
         "Successful ROM inspection required",
     )?;
+
     let candidates = result["matching_candidates"].as_object();
     require(
         candidates.is_some_and(|c| {
@@ -199,6 +202,7 @@ pub fn validate_rom_report(context: &Context, path: &Path) -> Result<Vec<u8>> {
         }),
         "ROM report does not identify a pinned candidate",
     )?;
+
     let expected: Vec<Value> = protocol::rom_sample_addresses()
         .iter()
         .map(|a| Value::String(format!("0x{a:08x}")))
@@ -208,6 +212,7 @@ pub fn validate_rom_report(context: &Context, path: &Path) -> Result<Vec<u8>> {
         .map(|words| words.iter().map(|w| w["address"].clone()).collect())
         .unwrap_or_default();
     require(sampled == expected, "Incomplete ROM sample set")?;
+
     streams_match(root, path, &report, "ROM serial evidence hash mismatch")?;
     Ok(raw)
 }
@@ -233,21 +238,25 @@ pub fn validate_status_session(
     let path = path.ok_or_else(|| {
         crate::Error::Refused("A completed bounded-read report is required".into())
     })?;
+
     require(
         root.is_private(path),
         "Bounded-read report must refer to private evidence",
     )?;
+
     let (raw, report) = report(root, path)?;
     context.same_transport(&report)?;
     require(
         bounded_read(&report, port) && report["result"]["offset"].as_u64() == Some(0),
         "Bounded-read session does not validate",
     )?;
+
     let data = fs::read(parent(path).join("flash-read.bin"))?;
     require(
         data.len() == 4096 && report["result"]["sha256"] == sha256(&data).as_str(),
         "Bounded-read image does not validate",
     )?;
+
     streams_match(
         root,
         path,
@@ -263,6 +272,7 @@ pub fn validate_small_for_full(context: &Context, path: &Path, port: &str) -> Re
     let root = &context.root;
     let (raw, report) = report(root, path)?;
     context.same_transport(&report)?;
+
     let image = fs::read(parent(path).join("flash-read.bin"))?;
     require(
         root.is_private(path)
@@ -295,6 +305,7 @@ pub fn reviewed_plan(
             "Reviewed plan and hash required".into(),
         ));
     };
+
     let raw = root.private_file(path)?;
     let parsed: Value = serde_json::from_slice(&raw)?;
     require(
@@ -324,14 +335,17 @@ pub fn acquire_region(
         .write(true)
         .create_new(true)
         .open(&partial)?;
+
     let transfer = protocol::receive_flash(port, offset, length, &mut file, None)?;
     file.sync_all()?;
     drop(file);
+
     let data = fs::read(&partial)?;
     require(data.len() == length, "Incomplete region read")?;
     let name = format!("{label}-{number:02}.bin");
     fs::rename(&partial, directory.join(&name))?;
     evidence::sync_directory(directory)?;
+
     let mut entry: Map<String, Value> = Map::new();
     entry.insert("file".into(), json!(name));
     entry.insert("offset".into(), json!(offset));
@@ -355,6 +369,7 @@ pub fn inspected_transfers(
         .and_then(|o| o[0].as_array())
         .filter(|o| o.len() == extents.len())
         .ok_or_else(|| crate::Error::Refused(message.into()))?;
+
     let mut values = Vec::new();
     for (transfer, (offset, length)) in first.iter().zip(extents) {
         let file = transfer["file"].as_str().unwrap_or_default();
@@ -362,6 +377,7 @@ pub fn inspected_transfers(
             !file.is_empty() && !file.contains('/'),
             "Inspection extent/hash differs",
         )?;
+
         let value = root.private_file(&parent(path).join(file))?;
         require(
             transfer["offset"].as_u64() == Some(*offset as u64)
@@ -386,6 +402,7 @@ pub fn inspection(
         path.ok_or_else(|| crate::Error::Refused("Completed inspection report required".into()))?;
     let (raw, report) = report(root, path)?;
     context.same_transport(&report)?;
+
     require(
         report["status"] == "complete"
             && report["mode"] == "inspect"
@@ -393,6 +410,7 @@ pub fn inspection(
             && report["helper_upload_attempted"] == false,
         "Fresh matching inspection required",
     )?;
+
     streams_match(root, path, &report, "Inspection serial evidence mismatch")?;
     Ok((path.to_path_buf(), report, sha256(&raw)))
 }

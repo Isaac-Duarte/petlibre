@@ -1,4 +1,9 @@
 //! Durable-storage callback interface used by the feeding owner.
+//!
+//! The owner reserves each request durably before applying output and
+//! records its result afterwards; at boot `recover` returns the ID high-water
+//! mark and the mechanical phase. [`crate::feed_journal::FeedJournal`]
+//! provides the implementation.
 
 use core::ffi::c_void;
 use core::ptr;

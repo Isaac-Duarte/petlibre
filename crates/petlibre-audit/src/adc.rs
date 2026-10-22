@@ -25,20 +25,28 @@ use crate::startup::{self, contains, count, find};
 use crate::{Report, Result, digest, require, round, update};
 
 const POLICIES: [&str; 2] = ["fw14-adc-v1", "fw14-adc-v2"];
+/// Under fw14-adc-v2, the least gap between the internal supply channel's mean
+/// and each external channel's mean that shows the channel select took effect.
 const DISTINCT_RAW: i64 = 1000;
+
 /// BIT_LSYS_ADC_FEN / BIT_LSYS_ADC_CKE.
 const ADC_BIT: u64 = 1 << 8;
+
 const MIN_SAMPLES: usize = 30;
 /// Mean host spacing of samples; the firmware waits 1000 ms after each.
 const SAMPLE_SECONDS: (f64, f64) = (0.8, 1.5);
 /// 100 ms at 32 768 Hz for 32 conversions.
 const CAPTURE_TICKS: i64 = 3277;
+
 const MAX_RAW: i64 = 4095;
 const DEFAULT_OFFSET: i64 = 2480;
 const DEFAULT_GAIN: i64 = 12050;
+
+/// Other diagnostics' record tags: an ADC build must emit none of them.
 const FOREIGN: [&[u8]; 7] = [
     b"PLFLS1", b"PLPRK1", b"PLRDS1", b"PLWRS1", b"PLJNL1", b"PLSET1", b"PLTMR1",
 ];
+
 const LIMIT: &str = "UART evidence of register readback and raw conversions; host timestamps carry USB latency. Voltages, \
     divider ratios, current units and the external-power polarity are not established by this capture.";
 
@@ -72,6 +80,7 @@ static ANY: LazyLock<Regex> = LazyLock::new(|| {
         .collect();
     Regex::new(&format!("(?-u){}", alternatives.join("|"))).expect("ADC pattern")
 });
+
 static CLOCK: LazyLock<Regex> = LazyLock::new(|| exact('C'));
 static OPEN: LazyLock<Regex> = LazyLock::new(|| exact('O'));
 static SAMPLE: LazyLock<Regex> = LazyLock::new(|| exact('S'));
@@ -101,6 +110,7 @@ pub fn records(rx: &[u8]) -> (Vec<Record<'_>>, bool) {
             }
         })
         .collect();
+
     let intact = found.len() == count(rx, b"PLADC1");
     (found, intact)
 }
@@ -127,6 +137,7 @@ pub fn calibration(efuse: &str) -> Option<[i64; 4]> {
         i64::from(u16::from_le_bytes([a, b])),
         i64::from(u16::from_le_bytes([c, d])),
     );
+
     Some([
         if offset == 0xffff {
             DEFAULT_OFFSET
@@ -157,10 +168,12 @@ pub fn check_adc(
     if !(kinds.starts_with("CO") && kinds[2..].chars().all(|k| k == 'S')) {
         return Ok("adc_sequence");
     }
+
     match find(rx, b"PLLED1 done low=all\r\n") {
         Some(led_done) if found[0].start >= led_done => {}
         _ => return Ok("adc_sequence"),
     }
+
     let c = CLOCK.captures(found[0].bytes).expect("clock record");
     let hex = |i| u64::from_str_radix(&text(&c, i), 16).unwrap_or(0);
     let (before_f, before_c, after_f, after_c) = (hex(1), hex(2), hex(3), hex(4));
@@ -173,12 +186,14 @@ pub fn check_adc(
         json!({"function_before": format!("{before_f:08x}"), "clock_before": format!("{before_c:08x}"),
                "function_after": format!("{after_f:08x}"), "clock_after": format!("{after_c:08x}")}),
     );
+
     if text(&c, 5) != "pass"
         || after_f & after_c & ADC_BIT == 0
         || (after_f & !ADC_BIT, after_c & !ADC_BIT) != (before_f & !ADC_BIT, before_c & !ADC_BIT)
     {
         return Ok("adc_clock");
     }
+
     let o = OPEN.captures(found[1].bytes).expect("open record");
     let int = |i| text(&o, i).parse::<i64>().unwrap_or(0);
     let reported = [int(3), int(4), int(5), int(6)];
@@ -186,6 +201,7 @@ pub fn check_adc(
         "adc_calibration".into(),
         json!({"offset": reported[0], "gain": reported[1], "default_offset": reported[2], "default_gain": reported[3]}),
     );
+
     let efuse = text(&o, 2);
     if text(&o, 1) != "1"
         || text(&o, 7) != "pass"
@@ -194,6 +210,10 @@ pub fn check_adc(
     {
         return Ok("adc_open");
     }
+
+    // Sample fields in capture-group order: 0 n, 1 ticks, 2-4 food/outlet/dc,
+    // 5 stopped, then (low, high, mean, scaled) per channel at 6 current,
+    // 10 battery and 14 supply; an absent supply group reads as -1.
     let samples: Vec<Vec<i64>> = found[2..]
         .iter()
         .map(|r| {
@@ -207,29 +227,35 @@ pub fn check_adc(
                 .collect()
         })
         .collect();
+
     if samples.iter().any(|s| (s[14] >= 0) != supply) {
         return Ok("adc_sequence");
     }
+
     result.insert("adc_samples".into(), json!(samples.len()));
     if samples.is_empty() {
         return Ok("adc_samples");
     }
+
     let ticks_max = samples.iter().map(|s| s[1]).max().unwrap_or(0);
     result.insert("adc_ticks_max".into(), json!(ticks_max));
     result.insert(
         "adc_capture_ms_max".into(),
         json!(round(ticks_max as f64 * 1000.0 / 32768.0, 2)),
     );
+
     for (name, index) in [("food", 2), ("outlet", 3), ("dc", 4)] {
         let mut levels: Vec<i64> = samples.iter().map(|s| s[index]).collect();
         levels.sort();
         levels.dedup();
         result.insert(format!("adc_{name}_levels"), json!(levels));
     }
+
     let mut channels = vec![("current", 6), ("battery", 10)];
     if supply {
         channels.push(("supply", 14));
     }
+
     for (name, base) in &channels {
         let values: Vec<&[i64]> = samples.iter().map(|s| &s[*base..base + 4]).collect();
         let max = |f: &dyn Fn(&[i64]) -> i64| values.iter().map(|v| f(v)).max().unwrap_or(0);
@@ -241,6 +267,7 @@ pub fn check_adc(
                    "scaled_min": min(&|v| v[3]), "scaled_max": max(&|v| v[3])}),
         );
     }
+
     for (number, s) in samples.iter().enumerate() {
         if s[0] != number as i64 || s[5] != 1 || !(0 < s[1] && s[1] <= CAPTURE_TICKS) {
             return Ok("adc_samples");
@@ -254,6 +281,7 @@ pub fn check_adc(
             }
         }
     }
+
     if supply
         && samples.iter().any(|s| {
             [6, 10]
@@ -263,9 +291,11 @@ pub fn check_adc(
     {
         return Ok("adc_channels");
     }
+
     if samples.len() < MIN_SAMPLES {
         return Ok("adc_samples");
     }
+
     let first = arrival(found[2].start)?;
     let last = arrival(found[found.len() - 1].start)?;
     let spacing = round(seconds(last, first) / (samples.len() - 1) as f64, 3);
@@ -273,6 +303,7 @@ pub fn check_adc(
     if !(SAMPLE_SECONDS.0 <= spacing && spacing <= SAMPLE_SECONDS.1) {
         return Ok("adc_timing");
     }
+
     Ok("pass")
 }
 
@@ -286,6 +317,7 @@ pub fn verify(capture: &Path, manifest: &Path, image: &Path) -> Result<Report> {
         policy.is_some_and(|p| POLICIES.contains(&p)),
         "ADC policy required",
     )?;
+
     let c = &loaded.capture;
     let rx = &c.rx;
     let arrival = |offset: usize| c.arrival(offset);
@@ -298,6 +330,7 @@ pub fn verify(capture: &Path, manifest: &Path, image: &Path) -> Result<Report> {
         Value::Object(map) => map,
         _ => unreachable!(),
     };
+
     let end = crate::capture::timestamp(&c.metadata["end_utc"])?;
     let mut check = startup::startup(
         rx,
@@ -310,6 +343,7 @@ pub fn verify(capture: &Path, manifest: &Path, image: &Path) -> Result<Report> {
     check.remove("start_offset");
     let startup_outcome = check["outcome"].as_str().unwrap_or("").to_string();
     result.insert("startup".into(), Value::Object(check));
+
     let (found, intact) = records(rx);
     let outcome = if startup_outcome != "pass" {
         format!("startup_{startup_outcome}")
@@ -329,6 +363,7 @@ pub fn verify(capture: &Path, manifest: &Path, image: &Path) -> Result<Report> {
         .into()
     };
     result.insert("outcome".into(), json!(outcome));
+
     let mut tail = Report::new();
     tail.insert("build_id".into(), json!(loaded.identity));
     tail.insert("ota_sha256".into(), json!(digest(&loaded.image)));

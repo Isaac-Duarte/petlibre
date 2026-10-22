@@ -1,4 +1,9 @@
 //! Explicit, reversible gateway changes scoped to one test-device MAC.
+//!
+//! Linux gateway only, run as root through `nft`. `rules` renders the
+//! transaction for preview; `apply` refuses unless the broker is listening and
+//! checks the complete transaction before committing it; `remove` deletes only
+//! Petlibre's own table and its tagged input rule.
 use std::process::Command;
 
 use anyhow::{Context, Result, ensure};
@@ -25,6 +30,7 @@ pub fn remove() -> Result<()> {
         output.status.success(),
         "cannot read desktop firewall (run network commands with sudo)"
     );
+
     let data: Value = serde_json::from_slice(&output.stdout)?;
     for item in data["nftables"]
         .as_array()
@@ -43,12 +49,14 @@ pub fn remove() -> Result<()> {
             ])?;
         }
     }
+
     let exists = Command::new("nft")
         .args(["list", "table", "inet", TABLE])
         .output()?;
     if exists.status.success() {
         nft(&["delete", "table", "inet", TABLE])?;
     }
+
     Ok(())
 }
 
@@ -58,10 +66,12 @@ pub fn rules(config: &Config) -> Result<String> {
         !config.mqtt_listen.ip().is_loopback(),
         "network redirection requires a hotspot broker address"
     );
+
     let interface = &config.hotspot_interface;
     let mac = &config.target_mac;
     let ip = config.mqtt_listen.ip();
     let port = config.mqtt_listen.port();
+
     Ok(format!(
         r#"table inet {TABLE} {{
   chain prerouting {{
@@ -84,6 +94,7 @@ pub fn apply(config: &Config) -> Result<()> {
     std::net::TcpStream::connect_timeout(&config.mqtt_listen, std::time::Duration::from_secs(2))
         .context("local broker is not listening; start serve first")?;
     let rules = rules(config)?;
+
     // Check the complete transaction before removing any previous lab rules.
     let existing = Command::new("nft")
         .args(["list", "table", "inet", TABLE])
@@ -92,7 +103,9 @@ pub fn apply(config: &Config) -> Result<()> {
         !existing.status.success(),
         "local routing is already enabled; remove it before applying again"
     );
+
     use std::io::Write;
+    // The first pass only checks (`nft --check`); the second commits the same rules.
     for check in [true, false] {
         let mut command = Command::new("nft");
         if check {
@@ -112,5 +125,6 @@ pub fn apply(config: &Config) -> Result<()> {
             "nft transaction failed; routing was not changed"
         );
     }
+
     Ok(())
 }

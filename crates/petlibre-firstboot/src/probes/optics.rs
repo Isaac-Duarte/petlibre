@@ -42,16 +42,19 @@ pub const POLL_MS: u32 = 2;
 /// Handshake polling before the supervisor (and its clock) is open.
 pub const WAIT_MS: u32 = 10;
 pub const READY_TIMEOUT_MS: u32 = 2000;
+
 const DEADTIME_MS: u32 = 50;
 /// Motor lease, and with it the owner lease the timer interrupt enforces.
 pub const LEASE_MS: u32 = 300;
 pub const ADC_POLLS: u32 = 10_000;
+
 pub const EVENTS: EventsConfig = EventsConfig {
     ticks_per_second: SYSTIMER_HZ,
     timer_period_ms: 10,
     max_feedback_age_ms: 100,
     feedback_capacity: 8,
 };
+
 /// Stock: 100 ticks of settling after enable, 21 bad samples at nominal
 /// 50 ms polling (about 1 s) before a bad state.
 pub const SENSORS: SensorLimits = SensorLimits {
@@ -63,6 +66,7 @@ pub const SENSORS: SensorLimits = SensorLimits {
     max_age_ms: 100,
     battery_min_scaled: 1650,
 };
+
 /// Never started: `observe` needs an idle controller.
 pub const FEED: FeedLimits = FeedLimits {
     feedback_inhibit_ms: 200,
@@ -75,6 +79,7 @@ pub const FEED: FeedLimits = FeedLimits {
     max_portions: 1,
     max_reverse_attempts: 0,
 };
+
 pub const BASELINE_MS: u32 = 5000;
 /// One cycle's emitter windows, each followed by `OFF_MS` with both off.
 pub const CYCLE: [(Emitters, u32); 3] = [
@@ -87,10 +92,12 @@ pub const CYCLES: u32 = 3;
 /// Announced in the start record and bound to the startup policy.
 pub const PLAN: u32 = 2;
 pub const WINDOWS: u32 = 1 + CYCLES * 2 * CYCLE.len() as u32;
+
 /// Budget over a window's length; the probe turns the emitters off first.
 pub const BUDGET_MARGIN_MS: u32 = 500;
 pub const QUIET_MS: u32 = 300;
 pub const EDGE_CAP: usize = 16;
+
 pub const STALL_WARM_MS: u32 = 500;
 pub const STALL_MS: u32 = 1000;
 pub const STALL_BUDGET_MS: u32 = 4000;
@@ -166,12 +173,14 @@ pub struct Window {
     pub highs: [u32; 3],
     pub begin: [bool; 3],
     pub end: [bool; 3],
+
     /// From the window start to each input's first change.
     pub first_change: [Option<u32>; 3],
     /// Shortest LOW run that both began and ended inside the window.
     pub low_min: [Option<u32>; 3],
     pub edges: u32,
     pub dropped: u32,
+
     /// Stock-derived labels: food Good is food present, outlet Good is clear.
     pub food: State,
     pub outlet: State,
@@ -220,6 +229,7 @@ pub enum Record {
         inputs: bool,
         ms: u32,
     },
+
     /// No READY from the KM0 peer.
     Timeout {
         ms: u32,
@@ -229,6 +239,7 @@ pub enum Record {
     /// The same window's per-input statistics.
     Inputs(Window),
     Edge(Edge),
+
     Stall {
         /// From the last lease renewal to emitters read OFF.
         cut_ms: Option<u32>,
@@ -288,6 +299,7 @@ pub fn describe(record: Record, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             u8::from(events),
             u8::from(inputs)
         ),
+
         Record::Timeout { ms } => write!(f, "timeout ms={ms}"),
         Record::Window(w) => {
             let food = match w.food {
@@ -300,6 +312,7 @@ pub fn describe(record: Record, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 State::Good => "clear",
                 State::Bad => "blocked",
             };
+
             write!(
                 f,
                 "window n={} emitters={} start={} len={} samples={} gap={} edges={} dropped={} \
@@ -315,6 +328,7 @@ pub fn describe(record: Record, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 u8::from(w.stopped)
             )
         }
+
         Record::Inputs(w) => {
             let [b0, b1, b2] = bits(w.begin);
             let [e0, e1, e2] = bits(w.end);
@@ -329,6 +343,7 @@ pub fn describe(record: Record, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 Times(w.low_min),
             )
         }
+
         Record::Edge(e) => write!(
             f,
             "edge n={} input={} level={} ms={}",
@@ -337,6 +352,7 @@ pub fn describe(record: Record, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             u8::from(e.level),
             e.ms
         ),
+
         Record::Stall {
             cut_ms,
             fault,
@@ -357,6 +373,7 @@ pub fn describe(record: Record, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 u8::from(closed)
             )
         }
+
         Record::Done { windows } => write!(f, "done windows={windows}"),
         Record::Error { kind, n, fault } => {
             write!(f, "error kind={} n={n} fault={fault}", kind.name())
@@ -451,6 +468,7 @@ impl Probe {
         } else {
             self.board.close();
         }
+
         stopped::set_supervised(0);
         self.end(Record::Error {
             kind,
@@ -468,6 +486,7 @@ impl Probe {
                 if !self.board.open(DEADTIME_MS, LEASE_MS, ADC_POLLS, 0) {
                     return self.end(self.open_record(false, false, false, false, false));
                 }
+
                 let count = sdk::backup_read(BOOT_COUNT_REGISTER).wrapping_add(1);
                 sdk::backup_write(BOOT_COUNT_REGISTER, count);
                 self.authority = park::session(count, self.begin_raw, false);
@@ -475,9 +494,11 @@ impl Probe {
                     self.board.close();
                     return self.end(self.open_record(true, false, false, false, false));
                 }
+
                 self.stage = Stage::Wait;
                 next(WAIT_MS, None)
             }
+
             Stage::Wait => self.wait::<M>(),
             Stage::Run => self.run(),
             Stage::Warm => self.warm(),
@@ -517,12 +538,14 @@ impl Probe {
             }
             _ => return next(WAIT_MS, None),
         };
+
         // Bind only with verified STOP and infrared OFF readback.
         let inactive = stopped::observe().verified();
         let ready = FlashCoord::new(&FLASH_LIMITS, self.authority, ms).and_then(|mut coord| {
             (coord.ready(self.authority, peer, inactive, ms) == FlashReply::ACCEPTED)
                 .then_some(coord)
         });
+
         self.flash = ready;
         let flash = self
             .flash
@@ -534,6 +557,7 @@ impl Probe {
         let board = &raw mut self.board;
         // SAFETY: the board stays at this fixed address while events is open.
         let events = attached && unsafe { self.events.open(board, &EVENTS) };
+
         let inputs = SensorInputs::new(&SENSORS, &self.board.calibration);
         let controller = FeedController::new(&FEED, 0);
         let ok = events && inputs.is_some() && controller.is_some();
@@ -546,11 +570,13 @@ impl Probe {
             }
             return self.end(record);
         }
+
         self.inputs = inputs.unwrap_or_default();
         self.controller = controller.unwrap_or_default();
         let Some(now) = self.events.now_ms() else {
             return self.fail(ErrorKind::Clock);
         };
+
         self.begin_window(0, now, None);
         self.stage = Stage::Run;
         next(POLL_MS, Some(record))
@@ -585,6 +611,7 @@ impl Probe {
             stopped::set_supervised(0);
             return ok;
         }
+
         stopped::set_supervised(emitters.mask());
         let ok = self.events.optics_select(a, b, len_ms + BUDGET_MARGIN_MS);
         if !ok {
@@ -598,16 +625,19 @@ impl Probe {
         if self.events.fault != EventsFault::OK {
             return Err(ErrorKind::Supervisor);
         }
+
         let now = self.events.now_ms().ok_or(ErrorKind::Clock)?;
         let mut reading = SensorReading::default();
         let pins = self
             .board
             .capture_gpio(&mut reading)
             .ok_or(ErrorKind::Capture)?;
+
         self.inputs.update(now, Some(&reading));
         if !self.events.observe(&mut self.controller, &self.inputs) {
             return Err(ErrorKind::Observe);
         }
+
         Ok((now, pins))
     }
 
@@ -621,12 +651,14 @@ impl Probe {
             w.begin = levels;
             w.end = levels;
         }
+
         w.max_gap_ms = w.max_gap_ms.max(now.wrapping_sub(self.last_ms));
         self.last_ms = now;
         w.samples += 1;
         let (a, b) = w.emitters.levels();
         w.stopped &=
             sdk::gpio_port_read(GPIO_PORT_A, MOTOR_MASK) == MOTOR_MASK && board::optics_are(a, b);
+
         for (i, &high) in levels.iter().enumerate() {
             w.highs[i] += u32::from(high);
             if high == w.end[i] {
@@ -635,6 +667,7 @@ impl Probe {
             if w.first_change[i].is_none() && high != w.begin[i] {
                 w.first_change[i] = Some(at);
             }
+
             if high {
                 if let Some(since) = self.low_since[i].take() {
                     let run = now.wrapping_sub(since);
@@ -643,6 +676,7 @@ impl Probe {
             } else {
                 self.low_since[i] = Some(now);
             }
+
             w.end[i] = high;
             let index = w.edges as usize;
             w.edges += 1;
@@ -674,6 +708,7 @@ impl Probe {
         self.window.outlet = State::of(&self.inputs.outlet);
         self.pending[0] = Some(Record::Window(self.window));
         self.pending[1] = Some(Record::Inputs(self.window));
+
         let kept = (self.window.edges as usize).min(EDGE_CAP);
         for (slot, edge) in self.pending[2..kept + 2].iter_mut().zip(self.edges) {
             *slot = Some(Record::Edge(edge));
@@ -687,6 +722,7 @@ impl Probe {
             Ok(sample) => sample,
             Err(kind) => return self.fail(kind),
         };
+
         self.record_sample(now, pins);
         let age = now.wrapping_sub(self.window.start_ms);
         if age >= self.window.len_ms {
@@ -694,6 +730,7 @@ impl Probe {
             if let Some(record) = self.take_pending() {
                 return next(POLL_MS, Some(record));
             }
+
             self.finish_window(now);
             let n = self.window.n + 1;
             if n == WINDOWS {
@@ -704,12 +741,14 @@ impl Probe {
                 self.window.start_ms = now;
                 return next(POLL_MS, None);
             }
+
             if !self.switch(n) {
                 return self.fail(ErrorKind::Optics);
             }
             self.begin_window(n, now, Some(levels(pins)));
             return next(POLL_MS, None);
         }
+
         let record = if age >= QUIET_MS {
             self.take_pending()
         } else {
@@ -745,9 +784,11 @@ impl Probe {
         if let Err(kind) = self.sample() {
             return self.fail(kind);
         }
+
         let renewed = sdk::systimer_ticks();
         let ticks = (STALL_MS * SYSTIMER_HZ).div_ceil(1000);
         let mut cut = None;
+
         loop {
             let raw = sdk::systimer_ticks();
             if cut.is_none() && board::optics_off() {
@@ -758,10 +799,12 @@ impl Probe {
             }
             sdk::spin_once();
         }
+
         let mut snapshot = EventsSnapshot::default();
         self.events.snapshot(&mut snapshot);
         stopped::set_supervised(0);
         let closed = self.events.close();
+
         let cut_ms = cut.map(|t| (u64::from(t) * 1000 / u64::from(SYSTIMER_HZ)) as u32);
         let record = Record::Stall {
             cut_ms,
@@ -770,6 +813,7 @@ impl Probe {
             stopped: snapshot.stopped && sdk::gpio_port_read(GPIO_PORT_A, MOTOR_MASK) == MOTOR_MASK,
             closed,
         };
+
         self.pending = [None; EDGE_CAP + 2];
         self.pending[0] = Some(Record::Done { windows: WINDOWS });
         self.pending_len = 1;

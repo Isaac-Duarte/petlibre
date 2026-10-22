@@ -19,6 +19,8 @@ use std::time::{Duration, Instant};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
+// Name tables for the enumerated status fields; the worker reports indexes
+// into them, and `expect` actions and the report use the names.
 pub const STATES: [&str; 9] = [
     "starting",
     "idle",
@@ -30,10 +32,13 @@ pub const STATES: [&str; 9] = [
     "fault",
     "stopped",
 ];
+
 pub const FAULTS: [&str; 7] = [
     "ok", "setup", "recovery", "storage", "hardware", "watchdog", "flash",
 ];
+
 pub const OUTCOMES: [&str; 5] = ["pending", "done", "cancelled", "expired", "failed"];
+
 pub const REASONS: [&str; 13] = [
     "none",
     "done",
@@ -49,6 +54,7 @@ pub const REASONS: [&str; 13] = [
     "feedback_stream",
     "output",
 ];
+
 pub const SUBMISSIONS: [&str; 6] = [
     "enqueued",
     "reject_busy",
@@ -57,6 +63,8 @@ pub const SUBMISSIONS: [&str; 6] = [
     "reject_phase",
     "reject_stopped",
 ];
+
+// The status fields an `expect` action may name, and the booleans among them.
 const STATUS_FIELDS: [&str; 23] = [
     "device_ms",
     "response",
@@ -82,6 +90,7 @@ const STATUS_FIELDS: [&str; 23] = [
     "boots",
     "submission",
 ];
+
 const BOOLEAN_FIELDS: [&str; 6] = [
     "durable",
     "stopped",
@@ -90,6 +99,8 @@ const BOOLEAN_FIELDS: [&str; 6] = [
     "pending",
     "online",
 ];
+
+// Every event kind the worker may emit; anything else is a protocol error.
 const EVENTS: [&str; 7] = [
     "status",
     "outputs",
@@ -99,6 +110,7 @@ const EVENTS: [&str; 7] = [
     "power_cut",
     "journal_io",
 ];
+
 /// How long the worker may take to answer one command.
 const RESPONSE: Duration = Duration::from_secs(5);
 const MAX_RESPONSE_BYTES: usize = 65536;
@@ -169,6 +181,7 @@ pub fn validate(scenario: &Value) -> Result<&Value> {
     }) else {
         return fail("Unknown scenario fields");
     };
+
     if !integer(&s.get("version").cloned().unwrap_or(Value::Null), 1, 1) {
         return fail("Scenario version must be 1");
     }
@@ -179,6 +192,7 @@ pub fn validate(scenario: &Value) -> Result<&Value> {
     {
         return fail("Scenario needs a name of 1..100 characters");
     }
+
     if !matches!(
         s.get("profile").map_or(Some("single"), Value::as_str),
         Some("single" | "double")
@@ -188,6 +202,7 @@ pub fn validate(scenario: &Value) -> Result<&Value> {
     if !integer(s.get("feedback_period_ms").unwrap_or(&json!(10)), 0, 100000) {
         return fail("Invalid feedback period");
     }
+
     let end = match s.get("end_ms") {
         Some(end) if integer(end, 0, 10000) => end.as_u64().unwrap(),
         _ => return fail("end_ms must be 0..10000"),
@@ -199,6 +214,7 @@ pub fn validate(scenario: &Value) -> Result<&Value> {
     else {
         return fail("actions must be a list with at most 10000 entries");
     };
+
     let mut previous = 0;
     let mut expectations = 0;
     for action in actions {
@@ -208,10 +224,12 @@ pub fn validate(scenario: &Value) -> Result<&Value> {
         else {
             return fail("Invalid action fields");
         };
+
         match a.get("at_ms") {
             Some(at) if integer(at, previous, end) => previous = at.as_u64().unwrap(),
             _ => return fail("Actions must have nondecreasing timestamps within end_ms"),
         }
+
         let Some((op, bounds)) = a
             .get("op")
             .and_then(Value::as_str)
@@ -219,6 +237,7 @@ pub fn validate(scenario: &Value) -> Result<&Value> {
         else {
             return fail("Unknown action");
         };
+
         match bounds {
             None => {
                 let values = a.get("values").and_then(Value::as_object);
@@ -227,6 +246,7 @@ pub fn validate(scenario: &Value) -> Result<&Value> {
                 }) else {
                     return fail("expect requires known, nonempty status values");
                 };
+
                 for (key, value) in values {
                     let valid = if BOOLEAN_FIELDS.contains(&key.as_str()) {
                         value.is_boolean()
@@ -239,8 +259,10 @@ pub fn validate(scenario: &Value) -> Result<&Value> {
                         return fail(format!("Invalid expectation for {key}"));
                     }
                 }
+
                 expectations += 1;
             }
+
             Some(bounds) => {
                 let empty = json!([]);
                 let args = a.get("args").unwrap_or(&empty).as_array();
@@ -259,6 +281,7 @@ pub fn validate(scenario: &Value) -> Result<&Value> {
             }
         }
     }
+
     if expectations == 0 {
         return fail("Scenario needs at least one expectation");
     }
@@ -290,9 +313,11 @@ impl Worker {
             )
             .spawn()
             .map_err(|e| HarnessError(format!("Worker start failed: {e}")))?;
+
         let stdin = child.stdin.take().expect("piped stdin");
         let stdout = child.stdout.take().expect("piped stdout");
         let (send, lines) = channel();
+        // A reader thread feeds a channel, so `read` can wait with a deadline.
         std::thread::spawn(move || {
             for line in BufReader::new(stdout).lines() {
                 if send.send(line).is_err() {
@@ -300,6 +325,7 @@ impl Worker {
                 }
             }
         });
+
         Ok(Self {
             child,
             stdin,
@@ -312,6 +338,7 @@ impl Worker {
     pub fn read(&mut self) -> Result<Vec<Value>> {
         let deadline = Instant::now() + RESPONSE;
         let (mut events, mut bytes) = (Vec::new(), 0);
+
         loop {
             let left = deadline.saturating_duration_since(Instant::now());
             let line = match self.lines.recv_timeout(left) {
@@ -319,12 +346,14 @@ impl Worker {
                 Ok(Err(_)) | Err(RecvTimeoutError::Disconnected) => return Err(self.exited()),
                 Err(RecvTimeoutError::Timeout) => return fail("Worker response timed out"),
             };
+
             bytes += line.len() + 1;
             let event: Value = serde_json::from_str(&line)
                 .map_err(|_| HarnessError("Malformed worker JSON".into()))?;
             if !event["event"].as_str().is_some_and(|e| EVENTS.contains(&e)) {
                 return fail("Unknown worker event");
             }
+
             let done = matches!(event["event"].as_str(), Some("status" | "power_cut"));
             events.push(event);
             if done {
@@ -390,6 +419,7 @@ fn python_dumps(value: &Value, out: &mut String) {
             }
             out.push(']');
         }
+
         Value::Object(map) => {
             let mut keys: Vec<&String> = map.keys().collect();
             keys.sort();
@@ -404,6 +434,7 @@ fn python_dumps(value: &Value, out: &mut String) {
             }
             out.push('}');
         }
+
         Value::String(text) => {
             out.push('"');
             for c in text.chars() {
@@ -426,6 +457,7 @@ fn python_dumps(value: &Value, out: &mut String) {
             }
             out.push('"');
         }
+
         other => out.push_str(&other.to_string()),
     }
 }
@@ -440,6 +472,7 @@ pub fn sha256_hex(data: &[u8]) -> String {
 /// Hashes of the worker and of every source that shapes it.
 pub fn identities(root: &Path, executable: &Path) -> Value {
     let mut paths: BTreeSet<PathBuf> = BTreeSet::new();
+
     fn walk(dir: &Path, out: &mut BTreeSet<PathBuf>) {
         let Ok(entries) = fs::read_dir(dir) else {
             return;
@@ -458,6 +491,7 @@ pub fn identities(root: &Path, executable: &Path) -> Value {
             }
         }
     }
+
     for krate in ["core", "amebad", "testkit", "sim"] {
         walk(&root.join(format!("crates/petlibre-{krate}")), &mut paths);
     }
@@ -465,6 +499,7 @@ pub fn identities(root: &Path, executable: &Path) -> Value {
         paths.extend(entries.flatten().map(|e| e.path()).filter(|p| p.is_file()));
     }
     paths.insert(root.join("Cargo.lock"));
+
     let sources: Map<String, Value> = paths
         .iter()
         .filter_map(|p| {
@@ -475,24 +510,33 @@ pub fn identities(root: &Path, executable: &Path) -> Value {
             ))
         })
         .collect();
+
     let worker = fs::read(executable)
         .map(|d| sha256_hex(&d))
         .unwrap_or_default();
     json!({"worker_sha256": worker, "sources": sources})
 }
 
+/// One scenario run: the worker for the current boot, the latest status, and
+/// the harness's own view of storage that the invariants are checked against.
 pub struct Simulation<'a> {
     scenario: &'a Value,
     root: PathBuf,
     executable: PathBuf,
     image: PathBuf,
     worker: Option<Worker>,
+
     now: u64,
     boots: u64,
+
     latest: Map<String, Value>,
     last_submission: Option<&'static str>,
+
     events: Vec<Value>,
     assertions: Vec<Value>,
+
+    // `armed`: a `cut` or `power_cut` was sent, so a worker power cut is expected.
+    // `reserved`: a reservation write ended ok and no finish write has ended since.
     armed: bool,
     reserved: bool,
     phase: u64,
@@ -506,6 +550,7 @@ impl<'a> Simulation<'a> {
         directory: &Path,
     ) -> Result<Self> {
         validate(scenario)?;
+
         Ok(Self {
             scenario,
             root: root.to_path_buf(),
@@ -546,15 +591,18 @@ impl<'a> Simulation<'a> {
 
     fn consume(&mut self, events: Vec<Value>) -> Result<()> {
         let mut reset = false;
+
         for event in events {
             self.record(&event);
             match event["event"].as_str().unwrap_or("") {
                 "storage_begin" => {
                     self.phase = event["phase"].as_u64().unwrap_or(0);
+                    // A new reservation does not count until its write ends ok.
                     if self.phase == 1 {
                         self.reserved = false;
                     }
                 }
+
                 "storage_end" => {
                     if self.phase == 1 && event["ok"] == true {
                         self.reserved = true;
@@ -563,6 +611,7 @@ impl<'a> Simulation<'a> {
                     }
                     self.phase = 0;
                 }
+
                 "outputs" => {
                     let motor = event["motor"].as_u64();
                     if matches!(motor, Some(1 | 2)) {
@@ -580,6 +629,7 @@ impl<'a> Simulation<'a> {
                         Value::Null,
                     );
                 }
+
                 "status" => {
                     self.latest = event.as_object().cloned().unwrap_or_default();
                     if event["durable"] == true {
@@ -595,8 +645,10 @@ impl<'a> Simulation<'a> {
                             Value::Null,
                         );
                     }
+                    // Applied after this batch, as a reboot on the same journal.
                     reset = event["watchdog_resets"].as_u64().unwrap_or(0) > 0;
                 }
+
                 "power_cut" => {
                     if !self.armed {
                         return fail("Unexpected worker power cut");
@@ -613,11 +665,13 @@ impl<'a> Simulation<'a> {
                 _ => {}
             }
         }
+
         if reset && self.worker.is_some() {
             self.record(&json!({"event": "watchdog_reset_requested"}));
             self.offline();
             self.boot()?;
         }
+
         Ok(())
     }
 
@@ -634,14 +688,19 @@ impl<'a> Simulation<'a> {
         if self.worker.is_some() {
             return fail("boot requires the simulated power to be off");
         }
+
         self.boots += 1;
         self.last_submission = None;
+
         let mode = u8::from(self.profile() == "double");
+        // Only the first boot provisions; later boots recover from the journal.
         let mut worker = Worker::start(&self.executable, &self.image, mode, self.boots == 1)?;
+        // Keep the worker before checking its boot output, so `offline` stops it.
         let first = worker.read();
         self.worker = Some(worker);
         self.record(&json!({"event": "boot", "profile": self.profile()}));
         self.consume(first?)?;
+
         let period = self
             .scenario
             .get("feedback_period_ms")
@@ -654,11 +713,14 @@ impl<'a> Simulation<'a> {
         let Some(worker) = self.worker.as_mut() else {
             return fail(format!("{op} requires simulated power"));
         };
+
         if op == "cut" || op == "power_cut" {
             self.armed = true;
         }
+
         let events = worker.command(op, args)?;
         self.consume(events)?;
+
         if op == "submit" {
             let response = self.latest.get("response").cloned().unwrap_or(Value::Null);
             if !integer(&response, 0, SUBMISSIONS.len() as u64 - 1) {
@@ -666,6 +728,7 @@ impl<'a> Simulation<'a> {
             }
             self.last_submission = Some(SUBMISSIONS[response.as_u64().unwrap() as usize]);
         }
+
         Ok(())
     }
 
@@ -674,6 +737,8 @@ impl<'a> Simulation<'a> {
         actual.insert("online".into(), json!(self.worker.is_some()));
         actual.insert("boots".into(), json!(self.boots));
         actual.insert("submission".into(), json!(self.last_submission));
+
+        // The worker reports enum fields as indexes; scenarios expect names.
         for key in ["state", "fault", "outcome", "reason", "submission"] {
             let names = enum_names(key).unwrap();
             if let Some(index) = actual.get(key).and_then(Value::as_u64) {
@@ -683,6 +748,7 @@ impl<'a> Simulation<'a> {
                 actual.insert(key.into(), json!(name));
             }
         }
+
         for (key, value) in values {
             if self.worker.is_none() && key != "online" && key != "boots" {
                 return fail("Only online/boots can be asserted while power is off");
@@ -690,16 +756,20 @@ impl<'a> Simulation<'a> {
             let got = actual.get(key).cloned().unwrap_or(Value::Null);
             self.check(&format!("expect.{key}"), got == *value, got, value.clone());
         }
+
         Ok(())
     }
 
     pub fn run(mut self) -> Result<Value> {
+        // Power off before surfacing a step's error, so no worker outlives the run.
         let result = self.steps();
         self.offline();
         result?;
+
         let mut scenario_text = String::new();
         python_dumps(self.scenario, &mut scenario_text);
         let passed = self.assertions.iter().all(|a| a["passed"] == true);
+
         Ok(json!({
             "version": 1, "name": self.scenario["name"], "profile": self.profile(),
             "scenario_sha256": sha256_hex(scenario_text.as_bytes()),
@@ -720,13 +790,16 @@ impl<'a> Simulation<'a> {
             .as_array()
             .cloned()
             .unwrap_or_default();
+
         let mut next = actions.iter().peekable();
         let end = self.scenario["end_ms"].as_u64().unwrap_or(0);
+        // Each millisecond: tick, apply that millisecond's actions, then poll.
         for now in 0..=end {
             self.now = now;
             if now > 0 && self.worker.is_some() {
                 self.send("tick", &[])?;
             }
+
             while let Some(action) = next.next_if(|a| a["at_ms"].as_u64() == Some(now)) {
                 self.record(&json!({"event": "action", "action": action}));
                 let op = action["op"].as_str().unwrap_or("");
@@ -741,10 +814,12 @@ impl<'a> Simulation<'a> {
                     }
                 }
             }
+
             if self.worker.is_some() {
                 self.send("poll", &[])?;
             }
         }
+
         Ok(())
     }
 }

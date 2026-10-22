@@ -42,6 +42,7 @@ pub fn runs(data: &[u8], mask: u8) -> Vec<(u8, usize, usize)> {
             start = index;
         }
     }
+
     if let Some(previous) = current {
         out.push((previous, start, data.len() - start));
     }
@@ -58,14 +59,17 @@ pub fn check_cycle(data: &[u8], channels: &[u8; 4], mode: &str, samplerate: f64)
         "seconds".into(),
         json!(round(data.len() as f64 / samplerate, 6)),
     );
+
     let mut input_drive = Vec::new();
     let mut output_drive = Vec::new();
+
     if data.is_empty() {
         result.insert("input_drive".into(), json!([]));
         result.insert("output_drive".into(), json!([]));
         result.insert("outcome".into(), json!("transients_empty"));
         return result;
     }
+
     let timeline = runs(data, mask);
     let on = |value: u8, line: usize| value & bit[line] != 0;
     for (value, start, length) in &timeline {
@@ -80,11 +84,13 @@ pub fn check_cycle(data: &[u8], channels: &[u8; 4], mode: &str, samplerate: f64)
             output_drive.push(event(("high", if on(*value, 2) { "outa" } else { "outb" })));
         }
     }
+
     let inputs: Vec<(bool, bool, usize)> = timeline
         .iter()
         .map(|(v, s, _)| (on(*v, 0), on(*v, 1), *s))
         .collect();
     let brake_at = inputs.iter().find(|(a, b, _)| *a && *b).map(|(_, _, s)| *s);
+
     result.insert("input_drive".into(), json!(input_drive));
     result.insert("output_drive".into(), json!(output_drive));
     result.insert(
@@ -92,6 +98,7 @@ pub fn check_cycle(data: &[u8], channels: &[u8; 4], mode: &str, samplerate: f64)
         brake_at.map_or(Value::Null, |s| json!(round(s as f64 / samplerate, 6))),
     );
     result.insert("transitions".into(), json!(timeline.len() - 1));
+
     let outcome = if timeline[0].0 != 0 {
         "transients_late_start"
     } else if !input_drive.is_empty() {
@@ -116,6 +123,7 @@ pub fn check_cycle(data: &[u8], channels: &[u8; 4], mode: &str, samplerate: f64)
     } else {
         "pass"
     };
+
     result.insert("outcome".into(), json!(outcome));
     result
 }
@@ -128,6 +136,7 @@ pub fn verify(capture: &Path) -> Result<Report> {
         manifest["schema_version"] == 1 && ["boot", "loader"].contains(&mode),
         "Unsupported transients manifest",
     )?;
+
     let channel = |name: &str| {
         manifest["channels"][name]
             .as_u64()
@@ -148,8 +157,10 @@ pub fn verify(capture: &Path) -> Result<Report> {
                 "Manifest needs four distinct channels 0-7 for INA, INB, OUTA and OUTB".into(),
             )
         })?;
+
     let samplerate = manifest["samplerate"].as_f64().unwrap_or(0.0);
     require(samplerate > 0.0, "Unsupported transients manifest")?;
+
     let mut cycles = Vec::new();
     for entry in manifest["cycles"]
         .as_array()
@@ -166,11 +177,13 @@ pub fn verify(capture: &Path) -> Result<Report> {
             entry["bytes"] == data.len(),
             format!("{file} changed since capture"),
         )?;
+
         let mut cycle = Report::new();
         cycle.insert("file".into(), json!(file));
         crate::update(&mut cycle, &check_cycle(&data, &channels, mode, samplerate));
         cycles.push(cycle);
     }
+
     let passed = cycles.iter().filter(|c| c["outcome"] == "pass").count();
     let brakes: Vec<f64> = cycles
         .iter()
@@ -182,18 +195,21 @@ pub fn verify(capture: &Path) -> Result<Report> {
             .map(|c| c[key].as_array().map_or(0, Vec::len))
             .sum()
     };
+
     let brake = if brakes.is_empty() {
         Value::Null
     } else {
         json!({"min": brakes.iter().copied().fold(f64::INFINITY, f64::min),
                "max": brakes.iter().copied().fold(f64::NEG_INFINITY, f64::max)})
     };
+
     let report = json!({
         "outcome": if !cycles.is_empty() && passed == cycles.len() { "pass" } else { "transients_fail" },
         "mode": mode, "samplerate": manifest["samplerate"], "cycles": cycles.len(), "passed": passed,
         "input_drive_events": events("input_drive"), "output_drive_events": events("output_drive"),
         "brake_at_s": brake, "per_cycle": cycles, "limit": LIMIT,
     });
+
     Ok(match report {
         Value::Object(map) => map,
         _ => unreachable!(),

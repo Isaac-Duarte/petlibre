@@ -107,11 +107,13 @@ mod tests {
             offset: 0x3ff_a000,
             reset: 0x10_0000,
         };
+
         assert_eq!(s.bank(), Some(0));
         s.offset = 0x3e7_a000;
         assert_eq!(s.bank(), Some(1));
         s.control = 0;
         assert_eq!(s.bank(), None);
+
         s.control = 1;
         s.offset = u32::MAX;
         assert_eq!(s.bank(), None);
@@ -132,8 +134,10 @@ mod tests {
             offset: 0x3e7_a000,
             reset: 0x10_0000,
         };
+
         let line = report.start(s).unwrap().to_str().unwrap();
         assert!(line.contains(" bank=unknown reset=00100000 mmu=00000000,0c000000,03e7a000\r\n"));
+
         s.control = 3;
         s.reset = 0;
         let line = report.start(s).unwrap().to_str().unwrap();

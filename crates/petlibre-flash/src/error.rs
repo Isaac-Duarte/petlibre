@@ -1,3 +1,8 @@
+//! The crate's error type and `require`, the guard every check goes through.
+//!
+//! A refusal, an I/O error and malformed JSON all end a session the same
+//! way: terminally, with no retry, resume or fallback.
+
 use std::io;
 
 /// Every stop is terminal: nothing in this crate retries, resumes or falls

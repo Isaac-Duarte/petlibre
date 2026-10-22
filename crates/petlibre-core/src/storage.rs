@@ -17,6 +17,7 @@ pub type ReadFn = unsafe extern "C" fn(
     bytes: *mut c_void,
     size: usize,
 ) -> bool;
+
 pub type ProgramFn = unsafe extern "C" fn(
     context: *mut c_void,
     slot: c_uint,
@@ -24,6 +25,7 @@ pub type ProgramFn = unsafe extern "C" fn(
     bytes: *const c_void,
     size: usize,
 ) -> bool;
+
 pub type EraseFn = unsafe extern "C" fn(context: *mut c_void, slot: c_uint) -> bool;
 
 /// Two EXCLUSIVE, nonoverlapping erase units, assigned only after a complete

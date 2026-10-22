@@ -1,3 +1,6 @@
+//! Shared integration-test fixtures: a synthetic configuration and helpers
+//! that run the real `petlibre-local serve` binary on loopback ports.
+
 #![allow(dead_code)]
 use petlibre_local::config::Config;
 
@@ -35,12 +38,14 @@ impl Drop for Service {
         let _ = Command::new("kill")
             .args(["-INT", &self.0.id().to_string()])
             .status();
+
         for _ in 0..30 {
             if self.0.try_wait().ok().flatten().is_some() {
                 return;
             }
             std::thread::sleep(Duration::from_millis(100));
         }
+
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
@@ -65,6 +70,7 @@ pub fn start_mode(path: &std::path::Path, ota: bool) -> Service {
 pub fn start_in(path: &std::path::Path, ota: bool, cwd: Option<&std::path::Path>) -> Service {
     let mut command = Command::new(env!("CARGO_BIN_EXE_petlibre-local"));
     command.args(["serve", "--config"]).arg(path);
+
     if let Some(cwd) = cwd {
         command.current_dir(cwd);
     }
@@ -74,6 +80,7 @@ pub fn start_in(path: &std::path::Path, ota: bool, cwd: Option<&std::path::Path>
             .arg("--enable-ota-trial")
             .env(petlibre_local::build_info::ALLOW_UNREVIEWED_ENV, "1");
     }
+
     Service(
         command
             .stdout(Stdio::null())

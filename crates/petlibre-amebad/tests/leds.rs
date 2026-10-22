@@ -1,3 +1,8 @@
+//! Indicator LED driver against the fake GPIO model. Indicators enable only
+//! from a verified stopped state with their latches preloaded LOW; only PB22
+//! can be input-verified (Port A indicators are output-only); and a failed
+//! write, direction, pad or stopped check aborts to all LOW.
+
 use petlibre_amebad::leds::{self, Led};
 use petlibre_amebad::sdk::fake;
 use petlibre_amebad::stopped;
@@ -13,6 +18,7 @@ fn bounded_probe_visits_only_indicators_and_keeps_stopped_outputs() {
     ready();
     let mut duration = 0;
     let mut levels = Vec::new();
+
     for step in (0..).map_while(leds::probe_step) {
         assert!(leds::request(step.led, step.high));
         let readback = leds::observe(step.led);
@@ -24,6 +30,7 @@ fn bounded_probe_visits_only_indicators_and_keeps_stopped_outputs() {
         assert!(stopped::observe().verified());
         fake::with(|h| assert!(!h.adc_enabled && !h.task_live));
     }
+
     assert_eq!(levels.len(), 16);
     assert_eq!(duration, 14_000);
     assert_eq!(
@@ -41,6 +48,7 @@ fn bounded_probe_visits_only_indicators_and_keeps_stopped_outputs() {
 fn preloads_before_enabling_indicators_and_preserves_other_pins() {
     fake::reset_hardware();
     assert!(stopped::initialize().verified());
+
     fake::with(|h| {
         h.output[0] |= leds::PA_MASK | (1 << 9);
         h.output[1] |= leds::PB_MASK | (1 << 10);
@@ -52,10 +60,12 @@ fn preloads_before_enabling_indicators_and_preserves_other_pins() {
             })
         });
     });
+
     assert!(leds::initialize());
     for led in Led::ALL {
         assert!(leds::request(led, true));
     }
+
     assert!(stopped::observe().verified());
     fake::with(|h| {
         assert_ne!(h.output[0] & (1 << 9), 0);
@@ -74,6 +84,7 @@ fn blocked_write_and_direction_loss_abort_to_low() {
         assert!(leds::all_low());
         assert!(stopped::observe().verified());
     }
+
     ready();
     assert!(leds::request(Led::Connection, true));
     fake::with(|h| h.direction[1] &= !leds::PB_MASK);
@@ -86,6 +97,7 @@ fn blocked_write_and_direction_loss_abort_to_low() {
 fn missing_stopped_state_refuses_indicator_enable() {
     fake::reset_hardware();
     assert!(!leds::initialize());
+
     ready();
     fake::with(|h| {
         h.output[0] &= !(1 << 13);
@@ -103,16 +115,19 @@ fn stale_input_is_distinguished_from_latch_failure_and_mux_mismatch() {
     use leds::Decision;
     let fault = Led::Fault.pin();
     let (port, bit) = ((fault >> 5) as usize, 1 << (fault & 31));
+
     ready();
     fake::with(|h| h.readback_override_mask[port] = bit);
     assert!(leds::request(Led::Fault, true));
     let stale = leds::observe(Led::Fault);
     assert!(stale.latch_high && !stale.input_high && stale.directions_ok && stale.stopped_ok);
     assert!(!stale.accepted(true));
+
     fake::with(|h| {
         assert_eq!(h.interrupts, 0);
         h.readback_override_mask[port] = 0;
     });
+
     assert!(leds::observe(Led::Fault).matches(true));
     fake::with(|h| h.pad_control[fault as usize] = 11);
     assert!(!leds::observe(Led::Fault).accepted(true));
@@ -134,11 +149,13 @@ fn stale_input_is_distinguished_from_latch_failure_and_mux_mismatch() {
     let output = leds::observe(Led::Connection);
     assert_eq!(output.decision(true), Decision::OutputOnly);
     assert!(output.accepted(true) && !output.matches(true));
+
     fake::with(|h| h.pad_control[0] = 11);
     assert_eq!(
         leds::observe(Led::Connection).decision(true),
         Decision::Abort
     );
+
     ready();
     fake::with(|h| h.blocked_gpio_write[0] = 1);
     assert!(leds::request(Led::Connection, true));
@@ -156,8 +173,10 @@ fn input_only_high_mismatch_can_complete_bounded_probe_but_never_passes() {
         h.readback_override_mask = [leds::PA_MASK, leds::PB_MASK];
         h.readback_override = [0; 2];
     });
+
     let mut mismatches = 0;
     let mut duration = 0;
+
     for step in (0..).map_while(leds::probe_step) {
         assert!(leds::request(step.led, step.high));
         let readback = leds::observe(step.led);
@@ -173,6 +192,7 @@ fn input_only_high_mismatch_can_complete_bounded_probe_but_never_passes() {
         assert!(stopped::observe().verified());
         duration += step.delay_ms;
     }
+
     assert_eq!(mismatches, 2);
     assert_eq!(duration, 14_000);
     assert!(leds::all_low());
@@ -190,12 +210,14 @@ fn high_mismatch_continuation_refuses_latch_direction_stop_and_pad_failures() {
         stopped_ok: true,
         pad: 0,
     };
+
     // Extra samples are reported only; they never verify a failed input read.
     let sampled = Readback {
         input_highs: leds::INPUT_SAMPLES,
         ..high
     };
     assert_eq!(sampled.decision(true), Decision::InputMismatch);
+
     for bad in [
         Readback {
             latch_high: false,
@@ -225,6 +247,7 @@ fn high_mismatch_continuation_refuses_latch_direction_stop_and_pad_failures() {
     ] {
         assert_eq!(bad.decision(true), Decision::Abort);
     }
+
     let low = Readback {
         latch_high: false,
         input_high: true,

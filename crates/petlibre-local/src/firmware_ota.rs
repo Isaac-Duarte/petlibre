@@ -1,6 +1,11 @@
 //! Replacement-firmware update signing (FW10). Owner-side only: creates the
 //! offline signing key and signs a reviewed image's manifest in the format
 //! `petlibre-core::ota` verifies. Nothing here talks to a device.
+//!
+//! `Offer` is the server side of delivery: one owner-loaded update held only
+//! in memory and answered over `ota/get`. Each offer is served to completion
+//! once; a manifest request after its last chunk means the candidate fell
+//! back, so the offer is dropped until the owner offers it again.
 use std::{fs, io::Read, path::Path};
 
 use anyhow::{Context, Result, ensure};
@@ -45,6 +50,7 @@ pub fn keygen(output: &Path) -> Result<String> {
     fs::File::open("/dev/urandom")
         .and_then(|mut random| random.read_exact(&mut seed))
         .context("read the system random source")?;
+
     let public_key = hex(&SigningKey::from_bytes(&seed).verifying_key().to_bytes());
     storage::write_new_json(
         output,
@@ -54,6 +60,7 @@ pub fn keygen(output: &Path) -> Result<String> {
             public_key: public_key.clone(),
         },
     )?;
+
     Ok(public_key)
 }
 
@@ -96,6 +103,7 @@ pub fn sign(
         (ota::SECTOR as u32..=ota::BANK1_BYTES).contains(&image_len),
         "image outside the reviewed bank-1 size bound"
     );
+
     let manifest = Manifest {
         version,
         image_len,
@@ -103,10 +111,12 @@ pub fn sign(
         image_sha256: Sha256::digest(payload).into(),
         build_id,
     };
+
     let body = ota::manifest_body(&manifest);
     let mut out = [0u8; MANIFEST_LEN];
     out[..body.len()].copy_from_slice(&body);
     out[body.len()..].copy_from_slice(&key.sign(&body).to_bytes());
+
     Ok(out)
 }
 
@@ -132,7 +142,10 @@ impl Offer {
             .try_into()
             .map_err(|_| anyhow::anyhow!("manifest must be {MANIFEST_LEN} bytes"))?;
         ensure!(manifest[..8] == ota::MAGIC, "not an update manifest");
+
         let payload = self::payload(container)?.to_vec();
+        // Offsets follow `ota::manifest_body`: version at 8, image length at 12 and
+        // the SHA-256 at 20..52.
         let field = |at: usize| u32::from_le_bytes(manifest[at..at + 4].try_into().unwrap());
         ensure!(
             field(12) as usize == payload.len(),
@@ -142,6 +155,7 @@ impl Offer {
             manifest[20..52] == Sha256::digest(&payload)[..],
             "manifest hash differs from the image"
         );
+
         Ok(Self {
             manifest,
             payload,
@@ -162,11 +176,15 @@ impl Offer {
             Some(get) => get,
             None => return (None, false),
         };
+
         let dropped = part == ota::Part::Manifest && offer.as_ref().is_some_and(|o| o.delivered);
         if dropped {
             *offer = None;
         }
+
         let answer = Self::answer(offer.as_ref(), request);
+        // Byte 1 of an answer is its status: only an `Ok` answer for the final
+        // chunk counts as delivery.
         if let Some(o) = offer.as_mut()
             && part == ota::Part::Chunk
             && offset as usize + len as usize == o.payload.len()
@@ -174,6 +192,7 @@ impl Offer {
         {
             o.delivered = true;
         }
+
         (answer, dropped)
     }
 
@@ -189,6 +208,7 @@ impl Offer {
         let Some(offer) = offer else {
             return Some(refuse(ota::Status::NoOffer));
         };
+
         let body: &[u8] = match part {
             ota::Part::Manifest => &offer.manifest,
             ota::Part::Chunk => {
@@ -199,6 +219,7 @@ impl Offer {
                 &offer.payload[offset as usize..end]
             }
         };
+
         let mut out =
             ota::encode_data_header(part, ota::Status::Ok, offset, body.len() as u32).to_vec();
         out.extend_from_slice(body);

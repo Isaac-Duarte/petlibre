@@ -37,10 +37,12 @@ fn prepare_inputs(
     let baseline = context.baseline(&evidence.baseline)?;
     let current = root.private_file(&args.current)?;
     let plan = recovery::plan(&baseline, &current)?;
+
     context.helper(evidence.helper.as_deref())?;
     let rom = session::validate_rom_report(context, &evidence.rom_report)?;
     let small =
         session::validate_status_session(context, Some(&evidence.small_report), &evidence.port)?;
+
     let report_path = args
         .current
         .parent()
@@ -49,6 +51,7 @@ fn prepare_inputs(
     let raw_report = root.private_file(&report_path)?;
     let report: Value = serde_json::from_slice(&raw_report)?;
     context.same_transport(&report)?;
+
     let result = &report["result"];
     require(
         report["mode"] == "read-full"
@@ -68,12 +71,14 @@ fn prepare_inputs(
         &report,
         "Full-read serial evidence hash mismatch",
     )?;
+
     let reviewed = json!({
         "schema_version": 1, "kind": KIND, "port": evidence.port, "recovery_plan": plan,
         "current_report_sha256": sha256(&raw_report),
         "bounded_read_report_sha256": sha256(&small), "rom_report_sha256": sha256(&rom),
         "tool_sha256": context.tools(),
     });
+
     Ok((baseline, current, reviewed))
 }
 
@@ -84,6 +89,7 @@ fn comparable(reviewed: &Value) -> Result<Vec<u8>> {
         result["recovery_plan"]["created_utc"].is_string(),
         "Plan creation time required",
     )?;
+
     result["recovery_plan"]
         .as_object_mut()
         .unwrap()
@@ -94,6 +100,7 @@ fn comparable(reviewed: &Value) -> Result<Vec<u8>> {
 pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
     let (baseline, current, expected) = prepare_inputs(context, args)?;
     let evidence = &args.evidence;
+
     if !args.execute {
         let sha = session::write_plan(&context.root, &evidence.output, &expected)?;
         progress(&format!("Prepared bank-1 recovery plan SHA256: {sha}"));
@@ -104,21 +111,25 @@ pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
                             "changed_sectors": expected["recovery_plan"]["changed_sector_count"]}),
         });
     }
+
     let (Some(plan), Some(expected_sha)) = (&evidence.plan, &evidence.expected_plan_sha256) else {
         return Err(crate::Error::Refused(
             "Exact reviewed plan/hash required".into(),
         ));
     };
+
     let raw = context.root.private_file(plan)?;
     require(
         sha256(&raw) == *expected_sha,
         "Reviewed plan SHA256 differs",
     )?;
+
     let reviewed: Value = serde_json::from_slice(&raw)?;
     require(
         comparable(&reviewed)? == comparable(&expected)?,
         "Reviewed plan/source/evidence differs",
     )?;
+
     recovery::validate_plan(&baseline, &current, &reviewed["recovery_plan"])?;
     execute(context, args, &baseline, &current, &reviewed, &raw)
 }
@@ -137,6 +148,7 @@ fn execute(
     if let Some(parent) = directory.parent() {
         evidence::sync_directory(parent)?;
     }
+
     let path = directory.join("session.json");
     let state = RefCell::new(json!({
         "status": "prepared", "start_utc": utc(), "port": args.evidence.port, "operation": KIND,
@@ -147,11 +159,14 @@ fn execute(
     }));
     let save = || evidence::save_report(&path, &state.borrow());
     save()?;
+
     let result = (|| -> Result<Value> {
         let mut port = context.record(&args.evidence.port, &directory)?;
         state.borrow_mut()["status"] = json!("running");
         save()?;
+
         progress("Original bank-1 operation; fresh full verification before any mutation");
+
         let mut snapshot = |port: &mut dyn Port| -> Result<Vec<u8>> {
             let number = state.borrow()["snapshots"].as_array().unwrap().len() + 1;
             let partial = directory.join(format!("snapshot-{number:02}.bin.part"));
@@ -165,14 +180,17 @@ fn execute(
                 protocol::receive_flash(port, 0, CAPACITY, &mut file, Some(&mut report))?;
             file.sync_all()?;
             drop(file);
+
             let data = fs::read(&partial)?;
             require(data.len() == CAPACITY, "Full snapshot truncated")?;
             let name = format!("snapshot-{number:02}.bin");
             fs::rename(&partial, directory.join(&name))?;
             evidence::sync_directory(&directory)?;
+
             let mut entry = Value::Object(transfer.json());
             entry["file"] = json!(name);
             entry["sha256"] = json!(sha256(&data));
+
             state.borrow_mut()["snapshots"]
                 .as_array_mut()
                 .unwrap()
@@ -180,6 +198,7 @@ fn execute(
             save()?;
             Ok(data)
         };
+
         recovery::run_transaction(
             &mut port,
             &context.root,
@@ -190,6 +209,7 @@ fn execute(
             &directory.join("transaction"),
         )
     })();
+
     let complete = result.is_ok();
     {
         let mut state = state.borrow_mut();
@@ -212,6 +232,7 @@ fn execute(
         state["end_utc"] = json!(utc());
         evidence::stream_hashes(&directory, &mut state);
     }
+
     let saved = save();
     let state = state.into_inner();
     Ok(session::closed(
@@ -234,12 +255,15 @@ pub fn plan_offline(
     let plan = recovery::plan(&baseline, &current)?;
     let files = recovery::payload_files(&baseline, &plan)?;
     let directory = context.root.output_directory(output)?;
+
     for (name, data) in files {
         evidence::write_new(&directory.join(name), &data)?;
     }
+
     let mut text = serde_json::to_string_pretty(&plan)?;
     text.push('\n');
     evidence::write_new(&directory.join("plan.json"), text.as_bytes())?;
+
     progress(&format!(
         "Offline plan: {} application-bank sectors; no device I/O",
         plan["changed_sector_count"]

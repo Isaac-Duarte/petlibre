@@ -22,6 +22,7 @@ pub struct OwnerConfig {
     pub events: EventsConfig,
     pub watchdog: WatchdogConfig,
     pub bowl_mode: BowlMode,
+
     pub sample_period_ms: u32,
     pub prepare_timeout_ms: u32,
     pub optics_max_on_ms: u32,
@@ -29,6 +30,7 @@ pub struct OwnerConfig {
     pub motor_lease_ms: u32,
     pub adc_poll_limit: u32,
     pub wake_lock_id: u32,
+
     /// Required external authority. Platform boot/transport establishes IDLE
     /// before start. Retain beyond owner STOPPED until global transport teardown.
     pub flash: *mut FlashCoord,
@@ -91,6 +93,7 @@ impl OwnerConfig {
         {
             return false;
         }
+
         // Only validate structure/ranges here; real efuse calibration is read by open.
         let calibration = AdcCalibration {
             offset: 2480,

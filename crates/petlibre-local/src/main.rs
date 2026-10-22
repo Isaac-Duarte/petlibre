@@ -1,3 +1,12 @@
+//! `petlibre-local` command line.
+//!
+//! `serve` runs the stock-firmware stack: the MQTT broker as a child process
+//! of this binary, the device protocol worker and the loopback HTTP API. Most
+//! other subcommands are clients of that API and read the bearer token from
+//! the private configuration, so the token never appears in shell arguments.
+//! Starting the service redirects no traffic; `network apply` is the separate,
+//! privileged step that does.
+
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result, bail};
@@ -44,6 +53,7 @@ enum Action {
         #[arg(long, default_value = "private/server.json")]
         output: PathBuf,
     },
+
     /// Start the Rust broker, device protocol service and loopback HTTP API.
     Serve {
         #[arg(long, default_value = "private/server.json")]
@@ -52,16 +62,19 @@ enum Action {
         #[arg(long)]
         enable_ota_trial: bool,
     },
+
     /// Run just the authenticated Rust MQTT broker (normally managed by serve).
     Broker {
         #[arg(long, default_value = "private/server.json")]
         config: PathBuf,
     },
+
     /// Inspect authenticated local status without printing credentials.
     Status {
         #[arg(long, default_value = "private/server.json")]
         config: PathBuf,
     },
+
     /// Request a supervised feed. Reuse the same request ID for any retry.
     Feed {
         #[arg(long, default_value = "private/server.json")]
@@ -71,6 +84,7 @@ enum Action {
         #[arg(long, default_value_t = 1)]
         portions: u8,
     },
+
     /// Resolve an uncertain operation after physically checking the feeder.
     Resolve {
         #[arg(long, default_value = "private/server.json")]
@@ -80,8 +94,10 @@ enum Action {
         #[arg(long)]
         note: String,
     },
+
     /// Print an operation identifier without sending a command.
     NewRequestId,
+
     /// Serve a pinned experiment/original pair on the fixed trial port; never
     /// sends an OTA command. Writes a private token lease beside the config.
     OtaImages {
@@ -94,6 +110,7 @@ enum Action {
         #[arg(long, value_enum, default_value_t = ota_image::Profile::StockVersion)]
         profile: ota_image::Profile,
     },
+
     /// Explicitly run GET_CONFIG once on a confirmed C-probe installation.
     ProbeQuery {
         #[arg(long, default_value = "private/server.json")]
@@ -101,6 +118,7 @@ enum Action {
         #[arg(long)]
         request_id: Uuid,
     },
+
     /// Explicitly submit one fixed OTA trial or restore; never retries automatically.
     OtaTrial {
         #[arg(long, default_value = "private/server.json")]
@@ -112,6 +130,7 @@ enum Action {
         #[arg(long)]
         server_token: Uuid,
     },
+
     /// Close the latest uncertain/failed trial from fresh version evidence after
     /// the documented waiting periods; never sends a device command.
     OtaTrialResolve {
@@ -122,6 +141,7 @@ enum Action {
         #[arg(long)]
         note: String,
     },
+
     /// Add the replacement-firmware broker role to a stopped server's config and
     /// write the firmware build's private credential file; never rotates one.
     FirmwareCredential {
@@ -130,12 +150,14 @@ enum Action {
         #[arg(long, default_value = "private/fw-mqtt.json")]
         output: PathBuf,
     },
+
     /// Create the replacement firmware's update-signing key (FW10); never
     /// replaces one. Prints the public key the firmware build embeds.
     OtaKeygen {
         #[arg(long, default_value = "private/ota-key.json")]
         output: PathBuf,
     },
+
     /// Sign a reviewed replacement image's update manifest (FW10).
     OtaSign {
         #[arg(long, default_value = "private/ota-key.json")]
@@ -152,6 +174,7 @@ enum Action {
         #[arg(long)]
         output: PathBuf,
     },
+
     /// Offer a signed replacement update to the running server (FW10), or
     /// clear the offer. Paths are relative and under private/; nothing is
     /// sent to the firmware until it asks.
@@ -165,6 +188,7 @@ enum Action {
         #[arg(long)]
         clear: bool,
     },
+
     /// Explicit feeder-only gateway routing and WAN isolation; needs sudo.
     Network {
         #[command(subcommand)]
@@ -195,6 +219,7 @@ async fn main() -> Result<()> {
         )
         .with_writer(std::io::stderr)
         .init();
+
     match Cli::parse().command {
         Action::Init {
             credentials,
@@ -219,12 +244,14 @@ async fn main() -> Result<()> {
                 output.display()
             );
         }
+
         Action::Broker { config } => broker::run(Config::load(&config)?).await?,
         Action::Serve {
             config,
             enable_ota_trial,
         } => serve(config, enable_ota_trial).await?,
         Action::Status { config } => api_request(config, "GET", "/api/status", None).await?,
+
         Action::Feed {
             config,
             request_id,
@@ -241,6 +268,7 @@ async fn main() -> Result<()> {
             )
             .await?
         }
+
         Action::Resolve {
             config,
             request_id,
@@ -254,7 +282,9 @@ async fn main() -> Result<()> {
             )
             .await?
         }
+
         Action::NewRequestId => println!("{}", Uuid::new_v4()),
+
         Action::ProbeQuery { config, request_id } => {
             api_request(
                 config,
@@ -264,6 +294,7 @@ async fn main() -> Result<()> {
             )
             .await?
         }
+
         Action::OtaImages {
             config,
             directory,
@@ -273,6 +304,7 @@ async fn main() -> Result<()> {
             let path = config.canonicalize()?;
             ota_image::serve(Config::load(&path)?, &path, &directory, peer, profile).await?;
         }
+
         Action::OtaTrialResolve {
             config,
             request_id,
@@ -289,6 +321,7 @@ async fn main() -> Result<()> {
             )
             .await?;
         }
+
         Action::OtaTrial {
             config,
             request_id,
@@ -307,6 +340,7 @@ async fn main() -> Result<()> {
             )
             .await?;
         }
+
         Action::FirmwareCredential { config, output } => {
             config::add_firmware_credential(&config, &output)?;
             println!(
@@ -315,10 +349,12 @@ async fn main() -> Result<()> {
                 output.display()
             );
         }
+
         Action::OtaKeygen { output } => {
             let public = firmware_ota::keygen(&output)?;
             println!("Wrote {}; public key {public}", output.display());
         }
+
         Action::OtaSign {
             key,
             image,
@@ -339,6 +375,7 @@ async fn main() -> Result<()> {
                 output.display()
             );
         }
+
         Action::OtaOffer {
             config,
             manifest,
@@ -357,6 +394,7 @@ async fn main() -> Result<()> {
             )
             .await?;
         }
+
         Action::Network { action } => match action {
             NetworkAction::Apply { config } => {
                 network::apply(&Config::load(&config)?)?;
@@ -373,6 +411,7 @@ async fn main() -> Result<()> {
             }
         },
     }
+
     Ok(())
 }
 
@@ -389,11 +428,13 @@ async fn serve(path: PathBuf, enable_ota_trial: bool) -> Result<()> {
             BUILD.clean
         );
     }
+
     let path = path.canonicalize()?;
     let config = Arc::new(Config::load(&path)?);
     let listener = tokio::net::TcpListener::bind(config.http_listen)
         .await
         .context("bind loopback HTTP API")?;
+
     let mut controller = Controller::load(
         (*config).clone(),
         path.parent()
@@ -403,16 +444,21 @@ async fn serve(path: PathBuf, enable_ota_trial: bool) -> Result<()> {
     if enable_ota_trial {
         controller.enable_ota_trial();
     }
+
+    // The broker runs as a child process of this same binary; kill_on_drop
+    // ties its lifetime to serve.
     let mut child = Command::new(std::env::current_exe()?)
         .arg("broker")
         .arg("--config")
         .arg(&path)
         .kill_on_drop(true)
         .spawn()?;
+
     let (requests, receiver) = mpsc::channel(16);
     let (status, status_rx) = watch::channel(controller.status.clone());
     let (shutdown, mut shutdown_rx) = watch::channel(false);
     let mut worker = tokio::spawn(mqtt::run(config.clone(), controller, receiver, status));
+
     let app = api::router(ApiState {
         token: Arc::from(config.api_token.as_str()),
         requests,
@@ -427,7 +473,10 @@ async fn serve(path: PathBuf, enable_ota_trial: bool) -> Result<()> {
             })
             .await
     });
+
     info!(mqtt=%config.mqtt_listen,http=%config.http_listen,"local service starting; no traffic redirection applied");
+    // select! may consume `http`; a JoinHandle must not be awaited again after
+    // it completes, so the shutdown wait below is skipped in that case.
     let mut http_finished = false;
     let outcome: Result<()> = tokio::select! {
         result = &mut worker => result.context("MQTT worker panicked").and_then(|r|r),
@@ -435,12 +484,14 @@ async fn serve(path: PathBuf, enable_ota_trial: bool) -> Result<()> {
         result = child.wait() => Err(anyhow::anyhow!("broker exited unexpectedly: {result:?}")),
         result = tokio::signal::ctrl_c() => result.context("shutdown signal failed"),
     };
+
     let _ = shutdown.send(true);
     worker.abort();
     let _ = child.kill().await;
     if !http_finished {
         let _ = tokio::time::timeout(Duration::from_secs(3), http).await;
     }
+
     info!("service stopped; use network remove to restore cloud routing if enabled");
     outcome
 }
@@ -457,6 +508,7 @@ async fn api_request(
         .timeout(Duration::from_secs(10))
         .no_proxy()
         .build()?;
+
     let mut request = client
         .request(
             method.parse()?,
@@ -466,6 +518,7 @@ async fn api_request(
     if let Some(body) = body {
         request = request.json(&body);
     }
+
     let response = request.send().await?;
     let status = response.status();
     let body: serde_json::Value = response.json().await?;
@@ -473,5 +526,6 @@ async fn api_request(
     if !status.is_success() {
         bail!("local API returned {status}");
     }
+
     Ok(())
 }

@@ -107,6 +107,8 @@ impl Tools for Processes {
             child,
             output: output.to_path_buf(),
         };
+
+        // The observer's report says `running` once it holds the port.
         let report = output.join("report.json");
         let deadline = Instant::now() + OBSERVER_START;
         while Instant::now() < deadline {
@@ -128,6 +130,7 @@ impl Tools for Processes {
             }
             std::thread::sleep(Duration::from_millis(50));
         }
+
         observer.kill();
         Err(Error::Bench(
             "Observer did not hold the port in time".into(),
@@ -141,17 +144,22 @@ impl Tools for Processes {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()?;
+
+        // Drain stdout on its own thread so neither pipe fills and blocks the
+        // child while stderr streams here.
         let mut stdout = child.stdout.take().expect("piped stdout");
         let summary = std::thread::spawn(move || {
             let mut text = String::new();
             let _ = stdout.read_to_string(&mut text);
             text
         });
+
         for line in BufReader::new(child.stderr.take().expect("piped stderr")).lines() {
             let line = line?;
             eprintln!("{line}");
             status.line(&line);
         }
+
         let code = exit_code(child.wait()?);
         // The one-line JSON summary: shown and kept with the progress.
         for line in summary.join().unwrap_or_default().lines() {
@@ -227,6 +235,7 @@ impl Analyzer for Sigrok {
 
     fn wait(&mut self, timeout: Duration) -> Result<Option<i32>> {
         let deadline = Instant::now() + timeout;
+
         loop {
             if let Some(status) = self.0.try_wait()? {
                 return Ok(Some(exit_code(status)));
@@ -281,9 +290,11 @@ mod tests {
         };
         let mut status = Status::new(tmp.path(), tmp.path().join("status"));
         status.begin("dump", Some("unit"), &[]).unwrap();
+
         let code = tools
             .flash(&["read".into(), "full".into()], &mut status)
             .unwrap();
+
         assert_eq!(code, 1);
         let state = status.state.unwrap();
         assert_eq!(state.progress.unwrap().done, 4096);
@@ -304,6 +315,7 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
             flash_bin,
         };
         let output = tmp.path().join("capture");
+
         let mut observer = tools.observe("uart", &output, 1.0).unwrap();
         assert_eq!(observer.finish().unwrap()["bytes"], 7);
     }
@@ -316,10 +328,12 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
             root: tmp.path().into(),
             flash_bin,
         };
+
         let error = tools
             .observe("uart", &tmp.path().join("c"), 1.0)
             .err()
             .unwrap();
+
         assert!(error.to_string().contains("exited before holding the port"));
     }
 
@@ -331,6 +345,7 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
             flash_bin: tmp.path().join("absent"),
         };
         let mut status = Status::disabled();
+
         let error = tools.flash(&[], &mut status).unwrap_err();
         assert!(error.to_string().contains("cargo build -p petlibre-flash"));
     }

@@ -41,12 +41,16 @@ impl Mmio for Km0 {
                 }
                 return m.ticks;
             }
+
             if address == SYSTICK_CTRL {
                 return m.systick;
             }
+
             if (BACKUP_BASE..BACKUP_BASE + 32).contains(&address) {
                 return m.backup[((address - BACKUP_BASE) / 4) as usize];
             }
+
+            // USR words per core: index 0 KM0 (0x4800_6000), 1 KM4 (0x4000_6000).
             let core = usize::from(address & 0xffff_f000 == 0x4000_6000);
             m.regs[core][((address & 0xfff) - 0x20) as usize / 4]
         })
@@ -57,6 +61,7 @@ impl Mmio for Km0 {
                 m.backup[((address - BACKUP_BASE) / 4) as usize] = value;
                 return;
             }
+
             let core = usize::from(address & 0xffff_f000 == 0x4000_6000);
             m.regs[core][((address & 0xfff) - 0x20) as usize / 4] = value;
         })
@@ -81,10 +86,12 @@ fn requested(lease: u64) -> Peer {
         m.regs[1][3] = (A >> 32) as u32;
         m.regs[1][10] = HELLO;
     });
+
     let mut peer = Peer::default();
     peer.step::<Km0>(1, 5);
     assert_ne!(peer.answered, 0);
     let session = peer.session;
+
     with(|m| {
         let r = &mut m.regs[1];
         (r[4], r[5], r[6], r[9], r[10]) = (
@@ -97,6 +104,7 @@ fn requested(lease: u64) -> Peer {
         m.mask = 1;
         m.release_at = 50;
     });
+
     peer
 }
 
@@ -126,6 +134,7 @@ fn marker_withholds_only_the_injection_lease() {
     with(|m| m.backup[MARKER_REGISTER as usize] = 1);
     assert_eq!(peer.on_request::<Km0>(), ParkEvent::WITHHELD);
     assert_ne!(with(|m| m.regs[0][10]), ACK);
+
     let mut peer = requested(INJECT_LEASE);
     with(|m| m.backup[MARKER_REGISTER as usize] = 2);
     assert_eq!(peer.on_request::<Km0>(), ParkEvent::RELEASED);
@@ -136,6 +145,7 @@ fn unmasked_context_is_refused_without_ack() {
     let mut peer = requested(1);
     with(|m| m.mask = 0);
     assert_eq!(peer.on_request::<Km0>(), ParkEvent::REFUSED);
+
     with(|m| {
         m.mask = 1;
         m.systick = 1;

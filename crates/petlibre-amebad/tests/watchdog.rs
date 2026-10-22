@@ -1,3 +1,9 @@
+//! KM4 watchdog driver against the fake register model: opening validates
+//! the configuration and claims the reset scope while preserving the other
+//! scope bits; a refresh needs elapsed time and owner progress; and a context
+//! or register change, a frozen clock or a flash hold ends refreshes so the
+//! independent watchdog expires.
+
 mod common;
 
 use common::*;
@@ -37,11 +43,13 @@ fn lifecycle_and_scope() {
         h.hs_control = 0x125;
         h.lp_control = 0x2000; // LP reset-scope bit 13 must be preserved.
     });
+
     assert!(w.open(&CONFIG));
     assert!(w.claimed && w.armed && hw(|h| h.watchdog_init_calls) == 1);
     assert_eq!(hw(|h| h.hs_control), 0x125 | sdk::HS_WDTRST_OPT);
     assert_eq!(hw(|h| h.lp_control), 0x2000 | sdk::LP_WDT_RESET_HS_ALL);
     assert!(hw(|h| h.watchdog_period) == 4032 && hw(|h| h.interrupts) == 0);
+
     assert!(w.checkpoint(1));
     assert_eq!(hw(|h| h.watchdog_refreshes), 0); // No elapsed time, no refresh.
     fake::advance(32, false);
@@ -50,6 +58,7 @@ fn lifecycle_and_scope() {
     fake::advance(32, false);
     assert!(w.checkpoint(3));
     assert!(hw(|h| h.watchdog_refreshes) == 1 && hw(|h| h.watchdog_ticks) == 0);
+
     hw(|h| {
         h.hs_control |= 0x200;
         h.lp_control |= 0x400;
@@ -66,6 +75,7 @@ fn invalid_configuration_and_resources() {
         clock_min_hz: 0,
         ..CONFIG
     }));
+
     for bad in [
         WatchdogConfig {
             clock_max_hz: 1000,
@@ -106,13 +116,16 @@ fn invalid_configuration_and_resources() {
     ] {
         assert!(!bad.valid());
     }
+
     assert_eq!(hw(|h| h.watchdog_init_calls), 0);
     hw(|h| h.interrupts = 1);
     assert!(!w.open(&CONFIG) && hw(|h| h.interrupts) == 1);
     hw(|h| h.interrupts = 0);
+
     hw(|h| h.watchdog_vendor = sdk::WDG_BIT_ENABLE);
     assert!(!w.open(&CONFIG) && !w.claimed);
     hw(|h| h.watchdog_vendor = 0);
+
     assert!(w.open(&CONFIG));
     assert!(!other.open(&CONFIG) && !other.claimed);
     close_port(&mut w);
@@ -122,6 +135,7 @@ fn invalid_configuration_and_resources() {
 fn progress_deadline_and_replay_latch() {
     let mut w = fresh();
     assert!(w.open(&CONFIG));
+
     fake::advance(49 * 32, false);
     assert!(w.check() && hw(|h| h.watchdog_refreshes) == 0);
     fake::advance(32, false);
@@ -129,6 +143,7 @@ fn progress_deadline_and_replay_latch() {
     assert!(w.fault == WatchdogFault::PROGRESS && w.armed);
     assert!(!w.checkpoint(2) && hw(|h| h.watchdog_refreshes) == 0);
     close_port(&mut w);
+
     assert!(w.open(&CONFIG));
     fake::advance(64, false);
     assert!(w.checkpoint(u64::MAX));
@@ -145,7 +160,9 @@ fn independent_expiry_with_frozen_clock_and_masked_irqs() {
         assert!(w.checkpoint(token));
         fake::watchdog_advance(400); // SYSTIMER deliberately frozen.
     }
+
     assert!(hw(|h| h.watchdog_refreshes) == 0 && hw(|h| h.raw_ticks) == 0);
+
     hw(|h| h.interrupts = 1);
     fake::watchdog_advance(32);
     assert!(hw(|h| h.watchdog_expired
@@ -161,6 +178,7 @@ fn context_and_register_changes() {
     for change in 0..7 {
         let mut w = fresh();
         assert!(w.open(&CONFIG));
+
         hw(|h| match change {
             0 => h.ipsr = 19,
             1 => h.interrupts = 1,
@@ -170,6 +188,7 @@ fn context_and_register_changes() {
             5 => h.lp_control &= !sdk::LP_WDT_RESET_HS_ALL,
             _ => h.watchdog_vendor &= !sdk::WDG_BIT_ENABLE,
         });
+
         let mask = hw(|h| h.interrupts);
         assert!(!w.checkpoint(1));
         assert!(hw(|h| h.interrupts) == mask && hw(|h| h.watchdog_refreshes) == 0);
@@ -181,6 +200,7 @@ fn context_and_register_changes() {
                 WatchdogFault::REGISTER
             }
         );
+
         hw(|h| {
             h.ipsr = 0;
             h.interrupts = 0;
@@ -195,6 +215,7 @@ fn setup_rollback_and_retained_cleanup() {
     hw(|h| h.watchdog_scope_blocked = true);
     assert!(!w.open(&CONFIG));
     assert!(!w.claimed && !w.armed && w.fault == WatchdogFault::SETUP);
+
     hw(|h| {
         h.watchdog_scope_blocked = false;
         h.watchdog_enable_corrupt = true;
@@ -208,6 +229,7 @@ fn setup_rollback_and_retained_cleanup() {
         h.watchdog_enable_corrupt = false;
     });
     close_port(&mut w);
+
     assert!(w.open(&CONFIG));
     let mut b = Box::<Board>::default();
     assert!(b.open(2, 12, 8, 0));
@@ -219,6 +241,7 @@ fn setup_rollback_and_retained_cleanup() {
     assert!(!w.close(Some(&b)) && w.claimed && w.armed);
     hw(|h| h.watchdog_disable_blocked = false);
     assert!(w.close(Some(&b)));
+
     assert!(w.open(&CONFIG));
     hw(|h| h.watchdog_scope_blocked = true);
     assert!(!w.close(Some(&b)));
@@ -235,6 +258,7 @@ fn hardware_counter_wrap_and_clock_fault() {
     assert!(w.open(&CONFIG));
     fake::advance(64, false);
     assert!(w.checkpoint(1) && hw(|h| h.watchdog_refreshes) == 1);
+
     hw(|h| h.raw_ticks -= 1);
     assert!(!w.check() && w.fault == WatchdogFault::CLOCK);
     close_port(&mut w);
@@ -245,16 +269,19 @@ fn flash_hold_cannot_refresh_or_extend_progress() {
     let mut w = fresh();
     let mut c = flash_ready();
     assert!(w.open(&CONFIG));
+
     fake::advance(64, false);
     assert!(!unsafe { w.checkpoint_if_ready(1, core::ptr::null()) });
     assert!(unsafe { w.checkpoint_if_ready(1, &*c) });
     assert!(hw(|h| h.watchdog_refreshes) == 1 && w.progress_at == 2);
+
     assert_eq!(c.request(FlashParty::PEER, 29, 1, 0), FlashReply::ACCEPTED);
     for n in 2..51 {
         fake::advance(32, false);
         assert!(unsafe { w.checkpoint_if_ready(n, &*c) });
         assert!(w.progress == 1 && w.progress_at == 2 && hw(|h| h.watchdog_refreshes) == 1);
     }
+
     fake::advance(32, false);
     assert!(!unsafe { w.checkpoint_if_ready(51, &*c) });
     assert!(w.fault == WatchdogFault::PROGRESS && hw(|h| h.watchdog_refreshes) == 1);

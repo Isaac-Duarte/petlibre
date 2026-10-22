@@ -154,11 +154,13 @@ impl Confirm {
                 self.stage = Stage::Healthy;
                 next(POLL_MS, None)
             }
+
             Stage::Healthy => {
                 if !healthy {
                     self.healthy_since = None;
                     return next(POLL_MS, None);
                 }
+
                 let since = *self.healthy_since.get_or_insert(now);
                 self.healthy_ms = now.wrapping_sub(since);
                 if self.healthy_ms >= HEALTHY_MS {
@@ -166,6 +168,7 @@ impl Confirm {
                 }
                 next(POLL_MS, None)
             }
+
             // SAFETY: the caller's contract.
             Stage::Arm => match unsafe { self.arming.step::<M, H>(provider) } {
                 Poll::Pending(event) => next(arming::POLL_MS, event.map(Record::Arming)),
@@ -175,6 +178,7 @@ impl Confirm {
                 }
                 Poll::Failed(event) => self.end(Record::Arming(event)),
             },
+
             Stage::Write => {
                 let record = ota::confirm_record(&trial::identity(), 0);
                 let mut readback = [0u8; CONFIRM_LEN];
@@ -182,6 +186,8 @@ impl Confirm {
                     && flash.program(CONFIRM_SECTOR, 0, &record)
                     && flash.read(CONFIRM_SECTOR, 0, &mut readback)
                     && readback == record;
+
+                // The attempt ended in order either way, so a later boot must not skip.
                 arming::clear_attempt();
                 if !ok {
                     return self.end(Record::Error { stage: "write" });
@@ -190,6 +196,7 @@ impl Confirm {
                     healthy_ms: self.healthy_ms,
                 })
             }
+
             Stage::Done => next(0, None),
         }
     }

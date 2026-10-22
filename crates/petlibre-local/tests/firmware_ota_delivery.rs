@@ -38,6 +38,7 @@ impl Client {
                 }
                 continue;
             }
+
             let mut buf = [0; 2048];
             let n = tokio::time::timeout(Duration::from_secs(5), self.stream.read(&mut buf))
                 .await
@@ -112,6 +113,7 @@ async fn firmware_pulls_a_signed_update_through_the_real_broker() {
         stream: TcpStream::connect(config.mqtt_listen).await.unwrap(),
         rx: Vec::new(),
     };
+
     let mut out = [0; mqtt::MAX_PACKET];
     let n = mqtt::encode_connect(
         &mut out,
@@ -124,6 +126,7 @@ async fn firmware_pulls_a_signed_update_through_the_real_broker() {
     )
     .unwrap();
     client.send(&out[..n]).await;
+
     let n = mqtt::encode_subscribe(&mut out, 1, &config.firmware_topic("ota/data")).unwrap();
     client.send(&out[..n]).await;
     tokio::time::sleep(Duration::from_millis(200)).await;
@@ -142,10 +145,12 @@ async fn firmware_pulls_a_signed_update_through_the_real_broker() {
         .json(&body)
         .send()
     };
+
     let refused = post(serde_json::json!({"manifest":"../x","image":"private/image.bin"}))
         .await
         .unwrap();
     assert_eq!(refused.status(), 400);
+
     let loaded =
         post(serde_json::json!({"manifest":"private/update.manifest","image":"private/image.bin"}))
             .await
@@ -158,6 +163,7 @@ async fn firmware_pulls_a_signed_update_through_the_real_broker() {
     let manifest = ota::parse_manifest(data.bytes, &public, 1).unwrap();
     let mut writer = ota::Writer::new(manifest, ota::MAX_CHUNK as usize).unwrap();
     let mut bank = vec![0xffu8; payload.len()];
+
     while let Some((offset, len)) = writer.next_request() {
         let answer = client.get(&config, Part::Chunk, offset, len).await;
         let data = ota::decode_data(&answer).unwrap();
@@ -168,6 +174,7 @@ async fn firmware_pulls_a_signed_update_through_the_real_broker() {
             writer.programmed(true).unwrap();
         }
     }
+
     assert_eq!(&bank[..8], &[0xff; 8], "marker withheld until commit");
     assert_eq!(&bank[8..], &payload[8..]);
     assert_eq!(writer.commit(), Ok((ota::BANK1_OFFSET, ota::MARKER)));

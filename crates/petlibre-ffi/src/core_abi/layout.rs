@@ -62,6 +62,7 @@ lock!(FeedLimits, 32, 4);
 lock!(FeedSample, 12, 4);
 lock!(FeedProgress, 16, 4, mode = 4, direction = 8);
 lock!(FeedRequest, 24, 8, mode = 12, direction = 16);
+
 lock!(
     FeedController,
     96,
@@ -71,13 +72,16 @@ lock!(
     reason = 84,
     motor = 88,
 );
+
 lock!(SensorLimits, 28, 4);
 lock!(SensorReading, 72, 2);
 lock!(SensorFilter, 8, 4);
 lock!(SensorInputs, 84, 4);
+
 lock!(FeedbackEvent, 8, 4);
 lock!(FeedbackDrive, 12, 4, applied = 4, applied_at = 8);
 lock!(FeedbackEvents, 272, 4, fault = 268);
+
 lock!(JournalConfig, 16, 8, mode = 8, max_portions = 12);
 lock!(OwnerRecovery, 16, 8, direction = 8);
 lock!(
@@ -89,6 +93,7 @@ lock!(
     motion_possible = 20
 );
 lock!(JournalView, 56, 8, recovery = 0, result = 16, sequence = 40);
+
 lock!(FlashLimits, 20, 4);
 lock!(FlashToken, 32, 8, owner = 24);
 lock!(
@@ -106,6 +111,7 @@ lock!(
 #[cfg(target_pointer_width = "32")]
 mod pointers {
     use super::*;
+
     lock!(
         MotorGate,
         48,
@@ -117,6 +123,7 @@ mod pointers {
         fault = 40,
         applied_known = 44,
     );
+
     lock!(JournalIo, 20, 4);
     lock!(OwnerStorage, 16, 4);
     lock!(
@@ -134,6 +141,7 @@ mod pointers {
 #[cfg(target_pointer_width = "64")]
 mod pointers {
     use super::*;
+
     lock!(
         MotorGate,
         56,
@@ -145,6 +153,7 @@ mod pointers {
         fault = 48,
         applied_known = 52,
     );
+
     lock!(JournalIo, 40, 8);
     lock!(OwnerStorage, 32, 8);
     lock!(

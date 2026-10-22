@@ -17,6 +17,7 @@ use crate::storage::{COMMIT, JournalIo, RECORD_BYTES, crc32, get, put};
 const GENESIS: u8 = 0;
 const INTENT: u8 = 1;
 const RESULT: u8 = 2;
+
 const MAGIC: [u8; 8] = *b"PLFJNL01";
 
 #[repr(C)]
@@ -93,12 +94,14 @@ fn result_valid(c: &JournalConfig, v: &JournalView) -> bool {
     {
         return false;
     }
+
     if r.outcome == OwnerOutcome::DONE {
         return r.completed == r.requested
             && r.motion_possible
             && r.reason == FeedReason::DONE
             && v.recovery.phase_known;
     }
+
     if c.mode == BowlMode::DOUBLE && r.motion_possible && v.recovery.phase_known {
         return false;
     }
@@ -115,6 +118,7 @@ fn transition(c: &JournalConfig, old: &JournalView, next: &JournalView) -> bool 
     if old.sequence == u64::MAX || next.sequence != old.sequence + 1 {
         return false;
     }
+
     if !old.recovery.pending_request {
         return next.recovery.pending_request
             && !next.has_result
@@ -122,6 +126,7 @@ fn transition(c: &JournalConfig, old: &JournalView, next: &JournalView) -> bool 
             && same_phase(&old.recovery, &next.recovery)
             && (c.mode != BowlMode::DOUBLE || next.recovery.phase_known);
     }
+
     if next.recovery.pending_request
         || !next.has_result
         || next.recovery.high_water_id != old.recovery.high_water_id
@@ -130,6 +135,7 @@ fn transition(c: &JournalConfig, old: &JournalView, next: &JournalView) -> bool 
     {
         return false;
     }
+
     let mut expected = old.recovery;
     if next.result.outcome == OwnerOutcome::DONE && c.mode == BowlMode::DOUBLE {
         if next.result.requested & 1 == 0 {
@@ -139,6 +145,7 @@ fn transition(c: &JournalConfig, old: &JournalView, next: &JournalView) -> bool 
     } else if next.result.motion_possible && c.mode == BowlMode::DOUBLE {
         expected.phase_known = false;
     }
+
     same_phase(&expected, &next.recovery)
 }
 
@@ -148,6 +155,7 @@ impl FeedJournal {
         p[..8].copy_from_slice(&MAGIC);
         put(&mut p[8..], 1, 2);
         put(&mut p[10..], RECORD_BYTES as u64, 2);
+
         p[12] = if v.recovery.pending_request {
             INTENT
         } else if v.has_result {
@@ -160,17 +168,21 @@ impl FeedJournal {
         p[15] = u8::from(v.recovery.credit_next_event)
             | (u8::from(v.recovery.phase_known) << 1)
             | (u8::from(v.result.motion_possible) << 2);
+
         put(&mut p[16..], v.sequence, 8);
         put(&mut p[24..], self.config.binding, 8);
         put(&mut p[32..], v.recovery.high_water_id, 8);
+
         put(&mut p[40..], v.result.requested.into(), 2);
         put(&mut p[42..], v.result.completed.into(), 2);
         p[44] = v.result.outcome.0 as u8;
         p[45] = v.result.reason.0 as u8;
         put(&mut p[46..], self.config.max_portions.into(), 2);
+
         let checksum = crc32(&p[..120]);
         put(&mut p[120..], checksum.into(), 4);
         p[124..].copy_from_slice(&COMMIT);
+
         p
     }
 
@@ -189,6 +201,7 @@ impl FeedJournal {
         {
             return None;
         }
+
         let v = JournalView {
             sequence: get(&p[16..], 8),
             has_result: p[12] == RESULT,
@@ -208,9 +221,11 @@ impl FeedJournal {
                 motion_possible: p[15] & 4 != 0,
             },
         };
+
         if v.sequence == 0 || !phase_valid(&self.config, &v.recovery) {
             return None;
         }
+
         let valid = if p[12] == GENESIS {
             v.sequence == 1
                 && v.recovery.high_water_id == 0
@@ -235,6 +250,7 @@ impl FeedJournal {
         } else {
             v.sequence & 1 != 0 && result_valid(&self.config, &v)
         };
+
         valid.then_some(v)
     }
 
@@ -244,6 +260,7 @@ impl FeedJournal {
             error: JournalError::ARGUMENT,
             ..Self::default()
         };
+
         if io.read.is_none()
             || io.program.is_none()
             || io.erase.is_none()
@@ -256,6 +273,7 @@ impl FeedJournal {
         {
             return false;
         }
+
         self.io = io;
         self.config = config;
         true
@@ -275,6 +293,7 @@ impl FeedJournal {
         if !self.io.read(slot, 0, &mut record) {
             return None;
         }
+
         let mut offset = RECORD_BYTES as u32;
         while offset < self.io.unit_bytes {
             let size = ((self.io.unit_bytes - offset) as usize).min(tail.len());
@@ -286,12 +305,14 @@ impl FeedJournal {
             }
             offset += size as u32;
         }
+
         if all(&record, u8::MAX) {
             return Some((Scan::Erased, None));
         }
         if record[124..] != COMMIT {
             return Some((Scan::Dirty, None));
         }
+
         Some(match self.decode(&record) {
             Some(view) => (Scan::Valid, Some(view)),
             None => (Scan::Invalid, None),
@@ -309,17 +330,20 @@ impl FeedJournal {
         if !self.setup(io, config) {
             return JournalError::ARGUMENT;
         }
+
         let (Some(a), Some(b)) = (self.scan(0), self.scan(1)) else {
             return self.fail(JournalError::IO);
         };
         let views = [a.1.unwrap_or_default(), b.1.unwrap_or_default()];
         let (a, b) = (a.0, b.0);
+
         if a == Scan::Erased && b == Scan::Erased {
             return self.fail(JournalError::EMPTY);
         }
         if a == Scan::Invalid || b == Scan::Invalid || (a != Scan::Valid && b != Scan::Valid) {
             return self.fail(JournalError::CORRUPT);
         }
+
         let mut slot = if a == Scan::Valid { 0 } else { 1 };
         if a == Scan::Valid && b == Scan::Valid {
             slot = if views[0].sequence > views[1].sequence {
@@ -334,6 +358,7 @@ impl FeedJournal {
             // Falling back to idle could forget a newer, ambiguous reservation.
             return self.fail(JournalError::CORRUPT);
         }
+
         self.slot = slot as c_uint;
         self.view = views[slot];
         self.opened = true;
@@ -344,6 +369,8 @@ impl FeedJournal {
     fn write_record(&mut self, slot: c_uint, next: &JournalView, erase: bool) -> bool {
         let bytes = self.encode(next);
         let mut checked = [0u8; RECORD_BYTES];
+        // Program everything but the marker, verify it, then commit: a torn write
+        // leaves an uncommitted record that `scan` reports as dirty.
         let ok = (!erase || self.io.erase(slot))
             && matches!(self.scan(slot), Some((Scan::Erased, _)))
             && self.io.program(slot, 0, &bytes[..124])
@@ -353,10 +380,12 @@ impl FeedJournal {
             && self.io.program(slot, 124, &COMMIT)
             && self.io.read(slot, 0, &mut checked)
             && bytes == checked;
+
         if !ok {
             self.fail(JournalError::IO);
             return false;
         }
+
         self.view = *next;
         self.slot = slot;
         self.opened = true;
@@ -382,6 +411,7 @@ impl FeedJournal {
         if !self.setup(io, config) {
             return JournalError::ARGUMENT;
         }
+
         let next = JournalView {
             sequence: 1,
             recovery: OwnerRecovery {
@@ -392,15 +422,18 @@ impl FeedJournal {
             },
             ..JournalView::default()
         };
+
         if !phase_valid(&config, &next.recovery) {
             return self.error;
         }
+
         let (Some(a), Some(b)) = (self.scan(0), self.scan(1)) else {
             return self.fail(JournalError::IO);
         };
         if a.0 != Scan::Erased || b.0 != Scan::Erased {
             return self.fail(JournalError::STATE);
         }
+
         self.write_record(0, &next, false);
         self.error
     }
@@ -433,6 +466,7 @@ impl FeedJournal {
         {
             return false;
         }
+
         if v.sequence == u64::MAX {
             self.fail(JournalError::EXHAUSTED);
             return false;
@@ -442,6 +476,7 @@ impl FeedJournal {
             self.error = JournalError::WORN;
             return false;
         }
+
         let mut next = JournalView {
             sequence: v.sequence + 1,
             recovery: v.recovery,
@@ -454,6 +489,7 @@ impl FeedJournal {
         };
         next.recovery.high_water_id = request.id;
         next.recovery.pending_request = true;
+
         if !self.write_record(1 - self.slot, &next, true) {
             return false;
         }
@@ -472,16 +508,19 @@ impl FeedJournal {
         {
             return false;
         }
+
         if self.view.sequence == u64::MAX {
             self.fail(JournalError::EXHAUSTED);
             return false;
         }
+
         let next = JournalView {
             sequence: self.view.sequence + 1,
             recovery: *phase,
             result: *result,
             has_result: true,
         };
+
         if !transition(&self.config, &self.view, &next)
             || !self.write_record(1 - self.slot, &next, true)
         {
@@ -514,6 +553,7 @@ unsafe extern "C" fn storage_recover(context: *mut c_void, recovery: *mut OwnerR
     else {
         return false;
     };
+
     match journal.read() {
         Some(view) => {
             *recovery = view.recovery;

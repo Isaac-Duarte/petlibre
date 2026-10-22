@@ -1,4 +1,9 @@
-//! Exported RAM-resident SDK hooks and their private state for this core.
+//! Target builds only: the RAM-resident SDK flash hooks, their C entry points
+//! and private state, in whichever core's image links this crate.
+//!
+//! The public `FLASH_Write_*` symbols here replace the SDK's, which the build
+//! overlay renamed to `petlibre_sdk_flash_legacy_*`. The exported names are
+//! what the firmware build audits, so they must not change.
 
 use super::*;
 
@@ -14,11 +19,13 @@ static mut hook_transport: HookProvider = HookProvider {
     peer: None,
     fault: None,
 };
+
 #[unsafe(no_mangle)]
 static mut hook_ticket: HookTicket = HookTicket {
     id: 0,
     saved_systick: 0,
 };
+
 #[unsafe(no_mangle)]
 static mut hook_last_id: u64 = 0;
 #[unsafe(no_mangle)]

@@ -1,3 +1,10 @@
+//! Tests for extending the free-running `u32` hardware counter into
+//! milliseconds: fraction carry, partitioned reads, wrap of both counters
+//! and latched time failures.
+//!
+//! Many small reads must agree with one large read, and a backward or
+//! over-long step invalidates the clock instead of rebasing it.
+
 use petlibre_core::tick_clock::TickClock;
 
 #[test]
@@ -21,6 +28,7 @@ fn partitions_match_a_single_read() {
     for tick in (100..=100_000).step_by(37) {
         fine.read(tick).unwrap();
     }
+
     let a = fine.read(100_123).unwrap();
     let b = coarse.read(100_123).unwrap();
     assert_eq!(a, b);
@@ -42,6 +50,7 @@ fn time_failures_latch_without_rebasing() {
     assert!(!clock.valid);
     assert_eq!((clock.raw_at, clock.millis), (100, 7));
     assert_eq!(clock.read(200), None);
+
     let mut clock = TickClock::new(32_768, 0, 0).unwrap();
     assert_eq!(clock.read(0x8000_0000), None);
     let mut clock = TickClock::new(1, 0, 0).unwrap();

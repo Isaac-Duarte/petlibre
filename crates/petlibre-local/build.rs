@@ -21,6 +21,9 @@ fn main() {
     for input in BUILD_INPUTS {
         println!("cargo:rerun-if-changed={input}");
     }
+
+    // A commit or index change alters the recorded commit or clean flag without
+    // touching a build input, so watch the git state too.
     if let (Some(dir), Some(common)) = (
         git(&["rev-parse", "--git-dir"]),
         git(&["rev-parse", "--git-common-dir"]),
@@ -30,11 +33,13 @@ fn main() {
         println!("cargo:rerun-if-changed={common}/refs/heads");
         println!("cargo:rerun-if-changed={common}/packed-refs");
     }
+
     let commit = git(&["rev-parse", "HEAD"]).filter(|c| c.len() == 40);
     // Untracked files inside build inputs count: they can be compiled in.
     let mut status = vec!["status", "--porcelain", "--"];
     status.extend(BUILD_INPUTS);
     let clean = commit.is_some() && git(&status).is_some_and(|s| s.is_empty());
+
     println!(
         "cargo:rustc-env=PETLIBRE_BUILD_COMMIT={}",
         commit.as_deref().unwrap_or("unknown")

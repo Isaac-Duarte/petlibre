@@ -86,19 +86,23 @@ impl Arming {
             Stage::Hello => {
                 let count = sdk::backup_read(BOOT_COUNT_REGISTER).wrapping_add(1);
                 sdk::backup_write(BOOT_COUNT_REGISTER, count);
+
                 let raw = sdk::systimer_ticks();
                 self.clock = TickClock::new(SYSTIMER_HZ, raw, 0).unwrap_or_default();
                 self.authority = park::session(count, raw, false);
                 if !park::hello::<M>(self.authority) {
                     return self.fail(Event::Clock);
                 }
+
                 self.stage = Stage::Wait;
                 Poll::Pending(None)
             }
+
             Stage::Wait => {
                 let Some(now) = self.clock.read(sdk::systimer_ticks()) else {
                     return self.fail(Event::Clock);
                 };
+
                 match park::reply::<M>(self.authority) {
                     Reply::Ready(peer) => {
                         // Bind only with verified STOP and infrared OFF readback.
@@ -110,6 +114,7 @@ impl Arming {
                         let reply = coord.ready(self.authority, peer, inactive, now);
                         // SAFETY: the caller's contract; no hook is armed yet.
                         unsafe { *provider = Provider::bound(coord, self.clock, self.authority) };
+
                         let event = Event::Ready { reply, inactive };
                         if reply != FlashReply::ACCEPTED {
                             return self.fail(event);
@@ -121,12 +126,14 @@ impl Arming {
                     _ => Poll::Pending(None),
                 }
             }
+
             Stage::Arm => {
                 let marker = sdk::backup_read(MARKER_REGISTER);
                 if marker != 0 {
                     sdk::backup_write(MARKER_REGISTER, 0);
                     return self.fail(Event::Skip { marker });
                 }
+
                 sdk::backup_write(MARKER_REGISTER, ATTEMPT_BIT);
                 let watchdog = H::watchdog();
                 let installed = watchdog && H::install(provider);
@@ -134,6 +141,7 @@ impl Arming {
                     watchdog,
                     installed,
                 };
+
                 self.stage = Stage::Done;
                 if !installed {
                     sdk::backup_write(MARKER_REGISTER, 0);
@@ -141,6 +149,7 @@ impl Arming {
                 }
                 Poll::Armed(event)
             }
+
             Stage::Done => Poll::Failed(Event::Clock),
         }
     }

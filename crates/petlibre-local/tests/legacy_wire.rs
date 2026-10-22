@@ -71,6 +71,7 @@ async fn captured_legacy_connect_and_both_subscriptions_reach_local_clock_servic
     config.mqtt_listen = common::address();
     config.http_listen = common::address();
     storage::write_json(&path, &config).unwrap();
+
     let _service = common::start(&path);
     let http = reqwest::Client::builder().no_proxy().build().unwrap();
     common::ready(&config, &http).await;
@@ -93,6 +94,7 @@ async fn captured_legacy_connect_and_both_subscriptions_reach_local_clock_servic
         tokio::task::yield_now().await;
     }
     assert_eq!(read(&mut device).await, (0x20, vec![0, 0]));
+
     for (id, suffix) in [(2, "+/sub"), (3, "broadcast/sub")] {
         let mut body = vec![0, id];
         body.extend(string(&config.topic(suffix)));
@@ -109,6 +111,7 @@ async fn captured_legacy_connect_and_both_subscriptions_reach_local_clock_servic
     body.extend_from_slice(&[0, 4]);
     body.extend(serde_json::to_vec(&json!({"cmd":"NTP","ts":0})).unwrap());
     device.write_all(&packet(0x32, body)).await.unwrap();
+
     let mut acknowledged = false;
     let mut calibrated = false;
     for _ in 0..6 {
@@ -117,6 +120,7 @@ async fn captured_legacy_connect_and_both_subscriptions_reach_local_clock_servic
             assert_eq!(body, vec![0, 4]);
             acknowledged = true;
         }
+
         if kind >> 4 == 3 {
             // QoS 1 subscriptions must not upgrade the server's QoS 0 publication.
             assert_eq!(kind & 0x0f, 0);
@@ -140,6 +144,7 @@ async fn captured_legacy_connect_and_both_subscriptions_reach_local_clock_servic
         acknowledged && calibrated,
         "legacy peer did not receive PUBACK and clock response"
     );
+
     let status = common::status(&config, &http).await;
     assert_eq!(status["device_online"], true);
     assert_eq!(status["feeds"], json!([]), "handshake initiated a feed");

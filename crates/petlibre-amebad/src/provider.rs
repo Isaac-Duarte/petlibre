@@ -1,8 +1,12 @@
 //! The KM4 lease provider for the SDK flash-lock hooks: each SDK flash
 //! operation reserves a `FlashCoord` lease, verifies stopped outputs, parks
-//! KM0 in RAM and releases it afterwards. The FW06 probe proved the sequence
-//! on hardware; the FW10 updater and FW11 confirmation arm it through
-//! `arming`.
+//! KM0 in RAM and releases it afterwards. The FW06 and FW15 probes proved
+//! the sequence on hardware; the FW10 updater, FW11 confirmation and the
+//! offer watch arm it through `arming`.
+//!
+//! Every failed step is final: the hook returns false, which halts in RAM
+//! rather than retrying, and [`Provider::failure`] keeps the first step that
+//! failed for the report.
 
 use petlibre_core::flash_coord::{
     FlashCoord, FlashFault, FlashParty, FlashPhase, FlashReply, FlashToken,
@@ -18,8 +22,12 @@ use crate::stopped;
 
 /// KM4 boot count; KM0 keeps its own in backup register 4.
 pub const BOOT_COUNT_REGISTER: u32 = 3;
+/// How long arming waits for the KM0 peer's READY after announcing.
 pub const READY_TIMEOUT_MS: u32 = 2000;
+/// Set in the peer marker register before the hooks open; a boot that finds
+/// it set skips arming.
 pub const ATTEMPT_BIT: u32 = 0x100;
+
 /// Begin and end waits, inside the coordinator's 50 ms park/release limits.
 pub const EXCHANGE_TICKS: u32 = 40 * SYSTIMER_HZ / 1000;
 pub const EXCHANGE_POLLS: u32 = 10_000_000;
@@ -59,6 +67,10 @@ pub struct Provider {
     authority: u64,
     saved_systick: u32,
     parked_beat: u32,
+
+    // Report counters: leases completed, the slowest park and release
+    // exchanges in SysTimer ticks, and leases during which KM0's heartbeat
+    // stayed frozen.
     pub leases: u64,
     pub park_max: u32,
     pub release_max: u32,
@@ -107,6 +119,7 @@ impl Provider {
         if reply != FlashReply::ACCEPTED {
             return self.fail(LeaseStage::REQUEST, reply);
         }
+
         let token = self.coord.token;
         let reply = self
             .coord
@@ -114,6 +127,7 @@ impl Provider {
         if reply != FlashReply::ACCEPTED {
             return self.fail(LeaseStage::QUIESCE, reply);
         }
+
         sdk::disable_irq();
         let systick = sdk::systick_ctrl();
         sdk::set_systick_ctrl(systick & !park::SYSTICK_CONTROL_BITS);
@@ -125,11 +139,13 @@ impl Provider {
         if !acked {
             return self.fail(LeaseStage::BEGIN, FlashReply::FAILED);
         }
+
         let now = self.now();
         let reply = self.coord.parked(&token, FlashParty::PEER, now);
         if reply != FlashReply::ACCEPTED {
             return self.fail(LeaseStage::PARKED, reply);
         }
+
         self.parked_beat = beat();
         self.park_max = self.park_max.max(acked_at.wrapping_sub(begin_at));
         self.saved_systick = systick & crate::flash::hooks::SYSTICK_SAVED_BITS;
@@ -137,6 +153,7 @@ impl Provider {
             id: token.lease,
             saved_systick: self.saved_systick,
         };
+
         true
     }
 
@@ -148,12 +165,16 @@ impl Provider {
         if ticket.id != token.lease || self.coord.phase != FlashPhase::ACTIVE {
             return self.fail(LeaseStage::TICKET, FlashReply::STALE);
         }
+
+        // A parked KM0 runs nothing, so its heartbeat should not have moved
+        // since the park; count the leases where it held still.
         self.frozen += u64::from(beat() == self.parked_beat);
         let now = self.now();
         let reply = self.coord.complete(&token, FlashParty::LOCAL, now);
         if reply != FlashReply::ACCEPTED {
             return self.fail(LeaseStage::COMPLETE, reply);
         }
+
         let ram_token = park_token(&token);
         let end_at = sdk::systimer_ticks();
         let ended =
@@ -162,6 +183,7 @@ impl Provider {
         if !ended {
             return self.fail(LeaseStage::END, FlashReply::FAILED);
         }
+
         let now = self.now();
         let reply =
             self.coord
@@ -169,6 +191,7 @@ impl Provider {
         if reply != FlashReply::ACCEPTED {
             return self.fail(LeaseStage::RELEASED, reply);
         }
+
         self.release_max = self.release_max.max(released_at.wrapping_sub(end_at));
         self.leases += 1;
         true

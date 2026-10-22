@@ -19,9 +19,11 @@ use crate::storage::{COMMIT, JournalIo, RECORD_BYTES, crc32, get, put};
 
 pub const VERSION: u16 = 1;
 const MAGIC: [u8; 8] = *b"PLFSET01";
+
 /// Generations written before saves are refused: about 50 000 erases per
 /// unit, half a typical NOR part's 100 000-cycle rating.
 pub const WEAR_LIMIT: u64 = 100_000;
+
 pub const MAX_VOLUME: u8 = 100;
 pub const MIN_UTC_OFFSET: i16 = -12 * 60;
 pub const MAX_UTC_OFFSET: i16 = 14 * 60;
@@ -150,10 +152,12 @@ impl SettingsStore {
         put(&mut p[10..], RECORD_BYTES as u64, 2);
         put(&mut p[12..], generation, 8);
         put(&mut p[20..], self.binding, 8);
+
         p[28] = s.bowl_mode.0 as u8;
         p[29] = u8::from(s.lights) | (u8::from(s.sound) << 1);
         p[30] = s.volume;
         put(&mut p[32..], s.utc_offset_minutes as u16 as u64, 2);
+
         let crc = crc32(&p[..120]);
         put(&mut p[120..], u64::from(crc), 4);
         p[124..].copy_from_slice(&COMMIT);
@@ -167,6 +171,7 @@ impl SettingsStore {
         {
             return Scan::Invalid;
         }
+
         let version = get(&p[8..], 2) as u16;
         if version > VERSION {
             return Scan::Future;
@@ -175,6 +180,7 @@ impl SettingsStore {
         if version != VERSION || get(&p[20..], 8) != self.binding {
             return Scan::Invalid;
         }
+
         let s = Settings {
             bowl_mode: BowlMode(u32::from(p[28])),
             lights: p[29] & 1 != 0,
@@ -191,6 +197,7 @@ impl SettingsStore {
         {
             return Scan::Invalid;
         }
+
         Scan::Valid(generation, s)
     }
 
@@ -200,6 +207,7 @@ impl SettingsStore {
         if !self.io.read(slot, 0, &mut record) {
             return None;
         }
+
         let mut tail = [0u8; 64];
         let mut offset = RECORD_BYTES as u32;
         let mut tail_erased = true;
@@ -211,6 +219,7 @@ impl SettingsStore {
             tail_erased &= tail[..size].iter().all(|&b| b == u8::MAX);
             offset += size as u32;
         }
+
         let erased = record.iter().all(|&b| b == u8::MAX);
         Some(match (erased, tail_erased) {
             (true, true) => Scan::Erased,
@@ -232,6 +241,7 @@ impl SettingsStore {
             binding,
             ..Self::default()
         };
+
         if io.read.is_none()
             || io.program.is_none()
             || io.erase.is_none()
@@ -241,6 +251,7 @@ impl SettingsStore {
         {
             return self.status;
         }
+
         let (Some(a), Some(b)) = (self.scan(0), self.scan(1)) else {
             self.status = SettingsStatus::IO;
             return self.status;
@@ -254,6 +265,7 @@ impl SettingsStore {
             (_, Scan::Valid(g, s)) => Some((1, g, s)),
             _ => None,
         };
+
         let future = a == Scan::Future || b == Scan::Future;
         self.status = match pick {
             // A newer schema anywhere means this firmware must not write.
@@ -274,6 +286,7 @@ impl SettingsStore {
             }
             None => SettingsStatus::CORRUPT,
         };
+
         if let Some((slot, generation, settings)) = pick.filter(|_| !future) {
             self.slot = slot;
             self.generation = generation;
@@ -283,6 +296,7 @@ impl SettingsStore {
             self.status,
             SettingsStatus::LOADED | SettingsStatus::EMPTY | SettingsStatus::RECOVERED
         );
+
         self.status
     }
 
@@ -293,16 +307,19 @@ impl SettingsStore {
         if !self.writable || !settings.valid() {
             return false;
         }
+
         if self.generation >= WEAR_LIMIT {
             self.status = SettingsStatus::WORN;
             return false;
         }
+
         let generation = self.generation + 1;
         let slot = if self.generation == 0 {
             0
         } else {
             1 - self.slot
         };
+
         let bytes = self.encode(generation, settings);
         let mut checked = [0u8; RECORD_BYTES];
         let ok = self.io.erase(slot)
@@ -314,10 +331,12 @@ impl SettingsStore {
             && self.io.program(slot, 124, &COMMIT)
             && self.io.read(slot, 0, &mut checked)
             && bytes == checked;
+
         if !ok {
             self.status = SettingsStatus::IO;
             return false;
         }
+
         self.slot = slot;
         self.generation = generation;
         self.settings = *settings;
@@ -332,10 +351,12 @@ impl SettingsStore {
         if self.binding == 0 {
             return false;
         }
+
         let ok = self.io.erase(0)
             && self.io.erase(1)
             && matches!(self.scan(0), Some(Scan::Erased))
             && matches!(self.scan(1), Some(Scan::Erased));
+
         self.settings = Settings::default();
         self.generation = 0;
         self.slot = 0;

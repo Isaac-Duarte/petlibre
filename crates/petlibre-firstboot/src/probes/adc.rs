@@ -37,6 +37,7 @@ pub struct Channel {
 impl Channel {
     fn of(samples: &[u16; SAMPLES], calibration: &AdcCalibration) -> Self {
         let sum: u32 = samples.iter().map(|&s| u32::from(s)).sum();
+
         Self {
             min: samples.iter().copied().min().unwrap_or_default(),
             max: samples.iter().copied().max().unwrap_or_default(),
@@ -56,6 +57,9 @@ pub enum Record {
         calibration: AdcCalibration,
         ok: bool,
     },
+
+    /// One pass of the once-a-second loop: the digital inputs, the stopped
+    /// readback and 16 conversions of each ADC channel.
     Sample {
         n: u32,
         /// SYSTIMER ticks for the whole capture (48 conversions).
@@ -68,6 +72,7 @@ pub enum Record {
         battery: Channel,
         supply: Channel,
     },
+
     /// A capture failed (ADC timeout) or outputs did not read back stopped.
     Error { n: u32, ticks: u32, stopped: bool },
 }
@@ -104,6 +109,7 @@ impl Probe {
                 record: None,
             };
         }
+
         if !self.started {
             self.started = true;
             let outputs = self.board.open_outputs(DEADTIME_MS, LEASE_MS, 0);
@@ -122,19 +128,23 @@ impl Probe {
             self.done = !sensors.ok;
             return next(if sensors.ok { SAMPLE_MS } else { 0 }, record);
         }
+
         let n = self.samples;
         self.samples += 1;
+
         let mut reading = SensorReading::default();
         let begin = sdk::systimer_ticks();
         let mut supply = [0u16; SAMPLES];
         let ok = self.board.capture(&mut reading) && self.board.sample_channel(10, &mut supply);
         let ticks = sdk::systimer_ticks().wrapping_sub(begin);
         let stopped = stopped::observe().verified();
+
         if !ok || !stopped {
             self.board.close();
             self.done = true;
             return next(0, Record::Error { n, ticks, stopped });
         }
+
         let calibration = self.board.calibration;
         next(
             SAMPLE_MS,

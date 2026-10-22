@@ -49,6 +49,7 @@ pub const SETTINGS_BINDING: u64 = 0x5046_5731_3502_0001;
 pub const STRESS_SAVES: u32 = 1500;
 pub const STRESS_BATCH: u32 = 25;
 pub const SAVE_GAP_MS: u32 = 1;
+
 /// The research unit's boot log reports flash ID c8 40 17 (GigaDevice, 8 MiB).
 pub const EXPECTED_ID: [u8; 3] = [0xc8, 0x40, 0x17];
 
@@ -149,6 +150,7 @@ pub enum Record {
         ms: u32,
     },
     Foreign,
+
     /// Watchdog and hook installation before any operation.
     Start {
         mode: u32,
@@ -160,6 +162,7 @@ pub enum Record {
     Skip {
         marker: u32,
     },
+
     /// The settings store as opened by this boot.
     Open {
         status: SettingsStatus,
@@ -171,6 +174,7 @@ pub enum Record {
         other: SlotState,
         consistent: bool,
     },
+
     /// Every `STRESS_BATCH` completed saves.
     Batch {
         saves: u32,
@@ -269,6 +273,7 @@ impl Probe {
                 if !park::hello::<M>(self.authority) {
                     return self.end(Record::ClockError);
                 }
+
                 self.stage = Stage::Wait;
                 next(
                     POLL_MS,
@@ -278,6 +283,7 @@ impl Probe {
                     }),
                 )
             }
+
             Stage::Wait => {
                 let Some(now) = self.now() else {
                     return self.end(Record::ClockError);
@@ -298,9 +304,11 @@ impl Probe {
                             fault: coord.fault,
                             inactive,
                         };
+
                         // SAFETY: the caller's contract; no hook is armed yet.
                         let p = unsafe { &mut *provider };
                         *p = Provider::bound(coord, self.clock, self.authority);
+
                         if reply != FlashReply::ACCEPTED {
                             return self.end(record);
                         }
@@ -315,12 +323,14 @@ impl Probe {
                     _ => next(POLL_MS, None),
                 }
             }
+
             Stage::Arm => {
                 let marker = sdk::backup_read(MARKER_REGISTER);
                 if marker != 0 {
                     sdk::backup_write(MARKER_REGISTER, 0);
                     return self.end(Record::Skip { marker });
                 }
+
                 sdk::backup_write(MARKER_REGISTER, ATTEMPT_BIT);
                 let watchdog = self.watchdog.open(&WATCHDOG);
                 let installed = watchdog && F::install(provider);
@@ -330,6 +340,7 @@ impl Probe {
                     watchdog,
                     installed,
                 };
+
                 if !installed {
                     if watchdog {
                         return self.stop(record);
@@ -340,6 +351,7 @@ impl Probe {
                 self.stage = Stage::Run;
                 next(OP_GAP_MS, Some(record))
             }
+
             Stage::Run => self.run::<F>(provider),
             Stage::Idle => {
                 // Feed only while every iteration re-verifies stopped outputs,
@@ -377,26 +389,31 @@ impl Probe {
                 other: self.settings.slots[1 - self.settings.slot as usize],
                 consistent: s == stress_settings(generation),
             };
+
             let usable = matches!(
                 status,
                 SettingsStatus::LOADED | SettingsStatus::EMPTY | SettingsStatus::RECOVERED
             );
+
             if id != EXPECTED_ID || !usable || s != stress_settings(generation) {
                 return self.stop(record);
             }
             return next(SAVE_GAP_MS, Some(record));
         }
+
         let generation = self.settings.generation + 1;
         let begin = sdk::systimer_ticks();
         let ok = self.settings.save(&stress_settings(generation));
         let ticks = sdk::systimer_ticks().wrapping_sub(begin);
         self.feed();
+
         if !ok {
             return self.stop(Record::SaveFailed {
                 generation: self.settings.generation,
                 status: self.settings.status,
             });
         }
+
         self.saves += 1;
         self.ticks_max = self.ticks_max.max(ticks);
         if self.saves >= STRESS_SAVES {
@@ -416,6 +433,7 @@ impl Probe {
                 }),
             );
         }
+
         let record = self
             .saves
             .is_multiple_of(STRESS_BATCH)

@@ -18,10 +18,13 @@ pub const RELEASED: u32 = 0x504b_0004;
 pub const TIMEOUT: u32 = 0x504b_0081;
 pub const PEER_LOST: u32 = 0x504b_0082;
 pub const CLOCK: u32 = 0x504b_0083;
+
 /// Boot handshake: KM4 names its authority session; KM0 echoes it with its own.
 pub const HELLO: u32 = 0x504b_0010;
 pub const READY: u32 = 0x504b_0011;
 
+// Wrapping tick deltas at or above half the counter range read as a clock
+// that went backward; tick and poll limits must stay below it.
 const HALF: u32 = 0x8000_0000;
 pub const KM0_IPC: u32 = 0x4800_6000;
 pub const KM4_IPC: u32 = 0x4000_6000;
@@ -63,6 +66,8 @@ const fn peer<M: Mmio>() -> u32 {
     if M::KM0 { KM4_IPC } else { KM0_IPC }
 }
 
+/// IPC USR word `index` of a core's bank: USR[10] carries the command and
+/// USR[2..6] plus USR[9] the six token payload words.
 #[inline(always)]
 const fn slot(base: u32, index: u32) -> u32 {
     base + 0x20 + index * 4
@@ -199,12 +204,14 @@ pub fn wait<M: Mmio>(t: *const ParkToken, tick_limit: u32, poll_limit: u32) -> b
     {
         return false;
     }
+
     // The private copy is materialized before acknowledgement; never depend
     // on shared payload mutation or an XIP token while the owner uses flash.
     let expected = input;
     let start = ticks::<M>();
     let mut previous = start;
     publish_raw::<M>(&expected, ACK);
+
     let mut reason = TIMEOUT;
     let mut polls = 0;
     while polls < poll_limit {
@@ -218,6 +225,7 @@ pub fn wait<M: Mmio>(t: *const ParkToken, tick_limit: u32, poll_limit: u32) -> b
         if now.wrapping_sub(start) >= tick_limit {
             break;
         }
+
         match sample::<M>(&expected) {
             Sample::Matching(RELEASE) => {
                 let checked_at = ticks::<M>();
@@ -242,6 +250,7 @@ pub fn wait<M: Mmio>(t: *const ParkToken, tick_limit: u32, poll_limit: u32) -> b
             _ => {}
         }
     }
+
     publish_raw::<M>(&expected, reason);
     M::halt()
 }
@@ -303,6 +312,7 @@ fn owner_exchange<M: Mmio>(
     {
         return false;
     }
+
     // Private RAM token: a caller/context mutation cannot retarget this wait.
     let token = input;
     let start = ticks::<M>();
@@ -314,6 +324,7 @@ fn owner_exchange<M: Mmio>(
         M::store(local::<M>() + 8, 1 << channel);
         M::barrier();
     }
+
     let mut fault = TIMEOUT;
     let mut polls = 0;
     while polls < poll_limit {
@@ -327,6 +338,7 @@ fn owner_exchange<M: Mmio>(
         if now.wrapping_sub(start) >= tick_limit {
             break;
         }
+
         let reply = match sample::<M>(&token) {
             Sample::Publishing => continue,
             // Before a new ACK the peer can still expose an old lease's reply.
@@ -339,6 +351,7 @@ fn owner_exchange<M: Mmio>(
             }
             Sample::Matching(reply) => reply,
         };
+
         if reply == expected {
             let checked_at = ticks::<M>();
             if checked_at.wrapping_sub(previous) >= HALF {
@@ -350,6 +363,7 @@ fn owner_exchange<M: Mmio>(
             }
             return true;
         }
+
         // Owner end can observe the peer's earlier ACK before RELEASED.
         // Owner begin must never accept an old RELEASED as a new ACK.
         if !(command == RELEASE && reply == ACK) {
@@ -357,6 +371,7 @@ fn owner_exchange<M: Mmio>(
             break;
         }
     }
+
     publish_raw::<M>(&token, fault);
     false
 }

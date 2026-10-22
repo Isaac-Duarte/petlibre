@@ -1,4 +1,8 @@
 //! Serialized extension of a free-running `u32` hardware counter.
+//!
+//! Gives the core wrapping millisecond time from raw ticks, carrying the
+//! sub-millisecond remainder. It must be read at least every half counter
+//! range; a backward or ambiguous step latches it invalid.
 
 use crate::HALF_RANGE;
 
@@ -40,12 +44,14 @@ impl TickClock {
             self.valid = false;
             return None;
         }
+
         let scaled = u64::from(delta) * 1000 + u64::from(self.fraction);
         let elapsed = scaled / u64::from(self.ticks_per_second);
         if elapsed >= u64::from(HALF_RANGE) {
             self.valid = false;
             return None;
         }
+
         self.raw_at = raw;
         self.fraction = (scaled % u64::from(self.ticks_per_second)) as u32;
         self.millis = self.millis.wrapping_add(elapsed as u32);

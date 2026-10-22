@@ -53,6 +53,7 @@ impl Probe {
         if self.done {
             return step(0, None);
         }
+
         if !self.started {
             self.started = true;
             self.next = 1;
@@ -63,6 +64,7 @@ impl Probe {
                 Some(Record::Start { created }),
             );
         }
+
         match sdk::wifi_event(self.next) {
             WifiPoll::Pending => step(POLL_MS, None),
             WifiPoll::Event(event) => {
@@ -72,6 +74,7 @@ impl Probe {
                 // Drain quickly; the ring holds 16.
                 step(1, Some(Record::Event { event, stopped }))
             }
+
             WifiPoll::Lost => {
                 let seq = self.next;
                 self.next += 1;

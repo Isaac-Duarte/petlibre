@@ -1,3 +1,11 @@
+//! Tests for sensor normalization: ADC scaling and calibration, optical and
+//! power settling, outlet-blockage and food filtering, sample freshness and
+//! clock wrap, and the handoff into the feeding controller.
+//!
+//! An input reads as invalid until it has settled, and a gap, backward time
+//! or bad ADC sample discards its qualification, so an optical or power
+//! change stops an active feed.
+
 use petlibre_core::adc_scale::{AdcCalibration, SAMPLES};
 use petlibre_core::feed_controller::{
     FeedController, FeedLimits, FeedReason, FeedRequest, FeedSample, FeedStartResult, FeedState,
@@ -39,11 +47,13 @@ fn begin_with(settings: &SensorLimits, now: u32) -> Fixture {
         battery: [2800; SAMPLES],
         ..SensorReading::default()
     };
+
     let mut f = Fixture {
         inputs: SensorInputs::new(settings, &defaults()).unwrap(),
         raw,
         now,
     };
+
     f.inputs.update(now, Some(&f.raw));
     f
 }
@@ -70,14 +80,17 @@ fn adc_defaults_and_threshold() {
     let calibration = defaults();
     assert_eq!((calibration.offset, calibration.gain), (2480, 12050));
     assert!(calibration.default_offset && calibration.default_gain);
+
     let mut samples = [610; SAMPLES];
     assert_eq!(calibration.scale_16(&samples), Some(300));
     samples[15] = 611; // Floor the mean before applying the gain.
     assert_eq!(calibration.scale_16(&samples), Some(300));
     assert_eq!(calibration.scale_16(&[611; SAMPLES]), Some(301));
+
     let calibration = AdcCalibration::decode(&[255, 255, 0xe8, 3]).unwrap();
     assert_eq!((calibration.offset, calibration.gain), (2480, 1000));
     assert!(calibration.default_offset && !calibration.default_gain);
+
     let calibration = AdcCalibration::decode(&[0, 0, 0, 128]).unwrap();
     assert_eq!(calibration.scale_16(&[4095; SAMPLES]), Some(1249));
 }
@@ -88,6 +101,7 @@ fn adc_saturation_and_numeric_bounds() {
     assert_eq!(calibration.scale_16(&[0; SAMPLES]), Some(0));
     assert_eq!(calibration.scale_16(&[248; SAMPLES]), Some(0));
     assert_eq!(calibration.scale_16(&[4095; SAMPLES]), Some(3192));
+
     let calibration = AdcCalibration {
         offset: 0,
         gain: 1,
@@ -102,6 +116,7 @@ fn invalid_adc_never_reuses_a_value() {
     let mut samples = [500; SAMPLES];
     samples[0] = 4096;
     assert_eq!(calibration.scale_16(&samples), None);
+
     assert!(AdcCalibration::decode(&[0; 4]).is_none());
     calibration.gain = 0;
     assert_eq!(calibration.scale_16(&samples), None);
@@ -111,11 +126,14 @@ fn invalid_adc_never_reuses_a_value() {
 fn optics_are_unknown_until_settled() {
     let mut f = begin(0);
     assert!(!f.snapshot().optical_valid);
+
     f.advance(2);
     assert!(f.snapshot().optical_valid && f.snapshot().outlet_clear);
+
     f.raw.optics_enabled = false;
     f.advance(1);
     assert!(!f.snapshot().optical_valid && !f.inputs.food.known);
+
     f.raw.optics_enabled = true;
     f.advance(1);
     assert!(!f.snapshot().optical_valid);
@@ -127,9 +145,11 @@ fn optics_are_unknown_until_settled() {
 fn passage_pulses_and_sustained_blockage() {
     let mut f = begin(0);
     f.advance(2);
+
     f.raw.outlet_high = false;
     f.advance(4);
     assert!(f.snapshot().outlet_clear);
+
     f.raw.outlet_high = true;
     f.advance(1);
     f.raw.outlet_high = false;
@@ -137,14 +157,17 @@ fn passage_pulses_and_sustained_blockage() {
     assert!(f.snapshot().outlet_clear);
     f.advance(1);
     assert!(f.snapshot().optical_valid && !f.snapshot().outlet_clear);
+
     f.raw.outlet_high = true;
     f.advance(1);
     assert!(f.snapshot().outlet_clear);
+
     f.raw.food_high = true;
     f.advance(5);
     assert!(f.inputs.food.good);
     f.advance(1);
     assert!(f.inputs.food.known && !f.inputs.food.good);
+
     f.raw.food_high = false;
     f.advance(1);
     assert!(f.inputs.food.good);
@@ -161,11 +184,13 @@ fn stale_gap_and_backward_time_discard_qualification() {
             && !sample.power_healthy
             && !sample.feedback_edge
     );
+
     f.now = 5;
     f.inputs.update(f.now, Some(&f.raw));
     assert!(!f.snapshot().current_valid && !f.snapshot().optical_valid);
     f.advance(3);
     assert!(f.snapshot().optical_valid && f.snapshot().power_healthy);
+
     f.inputs.update(7, Some(&f.raw));
     assert!(!f.inputs.timing_valid && !f.inputs.outlet.known);
 }
@@ -175,18 +200,22 @@ fn power_transition_and_battery_failure() {
     let mut f = begin(0);
     f.advance(2);
     assert!(f.snapshot().power_healthy);
+
     f.raw.dc_present = false;
     f.advance(1);
     assert!(!f.snapshot().power_healthy);
     f.advance(2);
     assert!(f.snapshot().power_healthy);
+
     f.raw.battery = [1500; SAMPLES];
     f.advance(1);
     assert!(!f.snapshot().power_healthy);
+
     f.raw.dc_present = true;
     f.raw.battery_adc_valid = false;
     f.advance(3);
     assert!(f.snapshot().power_healthy && !f.inputs.battery_valid);
+
     f.raw.current[0] = 4096;
     f.advance(1);
     assert!(!f.snapshot().current_valid);
@@ -207,12 +236,14 @@ fn clock_wrap_does_not_unsettle_stable_inputs() {
     let mut f = begin(u32::MAX - 1);
     f.advance(2);
     assert!(f.now == 0 && f.snapshot().optical_valid && f.snapshot().power_healthy);
+
     let settings = SensorLimits {
         max_observation_gap_ms: 0x7fff_ffff,
         ..LIMITS
     };
     let mut f = begin_with(&settings, 0);
     f.advance(2);
+
     // Two valid large intervals wrap uptime after qualification, without replay.
     f.now = 0x8000_0001;
     f.inputs.update(f.now, Some(&f.raw));
@@ -244,6 +275,7 @@ fn invalid_sensor_configuration() {
         )
         .is_none()
     );
+
     calibration.gain = 0;
     assert!(SensorInputs::new(&LIMITS, &calibration).is_none());
 }
@@ -281,6 +313,7 @@ fn normalized_passage_can_complete_a_feed() {
     let mut f = begin(0);
     f.advance(2);
     let mut controller = start_feed(&f);
+
     for i in 0..5 {
         f.raw.outlet_high = i >= 3;
         f.advance(1);
@@ -288,6 +321,7 @@ fn normalized_passage_can_complete_a_feed() {
         assert!(sample.outlet_clear);
         controller.update(f.now, Some(&sample));
     }
+
     assert!(controller.state == FeedState::COMPLETE && controller.progress.completed == 1);
     assert_eq!(controller.motor, MotorCommand::STOP);
 }
@@ -303,6 +337,7 @@ fn optical_loss_and_power_change_stop_an_active_feed() {
         } else {
             f.raw.dc_present = false;
         }
+
         f.advance(1);
         controller.update(f.now, Some(&f.snapshot()));
         assert!(controller.state == FeedState::FAULT && controller.motor == MotorCommand::STOP);

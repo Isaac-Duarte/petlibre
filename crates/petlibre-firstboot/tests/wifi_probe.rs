@@ -1,3 +1,7 @@
+//! FW07 Wi-Fi probe against the fake SDK's event ring: every shim event is
+//! logged once and in order, an overwritten event is reported and skipped,
+//! and the shim can be started only once.
+
 use petlibre_amebad::sdk::{WifiEvent, fake};
 use petlibre_amebad::stopped;
 use petlibre_firstboot::probes::wifi::{POLL_MS, Probe, Record, Step};
@@ -41,12 +45,14 @@ fn every_event_is_logged_once_in_order() {
             record: None
         }
     );
+
     let events = [
         push(1, 0, 0),
         push(2, 1, 1),
         push(3, 1, 0),
         push(4, 1, 0x0a2a_0005),
     ];
+
     for event in events {
         assert_eq!(
             probe.step(),
@@ -59,7 +65,9 @@ fn every_event_is_logged_once_in_order() {
             }
         );
     }
+
     assert_eq!(probe.step().record, None);
+
     // Later events, after a quiet period.
     let lost = push(5, 1, 60_000);
     assert_eq!(
@@ -78,7 +86,9 @@ fn an_overwritten_event_is_reported_and_skipped() {
     let _first = push(1, 0, 0);
     let second = push(6, 1, 1000);
     let third = push(6, 2, 2000);
+
     assert_eq!(probe.step().record, Some(Record::Overrun { seq: 1 }));
+
     assert_eq!(
         probe.step().record,
         Some(Record::Event {
@@ -99,6 +109,7 @@ fn an_overwritten_event_is_reported_and_skipped() {
 fn a_second_start_is_refused() {
     let _ = start();
     let mut again = Probe::default();
+
     assert_eq!(
         again.step(),
         Step {

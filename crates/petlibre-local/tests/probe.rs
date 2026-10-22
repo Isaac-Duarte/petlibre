@@ -1,3 +1,7 @@
+//! C-probe configuration queries in the controller: journaled once, proven
+//! only by fresh computed replies, never replayed after a restart, and never
+//! completed by a late reply.
+
 mod common;
 
 use chrono::{DateTime, Duration, Utc};
@@ -44,6 +48,7 @@ fn installed(c: &mut Controller, at: DateTime<Utc>) -> Uuid {
         image: Image::CProbe,
         server_token: images.token,
     };
+
     let command = c
         .ota_trial(input.clone(), Some(&images), at)
         .unwrap()
@@ -56,6 +61,7 @@ fn installed(c: &mut Controller, at: DateTime<Utc>) -> Uuid {
             .unwrap()
             .ends_with("/probe.bin")
     );
+
     ready(c, "1.1.17", at + Duration::milliseconds(1));
     assert!(c.status.ota_hold);
     input.request_id
@@ -74,17 +80,21 @@ fn query_is_journaled_once_and_requires_two_fresh_distinct_computed_replies() {
     let at = Utc::now();
     let trial = installed(&mut c, at);
     let at = at + Duration::seconds(1);
+
     let input = probe::Input {
         request_id: Uuid::new_v4(),
     };
+
     let (record, command) = c.probe_query(input.clone(), at).unwrap();
     assert_eq!(record.trial_request_id, trial);
     assert_eq!(command.unwrap().payload["cmd"], "GET_CONFIG");
+
     let disk: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     assert_eq!(
         disk["probe_queries"][input.request_id.to_string()]["phase"],
         "submitted"
     );
+
     assert!(c.probe_query(input.clone(), at).unwrap().1.is_none());
     assert!(matches!(
         c.probe_query(
@@ -100,13 +110,16 @@ fn query_is_journaled_once_and_requires_two_fresh_distinct_computed_replies() {
     malformed["localReProbe"] = json!("c1-00000000");
     observe(&mut c, "config", malformed, at);
     observe(&mut c, "event", reply("device-generated-1", at), at);
+
     let mut stale = reply("device-generated-1", at);
     stale["ts"] = json!((at - Duration::seconds(11)).timestamp_millis());
     observe(&mut c, "config", stale, at);
+
     let mut wrong_version = reply("device-generated-1", at);
     wrong_version["softwareVersion"] = json!("1.1.15");
     observe(&mut c, "config", wrong_version, at);
     assert_eq!(c.status.probe_queries[0].phase, Phase::Submitted);
+
     let mut skewed = reply("device-generated-1", at);
     skewed["ts"] = json!((at - Duration::seconds(2)).timestamp_millis());
     observe(&mut c, "config", skewed, at);
@@ -131,6 +144,7 @@ fn query_is_journaled_once_and_requires_two_fresh_distinct_computed_replies() {
             .all(|q| q.phase == Phase::ProofReported)
     );
     assert!(c.status.ota_hold);
+
     assert_eq!(probe::expected("hello").as_deref(), Some("c1-4f9f2cab"));
     for invalid in ["", "\n", "é", &"x".repeat(48)] {
         assert!(probe::expected(invalid).is_none());
@@ -144,15 +158,18 @@ fn pending_query_is_not_replayed_after_restart_and_does_not_block_original_resto
     let mut c = Controller::load(common::config(), path.clone()).unwrap();
     let at = Utc::now();
     installed(&mut c, at);
+
     let input = probe::Input {
         request_id: Uuid::new_v4(),
     };
     c.probe_query(input.clone(), at + Duration::seconds(1))
         .unwrap();
+
     drop(c);
     let mut c = Controller::load(common::config(), path).unwrap();
     assert_eq!(c.status.probe_queries[0].phase, Phase::Uncertain);
     assert!(c.probe_query(input, at).unwrap().1.is_none());
+
     c.enable_ota_trial();
     let at = at + Duration::seconds(2);
     ready(&mut c, "1.1.17", at);
@@ -165,6 +182,7 @@ fn pending_query_is_not_replayed_after_restart_and_does_not_block_original_resto
         ),
         Err(Rejection::InvalidProbe)
     ));
+
     let images = lease(Profile::CExecution, at);
     let restore = ota_trial::Input {
         request_id: Uuid::new_v4(),
@@ -174,6 +192,7 @@ fn pending_query_is_not_replayed_after_restart_and_does_not_block_original_resto
     let command = c.ota_trial(restore, Some(&images), at).unwrap().1.unwrap();
     assert_eq!(command.payload["targetSoftwareVersion"], "1.1.15");
     assert_eq!(command.payload["sha256"], ORIGINAL_SHA256);
+
     ready(&mut c, "1.1.15", at + Duration::seconds(1));
     assert!(!c.status.ota_hold);
 }
@@ -184,6 +203,7 @@ fn profile_mismatch_and_unconfirmed_installation_cannot_execute_the_probe() {
     let mut c = Controller::load(common::config(), dir.path().join("ledger.json")).unwrap();
     let at = Utc::now();
     ready(&mut c, "1.1.15", at);
+
     let query = probe::Input {
         request_id: Uuid::new_v4(),
     };
@@ -191,11 +211,13 @@ fn profile_mismatch_and_unconfirmed_installation_cannot_execute_the_probe() {
         c.probe_query(query.clone(), at),
         Err(Rejection::OtaDisabled)
     ));
+
     c.enable_ota_trial();
     assert!(matches!(
         c.probe_query(query, at),
         Err(Rejection::InvalidProbe)
     ));
+
     let wrong = lease(Profile::StockVersion, at);
     let input = ota_trial::Input {
         request_id: Uuid::new_v4(),
@@ -206,6 +228,7 @@ fn profile_mismatch_and_unconfirmed_installation_cannot_execute_the_probe() {
         c.ota_trial(input, Some(&wrong), at),
         Err(Rejection::ImageServer)
     ));
+
     let correct = lease(Profile::CExecution, at);
     ready(&mut c, "1.1.17", at);
     let restore = ota_trial::Input {
@@ -225,6 +248,7 @@ fn lost_query_times_out_and_cannot_be_retriggered_by_a_late_reply() {
     let mut c = Controller::load(common::config(), dir.path().join("ledger.json")).unwrap();
     let at = Utc::now();
     installed(&mut c, at);
+
     let at = at + Duration::seconds(1);
     c.probe_query(
         probe::Input {
@@ -233,6 +257,7 @@ fn lost_query_times_out_and_cannot_be_retriggered_by_a_late_reply() {
         at,
     )
     .unwrap();
+
     let later = at + Duration::seconds(60);
     c.expire(later).unwrap();
     observe(&mut c, "config", reply("late-reply", later), later);

@@ -1,6 +1,11 @@
 //! `petlibre-bench`: relay power, the loader strap, and supervised
 //! captures, dumps and updates through `petlibre-flash`. `--ui` serves the
 //! read-only progress page, alone or beside a command.
+//!
+//! Every subcommand except `status` is a physical bench operation. All but
+//! `status` record their steps under `private/bench-status`, which the page
+//! reads; `demo` refuses to start while another command is recorded as
+//! running there.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -40,6 +45,7 @@ struct Cli {
     /// The petlibre-flash binary (default: beside this one).
     #[arg(long, global = true)]
     flash_bin: Option<PathBuf>,
+
     /// Serve the read-only progress page: alone until Ctrl+C, or while a command runs.
     #[arg(long, global = true)]
     ui: bool,
@@ -48,6 +54,7 @@ struct Cli {
     listen: String,
     #[arg(long, global = true, default_value_t = 8780, requires = "ui")]
     ui_port: u16,
+
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -60,6 +67,7 @@ enum Command {
     Off,
     /// Power the feeder without the strap or a capture.
     On,
+
     /// Record the running feeder without touching power.
     Capture {
         /// Capture name under private/captures/.
@@ -81,6 +89,7 @@ enum Command {
     },
     /// Repeated logic-analyzer captures of power-ons or loader entries (FW30).
     Transients(TransientArgs),
+
     /// Loader, bounded read, then full flash read.
     Dump {
         /// Session name under private/flash-backups/.
@@ -94,6 +103,7 @@ enum Command {
     GiveWayPrepare(GiveWayArgs),
     /// Clear bank 1's first marker byte, then boot.
     GiveWayExecute(GiveWayExecuteArgs),
+
     /// Click the spare relays 3 and 4 in patterns; never switches power or the strap.
     Demo(DemoArgs),
 }
@@ -135,11 +145,13 @@ impl Command {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+
     // An interrupt stops the running sequence, through its power-off cleanup.
     // petlibre-flash children get the terminal's interrupt too, and stop themselves.
     let _ = ctrlc::set_handler(|| INTERRUPTED.store(true, Ordering::SeqCst));
     // Evidence and status are private.
     rustix::process::umask(rustix::fs::Mode::from_raw_mode(0o077));
+
     match run(cli) {
         Ok(code) => ExitCode::from(code),
         Err(error) => {
@@ -155,6 +167,7 @@ fn run(cli: Cli) -> petlibre_bench::Result<u8> {
         .canonicalize()
         .map_err(|error| Error::Bench(format!("--root {}: {error}", cli.root.display())))?;
     let flash_bin = cli.flash_bin.clone().unwrap_or_else(default_flash_bin);
+
     let page = if cli.ui {
         let listen = ui::Listen::new(&cli.listen, cli.ui_port)?;
         let handle = ui::start(root.clone(), flash_bin.clone(), &listen)?;
@@ -163,6 +176,7 @@ fn run(cli: Cli) -> petlibre_bench::Result<u8> {
     } else {
         None
     };
+
     let Some(command) = cli.command else {
         // Viewer only: serve until the operator interrupts.
         if let Some(page) = page {
@@ -173,6 +187,8 @@ fn run(cli: Cli) -> petlibre_bench::Result<u8> {
     if let Some(name) = command.name() {
         check_name(name)?;
     }
+
+    // The demo refuses to click relays beside another bench command.
     let status_dir = root.join(STATUS_DIR);
     if matches!(command, Command::Demo(_))
         && let Some(running) = status::busy(&status_dir)
@@ -181,6 +197,7 @@ fn run(cli: Cli) -> petlibre_bench::Result<u8> {
             "Bench command '{running}' is running; try again when it ends"
         )));
     }
+
     let config = Config::load(&root)?;
     let relay = Relay::open(&config.relay_port)?;
     let tools = Processes {
@@ -197,6 +214,8 @@ fn run(cli: Cli) -> petlibre_bench::Result<u8> {
         sleep: petlibre_bench::sleep,
         off_seconds: cli.off_seconds,
     };
+
+    // `status` only reads, so it leaves no status record behind.
     let label = command.label();
     if !matches!(command, Command::Status) {
         bench.status = Status::new(&root, status_dir);
@@ -213,6 +232,7 @@ fn run(cli: Cli) -> petlibre_bench::Result<u8> {
             bench.status.flash_tool(tool);
         }
     }
+
     let result = dispatch(&mut bench, &command);
     let (code, error) = match &result {
         Ok(code) => (*code, None),

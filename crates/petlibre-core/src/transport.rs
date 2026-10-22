@@ -15,6 +15,7 @@ pub const MAX_PACKET: usize = 640;
 pub const MAX_HEALTH: usize = 512;
 /// Request payload limit (design: 256 bytes).
 pub const MAX_REQUEST: usize = 256;
+
 pub const KEEPALIVE_S: u16 = 30;
 /// Send PINGREQ after this long without sending anything.
 pub const PING_AFTER_MS: u32 = 15_000;
@@ -23,6 +24,7 @@ pub const REPLY_TIMEOUT_MS: u32 = 10_000;
 /// Close after this long with nothing received (1.5 keepalives).
 pub const SILENCE_MS: u32 = 45_000;
 pub const HEALTH_PERIOD_MS: u32 = 30_000;
+
 pub const SCHEMA: &str = "petlibre.health";
 pub const SCHEMA_VERSION: u32 = 1;
 
@@ -78,9 +80,11 @@ fn remaining_length(length: usize) -> Result<([u8; 4], usize), Error> {
     if length >= MAX_PACKET {
         return Err(Error::TooLong);
     }
+
     let mut out = [0; 4];
     let mut value = length;
     let mut used = 0;
+
     loop {
         let mut digit = (value % 128) as u8;
         value /= 128;
@@ -106,6 +110,7 @@ fn packet(
     let mut out = Out::new(buf);
     out.byte(header)?;
     out.bytes(&encoded[..used])?;
+
     let start = out.at;
     write(&mut out)?;
     // A length mismatch is a bug in this module, not a runtime condition.
@@ -141,6 +146,7 @@ pub fn encode_connect(buf: &mut [u8], c: &Connect) -> Result<usize, Error> {
         length += field_len(w.topic.as_bytes()) + field_len(w.payload);
     }
     length += field_len(c.username.as_bytes()) + field_len(c.password);
+
     packet(buf, 0x10, length, |o| {
         o.field(b"MQTT")?;
         o.byte(4)?; // protocol level 3.1.1
@@ -218,6 +224,7 @@ pub fn decode(data: &[u8]) -> Result<Option<(Packet<'_>, usize)>, Error> {
     let Some(&header) = data.first() else {
         return Ok(None);
     };
+
     let mut length = 0usize;
     let mut at = 1;
     loop {
@@ -229,10 +236,12 @@ pub fn decode(data: &[u8]) -> Result<Option<(Packet<'_>, usize)>, Error> {
         if digit & 0x80 == 0 {
             break;
         }
+        // MQTT caps the remaining length at four bytes.
         if at > 4 {
             return Err(Error::Malformed);
         }
     }
+
     if length >= MAX_PACKET {
         return Err(Error::TooLong);
     }
@@ -240,6 +249,7 @@ pub fn decode(data: &[u8]) -> Result<Option<(Packet<'_>, usize)>, Error> {
         return Ok(None);
     };
     let used = at + length;
+
     let packet = match (header >> 4, header & 0x0f) {
         (2, 0) if length == 2 => {
             if body[0] & 0xfe != 0 {
@@ -255,6 +265,7 @@ pub fn decode(data: &[u8]) -> Result<Option<(Packet<'_>, usize)>, Error> {
             code: body[2],
         },
         (13, 0) if length == 0 => Packet::PingResp,
+
         (3, flags) => {
             if flags & 0x06 != 0 {
                 return Err(Error::Unexpected); // QoS 1/2 never requested
@@ -268,9 +279,12 @@ pub fn decode(data: &[u8]) -> Result<Option<(Packet<'_>, usize)>, Error> {
                 retain: flags & 1 == 1,
             }
         }
+
+        // A packet type this client accepts, but with the wrong flags or length.
         (2 | 9 | 13, _) => return Err(Error::Malformed),
         _ => return Err(Error::Unexpected),
     };
+
     Ok(Some((packet, used)))
 }
 
@@ -391,14 +405,17 @@ impl Session {
         if let State::Closed(fault) = self.state {
             return Tick::Closed(fault);
         }
+
         if let Some(since) = self.waiting_since
             && now.wrapping_sub(since) >= REPLY_TIMEOUT_MS
         {
             return Tick::Closed(self.close(Fault::ReplyTimeout));
         }
+
         if now.wrapping_sub(self.heard_ms) >= SILENCE_MS {
             return Tick::Closed(self.close(Fault::Silence));
         }
+
         if self.state == State::Ready
             && self.waiting_since.is_none()
             && now.wrapping_sub(self.sent_ms) >= PING_AFTER_MS
@@ -407,6 +424,7 @@ impl Session {
             self.waiting_since = Some(now);
             return Tick::Ping;
         }
+
         Tick::Idle
     }
 
@@ -434,6 +452,7 @@ impl Session {
             return Event::Closed(fault);
         }
         self.heard_ms = now;
+
         match (self.state, packet) {
             (
                 State::AwaitConnAck,
@@ -449,6 +468,7 @@ impl Session {
             (State::AwaitConnAck, Packet::ConnAck { code, .. }) if code != 0 => {
                 Event::Closed(self.close(Fault::Refused(code)))
             }
+
             (
                 State::AwaitSubAck,
                 Packet::SubAck {
@@ -467,6 +487,7 @@ impl Session {
                     code,
                 },
             ) => Event::Closed(self.close(Fault::SubscribeRefused(code))),
+
             (
                 State::Ready,
                 Packet::SubAck {
@@ -484,10 +505,12 @@ impl Session {
                     code,
                 },
             ) if data_topic.is_some() => Event::Closed(self.close(Fault::SubscribeRefused(code))),
+
             (State::Ready, Packet::PingResp) if self.waiting_since.is_some() => {
                 self.waiting_since = None;
                 Event::Pong
             }
+
             (
                 State::Ready,
                 Packet::Publish {
@@ -507,6 +530,7 @@ impl Session {
                 }
                 Event::Request(payload)
             }
+
             _ => Event::Closed(self.close(Fault::OutOfOrder)),
         }
     }
@@ -559,6 +583,7 @@ pub fn parse_request(payload: &[u8]) -> Result<Request<'_>, RequestError> {
     if payload.len() > MAX_REQUEST {
         return Err(RequestError::TooLong);
     }
+
     let text = core::str::from_utf8(payload).map_err(|_| RequestError::Malformed)?;
     let inner = text
         .trim()
@@ -568,6 +593,7 @@ pub fn parse_request(payload: &[u8]) -> Result<Request<'_>, RequestError> {
     if inner.contains('\\') {
         return Err(RequestError::Malformed);
     }
+
     let (mut id, mut op) = (None, None);
     for pair in inner.split(',') {
         let (key, value) = pair.split_once(':').ok_or(RequestError::Malformed)?;
@@ -575,6 +601,7 @@ pub fn parse_request(payload: &[u8]) -> Result<Request<'_>, RequestError> {
             unquote(key).ok_or(RequestError::Malformed)?,
             unquote(value).ok_or(RequestError::Malformed)?,
         );
+
         let slot = match key {
             "id" => &mut id,
             "op" => &mut op,
@@ -584,6 +611,7 @@ pub fn parse_request(payload: &[u8]) -> Result<Request<'_>, RequestError> {
             return Err(RequestError::Malformed);
         }
     }
+
     let (id, op) = (
         id.ok_or(RequestError::Malformed)?,
         op.ok_or(RequestError::Malformed)?,
@@ -591,11 +619,13 @@ pub fn parse_request(payload: &[u8]) -> Result<Request<'_>, RequestError> {
     if !is_uuid(id) {
         return Err(RequestError::BadId);
     }
+
     let op = match op {
         "health" => Ok(Op::Health),
         "ping" => Ok(Op::Ping),
         other => Err(other),
     };
+
     Ok(Request { id, op })
 }
 
@@ -660,19 +690,23 @@ pub struct Health {
     pub online: bool,
     pub seq: u32,
     pub uptime_ms: u32,
+
     /// The embedded startup identity (hex on SDK builds).
     pub build: &'static str,
     pub bank: u8,
     pub reset_flags: u32,
     pub boot_count: u32,
     pub outputs: Outputs,
+
     /// Bit set of [`FAULTS`].
     pub faults: u32,
+
     pub rssi: i32,
     pub wifi_attempt: u32,
     pub link_losses: u32,
     pub dns_losses: u32,
     pub last_loss: Loss,
+
     pub connects: u32,
     /// Fault code of the last closed session, if any.
     pub last_error: Option<&'static str>,
@@ -684,9 +718,11 @@ pub const FAULTS: [&str; 3] = ["watchdog", "flash_hook", "stopped_readback"];
 impl Health {
     pub fn write(&self, out: &mut impl Write) -> fmt::Result {
         let build = self.build;
+        // `build` is written unescaped, so refuse anything that could break the JSON.
         if build.len() > 64 || !build.bytes().all(|b| b.is_ascii_alphanumeric()) {
             return Err(fmt::Error);
         }
+
         write!(
             out,
             "{{\"schema\":\"{SCHEMA}\",\"v\":{SCHEMA_VERSION},\"online\":{},\"seq\":{},\"uptime_ms\":{},\
@@ -703,6 +739,7 @@ impl Health {
                 Outputs::Unverified => "unverified",
             },
         )?;
+
         let mut first = true;
         for (bit, name) in FAULTS.iter().enumerate() {
             if self.faults & (1 << bit) != 0 {
@@ -712,6 +749,7 @@ impl Health {
                 first = false;
             }
         }
+
         let loss = match self.last_loss {
             Loss::None => "null",
             Loss::Link => "\"link\"",
@@ -723,6 +761,7 @@ impl Health {
              \"transport\":{{\"connects\":{},\"last_error\":",
             self.rssi, self.wifi_attempt, self.link_losses, self.dns_losses, self.connects,
         )?;
+
         match self.last_error {
             Some(code) if code.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') => {
                 write!(out, "\"{code}\"}}}}")

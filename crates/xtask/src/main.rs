@@ -30,6 +30,7 @@ enum Task {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+
     match cli.task {
         Task::CheckRepository => match repository::check(&cli.root) {
             Ok(summary) if summary.errors.is_empty() => {

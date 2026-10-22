@@ -1,5 +1,11 @@
 //! Bench sequences. Each one either completes, or stops without retry and
 //! says what state it left the feeder in.
+//!
+//! `main` dispatches each subcommand to a [`Bench`] method. Bench only
+//! switches relays and orders steps; serial reads, inspections, plans and
+//! writes go through [`Tools`] as separate `petlibre-flash` runs. Evidence
+//! directories are never reused, and an execute refuses once its output
+//! exists, so each prepared plan runs at most once.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -17,6 +23,7 @@ use crate::{Error, Result, now, require, sha256_hex};
 
 pub const STRAP_SECONDS: f64 = 2.0;
 pub const LOADER_SECONDS: f64 = 5.0;
+
 /// Observed per staged frame, framing included; for progress only.
 pub const FRAME_TX_BYTES: u64 = 1056;
 /// FW30 logic analyzer (sigrok fx2lafw, 8 channels). Capture starts this long
@@ -25,6 +32,7 @@ pub const FRAME_TX_BYTES: u64 = 1056;
 pub const ANALYZER_ARMING_SECONDS: f64 = 3.0;
 const ANALYZER_DEFAULT_CHANNELS: [(&str, u8); 4] =
     [("ina", 0), ("inb", 1), ("outa", 2), ("outb", 3)];
+
 const STOPPED_POWERED: &str =
     "Stopped without retry; the feeder stays powered. Inspect the evidence.";
 
@@ -44,6 +52,7 @@ pub struct UpdateArgs {
     /// Frozen review to install.
     #[arg(long)]
     pub target: PathBuf,
+
     /// Finish a stopped update from a fresh session.
     #[arg(long)]
     pub interrupted: bool,
@@ -250,6 +259,7 @@ impl Bench {
         self.status
             .step(&format!("petlibre-flash {} {}", args[0], args[1]));
         let code = self.tools.flash(args, &mut self.status)?;
+
         if crate::interrupted() {
             return Err(Error::Interrupted);
         }
@@ -271,6 +281,7 @@ impl Bench {
             let on = self.get(channel)?;
             println!("Relay {channel}: {}", if on { "on" } else { "off" });
         }
+
         for (key, port) in [
             ("relay_port", &self.config.relay_port),
             ("uart_port", &self.config.uart_port),
@@ -316,11 +327,13 @@ impl Bench {
             observer.kill();
             return Err(error);
         }
+
         let result = self.finish_observer(observer.as_mut())?;
         require(
             !truthy(&result["download_banner_seen"]),
             "Boot reached the ROM loader, not the application",
         )?;
+
         println!(
             "Boot captured: {} bytes in {}; fault marker {}",
             result["bytes"],
@@ -340,6 +353,9 @@ impl Bench {
         self.fresh(output)?;
         self.power_off(self.off_seconds)?;
         let mut observer = self.start_observer(output, LOADER_SECONDS)?;
+
+        // A failed entry kills the observer and tries to cut power rather
+        // than leave the feeder strapped or half in the loader.
         let entered = (|| {
             self.set(STRAP, true)?;
             self.set(POWER, true)?;
@@ -355,6 +371,7 @@ impl Bench {
             )?;
             Ok(result)
         })();
+
         match entered {
             Ok(result) => {
                 println!(
@@ -364,6 +381,7 @@ impl Bench {
                 );
                 Ok(result)
             }
+
             Err(error) => {
                 observer.kill();
                 self.status.capture(None, 0.0);
@@ -393,6 +411,7 @@ impl Bench {
             "sigrok-cli not found; install it before a transient session",
         )?;
         fs::create_dir_all(&out)?;
+
         let channels: BTreeMap<String, u8> =
             self.config.analyzer_channels.clone().unwrap_or_else(|| {
                 ANALYZER_DEFAULT_CHANNELS
@@ -406,10 +425,14 @@ impl Bench {
             "samplerate": args.samplerate, "seconds": args.seconds,
             "arming_seconds": ANALYZER_ARMING_SECONDS, "channels": channels, "cycles": [],
         });
+
+        // Power off whether or not the cycles succeeded, then report the
+        // cycles' failure ahead of the power-off's.
         let session = self.transient_cycles(args, &out, &mut manifest);
         let cut = self.cut_power();
         session?;
         cut?;
+
         println!(
             "Transient captures in {}; audit them with petlibre-audit transients",
             self.rel(&out)
@@ -428,6 +451,7 @@ impl Bench {
             self.power_off(self.off_seconds)?;
             let name = format!("cycle-{n:03}.bin");
             let started = now();
+
             let mut analyzer =
                 self.tools
                     .analyzer(&out.join(&name), args.seconds, args.samplerate)?;
@@ -436,6 +460,9 @@ impl Bench {
                 analyzer.kill();
             }
             let powered = cycle?;
+
+            // Rewritten after every cycle, so a stopped session keeps the
+            // manifest of the cycles it finished.
             let bytes = fs::metadata(out.join(&name)).map_or(0, |m| m.len());
             manifest["cycles"].as_array_mut().unwrap().push(json!({
                 "file": name, "bytes": bytes,
@@ -463,6 +490,7 @@ impl Bench {
                 analyzer.stderr()
             )));
         }
+
         let powered = now();
         if args.mode == TransientMode::Loader {
             self.set(STRAP, true)?;
@@ -472,6 +500,7 @@ impl Bench {
         } else {
             self.set(POWER, true)?;
         }
+
         let code = analyzer.wait(Duration::from_secs_f64(args.seconds + 30.0))?;
         let Some(code) = code else {
             return Err(Error::Bench(
@@ -493,6 +522,7 @@ impl Bench {
             self.fresh(path)?;
         }
         self.loader(&p.loader)?;
+
         let read = self.read_args();
         let steps = [
             argv(&["read", "small"], &[&read, &self.out(&p.bounded)]),
@@ -508,6 +538,7 @@ impl Bench {
         if !self.run_all(&steps)? {
             return Ok(1);
         }
+
         println!(
             "Full read in {}; compare it before relying on it",
             self.rel(&p.full)
@@ -554,6 +585,7 @@ impl Bench {
             args.source.is_some() || args.bank == 0,
             "--source is required except when overwriting bank 0",
         )?;
+
         let mut out = self.evidence_args(p);
         out.extend([
             "--target".into(),
@@ -593,6 +625,7 @@ impl Bench {
         if !truthy(policy) {
             return Ok(());
         }
+
         let policy = policy
             .as_str()
             .map_or_else(|| policy.to_string(), str::to_string);
@@ -621,6 +654,7 @@ impl Bench {
             self.fresh(path)?;
         }
         self.loader(&p.loader)?;
+
         let steps = [
             argv(
                 &["read", "small"],
@@ -639,6 +673,7 @@ impl Bench {
         if !self.run_all(&steps)? {
             return Ok(1);
         }
+
         let (raw, sha) = self.prepared(&p)?;
         let plan: Value = serde_json::from_slice(&raw)?;
         let plan = &plan["operation_plan"];
@@ -650,6 +685,7 @@ impl Bench {
             plan["erase_sectors"],
             plan["target_ota_sha256"].as_str().unwrap_or("?"),
         );
+
         let next = execute_line(args, &sha);
         println!("Review it, then: {next}");
         self.status.next(next);
@@ -666,6 +702,7 @@ impl Bench {
             "Prepared plan required; execution is single-use",
         )?;
         self.require_unbroken_power()?;
+
         // Progress estimate only: one ~1 KiB frame per packet out, three region
         // acquisitions back. The updater reads and checks the plan itself.
         if let Some((tx, rx)) = fs::read(&p.plan)
@@ -683,6 +720,7 @@ impl Bench {
         {
             self.status.transfer(Some(&p.execute), tx, rx);
         }
+
         let command = argv(
             &["update", "execute"],
             &[
@@ -702,6 +740,7 @@ impl Bench {
             println!("Update stopped; the feeder stays powered and is not booted. No retry.");
             return Ok(1);
         }
+
         self.status.transfer(None, 0, 0);
         self.boot(&p.boot, args.boot_seconds)?;
         Ok(0)
@@ -724,6 +763,7 @@ impl Bench {
             self.fresh(path)?;
         }
         self.loader(&p.loader)?;
+
         let give_way = self.give_way_args(args, &p);
         let steps = [
             argv(
@@ -746,6 +786,7 @@ impl Bench {
         if !self.run_all(&steps)? {
             return Ok(1);
         }
+
         let (raw, sha) = self.prepared(&p)?;
         let plan: Value = serde_json::from_slice(&raw)?;
         println!(
@@ -755,6 +796,7 @@ impl Bench {
                 .as_str()
                 .unwrap_or("?"),
         );
+
         let next = format!(
             "petlibre-bench give-way-execute {} --fallback {} --expected-plan-sha256 {sha}",
             args.name,
@@ -773,6 +815,7 @@ impl Bench {
             "Prepared plan required; execution is single-use",
         )?;
         self.require_unbroken_power()?;
+
         let command = argv(
             &["give-way", "execute"],
             &[
@@ -792,6 +835,7 @@ impl Bench {
             println!("Give-way stopped; the feeder stays powered and is not booted. No retry.");
             return Ok(1);
         }
+
         self.boot(&p.boot, args.boot_seconds)?;
         Ok(0)
     }
@@ -805,6 +849,7 @@ impl Bench {
             if power { "on" } else { "off" },
             if strap { "held" } else { "released" }
         );
+
         let patterns = demo_patterns(args);
         let mut show = Show {
             bench: self,
@@ -812,6 +857,7 @@ impl Bench {
             toggles: 0,
             on: [false; 2],
         };
+
         let shown = (|| {
             for pattern in &patterns {
                 let label = pattern_name(*pattern);
@@ -827,6 +873,7 @@ impl Bench {
             Ok(())
         })();
         let toggles = show.toggles;
+
         // Both spares end off whatever happened; try each even if one fails.
         let mut failure = shown.err();
         for channel in SPARES {
@@ -836,6 +883,7 @@ impl Bench {
                 )));
             }
         }
+
         match failure {
             Some(error) => Err(error),
             None => {
@@ -857,6 +905,7 @@ pub fn execute_line(args: &UpdateArgs, sha: &str) -> String {
     } else if let Some(read) = &args.original_read {
         line += &format!(" --original-read {}", read.display());
     }
+
     line += &format!(" --target {}", args.target.display());
     for (set, flag) in [
         (args.restore_marker, " --restore-marker"),
@@ -972,6 +1021,8 @@ impl Show<'_> {
                     "Relay {channel} is not a spare; the demo never switches it"
                 ))
             })?;
+
+        // Only actual changes count toward the cap; a repeat is just a hold.
         if self.on[index] != on {
             require(
                 self.toggles < MAX_TOGGLES,

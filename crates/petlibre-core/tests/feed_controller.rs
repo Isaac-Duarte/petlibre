@@ -1,3 +1,11 @@
+//! Behavior tests for the feeding state machine: feedback inhibit windows,
+//! double-bowl direction pauses, bounded reversals, deadlines, input faults
+//! and clock wrap.
+//!
+//! A fault latches the motor at STOP until an explicit reset, and a request
+//! ID is never accepted twice. The limits below are compressed test
+//! intervals, not hardware settings.
+
 use petlibre_core::feed_controller::{
     FeedController, FeedLimits, FeedReason, FeedRequest, FeedSample, FeedStartResult, FeedState,
     MotorCommand,
@@ -56,11 +64,13 @@ fn begin_with(
         sample: HEALTHY,
         now,
     };
+
     let r = request(1, portions, mode, direction);
     assert_eq!(
         f.controller.start(&r, now, &f.sample),
         FeedStartResult::ACCEPTED
     );
+
     f
 }
 
@@ -96,26 +106,31 @@ impl Fixture {
 fn single_feedback_and_terminal_events() {
     let mut f = begin(BowlMode::SINGLE, Direction::D0, 2);
     let next = request(2, 1, BowlMode::SINGLE, Direction::D0);
+
     assert!(!f.controller.reset());
     assert_eq!(
         f.controller.start(&next, f.now, &f.sample),
         FeedStartResult::REJECT_BUSY
     );
     assert_eq!(f.controller.last_request_id, 1);
+
     f.edge(true);
     assert_eq!(f.controller.progress.completed, 0);
     f.advance(5);
     f.edge(false);
     assert_eq!(f.controller.progress.completed, 0);
+
     f.edge(true);
     assert_eq!(f.controller.progress.completed, 1);
     f.edge(true);
     assert_eq!(f.controller.progress.completed, 1);
+
     f.advance(5);
     f.edge(true);
     assert_eq!(f.controller.state, FeedState::COMPLETE);
     assert_eq!(f.controller.motor, MotorCommand::STOP);
     assert_eq!(f.controller.reason, FeedReason::DONE);
+
     f.edge(true);
     f.advance(100);
     assert_eq!(f.controller.progress.completed, 2);
@@ -125,10 +140,12 @@ fn single_feedback_and_terminal_events() {
 #[test]
 fn double_bowl_pause_and_direction() {
     let mut f = begin(BowlMode::DOUBLE, Direction::D0, 3);
+
     f.advance(5);
     f.edge(true);
     assert_eq!(f.controller.progress.completed, 1);
     assert_eq!(f.controller.motor, MotorCommand::DRIVE_1);
+
     f.advance(5);
     f.edge(true); // Wrong polarity cannot advance double-bowl progress.
     assert_eq!(f.controller.progress.pending_events, 0);
@@ -139,16 +156,19 @@ fn double_bowl_pause_and_direction() {
     assert_eq!(f.controller.progress.completed, 2);
     assert_eq!(f.controller.state, FeedState::DIRECTION_PAUSE);
     assert_eq!(f.controller.motor, MotorCommand::STOP);
+
     f.edge(true);
     f.advance(3);
     assert_eq!(f.controller.motor, MotorCommand::DRIVE_0);
     assert_eq!(f.controller.inhibit_at, f.now); // Resume re-arms inhibition.
+
     f.advance(2);
     f.edge(true); // Too soon after resuming drive.
     assert_eq!(f.controller.progress.pending_events, 0);
     f.advance(3);
     f.edge(true);
     assert_eq!(f.controller.progress.completed, 2);
+
     f.advance(5);
     f.edge(true);
     assert_eq!(f.controller.progress.completed, 3);
@@ -160,15 +180,19 @@ fn double_bowl_pause_and_direction() {
 #[test]
 fn missing_feedback_latches_stop() {
     let mut f = begin(BowlMode::SINGLE, Direction::D0, 2);
+
     f.advance(30);
     f.expect_fault(FeedReason::FEEDBACK_TIMEOUT);
+
     f.edge(true);
     assert_eq!(f.controller.progress.completed, 0);
+
     let mut next = request(2, 1, BowlMode::SINGLE, Direction::D0);
     assert_eq!(
         f.controller.start(&next, f.now, &f.sample),
         FeedStartResult::REJECT_RESET_REQUIRED
     );
+
     assert!(f.controller.reset());
     assert_eq!(f.controller.last_request_id, 1);
     next.id = 1;
@@ -186,11 +210,13 @@ fn total_deadline_wins_over_feedback() {
         ..LIMITS
     };
     let mut f = begin_with(&settings, BowlMode::SINGLE, Direction::D0, 20, 0);
+
     for _ in 0..5 {
         f.advance(5);
         f.edge(true);
     }
     assert_eq!(f.controller.progress.completed, 5);
+
     f.advance(5);
     f.edge(true);
     f.expect_fault(FeedReason::TOTAL_TIMEOUT);
@@ -200,26 +226,31 @@ fn total_deadline_wins_over_feedback() {
 #[test]
 fn reverse_attempts_are_bounded() {
     let mut f = begin(BowlMode::SINGLE, Direction::D0, 3);
+
     f.sample.current_ma = 301;
     f.advance(1);
     assert_eq!(f.controller.state, FeedState::REVERSING);
     assert_eq!(f.controller.motor, MotorCommand::DRIVE_1);
     f.edge(true);
     assert_eq!(f.controller.progress.completed, 0);
+
     f.sample.current_ma = 100;
     f.advance(3);
     assert_eq!(f.controller.motor, MotorCommand::DRIVE_0);
+
     f.advance(4);
     f.edge(true);
     assert_eq!(f.controller.progress.completed, 0);
     f.advance(1);
     f.edge(true);
     assert_eq!(f.controller.progress.completed, 1);
+
     f.sample.current_ma = 301;
     f.advance(1);
     assert_eq!(f.controller.reverse_attempts, 2);
     f.sample.current_ma = 100;
     f.advance(3);
+
     f.sample.current_ma = 301;
     f.advance(1);
     f.expect_fault(FeedReason::OVERCURRENT);
@@ -251,6 +282,7 @@ fn input_faults_in_every_motion_state() {
                 f.sample.current_ma = 100;
                 assert_eq!(f.controller.state, FeedState::REVERSING);
             }
+
             let reason = match fault {
                 0 => {
                     f.sample.power_healthy = false;
@@ -269,6 +301,7 @@ fn input_faults_in_every_motion_state() {
                     FeedReason::SENSOR
                 }
             };
+
             f.advance(1);
             f.expect_fault(reason);
             f.sample = HEALTHY;
@@ -285,9 +318,11 @@ fn clock_wrap_and_bad_timestamps() {
     f.edge(true);
     assert_eq!(f.now, 1);
     assert_eq!(f.controller.state, FeedState::COMPLETE);
+
     let mut f = begin_with(&LIMITS, BowlMode::SINGLE, Direction::D0, 1, 100);
     f.controller.update(99, Some(&f.sample));
     f.expect_fault(FeedReason::CLOCK);
+
     let mut f = begin(BowlMode::SINGLE, Direction::D0, 1);
     f.controller.update(3, Some(&f.sample));
     f.expect_fault(FeedReason::OBSERVATION_GAP);
@@ -296,18 +331,22 @@ fn clock_wrap_and_bad_timestamps() {
 #[test]
 fn cancellation_and_id_replay() {
     let mut f = begin(BowlMode::SINGLE, Direction::D0, 2);
+
     assert!(!f.controller.cancel(0));
     assert!(f.controller.cancel(1));
     assert_eq!(f.controller.state, FeedState::CANCELLED);
     assert_eq!(f.controller.motor, MotorCommand::STOP);
     assert!(f.controller.reset());
+
     let next = request(2, 1, BowlMode::SINGLE, Direction::D0);
     assert_eq!(
         f.controller.start(&next, f.now, &f.sample),
         FeedStartResult::ACCEPTED
     );
+
     assert!(!f.controller.cancel(1));
     assert_eq!(f.controller.state, FeedState::RUNNING);
+
     let mut restored = FeedController::new(&LIMITS, 2).unwrap();
     assert_eq!(restored.motor, MotorCommand::STOP);
     assert_eq!(
@@ -328,6 +367,7 @@ fn invalid_configuration_and_requests() {
         )
         .is_none()
     );
+
     assert!(
         FeedController::new(
             &FeedLimits {
@@ -338,6 +378,7 @@ fn invalid_configuration_and_requests() {
         )
         .is_none()
     );
+
     assert!(
         FeedController::new(
             &FeedLimits {
@@ -348,28 +389,33 @@ fn invalid_configuration_and_requests() {
         )
         .is_none()
     );
+
     let mut controller = FeedController::new(&LIMITS, 0).unwrap();
     let mut r = request(1, 0, BowlMode::SINGLE, Direction::D0);
     assert_eq!(
         controller.start(&r, 0, &HEALTHY),
         FeedStartResult::REJECT_REQUEST
     );
+
     r.portions = 51;
     assert_eq!(
         controller.start(&r, 0, &HEALTHY),
         FeedStartResult::REJECT_REQUEST
     );
+
     r = request(1, 1, BowlMode::DOUBLE, Direction::D0);
     r.phase_known = false;
     assert_eq!(
         controller.start(&r, 0, &HEALTHY),
         FeedStartResult::REJECT_REQUEST
     );
+
     r = request(1, 1, BowlMode::SINGLE, Direction::D1);
     assert_eq!(
         controller.start(&r, 0, &HEALTHY),
         FeedStartResult::REJECT_REQUEST
     );
+
     r.direction = Direction::D0;
     let bad_sample = FeedSample {
         current_valid: false,
@@ -390,14 +436,17 @@ fn pause_completion_cannot_consume_old_edges() {
         ..LIMITS
     };
     let mut f = begin_with(&settings, BowlMode::DOUBLE, Direction::D1, 3, 0);
+
     f.advance(5);
     f.edge(false);
     assert_eq!(f.controller.state, FeedState::DIRECTION_PAUSE);
     assert_eq!(f.controller.motor, MotorCommand::STOP);
+
     f.advance(10);
     assert_eq!(f.controller.state, FeedState::RUNNING);
     assert_eq!(f.controller.motor, MotorCommand::DRIVE_0);
     assert_eq!(f.controller.inhibit_at, 15);
+
     // Captured while stopped, past the old inhibit window, delivered after resume.
     let edge = FeedSample {
         feedback_edge: true,
@@ -408,6 +457,7 @@ fn pause_completion_cannot_consume_old_edges() {
     assert_eq!(f.controller.progress.pending_events, 0);
     assert_eq!(f.controller.last_feedback_at, 5);
     assert_eq!(f.controller.state, FeedState::RUNNING);
+
     // A fresh edge after the re-armed window still counts.
     f.advance(5);
     f.edge(true);
@@ -425,6 +475,7 @@ fn reversals_do_not_extend_feedback_deadline() {
     f.advance(1);
     f.sample.current_ma = 100;
     f.advance(25);
+
     f.expect_fault(FeedReason::FEEDBACK_TIMEOUT);
 }
 
@@ -447,6 +498,7 @@ fn stopped_outputs_do_not_resume_on_bad_current() {
     f.advance(1);
     f.expect_fault(FeedReason::OVERCURRENT);
     assert_eq!(f.controller.reverse_attempts, 0);
+
     let mut f = begin(BowlMode::SINGLE, Direction::D0, 3);
     f.controller.update(1, None);
     f.expect_fault(FeedReason::SENSOR);

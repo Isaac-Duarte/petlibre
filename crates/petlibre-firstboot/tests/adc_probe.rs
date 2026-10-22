@@ -1,3 +1,7 @@
+//! FW14 read-only ADC probe against the fake SDK: the LP ADC enable is
+//! explicit and verified, a failed enable, efuse read or conversion ends the
+//! probe, and the motor pins never leave STOP.
+
 use petlibre_amebad::board::MOTOR_MASK;
 use petlibre_amebad::sdk::{ADC_ENABLE_BIT, GPIO_ENABLE_BIT, fake};
 use petlibre_amebad::stopped;
@@ -13,11 +17,13 @@ fn start() -> Probe {
 #[test]
 fn opens_with_explicit_adc_enable_and_samples_read_only() {
     let mut probe = start();
+
     fake::with(|h| {
         h.current_adc = 300;
         h.battery_adc = 2600;
         h.input[0] |= 1 << 19;
     });
+
     let step = probe.step();
     assert_eq!(step.delay_ms, SAMPLE_MS);
     let Some(Record::Open {
@@ -38,9 +44,11 @@ fn opens_with_explicit_adc_enable_and_samples_read_only() {
     assert_eq!(clock.function_after, GPIO_ENABLE_BIT | ADC_ENABLE_BIT);
     assert_eq!(efuse, Some([0xff; 4]));
     assert!(calibration.default_offset && calibration.default_gain);
+
     for n in 0..3 {
         let step = probe.step();
         assert_eq!(step.delay_ms, SAMPLE_MS);
+
         let Some(Record::Sample {
             n: got,
             dc,
@@ -53,8 +61,10 @@ fn opens_with_explicit_adc_enable_and_samples_read_only() {
         else {
             panic!("{step:?}");
         };
+
         assert_eq!(got, n);
         assert!(dc && stopped);
+
         // Default calibration: (300 * 10 - 2480) * 1000 / 12050.
         assert_eq!(
             current,
@@ -69,6 +79,7 @@ fn opens_with_explicit_adc_enable_and_samples_read_only() {
         assert_eq!(battery.scaled, (26000 - 2480) * 1000 / 12050);
         assert_eq!(supply.mean, 3000);
     }
+
     // Motor pins never left STOP; emitters never enabled.
     fake::with(|h| assert_eq!(h.output[0] & MOTOR_MASK, MOTOR_MASK));
 }
@@ -80,9 +91,11 @@ fn an_already_enabled_adc_is_preserved_and_still_verified() {
         h.lp_function |= ADC_ENABLE_BIT | 0x41;
         h.lp_clock |= ADC_ENABLE_BIT;
     });
+
     let Some(Record::Open { clock, ok, .. }) = probe.step().record else {
         panic!();
     };
+
     assert!(ok && clock.verified());
     assert_eq!(clock.function_before, clock.function_after);
 }
@@ -95,6 +108,7 @@ fn a_blocked_adc_enable_or_efuse_failure_ends_without_sampling() {
             h.blocked_gpio_clock = blocked;
             h.efuse_fail = !blocked;
         });
+
         let step = probe.step();
         let Some(Record::Open {
             outputs,
@@ -106,6 +120,7 @@ fn a_blocked_adc_enable_or_efuse_failure_ends_without_sampling() {
         else {
             panic!("{step:?}");
         };
+
         assert!(outputs && !ok);
         assert_eq!(clock.verified(), !blocked);
         assert_eq!(efuse.is_none(), !blocked);
@@ -126,7 +141,9 @@ fn a_stuck_conversion_trips_and_ends() {
         probe.step().record,
         Some(Record::Sample { n: 0, .. })
     ));
+
     fake::with(|h| h.stuck = true);
+
     let step = probe.step();
     assert_eq!(step.delay_ms, 0);
     assert!(
@@ -140,6 +157,7 @@ fn a_stuck_conversion_trips_and_ends() {
         ),
         "{step:?}"
     );
+
     assert!(probe.board.faulted || !probe.board.opened);
     fake::with(|h| assert_eq!(h.output[0] & MOTOR_MASK, MOTOR_MASK));
 }

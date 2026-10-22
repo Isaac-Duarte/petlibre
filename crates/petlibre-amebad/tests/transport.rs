@@ -1,3 +1,8 @@
+//! FW08 transport link against fake SDK sockets and a scripted broker: it
+//! waits for DNS, connects with an offline will, publishes non-retained
+//! health, answers only the read-only request allowlist, and on any protocol,
+//! socket or Wi-Fi failure closes with a reason and backs off.
+
 use std::sync::{Mutex, MutexGuard};
 
 use petlibre_amebad::health::Boot;
@@ -33,9 +38,11 @@ fn start() -> (MutexGuard<'static, ()>, Link) {
     net_status::reset();
     fake::with(|h| h.interrupts = 1);
     assert!(stopped::initialize().verified());
+
     wifi(2, 0, 1); // scan found
     wifi(4, 2, 0x0a2a_6705); // DHCP assigned
     wifi(7, 0, 0x5db8_d822); // DNS ok
+
     let boot = Boot {
         bank: 1,
         reset_flags: 0,
@@ -115,6 +122,7 @@ fn waits_for_dns_then_connects_subscribes_and_publishes_health() {
     wifi(5, 0, 1000); // a link loss: DNS no longer known good
     assert_eq!(link.step(&mut |_| panic!("no record before DNS")), IDLE_MS);
     assert!(fake::with(|h| h.tcp_tx.is_empty()));
+
     wifi(4, 2, 0x0a2a_6705);
     wifi(7, 0, 0x5db8_d822);
 
@@ -139,12 +147,15 @@ fn waits_for_dns_then_connects_subscribes_and_publishes_health() {
         contains(connect, br#""online":false"#),
         "the will reports offline"
     );
+
     assert_eq!(tx[1].1[0], 0x82, "then SUBSCRIBE");
     assert!(contains(&tx[1].1, b"petlibre/1/dev1/request"));
+
     let sent = published();
     assert_eq!(sent.len(), 1);
     assert_eq!(sent[0].0, "petlibre/1/dev1/health");
     let health = &sent[0].1;
+
     for field in [
         r#""online":true"#,
         r#""seq":1"#,
@@ -158,6 +169,7 @@ fn waits_for_dns_then_connects_subscribes_and_publishes_health() {
     ] {
         assert!(health.contains(field), "{field} in {health}");
     }
+
     assert!(
         tx.iter()
             .all(|(_, p)| p[0] & 0x01 == 0 || p[0] & 0xf0 != 0x30),
@@ -181,15 +193,18 @@ fn publishes_periodically_and_on_wifi_changes_and_pings_when_idle() {
     let (_guard, mut link) = start();
     connect(&mut link);
     let base = fake::with(|h| h.uptime_ms);
+
     // Idle receives advance the fake clock by POLL_MS each.
     let steps = (petlibre_core::transport::PING_AFTER_MS / POLL_MS) as usize;
     run(&mut link, steps);
     assert_eq!(pings(), 1);
     rx(&PINGRESP);
+
     let records = run_answering_pings(
         &mut link,
         (petlibre_core::transport::HEALTH_PERIOD_MS / POLL_MS) as usize,
     );
+
     assert!(link.ready(), "{records:?}");
     assert!(
         records.iter().any(|r| matches!(
@@ -203,6 +218,7 @@ fn publishes_periodically_and_on_wifi_changes_and_pings_when_idle() {
         "{records:?}"
     );
     assert!(fake::with(|h| h.uptime_ms) - base >= petlibre_core::transport::HEALTH_PERIOD_MS);
+
     // A DNS loss ends this generation: the transport closes rather than publishing.
     wifi(5, 1, 20_000);
     let records = run(&mut link, 1);
@@ -218,6 +234,7 @@ fn publishes_periodically_and_on_wifi_changes_and_pings_when_idle() {
 fn answers_only_the_allowlist() {
     let (_guard, mut link) = start();
     connect(&mut link);
+
     for (op, kind, ok) in [
         ("ping", RequestKind::Ping, true),
         ("health", RequestKind::Health, true),
@@ -227,6 +244,7 @@ fn answers_only_the_allowlist() {
             "petlibre/1/dev1/request",
             &format!(r#"{{"id":"{ID}","op":"{op}"}}"#),
         ));
+
         let records = run(&mut link, 1);
         assert_eq!(records[0], Record::Request { kind, ok }, "{op}");
         if op == "health" {
@@ -239,6 +257,7 @@ fn answers_only_the_allowlist() {
             ));
         }
     }
+
     rx(&publish("petlibre/1/dev1/request", r#"{"op":"ping"}"#));
     assert_eq!(
         run(&mut link, 1),
@@ -247,12 +266,14 @@ fn answers_only_the_allowlist() {
             ok: false
         }]
     );
+
     let replies: Vec<String> = published()
         .into_iter()
         .filter(|(t, _)| t.ends_with("/reply"))
         .map(|(_, p)| p)
         .collect();
     assert_eq!(replies.len(), 3, "no reply without an ID");
+
     assert!(replies[0].starts_with(&format!(
         r#"{{"id":"{ID}","op":"ping","ok":true,"uptime_ms":"#
     )));
@@ -270,6 +291,7 @@ fn answers_only_the_allowlist() {
 #[test]
 fn failures_close_with_a_reason_and_back_off() {
     let (_guard, mut link) = start();
+
     // Refused connects wait 1 s, then 2 s.
     let records = run(&mut link, 1);
     assert!(matches!(
@@ -282,6 +304,7 @@ fn failures_close_with_a_reason_and_back_off() {
     ));
     assert_eq!(link.counters().last_error, Some("connect"));
     assert_eq!(run(&mut link, 1), vec![], "inside the backoff");
+
     fake::with(|h| h.uptime_ms += BACKOFF_MIN_MS * 2);
     assert!(matches!(
         run(&mut link, 1)[0],
@@ -313,6 +336,7 @@ fn failures_close_with_a_reason_and_back_off() {
         );
         assert!(!link.ready());
     }
+
     // A foreign topic after Ready, and the broker hanging up.
     fake::with(|h| h.uptime_ms += BACKOFF_MAX_MS);
     connect(&mut link);
@@ -323,10 +347,12 @@ fn failures_close_with_a_reason_and_back_off() {
             reason: "foreign_topic"
         })
     );
+
     fake::with(|h| h.uptime_ms += BACKOFF_MAX_MS);
     connect(&mut link);
     fake::with(|h| h.tcp_rx.push_back(TcpRecvScript::Closed));
     assert_eq!(run(&mut link, 1), vec![Record::Closed { reason: "closed" }]);
+
     // A failed send closes too.
     fake::with(|h| h.uptime_ms += BACKOFF_MAX_MS);
     connect(&mut link);
@@ -336,12 +362,14 @@ fn failures_close_with_a_reason_and_back_off() {
         &format!(r#"{{"id":"{ID}","op":"ping"}}"#),
     ));
     assert_eq!(run(&mut link, 1), vec![Record::Closed { reason: "send" }]);
+
     // A silent broker times out the CONNACK.
     fake::with(|h| {
         h.tcp_send_fails = false;
         h.uptime_ms += BACKOFF_MAX_MS;
         h.tcp_connects.push_back(Some(11));
     });
+
     let records = run(
         &mut link,
         1 + (petlibre_core::transport::REPLY_TIMEOUT_MS / POLL_MS) as usize,
@@ -361,12 +389,14 @@ fn split_and_coalesced_packets_are_reassembled() {
     fake::with(|h| h.tcp_connects.push_back(Some(7)));
     rx(&CONNACK[..1]);
     rx(&CONNACK[1..]);
+
     let mut both = SUBACK.to_vec();
     both.extend(publish(
         "petlibre/1/dev1/request",
         &format!(r#"{{"id":"{ID}","op":"ping"}}"#),
     ));
     rx(&both);
+
     let records = run(&mut link, 4);
     assert!(
         records.contains(&Record::Request {
@@ -391,6 +421,7 @@ fn records_describe_without_credentials() {
     )
     .unwrap();
     assert_eq!(text, "connect n=2 ok=1 ms=40");
+
     let mut text = String::new();
     describe(Record::Closed { reason: "silence" }, &mut text).unwrap();
     assert_eq!(text, "closed reason=silence");

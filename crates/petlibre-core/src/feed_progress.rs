@@ -1,4 +1,9 @@
 //! Portion counting and direction alternation for one request.
+//!
+//! In DOUBLE_BOWL mode a portion is credited on every second qualified
+//! feedback event, or on the next one when `credit_next_event` is set, and
+//! the logical direction toggles with each portion. SINGLE_BOWL credits every
+//! event.
 
 c_enum!(BowlMode { SINGLE = 0, DOUBLE = 1 });
 c_enum!(ProgressResult { WAIT = 0, PORTION = 1, FINISHED = 2 });
@@ -80,6 +85,7 @@ impl FeedProgress {
             self.credit_next_event = false;
             self.direction = self.direction.toggled();
         }
+
         self.completed = self.completed.wrapping_add(1);
         if self.completed == self.requested {
             self.finished = true;

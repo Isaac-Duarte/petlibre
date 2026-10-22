@@ -16,9 +16,11 @@ pub unsafe extern "C" fn petlibre_feed_journal_open(
     if journal.is_null() {
         return JournalError::ARGUMENT;
     }
+
     // Copy first: the arguments may alias the journal's own saved values.
     let io = unsafe { io.as_ref() }.copied().unwrap_or_default();
     let config = unsafe { config.as_ref() }.copied().unwrap_or_default();
+
     // SAFETY: the C contract keeps the I/O callbacks valid for their context.
     unsafe { (*journal).open(io, config) }
 }
@@ -35,8 +37,10 @@ pub unsafe extern "C" fn petlibre_feed_journal_create(
     if journal.is_null() {
         return JournalError::ARGUMENT;
     }
+
     let io = unsafe { io.as_ref() }.copied().unwrap_or_default();
     let config = unsafe { config.as_ref() }.copied().unwrap_or_default();
+
     // SAFETY: as for open.
     unsafe { (*journal).create(io, config, direction, credit_next_event, phase_known) }
 }

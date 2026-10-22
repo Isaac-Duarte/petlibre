@@ -80,19 +80,23 @@ pub struct Fixture {
     pub authority: FlashCoord,
     pub disk: OwnerRecovery,
     pub saved_result: OwnerResult,
+
     pub recover_calls: u32,
     pub reserve_calls: u32,
     pub finish_calls: u32,
     pub finish_refreshes: u32,
+
     pub recover_fail: bool,
     pub reserve_fail: bool,
     pub finish_fail: bool,
     pub cancel_in_reserve: bool,
     pub stop_in_finish: bool,
+
     pub reserve_delay_ticks: u32,
     pub recover_delay_ticks: u32,
     pub finish_delay_ticks: u32,
     pub reserve_mask_irqs: bool,
+
     pub flash: FakeJournalFlash,
     pub journal: FeedJournal,
     pub use_journal: bool,
@@ -106,19 +110,23 @@ impl Fixture {
             authority: FlashCoord::default(),
             disk,
             saved_result: OwnerResult::default(),
+
             recover_calls: 0,
             reserve_calls: 0,
             finish_calls: 0,
             finish_refreshes: 0,
+
             recover_fail: false,
             reserve_fail: false,
             finish_fail: false,
             cancel_in_reserve: false,
             stop_in_finish: false,
+
             reserve_delay_ticks: 0,
             recover_delay_ticks: 0,
             finish_delay_ticks: 0,
             reserve_mask_irqs: false,
+
             flash: FakeJournalFlash::default(),
             journal: FeedJournal::default(),
             use_journal: false,
@@ -209,6 +217,8 @@ impl Fixture {
     }
 }
 
+/// The storage callbacks below run only while outputs are inactive and
+/// interrupts are enabled; each one asserts it before touching the disk.
 pub fn inactive_outputs() {
     assert_eq!(hw(|h| h.interrupts), 0);
     assert_eq!(motor_pins(), MOTOR_MASK);
@@ -223,6 +233,7 @@ pub unsafe extern "C" fn recover(context: *mut c_void, value: *mut OwnerRecovery
         if (*f).recover_delay_ticks != 0 {
             fake::advance((*f).recover_delay_ticks, true);
         }
+
         if (*f).use_journal {
             let Some(view) = (*f).journal.read() else {
                 return false;
@@ -231,6 +242,7 @@ pub unsafe extern "C" fn recover(context: *mut c_void, value: *mut OwnerRecovery
             (*f).disk = view.recovery;
             return true;
         }
+
         *value = (*f).disk;
         !(*f).recover_fail
     }
@@ -243,6 +255,7 @@ pub unsafe extern "C" fn reserve(context: *mut c_void, request: *const FeedReque
         let request = &*request;
         (*f).reserve_calls += 1;
         assert!(!(*f).disk.pending_request && request.id > (*f).disk.high_water_id);
+
         if (*f).reserve_delay_ticks != 0 {
             let masked = (*f).reserve_mask_irqs;
             if masked {
@@ -251,6 +264,7 @@ pub unsafe extern "C" fn reserve(context: *mut c_void, request: *const FeedReque
             fake::advance((*f).reserve_delay_ticks, !masked);
             hw(|h| h.interrupts = 0);
         }
+
         if (*f).cancel_in_reserve {
             assert!((*f).owner.cancel(request.id));
         }
@@ -280,11 +294,13 @@ pub unsafe extern "C" fn finish_record(
         if (*f).finish_delay_ticks != 0 {
             fake::advance((*f).finish_delay_ticks, true);
         }
+
         assert!((*f).disk.pending_request && result.id == (*f).disk.high_water_id);
         assert!(!phase.pending_request && phase.high_water_id == result.id);
         if (*f).stop_in_finish {
             (*f).owner.stop();
         }
+
         if (*f).finish_fail {
             return false;
         }
@@ -302,6 +318,7 @@ pub fn boot() -> Box<Fixture> {
     let mut f = Box::new(Fixture::new(PHASE_KNOWN));
     f.create();
     assert_eq!(f.status().state, OwnerState::STARTING);
+
     fake::run_task();
     let s = f.status();
     assert!(s.state == OwnerState::IDLE && s.stopped && s.optics_off);
@@ -316,6 +333,7 @@ pub fn boot_with_journal(dual: bool) -> Box<Fixture> {
     if dual {
         f.config.bowl_mode = BowlMode::DOUBLE;
     }
+
     let io = f.flash.io();
     let c = JournalConfig {
         binding: 42,
@@ -327,6 +345,7 @@ pub fn boot_with_journal(dual: bool) -> Box<Fixture> {
         unsafe { f.journal.create(io, c, Direction::D0, true, true) },
         JournalError::OK
     );
+
     f.create();
     fake::run_task();
     assert_eq!(f.status().state, OwnerState::IDLE);

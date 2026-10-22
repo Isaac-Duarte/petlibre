@@ -1,4 +1,9 @@
 //! Explicit, non-replayed configuration queries for the pinned C experiment.
+//!
+//! On a confirmed C-probe (1.1.17) installation, one `GET_CONFIG` query at a
+//! time proves the diagnostic ran: the reply must carry `localReProbe`, an
+//! FNV-1a value of the device's own reply ID, within `QUERY_SECONDS`. A query
+//! without proof by then becomes uncertain and is never resent.
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -55,10 +60,12 @@ pub fn expected(message_id: &str) -> Option<String> {
     {
         return None;
     }
+
     let mut value = 2_166_136_261_u32;
     for byte in message_id.bytes() {
         value = (value ^ u32::from(byte)).wrapping_mul(16_777_619);
     }
+
     Some(format!("c1-{value:08x}"))
 }
 
@@ -88,8 +95,10 @@ impl Record {
         {
             return None;
         }
+
         let message_id = message.msg_id.as_deref()?;
         let value = expected(message_id)?;
+
         (message
             .fields
             .get("localReProbe")

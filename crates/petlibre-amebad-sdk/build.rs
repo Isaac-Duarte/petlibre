@@ -1,4 +1,8 @@
 //! Generates AmebaD SDK bindings for target builds with the `sdk` feature.
+//!
+//! Only KM4 target builds run bindgen; host and KM0 builds generate nothing.
+//! The function and type allowlists keep the generated surface to exactly
+//! what the ports call, so a new SDK use has to be added here deliberately.
 
 fn main() {
     println!("cargo:rerun-if-changed=sdk_wrapper.h");
@@ -63,6 +67,7 @@ mod sdk {
         "FLASH_TxData256BXIP",
         "BKUP_Write",
     ];
+
     const TYPES: &[&str] = &[
         "GPIO_InitTypeDef",
         "GPIO_TypeDef",
@@ -85,6 +90,7 @@ mod sdk {
         {
             return;
         }
+
         let sdk = PathBuf::from(
             env::var("PETLIBRE_SDK_DIR").expect("PETLIBRE_SDK_DIR names the staged SDK"),
         );
@@ -100,6 +106,7 @@ mod sdk {
         } else {
             ("lp", "RTL8721D_LP")
         };
+
         let soc = sdk.join("component/soc/realtek/amebad");
         let rtos = sdk.join("component/os/freertos/freertos_v10.2.0/Source");
         let includes = [
@@ -124,6 +131,7 @@ mod sdk {
             sdk.join("component/common/network/ssl/mbedtls-2.4.0/include"),
             sdk.join("component/common/network/ssl/ssl_ram_map/rom"),
         ];
+
         // Layouts only: parse with a soft-float triple so CMSIS FPU asm is not
         // instantiated; no binding takes or returns floating-point values.
         let mut args: Vec<String> = vec![
@@ -145,12 +153,14 @@ mod sdk {
             "-isystem".into(),
             newlib,
         ];
+
         if km4 {
             args.push("-mfpu=none".into());
         } else {
             args.push("-D__ARM_FEATURE_DSP=0".into());
         }
         args.extend(includes.iter().map(|path| format!("-I{}", path.display())));
+
         let mut builder = bindgen::Builder::default()
             .header("sdk_wrapper.h")
             .clang_args(args)
@@ -162,12 +172,14 @@ mod sdk {
             .constified_enum_module("petlibre_sdk_constant")
             .prepend_enum_name(false)
             .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()));
+
         for name in FUNCTIONS {
             builder = builder.allowlist_function(name);
         }
         for name in TYPES {
             builder = builder.allowlist_type(name);
         }
+
         let bindings = builder.generate().expect("generate AmebaD SDK bindings");
         let out = PathBuf::from(env::var("OUT_DIR").unwrap()).join("sdk.rs");
         bindings.write_to_file(out).expect("write SDK bindings");

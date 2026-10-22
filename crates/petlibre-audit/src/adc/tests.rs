@@ -12,6 +12,7 @@ const OUTPUTS: &[u8] =
     b"PLFW1 outputs pa=00006000 pb=00000000 dira=0000e000 dirb=00000008 status=pass\r\n";
 const ADC_CLOCK: &[u8] = b"PLADC1 clock function_before=000115f7 clock_before=00031457 function_after=000115f7 clock_after=00031557 status=pass\r\n";
 const OPEN: &[u8] = b"PLADC1 open outputs=1 efuse=ffffffff offset=2480 gain=12050 default_offset=1 default_gain=1 status=pass\r\n";
+
 const STAGES: [&str; 9] = [
     "startup", "PA0", "PA0", "PA2", "PA2", "PA4", "PA4", "PB22", "PB22",
 ];
@@ -24,9 +25,11 @@ fn boot(identity: &str) -> Vec<u8> {
                 .into_bytes()
         })
         .collect();
+
     let start = format!(
         "PLFW1 start build={identity} bank=1 reset=00000000 mmu=00000003,0c000000,03e7a000\r\n"
     );
+
     [
         POWER,
         CLOCK,
@@ -65,6 +68,7 @@ fn sample(n: i64, s: Sample) -> Vec<u8> {
     let channel = |(low, high, mean): (i64, i64, i64)| {
         format!("{low},{high},{mean},{}", scaled(mean, 2480, 12050))
     };
+
     let supply = s
         .supply
         .map_or(String::new(), |c| format!(" supply={}", channel(c)));
@@ -77,6 +81,7 @@ fn sample(n: i64, s: Sample) -> Vec<u8> {
         channel(s.battery)
     )
     .into_bytes();
+
     match s.scaled {
         None => line,
         Some(value) => replace(
@@ -115,9 +120,11 @@ fn capture(identity: &str, c: Capture, line: &dyn Fn(i64) -> Vec<u8>) -> Receive
         (5.0, led),
         (5.05, [&c.clock[..], &c.opened].concat()),
     ];
+
     for n in 0..c.samples {
         out.push((6.05 + n as f64 * c.period, line(n)));
     }
+
     (out, 6.05 + c.samples as f64 * c.period + 2.0)
 }
 
@@ -144,6 +151,7 @@ impl Adc {
         ] {
             f.set(key, value);
         }
+
         let base = [
             format!(
                 "PLFW1 start build={} PLFW1 outputs pa= PLCLK1 function_before= PLLED1 begin output_only= highs= PLIO1 stage= share_pad= PLPWR1 before_func=",
@@ -153,6 +161,7 @@ impl Adc {
             b"after_pad=%08x ext_a=%08x,%08x,%08x,%08x",
         ]
         .concat();
+
         f.image(&[&base[..], b" ", ADC_MARK].concat());
         Self { f, base }
     }
@@ -180,6 +189,7 @@ fn read_only_capture_passes_with_fixed_fields() {
     let report = a
         .audit(&capture(&id, Capture::default(), &good_line))
         .unwrap();
+
     assert_eq!(outcome(&report), "pass", "{report:?}");
     assert_eq!(report["startup"]["outcome"], "pass");
     assert_eq!(report["adc_enabled_before"], false);
@@ -213,6 +223,7 @@ fn read_only_capture_passes_with_fixed_fields() {
             .contains("not established")
     );
     assert!(!json!(report).to_string().contains("PLADC1"));
+
     // An ADC already enabled by startup is preserved and still passes.
     let on = replace(
         ADC_CLOCK,
@@ -231,6 +242,7 @@ fn read_only_capture_passes_with_fixed_fields() {
         .unwrap();
     assert_eq!(outcome(&report), "pass", "{report:?}");
     assert_eq!(report["adc_enabled_before"], true);
+
     // Real efuse calibration decodes little endian.
     let opened = b"PLADC1 open outputs=1 efuse=a8090f2f offset=2472 gain=12047 default_offset=0 default_gain=0 status=pass\r\n".to_vec();
     let line = |n: i64| {
@@ -262,6 +274,7 @@ fn read_only_capture_passes_with_fixed_fields() {
 fn failures_have_distinct_outcomes() {
     let a = Adc::new();
     let id = a.f.identity.clone();
+
     let with_clock = |old: &[u8], new: &[u8]| Capture {
         clock: replace(ADC_CLOCK, old, new),
         ..Capture::default()
@@ -271,7 +284,9 @@ fn failures_have_distinct_outcomes() {
         ..Capture::default()
     };
     let at7 = |s: Sample| move |n: i64| if n == 7 { sample(n, s) } else { good_line(n) };
+
     let cases: Vec<(Received, &str)> = vec![
+        // Clock readback: failed status, the ADC bit not set, or another bit changed.
         (
             capture(&id, with_clock(b"status=pass", b"status=fail"), &good_line),
             "adc_clock",
@@ -292,6 +307,7 @@ fn failures_have_distinct_outcomes() {
             ),
             "adc_clock",
         ),
+        // Open record: the outputs flag, failed status, or missing or mismatched efuse calibration.
         (
             capture(&id, with_open(b"outputs=1", b"outputs=0"), &good_line),
             "adc_open",
@@ -316,6 +332,7 @@ fn failures_have_distinct_outcomes() {
             ),
             "adc_open",
         ),
+        // Sample count, numbering, stopped state and capture ticks.
         (
             capture(
                 &id,
@@ -363,6 +380,7 @@ fn failures_have_distinct_outcomes() {
             ),
             "adc_samples",
         ),
+        // Raw bounds and the stock scaling.
         (
             capture(
                 &id,
@@ -396,6 +414,7 @@ fn failures_have_distinct_outcomes() {
             ),
             "adc_values",
         ),
+        // Mean host spacing outside 0.8-1.5 s.
         (
             capture(
                 &id,
@@ -418,6 +437,7 @@ fn failures_have_distinct_outcomes() {
             ),
             "adc_timing",
         ),
+        // Error, foreign or unparsed records, and a missing or repeated open record.
         (
             capture(&id, Capture::default(), &|n| {
                 if n == 7 {
@@ -475,11 +495,13 @@ fn failures_have_distinct_outcomes() {
             "adc_sequence",
         ),
     ];
+
     for (index, (received, expected)) in cases.into_iter().enumerate() {
         let report = a.audit(&received).unwrap();
         assert_eq!(outcome(&report), expected, "case {index}");
         assert!(!json!(report).to_string().contains("PLADC1"));
     }
+
     // Records before the LED probe completes, or a second startup.
     let (chunks, end) = capture(&id, Capture::default(), &good_line);
     let early: Vec<(f64, Vec<u8>)> = chunks
@@ -496,6 +518,7 @@ fn failures_have_distinct_outcomes() {
         })
         .collect();
     assert_eq!(outcome(&a.audit(&(early, end)).unwrap()), "adc_sequence");
+
     let mut again = chunks;
     again.push((end - 1.0, boot(&id)));
     assert_eq!(
@@ -510,6 +533,7 @@ fn supply_channel_policy_requires_distinct_channels() {
     let id = a.f.identity.clone();
     a.f.set("startup_adc_policy", json!("fw14-adc-v2"));
     a.f.image(&[&a.base[..], b" ", ADC_MARK, b" supply="].concat());
+
     let battery = (230, 250, 240);
     let run = |a: &Adc, supply: (i64, i64, i64), battery: (i64, i64, i64)| {
         let line = move |i: i64| {
@@ -525,6 +549,7 @@ fn supply_channel_policy_requires_distinct_channels() {
         };
         a.audit(&capture(&id, Capture::default(), &line))
     };
+
     let report = run(&a, (3480, 3500, 3490), battery).unwrap();
     assert_eq!(outcome(&report), "pass", "{report:?}");
     assert_eq!(
@@ -534,6 +559,7 @@ fn supply_channel_policy_requires_distinct_channels() {
         ),
         (&json!(3490), &json!(scaled(3490, 2480, 12050)))
     );
+
     assert_eq!(
         outcome(&run(&a, (1130, 1150, 1139), battery).unwrap()),
         "adc_channels"
@@ -546,6 +572,7 @@ fn supply_channel_policy_requires_distinct_channels() {
         outcome(&run(&a, (3480, 3500, 4000), battery).unwrap()),
         "adc_values"
     );
+
     // A sample without the supply channel, under v2, or with it, under v1.
     assert_eq!(
         outcome(
@@ -554,11 +581,13 @@ fn supply_channel_policy_requires_distinct_channels() {
         ),
         "adc_sequence"
     );
+
     a.f.set("startup_adc_policy", json!("fw14-adc-v1"));
     let error = run(&a, (3480, 3500, 3490), battery)
         .unwrap_err()
         .to_string();
     assert!(error.contains("ADC supply policy/artifact mismatch"));
+
     a.f.image(&[&a.base[..], b" ", ADC_MARK].concat());
     assert_eq!(
         outcome(&run(&a, (3480, 3500, 3490), battery).unwrap()),
@@ -570,6 +599,7 @@ fn supply_channel_policy_requires_distinct_channels() {
 fn policy_binding_both_ways() {
     let mut a = Adc::new();
     let good = capture(&a.f.identity.clone(), Capture::default(), &good_line);
+
     a.f.set("startup_adc_policy", Value::Null);
     assert!(
         a.audit(&good)
@@ -577,6 +607,7 @@ fn policy_binding_both_ways() {
             .to_string()
             .contains("ADC policy required")
     );
+
     a.f.set("startup_adc_policy", json!("fw14-adc-v1"));
     let base = a.base.clone();
     a.f.image(&base);
@@ -586,6 +617,7 @@ fn policy_binding_both_ways() {
             .to_string()
             .contains("ADC policy/artifact mismatch")
     );
+
     a.f.set("startup_adc_policy", json!("fw14-adc-v3"));
     assert!(
         a.audit(&good)
@@ -593,6 +625,7 @@ fn policy_binding_both_ways() {
             .to_string()
             .contains("ADC policy required")
     );
+
     a.f.set("startup_adc_policy", json!("fw14-adc-v1"));
     a.f.set("startup_led_policy", Value::Null);
     a.f.image(

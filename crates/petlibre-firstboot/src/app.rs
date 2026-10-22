@@ -6,7 +6,10 @@
 //! reads the food, outlet and feedback inputs, motor STOP throughout.
 //!
 //! Booted from bank 0 (the recovery role), the FW10 updater runs in place of
-//! the transport and optics tasks, with a watchdog feeder beside it.
+//! the transport and optics tasks, with a watchdog feeder beside it. In the
+//! normal role, the FW11 confirmation task and the feeder confirm a healthy
+//! build, and only then does the FW10 offer check start. A hung task stops
+//! the feeding, so a hang becomes a watchdog reset that KM0 counts.
 
 use core::cell::UnsafeCell;
 use core::ffi::c_void;
@@ -144,12 +147,14 @@ unsafe extern "C" fn net_task(_: *mut c_void) -> u32 {
         };
         *slot = Some(Link::new(config, Boot::read(startup::snapshot())));
     }
+
     NET_RUNNING.store(true, Ordering::Release);
     let delay = slot
         .as_mut()
         .map_or(0, |link| link.step(&mut log_transport));
     NET_READY.store(slot.as_ref().is_some_and(Link::ready), Ordering::Release);
     NET_BEAT.store(sdk::uptime_ms(), Ordering::Release);
+
     if delay == 0 {
         NET_RUNNING.store(false, Ordering::Release);
     }
@@ -172,6 +177,7 @@ static PROVIDER: Slot<Provider> = Slot(UnsafeCell::new(None));
 /// Opened by the updater task, then touched only by the feeder task.
 static WATCHDOG: Slot<Watchdog> = Slot(UnsafeCell::new(None));
 static WATCHDOG_OPEN: AtomicBool = AtomicBool::new(false);
+
 /// The flash writer's (updater or FW11 confirmation) last step, in uptime
 /// milliseconds.
 static HEARTBEAT: AtomicU32 = AtomicU32::new(0);
@@ -179,6 +185,7 @@ static HEARTBEAT: AtomicU32 = AtomicU32::new(0);
 static UPDATER_DONE: AtomicBool = AtomicBool::new(false);
 /// Bank 1 is activated: stop feeding so the watchdog resets the platform.
 static RESTART: AtomicBool = AtomicBool::new(false);
+
 /// The transport task's last step and state, for the feeder and FW11.
 static NET_BEAT: AtomicU32 = AtomicU32::new(0);
 static NET_RUNNING: AtomicBool = AtomicBool::new(false);
@@ -189,6 +196,7 @@ static WATCH_RUNNING: AtomicBool = AtomicBool::new(false);
 /// The startup optics (or pulse) probe has ended and released the KM0
 /// handshake, so another writer may bind it.
 static PROBE_DONE: AtomicBool = AtomicBool::new(false);
+
 /// A task step longer than this (a hang) stops the feeding.
 const LIVENESS_MS: u32 = 10_000;
 const FEED_MS: u32 = 250;
@@ -223,6 +231,7 @@ impl Hooks for SdkHooks {
         if WATCHDOG_OPEN.load(Ordering::Acquire) {
             return true; // The normal role opened it at startup.
         }
+
         // SAFETY: the feeder touches the slot only once WATCHDOG_OPEN is set.
         let watchdog = unsafe { &mut *WATCHDOG.0.get() }.get_or_insert_with(Watchdog::default);
         let opened = watchdog.open(&config::WATCHDOG);
@@ -269,20 +278,24 @@ unsafe extern "C" fn updater_task(_: *mut c_void) -> u32 {
         };
         *slot = Some(Updater::new(config, updater::public_key()));
     }
+
     let Some(updater) = slot.as_mut() else {
         return 0;
     };
+
     let provider =
         unsafe { &mut *PROVIDER.0.get() }.get_or_insert_with(Provider::default) as *mut Provider;
     let mut flash = Hooked::<SdkHooks>::new();
     // SAFETY: the provider slot is fixed for the program's lifetime.
     let step = unsafe { updater.step::<Hardware, SdkHooks>(provider, &mut flash) };
+
     if let Some(record) = step.record {
         let mut report = startup::Report::new();
         if let Ok(line) = report.record(format_args!("PLOTA1 {}\r\n", UpdateLine(record))) {
             sdk::log(line);
         }
     }
+
     HEARTBEAT.store(sdk::uptime_ms(), Ordering::Release);
     if step.delay_ms == 0 {
         if step.restart {
@@ -306,11 +319,13 @@ unsafe extern "C" fn feeder_task(_: *mut c_void) -> u32 {
     if !WATCHDOG_OPEN.load(Ordering::Acquire) || RESTART.load(Ordering::Acquire) {
         return FEED_MS;
     }
+
     let now = sdk::uptime_ms();
     let fresh = |beat: &AtomicU32| now.wrapping_sub(beat.load(Ordering::Acquire)) < LIVENESS_MS;
     let alive = (!NET_RUNNING.load(Ordering::Acquire) || fresh(&NET_BEAT))
         && (!WATCH_RUNNING.load(Ordering::Acquire) || fresh(&WATCH_BEAT))
         && (UPDATER_DONE.load(Ordering::Acquire) || fresh(&HEARTBEAT));
+
     // Stopped, or motor STOP with exactly the supervised emitters lit (the
     // optics probe): the feeder must not trip on a sensing window (observed).
     let outputs = stopped::observe();
@@ -352,15 +367,18 @@ unsafe extern "C" fn confirm_task(_: *mut c_void) -> u32 {
     let healthy = NET_READY.load(Ordering::Acquire)
         && PROBE_DONE.load(Ordering::Acquire)
         && stopped::observe().verified();
+
     let mut storage = HookedStorage::<SdkHooks>::new();
     // SAFETY: the provider slot is fixed for the program's lifetime.
     let step = unsafe { confirm.step::<Hardware, SdkHooks>(provider, &mut storage, healthy, now) };
+
     if let Some(record) = step.record {
         let mut report = startup::Report::new();
         if let Ok(line) = report.record(format_args!("PLCNF1 {}\r\n", ConfirmLine(record))) {
             sdk::log(line);
         }
     }
+
     HEARTBEAT.store(sdk::uptime_ms(), Ordering::Release);
     if step.delay_ms == 0 {
         UPDATER_DONE.store(true, Ordering::Release);
@@ -404,20 +422,24 @@ unsafe extern "C" fn watch_task(_: *mut c_void) -> u32 {
         };
         *slot = Some(Watch::new(config, updater::public_key()));
     }
+
     let Some(watch) = slot.as_mut() else {
         return 0;
     };
+
     let provider =
         unsafe { &mut *PROVIDER.0.get() }.get_or_insert_with(Provider::default) as *mut Provider;
     let mut bank = SdkGiveWay::<SdkHooks>::new();
     // SAFETY: the provider slot is fixed for the program's lifetime.
     let step = unsafe { watch.step::<Hardware, SdkHooks>(provider, &mut bank, now) };
+
     if let Some(record) = step.record {
         let mut report = startup::Report::new();
         if let Ok(line) = report.record(format_args!("PLWCH1 {}\r\n", WatchLine(record))) {
             sdk::log(line);
         }
     }
+
     WATCH_BEAT.store(sdk::uptime_ms(), Ordering::Release);
     if step.delay_ms == 0 {
         if step.restart {
@@ -443,6 +465,7 @@ fn start_watch() {
     if !created {
         WATCH_RUNNING.store(false, Ordering::Release);
     }
+
     sdk::log(if created {
         c"PLWCH1 start created=1\r\n"
     } else {
@@ -538,6 +561,7 @@ fn log_probe(record: Record) {
             report.record(format_args!("PLWIF3 error overrun seq={seq}\r\n"))
         }
     };
+
     if let Ok(line) = line {
         sdk::log(line);
     }
@@ -596,7 +620,11 @@ unsafe extern "C" fn diagnostic_task(_: *mut c_void) -> u32 {
     if PROBING.load(Ordering::Relaxed) {
         return probe_step();
     }
+
     let phase = PHASE.fetch_add(1, Ordering::Relaxed);
+
+    // Phase 0 runs the diagnostic. After it, each indicator step takes two
+    // phases: the request, then the check once the pad has settled.
     if phase != 0 {
         let Some(step) = leds::probe_step((phase - 1) / 2) else {
             if leds::all_low() && stopped::observe().verified() {
@@ -619,6 +647,7 @@ unsafe extern "C" fn diagnostic_task(_: *mut c_void) -> u32 {
             }
             return 0;
         };
+
         if (phase - 1).is_multiple_of(2) {
             if !leds::request(step.led, step.high) {
                 abort_led(step.led, step.high, "request", leds::observe(step.led));
@@ -627,9 +656,11 @@ unsafe extern "C" fn diagnostic_task(_: *mut c_void) -> u32 {
             // Yield with IRQs restored; do not inspect pad input immediately after DR.
             return leds::SETTLE_MS;
         }
+
         if step.high {
             log_gpio_routing(step.led.name());
         }
+
         let observed = leds::observe(step.led);
         let status = match observed.decision(step.high) {
             leds::Decision::Verified => "pass",
@@ -644,6 +675,7 @@ unsafe extern "C" fn diagnostic_task(_: *mut c_void) -> u32 {
                 return 0;
             }
         };
+
         let mut report = startup::Report::new();
         if let Ok(line) = report.record(format_args!(
             "PLLED1 pin={} level={} status={}\r\n",
@@ -655,11 +687,13 @@ unsafe extern "C" fn diagnostic_task(_: *mut c_void) -> u32 {
         }
         return step.delay_ms - leds::SETTLE_MS;
     }
+
     sdk::log(c"\r\nPetlibre local firmware: Rust bringup\r\n");
     let mut report = startup::Report::new();
     if let Ok(line) = report.start(startup::snapshot()) {
         sdk::log(line);
     }
+
     let passed = petlibre_core::diagnostic::run();
     sdk::log(if passed {
         c"Synthetic core diagnostic: PASS\r\n"
@@ -672,6 +706,7 @@ unsafe extern "C" fn diagnostic_task(_: *mut c_void) -> u32 {
     } else {
         c"PLFW1 result diagnostic=fail backend=unopened\r\n"
     });
+
     if !passed || !leds::initialize() {
         for led in leds::Led::ALL {
             log_led_readback(led, false, "initialize", leds::observe(led));
@@ -679,6 +714,7 @@ unsafe extern "C" fn diagnostic_task(_: *mut c_void) -> u32 {
         sdk::log(c"PLLED1 error initialize=unverified\r\n");
         return 0;
     }
+
     sdk::log(c"PLLED1 begin output_only=PA0,PA2,PA4\r\n");
     3000
 }
@@ -696,6 +732,7 @@ pub extern "C" fn petlibre_app_start() {
     )) {
         sdk::log(line);
     }
+
     log_gpio_routing("startup");
     if let Ok(line) = report.record(format_args!(
         "PLFW1 outputs pa={:08x} pb={:08x} dira={:08x} dirb={:08x} status={}\r\n",
@@ -707,10 +744,12 @@ pub extern "C" fn petlibre_app_start() {
     )) {
         sdk::log(line);
     }
+
     if !snapshot.verified() {
         sdk::log(c"PLFW1 error outputs=unverified\r\n");
         return;
     }
+
     if !sdk::task_create(c"petlibre", 1024, 1, diagnostic_task, ptr::null_mut()) {
         sdk::log(c"Petlibre: diagnostic task creation failed\r\n");
         sdk::log(c"PLFW1 error task=create\r\n");

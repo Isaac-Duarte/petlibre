@@ -39,6 +39,7 @@ impl<const KM0: bool> Mmio for Core<KM0> {
     }
 }
 
+/// USR words per core: index 0 KM0 (0x4800_6000), 1 KM4 (0x4000_6000).
 fn locate(address: u32) -> (usize, usize) {
     let core = if address & 0xffff_f000 == 0x4800_6000 {
         0
@@ -85,6 +86,7 @@ fn run(confirm: &mut Confirm, healthy: impl Fn(u32) -> bool, steps: usize) -> Ve
     let mut answered = 0;
     let mut now = 0;
     let mut out = Vec::new();
+
     for _ in 0..steps {
         park::answer::<Core<true>>(0x0000_0001_4b30_abcd, &mut answered);
         // SAFETY: `provider` outlives the run.
@@ -98,6 +100,7 @@ fn run(confirm: &mut Confirm, healthy: impl Fn(u32) -> bool, steps: usize) -> Ve
         fake::advance(step.delay_ms * 32, false);
         now += step.delay_ms;
     }
+
     out
 }
 
@@ -106,6 +109,7 @@ fn confirms_after_continuous_health_with_the_attempt_marker_cleared() {
     start();
     let mut confirm = Confirm::default();
     let records = run(&mut confirm, |_| true, 200);
+
     let Some(Record::Confirmed { healthy_ms }) = records.last() else {
         panic!("{records:?}");
     };
@@ -125,6 +129,7 @@ fn health_must_hold_for_the_whole_window() {
     let mut confirm = Confirm::default();
     // Health drops every 20 s: never 30 s in a row.
     let records = run(&mut confirm, |ms| ms % 20_000 >= 1_000, 400);
+
     assert!(records.is_empty(), "{records:?}");
     assert!(!FakeHooks::armed());
     assert_eq!(fake::with(|h| h.storage_erases[CONFIRM_SECTOR as usize]), 0);
@@ -137,6 +142,7 @@ fn an_existing_record_for_this_build_writes_nothing() {
     let existing = confirm_record(&identity(), 0);
     fake::with(|h| h.storage[at..at + CONFIRM_LEN].copy_from_slice(&existing));
     let mut confirm = Confirm::default();
+
     assert_eq!(run(&mut confirm, |_| true, 10), [Record::Already]);
     assert!(!FakeHooks::armed());
     assert_eq!(fake::with(|h| h.storage_erases[CONFIRM_SECTOR as usize]), 0);
@@ -150,6 +156,7 @@ fn another_builds_record_is_replaced() {
     fake::with(|h| h.storage[at..at + CONFIRM_LEN].copy_from_slice(&other));
     let mut confirm = Confirm::default();
     let records = run(&mut confirm, |_| true, 200);
+
     assert!(matches!(records.last(), Some(Record::Confirmed { .. })));
     assert_eq!(confirmed(&record(), &identity()), Some(0));
 }
@@ -160,6 +167,7 @@ fn a_set_attempt_marker_skips() {
     fake::with(|h| h.backup[MARKER_REGISTER as usize] = ATTEMPT_BIT);
     let mut confirm = Confirm::default();
     let records = run(&mut confirm, |_| true, 200);
+
     assert_eq!(
         records.last(),
         Some(&Record::Arming(arming::Event::Skip {

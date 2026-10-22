@@ -1,4 +1,10 @@
 //! Motor output with deadtime, a renewable command lease and latched faults.
+//!
+//! Drives the PA13/PA14 motor pair. STOP is HIGH/HIGH (driver brake, as
+//! stock does); a change of direction always passes through STOP for at
+//! least `deadtime_ms`, and a drive command expires unless renewed within
+//! `lease_ms`, which an independent timer tick enforces while the owner
+//! stalls. Any fault latches STOP.
 
 use core::ffi::c_void;
 use core::ptr;
@@ -18,13 +24,16 @@ c_enum!(MotorGateFault { OK = 0, IO = 1, CLOCK = 2, EXPIRED = 3, COMMAND = 4 });
 pub struct MotorGate {
     pub write_pair: Option<MotorWritePair>,
     pub context: *mut c_void,
+
     pub deadtime_ms: u32,
     pub lease_ms: u32,
+
     pub stopped_at: u32,
     pub renewed_at: u32,
     pub observed_at: u32,
     /// Timestamp of the last successfully verified output transition.
     pub applied_at: u32,
+
     pub desired: MotorCommand,
     pub applied: MotorCommand,
     pub fault: MotorGateFault,
@@ -75,6 +84,7 @@ impl MotorGate {
         {
             return false;
         }
+
         *self = Self {
             write_pair,
             context,
@@ -84,6 +94,7 @@ impl MotorGate {
             renewed_at: now_ms,
             ..Self::default()
         };
+
         if !self.stop_output(now_ms) {
             self.fault = MotorGateFault::IO;
             return false;
@@ -124,8 +135,10 @@ impl MotorGate {
         if self.fault != MotorGateFault::OK {
             return false;
         }
+
         let gap = now.wrapping_sub(self.observed_at);
         self.observed_at = now;
+
         if self.desired != MotorCommand::STOP {
             if gap >= HALF_RANGE {
                 return self.fail(MotorGateFault::CLOCK, now);
@@ -156,6 +169,7 @@ impl MotorGate {
             }
             return false;
         }
+
         if !self.observe(now_ms) {
             return false;
         }
@@ -165,6 +179,7 @@ impl MotorGate {
         if !self.applied_known {
             return self.fail(MotorGateFault::IO, now_ms);
         }
+
         if self.applied == MotorCommand::STOP
             && now_ms.wrapping_sub(self.stopped_at) >= self.deadtime_ms
         {
@@ -191,8 +206,10 @@ impl MotorGate {
             }
             return false;
         }
+
         self.desired = command;
         self.renewed_at = now_ms;
+        // Stopping or reversing goes through STOP first, unless STOP is already verified.
         if (command == MotorCommand::STOP
             || (self.applied != MotorCommand::STOP && self.applied != command))
             && (!self.applied_known || self.applied != MotorCommand::STOP)
@@ -200,6 +217,7 @@ impl MotorGate {
         {
             return self.fail(MotorGateFault::IO, now_ms);
         }
+
         self.tick(now_ms)
     }
 }

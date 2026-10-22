@@ -14,15 +14,20 @@ use serde_json::{Value, json};
 use crate::canonical::sha256;
 use crate::error::{Error, Result, require};
 
+/// The reviewed vendor flash helper, which runs from RAM; no other bytes are
+/// ever uploaded.
 pub const HELPER_SHA256: &str = "9307121385cb390dfd2da64da2c6c515f17b5a9556b3d04021487c9b9f220b55";
 pub const HELPER_BYTES: usize = 4688;
 pub const HELPER_ADDRESS: u32 = 0x82000;
+
 pub const CAPACITY: usize = 8 * 1024 * 1024;
 pub const SECTOR: usize = 4096;
+
 pub const ACK: u8 = 6;
 pub const NAK: u8 = 21;
 pub const EOT: u8 = 4;
 pub const STX: u8 = 2;
+
 /// The SDK ROM words sampled before any helper upload.
 pub const ROM_POINTS: [u32; 17] = [
     0x1298, 0x0474, 0x1434, 0x14C0, 0x1504, 0x2E9C, 0x3594, 0x40B0, 0x43D4, 0x61A0, 0x61D4, 0x6220,
@@ -118,6 +123,7 @@ pub fn upload_frame(helper: &[u8], index: usize) -> Result<Vec<u8>> {
         index < helper.len().div_ceil(1024),
         "Invalid helper packet index",
     )?;
+
     let mut payload = [0xffu8; 1024];
     let chunk = &helper[index * 1024..helper.len().min((index + 1) * 1024)];
     payload[..chunk.len()].copy_from_slice(chunk);
@@ -218,10 +224,12 @@ pub fn upload_helper(port: &mut dyn Port, helper: &[u8]) -> Result<()> {
     wait_naks(port, 3, 5.0)?;
     drain_naks(port, "Unexpected pending loader output")?;
     baudcheck(port)?;
+
     for index in 0..helper.len().div_ceil(1024) {
         send(port, &upload_frame(helper, index)?)?;
         expect(port, ACK)?;
     }
+
     send(port, &[EOT])?;
     expect(port, ACK)?;
     wait_naks(port, 3, 5.0)
@@ -261,11 +269,13 @@ pub fn receive_flash(
     wait_naks(port, 3, 5.0)?;
     drain_naks(port, "Unexpected pending helper output")?;
     send(port, &request)?;
+
     let mut total = 0;
     let mut sequence: usize = 1;
     let mut previous: Option<Vec<u8>> = None;
     let mut duplicates = 0;
     let deadline = Instant::now() + seconds(30.0 + length as f64 / 4000.0);
+
     loop {
         require(Instant::now() < deadline, "Overall read deadline expired")?;
         interrupted()?;
@@ -280,10 +290,12 @@ pub fn receive_flash(
                 duplicate_packets: duplicates,
             });
         }
+
         require(
             control == STX,
             format!("Unexpected read control {control:#04x}; no fallback"),
         )?;
+
         let frame = exact_read(port, 1027, 3.0)?;
         let (number, complement) = (frame[0], frame[1]);
         let payload = &frame[2..1026];
@@ -295,6 +307,7 @@ pub fn receive_flash(
             checksum(payload) == frame[1026],
             "Read packet checksum mismatch",
         )?;
+
         if previous.is_some() && number == ((sequence - 1) & 0xff) as u8 {
             require(
                 previous.as_deref() == Some(payload) && duplicates < 8,
@@ -304,6 +317,7 @@ pub fn receive_flash(
             send(port, &[ACK])?;
             continue;
         }
+
         require(
             number == (sequence & 0xff) as u8,
             "Out-of-order read packet",
@@ -312,11 +326,13 @@ pub fn receive_flash(
             total + payload.len() <= length,
             "Read exceeded requested length",
         )?;
+
         output.write_all(payload)?;
         total += payload.len();
         previous = Some(payload.to_vec());
         sequence += 1;
         send(port, &[ACK])?;
+
         if let Some(progress) = progress.as_mut()
             && (total % (256 * 1024) == 0 || total == length)
         {
@@ -377,12 +393,14 @@ pub fn observe(port: &mut dyn Port, seconds: f64) -> Result<Value> {
         (1.0..=180.0).contains(&seconds),
         "Observation must be 1-180 seconds",
     )?;
+
     let data = collect(port, seconds)?;
     let longest = data
         .split(|byte| *byte != NAK)
         .map(<[u8]>::len)
         .max()
         .unwrap_or(0);
+
     Ok(json!({
         "bytes": data.len(), "transmitted_bytes": 0,
         "nak_bytes": data.iter().filter(|byte| **byte == NAK).count(),
@@ -410,6 +428,7 @@ pub fn console_query(port: &mut dyn Port, command: &[u8], seconds: f64) -> Resul
         rom_command(command),
         "Console command is outside the fixed ROM-inspection profile",
     )?;
+
     send(port, command)?;
     let reply = collect(port, seconds)?;
     require(
@@ -419,6 +438,7 @@ pub fn console_query(port: &mut dyn Port, command: &[u8], seconds: f64) -> Resul
             .any(|marker| contains(&reply, marker)),
         "Fault or startup observed during console query; stop and inspect capture",
     )?;
+
     Ok(reply)
 }
 
@@ -446,11 +466,13 @@ fn dumped_words(reply: &[u8], address: u32) -> Vec<u32> {
     let label = label.as_bytes();
     let mut values = Vec::new();
     let mut at = 0;
+
     while at + label.len() <= reply.len() {
         if &reply[at..at + label.len()] != label {
             at += 1;
             continue;
         }
+
         let mut cursor = at + label.len();
         // Python's bytes `\s`, which also includes vertical tab.
         while cursor < reply.len()
@@ -487,6 +509,7 @@ pub fn inspect_rom(
         !contains(&initial, b"Hard Fault"),
         "Unexpected pre-existing fault output",
     )?;
+
     if start_km4 {
         let high = console_query(port, b"?\r\n", 1.0)?;
         require(
@@ -495,13 +518,16 @@ pub fn inspect_rom(
         )?;
         console_query(port, b">>\r\n", 0.5)?;
     }
+
     let low = console_query(port, b"?\r\n", 1.0)?;
     require(
         is_km0_help(&low),
         "Expected stock KM0 help table not observed; no ROM read attempted",
     )?;
+
     let mut samples = Vec::new();
     let mut surviving: Vec<&(String, Vec<u8>)> = candidates.iter().collect();
+
     for address in rom_sample_addresses() {
         let command = format!("DW {address:08X}\r\n");
         let response = console_query(port, command.as_bytes(), 0.25)?;
@@ -510,6 +536,7 @@ pub fn inspect_rom(
             values.len() == 1,
             "Expected exactly one matching ROM word; no retry",
         )?;
+
         let value = values[0];
         let at = address as usize;
         surviving.retain(|(_, rom)| rom.get(at..at + 4) == Some(&value.to_le_bytes()[..]));
@@ -517,17 +544,21 @@ pub fn inspect_rom(
             !surviving.is_empty(),
             format!("ROM differs from candidate at {address:#x}; helper upload blocked"),
         )?;
+
         samples.push(
             json!({"address": format!("0x{address:08x}"), "value": format!("0x{value:08x}")}),
         );
     }
+
     console_query(port, b">>\r\n", 0.5)?;
     let high = console_query(port, b"?\r\n", 1.0)?;
     require(is_km4_help(&high), "KM4 console return not verified")?;
+
     let matching: serde_json::Map<String, Value> = surviving
         .iter()
         .map(|(name, rom)| (name.clone(), Value::String(sha256(rom))))
         .collect();
+
     Ok(json!({
         "sampled_words": samples, "matching_candidates": matching, "returned_to_km4": true,
         "limit": "Sampled ROM identity only; not whole-ROM or all-side-effect verification",

@@ -19,13 +19,16 @@ fn keygen_sign_and_firmware_verify_round_trip() {
         firmware_ota::keygen(&path).is_err(),
         "keygen must not replace a key"
     );
+
     let key = firmware_ota::load_key(&path).unwrap();
     let image = container(2 * SECTOR + 17);
     let manifest = firmware_ota::sign(&key, &image, 9, [0x5a; 32]).unwrap();
+
     let mut public_bytes = [0u8; 32];
     for (i, b) in public_bytes.iter_mut().enumerate() {
         *b = u8::from_str_radix(&public[2 * i..2 * i + 2], 16).unwrap();
     }
+
     let parsed = ota::parse_manifest(&manifest, &public_bytes, 8).unwrap();
     assert_eq!(
         (parsed.version, parsed.image_len, parsed.build_id),
@@ -35,6 +38,7 @@ fn keygen_sign_and_firmware_verify_round_trip() {
         ota::parse_manifest(&manifest, &public_bytes, 9),
         Err(ManifestError::Downgrade)
     );
+
     // The firmware's writer accepts the signed payload end to end.
     let payload = firmware_ota::payload(&image).unwrap();
     let mut writer = ota::Writer::new(parsed, 1024).unwrap();
@@ -48,6 +52,7 @@ fn keygen_sign_and_firmware_verify_round_trip() {
         }
     }
     assert_eq!(writer.commit(), Ok((ota::BANK1_OFFSET, ota::MARKER)));
+
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -64,6 +69,7 @@ fn signing_refuses_images_the_firmware_would_refuse() {
     let path = dir.path().join("k.json");
     firmware_ota::keygen(&path).unwrap();
     let key = firmware_ota::load_key(&path).unwrap();
+
     let mut no_marker = container(SECTOR);
     no_marker[firmware_ota::CONTAINER_HEADER] = b'0';
     assert!(firmware_ota::sign(&key, &no_marker, 1, [0; 32]).is_err());
@@ -71,6 +77,7 @@ fn signing_refuses_images_the_firmware_would_refuse() {
     assert!(
         firmware_ota::sign(&key, &container(ota::BANK1_BYTES as usize + 1), 1, [0; 32]).is_err()
     );
+
     // A key file whose public half does not match its seed is refused.
     let mut file: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
@@ -87,22 +94,26 @@ fn an_offer_answers_manifest_and_chunks_within_its_image() {
     let path = dir.path().join("k.json");
     firmware_ota::keygen(&path).unwrap();
     let key = firmware_ota::load_key(&path).unwrap();
+
     let image = container(SECTOR + 700);
     let manifest = firmware_ota::sign(&key, &image, 3, [1; 32]).unwrap();
     let offer = Offer::new(&manifest, &image).unwrap();
     assert_eq!(offer.version, 3);
+
     let answer = Offer::answer(Some(&offer), &ota::encode_get(ota::Part::Manifest, 0, 0)).unwrap();
     let data = ota::decode_data(&answer).unwrap();
     assert_eq!(
         (data.status, data.bytes),
         (ota::Status::Ok, manifest.as_slice())
     );
+
     let answer = Offer::answer(Some(&offer), &ota::encode_get(ota::Part::Chunk, 512, 512)).unwrap();
     let data = ota::decode_data(&answer).unwrap();
     assert_eq!(
         data.bytes,
         &firmware_ota::payload(&image).unwrap()[512..1024]
     );
+
     for (offset, len) in [(SECTOR as u32 + 600, 512), (0, 513), (0, 0)] {
         let answer = Offer::answer(
             Some(&offer),
@@ -114,12 +125,14 @@ fn an_offer_answers_manifest_and_chunks_within_its_image() {
             ota::Status::Range
         );
     }
+
     let none = Offer::answer(None, &ota::encode_get(ota::Part::Manifest, 0, 0)).unwrap();
     assert_eq!(
         ota::decode_data(&none).unwrap().status,
         ota::Status::NoOffer
     );
     assert!(Offer::answer(Some(&offer), &[1, 2]).is_none());
+
     // A manifest for another image is refused when loading the offer.
     let other = container(SECTOR + 701);
     assert!(Offer::new(&manifest, &other).is_err());

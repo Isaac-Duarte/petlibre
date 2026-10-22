@@ -1,4 +1,10 @@
 //! Serve one pinned experiment/original pair; never publishes a device command.
+//!
+//! `ota-images` runs this HTTP server on the fixed trial port for a single
+//! peer and a 15-minute accept window. Both images are hash-pinned and held in
+//! memory once loaded, so changing the files afterwards cannot change what is
+//! served. A private lease beside the config records the random URL token;
+//! trial dispatch requires that lease and a live listener.
 use std::{
     convert::Infallible, fmt::Write, future::Future, io::Read, net::Ipv4Addr, path::Path,
     sync::Arc, time::Duration,
@@ -24,7 +30,9 @@ pub const ORIGINAL_SHA256: &str =
     "05147476fc70c91cc77ad7da6d6772376b2081d460ac7b1912e2d73868a09498";
 pub const TEST_SHA256: &str = "3cd8d0454f3eee84b6fc81fdf30999b1527e7ed2aad9e8ec3fadbd906da86503";
 pub const C_PROBE_SHA256: &str = "9af0ce801c538f7ff4b6edbe84f4d250791c5dedefbf01f0b18958b7123df6e7";
+
 const IMAGE_BYTES: usize = 1_376_288;
+
 /// Trial URLs are built with this port; the server cannot be moved elsewhere.
 pub const PORT: u16 = 8088;
 pub const ACCEPT_WINDOW_SECONDS: i64 = 15 * 60;
@@ -109,9 +117,11 @@ impl Images {
                 file.metadata()?.len() == IMAGE_BYTES as u64,
                 "unexpected OTA file size"
             );
+
             let mut data = Vec::with_capacity(IMAGE_BYTES);
             file.take((IMAGE_BYTES + 1) as u64).read_to_end(&mut data)?;
             ensure!(data.len() == IMAGE_BYTES, "OTA size changed while reading");
+
             let mut actual = String::with_capacity(64);
             for byte in Sha256::digest(&data) {
                 write!(actual, "{byte:02x}").expect("format hash into String");
@@ -119,6 +129,7 @@ impl Images {
             ensure!(actual == expected, "OTA image hash mismatch");
             Ok(Bytes::from(data))
         }
+
         Ok(Self {
             original: read(directory, "original-1.1.15.bin", ORIGINAL_SHA256)?,
             test: read(directory, profile.filename(), profile.digest())?,
@@ -152,16 +163,19 @@ fn response(
     {
         return StatusCode::BAD_REQUEST.into_response();
     }
+
     let (data, kind) = if original {
         (state.images.original.clone(), "original")
     } else {
         (state.images.test.clone(), state.images.profile.route())
     };
+
     tracing::info!(
         image = kind,
         bytes = data.len(),
         "OTA image requested; receipt unconfirmed"
     );
+
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "application/octet-stream")
@@ -187,6 +201,7 @@ fn dispatch(
     if request.uri().query().is_some() {
         return StatusCode::NOT_FOUND.into_response();
     }
+
     let original = if request.uri().path()
         == format!("/ota/{}/{}", state.token, state.images.profile.route())
     {
@@ -196,6 +211,7 @@ fn dispatch(
     } else {
         return StatusCode::NOT_FOUND.into_response();
     };
+
     if request.headers().contains_key(header::TRANSFER_ENCODING)
         || request
             .headers()
@@ -204,6 +220,7 @@ fn dispatch(
     {
         return StatusCode::BAD_REQUEST.into_response();
     }
+
     response(
         state,
         peer,
@@ -227,6 +244,7 @@ async fn run(
     });
     let mut connections = JoinSet::new();
     tokio::pin!(stop);
+
     loop {
         tokio::select! {
             _ = &mut stop => break,
@@ -240,6 +258,7 @@ async fn run(
                         let state = Arc::clone(&state);
                         async move { Ok::<_, Infallible>(dispatch(&state, address, request)) }
                     });
+
                     let mut http = http1::Builder::new();
                     http.title_case_headers(true)
                         .keep_alive(false)
@@ -247,6 +266,7 @@ async fn run(
                         .header_read_timeout(Duration::from_secs(10))
                         .max_headers(16)
                         .max_buf_size(8192);
+
                     let result = tokio::time::timeout(Duration::from_secs(300),
                         http.serve_connection(TokioIo::new(stream), service)).await;
                     if !matches!(result, Ok(Ok(()))) {
@@ -256,6 +276,7 @@ async fn run(
             }
         }
     }
+
     // Stop admitting connections, but let an already-started transfer finish
     // within its own deadline instead of truncating it at the server expiry.
     drop(listener);
@@ -277,16 +298,19 @@ pub async fn serve(
         host.is_private() && peer.is_private() && host != peer,
         "OTA image server requires distinct private IPv4 host/peer addresses"
     );
+
     let images = Images::load(directory, profile)?;
     let listener = TcpListener::bind((host, PORT))
         .await
         .context("bind OTA image server")?;
+
     let lease = Lease {
         token: Uuid::new_v4(),
         peer,
         expires_at: Utc::now() + chrono::Duration::seconds(ACCEPT_WINDOW_SECONDS),
         profile,
     };
+
     let lease_path = Lease::path(config_path);
     // The private lease (mode 0600) and operator output are the only places the
     // token appears. No directory listing, upload, generic file route, redirect,
@@ -309,6 +333,7 @@ pub async fn serve(
             lease.token
         );
     }
+
     let result = run(listener, images, peer, lease.token, async {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {},
@@ -316,6 +341,7 @@ pub async fn serve(
         }
     })
     .await;
+
     // Remove only our own lease; a newer server may have replaced it.
     if std::fs::read(&lease_path)
         .ok()
@@ -324,6 +350,7 @@ pub async fn serve(
     {
         let _ = std::fs::remove_file(&lease_path);
     }
+
     result
 }
 
@@ -353,6 +380,7 @@ mod tests {
             test: Bytes::from_static(b"test-image"),
             profile,
         };
+
         let worker = tokio::spawn(run(listener, images, peer, token, std::future::pending()));
         (address, token, worker)
     }
@@ -360,6 +388,7 @@ mod tests {
     async fn exchange(address: SocketAddr, request: &str) -> Vec<u8> {
         let mut stream = TcpStream::connect(address).await.unwrap();
         stream.write_all(request.as_bytes()).await.unwrap();
+
         let mut result = Vec::new();
         tokio::time::timeout(Duration::from_secs(3), stream.read_to_end(&mut result))
             .await
@@ -380,6 +409,7 @@ mod tests {
     async fn c_profile_serves_only_probe_and_original_routes() {
         let (address, token, worker) =
             start_profile(Ipv4Addr::LOCALHOST, Profile::CExecution).await;
+
         for (file, status, body) in [
             ("probe.bin", 200, b"test-image".as_slice()),
             ("original.bin", 200, b"original-image".as_slice()),
@@ -393,12 +423,14 @@ mod tests {
             assert!(split(&reply).0.starts_with(&format!("HTTP/1.1 {status} ")));
             assert_eq!(split(&reply).1, body);
         }
+
         worker.abort();
     }
 
     #[tokio::test]
     async fn raw_http_uses_stock_compatible_header_case_and_exact_complete_objects() {
         let (address, token, worker) = start(Ipv4Addr::LOCALHOST).await;
+
         for (file, expected) in [
             ("test.bin", &b"test-image"[..]),
             ("original.bin", &b"original-image"[..]),
@@ -418,6 +450,7 @@ mod tests {
             assert!(!headers.contains("Content-Encoding:"));
             assert_eq!(body, expected);
         }
+
         let reply = exchange(
             address,
             &format!("HEAD /ota/{token}/test.bin HTTP/1.1\r\nHost: lab\r\n\r\n"),
@@ -426,12 +459,14 @@ mod tests {
         let (headers, body) = split(&reply);
         assert!(headers.contains("Content-Length: 10\r\n"));
         assert!(body.is_empty());
+
         worker.abort();
     }
 
     #[tokio::test]
     async fn wrong_peer_path_method_range_and_conditional_requests_cannot_fetch_image() {
         let (address, token, worker) = start(Ipv4Addr::LOCALHOST).await;
+
         for (method, path, extra, status) in [
             ("GET", "/private/server.json".to_owned(), "", 404),
             ("GET", format!("/ota/{}/test.bin", Uuid::nil()), "", 404),
@@ -459,6 +494,7 @@ mod tests {
             assert!(split(&reply).1.is_empty());
         }
         worker.abort();
+
         let (address, token, worker) = start(Ipv4Addr::new(127, 0, 0, 2)).await;
         let reply = exchange(
             address,
@@ -475,19 +511,25 @@ mod tests {
         let host = std::net::IpAddr::V4(Ipv4Addr::new(127, 0, 0, 250));
         let directory = tempfile::tempdir().unwrap();
         let config = directory.path().join("server.json");
+
         assert!(Lease::current(&config, host).await.is_none());
+
         let lease = Lease {
             token: Uuid::new_v4(),
             peer: Ipv4Addr::new(10, 0, 0, 2),
             expires_at: Utc::now(),
             profile: Profile::StockVersion,
         };
+
         storage::write_json(&Lease::path(&config), &lease).unwrap();
         assert!(Lease::current(&config, host).await.is_none());
+
         let listener = TcpListener::bind((host, PORT)).await.unwrap();
         assert_eq!(Lease::current(&config, host).await, Some(lease));
+
         std::fs::write(Lease::path(&config), b"{\"token\":\"x\"}").unwrap();
         assert!(Lease::current(&config, host).await.is_none());
+
         drop(listener);
     }
 
@@ -513,20 +555,24 @@ mod tests {
             for name in ["original-1.1.15.bin", profile.filename()] {
                 std::fs::copy(source.join(name), directory.path().join(name)).unwrap();
             }
+
             let images = Images::load(directory.path(), profile).unwrap();
             assert_eq!(images.original.len(), IMAGE_BYTES);
             assert_eq!(images.test.len(), IMAGE_BYTES);
+
             let path = directory.path().join("original-1.1.15.bin");
             let mut data = std::fs::read(&path).unwrap();
             data[0x17040] ^= 1;
             std::fs::write(path, &data).unwrap();
             assert_ne!(images.original[0x17040], data[0x17040]);
             assert!(Images::load(directory.path(), profile).is_err());
+
             std::fs::copy(
                 source.join("original-1.1.15.bin"),
                 directory.path().join("original-1.1.15.bin"),
             )
             .unwrap();
+
             let path = directory.path().join(profile.filename());
             let mut data = std::fs::read(&path).unwrap();
             data[0x17040] ^= 1;

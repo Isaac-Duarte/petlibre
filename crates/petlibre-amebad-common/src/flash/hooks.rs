@@ -35,6 +35,7 @@ macro_rules! callback {
     ($($arg:ty),*) => { unsafe extern "C" fn($($arg),*) };
     ($($arg:ty),* => $ret:ty) => { unsafe extern "C" fn($($arg),*) -> $ret };
 }
+
 #[cfg(not(target_os = "none"))]
 macro_rules! callback {
     ($($arg:ty),*) => { unsafe extern "C-unwind" fn($($arg),*) };
@@ -105,6 +106,7 @@ pub trait HookCpu {
     fn restore(value: u32);
     fn tick_read() -> u32;
     fn tick_write(value: u32);
+
     /// Latch the fault once and halt in RAM for independent reset.
     fn fail(reason: HookFault) -> !;
     /// One iteration of the RAM halt loop.
@@ -160,6 +162,7 @@ pub fn fail_body<C: HookCpu>(reason: HookFault) -> ! {
     let s = C::cells();
     C::disable();
     C::tick_write(0);
+
     let first = !get(s.faulted);
     set(s.faulted, true);
     if first {
@@ -169,6 +172,7 @@ pub fn fail_body<C: HookCpu>(reason: HookFault) -> ! {
             unsafe { fault(t.context, reason) };
         }
     }
+
     // A provider must never make a failed void SDK lock look successful.
     C::disable();
     C::tick_write(0);
@@ -185,6 +189,7 @@ pub fn install<C: HookCpu>(p: *const HookProvider) -> bool {
     if p.is_null() || C::mask() != 0 || C::ipsr() != 0 {
         return false;
     }
+
     let s = C::cells();
     let candidate = copy_provider(p);
     let Some(ready) = candidate.ready else {
@@ -197,6 +202,7 @@ pub fn install<C: HookCpu>(p: *const HookProvider) -> bool {
     {
         return false;
     }
+
     C::disable();
     let available = !get(s.armed) && !get(s.legacy_locked) && !get(s.faulted);
     C::restore(0);
@@ -204,6 +210,7 @@ pub fn install<C: HookCpu>(p: *const HookProvider) -> bool {
     if !available || !unsafe { ready(candidate.context) } || C::mask() != 0 || C::ipsr() != 0 {
         return false;
     }
+
     C::disable();
     let ok = !get(s.armed) && !get(s.legacy_locked) && !get(s.faulted);
     if ok {
@@ -235,12 +242,14 @@ pub fn write_lock<C: HookCpu>() {
         C::legacy_lock();
         return;
     }
+
     if get(s.faulted) || get(s.lease_held) {
         C::fail(HookFault::ORDER);
     }
     if saved != 0 || C::ipsr() != 0 {
         C::fail(HookFault::CONTEXT);
     }
+
     C::restore(saved);
     // Pending acquisitions are provider-owned, so another local task can wait
     // without overwriting a global ticket or starving an IRQ-mediated request.
@@ -251,11 +260,13 @@ pub fn write_lock<C: HookCpu>() {
     let ok = t
         .acquire
         .is_some_and(|acquire| unsafe { acquire(t.context, &mut ticket) });
+
     let returned_mask = C::mask();
     C::disable();
     if !ok {
         C::fail(HookFault::ACQUIRE);
     }
+
     // Check the provider's actual exit context, not our own disable above.
     if returned_mask != 1
         || C::ipsr() != 0
@@ -267,6 +278,7 @@ pub fn write_lock<C: HookCpu>() {
     {
         C::fail(HookFault::ACQUIRE);
     }
+
     set(s.ticket, ticket);
     set(s.last_id, ticket.id);
     set(s.lease_held, true);
@@ -282,12 +294,14 @@ pub fn write_unlock<C: HookCpu>() {
         set(s.legacy_locked, false);
         return;
     }
+
     if get(s.faulted) || !get(s.lease_held) {
         C::fail(HookFault::ORDER);
     }
     if saved != 1 || C::ipsr() != 0 || C::tick_read() & SYSTICK_CONTROL_BITS != 0 {
         C::fail(HookFault::CONTEXT);
     }
+
     let t = copy_provider(s.transport);
     // SAFETY: the installed provider's contract; the ticket is private RAM.
     let ok = t
@@ -298,6 +312,7 @@ pub fn write_unlock<C: HookCpu>() {
     if !ok || returned_mask != 1 || C::ipsr() != 0 || C::tick_read() & SYSTICK_CONTROL_BITS != 0 {
         C::fail(HookFault::RELEASE);
     }
+
     let systick = get(s.ticket).saved_systick;
     set(s.lease_held, false);
     set(s.ticket, HookTicket::default());
@@ -316,16 +331,19 @@ pub fn write_ipc<C: HookCpu>(data: *mut c_void, status: u32, channel: u32) {
         C::legacy_ipc(data, status, channel);
         return;
     }
+
     if get(s.faulted) || get(s.lease_held) {
         C::fail(HookFault::ORDER);
     }
     let systick = C::tick_read() & SYSTICK_CONTROL_BITS;
     C::restore(saved);
+
     let t = copy_provider(s.transport);
     // SAFETY: the installed provider's contract.
     let ok = t
         .peer
         .is_some_and(|peer| unsafe { peer(t.context, status, channel) });
+
     let returned_mask = C::mask();
     let returned_tick = C::tick_read() & SYSTICK_CONTROL_BITS;
     C::disable();

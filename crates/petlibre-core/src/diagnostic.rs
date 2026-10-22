@@ -1,5 +1,11 @@
 //! Synthetic end-to-end pipeline check with a memory-only motor.
 //! Never accesses board I/O.
+//!
+//! One single-portion feed runs through ADC scaling, sensor qualification,
+//! the tick clock, the controller, the feedback queue and the motor gate.
+//! The board app runs it at startup and the C ABI exports it, so a build
+//! shows the core logic is linked and consistent; it says nothing about
+//! hardware.
 
 use core::ffi::c_void;
 
@@ -47,6 +53,7 @@ fn run_pipeline() -> Option<bool> {
         max_age_ms: 2,
         battery_min_scaled: 1650,
     };
+
     let feed_limits = FeedLimits {
         feedback_inhibit_ms: 5,
         feedback_timeout_ms: 30,
@@ -58,17 +65,20 @@ fn run_pipeline() -> Option<bool> {
         max_portions: 1,
         max_reverse_attempts: 0,
     };
+
     let mut motor = SimulatedMotor::default();
     let mut inputs = SensorInputs::new(&sensor_limits, &calibration)?;
     let mut controller = FeedController::new(&feed_limits, 0)?;
     let mut events = FeedbackEvents::new(8, 2, 0)?;
     let mut clock = TickClock::new(32_000, 0, 0)?;
     let mut gate = MotorGate::default();
+
     // SAFETY: `motor` outlives `gate`, which never escapes this function.
     #[allow(unsafe_code)]
     if !unsafe { gate.init(Some(simulated_write), (&raw mut motor).cast(), 1, 3, 0) } {
         return None;
     }
+
     let mut reading = SensorReading {
         gpio_valid: true,
         optics_enabled: true,
@@ -80,10 +90,12 @@ fn run_pipeline() -> Option<bool> {
         battery: [2800; SAMPLES],
         ..SensorReading::default()
     };
+
     for tick in 0..=2 {
         let now = clock.read(tick * 32)?;
         inputs.update(now, Some(&reading));
     }
+
     let sample = inputs.sample(2, false, false);
     let request = FeedRequest {
         id: 1,
@@ -92,9 +104,11 @@ fn run_pipeline() -> Option<bool> {
         direction: Direction::D0,
         ..FeedRequest::default()
     };
+
     if controller.start(&request, 2, &sample) != FeedStartResult::ACCEPTED {
         return None;
     }
+
     for tick in 3..=7 {
         let now = clock.read(tick * 32)?;
         reading.outlet_high = now >= 5;
@@ -103,18 +117,21 @@ fn run_pipeline() -> Option<bool> {
         if now == 7 && !events.push(now, true) {
             return None;
         }
+
         let drive = FeedbackDrive {
             healthy: gate.fault == MotorGateFault::OK,
             applied_known: gate.applied_known,
             applied: gate.applied,
             applied_at: gate.applied_at,
         };
+
         if !events.process(&mut controller, now, &sample, drive)
             || !gate.request(controller.motor, now)
         {
             return None;
         }
     }
+
     Some(
         controller.state == FeedState::COMPLETE
             && controller.progress.completed == 1

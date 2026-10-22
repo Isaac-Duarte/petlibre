@@ -1,3 +1,11 @@
+//! Tests for the FW10/FW11 update logic: signed manifest parsing (with an
+//! RFC 8032 vector), the bank-1 sector writer, the boot-trial decision,
+//! confirmation records and the delivery messages.
+//!
+//! The writer must withhold the marker until commit and refuse to commit
+//! after any order, marker, readback or hash failure, so an incomplete image
+//! can never be activated (design: docs/firmware/ota-design.md).
+
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use petlibre_core::ota::*;
 use sha2::{Digest, Sha256};
@@ -24,6 +32,7 @@ fn manifest_bytes(signing: &SigningKey, version: u32, payload: &[u8], bank: u32)
     body.extend_from_slice(&bank.to_le_bytes());
     body.extend_from_slice(&Sha256::digest(payload));
     body.extend_from_slice(&[0xab; 32]);
+
     assert_eq!(body.len(), MANIFEST_BODY);
     let signature = signing.sign(&body).to_bytes();
     body.extend_from_slice(&signature);
@@ -46,6 +55,7 @@ fn rfc8032_vector_one_verifies() {
     let signature: [u8; 64] = hex(
         "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b",
     );
+
     let key = VerifyingKey::from_bytes(&public).unwrap();
     assert!(
         key.verify_strict(b"", &ed25519_dalek::Signature::from_bytes(&signature))
@@ -75,6 +85,7 @@ fn manifest_needs_signature_bank_one_size_and_a_newer_version() {
         m.image_sha256.as_slice(),
         Sha256::digest(&payload).as_slice()
     );
+
     assert_eq!(
         parse_manifest(&good, &public, 5),
         Err(ManifestError::Downgrade)
@@ -83,23 +94,27 @@ fn manifest_needs_signature_bank_one_size_and_a_newer_version() {
         parse_manifest(&good[1..], &public, 0),
         Err(ManifestError::Length)
     );
+
     let mut tampered = good.clone();
     tampered[12] ^= 1;
     assert_eq!(
         parse_manifest(&tampered, &public, 0),
         Err(ManifestError::Signature)
     );
+
     let other = SigningKey::from_bytes(&[9; 32]).verifying_key().to_bytes();
     assert_eq!(
         parse_manifest(&good, &other, 0),
         Err(ManifestError::Signature)
     );
+
     let mut magic = good.clone();
     magic[0] = b'X';
     assert_eq!(
         parse_manifest(&magic, &public, 0),
         Err(ManifestError::Magic)
     );
+
     assert_eq!(
         parse_manifest(&manifest_bytes(&signing, 5, &payload, 0), &public, 0),
         Err(ManifestError::Bank)
@@ -108,6 +123,7 @@ fn manifest_needs_signature_bank_one_size_and_a_newer_version() {
         parse_manifest(&manifest_bytes(&signing, 5, &payload[..100], 1), &public, 0),
         Err(ManifestError::Size)
     );
+
     let big = image(BANK1_BYTES as usize + 1);
     assert_eq!(
         parse_manifest(&manifest_bytes(&signing, 5, &big, 1), &public, 0),
@@ -134,6 +150,7 @@ fn write_all(
             w.programmed(ok)?;
         }
     }
+
     Ok(())
 }
 
@@ -146,11 +163,13 @@ fn writer_stages_every_sector_with_the_marker_withheld_until_commit() {
         let mut w = Writer::new(m, chunk).unwrap();
         let mut flash = Vec::new();
         write_all(&mut w, &payload, &mut flash, None).unwrap();
+
         // Everything but the marker is in place; the marker bytes are erased.
         assert_eq!(&flash[..8], &[0xff; 8]);
         assert_eq!(&flash[8..], &payload[8..]);
         assert_eq!(w.commit(), Ok((BANK1_OFFSET, MARKER)));
     }
+
     assert!(
         Writer::new(
             parse_manifest(&manifest_bytes(&signing, 2, &image(SECTOR), 1), &public, 1).unwrap(),
@@ -228,6 +247,7 @@ fn confirmation_names_exactly_one_image() {
     assert_eq!(confirmed(&record, &sha), Some(7));
     assert_eq!(confirmed(&record, &[4u8; 32]), None);
     assert_eq!(confirmed(&record[1..], &sha), None);
+
     let mut bad = record;
     bad[0] = b'X';
     assert_eq!(confirmed(&bad, &sha), None);
@@ -241,6 +261,7 @@ fn delivery_messages_round_trip_and_reject_malformed() {
         decode_get(&encode_get(Part::Manifest, 0, 0)),
         Some((Part::Manifest, 0, 0))
     );
+
     assert_eq!(decode_get(&get[..8]), None);
     let mut bad = get;
     bad[0] = 9;
@@ -257,8 +278,10 @@ fn delivery_messages_round_trip_and_reject_malformed() {
             bytes: &[1, 2, 3]
         })
     );
+
     // A declared length that disagrees with the body is refused.
     assert_eq!(decode_data(&data[..data.len() - 1]), None);
+
     let refused = encode_data_header(Part::Chunk, Status::Range, 0, 0);
     assert_eq!(decode_data(&refused).map(|d| d.status), Some(Status::Range));
     let mut refused_with_body = encode_data_header(Part::Chunk, Status::NoOffer, 0, 1).to_vec();

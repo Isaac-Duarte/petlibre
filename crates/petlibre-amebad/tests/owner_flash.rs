@@ -15,6 +15,7 @@ fn flash_hold_waits_before_outputs_and_release_allows_new_work() {
     f.advance(2);
     let refreshes = hw(|h| h.watchdog_refreshes);
     f.hold();
+
     assert_eq!(f.owner.submit(1, 1), SubmitResult::ENQUEUED);
     fake::run_task();
     f.advance(3);
@@ -25,6 +26,7 @@ fn flash_hold_waits_before_outputs_and_release_allows_new_work() {
             && hw(|h| h.watchdog_refreshes) == refreshes
     );
     inactive_outputs();
+
     f.release_hold();
     f.advance(5);
     assert!(f.status().state == OwnerState::FEEDING && f.reserve_calls == 1);
@@ -45,6 +47,7 @@ fn flash_interruption_latches_failure_even_after_release() {
             fake::run_task();
             assert!(f.owner.optics_started && f.status().state == OwnerState::PREPARING);
         }
+
         let refreshes = hw(|h| h.watchdog_refreshes);
         f.hold();
         hw(|h| h.blocked_motor_write = phase == 2);
@@ -53,6 +56,7 @@ fn flash_interruption_latches_failure_even_after_release() {
             inactive_outputs();
         }
         fake::run_task();
+
         if phase == 2 {
             assert!(
                 f.status().fault == OwnerFault::FLASH && f.status().state == OwnerState::REPORTING
@@ -68,12 +72,15 @@ fn flash_interruption_latches_failure_even_after_release() {
             f.advance(1);
             inactive_outputs();
         }
+
         assert!(f.status().fault == OwnerFault::FLASH && f.status().state == OwnerState::FAULT);
         assert!(f.status().result.outcome == OwnerOutcome::FAILED && f.status().result_durable);
         assert!(f.finish_calls == 1 && hw(|h| h.watchdog_refreshes) == refreshes);
+
         if phase != 2 {
             f.release_hold();
         }
+
         f.advance(1);
         assert_eq!(f.owner.submit(2, 1), SubmitResult::REJECT_STOPPED);
         assert!(!f.owner.acknowledge(1));
@@ -89,12 +96,14 @@ fn flash_hold_expires_requests_and_protocol_fault_stops_owner() {
     assert_eq!(f.owner.submit(1, 1), SubmitResult::ENQUEUED);
     fake::run_task();
     f.advance(20);
+
     assert!(
         f.status().state == OwnerState::TERMINAL
             && f.status().result.outcome == OwnerOutcome::EXPIRED
     );
     assert!(!f.status().result.motion_possible && hw(|h| h.watchdog_refreshes) == 0);
     assert!(f.status().result_durable);
+
     f.authority.trip(FlashFault::TRANSPORT);
     f.advance(1);
     assert!(
@@ -119,13 +128,16 @@ fn start_requires_an_external_ready_authority() {
     let mut f = Box::new(Fixture::new(OwnerRecovery::default()));
     let config = f.config;
     assert!(!f.try_start(&config));
+
     f.bind_authority();
     f.authority = FlashCoord::new(&FLASH_LIMITS, 17, 0).unwrap();
     let config = f.config;
     assert!(!f.try_start(&config));
+
     assert_eq!(f.authority.ready(17, 29, true, 0), FlashReply::ACCEPTED);
     f.authority.trip(FlashFault::PEER_LOST);
     assert!(!f.try_start(&config));
+
     assert!(!hw(|h| h.task_live) && hw(|h| h.watchdog_init_calls) == 0 && hw(|h| h.output[0]) == 0);
 }
 
@@ -137,6 +149,7 @@ fn flash_lease_budget_must_fit_watchdog_supervision() {
     f.hold();
     f.advance(FLASH_LIMITS.total_ms);
     assert!(f.status().fault == OwnerFault::OK && f.status().state == OwnerState::IDLE);
+
     let refreshes = hw(|h| h.watchdog_refreshes);
     f.release_hold();
     f.advance(2);
@@ -154,6 +167,7 @@ fn flash_lease_budget_must_fit_watchdog_supervision() {
     };
     let config = CONFIG;
     assert!(config.valid() && config.lease_fits(&FLASH_LIMITS) && !config.lease_fits(&limits));
+
     // The bound includes two sample periods and two timer periods of margin.
     let edge = FlashLimits {
         total_ms: 50 - 2 - 4,
@@ -164,6 +178,7 @@ fn flash_lease_budget_must_fit_watchdog_supervision() {
         total_ms: edge.total_ms - 1,
         ..edge
     }));
+
     fake::reset_hardware();
     let mut f = Box::new(Fixture::new(PHASE_KNOWN));
     f.authority = FlashCoord::new(&limits, 17, 0).unwrap();

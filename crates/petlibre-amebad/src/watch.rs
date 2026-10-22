@@ -206,23 +206,28 @@ impl Watch {
                 if self.key.is_none() {
                     return self.end(Record::Error { stage: "key" });
                 }
+
                 if self.open.is_some() {
                     return self.poll(now);
                 }
+
                 if self
                     .checked_at
                     .is_some_and(|at| now.wrapping_sub(at) < CHECK_MS)
                 {
                     return next(CHECK_MS / 10, None);
                 }
+
                 self.checked_at = Some(now);
                 self.connect(now)
             }
+
             Stage::Arm => {
                 if H::armed() {
                     self.stage = Stage::GiveWay;
                     return next(POLL_MS, None);
                 }
+
                 // SAFETY: the caller's contract.
                 match unsafe { self.arming.step::<M, H>(provider) } {
                     Poll::Pending(event) => next(arming::POLL_MS, event.map(Record::Arming)),
@@ -233,6 +238,7 @@ impl Watch {
                     Poll::Failed(event) => self.end(Record::Arming(event)),
                 }
             }
+
             Stage::GiveWay => {
                 let ok = bank.give_way();
                 // The recovery boot must not find the attempt marker set.
@@ -240,6 +246,7 @@ impl Watch {
                 if !ok {
                     return self.end(Record::Error { stage: "give_way" });
                 }
+
                 self.stage = Stage::Done;
                 Step {
                     delay_ms: 0,
@@ -249,6 +256,7 @@ impl Watch {
                     restart: true,
                 }
             }
+
             Stage::Done => next(0, None),
         }
     }
@@ -257,6 +265,7 @@ impl Watch {
         if !net_status::read().dns_ok {
             return next(POLL_MS, None);
         }
+
         let mut id = [0u8; 80];
         let base = self.config.client_id.as_bytes();
         let Some(id) = id.get_mut(..base.len() + 4).map(|out| {
@@ -266,14 +275,17 @@ impl Watch {
         }) else {
             return self.end(Record::Error { stage: "client_id" });
         };
+
         let Ok(client_id) = core::str::from_utf8(id) else {
             return self.end(Record::Error { stage: "client_id" });
         };
+
         let Some(socket) =
             sdk::tcp_connect(self.config.broker, self.config.port, CONNECT_TIMEOUT_MS)
         else {
             return next(POLL_MS, None);
         };
+
         let mut out = [0; mqtt::MAX_PACKET];
         let connect = mqtt::Connect {
             client_id,
@@ -281,11 +293,13 @@ impl Watch {
             password: self.config.password,
             will: None,
         };
+
         if !mqtt::encode_connect(&mut out, &connect).is_ok_and(|n| sdk::tcp_send(socket, &out[..n]))
         {
             sdk::tcp_close(socket);
             return next(POLL_MS, None);
         }
+
         self.open = Some(Open {
             socket,
             session: Session::connecting(now),
@@ -300,10 +314,12 @@ impl Watch {
         let Some(open) = self.open else {
             return next(POLL_MS, None);
         };
+
         if now.wrapping_sub(open.opened_at) >= ANSWER_MS + CONNECT_TIMEOUT_MS {
             self.close();
             return next(POLL_MS, None);
         }
+
         match sdk::tcp_recv(open.socket, &mut self.rx[self.rx_len..], POLL_MS) {
             TcpRecv::Data(n) => self.rx_len += n,
             TcpRecv::Timeout => {}
@@ -312,6 +328,7 @@ impl Watch {
                 return next(POLL_MS, None);
             }
         }
+
         loop {
             let used = match mqtt::decode(&self.rx[..self.rx_len]) {
                 Ok(None) => break,
@@ -329,11 +346,13 @@ impl Watch {
                 return step;
             }
         }
+
         if let Some(open) = self.open.as_mut()
             && let Tick::Closed(_) = open.session.tick(now)
         {
             self.close();
         }
+
         next(POLL_MS, None)
     }
 
@@ -348,7 +367,10 @@ impl Watch {
         ) else {
             return Some(self.end(Record::Error { stage: "topic" }));
         };
+
         let open = self.open.as_mut()?;
+        // `ota/offered` takes the request topic's place in the session, so the
+        // server's answer arrives as `Event::Request`.
         match open.session.on_packet(now, packet, offered.as_str()) {
             Event::Connected => {
                 let mut out = [0; 128];
@@ -361,6 +383,7 @@ impl Watch {
                 }
                 None
             }
+
             Event::Ready => {
                 let mut out = [0; 128];
                 let get = ota::encode_get(ota::Part::Manifest, 0, 0);
@@ -372,6 +395,7 @@ impl Watch {
                 }
                 None
             }
+
             Event::Request(payload) => Some(self.answer(payload)),
             Event::Closed(_) => {
                 self.close();
@@ -403,6 +427,7 @@ impl Watch {
         if manifest.build_id == trial::identity() {
             return self.found(Found::Same);
         }
+
         self.close();
         self.version = manifest.version;
         self.stage = Stage::Arm;

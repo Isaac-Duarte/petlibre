@@ -1,3 +1,12 @@
+//! Recovery tests for the two-slot feed journal: lifecycle, phase recovery,
+//! bit-flip corruption, binding mismatch, torn writes cut at every byte,
+//! injected I/O failures, the pinned 128-byte v1 wire format, exhaustion and
+//! the wear limit.
+//!
+//! The invariant under test: after any cut or failure, reopening yields the
+//! committed state, an unresolved pending intent, or `CORRUPT`, never an idle
+//! journal that has forgotten a reserved request ID.
+
 use petlibre_core::feed_controller::{FeedReason, FeedRequest};
 use petlibre_core::feed_journal::{FeedJournal, JournalConfig, JournalError};
 use petlibre_core::feed_progress::{BowlMode, Direction};
@@ -35,6 +44,7 @@ fn reserve(j: &mut FeedJournal, id: u64) -> bool {
 fn finish(j: &mut FeedJournal, done: bool, motion: bool) -> bool {
     let mut phase = j.view.recovery;
     phase.pending_request = false;
+
     let mut result = j.view.result;
     result.completed = if done { result.requested } else { 0 };
     result.outcome = if done {
@@ -48,6 +58,7 @@ fn finish(j: &mut FeedJournal, done: bool, motion: bool) -> bool {
         FeedReason::CANCELLED
     };
     result.motion_possible = motion;
+
     if j.config.mode == BowlMode::DOUBLE {
         if done {
             if result.requested & 1 == 0 {
@@ -58,6 +69,7 @@ fn finish(j: &mut FeedJournal, done: bool, motion: bool) -> bool {
             phase.phase_known = false;
         }
     }
+
     j.finish(&result, &phase)
 }
 
@@ -67,6 +79,7 @@ fn create(f: &mut FakeJournalFlash, dual: bool) -> FeedJournal {
 
 fn create_unit(f: &mut FakeJournalFlash, dual: bool, unit: usize) -> FeedJournal {
     *f = FakeJournalFlash::with_unit(unit);
+
     let config = JournalConfig {
         mode: if dual {
             BowlMode::DOUBLE
@@ -75,12 +88,14 @@ fn create_unit(f: &mut FakeJournalFlash, dual: bool, unit: usize) -> FeedJournal
         },
         ..CONFIG
     };
+
     let mut j = FeedJournal::default();
     // SAFETY: each test keeps `f` in place while the journal uses it.
     assert_eq!(
         unsafe { j.create(f.io(), config, Direction::D0, true, true) },
         JournalError::OK
     );
+
     j
 }
 
@@ -102,12 +117,15 @@ fn lifecycle() {
     let mut j = FeedJournal::default();
     assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::EMPTY);
     assert_eq!(f.mutations, 0);
+
     let mut j = create(&mut f, false);
     assert!(j.view.sequence == 1 && j.view.recovery.high_water_id == 0);
+
     assert!(reserve(&mut j, 0x1_0000_0001));
     assert!(j.view.sequence == 2 && j.view.recovery.pending_request);
     assert!(!reserve(&mut j, 0x1_0000_0002));
     assert!(finish(&mut j, true, true));
+
     assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::OK);
     let v = j.read().unwrap();
     assert!(v.has_result && !v.recovery.pending_request);
@@ -116,6 +134,7 @@ fn lifecycle() {
     assert!(reserve(&mut j, 0x1_0000_0010) && finish(&mut j, false, false));
     assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::OK);
     assert!(j.view.sequence == 5 && j.view.result.outcome == OwnerOutcome::CANCELLED);
+
     let writes = f.mutations;
     assert_eq!(
         unsafe { j.create(f.io(), CONFIG, Direction::D0, true, true) },
@@ -130,6 +149,7 @@ fn phase_and_recovery() {
     let mut j = create(&mut f, true);
     let c = j.config;
     assert!(reserve(&mut j, 10));
+
     let mut rebooted = FeedJournal::default();
     assert_eq!(reopen(&mut f, &mut rebooted, &c), JournalError::OK);
     let storage = rebooted.storage();
@@ -138,12 +158,14 @@ fn phase_and_recovery() {
     assert!(phase.pending_request && !phase.phase_known);
     assert_eq!(phase.high_water_id, 10);
     assert!(!reserve(&mut rebooted, 11) && !finish(&mut rebooted, true, true));
+
     bind(&mut j, &mut f);
     assert!(finish(&mut j, true, true));
     assert!(j.view.recovery.direction == Direction::D1 && j.view.recovery.credit_next_event);
     assert!(reserve(&mut j, 11) && finish(&mut j, false, true));
     assert_eq!(reopen(&mut f, &mut j, &c), JournalError::OK);
     assert!(!j.view.recovery.phase_known && !reserve(&mut j, 12));
+
     let mut j = create(&mut f, true);
     assert!(reserve(&mut j, 1) && finish(&mut j, false, false));
     assert!(j.view.recovery.phase_known && reserve(&mut j, 2));
@@ -155,6 +177,7 @@ fn invalid_arguments() {
     let mut j = create(&mut f, false);
     let mut r = request(&j, 1);
     let writes = f.mutations;
+
     r.portions = 0;
     assert!(!j.reserve(&r));
     r.portions = 4;
@@ -166,6 +189,7 @@ fn invalid_arguments() {
     r.direction = Direction::D1;
     assert!(!j.reserve(&r));
     assert!(f.mutations == writes && reserve(&mut j, 7));
+
     let mut phase = j.view.recovery;
     phase.pending_request = false;
     let mut result = OwnerResult {
@@ -176,6 +200,7 @@ fn invalid_arguments() {
         reason: FeedReason::DONE,
         motion_possible: true,
     };
+
     result.id = 6;
     assert!(!j.finish(&result, &phase));
     result.id = 7;
@@ -189,6 +214,7 @@ fn invalid_arguments() {
     assert!(!j.finish(&result, &phase));
     phase.phase_known = true;
     assert!(j.finish(&result, &phase));
+
     let mut io = f.io();
     io.unit_bytes = 127;
     assert_eq!(unsafe { j.open(io, CONFIG) }, JournalError::ARGUMENT);
@@ -200,6 +226,7 @@ fn corruption_and_binding() {
     let mut original = FakeJournalFlash::default();
     let mut j = create(&mut original, false);
     assert!(reserve(&mut j, 41) && finish(&mut j, true, true));
+
     for slot in 0..2 {
         for byte in 0..RECORD_BYTES {
             for bit in 0..8 {
@@ -216,9 +243,11 @@ fn corruption_and_binding() {
             }
         }
     }
+
     let mut f = original.clone();
     f.bytes[0][200] = 0;
     assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::CORRUPT);
+
     // Every blank-tail chunk is checked, including a short final chunk.
     for unit in UNITS {
         let mut original = FakeJournalFlash::default();
@@ -236,16 +265,19 @@ fn corruption_and_binding() {
         assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::OK);
         assert_eq!(j.view.recovery.high_water_id, 41);
     }
+
     let c = JournalConfig {
         binding: CONFIG.binding + 1,
         ..CONFIG
     };
     assert_eq!(reopen(&mut original, &mut j, &c), JournalError::CORRUPT);
+
     let c = JournalConfig {
         mode: BowlMode::DOUBLE,
         ..CONFIG
     };
     assert_eq!(reopen(&mut original, &mut j, &c), JournalError::CORRUPT);
+
     let c = JournalConfig {
         max_portions: CONFIG.max_portions + 1,
         ..CONFIG
@@ -262,27 +294,32 @@ fn byte_cuts(completing: bool, reused: bool, unit: usize) {
     if completing {
         assert!(reserve(&mut original_j, 42));
     }
+
     // Erase is `unit` mutations, then the body and the commit marker. Every
     // cut near the erase boundaries and through the record; large units sample
     // the middle of the erase.
     let end = (unit + RECORD_BYTES + 1) as i64;
     let edge = 2 * RECORD_BYTES as i64;
     let cuts = (0..=end).filter(|&cut| cut <= edge || cut >= unit as i64 - edge || cut % 61 == 0);
+
     for cut in cuts {
         let mut f = original.clone();
         let mut j = original_j;
         f.budget = cut;
         bind(&mut j, &mut f);
+
         let succeeded = if completing {
             finish(&mut j, true, true)
         } else {
             reserve(&mut j, 42)
         };
+
         let writes = f.mutations;
         if !succeeded {
             assert!(!j.opened && !reserve(&mut j, 43) && !finish(&mut j, true, true));
             assert_eq!(f.mutations, writes);
         }
+
         let e = reopen(&mut f, &mut j, &CONFIG);
         if e == JournalError::OK {
             assert!(
@@ -330,6 +367,7 @@ fn create_cuts() {
         let mut j = FeedJournal::default();
         let before = unsafe { j.create(f.io(), CONFIG, Direction::D0, true, true) };
         let after = reopen(&mut f, &mut j, &CONFIG);
+
         if after == JournalError::OK {
             assert!(j.view.sequence == 1 && j.view.recovery.high_water_id == 0);
         } else {
@@ -372,17 +410,20 @@ fn io_failures_at(unit: usize) {
             });
             f.calls - start
         };
+
         assert!(calls >= 6);
         for failure in 1..=calls {
             let mut f = base.clone();
             f.fail_call = f.calls + failure;
             let mut j = source;
             bind(&mut j, &mut f);
+
             let ok = if completing {
                 finish(&mut j, true, true)
             } else {
                 reserve(&mut j, 42)
             };
+
             let e = reopen(&mut f, &mut j, &CONFIG);
             if ok {
                 assert!(e == JournalError::OK && j.view.recovery.high_water_id == 42);
@@ -392,6 +433,7 @@ fn io_failures_at(unit: usize) {
             }
         }
     }
+
     let mut f = original.clone();
     f.silent_program = true;
     let mut j = original_j;
@@ -400,6 +442,7 @@ fn io_failures_at(unit: usize) {
     f.silent_program = false;
     assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::OK);
     assert!(reserve(&mut j, 42));
+
     f.silent_erase = true; // Inactive slot still holds the genesis record.
     bind(&mut j, &mut f);
     assert!(!finish(&mut j, true, true) && !j.opened);
@@ -419,6 +462,7 @@ fn repair_crc(p: &mut [u8]) {
             byte >>= 1;
         }
     }
+
     p[120..124].copy_from_slice(&(!remainder).to_le_bytes());
 }
 
@@ -436,6 +480,7 @@ fn wire_format_and_invalid_transitions() {
     expected[46] = 3;
     expected[120..].copy_from_slice(&[0x24, 0x34, 0xcf, 0x23, 0x43, 0x4d, 0x49, 0x54]);
     assert_eq!(f.bytes[0][..RECORD_BYTES], expected);
+
     assert!(reserve(&mut j, 42) && finish(&mut j, true, true));
     let original = f.clone();
     for field in [
@@ -446,10 +491,12 @@ fn wire_format_and_invalid_transitions() {
         repair_crc(&mut f.bytes[0]);
         assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::CORRUPT);
     }
+
     let mut f = original.clone();
     f.bytes[0][16] = 5; // Valid odd result generation, but skips generation 3.
     repair_crc(&mut f.bytes[0]);
     assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::CORRUPT);
+
     let mut f = original.clone();
     f.bytes[1] = f.bytes[0].clone();
     assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::CORRUPT);
@@ -462,6 +509,7 @@ fn id_and_sequence_exhaustion() {
     assert!(reserve(&mut j, u64::MAX) && finish(&mut j, true, true));
     assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::OK);
     assert!(j.view.recovery.high_water_id == u64::MAX && !reserve(&mut j, 1));
+
     // Synthesize the last adjacent generations, preserving valid checksums.
     for slot in 0..2 {
         f.bytes[slot][16..24].fill(u8::MAX);
@@ -472,6 +520,7 @@ fn id_and_sequence_exhaustion() {
     }
     assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::OK);
     assert_eq!(j.view.sequence, u64::MAX);
+
     // Restore an ordinary high-water to distinguish sequence from ID limit.
     for slot in 0..2 {
         f.bytes[slot][32..40].fill(0);
@@ -486,6 +535,7 @@ fn id_and_sequence_exhaustion() {
 #[test]
 fn wear_limit_refuses_new_reservations_but_never_strands_a_pending_one() {
     use petlibre_core::feed_journal::WEAR_LIMIT;
+
     let mut f = FakeJournalFlash::default();
     let mut j = FeedJournal::default();
     // SAFETY: the fake flash outlives the journal.
@@ -493,10 +543,13 @@ fn wear_limit_refuses_new_reservations_but_never_strands_a_pending_one() {
         unsafe { j.create(f.io(), CONFIG, Direction::D0, false, true) },
         JournalError::OK
     );
+
     assert!(reserve(&mut j, 1));
     j.view.sequence = WEAR_LIMIT;
+
     // The pending request can still finish.
     assert!(finish(&mut j, false, false));
+
     let writes = f.mutations;
     assert!(!reserve(&mut j, 2));
     assert_eq!(

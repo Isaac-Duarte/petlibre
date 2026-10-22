@@ -4,6 +4,7 @@ use petlibre_amebad_common::trial::{Decision, LIMIT, decide};
 use petlibre_core::ota::{CONFIRM_LEN, MARKER, confirm_record};
 
 const ID: [u8; 32] = [0x5a; 32];
+/// A marker whose first byte was cleared: what give-way leaves behind.
 const CLEARED: [u8; 8] = *b"\x001958711";
 const NONE: [u8; CONFIRM_LEN] = [0xff; CONFIRM_LEN];
 
@@ -43,6 +44,7 @@ fn a_confirmed_image_is_never_counted() {
             .iter()
             .all(|d| *d == Decision::Confirmed)
     );
+
     // A record for another build does not count.
     let other = confirm_record(&[1; 32], 0);
     assert_eq!(boots(1, MARKER, other), [Decision::Counted(1)]);
@@ -64,6 +66,7 @@ fn without_a_valid_bank_0_it_keeps_bank_1() {
 
 #[test]
 fn running_bank_0_runs_no_trial_and_clears_the_count() {
+    // Register layout: tag in bits 24-31, trial count 16-23, KM0 boot count 0-15.
     let register = (0x5a << 24) | (2 << 16) | 7;
     assert_eq!(
         decide(&CLEARED, &MARKER, &NONE, register, &ID),

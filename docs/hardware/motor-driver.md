@@ -64,7 +64,13 @@ The food emitter's OFF state is therefore confirmed electrically: TP20 at 3.3 V,
 ## Remaining for FW30
 
 1. **Outlet emitter OFF level (PB3):** find a node that follows PB3 (the outlet sensor's connector pins or its own test points). Emitter current for both emitters (the FNB58 would give it from supply current).
-2. **Transients:** across relay power-ons, resets and loader entries, between power-up and our stopped startup. A meter cannot catch these. They need a scope or logic analyzer on INA and INB, or a recorded limit if neither is available.
+2. **Transients:** across relay power-ons, resets and loader entries, between power-up and our stopped startup. A meter cannot catch these. Tooling is ready for the owner's 24 MHz fx2lafw analyzer:
+   1. Install `sigrok-cli`.
+   2. Wire D0 to INA (pin 2), D1 to INB (pin 3), D2 to OUTA (pin 8), D3 to OUTB (pin 5), and analyzer GND to board GND. Check the analyzer's input rating before connecting the 5 V outputs.
+   3. Run `tools/bench/bench.py transients NAME --cycles 50` and `--mode loader`.
+   4. Audit with `tools/audit/audit-driver-transients.py`.
+
+   A pass needs, on every cycle: an unpowered start, no sample with INA ≠ INB or OUTA ≠ OUTB, and the brake reached and held after boot, or standby held throughout a loader entry.
 3. **Polarity:** confirm the stock-derived polarity electrically, by tracing PA13/PA14 to INA/INB.
 
 Probe pins 2–4 at the tip of each foot. Pin 3 (INB) is next to pin 4 (VDD), and bridging them drives INB high, which with INA low is reverse drive.

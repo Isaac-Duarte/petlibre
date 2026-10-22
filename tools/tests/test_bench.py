@@ -1,5 +1,6 @@
 """No device I/O: relay protocol, loader sequencing and update stop rules."""
 import importlib.util
+import json
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
@@ -117,6 +118,63 @@ class SequenceTests(unittest.TestCase):
         run.assert_called_once()
         boot.assert_not_called()
         self.assertTrue(self.port.state[1])
+
+
+class TransientSequenceTests(unittest.TestCase):
+    def setUp(self):
+        self.port = FakeRelayPort()
+        self.relay = BENCH.Relay(self.port)
+        sleep = patch.object(BENCH.time, "sleep")
+        sleep.start()
+        self.addCleanup(sleep.stop)
+
+    def run_session(self, mode, fail=False):
+        import tempfile
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        log = self.port.log
+
+        class FakeAnalyzer:
+            def __init__(self, output):
+                self.output = output
+                self.stderr = SimpleNamespace(read=lambda: b"")
+
+            def poll(self):
+                return None
+
+            def wait(self, timeout=None):
+                # Recorded while the feeder was being powered.
+                self.output.write_bytes(b"\0" * 10)
+                return 1 if fail else 0
+
+            def kill(self):
+                pass
+
+        args = SimpleNamespace(name="unit", cycles=2, mode=mode, seconds=8.0, samplerate=1000, off_seconds=2)
+        with patch.object(BENCH, "ROOT", Path(tmp.name)), \
+                patch.object(BENCH, "analyzer", side_effect=lambda f, s, r: FakeAnalyzer(f)):
+            code = BENCH.transients(self.relay, CONFIG, args)
+        return code, log, Path(tmp.name) / "private/captures/unit"
+
+    def test_boot_cycles_power_on_after_arming_and_end_off(self):
+        code, log, out = self.run_session("boot")
+        self.assertEqual(code, 0)
+        # Each cycle: strap released and power off, then power on, then off.
+        self.assertEqual(log[:4], [(2, False), (1, False), (1, True), (2, False)])
+        self.assertEqual(self.port.state[1], False)
+        manifest = json.loads((out / "manifest.json").read_text())
+        self.assertEqual([c["file"] for c in manifest["cycles"]], ["cycle-001.bin", "cycle-002.bin"])
+        self.assertEqual(manifest["channels"], BENCH.ANALYZER_DEFAULT_CHANNELS)
+
+    def test_loader_cycles_hold_the_strap_across_power_on(self):
+        code, log, _ = self.run_session("loader")
+        self.assertEqual(log[:5], [(2, False), (1, False), (2, True), (1, True), (2, False)])
+        self.assertFalse(self.port.state[1] or self.port.state[2])
+
+    def test_a_failed_capture_stops_with_power_off(self):
+        with self.assertRaises(BENCH.BenchError):
+            self.run_session("boot", fail=True)
+        self.assertFalse(self.port.state[1] or self.port.state[2])
 
 
 class StatusTests(unittest.TestCase):

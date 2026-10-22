@@ -34,6 +34,7 @@ The relay board also enumerates as a USB serial port and can take the name the U
 | `capture NAME` | Receive-only recording of the running feeder; power is untouched |
 | `boot NAME` | Power off, start a receive-only capture, confirm it holds the port, then power on |
 | `loader NAME` | Same, with the strap held for 2 s across power-on; requires the download banner and a NAK run, otherwise powers off |
+| `transients NAME` | Repeated logic-analyzer captures (`sigrok-cli`, fx2lafw) of relay power-ons or, with `--mode loader`, loader entries; each cycle arms the analyzer before power-on and ends powered off. No UART, no flash |
 | `dump NAME` | `loader`, then `read-small` and `read-full` in one helper session |
 | `flash-prepare NAME` | `loader`, `read-small`, `inspect` and `prepare`; prints the plan summary and hash, then stops |
 | `flash-execute NAME` | Checks relay 1 stayed on and the strap is released, runs `execute` with the reviewed hash, then `boot` |

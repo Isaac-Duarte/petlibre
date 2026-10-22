@@ -24,6 +24,11 @@ STATUS_DIR = ROOT / "private/bench-status"
 POWER, STRAP = 1, 2
 STRAP_SECONDS = 2.0
 FRAME_TX_BYTES = 1056  # Observed per staged frame, framing included; for progress only
+# FW30 logic analyzer (sigrok fx2lafw, 8 channels). Capture starts this long
+# before power-on so the unpowered state is recorded first; the first open
+# also uploads the analyzer's firmware, which takes about a second.
+ANALYZER_ARMING_SECONDS = 3.0
+ANALYZER_DEFAULT_CHANNELS = {"ina": 0, "inb": 1, "outa": 2, "outb": 3}
 LOADER_SECONDS = 5
 
 
@@ -267,6 +272,63 @@ def loader(relay, config, output, off_seconds):
     return result
 
 
+def analyzer(output_file, seconds, samplerate):
+    """Start one bounded sigrok capture of all eight channels as raw bytes."""
+    return subprocess.Popen(["sigrok-cli", "--driver", "fx2lafw", "--config", f"samplerate={samplerate}",
+                             "--time", str(int(seconds * 1000)), "--channels", ",".join(f"D{i}" for i in range(8)),
+                             "--output-format", "binary", "--output-file", str(output_file)],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, cwd=ROOT)
+
+
+def transients(relay, config, args):
+    """Repeated captured power-ons (or loader entries) for FW30's driver-input check.
+
+    Each cycle: power off, start the analyzer, wait for it to arm, power on
+    (holding the strap for a loader entry), let the capture finish, power off.
+    Never opens the UART; never writes flash.
+    """
+    out = ROOT / "private/captures" / args.name
+    require(not out.exists(), f"Refusing to reuse {out.relative_to(ROOT)}")
+    require(args.cycles >= 1 and args.seconds > ANALYZER_ARMING_SECONDS, "Need cycles >= 1 and a capture longer than arming")
+    out.mkdir(parents=True)
+    manifest = {"schema_version": 1, "mode": args.mode, "samplerate": args.samplerate, "seconds": args.seconds,
+                "arming_seconds": ANALYZER_ARMING_SECONDS,
+                "channels": config.get("analyzer_channels", ANALYZER_DEFAULT_CHANNELS), "cycles": []}
+    try:
+        for n in range(args.cycles):
+            STATUS.step(f"cycle {n + 1}/{args.cycles}")
+            power_off(relay, args.off_seconds)
+            name = f"cycle-{n + 1:03d}.bin"
+            started = time.time()
+            process = analyzer(out / name, args.seconds, args.samplerate)
+            time.sleep(ANALYZER_ARMING_SECONDS)
+            require(process.poll() is None, f"Analyzer exited before power-on: {process.stderr.read()!r}")
+            powered = time.time()
+            if args.mode == "loader":
+                relay.set(STRAP, True)
+                relay.set(POWER, True)
+                time.sleep(STRAP_SECONDS)
+                relay.set(STRAP, False)
+            else:
+                relay.set(POWER, True)
+            try:
+                code = process.wait(timeout=args.seconds + 30)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                raise BenchError("Analyzer did not finish its bounded capture")
+            power_off(relay, 0)
+            require(code == 0, f"Analyzer failed: {process.stderr.read()!r}")
+            manifest["cycles"].append({"file": name, "bytes": (out / name).stat().st_size,
+                                       "power_on_after_launch_s": round(powered - started, 3)})
+            (out / "manifest.json").write_text(json.dumps(manifest, indent=1))
+            print(f"Cycle {n + 1}/{args.cycles}: {manifest['cycles'][-1]['bytes']} bytes", flush=True)
+    finally:
+        power_off(relay, 0)
+    print(f"Transient captures in {out.relative_to(ROOT)}; audit them with tools/audit/audit-driver-transients.py",
+          flush=True)
+    return 0
+
+
 def paths(name):
     return {"loader": ROOT / f"private/captures/{name}-loader",
             "bounded": ROOT / f"private/flash-backups/{name}-bounded",
@@ -368,6 +430,12 @@ def main(argv=None):
         command.add_argument("name", help="Capture name under private/captures/")
         if name == "boot":
             command.add_argument("--seconds", type=float, default=30)
+    command = sub.add_parser("transients", help="Repeated logic-analyzer captures of power-ons or loader entries")
+    command.add_argument("name", help="Session name under private/captures/")
+    command.add_argument("--cycles", type=int, default=10)
+    command.add_argument("--mode", choices=("boot", "loader"), default="boot")
+    command.add_argument("--seconds", type=float, default=8.0, help="Capture length per cycle, arming included")
+    command.add_argument("--samplerate", type=int, default=2_000_000)
     command = sub.add_parser("dump", help="Loader, bounded read, then full flash read")
     command.add_argument("name", help="Session name under private/flash-backups/")
     for name, text in (("flash-prepare", "Loader, bounded read, inspect and plan"),
@@ -411,6 +479,7 @@ STEPS = {
                       "uart-development prepare"],
     "flash-execute": ["uart-development execute", "boot capture"],
     "capture": ["capture"],
+    "transients": [],
 }
 
 
@@ -436,6 +505,8 @@ def dispatch(relay, config, args):
         loader(relay, config, ROOT / "private/captures" / args.name, args.off_seconds)
     elif args.command == "dump":
         return dump(relay, config, args)
+    elif args.command == "transients":
+        return transients(relay, config, args)
     elif args.command == "flash-prepare":
         return flash_prepare(relay, config, args)
     else:

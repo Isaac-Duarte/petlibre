@@ -59,6 +59,7 @@ Capture auditors check a finalized receive-only UART capture against the build m
 | [audit/audit-firmware-adc.py](audit/audit-firmware-adc.py) | FW14 power-input samples |
 | [audit/audit-firmware-journal.py](audit/audit-firmware-journal.py) | FW15 journal on NOR |
 | [audit/audit-firmware-settings.py](audit/audit-firmware-settings.py) | FW15 settings power-cut test |
+| [audit/audit-driver-transients.py](audit/audit-driver-transients.py) | FW30 logic-analyzer captures: any motor-driver drive across power-ons or loader entries |
 | [audit/audit-uart-startups.py](audit/audit-uart-startups.py) | Evidence integrity and reset decoding for saved UART captures |
 | [audit/audit-flash-backup.py](audit/audit-flash-backup.py) | Compare two full-flash reads |
 | [audit/audit-ota-layout.py](audit/audit-ota-layout.py) | OTA container and placement profile |

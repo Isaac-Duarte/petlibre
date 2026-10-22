@@ -905,8 +905,11 @@ unsafe extern "C" fn diagnostic_task(_: *mut c_void) -> u32 {
     }
 
     // FW11 test variant: a determined startup failure, which a trial image
-    // must turn into a counted reset.
-    let passed = petlibre_core::diagnostic::run() && !cfg!(feature = "fw11-fail");
+    // must turn into a counted reset. Opaque to the optimizer, or LTO drops
+    // every path after a passing diagnostic and the variant no longer links
+    // the image the link audit pins.
+    let forced_fail = cfg!(feature = "fw11-fail") && core::hint::black_box(true);
+    let passed = petlibre_core::diagnostic::run() && !forced_fail;
     sdk::log(if passed {
         c"Synthetic core diagnostic: PASS\r\n"
     } else {

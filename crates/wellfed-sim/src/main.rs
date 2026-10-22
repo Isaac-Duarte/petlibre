@@ -3,8 +3,8 @@
 //!
 //! Usage: `virtual-feeder-worker JOURNAL MODE PROVISION`. Reads one command per
 //! line on stdin and writes JSON-lines events on stdout; a power cut persists
-//! the journal image and exits with status 75. Driven by
-//! `tools/emulate/virtual-feeder.py`; the synthetic profile is not hardware calibration.
+//! the journal image and exits with status 75. Driven by the `virtual-feeder`
+//! harness in this crate; the synthetic profile is not hardware calibration.
 
 use core::ffi::{c_uint, c_void};
 use core::ptr;

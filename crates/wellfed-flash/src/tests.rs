@@ -253,8 +253,8 @@ impl Port for Fake {
     }
 }
 
-/// The development wire restated independently of `development.rs`, as
-/// `tools/flash/development-wire-policy.py` does.
+/// The development wire restated independently of `development.rs`, as the
+/// former `tools/flash/development-wire-policy.py` did.
 fn expected_wire(old: &[u8], new: &[u8], current: &[u8], start: usize, other: usize) -> Vec<u8> {
     let read = |at: usize, size: usize| {
         let mut out = vec![0x20];
@@ -848,4 +848,80 @@ fn the_cli_refuses_an_unpinned_helper_before_any_serial_access() {
     assert_eq!(*opened.borrow(), 0);
     assert!(!private("inspect").exists());
     let _ = evidence("unused");
+}
+
+/// A frozen review of a firstboot build, and the checkout around it.
+fn frozen_build(checkout: &Path, image: &[u8]) -> (PathBuf, Value, Value) {
+    let lock = json!({"sdk": {"revision": "r1"}, "toolchain": {"sha256": "t".repeat(64)}});
+    write(
+        &checkout.join("firmware/sdk.lock.json"),
+        lock.to_string().as_bytes(),
+    );
+    let mains = json!({"hp": {"address": "0x1"}, "lp": {"address": "0x2"}});
+    let pinmap = json!({"matches_stock": true, "runtime_address": "0x3"});
+    let manifest = json!({
+        "profile": "plaf103-firstboot", "sdk_revision": "r1", "toolchain_sha256": "t".repeat(64),
+        "artifacts": [{"path": "image/OTA_All.bin", "sha256": sha256(image), "bytes": image.len()}],
+        "firstboot_startup_audit": {"mains": mains}, "km0_pinmap_audit": pinmap,
+        "checks": {"ota_payload_matches": true, "ota_checksum_matches": true,
+                   "source_snapshot_unchanged": true, "staged_sources_without_diagnostics": true},
+    });
+    let payload = development::payload(image, &BANK1).unwrap();
+    let review = json!({
+        "schema_version": 1, "kind": "plaf103_development_image_review", "image_kind": "build",
+        "ota_sha256": sha256(image), "payload_sha256": sha256(payload), "payload_bytes": payload.len(),
+        "manifest_sha256": sha256(manifest.to_string().as_bytes()),
+        "review": {"startup_mains": mains, "pinmap": pinmap, "layout": {"sha256": sha256(image)},
+                   "factory_mapping": [{"bank": 0}, {"bank": 1}]},
+    });
+    let directory = checkout.join("private/review");
+    write(&directory.join("image.bin"), image);
+    write(
+        &directory.join("build-manifest.json"),
+        manifest.to_string().as_bytes(),
+    );
+    write(
+        &directory.join("review.json"),
+        review.to_string().as_bytes(),
+    );
+    (directory, review, manifest)
+}
+
+#[test]
+fn frozen_reviews_bind_image_manifest_and_required_audits() {
+    let (checkout, root) = private_root();
+    let image = image(30000, 3);
+    let (directory, review, _) = frozen_build(checkout.path(), &image);
+    let frozen = crate::review::frozen(&root, &directory, &BANK1).unwrap();
+    assert_eq!(frozen.image, image);
+    let refused = || crate::review::frozen(&root, &directory, &BANK1).is_err();
+    // A changed image byte.
+    let mut changed = image.clone();
+    *changed.last_mut().unwrap() ^= 1;
+    write(&directory.join("image.bin"), &changed);
+    assert!(refused());
+    write(&directory.join("image.bin"), &image);
+    // A replaced manifest.
+    let manifest = fs::read(directory.join("build-manifest.json")).unwrap();
+    write(&directory.join("build-manifest.json"), b"{}");
+    assert!(refused());
+    write(&directory.join("build-manifest.json"), &manifest);
+    // A review that names another image, sizes with a bool, or lacks the mapping.
+    for (path, value) in [
+        ("/ota_sha256", json!("0".repeat(64))),
+        ("/payload_bytes", json!(true)),
+        ("/review/factory_mapping", json!([])),
+        ("/kind", json!("other")),
+        ("/image_kind", json!("unknown")),
+    ] {
+        let mut bad = review.clone();
+        *bad.pointer_mut(path).unwrap() = value;
+        write(&directory.join("review.json"), bad.to_string().as_bytes());
+        assert!(refused(), "{path}");
+    }
+    write(
+        &directory.join("review.json"),
+        review.to_string().as_bytes(),
+    );
+    assert!(!refused());
 }

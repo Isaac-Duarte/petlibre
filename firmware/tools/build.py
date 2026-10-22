@@ -40,7 +40,7 @@ RUST = ROOT / "crates"
 # Crates linked into, or testing, the firmware. Host tools such as
 # wellfed-local and wellfed-flash never change a firmware build's identity.
 FIRMWARE_CRATES = ("wellfed-core", "wellfed-ffi", "wellfed-testkit", "wellfed-amebad",
-                   "wellfed-amebad-sdk", "wellfed-sim", "wellfed-probe")
+                   "wellfed-amebad-sdk", "wellfed-sim")
 ENTRY = FIRMWARE / "ports/amebad/example_entry.c"
 PLATFORM_OPTS = Path("project/realtek_amebaD_va0_example/inc/inc_hp/platform_opts.h")
 # FW07 join credentials: read from an ignored private file into an untracked,

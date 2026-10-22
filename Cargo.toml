@@ -20,8 +20,3 @@ lto = "fat"
 codegen-units = 1
 debug = true
 panic = "abort"
-
-# The stock-image probe is checked store-by-store under emulation; the smallest
-# code keeps register saves to a single push.
-[profile.firmware.package.wellfed-probe]
-opt-level = "z"

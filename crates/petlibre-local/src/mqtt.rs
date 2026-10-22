@@ -20,6 +20,7 @@ use crate::{
     controller::{Controller, FeedInput, FeedRecord, Rejection, ResolveInput, Status},
     firmware_ota, ota_image, ota_trial, probe, protocol,
     replacement::{self, RequestError},
+    request_auth::RequestKey,
 };
 
 pub type OperationResult = std::result::Result<FeedRecord, Rejection>;
@@ -37,7 +38,7 @@ pub enum Request {
     ),
     ResolveTrial(ota_trial::ResolveInput, oneshot::Sender<TrialResult>),
     ProbeQuery(probe::Input, oneshot::Sender<ProbeResult>),
-    Replacement(replacement::Op, oneshot::Sender<ReplacementResult>),
+    Replacement(replacement::Input, oneshot::Sender<ReplacementResult>),
     /// Load (or with `None`, clear) the update the server answers `ota/get` from.
     OtaOffer(Option<firmware_ota::Offer>, oneshot::Sender<bool>),
 }
@@ -56,12 +57,14 @@ fn publish_status(
 }
 
 /// Send one allowlisted request on QoS 0 only to fresh, online firmware; never
-/// queued for a later connection.
+/// queued for a later connection. Signed when the server has a request key
+/// and the firmware's health reports a nonce.
 fn replacement_request(
     config: &Config,
     client: &AsyncClient,
-    tracker: &replacement::Tracker,
-    op: replacement::Op,
+    tracker: &mut replacement::Tracker,
+    key: Option<&RequestKey>,
+    input: replacement::Input,
 ) -> ReplacementResult {
     if config.firmware.is_none() {
         return Err(RequestError::Unconfigured);
@@ -70,8 +73,7 @@ fn replacement_request(
         return Err(RequestError::Offline);
     }
     let id = uuid::Uuid::new_v4();
-    let payload = serde_json::to_vec(&serde_json::json!({"id": id, "op": op}))
-        .map_err(|_| RequestError::Offline)?;
+    let payload = tracker.finish(input.wire(id), key)?;
     client
         .try_publish(
             config.firmware_topic("request"),
@@ -91,6 +93,11 @@ pub async fn run(
 ) -> Result<()> {
     // Survives reconnects: health ages out rather than vanishing.
     let mut tracker = replacement::Tracker::default();
+    // Validated on load; never logged or reported.
+    let key = config
+        .firmware
+        .as_ref()
+        .and_then(|firmware| firmware.request_key());
     // Owner-loaded only; never persisted, never offered unasked.
     let mut offer: Option<firmware_ota::Offer> = None;
 
@@ -135,6 +142,21 @@ pub async fn run(
                             if publish.retain { warn!("ignored retained device message"); continue; }
                             if config.firmware.is_some() && publish.topic == config.firmware_topic("health") {
                                 if !tracker.observe_health(&publish.payload,Utc::now()) { warn!("ignored invalid replacement health"); }
+                                // FW21: the firmware's wall clock comes only from here.
+                                let now = Utc::now();
+                                if tracker.time_due(now) {
+                                    let request = replacement::time_request(uuid::Uuid::new_v4(),now,config.timezone);
+                                    match tracker.finish(request,key.as_ref()) {
+                                        Ok(payload) => {
+                                            let signed = payload.contains(crate::request_auth::MAC_FIELD);
+                                            if client.try_publish(config.firmware_topic("request"),QoS::AtMostOnce,false,payload).is_ok() {
+                                                tracker.time_sent(now);
+                                                info!(signed,"replacement clock sync sent");
+                                            }
+                                        }
+                                        Err(error) => warn!(error=error.message(),"replacement clock sync not sent"),
+                                    }
+                                }
                                 publish_status(&status,&controller,&tracker);
                                 continue;
                             }
@@ -210,7 +232,7 @@ pub async fn run(
 
                         Request::Resolve(input,response) => { let _ = response.send(controller.resolve(input,Utc::now())); }
                         Request::ResolveTrial(input,response) => { let _ = response.send(controller.resolve_trial(input,Utc::now())); }
-                        Request::Replacement(op,response) => { let _ = response.send(replacement_request(&config,&client,&tracker,op)); }
+                        Request::Replacement(input,response) => { let _ = response.send(replacement_request(&config,&client,&mut tracker,key.as_ref(),input)); }
 
                         Request::OtaOffer(next,response) => {
                             if let Some(o) = &next { info!(version=o.version,bytes=o.payload.len(),"replacement update offered"); }

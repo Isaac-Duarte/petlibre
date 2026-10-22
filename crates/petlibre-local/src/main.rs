@@ -151,6 +151,15 @@ enum Action {
         output: PathBuf,
     },
 
+    /// Add a request-signing key to a stopped server's firmware role and the
+    /// firmware build's credential file; never rotates one or prints it.
+    FirmwareRequestKey {
+        #[arg(long, default_value = "private/server.json")]
+        config: PathBuf,
+        #[arg(long, default_value = "private/fw-mqtt.json")]
+        credential: PathBuf,
+    },
+
     /// Create the replacement firmware's update-signing key (FW10); never
     /// replaces one. Prints the public key the firmware build embeds.
     OtaKeygen {
@@ -350,6 +359,15 @@ async fn main() -> Result<()> {
             );
         }
 
+        Action::FirmwareRequestKey { config, credential } => {
+            config::add_request_key(&config, &credential)?;
+            println!(
+                "Added a request key to {} and {}. Rebuild the firmware and restart serve to use it.",
+                credential.display(),
+                config.display()
+            );
+        }
+
         Action::OtaKeygen { output } => {
             let public = firmware_ota::keygen(&output)?;
             println!("Wrote {}; public key {public}", output.display());
@@ -413,6 +431,19 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Resolves on SIGTERM; never elsewhere.
+async fn terminated() -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?
+            .recv()
+            .await;
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    std::future::pending().await
 }
 
 async fn serve(path: PathBuf, enable_ota_trial: bool) -> Result<()> {
@@ -483,6 +514,9 @@ async fn serve(path: PathBuf, enable_ota_trial: bool) -> Result<()> {
         result = &mut http => {http_finished=true; Err(anyhow::anyhow!("HTTP server exited unexpectedly: {result:?}"))},
         result = child.wait() => Err(anyhow::anyhow!("broker exited unexpectedly: {result:?}")),
         result = tokio::signal::ctrl_c() => result.context("shutdown signal failed"),
+        // A SIGTERM (kill, timeout) must also stop the broker child; ending
+        // without this cleanup orphaned it (observed).
+        result = terminated() => result.context("shutdown signal failed"),
     };
 
     let _ = shutdown.send(true);

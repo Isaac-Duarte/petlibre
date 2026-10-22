@@ -11,11 +11,14 @@ image, bench state, next task, or acceptance evidence changes.
 - **Finding (static, stock):** the "buzzer" is a real speaker. Stock decodes AAC into the codec's line output by SPORT/GDMA and holds PB23 HIGH while it plays.
 - **Built:** a codec shim (16 kHz mono, 8-page DMA ring) and Rust tunes (`wellfed-core/src/tone.rs`). There is a speaker task (`wellfed-amebad/src/audio.rs`) with a startup chime, and a signed `play` request. Design and evidence: [audio](docs/firmware/audio.md).
 - **Heard on the unit:** the chime, `coin`, `twinkle` and `meal`. A second request during playback gets `busy`, and `sound` off gives `muted`. Volume is now on a decibel scale, after the linear one made 40 and 80 sound alike.
+- **Speaker variant (the owner's first "alternate build"):** `build.py --speaker` adds a signed TCP audio stream (port 7700). `wellfed-local speak FILE` decodes any format with ffmpeg and plays it ([audio](docs/firmware/audio.md#speaker-variant-network-audio)).
+- **Stock clips:** the 11 voice clips from the stock FAT (`0x4B0000`) are extracted for the owner only, in ignored `private/stock-audio-clips/`.
 - **Flash now:**
-  - **Bank 1:** `fw24-audio-ota-20261022-02` (`5c05c358…`, OTA v21, confirmed).
+  - **Bank 1:** `fw24-speaker-ota-20261022-01` (`c286fbac…`, OTA v22, speaker variant, confirmed). Install a normal build to leave it.
   - **Bank 0:** unchanged (`36c9a086…`).
   - **NOR settings:** generation 2985 (lights 1, sound 1, volume 40).
-  - **Next manifest version:** 22.
+  - **Next manifest version:** 23.
+- **Paused:** the watchdog clock spread. Both the FW05 and FW06 builds run the SDK's KM0 app start, which calibrates OSC131K on every cold boot. The SDK documents the watchdog clock as SDM 32k, so the calibration difference does not explain the spread.
 
 **October 22, afternoon: post-FW10 re-verification and FW11/FW12/FW21 bring-up (autonomous, physical through the relay bench and over the air).**
 - **Re-verified after the crate split and the Python→Rust ports.**

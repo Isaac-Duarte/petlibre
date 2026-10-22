@@ -618,24 +618,7 @@ impl Updater {
             Status::Range => return Some(self.fail("range")),
         }
         if answer.part == Part::Manifest {
-            if self.writer.is_some() {
-                return None; // Already pinned; only the first manifest counts.
-            }
-            let key = self.key?;
-            let Ok(manifest) = ota::parse_manifest(answer.bytes, &key, 0) else {
-                return Some(self.fail("manifest"));
-            };
-            self.writer = Writer::new(manifest, ota::MAX_CHUNK as usize);
-            if self.writer.is_none() || !self.ask_next(now) {
-                return Some(self.drop_link("send"));
-            }
-            return Some(next(
-                POLL_MS,
-                Some(Record::Manifest {
-                    version: manifest.version,
-                    bytes: manifest.image_len,
-                }),
-            ));
+            return Some(self.pin_manifest(now, answer.bytes));
         }
         let writer = self.writer.as_mut()?;
         let written = match writer.accept(answer.offset, answer.bytes) {
@@ -672,6 +655,34 @@ impl Updater {
             };
             next(POLL_MS, Some(record))
         })
+    }
+
+    /// Verify the first manifest and pin a writer for it. Kept out of line:
+    /// the signature check and the writer's sector buffer need about 12 KiB
+    /// of stack, which must not stack on the chunk path (observed: a
+    /// HardFault at 10 KiB on hardware).
+    #[inline(never)]
+    fn pin_manifest(&mut self, now: u32, bytes: &[u8]) -> Step {
+        if self.writer.is_some() {
+            return next(POLL_MS, None); // Already pinned; only the first manifest counts.
+        }
+        let Some(key) = self.key else {
+            return self.fail("key");
+        };
+        let Ok(manifest) = ota::parse_manifest(bytes, &key, 0) else {
+            return self.fail("manifest");
+        };
+        self.writer = Writer::new(manifest, ota::MAX_CHUNK as usize);
+        if self.writer.is_none() || !self.ask_next(now) {
+            return self.drop_link("send");
+        }
+        next(
+            POLL_MS,
+            Some(Record::Manifest {
+                version: manifest.version,
+                bytes: manifest.image_len,
+            }),
+        )
     }
 
     /// Program the withheld marker last and read it back: bank 1 is valid.

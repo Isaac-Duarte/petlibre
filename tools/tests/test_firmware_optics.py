@@ -21,8 +21,8 @@ S = M.STARTUP
 LIT = {'off': (0, 0, 0), 'a': (1, 0, 0), 'b': (0, 1, 0), 'both': (1, 1, 0)}
 
 
-def window(n, start, states=('unknown', 'unknown'), lit=None, edges=(), **over):
-    emitters, length = M.plan(n)
+def window(n, start, states=('unknown', 'unknown'), lit=None, edges=(), policy='fw13-optics-v1', **over):
+    emitters, length = M.plan(n, policy)
     on = lit or LIT[emitters]
     samples = length // 2
     w = dict(n=n, emitters=emitters, start=start, len=length + 4, samples=samples, gap=3, edges=len(edges),
@@ -41,14 +41,15 @@ def window(n, start, states=('unknown', 'unknown'), lit=None, edges=(), **over):
 
 
 def run(states=None, lit=None, edits=None, stall=b'PLOPT1 stall cut=305 fault=7 off=1 stopped=1 closed=1\r\n',
-        done=b'PLOPT1 done windows=37\r\n', count=M.WINDOWS):
+        done=b'PLOPT1 done windows=37\r\n', count=None, policy='fw13-optics-v1'):
     """(seconds, line) records after the LED probe."""
+    count = M.window_count(policy) if count is None else count
     out = [(0.1, b'PLOPT1 open board=1 ready=1 attached=1 events=1 inputs=1 ms=12\r\n')]
     start = 0
     for n in range(count):
         kw = dict((edits or {}).get(n, {}))
         line, start = window(n, start, states=(states or {}).get(n, ('unknown', 'unknown')),
-                             lit=(lit or {}).get(n), **kw)
+                             lit=(lit or {}).get(n), policy=policy, **kw)
         out.append((0.2 + start / 1000, line))
     if stall:
         out.append((0.5 + start / 1000, stall))
@@ -59,7 +60,7 @@ def run(states=None, lit=None, edits=None, stall=b'PLOPT1 stall cut=305 fault=7 
 
 def both_states():
     """Operator blocking seen through the filter in both windows."""
-    both = [n for n in range(M.WINDOWS) if M.plan(n)[0] == 'both']
+    both = [n for n in range(M.window_count()) if M.plan(n)[0] == 'both']
     return {both[0]: ('empty', 'clear'), both[1]: ('present', 'clear'), both[2]: ('empty', 'blocked')}
 
 
@@ -103,7 +104,7 @@ class FirmwareOptics(unittest.TestCase):
         return M.verify(self.p, self.p / 'manifest.json', self.p / 'image.bin', stage)
 
     def test_plan_matches_the_firmware(self):
-        self.assertEqual(M.WINDOWS, 37)
+        self.assertEqual((M.window_count(), M.window_count('fw13-optics-v2')), (37, 19))
         self.assertEqual([M.plan(n)[0] for n in range(8)], ['off', 'a', 'off', 'b', 'off', 'both', 'off', 'a'])
 
     def test_stage_b_reports_pairing_settling_and_the_stall(self):
@@ -167,6 +168,25 @@ class FirmwareOptics(unittest.TestCase):
         # Shifted window starts break contiguity.
         lines = [(t, d.replace(b'n=6 emitters=off start=', b'n=6 emitters=off start=1')) for t, d in run()]
         self.assertEqual(self.audit(lines, 'b')['outcome'], 'optics_sequence')
+
+    def test_plan_2_uses_five_second_windows_and_announces_itself(self):
+        self.manifest['startup_optics_policy'] = 'fw13-optics-v2'
+        self.image(self.base + b' ' + S.WIFI_DNS_MARK + b' ' + S.TRANSPORT_MARK + b' ' + S.OPTICS_MARK + b'1' + S.OPTICS_PLAN2_MARK)
+        v2 = run(policy='fw13-optics-v2', done=b'PLOPT1 done windows=19\r\n')
+        start = b'PLOPT1 start created=1 plan=2\r\n'
+        report = self.audit(v2, 'b', start=start)
+        self.assertEqual((report['outcome'], report['optics_windows'], report['policy']), ('pass', 19, 'fw13-optics-v2'))
+        self.assertEqual(report['optics_first_change_ms']['a:food']['count'], 3)
+        # The start record must announce the plan the manifest names.
+        self.assertEqual(self.audit(v2, 'b')['outcome'], 'optics_sequence')
+        # Plan 1 records against a plan 2 manifest fail on window lengths.
+        self.assertEqual(self.audit(run(done=b'PLOPT1 done windows=19\r\n', count=19), 'b', start=start)['outcome'],
+                         'optics_window')
+        # The manifest's plan must match the image's start record.
+        self.manifest['startup_optics_policy'] = 'fw13-optics-v1'
+        (self.p / 'manifest.json').write_text(json.dumps(self.manifest))
+        with self.assertRaisesRegex(ValueError, 'Optics plan/artifact mismatch'):
+            self.audit(v2, 'b', start=start)
 
     def test_policy_binding_both_ways(self):
         self.manifest['startup_optics_policy'] = None

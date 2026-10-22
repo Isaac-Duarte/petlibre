@@ -5,9 +5,11 @@ A passing capture is one startup whose LED probe completes, then
 `PLOPT1 start created=1` and the probe's records in their fixed formats:
   - `open` with board, ready (fresh flash authority bound to the KM0 peer),
     attached, events and inputs all 1;
-  - every planned window in order: a 2 s baseline with both emitters off,
-    then six cycles of PA15 alone (2 s), PB3 alone (2 s) and both (4 s), each
-    followed by 4 s off. Each window starts where the last ended, lasts at
+  - every planned window in order. Plan 1 (`fw13-optics-v1`): a 2 s baseline
+    with both emitters off, then six cycles of PA15 alone (2 s), PB3 alone
+    (2 s) and both (4 s), each followed by 4 s off. Plan 2 (`fw13-optics-v2`,
+    announced as `plan=2` in the start record): every window 5 s, three
+    cycles. Each window starts where the last ended, lasts at
     least its plan and at most 150 ms more, keeps every poll gap at or below
     the sensor filter's 100 ms observation limit, reads motor STOP and exactly
     the selected emitters on every sample (`stopped=1`), and has its
@@ -34,12 +36,12 @@ SPEC = importlib.util.spec_from_file_location('firmware_startup', ROOT / 'tools/
 STARTUP = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(STARTUP)
 EVIDENCE = STARTUP.EVIDENCE
-POLICY = 'fw13-optics-v1'
+POLICIES = ('fw13-optics-v1', 'fw13-optics-v2')
 DEC = rb'(\d{1,10})'
 T = rb'(\d{1,10}|-)'
 INPUTS = ('food', 'outlet', 'feedback')
 RECORDS = {
-    'start': rb'PLOPT1 start created=([01])\r\n',
+    'start': rb'PLOPT1 start created=([01])( plan=2)?\r\n',
     'open': rb'PLOPT1 open board=([01]) ready=([01]) attached=([01]) events=([01]) inputs=([01]) ms=' + DEC + rb'\r\n',
     'timeout': rb'PLOPT1 timeout ms=' + DEC + rb'\r\n',
     'window': (rb'PLOPT1 window n=' + DEC + rb' emitters=(off|a|b|both) start=' + DEC + rb' len=' + DEC
@@ -54,20 +56,27 @@ RECORDS = {
     'error': rb'PLOPT1 error kind=(supervisor|clock|capture|observe|optics) n=' + DEC + rb' fault=' + DEC + rb'\r\n',
 }
 ANY = re.compile(b'|'.join(b'(?P<%s>%s)' % (k.encode(), v) for k, v in RECORDS.items()))
-BASELINE_MS, OFF_MS, CYCLES = 2000, 4000, 6
-CYCLE = (('a', 2000), ('b', 2000), ('both', 4000))
-WINDOWS = 1 + CYCLES * 2 * len(CYCLE)
+PLANS = {
+    'fw13-optics-v1': {'baseline': 2000, 'off': 4000, 'cycles': 6, 'cycle': (('a', 2000), ('b', 2000), ('both', 4000))},
+    'fw13-optics-v2': {'baseline': 5000, 'off': 5000, 'cycles': 3, 'cycle': (('a', 5000), ('b', 5000), ('both', 5000))},
+}
 EDGE_CAP, LATE_MS, MAX_GAP_MS = 16, 150, 100
 LEASE_MS, CUT_MAX_MS, OWNER_FAULT = 300, 340, 7
 LIMIT = ('UART evidence of GPIO logic levels polled about every 2 ms: settling and pulse lengths carry that '
          'resolution, and receiver levels do not establish beam geometry, emitter current or thermal limits.')
 
 
-def plan(n):
+def window_count(policy='fw13-optics-v1'):
+    p = PLANS[policy]
+    return 1 + p['cycles'] * 2 * len(p['cycle'])
+
+
+def plan(n, policy='fw13-optics-v1'):
+    p = PLANS[policy]
     if n == 0:
-        return 'off', BASELINE_MS
-    i = (n - 1) % (2 * len(CYCLE))
-    return ('off', OFF_MS) if i % 2 else CYCLE[i // 2]
+        return 'off', p['baseline']
+    i = (n - 1) % (2 * len(p['cycle']))
+    return ('off', p['off']) if i % 2 else p['cycle'][i // 2]
 
 
 def records(rx):
@@ -91,14 +100,17 @@ def parse_inputs(f):
             'low_min': [time(v) for v in f[9:12]]}
 
 
-def check(rx, found, stage, result):
+def check(rx, found, stage, result, policy='fw13-optics-v1'):
     if not found or found[0][0] != 'start' or any(kind == 'start' for kind, _, _ in found[1:]):
         return 'optics_sequence'
     led_done = rx.find(b'PLLED1 done low=all\r\n')
     if led_done < 0 or found[0][2] < led_done:
         return 'optics_sequence'
-    if found[0][1] != (b'1',):
+    if found[0][1][0] != b'1':
         return 'optics_start'
+    if (found[0][1][1] is not None) != (policy == 'fw13-optics-v2'):
+        return 'optics_sequence'
+    WINDOWS = window_count(policy)
     rest = found[1:]
     if any(kind == 'error' for kind, _, _ in rest):
         kind, fields, _ = next(r for r in rest if r[0] == 'error')
@@ -144,7 +156,7 @@ def check(rx, found, stage, result):
         return 'optics_incomplete'
     previous_end = None
     for w in windows:
-        emitters, length = plan(w['n'])
+        emitters, length = plan(w['n'], policy)
         i = inputs.get(w['n'])
         if w['emitters'] != emitters or i is None:
             return 'optics_sequence'
@@ -207,7 +219,8 @@ def check(rx, found, stage, result):
 def verify(capture, manifest_path, image_path, stage):
     require = EVIDENCE.require
     manifest, identity, image, metadata, rx, tx, events = STARTUP.load(capture, manifest_path, image_path)
-    require(manifest.get('startup_optics_policy') == POLICY, 'Optics policy required')
+    policy = manifest.get('startup_optics_policy')
+    require(policy in POLICIES, 'Optics policy required')
     require(stage in ('b', 'c'), 'Stage b or c required')
     chunks = [(e['offset'], e['offset'] + e['bytes'], e['utc']) for e in events if e['direction'] == 'rx']
 
@@ -224,8 +237,8 @@ def verify(capture, manifest_path, image_path, stage):
     elif not intact:
         result['outcome'] = 'optics_sequence'
     else:
-        result['outcome'] = check(rx, found, stage, result)
-    return {**result, 'policy': POLICY, 'build_id': identity, 'ota_sha256': STARTUP.digest(image),
+        result['outcome'] = check(rx, found, stage, result, policy)
+    return {**result, 'policy': policy, 'build_id': identity, 'ota_sha256': STARTUP.digest(image),
             'rx_sha256': STARTUP.digest(rx), 'tx_bytes': len(tx), 'limit': LIMIT}
 
 

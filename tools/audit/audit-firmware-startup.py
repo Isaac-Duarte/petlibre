@@ -48,6 +48,7 @@ WIFI_JOIN_MARK = b'PLWIF2 start created='  # FW07 join and reconnect events foll
 WIFI_DNS_MARK = b'PLWIF3 start created='  # FW07 join, DNS and reconnect events follow the LED probe
 TRANSPORT_MARK = b'PLMQT1 start created='  # FW08 health transport records follow the LED probe
 OPTICS_MARK = b'PLOPT1 start created='  # FW13 emitter windows and input records follow the LED probe
+OPTICS_PLAN2_MARK = b' plan=2\r\n'  # fw13-optics-v2: 5 s windows
 WRITE = {'start': re.compile(rb'PLWRS1 start marker=([0-9a-f]{8}) watchdog=(pass|fail) installed=([01])\r\n'),
          'preimage': re.compile(rb'PLWRS1 preimage id=([0-9a-f]{6}) blank=' + DEC + rb'\r\n'),
          'cycle': re.compile(rb'PLWRS1 cycle n=' + DEC + rb' erase_ticks=' + DEC + rb' blank=' + DEC + rb' program_max=' + DEC
@@ -512,8 +513,10 @@ def startup(rx, manifest, image, identity, arrival=None, end=None):
     require(bool(transport_policy) == (TRANSPORT_MARK in image), 'Transport policy/artifact mismatch')
     require(not transport_policy or wifi_policy == 'fw07-dns-v1', 'Transport requires the FW07 DNS policy')
     optics_policy = manifest.get('startup_optics_policy')
-    require(optics_policy in (None, 'fw13-optics-v1'), 'Unknown optics policy')
+    require(optics_policy in (None, 'fw13-optics-v1', 'fw13-optics-v2'), 'Unknown optics policy')
     require(bool(optics_policy) == (OPTICS_MARK in image), 'Optics policy/artifact mismatch')
+    require((optics_policy == 'fw13-optics-v2') == (OPTICS_MARK + b'1' + OPTICS_PLAN2_MARK in image),
+            'Optics plan/artifact mismatch')
     require(not optics_policy or led_policy, 'Optics probe requires the LED probe policy')
     adc_policy = manifest.get('startup_adc_policy')
     require(adc_policy in (None, 'fw14-adc-v1', 'fw14-adc-v2'), 'Unknown ADC policy')

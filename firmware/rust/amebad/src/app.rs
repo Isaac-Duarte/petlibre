@@ -57,10 +57,11 @@ unsafe extern "C" fn optics_task(_: *mut c_void) -> u32 {
 fn start_optics() {
     let created = sdk::task_create(c"wellfed-optics", 1024, 3, optics_task, ptr::null_mut());
     sdk::log(if created {
-        c"PLOPT1 start created=1\r\n"
+        c"PLOPT1 start created=1 plan=2\r\n"
     } else {
-        c"PLOPT1 start created=0\r\n"
+        c"PLOPT1 start created=0 plan=2\r\n"
     });
+    const _: () = assert!(optics::PLAN == 2);
 }
 
 /// A transport record as the body of a `PLMQT1` line.

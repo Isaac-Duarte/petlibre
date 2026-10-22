@@ -8,8 +8,10 @@
 //! the timer interrupt turns the emitters off if the probe stops renewing
 //! its owner lease (one `observe` per sample).
 //!
-//! Sequence: a baseline window with both emitters off, then `CYCLES` cycles
-//! of PA15 alone, PB3 alone and both, each followed by an off window. Every
+//! Sequence (plan 2): a baseline window with both emitters off, then
+//! `CYCLES` cycles of PA15 alone, PB3 alone and both, each followed by an
+//! off window, every window 5 s so an operator can read a meter in each.
+//! Plan 1 (2/2/4 s windows, 4 s off, six cycles) ran the FW13 acceptance. Every
 //! `POLL_MS` the probe reads PA16..PA19 in one port access and records, per
 //! window, high counts, the time to each input's first change (settling),
 //! the shortest complete LOW run (pulse capture) and up to `EDGE_CAP` edges.
@@ -73,15 +75,17 @@ pub const FEED: FeedLimits = FeedLimits {
     max_portions: 1,
     max_reverse_attempts: 0,
 };
-pub const BASELINE_MS: u32 = 2000;
+pub const BASELINE_MS: u32 = 5000;
 /// One cycle's emitter windows, each followed by `OFF_MS` with both off.
 pub const CYCLE: [(Emitters, u32); 3] = [
-    (Emitters::A, 2000),
-    (Emitters::B, 2000),
-    (Emitters::Both, 4000),
+    (Emitters::A, 5000),
+    (Emitters::B, 5000),
+    (Emitters::Both, 5000),
 ];
-pub const OFF_MS: u32 = 4000;
-pub const CYCLES: u32 = 6;
+pub const OFF_MS: u32 = 5000;
+pub const CYCLES: u32 = 3;
+/// Announced in the start record and bound to the startup policy.
+pub const PLAN: u32 = 2;
 pub const WINDOWS: u32 = 1 + CYCLES * 2 * CYCLE.len() as u32;
 /// Budget over a window's length; the probe turns the emitters off first.
 pub const BUDGET_MARGIN_MS: u32 = 500;

@@ -23,7 +23,7 @@ Records (`PLOPT1`, policy `fw13-optics-v1`, bound both ways to `PLOPT1 start cre
 - `stall cut= fault= off= stopped= closed=`, then `done windows=`
 - `timeout ms=` or `error kind=supervisor|clock|capture|observe|optics n= fault=` end the probe with emitters off
 
-A window's records are logged at least 300 ms into the next window, so logging never delays settling samples. `tools/audit-firmware-optics.py --stage b|c` checks them. It requires the sequence and timing above, every gap within the filter's 100 ms limit, `stopped=1` throughout, a cut 300–340 ms after the last renewal with the OWNER fault, and the supervisor closed. Stage b (unattended) also requires the same inputs lit by each selection in every cycle. Stage c requires the operator's blocking seen through the filter: food both present and empty, and the outlet both clear and blocked.
+A window's records are logged at least 300 ms into the next window, so logging never delays settling samples. `tools/audit/audit-firmware-optics.py --stage b|c` checks them. It requires the sequence and timing above, every gap within the filter's 100 ms limit, `stopped=1` throughout, a cut 300–340 ms after the last renewal with the OWNER fault, and the supervisor closed. Stage b (unattended) also requires the same inputs lit by each selection in every cycle. Stage c requires the operator's blocking seen through the filter: food both present and empty, and the outlet both clear and blocked.
 
 ## PB3 is SWD_CLK
 

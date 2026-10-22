@@ -5,7 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-SPEC = importlib.util.spec_from_file_location('firmware_startup', Path(__file__).resolve().parents[1] / 'audit-firmware-startup.py')
+SPEC = importlib.util.spec_from_file_location('firmware_startup', Path(__file__).resolve().parents[1] / 'audit/audit-firmware-startup.py')
 M = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(M)
 ID = 'a' * 64

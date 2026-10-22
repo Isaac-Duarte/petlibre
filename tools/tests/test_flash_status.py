@@ -14,8 +14,8 @@ def module(name, filename):
     return result
 
 
-TOOL = module("flash_status", "flash-status.py")
-SIM = module("status_peer", "emulate-recovery-session.py")
+TOOL = module("flash_status", "flash/flash-status.py")
+SIM = module("status_peer", "emulate/emulate-recovery-session.py")
 
 
 class FlashStatusTests(unittest.TestCase):

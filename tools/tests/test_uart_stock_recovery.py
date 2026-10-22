@@ -21,9 +21,9 @@ def module(name, filename):
     return result
 
 
-TOOL = module("stock_serial_recovery", "uart-stock-recovery.py")
-SIM = module("stock_serial_peer", "emulate-recovery-session.py")
-WIRE = module("stock_bank_wire", "stock-bank-wire-policy.py")
+TOOL = module("stock_serial_recovery", "flash/uart-stock-recovery.py")
+SIM = module("stock_serial_peer", "emulate/emulate-recovery-session.py")
+WIRE = module("stock_bank_wire", "flash/stock-bank-wire-policy.py")
 BASELINE = ROOT / "private/fixtures/baseline.bin"
 
 
@@ -64,7 +64,7 @@ class StockSerialRecoveryTests(unittest.TestCase):
 
     def test_invalid_plan_cli_cannot_open_serial_or_create_output(self):
         expected = self.reviewed()
-        argv = ["uart-stock-recovery.py", "execute", "--baseline", "unused", "--current", "unused",
+        argv = ["flash/uart-stock-recovery.py", "execute", "--baseline", "unused", "--current", "unused",
                 "--rom-report", "unused", "--small-report", "unused", "--output", "unused",
                 "--port", "/fixture", "--plan", "unused", "--expected-plan-sha256", "0" * 64]
         with patch.object(sys, "argv", argv), patch.object(TOOL.os, "umask"), \
@@ -341,7 +341,7 @@ class StockSerialRecoveryTests(unittest.TestCase):
         expected = self.reviewed(self.baseline, bank_test=True)
         raw = TOOL.canonical(expected)
         for mode in ("execute", "activation-test", "bank-writeback-test"):
-            argv = ["uart-stock-recovery.py", mode, "--baseline", "unused", "--current", "unused",
+            argv = ["flash/uart-stock-recovery.py", mode, "--baseline", "unused", "--current", "unused",
                     "--rom-report", "unused", "--small-report", "unused", "--output", "unused",
                     "--port", "/fixture", "--plan", "unused", "--expected-plan-sha256", TOOL.digest(raw)]
             with self.subTest(mode=mode), patch.object(sys, "argv", argv), patch.object(TOOL.os, "umask"), \

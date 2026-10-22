@@ -9,7 +9,7 @@ import unittest
 from support import evidence
 
 ROOT = Path(__file__).resolve().parents[2]
-SPEC = importlib.util.spec_from_file_location("flash_backup", ROOT / "tools/audit-flash-backup.py")
+SPEC = importlib.util.spec_from_file_location("flash_backup", ROOT / "tools/audit/audit-flash-backup.py")
 BACKUP = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(BACKUP)
 CAPACITY = 8 * 1024 * 1024  # Test fixture only, never a hardware-capacity assertion.

@@ -6,7 +6,7 @@ from support import evidence
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
-SPEC = importlib.util.spec_from_file_location("recovery_program", ROOT / "tools/audit-recovery-program.py")
+SPEC = importlib.util.spec_from_file_location("recovery_program", ROOT / "tools/audit/audit-recovery-program.py")
 TOOL = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(TOOL)
 
@@ -25,7 +25,7 @@ class RecoveryProgramTests(unittest.TestCase):
             TOOL.execute(b"wrong")
 
     def test_unreviewed_status_write_cannot_pass_execution(self):
-        spec = importlib.util.spec_from_file_location("probe_patch", ROOT / "tools/prepare-c-probe.py")
+        spec = importlib.util.spec_from_file_location("probe_patch", ROOT / "tools/emulate/prepare-c-probe.py")
         builder = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(builder)
         helper = bytearray(TOOL.HELPER.read_bytes())

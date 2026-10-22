@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
-SPEC = importlib.util.spec_from_file_location("receipt", ROOT / "tools/inspect-recovery-transaction.py")
+SPEC = importlib.util.spec_from_file_location("receipt", ROOT / "tools/flash/inspect-recovery-transaction.py")
 TOOL = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(TOOL)
 
@@ -43,7 +43,7 @@ class RecoveryReceiptTests(unittest.TestCase):
 
     def cli(self, directory):
         output = io.StringIO()
-        with patch.object(sys, "argv", ["inspect-recovery-transaction.py", str(directory)]), \
+        with patch.object(sys, "argv", ["flash/inspect-recovery-transaction.py", str(directory)]), \
                 patch("sys.stdout", output):
             code = TOOL.main()
         return json.loads(output.getvalue()), code

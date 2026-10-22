@@ -1,10 +1,10 @@
 //! Non-actuating stock-image experiment: no SDK, globals, MMIO or flash writes.
 //!
-//! `tools/prepare-c-probe.py` links this archive with `firmware/probe/probe.ld`
+//! `tools/emulate/prepare-c-probe.py` links this archive with `firmware/probe/probe.ld`
 //! at the reviewed padding slot and patches GET_CONFIG's `softwareVersion` add
 //! call to `probe_add_version`, which adds a `localReProbe` proof field.
 //! Host builds are empty: the stock cJSON routines exist only in the image,
-//! and behavior is verified by `tools/emulate-c-probe.py` on real ARM code.
+//! and behavior is verified by `tools/emulate/emulate-c-probe.py` on real ARM code.
 #![cfg_attr(target_os = "none", no_std)]
 
 #[cfg(target_os = "none")]

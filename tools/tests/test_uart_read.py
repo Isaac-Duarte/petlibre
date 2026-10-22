@@ -14,7 +14,7 @@ HELPER = ROOT / "private/upstream/ameba-rtos-d/tools/AmebaD/Image_Tool/imgtool_f
 class ReadHelperTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        spec = importlib.util.spec_from_file_location("uart_read", ROOT / "tools/emulate-uart-read.py")
+        spec = importlib.util.spec_from_file_location("uart_read", ROOT / "tools/emulate/emulate-uart-read.py")
         cls.model = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(cls.model)
         cls.helper = HELPER.read_bytes()

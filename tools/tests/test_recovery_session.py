@@ -5,7 +5,7 @@ import unittest
 from support import evidence
 
 ROOT = Path(__file__).resolve().parents[2]
-SPEC = importlib.util.spec_from_file_location("recovery_session", ROOT / "tools/emulate-recovery-session.py")
+SPEC = importlib.util.spec_from_file_location("recovery_session", ROOT / "tools/emulate/emulate-recovery-session.py")
 TOOL = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(TOOL)
 

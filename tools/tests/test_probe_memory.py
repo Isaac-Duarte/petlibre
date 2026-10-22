@@ -15,7 +15,7 @@ ROM = ROOT / "private/firmware/plaf103-sdk-rom-inputs/km4-rom-text.bin"
 class MemoryAssumptionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        spec = importlib.util.spec_from_file_location("probe_memory", ROOT / "tools/audit-probe-memory.py")
+        spec = importlib.util.spec_from_file_location("probe_memory", ROOT / "tools/audit/audit-probe-memory.py")
         cls.memory = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(cls.memory)
         cls.stock = STOCK.read_bytes()

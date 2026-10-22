@@ -13,6 +13,8 @@ cargo build --locked
 make check PYTHON=.venv/bin/python
 ```
 
+The Python scripts are grouped into `tools/bench`, `tools/flash`, `tools/audit` and `tools/emulate`; the [tools index](../../tools/README.md) lists what each does and which ones open a serial port.
+
 Rustup/Cargo and pip download dependencies on initial setup. Check targets do not install packages, fetch SDKs, contact a device, change firewall rules, or start persistent services. Network tests bind loopback sockets with synthetic identities. Environments that prohibit local sockets need permission to run those tests; skipping them is not a passing result.
 
 ## Check targets
@@ -40,7 +42,7 @@ make -C firmware test
 make check-virtual-feeder PYTHON=.venv/bin/python
 ```
 
-The simulator connects the real Rust owner/controller/ports to fake SDK inputs and NOR storage. It covers command IDs, sensor faults, blocked outlet, missing feedback, watchdog stalls, and interrupted journal writes. It does not model all electrical behavior. Example scenarios are in [tools/scenarios/virtual-feeder](../../tools/scenarios/virtual-feeder).
+The simulator connects the real Rust owner/controller/ports to fake SDK inputs and NOR storage. It covers command IDs, sensor faults, blocked outlet, missing feedback, watchdog stalls, and interrupted journal writes. It does not model all electrical behavior. Example scenarios are in [tools/emulate/scenarios/virtual-feeder](../../tools/emulate/scenarios/virtual-feeder).
 
 The repository is self-contained: SDK/toolchain copies and fixtures resolve locally. Original research documents/tools/history are retained in ignored `private/research-archive/`; see [provenance](provenance.md). Historical evidence paths are records, not instructions to access another checkout.
 

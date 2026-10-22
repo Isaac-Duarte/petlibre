@@ -9,7 +9,7 @@ import unittest
 from support import evidence
 
 ROOT = Path(__file__).resolve().parents[2]
-spec = importlib.util.spec_from_file_location("ota_layout", ROOT / "tools/audit-ota-layout.py")
+spec = importlib.util.spec_from_file_location("ota_layout", ROOT / "tools/audit/audit-ota-layout.py")
 ota = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ota)
 STOCK = ROOT / "private/firmware/PLAF103_OTA_010115.bin"

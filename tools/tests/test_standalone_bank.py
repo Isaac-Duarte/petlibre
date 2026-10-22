@@ -21,10 +21,10 @@ def module(name, filename):
     return result
 
 
-TOOL = module("standalone_cli_test", "uart-standalone.py")
+TOOL = module("standalone_cli_test", "flash/uart-standalone.py")
 BANK = TOOL.BANK
-SIM = module("standalone_helper_test", "emulate-recovery-session.py")
-WIRE = module("standalone_wire_test", "standalone-wire-policy.py")
+SIM = module("standalone_helper_test", "emulate/emulate-recovery-session.py")
+WIRE = module("standalone_wire_test", "flash/standalone-wire-policy.py")
 BASELINE = ROOT / "private/fixtures/baseline.bin"
 CANDIDATE = ROOT / "private/fixtures/diagnostic-ota.bin"
 CURRENT = ROOT / "private/fixtures/current-read/flash-read.bin"
@@ -302,7 +302,7 @@ class StandaloneBankTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "SHA256"):
             TOOL.validate_reviewed(raw, "0" * 64, expected)
         wrong = self.reviewed(self.custom, "restore")
-        argv = ["uart-standalone.py", "install", "--baseline", "unused", "--current", "unused",
+        argv = ["flash/uart-standalone.py", "install", "--baseline", "unused", "--current", "unused",
                 "--candidate", "unused", "--rom-report", "unused", "--small-report", "unused",
                 "--output", "unused", "--port", "/fixture", "--plan", "unused",
                 "--expected-plan-sha256", TOOL.digest(TOOL.canonical(wrong))]

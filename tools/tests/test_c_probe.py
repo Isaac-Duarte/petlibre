@@ -7,7 +7,7 @@ import unittest
 from support import evidence
 
 ROOT = Path(__file__).resolve().parents[2]
-SPEC = importlib.util.spec_from_file_location("c_probe_patch", ROOT / "tools/prepare-c-probe.py")
+SPEC = importlib.util.spec_from_file_location("c_probe_patch", ROOT / "tools/emulate/prepare-c-probe.py")
 PATCH = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(PATCH)
 DIRECTORY = ROOT / "private/firmware/experiments/rust-probe-1.1.17"
@@ -64,7 +64,7 @@ class ExecutionTests(Fixtures, unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        spec = importlib.util.spec_from_file_location("c_probe_emulator", ROOT / "tools/emulate-c-probe.py")
+        spec = importlib.util.spec_from_file_location("c_probe_emulator", ROOT / "tools/emulate/emulate-c-probe.py")
         cls.emulator = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(cls.emulator)
 

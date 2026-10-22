@@ -93,26 +93,30 @@ def main():
                     errors.append(f"{relative}: missing/nonlocal link {target}")
     # Curated Python entrypoints load siblings dynamically; catch missing imports
     # before an optional fixture test can mask them through an unavailable input.
-    for directory in (ROOT / "tools", ROOT / "firmware/tools"):
-        for path in directory.glob("*.py"):
-            for node in ast.walk(ast.parse(path.read_text())):
-                if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
-                    continue
-                value = node.value
-                if not re.fullmatch(r"(?:[A-Za-z0-9_-]+/)*[A-Za-z0-9_-]+\.py", value):
-                    continue
-                if value.startswith("tools/"):
-                    dest = ROOT / value
-                    if not dest.exists() and directory == ROOT / "firmware/tools":
-                        dest = ROOT / "firmware" / value
-                elif "/" not in value:
-                    dest = directory / value
-                    if not dest.exists():
-                        dest = ROOT / "tools" / value
-                else:
-                    continue
-                if not dest.is_file():
-                    errors.append(f"{path.relative_to(ROOT)}: missing tool dependency {value}")
+    scripts = [p for p in (ROOT / "tools").rglob("*.py") if "tests" not in p.parts and "__pycache__" not in p.parts]
+    scripts += list((ROOT / "firmware/tools").glob("*.py"))
+    for path in scripts:
+        directory = path.parent
+        for node in ast.walk(ast.parse(path.read_text())):
+            if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+                continue
+            value = node.value
+            if not re.fullmatch(r"(?:[A-Za-z0-9_-]+/)*[A-Za-z0-9_-]+\.py", value):
+                continue
+            if value.startswith("tools/"):
+                dest = ROOT / value
+                if not dest.exists() and directory == ROOT / "firmware/tools":
+                    dest = ROOT / "firmware" / value
+            elif "/" not in value:
+                dest = directory / value
+                if not dest.exists():
+                    dest = ROOT / "tools" / value
+            elif (ROOT / "tools" / value.split("/")[0]).is_dir():
+                dest = ROOT / "tools" / value  # A category-qualified sibling, e.g. "flash/uart-flash-read.py".
+            else:
+                continue
+            if not dest.is_file():
+                errors.append(f"{path.relative_to(ROOT)}: missing tool dependency {value}")
     transport_isolation(errors)
     if errors:
         print("\n".join(errors), file=sys.stderr)

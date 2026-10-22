@@ -19,8 +19,8 @@ def module(name, filename):
     return result
 
 
-TOOL = module("recovery_transaction", "recovery-transaction.py")
-SIM = module("recovery_transaction_peer", "emulate-recovery-session.py")
+TOOL = module("recovery_transaction", "flash/recovery-transaction.py")
+SIM = module("recovery_transaction_peer", "emulate/emulate-recovery-session.py")
 BASELINE = ROOT / "private/fixtures/baseline.bin"
 
 

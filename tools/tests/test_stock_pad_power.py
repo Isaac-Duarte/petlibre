@@ -14,7 +14,7 @@ STOCK = ROOT / "private/firmware/PLAF103_OTA_010115.bin"
 class StockPadPowerTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        spec = importlib.util.spec_from_file_location("pad_power", ROOT / "tools/trace-stock-pad-power.py")
+        spec = importlib.util.spec_from_file_location("pad_power", ROOT / "tools/emulate/trace-stock-pad-power.py")
         cls.tool = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(cls.tool)
 

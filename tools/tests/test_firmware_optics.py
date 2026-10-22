@@ -15,7 +15,7 @@ def load(name, path):
     return module
 
 
-M = load('firmware_optics', TOOLS / 'audit-firmware-optics.py')
+M = load('firmware_optics', TOOLS / 'audit/audit-firmware-optics.py')
 J = load('firmware_wifi_join_tests_optics', TOOLS / 'tests/test_firmware_wifi_join.py')  # startup/LED capture helpers
 S = M.STARTUP
 LIT = {'off': (0, 0, 0), 'a': (1, 0, 0), 'b': (0, 1, 0), 'both': (1, 1, 0)}

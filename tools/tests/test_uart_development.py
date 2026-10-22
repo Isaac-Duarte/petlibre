@@ -22,10 +22,10 @@ def module(name, filename):
     return value
 
 
-CLI = module("uart_development_test", "uart-development.py")
-REVIEW = module("review_development_test", "review-development-image.py")
-SIM = module("uart_development_peer", "emulate-recovery-session.py")
-WIRE = module("uart_development_wire", "development-wire-policy.py")
+CLI = module("uart_development_test", "flash/uart-development.py")
+REVIEW = module("review_development_test", "flash/review-development-image.py")
+SIM = module("uart_development_peer", "emulate/emulate-recovery-session.py")
+WIRE = module("uart_development_wire", "flash/development-wire-policy.py")
 BASELINE = ROOT / "private/fixtures/baseline.bin"
 SOURCE = ROOT / "private/fixtures/development-source"
 TARGET = ROOT / "private/fixtures/development-target"
@@ -173,7 +173,7 @@ class UartDevelopmentTests(unittest.TestCase):
         args, peer, _serial, _ = self.inspect(root)
         before = bytes(peer.host_tx)
         r = json.loads(args.inspection.read_text())
-        r["bindings"]["tool_sha256"]["development-bank.py"] = "0" * 64
+        r["bindings"]["tool_sha256"]["flash/development-bank.py"] = "0" * 64
         args.inspection.write_text(json.dumps(r))
         with self.assertRaisesRegex(ValueError, "matching inspection"):
             CLI.prepared(args)

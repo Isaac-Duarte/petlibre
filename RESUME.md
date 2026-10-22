@@ -7,6 +7,16 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
+**October 21–22 overnight (autonomous, offline, nothing flashed).** The owner set the goal of doing what needs no owner, committing and pushing as I go:
+- **FW09:** the actual factory loader always prefers a valid bank 1 and only falls back to bank 0 (simulation). See [bank policy](docs/firmware/bank-policy.md).
+- **FW10/FW11:** designed around that: bank 0 holds a recovery/updater role, and bank 1 the normal role ([OTA design](docs/firmware/ota-design.md)). Every marker step and partial marker write keeps a bootable bank in emulation.
+- **OTA code:** the core OTA logic (signed manifests, the bank-1 writer, boot trials) and the server's `ota-keygen`/`ota-sign` are in, host-tested.
+- **FW30:** the logic-analyzer transient command and its auditor are ready for Friday.
+- **Needs the owner:** any write to bank 0 or the markers (the first OTA hardware stage), the PB3 test points, the analyzer and battery sessions, and any motion.
+
+The installed image is the FW13 plan 2 build (5 s emitter windows; see below).
+
+
 **FW13 and FW31 are Done (October 21).** FW13 (motion-free scope): PA15 lights
 the food receiver (PA17), PB3 the outlet receiver (PA16), and a blocked beam
 reads LOW on both. Receivers settle within one 2 ms poll, and the supervisor

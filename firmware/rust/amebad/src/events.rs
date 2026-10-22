@@ -298,6 +298,14 @@ impl Events {
     /// Arm a non-renewable maximum on-time. Repeated enables do not extend it.
     /// Only successful owner-side sample processing renews the liveness lease.
     pub fn optics(&mut self, enabled: bool, max_on_ms: u32) -> bool {
+        self.optics_select(enabled, enabled, max_on_ms)
+    }
+
+    /// As `optics`, with PA15 to `a` and PB3 to `b`. While on, a repeated
+    /// enable neither extends the budget nor changes the selection: it
+    /// returns whether the emitters already match it.
+    pub fn optics_select(&mut self, a: bool, b: bool, max_on_ms: u32) -> bool {
+        let enabled = a || b;
         if !self.opened || (enabled && (max_on_ms == 0 || max_on_ms >= 0x8000_0000)) {
             return false;
         }
@@ -313,9 +321,9 @@ impl Events {
             return false;
         }
         if enabled && self.board().optics_enabled {
-            return true;
+            return board::optics_are(a, b);
         }
-        if !self.board().optics(enabled) {
+        if !self.board().optics_select(a, b) {
             return self.fail(EventsFault::OUTPUT);
         }
         self.optics_armed = enabled;

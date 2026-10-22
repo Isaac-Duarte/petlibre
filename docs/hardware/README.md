@@ -23,9 +23,9 @@ The table records stock 1.1.15 software roles. The SDK pin encoding is `(port <<
 | --- | --- | --- |
 | PA13 / PA14 | Motor output pair; initially both high | Driver braking/coasting and physical bowl/direction mapping |
 | PA18 | Portion feedback input; both-edge interrupts during feeding | Mechanical phase and feedback timing |
-| PA17 | Food-level input | Physical beam polarity and filter calibration |
-| PA16 | Outlet input and passage latch | Physical obstruction polarity and timer activation |
-| PA15 / PB3 | Optical enable outputs; initially high | Which line powers each emitter and duty limits |
+| PA17 | Food-level input; LOW when the beam is blocked (food present), HIGH when lit (FW13, physical) | How much food it takes to read present |
+| PA16 | Outlet input and passage latch; LOW when blocked, HIGH when clear (FW13, physical) | Passage pulses with real food (FW16) and timer activation |
+| PA15 / PB3 | Optical emitter enables, HIGH on: PA15 lights the food receiver, PB3 the outlet receiver (FW13, physical). PB3 is also SWD_CLK and needs SWD released first | Emitter current, duty limits and electrical OFF levels (FW30) |
 | PA19 | External-power presence input | Electrical transition behavior |
 | PB1 | ADC current estimate | Current scaling and trip thresholds |
 | PB2 | ADC battery/power measurement | Divider scaling, calibration, and battery percentage |

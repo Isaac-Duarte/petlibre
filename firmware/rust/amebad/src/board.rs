@@ -83,6 +83,11 @@ pub(crate) fn optics_off() -> bool {
     OPTICS.iter().all(|&pin| optic_is(pin, false))
 }
 
+/// PA15 at `a` and PB3 at `b`, latch and pad input each.
+pub(crate) fn optics_are(a: bool, b: bool) -> bool {
+    optic_is(OPTICS[0], a) && optic_is(OPTICS[1], b)
+}
+
 /// Motor pins callback. Reads board fields through the raw context pointer so
 /// it never aliases the gate borrow that invokes it.
 unsafe extern "C" fn motor_pair(context: *mut c_void, a: bool, b: bool) -> bool {
@@ -193,6 +198,9 @@ impl Board {
             self.motor
                 .init(Some(motor_pair), context, deadtime_ms, lease_ms, now_ms)
         };
+        // PB3 is SWD_CLK: release it first, as stock does, or the latch
+        // never reaches the pad.
+        let swd_released = sdk::swd_off() & sdk::SWD_PMUX_BIT == 0;
         for pin in OPTICS {
             sdk::gpio_write_bit(pin, false);
         }
@@ -200,7 +208,7 @@ impl Board {
             sdk::gpio_init(pin, true);
         }
         self.optics_initialized = true;
-        if !motor_ok || !optics_off() {
+        if !motor_ok || !swd_released || !optics_off() {
             self.faulted = true;
             return false;
         }
@@ -301,6 +309,13 @@ impl Board {
     }
 
     pub fn optics(&mut self, enabled: bool) -> bool {
+        self.optics_select(enabled, enabled)
+    }
+
+    /// PA15 to `a` and PB3 to `b`, with readback. Either one on counts as
+    /// enabled; a failed change attempts both off and trips the motor gate.
+    pub fn optics_select(&mut self, a: bool, b: bool) -> bool {
+        let enabled = a || b;
         if !self.optics_initialized || (enabled && (!self.opened || self.faulted)) {
             return false;
         }
@@ -308,10 +323,10 @@ impl Board {
         if enabled && self.flash_hold() {
             return false;
         }
-        for pin in OPTICS {
-            sdk::gpio_write_bit(pin, enabled);
+        for (pin, level) in OPTICS.into_iter().zip([a, b]) {
+            sdk::gpio_write_bit(pin, level);
         }
-        let verified = OPTICS.iter().all(|&pin| optic_is(pin, enabled));
+        let verified = optics_are(a, b);
         self.optics_enabled = verified && enabled;
         if !verified {
             for pin in OPTICS {
@@ -354,17 +369,9 @@ impl Board {
     /// Exclusive ADC ownership required. Polls are bounded per conversion.
     /// Timestamp at acquisition START, so its execution time counts toward age.
     pub fn capture(&mut self, reading: &mut SensorReading) -> bool {
-        *reading = SensorReading::default();
-        if !self.opened || self.faulted || !self.sensors_ready {
+        if self.capture_gpio(reading).is_none() {
             return false;
         }
-        let pins = sdk::gpio_port_read(GPIO_PORT_A, SENSOR_MASK);
-        reading.gpio_valid = true;
-        reading.food_high = pins & (1 << 17) != 0;
-        reading.outlet_high = pins & (1 << 16) != 0;
-        reading.dc_present = pins & (1 << 19) != 0;
-        reading.optics_enabled =
-            self.optics_enabled && OPTICS.iter().all(|&pin| optic_is(pin, true));
         reading.current_adc_valid = self.adc_channel(4, &mut reading.current);
         if reading.current_adc_valid {
             reading.battery_adc_valid = self.adc_channel(5, &mut reading.battery);
@@ -374,6 +381,23 @@ impl Board {
             return false;
         }
         true
+    }
+
+    /// GPIO only: PA16/PA17/PA19 and the emitter state, both ADC channels
+    /// marked invalid. Returns the raw PA16..PA19 inputs, PA18 feedback
+    /// included, read in the same port access.
+    pub fn capture_gpio(&mut self, reading: &mut SensorReading) -> Option<u32> {
+        *reading = SensorReading::default();
+        if !self.opened || self.faulted || !self.sensors_ready {
+            return None;
+        }
+        let pins = sdk::gpio_port_read(GPIO_PORT_A, SENSOR_MASK | (1 << 18));
+        reading.gpio_valid = true;
+        reading.food_high = pins & (1 << 17) != 0;
+        reading.outlet_high = pins & (1 << 16) != 0;
+        reading.dc_present = pins & (1 << 19) != 0;
+        reading.optics_enabled = self.optics_enabled && optics_are(true, true);
+        Some(pins)
     }
 
     pub fn close(&mut self) {

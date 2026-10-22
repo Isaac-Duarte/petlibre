@@ -396,7 +396,7 @@ fn health() -> Health {
         bank: 1,
         reset_flags: 0,
         boot_count: 7,
-        outputs_stopped: true,
+        outputs: Outputs::Stopped,
         faults: 0,
         rssi: -20,
         wifi_attempt: 2,
@@ -431,7 +431,7 @@ fn health_renders_the_v1_schema_within_its_limit() {
         uptime_ms: u32::MAX,
         reset_flags: u32::MAX,
         boot_count: u32::MAX,
-        outputs_stopped: false,
+        outputs: Outputs::Unverified,
         faults: u32::MAX,
         rssi: i32::MIN,
         wifi_attempt: u32::MAX,
@@ -447,6 +447,12 @@ fn health_renders_the_v1_schema_within_its_limit() {
     assert!(text.contains(r#""faults":["watchdog","flash_hook","stopped_readback"]"#));
     assert!(text.contains(r#""outputs":"unverified""#) && text.contains(r#""last_loss":"link""#));
     assert!(text.ends_with(r#""last_error":"protocol_malformed"}}"#));
+    let sensing = render(&Health {
+        outputs: Outputs::Sensing,
+        ..health()
+    })
+    .unwrap();
+    assert!(sensing.contains(r#""outputs":"sensing","faults":[]"#));
     let offline = render(&Health {
         online: false,
         last_loss: Loss::None,

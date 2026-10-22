@@ -28,7 +28,7 @@ FW02 passed artifact-bound physical startup verification. This evidence does not
 
 ## Stopped-output startup
 
-The initializer explicitly enables/checks LP GPIO clock/function bits while preserving unrelated controls. With the interrupt mask held/restored, it preloads motor PA13/PA14 HIGH/HIGH and infrared PA15/PB3 LOW/LOW before output direction. It verifies masked values and directions before scheduling diagnostics. Infrared OFF requires LOW output latches as well as LOW pad inputs, because a pad with a dead input path reads LOW whatever is driven (as PA0–PA7 do on the tested unit). Failure logs an error and does not start the diagnostic task. This requests the stock-derived STOP/off state; physical polarity and startup transients remain acceptance work.
+The initializer explicitly enables/checks LP GPIO clock/function bits while preserving unrelated controls. With the interrupt mask held/restored, it preloads motor PA13/PA14 HIGH/HIGH and infrared PA15/PB3 LOW/LOW before output direction. It verifies masked values and directions before scheduling diagnostics. Infrared OFF requires LOW output latches as well as LOW pad inputs, because a pad with a dead input path reads LOW whatever is driven (as PA0–PA7 do on the tested unit). PB3 is also SWD_CLK, so it first clears `REG_SWD_PMUX_EN` bit 0, as stock does before configuring PB3, and stopped readback requires that bit clear. Before FW13 this step was missing: PB3 was never driven, and its LOW readback was the pad's pull-down ([details](optical-inputs.md#pb3-is-swd_clk)). Failure logs an error and does not start the diagnostic task. This requests the stock-derived STOP/off state; physical polarity and startup transients remain acceptance work.
 
 `PLCLK1` records before/after clock/function words. `PLFW1 outputs` reports PA/PB values and directions before the startup banner. Manifest policies must match record formats in the hashed image. An output mismatch cannot be hidden by a synthetic diagnostic PASS.
 
@@ -222,6 +222,10 @@ A full 8 MiB flash read in loader mode, one boot of this build, then a second fu
 ## FW08 transport records
 
 Policy `fw08-transport-v1` is bound both ways to the `PLMQT1 start created=` record format, and requires `fw07-dns-v1`. After the LED probe, KM4 starts a second task beside the Wi-Fi probe; it connects to the local server's broker once DNS works and reports health. The formats, timing and pass criteria are in [the transport design](local-transport.md). `audit-firmware-transport.py --stage b|c` checks a capture against them: grammar and ordering, connect within 15 s of the first good DNS lookup, ready within 10 s of a connect, contiguous publish numbers, period publishes 30 ± 5 s apart, and a publish after each health request. Stage b also needs no close, two period publishes and an answered ping and health request. Stage c needs a close and a reconnect. It does not establish what the server received; that is read from the server's status.
+
+## FW13 optics records
+
+Policy `fw13-optics-v1` is bound both ways to `PLOPT1 start created=` and requires the LED probe policy. After the LED probe, KM4 starts a third task beside the Wi-Fi probe and the transport. It exercises each emitter in bounded, supervised windows, reads the food, outlet and feedback inputs, and ends with an owner stall the timer interrupt must cut. Records, audit criteria and bench results are in [optical inputs](optical-inputs.md).
 
 ## Shared-pad prerequisite and current physical findings
 

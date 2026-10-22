@@ -205,6 +205,19 @@ pub fn gpio_init(pin: u32, output: bool) {
     }
 }
 
+pub fn swd_pinmux() -> u32 {
+    with(|h| h.swd_pmux)
+}
+
+pub fn swd_off() -> u32 {
+    with(|h| {
+        if !h.swd_stuck {
+            h.swd_pmux &= !crate::SWD_PMUX_BIT;
+        }
+        h.swd_pmux
+    })
+}
+
 pub fn gpio_routing() -> GpioRouting {
     with(|h| h.gpio_routing)
 }

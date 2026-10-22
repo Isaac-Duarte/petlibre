@@ -414,3 +414,28 @@ fn port_reads_follow_the_pad_not_the_latch() {
     });
     assert!(!sdk::gpio_read_bit(13) && sdk::gpioa_ext_port() & (1 << 13) == 0);
 }
+
+#[test]
+fn single_emitter_windows_keep_one_budget_and_selection() {
+    let mut f = begin();
+    f.arm();
+    let pins = || (sdk::gpio_read_bit(15), sdk::gpio_read_bit(35));
+    assert!(f.events.optics_select(true, false, 20));
+    assert_eq!(pins(), (true, false));
+    // A repeated or different enable neither extends nor changes anything.
+    assert!(f.events.optics_select(true, false, 100));
+    assert!(!f.events.optics_select(false, true, 100));
+    assert_eq!((pins(), f.events.optics_max_ms), ((true, false), 20));
+    assert!(f.events.optics(false, 0) && optics_off());
+    assert!(f.events.optics_select(false, true, 20));
+    assert_eq!(pins(), (false, true));
+    // The budget holds for one emitter exactly as for both.
+    let mut idle = FeedController::new(&LIMITS, 0).unwrap();
+    for _ in 0..12 {
+        fake::advance(64, true);
+        assert!(f.events.process(&mut idle, Some(&HEALTHY)) || f.events.fault != EventsFault::OK);
+    }
+    assert_eq!(f.events.fault, EventsFault::OPTICS);
+    assert!(optics_off() && f.board.faulted);
+    f.finish();
+}

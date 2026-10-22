@@ -19,6 +19,9 @@ pub type TaskStep = unsafe extern "C" fn(context: *mut c_void) -> u32;
 pub const GPIO_ENABLE_BIT: u32 = 1 << 20;
 /// Pinned LP ADC function and clock enable bits, in the same two registers.
 pub const ADC_ENABLE_BIT: u32 = 1 << 8;
+/// `REG_SWD_PMUX_EN` bit 0 (reset 1): the SWD function holds PA27 and PB3
+/// (SWD_CLK). While set, GPIO writes to PB3 do not reach the pad.
+pub const SWD_PMUX_BIT: u32 = 1;
 
 /// One LP SYSCTRL function/clock enable pair (`REG_LP_FUNC_EN1`,
 /// `REG_LP_CLK_CTRL1`) around an enable of `bit`.

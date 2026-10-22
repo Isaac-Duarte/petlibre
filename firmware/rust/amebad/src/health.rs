@@ -2,7 +2,7 @@
 //! is the transport's only view of the rest of the firmware: it reads, and
 //! returns a plain value.
 
-use wellfed_core::transport::{Health, Loss};
+use wellfed_core::transport::{Health, Loss, Outputs};
 
 use crate::{net_status, sdk, startup, stopped};
 
@@ -38,7 +38,14 @@ pub struct Link {
 
 pub fn snapshot(boot: Boot, link: Link, online: bool) -> Health {
     let wifi = net_status::read();
-    let outputs_stopped = stopped::observe().verified();
+    let observed = stopped::observe();
+    let outputs = if observed.verified() {
+        Outputs::Stopped
+    } else if observed.sensing() {
+        Outputs::Sensing
+    } else {
+        Outputs::Unverified
+    };
     Health {
         online,
         seq: link.seq,
@@ -47,8 +54,8 @@ pub fn snapshot(boot: Boot, link: Link, online: bool) -> Health {
         bank: boot.bank,
         reset_flags: boot.reset_flags,
         boot_count: boot.boot_count,
-        outputs_stopped,
-        faults: if outputs_stopped {
+        outputs,
+        faults: if outputs != Outputs::Unverified {
             0
         } else {
             FAULT_STOPPED_READBACK

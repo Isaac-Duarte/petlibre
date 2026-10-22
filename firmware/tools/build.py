@@ -729,6 +729,7 @@ def build(profile, toolchain):
         "startup_adc_policy": None,
         "startup_wifi_policy": "fw07-dns-v1" if profile == "plaf103-firstboot" else None,
         "startup_transport_policy": "fw08-transport-v1" if profile == "plaf103-firstboot" else None,
+        "startup_optics_policy": "fw13-optics-v1" if profile == "plaf103-firstboot" else None,
         "toolchain_sha256": LOCK["toolchain"]["sha256"],
         "built_at": datetime.now(timezone.utc).isoformat(),
         "inputs": {str(p.relative_to(ROOT)): checksum for p, checksum in expected.items()},

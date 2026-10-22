@@ -58,8 +58,16 @@ pub fn start(path: &std::path::Path) -> Service {
 }
 
 pub fn start_mode(path: &std::path::Path, ota: bool) -> Service {
+    start_in(path, ota, None)
+}
+
+/// Start the server, optionally in `cwd` (paths like `private/...` resolve there).
+pub fn start_in(path: &std::path::Path, ota: bool, cwd: Option<&std::path::Path>) -> Service {
     let mut command = Command::new(env!("CARGO_BIN_EXE_petlibre-local"));
     command.args(["serve", "--config"]).arg(path);
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
+    }
     if ota {
         // Tests run from uncommitted trees; production refuses such builds.
         command

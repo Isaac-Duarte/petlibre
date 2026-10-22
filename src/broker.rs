@@ -83,8 +83,8 @@ fn publish_allowed(config: &Config, user: Option<&str>, topic: &str) -> bool {
     let suffix = topic.strip_prefix(&prefix);
     let firmware = firmware_suffix(config, topic);
     match user {
-        Some("firmware") => matches!(firmware, Some("health" | "reply")),
-        Some("server") if firmware.is_some() => firmware == Some("request"),
+        Some("firmware") => matches!(firmware, Some("health" | "reply" | "ota/get")),
+        Some("server") if firmware.is_some() => matches!(firmware, Some("request" | "ota/data")),
         Some("device") => suffix.is_some_and(|s| {
             matches!(
                 s,
@@ -112,8 +112,10 @@ fn subscribe_allowed(config: &Config, user: Option<&str>, topic: &str) -> bool {
     let suffix = topic.strip_prefix(&prefix);
     let firmware = firmware_suffix(config, topic);
     match user {
-        Some("firmware") => firmware == Some("request"),
-        Some("server") if firmware.is_some() => matches!(firmware, Some("health" | "reply")),
+        Some("firmware") => matches!(firmware, Some("request" | "ota/data")),
+        Some("server") if firmware.is_some() => {
+            matches!(firmware, Some("health" | "reply" | "ota/get"))
+        }
         Some("device") => suffix.is_some_and(|s| {
             matches!(
                 s,
@@ -202,13 +204,17 @@ mod tests {
     const STOCK: &str = "dl/PLAF103/AF_TEST/device/";
 
     #[test]
-    fn firmware_role_reaches_only_its_three_literal_topics() {
+    fn firmware_role_reaches_only_its_literal_topics() {
         let c = config(true);
         let user = Some("firmware");
         for (topic, publish, subscribe) in [
             ("health", true, false),
             ("reply", true, false),
             ("request", false, true),
+            ("ota/get", true, false),
+            ("ota/data", false, true),
+            ("ota/+", false, false),
+            ("ota/#", false, false),
             ("+", false, false),
             ("#", false, false),
             ("other", false, false),
@@ -235,11 +241,17 @@ mod tests {
         assert!(subscribe_allowed(&c, server, &format!("{FW}reply")));
         assert!(!subscribe_allowed(&c, server, &format!("{FW}request")));
         assert!(!subscribe_allowed(&c, server, &format!("{FW}+")));
+        assert!(publish_allowed(&c, server, &format!("{FW}ota/data")));
+        assert!(!publish_allowed(&c, server, &format!("{FW}ota/get")));
+        assert!(subscribe_allowed(&c, server, &format!("{FW}ota/get")));
+        assert!(!subscribe_allowed(&c, server, &format!("{FW}ota/data")));
         // Existing server access is unchanged.
         assert!(subscribe_allowed(&c, server, &format!("{STOCK}+/post")));
         assert!(publish_allowed(&c, server, &format!("{STOCK}service/sub")));
         let device = Some("device");
-        for topic in ["health", "reply", "request", "+", "#"] {
+        for topic in [
+            "health", "reply", "request", "ota/get", "ota/data", "+", "#",
+        ] {
             let topic = format!("{FW}{topic}");
             assert!(!publish_allowed(&c, device, &topic) && !subscribe_allowed(&c, device, &topic));
         }
@@ -251,7 +263,7 @@ mod tests {
     fn without_a_firmware_role_the_namespace_is_closed_to_everyone() {
         let c = config(false);
         for user in ["firmware", "server", "device"] {
-            for topic in ["health", "reply", "request"] {
+            for topic in ["health", "reply", "request", "ota/get", "ota/data"] {
                 let topic = format!("{FW}{topic}");
                 assert!(!publish_allowed(&c, Some(user), &topic));
                 assert!(!subscribe_allowed(&c, Some(user), &topic));

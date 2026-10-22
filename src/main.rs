@@ -152,6 +152,19 @@ enum Action {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Offer a signed replacement update to the running server (FW10), or
+    /// clear the offer. Paths are relative and under private/; nothing is
+    /// sent to the firmware until it asks.
+    OtaOffer {
+        #[arg(long, default_value = "private/server.json")]
+        config: PathBuf,
+        #[arg(long, requires = "image", conflicts_with = "clear")]
+        manifest: Option<String>,
+        #[arg(long, requires = "manifest", conflicts_with = "clear")]
+        image: Option<String>,
+        #[arg(long)]
+        clear: bool,
+    },
     /// Explicit feeder-only gateway routing and WAN isolation; needs sudo.
     Network {
         #[command(subcommand)]
@@ -325,6 +338,24 @@ async fn main() -> Result<()> {
                 "Signed manifest for version {version} in {}",
                 output.display()
             );
+        }
+        Action::OtaOffer {
+            config,
+            manifest,
+            image,
+            clear,
+        } => {
+            anyhow::ensure!(
+                clear || manifest.is_some(),
+                "give --manifest and --image, or --clear"
+            );
+            api_request(
+                config,
+                "POST",
+                "/api/replacement/ota/offer",
+                Some(serde_json::json!({"manifest": manifest, "image": image})),
+            )
+            .await?;
         }
         Action::Network { action } => match action {
             NetworkAction::Apply { config } => {

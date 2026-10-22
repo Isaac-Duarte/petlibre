@@ -232,3 +232,37 @@ fn confirmation_names_exactly_one_image() {
     bad[0] = b'X';
     assert_eq!(confirmed(&bad, &sha), None);
 }
+
+#[test]
+fn delivery_messages_round_trip_and_reject_malformed() {
+    let get = encode_get(Part::Chunk, 4096, 1024);
+    assert_eq!(decode_get(&get), Some((Part::Chunk, 4096, 1024)));
+    assert_eq!(
+        decode_get(&encode_get(Part::Manifest, 0, 0)),
+        Some((Part::Manifest, 0, 0))
+    );
+    assert_eq!(decode_get(&get[..8]), None);
+    let mut bad = get;
+    bad[0] = 9;
+    assert_eq!(decode_get(&bad), None);
+
+    let mut data = encode_data_header(Part::Chunk, Status::Ok, 4096, 3).to_vec();
+    data.extend_from_slice(&[1, 2, 3]);
+    assert_eq!(
+        decode_data(&data),
+        Some(Data {
+            part: Part::Chunk,
+            status: Status::Ok,
+            offset: 4096,
+            bytes: &[1, 2, 3]
+        })
+    );
+    // A declared length that disagrees with the body is refused.
+    assert_eq!(decode_data(&data[..data.len() - 1]), None);
+    let refused = encode_data_header(Part::Chunk, Status::Range, 0, 0);
+    assert_eq!(decode_data(&refused).map(|d| d.status), Some(Status::Range));
+    let mut refused_with_body = encode_data_header(Part::Chunk, Status::NoOffer, 0, 1).to_vec();
+    refused_with_body.push(0);
+    assert_eq!(decode_data(&refused_with_body), None);
+    assert_eq!(decode_data(&[0; 3]), None);
+}

@@ -9,7 +9,7 @@ use tracing::{info, warn};
 use crate::{
     config::Config,
     controller::{Controller, FeedInput, FeedRecord, Rejection, ResolveInput, Status},
-    ota_image, ota_trial, probe, protocol,
+    firmware_ota, ota_image, ota_trial, probe, protocol,
     replacement::{self, RequestError},
 };
 
@@ -28,6 +28,8 @@ pub enum Request {
     ResolveTrial(ota_trial::ResolveInput, oneshot::Sender<TrialResult>),
     ProbeQuery(probe::Input, oneshot::Sender<ProbeResult>),
     Replacement(replacement::Op, oneshot::Sender<ReplacementResult>),
+    /// Load (or with `None`, clear) the update the server answers `ota/get` from.
+    OtaOffer(Option<firmware_ota::Offer>, oneshot::Sender<bool>),
 }
 
 /// The controller's status plus the replacement-firmware snapshot at `now`.
@@ -79,6 +81,8 @@ pub async fn run(
 ) -> Result<()> {
     // Survives reconnects: health ages out rather than vanishing.
     let mut tracker = replacement::Tracker::default();
+    // Owner-loaded only; never persisted, never offered unasked.
+    let mut offer: Option<firmware_ota::Offer> = None;
     loop {
         let mut options = MqttOptions::new(
             config.server_client_id(),
@@ -101,6 +105,7 @@ pub async fn run(
                             if config.firmware.is_some() {
                                 filters.push(SubscribeFilter::new(config.firmware_topic("health"),QoS::AtMostOnce));
                                 filters.push(SubscribeFilter::new(config.firmware_topic("reply"),QoS::AtMostOnce));
+                                filters.push(SubscribeFilter::new(config.firmware_topic("ota/get"),QoS::AtMostOnce));
                             }
                             client.subscribe_many(filters).await?;
                             info!("local MQTT server connected");
@@ -116,6 +121,13 @@ pub async fn run(
                             if config.firmware.is_some() && publish.topic == config.firmware_topic("health") {
                                 if !tracker.observe_health(&publish.payload,Utc::now()) { warn!("ignored invalid replacement health"); }
                                 publish_status(&status,&controller,&tracker);
+                                continue;
+                            }
+                            if config.firmware.is_some() && publish.topic == config.firmware_topic("ota/get") {
+                                match firmware_ota::Offer::answer(offer.as_ref(),&publish.payload) {
+                                    Some(answer) => { let _ = client.try_publish(config.firmware_topic("ota/data"),QoS::AtMostOnce,false,answer); }
+                                    None => warn!("ignored malformed replacement update request"),
+                                }
                                 continue;
                             }
                             if config.firmware.is_some() && publish.topic == config.firmware_topic("reply") {
@@ -170,6 +182,12 @@ pub async fn run(
                         Request::Resolve(input,response) => { let _ = response.send(controller.resolve(input,Utc::now())); }
                         Request::ResolveTrial(input,response) => { let _ = response.send(controller.resolve_trial(input,Utc::now())); }
                         Request::Replacement(op,response) => { let _ = response.send(replacement_request(&config,&client,&tracker,op)); }
+                        Request::OtaOffer(next,response) => {
+                            if let Some(o) = &next { info!(version=o.version,bytes=o.payload.len(),"replacement update offered"); }
+                            else { info!("replacement update offer cleared"); }
+                            offer = next;
+                            let _ = response.send(config.firmware.is_some());
+                        }
                         Request::ProbeQuery(input,response) => {
                             let result = match controller.probe_query(input,Utc::now()) {
                                 Ok((record,Some(command))) => {
@@ -229,6 +247,8 @@ pub async fn run(
                             let error = if config.firmware.is_some() { RequestError::Offline } else { RequestError::Unconfigured };
                             let _ = response.send(Err(error));
                         }
+                        // An offer is server state, not a device command: keep it across reconnects.
+                        Some(Request::OtaOffer(next,response)) => { offer = next; let _ = response.send(config.firmware.is_some()); }
                         None => return Ok(()),
                     }
                 }

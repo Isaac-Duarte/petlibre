@@ -283,3 +283,105 @@ pub fn confirmed(record: &[u8], image_sha256: &[u8; 32]) -> Option<u32> {
     (record.len() == CONFIRM_LEN && record[..4] == CONFIRM_MAGIC && record[4..36] == *image_sha256)
         .then(|| u32_at(record, 36))
 }
+
+/// Delivery over the local transport: the updater pulls the manifest, then
+/// the image in chunks, on `ota/get`; the server answers on `ota/data`.
+/// 512 so a chunk answer fits the FW08 codec's existing packet bound with the
+/// topic: no change to the running transport's buffers. Divides a sector.
+pub const MAX_CHUNK: u32 = 512;
+pub const GET_LEN: usize = 9;
+pub const DATA_HEADER: usize = 10;
+/// Room for `petlibre/1/<device id>/ota/data`.
+pub const TOPIC_BUDGET: usize = 96;
+
+const _: () = assert!(
+    5 + 2 + TOPIC_BUDGET + DATA_HEADER + MAX_CHUNK as usize <= crate::transport::MAX_PACKET
+        && SECTOR.is_multiple_of(MAX_CHUNK as usize)
+);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Part {
+    Manifest,
+    Chunk,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Status {
+    Ok,
+    /// The server has no offer loaded.
+    NoOffer,
+    /// The requested range is outside the offered image or over `MAX_CHUNK`.
+    Range,
+}
+
+/// `ota/get`: part, offset and length (both zero for the manifest).
+pub fn encode_get(part: Part, offset: u32, len: u32) -> [u8; GET_LEN] {
+    let mut out = [0u8; GET_LEN];
+    out[0] = match part {
+        Part::Manifest => 0,
+        Part::Chunk => 1,
+    };
+    out[1..5].copy_from_slice(&offset.to_le_bytes());
+    out[5..9].copy_from_slice(&len.to_le_bytes());
+    out
+}
+
+pub fn decode_get(bytes: &[u8]) -> Option<(Part, u32, u32)> {
+    if bytes.len() != GET_LEN {
+        return None;
+    }
+    let part = match bytes[0] {
+        0 => Part::Manifest,
+        1 => Part::Chunk,
+        _ => return None,
+    };
+    Some((part, u32_at(bytes, 1), u32_at(bytes, 5)))
+}
+
+/// The fixed header of an `ota/data` answer; the data bytes follow it.
+pub fn encode_data_header(part: Part, status: Status, offset: u32, len: u32) -> [u8; DATA_HEADER] {
+    let mut out = [0u8; DATA_HEADER];
+    out[0] = matches!(part, Part::Chunk) as u8;
+    out[1] = match status {
+        Status::Ok => 0,
+        Status::NoOffer => 1,
+        Status::Range => 2,
+    };
+    out[2..6].copy_from_slice(&offset.to_le_bytes());
+    out[6..10].copy_from_slice(&len.to_le_bytes());
+    out
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Data<'a> {
+    pub part: Part,
+    pub status: Status,
+    pub offset: u32,
+    pub bytes: &'a [u8],
+}
+
+/// Accept an `ota/data` answer only if its declared length matches.
+pub fn decode_data(bytes: &[u8]) -> Option<Data<'_>> {
+    if bytes.len() < DATA_HEADER {
+        return None;
+    }
+    let part = match bytes[0] {
+        0 => Part::Manifest,
+        1 => Part::Chunk,
+        _ => return None,
+    };
+    let status = match bytes[1] {
+        0 => Status::Ok,
+        1 => Status::NoOffer,
+        2 => Status::Range,
+        _ => return None,
+    };
+    let len = u32_at(bytes, 6) as usize;
+    let body = &bytes[DATA_HEADER..];
+    (body.len() == len && (status == Status::Ok || len == 0)).then_some(Data {
+        part,
+        status,
+        offset: u32_at(bytes, 2),
+        bytes: body,
+    })
+}

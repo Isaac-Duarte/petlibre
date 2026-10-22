@@ -101,12 +101,12 @@ class UartDevelopmentTests(unittest.TestCase):
     def test_inspection_plan_and_execute_match_independent_actual_region_wire(self):
         root = self.temporary()
         args, peer, serial, before = self.inspect(root)
-        baseline, source, target, current, reviewed = CLI.prepared(args)
+        baseline, source, target, current, other, reviewed = CLI.prepared(args)
         raw = CLI.canonical(reviewed) + b"\n"
         args.expected_plan_sha256 = CLI.digest(raw)
         bindings = {k: v for k, v in reviewed.items() if k not in ("inspection_report_sha256", "operation_plan")}
         with patch.dict(sys.modules, {"serial": serial}), patch("sys.stdout", new_callable=io.StringIO):
-            self.assertEqual(CLI.session(args, baseline, source, target, bindings, current, reviewed, raw), 0)
+            self.assertEqual(CLI.session(args, baseline, source, target, bindings, current, reviewed, raw, other), 0)
         report = json.loads((args.output / "report.json").read_text())
         self.assertEqual(report["status"], "verified")
         self.assertEqual(len(report["observations"]), 3)
@@ -153,14 +153,14 @@ class UartDevelopmentTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "matching inspection"):
             CLI.prepared(args)
         args.interrupted = True
-        baseline, source, target, current, reviewed = CLI.prepared(args)
+        baseline, source, target, current, other, reviewed = CLI.prepared(args)
         self.assertTrue(reviewed["operation_plan"]["interrupted"])
         self.assertEqual([x["offset"] for x in reviewed["operation_plan"]["ordered_sectors"]], offsets[1:])
         raw = CLI.canonical(reviewed) + b"\n"
         args.expected_plan_sha256 = CLI.digest(raw)
         bindings = {k: v for k, v in reviewed.items() if k not in ("inspection_report_sha256", "operation_plan")}
         with patch.dict(sys.modules, {"serial": serial}), patch("sys.stdout", new_callable=io.StringIO):
-            self.assertEqual(CLI.session(args, baseline, source, target, bindings, current, reviewed, raw), 0)
+            self.assertEqual(CLI.session(args, baseline, source, target, bindings, current, reviewed, raw, other), 0)
         self.assertEqual(json.loads((args.output / "report.json").read_text())["status"], "verified")
         after = peer.snapshot()
         self.assertEqual(after[:CLI.B.START], before[:CLI.B.START])
@@ -182,7 +182,7 @@ class UartDevelopmentTests(unittest.TestCase):
     def test_changed_plan_hash_or_scope_and_reused_output_refuse_before_open(self):
         root = self.temporary()
         args, _peer, _serial, _ = self.inspect(root)
-        baseline, source, target, current, reviewed = CLI.prepared(args)
+        baseline, source, target, current, other, reviewed = CLI.prepared(args)
         bindings = {k: v for k, v in reviewed.items() if k not in ("inspection_report_sha256", "operation_plan")}
         never = SimpleNamespace(Serial=lambda **_: self.fail("Serial opened before refusal"))
         with patch.dict(sys.modules, {"serial": never}):
@@ -195,12 +195,12 @@ class UartDevelopmentTests(unittest.TestCase):
                 raw = CLI.canonical(d)
                 args.expected_plan_sha256 = "0" * 64 if fault == "hash" else CLI.digest(raw)
                 with self.subTest(fault=fault), self.assertRaises(ValueError):
-                    CLI.session(args, baseline, source, target, bindings, current, d, raw)
+                    CLI.session(args, baseline, source, target, bindings, current, d, raw, other)
             raw = CLI.canonical(reviewed)
             args.expected_plan_sha256 = CLI.digest(raw)
             args.output.mkdir()
             with self.assertRaises(FileExistsError):
-                CLI.session(args, baseline, source, target, bindings, current, reviewed, raw)
+                CLI.session(args, baseline, source, target, bindings, current, reviewed, raw, other)
 
 
 if __name__ == "__main__":

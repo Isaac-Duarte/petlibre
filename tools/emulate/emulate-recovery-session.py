@@ -38,7 +38,9 @@ def digest(data):
 
 class EmulatedHelperPort:
     """Serial-shaped in-memory peer; contains no OS port-opening code."""
-    def __init__(self, helper, snapshot=None, allowed_sectors=None, status_registers=None):
+    def __init__(self, helper, snapshot=None, allowed_sectors=None, status_registers=None, scope=(0x186000, 0x2D6000)):
+        """`scope`: the bank the modeled writes may touch; bank 1 unless a
+        bank-0 test names (0x6000, 0x156000). Never the factory region."""
         require(len(helper) == 4688 and digest(helper) == HELPER_SHA, "Pinned helper required")
         self.uc = Uc(UC_ARCH_ARM, UC_MODE_THUMB | UC_MODE_MCLASS)
         self.uc.ctl_set_cpu_model(arm.UC_CPU_ARM_CORTEX_M4)
@@ -49,9 +51,10 @@ class EmulatedHelperPort:
         self.before = bytes(snapshot) if snapshot is not None else b"\xa5" * CAPACITY
         require(len(self.before) == CAPACITY, "Synthetic snapshot must be 8 MiB")
         self.allowed_sectors = frozenset(allowed_sectors if allowed_sectors is not None else [TARGET])
-        require(self.allowed_sectors and all(type(s) is int and 0x186000 <= s < 0x2D6000
+        require(scope in ((0x186000, 0x2D6000), (0x6000, 0x156000)), "Synthetic scope must be one bank")
+        require(self.allowed_sectors and all(type(s) is int and scope[0] <= s < scope[1]
                                             and s % SECTOR == 0 for s in self.allowed_sectors),
-                "Synthetic erase/program scope must stay in stock bank 1")
+                "Synthetic erase/program scope must stay in its bank")
         self.uc.mem_write(0x08000000, self.before)
         self.uc.mem_map(0x48000000, 0x1000)
         self.uc.mem_map(0xE000E000, 0x2000)

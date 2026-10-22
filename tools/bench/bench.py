@@ -361,10 +361,64 @@ def require_attended_motion(args):
 
 
 def update_args(config, args, p):
-    common = ["--baseline", ROOT / config["baseline"], "--source", args.source, "--target", args.target,
+    bank = getattr(args, "bank", 1)
+    require(args.source is not None or bank == 0, "--source is required except when overwriting bank 0")
+    common = ["--baseline", ROOT / config["baseline"], "--target", args.target, "--bank", bank,
               "--rom-report", ROOT / config["rom_report"], "--small-report", p["bounded"] / "report.json",
               "--port", config["uart_port"]]
+    if args.source is not None:
+        common += ["--source", args.source]
+    elif getattr(args, "original_read", None) is not None:
+        common += ["--original-read", args.original_read]
+    if getattr(args, "restore_marker", False):
+        common.append("--restore-marker")
     return common + (["--interrupted"] if args.interrupted else [])
+
+
+def give_way_args(config, args, p):
+    return ["--baseline", ROOT / config["baseline"], "--fallback", args.fallback,
+            "--rom-report", ROOT / config["rom_report"], "--small-report", p["bounded"] / "report.json",
+            "--port", config["uart_port"]]
+
+
+def give_way_prepare(relay, config, args):
+    """Loader, bounded read, give-way inspection and plan; stop for review."""
+    p = paths(args.name)
+    for key in ("loader", "bounded", "inspect", "plan"):
+        require(not p[key].exists(), f"Refusing to reuse {p[key].relative_to(ROOT)}")
+    loader(relay, config, p["loader"], args.off_seconds)
+    steps = [
+        tool("flash/uart-flash-read.py", "read-small", "--port", config["uart_port"], "--output", p["bounded"],
+             "--rom-report", ROOT / config["rom_report"]),
+        tool("flash/uart-give-way.py", "inspect", *give_way_args(config, args, p), "--output", p["inspect"]),
+        tool("flash/uart-give-way.py", "prepare", *give_way_args(config, args, p),
+             "--inspection", p["inspect"] / "report.json", "--output", p["plan"]),
+    ]
+    for step in steps:
+        if run(step):
+            print("Stopped without retry; the feeder stays powered. Inspect the evidence.", flush=True)
+            return 1
+    raw = p["plan"].read_bytes()
+    print(f"Give-way plan {p['plan'].relative_to(ROOT)}: clears bank 1's first marker byte; bank 0 is "
+          f"{json.loads(raw)['operation_plan']['fallback_ota_sha256']}", flush=True)
+    print(f"Review it, then: tools/bench/bench.py give-way-execute {args.name} --fallback {args.fallback} "
+          f"--expected-plan-sha256 {hashlib.sha256(raw).hexdigest()}", flush=True)
+    return 0
+
+
+def give_way_execute(relay, config, args):
+    """Execute a reviewed give-way in the still-powered helper session, then boot."""
+    p = paths(args.name)
+    require(p["plan"].is_file() and not p["execute"].exists(), "Prepared plan required; execution is single-use")
+    require(relay.get(POWER) and not relay.get(STRAP), "Feeder power was cycled since prepare; start over")
+    code = run(tool("flash/uart-give-way.py", "execute", *give_way_args(config, args, p),
+                    "--inspection", p["inspect"] / "report.json", "--plan", p["plan"],
+                    "--expected-plan-sha256", args.expected_plan_sha256, "--output", p["execute"]))
+    if code:
+        print("Give-way stopped; the feeder stays powered and is not booted. No retry.", flush=True)
+        return 1
+    boot(relay, config, p["boot"], args.boot_seconds, args.off_seconds)
+    return 0
 
 
 def flash_prepare(relay, config, args):
@@ -387,9 +441,10 @@ def flash_prepare(relay, config, args):
             return 1
     raw = p["plan"].read_bytes()
     plan = json.loads(raw)["operation_plan"]
-    print(f"Plan {p['plan'].relative_to(ROOT)}: {len(plan['ordered_sectors'])} sectors staged, "
+    print(f"Plan {p['plan'].relative_to(ROOT)}: bank {plan['bank']}, {len(plan['ordered_sectors'])} sectors staged, "
           f"{plan['erase_sectors']} erases, target {plan['target_ota_sha256']}", flush=True)
-    print(f"Review it, then: tools/bench/bench.py flash-execute {args.name} --source {args.source} "
+    source = f" --source {args.source}" if args.source else ""
+    print(f"Review it, then: tools/bench/bench.py flash-execute {args.name} --bank {args.bank}{source} "
           f"--target {args.target} --expected-plan-sha256 {hashlib.sha256(raw).hexdigest()}", flush=True)
     return 0
 
@@ -460,15 +515,30 @@ def main(argv=None):
     command.add_argument("--mode", choices=("boot", "loader"), default="boot")
     command.add_argument("--seconds", type=float, default=8.0, help="Capture length per cycle, arming included")
     command.add_argument("--samplerate", type=int, default=2_000_000)
+    for name, text in (("give-way-prepare", "Loader, bounded read, give-way inspection and plan"),
+                       ("give-way-execute", "Clear bank 1's first marker byte, then boot")):
+        command = sub.add_parser(name, help=text)
+        command.add_argument("name", help="Session name for private evidence paths")
+        command.add_argument("--fallback", type=Path, required=True, help="Frozen review of bank 0's image")
+        if name == "give-way-execute":
+            command.add_argument("--expected-plan-sha256", required=True)
+            command.add_argument("--boot-seconds", type=float, default=30)
     command = sub.add_parser("dump", help="Loader, bounded read, then full flash read")
     command.add_argument("name", help="Session name under private/flash-backups/")
     for name, text in (("flash-prepare", "Loader, bounded read, inspect and plan"),
                        ("flash-execute", "Execute the reviewed plan, then boot")):
         command = sub.add_parser(name, help=text)
         command.add_argument("name", help="Session name for private evidence paths")
-        command.add_argument("--source", type=Path, required=True, help="Frozen review of the installed image")
+        command.add_argument("--source", type=Path,
+                             help="Frozen review of the installed image (bank 0 may omit it to overwrite its baseline)")
+        command.add_argument("--bank", type=int, choices=(0, 1), default=1,
+                             help="Bank to update; 0 is the factory loader's fallback")
+        command.add_argument("--original-read", type=Path,
+                             help="Bank 0 without --source: a full flash read pinning bank 0's current bytes")
         command.add_argument("--target", type=Path, required=True, help="Frozen review to install")
         command.add_argument("--interrupted", action="store_true")
+        command.add_argument("--restore-marker", action="store_true",
+                             help="Restore bank 1 after a give-way (the source with its first marker byte cleared)")
         command.add_argument("--attended-motion", action="store_true",
                              help="Allow a target whose manifest names a motion policy (owner present)")
         if name == "flash-execute":
@@ -506,6 +576,8 @@ STEPS = {
     "flash-execute": ["uart-development execute", "boot capture"],
     "capture": ["capture"],
     "transients": [],
+    "give-way-prepare": ["loader entry", "uart-flash-read read-small", "uart-give-way inspect", "uart-give-way prepare"],
+    "give-way-execute": ["uart-give-way execute", "boot capture"],
 }
 
 
@@ -534,6 +606,10 @@ def dispatch(relay, config, args):
         return dump(relay, config, args)
     elif args.command == "transients":
         return transients(relay, config, args)
+    elif args.command == "give-way-prepare":
+        return give_way_prepare(relay, config, args)
+    elif args.command == "give-way-execute":
+        return give_way_execute(relay, config, args)
     elif args.command == "flash-prepare":
         return flash_prepare(relay, config, args)
     else:

@@ -4,9 +4,11 @@ import hashlib
 import struct
 
 START, SECTOR, LIMIT = 0x186000, 4096, 0x150000
+# Bank start and the other bank's guard sector, restated here independently.
+BANKS = {1: (0x186000, 0x6000), 0: (0x6000, 0x186000)}
 
 
-def expected(source, target, current, *, include_acquisitions=True):
+def expected(source, target, current, *, include_acquisitions=True, bank=1):
     def unpack(image):
         if type(image) is not bytes or len(image) < 32:
             raise ValueError("Complete immutable OTA required")
@@ -17,7 +19,13 @@ def expected(source, target, current, *, include_acquisitions=True):
             raise ValueError("Unsupported application container")
         return data
 
-    old, new = unpack(source), unpack(target)
+    if bank not in BANKS:
+        raise ValueError("Unknown bank")
+    start, other = BANKS[bank]
+    if start < 0x6000:
+        raise ValueError("The factory region is never written")
+    # Bank 0 may be overwritten without a source review: nothing to match.
+    old, new = (b"" if source is None and bank == 0 else unpack(source)), unpack(target)
     if type(current) is not bytes or len(current) != max(len(old), len(new)) or current[:len(old)] != old:
         raise ValueError("Source union mismatch")
     if type(include_acquisitions) is not bool:
@@ -32,7 +40,7 @@ def expected(source, target, current, *, include_acquisitions=True):
         body = struct.pack("<I", 0x08000000 + at) + data
         return bytes([2, n, n ^ 255]) + body + bytes([sum(body) & 255])
 
-    acquire = read(0, 0x6000) + read(0x6000, SECTOR) + read(START, len(current)) if include_acquisitions else b""
+    acquire = read(0, 0x6000) + read(other, SECTOR) + read(start, len(current)) if include_acquisitions else b""
     parts = [acquire]
     if result == current:
         return b"".join(parts)
@@ -41,11 +49,11 @@ def expected(source, target, current, *, include_acquisitions=True):
         data = stage[i:i + SECTOR]
         if data == current[i:i + SECTOR]:
             continue
-        at = START + i
+        at = start + i
         parts.extend([read(at, SECTOR), status, b"\x17" + at.to_bytes(3, "little") + b"\x01\x00",
                       read(at, SECTOR), status, b"\x07"])
         parts.extend(packet(n + 1, at + n * 1024, data[n * 1024:(n + 1) * 1024]) for n in range(4))
         parts.extend([b"\x04", read(at, SECTOR)])
-    parts.extend([acquire, read(START, SECTOR), status, b"\x07", packet(1, START, result[:1024]),
-                  b"\x04", read(START, SECTOR), acquire])
+    parts.extend([acquire, read(start, SECTOR), status, b"\x07", packet(1, start, result[:1024]),
+                  b"\x04", read(start, SECTOR), acquire])
     return b"".join(parts)

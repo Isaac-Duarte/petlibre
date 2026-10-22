@@ -127,7 +127,7 @@ pub struct ItestArgs {
     /// With --build: build even when a review of the same sources exists.
     #[arg(long, requires = "build")]
     pub rebuild: bool,
-    /// Python for --build's tools (default: .venv/bin/python under --root).
+    /// Python for --build's review (default: .venv/bin/python under --root).
     #[arg(long)]
     pub python: Option<PathBuf>,
     /// wellfed-local config the suite serves with (root-relative).

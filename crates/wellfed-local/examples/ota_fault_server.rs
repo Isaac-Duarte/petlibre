@@ -5,7 +5,7 @@
 //! server refuses a mismatched offer, so faults cannot come from it.
 //!
 //! ```text
-//! cargo run --example ota_fault_server -- --config private/server.json \
+//! cargo run -p wellfed-local --example ota_fault_server -- --config private/server.json \
 //!     --manifest M --image I [--fault none|corrupt|range|stall] [--at OFFSET]
 //! ```
 //!

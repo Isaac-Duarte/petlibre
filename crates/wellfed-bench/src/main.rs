@@ -20,7 +20,9 @@ use wellfed_bench::commands::{
 use wellfed_bench::config::{Config, STATUS_DIR};
 use wellfed_bench::relay::Relay;
 use wellfed_bench::status::{self, Status};
-use wellfed_bench::tools::{Processes, Tools, default_flash_bin, default_local_bin};
+use wellfed_bench::tools::{
+    Processes, Tools, default_build_bin, default_flash_bin, default_local_bin,
+};
 use wellfed_bench::{Error, INTERRUPTED, ui};
 
 #[derive(Parser)]
@@ -48,6 +50,9 @@ struct Cli {
     /// The wellfed-local binary for `ota` and `itest` (default: beside this one).
     #[arg(long, global = true)]
     local_bin: Option<PathBuf>,
+    /// The wellfed-build binary for `--build` (default: beside this one).
+    #[arg(long, global = true)]
+    build_bin: Option<PathBuf>,
 
     /// Serve the read-only progress page: alone until Ctrl+C, or while a command runs.
     #[arg(long, global = true)]
@@ -234,6 +239,7 @@ fn run(cli: Cli) -> wellfed_bench::Result<u8> {
         root: root.clone(),
         flash_bin,
         local_bin: local_bin.clone(),
+        build_bin: cli.build_bin.clone().unwrap_or_else(default_build_bin),
     };
     let flash_tool = tools.flash_tool();
     let mut bench = Bench {

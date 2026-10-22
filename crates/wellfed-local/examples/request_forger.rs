@@ -4,7 +4,7 @@
 //! `serve`: it logs in as the server role, which one client at a time holds.
 //!
 //! ```text
-//! cargo run --example request_forger -- --config private/server.json [--seconds 90]
+//! cargo run -p wellfed-local --example request_forger -- --config private/server.json [--seconds 90]
 //! ```
 //!
 //! It waits for a health report carrying the firmware's session nonce, then

@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -79,6 +80,19 @@ def mapping_cases(current, rom, image):
     return cases
 
 
+def builder(*args):
+    """JSON from `wellfed-build` (inputs, audits); it computes the identity
+    inputs and runs the linked-code audits the build recorded."""
+    result = subprocess.run(["cargo", "run", "--quiet", "--locked", "--release", "-p", "wellfed-build",
+                             "--", *map(str, args)], cwd=ROOT, check=True, capture_output=True, text=True)
+    return json.loads(result.stdout)
+
+
+def revision(path):
+    return subprocess.run(["git", "rev-parse", "HEAD"], cwd=path, check=True,
+                          capture_output=True, text=True).stdout.strip()
+
+
 def local(parent, name):
     path = (parent / name).resolve()
     require(path.is_relative_to(parent.resolve()) and path.is_file(), "Manifest file escapes its root")
@@ -87,16 +101,14 @@ def local(parent, name):
 
 def review(build):
     build = Path(build).resolve()
-    sys.path.insert(0, str(ROOT / "firmware/tools"))
-    builder = module("development_builder", ROOT / "firmware/tools/build.py")
+    lock = json.loads((ROOT / "firmware/sdk.lock.json").read_text())
     raw = (build / "manifest.json").read_bytes()
     m = json.loads(raw)
     require(m["profile"] == "plaf103-firstboot", "Only the reviewed UART startup profile is supported")
-    require(m["sdk_revision"] == builder.LOCK["sdk"]["revision"] and
-            m["toolchain_sha256"] == builder.LOCK["toolchain"]["sha256"], "Unexpected SDK/toolchain")
-    require(builder.revision(build / "sdk") == m["sdk_revision"], "SDK worktree revision differs")
-    expected_inputs = {str(p.relative_to(ROOT)): builder.digest(p)
-                       for p in builder.source_inputs(m["profile"])}
+    require(m["sdk_revision"] == lock["sdk"]["revision"] and
+            m["toolchain_sha256"] == lock["toolchain"]["sha256"], "Unexpected SDK/toolchain")
+    require(revision(build / "sdk") == m["sdk_revision"], "SDK worktree revision differs")
+    expected_inputs = builder("inputs", m["profile"])
     require(m["inputs"] == expected_inputs, "Build inputs are stale or incomplete; rebuild before review")
     for name, expected in m["inputs"].items():
         require(digest(local(ROOT, name).read_bytes()) == expected, "Build input differs")
@@ -123,15 +135,10 @@ def review(build):
         require(digest(path.read_bytes()) == entry["sha256"], "Compiled archive differs")
         objects[entry["core"]] = path
     require(set(objects) == {"KM0", "KM4"}, "Both compiled cores required")
-    tools = ROOT / "private/toolchains" / builder.LOCK["toolchain"]["directory"] / "bin"
-    sdk = build / "sdk"
-    mains = builder.firstboot.audit(sdk, builder.PROJECT, tools)
-    parking = builder.rampark.audit(sdk, builder.PROJECT, tools, objects)
-    hooks = builder.sdkhooks.audit(sdk, builder.PROJECT, tools, objects)
-    require(mains == m["firstboot_startup_audit"] and parking == m["ram_park_audit"] and
-            hooks == m["sdk_hook_audit"], "Linked-code audits differ from build manifest")
-    pinmap = builder.pinmap.audit_linked_table(image,
-        int(m["km0_pinmap_audit"]["runtime_address"], 16), STOCK.read_bytes())
+    audits = builder("audit", "--build", build)
+    mains, pinmap = audits["firstboot_startup_audit"], audits["km0_pinmap_audit"]
+    require(all(audits[k] == m[k] for k in ("firstboot_startup_audit", "ram_park_audit", "sdk_hook_audit")),
+            "Linked-code audits differ from build manifest")
     require(pinmap == m["km0_pinmap_audit"], "Linked pad table differs")
     ota_path = next(a["path"] for a in m["artifacts"] if Path(a["path"]).name == "OTA_All.bin")
     layout = L.audit(build / ota_path, STOCK, ROOT / "firmware/plaf103-layout.json")
@@ -142,8 +149,7 @@ def review(build):
     mapping = mapping_cases(baseline, rom, image)
     # Detect edits during potentially lengthy disassembly/emulation.
     require((build / "manifest.json").read_bytes() == raw and
-            {str(p.relative_to(ROOT)): builder.digest(p)
-             for p in builder.source_inputs(m["profile"])} == expected_inputs,
+            builder("inputs", m["profile"]) == expected_inputs,
             "Build changed during review")
     for artifact in m["artifacts"]:
         require(digest(local(build, artifact["path"]).read_bytes()) == artifact["sha256"],

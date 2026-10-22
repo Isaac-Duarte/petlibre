@@ -47,7 +47,7 @@ The transport reaches only `audio::request` (`cargo xtask check-repository` pins
 
 ## Speaker variant (network audio)
 
-`build.py plaf103-firstboot --speaker` (or `wellfed-bench ota NAME --build --variant speaker`) builds the normal image plus a stream task (`wellfed-amebad/src/stream.rs`, task `wellfed-spk`). Motion is untouched, and OTA, recovery and confirmation work as in the normal image.
+`wellfed-build plaf103-firstboot --speaker` (or `wellfed-bench ota NAME --build --variant speaker`) builds the normal image plus a stream task (`wellfed-amebad/src/stream.rs`, task `wellfed-spk`). Motion is untouched, and OTA, recovery and confirmation work as in the normal image.
 - **Handshake:** the task listens on TCP 7700, one client at a time. It sends a `PLSPK1` hello with a fresh challenge, and the client answers with a header (sample rate 8, 16, 32 or 48 kHz) and an HMAC under the FW08 request key (`wellfed-core/src/speaker_stream.rs`). The feeder replies with one status byte: `ok`, `unauthenticated`, `bad_header`, `busy` or `muted`. An image without a request key refuses every stream.
 - **Stream:**
   - After `ok`, the connection is raw 16-bit little-endian mono PCM.

@@ -1577,6 +1577,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "wellfed-build"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "clap",
+ "wellfed-flash",
+ "regex",
+ "rustix",
+ "serde_json",
+ "sha2 0.11.1",
+ "tempfile",
+]
+
+[[package]]
 name = "wellfed-core"
 version = "0.1.0"
 dependencies = [

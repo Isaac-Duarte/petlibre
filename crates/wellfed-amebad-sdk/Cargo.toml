@@ -10,7 +10,7 @@ build = "build.rs"
 
 [features]
 # Generate SDK bindings from the pinned AmebaD headers (target builds only).
-# Requires WELLFED_SDK_DIR and WELLFED_NEWLIB_INCLUDE; set by firmware/tools.
+# Requires WELLFED_SDK_DIR and WELLFED_NEWLIB_INCLUDE; set by wellfed-build.
 sdk = ["dep:bindgen"]
 # Select the core; only KM4 calls the SDK.
 km0 = []

@@ -18,7 +18,7 @@ check-rust:
 
 check-cross:
 	cargo build --locked -p wellfed-ffi --release --target thumbv8m.main-none-eabihf
-	WELLFED_BUILD_ID=$$($(PYTHON) firmware/tools/build.py source-id) cargo build --locked -p wellfed-ffi --release --target thumbv8m.base-none-eabi --features km0
+	WELLFED_BUILD_ID=$$(cargo run --quiet --locked --release -p wellfed-build -- source-id) cargo build --locked -p wellfed-ffi --release --target thumbv8m.base-none-eabi --features km0
 
 check-python:
 	$(PYTHON) tools/check-python.py
@@ -33,3 +33,4 @@ check-fixtures:
 	$(PYTHON) tools/check-python.py --fixtures
 	cargo test --locked --lib ota_image::tests::pinned_real_images_are_immutable_after_load_and_mutated_files_are_refused -- --ignored --exact
 	cargo test --locked -p wellfed-audit --lib -- --ignored
+	cargo test --locked -p wellfed-build -- --ignored

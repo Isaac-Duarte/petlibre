@@ -9,7 +9,7 @@
 //! already accepted requests in this session answers `"error":"auth"`.
 //!
 //! ```text
-//! cargo run --example time_jump -- --config private/server.json --shift-ms 3600000
+//! cargo run -p wellfed-local --example time_jump -- --config private/server.json --shift-ms 3600000
 //! ```
 
 use std::time::Duration;

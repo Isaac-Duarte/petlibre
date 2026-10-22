@@ -1,8 +1,7 @@
 """Mark optional evidence checks separately from contributor checks."""
-import importlib.util
 import json
 from pathlib import Path
-import sys
+import subprocess
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -16,15 +15,14 @@ def evidence(available, reason):
     return decorate
 
 
-def _builder():
-    sys.path.insert(0, str(ROOT / "firmware/tools"))
+def current_inputs(profile):
+    """A profile's current input digests, from `wellfed-build inputs`."""
     try:
-        spec = importlib.util.spec_from_file_location("evidence_build_inputs", ROOT / "firmware/tools/build.py")
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-    finally:
-        sys.path.remove(str(ROOT / "firmware/tools"))
-    return module
+        result = subprocess.run(["cargo", "run", "--quiet", "--locked", "--release", "-p", "wellfed-build",
+                                 "--", "inputs", profile], cwd=ROOT, check=True, capture_output=True, text=True)
+    except subprocess.CalledProcessError as error:
+        raise RuntimeError(error.stderr.strip() or "wellfed-build inputs failed") from None
+    return json.loads(result.stdout)
 
 
 def current_build(directory):
@@ -38,9 +36,7 @@ def current_build(directory):
         return False, f"Requires completed ignored SDK build: {manifest.parent.name}"
     try:
         recorded = json.loads(manifest.read_text())
-        builder = _builder()
-        current = {str(p.relative_to(ROOT)): builder.digest(p)
-                   for p in builder.source_inputs(recorded["profile"])}
+        current = current_inputs(recorded["profile"])
     except (OSError, ValueError, KeyError, RuntimeError) as error:
         return False, f"Cannot compare {manifest} with current sources: {error}"
     if recorded.get("inputs") != current:

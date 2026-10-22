@@ -35,15 +35,19 @@ struct Calls {
     root: PathBuf,
     /// Python runs: the interpreter, then its arguments.
     python: Vec<Vec<String>>,
-    python_codes: VecDeque<i32>,
-    /// What `build.py source-id --image` prints; none fails the query.
+    /// `wellfed-build` runs.
+    builds: Vec<Vec<String>>,
+    /// Exit codes of the build and review children, in order.
+    codes: VecDeque<i32>,
+    /// What `wellfed-build source-id --image` prints; none fails the query.
     source_id: Option<String>,
-    python_queries: Vec<Vec<String>>,
+    build_queries: Vec<Vec<String>>,
     /// `wellfed-local status` queries and their answers; then the default.
     queries: Vec<Vec<String>>,
     statuses: VecDeque<Captured>,
     status_default: String,
-    /// Every child in order: `python <args>`, `local <args>`, `query <args>`.
+    /// Every child in order: `build <args>`, `python <args>`, `local <args>`,
+    /// `query <args>`.
     ran: Vec<String>,
 }
 
@@ -154,7 +158,7 @@ impl Tools for FakeTools {
                 .collect(),
         );
         calls.ran.push(format!("python {}", args.join(" ")));
-        let code = calls.python_codes.pop_front().unwrap_or(0);
+        let code = calls.codes.pop_front().unwrap_or(0);
         // A successful review freezes the build at --output.
         if code == 0 && args[0].ends_with("review-development-image.py") {
             let review = calls.root.join(flag(args, "--output"));
@@ -167,9 +171,16 @@ impl Tools for FakeTools {
         Ok(code)
     }
 
-    fn python_query(&mut self, _: &Path, args: &[String]) -> Result<Captured> {
+    fn build(&mut self, args: &[String], _: &mut Status) -> Result<i32> {
         let mut calls = self.0.borrow_mut();
-        calls.python_queries.push(args.to_vec());
+        calls.builds.push(args.to_vec());
+        calls.ran.push(format!("build {}", args.join(" ")));
+        Ok(calls.codes.pop_front().unwrap_or(0))
+    }
+
+    fn build_query(&mut self, args: &[String]) -> Result<Captured> {
+        let mut calls = self.0.borrow_mut();
+        calls.build_queries.push(args.to_vec());
         Ok(match &calls.source_id {
             Some(id) => Captured {
                 code: 0,
@@ -990,7 +1001,7 @@ fn ota_build_builds_reviews_offers_and_checks_health_in_order() {
     assert_eq!(
         calls.ran,
         [
-            "python firmware/tools/build.py plaf103-firstboot --trial-reset",
+            "build plaf103-firstboot --trial-reset",
             "python tools/flash/review-development-image.py build --build private/firmware-build/plaf103-firstboot --output private/verification/unit-review",
             "local ota-sign --image private/verification/unit-review/image.bin --version 1 --build-id 8a13e59efa15e56b5f5e32825909dc45e381a2027abc65d8de6658c40b302447 --output private/verification/unit-v1.manifest",
             "local ota-offer --manifest private/verification/unit-v1.manifest --image private/verification/unit-review/image.bin",
@@ -1060,15 +1071,13 @@ fn ota_build_reuses_a_review_of_the_same_sources() {
 
     let calls = rig.tools.0.borrow();
     assert_eq!(
-        calls.python_queries,
-        [[
-            "firmware/tools/build.py",
-            "source-id",
-            "--image",
-            "--trial-reset"
-        ]]
+        calls.build_queries,
+        [["source-id", "--image", "--trial-reset"]]
     );
-    assert!(calls.python.is_empty(), "nothing built or reviewed");
+    assert!(
+        calls.builds.is_empty() && calls.python.is_empty(),
+        "nothing built or reviewed"
+    );
     assert!(
         calls.ran[0].starts_with(
             "local ota-sign --image private/verification/earlier-review/image.bin --version 1"
@@ -1111,11 +1120,11 @@ fn ota_build_builds_when_no_complete_review_matches_or_asked_to() {
 
         let calls = rig.tools.0.borrow();
         assert!(
-            calls.ran[0].starts_with("python firmware/tools/build.py plaf103-firstboot"),
+            calls.ran[0].starts_with("build plaf103-firstboot"),
             "{identity} {complete} {rebuild}: {:?}",
             calls.ran
         );
-        assert_eq!(calls.python_queries.is_empty(), rebuild);
+        assert_eq!(calls.build_queries.is_empty(), rebuild);
     }
 }
 
@@ -1125,12 +1134,12 @@ fn a_failed_build_or_review_stops_before_offering() {
         let mut rig = rig();
         with_status(&mut rig, true);
         let args = build_args(&rig);
-        rig.tools.0.borrow_mut().python_codes.extend(codes);
+        rig.tools.0.borrow_mut().codes.extend(codes);
 
         assert_eq!(rig.bench.ota(&args).unwrap(), 1, "{codes:?}");
 
         let calls = rig.tools.0.borrow();
-        assert_eq!(calls.python.len(), codes.len());
+        assert_eq!(calls.builds.len() + calls.python.len(), codes.len());
         assert!(calls.local.is_empty() && calls.queries.is_empty());
         drop(calls);
         assert!(captured(&rig).is_empty());

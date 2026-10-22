@@ -11,7 +11,7 @@ publish.workspace = true
 crate-type = ["staticlib", "rlib"]
 
 [features]
-# Link the AmebaD ports for one core (target builds from firmware/tools/build.py).
+# Link the AmebaD ports for one core (target builds from wellfed-build).
 km0 = ["dep:wellfed-amebad-common", "wellfed-amebad-common/km0"]
 km4 = ["dep:wellfed-amebad", "dep:wellfed-firstboot", "wellfed-firstboot/km4"]
 fw16-pulse = ["km4", "wellfed-firstboot/fw16-pulse"]

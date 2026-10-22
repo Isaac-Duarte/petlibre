@@ -2,7 +2,7 @@
 
 Scripts are grouped by what they do. Run them from the repository root with the project environment, for example `.venv/bin/python tools/flash/review-development-image.py --help`. Install `requirements-probe.txt` for checks and emulation, and also `requirements-hardware.txt` for serial access.
 
-What stays in Python, on purpose: stock recovery (the Rust port has not run it on hardware or under emulation), the unicorn emulations of vendor code (factory loader, ROM, flash helper), the image review and the firmware build helpers in [firmware/tools/](../firmware/tools/). Everything else is Rust.
+What stays in Python, on purpose: stock recovery (the Rust port has not run it on hardware or under emulation), the unicorn emulations of vendor code (factory loader, ROM, flash helper), and the image review (it calls `wellfed-build` for the build's inputs and linked-code audits). Everything else is Rust, including the firmware build (`crates/wellfed-build`).
 
 **Device** marks the only scripts that open a serial port. Everything else works offline. Physical operations need an explicit task and a reviewed procedure (see [AGENTS.md](../AGENTS.md)); a script being here does not authorize running it against the feeder.
 
@@ -54,7 +54,7 @@ The capture auditors (startup, FW14 ADC, FW30 driver transients) and the full-fl
 
 ## Layout notes
 
-- Firmware build helpers live separately in [firmware/tools/](../firmware/tools/) (`build.py` and its link audits).
+- The firmware build and its link audits are Rust: `wellfed-build` ([firmware builds](../docs/development/firmware-builds.md)).
 - Tests are in [tests/](tests/), one `test_*.py` per tool or feature. `check-python.py` discovers them.
 - Scripts load their siblings by path, because hyphenated names are not importable. A folder-qualified name such as `flash/uart-flash-read.py` is relative to `tools/`, and `cargo xtask check-repository` verifies every such reference (documentation links, portability and transport isolation too).
 - Reports record their tool hashes under these folder-qualified names. Evidence from before October 21, 2026 names the old flat paths (`tools/<script>.py`).

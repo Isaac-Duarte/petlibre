@@ -1,6 +1,6 @@
 //! The child processes the bench chains: `wellfed-flash`, `wellfed-local`
-//! (signing, offering and checking an over-the-air update), the Python
-//! firmware build and review for `ota --build`, and `sigrok-cli`.
+//! (signing, offering and checking an over-the-air update), `wellfed-build`
+//! and the Python review for `ota --build`, and `sigrok-cli`.
 //!
 //! `wellfed-flash` runs as its own process, never linked in. Its plans bind
 //! the SHA-256 of the running executable, and that has to stay the flash
@@ -37,8 +37,10 @@ pub trait Tools {
     /// Run a Python tool from the checkout root, streaming both of its
     /// outputs as they come; returns its exit status.
     fn python(&mut self, python: &Path, args: &[String], status: &mut Status) -> Result<i32>;
-    /// Run a Python tool from the checkout root and keep its output.
-    fn python_query(&mut self, python: &Path, args: &[String]) -> Result<Captured>;
+    /// Run one `wellfed-build` command (a firmware build) the same way.
+    fn build(&mut self, args: &[String], status: &mut Status) -> Result<i32>;
+    /// Run one `wellfed-build` query (`source-id`) and keep its output.
+    fn build_query(&mut self, args: &[String]) -> Result<Captured>;
     /// Hold the UART with back-to-back receive-only captures of `seconds`
     /// each, the `n`th (from 1) into `segment(n)`, until stopped.
     fn capture(
@@ -98,6 +100,7 @@ pub struct Processes {
     pub root: PathBuf,
     pub flash_bin: PathBuf,
     pub local_bin: PathBuf,
+    pub build_bin: PathBuf,
 }
 
 fn beside_this(name: &str) -> PathBuf {
@@ -115,6 +118,11 @@ pub fn default_flash_bin() -> PathBuf {
 /// `wellfed-local` beside this executable.
 pub fn default_local_bin() -> PathBuf {
     beside_this("wellfed-local")
+}
+
+/// `wellfed-build` beside this executable.
+pub fn default_build_bin() -> PathBuf {
+    beside_this("wellfed-build")
 }
 
 pub fn flash_tool(root: &Path, path: &Path) -> Option<FlashTool> {
@@ -242,6 +250,19 @@ impl Processes {
         command.current_dir(&self.root);
         Ok(command)
     }
+
+    fn build_command(&self) -> Result<Command> {
+        require(
+            self.build_bin.is_file(),
+            format!(
+                "{} not found; build it with cargo build --release -p wellfed-build or pass --build-bin",
+                self.build_bin.display()
+            ),
+        )?;
+        let mut command = Command::new(&self.build_bin);
+        command.current_dir(&self.root);
+        Ok(command)
+    }
 }
 
 impl Tools for Processes {
@@ -325,9 +346,15 @@ impl Tools for Processes {
         stream_both(command, status)
     }
 
-    fn python_query(&mut self, python: &Path, args: &[String]) -> Result<Captured> {
-        let output = Command::new(python)
-            .current_dir(&self.root)
+    fn build(&mut self, args: &[String], status: &mut Status) -> Result<i32> {
+        let mut command = self.build_command()?;
+        command.args(args);
+        stream_both(command, status)
+    }
+
+    fn build_query(&mut self, args: &[String]) -> Result<Captured> {
+        let output = self
+            .build_command()?
             .args(args)
             .stdin(Stdio::null())
             .output()?;
@@ -585,6 +612,7 @@ mod tests {
             root: tmp.path().into(),
             flash_bin,
             local_bin: tmp.path().join("absent"),
+            build_bin: tmp.path().join("absent"),
         };
         let mut status = Status::new(tmp.path(), tmp.path().join("status"));
         status.begin("dump", Some("unit"), &[]).unwrap();
@@ -613,6 +641,7 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
             root: tmp.path().into(),
             flash_bin,
             local_bin: tmp.path().join("absent"),
+            build_bin: tmp.path().join("absent"),
         };
         let output = tmp.path().join("capture");
 
@@ -629,6 +658,7 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
             root: tmp.path().into(),
             flash_bin,
             local_bin: tmp.path().join("absent"),
+            build_bin: tmp.path().join("absent"),
         };
 
         let error = tools
@@ -649,6 +679,7 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
             root: tmp.path().into(),
             flash_bin: tmp.path().join("absent"),
             local_bin: "/bin/sh".into(),
+            build_bin: tmp.path().join("absent"),
         };
         let mut status = Status::new(tmp.path(), tmp.path().join("status"));
         status.begin("ota", Some("unit"), &[]).unwrap();
@@ -679,6 +710,7 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
             root: tmp.into(),
             flash_bin: fake_flash(tmp, &script),
             local_bin: "/bin/sh".into(),
+            build_bin: tmp.join("absent"),
         };
         let root = tmp.to_path_buf();
         tools
@@ -761,6 +793,7 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
             root: tmp.path().into(),
             flash_bin: tmp.path().join("absent"),
             local_bin: "/bin/sh".into(),
+            build_bin: tmp.path().join("absent"),
         };
 
         let output = tools
@@ -786,6 +819,7 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
             root: tmp.path().into(),
             flash_bin: tmp.path().join("absent"),
             local_bin: tmp.path().join("absent"),
+            build_bin: tmp.path().join("absent"),
         };
         let mut status = Status::new(tmp.path(), tmp.path().join("status"));
         status.begin("ota", Some("unit"), &[]).unwrap();
@@ -811,12 +845,53 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
     }
 
     #[test]
+    fn the_builder_runs_from_the_root_and_must_exist() {
+        let _serial = serial();
+        let tmp = tempfile::tempdir().unwrap();
+        let builder = tmp.path().join("wellfed-build");
+        fs::write(&builder, "#!/bin/sh\necho \"$1 in $(pwd)\"; exit 3\n").unwrap();
+        fs::set_permissions(
+            &builder,
+            std::os::unix::fs::PermissionsExt::from_mode(0o755),
+        )
+        .unwrap();
+        let mut tools = Processes {
+            root: tmp.path().into(),
+            flash_bin: tmp.path().join("absent"),
+            local_bin: tmp.path().join("absent"),
+            build_bin: builder,
+        };
+        let mut status = Status::new(tmp.path(), tmp.path().join("status"));
+        status.begin("ota", Some("unit"), &[]).unwrap();
+
+        assert_eq!(
+            tools
+                .build(&["plaf103-firstboot".into()], &mut status)
+                .unwrap(),
+            3
+        );
+        let root = tmp.path().canonicalize().unwrap();
+        let lines = status.state.unwrap().lines;
+        assert!(lines.contains(&format!("plaf103-firstboot in {}", root.display())));
+        let answer = tools.build_query(&["source-id".into()]).unwrap();
+        assert_eq!(
+            (answer.code, answer.stdout.split(' ').next()),
+            (3, Some("source-id"))
+        );
+
+        tools.build_bin = tmp.path().join("absent");
+        let error = tools.build_query(&[]).unwrap_err();
+        assert!(error.to_string().contains("--build-bin"));
+    }
+
+    #[test]
     fn a_missing_flash_binary_is_refused() {
         let tmp = tempfile::tempdir().unwrap();
         let mut tools = Processes {
             root: tmp.path().into(),
             flash_bin: tmp.path().join("absent"),
             local_bin: tmp.path().join("absent"),
+            build_bin: tmp.path().join("absent"),
         };
         let mut status = Status::disabled();
 

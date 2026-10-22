@@ -703,20 +703,11 @@ impl Bench {
         )?;
         self.require_unbroken_power()?;
 
-        // Progress estimate only: one ~1 KiB frame per packet out, three region
-        // acquisitions back. The updater reads and checks the plan itself.
+        // Progress estimate only; the updater reads and checks the plan itself.
         if let Some((tx, rx)) = fs::read(&p.plan)
             .ok()
             .and_then(|raw| serde_json::from_slice::<Value>(&raw).ok())
-            .and_then(|plan| {
-                let plan = &plan["operation_plan"];
-                let packets =
-                    plan["staging_packets"].as_u64()? + plan["commit_packets"].as_u64()?;
-                Some((
-                    packets * FRAME_TX_BYTES,
-                    3 * plan["region"]["bytes"].as_u64()?,
-                ))
-            })
+            .and_then(|plan| update_traffic(&plan["operation_plan"]))
         {
             self.status.transfer(Some(&p.execute), tx, rx);
         }
@@ -917,6 +908,34 @@ pub fn execute_line(args: &UpdateArgs, sha: &str) -> String {
         }
     }
     line + &format!(" --expected-plan-sha256 {sha}")
+}
+
+/// Expected serial bytes (out, back) of a development update, for the
+/// estimated bar. It mirrors the read sequence in wellfed-flash's
+/// `development::run`, so a change there must change this too.
+///
+/// Each acquisition reads the factory region, the other bank's guard sector
+/// and the application region. A plan with sectors to stage (or an interrupted
+/// one) does three acquisitions, reads every staged sector three times
+/// (preimage, erased, programmed) and the marker sector twice; otherwise only
+/// the preimage acquisition runs.
+pub fn update_traffic(plan: &Value) -> Option<(u64, u64)> {
+    const SECTOR: u64 = 0x1000;
+    const ACQUIRED_GUARDS: u64 = 0x6000 + SECTOR;
+
+    let packets = plan["staging_packets"].as_u64()? + plan["commit_packets"].as_u64()?;
+    let region = plan["region"]["bytes"].as_u64()?;
+    let sectors = plan["ordered_sectors"].as_array()?.len() as u64;
+    let acquisition = ACQUIRED_GUARDS + region;
+
+    let read = if sectors > 0 || plan["interrupted"].as_bool()? {
+        3 * acquisition + (3 * sectors + 2) * SECTOR
+    } else {
+        acquisition
+    };
+
+    // Read packets carry 1024 payload bytes in 1028 on the wire.
+    Some((packets * FRAME_TX_BYTES, read / 1024 * 1028))
 }
 
 /// Labels for the overall-progress steps of each command.

@@ -525,3 +525,21 @@ fn demo_stops_at_the_toggle_cap_and_still_ends_off() {
     assert!(error.to_string().contains("Toggle cap"));
     assert_eq!(rig.board.state()[2..], [false, false]);
 }
+
+#[test]
+fn update_traffic_matches_observed_installs() {
+    // Totals observed on October 22, 2026 (FW32 bench): a 158-sector bank-0
+    // install and a no-op, both over a 0xa4000-byte region.
+    let plan = |sectors: usize, packets: u64| {
+        json!({"staging_packets": packets, "commit_packets": packets.min(1),
+               "region": {"bytes": 0xa4000}, "interrupted": false,
+               "ordered_sectors": vec![json!({}); sectors]})
+    };
+    let close = |estimate: u64, actual: u64| estimate.abs_diff(actual) * 100 <= actual;
+
+    let (tx, rx) = update_traffic(&plan(158, 632)).unwrap();
+    assert!(close(tx, 667_579) && close(rx, 4_081_733), "{tx} {rx}");
+
+    let (tx, rx) = update_traffic(&plan(0, 0)).unwrap();
+    assert!(tx == 0 && close(rx, 703_173), "{rx}");
+}

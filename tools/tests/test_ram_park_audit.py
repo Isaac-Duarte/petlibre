@@ -38,8 +38,9 @@ class RamParkTests(unittest.TestCase):
         result = rampark.audit(BUILD / "sdk", Path("project/realtek_amebaD_va0_example/GCC-RELEASE"), BINUTILS, {"KM0": BUILD / "rust-lib/libwellfed_km0.a", "KM4": BUILD / "rust-lib/libwellfed_km4.a"})
         self.assertEqual(set(result["images"]), {"KM0", "KM4"})
         self.assertFalse(result["activated"])
-        for image in result["images"].values():
-            self.assertEqual(set(image["functions"]), set(rampark.SYMBOLS))
+        for core, image in result["images"].items():
+            pinned = set(rampark.SYMBOLS) | (set(rampark.KM4_SYMBOLS) if core == "KM4" else set())
+            self.assertEqual(set(image["functions"]), pinned)
             self.assertTrue(all(f["calls"] == 0 for f in image["functions"].values()))
 
     def test_calls_and_foreign_branches_are_rejected(self):

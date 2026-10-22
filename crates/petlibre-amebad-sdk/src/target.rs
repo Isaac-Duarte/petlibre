@@ -836,6 +836,8 @@ unsafe extern "C" {
     fn petlibre_tcp_send(socket: i32, data: *const u8, length: u32) -> i32;
     fn petlibre_tcp_recv(socket: i32, buffer: *mut u8, length: u32, timeout_ms: u32) -> i32;
     fn petlibre_tcp_close(socket: i32);
+    fn petlibre_tcp_listen(port: u32) -> i32;
+    fn petlibre_tcp_accept(listener: i32, timeout_ms: u32) -> i32;
 }
 
 /// The broker settings compiled into this image; `None` when a string field
@@ -891,7 +893,7 @@ fn hex_key(hex: &[u8]) -> Option<[u8; 32]> {
 }
 
 unsafe extern "C" {
-    fn petlibre_audio_open() -> i32;
+    fn petlibre_audio_open(rate_hz: u32) -> i32;
     fn petlibre_audio_page() -> *mut c_void;
     fn petlibre_audio_submit();
     fn petlibre_audio_drained() -> i32;
@@ -899,10 +901,11 @@ unsafe extern "C" {
     fn petlibre_audio_close();
 }
 
-/// FW24: start the codec's line output and its DMA ring (`example_entry.c`);
-/// false when already open or no DMA channel was free.
-pub fn audio_open() -> bool {
-    unsafe { petlibre_audio_open() != 0 }
+/// FW24: start the codec's line output and its DMA ring (`example_entry.c`)
+/// at `rate_hz` (8, 16, 32 or 48 kHz); false for another rate, when already
+/// open or when no DMA channel was free.
+pub fn audio_open(rate_hz: u32) -> bool {
+    unsafe { petlibre_audio_open(rate_hz) != 0 }
 }
 
 /// The next free ring page, while the codec is open and the DMA does not
@@ -963,6 +966,18 @@ pub fn tcp_recv(socket: i32, buffer: &mut [u8], timeout_ms: u32) -> TcpRecv {
 
 pub fn tcp_close(socket: i32) {
     unsafe { petlibre_tcp_close(socket) }
+}
+
+/// A listening socket on `port`, or `None`.
+pub fn tcp_listen(port: u16) -> Option<i32> {
+    let socket = unsafe { petlibre_tcp_listen(u32::from(port)) };
+    (socket >= 0).then_some(socket)
+}
+
+/// A connection accepted within `timeout_ms`, or `None`.
+pub fn tcp_accept(listener: i32, timeout_ms: u32) -> Option<i32> {
+    let socket = unsafe { petlibre_tcp_accept(listener, timeout_ms) };
+    (socket >= 0).then_some(socket)
 }
 
 /// Milliseconds since the scheduler started (configTICK_RATE_HZ is 1000).

@@ -642,12 +642,13 @@ pub fn entropy() -> [u32; 4] {
     [call, uptime_ms(), systimer_ticks(), 0x5eed]
 }
 
-pub fn audio_open() -> bool {
+pub fn audio_open(rate_hz: u32) -> bool {
     with(|h| {
-        if h.audio_open || h.audio_open_fails {
+        if h.audio_open || h.audio_open_fails || ![8000, 16000, 32000, 48000].contains(&rate_hz) {
             return false;
         }
         h.audio_open = true;
+        h.audio_rate = rate_hz;
         h.audio_opens += 1;
         h.audio_underruns = 0;
         true
@@ -732,6 +733,21 @@ pub fn tcp_recv(_socket: i32, buffer: &mut [u8], timeout_ms: u32) -> TcpRecv {
 
 pub fn tcp_close(socket: i32) {
     with(|h| h.tcp_closed.push(socket));
+}
+
+pub fn tcp_listen(_port: u16) -> Option<i32> {
+    with(|h| (!h.tcp_listen_fails).then_some(100))
+}
+
+/// Takes the next scripted connection; otherwise the wait passes.
+pub fn tcp_accept(_listener: i32, timeout_ms: u32) -> Option<i32> {
+    with(|h| {
+        let socket = h.tcp_accepts.pop_front();
+        if socket.is_none() {
+            h.uptime_ms = h.uptime_ms.wrapping_add(timeout_ms);
+        }
+        socket
+    })
 }
 
 pub fn uptime_ms() -> u32 {

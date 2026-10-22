@@ -13,7 +13,7 @@
 use core::fmt;
 use core::sync::atomic::{AtomicU8, Ordering};
 
-use petlibre_core::tone::{Player, Tune};
+use petlibre_core::tone::{Player, SAMPLE_RATE, Tune};
 use petlibre_core::transport::PlayResult;
 
 use crate::sdk;
@@ -186,7 +186,7 @@ impl Speaker {
                 };
                 let volume = settings::current().map_or(0, |view| view.volume);
                 self.prepare_amp();
-                if !sdk::audio_open() {
+                if !sdk::audio_open(SAMPLE_RATE) {
                     SLOT.store(EMPTY, Ordering::Release);
                     return next(POLL_MS, Some(Record::Error { stage: "open" }));
                 }

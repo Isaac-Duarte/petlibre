@@ -90,6 +90,9 @@ pub struct Hardware {
     pub tcp_tx: Vec<(i32, Vec<u8>)>,
     pub tcp_closed: Vec<i32>,
     pub tcp_send_fails: bool,
+    pub tcp_listen_fails: bool,
+    /// Connections `tcp_accept` hands out, in order.
+    pub tcp_accepts: VecDeque<i32>,
     /// Milliseconds; a timed-out receive advances it by its timeout.
     pub uptime_ms: u32,
 
@@ -173,6 +176,7 @@ pub struct Hardware {
     pub audio_open: bool,
     pub audio_open_fails: bool,
     pub audio_opens: u32,
+    pub audio_rate: u32,
     pub audio_queue: VecDeque<[i16; AUDIO_PAGE_SAMPLES]>,
     pub audio_played: Vec<i16>,
     pub audio_underruns: u32,
@@ -208,6 +212,8 @@ impl Default for Hardware {
             tcp_tx: Vec::new(),
             tcp_closed: Vec::new(),
             tcp_send_fails: false,
+            tcp_listen_fails: false,
+            tcp_accepts: VecDeque::new(),
             uptime_ms: 0,
 
             wifi_started: false,
@@ -285,6 +291,7 @@ impl Default for Hardware {
             audio_open: false,
             audio_open_fails: false,
             audio_opens: 0,
+            audio_rate: 0,
             audio_queue: VecDeque::new(),
             audio_played: Vec::new(),
             audio_underruns: 0,

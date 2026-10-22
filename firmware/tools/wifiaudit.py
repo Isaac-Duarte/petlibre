@@ -42,7 +42,10 @@ EXPECTED_HP = {
     "FLASH_SetStatusBits": {"FLASH_SetStatusBitsXIP"},
     "FLASH_TxData12B": {"FLASH_TxData12BXIP", "FLASH_WriteStream", "cmd_flash"},
     "FLASH_TxData256B": {"FLASH_TxData256BXIP"},
-    "FLASH_EraseXIP": {"FLASH_EreaseDwordsXIP"},
+    # FW10: the recovery updater's bank-1 wrappers, which refuse unless the
+    # image runs from bank 0 and stay inside bank 1 (amebad-sdk target.rs).
+    "FLASH_EraseXIP": {"FLASH_EreaseDwordsXIP", "wellfed_amebad_sdk::target::bank1_erase"},
+    "FLASH_TxData256BXIP": {"wellfed_amebad_sdk::target::bank1_program"},
     "FLASH_TxData12BXIP": {"FLASH_EreaseDwordsXIP"},
     "FLASH_EreaseDwordsXIP": set(),
     "cmd_flash": {"shell_cmd_table"},
@@ -80,7 +83,46 @@ EXPECTED_LP = {
 CORES = {"hp": (ABSENT, EXPECTED_HP, (".ram_image2.text", ".xip_image2.text"), "wifi_FW_init_ram", False),
          "lp": (tuple(n for n in ABSENT if n not in EXPECTED_LP), EXPECTED_LP,
                 (".ram_image2.text", ".xip_image2.text", ".ram_retention.text"), "wifi_FW_init_ram", True)}
-BRANCH = re.compile(r"\b(?:bl|blx|b(?:\.w)?)\s+([0-9a-f]+)\s+<([^>+]+)>")
+# Calls and branches, conditional ones included (`bleq` inside an IT block).
+BRANCH = re.compile(r"\b(?:blx?|b)(?:eq|ne|cs|hs|cc|lo|mi|pl|vs|vc|hi|ls|ge|lt|gt|le|al)?(?:\.[wn])?"
+                    r"\s+([0-9a-f]+)\s+<([^>+]+)>")
+
+
+def demangle(name):
+    """A Rust v0 nested path (`_RNvNt...`) as `crate::module::item`, without the
+    per-build crate hash, so pins survive rebuilds; other names unchanged."""
+    if not name.startswith("_R"):
+        return name
+    text, at = name[2:], 0
+
+    def ident():
+        nonlocal at
+        match = re.match(r"u?(\d+)_?", text[at:])
+        if not match:
+            raise ValueError
+        at += match.end()
+        value = text[at:at + int(match[1])]
+        at += int(match[1])
+        return value
+
+    def path():
+        nonlocal at
+        tag = text[at:at + 1]
+        at += 1
+        if tag == "C":
+            disambiguator = re.match(r"s[0-9A-Za-z]*_", text[at:])
+            if disambiguator:
+                at += disambiguator.end()
+            return [ident()]
+        if tag == "N":
+            at += 1  # Namespace: v (value), t (type) or another.
+            return path() + [ident()]
+        raise ValueError
+    try:
+        parts = path()
+    except ValueError:
+        return name
+    return "::".join(parts) if at == len(text) else name
 
 
 def table(elf, objdump):
@@ -110,7 +152,7 @@ def loaded(elf, objdump):
 
 def references(elf, objdump, names, targets, sections):
     """{target: set of enclosing symbols that reference it}."""
-    starts = sorted((address & ~1, name) for name, (address, section) in names.items()
+    starts = sorted((address & ~1, demangle(name)) for name, (address, section) in names.items()
                     if section not in ("*ABS*",) and address)
     keys = [address for address, _ in starts]
 
@@ -134,7 +176,7 @@ def references(elf, objdump, names, targets, sections):
     for line in listing.splitlines():
         header = re.match(r"^([0-9a-f]+) <([^>]+)>:$", line)
         if header:
-            current = header[2]
+            current = demangle(header[2])
             continue
         branch = BRANCH.search(line)
         if branch and current:

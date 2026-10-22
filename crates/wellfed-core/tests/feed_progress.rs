@@ -1,3 +1,10 @@
+//! Tests for portion counting and direction alternation within one feed
+//! request.
+//!
+//! The double-bowl trace is an independent reconstruction of the stock
+//! `Micro_SwHandle` behavior. A finished request never counts further, even
+//! at the `u16` maximum.
+
 use wellfed_core::feed_progress::{BowlMode, Direction, FeedProgress, ProgressResult};
 
 #[test]
@@ -10,6 +17,7 @@ fn single_bowl_request() {
     assert_eq!(progress.accept(), ProgressResult::FINISHED);
     assert_eq!(progress.completed, 3);
     assert_eq!(progress.direction, Direction::D0);
+
     for _ in 0..100 {
         assert_eq!(progress.accept(), ProgressResult::FINISHED);
     }
@@ -34,12 +42,14 @@ fn double_bowl_trace() {
         ProgressResult::WAIT,
         ProgressResult::FINISHED,
     ];
+
     let mut progress = FeedProgress::new(BowlMode::DOUBLE, Direction::D0, 3, true).unwrap();
     for i in 0..completed.len() {
         assert_eq!(progress.accept(), results[i]);
         assert_eq!(progress.completed, completed[i]);
         assert_eq!(progress.direction, direction[i]);
     }
+
     assert!(progress.credit_next_event);
     assert_eq!(progress.accept(), ProgressResult::FINISHED);
     assert_eq!(progress.completed, 3);
@@ -63,6 +73,7 @@ fn consecutive_requests() {
     assert_eq!(progress.accept(), ProgressResult::WAIT);
     assert_eq!(progress.accept(), ProgressResult::FINISHED);
     assert_eq!(progress.direction, Direction::D0);
+
     progress = FeedProgress::new(
         progress.mode,
         progress.direction,
@@ -70,6 +81,7 @@ fn consecutive_requests() {
         progress.credit_next_event,
     )
     .unwrap();
+
     assert_eq!(progress.accept(), ProgressResult::FINISHED);
     assert_eq!(progress.completed, 1);
     assert_eq!(progress.direction, Direction::D0);
@@ -79,11 +91,13 @@ fn consecutive_requests() {
 fn maximum_request_does_not_wrap() {
     let mut progress = FeedProgress::new(BowlMode::DOUBLE, Direction::D0, u16::MAX, true).unwrap();
     let mut events = 0u32;
+
     while !progress.finished {
         progress.accept();
         events += 1;
         assert!(events <= 131_069);
     }
+
     assert_eq!(events, 131_069);
     assert_eq!(progress.completed, u16::MAX);
     assert_eq!(progress.accept(), ProgressResult::FINISHED);

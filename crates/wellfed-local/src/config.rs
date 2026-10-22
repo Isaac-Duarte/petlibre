@@ -1,3 +1,12 @@
+//! The private server configuration (`private/server.json`, format version 1).
+//!
+//! `init` imports it once from a captured CONNECT credential and a decoded
+//! MQTT capture, generating independent API and server secrets, and refuses
+//! to overwrite an existing file. It holds working device credentials, so it
+//! is written mode 0600 and has no `Debug`. Edit it only while the service is
+//! stopped. `validate` keeps the HTTP API on loopback and the broker on one
+//! specific IPv4 address.
+
 use std::{fs, net::SocketAddr, path::Path};
 
 use anyhow::{Context, Result, bail, ensure};
@@ -17,16 +26,21 @@ pub struct Config {
     pub device_client_id: String,
     pub device_username: String,
     pub device_password: String,
+
     pub server_password: String,
     pub api_token: String,
+
     pub mqtt_listen: SocketAddr,
     pub http_listen: SocketAddr,
+
     pub timezone: Tz,
     pub max_portions: u8,
     pub plans: Vec<Value>,
     pub binding_response: Option<Value>,
+
     pub hotspot_interface: String,
     pub target_mac: String,
+
     /// Replacement-firmware MQTT role (FW08); absent for stock-only setups.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub firmware: Option<FirmwareConfig>,
@@ -64,10 +78,12 @@ impl Config {
                     .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'),
             "invalid device identifier"
         );
+
         ensure!(
             self.max_portions > 0 && self.max_portions <= 10,
             "max_portions must be 1..10"
         );
+
         ensure!(
             self.http_listen.ip().is_loopback(),
             "HTTP API must bind to loopback"
@@ -76,6 +92,7 @@ impl Config {
             self.mqtt_listen.is_ipv4() && !self.mqtt_listen.ip().is_unspecified(),
             "MQTT must bind to a specific IPv4 address"
         );
+
         ensure!(
             self.api_token.len() >= 32 && self.server_password.len() >= 32,
             "server secrets must have at least 32 characters"
@@ -84,6 +101,7 @@ impl Config {
             !self.device_password.is_empty() && !self.device_username.is_empty(),
             "device credentials missing"
         );
+
         ensure!(
             self.hotspot_interface
                 .bytes()
@@ -99,6 +117,7 @@ impl Config {
                     .all(|part| part.len() == 2 && u8::from_str_radix(part, 16).is_ok()),
             "invalid target MAC"
         );
+
         if let Some(firmware) = &self.firmware {
             ensure!(
                 firmware.client_id == self.firmware_client_id()
@@ -111,6 +130,7 @@ impl Config {
                 "replacement-firmware password must be 64 hex characters"
             );
         }
+
         Ok(())
     }
 
@@ -164,9 +184,11 @@ pub fn add_firmware_credential(config_path: &Path, output: &Path) -> Result<()> 
         !output.exists(),
         "credential file already exists; refusing to replace it"
     );
+
     let std::net::IpAddr::V4(broker) = config.mqtt_listen.ip() else {
         bail!("MQTT must bind to a specific IPv4 address");
     };
+
     // Same source as the other server secrets: 2 x 122 random bits.
     let password = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
     let firmware = FirmwareConfig {
@@ -174,6 +196,7 @@ pub fn add_firmware_credential(config_path: &Path, output: &Path) -> Result<()> 
         username: FIRMWARE_USERNAME.to_owned(),
         password,
     };
+
     let credential = FirmwareCredential {
         version: 1,
         broker,
@@ -184,6 +207,7 @@ pub fn add_firmware_credential(config_path: &Path, output: &Path) -> Result<()> 
         password: firmware.password.clone(),
         namespace: config.firmware_namespace(),
     };
+
     config.firmware = Some(firmware);
     config.validate()?;
     storage::write_new_json(output, &credential)?;
@@ -207,27 +231,32 @@ pub fn import(
         !output.exists(),
         "configuration already exists; refusing to replace secrets"
     );
+
     let credentials: Vec<Value> = serde_json::from_slice(&fs::read(credentials)?)?;
     ensure!(
         credentials.len() == 1,
         "expected exactly one captured CONNECT record"
     );
+
     let get = |field: &str| -> Result<String> {
         Ok(credentials[0][field]
             .as_str()
             .context("CONNECT credential field missing")?
             .to_owned())
     };
+
     let packets: Vec<Value> = serde_json::from_slice(&fs::read(capture)?)?;
     let mut device_id = None;
     let mut plans = None;
     let mut binding_response = None;
     let mut target_mac = None;
+
     for packet in packets {
         let mqtt = &packet["_source"]["layers"]["mqtt"];
         let Some(topic) = mqtt["mqtt.topic"].as_str() else {
             continue;
         };
+
         let parts: Vec<_> = topic.split('/').collect();
         if parts.len() != 6 || parts[0] != "dl" || parts[1] != "PLAF103" {
             continue;
@@ -236,6 +265,7 @@ pub fn import(
             bail!("capture contains multiple feeder identifiers");
         }
         device_id = Some(parts[2].to_owned());
+
         if parts[5] == "post"
             && let Some(mac) = packet["_source"]["layers"]["eth"]["eth.src"].as_str()
         {
@@ -245,6 +275,7 @@ pub fn import(
             );
             target_mac = Some(mac.to_owned());
         }
+
         let Some(hex) = mqtt["mqtt.msg"].as_str() else {
             continue;
         };
@@ -260,6 +291,7 @@ pub fn import(
         let Ok(message) = serde_json::from_slice::<Value>(&bytes) else {
             continue;
         };
+
         if parts[5] == "sub"
             && matches!(
                 message["cmd"].as_str(),
@@ -269,10 +301,12 @@ pub fn import(
         {
             plans = Some(values.clone());
         }
+
         if parts[4] == "system" && parts[5] == "sub" && message["cmd"] == "BINDING" {
             binding_response = Some(message);
         }
     }
+
     let config = Config {
         version: 1,
         device_id: device_id.context("capture has no PLAF103 topics")?,
@@ -291,6 +325,7 @@ pub fn import(
         target_mac: target_mac.context("capture lacks a device source MAC")?,
         firmware: None,
     };
+
     config.validate()?;
     storage::write_json(output, &config)
 }

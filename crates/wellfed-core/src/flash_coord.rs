@@ -4,10 +4,17 @@
 //! serialization. No SDK/transport or physical parking is implemented here.
 //! Messages are API values, not a native-struct wire format. Boot sessions must
 //! be fresh, nonzero challenges.
+//!
+//! A lease runs IDLE, QUIESCING (the requester's outputs verified inactive),
+//! PARKING (the other core acknowledges from RAM), ACTIVE (only the owner may
+//! touch flash), RELEASING, then IDLE again. Outputs are blocked in every
+//! phase but IDLE, each phase has its own deadline inside the total lease
+//! budget, and a fault latches: only a fresh boot authority clears it.
 
 use crate::{HALF_RANGE, interval_valid};
 
 c_enum!(FlashParty { LOCAL = 0, PEER = 1, FENCE = 2 });
+
 c_enum!(FlashPhase {
     BOOT = 0,
     IDLE = 1,
@@ -19,6 +26,7 @@ c_enum!(FlashPhase {
     CLOSED = 7,
     FAULT = 8,
 });
+
 c_enum!(FlashFault {
     OK = 0,
     CLOCK = 1,
@@ -29,6 +37,7 @@ c_enum!(FlashFault {
     TRANSPORT = 6,
     PEER_LOST = 7,
 });
+
 c_enum!(FlashReply { ACCEPTED = 0, DUPLICATE = 1, STALE = 2, BUSY = 3, INVALID = 4, FAILED = 5 });
 
 impl FlashParty {
@@ -63,9 +72,11 @@ pub struct FlashCoord {
     pub limits: FlashLimits,
     pub token: FlashToken,
     pub last_request: [u64; 2],
+
     pub observed_at: u32,
     pub phase_at: u32,
     pub requested_at: u32,
+
     pub phase: FlashPhase,
     pub fault: FlashFault,
     pub initialized: bool,
@@ -86,6 +97,7 @@ impl FlashCoord {
             && l.park_ms <= l.total_ms
             && l.active_ms <= l.total_ms
             && l.release_ms <= l.total_ms;
+
         valid.then(|| Self {
             limits: *l,
             token: FlashToken {
@@ -109,6 +121,7 @@ impl FlashCoord {
         {
             return;
         }
+
         if self.fault == FlashFault::OK {
             self.fault = reason;
         }
@@ -124,11 +137,13 @@ impl FlashCoord {
         if !self.initialized || self.fault != FlashFault::OK || self.phase == FlashPhase::CLOSED {
             return false;
         }
+
         if now.wrapping_sub(self.observed_at) >= HALF_RANGE {
             self.trip(FlashFault::CLOCK);
             return false;
         }
         self.observed_at = now;
+
         let limit = match self.phase {
             FlashPhase::BOOT | FlashPhase::PARKING => self.limits.park_ms,
             FlashPhase::QUIESCING => self.limits.quiesce_ms,
@@ -140,6 +155,7 @@ impl FlashCoord {
                 return false;
             }
         };
+
         if now.wrapping_sub(self.phase_at) >= limit
             || (self.phase != FlashPhase::BOOT
                 && now.wrapping_sub(self.requested_at) >= self.limits.total_ms)
@@ -186,6 +202,7 @@ impl FlashCoord {
         if session != self.token.authority_session {
             return FlashReply::STALE;
         }
+
         if self.phase != FlashPhase::BOOT {
             if peer == self.token.peer_session {
                 return FlashReply::DUPLICATE;
@@ -193,9 +210,11 @@ impl FlashCoord {
             self.trip(FlashFault::PEER_LOST);
             return FlashReply::FAILED;
         }
+
         if !inactive {
             return self.output();
         }
+
         self.token.peer_session = peer;
         self.set_phase(FlashPhase::IDLE, now);
         FlashReply::ACCEPTED
@@ -223,6 +242,7 @@ impl FlashCoord {
         if !self.poll(now) {
             return FlashReply::FAILED;
         }
+
         let expected = if requester == FlashParty::LOCAL {
             self.token.authority_session
         } else {
@@ -231,6 +251,7 @@ impl FlashCoord {
         if session != expected || session == 0 {
             return FlashReply::STALE;
         }
+
         let last = &self.last_request[requester.0 as usize];
         if id == *last && self.token.owner == requester {
             return FlashReply::DUPLICATE;
@@ -238,12 +259,14 @@ impl FlashCoord {
         if id <= *last {
             return FlashReply::STALE;
         }
+
         if self.phase != FlashPhase::IDLE {
             return FlashReply::BUSY;
         }
         if !self.next_token() {
             return FlashReply::FAILED;
         }
+
         self.token.owner = requester;
         self.last_request[requester.0 as usize] = id;
         self.requested_at = now;
@@ -259,6 +282,7 @@ impl FlashCoord {
         if !inactive {
             return self.output();
         }
+
         match self.phase {
             FlashPhase::QUIESCING => {
                 self.set_phase(FlashPhase::PARKING, now);
@@ -281,6 +305,7 @@ impl FlashCoord {
         if !who.is_core() || who == self.token.owner {
             return self.order();
         }
+
         match self.phase {
             FlashPhase::PARKING => {
                 self.set_phase(FlashPhase::ACTIVE, now);
@@ -299,6 +324,7 @@ impl FlashCoord {
         if who != self.token.owner || who == FlashParty::FENCE {
             return self.order();
         }
+
         match self.phase {
             FlashPhase::ACTIVE => {
                 self.set_phase(FlashPhase::RELEASING, now);
@@ -322,6 +348,7 @@ impl FlashCoord {
         if r != FlashReply::ACCEPTED {
             return r;
         }
+
         if !who.is_core() || who == self.token.owner {
             return self.order();
         }
@@ -334,6 +361,7 @@ impl FlashCoord {
         if !inactive {
             return self.output();
         }
+
         self.set_phase(FlashPhase::IDLE, now);
         FlashReply::ACCEPTED
     }
@@ -371,6 +399,7 @@ impl FlashCoord {
         if !self.next_token() {
             return FlashReply::FAILED;
         }
+
         self.token.owner = FlashParty::FENCE;
         self.requested_at = now;
         self.set_phase(FlashPhase::CLOSING, now);
@@ -388,6 +417,7 @@ impl FlashCoord {
         if r != FlashReply::ACCEPTED {
             return r;
         }
+
         if self.phase != FlashPhase::CLOSING || self.token.owner != FlashParty::FENCE {
             return self.order();
         }
@@ -397,6 +427,7 @@ impl FlashCoord {
         if !inactive {
             return self.output();
         }
+
         self.set_phase(FlashPhase::CLOSED, now);
         FlashReply::ACCEPTED
     }

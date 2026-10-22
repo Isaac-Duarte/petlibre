@@ -1,4 +1,9 @@
 //! End-to-end replacement Rust behavior on synthetic hardware and persistent NOR.
+//!
+//! Each test runs the real `virtual-feeder-worker` through the harness, so
+//! besides its own expectations every run also checks the safety invariants
+//! (reservation before drive, valid motor pair, inactive outputs when
+//! durable). This is simulation evidence, not hardware reliability.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -37,12 +42,14 @@ fn run(scenario: &Value) -> Result<Value, wellfed_sim::HarnessError> {
 
 fn passing(actions: Vec<Value>, end: u64, profile: &str, feedback: u64) -> Value {
     let report = run(&scenario(actions, end, profile, feedback)).unwrap();
+
     let failed: Vec<&Value> = report["assertions"]
         .as_array()
         .unwrap()
         .iter()
         .filter(|a| a["passed"] != true)
         .collect();
+
     assert!(report["passed"] == true, "{failed:?}");
     report
 }
@@ -78,6 +85,7 @@ fn single_and_double_bowl_complete_through_real_journal() {
             profile,
             10,
         );
+
         let drives: Vec<u64> = events(&report, "outputs")
             .filter_map(|e| e["motor"].as_u64())
             .collect();
@@ -178,15 +186,18 @@ fn faults_stop_and_finish_without_success() {
             json!({"state": "fault", "fault": "hardware"}),
         ),
     ];
+
     for (name, faults, expected) in cases {
         let mut values = json!({"durable": true, "motor": 0, "optics": 0, "completed": 0});
         values
             .as_object_mut()
             .unwrap()
             .extend(expected.as_object().unwrap().clone());
+
         let mut actions = vec![act(1, "submit", &[1, 3])];
         actions.extend(faults);
         actions.push(expect(50, values));
+
         let report = passing(actions, 55, "single", 10);
         assert!(
             !events(&report, "status").any(|e| e["outcome"] == 1),
@@ -211,6 +222,7 @@ fn stalled_owner_independent_timer_and_watchdog_reset() {
         "single",
         10,
     );
+
     assert_eq!(events(&report, "watchdog_reset_requested").count(), 1);
 }
 
@@ -277,6 +289,7 @@ fn power_cut_during_motion_blocks_recovery_and_new_feed() {
         "single",
         10,
     );
+
     assert!(!drove_after_reboot(&report));
 }
 
@@ -292,11 +305,13 @@ fn byte_cuts_at_erase_body_and_commit_boundaries() {
             } else {
                 json!({"state": "fault", "fault": "recovery"})
             };
+
             let mut values = json!({"motor": 0, "optics": 0});
             values
                 .as_object_mut()
                 .unwrap()
                 .extend(expected.as_object().unwrap().clone());
+
             let report = passing(
                 vec![
                     act(0, "cut", &[phase, byte]),
@@ -309,6 +324,7 @@ fn byte_cuts_at_erase_body_and_commit_boundaries() {
                 "single",
                 10,
             );
+
             assert_eq!(events(&report, "power_cut").count(), 1, "{phase} {byte}");
             assert!(!drove_after_reboot(&report), "{phase} {byte}");
         }
@@ -351,6 +367,8 @@ fn identical_scenarios_have_identical_reports() {
 fn invalid_scenarios_rejected_before_worker_launch() {
     let base = scenario(vec![expect(1, json!({"online": true}))], 80, "single", 10);
     let mut bad = Vec::new();
+
+    // Each top-level field invalid.
     for (key, value) in [
         ("version", json!(2)),
         ("end_ms", json!(10001)),
@@ -362,6 +380,8 @@ fn invalid_scenarios_rejected_before_worker_launch() {
         item[key] = value;
         bad.push(item);
     }
+
+    // Each malformed action.
     for event in [
         act(1, "shell", &[0]),
         json!({"at_ms": -1, "op": "status", "args": []}),
@@ -375,12 +395,15 @@ fn invalid_scenarios_rejected_before_worker_launch() {
         item["actions"] = json!([event]);
         bad.push(item);
     }
+
+    // Timestamps must not decrease.
     bad.push(scenario(
         vec![act(2, "status", &[]), expect(1, json!({"online": true}))],
         80,
         "single",
         10,
     ));
+
     for item in bad {
         assert!(validate(&item).is_err(), "{item}");
     }
@@ -391,9 +414,13 @@ fn invalid_worker_commands_and_unexpected_exit() {
     let scratch = tempfile::tempdir().unwrap();
     let mut w = Worker::start(&worker(), &scratch.path().join("journal.bin"), 0, true).unwrap();
     w.read().unwrap();
+
+    // The worker refuses an out-of-range argument by exiting with status 2.
     let error = w.command("current", &[5000]).unwrap_err();
     assert!(error.to_string().contains("Worker exited 2"), "{error}");
     w.close();
+
+    // Commanding a powered-off worker is a harness error, not a failed assertion.
     let unpowered = scenario(
         vec![
             act(1, "power_cut", &[]),
@@ -404,6 +431,7 @@ fn invalid_worker_commands_and_unexpected_exit() {
         "single",
         10,
     );
+
     assert!(run(&unpowered).is_err());
 }
 
@@ -412,6 +440,7 @@ fn cli_exit_codes_report_creation_and_no_overwrite() {
     let scratch = tempfile::tempdir().unwrap();
     let data = scratch.path().join("scenario.json");
     let report = scratch.path().join("report.json");
+
     let cli = |report: &Path| {
         Command::new(env!("CARGO_BIN_EXE_virtual-feeder"))
             .arg("--scenario")
@@ -427,6 +456,7 @@ fn cli_exit_codes_report_creation_and_no_overwrite() {
             .status
             .code()
     };
+
     std::fs::write(
         &data,
         scenario(vec![expect(1, json!({"online": true}))], 2, "single", 10).to_string(),
@@ -438,12 +468,14 @@ fn cli_exit_codes_report_creation_and_no_overwrite() {
         Some(2),
         "an existing report is never replaced"
     );
+
     std::fs::write(
         &data,
         scenario(vec![expect(1, json!({"completed": 1}))], 2, "single", 10).to_string(),
     )
     .unwrap();
     assert_eq!(cli(&scratch.path().join("failure.json")), Some(1));
+
     std::fs::write(&data, r#"{"version":2}"#).unwrap();
     assert_eq!(cli(&scratch.path().join("refused.json")), Some(2));
 }
@@ -459,6 +491,7 @@ fn checked_in_examples() {
         .collect();
     paths.sort();
     assert!(paths.len() >= 8);
+
     for path in paths {
         let scenario: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         let report = run(&scenario).unwrap();

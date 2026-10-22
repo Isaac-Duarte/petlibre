@@ -22,8 +22,13 @@ use crate::protocol::{Port, SECTOR};
 use crate::sector::{self, Baseline};
 use crate::status::{self, fields};
 
+/// One program packet's payload; a sector takes four.
 pub const FRAME: usize = 1024;
 pub const FACTORY: (usize, usize) = (0, 0x6000);
+
+/// The first eight bytes of a valid bank (with valid KM0/KM4 signatures).
+/// Bank 1 has priority, so clearing its marker is how bank 0 gets to boot;
+/// see docs/firmware/bank-policy.md.
 pub const MARKER: &[u8; 8] = b"81958711";
 pub const GIVE_WAY_KIND: &str = "plaf103_bank1_give_way";
 
@@ -44,6 +49,7 @@ pub const BANK1: Layout = Layout {
     end: sector::END,
     other: (0x6000, SECTOR),
 };
+
 /// Bank 0 keeps the reviewed stock footprint (0x150000), like bank 1.
 pub const BANK0: Layout = Layout {
     kind: "plaf103_bank0_development_update",
@@ -109,11 +115,13 @@ pub fn guards(
         factory == &baseline.bytes()[FACTORY.0..FACTORY.0 + FACTORY.1],
         "Factory region differs from the pinned baseline",
     )?;
+
     let (at, length) = layout.other;
     require(
         other.len() == length,
         "Other-bank guard has the wrong length",
     )?;
+
     if layout.bank == 1 {
         require(
             other == &baseline.bytes()[at..at + length] || &other[..8] == MARKER,
@@ -125,6 +133,7 @@ pub fn guards(
             "Bank 1 must be valid while bank 0 is written",
         )?;
     }
+
     require(
         other_sha256.is_none_or(|expected| sha256(other) == expected),
         "Other bank changed since inspection",
@@ -171,15 +180,18 @@ pub fn images(update: &Update, current: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
         }
         Some(source) => payload(source, layout)?,
     };
+
     require(
         current.len() == old.len().max(new.len()),
         "Exact source/target union acquisition required",
     )?;
+
     let with_tail = |base: &[u8]| {
         let mut proposed = new.to_vec();
         proposed.extend_from_slice(&base[new.len().min(base.len())..]);
         proposed
     };
+
     if update.restore {
         require(
             !update.interrupted && update.source.is_some(),
@@ -193,6 +205,7 @@ pub fn images(update: &Update, current: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
         let staged = staged_of(&proposed);
         return Ok((proposed, staged));
     }
+
     if !update.interrupted {
         require(
             &current[..old.len()] == old,
@@ -202,6 +215,7 @@ pub fn images(update: &Update, current: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
         let staged = staged_of(&proposed);
         return Ok((proposed, staged));
     }
+
     // The tail beyond the target is never written, so it must still be the source's.
     let mut union = old.to_vec();
     union.extend_from_slice(&current[old.len()..]);
@@ -211,6 +225,7 @@ pub fn images(update: &Update, current: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
         current[..SECTOR] == staged[..SECTOR],
         "Interrupted update requires the staged marker sector",
     )?;
+
     let erased = [0xffu8; SECTOR];
     let mut partial = 0;
     for at in (0..current.len()).step_by(SECTOR) {
@@ -230,6 +245,7 @@ pub fn images(update: &Update, current: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
         )?;
         partial += 1;
     }
+
     require(partial <= 1, "More than one partially programmed sector")?;
     Ok((proposed, staged))
 }
@@ -248,10 +264,12 @@ pub fn plan(update: &Update, current: &[u8], other: Option<&[u8]>) -> Result<Val
     } else {
         Vec::new()
     };
+
     require(
         update.interrupted || !changed || offsets.first() == Some(&0),
         "Marker must be staged first",
     )?;
+
     let target = payload(update.target, layout)?;
     let mut out = json!({
         "schema_version": 1, "kind": layout.kind, "bank": layout.bank,
@@ -273,12 +291,14 @@ pub fn plan(update: &Update, current: &[u8], other: Option<&[u8]>) -> Result<Val
         "retained_tail_sha256": sha256(&current[target.len().min(current.len())..]),
         "scope": "Application union and factory/other-bank guards read back; other flash is not scanned",
     });
+
     if let Some(other) = other {
         out["other_bank_sha256"] = json!(sha256(other));
     }
     if update.restore {
         out["restore_marker"] = json!(true);
     }
+
     Ok(out)
 }
 
@@ -343,11 +363,13 @@ pub fn run(
         .get("other_bank_sha256")
         .and_then(Value::as_str)
         .map(str::to_string);
+
     require(
         same(reviewed, &expected)?,
         "Reviewed development plan differs",
     )?;
     let (proposed, staged) = images(update, current)?;
+
     // Freeze all packets before creating durable intent or touching the transport.
     let mut sectors = Vec::new();
     for entry in expected["ordered_sectors"].as_array().unwrap() {
@@ -366,10 +388,15 @@ pub fn run(
             .collect::<Result<Vec<_>>>()?;
         sectors.push((offset, data, frames));
     }
+
     let commit = frame(&layout, 1, start, &proposed[..1024])?;
     let mut journal = Journal::create(root, output)?;
+
     let result = (|| -> Result<Value> {
         journal.append("transaction_start", fields(json!({"plan": expected})))?;
+
+        // Every acquisition re-checks the factory region and the other bank's
+        // guard, not only the application region being written.
         let mut check = |port: &mut dyn Port, journal: &mut Journal, want: &[u8], phase: &str| {
             let acquired = acquire(port)?;
             guards(
@@ -388,7 +415,9 @@ pub fn run(
                 fields(json!({"phase": phase, "sha256": sha256(want), "bytes": want.len()})),
             )
         };
+
         check(port, &mut journal, current, "preimage")?;
+
         for (number, (offset, data, frames)) in sectors.iter().enumerate() {
             let offset = *offset;
             let at = offset - start;
@@ -396,10 +425,12 @@ pub fn run(
                 sector::read_sector(port, offset)? == current[at..at + SECTOR],
                 "Sector preimage drift",
             )?;
+
             let mut record = |event: &str, mut extra: Map<String, Value>| {
                 extra.insert("offset".into(), json!(offset));
                 journal.append(event, extra)
             };
+
             status::check_status(port, offset, offset + SECTOR, "before_erase", &mut record)?;
             record("erase_intent", fields(json!({"bytes": SECTOR})))?;
             // After the journal fsync: no stale idle-ready byte.
@@ -409,6 +440,7 @@ pub fn run(
                 "Erase readback differs",
             )?;
             record("erase_verified", Map::new())?;
+
             status::check_status(port, offset, offset + SECTOR, "before_program", &mut record)?;
             sector::program_packets(port, frames, &mut record)?;
             require(
@@ -416,19 +448,25 @@ pub fn run(
                 "Program readback differs",
             )?;
             record("sector_staged", fields(json!({"sha256": sha256(data)})))?;
+
             progress(number + 1, sectors.len());
         }
+
+        // The marker goes last, after every sector reads back staged. Interrupted
+        // runs commit even when no sector is left to stage.
         if !sectors.is_empty() || update.interrupted {
             check(port, &mut journal, &staged, "staged")?;
             require(
                 sector::read_sector(port, start)? == staged[..SECTOR],
                 "Marker sector drift",
             )?;
+
             let mut record = |event: &str, mut extra: Map<String, Value>| {
                 extra.insert("offset".into(), json!(start));
                 extra.insert("phase".into(), json!("marker_commit"));
                 journal.append(event, extra)
             };
+
             status::check_status(
                 port,
                 start,
@@ -445,22 +483,28 @@ pub fn run(
                 sector::read_sector(port, start)? == proposed[..SECTOR],
                 "Committed marker readback differs",
             )?;
+
             check(port, &mut journal, &proposed, "final")?;
             journal.append(
                 "marker_commit_verified",
                 fields(json!({"sha256": sha256(&proposed)})),
             )?;
         }
+
         journal.append(
             "transaction_verified",
             fields(json!({"snapshot_sha256": sha256(&proposed), "erase_sectors": sectors.len()})),
         )?;
+
         let report = json!({"status": "verified_via_supplied_transports",
                             "region_sha256": sha256(&proposed), "erase_sectors": sectors.len(),
                             "application_boot_verified": false, "scope": expected["scope"]});
         journal.save_report(report.clone())?;
         Ok(report)
     })();
+
+    // A stop is terminal and never retried; an interrupted transaction is
+    // finished by a fresh acquisition in interrupted mode.
     if let Err(error) = &result {
         journal.stopped(error, Map::new());
     }
@@ -485,6 +529,7 @@ pub fn give_way_plan(fallback: &[u8], bank0: &[u8], bank1_sector: &[u8]) -> Resu
         bank1_sector.len() == SECTOR && &bank1_sector[..8] == MARKER,
         "Bank 1's marker is not valid; nothing to give way",
     )?;
+
     let after = given_way(bank1_sector);
     Ok(json!({
         "schema_version": 1, "kind": GIVE_WAY_KIND, "bank": 1, "offset": sector::START,
@@ -519,9 +564,11 @@ pub fn run_give_way(
 ) -> Result<Value> {
     let expected = give_way_plan(fallback, bank0, bank1_sector)?;
     require(same(reviewed, &expected)?, "Reviewed give-way plan differs")?;
+
     let after = given_way(bank1_sector);
     let packet = sector::program_frame(1, sector::START, &after[..1024])?;
     let mut journal = Journal::create(root, output)?;
+
     let result = (|| -> Result<Value> {
         journal.append("transaction_start", fields(json!({"plan": expected})))?;
         let mut check = |port: &mut dyn Port, journal: &mut Journal, want: &[u8], phase: &str| {
@@ -540,7 +587,9 @@ pub fn run_give_way(
             )?;
             journal.append("guards_verified", fields(json!({"phase": phase})))
         };
+
         check(port, &mut journal, bank1_sector, "preimage")?;
+
         let mut record = |event: &str, extra: Map<String, Value>| journal.append(event, extra);
         status::check_status(
             port,
@@ -553,22 +602,26 @@ pub fn run_give_way(
             "give_way_intent",
             fields(json!({"frame_sha256": sha256(&packet)})),
         )?;
+
         sector::program_packets(port, std::slice::from_ref(&packet), &mut record)?;
         require(
             sector::read_sector(port, sector::START)? == after,
             "Bank 1 first-sector readback differs",
         )?;
+
         check(port, &mut journal, &after, "final")?;
         journal.append(
             "give_way_verified",
             fields(json!({"after_sha256": sha256(&after)})),
         )?;
+
         let report = json!({"status": "verified_via_supplied_transports",
                             "after_sha256": sha256(&after), "application_boot_verified": false,
                             "scope": expected["scope"]});
         journal.save_report(report.clone())?;
         Ok(report)
     })();
+
     if let Err(error) = &result {
         journal.stopped(error, Map::new());
     }

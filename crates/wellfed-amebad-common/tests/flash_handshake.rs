@@ -66,6 +66,7 @@ fn sessions_are_nonzero_and_distinct_per_core() {
             assert!(a != 0 && b != 0 && a != b);
         }
     }
+
     // A single-core reset bumps the count, so the session changes.
     assert_ne!(session(1, 77, true), session(2, 77, true));
 }
@@ -76,15 +77,18 @@ fn hello_ready_round_trip() {
     let mut answered = 0;
     assert_eq!(reply::<Km4>(A), Reply::Waiting);
     assert_eq!(answer::<Km0>(P, &mut answered), 0);
+
     assert!(hello::<Km4>(A));
     assert_eq!(
         (usr(1, 10), usr(1, 2), usr(1, 3)),
         (HELLO, A as u32, (A >> 32) as u32)
     );
+
     assert_eq!(answer::<Km0>(P, &mut answered), A);
     assert_eq!(answered, A);
     assert_eq!(usr(0, 10), READY);
     assert_eq!(reply::<Km4>(A), Reply::Ready(P));
+
     // The same HELLO is answered once.
     assert_eq!(answer::<Km0>(P, &mut answered), 0);
 }
@@ -95,12 +99,14 @@ fn stale_or_foreign_replies_are_never_ready() {
     let mut answered = 0;
     assert!(hello::<Km4>(A));
     assert_eq!(answer::<Km0>(P, &mut answered), A);
+
     // A new KM4 boot announces a different authority: the old READY is foreign.
     let b = A + 2;
     assert_eq!(reply::<Km4>(b), Reply::Foreign);
     assert!(hello::<Km4>(b));
     assert_eq!(answer::<Km0>(P, &mut answered), b);
     assert_eq!(reply::<Km4>(b), Reply::Ready(P));
+
     // A non-handshake command or a lease word never reads as READY.
     REGS.with(|r| r.borrow_mut()[0][10] = REQUEST);
     assert_eq!(reply::<Km4>(b), Reply::Waiting);
@@ -120,6 +126,7 @@ fn roles_and_zero_sessions_are_refused() {
     assert_eq!(answer::<Km4>(P, &mut answered), 0);
     assert_eq!(answer::<Km0>(0, &mut answered), 0);
     assert_eq!(reply::<Km0>(A), Reply::Foreign);
+
     // A HELLO naming a zero authority is not answered.
     REGS.with(|r| r.borrow_mut()[1][10] = HELLO);
     assert_eq!(answer::<Km0>(P, &mut answered), 0);

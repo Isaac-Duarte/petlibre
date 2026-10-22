@@ -62,6 +62,7 @@ impl Root {
                 .map(|cwd| cwd.join(path))
                 .unwrap_or_else(|_| path.to_path_buf())
         };
+
         // Python's non-strict `resolve()`: walk the components, resolving
         // symlinks wherever the path so far exists, and `..` lexically
         // where it does not.
@@ -96,6 +97,7 @@ impl Root {
             !path.is_symlink() && self.is_private(path),
             "Output must be a new private directory",
         )?;
+
         fs::DirBuilder::new()
             .recursive(false)
             .mode(0o700)
@@ -187,13 +189,16 @@ impl<P: Port> EvidencePort<P> {
         if data.is_empty() {
             return Ok(());
         }
+
         let (stream, index, direction) = if transmit {
             (&mut self.tx, 1, "tx")
         } else {
             (&mut self.rx, 0, "rx")
         };
+
         stream.write_all(data)?;
         stream.flush()?;
+
         let event = json!({"utc": utc(), "direction": direction,
                            "offset": self.offsets[index], "bytes": data.len()});
         writeln!(self.events, "{event}")?;
@@ -233,11 +238,13 @@ mod tests {
         let checkout = tempfile::tempdir().unwrap();
         fs::create_dir(checkout.path().join("private")).unwrap();
         let root = Root::new(checkout.path()).unwrap();
+
         assert!(root.is_private(&checkout.path().join("private/new/deeper")));
         assert!(!root.is_private(&checkout.path().join("public/new")));
         assert!(!root.is_private(&checkout.path().join("private/../escape")));
         assert!(!root.is_private(&checkout.path().join("private/missing/../../escape")));
         assert!(root.is_private(&checkout.path().join("private/missing/../kept")));
+
         let outside = tempfile::tempdir().unwrap();
         std::os::unix::fs::symlink(outside.path(), checkout.path().join("private/out")).unwrap();
         assert!(!root.is_private(&checkout.path().join("private/new/../out/x")));
@@ -245,8 +252,10 @@ mod tests {
             root.output_directory(&checkout.path().join("private/new/../out/x"))
                 .is_err()
         );
+
         std::os::unix::fs::symlink("/tmp", checkout.path().join("private/link")).unwrap();
         assert!(!root.is_private(&checkout.path().join("private/link/x")));
+
         let out = root
             .output_directory(&checkout.path().join("private/a/b"))
             .unwrap();

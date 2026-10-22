@@ -53,11 +53,13 @@ enum Command {
         #[arg(long, default_value_t = 60.0)]
         minimum_seconds: f64,
     },
+
     /// The FW14 read-only power-input samples after a passing startup.
     Adc {
         #[command(flatten)]
         args: CaptureArgs,
     },
+
     /// FW30 logic-analyzer cycles from `wellfed-bench transients`: any motor-driver drive.
     Transients {
         /// The session directory with manifest.json and the cycle files.
@@ -67,6 +69,7 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+
     /// Compare two existing full-flash reads.
     Backup {
         first: PathBuf,
@@ -106,10 +109,12 @@ fn write_new(root: &Path, path: &Path, report: &Report) -> Result<()> {
     let resolved = parent
         .canonicalize()?
         .join(path.file_name().unwrap_or_default());
+
     require(
         resolved.starts_with(root.join("private").canonicalize()?),
         "Evidence output must stay under private/",
     )?;
+
     let mut file = fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -119,6 +124,7 @@ fn write_new(root: &Path, path: &Path, report: &Report) -> Result<()> {
     Ok(())
 }
 
+/// Exit status for a written report: 0 when it passed, 1 when it did not.
 fn passed(report: &Report) -> u8 {
     u8::from(report.get("outcome").and_then(Value::as_str) != Some("pass"))
 }
@@ -134,18 +140,21 @@ fn run(cli: Cli) -> Result<u8> {
                 (1.0..=180.0).contains(&minimum_seconds),
                 "Observation minimum must be 1-180 seconds",
             )?;
+
             let report =
                 startup::verify(&args.capture, &args.manifest, &args.image, minimum_seconds)?;
             write_new(&root, &args.output, &report)?;
             println!("{}", serde_json::to_string(&report)?);
             Ok(passed(&report))
         }
+
         Command::Adc { args } => {
             let report = adc::verify(&args.capture, &args.manifest, &args.image)?;
             write_new(&root, &args.output, &report)?;
             println!("{}", serde_json::to_string(&report)?);
             Ok(passed(&report))
         }
+
         Command::Transients { capture, output } => {
             let report = transients::verify(&capture)?;
             write_new(&root, &output, &report)?;
@@ -154,6 +163,7 @@ fn run(cli: Cli) -> Result<u8> {
             println!("{}", serde_json::to_string(&summary)?);
             Ok(passed(&report))
         }
+
         Command::Backup {
             first,
             second,
@@ -172,6 +182,7 @@ fn run(cli: Cli) -> Result<u8> {
                 stock: stock_reference.as_deref(),
                 capacity_evidence: capacity_evidence.as_deref(),
             })?;
+
             let inputs: Vec<&Path> = [
                 Some(first.as_path()),
                 Some(second.as_path()),
@@ -181,6 +192,7 @@ fn run(cli: Cli) -> Result<u8> {
             .into_iter()
             .flatten()
             .collect();
+
             let written = backup::write_report(&root, &report_path, &report, &inputs)?;
             let pass = report["comparison_passed"] == true;
             println!(

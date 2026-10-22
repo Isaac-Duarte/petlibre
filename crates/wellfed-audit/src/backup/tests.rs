@@ -18,12 +18,15 @@ fn synthetic() -> Vec<u8> {
     let mut data = vec![0xffu8; CAPACITY as usize];
     let prefix = b"synthetic-not-a-backup!!!";
     data[..prefix.len()].copy_from_slice(prefix);
+
     let magic: Vec<u8> = IMAGE_MAGIC.iter().flat_map(|w| w.to_le_bytes()).collect();
     for offset in [0x6000, 0x186000] {
         data[offset..offset + 8].copy_from_slice(&magic);
     }
+
     data[0x3EA000..0x3EA010].copy_from_slice(&(0..16).collect::<Vec<u8>>());
     data[0x7D6000..0x7D6010].copy_from_slice(&(16..32).collect::<Vec<u8>>());
+
     data
 }
 
@@ -38,6 +41,7 @@ impl Reads {
         let data = synthetic();
         fs::write(dir.path().join("read-1.bin"), &data).unwrap();
         fs::write(dir.path().join("read-2.bin"), &data).unwrap();
+
         Self { dir, data }
     }
 
@@ -78,11 +82,13 @@ impl Reads {
 fn identical_full_reads_preserve_unknowns_and_do_not_claim_recovery() {
     let r = Reads::new();
     let report = r.audit();
+
     assert_eq!(report["comparison_passed"], true);
     assert_eq!(
         report["checks"]["all_observed_preserve_areas_covered"],
         true
     );
+
     assert_eq!(report["differences"]["different_bytes"], 0);
     assert!(
         report["limits"]
@@ -98,12 +104,14 @@ fn identical_full_reads_preserve_unknowns_and_do_not_claim_recovery() {
             .iter()
             .all(|a| a["identical"] == true)
     );
+
     let banks = report["application_banks"]["first"].as_array().unwrap();
     assert!(
         banks
             .iter()
             .all(|b| b["marker_matches_known_magic"] == true && b["currently_active"] == "unknown")
     );
+
     assert!(report["stock_reference_sha256"].is_null());
     assert_eq!(fs::read(r.first()).unwrap(), r.data);
 }
@@ -114,11 +122,14 @@ fn factory_bank_and_unmapped_changes_are_all_reported_without_values() {
     for offset in [7, 0x7000, 0x300000, 0x3EA003, 0x7D6001] {
         r.data[offset] ^= 1;
     }
+
     fs::write(r.second(), &r.data).unwrap();
     let report = r.audit();
+
     assert_eq!(report["comparison_passed"], false);
     assert_eq!(report["differences"]["different_bytes"], 5);
     assert_eq!(report["changed_sectors"].as_array().unwrap().len(), 5);
+
     let mut changed: Vec<&str> = report["known_preserve_areas"]
         .as_array()
         .unwrap()
@@ -135,6 +146,7 @@ fn factory_bank_and_unmapped_changes_are_all_reported_without_values() {
             "pre_application"
         ]
     );
+
     let unknown = report["changed_sectors"]
         .as_array()
         .unwrap()
@@ -155,9 +167,11 @@ fn identical_partial_and_padded_uniform_reads_do_not_pass() {
     let short = &r.data[..r.data.len() - 4096];
     fs::write(r.first(), short).unwrap();
     fs::write(r.second(), short).unwrap();
+
     let report = r.audit();
     assert_eq!(report["comparison_passed"], false);
     assert_eq!(report["checks"]["lengths_match_supplied_capacity"], false);
+
     for value in [0u8, 0xff] {
         fs::write(r.first(), vec![value; CAPACITY as usize]).unwrap();
         fs::write(r.second(), vec![value; CAPACITY as usize]).unwrap();
@@ -171,6 +185,7 @@ fn alias_pattern_and_uncovered_areas_are_explicit() {
     let half = r.data[..r.data.len() / 2].to_vec();
     fs::write(r.first(), [&half[..], &half].concat()).unwrap();
     fs::write(r.second(), [&half[..], &half].concat()).unwrap();
+
     let report = r.audit();
     assert_eq!(report["comparison_passed"], false);
     assert!(
@@ -181,10 +196,12 @@ fn alias_pattern_and_uncovered_areas_are_explicit() {
                 "identical_halves_require_alias_or_content_investigation"
             ))
     );
+
     let report = r
         .audit_with(&r.first(), &r.second(), CAPACITY / 2, None)
         .unwrap();
     assert_eq!(report["checks"]["lengths_match_supplied_capacity"], false);
+
     fs::write(r.first(), &half).unwrap();
     fs::write(r.second(), &half).unwrap();
     let report = r
@@ -208,15 +225,20 @@ fn alias_pattern_and_uncovered_areas_are_explicit() {
 fn same_file_hardlink_invalid_capacity_and_wrong_reference_are_refused() {
     let r = Reads::new();
     let error = |result: Result<Report>| result.unwrap_err().to_string();
+
     assert!(error(r.audit_with(&r.first(), &r.first(), CAPACITY, None)).contains("same file"));
+
     fs::remove_file(r.second()).unwrap();
     fs::hard_link(r.first(), r.second()).unwrap();
     assert!(error(r.audit_with(&r.first(), &r.second(), CAPACITY, None)).contains("same file"));
+
     fs::remove_file(r.second()).unwrap();
     fs::write(r.second(), &r.data).unwrap();
+
     for capacity in [0, CAPACITY - 1, MAX_BYTES + 4096] {
         assert!(error(r.audit_with(&r.first(), &r.second(), capacity, None)).contains("Capacity"));
     }
+
     assert!(
         error(r.audit_with(&r.first(), &r.second(), CAPACITY, Some(&r.first())))
             .contains("Reference is not")
@@ -230,19 +252,23 @@ fn report_is_private_exclusive_and_cannot_replace_inputs_or_follow_symlinks() {
     fs::create_dir_all(root.join("private")).unwrap();
     let directory = tempfile::tempdir_in(root.join("private")).unwrap();
     let report_path = directory.path().join("audit.json");
+
     let report = r.audit();
     write_report(&root, &report_path, &report, &[&r.first(), &r.second()]).unwrap();
+
     use std::os::unix::fs::PermissionsExt;
     assert_eq!(
         fs::metadata(&report_path).unwrap().permissions().mode() & 0o777,
         0o600
     );
+
     assert!(
         write_report(&root, &report_path, &report, &[])
             .unwrap_err()
             .to_string()
             .contains("already exists")
     );
+
     let link = directory.path().join("symlink.json");
     let target = directory.path().join("absent.json");
     std::os::unix::fs::symlink(&target, &link).unwrap();
@@ -253,6 +279,7 @@ fn report_is_private_exclusive_and_cannot_replace_inputs_or_follow_symlinks() {
             .contains("already exists")
     );
     assert!(!target.exists());
+
     let public = r.dir.path().join("public.json");
     assert!(
         write_report(&root, &public, &Report::new(), &[])
@@ -267,14 +294,17 @@ fn diff_ranges_are_bounded_and_include_missing_tail_bytes() {
     let first = vec![0u8; 1024];
     let second: Vec<u8> = (0..512).flat_map(|_| [1u8, 0]).collect();
     let report = differences(&first, &second);
+
     assert_eq!(report["different_bytes"], 512);
     assert_eq!(report["total_runs"], 512);
     assert_eq!(report["runs"].as_array().unwrap().len(), MAX_RUNS);
     assert_eq!(report["runs_truncated"], true);
+
     assert_eq!(
         differences(b"abc", b"abcdef")["runs"],
         json!([{"start": 3, "end_exclusive": 6}])
     );
+
     let diff = differences(b"abcdef", b"aXcdYYZ");
     assert_eq!(diff["different_bytes"], 4);
     assert_eq!(
@@ -302,14 +332,17 @@ fn bank_body_is_identified_even_when_old_marker_is_invalid_but_not_after_other_c
     let root = root();
     let stock = root.join("private/firmware/PLAF103_OTA_010115.bin");
     let original = reference(Some(&stock)).unwrap().unwrap();
+
     let mut data = synthetic();
     let payload = &original[32..];
     for start in [0x6000, 0x186000] {
         data[start..start + payload.len()].copy_from_slice(payload);
     }
     data[0x186000..0x186004].copy_from_slice(&[0; 4]);
+
     let layout: Value = serde_json::from_slice(&fs::read(root.join(LAYOUT)).unwrap()).unwrap();
     let result = banks(&data, &layout, Some(&original)).unwrap();
+
     assert_eq!(result[0]["marker_matches_known_magic"], true);
     assert_eq!(result[1]["marker_matches_known_magic"], false);
     assert!(
@@ -317,6 +350,7 @@ fn bank_body_is_identified_even_when_old_marker_is_invalid_but_not_after_other_c
             .iter()
             .all(|r| r["image_after_marker_normalization"] == "original-1.1.15")
     );
+
     data[0x186100] ^= 1;
     assert_eq!(
         banks(&data, &layout, Some(&original)).unwrap()[1]["image_after_marker_normalization"],

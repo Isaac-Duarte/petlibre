@@ -2,7 +2,9 @@
 //!
 //! Canonical form matches Python's `json.dumps(value, sort_keys=True,
 //! separators=(",", ":"), allow_nan=False)` byte for byte, so journals and
-//! plans can be checked by either implementation.
+//! plans can be checked by either implementation. Plan digests are taken
+//! over these bytes and bindings are compared in this form, so any change to
+//! the encoding breaks agreement with records already written.
 
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -17,6 +19,8 @@ pub fn hex(data: &[u8]) -> String {
     data.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
+/// Lowercase hex only, the form [`sha256`] writes, so digests compare as
+/// plain strings.
 pub fn is_sha256(value: &str) -> bool {
     value.len() == 64
         && value
@@ -71,6 +75,7 @@ fn write(value: &Value, out: &mut Vec<u8>) -> Result<()> {
             out.push(b'}');
         }
     }
+
     Ok(())
 }
 

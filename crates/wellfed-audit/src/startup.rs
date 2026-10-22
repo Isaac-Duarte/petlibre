@@ -3,6 +3,17 @@
 //! Port of `audit-firmware-startup.py`: the same policies, record formats,
 //! outcomes and report fields. Only fixed public fields are parsed; arbitrary
 //! device text is never returned.
+//!
+//! `load` binds the evidence before anything is classified: the manifest's
+//! `startup_identity` is the hash of its profile and inputs, the image is the
+//! manifest's OTA and embeds that identity, and the capture is finalized and
+//! receive-only. Each `startup_*_policy` the manifest declares must match the
+//! record formats linked into the image, mostly both ways, so a build cannot
+//! be audited under a different probe's rules. One startup passes when its
+//! start record names the build and its live bank mapping, outputs were
+//! stopped, the synthetic diagnostic passed, and every declared probe's
+//! records classify as pass. Record formats and policies are described in
+//! docs/firmware/startup-diagnostics.md.
 
 use std::fs;
 use std::path::Path;
@@ -35,6 +46,7 @@ pattern!(
     OUTPUTS,
     r"PLFW1 outputs pa=([0-9a-f]{8}) pb=([0-9a-f]{8}) dira=([0-9a-f]{8}) dirb=([0-9a-f]{8}) status=(pass|fail)\r\n"
 );
+
 pattern!(
     POWER_V1,
     r"PLPWR1 before_func=([0-9a-f]{8}) before_pad=([0-9a-f]{8}) after_func=([0-9a-f]{8}) after_pad=([0-9a-f]{8})()\n\r"
@@ -43,6 +55,7 @@ pattern!(
     POWER_V3,
     r"PLPWR1 before_func=([0-9a-f]{8}) before_pad=([0-9a-f]{8}) after_func=([0-9a-f]{8}) after_pad=([0-9a-f]{8}) ext_a=((?:[0-9a-f]{8},){3}[0-9a-f]{8})\n\r"
 );
+
 pattern!(
     ROUTING_V1,
     r"PLIO1 stage=(startup|PA0|PA2|PA4|PB22) groups=([0-9a-f]{8}) aon=([0-9a-f]{8}) control_a=([0-9a-f]{8}) control_b=([0-9a-f]{8})\r\n"
@@ -60,6 +73,7 @@ const ROUTING_FIELDS: [&str; 7] = [
     "share_pad",
     "ext_a",
 ];
+
 pattern!(
     READBACK_V1,
     r"PLDBG1 pin=(PA0|PA2|PA4|PB22) stage=(request|verify|initialize) want=([01]) latch=([01]) input=([01])() directions=([01]) stopped=([01]) pad=([0-9a-f]{8})\r\n"
@@ -68,17 +82,21 @@ pattern!(
     READBACK_V2,
     r"PLDBG1 pin=(PA0|PA2|PA4|PB22) stage=(request|verify|initialize) want=([01]) latch=([01]) input=([01]) highs=([0-9]|[1-5][0-9]|6[0-4])/64 directions=([01]) stopped=([01]) pad=([0-9a-f]{8})\r\n"
 );
+
 pattern!(LED_RECORD, r"PLLED1[^\r\n]*\r\n");
 pattern!(LED_FAIL, r"PLLED1 pin=[^\r\n]* status=fail\r\n");
+
 const AMACRO: u64 = 1 << 28;
 /// PORB, MBIAS and LDO trim/power, per the stock trace.
 const SHARE_PAD_HELPER: u64 = 0x3ff;
+
 const SUPERVISION_MARK: &[u8] = b"PLTMR1 open board=";
 const FLASH_MARK: &[u8] = b"PLFLS1 hello authority=";
 /// FW06 stage C park round trip follows READY.
 const PARK_MARK: &[u8] = b"PLPRK1 start mode=";
 /// FW06 stage D mediated flash read follows READY.
 const READ_MARK: &[u8] = b"PLRDS1 start marker=";
+
 pattern!(
     READ_START,
     r"PLRDS1 start marker=([0-9a-f]{8}) watchdog=(pass|fail) installed=([01])\r\n"
@@ -92,6 +110,7 @@ pattern!(
     r"PLRDS1 done reads=([0-9]{1,10}) leases=([0-9]{1,10}) phase=([0-9]{1,10}) fault=([0-9]{1,10})\r\n"
 );
 pattern!(READ_SKIP, r"PLRDS1 skip marker=([0-9a-f]{8})\r\n");
+
 const READ_BATCHES: [u64; 4] = [25, 50, 75, 100];
 /// JEDEC ID of the research unit's GigaDevice flash (boot log `Flash ID:c8, 40, 17`).
 const READ_ID: &str = "c84017";
@@ -99,6 +118,7 @@ const READ_ID: &str = "c84017";
 const READ_DONE: [u64; 4] = [100, 100, 1, 0];
 /// 40 ms park/release exchange limit at 32 768 Hz.
 const EXCHANGE_TICKS: u64 = 1310;
+
 /// FW06 stage E owner-approved scratch-sector write follows READY.
 const WRITE_MARK: &[u8] = b"PLWRS1 start marker=";
 /// FW15 flash journal on NOR follows READY.
@@ -109,6 +129,7 @@ const SETTINGS_MARK: &[u8] = b"PLSET1 start marker=";
 pub const ADC_MARK: &[u8] = b"PLADC1 open outputs=";
 /// fw14-adc-v2 samples add internal channel 10.
 const ADC_SUPPLY_MARK: &[u8] = b" supply=";
+
 const WIFI_MARK: &[u8] = b"PLWIF1 start created=";
 const WIFI_JOIN_MARK: &[u8] = b"PLWIF2 start created=";
 const WIFI_DNS_MARK: &[u8] = b"PLWIF3 start created=";
@@ -120,6 +141,7 @@ const OPTICS_MARK: &[u8] = b"PLOPT1 start created=";
 const OPTICS_PLAN2_MARK: &[u8] = b" plan=2\r\n";
 /// FW16 single supervised pulse follows the LED probe.
 const MOTION_MARK: &[u8] = b"PLMOT1 start created=";
+
 const DEC: &str = "([0-9]{1,10})";
 static WRITE_START: LazyLock<Regex> = LazyLock::new(|| {
     re(r"PLWRS1 start marker=([0-9a-f]{8}) watchdog=(pass|fail) installed=([01])\r\n")
@@ -145,6 +167,7 @@ static WRITE_DONE_RE: LazyLock<Regex> = LazyLock::new(|| {
     ))
 });
 static WRITE_SKIP: LazyLock<Regex> = LazyLock::new(|| re(r"PLWRS1 skip marker=([0-9a-f]{8})\r\n"));
+
 const WRITE_CYCLES: [u64; 3] = [1, 2, 3];
 /// Every sampled word of the 4 KiB scratch sector reads erased.
 const WRITE_BLANK: u64 = 1024;
@@ -155,6 +178,7 @@ const TICK_HZ: f64 = 32768.0;
 const ERASE_TICKS: u64 = 16384;
 /// 50 ms.
 const PROGRAM_TICKS: u64 = 1638;
+
 pattern!(
     FLASH_HELLO,
     r"PLFLS1 hello authority=([0-9a-f]{16}) count=([0-9]{1,10})\r\n"
@@ -176,15 +200,18 @@ pattern!(
     FLASH_ERROR,
     r"PLFLS1 error (?:timeout ms=[0-9]{1,10}|clock)\r\n"
 );
+
 // Reply ACCEPTED/FAILED, phase IDLE/FAULT, fault PEER_LOST; the test KM0
 // republishes its session ~10 s after READY.
 const FLASH_READY: [u64; 4] = [0, 1, 0, 1];
 const FLASH_PEER: [u64; 4] = [5, 8, 7, 1];
 const FLASH_DONE: [u64; 3] = [8, 7, 1];
+
 pattern!(
     CLOCK,
     r"PLCLK1 function_before=([0-9a-f]{8}) clock_before=([0-9a-f]{8}) function_after=([0-9a-f]{8}) clock_after=([0-9a-f]{8}) status=(pass|fail)\r\n"
 );
+
 const OUTPUT_ONLY: [&str; 3] = ["PA0", "PA2", "PA4"];
 const LED_PINS: [&str; 4] = ["PA0", "PA2", "PA4", "PB22"];
 /// The KM0 printf format of the before-KM4 (v3) shared-pad record, as linked.
@@ -283,6 +310,7 @@ pub fn classify_clock(rx: &[u8]) -> Report {
         };
         return obj(json!({"outcome": outcome, "gpio_clock_verified": false}));
     }
+
     let m = &values[0];
     let (before_function, before_clock, function, clock) =
         (hex(m, 1), hex(m, 2), hex(m, 3), hex(m, 4));
@@ -292,6 +320,7 @@ pub fn classify_clock(rx: &[u8]) -> Report {
         && function & !bit == before_function & !bit
         && clock & !bit == before_clock & !bit
         && group(m, 5) == b"pass";
+
     obj(
         json!({"outcome": if ok { "pass" } else { "gpio_clock_failed" }, "gpio_clock_verified": ok,
                "gpio_function_before": text(m, 1), "gpio_clock_before": text(m, 2),
@@ -313,16 +342,19 @@ pub fn classify_power(rx: &[u8], version: u8) -> Report {
         };
         return obj(json!({"outcome": outcome, "shared_pad_verified": false}));
     }
+
     let m = &values[0];
     let (before_func, before_pad, func, pad) = (hex(m, 1), hex(m, 2), hex(m, 3), hex(m, 4));
     let km4: Vec<usize> = [&b"PLCLK1"[..], b"PLIO1", b"PLFW1"]
         .iter()
         .filter_map(|marker| find(rx, marker))
         .collect();
+
     let ok = func == before_func | AMACRO
         && pad & 0x301 == 0x301
         && pad & !SHARE_PAD_HELPER == before_pad & !SHARE_PAD_HELPER
         && (version < 2 || [0x2A, 0x68].contains(&((pad >> 1) & 0x7f)));
+
     let end = whole(m).end();
     let outcome = if !ok {
         "shared_pad_failed"
@@ -331,12 +363,14 @@ pub fn classify_power(rx: &[u8], version: u8) -> Report {
     } else {
         "pass"
     };
+
     let mut out = obj(
         json!({"outcome": outcome, "shared_pad_verified": outcome == "pass",
         "shared_pad_ldo_trim": format!("{:02x}", (pad >> 1) & 0x7f),
         "shared_pad_function_before": text(m, 1), "shared_pad_control_before": text(m, 2),
         "shared_pad_function_after": text(m, 3), "shared_pad_control_after": text(m, 4)}),
     );
+
     if version >= 3 {
         let samples: Vec<String> = text(m, 5).split(',').map(str::to_string).collect();
         out.insert("shared_pad_port_a_samples".into(), json!(samples));
@@ -361,14 +395,17 @@ pub fn classify_routing(rx: &[u8], version: u8) -> Report {
             )
         })
         .collect();
+
     let stages: Vec<&str> = records
         .iter()
         .map(|r| r["stage"].as_str().unwrap_or(""))
         .collect();
+
     let expected = [
         "startup", "PA0", "PA0", "PA2", "PA2", "PA4", "PA4", "PB22", "PB22",
     ];
     let complete = stages == expected && count(rx, b"PLIO1") == records.len();
+
     obj(
         json!({"outcome": if complete { "pass" } else { "gpio_routing_incomplete" },
                "gpio_routing_complete": complete, "gpio_routing_records": records}),
@@ -389,6 +426,7 @@ pub fn classify_led(rx: &[u8], version: u8) -> Report {
     } else {
         format!("PLLED1 begin output_only={}\r\n", OUTPUT_ONLY.join(",")).into_bytes()
     }];
+
     for pin in LED_PINS {
         let status = if output_only.contains(&pin) {
             "output"
@@ -401,6 +439,7 @@ pub fn classify_led(rx: &[u8], version: u8) -> Report {
         }
     }
     expected.push(b"PLLED1 done low=all\r\n".to_vec());
+
     let actual: Vec<&[u8]> = LED_RECORD.find_iter(rx).map(|m| m.as_bytes()).collect();
     let prefix = expected.len().min(actual.len());
     let matches_prefix = actual.len() <= expected.len()
@@ -408,6 +447,7 @@ pub fn classify_led(rx: &[u8], version: u8) -> Report {
             .iter()
             .zip(&expected[..prefix])
             .all(|(a, e)| *a == e.as_slice());
+
     let outcome = if contains(rx, b"PLLED1 error ") || LED_FAIL.is_match(rx) {
         "led_failed"
     } else if actual.is_empty() && !contains(rx, b"PLLED1") {
@@ -419,6 +459,7 @@ pub fn classify_led(rx: &[u8], version: u8) -> Report {
     } else {
         "pass"
     };
+
     let pattern = if version >= 2 {
         &READBACK_V2
     } else {
@@ -439,6 +480,7 @@ pub fn classify_led(rx: &[u8], version: u8) -> Report {
             Value::Object(d)
         })
         .collect();
+
     let verified: Vec<&str> = if outcome == "pass" {
         LED_PINS
             .iter()
@@ -448,10 +490,12 @@ pub fn classify_led(rx: &[u8], version: u8) -> Report {
     } else {
         vec![]
     };
+
     let mut out = obj(
         json!({"outcome": outcome, "led_probe_verified": outcome == "pass" && output_only.is_empty(),
         "led_input_verified_pins": verified, "led_readbacks": diagnostics}),
     );
+
     if !output_only.is_empty() {
         out.insert("led_output_only_pins".into(), json!(output_only));
     }
@@ -503,12 +547,14 @@ pub fn classify_flash(
         done: all(&FLASH_DONE_RE, rx),
         error: all(&FLASH_ERROR, rx),
     };
+
     let kinds = if version == 1 { 4 } else { 2 };
     let mut report = obj(
         json!({"flash_handshake_verified": false, "flash_authority_session": null,
         "flash_boot_count": null, "flash_peer_session": null, "flash_injected_peer_session": null,
         "flash_ready_seconds": null, "flash_peer_change_seconds": null, "flash_done_seconds": null}),
     );
+
     if version == 3 {
         update(
             &mut report,
@@ -520,6 +566,7 @@ pub fn classify_flash(
             ),
         );
     }
+
     if version == 4 {
         update(
             &mut report,
@@ -532,6 +579,7 @@ pub fn classify_flash(
             ),
         );
     }
+
     let single = |list: &Vec<Captures<'_>>| list.len() == 1;
     if single(&found.hello) {
         report.insert(
@@ -549,9 +597,11 @@ pub fn classify_flash(
             json!(text(&found.peer[0], 1)),
         );
     }
+
     if !contains(rx, b"PLFLS1") {
         return Ok(with_outcome("flash_handshake_missing", &report));
     }
+
     if count(rx, b"PLFLS1") != found.total()
         || found.foreign.len() > 1
         || [&found.hello, &found.ready, &found.peer, &found.done]
@@ -560,9 +610,11 @@ pub fn classify_flash(
     {
         return Ok(with_outcome("flash_handshake_malformed", &report));
     }
+
     if version >= 2 && (!found.peer.is_empty() || !found.done.is_empty()) {
         return Ok(with_outcome("flash_handshake_malformed", &report));
     }
+
     // Under the read and write policies an error after READY belongs to that
     // stage; earlier ones fail the handshake.
     if !found.error.is_empty()
@@ -572,6 +624,7 @@ pub fn classify_flash(
     {
         return Ok(with_outcome("flash_handshake_failed", &report));
     }
+
     let singles = [&found.hello, &found.ready, &found.peer, &found.done]
         .iter()
         .filter(|l| single(l))
@@ -579,12 +632,15 @@ pub fn classify_flash(
     if singles != kinds {
         return Ok(with_outcome("flash_handshake_missing", &report));
     }
+
     // With version >= 2 there are no peer/done records, so the singles are hello and ready.
     let (hello, ready) = (&found.hello[0], &found.ready[0]);
     let led_done = find_i(rx, b"PLLED1 done low=all\r\n");
+
     match version {
         3 => return classify_flash_read(rx, arrival, end, hello, ready, &found, led_done, report),
         4 => return classify_flash_write(rx, arrival, end, hello, ready, &found, led_done, report),
+
         5 => {
             if [&b"PLPRK1"[..], b"PLRDS1", b"PLWRS1"]
                 .iter()
@@ -603,6 +659,7 @@ pub fn classify_flash(
                 JOURNAL_MARK,
             );
         }
+
         6 => {
             if [&b"PLPRK1"[..], b"PLRDS1", b"PLWRS1", b"PLJNL1"]
                 .iter()
@@ -621,6 +678,7 @@ pub fn classify_flash(
                 SETTINGS_MARK,
             );
         }
+
         2 => {
             return classify_flash_park(
                 rx,
@@ -633,8 +691,10 @@ pub fn classify_flash(
                 PARK_MARK,
             );
         }
+
         _ => {}
     }
+
     let (peer, done) = (&found.peer[0], &found.done[0]);
     let (h, r, p, d) = (whole(hello), whole(ready), whole(peer), whole(done));
     let ordered = 0 <= led_done
@@ -645,9 +705,11 @@ pub fn classify_flash(
         && r.end() <= p.start()
         && p.start() < p.end()
         && p.end() <= d.start();
+
     if !ordered || found.foreign.iter().any(|m| whole(m).start() < h.end()) {
         return Ok(with_outcome("flash_handshake_order", &report));
     }
+
     let (first, second) = (hex(ready, 1), hex(peer, 1));
     let ok = ready_fields_ok(hello, ready)
         && second != first
@@ -657,18 +719,21 @@ pub fn classify_flash(
     if !ok {
         return Ok(with_outcome("flash_handshake_failed", &report));
     }
+
     let at = |m: &Match| arrival(m.end() - 1);
     let (th, tr, tp, td) = (at(&h)?, at(&r)?, at(&p)?, at(&d)?);
     let (ready_s, peer_s, done_s) = (seconds(tr, th), seconds(tp, tr), seconds(td, tr));
     report.insert("flash_ready_seconds".into(), json!(ready_s));
     report.insert("flash_peer_change_seconds".into(), json!(peer_s));
     report.insert("flash_done_seconds".into(), json!(done_s));
+
     if !((0.0..=2.5).contains(&ready_s)
         && (9.0..=12.0).contains(&peer_s)
         && (29.0..=32.0).contains(&done_s))
     {
         return Ok(with_outcome("flash_handshake_timing", &report));
     }
+
     let mut out = with_outcome("pass", &report);
     out.insert("flash_handshake_verified".into(), json!(true));
     Ok(out)
@@ -702,12 +767,15 @@ fn hello_ready_ok(
         && h.start() < h.end()
         && h.end() <= r.start()
         && until.is_none_or(|start| r.start() < r.end() && r.end() <= start);
+
     if !ordered || foreign.iter().any(|m| whole(m).start() < h.end()) {
         return Ok(Some("flash_handshake_order"));
     }
+
     if !ready_fields_ok(hello, ready) {
         return Ok(Some("flash_handshake_failed"));
     }
+
     let ready_s = seconds(arrival(r.end() - 1)?, arrival(h.end() - 1)?);
     report.insert("flash_ready_seconds".into(), json!(ready_s));
     if !(0.0..=2.5).contains(&ready_s) {
@@ -733,6 +801,7 @@ fn classify_flash_park(
     let Some(start) = find(rx, mark) else {
         return Ok(with_outcome("flash_handshake_missing", &report));
     };
+
     if let Some(outcome) = hello_ready_ok(
         arrival,
         hello,
@@ -744,6 +813,7 @@ fn classify_flash_park(
     )? {
         return Ok(with_outcome(outcome, &report));
     }
+
     let mut out = with_outcome("pass", &report);
     out.insert("flash_handshake_verified".into(), json!(true));
     Ok(out)
@@ -768,6 +838,7 @@ fn classify_flash_read(
         all(&READ_DONE_RE, rx),
         all(&READ_SKIP, rx),
     );
+
     if let Some(last) = batches.last() {
         let mut ids: Vec<String> = batches.iter().map(|m| text(m, 2)).collect();
         ids.sort();
@@ -791,14 +862,17 @@ fn classify_flash_read(
         report.insert("flash_read_frozen".into(), json!(dec(last, 6)));
         report.insert("flash_read_alive".into(), json!(dec(last, 7)));
     }
+
     if done.len() == 1 {
         report.insert("flash_read_reads".into(), json!(dec(&done[0], 1)));
         report.insert("flash_read_leases".into(), json!(dec(&done[0], 2)));
     }
+
     let reads: Vec<u64> = batches.iter().map(|m| dec(m, 1)).collect();
     let mut distinct = reads.clone();
     distinct.sort();
     distinct.dedup();
+
     if count(rx, b"PLRDS1") != start.len() + batches.len() + done.len() + skip.len()
         || contains(rx, b"PLPRK1")
         || [&start, &done, &skip].iter().any(|l| l.len() > 1)
@@ -806,9 +880,11 @@ fn classify_flash_read(
     {
         return Ok(with_outcome("flash_read_malformed", &report));
     }
+
     if !skip.is_empty() || !flash.error.is_empty() {
         return Ok(with_outcome("flash_read_failed", &report));
     }
+
     if let Some(outcome) = hello_ready_ok(
         arrival,
         hello,
@@ -820,9 +896,11 @@ fn classify_flash_read(
     )? {
         return Ok(with_outcome(outcome, &report));
     }
+
     if start.is_empty() || done.is_empty() {
         return Ok(with_outcome("flash_read_missing", &report));
     }
+
     let (s, d, r) = (whole(&start[0]), whole(&done[0]), whole(ready));
     // Batches lie between start and done in ascending order; no PLFLS1 record follows done.
     let mut sorted = reads.clone();
@@ -836,6 +914,7 @@ fn classify_flash_read(
     {
         return Ok(with_outcome("flash_read_order", &report));
     }
+
     let ok = started_cleanly(&start[0])
         && reads == READ_BATCHES
         && batches.iter().all(|m| {
@@ -852,6 +931,7 @@ fn classify_flash_read(
     if !ok {
         return Ok(with_outcome("flash_read_failed", &report));
     }
+
     let finished = arrival(d.end() - 1)?;
     let read_s = seconds(finished, arrival(s.end() - 1)?);
     let end = end
@@ -862,6 +942,7 @@ fn classify_flash_read(
     if !((0.0..=30.0).contains(&read_s) && tail_s >= 30.0) {
         return Ok(with_outcome("flash_read_timing", &report));
     }
+
     let mut out = with_outcome("pass", &report);
     out.insert("flash_handshake_verified".into(), json!(true));
     out.insert("flash_read_verified".into(), json!(true));
@@ -887,6 +968,7 @@ fn classify_flash_write(
     let restore = all(&WRITE_RESTORE, rx);
     let done = all(&WRITE_DONE_RE, rx);
     let skip = all(&WRITE_SKIP, rx);
+
     let cycle_fields: Vec<Vec<u64>> = cycles.iter().map(|m| decs(m, 1)).collect();
     report.insert(
         "flash_write_cycles".into(),
@@ -898,6 +980,7 @@ fn classify_flash_write(
                 .collect::<Vec<_>>()
         ),
     );
+
     if preimage.len() == 1 {
         report.insert("flash_write_id".into(), json!(text(&preimage[0], 1)));
         report.insert(
@@ -922,6 +1005,7 @@ fn classify_flash_write(
         report.insert("flash_write_release_max".into(), json!(fields[5]));
         report.insert("flash_write_frozen".into(), json!(fields[6]));
     }
+
     let mut erase: Vec<u64> = cycle_fields.iter().map(|c| c[1]).collect();
     if restore.len() == 1 {
         erase.push(dec(&restore[0], 1));
@@ -932,6 +1016,7 @@ fn classify_flash_write(
             json!(crate::round(*max as f64 * 1000.0 / TICK_HZ, 1)),
         );
     }
+
     let numbers: Vec<u64> = cycle_fields.iter().map(|c| c[0]).collect();
     let mut distinct = numbers.clone();
     distinct.sort();
@@ -948,9 +1033,11 @@ fn classify_flash_write(
     {
         return Ok(with_outcome("flash_write_malformed", &report));
     }
+
     if !skip.is_empty() || !flash.error.is_empty() {
         return Ok(with_outcome("flash_write_failed", &report));
     }
+
     if let Some(outcome) = hello_ready_ok(
         arrival,
         hello,
@@ -962,12 +1049,14 @@ fn classify_flash_write(
     )? {
         return Ok(with_outcome(outcome, &report));
     }
+
     if [&start, &preimage, &restore, &done]
         .iter()
         .any(|l| l.len() != 1)
     {
         return Ok(with_outcome("flash_write_missing", &report));
     }
+
     let (s, p, rs, d, r) = (
         whole(&start[0]),
         whole(&preimage[0]),
@@ -975,6 +1064,7 @@ fn classify_flash_write(
         whole(&done[0]),
         whole(ready),
     );
+
     let mut sorted = numbers.clone();
     sorted.sort();
     // start, preimage, ascending cycles, restore, done; no PLFLS1 record follows done.
@@ -993,6 +1083,7 @@ fn classify_flash_write(
     {
         return Ok(with_outcome("flash_write_order", &report));
     }
+
     let done_fields = decs(&done[0], 1);
     let ok = started_cleanly(&start[0])
         && text(&preimage[0], 1) == READ_ID
@@ -1018,6 +1109,7 @@ fn classify_flash_write(
     if !ok {
         return Ok(with_outcome("flash_write_failed", &report));
     }
+
     let finished = arrival(d.end() - 1)?;
     let write_s = seconds(finished, arrival(s.end() - 1)?);
     let end = end
@@ -1028,6 +1120,7 @@ fn classify_flash_write(
     if !((0.0..=60.0).contains(&write_s) && tail_s >= 30.0) {
         return Ok(with_outcome("flash_write_timing", &report));
     }
+
     let mut out = with_outcome("pass", &report);
     out.insert("flash_handshake_verified".into(), json!(true));
     out.insert("flash_write_verified".into(), json!(true));
@@ -1038,6 +1131,8 @@ fn classify_flash_write(
 pub fn classify(rx: &[u8], identity: &str, require_stopped: bool) -> Report {
     let starts = all(&START, rx);
     let outputs = all(&OUTPUTS, rx);
+    // The stopped-output state: motor PA13/PA14 latched HIGH/HIGH, infrared
+    // PA15/PB3 LOW, and all four driven as outputs.
     let stopped = outputs.len() == 1
         && [
             hex(&outputs[0], 1),
@@ -1046,6 +1141,7 @@ pub fn classify(rx: &[u8], identity: &str, require_stopped: bool) -> Report {
             hex(&outputs[0], 4),
         ] == [0x6000, 0, 0xe000, 8]
         && group(&outputs[0], 5) == b"pass";
+
     let pass_count = count(rx, PASS);
     let mut outcome = "timeout";
     if [&b"Hard Fault"[..], b"HardFault", b"Fault on thread"]
@@ -1072,17 +1168,23 @@ pub fn classify(rx: &[u8], identity: &str, require_stopped: bool) -> Report {
             b"unknown" => None,
             value => String::from_utf8_lossy(value).parse::<i64>().ok(),
         };
+
         let (reason, ctrl, start, offset) = (
             hex(m, 3) as i64,
             hex(m, 4) as i64,
             hex(m, 5) as i64,
             hex(m, 6) as i64,
         );
+
         let physical = if ctrl & 2 != 0 {
             start - offset
         } else {
             start + offset
         };
+
+        // RSIP mapping entry 0 names the bank: virtual 0x0c000000 at physical
+        // 0x08006000 or 0x08186000. Any other mapping is unknown, and the bank the
+        // firmware reports must agree with it.
         let live_bank =
             if ctrl & 1 != 0 && start == 0x0c000000 && (0..=0xffffffff).contains(&physical) {
                 match physical {
@@ -1093,6 +1195,7 @@ pub fn classify(rx: &[u8], identity: &str, require_stopped: bool) -> Report {
             } else {
                 None
             };
+
         let at = whole(m);
         outcome = if text(m, 1) != identity {
             "wrong_build"
@@ -1116,11 +1219,13 @@ pub fn classify(rx: &[u8], identity: &str, require_stopped: bool) -> Report {
         } else {
             "incomplete_report"
         };
+
         return obj(
             json!({"outcome": outcome, "bank": bank, "reset_flags": format!("{reason:08x}"),
                           "start_offset": at.start(), "stopped_gpio_verified": stopped}),
         );
     }
+
     obj(json!({"outcome": outcome}))
 }
 
@@ -1143,6 +1248,7 @@ pub fn load(capture: &Path, manifest_path: &Path, image_path: &Path) -> Result<L
         manifest["startup_identity"] == identity.as_str(),
         "Build identity is not source-bound",
     )?;
+
     let image = fs::read(image_path)?;
     let ota: Vec<&Value> = manifest["artifacts"]
         .as_array()
@@ -1167,12 +1273,14 @@ pub fn load(capture: &Path, manifest_path: &Path, image_path: &Path) -> Result<L
         contains(&image, format!("PLFW1 start build={identity} ").as_bytes()),
         "Identity absent from artifact",
     )?;
+
     let capture = Capture::load(capture)?;
     capture.validate()?;
     require(
         capture.tx.is_empty() && capture.metadata["mode"] == "observe",
         "Receive-only observation required",
     )?;
+
     Ok(Loaded {
         manifest,
         identity,
@@ -1209,6 +1317,7 @@ pub fn startup(
     end: Option<Time>,
 ) -> Result<Report> {
     let has = |mark: &[u8]| contains(image, mark);
+
     let supervision = policy(
         manifest,
         "startup_supervision_policy",
@@ -1219,6 +1328,7 @@ pub fn startup(
         supervision.is_some() == has(SUPERVISION_MARK),
         "Supervision policy/artifact mismatch",
     )?;
+
     let output = policy(
         manifest,
         "startup_output_policy",
@@ -1229,8 +1339,12 @@ pub fn startup(
         output.is_some() == has(b"PLFW1 outputs pa="),
         "Output policy/artifact mismatch",
     )?;
+
     let mut result = classify(rx, identity, output.is_some());
+    // The first failure decides the outcome: once `result` has failed, later
+    // probes add their fields but not their outcome.
     let passed = |r: &Report| r["outcome"] == "pass";
+
     let clock_policy = policy(
         manifest,
         "startup_gpio_clock_policy",
@@ -1245,6 +1359,7 @@ pub fn startup(
         clock_policy.is_some() == has(b"PLCLK1 function_before="),
         "GPIO clock policy/artifact mismatch",
     )?;
+
     if clock_policy.is_some() {
         let mut clock = classify_clock(rx);
         if passed(&result) {
@@ -1263,6 +1378,7 @@ pub fn startup(
             update_except_outcome(&mut result, &clock);
         }
     }
+
     let led_policy = policy(
         manifest,
         "startup_led_policy",
@@ -1281,12 +1397,14 @@ pub fn startup(
         (led_policy == Some("bounded-probe-v3")) == has(b"PLLED1 begin output_only="),
         "LED output-only policy/artifact mismatch",
     )?;
+
     if let Some(led) = led_policy {
         let version = match led {
             "bounded-probe-v2" => 2,
             "bounded-probe-v3" => 3,
             _ => 1,
         };
+
         let mut led_result = classify_led(rx, version);
         if passed(&result) {
             if passed(&led_result) {
@@ -1306,6 +1424,7 @@ pub fn startup(
             result.insert("led_outcome".into(), led_result["outcome"].clone());
         }
     }
+
     let routing_policy = policy(
         manifest,
         "startup_gpio_routing_policy",
@@ -1320,6 +1439,7 @@ pub fn startup(
         (routing_policy == Some("read-only-v2")) == has(b" share_pad="),
         "GPIO routing format/artifact mismatch",
     )?;
+
     if let Some(routing_policy) = routing_policy {
         let routing = classify_routing(
             rx,
@@ -1335,6 +1455,7 @@ pub fn startup(
             update_except_outcome(&mut result, &routing);
         }
     }
+
     let power_policy = policy(
         manifest,
         "startup_shared_pad_policy",
@@ -1352,6 +1473,7 @@ pub fn startup(
             == (has(b"PLPWR1 before_func=") && has(POWER_V3_FORMAT)),
         "Shared-pad v3 policy/artifact mismatch",
     )?;
+
     if let Some(power_policy) = power_policy {
         let version = match power_policy {
             "before-km4-v2" => 2,
@@ -1365,6 +1487,9 @@ pub fn startup(
             update_except_outcome(&mut result, &power);
         }
     }
+
+    // The probes below are only bound to the image here; this audit does not
+    // classify their records.
     let wifi = policy(
         manifest,
         "startup_wifi_policy",
@@ -1387,6 +1512,7 @@ pub fn startup(
         wifi.is_none() || led_policy.is_some(),
         "Wi-Fi probe requires the LED probe policy",
     )?;
+
     let transport = policy(
         manifest,
         "startup_transport_policy",
@@ -1401,6 +1527,7 @@ pub fn startup(
         transport.is_none() || wifi == Some("fw07-dns-v1"),
         "Transport requires the FW07 DNS policy",
     )?;
+
     let optics = policy(
         manifest,
         "startup_optics_policy",
@@ -1419,6 +1546,7 @@ pub fn startup(
         optics.is_none() || led_policy.is_some(),
         "Optics probe requires the LED probe policy",
     )?;
+
     let motion = policy(
         manifest,
         "startup_motion_policy",
@@ -1437,6 +1565,7 @@ pub fn startup(
         motion.is_none() || led_policy.is_some(),
         "Motion probe requires the LED probe policy",
     )?;
+
     let trial = policy(
         manifest,
         "startup_trial_policy",
@@ -1451,6 +1580,7 @@ pub fn startup(
         !(trial.is_some() && (optics.is_some() || motion.is_some())),
         "The trial test runs alone",
     )?;
+
     let adc = policy(
         manifest,
         "startup_adc_policy",
@@ -1469,6 +1599,7 @@ pub fn startup(
         adc.is_none() || led_policy.is_some(),
         "ADC probe requires the LED probe policy",
     )?;
+
     let flash_policy = policy(
         manifest,
         "startup_flash_handshake_policy",
@@ -1487,6 +1618,7 @@ pub fn startup(
         flash_policy.is_some() == has(FLASH_MARK),
         "Flash handshake policy/artifact mismatch",
     )?;
+
     // Checked both ways: a park image cannot be audited as a hello-only build, nor the reverse.
     require(
         (flash_policy == Some("fw06-park-v1")) == has(PARK_MARK),
@@ -1508,11 +1640,13 @@ pub fn startup(
         matches!(flash_policy, Some("fw15-settings-v1" | "fw15-settings-v2")) == has(SETTINGS_MARK),
         "Flash settings policy/artifact mismatch",
     )?;
+
     if let Some(flash_policy) = flash_policy {
         require(
             led_policy.is_some(),
             "Flash handshake requires the LED probe policy",
         )?;
+
         let arrival = arrival.ok_or_else(|| {
             crate::Error::Refused("Flash handshake requires host receive times".into())
         })?;
@@ -1524,6 +1658,7 @@ pub fn startup(
             flash_policy != "fw06-write-v1" || end.is_some(),
             "Flash write requires the capture end time",
         )?;
+
         let version = match flash_policy {
             "fw06-park-v1" => 2,
             "fw06-read-v1" => 3,
@@ -1532,6 +1667,7 @@ pub fn startup(
             "fw15-settings-v1" | "fw15-settings-v2" => 6,
             _ => 1,
         };
+
         let flash = classify_flash(rx, arrival, version, end)?;
         if passed(&result) {
             update(&mut result, &flash);
@@ -1539,6 +1675,7 @@ pub fn startup(
             update_except_outcome(&mut result, &flash);
         }
     }
+
     Ok(result)
 }
 
@@ -1553,6 +1690,7 @@ pub fn verify(
     let c = &loaded.capture;
     let arrival = |offset: usize| c.arrival(offset);
     let end = crate::capture::timestamp(&c.metadata["end_utc"])?;
+
     let mut result = startup(
         &c.rx,
         &loaded.manifest,
@@ -1561,6 +1699,7 @@ pub fn verify(
         Some(&arrival),
         Some(end),
     )?;
+
     if result["outcome"] == "pass" {
         let at = result
             .remove("start_offset")
@@ -1572,6 +1711,7 @@ pub fn verify(
             result.insert("outcome".into(), json!("observation_too_short"));
         }
     }
+
     result.remove("start_offset");
     update(
         &mut result,
@@ -1581,6 +1721,7 @@ pub fn verify(
         "limit": "UART startup evidence; electrical outputs and physical reset cause are not established."}),
         ),
     );
+
     Ok(result)
 }
 

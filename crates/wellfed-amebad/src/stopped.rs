@@ -96,6 +96,7 @@ pub fn initialize() -> Snapshot {
     if !clock.verified() {
         return Snapshot { clock, ..observe() };
     }
+
     sdk::swd_off();
     sdk::gpio_port_write(0, PA_MASK, MOTOR_MASK);
     sdk::gpio_port_write(1, PB_MASK, 0);

@@ -21,6 +21,7 @@ impl AdcCalibration {
     pub fn decode(efuse: &[u8; 4]) -> Option<Self> {
         let offset = u16::from_le_bytes([efuse[0], efuse[1]]);
         let gain = u16::from_le_bytes([efuse[2], efuse[3]]);
+        // Erased (all-ones) efuse words fall back to the default offset and gain.
         let candidate = Self {
             offset: if offset == u16::MAX { 2480 } else { offset },
             gain: if gain == u16::MAX { 12050 } else { gain },
@@ -38,6 +39,7 @@ impl AdcCalibration {
         if !self.valid() {
             return None;
         }
+
         let mut sum = 0u32;
         for &sample in samples {
             if sample > MAX_RAW {
@@ -45,6 +47,7 @@ impl AdcCalibration {
             }
             sum += u32::from(sample);
         }
+
         let mean_tenths = (sum / SAMPLES as u32) * 10;
         // At most 40,950,000 after multiplication; no 32-bit overflow.
         let offset = u32::from(self.offset);

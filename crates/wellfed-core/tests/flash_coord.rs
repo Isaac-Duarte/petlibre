@@ -1,3 +1,12 @@
+//! Protocol tests for the flash lease authority: startup sessions, token
+//! mutations, phase and total deadlines, ordering faults, the close fence and
+//! an exhaustive reordering and replay search.
+//!
+//! The property under test: only the lease owner may access flash, and only
+//! after quiesce and the other side's park; actuation resumes only after
+//! completion and release. A stale token, wrong sender or missed deadline
+//! fails or faults; it never grants permission.
+
 use wellfed_core::flash_coord::{
     FlashCoord, FlashFault, FlashLimits, FlashParty, FlashReply, FlashToken,
 };
@@ -64,6 +73,7 @@ fn lifecycle_and_exclusion() {
             c.request(other(party), if side == 1 { 17 } else { 29 }, 2, side),
             FlashReply::BUSY
         );
+
         grant(&mut c, &t, side);
         finish(&mut c, &t, side);
         assert_eq!(
@@ -82,12 +92,14 @@ fn startup_requires_current_sessions_and_verified_outputs() {
     assert!(!c.may_actuate(0));
     assert_eq!(c.ready(17, 29, false, 0), FlashReply::FAILED);
     assert!(c.fault == FlashFault::OUTPUT && !c.may_actuate(0));
+
     let mut c = ready(0);
     assert_eq!(c.ready(17, 29, true, 1), FlashReply::DUPLICATE);
     assert_eq!(c.request(FlashParty::PEER, 30, 1, 1), FlashReply::STALE);
     assert!(c.may_actuate(1));
     assert_eq!(c.ready(17, 30, true, 1), FlashReply::FAILED);
     assert!(c.fault == FlashFault::PEER_LOST && !c.may_actuate(1));
+
     let mut c = FlashCoord::new(&LIMITS, 18, 2).unwrap(); // Fixture models a fresh boot object.
     assert_eq!(c.ready(17, 29, true, 2), FlashReply::STALE);
     assert!(!c.may_actuate(2));
@@ -105,15 +117,18 @@ fn token_mutations_cannot_authorize() {
             2 => stale.lease += 1,
             _ => stale.owner = FlashParty::PEER,
         }
+
         assert_eq!(c.quiesced(&stale, true, 1), FlashReply::STALE);
         assert_eq!(c.parked(&stale, FlashParty::PEER, 1), FlashReply::STALE);
         assert!(!c.may_access(&stale, FlashParty::LOCAL, 1));
+
         grant(&mut c, &t, 1);
         assert_eq!(
             c.released(&stale, FlashParty::PEER, true, 1),
             FlashReply::STALE
         );
         assert!(!c.may_actuate(1));
+
         finish(&mut c, &t, 2);
         let next = request(&mut c, FlashParty::LOCAL, 2, 3);
         assert_ne!(next.lease, t.lease);
@@ -135,6 +150,7 @@ fn duplicates_never_extend_deadlines() {
         assert_eq!(c.parked(&t, FlashParty::PEER, time), FlashReply::DUPLICATE);
         assert_eq!(c.quiesced(&t, true, time), FlashReply::DUPLICATE);
     }
+
     assert!(!c.may_access(&t, FlashParty::LOCAL, 11));
     assert!(c.fault == FlashFault::TIMEOUT && !c.may_actuate(11));
     assert_eq!(c.complete(&t, FlashParty::LOCAL, 11), FlashReply::FAILED);
@@ -152,6 +168,7 @@ fn each_phase_has_an_absolute_cutoff() {
             assert_eq!(c.ready(17, 29, true, 0), FlashReply::ACCEPTED);
             request(&mut c, FlashParty::PEER, 1, 0);
         }
+
         let t = c.token;
         if stage > 1 {
             assert_eq!(c.quiesced(&t, true, 0), FlashReply::ACCEPTED);
@@ -162,6 +179,7 @@ fn each_phase_has_an_absolute_cutoff() {
         if stage > 3 {
             assert_eq!(c.complete(&t, FlashParty::PEER, 0), FlashReply::ACCEPTED);
         }
+
         assert!(c.poll(9));
         assert!(!c.poll(10) && c.fault == FlashFault::TIMEOUT);
         assert!(!c.may_actuate(10));
@@ -179,6 +197,7 @@ fn total_time_is_not_renewed_by_phase_changes() {
         0,
     )
     .unwrap();
+
     assert_eq!(c.ready(17, 29, true, 0), FlashReply::ACCEPTED);
     let t = request(&mut c, FlashParty::LOCAL, 1, 0);
     assert_eq!(c.quiesced(&t, true, 8), FlashReply::ACCEPTED);
@@ -207,6 +226,7 @@ fn wrong_sender_early_release_and_output_loss_fault() {
             };
             assert_eq!(reply, FlashReply::FAILED);
         }
+
         assert!(!c.may_actuate(0) && !c.may_access(&t, FlashParty::LOCAL, 0));
         assert_eq!(
             c.fault,
@@ -227,6 +247,7 @@ fn clock_wrap_backward_and_transport_fault() {
     grant(&mut c, &t, start + 1);
     finish(&mut c, &t, 1);
     assert!(!c.may_actuate(0) && c.fault == FlashFault::CLOCK);
+
     let mut c = ready(0);
     c.trip(FlashFault::TRANSPORT);
     c.trip(FlashFault::PEER_LOST);
@@ -241,6 +262,7 @@ fn close_requires_current_fence_and_disabled_peer() {
     grant(&mut c, &old, 0);
     finish(&mut c, &old, 0);
     assert_eq!(c.close(1), FlashReply::ACCEPTED);
+
     let fence = c.token;
     assert!(fence.owner == FlashParty::FENCE && fence.lease != old.lease);
     assert_eq!(c.closed(&old, true, true, 1), FlashReply::STALE);
@@ -277,6 +299,7 @@ fn configuration_and_counter_exhaustion() {
         .is_none()
     );
     assert!(FlashCoord::new(&LIMITS, 0, 0).is_none());
+
     let mut c = ready(0);
     assert_eq!(c.request(FlashParty::FENCE, 17, 1, 0), FlashReply::INVALID);
     assert_eq!(c.request(FlashParty::LOCAL, 17, 0, 0), FlashReply::INVALID);
@@ -300,6 +323,7 @@ fn exhaustive_reordering_and_replay_cannot_create_permission() {
             };
             let (mut quiet, mut parked, mut complete, mut released) = (false, false, false, false);
             let mut events = trace;
+
             for step in 1..=6 {
                 let event = events % 5;
                 events /= 5;
@@ -327,6 +351,7 @@ fn exhaustive_reordering_and_replay_cannot_create_permission() {
                         c.parked(&stale, other(who), step);
                     }
                 }
+
                 if c.may_access(&t, who, step) {
                     assert!(quiet && parked && !complete);
                 }

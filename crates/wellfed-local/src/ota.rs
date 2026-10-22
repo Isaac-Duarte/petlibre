@@ -36,6 +36,7 @@ impl OtaReport {
         ) {
             return None;
         }
+
         let byte = |key| {
             message
                 .fields
@@ -43,6 +44,7 @@ impl OtaReport {
                 .and_then(Value::as_u64)
                 .and_then(|n| u8::try_from(n).ok())
         };
+
         Some(Self {
             received_at: now,
             command: message.cmd.clone(),

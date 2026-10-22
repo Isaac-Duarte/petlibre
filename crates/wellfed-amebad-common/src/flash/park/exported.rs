@@ -1,4 +1,6 @@
-//! Exported RAM-resident routines for one core's hardware.
+//! Target builds only: the C entry points of the RAM park and the IPC
+//! semaphore over this core's real registers (KM0 or KM4, by the `km0`
+//! feature). Like the rest of the park, they stay leaf code in RAM text.
 
 use super::*;
 

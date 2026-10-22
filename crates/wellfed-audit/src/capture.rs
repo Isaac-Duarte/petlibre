@@ -1,6 +1,10 @@
 //! A finalized receive-only capture: `serial-rx.bin`, `serial-tx.bin`,
 //! `serial-events.jsonl` and `report.json`, validated as
 //! `analyze` in `audit-uart-startups.py` does before anything is read from it.
+//!
+//! Nothing is read until the hashes match the finalized report and the event
+//! log covers both streams contiguously and in time order; any gap, overlap or
+//! mismatch refuses the capture instead of auditing part of it.
 
 use std::fs;
 use std::path::Path;
@@ -19,6 +23,7 @@ pub fn timestamp(value: &Value) -> Result<Time> {
     if let Ok(time) = DateTime::parse_from_rfc3339(text) {
         return Ok(time);
     }
+
     require(
         chrono::NaiveDateTime::parse_from_str(text, "%Y-%m-%dT%H:%M:%S%.f").is_err(),
         "Timestamp requires a timezone",
@@ -35,6 +40,7 @@ pub fn seconds(later: Time, earlier: Time) -> f64 {
     (micros(later) - micros(earlier)) as f64 / 1e6
 }
 
+/// A capture as loaded from disk; it is evidence only after `validate` passes.
 pub struct Capture {
     pub rx: Vec<u8>,
     pub tx: Vec<u8>,
@@ -53,6 +59,7 @@ impl Capture {
             .map(serde_json::from_str)
             .collect::<Result<Vec<Value>, _>>()?;
         let metadata: Value = serde_json::from_slice(&fs::read(directory.join("report.json"))?)?;
+
         let chunks = events
             .iter()
             .filter(|e| e["direction"] == "rx")
@@ -65,6 +72,7 @@ impl Capture {
                 ))
             })
             .collect();
+
         Ok(Self {
             rx,
             tx,
@@ -92,6 +100,7 @@ impl Capture {
     pub fn validate(&self) -> Result<()> {
         let metadata = &self.metadata;
         require(metadata["status"] == "complete", "Capture must be complete")?;
+
         for (direction, data) in [("rx", &self.rx), ("tx", &self.tx)] {
             let hashes: Vec<&Value> = [
                 format!("{direction}_sha256"),
@@ -109,6 +118,7 @@ impl Capture {
                 "Capture hash mismatch",
             )?;
         }
+
         let mut offsets = [0i64, 0i64];
         let mut previous: Option<Time> = None;
         for event in &self.events {
@@ -117,6 +127,7 @@ impl Capture {
                 Some("tx") => 1,
                 _ => return Err(crate::Error::Refused("Invalid event direction".into())),
             };
+
             let (size, offset) = (event.get("bytes"), event.get("offset"));
             let int = |v: Option<&Value>| {
                 v.and_then(|v| {
@@ -132,6 +143,7 @@ impl Capture {
             };
             require(size > 0, "Invalid event extent")?;
             require(offset == offsets[index], "Noncontiguous event offsets")?;
+
             let when = timestamp(&event["utc"])?;
             require(
                 previous.is_none_or(|p| when >= p),
@@ -140,6 +152,7 @@ impl Capture {
             previous = Some(when);
             offsets[index] += size;
         }
+
         require(
             offsets == [self.rx.len() as i64, self.tx.len() as i64],
             "Event coverage mismatch",
@@ -157,6 +170,7 @@ pub mod tests {
         fs::create_dir_all(dir).unwrap();
         fs::write(dir.join("serial-rx.bin"), rx).unwrap();
         fs::write(dir.join("serial-tx.bin"), b"").unwrap();
+
         let start = DateTime::parse_from_rfc3339("2026-10-22T10:00:00+00:00").unwrap();
         let mut events = String::new();
         let mut at = start;
@@ -168,6 +182,7 @@ pub mod tests {
                        "offset": index * chunk.max(1), "bytes": piece.len()})
             );
         }
+
         fs::write(dir.join("serial-events.jsonl"), events).unwrap();
         let end = at + chrono::Duration::seconds(1);
         let report = json!({"status": "complete", "mode": "observe", "rx_sha256": digest(rx),
@@ -179,6 +194,7 @@ pub mod tests {
     fn a_complete_capture_validates() {
         let tmp = tempfile::tempdir().unwrap();
         write_capture(tmp.path(), b"hello world", 4, 1000);
+
         let capture = Capture::load(tmp.path()).unwrap();
         capture.validate().unwrap();
         assert_eq!(
@@ -191,6 +207,7 @@ pub mod tests {
     fn hash_gaps_and_time_order_are_refused() {
         let tmp = tempfile::tempdir().unwrap();
         write_capture(tmp.path(), b"hello world", 4, 1000);
+
         let mut capture = Capture::load(tmp.path()).unwrap();
         capture.rx.push(b'!');
         assert!(
@@ -200,6 +217,7 @@ pub mod tests {
                 .to_string()
                 .contains("hash mismatch")
         );
+
         let mut capture = Capture::load(tmp.path()).unwrap();
         capture.events[1]["offset"] = json!(5);
         assert!(
@@ -209,6 +227,7 @@ pub mod tests {
                 .to_string()
                 .contains("Noncontiguous")
         );
+
         let mut capture = Capture::load(tmp.path()).unwrap();
         capture.events[2]["utc"] = json!("2026-10-22T09:00:00+00:00");
         assert!(
@@ -218,6 +237,7 @@ pub mod tests {
                 .to_string()
                 .contains("backward")
         );
+
         let mut capture = Capture::load(tmp.path()).unwrap();
         capture.events[0]["utc"] = json!("2026-10-22T09:00:00");
         assert!(
@@ -227,6 +247,7 @@ pub mod tests {
                 .to_string()
                 .contains("timezone")
         );
+
         let mut capture = Capture::load(tmp.path()).unwrap();
         capture.events[0]["bytes"] = json!(true);
         assert!(

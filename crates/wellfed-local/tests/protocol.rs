@@ -1,3 +1,7 @@
+//! Stock topic parsing and replies: only this device's `/post` topics parse,
+//! no reply carries a feed command, and clock calibration is withheld while
+//! imported plans exist.
+
 mod common;
 
 use chrono::Utc;
@@ -14,6 +18,7 @@ fn messages_from_other_devices_and_retained_topic_shapes_are_rejected() {
     ] {
         assert!(protocol::parse(&config, topic, br#"{"cmd":"ATTR_PUSH_EVENT"}"#).is_err());
     }
+
     assert!(protocol::parse(&config, &config.topic("event/post"), b"[]").is_err());
     assert!(protocol::parse(&config, &config.topic("event/post"), &vec![b'x'; 65_537]).is_err());
 }
@@ -28,6 +33,7 @@ fn acknowledgements_preserve_event_id_and_step_without_sending_a_feed() {
         &serde_json::to_vec(&input).unwrap(),
     )
     .unwrap();
+
     let reply = protocol::reply(&config, &channel, &msg, Utc::now()).unwrap();
     assert_eq!(reply.topic, config.topic("event/sub"));
     assert_eq!(reply.payload["msgId"], "event42");
@@ -59,6 +65,7 @@ fn configuration_reply_uses_its_own_channel_without_an_automatic_response() {
         br#"{"cmd":"GET_CONFIG","msgId":"device-generated"}"#,
     )
     .unwrap();
+
     assert_eq!(channel, "config");
     assert!(protocol::reply(&config, &channel, &msg, Utc::now()).is_none());
     assert!(
@@ -81,8 +88,10 @@ fn plan_requests_return_imported_snapshot_and_clock_changes_are_held_for_nonempt
         br#"{"cmd":"GET_FEEDING_PLAN_EVENT","msgId":"p"}"#,
     )
     .unwrap();
+
     let reply = protocol::reply(&config, "event", &msg, Utc::now()).unwrap();
     assert_eq!(reply.payload["plans"], json!(config.plans));
+
     let (_, msg) = protocol::parse(
         &config,
         &config.topic("ntp/post"),

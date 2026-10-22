@@ -7,6 +7,7 @@
 - Keep user changes and private evidence intact. Do not copy credentials, real device identifiers, captures, backups, vendor binaries, or decompiled artifacts into tracked files.
 - Keep first-party source in the Rust workspace; preserve existing crate names, public protocols, and C ABI unless the task requires a compatibility change.
 - Record whether a finding comes from physical observation, static analysis, or simulation. Host checks do not establish hardware reliability.
+- Write for the reader: separate the logical steps in a function body (setup, the work, the result) with a blank line, and keep long match arms, tests and builders broken into paragraphs. Comments and `//!` module docs explain why the code exists and how it fits the system (invariants, hardware or protocol constraints, ordering requirements), not what the next line does. Don't add comments that restate the code.
 - Run cargo fmt after Rust edits. Run the applicable checks; make check PYTHON=.venv/bin/python is the contributor gate. Missing optional fixtures are not successful evidence checks.
 - Never weaken pinned recovery hashes, marker sequencing, preservation checks, or no-retry behavior to make tests pass. Rebuilt diagnostics are not automatically compatible with the pinned writer.
 - Build/test commands must not flash hardware, operate motors, alter routing, or start persistent services. Such operations require an explicit user task and a reviewed device-specific procedure.

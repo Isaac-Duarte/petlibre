@@ -12,9 +12,11 @@ use uuid::Uuid;
 
 pub const HEALTH_SCHEMA: &str = "wellfed.health";
 pub const HEALTH_VERSION: u64 = 1;
+
 pub const MAX_HEALTH_BYTES: usize = 512;
 pub const MAX_REPLY_BYTES: usize = 256;
 pub const REPLIES_KEPT: usize = 8;
+
 /// Two missed 30 s publishes plus margin.
 pub const STALE_SECONDS: i64 = 75;
 
@@ -137,6 +139,7 @@ impl Tracker {
             Some((health, at)) => (Some(health.clone()), Some(*at)),
             None => (None, None),
         };
+
         let age_ms = received_at.map(|at| (now - at).num_milliseconds());
         // A clock step backwards also counts as stale rather than fresh.
         let stale = age_ms.is_none_or(|age| !(0..STALE_SECONDS * 1000).contains(&age));
@@ -145,6 +148,7 @@ impl Tracker {
                 .as_ref()
                 .and_then(|h| h["online"].as_bool())
                 .unwrap_or(false);
+
         Snapshot {
             health,
             received_at,
@@ -174,6 +178,7 @@ mod tests {
     #[test]
     fn health_requires_schema_major_version_and_online_and_keeps_unknown_fields() {
         assert!(parse_health(&health(json!({"future":"field"}))).is_some());
+
         for bad in [
             json!({"schema":"other"}),
             json!({"v":2}),
@@ -182,8 +187,10 @@ mod tests {
         ] {
             assert!(parse_health(&health(bad.clone())).is_none(), "{bad}");
         }
+
         assert!(parse_health(b"[1]").is_none());
         assert!(parse_health(b"not json").is_none());
+
         let padded = health(json!({"pad":"x".repeat(MAX_HEALTH_BYTES)}));
         assert!(parse_health(&padded).is_none());
     }
@@ -199,12 +206,15 @@ mod tests {
                 ..Default::default()
             }
         );
+
         assert!(tracker.observe_health(&health(json!({})), t0));
+
         let fresh = tracker.snapshot(t0 + chrono::Duration::seconds(74));
         assert!(fresh.online && !fresh.stale);
         let old = tracker.snapshot(t0 + chrono::Duration::seconds(75));
         assert!(!old.online && old.stale);
         assert!(tracker.snapshot(t0 - chrono::Duration::seconds(1)).stale);
+
         assert!(tracker.observe_health(&health(json!({"online":false})), t0));
         assert!(!tracker.snapshot(t0).online);
         assert!(!tracker.observe_health(b"{}", t0));
@@ -222,11 +232,13 @@ mod tests {
             "x".repeat(300)
         );
         assert!(!tracker.observe_reply(long.as_bytes(), now));
+
         let ids: Vec<_> = (0..10).map(|_| Uuid::new_v4()).collect();
         for id in &ids {
             let reply = format!(r#"{{"id":"{id}","op":"ping","ok":true}}"#);
             assert!(tracker.observe_reply(reply.as_bytes(), now));
         }
+
         let kept: Vec<_> = tracker
             .snapshot(now)
             .replies
@@ -253,6 +265,7 @@ mod tests {
                 .op,
             Op::Health
         );
+
         for bad in [r#"{"op":"reboot"}"#, r#"{"op":"ping","x":1}"#, r#"{}"#] {
             assert!(serde_json::from_str::<Input>(bad).is_err(), "{bad}");
         }

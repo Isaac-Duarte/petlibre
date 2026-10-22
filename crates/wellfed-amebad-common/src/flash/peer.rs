@@ -16,17 +16,20 @@ use crate::flash::park::{self, Mmio};
 
 /// SDK SYSTIMER rate, as measured in FW05.
 const TICKS_PER_SECOND: u32 = 32_768;
+
 pub const INJECT_PEER_LOSS_MS: Option<u32> = None;
 pub const PARK_CHANNEL: u32 = 16;
 pub const INJECT_LEASE: u64 = 101;
 pub const MARKER_REGISTER: u32 = 1;
 pub const WITHHOLD_MARKER: u32 = 1;
 pub const HEARTBEAT_REGISTER: u32 = 5;
+
 /// Park handler diagnostics for KM4 to report: entries (high half), the IPC
 /// channel (bits 15:8) and the last `ParkEvent` plus one (bits 7:0).
 pub const DIAG_REGISTER: u32 = 2;
 /// The KM0 backup registers (SDK `BACKUP_REG_BASE`), readable by both cores.
 pub const BACKUP_BASE: u32 = 0x4800_03c0;
+
 /// The whole lease budget (`config::FLASH_LIMITS.total_ms`, 700 ms) in ticks,
 /// so a lost RELEASE parks this core no longer than the authority's budget.
 pub const PARK_TICK_LIMIT: u32 = 700 * TICKS_PER_SECOND / 1000;
@@ -54,14 +57,17 @@ impl Peer {
     pub fn step<M: Mmio>(&mut self, boot_count: u32, ticks: u32) -> PeerEvent {
         let beat = backup::<M>(HEARTBEAT_REGISTER).wrapping_add(1);
         M::store(BACKUP_BASE + HEARTBEAT_REGISTER * 4, beat);
+
         if self.session == 0 {
             self.boot_count = boot_count;
             self.session = park::session(boot_count, ticks, true);
         }
+
         if park::answer::<M>(self.session, &mut self.answered) != 0 {
             self.answered_at = ticks;
             return PeerEvent::ANSWERED;
         }
+
         if let Some(ms) = INJECT_PEER_LOSS_MS
             && self.answered != 0
             && !self.injected
@@ -92,6 +98,7 @@ impl Peer {
         if lease <= self.last_lease {
             return ParkEvent::IGNORED;
         }
+
         if lease == INJECT_LEASE && backup::<M>(MARKER_REGISTER) == WITHHOLD_MARKER {
             self.last_lease = lease;
             return ParkEvent::WITHHELD;
@@ -116,6 +123,7 @@ mod exported {
     struct Slot(UnsafeCell<Peer>);
     // SAFETY: only the single KM0 peer task calls the step.
     unsafe impl Sync for Slot {}
+
     static PEER: Slot = Slot(UnsafeCell::new(Peer {
         session: 0,
         answered: 0,
@@ -150,10 +158,12 @@ mod exported {
             // SAFETY: fixed SysTick CTRL register; restored below.
             let saved = unsafe { core::ptr::read_volatile(systick) };
             unsafe { core::ptr::write_volatile(systick, saved & !park::SYSTICK_CONTROL_BITS) };
+
             // SAFETY: serialized with the task step by the critical section.
             let peer = unsafe { &mut *PEER.0.get() };
             let event = peer.on_request::<Hardware>();
             unsafe { core::ptr::write_volatile(systick, saved) };
+
             let diag = (super::BACKUP_BASE + super::DIAG_REGISTER * 4) as usize as *mut u32;
             // SAFETY: KM0 user backup register 2.
             let count = (unsafe { core::ptr::read_volatile(diag) } >> 16).wrapping_add(1);

@@ -108,6 +108,7 @@ fn continued(context: &Context, evidence: &Evidence) -> Result<(Baseline, Vec<u8
 fn load(context: &Context, args: &Args) -> Result<Loaded> {
     let root = &context.root;
     let layout = development::layout(args.bank)?;
+
     // Bank 0 may be overwritten from its pinned contents instead of a source review.
     let source = args
         .source
@@ -118,8 +119,10 @@ fn load(context: &Context, args: &Args) -> Result<Loaded> {
         source.is_some() || layout.bank == 0,
         "A source review is required for bank 1",
     )?;
+
     let target = frozen(root, &args.target, &layout)?;
     let (baseline, rom, small) = continued(context, &args.evidence)?;
+
     let original = match &source {
         Some(_) => None,
         None => {
@@ -141,6 +144,7 @@ fn load(context: &Context, args: &Args) -> Result<Loaded> {
             Some(read)
         }
     };
+
     let bindings = json!({
         "schema_version": 1, "kind": layout.kind, "port": args.evidence.port,
         "interrupted": args.interrupted,
@@ -152,9 +156,11 @@ fn load(context: &Context, args: &Args) -> Result<Loaded> {
         "rom_report_sha256": sha256(&rom), "bounded_read_report_sha256": sha256(&small),
         "tool_sha256": context.tools(),
     });
+
     let original = original
         .map(|read| development::original_region(&read, &target.image, &layout))
         .transpose()?;
+
     Ok(Loaded {
         layout,
         baseline,
@@ -176,6 +182,7 @@ fn inspected(
         args.evidence.inspection.as_deref(),
         &loaded.bindings,
     )?;
+
     let values = session::inspected_transfers(
         &context.root,
         &path,
@@ -183,6 +190,7 @@ fn inspected(
         &loaded.extents()?,
         "Complete region/guards required",
     )?;
+
     development::guards(
         &loaded.baseline,
         &values[0],
@@ -191,6 +199,7 @@ fn inspected(
         None,
     )?;
     development::images(&loaded.update(), &values[2])?;
+
     let checks = report["status_checks"].as_array();
     require(
         checks.is_some_and(|c| {
@@ -200,6 +209,7 @@ fn inspected(
         }),
         "Permitted inspection status pair missing",
     )?;
+
     let [_, other, application] = <[Vec<u8>; 3]>::try_from(values).unwrap();
     Ok((application, other, sha))
 }
@@ -217,10 +227,12 @@ pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
     if args.mode == Mode::Inspect {
         return session_run(context, args, &loaded, None);
     }
+
     let (current, other, report_sha) = inspected(context, args, &loaded)?;
     let mut reviewed = loaded.bindings.clone();
     reviewed["inspection_report_sha256"] = json!(report_sha);
     reviewed["operation_plan"] = development::plan(&loaded.update(), &current, Some(&other))?;
+
     if args.mode == Mode::Prepare {
         let sha = session::write_plan(&context.root, &args.evidence.output, &reviewed)?;
         progress(&format!("Prepared development plan SHA256: {sha}"));
@@ -230,12 +242,14 @@ pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
                             "erase_sectors": reviewed["operation_plan"]["erase_sectors"]}),
         });
     }
+
     let raw = session::reviewed_plan(
         &context.root,
         args.evidence.plan.as_deref(),
         args.evidence.expected_plan_sha256.as_deref(),
         &reviewed,
     )?;
+
     // Recheck the operation and bindings themselves before serial access.
     require(
         canonical(&reviewed["operation_plan"])?
@@ -250,6 +264,7 @@ pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
         canonical(&without_review(&reviewed))? == canonical(&loaded.bindings)?,
         "Execution bindings differ before serial access",
     )?;
+
     session_run(
         context,
         args,
@@ -268,6 +283,7 @@ fn session_run(
     if let Some((_, _, _, raw)) = &execution {
         session::keep_plan(&directory, raw)?;
     }
+
     let report_path = directory.join("report.json");
     let report = RefCell::new(json!({
         "mode": args.mode.name(), "status": "prepared", "start_utc": utc(),
@@ -278,22 +294,27 @@ fn session_run(
     }));
     let save = || evidence::save_report(&report_path, &report.borrow());
     save()?;
+
     let extents = loaded.extents()?;
     let update = loaded.update();
+
     let result = (|| -> Result<Option<Value>> {
         let mut port = context.record(&args.evidence.port, &directory)?;
         report.borrow_mut()["status"] = json!("running");
         save()?;
+
         progress(&format!(
             "Development {} of bank {}; region {} bytes; no full-flash scans",
             args.mode.name(),
             loaded.layout.bank,
             extents[2].1
         ));
+
         let mut acquire = |port: &mut dyn Port| -> Result<Acquired> {
             let number = report.borrow()["observations"].as_array().unwrap().len() + 1;
             let mut observation = Vec::new();
             let mut values = Vec::new();
+
             for (label, (offset, length)) in
                 ["factory", "other-bank", "application"].iter().zip(extents)
             {
@@ -302,12 +323,14 @@ fn session_run(
                 observation.push(entry);
                 values.push(data);
             }
+
             report.borrow_mut()["observations"]
                 .as_array_mut()
                 .unwrap()
                 .push(Value::Array(observation));
             save()?;
             progress(&format!("Region acquisition {number} complete"));
+
             let [factory, other, application] = <[Vec<u8>; 3]>::try_from(values).unwrap();
             Ok(Acquired {
                 application,
@@ -315,6 +338,7 @@ fn session_run(
                 other,
             })
         };
+
         match &execution {
             None => {
                 let acquired = acquire(&mut port)?;
@@ -326,6 +350,7 @@ fn session_run(
                     None,
                 )?;
                 development::images(&update, &acquired.application)?;
+
                 let mut record = |event: &str, extra: Map<String, Value>| {
                     let mut entry = extra;
                     entry.insert("event".into(), json!(event));
@@ -335,6 +360,7 @@ fn session_run(
                         .push(Value::Object(entry));
                     Ok(())
                 };
+
                 status::check_status(
                     &mut port,
                     loaded.layout.start,
@@ -344,12 +370,14 @@ fn session_run(
                 )?;
                 Ok(None)
             }
+
             Some((current, other, reviewed, _)) => {
                 let mut counter = |n: usize, total: usize| {
                     if n == 1 || n.is_multiple_of(8) || n == total {
                         progress(&format!("Verified changed sectors: {n}/{total}"));
                     }
                 };
+
                 development::run(
                     &mut port,
                     &context.root,
@@ -366,6 +394,7 @@ fn session_run(
             }
         }
     })();
+
     finish(
         &directory,
         &report,
@@ -396,6 +425,7 @@ fn finish(
                 report["error"] = json!(format!("{}: {error}", error.kind()));
             }
         }
+
         progress(if complete {
             "Completed; application boot remains a separate bench check"
         } else {
@@ -404,6 +434,7 @@ fn finish(
         report["end_utc"] = json!(utc());
         evidence::stream_hashes(directory, &mut report);
     }
+
     let saved = evidence::save_report(&directory.join("report.json"), &report.borrow());
     let report = report.borrow();
     Ok(session::closed(
@@ -465,6 +496,7 @@ pub fn give_way(context: &Context, args: &GiveWayArgs) -> Result<Outcome> {
     if args.mode == Mode::Inspect {
         return give_way_session(context, args, &loaded, None);
     }
+
     let (path, report, report_sha) = session::inspection(
         context,
         args.evidence.inspection.as_deref(),
@@ -478,14 +510,17 @@ pub fn give_way(context: &Context, args: &GiveWayArgs) -> Result<Outcome> {
         &extents,
         "Complete guard acquisition required",
     )?;
+
     require(
         values[0] == loaded.baseline.bytes()[..0x6000],
         "Factory region differs from the pinned baseline",
     )?;
+
     let operation = development::give_way_plan(&loaded.fallback, &values[1], &values[2])?;
     let mut reviewed = loaded.bindings.clone();
     reviewed["inspection_report_sha256"] = json!(report_sha);
     reviewed["operation_plan"] = operation;
+
     if args.mode == Mode::Prepare {
         let sha = session::write_plan(&context.root, &args.evidence.output, &reviewed)?;
         progress(&format!("Prepared give-way plan SHA256: {sha}"));
@@ -494,12 +529,14 @@ pub fn give_way(context: &Context, args: &GiveWayArgs) -> Result<Outcome> {
             summary: json!({"status": "prepared", "plan": args.evidence.output, "plan_sha256": sha}),
         });
     }
+
     let raw = session::reviewed_plan(
         &context.root,
         args.evidence.plan.as_deref(),
         args.evidence.expected_plan_sha256.as_deref(),
         &reviewed,
     )?;
+
     let [_, bank0, bank1] = <[Vec<u8>; 3]>::try_from(values).unwrap();
     give_way_session(context, args, &loaded, Some((bank0, bank1, reviewed, raw)))
 }
@@ -514,6 +551,7 @@ fn give_way_session(
     if let Some((_, _, _, raw)) = &execution {
         session::keep_plan(&directory, raw)?;
     }
+
     let report_path = directory.join("report.json");
     let report = RefCell::new(json!({
         "mode": args.mode.name(), "status": "prepared", "start_utc": utc(),
@@ -522,21 +560,26 @@ fn give_way_session(
     }));
     let save = || evidence::save_report(&report_path, &report.borrow());
     save()?;
+
     let extents = loaded.extents()?;
+
     let result = (|| -> Result<Option<Value>> {
         let mut port = context.record(&args.evidence.port, &directory)?;
         report.borrow_mut()["status"] = json!("running");
         save()?;
+
         let mut acquire = |port: &mut dyn Port| -> Result<[Vec<u8>; 3]> {
             let number = report.borrow()["observations"].as_array().unwrap().len() + 1;
             let mut observation = Vec::new();
             let mut values = Vec::new();
+
             for (label, offset, length) in extents {
                 let (entry, data) =
                     session::acquire_region(port, &directory, label, number, offset, length)?;
                 observation.push(entry);
                 values.push(data);
             }
+
             report.borrow_mut()["observations"]
                 .as_array_mut()
                 .unwrap()
@@ -545,6 +588,7 @@ fn give_way_session(
             progress(&format!("Guard acquisition {number} complete"));
             Ok(<[Vec<u8>; 3]>::try_from(values).unwrap())
         };
+
         match &execution {
             None => {
                 let [factory, region, first] = acquire(&mut port)?;
@@ -553,6 +597,7 @@ fn give_way_session(
                     "Factory region differs from the pinned baseline",
                 )?;
                 development::give_way_plan(&loaded.fallback, &region, &first)?;
+
                 let mut record = |event: &str, extra: Map<String, Value>| {
                     let mut entry = extra;
                     entry.insert("event".into(), json!(event));
@@ -562,6 +607,7 @@ fn give_way_session(
                         .push(Value::Object(entry));
                     Ok(())
                 };
+
                 status::check_status(
                     &mut port,
                     sector::START,
@@ -571,6 +617,7 @@ fn give_way_session(
                 )?;
                 Ok(None)
             }
+
             Some((bank0, bank1, reviewed, _)) => development::run_give_way(
                 &mut port,
                 &context.root,
@@ -585,6 +632,7 @@ fn give_way_session(
             .map(Some),
         }
     })();
+
     finish(
         &directory,
         &report,

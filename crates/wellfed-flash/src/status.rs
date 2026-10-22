@@ -22,6 +22,7 @@ fn protected(sr1: u8, sr2: u8) -> Option<(usize, usize)> {
     let bp = (sr1 >> 2) & 31;
     let level = bp & 7;
     let (small, lower, complement) = (bp & 16 != 0, bp & 8 != 0, sr2 & 64 != 0);
+
     let range = match level {
         0 => None,
         7 => Some((0, CAPACITY)),
@@ -38,6 +39,7 @@ fn protected(sr1: u8, sr2: u8) -> Option<(usize, usize)> {
             })
         }
     };
+
     if !complement {
         return range;
     }
@@ -76,6 +78,7 @@ pub fn assess_range(registers: [u8; 3], start: usize, end: usize) -> Result<Valu
         start < end && end <= CAPACITY,
         "Range must be within the 8 MiB main array",
     )?;
+
     let [sr1, sr2, sr3] = registers;
     let decoded = decode(sr1, sr2, sr3);
     let overlaps: Vec<Value> = protected(sr1, sr2)
@@ -83,6 +86,7 @@ pub fn assess_range(registers: [u8; 3], start: usize, end: usize) -> Result<Valu
         .map(|(a, b)| json!({"start": start.max(a), "end_exclusive": end.min(b)}))
         .into_iter()
         .collect();
+
     let mut reasons = Vec::new();
     if decoded["busy"] == true {
         reasons.push("flash_busy");
@@ -93,6 +97,7 @@ pub fn assess_range(registers: [u8; 3], start: usize, end: usize) -> Result<Valu
     if !overlaps.is_empty() {
         reasons.push("software_protected_range");
     }
+
     Ok(json!({
         "range": {"start": start, "end_exclusive": end}, "protected_overlap": overlaps,
         "software_preconditions_met": reasons.is_empty(), "blocking_reasons": reasons,
@@ -123,6 +128,7 @@ pub fn check_status(
 ) -> Result<Value> {
     let first = read_status_registers(port)?;
     let second = read_status_registers(port)?;
+
     if first != second {
         record(
             "flash_status_unstable",
@@ -135,11 +141,13 @@ pub fn check_status(
             "Flash status changed between observations; mutation refused".into(),
         ));
     }
+
     let assessed = assess_range(second, start, end)?;
     record(
         "flash_status_checked",
         fields(json!({"boundary": boundary, "registers": second, "assessment": assessed})),
     )?;
+
     let reasons: Vec<&str> = assessed["blocking_reasons"]
         .as_array()
         .unwrap()
@@ -150,6 +158,7 @@ pub fn check_status(
         assessed["software_preconditions_met"] == true,
         format!("Flash status blocks {boundary}: {}", reasons.join(", ")),
     )?;
+
     Ok(assessed)
 }
 
@@ -185,6 +194,7 @@ mod tests {
         let clear = assess_range([0, 2, 0], 0x186000, 0x2d6000).unwrap();
         assert_eq!(clear["software_preconditions_met"], true);
         assert_eq!(clear["physical_write_permission_established"], false);
+
         let busy = assess_range([1 | (7 << 2), 4, 0], 0x186000, 0x2d6000).unwrap();
         assert_eq!(
             busy["blocking_reasons"],

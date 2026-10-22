@@ -1,6 +1,11 @@
 //! `virtual-feeder`: run one replacement-feeder scenario on synthetic
 //! hardware and write its report. Exit status: 0 pass, 1 an assertion
 //! failed, 2 the scenario or worker was refused.
+//!
+//! Ported from the former `tools/emulate/virtual-feeder.py`. It drives
+//! `virtual-feeder-worker` (beside this binary unless `--worker`) through
+//! [`wellfed_sim::run_scenario`]. The report is evidence, so an existing
+//! file is never replaced.
 
 use std::fs;
 use std::io::Write;
@@ -36,15 +41,19 @@ fn run(cli: Cli) -> Result<bool, HarnessError> {
     if fs::metadata(&cli.scenario).map_err(error)?.len() > 2_000_000 {
         return Err(HarnessError("Scenario exceeds 2 MB".into()));
     }
+
     let scenario: Value = serde_json::from_slice(&fs::read(&cli.scenario).map_err(error)?)
         .map_err(|e| HarnessError(e.to_string()))?;
+
     let worker = cli.worker.unwrap_or_else(|| {
         std::env::current_exe()
             .ok()
             .and_then(|exe| exe.parent().map(|dir| dir.join("virtual-feeder-worker")))
             .unwrap_or_else(|| PathBuf::from("virtual-feeder-worker"))
     });
+
     let report = run_scenario(&scenario, &cli.root, &worker)?;
+
     // Exclusive creation prevents accidental evidence replacement.
     let mut output = fs::OpenOptions::new()
         .write(true)
@@ -57,12 +66,14 @@ fn run(cli: Cli) -> Result<bool, HarnessError> {
         serde_json::to_string_pretty(&report).map_err(|e| HarnessError(e.to_string()))?
     )
     .map_err(error)?;
+
     let passed = report["passed"] == true;
     println!(
         "{}: {}",
         if passed { "PASS" } else { "FAIL" },
         report["name"].as_str().unwrap_or("")
     );
+
     Ok(passed)
 }
 

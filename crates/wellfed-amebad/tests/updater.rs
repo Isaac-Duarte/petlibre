@@ -19,6 +19,8 @@ use wellfed_amebad::{net_status, stopped};
 use wellfed_core::ota::{self, MAGIC, MANIFEST_BODY, MARKER, Part, Status};
 use sha2::{Digest, Sha256};
 
+/// The fake hardware is per thread but `net_status` is process-global, so
+/// tests that join Wi-Fi run one at a time.
 static SERIAL: Mutex<()> = Mutex::new(());
 
 thread_local! {
@@ -48,6 +50,7 @@ impl<const KM0: bool> Mmio for Core<KM0> {
     }
 }
 
+/// USR words per core: index 0 KM0 (0x4800_6000), 1 KM4 (0x4000_6000).
 fn locate(address: u32) -> (usize, usize) {
     let core = match address & 0xffff_f000 {
         0x4800_6000 => 0,
@@ -123,6 +126,7 @@ fn manifest(signing: &SigningKey, version: u32, hashed: &[u8], len: usize) -> Ve
     body.extend_from_slice(&Sha256::digest(hashed));
     body.extend_from_slice(&[0xab; 32]);
     assert_eq!(body.len(), MANIFEST_BODY);
+
     let signature = signing.sign(&body).to_bytes();
     body.extend_from_slice(&signature);
     body
@@ -151,11 +155,14 @@ fn start() -> MutexGuard<'static, ()> {
     REGS.with(|r| *r.borrow_mut() = [[0; 12]; 2]);
     ARMED.with(|a| a.set(false));
     WATCHDOG.with(|w| w.set(true));
+
     fake::with(|h| {
         h.interrupts = 1;
         h.running_bank = Some(0);
     });
     assert!(stopped::initialize().verified());
+
+    // Scan found, DHCP assigned, DNS ok.
     wifi(2, 0, 1);
     wifi(4, 2, 0x0a2a_6705);
     wifi(7, 0, 0x5db8_d822);
@@ -194,10 +201,12 @@ impl Broker {
     fn reply(&mut self) {
         let sent: Vec<(i32, Vec<u8>)> = fake::with(|h| h.tcp_tx[self.seen..].to_vec());
         self.seen += sent.len();
+
         for (socket, packet) in sent {
             if self.dead == Some(socket) {
                 continue;
             }
+
             match packet[0] {
                 0x10 => rx(&[0x20, 2, 0, 0]),
                 0x82 => {
@@ -217,12 +226,14 @@ impl Broker {
         } else {
             (packet[1] as usize, 2)
         };
+
         assert_eq!(packet.len(), at + length);
         let n = u16::from_be_bytes([packet[at], packet[at + 1]]) as usize;
         let topic = std::str::from_utf8(&packet[at + 2..at + 2 + n]).unwrap();
         assert_eq!(topic, format!("{}ota/get", FAKE_TRANSPORT.namespace));
         let (part, offset, len) = ota::decode_get(&packet[at + 2 + n..]).unwrap();
         self.gets.push((part, offset, len));
+
         let mut answer = Vec::new();
         match (part, &self.manifest) {
             (_, None) => answer.extend(ota::encode_data_header(part, Status::NoOffer, offset, 0)),
@@ -235,6 +246,7 @@ impl Broker {
                     self.drop_chunks -= 1;
                     return;
                 }
+
                 let end = offset as usize + len as usize;
                 if end > self.image.len() || len > ota::MAX_CHUNK {
                     answer.extend(ota::encode_data_header(part, Status::Range, offset, 0));
@@ -242,13 +254,16 @@ impl Broker {
                     answer.extend(ota::encode_data_header(part, Status::Ok, offset, len));
                     answer.extend(&self.image[offset as usize..end]);
                 }
+
                 self.chunks += 1;
             }
         }
+
         rx(&publish_packet(
             &format!("{}ota/data", FAKE_TRANSPORT.namespace),
             &answer,
         ));
+
         if self.close_after == Some(self.chunks) {
             self.close_after = None;
             self.dead = Some(socket);
@@ -285,6 +300,7 @@ fn run(updater: &mut Updater, broker: &mut Broker, flash: &mut Flash, steps: usi
     let mut provider = Provider::default();
     let mut answered = 0;
     let mut records = Vec::new();
+
     for _ in 0..steps {
         park::answer::<Core<true>>(0x0000_0001_4b30_abcd, &mut answered);
         // SAFETY: `provider` outlives the run and is not otherwise borrowed.
@@ -297,6 +313,7 @@ fn run(updater: &mut Updater, broker: &mut Broker, flash: &mut Flash, steps: usi
                 ended: true,
             };
         }
+
         broker.reply();
         fake::advance(step.delay_ms * 32, false);
         fake::with(|h| h.uptime_ms = h.uptime_ms.wrapping_add(step.delay_ms));
@@ -323,6 +340,7 @@ fn installs_bank_1_with_its_marker_last_and_asks_for_a_restart() {
     let mut broker = Broker::new(Some(manifest(&signing, 3, &payload, LEN)), payload.clone());
     let mut flash = Flash::default();
     let mut updater = Updater::new(FAKE_TRANSPORT, Some(key()));
+
     let result = run(&mut updater, &mut broker, &mut flash, 500);
     assert!(result.ended && result.restart, "{:?}", result.records);
     assert_eq!(
@@ -337,16 +355,20 @@ fn installs_bank_1_with_its_marker_last_and_asks_for_a_restart() {
         watchdog: true,
         installed: true
     }));
+
     let bank1 = fake::with(|h| h.bank1.clone());
     assert_eq!(&bank1[..LEN], &payload[..]);
     assert!(bank1[LEN..].iter().all(|&b| b == 0xff));
+
     // The marker was erased before every program but the last one.
     let (last, earlier) = flash.marker_seen.split_last().unwrap();
     assert!(earlier[1..].iter().all(|m| *m == [0xff; 8]));
     assert_eq!(*last, [0xff; 8]);
     assert_eq!(flash.erases, 4);
+
     // 16 pages per full sector, 4 for the last, then the marker.
     assert_eq!(flash.programs, 3 * 16 + 4 + 1);
+
     // Chunks were asked in order, each once.
     let chunks: Vec<_> = broker
         .gets
@@ -367,8 +389,10 @@ fn a_manifest_signed_by_another_key_writes_nothing() {
     let mut broker = Broker::new(Some(manifest(&other, 3, &payload, LEN)), payload);
     let mut flash = Flash::default();
     let mut updater = Updater::new(FAKE_TRANSPORT, Some(key()));
+
     let result = run(&mut updater, &mut broker, &mut flash, 200);
     assert!(result.ended && !result.restart);
+
     assert_eq!(
         result.records.last(),
         Some(&Record::Error { stage: "manifest" })
@@ -388,8 +412,10 @@ fn a_hash_mismatch_leaves_bank_1_without_its_marker() {
     let mut broker = Broker::new(Some(manifest(&signing, 3, &payload, LEN)), tampered);
     let mut flash = Flash::default();
     let mut updater = Updater::new(FAKE_TRANSPORT, Some(key()));
+
     let result = run(&mut updater, &mut broker, &mut flash, 500);
     assert!(result.ended && !result.restart);
+
     assert_eq!(
         result.records.last(),
         Some(&Record::Error { stage: "hash" })
@@ -410,7 +436,9 @@ fn a_failed_page_program_stops_the_update() {
         ..Flash::default()
     };
     let mut updater = Updater::new(FAKE_TRANSPORT, Some(key()));
+
     let result = run(&mut updater, &mut broker, &mut flash, 500);
+
     assert_eq!(
         result.records.last(),
         Some(&Record::Error { stage: "write" })
@@ -430,8 +458,10 @@ fn a_dropped_connection_resumes_at_the_next_chunk() {
     broker.close_after = Some(10);
     let mut flash = Flash::default();
     let mut updater = Updater::new(FAKE_TRANSPORT, Some(key()));
+
     let result = run(&mut updater, &mut broker, &mut flash, 500);
     assert!(result.restart, "{:?}", result.records);
+
     assert!(
         result
             .records
@@ -445,6 +475,7 @@ fn a_dropped_connection_resumes_at_the_next_chunk() {
             .count(),
         2
     );
+
     let chunks: Vec<_> = broker
         .gets
         .iter()
@@ -452,6 +483,7 @@ fn a_dropped_connection_resumes_at_the_next_chunk() {
         .map(|g| g.1)
         .collect();
     assert_eq!(chunks, (0..LEN as u32).step_by(512).collect::<Vec<_>>());
+
     // The manifest was asked once: the pinned writer kept its place.
     assert_eq!(
         broker.gets.iter().filter(|g| g.0 == Part::Manifest).count(),
@@ -470,7 +502,9 @@ fn lost_answers_are_asked_again_then_the_update_stops() {
     broker.drop_chunks = 2;
     let mut flash = Flash::default();
     let mut updater = Updater::new(FAKE_TRANSPORT, Some(key()));
+
     assert!(run(&mut updater, &mut broker, &mut flash, 1000).restart);
+
     let first = broker
         .gets
         .iter()
@@ -484,7 +518,9 @@ fn lost_answers_are_asked_again_then_the_update_stops() {
     broker.drop_chunks = usize::MAX;
     let mut flash = Flash::default();
     let mut updater = Updater::new(FAKE_TRANSPORT, Some(key()));
+
     let result = run(&mut updater, &mut broker, &mut flash, 2000);
+
     assert_eq!(
         result.records.last(),
         Some(&Record::Error { stage: "timeout" })
@@ -503,8 +539,10 @@ fn no_offer_is_asked_again_later() {
     let mut broker = Broker::new(None, Vec::new());
     let mut flash = Flash::default();
     let mut updater = Updater::new(FAKE_TRANSPORT, Some(key()));
+
     let result = run(&mut updater, &mut broker, &mut flash, 600);
     assert!(!result.ended);
+
     let asks = broker.gets.len();
     // Each idle step is 100 ms (its delay plus the receive timeout): 60 s.
     assert!((5..=7).contains(&asks), "{asks}");
@@ -520,8 +558,10 @@ fn a_set_attempt_marker_skips_without_arming() {
     let mut broker = Broker::new(None, Vec::new());
     let mut flash = Flash::default();
     let mut updater = Updater::new(FAKE_TRANSPORT, Some(key()));
+
     let result = run(&mut updater, &mut broker, &mut flash, 50);
     assert!(result.ended);
+
     assert_eq!(
         result.records.last(),
         Some(&Record::Skip {
@@ -545,6 +585,7 @@ fn without_a_key_or_a_watchdog_nothing_runs() {
     WATCHDOG.with(|w| w.set(false));
     let mut updater = Updater::new(FAKE_TRANSPORT, Some(key()));
     let result = run(&mut updater, &mut broker, &mut flash, 50);
+
     assert_eq!(
         result.records.last(),
         Some(&Record::Armed {
@@ -566,7 +607,9 @@ fn running_from_bank_1_refuses_every_bank_1_write() {
     let mut broker = Broker::new(Some(manifest(&signing, 3, &payload, LEN)), payload);
     let mut flash = Flash::default();
     let mut updater = Updater::new(FAKE_TRANSPORT, Some(key()));
+
     let result = run(&mut updater, &mut broker, &mut flash, 500);
+
     assert_eq!(
         result.records.last(),
         Some(&Record::Error { stage: "write" })
@@ -597,6 +640,7 @@ fn records_describe_without_credentials() {
     )
     .unwrap();
     assert_eq!(line, "progress sectors=16/145 leases=272");
+
     let mut line = String::new();
     describe(Record::Start { key: true }, &mut line).unwrap();
     assert_eq!(line, "start role=recovery key=1");

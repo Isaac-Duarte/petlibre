@@ -12,28 +12,34 @@ struct Model {
     systick: u32,
     /// SysTick COUNTFLAG: set by a counter wrap, cleared only by reading CTRL.
     countflag: bool,
+
     ticks: u32,
     stores: u32,
     barriers: u32,
     tick_reads: u32,
+
     release_at: u32,
     tear_at: u32,
     peer_reads: u32,
     /// 0 advancing, 1 frozen, 2 backward, 3 foreign, 4 torn, 5 bad command.
     mode: u32,
     foreign_slot: usize,
+
     semaphore: u32,
     semaphore_writes: u32,
     irq_requests: u32,
+
     response_at: u32,
     response_delay: u32,
     snapshot_delay: u32,
+
     race_claim: bool,
     race_release: bool,
     blocked_release: bool,
     owner_wait: bool,
     owner_releasing: bool,
     owner_foreign: bool,
+
     acked: bool,
     mutate_input: bool,
     input: ParkToken,
@@ -71,6 +77,7 @@ impl Model {
     }
 }
 
+/// Register bank of an address: 0 for KM0 (0x4800_xxxx), 1 for KM4 (0x4000_xxxx).
 fn bank(address: u32) -> usize {
     assert!(address & 0xffff_0000 == 0x4800_0000 || address & 0xffff_0000 == 0x4000_0000);
     if address & 0x0800_0000 != 0 { 0 } else { 1 }
@@ -97,9 +104,11 @@ impl<const KM0: bool> Mmio for Fake<KM0> {
                 };
                 return m.systick | flag;
             }
+
             if address == SEM {
                 return m.semaphore;
             }
+
             if address == TICKS {
                 m.tick_reads += 1;
                 if m.owner_wait && m.tick_reads == m.response_at {
@@ -109,6 +118,7 @@ impl<const KM0: bool> Mmio for Fake<KM0> {
                         m.regs[other][4] ^= 1;
                     }
                 }
+
                 if m.acked && m.tick_reads == m.release_at {
                     let other = m.other();
                     m.message(other, if m.mode == 5 { ACK } else { RELEASE });
@@ -117,6 +127,7 @@ impl<const KM0: bool> Mmio for Fake<KM0> {
                         m.regs[other][slot] ^= 1;
                     }
                 }
+
                 if m.mode == 1 {
                     return m.ticks;
                 }
@@ -124,14 +135,17 @@ impl<const KM0: bool> Mmio for Fake<KM0> {
                     m.ticks = m.ticks.wrapping_sub(1);
                     return m.ticks;
                 }
+
                 let value = m.ticks;
                 m.ticks = m.ticks.wrapping_add(1);
                 return value;
             }
+
             let (side, slot) = (bank(address), index_of(address));
             if side == m.other() && slot == 2 && (m.acked || m.owner_wait) {
                 m.ticks = m.ticks.wrapping_add(m.snapshot_delay);
             }
+
             if side == m.other() && m.acked && m.mode == 4 {
                 m.peer_reads += 1;
                 if m.peer_reads == m.tear_at {
@@ -139,6 +153,7 @@ impl<const KM0: bool> Mmio for Fake<KM0> {
                     m.regs[side][10] = 0;
                 }
             }
+
             m.regs[side][slot]
         })
     }
@@ -165,15 +180,18 @@ impl<const KM0: bool> Mmio for Fake<KM0> {
                 }
                 return;
             }
+
             if address == if m.own == 0 { 0x4800_6008 } else { 0x4000_6008 } {
                 assert!((1 << 16..=1 << 30).contains(&value) && value.is_power_of_two());
                 m.irq_requests += 1;
                 return;
             }
+
             let (side, slot) = (bank(address), index_of(address));
             assert!(side == m.own && [2, 3, 4, 5, 6, 9, 10].contains(&slot));
             m.stores += 1;
             m.regs[side][slot] = value;
+
             if slot == 10 && value != 0 {
                 let (r, o) = (m.regs[side], m.original);
                 assert_eq!(
@@ -187,12 +205,14 @@ impl<const KM0: bool> Mmio for Fake<KM0> {
                         o.lease_hi
                     )
                 );
+
                 if value == ACK {
                     m.acked = true;
                     if m.mutate_input {
                         m.input = ParkToken::default();
                     }
                 }
+
                 if value == REQUEST || value == RELEASE {
                     m.owner_wait = true;
                     m.owner_releasing = value == RELEASE;
@@ -228,6 +248,7 @@ fn reset<const KM0: bool>() {
             lease_lo: 1,
             lease_hi: 2,
         };
+
         *m = Model {
             mask: 1,
             foreign_slot: 5,
@@ -239,6 +260,7 @@ fn reset<const KM0: bool>() {
             own: if KM0 { 0 } else { 1 },
             ..Model::default()
         };
+
         let other = m.other();
         m.message(other, REQUEST);
     });
@@ -262,6 +284,7 @@ fn release_and_private_token<const KM0: bool>() {
                 m.ticks = u32::MAX - 2;
             }
         });
+
         assert!(wait::<Fake<KM0>>(input(), 20, 30));
         assert!(m(|m| m.acked
             && m.regs[m.own][10] == RELEASED
@@ -293,11 +316,13 @@ fn refuse_before_acknowledgement<const KM0: bool>() {
                 _ => {}
             }
         });
+
         let token = if change == 12 {
             core::ptr::null()
         } else {
             input()
         };
+
         assert!(!wait::<Fake<KM0>>(token, time_limit, polls));
         assert!(m(|m| !m.acked && m.stores == 0));
     }
@@ -324,6 +349,7 @@ fn faults_after_ack_never_return<const KM0: bool>() {
                 m.snapshot_delay = 20;
             }
         });
+
         let (ticks, polls) = (
             if change == 9 { 3 } else { 10 },
             if change == 8 { 30 } else { 3 },
@@ -332,6 +358,7 @@ fn faults_after_ack_never_return<const KM0: bool>() {
         let outcome = catch_unwind(AssertUnwindSafe(|| wait::<Fake<KM0>>(token, ticks, polls)));
         let halted = outcome.err().is_some_and(|e| e.is::<Halted>());
         assert!(halted, "an acknowledged fault must stay in RAM for reset");
+
         let expected = match change {
             1 => CLOCK,
             2..=7 | 10 => PEER_LOST,
@@ -354,6 +381,7 @@ fn publication_tearing_and_reserved_slots<const KM0: bool>() {
                 (bank[0], bank[1], bank[7], bank[8], bank[11]) = (0x10, 0x20, 0x30, 0x40, 0x50);
             }
         });
+
         assert!(wait::<Fake<KM0>>(input(), 15, 40));
         assert!(m(|m| m.regs.iter().all(|b| (
             b[0], b[1], b[7], b[8], b[11]
@@ -361,14 +389,17 @@ fn publication_tearing_and_reserved_slots<const KM0: bool>() {
             0x10, 0x20, 0x30, 0x40, 0x50
         ))));
     }
+
     reset::<KM0>();
     assert!(!publish::<Fake<KM0>>(input(), ACK));
     assert!(!publish::<Fake<KM0>>(core::ptr::null(), REQUEST));
     assert_eq!(m(|m| m.stores), 0);
+
     assert!(publish::<Fake<KM0>>(input(), REQUEST));
     assert!(m(|m| m.regs[m.own][10] == REQUEST
         && m.stores == 8
         && m.barriers == 3));
+
     assert!(publish::<Fake<KM0>>(input(), RELEASE));
     assert!(m(|m| m.regs[m.own][10] == RELEASE
         && m.stores == 16
@@ -384,12 +415,14 @@ fn bounded_semaphore_attempts_and_ownership<const KM0: bool>() {
             assert!(!sem_release::<Fake<KM0>>(index) && m(|m| m.semaphore_writes) == 0);
             continue;
         }
+
         with(|m| m.mask = 0);
         assert!(!sem_try_claim::<Fake<KM0>>(index) && m(|m| m.semaphore_writes) == 0);
         with(|m| m.mask = 1);
         assert!(sem_try_claim::<Fake<KM0>>(index));
         assert!(!sem_try_claim::<Fake<KM0>>(index) && m(|m| m.semaphore_writes) == 1);
         assert_eq!(m(|m| m.semaphore) & 0xffff, 0x5555);
+
         with(|m| m.blocked_release = true);
         assert!(!sem_release::<Fake<KM0>>(index));
         with(|m| {
@@ -399,10 +432,12 @@ fn bounded_semaphore_attempts_and_ownership<const KM0: bool>() {
         assert!(sem_release::<Fake<KM0>>(index)); // Peer claims immediately.
         let writes = m(|m| m.semaphore_writes);
         assert!(!sem_release::<Fake<KM0>>(index) && m(|m| m.semaphore_writes) == writes);
+
         reset::<KM0>();
         with(|m| m.race_claim = true);
         assert!(!sem_try_claim::<Fake<KM0>>(index));
         assert!(m(|m| m.semaphore_writes == 1 && m.mask == 1));
+
         reset::<KM0>();
         with(|m| m.semaphore = 2 << (index * 2)); // Free lock with stale owner bits.
         assert!(sem_try_claim::<Fake<KM0>>(index));
@@ -426,16 +461,19 @@ fn owner_requires_current_ack_and_verified_release<const KM0: bool>() {
             }
             m.mutate_input = change == 2;
         });
+
         assert!(sem_try_claim::<Fake<KM0>>(8));
         assert!(owner_begin::<Fake<KM0>>(input(), 16, 20, 30));
         assert!(m(
             |m| m.regs[m.own][10] == REQUEST && m.regs[m.other()][10] == ACK
         ));
         assert!(m(|m| m.irq_requests == 1 && m.mask == 1 && m.systick == 0));
+
         with(|m| {
             m.mutate_input = false;
             m.input = m.original;
         });
+
         assert!(owner_end::<Fake<KM0>>(input(), 30, 20, 30));
         assert!(m(
             |m| m.regs[m.own][10] == RELEASE && m.regs[m.other()][10] == RELEASED
@@ -473,6 +511,7 @@ fn owner_bad_context_stale_reply_and_deadlines_never_grant<const KM0: bool>() {
                 }
             }
         });
+
         assert!(!owner_begin::<Fake<KM0>>(input(), channel, 10, 8));
         if change < 4 {
             assert!(m(|m| m.stores == 0 && m.irq_requests == 0));
@@ -480,6 +519,7 @@ fn owner_bad_context_stale_reply_and_deadlines_never_grant<const KM0: bool>() {
             assert!(m(|m| m.irq_requests == 1 && m.regs[m.own][10] >= TIMEOUT));
         }
     }
+
     reset::<KM0>();
     with(|m| {
         let other = m.other();
@@ -496,6 +536,7 @@ fn countflag_is_not_an_enabled_systick<const KM0: bool>() {
     with(|m| m.countflag = true);
     assert!(wait::<Fake<KM0>>(input(), 20, 30));
     assert!(m(|m| m.acked && m.regs[m.own][10] == RELEASED));
+
     reset::<KM0>();
     with(|m| {
         m.countflag = true;

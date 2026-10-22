@@ -48,6 +48,7 @@ impl Firmware {
                     event => return event,
                 }
             }
+
             let mut buf = [0; 1024];
             let n = tokio::time::timeout(Duration::from_secs(5), self.stream.read(&mut buf))
                 .await
@@ -78,6 +79,7 @@ fn health(online: bool, seq: u32) -> Vec<u8> {
         connects: 1,
         last_error: None,
     };
+
     let mut buf = [0; mqtt::MAX_HEALTH];
     let mut out = Buffer::new(&mut buf);
     snapshot.write(&mut out).unwrap();
@@ -90,6 +92,7 @@ async fn connect(
 ) -> (Firmware, Option<u8>) {
     let firmware = config.firmware.as_ref().unwrap();
     let mut stream = TcpStream::connect(config.mqtt_listen).await.unwrap();
+
     let will = health(false, 0);
     let health_topic = config.firmware_topic("health");
     let mut out = [0; mqtt::MAX_PACKET];
@@ -106,6 +109,7 @@ async fn connect(
         },
     )
     .unwrap();
+
     stream.write_all(&out[..n]).await.unwrap();
     let mut fw = Firmware {
         stream,
@@ -113,11 +117,13 @@ async fn connect(
         rx: Vec::new(),
         request_topic: config.firmware_topic("request"),
     };
+
     let refused = match tokio::time::timeout(Duration::from_secs(3), fw.next()).await {
         Ok(Event::Connected) => None,
         Ok(Event::Closed(mqtt::Fault::Refused(code))) => Some(code),
         other => panic!("unexpected CONNACK outcome {other:?}"),
     };
+
     (fw, refused)
 }
 
@@ -149,6 +155,7 @@ async fn firmware_codec_reports_health_and_answers_through_the_real_broker() {
         password: "0123456789abcdef".repeat(4),
     });
     storage::write_json(&path, &config).unwrap();
+
     let _service = start(&path);
     let http = reqwest::Client::builder()
         .timeout(Duration::from_secs(3))
@@ -156,6 +163,7 @@ async fn firmware_codec_reports_health_and_answers_through_the_real_broker() {
         .build()
         .unwrap();
     ready(&config, &http).await;
+
     let password = config.firmware.as_ref().unwrap().password.clone();
 
     // The broker refuses a wrong password with a CONNACK code the session reports.
@@ -164,12 +172,14 @@ async fn firmware_codec_reports_health_and_answers_through_the_real_broker() {
 
     let (mut fw, refused) = connect(&config, &password).await;
     assert_eq!(refused, None);
+
     let mut out = [0; mqtt::MAX_PACKET];
     let request_topic = config.firmware_topic("request");
     let n = fw
         .session
         .subscribe(now_ms(), &mut out, &request_topic)
         .unwrap();
+
     fw.send(&out[..n]).await;
     assert_eq!(fw.next().await, Event::Ready);
     assert_eq!(fw.session.state(), State::Ready);
@@ -197,6 +207,7 @@ async fn firmware_codec_reports_health_and_answers_through_the_real_broker() {
         .json()
         .await
         .unwrap();
+
     let id = response["id"].as_str().unwrap().to_owned();
     let Event::Request(payload) = fw.next().await else {
         panic!("no request")
@@ -204,10 +215,12 @@ async fn firmware_codec_reports_health_and_answers_through_the_real_broker() {
     let request = mqtt::parse_request(payload).unwrap();
     assert_eq!(request.id, id);
     assert_eq!(request.op, Ok(mqtt::Op::Ping));
+
     let mut reply = [0; mqtt::MAX_REQUEST];
     let mut writer = Buffer::new(&mut reply);
     mqtt::write_reply(&mut writer, &request, 4321).unwrap();
     let len = writer.len();
+
     let n = mqtt::encode_publish(
         &mut out,
         &config.firmware_topic("reply"),
@@ -216,10 +229,12 @@ async fn firmware_codec_reports_health_and_answers_through_the_real_broker() {
     )
     .unwrap();
     fw.send(&out[..n]).await;
+
     let replacement = wait_for(&config, &http, |r| {
         r["replies"].as_array().is_some_and(|a| !a.is_empty())
     })
     .await;
+
     let message = &replacement["replies"][0]["message"];
     assert_eq!(message["id"], id.as_str());
     assert_eq!(message["ok"], true);

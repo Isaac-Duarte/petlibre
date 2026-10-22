@@ -26,6 +26,7 @@ pub unsafe extern "C" fn wellfed_tick_clock_read(
     let Some(clock) = (unsafe { clock.as_mut() }) else {
         return false;
     };
+
     match unsafe { now_ms.as_mut() } {
         Some(now) => store(Some(now), clock.read(raw)),
         None => {

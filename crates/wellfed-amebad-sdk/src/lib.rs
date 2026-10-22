@@ -73,11 +73,13 @@ impl FlashMmuEntry {
         if self.control & 1 == 0 || self.start != 0x0c00_0000 {
             return None;
         }
+
         let physical = if self.control & 2 != 0 {
             self.start.checked_sub(self.offset)?
         } else {
             self.start.checked_add(self.offset)?
         };
+
         match physical {
             0x0800_6000 => Some(0),
             0x0818_6000 => Some(1),
@@ -90,6 +92,7 @@ impl FlashMmuEntry {
 /// from 0x186000, in 4 KiB sectors. Only while running from bank 0.
 pub const BANK1_OFFSET: u32 = 0x18_6000;
 pub const BANK1_SECTORS: u32 = 0x15_0000 / 0x1000;
+
 /// Bank 0, the factory loader's fallback (read only, for the give-way guard).
 pub const BANK0_OFFSET: u32 = 0x6000;
 /// The factory loader's valid-image marker at the start of each bank.
@@ -182,5 +185,6 @@ mod guard {
         }
     }
 }
+
 #[cfg(any(not(target_os = "none"), feature = "km4"))]
 pub use guard::IrqGuard;

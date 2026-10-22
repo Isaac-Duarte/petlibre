@@ -13,6 +13,8 @@ use crate::active::active_pointer;
 use crate::board::{self, Board, MOTOR_MASK};
 use crate::sdk::{self, GPIO_PORT_A, IrqGuard};
 
+/// The vendor-register fields `open` programs: divisor (bits 0..15), count ID
+/// (bits 25..28), enable and reset mode.
 const CONTROL_MASK: u32 = 0x1e00_ffff | sdk::WDG_BIT_ENABLE | sdk::WDG_BIT_RST_MODE;
 
 #[repr(C)]
@@ -69,6 +71,7 @@ impl WatchdogConfig {
         {
             return false;
         }
+
         let ticks = ((1u64 << (self.count_id + 1)) - 1) * (u64::from(self.divisor) + 1);
         let shortest_ms = ticks * 1000 / u64::from(self.clock_max_hz);
         let longest_ms = (ticks * 1000).div_ceil(u64::from(self.clock_min_hz));
@@ -104,17 +107,20 @@ impl Watchdog {
             return false;
         }
         self.armed = false;
+
         sdk::set_hs_platform_para(
             (sdk::hs_platform_para() & !sdk::HS_WDTRST_OPT) | self.old_hs_scope,
         );
         sdk::set_lp_km0_ctrl(
             (sdk::lp_km0_ctrl() & !sdk::LP_WDT_RESET_HS_ALL) | self.old_peripheral_scope,
         );
+
         if sdk::hs_platform_para() & sdk::HS_WDTRST_OPT != self.old_hs_scope
             || sdk::lp_km0_ctrl() & sdk::LP_WDT_RESET_HS_ALL != self.old_peripheral_scope
         {
             return false;
         }
+
         self.claimed = false;
         set_active(ptr::null_mut());
         true
@@ -125,23 +131,27 @@ impl Watchdog {
         if !config.valid() || !context() {
             return false;
         }
+
         sdk::disable_irq();
         if !active().is_null() || sdk::wdg_vendor() & sdk::WDG_BIT_ENABLE != 0 {
             sdk::set_primask(0);
             return false;
         }
+
         *self = Self {
             config: *config,
             claimed: true,
             ..Self::default()
         };
         set_active(self);
+
         self.old_hs_scope = sdk::hs_platform_para() & sdk::HS_WDTRST_OPT;
         self.old_peripheral_scope = sdk::lp_km0_ctrl() & sdk::LP_WDT_RESET_HS_ALL;
         self.expected_control =
             (u32::from(config.count_id) << 25) | u32::from(config.divisor) | sdk::WDG_BIT_RST_MODE;
         self.clock =
             TickClock::new(config.systimer_hz, sdk::systimer_ticks(), 0).unwrap_or_default();
+
         sdk::set_hs_platform_para(sdk::hs_platform_para() | sdk::HS_WDTRST_OPT);
         sdk::wdg_init(u32::from(config.count_id), u32::from(config.divisor));
         let mut ok = self.registers();
@@ -150,11 +160,13 @@ impl Watchdog {
             self.expected_control |= sdk::WDG_BIT_ENABLE;
             ok = self.registers();
         }
+
         self.armed = sdk::wdg_vendor() & sdk::WDG_BIT_ENABLE != 0;
         if !ok {
             self.fail(WatchdogFault::SETUP);
             self.release(); // Retain ownership if disable/restore cannot be verified.
         }
+
         sdk::set_primask(0);
         ok
     }
@@ -168,18 +180,22 @@ impl Watchdog {
         {
             return None;
         }
+
         if !self.registers() {
             self.fail(WatchdogFault::REGISTER);
             return None;
         }
+
         let Some(now) = self.clock.read(sdk::systimer_ticks()) else {
             self.fail(WatchdogFault::CLOCK);
             return None;
         };
+
         if now.wrapping_sub(self.progress_at) >= self.config.max_progress_gap_ms {
             self.fail(WatchdogFault::PROGRESS);
             return None;
         }
+
         Some(now)
     }
 
@@ -209,9 +225,11 @@ impl Watchdog {
             None
         };
         let Some(now) = now else { return false };
+
         if progress == 0 || progress <= self.progress {
             return self.fail(WatchdogFault::PROGRESS);
         }
+
         if flash.is_none_or(|flash| !board::outputs_blocked(flash)) {
             self.progress = progress;
             self.progress_at = now;
@@ -248,6 +266,7 @@ impl Watchdog {
             return false;
         }
         sdk::disable_irq();
+
         let me = ptr::from_mut(self);
         let mut ok = !self.claimed && active() != me;
         let inactive = board.is_some_and(|b| {
@@ -258,12 +277,14 @@ impl Watchdog {
                 && sdk::gpio_port_read(GPIO_PORT_A, MOTOR_MASK) == MOTOR_MASK
                 && board::optics_off()
         });
+
         if active() == me && self.claimed && inactive {
             ok = self.release();
             if !ok {
                 self.fail(WatchdogFault::REGISTER);
             }
         }
+
         sdk::set_primask(0);
         ok
     }

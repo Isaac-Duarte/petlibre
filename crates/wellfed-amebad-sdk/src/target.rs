@@ -1,4 +1,10 @@
 //! KM4 calls into the pinned AmebaD SDK.
+//!
+//! The target half of the crate: each function wraps one SDK/ROM routine or
+//! one fixed register access and matches the signature in `fake::api`, so the
+//! ports build unchanged for host tests. The `const` asserts pin the SDK
+//! constants (register bases, enable bits, 1 kHz tick) the ports were
+//! reviewed against; a different SDK fails the build rather than the board.
 #![allow(unsafe_code)]
 
 use core::ffi::{CStr, c_void};
@@ -20,20 +26,24 @@ use super::{
 mod raw {
     include!(concat!(env!("OUT_DIR"), "/sdk.rs"));
 }
+
 use raw::wellfed_sdk_constant as k;
 
 pub const GPIO_PORT_A: u32 = k::WELLFED_GPIO_PORT_A;
 pub const PMU_USER_BASE: u32 = k::WELLFED_PMU_DEV_USER_BASE;
 pub const PMU_MAX: u32 = k::WELLFED_PMU_MAX;
+
 pub const TIM_CR_CNT_START: u32 = k::WELLFED_TIM_CR_CNT_START;
 pub const TIM_CR_CNT_RUN: u32 = k::WELLFED_TIM_CR_CNT_RUN;
 pub const TIM_CR_CNT_STS: u32 = k::WELLFED_TIM_CR_CNT_STS;
 pub const TIM_IT_UPDATE: u32 = k::WELLFED_TIM_IT_UPDATE;
+
 pub const WDG_BIT_ENABLE: u32 = k::WELLFED_WDG_BIT_ENABLE;
 pub const WDG_BIT_RST_MODE: u32 = k::WELLFED_WDG_BIT_RST_MODE;
 pub const WDG_BIT_ISR_CLEAR: u32 = k::WELLFED_WDG_BIT_ISR_CLEAR;
 pub const HS_WDTRST_OPT: u32 = k::WELLFED_BIT_HSYS_PLFM_WDTRST_OPT;
 pub const LP_WDT_RESET_HS_ALL: u32 = k::WELLFED_BIT_LSYS_WDT_RESET_HS_ALL;
+
 pub const BACKUP_USER: u32 = k::WELLFED_BKUP_REG1;
 pub const BOOT_KM4_WATCHDOG: u32 = k::WELLFED_BOOT_KM4WDG_RESET;
 pub const BOOT_KM4_SYSTEM: u32 = k::WELLFED_BOOT_KM4SYS_RESET;
@@ -42,6 +52,7 @@ const _: () = assert!(
     k::WELLFED_WDG_BASE == 0x4000_2800,
     "requires the KM4 watchdog mapping"
 );
+
 const _: () = assert!(
     k::WELLFED_TICK_RATE_HZ == 1000,
     "owner polling requires the pinned 1 kHz SDK tick"
@@ -76,12 +87,14 @@ pub fn swd_pinmux() -> u32 {
 pub fn swd_off() -> u32 {
     let _guard = super::IrqGuard::lock();
     let before = swd_pinmux();
+
     unsafe {
         ptr::write_volatile(
             reg(k::WELLFED_SYSCTRL_LP + k::WELLFED_REG_SWD_PMUX),
             before & !super::SWD_PMUX_BIT,
         )
     };
+
     swd_pinmux()
 }
 
@@ -114,6 +127,7 @@ pub fn gpio_clock_state() -> LpClock {
 fn lp_clock_enable(bit: u32) -> LpClock {
     let _guard = super::IrqGuard::lock();
     let before = lp_clock_state(bit);
+
     unsafe {
         ptr::write_volatile(
             reg(k::WELLFED_SYSCTRL_LP + k::WELLFED_REG_LP_CLOCK),
@@ -124,6 +138,7 @@ fn lp_clock_enable(bit: u32) -> LpClock {
             before.function_before | bit,
         );
     }
+
     cortex_m::asm::dsb();
     LpClock {
         function_before: before.function_before,
@@ -353,6 +368,7 @@ pub fn panic_outputs_safe() {
     {
         return;
     }
+
     let gpio_b = (k::WELLFED_GPIOA_BASE + 0x400) as usize as *mut raw::GPIO_TypeDef;
     unsafe {
         let a = ptr::addr_of_mut!((*gpioa()).PORT[0].DR);
@@ -360,9 +376,11 @@ pub fn panic_outputs_safe() {
             a,
             (ptr::read_volatile(a) | (1 << 13) | (1 << 14)) & !(1 << 15),
         );
+
         let b = ptr::addr_of_mut!((*gpio_b).PORT[0].DR);
         ptr::write_volatile(b, ptr::read_volatile(b) & !(1 << 3));
     }
+
     cortex_m::asm::dsb();
 }
 
@@ -499,6 +517,7 @@ const _: () = assert!(
         && STORAGE_OFFSET >= 0x30_6000
         && STORAGE_OFFSET + STORAGE_SECTORS * SECTOR_BYTES <= 0x3e_8000
 );
+
 const _: () = assert!(k::WELLFED_SPI_FLASH_BASE == 0x0800_0000 && k::WELLFED_ERASE_SECTOR == 2);
 
 fn storage_span(sector: u32, offset: u32, len: usize) -> Option<u32> {
@@ -526,6 +545,7 @@ pub fn storage_program(sector: u32, offset: u32, data: &[u8]) -> bool {
     {
         return false;
     }
+
     let mut done = 0;
     while done < data.len() {
         let at = offset + done as u32;
@@ -536,6 +556,7 @@ pub fn storage_program(sector: u32, offset: u32, data: &[u8]) -> bool {
         unsafe { raw::FLASH_TxData256BXIP(address, chunk as u32, page.as_mut_ptr()) };
         done += chunk;
     }
+
     true
 }
 
@@ -561,9 +582,11 @@ pub fn bank1_program(sector: u32, offset: u32, data: &[u8]) -> bool {
     let Some(base) = bank1_span(sector, offset, data.len()) else {
         return false;
     };
+
     if !offset.is_multiple_of(4) || !data.len().is_multiple_of(4) {
         return false;
     }
+
     let mut done = 0;
     while done < data.len() {
         let at = base + done as u32;
@@ -602,6 +625,7 @@ pub fn bank1_give_way() -> bool {
         }
         out
     };
+
     let bank1 = read(super::BANK1_OFFSET);
     if flash_mmu_entry0().bank() != Some(1)
         || bank1 != super::MARKER
@@ -609,6 +633,7 @@ pub fn bank1_give_way() -> bool {
     {
         return false;
     }
+
     let mut word = [0x00, bank1[1], bank1[2], bank1[3]];
     unsafe { raw::FLASH_TxData256BXIP(super::BANK1_OFFSET, 4, word.as_mut_ptr()) };
     read(super::BANK1_OFFSET)[0] == 0
@@ -719,6 +744,7 @@ static TASKS: [TaskSlot; 8] = [EMPTY; 8];
 unsafe extern "C" fn trampoline(argument: *mut c_void) {
     let slot = unsafe { &*argument.cast::<TaskSlot>() };
     let (step, context) = unsafe { ((*slot.step.get()).unwrap_unchecked(), *slot.context.get()) };
+
     loop {
         let delay = unsafe { step(context) };
         if delay == 0 {
@@ -727,6 +753,7 @@ unsafe extern "C" fn trampoline(argument: *mut c_void) {
         // configTICK_RATE_HZ is 1000, so pdMS_TO_TICKS(ms) == ms.
         unsafe { raw::vTaskDelay(delay) };
     }
+
     slot.claimed.store(false, Ordering::Release);
     unsafe { raw::vTaskDelete(ptr::null_mut()) }
 }
@@ -746,10 +773,12 @@ pub fn task_create(
     }) else {
         return false;
     };
+
     unsafe {
         *slot.step.get() = Some(step);
         *slot.context.get() = context;
     }
+
     let created = unsafe {
         raw::xTaskCreate(
             Some(trampoline),
@@ -760,6 +789,7 @@ pub fn task_create(
             ptr::null_mut(),
         )
     } == k::WELLFED_PD_PASS as raw::BaseType_t;
+
     if !created {
         slot.claimed.store(false, Ordering::Release);
     }
@@ -817,7 +847,9 @@ pub fn transport_config() -> Option<TransportConfig> {
         password_len: 0,
         namespace: ptr::null(),
     };
+
     unsafe { wellfed_transport_config(&mut raw) };
+
     // SAFETY: the shim returns pointers to NUL-terminated string literals.
     let text = |p: *const core::ffi::c_char| unsafe { CStr::from_ptr(p) }.to_str().ok();
     Some(TransportConfig {

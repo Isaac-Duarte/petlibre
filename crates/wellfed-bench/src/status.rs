@@ -37,6 +37,7 @@ pub struct Current {
     pub outcome: String,
     #[serde(default)]
     pub error: Option<String>,
+
     #[serde(default)]
     pub steps: Vec<Step>,
     #[serde(default)]
@@ -45,10 +46,12 @@ pub struct Current {
     pub capture: Option<Capture>,
     #[serde(default)]
     pub transfer: Option<Transfer>,
+
     #[serde(default)]
     pub relay: BTreeMap<String, bool>,
     #[serde(default)]
     pub lines: Vec<String>,
+
     /// The command to run after review, such as a prepared plan's execute.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next: Option<String>,
@@ -166,6 +169,7 @@ impl Status {
                 .collect(),
             ..Current::default()
         });
+
         if let Some(directory) = &self.directory {
             fs::create_dir_all(directory)?;
             self.log = Some(File::create(directory.join(LOG))?);
@@ -181,6 +185,7 @@ impl Status {
                 s.state = "done".into();
             }
         }
+
         let index = match state
             .steps
             .iter()
@@ -210,6 +215,7 @@ impl Status {
         if let Some(log) = &mut self.log {
             let _ = writeln!(log, "{text}");
         }
+
         if let Some((done, total, unit)) = progress_count(text) {
             let at = now();
             // The first report of a count sets the rate baseline for the ETA.
@@ -259,6 +265,7 @@ impl Status {
         if let Some(state) = &mut self.state {
             state.relay.insert(channel.to_string(), on);
         }
+
         if let Some(directory) = &self.directory {
             let path = directory.join(RELAYS);
             let mut relays: BTreeMap<String, RelayState> = fs::read_to_string(&path)
@@ -295,11 +302,13 @@ impl Status {
                 s.state = if pass { "done" } else { "failed" }.into();
             }
         }
+
         state.finished = Some(now());
         state.outcome = if pass { "pass" } else { "stopped" }.into();
         state.error = error;
         state.capture = None;
         state.transfer = None;
+
         let entry = HistoryEntry {
             command: state.command.clone(),
             name: state.name.clone(),
@@ -310,6 +319,7 @@ impl Status {
             next: state.next.clone(),
         };
         self.write_quietly(true);
+
         if let Some(directory) = &self.directory {
             let appended = OpenOptions::new()
                 .create(true)
@@ -342,6 +352,7 @@ impl Status {
         {
             return Ok(());
         }
+
         self.written = Some(Instant::now());
         fs::create_dir_all(directory)?;
         replace(&directory.join(CURRENT), &serde_json::to_vec(&self.state)?)?;
@@ -370,6 +381,8 @@ pub fn busy(directory: &Path) -> Option<String> {
     (current.outcome == "running" && alive(current.pid)).then_some(current.command)
 }
 
+/// Write beside the target, then rename over it, so a reader never sees a
+/// half-written file.
 fn replace(path: &Path, data: &[u8]) -> std::io::Result<()> {
     let temporary = path.with_extension("json.tmp");
     fs::write(&temporary, data)?;
@@ -392,6 +405,7 @@ pub fn progress_count(text: &str) -> Option<(u64, u64, &'static str)> {
             .unwrap_or(rest.len());
         Some((done.trim().parse().ok()?, rest[..digits].parse().ok()?))
     }
+
     if let Some(at) = text.find("Read ") {
         let rest = &text[at + 5..];
         let (counts, tail) = rest.split_once(' ')?;
@@ -418,11 +432,13 @@ mod tests {
                 &["loader entry", "wellfed-flash read full"],
             )
             .unwrap();
+
         status.relay(1, true);
         status.step("loader entry");
         status.step("wellfed-flash read full");
         status.line("Read 4096/8388608 bytes\n");
         status.write(true).unwrap();
+
         let read = |name| -> serde_json::Value {
             serde_json::from_str(&fs::read_to_string(tmp.path().join(name)).unwrap()).unwrap()
         };
@@ -433,6 +449,7 @@ mod tests {
         assert_eq!(current["progress"]["unit"], "bytes");
         assert_eq!(current["relay"], serde_json::json!({"1": true}));
         assert_eq!(read(RELAYS)["1"]["on"], true);
+
         let first = status.state.as_ref().unwrap().progress.clone().unwrap();
         status.line("Read 8192/8388608 bytes");
         let later = status.state.as_ref().unwrap().progress.clone().unwrap();
@@ -441,10 +458,12 @@ mod tests {
             (later.done, later.since, later.since_done),
             (8192, first.since, 4096)
         );
+
         status.finish(1, Some("Observer failed".into()));
         let current = read(CURRENT);
         assert_eq!(current["outcome"], "stopped");
         assert_eq!(current["steps"][1]["state"], "failed");
+
         let history = fs::read_to_string(tmp.path().join(HISTORY)).unwrap();
         let entry: HistoryEntry = serde_json::from_str(history.trim()).unwrap();
         assert_eq!(
@@ -452,6 +471,7 @@ mod tests {
             ("dump", "stopped")
         );
         assert_eq!(entry.error.as_deref(), Some("Observer failed"));
+
         let log = fs::read_to_string(tmp.path().join(LOG)).unwrap();
         assert_eq!(log, "Read 4096/8388608 bytes\nRead 8192/8388608 bytes\n");
     }
@@ -462,6 +482,7 @@ mod tests {
         status.begin("boot", Some("unit"), &[]).unwrap();
         status.line("Read 1/2 bytes");
         status.finish(0, None);
+
         assert_eq!(status.state.unwrap().outcome, "pass");
     }
 

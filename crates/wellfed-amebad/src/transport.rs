@@ -151,7 +151,10 @@ impl Link {
         if self.open.is_none() {
             return self.try_connect(log);
         }
+
         let wifi = net_status::read();
+        // A socket opened before the latest join or loss rides a link that
+        // has since gone away.
         if self
             .open
             .as_ref()
@@ -160,6 +163,7 @@ impl Link {
             self.close("wifi", log);
             return IDLE_MS;
         }
+
         let socket = self.open.as_ref().map_or(-1, |o| o.socket);
         match sdk::tcp_recv(socket, &mut self.rx[self.rx_len..], POLL_MS) {
             TcpRecv::Data(n) => self.rx_len += n,
@@ -169,14 +173,17 @@ impl Link {
                 return IDLE_MS;
             }
         }
+
         if !self.serve(log) {
             return IDLE_MS;
         }
+
         let now = sdk::uptime_ms();
         let tick = match self.open.as_mut() {
             Some(open) => open.session.tick(now),
             None => return IDLE_MS,
         };
+
         match tick {
             Tick::Idle => {}
             Tick::Ping => {
@@ -193,6 +200,7 @@ impl Link {
                 return IDLE_MS;
             }
         }
+
         if self.ready() {
             let wifi = net_status::read();
             let losses = wifi.link_losses.wrapping_add(wifi.dns_losses);
@@ -209,6 +217,7 @@ impl Link {
                 return IDLE_MS;
             }
         }
+
         1
     }
 
@@ -221,6 +230,7 @@ impl Link {
         if !wifi.dns_ok || waiting {
             return IDLE_MS;
         }
+
         self.counters.connects = self.counters.connects.wrapping_add(1);
         let n = self.counters.connects;
         let Some(socket) =
@@ -235,11 +245,13 @@ impl Link {
             self.back_off();
             return IDLE_MS;
         };
+
         log(Record::Connect {
             n,
             ok: true,
             ms: sdk::uptime_ms().wrapping_sub(now),
         });
+
         let sent = self.send_connect(socket);
         let now = sdk::uptime_ms();
         self.open = Some(Open {
@@ -248,6 +260,7 @@ impl Link {
             since: now,
             generation: wifi.generation,
         });
+
         self.rx_len = 0;
         if !sent {
             self.close("send", log);
@@ -259,6 +272,7 @@ impl Link {
         let Some(health) = Topic::new(self.config.namespace, "health") else {
             return false;
         };
+
         let mut will = [0; mqtt::MAX_HEALTH];
         let mut will_out = Buffer::new(&mut will);
         let link = self.counters;
@@ -268,6 +282,7 @@ impl Link {
         {
             return false;
         }
+
         let will_len = will_out.len();
         let mut out = [0; mqtt::MAX_PACKET];
         let connect = mqtt::Connect {
@@ -304,6 +319,7 @@ impl Link {
                     return false;
                 }
             };
+
             // Copy the packet out so handling it may send and reuse `rx`.
             frame[..used].copy_from_slice(&self.rx[..used]);
             self.rx.copy_within(used..self.rx_len, 0);
@@ -326,6 +342,7 @@ impl Link {
         let Some(open) = self.open.as_mut() else {
             return false;
         };
+
         let socket = open.socket;
         match open.session.on_packet(now, packet, request.as_str()) {
             Event::Connected => {
@@ -340,6 +357,7 @@ impl Link {
                 }
                 true
             }
+
             Event::Ready => {
                 log(Record::Ready {
                     ms: now.wrapping_sub(open.since),
@@ -347,8 +365,10 @@ impl Link {
                 self.backoff_ms = BACKOFF_MIN_MS;
                 self.publish(Trigger::Connect, log)
             }
+
             Event::Pong => true,
             Event::Request(payload) => self.answer(payload, log),
+
             // This driver never subscribes a data topic (only the recovery
             // role's updater does), so these cannot arrive here.
             Event::DataReady | Event::Data(_) => {
@@ -374,21 +394,25 @@ impl Link {
                 return true;
             }
         };
+
         let kind = match request.op {
             Ok(Op::Health) => RequestKind::Health,
             Ok(Op::Ping) => RequestKind::Ping,
             Err(_) => RequestKind::Unsupported,
         };
+
         let mut body = [0; mqtt::MAX_REQUEST];
         let mut writer = Buffer::new(&mut body);
         if mqtt::write_reply(&mut writer, &request, sdk::uptime_ms()).is_err() {
             return true;
         }
+
         let len = writer.len();
         if !self.send_publish("reply", &body[..len]) {
             self.close("send", log);
             return false;
         }
+
         log(Record::Request {
             kind,
             ok: request.op.is_ok(),
@@ -408,11 +432,13 @@ impl Link {
             self.close("health_format", log);
             return false;
         }
+
         let len = writer.len();
         if !self.send_publish("health", &body[..len]) {
             self.close("send", log);
             return false;
         }
+
         self.published_at = sdk::uptime_ms();
         self.losses_seen = snapshot.link_losses.wrapping_add(snapshot.dns_losses);
         log(Record::Publish {
@@ -430,6 +456,7 @@ impl Link {
         let Some(open) = self.open.as_mut() else {
             return false;
         };
+
         let mut out = [0; mqtt::MAX_PACKET];
         let ok = mqtt::encode_publish(&mut out, topic.as_str(), payload, false)
             .is_ok_and(|n| sdk::tcp_send(open.socket, &out[..n]));
@@ -481,6 +508,7 @@ pub fn describe(record: Record, out: &mut impl Write) -> core::fmt::Result {
             };
             write!(out, "publish seq={seq} bytes={bytes} trigger={trigger}")
         }
+
         Record::Request { kind, ok } => {
             let kind = match kind {
                 RequestKind::Health => "health",

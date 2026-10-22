@@ -94,10 +94,12 @@ pub fn parse_key(text: &str) -> Option<[u8; 32]> {
             _ => None,
         }
     }
+
     let bytes = text.as_bytes();
     if bytes.len() != 64 {
         return None;
     }
+
     let mut out = [0u8; 32];
     for (i, byte) in out.iter_mut().enumerate() {
         *byte = (nibble(bytes[2 * i])? << 4) | nibble(bytes[2 * i + 1])?;
@@ -123,6 +125,7 @@ pub enum Record {
         watchdog: bool,
         installed: bool,
     },
+
     Connect {
         ok: bool,
     },
@@ -130,6 +133,7 @@ pub enum Record {
         reason: &'static str,
     },
     NoOffer,
+
     Manifest {
         version: u32,
         bytes: u32,
@@ -185,12 +189,14 @@ pub fn describe(record: Record, f: &mut impl fmt::Write) -> fmt::Result {
             u8::from(watchdog),
             u8::from(installed)
         ),
+
         Record::Connect { ok } => write!(f, "connect ok={}", u8::from(ok)),
         Record::Closed { reason } => write!(f, "closed reason={reason}"),
         Record::NoOffer => f.write_str("no_offer"),
         Record::Manifest { version, bytes } => {
             write!(f, "manifest version={version} bytes={bytes}")
         }
+
         Record::Progress {
             sectors,
             total,
@@ -353,6 +359,7 @@ impl Updater {
                 self.stage = Stage::Arm;
                 next(POLL_MS, Some(Record::Start { key: true }))
             }
+
             // SAFETY: the caller's contract.
             Stage::Arm => match unsafe { self.arming.step::<M, H>(provider) } {
                 Poll::Pending(event) => next(POLL_MS, event.map(Record::from)),
@@ -362,12 +369,14 @@ impl Updater {
                 }
                 Poll::Failed(event) => self.end(event.into()),
             },
+
             Stage::Net => {
                 let step = self.net(flash);
                 // SAFETY: the caller's contract; no hook call is in progress.
                 self.leases = unsafe { (*provider).leases };
                 step
             }
+
             Stage::Done => next(0, None),
         }
     }
@@ -380,11 +389,13 @@ impl Updater {
         if open.generation != wifi.generation {
             return self.drop_link("wifi");
         }
+
         match sdk::tcp_recv(open.socket, &mut self.rx[self.rx_len..], POLL_MS) {
             TcpRecv::Data(n) => self.rx_len += n,
             TcpRecv::Timeout => {}
             TcpRecv::Closed => return self.drop_link("closed"),
         }
+
         let now = sdk::uptime_ms();
         loop {
             let used = match mqtt::decode(&self.rx[..self.rx_len]) {
@@ -400,10 +411,12 @@ impl Updater {
                 return step;
             }
         }
+
         let tick = match self.open.as_mut() {
             Some(open) => open.session.tick(now),
             None => return next(IDLE_MS, None),
         };
+
         match tick {
             Tick::Idle => {}
             Tick::Ping => {
@@ -414,6 +427,7 @@ impl Updater {
             }
             Tick::Closed(_) => return self.drop_link("timeout"),
         }
+
         self.retry(now)
     }
 
@@ -421,10 +435,12 @@ impl Updater {
         if !dns_ok {
             return next(IDLE_MS, None);
         }
+
         let config = self.config;
         let Some(socket) = sdk::tcp_connect(config.broker, config.port, CONNECT_TIMEOUT_MS) else {
             return next(IDLE_MS * 4, Some(Record::Connect { ok: false }));
         };
+
         let mut out = [0; mqtt::MAX_PACKET];
         let connect = mqtt::Connect {
             client_id: config.client_id,
@@ -438,6 +454,7 @@ impl Updater {
             sdk::tcp_close(socket);
             return next(IDLE_MS * 4, Some(Record::Connect { ok: false }));
         }
+
         self.open = Some(Open {
             socket,
             session: Session::connecting(sdk::uptime_ms()),
@@ -463,6 +480,7 @@ impl Updater {
         let Some(topic) = Topic::new(self.config.namespace, "ota/get") else {
             return false;
         };
+
         let mut out = [0; ota::TOPIC_BUDGET + ota::GET_LEN + 8];
         let get = ota::encode_get(part, offset, len);
         let ok = mqtt::encode_publish(&mut out, topic.as_str(), &get, false)
@@ -492,6 +510,7 @@ impl Updater {
         if !self.open.is_some_and(|o| o.data_ready) {
             return next(POLL_MS, None);
         }
+
         if let Some(at) = self.no_offer_at {
             if now.wrapping_sub(at) >= NO_OFFER_MS {
                 self.no_offer_at = None;
@@ -501,12 +520,14 @@ impl Updater {
             }
             return next(POLL_MS, None);
         }
+
         let Some(w) = self.wanted else {
             return next(POLL_MS, None);
         };
         if now.wrapping_sub(w.asked_at) < ANSWER_MS {
             return next(POLL_MS, None);
         }
+
         if w.tries >= MAX_TRIES {
             return self.fail("timeout");
         }
@@ -527,10 +548,12 @@ impl Updater {
         ) else {
             return Some(self.fail("topic"));
         };
+
         let open = self.open.as_mut()?;
         let event = open
             .session
             .on_packet_with(now, packet, request.as_str(), Some(data.as_str()));
+
         match event {
             Event::Connected => {
                 let mut out = [0; 128];
@@ -540,6 +563,7 @@ impl Updater {
                     .is_ok_and(|n| sdk::tcp_send(open.socket, &out[..n]));
                 (!ok).then(|| self.drop_link("send"))
             }
+
             Event::Ready => {
                 let mut out = [0; 128];
                 let ok = open
@@ -548,11 +572,13 @@ impl Updater {
                     .is_ok_and(|n| sdk::tcp_send(open.socket, &out[..n]));
                 (!ok).then(|| self.drop_link("send"))
             }
+
             Event::DataReady => {
                 open.data_ready = true;
                 self.no_offer_at = None;
                 (!self.ask_next(now)).then(|| self.drop_link("send"))
             }
+
             // Diagnostic requests are not served in the recovery role.
             Event::Pong | Event::Request(_) => None,
             Event::Data(payload) => self.data(now, payload, flash),
@@ -566,6 +592,7 @@ impl Updater {
         if answer.part != wanted.part || answer.offset != wanted.offset {
             return None; // A late answer to an earlier ask.
         }
+
         self.wanted = None;
         match answer.status {
             Status::Ok => {}
@@ -575,9 +602,11 @@ impl Updater {
             }
             Status::Range => return Some(self.fail("range")),
         }
+
         if answer.part == Part::Manifest {
             return Some(self.pin_manifest(now, answer.bytes));
         }
+
         let writer = self.writer.as_mut()?;
         let written = match writer.accept(answer.offset, answer.bytes) {
             Err(_) => return Some(self.fail("order")),
@@ -587,9 +616,11 @@ impl Updater {
                 Some(write_sector(flash, sector, program.data))
             }
         };
+
         let Some(ok) = written else {
             return (!self.ask_next(now)).then(|| self.drop_link("send"));
         };
+
         if let Err(error) = writer.programmed(ok) {
             return Some(self.fail(match error {
                 ota::WriteError::Hash => "hash",
@@ -597,14 +628,17 @@ impl Updater {
                 _ => "state",
             }));
         }
+
         self.sectors += 1;
         let manifest = *writer.manifest();
         if writer.next_request().is_none() {
             return Some(self.activate(flash, manifest));
         }
+
         if !self.ask_next(now) {
             return Some(self.drop_link("send"));
         }
+
         self.sectors.is_multiple_of(PROGRESS_SECTORS).then(|| {
             let record = Record::Progress {
                 sectors: self.sectors,
@@ -624,16 +658,19 @@ impl Updater {
         if self.writer.is_some() {
             return next(POLL_MS, None); // Already pinned; only the first manifest counts.
         }
+
         let Some(key) = self.key else {
             return self.fail("key");
         };
         let Ok(manifest) = ota::parse_manifest(bytes, &key, 0) else {
             return self.fail("manifest");
         };
+
         self.writer = Writer::new(manifest, ota::MAX_CHUNK as usize);
         if self.writer.is_none() || !self.ask_next(now) {
             return self.drop_link("send");
         }
+
         next(
             POLL_MS,
             Some(Record::Manifest {
@@ -648,6 +685,7 @@ impl Updater {
         let Some(Ok((offset, marker))) = self.writer.as_mut().map(Writer::commit) else {
             return self.fail("state");
         };
+
         let mut readback = [0u8; 8];
         let ok = offset == ota::BANK1_OFFSET
             && flash.program(0, 0, &marker)
@@ -656,9 +694,11 @@ impl Updater {
         if !ok {
             return self.fail("marker");
         }
+
         self.close();
         arming::clear_attempt();
         self.stage = Stage::Done;
+
         Step {
             delay_ms: 0,
             record: Some(Record::Activated {
@@ -677,6 +717,7 @@ fn write_sector(flash: &mut impl BankFlash, sector: u32, data: &[u8]) -> bool {
     if data.len() > SECTOR || !flash.erase(sector) {
         return false;
     }
+
     let mut page = [u8::MAX; PIECE];
     let mut readback = [0u8; PIECE];
     for (n, piece) in data.chunks(PIECE).enumerate() {

@@ -1,3 +1,11 @@
+//! Durable private state files: configuration, ledger, leases and credentials.
+//!
+//! Every file is created mode 0600 on Unix. `write_json` replaces a file
+//! atomically (temporary file, fsync, rename, directory fsync), so a crash
+//! leaves the old or the new contents, never a torn ledger. `write_new_json`
+//! refuses to replace anything, and `lock` gives one server process exclusive
+//! ownership of a ledger.
+
 use std::{fs, io::Write, path::Path};
 
 use anyhow::{Context, Result};
@@ -9,6 +17,7 @@ pub fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
     let parent = path.parent().context("state path needs a parent")?;
     fs::create_dir_all(parent)?;
     let temp = parent.join(format!(".{}.tmp", Uuid::new_v4()));
+
     let result = (|| {
         let mut options = fs::OpenOptions::new();
         options.create_new(true).write(true);
@@ -17,6 +26,7 @@ pub fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
             use std::os::unix::fs::OpenOptionsExt;
             options.mode(0o600);
         }
+
         let mut file = options.open(&temp)?;
         serde_json::to_writer_pretty(&mut file, value)?;
         file.write_all(b"\n")?;
@@ -25,6 +35,7 @@ pub fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
         fs::File::open(parent)?.sync_all()?;
         Ok(())
     })();
+
     if result.is_err() {
         let _ = fs::remove_file(temp);
     }
@@ -40,9 +51,11 @@ pub fn write_new_json(path: &Path, value: &impl Serialize) -> Result<()> {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
+
     let mut file = options
         .open(path)
         .with_context(|| format!("create {}", path.display()))?;
+
     let result = (|| {
         serde_json::to_writer_pretty(&mut file, value)?;
         file.write_all(b"\n")?;
@@ -52,6 +65,7 @@ pub fn write_new_json(path: &Path, value: &impl Serialize) -> Result<()> {
         }
         Ok(())
     })();
+
     if result.is_err() {
         let _ = fs::remove_file(path);
     }
@@ -68,6 +82,7 @@ pub fn lock(path: &Path) -> Result<fs::File> {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
+
     let file = options.open(path.with_extension("lock"))?;
     file.try_lock()
         .context("another server already owns this feed ledger")?;

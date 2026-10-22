@@ -15,7 +15,9 @@ use wellfed_amebad::sdk;
 use wellfed_amebad::stopped;
 use wellfed_amebad::watchdog::{Watchdog, WatchdogConfig};
 
+/// Backup-register marker (`PFW5` in ASCII) written before the watchdog is armed.
 pub const MARKER: u32 = 0x5046_5735;
+
 /// SDK-documented 31 us SYSTIMER tick; TIM2 is assumed to share the 32 kHz source.
 pub const TICKS_PER_SECOND: u32 = 32_768;
 pub const EVENTS: EventsConfig = EventsConfig {
@@ -24,6 +26,7 @@ pub const EVENTS: EventsConfig = EventsConfig {
     max_feedback_age_ms: 100,
     feedback_capacity: 8,
 };
+
 /// Nominal 33.3 kHz watchdog clock (`WDG_Scalar`): 4095 x 32 counts is about
 /// 3.9 s, bounded to 2.9-5.3 s by the wide clock limits.
 pub const WATCHDOG: WatchdogConfig = WatchdogConfig {
@@ -36,6 +39,7 @@ pub const WATCHDOG: WatchdogConfig = WatchdogConfig {
     divisor: 31,
     count_id: 11,
 };
+
 pub const FIRST_SAMPLE_MS: u32 = 100;
 pub const SAMPLE_MS: u32 = 5000;
 pub const SAMPLES: u32 = 12;
@@ -43,6 +47,7 @@ pub const STALL_MS: u32 = 2000;
 pub const FEED_MS: u32 = 15_000;
 pub const FEED_PERIOD_MS: u32 = 250;
 pub const STALLED_REPORT_MS: u32 = 1000;
+
 /// Still running this long after the stall began means the watchdog failed.
 pub const RESET_DEADLINE_MS: u32 = WATCHDOG.max_expiry_ms + 2000;
 
@@ -60,9 +65,11 @@ pub enum Record {
         board: bool,
         events: bool,
     },
+
     Sample(Sample),
     StallBegin(Sample),
     StallEnd(Sample),
+
     Arm {
         ok: bool,
         vendor: u32,
@@ -76,6 +83,7 @@ pub enum Record {
     WatchdogStall {
         ms: u32,
     },
+
     Stalled {
         ms: u32,
         fault: u32,
@@ -152,6 +160,7 @@ impl Probe {
         if !self.events.snapshot(&mut snapshot) {
             return None;
         }
+
         Some(Sample {
             n,
             raw,
@@ -173,16 +182,19 @@ impl Probe {
                     sdk::backup_write(sdk::BACKUP_USER, 0);
                     return self.end(Record::Skip { reset, marker });
                 }
+
                 let board = self.board.open_outputs(DEADTIME_MS, LEASE_MS, 0);
                 // SAFETY: the probe, and with it the board, stays at a fixed address.
                 let events = board && unsafe { self.events.open(&mut self.board, &EVENTS) };
                 if !events {
                     return self.end(Record::Open { board, events });
                 }
+
                 self.stage = Stage::Sample(0);
                 // Several timer periods, so every sample must see a ready timer.
                 next(FIRST_SAMPLE_MS, Record::Open { board, events })
             }
+
             Stage::Sample(n) => {
                 let Some(sample) = self.sample(n) else {
                     return self.end(Record::ClockError);
@@ -195,15 +207,18 @@ impl Probe {
                 self.stage = stage;
                 next(delay, Record::Sample(sample))
             }
+
             Stage::Stall => {
                 let Some(begin) = self.sample(0) else {
                     return self.end(Record::ClockError);
                 };
+
                 // The task keeps the CPU without yielding; only interrupts run.
                 let ticks = (STALL_MS * TICKS_PER_SECOND).div_ceil(1000);
                 while sdk::systimer_ticks().wrapping_sub(begin.raw) < ticks {
                     sdk::spin_once();
                 }
+
                 let Some(end) = self.sample(1) else {
                     return self.end(Record::ClockError);
                 };
@@ -212,10 +227,12 @@ impl Probe {
                 self.pending = Some(Record::StallEnd(end));
                 next(1, Record::StallBegin(begin))
             }
+
             Stage::Arm => {
                 if let Some(record) = self.pending.take() {
                     return next(1, record);
                 }
+
                 sdk::backup_write(sdk::BACKUP_USER, MARKER);
                 let marker = sdk::backup_read(sdk::BACKUP_USER);
                 let ok = marker == MARKER && self.watchdog.open(&WATCHDOG);
@@ -226,13 +243,16 @@ impl Probe {
                     }
                     return self.end(Record::Arm { ok, vendor, marker });
                 }
+
                 let Some(now) = self.events.now_ms() else {
                     return self.end(Record::ClockError);
                 };
+
                 self.phase_at = now;
                 self.stage = Stage::Feed;
                 next(FEED_PERIOD_MS, Record::Arm { ok, vendor, marker })
             }
+
             Stage::Feed => {
                 self.progress += 1;
                 self.checkpoints += 1;
@@ -240,6 +260,7 @@ impl Probe {
                 let Some(now) = self.events.now_ms() else {
                     return self.end(Record::ClockError);
                 };
+
                 let ms = now.wrapping_sub(self.phase_at);
                 if ok && ms < FEED_MS {
                     return Step {
@@ -247,6 +268,7 @@ impl Probe {
                         record: None,
                     };
                 }
+
                 // A failed checkpoint no longer refreshes: the reset follows either way.
                 self.phase_at = now;
                 self.reported_at = now;
@@ -261,15 +283,18 @@ impl Probe {
                     },
                 )
             }
+
             Stage::Stuck => {
                 if let Some(record) = self.pending.take() {
                     return next(FEED_PERIOD_MS, record);
                 }
+
                 // Alive but without progress: the repeated token must never refresh.
                 let _ = self.watchdog.checkpoint(self.progress);
                 let Some(now) = self.events.now_ms() else {
                     return self.end(Record::ClockError);
                 };
+
                 let ms = now.wrapping_sub(self.phase_at);
                 if ms >= RESET_DEADLINE_MS {
                     let _ = self.watchdog.close(Some(&self.board));
@@ -278,12 +303,14 @@ impl Probe {
                     }
                     return self.end(Record::NoReset { ms });
                 }
+
                 if now.wrapping_sub(self.reported_at) < STALLED_REPORT_MS {
                     return Step {
                         delay_ms: FEED_PERIOD_MS,
                         record: None,
                     };
                 }
+
                 self.reported_at = now;
                 next(
                     FEED_PERIOD_MS,
@@ -294,6 +321,7 @@ impl Probe {
                     },
                 )
             }
+
             Stage::Done => Step {
                 delay_ms: 0,
                 record: None,

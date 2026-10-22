@@ -1,3 +1,10 @@
+//! Tests for the motor output gate: deadtime before every drive or
+//! reversal, lease expiry from an independent tick, I/O failures and clock
+//! wrap.
+//!
+//! The fake pin callback rejects LOW/LOW. Every fault leaves both pins HIGH
+//! (STOP), and a failed STOP write does not claim the outputs are verified.
+
 use core::ffi::c_void;
 
 use wellfed_core::feed_controller::MotorCommand;
@@ -20,6 +27,7 @@ unsafe extern "C" fn write_pair(context: *mut c_void, a: bool, b: bool) -> bool 
     if a && b {
         pins.stops += 1;
     }
+
     if if a && b {
         pins.fail_stop
     } else {
@@ -55,14 +63,17 @@ fn startup_and_reversal_wait_for_stop() {
     with_gate(|gate, p| {
         assert!(init(gate, p, 3, 10, 0));
         assert!(pins(p).a && pins(p).b);
+
         assert!(gate.request(MotorCommand::DRIVE_0, 0));
         assert!(gate.tick(2));
         assert!(pins(p).a && pins(p).b);
         assert!(gate.tick(3));
         assert!(pins(p).a && !pins(p).b);
         assert_eq!(gate.applied_at, 3);
+
         assert!(gate.request(MotorCommand::DRIVE_0, 4));
         assert_eq!(gate.applied_at, 3); // Renewal is not a new drive transition.
+
         assert!(gate.request(MotorCommand::DRIVE_1, 4));
         assert!(pins(p).a && pins(p).b);
         assert_eq!(gate.applied_at, 4);
@@ -123,13 +134,16 @@ fn io_failure_stops_and_does_not_claim_verification() {
         assert!(!gate.request(MotorCommand::DRIVE_0, 3));
         assert_eq!(gate.fault, MotorGateFault::IO);
         assert!(pins(p).a && pins(p).b && gate.applied_known);
+
         *pins(p) = Output::default();
         assert!(init(gate, p, 3, 10, 0));
         assert!(gate.request(MotorCommand::DRIVE_0, 3));
+
         pins(p).fail_stop = true;
         assert!(!gate.request(MotorCommand::STOP, 4));
         assert_eq!(gate.fault, MotorGateFault::IO);
         assert!(!gate.applied_known);
+
         pins(p).fail_stop = false;
         assert!(!gate.tick(5));
         assert!(gate.applied_known && pins(p).a && pins(p).b);
@@ -147,10 +161,12 @@ fn invalid_command_and_clock_wrap() {
         assert!(!gate.tick(u32::MAX));
         assert_eq!(gate.fault, MotorGateFault::CLOCK);
         assert!(pins(p).a && pins(p).b);
+
         assert!(init(gate, p, 3, 10, 0));
         assert!(!gate.request(MotorCommand(99), 0));
         assert_eq!(gate.fault, MotorGateFault::COMMAND);
         assert!(pins(p).a && pins(p).b);
+
         assert!(!init(gate, p, 10, 10, 0));
     });
 }

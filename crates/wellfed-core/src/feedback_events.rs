@@ -1,4 +1,9 @@
 //! Bounded queue of captured feedback edges, drained and validated per batch.
+//!
+//! Capture contexts push edges with their capture time; the owner drains them
+//! in [`FeedbackEvents::process`], which credits only edges captured while
+//! the motor gate's applied drive matched the controller's command. Every
+//! call must be serialized by the caller, and a queue fault is sticky.
 
 use crate::HALF_RANGE;
 use crate::feed_controller::{FeedController, FeedReason, FeedSample, FeedState, MotorCommand};
@@ -73,6 +78,7 @@ impl FeedbackEvents {
         {
             return self.fail(FeedbackFault::ARGUMENT);
         }
+
         if now.wrapping_sub(self.observed_at) >= HALF_RANGE {
             return self.fail(FeedbackFault::CLOCK);
         }
@@ -89,6 +95,7 @@ impl FeedbackEvents {
         if self.count == self.capacity {
             return self.fail(FeedbackFault::OVERFLOW);
         }
+
         let index = (usize::from(self.head) + usize::from(self.count)) % usize::from(self.capacity);
         self.events[index] = FeedbackEvent {
             captured_at: captured_at_ms,
@@ -106,11 +113,13 @@ impl FeedbackEvents {
         if self.count == 0 {
             return (FeedbackTakeResult::EMPTY, None);
         }
+
         let front = self.events[usize::from(self.head)];
         if now_ms.wrapping_sub(front.captured_at) > self.max_age_ms {
             self.fail(FeedbackFault::STALE);
             return (FeedbackTakeResult::FAILED, None);
         }
+
         self.head = ((usize::from(self.head) + 1) % usize::from(self.capacity)) as u8;
         self.count -= 1;
         (FeedbackTakeResult::EVENT, Some(front))
@@ -137,6 +146,7 @@ impl FeedbackEvents {
             controller.trip(FeedReason::FEEDBACK_STREAM);
             return false;
         }
+
         let mut batch = [FeedbackEvent::default(); CAPACITY];
         let mut count = 0;
         loop {
@@ -153,11 +163,13 @@ impl FeedbackEvents {
                 }
             }
         }
+
         let previous = controller.state;
         let command = controller.motor;
         let mut current = *sample;
         current.feedback_edge = false;
         controller.update(now_ms, Some(&current));
+
         let valid_drive = drive.healthy && drive.applied_known && drive.applied.valid();
         if !valid_drive
             || (previous == FeedState::RUNNING
@@ -167,20 +179,25 @@ impl FeedbackEvents {
             controller.trip(FeedReason::OUTPUT);
             return false;
         }
+
+        // Credit edges only while the gate applies exactly the commanded drive.
         if previous != FeedState::RUNNING
             || drive.applied != command
             || drive.applied == MotorCommand::STOP
         {
             return true;
         }
+
         if now_ms.wrapping_sub(drive.applied_at) >= HALF_RANGE {
             controller.trip(FeedReason::CLOCK);
             return false;
         }
+
         for event in &batch[..count] {
             if controller.state != FeedState::RUNNING || controller.motor != command {
                 break;
             }
+            // An edge captured before this drive was applied belongs to an earlier output.
             if event.captured_at.wrapping_sub(drive.applied_at) >= HALF_RANGE {
                 continue;
             }

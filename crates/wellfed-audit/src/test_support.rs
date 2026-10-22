@@ -49,6 +49,7 @@ pub fn led_full(version: u8) -> Vec<Vec<u8>> {
     } else {
         b"PLLED1 begin\r\n".to_vec()
     }];
+
     for pin in LED_PINS {
         let status = if version >= 3 && pin != "PB22" {
             "output"
@@ -60,6 +61,7 @@ pub fn led_full(version: u8) -> Vec<Vec<u8>> {
                 .push(format!("PLLED1 pin={pin} level={level} status={status}\r\n").into_bytes());
         }
     }
+
     records.push(b"PLLED1 done low=all\r\n".to_vec());
     records
 }
@@ -76,6 +78,7 @@ impl Fixture {
         let mut manifest = json!({"profile": "plaf103-firstboot", "inputs": inputs});
         let identity = digest(&wellfed_flash::canonical::canonical(&manifest).unwrap());
         manifest["startup_identity"] = json!(identity);
+
         Self {
             dir: tempfile::tempdir().unwrap(),
             manifest,
@@ -108,6 +111,7 @@ impl Fixture {
         let mut sorted: Vec<&(f64, Vec<u8>)> = chunks.iter().collect();
         sorted.sort_by(|a, b| a.0.total_cmp(&b.0));
         let rx: Vec<u8> = sorted.iter().flat_map(|c| c.1.clone()).collect();
+
         let mut events = String::new();
         let mut offset = 0;
         for (seconds, data) in sorted {
@@ -120,10 +124,12 @@ impl Fixture {
             );
             offset += data.len();
         }
+
         let p = self.path();
         fs::write(p.join("serial-rx.bin"), &rx).unwrap();
         fs::write(p.join("serial-tx.bin"), b"").unwrap();
         fs::write(p.join("serial-events.jsonl"), events).unwrap();
+
         let end = at(end).format("%Y-%m-%dT%H:%M:%S%.6f+00:00").to_string();
         fs::write(
             p.join("report.json"),

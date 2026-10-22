@@ -1,3 +1,12 @@
+//! Loopback HTTP API of `wellfed-local serve`.
+//!
+//! Every route except `/health` needs the bearer token from the private
+//! configuration, compared in constant time, and write bodies are capped at
+//! 4096 bytes. Handlers never touch device state themselves: they hand a
+//! `Request` to the MQTT actor and wait up to 5 s. A timeout leaves the outcome
+//! unknown, so the caller queries status or repeats the same request ID
+//! instead of creating a new one.
+
 use std::{sync::Arc, time::Duration};
 
 use axum::{
@@ -37,6 +46,7 @@ fn authenticate(headers: &HeaderMap, state: &ApiState) -> Result<(), ApiError> {
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.strip_prefix("Bearer "))
         .unwrap_or("");
+
     if bool::from(supplied.as_bytes().ct_eq(state.token.as_bytes())) {
         Ok(())
     } else {
@@ -72,6 +82,7 @@ async fn operation<T: Serialize>(
         .requests
         .try_send(build(send))
         .map_err(|_| reject(Rejection::Offline))?;
+
     let result = tokio::time::timeout(Duration::from_secs(5), receive)
         .await
         .map_err(|_| {
@@ -83,6 +94,7 @@ async fn operation<T: Serialize>(
             )
         })?
         .map_err(|_| reject(Rejection::Offline))?;
+
     result.map(Json).map_err(reject)
 }
 
@@ -162,12 +174,14 @@ async fn replacement_request(
     body: axum::body::Bytes,
 ) -> Result<Json<Value>, ApiError> {
     authenticate(&headers, &state)?;
+
     let input: replacement::Input = serde_json::from_slice(&body).map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
             Json(json!({"error":"expected {\"op\":\"health\"|\"ping\"}"})),
         )
     })?;
+
     let (send, receive) = oneshot::channel();
     let offline = |error: RequestError| {
         let status = match error {
@@ -176,6 +190,7 @@ async fn replacement_request(
         };
         (status, Json(json!({"error":error.message()})))
     };
+
     state
         .requests
         .try_send(Request::Replacement(input.op, send))
@@ -185,6 +200,7 @@ async fn replacement_request(
         .map_err(|_| offline(RequestError::Offline))?
         .map_err(|_| offline(RequestError::Offline))?
         .map_err(offline)?;
+
     Ok(Json(json!({"id":id,"op":input.op})))
 }
 
@@ -215,6 +231,7 @@ async fn replacement_ota_offer(
 ) -> Result<Json<Value>, ApiError> {
     authenticate(&headers, &state)?;
     let bad = |message: String| (StatusCode::BAD_REQUEST, Json(json!({"error": message})));
+
     let offer = match (input.manifest.as_deref(), input.image.as_deref()) {
         (None, None) => None,
         (Some(manifest), Some(image)) => {
@@ -236,9 +253,11 @@ async fn replacement_ota_offer(
             ));
         }
     };
+
     let summary = offer
         .as_ref()
         .map(|o| json!({"version": o.version, "bytes": o.payload.len()}));
+
     let (send, receive) = oneshot::channel();
     let unavailable = || {
         (
@@ -246,20 +265,24 @@ async fn replacement_ota_offer(
             Json(json!({"error":"server busy"})),
         )
     };
+
     state
         .requests
         .try_send(Request::OtaOffer(offer, send))
         .map_err(|_| unavailable())?;
+
     let configured = tokio::time::timeout(Duration::from_secs(5), receive)
         .await
         .map_err(|_| unavailable())?
         .map_err(|_| unavailable())?;
+
     if !configured {
         return Err((
             StatusCode::NOT_FOUND,
             Json(json!({"error":"no replacement-firmware role configured"})),
         ));
     }
+
     Ok(Json(json!({"offer": summary})))
 }
 

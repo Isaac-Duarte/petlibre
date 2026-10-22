@@ -1,3 +1,7 @@
+//! The FW08 replacement-firmware role end to end with a generic MQTT client:
+//! health reaches the API, only allowlisted requests are sent, and each role
+//! stays inside its own topics.
+
 mod common;
 
 use std::time::Duration;
@@ -102,6 +106,7 @@ async fn firmware_role_reports_health_answers_requests_and_stays_in_its_namespac
         password: "0123456789abcdef".repeat(4),
     });
     storage::write_json(&path, &config).unwrap();
+
     let _service = start(&path);
     let http = reqwest::Client::builder()
         .timeout(Duration::from_secs(3))
@@ -109,6 +114,7 @@ async fn firmware_role_reports_health_answers_requests_and_stays_in_its_namespac
         .build()
         .unwrap();
     ready(&config, &http).await;
+
     let password = config.firmware.as_ref().unwrap().password.clone();
     let initial = status(&config, &http).await;
     assert_eq!(initial["replacement"]["health"], Value::Null);
@@ -140,16 +146,19 @@ async fn firmware_role_reports_health_answers_requests_and_stays_in_its_namespac
         QoS::AtMostOnce,
         false,
     ));
+
     let (firmware, mut events) = AsyncClient::new(options, 16);
     connected(&mut events).await;
     firmware
         .subscribe(config.firmware_topic("request"), QoS::AtMostOnce)
         .await
         .unwrap();
+
     assert!(matches!(
         suback(&mut events).await[..],
         [SubscribeReasonCode::Success(_)]
     ));
+
     // Outside its single subscription, the firmware is refused.
     for topic in [
         config.firmware_topic("health"),
@@ -218,11 +227,13 @@ async fn firmware_role_reports_health_answers_requests_and_stays_in_its_namespac
             "{body}"
         );
     }
+
     let response = request(&config, &http, r#"{"op":"ping"}"#).await;
     assert_eq!(response.status(), reqwest::StatusCode::OK);
     let sent: Value = response.json().await.unwrap();
     let id = sent["id"].as_str().unwrap().to_owned();
     assert_eq!(sent["op"], "ping");
+
     let (topic, payload) = tokio::time::timeout(Duration::from_secs(5), incoming.recv())
         .await
         .unwrap()
@@ -230,6 +241,7 @@ async fn firmware_role_reports_health_answers_requests_and_stays_in_its_namespac
     assert_eq!(topic, config.firmware_topic("request"));
     let received: Value = serde_json::from_slice(&payload).unwrap();
     assert_eq!(received, json!({"id": id, "op": "ping"}));
+
     firmware
         .publish(
             config.firmware_topic("reply"),
@@ -240,6 +252,7 @@ async fn firmware_role_reports_health_answers_requests_and_stays_in_its_namespac
         )
         .await
         .unwrap();
+
     let replied = wait_for(&config, &http, |r| {
         r["replies"].as_array().is_some_and(|v| !v.is_empty())
     })
@@ -256,6 +269,7 @@ async fn firmware_role_reports_health_answers_requests_and_stays_in_its_namespac
     device_options.set_clean_session(true);
     let (device, mut device_events) = AsyncClient::new(device_options, 8);
     connected(&mut device_events).await;
+
     device
         .subscribe(config.firmware_topic("request"), QoS::AtMostOnce)
         .await
@@ -264,6 +278,7 @@ async fn firmware_role_reports_health_answers_requests_and_stays_in_its_namespac
         suback(&mut device_events).await[..],
         [SubscribeReasonCode::Failure]
     ));
+
     device
         .publish(
             config.firmware_topic("health"),
@@ -273,6 +288,7 @@ async fn firmware_role_reports_health_answers_requests_and_stays_in_its_namespac
         )
         .await
         .unwrap();
+
     let _ = tokio::time::timeout(Duration::from_millis(500), device_events.poll()).await;
 
     // Firmware publishes outside its two topics, then health still shows seq 1:
@@ -314,6 +330,7 @@ async fn without_a_firmware_role_status_has_none_and_requests_are_not_found() {
     config.mqtt_listen = address();
     config.http_listen = address();
     storage::write_json(&path, &config).unwrap();
+
     let _service = start(&path);
     let http = reqwest::Client::builder()
         .timeout(Duration::from_secs(3))
@@ -321,6 +338,7 @@ async fn without_a_firmware_role_status_has_none_and_requests_are_not_found() {
         .build()
         .unwrap();
     ready(&config, &http).await;
+
     assert_eq!(status(&config, &http).await["replacement"], Value::Null);
     assert_eq!(
         request(&config, &http, r#"{"op":"ping"}"#).await.status(),

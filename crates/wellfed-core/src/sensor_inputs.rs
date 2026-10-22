@@ -1,4 +1,9 @@
 //! Food/outlet filtering, optical and power settling, and sample freshness.
+//!
+//! The owner feeds it one coherent acquisition per poll and composes a
+//! [`FeedSample`] for the controller from it. A timing gap or an invalid
+//! acquisition drops qualification back to unknown instead of keeping old
+//! good data, and optical inputs count only after the emitters have settled.
 
 use crate::adc_scale::{AdcCalibration, SAMPLES};
 use crate::feed_controller::FeedSample;
@@ -67,11 +72,14 @@ pub struct SensorInputs {
     pub calibration: AdcCalibration,
     pub food: SensorFilter,
     pub outlet: SensorFilter,
+
     pub last_update_at: u32,
     pub optical_since: u32,
     pub power_since: u32,
+
     pub current_scaled: u32,
     pub battery_scaled: u32,
+
     pub have_time: bool,
     pub timing_valid: bool,
     pub gpio_valid: bool,
@@ -121,15 +129,18 @@ impl SensorInputs {
             !self.have_time || (gap < HALF_RANGE && gap <= self.limits.max_observation_gap_ms);
         self.have_time = true;
         self.last_update_at = now_ms;
+
         self.current_valid = false;
         self.battery_valid = false;
         self.gpio_valid = false;
         self.current_scaled = 0;
         self.battery_scaled = 0;
+
         let Some(reading) = reading.filter(|_| self.timing_valid) else {
             self.reset_power();
             return;
         };
+
         if reading.current_adc_valid
             && let Some(value) = self.calibration.scale_16(&reading.current)
         {
@@ -142,6 +153,7 @@ impl SensorInputs {
             self.battery_scaled = value;
             self.battery_valid = true;
         }
+
         self.gpio_valid = reading.gpio_valid;
         if !reading.gpio_valid {
             self.reset_power();
@@ -159,6 +171,7 @@ impl SensorInputs {
         {
             self.power_settled = true;
         }
+
         if !reading.optics_enabled {
             self.reset_optics();
             return;
@@ -172,6 +185,7 @@ impl SensorInputs {
         {
             self.optical_ready = true;
         }
+
         if self.optical_ready {
             self.food
                 .update(!reading.food_high, now_ms, self.limits.food_empty_delay_ms);
@@ -194,6 +208,7 @@ impl SensorInputs {
             && age < HALF_RANGE
             && age <= self.limits.max_age_ms;
         let gpio = fresh && self.gpio_valid;
+
         FeedSample {
             power_healthy: gpio
                 && self.power_settled

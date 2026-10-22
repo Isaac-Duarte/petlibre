@@ -46,6 +46,7 @@ pub fn snapshot(boot: Boot, link: Link, online: bool) -> Health {
     } else {
         Outputs::Unverified
     };
+
     Health {
         online,
         seq: link.seq,

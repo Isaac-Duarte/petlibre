@@ -24,12 +24,15 @@ pub struct FakeJournalFlash {
     /// programmed byte is one mutation; erase is `unit` mutations of eight
     /// raised bits each.
     pub budget: i64,
+
     pub calls: u32,
     /// Fail this 1-based call number; zero disables injection.
     pub fail_call: u32,
     pub mutations: u32,
+
     pub silent_program: bool,
     pub silent_erase: bool,
+
     /// Runs after every durable mutation. No reference to the flash is live
     /// while it runs, so it may read the flash through the I/O context.
     pub after_mutation: Option<fn(*mut c_void)>,
@@ -117,14 +120,17 @@ unsafe fn mutate(flash: *mut FakeJournalFlash, apply: impl FnOnce(&mut FakeJourn
         f.mutations += 1;
         (f.after_mutation, f.mutation_context)
     };
+
     if let Some(hook) = hook {
         hook(context);
     }
+
     // SAFETY: as above; a fresh reference after the hook returned.
     let f = unsafe { &mut *flash };
     if f.budget > 0 {
         f.budget -= 1;
     }
+
     // Includes failure after the last durable mutation.
     f.budget != 0
 }
@@ -138,6 +144,7 @@ fn erase_order(slot: usize, unit: usize) -> Rc<Vec<u32>> {
     thread_local! {
         static ORDERS: RefCell<Vec<CachedOrder>> = const { RefCell::new(Vec::new()) };
     }
+
     ORDERS.with_borrow_mut(|orders| {
         if let Some((_, _, order)) = orders.iter().find(|(s, u, _)| *s == slot && *u == unit) {
             return order.clone();
@@ -152,6 +159,7 @@ fn shuffled_bits(slot: usize, unit: usize) -> Vec<u32> {
     let mut order: Vec<u32> = (0..(unit * 8) as u32).collect();
     let mut state =
         0x9e37_79b9_7f4a_7c15u64 ^ (slot as u64 + 1).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+
     for i in (1..order.len()).rev() {
         // xorshift64*: reproducible across runs and platforms.
         state ^= state >> 12;
@@ -160,6 +168,7 @@ fn shuffled_bits(slot: usize, unit: usize) -> Vec<u32> {
         let j = (state.wrapping_mul(0x2545_f491_4f6c_dd1d) >> 32) as usize % (i + 1);
         order.swap(i, j);
     }
+
     order
 }
 
@@ -176,6 +185,7 @@ unsafe extern "C" fn read_bytes(
     if !f.call() {
         return false;
     }
+
     let out = unsafe { core::slice::from_raw_parts_mut(bytes.cast::<u8>(), size) };
     out.copy_from_slice(&f.bytes[slot][offset..offset + size]);
     true
@@ -202,6 +212,7 @@ unsafe extern "C" fn program(
         }
         (slot, offset)
     };
+
     // The caller's buffer is distinct from the flash.
     let input = unsafe { core::slice::from_raw_parts(bytes.cast::<u8>(), size) };
     for (i, &value) in input.iter().enumerate() {
@@ -220,6 +231,7 @@ unsafe extern "C" fn program(
             return false;
         }
     }
+
     true
 }
 
@@ -227,6 +239,7 @@ unsafe extern "C" fn erase(context: *mut c_void, slot: c_uint) -> bool {
     let flash = context.cast::<FakeJournalFlash>();
     assert!(slot < 2);
     let slot = slot as usize;
+
     let unit = {
         // SAFETY: the context was created by `io_at`; ends before any hook.
         let f = unsafe { &mut *flash };
@@ -238,6 +251,7 @@ unsafe extern "C" fn erase(context: *mut c_void, slot: c_uint) -> bool {
         }
         f.unit()
     };
+
     let order = erase_order(slot, unit);
     order.chunks(8).all(|bits| unsafe {
         mutate(flash, |f| {
@@ -259,6 +273,7 @@ mod tests {
         let io = f.io();
         // SAFETY: `f` stays in place and is not otherwise used during the call.
         let ok = unsafe { io.erase.unwrap()(io.context, 0) };
+
         (f, ok)
     }
 
@@ -267,10 +282,12 @@ mod tests {
         let (f, ok) = erase_with_budget(4096, -1);
         assert!(ok && f.bytes[0].iter().all(|&b| b == u8::MAX));
         assert_eq!(f.mutations, 4096);
+
         let mut f = FakeJournalFlash::default();
         let io = f.io();
         let data = [0x0fu8, 0xf0, 0x00, 0xff];
         assert!(unsafe { io.program.unwrap()(io.context, 1, 4, data.as_ptr().cast(), 4) });
+
         assert_eq!(f.bytes[1][4..8], data);
         assert_eq!(f.io().unit_bytes, UNIT as u32);
     }
@@ -282,13 +299,16 @@ mod tests {
                 let (f, ok) = erase_with_budget(unit, cut);
                 let (again, _) = erase_with_budget(unit, cut);
                 assert!(!ok && f.bytes[0] == again.bytes[0]);
+
                 let raised: u32 = f.bytes[0].iter().map(|b| b.count_ones()).sum();
                 assert_eq!(u64::from(raised), cut as u64 * 8);
+
                 // Raised bits are spread across the unit, not a byte prefix.
                 let prefix = f.bytes[0].iter().take_while(|&&b| b == u8::MAX).count();
                 assert!(prefix < unit / 2 && f.bytes[0].iter().any(|&b| b != 0 && b != u8::MAX));
             }
         }
+
         // The two units tear differently.
         assert_ne!(erase_order(0, UNIT), erase_order(1, UNIT));
     }
@@ -301,12 +321,14 @@ mod tests {
             let seen = unsafe { (&(*f).bytes)[0][0] };
             assert!(seen == 0x0f || seen == u8::MAX);
         }
+
         let mut f = Box::new(FakeJournalFlash::default());
         let raw: *mut FakeJournalFlash = &raw mut *f;
         unsafe {
             (*raw).after_mutation = Some(hook);
             (*raw).mutation_context = raw.cast();
             (*raw).budget = 2;
+
             let io = FakeJournalFlash::io_at(raw);
             let data = [0x0fu8, 0x0f, 0x0f, 0x0f];
             assert!(!io.program.unwrap()(
@@ -316,6 +338,7 @@ mod tests {
                 data.as_ptr().cast(),
                 4
             ));
+
             assert_eq!((&(*raw).bytes)[0][..4], [0x0f, 0x0f, 0xff, 0xff]);
             assert!(!io.program.unwrap()(
                 io.context,
@@ -324,6 +347,7 @@ mod tests {
                 data.as_ptr().cast(),
                 4
             ));
+
             assert_eq!((*raw).mutations, 2);
         }
     }

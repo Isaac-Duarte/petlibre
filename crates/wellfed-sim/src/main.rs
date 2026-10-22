@@ -39,6 +39,7 @@ fn config() -> OwnerConfig {
             max_portions: 3,
             max_reverse_attempts: 0,
         },
+
         sensors: SensorLimits {
             optical_settle_ms: 2,
             food_empty_delay_ms: 5,
@@ -48,12 +49,14 @@ fn config() -> OwnerConfig {
             max_age_ms: 2,
             battery_min_scaled: 1650,
         },
+
         events: EventsConfig {
             ticks_per_second: 32_000,
             timer_period_ms: 2,
             max_feedback_age_ms: 2,
             feedback_capacity: 8,
         },
+
         watchdog: WatchdogConfig {
             systimer_hz: 32_000,
             clock_min_hz: 32_000,
@@ -64,6 +67,7 @@ fn config() -> OwnerConfig {
             count_id: 5,
             divisor: 63,
         },
+
         bowl_mode: BowlMode::SINGLE,
         sample_period_ms: 1,
         prepare_timeout_ms: 20,
@@ -84,18 +88,26 @@ struct World {
     base_io: JournalIo,
     authority: FlashCoord,
     disk: File,
+
     device_ms: u64,
     opened: bool,
     run_owner: bool,
     run_timer: bool,
+
+    // Synthetic feedback plant: toggles the feedback edge every `auto_period` ms of drive.
     auto_period: u32,
     plant_ms: u32,
     previous_motor: u32,
     feedback_high: bool,
+
+    // Power-cut injection: cut after `cut_remaining` more mutations in storage phase
+    // `cut_phase` (or at that phase's start when the count is already zero).
     cut_phase: u32,
     active_phase: u32,
     phase_start_mutations: u32,
     cut_remaining: u64,
+
+    // Last reported outputs, so the hook only prints changes.
     observed_motor: u32,
     observed_optics: u32,
 }
@@ -161,6 +173,7 @@ fn save() {
             && disk.write_all(&bytes[1]).is_ok()
             && disk.flush().is_ok()
     };
+
     if !ok {
         fail("Cannot persist synthetic journal");
     }
@@ -180,6 +193,7 @@ fn cut() -> ! {
             (*flash_ptr()).mutations
         );
     }
+
     let _ = std::io::stdout().flush();
     exit(75);
 }
@@ -226,6 +240,8 @@ unsafe extern "C" fn program_io(
     bytes: *const c_void,
     size: usize,
 ) -> bool {
+    // Journal writes must only happen with the motor and optics off; the worker
+    // fails loudly if the owner ever programs or erases flash while either is on.
     assert!(motor() == 0 && optics() == 0);
     io_event("program", "begin", slot, offset, size, false);
     let program = unsafe { (*w()).base_io.program.unwrap() };
@@ -243,6 +259,8 @@ unsafe extern "C" fn erase_io(context: *mut c_void, slot: c_uint) -> bool {
     ok
 }
 
+/// Phase numbers: 1 reserve, 2 finish, 3 recover. The `cut` command can only
+/// target 1 or 2.
 fn storage_begin(phase: u32) {
     assert!(motor() == 0 && optics() == 0);
     // SAFETY: see `w`.
@@ -317,6 +335,7 @@ fn status(response: i64) {
         let s = (*world).owner.status();
         let opened = (*world).opened;
         let view = (*world).journal.view;
+
         println!(
             concat!(
                 r#"{{"event":"status","device_ms":{},"response":{},"state":{},"fault":{},"supervisor_fault":{},"watchdog_fault":{}"#,
@@ -370,6 +389,7 @@ fn poll() {
         if m == 0 || m == 3 || m != (*world).previous_motor {
             (*world).plant_ms = 0;
         }
+
         if m != 0 && m != 3 && (*world).auto_period != 0 {
             (*world).plant_ms += 1;
             if (*world).plant_ms >= (*world).auto_period {
@@ -383,6 +403,7 @@ fn poll() {
                 );
             }
         }
+
         (*world).previous_motor = m;
         if (*world).run_owner && fake::with(|h| h.task_live) {
             fake::run_task();
@@ -415,12 +436,15 @@ fn main() {
     if args.len() != 4 {
         fail("worker JOURNAL MODE PROVISION");
     }
+
     let (mode, provision) = (number(Some(&args[2])), number(Some(&args[3])));
     if mode > 1 || provision > 1 {
         fail("Invalid mode or provision flag");
     }
+
     let provision = provision == 1;
     let mut disk = open_disk(&args[1], provision);
+
     let mut flash = FakeJournalFlash::default();
     if !provision {
         let mut image = Vec::new();
@@ -430,6 +454,7 @@ fn main() {
         flash.bytes[0].copy_from_slice(&image[..UNIT]);
         flash.bytes[1].copy_from_slice(&image[UNIT..]);
     }
+
     // Installed before any I/O is bound; the flash is not written directly later.
     flash.after_mutation = Some(mutation);
     let world = Box::into_raw(Box::new(World {
@@ -451,9 +476,11 @@ fn main() {
         active_phase: 0,
         phase_start_mutations: 0,
         cut_remaining: 0,
+        // Out of range, so the first output hook always reports.
         observed_motor: 99,
         observed_optics: 99,
     }));
+
     // SAFETY: the world is leaked for the process lifetime; single-threaded.
     unsafe {
         WORLD = world;
@@ -463,12 +490,14 @@ fn main() {
             mode: BowlMode(mode as u32),
             max_portions: 3,
         };
+
         if provision {
             if (*world).journal.create(io, jc, Direction::D0, true, true) != JournalError::OK {
                 fail("Cannot provision synthetic journal");
             }
             save();
         }
+
         (*world).base_io = io;
         let wrapped = JournalIo {
             read: Some(read_io),
@@ -477,8 +506,10 @@ fn main() {
             ..io
         };
         (*world).opened = (*world).journal.open(wrapped, jc) == JournalError::OK;
+
         fake::reset_hardware();
         fake::with(|h| h.output_hook = Some(outputs));
+
         let limits = FlashLimits {
             // The whole lease must fit inside the 50 ms watchdog progress gap.
             quiesce_ms: 10,
@@ -492,25 +523,31 @@ fn main() {
             (*world).authority.ready(17, 29, true, 0),
             FlashReply::ACCEPTED
         );
+
         let c = OwnerConfig {
             bowl_mode: BowlMode(mode as u32),
             flash: &raw mut (*world).authority,
             ..config()
         };
+
         let storage = OwnerStorage {
             context: ptr::null_mut(),
             recover: Some(recover),
             reserve: Some(reserve),
             finish: Some(finish),
         };
+
         if !(*world).owner.start(&c, &storage) {
             fail("Owner start failed");
         }
     }
+
     fake::run_task();
     status(0);
+
     let stdin = std::io::stdin();
     let mut line = String::new();
+
     loop {
         line.clear();
         match stdin.lock().read_line(&mut line) {
@@ -518,9 +555,11 @@ fn main() {
             Ok(_) => {}
             Err(_) => fail("Worker input failed"),
         }
+
         if !line.ends_with('\n') || line.len() > 255 {
             fail("Overlong worker command");
         }
+
         let mut words = line
             .split([' ', '\t', '\r', '\n'])
             .filter(|w| !w.is_empty());
@@ -529,9 +568,11 @@ fn main() {
         if words.next().is_some() {
             fail("Too many arguments");
         }
+
         let x = a.map_or(0, |s| number(Some(s)));
         let y = b.map_or(0, |s| number(Some(s)));
         let (a, b) = (a.is_some(), b.is_some());
+
         let mut response = 0i64;
         // SAFETY: see `w`.
         unsafe {
@@ -542,8 +583,10 @@ fn main() {
                 }
                 "cancel" if a && !b => response = i64::from((*world).owner.cancel(x)),
                 "ack" if a && !b => response = i64::from((*world).owner.acknowledge(x)),
+
                 "tick" if !a => tick(),
                 "poll" if !a => poll(),
+
                 "cut" if a && b && (1..=2).contains(&x) => {
                     (*world).cut_phase = x as u32;
                     (*world).cut_remaining = y;
@@ -557,11 +600,13 @@ fn main() {
                     (*world).feedback_high = x != 0;
                     fake::edge(x != 0);
                 }
+
                 "owner" if a && !b && x <= 1 => (*world).run_owner = x != 0,
                 "timer" if a && !b && x <= 1 => (*world).run_timer = x != 0,
                 "adc_stuck" if a && !b && x <= 1 => fake::with(|h| h.stuck = x != 0),
                 "current" if a && !b && x <= 4095 => fake::with(|h| h.current_adc = x as u16),
                 "battery" if a && !b && x <= 4095 => fake::with(|h| h.battery_adc = x as u16),
+
                 "inputs" if a && !b && x <= 7 => fake::with(|h| {
                     let mask = (1 << 16) | (1 << 17) | (1 << 19);
                     h.input[0] = (h.input[0] & !mask)
@@ -569,6 +614,7 @@ fn main() {
                         | if x & 2 != 0 { 1 << 17 } else { 0 }
                         | if x & 4 != 0 { 1 << 19 } else { 0 };
                 }),
+
                 "status" if !a => {}
                 "stop" if !a => {
                     (*world).owner.stop();
@@ -579,6 +625,7 @@ fn main() {
                 _ => fail("Unknown or invalid worker command"),
             }
         }
+
         status(response);
     }
 }

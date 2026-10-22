@@ -9,6 +9,7 @@ const OFF: u8 = 0b0000;
 const BRAKE: u8 = 0b0011;
 const FWD: u8 = 0b0001;
 const REV: u8 = 0b0010;
+
 const RATE: f64 = 1_000_000.0;
 
 /// Segments of (value, samples); bits 4-7 carry unrelated noise.
@@ -30,6 +31,7 @@ fn clean_boot_and_loader() {
         (&r["outcome"], &r["brake_at_s"]),
         (&json!("pass"), &json!(3.0))
     );
+
     assert_eq!(
         check(&capture(&[(OFF, 5_000_000)]), "loader")["outcome"],
         "pass"
@@ -47,8 +49,10 @@ fn a_single_sample_drive_is_caught_and_timed() {
         r["input_drive"],
         json!([{"start_us": 1000.0, "length_us": 1.0, "direction": "forward"}])
     );
+
     let r = check(&capture(&[(OFF, 10), (REV, 5), (BRAKE, 10)]), "boot");
     assert_eq!(r["input_drive"][0]["direction"], "reverse");
+
     // Inputs equal but an output pulse (OUTA high) is still a drive.
     let r = check(&capture(&[(OFF, 10), (0b0100, 2), (BRAKE, 10)]), "boot");
     assert_eq!(
@@ -94,16 +98,19 @@ fn session_summary_and_integrity() {
     for (name, data) in &files {
         fs::write(d.join(name), data).unwrap();
     }
+
     let mut manifest = json!({"schema_version": 1, "mode": "boot", "samplerate": 1_000_000, "seconds": 8,
         "channels": {"ina": 0, "inb": 1, "outa": 2, "outb": 3},
         "cycles": files.iter().map(|(n, b)| json!({"file": n, "bytes": b.len()})).collect::<Vec<_>>()});
     fs::write(d.join("manifest.json"), manifest.to_string()).unwrap();
+
     let report = verify(d).unwrap();
     assert_eq!(
         (&report["outcome"], &report["passed"]),
         (&json!("pass"), &json!(2))
     );
     assert_eq!(report["brake_at_s"], json!({"min": 0.002, "max": 0.0025}));
+
     fs::write(d.join("cycle-002.bin"), [&files[1].1[..], b"\0"].concat()).unwrap();
     assert!(
         verify(d)
@@ -111,6 +118,7 @@ fn session_summary_and_integrity() {
             .to_string()
             .contains("changed since capture")
     );
+
     manifest["channels"] = json!({"ina": 0, "inb": 0, "outa": 2, "outb": 3});
     fs::write(d.join("manifest.json"), manifest.to_string()).unwrap();
     assert!(
@@ -119,6 +127,7 @@ fn session_summary_and_integrity() {
             .to_string()
             .contains("four distinct channels")
     );
+
     manifest["cycles"][0]["file"] = json!("../outside.bin");
     manifest["channels"] = json!({"ina": 0, "inb": 1, "outa": 2, "outb": 3});
     fs::write(d.join("manifest.json"), manifest.to_string()).unwrap();

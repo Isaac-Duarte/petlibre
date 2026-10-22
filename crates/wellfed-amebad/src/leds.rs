@@ -63,6 +63,7 @@ pub fn initialize() -> bool {
     if !stopped::observe().verified() {
         return false;
     }
+
     let _ = all_low(); // Preload before output direction; verify after enabling.
     for led in Led::ALL {
         sdk::gpio_no_pull(led.pin());
@@ -79,6 +80,7 @@ pub fn request(led: Led, high: bool) -> bool {
         let _ = all_low();
         return false;
     }
+
     let pin = led.pin();
     let mask = 1 << (pin & 31);
     sdk::gpio_port_write(pin >> 5, mask, if high { mask } else { 0 });

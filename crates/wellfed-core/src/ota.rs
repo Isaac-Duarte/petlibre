@@ -12,7 +12,9 @@ pub const MAGIC: [u8; 8] = *b"PLOTA1\0\0";
 /// magic, version, image length, target bank (u32), image SHA-256, build ID.
 pub const MANIFEST_BODY: usize = 8 + 4 + 4 + 4 + 32 + 32;
 pub const MANIFEST_LEN: usize = MANIFEST_BODY + 64;
+
 pub const SECTOR: usize = 4096;
+
 /// The factory loader's validity marker at the start of a bank.
 pub const MARKER: [u8; 8] = *b"81958711";
 /// Bank 1 starts at 0x186000; the reviewed footprint ends at 0x2d6000.
@@ -68,11 +70,13 @@ pub fn parse_manifest(
     if bytes[..8] != MAGIC {
         return Err(ManifestError::Magic);
     }
+
     let key = VerifyingKey::from_bytes(key).map_err(|_| ManifestError::Signature)?;
     let mut signature = [0u8; 64];
     signature.copy_from_slice(&bytes[MANIFEST_BODY..]);
     key.verify_strict(&bytes[..MANIFEST_BODY], &Signature::from_bytes(&signature))
         .map_err(|_| ManifestError::Signature)?;
+
     let mut image_sha256 = [0u8; 32];
     image_sha256.copy_from_slice(&bytes[20..52]);
     let mut build_id = [0u8; 32];
@@ -84,6 +88,7 @@ pub fn parse_manifest(
         image_sha256,
         build_id,
     };
+
     if manifest.target_bank != 1 {
         return Err(ManifestError::Bank);
     }
@@ -93,6 +98,7 @@ pub fn parse_manifest(
     if manifest.version <= installed_version {
         return Err(ManifestError::Downgrade);
     }
+
     Ok(manifest)
 }
 
@@ -192,6 +198,7 @@ impl Writer {
         if offset == 0 && data.len() >= MARKER.len() && data[..MARKER.len()] != MARKER {
             return Err(self.fail(WriteError::Marker));
         }
+
         self.hasher.update(data);
         self.sector[self.fill..self.fill + data.len()].copy_from_slice(data);
         self.fill += data.len();
@@ -199,11 +206,13 @@ impl Writer {
         if self.fill < SECTOR && self.received < self.manifest.image_len {
             return Ok(None);
         }
+
         self.phase = Phase::Programming;
         if self.sector_offset == 0 {
             // Withhold the marker: bank 1 must not be valid before commit.
             self.sector[..MARKER.len()].fill(0xff);
         }
+
         Ok(Some(Program {
             offset: BANK1_OFFSET + self.sector_offset,
             data: &self.sector[..self.fill],
@@ -218,6 +227,7 @@ impl Writer {
         if !readback_ok {
             return Err(self.fail(WriteError::Readback));
         }
+
         self.sector_offset += SECTOR as u32;
         self.fill = 0;
         self.sector = [0xff; SECTOR];
@@ -225,6 +235,7 @@ impl Writer {
             self.phase = Phase::Receiving;
             return Ok(());
         }
+
         let digest: [u8; 32] = self.hasher.clone().finalize().into();
         if digest != self.manifest.image_sha256 {
             return Err(self.fail(WriteError::Hash));
@@ -294,6 +305,8 @@ pub const DATA_HEADER: usize = 10;
 /// Room for `wellfed/1/<device id>/ota/data`.
 pub const TOPIC_BUDGET: usize = 96;
 
+// A chunk answer's publish: a header byte, up to four remaining-length bytes,
+// the topic's length prefix, the topic, then the data header and chunk.
 const _: () = assert!(
     5 + 2 + TOPIC_BUDGET + DATA_HEADER + MAX_CHUNK as usize <= crate::transport::MAX_PACKET
         && SECTOR.is_multiple_of(MAX_CHUNK as usize)
@@ -376,6 +389,7 @@ pub fn decode_data(bytes: &[u8]) -> Option<Data<'_>> {
         2 => Status::Range,
         _ => return None,
     };
+
     let len = u32_at(bytes, 6) as usize;
     let body = &bytes[DATA_HEADER..];
     (body.len() == len && (status == Status::Ok || len == 0)).then_some(Data {

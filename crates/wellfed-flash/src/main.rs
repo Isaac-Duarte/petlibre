@@ -43,6 +43,7 @@ enum Command {
     GiveWay(GiveWayArgs),
     /// Exact original bank-1 stock recovery from a full read.
     StockRecovery(StockArgs),
+
     /// Offline: plan stock recovery sectors from a baseline and current read.
     PlanStockRecovery {
         #[arg(long)]
@@ -53,6 +54,7 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+
     /// Offline: decode GD25Q64E status registers and assess a write range.
     DecodeStatus {
         #[arg(long, value_parser = number::<u8>)]
@@ -66,6 +68,7 @@ enum Command {
         #[arg(long, value_parser = number::<usize>, default_value = "0x2d6000")]
         end: usize,
     },
+
     /// Offline: check a transaction journal's hash chain; never resumes it.
     InspectJournal { journal: PathBuf },
 }
@@ -261,9 +264,11 @@ fn refused(error: &wellfed_flash::Error) -> (u8, Value) {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+
     // An operator interrupt stops the session terminally and records it.
     let _ = ctrlc::set_handler(|| INTERRUPTED.store(true, Ordering::SeqCst));
     let root = cli.root.as_path();
+
     let (code, summary) = match cli.command {
         Command::Read(args) => device(root, |context| {
             let mode = match args.mode {
@@ -273,6 +278,7 @@ fn main() -> ExitCode {
                 ReadMode::Full => read::Mode::Full,
                 ReadMode::Status => read::Mode::Status,
             };
+
             read::run(
                 context,
                 &read::Args {
@@ -288,6 +294,7 @@ fn main() -> ExitCode {
                 },
             )
         }),
+
         Command::Update(args) => device(root, |context| {
             update::run(
                 context,
@@ -303,6 +310,7 @@ fn main() -> ExitCode {
                 },
             )
         }),
+
         Command::GiveWay(args) => device(root, |context| {
             update::give_way(
                 context,
@@ -313,6 +321,7 @@ fn main() -> ExitCode {
                 },
             )
         }),
+
         Command::StockRecovery(args) => device(root, |context| {
             stock::run(
                 context,
@@ -323,6 +332,7 @@ fn main() -> ExitCode {
                 },
             )
         }),
+
         Command::PlanStockRecovery {
             baseline,
             current,
@@ -333,6 +343,7 @@ fn main() -> ExitCode {
                 summary,
             })
         }),
+
         Command::DecodeStatus {
             sr1,
             sr2,
@@ -343,6 +354,7 @@ fn main() -> ExitCode {
             Ok(value) => (0, value),
             Err(error) => refused(&error),
         },
+
         Command::InspectJournal { journal } => {
             match std::fs::read(&journal)
                 .map_err(wellfed_flash::Error::from)
@@ -353,6 +365,7 @@ fn main() -> ExitCode {
             }
         }
     };
+
     println!("{summary}");
     ExitCode::from(code)
 }

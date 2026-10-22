@@ -60,22 +60,27 @@ pub struct Hardware {
     pub lp_clock: u32,
     /// Writes to the two LP enable registers are ignored.
     pub blocked_gpio_clock: bool,
+
     pub output: [u32; 2],
     pub input: [u32; 2],
     pub direction: [u32; 2],
+
     pub interrupts: u32,
     pub polls: u32,
     pub reads: u32,
     pub clears: u32,
     pub current_adc: u16,
     pub battery_adc: u16,
+
     pub wifi_started: bool,
     /// Every event the Wi-Fi shim recorded, in order; tests script it.
     pub wifi_events: Vec<WifiEvent>,
     /// The shim's ring size.
     pub wifi_ring: u32,
+
     /// Internal channel 10: the chip's own supply measurement.
     pub supply_adc: u16,
+
     /// FW08 TCP script: each connect takes the next result (default: refused).
     pub tcp_connects: VecDeque<Option<i32>>,
     /// Each receive takes the next item; an empty queue is a timeout.
@@ -86,6 +91,7 @@ pub struct Hardware {
     pub tcp_send_fails: bool,
     /// Milliseconds; a timed-out receive advances it by its timeout.
     pub uptime_ms: u32,
+
     pub output_hook: Option<fn()>,
     pub gpio_init_hook: Option<fn()>,
     pub blocked_gpio_write: [u32; 2],
@@ -94,22 +100,26 @@ pub struct Hardware {
     /// Pads whose input path reads LOW regardless of the driven level.
     pub dead_input: [u32; 2],
     pub pad_control: [u32; 64],
+
     pub adc_enabled: bool,
     pub trigger: bool,
     pub stuck: bool,
     pub efuse_fail: bool,
     pub blocked_motor_write: bool,
     pub blocked_optics_write: bool,
+
     pub raw_ticks: u32,
     pub timer_phase: u32,
     pub timer_irqs: u32,
     pub gpio_irqs: u32,
     pub fail_timer_register: bool,
     pub fail_gpio_register: bool,
+
     pub task_create_fail: bool,
     pub task_live: bool,
     pub blocked_optics_off: bool,
     pub ipsr: u32,
+
     pub hs_control: u32,
     pub lp_control: u32,
     pub watchdog_ticks: u32,
@@ -121,10 +131,12 @@ pub struct Hardware {
     pub watchdog_scope_blocked: bool,
     pub watchdog_disable_blocked: bool,
     pub watchdog_enable_corrupt: bool,
+
     pub task: Option<TaskStep>,
     pub task_context: *mut c_void,
     pub task_delays: u32,
     pub task_deletes: u32,
+
     pub wake_locks: u32,
     pub adc_delay_ticks: u32,
     pub adc_hook: Option<fn(*mut c_void)>,
@@ -133,15 +145,18 @@ pub struct Hardware {
     pub irq_enabled: [bool; 32],
     pub irq_pending: [bool; 32],
     pub adc_channel: u32,
+
     pub gpio: GpioRegisters,
     pub timer: TimerRegisters,
     pub watchdog_vendor: u32,
     pub backup: [u32; 8],
     pub boot_reason: u32,
+
     /// SYSTIMER ticks that pass during each busy-wait iteration.
     pub spin_ticks: u32,
     pub spins: u32,
     pub systick: u32,
+
     /// The 64 KiB storage region as NOR: erase sets 1s, program clears bits.
     pub storage: Vec<u8>,
     /// Bank 1's reviewed footprint, for the updater.
@@ -163,6 +178,7 @@ impl Default for Hardware {
             swd_stuck: false,
             lp_clock: 0,
             blocked_gpio_clock: false,
+
             output: [0; 2],
             input: [(1 << 16) | (1 << 19), 0],
             direction: [0; 2],
@@ -170,18 +186,22 @@ impl Default for Hardware {
             polls: 0,
             reads: 0,
             clears: 0,
+
             current_adc: 500,
             battery_adc: 2800,
             supply_adc: 3000,
+
             tcp_connects: VecDeque::new(),
             tcp_rx: VecDeque::new(),
             tcp_tx: Vec::new(),
             tcp_closed: Vec::new(),
             tcp_send_fails: false,
             uptime_ms: 0,
+
             wifi_started: false,
             wifi_events: Vec::new(),
             wifi_ring: 16,
+
             output_hook: None,
             gpio_init_hook: None,
             blocked_gpio_write: [0; 2],
@@ -190,6 +210,7 @@ impl Default for Hardware {
             // Physical observation on the research unit: PA0-PA7 read LOW.
             dead_input: [0xff, 0],
             pad_control: [0; 64],
+
             adc_enabled: false,
             trigger: false,
             stuck: false,
@@ -200,6 +221,7 @@ impl Default for Hardware {
             timer_phase: 0,
             timer_irqs: 0,
             gpio_irqs: 0,
+
             fail_timer_register: false,
             fail_gpio_register: false,
             task_create_fail: false,
@@ -208,6 +230,7 @@ impl Default for Hardware {
             ipsr: 0,
             hs_control: 0,
             lp_control: 0,
+
             watchdog_ticks: 0,
             watchdog_period: 0,
             watchdog_init_calls: 0,
@@ -217,6 +240,7 @@ impl Default for Hardware {
             watchdog_scope_blocked: false,
             watchdog_disable_blocked: false,
             watchdog_enable_corrupt: false,
+
             task: None,
             task_context: core::ptr::null_mut(),
             task_delays: 0,
@@ -225,6 +249,7 @@ impl Default for Hardware {
             adc_delay_ticks: 0,
             adc_hook: None,
             adc_hook_context: core::ptr::null_mut(),
+
             irq: [None; 32],
             irq_enabled: [false; 32],
             irq_pending: [false; 32],
@@ -234,9 +259,11 @@ impl Default for Hardware {
             watchdog_vendor: 0,
             backup: [0; 8],
             boot_reason: 0,
+
             spin_ticks: 33,
             spins: 0,
             systick: 7,
+
             storage: vec![u8::MAX; 16 * 4096],
             bank1: vec![u8::MAX; 0x15_0000],
             running_bank: Some(1),
@@ -301,6 +328,7 @@ fn run_irq(index: usize) {
         }
         Some((handler, previous))
     });
+
     if let Some((handler, previous)) = handler {
         // SAFETY: handlers are the ports' registered ISRs, run synchronously.
         unsafe { handler(core::ptr::null_mut()) };
@@ -332,6 +360,7 @@ pub fn watchdog_advance(ticks: u32) {
         if h.watchdog_vendor & api::WDG_BIT_ENABLE == 0 || h.watchdog_expired {
             return;
         }
+
         let elapsed = u64::from(h.watchdog_ticks) + u64::from(ticks);
         if elapsed >= u64::from(h.watchdog_period) {
             h.watchdog_ticks = h.watchdog_period;
@@ -348,6 +377,7 @@ pub fn watchdog_advance(ticks: u32) {
 pub fn advance(ticks: u32, run_timer: bool) {
     with(|h| h.raw_ticks = h.raw_ticks.wrapping_add(ticks));
     watchdog_advance(ticks);
+
     let fire = with(|h| {
         if h.timer.en & api::TIM_CR_CNT_STS == 0 {
             return false;
@@ -362,6 +392,7 @@ pub fn advance(ticks: u32, run_timer: bool) {
         // Model a coalesced pending IRQ, not one callback per lost period.
         run_timer
     });
+
     if fire {
         irq(TIMER2_IRQ);
     }
@@ -393,6 +424,7 @@ pub fn run_task() {
         assert!(h.task_live && h.task.is_some());
         (h.task.unwrap(), h.task_context)
     });
+
     // SAFETY: the step and context were registered by the port under test.
     let delay = unsafe { step(context) };
     with(|h| {

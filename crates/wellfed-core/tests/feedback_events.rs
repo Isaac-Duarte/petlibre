@@ -1,3 +1,11 @@
+//! Tests for the bounded feedback-edge queue and its handoff to the feeding
+//! controller: FIFO wrap, capture-time inhibition, overflow and stale
+//! batches, clock errors, drive continuity and the motor-gate pipeline.
+//!
+//! An edge is credited at most once and judged by its capture time, not by
+//! when it is processed. An invalid batch credits nothing and faults the feed
+//! to STOP.
+
 use core::ffi::c_void;
 
 use wellfed_core::feed_controller::{
@@ -40,6 +48,7 @@ fn begin_mode(mode: BowlMode, now: u32) -> Fixture {
         current_ma: 100,
         ..FeedSample::default()
     };
+
     let mut f = Fixture {
         events: FeedbackEvents::new(32, 2, now).unwrap(),
         controller: FeedController::new(&LIMITS, 0).unwrap(),
@@ -52,6 +61,7 @@ fn begin_mode(mode: BowlMode, now: u32) -> Fixture {
         },
         now,
     };
+
     let request = FeedRequest {
         id: 1,
         portions: 2,
@@ -104,14 +114,17 @@ const EMPTY: (FeedbackTakeResult, Option<FeedbackEvent>) = (FeedbackTakeResult::
 fn fifo_wrap_and_exactly_once() {
     let mut q = FeedbackEvents::new(3, 10, 0).unwrap();
     assert_eq!(q.take(0), EMPTY);
+
     assert!(q.push(1, true));
     assert!(q.push(2, false));
     assert_eq!(q.take(2), event(1, true));
     assert!(q.push(3, true));
     assert!(q.push(4, false));
+
     for stamp in 2..=4 {
         assert_eq!(q.take(4), event(stamp, stamp == 3));
     }
+
     assert_eq!(q.take(4), EMPTY);
     assert_eq!(q.count, 0);
 }
@@ -120,12 +133,15 @@ fn fifo_wrap_and_exactly_once() {
 fn delayed_inhibited_edges_never_become_valid() {
     let mut f = begin();
     f.advance(3);
+
     assert!(f.events.push(4, true));
     assert!(f.process(6)); // Old controller API would qualify processing time.
     assert!(f.controller.progress.completed == 0 && f.events.count == 0);
+
     assert!(f.events.push(7, true));
     assert!(f.process(7));
     assert_eq!(f.controller.progress.completed, 1);
+
     assert!(f.process(8));
     assert_eq!(f.controller.progress.completed, 1); // No replay on later polls.
 }
@@ -134,10 +150,12 @@ fn delayed_inhibited_edges_never_become_valid() {
 fn inhibition_retains_capture_time() {
     let mut f = begin();
     f.advance(4);
+
     assert!(f.events.push(5, true));
     assert!(f.process(7));
     assert!(f.controller.progress.completed == 1 && f.controller.inhibit_at == 5);
     assert_eq!(f.controller.last_feedback_at, 5);
+
     f.advance(2);
     assert!(f.events.push(10, true));
     assert!(f.process(11));
@@ -152,6 +170,7 @@ fn full_batch_credits_at_most_once() {
     for _ in 0..CAPACITY {
         assert!(f.events.push(5, true));
     }
+
     assert!(f.process(5));
     assert!(f.controller.progress.completed == 1 && f.events.count == 0);
 }
@@ -163,10 +182,12 @@ fn overflow_and_stale_batches_credit_nothing() {
     for _ in 0..CAPACITY {
         assert!(f.events.push(5, true));
     }
+
     assert!(!f.events.push(5, true));
     assert!(!f.process(5));
     assert!(f.events.fault == FeedbackFault::OVERFLOW && f.controller.progress.completed == 0);
     f.fault(FeedReason::FEEDBACK_STREAM);
+
     assert!(!f.events.push(6, true));
     assert!(f.controller.reset());
     assert!(!f.process(6) && f.events.fault == FeedbackFault::OVERFLOW);
@@ -189,6 +210,7 @@ fn current_faults_and_deadlines_precede_old_feedback() {
     assert!(f.process(5));
     f.fault(FeedReason::POWER);
     assert_eq!(f.controller.progress.completed, 0);
+
     let mut f = begin();
     f.advance(29);
     assert!(f.events.push(29, true));
@@ -212,6 +234,7 @@ fn clock_errors_wrap_and_future_capture() {
     assert!(f.events.push(6, true));
     assert!(!f.process(5));
     f.fault(FeedReason::FEEDBACK_STREAM);
+
     let mut f = begin();
     let edge = FeedSample {
         feedback_edge: true,
@@ -243,17 +266,20 @@ fn drive_must_be_known_healthy_and_continuous() {
         f.fault(FeedReason::OUTPUT);
         assert_eq!(f.controller.progress.completed, 0);
     }
+
     let mut f = begin();
     f.advance(4);
     f.drive.applied = MotorCommand::STOP;
     assert!(f.events.push(5, true));
     assert!(f.process(5));
     assert_eq!(f.controller.progress.completed, 0);
+
     assert!(f.events.push(6, true));
     f.drive.applied = MotorCommand::DRIVE_0;
     f.drive.applied_at = 7;
     assert!(f.process(7));
     assert_eq!(f.controller.progress.completed, 0);
+
     assert!(f.events.push(8, true));
     assert!(f.process(8));
     assert_eq!(f.controller.progress.completed, 1);
@@ -266,6 +292,7 @@ fn direction_handoff_discards_pre_drive_edges() {
     assert!(f.events.push(5, true));
     assert!(f.process(5));
     assert!(f.controller.motor == MotorCommand::DRIVE_1 && f.controller.progress.completed == 1);
+
     f.drive.applied = MotorCommand::STOP;
     f.advance(4);
     assert!(f.events.push(10, false));
@@ -273,6 +300,7 @@ fn direction_handoff_discards_pre_drive_edges() {
     f.drive.applied_at = 11;
     assert!(f.process(11));
     assert_eq!(f.controller.progress.pending_events, 0);
+
     assert!(f.events.push(12, false));
     assert!(f.process(12));
     assert!(f.controller.progress.pending_events == 1 && f.controller.progress.completed == 1);
@@ -282,13 +310,16 @@ fn direction_handoff_discards_pre_drive_edges() {
 fn reverse_completion_cannot_consume_old_edges() {
     let mut f = begin();
     f.advance(3);
+
     f.sample.current_ma = 301;
     assert!(f.process(4));
     assert_eq!(f.controller.state, FeedState::REVERSING);
+
     f.sample.current_ma = 100;
     f.drive.applied = MotorCommand::DRIVE_1;
     f.drive.applied_at = 5;
     f.advance(2);
+
     assert!(f.events.push(7, true));
     assert!(f.process(7));
     assert!(f.controller.state == FeedState::RUNNING && f.controller.progress.completed == 0);
@@ -301,13 +332,16 @@ fn invalid_configuration_and_external_trips() {
     assert!(FeedbackEvents::new(33, 2, 0).is_none());
     assert!(FeedbackEvents::new(1, 0, 0).is_none());
     assert!(FeedbackEvents::new(1, 0x8000_0000, 0).is_none());
+
     let mut q = FeedbackEvents::default();
     assert!(!q.push(0, true));
     assert_eq!(q.fault, FeedbackFault::ARGUMENT);
+
     let mut f = begin();
     f.events = FeedbackEvents::new(2, 5, 0).unwrap();
     assert!(!f.process(0));
     f.fault(FeedReason::FEEDBACK_STREAM);
+
     let mut f = begin();
     assert!(!f.controller.trip(FeedReason::DONE));
     assert!(!f.controller.trip(FeedReason::NONE));
@@ -339,21 +373,25 @@ fn pipeline_applies_gate_output_and_stops() {
     let mut gate = MotorGate::default();
     // SAFETY: `pins` outlives every gate call below.
     assert!(unsafe { gate.init(Some(write_pair), pins.cast(), 2, 4, 0) });
+
     for now in 0..=6 {
         if now == 5 {
             assert!(f.events.push(now, true));
         }
+
         f.drive = FeedbackDrive {
             healthy: gate.fault == MotorGateFault::OK,
             applied_known: gate.applied_known,
             applied: gate.applied,
             applied_at: gate.applied_at,
         };
+
         assert!(f.process(now));
         assert!(gate.request(f.controller.motor, now));
         assert!(gate.tick(now));
     }
     assert!(f.controller.progress.completed == 1 && !unsafe { &*pins }.b);
+
     // An ingestion overflow must cause the owner to apply STOP, not continue.
     for _ in 0..CAPACITY {
         assert!(f.events.push(7, true));
@@ -361,6 +399,7 @@ fn pipeline_applies_gate_output_and_stops() {
     assert!(!f.events.push(7, true));
     assert!(!f.process(7));
     assert!(gate.request(f.controller.motor, 7));
+
     let pins = unsafe { Box::from_raw(pins) };
     assert!(pins.a && pins.b && gate.applied_known);
     f.fault(FeedReason::FEEDBACK_STREAM);

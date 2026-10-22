@@ -55,9 +55,11 @@ async fn read_connect(stream: &mut TcpStream) -> Result<Vec<u8>> {
         }
     }
     ensure!(complete, "malformed remaining length");
+
     let mut body = vec![0; length];
     stream.read_exact(&mut body).await?;
     let body = normalize_connect(body)?;
+
     let mut packet = vec![0x10];
     let mut length = body.len();
     loop {
@@ -71,6 +73,7 @@ async fn read_connect(stream: &mut TcpStream) -> Result<Vec<u8>> {
             break;
         }
     }
+
     packet.extend(body);
     Ok(packet)
 }

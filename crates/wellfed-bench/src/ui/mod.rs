@@ -65,6 +65,7 @@ impl Listen {
                 "Refusing a wildcard address; name the interface address to serve on".into(),
             ));
         }
+
         let token = if ip.is_loopback() {
             None
         } else {
@@ -114,10 +115,12 @@ async fn authorize(State(ui): State<Ui>, request: Request, next: Next) -> Respon
             .split('&')
             .find_map(|pair| pair.strip_prefix("token="))
             .unwrap_or("");
+        // Constant-time, so response timing does not reveal the token.
         if !bool::from(supplied.as_bytes().ct_eq(token.as_bytes())) {
             return StatusCode::FORBIDDEN.into_response();
         }
     }
+
     let mut response = next.run(request).await;
     response
         .headers_mut()
@@ -198,6 +201,7 @@ impl Cursor {
     fn poll(&mut self) -> Vec<Event> {
         let directory = self.ui.sources.root.join(STATUS_DIR);
         let mut out = Vec::new();
+
         let snapshot = views::snapshot(&self.ui.sources).to_string();
         // `now` changes every time; compare without it.
         let key = |text: &str| {
@@ -212,6 +216,9 @@ impl Cursor {
             out.push(Event::default().event("status").data(&snapshot));
             self.snapshot = snapshot;
         }
+
+        // A new command, or a log that shrank, restarts the page's log view
+        // near the end of the current file.
         let started = fs::read_to_string(directory.join(CURRENT))
             .ok()
             .and_then(|text| serde_json::from_str::<Current>(&text).ok())
@@ -224,6 +231,7 @@ impl Cursor {
             out.push(Event::default().event("log-reset").data(""));
         }
         self.first = false;
+
         if size > self.offset {
             let mut chunk = Vec::new();
             if let Ok(mut file) = fs::File::open(&log)
@@ -239,6 +247,7 @@ impl Cursor {
                 out.push(Event::default().event("log").data(text));
             }
         }
+
         out
     }
 }
@@ -253,6 +262,7 @@ async fn events(
         offset: 0,
         first: true,
     };
+
     let ticks = stream::unfold(Some(cursor), |cursor| async move {
         let mut cursor = cursor?;
         loop {
@@ -285,6 +295,7 @@ pub fn start(
 ) -> Result<std::thread::JoinHandle<()>> {
     let listener = TcpListener::bind(listen.address)?;
     listener.set_nonblocking(true)?;
+
     let ui = Ui {
         sources: Sources { root, flash_bin },
         token: listen.token.as_deref().map(Arc::from),
@@ -294,12 +305,14 @@ pub fn start(
         .worker_threads(2)
         .enable_all()
         .build()?;
+
     Ok(std::thread::spawn(move || {
         runtime.block_on(async move {
             let Ok(listener) = tokio::net::TcpListener::from_std(listener) else {
                 eprintln!("The page could not take its listening socket");
                 return;
             };
+
             let shutdown = async {
                 while !interrupted() {
                     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -354,9 +367,11 @@ mod tests {
             assert_eq!(response.status(), StatusCode::OK, "{uri}");
             assert_eq!(response.headers()[header::CONTENT_TYPE], kind);
         }
+
         for uri in ["/api/status", "/api/sessions", "/api/health"] {
             assert_eq!(get(&router, uri).await.status(), StatusCode::OK, "{uri}");
         }
+
         assert_eq!(
             get(&router, "/missing").await.status(),
             StatusCode::NOT_FOUND
@@ -383,6 +398,7 @@ mod tests {
                 "{uri}"
             );
         }
+
         assert_eq!(
             get(&router, "/api/status?token=secret").await.status(),
             StatusCode::OK
@@ -399,10 +415,12 @@ mod tests {
         assert!(Listen::new("::", 8780).is_err());
         assert!(Listen::new("localhost", 8780).is_err());
         assert!(Listen::new("127.0.0.1", 8780).unwrap().token.is_none());
+
         let remote = Listen::new("100.64.0.1", 8780).unwrap();
         let token = remote.token.clone().unwrap();
         assert_eq!(token.len(), 48);
         assert!(remote.url().ends_with(&format!("?token={token}")));
+
         assert!(
             Listen::new("::1", 8780)
                 .unwrap()

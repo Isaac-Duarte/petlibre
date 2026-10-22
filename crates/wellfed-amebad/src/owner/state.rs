@@ -38,6 +38,7 @@ impl Owner {
     fn publish(&mut self) {
         let mut s = EventsSnapshot::default();
         self.snapshot(&mut s);
+
         let mut value = OwnerStatus {
             state: self.state,
             fault: self.fault,
@@ -54,6 +55,7 @@ impl Owner {
             optics_off: s.optics_off,
             ..OwnerStatus::default()
         };
+
         let _guard = IrqGuard::lock();
         value.flash_phase = self.flash().phase;
         value.flash_fault = self.flash().fault;
@@ -85,6 +87,7 @@ impl Owner {
             self.board.trip(observed);
             self.board.optics(false);
         }
+
         let mut s = EventsSnapshot::default();
         self.snapshot(&mut s);
         if !s.stopped || !s.optics_off {
@@ -151,6 +154,7 @@ impl Owner {
                 || (self.state == OwnerState::PREPARING && self.optics_started)
                 || self.board.optics_enabled
                 || self.board.motor.desired != MotorCommand::STOP);
+
         if blocked && self.board_attempted && !self.board.flash_quiesce() {
             // SAFETY: as for `flash`; serialized by the guard.
             unsafe { (*self.config.flash).trip(FlashFault::OUTPUT) };
@@ -168,6 +172,7 @@ impl Owner {
             self.fail(OwnerFault::HARDWARE);
             return; // Keep the supervisor and caller-owned context alive for retries.
         }
+
         let mut s = EventsSnapshot::default();
         if !self.snapshot(&mut s) {
             self.fail(OwnerFault::HARDWARE);
@@ -179,12 +184,14 @@ impl Owner {
             self.state = OwnerState::FAULT;
             return;
         }
+
         let mut next = self.recovery;
         next.pending_request = false;
         if self.result.outcome == OwnerOutcome::DONE {
             next.direction = self.controller.progress.direction;
             next.credit_next_event = self.controller.progress.credit_next_event;
         }
+
         self.finish_attempted = true;
         self.publish(); // REPORTING is visible before a potentially slow journal write.
         // SAFETY: `start` validated the storage callbacks for their context.
@@ -206,12 +213,14 @@ impl Owner {
         self.initialized = true;
         sdk::wakelock_acquire(self.config.wake_lock_id);
         self.wake_owned = true;
+
         // Covers blocked board initialization/recovery, before any later refresh.
         let watchdog_config = self.config.watchdog;
         if !self.watchdog.open(&watchdog_config) {
             self.fail(OwnerFault::SETUP);
             return false;
         }
+
         self.board_attempted = true;
         let c = self.config;
         let board = &raw mut self.board;
@@ -226,6 +235,7 @@ impl Owner {
             self.init_failed = true;
             return false;
         }
+
         // SAFETY: as for `finish_result`.
         let recovered = unsafe { self.storage.recover_into(&mut self.recovery) };
         let r = self.recovery;
@@ -239,6 +249,7 @@ impl Owner {
             self.init_failed = true;
             return false;
         }
+
         let controller = FeedController::new(&c.feed, self.recovery.high_water_id);
         let sensors = SensorInputs::new(&c.sensors, &self.board.calibration);
         let (Some(controller), Some(sensors)) = (controller, sensors) else {
@@ -251,6 +262,7 @@ impl Owner {
         if c.bowl_mode == BowlMode::SINGLE {
             self.recovery.phase_known = true;
         }
+
         self.last_submitted_id = self.recovery.high_water_id;
         self.state = OwnerState::IDLE;
         true
@@ -262,6 +274,7 @@ impl Owner {
             if self.state != OwnerState::IDLE || !self.mailbox.has_request {
                 return;
             }
+
             self.request = FeedRequest {
                 id: self.mailbox.id,
                 portions: self.mailbox.portions,
@@ -272,6 +285,7 @@ impl Owner {
             };
             self.queued_at = self.mailbox.queued_at;
             self.mailbox.has_request = false;
+
             self.reserved = false;
             self.finish_attempted = false;
             self.result_durable = false;
@@ -287,7 +301,9 @@ impl Owner {
             self.published.result_durable = false;
             self.published.intent_reserved = false;
         }
+
         self.publish();
+
         // Reserve even a queued cancellation/expiry: it becomes a durable outcome.
         if !self.quiet() {
             self.fail(OwnerFault::HARDWARE);
@@ -310,6 +326,7 @@ impl Owner {
         let mut raw = SensorReading::default();
         let valid = self.board.capture(&mut raw);
         self.sensors.update(started, valid.then_some(&raw));
+
         // Cancellation has priority over feedback captured during acquisition.
         if (self.state == OwnerState::FEEDING || self.state == OwnerState::PREPARING)
             && self.cancelled()
@@ -326,19 +343,23 @@ impl Owner {
             self.reporting(OwnerOutcome::CANCELLED, FeedReason::CANCELLED);
             return;
         }
+
         let mut s = EventsSnapshot::default();
         if !self.snapshot(&mut s) {
             self.fail(OwnerFault::HARDWARE);
             self.reporting(OwnerOutcome::FAILED, FeedReason::OUTPUT);
             return;
         }
+
         if s.now_ms.wrapping_sub(self.queued_at) >= self.config.prepare_timeout_ms {
             self.reporting(OwnerOutcome::EXPIRED, FeedReason::TOTAL_TIMEOUT);
             return;
         }
+
         if !self.flash_ready() || !s.timer_ready || !s.owner_ready {
             return;
         }
+
         if !self.optics_started {
             if !self.events.optics(true, self.config.optics_max_on_ms) {
                 self.fail(OwnerFault::HARDWARE);
@@ -348,6 +369,7 @@ impl Owner {
             }
             return; // Fresh observations must now establish optical settling.
         }
+
         let _guard = IrqGuard::lock();
         if self.cancelled() {
             self.reporting(OwnerOutcome::CANCELLED, FeedReason::CANCELLED);
@@ -377,11 +399,13 @@ impl Owner {
         if self.board.opened {
             self.board.close();
         }
+
         if !self.watchdog.close(Some(&self.board)) {
             self.fail(OwnerFault::WATCHDOG);
             self.state = OwnerState::FAULT;
             return false;
         }
+
         if self.wake_owned {
             sdk::wakelock_release(self.config.wake_lock_id);
             self.wake_owned = false;
@@ -405,12 +429,14 @@ impl Owner {
         {
             return;
         }
+
         let progress = if self.watchdog_progress == u64::MAX {
             0
         } else {
             self.watchdog_progress += 1;
             self.watchdog_progress
         };
+
         // SAFETY: as for `flash`; a blocked authority refreshes nothing.
         unsafe {
             self.watchdog
@@ -438,15 +464,18 @@ impl Owner {
                 (*this).publish(); // No hardware or wake lock has been claimed.
                 return true;
             }
+
             if !(*this).initialized && !(*this).initialize() {
                 (*this).state = OwnerState::FAULT;
             }
+
             if (*this).fault == OwnerFault::OK {
                 (*this).check_watchdog();
             }
             if (*this).fault == OwnerFault::OK {
                 (*this).flash_ready();
             }
+
             let ack = {
                 let _guard = IrqGuard::lock();
                 core::mem::take(&mut (*this).mailbox.acknowledge)
@@ -455,6 +484,7 @@ impl Owner {
                 (*this).controller.reset();
                 (*this).state = OwnerState::IDLE;
             }
+
             (*this).take_request();
             if (*this).fault == OwnerFault::OK {
                 (*this).check_watchdog(); // A reservation can block.
@@ -462,10 +492,12 @@ impl Owner {
             if (*this).fault == OwnerFault::OK {
                 (*this).flash_ready();
             }
+
             if (*this).active_phase() && (*this).cancelled() {
                 (*this).controller.cancel((*this).request.id);
                 (*this).reporting(OwnerOutcome::CANCELLED, FeedReason::CANCELLED);
             }
+
             let mut acquired = false;
             if !(*this).flash().outputs_blocked()
                 && ((*this).state == OwnerState::IDLE || (*this).active_phase())
@@ -484,6 +516,7 @@ impl Owner {
                     }
                 }
             }
+
             if (*this).fault == OwnerFault::OK {
                 (*this).check_watchdog(); // Before optical/motor enable.
             }
@@ -493,6 +526,7 @@ impl Owner {
             if (*this).state == OwnerState::PREPARING {
                 (*this).prepare();
             }
+
             if (*this).state == OwnerState::FEEDING {
                 if !(*this).events.motor((*this).controller.motor) {
                     (*this).fail(OwnerFault::HARDWARE);
@@ -506,9 +540,11 @@ impl Owner {
                     _ => {}
                 }
             }
+
             if (*this).state == OwnerState::REPORTING {
                 (*this).finish_result();
             }
+
             if (*this).fault == OwnerFault::OK
                 && !(*this).flash().outputs_blocked()
                 && ((*this).state == OwnerState::IDLE
@@ -527,6 +563,7 @@ impl Owner {
                         (*this).watchdog_progress += 1;
                         (*this).watchdog_progress
                     };
+
                     let ok = (*this)
                         .watchdog
                         .checkpoint_if_ready(progress, (*this).config.flash);
@@ -535,12 +572,14 @@ impl Owner {
                     }
                 }
             }
+
             if (*this).state == OwnerState::FAULT {
                 let quiet = (*this).quiet();
                 if quiet && (*this).init_failed {
                     (*this).hold_init_fault();
                 }
             }
+
             let ended = (*this).stop_requested()
                 && (*this).state != OwnerState::REPORTING
                 && !(*this).active_phase()

@@ -25,6 +25,7 @@ fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     // drives neither, so it only halts.
     #[cfg(feature = "km4")]
     wellfed_amebad::sdk::panic_outputs_safe();
+
     // Halt here. Only a watchdog that was already armed resets the core (the
     // diagnostic build arms none); otherwise recovery needs an external reset.
     loop {

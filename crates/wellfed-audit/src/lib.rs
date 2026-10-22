@@ -34,6 +34,8 @@ pub enum Error {
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
+/// Refuse the input unless `condition` holds. A refusal (exit status 2) means
+/// the audit never ran, which is distinct from evidence that ran and failed.
 pub fn require(condition: bool, message: impl Into<String>) -> Result<()> {
     if condition {
         Ok(())

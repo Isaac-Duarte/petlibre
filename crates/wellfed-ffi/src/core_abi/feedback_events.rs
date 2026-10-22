@@ -42,6 +42,7 @@ pub unsafe extern "C" fn wellfed_feedback_events_take(
         events.fail(FeedbackFault::ARGUMENT);
         return FeedbackTakeResult::FAILED;
     };
+
     let (result, taken) = events.take(now_ms);
     if let Some(taken) = taken {
         *out = taken;
@@ -66,6 +67,8 @@ pub unsafe extern "C" fn wellfed_feedback_events_process(
             events.process(controller, now_ms, sample, drive)
         }
         (events, controller, _) => {
+            // A missing argument is a stream fault: fault whichever queue is present and
+            // trip whichever controller is present.
             if let Some(events) = events {
                 events.fail(FeedbackFault::ARGUMENT);
             }

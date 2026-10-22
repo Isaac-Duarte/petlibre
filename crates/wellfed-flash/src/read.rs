@@ -62,10 +62,12 @@ pub fn inspect_status(
         observations.push(values);
         record(values)?;
     }
+
     require(
         observations[0] == observations[1],
         "Status observations differ; stop without retry",
     )?;
+
     Ok(json!({
         "observations": observations, "matching": true,
         "bank1_assessment": status::assess_range(observations[1], 0x186000, 0x2D6000)?,
@@ -76,15 +78,18 @@ pub fn inspect_status(
 
 pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
     let root = &context.root;
+
     // Validate local inputs before opening any port or writing any command.
     let mut helper = None;
     let mut candidates = Vec::new();
     let mut continued = None;
+
     match args.mode {
         Mode::Observe => require(
             (1.0..=180.0).contains(&args.seconds),
             "Observation must be 1-180 seconds",
         )?,
+
         Mode::InspectRom => {
             require(
                 !args.candidate_rom.is_empty(),
@@ -99,6 +104,7 @@ pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
                 candidates.push((path.display().to_string(), data));
             }
         }
+
         _ => {
             helper = Some(context.helper(args.helper.as_deref())?);
             let rom = args.rom_report.as_deref().ok_or_else(|| {
@@ -107,6 +113,7 @@ pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
                 )
             })?;
             session::validate_rom_report(context, rom)?;
+
             if args.mode == Mode::Status {
                 continued = Some(session::validate_status_session(
                     context,
@@ -114,6 +121,7 @@ pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
                     &args.port,
                 )?);
             }
+
             if args.mode == Mode::Full {
                 let small = args.small_report.as_deref().ok_or_else(|| {
                     crate::Error::Refused("A completed bounded read is required first".into())
@@ -124,8 +132,10 @@ pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
             }
         }
     }
+
     let directory = root.output_directory(&args.output)?;
     let report_path = directory.join("report.json");
+
     let metadata = RefCell::new(json!({
         "mode": args.mode.name(), "port": args.port, "baud": 115200, "format": "8N1",
         "start_utc": utc(), "status": "prepared",
@@ -137,26 +147,34 @@ pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
                         "Helper disables OTF; a raw dump may contain ciphertext",
                         "External flash excludes separate OTP/eFuse"],
     }));
+
+    // The prepared report exists before the port opens, so any later stop
+    // has a report to update.
     let save = || evidence::save_report(&report_path, &metadata.borrow());
     save()?;
+
     let result = (|| -> Result<Value> {
         let mut port = context.record(&args.port, &directory)?;
         metadata.borrow_mut()["status"] = json!("running");
         save()?;
+
         progress(&format!(
             "Recording {} in {}",
             args.mode.name(),
             directory.display()
         ));
+
         let continuing = |metadata: &mut Value| {
             metadata["helper_upload_attempted"] = json!(false);
             metadata["continuing_helper_session"] =
                 json!(args.small_report.as_ref().unwrap().display().to_string());
             metadata["bounded_read_report_sha256"] = json!(sha256(continued.as_ref().unwrap()));
         };
+
         match args.mode {
             Mode::Observe => protocol::observe(&mut port, args.seconds),
             Mode::InspectRom => protocol::inspect_rom(&mut port, &candidates, args.start_km4),
+
             Mode::Status => {
                 continuing(&mut metadata.borrow_mut());
                 metadata.borrow_mut()["status_observations"] = json!([]);
@@ -169,6 +187,7 @@ pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
                     save()
                 })
             }
+
             Mode::Small | Mode::Full => {
                 if args.mode == Mode::Small {
                     // Require the already-observed ROM loader; never auto-enter it.
@@ -186,6 +205,7 @@ pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
             }
         }
     })();
+
     let complete = result.is_ok();
     {
         let mut metadata = metadata.borrow_mut();
@@ -206,6 +226,7 @@ pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
         metadata["end_utc"] = json!(utc());
         evidence::stream_hashes(&directory, &mut metadata);
     }
+
     let saved = save();
     let metadata = metadata.into_inner();
     Ok(session::closed(
@@ -228,13 +249,17 @@ fn full_or_small(port: &mut dyn Port, directory: &Path, mode: Mode) -> Result<Va
     let transfer = protocol::receive_flash(port, 0, length, &mut output, Some(&mut report))?;
     output.sync_all()?;
     drop(output);
+
     require(
         fs::metadata(&partial)?.len() == length as u64,
         "Final file length mismatch",
     )?;
+
+    // Only a complete, length-checked read takes the final name.
     let finished = directory.join("flash-read.bin");
     require(!finished.exists(), "Refusing to overwrite a completed read")?;
     fs::rename(&partial, &finished)?;
+
     let mut result = Value::Object(transfer.json());
     result["sha256"] = json!(sha256(&fs::read(&finished)?));
     result["offset"] = json!(0);

@@ -1,3 +1,12 @@
+//! The server's MQTT client, a single actor that owns the `Controller`.
+//!
+//! It answers the stock device on its namespace, carries the
+//! replacement-firmware health, reply and update topics when a firmware role
+//! is configured, and serves API requests arriving over a channel. Commands
+//! go out on QoS 0 without retain, and every reconnect builds a new client, so
+//! nothing is replayed into a later session; while disconnected, requests are
+//! still answered but no command is queued.
+
 use std::{sync::Arc, time::Duration};
 
 use anyhow::Result;
@@ -17,6 +26,7 @@ pub type OperationResult = std::result::Result<FeedRecord, Rejection>;
 pub type TrialResult = std::result::Result<ota_trial::Record, Rejection>;
 pub type ProbeResult = std::result::Result<probe::Record, Rejection>;
 pub type ReplacementResult = std::result::Result<uuid::Uuid, RequestError>;
+
 pub enum Request {
     Feed(FeedInput, oneshot::Sender<OperationResult>),
     Resolve(ResolveInput, oneshot::Sender<OperationResult>),
@@ -83,6 +93,7 @@ pub async fn run(
     let mut tracker = replacement::Tracker::default();
     // Owner-loaded only; never persisted, never offered unasked.
     let mut offer: Option<firmware_ota::Offer> = None;
+
     loop {
         let mut options = MqttOptions::new(
             config.server_client_id(),
@@ -95,6 +106,7 @@ pub async fn run(
         options.set_max_packet_size(65_536, 65_536);
         let (client, mut eventloop) = AsyncClient::new(options, 32);
         let mut tick = tokio::time::interval(Duration::from_secs(1));
+
         loop {
             tokio::select! {
                 event = eventloop.poll() => {
@@ -111,12 +123,14 @@ pub async fn run(
                             client.subscribe_many(filters).await?;
                             info!("local MQTT server connected");
                         }
+
                         Ok(Event::Incoming(Packet::SubAck(ack))) => {
                             anyhow::ensure!(ack.return_codes.iter().all(|code|matches!(code,rumqttc::SubscribeReasonCode::Success(_))),"broker refused server subscription");
                             controller.connected(Utc::now());
                             let query = protocol::service(&config,"ATTR_GET_SERVICE",uuid::Uuid::new_v4(),Utc::now());
                             client.try_publish(query.topic,QoS::AtMostOnce,false,serde_json::to_vec(&query.payload)?)?;
                         }
+
                         Ok(Event::Incoming(Packet::Publish(publish))) => {
                             if publish.retain { warn!("ignored retained device message"); continue; }
                             if config.firmware.is_some() && publish.topic == config.firmware_topic("health") {
@@ -124,6 +138,7 @@ pub async fn run(
                                 publish_status(&status,&controller,&tracker);
                                 continue;
                             }
+
                             if config.firmware.is_some() && publish.topic == config.firmware_topic("ota/get") {
                                 let (answer,dropped) = firmware_ota::Offer::serve(&mut offer,&publish.payload);
                                 if dropped { warn!("replacement update offer dropped: delivered once, then asked for again after a fallback; offer again to retry"); }
@@ -133,16 +148,19 @@ pub async fn run(
                                 }
                                 continue;
                             }
+
                             if config.firmware.is_some() && publish.topic == config.firmware_topic("ota/check") {
                                 // The normal role's offer check: the manifest only, and never counted as a delivery.
                                 let _ = client.try_publish(config.firmware_topic("ota/offered"),QoS::AtMostOnce,false,firmware_ota::Offer::check(offer.as_ref()));
                                 continue;
                             }
+
                             if config.firmware.is_some() && publish.topic == config.firmware_topic("reply") {
                                 if !tracker.observe_reply(&publish.payload,Utc::now()) { warn!("ignored invalid replacement reply"); }
                                 publish_status(&status,&controller,&tracker);
                                 continue;
                             }
+
                             match protocol::parse(&config,&publish.topic,&publish.payload) {
                                 Ok((channel,message)) => {
                                     let first_seen=controller.status.last_seen.is_none();
@@ -159,6 +177,7 @@ pub async fn run(
                                 Err(_) => warn!("ignored invalid device message"),
                             }
                         }
+
                         Ok(_) => {}
                         Err(_) => {
                             warn!("MQTT disconnected; discarding pending outgoing messages");
@@ -168,6 +187,7 @@ pub async fn run(
                         }
                     }
                 }
+
                 request = requests.recv() => {
                     let Some(request) = request else { return Ok(()); };
                     match request {
@@ -187,15 +207,18 @@ pub async fn run(
                             };
                             let _ = response.send(result);
                         }
+
                         Request::Resolve(input,response) => { let _ = response.send(controller.resolve(input,Utc::now())); }
                         Request::ResolveTrial(input,response) => { let _ = response.send(controller.resolve_trial(input,Utc::now())); }
                         Request::Replacement(op,response) => { let _ = response.send(replacement_request(&config,&client,&tracker,op)); }
+
                         Request::OtaOffer(next,response) => {
                             if let Some(o) = &next { info!(version=o.version,bytes=o.payload.len(),"replacement update offered"); }
                             else { info!("replacement update offer cleared"); }
                             offer = next;
                             let _ = response.send(config.firmware.is_some());
                         }
+
                         Request::ProbeQuery(input,response) => {
                             let result = match controller.probe_query(input,Utc::now()) {
                                 Ok((record,Some(command))) => {
@@ -209,6 +232,7 @@ pub async fn run(
                             };
                             let _ = response.send(result);
                         }
+
                         Request::OtaTrial(input,lease,response) => {
                             let result = match controller.ota_trial(input,lease.as_ref(),Utc::now()) {
                                 Ok((record,Some(command))) => {
@@ -224,10 +248,12 @@ pub async fn run(
                         }
                     }
                 }
+
                 _ = tick.tick() => { controller.expire(Utc::now())?; }
             }
             publish_status(&status, &controller, &tracker);
         }
+
         // Serve API requests while offline without accumulating commands for a
         // future session. All newly submitted feeds are rejected by the controller.
         let delay = tokio::time::sleep(Duration::from_secs(2));
@@ -242,19 +268,23 @@ pub async fn run(
                             let _ = response.send(result);
                         }
                         Some(Request::Resolve(input,response)) => { let _ = response.send(controller.resolve(input,Utc::now())); }
+
                         Some(Request::OtaTrial(input,lease,response)) => {
                             let result = controller.ota_trial(input,lease.as_ref(),Utc::now()).map(|(record,_)|record);
                             let _ = response.send(result);
                         }
                         Some(Request::ResolveTrial(input,response)) => { let _ = response.send(controller.resolve_trial(input,Utc::now())); }
+
                         Some(Request::ProbeQuery(input,response)) => {
                             let result = controller.probe_query(input,Utc::now()).map(|(record,_)|record);
                             let _ = response.send(result);
                         }
+
                         Some(Request::Replacement(_,response)) => {
                             let error = if config.firmware.is_some() { RequestError::Offline } else { RequestError::Unconfigured };
                             let _ = response.send(Err(error));
                         }
+
                         // An offer is server state, not a device command: keep it across reconnects.
                         Some(Request::OtaOffer(next,response)) => { offer = next; let _ = response.send(config.firmware.is_some()); }
                         None => return Ok(()),

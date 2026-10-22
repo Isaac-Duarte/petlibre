@@ -1,4 +1,10 @@
 //! Fixed modified-stock/original trial requests; no arbitrary firmware or URLs.
+//!
+//! Each `Image` names one hash-pinned file on the `ota-images` server and the
+//! stock version it must start from. A restore (`Original`, `CProbeOriginal`)
+//! is allowed only after its experiment's version was reported. The controller
+//! persists a `Record` before the `OTA_UPGRADE` command goes out and never
+//! resends it.
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -27,6 +33,7 @@ impl Image {
             Self::CProbeOriginal => "1.1.17",
         }
     }
+
     pub fn target_version(self) -> &'static str {
         match self {
             Self::Test => "1.1.16",
@@ -34,6 +41,7 @@ impl Image {
             Self::Original | Self::CProbeOriginal => "1.1.15",
         }
     }
+
     fn filename(self) -> &'static str {
         match self {
             Self::Test => "test.bin",
@@ -41,6 +49,7 @@ impl Image {
             Self::Original | Self::CProbeOriginal => "original.bin",
         }
     }
+
     fn digest(self) -> &'static str {
         match self {
             Self::Test => ota_image::TEST_SHA256,
@@ -114,6 +123,7 @@ impl Record {
             self.input.request_id,
             self.created_at,
         );
+
         command.payload["upgradeType"] = json!(1);
         command.payload["targetPid"] = json!("PLAF103");
         command.payload["targetSoftwareVersion"] = json!(self.input.image.target_version());
@@ -125,6 +135,7 @@ impl Record {
             self.input.server_token,
             self.input.image.filename()
         ));
+
         command
     }
 }

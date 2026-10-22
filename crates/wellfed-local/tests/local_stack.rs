@@ -1,3 +1,9 @@
+//! End-to-end feed test: the real `serve` process (broker, MQTT worker and
+//! API) with a simulated stock feeder. A feed completes from the device's
+//! service and grain-output reports, a repeated request ID is answered from
+//! the ledger without a second command, and after a restart a fresh feed is
+//! refused until the device reconnects.
+
 mod common;
 
 use std::{
@@ -22,6 +28,7 @@ async fn real_broker_api_and_simulated_feeder_complete_once_and_do_not_replay_af
     config.mqtt_listen = address();
     config.http_listen = address();
     storage::write_json(&path, &config).unwrap();
+
     let service = start(&path);
     let http = reqwest::Client::builder()
         .timeout(Duration::from_secs(3))
@@ -29,6 +36,7 @@ async fn real_broker_api_and_simulated_feeder_complete_once_and_do_not_replay_af
         .build()
         .unwrap();
     ready(&config, &http).await;
+
     let unauth = http
         .get(format!("http://{}/api/status", config.http_listen))
         .send()
@@ -57,11 +65,13 @@ async fn real_broker_api_and_simulated_feeder_complete_once_and_do_not_replay_af
     options.set_credentials(&config.device_username, &config.device_password);
     options.set_clean_session(true);
     let (device, mut events) = AsyncClient::new(options, 32);
+
     let worker_device = device.clone();
     let worker_config = config.clone();
     let count = Arc::new(AtomicUsize::new(0));
     let worker_count = count.clone();
     let (ntp_send, ntp_receive) = tokio::sync::oneshot::channel();
+
     let worker = tokio::spawn(async move {
         let mut ntp_send = Some(ntp_send);
         loop {
@@ -72,6 +82,7 @@ async fn real_broker_api_and_simulated_feeder_complete_once_and_do_not_replay_af
                         .await
                         .unwrap();
                 }
+
                 Ok(Event::Incoming(Packet::SubAck(_))) => {
                     for (suffix, message) in [
                         ("ntp/post", json!({"cmd":"NTP","ts":0})),
@@ -91,6 +102,7 @@ async fn real_broker_api_and_simulated_feeder_complete_once_and_do_not_replay_af
                             .unwrap();
                     }
                 }
+
                 Ok(Event::Incoming(Packet::Publish(publish))) => {
                     let message: Value = serde_json::from_slice(&publish.payload).unwrap();
                     if message["cmd"] == "NTP" {
@@ -102,6 +114,7 @@ async fn real_broker_api_and_simulated_feeder_complete_once_and_do_not_replay_af
                         assert_eq!(publish.qos, QoS::AtMostOnce);
                         worker_count.fetch_add(1, Ordering::SeqCst);
                         let id = message["msgId"].clone();
+
                         for (suffix, message) in [
                             (
                                 "service/post",
@@ -128,17 +141,20 @@ async fn real_broker_api_and_simulated_feeder_complete_once_and_do_not_replay_af
                         }
                     }
                 }
+
                 Ok(_) => {}
                 Err(_) => break,
             }
         }
     });
+
     let ntp = tokio::time::timeout(Duration::from_secs(5), ntp_receive)
         .await
         .unwrap()
         .unwrap();
     assert_eq!(ntp["calibrationTag"], true);
     assert!(ntp["ts"].as_i64().unwrap() > 1_700_000_000_000);
+
     let id = Uuid::new_v4();
     let input = json!({"request_id":id,"portions":1});
     let url = format!("http://{}/api/feed", config.http_listen);
@@ -154,6 +170,7 @@ async fn real_broker_api_and_simulated_feeder_complete_once_and_do_not_replay_af
         "{}",
         response.text().await.unwrap()
     );
+
     let mut completed = false;
     for _ in 0..100 {
         let state = status(&config, &http).await;
@@ -164,6 +181,7 @@ async fn real_broker_api_and_simulated_feeder_complete_once_and_do_not_replay_af
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     assert!(completed, "simulated feed was not completed");
+
     let duplicate: Value = http
         .post(&url)
         .bearer_auth(&config.api_token)
@@ -176,6 +194,7 @@ async fn real_broker_api_and_simulated_feeder_complete_once_and_do_not_replay_af
         .unwrap();
     assert_eq!(duplicate["phase"], "completed");
     assert_eq!(count.load(Ordering::SeqCst), 1);
+
     worker.abort();
     drop(device);
     drop(service);
@@ -184,6 +203,7 @@ async fn real_broker_api_and_simulated_feeder_complete_once_and_do_not_replay_af
     // before any device reconnects, while a fresh ID is refused as offline.
     let _restarted = start(&path);
     ready(&config, &http).await;
+
     let old: Value = http
         .post(&url)
         .bearer_auth(&config.api_token)
@@ -195,6 +215,7 @@ async fn real_broker_api_and_simulated_feeder_complete_once_and_do_not_replay_af
         .await
         .unwrap();
     assert_eq!(old["phase"], "completed");
+
     let fresh = http
         .post(&url)
         .bearer_auth(&config.api_token)

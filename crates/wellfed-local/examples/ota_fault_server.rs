@@ -35,6 +35,7 @@ async fn main() -> Result<()> {
     let mut args = std::env::args().skip(1);
     let (mut config, mut manifest, mut image) = (None, None, None);
     let (mut fault, mut at) = (Fault::None, 8192u32);
+
     while let Some(arg) = args.next() {
         let mut value = || args.next().context("missing value");
         match arg.as_str() {
@@ -54,17 +55,20 @@ async fn main() -> Result<()> {
             other => bail!("unknown argument {other}"),
         }
     }
+
     let config = Config::load(&config.context("--config")?)?;
     anyhow::ensure!(config.firmware.is_some(), "the config has no firmware role");
     let offer = Offer::new(
         &std::fs::read(manifest.context("--manifest")?)?,
         &std::fs::read(image.context("--image")?)?,
     )?;
+
     eprintln!(
         "offering version {} ({} bytes), fault {fault:?} at {at}",
         offer.version,
         offer.payload.len()
     );
+
     let mut options = MqttOptions::new(
         config.server_client_id(),
         config.mqtt_listen.ip().to_string(),
@@ -74,9 +78,11 @@ async fn main() -> Result<()> {
     options.set_keep_alive(Duration::from_secs(15));
     options.set_max_packet_size(65_536, 65_536);
     let (client, mut eventloop) = AsyncClient::new(options, 32);
+
     let get = config.firmware_topic("ota/get");
     let data = config.firmware_topic("ota/data");
     let started = Instant::now();
+
     loop {
         match eventloop.poll().await {
             Ok(Event::Incoming(Packet::ConnAck(_))) => {
@@ -87,6 +93,7 @@ async fn main() -> Result<()> {
                 let Some((part, offset, len)) = ota::decode_get(&publish.payload) else {
                     continue;
                 };
+
                 let t = started.elapsed().as_secs_f32();
                 let faulted = part == ota::Part::Chunk && offset >= at;
                 let answer = match (fault, faulted) {
@@ -107,6 +114,7 @@ async fn main() -> Result<()> {
                         answer
                     }
                 };
+
                 eprintln!("{t:8.2} get {part:?} {offset} {len}");
                 client
                     .publish(&data, QoS::AtMostOnce, false, answer)

@@ -16,6 +16,7 @@ use crate::canonical::{canonical, sha256};
 use crate::error::{Result, require};
 use crate::evidence::{Root, sync_directory, utc};
 
+/// Intent events after which flash may already differ from the preimage.
 const MUTATIONS: [&str; 3] = [
     "erase_intent",
     "program_packet_intent",
@@ -42,6 +43,7 @@ impl Journal {
         )?;
         let parent = output.parent().map(Path::to_path_buf).unwrap_or_default();
         require(parent.is_dir(), "Journal parent must already exist")?;
+
         fs::DirBuilder::new().mode(0o700).create(&output)?;
         let stream = OpenOptions::new()
             .write(true)
@@ -50,6 +52,7 @@ impl Journal {
             .open(output.join("journal.jsonl"))?;
         sync_directory(&output)?;
         sync_directory(&parent)?;
+
         Ok(Self {
             output,
             stream,
@@ -69,6 +72,7 @@ impl Journal {
             !self.failed,
             "Journal failed previously; no append or replay",
         )?;
+
         let mut body = fields;
         body.insert("event".into(), Value::String(event.into()));
         let mut entry = json!({"sequence": self.sequence, "previous_sha256": self.head,
@@ -77,6 +81,9 @@ impl Journal {
         entry["sha256"] = Value::String(head.clone());
         let mut line = canonical(&entry)?;
         line.push(b'\n');
+
+        // A failed write or fsync poisons the journal: no later append can
+        // announce an operation the journal does not durably record.
         if let Err(error) = self
             .stream
             .write_all(&line)
@@ -85,8 +92,10 @@ impl Journal {
             self.failed = true;
             return Err(error.into());
         }
+
         self.sequence += 1;
         self.head = head;
+
         if MUTATIONS.contains(&event) {
             self.mutation_possible = true;
         }
@@ -113,10 +122,12 @@ impl Journal {
                 json!({"error_type": error.kind(), "mutation_possible": possible}),
             ),
         );
+
         if appended.is_err() {
             // As in Python: no report a terminal record does not back.
             return;
         }
+
         let mut report = json!({"status": "stopped", "error_type": error.kind(),
                                 "mutation_possible": possible});
         for (key, value) in extra {
@@ -132,6 +143,7 @@ pub fn inspect(data: &[u8]) -> Result<Value> {
         data.len() <= 4 * 1024 * 1024 && data.ends_with(b"\n"),
         "Oversized or incomplete journal line",
     )?;
+
     let mut head = ZERO.to_string();
     let mut events: Vec<Map<String, Value>> = Vec::new();
     for (sequence, line) in data[..data.len() - 1].split(|b| *b == b'\n').enumerate() {
@@ -151,20 +163,24 @@ pub fn inspect(data: &[u8]) -> Result<Value> {
                 && entry["previous_sha256"] == head.as_str(),
             "Broken journal ordering/hash link",
         )?;
+
         let supplied = entry.remove("sha256").unwrap();
         require(
             supplied.as_str() == Some(&sha256(&canonical(&Value::Object(entry.clone()))?)),
             "Journal content hash mismatch",
         )?;
+
         head = supplied.as_str().unwrap().to_string();
         let Some(Value::Object(event)) = entry.remove("event") else {
             unreachable!()
         };
         events.push(event);
     }
+
     require(!events.is_empty(), "Empty journal")?;
     let name = |e: &Map<String, Value>| e["event"].as_str().unwrap().to_string();
     let last = events.last().unwrap();
+
     Ok(json!({
         "records": events.len(), "head_sha256": head,
         "first_event": name(&events[0]),
@@ -190,6 +206,7 @@ mod tests {
         let root = Root::new(checkout.path()).unwrap();
         let output = checkout.path().join("private/transaction");
         let mut journal = Journal::create(&root, &output).unwrap();
+
         journal
             .append("transaction_start", fields(json!({"transaction_id": "t"})))
             .unwrap();
@@ -205,16 +222,20 @@ mod tests {
             )
             .unwrap();
         journal.save_report(json!({"status": "ok"})).unwrap();
+
         assert!(Journal::create(&root, &output).is_err());
+
         let data = fs::read(output.join("journal.jsonl")).unwrap();
         let receipt = inspect(&data).unwrap();
         assert_eq!(receipt["records"], 3);
         assert_eq!(receipt["verified_terminal"], true);
         assert_eq!(receipt["erase_order"], json!([0x186000]));
         assert_eq!(receipt["transaction_id"], "t");
+
         let report: Value =
             serde_json::from_slice(&fs::read(output.join("report.json")).unwrap()).unwrap();
         assert_eq!(report["journal_head_sha256"], receipt["head_sha256"]);
+
         let tampered = String::from_utf8(data.clone())
             .unwrap()
             .replace("1597440", "1597441");

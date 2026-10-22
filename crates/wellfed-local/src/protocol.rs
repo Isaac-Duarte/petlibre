@@ -1,3 +1,10 @@
+//! The stock PLAF103 device protocol: topic parsing and the server's replies.
+//!
+//! The device posts JSON on `dl/PLAF103/<device_id>/device/<channel>/post`
+//! and the server answers on the matching `/sub` topic. Only captured commands
+//! get a reply (clock, binding, the imported feeding-plan snapshot and event
+//! acknowledgements); schedules are served from the snapshot, never edited.
+
 use anyhow::{Context, Result, ensure};
 use chrono::{DateTime, Offset, TimeZone, Utc};
 use chrono_tz::Tz;
@@ -39,6 +46,7 @@ pub fn parse(config: &Config, topic: &str, payload: &[u8]) -> Result<(String, Me
         ),
         "unknown topic channel"
     );
+
     let message: Message = serde_json::from_slice(payload).context("invalid device JSON")?;
     ensure!(
         !message.cmd.is_empty()
@@ -49,6 +57,7 @@ pub fn parse(config: &Config, topic: &str, payload: &[u8]) -> Result<(String, Me
                 .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_'),
         "invalid command name"
     );
+
     Ok((channel.to_owned(), message))
 }
 
@@ -57,6 +66,7 @@ pub fn reply(config: &Config, channel: &str, msg: &Message, now: DateTime<Utc>) 
     if let Some(id) = &msg.msg_id {
         payload["msgId"] = json!(id);
     }
+
     match (channel, msg.cmd.as_str()) {
         ("ntp", "NTP") => {
             // Only calibrate when there are no imported schedules. Large clock
@@ -84,6 +94,7 @@ pub fn reply(config: &Config, channel: &str, msg: &Message, now: DateTime<Utc>) 
         ) => {}
         _ => return None,
     }
+
     Some(Reply {
         topic: config.topic(&format!("{channel}/sub")),
         payload,
@@ -100,9 +111,11 @@ pub fn ntp_response(zone: Tz, now: DateTime<Utc>, calibrate: bool) -> Value {
             .fix()
             .local_minus_utc()
     };
+
     let mut transitions = Vec::new();
     let mut previous = now.timestamp();
     let mut previous_offset = current;
+
     // Scan UTC days, then find the exact transition second; no ambiguous local times.
     for day in 1..=800 {
         let end = now.timestamp() + day * 86_400;
@@ -125,8 +138,10 @@ pub fn ntp_response(zone: Tz, now: DateTime<Utc>, calibrate: bool) -> Value {
         previous = end;
         previous_offset = offset;
     }
+
     let (next_offset, next_ts) = transitions.first().copied().unwrap_or((current, 0));
     let (second_offset, second_ts) = transitions.get(1).copied().unwrap_or((current, 0));
+
     json!({"cmd":"NTP", "ts":now.timestamp_millis(), "code":0, "calibrationTag":calibrate,
         "timezone":f64::from(current)/3600.0, "timezoneOffsetSeconds":current,
         "nextDSTOffsetSeconds":next_offset, "nextDSTTransitionTs":next_ts,
@@ -149,6 +164,7 @@ mod tests {
     fn denver_time_response_matches_captured_dst_transitions() {
         let now = Utc.with_ymd_and_hms(2026, 10, 17, 21, 17, 41).unwrap();
         let response = ntp_response(chrono_tz::America::Denver, now, true);
+
         assert_eq!(response["timezoneOffsetSeconds"], -21600);
         assert_eq!(response["nextDSTOffsetSeconds"], -25200);
         assert_eq!(response["nextDSTTransitionTs"], 1793520000000_i64);
@@ -159,6 +175,7 @@ mod tests {
     #[test]
     fn zones_without_dst_do_not_invent_transition_dates() {
         let response = ntp_response(chrono_tz::UTC, Utc::now(), false);
+
         assert_eq!(response["nextDSTTransitionTs"], 0);
         assert_eq!(response["calibrationTag"], false);
     }

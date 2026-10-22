@@ -1,4 +1,9 @@
 //! The SDK function surface, mirroring `sdk::target`.
+//!
+//! Same names and signatures as the target build, backed by the per-thread
+//! [`Hardware`] model. Constants are host stand-ins for the SDK's values. The
+//! asserts encode how the ports must call the SDK (pins, priorities, task
+//! shape, interrupt state), so a port that drifts fails its host tests.
 
 use super::*;
 
@@ -43,10 +48,12 @@ pub fn adc_clock_enable() -> LpClock {
 pub const GPIO_PORT_A: u32 = 0;
 pub const PMU_USER_BASE: u32 = 16;
 pub const PMU_MAX: u32 = 31;
+
 pub const TIM_CR_CNT_START: u32 = 1;
 pub const TIM_CR_CNT_RUN: u32 = 256;
 pub const TIM_CR_CNT_STS: u32 = 65536;
 pub const TIM_IT_UPDATE: u32 = 1;
+
 pub const WDG_BIT_ENABLE: u32 = 1 << 16;
 pub const WDG_BIT_RST_MODE: u32 = 1 << 30;
 pub const WDG_BIT_ISR_CLEAR: u32 = 1 << 31;
@@ -54,6 +61,7 @@ pub const WDG_BIT_ISR_CLEAR: u32 = 1 << 31;
 const WDG_BIT_CLEAR: u32 = 1 << 24;
 pub const HS_WDTRST_OPT: u32 = 1 << 23;
 pub const LP_WDT_RESET_HS_ALL: u32 = 1 << 15;
+
 pub const BACKUP_USER: u32 = 1;
 pub const BOOT_KM4_WATCHDOG: u32 = 1 << 20;
 pub const BOOT_KM4_SYSTEM: u32 = 1 << 19;
@@ -346,12 +354,14 @@ pub fn adc_readable() -> bool {
     }) else {
         return false;
     };
+
     if delay != 0 {
         advance(delay, true);
     }
     if let Some((hook, context)) = hook {
         hook(context);
     }
+
     with(|h| !h.stuck)
 }
 
@@ -513,6 +523,7 @@ pub fn wdg_init(count_id: u32, divisor: u32) {
         h.watchdog_period = ((1u32 << (count_id + 1)) - 1) * (divisor + 1);
         h.watchdog_ticks = 0;
         h.watchdog_expired = false;
+
         // The SDK writes CLEAR (bit 24) and ISR_CLEAR (bit 31) with the
         // configuration; both are write-1 actions that read back as 0.
         let written =

@@ -69,6 +69,7 @@ pub fn decide(
     if ota::confirmed(record, identity).is_some() {
         return (Decision::Confirmed, boots);
     }
+
     let tag = u32::from(identity[0]);
     let counted = if register >> TAG_SHIFT == tag {
         (register >> COUNT_SHIFT) & 0xff
@@ -76,6 +77,7 @@ pub fn decide(
         0
     };
     let stamp = |n: u32| (tag << TAG_SHIFT) | (n.min(0xff) << COUNT_SHIFT) | boots;
+
     match ota::trial(false, counted, LIMIT) {
         Trial::Run => (Decision::Confirmed, boots),
         Trial::Count(n) => (Decision::Counted(n), stamp(n)),

@@ -91,16 +91,19 @@ pub struct Owner {
     pub watchdog: Watchdog,
     pub sensors: SensorInputs,
     pub controller: FeedController,
+
     pub recovery: OwnerRecovery,
     pub request: FeedRequest,
     pub result: OwnerResult,
     pub published: OwnerStatus,
     pub mailbox: OwnerMailbox,
+
     pub state: OwnerState,
     pub fault: OwnerFault,
     pub last_submitted_id: u64,
     pub watchdog_progress: u64,
     pub queued_at: u32,
+
     pub initialized: bool,
     pub board_attempted: bool,
     pub wake_owned: bool,
@@ -108,6 +111,7 @@ pub struct Owner {
     pub finish_attempted: bool,
     pub optics_started: bool,
     pub result_durable: bool,
+
     /// Initialization failed after the watchdog was armed (SETUP or RECOVERY).
     /// The fault stays latched; the watchdog is refreshed only while each
     /// iteration re-verifies STOP and infrared OFF, so a determined failure
@@ -129,6 +133,7 @@ impl Owner {
         if !config.valid() || !storage.complete() {
             return false;
         }
+
         {
             let _guard = IrqGuard::lock();
             // SAFETY: the contract requires a live authority; null fails here.
@@ -149,6 +154,7 @@ impl Owner {
             };
             set_active(self);
         }
+
         if !sdk::task_create(
             c"feed-owner",
             2048,
@@ -163,6 +169,7 @@ impl Owner {
             self.published.fault = OwnerFault::SETUP;
             return false;
         }
+
         true
     }
 
@@ -188,9 +195,11 @@ impl Owner {
         if self.config.bowl_mode == BowlMode::DOUBLE && !self.published.phase_known {
             return SubmitResult::REJECT_PHASE;
         }
+
         let Some(value) = self.events.now_ms() else {
             return SubmitResult::REJECT_STOPPED;
         };
+
         self.mailbox.id = id;
         self.mailbox.portions = portions;
         self.mailbox.queued_at = value;
@@ -262,6 +271,7 @@ unsafe extern "C" fn owner_step(argument: *mut c_void) -> u32 {
     if !unsafe { Owner::poll(owner) } {
         return unsafe { (*owner).config.sample_period_ms };
     }
+
     let _guard = IrqGuard::lock();
     set_active(ptr::null_mut());
     0

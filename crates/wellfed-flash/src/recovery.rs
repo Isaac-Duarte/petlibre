@@ -29,8 +29,10 @@ pub fn plan(baseline: &Baseline, current: &[u8]) -> Result<Value> {
         current[..0x6000] == baseline[..0x6000],
         "Factory/pre-application bytes differ; stop for investigation",
     )?;
+
     let mut sectors = Vec::new();
     let mut proposed = current.to_vec();
+
     for offset in (START..END).step_by(SECTOR) {
         let (before, after) = (
             &current[offset..offset + SECTOR],
@@ -39,10 +41,12 @@ pub fn plan(baseline: &Baseline, current: &[u8]) -> Result<Value> {
         if before == after {
             continue;
         }
+
         let mut staged = after.to_vec();
         if offset == START {
             staged[..8].fill(0xff);
         }
+
         sectors.push(json!({
             "offset": offset, "bytes": SECTOR,
             "before_sha256": sha256(before), "after_sha256": sha256(after),
@@ -52,6 +56,7 @@ pub fn plan(baseline: &Baseline, current: &[u8]) -> Result<Value> {
         }));
         proposed[offset..offset + SECTOR].copy_from_slice(after);
     }
+
     require(
         proposed[..START] == current[..START] && proposed[END..] == current[END..],
         "Proposed bytes escape application bank 1",
@@ -64,15 +69,18 @@ pub fn plan(baseline: &Baseline, current: &[u8]) -> Result<Value> {
         sectors.is_empty() || current[START..START + 8] != baseline[START..START + 8],
         "Target marker is still valid; refuse an in-place rewrite of a bootable bank",
     )?;
+
     // The marker sector goes last; activation is a separate no-erase pass.
     sectors.sort_by_key(|entry| {
         let offset = entry["offset"].as_u64().unwrap() as usize;
         (offset == START, offset)
     });
+
     let preserved: Vec<Value> = [(0, START), (END, CAPACITY)]
         .iter()
         .map(|(a, b)| json!({"start": a, "end_exclusive": b, "sha256": sha256(&current[*a..*b])}))
         .collect();
+
     let activation = if sectors.is_empty() {
         Value::Null
     } else {
@@ -83,6 +91,7 @@ pub fn plan(baseline: &Baseline, current: &[u8]) -> Result<Value> {
                "payload": "marker-commit-1k.bin", "payload_bytes": 1024,
                "payload_sha256": sha256(&baseline[START..START + 1024])})
     };
+
     Ok(json!({
         "schema_version": 2, "created_utc": utc(),
         "baseline_sha256": sha256(baseline), "current_snapshot_sha256": sha256(current),
@@ -142,12 +151,14 @@ pub fn payload_files(baseline: &Baseline, plan: &Value) -> Result<Vec<(String, V
         )?;
         files.push((entry["payload"].as_str().unwrap().to_string(), payload));
     }
+
     if !plan["activation"].is_null() {
         files.push((
             plan["activation"]["payload"].as_str().unwrap().to_string(),
             baseline.bytes()[START..START + 1024].to_vec(),
         ));
     }
+
     Ok(files)
 }
 
@@ -164,10 +175,12 @@ pub fn run_transaction(
     output: &Path,
 ) -> Result<Value> {
     let expected = validate_plan(baseline, current, manifest)?;
+
     // A previous output is terminal; there is no resume path.
     let mut journal = Journal::create(root, output)?;
     let transaction = uuid::Uuid::new_v4().to_string();
     let last = std::cell::RefCell::new(None::<Vec<u8>>);
+
     let mut full = |port: &mut dyn Port| -> Result<Vec<u8>> {
         let value = snapshot(port)?;
         require(
@@ -177,6 +190,7 @@ pub fn run_transaction(
         *last.borrow_mut() = Some(value.clone());
         Ok(value)
     };
+
     let result = (|| -> Result<Value> {
         journal.append(
             "transaction_start",
@@ -186,6 +200,7 @@ pub fn run_transaction(
                           "plan_sha256": sha256(&canonical(manifest)?)}),
             ),
         )?;
+
         require(
             full(port)? == current,
             "Fresh full snapshot differs from reviewed current image",
@@ -194,6 +209,7 @@ pub fn run_transaction(
             "initial_snapshot_verified",
             fields(json!({"sha256": sha256(current)})),
         )?;
+
         let mut results = Vec::new();
         for entry in expected["ordered_sector_payloads"].as_array().unwrap() {
             let offset = entry["offset"].as_u64().unwrap() as usize;
@@ -205,11 +221,13 @@ pub fn run_transaction(
                 entry["before_sha256"].as_str().unwrap(),
                 &mut append,
             )?;
+
             let packets = if entry["stage_required"] == true {
                 4
             } else {
                 0
             };
+
             require(
                 result["after_sha256"] == entry["stage_sha256"]
                     && result["program_packets"] == packets,
@@ -217,6 +235,7 @@ pub fn run_transaction(
             )?;
             results.push(result);
         }
+
         let mut marker = Value::Null;
         if !results.is_empty() {
             let last_result = results.last().unwrap();
@@ -227,6 +246,7 @@ pub fn run_transaction(
             let mut append = |event: &str, extra: Map<String, Value>| journal.append(event, extra);
             marker = sector::commit_marker(port, baseline, current, &mut full, &mut append)?;
         }
+
         // The commit's last action verified a full final snapshot, and a no-op
         // plan performs nothing after the initial one; reuse it.
         let after = last.borrow().clone().unwrap();
@@ -239,6 +259,7 @@ pub fn run_transaction(
                 && sha256(&after) == expected["proposed_snapshot_sha256"].as_str().unwrap(),
             "Final stock bank/full-image verification failed",
         )?;
+
         journal.append(
             "transaction_verified",
             fields(
@@ -246,6 +267,7 @@ pub fn run_transaction(
                           "marker_commit": !marker.is_null()}),
             ),
         )?;
+
         let report = json!({
             "status": "verified_via_supplied_transports", "transaction_id": transaction,
             "sectors": results, "marker_commit": marker, "snapshot_sha256": sha256(&after),
@@ -255,6 +277,7 @@ pub fn run_transaction(
         journal.save_report(report.clone())?;
         Ok(report)
     })();
+
     if let Err(error) = &result {
         journal.stopped(error, fields(json!({"transaction_id": transaction})));
     }

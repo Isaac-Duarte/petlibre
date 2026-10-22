@@ -1,3 +1,11 @@
+//! Wire-level tests for the FW08 local transport: MQTT 3.1.1 subset encoding
+//! and decoding, the session state machine, request parsing and the health
+//! and reply encoders.
+//!
+//! The expected bytes are pinned literally. The session must close on every
+//! protocol failure, and replies must never echo an unsupported request name
+//! (see docs/firmware/local-transport.md).
+
 use wellfed_core::transport::*;
 
 const NS: &str = "wellfed/1/dev1/";
@@ -14,6 +22,7 @@ fn connect(will: Option<Will>) -> Vec<u8> {
         password: b"secret",
         will,
     };
+
     let n = encode_connect(&mut buf, &c).unwrap();
     buf[..n].to_vec()
 }
@@ -21,6 +30,7 @@ fn connect(will: Option<Will>) -> Vec<u8> {
 #[test]
 fn connect_encodes_the_3_1_1_subset() {
     let bytes = connect(None);
+
     let mut expected = vec![0x10, 0];
     expected.extend([0, 4, b'M', b'Q', b'T', b'T', 4, 0xc2, 0, 30]);
     for field in [&b"wellfed-fw-dev1"[..], b"wellfed-fw", b"secret"] {
@@ -51,14 +61,19 @@ fn publish_subscribe_ping_disconnect_encode() {
     let mut buf = [0; MAX_PACKET];
     let n = encode_publish(&mut buf, "a/b", b"xy", true).unwrap();
     assert_eq!(&buf[..n], &[0x31, 7, 0, 3, b'a', b'/', b'b', b'x', b'y']);
+
     let n = encode_publish(&mut buf, "a/b", b"", false).unwrap();
     assert_eq!(&buf[..n], &[0x30, 5, 0, 3, b'a', b'/', b'b']);
+
     let n = encode_subscribe(&mut buf, 1, "t").unwrap();
     assert_eq!(&buf[..n], &[0x82, 6, 0, 1, 0, 1, b't', 0]);
+
     assert_eq!(encode_pingreq(&mut buf), Ok(2));
     assert_eq!(&buf[..2], &[0xc0, 0]);
+
     assert_eq!(encode_disconnect(&mut buf), Ok(2));
     assert_eq!(&buf[..2], &[0xe0, 0]);
+
     // A two-byte remaining length.
     let payload = [b'z'; 300];
     let n = encode_publish(&mut buf, "t", &payload, false).unwrap();
@@ -73,6 +88,7 @@ fn encoders_refuse_overflow_instead_of_truncating() {
         encode_publish(&mut small, "topic", b"payload", false),
         Err(Error::TooLong)
     );
+
     let mut buf = [0; 2 * MAX_PACKET];
     let big = [0; MAX_PACKET];
     assert_eq!(
@@ -86,6 +102,7 @@ fn decode_accepts_only_the_expected_packets() {
     assert_eq!(decode(&[]), Ok(None));
     assert_eq!(decode(&[0x20]), Ok(None));
     assert_eq!(decode(&[0x20, 2, 0]), Ok(None));
+
     assert_eq!(
         decode(&[0x20, 2, 0, 0, 0xff]),
         Ok(Some((
@@ -116,6 +133,7 @@ fn decode_accepts_only_the_expected_packets() {
             5
         )))
     );
+
     assert_eq!(decode(&[0xd0, 0]), Ok(Some((Packet::PingResp, 2))));
     let publish = [0x30, 6, 0, 1, b't', b'{', b'}', b'!'];
     assert_eq!(
@@ -129,6 +147,7 @@ fn decode_accepts_only_the_expected_packets() {
             8
         )))
     );
+
     // Wrong lengths, reserved bits, QoS > 0, unknown types, over-long lengths.
     assert_eq!(decode(&[0x20, 3, 0, 0, 0]), Err(Error::Malformed));
     assert_eq!(decode(&[0x20, 2, 2, 0]), Err(Error::Malformed));
@@ -149,6 +168,7 @@ fn session_runs_connect_subscribe_ping_and_requests() {
     let mut s = Session::connecting(1000);
     assert_eq!(s.state(), State::AwaitConnAck);
     assert_eq!(s.tick(5000), Tick::Idle);
+
     assert_eq!(
         s.on_packet(
             1200,
@@ -160,6 +180,7 @@ fn session_runs_connect_subscribe_ping_and_requests() {
         ),
         Event::Connected
     );
+
     let mut buf = [0; MAX_PACKET];
     let n = s.subscribe(1200, &mut buf, REQUEST).unwrap();
     assert_eq!(buf[0], 0x82);
@@ -176,12 +197,14 @@ fn session_runs_connect_subscribe_ping_and_requests() {
         Event::Ready
     );
     assert_eq!(s.state(), State::Ready);
+
     // Publishing defers the ping; then it is due.
     s.sent(10_000);
     assert_eq!(s.tick(24_999), Tick::Idle);
     assert_eq!(s.tick(25_000), Tick::Ping);
     assert_eq!(s.tick(26_000), Tick::Idle, "one ping outstanding");
     assert_eq!(s.on_packet(26_100, Packet::PingResp, REQUEST), Event::Pong);
+
     let payload = br#"{"id":"x","op":"ping"}"#;
     assert_eq!(
         s.on_packet(
@@ -208,12 +231,14 @@ fn session_closes_on_every_failure() {
         packet_id: 1,
         code: 0,
     };
+
     let ready = || {
         let mut s = Session::connecting(0);
         s.on_packet(1, connack, REQUEST);
         s.on_packet(2, suback, REQUEST);
         s
     };
+
     let cases: Vec<(Session, Packet, Fault)> = vec![
         (
             Session::connecting(0),
@@ -263,6 +288,7 @@ fn session_closes_on_every_failure() {
             Fault::Protocol(Error::TooLong),
         ),
     ];
+
     for (index, (mut s, packet, fault)) in cases.into_iter().enumerate() {
         assert_eq!(
             s.on_packet(10, packet, REQUEST),
@@ -276,6 +302,7 @@ fn session_closes_on_every_failure() {
             Event::Closed(fault)
         );
     }
+
     let mut s = Session::connecting(0);
     s.on_packet(1, connack, REQUEST);
     assert_eq!(
@@ -298,6 +325,7 @@ fn session_closes_on_every_failure() {
         Tick::Closed(Fault::ReplyTimeout),
         "across the wrap"
     );
+
     let mut s = Session::connecting(0);
     s.on_packet(1, connack, REQUEST);
     let mut buf = [0; MAX_PACKET];
@@ -306,18 +334,21 @@ fn session_closes_on_every_failure() {
         s.tick(1 + REPLY_TIMEOUT_MS),
         Tick::Closed(Fault::ReplyTimeout)
     );
+
     let mut s = ready();
     assert_eq!(s.tick(PING_AFTER_MS + 2), Tick::Ping);
     assert_eq!(
         s.tick(PING_AFTER_MS + 2 + REPLY_TIMEOUT_MS),
         Tick::Closed(Fault::ReplyTimeout)
     );
+
     let mut s = ready();
     for now in (1000..SILENCE_MS).step_by(1000) {
         s.sent(now); // Keeps pings from being due; the broker stays silent.
         assert_eq!(s.tick(now), Tick::Idle);
     }
     assert_eq!(s.tick(SILENCE_MS + 2), Tick::Closed(Fault::Silence));
+
     assert_eq!(
         s.on_error(Error::Malformed),
         Fault::Protocol(Error::Malformed)
@@ -334,6 +365,7 @@ fn requests_parse_only_the_fixed_shape() {
             op: Ok(Op::Health)
         })
     );
+
     let swapped = format!(r#" {{ "op" : "ping" , "id" : "{ID}" }} "#);
     assert_eq!(
         parse_request(swapped.as_bytes()),
@@ -342,6 +374,7 @@ fn requests_parse_only_the_fixed_shape() {
             op: Ok(Op::Ping)
         })
     );
+
     let other = format!(r#"{{"id":"{ID}","op":"feed"}}"#);
     assert_eq!(
         parse_request(other.as_bytes()),
@@ -350,6 +383,7 @@ fn requests_parse_only_the_fixed_shape() {
             op: Err("feed")
         })
     );
+
     for bad in [
         String::new(),
         "{}".into(),
@@ -367,6 +401,7 @@ fn requests_parse_only_the_fixed_shape() {
             "{bad}"
         );
     }
+
     for id in [
         "x",
         "0f8fad5b-d9cb-469f-a165-70867728950",
@@ -380,6 +415,7 @@ fn requests_parse_only_the_fixed_shape() {
             "{id}"
         );
     }
+
     assert_eq!(
         parse_request(&[b' '; MAX_REQUEST + 1]),
         Err(RequestError::TooLong)
@@ -425,6 +461,7 @@ fn health_renders_the_v1_schema_within_its_limit() {
             r#"{{"schema":"wellfed.health","v":1,"online":true,"seq":12,"uptime_ms":61234,"build":"{build}","bank":1,"reset_flags":"00000000","boot_count":7,"outputs":"stopped","faults":[],"wifi":{{"rssi":-20,"attempt":2,"losses":{{"link":0,"dns":1}},"last_loss":"dns"}},"transport":{{"connects":1,"last_error":null}}}}"#
         )
     );
+
     // The largest values still fit.
     let worst = Health {
         seq: u32::MAX,
@@ -442,17 +479,20 @@ fn health_renders_the_v1_schema_within_its_limit() {
         last_error: Some("protocol_malformed"),
         ..health()
     };
+
     let text = render(&worst).unwrap();
     assert!(text.len() <= MAX_HEALTH, "{}", text.len());
     assert!(text.contains(r#""faults":["watchdog","flash_hook","stopped_readback"]"#));
     assert!(text.contains(r#""outputs":"unverified""#) && text.contains(r#""last_loss":"link""#));
     assert!(text.ends_with(r#""last_error":"protocol_malformed"}}"#));
+
     let sensing = render(&Health {
         outputs: Outputs::Sensing,
         ..health()
     })
     .unwrap();
     assert!(sensing.contains(r#""outputs":"sensing","faults":[]"#));
+
     let offline = render(&Health {
         online: false,
         last_loss: Loss::None,
@@ -460,6 +500,7 @@ fn health_renders_the_v1_schema_within_its_limit() {
     })
     .unwrap();
     assert!(offline.contains(r#""online":false"#) && offline.contains(r#""last_loss":null"#));
+
     // Non-hex identities and unsafe error codes are refused, not escaped.
     assert!(
         render(&Health {
@@ -482,6 +523,7 @@ fn health_renders_the_v1_schema_within_its_limit() {
         })
         .is_err()
     );
+
     let mut tiny = [0; 16];
     assert!(health().write(&mut Buffer::new(&mut tiny)).is_err());
 }
@@ -503,6 +545,7 @@ fn replies_never_echo_unsupported_names() {
         out.as_bytes(),
         format!(r#"{{"id":"{ID}","op":"ping","ok":true,"uptime_ms":5}}"#).as_bytes()
     );
+
     let mut out = Buffer::new(&mut buf);
     write_reply(
         &mut out,
@@ -517,6 +560,7 @@ fn replies_never_echo_unsupported_names() {
         out.as_bytes(),
         format!(r#"{{"id":"{ID}","op":"health","ok":true}}"#).as_bytes()
     );
+
     let mut out = Buffer::new(&mut buf);
     write_reply(
         &mut out,
@@ -532,6 +576,7 @@ fn replies_never_echo_unsupported_names() {
         text,
         format!(r#"{{"id":"{ID}","ok":false,"error":"unsupported"}}"#)
     );
+
     let mut buf = [0; 64];
     assert_eq!(topic(&mut buf, NS, "health"), Ok("wellfed/1/dev1/health"));
     let mut small = [0; 4];
@@ -543,6 +588,7 @@ fn the_updater_subscribes_a_data_topic_and_only_it_receives_data() {
     let (req, data) = ("wellfed/1/X/request", "wellfed/1/X/ota/data");
     let mut buf = [0; MAX_PACKET];
     let mut s = Session::connecting(0);
+
     assert_eq!(
         s.on_packet(
             1,
@@ -554,10 +600,12 @@ fn the_updater_subscribes_a_data_topic_and_only_it_receives_data() {
         ),
         Event::Connected
     );
+
     assert!(
         s.subscribe_data(1, &mut buf, data).is_err(),
         "not before ready"
     );
+
     s.subscribe(1, &mut buf, req).unwrap();
     assert_eq!(
         s.on_packet(
@@ -570,6 +618,7 @@ fn the_updater_subscribes_a_data_topic_and_only_it_receives_data() {
         ),
         Event::Ready
     );
+
     let n = s.subscribe_data(3, &mut buf, data).unwrap();
     assert_eq!(&buf[..2], &[0x82, (n - 2) as u8]);
     assert_eq!(
@@ -584,6 +633,7 @@ fn the_updater_subscribes_a_data_topic_and_only_it_receives_data() {
         ),
         Event::DataReady
     );
+
     let publish = Packet::Publish {
         topic: data,
         payload: &[1, 2, 3],
@@ -593,12 +643,14 @@ fn the_updater_subscribes_a_data_topic_and_only_it_receives_data() {
         s.on_packet_with(5, publish, req, Some(data)),
         Event::Data(&[1, 2, 3])
     );
+
     // The normal role never names a data topic: the same publish is foreign.
     let mut normal = s;
     assert_eq!(
         normal.on_packet(6, publish, req),
         Event::Closed(Fault::ForeignTopic)
     );
+
     // A refused data subscription closes.
     let mut refused = Session::connecting(0);
     refused.on_packet(

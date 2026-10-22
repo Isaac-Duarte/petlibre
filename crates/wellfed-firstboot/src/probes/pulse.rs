@@ -36,23 +36,29 @@ use wellfed_amebad::stopped;
 pub const POLL_MS: u32 = 2;
 pub const WAIT_MS: u32 = 10;
 pub const READY_TIMEOUT_MS: u32 = 2000;
+
 const DEADTIME_MS: u32 = 50;
 /// Motor command lease and owner lease: a stalled task stops the motor
 /// within this, plus one timer period.
 pub const LEASE_MS: u32 = 200;
 pub const ADC_POLLS: u32 = 10_000;
+
 pub const EVENTS: EventsConfig = EventsConfig {
     ticks_per_second: SYSTIMER_HZ,
     timer_period_ms: 10,
     max_feedback_age_ms: 100,
     feedback_capacity: 8,
 };
+
 pub const DELAY_MS: u32 = 60_000;
 pub const DIRECTION: MotorCommand = MotorCommand::DRIVE_0;
 pub const PULSE_MS: u32 = 100;
 pub const AFTER_MS: u32 = 1000;
 /// Current is sampled at most this often (16 conversions take about 5 ms).
 pub const CURRENT_PERIOD_MS: u32 = 10;
+
+/// Written to the user backup register before driving. It survives a
+/// watchdog reset but not power loss, so the pulse runs once per cold boot.
 pub const MARKER: u32 = 0x5046_5716;
 const FEEDBACK: u32 = 1 << 18;
 
@@ -112,6 +118,7 @@ pub enum Record {
     Timeout {
         ms: u32,
     },
+
     /// The pulse is armed and will start after `delay_ms`.
     Armed {
         delay_ms: u32,
@@ -126,6 +133,7 @@ pub enum Record {
         first_edge_ms: Option<u32>,
         current: Current,
     },
+
     After {
         edges: u32,
         current: Current,
@@ -171,11 +179,13 @@ pub fn describe(record: Record, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             bit(events),
             bit(capture)
         ),
+
         Record::Timeout { ms } => write!(f, "timeout ms={ms}"),
         Record::Armed { delay_ms } => write!(
             f,
             "armed delay_ms={delay_ms} pulse_ms={PULSE_MS} lease_ms={LEASE_MS}"
         ),
+
         Record::Pulse {
             direction,
             applied_ms,
@@ -192,6 +202,7 @@ pub fn describe(record: Record, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             c.mean(),
             c.samples
         ),
+
         Record::After {
             edges,
             current: c,
@@ -204,6 +215,7 @@ pub fn describe(record: Record, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             c.mean(),
             bit(stopped)
         ),
+
         Record::Done => f.write_str("done"),
         Record::Error {
             stage,
@@ -285,6 +297,7 @@ impl Probe {
         } else {
             self.board.close();
         }
+
         let stopped = motor_pins_stopped();
         self.end(Record::Error {
             stage,
@@ -312,10 +325,12 @@ impl Probe {
             sdk::backup_write(sdk::BACKUP_USER, 0);
             return self.end(Record::Skip { reset, marker });
         }
+
         self.begin_raw = sdk::systimer_ticks();
         if !self.board.open(DEADTIME_MS, LEASE_MS, ADC_POLLS, 0) {
             return self.end(self.open_record(false, false, false, false, false));
         }
+
         let count = sdk::backup_read(BOOT_COUNT_REGISTER).wrapping_add(1);
         sdk::backup_write(BOOT_COUNT_REGISTER, count);
         self.authority = park::session(count, self.begin_raw, false);
@@ -323,6 +338,7 @@ impl Probe {
             self.board.close();
             return self.end(self.open_record(true, false, false, false, false));
         }
+
         self.stage = Stage::Wait;
         next(WAIT_MS, None)
     }
@@ -361,11 +377,13 @@ impl Probe {
             }
             _ => return next(WAIT_MS, None),
         };
+
         let inactive = stopped::observe().verified();
         self.flash = FlashCoord::new(&FLASH_LIMITS, self.authority, ms).and_then(|mut coord| {
             (coord.ready(self.authority, peer, inactive, ms) == FlashReply::ACCEPTED)
                 .then_some(coord)
         });
+
         let flash = self
             .flash
             .as_mut()
@@ -375,8 +393,10 @@ impl Probe {
         let board = &raw mut self.board;
         // SAFETY: the board stays at this fixed address while events is open.
         let events = attached && unsafe { self.events.open(board, &EVENTS) };
+
         let controller = FeedController::new(&FEED, 0);
         self.controller = controller.unwrap_or_default();
+
         // A timer interrupt must be seen before capture can be enabled.
         let mut capture = false;
         if events && controller.is_some() {
@@ -387,6 +407,7 @@ impl Probe {
             }
             capture = self.renew() && self.events.capture(true);
         }
+
         let record = self.open_record(true, self.flash.is_some(), attached, events, capture);
         if !capture {
             if events {
@@ -396,6 +417,7 @@ impl Probe {
             }
             return self.end(record);
         }
+
         self.armed_at = self.events.now_ms().unwrap_or_default();
         self.feedback_high = sdk::gpio_port_read(GPIO_PORT_A, FEEDBACK) != 0;
         self.stage = Stage::Delay;
@@ -407,6 +429,7 @@ impl Probe {
         if let Some(record) = self.pulse.take() {
             return next(POLL_MS, Some(record));
         }
+
         if !self.renew() {
             return self.fail("delay");
         }
@@ -416,11 +439,13 @@ impl Probe {
         if now.wrapping_sub(self.armed_at) < DELAY_MS {
             return next(POLL_MS, None);
         }
+
         // One pulse per cold boot: mark before driving.
         sdk::backup_write(sdk::BACKUP_USER, MARKER);
         if sdk::backup_read(sdk::BACKUP_USER) != MARKER {
             return self.fail("marker");
         }
+
         self.requested_at = now;
         if !self.events.motor(DIRECTION) {
             return self.fail("drive");
@@ -434,6 +459,7 @@ impl Probe {
         let Some(pins) = self.board.capture_gpio(&mut reading) else {
             return false;
         };
+
         let high = pins & FEEDBACK != 0;
         if high != self.feedback_high {
             self.feedback_high = high;
@@ -442,6 +468,7 @@ impl Probe {
                 self.first_edge_ms = Some(now.wrapping_sub(since));
             }
         }
+
         if self
             .last_current_at
             .is_none_or(|at| now.wrapping_sub(at) >= CURRENT_PERIOD_MS)
@@ -455,6 +482,7 @@ impl Probe {
             }
             self.last_current_at = Some(now);
         }
+
         true
     }
 
@@ -465,25 +493,30 @@ impl Probe {
         if !self.renew() {
             return self.fail("driving");
         }
+
         let gate = self.board.motor;
         if self.applied_at.is_none() && gate.applied == DIRECTION && gate.applied_known {
             self.applied_at = Some(gate.applied_at);
         }
+
         let Some(applied) = self.applied_at else {
             if now.wrapping_sub(self.requested_at) > DEADTIME_MS + 2 * EVENTS.timer_period_ms {
                 return self.fail("apply");
             }
             return next(POLL_MS, None);
         };
+
         if !self.sample(now, applied) {
             return self.fail("sample");
         }
         if now.wrapping_sub(applied) < PULSE_MS {
             return next(POLL_MS, None);
         }
+
         if !self.events.motor(MotorCommand::STOP) || !motor_pins_stopped() {
             return self.fail("stop");
         }
+
         self.stopped_at = self.board.motor.applied_at;
         let record = Record::Pulse {
             direction: DIRECTION.0,
@@ -493,6 +526,7 @@ impl Probe {
             first_edge_ms: self.first_edge_ms,
             current: self.current,
         };
+
         self.edges = 0;
         self.first_edge_ms = None;
         self.current = Current::default();
@@ -512,15 +546,18 @@ impl Probe {
         if now.wrapping_sub(self.stopped_at) < AFTER_MS {
             return next(POLL_MS, None);
         }
+
         let stopped = motor_pins_stopped()
             && self.board.motor.applied == MotorCommand::STOP
             && self.events.close()
             && stopped::observe().verified();
+
         let record = Record::After {
             edges: self.edges,
             current: self.current,
             stopped,
         };
+
         self.stage = Stage::Done;
         self.pulse = Some(Record::Done);
         next(POLL_MS, Some(record))

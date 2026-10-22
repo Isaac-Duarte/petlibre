@@ -31,6 +31,7 @@ pub fn frozen(root: &Root, directory: &Path, layout: &Layout) -> Result<Frozen> 
             && review["kind"] == "plaf103_development_image_review",
         "Unsupported frozen review",
     )?;
+
     let image = root.private_file(&directory.join("image.bin"))?;
     let data = payload(&image, layout)?;
     require(
@@ -39,6 +40,7 @@ pub fn frozen(root: &Root, directory: &Path, layout: &Layout) -> Result<Frozen> 
             && is_int(&review["payload_bytes"], data.len()),
         "Frozen image/review mismatch",
     )?;
+
     if review["image_kind"] == "stock" {
         require(
             sha256(&image) == crate::ota::STOCK_SHA256 && review["manifest_sha256"].is_null(),
@@ -51,6 +53,7 @@ pub fn frozen(root: &Root, directory: &Path, layout: &Layout) -> Result<Frozen> 
         )?;
         build(root, directory, &review, &image)?;
     }
+
     Ok(Frozen {
         image,
         review_sha256: sha256(&raw),
@@ -63,6 +66,7 @@ fn build(root: &Root, directory: &Path, review: &Value, image: &[u8]) -> Result<
         review["manifest_sha256"] == sha256(&manifest_raw).as_str(),
         "Frozen manifest mismatch",
     )?;
+
     let m: Value = serde_json::from_slice(&manifest_raw)?;
     let lock: Value = serde_json::from_slice(&std::fs::read(root.join("firmware/sdk.lock.json"))?)?;
     require(
@@ -71,6 +75,7 @@ fn build(root: &Root, directory: &Path, review: &Value, image: &[u8]) -> Result<
             && m["toolchain_sha256"] == lock["toolchain"]["sha256"],
         "Unknown build profile",
     )?;
+
     let ota: Vec<&Value> = m["artifacts"]
         .as_array()
         .map(|artifacts| {
@@ -91,6 +96,7 @@ fn build(root: &Root, directory: &Path, review: &Value, image: &[u8]) -> Result<
             && is_int(&ota[0]["bytes"], image.len()),
         "Manifest/image mismatch",
     )?;
+
     let details = &review["review"];
     let mains = &details["startup_mains"];
     // Python's `set(...)` of the audit's per-core mapping: its keys.
@@ -109,6 +115,7 @@ fn build(root: &Root, directory: &Path, review: &Value, image: &[u8]) -> Result<
             && audit["matches_stock"] == true,
         "Frozen linked/startup/pad review missing",
     )?;
+
     let banks: Vec<&Value> = details["factory_mapping"]
         .as_array()
         .map(|cases| cases.iter().map(|case| &case["bank"]).collect())

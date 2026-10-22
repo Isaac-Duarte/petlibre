@@ -13,9 +13,9 @@
 use wellfed_core::adc_scale::{AdcCalibration, SAMPLES};
 use wellfed_core::sensor_inputs::SensorReading;
 
-use crate::board::Board;
-use crate::sdk;
-use crate::stopped;
+use wellfed_amebad::board::Board;
+use wellfed_amebad::sdk;
+use wellfed_amebad::stopped;
 
 const DEADTIME_MS: u32 = 50;
 const LEASE_MS: u32 = 300;

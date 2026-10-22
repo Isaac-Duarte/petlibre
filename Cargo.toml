@@ -15,6 +15,7 @@ wellfed-amebad = { path = "crates/wellfed-amebad" }
 wellfed-amebad-common = { path = "crates/wellfed-amebad-common" }
 wellfed-amebad-sdk = { path = "crates/wellfed-amebad-sdk" }
 wellfed-core = { path = "crates/wellfed-core" }
+wellfed-firstboot = { path = "crates/wellfed-firstboot" }
 wellfed-testkit = { path = "crates/wellfed-testkit" }
 # Host tools.
 anyhow = "1.0.104"

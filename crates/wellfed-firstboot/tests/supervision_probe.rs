@@ -1,12 +1,25 @@
-mod common;
-
-use common::{hw, motor_pins, optics_off};
 use wellfed_amebad::board::MOTOR_MASK;
-use wellfed_amebad::probes::supervision::{
-    FEED_MS, MARKER, Probe, RESET_DEADLINE_MS, Record, SAMPLES, STALL_MS, Sample,
-};
 use wellfed_amebad::sdk::{self, fake};
 use wellfed_amebad::watchdog::WatchdogFault;
+use wellfed_firstboot::probes::supervision::{
+    FEED_MS, MARKER, Probe, RESET_DEADLINE_MS, Record, SAMPLES, STALL_MS, Sample,
+};
+
+fn motor_pins() -> u32 {
+    sdk::gpio_port_read(0, MOTOR_MASK)
+}
+
+/// Both emitters OFF: LOW pad input AND LOW output latch.
+fn optics_off() -> bool {
+    !sdk::gpio_read_bit(15)
+        && !sdk::gpio_read_bit(35)
+        && sdk::gpio_output_latch(0) & (1 << 15) == 0
+        && sdk::gpio_output_latch(1) & (1 << 3) == 0
+}
+
+fn hw<R>(f: impl FnOnce(&mut fake::Hardware) -> R) -> R {
+    fake::with(f)
+}
 
 /// About 1 ms of the nominal 32 kHz SYSTIMER per delay millisecond.
 const TICKS_PER_MS: u32 = 33;

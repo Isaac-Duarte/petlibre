@@ -1,7 +1,7 @@
 use wellfed_amebad::board::MOTOR_MASK;
-use wellfed_amebad::probes::adc::{Channel, Probe, Record, SAMPLE_MS};
 use wellfed_amebad::sdk::{ADC_ENABLE_BIT, GPIO_ENABLE_BIT, fake};
 use wellfed_amebad::stopped;
+use wellfed_firstboot::probes::adc::{Channel, Probe, Record, SAMPLE_MS};
 
 fn start() -> Probe {
     fake::reset_hardware();

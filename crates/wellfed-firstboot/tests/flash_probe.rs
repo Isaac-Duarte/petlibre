@@ -16,12 +16,12 @@ use wellfed_amebad::flash::park::{
 use wellfed_amebad::flash::peer::{
     BACKUP_BASE, MARKER_REGISTER, PARK_CHANNEL, PARK_TICK_LIMIT, Peer,
 };
-use wellfed_amebad::probes::flash::{EXPECTED_ID, FlashOps, Probe, Record, STRESS_SAVES};
 use wellfed_amebad::provider::{ATTEMPT_BIT, LeaseStage, Provider};
 use wellfed_amebad::sdk::{self, fake};
 use wellfed_amebad::stopped;
 use wellfed_core::flash_coord::{FlashFault, FlashPhase, FlashReply};
 use wellfed_core::settings_store::{SettingsStatus, SlotState};
+use wellfed_firstboot::probes::flash::{EXPECTED_ID, FlashOps, Probe, Record, STRESS_SAVES};
 
 #[derive(Default)]
 struct Km0 {

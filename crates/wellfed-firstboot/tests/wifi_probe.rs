@@ -1,6 +1,6 @@
-use wellfed_amebad::probes::wifi::{POLL_MS, Probe, Record, Step};
 use wellfed_amebad::sdk::{WifiEvent, fake};
 use wellfed_amebad::stopped;
+use wellfed_firstboot::probes::wifi::{POLL_MS, Probe, Record, Step};
 
 fn start() -> Probe {
     fake::reset_hardware();

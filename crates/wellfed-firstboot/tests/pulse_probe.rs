@@ -6,9 +6,11 @@ use std::cell::RefCell;
 use wellfed_amebad::board::MOTOR_MASK;
 use wellfed_amebad::events::EventsFault;
 use wellfed_amebad::flash::park::{self, Mmio};
-use wellfed_amebad::probes::pulse::{self, DELAY_MS, LEASE_MS, MARKER, PULSE_MS, Probe, Record};
 use wellfed_amebad::sdk::{self, fake};
 use wellfed_amebad::stopped;
+use wellfed_firstboot::probes::pulse::{
+    self, DELAY_MS, LEASE_MS, MARKER, PULSE_MS, Probe, Record,
+};
 
 thread_local! {
     static REGS: RefCell<[[u32; 12]; 2]> = const { RefCell::new([[0; 12]; 2]) };

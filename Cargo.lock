@@ -1579,7 +1579,16 @@ dependencies = [
  "wellfed-amebad",
  "wellfed-amebad-common",
  "wellfed-core",
+ "wellfed-firstboot",
  "wellfed-testkit",
+]
+
+[[package]]
+name = "wellfed-firstboot"
+version = "0.1.0"
+dependencies = [
+ "wellfed-amebad",
+ "wellfed-core",
 ]
 
 [[package]]

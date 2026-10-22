@@ -30,13 +30,13 @@ use wellfed_core::feed_controller::{FeedController, FeedLimits};
 use wellfed_core::flash_coord::{FlashCoord, FlashReply};
 use wellfed_core::sensor_inputs::{SensorFilter, SensorInputs, SensorLimits, SensorReading};
 
-use crate::board::{self, Board, MOTOR_MASK};
-use crate::config::{FLASH_LIMITS, SYSTIMER_HZ};
-use crate::events::{Events, EventsConfig, EventsFault, EventsSnapshot};
-use crate::flash::park::{self, Mmio, Reply};
-use crate::provider::BOOT_COUNT_REGISTER;
-use crate::sdk::{self, GPIO_PORT_A};
-use crate::stopped;
+use wellfed_amebad::board::{self, Board, MOTOR_MASK};
+use wellfed_amebad::config::{FLASH_LIMITS, SYSTIMER_HZ};
+use wellfed_amebad::events::{Events, EventsConfig, EventsFault, EventsSnapshot};
+use wellfed_amebad::flash::park::{self, Mmio, Reply};
+use wellfed_amebad::provider::BOOT_COUNT_REGISTER;
+use wellfed_amebad::sdk::{self, GPIO_PORT_A};
+use wellfed_amebad::stopped;
 
 pub const POLL_MS: u32 = 2;
 /// Handshake polling before the supervisor (and its clock) is open.

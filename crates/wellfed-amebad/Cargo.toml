@@ -13,12 +13,6 @@ build = "build.rs"
 sdk = ["wellfed-amebad-sdk/sdk"]
 # KM4 target builds; the KM0 image links only wellfed-amebad-common.
 km4 = ["wellfed-amebad-common/km4", "wellfed-amebad-sdk/km4"]
-# FW16 first supervised motor pulse instead of the FW13 optics probe. Only
-# `build.py plaf103-firstboot --motion-probe` sets it; never a default.
-fw16-pulse = []
-# FW11 trial test: a candidate that never confirms and lets the watchdog
-# reset it after startup. Only `build.py --trial-reset` sets it.
-fw11-reset = []
 
 [dependencies]
 wellfed-amebad-common.workspace = true

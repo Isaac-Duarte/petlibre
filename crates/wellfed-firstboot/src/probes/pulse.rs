@@ -24,14 +24,14 @@ use wellfed_core::feed_controller::{FeedController, FeedSample, MotorCommand};
 use wellfed_core::flash_coord::{FlashCoord, FlashReply};
 use wellfed_core::sensor_inputs::SensorReading;
 
-use crate::board::{Board, MOTOR_MASK};
-use crate::config::{FLASH_LIMITS, SYSTIMER_HZ};
-use crate::events::{Events, EventsConfig, EventsFault};
-use crate::flash::park::{self, Mmio, Reply};
 use crate::probes::optics::FEED;
-use crate::provider::BOOT_COUNT_REGISTER;
-use crate::sdk::{self, GPIO_PORT_A};
-use crate::stopped;
+use wellfed_amebad::board::{Board, MOTOR_MASK};
+use wellfed_amebad::config::{FLASH_LIMITS, SYSTIMER_HZ};
+use wellfed_amebad::events::{Events, EventsConfig, EventsFault};
+use wellfed_amebad::flash::park::{self, Mmio, Reply};
+use wellfed_amebad::provider::BOOT_COUNT_REGISTER;
+use wellfed_amebad::sdk::{self, GPIO_PORT_A};
+use wellfed_amebad::stopped;
 
 pub const POLL_MS: u32 = 2;
 pub const WAIT_MS: u32 = 10;

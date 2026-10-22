@@ -13,14 +13,15 @@ crate-type = ["staticlib", "rlib"]
 [features]
 # Link the AmebaD ports for one core (target builds from firmware/tools/build.py).
 km0 = ["dep:wellfed-amebad-common", "wellfed-amebad-common/km0"]
-km4 = ["dep:wellfed-amebad", "wellfed-amebad/km4", "wellfed-amebad/sdk"]
-fw16-pulse = ["km4", "wellfed-amebad/fw16-pulse"]
-fw11-reset = ["km4", "wellfed-amebad/fw11-reset"]
+km4 = ["dep:wellfed-amebad", "dep:wellfed-firstboot", "wellfed-firstboot/km4"]
+fw16-pulse = ["km4", "wellfed-firstboot/fw16-pulse"]
+fw11-reset = ["km4", "wellfed-firstboot/fw11-reset"]
 
 [dependencies]
 wellfed-core.workspace = true
 wellfed-amebad = { workspace = true, optional = true }
 wellfed-amebad-common = { workspace = true, optional = true }
+wellfed-firstboot = { workspace = true, optional = true }
 
 [lints]
 workspace = true

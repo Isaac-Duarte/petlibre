@@ -8,8 +8,8 @@
 //! The SSID and password never pass through here. Outputs stay as startup
 //! left them (STOP, emitters OFF).
 
-use crate::sdk::{self, WifiEvent, WifiPoll};
-use crate::stopped;
+use wellfed_amebad::sdk::{self, WifiEvent, WifiPoll};
+use wellfed_amebad::stopped;
 
 pub const POLL_MS: u32 = 250;
 
@@ -67,7 +67,7 @@ impl Probe {
             WifiPoll::Pending => step(POLL_MS, None),
             WifiPoll::Event(event) => {
                 self.next += 1;
-                crate::net_status::observe(&event);
+                wellfed_amebad::net_status::observe(&event);
                 let stopped = stopped::observe().verified();
                 // Drain quickly; the ring holds 16.
                 step(1, Some(Record::Event { event, stopped }))

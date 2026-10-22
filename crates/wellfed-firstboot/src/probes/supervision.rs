@@ -9,11 +9,11 @@
 //! skips the whole probe, so a reset cannot repeat it until power is cut.
 //! Clock rates are nominal; the bench capture measures them.
 
-use crate::board::Board;
-use crate::events::{Events, EventsConfig, EventsSnapshot};
-use crate::sdk;
-use crate::stopped;
-use crate::watchdog::{Watchdog, WatchdogConfig};
+use wellfed_amebad::board::Board;
+use wellfed_amebad::events::{Events, EventsConfig, EventsSnapshot};
+use wellfed_amebad::sdk;
+use wellfed_amebad::stopped;
+use wellfed_amebad::watchdog::{Watchdog, WatchdogConfig};
 
 pub const MARKER: u32 = 0x5046_5735;
 /// SDK-documented 31 us SYSTIMER tick; TIM2 is assumed to share the 32 kHz source.

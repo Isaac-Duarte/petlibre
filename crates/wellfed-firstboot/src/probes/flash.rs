@@ -30,13 +30,13 @@ use wellfed_core::settings_store::{Settings, SettingsStatus, SettingsStore, Slot
 use wellfed_core::storage::JournalIo;
 use wellfed_core::tick_clock::TickClock;
 
-use crate::config::{FLASH_LIMITS, SYSTIMER_HZ, WATCHDOG};
-use crate::flash::park::{self, Mmio, Reply};
-use crate::flash::peer::MARKER_REGISTER;
-use crate::provider::{ATTEMPT_BIT, BOOT_COUNT_REGISTER, Provider, READY_TIMEOUT_MS};
-use crate::sdk;
-use crate::stopped;
-use crate::watchdog::Watchdog;
+use wellfed_amebad::config::{FLASH_LIMITS, SYSTIMER_HZ, WATCHDOG};
+use wellfed_amebad::flash::park::{self, Mmio, Reply};
+use wellfed_amebad::flash::peer::MARKER_REGISTER;
+use wellfed_amebad::provider::{ATTEMPT_BIT, BOOT_COUNT_REGISTER, Provider, READY_TIMEOUT_MS};
+use wellfed_amebad::sdk;
+use wellfed_amebad::stopped;
+use wellfed_amebad::watchdog::Watchdog;
 
 pub const POLL_MS: u32 = 10;
 pub const OP_GAP_MS: u32 = 10;

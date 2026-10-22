@@ -15,4 +15,4 @@ bootstrap baseline bringup plaf103 plaf103-firstboot:
 	$(PYTHON) tools/build.py $@
 
 test:
-	cargo test --locked -p wellfed-core -p wellfed-amebad-common -p wellfed-amebad -p wellfed-ffi
+	cargo test --locked -p wellfed-core -p wellfed-amebad-common -p wellfed-amebad -p wellfed-firstboot -p wellfed-ffi

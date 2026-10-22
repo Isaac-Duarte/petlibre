@@ -27,6 +27,7 @@
 #include <platform/platform_stdlib.h>
 #include "petlibre_wifi_credentials.h"
 #include "petlibre_transport_credentials.h"
+#include "rl6548.h"
 
 void petlibre_app_start(void);
 
@@ -500,6 +501,141 @@ int petlibre_tcp_recv(int s, void *buffer, unsigned int length, unsigned int tim
 void petlibre_tcp_close(int s)
 {
     lwip_close(s);
+}
+
+/* FW24: the speaker. Stock 1.1.15 plays through the codec's line output
+ * (CODEC_Init application 8) from SPORT by GDMA and holds PB23 HIGH while it
+ * plays, the amplifier enable that Rust drives (petlibre-amebad audio.rs).
+ * This shim owns only the codec, SPORT and an 8-page DMA ring at 16 kHz,
+ * 16-bit mono. Rust fills pages and decides when to open and close. When no
+ * filled page is ready the DMA plays a zero page and counts an underrun, so
+ * the stream never stops on its own. */
+/* Defined in the pinned fwlib (rtl8721d_pll.c, rtl8721dhp_audio.c) with no
+ * header declaration. */
+void PLL_Div(u32 div);
+BOOL AUDIO_SP_TXGDMA_Restart(u8 GDMA_Index, u8 GDMA_ChNum, u32 tx_addr, u32 tx_length);
+
+#define PETLIBRE_AUDIO_PAGE 512 /* bytes: 256 samples, 16 ms */
+#define PETLIBRE_AUDIO_PAGES 8
+
+/* Multiples of 32 bytes at 32-byte alignment: the restart cleans the cache
+ * over each page the DMA reads. */
+static u8 petlibre_audio_ring[PETLIBRE_AUDIO_PAGE * PETLIBRE_AUDIO_PAGES] __attribute__((aligned(32)));
+static u8 petlibre_audio_zero[PETLIBRE_AUDIO_PAGE] __attribute__((aligned(32)));
+/* Filled pages the DMA owns; set by Rust's task, cleared by the DMA interrupt. */
+static volatile u8 petlibre_audio_own[PETLIBRE_AUDIO_PAGES];
+static unsigned int petlibre_audio_user;
+static volatile unsigned int petlibre_audio_dma;
+static volatile unsigned int petlibre_audio_on_zero;
+static volatile unsigned int petlibre_audio_underruns;
+static GDMA_InitTypeDef petlibre_audio_gdma;
+static int petlibre_audio_opened;
+
+static u32 petlibre_audio_done(void *data)
+{
+    GDMA_InitTypeDef *gdma = data;
+    GDMA_ClearINT(gdma->GDMA_Index, gdma->GDMA_ChNum);
+    if (!petlibre_audio_on_zero) {
+        petlibre_audio_own[petlibre_audio_dma] = 0;
+        petlibre_audio_dma = (petlibre_audio_dma + 1) % PETLIBRE_AUDIO_PAGES;
+    }
+    u8 *next = petlibre_audio_zero;
+    petlibre_audio_on_zero = !petlibre_audio_own[petlibre_audio_dma];
+    if (petlibre_audio_on_zero) {
+        petlibre_audio_underruns++;
+    } else {
+        next = petlibre_audio_ring + petlibre_audio_dma * PETLIBRE_AUDIO_PAGE;
+    }
+    AUDIO_SP_TXGDMA_Restart(gdma->GDMA_Index, gdma->GDMA_ChNum, (u32)next, PETLIBRE_AUDIO_PAGE);
+    return 0;
+}
+
+/* Clocks, codec and SPORT as stock sets them for 16 kHz; the DMA starts on
+ * the zero page. 1 when streaming. */
+int petlibre_audio_open(void)
+{
+    if (petlibre_audio_opened) {
+        return 0;
+    }
+    memset(petlibre_audio_zero, 0, sizeof(petlibre_audio_zero));
+    for (int i = 0; i < PETLIBRE_AUDIO_PAGES; i++) {
+        petlibre_audio_own[i] = 0;
+    }
+    petlibre_audio_user = 0;
+    petlibre_audio_dma = 0;
+    petlibre_audio_on_zero = 1;
+    petlibre_audio_underruns = 0;
+
+    PLL_I2S_Set(ENABLE); /* 98.304 MHz */
+    RCC_PeriphClockCmd(APBPeriph_AUDIOC, APBPeriph_AUDIOC_CLOCK, ENABLE);
+    RCC_PeriphClockCmd(APBPeriph_SPORT, APBPeriph_SPORT_CLOCK, ENABLE);
+    PLL_Div(24); /* 256 x 16 kHz */
+    CODEC_Init(SR_16K, WL_16, CH_MONO, APP_LINE_OUT);
+
+    SP_InitTypeDef sport;
+    AUDIO_SP_StructInit(&sport);
+    sport.SP_MonoStereo = SP_CH_MONO;
+    sport.SP_WordLen = SP_WL_16;
+    AUDIO_SP_Init(AUDIO_SPORT_DEV, &sport);
+    AUDIO_SP_TdmaCmd(AUDIO_SPORT_DEV, ENABLE);
+    AUDIO_SP_TxStart(AUDIO_SPORT_DEV, ENABLE);
+    if (!AUDIO_SP_TXGDMA_Init(0, &petlibre_audio_gdma, &petlibre_audio_gdma, petlibre_audio_done,
+                              petlibre_audio_zero, PETLIBRE_AUDIO_PAGE)) {
+        AUDIO_SP_TxStart(AUDIO_SPORT_DEV, DISABLE);
+        AUDIO_SP_TdmaCmd(AUDIO_SPORT_DEV, DISABLE);
+        CODEC_DeInit(APP_LINE_OUT);
+        return 0;
+    }
+    petlibre_audio_opened = 1;
+    return 1;
+}
+
+/* The next page to fill (PETLIBRE_AUDIO_PAGE bytes), or NULL while the DMA
+ * owns every page. */
+void *petlibre_audio_page(void)
+{
+    if (!petlibre_audio_opened || petlibre_audio_own[petlibre_audio_user]) {
+        return NULL;
+    }
+    return petlibre_audio_ring + petlibre_audio_user * PETLIBRE_AUDIO_PAGE;
+}
+
+/* Hand the page from petlibre_audio_page to the DMA. */
+void petlibre_audio_submit(void)
+{
+    petlibre_audio_own[petlibre_audio_user] = 1;
+    petlibre_audio_user = (petlibre_audio_user + 1) % PETLIBRE_AUDIO_PAGES;
+}
+
+/* 1 once every submitted page has played. */
+int petlibre_audio_drained(void)
+{
+    for (int i = 0; i < PETLIBRE_AUDIO_PAGES; i++) {
+        if (petlibre_audio_own[i]) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+unsigned int petlibre_audio_underruns_seen(void)
+{
+    return petlibre_audio_underruns;
+}
+
+/* Stop the DMA, SPORT and codec output; the clocks stay on for the next open. */
+void petlibre_audio_close(void)
+{
+    if (!petlibre_audio_opened) {
+        return;
+    }
+    GDMA_Cmd(petlibre_audio_gdma.GDMA_Index, petlibre_audio_gdma.GDMA_ChNum, DISABLE);
+    GDMA_ClearINT(petlibre_audio_gdma.GDMA_Index, petlibre_audio_gdma.GDMA_ChNum);
+    GDMA_ChnlFree(petlibre_audio_gdma.GDMA_Index, petlibre_audio_gdma.GDMA_ChNum);
+    AUDIO_SP_TxStart(AUDIO_SPORT_DEV, DISABLE);
+    AUDIO_SP_TdmaCmd(AUDIO_SPORT_DEV, DISABLE);
+    CODEC_DeInit(APP_LINE_OUT);
+    petlibre_audio_opened = 0;
 }
 
 void pre_example_entry(void)

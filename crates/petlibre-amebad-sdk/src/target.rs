@@ -12,8 +12,8 @@ use core::ptr;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use super::{
-    FlashMmuEntry, GpioRouting, Irq, Isr, LpClock, TaskStep, TcpRecv, TransportConfig, WifiEvent,
-    WifiPoll,
+    AUDIO_PAGE_SAMPLES, FlashMmuEntry, GpioRouting, Irq, Isr, LpClock, TaskStep, TcpRecv,
+    TransportConfig, WifiEvent, WifiPoll,
 };
 
 #[allow(
@@ -888,6 +888,48 @@ fn hex_key(hex: &[u8]) -> Option<[u8; 32]> {
         key[i] = (nibble(pair[0])? << 4) | nibble(pair[1])?;
     }
     Some(key)
+}
+
+unsafe extern "C" {
+    fn petlibre_audio_open() -> i32;
+    fn petlibre_audio_page() -> *mut c_void;
+    fn petlibre_audio_submit();
+    fn petlibre_audio_drained() -> i32;
+    fn petlibre_audio_underruns_seen() -> u32;
+    fn petlibre_audio_close();
+}
+
+/// FW24: start the codec's line output and its DMA ring (`example_entry.c`);
+/// false when already open or no DMA channel was free.
+pub fn audio_open() -> bool {
+    unsafe { petlibre_audio_open() != 0 }
+}
+
+/// The next free ring page, while the codec is open and the DMA does not
+/// own every page. Fill it, then [`audio_submit`]; one page at a time.
+pub fn audio_page() -> Option<&'static mut [i16; AUDIO_PAGE_SAMPLES]> {
+    let page = unsafe { petlibre_audio_page() };
+    // SAFETY: a 32-byte-aligned ring page of `AUDIO_PAGE_SAMPLES` samples the
+    // DMA does not own until `audio_submit`.
+    (!page.is_null()).then(|| unsafe { &mut *page.cast() })
+}
+
+pub fn audio_submit() {
+    unsafe { petlibre_audio_submit() }
+}
+
+/// Every submitted page has played.
+pub fn audio_drained() -> bool {
+    unsafe { petlibre_audio_drained() != 0 }
+}
+
+/// Zero pages played for want of a filled one since the open.
+pub fn audio_underruns() -> u32 {
+    unsafe { petlibre_audio_underruns_seen() }
+}
+
+pub fn audio_close() {
+    unsafe { petlibre_audio_close() }
 }
 
 /// Inputs for a session's request nonce: the ROM generator and timer values

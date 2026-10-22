@@ -167,6 +167,10 @@ Server-to-firmware requests can carry an HMAC so that a party with only the Wi-F
 - **API:** `POST /api/replacement/request` takes `{"op":"settings"}` or `{"op":"settings","lights":true,"volume":40}`; the server signs it.
 - **Physical (October 22):** a signed change from generation 2978 to 2979 (lights on, volume 40) was saved and read back after a cold boot.
 
+## Speaker (FW24)
+
+`{"id":…,"op":"play","tune":"chime|meal|coin|alert|test|twinkle"}` queues one built-in tune; it **must be signed**. The reply is `"ok":true,"tune":…`, or `error: muted` (the `sound` setting is off) or `error: busy` (a tune is playing, or the settings are not loaded yet). An unknown tune is malformed. The transport may only call `audio::request`, which reads the settings and fills a one-slot mailbox. API: `POST /api/replacement/request` with `{"op":"play","tune":"coin"}`. Design and evidence: [audio](audio.md).
+
 ## Server side
 
 - **Config:** an optional `firmware` section (client ID, username, password). The config format stays version 1; a config without the section behaves exactly as today.

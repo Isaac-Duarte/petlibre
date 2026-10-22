@@ -127,6 +127,13 @@ impl Request {
         self
     }
 
+    /// Append a string field whose value is a fixed identifier, such as a
+    /// built-in tune's name; never text from a client.
+    pub fn name_field(mut self, name: &str, value: &'static str) -> Self {
+        let _ = write!(self.0, r#","{name}":"{value}""#);
+        self
+    }
+
     /// Append an integer field; names are fixed identifiers from this crate.
     pub fn field(mut self, name: &str, value: i64) -> Self {
         let _ = write!(self.0, r#","{name}":{value}"#);

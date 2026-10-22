@@ -181,7 +181,7 @@ async fn replacement_request(
         .ok_or_else(|| {
             (
                 StatusCode::BAD_REQUEST,
-                Json(json!({"error":"expected {\"op\":\"health\"|\"ping\"|\"settings\"|\"wifi\"}; settings may set lights, sound (booleans) and volume (0-100); wifi may set ssid (1-32 bytes) with psk (8-63 printable ASCII), or clear: true"})),
+                Json(json!({"error":"expected {\"op\":\"health\"|\"ping\"|\"settings\"|\"wifi\"|\"play\"}; settings may set lights, sound (booleans) and volume (0-100); wifi may set ssid (1-32 bytes) with psk (8-63 printable ASCII), or clear: true; play needs tune: chime, meal, coin, alert, test or twinkle"})),
             )
         })?;
 

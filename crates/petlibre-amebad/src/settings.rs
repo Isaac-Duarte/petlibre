@@ -23,7 +23,8 @@ static GENERATION: AtomicU32 = AtomicU32::new(0);
 /// One queued change: `QUEUED`, which fields, and their values.
 static PENDING: AtomicU32 = AtomicU32::new(0);
 
-fn view() -> Option<SettingsView> {
+/// What NOR holds, once the writer has loaded it.
+pub fn current() -> Option<SettingsView> {
     let packed = VIEW.load(Ordering::Acquire);
     (packed & LOADED != 0).then(|| SettingsView {
         lights: packed & LIGHTS != 0,
@@ -36,7 +37,7 @@ fn view() -> Option<SettingsView> {
 
 /// The transport's half: read, or queue one change for the writer.
 pub fn request(fields: SettingsFields) -> SettingsResult {
-    let Some(view) = view() else {
+    let Some(view) = current() else {
         return SettingsResult::Busy;
     };
     if !fields.changes() {

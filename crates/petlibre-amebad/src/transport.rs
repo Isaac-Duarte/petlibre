@@ -13,6 +13,7 @@ use petlibre_core::transport::{
     self as mqtt, Buffer, Event, Fault, Op, Packet, Session, State, Tick,
 };
 
+use crate::audio;
 use crate::clock;
 use crate::health::{self, Boot};
 use crate::net_status;
@@ -45,6 +46,7 @@ pub enum RequestKind {
     Time,
     Settings,
     Wifi,
+    Play,
     /// Refused: a bad signature, or a state change that came unsigned.
     Unauthenticated,
     Unsupported,
@@ -443,7 +445,7 @@ impl Link {
         };
         // A bad signature is refused whatever it asks; a state change needs a
         // good one, and an image without a request key refuses every change.
-        let changes = request.op == Ok(Op::Time)
+        let changes = matches!(request.op, Ok(Op::Time | Op::Play))
             || request.settings.is_some_and(|fields| fields.changes())
             || request.wifi.is_some_and(|fields| fields.changes());
         let refused = (signed.is_some() || changes) && !authentic;
@@ -455,6 +457,7 @@ impl Link {
             Ok(Op::Time) => RequestKind::Time,
             Ok(Op::Settings) => RequestKind::Settings,
             Ok(Op::Wifi) => RequestKind::Wifi,
+            Ok(Op::Play) => RequestKind::Play,
             Err(_) => RequestKind::Unsupported,
         };
 
@@ -477,6 +480,14 @@ impl Link {
                 (
                     mqtt::write_settings_reply(&mut writer, &request, result),
                     matches!(result, mqtt::SettingsResult::Current { .. }),
+                )
+            }
+            // FW24: queue a tune for the speaker.
+            _ if request.tune.is_some() => {
+                let result = request.tune.map_or(mqtt::PlayResult::Busy, audio::request);
+                (
+                    mqtt::write_play_reply(&mut writer, &request, result),
+                    result == mqtt::PlayResult::Started,
                 )
             }
             Some(fields) => {
@@ -601,6 +612,7 @@ pub fn describe(record: Record, out: &mut impl Write) -> core::fmt::Result {
                 RequestKind::Time => "time",
                 RequestKind::Settings => "settings",
                 RequestKind::Wifi => "wifi",
+                RequestKind::Play => "play",
                 RequestKind::Unauthenticated => "unauthenticated",
                 RequestKind::Unsupported => "unsupported",
                 RequestKind::Malformed => "malformed",

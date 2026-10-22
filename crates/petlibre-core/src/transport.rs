@@ -9,6 +9,8 @@
 
 use core::fmt::{self, Write};
 
+use crate::tone::Tune;
+
 /// Largest packet either side may send; bigger input closes the session.
 pub const MAX_PACKET: usize = 768;
 /// Health payload limit (512 bytes in FW08; 640 since the clock and nonce).
@@ -552,6 +554,8 @@ pub enum Op {
     Settings,
     /// FW25: read, store or clear the Wi-Fi credentials used from next boot.
     Wifi,
+    /// FW24: play one built-in tune.
+    Play,
 }
 
 /// The fields of a `wifi` request: hex `ssid` and `psk` together, or
@@ -617,6 +621,8 @@ pub struct Request<'a> {
     pub settings: Option<SettingsFields>,
     /// Present exactly when `op` is `wifi`.
     pub wifi: Option<WifiFields<'a>>,
+    /// Present exactly when `op` is `play`: a known tune's name.
+    pub tune: Option<Tune>,
     /// The session nonce and sequence number of a signed request
     /// ([`crate::request_auth`] checks them with the MAC).
     pub auth: Option<(&'a str, u32)>,
@@ -672,7 +678,7 @@ pub fn parse_request(payload: &[u8]) -> Result<Request<'_>, RequestError> {
     }
 
     let (mut id, mut op, mut nonce) = (None, None, None);
-    let (mut ssid, mut psk, mut clear) = (None, None, None);
+    let (mut ssid, mut psk, mut clear, mut tune) = (None, None, None, None);
     let mut numbers: [Option<i64>; 4] = [None; 4];
     let mut seq = None;
     let mut options: [Option<i64>; 3] = [None; 3];
@@ -729,6 +735,7 @@ pub fn parse_request(payload: &[u8]) -> Result<Request<'_>, RequestError> {
             "nonce" => &mut nonce,
             "ssid" => &mut ssid,
             "psk" => &mut psk,
+            "tune" => &mut tune,
             _ => return Err(RequestError::Malformed),
         };
         if slot.replace(value).is_some() {
@@ -750,7 +757,14 @@ pub fn parse_request(payload: &[u8]) -> Result<Request<'_>, RequestError> {
         "time" => Ok(Op::Time),
         "settings" => Ok(Op::Settings),
         "wifi" => Ok(Op::Wifi),
+        "play" => Ok(Op::Play),
         other => Err(other),
+    };
+
+    let tune = match (op, tune) {
+        (Ok(Op::Play), Some(name)) => Some(Tune::from_name(name).ok_or(RequestError::Malformed)?),
+        (_, None) if op != Ok(Op::Play) => None,
+        _ => return Err(RequestError::Malformed),
     };
 
     let wifi = match (op, ssid, psk, clear) {
@@ -833,6 +847,7 @@ pub fn parse_request(payload: &[u8]) -> Result<Request<'_>, RequestError> {
         time,
         settings,
         wifi,
+        tune,
         auth,
     })
 }
@@ -1090,6 +1105,43 @@ pub fn write_settings_reply(
     }
 }
 
+/// How a `play` request ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlayResult {
+    /// Queued for the speaker.
+    Started,
+    /// The `sound` setting is off.
+    Muted,
+    /// Settings not loaded yet, or a tune is playing.
+    Busy,
+}
+
+/// The reply to a `play` request.
+pub fn write_play_reply(
+    out: &mut impl Write,
+    request: &Request,
+    result: PlayResult,
+) -> fmt::Result {
+    let tune = request.tune.map_or("", Tune::name);
+    match result {
+        PlayResult::Started => write!(
+            out,
+            "{{\"id\":\"{}\",\"op\":\"play\",\"ok\":true,\"tune\":\"{tune}\"}}",
+            request.id
+        ),
+        PlayResult::Muted | PlayResult::Busy => write!(
+            out,
+            "{{\"id\":\"{}\",\"op\":\"play\",\"ok\":false,\"error\":\"{}\"}}",
+            request.id,
+            if result == PlayResult::Muted {
+                "muted"
+            } else {
+                "busy"
+            }
+        ),
+    }
+}
+
 /// Which credentials the Wi-Fi join uses this boot.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum WifiSource {
@@ -1216,6 +1268,7 @@ pub fn write_reply(out: &mut impl Write, request: &Request, uptime_ms: u32) -> f
                 Op::Time => "time",
                 Op::Settings => "settings",
                 Op::Wifi => "wifi",
+                Op::Play => "play",
             };
             write!(
                 out,

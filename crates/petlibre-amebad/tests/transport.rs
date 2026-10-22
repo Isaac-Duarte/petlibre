@@ -580,3 +580,60 @@ fn settings_read_unsigned_but_change_only_signed() {
     assert!(replies[2].contains(r#""pending":true"#));
     settings::reset();
 }
+
+#[test]
+fn play_only_signed() {
+    use petlibre_amebad::sdk::fake::api::FAKE_REQUEST_KEY;
+    use petlibre_amebad::{audio, settings};
+    use petlibre_core::transport::SettingsView;
+    let (_guard, mut link) = start();
+    settings::reset();
+    audio::reset();
+    settings::publish(SettingsView {
+        lights: true,
+        sound: true,
+        volume: 50,
+        generation: 4,
+        writable: true,
+    });
+    connect(&mut link);
+    let nonce = health_nonce();
+
+    rx(&encoded(&format!(
+        r#"{{"id":"{ID}","op":"play","tune":"coin"}}"#
+    )));
+    assert_eq!(
+        run(&mut link, 1),
+        vec![Record::Request {
+            kind: RequestKind::Unauthenticated,
+            ok: false
+        }]
+    );
+
+    let prefix = format!(r#"{{"id":"{ID}","op":"play","tune":"coin","nonce":"{nonce}","seq":1"#);
+    rx(&signed_publish(&FAKE_REQUEST_KEY, &prefix));
+    assert_eq!(
+        run(&mut link, 1),
+        vec![Record::Request {
+            kind: RequestKind::Play,
+            ok: true
+        }]
+    );
+    assert_eq!(
+        audio::request(petlibre_core::tone::Tune::Meal),
+        petlibre_core::transport::PlayResult::Busy,
+        "the signed request holds the speaker"
+    );
+
+    let replies: Vec<String> = published()
+        .into_iter()
+        .filter(|(t, _)| t.ends_with("/reply"))
+        .map(|(_, p)| p)
+        .collect();
+    assert_eq!(
+        replies[1],
+        format!(r#"{{"id":"{ID}","op":"play","ok":true,"tune":"coin"}}"#)
+    );
+    audio::reset();
+    settings::reset();
+}

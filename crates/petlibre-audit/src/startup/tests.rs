@@ -2031,3 +2031,35 @@ fn write_policy_binding_both_ways() {
     .unwrap_err();
     assert!(error.to_string().contains("capture end time"));
 }
+
+#[test]
+fn low_only_led_policy_expects_no_pulses() {
+    let low = b"PLLED1 begin low_only\r\nPLLED1 done low=all\r\n";
+    let result = classify_led(low, 4);
+    assert_eq!(result["outcome"], "pass");
+    assert_eq!(result["led_low_verified"], true);
+    assert_eq!(result["led_probe_verified"], false);
+    assert_eq!(result["led_input_verified_pins"], json!([]));
+
+    // A pulse record is not part of this policy.
+    let pulsed =
+        b"PLLED1 begin low_only\r\nPLLED1 pin=PA0 level=1 status=output\r\nPLLED1 done low=all\r\n";
+    assert_eq!(
+        classify_led(pulsed, 4)["outcome"],
+        "led_unexpected_sequence"
+    );
+    assert_eq!(
+        classify_led(b"PLLED1 begin low_only\r\n", 4)["outcome"],
+        "led_incomplete"
+    );
+}
+
+#[test]
+fn routing_v3_has_only_the_startup_stage() {
+    let v2_startup: Vec<u8> = b"PLIO1 stage=startup groups=0000ffff aon=00020003 control_a=00000000 control_b=00000000 share_pad=00000355 ext_a=e9c46e00\r\n".to_vec();
+    assert_eq!(classify_routing(&v2_startup, 3)["outcome"], "pass");
+    assert_eq!(
+        classify_routing(&v2_startup, 2)["outcome"],
+        "gpio_routing_incomplete"
+    );
+}

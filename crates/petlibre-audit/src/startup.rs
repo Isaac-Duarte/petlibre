@@ -379,8 +379,10 @@ pub fn classify_power(rx: &[u8], version: u8) -> Report {
 }
 
 /// Keep fixed numeric observations without inferring pin-group membership.
+/// Version 3 has the v2 fields but only the startup stage, since the LED
+/// probe that added the per-pin stages is gone (`low-only-v1`).
 pub fn classify_routing(rx: &[u8], version: u8) -> Report {
-    let pattern = if version == 2 {
+    let pattern = if version >= 2 {
         &ROUTING_V2
     } else {
         &ROUTING_V1
@@ -401,9 +403,13 @@ pub fn classify_routing(rx: &[u8], version: u8) -> Report {
         .map(|r| r["stage"].as_str().unwrap_or(""))
         .collect();
 
-    let expected = [
-        "startup", "PA0", "PA0", "PA2", "PA2", "PA4", "PA4", "PB22", "PB22",
-    ];
+    let expected: &[&str] = if version >= 3 {
+        &["startup"]
+    } else {
+        &[
+            "startup", "PA0", "PA0", "PA2", "PA2", "PA4", "PA4", "PB22", "PB22",
+        ]
+    };
     let complete = stages == expected && count(rx, b"PLIO1") == records.len();
 
     obj(
@@ -419,15 +425,22 @@ pub fn classify_routing(rx: &[u8], version: u8) -> Report {
 /// `led_probe_verified` means every pin was input-verified, so it stays false
 /// whenever output-only pins are present; `led_input_verified_pins` lists the
 /// pins whose levels were read back.
+///
+/// Version 4 (`low-only-v1`) has no probe: the indicators are only driven
+/// LOW and verified, so the sequence is `begin low_only` then `done`, and no
+/// pin counts as probe-verified.
 pub fn classify_led(rx: &[u8], version: u8) -> Report {
-    let output_only: &[&str] = if version >= 3 { &OUTPUT_ONLY } else { &[] };
-    let mut expected: Vec<Vec<u8>> = vec![if output_only.is_empty() {
+    let low_only = version >= 4;
+    let output_only: &[&str] = if version == 3 { &OUTPUT_ONLY } else { &[] };
+    let mut expected: Vec<Vec<u8>> = vec![if low_only {
+        b"PLLED1 begin low_only\r\n".to_vec()
+    } else if output_only.is_empty() {
         b"PLLED1 begin\r\n".to_vec()
     } else {
         format!("PLLED1 begin output_only={}\r\n", OUTPUT_ONLY.join(",")).into_bytes()
     }];
 
-    for pin in LED_PINS {
+    for pin in LED_PINS.into_iter().filter(|_| !low_only) {
         let status = if output_only.contains(&pin) {
             "output"
         } else {
@@ -481,7 +494,7 @@ pub fn classify_led(rx: &[u8], version: u8) -> Report {
         })
         .collect();
 
-    let verified: Vec<&str> = if outcome == "pass" {
+    let verified: Vec<&str> = if outcome == "pass" && !low_only {
         LED_PINS
             .iter()
             .copied()
@@ -492,9 +505,12 @@ pub fn classify_led(rx: &[u8], version: u8) -> Report {
     };
 
     let mut out = obj(
-        json!({"outcome": outcome, "led_probe_verified": outcome == "pass" && output_only.is_empty(),
+        json!({"outcome": outcome, "led_probe_verified": outcome == "pass" && output_only.is_empty() && !low_only,
         "led_input_verified_pins": verified, "led_readbacks": diagnostics}),
     );
+    if low_only {
+        out.insert("led_low_verified".into(), json!(outcome == "pass"));
+    }
 
     if !output_only.is_empty() {
         out.insert("led_output_only_pins".into(), json!(output_only));
@@ -1382,7 +1398,12 @@ pub fn startup(
     let led_policy = policy(
         manifest,
         "startup_led_policy",
-        &["bounded-probe-v1", "bounded-probe-v2", "bounded-probe-v3"],
+        &[
+            "bounded-probe-v1",
+            "bounded-probe-v2",
+            "bounded-probe-v3",
+            "low-only-v1",
+        ],
         "Unknown startup LED policy",
     )?;
     require(
@@ -1390,7 +1411,10 @@ pub fn startup(
         "LED policy/artifact mismatch",
     )?;
     require(
-        matches!(led_policy, Some("bounded-probe-v2" | "bounded-probe-v3")) == has(b" highs="),
+        matches!(
+            led_policy,
+            Some("bounded-probe-v2" | "bounded-probe-v3" | "low-only-v1")
+        ) == has(b" highs="),
         "LED readback format/artifact mismatch",
     )?;
     require(
@@ -1402,6 +1426,7 @@ pub fn startup(
         let version = match led {
             "bounded-probe-v2" => 2,
             "bounded-probe-v3" => 3,
+            "low-only-v1" => 4,
             _ => 1,
         };
 
@@ -1428,7 +1453,7 @@ pub fn startup(
     let routing_policy = policy(
         manifest,
         "startup_gpio_routing_policy",
-        &["read-only-v1", "read-only-v2"],
+        &["read-only-v1", "read-only-v2", "read-only-v3"],
         "Unknown GPIO routing policy",
     )?;
     require(
@@ -1436,17 +1461,17 @@ pub fn startup(
         "GPIO routing policy/artifact mismatch",
     )?;
     require(
-        (routing_policy == Some("read-only-v2")) == has(b" share_pad="),
+        matches!(routing_policy, Some("read-only-v2" | "read-only-v3")) == has(b" share_pad="),
         "GPIO routing format/artifact mismatch",
     )?;
 
     if let Some(routing_policy) = routing_policy {
         let routing = classify_routing(
             rx,
-            if routing_policy == "read-only-v2" {
-                2
-            } else {
-                1
+            match routing_policy {
+                "read-only-v3" => 3,
+                "read-only-v2" => 2,
+                _ => 1,
             },
         );
         if passed(&result) {

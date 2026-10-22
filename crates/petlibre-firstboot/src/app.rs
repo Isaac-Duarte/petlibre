@@ -31,8 +31,6 @@ use petlibre_amebad::{config, leds, sdk, startup, stopped, trial};
 use crate::probes::optics;
 use crate::probes::wifi::{Probe, Record};
 
-static PHASE: AtomicU32 = AtomicU32::new(0);
-static INPUT_MISMATCH: AtomicBool = AtomicBool::new(false);
 static PROBING: AtomicBool = AtomicBool::new(false);
 
 /// Fixed-address probe storage touched only by the diagnostic task.
@@ -815,87 +813,10 @@ fn log_led_readback(led: leds::Led, high: bool, stage: &str, value: leds::Readba
     }
 }
 
-fn abort_led(led: leds::Led, high: bool, stage: &str, value: leds::Readback) {
-    let _ = leds::all_low();
-    if !value.stopped_ok {
-        let _ = stopped::initialize();
-    }
-    log_led_readback(led, high, stage, value);
-    sdk::log(c"PLLED1 error step=unverified\r\n");
-}
-
 unsafe extern "C" fn diagnostic_task(_: *mut c_void) -> u32 {
     STARTUP_BEAT.store(sdk::uptime_ms(), Ordering::Release);
     if PROBING.load(Ordering::Relaxed) {
         return probe_step();
-    }
-
-    let phase = PHASE.fetch_add(1, Ordering::Relaxed);
-
-    // Phase 0 runs the diagnostic. After it, each indicator step takes two
-    // phases: the request, then the check once the pad has settled.
-    if phase != 0 {
-        let Some(step) = leds::probe_step((phase - 1) / 2) else {
-            if leds::all_low() && stopped::observe().verified() {
-                if INPUT_MISMATCH.load(Ordering::Relaxed) {
-                    sdk::log(c"PLLED1 error finish=input_mismatch low=all\r\n");
-                } else {
-                    sdk::log(c"PLLED1 done low=all\r\n");
-                    PROBING.store(true, Ordering::Relaxed);
-                    if startup::snapshot().bank() == Some(0) {
-                        start_updater();
-                    } else {
-                        start_transport();
-                        start_optics();
-                        start_confirm();
-                    }
-                    STARTUP.store(STARTUP_STARTED, Ordering::Release);
-                    return 1;
-                }
-            } else {
-                sdk::log(c"PLLED1 error finish=unverified\r\n");
-            }
-            return startup_failed();
-        };
-
-        if (phase - 1).is_multiple_of(2) {
-            if !leds::request(step.led, step.high) {
-                abort_led(step.led, step.high, "request", leds::observe(step.led));
-                return startup_failed();
-            }
-            // Yield with IRQs restored; do not inspect pad input immediately after DR.
-            return leds::SETTLE_MS;
-        }
-
-        if step.high {
-            log_gpio_routing(step.led.name());
-        }
-
-        let observed = leds::observe(step.led);
-        let status = match observed.decision(step.high) {
-            leds::Decision::Verified => "pass",
-            leds::Decision::OutputOnly => "output",
-            leds::Decision::InputMismatch => {
-                INPUT_MISMATCH.store(true, Ordering::Relaxed);
-                log_led_readback(step.led, step.high, "verify", observed);
-                "fail"
-            }
-            leds::Decision::Abort => {
-                abort_led(step.led, step.high, "verify", observed);
-                return startup_failed();
-            }
-        };
-
-        let mut report = startup::Report::new();
-        if let Ok(line) = report.record(format_args!(
-            "PLLED1 pin={} level={} status={}\r\n",
-            step.led.name(),
-            u8::from(step.high),
-            status,
-        )) {
-            sdk::log(line);
-        }
-        return step.delay_ms - leds::SETTLE_MS;
     }
 
     sdk::log(c"\r\nPetlibre local firmware: Rust bringup\r\n");
@@ -927,8 +848,25 @@ unsafe extern "C" fn diagnostic_task(_: *mut c_void) -> u32 {
         return startup_failed();
     }
 
-    sdk::log(c"PLLED1 begin output_only=PA0,PA2,PA4\r\n");
-    3000
+    // The indicators stay LOW (policy low-only-v1): the FW04 pulse probe
+    // proved them and cost every boot about 15 s; FW23 gives them meaning.
+    if !(leds::all_low() && stopped::observe().verified()) {
+        sdk::log(c"PLLED1 error finish=unverified\r\n");
+        return startup_failed();
+    }
+    sdk::log(c"PLLED1 begin low_only\r\n");
+    sdk::log(c"PLLED1 done low=all\r\n");
+
+    PROBING.store(true, Ordering::Relaxed);
+    if startup::snapshot().bank() == Some(0) {
+        start_updater();
+    } else {
+        start_transport();
+        start_optics();
+        start_confirm();
+    }
+    STARTUP.store(STARTUP_STARTED, Ordering::Release);
+    1
 }
 
 /// Called once by the SDK's `example_entry`, before the scheduler starts.

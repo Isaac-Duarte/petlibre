@@ -48,8 +48,10 @@ EXPECTED_HP = {
     # normal role's confirmation write uses.
     "FLASH_EraseXIP": {"FLASH_EreaseDwordsXIP", "wellfed_amebad_sdk::target::bank1_erase",
                        "wellfed_amebad_sdk::target::storage_erase"},
+    # FW10 give-way: bank 1's first marker byte only, from bank 1, with bank 0 valid.
     "FLASH_TxData256BXIP": {"wellfed_amebad_sdk::target::bank1_program",
-                            "wellfed_amebad_sdk::target::storage_program"},
+                            "wellfed_amebad_sdk::target::storage_program",
+                            "wellfed_amebad_sdk::target::bank1_give_way"},
     "FLASH_TxData12BXIP": {"FLASH_EreaseDwordsXIP"},
     "FLASH_EreaseDwordsXIP": set(),
     "cmd_flash": {"shell_cmd_table"},

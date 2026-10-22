@@ -225,19 +225,19 @@ fn next(delay_ms: u32, record: Option<Record>) -> Step {
     }
 }
 
-struct Topic {
+pub(crate) struct Topic {
     buf: [u8; ota::TOPIC_BUDGET],
     len: usize,
 }
 
 impl Topic {
-    fn new(namespace: &str, suffix: &str) -> Option<Self> {
+    pub(crate) fn new(namespace: &str, suffix: &str) -> Option<Self> {
         let mut buf = [0; ota::TOPIC_BUDGET];
         let len = mqtt::topic(&mut buf, namespace, suffix).ok()?.len();
         Some(Self { buf, len })
     }
 
-    fn as_str(&self) -> &str {
+    pub(crate) fn as_str(&self) -> &str {
         core::str::from_utf8(&self.buf[..self.len]).unwrap_or("")
     }
 }

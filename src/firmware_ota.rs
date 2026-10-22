@@ -177,6 +177,12 @@ impl Offer {
         (answer, dropped)
     }
 
+    /// The answer to the normal role's `ota/check`: the manifest, or no
+    /// offer. Never counted as a delivery.
+    pub fn check(offer: Option<&Self>) -> Vec<u8> {
+        Self::answer(offer, &ota::encode_get(ota::Part::Manifest, 0, 0)).unwrap_or_default()
+    }
+
     pub fn answer(offer: Option<&Self>, request: &[u8]) -> Option<Vec<u8>> {
         let (part, offset, len) = ota::decode_get(request)?;
         let refuse = |status| ota::encode_data_header(part, status, offset, 0).to_vec();

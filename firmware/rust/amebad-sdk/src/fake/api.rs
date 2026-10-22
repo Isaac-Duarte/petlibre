@@ -157,6 +157,20 @@ pub fn bank1_read(sector: u32, offset: u32, bytes: &mut [u8]) -> bool {
     true
 }
 
+/// As the target: clear bank 1's first marker byte, only from bank 1 with
+/// both markers valid.
+pub fn bank1_give_way() -> bool {
+    with(|h| {
+        let ok = h.running_bank == Some(1)
+            && h.bank1[..8] == crate::MARKER
+            && h.bank0_marker == crate::MARKER;
+        if ok {
+            h.bank1[0] = 0;
+        }
+        ok
+    })
+}
+
 pub fn flash_read_jedec() -> [u8; 3] {
     [0xc8, 0x40, 0x17]
 }

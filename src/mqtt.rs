@@ -106,6 +106,7 @@ pub async fn run(
                                 filters.push(SubscribeFilter::new(config.firmware_topic("health"),QoS::AtMostOnce));
                                 filters.push(SubscribeFilter::new(config.firmware_topic("reply"),QoS::AtMostOnce));
                                 filters.push(SubscribeFilter::new(config.firmware_topic("ota/get"),QoS::AtMostOnce));
+                                filters.push(SubscribeFilter::new(config.firmware_topic("ota/check"),QoS::AtMostOnce));
                             }
                             client.subscribe_many(filters).await?;
                             info!("local MQTT server connected");
@@ -130,6 +131,11 @@ pub async fn run(
                                     Some(answer) => { let _ = client.try_publish(config.firmware_topic("ota/data"),QoS::AtMostOnce,false,answer); }
                                     None => warn!("ignored malformed replacement update request"),
                                 }
+                                continue;
+                            }
+                            if config.firmware.is_some() && publish.topic == config.firmware_topic("ota/check") {
+                                // The normal role's offer check: the manifest only, and never counted as a delivery.
+                                let _ = client.try_publish(config.firmware_topic("ota/offered"),QoS::AtMostOnce,false,firmware_ota::Offer::check(offer.as_ref()));
                                 continue;
                             }
                             if config.firmware.is_some() && publish.topic == config.firmware_topic("reply") {

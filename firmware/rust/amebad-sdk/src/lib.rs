@@ -90,6 +90,10 @@ impl FlashMmuEntry {
 /// from 0x186000, in 4 KiB sectors. Only while running from bank 0.
 pub const BANK1_OFFSET: u32 = 0x18_6000;
 pub const BANK1_SECTORS: u32 = 0x15_0000 / 0x1000;
+/// Bank 0, the factory loader's fallback (read only, for the give-way guard).
+pub const BANK0_OFFSET: u32 = 0x6000;
+/// The factory loader's valid-image marker at the start of each bank.
+pub const MARKER: [u8; 8] = *b"81958711";
 
 /// One event from the KM4 Wi-Fi shim's ring (`example_entry.c`), numbered
 /// from 1. `kind`: 1 on, 2 scan, 3 connect, 4 DHCP, 5 lost, 6 backoff.

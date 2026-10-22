@@ -58,7 +58,7 @@ Session evidence goes to new directories under `private/captures/`, `private/fla
 
 Ctrl+C stops the running sequence: the `petlibre-flash` child stops itself terminally and records it, and the bench runs the same cleanup as for any stop (the loader and transient sequences power off, and the demo turns the spares off).
 
-Stock recovery and the standalone diagnostic keep their own tools. Use `loader` to enter the ROM, then run `petlibre-flash stock-recovery` or `tools/flash/uart-standalone.py` directly.
+Stock recovery keeps its own commands. Use `loader` to enter the ROM, then run `petlibre-flash stock-recovery` directly.
 
 ## Progress page
 

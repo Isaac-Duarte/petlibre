@@ -13,9 +13,9 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "firmware/tools"))
 import firstboot
 sys.path.pop(0)
-spec = importlib.util.spec_from_file_location("firstboot_preflight", ROOT / "tools/flash/prepare-firstboot.py")
-preflight = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(preflight)
+spec = importlib.util.spec_from_file_location("firstboot_review", ROOT / "tools/flash/review-development-image.py")
+review = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(review)
 BUILD = ROOT / "private/firmware-build/plaf103-firstboot"
 PROJECT = Path("project/realtek_amebaD_va0_example/GCC-RELEASE")
 LOCK = json.loads((ROOT / "firmware/sdk.lock.json").read_text())
@@ -98,17 +98,10 @@ class FirstBootTests(unittest.TestCase):
             firstboot.audit(ROOT / "private/firmware-build/plaf103/sdk", PROJECT, BINUTILS)
 
     def test_actual_factory_accepts_short_diagnostic_in_both_banks(self):
-        cases = preflight.mapping_cases(CURRENT.read_bytes(), preflight.FACTORY.ROM.read_bytes(), self.image)
+        factory = review.factory()
+        cases = review.mapping_cases(CURRENT.read_bytes(), factory.ROM.read_bytes(), self.image)
         self.assertEqual([case["selection"]["result"] for case in cases], [1, 2])
         self.assertLess(len(self.image), 200000)
-
-    def test_stock_guard_and_hypothetical_restoration_preserve_fresh_snapshot(self):
-        baseline, current = preflight.FACTORY.FLASH.read_bytes(), CURRENT.read_bytes()
-        report = preflight.restoration_fixture(baseline, current, self.image)
-        self.assertTrue(report["live_custom_bank_refused_by_existing_cli"])
-        self.assertTrue(report["invalidation_is_model_only"])
-        self.assertTrue(report["restores_exact_current_snapshot"])
-        self.assertEqual(report["stock_restoration_plan"]["proposed_snapshot_sha256"], preflight.digest(current))
 
 
 if __name__ == "__main__":

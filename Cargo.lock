@@ -1540,6 +1540,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "petlibre-audit"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "clap",
+ "petlibre-flash",
+ "regex",
+ "serde_json",
+ "sha2 0.11.1",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "petlibre-bench"
 version = "0.1.0"
 dependencies = [
@@ -1634,16 +1648,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "petlibre-probe"
-version = "0.1.0"
-
-[[package]]
 name = "petlibre-sim"
 version = "0.1.0"
 dependencies = [
+ "clap",
  "petlibre-amebad",
  "petlibre-core",
  "petlibre-testkit",
+ "serde_json",
+ "sha2 0.11.1",
+ "tempfile",
+ "thiserror",
 ]
 
 [[package]]
@@ -2962,6 +2977,15 @@ name = "writeable"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
+
+[[package]]
+name = "xtask"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "regex",
+ "tempfile",
+]
 
 [[package]]
 name = "yoke"

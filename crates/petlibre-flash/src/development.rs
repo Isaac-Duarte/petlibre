@@ -1,6 +1,6 @@
 //! Region-scoped bank development transactions over an injected transport.
 //!
-//! Port of `tools/flash/development-bank.py`. Bank 1 (`0x186000`, the
+//! Port of the former `tools/flash/development-bank.py`. Bank 1 (`0x186000`, the
 //! factory loader's preferred bank) is the default; bank 0 (`0x6000`, the
 //! fallback) has its own transaction kind and layout. Neither ever writes the
 //! factory region `0x0-0x6000`, which is only read and compared with the

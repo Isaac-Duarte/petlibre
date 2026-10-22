@@ -12,13 +12,12 @@ Later diagnostics also added artifact-bound startup, physical STOP/off requests,
 
 | Tools | Purpose |
 | --- | --- |
-| `uart-flash-read.py`, `flash-status.py`, `audit-flash-backup.py` | Restricted inspection/read transport, protection decoding, and independent backup comparison |
+| `uart-flash-read.py`, `flash-status.py`, `petlibre-audit backup` | Restricted inspection/read transport, protection decoding, and independent backup comparison |
 | `plan-stock-recovery.py`, `recovery-transaction.py`, `uart-stock-recovery.py` | Offline plan and explicit stock-bank transport; ordinary recovery refuses a still-bootable target bank |
-| `prepare-firstboot.py`, `standalone-bank.py`, `uart-standalone.py` | Candidate audit and guarded transition between the exact pinned diagnostic and stock |
 | `inspect-recovery-transaction.py`, wire-policy tools | Journal and transmitted-byte verification |
 | Recovery emulators and fixture tests | Supplied helper/NOR fault scenarios; no hardware operation |
 
-Writers require source-bound plans, current-image evidence, explicit serial identity, immutable inputs, and full preimage verification. Sector writes have durable intent records and exact readback. Activation withholds the first eight marker bytes until staged image and preserved ranges match; the final marker write adds no erase. The standalone transition invalidates the marker sector first and has a fixed 26-sector footprint. Lost ACKs or uncertain writes stop without automatic retry or resume.
+Writers require source-bound plans, current-image evidence, explicit serial identity, immutable inputs, and full preimage verification. Sector writes have durable intent records and exact readback. Activation withholds the first eight marker bytes until staged image and preserved ranges match; the final marker write adds no erase. Lost ACKs or uncertain writes stop without automatic retry or resume.
 
 Preserve current bytes outside the allowed application region, including unclassified bytes. Do not substitute blanket chip erases, protection clearing, arbitrary images, or disabled checks. Hash equality does not prove physical device identity.
 

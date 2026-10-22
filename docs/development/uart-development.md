@@ -1,6 +1,6 @@
 # Region-scoped UART development updates
 
-This is a separate experimental path for the tested PLAF103 bank-1 layout. It accepts complete, frozen source/target images and updates their required application sectors in an already established supervised helper session. Existing pinned stock-recovery and standalone diagnostic writers retain their original restrictions.
+This is a separate experimental path for the tested PLAF103 bank-1 layout. It accepts complete, frozen source/target images and updates their required application sectors in an already established supervised helper session. The pinned stock-recovery writer retains its original restrictions.
 
 It is not replacement OTA, automatic rollback, a boot controller, or a partial-write resume mechanism. The factory guards still require the original research baseline; another unit's backup is not automatically compatible.
 
@@ -17,7 +17,7 @@ make -C firmware plaf103-firstboot
 .venv/bin/python tools/flash/review-development-image.py build \
   --build private/firmware-build/plaf103-firstboot \
   --output private/verification/development-review
-.venv/bin/python tools/flash/uart-development.py --help
+cargo run --locked -p petlibre-flash -- update --help
 ```
 
 The [Rust client](rust-flash.md) runs the same inspect, prepare and execute sequence as `petlibre-flash update`; it has no hardware acceptance yet. These commands do not open a serial port. Build snapshots copied from the research archive can be stale against Petlibre's changed source/input hashes. Rebuild and freeze new targets rather than editing manifests or substituting expected hashes. Retain a frozen source matching the actually installed application.

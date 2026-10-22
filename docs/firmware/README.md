@@ -13,7 +13,6 @@ The local server talks to **stock 1.1.15** over its existing MQTT protocol. It d
 | `petlibre-amebad-sdk` | Bindgen-backed KM4 calls into the pinned AmebaD SDK, and the deterministic host fake SDK used by tests and the simulator |
 | `petlibre-ffi` | C ABI and per-core static libraries joining Rust to SDK startup |
 | `petlibre-testkit`, `petlibre-sim` | Fake NOR journal storage and deterministic host worker |
-| `petlibre-probe` | Small non-actuating GET_CONFIG execution probe embedded into a fixed stock-image slot |
 
 Minimal C hooks call the Rust entrypoint. The SDK still supplies startup, FreeRTOS, radio code, linker scripts, and image packaging. KM0 and KM4 are built separately. Header-derived bindings are generated for SDK-backed KM4 builds; host tests use fake bindings.
 

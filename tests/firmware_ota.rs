@@ -79,3 +79,48 @@ fn signing_refuses_images_the_firmware_would_refuse() {
     std::fs::write(&bad, serde_json::to_vec(&file).unwrap()).unwrap();
     assert!(firmware_ota::load_key(&bad).is_err());
 }
+
+#[test]
+fn an_offer_answers_manifest_and_chunks_within_its_image() {
+    use firmware_ota::Offer;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("k.json");
+    firmware_ota::keygen(&path).unwrap();
+    let key = firmware_ota::load_key(&path).unwrap();
+    let image = container(SECTOR + 700);
+    let manifest = firmware_ota::sign(&key, &image, 3, [1; 32]).unwrap();
+    let offer = Offer::new(&manifest, &image).unwrap();
+    assert_eq!(offer.version, 3);
+    let answer = Offer::answer(Some(&offer), &ota::encode_get(ota::Part::Manifest, 0, 0)).unwrap();
+    let data = ota::decode_data(&answer).unwrap();
+    assert_eq!(
+        (data.status, data.bytes),
+        (ota::Status::Ok, manifest.as_slice())
+    );
+    let answer = Offer::answer(Some(&offer), &ota::encode_get(ota::Part::Chunk, 512, 512)).unwrap();
+    let data = ota::decode_data(&answer).unwrap();
+    assert_eq!(
+        data.bytes,
+        &firmware_ota::payload(&image).unwrap()[512..1024]
+    );
+    for (offset, len) in [(SECTOR as u32 + 600, 512), (0, 513), (0, 0)] {
+        let answer = Offer::answer(
+            Some(&offer),
+            &ota::encode_get(ota::Part::Chunk, offset, len),
+        )
+        .unwrap();
+        assert_eq!(
+            ota::decode_data(&answer).unwrap().status,
+            ota::Status::Range
+        );
+    }
+    let none = Offer::answer(None, &ota::encode_get(ota::Part::Manifest, 0, 0)).unwrap();
+    assert_eq!(
+        ota::decode_data(&none).unwrap().status,
+        ota::Status::NoOffer
+    );
+    assert!(Offer::answer(Some(&offer), &[1, 2]).is_none());
+    // A manifest for another image is refused when loading the offer.
+    let other = container(SECTOR + 701);
+    assert!(Offer::new(&manifest, &other).is_err());
+}

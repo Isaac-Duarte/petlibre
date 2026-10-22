@@ -149,6 +149,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/ota/trial/resolve", post(ota_trial_resolve))
         .route("/api/probe/query", post(probe_query))
         .route("/api/replacement/request", post(replacement_request))
+        .route("/api/replacement/ota/offer", post(replacement_ota_offer))
         .layer(DefaultBodyLimit::max(4096))
         .with_state(state)
 }
@@ -185,6 +186,81 @@ async fn replacement_request(
         .map_err(|_| offline(RequestError::Offline))?
         .map_err(offline)?;
     Ok(Json(json!({"id":id,"op":input.op})))
+}
+
+#[derive(serde::Deserialize)]
+struct OfferInput {
+    /// Both relative paths under `private/`; absent to clear the offer.
+    manifest: Option<String>,
+    image: Option<String>,
+}
+
+fn private_path(name: &str) -> Option<std::path::PathBuf> {
+    let path = std::path::Path::new(name);
+    let clean = path.is_relative()
+        && path.starts_with("private")
+        && path
+            .components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)));
+    clean.then(|| path.to_path_buf())
+}
+
+/// Load or clear the replacement-firmware update the server will answer
+/// `ota/get` from. The files are read from `private/`; the firmware verifies
+/// the signature, the server only checks the image matches its manifest.
+async fn replacement_ota_offer(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Json(input): Json<OfferInput>,
+) -> Result<Json<Value>, ApiError> {
+    authenticate(&headers, &state)?;
+    let bad = |message: String| (StatusCode::BAD_REQUEST, Json(json!({"error": message})));
+    let offer = match (input.manifest.as_deref(), input.image.as_deref()) {
+        (None, None) => None,
+        (Some(manifest), Some(image)) => {
+            let (Some(manifest), Some(image)) = (private_path(manifest), private_path(image))
+            else {
+                return Err(bad("paths must be relative and under private/".into()));
+            };
+            let read = |p: &std::path::Path| {
+                std::fs::read(p).map_err(|e| bad(format!("{}: {e}", p.display())))
+            };
+            Some(
+                crate::firmware_ota::Offer::new(&read(&manifest)?, &read(&image)?)
+                    .map_err(|e| bad(e.to_string()))?,
+            )
+        }
+        _ => {
+            return Err(bad(
+                "give both manifest and image, or neither to clear".into()
+            ));
+        }
+    };
+    let summary = offer
+        .as_ref()
+        .map(|o| json!({"version": o.version, "bytes": o.payload.len()}));
+    let (send, receive) = oneshot::channel();
+    let unavailable = || {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"error":"server busy"})),
+        )
+    };
+    state
+        .requests
+        .try_send(Request::OtaOffer(offer, send))
+        .map_err(|_| unavailable())?;
+    let configured = tokio::time::timeout(Duration::from_secs(5), receive)
+        .await
+        .map_err(|_| unavailable())?
+        .map_err(|_| unavailable())?;
+    if !configured {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({"error":"no replacement-firmware role configured"})),
+        ));
+    }
+    Ok(Json(json!({"offer": summary})))
 }
 
 async fn probe_query(

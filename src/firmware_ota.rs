@@ -113,3 +113,59 @@ pub fn sign(
 pub fn parse_build_id(text: &str) -> Result<[u8; 32]> {
     unhex::<32>(text)
 }
+
+/// One owner-loaded update the server answers `ota/get` from. Checked
+/// against its own manifest; authenticity is the firmware's signature check.
+#[derive(Clone, Debug)]
+pub struct Offer {
+    pub manifest: [u8; MANIFEST_LEN],
+    pub payload: Vec<u8>,
+    pub version: u32,
+}
+
+impl Offer {
+    pub fn new(manifest: &[u8], container: &[u8]) -> Result<Self> {
+        let manifest: [u8; MANIFEST_LEN] = manifest
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("manifest must be {MANIFEST_LEN} bytes"))?;
+        ensure!(manifest[..8] == ota::MAGIC, "not an update manifest");
+        let payload = self::payload(container)?.to_vec();
+        let field = |at: usize| u32::from_le_bytes(manifest[at..at + 4].try_into().unwrap());
+        ensure!(
+            field(12) as usize == payload.len(),
+            "manifest length differs from the image"
+        );
+        ensure!(
+            manifest[20..52] == Sha256::digest(&payload)[..],
+            "manifest hash differs from the image"
+        );
+        Ok(Self {
+            manifest,
+            payload,
+            version: field(8),
+        })
+    }
+
+    /// The `ota/data` answer to one `ota/get`, or `None` for a malformed request.
+    pub fn answer(offer: Option<&Self>, request: &[u8]) -> Option<Vec<u8>> {
+        let (part, offset, len) = ota::decode_get(request)?;
+        let refuse = |status| ota::encode_data_header(part, status, offset, 0).to_vec();
+        let Some(offer) = offer else {
+            return Some(refuse(ota::Status::NoOffer));
+        };
+        let body: &[u8] = match part {
+            ota::Part::Manifest => &offer.manifest,
+            ota::Part::Chunk => {
+                let end = offset as usize + len as usize;
+                if len == 0 || len > ota::MAX_CHUNK || end > offer.payload.len() {
+                    return Some(refuse(ota::Status::Range));
+                }
+                &offer.payload[offset as usize..end]
+            }
+        };
+        let mut out =
+            ota::encode_data_header(part, ota::Status::Ok, offset, body.len() as u32).to_vec();
+        out.extend_from_slice(body);
+        Some(out)
+    }
+}

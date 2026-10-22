@@ -49,8 +49,8 @@ Candidate algorithm: Ed25519, verified in `wellfed-core` (`no_std`), with the SH
 
 The recovery image pulls; it is never pushed:
 - It publishes `ota/get {offset, length}` on its own namespace, and the server answers `ota/data` with that chunk.
-- Chunks are at most 4 KiB, a whole sector, so each sector is staged in RAM, then erased, programmed and read back in one lease.
-- The MQTT codec's packet bound grows for these two topics only.
+- Chunks are at most 512 bytes, so an answer fits the FW08 codec's existing 640-byte packet bound with its topic, leaving the running transport's buffers unchanged. A compile-time assert keeps it that way.
+- The writer stages a whole sector in RAM, then the port erases, programs and reads it back in one lease.
 - A missing or late chunk is re-requested a bounded number of times, then the attempt fails into step 4's safe state.
 
 The server-side broker ACL gains these two topics for the firmware role only.
@@ -60,7 +60,7 @@ The server-side broker ACL gains these two topics for the firmware role only.
 - **Core (done):** `wellfed-core::ota`, using `ed25519-dalek` and `sha2` with default features off, so it stays `no_std`. It holds manifest parsing and signature verification, the bank-1 sector writer, the trial decision and the confirmation record. The manifest refuses tampering, the wrong key, a bank other than 1, a size outside one sector to 0x150000, and downgrades. The writer withholds the marker until every sector reads back and the whole-image SHA-256 matches, and it refuses out-of-order chunks, a missing marker, failed readback, corruption and truncation. Host tests include RFC 8032 test 1.
 - **Fakes:** the bank-role decision and the KM0 trial counter, against the fake SDK.
 - **Emulation (done):** `tools/emulate/emulate-ota-markers.py` hands each modeled flash state to the factory loader's own selection code. The states are every step above, a bank-1 marker cut after each of its 8 bytes, and erased or staged bodies. It passed all 14 states for both stock and the replacement build. Only the forbidden step, giving way with no valid recovery in bank 0, leaves nothing to boot. Any single cleared bit in bank 1's marker gives way to bank 0.
-- **Server:** manifest signing (done: `wellfed-local ota-keygen` and `ota-sign`, round-tripped through the firmware's own parser and writer in a test). The `ota/get`/`ota/data` handling is next, against the real broker in a loopback test.
+- **Server:** manifest signing (done: `wellfed-local ota-keygen` and `ota-sign`, round-tripped through the firmware's own parser and writer in a test). Delivery is done too: `ota-offer`, the broker ACL and the server's answers. A loopback test has the firmware's own codec, parser and writer pull a signed image through the real broker and server.
 
 ## Hardware stages (owner-reviewed)
 

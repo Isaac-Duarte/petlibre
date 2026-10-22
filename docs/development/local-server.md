@@ -70,7 +70,14 @@ The replacement firmware will accept only updates signed by an owner-held key ([
 - **`ota-keygen`:** writes the Ed25519 seed (mode 600) and prints the public key that firmware builds embed. It refuses to replace an existing key.
 - **`ota-sign`:** checks that the image's bank contents start with the loader marker and fit the reviewed bank-1 bound, then writes the manifest in the exact format `wellfed-core::ota` verifies.
 
-Delivering a manifest and image to the firmware is not implemented yet.
+Offer a signed update to the running server, or clear it:
+
+```sh
+./target/debug/wellfed-local ota-offer --manifest private/<name>.manifest --image private/verification/<review>/image.bin
+./target/debug/wellfed-local ota-offer --clear
+```
+
+The offer lives only in the server's memory. The server answers the firmware's `ota/get` requests on `ota/data` with the manifest or a chunk of at most 512 bytes, and never pushes anything. On load it checks that the image matches the manifest's length and hash; authenticity is the firmware's signature check. Paths must be relative and under `private/`. The broker lets the firmware role publish only `ota/get` and subscribe only `ota/data`, and the server role the reverse.
 
 ## Manual requests and uncertainty
 

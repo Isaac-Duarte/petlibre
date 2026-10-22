@@ -9,9 +9,13 @@
 //! FW15 `sound` setting mutes requests and its `volume` sets loudness.
 //! Nothing here touches the motor, the emitters or flash, and the transport
 //! only reaches [`request`].
+//!
+//! The speaker variant's network stream (`stream.rs`) shares the output: it
+//! takes the same slot with [`claim_stream`], so a tune and a stream never
+//! open the codec together.
 
 use core::fmt;
-use core::sync::atomic::{AtomicU8, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use petlibre_core::tone::{Player, SAMPLE_RATE, Tune};
 use petlibre_core::transport::PlayResult;
@@ -31,9 +35,45 @@ const DRAIN_MS: u32 = 400;
 const LATE_MS: u32 = 1000;
 
 const EMPTY: u8 = 0;
+/// The slot while a network stream holds the output.
+const STREAM: u8 = u8::MAX;
 
-/// `EMPTY`, or the queued or playing tune's code + 1.
+/// `EMPTY`, `STREAM`, or the queued or playing tune's code + 1.
 static SLOT: AtomicU8 = AtomicU8::new(EMPTY);
+static AMP_READY: AtomicBool = AtomicBool::new(false);
+
+/// Take the output for a stream; false while a tune is queued or playing.
+pub fn claim_stream() -> bool {
+    SLOT.compare_exchange(EMPTY, STREAM, Ordering::AcqRel, Ordering::Acquire)
+        .is_ok()
+}
+
+pub fn release_stream() {
+    let _ = SLOT.compare_exchange(STREAM, EMPTY, Ordering::AcqRel, Ordering::Acquire);
+}
+
+/// Open the codec at `rate_hz`, then enable the amplifier; false (amplifier
+/// off) when the codec would not open.
+pub fn open_output(rate_hz: u32) -> bool {
+    if !AMP_READY.swap(true, Ordering::AcqRel) {
+        // Configure the enable as an output, LOW, before its first use.
+        amp(false);
+        sdk::gpio_no_pull(AMP_PIN);
+        sdk::gpio_init(AMP_PIN, true);
+        amp(false);
+    }
+    if !sdk::audio_open(rate_hz) {
+        return false;
+    }
+    amp(true);
+    true
+}
+
+/// Amplifier off first, then the codec.
+pub fn close_output() {
+    amp(false);
+    sdk::audio_close();
+}
 
 /// The transport's half: queue `tune` unless muted or busy.
 pub fn request(tune: Tune) -> PlayResult {
@@ -52,6 +92,7 @@ pub fn request(tune: Tune) -> PlayResult {
 /// Forget everything (host tests).
 pub fn reset() {
     SLOT.store(EMPTY, Ordering::Release);
+    AMP_READY.store(false, Ordering::Release);
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -122,7 +163,6 @@ pub struct Speaker {
     started: u32,
     /// The DMA's underrun count when streaming began, then the tune's own.
     underruns: u32,
-    amp_ready: bool,
 }
 
 fn next(delay_ms: u32, record: Option<Record>) -> Step {
@@ -134,20 +174,8 @@ fn amp(on: bool) {
 }
 
 impl Speaker {
-    /// Configure the amplifier enable as an output, LOW, before its first use.
-    fn prepare_amp(&mut self) {
-        if !self.amp_ready {
-            amp(false);
-            sdk::gpio_no_pull(AMP_PIN);
-            sdk::gpio_init(AMP_PIN, true);
-            amp(false);
-            self.amp_ready = true;
-        }
-    }
-
     fn finish(&mut self, drained: bool) -> Record {
-        amp(false);
-        sdk::audio_close();
+        close_output();
         let (tune, _) = self.playing.take().expect("finish while playing");
         SLOT.store(EMPTY, Ordering::Release);
         self.stage = Stage::Idle;
@@ -185,12 +213,10 @@ impl Speaker {
                     return next(POLL_MS, None);
                 };
                 let volume = settings::current().map_or(0, |view| view.volume);
-                self.prepare_amp();
-                if !sdk::audio_open(SAMPLE_RATE) {
+                if !open_output(SAMPLE_RATE) {
                     SLOT.store(EMPTY, Ordering::Release);
                     return next(POLL_MS, Some(Record::Error { stage: "open" }));
                 }
-                amp(true);
                 self.playing = Some((tune, Player::new(tune, volume)));
                 self.started = now;
                 self.stage = Stage::Warm {

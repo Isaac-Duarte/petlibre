@@ -17,6 +17,7 @@ km4 = ["dep:petlibre-amebad", "dep:petlibre-firstboot", "petlibre-firstboot/km4"
 fw16-pulse = ["km4", "petlibre-firstboot/fw16-pulse"]
 fw11-reset = ["km4", "petlibre-firstboot/fw11-reset"]
 fw11-fail = ["km4", "petlibre-firstboot/fw11-fail"]
+speaker = ["km4", "petlibre-firstboot/speaker"]
 
 [dependencies]
 petlibre-core.workspace = true

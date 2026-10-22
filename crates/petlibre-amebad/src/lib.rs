@@ -39,6 +39,7 @@ pub mod clock;
 pub mod confirm;
 pub mod network;
 pub mod settings;
+pub mod stream;
 pub mod supervise;
 
 mod active;

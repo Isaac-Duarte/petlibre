@@ -198,6 +198,20 @@ enum Action {
         clear: bool,
     },
 
+    /// Play an audio file (any format ffmpeg reads, or - for stdin) on a
+    /// feeder running the speaker variant. Talks to the feeder directly.
+    Speak {
+        #[arg(long, default_value = "private/server.json")]
+        config: PathBuf,
+        file: PathBuf,
+        /// The feeder's address; found by its MAC on the hotspot otherwise.
+        #[arg(long)]
+        host: Option<std::net::IpAddr>,
+        /// Sample rate: 8000, 16000, 32000 or 48000.
+        #[arg(long, default_value_t = 32_000)]
+        rate: u32,
+    },
+
     /// Explicit feeder-only gateway routing and WAN isolation; needs sudo.
     Network {
         #[command(subcommand)]
@@ -260,6 +274,22 @@ async fn main() -> Result<()> {
             enable_ota_trial,
         } => serve(config, enable_ota_trial).await?,
         Action::Status { config } => api_request(config, "GET", "/api/status", None).await?,
+        Action::Speak {
+            config,
+            file,
+            host,
+            rate,
+        } => {
+            let config = Config::load(&config)?;
+            let host = match host {
+                Some(host) => host,
+                None => petlibre_local::speak::discover(&config)?,
+            };
+            tokio::task::spawn_blocking(move || {
+                petlibre_local::speak::play(&config, &file, host, rate)
+            })
+            .await??;
+        }
 
         Action::Feed {
             config,

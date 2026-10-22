@@ -45,6 +45,26 @@ A signed `{"op":"play","tune":"<name>"}` queues a tune (see [local transport](lo
 
 The transport reaches only `audio::request` (`cargo xtask check-repository` pins it).
 
+## Speaker variant (network audio)
+
+`build.py plaf103-firstboot --speaker` (or `petlibre-bench ota NAME --build --variant speaker`) builds the normal image plus a stream task (`petlibre-amebad/src/stream.rs`, task `petlibre-spk`). Motion is untouched, and OTA, recovery and confirmation work as in the normal image.
+- **Handshake:** the task listens on TCP 7700, one client at a time. It sends a `PLSPK1` hello with a fresh challenge, and the client answers with a header (sample rate 8, 16, 32 or 48 kHz) and an HMAC under the FW08 request key (`petlibre-core/src/speaker_stream.rs`). The feeder replies with one status byte: `ok`, `unauthenticated`, `bad_header`, `busy` or `muted`. An image without a request key refuses every stream.
+- **Stream:**
+  - After `ok`, the connection is raw 16-bit little-endian mono PCM.
+  - A 64 KiB buffer (1 s at 32 kHz) fills to half before playback starts. TCP backpressure paces the sender.
+  - The stream ends when the client closes, or after 3 s without data. The ring drains, then the amplifier and codec close.
+- **Shared output and settings:** tunes and streams share one output slot, so either one gets `busy` while the other plays. `sound` off refuses streams, and `volume` scales them on the tunes' decibel curve.
+- **Cost:** about 4 KiB of flash over the normal image, and 64 KiB of static RAM plus a 4 KiB stack.
+- **Host:** `petlibre-local speak FILE [--host IP] [--rate 32000]` decodes any format `ffmpeg` reads (or `-` for stdin) to mono PCM and streams it. It finds the feeder by its MAC on the hotspot when `--host` is omitted.
+- **Records:** `PLSPK1 start created=`, `listen port= ok=`, `open rate= volume=`, `refused status=`, `done bytes= ms= underruns= reason=closed|stall` and `error stage=open`.
+- **Physical (October 22, OTA v22):**
+  - A 2 s tone and a 15 s file streamed from mp3; the 15 s file was 960,000 bytes, played in 15.1 s.
+  - That run reported `underruns=1`. It was counted after the last page, while the DMA played silence by design; source now counts only up to the last page.
+- **Host tests** (`tests/stream.rs`):
+  - sample-exact playback at the volume gain;
+  - wrong-key, muted, busy and handshake-timeout refusals that never open the output;
+  - a stalled client dropped with the amplifier off.
+
 ## Records
 
 The task logs these `PLAUD1` lines:

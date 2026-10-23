@@ -7,6 +7,16 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
+**October 23, about 6:30 AM: stock 1.1.15 restored over UART (owner request, physical, owner present).**
+- **Runs** (release binaries current):
+  - `give-way-prepare/-execute stock-20261023-01-giveway` (fallback `itest-20261022-18-good-review`): one 1 KiB frame at `0x186000`; bank 0 `f244d9a9…` booted.
+  - `loader stock-20261023-02-loader`, `wellfed-flash read small`/`read full` (`stock-20261023-02-bounded`, `-full`), `stock-recovery prepare` (204 sectors, all in 0x186000–0x252000, plan `d3e85d06…`) and `execute` (`stock-20261023-02-recovery-execute`): initial and pre-marker 8 MiB reads matched (`snapshot-02` `e236dc09…` = the staged snapshot), every sector read back, marker written. The final full read was interrupted (journal and session end `stopped`), as in FW38.
+  - `boot stock-20261023-03-boot`: `app_main:version:1.1.15`, no `PL…` records. Stock prints the unit's secrets; keep that capture private.
+  - About 65 minutes end to end; the overnight FW21 expiry run was dropped for this.
+- **Also (host):** FW41, `wellfed-bench ota --review <stock review>` back to stock over the air; not yet run on hardware.
+- **Flash now:** **Bank 1:** stock 1.1.15 (UART restore). **Bank 0:** unchanged (`f244d9a9…`). **Next manifest version:** 73. Back to a replacement: UART (`flash-prepare … --bank 1` from the stock review, as `fw38-stock-04`) or FW40.
+- **Bench state:** feeder off (relay off), hotspot down, no server, batteries out.
+
 **October 23, about 5 AM: FW14 done (power in health, physical over the air, owner at the bench).**
 - **What changed:** the SDK runtime's power monitor (`wellfed-hal` `power.rs`, task `wellfed-pwr`) samples ADC channel 5 and PA19 every 5 s once the startup probe releases the ADC; health gains `power` (limits now 704 B health, 832 B packet). The `adc` and `qa` firmwares claim the ADC. UART tag `PLBAT1` (`PLPWR1` is KM0's shared-pad record; the first install used it by mistake). Write audit fix: a literal decoded as two 16-bit instructions now counts as a reference (`662686a`).
 - **Runs:** `itest-20261023-fw14-01` (v71, `PLPWR1` tags) and `itest-20261023-fw14-02` (v72, review `fw14-power-04-review`, `optics` firmware), both confirmed. Then a bounded session (relay on, hotspot up, `serve` under 5 min): health `power` `null` for about 100 s, then `{"adapter":true,"age_ms":3787,"battery_mv":null}`.

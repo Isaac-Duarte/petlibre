@@ -289,6 +289,7 @@ fn args(promote: bool) -> StockOtaArgs {
 fn staged() -> Staged {
     Staged {
         build: BUILD.into(),
+        target: crate::commands::ota::Target::Replacement,
         version: 72,
         review: PathBuf::from("private/verification/poc1-review"),
         manifest: "private/verification/poc1-v72.manifest".into(),

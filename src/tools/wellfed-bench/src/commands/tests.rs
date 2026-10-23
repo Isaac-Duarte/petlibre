@@ -849,6 +849,34 @@ fn ota_signs_one_above_the_highest_signed_version_then_offers() {
 }
 
 #[test]
+fn ota_installs_a_stock_review_by_its_payload_hash_without_health() {
+    let mut rig = rig();
+    let args = ota_review(&rig, json!({}));
+    let review = rig.bench.root.join(VERIFICATION).join("review");
+    fs::remove_file(review.join("build-manifest.json")).unwrap();
+    let mut stock = build_review();
+    stock["image_kind"] = json!("stock");
+    stock["manifest_sha256"] = Value::Null;
+    stock["review"] = json!({"stock_sha256": "0".repeat(64)});
+    fs::write(review.join("review.json"), stock.to_string()).unwrap();
+    rig.tools.0.borrow_mut().rx.push_back(
+        b"PLWCH1 give_way=1 version=1 restart=1\r\nPLOTA1 activated version=1\r\n\
+          [0]app_main:version:1.1.15 DATE:Jul 16 2026\r\n"
+            .to_vec(),
+    );
+
+    assert_eq!(rig.bench.ota(&args).unwrap(), 0);
+
+    let calls = rig.tools.0.borrow();
+    let [sign, offer] = &calls.local[..] else {
+        panic!("{:?}", calls.local)
+    };
+    assert_eq!(flag(sign, "--build-id"), "1".repeat(64));
+    assert_eq!(offer[0], "ota-offer");
+    assert!(calls.queries.is_empty(), "stock has no health to poll");
+}
+
+#[test]
 fn ota_takes_a_given_version() {
     let mut rig = rig();
     let mut args = plain_review(&rig);
@@ -1124,8 +1152,30 @@ fn old_review(rig: &Rig, name: &str, identity: &str, complete: bool) {
     let manifest = json!({"startup_identity": identity, "startup_motion_policy": null});
     fs::write(review.join("build-manifest.json"), manifest.to_string()).unwrap();
     if complete {
-        fs::write(review.join("review.json"), "{}").unwrap();
+        fs::write(review.join("review.json"), build_review().to_string()).unwrap();
     }
+}
+
+/// A frozen build's review.json, as `wellfed-build review build` writes it.
+fn build_review() -> Value {
+    json!({
+        "schema_version": 1,
+        "kind": "plaf103_development_image_review",
+        "image_kind": "build",
+        "ota_sha256": "0".repeat(64),
+        "payload_sha256": "1".repeat(64),
+        "payload_bytes": 16,
+        "manifest_sha256": "2".repeat(64),
+        "review": {
+            "startup_mains": null,
+            "layout": null,
+            "pinmap": null,
+            "factory_mapping": [],
+            "scope": "test"
+        },
+        "reviewer_sha256": "3".repeat(64),
+        "application_boot_verified": false
+    })
 }
 
 #[test]

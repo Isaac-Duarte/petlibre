@@ -246,6 +246,7 @@ impl Rig for Feeder {
             .push(format!("stage {} v{}", args.name, self.version));
         Ok(Some(Staged {
             build: build.into(),
+            target: crate::commands::ota::Target::Replacement,
             version: self.version,
             review: review.clone(),
             manifest: format!(

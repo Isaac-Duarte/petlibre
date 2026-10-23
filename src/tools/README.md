@@ -1,63 +1,28 @@
-# Python tools
+# Host tools
 
-Scripts are grouped by what they do. Run them from the repository root with the project environment, for example `.venv/bin/python src/tools/flash/review-development-image.py --help`. Install `requirements-probe.txt` for checks and emulation, and also `requirements-hardware.txt` for serial access.
+Every host tool is a Rust crate in the workspace. Build them with `cargo build --locked --release` and run the binaries from `target/release/` at the repository root (or pass `--root` where a tool takes one). `make check` runs their tests; the evidence tests that need ignored private inputs run under `make check-fixtures` ([fixtures](../../docs/development/fixtures.md)).
 
-What stays in Python, on purpose: stock recovery (the Rust port has not run it on hardware or under emulation), the unicorn emulations of vendor code (factory loader, ROM, flash helper), and the image review (it calls `wellfed-build` for the build's inputs and linked-code audits). Everything else is Rust, including the firmware build (`src/tools/wellfed-build`).
+**Device** marks the tools that open a serial port or switch relays. Everything else works offline. Physical operations need an explicit task and a reviewed procedure (see [AGENTS.md](../../AGENTS.md)); a tool being here does not authorize running it against the feeder.
 
-**Device** marks the only scripts that open a serial port. Everything else works offline. Physical operations need an explicit task and a reviewed procedure (see [AGENTS.md](../../AGENTS.md)); a script being here does not authorize running it against the feeder.
-
-## Repository checks
-
-| Script | Purpose |
-| --- | --- |
-| [check-python.py](check-python.py) | Run the Python tests (`make check`), or `--fixtures` for the private binary-evidence checks |
-
-## Bench: relay control and progress
-
-The relay bench is the Rust binary `wellfed-bench` ([src/tools/wellfed-bench](wellfed-bench), [guide](../../docs/hardware/bench.md)). It switches power and the loader strap, chains `wellfed-flash` for captures, dumps and updates, and serves the read-only progress page with `--ui`. `wellfed-bench demo` clicks the spare relays.
-
-## Flash: reads, updates and recovery
-
-The two `uart-*` clients own the serial port. The [Rust client](../../docs/development/rust-flash.md) `wellfed-flash` ports the reader, development update, give-way and stock recovery with the same evidence formats. It passed on the research unit (FW32), and it is the only development-update and give-way writer; the relay bench drives it. These Python clients, the reader and stock recovery, remain accepted, and the Rust client's tests still check journals against their inspector. The rest are the components they load, plus offline planners and reviewers. See the [development updater](../../docs/development/uart-development.md) and [recovery limits](../../docs/hardware/recovery.md).
-
-| Script | Device | Purpose |
+| Crate | Device | Purpose |
 | --- | --- | --- |
-| [flash/uart-flash-read.py](flash/uart-flash-read.py) | yes | Restricted reader: observe captures, bounded and full reads; never programs or erases |
-| [flash/uart-stock-recovery.py](flash/uart-stock-recovery.py) | yes | Exact original bank-1 stock recovery |
-| [flash/review-development-image.py](flash/review-development-image.py) | no | Freeze a reviewed stock OTA or PLAF103 `firstboot` build as an update source/target |
-| [flash/stock-bank-wire-policy.py](flash/stock-bank-wire-policy.py) | no | Expected TX transcript for the stock bank-1 acceptance test |
-| [flash/plan-stock-recovery.py](flash/plan-stock-recovery.py) | no | Plan sector-scoped stock recovery |
-| [flash/recovery-transaction.py](flash/recovery-transaction.py) | no | Recovery plan coordinator with a durable journal |
-| [flash/recovery-sector-transport.py](flash/recovery-sector-transport.py) | no | Bounded stock-sector transport component |
-| [flash/inspect-recovery-transaction.py](flash/inspect-recovery-transaction.py) | no | Read existing recovery receipts; never resumes a write |
-| [flash/marker-activation-test.py](flash/marker-activation-test.py) | no | Original-stock write-back test transactions |
-| [flash/flash-status.py](flash/flash-status.py) | no | GD25Q64E status decoding and reads over an injected transport |
+| [wellfed-flash](wellfed-flash) | yes | The UART flash client: restricted reads, region-scoped development updates, give-ways and original-stock recovery, each inspect → prepare → execute ([guide](../../docs/development/rust-flash.md)) |
+| [wellfed-bench](wellfed-bench) | yes | The relay bench: power and loader strap, chained `wellfed-flash` sessions, the over-the-air loop, and the read-only progress page with `--features ui` ([guide](../../docs/hardware/bench.md)) |
+| [wellfed-local](wellfed-local) | no (network) | The local server for stock and replacement firmware: MQTT broker, signed OTA offers and status |
+| [wellfed-build](wellfed-build) | no | SDK firmware builds, their linked-image audits, and `review`, which freezes a reviewed build or the stock OTA for `wellfed-flash` ([firmware builds](../../docs/development/firmware-builds.md), [development updates](../../docs/development/uart-development.md)) |
+| [wellfed-audit](wellfed-audit) | no | Offline audits of finalized receive-only captures (startup, FW14 ADC, FW30 driver transients) and full-flash backup comparison |
+| [wellfed-emu](wellfed-emu) | no | The vendor factory loader (mapping and bank selection) and UART flash helper, executed under Unicorn on supplied state: the review's mapping check, the OTA marker fixtures, and `wellfed-flash`'s emulated sessions |
+| [wellfed-formats](wellfed-formats) | no | The files these tools pass to each other (build manifest, frozen review, stock layout, locks, captures, credentials, flash plans), typed once |
+| [xtask](xtask) | no | `cargo xtask check-repository`: documentation links, portability, no Python under `src/`, transport isolation |
 
-## Audit: captures, images and flash
+## Removed Python tools
 
-The capture auditors (startup, FW14 ADC, FW30 driver transients) and the full-flash comparison are the Rust binary `wellfed-audit` ([src/tools/wellfed-audit](wellfed-audit)). They check a finalized receive-only capture against the build manifest and image it claims to run, and write evidence only under `private/`. The scripts left here emulate vendor code under unicorn or serve the firmware build.
+The tools here were Python until October 2026. Older evidence still names them, as `src/tools/<folder>/<script>.py` (or `src/tools/<script>.py` before October 21, 2026); their last versions are in Git history.
 
-| Script | Purpose |
-| --- | --- |
-| [audit/audit-uart-startups.py](audit/audit-uart-startups.py) | Evidence integrity and reset decoding for saved UART captures |
-| [audit/audit-ota-layout.py](audit/audit-ota-layout.py) | OTA container and placement profile |
-| [audit/audit-factory-mapping.py](audit/audit-factory-mapping.py) | Execute the factory flash mapper offline |
-| [audit/audit-recovery-boot.py](audit/audit-recovery-boot.py) | Factory-loader and ROM recovery route |
-| [audit/audit-sdk-flash-users.py](audit/audit-sdk-flash-users.py) | Flash/IPC branches in both linked SDK images |
-
-## Emulate: offline execution and simulation
-
-| Script | Purpose |
-| --- | --- |
-| [emulate/emulate-recovery-session.py](emulate/emulate-recovery-session.py) | Helper erase/program/read transport on synthetic NOR |
-| [emulate/emulate-ota-markers.py](emulate/emulate-ota-markers.py) | The FW10/FW11 marker sequence through the actual factory loader's bank selection |
-
-## Layout notes
-
-- The firmware build and its link audits are Rust: `wellfed-build` ([firmware builds](../../docs/development/firmware-builds.md)).
-- Tests are in [tests/](tests/), one `test_*.py` per tool or feature. `check-python.py` discovers them.
-- Scripts load their siblings by path, because hyphenated names are not importable. A folder-qualified name such as `flash/uart-flash-read.py` is relative to `src/tools/`, and `cargo xtask check-repository` verifies every such reference (documentation links, portability and transport isolation too).
-- Reports record their tool hashes under these folder-qualified names. Evidence from before October 21, 2026 names the old flat paths (`src/tools/<script>.py`).
-- Removed October 22, 2026, and still named by older evidence (their last versions are in Git history):
+- Removed October 23, 2026:
+  - Ported to Rust: `flash/review-development-image.py` (`wellfed-build review`; both froze the same build to identical reviews apart from the reviewer hash); `audit/audit-factory-mapping.py`'s loader execution and `emulate/emulate-ota-markers.py` (`wellfed-emu` and its fixture tests); `emulate/emulate-recovery-session.py`'s helper model (`wellfed-emu`'s helper, which `wellfed-flash`'s emulated tests serve); `check-python.py` and `tests/` (Rust tests).
+  - Superseded by earlier ports: `flash/uart-flash-read.py`, `flash-status.py`, `plan-stock-recovery.py`, `recovery-transaction.py`, `recovery-sector-transport.py`, `inspect-recovery-transaction.py` and `uart-stock-recovery.py` (`wellfed-flash`); `audit/audit-ota-layout.py` (`wellfed-build`'s layout audit); `audit/audit-uart-startups.py`'s capture validation (`wellfed-audit`).
+  - Finished, no longer run: the stock write-back acceptance tests (`flash/marker-activation-test.py`, `flash/stock-bank-wire-policy.py`, `uart-stock-recovery.py prepare-activation-test` and `bank-writeback-test`); the research reports of `audit/audit-recovery-boot.py` (ROM download-route selector), `audit-factory-mapping.py` (probe-slot mapping), `audit-uart-startups.py` (reset-reason decoder), `audit/audit-sdk-flash-users.py` (call-site inventory; its packaged-code check lives on in `wellfed-build`) and `emulate-recovery-session.py`.
+- Removed October 22, 2026:
   - Ported to Rust, with the same checks and outcomes: `bench/bench.py`, `bench/bench-dashboard.py` and `bench/relay-demo.py` (`wellfed-bench`); `flash/uart-give-way.py`, `flash/uart-development.py`, `flash/development-bank.py` and `flash/development-wire-policy.py` (`wellfed-flash`); `audit/audit-firmware-startup.py`, `audit/audit-firmware-adc.py`, `audit/audit-driver-transients.py` and `audit/audit-flash-backup.py` (`wellfed-audit`); `emulate/virtual-feeder.py` (`wellfed-sim`'s `virtual-feeder`); `check-repository.py` (`cargo xtask check-repository`).
   - Finished, no longer run: the FW05–FW15 capture auditors (`audit-firmware-supervision`, `-park`, `-wifi`, `-wifi-join`, `-transport`, `-optics`, `-journal`, `-settings`); the stock C-probe research (`prepare-c-probe.py`, `emulate-c-probe.py`, `emulate-uart-read.py` and the `wellfed-probe` crate); the standalone diagnostic (`uart-standalone.py`, `standalone-bank.py`, `standalone-wire-policy.py`, `prepare-firstboot.py`); and `audit-probe-memory.py`, `audit-recovery-program.py`, `emulate-development.py`, `emulate-recovery-transaction.py`, `emulate-standalone.py`, `prepare-stock-ota-test.py` and `trace-stock-pad-power.py`.

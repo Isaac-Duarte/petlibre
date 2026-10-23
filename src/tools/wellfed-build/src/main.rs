@@ -14,7 +14,9 @@ use clap::{Args, Parser, Subcommand};
 use wellfed_build::catalog::Catalog;
 use wellfed_build::identity::{SourceId, current_inputs, source_id};
 use wellfed_build::image::{Request, audit_build, build};
+use wellfed_build::review::freeze;
 use wellfed_build::{Device, Firmware, Profile, Repo, Result, Variant};
+use wellfed_formats::review::ImageKind;
 
 #[derive(Parser)]
 #[command(about = "Build firmware images locally, without connecting to the feeder")]
@@ -61,6 +63,26 @@ enum Command {
     },
     /// Print the devices and firmwares this checkout builds, as JSON.
     List,
+    /// Freeze a reviewed image as a new private directory that
+    /// `wellfed-flash` installs from, offline (no serial access).
+    Review {
+        #[arg(value_enum)]
+        kind: ReviewKind,
+        /// The first-boot build to review (ignored for stock).
+        #[arg(long, default_value = "private/firmware-build/plaf103/firstboot")]
+        build: PathBuf,
+        /// New private output directory.
+        #[arg(long)]
+        output: PathBuf,
+    },
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum ReviewKind {
+    /// The pinned original stock OTA.
+    Stock,
+    /// A first-boot build.
+    Build,
 }
 
 #[derive(Args)]
@@ -138,6 +160,24 @@ fn run(command: Command) -> Result<()> {
                 "{}",
                 serde_json::to_string_pretty(&audit_build(&repo, &build)?)?
             );
+        }
+        Command::Review {
+            kind,
+            build,
+            output,
+        } => {
+            let kind = match kind {
+                ReviewKind::Stock => ImageKind::Stock,
+                ReviewKind::Build => ImageKind::Build,
+            };
+            private_outputs();
+            let review = freeze(&repo, kind, &build, &output)?;
+            let summary = serde_json::json!({
+                "image_kind": review.image_kind,
+                "ota_sha256": review.ota_sha256,
+                "payload_bytes": review.payload_bytes,
+            });
+            println!("{summary}");
         }
         Command::List => {
             let catalog = Catalog {

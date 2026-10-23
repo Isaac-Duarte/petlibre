@@ -4,7 +4,7 @@ Status: Done. Selection, compatibility and activation were established offline (
 
 ## How the factory loader chooses (simulation)
 
-`src/tools/audit/audit-factory-mapping.py` executes the factory loader's own instructions, taken from the verified 8 MiB backup, with the candidate B-cut ROM's mapping routines. The ordinary selection slice (`0x080003f4`) runs with this unit's initialized configuration: no selection or firmware-check callback, and the force-bank GPIO disabled (`0xff`).
+`wellfed-emu`'s factory module (formerly `audit-factory-mapping.py`) executes the factory loader's own instructions, taken from the verified 8 MiB backup, with the candidate B-cut ROM's mapping routines. The ordinary selection slice (`0x080003f4`) runs with this unit's initialized configuration: no selection or firmware-check callback, and the force-bank GPIO disabled (`0xff`).
 
 | Bank 1 (`0x186000`) | Bank 0 (`0x006000`) | Boots |
 | --- | --- | --- |

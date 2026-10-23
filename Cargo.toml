@@ -18,6 +18,7 @@ wellfed-sdk = { path = "src/sdk/wellfed-sdk" }
 wellfed-sdk-c = { path = "src/sdk/wellfed-sdk-c" }
 wellfed-fw-blink = { path = "src/firmware/wellfed/blink" }
 wellfed-formats = { path = "src/tools/wellfed-formats" }
+wellfed-emu = { path = "src/tools/wellfed-emu" }
 wellfed-testkit = { path = "src/sdk/wellfed-testkit" }
 # Host tools.
 anyhow = "1.0.104"

@@ -6,21 +6,20 @@ It is not replacement OTA, automatic rollback, a boot controller, or a partial-w
 
 ## Review and scope
 
-`review-development-image.py` freezes either the exact stock OTA or a reviewed PLAF103 `firstboot` SDK build. Build review checks the current source snapshot, SDK revision/overlays, artifacts/archives, both core packages, linked mains/code, RAM parking/hooks, stock pulls, and modeled factory mapping. Frozen source reviews remain useful after later source changes. Freezing an arbitrary new application does not establish its behavior or physical acceptance.
+`wellfed-build review` freezes either the exact stock OTA or a reviewed PLAF103 `firstboot` SDK build. Build review checks the current source snapshot, SDK revision/overlays, artifacts/archives, both core packages, linked mains/code, RAM parking/hooks, stock pulls, and the factory loader's own mapping and bank selection, executed under Unicorn (`wellfed-emu`) with the image alone in each bank. It replaced the Python `review-development-image.py` on October 23, 2026, after both froze the same build to identical reviews apart from the reviewer hash. Frozen source reviews remain useful after later source changes. Freezing an arbitrary new application does not establish its behavior or physical acceptance.
 
 Offline build/review commands use new output directories:
 
 ```sh
-.venv/bin/python src/tools/flash/review-development-image.py stock \
-  --output private/verification/stock-review
+target/release/wellfed-build review stock --output private/verification/stock-review
 make -C src/firmware/vendor firstboot
-.venv/bin/python src/tools/flash/review-development-image.py build \
+target/release/wellfed-build review build \
   --build private/firmware-build/plaf103/firstboot \
   --output private/verification/development-review
 cargo run --locked -p wellfed-flash -- update --help
 ```
 
-The [Rust client](rust-flash.md) runs the same inspect, prepare and execute sequence as `wellfed-flash update`; it has no hardware acceptance yet. These commands do not open a serial port. Build snapshots copied from the research archive can be stale against Wellfed's changed source/input hashes. Rebuild and freeze new targets rather than editing manifests or substituting expected hashes. Retain a frozen source matching the actually installed application.
+The [Rust client](rust-flash.md) runs the inspect, prepare and execute sequence as `wellfed-flash update`. These commands do not open a serial port. Build snapshots copied from the research archive can be stale against Wellfed's changed source/input hashes. Rebuild and freeze new targets rather than editing manifests or substituting expected hashes. Retain a frozen source matching the actually installed application.
 
 ## Inspection, planning, and execution
 
@@ -32,7 +31,7 @@ The other bank's first sector must be in a known state, and its hash is pinned i
 
 `--bank 0` updates bank 0 (`0x6000`–`0x156000`, the same reviewed footprint) under its own transaction kind. Bank 1 must be valid throughout, so the unit always has a bootable bank while bank 0's marker is withheld. Program packets are bounded to the selected bank in the updater itself, and the factory range `0x0`–`0x6000` is never a write target in either mode. Bank 0 may omit `--source`: bank 0 must then still be exactly the pinned baseline's bytes over the target's extent, with an invalid marker, and the target overwrites it with its marker last.
 
-`wellfed-flash give-way` (which replaced `src/tools/flash/uart-give-way.py`) clears bank 1's first marker byte with one 1 KiB program frame, so the loader falls back to bank 0. It runs only when bank 0 holds exactly a frozen, reviewed image, read in full. The frame rewrites the other 1023 bytes unchanged, since NOR programming only clears bits, which is what stock's activation does. A development update with `--restore-marker` then restores bank 1. It accepts only the source with its first marker byte cleared, rewrites that one sector with the marker withheld, and commits the marker last.
+`wellfed-flash give-way` clears bank 1's first marker byte with one 1 KiB program frame, so the loader falls back to bank 0. It runs only when bank 0 holds exactly a frozen, reviewed image, read in full. The frame rewrites the other 1023 bytes unchanged, since NOR programming only clears bits, which is what stock's activation does. A development update with `--restore-marker` then restores bank 1. It accepts only the source with its first marker byte cleared, rewrites that one sector with the marker withheld, and commits the marker last.
 
 For changed images, execution verifies preimage, staged, and activated application regions and guards. It stages the marker sector first with eight erased bytes, then only other changed sectors, with status checks, durable intent, and exact sector readback. Whole-region verification precedes one 1 KiB no-erase marker commit, followed by final verification. A shorter target retains and verifies the old tail; a larger target explicitly includes additional sectors. No-op plans perform one acquisition and no writes.
 

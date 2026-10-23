@@ -1,8 +1,7 @@
 //! Durable hash-chained transaction journal.
 //!
-//! Port of `Journal` and `inspect_journal` in
-//! `src/tools/flash/recovery-transaction.py`; either implementation reads the
-//! other's journals. Every entry is fsynced before the operation it
+//! Port of `Journal` and `inspect_journal` in the former
+//! `src/tools/flash/recovery-transaction.py`, whose journals still read. Every entry is fsynced before the operation it
 //! announces. A stopped journal is evidence only: nothing resumes from it.
 
 use std::fs::{self, File, OpenOptions};

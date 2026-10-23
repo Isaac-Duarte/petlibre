@@ -107,9 +107,7 @@ struct Calls {
     chunks: VecDeque<String>,
     /// The checkout, where a successful fake review writes its output.
     root: PathBuf,
-    /// Python runs: the interpreter, then its arguments.
-    python: Vec<Vec<String>>,
-    /// `wellfed-build` runs.
+    /// `wellfed-build` runs: builds and reviews.
     builds: Vec<Vec<String>>,
     /// Exit codes of the build and review children, in order.
     codes: VecDeque<i32>,
@@ -120,8 +118,7 @@ struct Calls {
     queries: Vec<Vec<String>>,
     statuses: VecDeque<Captured>,
     status_default: String,
-    /// Every child in order: `build <args>`, `python <args>`, `local <args>`,
-    /// `query <args>`.
+    /// Every child in order: `build <args>`, `local <args>`, `query <args>`.
     ran: Vec<String>,
 }
 
@@ -223,18 +220,13 @@ impl Tools for FakeTools {
         Ok(calls.statuses.pop_front().unwrap_or(default))
     }
 
-    fn python(&mut self, python: &Path, args: &[String], _: &mut Status) -> Result<i32> {
+    fn build(&mut self, args: &[String], _: &mut Status) -> Result<i32> {
         let mut calls = self.0.borrow_mut();
-        calls.python.push(
-            [python.display().to_string()]
-                .into_iter()
-                .chain(args.iter().cloned())
-                .collect(),
-        );
-        calls.ran.push(format!("python {}", args.join(" ")));
+        calls.builds.push(args.to_vec());
+        calls.ran.push(format!("build {}", args.join(" ")));
         let code = calls.codes.pop_front().unwrap_or(0);
         // A successful review freezes the build at --output.
-        if code == 0 && args[0].ends_with("review-development-image.py") {
+        if code == 0 && args[0] == "review" {
             let review = calls.root.join(flag(args, "--output"));
             fs::create_dir_all(&review)?;
             fs::write(review.join("image.bin"), [0u8; 16])?;
@@ -243,13 +235,6 @@ impl Tools for FakeTools {
             fs::write(review.join("build-manifest.json"), manifest.to_string())?;
         }
         Ok(code)
-    }
-
-    fn build(&mut self, args: &[String], _: &mut Status) -> Result<i32> {
-        let mut calls = self.0.borrow_mut();
-        calls.builds.push(args.to_vec());
-        calls.ran.push(format!("build {}", args.join(" ")));
-        Ok(calls.codes.pop_front().unwrap_or(0))
     }
 
     fn build_query(&mut self, args: &[String]) -> Result<Captured> {
@@ -783,7 +768,6 @@ fn ota_review(rig: &Rig, manifest: Value) -> OtaArgs {
         build: false,
         rebuild: false,
         variant: None,
-        python: None,
         config: "private/server.json".into(),
         version: None,
         minutes: 20.0,
@@ -1028,18 +1012,14 @@ fn answer(stdout: String) -> Captured {
     }
 }
 
-/// `ota --build` arguments with the default interpreter in place.
-fn build_args(rig: &Rig) -> OtaArgs {
-    let python = rig.bench.root.join(".venv/bin/python");
-    fs::create_dir_all(python.parent().unwrap()).unwrap();
-    fs::write(&python, "").unwrap();
+/// `ota --build` arguments.
+fn build_args() -> OtaArgs {
     OtaArgs {
         name: "unit".into(),
         review: None,
         build: true,
         rebuild: false,
         variant: Some(Variant::Fw11Reset),
-        python: None,
         config: "private/server.json".into(),
         version: None,
         minutes: 20.0,
@@ -1087,7 +1067,7 @@ fn timed_pass(rig: &Rig) {
 fn ota_build_builds_reviews_offers_and_checks_health_in_order() {
     let mut rig = rig();
     with_status(&mut rig, Source::Build);
-    let args = build_args(&rig);
+    let args = build_args();
     timed_pass(&rig);
 
     assert_eq!(rig.bench.ota(&args).unwrap(), 0);
@@ -1097,18 +1077,11 @@ fn ota_build_builds_reviews_offers_and_checks_health_in_order() {
         calls.ran,
         [
             "build build --profile firstboot --variant fw11-reset",
-            "python src/tools/flash/review-development-image.py build --build private/firmware-build/plaf103/firstboot --output private/verification/unit-review",
+            "build review build --build private/firmware-build/plaf103/firstboot --output private/verification/unit-review",
             "local ota-sign --image private/verification/unit-review/image.bin --version 1 --build-id 8a13e59efa15e56b5f5e32825909dc45e381a2027abc65d8de6658c40b302447 --output private/verification/unit-v1.manifest",
             "local ota-offer --manifest private/verification/unit-v1.manifest --image private/verification/unit-review/image.bin",
             "query status --config private/server.json",
         ]
-    );
-    let python = rig.bench.root.join(".venv/bin/python");
-    assert!(
-        calls
-            .python
-            .iter()
-            .all(|run| run[0] == python.display().to_string())
     );
     drop(calls);
 
@@ -1157,7 +1130,7 @@ fn old_review(rig: &Rig, name: &str, identity: &str, complete: bool) {
 fn ota_build_reuses_a_review_of_the_same_sources() {
     let mut rig = rig();
     with_status(&mut rig, Source::Build);
-    let args = build_args(&rig);
+    let args = build_args();
     old_review(&rig, "earlier-review", BUILD, true);
     rig.tools.0.borrow_mut().source_id = Some(BUILD.into());
     timed_pass(&rig);
@@ -1169,10 +1142,7 @@ fn ota_build_reuses_a_review_of_the_same_sources() {
         calls.build_queries,
         [["source-id", "--image", "--variant", "fw11-reset"]]
     );
-    assert!(
-        calls.builds.is_empty() && calls.python.is_empty(),
-        "nothing built or reviewed"
-    );
+    assert!(calls.builds.is_empty(), "nothing built or reviewed");
     assert!(
         calls.ran[0].starts_with(
             "local ota-sign --image private/verification/earlier-review/image.bin --version 1"
@@ -1205,7 +1175,7 @@ fn ota_build_builds_when_no_complete_review_matches_or_asked_to() {
     ] {
         let mut rig = rig();
         with_status(&mut rig, Source::Build);
-        let mut args = build_args(&rig);
+        let mut args = build_args();
         args.rebuild = rebuild;
         old_review(&rig, "earlier-review", &identity, complete);
         rig.tools.0.borrow_mut().source_id = Some(BUILD.into());
@@ -1228,13 +1198,13 @@ fn a_failed_build_or_review_stops_before_offering() {
     for codes in [&[1][..], &[0, 2]] {
         let mut rig = rig();
         with_status(&mut rig, Source::Build);
-        let args = build_args(&rig);
+        let args = build_args();
         rig.tools.0.borrow_mut().codes.extend(codes);
 
         assert_eq!(rig.bench.ota(&args).unwrap(), 1, "{codes:?}");
 
         let calls = rig.tools.0.borrow();
-        assert_eq!(calls.builds.len() + calls.python.len(), codes.len());
+        assert_eq!(calls.builds.len(), codes.len());
         assert!(calls.local.is_empty() && calls.queries.is_empty());
         drop(calls);
         assert!(captured(&rig).is_empty());
@@ -1245,9 +1215,9 @@ fn a_failed_build_or_review_stops_before_offering() {
 }
 
 #[test]
-fn ota_build_refuses_an_existing_review_or_missing_python_up_front() {
+fn ota_build_refuses_an_existing_review_up_front() {
     let mut rig = rig();
-    let args = build_args(&rig);
+    let args = build_args();
     fs::create_dir_all(rig.bench.root.join(VERIFICATION).join("unit-review")).unwrap();
 
     let error = rig.bench.ota(&args).unwrap_err().to_string();
@@ -1256,13 +1226,6 @@ fn ota_build_refuses_an_existing_review_or_missing_python_up_front() {
         "{error}"
     );
     assert!(rig.tools.0.borrow().ran.is_empty());
-
-    let mut other = self::rig();
-    let mut args = build_args(&other);
-    args.python = Some("absent/python".into());
-    let error = other.bench.ota(&args).unwrap_err().to_string();
-    assert!(error.contains("--python"), "{error}");
-    assert!(other.tools.0.borrow().ran.is_empty());
 }
 
 #[test]

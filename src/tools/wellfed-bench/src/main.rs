@@ -439,13 +439,11 @@ mod tests {
     }
 
     #[test]
-    fn ota_build_takes_a_no_motion_variant_python_and_config() {
+    fn ota_build_takes_a_no_motion_variant_and_config() {
         let cli = ota(&[
             "--build",
             "--variant",
             "fw11-fail",
-            "--python",
-            "/usr/bin/python3",
             "--config",
             "private/other.json",
         ])
@@ -456,7 +454,6 @@ mod tests {
         };
         assert!(args.build && args.review.is_none());
         assert_eq!(args.variant, Some(commands::Variant::Fw11Fail));
-        assert_eq!(args.python, Some(PathBuf::from("/usr/bin/python3")));
         assert_eq!(args.config, PathBuf::from("private/other.json"));
     }
 
@@ -468,7 +465,7 @@ mod tests {
             .to_string();
         assert!(error.contains("motion builds stay manual"), "{error}");
 
-        // --variant and --python without --build are refused by the command.
+        // --variant without --build is refused by the command.
         for extra in [&["--build", "--review", "private/verification/r"][..], &[]] {
             assert!(ota(extra).is_err(), "{extra:?}");
         }

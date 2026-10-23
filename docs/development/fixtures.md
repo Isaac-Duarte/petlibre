@@ -3,10 +3,12 @@
 Ordinary contributor checks need no private binary inputs. The optional suite is selected explicitly:
 
 ```sh
-make check-fixtures PYTHON=.venv/bin/python
+make check-fixtures
 ```
 
-It fails for missing fixtures, incompatible hashes, errors, or skips. It does not download binaries or produce missing evidence. A passing synthetic suite does not imply these checks passed. Python evidence cases are marked with `support.evidence`; direct unittest discovery can still show their unavailable-input skips, so use the Make targets when reporting contributor results.
+It fails for missing fixtures, incompatible hashes, errors, or skips. It does not download binaries or produce missing evidence. A passing synthetic suite does not imply these checks passed. Evidence tests are Rust tests marked `#[ignore]`, so plain `cargo test` lists them as ignored, not passed; use the Make target when reporting contributor results.
+
+The emulation, review and flash-client evidence tests (`wellfed-emu`, `wellfed-build`'s `tests/review.rs`, `wellfed-flash`'s `tests/emulated.rs`) read their inputs from the checkout they were built in. Set `WELLFED_FIXTURE_ROOT` to another checkout to use its `private/` instead, as a Git worktree (which has no evidence) must; their temporary outputs then go under that checkout's `private/` and are removed afterwards.
 
 ## Generic local locations
 
@@ -14,14 +16,11 @@ It fails for missing fixtures, incompatible hashes, errors, or skips. It does no
 | --- | --- |
 | `private/firmware/PLAF103_OTA_010115.bin` | Contributor-obtained stock 1.1.15 OTA; exact hash is recorded in the layout file |
 | `private/upstream/ameba-rtos-d/` | SDK checkout obtained by explicit bootstrap; supplies candidate ROM/helper inputs |
-| `private/toolchains/` and `private/firmware-build/` | Explicit SDK build artifacts and audited tools; a build whose manifest inputs differ from the current sources is stale and its suites skip (so `check-fixtures` fails) until rebuilt |
+| `private/toolchains/` and `private/firmware-build/` | Explicit SDK build artifacts and audited tools; a build whose manifest inputs differ from the current sources is stale and its tests fail until rebuilt |
 | `private/fixtures/baseline.bin` | Exact historical 8 MiB research baseline required by pinned recovery checks |
-| `private/fixtures/current-read/flash-read.bin` | Recorded current full snapshot required by firstboot/reference tests |
-| `private/fixtures/diagnostic-ota.bin` | Exact reviewed UART-only diagnostic, not an arbitrary new build |
-| `private/fixtures/bounded-read/report.json` | Finalized bounded-read report; linked serial/read evidence must remain beside it |
+| `private/fixtures/current-read/flash-read.bin` | Recorded current full snapshot the first-boot mapping test places the build into |
 | `private/fixtures/rom-inspection/report.json` | Finalized ROM report; linked serial evidence must remain beside it |
-| `private/firmware/plaf103-sdk-rom-inputs/` | Optional extracted candidate ROM text used by the memory audit |
-| `private/firmware/experiments/` | Explicitly prepared stock marker/probe original and candidate pairs, manifests, and compiled probe |
+| `private/firmware/experiments/` | Explicitly prepared stock-version OTA pairs that `wellfed-local`'s pinned-image test reads |
 
 The generic locations replace dated workstation paths. They do **not** make the exact research-unit recovery profile portable. No other contributor is expected to possess its baseline or historical artifact. Keep each capture/report bundle intact and supply explicit report arguments when required; two independently captured bundles should remain in separate subdirectories with their companion files. Generic fixture paths are test conventions, not proof of valid session provenance.
 

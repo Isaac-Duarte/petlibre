@@ -1,0 +1,17 @@
+[package]
+license.workspace = true
+name = "wellfed-emu"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "Offline ARM execution of the vendor factory loader and UART flash helper under unicorn"
+publish.workspace = true
+
+[dependencies]
+wellfed-formats.workspace = true
+thiserror.workspace = true
+# Builds the unicorn C library with cmake.
+unicorn-engine = "=2.1.5"
+
+[lints]
+workspace = true

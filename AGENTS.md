@@ -17,7 +17,7 @@
 
 ## Rust conventions
 
-Everything first-party is under `src/`. The Rust workspace is `src/sdk/` (the SDK every firmware builds on), `src/tools/wellfed-*` and `src/tools/xtask` (host tools, beside the remaining Python tools) and `src/firmware/wellfed/` (one crate per firmware); `src/firmware/vendor/` holds the AmebaD C ports, pins and image build, and `src/web/` the web frontends. The compiler enforces most of these rules. Every crate inherits `[workspace.lints]`, and `make check-rust` runs a second Clippy pass over libraries and binaries with `PRODUCTION_LINTS` (no `unwrap`, no narrowing `as`, no needless by-value parameters, no unreachable `pub`). A deliberate exception is an `#[expect(lint, reason = "…")]` at the narrowest scope. Keep existing crate names, public protocols and the C ABI unless the task requires a compatibility change. Python tools are being replaced by Rust where sensible; once a Rust port is equivalent, delete the Python tool and its tests.
+Everything first-party is under `src/`. The Rust workspace is `src/sdk/` (the SDK every firmware builds on), `src/tools/wellfed-*` and `src/tools/xtask` (host tools) and `src/firmware/wellfed/` (one crate per firmware); `src/firmware/vendor/` holds the AmebaD C ports, pins and image build, and `src/web/` the web frontends. The compiler enforces most of these rules. Every crate inherits `[workspace.lints]`, and `make check-rust` runs a second Clippy pass over libraries and binaries with `PRODUCTION_LINTS` (no `unwrap`, no narrowing `as`, no needless by-value parameters, no unreachable `pub`). A deliberate exception is an `#[expect(lint, reason = "…")]` at the narrowest scope. Keep existing crate names, public protocols and the C ABI unless the task requires a compatibility change. Every host tool is Rust; the Python tools were ported or retired by October 23, 2026, and `cargo xtask check-repository` refuses Python under `src/`.
 
 - **Typed data.** Model JSON with `#[derive(Serialize, Deserialize)]` structs and enums. Use `serde_json::Value` only for JSON that is genuinely opaque: hashed or replayed verbatim, or passed through unread.
 - **Shared formats.** A file one crate writes and another reads gets its type in `wellfed-formats`, not a copy in each reader. Anything hashed goes through `wellfed_formats::canonical`, which fixes the bytes regardless of field order.
@@ -32,7 +32,7 @@ Everything first-party is under `src/`. The Rust workspace is `src/sdk/` (the SD
 ## Compatibility
 
 Old on-disk evidence and stale file fields may break when that makes the code simpler; drop the legacy reader rather than carrying it. Some things are live interop rather than legacy, and must stay exact:
-- formats a current consumer reads (the Python tools still in `src/tools/`);
+- formats a current consumer reads (the frozen reviews, plans and journals `wellfed-flash` accepts, including those the former Python tools wrote);
 - the stock and replacement firmware wire protocols;
 - canonical JSON that is hashed;
 - every pinned check in the hard rules.
@@ -41,8 +41,8 @@ Old on-disk evidence and stale file fields may break when that makes the code si
 
 | Change | Run |
 | --- | --- |
-| Any Rust edit | `cargo fmt --all`, then `make check PYTHON=.venv/bin/python` (the contributor gate) |
-| Builder, audits, formats or flash review | Also `make check-fixtures PYTHON=.venv/bin/python` against fresh builds (`make -C src/firmware/vendor device firstboot`) |
+| Any Rust edit | `cargo fmt --all`, then `make check` (the contributor gate) |
+| Builder, audits, formats or flash review | Also `make check-fixtures` against fresh builds (`make -C src/firmware/vendor device firstboot`) |
 | Firmware crates | Also a fresh image build, so its link, RAM-park and stack audits run |
 | `src/web/`, or the views `wellfed-bench --ui` serves | Also `make check-web` (needs Node and pnpm): web types, unit tests, the build, and Playwright against the real binary |
 

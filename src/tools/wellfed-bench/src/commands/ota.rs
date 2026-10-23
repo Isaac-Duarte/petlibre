@@ -1,5 +1,5 @@
 //! FW12 over-the-air iteration: optionally build and freeze a review with
-//! the Python tools, sign it with `wellfed-local`, offer it to the server
+//! `wellfed-build`, sign it with `wellfed-local`, offer it to the server
 //! that is already running, watch receive-only UART captures until the new
 //! build confirms, falls back, or time runs out, then check that the server's
 //! health shows the new build. Each phase is timed for the FW12 record.
@@ -137,9 +137,6 @@ pub struct OtaArgs {
     /// No-motion variant for --build: fw11-reset, fw11-fail, speaker or fw14-adc.
     #[arg(long, value_parser = parse_variant)]
     pub variant: Option<Variant>,
-    /// Python for --build's review (default: .venv/bin/python under --root).
-    #[arg(long)]
-    pub python: Option<PathBuf>,
     /// wellfed-local config for the health check's `status` (root-relative).
     #[arg(long, default_value = "private/server.json")]
     pub config: PathBuf,
@@ -575,7 +572,6 @@ pub(crate) struct Staged {
 struct OtaPlan {
     /// Root-relative review: the one given, found, or about to be built.
     review: PathBuf,
-    python: PathBuf,
     /// No review of these sources exists yet, so `--build` builds one.
     build: bool,
     version: u32,
@@ -687,22 +683,13 @@ impl Bench {
         self.status.line(text);
     }
 
-    /// Run one build step from the root, `wellfed-build` or with `python` a
-    /// Python tool; its exit status and duration.
-    fn run_step(
-        &mut self,
-        step: &str,
-        python: Option<&Path>,
-        args: &[String],
-    ) -> Result<(i32, f64)> {
-        let program = python.map_or_else(|| "wellfed-build".into(), |p| self.rel(p));
-        say!("+ {program} {}", args.join(" "));
+    /// Run one `wellfed-build` step from the root; its exit status and
+    /// duration.
+    fn run_step(&mut self, step: &str, args: &[String]) -> Result<(i32, f64)> {
+        say!("+ wellfed-build {}", args.join(" "));
         self.status.step(step);
         let started = Instant::now();
-        let code = match python {
-            Some(python) => self.tools.python(python, args, &mut self.status)?,
-            None => self.tools.build(args, &mut self.status)?,
-        };
+        let code = self.tools.build(args, &mut self.status)?;
 
         if crate::interrupted() {
             return Err(Error::Interrupted);
@@ -774,7 +761,7 @@ impl Bench {
     ) -> Result<Option<Staged>> {
         let plan = self.ota_plan(args, timing)?;
 
-        if plan.build && !self.ota_build(args, &plan.python, &plan.review, timing)? {
+        if plan.build && !self.ota_build(args, &plan.review, timing)? {
             return Ok(None);
         }
 
@@ -802,13 +789,13 @@ impl Bench {
     }
 
     /// Every refusal `ota_stage` can make, before anything is built: the
-    /// review to offer, the interpreter for a build, the version to sign.
+    /// review to offer and the version to sign.
     fn ota_plan(&mut self, args: &OtaArgs, timing: &mut Timing) -> Result<OtaPlan> {
         require(args.minutes > 0.0, "--minutes must be positive")?;
         // clap counts a flag as always present, so this pairing is checked here.
         require(
-            args.build || (args.variant.is_none() && args.python.is_none()),
-            "--variant and --python apply to --build only",
+            args.build || args.variant.is_none(),
+            "--variant applies to --build only",
         )?;
         let mut review = match (&args.review, args.build) {
             (_, true) => PathBuf::from(VERIFICATION).join(format!("{}-review", args.name)),
@@ -816,20 +803,8 @@ impl Bench {
             (None, false) => return Err(Error::Bench("Give --review DIR or --build".into())),
         };
 
-        let python = self.root.join(
-            args.python
-                .as_deref()
-                .unwrap_or(Path::new(".venv/bin/python")),
-        );
         let mut build = false;
         if args.build {
-            require(
-                python.is_file(),
-                format!(
-                    "{} not found; create the virtual environment or pass --python",
-                    self.rel(&python)
-                ),
-            )?;
             match self.cached_review(args)? {
                 Some(found) => {
                     self.note(&format!(
@@ -856,7 +831,6 @@ impl Bench {
 
         Ok(OtaPlan {
             review,
-            python,
             build,
             version,
             signed,
@@ -941,19 +915,13 @@ impl Bench {
     }
 
     /// Build the firmware and freeze its review; false if either failed.
-    fn ota_build(
-        &mut self,
-        args: &OtaArgs,
-        python: &Path,
-        review: &Path,
-        timing: &mut Timing,
-    ) -> Result<bool> {
+    fn ota_build(&mut self, args: &OtaArgs, review: &Path, timing: &mut Timing) -> Result<bool> {
         let mut build = ["build", "--profile", "firstboot"]
             .map(String::from)
             .to_vec();
         build.extend(Variant::args(args.variant));
         timing.ran = true;
-        let (code, seconds) = self.run_step(BUILD_STEPS[0], None, &build)?;
+        let (code, seconds) = self.run_step(BUILD_STEPS[0], &build)?;
         timing.build = Some(seconds);
         self.note(&format!("Build took {}", duration(seconds)));
         if code != 0 {
@@ -962,14 +930,14 @@ impl Bench {
         }
 
         let freeze = [
-            "src/tools/flash/review-development-image.py".to_string(),
+            "review".to_string(),
             "build".into(),
             "--build".into(),
             BUILD_OUTPUT.into(),
             "--output".into(),
             review.display().to_string(),
         ];
-        let (code, seconds) = self.run_step(BUILD_STEPS[1], Some(python), &freeze)?;
+        let (code, seconds) = self.run_step(BUILD_STEPS[1], &freeze)?;
         timing.review = Some(seconds);
         self.note(&format!("Review took {}", duration(seconds)));
         if code != 0 {

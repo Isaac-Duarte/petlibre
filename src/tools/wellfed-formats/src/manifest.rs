@@ -3,7 +3,7 @@
 //! `wellfed-build` writes the manifest; the startup audit, the flash review
 //! and the bench read it, and frozen reviews keep a copy as
 //! `build-manifest.json`. Every field is always written, as `null` when it
-//! does not apply, because `review-development-image.py` compares the audit
+//! does not apply, because `wellfed-build review` compares the audit
 //! sections as whole objects.
 
 use std::collections::BTreeMap;

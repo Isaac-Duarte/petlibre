@@ -1,8 +1,8 @@
-//! Hashes and the canonical JSON the Python tools also write.
+//! Hashes and the canonical JSON the former Python tools also wrote.
 //!
 //! Canonical form matches Python's `json.dumps(value, sort_keys=True,
 //! separators=(",", ":"), allow_nan=False)` byte for byte, so journals and
-//! plans can be checked by either implementation. Plan digests are taken
+//! plans the Python tools wrote still check. Plan digests are taken
 //! over these bytes and bindings are compared in this form, so any change to
 //! the encoding breaks agreement with records already written.
 

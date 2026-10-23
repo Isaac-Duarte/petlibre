@@ -10,39 +10,17 @@
 //! its result; anything else is a sequence fault, not a pass or a fail.
 
 use std::path::Path;
-use std::sync::LazyLock;
 
-use regex::bytes::Regex;
+pub use petlibre_formats::qa::Verdict;
+use petlibre_formats::qa::{Check, Record};
 use serde::Serialize;
 
+use crate::Error;
+use crate::Result;
 use crate::startup::{self, Evidence, Outcome, StartupReport};
-use crate::{Error, Result, outcomes};
 
 const LIMIT: &str = "UART evidence of the QA firmware's own verdicts. Button presses, lit indicators and \
     audible tunes are what the operator answered; power values are reported, not judged.";
-
-/// The checks in sequence order, as the firmware names them.
-const CHECKS: [&str; 5] = ["optics", "power", "buttons", "indicators", "speaker"];
-
-outcomes! {
-    /// One check's verdict, as the result line prints it.
-    pub enum Verdict {
-        Pass => "pass",
-        Fail => "fail",
-        None => "none",
-    }
-}
-
-impl Verdict {
-    fn parse(text: &[u8]) -> Option<Self> {
-        match text {
-            b"pass" => Some(Self::Pass),
-            b"fail" => Some(Self::Fail),
-            b"none" => Some(Self::None),
-            _ => None,
-        }
-    }
-}
 
 /// The audit's outcome: a failed startup, a broken sequence, or the run's
 /// own result.
@@ -96,37 +74,14 @@ pub struct QaFields {
     pub qa_sequence_fault: Option<&'static str>,
 }
 
-static START: LazyLock<Regex> = LazyLock::new(|| line(r"start stage=([a-z]+)"));
-static PROMPT: LazyLock<Regex> = LazyLock::new(|| {
-    line(
-        r"prompt (?:press=[a-z]+|look=P[AB][0-9]+ yes=dispense no=lock|listen=[a-z]+ yes=dispense no=lock)",
-    )
-});
-static ITEM: LazyLock<Regex> = LazyLock::new(|| {
-    line(
-        r"item stage=([a-z]+) ((?:press|led|tune)=[A-Za-z0-9]+) status=(?:pass|fail reason=([a-z]+))",
-    )
-});
-static CHECK: LazyLock<Regex> = LazyLock::new(|| line(r"check stage=([a-z]+) status=(pass|fail)"));
-static RESULT: LazyLock<Regex> = LazyLock::new(|| {
-    line(
-        r"result status=(pass|fail) optics=([a-z]+) power=([a-z]+) buttons=([a-z]+) indicators=([a-z]+) speaker=([a-z]+)",
-    )
-});
-
-fn line(body: &str) -> Regex {
-    Regex::new(&format!(r"(?-u)^PLQA1 {body}$")).expect("QA pattern")
-}
-
-fn text(bytes: &[u8]) -> String {
-    String::from_utf8_lossy(bytes).into_owned()
-}
-
 /// The check verdicts and failed items in `rx`, and the outcome they grade
 /// to (`Pass`, `Fail` or `Sequence`).
 pub(crate) fn classify(rx: &[u8]) -> (QaOutcome, QaFields) {
     let mut fields = QaFields {
-        qa_checks: CHECKS.iter().map(|c| ((*c).to_string(), None)).collect(),
+        qa_checks: Check::ALL
+            .iter()
+            .map(|c| (c.as_str().to_string(), None))
+            .collect(),
         ..QaFields::default()
     };
     match grade(rx, &mut fields) {
@@ -140,7 +95,7 @@ pub(crate) fn classify(rx: &[u8]) -> (QaOutcome, QaFields) {
 
 fn grade(rx: &[u8], fields: &mut QaFields) -> std::result::Result<QaOutcome, &'static str> {
     let mut started = 0;
-    let mut result: Option<(Verdict, [Option<Verdict>; 5])> = None;
+    let mut result: Option<(bool, [Verdict; 5])> = None;
 
     for record in rx.split(|b| *b == b'\n') {
         // The firmware ends each record with "\r\n" and the console adds a
@@ -157,56 +112,55 @@ fn grade(rx: &[u8], fields: &mut QaFields) -> std::result::Result<QaOutcome, &'s
             return Err("records after the result");
         }
 
-        if let Some(m) = START.captures(record) {
-            if CHECKS.get(started).map(|c| c.as_bytes()) != Some(&m[1]) {
-                return Err("checks started out of order");
+        let record = std::str::from_utf8(record)
+            .ok()
+            .and_then(Record::parse)
+            .ok_or("an unreadable PLQA1 record")?;
+        match record {
+            Record::Start(check) => {
+                if check.index() != started {
+                    return Err("checks started out of order");
+                }
+                started += 1;
             }
-            started += 1;
-        } else if PROMPT.is_match(record) {
-            fields.qa_prompts += 1;
-        } else if let Some(m) = ITEM.captures(record) {
-            if let Some(reason) = m.get(3) {
-                fields.qa_failed_items.push(FailedItem {
-                    stage: text(&m[1]),
-                    item: text(&m[2]),
-                    reason: text(reason.as_bytes()),
-                });
+            Record::Prompt(_) => fields.qa_prompts += 1,
+            Record::Item {
+                check,
+                item,
+                failure,
+            } => {
+                if let Some(reason) = failure {
+                    fields.qa_failed_items.push(FailedItem {
+                        stage: check.as_str().to_string(),
+                        item: item.to_string(),
+                        reason,
+                    });
+                }
             }
-        } else if let Some(m) = CHECK.captures(record) {
-            let index = CHECKS
-                .iter()
-                .position(|c| c.as_bytes() == &m[1])
-                .ok_or("a verdict for an unknown check")?;
-            let slot = &mut fields.qa_checks[index].1;
-            if index + 1 != started || slot.is_some() {
-                return Err("a verdict outside its check");
+            Record::Verdict { check, passed } => {
+                let slot = &mut fields.qa_checks[check.index()].1;
+                if check.index() + 1 != started || slot.is_some() {
+                    return Err("a verdict outside its check");
+                }
+                *slot = Some(if passed { Verdict::Pass } else { Verdict::Fail });
             }
-            *slot = Verdict::parse(&m[2]);
-        } else if let Some(m) = RESULT.captures(record) {
-            let mut verdicts = [None; 5];
-            for (index, verdict) in verdicts.iter_mut().enumerate() {
-                *verdict = Verdict::parse(&m[index + 2]);
-            }
-            let status = Verdict::parse(&m[1]).ok_or("an unreadable result")?;
-            result = Some((status, verdicts));
-        } else {
-            return Err("an unreadable PLQA1 record");
+            Record::Result { passed, verdicts } => result = Some((passed, verdicts)),
         }
     }
 
-    let (status, verdicts) = result.ok_or("no result")?;
-    if started != CHECKS.len() {
+    let (passed, verdicts) = result.ok_or("no result")?;
+    if started != Check::ALL.len() {
         return Err("a check never started");
     }
     let reported: Vec<Option<Verdict>> = fields.qa_checks.iter().map(|(_, v)| *v).collect();
     if reported.iter().any(Option::is_none) {
         return Err("a check never reported a verdict");
     }
-    if reported != verdicts {
+    if reported.iter().zip(verdicts).any(|(r, v)| *r != Some(v)) {
         return Err("the result disagrees with the verdicts");
     }
     let all_passed = reported.iter().all(|v| *v == Some(Verdict::Pass));
-    if all_passed != (status == Verdict::Pass) {
+    if all_passed != passed {
         return Err("the result status disagrees with the verdicts");
     }
     if all_passed && !fields.qa_failed_items.is_empty() {

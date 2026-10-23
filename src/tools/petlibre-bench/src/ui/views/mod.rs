@@ -10,6 +10,7 @@
 //! from a status file must stay inside its private/ folder; others are ignored.
 
 pub(super) mod health;
+mod qa;
 mod script;
 pub(super) mod sessions;
 pub(super) mod snapshot;
@@ -115,6 +116,7 @@ pub(super) fn bindings(cfg: &ts_rs::Config) -> Vec<String> {
     let mut decls = tail::bindings(cfg);
     decls.extend(snapshot::bindings(cfg));
     decls.extend(script::bindings(cfg));
+    decls.extend(qa::bindings(cfg));
     decls.extend(sessions::bindings(cfg));
     decls.extend(health::bindings(cfg));
     decls
@@ -152,6 +154,7 @@ mod tests {
         assert_eq!(view["history"], json!([]));
         assert!(view["rx"].is_null());
         assert!(view["script"].is_null());
+        assert!(view["qa"].is_null());
         assert_eq!(json(sessions(&sources))["sessions"], json!([]));
     }
 

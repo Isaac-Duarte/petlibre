@@ -30,6 +30,7 @@ function snapshot(outcome: "running" | "pass", command = "itest"): Snapshot {
     now: 1000,
     history: [],
     rx: null,
+    qa: null,
     script: null,
     current: {
       pid: 1,

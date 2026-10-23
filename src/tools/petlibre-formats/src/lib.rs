@@ -1,10 +1,11 @@
 //! The files one host tool writes and another reads, typed once.
 //!
 //! Build manifests, device configs, the stock layout, the SDK and toolchain locks, serial
-//! captures, the credential files and the flash client's reviewed plans each
-//! cross crate boundaries (the builder writes what the audit, flash review
-//! and bench read; the bench summarizes the flash plans), so their shape
-//! lives here rather than as `Value` lookups in every reader.
+//! captures, the credential files, the flash client's reviewed plans and the
+//! QA firmware's UART records each cross crate boundaries (the builder writes
+//! what the audit, flash review and bench read; the bench summarizes the flash
+//! plans and follows a QA run), so their shape lives here rather than as
+//! `Value` lookups in every reader.
 //!
 //! Whatever is hashed goes through [`canonical`], which fixes the bytes
 //! independently of field order; other files are written in declaration
@@ -21,6 +22,7 @@ pub mod hex;
 pub mod layout;
 pub mod lock;
 pub mod manifest;
+pub mod qa;
 pub mod review;
 pub mod transients;
 

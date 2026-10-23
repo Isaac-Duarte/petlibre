@@ -9,6 +9,15 @@ test("the overview shows the live run, its log, the feeder and the bench", async
   await expect(page.getByLabel("Bench hardware and tools")).toContainText("Power");
 });
 
+test("the overview coaches a guided QA run from the latest capture", async ({ page }) => {
+  await page.goto("/");
+
+  const qa = page.getByLabel("Guided QA");
+  await expect(qa).toContainText("Look at the Wi-Fi light");
+  await expect(qa).toContainText("Lit: press Dispense. Dark: press Lock.");
+  await expect(qa).toContainText("Indicators");
+});
+
 test("the tests view follows the live run and charts every recorded one", async ({ page }) => {
   await page.goto("/#/tests");
 

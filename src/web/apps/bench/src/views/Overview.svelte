@@ -5,11 +5,15 @@
   import HistoryPanel from "../parts/HistoryPanel.svelte";
   import LogPanel from "../parts/LogPanel.svelte";
   import NowPanel from "../parts/NowPanel.svelte";
+  import QaPanel from "../parts/QaPanel.svelte";
   import ScriptPanel from "../parts/ScriptPanel.svelte";
 </script>
 
 {#if app.snapshot?.script}
   <ScriptPanel script={app.snapshot.script} now={app.now} />
+{/if}
+{#if app.snapshot?.qa}
+  <QaPanel qa={app.snapshot.qa} now={app.now} />
 {/if}
 
 <div class="grid">

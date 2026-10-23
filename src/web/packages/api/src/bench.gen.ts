@@ -137,7 +137,11 @@ history: Array<HistoryEntry>,
 /**
  * The latest capture's output.
  */
-rx: TailView | null, script: ScriptView | null, };
+rx: TailView | null, script: ScriptView | null, 
+/**
+ * The QA firmware's guided run in the latest capture.
+ */
+qa: QaView | null, };
 
 /**
  * `current.json` as the page reads it: a dead process's `running` record
@@ -173,6 +177,53 @@ export type ScriptView = { title: string, capture: string, steps: Array<ScriptSt
  * When the anchor arrived; `None` until it has.
  */
 started: number | null, capture_exists: boolean, };
+
+export type QaState = "waiting" | "running" | "pass" | "fail";
+
+export type QaAsk = "press" | "look" | "listen";
+
+export type QaPromptView = { ask: QaAsk, 
+/**
+ * A button (`reset`), a pin (`PA0`) or a tune (`test`).
+ */
+target: string, 
+/**
+ * When the prompt arrived, if the capture's events place it.
+ */
+asked: number | null, };
+
+export type QaItemView = { ask: QaAsk, target: string, passed: boolean, 
+/**
+ * The firmware's reason when it failed: `timeout`, `wrong`, `no`…
+ */
+reason: string | null, };
+
+export type QaCheckView = { check: "optics" | "power" | "buttons" | "indicators" | "speaker", state: QaState, items: Array<QaItemView>, };
+
+/**
+ * The newest QA run in the latest capture.
+ */
+export type QaView = { 
+/**
+ * Root-relative capture directory.
+ */
+capture: string, 
+/**
+ * All five checks, in sequence order.
+ */
+checks: Array<QaCheckView>, 
+/**
+ * The question waiting for an answer, if any.
+ */
+prompt: QaPromptView | null, 
+/**
+ * The result line's overall status, once it has arrived.
+ */
+passed: boolean | null, 
+/**
+ * Records the parser could not read; the audit would refuse the run.
+ */
+unreadable: number, };
 
 /**
  * `/api/sessions`: recent session names with the evidence each one has.

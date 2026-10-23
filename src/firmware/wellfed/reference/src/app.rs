@@ -2,9 +2,9 @@
 //! Wellfed SDK runtime. In the normal role it adds the FW13 optics probe
 //! (which exercises the emitters and reads the food, outlet and feedback
 //! inputs, motor STOP throughout) and the FW24 startup chime; the speaker
-//! variant adds the signed network audio stream, and the FW16, FW14 and
-//! FW11 variants replace the optics probe with a motor pulse, the read-only
-//! power-input probe or a trial reset.
+//! variant adds the signed network audio stream, and the FW16, FW14, FW20
+//! and FW11 variants replace the optics probe with a motor pulse, the
+//! read-only power-input or button probe, or a trial reset.
 //!
 //! Everything else, from startup to confirmation, updates and recovery, is
 //! the runtime's (`wellfed_sdk`).
@@ -100,7 +100,12 @@ fn start_optics() {
 
 /// Above the diagnostic and transport tasks, so their logging cannot hold
 /// off the owner lease the supervisor enforces.
-#[cfg(not(any(feature = "fw16-pulse", feature = "fw14-adc", feature = "fw11-reset")))]
+#[cfg(not(any(
+    feature = "fw16-pulse",
+    feature = "fw14-adc",
+    feature = "fw20-buttons",
+    feature = "fw11-reset"
+)))]
 fn start_optics() {
     // SAFETY: the step ignores its context and keeps its state in statics.
     let created =
@@ -212,6 +217,49 @@ fn start_optics() {
         sdk::log(c"PLADC1 start created=0\r\n");
     }
 }
+/// Touched only by the button task; see `button_task`.
+#[cfg(feature = "fw20-buttons")]
+static BUTTONS: Slot<crate::probes::buttons::Probe> = Slot::new();
+
+#[cfg(feature = "fw20-buttons")]
+struct ButtonLine(crate::probes::buttons::Record);
+
+#[cfg(feature = "fw20-buttons")]
+impl core::fmt::Display for ButtonLine {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        crate::probes::buttons::describe(self.0, f)
+    }
+}
+
+#[cfg(feature = "fw20-buttons")]
+unsafe extern "C" fn button_task(_: *mut c_void) -> u32 {
+    // SAFETY: only this task touches the slot.
+    let probe = unsafe { BUTTONS.get_or_init(Default::default) };
+    let step = probe.step();
+    if let Some(record) = step.record {
+        let mut report = startup::Report::new();
+        if let Ok(line) = report.record(format_args!("PLBTN1 {}\r\n", ButtonLine(record))) {
+            sdk::log(line);
+        }
+    }
+    step.delay_ms
+}
+
+/// FW20 builds read the panel buttons in place of the optics probe. Like
+/// the ADC probe, it never binds the KM0 flash handshake.
+#[cfg(feature = "fw20-buttons")]
+fn start_optics() {
+    wellfed_sdk::startup_done(true);
+
+    // SAFETY: the step ignores its context and keeps its state in statics.
+    let created = unsafe { wellfed_sdk::spawn(c"wellfed-btn", 1024, 3, button_task) };
+    sdk::log(if created {
+        c"PLBTN1 start created=1\r\n"
+    } else {
+        c"PLBTN1 start created=0\r\n"
+    });
+}
+
 /// Touched only by the audio task; see `audio_task`.
 static SPEAKER: Slot<audio::Speaker> = Slot::new();
 

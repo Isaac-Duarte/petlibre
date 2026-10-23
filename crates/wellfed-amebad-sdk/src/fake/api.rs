@@ -82,10 +82,6 @@ pub fn boot_reason() -> u32 {
     with(|h| h.boot_reason)
 }
 
-pub const STORAGE_OFFSET: u32 = 0x34_0000;
-pub const STORAGE_SECTORS: u32 = 16;
-pub const SECTOR_BYTES: u32 = 0x1000;
-
 fn storage_span(sector: u32, offset: u32, len: usize) -> Option<usize> {
     let end = offset as usize + len;
     (sector < STORAGE_SECTORS && end <= SECTOR_BYTES as usize)
@@ -580,7 +576,12 @@ pub fn set_lp_km0_ctrl(value: u32) {
     });
 }
 
-pub fn task_create(
+/// The fake records the task; `fake::run_task` steps it.
+///
+/// # Safety
+/// `step` must be sound to call with `context`, again and again, from the
+/// new task until it returns zero; `context` stays valid for that long.
+pub unsafe fn task_create(
     name: &'static CStr,
     stack_words: u16,
     priority: u32,
@@ -609,8 +610,8 @@ pub fn panic_outputs_safe() {
         if h.lp_function & enabled == 0 || h.lp_clock & enabled == 0 {
             return;
         }
-        h.output[0] = (h.output[0] | MOTOR_MASK) & !(1 << 15);
-        h.output[1] &= !(1 << 3);
+        h.output[0] = (h.output[0] | MOTOR_MASK) & !IR_PA_BIT;
+        h.output[1] &= !IR_PB_BIT;
     });
 }
 
@@ -703,6 +704,7 @@ pub fn tcp_connect(_ip: u32, _port: u16, timeout_ms: u32) -> Option<i32> {
     })
 }
 
+#[must_use]
 pub fn tcp_send(socket: i32, data: &[u8]) -> bool {
     with(|h| {
         if h.tcp_send_fails {

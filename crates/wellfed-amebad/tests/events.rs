@@ -64,6 +64,7 @@ impl Fixture {
 
     fn open_events(&mut self, config: &EventsConfig) -> bool {
         let board = &raw mut self.board;
+        // SAFETY: the fixture's callbacks are sound for its context, which outlives the call.
         unsafe { self.events.open(board, config) }
     }
 
@@ -222,6 +223,7 @@ fn claims_and_failed_registration_leave_no_live_resources() {
     assert!(f.open_events(&CONFIG));
 
     let mut another = Box::<Events>::default();
+    // SAFETY: the fixture's callbacks are sound for its context, which outlives the call.
     assert!(!unsafe { another.open(&raw mut f.board, &CONFIG) });
     f.finish();
 }

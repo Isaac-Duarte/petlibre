@@ -285,7 +285,8 @@ fn release_and_private_token<const KM0: bool>() {
             }
         });
 
-        assert!(wait::<Fake<KM0>>(input(), 20, 30));
+        // SAFETY: the token is null or points into the live model.
+        assert!(unsafe { wait::<Fake<KM0>>(input(), 20, 30) });
         assert!(m(|m| m.acked
             && m.regs[m.own][10] == RELEASED
             && m.mask == 1
@@ -323,7 +324,8 @@ fn refuse_before_acknowledgement<const KM0: bool>() {
             input()
         };
 
-        assert!(!wait::<Fake<KM0>>(token, time_limit, polls));
+        // SAFETY: the token is null or points into the live model.
+        assert!(!unsafe { wait::<Fake<KM0>>(token, time_limit, polls) });
         assert!(m(|m| !m.acked && m.stores == 0));
     }
 }
@@ -355,7 +357,10 @@ fn faults_after_ack_never_return<const KM0: bool>() {
             if change == 8 { 30 } else { 3 },
         );
         let token = input();
-        let outcome = catch_unwind(AssertUnwindSafe(|| wait::<Fake<KM0>>(token, ticks, polls)));
+        // SAFETY: the token is null or points into the live model.
+        let outcome = catch_unwind(AssertUnwindSafe(|| unsafe {
+            wait::<Fake<KM0>>(token, ticks, polls)
+        }));
         let halted = outcome.err().is_some_and(|e| e.is::<Halted>());
         assert!(halted, "an acknowledged fault must stay in RAM for reset");
 
@@ -382,7 +387,8 @@ fn publication_tearing_and_reserved_slots<const KM0: bool>() {
             }
         });
 
-        assert!(wait::<Fake<KM0>>(input(), 15, 40));
+        // SAFETY: the token is null or points into the live model.
+        assert!(unsafe { wait::<Fake<KM0>>(input(), 15, 40) });
         assert!(m(|m| m.regs.iter().all(|b| (
             b[0], b[1], b[7], b[8], b[11]
         ) == (
@@ -391,16 +397,20 @@ fn publication_tearing_and_reserved_slots<const KM0: bool>() {
     }
 
     reset::<KM0>();
-    assert!(!publish::<Fake<KM0>>(input(), ACK));
-    assert!(!publish::<Fake<KM0>>(core::ptr::null(), REQUEST));
+    // SAFETY: the token is null or points into the live model.
+    assert!(!unsafe { publish::<Fake<KM0>>(input(), ACK) });
+    // SAFETY: the token is null or points into the live model.
+    assert!(!unsafe { publish::<Fake<KM0>>(core::ptr::null(), REQUEST) });
     assert_eq!(m(|m| m.stores), 0);
 
-    assert!(publish::<Fake<KM0>>(input(), REQUEST));
+    // SAFETY: the token is null or points into the live model.
+    assert!(unsafe { publish::<Fake<KM0>>(input(), REQUEST) });
     assert!(m(|m| m.regs[m.own][10] == REQUEST
         && m.stores == 8
         && m.barriers == 3));
 
-    assert!(publish::<Fake<KM0>>(input(), RELEASE));
+    // SAFETY: the token is null or points into the live model.
+    assert!(unsafe { publish::<Fake<KM0>>(input(), RELEASE) });
     assert!(m(|m| m.regs[m.own][10] == RELEASE
         && m.stores == 16
         && m.barriers == 6));
@@ -463,7 +473,8 @@ fn owner_requires_current_ack_and_verified_release<const KM0: bool>() {
         });
 
         assert!(sem_try_claim::<Fake<KM0>>(8));
-        assert!(owner_begin::<Fake<KM0>>(input(), 16, 20, 30));
+        // SAFETY: the token is null or points into the live model.
+        assert!(unsafe { owner_begin::<Fake<KM0>>(input(), 16, 20, 30) });
         assert!(m(
             |m| m.regs[m.own][10] == REQUEST && m.regs[m.other()][10] == ACK
         ));
@@ -474,7 +485,8 @@ fn owner_requires_current_ack_and_verified_release<const KM0: bool>() {
             m.input = m.original;
         });
 
-        assert!(owner_end::<Fake<KM0>>(input(), 30, 20, 30));
+        // SAFETY: the token is null or points into the live model.
+        assert!(unsafe { owner_end::<Fake<KM0>>(input(), 30, 20, 30) });
         assert!(m(
             |m| m.regs[m.own][10] == RELEASE && m.regs[m.other()][10] == RELEASED
         ));
@@ -512,7 +524,8 @@ fn owner_bad_context_stale_reply_and_deadlines_never_grant<const KM0: bool>() {
             }
         });
 
-        assert!(!owner_begin::<Fake<KM0>>(input(), channel, 10, 8));
+        // SAFETY: the token is null or points into the live model.
+        assert!(!unsafe { owner_begin::<Fake<KM0>>(input(), channel, 10, 8) });
         if change < 4 {
             assert!(m(|m| m.stores == 0 && m.irq_requests == 0));
         } else {
@@ -526,7 +539,8 @@ fn owner_bad_context_stale_reply_and_deadlines_never_grant<const KM0: bool>() {
         m.message(other, ACK);
         m.owner_foreign = true;
     });
-    assert!(!owner_end::<Fake<KM0>>(input(), 16, 20, 30));
+    // SAFETY: the token is null or points into the live model.
+    assert!(!unsafe { owner_end::<Fake<KM0>>(input(), 16, 20, 30) });
     assert!(m(|m| m.regs[m.own][10] == PEER_LOST && m.mask == 1));
 }
 
@@ -534,7 +548,8 @@ fn owner_bad_context_stale_reply_and_deadlines_never_grant<const KM0: bool>() {
 fn countflag_is_not_an_enabled_systick<const KM0: bool>() {
     reset::<KM0>();
     with(|m| m.countflag = true);
-    assert!(wait::<Fake<KM0>>(input(), 20, 30));
+    // SAFETY: the token is null or points into the live model.
+    assert!(unsafe { wait::<Fake<KM0>>(input(), 20, 30) });
     assert!(m(|m| m.acked && m.regs[m.own][10] == RELEASED));
 
     reset::<KM0>();
@@ -542,7 +557,8 @@ fn countflag_is_not_an_enabled_systick<const KM0: bool>() {
         m.countflag = true;
         m.systick = 1; // Enabled: still refused.
     });
-    assert!(!wait::<Fake<KM0>>(input(), 20, 30));
+    // SAFETY: the token is null or points into the live model.
+    assert!(!unsafe { wait::<Fake<KM0>>(input(), 20, 30) });
     assert!(m(|m| !m.acked && m.stores == 0));
 }
 

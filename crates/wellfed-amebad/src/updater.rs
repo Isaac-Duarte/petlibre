@@ -20,8 +20,10 @@
 
 use core::fmt;
 
+use wellfed_core::named_enum;
+
 use wellfed_core::flash_coord::FlashReply;
-use wellfed_core::ota::{self, Manifest, Part, SECTOR, Status, Writer};
+use wellfed_core::ota::{self, Manifest, Part, SECTOR, SECTOR_BYTES, Status, Writer};
 use wellfed_core::transport::{self as mqtt, Event, Session, Tick};
 
 pub use crate::arming::Hooks;
@@ -30,6 +32,15 @@ use crate::flash::park::Mmio;
 use crate::net_status;
 use crate::provider::Provider;
 use crate::sdk::{self, TcpRecv, TransportConfig};
+
+// The SDK crate cannot depend on wellfed-core, so it keeps its own copies
+// of the bank layout the updater writes; they must agree.
+const _: () = assert!(
+    sdk::BANK1_OFFSET == ota::BANK1_OFFSET
+        && sdk::BANK1_SECTORS * sdk::SECTOR_BYTES == ota::BANK1_BYTES
+        && sdk::SECTOR_BYTES == SECTOR_BYTES
+        && u64::from_le_bytes(sdk::MARKER) == u64::from_le_bytes(ota::MARKER)
+);
 
 pub const CONNECT_TIMEOUT_MS: u32 = 3000;
 pub const POLL_MS: u32 = 50;
@@ -87,24 +98,36 @@ pub fn public_key() -> Option<[u8; 32]> {
 }
 
 pub fn parse_key(text: &str) -> Option<[u8; 32]> {
-    fn nibble(c: u8) -> Option<u8> {
-        match c {
-            b'0'..=b'9' => Some(c - b'0'),
-            b'a'..=b'f' => Some(c - b'a' + 10),
-            _ => None,
-        }
-    }
+    wellfed_core::hex::decode_array(text.as_bytes())
+}
 
-    let bytes = text.as_bytes();
-    if bytes.len() != 64 {
-        return None;
+named_enum! {
+    /// Where an update stopped (`error stage=`).
+    pub enum ErrorStage {
+        Clock = "clock",
+        Timeout = "timeout",
+        Topic = "topic",
+        Range = "range",
+        Order = "order",
+        Hash = "hash",
+        Write = "write",
+        State = "state",
+        Key = "key",
+        Manifest = "manifest",
+        Marker = "marker",
     }
+}
 
-    let mut out = [0u8; 32];
-    for (i, byte) in out.iter_mut().enumerate() {
-        *byte = (nibble(bytes[2 * i])? << 4) | nibble(bytes[2 * i + 1])?;
+named_enum! {
+    /// Why the update's connection dropped (`closed reason=`); the next one
+    /// resumes.
+    pub enum CloseReason {
+        Wifi = "wifi",
+        Closed = "closed",
+        Protocol = "protocol",
+        Send = "send",
+        Timeout = "timeout",
     }
-    Some(out)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -130,7 +153,7 @@ pub enum Record {
         ok: bool,
     },
     Closed {
-        reason: &'static str,
+        reason: CloseReason,
     },
     NoOffer,
 
@@ -149,7 +172,7 @@ pub enum Record {
         sectors: u32,
     },
     Error {
-        stage: &'static str,
+        stage: ErrorStage,
     },
 }
 
@@ -166,7 +189,9 @@ impl From<arming::Event> for Record {
                 watchdog,
                 installed,
             },
-            arming::Event::Clock => Self::Error { stage: "clock" },
+            arming::Event::Clock => Self::Error {
+                stage: ErrorStage::Clock,
+            },
         }
     }
 }
@@ -321,7 +346,7 @@ impl Updater {
 
     /// Stop for good with bank 1 invalid. The stop is orderly, so the
     /// attempt marker is cleared.
-    fn fail(&mut self, stage: &'static str) -> Step {
+    fn fail(&mut self, stage: ErrorStage) -> Step {
         self.close();
         arming::clear_attempt();
         self.end(Record::Error { stage })
@@ -336,7 +361,7 @@ impl Updater {
         self.wanted = None;
     }
 
-    fn drop_link(&mut self, reason: &'static str) -> Step {
+    fn drop_link(&mut self, reason: CloseReason) -> Step {
         self.close();
         next(IDLE_MS, Some(Record::Closed { reason }))
     }
@@ -387,13 +412,13 @@ impl Updater {
             return self.connect(wifi.dns_ok, wifi.generation);
         };
         if open.generation != wifi.generation {
-            return self.drop_link("wifi");
+            return self.drop_link(CloseReason::Wifi);
         }
 
         match sdk::tcp_recv(open.socket, &mut self.rx[self.rx_len..], POLL_MS) {
             TcpRecv::Data(n) => self.rx_len += n,
             TcpRecv::Timeout => {}
-            TcpRecv::Closed => return self.drop_link("closed"),
+            TcpRecv::Closed => return self.drop_link(CloseReason::Closed),
         }
 
         let now = sdk::uptime_ms();
@@ -401,7 +426,7 @@ impl Updater {
             let used = match mqtt::decode(&self.rx[..self.rx_len]) {
                 Ok(None) => break,
                 Ok(Some((_, used))) => used,
-                Err(_) => return self.drop_link("protocol"),
+                Err(_) => return self.drop_link(CloseReason::Protocol),
             };
             let mut frame = [0u8; mqtt::MAX_PACKET];
             frame[..used].copy_from_slice(&self.rx[..used]);
@@ -422,10 +447,10 @@ impl Updater {
             Tick::Ping => {
                 let mut out = [0; 2];
                 if !mqtt::encode_pingreq(&mut out).is_ok_and(|n| self.send(&out[..n])) {
-                    return self.drop_link("send");
+                    return self.drop_link(CloseReason::Send);
                 }
             }
-            Tick::Closed(_) => return self.drop_link("timeout"),
+            Tick::Closed(_) => return self.drop_link(CloseReason::Timeout),
         }
 
         self.retry(now)
@@ -515,7 +540,7 @@ impl Updater {
             if now.wrapping_sub(at) >= NO_OFFER_MS {
                 self.no_offer_at = None;
                 if !self.ask_next(now) {
-                    return self.drop_link("send");
+                    return self.drop_link(CloseReason::Send);
                 }
             }
             return next(POLL_MS, None);
@@ -529,10 +554,10 @@ impl Updater {
         }
 
         if w.tries >= MAX_TRIES {
-            return self.fail("timeout");
+            return self.fail(ErrorStage::Timeout);
         }
         if !self.ask(now, w.part, w.offset, w.len, w.tries + 1) {
-            return self.drop_link("send");
+            return self.drop_link(CloseReason::Send);
         }
         next(POLL_MS, None)
     }
@@ -540,13 +565,13 @@ impl Updater {
     /// One received packet; `Some` ends this iteration.
     fn handle(&mut self, now: u32, frame: &[u8], flash: &mut impl BankFlash) -> Option<Step> {
         let Ok(Some((packet, _))) = mqtt::decode(frame) else {
-            return Some(self.drop_link("protocol"));
+            return Some(self.drop_link(CloseReason::Protocol));
         };
         let (Some(request), Some(data)) = (
             Topic::new(self.config.namespace, "request"),
             Topic::new(self.config.namespace, "ota/data"),
         ) else {
-            return Some(self.fail("topic"));
+            return Some(self.fail(ErrorStage::Topic));
         };
 
         let open = self.open.as_mut()?;
@@ -561,7 +586,7 @@ impl Updater {
                     .session
                     .subscribe(now, &mut out, request.as_str())
                     .is_ok_and(|n| sdk::tcp_send(open.socket, &out[..n]));
-                (!ok).then(|| self.drop_link("send"))
+                (!ok).then(|| self.drop_link(CloseReason::Send))
             }
 
             Event::Ready => {
@@ -570,19 +595,19 @@ impl Updater {
                     .session
                     .subscribe_data(now, &mut out, data.as_str())
                     .is_ok_and(|n| sdk::tcp_send(open.socket, &out[..n]));
-                (!ok).then(|| self.drop_link("send"))
+                (!ok).then(|| self.drop_link(CloseReason::Send))
             }
 
             Event::DataReady => {
                 open.data_ready = true;
                 self.no_offer_at = None;
-                (!self.ask_next(now)).then(|| self.drop_link("send"))
+                (!self.ask_next(now)).then(|| self.drop_link(CloseReason::Send))
             }
 
             // Diagnostic requests are not served in the recovery role.
             Event::Pong | Event::Request(_) => None,
             Event::Data(payload) => self.data(now, payload, flash),
-            Event::Closed(_) => Some(self.drop_link("protocol")),
+            Event::Closed(_) => Some(self.drop_link(CloseReason::Protocol)),
         }
     }
 
@@ -600,7 +625,7 @@ impl Updater {
                 self.no_offer_at = Some(now);
                 return Some(next(POLL_MS, Some(Record::NoOffer)));
             }
-            Status::Range => return Some(self.fail("range")),
+            Status::Range => return Some(self.fail(ErrorStage::Range)),
         }
 
         if answer.part == Part::Manifest {
@@ -609,23 +634,23 @@ impl Updater {
 
         let writer = self.writer.as_mut()?;
         let written = match writer.accept(answer.offset, answer.bytes) {
-            Err(_) => return Some(self.fail("order")),
+            Err(_) => return Some(self.fail(ErrorStage::Order)),
             Ok(None) => None,
             Ok(Some(program)) => {
-                let sector = (program.offset - ota::BANK1_OFFSET) / SECTOR as u32;
+                let sector = (program.offset - ota::BANK1_OFFSET) / SECTOR_BYTES;
                 Some(write_sector(flash, sector, program.data))
             }
         };
 
         let Some(ok) = written else {
-            return (!self.ask_next(now)).then(|| self.drop_link("send"));
+            return (!self.ask_next(now)).then(|| self.drop_link(CloseReason::Send));
         };
 
         if let Err(error) = writer.programmed(ok) {
             return Some(self.fail(match error {
-                ota::WriteError::Hash => "hash",
-                ota::WriteError::Readback => "write",
-                _ => "state",
+                ota::WriteError::Hash => ErrorStage::Hash,
+                ota::WriteError::Readback => ErrorStage::Write,
+                _ => ErrorStage::State,
             }));
         }
 
@@ -636,13 +661,13 @@ impl Updater {
         }
 
         if !self.ask_next(now) {
-            return Some(self.drop_link("send"));
+            return Some(self.drop_link(CloseReason::Send));
         }
 
         self.sectors.is_multiple_of(PROGRESS_SECTORS).then(|| {
             let record = Record::Progress {
                 sectors: self.sectors,
-                total: manifest.image_len.div_ceil(SECTOR as u32),
+                total: manifest.image_len.div_ceil(SECTOR_BYTES),
                 leases: self.leases,
             };
             next(POLL_MS, Some(record))
@@ -660,15 +685,15 @@ impl Updater {
         }
 
         let Some(key) = self.key else {
-            return self.fail("key");
+            return self.fail(ErrorStage::Key);
         };
         let Ok(manifest) = ota::parse_manifest(bytes, &key, 0) else {
-            return self.fail("manifest");
+            return self.fail(ErrorStage::Manifest);
         };
 
         self.writer = Writer::new(manifest, ota::MAX_CHUNK as usize);
         if self.writer.is_none() || !self.ask_next(now) {
-            return self.drop_link("send");
+            return self.drop_link(CloseReason::Send);
         }
 
         next(
@@ -683,7 +708,7 @@ impl Updater {
     /// Program the withheld marker last and read it back: bank 1 is valid.
     fn activate(&mut self, flash: &mut impl BankFlash, manifest: Manifest) -> Step {
         let Some(Ok((offset, marker))) = self.writer.as_mut().map(Writer::commit) else {
-            return self.fail("state");
+            return self.fail(ErrorStage::State);
         };
 
         let mut readback = [0u8; 8];
@@ -692,7 +717,7 @@ impl Updater {
             && flash.read(0, 0, &mut readback)
             && readback == marker;
         if !ok {
-            return self.fail("marker");
+            return self.fail(ErrorStage::Marker);
         }
 
         self.close();

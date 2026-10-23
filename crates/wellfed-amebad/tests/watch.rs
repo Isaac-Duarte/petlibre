@@ -307,7 +307,12 @@ fn without_a_valid_bank_0_the_give_way_is_refused() {
     let (records, restart) = run(&mut watch, &mut broker, 200);
 
     assert!(!restart);
-    assert_eq!(records.last(), Some(&Record::Error { stage: "give_way" }));
+    assert_eq!(
+        records.last(),
+        Some(&Record::Error {
+            stage: ErrorStage::GiveWay
+        })
+    );
     assert_eq!(fake::with(|h| h.bank1[..8].to_vec()), MARKER.to_vec());
 }
 

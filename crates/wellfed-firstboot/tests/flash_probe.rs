@@ -309,6 +309,7 @@ fn platform_boot_cut(
 
         'boot: for _ in 0..100_000 {
             let raw: *mut Provider = &mut *provider;
+            // SAFETY: the probe's pointers are the fixture's live locals.
             let step = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
                 probe.step::<Core<false>, Hooks>(raw)
             }));

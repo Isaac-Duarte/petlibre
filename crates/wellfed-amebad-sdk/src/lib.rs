@@ -23,6 +23,19 @@ pub const ADC_ENABLE_BIT: u32 = 1 << 8;
 /// (SWD_CLK). While set, GPIO writes to PB3 do not reach the pad.
 pub const SWD_PMUX_BIT: u32 = 1;
 
+/// Stock-derived motor driver inputs PA13 and PA14 (port A); both HIGH
+/// requests STOP.
+pub const MOTOR_A_BIT: u32 = 1 << 13;
+pub const MOTOR_B_BIT: u32 = 1 << 14;
+pub const MOTOR_MASK: u32 = MOTOR_A_BIT | MOTOR_B_BIT;
+/// Stock-derived infrared emitter latches, LOW for OFF: PA15 on port A and
+/// PB3 (also SWD_CLK) on port B.
+pub const IR_PA_BIT: u32 = 1 << 15;
+pub const IR_PB_BIT: u32 = 1 << 3;
+
+/// The architectural SysTick control and status register (CTRL).
+pub const SYSTICK_CTRL: u32 = 0xe000_e010;
+
 /// One LP SYSCTRL function/clock enable pair (`REG_LP_FUNC_EN1`,
 /// `REG_LP_CLK_CTRL1`) around an enable of `bit`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -91,12 +104,22 @@ impl FlashMmuEntry {
 /// Bank 1 as the updater may write it: the reviewed 0x150000-byte footprint
 /// from 0x186000, in 4 KiB sectors. Only while running from bank 0.
 pub const BANK1_OFFSET: u32 = 0x18_6000;
-pub const BANK1_SECTORS: u32 = 0x15_0000 / 0x1000;
+pub const BANK1_SECTORS: u32 = 0x15_0000 / SECTOR_BYTES;
 
 /// Bank 0, the factory loader's fallback (read only, for the give-way guard).
 pub const BANK0_OFFSET: u32 = 0x6000;
 /// The factory loader's valid-image marker at the start of each bank.
 pub const MARKER: [u8; 8] = *b"81958711";
+
+/// Owner-approved replacement-firmware storage (FW15): 16 sectors at
+/// 0x340000-0x350000, blank in the research unit's backup and referenced
+/// nowhere in stock 1.1.15. Clear of bank 0, of a full-size bank 1 (ends no
+/// later than 0x306000) and of the stock settings (0x3e8000). Callers name a
+/// sector index; nothing takes a flash address.
+pub const STORAGE_OFFSET: u32 = 0x34_0000;
+pub const STORAGE_SECTORS: u32 = 16;
+/// One NOR erase sector.
+pub const SECTOR_BYTES: u32 = 0x1000;
 
 /// FW24: samples in one codec DMA page (16 ms at 16 kHz, 16-bit mono),
 /// `WELLFED_AUDIO_PAGE` in `example_entry.c`.
@@ -105,7 +128,8 @@ pub const AUDIO_PAGE_SAMPLES: usize = 256;
 pub const AUDIO_PAGES: usize = 8;
 
 /// One event from the KM4 Wi-Fi shim's ring (`example_entry.c`), numbered
-/// from 1. `kind`: 1 on, 2 scan, 3 connect, 4 DHCP, 5 lost, 6 backoff.
+/// from 1. `kind` is one of the associated constants: 1 on, 2 scan,
+/// 3 connect, 4 DHCP, 5 lost, 6 backoff, 7 DNS.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct WifiEvent {
@@ -120,6 +144,17 @@ pub struct WifiEvent {
     pub rssi: i32,
     pub security: u32,
     pub ms: u32,
+}
+
+impl WifiEvent {
+    pub const ON: u32 = 1;
+    pub const SCAN: u32 = 2;
+    pub const CONNECT: u32 = 3;
+    pub const DHCP: u32 = 4;
+    pub const LOST: u32 = 5;
+    pub const BACKOFF: u32 = 6;
+    /// A DNS check of the server name: `result` 0 and `value` nonzero on success.
+    pub const DNS: u32 = 7;
 }
 
 /// `wifi_event(seq)` outcome.

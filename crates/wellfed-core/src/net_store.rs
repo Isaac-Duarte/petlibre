@@ -13,7 +13,10 @@
 
 use core::ffi::c_uint;
 
-use crate::storage::{COMMIT, JournalIo, RECORD_BYTES, crc32, get, put};
+use crate::storage::{
+    COMMIT, COMMIT_AT, CRC_AT, JournalIo, LENGTH_AT, RECORD_BYTES, VERSION_AT, crc32, get_u16,
+    get_u32, get_u64, put_u16, put_u32, put_u64,
+};
 
 pub const VERSION: u16 = 1;
 const MAGIC: [u8; 8] = *b"PLFNET01";
@@ -105,18 +108,18 @@ impl Default for NetStore {
 fn encode(generation: u64, credentials: Option<&Credentials>) -> [u8; RECORD_BYTES] {
     let mut p = [0u8; RECORD_BYTES];
     p[..8].copy_from_slice(&MAGIC);
-    put(&mut p[8..], u64::from(VERSION), 2);
-    put(&mut p[10..], RECORD_BYTES as u64, 2);
-    put(&mut p[12..], generation, 8);
+    put_u16(&mut p[VERSION_AT..], VERSION);
+    put_u16(&mut p[LENGTH_AT..], RECORD_BYTES as u16);
+    put_u64(&mut p[12..], generation);
     if let Some(c) = credentials {
         p[20] = c.ssid_len;
         p[21] = c.psk_len;
         p[22..22 + MAX_SSID].copy_from_slice(&c.ssid);
         p[54..54 + 64].copy_from_slice(&c.psk);
     }
-    let crc = crc32(&p[..120]);
-    put(&mut p[120..], u64::from(crc), 4);
-    p[124..].copy_from_slice(&COMMIT);
+    let crc = crc32(&p[..CRC_AT]);
+    put_u32(&mut p[CRC_AT..], crc);
+    p[COMMIT_AT..].copy_from_slice(&COMMIT);
     p
 }
 
@@ -125,19 +128,19 @@ fn decode(p: &[u8; RECORD_BYTES]) -> Scan {
         return Scan::Erased;
     }
     if p[..8] != MAGIC
-        || get(&p[10..], 2) != RECORD_BYTES as u64
-        || p[124..] != COMMIT
-        || get(&p[120..], 4) != u64::from(crc32(&p[..120]))
+        || usize::from(get_u16(&p[LENGTH_AT..])) != RECORD_BYTES
+        || p[COMMIT_AT..] != COMMIT
+        || get_u32(&p[CRC_AT..]) != crc32(&p[..CRC_AT])
     {
         return Scan::Invalid;
     }
-    let version = get(&p[8..], 2) as u16;
+    let version = get_u16(&p[VERSION_AT..]);
     if version > VERSION {
         return Scan::Future;
     }
-    let generation = get(&p[12..], 8);
+    let generation = get_u64(&p[12..]);
     let (ssid_len, psk_len) = (usize::from(p[20]), usize::from(p[21]));
-    if version != VERSION || generation == 0 || p[118..120] != [0, 0] {
+    if version != VERSION || generation == 0 || p[118..CRC_AT] != [0, 0] {
         return Scan::Invalid;
     }
     if ssid_len == 0 {
@@ -231,8 +234,8 @@ impl NetStore {
         let ok = self.io.erase(slot)
             && self.io.read(slot, 0, &mut checked)
             && checked.iter().all(|&b| b == u8::MAX)
-            && self.io.program(slot, 0, &bytes[..124])
-            && self.io.program(slot, 124, &COMMIT)
+            && self.io.program(slot, 0, &bytes[..COMMIT_AT])
+            && self.io.program(slot, COMMIT_AT as u32, &COMMIT)
             && self.io.read(slot, 0, &mut checked)
             && bytes == checked;
         if !ok {

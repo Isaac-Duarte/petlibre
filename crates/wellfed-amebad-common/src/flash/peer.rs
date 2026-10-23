@@ -12,6 +12,8 @@
 //! backup marker reads `WITHHOLD_MARKER`, lease `INJECT_LEASE` is ignored
 //! without ACK, once, so the authority's begin must time out.
 
+use wellfed_core::c_enum;
+
 use crate::flash::park::{self, Mmio};
 
 /// SDK SYSTIMER rate, as measured in FW05.
@@ -103,7 +105,8 @@ impl Peer {
             self.last_lease = lease;
             return ParkEvent::WITHHELD;
         }
-        if park::ram_wait::<M>(&token, PARK_TICK_LIMIT, PARK_POLL_LIMIT) {
+        // SAFETY: `token` is a live local.
+        if unsafe { park::ram_wait::<M>(&token, PARK_TICK_LIMIT, PARK_POLL_LIMIT) } {
             self.last_lease = lease;
             ParkEvent::RELEASED
         } else {
@@ -114,24 +117,21 @@ impl Peer {
 
 #[cfg(all(target_os = "none", feature = "km0"))]
 mod exported {
-    use core::cell::UnsafeCell;
-
     use super::{Peer, PeerEvent};
+    use crate::cell::TaskCell;
     use crate::flash::park;
     use crate::flash::park::Hardware;
 
-    struct Slot(UnsafeCell<Peer>);
-    // SAFETY: only the single KM0 peer task calls the step.
-    unsafe impl Sync for Slot {}
-
-    static PEER: Slot = Slot(UnsafeCell::new(Peer {
+    /// Shared by the KM0 peer task's step and the IPC handler, each under
+    /// a critical section.
+    static PEER: TaskCell<Peer> = TaskCell::new(Peer {
         session: 0,
         answered: 0,
         answered_at: 0,
         boot_count: 0,
         injected: false,
         last_lease: 0,
-    }));
+    });
 
     /// Called every few milliseconds by the KM0 peer task only. Masks IRQs so
     /// the park handler never observes a half-updated peer.
@@ -139,7 +139,7 @@ mod exported {
     pub extern "C" fn wellfed_amebad_flash_peer_step(boot_count: u32, ticks: u32) -> u32 {
         cortex_m::interrupt::free(|_| {
             // SAFETY: serialized with the IPC handler by the critical section.
-            let peer = unsafe { &mut *PEER.0.get() };
+            let peer = unsafe { &mut *PEER.get() };
             let event: PeerEvent = peer.step::<Hardware>(boot_count, ticks);
             event.0
         })
@@ -157,16 +157,19 @@ mod exported {
         cortex_m::interrupt::free(|_| {
             // SAFETY: fixed SysTick CTRL register; restored below.
             let saved = unsafe { core::ptr::read_volatile(systick) };
+            // SAFETY: as above.
             unsafe { core::ptr::write_volatile(systick, saved & !park::SYSTICK_CONTROL_BITS) };
 
             // SAFETY: serialized with the task step by the critical section.
-            let peer = unsafe { &mut *PEER.0.get() };
+            let peer = unsafe { &mut *PEER.get() };
             let event = peer.on_request::<Hardware>();
+            // SAFETY: as above.
             unsafe { core::ptr::write_volatile(systick, saved) };
 
             let diag = (super::BACKUP_BASE + super::DIAG_REGISTER * 4) as usize as *mut u32;
             // SAFETY: KM0 user backup register 2.
             let count = (unsafe { core::ptr::read_volatile(diag) } >> 16).wrapping_add(1);
+            // SAFETY: as above.
             unsafe {
                 core::ptr::write_volatile(
                     diag,

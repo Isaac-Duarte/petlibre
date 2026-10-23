@@ -80,7 +80,8 @@ impl Owner {
 
     fn quiet(&mut self) -> bool {
         if self.events.opened {
-            self.events.motor(MotorCommand::STOP);
+            // Best effort: the outputs are verified stopped below.
+            let _ = self.events.motor(MotorCommand::STOP);
             self.events.optics(false, 0);
         } else if self.board.motor.write_pair.is_some() {
             let observed = self.board.motor.observed_at;
@@ -457,7 +458,8 @@ impl Owner {
     /// # Safety
     /// `this` is the started, fixed-address owner, polled only by its task.
     pub(super) unsafe fn poll(this: *mut Self) -> bool {
-        // SAFETY (whole body): see the function contract.
+        // SAFETY: the function contract, for the whole body: each step
+        // borrows the owner afresh through `this`.
         unsafe {
             if !(*this).initialized && (*this).stop_requested() {
                 (*this).state = OwnerState::STOPPED;

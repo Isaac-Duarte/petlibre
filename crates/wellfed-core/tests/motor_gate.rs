@@ -21,6 +21,7 @@ struct Output {
 }
 
 unsafe extern "C" fn write_pair(context: *mut c_void, a: bool, b: bool) -> bool {
+    // SAFETY: `context` is the fixture's leaked pins, unaliased during the callback.
     let pins = unsafe { &mut *context.cast::<Output>() };
     assert!(a || b, "no command may produce LOW/LOW");
     pins.writes += 1;
@@ -50,11 +51,13 @@ fn with_gate(body: impl FnOnce(&mut MotorGate, *mut Output)) {
     let pins = Box::into_raw(Box::new(Output::default()));
     let mut gate = MotorGate::default();
     body(&mut gate, pins);
+    // SAFETY: the box leaked when the fixture was built, freed once here.
     drop(unsafe { Box::from_raw(pins) });
 }
 
 /// Short-lived access between gate calls; never held across a callback.
 fn pins(p: *mut Output) -> &'static mut Output {
+    // SAFETY: the leaked pins outlive the fixture and nothing else borrows them here.
     unsafe { &mut *p }
 }
 

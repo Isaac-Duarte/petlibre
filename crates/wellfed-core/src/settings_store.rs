@@ -15,7 +15,10 @@
 use core::ffi::c_uint;
 
 use crate::feed_progress::BowlMode;
-use crate::storage::{COMMIT, JournalIo, RECORD_BYTES, crc32, get, put};
+use crate::storage::{
+    COMMIT, COMMIT_AT, CRC_AT, JournalIo, LENGTH_AT, RECORD_BYTES, VERSION_AT, crc32, get_u16,
+    get_u32, get_u64, put_u16, put_u32, put_u64,
+};
 
 pub const VERSION: u16 = 1;
 const MAGIC: [u8; 8] = *b"PLFSET01";
@@ -24,7 +27,7 @@ const MAGIC: [u8; 8] = *b"PLFSET01";
 /// unit, half a typical NOR part's 100 000-cycle rating.
 pub const WEAR_LIMIT: u64 = 100_000;
 
-pub const MAX_VOLUME: u8 = 100;
+pub use crate::transport::MAX_VOLUME;
 pub const MIN_UTC_OFFSET: i16 = -12 * 60;
 pub const MAX_UTC_OFFSET: i16 = 14 * 60;
 
@@ -148,36 +151,36 @@ impl SettingsStore {
     fn encode(&self, generation: u64, s: &Settings) -> [u8; RECORD_BYTES] {
         let mut p = [0u8; RECORD_BYTES];
         p[..8].copy_from_slice(&MAGIC);
-        put(&mut p[8..], u64::from(VERSION), 2);
-        put(&mut p[10..], RECORD_BYTES as u64, 2);
-        put(&mut p[12..], generation, 8);
-        put(&mut p[20..], self.binding, 8);
+        put_u16(&mut p[VERSION_AT..], VERSION);
+        put_u16(&mut p[LENGTH_AT..], RECORD_BYTES as u16);
+        put_u64(&mut p[12..], generation);
+        put_u64(&mut p[20..], self.binding);
 
         p[28] = s.bowl_mode.0 as u8;
         p[29] = u8::from(s.lights) | (u8::from(s.sound) << 1);
         p[30] = s.volume;
-        put(&mut p[32..], s.utc_offset_minutes as u16 as u64, 2);
+        put_u16(&mut p[32..], s.utc_offset_minutes as u16);
 
-        let crc = crc32(&p[..120]);
-        put(&mut p[120..], u64::from(crc), 4);
-        p[124..].copy_from_slice(&COMMIT);
+        let crc = crc32(&p[..CRC_AT]);
+        put_u32(&mut p[CRC_AT..], crc);
+        p[COMMIT_AT..].copy_from_slice(&COMMIT);
         p
     }
 
     fn decode(&self, p: &[u8; RECORD_BYTES]) -> Scan {
         if p[..8] != MAGIC
-            || get(&p[10..], 2) != RECORD_BYTES as u64
-            || get(&p[120..], 4) != u64::from(crc32(&p[..120]))
+            || usize::from(get_u16(&p[LENGTH_AT..])) != RECORD_BYTES
+            || get_u32(&p[CRC_AT..]) != crc32(&p[..CRC_AT])
         {
             return Scan::Invalid;
         }
 
-        let version = get(&p[8..], 2) as u16;
+        let version = get_u16(&p[VERSION_AT..]);
         if version > VERSION {
             return Scan::Future;
         }
         // Only v1 exists; an older version would be migrated here.
-        if version != VERSION || get(&p[20..], 8) != self.binding {
+        if version != VERSION || get_u64(&p[20..]) != self.binding {
             return Scan::Invalid;
         }
 
@@ -186,12 +189,12 @@ impl SettingsStore {
             lights: p[29] & 1 != 0,
             sound: p[29] & 2 != 0,
             volume: p[30],
-            utc_offset_minutes: get(&p[32..], 2) as u16 as i16,
+            utc_offset_minutes: get_u16(&p[32..]) as i16,
         };
-        let generation = get(&p[12..], 8);
+        let generation = get_u64(&p[12..]);
         if p[29] & !3 != 0
             || p[31] != 0
-            || p[34..120].iter().any(|&b| b != 0)
+            || p[34..CRC_AT].iter().any(|&b| b != 0)
             || !s.valid()
             || generation == 0
         {
@@ -224,8 +227,8 @@ impl SettingsStore {
         Some(match (erased, tail_erased) {
             (true, true) => Scan::Erased,
             (_, false) => Scan::Invalid,
-            _ if record[124..] != COMMIT && ours_torn(&record) => Scan::Dirty,
-            _ if record[124..] != COMMIT => Scan::Invalid,
+            _ if record[COMMIT_AT..] != COMMIT && ours_torn(&record) => Scan::Dirty,
+            _ if record[COMMIT_AT..] != COMMIT => Scan::Invalid,
             _ => self.decode(&record),
         })
     }
@@ -324,11 +327,11 @@ impl SettingsStore {
         let mut checked = [0u8; RECORD_BYTES];
         let ok = self.io.erase(slot)
             && matches!(self.scan(slot), Some(Scan::Erased))
-            && self.io.program(slot, 0, &bytes[..124])
+            && self.io.program(slot, 0, &bytes[..COMMIT_AT])
             && self.io.read(slot, 0, &mut checked)
-            && bytes[..124] == checked[..124]
-            && checked[124..].iter().all(|&b| b == u8::MAX)
-            && self.io.program(slot, 124, &COMMIT)
+            && bytes[..COMMIT_AT] == checked[..COMMIT_AT]
+            && checked[COMMIT_AT..].iter().all(|&b| b == u8::MAX)
+            && self.io.program(slot, COMMIT_AT as u32, &COMMIT)
             && self.io.read(slot, 0, &mut checked)
             && bytes == checked;
 

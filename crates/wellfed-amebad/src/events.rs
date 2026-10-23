@@ -8,10 +8,12 @@
 use core::ffi::c_void;
 use core::ptr;
 
+use wellfed_core::c_enum;
 use wellfed_core::feed_controller::{
     FeedController, FeedReason, FeedRequest, FeedSample, FeedStartResult, MotorCommand,
 };
 use wellfed_core::feedback_events::{CAPACITY, FeedbackDrive, FeedbackEvents, FeedbackFault};
+use wellfed_core::interval_valid;
 use wellfed_core::motor_gate::MotorGateFault;
 use wellfed_core::sensor_inputs::SensorInputs;
 use wellfed_core::tick_clock::TickClock;
@@ -198,8 +200,7 @@ impl Events {
             || config.ticks_per_second > 1_000_000
             || config.timer_period_ms == 0
             || config.timer_period_ms >= b.motor.lease_ms / 3
-            || config.max_feedback_age_ms == 0
-            || config.max_feedback_age_ms >= 0x8000_0000
+            || !interval_valid(config.max_feedback_age_ms)
             || config.feedback_capacity == 0
             || usize::from(config.feedback_capacity) > CAPACITY
         {
@@ -317,7 +318,7 @@ impl Events {
     /// returns whether the emitters already match it.
     pub fn optics_select(&mut self, a: bool, b: bool, max_on_ms: u32) -> bool {
         let enabled = a || b;
-        if !self.opened || (enabled && (max_on_ms == 0 || max_on_ms >= 0x8000_0000)) {
+        if !self.opened || (enabled && !interval_valid(max_on_ms)) {
             return false;
         }
 
@@ -493,8 +494,7 @@ impl Events {
         if self.fault != EventsFault::OK
             || !self.timer_ready(value)
             || !self.owner_ready(value)
-            || remaining == 0
-            || remaining >= 0x8000_0000
+            || !interval_valid(remaining)
             || self.feedback.max_age_ms >= controller.limits.feedback_inhibit_ms
         {
             return FeedStartResult::REJECT_INPUT;
@@ -515,6 +515,7 @@ impl Events {
     }
 
     /// Drive requires a recently observed timer and enabled healthy capture.
+    #[must_use]
     pub fn motor(&mut self, command: MotorCommand) -> bool {
         if !self.opened {
             return false;

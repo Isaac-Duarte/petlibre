@@ -25,10 +25,10 @@ pub const READY: u32 = 0x504b_0011;
 
 // Wrapping tick deltas at or above half the counter range read as a clock
 // that went backward; tick and poll limits must stay below it.
-const HALF: u32 = 0x8000_0000;
+const HALF: u32 = wellfed_core::HALF_RANGE;
 pub const KM0_IPC: u32 = 0x4800_6000;
 pub const KM4_IPC: u32 = 0x4000_6000;
-pub const SYSTICK_CTRL: u32 = 0xe000_e010;
+pub const SYSTICK_CTRL: u32 = crate::sdk::SYSTICK_CTRL;
 pub const TICKS: u32 = 0x4800_2014;
 pub const SEM: u32 = 0x4800_6018;
 
@@ -79,12 +79,14 @@ const fn ours<M: Mmio>() -> u32 {
     if M::KM0 { 1 } else { 3 }
 }
 
+/// # Safety
+/// `t` is null or valid for reading a `ParkToken`.
 #[inline(always)]
-fn read(t: *const ParkToken) -> Option<ParkToken> {
-    // SAFETY: callers pass null or a token readable for the call.
+unsafe fn read(t: *const ParkToken) -> Option<ParkToken> {
     if t.is_null() {
         None
     } else {
+        // SAFETY: non-null, so readable by the caller's contract.
         Some(unsafe { ptr::read(t) })
     }
 }
@@ -175,9 +177,15 @@ fn sample<M: Mmio>(t: &ParkToken) -> Sample {
 /// disabled. One publisher per core. REQUEST/RELEASE from owner; ACK/RELEASED
 /// from the parked core. Publication is invalidation, barrier, six payload
 /// words, barrier, command, barrier.
+///
+/// # Safety
+/// `t` is null (refused) or valid for reading a `ParkToken`.
 #[inline(always)]
-pub fn publish<M: Mmio>(t: *const ParkToken, command: u32) -> bool {
-    let Some(t) = read(t) else { return false };
+pub unsafe fn publish<M: Mmio>(t: *const ParkToken, command: u32) -> bool {
+    // SAFETY: the caller's contract.
+    let Some(t) = (unsafe { read(t) }) else {
+        return false;
+    };
     if !valid(&t) || !context::<M>() || (command != REQUEST && command != RELEASE) {
         return false;
     }
@@ -191,9 +199,15 @@ pub fn publish<M: Mmio>(t: *const ParkToken, command: u32) -> bool {
 /// only this exact token's RELEASE permits a true return (IRQs remain masked).
 /// Timeout, frozen/backward clock or peer mismatch publishes a fault and
 /// stays in RAM forever for independent reset; it NEVER returns into XIP.
+///
+/// # Safety
+/// `t` is null (refused) or valid for reading a `ParkToken`.
 #[inline(always)]
-pub fn wait<M: Mmio>(t: *const ParkToken, tick_limit: u32, poll_limit: u32) -> bool {
-    let Some(input) = read(t) else { return false };
+pub unsafe fn wait<M: Mmio>(t: *const ParkToken, tick_limit: u32, poll_limit: u32) -> bool {
+    // SAFETY: the caller's contract.
+    let Some(input) = (unsafe { read(t) }) else {
+        return false;
+    };
     if !valid(&input)
         || tick_limit == 0
         || tick_limit >= HALF
@@ -292,8 +306,10 @@ pub fn sem_release<M: Mmio>(index: u32) -> bool {
     (M::load(SEM) >> shift) & 3 != ours::<M>()
 }
 
+/// # Safety
+/// `t` is null (refused) or valid for reading a `ParkToken`.
 #[inline(always)]
-fn owner_exchange<M: Mmio>(
+unsafe fn owner_exchange<M: Mmio>(
     t: *const ParkToken,
     command: u32,
     expected: u32,
@@ -301,7 +317,10 @@ fn owner_exchange<M: Mmio>(
     tick_limit: u32,
     poll_limit: u32,
 ) -> bool {
-    let Some(input) = read(t) else { return false };
+    // SAFETY: the caller's contract.
+    let Some(input) = (unsafe { read(t) }) else {
+        return false;
+    };
     if !valid(&input)
         || !context::<M>()
         || !(16..=30).contains(&channel)
@@ -380,47 +399,68 @@ fn owner_exchange<M: Mmio>(
 /// quiescence; the caller owns arbitration, masks IRQs and disables SysTick.
 /// Channel must be an exclusively reserved application channel 16..30.
 /// Publishes REQUEST and waits for the full-token ACK.
+///
+/// # Safety
+/// `t` is null (refused) or valid for reading a `ParkToken`.
 #[inline(always)]
-pub fn owner_begin<M: Mmio>(
+pub unsafe fn owner_begin<M: Mmio>(
     t: *const ParkToken,
     channel: u32,
     tick_limit: u32,
     poll_limit: u32,
 ) -> bool {
-    owner_exchange::<M>(t, REQUEST, ACK, channel, tick_limit, poll_limit)
+    // SAFETY: the caller's contract.
+    unsafe { owner_exchange::<M>(t, REQUEST, ACK, channel, tick_limit, poll_limit) }
 }
 
 /// Call only AFTER verified physical flash/controller idle. Publishes
 /// RELEASE and waits for RELEASED. False never permits I/O or release of the
 /// output/arbitration hold; the caller must fault/halt for reset.
+///
+/// # Safety
+/// `t` is null (refused) or valid for reading a `ParkToken`.
 #[inline(always)]
-pub fn owner_end<M: Mmio>(
+pub unsafe fn owner_end<M: Mmio>(
     t: *const ParkToken,
     channel: u32,
     tick_limit: u32,
     poll_limit: u32,
 ) -> bool {
-    owner_exchange::<M>(t, RELEASE, RELEASED, channel, tick_limit, poll_limit)
+    // SAFETY: the caller's contract.
+    unsafe { owner_exchange::<M>(t, RELEASE, RELEASED, channel, tick_limit, poll_limit) }
 }
 
 /// `wait` through the RAM-resident export on target, so the parked loop never
 /// executes from XIP; the generic routine on the host.
+///
+/// # Safety
+/// As for `wait`.
 #[inline(always)]
-pub fn ram_wait<M: Mmio>(t: *const ParkToken, tick_limit: u32, poll_limit: u32) -> bool {
+pub unsafe fn ram_wait<M: Mmio>(t: *const ParkToken, tick_limit: u32, poll_limit: u32) -> bool {
     #[cfg(target_os = "none")]
     {
-        // SAFETY: the export takes the same arguments; `M` is the hardware here.
+        // SAFETY: the export takes the same arguments and contract; `M`
+        // is the hardware here.
         unsafe { wellfed_amebad_flash_park_wait(t, tick_limit, poll_limit) }
     }
     #[cfg(not(target_os = "none"))]
     {
-        wait::<M>(t, tick_limit, poll_limit)
+        // SAFETY: the caller's contract.
+        unsafe { wait::<M>(t, tick_limit, poll_limit) }
     }
 }
 
 /// `owner_begin` through the RAM-resident export on target.
+///
+/// # Safety
+/// As for `owner_begin`.
 #[inline(always)]
-pub fn ram_owner_begin<M: Mmio>(t: *const ParkToken, channel: u32, ticks: u32, polls: u32) -> bool {
+pub unsafe fn ram_owner_begin<M: Mmio>(
+    t: *const ParkToken,
+    channel: u32,
+    ticks: u32,
+    polls: u32,
+) -> bool {
     #[cfg(target_os = "none")]
     {
         // SAFETY: as for `ram_wait`.
@@ -428,13 +468,22 @@ pub fn ram_owner_begin<M: Mmio>(t: *const ParkToken, channel: u32, ticks: u32, p
     }
     #[cfg(not(target_os = "none"))]
     {
-        owner_begin::<M>(t, channel, ticks, polls)
+        // SAFETY: the caller's contract.
+        unsafe { owner_begin::<M>(t, channel, ticks, polls) }
     }
 }
 
 /// `owner_end` through the RAM-resident export on target.
+///
+/// # Safety
+/// As for `owner_end`.
 #[inline(always)]
-pub fn ram_owner_end<M: Mmio>(t: *const ParkToken, channel: u32, ticks: u32, polls: u32) -> bool {
+pub unsafe fn ram_owner_end<M: Mmio>(
+    t: *const ParkToken,
+    channel: u32,
+    ticks: u32,
+    polls: u32,
+) -> bool {
     #[cfg(target_os = "none")]
     {
         // SAFETY: as for `ram_wait`.
@@ -442,7 +491,8 @@ pub fn ram_owner_end<M: Mmio>(t: *const ParkToken, channel: u32, ticks: u32, pol
     }
     #[cfg(not(target_os = "none"))]
     {
-        owner_end::<M>(t, channel, ticks, polls)
+        // SAFETY: the caller's contract.
+        unsafe { owner_end::<M>(t, channel, ticks, polls) }
     }
 }
 

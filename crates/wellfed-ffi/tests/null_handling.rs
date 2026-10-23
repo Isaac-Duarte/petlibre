@@ -19,6 +19,7 @@ use wellfed_testkit::journal_flash::FakeJournalFlash;
 
 #[test]
 fn constructors_reject_null_destinations() {
+    // SAFETY: each pointer is null or a live local, as the C contract allows.
     unsafe {
         assert!(!wellfed_feed_progress_init(
             null_mut(),
@@ -47,6 +48,7 @@ fn constructors_reject_null_destinations() {
 fn invalid_progress_leaves_destination_unchanged() {
     let mut progress = FeedProgress::new(BowlMode::SINGLE, Direction::D0, 1, true).unwrap();
     let before = progress;
+    // SAFETY: each pointer is null or a live local, as the C contract allows.
     unsafe {
         assert!(!wellfed_feed_progress_init(
             &mut progress,
@@ -64,6 +66,7 @@ fn invalid_progress_leaves_destination_unchanged() {
 fn tick_clock_null_output_invalidates() {
     let mut clock = TickClock::new(u32::MAX, 0, 0).unwrap();
     let mut now = 0;
+    // SAFETY: each pointer is null or a live local, as the C contract allows.
     unsafe {
         assert!(!wellfed_tick_clock_read(null_mut(), 1, null_mut()));
         assert!(wellfed_tick_clock_read(&mut clock, 0x7fff_ffff, &mut now));
@@ -81,6 +84,7 @@ fn tick_clock_null_output_invalidates() {
 #[test]
 fn controller_rejects_null_arguments() {
     let mut controller = FeedController::default();
+    // SAFETY: each pointer is null or a live local, as the C contract allows.
     unsafe {
         assert_eq!(
             wellfed_feed_controller_start(&mut controller, null(), 0, &FeedSample::default()),
@@ -108,6 +112,7 @@ fn controller_rejects_null_arguments() {
 #[test]
 fn feedback_take_without_output_latches_argument() {
     let mut q = FeedbackEvents::new(1, 2, 0).unwrap();
+    // SAFETY: each pointer is null or a live local, as the C contract allows.
     unsafe {
         assert_eq!(
             wellfed_feedback_events_take(&mut q, 0, null_mut()),
@@ -127,6 +132,7 @@ fn feedback_take_without_output_latches_argument() {
 fn feedback_process_with_missing_sample_fails_both_sides() {
     let mut q = FeedbackEvents::new(1, 2, 0).unwrap();
     let mut controller = FeedController::default();
+    // SAFETY: each pointer is null or a live local, as the C contract allows.
     unsafe {
         assert!(!wellfed_feedback_events_process(
             &mut q,
@@ -158,6 +164,7 @@ fn journal_rejects_null_arguments() {
     };
     let mut j = FeedJournal::default();
 
+    // SAFETY: each pointer is null or a live local, as the C contract allows.
     unsafe {
         assert_eq!(
             wellfed_feed_journal_open(null_mut(), &io, &config),
@@ -193,6 +200,7 @@ fn journal_rejects_null_arguments() {
 #[test]
 fn flash_coord_null_handling() {
     let mut c = FlashCoord::default();
+    // SAFETY: each pointer is null or a live local, as the C contract allows.
     unsafe {
         assert_eq!(
             wellfed_flash_coord_ready(null_mut(), 1, 1, true, 0),

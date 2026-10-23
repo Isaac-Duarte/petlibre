@@ -13,7 +13,7 @@ use wellfed_amebad::{network, settings};
 use wellfed_core::settings_store::SettingsStatus;
 use wellfed_core::transport::{SettingsFields, SettingsResult};
 use wellfed_firstboot::probes::flash::{FlashOps, SETTINGS_BASE};
-use wellfed_firstboot::settings::{Record, Writer};
+use wellfed_firstboot::settings::{self as writer, ErrorStage, Record, Writer};
 
 thread_local! {
     static ARMED: Cell<bool> = const { Cell::new(true) };
@@ -255,4 +255,35 @@ fn wifi_credentials_are_saved_inside_a_marked_attempt_and_cleared() {
             stored: false
         })
     );
+}
+
+/// The `PLCFG1` error words, as they were when the stage was a string.
+#[test]
+fn error_records_format_as_before() {
+    let words: Vec<_> = ErrorStage::ALL.iter().map(|s| s.as_str()).collect();
+    assert_eq!(words, ["unarmed", "save"]);
+
+    let mut text = String::new();
+    writer::describe(
+        Record::Error {
+            stage: ErrorStage::Save,
+            status: SettingsStatus::CORRUPT,
+        },
+        &mut text,
+    )
+    .unwrap();
+    assert_eq!(
+        text,
+        format!("error stage=save status={}", SettingsStatus::CORRUPT.0)
+    );
+
+    text.clear();
+    writer::describe(
+        Record::NetError {
+            stage: ErrorStage::Unarmed,
+        },
+        &mut text,
+    )
+    .unwrap();
+    assert_eq!(text, "net error stage=unarmed");
 }

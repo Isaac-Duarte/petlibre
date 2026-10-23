@@ -8,6 +8,7 @@
 use core::ffi::c_void;
 use core::ptr;
 
+use wellfed_core::c_enum;
 use wellfed_core::feed_controller::{FeedController, FeedRequest};
 use wellfed_core::feed_progress::BowlMode;
 use wellfed_core::feed_storage::{OwnerRecovery, OwnerResult, OwnerStorage};
@@ -155,13 +156,17 @@ impl Owner {
             set_active(self);
         }
 
-        if !sdk::task_create(
-            c"feed-owner",
-            2048,
-            3,
-            owner_step,
-            ptr::from_mut(self).cast(),
-        ) {
+        // SAFETY: `owner_step` takes this owner, which the caller's contract
+        // keeps in place until STOPPED.
+        if !unsafe {
+            sdk::task_create(
+                c"feed-owner",
+                2048,
+                3,
+                owner_step,
+                ptr::from_mut(self).cast(),
+            )
+        } {
             let _guard = IrqGuard::lock();
             set_active(ptr::null_mut());
             self.state = OwnerState::STOPPED;
@@ -266,9 +271,11 @@ impl Owner {
 }
 
 unsafe extern "C" fn owner_step(argument: *mut c_void) -> u32 {
-    // SAFETY: `start` registered this fixed-address owner as the task context.
+    // `start` registered this fixed-address owner as the task context.
     let owner = argument.cast::<Owner>();
+    // SAFETY: the started owner, polled only by this task.
     if !unsafe { Owner::poll(owner) } {
+        // SAFETY: as above; `poll` holds no borrow once it returns.
         return unsafe { (*owner).config.sample_period_ms };
     }
 

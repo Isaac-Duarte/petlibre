@@ -26,6 +26,7 @@ fn select() -> (Vec<u8>, Vec<u8>, u32) {
     unsafe { wellfed_wifi_select(&mut out) };
     // SAFETY: the pointers name the build's constants or the static credentials.
     let ssid = unsafe { std::slice::from_raw_parts(out.ssid, out.ssid_len as usize) }.to_vec();
+    // SAFETY: the shim view points into the static join state.
     let psk = unsafe { std::slice::from_raw_parts(out.psk, out.psk_len as usize) }.to_vec();
     (ssid, psk, out.source)
 }
@@ -41,6 +42,7 @@ fn store(credentials: Option<Credentials>) {
         bytes: *mut c_void,
         size: usize,
     ) -> bool {
+        // SAFETY: the store passes a live buffer of `size` bytes.
         let out = unsafe { std::slice::from_raw_parts_mut(bytes.cast::<u8>(), size) };
         wellfed_amebad::sdk::storage_read(NET_BASE + slot, offset, out)
     }
@@ -51,6 +53,7 @@ fn store(credentials: Option<Credentials>) {
         bytes: *const c_void,
         size: usize,
     ) -> bool {
+        // SAFETY: the store passes a live buffer of `size` bytes.
         let data = unsafe { std::slice::from_raw_parts(bytes.cast::<u8>(), size) };
         wellfed_amebad::sdk::storage_program(NET_BASE + slot, offset, data)
     }

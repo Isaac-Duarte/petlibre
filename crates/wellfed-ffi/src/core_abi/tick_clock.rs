@@ -12,6 +12,7 @@ pub unsafe extern "C" fn wellfed_tick_clock_init(
     initial_ms: u32,
 ) -> bool {
     store(
+        // SAFETY: the C contract: `clock` is null or valid for the call.
         unsafe { clock.as_mut() },
         TickClock::new(ticks_per_second, raw, initial_ms),
     )
@@ -23,10 +24,12 @@ pub unsafe extern "C" fn wellfed_tick_clock_read(
     raw: u32,
     now_ms: *mut u32,
 ) -> bool {
+    // SAFETY: the C contract: `clock` is null or valid for the call.
     let Some(clock) = (unsafe { clock.as_mut() }) else {
         return false;
     };
 
+    // SAFETY: the C contract: `now_ms` is null or valid for the call.
     match unsafe { now_ms.as_mut() } {
         Some(now) => store(Some(now), clock.read(raw)),
         None => {

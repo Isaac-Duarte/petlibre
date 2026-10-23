@@ -10,6 +10,17 @@ use core::ptr;
 pub const RECORD_BYTES: usize = 128;
 pub(crate) const COMMIT: [u8; 4] = *b"CMIT";
 
+/// The header every store's record shares after its 8-byte magic: the format
+/// version (u16) and the record length (u16).
+pub(crate) const VERSION_AT: usize = 8;
+pub(crate) const LENGTH_AT: usize = 10;
+/// CRC-32 of bytes `..CRC_AT`, stored at `CRC_AT`.
+pub(crate) const CRC_AT: usize = 120;
+/// `COMMIT`, programmed last, after the rest of the record verified.
+pub(crate) const COMMIT_AT: usize = 124;
+
+const _: () = assert!(COMMIT_AT == CRC_AT + 4 && RECORD_BYTES == COMMIT_AT + COMMIT.len());
+
 pub type ReadFn = unsafe extern "C" fn(
     context: *mut c_void,
     slot: c_uint,
@@ -60,9 +71,10 @@ impl Default for JournalIo {
 
 #[allow(unsafe_code)]
 impl JournalIo {
-    // SAFETY (all three): `FeedJournal::open`/`create` require the callbacks
-    // to be sound for `context`; the buffers are live Rust slices.
+    // In all three, `FeedJournal::open`/`create` require the callbacks to
+    // be sound for `context`; the buffers are live Rust slices.
     pub(crate) fn read(&self, slot: c_uint, offset: u32, bytes: &mut [u8]) -> bool {
+        // SAFETY: the callback contract above.
         self.read.is_some_and(|f| unsafe {
             f(
                 self.context,
@@ -75,6 +87,7 @@ impl JournalIo {
     }
 
     pub(crate) fn program(&self, slot: c_uint, offset: u32, bytes: &[u8]) -> bool {
+        // SAFETY: the callback contract above.
         self.program.is_some_and(|f| unsafe {
             f(
                 self.context,
@@ -87,22 +100,41 @@ impl JournalIo {
     }
 
     pub(crate) fn erase(&self, slot: c_uint) -> bool {
+        // SAFETY: the callback contract above.
         self.erase.is_some_and(|f| unsafe { f(self.context, slot) })
     }
 }
 
-pub(crate) fn put(p: &mut [u8], mut value: u64, count: usize) {
-    for byte in &mut p[..count] {
-        *byte = value as u8;
-        value >>= 8;
-    }
+// Little-endian record fields at the start of `p`.
+
+pub(crate) fn put_u16(p: &mut [u8], value: u16) {
+    p[..2].copy_from_slice(&value.to_le_bytes());
 }
 
-pub(crate) fn get(p: &[u8], count: usize) -> u64 {
-    p[..count]
-        .iter()
-        .enumerate()
-        .fold(0, |value, (i, &b)| value | (u64::from(b) << (i * 8)))
+pub(crate) fn put_u32(p: &mut [u8], value: u32) {
+    p[..4].copy_from_slice(&value.to_le_bytes());
+}
+
+pub(crate) fn put_u64(p: &mut [u8], value: u64) {
+    p[..8].copy_from_slice(&value.to_le_bytes());
+}
+
+fn field<const N: usize>(p: &[u8]) -> [u8; N] {
+    let mut bytes = [0; N];
+    bytes.copy_from_slice(&p[..N]);
+    bytes
+}
+
+pub(crate) fn get_u16(p: &[u8]) -> u16 {
+    u16::from_le_bytes(field(p))
+}
+
+pub(crate) fn get_u32(p: &[u8]) -> u32 {
+    u32::from_le_bytes(field(p))
+}
+
+pub(crate) fn get_u64(p: &[u8]) -> u64 {
+    u64::from_le_bytes(field(p))
 }
 
 /// CRC-32/ISO-HDLC: reflected 0x04c11db7, init/xor-out all ones.

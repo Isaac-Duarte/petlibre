@@ -34,12 +34,24 @@ use crate::probes::wifi::{Probe, Record};
 
 static PROBING: AtomicBool = AtomicBool::new(false);
 
-/// Fixed-address probe storage touched only by the diagnostic task.
+/// Fixed-address task storage, built on first use; each static names the
+/// task that owns it.
+///
+/// Not a `cell::TaskCell`: several probes keep raw C context pointers (the
+/// board, the flash coordinator, `JournalIo`), so they are not `Send`.
+/// Those pointers stay with the owning task like the rest of the value.
 struct Slot<T>(UnsafeCell<Option<T>>);
-// SAFETY: the diagnostic task is the only user; see `probe_step`.
+
+// SAFETY: each slot's value is touched only by the task its static names
+// (see `get_or_try_init`); the hooks reach `PROVIDER` only through the
+// context pointer its owner installed.
 unsafe impl<T> Sync for Slot<T> {}
 
 impl<T> Slot<T> {
+    const fn new() -> Self {
+        Self(UnsafeCell::new(None))
+    }
+
     /// The value, built on first use by `make` in a frame of its own. Built
     /// inline, a large value's temporary stays reserved in the task's frame
     /// beneath every later step: after the crate split, LTO inlined the
@@ -48,6 +60,7 @@ impl<T> Slot<T> {
     /// # Safety
     /// Only the slot's owning task calls this, with no other reference into
     /// the slot live.
+    #[allow(clippy::mut_from_ref)]
     unsafe fn get_or_try_init(&self, make: impl FnOnce() -> Option<T>) -> Option<&mut T> {
         // SAFETY: the caller is the slot's only user.
         let slot = unsafe { &mut *self.0.get() };
@@ -61,6 +74,7 @@ impl<T> Slot<T> {
     ///
     /// # Safety
     /// As for `get_or_try_init`.
+    #[allow(clippy::mut_from_ref)]
     unsafe fn get_or_init(&self, make: impl FnOnce() -> T) -> &mut T {
         // SAFETY: the caller's contract.
         match unsafe { self.get_or_try_init(|| Some(make())) } {
@@ -75,11 +89,11 @@ impl<T> Slot<T> {
 fn fill<T>(slot: &mut Option<T>, make: impl FnOnce() -> Option<T>) {
     *slot = make();
 }
-static PROBE: Slot<Probe> = Slot(UnsafeCell::new(None));
+static PROBE: Slot<Probe> = Slot::new();
 /// Touched only by the transport task; see `net_task`.
-static NET: Slot<Link> = Slot(UnsafeCell::new(None));
+static NET: Slot<Link> = Slot::new();
 /// Touched only by the optics task; see `optics_task`.
-static OPTICS: Slot<optics::Probe> = Slot(UnsafeCell::new(None));
+static OPTICS: Slot<optics::Probe> = Slot::new();
 
 struct OpticsLine(optics::Record);
 
@@ -110,7 +124,7 @@ const PROBE_STACK_WORDS: u16 = 2048;
 
 /// Touched only by the pulse task; see `pulse_task`.
 #[cfg(feature = "fw16-pulse")]
-static PULSE: Slot<crate::probes::pulse::Probe> = Slot(UnsafeCell::new(None));
+static PULSE: Slot<crate::probes::pulse::Probe> = Slot::new();
 
 #[cfg(feature = "fw16-pulse")]
 struct PulseLine(crate::probes::pulse::Record);
@@ -140,13 +154,16 @@ unsafe extern "C" fn pulse_task(_: *mut c_void) -> u32 {
 /// FW16 builds run the motor pulse in place of the optics probe.
 #[cfg(feature = "fw16-pulse")]
 fn start_optics() {
-    let created = sdk::task_create(
-        c"wellfed-pulse",
-        PROBE_STACK_WORDS,
-        3,
-        pulse_task,
-        ptr::null_mut(),
-    );
+    // SAFETY: the step takes no context and keeps its state in statics.
+    let created = unsafe {
+        sdk::task_create(
+            c"wellfed-pulse",
+            PROBE_STACK_WORDS,
+            3,
+            pulse_task,
+            ptr::null_mut(),
+        )
+    };
     sdk::log(if created {
         c"PLMOT1 start created=1\r\n"
     } else {
@@ -158,13 +175,16 @@ fn start_optics() {
 /// off the owner lease the supervisor enforces.
 #[cfg(not(any(feature = "fw16-pulse", feature = "fw11-reset")))]
 fn start_optics() {
-    let created = sdk::task_create(
-        c"wellfed-optics",
-        PROBE_STACK_WORDS,
-        3,
-        optics_task,
-        ptr::null_mut(),
-    );
+    // SAFETY: the step takes no context and keeps its state in statics.
+    let created = unsafe {
+        sdk::task_create(
+            c"wellfed-optics",
+            PROBE_STACK_WORDS,
+            3,
+            optics_task,
+            ptr::null_mut(),
+        )
+    };
     sdk::log(if created {
         c"PLOPT1 start created=1 plan=2\r\n"
     } else {
@@ -217,7 +237,8 @@ unsafe extern "C" fn net_task(_: *mut c_void) -> u32 {
 }
 
 fn start_transport() {
-    let created = sdk::task_create(c"wellfed-net", 1536, 2, net_task, ptr::null_mut());
+    // SAFETY: the step takes no context and keeps its state in statics.
+    let created = unsafe { sdk::task_create(c"wellfed-net", 1536, 2, net_task, ptr::null_mut()) };
     sdk::log(if created {
         c"PLMQT1 start created=1\r\n"
     } else {
@@ -226,7 +247,7 @@ fn start_transport() {
 }
 
 /// Touched only by the audio task; see `audio_task`.
-static SPEAKER: Slot<audio::Speaker> = Slot(UnsafeCell::new(None));
+static SPEAKER: Slot<audio::Speaker> = Slot::new();
 
 struct AudioLine(audio::Record);
 
@@ -252,7 +273,7 @@ unsafe extern "C" fn audio_task(_: *mut c_void) -> u32 {
 
 /// Speaker variant: touched only by the stream task; see `stream_task`.
 #[cfg(feature = "speaker")]
-static STREAMER: Slot<wellfed_amebad::stream::Streamer> = Slot(UnsafeCell::new(None));
+static STREAMER: Slot<wellfed_amebad::stream::Streamer> = Slot::new();
 
 #[cfg(feature = "speaker")]
 struct StreamLine(wellfed_amebad::stream::Record);
@@ -281,7 +302,9 @@ unsafe extern "C" fn stream_task(_: *mut c_void) -> u32 {
 
 #[cfg(feature = "speaker")]
 fn start_stream() {
-    let created = sdk::task_create(c"wellfed-spk", 1024, 2, stream_task, ptr::null_mut());
+    // SAFETY: the step takes no context and keeps its state in statics.
+    let created =
+        unsafe { sdk::task_create(c"wellfed-spk", 1024, 2, stream_task, ptr::null_mut()) };
     sdk::log(if created {
         c"PLSPK1 start created=1\r\n"
     } else {
@@ -295,7 +318,9 @@ fn start_stream() {}
 /// Below the feeder and the optics probe: a late page is an audible gap,
 /// never a missed lease.
 fn start_audio() {
-    let created = sdk::task_create(c"wellfed-aud", 1024, 2, audio_task, ptr::null_mut());
+    // SAFETY: the step takes no context and keeps its state in statics.
+    let created =
+        unsafe { sdk::task_create(c"wellfed-aud", 1024, 2, audio_task, ptr::null_mut()) };
     sdk::log(if created {
         c"PLAUD1 start created=1\r\n"
     } else {
@@ -305,10 +330,10 @@ fn start_audio() {
 
 /// Touched only by the updater task, except that the armed hooks reach the
 /// provider through its context pointer.
-static UPDATER: Slot<Updater> = Slot(UnsafeCell::new(None));
-static PROVIDER: Slot<Provider> = Slot(UnsafeCell::new(None));
+static UPDATER: Slot<Updater> = Slot::new();
+static PROVIDER: Slot<Provider> = Slot::new();
 /// Opened by the updater task, then touched only by the feeder task.
-static WATCHDOG: Slot<Watchdog> = Slot(UnsafeCell::new(None));
+static WATCHDOG: Slot<Watchdog> = Slot::new();
 static WATCHDOG_OPEN: AtomicBool = AtomicBool::new(false);
 
 /// The flash writer's (updater or FW11 confirmation) last step, in uptime
@@ -332,11 +357,8 @@ static PROBE_DONE: AtomicBool = AtomicBool::new(false);
 
 const FEED_MS: u32 = 250;
 
-/// FW11 supervision state for the feeder (`supervise.rs`).
-static STARTUP: AtomicU8 = AtomicU8::new(STARTUP_RUNNING);
-const STARTUP_RUNNING: u8 = 0;
-const STARTUP_STARTED: u8 = 1;
-const STARTUP_FAILED: u8 = 2;
+/// FW11 supervision state for the feeder (`supervise.rs`), as `Startup::code`.
+static STARTUP: AtomicU8 = AtomicU8::new(Startup::Running.code());
 /// The diagnostic task's last step, while startup runs.
 static STARTUP_BEAT: AtomicU32 = AtomicU32::new(0);
 /// Bank 1 without a confirmation record for this build.
@@ -346,7 +368,7 @@ static CONFIRMED: AtomicBool = AtomicBool::new(false);
 
 /// Startup stopped on a determined failure; ends the diagnostic task.
 fn startup_failed() -> u32 {
-    STARTUP.store(STARTUP_FAILED, Ordering::Release);
+    STARTUP.store(Startup::Failed.code(), Ordering::Release);
     0
 }
 
@@ -441,6 +463,8 @@ unsafe extern "C" fn updater_task(_: *mut c_void) -> u32 {
         return 0;
     };
 
+    // SAFETY: only the owning task reaches the provider slot, and the
+    // borrow ends here: the hooks use the raw pointer.
     let provider = unsafe { PROVIDER.get_or_init(Provider::default) } as *mut Provider;
     let mut flash = Hooked::<SdkHooks>::new();
     // SAFETY: the provider slot is fixed for the program's lifetime.
@@ -505,11 +529,7 @@ unsafe extern "C" fn feeder_task(_: *mut c_void) -> u32 {
     let outputs = stopped::observe();
     let inputs = supervise::Inputs {
         now_ms: now,
-        startup: match STARTUP.load(Ordering::Acquire) {
-            STARTUP_RUNNING => Startup::Running,
-            STARTUP_STARTED => Startup::Started,
-            _ => Startup::Failed,
-        },
+        startup: Startup::from_code(STARTUP.load(Ordering::Acquire)),
         startup_beat_ms: STARTUP_BEAT.load(Ordering::Acquire),
         trial: TRIAL.load(Ordering::Acquire),
         confirmed: CONFIRMED.load(Ordering::Acquire),
@@ -545,7 +565,7 @@ unsafe extern "C" fn feeder_task(_: *mut c_void) -> u32 {
 }
 
 /// Touched only by the confirmation task; see `confirm_task`.
-static CONFIRM: Slot<Confirm> = Slot(UnsafeCell::new(None));
+static CONFIRM: Slot<Confirm> = Slot::new();
 
 struct ConfirmLine(confirm::Record);
 
@@ -563,6 +583,8 @@ unsafe extern "C" fn confirm_task(_: *mut c_void) -> u32 {
     // SAFETY: only this task creates references into the slots; the provider
     // is reached by raw pointer so hook callbacks never alias a live borrow.
     let confirm = unsafe { CONFIRM.get_or_init(Confirm::default) };
+    // SAFETY: only the owning task reaches the provider slot, and the
+    // borrow ends here: the hooks use the raw pointer.
     let provider = unsafe { PROVIDER.get_or_init(Provider::default) } as *mut Provider;
     let healthy = NET_READY.load(Ordering::Acquire)
         && PROBE_DONE.load(Ordering::Acquire)
@@ -598,7 +620,7 @@ unsafe extern "C" fn confirm_task(_: *mut c_void) -> u32 {
 }
 
 /// Touched only by the offer-check task; see `watch_task`.
-static WATCH: Slot<Watch> = Slot(UnsafeCell::new(None));
+static WATCH: Slot<Watch> = Slot::new();
 
 struct WatchLine(watch::Record);
 
@@ -629,6 +651,8 @@ unsafe extern "C" fn watch_task(_: *mut c_void) -> u32 {
         return 0;
     };
 
+    // SAFETY: only the owning task reaches the provider slot, and the
+    // borrow ends here: the hooks use the raw pointer.
     let provider = unsafe { PROVIDER.get_or_init(Provider::default) } as *mut Provider;
     let mut bank = SdkGiveWay::<SdkHooks>::new();
     // SAFETY: the provider slot is fixed for the program's lifetime.
@@ -678,7 +702,7 @@ impl crate::probes::flash::FlashOps for SdkStorage {
 }
 
 /// Touched only by the settings task; see `settings_task`.
-static SETTINGS: Slot<crate::settings::Writer> = Slot(UnsafeCell::new(None));
+static SETTINGS: Slot<crate::settings::Writer> = Slot::new();
 /// The settings task's last step, while it runs.
 static SETTINGS_BEAT: AtomicU32 = AtomicU32::new(0);
 static SETTINGS_RUNNING: AtomicBool = AtomicBool::new(false);
@@ -697,6 +721,8 @@ unsafe extern "C" fn settings_task(_: *mut c_void) -> u32 {
     // SAFETY: only this task creates references into the slot; the provider
     // is reached by raw pointer so hook callbacks never alias a live borrow.
     let writer = unsafe { SETTINGS.get_or_init(Default::default) };
+    // SAFETY: only the owning task reaches the provider slot, and the
+    // borrow ends here: the hooks use the raw pointer.
     let provider = unsafe { PROVIDER.get_or_init(Provider::default) } as *mut Provider;
     // SAFETY: the provider slot is fixed for the program's lifetime.
     let step = unsafe { writer.step::<Hardware, SdkHooks, SdkStorage>(provider) };
@@ -720,13 +746,16 @@ unsafe extern "C" fn settings_task(_: *mut c_void) -> u32 {
 fn start_settings() {
     SETTINGS_BEAT.store(sdk::uptime_ms(), Ordering::Release);
     SETTINGS_RUNNING.store(true, Ordering::Release);
-    let created = sdk::task_create(
-        c"wellfed-cfg",
-        SETTINGS_STACK_WORDS,
-        2,
-        settings_task,
-        ptr::null_mut(),
-    );
+    // SAFETY: the step takes no context and keeps its state in statics.
+    let created = unsafe {
+        sdk::task_create(
+            c"wellfed-cfg",
+            SETTINGS_STACK_WORDS,
+            2,
+            settings_task,
+            ptr::null_mut(),
+        )
+    };
     if !created {
         SETTINGS_RUNNING.store(false, Ordering::Release);
         start_watch();
@@ -745,13 +774,16 @@ const SETTINGS_STACK_WORDS: u16 = 1024;
 fn start_watch() {
     WATCH_BEAT.store(sdk::uptime_ms(), Ordering::Release);
     WATCH_RUNNING.store(true, Ordering::Release);
-    let created = sdk::task_create(
-        c"wellfed-wch",
-        UPDATER_STACK_WORDS,
-        2,
-        watch_task,
-        ptr::null_mut(),
-    );
+    // SAFETY: the step takes no context and keeps its state in statics.
+    let created = unsafe {
+        sdk::task_create(
+            c"wellfed-wch",
+            UPDATER_STACK_WORDS,
+            2,
+            watch_task,
+            ptr::null_mut(),
+        )
+    };
     if !created {
         WATCH_RUNNING.store(false, Ordering::Release);
     }
@@ -767,7 +799,9 @@ fn start_watch() {
 /// application, already supervises it.
 fn start_confirm() {
     HEARTBEAT.store(sdk::uptime_ms(), Ordering::Release);
-    let created = sdk::task_create(c"wellfed-cnf", 1024, 2, confirm_task, ptr::null_mut());
+    // SAFETY: the step takes no context and keeps its state in statics.
+    let created =
+        unsafe { sdk::task_create(c"wellfed-cnf", 1024, 2, confirm_task, ptr::null_mut()) };
     let opened = WATCHDOG_OPEN.load(Ordering::Acquire);
     sdk::log(match (created, opened) {
         (true, true) => c"PLCNF1 start created=1 watchdog=1\r\n",
@@ -780,13 +814,16 @@ fn start_confirm() {
 /// cannot starve the watchdog.
 fn start_updater() {
     HEARTBEAT.store(sdk::uptime_ms(), Ordering::Release);
-    let created = sdk::task_create(
-        c"wellfed-ota",
-        UPDATER_STACK_WORDS,
-        2,
-        updater_task,
-        ptr::null_mut(),
-    );
+    // SAFETY: the step takes no context and keeps its state in statics.
+    let created = unsafe {
+        sdk::task_create(
+            c"wellfed-ota",
+            UPDATER_STACK_WORDS,
+            2,
+            updater_task,
+            ptr::null_mut(),
+        )
+    };
     sdk::log(if created {
         c"PLOTA1 tasks created=1\r\n"
     } else {
@@ -813,13 +850,13 @@ fn bit(value: bool) -> u8 {
 
 fn kind(kind: u32) -> &'static str {
     match kind {
-        1 => "on",
-        2 => "scan",
-        3 => "connect",
-        4 => "dhcp",
-        5 => "lost",
-        6 => "backoff",
-        7 => "dns",
+        sdk::WifiEvent::ON => "on",
+        sdk::WifiEvent::SCAN => "scan",
+        sdk::WifiEvent::CONNECT => "connect",
+        sdk::WifiEvent::DHCP => "dhcp",
+        sdk::WifiEvent::LOST => "lost",
+        sdk::WifiEvent::BACKOFF => "backoff",
+        sdk::WifiEvent::DNS => "dns",
         _ => "unknown",
     }
 }
@@ -949,7 +986,7 @@ unsafe extern "C" fn diagnostic_task(_: *mut c_void) -> u32 {
         start_audio();
         start_stream();
     }
-    STARTUP.store(STARTUP_STARTED, Ordering::Release);
+    STARTUP.store(Startup::Started.code(), Ordering::Release);
     1
 }
 
@@ -959,7 +996,8 @@ pub extern "C" fn wellfed_app_start() {
     let snapshot = stopped::initialize();
     // FW11: supervise from the first scheduled step, so a startup fault or
     // hang is a reset KM0 can count.
-    if !sdk::task_create(c"wellfed-wdg", 512, 3, feeder_task, ptr::null_mut()) {
+    // SAFETY: the step takes no context and keeps its state in statics.
+    if !unsafe { sdk::task_create(c"wellfed-wdg", 512, 3, feeder_task, ptr::null_mut()) } {
         sdk::log(c"PLSUP1 error task=create\r\n");
     }
     let mut report = startup::Report::new();
@@ -990,7 +1028,8 @@ pub extern "C" fn wellfed_app_start() {
         return;
     }
 
-    if !sdk::task_create(c"wellfed", 1024, 1, diagnostic_task, ptr::null_mut()) {
+    // SAFETY: the step takes no context and keeps its state in statics.
+    if !unsafe { sdk::task_create(c"wellfed", 1024, 1, diagnostic_task, ptr::null_mut()) } {
         sdk::log(c"Wellfed: diagnostic task creation failed\r\n");
         sdk::log(c"PLFW1 error task=create\r\n");
         startup_failed();

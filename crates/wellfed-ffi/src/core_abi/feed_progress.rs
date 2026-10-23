@@ -13,6 +13,7 @@ pub unsafe extern "C" fn wellfed_feed_progress_init(
     credit_next_event: bool,
 ) -> bool {
     store(
+        // SAFETY: the C contract: `progress` is null or valid for the call.
         unsafe { progress.as_mut() },
         FeedProgress::new(mode, direction, portions, credit_next_event),
     )
@@ -22,5 +23,6 @@ pub unsafe extern "C" fn wellfed_feed_progress_init(
 pub unsafe extern "C" fn wellfed_feed_progress_accept(
     progress: *mut FeedProgress,
 ) -> ProgressResult {
+    // SAFETY: the C contract: `progress` must be valid: like the C original, this does not check for null.
     unsafe { &mut *progress }.accept()
 }

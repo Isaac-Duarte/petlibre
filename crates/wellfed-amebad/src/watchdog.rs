@@ -5,9 +5,11 @@
 
 use core::ptr;
 
+use wellfed_core::c_enum;
 use wellfed_core::feed_controller::MotorCommand;
 use wellfed_core::flash_coord::FlashCoord;
 use wellfed_core::tick_clock::TickClock;
+use wellfed_core::{HALF_RANGE, interval_valid};
 
 use crate::active::active_pointer;
 use crate::board::{self, Board, MOTOR_MASK};
@@ -65,9 +67,8 @@ impl WatchdogConfig {
             || self.divisor == 0
             || self.min_refresh_ms == 0
             || self.min_refresh_ms >= self.max_progress_gap_ms
-            || self.max_progress_gap_ms >= 0x8000_0000
-            || self.max_expiry_ms == 0
-            || self.max_expiry_ms >= 0x8000_0000
+            || self.max_progress_gap_ms >= HALF_RANGE
+            || !interval_valid(self.max_expiry_ms)
         {
             return false;
         }
@@ -246,6 +247,7 @@ impl Watchdog {
 
     /// Owner only, AFTER a completed verified frame. Increasing nonzero token
     /// and advancing hardware time required. Failures latch until shutdown.
+    #[must_use]
     pub fn checkpoint(&mut self, progress: u64) -> bool {
         self.checkpoint_with(progress, None)
     }
@@ -261,6 +263,7 @@ impl Watchdog {
 
     /// Explicit cooperative shutdown only, after events close and verified
     /// outputs. Restores only owned scope bits. Failure retains ownership.
+    #[must_use]
     pub fn close(&mut self, board: Option<&Board>) -> bool {
         if !context() {
             return false;

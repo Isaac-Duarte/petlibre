@@ -14,13 +14,15 @@
 //! the FW15 `sound` setting refuses streams (`muted`) and `volume` scales
 //! them. Nothing here touches the motor, the emitters or flash.
 
-use core::cell::UnsafeCell;
 use core::fmt;
 
+use wellfed_core::deadline_passed;
+use wellfed_core::named_enum;
 use wellfed_core::speaker_stream::{CHALLENGE_LEN, HEADER_LEN, PORT, Status, check, hello};
 use wellfed_core::tone::gain_q15;
 
 use crate::audio;
+use crate::cell::TaskCell;
 use crate::sdk::{self, AUDIO_PAGE_SAMPLES, TcpRecv};
 use crate::settings;
 
@@ -34,13 +36,25 @@ const DRAIN_MS: u32 = 400;
 pub const BUFFER: usize = 64 * 1024;
 const PAGE_BYTES: usize = AUDIO_PAGE_SAMPLES * 2;
 
-struct Ring(UnsafeCell<[u8; BUFFER]>);
-// SAFETY: only the stream task touches the buffer (see `Streamer`).
-unsafe impl Sync for Ring {}
-
 /// Kept out of `Streamer` so the task's slot is built without a 64 KiB
-/// temporary on its stack.
-static RING: Ring = Ring(UnsafeCell::new([0; BUFFER]));
+/// temporary on its stack. Only the stream task touches the buffer (see
+/// `Streamer`).
+static RING: TaskCell<[u8; BUFFER]> = TaskCell::new([0; BUFFER]);
+
+named_enum! {
+    /// Why a stream ended (`done reason=`).
+    pub enum EndReason {
+        Closed = "closed",
+        Stall = "stall",
+    }
+}
+
+named_enum! {
+    /// What failed to start a stream (`error stage=`).
+    pub enum ErrorStage {
+        Open = "open",
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Record {
@@ -58,10 +72,10 @@ pub enum Record {
         bytes: u32,
         ms: u32,
         underruns: u32,
-        reason: &'static str,
+        reason: EndReason,
     },
     Error {
-        stage: &'static str,
+        stage: ErrorStage,
     },
 }
 
@@ -94,20 +108,21 @@ fn next(delay_ms: u32, record: Option<Record>) -> Step {
     Step { delay_ms, record }
 }
 
+/// The connected stages own the client's socket, so a stage that needs one
+/// always has it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Stage {
     Listen,
     Accept,
-    Handshake,
-    Stream,
-    Drain { since: u32 },
+    Handshake { socket: i32 },
+    Stream { socket: i32 },
+    Drain { socket: i32, since: u32 },
 }
 
 #[derive(Debug)]
 pub struct Streamer {
     stage: Stage,
     listener: Option<i32>,
-    socket: Option<i32>,
     challenge: [u8; CHALLENGE_LEN],
     header: [u8; HEADER_LEN],
     received: usize,
@@ -124,7 +139,7 @@ pub struct Streamer {
     bytes: u32,
     /// The DMA's underrun count when playback began, then the stream's own.
     underruns: u32,
-    reason: &'static str,
+    reason: EndReason,
 }
 
 impl Default for Streamer {
@@ -132,7 +147,6 @@ impl Default for Streamer {
         Self {
             stage: Stage::Listen,
             listener: None,
-            socket: None,
             challenge: [0; CHALLENGE_LEN],
             header: [0; HEADER_LEN],
             received: 0,
@@ -147,7 +161,7 @@ impl Default for Streamer {
             last_data: 0,
             bytes: 0,
             underruns: 0,
-            reason: "closed",
+            reason: EndReason::Closed,
         }
     }
 }
@@ -163,19 +177,17 @@ fn challenge() -> [u8; CHALLENGE_LEN] {
 impl Streamer {
     fn ring(&mut self) -> &mut [u8; BUFFER] {
         // SAFETY: the stream task owns `Streamer` and is the only user.
-        unsafe { &mut *RING.0.get() }
+        unsafe { &mut *RING.get() }
     }
 
-    fn hang_up(&mut self) {
-        if let Some(socket) = self.socket.take() {
-            sdk::tcp_close(socket);
-        }
+    fn hang_up(&mut self, socket: i32) {
+        sdk::tcp_close(socket);
         self.stage = Stage::Accept;
     }
 
     fn refuse(&mut self, socket: i32, status: Status) -> Step {
         let _ = sdk::tcp_send(socket, &[status as u8]);
-        self.hang_up();
+        self.hang_up(socket);
         next(1, Some(Record::Refused { status }))
     }
 
@@ -198,7 +210,7 @@ impl Streamer {
                 TcpRecv::Timeout => return,
                 TcpRecv::Closed => {
                     self.ended = true;
-                    self.reason = "closed";
+                    self.reason = EndReason::Closed;
                     return;
                 }
             }
@@ -215,7 +227,7 @@ impl Streamer {
             let take = self.held.min(PAGE_BYTES) & !1;
             let (head, gain) = (self.head, self.gain);
             // SAFETY: as in `ring`; `page` is the DMA ring's, not this buffer.
-            let ring = unsafe { &*RING.0.get() };
+            let ring = unsafe { &*RING.get() };
             for (i, sample) in page.iter_mut().enumerate() {
                 *sample = if 2 * i < take {
                     let at = (head + 2 * i) % BUFFER;
@@ -235,10 +247,10 @@ impl Streamer {
         }
     }
 
-    fn finish(&mut self, now: u32) -> Record {
+    fn finish(&mut self, socket: i32, now: u32) -> Record {
         audio::close_output();
         audio::release_stream();
-        self.hang_up();
+        self.hang_up(socket);
         Record::Done {
             bytes: self.bytes,
             ms: now.wrapping_sub(self.started),
@@ -270,21 +282,19 @@ impl Streamer {
                 let Some(socket) = sdk::tcp_accept(listener, ACCEPT_MS) else {
                     return next(1, None);
                 };
-                self.socket = Some(socket);
                 self.challenge = challenge();
                 if !sdk::tcp_send(socket, &hello(&self.challenge)) {
-                    self.hang_up();
+                    self.hang_up(socket);
                     return next(1, None);
                 }
                 self.received = 0;
                 self.deadline = now.wrapping_add(HANDSHAKE_MS);
-                self.stage = Stage::Handshake;
+                self.stage = Stage::Handshake { socket };
                 next(1, None)
             }
 
-            Stage::Handshake => {
-                let socket = self.socket.expect("connected");
-                if (now.wrapping_sub(self.deadline) as i32) >= 0 {
+            Stage::Handshake { socket } => {
+                if deadline_passed(now, self.deadline) {
                     return self.refuse(socket, Status::BadHeader);
                 }
                 let received = self.received;
@@ -292,7 +302,7 @@ impl Streamer {
                     TcpRecv::Data(n) => self.received += n,
                     TcpRecv::Timeout => {}
                     TcpRecv::Closed => {
-                        self.hang_up();
+                        self.hang_up(socket);
                         return next(1, None);
                     }
                 }
@@ -321,13 +331,18 @@ impl Streamer {
                 if !audio::open_output(rate) {
                     audio::release_stream();
                     let _ = sdk::tcp_send(socket, &[Status::Busy as u8]);
-                    self.hang_up();
-                    return next(1, Some(Record::Error { stage: "open" }));
+                    self.hang_up(socket);
+                    return next(
+                        1,
+                        Some(Record::Error {
+                            stage: ErrorStage::Open,
+                        }),
+                    );
                 }
                 if !sdk::tcp_send(socket, &[Status::Ok as u8]) {
                     audio::close_output();
                     audio::release_stream();
-                    self.hang_up();
+                    self.hang_up(socket);
                     return next(1, None);
                 }
 
@@ -336,8 +351,8 @@ impl Streamer {
                 self.gain = gain_q15(view.volume);
                 (self.started, self.last_data) = (now, now);
                 self.bytes = 0;
-                self.reason = "closed";
-                self.stage = Stage::Stream;
+                self.reason = EndReason::Closed;
+                self.stage = Stage::Stream { socket };
                 next(
                     1,
                     Some(Record::Open {
@@ -347,13 +362,12 @@ impl Streamer {
                 )
             }
 
-            Stage::Stream => {
-                let socket = self.socket.expect("connected");
+            Stage::Stream { socket } => {
                 if !self.ended {
                     self.receive(socket, now);
                     if !self.ended && now.wrapping_sub(self.last_data) >= STALL_MS {
                         self.ended = true;
-                        self.reason = "stall";
+                        self.reason = EndReason::Stall;
                     }
                 }
                 if !self.playing && (self.held >= BUFFER / 2 || self.ended) {
@@ -367,14 +381,14 @@ impl Streamer {
                     // Counted now: once the ring drains, the DMA plays zero
                     // pages by design.
                     self.underruns = sdk::audio_underruns().wrapping_sub(self.underruns);
-                    self.stage = Stage::Drain { since: now };
+                    self.stage = Stage::Drain { socket, since: now };
                 }
                 next(1, None)
             }
 
-            Stage::Drain { since } => {
+            Stage::Drain { socket, since } => {
                 if sdk::audio_drained() || now.wrapping_sub(since) >= DRAIN_MS {
-                    return next(1, Some(self.finish(now)));
+                    return next(1, Some(self.finish(socket, now)));
                 }
                 next(5, None)
             }

@@ -181,6 +181,7 @@ fn newer_schema_is_read_only_until_reset() {
 fn foreign_binding_or_garbage_is_corrupt_and_read_only() {
     let mut f = FakeJournalFlash::default();
     let mut s = SettingsStore::default();
+    // SAFETY: the fixture's callbacks are sound for its context, which outlives the call.
     unsafe { s.open(f.io(), BINDING ^ 1) };
     assert!(s.save(&custom(1)));
 

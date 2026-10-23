@@ -53,7 +53,8 @@ pub unsafe extern "C" fn wellfed_amebad_flash_park_publish(
     token: *const ParkToken,
     command: u32,
 ) -> bool {
-    publish::<Hardware>(token, command)
+    // SAFETY: the C caller passes null or a readable token.
+    unsafe { publish::<Hardware>(token, command) }
 }
 
 #[unsafe(no_mangle)]
@@ -64,7 +65,8 @@ pub unsafe extern "C" fn wellfed_amebad_flash_park_wait(
     tick_limit: u32,
     poll_limit: u32,
 ) -> bool {
-    wait::<Hardware>(token, tick_limit, poll_limit)
+    // SAFETY: as for `wellfed_amebad_flash_park_publish`.
+    unsafe { wait::<Hardware>(token, tick_limit, poll_limit) }
 }
 
 #[unsafe(no_mangle)]
@@ -90,7 +92,8 @@ pub unsafe extern "C" fn wellfed_amebad_flash_owner_begin(
     tick_limit: u32,
     poll_limit: u32,
 ) -> bool {
-    owner_begin::<Hardware>(token, channel, tick_limit, poll_limit)
+    // SAFETY: as for `wellfed_amebad_flash_park_publish`.
+    unsafe { owner_begin::<Hardware>(token, channel, tick_limit, poll_limit) }
 }
 
 #[unsafe(no_mangle)]
@@ -102,5 +105,6 @@ pub unsafe extern "C" fn wellfed_amebad_flash_owner_end(
     tick_limit: u32,
     poll_limit: u32,
 ) -> bool {
-    owner_end::<Hardware>(token, channel, tick_limit, poll_limit)
+    // SAFETY: as for `wellfed_amebad_flash_park_publish`.
+    unsafe { owner_end::<Hardware>(token, channel, tick_limit, poll_limit) }
 }

@@ -5,7 +5,7 @@
 
 use std::fmt;
 
-use wellfed_amebad::{confirm, transport, updater, watch};
+use wellfed_amebad::{audio, confirm, stream, transport, updater, watch};
 use wellfed_core::record::{Record, tag};
 
 struct Body<F>(F);
@@ -54,9 +54,14 @@ fn transport_records_carry_what_the_suite_asserts() {
     assert_eq!(read(&ready).first, "ready");
 
     let closed = line(tag::TRANSPORT, |f| {
-        transport::describe(transport::Record::Closed { reason: "timeout" }, f)
+        transport::describe(
+            transport::Record::Closed {
+                reason: transport::CloseReason::ReplyTimeout,
+            },
+            f,
+        )
     });
-    assert_eq!(read(&closed).first, "closed");
+    assert!(read(&closed).is(tag::TRANSPORT, &[("reason", "reply_timeout")]));
 }
 
 #[test]
@@ -103,12 +108,15 @@ fn updater_records_carry_what_the_ota_watch_reads() {
     assert_eq!(activated.first, "activated");
     assert_eq!(activated.number::<u32>("version"), Some(33));
 
-    for stage in ["hash", "range", "timeout"] {
+    for &stage in updater::ErrorStage::ALL {
         let error = line(tag::UPDATE, |f| {
             updater::describe(updater::Record::Error { stage }, f)
         });
         let error = read(&error);
-        assert_eq!((error.first, error.field("stage")), ("error", Some(stage)));
+        assert_eq!(
+            (error.first, error.field("stage")),
+            ("error", Some(stage.as_str()))
+        );
     }
 }
 
@@ -139,4 +147,169 @@ fn watch_and_confirmation_records_carry_what_the_ota_watch_reads() {
     let already = read(&already);
     assert!(already.is(tag::CONFIRM, &[("confirmed", "1")]));
     assert_eq!(already.field("healthy_ms"), None);
+}
+
+fn text(write: impl FnOnce(&mut String) -> fmt::Result) -> String {
+    let mut out = String::new();
+    write(&mut out).unwrap();
+    out
+}
+
+fn words<T: Copy>(all: &[T], as_str: fn(T) -> &'static str) -> Vec<&'static str> {
+    all.iter().map(|&value| as_str(value)).collect()
+}
+
+/// `named_enum!` types also print through `Display`, which `describe` uses.
+fn displayed<T: fmt::Display + Copy>(
+    all: &[T],
+    as_str: fn(T) -> &'static str,
+) -> Vec<&'static str> {
+    for &value in all {
+        assert_eq!(value.to_string(), as_str(value));
+    }
+    words(all, as_str)
+}
+
+/// The words the stage and reason fields carry on the UART, as they were
+/// when these fields were plain strings: the host tools match them.
+#[test]
+fn stage_and_reason_words_are_unchanged() {
+    assert_eq!(
+        displayed(updater::ErrorStage::ALL, updater::ErrorStage::as_str),
+        [
+            "clock", "timeout", "topic", "range", "order", "hash", "write", "state", "key",
+            "manifest", "marker"
+        ]
+    );
+    assert_eq!(
+        displayed(updater::CloseReason::ALL, updater::CloseReason::as_str),
+        ["wifi", "closed", "protocol", "send", "timeout"]
+    );
+    assert_eq!(
+        words(transport::CloseReason::ALL, transport::CloseReason::as_str),
+        [
+            "wifi",
+            "closed",
+            "send",
+            "refused",
+            "subscribe_refused",
+            "protocol_too_long",
+            "protocol_malformed",
+            "protocol_unexpected",
+            "out_of_order",
+            "reply_timeout",
+            "silence",
+            "foreign_topic",
+            "health_format"
+        ]
+    );
+    assert_eq!(
+        displayed(watch::ErrorStage::ALL, watch::ErrorStage::as_str),
+        ["key", "give_way", "client_id", "topic"]
+    );
+    assert_eq!(
+        displayed(confirm::ErrorStage::ALL, confirm::ErrorStage::as_str),
+        ["read", "write"]
+    );
+    assert_eq!(
+        displayed(audio::ErrorStage::ALL, audio::ErrorStage::as_str),
+        ["open"]
+    );
+    assert_eq!(
+        displayed(stream::ErrorStage::ALL, stream::ErrorStage::as_str),
+        ["open"]
+    );
+    assert_eq!(
+        displayed(stream::EndReason::ALL, stream::EndReason::as_str),
+        ["closed", "stall"]
+    );
+}
+
+#[test]
+fn stage_and_reason_records_format_as_before() {
+    let cases = [
+        (
+            text(|f| {
+                updater::describe(
+                    updater::Record::Error {
+                        stage: updater::ErrorStage::Marker,
+                    },
+                    f,
+                )
+            }),
+            "error stage=marker",
+        ),
+        (
+            text(|f| {
+                updater::describe(
+                    updater::Record::Closed {
+                        reason: updater::CloseReason::Protocol,
+                    },
+                    f,
+                )
+            }),
+            "closed reason=protocol",
+        ),
+        (
+            text(|f| {
+                transport::describe(
+                    transport::Record::Closed {
+                        reason: transport::CloseReason::SubscribeRefused,
+                    },
+                    f,
+                )
+            }),
+            "closed reason=subscribe_refused",
+        ),
+        (
+            text(|f| {
+                watch::describe(
+                    watch::Record::Error {
+                        stage: watch::ErrorStage::ClientId,
+                    },
+                    f,
+                )
+            }),
+            "error stage=client_id",
+        ),
+        (
+            text(|f| {
+                confirm::describe(
+                    confirm::Record::Error {
+                        stage: confirm::ErrorStage::Write,
+                    },
+                    f,
+                )
+            }),
+            "error stage=write",
+        ),
+        (
+            text(|f| {
+                audio::describe(
+                    audio::Record::Error {
+                        stage: audio::ErrorStage::Open,
+                    },
+                    f,
+                )
+            }),
+            "error stage=open",
+        ),
+        (
+            text(|f| {
+                stream::describe(
+                    stream::Record::Done {
+                        bytes: 4,
+                        ms: 5,
+                        underruns: 6,
+                        reason: stream::EndReason::Stall,
+                    },
+                    f,
+                )
+            }),
+            "done bytes=4 ms=5 underruns=6 reason=stall",
+        ),
+    ];
+    for (got, expected) in cases {
+        assert_eq!(got, expected);
+    }
 }

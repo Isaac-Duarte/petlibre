@@ -16,6 +16,8 @@
 
 use core::fmt;
 
+use wellfed_core::named_enum;
+
 use wellfed_core::ota::{self, Status};
 use wellfed_core::transport::{self as mqtt, Event, Session, Tick};
 
@@ -67,13 +69,23 @@ pub enum Found {
     Refused,
 }
 
+named_enum! {
+    /// Where the offer check stopped (`error stage=`).
+    pub enum ErrorStage {
+        Key = "key",
+        GiveWay = "give_way",
+        ClientId = "client_id",
+        Topic = "topic",
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Record {
     Found(Found),
     Offer { version: u32 },
     Arming(arming::Event),
     GaveWay { version: u32 },
-    Error { stage: &'static str },
+    Error { stage: ErrorStage },
 }
 
 /// The body of a `PLWCH1` line.
@@ -170,7 +182,8 @@ impl Watch {
         if let Some(open) = self.open.take() {
             let mut out = [0; 2];
             if let Ok(n) = mqtt::encode_disconnect(&mut out) {
-                sdk::tcp_send(open.socket, &out[..n]);
+                // Best effort: the socket closes either way.
+                let _ = sdk::tcp_send(open.socket, &out[..n]);
             }
             sdk::tcp_close(open.socket);
         }
@@ -204,7 +217,9 @@ impl Watch {
         match self.stage {
             Stage::Idle => {
                 if self.key.is_none() {
-                    return self.end(Record::Error { stage: "key" });
+                    return self.end(Record::Error {
+                        stage: ErrorStage::Key,
+                    });
                 }
 
                 if self.open.is_some() {
@@ -244,7 +259,9 @@ impl Watch {
                 // The recovery boot must not find the attempt marker set.
                 arming::clear_attempt();
                 if !ok {
-                    return self.end(Record::Error { stage: "give_way" });
+                    return self.end(Record::Error {
+                        stage: ErrorStage::GiveWay,
+                    });
                 }
 
                 self.stage = Stage::Done;
@@ -273,11 +290,15 @@ impl Watch {
             out[base.len()..].copy_from_slice(b"-ota");
             &*out
         }) else {
-            return self.end(Record::Error { stage: "client_id" });
+            return self.end(Record::Error {
+                stage: ErrorStage::ClientId,
+            });
         };
 
         let Ok(client_id) = core::str::from_utf8(id) else {
-            return self.end(Record::Error { stage: "client_id" });
+            return self.end(Record::Error {
+                stage: ErrorStage::ClientId,
+            });
         };
 
         let Some(socket) =
@@ -365,7 +386,9 @@ impl Watch {
             Topic::new(self.config.namespace, "ota/offered"),
             Topic::new(self.config.namespace, "ota/check"),
         ) else {
-            return Some(self.end(Record::Error { stage: "topic" }));
+            return Some(self.end(Record::Error {
+                stage: ErrorStage::Topic,
+            }));
         };
 
         let open = self.open.as_mut()?;

@@ -39,24 +39,9 @@ pub fn hmac_sha256(key: &[u8; KEY_LEN], parts: &[&[u8]]) -> [u8; 32] {
     outer.finalize().into()
 }
 
-fn hex_value(c: u8) -> Option<u8> {
-    match c {
-        b'0'..=b'9' => Some(c - b'0'),
-        b'a'..=b'f' => Some(c - b'a' + 10),
-        _ => None,
-    }
-}
-
 /// 64 lowercase hex characters as 32 bytes.
 pub fn parse_key(hex: &[u8]) -> Option<[u8; KEY_LEN]> {
-    if hex.len() != 2 * KEY_LEN {
-        return None;
-    }
-    let mut key = [0u8; KEY_LEN];
-    for (i, pair) in hex.as_chunks::<2>().0.iter().enumerate() {
-        key[i] = (hex_value(pair[0])? << 4) | hex_value(pair[1])?;
-    }
-    Some(key)
+    crate::hex::decode_array(hex)
 }
 
 /// A payload split at its MAC.

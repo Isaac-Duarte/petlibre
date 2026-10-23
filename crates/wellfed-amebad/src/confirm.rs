@@ -11,6 +11,8 @@
 
 use core::fmt;
 
+use wellfed_core::named_enum;
+
 use wellfed_core::ota::{self, CONFIRM_LEN};
 
 use crate::arming::{self, Arming, Hooks, Poll};
@@ -57,6 +59,14 @@ impl<H: Hooks> StorageFlash for HookedStorage<H> {
     }
 }
 
+named_enum! {
+    /// Where the confirmation failed (`error stage=`).
+    pub enum ErrorStage {
+        Read = "read",
+        Write = "write",
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Record {
     /// The record already names this build.
@@ -66,7 +76,7 @@ pub enum Record {
         healthy_ms: u32,
     },
     Error {
-        stage: &'static str,
+        stage: ErrorStage,
     },
 }
 
@@ -146,7 +156,9 @@ impl Confirm {
             Stage::Check => {
                 let mut record = [0u8; CONFIRM_LEN];
                 if !flash.read(CONFIRM_SECTOR, 0, &mut record) {
-                    return self.end(Record::Error { stage: "read" });
+                    return self.end(Record::Error {
+                        stage: ErrorStage::Read,
+                    });
                 }
                 if ota::confirmed(&record, &trial::identity()).is_some() {
                     return self.end(Record::Already);
@@ -190,7 +202,9 @@ impl Confirm {
                 // The attempt ended in order either way, so a later boot must not skip.
                 arming::clear_attempt();
                 if !ok {
-                    return self.end(Record::Error { stage: "write" });
+                    return self.end(Record::Error {
+                        stage: ErrorStage::Write,
+                    });
                 }
                 self.end(Record::Confirmed {
                     healthy_ms: self.healthy_ms,

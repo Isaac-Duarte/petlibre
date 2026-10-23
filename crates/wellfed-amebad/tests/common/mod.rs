@@ -30,6 +30,7 @@ pub fn flash_attach(b: &mut Board) -> Box<FlashCoord> {
     assert_eq!(sdk::gpio_port_read(0, MOTOR_MASK), MOTOR_MASK);
     assert!(!sdk::gpio_read_bit(15) && !sdk::gpio_read_bit(35));
     let mut c = flash_ready();
+    // SAFETY: the fixture keeps the coordinator alive and in place.
     assert!(unsafe { b.attach_flash(&mut *c) });
     c
 }

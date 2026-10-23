@@ -18,7 +18,9 @@ pub unsafe extern "C" fn wellfed_feed_journal_open(
     }
 
     // Copy first: the arguments may alias the journal's own saved values.
+    // SAFETY: the C contract: `io` is null or valid for the call.
     let io = unsafe { io.as_ref() }.copied().unwrap_or_default();
+    // SAFETY: the C contract: `config` is null or valid for the call.
     let config = unsafe { config.as_ref() }.copied().unwrap_or_default();
 
     // SAFETY: the C contract keeps the I/O callbacks valid for their context.
@@ -38,7 +40,9 @@ pub unsafe extern "C" fn wellfed_feed_journal_create(
         return JournalError::ARGUMENT;
     }
 
+    // SAFETY: the C contract: `io` is null or valid for the call.
     let io = unsafe { io.as_ref() }.copied().unwrap_or_default();
+    // SAFETY: the C contract: `config` is null or valid for the call.
     let config = unsafe { config.as_ref() }.copied().unwrap_or_default();
 
     // SAFETY: as for open.
@@ -50,7 +54,9 @@ pub unsafe extern "C" fn wellfed_feed_journal_read(
     journal: *const FeedJournal,
     view: *mut JournalView,
 ) -> bool {
+    // SAFETY: the C contract: `journal` is null or valid for the call.
     match unsafe { journal.as_ref() } {
+        // SAFETY: the C contract: `view` is null or valid for the call.
         Some(journal) if !view.is_null() => store(unsafe { view.as_mut() }, journal.read()),
         _ => false,
     }
@@ -58,6 +64,7 @@ pub unsafe extern "C" fn wellfed_feed_journal_read(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn wellfed_feed_journal_storage(journal: *mut FeedJournal) -> OwnerStorage {
+    // SAFETY: the C contract: `journal` is null or valid for the call.
     match unsafe { journal.as_mut() } {
         Some(journal) => journal.storage(),
         None => OwnerStorage {

@@ -14,6 +14,7 @@ pub unsafe extern "C" fn wellfed_motor_gate_init(
     lease_ms: u32,
     now_ms: u32,
 ) -> bool {
+    // SAFETY: the C contract: `gate` is null or valid for the call.
     let Some(gate) = (unsafe { gate.as_mut() }) else {
         return false;
     };
@@ -27,15 +28,18 @@ pub unsafe extern "C" fn wellfed_motor_gate_request(
     command: MotorCommand,
     now_ms: u32,
 ) -> bool {
+    // SAFETY: the C contract: `gate` must be valid: like the C original, this does not check for null.
     unsafe { &mut *gate }.request(command, now_ms)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn wellfed_motor_gate_tick(gate: *mut MotorGate, now_ms: u32) -> bool {
+    // SAFETY: the C contract: `gate` must be valid: like the C original, this does not check for null.
     unsafe { &mut *gate }.tick(now_ms)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn wellfed_motor_gate_trip(gate: *mut MotorGate, now_ms: u32) {
+    // SAFETY: the C contract: `gate` must be valid: like the C original, this does not check for null.
     unsafe { &mut *gate }.trip(now_ms);
 }

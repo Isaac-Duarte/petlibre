@@ -146,7 +146,12 @@ fn a_failed_open_frees_the_slot() {
     fake::with(|h| h.audio_open_fails = true);
 
     let records = run(&mut speaker, 5, done);
-    assert_eq!(records, vec![Record::Error { stage: "open" }]);
+    assert_eq!(
+        records,
+        vec![Record::Error {
+            stage: audio::ErrorStage::Open
+        }]
+    );
     assert!(!amp());
     assert_eq!(audio::request(Tune::Coin), PlayResult::Started);
 }

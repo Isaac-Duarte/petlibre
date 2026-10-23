@@ -47,6 +47,7 @@ fn directions() -> bool {
 }
 
 /// LOW is the stock software's disabled-indicator request, pending polarity check.
+#[must_use]
 pub fn all_low() -> bool {
     let _guard = IrqGuard::lock();
     sdk::gpio_port_write(0, PA_MASK, 0);

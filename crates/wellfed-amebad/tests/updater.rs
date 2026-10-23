@@ -395,7 +395,9 @@ fn a_manifest_signed_by_another_key_writes_nothing() {
 
     assert_eq!(
         result.records.last(),
-        Some(&Record::Error { stage: "manifest" })
+        Some(&Record::Error {
+            stage: ErrorStage::Manifest
+        })
     );
     assert_eq!(flash.erases + flash.programs, 0);
     assert!(broker.gets.iter().all(|g| g.0 == Part::Manifest));
@@ -418,7 +420,9 @@ fn a_hash_mismatch_leaves_bank_1_without_its_marker() {
 
     assert_eq!(
         result.records.last(),
-        Some(&Record::Error { stage: "hash" })
+        Some(&Record::Error {
+            stage: ErrorStage::Hash
+        })
     );
     assert_eq!(fake::with(|h| h.bank1[..8].to_vec()), vec![0xff; 8]);
     assert_eq!(flash.programs, 3 * 16 + 4);
@@ -441,7 +445,9 @@ fn a_failed_page_program_stops_the_update() {
 
     assert_eq!(
         result.records.last(),
-        Some(&Record::Error { stage: "write" })
+        Some(&Record::Error {
+            stage: ErrorStage::Write
+        })
     );
     assert_eq!(flash.programs, 21);
     assert_eq!(fake::with(|h| h.bank1[..8].to_vec()), vec![0xff; 8]);
@@ -462,11 +468,9 @@ fn a_dropped_connection_resumes_at_the_next_chunk() {
     let result = run(&mut updater, &mut broker, &mut flash, 500);
     assert!(result.restart, "{:?}", result.records);
 
-    assert!(
-        result
-            .records
-            .contains(&Record::Closed { reason: "closed" })
-    );
+    assert!(result.records.contains(&Record::Closed {
+        reason: CloseReason::Closed
+    }));
     assert_eq!(
         result
             .records
@@ -523,7 +527,9 @@ fn lost_answers_are_asked_again_then_the_update_stops() {
 
     assert_eq!(
         result.records.last(),
-        Some(&Record::Error { stage: "timeout" })
+        Some(&Record::Error {
+            stage: ErrorStage::Timeout
+        })
     );
     assert_eq!(
         broker.gets.iter().filter(|g| g.0 == Part::Chunk).count(),
@@ -612,7 +618,9 @@ fn running_from_bank_1_refuses_every_bank_1_write() {
 
     assert_eq!(
         result.records.last(),
-        Some(&Record::Error { stage: "write" })
+        Some(&Record::Error {
+            stage: ErrorStage::Write
+        })
     );
     assert!(fake::with(|h| h.bank1.iter().all(|&b| b == 0xff)));
 }

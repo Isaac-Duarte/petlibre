@@ -16,11 +16,11 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 
 use super::{
-    AUDIO_PAGE_SAMPLES, AUDIO_PAGES, GpioRouting, Irq, Isr, LpClock, TaskStep, TcpRecv,
-    TransportConfig, WifiEvent, WifiPoll,
+    AUDIO_PAGE_SAMPLES, AUDIO_PAGES, GpioRouting, IR_PA_BIT, IR_PB_BIT, Irq, Isr, LpClock,
+    MOTOR_MASK, SECTOR_BYTES, STORAGE_SECTORS, TaskStep, TcpRecv, TransportConfig, WifiEvent,
+    WifiPoll,
 };
 
-const MOTOR_MASK: u32 = (1 << 13) | (1 << 14);
 pub const GPIOA_IRQ: usize = 4;
 pub const TIMER2_IRQ: usize = 19;
 
@@ -392,7 +392,7 @@ fn pad_input(h: &Hardware, p: usize) -> u32 {
         ((h.output[p] & h.direction[p]) | (h.input[p] & !h.direction[p])) & !h.dead_input[p];
     if p == 1 && h.swd_pmux & crate::SWD_PMUX_BIT != 0 {
         // SWD owns PB3 (SWD_CLK): the GPIO latch never reaches the pad.
-        normal &= !(1 << 3);
+        normal &= !IR_PB_BIT;
     }
     (normal & !h.readback_override_mask[p]) | (h.readback_override[p] & h.readback_override_mask[p])
 }

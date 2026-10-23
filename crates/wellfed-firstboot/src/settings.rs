@@ -7,6 +7,8 @@
 
 use core::fmt;
 
+use wellfed_core::named_enum;
+
 use wellfed_amebad::arming::{self, Arming, Hooks, Poll};
 use wellfed_amebad::flash::park::Mmio;
 use wellfed_amebad::network::{self, NET_BASE};
@@ -19,6 +21,14 @@ use wellfed_core::transport::{SettingsFields, SettingsView};
 use crate::probes::flash::{FlashOps, SETTINGS_BASE, SETTINGS_BINDING, slot_io};
 
 pub const POLL_MS: u32 = 200;
+
+named_enum! {
+    /// Why a settings or Wi-Fi save did not happen (`error stage=`).
+    pub enum ErrorStage {
+        Unarmed = "unarmed",
+        Save = "save",
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Record {
@@ -33,7 +43,7 @@ pub enum Record {
         settings: Settings,
     },
     Error {
-        stage: &'static str,
+        stage: ErrorStage,
         status: SettingsStatus,
     },
     /// FW25 Wi-Fi credentials (sectors 5 and 6): what the store holds.
@@ -47,7 +57,7 @@ pub enum Record {
         stored: bool,
     },
     NetError {
-        stage: &'static str,
+        stage: ErrorStage,
     },
 }
 
@@ -248,7 +258,9 @@ impl Writer {
                 }
                 if let Some(credentials) = network::pending() {
                     let record = if self.stage == Stage::Serve || !H::armed() {
-                        Record::NetError { stage: "unarmed" }
+                        Record::NetError {
+                            stage: ErrorStage::Unarmed,
+                        }
                     } else {
                         arming::set_attempt();
                         let saved = self.net.save(credentials.as_ref());
@@ -259,7 +271,9 @@ impl Writer {
                                 stored: self.net.credentials.is_some(),
                             }
                         } else {
-                            Record::NetError { stage: "save" }
+                            Record::NetError {
+                                stage: ErrorStage::Save,
+                            }
                         }
                     };
                     self.publish();
@@ -272,7 +286,7 @@ impl Writer {
                 let target = changed(self.store.settings, fields);
                 let record = if self.stage == Stage::Serve || !H::armed() {
                     Record::Error {
-                        stage: "unarmed",
+                        stage: ErrorStage::Unarmed,
                         status: self.store.status,
                     }
                 } else if target == self.store.settings {
@@ -291,7 +305,7 @@ impl Writer {
                         }
                     } else {
                         Record::Error {
-                            stage: "save",
+                            stage: ErrorStage::Save,
                             status: self.store.status,
                         }
                     }

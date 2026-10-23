@@ -12,8 +12,10 @@ pub unsafe extern "C" fn wellfed_sensor_inputs_init(
     limits: *const SensorLimits,
     calibration: *const AdcCalibration,
 ) -> bool {
+    // SAFETY: the C contract: `limits`, `calibration` are each null or valid for the call.
     match (unsafe { limits.as_ref() }, unsafe { calibration.as_ref() }) {
         (Some(limits), Some(calibration)) => store(
+            // SAFETY: the C contract: `inputs` is null or valid for the call.
             unsafe { inputs.as_mut() },
             SensorInputs::new(limits, calibration),
         ),
@@ -27,6 +29,7 @@ pub unsafe extern "C" fn wellfed_sensor_inputs_update(
     now_ms: u32,
     reading: *const SensorReading,
 ) {
+    // SAFETY: the C contract: `inputs` must be valid: like the C original, this does not check for null; `reading` is null or valid for the call.
     unsafe { &mut *inputs }.update(now_ms, unsafe { reading.as_ref() });
 }
 
@@ -38,5 +41,6 @@ pub unsafe extern "C" fn wellfed_sensor_inputs_sample(
     feedback_high: bool,
     sample: *mut FeedSample,
 ) {
+    // SAFETY: the C contract: `sample` must be valid: like the C original, this does not check for null.
     unsafe { *sample = (*inputs).sample(now_ms, feedback_edge, feedback_high) };
 }

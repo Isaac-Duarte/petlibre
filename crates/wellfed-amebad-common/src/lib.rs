@@ -9,19 +9,6 @@
 // The KM4 provider fault callback calls the SDK's output guard.
 pub use wellfed_amebad_sdk as sdk;
 
-/// Declare a C-compatible enumeration that tolerates out-of-range values.
-macro_rules! c_enum {
-    ($(#[$meta:meta])* $name:ident { $($variant:ident = $value:expr),+ $(,)? }) => {
-        $(#[$meta])*
-        #[repr(transparent)]
-        #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-        pub struct $name(pub u32);
-
-        impl $name {
-            $(pub const $variant: Self = Self($value);)+
-        }
-    };
-}
-
+pub mod cell;
 pub mod flash;
 pub mod trial;

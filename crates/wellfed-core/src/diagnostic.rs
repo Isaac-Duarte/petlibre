@@ -38,10 +38,11 @@ unsafe extern "C" fn simulated_write(context: *mut c_void, a: bool, b: bool) -> 
 }
 
 pub fn run() -> bool {
-    run_pipeline().unwrap_or(false)
+    run_pipeline().is_some()
 }
 
-fn run_pipeline() -> Option<bool> {
+/// `None` at the first step that fails.
+fn run_pipeline() -> Option<()> {
     let calibration = AdcCalibration::decode(&[255; 4])?;
     // Compressed synthetic intervals, not settings for a physical board.
     let sensor_limits = SensorLimits {
@@ -132,16 +133,15 @@ fn run_pipeline() -> Option<bool> {
         }
     }
 
-    Some(
-        controller.state == FeedState::COMPLETE
-            && controller.progress.completed == 1
-            && gate.applied_known
-            && gate.applied == MotorCommand::STOP
-            && motor.a
-            && motor.b
-            && events.count == 0
-            && events.fault == FeedbackFault::OK,
-    )
+    (controller.state == FeedState::COMPLETE
+        && controller.progress.completed == 1
+        && gate.applied_known
+        && gate.applied == MotorCommand::STOP
+        && motor.a
+        && motor.b
+        && events.count == 0
+        && events.fault == FeedbackFault::OK)
+        .then_some(())
 }
 
 #[cfg(test)]

@@ -575,10 +575,15 @@ impl WifiFields<'_> {
     }
 }
 
+/// Lowercase hex digits only, the one spelling the protocol accepts. Kept
+/// here rather than shared with `crate::hex`: the FW08 isolation check lets
+/// this module name nothing else in the crate.
+fn lower_hex(text: &str) -> bool {
+    text.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
 fn hex_of(text: &str, min: usize, max: usize) -> bool {
-    text.len().is_multiple_of(2)
-        && (2 * min..=2 * max).contains(&text.len())
-        && text.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    text.len().is_multiple_of(2) && (2 * min..=2 * max).contains(&text.len()) && lower_hex(text)
 }
 
 /// The fields of a `settings` request; none present reads the settings.
@@ -596,7 +601,7 @@ impl SettingsFields {
     }
 }
 
-/// Largest `volume` a `settings` request may set.
+/// Largest `volume` a `settings` request may set, and the store accepts.
 pub const MAX_VOLUME: u8 = 100;
 
 /// The fields of a `time` request, as sent (validated by the clock).
@@ -827,12 +832,7 @@ pub fn parse_request(payload: &[u8]) -> Result<Request<'_>, RequestError> {
 
     let auth = match (nonce, seq) {
         (None, None) => None,
-        (Some(nonce), Some(seq))
-            if nonce.len() == 16
-                && nonce
-                    .bytes()
-                    .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) =>
-        {
+        (Some(nonce), Some(seq)) if nonce.len() == 16 && lower_hex(nonce) => {
             match u32::try_from(seq) {
                 Ok(seq) if seq > 0 => Some((nonce, seq)),
                 _ => return Err(RequestError::Malformed),
@@ -1017,7 +1017,7 @@ impl Health {
 
         if let Some(nonce) = self.nonce {
             let text = core::str::from_utf8(&nonce).map_err(|_| fmt::Error)?;
-            if !text.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+            if !lower_hex(text) {
                 return Err(fmt::Error);
             }
             write!(out, ",\"nonce\":\"{text}\"")?;
@@ -1153,6 +1153,24 @@ pub enum WifiSource {
 }
 
 impl WifiSource {
+    /// The source as the C join shim and the port's atomics carry it.
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::Build => 0,
+            Self::Stored => 1,
+            Self::Fallback => 2,
+        }
+    }
+
+    /// The inverse of `code`; anything else reads as the build's.
+    pub const fn from_code(code: u8) -> Self {
+        match code {
+            1 => Self::Stored,
+            2 => Self::Fallback,
+            _ => Self::Build,
+        }
+    }
+
     pub fn name(self) -> &'static str {
         match self {
             Self::Build => "build",

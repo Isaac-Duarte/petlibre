@@ -9,7 +9,7 @@ use wellfed_amebad::audio::{self, AMP_PIN};
 use wellfed_amebad::sdk::fake::api::FAKE_REQUEST_KEY;
 use wellfed_amebad::sdk::fake::{self, TcpRecvScript};
 use wellfed_amebad::settings;
-use wellfed_amebad::stream::{Record, STALL_MS, Streamer};
+use wellfed_amebad::stream::{EndReason, Record, STALL_MS, Streamer};
 use wellfed_core::speaker_stream::{HELLO_LEN, Status, challenge, header};
 use wellfed_core::tone::{Tune, gain_q15};
 use wellfed_core::transport::{PlayResult, SettingsView};
@@ -121,7 +121,7 @@ fn a_signed_stream_plays_every_sample_then_closes() {
         panic!("{records:?}");
     };
     assert_eq!(
-        (bytes as usize, reason, underruns),
+        (bytes as usize, reason.as_str(), underruns),
         (pcm.len(), "closed", 0)
     );
     assert_eq!(status_sent(), Some(Status::Ok as u8));
@@ -212,7 +212,7 @@ fn a_silent_client_is_dropped_and_the_output_freed() {
         matches!(
             records.last(),
             Some(Record::Done {
-                reason: "stall",
+                reason: EndReason::Stall,
                 bytes: 4000,
                 ..
             })

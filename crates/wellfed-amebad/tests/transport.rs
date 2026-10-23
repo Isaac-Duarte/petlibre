@@ -222,7 +222,12 @@ fn publishes_periodically_and_on_wifi_changes_and_pings_when_idle() {
     // A DNS loss ends this generation: the transport closes rather than publishing.
     wifi(5, 1, 20_000);
     let records = run(&mut link, 1);
-    assert_eq!(records, vec![Record::Closed { reason: "wifi" }]);
+    assert_eq!(
+        records,
+        vec![Record::Closed {
+            reason: CloseReason::Wifi
+        }]
+    );
     assert!(fake::with(|h| h.tcp_closed == vec![7]));
     assert!(
         !fake::with(|h| h.tcp_tx.iter().any(|(_, p)| p == &vec![0xe0, 0])),
@@ -329,9 +334,8 @@ fn failures_close_with_a_reason_and_back_off() {
         });
         rx(bytes);
         let records = run(&mut link, 2);
-        assert_eq!(
-            records.last(),
-            Some(&Record::Closed { reason }),
+        assert!(
+            matches!(records.last(), Some(Record::Closed { reason: r }) if r.as_str() == reason),
             "{bytes:?}"
         );
         assert!(!link.ready());
@@ -344,14 +348,19 @@ fn failures_close_with_a_reason_and_back_off() {
     assert_eq!(
         run(&mut link, 1).last(),
         Some(&Record::Closed {
-            reason: "foreign_topic"
+            reason: CloseReason::ForeignTopic
         })
     );
 
     fake::with(|h| h.uptime_ms += BACKOFF_MAX_MS);
     connect(&mut link);
     fake::with(|h| h.tcp_rx.push_back(TcpRecvScript::Closed));
-    assert_eq!(run(&mut link, 1), vec![Record::Closed { reason: "closed" }]);
+    assert_eq!(
+        run(&mut link, 1),
+        vec![Record::Closed {
+            reason: CloseReason::Closed
+        }]
+    );
 
     // A failed send closes too.
     fake::with(|h| h.uptime_ms += BACKOFF_MAX_MS);
@@ -361,7 +370,12 @@ fn failures_close_with_a_reason_and_back_off() {
         "wellfed/1/dev1/request",
         &format!(r#"{{"id":"{ID}","op":"ping"}}"#),
     ));
-    assert_eq!(run(&mut link, 1), vec![Record::Closed { reason: "send" }]);
+    assert_eq!(
+        run(&mut link, 1),
+        vec![Record::Closed {
+            reason: CloseReason::Send
+        }]
+    );
 
     // A silent broker times out the CONNACK.
     fake::with(|h| {
@@ -377,7 +391,7 @@ fn failures_close_with_a_reason_and_back_off() {
     assert_eq!(
         records.last(),
         Some(&Record::Closed {
-            reason: "reply_timeout"
+            reason: CloseReason::ReplyTimeout
         })
     );
     assert!(records.iter().all(|r| !matches!(r, Record::Publish { .. })));
@@ -423,7 +437,13 @@ fn records_describe_without_credentials() {
     assert_eq!(text, "connect n=2 ok=1 ms=40");
 
     let mut text = String::new();
-    describe(Record::Closed { reason: "silence" }, &mut text).unwrap();
+    describe(
+        Record::Closed {
+            reason: CloseReason::Silence,
+        },
+        &mut text,
+    )
+    .unwrap();
     assert_eq!(text, "closed reason=silence");
 }
 

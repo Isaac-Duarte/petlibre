@@ -72,9 +72,13 @@ fn build(
 
     let m: BuildManifest = serde_json::from_slice(&manifest_raw)?;
     let lock: SdkLock = petlibre_formats::load(&root.join("src/firmware/vendor/sdk.lock.json"))?;
+    // Builds before FW37 recorded no device and named the profile
+    // `plaf103-firstboot`. Bank 0's recovery image is one, and a give-way or
+    // a reinstall names its review, so those still read.
+    let firstboot = (m.device == "plaf103" && m.profile == "firstboot")
+        || (m.device.is_empty() && m.profile == "plaf103-firstboot");
     require(
-        m.device == "plaf103"
-            && m.profile == "firstboot"
+        firstboot
             && m.sdk_revision == lock.sdk.revision
             && m.toolchain_sha256 == lock.toolchain.sha256,
         "Unknown build profile",

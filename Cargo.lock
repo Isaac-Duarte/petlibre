@@ -1612,6 +1612,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "wellfed-fw-blink"
+version = "0.1.0"
+dependencies = [
+ "wellfed-sdk",
+]
+
+[[package]]
 name = "wellfed-fw-reference"
 version = "0.1.0"
 dependencies = [
@@ -1676,15 +1683,15 @@ version = "0.1.0"
 dependencies = [
  "wellfed-core",
  "wellfed-hal",
+ "wellfed-sdk-c",
 ]
 
 [[package]]
 name = "wellfed-sdk-c"
 version = "0.1.0"
 dependencies = [
+ "wellfed-amebad-sys",
  "wellfed-core",
- "wellfed-fw-reference",
- "wellfed-hal",
  "wellfed-hal-common",
  "wellfed-testkit",
 ]

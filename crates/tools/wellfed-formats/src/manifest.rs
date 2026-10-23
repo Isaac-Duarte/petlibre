@@ -22,6 +22,8 @@ pub struct BuildManifest {
     pub sdk_revision: String,
     pub toolchain_sha256: String,
     pub built_at: String,
+    /// The firmware under `firmwares/` a Rust profile linked.
+    pub firmware: Option<String>,
     pub variant: Option<String>,
     pub ota_public_key: Option<String>,
     /// Root-relative source path to its SHA-256.
@@ -60,11 +62,13 @@ pub struct BuildManifest {
 }
 
 impl BuildManifest {
-    /// The identity the manifest's sources, variant and update key give.
+    /// The identity the manifest's sources, firmware, variant and update
+    /// key give.
     pub fn source_identity(&self) -> Result<String> {
         IdentitySnapshot {
             profile: &self.profile,
             inputs: &self.inputs,
+            firmware: self.firmware.as_deref(),
             variant: self.variant.as_deref(),
             ota_public_key: self.ota_public_key.as_deref(),
         }
@@ -136,13 +140,15 @@ pub struct BuildChecks {
 }
 
 /// What a build identity binds: SHA-256 of this snapshot's canonical JSON.
-/// The variant and update key are left out when absent (not written as
-/// `null`), which keeps identities of plain builds what they were before
-/// either existed.
+/// The firmware, variant and update key are left out when absent (not
+/// written as `null`), which keeps identities of plain builds what they were
+/// before any of them existed.
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct IdentitySnapshot<'a> {
     pub profile: &'a str,
     pub inputs: &'a BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub firmware: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub variant: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -171,17 +177,20 @@ mod tests {
         let snapshot = IdentitySnapshot {
             profile: "plaf103-firstboot",
             inputs: &inputs,
+            firmware: Some("reference"),
             variant: Some("speaker"),
             ota_public_key: Some("ab"),
         };
         let untyped = json!({"profile": "plaf103-firstboot", "inputs": inputs,
-                             "variant": "speaker", "ota_public_key": "ab"});
+                             "firmware": "reference", "variant": "speaker",
+                             "ota_public_key": "ab"});
         assert_eq!(
             snapshot.identity().unwrap(),
             sha256(&canonical(&untyped).unwrap())
         );
 
         let bare = IdentitySnapshot {
+            firmware: None,
             variant: None,
             ota_public_key: None,
             ..snapshot
@@ -194,7 +203,7 @@ mod tests {
     }
 
     #[test]
-    fn manifest_identity_binds_variant_and_key() {
+    fn manifest_identity_binds_firmware_variant_and_key() {
         let manifest = BuildManifest {
             profile: "plaf103-firstboot".into(),
             inputs: inputs(),
@@ -208,9 +217,14 @@ mod tests {
             variant: Some("speaker".into()),
             ..keyed.clone()
         };
-        let ids = [&manifest, &keyed, &variant].map(|m| m.source_identity().unwrap());
+        let blink = BuildManifest {
+            firmware: Some("blink".into()),
+            ..keyed.clone()
+        };
+        let ids = [&manifest, &keyed, &variant, &blink].map(|m| m.source_identity().unwrap());
         assert_ne!(ids[0], ids[1]);
         assert_ne!(ids[1], ids[2]);
+        assert_ne!(ids[1], ids[3]);
     }
 
     #[test]

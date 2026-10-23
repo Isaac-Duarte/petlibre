@@ -36,6 +36,12 @@ pub mod wifi;
 pub use runtime::{request_reset, spawn, startup_done, watchdog_open};
 pub use slot::Slot;
 
+/// The ports a firmware drives (indicators, audio, inputs). Startup,
+/// supervision, flash and updates stay the runtime's.
+pub use wellfed_hal as hal;
+// Every firmware archive carries the core C ABI and the panic handler.
+use wellfed_sdk_c as _;
+
 /// Defines the firmware's start hook. The runtime calls `$start` once, in
 /// the normal role, from its startup task after the startup checks passed
 /// and the transport task was created. `$start` creates the firmware's

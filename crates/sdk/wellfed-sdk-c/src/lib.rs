@@ -10,12 +10,11 @@
 
 pub mod core_abi;
 
-// The ports export their own C symbols: KM0 the RAM park, SDK hooks and
-// trial step; KM4 those (through wellfed-hal) and the first-boot app.
+// The KM0 archive's C symbols (RAM park, SDK hooks, trial step) come from
+// the common crate. A KM4 archive is the firmware crate, which links this
+// one through wellfed-sdk for the core ABI and the panic handler.
 #[cfg(feature = "km0")]
 pub use wellfed_hal_common;
-#[cfg(feature = "km4")]
-pub use {wellfed_fw_reference, wellfed_hal};
 
 #[cfg(target_os = "none")]
 #[panic_handler]
@@ -24,7 +23,7 @@ fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     // STOP and infrared OFF with raw register writes before halting. KM0
     // drives neither, so it only halts.
     #[cfg(feature = "km4")]
-    wellfed_hal::sdk::panic_outputs_safe();
+    wellfed_amebad_sys::panic_outputs_safe();
 
     // Halt here. Only a watchdog that was already armed resets the core (the
     // diagnostic build arms none); otherwise recovery needs an external reset.

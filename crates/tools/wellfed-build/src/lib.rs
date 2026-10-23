@@ -110,7 +110,8 @@ impl Core {
         }
     }
 
-    /// The `wellfed-sdk-c` feature that builds the core's archive.
+    /// The core's feature in its archive crate: `wellfed-sdk-c` for KM0,
+    /// the firmware for KM4.
     pub(crate) fn feature(self) -> &'static str {
         match self {
             Self::Lp => "km0",
@@ -122,6 +123,64 @@ impl Core {
 impl std::fmt::Display for Core {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.name())
+    }
+}
+
+/// A firmware crate under `firmwares/`, chosen by its directory name. The
+/// set is open (anyone may add a firmware), so this is a checked name rather
+/// than an enum. Its Cargo package is `wellfed-fw-<name>`, a KM4 staticlib
+/// on `wellfed-sdk`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Firmware(String);
+
+impl Firmware {
+    /// The firmware a build uses unless told otherwise.
+    pub const DEFAULT: &'static str = "reference";
+
+    /// `name`, if this checkout has `firmwares/<name>` with the matching
+    /// package.
+    pub fn new(repo: &Repo, name: &str) -> Result<Self> {
+        require(
+            !name.is_empty()
+                && name
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'),
+            format!("Firmware names are lowercase letters, digits and dashes: {name:?}"),
+        )?;
+        let firmware = Self(name.to_string());
+        let manifest = fs::read_to_string(repo.path(&format!("{}/Cargo.toml", firmware.dir())))
+            .map_err(|_| Error::Refused(format!("No firmware named {name} under firmwares/")))?;
+        require(
+            manifest
+                .lines()
+                .any(|line| line.trim() == format!("name = \"{}\"", firmware.package())),
+            format!("Firmware {name} must be the package {}", firmware.package()),
+        )?;
+        Ok(firmware)
+    }
+
+    pub fn name(&self) -> &str {
+        &self.0
+    }
+
+    /// The reference firmware, the only one with image variants and the
+    /// FW13 optics probe.
+    pub(crate) fn reference(&self) -> bool {
+        self.0 == Self::DEFAULT
+    }
+
+    /// Its root-relative directory.
+    pub(crate) fn dir(&self) -> String {
+        format!("firmwares/{}", self.0)
+    }
+
+    pub(crate) fn package(&self) -> String {
+        format!("wellfed-fw-{}", self.0)
+    }
+
+    /// The KM4 archive Cargo writes for the package.
+    pub(crate) fn archive(&self) -> String {
+        format!("lib{}.a", self.package().replace('-', "_"))
     }
 }
 

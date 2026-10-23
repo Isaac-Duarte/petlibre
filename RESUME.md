@@ -15,7 +15,12 @@ image, bench state, next task, or acceptance evidence changes.
   - The stack audit reads its task table from the runtime and the firmware.
 - **Checks:** `make check`; fresh `plaf103` and `plaf103-firstboot` builds with every audit passing; `make check-fixtures` with no skips. Stack bounds unchanged except audio 1040 to 728 and optics 4352 to 4380 (of 8192), both from cross-crate inlining.
 - **Not yet physical:** the split images have not run on the feeder.
-- **Next (FW36):** `wellfed-build --firmware <name>` with the KM4 archive built from the selected firmware, a minimal `firmwares/blink`, then on hardware: the smoke suite, blink confirming, and an OTA back to the reference firmware.
+- **Firmware selection (later the same night):**
+  - `wellfed-build --firmware <name>` (default `reference`; `make -C firmware … FIRMWARE=<name>`). The KM4 archive is the firmware crate; KM0's is `wellfed-sdk-c`, which every firmware also links through `wellfed-sdk` for the core C ABI and the panic handler.
+  - The firmware name joins the identity and the manifest (`firmware`). Only the chosen firmware's sources are inputs. `audit` and the Python review read it from the manifest, and image variants are refused for any firmware but `reference`.
+  - New `firmwares/blink`: one task blinks the connection indicator, verifying each level. A `play` request on blink fills the audio mailbox and later ones answer `busy`.
+  - Checks: `make check`; `plaf103` and `plaf103-firstboot` for `reference` (stack bounds as above), and `plaf103-firstboot` for `blink` (blink task 748 of 4096); `make check-fixtures` with no skips against each. `private/firmware-build/plaf103-firstboot` holds the reference build again.
+- **Next (FW36), on hardware:** the smoke suite on the reference firmware, then install `blink` and check it confirms and blinks, then OTA back to the reference firmware.
 
 **October 22, late night: faster integration runs (physical over the air and by UART, autonomous).**
 - **What changed:**

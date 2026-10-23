@@ -15,6 +15,8 @@ wellfed-amebad-sys = { path = "crates/sdk/wellfed-amebad-sys" }
 wellfed-core = { path = "crates/sdk/wellfed-core" }
 wellfed-fw-reference = { path = "firmwares/reference" }
 wellfed-sdk = { path = "crates/sdk/wellfed-sdk" }
+wellfed-sdk-c = { path = "crates/sdk/wellfed-sdk-c" }
+wellfed-fw-blink = { path = "firmwares/blink" }
 wellfed-formats = { path = "crates/tools/wellfed-formats" }
 wellfed-testkit = { path = "crates/sdk/wellfed-testkit" }
 # Host tools.

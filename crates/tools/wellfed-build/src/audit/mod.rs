@@ -15,7 +15,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 use serde::Serialize;
 
-use crate::{Core, Error, PROJECT, Repo, Result, relative, text};
+use crate::{Core, Error, Firmware, PROJECT, Repo, Result, relative, text};
 
 pub mod hooks;
 pub(crate) mod layout;
@@ -132,14 +132,19 @@ pub struct Linked {
 
 /// Run every linked-image audit of a first-boot build against `objects`,
 /// the KM0/KM4 Rust archives it linked.
-pub(crate) fn linked(repo: &Repo, build: &Path, objects: &Archives) -> Result<Linked> {
+pub(crate) fn linked(
+    repo: &Repo,
+    build: &Path,
+    objects: &Archives,
+    firmware: &Firmware,
+) -> Result<Linked> {
     let sdk = build.join("sdk");
     let binutils = Binutils {
         dir: repo.binutils()?,
     };
     let stock = fs::read(repo.stock())?;
     let image = fs::read(ota_image(&sdk))?;
-    let app = stack::task_sources(repo)?;
+    let app = stack::task_sources(repo, firmware)?;
 
     Ok(Linked {
         layout_audit: layout::audit(&ota_image(&sdk), &repo.stock(), &repo.layout())?,

@@ -11,8 +11,9 @@ The local server talks to **stock 1.1.15** over its existing MQTT protocol. It d
 | `wellfed-hal` | KM4 ports: GPIO/ADC board port, interrupt/timer supervision, watchdog, FreeRTOS owner, flash lease provider, transport, updater, build-bound startup reports, stopped outputs, and LED diagnostics. It re-exports the common crate's `flash` and `trial` |
 | `wellfed-sdk` | The KM4 runtime every firmware runs inside: the `wellfed_app_start` entry, stopped-output startup and the synthetic diagnostic, the Wi-Fi join and health transport, the watchdog feeder, FW11 confirmation, the settings writer, and the FW10 updater and offer check. Bank 0 runs only the runtime. A firmware defines its start hook with `firmware!` and creates its tasks with `spawn` |
 | `wellfed-fw-reference` (`firmwares/reference`) | The reference firmware: the optics probe, startup chime and speaker stream tasks, the opt-in `fw16-pulse` motion and FW11 trial variants, and the bench probes (optics, ADC, supervision, flash stress) |
+| `wellfed-fw-blink` (`firmwares/blink`) | The minimal firmware: one task blinks the connection indicator. The [firmware guide](../../firmwares/README.md) covers writing one |
 | `wellfed-amebad-sys` | Bindgen-backed KM4 calls into the pinned AmebaD SDK, and the deterministic host fake SDK used by tests and the simulator |
-| `wellfed-sdk-c` | C ABI and per-core static libraries joining Rust to SDK startup |
+| `wellfed-sdk-c` | The core C ABI, the KM0 archive, and the panic handler every firmware archive links |
 | `wellfed-testkit`, `wellfed-sim` | Fake NOR journal storage and deterministic host worker |
 
 Minimal C hooks call the Rust entrypoint. The SDK still supplies startup, FreeRTOS, radio code, linker scripts, and image packaging. KM0 and KM4 are built separately. Header-derived bindings are generated for SDK-backed KM4 builds; host tests use fake bindings.

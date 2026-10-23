@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Petlibre">
+<rect width="64" height="64" rx="14" fill="#13213A"/><g transform="translate(6.4 6.4) scale(0.8)">
+<path d="M17 30V12A8 8 0 0 1 25 4H39A8 8 0 0 1 47 12V30Z" fill="#E8EEF8"/><path d="M18 34H46A2 2 0 0 1 48 36V38A2 2 0 0 1 46 40H18A2 2 0 0 1 16 38V36A2 2 0 0 1 18 34Z" fill="#3B82F6"/><path d="M20 44H44A3 3 0 0 1 47 47V56A3 3 0 0 1 44 59H20A3 3 0 0 1 17 56V47A3 3 0 0 1 20 44Z" fill="#E8EEF8"/>
+</g></svg>

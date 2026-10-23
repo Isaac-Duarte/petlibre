@@ -165,6 +165,17 @@ One cold boot on adapter power, no batteries, motor stopped (physical, UART): st
 
 A second boot under `fw14-adc-v2` (same conditions, 95 samples) settled that: channel 10 read raw 3911–3924 while channels 4 and 5 stayed at 239–244. Its stock-scaled value was 3315–3317. Channel 10 measures the I/O supply (the SDK's 3.3 V detection reads it), and the feeder's idle UART TX, which sits at that supply, measured about 3.29 V with a meter ([UART notes](../hardware/uart.md)). So the stock scaling gives millivolts, within about 1%, at least for this channel; the external channels' dividers remain unmeasured. Each 48-conversion capture took at most 15.1 ms.
 
+**Batteries (Oct 23, physical, UART and meter).** The normal image no longer runs this probe, so the `fw14-adc` variant (`petlibre-build plaf103-firstboot --adc-probe`, policy `fw14-adc-v2`) runs it in place of the FW13 optics probe, sampling for as long as the build runs. It never binds the KM0 flash handshake, so the build confirms as usual. It was installed over the air (v64) and confirmed. A cold boot with no batteries passed `petlibre-audit adc` (58 samples): PA19 1 and channel 5 at raw 240, as on Oct 21. Then, without a reboot, the owner inserted three D cells and later pulled and replugged the adapter:
+
+| State | PA19 | Channel 5 mean (raw) | Scaled (mV) | Pack on meter |
+| --- | --- | --- | --- | --- |
+| Adapter, no batteries | 1 | 240 | 16 | — |
+| Adapter and batteries | 1 | 2849 | 2357 | 4.85 V |
+| Batteries only | 0 | 2737 just after the unplug, settling to about 2793 over 20 s | 2256 to about 2306 | 4.77 V |
+| Adapter back in | 1 | 2848 | 2356 | — |
+
+So channel 5 measures the battery pack, not the adapter, through a divider of about 2.06 (2.058 and 2.068 in the two states). PA19 is high while the adapter is present and low on batteries. Channel 4 (motor current) stayed at 240 throughout, and the feeder neither reset nor showed anything visible at either transition. Channel 5 is noisier than the others: about 110 raw between the minimum and maximum of each 16-conversion sample, against 3 or 4 on channels 4 and 10. The meter readings were not time-stamped against particular samples. Captures: `fw14-batt-01-baseline` (audited), `fw14-batt-02-both`, `-04-unplug` and `-05-meter`, which are receive-only and have no startup, so they were read, not audited.
+
 ## FW07 scan probe
 
 Policy `fw07-scan-v1` is bound both ways to the `PLWIF1 start created=` record format and requires the LED probe policy. After the LED probe, KM4 starts the Wi-Fi shim in `example_entry.c`. One task runs `LwIP_Init()` and `wifi_on(RTW_MODE_STA)`, then three scans 5 s apart, each waiting at most 10 s and keeping the 32 strongest networks. The probe polls it and prints `PLWIF1 start created=<0|1>`, `PLWIF1 on result=<n> ms=<n>`, then per scan `PLWIF1 scan n=<n> result=<n> ms=<n> count=<n> dropped=<n> stopped=<0|1>` followed by `PLWIF1 ap n=<n> i=<n> ssid_crc=<hex8> rssi=<dBm> channel=<n> security=<hex8>` for each of up to 32 networks, and `PLWIF1 done scans=3`; a stalled shim prints `PLWIF1 error timeout stage=<n> ms=<n>`. Networks are identified only by a CRC-32 of the SSID, and the build holds no credentials; nothing joins a network. KM0 did not run `wifi_FW_init_ram()` in these builds.

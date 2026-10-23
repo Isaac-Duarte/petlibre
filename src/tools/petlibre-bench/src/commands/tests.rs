@@ -1281,6 +1281,8 @@ fn the_motion_variant_is_refused() {
     let error = ota::parse_variant("fw16-pulse").unwrap_err();
     assert!(error.contains("motion builds stay manual"), "{error}");
     assert_eq!(ota::parse_variant("fw11-fail"), Ok(Variant::Fw11Fail));
+    assert_eq!(ota::parse_variant("fw14-adc"), Ok(Variant::Fw14Adc));
+    assert_eq!(Variant::Fw14Adc.flag(), "--adc-probe");
     assert!(ota::parse_variant("pulse").is_err());
 }
 

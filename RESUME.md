@@ -1,11 +1,23 @@
 # Resume firmware development
 
-Handoff checkpoint: **October 22, 2026, Mountain time**. Read this, then
+Handoff checkpoint: **October 23, 2026, Mountain time**. Read this, then
 [AGENTS.md](AGENTS.md), the [development guide](docs/development/README.md),
 and [FIRMWARE_BOARD.md](FIRMWARE_BOARD.md). Update this handoff when the installed
 image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
+
+**October 23, after midnight: battery inputs measured (FW14, physical, owner at the bench).**
+- **What changed:** `petlibre-build plaf103-firstboot --adc-probe` builds the `fw14-adc` variant (policy `fw14-adc-v2`): the reference firmware runs the read-only ADC probe in place of the optics probe, sampling once a second for as long as it runs. The probe never binds the KM0 flash handshake, so it reports `startup_done` at once and the build confirms. `petlibre-bench ota/itest --variant fw14-adc` builds it too. Checks: `make check`; a fresh `--adc-probe` build with every audit passing (`petlibre-adc` stack 1120 of 8192 B); review `fw14-batt-01-review` (`7c085e27…`).
+- **Runs:**
+  - `itest-20261023-01 --review fw14-batt-01-review --only ota-update --power` installed it (v64, confirmed in 2 min 43 s).
+  - `fw14-batt-01-baseline` (cold boot, no batteries) passed `petlibre-audit adc`.
+  - The owner then inserted three D cells with the feeder running; later unplugged and replugged the adapter by hand (the bench `off` needs the serial port, so it cannot run during a capture). Receive-only captures `fw14-batt-02-both`, `-03-cut`, `-04-unplug`, `-05-meter`.
+- **Results** ([notes](docs/firmware/startup-diagnostics.md)): channel 5 is the pack, through a divider of about 2.06 (2357 mV at 4.85 V with the adapter, about 2306 mV at 4.77 V on batteries). PA19 is 1 with the adapter, 0 without. No reset at either transition. Channel 5 is noisy (about 110 raw spread per sample).
+- **Restore:** the owner removed the batteries; `itest-20261023-02 --review itest-20261022-19-good-review --only ota-update --power` put the reference build back (v65, confirmed).
+- **Checks after the session:** fresh `plaf103` and `plaf103-firstboot` (reference) builds and `make check-fixtures` with no skips.
+- **Flash now:** **Bank 1:** reference build `f550a0e9…` (OTA v65, confirmed). **Bank 0:** unchanged (`f244d9a9…`). **Next manifest version:** 66.
+- **Bench state:** restored. Batteries out, feeder off (relay 1 off), hotspot down, no server.
 
 **October 23, early morning: one SDK, many firmwares on hardware (FW36 done, physical over the air, autonomous).**
 - **Runs** (release binaries rebuilt first):

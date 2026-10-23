@@ -194,6 +194,8 @@ impl Firmware {
 pub enum Variant {
     /// FW16: pulses the motor once per cold boot.
     Fw16Pulse,
+    /// FW14: samples the power inputs read-only instead of the optics probe; no motion.
+    Fw14Adc,
     /// FW11: never confirms and lets the watchdog reset it; no motion.
     Fw11Reset,
     /// FW11: fails its startup diagnostic on purpose; no motion.
@@ -207,6 +209,7 @@ impl Variant {
     pub fn name(self) -> &'static str {
         match self {
             Self::Fw16Pulse => "fw16-pulse",
+            Self::Fw14Adc => "fw14-adc",
             Self::Fw11Reset => "fw11-reset",
             Self::Fw11Fail => "fw11-fail",
             Self::Speaker => "speaker",
@@ -215,6 +218,10 @@ impl Variant {
 
     pub(crate) fn motion_policy(self) -> Option<&'static str> {
         (self == Self::Fw16Pulse).then_some("fw16-pulse-v1")
+    }
+
+    pub(crate) fn adc_policy(self) -> Option<&'static str> {
+        (self == Self::Fw14Adc).then_some("fw14-adc-v2")
     }
 
     pub(crate) fn trial_policy(self) -> Option<&'static str> {

@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "model": "PLAF103",
+  "stock": {
+    "image": "private/firmware/PLAF103_OTA_010115.bin",
+    "layout": "src/firmware/devices/plaf103/layout.json"
+  },
+  "platform": {
+    "kind": "amebad",
+    "entry": "src/firmware/vendor/ports/amebad/example_entry.c",
+    "firstboot_mains": {
+      "km0": "src/firmware/vendor/ports/amebad/firstboot_km0.c",
+      "km4": "src/firmware/vendor/ports/amebad/firstboot_km4.c"
+    }
+  }
+}

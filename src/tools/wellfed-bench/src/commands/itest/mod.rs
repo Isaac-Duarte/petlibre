@@ -104,7 +104,7 @@ pub struct ItestArgs {
     /// Frozen review under test; installed over the air unless already running.
     #[arg(long, conflicts_with = "build")]
     pub review: Option<PathBuf>,
-    /// Build plaf103-firstboot from this checkout and freeze it as NAME-good-review first.
+    /// Build the PLAF103 firstboot profile from this checkout and freeze it as NAME-good-review first.
     #[arg(long)]
     pub build: bool,
     /// Only these scenarios, comma-separated, whatever their tier; ota-update

@@ -210,17 +210,18 @@ pub(crate) fn audit_linked_table(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Repo;
+    use crate::platform::amebad::source;
+    use crate::{Device, Repo};
     use std::fs;
 
     /// The ignored stock image and pinned SDK source, when present.
     fn evidence() -> (Vec<u8>, String) {
         let repo = Repo::here().unwrap();
-        let source = repo
-            .source()
-            .join("component/soc/realtek/amebad/fwlib/usrcfg/rtl8721dlp_pinmapcfg.c");
+        let stock = Device::new(&repo, "plaf103").unwrap().stock(&repo).unwrap();
+        let source =
+            source(&repo).join("component/soc/realtek/amebad/fwlib/usrcfg/rtl8721dlp_pinmapcfg.c");
         (
-            fs::read(repo.stock()).expect("ignored verified stock OTA"),
+            fs::read(stock.image).expect("ignored verified stock OTA"),
             fs::read_to_string(source).expect("pinned SDK checkout"),
         )
     }

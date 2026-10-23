@@ -20,7 +20,8 @@ use super::{
     ADDRESSED, ArchiveRecord, Archives, Binutils, DIRECT_BRANCH, INSTRUCTION, elf, hex, ota_image,
     parse_hex, refuse, tool,
 };
-use crate::{Core, Result, require};
+use crate::platform::amebad::Core;
+use crate::{Result, require};
 
 pub(crate) const SYMBOLS: [&str; 6] = [
     "wellfed_amebad_flash_park_publish",

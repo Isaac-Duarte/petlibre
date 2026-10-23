@@ -81,7 +81,7 @@ pub struct Fixture {
 
 impl Fixture {
     pub fn new(inputs: Value) -> Self {
-        let mut manifest = json!({"profile": "plaf103-firstboot", "inputs": inputs});
+        let mut manifest = json!({"device": "plaf103", "profile": "firstboot", "inputs": inputs});
         let identity = digest(&wellfed_formats::canonical::canonical(&manifest).unwrap());
         manifest["startup_identity"] = json!(identity);
 

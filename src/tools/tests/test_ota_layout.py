@@ -13,7 +13,7 @@ spec = importlib.util.spec_from_file_location("ota_layout", ROOT / "src/tools/au
 ota = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ota)
 STOCK = ROOT / "private/firmware/PLAF103_OTA_010115.bin"
-LAYOUT = ROOT / "src/firmware/vendor/plaf103-layout.json"
+LAYOUT = ROOT / "src/firmware/devices/plaf103/layout.json"
 
 
 @evidence(STOCK.is_file(), "Requires verified stock OTA fixture")

@@ -24,7 +24,7 @@ The two `uart-*` clients own the serial port. The [Rust client](../../docs/devel
 | --- | --- | --- |
 | [flash/uart-flash-read.py](flash/uart-flash-read.py) | yes | Restricted reader: observe captures, bounded and full reads; never programs or erases |
 | [flash/uart-stock-recovery.py](flash/uart-stock-recovery.py) | yes | Exact original bank-1 stock recovery |
-| [flash/review-development-image.py](flash/review-development-image.py) | no | Freeze a reviewed stock OTA or `plaf103-firstboot` build as an update source/target |
+| [flash/review-development-image.py](flash/review-development-image.py) | no | Freeze a reviewed stock OTA or PLAF103 `firstboot` build as an update source/target |
 | [flash/stock-bank-wire-policy.py](flash/stock-bank-wire-policy.py) | no | Expected TX transcript for the stock bank-1 acceptance test |
 | [flash/plan-stock-recovery.py](flash/plan-stock-recovery.py) | no | Plan sector-scoped stock recovery |
 | [flash/recovery-transaction.py](flash/recovery-transaction.py) | no | Recovery plan coordinator with a durable journal |

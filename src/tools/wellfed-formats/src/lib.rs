@@ -1,6 +1,6 @@
 //! The files one host tool writes and another reads, typed once.
 //!
-//! Build manifests, the stock layout, the SDK and toolchain locks, serial
+//! Build manifests, device configs, the stock layout, the SDK and toolchain locks, serial
 //! captures, the credential files and the flash client's reviewed plans each
 //! cross crate boundaries (the builder writes what the audit, flash review
 //! and bench read; the bench summarizes the flash plans), so their shape
@@ -15,6 +15,7 @@
 pub mod canonical;
 pub mod capture;
 pub mod credentials;
+pub mod device;
 pub mod flash_plan;
 pub mod hex;
 pub mod layout;

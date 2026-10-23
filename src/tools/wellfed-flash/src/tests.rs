@@ -944,7 +944,7 @@ fn frozen_build(checkout: &Path, image: &[u8]) -> (PathBuf, Value, Value) {
     let mains = json!({"hp": {"address": "0x1"}, "lp": {"address": "0x2"}});
     let pinmap = json!({"matches_stock": true, "runtime_address": "0x3"});
     let manifest = json!({
-        "profile": "plaf103-firstboot", "sdk_revision": "r1", "toolchain_sha256": "t".repeat(64),
+        "device": "plaf103", "profile": "firstboot", "sdk_revision": "r1", "toolchain_sha256": "t".repeat(64),
         "artifacts": [{"path": "image/OTA_All.bin", "sha256": sha256(image), "bytes": image.len()}],
         "firstboot_startup_audit": {"mains": mains}, "km0_pinmap_audit": pinmap,
         "checks": {"ota_payload_matches": true, "ota_checksum_matches": true,

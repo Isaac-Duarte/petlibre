@@ -1,12 +1,21 @@
-//! Local AmebaD firmware builds, without connecting to the feeder.
+//! Local firmware builds, without connecting to the feeder.
 //!
-//! The SDK and its Linux toolchain are pinned (`src/firmware/vendor/sdk.lock.json`,
-//! `src/firmware/vendor/probe/toolchain.lock.json`) and verified on every run. Each
-//! profile builds in its own private SDK worktree, overlaid from the pinned
-//! revision; the linked images are then audited ([`audit`]) and described in
-//! `manifest.json`, which the frozen review re-checks. The startup identity
-//! every image prints is a hash of its exact inputs ([`identity`]), so a
-//! review of the same sources can be reused instead of rebuilt.
+//! A build combines three things:
+//! - a **device** (`src/firmware/devices/<name>/device.json`, [`device`]): the board,
+//!   naming its platform and the board-level files that platform stages;
+//! - a **firmware** (`src/firmware/wellfed/<name>`, [`firmware`]): the KM4
+//!   application crate, whose `[package.metadata.wellfed]` table declares the
+//!   devices, policies and image variants it has;
+//! - a **profile** ([`Profile`]): which stages of the ladder from the
+//!   unchanged SDK example to the reviewed first-boot image run.
+//!
+//! The platform ([`platform`]) is code: its SDK and toolchain are pinned and
+//! verified on every run, each profile builds in its own private SDK worktree
+//! overlaid from the pinned revision, and the linked images are audited and
+//! described in `manifest.json`, which the frozen review re-checks. The
+//! startup identity every image prints is a hash of its exact inputs
+//! ([`identity`]), so a review of the same sources can be reused instead of
+//! rebuilt.
 
 #![forbid(unsafe_code)]
 
@@ -15,32 +24,47 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use wellfed_formats::lock::SdkLock;
 use sha2::{Digest, Sha256};
 
-pub mod audit;
-pub(crate) mod credentials;
+pub mod catalog;
+pub mod device;
 pub(crate) mod environment;
 mod error;
+pub mod firmware;
 pub mod identity;
 pub mod image;
-pub(crate) mod sdk;
-pub mod toolchain;
+pub mod platform;
 
+pub use device::Device;
 pub use error::{Error, Result, require};
+pub use firmware::{Firmware, Variant};
 pub(crate) use wellfed_formats::canonical::sha256;
 
-/// The vendor project inside an SDK worktree.
-pub const PROJECT: &str = "project/realtek_amebaD_va0_example/GCC-RELEASE";
-
 /// The build profiles, from the unchanged SDK example to the reviewed
-/// UART-only first-boot image.
+/// UART-only first-boot image. Each adds stages to the one before.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum Profile {
+    /// The unchanged SDK example.
     Baseline,
+    /// The Rust application on the SDK's own layout.
     Bringup,
-    Plaf103,
-    Plaf103Firstboot,
+    /// The Rust application on the device's stock-derived layout.
+    Device,
+    /// The device image with the UART-only first-boot mains: what the bench
+    /// reviews and installs.
+    Firstboot,
+}
+
+/// One step of the profile ladder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage {
+    /// Links the Rust application and the SDK runtime.
+    Rust,
+    /// Uses the device's stock-derived OTA bank addresses and pad table.
+    Stock,
+    /// Stages the UART-only first-boot mains; the image joins Wi-Fi, the
+    /// transport and updates, and carries the firmware's policies.
+    Firstboot,
 }
 
 impl Profile {
@@ -49,188 +73,36 @@ impl Profile {
         match self {
             Self::Baseline => "baseline",
             Self::Bringup => "bringup",
-            Self::Plaf103 => "plaf103",
-            Self::Plaf103Firstboot => "plaf103-firstboot",
+            Self::Device => "device",
+            Self::Firstboot => "firstboot",
         }
     }
 
-    /// Links the Rust application (everything but the unchanged example).
-    pub fn rust(self) -> bool {
-        self != Self::Baseline
+    pub fn stages(self) -> &'static [Stage] {
+        match self {
+            Self::Baseline => &[],
+            Self::Bringup => &[Stage::Rust],
+            Self::Device => &[Stage::Rust, Stage::Stock],
+            Self::Firstboot => &[Stage::Rust, Stage::Stock, Stage::Firstboot],
+        }
     }
 
-    /// Uses the stock-derived OTA bank addresses and pad table.
-    pub fn model(self) -> bool {
-        matches!(self, Self::Plaf103 | Self::Plaf103Firstboot)
-    }
-
-    pub fn firstboot(self) -> bool {
-        self == Self::Plaf103Firstboot
+    pub fn has(self, stage: Stage) -> bool {
+        self.stages().contains(&stage)
     }
 }
 
-/// The AmebaD's two cores. The SDK names their projects `lp` and `hp`; the
-/// manifest and audits call them KM0 and KM4.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Core {
-    /// KM0, the low-power Cortex-M23.
-    Lp,
-    /// KM4, the application Cortex-M33.
-    Hp,
-}
-
-impl Core {
-    pub const BOTH: [Self; 2] = [Self::Lp, Self::Hp];
-
-    /// The SDK's directory suffix (`project_lp`, `src_hp`).
-    pub fn dir(self) -> &'static str {
-        match self {
-            Self::Lp => "lp",
-            Self::Hp => "hp",
-        }
-    }
-
-    /// The manifest's and audits' name.
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Lp => "KM0",
-            Self::Hp => "KM4",
-        }
-    }
-
-    pub(crate) fn from_name(name: &str) -> Option<Self> {
-        Self::BOTH.into_iter().find(|core| core.name() == name)
-    }
-
-    /// The Cargo target of the core's firmware archive.
-    pub(crate) fn target(self) -> &'static str {
-        match self {
-            Self::Lp => "thumbv8m.base-none-eabi",
-            Self::Hp => "thumbv8m.main-none-eabihf",
-        }
-    }
-
-    /// The core's feature in its archive crate: `wellfed-sdk-c` for KM0,
-    /// the firmware for KM4.
-    pub(crate) fn feature(self) -> &'static str {
-        match self {
-            Self::Lp => "km0",
-            Self::Hp => "km4",
-        }
-    }
-}
-
-impl std::fmt::Display for Core {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.name())
-    }
-}
-
-/// A firmware crate under `src/firmware/wellfed/`, chosen by its directory name. The
-/// set is open (anyone may add a firmware), so this is a checked name rather
-/// than an enum. Its Cargo package is `wellfed-fw-<name>`, a KM4 staticlib
-/// on `wellfed-sdk`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Firmware(String);
-
-impl Firmware {
-    /// The firmware a build uses unless told otherwise.
-    pub const DEFAULT: &'static str = "reference";
-
-    /// `name`, if this checkout has `src/firmware/wellfed/<name>` with the matching
-    /// package.
-    pub fn new(repo: &Repo, name: &str) -> Result<Self> {
-        require(
-            !name.is_empty()
-                && name
-                    .bytes()
-                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'),
-            format!("Firmware names are lowercase letters, digits and dashes: {name:?}"),
-        )?;
-        let firmware = Self(name.to_string());
-        let manifest = fs::read_to_string(repo.path(&format!("{}/Cargo.toml", firmware.dir())))
-            .map_err(|_| {
-                Error::Refused(format!(
-                    "No firmware named {name} under src/firmware/wellfed/"
-                ))
-            })?;
-        require(
-            manifest
-                .lines()
-                .any(|line| line.trim() == format!("name = \"{}\"", firmware.package())),
-            format!("Firmware {name} must be the package {}", firmware.package()),
-        )?;
-        Ok(firmware)
-    }
-
-    pub fn name(&self) -> &str {
-        &self.0
-    }
-
-    /// The reference firmware, the only one with image variants and the
-    /// FW13 optics probe.
-    pub(crate) fn reference(&self) -> bool {
-        self.0 == Self::DEFAULT
-    }
-
-    /// Its root-relative directory.
-    pub(crate) fn dir(&self) -> String {
-        format!("src/firmware/wellfed/{}", self.0)
-    }
-
-    pub(crate) fn package(&self) -> String {
-        format!("wellfed-fw-{}", self.0)
-    }
-
-    /// The KM4 archive Cargo writes for the package.
-    pub(crate) fn archive(&self) -> String {
-        format!("lib{}.a", self.package().replace('-', "_"))
-    }
-}
-
-/// Explicit opt-in image variants of the first-boot profile. A motion variant
-/// drives the motor; it is never built unless named, and its manifest says so.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Variant {
-    /// FW16: pulses the motor once per cold boot.
-    Fw16Pulse,
-    /// FW14: samples the power inputs read-only instead of the optics probe; no motion.
-    Fw14Adc,
-    /// FW11: never confirms and lets the watchdog reset it; no motion.
-    Fw11Reset,
-    /// FW11: fails its startup diagnostic on purpose; no motion.
-    Fw11Fail,
-    /// The normal image plus a signed network audio stream; no motion.
-    Speaker,
-}
-
-impl Variant {
-    /// The manifest name, which is also the KM4 Cargo feature.
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Fw16Pulse => "fw16-pulse",
-            Self::Fw14Adc => "fw14-adc",
-            Self::Fw11Reset => "fw11-reset",
-            Self::Fw11Fail => "fw11-fail",
-            Self::Speaker => "speaker",
-        }
-    }
-
-    pub(crate) fn motion_policy(self) -> Option<&'static str> {
-        (self == Self::Fw16Pulse).then_some("fw16-pulse-v1")
-    }
-
-    pub(crate) fn adc_policy(self) -> Option<&'static str> {
-        (self == Self::Fw14Adc).then_some("fw14-adc-v2")
-    }
-
-    pub(crate) fn trial_policy(self) -> Option<&'static str> {
-        match self {
-            Self::Fw11Reset => Some("fw11-reset-v1"),
-            Self::Fw11Fail => Some("fw11-fail-v1"),
-            _ => None,
-        }
-    }
+/// `name` as a device or firmware directory name: lowercase letters,
+/// digits and dashes, so it never leaves its parent directory.
+pub(crate) fn checked_name<'a>(kind: &str, name: &'a str) -> Result<&'a str> {
+    require(
+        !name.is_empty()
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'),
+        format!("{kind} names are lowercase letters, digits and dashes: {name:?}"),
+    )?;
+    Ok(name)
 }
 
 /// The checkout the tool was built from, and the paths it reads and writes.
@@ -255,43 +127,6 @@ impl Repo {
 
     pub(crate) fn private(&self) -> PathBuf {
         self.path("private")
-    }
-
-    /// The pinned SDK checkout every profile's worktree comes from.
-    pub(crate) fn source(&self) -> PathBuf {
-        self.path("private/upstream/ameba-rtos-d")
-    }
-
-    pub(crate) fn toolchains(&self) -> PathBuf {
-        self.path("private/toolchains")
-    }
-
-    /// The verified stock image: the pad table and layout reference.
-    pub(crate) fn stock(&self) -> PathBuf {
-        self.path("private/firmware/PLAF103_OTA_010115.bin")
-    }
-
-    pub(crate) fn layout(&self) -> PathBuf {
-        self.path("src/firmware/vendor/plaf103-layout.json")
-    }
-
-    pub fn output(&self, profile: Profile) -> PathBuf {
-        self.private().join("firmware-build").join(profile.name())
-    }
-
-    /// `src/firmware/vendor/sdk.lock.json`.
-    pub(crate) fn lock(&self) -> Result<SdkLock> {
-        Ok(wellfed_formats::load(
-            &self.path("src/firmware/vendor/sdk.lock.json"),
-        )?)
-    }
-
-    /// The pinned toolchain's binutils directory.
-    pub fn binutils(&self) -> Result<PathBuf> {
-        Ok(self
-            .toolchains()
-            .join(&self.lock()?.toolchain.directory)
-            .join("bin"))
     }
 }
 

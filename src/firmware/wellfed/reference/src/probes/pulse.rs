@@ -1,4 +1,4 @@
-//! FW16 first supervised motor pulse, built only with `--motion-probe`
+//! FW16 first supervised motor pulse, built only as the `fw16-pulse` variant
 //! (feature `fw16-pulse`, policy `fw16-pulse-v1`). Never the default image.
 //!
 //! Opens the board (motor STOP, emitters OFF, sensors), binds a fresh flash

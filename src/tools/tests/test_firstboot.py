@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[3]
 spec = importlib.util.spec_from_file_location("firstboot_review", ROOT / "src/tools/flash/review-development-image.py")
 review = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(review)
-BUILD = ROOT / "private/firmware-build/plaf103-firstboot"
+BUILD = ROOT / "private/firmware-build/plaf103/firstboot"
 CURRENT = ROOT / "private/fixtures/current-read/flash-read.bin"
 FRESH, STALE = current_build(BUILD)
 

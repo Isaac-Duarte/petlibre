@@ -21,7 +21,7 @@ use serde::Serialize;
 
 use crate::{Error, Result, digest, require};
 
-pub(crate) const LAYOUT: &str = "src/firmware/vendor/plaf103-layout.json";
+pub(crate) const LAYOUT: &str = "src/firmware/devices/plaf103/layout.json";
 const MAX_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_RUNS: usize = 128;
 /// The bank marker `81958711` as two little-endian words; a valid bank's image

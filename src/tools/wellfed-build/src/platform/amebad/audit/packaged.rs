@@ -12,7 +12,8 @@ use regex::Regex;
 use serde::Serialize;
 
 use super::{index, parse_hex, refuse, tool};
-use crate::{Core, Result, require, sha256};
+use crate::platform::amebad::Core;
+use crate::{Result, require, sha256};
 
 static TEXT_SECTION: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(

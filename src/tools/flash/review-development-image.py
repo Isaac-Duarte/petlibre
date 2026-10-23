@@ -104,12 +104,13 @@ def review(build):
     lock = json.loads((ROOT / "src/firmware/vendor/sdk.lock.json").read_text())
     raw = (build / "manifest.json").read_bytes()
     m = json.loads(raw)
-    require(m["profile"] == "plaf103-firstboot", "Only the reviewed UART startup profile is supported")
+    require(m.get("device") == "plaf103" and m["profile"] == "firstboot",
+            "Only the reviewed PLAF103 UART startup profile is supported")
     require(isinstance(m.get("firmware"), str), "Build manifest names no firmware; rebuild it")
     require(m["sdk_revision"] == lock["sdk"]["revision"] and
             m["toolchain_sha256"] == lock["toolchain"]["sha256"], "Unexpected SDK/toolchain")
     require(revision(build / "sdk") == m["sdk_revision"], "SDK worktree revision differs")
-    inputs_args = ("inputs", m["profile"], "--firmware", m["firmware"])
+    inputs_args = ("inputs", "--profile", m["profile"], "--device", m["device"], "--firmware", m["firmware"])
     expected_inputs = builder(*inputs_args)
     require(m["inputs"] == expected_inputs, "Build inputs are stale or incomplete; rebuild before review")
     for name, expected in m["inputs"].items():
@@ -143,7 +144,7 @@ def review(build):
             "Linked-code audits differ from build manifest")
     require(pinmap == m["km0_pinmap_audit"], "Linked pad table differs")
     ota_path = next(a["path"] for a in m["artifacts"] if Path(a["path"]).name == "OTA_All.bin")
-    layout = L.audit(build / ota_path, STOCK, ROOT / "src/firmware/vendor/plaf103-layout.json")
+    layout = L.audit(build / ota_path, STOCK, ROOT / "src/firmware/devices/plaf103/layout.json")
     mapper = factory()
     baseline = C.SECTORS.pinned_baseline(mapper.FLASH.read_bytes())
     rom = mapper.ROM.read_bytes()
@@ -195,7 +196,7 @@ def freeze(mode, build, output):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=("stock", "build"))
-    parser.add_argument("--build", type=Path, default=ROOT / "private/firmware-build/plaf103-firstboot")
+    parser.add_argument("--build", type=Path, default=ROOT / "private/firmware-build/plaf103/firstboot")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     os.umask(0o077)

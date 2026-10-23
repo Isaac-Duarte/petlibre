@@ -1,27 +1,43 @@
-.PHONY: help bootstrap baseline bringup plaf103 plaf103-firstboot test
+.PHONY: help bootstrap list baseline bringup device firstboot test
 
-# The firmware under ../wellfed/ that the Rust profiles link.
+# The board under ../devices/ (empty: the only one), the firmware under
+# ../wellfed/ that the Rust profiles link, and an optional image variant
+# the firmware declares (`make list`).
+DEVICE ?=
 FIRMWARE ?= reference
+VARIANT ?=
+
+BUILD = ../../../target/release/wellfed-build
+DEVICE_ARG = $(if $(DEVICE),--device $(DEVICE))
+VARIANT_ARG = $(if $(VARIANT),--variant $(VARIANT))
 
 help:
-	@echo "bootstrap: fetch and verify the pinned SDK and Linux toolchain"
+	@echo "bootstrap: fetch and verify the device platform's pinned SDK and toolchain"
+	@echo "list: the devices and firmwares (with their variants) this checkout builds"
 	@echo "baseline: build the unchanged SDK example in a private worktree"
-	@echo "bringup: build the Rust diagnostic application in a separate worktree"
-	@echo "plaf103: build/audit the diagnostic with stock-derived application OTA bank addresses"
-	@echo "plaf103-firstboot: build/audit UART-only SDK mains and the Rust diagnostic"
+	@echo "bringup: build the Rust application in a separate worktree"
+	@echo "device: build/audit the application with the device's stock-derived OTA bank addresses"
+	@echo "firstboot: build/audit UART-only SDK mains and the Rust application"
 	@echo "test: run hardware-independent Rust firmware tests on the host"
-	@echo "FIRMWARE=<name> picks the firmware the Rust profiles link (default: reference)."
+	@echo "DEVICE=<name> FIRMWARE=<name> VARIANT=<name> pick what to build (default: the only device, reference, none)."
 	@echo "These targets only build desktop artifacts; there is no flash target."
 
 # wellfed-build runs as its own executable: `cargo run` would set
 # RUSTUP_TOOLCHAIN, which a firmware build refuses as a compiler override.
-bootstrap baseline:
+$(BUILD): FORCE
 	cargo build --locked --release -p wellfed-build
-	../../../target/release/wellfed-build $@
 
-bringup plaf103 plaf103-firstboot:
-	cargo build --locked --release -p wellfed-build
-	../../../target/release/wellfed-build $@ --firmware $(FIRMWARE)
+bootstrap: $(BUILD)
+	$(BUILD) bootstrap $(DEVICE_ARG)
+
+list: $(BUILD)
+	$(BUILD) list
+
+baseline bringup device firstboot: $(BUILD)
+	$(BUILD) build --profile $@ $(DEVICE_ARG) --firmware $(FIRMWARE) $(VARIANT_ARG)
 
 test:
 	cargo test --locked -p wellfed-core -p wellfed-hal-common -p wellfed-hal -p wellfed-sdk -p wellfed-sdk-c -p wellfed-fw-reference -p wellfed-fw-blink
+
+.PHONY: FORCE
+FORCE:

@@ -4,7 +4,7 @@ name = "wellfed-build"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
-description = "Local AmebaD firmware builds: pinned SDK and toolchain, source-bound identity, SDK overlays and the linked-image audits"
+description = "Local firmware builds: devices and firmwares from config, pinned platform SDKs and toolchains, source-bound identity, SDK overlays and the linked-image audits"
 publish.workspace = true
 
 [dependencies]
@@ -19,6 +19,7 @@ serde_json.workspace = true
 sha2 = "0.11"
 tempfile.workspace = true
 thiserror.workspace = true
+toml = { version = "1", default-features = false, features = ["parse", "serde", "std"] }
 
 [lints]
 workspace = true

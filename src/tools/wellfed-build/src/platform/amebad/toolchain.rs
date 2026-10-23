@@ -13,7 +13,7 @@ use std::process::Command;
 
 use wellfed_formats::lock::{SdkLock, ToolchainLock};
 
-use crate::identity::TOOL_LOCK;
+use super::{TOOL_LOCK, lock, source, toolchains};
 use crate::{Error, Repo, Result, digest, git, require, revision, run, text, which};
 
 /// Per-file hashes of the executables the SDK build and audits invoke.
@@ -143,7 +143,7 @@ fn extract_toolchain(
 
 /// Fetch (once) and verify the pinned SDK checkout and toolchain; returns
 /// the toolchain directory.
-pub fn bootstrap(repo: &Repo) -> Result<PathBuf> {
+pub(crate) fn bootstrap(repo: &Repo) -> Result<PathBuf> {
     require(
         cfg!(target_os = "linux") && cfg!(target_arch = "x86_64"),
         "This initial toolchain setup supports Linux x86_64 only",
@@ -156,8 +156,8 @@ pub fn bootstrap(repo: &Repo) -> Result<PathBuf> {
         )?;
     }
 
-    let lock = repo.lock()?;
-    let source = repo.source();
+    let lock = lock(repo)?;
+    let source = source(repo);
     if !source.exists() {
         fs::create_dir_all(source.parent().unwrap_or(&repo.root))?;
         run(Command::new("git").arg("init").arg(&source))?;
@@ -173,7 +173,7 @@ pub fn bootstrap(repo: &Repo) -> Result<PathBuf> {
         "SDK checkout does not match sdk.lock.json; left unchanged",
     )?;
 
-    let toolchains = repo.toolchains();
+    let toolchains = toolchains(repo);
     fs::create_dir_all(&toolchains)?;
     let name = lock
         .toolchain
@@ -323,7 +323,7 @@ mod tests {
     #[test]
     fn pins_must_describe_the_sdk_archive() {
         let repo = Repo::here().unwrap();
-        let mut lock = repo.lock().unwrap();
+        let mut lock = lock(&repo).unwrap();
         assert!(!toolchain_lock(&repo, &lock).unwrap().is_empty());
         lock.toolchain.sha256 = "0".repeat(64);
         assert!(toolchain_lock(&repo, &lock).is_err());

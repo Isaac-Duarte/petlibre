@@ -15,14 +15,15 @@ def evidence(available, reason):
     return decorate
 
 
-def current_inputs(profile, firmware=None):
+def current_inputs(profile, firmware=None, device=None):
     """A profile's current input digests, from `wellfed-build inputs`, for the
-    firmware a build manifest names (the builder's default when it names none)."""
-    selected = ["--firmware", firmware] if firmware else []
+    device and firmware a build manifest names (the builder's defaults when it
+    names none)."""
+    selected = (["--firmware", firmware] if firmware else []) + (["--device", device] if device else [])
     try:
         result = subprocess.run(["cargo", "run", "--quiet", "--locked", "--release", "-p", "wellfed-build",
-                                 "--", "inputs", profile, *selected], cwd=ROOT, check=True, capture_output=True,
-                                text=True)
+                                 "--", "inputs", "--profile", profile, *selected], cwd=ROOT, check=True,
+                                capture_output=True, text=True)
     except subprocess.CalledProcessError as error:
         raise RuntimeError(error.stderr.strip() or "wellfed-build inputs failed") from None
     return json.loads(result.stdout)
@@ -39,7 +40,7 @@ def current_build(directory):
         return False, f"Requires completed ignored SDK build: {manifest.parent.name}"
     try:
         recorded = json.loads(manifest.read_text())
-        current = current_inputs(recorded["profile"], recorded.get("firmware"))
+        current = current_inputs(recorded["profile"], recorded.get("firmware"), recorded.get("device"))
     except (OSError, ValueError, KeyError, RuntimeError) as error:
         return False, f"Cannot compare {manifest} with current sources: {error}"
     if recorded.get("inputs") != current:

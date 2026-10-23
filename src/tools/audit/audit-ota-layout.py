@@ -103,7 +103,7 @@ def main():
     parser.add_argument("image", type=Path)
     parser.add_argument("--stock-reference", type=Path,
                         default=ROOT / "private/firmware/PLAF103_OTA_010115.bin")
-    parser.add_argument("--layout", type=Path, default=ROOT / "src/firmware/vendor/plaf103-layout.json")
+    parser.add_argument("--layout", type=Path, default=ROOT / "src/firmware/devices/plaf103/layout.json")
     args = parser.parse_args()
     try:
         print(json.dumps(audit(args.image, args.stock_reference, args.layout), indent=2))

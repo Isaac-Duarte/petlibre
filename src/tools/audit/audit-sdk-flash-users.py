@@ -120,7 +120,7 @@ def inventory(elf, nm, objdump):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--build", type=Path, default=ROOT / "private/firmware-build/plaf103")
+    parser.add_argument("--build", type=Path, default=ROOT / "private/firmware-build/plaf103/device")
     parser.add_argument("--binutils", type=Path, default=DEFAULT_TOOLS)
     args = parser.parse_args()
     args.binutils = args.binutils.resolve()

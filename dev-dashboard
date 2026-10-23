@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Serve the read-only bench page for this checkout, attached to whatever is
+# running: a bench command or integration run in another terminal, and a
+# petlibre-local serve if one is up. Builds the page and binary when needed.
+#
+#   ./dev-dashboard                          # http://127.0.0.1:8780/
+#   ./dev-dashboard --ui-port 8781
+#   ./dev-dashboard --listen 100.x.y.z       # a Tailscale address, for a phone
+#
+# Extra arguments go to petlibre-bench. It never touches relays, the UART or
+# flash; Ctrl+C stops it.
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$root"
+
+dist="web/apps/bench/dist/index.html"
+# Rebuild the page when it is missing or any web source is newer than it.
+if [[ ! -f "$dist" ]] || [[ -n "$(find web -path '*/node_modules' -prune -o -path '*/dist' -prune -o -type f -newer "$dist" -print -quit)" ]]; then
+  make ui
+fi
+
+# Cargo skips the build when nothing changed.
+cargo build --locked --release -p petlibre-bench --features ui
+
+exec ./target/release/petlibre-bench --root "$root" --ui "$@"

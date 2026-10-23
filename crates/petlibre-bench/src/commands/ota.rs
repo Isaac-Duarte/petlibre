@@ -487,6 +487,10 @@ pub(crate) fn duration(seconds: f64) -> String {
     if seconds < 60.0 {
         return format!("{seconds:.1} s");
     }
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "a run's length in whole seconds"
+    )]
     let whole = seconds.round() as u64;
     format!("{} min {:02} s", whole / 60, whole % 60)
 }

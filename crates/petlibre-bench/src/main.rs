@@ -7,6 +7,8 @@
 //! reads; `demo` refuses to start while another command is recorded as
 //! running there.
 
+#![forbid(unsafe_code)]
+
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::atomic::Ordering;

@@ -456,12 +456,17 @@ impl Tools for Processes {
         samplerate: u64,
     ) -> Result<Box<dyn Analyzer>> {
         let channels: Vec<String> = (0..8).map(|i| format!("D{i}")).collect();
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "a capture of a few minutes"
+        )]
+        let millis = (seconds * 1000.0) as u64;
         let child = Command::new("sigrok-cli")
             .current_dir(&self.root)
             .args(["--driver", "fx2lafw", "--config"])
             .arg(format!("samplerate={samplerate}"))
             .arg("--time")
-            .arg(((seconds * 1000.0) as u64).to_string())
+            .arg(millis.to_string())
             .arg("--channels")
             .arg(channels.join(","))
             .args(["--output-format", "binary", "--output-file"])

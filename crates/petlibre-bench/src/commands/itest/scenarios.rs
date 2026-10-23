@@ -185,7 +185,7 @@ fn ota_update(ctx: &mut Ctx) -> Result<()> {
 
 fn requests(ctx: &mut Ctx) -> Result<()> {
     let since = ctx.mark()?;
-    let ping = ctx.ask(Request::Ping)?;
+    let ping = ctx.ask(&Request::Ping)?;
     reply_ok(&ping)?;
     require(
         ping.uptime_ms.is_some(),
@@ -195,7 +195,7 @@ fn requests(ctx: &mut Ctx) -> Result<()> {
         r.is("PLMQT1", &[("op", "ping"), ("ok", "1")])
     })?;
 
-    reply_ok(&ctx.ask(Request::Health)?)?;
+    reply_ok(&ctx.ask(&Request::Health)?)?;
 
     ctx.until_status("a synced firmware clock", HEALTH_SECONDS, clock_synced)
         .map(|report| ctx.note(&format!("  {report}")))?;
@@ -235,7 +235,7 @@ fn clock_synced(status: &LocalStatus) -> Result<String> {
 }
 
 fn read_settings(ctx: &mut Ctx) -> Result<Reply> {
-    let settings = ctx.ask(Request::Settings(SettingsChange::default()))?;
+    let settings = ctx.ask(&Request::Settings(SettingsChange::default()))?;
     reply_ok(&settings)?;
     require(
         settings.writable == Some(true),
@@ -250,7 +250,7 @@ fn set_settings(ctx: &mut Ctx, change: &SettingsChange) -> Result<()> {
     let generation = read_settings(ctx)?.generation.unwrap_or(0);
     let since = ctx.mark()?;
 
-    reply_ok(&ctx.ask(Request::Settings(change.clone()))?)?;
+    reply_ok(&ctx.ask(&Request::Settings(change.clone()))?)?;
     ctx.expect("PLCFG1 saved", since, SAVE_SECONDS, |r| {
         r.tag == "PLCFG1"
             && r.first == "saved"
@@ -403,7 +403,7 @@ fn wifi_source(status: &LocalStatus, source: &str) -> Result<String> {
 
 /// A read of the Wi-Fi store.
 fn wifi_state(ctx: &mut Ctx) -> Result<Reply> {
-    ctx.ask(Request::Wifi(WifiChange::default()))
+    ctx.ask(&Request::Wifi(WifiChange::default()))
 }
 
 fn clear_wifi() -> Request {
@@ -431,7 +431,7 @@ fn wifi_fallback(ctx: &mut Ctx) -> Result<()> {
 
 fn wrong_credentials(ctx: &mut Ctx) -> Result<()> {
     let since = ctx.mark()?;
-    reply_ok(&ctx.ask(Request::Wifi(WifiChange {
+    reply_ok(&ctx.ask(&Request::Wifi(WifiChange {
         ssid: Some(ABSENT_SSID.into()),
         psk: Some(WRONG_PSK.into()),
         clear: false,
@@ -465,7 +465,7 @@ fn clear_credentials(ctx: &mut Ctx) -> Result<()> {
         return Ok(());
     }
 
-    reply_ok(&ctx.ask(clear_wifi())?)?;
+    reply_ok(&ctx.ask(&clear_wifi())?)?;
     ctx.expect("PLCFG1 net saved stored=0", since, SAVE_SECONDS, |r| {
         r.is("PLCFG1", &[("stored", "0")]) && r.body_starts("net saved")
     })?;
@@ -712,7 +712,7 @@ fn soak(ctx: &mut Ctx) -> Result<()> {
     let (mut pings, mut slowest) = (0u32, 0.0f64);
     while ctx.rig.clock() < end {
         let asked = ctx.rig.clock();
-        reply_ok(&ctx.ask(Request::Ping)?)?;
+        reply_ok(&ctx.ask(&Request::Ping)?)?;
         slowest = slowest.max(ctx.rig.clock() - asked);
         pings += 1;
         ctx.idle(SOAK_PERIOD_SECONDS)?;
@@ -784,7 +784,7 @@ pub(super) fn restore_state(ctx: &mut Ctx, want: &DeviceState, now: &DeviceState
             }
         ));
         if !want.wifi_stored
-            && let Err(error) = ctx.ask(clear_wifi()).and_then(|reply| reply_ok(&reply))
+            && let Err(error) = ctx.ask(&clear_wifi()).and_then(|reply| reply_ok(&reply))
         {
             changed.push(format!("clearing them failed: {error}"));
         }

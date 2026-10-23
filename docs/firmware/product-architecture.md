@@ -24,6 +24,11 @@ The owner's target (Oct 23, 2026): the Petlibro experience, fully open and usabl
 | Server | A new `petlibre-server` crate | Growing `petlibre-local` would mix bench shortcuts and the stock protocol into the owners' product |
 | Stock firmware | Used only to install and roll back | Ongoing stock control means two device protocols forever |
 | Several feeders | The app manages each one directly | Requiring a server for a second feeder weakens the no-server promise |
+| App | An Android app in Flutter over a sans-IO Rust core. It talks to feeders directly and to a server when one exists | Tauri: one UI, but mobile BLE and Wi-Fi need native plugins and the app feels like a web page. Native Swift/Kotlin: two or three UIs for one maintainer. iOS and a desktop app: not needed now |
+| Web | Only the server's Svelte UI; the browser never talks to the feeder | Browsers have no raw TCP, no mDNS and no Web Bluetooth on iOS or Firefox, and Chrome restricts HTTPS pages reaching LAN devices. A UI served by the feeder costs flash and a second listener, and its page arrives over plain HTTP |
+| No-server owners | Use the Android app | — |
+| Installer | The Android app, and `petlibre-server` or the CLI | — |
+| Distribution | APKs and server builds as GitHub releases | App stores and F-Droid later |
 | Home Assistant | **Paused** (Oct 23) | See [Home Assistant](#home-assistant) |
 | Notifications, remote access | **Deferred**; no notifications for now | See [Deferred](#deferred) |
 | Hardware | The PLAF103 first; a device layer generic enough for other AmebaD Petlibro models | — |
@@ -31,14 +36,17 @@ The owner's target (Oct 23, 2026): the Petlibro experience, fully open and usabl
 ## Components
 
 ```text
-   Tauri app ── BLE (setup mode only) ─────────┐
-      │                                        ▼
-      │  Noise message stream (mDNS)       ┌────────┐   NTP
-      ├───────────────────────────────────►│ feeder │◄──────
-      │                                    └────────┘
-   petlibre-server (optional) ──────────────►  ▲
-      history store, release fetching          │ update offers
-                                               │ (owner-approved)
+  Android app (Flutter) ── BLE (setup mode only) ──┐
+      │   │                                        ▼
+      │   │  Noise message stream (mDNS)       ┌────────┐   NTP
+      │   └───────────────────────────────────►│ feeder │◄──────
+      │ HTTP                                   └────────┘
+      ▼                                            ▲
+  petlibre-server (optional) ── Noise stream ──────┘
+      history store, release fetching, installer
+      ▲
+      │ HTTP
+  browser (server's Svelte UI)
 ```
 
 In code:
@@ -46,7 +54,15 @@ In code:
 - **SDK (`src/sdk/`):** mechanisms only. The runtime, clock and time sources, journal, feeding owner, buttons, event log, Noise transport, BLE setup mode and updater.
 - **`petlibre-feeder`:** a `no_std` library with the product policy. Schedules, child lock, alerts, the history policy, and the request and entity model the API exposes. It is host-tested, and the server's simulator can reuse it.
 - **Firmware (`src/firmware/petlibre/feeder`):** the PLAF103's glue between the two. Another model gets its own thin firmware.
+- **`petlibre-client`:** a sans-IO Rust core. It turns bytes in into bytes out (the Noise handshake, pairing, invites, requests, event-cursor sync and the installer's steps) and never opens a socket or a radio. The server drives it with tokio, the Android app with Dart IO, and WASM can run it later.
 - **`petlibre-server`:** the owner's server. Shared pieces (the Noise client, the request types, the release and signing code) come out of `petlibre-local` and `petlibre-bench` into libraries. `petlibre-local` stays the bench and stock-protocol tool, and gets simpler as those pieces leave.
+
+## Frontends
+
+- **Android app (Flutter).** It owns all IO through mature plugins: BLE (`flutter_blue_plus`), mDNS/NSD, sockets and joining a Wi-Fi network for the installer. All protocol logic goes through `petlibre-client` over `flutter_rust_bridge`, which also generates the Dart types. The app talks to feeders on the LAN directly, and to a `petlibre-server` over HTTP for long history and pet profiles when one exists. It can also run the stock installer: it joins stock's setup access point, sends the `DL` frame and serves the image in the foreground for about 3 minutes ([consumer installation](consumer-installation.md)).
+- **Server web UI (Svelte, `src/web`).** It reuses the bench's stack and the TypeScript types generated from Rust. Browsers reach the feeder only through the server.
+- **Two UIs.** The app and the web UI are separate codebases. That cost is accepted for a native-feeling mobile app; Rust-generated types keep their data models identical.
+- **Spike first.** Before building screens, a throwaway Android app proves the risky parts against a host-simulated feeder: BLE scanning and writes, NSD discovery on a real network, and a Noise session through `petlibre-client`.
 
 ## Setup and pairing
 

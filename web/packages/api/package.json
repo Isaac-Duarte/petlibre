@@ -1,0 +1,15 @@
+{
+  "name": "@wellfed/api",
+  "private": true,
+  "type": "module",
+  "description": "Typed clients for the wellfed tools' HTTP views; the types are generated from Rust",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "check": "tsc -p ."
+  },
+  "devDependencies": {
+    "typescript": "6.0.3"
+  }
+}

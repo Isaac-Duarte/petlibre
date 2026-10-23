@@ -21,7 +21,7 @@ use wellfed_bench::config::{Config, STATUS_DIR};
 use wellfed_bench::relay::Relay;
 use wellfed_bench::status::{self, Status};
 use wellfed_bench::tools::{Processes, default_build_bin, default_flash_bin, default_local_bin};
-use wellfed_bench::{Error, INTERRUPTED, ui};
+use wellfed_bench::{Error, INTERRUPTED};
 
 #[derive(Parser)]
 #[command(
@@ -248,16 +248,32 @@ fn run(cli: Cli) -> wellfed_bench::Result<u8> {
 }
 
 /// Bind the progress page, so a busy port refuses before any bench command.
+#[cfg(feature = "ui")]
 fn start_page(
     root: &Path,
     flash_bin: &Path,
     listen: &str,
     port: u16,
 ) -> wellfed_bench::Result<std::thread::JoinHandle<()>> {
-    let listen = ui::Listen::new(listen, port)?;
-    let handle = ui::start(root.to_path_buf(), flash_bin.to_path_buf(), &listen)?;
+    let listen = wellfed_bench::ui::Listen::new(listen, port)?;
+    let handle = wellfed_bench::ui::start(root.to_path_buf(), flash_bin.to_path_buf(), &listen)?;
     wellfed_bench::say!("Bench page on {} (Ctrl+C to stop)", listen.url());
     Ok(handle)
+}
+
+/// Without the web app built in, `--ui` refuses before any bench command.
+#[cfg(not(feature = "ui"))]
+fn start_page(
+    _root: &Path,
+    _flash_bin: &Path,
+    _listen: &str,
+    _port: u16,
+) -> wellfed_bench::Result<std::thread::JoinHandle<()>> {
+    Err(Error::Bench(
+        "This wellfed-bench was built without the web page; run `make ui`, then \
+         build with `--features ui`"
+            .into(),
+    ))
 }
 
 /// The bench a command runs on: its config, the relay board when the

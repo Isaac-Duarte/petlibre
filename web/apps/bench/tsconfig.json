@@ -1,0 +1,7 @@
+{
+  "extends": ["@tsconfig/svelte/tsconfig.json", "../../tsconfig.base.json"],
+  "compilerOptions": {
+    "types": ["svelte", "vite/client"]
+  },
+  "include": ["src", "e2e", "vite.config.ts", "playwright.config.ts"]
+}

@@ -17,6 +17,10 @@ use serde_json::{Map, Value};
 /// A `wellfed-local` status document.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub(crate) struct LocalStatus {
+    /// The feeder's MQTT session reaches the server's broker. Only the page reads it.
+    #[cfg_attr(not(any(feature = "ui", test)), allow(dead_code))]
+    #[serde(default)]
+    pub broker_connected: bool,
     /// `None` when the server has no replacement-firmware role.
     #[serde(default)]
     pub replacement: Option<Replacement>,
@@ -50,7 +54,8 @@ impl Default for Replacement {
 }
 
 /// The firmware's health message.
-#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(default)]
 pub(crate) struct Health {
     /// The startup identity, hex in either case.
@@ -66,6 +71,7 @@ pub(crate) struct Health {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(default)]
 pub(crate) struct Clock {
     pub syncs: u64,
@@ -74,14 +80,16 @@ pub(crate) struct Clock {
     pub unix_ms: Option<i64>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(default)]
 pub(crate) struct Wifi {
     /// Which credentials joined this boot: `build`, `stored` or `fallback`.
     pub source: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(default)]
 pub(crate) struct Transport {
     pub connects: u64,

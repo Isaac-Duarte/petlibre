@@ -11,3 +11,14 @@ __pycache__/
 *.pcap
 *.pcapng
 .DS_Store
+
+# Web frontends: dependencies, builds (embedded by `--features ui`) and test output
+node_modules/
+/web/**/dist/
+/web/**/test-results/
+/web/**/playwright-report/
+/web/**/.vite/
+*.tsbuildinfo
+
+# Agent worktrees: scratch checkouts, not sources
+/.claude/worktrees/

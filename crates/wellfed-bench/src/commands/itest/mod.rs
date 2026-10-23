@@ -26,11 +26,13 @@ use crate::{Error, Result, require};
 
 mod live;
 mod log;
+pub(crate) mod record;
 mod scenarios;
 #[cfg(test)]
 mod tests;
 
 use log::{Log, Record};
+use record::{Evidence, RunRecord, ScenarioRecord, ScenarioVerdict};
 use scenarios::{DeviceState, SCENARIOS, Scenario};
 
 /// How often waits look at the UART and the server again.
@@ -48,7 +50,9 @@ const INSTALL_SECONDS: f64 = 15.0 * 60.0;
 const SILENT_SECONDS: f64 = 180.0;
 
 /// How much of the suite a run takes on; each tier includes the cheaper ones.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "lowercase")]
 pub enum Tier {
     /// Minutes, no cold boots or installs beyond the build under test.
     Smoke,
@@ -133,7 +137,7 @@ pub struct ItestArgs {
     #[arg(long)]
     pub python: Option<PathBuf>,
     /// wellfed-local config the suite serves with (root-relative).
-    #[arg(long, default_value = "private/server.json")]
+    #[arg(long, default_value = crate::local_api::SERVER_CONFIG)]
     pub config: PathBuf,
     /// Hotspot description: its NetworkManager `connection` (root-relative).
     #[arg(long, default_value = "private/hotspot.json")]
@@ -617,11 +621,11 @@ enum Verdict {
 
 impl Verdict {
     /// As the run's record writes it.
-    fn word(&self) -> &'static str {
+    fn kind(&self) -> ScenarioVerdict {
         match self {
-            Self::Pass => "pass",
-            Self::Fail(_) => "fail",
-            Self::Skip(_) => "skip",
+            Self::Pass => ScenarioVerdict::Pass,
+            Self::Fail(_) => ScenarioVerdict::Fail,
+            Self::Skip(_) => ScenarioVerdict::Skip,
         }
     }
 
@@ -640,24 +644,46 @@ struct Report {
     seconds: f64,
 }
 
-/// `NAME-itest.json`: the run's record, per-scenario verdicts beside the
-/// captures they rest on.
-#[derive(Debug, Serialize)]
-struct RunRecord {
-    name: String,
-    /// Always `physical`: these verdicts come from the feeder on the bench.
-    evidence: &'static str,
-    scenarios: Vec<ScenarioRecord>,
-    silent: Option<String>,
-    captures: Vec<String>,
+/// One scenario as the page lists it: what it checks and what it needs.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub(crate) struct CatalogEntry {
+    pub name: &'static str,
+    pub about: &'static str,
+    /// The cheapest tier that runs it.
+    pub tier: Tier,
+    pub needs: Vec<Requirement>,
+    /// Installs the build under test; every other scenario needs it.
+    pub baseline: bool,
 }
 
-#[derive(Debug, Serialize)]
-struct ScenarioRecord {
-    scenario: &'static str,
-    verdict: &'static str,
-    reason: Option<String>,
-    seconds: f64,
+/// A session flag a scenario needs, and why.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub(crate) struct Requirement {
+    pub flag: &'static str,
+    pub why: &'static str,
+}
+
+/// The whole suite, in run order.
+pub(crate) fn catalog() -> Vec<CatalogEntry> {
+    SCENARIOS
+        .iter()
+        .map(|s| CatalogEntry {
+            name: s.name,
+            about: s.about,
+            tier: s.tier,
+            needs: s
+                .needs
+                .iter()
+                .map(|need| Requirement {
+                    flag: need.flag(),
+                    why: need.why(),
+                })
+                .collect(),
+            baseline: s.baseline,
+        })
+        .collect()
 }
 
 /// The names of the scenarios a run takes on: its status steps.
@@ -801,8 +827,8 @@ fn summary(
     let scenarios = reports
         .iter()
         .map(|report| ScenarioRecord {
-            scenario: report.scenario,
-            verdict: report.verdict.word(),
+            scenario: report.scenario.into(),
+            verdict: report.verdict.kind(),
             reason: report.verdict.reason().map(str::to_string),
             seconds: (report.seconds * 10.0).round() / 10.0,
         })
@@ -810,7 +836,7 @@ fn summary(
 
     RunRecord {
         name: name.into(),
-        evidence: "physical",
+        evidence: Evidence::Physical,
         scenarios,
         silent: silent.map(|s| s.0.clone()),
         captures: captures.to_vec(),
@@ -849,19 +875,14 @@ fn recovery_hint(name: &str, baseline: Option<&Baseline>) -> Vec<String> {
 
 /// `--list`: each scenario with what it needs.
 pub fn listing() -> Vec<String> {
-    SCENARIOS
+    catalog()
         .iter()
         .map(|s| {
-            let mut needs: Vec<&str> = s.needs.iter().map(|need| need.flag()).collect();
-            if s.tier > Tier::Smoke {
-                needs.insert(
-                    0,
-                    if s.tier == Tier::Soak {
-                        "soak"
-                    } else {
-                        "standard"
-                    },
-                );
+            let mut needs: Vec<&str> = s.needs.iter().map(|need| need.flag).collect();
+            match s.tier {
+                Tier::Smoke => {}
+                Tier::Standard => needs.insert(0, "standard"),
+                Tier::Soak => needs.insert(0, "soak"),
             }
             let needs = if needs.is_empty() {
                 String::new()
@@ -882,7 +903,7 @@ impl super::Bench {
         let record = self
             .root
             .join(VERIFICATION)
-            .join(format!("{name}-itest.json"));
+            .join(format!("{name}{}", record::SUFFIX));
         self.fresh(&record)?;
         std::fs::create_dir_all(self.root.join(VERIFICATION))?;
 
@@ -904,7 +925,7 @@ impl super::Bench {
         for report in &reports {
             let verdict = match report.verdict {
                 Verdict::Fail(_) => "FAIL",
-                ref other => other.word(),
+                ref other => other.kind().as_str(),
             };
             let reason = report.verdict.reason().unwrap_or("");
             say!(

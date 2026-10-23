@@ -44,6 +44,7 @@ Old on-disk evidence and stale file fields may break when that makes the code si
 | Any Rust edit | `cargo fmt --all`, then `make check PYTHON=.venv/bin/python` (the contributor gate) |
 | Builder, audits, formats or flash review | Also `make check-fixtures PYTHON=.venv/bin/python` against fresh builds (`make -C firmware plaf103 plaf103-firstboot`) |
 | Firmware crates | Also a fresh image build, so its link, RAM-park and stack audits run |
+| `web/`, or the views `wellfed-bench --ui` serves | Also `make check-web` (needs Node and pnpm): web types, unit tests, the build, and Playwright against the real binary |
 
 A skipped or missing fixture is not a passing check.
 

@@ -21,11 +21,11 @@ pub(crate) const CURRENT: &str = "current.json";
 pub(crate) const LOG: &str = "current.log";
 pub(crate) const HISTORY: &str = "history.jsonl";
 pub(crate) const RELAYS: &str = "relays.json";
-pub(crate) const SCRIPT: &str = "script.json";
 const KEPT_LINES: usize = 40;
 
 /// How a command went, as `current.json` and the history record it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum Outcome {
     #[default]
@@ -39,6 +39,7 @@ pub(crate) enum Outcome {
 
 /// Where one of a command's steps stands; the page colours its rows by it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum StepState {
     Pending,
@@ -55,6 +56,7 @@ impl StepState {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub(crate) struct Current {
     #[serde(default)]
     pub pid: u32,
@@ -96,13 +98,44 @@ impl Current {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub(crate) struct Step {
     pub label: String,
     pub state: StepState,
+    /// When it began running and when it finished, for the page's timers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finished: Option<f64>,
+}
+
+impl Step {
+    fn pending(label: &str) -> Self {
+        Self {
+            label: label.into(),
+            state: StepState::Pending,
+            started: None,
+            finished: None,
+        }
+    }
+
+    /// Move to `state`, stamping the start or finish it implies.
+    fn set(&mut self, state: StepState) {
+        let at = now();
+        match state {
+            StepState::Pending => {}
+            StepState::Running => self.started = Some(at),
+            StepState::Done | StepState::Failed | StepState::Skipped => {
+                self.finished = Some(at);
+            }
+        }
+        self.state = state;
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub(crate) struct Progress {
     pub done: u64,
     pub total: u64,
@@ -114,6 +147,7 @@ pub(crate) struct Progress {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub(crate) struct Capture {
     /// Root-relative capture directory.
     pub path: String,
@@ -122,6 +156,7 @@ pub(crate) struct Capture {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub(crate) struct Transfer {
     /// Root-relative session directory.
     pub path: String,
@@ -132,12 +167,14 @@ pub(crate) struct Transfer {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct FlashTool {
     pub path: String,
     pub sha256: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub(crate) struct HistoryEntry {
     pub command: String,
     #[serde(default)]
@@ -153,6 +190,7 @@ pub(crate) struct HistoryEntry {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub(crate) struct RelayState {
     pub on: bool,
     pub at: f64,
@@ -197,13 +235,7 @@ impl Status {
             name: name.map(Into::into),
             started: now(),
             outcome: Outcome::Running,
-            steps: steps
-                .iter()
-                .map(|s| Step {
-                    label: (*s).into(),
-                    state: StepState::Pending,
-                })
-                .collect(),
+            steps: steps.iter().map(|label| Step::pending(label)).collect(),
             ..Current::default()
         });
 
@@ -224,7 +256,7 @@ impl Status {
         }
         for s in &mut state.steps {
             if s.state == StepState::Running {
-                s.state = StepState::Done;
+                s.set(StepState::Done);
             }
         }
 
@@ -235,14 +267,11 @@ impl Status {
         {
             Some(index) => index,
             None => {
-                state.steps.push(Step {
-                    label: label.into(),
-                    state: StepState::Pending,
-                });
+                state.steps.push(Step::pending(label));
                 state.steps.len() - 1
             }
         };
-        state.steps[index].state = StepState::Running;
+        state.steps[index].set(StepState::Running);
         state.progress = None;
         self.write_quietly(true);
     }
@@ -263,7 +292,7 @@ impl Status {
             .iter_mut()
             .find(|s| s.label == label && s.state.unfinished())
         {
-            step.state = state;
+            step.set(state);
         }
         self.write_quietly(true);
     }
@@ -362,11 +391,11 @@ impl Status {
         let pass = code == 0;
         for s in &mut state.steps {
             if s.state == StepState::Running {
-                s.state = if pass {
+                s.set(if pass {
                     StepState::Done
                 } else {
                     StepState::Failed
-                };
+                });
             }
         }
 

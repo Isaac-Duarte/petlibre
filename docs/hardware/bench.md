@@ -174,18 +174,38 @@ Each command except `status` records its steps, the flash client's progress line
 
 The fields match what the Python bench wrote, so older history still shows.
 
-`--ui` serves a read-only page of those files on `http://127.0.0.1:8780/`:
+`--ui` serves a read-only page on `http://127.0.0.1:8780/`:
 - `wellfed-bench --ui` alone runs until Ctrl+C.
 - `wellfed-bench --ui flash-execute …` serves it while that command runs.
 
-The page only reads the status files and evidence directories. It never opens a serial port, so it can run beside any command. Its assets are embedded in the binary. It binds to loopback by default because the page shows private UART output. `--listen ADDRESS` serves another interface, for example the Tailscale address to reach it from a phone. There is no access token: anyone who can reach that address can read the page, so name only a private interface such as Tailscale. Wildcard addresses are refused. Allowing that port through the host firewall is the owner's change. `--ui-port` changes the port.
+**Building it.** The page is optional. It is a Svelte app in `web/apps/bench`, which the binary embeds only when built with the `ui` feature:
 
-The page shows:
-- **Header:** relay and UART port presence, the last recorded relay states (not queried), the `wellfed-flash` hash, the build and bank from the newest replacement-firmware start banner in a capture, and the running command. It does not stay pinned while scrolling.
-- **Now:** a summary line with the state, elapsed time and step count, then the steps and relays beside bars with straight-line ETAs for the tool's own counts, an update's estimated transfer and the active capture, plus the next command to run after review. The tab title carries the state.
-- **Live log** and **Latest RX log** side by side at the same height. The live log streams the command's full output; you can filter it, pause following, or copy it. Stops, refusals, faults and NAKs are highlighted; the flash client's JSON summaries are coloured by their `error` and `status` fields, so a successful summary with `"error":null` reads as success.
-- **Sessions:** the ten newest session names (**Show all** for the rest) with evidence parts, report state and age. Selecting one shows the plan (bank, sectors, erases, image hashes, plan SHA-256) and a copyable execute line above the list. A report still marked `running` whose command is no longer live reads as `ended` (grey, italic): the process stopped without recording an outcome.
-- **Recent commands:** the newest eight (**Show all** for up to 15) with start time, duration and outcome.
+```
+make ui                                   # pnpm in web/: builds web/apps/bench/dist
+cargo build --locked --release -p wellfed-bench --features ui
+```
+
+A binary built without the feature refuses `--ui` before any bench command runs. Node and pnpm are needed only for `make ui` and `make check-web`, never for `make check`. The page's TypeScript types (`web/packages/api/src/bench.gen.ts`) are generated from the Rust views, and a test in `make check` fails when they are stale (`UPDATE_BINDINGS=1 cargo test -p wellfed-bench bindings` rewrites them).
+
+**What it reads.** The page reads only the status files, the evidence directories and the local server's status. It never opens a serial port, so it can run beside any command, and nothing it does writes. The feeder panel asks `wellfed-local serve` for `GET /api/status` on the address and token in `private/server.json`, every 5 seconds; that read changes nothing on the server or the feeder. When the server is down or not configured, the panel says so.
+
+**Network.** The page binds to loopback by default because it shows private UART output. `--listen ADDRESS` serves another interface, for example the Tailscale address to reach it from a phone. There is no access token: anyone who can reach that address can read the page, so name only a private interface such as Tailscale. Wildcard addresses are refused. Allowing that port through the host firewall is the owner's change. `--ui-port` changes the port.
+
+The page has four views (keys `g o`, `g t`, `g s`, `g l`; `/` filters the log):
+- **Strip** (every view): relay and UART port presence, the last recorded relay states (not queried), the `wellfed-flash` hash, the build and bank from the newest replacement-firmware start banner in a capture, and the running command.
+- **Overview:**
+  - **Now:** the command, its outcome and elapsed time. Steps show their own durations. While the command runs, bars show straight-line ETAs for the tool's own counts, an update's estimated transfer and the active capture. The next command to run after review is shown with a copy button. The tab title carries the state.
+  - **Feeder:** online, stale or offline; health age, build, bank, faults, Wi-Fi credential source, clock and transport reconnects; recent request replies.
+  - **Latest integration run:** each scenario's verdict, or the live run's progress.
+  - **Recent commands.**
+- **Tests:**
+  - **Run in progress:** each scenario with what it checks and its time. The running one shows its current wait and its notes from the log.
+  - **Run history:** every `NAME-itest.json` against every scenario, newest on the left. A live run fills the first column. Each row has the pass rate over runs that reached a verdict, the median passing time and the last failure. **Flaky** marks two or more pass/fail changes in the last 20 runs. Selecting a run opens its record: verdicts and reasons, the UART recovery commands if the feeder went silent, and the tails of its captures and `NAME-servers.log`. A run's link (`#/tests/NAME`) can be shared.
+  - **Start a run:** composes a `wellfed-bench itest` command from a tier or chosen scenarios and the allowed flags, and warns which scenarios would be skipped. The page only writes the command out; running it is a physical bench operation.
+- **Sessions:** session names with evidence parts, report state and age. Selecting one shows each part's report or plan (bank, sectors, erases, image hashes, plan SHA-256) and a copyable execute line. A report still marked `running` whose command is no longer live reads as `ended`: the process stopped without recording an outcome.
+- **Log:** the command's full output, kept to the newest 20,000 lines. It can be filtered, followed and copied, and only the visible lines are drawn. Stops, refusals, faults and NAKs are highlighted, and scenario starts mark sections. The flash client's JSON summaries are coloured by their `error` and `status` fields. Healthy health lines (`outputs stopped, faults none`) and file names such as `-fault-v52.manifest` are not taken for failures. The latest capture's tail sits beside the log.
+
+Light and dark follow the system; the button in the header cycles auto, light and dark for this browser.
 
 For a timed operator run, an optional `private/bench-status/script.json` lists steps (`{"title", "capture", "anchor", "steps": [{"at", "text"}]}`). The page shows the current step large with a countdown, starting when the anchor bytes (for example `PLOPT1 open`) arrive in that capture. After **Enable sound** (browsers need a click), each step beeps (a double beep to move a probe, a long tone at the end), and **Speak steps** reads it aloud.
 
@@ -202,7 +222,7 @@ For a timed operator run, an optional `private/bench-status/script.json` lists s
 
 ## Evidence
 
-The Rust bench is host-tested only: fake relay board and flash client, the page's handlers in process, and the real binary against synthetic status files (October 22, 2026). Its sequences port the Python bench line for line. The physical evidence below was gathered with the Python `tools/bench/bench.py`, which it replaces; repeat `status`, `on`/`off`, `loader` and a no-op `flash-prepare`/`flash-execute` under a reviewed session before relying on it.
+The Rust bench is host-tested only: fake relay board and flash client, the page's handlers in process, and the real binary against synthetic status files (October 22, 2026). The web page is host-tested too (October 22, 2026, simulation): unit tests for its log reading, run builder and formatting, and Playwright against the real binary serving a synthetic `private/` tree, on desktop and phone sizes in both themes. Its feeder panel has not yet read a live `wellfed-local serve`. Its sequences port the Python bench line for line. The physical evidence below was gathered with the Python `tools/bench/bench.py`, which it replaces; repeat `status`, `on`/`off`, `loader` and a no-op `flash-prepare`/`flash-execute` under a reviewed session before relying on it.
 
 **Full live test (physical, October 22, 2026, Python bench).** Every command was exercised on the research unit, except `transients`, which needs the analyzer:
 - **Commands:** `status`, `on`, `capture` (power untouched), `off`, `boot`, `loader` and `dump`. The dump was a full 8 MiB read, and comparing it with the previous one showed exactly the expected changes.

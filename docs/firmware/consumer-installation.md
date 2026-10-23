@@ -134,4 +134,4 @@ What a rollback keeps and leaves behind:
   - **BLE:** Tauri has no official BLE plugin. Desktop can use `btleplug`; mobile needs a plugin or thin native code.
   - **Setup network:** joining the feeder's access point needs platform Wi-Fi APIs.
   - **Install-time server:** the app is the server only during an install, about 3 minutes in the foreground, since iOS suspends background apps.
-  - **Afterwards:** the feeder lives on the self-hosted server, and the app is a client of it.
+  - **Afterwards:** the app pairs over BLE and talks to the feeder directly on the LAN; the self-hosted server is optional ([product architecture](product-architecture.md)).

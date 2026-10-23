@@ -28,6 +28,10 @@ enum Script {
     OtherVersion,
     /// Something other than the build starts after activation.
     WrongBuild,
+    /// A build from before recovery-role health: silent on bank 0.
+    OldBuild,
+    /// Nothing reports after the bank-0 start.
+    Silent,
 }
 
 struct StockFeeder {
@@ -43,7 +47,7 @@ struct StockFeeder {
     /// evidence lets it be resolved.
     earlier: Option<(String, &'static str, f64)>,
     /// The replacement's health: build and bank.
-    health: Option<(String, u64)>,
+    health: Option<(String, u64, bool)>,
     offered: bool,
     served: Option<PathBuf>,
     actions: Vec<String>,
@@ -54,7 +58,8 @@ enum Change {
     Line(String),
     Report(Value),
     StockOffline,
-    Health(String, u64),
+    /// Build, bank and whether it is the recovery role.
+    Health(String, u64, bool),
     Phase(&'static str),
 }
 
@@ -119,7 +124,9 @@ impl StockFeeder {
                 }
                 Change::Report(report) => self.reports.push(report),
                 Change::StockOffline => self.stock_online = false,
-                Change::Health(build, bank) => self.health = Some((build, bank)),
+                Change::Health(build, bank, recovery) => {
+                    self.health = Some((build, bank, recovery))
+                }
                 Change::Phase(phase) => {
                     if let Some((_, current)) = &mut self.trial {
                         *current = phase;
@@ -148,12 +155,30 @@ impl Rig for StockFeeder {
         unreachable!()
     }
 
+    /// The bank-0 recovery role finds the offer at its next 10 s ask and
+    /// installs it into bank 1, whose trial boot confirms.
     fn offer(&mut self, staged: Option<&Staged>) -> Result<()> {
         self.offered = staged.is_some();
         self.actions.push(format!(
-            "offer before the request: {}",
-            self.trial.is_none()
+            "offer on {}",
+            self.health.as_ref().map_or("nothing".into(), |h| format!(
+                "bank {}{}",
+                h.1,
+                if h.2 { " recovery" } else { "" }
+            ))
         ));
+
+        let build = BUILD;
+        self.line(10.0, "PLOTA1 manifest version=72 bytes=663552");
+        self.line(40.0, "PLOTA1 progress sectors=162/162 leases=2600");
+        self.line(50.0, "PLOTA1 activated version=72 sectors=162");
+        self.line(
+            55.0,
+            &format!("PLFW1 start build={build} bank=1 reset=0x0 mmu=1"),
+        );
+        self.line(56.0, "PLTRL1 confirmed=0 boot=1 limit=3");
+        self.line(90.0, "PLCNF1 confirmed=1 healthy_ms=30000");
+        self.at(92.0, Change::Health(build.into(), 1, false));
         Ok(())
     }
 
@@ -179,9 +204,14 @@ impl Rig for StockFeeder {
             })
             .collect();
         let replacement = match &self.health {
-            Some((build, bank)) => json!({"health": {"build": build, "bank": bank, "seq": 1,
-                                         "outputs": "stopped", "faults": []},
-                                         "online": true, "stale": false, "age_ms": 500}),
+            Some((build, bank, recovery)) => {
+                let mut health = json!({"build": build, "bank": bank, "seq": 1,
+                                        "outputs": "stopped", "faults": []});
+                if *recovery {
+                    health["role"] = json!("recovery");
+                }
+                json!({"health": health, "online": true, "stale": false, "age_ms": 500})
+            }
             None => json!({"online": false, "stale": true}),
         };
         Ok(serde_json::from_value(json!({
@@ -264,7 +294,7 @@ impl Rig for StockFeeder {
                 self.report(2.0, "OTA_UPGRADE", None, Some(0x464));
                 self.at(2.0, Change::Phase("reported_error"));
             }
-            Script::Installs | Script::WrongBuild => {
+            Script::Installs | Script::WrongBuild | Script::OldBuild | Script::Silent => {
                 self.report(10.0, "OTA_PROGRESS", Some(50), None);
                 self.report(60.0, "OTA_PROGRESS", Some(100), None);
                 self.at(65.0, Change::StockOffline);
@@ -277,20 +307,11 @@ impl Rig for StockFeeder {
                     70.0,
                     &format!("PLFW1 start build={build} bank=0 reset=0x0 mmu=0"),
                 );
-                if self.offered {
-                    self.line(90.0, "PLOTA1 manifest version=72 bytes=663552");
-                    self.line(120.0, "PLOTA1 progress sectors=162/162 leases=2600");
-                    self.line(130.0, "PLOTA1 activated version=72 sectors=162");
-                    self.line(
-                        135.0,
-                        &format!("PLFW1 start build={build} bank=1 reset=0x0 mmu=1"),
-                    );
-                    self.line(136.0, "PLTRL1 confirmed=0 boot=1 limit=3");
-                    self.line(170.0, "PLCNF1 confirmed=1 healthy_ms=30000");
-                    self.at(172.0, Change::Health(build.into(), 1));
-                    self.at(172.0, Change::Phase("replacement_healthy"));
-                } else {
-                    self.at(100.0, Change::Health(build.into(), 0));
+                // The recovery role reports while it waits for an offer;
+                // a build from before that reports nothing from bank 0.
+                if self.script != Script::Silent {
+                    let recovery = self.script != Script::OldBuild;
+                    self.at(100.0, Change::Health(build.into(), 0, recovery));
                     self.at(100.0, Change::Phase("replacement_healthy"));
                 }
             }
@@ -313,8 +334,8 @@ fn args(promote: bool) -> StockOtaArgs {
         args: StockOtaArgs,
     }
     let mut argv = vec!["stock-ota", "poc1"];
-    if promote {
-        argv.push("--promote");
+    if !promote {
+        argv.push("--no-promote");
     }
     Cli::try_parse_from(argv).unwrap().args
 }
@@ -368,7 +389,7 @@ fn stock_installs_the_build_which_reports_from_bank_0() {
         feeder.served.as_deref(),
         Some(Path::new("private/verification/poc1-review"))
     );
-    assert!(!feeder.offered, "no promotion offer without --promote");
+    assert!(!feeder.offered, "no promotion offer with --no-promote");
     assert!(
         feeder
             .notes
@@ -398,12 +419,34 @@ fn promote_lets_the_bank_0_build_install_itself_into_bank_1() {
             (SETTLE, "pass"),
             (REQUEST, "pass"),
             (DOWNLOAD, "pass"),
+            (BANK0, "pass"),
             (PROMOTE, "pass")
         ]
     );
-    // Offered before stock was asked: the recovery role asks at its boot.
-    assert_eq!(feeder.actions, ["offer before the request: true"]);
+    // Offered once the recovery role reported from bank 0.
+    assert_eq!(feeder.actions, ["offer on bank 0 recovery"]);
     assert!(feeder.offered);
+}
+
+#[test]
+fn a_bank_0_build_without_recovery_health_fails_before_any_offer() {
+    for (script, why) in [
+        (Script::OldBuild, "not the recovery role"),
+        (Script::Silent, "No recovery-role health"),
+    ] {
+        let mut feeder = StockFeeder::new(script);
+        let reports = session(&mut feeder, true);
+
+        assert_eq!(
+            verdicts(&reports)[3..],
+            [(DOWNLOAD, "pass"), (BANK0, "fail"), (PROMOTE, "skip")]
+        );
+        let Verdict::Fail(reason) = &reports[4].1 else {
+            unreachable!()
+        };
+        assert!(reason.contains(why), "{reason}");
+        assert!(!feeder.offered);
+    }
 }
 
 #[test]
@@ -493,14 +536,14 @@ fn trial_phases_read_from_the_server_s_ledger() {
 }
 
 #[test]
-fn the_steps_end_with_the_promotion_only_when_asked() {
+fn the_steps_end_with_the_promotion_unless_told_not_to() {
     assert_eq!(
         args(false).steps(),
         [READY, SETTLE, REQUEST, DOWNLOAD, BANK0]
     );
     assert_eq!(
         args(true).steps(),
-        [READY, SETTLE, REQUEST, DOWNLOAD, PROMOTE]
+        [READY, SETTLE, REQUEST, DOWNLOAD, BANK0, PROMOTE]
     );
 }
 

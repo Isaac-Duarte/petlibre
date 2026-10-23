@@ -71,12 +71,22 @@ fn health(online: bool, seq: u32) -> Vec<u8> {
 }
 
 fn health_with(online: bool, seq: u32, nonce: Option<[u8; 16]>) -> Vec<u8> {
+    health_as(online, seq, nonce, 1, mqtt::Role::Normal)
+}
+
+fn health_as(
+    online: bool,
+    seq: u32,
+    nonce: Option<[u8; 16]>,
+    bank: u8,
+    role: mqtt::Role,
+) -> Vec<u8> {
     let snapshot = Health {
         online,
         seq,
         uptime_ms: 1000,
         build: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-        bank: 1,
+        bank,
         reset_flags: 0,
         boot_count: 1,
         outputs: mqtt::Outputs::Stopped,
@@ -97,6 +107,7 @@ fn health_with(online: bool, seq: u32, nonce: Option<[u8; 16]>) -> Vec<u8> {
             battery_mv: Some(4_850),
             age_ms: 1_200,
         }),
+        role,
     };
 
     let mut buf = [0; mqtt::MAX_HEALTH];
@@ -283,6 +294,16 @@ async fn firmware_codec_reports_health_and_answers_through_the_real_broker() {
     assert_eq!(message["id"], id.as_str());
     assert_eq!(message["ok"], true);
     assert_eq!(message["uptime_ms"], 4321);
+
+    // FW40: the bank-0 recovery role's health, exactly as it formats it,
+    // reads as online with its role (a build stock just installed).
+    let body = health_as(true, 2, None, 0, mqtt::Role::Recovery);
+    let n = mqtt::encode_publish(&mut out, &config.firmware_topic("health"), &body, false).unwrap();
+    fw.send(&out[..n]).await;
+    let replacement = wait_for(&config, &http, |r| r["health"]["seq"] == 2).await;
+    assert_eq!(replacement["online"], true);
+    assert_eq!(replacement["health"]["role"], "recovery");
+    assert_eq!(replacement["health"]["bank"], 0);
 
     // Keepalive: PINGREQ gets PINGRESP.
     let n = mqtt::encode_pingreq(&mut out).unwrap();

@@ -2,7 +2,7 @@
 //! is the transport's only view of the rest of the firmware: it reads, and
 //! returns a plain value.
 
-use petlibre_core::transport::{Health, Loss, Outputs};
+use petlibre_core::transport::{Health, Loss, Outputs, Role};
 
 use crate::{clock, net_status, network, power, sdk, startup, stopped};
 
@@ -40,7 +40,7 @@ pub struct Link {
 
 /// The will (`online` false) is built at connect, so it carries no clock or
 /// power reading, which would be stale by the time the broker sends it.
-pub fn snapshot(boot: Boot, link: Link, online: bool) -> Health {
+pub fn snapshot(boot: Boot, link: Link, online: bool, role: Role) -> Health {
     let wifi = net_status::read();
     let (clock, clock_syncs) = if online { clock::health() } else { (None, 0) };
     let observed = stopped::observe();
@@ -86,5 +86,6 @@ pub fn snapshot(boot: Boot, link: Link, online: bool) -> Health {
         } else {
             None
         },
+        role,
     }
 }

@@ -29,11 +29,12 @@ use petlibre_core::named_enum;
 
 use petlibre_core::flash_coord::FlashReply;
 use petlibre_core::ota::{self, Manifest, Part, SECTOR, SECTOR_BYTES, Status, Writer};
-use petlibre_core::transport::{self as mqtt, Event, Session, Tick};
+use petlibre_core::transport::{self as mqtt, Buffer, Event, Role, Session, Tick};
 
 pub use crate::arming::Hooks;
 use crate::arming::{self, Arming, Poll};
 use crate::flash::park::Mmio;
+use crate::health::{self, Boot, Link};
 use crate::net_status;
 use crate::provider::Provider;
 use crate::sdk::{self, TcpRecv, TransportConfig};
@@ -58,6 +59,9 @@ pub const ANSWER_MS: u32 = 3000;
 pub const MAX_TRIES: u32 = 5;
 /// Wait between manifest asks while the server has no offer.
 pub const NO_OFFER_MS: u32 = 10_000;
+/// Health while waiting for an offer: the normal role's period, well inside
+/// the server's 75 s staleness bound.
+pub const HEALTH_MS: u32 = 30_000;
 /// Log progress every this many sectors.
 pub const PROGRESS_SECTORS: u32 = 16;
 /// One page program (one lease) at a time, each read back.
@@ -312,6 +316,8 @@ enum Stage {
 /// Keep at a fixed address once started: the provider is reached by pointer.
 pub struct Updater {
     config: TransportConfig,
+    /// Startup facts for health, read once by the runtime as the transport's are.
+    boot: Boot,
     key: Option<[u8; 32]>,
     stage: Stage,
     arming: Arming,
@@ -323,12 +329,17 @@ pub struct Updater {
     sectors: u32,
     leases: u64,
     no_offer_at: Option<u32>,
+    /// The last health this session published while waiting.
+    health_at: Option<u32>,
+    /// Health's `seq` and `transport.connects`.
+    link: Link,
 }
 
 impl Updater {
-    pub fn new(config: TransportConfig, key: Option<[u8; 32]>) -> Self {
+    pub fn new(config: TransportConfig, key: Option<[u8; 32]>, boot: Boot) -> Self {
         Self {
             config,
+            boot,
             key,
             stage: Stage::Start,
             arming: Arming::default(),
@@ -340,6 +351,8 @@ impl Updater {
             sectors: 0,
             leases: 0,
             no_offer_at: None,
+            health_at: None,
+            link: Link::default(),
         }
     }
 
@@ -368,6 +381,7 @@ impl Updater {
         self.rx_len = 0;
         // The writer keeps its place: the next connection resumes there.
         self.asks = [None; WINDOW];
+        self.health_at = None;
     }
 
     fn drop_link(&mut self, reason: CloseReason) -> Step {
@@ -509,7 +523,42 @@ impl Updater {
             data_ready: false,
         });
         self.rx_len = 0;
+        self.link.connects = self.link.connects.wrapping_add(1);
         next(POLL_MS, Some(Record::Connect { ok: true }))
+    }
+
+    /// Health from this session while no update is offered, at most every
+    /// [`HEALTH_MS`], so a feeder whose bank 1 is invalid (just installed by
+    /// stock, FW40) still reports. The transport shares the client ID, so it
+    /// cannot run beside the updater. Nothing here touches flash. `false` only
+    /// when the send failed; a health that does not format is skipped.
+    fn report(&mut self, now: u32) -> bool {
+        if self
+            .health_at
+            .is_some_and(|at| now.wrapping_sub(at) < HEALTH_MS)
+        {
+            return true;
+        }
+        let Some(topic) = Topic::new(self.config.namespace, "health") else {
+            return true;
+        };
+
+        self.link.seq = self.link.seq.wrapping_add(1);
+        let snapshot = health::snapshot(self.boot, self.link, true, Role::Recovery);
+        let mut body = [0; mqtt::MAX_HEALTH];
+        let mut writer = Buffer::new(&mut body);
+        if snapshot.write(&mut writer).is_err() {
+            return true;
+        }
+        let len = writer.len();
+
+        let mut out = [0; mqtt::MAX_PACKET];
+        let sent = mqtt::encode_publish(&mut out, topic.as_str(), &body[..len], false)
+            .is_ok_and(|n| self.send(&out[..n]));
+        if sent {
+            self.health_at = Some(now);
+        }
+        sent
     }
 
     fn send(&mut self, bytes: &[u8]) -> bool {
@@ -666,6 +715,9 @@ impl Updater {
             Status::Ok => {}
             Status::NoOffer => {
                 self.no_offer_at = Some(now);
+                if !self.report(now) {
+                    return Some(self.drop_link(CloseReason::Send));
+                }
                 return Some(next(POLL_MS, Some(Record::NoOffer)));
             }
             Status::Range => return Some(self.fail(ErrorStage::Range)),

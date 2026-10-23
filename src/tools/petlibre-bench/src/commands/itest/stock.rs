@@ -6,14 +6,14 @@
 //! also the server's own gate for the request. Stock then fetches the build
 //! from `ota-images`, checks only its byte-sum, writes it to bank 0 (the bank
 //! it is not running from) and invalidates bank 1 ([stock OTA requirements]).
-//! The factory loader then boots the build from bank 0, where it runs its
-//! recovery role, then its transport.
+//! The factory loader then boots the build from bank 0, where its recovery
+//! role reports health while it waits for an update.
 //!
 //! The request goes out once and is never resent: a rejected stock precheck
 //! can erase the stock OTA status sector, and an uncertain one may still be
-//! downloading. With `--promote`, the same build is also offered as a signed
-//! update, so its bank-0 recovery role installs it into bank 1 and the
-//! feeder ends in the normal two-bank state.
+//! downloading. Then the same build is offered as a signed update, so its
+//! bank-0 recovery role installs it into bank 1 and the feeder ends in the
+//! normal two-bank state (`--no-promote` stops at bank 0).
 //!
 //! Stock reaches this server only through `petlibre-local network apply`, a
 //! host firewall change the operator makes and removes by hand; the run never
@@ -72,10 +72,10 @@ pub struct StockOtaArgs {
     /// Build even when a review of the same sources exists.
     #[arg(long)]
     pub rebuild: bool,
-    /// Once the build runs on bank 0, offer it as a signed update so its
-    /// recovery role installs it into bank 1, which then confirms.
+    /// Stop once the build reports from bank 0, instead of offering it as a
+    /// signed update that its recovery role installs into bank 1.
     #[arg(long)]
-    pub promote: bool,
+    pub no_promote: bool,
     /// Switch the feeder supply on if it is off (and off again afterwards).
     #[arg(long)]
     pub power: bool,
@@ -90,12 +90,15 @@ pub struct StockOtaArgs {
 impl StockOtaArgs {
     /// The stages this run takes on.
     pub fn steps(&self) -> Vec<&'static str> {
-        let last = if self.promote { PROMOTE } else { BANK0 };
-        vec![READY, SETTLE, REQUEST, DOWNLOAD, last]
+        let mut steps = vec![READY, SETTLE, REQUEST, DOWNLOAD, BANK0];
+        if !self.no_promote {
+            steps.push(PROMOTE);
+        }
+        steps
     }
 
-    /// The `ota` arguments that build and sign the payload. The signed
-    /// manifest is used only by `--promote`; stock ignores it.
+    /// The `ota` arguments that build and sign the payload. Stock ignores
+    /// the signed manifest; the promotion offers it.
     fn ota_args(&self) -> super::super::OtaArgs {
         super::super::OtaArgs {
             name: self.name.clone(),
@@ -152,8 +155,6 @@ fn run(ctx: &mut Ctx, args: &StockOtaArgs, staged: &Staged) -> (Vec<Report>, Opt
     let mut reports = Vec::new();
     let mut stop: Option<String> = None;
     let request_id = uuid::Uuid::new_v4().to_string();
-    // The UART line just past the build's bank-0 start.
-    let mut started = 0;
 
     for name in args.steps() {
         if let Some(reason) = &stop {
@@ -171,10 +172,10 @@ fn run(ctx: &mut Ctx, args: &StockOtaArgs, staged: &Staged) -> (Vec<Report>, Opt
         let result = match name {
             READY => ready(ctx),
             SETTLE => settle(ctx),
-            REQUEST => request(ctx, args, staged, &request_id),
-            DOWNLOAD => install(ctx, &staged.build, &request_id).map(|at| started = at),
+            REQUEST => request(ctx, staged, &request_id),
+            DOWNLOAD => install(ctx, &staged.build, &request_id),
             BANK0 => bank0(ctx, &staged.build, &request_id),
-            _ => promote(ctx, &staged.build, &request_id, started),
+            _ => promote(ctx, staged),
         };
         let seconds = ctx.rig.clock() - begun;
 
@@ -218,16 +219,8 @@ fn ready(ctx: &mut Ctx) -> Result<()> {
 }
 
 /// Serve the build and ask stock once to install it.
-fn request(ctx: &mut Ctx, args: &StockOtaArgs, staged: &Staged, request_id: &str) -> Result<()> {
+fn request(ctx: &mut Ctx, staged: &Staged, request_id: &str) -> Result<()> {
     let token = ctx.rig.images(&staged.review)?;
-    if args.promote {
-        // Loaded before stock reboots: the bank-0 recovery role asks at boot.
-        ctx.rig.offer(Some(staged))?;
-        ctx.note(&format!(
-            "  Offered version {} for the promotion",
-            staged.version
-        ));
-    }
 
     let trial = TrialRequest {
         request_id: request_id.to_string(),
@@ -242,9 +235,8 @@ fn request(ctx: &mut Ctx, args: &StockOtaArgs, staged: &Staged, request_id: &str
 }
 
 /// Stock downloads, checks and activates; the build then starts on bank 0.
-/// Stock's own reports and the server's ledger say how far it got; the
-/// mark just past the build's start line.
-fn install(ctx: &mut Ctx, build: &str, request_id: &str) -> Result<usize> {
+/// Stock's own reports and the server's ledger say how far it got.
+fn install(ctx: &mut Ctx, build: &str, request_id: &str) -> Result<()> {
     let since = ctx.mark()?;
     let deadline = ctx.rig.clock() + INSTALL_SECONDS;
     // The server keeps only the latest reports; each has its receipt time.
@@ -256,7 +248,7 @@ fn install(ctx: &mut Ctx, build: &str, request_id: &str) -> Result<usize> {
             if let Some(index) = ctx.log.find(since, is_start) {
                 let line = ctx.log.line(index).text.clone();
                 ctx.note(&format!("  UART: {line}"));
-                return started(&line, build).map(|()| index + 1);
+                return started(&line, build);
             }
 
             // A status call that fails once is retried at the next poll; the
@@ -326,19 +318,29 @@ fn started(line: &str, build: &str) -> Result<()> {
     Ok(())
 }
 
-/// The build's health from bank 0, and the server closing the install.
+/// The build's recovery role reports from bank 0 while it waits for an
+/// update, and that health closes the server's install record.
 fn bank0(ctx: &mut Ctx, build: &str, request_id: &str) -> Result<()> {
     let report = ctx.until_status(
-        "health from the build on bank 0",
+        "recovery-role health from the build on bank 0",
         HEALTH_SECONDS,
-        |status| Ok(status.health_on(build, 0)?),
+        |status| Ok(status.recovery_health(build)?),
     )?;
     ctx.note(&format!("  {report}"));
     closed(ctx, request_id)
 }
 
-/// The bank-0 recovery role installs the offer into bank 1, which confirms.
-fn promote(ctx: &mut Ctx, build: &str, request_id: &str, since: usize) -> Result<()> {
+/// Offer the same build signed: the bank-0 recovery role asks every 10 s,
+/// installs it into bank 1, and the trial boot confirms.
+fn promote(ctx: &mut Ctx, staged: &Staged) -> Result<()> {
+    let since = ctx.mark()?;
+    ctx.rig.offer(Some(staged))?;
+    ctx.note(&format!(
+        "  Offered version {} for the promotion",
+        staged.version
+    ));
+
+    let build = &staged.build;
     match ctx.watch(build, since, INSTALL_SECONDS)? {
         Outcome::Passed => {}
         Outcome::FellBack { boot } => {
@@ -350,8 +352,7 @@ fn promote(ctx: &mut Ctx, build: &str, request_id: &str, since: usize) -> Result
             return Err(Error::Bench(format!("The promotion failed at {stage}")));
         }
     }
-    ctx.confirm(build)?;
-    closed(ctx, request_id)
+    ctx.confirm(build)
 }
 
 /// An earlier request that failed or is uncertain blocks a new one until

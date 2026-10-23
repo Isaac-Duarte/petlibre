@@ -11,7 +11,7 @@ use ts_rs::{Config, TS};
 
 use crate::commands::itest::record::{Evidence, RunRecord, ScenarioRecord, ScenarioVerdict};
 use crate::commands::itest::{CatalogEntry, Requirement, Tier};
-use crate::server::{Clock, Health, Transport, Wifi};
+use crate::server::{Clock, Health, HealthRole, Transport, Wifi};
 use crate::status::{FlashTool, HistoryEntry, Outcome, Progress, RelayState, Step, StepState};
 
 /// One exported declaration, with its doc comment.
@@ -44,6 +44,7 @@ fn generated() -> String {
         decl::<Clock>(&cfg),
         decl::<Wifi>(&cfg),
         decl::<Transport>(&cfg),
+        decl::<HealthRole>(&cfg),
         decl::<Health>(&cfg),
     ];
     decls.extend(super::views::bindings(&cfg));

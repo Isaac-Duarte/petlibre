@@ -309,8 +309,13 @@ unsafe extern "C" fn updater_task(_: *mut c_void) -> u32 {
     // is reached by raw pointer so hook callbacks never alias a live borrow.
     let updater = unsafe {
         UPDATER.get_or_try_init(|| {
-            let updater =
-                sdk::transport_config().map(|config| Updater::new(config, updater::public_key()));
+            let updater = sdk::transport_config().map(|config| {
+                Updater::new(
+                    config,
+                    updater::public_key(),
+                    Boot::read(startup::snapshot()),
+                )
+            });
             if updater.is_none() {
                 sdk::log(c"PLOTA1 error stage=config\r\n");
                 UPDATER_DONE.store(true, Ordering::Release);

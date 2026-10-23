@@ -909,6 +909,17 @@ pub enum Outputs {
     Unverified,
 }
 
+/// Which role is reporting. The bank-0 recovery role reports while it waits
+/// for an update, so a feeder whose bank 1 is invalid (just installed by
+/// stock, FW40) is still visible; only that role writes the field, so normal
+/// health is unchanged.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Role {
+    #[default]
+    Normal,
+    Recovery,
+}
+
 /// Everything a health message reports. Built by the board port from data it
 /// already has; the transport only formats it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -947,6 +958,7 @@ pub struct Health {
     pub nonce: Option<[u8; 16]>,
     /// FW14: the power inputs, `None` without a fresh sample.
     pub power: Option<PowerHealth>,
+    pub role: Role,
 }
 
 /// A fresh power sample as health reports it.
@@ -1037,6 +1049,10 @@ impl Health {
                 return Err(fmt::Error);
             }
             write!(out, ",\"nonce\":\"{text}\"")?;
+        }
+
+        if self.role == Role::Recovery {
+            out.write_str(",\"role\":\"recovery\"")?;
         }
 
         match self.clock {

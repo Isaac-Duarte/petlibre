@@ -462,6 +462,7 @@ fn health() -> Health {
         clock_syncs: 0,
         nonce: None,
         power: None,
+        role: Role::Normal,
     }
 }
 
@@ -514,6 +515,7 @@ fn health_renders_the_v1_schema_within_its_limit() {
             battery_mv: Some(6_808),
             age_ms: 15_000,
         }),
+        role: Role::Recovery,
         ..health()
     };
 
@@ -526,7 +528,7 @@ fn health_renders_the_v1_schema_within_its_limit() {
     );
     assert!(
         text.contains(
-            r#""last_error":"protocol_malformed"},"nonce":"ffffffffffffffff","clock":{"syncs":4294967295,"unix_ms":"#
+            r#""last_error":"protocol_malformed"},"nonce":"ffffffffffffffff","role":"recovery","clock":{"syncs":4294967295,"unix_ms":"#
         )
     );
     assert!(text.ends_with(

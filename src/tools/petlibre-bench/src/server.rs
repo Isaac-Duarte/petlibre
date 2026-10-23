@@ -148,6 +148,17 @@ pub(crate) struct Health {
     pub clock: Option<Clock>,
     pub wifi: Wifi,
     pub transport: Transport,
+    /// Only the bank-0 recovery role reports one, while it waits for an
+    /// update (FW40).
+    pub role: Option<HealthRole>,
+}
+
+/// Who reports health, when it is not the normal role.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum HealthRole {
+    Recovery,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -312,6 +323,9 @@ pub enum NotReady {
     Build(String),
     #[error("health reports bank {}", shown(.0))]
     Bank(Option<u64>),
+    /// Bank 0 is the recovery role, which must say so.
+    #[error("health from bank 0 is not the recovery role's")]
+    NotRecovery,
     /// Health from the session before a boot.
     #[error("health predates the boot")]
     Predates,
@@ -422,6 +436,16 @@ impl LocalStatus {
     /// one-line report of it.
     pub(crate) fn health_matches(&self, build: &str) -> Result<String, NotReady> {
         self.health_on(build, 1)
+    }
+
+    /// The bank-0 recovery role's health from `build`, while it waits for an
+    /// update: what a build stock just installed reports (FW40).
+    pub(crate) fn recovery_health(&self, build: &str) -> Result<String, NotReady> {
+        let report = self.health_on(build, 0)?;
+        match self.fresh_health()?.role {
+            Some(HealthRole::Recovery) => Ok(report + ", recovery role"),
+            None => Err(NotReady::NotRecovery),
+        }
     }
 
     /// As [`Self::health_matches`] on `bank`: bank 0 after stock installed

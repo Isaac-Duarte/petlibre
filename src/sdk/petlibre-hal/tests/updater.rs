@@ -11,6 +11,7 @@ use ed25519_dalek::{Signer, SigningKey};
 use petlibre_core::ota::{self, MAGIC, MANIFEST_BODY, MARKER, Part, Status};
 use petlibre_hal::flash::park::{self, Mmio};
 use petlibre_hal::flash::peer::MARKER_REGISTER;
+use petlibre_hal::health::Boot;
 use petlibre_hal::provider::{ATTEMPT_BIT, Provider};
 use petlibre_hal::sdk::WifiEvent;
 use petlibre_hal::sdk::fake::api::FAKE_TRANSPORT;
@@ -143,6 +144,13 @@ fn wifi(kind: u32, result: i32, value: u32) {
     });
 }
 
+/// The recovery role runs from bank 0.
+const BOOT: Boot = Boot {
+    bank: 0,
+    reset_flags: 0,
+    boot_count: 1,
+};
+
 fn key() -> [u8; 32] {
     SigningKey::from_bytes(&SEED).verifying_key().to_bytes()
 }
@@ -180,6 +188,8 @@ struct Broker {
     close_after: Option<usize>,
     chunks: usize,
     gets: Vec<(Part, u32, u32)>,
+    /// Health payloads, in order.
+    health: Vec<String>,
     /// A socket the broker closed: what it sends later is never answered.
     dead: Option<i32>,
 }
@@ -194,6 +204,7 @@ impl Broker {
             close_after: None,
             chunks: 0,
             gets: Vec::new(),
+            health: Vec::new(),
             dead: None,
         }
     }
@@ -230,6 +241,11 @@ impl Broker {
         assert_eq!(packet.len(), at + length);
         let n = u16::from_be_bytes([packet[at], packet[at + 1]]) as usize;
         let topic = std::str::from_utf8(&packet[at + 2..at + 2 + n]).unwrap();
+        if topic == format!("{}health", FAKE_TRANSPORT.namespace) {
+            let payload = std::str::from_utf8(&packet[at + 2 + n..]).unwrap();
+            self.health.push(payload.to_owned());
+            return;
+        }
         assert_eq!(topic, format!("{}ota/get", FAKE_TRANSPORT.namespace));
         let (part, offset, len) = ota::decode_get(&packet[at + 2 + n..]).unwrap();
         self.gets.push((part, offset, len));
@@ -339,7 +355,7 @@ fn installs_bank_1_with_its_marker_last_and_asks_for_a_restart() {
     let payload = image(LEN);
     let mut broker = Broker::new(Some(manifest(&signing, 3, &payload, LEN)), payload.clone());
     let mut flash = Flash::default();
-    let mut updater = Updater::new(FAKE_TRANSPORT, Some(key()));
+    let mut updater = Updater::new(FAKE_TRANSPORT, Some(key()), BOOT);
 
     let result = run(&mut updater, &mut broker, &mut flash, 500);
     assert!(result.ended && result.restart, "{:?}", result.records);
@@ -378,6 +394,8 @@ fn installs_bank_1_with_its_marker_last_and_asks_for_a_restart() {
         .collect();
     assert_eq!(chunks, (0..LEN as u32).step_by(512).collect::<Vec<_>>());
     assert_eq!(fake::with(|h| h.backup[MARKER_REGISTER as usize]), 0);
+    // Health is only for waiting: an offered update publishes none.
+    assert!(broker.health.is_empty());
 }
 
 #[test]
@@ -388,7 +406,7 @@ fn a_sectors_chunks_are_asked_together_and_answers_poll_again_at_once() {
     let payload = image(LEN);
     let mut broker = Broker::new(Some(manifest(&signing, 3, &payload, LEN)), payload);
     let mut flash = Flash::default();
-    let mut updater = Updater::new(FAKE_TRANSPORT, Some(key()));
+    let mut updater = Updater::new(FAKE_TRANSPORT, Some(key()), BOOT);
     let mut provider = Provider::default();
     let mut answered = 0;
 
@@ -429,7 +447,7 @@ fn a_manifest_signed_by_another_key_writes_nothing() {
     let payload = image(LEN);
     let mut broker = Broker::new(Some(manifest(&other, 3, &payload, LEN)), payload);
     let mut flash = Flash::default();
-    let mut updater = Updater::new(FAKE_TRANSPORT, Some(key()));
+    let mut updater = Updater::new(FAKE_TRANSPORT, Some(key()), BOOT);
 
     let result = run(&mut updater, &mut broker, &mut flash, 200);
     assert!(result.ended && !result.restart);
@@ -454,7 +472,7 @@ fn a_hash_mismatch_leaves_bank_1_without_its_marker() {
     tampered[9000] ^= 1;
     let mut broker = Broker::new(Some(manifest(&signing, 3, &payload, LEN)), tampered);
     let mut flash = Flash::default();
-    let mut updater = Updater::new(FAKE_TRANSPORT, Some(key()));
+    let mut updater = Updater::new(FAKE_TRANSPORT, Some(key()), BOOT);
 
     let result = run(&mut updater, &mut broker, &mut flash, 500);
     assert!(result.ended && !result.restart);
@@ -480,7 +498,7 @@ fn a_failed_page_program_stops_the_update() {
         fail_program: Some(20),
         ..Flash::default()
     };
-    let mut updater = Updater::new(FAKE_TRANSPORT, Some(key()));
+    let mut updater = Updater::new(FAKE_TRANSPORT, Some(key()), BOOT);
 
     let result = run(&mut updater, &mut broker, &mut flash, 500);
 
@@ -504,7 +522,7 @@ fn a_dropped_connection_resumes_at_the_next_chunk() {
     let mut broker = Broker::new(Some(manifest(&signing, 3, &payload, LEN)), payload.clone());
     broker.close_after = Some(10);
     let mut flash = Flash::default();
-    let mut updater = Updater::new(FAKE_TRANSPORT, Some(key()));
+    let mut updater = Updater::new(FAKE_TRANSPORT, Some(key()), BOOT);
 
     let result = run(&mut updater, &mut broker, &mut flash, 500);
     assert!(result.restart, "{:?}", result.records);
@@ -546,7 +564,7 @@ fn lost_answers_are_asked_again_then_the_update_stops() {
     let mut broker = Broker::new(Some(manifest(&signing, 3, &payload, LEN)), payload.clone());
     broker.drop_chunks = 2;
     let mut flash = Flash::default();
-    let mut updater = Updater::new(FAKE_TRANSPORT, Some(key()));
+    let mut updater = Updater::new(FAKE_TRANSPORT, Some(key()), BOOT);
 
     assert!(run(&mut updater, &mut broker, &mut flash, 1000).restart);
 
@@ -566,7 +584,7 @@ fn lost_answers_are_asked_again_then_the_update_stops() {
     let mut broker = Broker::new(Some(manifest(&signing, 3, &payload, LEN)), payload);
     broker.drop_chunks = usize::MAX;
     let mut flash = Flash::default();
-    let mut updater = Updater::new(FAKE_TRANSPORT, Some(key()));
+    let mut updater = Updater::new(FAKE_TRANSPORT, Some(key()), BOOT);
 
     let result = run(&mut updater, &mut broker, &mut flash, 2000);
 
@@ -590,7 +608,7 @@ fn no_offer_is_asked_again_later() {
     connect_ok();
     let mut broker = Broker::new(None, Vec::new());
     let mut flash = Flash::default();
-    let mut updater = Updater::new(FAKE_TRANSPORT, Some(key()));
+    let mut updater = Updater::new(FAKE_TRANSPORT, Some(key()), BOOT);
 
     let result = run(&mut updater, &mut broker, &mut flash, 600);
     assert!(!result.ended);
@@ -600,6 +618,14 @@ fn no_offer_is_asked_again_later() {
     assert!((5..=7).contains(&asks), "{asks}");
     assert!(result.records.contains(&Record::NoOffer));
     assert_eq!(flash.erases, 0);
+
+    // Health while waiting, at most every 30 s, from bank 0 and marked as
+    // the recovery role (FW40: a stock-installed build reports).
+    assert_eq!(broker.health.len(), 2, "{:?}", broker.health);
+    let first = &broker.health[0];
+    assert!(first.contains(r#""bank":0"#) && first.contains(r#""role":"recovery""#));
+    assert!(first.contains(r#""online":true"#) && first.contains(r#""seq":1"#));
+    assert!(broker.health[1].contains(r#""seq":2"#));
 }
 
 #[test]
@@ -609,7 +635,7 @@ fn a_set_attempt_marker_skips_without_arming() {
     fake::with(|h| h.backup[MARKER_REGISTER as usize] = ATTEMPT_BIT);
     let mut broker = Broker::new(None, Vec::new());
     let mut flash = Flash::default();
-    let mut updater = Updater::new(FAKE_TRANSPORT, Some(key()));
+    let mut updater = Updater::new(FAKE_TRANSPORT, Some(key()), BOOT);
 
     let result = run(&mut updater, &mut broker, &mut flash, 50);
     assert!(result.ended);
@@ -630,12 +656,12 @@ fn without_a_key_or_a_watchdog_nothing_runs() {
     let _guard = start();
     let mut broker = Broker::new(None, Vec::new());
     let mut flash = Flash::default();
-    let mut updater = Updater::new(FAKE_TRANSPORT, None);
+    let mut updater = Updater::new(FAKE_TRANSPORT, None, BOOT);
     let result = run(&mut updater, &mut broker, &mut flash, 5);
     assert_eq!(result.records, vec![Record::Start { key: false }]);
 
     WATCHDOG.with(|w| w.set(false));
-    let mut updater = Updater::new(FAKE_TRANSPORT, Some(key()));
+    let mut updater = Updater::new(FAKE_TRANSPORT, Some(key()), BOOT);
     let result = run(&mut updater, &mut broker, &mut flash, 50);
 
     assert_eq!(
@@ -658,7 +684,7 @@ fn running_from_bank_1_refuses_every_bank_1_write() {
     let payload = image(LEN);
     let mut broker = Broker::new(Some(manifest(&signing, 3, &payload, LEN)), payload);
     let mut flash = Flash::default();
-    let mut updater = Updater::new(FAKE_TRANSPORT, Some(key()));
+    let mut updater = Updater::new(FAKE_TRANSPORT, Some(key()), BOOT);
 
     let result = run(&mut updater, &mut broker, &mut flash, 500);
 

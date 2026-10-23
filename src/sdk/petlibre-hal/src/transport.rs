@@ -10,7 +10,7 @@ use core::fmt::Write;
 
 use petlibre_core::request_auth;
 use petlibre_core::transport::{
-    self as mqtt, Buffer, Event, Fault, Op, Packet, Session, State, Tick,
+    self as mqtt, Buffer, Event, Fault, Op, Packet, Role, Session, State, Tick,
 };
 
 use crate::audio;
@@ -360,7 +360,7 @@ impl Link {
         let mut will = [0; mqtt::MAX_HEALTH];
         let mut will_out = Buffer::new(&mut will);
         let link = self.counters;
-        if health::snapshot(self.boot, link, false)
+        if health::snapshot(self.boot, link, false, Role::Normal)
             .write(&mut will_out)
             .is_err()
         {
@@ -582,7 +582,7 @@ impl Link {
         self.counters.seq = self.counters.seq.wrapping_add(1);
         let mut body = [0; mqtt::MAX_HEALTH];
         let mut writer = Buffer::new(&mut body);
-        let snapshot = health::snapshot(self.boot, self.counters, true);
+        let snapshot = health::snapshot(self.boot, self.counters, true, Role::Normal);
         if snapshot.write(&mut writer).is_err() {
             self.close(CloseReason::HealthFormat, log);
             return false;

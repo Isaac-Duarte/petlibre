@@ -184,7 +184,7 @@ fn reference(path: Option<&Path>) -> Result<Option<Vec<u8>>> {
     )?;
 
     let payload = ota::container(&data)?;
-    ota::regions(payload)?;
+    ota::images(payload)?;
     Ok(Some(data))
 }
 

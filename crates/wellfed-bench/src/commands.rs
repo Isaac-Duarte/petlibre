@@ -16,9 +16,10 @@ use std::time::Duration;
 
 use clap::{Args, ValueEnum};
 use wellfed_formats::canonical::sha256;
+use wellfed_formats::flash_plan::{DevelopmentPlan, GiveWayPlan};
 use wellfed_formats::manifest::BuildManifest;
 use wellfed_formats::transients::{self, TransientCycle, TransientsManifest};
-use serde_json::Value;
+use serde::Deserialize;
 
 use crate::config::{CAPTURES, Config, FLASH_BACKUPS, VERIFICATION};
 use crate::relay::{POWER, Relay, SPARES, STRAP};
@@ -690,15 +691,16 @@ impl Bench {
         }
 
         let (raw, sha) = self.prepared(&p)?;
-        let plan: Value = serde_json::from_slice(&raw)?;
-        let plan = &plan["operation_plan"];
+        let Prepared {
+            operation_plan: plan,
+        } = serde_json::from_slice::<Prepared<DevelopmentPlan>>(&raw)?;
         say!(
             "Plan {}: bank {}, {} sectors staged, {} erases, target {}",
             self.rel(&p.plan),
-            plan["bank"],
-            plan["ordered_sectors"].as_array().map_or(0, Vec::len),
-            plan["erase_sectors"],
-            plan["target_ota_sha256"].as_str().unwrap_or("?"),
+            plan.bank,
+            plan.ordered_sectors.len(),
+            plan.erase_sectors,
+            plan.target_ota_sha256,
         );
 
         let next = execute_line(args, &sha);
@@ -719,11 +721,11 @@ impl Bench {
         self.require_unbroken_power()?;
 
         // Progress estimate only; the updater reads and checks the plan itself.
-        if let Some((tx, rx)) = fs::read(&p.plan)
+        if let Some(plan) = fs::read(&p.plan)
             .ok()
-            .and_then(|raw| serde_json::from_slice::<Value>(&raw).ok())
-            .and_then(|plan| update_traffic(&plan["operation_plan"]))
+            .and_then(|raw| serde_json::from_slice::<Prepared<DevelopmentPlan>>(&raw).ok())
         {
+            let (tx, rx) = update_traffic(&plan.operation_plan);
             self.status.transfer(Some(&p.execute), tx, rx);
         }
 
@@ -794,13 +796,13 @@ impl Bench {
         }
 
         let (raw, sha) = self.prepared(&p)?;
-        let plan: Value = serde_json::from_slice(&raw)?;
+        let Prepared {
+            operation_plan: plan,
+        } = serde_json::from_slice::<Prepared<GiveWayPlan>>(&raw)?;
         say!(
             "Give-way plan {}: clears bank 1's first marker byte; bank 0 is {}",
             self.rel(&p.plan),
-            plan["operation_plan"]["fallback_ota_sha256"]
-                .as_str()
-                .unwrap_or("?"),
+            plan.fallback_ota_sha256,
         );
 
         let next = format!(
@@ -934,23 +936,28 @@ fn execute_line(args: &UpdateArgs, sha: &str) -> String {
 /// one) does three acquisitions, reads every staged sector three times
 /// (preimage, erased, programmed) and the marker sector twice; otherwise only
 /// the preimage acquisition runs.
-fn update_traffic(plan: &Value) -> Option<(u64, u64)> {
+fn update_traffic(plan: &DevelopmentPlan) -> (u64, u64) {
     const SECTOR: u64 = 0x1000;
     const ACQUIRED_GUARDS: u64 = 0x6000 + SECTOR;
 
-    let packets = plan["staging_packets"].as_u64()? + plan["commit_packets"].as_u64()?;
-    let region = plan["region"]["bytes"].as_u64()?;
-    let sectors = plan["ordered_sectors"].as_array()?.len() as u64;
-    let acquisition = ACQUIRED_GUARDS + region;
+    let packets = plan.staging_packets + plan.commit_packets;
+    let sectors = plan.ordered_sectors.len() as u64;
+    let acquisition = ACQUIRED_GUARDS + plan.region.bytes;
 
-    let read = if sectors > 0 || plan["interrupted"].as_bool()? {
+    let read = if sectors > 0 || plan.interrupted {
         3 * acquisition + (3 * sectors + 2) * SECTOR
     } else {
         acquisition
     };
 
     // Read packets carry 1024 payload bytes in 1028 on the wire.
-    Some((packets * FRAME_TX_BYTES, read / 1024 * 1028))
+    (packets * FRAME_TX_BYTES, read / 1024 * 1028)
+}
+
+/// The operation a prepared plan describes; the updater checks the rest.
+#[derive(Deserialize)]
+struct Prepared<P> {
+    operation_plan: P,
 }
 
 /// Labels for the overall-progress steps of each command.

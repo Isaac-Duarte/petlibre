@@ -4,7 +4,8 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
-use serde_json::json;
+use wellfed_formats::flash_plan::{GiveWayPlan, Kind, PlannedSector, Region};
+use serde_json::{Value, json};
 
 use super::*;
 use crate::commands::ota::Source;
@@ -12,8 +13,64 @@ use crate::relay::FakeBoard;
 use crate::status::{FlashTool, StepState};
 use crate::tools::{Capture, Captured};
 
-const PLAN: &str = r#"{"operation_plan": {"bank": 1, "ordered_sectors": [{}], "erase_sectors": 1,
-    "target_ota_sha256": "t", "fallback_ota_sha256": "f"}}"#;
+fn sector() -> PlannedSector {
+    PlannedSector {
+        offset: 0x186000,
+        bytes: 0x1000,
+        before_sha256: "b".into(),
+        staged_sha256: "s".into(),
+    }
+}
+
+/// A development plan staging `sectors` with `packets` staging packets.
+fn development(sectors: usize, packets: u64) -> DevelopmentPlan {
+    DevelopmentPlan {
+        schema_version: 1,
+        kind: Kind::Bank1Update,
+        bank: 1,
+        interrupted: false,
+        source_ota_sha256: None,
+        target_ota_sha256: "t".into(),
+        source_payload_bytes: 0,
+        target_payload_bytes: 0,
+        region: Region {
+            offset: 0x186000,
+            bytes: 0xa4000,
+        },
+        current_region_sha256: "c".into(),
+        staged_region_sha256: "s".into(),
+        proposed_region_sha256: "p".into(),
+        ordered_sectors: vec![sector(); sectors],
+        erase_sectors: sectors as u64,
+        staging_packets: packets,
+        commit_packets: packets.min(1),
+        additional_commit_erases: 0,
+        retained_tail_sha256: "r".into(),
+        scope: "test".into(),
+        other_bank_sha256: None,
+        restore_marker: false,
+    }
+}
+
+/// What the fake flash client's `prepare` writes for `command`.
+fn plan(command: &str) -> String {
+    let operation = match command {
+        "give-way" => json!(GiveWayPlan {
+            schema_version: 1,
+            kind: Kind::GiveWay,
+            bank: 1,
+            offset: 0x186000,
+            fallback_ota_sha256: "f".into(),
+            bank0_region_sha256: "z".into(),
+            before_sha256: "b".into(),
+            after_sha256: "a".into(),
+            program_frame_sha256: "p".into(),
+            scope: "test".into(),
+        }),
+        _ => json!(development(1, 4)),
+    };
+    json!({"operation_plan": operation}).to_string()
+}
 
 fn loader_result() -> Observation {
     Observation {
@@ -142,7 +199,7 @@ impl Tools for FakeTools {
         // A successful prepare writes its plan to --output.
         if code == 0 && args[1] == "prepare" {
             let at = args.iter().position(|a| a == "--output").unwrap();
-            fs::write(&args[at + 1], PLAN)?;
+            fs::write(&args[at + 1], plan(&args[0]))?;
         }
         Ok(code)
     }
@@ -479,7 +536,7 @@ fn prepare_records_the_matching_execute_line() {
         .collect();
     assert_eq!(ran, ["read small", "update inspect", "update prepare"]);
 
-    let sha = sha256(PLAN.as_bytes());
+    let sha = sha256(plan("update").as_bytes());
     assert_eq!(
         rig.bench.status.state.as_ref().unwrap().next.as_deref(),
         Some(format!(
@@ -506,7 +563,7 @@ fn give_way_prepare_then_execute() {
     rig.tools.0.borrow_mut().results.push_back(boot_result());
     let execute = GiveWayExecuteArgs {
         give_way: args,
-        expected_plan_sha256: sha256(PLAN.as_bytes()),
+        expected_plan_sha256: sha256(plan("give-way").as_bytes()),
         boot_seconds: 10.0,
     };
     assert_eq!(rig.bench.give_way_execute(&execute).unwrap(), 0);
@@ -703,17 +760,12 @@ fn demo_stops_at_the_toggle_cap_and_still_ends_off() {
 fn update_traffic_matches_observed_installs() {
     // Totals observed on October 22, 2026 (FW32 bench): a 158-sector bank-0
     // install and a no-op, both over a 0xa4000-byte region.
-    let plan = |sectors: usize, packets: u64| {
-        json!({"staging_packets": packets, "commit_packets": packets.min(1),
-               "region": {"bytes": 0xa4000}, "interrupted": false,
-               "ordered_sectors": vec![json!({}); sectors]})
-    };
     let close = |estimate: u64, actual: u64| estimate.abs_diff(actual) * 100 <= actual;
 
-    let (tx, rx) = update_traffic(&plan(158, 632)).unwrap();
+    let (tx, rx) = update_traffic(&development(158, 632));
     assert!(close(tx, 667_579) && close(rx, 4_081_733), "{tx} {rx}");
 
-    let (tx, rx) = update_traffic(&plan(0, 0)).unwrap();
+    let (tx, rx) = update_traffic(&development(0, 0));
     assert!(tx == 0 && close(rx, 703_173), "{rx}");
 }
 

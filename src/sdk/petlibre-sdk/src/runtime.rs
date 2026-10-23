@@ -733,6 +733,9 @@ fn log_probe(record: Record) {
         Record::Overrun { seq } => {
             report.record(format_args!("PLWIF3 error overrun seq={seq}\r\n"))
         }
+        Record::Hold => report.record(format_args!(
+            "PLWIF3 hold until=startup max_ms={WIFI_HOLD_MAX_MS}\r\n"
+        )),
     };
 
     if let Ok(line) = line {
@@ -740,10 +743,19 @@ fn log_probe(record: Record) {
     }
 }
 
+/// The longest the radio waits for startup work: a firmware that never
+/// reports `startup_done` still joins.
+const WIFI_HOLD_MAX_MS: u32 = 180_000;
+
 fn probe_step() -> u32 {
     // SAFETY: only this task touches the slot.
     let probe = unsafe { PROBE.get_or_init(Probe::default) };
-    let step = probe.step();
+    // The startup probe's windows run first; the recovery role has none and
+    // needs the network at once.
+    let ready = startup::snapshot().bank() == Some(0)
+        || PROBE_DONE.load(Ordering::Acquire)
+        || sdk::uptime_ms() >= WIFI_HOLD_MAX_MS;
+    let step = probe.step_when(ready);
     if let Some(record) = step.record {
         log_probe(record);
     }

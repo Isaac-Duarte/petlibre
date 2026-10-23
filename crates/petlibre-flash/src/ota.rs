@@ -71,14 +71,6 @@ pub struct Image {
     pub runtime_address: String,
 }
 
-/// [`images`] as JSON, the form `petlibre-build`'s audits still read.
-pub fn regions(payload: &[u8]) -> Result<Vec<serde_json::Value>> {
-    images(payload)?
-        .iter()
-        .map(|image| Ok(serde_json::to_value(image)?))
-        .collect()
-}
-
 /// Both cores' images at their exact addresses, with only erased padding.
 pub fn images(payload: &[u8]) -> Result<Vec<Image>> {
     let profile = [
@@ -189,7 +181,7 @@ pub mod tests {
         let image = wrap(&payload);
         assert_eq!(container(&image).unwrap(), &payload[..]);
         assert_eq!(images(&payload).unwrap().len(), 5);
-        assert_eq!(regions(&payload).unwrap()[2]["name"], "km4_xip");
+        assert_eq!(images(&payload).unwrap()[2].name, "km4_xip");
 
         let mut bad = image.clone();
         bad[40] ^= 1;

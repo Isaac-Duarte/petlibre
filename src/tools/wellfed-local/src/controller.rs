@@ -43,8 +43,11 @@ const RESOLVE_AFTER_SECONDS: i64 = 20 * 60;
 const QUIET_SECONDS: i64 = 10 * 60;
 
 /// Missing feeder telemetry breaks the observation interval even when the
-/// server remains connected to its own broker.
-const TELEMETRY_SECONDS: i64 = 60;
+/// server remains connected to its own broker. Stock 1.1.15 heartbeats about
+/// every 61 s (physical, fw40-stock-ota-03), so a 60 s bound restarted the
+/// interval at every heartbeat and an idle feeder could never be resolved;
+/// 90 s tolerates one late heartbeat but not a missed one.
+const TELEMETRY_SECONDS: i64 = 90;
 
 /// Stock precheck code for "an OTA is already active" (`0x0e018e30`).
 const OTA_ALREADY_ACTIVE: u64 = 0x464;

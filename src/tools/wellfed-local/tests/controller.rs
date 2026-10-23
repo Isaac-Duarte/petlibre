@@ -169,7 +169,7 @@ fn retry_does_not_emit_another_command_and_restart_is_uncertain() {
                 request_id: Uuid::new_v4(),
                 portions: 1
             },
-            Utc::now() + Duration::seconds(61)
+            Utc::now() + Duration::seconds(91)
         ),
         Err(Rejection::Offline)
     ));
@@ -470,7 +470,7 @@ fn timeout_is_uncertain_and_private_attributes_are_not_exposed() {
     )
     .unwrap();
 
-    c.expire(now + Duration::seconds(61)).unwrap();
+    c.expire(now + Duration::seconds(91)).unwrap();
     assert_eq!(c.status.feeds[0].phase, FeedPhase::Uncertain);
     assert!(!c.status.device_online);
 }

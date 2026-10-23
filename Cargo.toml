@@ -14,6 +14,7 @@ petlibre-hal-common = { path = "crates/sdk/petlibre-hal-common" }
 petlibre-amebad-sys = { path = "crates/sdk/petlibre-amebad-sys" }
 petlibre-core = { path = "crates/sdk/petlibre-core" }
 petlibre-fw-reference = { path = "firmwares/reference" }
+petlibre-sdk = { path = "crates/sdk/petlibre-sdk" }
 petlibre-formats = { path = "crates/tools/petlibre-formats" }
 petlibre-testkit = { path = "crates/sdk/petlibre-testkit" }
 # Host tools.

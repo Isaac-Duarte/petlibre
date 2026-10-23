@@ -2,9 +2,9 @@
 //! logged once and in order, an overwritten event is reported and skipped,
 //! and the shim can be started only once.
 
-use petlibre_fw_reference::probes::wifi::{POLL_MS, Probe, Record, Step};
 use petlibre_hal::sdk::{WifiEvent, fake};
 use petlibre_hal::stopped;
+use petlibre_sdk::wifi::{POLL_MS, Probe, Record, Step};
 
 fn start() -> Probe {
     fake::reset_hardware();

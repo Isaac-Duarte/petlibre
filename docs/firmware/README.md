@@ -9,7 +9,8 @@ The local server talks to **stock 1.1.15** over its existing MQTT protocol. It d
 | `petlibre-core` | `no_std` controller, portion accounting, sensor qualification, ADC scaling, motor gate, feedback queue, monotonic clock, journal, and flash authority |
 | `petlibre-hal-common` | The routines both cores link: RAM parking, SDK flash hooks, the KM0 park peer, and the OTA boot-trial step. The KM0 image contains only this crate |
 | `petlibre-hal` | KM4 ports: GPIO/ADC board port, interrupt/timer supervision, watchdog, FreeRTOS owner, flash lease provider, transport, updater, build-bound startup reports, stopped outputs, and LED diagnostics. It re-exports the common crate's `flash` and `trial` |
-| `petlibre-fw-reference` | The KM4 first-boot application entry and its bench probes (Wi-Fi, optics, ADC, supervision, flash stress, and the opt-in `fw16-pulse` motion variant) |
+| `petlibre-sdk` | The KM4 runtime every firmware runs inside: the `petlibre_app_start` entry, stopped-output startup and the synthetic diagnostic, the Wi-Fi join and health transport, the watchdog feeder, FW11 confirmation, the settings writer, and the FW10 updater and offer check. Bank 0 runs only the runtime. A firmware defines its start hook with `firmware!` and creates its tasks with `spawn` |
+| `petlibre-fw-reference` (`firmwares/reference`) | The reference firmware: the optics probe, startup chime and speaker stream tasks, the opt-in `fw16-pulse` motion and FW11 trial variants, and the bench probes (optics, ADC, supervision, flash stress) |
 | `petlibre-amebad-sys` | Bindgen-backed KM4 calls into the pinned AmebaD SDK, and the deterministic host fake SDK used by tests and the simulator |
 | `petlibre-sdk-c` | C ABI and per-core static libraries joining Rust to SDK startup |
 | `petlibre-testkit`, `petlibre-sim` | Fake NOR journal storage and deterministic host worker |

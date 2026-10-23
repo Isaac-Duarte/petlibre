@@ -43,7 +43,7 @@ Initial setup downloads dependencies. Checks use host models and loopback networ
 
 | Location | Contents |
 | --- | --- |
-| `crates/sdk/` | The PetLibre SDK that firmwares build on: `petlibre-core` (hardware-independent feeding, journal and flash logic), `petlibre-hal` and `petlibre-hal-common` (AmebaD ports), `petlibre-amebad-sys` (pinned vendor SDK bindings and the host fake), `petlibre-sdk-c` (the C ABI and per-core archives), `petlibre-testkit` and `petlibre-sim` (the virtual feeder) |
+| `crates/sdk/` | The PetLibre SDK that firmwares build on: `petlibre-sdk` (the runtime every firmware runs inside, and the firmware API), `petlibre-core` (hardware-independent feeding, journal and flash logic), `petlibre-hal` and `petlibre-hal-common` (AmebaD ports), `petlibre-amebad-sys` (pinned vendor SDK bindings and the host fake), `petlibre-sdk-c` (the C ABI and per-core archives), `petlibre-testkit` and `petlibre-sim` (the virtual feeder) |
 | `crates/tools/` | Host tools: `petlibre-local` (stock-firmware local server), `petlibre-flash` (UART flash reads, updates and recovery), `petlibre-bench` (relay bench and its progress page, built in with `--features ui`), `petlibre-audit` (offline evidence audits), `petlibre-build` (SDK firmware builds and their link audits), `petlibre-formats` (the file formats those host tools share), `xtask` (`cargo xtask check-repository`) |
 | `firmwares/` | One crate per firmware built on the SDK; `reference` is the current diagnostic application and its bench variants |
 | `firmware/` | SDK hooks and C ports, pinned builds, layout, and simulator build |

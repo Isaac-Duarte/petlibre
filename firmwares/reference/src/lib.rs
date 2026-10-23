@@ -1,7 +1,8 @@
-//! EXPERIMENTAL KM4 first-boot image for the PLAF103 research board.
+//! EXPERIMENTAL reference firmware for the PLAF103 research board, on the
+//! PetLibre SDK.
 //!
-//! The diagnostic application entry (`app`, target builds only) starts the
-//! `petlibre-hal` ports and runs the bench probe its features select.
+//! The firmware's tasks (`app`, target builds only) start inside the
+//! `petlibre-sdk` runtime and run the bench probe its features select.
 //! Host builds test the probes against the SDK fake.
 #![cfg_attr(target_os = "none", no_std)]
 #![allow(clippy::missing_safety_doc)]
@@ -10,6 +11,5 @@
 compile_error!("petlibre-fw-reference target builds are KM4-only");
 
 #[cfg(target_os = "none")]
-pub mod app;
+mod app;
 pub mod probes;
-pub mod settings;

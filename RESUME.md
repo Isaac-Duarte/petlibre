@@ -7,6 +7,16 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
+**October 22, late night: one SDK, many firmwares (FW36, host only, nothing run on the bench).**
+- **What changed:**
+  - The workspace is `crates/sdk/` (the SDK), `crates/tools/` (host tools) and `firmwares/` (one crate per firmware). Renamed: `petlibre-amebad` to `petlibre-hal`, `-amebad-common` to `-hal-common`, `-amebad-sdk` to `-amebad-sys`, `-ffi` to `-sdk-c`, `-firstboot` to `petlibre-fw-reference` in `firmwares/reference`. C symbols are unchanged.
+  - New `petlibre-sdk`: the KM4 runtime from `app.rs` (entry, startup, Wi-Fi and transport, feeder, confirmation, settings writer, updater, offer check). Bank 0 never starts firmware code. A firmware defines `firmware!(start)` and creates tasks with `petlibre_sdk::spawn`; it reports `startup_done` before the runtime confirms.
+  - The reference firmware's tasks now start before the confirmation task, so `PLAUD1 start` logs before `PLCNF1 start`.
+  - The stack audit reads its task table from the runtime and the firmware.
+- **Checks:** `make check`; fresh `plaf103` and `plaf103-firstboot` builds with every audit passing; `make check-fixtures` with no skips. Stack bounds unchanged except audio 1040 to 728 and optics 4352 to 4380 (of 8192), both from cross-crate inlining.
+- **Not yet physical:** the split images have not run on the feeder.
+- **Next (FW36):** `petlibre-build --firmware <name>` with the KM4 archive built from the selected firmware, a minimal `firmwares/blink`, then on hardware: the smoke suite, blink confirming, and an OTA back to the reference firmware.
+
 **October 22, late night: faster integration runs (physical over the air and by UART, autonomous).**
 - **What changed:**
   - **Pipelined OTA download:**

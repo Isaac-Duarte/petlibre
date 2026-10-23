@@ -1617,6 +1617,7 @@ version = "0.1.0"
 dependencies = [
  "petlibre-core",
  "petlibre-hal",
+ "petlibre-sdk",
 ]
 
 [[package]]
@@ -1667,6 +1668,14 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "petlibre-sdk"
+version = "0.1.0"
+dependencies = [
+ "petlibre-core",
+ "petlibre-hal",
 ]
 
 [[package]]

@@ -521,7 +521,7 @@ impl Build<'_> {
             audits.stack_audit = recorded(&audit::stack::audit(
                 &self.image_directory().join("target_img2.axf"),
                 &binutils.objdump(),
-                &fs::read_to_string(repo.path(audit::stack::APP_SOURCE))?,
+                &audit::stack::task_sources(repo)?,
             )?)?;
         }
         Ok(audits)

@@ -1,0 +1,22 @@
+[package]
+license.workspace = true
+name = "petlibre-sdk"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "Experimental PetLibre SDK: the PLAF103 KM4 runtime every firmware runs inside, and the API firmwares build on"
+publish.workspace = true
+
+[features]
+# KM4 target builds with the pinned SDK bindings.
+km4 = ["petlibre-hal/km4", "petlibre-hal/sdk"]
+# FW11 trial test: a candidate whose startup fails on a determined error.
+# Only `petlibre-build plaf103-firstboot --trial-fail` sets it.
+fw11-fail = []
+
+[dependencies]
+petlibre-hal.workspace = true
+petlibre-core.workspace = true
+
+[lints]
+workspace = true

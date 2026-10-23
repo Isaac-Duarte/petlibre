@@ -139,7 +139,7 @@ pub(crate) fn linked(repo: &Repo, build: &Path, objects: &Archives) -> Result<Li
     };
     let stock = fs::read(repo.stock())?;
     let image = fs::read(ota_image(&sdk))?;
-    let app = fs::read_to_string(repo.path(stack::APP_SOURCE))?;
+    let app = stack::task_sources(repo)?;
 
     Ok(Linked {
         layout_audit: layout::audit(&ota_image(&sdk), &repo.stock(), &repo.layout())?,

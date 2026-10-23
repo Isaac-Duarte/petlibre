@@ -17,9 +17,7 @@ A feature card sequences behavior through the SDK; it never relaxes a FIRMWARE_B
 
 **Scope.** Parity means the device's own functions, not the vendor app or cloud. Out of scope: the vendor app and cloud, binding, upsell and care plans, camera and motion switches (other models), wire compatibility with the stock app, and recording through the on-board microphone (a CLI upload is enough). The stock behavior column comes from static analysis of the 1.1.15 image, the vendor app and captured traffic; fields shared across the vendor's models are not confirmed for the PLAF103 until FP01 says so.
 
-**Time policy.** There is no battery-backed RTC in use, so the clock is invalid after every cold boot ([clock](docs/firmware/clock.md)). The feeder needs no server: any one time source (NTP, the app, the server or Home Assistant) makes the clock valid, and it stays valid for at least 7 days without another sync (FW46). Until FW46 lands, only the server syncs. After a cold boot no schedule runs until a source syncs, and occurrences missed meanwhile follow FW21's missed-meal rule.
-
-**Server optional.** Every card here works with the app alone on the LAN; the server adds long history, remote access and push notifications (FP18). See [product architecture](docs/firmware/product-architecture.md).
+**v1 time policy.** There is no battery-backed RTC in use, so the clock is invalid after every cold boot ([clock](docs/firmware/clock.md)). For v1 the feeder needs the local server after a cold boot: no schedule runs until the server syncs the clock, and occurrences missed meanwhile follow FW21's missed-meal rule. Keeping time across a power cut with no server is deferred.
 
 ## Groundwork
 
@@ -32,7 +30,7 @@ A feature card sequences behavior through the SDK; it never relaxes a FIRMWARE_B
 
 | Card | Status | Evidence | Stock behavior | Prerequisites | Finish line |
 | --- | --- | --- | --- | --- | --- |
-| **FP03 Feeding schedules** | Planned | — | `FEEDING_PLAN_SERVICE`: several plans, each with a time, portions, repeat days, an enable flag and a meal call | FW15, FW17, FW18, FW21, FP02 | Create, edit, enable, disable and delete plans from the CLI, within stock's limits. Plans persist and each occurrence runs exactly once through the feeding owner, with no server needed once the clock is valid. Cover DST, clock jumps, overlapping plans, restart and interrupted-meal reconciliation. After a cold boot nothing runs until a time source syncs the clock, and missed occurrences follow FW21's rule. |
+| **FP03 Feeding schedules** | Planned | — | `FEEDING_PLAN_SERVICE`: several plans, each with a time, portions, repeat days, an enable flag and a meal call | FW15, FW17, FW18, FW21, FP02 | Create, edit, enable, disable and delete plans from the CLI, within stock's limits. Plans persist and each occurrence runs exactly once through the feeding owner, with no server needed once the clock is valid. Cover DST, clock jumps, overlapping plans, restart and interrupted-meal reconciliation. After a cold boot nothing runs until the server syncs the clock, and missed occurrences follow FW21's rule. |
 | **FP04 Import the stock schedule** | Planned | — | The server already holds the captured plan snapshot | FP03 | Moving from stock to the replacement keeps the owner's meals: the captured snapshot converts to replacement plans, and a plan that cannot convert is refused by name, never silently dropped. |
 | **FP05 Manual feed** | Planned | — | The Dispense button and a remote feed of N portions; `GRAIN_OUTPUT_EVENT` start and end with expected and actual counts | FW17, FW20 | A button press and a remote request go through the same owner with stock's portion rules, and cannot double-feed. Each feed reports requested and delivered portions (outlet beam). |
 | **FP06 Feeding history** | Planned | — | Feed and error records (`GRAIN_OUTPUT_EVENT`, `ERROR_EVENT`) | FW15, FW17 | A bounded on-device log of each feed (source, time, requested, delivered, result) that survives reboots and reads from the CLI. An uncertain feed reads as uncertain. |
@@ -60,8 +58,7 @@ A feature card sequences behavior through the SDK; it never relaxes a FIRMWARE_B
 
 | Card | Status | Evidence | Stock behavior | Prerequisites | Finish line |
 | --- | --- | --- | --- | --- | --- |
-| **FP16 Home Assistant integration** | Planned | — | — | FP03, FP05, FP07, FP08, FW49 | Home Assistant adds the feeder by auto-discovery with no add-on (FW49's ESPHome native API). Feed, food level, faults, battery, lock, lights and sound work from HA, and each plan shows as an enable switch and a time. Reconnects and automation replay cannot duplicate a feed, and feeding continues without Home Assistant. |
-| **FP18 Server mirror and notifications** | Planned | — | The vendor cloud: history, push alerts, remote control | FP06, FP08, FW47 | The optional server mirrors the feeder's events through FW47's cursor with no gaps across its own outages. It records live samples while connected and keeps both raw, forever by default, with CSV and JSON export and import. It holds pet profiles and food info, shows the derived views (refill estimate, grams and calories, anomalies, hardware health, audit log), sends push notifications for alerts, and gives remote access. Stopping the server changes nothing on the feeder. Details: [data](docs/firmware/product-architecture.md#data). |
+| **FP16 Home Assistant integration** | Planned | — | — | FP02, FP03, FP05, FP08, FW25 | After standalone behavior works, add discovery, availability, sensors, settings and feed commands over the FP02 interface. Reconnects and automation replay cannot duplicate a feed, and feeding continues without Home Assistant. |
 | **FP17 Parity soak** | Planned | — | — | FP03–FP15, FW27 | A defined multi-day run on schedules alone, with power cuts, server outages and a battery stretch. Every meal is accounted for exactly once, and the result is compared with stock in the same scenarios. FW29 waits on this card. |
 
 ## Status at a glance
@@ -87,4 +84,3 @@ A feature card sequences behavior through the SDK; it never relaxes a FIRMWARE_B
 | FP15 Reset button | ⬜ Planned |
 | FP16 Home Assistant integration | ⬜ Planned |
 | FP17 Parity soak | ⬜ Planned |
-| FP18 Server mirror and notifications | ⬜ Planned |

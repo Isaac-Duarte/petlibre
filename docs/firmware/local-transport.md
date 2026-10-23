@@ -51,7 +51,7 @@ The will is a non-retained `health` message with `"online": false`, so the broke
 
 ## Health message
 
-Compact JSON, one object, at most 512 bytes (576 since FW21 added `clock`), schema `wellfed.health`, version 1. A consumer must ignore unknown fields and refuse an unknown major version. Field values come from data the firmware already has; nothing new is measured.
+Compact JSON, one object, at most 512 bytes (640 once FW21 added `clock` and the nonce, 704 since FW14 added `power`), schema `wellfed.health`, version 1. A consumer must ignore unknown fields and refuse an unknown major version. Field values come from data the firmware already has; only `power` is measured for it.
 
 ```json
 {"schema":"wellfed.health","v":1,"online":true,"seq":12,"uptime_ms":61234,
@@ -71,6 +71,7 @@ Compact JSON, one object, at most 512 bytes (576 since FW21 added `clock`), sche
 | `faults` | latched fault names, for example `watchdog`, `flash_hook`, `stopped_readback`; empty when none |
 | `wifi` | the FW07 shim's event counters |
 | `transport` | this client's own connect count and last error |
+| `power` | FW14: `{"adapter":true,"battery_mv":4850,"age_ms":1200}` from the runtime's power monitor, which samples ADC channel 5 and PA19 every 5 s once the startup probe has released the ADC. `battery_mv` is the pin's millivolts through the measured divider (2.063), `null` with no pack fitted (pin below 500 mV). `power` is `null` when there is no sample younger than 15 s: before the first, after an ADC failure, or in a firmware that claims the ADC itself (`adc`, `qa`). The will carries `null` |
 
 **Decision:** publish on connect, then every 30 s, and immediately when `faults`, `outputs` or a Wi-Fi loss counter changes. The keepalive is 30 s, and the server treats health older than 75 s as stale even if no will arrived.
 

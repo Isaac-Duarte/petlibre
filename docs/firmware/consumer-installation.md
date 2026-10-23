@@ -9,6 +9,8 @@ Each finding is labeled **physical** (observed on the research unit), **static**
 **Physical (October 23, 2026, research unit):**
 - **`fw40-stock-ota-05`:** stock 1.1.15 installed a replacement build through its own MQTT-triggered HTTP updater, with no UART write. It downloaded the image in about 40 s, checked its byte-sum and wrote it to bank 0. The loader then booted the build from bank 0.
 - **`fw40-stock-ota-06-promote`:** the build's bank-0 recovery role installed the same build, signed, into bank 1, where it confirmed.
+- **`fw40-stock-ota-07`:** the whole sequence in one command, with a fresh build: install, recovery-role health from bank 0, and promotion to bank 1.
+- **`fw41-roundtrip-01`:** to stock over our updater and back over stock's, with no UART write and nobody at the bench.
 - **Tool:** `petlibre-bench stock-ota` runs this whole sequence ([bench](../hardware/bench.md#stock-to-a-replacement-stock-ota)). The image contract is in [stock OTA requirements](stock-ota-requirements.md).
 
 What made those runs work on the bench, and must stay in any installer:
@@ -115,7 +117,7 @@ The vendor's firmware cannot be shipped with the app. Each feeder already holds 
 
 **Secondary: the vendor's update service (static).** The vendor app asks the cloud for a device's update metadata (private evidence E12). An installer could fetch the official package the same way with the user's own account. This depends on the vendor's service, and may offer only the latest version.
 
-**Rolling back.** Our firmware installs a stock image as a signed update (FW41: `petlibre-bench ota --review <stock review>`, host-tested). The bank-0 role writes it into bank 1. Stock's own KM0 then runs, so our trial counter never counts it.
+**Rolling back.** Our firmware installs a stock image as a signed update (FW41: `petlibre-bench ota --review <stock review>`, physical in `fw41-roundtrip-01`). The bank-0 role writes it into bank 1. Stock's own KM0 then runs, so our trial counter never counts it.
 
 What a rollback keeps and leaves behind:
 - **Stock's settings stay:** `0x3e8000`–`0x3f0000` are never written by our firmware, so stock comes back still provisioned. It points at the installer's broker if steps 1–3 were used; re-pairing with the vendor app returns it to the cloud.

@@ -7,6 +7,18 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
+**October 23, early afternoon: the stock round trip runs UART-free, and FW35, FW37, FW39, FW40 and FW41 are done (physical, owner at the bench for QA, away for the rest).**
+- **Runs:**
+  - `fw40-stock-ota-07` (`stock-ota --power`): stock 1.1.15, which the owner had put back, installed `qa` `ef76b85e…` in 40 s. It booted from bank 0, reported recovery-role health (first time with stock), and was promoted to bank 1 as v84, which confirmed. On the trial boot: `PLWIF3 hold`, then `PLQA1 check stage=optics status=pass`.
+  - `fw39-qa-03-guided`, `fw39-qa-04-guided` (`boot --seconds 180`, at most 180 s): `qa_fail` each. 03 failed PA0 (Lock mis-pressed); 04 failed Reset (no press in 30 s). Between them every check and item passed; the owner accepted the pair.
+  - `fw41-roundtrip-01` (`itest --only stock-roundtrip --power --stock fw01-stock-review-20261020-01`): passed in 6 min 31 s. Stock v85 via our updater, then stock installed v84 into bank 0, promoted as v86.
+  - `fw35-live-01` (smoke tier, all pass) with the page's `/api/feeder` and `/api/status` sampled every 5 s (`private/verification/fw35-live-01-page.jsonl`).
+  - `make check-fixtures` against fresh `device`/`firstboot` builds: 25 tests, none skipped.
+- **Code:** the bench page has a guided-QA panel (Overview) that coaches a QA run from its `PLQA1` records; the parser moved to `petlibre_formats::qa`, shared with `petlibre-audit qa`.
+- **Flash now:** **Bank 1:** `qa` `ef76b85e…` (last offer v86, confirmed). **Bank 0:** the same build, written by stock. **Next manifest version:** 87.
+- **Bench state:** feeder on (relay 1), hotspot up, no server. The owner's `petlibre-local network apply` rules are still in place; `sudo petlibre-local network remove` clears them.
+- **Next:** FW42's setup-frame test (owner puts stock in setup mode), or FW43. Owner ideas for QA speed: end the capture at `PLQA1 result`, and run the guided checks before optics.
+
 **October 23, morning to afternoon: stock 1.1.15 installs the replacement over its own updater (FW40, physical; built on branch `fw40-followup` in the `stock-ota-poc` worktree).**
 - **Runs:**
   - `fw40-stock-ota-02`: stock accepted the request but could not reach the image port, and reported `OTA_INFORM` error 2003; it stayed on stock. Cause: `network apply` opened only 1883. It now also accepts 8088 from the feeder.

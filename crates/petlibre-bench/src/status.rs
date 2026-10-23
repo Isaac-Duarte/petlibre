@@ -17,15 +17,45 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Result, now};
 
-pub const CURRENT: &str = "current.json";
-pub const LOG: &str = "current.log";
-pub const HISTORY: &str = "history.jsonl";
-pub const RELAYS: &str = "relays.json";
-pub const SCRIPT: &str = "script.json";
+pub(crate) const CURRENT: &str = "current.json";
+pub(crate) const LOG: &str = "current.log";
+pub(crate) const HISTORY: &str = "history.jsonl";
+pub(crate) const RELAYS: &str = "relays.json";
+pub(crate) const SCRIPT: &str = "script.json";
 const KEPT_LINES: usize = 40;
 
+/// How a command went, as `current.json` and the history record it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum Outcome {
+    #[default]
+    Running,
+    Pass,
+    Stopped,
+    /// Never written: the page's reading of a `running` record whose
+    /// process exited without finishing it.
+    Ended,
+}
+
+/// Where one of a command's steps stands; the page colours its rows by it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum StepState {
+    Pending,
+    Running,
+    Done,
+    Failed,
+    Skipped,
+}
+
+impl StepState {
+    fn unfinished(self) -> bool {
+        matches!(self, Self::Pending | Self::Running)
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct Current {
+pub(crate) struct Current {
     #[serde(default)]
     pub pid: u32,
     pub command: String,
@@ -34,7 +64,7 @@ pub struct Current {
     pub started: f64,
     #[serde(default)]
     pub finished: Option<f64>,
-    pub outcome: String,
+    pub outcome: Outcome,
     #[serde(default)]
     pub error: Option<String>,
 
@@ -59,14 +89,21 @@ pub struct Current {
     pub flash_tool: Option<FlashTool>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Step {
-    pub label: String,
-    pub state: String,
+impl Current {
+    /// Recorded as running by a process that still exists.
+    pub(crate) fn live(&self) -> bool {
+        self.outcome == Outcome::Running && alive(self.pid)
+    }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Progress {
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Step {
+    pub label: String,
+    pub state: StepState,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct Progress {
     pub done: u64,
     pub total: u64,
     pub unit: String,
@@ -77,7 +114,7 @@ pub struct Progress {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Capture {
+pub(crate) struct Capture {
     /// Root-relative capture directory.
     pub path: String,
     pub seconds: f64,
@@ -85,7 +122,7 @@ pub struct Capture {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Transfer {
+pub(crate) struct Transfer {
     /// Root-relative session directory.
     pub path: String,
     pub tx: u64,
@@ -94,29 +131,29 @@ pub struct Transfer {
     pub started: Option<f64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FlashTool {
     pub path: String,
     pub sha256: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HistoryEntry {
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct HistoryEntry {
     pub command: String,
     #[serde(default)]
     pub name: Option<String>,
     pub started: f64,
     #[serde(default)]
     pub finished: Option<f64>,
-    pub outcome: String,
+    pub outcome: Outcome,
     #[serde(default)]
     pub error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RelayState {
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct RelayState {
     pub on: bool,
     pub at: f64,
 }
@@ -125,7 +162,7 @@ pub struct RelayState {
 pub struct Status {
     directory: Option<PathBuf>,
     root: PathBuf,
-    pub state: Option<Current>,
+    pub(crate) state: Option<Current>,
     written: Option<Instant>,
     log: Option<File>,
     /// The steps are the command's own (the suite's scenarios); a child's
@@ -153,22 +190,18 @@ impl Status {
         }
     }
 
-    pub fn directory(&self) -> Option<&Path> {
-        self.directory.as_deref()
-    }
-
     pub fn begin(&mut self, command: &str, name: Option<&str>, steps: &[&str]) -> Result<()> {
         self.state = Some(Current {
             pid: std::process::id(),
             command: command.into(),
             name: name.map(Into::into),
             started: now(),
-            outcome: "running".into(),
+            outcome: Outcome::Running,
             steps: steps
                 .iter()
                 .map(|s| Step {
                     label: (*s).into(),
-                    state: "pending".into(),
+                    state: StepState::Pending,
                 })
                 .collect(),
             ..Current::default()
@@ -190,26 +223,26 @@ impl Status {
             return;
         }
         for s in &mut state.steps {
-            if s.state == "running" {
-                s.state = "done".into();
+            if s.state == StepState::Running {
+                s.state = StepState::Done;
             }
         }
 
         let index = match state
             .steps
             .iter()
-            .position(|s| s.label == label && s.state == "pending")
+            .position(|s| s.label == label && s.state == StepState::Pending)
         {
             Some(index) => index,
             None => {
                 state.steps.push(Step {
                     label: label.into(),
-                    state: "pending".into(),
+                    state: StepState::Pending,
                 });
                 state.steps.len() - 1
             }
         };
-        state.steps[index].state = "running".into();
+        state.steps[index].state = StepState::Running;
         state.progress = None;
         self.write_quietly(true);
     }
@@ -220,24 +253,23 @@ impl Status {
         self.fixed = true;
     }
 
-    /// Set the first unfinished step named `label` to `state` (`running`,
-    /// `done`, `failed` or `skipped`).
-    pub fn mark(&mut self, label: &str, state: &str) {
+    /// Set the first unfinished step named `label` to `state`.
+    pub(crate) fn mark(&mut self, label: &str, state: StepState) {
         let Some(current) = &mut self.state else {
             return;
         };
         if let Some(step) = current
             .steps
             .iter_mut()
-            .find(|s| s.label == label && matches!(s.state.as_str(), "pending" | "running"))
+            .find(|s| s.label == label && s.state.unfinished())
         {
-            step.state = state.into();
+            step.state = state;
         }
         self.write_quietly(true);
     }
 
     /// One line of tool output: kept, logged, and scanned for progress counts.
-    pub fn line(&mut self, text: &str) {
+    pub(crate) fn line(&mut self, text: &str) {
         let Some(state) = &mut self.state else { return };
         let text = text.trim_end();
         state.lines.push(text.into());
@@ -268,7 +300,7 @@ impl Status {
         self.write_quietly(false);
     }
 
-    pub fn capture(&mut self, output: Option<&Path>, seconds: f64) {
+    pub(crate) fn capture(&mut self, output: Option<&Path>, seconds: f64) {
         let root = self.root.clone();
         let Some(state) = &mut self.state else { return };
         state.capture = output.map(|path| Capture {
@@ -280,7 +312,7 @@ impl Status {
     }
 
     /// Expected serial traffic of an update session, for an estimated bar.
-    pub fn transfer(&mut self, directory: Option<&Path>, tx: u64, rx: u64) {
+    pub(crate) fn transfer(&mut self, directory: Option<&Path>, tx: u64, rx: u64) {
         let root = self.root.clone();
         let Some(state) = &mut self.state else { return };
         state.transfer = directory.map(|path| Transfer {
@@ -292,7 +324,7 @@ impl Status {
         self.write_quietly(true);
     }
 
-    pub fn relay(&mut self, channel: u8, on: bool) {
+    pub(crate) fn relay(&mut self, channel: u8, on: bool) {
         if let Some(state) = &mut self.state {
             state.relay.insert(channel.to_string(), on);
         }
@@ -318,7 +350,7 @@ impl Status {
         self.write_quietly(true);
     }
 
-    pub fn next(&mut self, line: String) {
+    pub(crate) fn next(&mut self, line: String) {
         if let Some(state) = &mut self.state {
             state.next = Some(line);
         }
@@ -329,13 +361,21 @@ impl Status {
         let Some(state) = &mut self.state else { return };
         let pass = code == 0;
         for s in &mut state.steps {
-            if s.state == "running" {
-                s.state = if pass { "done" } else { "failed" }.into();
+            if s.state == StepState::Running {
+                s.state = if pass {
+                    StepState::Done
+                } else {
+                    StepState::Failed
+                };
             }
         }
 
         state.finished = Some(now());
-        state.outcome = if pass { "pass" } else { "stopped" }.into();
+        state.outcome = if pass {
+            Outcome::Pass
+        } else {
+            Outcome::Stopped
+        };
         state.error = error;
         state.capture = None;
         state.transfer = None;
@@ -345,23 +385,16 @@ impl Status {
             name: state.name.clone(),
             started: state.started,
             finished: state.finished,
-            outcome: state.outcome.clone(),
+            outcome: state.outcome,
             error: state.error.clone(),
             next: state.next.clone(),
         };
         self.write_quietly(true);
 
-        if let Some(directory) = &self.directory {
-            let appended = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(directory.join(HISTORY))
-                .and_then(|mut stream| {
-                    writeln!(stream, "{}", serde_json::to_string(&entry).unwrap())
-                });
-            if let Err(error) = appended {
-                eprintln!("Could not record bench history: {error}");
-            }
+        if let Some(directory) = &self.directory
+            && let Err(error) = append_history(directory, &entry)
+        {
+            eprintln!("Could not record bench history: {error}");
         }
     }
 
@@ -372,7 +405,7 @@ impl Status {
         }
     }
 
-    pub fn write(&mut self, force: bool) -> Result<()> {
+    pub(crate) fn write(&mut self, force: bool) -> Result<()> {
         let Some(directory) = &self.directory else {
             return Ok(());
         };
@@ -391,8 +424,18 @@ impl Status {
     }
 }
 
+fn append_history(directory: &Path, entry: &HistoryEntry) -> Result<()> {
+    let line = serde_json::to_string(entry)?;
+    let mut stream = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(directory.join(HISTORY))?;
+    writeln!(stream, "{line}")?;
+    Ok(())
+}
+
 /// Whether a recorded process still exists (one owned by another user counts).
-pub fn alive(pid: u32) -> bool {
+pub(crate) fn alive(pid: u32) -> bool {
     let Some(pid) = i32::try_from(pid)
         .ok()
         .and_then(rustix::process::Pid::from_raw)
@@ -405,11 +448,17 @@ pub fn alive(pid: u32) -> bool {
     }
 }
 
+/// The record of the last command in `directory`, if it reads.
+pub(crate) fn current(directory: &Path) -> Option<Current> {
+    let text = fs::read_to_string(directory.join(CURRENT)).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
 /// The command a live bench process is running, from its status file.
 pub fn busy(directory: &Path) -> Option<String> {
-    let text = fs::read_to_string(directory.join(CURRENT)).ok()?;
-    let current: Current = serde_json::from_str(&text).ok()?;
-    (current.outcome == "running" && alive(current.pid)).then_some(current.command)
+    current(directory)
+        .filter(Current::live)
+        .map(|current| current.command)
 }
 
 /// Write beside the target, then rename over it, so a reader never sees a
@@ -420,7 +469,7 @@ fn replace(path: &Path, data: &[u8]) -> std::io::Result<()> {
     fs::rename(temporary, path)
 }
 
-pub fn relative(root: &Path, path: &Path) -> String {
+pub(crate) fn relative(root: &Path, path: &Path) -> String {
     path.strip_prefix(root)
         .unwrap_or(path)
         .display()
@@ -429,7 +478,7 @@ pub fn relative(root: &Path, path: &Path) -> String {
 
 /// `Read N/M bytes`, `Verified changed sectors: N/M` or the over-the-air
 /// loop's `Written sectors: N/M` in a tool's output.
-pub fn progress_count(text: &str) -> Option<(u64, u64, &'static str)> {
+fn progress_count(text: &str) -> Option<(u64, u64, &'static str)> {
     fn pair(text: &str) -> Option<(u64, u64)> {
         let (done, rest) = text.split_once('/')?;
         let digits = rest
@@ -481,6 +530,7 @@ mod tests {
         let current = read(CURRENT);
         assert_eq!(current["steps"][0]["state"], "done");
         assert_eq!(current["steps"][1]["state"], "running");
+        assert_eq!(current["outcome"], "running");
         assert_eq!(current["progress"]["done"], 4096);
         assert_eq!(current["progress"]["unit"], "bytes");
         assert_eq!(current["relay"], serde_json::json!({"1": true}));
@@ -503,8 +553,8 @@ mod tests {
         let history = fs::read_to_string(tmp.path().join(HISTORY)).unwrap();
         let entry: HistoryEntry = serde_json::from_str(history.trim()).unwrap();
         assert_eq!(
-            (entry.command.as_str(), entry.outcome.as_str()),
-            ("dump", "stopped")
+            (entry.command.as_str(), entry.outcome),
+            ("dump", Outcome::Stopped)
         );
         assert_eq!(entry.error.as_deref(), Some("Observer failed"));
 
@@ -519,7 +569,7 @@ mod tests {
         status.line("Read 1/2 bytes");
         status.finish(0, None);
 
-        assert_eq!(status.state.unwrap().outcome, "pass");
+        assert_eq!(status.state.unwrap().outcome, Outcome::Pass);
     }
 
     #[test]
@@ -549,10 +599,10 @@ mod tests {
             .unwrap();
         status.fix_steps();
 
-        status.mark("ota-update", "running");
+        status.mark("ota-update", StepState::Running);
         status.step("firmware build");
-        status.mark("ota-update", "done");
-        status.mark("requests", "failed");
+        status.mark("ota-update", StepState::Done);
+        status.mark("requests", StepState::Failed);
 
         let steps: Vec<_> = status
             .state
@@ -560,15 +610,21 @@ mod tests {
             .unwrap()
             .steps
             .iter()
-            .map(|s| (s.label.as_str(), s.state.as_str()))
+            .map(|s| (s.label.as_str(), s.state))
             .collect();
-        assert_eq!(steps, [("ota-update", "done"), ("requests", "failed")]);
+        assert_eq!(
+            steps,
+            [
+                ("ota-update", StepState::Done),
+                ("requests", StepState::Failed)
+            ]
+        );
     }
 
     #[test]
     fn python_written_history_still_reads() {
         let line = r#"{"command": "dump", "name": "x", "started": 1.0, "finished": 2.0, "outcome": "pass", "error": null}"#;
         let entry: HistoryEntry = serde_json::from_str(line).unwrap();
-        assert_eq!(entry.outcome, "pass");
+        assert_eq!(entry.outcome, Outcome::Pass);
     }
 }

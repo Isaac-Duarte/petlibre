@@ -20,10 +20,12 @@ macro_rules! say {
 pub mod commands;
 pub mod config;
 pub mod relay;
+mod server;
 pub mod status;
 pub mod tools;
 pub mod ui;
 
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
@@ -38,6 +40,21 @@ pub enum Error {
     Bench(String),
     #[error("Interrupted by the operator")]
     Interrupted,
+    /// A JSON file the bench reads (its config, the server's, a review's
+    /// manifest) is missing or malformed; `path` as the operator gave it.
+    #[error("{}: {source}", path.display())]
+    Load {
+        path: PathBuf,
+        #[source]
+        source: petlibre_formats::Error,
+    },
+    /// The server's status does not show what a wait is for, yet.
+    #[error(transparent)]
+    NotReady(#[from] server::NotReady),
+    /// The firmware did not answer a request. Requests go out at QoS 0, so
+    /// one sent while the transport reconnects is lost.
+    #[error("No reply to {op} within {seconds:.0} s")]
+    NoReply { op: &'static str, seconds: f64 },
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
@@ -48,7 +65,7 @@ pub enum Error {
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
-pub fn require(condition: bool, message: impl Into<String>) -> Result<()> {
+pub(crate) fn require(condition: bool, message: impl Into<String>) -> Result<()> {
     if condition {
         Ok(())
     } else {
@@ -56,7 +73,15 @@ pub fn require(condition: bool, message: impl Into<String>) -> Result<()> {
     }
 }
 
-pub fn interrupted() -> bool {
+/// Read the JSON file at `relative` under `root` into its type.
+pub(crate) fn load<T: serde::de::DeserializeOwned>(root: &Path, relative: &Path) -> Result<T> {
+    petlibre_formats::load(&root.join(relative)).map_err(|source| Error::Load {
+        path: relative.to_path_buf(),
+        source,
+    })
+}
+
+pub(crate) fn interrupted() -> bool {
     INTERRUPTED.load(Ordering::SeqCst)
 }
 
@@ -75,16 +100,8 @@ pub fn sleep(seconds: f64) -> Result<()> {
     }
 }
 
-pub fn sha256_hex(data: &[u8]) -> String {
-    use sha2::Digest;
-    sha2::Sha256::digest(data)
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
-}
-
 /// Seconds since the Unix epoch, as the status files record times.
-pub fn now() -> f64 {
+pub(crate) fn now() -> f64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0.0, |d| d.as_secs_f64())

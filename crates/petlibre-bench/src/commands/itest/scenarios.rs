@@ -3,17 +3,15 @@
 //! settings and stored Wi-Fi credentials as before. One that changes device
 //! state restores it on failure too, as far as the feeder still answers.
 
-use serde_json::{Value, json};
-
 use super::log::Record;
 use super::{
-    Baseline, Ctx, Fault, HEALTH_SECONDS, INSTALL_SECONDS, Need, Server, Tier, compact,
-    fresh_health, reply_ok,
+    Baseline, Ctx, Fault, HEALTH_SECONDS, INSTALL_SECONDS, Need, Server, Tier, compact, reply_ok,
 };
-use crate::commands::ota::{Outcome, health_matches};
+use crate::commands::ota::Outcome;
+use crate::server::{LocalStatus, NotReady, Reply, Request, SettingsChange, WifiChange};
 use crate::{Error, Result, require};
 
-pub struct Scenario {
+pub(super) struct Scenario {
     pub name: &'static str,
     pub about: &'static str,
     /// The cheapest tier that runs it (`--tier`).
@@ -25,7 +23,7 @@ pub struct Scenario {
     pub run: fn(&mut Ctx) -> Result<()>,
 }
 
-pub const SCENARIOS: [Scenario; 10] = [
+pub(super) const SCENARIOS: [Scenario; 10] = [
     Scenario {
         name: "ota-update",
         about: "install the build under test over the air and see it confirm",
@@ -156,7 +154,12 @@ fn ota_update(ctx: &mut Ctx) -> Result<()> {
         }
     }
 
-    let args = ctx.ota_args("good", ctx.args.review.clone(), ctx.args.build);
+    // Without a review, `ota_args` builds; only `--build` asks for that.
+    require(
+        ctx.args.build || ctx.args.review.is_some(),
+        "Give --review DIR or --build",
+    )?;
+    let args = ctx.ota_args("good", ctx.args.review.clone());
     let staged = ctx
         .rig
         .stage(&args)?
@@ -182,99 +185,72 @@ fn ota_update(ctx: &mut Ctx) -> Result<()> {
 
 fn requests(ctx: &mut Ctx) -> Result<()> {
     let since = ctx.mark()?;
-    let ping = ctx.ask(json!({"op": "ping"}))?;
+    let ping = ctx.ask(Request::Ping)?;
     reply_ok(&ping)?;
     require(
-        ping["uptime_ms"].is_u64(),
+        ping.uptime_ms.is_some(),
         format!("Ping reply has no uptime_ms: {}", compact(&ping)),
     )?;
     ctx.expect("PLMQT1 request op=ping ok=1", since, 15.0, |r| {
         r.is("PLMQT1", &[("op", "ping"), ("ok", "1")])
     })?;
 
-    reply_ok(&ctx.ask(json!({"op": "health"}))?)?;
+    reply_ok(&ctx.ask(Request::Health)?)?;
 
     ctx.until_status("a synced firmware clock", HEALTH_SECONDS, clock_synced)
         .map(|report| ctx.note(&format!("  {report}")))?;
 
     let before = read_settings(ctx)?;
-    let flipped = json!({"lights": before["lights"] != 1});
+    let flipped = SettingsChange {
+        lights: Some(before.lights != Some(1)),
+        ..SettingsChange::default()
+    };
     set_settings(ctx, &flipped)?;
-    set_settings(ctx, &settings_fields(&before))
+    set_settings(ctx, &before.settings())
 }
 
 /// Health shows a synced clock that agrees with the server's receive time.
-fn clock_synced(status: &Value) -> std::result::Result<String, String> {
-    let health = fresh_health(status)?;
-    let clock = &health["clock"];
-    if clock.is_null() {
-        return Err("health has no clock (a pre-FW21 build)".into());
+fn clock_synced(status: &LocalStatus) -> Result<String> {
+    let health = status.fresh_health()?;
+    let clock = health.clock.as_ref().ok_or(NotReady::NoClock)?;
+    if clock.syncs < 1 {
+        return Err(NotReady::Unsynced(compact(clock)).into());
     }
-    if !clock["syncs"].as_u64().is_some_and(|n| n >= 1) {
-        return Err(format!("the clock never synced: {}", compact(clock)));
-    }
-    let unix_ms = clock["unix_ms"]
-        .as_i64()
-        .ok_or_else(|| format!("the clock is not set: {}", compact(clock)))?;
+    let unix_ms = clock
+        .unix_ms
+        .ok_or_else(|| NotReady::ClockUnset(compact(clock)))?;
 
-    let received = status["replacement"]["received_at"]
-        .as_str()
+    let received = status
+        .received_at()
         .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
-        .ok_or("status has no received_at")?;
+        .ok_or(NotReady::NoReceivedAt)?;
     let skew_ms = received.timestamp_millis() - unix_ms;
     if skew_ms.abs() > 5_000 {
-        return Err(format!(
-            "the firmware clock is {skew_ms} ms behind the server"
-        ));
+        return Err(NotReady::Skew(skew_ms).into());
     }
     Ok(format!(
         "Clock: {} syncs, {skew_ms} ms behind the server at receipt",
-        clock["syncs"]
+        clock.syncs
     ))
 }
 
-fn read_settings(ctx: &mut Ctx) -> Result<Value> {
-    let settings = ctx.ask(json!({"op": "settings"}))?;
+fn read_settings(ctx: &mut Ctx) -> Result<Reply> {
+    let settings = ctx.ask(Request::Settings(SettingsChange::default()))?;
     reply_ok(&settings)?;
     require(
-        settings["writable"] == true,
+        settings.writable == Some(true),
         format!("Settings are not writable: {}", compact(&settings)),
     )?;
     Ok(settings)
 }
 
-/// The request fields that would set a reply's values again.
-fn settings_fields(reply: &Value) -> Value {
-    json!({
-        "lights": reply["lights"] == 1,
-        "sound": reply["sound"] == 1,
-        "volume": reply["volume"],
-    })
-}
-
-/// Whether a settings reply holds every field of a settings request.
-fn settings_match(reply: &Value, fields: &Value) -> bool {
-    fields
-        .as_object()
-        .into_iter()
-        .flatten()
-        .all(|(key, want)| match want {
-            Value::Bool(on) => reply[key] == u8::from(*on),
-            other => &reply[key] == other,
-        })
-}
-
 /// Change settings, see the writer save a newer generation, and read the
 /// change back.
-fn set_settings(ctx: &mut Ctx, fields: &Value) -> Result<()> {
-    let generation = read_settings(ctx)?["generation"].as_u64().unwrap_or(0);
+fn set_settings(ctx: &mut Ctx, change: &SettingsChange) -> Result<()> {
+    let generation = read_settings(ctx)?.generation.unwrap_or(0);
     let since = ctx.mark()?;
 
-    let mut request = json!({"op": "settings"});
-    for (key, value) in fields.as_object().into_iter().flatten() {
-        request[key] = value.clone();
-    }
-    reply_ok(&ctx.ask(request)?)?;
+    reply_ok(&ctx.ask(Request::Settings(change.clone()))?)?;
     ctx.expect("PLCFG1 saved", since, SAVE_SECONDS, |r| {
         r.tag == "PLCFG1"
             && r.first == "saved"
@@ -284,11 +260,11 @@ fn set_settings(ctx: &mut Ctx, fields: &Value) -> Result<()> {
 
     let after = read_settings(ctx)?;
     require(
-        settings_match(&after, fields),
+        after.shows(change),
         format!(
             "Settings read back {} after setting {}",
             compact(&after),
-            compact(fields)
+            compact(change)
         ),
     )
 }
@@ -314,14 +290,16 @@ fn forged(ctx: &mut Ctx, since: usize) -> Result<()> {
     let reply = |case: &str| {
         lines
             .iter()
-            .find(|line| line["case"] == case)
-            .map_or(Value::Null, |line| line["reply"].clone())
+            .find(|line| line.case == case)
+            .and_then(|line| line.reply.clone())
     };
     for case in ["unsigned", "wrong_key", "replay"] {
         let answer = reply(case);
         ctx.note(&format!("  {case}: {}", compact(&answer)));
         require(
-            answer["ok"] == false && answer["error"] == "auth",
+            answer
+                .as_ref()
+                .is_some_and(|a| !a.ok && a.error.as_deref() == Some("auth")),
             format!(
                 "The {case} request was not refused for auth: {}",
                 compact(&answer)
@@ -331,7 +309,9 @@ fn forged(ctx: &mut Ctx, since: usize) -> Result<()> {
     let valid = reply("valid");
     ctx.note(&format!("  valid: {}", compact(&valid)));
     require(
-        valid["ok"] == true && valid["op"] == "settings",
+        valid
+            .as_ref()
+            .is_some_and(|v| v.ok && v.op.as_deref() == Some("settings")),
         format!(
             "The validly signed request was not answered: {}",
             compact(&valid)
@@ -359,7 +339,7 @@ fn cold_boot(ctx: &mut Ctx) -> Result<usize> {
     // The server keeps reporting the old session's health as fresh until the
     // broker's keepalive lapses, and a request sent then is lost (seen on the
     // bench), so only health received after the new session counts.
-    let before = ctx.rig.status()?["replacement"]["received_at"].clone();
+    let before = ctx.rig.status()?.received_at().map(str::to_string);
     let since = ctx.mark()?;
     ctx.rig.power_cycle()?;
 
@@ -376,10 +356,10 @@ fn cold_boot(ctx: &mut Ctx) -> Result<usize> {
         |r| r.tag == "PLMQT1" && r.first == "ready",
     )?;
     let report = ctx.until_status("health from the new session", HEALTH_SECONDS, |status| {
-        if status["replacement"]["received_at"] == before {
-            return Err("health predates the boot".into());
+        if status.received_at() == before.as_deref() {
+            return Err(NotReady::Predates.into());
         }
-        health_matches(status, &build)
+        Ok(status.health_matches(&build)?)
     })?;
     ctx.note(&format!("  {report}"));
     Ok(since)
@@ -394,38 +374,50 @@ fn started(record: &Record, build: &str) -> bool {
 
 fn settings_persist(ctx: &mut Ctx) -> Result<()> {
     let before = read_settings(ctx)?;
-    let volume = before["volume"].as_u64().unwrap_or(0);
-    let changed = json!({
-        "lights": before["lights"] != 1,
-        "sound": before["sound"] != 1,
-        "volume": if volume == 35 { 36 } else { 35 },
-    });
+    let changed = SettingsChange {
+        lights: Some(before.lights != Some(1)),
+        sound: Some(before.sound != Some(1)),
+        volume: Some(if before.volume == Some(35) { 36 } else { 35 }),
+    };
 
     let result = set_settings(ctx, &changed).and_then(|()| {
         cold_boot(ctx)?;
         let after = read_settings(ctx)?;
         require(
-            settings_match(&after, &changed),
+            after.shows(&changed),
             format!("After a cold boot the settings read {}", compact(&after)),
         )
     });
-    let restored = set_settings(ctx, &settings_fields(&before));
+    let restored = set_settings(ctx, &before.settings());
     result.and(restored)
 }
 
-fn wifi_source(status: &Value, source: &str) -> std::result::Result<String, String> {
-    let health = fresh_health(status)?;
-    match health["wifi"]["source"].as_str() {
-        Some(found) if found == source => Ok(format!("Wi-Fi source {source}")),
-        found => Err(format!("Wi-Fi source {found:?}")),
+fn wifi_source(status: &LocalStatus, source: &str) -> Result<String> {
+    let found = &status.fresh_health()?.wifi.source;
+    if found.as_deref() == Some(source) {
+        Ok(format!("Wi-Fi source {source}"))
+    } else {
+        Err(NotReady::WifiSource(found.clone()).into())
     }
 }
 
+/// A read of the Wi-Fi store.
+fn wifi_state(ctx: &mut Ctx) -> Result<Reply> {
+    ctx.ask(Request::Wifi(WifiChange::default()))
+}
+
+fn clear_wifi() -> Request {
+    Request::Wifi(WifiChange {
+        clear: true,
+        ..WifiChange::default()
+    })
+}
+
 fn wifi_fallback(ctx: &mut Ctx) -> Result<()> {
-    let state = ctx.ask(json!({"op": "wifi"}))?;
+    let state = wifi_state(ctx)?;
     reply_ok(&state)?;
     require(
-        state["stored"].is_null() && state["source"] == "build",
+        state.stored.is_none() && state.source.as_deref() == Some("build"),
         format!(
             "Stored credentials are already set; clear them first: {}",
             compact(&state)
@@ -439,20 +431,24 @@ fn wifi_fallback(ctx: &mut Ctx) -> Result<()> {
 
 fn wrong_credentials(ctx: &mut Ctx) -> Result<()> {
     let since = ctx.mark()?;
-    reply_ok(&ctx.ask(json!({"op": "wifi", "ssid": ABSENT_SSID, "psk": WRONG_PSK}))?)?;
+    reply_ok(&ctx.ask(Request::Wifi(WifiChange {
+        ssid: Some(ABSENT_SSID.into()),
+        psk: Some(WRONG_PSK.into()),
+        clear: false,
+    }))?)?;
     ctx.expect("PLCFG1 net saved stored=1", since, SAVE_SECONDS, |r| {
         r.is("PLCFG1", &[("stored", "1")]) && r.body_starts("net saved")
     })?;
 
-    let before = ctx.rig.status()?["replacement"]["received_at"].clone();
+    let before = ctx.rig.status()?.received_at().map(str::to_string);
     ctx.rig.power_cycle()?;
     let report = ctx.offline(|ctx| {
         ctx.until_status(
             "the build's credentials after fallback",
             FALLBACK_SECONDS,
             |s| {
-                if s["replacement"]["received_at"] == before {
-                    return Err("health predates the boot".into());
+                if s.received_at() == before.as_deref() {
+                    return Err(NotReady::Predates.into());
                 }
                 wifi_source(s, "fallback")
             },
@@ -464,12 +460,12 @@ fn wrong_credentials(ctx: &mut Ctx) -> Result<()> {
 
 fn clear_credentials(ctx: &mut Ctx) -> Result<()> {
     let since = ctx.mark()?;
-    let state = ctx.ask(json!({"op": "wifi"}))?;
-    if state["stored"].is_null() {
+    let state = wifi_state(ctx)?;
+    if state.stored.is_none() {
         return Ok(());
     }
 
-    reply_ok(&ctx.ask(json!({"op": "wifi", "clear": true}))?)?;
+    reply_ok(&ctx.ask(clear_wifi())?)?;
     ctx.expect("PLCFG1 net saved stored=0", since, SAVE_SECONDS, |r| {
         r.is("PLCFG1", &[("stored", "0")]) && r.body_starts("net saved")
     })?;
@@ -481,12 +477,8 @@ fn clear_credentials(ctx: &mut Ctx) -> Result<()> {
     Ok(())
 }
 
-fn connects(health: &Value) -> u64 {
-    health["transport"]["connects"].as_u64().unwrap_or(0)
-}
-
 fn network_bounce(ctx: &mut Ctx) -> Result<()> {
-    let before = connects(&ctx.health(HEALTH_SECONDS)?);
+    let before = ctx.health(HEALTH_SECONDS)?.transport.connects;
     let since = ctx.mark()?;
 
     ctx.rig.hotspot(false)?;
@@ -502,7 +494,7 @@ fn network_bounce(ctx: &mut Ctx) -> Result<()> {
     ctx.expect("a reconnect", since, RECONNECT_SECONDS, |r| {
         r.tag == "PLMQT1" && r.first == "ready"
     })?;
-    let after = connects(&ctx.health(HEALTH_SECONDS)?);
+    let after = ctx.health(HEALTH_SECONDS)?.transport.connects;
     require(
         after > before,
         format!("Health reports {after} transport connects, {before} before the outage"),
@@ -714,14 +706,13 @@ const SOAK_PERIOD_SECONDS: f64 = 30.0;
 
 fn soak(ctx: &mut Ctx) -> Result<()> {
     let since = ctx.mark()?;
-    let connects = |health: &Value| health["transport"]["connects"].as_u64().unwrap_or(0);
-    let before = connects(&ctx.health(HEALTH_SECONDS)?);
+    let before = ctx.health(HEALTH_SECONDS)?.transport.connects;
     let end = ctx.rig.clock() + ctx.args.soak_minutes * 60.0;
 
     let (mut pings, mut slowest) = (0u32, 0.0f64);
     while ctx.rig.clock() < end {
         let asked = ctx.rig.clock();
-        reply_ok(&ctx.ask(json!({"op": "ping"}))?)?;
+        reply_ok(&ctx.ask(Request::Ping)?)?;
         slowest = slowest.max(ctx.rig.clock() - asked);
         pings += 1;
         ctx.idle(SOAK_PERIOD_SECONDS)?;
@@ -730,7 +721,7 @@ fn soak(ctx: &mut Ctx) -> Result<()> {
     let restarts = ctx
         .log
         .count(since, |r| r.tag == "PLFW1" && r.first == "start");
-    let after = connects(&ctx.health(HEALTH_SECONDS)?);
+    let after = ctx.health(HEALTH_SECONDS)?.transport.connects;
     ctx.note(&format!(
         "  {pings} pings, slowest reply {slowest:.1} s, {restarts} restarts, {} reconnects",
         after.saturating_sub(before)
@@ -747,30 +738,31 @@ fn soak(ctx: &mut Ctx) -> Result<()> {
 
 /// What every scenario must leave as it found it: the stored settings and
 /// Wi-Fi credentials, and the baseline running on bank 1.
-#[derive(Debug, Clone, PartialEq)]
-pub struct DeviceState {
-    settings: Value,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct DeviceState {
+    settings: SettingsChange,
     wifi_stored: bool,
     build: String,
     bank: u64,
 }
 
-pub fn device_state(ctx: &mut Ctx) -> Result<DeviceState> {
-    let settings = settings_fields(&read_settings(ctx)?);
-    let wifi = ctx.ask(json!({"op": "wifi"}))?;
+pub(super) fn device_state(ctx: &mut Ctx) -> Result<DeviceState> {
+    let settings = read_settings(ctx)?.settings();
+    let wifi = wifi_state(ctx)?;
     reply_ok(&wifi)?;
     let health = ctx.health(HEALTH_SECONDS)?;
+
     Ok(DeviceState {
         settings,
-        wifi_stored: !wifi["stored"].is_null(),
-        build: health["build"].as_str().unwrap_or("").to_ascii_lowercase(),
-        bank: health["bank"].as_u64().unwrap_or(0),
+        wifi_stored: wifi.stored.is_some(),
+        build: health.build.to_ascii_lowercase(),
+        bank: health.bank.unwrap_or(0),
     })
 }
 
 /// How `now` differs from `want`, after putting back what a request can:
 /// settings at once, stored Wi-Fi credentials from the next boot.
-pub fn restore_state(ctx: &mut Ctx, want: &DeviceState, now: &DeviceState) -> Vec<String> {
+pub(super) fn restore_state(ctx: &mut Ctx, want: &DeviceState, now: &DeviceState) -> Vec<String> {
     let mut changed = Vec::new();
     if now.settings != want.settings {
         changed.push(format!(
@@ -792,9 +784,7 @@ pub fn restore_state(ctx: &mut Ctx, want: &DeviceState, now: &DeviceState) -> Ve
             }
         ));
         if !want.wifi_stored
-            && let Err(error) = ctx
-                .ask(json!({"op": "wifi", "clear": true}))
-                .and_then(|reply| reply_ok(&reply))
+            && let Err(error) = ctx.ask(clear_wifi()).and_then(|reply| reply_ok(&reply))
         {
             changed.push(format!("clearing them failed: {error}"));
         }

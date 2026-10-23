@@ -15,6 +15,7 @@ use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 use clap::{Args, ValueEnum};
+use petlibre_formats::canonical::sha256;
 use petlibre_formats::manifest::BuildManifest;
 use petlibre_formats::transients::{self, TransientCycle, TransientsManifest};
 use serde_json::Value;
@@ -22,23 +23,25 @@ use serde_json::Value;
 use crate::config::{CAPTURES, Config, FLASH_BACKUPS, VERIFICATION};
 use crate::relay::{POWER, Relay, SPARES, STRAP};
 use crate::status::{Status, relative};
-use crate::tools::{Analyzer, Observer, Tools};
-use crate::{Error, Result, now, require, sha256_hex};
+use crate::tools::{Analyzer, Observation, Observer, Tools};
+use crate::{Error, Result, now, require};
 
 pub mod itest;
 pub mod ota;
 pub use itest::ItestArgs;
 pub use ota::{OtaArgs, Variant};
 
-pub const STRAP_SECONDS: f64 = 2.0;
-pub const LOADER_SECONDS: f64 = 5.0;
+const STRAP_SECONDS: f64 = 2.0;
+const LOADER_SECONDS: f64 = 5.0;
+/// A ROM loader answers the strap with a run of NAKs at least this long.
+const LOADER_NAK_RUN: u64 = 8;
 
 /// Observed per staged frame, framing included; for progress only.
-pub const FRAME_TX_BYTES: u64 = 1056;
+const FRAME_TX_BYTES: u64 = 1056;
 /// FW30 logic analyzer (sigrok fx2lafw, 8 channels). Capture starts this long
 /// before power-on so the unpowered state is recorded first; the first open
 /// also uploads the analyzer's firmware, which takes about a second.
-pub const ANALYZER_ARMING_SECONDS: f64 = 3.0;
+const ANALYZER_ARMING_SECONDS: f64 = 3.0;
 const ANALYZER_DEFAULT_CHANNELS: [(&str, u8); 4] =
     [("ina", 0), ("inb", 1), ("outa", 2), ("outb", 3)];
 
@@ -145,7 +148,7 @@ pub struct DemoArgs {
 }
 
 /// Evidence locations for one session name.
-pub struct Paths {
+pub(crate) struct Paths {
     pub loader: PathBuf,
     pub bounded: PathBuf,
     pub full: PathBuf,
@@ -156,7 +159,7 @@ pub struct Paths {
 }
 
 impl Paths {
-    pub fn new(root: &Path, name: &str) -> Self {
+    pub(crate) fn new(root: &Path, name: &str) -> Self {
         Self {
             loader: root.join(CAPTURES).join(format!("{name}-loader")),
             bounded: root.join(FLASH_BACKUPS).join(format!("{name}-bounded")),
@@ -188,18 +191,6 @@ fn argv(head: &[&str], parts: &[&[String]]) -> Vec<String> {
         .collect()
 }
 
-/// Python-style truthiness of a report field.
-fn truthy(value: &Value) -> bool {
-    match value {
-        Value::Null => false,
-        Value::Bool(b) => *b,
-        Value::Number(n) => n.as_f64() != Some(0.0),
-        Value::String(s) => !s.is_empty(),
-        Value::Array(a) => !a.is_empty(),
-        Value::Object(o) => !o.is_empty(),
-    }
-}
-
 pub struct Bench {
     pub root: PathBuf,
     pub config: Config,
@@ -216,20 +207,20 @@ impl Bench {
         relative(&self.root, path)
     }
 
-    pub fn set(&mut self, channel: u8, on: bool) -> Result<()> {
+    pub(crate) fn set(&mut self, channel: u8, on: bool) -> Result<()> {
         self.relay.set(channel, on)?;
         self.status.relay(channel, on);
         Ok(())
     }
 
-    pub fn get(&mut self, channel: u8) -> Result<bool> {
+    pub(crate) fn get(&mut self, channel: u8) -> Result<bool> {
         let on = self.relay.get(channel)?;
         self.status.relay(channel, on);
         Ok(on)
     }
 
     /// Release the strap and cut power, with no wait: safe in cleanup paths.
-    pub fn cut_power(&mut self) -> Result<()> {
+    pub(crate) fn cut_power(&mut self) -> Result<()> {
         self.set(STRAP, false)?;
         self.set(POWER, false)
     }
@@ -255,7 +246,7 @@ impl Bench {
         Ok(observer)
     }
 
-    fn finish_observer(&mut self, observer: &mut dyn Observer) -> Result<Value> {
+    fn finish_observer(&mut self, observer: &mut dyn Observer) -> Result<Observation> {
         let result = observer.finish();
         self.status.capture(None, 0.0);
         result
@@ -318,16 +309,12 @@ impl Bench {
         self.fresh(&output)?;
         let mut observer = self.start_observer(&output, seconds)?;
         let result = self.finish_observer(observer.as_mut())?;
-        say!(
-            "Captured {} bytes in {}",
-            result["bytes"],
-            self.rel(&output)
-        );
+        say!("Captured {} bytes in {}", result.bytes, self.rel(&output));
         Ok(0)
     }
 
     /// Cold boot into the installed application while recording it from the start.
-    pub fn boot(&mut self, output: &Path, seconds: f64) -> Result<Value> {
+    pub fn boot(&mut self, output: &Path, seconds: f64) -> Result<Observation> {
         self.status.step("boot capture");
         self.fresh(output)?;
         self.power_off(self.off_seconds)?;
@@ -339,15 +326,15 @@ impl Bench {
 
         let result = self.finish_observer(observer.as_mut())?;
         require(
-            !truthy(&result["download_banner_seen"]),
+            !result.download_banner_seen,
             "Boot reached the ROM loader, not the application",
         )?;
 
         say!(
             "Boot captured: {} bytes in {}; fault marker {}",
-            result["bytes"],
+            result.bytes,
             self.rel(output),
-            if truthy(&result["fault_marker_seen"]) {
+            if result.fault_marker_seen {
                 "seen"
             } else {
                 "not seen"
@@ -357,7 +344,7 @@ impl Bench {
     }
 
     /// Cold boot with the strap held; leave the feeder powered in the ROM loader.
-    pub fn loader(&mut self, output: &Path) -> Result<Value> {
+    pub fn loader(&mut self, output: &Path) -> Result<Observation> {
         self.status.step("loader entry");
         self.fresh(output)?;
         self.power_off(self.off_seconds)?;
@@ -372,10 +359,10 @@ impl Bench {
             self.set(STRAP, false)?;
             let result = self.finish_observer(observer.as_mut())?;
             require(
-                truthy(&result["download_banner_seen"])
-                    && result["longest_nak_run"].as_u64().unwrap_or(0) >= 8
-                    && !truthy(&result["fault_marker_seen"])
-                    && !truthy(&result["stock_startup_markers"]),
+                result.download_banner_seen
+                    && result.longest_nak_run >= LOADER_NAK_RUN
+                    && !result.fault_marker_seen
+                    && result.stock_startup_markers == 0,
                 format!("Loader not confirmed; see {}", self.rel(output)),
             )?;
             Ok(result)
@@ -385,7 +372,7 @@ impl Bench {
             Ok(result) => {
                 say!(
                     "Loader confirmed: banner and {} NAKs in {}",
-                    result["nak_bytes"],
+                    result.nak_bytes,
                     self.rel(output)
                 );
                 Ok(result)
@@ -632,7 +619,7 @@ impl Bench {
     /// A target whose manifest names a motion policy drives the motor after
     /// boot. A target without a manifest (stock, diagnostics) has no policy;
     /// one whose manifest cannot be read is refused rather than assumed safe.
-    pub fn require_attended_motion(&self, args: &UpdateArgs) -> Result<()> {
+    fn require_attended_motion(&self, args: &UpdateArgs) -> Result<()> {
         let path = args.target.join("build-manifest.json");
         if !path.exists() {
             return Ok(());
@@ -669,7 +656,7 @@ impl Bench {
 
     fn prepared(&self, p: &Paths) -> Result<(Vec<u8>, String)> {
         let raw = fs::read(&p.plan)?;
-        let sha = sha256_hex(&raw);
+        let sha = sha256(&raw);
         Ok((raw, sha))
     }
 
@@ -914,7 +901,7 @@ impl Bench {
 }
 
 /// The execute command matching a prepare: same evidence flags, plus the hash.
-pub fn execute_line(args: &UpdateArgs, sha: &str) -> String {
+fn execute_line(args: &UpdateArgs, sha: &str) -> String {
     let mut line = format!(
         "petlibre-bench flash-execute {} --bank {}",
         args.name, args.bank
@@ -947,7 +934,7 @@ pub fn execute_line(args: &UpdateArgs, sha: &str) -> String {
 /// one) does three acquisitions, reads every staged sector three times
 /// (preimage, erased, programmed) and the marker sector twice; otherwise only
 /// the preimage acquisition runs.
-pub fn update_traffic(plan: &Value) -> Option<(u64, u64)> {
+fn update_traffic(plan: &Value) -> Option<(u64, u64)> {
     const SECTOR: u64 = 0x1000;
     const ACQUIRED_GUARDS: u64 = 0x6000 + SECTOR;
 
@@ -1067,6 +1054,27 @@ struct Show<'a> {
     on: [bool; 2],
 }
 
+/// Which spare relays a step of a pattern holds on.
+#[derive(Clone, Copy)]
+enum Lit {
+    Neither,
+    Third,
+    Fourth,
+    Both,
+}
+
+impl Lit {
+    /// Relay 3's state, then relay 4's.
+    fn states(self) -> (bool, bool) {
+        match self {
+            Self::Neither => (false, false),
+            Self::Third => (true, false),
+            Self::Fourth => (false, true),
+            Self::Both => (true, true),
+        }
+    }
+}
+
 impl Show<'_> {
     fn set(&mut self, channel: u8, on: bool, hold: f64) -> Result<()> {
         let index = SPARES
@@ -1091,33 +1099,35 @@ impl Show<'_> {
         (self.bench.sleep)(self.step * hold)
     }
 
-    fn both(&mut self, a: bool, b: bool, hold: f64) -> Result<()> {
-        self.set(3, a, 0.0)?;
-        self.set(4, b, hold)
+    /// Set both spares to `lit`, then wait `hold` steps.
+    fn hold(&mut self, lit: Lit, hold: f64) -> Result<()> {
+        let (third, fourth) = lit.states();
+        self.set(3, third, 0.0)?;
+        self.set(4, fourth, hold)
     }
 
     fn chase(&mut self, rounds: u32) -> Result<()> {
         for _ in 0..rounds {
-            self.both(true, false, 1.0)?;
-            self.both(false, true, 1.0)?;
+            self.hold(Lit::Third, 1.0)?;
+            self.hold(Lit::Fourth, 1.0)?;
         }
-        self.both(false, false, 1.0)
+        self.hold(Lit::Neither, 1.0)
     }
 
     fn blink(&mut self, times: u32) -> Result<()> {
         for _ in 0..times {
-            self.both(true, true, 2.0)?;
-            self.both(false, false, 2.0)?;
+            self.hold(Lit::Both, 2.0)?;
+            self.hold(Lit::Neither, 2.0)?;
         }
         Ok(())
     }
 
     fn heartbeat(&mut self, beats: u32) -> Result<()> {
         for _ in 0..beats {
-            self.both(true, true, 0.6)?;
-            self.both(false, false, 0.6)?;
-            self.both(true, true, 0.6)?;
-            self.both(false, false, 4.0)?;
+            self.hold(Lit::Both, 0.6)?;
+            self.hold(Lit::Neither, 0.6)?;
+            self.hold(Lit::Both, 0.6)?;
+            self.hold(Lit::Neither, 4.0)?;
         }
         Ok(())
     }

@@ -7,16 +7,31 @@ use std::rc::Rc;
 use serde_json::json;
 
 use super::*;
+use crate::commands::ota::Source;
 use crate::relay::FakeBoard;
-use crate::status::FlashTool;
+use crate::status::{FlashTool, StepState};
 use crate::tools::{Capture, Captured};
 
 const PLAN: &str = r#"{"operation_plan": {"bank": 1, "ordered_sectors": [{}], "erase_sectors": 1,
     "target_ota_sha256": "t", "fallback_ota_sha256": "f"}}"#;
 
-fn loader_result() -> Value {
-    json!({"download_banner_seen": true, "longest_nak_run": 99, "nak_bytes": 99,
-           "fault_marker_seen": false, "stock_startup_markers": 0, "bytes": 120})
+fn loader_result() -> Observation {
+    Observation {
+        bytes: 120,
+        nak_bytes: 99,
+        longest_nak_run: 99,
+        download_banner_seen: true,
+        stock_startup_markers: 0,
+        fault_marker_seen: false,
+    }
+}
+
+/// An application boot: some output, no loader banner.
+fn boot_result() -> Observation {
+    Observation {
+        bytes: 10,
+        ..Observation::default()
+    }
 }
 
 #[derive(Default)]
@@ -24,7 +39,7 @@ struct Calls {
     observed: Vec<PathBuf>,
     flash: Vec<Vec<String>>,
     flash_codes: VecDeque<i32>,
-    results: VecDeque<Value>,
+    results: VecDeque<Observation>,
     analyzer_code: i32,
     sigrok: bool,
     local: Vec<Vec<String>>,
@@ -56,10 +71,10 @@ struct Calls {
 #[derive(Clone, Default)]
 struct FakeTools(Rc<RefCell<Calls>>);
 
-struct FakeObserver(Value, PathBuf, Option<Vec<u8>>, Option<String>);
+struct FakeObserver(Observation, PathBuf, Option<Vec<u8>>, Option<String>);
 
 impl Observer for FakeObserver {
-    fn finish(&mut self) -> Result<Value> {
+    fn finish(&mut self) -> Result<Observation> {
         if let Some(rx) = self.2.take() {
             fs::create_dir_all(&self.1)?;
             fs::write(self.1.join("serial-rx.bin"), rx)?;
@@ -306,15 +321,38 @@ fn loader_holds_strap_across_power_on_and_leaves_feeder_powered() {
 
 #[test]
 fn unconfirmed_loader_powers_off() {
-    for (field, value) in [
-        ("download_banner_seen", json!(false)),
-        ("longest_nak_run", json!(3)),
-        ("fault_marker_seen", json!(true)),
-        ("stock_startup_markers", json!(1)),
+    let confirmed = loader_result();
+    for (field, result) in [
+        (
+            "download_banner_seen",
+            Observation {
+                download_banner_seen: false,
+                ..confirmed.clone()
+            },
+        ),
+        (
+            "longest_nak_run",
+            Observation {
+                longest_nak_run: 3,
+                ..confirmed.clone()
+            },
+        ),
+        (
+            "fault_marker_seen",
+            Observation {
+                fault_marker_seen: true,
+                ..confirmed.clone()
+            },
+        ),
+        (
+            "stock_startup_markers",
+            Observation {
+                stock_startup_markers: 1,
+                ..confirmed.clone()
+            },
+        ),
     ] {
         let mut rig = rig();
-        let mut result = loader_result();
-        result[field] = value;
         rig.tools.0.borrow_mut().results.push_back(result);
         let out = rig.bench.root.join("out");
 
@@ -392,11 +430,7 @@ fn completed_execute_passes_the_reviewed_hash_and_boots() {
     let mut rig = rig();
     rig.bench.on().unwrap();
     prepare_plan(&rig, "unit");
-    rig.tools
-        .0
-        .borrow_mut()
-        .results
-        .push_back(json!({"download_banner_seen": false, "bytes": 10, "fault_marker_seen": false}));
+    rig.tools.0.borrow_mut().results.push_back(boot_result());
 
     assert_eq!(rig.bench.flash_execute(&execute("unit")).unwrap(), 0);
 
@@ -445,7 +479,7 @@ fn prepare_records_the_matching_execute_line() {
         .collect();
     assert_eq!(ran, ["read small", "update inspect", "update prepare"]);
 
-    let sha = sha256_hex(PLAN.as_bytes());
+    let sha = sha256(PLAN.as_bytes());
     assert_eq!(
         rig.bench.status.state.as_ref().unwrap().next.as_deref(),
         Some(format!(
@@ -469,14 +503,10 @@ fn give_way_prepare_then_execute() {
     };
     assert_eq!(rig.bench.give_way_prepare(&args).unwrap(), 0);
 
-    rig.tools
-        .0
-        .borrow_mut()
-        .results
-        .push_back(json!({"download_banner_seen": false, "bytes": 10}));
+    rig.tools.0.borrow_mut().results.push_back(boot_result());
     let execute = GiveWayExecuteArgs {
         give_way: args,
-        expected_plan_sha256: sha256_hex(PLAN.as_bytes()),
+        expected_plan_sha256: sha256(PLAN.as_bytes()),
         boot_seconds: 10.0,
     };
     assert_eq!(rig.bench.give_way_execute(&execute).unwrap(), 0);
@@ -867,18 +897,18 @@ fn ota_passes_across_segments_and_records_steps() {
     let steps: Vec<_> = state
         .steps
         .iter()
-        .map(|s| (s.label.as_str(), s.state.as_str()))
+        .map(|s| (s.label.as_str(), s.state))
         .collect();
     assert_eq!(
         steps,
         [
-            ("petlibre-local ota-sign", "done"),
-            ("petlibre-local ota-offer", "done"),
-            ("give way", "done"),
-            ("download", "done"),
-            ("new build boot", "done"),
-            ("confirm", "done"),
-            ("health", "running"),
+            ("petlibre-local ota-sign", StepState::Done),
+            ("petlibre-local ota-offer", StepState::Done),
+            ("give way", StepState::Done),
+            ("download", StepState::Done),
+            ("new build boot", StepState::Done),
+            ("confirm", StepState::Done),
+            ("health", StepState::Running),
         ]
     );
     assert!(state.lines.iter().any(|l| l == "Written sectors: 16/164"));
@@ -969,11 +999,11 @@ fn recorded(rig: &Rig) -> Vec<String> {
     rig.bench.status.state.as_ref().unwrap().lines.clone()
 }
 
-fn with_status(rig: &mut Rig, build: bool) {
+fn with_status(rig: &mut Rig, source: Source) {
     rig.bench.status = Status::new(&rig.bench.root, rig.bench.root.join("status"));
     rig.bench
         .status
-        .begin("ota", Some("unit"), &ota::steps(build))
+        .begin("ota", Some("unit"), &ota::steps(source))
         .unwrap();
 }
 
@@ -1004,7 +1034,7 @@ fn timed_pass(rig: &Rig) {
 #[test]
 fn ota_build_builds_reviews_offers_and_checks_health_in_order() {
     let mut rig = rig();
-    with_status(&mut rig, true);
+    with_status(&mut rig, Source::Build);
     let args = build_args(&rig);
     timed_pass(&rig);
 
@@ -1074,7 +1104,7 @@ fn old_review(rig: &Rig, name: &str, identity: &str, complete: bool) {
 #[test]
 fn ota_build_reuses_a_review_of_the_same_sources() {
     let mut rig = rig();
-    with_status(&mut rig, true);
+    with_status(&mut rig, Source::Build);
     let args = build_args(&rig);
     old_review(&rig, "earlier-review", BUILD, true);
     rig.tools.0.borrow_mut().source_id = Some(BUILD.into());
@@ -1122,7 +1152,7 @@ fn ota_build_builds_when_no_complete_review_matches_or_asked_to() {
         (BUILD.to_string(), true, true),
     ] {
         let mut rig = rig();
-        with_status(&mut rig, true);
+        with_status(&mut rig, Source::Build);
         let mut args = build_args(&rig);
         args.rebuild = rebuild;
         old_review(&rig, "earlier-review", &identity, complete);
@@ -1145,7 +1175,7 @@ fn ota_build_builds_when_no_complete_review_matches_or_asked_to() {
 fn a_failed_build_or_review_stops_before_offering() {
     for codes in [&[1][..], &[0, 2]] {
         let mut rig = rig();
-        with_status(&mut rig, true);
+        with_status(&mut rig, Source::Build);
         let args = build_args(&rig);
         rig.tools.0.borrow_mut().codes.extend(codes);
 
@@ -1205,7 +1235,7 @@ fn the_motion_variant_is_refused() {
 #[test]
 fn health_that_never_shows_the_build_fails_after_confirmation() {
     let mut rig = rig();
-    with_status(&mut rig, false);
+    with_status(&mut rig, Source::Review);
     let args = plain_review(&rig);
     timed_pass(&rig);
     rig.tools.0.borrow_mut().status_default = server_status(OTHER, 0, true, false);
@@ -1235,7 +1265,7 @@ fn health_that_never_shows_the_build_fails_after_confirmation() {
 #[test]
 fn stale_or_failed_health_is_waited_out_until_it_matches() {
     let mut rig = rig();
-    with_status(&mut rig, false);
+    with_status(&mut rig, Source::Review);
     let args = plain_review(&rig);
     timed_pass(&rig);
     rig.tools.0.borrow_mut().statuses.extend([

@@ -1,7 +1,9 @@
-//! Read-only JSON views of the status files and evidence directories.
+//! Read-only views of the status files and evidence directories, as the
+//! documents `assets/app.js` reads.
 //!
 //! Each public view backs one of the `--ui` page's API routes in the parent
-//! module, which runs it on the blocking pool.
+//! module, which runs it on the blocking pool. Field names and shapes are the
+//! page's contract: change one only with the script.
 //!
 //! Nothing here opens a serial port or writes a file. Every evidence path
 //! from a status file must stay inside its private/ folder; others are ignored.
@@ -12,12 +14,17 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::{Component, Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
-use serde_json::{Map, Value, json};
+use petlibre_formats::canonical::sha256;
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 
 use crate::commands::{Paths, check_name};
 use crate::config::{CAPTURES, CONFIG, Config, FLASH_BACKUPS, STATUS_DIR, VERIFICATION};
-use crate::status::{self, CURRENT, Current, HISTORY, HistoryEntry, RELAYS, SCRIPT, alive};
-use crate::{now, sha256_hex};
+use crate::now;
+use crate::status::{
+    self, Current, FlashTool, HISTORY, HistoryEntry, Outcome, Progress, RELAYS, RelayState, SCRIPT,
+    Step,
+};
 
 const TAIL_BYTES: u64 = 12_000;
 const TAIL_LINES: usize = 60;
@@ -30,7 +37,7 @@ const BANNER_SCAN_CAPTURES: usize = 25;
 
 /// Where the views look: the checkout root and the flash client in use.
 #[derive(Clone)]
-pub struct Sources {
+pub(crate) struct Sources {
     pub root: PathBuf,
     pub flash_bin: PathBuf,
 }
@@ -47,7 +54,7 @@ fn modified(path: &Path) -> Option<f64> {
 }
 
 /// `relative` under `base` (both under `root`), with no escape by `..` or links.
-pub fn inside(root: &Path, base: &str, relative: &str) -> Option<PathBuf> {
+fn inside(root: &Path, base: &str, relative: &str) -> Option<PathBuf> {
     let relative = Path::new(relative);
     if relative.is_absolute()
         || relative
@@ -77,12 +84,32 @@ fn printable(data: &[u8]) -> String {
         .collect()
 }
 
-/// Size, modification time and printable tail of a capture's serial-rx.bin.
-pub fn rx_view(root: &Path, directory: &Path) -> Value {
+/// A JSON file under the root, if it reads as `T`; the views show what is
+/// there and skip what is not.
+fn read<T: serde::de::DeserializeOwned>(path: &Path) -> Option<T> {
+    petlibre_formats::load(path).ok()
+}
+
+/// A capture's serial-rx.bin: size, modification time and printable tail.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct RxView {
+    /// Root-relative capture directory.
+    path: String,
+    bytes: u64,
+    modified: Option<f64>,
+    tail: Vec<String>,
+}
+
+fn rx_view(root: &Path, directory: &Path) -> RxView {
     let rx = directory.join("serial-rx.bin");
     let path = status::relative(root, directory);
     let Ok(mut file) = fs::File::open(&rx) else {
-        return json!({"path": path, "bytes": 0, "modified": null, "tail": []});
+        return RxView {
+            path,
+            bytes: 0,
+            modified: None,
+            tail: Vec::new(),
+        };
     };
 
     let size = file.metadata().map_or(0, |m| m.len());
@@ -96,12 +123,16 @@ pub fn rx_view(root: &Path, directory: &Path) -> Value {
 
     let text = printable(&data);
     let lines: Vec<&str> = text.split('\n').filter(|l| !l.trim().is_empty()).collect();
-    let tail = &lines[lines.len().saturating_sub(TAIL_LINES)..];
-    json!({"path": path, "bytes": size, "modified": modified(&rx), "tail": tail})
-}
-
-fn read_json(path: &Path) -> Option<Value> {
-    serde_json::from_str(&fs::read_to_string(path).ok()?).ok()
+    let tail = lines[lines.len().saturating_sub(TAIL_LINES)..]
+        .iter()
+        .map(|line| (*line).to_string())
+        .collect();
+    RxView {
+        path,
+        bytes: size,
+        modified: modified(&rx),
+        tail,
+    }
 }
 
 fn history(sources: &Sources) -> Vec<HistoryEntry> {
@@ -112,55 +143,139 @@ fn history(sources: &Sources) -> Vec<HistoryEntry> {
         .collect()
 }
 
-/// Everything the "Now" view shows, as one snapshot.
-pub fn snapshot(sources: &Sources) -> Value {
+/// `/api/status`: everything the "Now" view shows, as one snapshot.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct Snapshot {
+    /// The bench host's clock, so the page's timers agree with it.
+    now: f64,
+    current: Option<CurrentView>,
+    /// Newest first.
+    history: Vec<HistoryEntry>,
+    /// The latest capture's output.
+    rx: Option<RxView>,
+    script: Option<ScriptView>,
+}
+
+impl Snapshot {
+    /// The same apart from the clock, which differs on every read.
+    pub(crate) fn same_as(&self, other: &Self) -> bool {
+        Self {
+            now: other.now,
+            ..self.clone()
+        } == *other
+    }
+}
+
+pub(crate) fn snapshot(sources: &Sources) -> Snapshot {
     let root = &sources.root;
-    let current = fs::read_to_string(sources.status().join(CURRENT))
-        .ok()
-        .and_then(|text| serde_json::from_str::<Current>(&text).ok())
-        .map(|current| current_view(root, current));
+    let current = status::current(&sources.status()).map(|current| current_view(root, current));
 
     let mut history = history(sources);
     let shown = history.len().saturating_sub(HISTORY_SHOWN);
     let mut history = history.split_off(shown);
     history.reverse();
-    json!({"now": now(), "current": current, "history": history,
-           "rx": latest_capture(root).map(|dir| rx_view(root, &dir)), "script": script_view(sources)})
+
+    Snapshot {
+        now: now(),
+        current,
+        history,
+        rx: latest_capture(root).map(|dir| rx_view(root, &dir)),
+        script: script_view(sources),
+    }
 }
 
-fn current_view(root: &Path, current: Current) -> Value {
-    let running = current.outcome == "running";
-    let live = running && alive(current.pid);
-    let capture = current.capture.clone();
-    let transfer = current.transfer.clone();
-    let mut view = serde_json::to_value(current).unwrap_or_default();
-    view["alive"] = json!(live);
-    if running && !live {
+/// `current.json` as the page reads it: a dead process's `running` record
+/// shows as `ended`, and capture and transfer carry what has arrived so far.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+struct CurrentView {
+    pid: u32,
+    command: String,
+    name: Option<String>,
+    started: f64,
+    finished: Option<f64>,
+    outcome: Outcome,
+    error: Option<String>,
+
+    steps: Vec<Step>,
+    progress: Option<Progress>,
+    capture: Option<CaptureView>,
+    transfer: Option<TransferView>,
+
+    relay: BTreeMap<String, bool>,
+    lines: Vec<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    next: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    flash_tool: Option<FlashTool>,
+    /// The recording process still exists.
+    alive: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+struct CaptureView {
+    #[serde(flatten)]
+    rx: RxView,
+    seconds: f64,
+    elapsed: f64,
+}
+
+/// Serial bytes so far against the plan's estimate, for the install bar.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+struct TransferView {
+    tx: u64,
+    rx: u64,
+    tx_expected: u64,
+    rx_expected: u64,
+    started: Option<f64>,
+}
+
+fn current_view(root: &Path, current: Current) -> CurrentView {
+    let alive = current.live();
+    let outcome = match current.outcome {
         // The process exited without recording a finish.
-        view["outcome"] = json!("ended");
+        Outcome::Running if !alive => Outcome::Ended,
+        outcome => outcome,
+    };
+
+    let capture = current.capture.and_then(|capture| {
+        let path = inside(root, CAPTURES, &capture.path)?;
+        Some(CaptureView {
+            rx: rx_view(root, &path),
+            seconds: capture.seconds,
+            elapsed: (now() - capture.started).min(capture.seconds),
+        })
+    });
+    let transfer = current.transfer.and_then(|transfer| {
+        let path = inside(root, VERIFICATION, &transfer.path)?;
+        let (tx, rx) = serial_sizes(&path);
+        Some(TransferView {
+            tx,
+            rx,
+            tx_expected: transfer.tx,
+            rx_expected: transfer.rx,
+            started: transfer.started,
+        })
+    });
+
+    CurrentView {
+        pid: current.pid,
+        command: current.command,
+        name: current.name,
+        started: current.started,
+        finished: current.finished,
+        outcome,
+        error: current.error,
+        steps: current.steps,
+        progress: current.progress,
+        capture,
+        transfer,
+        relay: current.relay,
+        lines: current.lines,
+        next: current.next,
+        flash_tool: current.flash_tool,
+        alive,
     }
-
-    view["capture"] = capture
-        .and_then(|capture| {
-            let path = inside(root, CAPTURES, &capture.path)?;
-            let mut rx = rx_view(root, &path);
-            rx["seconds"] = json!(capture.seconds);
-            rx["elapsed"] = json!((now() - capture.started).min(capture.seconds));
-            Some(rx)
-        })
-        .unwrap_or(Value::Null);
-    view["transfer"] = transfer
-        .and_then(|transfer| {
-            let path = inside(root, VERIFICATION, &transfer.path)?;
-            let (tx, rx) = serial_sizes(&path);
-            Some(
-                json!({"tx": tx, "rx": rx, "tx_expected": transfer.tx, "rx_expected": transfer.rx,
-                        "started": transfer.started}),
-            )
-        })
-        .unwrap_or(Value::Null);
-
-    view
 }
 
 fn serial_sizes(directory: &Path) -> (u64, u64) {
@@ -188,7 +303,7 @@ fn latest_capture(root: &Path) -> Option<PathBuf> {
 }
 
 /// Arrival time (Unix seconds) of the first `anchor` bytes in a capture, if seen.
-pub fn anchor_time(directory: &Path, anchor: &str) -> Option<f64> {
+fn anchor_time(directory: &Path, anchor: &str) -> Option<f64> {
     if anchor.is_empty() {
         return None;
     }
@@ -202,19 +317,49 @@ pub fn anchor_time(directory: &Path, anchor: &str) -> Option<f64> {
     crate::commands::ota::arrival(&events, offset)
 }
 
+/// `script.json`: an operator script the owner writes by hand.
+#[derive(Deserialize)]
+struct Script {
+    #[serde(default)]
+    title: String,
+    /// Root-relative capture the script runs against.
+    #[serde(default)]
+    capture: String,
+    /// Bytes in that capture that start the script's clock.
+    #[serde(default)]
+    anchor: String,
+    /// Passed to the page unread: it alone gives the steps meaning.
+    #[serde(default = "no_steps")]
+    steps: Value,
+}
+
+fn no_steps() -> Value {
+    Value::Array(Vec::new())
+}
+
 /// The optional operator script: timed steps from an anchor in a capture.
-fn script_view(sources: &Sources) -> Value {
-    let Some(script) = read_json(&sources.status().join(SCRIPT)) else {
-        return Value::Null;
-    };
-    let capture = script["capture"].as_str().unwrap_or("");
-    let Some(path) = inside(&sources.root, CAPTURES, capture) else {
-        return Value::Null;
-    };
-    let anchor = script["anchor"].as_str().unwrap_or("");
-    json!({"title": script["title"].as_str().unwrap_or(""), "capture": capture,
-           "steps": script.get("steps").cloned().unwrap_or(json!([])), "anchor": anchor,
-           "started": anchor_time(&path, anchor), "capture_exists": path.is_dir()})
+#[derive(Debug, Clone, PartialEq, Serialize)]
+struct ScriptView {
+    title: String,
+    capture: String,
+    steps: Value,
+    anchor: String,
+    /// When the anchor arrived; `None` until it has.
+    started: Option<f64>,
+    capture_exists: bool,
+}
+
+fn script_view(sources: &Sources) -> Option<ScriptView> {
+    let script: Script = read(&sources.status().join(SCRIPT))?;
+    let path = inside(&sources.root, CAPTURES, &script.capture)?;
+    Some(ScriptView {
+        started: anchor_time(&path, &script.anchor),
+        capture_exists: path.is_dir(),
+        title: script.title,
+        capture: script.capture,
+        steps: script.steps,
+        anchor: script.anchor,
+    })
 }
 
 /// Evidence parts a session name can have, as (kind, suffix, folder).
@@ -229,15 +374,30 @@ const PARTS: [(&str, &str, &str); 7] = [
 ];
 
 fn report_status(path: &Path) -> Option<String> {
-    read_json(&path.join("report.json"))?["status"]
+    read::<Value>(&path.join("report.json"))?["status"]
         .as_str()
         .map(str::to_string)
 }
 
-/// Recent session names with the evidence each one has.
-pub fn sessions(sources: &Sources) -> Value {
+/// `/api/sessions`: recent session names with the evidence each one has.
+#[derive(Debug, Serialize)]
+pub(crate) struct Sessions {
+    sessions: Vec<SessionRow>,
+}
+
+#[derive(Debug, Serialize)]
+struct SessionRow {
+    name: String,
+    modified: f64,
+    /// Evidence kinds found, from [`PARTS`].
+    parts: Vec<&'static str>,
+    /// The furthest part's state, in the report's own words (`read complete`).
+    outcome: String,
+}
+
+pub(crate) fn sessions(sources: &Sources) -> Sessions {
     let root = &sources.root;
-    let mut found: BTreeMap<String, (f64, Vec<&str>)> = BTreeMap::new();
+    let mut found: BTreeMap<String, (f64, Vec<&'static str>)> = BTreeMap::new();
     for (kind, suffix, folder) in PARTS {
         for entry in fs::read_dir(root.join(folder))
             .into_iter()
@@ -262,12 +422,10 @@ pub fn sessions(sources: &Sources) -> Value {
     list.truncate(SESSIONS_SHOWN);
 
     // A report left "running" by a process that exited without finishing it.
-    let live = fs::read_to_string(sources.status().join(CURRENT))
-        .ok()
-        .and_then(|text| serde_json::from_str::<Current>(&text).ok())
-        .filter(|current| current.outcome == "running" && alive(current.pid))
+    let live = status::current(&sources.status())
+        .filter(Current::live)
         .and_then(|current| current.name);
-    let list: Vec<Value> = list
+    let sessions = list
         .into_iter()
         .map(|(name, (modified, parts))| {
             let p = Paths::new(root, &name);
@@ -285,31 +443,36 @@ pub fn sessions(sources: &Sources) -> Value {
             } else {
                 "started".into()
             };
-            json!({"name": name, "modified": modified, "parts": parts, "outcome": outcome})
+
+            SessionRow {
+                name,
+                modified,
+                parts,
+                outcome,
+            }
         })
         .collect();
 
-    json!({"sessions": list})
+    Sessions { sessions }
 }
 
-/// Scalar fields of a report's result: the small facts, not bulk data.
-fn scalars(value: &Value) -> Value {
-    let Some(object) = value.as_object() else {
-        return Value::Null;
-    };
-    Value::Object(
+/// Scalar fields of a report's result: the small facts, not bulk data. Any
+/// object reads, since each report kind has its own fields.
+fn scalars(value: &Value) -> Option<Value> {
+    let object = value.as_object()?;
+    Some(Value::Object(
         object
             .iter()
             .filter(|(_, v)| !v.is_array() && !v.is_object())
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect::<Map<_, _>>(),
-    )
+    ))
 }
 
-fn report_summary(directory: &Path) -> Value {
-    let Some(report) = read_json(&directory.join("report.json")) else {
-        return Value::Null;
-    };
+/// A `petlibre-flash` report's headline fields and result scalars. The
+/// report belongs to the flash client; the page shows its fields as given.
+fn report_summary(directory: &Path) -> Option<Value> {
+    let report: Value = read(&directory.join("report.json"))?;
 
     let mut summary = Map::new();
     for key in [
@@ -327,32 +490,63 @@ fn report_summary(directory: &Path) -> Value {
         }
     }
 
-    let result = scalars(&report["result"]);
-    if !result.is_null() {
+    if let Some(result) = scalars(&report["result"]) {
         summary.insert("result".into(), result);
     }
-    Value::Object(summary)
+    Some(Value::Object(summary))
 }
 
-fn plan_summary(path: &Path) -> Value {
-    let Ok(raw) = fs::read(path) else {
-        return Value::Null;
-    };
+fn plan_summary(path: &Path) -> Option<Value> {
+    let raw = fs::read(path).ok()?;
     let plan: Value = serde_json::from_slice(&raw).unwrap_or_default();
     let operation = &plan["operation_plan"];
-    let mut summary = scalars(operation);
-    summary["plan_sha256"] = json!(sha256_hex(&raw));
-    summary["sectors"] = json!(operation["ordered_sectors"].as_array().map(Vec::len));
-    summary
+    let mut summary = scalars(operation).unwrap_or_default();
+    summary["plan_sha256"] = Value::String(sha256(&raw));
+    summary["sectors"] = operation["ordered_sectors"].as_array().map(Vec::len).into();
+    Some(summary)
 }
 
-/// One session's evidence, plan and next command.
-pub fn session(sources: &Sources, name: &str) -> Option<Value> {
+/// `/api/sessions/{name}`: one session's evidence, plan and next command.
+#[derive(Debug, Serialize)]
+pub(crate) struct SessionView {
+    name: String,
+    parts: Vec<PartView>,
+    /// The reviewed command that follows, if one was recorded.
+    next: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct PartView {
+    kind: &'static str,
+    path: String,
+    modified: Option<f64>,
+    #[serde(flatten)]
+    detail: PartDetail,
+    /// Execute only: the serial bytes it exchanged.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    serial: Option<Serial>,
+}
+
+/// A plan's summary, or any other part's report (`null` when it has none).
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum PartDetail {
+    Plan(Option<Value>),
+    Report(Option<Value>),
+}
+
+#[derive(Debug, Serialize)]
+struct Serial {
+    tx: u64,
+    rx: u64,
+}
+
+pub(crate) fn session(sources: &Sources, name: &str) -> Option<SessionView> {
     check_name(name).ok()?;
     let root = &sources.root;
     let p = Paths::new(root, name);
 
-    let parts: Vec<Value> = [
+    let parts: Vec<PartView> = [
         ("loader", &p.loader),
         ("bounded", &p.bounded),
         ("full", &p.full),
@@ -364,18 +558,23 @@ pub fn session(sources: &Sources, name: &str) -> Option<Value> {
     .into_iter()
     .filter(|(_, path)| path.exists())
     .map(|(kind, path)| {
-        let mut part =
-            json!({"kind": kind, "path": status::relative(root, path), "modified": modified(path)});
-        if kind == "plan" {
-            part["plan"] = plan_summary(path);
+        let detail = if kind == "plan" {
+            PartDetail::Plan(plan_summary(path))
         } else {
-            part["report"] = report_summary(path);
-        }
-        if kind == "execute" {
+            PartDetail::Report(report_summary(path))
+        };
+        let serial = (kind == "execute").then(|| {
             let (tx, rx) = serial_sizes(path);
-            part["serial"] = json!({"tx": tx, "rx": rx});
+            Serial { tx, rx }
+        });
+
+        PartView {
+            kind,
+            path: status::relative(root, path),
+            modified: modified(path),
+            detail,
+            serial,
         }
-        part
     })
     .collect();
 
@@ -388,35 +587,101 @@ pub fn session(sources: &Sources, name: &str) -> Option<Value> {
         .rev()
         .find(|entry| entry.name.as_deref() == Some(name) && entry.next.is_some())
         .and_then(|entry| entry.next);
-    Some(json!({"name": name, "parts": parts, "next": next}))
-}
-
-/// Ports, last relay states, flash client and the image the feeder last booted.
-pub fn health(sources: &Sources, flash: &mut FlashCache) -> Value {
-    let root = &sources.root;
-    let config = Config::load(root);
-    let ports = match &config {
-        Ok(config) => json!({
-            "relay_port": Path::new(&config.relay_port).exists(),
-            "uart_port": Path::new(&config.uart_port).exists(),
-            "baseline": root.join(&config.baseline).is_file(),
-            "rom_report": root.join(&config.rom_report).is_file(),
-        }),
-        Err(error) => json!({"error": error.to_string()}),
-    };
-
-    json!({
-        "config": CONFIG, "config_ok": config.is_ok(), "ports": ports,
-        "relays": read_json(&sources.status().join(RELAYS)),
-        "flash_tool": flash.get(sources),
-        "installed": installed(root),
-        "busy": status::busy(&sources.status()),
+    Some(SessionView {
+        name: name.into(),
+        parts,
+        next,
     })
 }
 
+/// `/api/health`: ports, last relay states, flash client and the image the
+/// feeder last booted.
+#[derive(Debug, Serialize)]
+pub(crate) struct HealthView {
+    /// Root-relative `bench.json`.
+    config: &'static str,
+    config_ok: bool,
+    ports: Ports,
+    relays: Option<BTreeMap<String, RelayState>>,
+    flash_tool: FlashToolView,
+    installed: Option<Installed>,
+    /// The command a live bench process is running.
+    busy: Option<String>,
+}
+
+/// Whether each configured path exists, or why the config does not read.
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+enum Ports {
+    Found {
+        relay_port: bool,
+        uart_port: bool,
+        baseline: bool,
+        rom_report: bool,
+    },
+    Unreadable {
+        error: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct FlashToolView {
+    path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sha256: Option<String>,
+    present: bool,
+}
+
+/// The newest replacement-firmware start banner in a capture.
+#[derive(Debug, Serialize)]
+struct Installed {
+    capture: String,
+    /// When that capture was last written.
+    at: f64,
+    build: Option<String>,
+    bank: Option<String>,
+    role: Role,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum Role {
+    Normal,
+    /// Bank 0's recovery role ran in that capture.
+    Recovery,
+}
+
+pub(crate) fn health(sources: &Sources, flash: &mut FlashCache) -> HealthView {
+    let root = &sources.root;
+    let config = Config::load(root);
+    let ports = match &config {
+        Ok(config) => Ports::Found {
+            relay_port: Path::new(&config.relay_port).exists(),
+            uart_port: Path::new(&config.uart_port).exists(),
+            baseline: root.join(&config.baseline).is_file(),
+            rom_report: root.join(&config.rom_report).is_file(),
+        },
+        Err(error) => Ports::Unreadable {
+            error: error.to_string(),
+        },
+    };
+
+    HealthView {
+        config: CONFIG,
+        config_ok: config.is_ok(),
+        ports,
+        relays: read(&sources.status().join(RELAYS)),
+        flash_tool: flash.get(sources),
+        installed: installed(root),
+        busy: status::busy(&sources.status()),
+    }
+}
+
 /// The newest capture that shows a replacement-firmware start banner.
-fn installed(root: &Path) -> Value {
+fn installed(root: &Path) -> Option<Installed> {
     const START: &[u8] = b"PLFW1 start build=";
+    const RECOVERY: &[u8] = b"PLOTA1 start role=recovery";
+
     for (at, dir) in captures_by_age(root).into_iter().take(BANNER_SCAN_CAPTURES) {
         let rx = dir.join("serial-rx.bin");
         if fs::metadata(&rx).map_or(true, |m| m.len() > BANNER_SCAN_BYTES) {
@@ -434,45 +699,66 @@ fn installed(root: &Path) -> Value {
                 .find_map(|word| word.strip_prefix(key))
                 .map(str::to_string)
         };
-        let recovery = data
-            .windows(b"PLOTA1 start role=recovery".len())
-            .any(|w| w == b"PLOTA1 start role=recovery");
-        return json!({"capture": status::relative(root, &dir), "at": at,
-                      "build": field("build="), "bank": field("bank="),
-                      "role": if recovery { "recovery" } else { "normal" }});
+        let recovery = data.windows(RECOVERY.len()).any(|w| w == RECOVERY);
+
+        return Some(Installed {
+            capture: status::relative(root, &dir),
+            at,
+            build: field("build="),
+            bank: field("bank="),
+            role: if recovery {
+                Role::Recovery
+            } else {
+                Role::Normal
+            },
+        });
     }
-    Value::Null
+    None
 }
 
 /// The flash client's hash, recomputed only when the binary changes.
 #[derive(Default)]
-pub struct FlashCache {
+pub(crate) struct FlashCache {
     key: Option<(f64, u64)>,
-    value: Value,
+    value: Option<FlashToolView>,
 }
 
 impl FlashCache {
-    pub fn get(&mut self, sources: &Sources) -> Value {
+    fn get(&mut self, sources: &Sources) -> FlashToolView {
+        let missing = || FlashToolView {
+            path: sources.flash_bin.display().to_string(),
+            sha256: None,
+            present: false,
+        };
         let Ok(metadata) = fs::metadata(&sources.flash_bin) else {
-            return json!({"path": sources.flash_bin.display().to_string(), "present": false});
+            return missing();
         };
 
         let key = (modified(&sources.flash_bin).unwrap_or(0.0), metadata.len());
-        if self.key != Some(key) {
-            self.key = Some(key);
-            self.value = match crate::tools::flash_tool(&sources.root, &sources.flash_bin) {
-                Some(tool) => json!({"path": tool.path, "sha256": tool.sha256, "present": true}),
-                None => json!({"path": sources.flash_bin.display().to_string(), "present": false}),
-            };
+        let cached = self.value.as_ref().filter(|_| self.key == Some(key));
+        if let Some(view) = cached {
+            return view.clone();
         }
-        self.value.clone()
+
+        let view = match crate::tools::flash_tool(&sources.root, &sources.flash_bin) {
+            Some(FlashTool { path, sha256 }) => FlashToolView {
+                path,
+                sha256: Some(sha256),
+                present: true,
+            },
+            None => missing(),
+        };
+        self.key = Some(key);
+        self.value = Some(view.clone());
+        view
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::status::Status;
+    use crate::status::{CURRENT, Status};
+    use serde_json::json;
 
     fn sources() -> (tempfile::TempDir, Sources) {
         let tmp = tempfile::tempdir().unwrap();
@@ -483,15 +769,21 @@ mod tests {
         (tmp, sources)
     }
 
+    /// A view as the page receives it.
+    fn json(view: impl Serialize) -> Value {
+        serde_json::to_value(view).unwrap()
+    }
+
     #[test]
     fn empty() {
         let (_tmp, sources) = sources();
 
-        let view = snapshot(&sources);
+        let view = json(snapshot(&sources));
         assert!(view["current"].is_null());
         assert_eq!(view["history"], json!([]));
         assert!(view["rx"].is_null());
-        assert_eq!(sessions(&sources)["sessions"], json!([]));
+        assert!(view["script"].is_null());
+        assert_eq!(json(sessions(&sources))["sessions"], json!([]));
     }
 
     #[test]
@@ -506,10 +798,10 @@ mod tests {
         fs::write(dir.join("serial-rx.bin"), &data).unwrap();
 
         let view = rx_view(&sources.root, &dir);
-        let tail = view["tail"].as_array().unwrap();
-        assert_eq!(tail.len(), TAIL_LINES);
-        assert_eq!(tail.last().unwrap(), "line 199");
-        assert_eq!(view["bytes"], data.len());
+        assert_eq!(view.tail.len(), TAIL_LINES);
+        assert_eq!(view.tail.last().unwrap(), "line 199");
+        assert_eq!(view.bytes, data.len() as u64);
+        assert_eq!(json(&view)["path"], "private/captures/cap");
     }
 
     #[test]
@@ -534,10 +826,8 @@ mod tests {
         }
 
         // A pid that cannot exist stands in for a process that died mid-run.
-        let mut current: Current =
-            serde_json::from_str(&fs::read_to_string(sources.status().join(CURRENT)).unwrap())
-                .unwrap();
-        current.outcome = "running".into();
+        let mut current = status::current(&sources.status()).unwrap();
+        current.outcome = Outcome::Running;
         current.pid = u32::MAX;
         fs::write(
             sources.status().join(CURRENT),
@@ -545,9 +835,31 @@ mod tests {
         )
         .unwrap();
 
-        let view = snapshot(&sources);
+        let view = json(snapshot(&sources));
         assert_eq!(view["current"]["outcome"], "ended");
+        assert_eq!(view["current"]["alive"], false);
         assert_eq!(view["history"][0]["name"], "two");
+        assert_eq!(view["history"][0]["outcome"], "pass");
+    }
+
+    #[test]
+    fn snapshots_compare_without_their_clock() {
+        let (_tmp, sources) = sources();
+        let first = snapshot(&sources);
+        let mut later = first.clone();
+        later.now += 1.0;
+
+        assert!(later.same_as(&first));
+        later.history.push(HistoryEntry {
+            command: "boot".into(),
+            name: None,
+            started: 1.0,
+            finished: None,
+            outcome: Outcome::Pass,
+            error: None,
+            next: None,
+        });
+        assert!(!later.same_as(&first));
     }
 
     #[test]
@@ -562,13 +874,40 @@ mod tests {
         status.begin("flash-execute", Some("s"), &[]).unwrap();
         status.transfer(Some(&execute), 100, 200);
 
-        let view = snapshot(&sources);
+        let view = json(snapshot(&sources));
         let transfer = &view["current"]["transfer"];
         assert_eq!(
             (transfer["tx"].as_u64(), transfer["rx"].as_u64()),
             (Some(3), Some(5))
         );
         assert_eq!(transfer["tx_expected"], 100);
+        assert_eq!(view["current"]["outcome"], "running");
+        assert_eq!(view["current"]["steps"], json!([]));
+    }
+
+    #[test]
+    fn a_running_capture_shows_its_tail_and_time() {
+        let (_tmp, sources) = sources();
+        let dir = sources.root.join(CAPTURES).join("c");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("serial-rx.bin"), b"hello\r\n").unwrap();
+
+        let mut status = Status::new(&sources.root, sources.root.join(STATUS_DIR));
+        status.begin("capture", Some("c"), &["capture"]).unwrap();
+        status.step("capture");
+        status.capture(Some(&dir), 60.0);
+
+        let view = json(snapshot(&sources));
+        let capture = &view["current"]["capture"];
+        assert_eq!(capture["path"], "private/captures/c");
+        assert_eq!(capture["bytes"], 7);
+        assert_eq!(capture["tail"], json!(["hello"]));
+        assert_eq!(capture["seconds"], 60.0);
+        assert!(capture["elapsed"].as_f64().unwrap() <= 60.0);
+        assert_eq!(
+            view["current"]["steps"],
+            json!([{"label": "capture", "state": "running"}])
+        );
     }
 
     #[test]
@@ -592,13 +931,15 @@ mod tests {
         )
         .unwrap();
 
-        let script = snapshot(&sources)["script"].clone();
+        let script = json(snapshot(&sources))["script"].clone();
         let expected = chrono::DateTime::parse_from_rfc3339("2026-10-22T10:00:01.5+00:00").unwrap();
         assert_eq!(
             script["started"].as_f64(),
             Some(expected.timestamp_millis() as f64 / 1e3)
         );
         assert_eq!(script["capture_exists"], true);
+        assert_eq!(script["steps"], json!([{"at": 0, "text": "go"}]));
+        assert_eq!(script["title"], "t");
     }
 
     #[test]
@@ -607,11 +948,14 @@ mod tests {
         let p = Paths::new(&sources.root, "s2");
         fs::create_dir_all(&p.execute).unwrap();
         fs::write(p.execute.join("report.json"), r#"{"status": "running"}"#).unwrap();
-        assert_eq!(sessions(&sources)["sessions"][0]["outcome"], "ended");
+        assert_eq!(json(sessions(&sources))["sessions"][0]["outcome"], "ended");
 
         let mut status = Status::new(&sources.root, sources.status());
         status.begin("flash-execute", Some("s2"), &[]).unwrap();
-        assert_eq!(sessions(&sources)["sessions"][0]["outcome"], "running");
+        assert_eq!(
+            json(sessions(&sources))["sessions"][0]["outcome"],
+            "running"
+        );
         status.finish(0, None);
     }
 
@@ -621,11 +965,13 @@ mod tests {
         let p = Paths::new(&sources.root, "s1");
         fs::create_dir_all(&p.loader).unwrap();
         fs::create_dir_all(&p.inspect).unwrap();
+        fs::create_dir_all(&p.execute).unwrap();
         fs::write(
             p.inspect.join("report.json"),
-            r#"{"status": "complete", "result": {"bytes": 4, "big": [1]}}"#,
+            r#"{"status": "complete", "error": null, "result": {"bytes": 4, "big": [1]}}"#,
         )
         .unwrap();
+        fs::write(p.execute.join("serial-tx.bin"), [0u8; 2]).unwrap();
         let plan =
             r#"{"operation_plan": {"bank": 1, "erase_sectors": 2, "ordered_sectors": [{}, {}]}}"#;
         fs::write(&p.plan, plan).unwrap();
@@ -635,30 +981,38 @@ mod tests {
         status.next("petlibre-bench flash-execute s1 …".into());
         status.finish(0, None);
 
-        let list = sessions(&sources);
+        let list = json(sessions(&sources));
         assert_eq!(list["sessions"][0]["name"], "s1");
-        assert_eq!(list["sessions"][0]["outcome"], "prepared");
-
-        let detail = session(&sources, "s1").unwrap();
-        let plan_part = detail["parts"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|p| p["kind"] == "plan")
-            .unwrap();
-        assert_eq!(plan_part["plan"]["sectors"], 2);
+        assert_eq!(list["sessions"][0]["outcome"], "unknown");
         assert_eq!(
-            plan_part["plan"]["plan_sha256"],
-            sha256_hex(plan.as_bytes())
+            list["sessions"][0]["parts"],
+            json!(["loader", "inspect", "plan", "execute"])
         );
 
-        let inspect = detail["parts"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|p| p["kind"] == "inspect")
-            .unwrap();
-        assert_eq!(inspect["report"]["result"], json!({"bytes": 4}));
+        let detail = json(session(&sources, "s1").unwrap());
+        let part = |kind: &str| {
+            detail["parts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|p| p["kind"] == kind)
+                .unwrap()
+                .clone()
+        };
+        let plan_part = part("plan");
+        assert_eq!(plan_part["plan"]["sectors"], 2);
+        assert_eq!(plan_part["plan"]["bank"], 1);
+        assert_eq!(plan_part["plan"]["plan_sha256"], sha256(plan.as_bytes()));
+        assert!(plan_part.get("report").is_none());
+
+        let inspect = part("inspect");
+        assert_eq!(
+            inspect["report"],
+            json!({"status": "complete", "result": {"bytes": 4}})
+        );
+        assert!(inspect.get("serial").is_none());
+        assert_eq!(part("loader")["report"], Value::Null);
+        assert_eq!(part("execute")["serial"], json!({"tx": 2, "rx": 0}));
         assert_eq!(detail["next"], "petlibre-bench flash-execute s1 …");
 
         assert!(session(&sources, "../s1").is_none());
@@ -676,11 +1030,51 @@ mod tests {
         )
         .unwrap();
 
-        let view = health(&sources, &mut FlashCache::default());
+        let view = json(health(&sources, &mut FlashCache::default()));
         assert_eq!(view["installed"]["build"], "abc123");
         assert_eq!(view["installed"]["bank"], "1");
         assert_eq!(view["installed"]["role"], "normal");
+        assert_eq!(view["installed"]["capture"], "private/captures/x-boot");
+        assert_eq!(view["config"], CONFIG);
         assert_eq!(view["config_ok"], false);
+        assert!(view["ports"]["error"].as_str().unwrap().contains(CONFIG));
+        assert!(view["relays"].is_null());
+        assert!(view["busy"].is_null());
         assert_eq!(view["flash_tool"]["present"], false);
+        assert!(view["flash_tool"].get("sha256").is_none());
+    }
+
+    #[test]
+    fn health_reports_present_ports_relays_and_the_flash_hash() {
+        let (_tmp, sources) = sources();
+        fs::create_dir_all(sources.root.join("private")).unwrap();
+        fs::write(sources.root.join("baseline.bin"), b"").unwrap();
+        fs::write(
+            sources.root.join(CONFIG),
+            r#"{"relay_port": "/nonexistent/relay", "uart_port": "/", "baseline": "baseline.bin", "rom_report": "rom.json"}"#,
+        )
+        .unwrap();
+        fs::write(&sources.flash_bin, b"tool").unwrap();
+        let mut status = Status::new(&sources.root, sources.status());
+        status.begin("on", None, &[]).unwrap();
+        status.relay(1, true);
+        status.finish(0, None);
+
+        let mut cache = FlashCache::default();
+        let view = json(health(&sources, &mut cache));
+        assert_eq!(view["config_ok"], true);
+        assert_eq!(
+            view["ports"],
+            json!({"relay_port": false, "uart_port": true, "baseline": true, "rom_report": false})
+        );
+        assert_eq!(view["relays"]["1"]["on"], true);
+        assert_eq!(
+            view["flash_tool"],
+            json!({"path": "petlibre-flash", "sha256": sha256(b"tool"), "present": true})
+        );
+        assert_eq!(
+            json(health(&sources, &mut cache))["flash_tool"],
+            view["flash_tool"]
+        );
     }
 }

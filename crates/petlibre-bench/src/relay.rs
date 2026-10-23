@@ -3,7 +3,7 @@
 //! The bench commands drive the feeder's power and boot strap through
 //! [`Relay`]. Every command must come back with `OK`, and a set must echo the
 //! exact channel and value; anything else is an error, so a sequence stops
-//! rather than assuming a relay moved. [`FakeBoard`] stands in for the board
+//! rather than assuming a relay moved. `FakeBoard` stands in for the board
 //! in tests.
 
 use std::io::{self, Read, Write};
@@ -12,22 +12,22 @@ use std::time::{Duration, Instant};
 use crate::{Result, require};
 
 /// Switches the feeder's USB 5V.
-pub const POWER: u8 = 1;
+pub(crate) const POWER: u8 = 1;
 /// Holds feeder TX to GND through the 4.7 kΩ strap.
-pub const STRAP: u8 = 2;
-pub const SPARES: [u8; 2] = [3, 4];
+pub(crate) const STRAP: u8 = 2;
+pub(crate) const SPARES: [u8; 2] = [3, 4];
 
 /// One command line out, one reply line back.
-pub trait Link: Send {
+pub(crate) trait Link: Send {
     /// Discard pending input, send `line` with CRLF, and return the reply up
     /// to its newline (or whatever arrived within the timeout).
     fn transact(&mut self, line: &str) -> io::Result<Vec<u8>>;
 }
 
-pub struct SerialLink(Box<dyn serialport::SerialPort>);
+struct SerialLink(Box<dyn serialport::SerialPort>);
 
 impl SerialLink {
-    pub fn open(path: &str) -> Result<Self> {
+    fn open(path: &str) -> Result<Self> {
         let builder = serialport::new(path, 9600).timeout(Duration::from_millis(100));
         // Exclusive, so a second bench process cannot share the board.
         #[cfg(unix)]
@@ -74,7 +74,7 @@ pub struct Relay {
 }
 
 impl Relay {
-    pub fn new(link: Box<dyn Link>) -> Self {
+    pub(crate) fn new(link: Box<dyn Link>) -> Self {
         Self { link }
     }
 
@@ -101,7 +101,7 @@ impl Relay {
         Ok(reply)
     }
 
-    pub fn set(&mut self, channel: u8, on: bool) -> Result<()> {
+    pub(crate) fn set(&mut self, channel: u8, on: bool) -> Result<()> {
         let value = u8::from(on);
         let reply = self.command(&format!("AT+CH{channel}={value}"))?;
         require(
@@ -113,7 +113,7 @@ impl Relay {
         )
     }
 
-    pub fn get(&mut self, channel: u8) -> Result<bool> {
+    pub(crate) fn get(&mut self, channel: u8) -> Result<bool> {
         let reply = self.command(&format!("AT+CH{channel}=?"))?;
         let on = reply == format!("OK+CH{channel}=1").as_bytes();
         require(
@@ -146,13 +146,15 @@ fn trim(raw: &[u8]) -> &[u8] {
 }
 
 /// Answers like the SH-UR04A, including its trailing NUL byte; for tests.
+#[cfg(test)]
 #[derive(Clone, Default)]
-pub struct FakeBoard {
+pub(crate) struct FakeBoard {
     pub inner: std::sync::Arc<std::sync::Mutex<FakeState>>,
 }
 
+#[cfg(test)]
 #[derive(Default)]
-pub struct FakeState {
+pub(crate) struct FakeState {
     /// Indexed by channel number; slot 0 is unused.
     pub on: [bool; 5],
     /// Every set, in order: (channel, on).
@@ -160,6 +162,7 @@ pub struct FakeState {
     pub refuse: bool,
 }
 
+#[cfg(test)]
 impl FakeBoard {
     pub fn state(&self) -> [bool; 4] {
         let s = self.inner.lock().unwrap();
@@ -171,6 +174,7 @@ impl FakeBoard {
     }
 }
 
+#[cfg(test)]
 impl Link for FakeBoard {
     fn transact(&mut self, line: &str) -> io::Result<Vec<u8>> {
         let mut s = self.inner.lock().unwrap();

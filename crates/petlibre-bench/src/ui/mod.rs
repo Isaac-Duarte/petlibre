@@ -6,14 +6,14 @@
 //! default. `--listen` serves one named interface instead, such as the
 //! Tailscale address; wildcard addresses are refused.
 
-pub mod views;
+mod views;
 
 use std::convert::Infallible;
 use std::fs;
 use std::io::{Read, Seek, SeekFrom};
 use std::net::{IpAddr, SocketAddr, TcpListener};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use axum::Router;
@@ -25,12 +25,12 @@ use axum::response::{IntoResponse, Json, Response};
 use axum::routing::get;
 use futures_util::stream::{self, Stream};
 use rust_embed::Embed;
-use serde_json::Value;
+use serde::Serialize;
 
 use crate::config::STATUS_DIR;
-use crate::status::{CURRENT, Current, LOG};
+use crate::status::{self, LOG};
 use crate::{Error, Result, interrupted};
-use views::{FlashCache, Sources};
+use views::{FlashCache, Snapshot, Sources};
 
 #[derive(Embed)]
 #[folder = "assets/"]
@@ -49,7 +49,7 @@ struct Ui {
 
 /// Where the page listens.
 pub struct Listen {
-    pub address: SocketAddr,
+    address: SocketAddr,
 }
 
 impl Listen {
@@ -93,39 +93,37 @@ async fn no_store(request: Request, next: Next) -> Response {
     response
 }
 
-/// Run a blocking view on the blocking pool.
-async fn view(ui: &Ui, make: impl FnOnce(&Ui) -> Value + Send + 'static) -> Json<Value> {
+/// Run a blocking view on the blocking pool; `None` is a missing page.
+async fn view<T: Serialize + Send + 'static>(
+    ui: &Ui,
+    make: impl FnOnce(&Ui) -> Option<T> + Send + 'static,
+) -> Response {
     let ui = ui.clone();
-    Json(
-        tokio::task::spawn_blocking(move || make(&ui))
-            .await
-            .unwrap_or_default(),
-    )
-}
-
-async fn status(State(ui): State<Ui>) -> Json<Value> {
-    view(&ui, |ui| views::snapshot(&ui.sources)).await
-}
-
-async fn sessions(State(ui): State<Ui>) -> Json<Value> {
-    view(&ui, |ui| views::sessions(&ui.sources)).await
-}
-
-async fn session(State(ui): State<Ui>, UrlPath(name): UrlPath<String>) -> Response {
-    let found = view(&ui, move |ui| {
-        views::session(&ui.sources, &name).unwrap_or(Value::Null)
-    })
-    .await;
-    if found.0.is_null() {
-        StatusCode::NOT_FOUND.into_response()
-    } else {
-        found.into_response()
+    match tokio::task::spawn_blocking(move || make(&ui)).await {
+        Ok(Some(view)) => Json(view).into_response(),
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
 
-async fn health(State(ui): State<Ui>) -> Json<Value> {
+async fn status(State(ui): State<Ui>) -> Response {
+    view(&ui, |ui| Some(views::snapshot(&ui.sources))).await
+}
+
+async fn sessions(State(ui): State<Ui>) -> Response {
+    view(&ui, |ui| Some(views::sessions(&ui.sources))).await
+}
+
+async fn session(State(ui): State<Ui>, UrlPath(name): UrlPath<String>) -> Response {
+    view(&ui, move |ui| views::session(&ui.sources, &name)).await
+}
+
+async fn health(State(ui): State<Ui>) -> Response {
     view(&ui, |ui| {
-        views::health(&ui.sources, &mut ui.flash.lock().unwrap())
+        // The cache holds only a hash; one left mid-update by a panicked
+        // view is recomputed when the binary next changes, so take it as is.
+        let mut flash = ui.flash.lock().unwrap_or_else(PoisonError::into_inner);
+        Some(views::health(&ui.sources, &mut flash))
     })
     .await
 }
@@ -155,47 +153,39 @@ fn serve_asset(path: &str) -> Response {
 /// What one event stream has sent so far.
 struct Cursor {
     ui: Ui,
-    snapshot: String,
+    /// The last status sent; `None` before the first.
+    snapshot: Option<Snapshot>,
     started: Option<f64>,
     offset: u64,
-    first: bool,
 }
 
 impl Cursor {
     /// The events due now: a status change, a log reset, new log text.
     fn poll(&mut self) -> Vec<Event> {
         let directory = self.ui.sources.root.join(STATUS_DIR);
+        let first = self.snapshot.is_none();
         let mut out = Vec::new();
 
-        let snapshot = views::snapshot(&self.ui.sources).to_string();
-        // `now` changes every time; compare without it.
-        let key = |text: &str| {
-            serde_json::from_str::<Value>(text)
-                .map(|mut v| {
-                    v["now"] = Value::Null;
-                    v.to_string()
-                })
-                .unwrap_or_default()
-        };
-        if self.first || key(&snapshot) != key(&self.snapshot) {
-            out.push(Event::default().event("status").data(&snapshot));
-            self.snapshot = snapshot;
+        let snapshot = views::snapshot(&self.ui.sources);
+        let changed = self
+            .snapshot
+            .as_ref()
+            .is_none_or(|sent| !snapshot.same_as(sent));
+        if changed && let Ok(text) = serde_json::to_string(&snapshot) {
+            out.push(Event::default().event("status").data(text));
+            self.snapshot = Some(snapshot);
         }
 
         // A new command, or a log that shrank, restarts the page's log view
         // near the end of the current file.
-        let started = fs::read_to_string(directory.join(CURRENT))
-            .ok()
-            .and_then(|text| serde_json::from_str::<Current>(&text).ok())
-            .map(|c| c.started);
+        let started = status::current(&directory).map(|c| c.started);
         let log = directory.join(LOG);
         let size = fs::metadata(&log).map_or(0, |m| m.len());
-        if self.first || started != self.started || size < self.offset {
+        if first || started != self.started || size < self.offset {
             self.started = started;
             self.offset = size.saturating_sub(LOG_BACKLOG);
             out.push(Event::default().event("log-reset").data(""));
         }
-        self.first = false;
 
         if size > self.offset {
             let mut chunk = Vec::new();
@@ -222,10 +212,9 @@ async fn events(
 ) -> Sse<impl Stream<Item = std::result::Result<Event, Infallible>>> {
     let cursor = Cursor {
         ui,
-        snapshot: String::new(),
+        snapshot: None,
         started: None,
         offset: 0,
-        first: true,
     };
 
     let ticks = stream::unfold(Some(cursor), |cursor| async move {

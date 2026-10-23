@@ -21,7 +21,7 @@ Records (`PLOPT1`, policy `fw13-optics-v1`, bound both ways to `PLOPT1 start cre
 - `inputs n= highs=food,outlet,feedback begin= end= first= low_min=`: high counts, levels at the window start and end, ms to each input's first change, and the shortest complete LOW run
 - `edge n= input= level= ms=`: up to 16 per window, the rest counted as dropped
 - `stall cut= fault= off= stopped= closed=`, then `done windows=`
-- `timeout ms=` or `error kind=supervisor|clock|capture|observe|optics n= fault=` end the probe with emitters off
+- `timeout ms=` or `error kind=supervisor|clock|capture|observe|optics n= fault= stall=` end the probe with emitters off. `stall=` (FW40) is the milliseconds since the last good sample, `-` without a clock: past 300 ms, the task was starved for longer than the owner lease
 
 A window's records are logged at least 300 ms into the next window, so logging never delays settling samples. `audit-firmware-optics.py --stage b|c` checked them (removed after FW13 closed; its reports remain). It requires the sequence and timing above, every gap within the filter's 100 ms limit, `stopped=1` throughout, a cut 300–340 ms after the last renewal with the OWNER fault, and the supervisor closed. Stage b (unattended) also requires the same inputs lit by each selection in every cycle. Stage c requires the operator's blocking seen through the filter: food both present and empty, and the outlet both clear and blocked.
 

@@ -52,5 +52,5 @@ Limits: buttons, indicators and the tune are graded by what the operator answere
 
 ## Known before the first run
 
-- Every reference-firmware boot since `itest-20261022-10` logged `PLOPT1 error kind=supervisor n=1 fault=7`. If the optics probe still does that, the optics check will fail until it is fixed. That is the check working as intended.
+- Every reference-firmware boot since `itest-20261022-10` logged `PLOPT1 error kind=supervisor n=1 fault=7`. FW40 found the cause (physical): the first WPA3 join starves the QA task past its 300 ms owner lease (`stall=703` on an OTA trial boot, `stall=702` on a cold boot with the hotspot up; every window passes with the hotspot down). The radio now waits for `startup_done` (`PLWIF3 hold`), so the optics check runs before the join.
 - A press must start after its prompt. A button still held from the previous answer, then released and pressed again within the 30 ms settle, can be missed. It then times out rather than passing wrongly.

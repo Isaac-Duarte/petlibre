@@ -172,38 +172,109 @@ The runs below used the two separate scenarios.
 
 **Physical, first suite:** `itest-20261022-06 --build --power` passed all eight scenarios in 26 minutes (OTA v28–v32). The good build (`877b2c9b…`) confirmed. `request-auth` saw three refusals on the UART. The Wi-Fi fallback took about 2 minutes. `trial-fallback` counted trial boots 1–3, and KM0 gave way. `ota-faults` saw `stage=hash`, `range` and `timeout`, then a clean install. The bench state came back as found. Runs 01–05 found the harness bugs fixed above: no silence check during waits, the capture gap and offset during the forger, stale health after a cold boot. They also found that the `fw11-fail` variant no longer passed the link audit, because its constant failure let LTO drop the image's writers. **Host:** the scenarios, the UART log and the HTTP parsing run against a scripted feeder that emits the firmware's record formats and models the boot window.
 
-## Stock-to-replacement install (POC)
+## Stock and back
 
-`stock-ota` has a feeder running stock 1.1.15 install a replacement build through stock's own MQTT-triggered HTTP updater, with no UART write ([stock OTA requirements](../firmware/stock-ota-requirements.md)). It assumes stock is installed and proves it first: the server must see stock report 1.1.15 on its adapter, which is also the server's own gate for the request. Returning to stock is the UART stock recovery (FW38), which the command never runs.
+Three bench routes cover stock 1.1.15:
+- to stock over the air (FW41);
+- to stock over UART (FW38, as `stock-prepare` and `stock-execute`);
+- from stock to a replacement over stock's own updater (FW40, `stock-ota`).
+
+`itest`'s `stock-roundtrip` scenario chains the over-the-air ones. The design for doing all of this without a bench is in [consumer installation](../firmware/consumer-installation.md).
+
+### To stock over the air
+
+```sh
+target/release/petlibre-bench ota NAME --review <frozen stock review>
+```
+
+Our running build signs the pinned stock payload, gives way, and its bank-0 recovery role writes stock into bank 1. The command passes on stock's `app_main:version:` banner and skips the health step, since stock does not report to this server. Stock's own KM0 then runs, so our trial counter never counts it. If stock failed to boot from bank 1, the only way back would be UART. Status: host-tested (FW41).
+
+### To stock over UART
+
+The FW38 procedure as two reviewed commands, shaped like `flash-prepare` and `flash-execute`:
+
+```sh
+# Bank 1 still holds a valid image: give way to bank 0 first.
+target/release/petlibre-bench stock-prepare NAME --fallback <bank-0 review>
+target/release/petlibre-bench stock-execute NAME --fallback <bank-0 review> --expected-plan-sha256 <sha>
+# Bank 1 invalid (a give-way, or just after a stock-ota install): recover.
+target/release/petlibre-bench stock-prepare NAME
+target/release/petlibre-bench stock-execute NAME --expected-plan-sha256 <sha>
+```
+
+**`stock-prepare NAME`:**
+1. loader;
+2. `read small`, then `read full`, in one helper session;
+3. a refusal if bank 1's marker is still valid, since `stock-recovery` refuses a valid target marker;
+4. `petlibre-flash stock-recovery prepare`, which writes the plan from the pinned baseline backup.
+
+It prints the next command with the plan's hash. With `--fallback`, both commands instead run the give-way to that bank-0 review, under the name `NAME-giveway`, and point back at `stock-prepare`.
+
+**`stock-execute NAME`:**
+- single-use, and it requires unbroken power since the prepare;
+- runs `stock-recovery execute` with the plan hash; it reads all 8 MiB three times, about an hour;
+- boots, and must see stock's banner.
+
+The boot capture holds the unit's serial and cloud keys, so keep it private. The bench reads the plan through `petlibre-formats`' `StockRecoveryReviewed`. Status: host-tested; the same `petlibre-flash` steps ran physically in FW38.
+
+### Stock to a replacement (`stock-ota`)
+
+`stock-ota` has a feeder running stock 1.1.15 install a replacement build through stock's own MQTT-triggered HTTP updater, with no UART write ([stock OTA requirements](../firmware/stock-ota-requirements.md)). It assumes stock is installed, and proves it first: the server must see stock report 1.1.15 on its adapter, which is also the server's own gate for the request.
 
 ```sh
 cargo build --release --bins --examples          # from a clean commit: --enable-ota-trial refuses a dirty build
-sudo target/release/petlibre-local network apply --config private/server.json
-target/release/petlibre-bench stock-ota poc-01 --power                  # default firmware (qa)
-target/release/petlibre-bench stock-ota poc-02 --firmware ble --promote --power
-sudo target/release/petlibre-local network remove
+target/release/petlibre-bench stock-ota NAME --power                     # default firmware (qa)
+sudo target/release/petlibre-local network apply --config private/server.json   # once it reaches stock-ready
+sudo target/release/petlibre-local network remove                               # afterwards
 ```
 
-**Routing is the operator's.** Stock connects to its vendor broker on TCP 1883. Only `network apply`, a host firewall change, redirects the feeder's traffic to this server, and only the operator runs it and removes it. It also accepts the image server's TCP 8088 from the feeder's MAC. Without that rule, stock connects for about 25 s and then reports `OTA_INFORM` error 2003 (seen in `fw40-stock-ota-02`). `network apply` refuses until a broker listens, so run it once the run reaches `stock-ready`. Without it stock never reports, and the first stage fails after 5 minutes with nothing sent.
+**Routing is the operator's.** Stock connects to its vendor broker on TCP 1883. Only `network apply`, a host firewall change, redirects the feeder's traffic to this server, and only the operator runs it and removes it.
+- **Image port:** `network apply` also accepts the image server's TCP 8088 from the feeder's MAC. Without that rule, stock connects for about 25 s and then reports `OTA_INFORM` error 2003 (`fw40-stock-ota-02`).
+- **Timing:** `network apply` refuses until a broker listens, so run it once the run reaches `stock-ready`. Without it stock never reports, and the first stage fails after 5 minutes with nothing sent.
 
-**Stages.**
-1. **Build:** before the bench is touched, `--build` stages the firmware as `ota --build` does: build, review, then sign the next manifest version. Stock ignores the manifest; only `--promote` uses it.
-2. **`stock-ready`:** the run brings the bench up as `itest` does, but with `serve --enable-ota-trial`. It then waits for fresh stock telemetry with `softwareVersion` 1.1.15 and `powerType` 1.
-3. **`stock-settle`:** an earlier request that failed or is uncertain blocks a new one. The run asks the server every 30 s to resolve it, for up to 25 minutes. The server decides from its own evidence: 20 minutes since that request, 10 quiet connected minutes, and stock still reporting 1.1.15.
-3. **`stock-request`:** `petlibre-local ota-images --profile replacement` serves the review's `image.bin`, bound to the review's `ota_sha256`. Its peer is found by the feeder's MAC. Then one `POST /api/ota/trial`. The server persists the request, then sends stock one `OTA_UPGRADE`:
+**Stages:**
+1. **Build:** before the bench is touched, the firmware is staged as `ota --build` does: build, review, sign the next version. Stock ignores the manifest; the promotion uses it.
+2. **`stock-ready`:** the bench comes up as in `itest`, with `serve --enable-ota-trial`. The stage then waits for fresh stock telemetry with `softwareVersion` 1.1.15 and `powerType` 1.
+3. **`stock-settle`:** an earlier request that failed or is uncertain blocks a new one. The run asks the server every 30 s to resolve it, for up to 25 minutes.
+   - **The server's evidence:** 20 minutes since that request, 10 quiet connected minutes, and a fresh 1.1.15 version report.
+   - **Version report:** idle stock reports its version only around a connect, so a refused resolve makes the server send stock a read-only `ATTR_GET_SERVICE`.
+   - **Heartbeat:** stock heartbeats about every 61 s, which the server's 90 s telemetry bound tolerates (`fw40-stock-ota-03`/`-04`).
+4. **`stock-request`:** `petlibre-local ota-images --profile replacement` serves the review's `image.bin`, bound to its `ota_sha256`, to the feeder found by its MAC. Then one `POST /api/ota/trial`. The server persists the request, then sends stock one `OTA_UPGRADE` with:
    - target version `2.0.0`;
    - the image's SHA-256;
    - a URL of about 80 characters, under stock's 128-byte parser buffer.
 
-   **Never resent:** a rejected precheck can erase stock's OTA status sector.
-4. **`stock-install`:** stock's `OTA_PROGRESS` and `OTA_UPGRADE` reports are printed as they arrive. A reported error fails the stage. Stock writes bank 0 and invalidates bank 1, so the stage passes only when the first `PLFW1 start` afterwards is the build, from **bank 0**.
-5. **`bank0-health`:** fresh health from the build on bank 0, then the server marking the trial `replacement_healthy`. Stock reports nothing after activation, so this is how the server closes the trial.
+   It is never resent.
+5. **`stock-install`:** stock's `OTA_PROGRESS` and `OTA_UPGRADE` reports are printed as they arrive, and a reported error fails the stage. Stock writes bank 0 and invalidates bank 1, so the stage passes only when the first `PLFW1 start` afterwards is the build, from **bank 0**.
+6. **`bank0-health`:** the build's recovery role reports health while it waits for an update (`"role":"recovery"`, bank 0). That health closes the server's trial as `replacement_healthy`; stock reports nothing after activation.
+7. **`promote`:** the same build is offered, signed. The recovery role asks every 10 s, installs it into bank 1, and the trial boot confirms. The feeder ends in the normal two-bank state, with bank 0 holding the same build. `--no-promote` stops after `bank0-health`.
 
-   **`promote`** (instead, with `--promote`): the signed manifest is offered before stock is asked, so the build's bank-0 recovery role finds it at its first boot. It installs the build into bank 1, which confirms, and the feeder ends in the normal two-bank state.
+**After it:**
+- The run restores the hotspot and the supply as it found them.
+- It writes `private/verification/NAME-itest.json` with the stage verdicts, so the page's run history shows it. Server output goes to `NAME-servers.log`.
+- Feeding through the server stays held (`ota_hold`) until stock is back and reports a fresh startup.
+- If anything failed after the request was sent, the run prints the UART recovery pointer: bank 1 may be invalid.
 
-**After it.** The run restores the hotspot and the supply as it found them, and writes `private/verification/NAME-itest.json` with the stage verdicts, so the page's run history shows it. Server output goes to `NAME-servers.log`. Feeding through the server stays held (`ota_hold`) until stock is back and reports a fresh startup. If anything failed after the request was sent, the run prints the UART recovery pointer: bank 1 may be invalid.
+**Status:**
+- **Physical (October 23, 2026):**
+  - `fw40-stock-ota-05`: stock installed a `qa` build in about 40 s, and it booted from bank 0.
+  - `fw40-stock-ota-06-promote`: an `itest --only ota-update` offer moved that build into bank 1, where it confirmed.
+  - Those runs found the image-port rule, the heartbeat bound and the stale version report fixed above. They also showed the old `bank0-health` could never pass: the recovery role reported no health.
+- **Host:** recovery-role health and the default promotion are host-tested; they have not yet run with stock.
 
-**Status (October 23, 2026): host only.** The stages run against a scripted stock feeder, and the server side is host-tested: the replacement image profile, the request's fields and URL length, and the close on health. Nothing has run on the feeder.
+### `itest` scenario `stock-roundtrip`
+
+```sh
+target/release/petlibre-bench itest NAME --review <baseline review> --only stock-roundtrip --power --stock <frozen stock review>
+```
+
+From the confirmed baseline:
+1. **To stock:** the stock review, offered over the air, installs into bank 1, and its banner must appear.
+2. **On stock:** the server switches to `serve --enable-ota-trial`. The scenario waits for stock to report, so run `network apply` then, and resolves any earlier request.
+3. **Back:** stock is asked to install the baseline, which starts on bank 0 and reports recovery-role health, then is promoted into bank 1. It confirms at once, since it was confirmed before.
+4. **Restore:** back to `serve` with fresh health.
+
+`--stock` requires `--power`. A failure on stock stops the suite with a stock-aware recovery hint. Status: host-tested on a scripted stock feeder.
 
 ## Progress page
 

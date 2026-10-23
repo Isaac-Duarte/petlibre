@@ -15,7 +15,7 @@ The practical image contract is:
 | A reachable plain HTTP endpoint serving the complete file | Direct `200`, explicit `Content-Length`, short URL, no compression or chunked body. U03, U04 |
 | An acceptable MQTT request and device state | Model, version, connectivity, idle/power conditions, time and memory checks occur before download. U02 |
 
-`petlibre-bench stock-ota` ([bench](../hardware/bench.md#stock-to-replacement-install-poc)) applies this contract to a replacement build (FW40). It is host-tested only, so it is not yet physical evidence of a stock-to-replacement install.
+`petlibre-bench stock-ota` ([bench](../hardware/bench.md#stock-to-a-replacement-stock-ota)) applies this contract to a replacement build (FW40). **Physical (October 23, 2026):** in `fw40-stock-ota-05` stock 1.1.15 accepted a `qa` build through this updater, downloaded it in about 40 s, and the build booted from bank 0. The runs also showed that the image port must be reachable (`OTA_INFORM` error 2003 otherwise). See [consumer installation](consumer-installation.md).
 
 ## Evidence identity and verification
 

@@ -7,7 +7,7 @@ Brand and product imagery for the app, the web UI and the docs.
 | `model/plaf103.blend` | The owner's Blender 5.2 model of the PETLIBRO Granary PLAF103 (meters, Z up, the bowl toward −Y). It holds the product only, with no cameras, lights or stage. Its PCB texture is synthetic and shows no device identifiers |
 | `model/render.py` | Builds the stage and renders every image under `renders/` |
 | `renders/` | Generated, committed images, so the app and web build without Blender |
-| `brand/` | The logo, palette and type, once a direction is chosen |
+| `brand/` | The logo, app and Android icons, and design tokens ([brand](brand/README.md)) |
 
 ## License
 

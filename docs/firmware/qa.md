@@ -1,6 +1,11 @@
 # QA firmware
 
-Status: host only (October 23, 2026). The sequence runs against the SDK fake with a scripted operator, and its records grade through `petlibre-audit qa`. It has not run on the feeder.
+Status: physical (October 23, 2026), with the owner answering. Every check and item has passed on the feeder across two guided cold boots of `qa` `ef76b85e…` (v84), each graded by `petlibre-audit qa`:
+- `fw39-qa-03-guided`: optics, power, all four buttons, three indicators and the speaker passed; PA0 failed as `no` (the owner mis-pressed Lock about 0.9 s after the prompt).
+- `fw39-qa-04-guided`, coached by the bench page's guided-QA panel: optics, power, all four indicators, the speaker and three buttons passed; Reset timed out with no press on the line (the owner missed the prompt).
+
+The sequence also runs against the SDK fake with a scripted operator.
+
 
 The `qa` firmware (`src/firmware/petlibre/qa`) is the default build. One boot walks an operator through every bring-up check that needs no motor, and ends with one line that says whether the unit passed:
 
@@ -50,7 +55,7 @@ The outcome is `pass`, `qa_fail` (the run completed and a check failed, with the
 
 Limits: buttons, indicators and the tune are graded by what the operator answered. A lit indicator and an audible tune are the operator's observations, not measurements. The power check shows that the ADC path works, not that the battery voltage is in range.
 
-## Known before the first run
+## Known issues
 
 - Every reference-firmware boot since `itest-20261022-10` logged `PLOPT1 error kind=supervisor n=1 fault=7`. FW40 found the cause (physical): the first WPA3 join starves the QA task past its 300 ms owner lease (`stall=703` on an OTA trial boot, `stall=702` on a cold boot with the hotspot up; every window passes with the hotspot down). The radio now waits for `startup_done` (`PLWIF3 hold`), so the optics check runs before the join.
 - A press must start after its prompt. A button still held from the previous answer, then released and pressed again within the 30 ms settle, can be missed. It then times out rather than passing wrongly.

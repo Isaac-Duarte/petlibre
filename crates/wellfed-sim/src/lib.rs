@@ -8,284 +8,73 @@
 //! inactive whenever a result is durable. Power cuts and watchdog resets
 //! restart the worker on the same journal image.
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Seek, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Child, ChildStdin, Command as Process, Stdio};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
 use std::time::{Duration, Instant};
 
-use serde_json::{Map, Value, json};
-use sha2::{Digest, Sha256};
+use clap::ValueEnum;
+use wellfed_formats::canonical::{self, sha256};
+use serde::Serialize;
+use serde_json::Value;
 
-// Name tables for the enumerated status fields; the worker reports indexes
-// into them, and `expect` actions and the report use the names.
-pub const STATES: [&str; 9] = [
-    "starting",
-    "idle",
-    "queued",
-    "preparing",
-    "feeding",
-    "reporting",
-    "terminal",
-    "fault",
-    "stopped",
-];
+pub mod protocol;
+pub mod scenario;
 
-pub const FAULTS: [&str; 7] = [
-    "ok", "setup", "recovery", "storage", "hardware", "watchdog", "flash",
-];
-
-pub const OUTCOMES: [&str; 5] = ["pending", "done", "cancelled", "expired", "failed"];
-
-pub const REASONS: [&str; 13] = [
-    "none",
-    "done",
-    "cancelled",
-    "clock",
-    "observation_gap",
-    "total_timeout",
-    "feedback_timeout",
-    "power",
-    "sensor",
-    "outlet",
-    "overcurrent",
-    "feedback_stream",
-    "output",
-];
-
-pub const SUBMISSIONS: [&str; 6] = [
-    "enqueued",
-    "reject_busy",
-    "reject_id",
-    "reject_request",
-    "reject_phase",
-    "reject_stopped",
-];
-
-// The status fields an `expect` action may name, and the booleans among them.
-const STATUS_FIELDS: [&str; 23] = [
-    "device_ms",
-    "response",
-    "state",
-    "fault",
-    "supervisor_fault",
-    "watchdog_fault",
-    "id",
-    "completed",
-    "outcome",
-    "reason",
-    "durable",
-    "stopped",
-    "optics_off",
-    "phase_known",
-    "high_water_id",
-    "pending",
-    "journal_error",
-    "motor",
-    "optics",
-    "watchdog_resets",
-    "online",
-    "boots",
-    "submission",
-];
-
-const BOOLEAN_FIELDS: [&str; 6] = [
-    "durable",
-    "stopped",
-    "optics_off",
-    "phase_known",
-    "pending",
-    "online",
-];
-
-// Every event kind the worker may emit; anything else is a protocol error.
-const EVENTS: [&str; 7] = [
-    "status",
-    "outputs",
-    "storage_begin",
-    "storage_end",
-    "feedback",
-    "power_cut",
-    "journal_io",
-];
+use protocol::{
+    Code, Command, Event, Fault, Journal, MOTORS, Outcome, Profile, Reason, State, Status,
+    StoragePhase, Submission,
+};
+use scenario::{Action, Expectation, Scenario};
 
 /// How long the worker may take to answer one command.
 const RESPONSE: Duration = Duration::from_secs(5);
 const MAX_RESPONSE_BYTES: usize = 65536;
 const MAX_EVENTS: usize = 10000;
 
+/// The worker's exit status after it persists a power cut.
+const POWER_CUT_EXIT: i32 = 75;
+
 /// An invalid scenario, a worker failure, or a malformed protocol.
 #[derive(Debug, thiserror::Error)]
-#[error("{0}")]
-pub struct HarnessError(pub String);
+pub enum HarnessError {
+    #[error("Invalid scenario: {0}")]
+    Scenario(serde_json::Error),
+    #[error("{0}")]
+    Invalid(&'static str),
+    #[error("{0}")]
+    Io(#[from] std::io::Error),
+    #[error("{0}")]
+    Json(#[from] serde_json::Error),
+
+    #[error("Worker start failed: {0}")]
+    WorkerStart(std::io::Error),
+    #[error("Worker exited {}: {detail}", code.map_or_else(|| "None".into(), |c| c.to_string()))]
+    WorkerExited { code: Option<i32>, detail: String },
+    #[error("Worker response timed out")]
+    WorkerTimeout,
+    #[error("Malformed worker event: {0}")]
+    WorkerEvent(serde_json::Error),
+    #[error("Worker response exceeded bounds")]
+    WorkerBounds,
+    #[error("Worker command pipe failed")]
+    WorkerPipe,
+
+    #[error("{0:?} requires simulated power")]
+    Unpowered(Command),
+}
 
 pub type Result<T> = std::result::Result<T, HarnessError>;
 
-fn fail<T>(message: impl Into<String>) -> Result<T> {
-    Err(HarnessError(message.into()))
-}
-
-fn enum_names(field: &str) -> Option<&'static [&'static str]> {
-    Some(match field {
-        "state" => &STATES,
-        "fault" => &FAULTS,
-        "outcome" => &OUTCOMES,
-        "reason" => &REASONS,
-        "submission" => &SUBMISSIONS,
-        _ => return None,
-    })
-}
-
-/// Fixed unsigned integer arguments and their inclusive bounds; `None` for `expect`.
-fn command_bounds(op: &str) -> Option<Option<&'static [(u64, u64)]>> {
-    const ID: (u64, u64) = (0, u64::MAX);
-    Some(Some(match op {
-        "submit" => &[ID, (0, 65535)],
-        "cancel" | "ack" => &[ID],
-        "auto" => &[(0, 100000)],
-        "edge" | "owner" | "timer" | "adc_stuck" => &[(0, 1)],
-        "current" | "battery" => &[(0, 4095)],
-        "inputs" => &[(0, 7)],
-        "cut" => &[(1, 2), (0, 100000)],
-        "status" | "stop" | "power_cut" | "boot" => &[],
-        "expect" => return Some(None),
-        _ => return None,
-    }))
-}
-
-/// An integer (never a bool or float) in `low..=high`.
-fn integer(value: &Value, low: u64, high: u64) -> bool {
-    value.as_u64().is_some_and(|v| (low..=high).contains(&v))
-}
-
-fn keys(value: &Map<String, Value>, allowed: &[&str]) -> bool {
-    value.keys().all(|k| allowed.contains(&k.as_str()))
-}
-
-/// Check a scenario fully before any worker starts.
-pub fn validate(scenario: &Value) -> Result<&Value> {
-    let Some(s) = scenario.as_object().filter(|s| {
-        keys(
-            s,
-            &[
-                "version",
-                "name",
-                "profile",
-                "feedback_period_ms",
-                "end_ms",
-                "actions",
-            ],
-        )
-    }) else {
-        return fail("Unknown scenario fields");
-    };
-
-    if !integer(&s.get("version").cloned().unwrap_or(Value::Null), 1, 1) {
-        return fail("Scenario version must be 1");
+fn require(condition: bool, message: &'static str) -> Result<()> {
+    if condition {
+        Ok(())
+    } else {
+        Err(HarnessError::Invalid(message))
     }
-    if !s
-        .get("name")
-        .and_then(Value::as_str)
-        .is_some_and(|n| (1..=100).contains(&n.chars().count()))
-    {
-        return fail("Scenario needs a name of 1..100 characters");
-    }
-
-    if !matches!(
-        s.get("profile").map_or(Some("single"), Value::as_str),
-        Some("single" | "double")
-    ) {
-        return fail("Profile must be single or double");
-    }
-    if !integer(s.get("feedback_period_ms").unwrap_or(&json!(10)), 0, 100000) {
-        return fail("Invalid feedback period");
-    }
-
-    let end = match s.get("end_ms") {
-        Some(end) if integer(end, 0, 10000) => end.as_u64().unwrap(),
-        _ => return fail("end_ms must be 0..10000"),
-    };
-    let Some(actions) = s
-        .get("actions")
-        .and_then(Value::as_array)
-        .filter(|a| a.len() <= 10000)
-    else {
-        return fail("actions must be a list with at most 10000 entries");
-    };
-
-    let mut previous = 0;
-    let mut expectations = 0;
-    for action in actions {
-        let Some(a) = action
-            .as_object()
-            .filter(|a| keys(a, &["at_ms", "op", "args", "values"]))
-        else {
-            return fail("Invalid action fields");
-        };
-
-        match a.get("at_ms") {
-            Some(at) if integer(at, previous, end) => previous = at.as_u64().unwrap(),
-            _ => return fail("Actions must have nondecreasing timestamps within end_ms"),
-        }
-
-        let Some((op, bounds)) = a
-            .get("op")
-            .and_then(Value::as_str)
-            .and_then(|op| Some((op, command_bounds(op)?)))
-        else {
-            return fail("Unknown action");
-        };
-
-        match bounds {
-            None => {
-                let values = a.get("values").and_then(Value::as_object);
-                let Some(values) = values.filter(|v| {
-                    !a.contains_key("args") && !v.is_empty() && keys(v, &STATUS_FIELDS)
-                }) else {
-                    return fail("expect requires known, nonempty status values");
-                };
-
-                for (key, value) in values {
-                    let valid = if BOOLEAN_FIELDS.contains(&key.as_str()) {
-                        value.is_boolean()
-                    } else if let Some(names) = enum_names(key) {
-                        value.as_str().is_some_and(|v| names.contains(&v))
-                    } else {
-                        integer(value, 0, u64::MAX)
-                    };
-                    if !valid {
-                        return fail(format!("Invalid expectation for {key}"));
-                    }
-                }
-
-                expectations += 1;
-            }
-
-            Some(bounds) => {
-                let empty = json!([]);
-                let args = a.get("args").unwrap_or(&empty).as_array();
-                let Some(args) =
-                    args.filter(|args| !a.contains_key("values") && args.len() == bounds.len())
-                else {
-                    return fail(format!("Invalid arguments for {op}"));
-                };
-                if args
-                    .iter()
-                    .zip(bounds)
-                    .any(|(value, (low, high))| !integer(value, *low, *high))
-                {
-                    return fail(format!("Arguments out of range for {op}"));
-                }
-            }
-        }
-    }
-
-    if expectations == 0 {
-        return fail("Scenario needs at least one expectation");
-    }
-    Ok(scenario)
 }
 
 /// One worker process: a bounded request/response transport, with stderr
@@ -297,25 +86,35 @@ pub struct Worker {
     errors: fs::File,
 }
 
+/// A value's command-line spelling.
+fn argument(value: impl ValueEnum) -> String {
+    value
+        .to_possible_value()
+        .map(|possible| possible.get_name().to_owned())
+        .unwrap_or_default()
+}
+
 impl Worker {
-    pub fn start(executable: &Path, image: &Path, mode: u8, provision: bool) -> Result<Self> {
-        let errors = tempfile::tempfile().map_err(|e| HarnessError(e.to_string()))?;
-        let mut child = Command::new(executable)
+    pub fn start(
+        executable: &Path,
+        image: &Path,
+        profile: Profile,
+        journal: Journal,
+    ) -> Result<Self> {
+        let errors = tempfile::tempfile()?;
+        let mut child = Process::new(executable)
             .arg(image)
-            .arg(mode.to_string())
-            .arg(u8::from(provision).to_string())
+            .arg(argument(profile))
+            .arg(argument(journal))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(
-                errors
-                    .try_clone()
-                    .map_err(|e| HarnessError(e.to_string()))?,
-            )
+            .stderr(errors.try_clone()?)
             .spawn()
-            .map_err(|e| HarnessError(format!("Worker start failed: {e}")))?;
+            .map_err(HarnessError::WorkerStart)?;
 
-        let stdin = child.stdin.take().expect("piped stdin");
-        let stdout = child.stdout.take().expect("piped stdout");
+        let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
+            unreachable!("both pipes were requested above");
+        };
         let (send, lines) = channel();
         // A reader thread feeds a channel, so `read` can wait with a deadline.
         std::thread::spawn(move || {
@@ -335,7 +134,7 @@ impl Worker {
     }
 
     /// Events up to and including the next status or power cut.
-    pub fn read(&mut self) -> Result<Vec<Value>> {
+    pub fn read(&mut self) -> Result<Vec<Event>> {
         let deadline = Instant::now() + RESPONSE;
         let (mut events, mut bytes) = (Vec::new(), 0);
 
@@ -344,44 +143,38 @@ impl Worker {
             let line = match self.lines.recv_timeout(left) {
                 Ok(Ok(line)) => line,
                 Ok(Err(_)) | Err(RecvTimeoutError::Disconnected) => return Err(self.exited()),
-                Err(RecvTimeoutError::Timeout) => return fail("Worker response timed out"),
+                Err(RecvTimeoutError::Timeout) => return Err(HarnessError::WorkerTimeout),
             };
 
             bytes += line.len() + 1;
-            let event: Value = serde_json::from_str(&line)
-                .map_err(|_| HarnessError("Malformed worker JSON".into()))?;
-            if !event["event"].as_str().is_some_and(|e| EVENTS.contains(&e)) {
-                return fail("Unknown worker event");
-            }
+            let event: Event = serde_json::from_str(&line).map_err(HarnessError::WorkerEvent)?;
 
-            let done = matches!(event["event"].as_str(), Some("status" | "power_cut"));
+            let done = matches!(event, Event::Status(_) | Event::PowerCut { .. });
             events.push(event);
             if done {
                 return Ok(events);
             }
             if bytes > MAX_RESPONSE_BYTES || events.len() > MAX_EVENTS {
-                return fail("Worker response exceeded bounds");
+                return Err(HarnessError::WorkerBounds);
             }
         }
     }
 
     fn exited(&mut self) -> HarnessError {
         let code = self.wait(RESPONSE).ok().flatten();
+
         let mut detail = String::new();
         let _ = self.errors.rewind();
         let _ = (&self.errors).take(4096).read_to_string(&mut detail);
-        let code = code.map_or_else(|| "None".into(), |c| c.to_string());
-        HarnessError(format!("Worker exited {code}: {detail}"))
+
+        HarnessError::WorkerExited { code, detail }
     }
 
-    pub fn command(&mut self, op: &str, args: &[u64]) -> Result<Vec<Value>> {
-        let mut line = op.to_string();
-        for arg in args {
-            line += &format!(" {arg}");
-        }
+    pub fn command(&mut self, command: &Command) -> Result<Vec<Event>> {
+        let line = serde_json::to_string(command)?;
         writeln!(self.stdin, "{line}")
             .and_then(|()| self.stdin.flush())
-            .map_err(|_| HarnessError("Worker command pipe failed".into()))?;
+            .map_err(|_| HarnessError::WorkerPipe)?;
         self.read()
     }
 
@@ -406,74 +199,50 @@ impl Worker {
 }
 
 /// Python's default `json.dumps(value, sort_keys=True)`, for the scenario hash
-/// the earlier reports carry.
-fn python_dumps(value: &Value, out: &mut String) {
+/// the earlier reports carry. Unlike canonical form it keeps the default
+/// `", "` and `": "` separators.
+fn python_dumps(value: &Value, out: &mut Vec<u8>) {
     match value {
         Value::Array(items) => {
-            out.push('[');
+            out.push(b'[');
             for (i, item) in items.iter().enumerate() {
                 if i > 0 {
-                    out.push_str(", ");
+                    out.extend_from_slice(b", ");
                 }
                 python_dumps(item, out);
             }
-            out.push(']');
+            out.push(b']');
         }
 
         Value::Object(map) => {
             let mut keys: Vec<&String> = map.keys().collect();
             keys.sort();
-            out.push('{');
+            out.push(b'{');
             for (i, key) in keys.into_iter().enumerate() {
                 if i > 0 {
-                    out.push_str(", ");
+                    out.extend_from_slice(b", ");
                 }
-                python_dumps(&Value::String(key.clone()), out);
-                out.push_str(": ");
+                canonical::string(key, out);
+                out.extend_from_slice(b": ");
                 python_dumps(&map[key], out);
             }
-            out.push('}');
+            out.push(b'}');
         }
 
-        Value::String(text) => {
-            out.push('"');
-            for c in text.chars() {
-                match c {
-                    '"' => out.push_str("\\\""),
-                    '\\' => out.push_str("\\\\"),
-                    '\n' => out.push_str("\\n"),
-                    '\r' => out.push_str("\\r"),
-                    '\t' => out.push_str("\\t"),
-                    '\u{8}' => out.push_str("\\b"),
-                    '\u{c}' => out.push_str("\\f"),
-                    ' '..='~' => out.push(c),
-                    _ => {
-                        let mut units = [0u16; 2];
-                        for unit in c.encode_utf16(&mut units) {
-                            out.push_str(&format!("\\u{unit:04x}"));
-                        }
-                    }
-                }
-            }
-            out.push('"');
-        }
-
-        other => out.push_str(&other.to_string()),
+        Value::String(text) => canonical::string(text, out),
+        other => out.extend_from_slice(other.to_string().as_bytes()),
     }
 }
 
-pub fn sha256_hex(data: &[u8]) -> String {
-    Sha256::digest(data)
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
+/// Hashes of the worker and of every source that shapes it.
+#[derive(Debug, Serialize)]
+struct Identity {
+    worker_sha256: String,
+    sources: BTreeMap<String, String>,
 }
 
-/// Hashes of the worker and of every source that shapes it.
-pub fn identities(root: &Path, executable: &Path) -> Value {
-    let mut paths: BTreeSet<PathBuf> = BTreeSet::new();
-
-    fn walk(dir: &Path, out: &mut BTreeSet<PathBuf>) {
+fn identities(root: &Path, executable: &Path) -> Identity {
+    fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
         let Ok(entries) = fs::read_dir(dir) else {
             return;
         };
@@ -487,40 +256,112 @@ pub fn identities(root: &Path, executable: &Path) -> Value {
                 path.extension().and_then(|e| e.to_str()),
                 Some("rs" | "toml" | "h")
             ) {
-                out.insert(path);
+                out.push(path);
             }
         }
     }
 
+    let mut paths = Vec::new();
     for krate in ["core", "amebad", "testkit", "sim"] {
         walk(&root.join(format!("crates/wellfed-{krate}")), &mut paths);
     }
     if let Ok(entries) = fs::read_dir(root.join("firmware/sim")) {
         paths.extend(entries.flatten().map(|e| e.path()).filter(|p| p.is_file()));
     }
-    paths.insert(root.join("Cargo.lock"));
+    paths.push(root.join("Cargo.lock"));
 
-    let sources: Map<String, Value> = paths
+    let sources = paths
         .iter()
         .filter_map(|p| {
             let data = fs::read(p).ok()?;
-            Some((
-                p.strip_prefix(root).unwrap_or(p).display().to_string(),
-                json!(sha256_hex(&data)),
-            ))
+            let name = p.strip_prefix(root).unwrap_or(p).display().to_string();
+            Some((name, sha256(&data)))
         })
         .collect();
 
-    let worker = fs::read(executable)
-        .map(|d| sha256_hex(&d))
-        .unwrap_or_default();
-    json!({"worker_sha256": worker, "sources": sources})
+    Identity {
+        worker_sha256: fs::read(executable).map(|d| sha256(&d)).unwrap_or_default(),
+        sources,
+    }
+}
+
+/// Notes the harness adds to the worker's events in the report.
+#[derive(Debug, Serialize)]
+#[serde(tag = "event", rename_all = "snake_case")]
+enum Note {
+    Boot { profile: Profile },
+    Action { action: Value },
+    PowerRemoved { outputs: &'static str },
+    WatchdogResetRequested,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+enum Logged {
+    Worker(Event),
+    Harness(Note),
+}
+
+#[derive(Debug, Serialize)]
+struct Entry {
+    at_ms: u64,
+    boot: u64,
+    #[serde(flatten)]
+    event: Logged,
+}
+
+#[derive(Debug, Serialize)]
+struct Assertion {
+    at_ms: u64,
+    label: String,
+    passed: bool,
+    actual: Value,
+    expected: Value,
+}
+
+/// The name tables for the indexes the report's events carry.
+#[derive(Debug, Serialize)]
+struct Enums {
+    state: &'static [State],
+    fault: &'static [Fault],
+    outcome: &'static [Outcome],
+    reason: &'static [Reason],
+    submission: &'static [Submission],
+    storage_phase: &'static [StoragePhase],
+    motor: [&'static str; 4],
+}
+
+/// What a passing report does not establish.
+#[derive(Debug, Serialize)]
+struct Limits {
+    synthetic_hardware_and_timing: bool,
+    physical_reliability_verified: bool,
+    full_boot_or_rtos_emulated: bool,
+    real_flash_provider: bool,
+    network_or_scheduler_implemented: bool,
+}
+
+/// One scenario's evidence. Serialize it through [`serde_json::to_value`]
+/// so its keys come out sorted, as the reports always have.
+#[derive(Debug, Serialize)]
+pub struct Report {
+    version: u32,
+    pub name: String,
+    profile: Profile,
+    scenario_sha256: String,
+    identity: Identity,
+    enums: Enums,
+    limits: Limits,
+    events: Vec<Entry>,
+    assertions: Vec<Assertion>,
+    pub passed: bool,
 }
 
 /// One scenario run: the worker for the current boot, the latest status, and
 /// the harness's own view of storage that the invariants are checked against.
 pub struct Simulation<'a> {
-    scenario: &'a Value,
+    raw: &'a Value,
+    scenario: Scenario,
     root: PathBuf,
     executable: PathBuf,
     image: PathBuf,
@@ -529,149 +370,148 @@ pub struct Simulation<'a> {
     now: u64,
     boots: u64,
 
-    latest: Map<String, Value>,
-    last_submission: Option<&'static str>,
+    latest: Status,
+    last_submission: Option<Submission>,
 
-    events: Vec<Value>,
-    assertions: Vec<Value>,
+    events: Vec<Entry>,
+    assertions: Vec<Assertion>,
 
     // `armed`: a `cut` or `power_cut` was sent, so a worker power cut is expected.
     // `reserved`: a reservation write ended ok and no finish write has ended since.
     armed: bool,
     reserved: bool,
-    phase: u64,
+    phase: StoragePhase,
+}
+
+fn json(value: impl Serialize) -> Value {
+    serde_json::to_value(value).unwrap_or(Value::Null)
 }
 
 impl<'a> Simulation<'a> {
-    pub fn new(
-        scenario: &'a Value,
-        root: &Path,
-        executable: &Path,
-        directory: &Path,
-    ) -> Result<Self> {
-        validate(scenario)?;
-
+    pub fn new(raw: &'a Value, root: &Path, executable: &Path, directory: &Path) -> Result<Self> {
         Ok(Self {
-            scenario,
+            raw,
+            scenario: Scenario::from_value(raw)?,
             root: root.to_path_buf(),
             executable: executable.to_path_buf(),
             image: directory.join("journal.bin"),
             worker: None,
             now: 0,
             boots: 0,
-            latest: Map::new(),
+            latest: Status::default(),
             last_submission: None,
             events: Vec::new(),
             assertions: Vec::new(),
             armed: false,
             reserved: false,
-            phase: 0,
+            phase: StoragePhase::None,
         })
     }
 
-    fn profile(&self) -> &str {
-        self.scenario["profile"].as_str().unwrap_or("single")
+    fn record(&mut self, event: Logged) {
+        self.events.push(Entry {
+            at_ms: self.now,
+            boot: self.boots,
+            event,
+        });
     }
 
-    fn record(&mut self, event: &Value) {
-        let mut entry = Map::new();
-        entry.insert("at_ms".into(), json!(self.now));
-        entry.insert("boot".into(), json!(self.boots));
-        if let Some(map) = event.as_object() {
-            entry.extend(map.clone());
-        }
-        self.events.push(Value::Object(entry));
+    fn note(&mut self, note: Note) {
+        self.record(Logged::Harness(note));
     }
 
-    fn check(&mut self, label: &str, ok: bool, actual: Value, expected: Value) {
-        self.assertions
-            .push(json!({"at_ms": self.now, "label": label, "passed": ok,
-                                    "actual": actual, "expected": expected}));
+    fn check(&mut self, label: impl Into<String>, passed: bool, actual: Value, expected: Value) {
+        self.assertions.push(Assertion {
+            at_ms: self.now,
+            label: label.into(),
+            passed,
+            actual,
+            expected,
+        });
     }
 
-    fn consume(&mut self, events: Vec<Value>) -> Result<()> {
+    fn invariant(&mut self, label: &str, passed: bool) {
+        self.check(label, passed, Value::Null, Value::Null);
+    }
+
+    fn consume(&mut self, events: Vec<Event>) -> Result<()> {
         let mut reset = false;
 
         for event in events {
-            self.record(&event);
-            match event["event"].as_str().unwrap_or("") {
-                "storage_begin" => {
-                    self.phase = event["phase"].as_u64().unwrap_or(0);
+            self.record(Logged::Worker(event));
+            match event {
+                Event::StorageBegin { phase, .. } => {
+                    self.phase = phase;
                     // A new reservation does not count until its write ends ok.
-                    if self.phase == 1 {
+                    if phase == StoragePhase::Reserve {
                         self.reserved = false;
                     }
                 }
 
-                "storage_end" => {
-                    if self.phase == 1 && event["ok"] == true {
+                Event::StorageEnd { ok, .. } => {
+                    if self.phase == StoragePhase::Reserve && ok {
                         self.reserved = true;
-                    } else if self.phase == 2 {
+                    } else if self.phase == StoragePhase::Finish {
                         self.reserved = false;
                     }
-                    self.phase = 0;
+                    self.phase = StoragePhase::None;
                 }
 
-                "outputs" => {
-                    let motor = event["motor"].as_u64();
-                    if matches!(motor, Some(1 | 2)) {
-                        self.check(
-                            "reservation_before_drive",
-                            self.reserved,
-                            Value::Null,
-                            Value::Null,
-                        );
+                Event::Outputs { motor, .. } => {
+                    if matches!(motor, 1 | 2) {
+                        self.invariant("reservation_before_drive", self.reserved);
                     }
-                    self.check(
-                        "valid_motor_pair",
-                        motor != Some(3),
-                        Value::Null,
-                        Value::Null,
-                    );
+                    self.invariant("valid_motor_pair", motor != 3);
                 }
 
-                "status" => {
-                    self.latest = event.as_object().cloned().unwrap_or_default();
-                    if event["durable"] == true {
-                        let inactive = event["motor"] == 0
-                            && event["optics"] == 0
-                            && event["stopped"] == true
-                            && event["optics_off"] == true
-                            && event["pending"] == false;
-                        self.check(
-                            "durable_result_after_inactive_outputs",
-                            inactive,
-                            Value::Null,
-                            Value::Null,
-                        );
+                Event::Status(status) => {
+                    self.latest = status;
+                    if status.durable {
+                        let inactive = status.motor == 0
+                            && status.optics == 0
+                            && status.stopped
+                            && status.optics_off
+                            && !status.pending;
+                        self.invariant("durable_result_after_inactive_outputs", inactive);
                     }
                     // Applied after this batch, as a reboot on the same journal.
-                    reset = event["watchdog_resets"].as_u64().unwrap_or(0) > 0;
+                    reset = status.watchdog_resets > 0;
                 }
 
-                "power_cut" => {
-                    if !self.armed {
-                        return fail("Unexpected worker power cut");
-                    }
-                    let worker = self.worker.as_mut().expect("a powered worker");
-                    match worker.wait(RESPONSE) {
-                        Ok(Some(75)) => {}
-                        Ok(None) => return fail("Worker failed to exit after power cut"),
-                        _ => return fail("Invalid power-cut worker exit"),
-                    }
-                    self.record(&json!({"event": "power_removed", "outputs": "unpowered"}));
-                    self.offline();
-                }
-                _ => {}
+                Event::PowerCut { .. } => self.power_cut()?,
+                Event::Feedback { .. } | Event::JournalIo { .. } => {}
             }
         }
 
         if reset && self.worker.is_some() {
-            self.record(&json!({"event": "watchdog_reset_requested"}));
+            self.note(Note::WatchdogResetRequested);
             self.offline();
             self.boot()?;
         }
 
+        Ok(())
+    }
+
+    fn power_cut(&mut self) -> Result<()> {
+        let worker = self.worker.as_mut().filter(|_| self.armed);
+        let Some(worker) = worker else {
+            return Err(HarnessError::Invalid("Unexpected worker power cut"));
+        };
+
+        match worker.wait(RESPONSE) {
+            Ok(Some(POWER_CUT_EXIT)) => {}
+            Ok(None) => {
+                return Err(HarnessError::Invalid(
+                    "Worker failed to exit after power cut",
+                ));
+            }
+            _ => return Err(HarnessError::Invalid("Invalid power-cut worker exit")),
+        }
+
+        self.note(Note::PowerRemoved {
+            outputs: "unpowered",
+        });
+        self.offline();
         Ok(())
     }
 
@@ -681,142 +521,170 @@ impl<'a> Simulation<'a> {
         }
         self.armed = false;
         self.reserved = false;
-        self.phase = 0;
+        self.phase = StoragePhase::None;
     }
 
     fn boot(&mut self) -> Result<()> {
-        if self.worker.is_some() {
-            return fail("boot requires the simulated power to be off");
-        }
+        require(
+            self.worker.is_none(),
+            "boot requires the simulated power to be off",
+        )?;
 
         self.boots += 1;
         self.last_submission = None;
 
-        let mode = u8::from(self.profile() == "double");
         // Only the first boot provisions; later boots recover from the journal.
-        let mut worker = Worker::start(&self.executable, &self.image, mode, self.boots == 1)?;
+        let journal = if self.boots == 1 {
+            Journal::Provision
+        } else {
+            Journal::Recover
+        };
+        let profile = self.scenario.profile;
+        let mut worker = Worker::start(&self.executable, &self.image, profile, journal)?;
+
         // Keep the worker before checking its boot output, so `offline` stops it.
         let first = worker.read();
         self.worker = Some(worker);
-        self.record(&json!({"event": "boot", "profile": self.profile()}));
+        self.note(Note::Boot { profile });
         self.consume(first?)?;
 
-        let period = self
-            .scenario
-            .get("feedback_period_ms")
-            .and_then(Value::as_u64)
-            .unwrap_or(10);
-        self.send("auto", &[period])
+        let period = self.scenario.feedback_period_ms;
+        self.send(&Command::Auto { args: [period] })
     }
 
-    fn send(&mut self, op: &str, args: &[u64]) -> Result<()> {
+    fn send(&mut self, command: &Command) -> Result<()> {
         let Some(worker) = self.worker.as_mut() else {
-            return fail(format!("{op} requires simulated power"));
+            return Err(HarnessError::Unpowered(*command));
         };
 
-        if op == "cut" || op == "power_cut" {
+        if command.cuts_power() {
             self.armed = true;
         }
 
-        let events = worker.command(op, args)?;
+        let events = worker.command(command)?;
         self.consume(events)?;
 
-        if op == "submit" {
-            let response = self.latest.get("response").cloned().unwrap_or(Value::Null);
-            if !integer(&response, 0, SUBMISSIONS.len() as u64 - 1) {
-                return fail("Invalid submission response");
-            }
-            self.last_submission = Some(SUBMISSIONS[response.as_u64().unwrap() as usize]);
+        if let Command::Submit { .. } = command {
+            let submission = Submission::from_index(self.latest.response);
+            require(submission.is_some(), "Invalid submission response")?;
+            self.last_submission = submission;
         }
 
         Ok(())
     }
 
-    fn expect(&mut self, values: &Map<String, Value>) -> Result<()> {
-        let mut actual = self.latest.clone();
-        actual.insert("online".into(), json!(self.worker.is_some()));
-        actual.insert("boots".into(), json!(self.boots));
-        actual.insert("submission".into(), json!(self.last_submission));
+    fn expect(&mut self, expected: &Expectation) -> Result<()> {
+        require(
+            self.worker.is_some() || expected.power_only(),
+            "Only online/boots can be asserted while power is off",
+        )?;
 
-        // The worker reports enum fields as indexes; scenarios expect names.
-        for key in ["state", "fault", "outcome", "reason", "submission"] {
-            let names = enum_names(key).unwrap();
-            if let Some(index) = actual.get(key).and_then(Value::as_u64) {
-                let Some(name) = names.get(index as usize) else {
-                    return fail(format!("Invalid worker enum {key}"));
-                };
-                actual.insert(key.into(), json!(name));
-            }
+        let status = self.latest;
+        let online = self.worker.is_some();
+        let (boots, submission) = (self.boots, self.last_submission);
+
+        // In key order, as the reports have always listed them.
+        macro_rules! compare {
+            ($($field:ident: $actual:expr),+ $(,)?) => {$(
+                if let Some(want) = expected.$field {
+                    let got: Option<_> = $actual.into();
+                    let passed = got == Some(want);
+                    self.check(concat!("expect.", stringify!($field)), passed, json(got), json(want));
+                }
+            )+};
         }
 
-        for (key, value) in values {
-            if self.worker.is_none() && key != "online" && key != "boots" {
-                return fail("Only online/boots can be asserted while power is off");
-            }
-            let got = actual.get(key).cloned().unwrap_or(Value::Null);
-            self.check(&format!("expect.{key}"), got == *value, got, value.clone());
-        }
+        compare!(
+            boots: boots,
+            completed: status.completed,
+            device_ms: status.device_ms,
+            durable: status.durable,
+            fault: status.fault,
+            high_water_id: status.high_water_id,
+            id: status.id,
+            journal_error: status.journal_error,
+            motor: status.motor,
+            online: online,
+            optics: status.optics,
+            optics_off: status.optics_off,
+            outcome: status.outcome,
+            pending: status.pending,
+            phase_known: status.phase_known,
+            reason: status.reason,
+            response: status.response,
+            state: status.state,
+            stopped: status.stopped,
+            submission: submission,
+            supervisor_fault: status.supervisor_fault,
+            watchdog_fault: status.watchdog_fault,
+            watchdog_resets: status.watchdog_resets,
+        );
 
         Ok(())
     }
 
-    pub fn run(mut self) -> Result<Value> {
+    pub fn run(mut self) -> Result<Report> {
         // Power off before surfacing a step's error, so no worker outlives the run.
         let result = self.steps();
         self.offline();
         result?;
 
-        let mut scenario_text = String::new();
-        python_dumps(self.scenario, &mut scenario_text);
-        let passed = self.assertions.iter().all(|a| a["passed"] == true);
+        let mut scenario_text = Vec::new();
+        python_dumps(self.raw, &mut scenario_text);
+        let passed = self.assertions.iter().all(|a| a.passed);
 
-        Ok(json!({
-            "version": 1, "name": self.scenario["name"], "profile": self.profile(),
-            "scenario_sha256": sha256_hex(scenario_text.as_bytes()),
-            "identity": identities(&self.root, &self.executable),
-            "enums": {"state": STATES, "fault": FAULTS, "outcome": OUTCOMES, "reason": REASONS,
-                      "submission": SUBMISSIONS, "storage_phase": ["none", "reserve", "finish", "recover"],
-                      "motor": ["stop", "drive_0", "drive_1", "invalid"]},
-            "limits": {"synthetic_hardware_and_timing": true, "physical_reliability_verified": false,
-                       "full_boot_or_rtos_emulated": false, "real_flash_provider": false,
-                       "network_or_scheduler_implemented": false},
-            "events": self.events, "assertions": self.assertions, "passed": passed,
-        }))
+        Ok(Report {
+            version: 1,
+            name: self.scenario.name,
+            profile: self.scenario.profile,
+            scenario_sha256: sha256(&scenario_text),
+            identity: identities(&self.root, &self.executable),
+            enums: Enums {
+                state: State::ALL,
+                fault: Fault::ALL,
+                outcome: Outcome::ALL,
+                reason: Reason::ALL,
+                submission: Submission::ALL,
+                storage_phase: StoragePhase::ALL,
+                motor: MOTORS,
+            },
+            limits: Limits {
+                synthetic_hardware_and_timing: true,
+                physical_reliability_verified: false,
+                full_boot_or_rtos_emulated: false,
+                real_flash_provider: false,
+                network_or_scheduler_implemented: false,
+            },
+            events: self.events,
+            assertions: self.assertions,
+            passed,
+        })
     }
 
     fn steps(&mut self) -> Result<()> {
         self.boot()?;
-        let actions = self.scenario["actions"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default();
 
-        let mut next = actions.iter().peekable();
-        let end = self.scenario["end_ms"].as_u64().unwrap_or(0);
+        let steps = std::mem::take(&mut self.scenario.steps);
+        let mut next = steps.into_iter().peekable();
+
         // Each millisecond: tick, apply that millisecond's actions, then poll.
-        for now in 0..=end {
+        for now in 0..=self.scenario.end_ms {
             self.now = now;
             if now > 0 && self.worker.is_some() {
-                self.send("tick", &[])?;
+                self.send(&Command::TICK)?;
             }
 
-            while let Some(action) = next.next_if(|a| a["at_ms"].as_u64() == Some(now)) {
-                self.record(&json!({"event": "action", "action": action}));
-                let op = action["op"].as_str().unwrap_or("");
-                match op {
-                    "expect" => self.expect(action["values"].as_object().expect("validated"))?,
-                    "boot" => self.boot()?,
-                    _ => {
-                        let args: Vec<u64> = action["args"]
-                            .as_array()
-                            .map_or(vec![], |a| a.iter().filter_map(Value::as_u64).collect());
-                        self.send(op, &args)?;
-                    }
+            while let Some(step) = next.next_if(|s| s.at_ms == now) {
+                self.note(Note::Action { action: step.raw });
+                match &step.action {
+                    Action::Expect { values } => self.expect(values)?,
+                    Action::Boot { .. } => self.boot()?,
+                    Action::Command(command) => self.send(command)?,
                 }
             }
 
             if self.worker.is_some() {
-                self.send("poll", &[])?;
+                self.send(&Command::POLL)?;
             }
         }
 
@@ -825,14 +693,15 @@ impl<'a> Simulation<'a> {
 }
 
 /// Run one scenario on a fresh journal under `root/private/verification`.
-pub fn run_scenario(scenario: &Value, root: &Path, executable: &Path) -> Result<Value> {
-    validate(scenario)?;
+pub fn run_scenario(scenario: &Value, root: &Path, executable: &Path) -> Result<Report> {
+    Scenario::from_value(scenario)?;
+
     let directory = root.join("private/verification");
-    fs::create_dir_all(&directory).map_err(|e| HarnessError(e.to_string()))?;
+    fs::create_dir_all(&directory)?;
     let scratch = tempfile::Builder::new()
         .prefix("virtual-feeder-")
-        .tempdir_in(&directory)
-        .map_err(|e| HarnessError(e.to_string()))?;
+        .tempdir_in(&directory)?;
+
     Simulation::new(scenario, root, executable, scratch.path())?.run()
 }
 
@@ -842,8 +711,11 @@ mod tests {
 
     #[test]
     fn python_dumps_matches_the_default_separators() {
-        let mut out = String::new();
-        python_dumps(&json!({"b": [1, true, null], "a": "é"}), &mut out);
-        assert_eq!(out, "{\"a\": \"\\u00e9\", \"b\": [1, true, null]}");
+        let mut out = Vec::new();
+        python_dumps(
+            &serde_json::json!({"b": [1, true, null], "a": "é"}),
+            &mut out,
+        );
+        assert_eq!(out, b"{\"a\": \"\\u00e9\", \"b\": [1, true, null]}");
     }
 }

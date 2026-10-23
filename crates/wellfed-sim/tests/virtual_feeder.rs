@@ -6,11 +6,13 @@
 //! durable). This is simulation evidence, not hardware reliability.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::Command as Process;
 
 use serde_json::{Value, json};
 
-use wellfed_sim::{Worker, run_scenario, validate};
+use wellfed_sim::protocol::{Adc, Command, Journal, Profile};
+use wellfed_sim::scenario::Scenario;
+use wellfed_sim::{Worker, run_scenario};
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -37,7 +39,8 @@ fn scenario(actions: Vec<Value>, end: u64, profile: &str, feedback: u64) -> Valu
 }
 
 fn run(scenario: &Value) -> Result<Value, wellfed_sim::HarnessError> {
-    run_scenario(scenario, &root(), &worker())
+    let report = run_scenario(scenario, &root(), &worker())?;
+    Ok(serde_json::to_value(report).unwrap())
 }
 
 fn passing(actions: Vec<Value>, end: u64, profile: &str, feedback: u64) -> Value {
@@ -390,6 +393,12 @@ fn invalid_scenarios_rejected_before_worker_launch() {
         expect(1, json!({"durable": 1})),
         expect(1, json!({"unknown": 1})),
         expect(1, json!({"state": "made_up"})),
+        expect(1, json!({})),
+        act(1, "tick", &[]),
+        act(1, "status", &[1]),
+        json!({"at_ms": 1, "op": "expect", "values": {"online": true}, "args": []}),
+        json!({"at_ms": 1, "op": "status", "args": [], "values": {"online": true}}),
+        json!({"at_ms": 1, "op": "stop", "args": [], "extra": 1}),
     ] {
         let mut item = base.clone();
         item["actions"] = json!([event]);
@@ -405,18 +414,21 @@ fn invalid_scenarios_rejected_before_worker_launch() {
     ));
 
     for item in bad {
-        assert!(validate(&item).is_err(), "{item}");
+        assert!(Scenario::from_value(&item).is_err(), "{item}");
     }
 }
 
 #[test]
 fn invalid_worker_commands_and_unexpected_exit() {
     let scratch = tempfile::tempdir().unwrap();
-    let mut w = Worker::start(&worker(), &scratch.path().join("journal.bin"), 0, true).unwrap();
+    let journal = scratch.path().join("journal.bin");
+    let mut w = Worker::start(&worker(), &journal, Profile::Single, Journal::Provision).unwrap();
     w.read().unwrap();
 
     // The worker refuses an out-of-range argument by exiting with status 2.
-    let error = w.command("current", &[5000]).unwrap_err();
+    let error = w
+        .command(&Command::Current { args: [Adc(5000)] })
+        .unwrap_err();
     assert!(error.to_string().contains("Worker exited 2"), "{error}");
     w.close();
 
@@ -442,7 +454,7 @@ fn cli_exit_codes_report_creation_and_no_overwrite() {
     let report = scratch.path().join("report.json");
 
     let cli = |report: &Path| {
-        Command::new(env!("CARGO_BIN_EXE_virtual-feeder"))
+        Process::new(env!("CARGO_BIN_EXE_virtual-feeder"))
             .arg("--scenario")
             .arg(&data)
             .arg("--report")

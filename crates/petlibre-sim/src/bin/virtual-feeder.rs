@@ -12,10 +12,11 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use anyhow::Context;
 use clap::Parser;
 use serde_json::Value;
 
-use petlibre_sim::{HarnessError, run_scenario};
+use petlibre_sim::run_scenario;
 
 #[derive(Parser)]
 #[command(
@@ -36,14 +37,14 @@ struct Cli {
     worker: Option<PathBuf>,
 }
 
-fn run(cli: Cli) -> Result<bool, HarnessError> {
-    let error = |e: std::io::Error| HarnessError(e.to_string());
-    if fs::metadata(&cli.scenario).map_err(error)?.len() > 2_000_000 {
-        return Err(HarnessError("Scenario exceeds 2 MB".into()));
-    }
+fn run(cli: Cli) -> anyhow::Result<bool> {
+    let size = fs::metadata(&cli.scenario)
+        .with_context(|| format!("Cannot read {}", cli.scenario.display()))?
+        .len();
+    anyhow::ensure!(size <= 2_000_000, "Scenario exceeds 2 MB");
 
-    let scenario: Value = serde_json::from_slice(&fs::read(&cli.scenario).map_err(error)?)
-        .map_err(|e| HarnessError(e.to_string()))?;
+    let scenario: Value = serde_json::from_slice(&fs::read(&cli.scenario)?)
+        .with_context(|| format!("{} is not JSON", cli.scenario.display()))?;
 
     let worker = cli.worker.unwrap_or_else(|| {
         std::env::current_exe()
@@ -53,28 +54,21 @@ fn run(cli: Cli) -> Result<bool, HarnessError> {
     });
 
     let report = run_scenario(&scenario, &cli.root, &worker)?;
+    // Through `Value`, so the keys are sorted as in every earlier report.
+    let text = serde_json::to_string_pretty(&serde_json::to_value(&report)?)?;
 
     // Exclusive creation prevents accidental evidence replacement.
     let mut output = fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(&cli.report)
-        .map_err(error)?;
-    writeln!(
-        output,
-        "{}",
-        serde_json::to_string_pretty(&report).map_err(|e| HarnessError(e.to_string()))?
-    )
-    .map_err(error)?;
+        .with_context(|| format!("Cannot create {}", cli.report.display()))?;
+    writeln!(output, "{text}")?;
 
-    let passed = report["passed"] == true;
-    println!(
-        "{}: {}",
-        if passed { "PASS" } else { "FAIL" },
-        report["name"].as_str().unwrap_or("")
-    );
+    let verdict = if report.passed { "PASS" } else { "FAIL" };
+    println!("{verdict}: {}", report.name);
 
-    Ok(passed)
+    Ok(report.passed)
 }
 
 fn main() -> ExitCode {
@@ -82,7 +76,7 @@ fn main() -> ExitCode {
         Ok(true) => ExitCode::SUCCESS,
         Ok(false) => ExitCode::from(1),
         Err(error) => {
-            eprintln!("virtual-feeder: {error}");
+            eprintln!("virtual-feeder: {error:#}");
             ExitCode::from(2)
         }
     }

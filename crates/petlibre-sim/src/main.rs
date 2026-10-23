@@ -1,16 +1,20 @@
 //! Virtual feeder worker: runs the real owner, board, events and watchdog
 //! ports on the fake SDK with a file-backed synthetic journal.
 //!
-//! Usage: `virtual-feeder-worker JOURNAL MODE PROVISION`. Reads one command per
-//! line on stdin and writes JSON-lines events on stdout; a power cut persists
-//! the journal image and exits with status 75. Driven by the `virtual-feeder`
+//! Usage: `virtual-feeder-worker JOURNAL PROFILE provision|recover`. Reads one
+//! JSON [`Command`] per line on stdin and writes JSON-lines [`Event`]s on
+//! stdout (the protocol in `petlibre_sim::protocol`); a power cut persists the
+//! journal image and exits with status 75. Driven by the `virtual-feeder`
 //! harness in this crate; the synthetic profile is not hardware calibration.
 
 use core::ffi::{c_uint, c_void};
 use core::ptr;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, Read, Seek, SeekFrom, Write};
+use std::path::Path;
 use std::process::exit;
+
+use clap::Parser;
 
 use petlibre_amebad::events::EventsConfig;
 use petlibre_amebad::owner::{Owner, OwnerConfig};
@@ -23,6 +27,10 @@ use petlibre_core::feed_storage::{OwnerRecovery, OwnerResult, OwnerStorage};
 use petlibre_core::flash_coord::{FlashCoord, FlashLimits, FlashReply};
 use petlibre_core::sensor_inputs::SensorLimits;
 use petlibre_core::storage::JournalIo;
+use petlibre_sim::protocol::{
+    Code, Command, Event, Fault, IoOperation, IoStage, Journal, Outcome, Profile, Reason, State,
+    Status, StoragePhase, WorkerArgs,
+};
 use petlibre_testkit::journal_flash::{FakeJournalFlash, UNIT};
 
 /// Synthetic profile copied from the owner tests; not hardware calibration.
@@ -102,8 +110,8 @@ struct World {
 
     // Power-cut injection: cut after `cut_remaining` more mutations in storage phase
     // `cut_phase` (or at that phase's start when the count is already zero).
-    cut_phase: u32,
-    active_phase: u32,
+    cut_phase: StoragePhase,
+    active_phase: StoragePhase,
     phase_start_mutations: u32,
     cut_remaining: u64,
 
@@ -133,6 +141,19 @@ fn fail(message: &str) -> ! {
     exit(2);
 }
 
+fn emit(event: &Event) {
+    match serde_json::to_string(event) {
+        Ok(line) => println!("{line}"),
+        Err(_) => fail("Cannot encode worker event"),
+    }
+}
+
+/// The harness's name for an owner code; a code it does not know is a
+/// protocol mismatch, not something to report as a number.
+fn code<C: Code>(index: u32) -> C {
+    C::from_index(index.into()).unwrap_or_else(|| fail("Unknown owner status code"))
+}
+
 fn motor() -> u32 {
     let bits = (fake::with(|h| h.output[0]) >> 13) & 3;
     match bits {
@@ -153,10 +174,11 @@ fn outputs() {
     // SAFETY: see `w`.
     unsafe {
         if m != (*w()).observed_motor || o != (*w()).observed_optics {
-            println!(
-                r#"{{"event":"outputs","device_ms":{},"motor":{m},"optics":{o}}}"#,
-                (*w()).device_ms
-            );
+            emit(&Event::Outputs {
+                device_ms: (*w()).device_ms,
+                motor: m,
+                optics: o,
+            });
             (*w()).observed_motor = m;
             (*w()).observed_optics = o;
         }
@@ -186,12 +208,11 @@ fn cut() -> ! {
         if (*w()).disk.sync_all().is_err() {
             fail("Cannot sync synthetic cut image");
         }
-        println!(
-            r#"{{"event":"power_cut","device_ms":{},"phase":{},"mutations":{}}}"#,
-            (*w()).device_ms,
-            (*w()).active_phase,
-            (*flash_ptr()).mutations
-        );
+        emit(&Event::PowerCut {
+            device_ms: (*w()).device_ms,
+            phase: (*w()).active_phase,
+            mutations: (*flash_ptr()).mutations,
+        });
     }
 
     let _ = std::io::stdout().flush();
@@ -203,7 +224,9 @@ fn mutation(_: *mut c_void) {
     // SAFETY: see `w`.
     unsafe {
         let world = w();
-        if (*world).active_phase != 0 && (*world).cut_phase == (*world).active_phase {
+        if (*world).active_phase != StoragePhase::None
+            && (*world).cut_phase == (*world).active_phase
+        {
             (*world).cut_remaining = (*world).cut_remaining.wrapping_sub(1);
             if (*world).cut_remaining == 0 {
                 cut();
@@ -212,12 +235,25 @@ fn mutation(_: *mut c_void) {
     }
 }
 
-fn io_event(operation: &str, stage: &str, slot: c_uint, offset: u32, size: usize, ok: bool) {
+fn io_event(
+    operation: IoOperation,
+    stage: IoStage,
+    slot: c_uint,
+    offset: u32,
+    size: usize,
+    ok: bool,
+) {
     // SAFETY: see `w`.
     let device_ms = unsafe { (*w()).device_ms };
-    println!(
-        r#"{{"event":"journal_io","device_ms":{device_ms},"operation":"{operation}","stage":"{stage}","slot":{slot},"offset":{offset},"bytes":{size},"ok":{ok}}}"#
-    );
+    emit(&Event::JournalIo {
+        device_ms,
+        operation,
+        stage,
+        slot,
+        offset,
+        bytes: size,
+        ok,
+    });
 }
 
 unsafe extern "C" fn read_io(
@@ -229,7 +265,7 @@ unsafe extern "C" fn read_io(
 ) -> bool {
     let read = unsafe { (*w()).base_io.read.unwrap() };
     let ok = unsafe { read(context, slot, offset, bytes, size) };
-    io_event("read", "end", slot, offset, size, ok);
+    io_event(IoOperation::Read, IoStage::End, slot, offset, size, ok);
     ok
 }
 
@@ -243,35 +279,41 @@ unsafe extern "C" fn program_io(
     // Journal writes must only happen with the motor and optics off; the worker
     // fails loudly if the owner ever programs or erases flash while either is on.
     assert!(motor() == 0 && optics() == 0);
-    io_event("program", "begin", slot, offset, size, false);
+    io_event(
+        IoOperation::Program,
+        IoStage::Begin,
+        slot,
+        offset,
+        size,
+        false,
+    );
     let program = unsafe { (*w()).base_io.program.unwrap() };
     let ok = unsafe { program(context, slot, offset, bytes, size) };
-    io_event("program", "end", slot, offset, size, ok);
+    io_event(IoOperation::Program, IoStage::End, slot, offset, size, ok);
     ok
 }
 
 unsafe extern "C" fn erase_io(context: *mut c_void, slot: c_uint) -> bool {
     assert!(motor() == 0 && optics() == 0);
-    io_event("erase", "begin", slot, 0, UNIT, false);
+    io_event(IoOperation::Erase, IoStage::Begin, slot, 0, UNIT, false);
     let erase = unsafe { (*w()).base_io.erase.unwrap() };
     let ok = unsafe { erase(context, slot) };
-    io_event("erase", "end", slot, 0, UNIT, ok);
+    io_event(IoOperation::Erase, IoStage::End, slot, 0, UNIT, ok);
     ok
 }
 
-/// Phase numbers: 1 reserve, 2 finish, 3 recover. The `cut` command can only
-/// target 1 or 2.
-fn storage_begin(phase: u32) {
+/// The `cut` command can only target reserve or finish.
+fn storage_begin(phase: StoragePhase) {
     assert!(motor() == 0 && optics() == 0);
     // SAFETY: see `w`.
     unsafe {
         let world = w();
         (*world).active_phase = phase;
         (*world).phase_start_mutations = (*flash_ptr()).mutations;
-        println!(
-            r#"{{"event":"storage_begin","device_ms":{},"phase":{phase}}}"#,
-            (*world).device_ms
-        );
+        emit(&Event::StorageBegin {
+            device_ms: (*world).device_ms,
+            phase,
+        });
         if (*world).cut_phase == phase && (*world).cut_remaining == 0 {
             cut();
         }
@@ -282,13 +324,13 @@ fn storage_end(ok: bool) {
     // SAFETY: see `w`.
     unsafe {
         let world = w();
-        println!(
-            r#"{{"event":"storage_end","device_ms":{},"phase":{},"mutations":{},"ok":{ok}}}"#,
-            (*world).device_ms,
-            (*world).active_phase,
-            (*flash_ptr()).mutations - (*world).phase_start_mutations
-        );
-        (*world).active_phase = 0;
+        emit(&Event::StorageEnd {
+            device_ms: (*world).device_ms,
+            phase: (*world).active_phase,
+            mutations: (*flash_ptr()).mutations - (*world).phase_start_mutations,
+            ok,
+        });
+        (*world).active_phase = StoragePhase::None;
     }
 }
 
@@ -298,7 +340,7 @@ fn journal_storage() -> OwnerStorage {
 }
 
 unsafe extern "C" fn recover(_: *mut c_void, value: *mut OwnerRecovery) -> bool {
-    storage_begin(3);
+    storage_begin(StoragePhase::Recover);
     let s = journal_storage();
     // SAFETY: the journal storage callbacks with a live output pointer.
     let ok = unsafe { (*w()).opened && s.recover.unwrap()(s.context, value) };
@@ -307,7 +349,7 @@ unsafe extern "C" fn recover(_: *mut c_void, value: *mut OwnerRecovery) -> bool 
 }
 
 unsafe extern "C" fn reserve(_: *mut c_void, request: *const FeedRequest) -> bool {
-    storage_begin(1);
+    storage_begin(StoragePhase::Reserve);
     let s = journal_storage();
     // SAFETY: as for `recover`.
     let ok = unsafe { s.reserve.unwrap()(s.context, request) };
@@ -320,7 +362,7 @@ unsafe extern "C" fn finish(
     result: *const OwnerResult,
     phase: *const OwnerRecovery,
 ) -> bool {
-    storage_begin(2);
+    storage_begin(StoragePhase::Finish);
     let s = journal_storage();
     // SAFETY: as for `recover`.
     let ok = unsafe { s.finish.unwrap()(s.context, result, phase) };
@@ -328,48 +370,43 @@ unsafe extern "C" fn finish(
     ok
 }
 
-fn status(response: i64) {
+fn status(response: u64) {
     // SAFETY: see `w`.
-    unsafe {
+    let status = unsafe {
         let world = w();
         let s = (*world).owner.status();
         let opened = (*world).opened;
         let view = (*world).journal.view;
 
-        println!(
-            concat!(
-                r#"{{"event":"status","device_ms":{},"response":{},"state":{},"fault":{},"supervisor_fault":{},"watchdog_fault":{}"#,
-                r#","id":{},"completed":{},"outcome":{},"reason":{}"#,
-                r#","durable":{},"stopped":{},"optics_off":{},"phase_known":{}"#,
-                r#","high_water_id":{},"pending":{},"journal_error":{}"#,
-                r#","motor":{},"optics":{},"watchdog_resets":{}}}"#
-            ),
-            (*world).device_ms,
+        Status {
+            device_ms: (*world).device_ms,
             response,
-            s.state.0,
-            s.fault.0,
-            s.supervisor_fault.0,
-            s.watchdog_fault.0,
-            s.result.id,
-            s.result.completed,
-            s.result.outcome.0,
-            s.result.reason.0,
-            s.result_durable,
-            s.stopped,
-            s.optics_off,
-            s.phase_known,
-            if opened {
+            state: code::<State>(s.state.0),
+            fault: code::<Fault>(s.fault.0),
+            supervisor_fault: s.supervisor_fault.0,
+            watchdog_fault: s.watchdog_fault.0,
+            id: s.result.id,
+            completed: s.result.completed,
+            outcome: code::<Outcome>(s.result.outcome.0),
+            reason: code::<Reason>(s.result.reason.0),
+            durable: s.result_durable,
+            stopped: s.stopped,
+            optics_off: s.optics_off,
+            phase_known: s.phase_known,
+            high_water_id: if opened {
                 view.recovery.high_water_id
             } else {
                 0
             },
-            opened && view.recovery.pending_request,
-            (*world).journal.error.0,
-            motor(),
-            optics(),
-            fake::with(|h| h.watchdog_reset_requests),
-        );
-    }
+            pending: opened && view.recovery.pending_request,
+            journal_error: (*world).journal.error.0,
+            motor: motor(),
+            optics: optics(),
+            watchdog_resets: fake::with(|h| h.watchdog_reset_requests),
+        }
+    };
+
+    emit(&Event::Status(status));
 }
 
 fn tick() {
@@ -397,10 +434,10 @@ fn poll() {
                 (*world).feedback_high = !(*world).feedback_high;
                 let high = (*world).feedback_high;
                 fake::edge(high);
-                println!(
-                    r#"{{"event":"feedback","device_ms":{},"high":{high}}}"#,
-                    (*world).device_ms
-                );
+                emit(&Event::Feedback {
+                    device_ms: (*world).device_ms,
+                    high,
+                });
             }
         }
 
@@ -411,16 +448,7 @@ fn poll() {
     }
 }
 
-fn number(text: Option<&str>) -> u64 {
-    match text {
-        Some(s) if !s.is_empty() && !s.starts_with('-') => s
-            .parse()
-            .unwrap_or_else(|_| fail("Invalid unsigned integer")),
-        _ => fail("Expected unsigned integer"),
-    }
-}
-
-fn open_disk(path: &str, provision: bool) -> File {
+fn open_disk(path: &Path, provision: bool) -> File {
     let mut options = OpenOptions::new();
     options.read(true).write(true);
     if provision {
@@ -432,18 +460,13 @@ fn open_disk(path: &str, provision: bool) -> File {
 }
 
 fn main() {
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() != 4 {
-        fail("worker JOURNAL MODE PROVISION");
-    }
-
-    let (mode, provision) = (number(Some(&args[2])), number(Some(&args[3])));
-    if mode > 1 || provision > 1 {
-        fail("Invalid mode or provision flag");
-    }
-
-    let provision = provision == 1;
-    let mut disk = open_disk(&args[1], provision);
+    let args = WorkerArgs::parse();
+    let provision = args.start == Journal::Provision;
+    let mode = match args.profile {
+        Profile::Single => BowlMode::SINGLE,
+        Profile::Double => BowlMode::DOUBLE,
+    };
+    let mut disk = open_disk(&args.journal, provision);
 
     let mut flash = FakeJournalFlash::default();
     if !provision {
@@ -472,8 +495,8 @@ fn main() {
         plant_ms: 0,
         previous_motor: 0,
         feedback_high: false,
-        cut_phase: 0,
-        active_phase: 0,
+        cut_phase: StoragePhase::None,
+        active_phase: StoragePhase::None,
         phase_start_mutations: 0,
         cut_remaining: 0,
         // Out of range, so the first output hook always reports.
@@ -487,7 +510,7 @@ fn main() {
         let io = FakeJournalFlash::io_at(flash_ptr());
         let jc = JournalConfig {
             binding: 17,
-            mode: BowlMode(mode as u32),
+            mode,
             max_portions: 3,
         };
 
@@ -525,7 +548,7 @@ fn main() {
         );
 
         let c = OwnerConfig {
-            bowl_mode: BowlMode(mode as u32),
+            bowl_mode: mode,
             flash: &raw mut (*world).authority,
             ..config()
         };
@@ -560,72 +583,74 @@ fn main() {
             fail("Overlong worker command");
         }
 
-        let mut words = line
-            .split([' ', '\t', '\r', '\n'])
-            .filter(|w| !w.is_empty());
-        let op = words.next().unwrap_or_else(|| fail("Empty worker command"));
-        let (a, b) = (words.next(), words.next());
-        if words.next().is_some() {
-            fail("Too many arguments");
-        }
+        let command: Command = serde_json::from_str(&line)
+            .unwrap_or_else(|_| fail("Unknown or invalid worker command"));
 
-        let x = a.map_or(0, |s| number(Some(s)));
-        let y = b.map_or(0, |s| number(Some(s)));
-        let (a, b) = (a.is_some(), b.is_some());
-
-        let mut response = 0i64;
         // SAFETY: see `w`.
-        unsafe {
-            let world = w();
-            match op {
-                "submit" if a && b && y <= u64::from(u16::MAX) => {
-                    response = i64::from((*world).owner.submit(x, y as u16).0)
-                }
-                "cancel" if a && !b => response = i64::from((*world).owner.cancel(x)),
-                "ack" if a && !b => response = i64::from((*world).owner.acknowledge(x)),
-
-                "tick" if !a => tick(),
-                "poll" if !a => poll(),
-
-                "cut" if a && b && (1..=2).contains(&x) => {
-                    (*world).cut_phase = x as u32;
-                    (*world).cut_remaining = y;
-                }
-                "power_cut" if !a => cut(),
-                "auto" if a && !b && x <= 100_000 => {
-                    (*world).auto_period = x as u32;
-                    (*world).plant_ms = 0;
-                }
-                "edge" if a && !b && x <= 1 => {
-                    (*world).feedback_high = x != 0;
-                    fake::edge(x != 0);
-                }
-
-                "owner" if a && !b && x <= 1 => (*world).run_owner = x != 0,
-                "timer" if a && !b && x <= 1 => (*world).run_timer = x != 0,
-                "adc_stuck" if a && !b && x <= 1 => fake::with(|h| h.stuck = x != 0),
-                "current" if a && !b && x <= 4095 => fake::with(|h| h.current_adc = x as u16),
-                "battery" if a && !b && x <= 4095 => fake::with(|h| h.battery_adc = x as u16),
-
-                "inputs" if a && !b && x <= 7 => fake::with(|h| {
-                    let mask = (1 << 16) | (1 << 17) | (1 << 19);
-                    h.input[0] = (h.input[0] & !mask)
-                        | if x & 1 != 0 { 1 << 16 } else { 0 }
-                        | if x & 2 != 0 { 1 << 17 } else { 0 }
-                        | if x & 4 != 0 { 1 << 19 } else { 0 };
-                }),
-
-                "status" if !a => {}
-                "stop" if !a => {
-                    (*world).owner.stop();
-                    if fake::with(|h| h.task_live) {
-                        fake::run_task();
-                    }
-                }
-                _ => fail("Unknown or invalid worker command"),
-            }
-        }
-
+        let response = unsafe { execute(w(), command) };
         status(response);
     }
+}
+
+/// Run one command; the result is the status `response`.
+///
+/// # Safety
+///
+/// `world` is the live world (see `w`).
+unsafe fn execute(world: *mut World, command: Command) -> u64 {
+    // SAFETY: the caller's contract.
+    unsafe {
+        match command {
+            Command::Submit {
+                args: (id, portions),
+            } => return (*world).owner.submit(id, portions).0.into(),
+            Command::Cancel { args: [id] } => return (*world).owner.cancel(id).into(),
+            Command::Ack { args: [id] } => return (*world).owner.acknowledge(id).into(),
+
+            Command::Tick { .. } => tick(),
+            Command::Poll { .. } => poll(),
+
+            Command::Cut {
+                args: (phase, mutations),
+            } => {
+                (*world).cut_phase = StoragePhase::from_index(phase.0.into())
+                    .unwrap_or_else(|| fail("Invalid cut phase"));
+                (*world).cut_remaining = mutations.0.into();
+            }
+            Command::PowerCut { .. } => cut(),
+            Command::Auto { args: [period] } => {
+                (*world).auto_period = period.0;
+                (*world).plant_ms = 0;
+            }
+            Command::Edge { args: [high] } => {
+                (*world).feedback_high = high.0;
+                fake::edge(high.0);
+            }
+
+            Command::Owner { args: [run] } => (*world).run_owner = run.0,
+            Command::Timer { args: [run] } => (*world).run_timer = run.0,
+            Command::AdcStuck { args: [stuck] } => fake::with(|h| h.stuck = stuck.0),
+            Command::Current { args: [level] } => fake::with(|h| h.current_adc = level.0),
+            Command::Battery { args: [level] } => fake::with(|h| h.battery_adc = level.0),
+
+            Command::Inputs { args: [bits] } => fake::with(|h| {
+                let bits = bits.0;
+                let mask = (1 << 16) | (1 << 17) | (1 << 19);
+                h.input[0] = (h.input[0] & !mask)
+                    | if bits & 1 != 0 { 1 << 16 } else { 0 }
+                    | if bits & 2 != 0 { 1 << 17 } else { 0 }
+                    | if bits & 4 != 0 { 1 << 19 } else { 0 };
+            }),
+
+            Command::Status { .. } => {}
+            Command::Stop { .. } => {
+                (*world).owner.stop();
+                if fake::with(|h| h.task_live) {
+                    fake::run_task();
+                }
+            }
+        }
+    }
+
+    0
 }

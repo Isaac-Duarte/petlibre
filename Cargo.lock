@@ -1681,12 +1681,14 @@ dependencies = [
 name = "petlibre-sim"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "clap",
  "petlibre-amebad",
  "petlibre-core",
+ "petlibre-formats",
  "petlibre-testkit",
+ "serde",
  "serde_json",
- "sha2 0.11.1",
  "tempfile",
  "thiserror",
 ]

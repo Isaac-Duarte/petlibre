@@ -12,12 +12,14 @@ name = "virtual-feeder-worker"
 path = "src/main.rs"
 
 [dependencies]
+anyhow.workspace = true
 clap.workspace = true
 petlibre-amebad.workspace = true
 petlibre-core.workspace = true
+petlibre-formats.workspace = true
 petlibre-testkit.workspace = true
+serde.workspace = true
 serde_json.workspace = true
-sha2 = "0.11"
 tempfile.workspace = true
 thiserror.workspace = true
 

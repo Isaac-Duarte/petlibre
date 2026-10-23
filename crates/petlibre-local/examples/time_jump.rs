@@ -69,9 +69,7 @@ async fn main() -> Result<()> {
             let id = uuid::Uuid::new_v4();
             let at = Utc::now() + TimeDelta::milliseconds(shift_ms);
             let request = replacement::time_request(id, at, config.timezone);
-            let payload = tracker
-                .finish(request, key.as_ref())
-                .map_err(|error| anyhow::anyhow!(error.message()))?;
+            let payload = tracker.finish(request, key.as_ref())?;
             client
                 .publish(
                     config.firmware_topic("request"),

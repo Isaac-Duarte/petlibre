@@ -1,7 +1,6 @@
 //! Bounded observations of stock OTA reports. This module sends no commands.
 use chrono::{DateTime, Utc};
 use serde::Serialize;
-use serde_json::Value;
 
 use crate::protocol::Message;
 
@@ -37,31 +36,16 @@ impl OtaReport {
             return None;
         }
 
-        let byte = |key| {
-            message
-                .fields
-                .get(key)
-                .and_then(Value::as_u64)
-                .and_then(|n| u8::try_from(n).ok())
-        };
-
+        let report = &message.report;
         Some(Self {
             received_at: now,
             command: message.cmd.clone(),
             message_id: message.msg_id.as_deref().and_then(|id| token(id, 64)),
-            phase: message
-                .fields
-                .get("phase")
-                .and_then(Value::as_str)
-                .and_then(|phase| token(phase, 32)),
-            state: byte("state"),
-            progress: byte("progress").filter(|value| *value <= 100),
-            code: message.fields.get("code").and_then(Value::as_i64),
-            error_code: message
-                .fields
-                .get("errCode")
-                .and_then(Value::as_u64)
-                .and_then(|n| u32::try_from(n).ok()),
+            phase: report.phase.as_deref().and_then(|phase| token(phase, 32)),
+            state: report.state,
+            progress: report.progress.filter(|value| *value <= 100),
+            code: report.code,
+            error_code: report.err_code.and_then(|n| u32::try_from(n).ok()),
         })
     }
 }

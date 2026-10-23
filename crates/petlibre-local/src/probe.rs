@@ -10,16 +10,22 @@ use uuid::Uuid;
 
 use crate::{
     config::Config,
-    protocol::{self, Message, Reply},
+    ota_trial::C_PROBE_VERSION,
+    protocol::{self, Channel, Message, Reply},
 };
 
 pub const QUERY_SECONDS: i64 = 60;
 const CLOCK_SKEW_MILLIS: i64 = 10_000;
 
 pub fn command(config: &Config, id: Uuid, now: DateTime<Utc>) -> Reply {
-    let mut command = protocol::service(config, "GET_CONFIG", id, now);
-    command.topic = config.topic("config/sub");
-    command
+    protocol::command(
+        config,
+        Channel::Config,
+        "GET_CONFIG",
+        id,
+        now,
+        &protocol::Plain {},
+    )
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -72,9 +78,9 @@ pub fn expected(message_id: &str) -> Option<String> {
 impl Record {
     /// Stock GET_CONFIG generates its own reply ID rather than echoing the
     /// request ID. Only one explicit query is outstanding per installation.
-    pub fn report(&self, channel: &str, message: &Message, now: DateTime<Utc>) -> Option<Proof> {
+    pub fn report(&self, channel: Channel, message: &Message, now: DateTime<Utc>) -> Option<Proof> {
         if self.phase != Phase::Submitted
-            || channel != "config"
+            || channel != Channel::Config
             || message.cmd != "GET_CONFIG"
             || !(0..QUERY_SECONDS).contains(&(now - self.created_at).num_seconds())
             || !message.ts.is_some_and(|ts| {
@@ -87,11 +93,7 @@ impl Record {
                     .saturating_sub(CLOCK_SKEW_MILLIS)
                     && ts <= now.timestamp_millis().saturating_add(CLOCK_SKEW_MILLIS)
             })
-            || message
-                .fields
-                .get("softwareVersion")
-                .and_then(serde_json::Value::as_str)
-                != Some("1.1.17")
+            || message.report.software_version.as_deref() != Some(C_PROBE_VERSION)
         {
             return None;
         }
@@ -99,12 +101,7 @@ impl Record {
         let message_id = message.msg_id.as_deref()?;
         let value = expected(message_id)?;
 
-        (message
-            .fields
-            .get("localReProbe")
-            .and_then(serde_json::Value::as_str)
-            == Some(value.as_str()))
-        .then(|| Proof {
+        (message.report.local_re_probe.as_deref() == Some(value.as_str())).then(|| Proof {
             message_id: message_id.to_owned(),
             value,
             received_at: now,

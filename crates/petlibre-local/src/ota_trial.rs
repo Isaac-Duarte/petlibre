@@ -7,14 +7,20 @@
 //! resends it.
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use uuid::Uuid;
 
 use crate::{
     config::Config,
     ota_image,
-    protocol::{self, Reply},
+    protocol::{self, Channel, Reply},
 };
+
+/// The original stock application, the only one feeding is allowed under.
+pub const ORIGINAL_VERSION: &str = "1.1.15";
+/// The modified-stock version-string test image.
+pub const TEST_VERSION: &str = "1.1.16";
+/// The C-probe diagnostic image.
+pub const C_PROBE_VERSION: &str = "1.1.17";
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize, clap::ValueEnum)]
 #[serde(rename_all = "snake_case")]
@@ -28,17 +34,17 @@ pub enum Image {
 impl Image {
     pub fn source_version(self) -> &'static str {
         match self {
-            Self::Test | Self::CProbe => "1.1.15",
-            Self::Original => "1.1.16",
-            Self::CProbeOriginal => "1.1.17",
+            Self::Test | Self::CProbe => ORIGINAL_VERSION,
+            Self::Original => TEST_VERSION,
+            Self::CProbeOriginal => C_PROBE_VERSION,
         }
     }
 
     pub fn target_version(self) -> &'static str {
         match self {
-            Self::Test => "1.1.16",
-            Self::CProbe => "1.1.17",
-            Self::Original | Self::CProbeOriginal => "1.1.15",
+            Self::Test => TEST_VERSION,
+            Self::CProbe => C_PROBE_VERSION,
+            Self::Original | Self::CProbeOriginal => ORIGINAL_VERSION,
         }
     }
 
@@ -115,27 +121,41 @@ pub struct Record {
     pub resolution_note: Option<String>,
 }
 
+/// The stock `OTA_UPGRADE` command's own fields.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Upgrade {
+    sha256: &'static str,
+    target_pid: &'static str,
+    target_software_version: &'static str,
+    upgrade_type: u8,
+    url: String,
+}
+
 impl Record {
     pub fn command(&self, config: &Config) -> Reply {
-        let mut command = protocol::service(
+        let image = self.input.image;
+        let upgrade = Upgrade {
+            sha256: image.digest(),
+            target_pid: "PLAF103",
+            target_software_version: image.target_version(),
+            upgrade_type: 1,
+            url: format!(
+                "http://{}:{}/ota/{}/{}",
+                config.mqtt_listen.ip(),
+                ota_image::PORT,
+                self.input.server_token,
+                image.filename()
+            ),
+        };
+
+        protocol::command(
             config,
+            Channel::Service,
             "OTA_UPGRADE",
             self.input.request_id,
             self.created_at,
-        );
-
-        command.payload["upgradeType"] = json!(1);
-        command.payload["targetPid"] = json!("PLAF103");
-        command.payload["targetSoftwareVersion"] = json!(self.input.image.target_version());
-        command.payload["sha256"] = json!(self.input.image.digest());
-        command.payload["url"] = json!(format!(
-            "http://{}:{}/ota/{}/{}",
-            config.mqtt_listen.ip(),
-            ota_image::PORT,
-            self.input.server_token,
-            self.input.image.filename()
-        ));
-
-        command
+            &upgrade,
+        )
     }
 }

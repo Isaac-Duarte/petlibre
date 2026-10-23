@@ -6,6 +6,7 @@ mod common;
 
 use chrono::Utc;
 use petlibre_local::protocol;
+use petlibre_local::protocol::Channel;
 use serde_json::json;
 
 #[test]
@@ -34,7 +35,7 @@ fn acknowledgements_preserve_event_id_and_step_without_sending_a_feed() {
     )
     .unwrap();
 
-    let reply = protocol::reply(&config, &channel, &msg, Utc::now()).unwrap();
+    let reply = protocol::reply(&config, channel, &msg, Utc::now()).unwrap();
     assert_eq!(reply.topic, config.topic("event/sub"));
     assert_eq!(reply.payload["msgId"], "event42");
     assert_eq!(reply.payload["execStep"], "GRAIN_END");
@@ -49,9 +50,9 @@ fn stock_ota_report_topic_is_parsed_without_sending_an_acknowledgement_or_comman
         let payload =
             serde_json::to_vec(&json!({"cmd":cmd,"msgId":"trial","progress":40})).unwrap();
         let (channel, msg) = protocol::parse(&config, &config.topic("ota/post"), &payload).unwrap();
-        assert_eq!(channel, "ota");
+        assert_eq!(channel, Channel::Ota);
         assert_eq!(msg.cmd, cmd);
-        assert!(protocol::reply(&config, &channel, &msg, Utc::now()).is_none());
+        assert!(protocol::reply(&config, channel, &msg, Utc::now()).is_none());
         assert!(protocol::parse(&config, "dl/PLAF103/ANOTHER/device/ota/post", &payload).is_err());
     }
 }
@@ -66,8 +67,8 @@ fn configuration_reply_uses_its_own_channel_without_an_automatic_response() {
     )
     .unwrap();
 
-    assert_eq!(channel, "config");
-    assert!(protocol::reply(&config, &channel, &msg, Utc::now()).is_none());
+    assert_eq!(channel, Channel::Config);
+    assert!(protocol::reply(&config, channel, &msg, Utc::now()).is_none());
     assert!(
         protocol::parse(
             &config,
@@ -89,7 +90,7 @@ fn plan_requests_return_imported_snapshot_and_clock_changes_are_held_for_nonempt
     )
     .unwrap();
 
-    let reply = protocol::reply(&config, "event", &msg, Utc::now()).unwrap();
+    let reply = protocol::reply(&config, Channel::Event, &msg, Utc::now()).unwrap();
     assert_eq!(reply.payload["plans"], json!(config.plans));
 
     let (_, msg) = protocol::parse(
@@ -99,7 +100,7 @@ fn plan_requests_return_imported_snapshot_and_clock_changes_are_held_for_nonempt
     )
     .unwrap();
     assert_eq!(
-        protocol::reply(&config, "ntp", &msg, Utc::now())
+        protocol::reply(&config, Channel::Ntp, &msg, Utc::now())
             .unwrap()
             .payload["calibrationTag"],
         false

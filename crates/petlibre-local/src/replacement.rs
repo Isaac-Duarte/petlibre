@@ -5,14 +5,17 @@
 //! keeps the latest health in memory; nothing here commands the feeder.
 use std::collections::VecDeque;
 
-use chrono::{DateTime, Offset, TimeDelta, TimeZone, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 use chrono_tz::Tz;
 use petlibre_core::tone::Tune;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 use serde_json::{Map, Value};
 use uuid::Uuid;
 
-use crate::request_auth::{self, Request, RequestKey};
+use crate::{
+    protocol::{self, lenient},
+    request_auth::{self, Request, RequestKey},
+};
 
 pub const HEALTH_SCHEMA: &str = "petlibre.health";
 pub const HEALTH_VERSION: u64 = 1;
@@ -31,8 +34,10 @@ pub const TIME_RETRY: TimeDelta = TimeDelta::seconds(60);
 /// How far ahead to look for the zone's next offset change.
 const TRANSITION_HORIZON_DAYS: i64 = 400;
 
+/// The request allowlist; `name` is the wire spelling, in requests and in
+/// the API's answers alike.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
+#[serde(try_from = "String", into = "&'static str")]
 pub enum Op {
     Health,
     Ping,
@@ -45,7 +50,14 @@ pub enum Op {
 }
 
 impl Op {
-    /// The wire name, as serde writes it.
+    pub(crate) const ALL: [Self; 5] = [
+        Self::Health,
+        Self::Ping,
+        Self::Settings,
+        Self::Wifi,
+        Self::Play,
+    ];
+
     pub fn name(self) -> &'static str {
         match self {
             Self::Health => "health",
@@ -55,6 +67,43 @@ impl Op {
             Self::Play => "play",
         }
     }
+}
+
+impl From<Op> for &'static str {
+    fn from(op: Op) -> Self {
+        op.name()
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("unsupported operation {0:?}")]
+pub struct UnknownOp(String);
+
+impl TryFrom<String> for Op {
+    type Error = UnknownOp;
+
+    fn try_from(name: String) -> Result<Self, UnknownOp> {
+        Self::ALL
+            .into_iter()
+            .find(|op| op.name() == name)
+            .ok_or(UnknownOp(name))
+    }
+}
+
+/// A tune by its `petlibre_core::tone` name; an unknown name is refused.
+fn tune<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<Tune>, D::Error> {
+    let Some(name) = Option::<String>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+    Tune::from_name(&name)
+        .map(Some)
+        .ok_or_else(|| D::Error::custom(format!("unknown tune {name:?}")))
+}
+
+/// The tune names for messages: "a, b or c".
+pub(crate) fn tune_names() -> String {
+    let [rest @ .., last] = Tune::ALL.map(Tune::name);
+    format!("{} or {last}", rest.join(", "))
 }
 
 #[derive(Clone, Deserialize)]
@@ -76,9 +125,9 @@ pub struct Input {
     pub psk: Option<String>,
     #[serde(default)]
     pub clear: Option<bool>,
-    /// `play` only: a built-in tune's name (`petlibre_core::tone`).
-    #[serde(default)]
-    pub tune: Option<String>,
+    /// `play` only: a built-in tune, by its `petlibre_core::tone` name.
+    #[serde(default, deserialize_with = "tune")]
+    pub tune: Option<Tune>,
 }
 
 impl std::fmt::Debug for Input {
@@ -119,10 +168,7 @@ impl Input {
             }
             _ => false,
         };
-        let tune = match &self.tune {
-            None => self.op != Op::Play,
-            Some(name) => self.op == Op::Play && Tune::from_name(name).is_some(),
-        };
+        let tune = self.tune.is_some() == (self.op == Op::Play);
         (self.op == Op::Settings || !fields) && self.volume.is_none_or(|v| v <= 100) && wifi && tune
     }
 
@@ -147,32 +193,25 @@ impl Input {
         if self.clear == Some(true) {
             request = request.field("clear", 1);
         }
-        if let Some(tune) = self.tune.as_deref().and_then(Tune::from_name) {
+        if let Some(tune) = self.tune {
             request = request.name_field("tune", tune.name());
         }
         request
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum RequestError {
     /// No firmware role in this server's configuration.
+    #[error("no replacement-firmware role is configured")]
     Unconfigured,
     /// No fresh online health: a QoS 0 request would be lost unseen.
+    #[error("replacement firmware is offline or its health is stale")]
     Offline,
     /// The firmware session's request sequence is used up; it needs a new
     /// session (a new nonce) before another signed request.
+    #[error("request sequence exhausted for this firmware session")]
     Exhausted,
-}
-
-impl RequestError {
-    pub fn message(self) -> &'static str {
-        match self {
-            Self::Unconfigured => "no replacement-firmware role is configured",
-            Self::Offline => "replacement firmware is offline or its health is stale",
-            Self::Exhausted => "request sequence exhausted for this firmware session",
-        }
-    }
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
@@ -181,9 +220,53 @@ pub struct Reply {
     pub message: Value,
 }
 
+/// A health object as published. Only what the server acts on is typed; every
+/// other field is kept (and reported through the API) as sent.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct Health {
+    pub schema: String,
+    /// The schema's major version.
+    pub v: u64,
+    pub online: bool,
+    /// This session's request nonce, from firmware built with a request key.
+    #[serde(
+        default,
+        deserialize_with = "nonce",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub nonce: Option<String>,
+    /// The firmware's wall clock (FW21); anything but an object is ignored.
+    #[serde(
+        default,
+        deserialize_with = "lenient",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub clock: Option<Clock>,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct Clock {
+    /// Present once the clock has been set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unix_ms: Option<u64>,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+/// A present nonce must be 16 lowercase hex characters; null is refused too.
+fn nonce<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<String>, D::Error> {
+    let nonce = String::deserialize(deserializer)?;
+    if !request_auth::valid_nonce(&nonce) {
+        return Err(D::Error::custom("malformed health nonce"));
+    }
+    Ok(Some(nonce))
+}
+
 #[derive(Clone, Debug, Default, Serialize, PartialEq)]
 pub struct Snapshot {
-    pub health: Option<Value>,
+    pub health: Option<Health>,
     pub received_at: Option<DateTime<Utc>>,
     pub age_ms: Option<i64>,
     pub online: bool,
@@ -194,7 +277,7 @@ pub struct Snapshot {
 
 #[derive(Default)]
 pub struct Tracker {
-    health: Option<(Value, DateTime<Utc>)>,
+    health: Option<(Health, DateTime<Utc>)>,
     replies: VecDeque<Reply>,
     rejected: u64,
     time_sent: Option<DateTime<Utc>>,
@@ -202,36 +285,16 @@ pub struct Tracker {
     signed: Option<(String, u32)>,
 }
 
-fn offset_s(zone: Tz, at: DateTime<Utc>) -> i32 {
-    zone.offset_from_utc_datetime(&at.naive_utc())
-        .fix()
-        .local_minus_utc()
-}
-
 /// The zone's next UTC offset change after `now`, to the second, and the
 /// offset after it; `None` within the horizon (a zone without DST).
 pub fn next_transition(zone: Tz, now: DateTime<Utc>) -> Option<(DateTime<Utc>, i32)> {
-    let current = offset_s(zone, now);
-    let mut low = now;
-    let high = (1..=TRANSITION_HORIZON_DAYS)
-        .map(|day| now + TimeDelta::days(day))
-        .find(|at| offset_s(zone, *at) != current)?;
-    let mut high = high;
-    while high - low > TimeDelta::seconds(1) {
-        let mid = low + (high - low) / 2;
-        if offset_s(zone, mid) == current {
-            low = mid;
-        } else {
-            high = mid;
-        }
-    }
-    let high = DateTime::from_timestamp(high.timestamp(), 0)?;
-    Some((high, offset_s(zone, high)))
+    let horizon = now + TimeDelta::days(TRANSITION_HORIZON_DAYS);
+    protocol::next_offset_change(zone, now, horizon)
 }
 
 /// The FW21 `time` request for `zone` at `now`, in wire field order.
 pub fn time_request(id: Uuid, now: DateTime<Utc>, zone: Tz) -> Request {
-    let offset = offset_s(zone, now);
+    let offset = protocol::offset_seconds(zone, now);
     let (next_change_s, next_offset_s) = match next_transition(zone, now) {
         Some((at, next)) => (at.timestamp(), next),
         None => (0, offset),
@@ -247,28 +310,22 @@ fn object(payload: &[u8], limit: usize) -> Option<Map<String, Value>> {
     if payload.len() > limit {
         return None;
     }
-    match serde_json::from_slice(payload).ok()? {
-        Value::Object(map) => Some(map),
-        _ => None,
-    }
+    serde_json::from_slice(payload).ok()
 }
 
 /// A health object the server accepts: schema and major version match,
 /// `online` is a boolean, and a `nonce`, if any, is 16 lowercase hex
 /// characters. Unknown fields are kept and ignored.
-pub fn parse_health(payload: &[u8]) -> Option<Value> {
-    let map = object(payload, MAX_HEALTH_BYTES)?;
-    let nonce_ok = map
-        .get("nonce")
-        .is_none_or(|nonce| nonce.as_str().is_some_and(request_auth::valid_nonce));
-    (map.get("schema")?.as_str()? == HEALTH_SCHEMA
-        && map.get("v")?.as_u64()? == HEALTH_VERSION
-        && map.get("online")?.is_boolean()
-        && nonce_ok)
-        .then_some(Value::Object(map))
+pub fn parse_health(payload: &[u8]) -> Option<Health> {
+    if payload.len() > MAX_HEALTH_BYTES {
+        return None;
+    }
+    let health: Health = serde_json::from_slice(payload).ok()?;
+    (health.schema == HEALTH_SCHEMA && health.v == HEALTH_VERSION).then_some(health)
 }
 
-/// A reply the server keeps: an object whose `id` is a UUID.
+/// A reply the server keeps: an object whose `id` is a UUID. The rest is
+/// reported through the API unread.
 pub fn parse_reply(payload: &[u8]) -> Option<Value> {
     let map = object(payload, MAX_REPLY_BYTES)?;
     Uuid::parse_str(map.get("id")?.as_str()?).ok()?;
@@ -296,22 +353,22 @@ impl Tracker {
         let Some((health, _)) = &self.health else {
             return false;
         };
-        let Some(clock) = health.get("clock").and_then(Value::as_object) else {
+        let Some(clock) = &health.clock else {
             return false;
         };
-        if health["online"] != Value::Bool(true) {
+        if !health.online {
             return false;
         }
         let since = self.time_sent.map(|at| now - at);
         if since.is_some_and(|since| (TimeDelta::zero()..TIME_RETRY).contains(&since)) {
             return false;
         }
-        !clock.contains_key("unix_ms") || since.is_none_or(|since| since >= TIME_RESYNC)
+        clock.unix_ms.is_none() || since.is_none_or(|since| since >= TIME_RESYNC)
     }
 
     /// The latest health's request nonce; `None` for firmware without a key.
     pub fn nonce(&self) -> Option<&str> {
-        self.health.as_ref()?.0.get("nonce")?.as_str()
+        self.health.as_ref()?.0.nonce.as_deref()
     }
 
     /// The payload for `request`: signed with the next `seq` under the
@@ -371,11 +428,7 @@ impl Tracker {
         let age_ms = received_at.map(|at| (now - at).num_milliseconds());
         // A clock step backwards also counts as stale rather than fresh.
         let stale = age_ms.is_none_or(|age| !(0..STALE_SECONDS * 1000).contains(&age));
-        let online = !stale
-            && health
-                .as_ref()
-                .and_then(|h| h["online"].as_bool())
-                .unwrap_or(false);
+        let online = !stale && health.as_ref().is_some_and(|health| health.online);
 
         Snapshot {
             health,

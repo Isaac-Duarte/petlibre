@@ -7,12 +7,31 @@
 use std::process::Command;
 
 use anyhow::{Context, Result, ensure};
-use serde_json::Value;
+use serde::Deserialize;
 
 use crate::config::Config;
 
 const TABLE: &str = "petlibre_local";
 const COMMENT: &str = "petlibre-local-broker";
+
+/// `nft -j list table` output: a list of objects, each holding one of
+/// metainfo, table, chain or rule. Only rules are read.
+#[derive(Deserialize)]
+struct Ruleset {
+    nftables: Vec<Item>,
+}
+
+#[derive(Deserialize)]
+struct Item {
+    rule: Option<Rule>,
+}
+
+#[derive(Deserialize)]
+struct Rule {
+    chain: String,
+    handle: u64,
+    comment: Option<String>,
+}
 
 fn nft(args: &[&str]) -> Result<()> {
     ensure!(
@@ -31,21 +50,17 @@ pub fn remove() -> Result<()> {
         "cannot read desktop firewall (run network commands with sudo)"
     );
 
-    let data: Value = serde_json::from_slice(&output.stdout)?;
-    for item in data["nftables"]
-        .as_array()
-        .context("invalid nft response")?
-    {
-        let rule = &item["rule"];
-        if rule["comment"] == COMMENT {
+    let data: Ruleset = serde_json::from_slice(&output.stdout).context("invalid nft response")?;
+    for rule in data.nftables.into_iter().filter_map(|item| item.rule) {
+        if rule.comment.as_deref() == Some(COMMENT) {
             nft(&[
                 "delete",
                 "rule",
                 "inet",
                 "computer_security",
-                rule["chain"].as_str().context("missing rule chain")?,
+                &rule.chain,
                 "handle",
-                &rule["handle"].to_string(),
+                &rule.handle.to_string(),
             ])?;
         }
     }

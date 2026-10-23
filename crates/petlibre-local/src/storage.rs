@@ -6,11 +6,28 @@
 //! refuses to replace anything, and `lock` gives one server process exclusive
 //! ownership of a ledger.
 
-use std::{fs, io::Write, path::Path};
+use std::{
+    fs,
+    io::{Read, Write},
+    path::Path,
+};
 
 use anyhow::{Context, Result};
 use serde::Serialize;
 use uuid::Uuid;
+
+/// The operating system's CSPRNG, which the kernel seeds before userspace
+/// can run this tool.
+pub(crate) const SYSTEM_RANDOM: &str = "/dev/urandom";
+
+/// `N` bytes from `source` (normally [`SYSTEM_RANDOM`]), for new secrets.
+pub(crate) fn random<const N: usize>(source: &Path) -> Result<[u8; N]> {
+    let mut bytes = [0u8; N];
+    fs::File::open(source)
+        .and_then(|mut file| file.read_exact(&mut bytes))
+        .context("read the system random source")?;
+    Ok(bytes)
+}
 
 /// Atomically replace a private state file, syncing data before committing it.
 pub fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {

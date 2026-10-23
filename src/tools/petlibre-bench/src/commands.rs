@@ -30,7 +30,7 @@ use crate::{Error, Result, now, require};
 pub mod itest;
 pub mod ota;
 pub use itest::ItestArgs;
-pub use ota::{OtaArgs, Variant};
+pub use ota::{Firmware, Image, OtaArgs, Variant};
 
 const STRAP_SECONDS: f64 = 2.0;
 const LOADER_SECONDS: f64 = 5.0;

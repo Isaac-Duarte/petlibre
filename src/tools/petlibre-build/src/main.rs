@@ -97,7 +97,7 @@ struct Target {
     #[command(flatten)]
     device: DeviceArgs,
     /// The firmware under `src/firmware/petlibre/` that the image links.
-    #[arg(long, default_value = "reference")]
+    #[arg(long, default_value = "qa")]
     firmware: String,
     /// An image variant the firmware declares (`petlibre-build list`).
     #[arg(long)]

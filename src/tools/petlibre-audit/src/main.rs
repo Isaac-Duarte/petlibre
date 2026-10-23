@@ -11,7 +11,7 @@ use std::process::ExitCode;
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 
-use petlibre_audit::{adc, backup, require, startup, transients, write_report};
+use petlibre_audit::{adc, backup, qa, require, startup, transients, write_report};
 
 #[derive(Parser)]
 #[command(
@@ -61,6 +61,12 @@ enum Command {
 
     /// The FW14 read-only power-input samples after a passing startup.
     Adc {
+        #[command(flatten)]
+        args: CaptureArgs,
+    },
+
+    /// The QA firmware's guided self-test after a passing startup.
+    Qa {
         #[command(flatten)]
         args: CaptureArgs,
     },
@@ -134,6 +140,13 @@ fn run(cli: Cli) -> anyhow::Result<u8> {
 
         Command::Adc { args } => {
             let report = adc::verify(&args.capture, &args.manifest, &args.image)?;
+            write_report(&root, &args.output, &report, &args.inputs())?;
+            println!("{}", serde_json::to_string(&report)?);
+            Ok(status(report.passed()))
+        }
+
+        Command::Qa { args } => {
+            let report = qa::verify(&args.capture, &args.manifest, &args.image)?;
             write_report(&root, &args.output, &report, &args.inputs())?;
             println!("{}", serde_json::to_string(&report)?);
             Ok(status(report.passed()))

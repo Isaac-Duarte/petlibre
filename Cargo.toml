@@ -13,7 +13,7 @@ petlibre-hal = { path = "src/sdk/petlibre-hal" }
 petlibre-hal-common = { path = "src/sdk/petlibre-hal-common" }
 petlibre-amebad-sys = { path = "src/sdk/petlibre-amebad-sys" }
 petlibre-core = { path = "src/sdk/petlibre-core" }
-petlibre-fw-reference = { path = "src/firmware/petlibre/reference" }
+petlibre-probes = { path = "src/sdk/petlibre-probes" }
 petlibre-sdk = { path = "src/sdk/petlibre-sdk" }
 petlibre-sdk-c = { path = "src/sdk/petlibre-sdk-c" }
 petlibre-fw-blink = { path = "src/firmware/petlibre/blink" }

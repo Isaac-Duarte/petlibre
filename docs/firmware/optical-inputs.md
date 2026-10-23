@@ -4,7 +4,7 @@ Status: Done (motion-free scope). Emitter/receiver pairing, blocked/clear polari
 
 ## Probe
 
-`probes/optics.rs` runs as its own KM4 task (priority 3) after the LED probe, beside the FW07 Wi-Fi probe and the FW08 transport. It:
+The optics probe (`src/sdk/petlibre-probes/src/optics.rs`) runs as its own KM4 task (priority 3), in the `optics` firmware and as the QA firmware's first check, after the LED probe, beside the FW07 Wi-Fi probe and the FW08 transport. It:
 
 1. Opens the board: motor STOP, emitters OFF, sensor inputs PA16–PA19.
 2. Binds a fresh flash authority to the KM0 peer (the FW06 HELLO/READY handshake), only after stopped-output readback, and attaches it to the board. No flash hook provider is installed in this image, so no lease can occur. The attachment satisfies the board's rule that an emitter needs an authority.

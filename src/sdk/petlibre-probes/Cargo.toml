@@ -1,0 +1,20 @@
+[package]
+license.workspace = true
+name = "petlibre-probes"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "Experimental PLAF103 bench probes (optics, buttons, power inputs, motor pulse, speaker records) shared by the PetLibre firmwares"
+publish.workspace = true
+
+[features]
+# KM4 target builds with the pinned SDK bindings.
+km4 = ["petlibre-sdk/km4", "petlibre-hal/km4", "petlibre-hal/sdk"]
+
+[dependencies]
+petlibre-sdk.workspace = true
+petlibre-hal.workspace = true
+petlibre-core.workspace = true
+
+[lints]
+workspace = true

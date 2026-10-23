@@ -1,0 +1,31 @@
+[package]
+license.workspace = true
+name = "petlibre-fw-qa"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "Experimental PLAF103 QA firmware on the PetLibre SDK: a guided self-test of optics, power, buttons, indicators and speaker"
+publish.workspace = true
+
+# The KM4 archive petlibre-build links into the image.
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[features]
+# KM4 target builds with the pinned SDK bindings.
+km4 = ["petlibre-sdk/km4", "petlibre-probes/km4"]
+
+[dependencies]
+petlibre-sdk.workspace = true
+petlibre-probes.workspace = true
+petlibre-core.workspace = true
+
+[lints]
+workspace = true
+
+# What petlibre-build reads: the default firmware. Its image runs the optics
+# and power probes, so it carries their startup policies (the startup audit
+# checks each against the image's markers).
+[package.metadata.petlibre]
+devices = ["plaf103"]
+policies = { optics = "fw13-optics-v2", adc = "fw14-adc-v2" }

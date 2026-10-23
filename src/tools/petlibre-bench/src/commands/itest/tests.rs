@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 
 use super::log::{Log, Record};
 use super::*;
-use crate::commands::ota::{OtaArgs, Variant};
+use crate::commands::ota::{Firmware, OtaArgs, Variant};
 use crate::server::{ForgedCase, LocalStatus, Request};
 
 const GOOD: &str = "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90";
@@ -235,8 +235,8 @@ impl Rig for Feeder {
         // A re-signed review keeps its build.
         let failing = args.variant == Some(Variant::Fw11Fail)
             || review.to_string_lossy().ends_with("-fail-review");
-        let speaker =
-            args.variant == Some(Variant::Speaker) || review.to_string_lossy().contains("speaker");
+        let speaker = args.firmware == Some(Firmware::Speaker)
+            || review.to_string_lossy().contains("speaker");
         let build = match (failing, speaker) {
             (true, _) => FAILING,
             (_, true) => SPEAKER,

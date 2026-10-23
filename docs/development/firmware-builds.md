@@ -13,8 +13,8 @@ The builder is `petlibre-build` (`src/tools/petlibre-build`); the make targets b
 A build is a **profile** of a **firmware** on a **device**:
 
 ```sh
-petlibre-build build --profile firstboot [--device plaf103] [--firmware reference] [--variant speaker]
-make -C src/firmware/vendor firstboot DEVICE=plaf103 FIRMWARE=reference VARIANT=speaker
+petlibre-build build --profile firstboot [--device plaf103] [--firmware qa] [--variant fw11-fail]
+make -C src/firmware/vendor firstboot DEVICE=plaf103 FIRMWARE=trial VARIANT=fw11-fail
 petlibre-build list    # the devices, and each firmware's devices and variants, as JSON
 ```
 

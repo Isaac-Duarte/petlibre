@@ -21,7 +21,7 @@ petlibre-sdk.workspace = true
 [lints]
 workspace = true
 
-# What petlibre-build reads (see the reference firmware): blink builds for
+# What petlibre-build reads (see the firmware guide): blink builds for
 # the PLAF103, with no startup policies of its own and no variants.
 [package.metadata.petlibre]
 devices = ["plaf103"]

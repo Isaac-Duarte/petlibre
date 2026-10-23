@@ -55,8 +55,8 @@ pub unsafe fn spawn(
     unsafe { sdk::task_create(name, stack_words, priority, step, ptr::null_mut()) }
 }
 
-/// The firmware's startup work that holds the KM0 flash handshake (the
-/// reference firmware's optics probe) has ended, so another flash writer may
+/// The firmware's startup work that holds the KM0 flash handshake (an
+/// optics or pulse probe) has ended, so another flash writer may
 /// bind it. The runtime does not confirm the build before this is reported.
 /// A firmware with no such work reports it from its start hook.
 pub fn startup_done(done: bool) {

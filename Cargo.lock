@@ -1653,6 +1653,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "petlibre-fw-adc"
+version = "0.1.0"
+dependencies = [
+ "petlibre-probes",
+ "petlibre-sdk",
+]
+
+[[package]]
 name = "petlibre-fw-blink"
 version = "0.1.0"
 dependencies = [
@@ -1660,11 +1668,50 @@ dependencies = [
 ]
 
 [[package]]
-name = "petlibre-fw-reference"
+name = "petlibre-fw-buttons"
+version = "0.1.0"
+dependencies = [
+ "petlibre-probes",
+ "petlibre-sdk",
+]
+
+[[package]]
+name = "petlibre-fw-motor"
+version = "0.1.0"
+dependencies = [
+ "petlibre-probes",
+ "petlibre-sdk",
+]
+
+[[package]]
+name = "petlibre-fw-optics"
+version = "0.1.0"
+dependencies = [
+ "petlibre-probes",
+ "petlibre-sdk",
+]
+
+[[package]]
+name = "petlibre-fw-qa"
 version = "0.1.0"
 dependencies = [
  "petlibre-core",
- "petlibre-hal",
+ "petlibre-probes",
+ "petlibre-sdk",
+]
+
+[[package]]
+name = "petlibre-fw-speaker"
+version = "0.1.0"
+dependencies = [
+ "petlibre-probes",
+ "petlibre-sdk",
+]
+
+[[package]]
+name = "petlibre-fw-trial"
+version = "0.1.0"
+dependencies = [
  "petlibre-sdk",
 ]
 
@@ -1716,6 +1763,15 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "petlibre-probes"
+version = "0.1.0"
+dependencies = [
+ "petlibre-core",
+ "petlibre-hal",
+ "petlibre-sdk",
 ]
 
 [[package]]

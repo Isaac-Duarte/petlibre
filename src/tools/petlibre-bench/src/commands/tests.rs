@@ -767,6 +767,7 @@ fn ota_review(rig: &Rig, manifest: Value) -> OtaArgs {
         review: Some("private/verification/review".into()),
         build: false,
         rebuild: false,
+        firmware: None,
         variant: None,
         config: "private/server.json".into(),
         version: None,
@@ -1019,6 +1020,7 @@ fn build_args() -> OtaArgs {
         review: None,
         build: true,
         rebuild: false,
+        firmware: Some(Firmware::Trial),
         variant: Some(Variant::Fw11Reset),
         config: "private/server.json".into(),
         version: None,
@@ -1076,7 +1078,7 @@ fn ota_build_builds_reviews_offers_and_checks_health_in_order() {
     assert_eq!(
         calls.ran,
         [
-            "build build --profile firstboot --variant fw11-reset",
+            "build build --profile firstboot --firmware trial --variant fw11-reset",
             "build review build --build private/firmware-build/plaf103/firstboot --output private/verification/unit-review",
             "local ota-sign --image private/verification/unit-review/image.bin --version 1 --build-id 8a13e59efa15e56b5f5e32825909dc45e381a2027abc65d8de6658c40b302447 --output private/verification/unit-v1.manifest",
             "local ota-offer --manifest private/verification/unit-v1.manifest --image private/verification/unit-review/image.bin",
@@ -1140,7 +1142,14 @@ fn ota_build_reuses_a_review_of_the_same_sources() {
     let calls = rig.tools.0.borrow();
     assert_eq!(
         calls.build_queries,
-        [["source-id", "--image", "--variant", "fw11-reset"]]
+        [[
+            "source-id",
+            "--image",
+            "--firmware",
+            "trial",
+            "--variant",
+            "fw11-reset"
+        ]]
     );
     assert!(calls.builds.is_empty(), "nothing built or reviewed");
     assert!(
@@ -1240,13 +1249,28 @@ fn build_options_without_build_are_refused() {
 }
 
 #[test]
-fn the_motion_variant_is_refused() {
+fn the_motor_firmware_and_its_variant_are_refused() {
     let error = ota::parse_variant("fw16-pulse").unwrap_err();
     assert!(error.contains("motion builds stay manual"), "{error}");
+    let error = ota::parse_firmware("motor").unwrap_err();
+    assert!(error.contains("motion builds stay manual"), "{error}");
+
     assert_eq!(ota::parse_variant("fw11-fail"), Ok(Variant::Fw11Fail));
-    assert_eq!(ota::parse_variant("fw14-adc"), Ok(Variant::Fw14Adc));
-    assert_eq!(Variant::Fw14Adc.name(), "fw14-adc");
-    assert!(ota::parse_variant("pulse").is_err());
+    assert_eq!(ota::parse_firmware("adc"), Ok(Firmware::Adc));
+    assert_eq!(Firmware::Speaker.name(), "speaker");
+    assert!(ota::parse_variant("fw14-adc").is_err());
+    assert!(ota::parse_firmware("reference").is_err());
+}
+
+#[test]
+fn a_variant_needs_the_trial_firmware() {
+    let mut rig = rig();
+    let mut args = build_args();
+    args.firmware = Some(Firmware::Speaker);
+
+    let error = rig.bench.ota(&args).unwrap_err().to_string();
+    assert!(error.contains("--firmware trial only"), "{error}");
+    assert!(rig.tools.0.borrow().ran.is_empty());
 }
 
 #[test]

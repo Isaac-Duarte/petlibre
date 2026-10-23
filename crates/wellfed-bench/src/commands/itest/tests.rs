@@ -278,11 +278,17 @@ impl Rig for Feeder {
                     Fault::Stall => Some("timeout"),
                     Fault::None => None,
                 };
+                // A failing trial still under way gives way first; bank 0's
+                // recovery role then meets this server.
+                let start = self.fallback_at.take().unwrap_or(self.now);
                 match stage {
-                    Some(stage) => self.line(90.0, &format!("PLOTA1 error stage={stage}")),
+                    Some(stage) => self.line(
+                        start - self.now + 90.0,
+                        &format!("PLOTA1 error stage={stage}"),
+                    ),
                     None => {
                         let (version, build) = (staged.version, staged.build.clone());
-                        self.install(self.now + 10.0, version, &build);
+                        self.install(start + 10.0, version, &build);
                     }
                 }
                 format!("fault {}", fault.arg())
@@ -580,8 +586,7 @@ fn without_power_or_build_those_scenarios_are_skipped_not_passed() {
             ("settings-persist", "skip"),
             ("wifi-fallback", "skip"),
             ("network-bounce", "pass"),
-            ("trial-fallback", "skip"),
-            ("ota-faults", "skip"),
+            ("ota-recovery", "skip"),
             ("ota-power-cuts", "skip"),
         ]
     );
@@ -823,7 +828,7 @@ fn the_record_lists_every_verdict_as_physical_evidence() {
             seconds: 241.04,
         },
         Report {
-            scenario: "ota-faults",
+            scenario: "ota-recovery",
             verdict: Verdict::Skip("needs --power".into()),
             seconds: 0.0,
         },

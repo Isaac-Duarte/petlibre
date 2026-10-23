@@ -14,7 +14,12 @@
 //! marker until the whole image hashed correctly; the marker goes in last and
 //! is read back. The SDK wrappers refuse bank 0, the bank this runs from.
 //!
-//! A dropped connection resumes at the next chunk the writer wants. A write,
+//! Every chunk of the sector being staged is asked for at once, each with its
+//! own retries, and the task polls again at once while answers keep coming:
+//! one ask per round trip, each followed by a task delay, held the transfer
+//! to about 6.5 KB/s.
+//!
+//! A dropped connection resumes at the chunks the writer still wants. A write,
 //! readback, hash or manifest failure stops the update with bank 1 invalid,
 //! so the loader keeps booting this recovery image.
 
@@ -44,10 +49,12 @@ const _: () = assert!(
 
 pub const CONNECT_TIMEOUT_MS: u32 = 3000;
 pub const POLL_MS: u32 = 50;
+/// The delay after a step that received data: more answers are likely queued.
+pub const BUSY_MS: u32 = 1;
 pub const IDLE_MS: u32 = 500;
 /// Ask again for an answer not received within this.
 pub const ANSWER_MS: u32 = 3000;
-/// Asks per part before the update stops.
+/// Asks per chunk (or the manifest) before the update stops.
 pub const MAX_TRIES: u32 = 5;
 /// Wait between manifest asks while the server has no offer.
 pub const NO_OFFER_MS: u32 = 10_000;
@@ -55,6 +62,8 @@ pub const NO_OFFER_MS: u32 = 10_000;
 pub const PROGRESS_SECTORS: u32 = 16;
 /// One page program (one lease) at a time, each read back.
 const PIECE: usize = 256;
+/// Asks outstanding at once: every chunk of one sector.
+const WINDOW: usize = SECTOR / ota::MAX_CHUNK as usize;
 
 /// Bank-1 flash access by sector index, as `sdk::bank1_*` take it.
 pub trait BankFlash {
@@ -273,7 +282,7 @@ impl Topic {
     }
 }
 
-/// The outstanding ask.
+/// An outstanding ask.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Wanted {
     part: Part,
@@ -309,7 +318,7 @@ pub struct Updater {
     open: Option<Open>,
     rx: [u8; 2 * mqtt::MAX_PACKET],
     rx_len: usize,
-    wanted: Option<Wanted>,
+    asks: [Option<Wanted>; WINDOW],
     writer: Option<Writer>,
     sectors: u32,
     leases: u64,
@@ -326,7 +335,7 @@ impl Updater {
             open: None,
             rx: [0; 2 * mqtt::MAX_PACKET],
             rx_len: 0,
-            wanted: None,
+            asks: [None; WINDOW],
             writer: None,
             sectors: 0,
             leases: 0,
@@ -358,7 +367,7 @@ impl Updater {
         }
         self.rx_len = 0;
         // The writer keeps its place: the next connection resumes there.
-        self.wanted = None;
+        self.asks = [None; WINDOW];
     }
 
     fn drop_link(&mut self, reason: CloseReason) -> Step {
@@ -415,11 +424,14 @@ impl Updater {
             return self.drop_link(CloseReason::Wifi);
         }
 
-        match sdk::tcp_recv(open.socket, &mut self.rx[self.rx_len..], POLL_MS) {
-            TcpRecv::Data(n) => self.rx_len += n,
-            TcpRecv::Timeout => {}
+        let busy = match sdk::tcp_recv(open.socket, &mut self.rx[self.rx_len..], POLL_MS) {
+            TcpRecv::Data(n) => {
+                self.rx_len += n;
+                true
+            }
+            TcpRecv::Timeout => false,
             TcpRecv::Closed => return self.drop_link(CloseReason::Closed),
-        }
+        };
 
         let now = sdk::uptime_ms();
         loop {
@@ -433,7 +445,7 @@ impl Updater {
             self.rx.copy_within(used..self.rx_len, 0);
             self.rx_len -= used;
             if let Some(step) = self.handle(now, &frame[..used], flash) {
-                return step;
+                return self.pace(step, busy);
             }
         }
 
@@ -453,7 +465,17 @@ impl Updater {
             Tick::Closed(_) => return self.drop_link(CloseReason::Timeout),
         }
 
-        self.retry(now)
+        let step = self.retry(now);
+        self.pace(step, busy)
+    }
+
+    /// Poll again at once after a receive, while the link is up: a dropped
+    /// link keeps its reconnect delay and an ended task stays ended.
+    fn pace(&self, mut step: Step, busy: bool) -> Step {
+        if busy && step.delay_ms > 0 && self.open.is_some() {
+            step.delay_ms = BUSY_MS;
+        }
+        step
     }
 
     fn connect(&mut self, dns_ok: bool, generation: u32) -> Step {
@@ -508,10 +530,18 @@ impl Updater {
 
         let mut out = [0; ota::TOPIC_BUDGET + ota::GET_LEN + 8];
         let get = ota::encode_get(part, offset, len);
+        // A re-ask takes its own slot over; a new ask takes a free one.
+        let slot = match self.slot(part, offset) {
+            Some(slot) => slot,
+            None => match self.asks.iter().position(Option::is_none) {
+                Some(slot) => slot,
+                None => return false,
+            },
+        };
         let ok = mqtt::encode_publish(&mut out, topic.as_str(), &get, false)
             .is_ok_and(|n| self.send(&out[..n]));
         if ok {
-            self.wanted = Some(Wanted {
+            self.asks[slot] = Some(Wanted {
                 part,
                 offset,
                 len,
@@ -522,13 +552,30 @@ impl Updater {
         ok
     }
 
-    /// Ask for the manifest, or for the writer's next chunk.
+    /// The slot of the outstanding ask for this part and offset.
+    fn slot(&self, part: Part, offset: u32) -> Option<usize> {
+        self.asks
+            .iter()
+            .position(|w| w.is_some_and(|w| w.part == part && w.offset == offset))
+    }
+
+    /// Ask for the manifest, or for every chunk of the staged sector not yet
+    /// asked for.
     fn ask_next(&mut self, now: u32) -> bool {
-        match self.writer.as_ref().map(Writer::next_request) {
-            None => self.ask(now, Part::Manifest, 0, 0, 1),
-            Some(Some((offset, len))) => self.ask(now, Part::Chunk, offset, len, 1),
-            Some(None) => true,
+        let Some(writer) = self.writer.as_ref() else {
+            return self.ask(now, Part::Manifest, 0, 0, 1);
+        };
+
+        let mut chunks = [(0, 0); WINDOW];
+        let mut count = 0;
+        for (slot, chunk) in chunks.iter_mut().zip(writer.missing()) {
+            *slot = chunk;
+            count += 1;
         }
+
+        chunks[..count].iter().all(|&(offset, len)| {
+            self.slot(Part::Chunk, offset).is_some() || self.ask(now, Part::Chunk, offset, len, 1)
+        })
     }
 
     fn retry(&mut self, now: u32) -> Step {
@@ -546,18 +593,16 @@ impl Updater {
             return next(POLL_MS, None);
         }
 
-        let Some(w) = self.wanted else {
-            return next(POLL_MS, None);
-        };
-        if now.wrapping_sub(w.asked_at) < ANSWER_MS {
-            return next(POLL_MS, None);
-        }
-
-        if w.tries >= MAX_TRIES {
-            return self.fail(ErrorStage::Timeout);
-        }
-        if !self.ask(now, w.part, w.offset, w.len, w.tries + 1) {
-            return self.drop_link(CloseReason::Send);
+        for w in self.asks {
+            let Some(w) = w.filter(|w| now.wrapping_sub(w.asked_at) >= ANSWER_MS) else {
+                continue;
+            };
+            if w.tries >= MAX_TRIES {
+                return self.fail(ErrorStage::Timeout);
+            }
+            if !self.ask(now, w.part, w.offset, w.len, w.tries + 1) {
+                return self.drop_link(CloseReason::Send);
+            }
         }
         next(POLL_MS, None)
     }
@@ -613,12 +658,10 @@ impl Updater {
 
     fn data(&mut self, now: u32, payload: &[u8], flash: &mut impl BankFlash) -> Option<Step> {
         let answer = ota::decode_data(payload)?;
-        let wanted = self.wanted?;
-        if answer.part != wanted.part || answer.offset != wanted.offset {
-            return None; // A late answer to an earlier ask.
-        }
+        // None: a late answer to an ask already answered.
+        let slot = self.slot(answer.part, answer.offset)?;
 
-        self.wanted = None;
+        self.asks[slot] = None;
         match answer.status {
             Status::Ok => {}
             Status::NoOffer => {

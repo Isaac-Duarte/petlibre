@@ -106,7 +106,8 @@ pub fn parse_manifest(
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WriteError {
-    /// A chunk out of order, of the wrong length, or after the end.
+    /// A chunk outside the staged sector, already received, or of the wrong
+    /// length.
     Order,
     /// The image does not start with the loader's marker.
     Marker,
@@ -135,30 +136,40 @@ pub struct Program<'a> {
     pub data: &'a [u8],
 }
 
+/// Chunks per sector the received bitmap can track.
+const MAX_CHUNKS: usize = u32::BITS as usize;
+
 /// Writes one candidate into bank 1 with its marker withheld: the first
 /// sector is programmed with erased marker bytes, and `commit` hands back the
 /// real marker only after every sector read back and the hash matched.
+///
+/// A sector's chunks may arrive in any order, so the port can ask for all of
+/// them at once; the sector is hashed in order once it is complete. Sectors
+/// themselves are still written strictly in order.
 pub struct Writer {
     manifest: Manifest,
-    chunk: usize,
-    received: u32,
+    chunk: u32,
+    /// The staged sector's received chunks, bit `i` for chunk `i`.
+    have: u32,
     hasher: Sha256,
     sector: [u8; SECTOR],
-    fill: usize,
     sector_offset: u32,
     phase: Phase,
 }
 
 impl Writer {
-    /// `chunk` must divide the sector size.
+    /// `chunk` must divide the sector size into at most 32 chunks.
     pub fn new(manifest: Manifest, chunk: usize) -> Option<Self> {
-        (chunk != 0 && SECTOR.is_multiple_of(chunk)).then(|| Self {
+        if chunk == 0 || !SECTOR.is_multiple_of(chunk) || SECTOR / chunk > MAX_CHUNKS {
+            return None;
+        }
+
+        Some(Self {
             manifest,
-            chunk,
-            received: 0,
+            chunk: u32::try_from(chunk).ok()?,
+            have: 0,
             hasher: Sha256::new(),
             sector: [0xff; SECTOR],
-            fill: 0,
             sector_offset: 0,
             phase: Phase::Receiving,
         })
@@ -180,36 +191,60 @@ impl Writer {
         error
     }
 
-    /// The next chunk to fetch, or `None` when nothing is wanted now.
-    pub fn next_request(&self) -> Option<(u32, u32)> {
-        (self.phase == Phase::Receiving && self.received < self.manifest.image_len).then(|| {
-            let left = self.manifest.image_len - self.received;
-            let chunk = u32::try_from(self.chunk).unwrap_or(u32::MAX);
-            (self.received, left.min(chunk))
-        })
+    /// The image bytes the staged sector holds: a whole sector, or the rest.
+    fn sector_len(&self) -> u32 {
+        self.manifest
+            .image_len
+            .saturating_sub(self.sector_offset)
+            .min(SECTOR_BYTES)
     }
 
-    /// Take the chunk at `offset`. Returns a sector to program when one is
-    /// complete (or the image ends); the port must then call `programmed`.
-    pub fn accept(&mut self, offset: u32, data: &[u8]) -> Result<Option<Program<'_>>, WriteError> {
-        let Some((want, len)) = self.next_request() else {
-            return Err(self.fail(WriteError::State));
+    /// The staged sector's chunks still to fetch, as `(offset, len)`; empty
+    /// when nothing is wanted now.
+    pub fn missing(&self) -> impl Iterator<Item = (u32, u32)> + '_ {
+        let len = self.sector_len();
+        let chunks = match self.phase {
+            Phase::Receiving => len.div_ceil(self.chunk),
+            _ => 0,
         };
-        if offset != want || data.len() != len as usize {
+
+        (0..chunks)
+            .filter(|i| self.have & (1 << i) == 0)
+            .map(move |i| {
+                let at = i * self.chunk;
+                (self.sector_offset + at, (len - at).min(self.chunk))
+            })
+    }
+
+    /// The first chunk still to fetch, for a port that fetches one at a time.
+    pub fn next_request(&self) -> Option<(u32, u32)> {
+        self.missing().next()
+    }
+
+    /// Take the chunk at `offset`. Returns a sector to program when its last
+    /// chunk arrives (or the image ends); the port must then call `programmed`.
+    pub fn accept(&mut self, offset: u32, data: &[u8]) -> Result<Option<Program<'_>>, WriteError> {
+        if self.phase != Phase::Receiving {
+            return Err(self.fail(WriteError::State));
+        }
+        let wanted = self.missing().find(|&(at, _)| at == offset);
+        if wanted.is_none_or(|(_, len)| data.len() != len as usize) {
             return Err(self.fail(WriteError::Order));
         }
         if offset == 0 && data.len() >= MARKER.len() && data[..MARKER.len()] != MARKER {
             return Err(self.fail(WriteError::Marker));
         }
 
-        self.hasher.update(data);
-        self.sector[self.fill..self.fill + data.len()].copy_from_slice(data);
-        self.fill += data.len();
-        self.received += len;
-        if self.fill < SECTOR && self.received < self.manifest.image_len {
+        let at = offset - self.sector_offset;
+        let start = at as usize;
+        self.sector[start..start + data.len()].copy_from_slice(data);
+        self.have |= 1 << (at / self.chunk);
+        if self.missing().next().is_some() {
             return Ok(None);
         }
 
+        let len = self.sector_len() as usize;
+        self.hasher.update(&self.sector[..len]);
         self.phase = Phase::Programming;
         if self.sector_offset == 0 {
             // Withhold the marker: bank 1 must not be valid before commit.
@@ -218,7 +253,7 @@ impl Writer {
 
         Ok(Some(Program {
             offset: BANK1_OFFSET + self.sector_offset,
-            data: &self.sector[..self.fill],
+            data: &self.sector[..len],
         }))
     }
 
@@ -232,9 +267,9 @@ impl Writer {
         }
 
         self.sector_offset += SECTOR_BYTES;
-        self.fill = 0;
+        self.have = 0;
         self.sector = [0xff; SECTOR];
-        if self.received < self.manifest.image_len {
+        if self.sector_offset < self.manifest.image_len {
             self.phase = Phase::Receiving;
             return Ok(());
         }

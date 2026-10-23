@@ -138,16 +138,24 @@ fn write_all(
     flash: &mut Vec<u8>,
     bad_readback: Option<u32>,
 ) -> Result<(), WriteError> {
-    while let Some((offset, len)) = w.next_request() {
-        let chunk = &payload[offset as usize..(offset + len) as usize];
-        if let Some(program) = w.accept(offset, chunk)? {
-            let at = (program.offset - BANK1_OFFSET) as usize;
-            if flash.len() < at + program.data.len() {
-                flash.resize(at + program.data.len(), 0xff);
+    loop {
+        let wanted: Vec<_> = w.missing().collect();
+        if wanted.is_empty() {
+            break;
+        }
+
+        // Last chunk first: a sector's chunks may arrive in any order.
+        for (offset, len) in wanted.into_iter().rev() {
+            let chunk = &payload[offset as usize..(offset + len) as usize];
+            if let Some(program) = w.accept(offset, chunk)? {
+                let at = (program.offset - BANK1_OFFSET) as usize;
+                if flash.len() < at + program.data.len() {
+                    flash.resize(at + program.data.len(), 0xff);
+                }
+                flash[at..at + program.data.len()].copy_from_slice(program.data);
+                let ok = bad_readback != Some(program.offset);
+                w.programmed(ok)?;
             }
-            flash[at..at + program.data.len()].copy_from_slice(program.data);
-            let ok = bad_readback != Some(program.offset);
-            w.programmed(ok)?;
         }
     }
 
@@ -177,6 +185,14 @@ fn writer_stages_every_sector_with_the_marker_withheld_until_commit() {
         )
         .is_none()
     );
+    // More chunks per sector than the received bitmap tracks.
+    assert!(
+        Writer::new(
+            parse_manifest(&manifest_bytes(&signing, 2, &image(SECTOR), 1), &public, 1).unwrap(),
+            64
+        )
+        .is_none()
+    );
 }
 
 #[test]
@@ -185,9 +201,18 @@ fn writer_refuses_disorder_bad_markers_readback_and_hash_and_never_commits() {
     let payload = image(2 * SECTOR + 10);
     let m = parse_manifest(&manifest_bytes(&signing, 2, &payload, 1), &public, 1).unwrap();
 
+    // Only the staged sector's chunks, each once.
     let mut w = Writer::new(m, 1024).unwrap();
-    assert_eq!(w.accept(1024, &payload[1024..2048]), Err(WriteError::Order));
+    let next = &payload[SECTOR..SECTOR + 1024];
+    assert_eq!(w.accept(SECTOR as u32, next), Err(WriteError::Order));
     assert_eq!(w.commit(), Err(WriteError::State));
+
+    let mut w = Writer::new(m, 1024).unwrap();
+    assert_eq!(w.accept(1024, &payload[1024..2048]), Ok(None));
+    assert_eq!(w.accept(1024, &payload[1024..2048]), Err(WriteError::Order));
+
+    let mut w = Writer::new(m, 1024).unwrap();
+    assert_eq!(w.accept(512, &payload[512..1536]), Err(WriteError::Order));
 
     let mut w = Writer::new(m, 1024).unwrap();
     assert_eq!(w.accept(0, &payload[..1000]), Err(WriteError::Order));

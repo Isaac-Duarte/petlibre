@@ -97,7 +97,7 @@ impl core::fmt::Display for PowerLine {
 /// startup probe to release its board, which owns the ADC until then.
 unsafe extern "C" fn power_task(_: *mut c_void) -> u32 {
     if ADC_CLAIMED.load(Ordering::Acquire) {
-        sdk::log(c"PLPWR1 claimed\r\n");
+        sdk::log(c"PLBAT1 claimed\r\n");
         return 0;
     }
     if !PROBE_DONE.load(Ordering::Acquire) {
@@ -109,7 +109,7 @@ unsafe extern "C" fn power_task(_: *mut c_void) -> u32 {
     let step = monitor.step();
     if let Some(record) = step.record {
         let mut report = startup::Report::new();
-        if let Ok(line) = report.record(format_args!("PLPWR1 {}\r\n", PowerLine(record))) {
+        if let Ok(line) = report.record(format_args!("PLBAT1 {}\r\n", PowerLine(record))) {
             sdk::log(line);
         }
     }
@@ -123,9 +123,9 @@ fn start_power() {
     // SAFETY: the step takes no context and keeps its state in statics.
     let created = unsafe { sdk::task_create(c"wellfed-pwr", 512, 1, power_task, ptr::null_mut()) };
     sdk::log(if created {
-        c"PLPWR1 start created=1\r\n"
+        c"PLBAT1 start created=1\r\n"
     } else {
-        c"PLPWR1 start created=0\r\n"
+        c"PLBAT1 start created=0\r\n"
     });
 }
 

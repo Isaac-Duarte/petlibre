@@ -92,6 +92,7 @@ fn create_unit(f: &mut FakeJournalFlash, dual: bool, unit: usize) -> FeedJournal
     let mut j = FeedJournal::default();
     // SAFETY: each test keeps `f` in place while the journal uses it.
     assert_eq!(
+        // SAFETY: the fixture's callbacks are sound for its context, which outlives the call.
         unsafe { j.create(f.io(), config, Direction::D0, true, true) },
         JournalError::OK
     );
@@ -137,6 +138,7 @@ fn lifecycle() {
 
     let writes = f.mutations;
     assert_eq!(
+        // SAFETY: the fixture's callbacks are sound for its context, which outlives the call.
         unsafe { j.create(f.io(), CONFIG, Direction::D0, true, true) },
         JournalError::STATE
     );
@@ -217,6 +219,7 @@ fn invalid_arguments() {
 
     let mut io = f.io();
     io.unit_bytes = 127;
+    // SAFETY: the fixture's callbacks are sound for its context, which outlives the call.
     assert_eq!(unsafe { j.open(io, CONFIG) }, JournalError::ARGUMENT);
     assert!(j.read().is_none());
 }
@@ -365,6 +368,7 @@ fn create_cuts() {
             ..FakeJournalFlash::with_unit(unit)
         };
         let mut j = FeedJournal::default();
+        // SAFETY: the fixture's callbacks are sound for its context, which outlives the call.
         let before = unsafe { j.create(f.io(), CONFIG, Direction::D0, true, true) };
         let after = reopen(&mut f, &mut j, &CONFIG);
 
@@ -540,6 +544,7 @@ fn wear_limit_refuses_new_reservations_but_never_strands_a_pending_one() {
     let mut j = FeedJournal::default();
     // SAFETY: the fake flash outlives the journal.
     assert_eq!(
+        // SAFETY: the fixture's callbacks are sound for its context, which outlives the call.
         unsafe { j.create(f.io(), CONFIG, Direction::D0, false, true) },
         JournalError::OK
     );

@@ -17,6 +17,8 @@
 use core::fmt;
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
+use petlibre_core::deadline_passed;
+use petlibre_core::named_enum;
 use petlibre_core::tone::{Player, SAMPLE_RATE, Tune};
 use petlibre_core::transport::PlayResult;
 
@@ -95,6 +97,13 @@ pub fn reset() {
     AMP_READY.store(false, Ordering::Release);
 }
 
+named_enum! {
+    /// What failed to start a tune (`error stage=`).
+    pub enum ErrorStage {
+        Open = "open",
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Record {
     Play {
@@ -111,7 +120,7 @@ pub enum Record {
         tune: Tune,
     },
     Error {
-        stage: &'static str,
+        stage: ErrorStage,
     },
 }
 
@@ -141,6 +150,8 @@ pub struct Step {
     pub record: Option<Record>,
 }
 
+/// The playing stages own the tune and its player, so a stage that plays
+/// always has them.
 #[derive(Clone, Debug, Default)]
 enum Stage {
     /// The startup chime waits for the settings to load.
@@ -148,10 +159,16 @@ enum Stage {
     Startup,
     Idle,
     Warm {
+        tune: Tune,
+        player: Player,
         until: u32,
     },
-    Play,
+    Play {
+        tune: Tune,
+        player: Player,
+    },
     Drain {
+        tune: Tune,
         since: u32,
     },
 }
@@ -159,7 +176,6 @@ enum Stage {
 #[derive(Clone, Debug, Default)]
 pub struct Speaker {
     stage: Stage,
-    playing: Option<(Tune, Player)>,
     started: u32,
     /// The DMA's underrun count when streaming began, then the tune's own.
     underruns: u32,
@@ -174,9 +190,8 @@ fn amp(on: bool) {
 }
 
 impl Speaker {
-    fn finish(&mut self, drained: bool) -> Record {
+    fn finish(&mut self, tune: Tune, drained: bool) -> Record {
         close_output();
-        let (tune, _) = self.playing.take().expect("finish while playing");
         SLOT.store(EMPTY, Ordering::Release);
         self.stage = Stage::Idle;
         Record::Done {
@@ -189,7 +204,7 @@ impl Speaker {
 
     pub fn step(&mut self) -> Step {
         let now = sdk::uptime_ms();
-        match self.stage {
+        match &mut self.stage {
             Stage::Startup => {
                 let Some(view) = settings::current() else {
                     return next(POLL_MS * 5, None);
@@ -215,31 +230,44 @@ impl Speaker {
                 let volume = settings::current().map_or(0, |view| view.volume);
                 if !open_output(SAMPLE_RATE) {
                     SLOT.store(EMPTY, Ordering::Release);
-                    return next(POLL_MS, Some(Record::Error { stage: "open" }));
+                    return next(
+                        POLL_MS,
+                        Some(Record::Error {
+                            stage: ErrorStage::Open,
+                        }),
+                    );
                 }
-                self.playing = Some((tune, Player::new(tune, volume)));
                 self.started = now;
                 self.stage = Stage::Warm {
+                    tune,
+                    player: Player::new(tune, volume),
                     until: now.wrapping_add(WARM_MS),
                 };
                 next(POLL_MS, Some(Record::Play { tune, volume }))
             }
 
-            Stage::Warm { until } => {
-                if (now.wrapping_sub(until) as i32) < 0 {
+            Stage::Warm {
+                tune,
+                player,
+                until,
+            } => {
+                if !deadline_passed(now, *until) {
                     return next(POLL_MS, None);
                 }
                 self.underruns = sdk::audio_underruns();
-                self.stage = Stage::Play;
+                self.stage = Stage::Play {
+                    tune: *tune,
+                    player: player.clone(),
+                };
                 self.step()
             }
 
-            Stage::Play => {
-                let (tune, player) = self.playing.as_mut().expect("playing");
+            Stage::Play { tune, player } => {
+                let tune = *tune;
                 let bound = WARM_MS + tune.duration_ms() + LATE_MS;
                 if now.wrapping_sub(self.started) >= bound {
                     self.underruns = sdk::audio_underruns().wrapping_sub(self.underruns);
-                    return next(POLL_MS, Some(self.finish(false)));
+                    return next(POLL_MS, Some(self.finish(tune, false)));
                 }
                 while let Some(page) = sdk::audio_page() {
                     player.fill(page);
@@ -251,15 +279,16 @@ impl Speaker {
                 if player.done() {
                     // Zero pages the DMA played for want of a filled one.
                     self.underruns = sdk::audio_underruns().wrapping_sub(self.underruns);
-                    self.stage = Stage::Drain { since: now };
+                    self.stage = Stage::Drain { tune, since: now };
                 }
                 next(POLL_MS, None)
             }
 
-            Stage::Drain { since } => {
+            Stage::Drain { tune, since } => {
+                let tune = *tune;
                 let drained = sdk::audio_drained();
-                if drained || now.wrapping_sub(since) >= DRAIN_MS {
-                    return next(POLL_MS, Some(self.finish(drained)));
+                if drained || now.wrapping_sub(*since) >= DRAIN_MS {
+                    return next(POLL_MS, Some(self.finish(tune, drained)));
                 }
                 next(POLL_MS, None)
             }

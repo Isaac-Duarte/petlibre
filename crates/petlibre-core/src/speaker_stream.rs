@@ -64,7 +64,8 @@ pub fn hello(challenge: &[u8; CHALLENGE_LEN]) -> [u8; HELLO_LEN] {
 
 /// The challenge in a feeder's hello.
 pub fn challenge(hello: &[u8; HELLO_LEN]) -> Option<[u8; CHALLENGE_LEN]> {
-    (hello[..8] == MAGIC).then(|| hello[8..].try_into().expect("16 bytes"))
+    let (magic, challenge) = hello.split_first_chunk::<8>()?;
+    (*magic == MAGIC).then_some(*challenge.first_chunk()?)
 }
 
 fn mac(key: &[u8; KEY_LEN], challenge: &[u8; CHALLENGE_LEN], fields: &[u8]) -> [u8; 32] {
@@ -96,8 +97,10 @@ pub fn check(
         return Err(Status::Unauthenticated);
     }
 
-    let rate = u32::from_le_bytes(header[8..12].try_into().expect("4 bytes"));
-    let flags = u32::from_le_bytes(header[12..16].try_into().expect("4 bytes"));
+    // Bytes 8..12 hold the rate and 12..16 the flags.
+    let words = header.as_chunks::<4>().0;
+    let rate = u32::from_le_bytes(words[2]);
+    let flags = u32::from_le_bytes(words[3]);
     if header[..8] != MAGIC || flags != 0 || !RATES.contains(&rate) {
         return Err(Status::BadHeader);
     }

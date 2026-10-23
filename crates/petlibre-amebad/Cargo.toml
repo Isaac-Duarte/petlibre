@@ -24,5 +24,11 @@ ed25519-dalek = "2"
 petlibre-testkit.workspace = true
 sha2 = "0.10"
 
-[lints]
-workspace = true
+# The workspace lints, plus a SAFETY comment on every `unsafe` block: Cargo
+# cannot extend `workspace = true`, and the host crates do not opt in yet.
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+dbg_macro = "deny"
+undocumented_unsafe_blocks = "deny"

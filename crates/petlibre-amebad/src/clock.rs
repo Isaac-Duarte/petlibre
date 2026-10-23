@@ -2,19 +2,15 @@
 //! `time` request is its only writer; health reads it. One instance, copied
 //! in and out with interrupts masked.
 
-use core::cell::UnsafeCell;
-
 use petlibre_core::transport::{ClockHealth, TimeFields, TimeResult};
 use petlibre_core::wall_clock::{Jump, Sync as ClockSync, SyncError, WallClock};
 
+use crate::cell::TaskCell;
 use crate::sdk::{self, IrqGuard};
 use crate::startup;
 
-struct Shared(UnsafeCell<WallClock>);
-// SAFETY: every access is a short copy or update under `IrqGuard`.
-unsafe impl Sync for Shared {}
-
-static CLOCK: Shared = Shared(UnsafeCell::new(WallClock::new()));
+/// Every access is a short copy or update under `IrqGuard`.
+static CLOCK: TaskCell<WallClock> = TaskCell::new(WallClock::new());
 
 /// Adopt a sync from the server and log it as a `PLTIM1` record.
 pub fn sync(fields: TimeFields) -> TimeResult {
@@ -28,7 +24,7 @@ pub fn sync(fields: TimeFields) -> TimeResult {
     let result = {
         let _guard = IrqGuard::lock();
         // SAFETY: interrupts are masked, so this is the only reference.
-        unsafe { &mut *CLOCK.0.get() }.sync(now, sync)
+        unsafe { &mut *CLOCK.get() }.sync(now, sync)
     };
 
     let mut report = startup::Report::new();
@@ -73,7 +69,7 @@ pub fn health() -> (Option<ClockHealth>, u32) {
     let clock = {
         let _guard = IrqGuard::lock();
         // SAFETY: interrupts are masked, so this is the only reference.
-        unsafe { *CLOCK.0.get() }
+        unsafe { *CLOCK.get() }
     };
     let reading = clock.read(now).map(|r| ClockHealth {
         unix_ms: r.unix_ms,

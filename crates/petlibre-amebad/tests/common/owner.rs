@@ -228,6 +228,7 @@ pub fn inactive_outputs() {
 pub unsafe extern "C" fn recover(context: *mut c_void, value: *mut OwnerRecovery) -> bool {
     let f = context.cast::<Fixture>();
     inactive_outputs();
+    // SAFETY: the fixture keeps the owner and its storage in place while it runs.
     unsafe {
         (*f).recover_calls += 1;
         if (*f).recover_delay_ticks != 0 {
@@ -251,6 +252,7 @@ pub unsafe extern "C" fn recover(context: *mut c_void, value: *mut OwnerRecovery
 pub unsafe extern "C" fn reserve(context: *mut c_void, request: *const FeedRequest) -> bool {
     let f = context.cast::<Fixture>();
     inactive_outputs();
+    // SAFETY: the fixture keeps the owner and its storage in place while it runs.
     unsafe {
         let request = &*request;
         (*f).reserve_calls += 1;
@@ -287,6 +289,7 @@ pub unsafe extern "C" fn finish_record(
 ) -> bool {
     let f = context.cast::<Fixture>();
     inactive_outputs();
+    // SAFETY: the fixture keeps the owner and its storage in place while it runs.
     unsafe {
         let (result, phase) = (&*result, &*phase);
         (*f).finish_calls += 1;
@@ -342,6 +345,7 @@ pub fn boot_with_journal(dual: bool) -> Box<Fixture> {
     };
     // SAFETY: the boxed fixture keeps the fake flash in place.
     assert_eq!(
+        // SAFETY: the fixture's callbacks are sound for its context, which outlives the call.
         unsafe { f.journal.create(io, c, Direction::D0, true, true) },
         JournalError::OK
     );

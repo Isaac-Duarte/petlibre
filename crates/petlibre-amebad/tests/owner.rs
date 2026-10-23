@@ -134,6 +134,7 @@ fn finish_failure_is_not_reported_as_durable_success() {
 
 fn cancel_hook(context: *mut c_void) {
     let f = context.cast::<Fixture>();
+    // SAFETY: the fixture keeps the owner and its storage in place while it runs.
     assert!(unsafe { (*f).owner.cancel(1) });
 }
 
@@ -322,6 +323,7 @@ fn stop_during_result_write_and_singleton_ownership() {
     let mut f = boot();
     let mut second = Box::<Owner>::default();
     let storage = f.storage();
+    // SAFETY: the fixture keeps the owner and its storage in place while it runs.
     assert!(!unsafe { second.start(&f.config, &storage) });
 
     f.start_feed();

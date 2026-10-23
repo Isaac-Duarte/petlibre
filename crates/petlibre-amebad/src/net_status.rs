@@ -6,11 +6,7 @@ use core::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 
 use crate::sdk::WifiEvent;
 
-// Event kinds from the shim (`example_entry.c`).
-const SCAN: u32 = 2;
-const DHCP: u32 = 4;
-const LOST: u32 = 5;
-const DNS: u32 = 7;
+/// `LwIP_DHCP` state for an assigned address, in a DHCP event's `result`.
 const DHCP_ASSIGNED: i32 = 2;
 
 static RSSI: AtomicI32 = AtomicI32::new(0);
@@ -39,15 +35,15 @@ pub struct Status {
 /// Fold one shim event in (FW07 probe task only).
 pub fn observe(event: &WifiEvent) {
     match event.kind {
-        SCAN if event.result == 0 && event.value == 1 => {
+        WifiEvent::SCAN if event.result == 0 && event.value == 1 => {
             RSSI.store(event.rssi, Ordering::Relaxed);
             ATTEMPT.store(event.attempt, Ordering::Relaxed);
         }
-        DHCP if event.result == DHCP_ASSIGNED => {
+        WifiEvent::DHCP if event.result == DHCP_ASSIGNED => {
             GENERATION.fetch_add(1, Ordering::Release);
         }
-        DNS => DNS_OK.store(event.result == 0 && event.value != 0, Ordering::Release),
-        LOST => {
+        WifiEvent::DNS => DNS_OK.store(event.result == 0 && event.value != 0, Ordering::Release),
+        WifiEvent::LOST => {
             DNS_OK.store(false, Ordering::Release);
             let (counter, cause) = if event.result == 1 {
                 (&DNS_LOSSES, 2)

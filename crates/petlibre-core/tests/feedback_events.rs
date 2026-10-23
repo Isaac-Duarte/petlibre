@@ -359,6 +359,7 @@ struct Output {
 }
 
 unsafe extern "C" fn write_pair(context: *mut c_void, a: bool, b: bool) -> bool {
+    // SAFETY: `context` is the fixture's leaked pins, unaliased during the callback.
     let pins = unsafe { &mut *context.cast::<Output>() };
     assert!(a || b);
     pins.a = a;
@@ -390,6 +391,7 @@ fn pipeline_applies_gate_output_and_stops() {
         assert!(gate.request(f.controller.motor, now));
         assert!(gate.tick(now));
     }
+    // SAFETY: the leaked pins outlive the fixture and nothing else borrows them here.
     assert!(f.controller.progress.completed == 1 && !unsafe { &*pins }.b);
 
     // An ingestion overflow must cause the owner to apply STOP, not continue.
@@ -400,6 +402,7 @@ fn pipeline_applies_gate_output_and_stops() {
     assert!(!f.process(7));
     assert!(gate.request(f.controller.motor, 7));
 
+    // SAFETY: the box leaked when the fixture was built, freed once here.
     let pins = unsafe { Box::from_raw(pins) };
     assert!(pins.a && pins.b && gate.applied_known);
     f.fault(FeedReason::FEEDBACK_STREAM);

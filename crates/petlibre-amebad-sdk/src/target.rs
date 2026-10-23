@@ -12,7 +12,8 @@ use core::ptr;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use super::{
-    AUDIO_PAGE_SAMPLES, FlashMmuEntry, GpioRouting, Irq, Isr, LpClock, TaskStep, TcpRecv,
+    AUDIO_PAGE_SAMPLES, FlashMmuEntry, GpioRouting, IR_PA_BIT, IR_PB_BIT, Irq, Isr, LpClock,
+    MOTOR_MASK, SECTOR_BYTES, STORAGE_OFFSET, STORAGE_SECTORS, SYSTICK_CTRL, TaskStep, TcpRecv,
     TransportConfig, WifiEvent, WifiPoll,
 };
 
@@ -21,7 +22,8 @@ use super::{
     non_snake_case,
     non_upper_case_globals,
     dead_code,
-    clippy::all
+    clippy::all,
+    clippy::undocumented_unsafe_blocks
 )]
 mod raw {
     include!(concat!(env!("OUT_DIR"), "/sdk.rs"));
@@ -79,6 +81,7 @@ const _: () = assert!(k::PETLIBRE_BIT_SWD_PMUX == super::SWD_PMUX_BIT);
 
 /// LP `REG_SWD_PMUX_EN`.
 pub fn swd_pinmux() -> u32 {
+    // SAFETY: a fixed register in the pinned SDK memory map.
     unsafe { ptr::read_volatile(reg(k::PETLIBRE_SYSCTRL_LP + k::PETLIBRE_REG_SWD_PMUX)) }
 }
 
@@ -88,6 +91,7 @@ pub fn swd_off() -> u32 {
     let _guard = super::IrqGuard::lock();
     let before = swd_pinmux();
 
+    // SAFETY: a fixed register in the pinned SDK memory map.
     unsafe {
         ptr::write_volatile(
             reg(k::PETLIBRE_SYSCTRL_LP + k::PETLIBRE_REG_SWD_PMUX),
@@ -105,8 +109,10 @@ const _: () = assert!(
 
 fn lp_clock_state(bit: u32) -> LpClock {
     let function =
+        // SAFETY: a fixed register in the pinned SDK memory map.
         unsafe { ptr::read_volatile(reg(k::PETLIBRE_SYSCTRL_LP + k::PETLIBRE_REG_LP_FUNC)) };
     let clock =
+        // SAFETY: a fixed register in the pinned SDK memory map.
         unsafe { ptr::read_volatile(reg(k::PETLIBRE_SYSCTRL_LP + k::PETLIBRE_REG_LP_CLOCK)) };
     LpClock {
         bit,
@@ -128,16 +134,12 @@ fn lp_clock_enable(bit: u32) -> LpClock {
     let _guard = super::IrqGuard::lock();
     let before = lp_clock_state(bit);
 
-    unsafe {
-        ptr::write_volatile(
-            reg(k::PETLIBRE_SYSCTRL_LP + k::PETLIBRE_REG_LP_CLOCK),
-            before.clock_before | bit,
-        );
-        ptr::write_volatile(
-            reg(k::PETLIBRE_SYSCTRL_LP + k::PETLIBRE_REG_LP_FUNC),
-            before.function_before | bit,
-        );
-    }
+    let clock = reg(k::PETLIBRE_SYSCTRL_LP + k::PETLIBRE_REG_LP_CLOCK);
+    let function = reg(k::PETLIBRE_SYSCTRL_LP + k::PETLIBRE_REG_LP_FUNC);
+    // SAFETY: a fixed register in the pinned SDK memory map.
+    unsafe { ptr::write_volatile(clock, before.clock_before | bit) };
+    // SAFETY: as above.
+    unsafe { ptr::write_volatile(function, before.function_before | bit) };
 
     cortex_m::asm::dsb();
     LpClock {
@@ -155,7 +157,7 @@ pub fn adc_clock_enable() -> LpClock {
     lp_clock_enable(super::ADC_ENABLE_BIT)
 }
 
-// SAFETY (module-wide): every call below is a bounded SDK/ROM routine or a
+// Every call below is a bounded SDK/ROM routine or a
 // volatile access to a fixed peripheral register in the pinned memory map;
 // callers provide the serialization the C ports documented.
 
@@ -165,6 +167,7 @@ pub fn primask() -> u32 {
 
 pub fn ipsr() -> u32 {
     let value: u32;
+    // SAFETY: reads IPSR only.
     unsafe {
         core::arch::asm!("mrs {}, IPSR", out(reg) value, options(nomem, nostack, preserves_flags))
     };
@@ -177,6 +180,7 @@ pub fn disable_irq() {
 
 pub fn set_primask(mask: u32) {
     if mask & 1 == 0 {
+        // SAFETY: unmasks only when restoring a mask the caller saved unmasked.
         unsafe { cortex_m::interrupt::enable() };
     } else {
         cortex_m::interrupt::disable();
@@ -184,11 +188,13 @@ pub fn set_primask(mask: u32) {
 }
 
 pub fn gpio_port_write(port: u32, mask: u32, value: u32) {
+    // SAFETY: the pinned SDK routine, with plain-value arguments.
     unsafe { raw::GPIO_PortWrite(port, mask, value) }
 }
 
 pub fn gpio_port_read(port: u32, mask: u32) -> u32 {
     // The pinned ROM returns the entire EXT_PORT word, ignoring its mask argument.
+    // SAFETY: the pinned SDK routine, with plain-value arguments.
     unsafe { raw::GPIO_PortRead(port, mask) & mask }
 }
 
@@ -197,12 +203,17 @@ pub fn gpio_routing() -> GpioRouting {
     let gpio_a = k::PETLIBRE_GPIOA_BASE as usize as *const raw::GPIO_TypeDef;
     let gpio_b = (k::PETLIBRE_GPIOA_BASE + 0x400) as usize as *const raw::GPIO_TypeDef;
     GpioRouting {
+        // SAFETY: a fixed register in the pinned SDK memory map.
         groups: unsafe {
             ptr::read_volatile(reg(k::PETLIBRE_SYSCTRL_LP + k::PETLIBRE_REG_GPIO_GROUPS))
         },
+        // SAFETY: a fixed register in the pinned SDK memory map.
         aon: unsafe { ptr::read_volatile(reg(k::PETLIBRE_SYSCTRL_LP + k::PETLIBRE_REG_AON_PAD)) },
+        // SAFETY: a fixed register in the pinned SDK memory map.
         control_a: unsafe { ptr::read_volatile(ptr::addr_of!((*gpio_a).PORT[0].CTRL)) },
+        // SAFETY: a fixed register in the pinned SDK memory map.
         control_b: unsafe { ptr::read_volatile(ptr::addr_of!((*gpio_b).PORT[0].CTRL)) },
+        // SAFETY: a fixed register in the pinned SDK memory map.
         share_pad: unsafe {
             ptr::read_volatile(reg(k::PETLIBRE_SYSCTRL_LP + k::PETLIBRE_REG_SHARE_PAD))
         },
@@ -213,24 +224,28 @@ pub fn gpio_routing() -> GpioRouting {
 pub fn gpio_direction(port: u32) -> u32 {
     assert!(port < 2);
     let gpio = (k::PETLIBRE_GPIOA_BASE + port * 0x400) as usize as *const raw::GPIO_TypeDef;
+    // SAFETY: a fixed register in the pinned SDK memory map.
     unsafe { ptr::read_volatile(ptr::addr_of!((*gpio).PORT[0].DDR)) }
 }
 
 pub fn gpio_output_latch(port: u32) -> u32 {
     assert!(port < 2);
     let gpio = (k::PETLIBRE_GPIOA_BASE + port * 0x400) as usize as *const raw::GPIO_TypeDef;
+    // SAFETY: a fixed register in the pinned SDK memory map.
     unsafe { ptr::read_volatile(ptr::addr_of!((*gpio).PORT[0].DR)) }
 }
 
 pub fn pad_control(pin: u32) -> u32 {
     assert!(pin < 64);
     let mux = k::PETLIBRE_PINMUX_BASE as usize as *const raw::PINMUX_TypeDef;
+    // SAFETY: a fixed register in the pinned SDK memory map.
     unsafe { ptr::read_volatile(ptr::addr_of!((*mux).PADCTR[pin as usize])) }
 }
 
 /// Remove pad pull resistors explicitly; ROM GPIO_Init skips this for outputs.
 pub fn gpio_no_pull(pin: u32) {
     assert!(pin < 64);
+    // SAFETY: the pinned SDK routine, with plain-value arguments.
     unsafe { raw::PAD_PullCtrl(pin as u8, k::PETLIBRE_GPIO_PUPD_NOPULL as u8) }
 }
 
@@ -245,66 +260,81 @@ pub fn gpio_init(pin: u32, output: bool) {
         GPIO_PuPd: k::PETLIBRE_GPIO_PUPD_NOPULL,
         ..Default::default()
     };
+    // SAFETY: the pinned SDK routine, writing only through a live local.
     unsafe { raw::GPIO_Init(&mut settings) }
 }
 
 pub fn gpio_write_bit(pin: u32, high: bool) {
+    // SAFETY: the pinned SDK routine, with plain-value arguments.
     unsafe { raw::GPIO_WriteBit(pin, u32::from(high)) }
 }
 
 pub fn gpio_read_bit(pin: u32) -> bool {
+    // SAFETY: the pinned SDK routine, with plain-value arguments.
     unsafe { raw::GPIO_ReadDataBit(pin) != 0 }
 }
 
 pub fn efuse_read8(address: u32) -> Option<u8> {
     let mut value = 0u8;
     let ok =
+        // SAFETY: the pinned SDK routine, writing only through a live local.
         unsafe { raw::EFUSERead8(0, address, &mut value, k::PETLIBRE_L25EOUTVOLTAGE as u8) } != 0;
     ok.then_some(value)
 }
 
 pub fn pad_disable(pin: u8) {
+    // SAFETY: the pinned SDK routine, with plain-value arguments.
     unsafe { raw::PAD_CMD(pin, k::PETLIBRE_DISABLE as u8) }
 }
 
 /// Initialize the ADC with an empty conversion list (manual channel select).
 pub fn adc_init_manual() {
     let mut settings = raw::ADC_InitTypeDef::default();
+    // SAFETY: the pinned SDK routine, writing only through a live local.
     unsafe { raw::ADC_StructInit(&mut settings) };
     settings.ADC_CvlistLen = 0;
+    // SAFETY: the pinned SDK routine, writing only through a live local.
     unsafe { raw::ADC_Init(&mut settings) }
 }
 
 pub fn adc_cmd(enabled: bool) {
+    // SAFETY: the pinned SDK routine, with plain-value arguments.
     unsafe { raw::ADC_Cmd(state(enabled)) }
 }
 
 pub fn adc_select(channel: u32) {
     let adc = k::PETLIBRE_ADC_BASE as usize as *mut raw::ADC_TypeDef;
+    // SAFETY: a fixed register in the pinned SDK memory map.
     unsafe { ptr::write_volatile(ptr::addr_of_mut!((*adc).ADC_CHSW_LIST[0]), channel) }
 }
 
 pub fn adc_clear_fifo() {
+    // SAFETY: the pinned SDK routine, with plain-value arguments.
     unsafe { raw::ADC_ClearFIFO() }
 }
 
 pub fn adc_sw_trigger(enabled: bool) {
+    // SAFETY: the pinned SDK routine, with plain-value arguments.
     unsafe { raw::ADC_SWTrigCmd(state(enabled)) }
 }
 
 pub fn adc_readable() -> bool {
+    // SAFETY: the pinned SDK routine, with plain-value arguments.
     unsafe { raw::ADC_Readable() != 0 }
 }
 
 pub fn adc_read() -> u16 {
+    // SAFETY: the pinned SDK routine, with plain-value arguments.
     unsafe { raw::ADC_Read() }
 }
 
 pub fn systimer_ticks() -> u32 {
+    // SAFETY: the pinned SDK routine, with plain-value arguments.
     unsafe { raw::SYSTIMER_TickGet() }
 }
 
 pub fn gtimer_clock_enable() {
+    // SAFETY: the pinned SDK routine, with plain-value arguments.
     unsafe {
         raw::RCC_PeriphClockCmd(
             k::PETLIBRE_APB_GTIMER,
@@ -315,11 +345,13 @@ pub fn gtimer_clock_enable() {
 }
 
 pub fn gpio_int_config(pin: u32, enabled: bool) {
+    // SAFETY: the pinned SDK routine, with plain-value arguments.
     unsafe { raw::GPIO_INTConfig(pin, state(enabled)) }
 }
 
 /// Both-edge, active-low, debounced interrupt mode.
 pub fn gpio_int_mode(pin: u32, enabled: bool) {
+    // SAFETY: the pinned SDK routine, with plain-value arguments.
     unsafe {
         raw::GPIO_INTMode(
             pin,
@@ -338,6 +370,7 @@ fn gpioa() -> *mut raw::GPIO_TypeDef {
 macro_rules! gpioa_read {
     ($($name:ident => $field:ident),*) => {$(
         pub fn $name() -> u32 {
+            // SAFETY: a fixed register in the pinned SDK memory map.
             unsafe { ptr::read_volatile(ptr::addr_of!((*gpioa()).$field)) }
         }
     )*};
@@ -346,10 +379,12 @@ gpioa_read!(gpioa_int_status => INT_STATUS, gpioa_int_en => INT_EN, gpioa_int_ma
     gpioa_int_bothedge => INT_BOTHEDGE);
 
 pub fn gpioa_ext_port() -> u32 {
+    // SAFETY: a fixed register in the pinned SDK memory map.
     unsafe { ptr::read_volatile(ptr::addr_of!((*gpioa()).EXT_PORT[0])) }
 }
 
 pub fn gpioa_eoi(mask: u32) {
+    // SAFETY: a fixed register in the pinned SDK memory map.
     unsafe { ptr::write_volatile(ptr::addr_of_mut!((*gpioa()).PORTA_EOI), mask) }
 }
 
@@ -370,16 +405,18 @@ pub fn panic_outputs_safe() {
     }
 
     let gpio_b = (k::PETLIBRE_GPIOA_BASE + 0x400) as usize as *mut raw::GPIO_TypeDef;
-    unsafe {
-        let a = ptr::addr_of_mut!((*gpioa()).PORT[0].DR);
-        ptr::write_volatile(
-            a,
-            (ptr::read_volatile(a) | (1 << 13) | (1 << 14)) & !(1 << 15),
-        );
+    // SAFETY: the two GPIO port blocks in the pinned SDK memory map.
+    let (a, b) = unsafe {
+        (
+            ptr::addr_of_mut!((*gpioa()).PORT[0].DR),
+            ptr::addr_of_mut!((*gpio_b).PORT[0].DR),
+        )
+    };
 
-        let b = ptr::addr_of_mut!((*gpio_b).PORT[0].DR);
-        ptr::write_volatile(b, ptr::read_volatile(b) & !(1 << 3));
-    }
+    // SAFETY: Port A's data register; interrupts are masked above.
+    unsafe { ptr::write_volatile(a, (ptr::read_volatile(a) | MOTOR_MASK) & !IR_PA_BIT) };
+    // SAFETY: Port B's data register, likewise.
+    unsafe { ptr::write_volatile(b, ptr::read_volatile(b) & !IR_PB_BIT) };
 
     cortex_m::asm::dsb();
 }
@@ -389,38 +426,46 @@ fn tim2() -> *mut raw::RTIM_TypeDef {
 }
 
 pub fn tim2_en() -> u32 {
+    // SAFETY: a fixed register in the pinned SDK memory map.
     unsafe { ptr::read_volatile(ptr::addr_of!((*tim2()).EN)) }
 }
 
 pub fn tim2_dier() -> u32 {
+    // SAFETY: a fixed register in the pinned SDK memory map.
     unsafe { ptr::read_volatile(ptr::addr_of!((*tim2()).DIER)) }
 }
 
 pub fn tim2_arr() -> u32 {
+    // SAFETY: a fixed register in the pinned SDK memory map.
     unsafe { ptr::read_volatile(ptr::addr_of!((*tim2()).ARR)) }
 }
 
 /// Overflow-updating TIM2 time base without ARR protection or SDK callback.
 pub fn tim2_init(period: u32) {
     let mut settings = raw::RTIM_TimeBaseInitTypeDef::default();
+    // SAFETY: the pinned SDK routine, writing only through a live local.
     unsafe { raw::RTIM_TimeBaseStructInit(&mut settings) };
     settings.TIM_Idx = 2;
     settings.TIM_Period = period;
     settings.TIM_UpdateEvent = k::PETLIBRE_ENABLE;
     settings.TIM_UpdateSource = k::PETLIBRE_TIM_UPDATE_OVERFLOW;
     settings.TIM_ARRProtection = k::PETLIBRE_DISABLE;
+    // SAFETY: the pinned SDK routine, writing only through a live local.
     unsafe { raw::RTIM_TimeBaseInit(tim2(), &mut settings, raw::TIMER2_IRQ, None, 0) }
 }
 
 pub fn tim2_int_config(enabled: bool) {
+    // SAFETY: the pinned SDK routine, with plain-value arguments.
     unsafe { raw::RTIM_INTConfig(tim2(), k::PETLIBRE_TIM_IT_UPDATE, state(enabled)) }
 }
 
 pub fn tim2_cmd(enabled: bool) {
+    // SAFETY: the pinned SDK routine, with plain-value arguments.
     unsafe { raw::RTIM_Cmd(tim2(), state(enabled)) }
 }
 
 pub fn tim2_int_clear() {
+    // SAFETY: the pinned SDK routine, with plain-value arguments.
     unsafe { raw::RTIM_INTClear(tim2()) }
 }
 
@@ -434,32 +479,39 @@ fn irqn(irq: Irq) -> raw::IRQn_Type {
 /// `InterruptRegister`, i.e. the SDK's inline `irq_register_check`.
 pub fn irq_register(irq: Irq, isr: Isr, priority: u32) -> bool {
     let priority = priority.min(k::PETLIBRE_MAX_IRQ_PRIORITY) << k::PETLIBRE_IRQ_PRIORITY_SHIFT;
+    // SAFETY: the pinned SDK routine, with plain-value arguments.
     unsafe { raw::irq_register(Some(isr), irqn(irq), 0, priority) != 0 }
 }
 
 pub fn irq_unregister(irq: Irq) -> bool {
+    // SAFETY: the pinned SDK routine, with plain-value arguments.
     unsafe { raw::irq_unregister(irqn(irq)) != 0 }
 }
 
 /// `InterruptEn(irq, priority)`: the SDK macro ignores the priority.
 pub fn irq_enable(irq: Irq, _priority: u32) {
+    // SAFETY: the pinned SDK routine, with plain-value arguments.
     unsafe { raw::irq_enable(irqn(irq)) }
 }
 
 pub fn irq_disable(irq: Irq) {
+    // SAFETY: the pinned SDK routine, with plain-value arguments.
     unsafe { raw::irq_disable(irqn(irq)) }
 }
 
 pub fn wakelock_acquire(id: u32) {
+    // SAFETY: the pinned SDK routine, with plain-value arguments.
     unsafe { raw::pmu_acquire_wakelock(id) }
 }
 
 pub fn wakelock_release(id: u32) {
+    // SAFETY: the pinned SDK routine, with plain-value arguments.
     unsafe { raw::pmu_release_wakelock(id) }
 }
 
 pub fn wdg_vendor() -> u32 {
     let wdg = k::PETLIBRE_WDG_BASE as usize as *const raw::WDG_TypeDef;
+    // SAFETY: a fixed register in the pinned SDK memory map.
     unsafe { ptr::read_volatile(ptr::addr_of!((*wdg).VENDOR)) }
 }
 
@@ -470,28 +522,34 @@ pub fn wdg_init(count_id: u32, divisor: u32) {
         DivFacProcess: divisor,
         RstAllPERI: 1,
     };
+    // SAFETY: the pinned SDK routine, writing only through a live local.
     unsafe { raw::WDG_Init(&mut settings) }
 }
 
 pub fn wdg_cmd(enabled: bool) {
+    // SAFETY: the pinned SDK routine, with plain-value arguments.
     unsafe { raw::WDG_Cmd(state(enabled)) }
 }
 
 pub fn wdg_refresh() {
+    // SAFETY: the pinned SDK routine, with plain-value arguments.
     unsafe { raw::WDG_Refresh() }
 }
 
 /// KM0 backup register; the SDK leaves REG1-REG5 to the user. Expected to
 /// survive a watchdog platform reset but not power loss (to be observed).
 pub fn backup_read(index: u32) -> u32 {
+    // SAFETY: the pinned SDK routine, with plain-value arguments.
     unsafe { raw::BKUP_Read(index) }
 }
 
 pub fn backup_write(index: u32, value: u32) {
+    // SAFETY: the pinned SDK routine, with plain-value arguments.
     unsafe { raw::BKUP_Write(index, value) }
 }
 
 pub fn boot_reason() -> u32 {
+    // SAFETY: the pinned SDK routine, with plain-value arguments.
     unsafe { raw::BOOT_Reason() }
 }
 
@@ -499,18 +557,10 @@ pub fn boot_reason() -> u32 {
 /// unlock calls resolve to the hook interposer. Read-only (RDID, 0x9F).
 pub fn flash_read_jedec() -> [u8; 3] {
     let mut id = [0u8; 3];
+    // SAFETY: the SDK's RAM flash read of 3 ID bytes into the live `id`.
     unsafe { raw::FLASH_RxCmdXIP(0x9f, 3, id.as_mut_ptr()) };
     id
 }
-
-/// Owner-approved replacement-firmware storage (FW15): 16 sectors at
-/// 0x340000-0x350000, blank in the research unit's backup and referenced
-/// nowhere in stock 1.1.15. Clear of bank 0, of a full-size bank 1 (ends no
-/// later than 0x306000) and of the stock settings (0x3e8000). Callers name a
-/// sector index; nothing takes a flash address.
-pub const STORAGE_OFFSET: u32 = 0x34_0000;
-pub const STORAGE_SECTORS: u32 = 16;
-pub const SECTOR_BYTES: u32 = 0x1000;
 
 const _: () = assert!(
     STORAGE_OFFSET.is_multiple_of(SECTOR_BYTES)
@@ -532,6 +582,7 @@ pub fn storage_erase(sector: u32) -> bool {
     let Some(address) = storage_span(sector, 0, SECTOR_BYTES as usize) else {
         return false;
     };
+    // SAFETY: the SDK's RAM flash routine, inside the span checked above; the page buffer is live.
     unsafe { raw::FLASH_EraseXIP(k::PETLIBRE_ERASE_SECTOR, address) };
     true
 }
@@ -553,6 +604,7 @@ pub fn storage_program(sector: u32, offset: u32, data: &[u8]) -> bool {
         let mut page = [0u8; 256];
         page[..chunk].copy_from_slice(&data[done..done + chunk]);
         let address = STORAGE_OFFSET + sector * SECTOR_BYTES + at;
+        // SAFETY: the SDK's RAM flash routine, inside the span checked above; the page buffer is live.
         unsafe { raw::FLASH_TxData256BXIP(address, chunk as u32, page.as_mut_ptr()) };
         done += chunk;
     }
@@ -573,6 +625,7 @@ pub fn bank1_erase(sector: u32) -> bool {
     let Some(address) = bank1_span(sector, 0, SECTOR_BYTES as usize) else {
         return false;
     };
+    // SAFETY: the SDK's RAM flash routine, inside the span checked above; the page buffer is live.
     unsafe { raw::FLASH_EraseXIP(k::PETLIBRE_ERASE_SECTOR, address) };
     true
 }
@@ -593,6 +646,7 @@ pub fn bank1_program(sector: u32, offset: u32, data: &[u8]) -> bool {
         let chunk = (256 - (at % 256) as usize).min(data.len() - done);
         let mut page = [0u8; 256];
         page[..chunk].copy_from_slice(&data[done..done + chunk]);
+        // SAFETY: the SDK's RAM flash routine, inside the span checked above; the page buffer is live.
         unsafe { raw::FLASH_TxData256BXIP(at, chunk as u32, page.as_mut_ptr()) };
         done += chunk;
     }
@@ -606,6 +660,7 @@ pub fn bank1_read(sector: u32, offset: u32, bytes: &mut [u8]) -> bool {
     };
     let base = k::PETLIBRE_SPI_FLASH_BASE + address;
     for (i, byte) in bytes.iter_mut().enumerate() {
+        // SAFETY: inside the memory-mapped flash window, at an offset checked above.
         *byte = unsafe { ptr::read_volatile((base as usize + i) as *const u8) };
     }
     true
@@ -621,6 +676,7 @@ pub fn bank1_give_way() -> bool {
         let mut out = [0u8; 8];
         for (i, byte) in out.iter_mut().enumerate() {
             let at = k::PETLIBRE_SPI_FLASH_BASE + offset + i as u32;
+            // SAFETY: inside the memory-mapped flash window, at an offset checked above.
             *byte = unsafe { ptr::read_volatile(at as usize as *const u8) };
         }
         out
@@ -635,6 +691,7 @@ pub fn bank1_give_way() -> bool {
     }
 
     let mut word = [0x00, bank1[1], bank1[2], bank1[3]];
+    // SAFETY: the SDK's RAM flash routine on bank 1's first word, checked above; `word` is live.
     unsafe { raw::FLASH_TxData256BXIP(super::BANK1_OFFSET, 4, word.as_mut_ptr()) };
     read(super::BANK1_OFFSET)[0] == 0
 }
@@ -647,6 +704,7 @@ pub fn storage_read(sector: u32, offset: u32, bytes: &mut [u8]) -> bool {
     };
     let base = k::PETLIBRE_SPI_FLASH_BASE + address;
     for (i, byte) in bytes.iter_mut().enumerate() {
+        // SAFETY: inside the memory-mapped flash window, at an offset checked above.
         *byte = unsafe { ptr::read_volatile((base as usize + i) as *const u8) };
     }
     true
@@ -659,20 +717,22 @@ pub fn storage_read(sector: u32, offset: u32, bytes: &mut [u8]) -> bool {
 pub fn ram_outputs_safe() {
     let port_a = k::PETLIBRE_GPIOA_BASE as usize as *mut raw::GPIO_TypeDef;
     let port_b = (k::PETLIBRE_GPIOA_BASE + 0x400) as usize as *mut raw::GPIO_TypeDef;
+    // SAFETY: a fixed register in the pinned SDK memory map.
     unsafe {
         let a = ptr::addr_of_mut!((*port_a).PORT[0].DR);
         let b = ptr::addr_of_mut!((*port_b).PORT[0].DR);
         // Separate volatile read-modify-writes (motor STOP first) keep the
         // audited RAM code to plain loads, ORR/BIC and stores.
-        ptr::write_volatile(a, ptr::read_volatile(a) | (1 << 13) | (1 << 14));
-        ptr::write_volatile(a, ptr::read_volatile(a) & !(1 << 15));
-        ptr::write_volatile(b, ptr::read_volatile(b) & !(1 << 3));
+        ptr::write_volatile(a, ptr::read_volatile(a) | MOTOR_MASK);
+        ptr::write_volatile(a, ptr::read_volatile(a) & !IR_PA_BIT);
+        ptr::write_volatile(b, ptr::read_volatile(b) & !IR_PB_BIT);
         core::arch::asm!("dsb", options(nostack, preserves_flags));
     }
 }
 
 /// KM4 IPC block: current interrupt enables (IER_R) and status (ISR).
 pub fn ipc_interrupts() -> (u32, u32) {
+    // SAFETY: a fixed register in the pinned SDK memory map.
     unsafe {
         (
             ptr::read_volatile(reg(0x4000_601c)),
@@ -683,11 +743,13 @@ pub fn ipc_interrupts() -> (u32, u32) {
 
 /// SysTick CTRL; a lease stops it while the peer is parked.
 pub fn systick_ctrl() -> u32 {
-    unsafe { ptr::read_volatile(reg(0xe000_e010)) }
+    // SAFETY: a fixed register in the pinned SDK memory map.
+    unsafe { ptr::read_volatile(reg(SYSTICK_CTRL)) }
 }
 
 pub fn set_systick_ctrl(value: u32) {
-    unsafe { ptr::write_volatile(reg(0xe000_e010), value) }
+    // SAFETY: a fixed register in the pinned SDK memory map.
+    unsafe { ptr::write_volatile(reg(SYSTICK_CTRL), value) }
 }
 
 /// One busy-wait iteration with interrupts left as they are.
@@ -696,6 +758,7 @@ pub fn spin_once() {
 }
 
 pub fn hs_platform_para() -> u32 {
+    // SAFETY: a fixed register in the pinned SDK memory map.
     unsafe {
         ptr::read_volatile(reg(
             k::PETLIBRE_SYSCTRL_HP + k::PETLIBRE_REG_HS_PLATFORM_PARA
@@ -704,6 +767,7 @@ pub fn hs_platform_para() -> u32 {
 }
 
 pub fn set_hs_platform_para(value: u32) {
+    // SAFETY: a fixed register in the pinned SDK memory map.
     unsafe {
         ptr::write_volatile(
             reg(k::PETLIBRE_SYSCTRL_HP + k::PETLIBRE_REG_HS_PLATFORM_PARA),
@@ -713,10 +777,12 @@ pub fn set_hs_platform_para(value: u32) {
 }
 
 pub fn lp_km0_ctrl() -> u32 {
+    // SAFETY: a fixed register in the pinned SDK memory map.
     unsafe { ptr::read_volatile(reg(k::PETLIBRE_SYSCTRL_LP + k::PETLIBRE_REG_LP_KM0_CTRL)) }
 }
 
 pub fn set_lp_km0_ctrl(value: u32) {
+    // SAFETY: a fixed register in the pinned SDK memory map.
     unsafe {
         ptr::write_volatile(
             reg(k::PETLIBRE_SYSCTRL_LP + k::PETLIBRE_REG_LP_KM0_CTRL),
@@ -731,35 +797,47 @@ struct TaskSlot {
     context: core::cell::UnsafeCell<*mut c_void>,
 }
 
-// SAFETY: a slot's cells are written only by the claimant before task creation.
+// SAFETY: a slot's cells are written only by its claimant, before the task
+// that reads them exists; the context pointer they carry crosses to that task
+// under `task_create`'s contract.
 unsafe impl Sync for TaskSlot {}
 
-const EMPTY: TaskSlot = TaskSlot {
-    claimed: AtomicBool::new(false),
-    step: core::cell::UnsafeCell::new(None),
-    context: core::cell::UnsafeCell::new(ptr::null_mut()),
-};
-static TASKS: [TaskSlot; 8] = [EMPTY; 8];
+static TASKS: [TaskSlot; 8] = [const {
+    TaskSlot {
+        claimed: AtomicBool::new(false),
+        step: core::cell::UnsafeCell::new(None),
+        context: core::cell::UnsafeCell::new(ptr::null_mut()),
+    }
+}; 8];
 
 unsafe extern "C" fn trampoline(argument: *mut c_void) {
+    // SAFETY: `argument` is the static `TaskSlot` that `task_create` passed.
     let slot = unsafe { &*argument.cast::<TaskSlot>() };
+    // SAFETY: the claimant filled both cells before creating this task, and nothing writes them until it ends.
     let (step, context) = unsafe { ((*slot.step.get()).unwrap_unchecked(), *slot.context.get()) };
 
     loop {
+        // SAFETY: `task_create`'s contract for `step` and `context`.
         let delay = unsafe { step(context) };
         if delay == 0 {
             break;
         }
         // configTICK_RATE_HZ is 1000, so pdMS_TO_TICKS(ms) == ms.
+        // SAFETY: the pinned SDK routine, with plain-value arguments.
         unsafe { raw::vTaskDelay(delay) };
     }
 
     slot.claimed.store(false, Ordering::Release);
+    // SAFETY: the pinned SDK routine, with plain-value arguments.
     unsafe { raw::vTaskDelete(ptr::null_mut()) }
 }
 
 /// Create a FreeRTOS task that repeatedly runs `step` until it returns zero.
-pub fn task_create(
+///
+/// # Safety
+/// `step` must be sound to call with `context`, again and again, from the
+/// new task until it returns zero; `context` stays valid for that long.
+pub unsafe fn task_create(
     name: &'static CStr,
     stack_words: u16,
     priority: u32,
@@ -774,11 +852,13 @@ pub fn task_create(
         return false;
     };
 
+    // SAFETY: the compare-exchange above claimed the slot, so only this call writes it until the task ends.
     unsafe {
         *slot.step.get() = Some(step);
         *slot.context.get() = context;
     }
 
+    // SAFETY: the pinned SDK routine; `name` is static and the argument is a static slot.
     let created = unsafe {
         raw::xTaskCreate(
             Some(trampoline),
@@ -804,11 +884,13 @@ unsafe extern "C" {
 /// Start the KM4 Wi-Fi shim's task (join and keep the configured network);
 /// true once, when the task was created.
 pub fn wifi_start() -> bool {
+    // SAFETY: the C shim in `example_entry.c`; any buffer is live for the call.
     unsafe { petlibre_wifi_start() != 0 }
 }
 
 pub fn wifi_event(seq: u32) -> WifiPoll {
     let mut event = WifiEvent::default();
+    // SAFETY: the C shim in `example_entry.c`; any buffer is live for the call.
     match unsafe { petlibre_wifi_event(seq, &mut event) } {
         1 => WifiPoll::Event(event),
         0 => WifiPoll::Pending,
@@ -854,6 +936,7 @@ pub fn transport_config() -> Option<TransportConfig> {
         request_key: ptr::null(),
     };
 
+    // SAFETY: the C shim in `example_entry.c`; any buffer is live for the call.
     unsafe { petlibre_transport_config(&mut raw) };
 
     // SAFETY: the shim returns pointers to NUL-terminated string literals.
@@ -905,12 +988,14 @@ unsafe extern "C" {
 /// at `rate_hz` (8, 16, 32 or 48 kHz); false for another rate, when already
 /// open or when no DMA channel was free.
 pub fn audio_open(rate_hz: u32) -> bool {
+    // SAFETY: the C shim in `example_entry.c`; any buffer is live for the call.
     unsafe { petlibre_audio_open(rate_hz) != 0 }
 }
 
 /// The next free ring page, while the codec is open and the DMA does not
 /// own every page. Fill it, then [`audio_submit`]; one page at a time.
 pub fn audio_page() -> Option<&'static mut [i16; AUDIO_PAGE_SAMPLES]> {
+    // SAFETY: the C shim in `example_entry.c`; any buffer is live for the call.
     let page = unsafe { petlibre_audio_page() };
     // SAFETY: a 32-byte-aligned ring page of `AUDIO_PAGE_SAMPLES` samples the
     // DMA does not own until `audio_submit`.
@@ -918,20 +1003,24 @@ pub fn audio_page() -> Option<&'static mut [i16; AUDIO_PAGE_SAMPLES]> {
 }
 
 pub fn audio_submit() {
+    // SAFETY: the C shim in `example_entry.c`; any buffer is live for the call.
     unsafe { petlibre_audio_submit() }
 }
 
 /// Every submitted page has played.
 pub fn audio_drained() -> bool {
+    // SAFETY: the C shim in `example_entry.c`; any buffer is live for the call.
     unsafe { petlibre_audio_drained() != 0 }
 }
 
 /// Zero pages played for want of a filled one since the open.
 pub fn audio_underruns() -> u32 {
+    // SAFETY: the C shim in `example_entry.c`; any buffer is live for the call.
     unsafe { petlibre_audio_underruns_seen() }
 }
 
 pub fn audio_close() {
+    // SAFETY: the C shim in `example_entry.c`; any buffer is live for the call.
     unsafe { petlibre_audio_close() }
 }
 
@@ -940,22 +1029,27 @@ pub fn audio_close() {
 /// Not a vetted RNG; the nonce only has to differ between sessions.
 pub fn entropy() -> [u32; 4] {
     let mut out = [0; 4];
+    // SAFETY: the C shim in `example_entry.c`; any buffer is live for the call.
     unsafe { petlibre_entropy(&mut out) };
     out
 }
 
 /// A connected TCP socket, or `None` after `timeout_ms`.
 pub fn tcp_connect(ip: u32, port: u16, timeout_ms: u32) -> Option<i32> {
+    // SAFETY: the C shim in `example_entry.c`; any buffer is live for the call.
     let socket = unsafe { petlibre_tcp_connect(ip, u32::from(port), timeout_ms) };
     (socket >= 0).then_some(socket)
 }
 
 /// Send all of `data`; false on error or a stalled peer.
+#[must_use]
 pub fn tcp_send(socket: i32, data: &[u8]) -> bool {
+    // SAFETY: the C shim in `example_entry.c`; any buffer is live for the call.
     unsafe { petlibre_tcp_send(socket, data.as_ptr(), data.len() as u32) == 0 }
 }
 
 pub fn tcp_recv(socket: i32, buffer: &mut [u8], timeout_ms: u32) -> TcpRecv {
+    // SAFETY: the C shim in `example_entry.c`; any buffer is live for the call.
     match unsafe { petlibre_tcp_recv(socket, buffer.as_mut_ptr(), buffer.len() as u32, timeout_ms) }
     {
         0 => TcpRecv::Timeout,
@@ -965,23 +1059,27 @@ pub fn tcp_recv(socket: i32, buffer: &mut [u8], timeout_ms: u32) -> TcpRecv {
 }
 
 pub fn tcp_close(socket: i32) {
+    // SAFETY: the C shim in `example_entry.c`; any buffer is live for the call.
     unsafe { petlibre_tcp_close(socket) }
 }
 
 /// A listening socket on `port`, or `None`.
 pub fn tcp_listen(port: u16) -> Option<i32> {
+    // SAFETY: the C shim in `example_entry.c`; any buffer is live for the call.
     let socket = unsafe { petlibre_tcp_listen(u32::from(port)) };
     (socket >= 0).then_some(socket)
 }
 
 /// A connection accepted within `timeout_ms`, or `None`.
 pub fn tcp_accept(listener: i32, timeout_ms: u32) -> Option<i32> {
+    // SAFETY: the C shim in `example_entry.c`; any buffer is live for the call.
     let socket = unsafe { petlibre_tcp_accept(listener, timeout_ms) };
     (socket >= 0).then_some(socket)
 }
 
 /// Milliseconds since the scheduler started (configTICK_RATE_HZ is 1000).
 pub fn uptime_ms() -> u32 {
+    // SAFETY: the pinned SDK routine, with plain-value arguments.
     unsafe { raw::xTaskGetTickCount() }
 }
 
@@ -990,12 +1088,16 @@ pub fn uptime_ms() -> u32 {
 /// starts, or from an interrupt, it prints directly.
 pub fn log(message: &CStr) {
     let task = ipsr() == 0
+        // SAFETY: the pinned SDK routine, with plain-value arguments.
         && unsafe { raw::xTaskGetSchedulerState() } == k::PETLIBRE_SCHEDULER_RUNNING as _;
     if task {
+        // SAFETY: the pinned SDK routine, with plain-value arguments.
         unsafe { raw::vTaskSuspendAll() };
     }
+    // SAFETY: a NUL-terminated format and string.
     unsafe { raw::_rtl_printf(c"%s".as_ptr(), message.as_ptr()) };
     if task {
+        // SAFETY: the pinned SDK routine, with plain-value arguments.
         unsafe { raw::xTaskResumeAll() };
     }
 }

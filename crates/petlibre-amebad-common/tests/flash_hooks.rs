@@ -85,16 +85,17 @@ impl HookCpu for Fake {
     fn cells() -> HookCells {
         STATE.with(|s| {
             let s = ptr::from_mut(&mut **s.borrow_mut());
-            // SAFETY: the boxed state lives for the thread.
+            // SAFETY: the boxed state lives for the thread, and only the
+            // interposer under test touches it.
             unsafe {
                 HookCells {
-                    transport: &raw mut (*s).transport,
-                    ticket: &raw mut (*s).ticket,
-                    last_id: &raw mut (*s).last_id,
-                    armed: &raw mut (*s).armed,
-                    faulted: &raw mut (*s).faulted,
-                    legacy_locked: &raw mut (*s).legacy_locked,
-                    lease_held: &raw mut (*s).lease_held,
+                    transport: RamCell::new(&raw mut (*s).transport),
+                    ticket: RamCell::new(&raw mut (*s).ticket),
+                    last_id: RamCell::new(&raw mut (*s).last_id),
+                    armed: RamCell::new(&raw mut (*s).armed),
+                    faulted: RamCell::new(&raw mut (*s).faulted),
+                    legacy_locked: RamCell::new(&raw mut (*s).legacy_locked),
+                    lease_held: RamCell::new(&raw mut (*s).lease_held),
                 }
             }
         })
@@ -183,6 +184,7 @@ unsafe extern "C-unwind" fn provider_acquire(
         assert!(m(|m| m.irq_mask == 0 && m.systick == 7));
     }
 
+    // SAFETY: the interposer passes its private ticket, live for the call.
     let ticket = unsafe { &mut *ticket };
     let (id, now) = m(|m| {
         m.irq_mask = 1;
@@ -245,6 +247,7 @@ unsafe extern "C-unwind" fn provider_release(
 ) -> bool {
     assert!(context == authority_ptr());
     assert!(m(|m| m.irq_mask == 1 && m.systick == 0 && m.ipsr == 0));
+    // SAFETY: the interposer passes its private ticket, live for the call.
     assert_eq!(unsafe { (*ticket).id }, authority(|a| a.token.lease));
 
     let (bad, now) = m(|m| {
@@ -342,7 +345,8 @@ fn reset() {
 }
 
 fn install_provider(p: &HookProvider) -> bool {
-    install::<Fake>(p)
+    // SAFETY: a live reference.
+    unsafe { install::<Fake>(p) }
 }
 
 /// Run `f`, which must halt in RAM rather than return.
@@ -405,7 +409,8 @@ fn installation_requires_complete_provider_and_task_context() {
             &raw const p
         };
 
-        assert!(!install::<Fake>(target));
+        // SAFETY: null or the live local provider.
+        assert!(!unsafe { install::<Fake>(target) });
         assert!(!armed::<Fake>() && m(|m| m.ready_calls) == 0);
     }
 }

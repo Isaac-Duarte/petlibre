@@ -8,6 +8,7 @@
 //! rather than retrying, and [`Provider::failure`] keeps the first step that
 //! failed for the report.
 
+use petlibre_core::c_enum;
 use petlibre_core::flash_coord::{
     FlashCoord, FlashFault, FlashParty, FlashPhase, FlashReply, FlashToken,
 };
@@ -133,8 +134,10 @@ impl Provider {
         sdk::set_systick_ctrl(systick & !park::SYSTICK_CONTROL_BITS);
         let begin_at = sdk::systimer_ticks();
         let ram_token = park_token(&token);
-        let acked =
-            park::ram_owner_begin::<M>(&ram_token, PARK_CHANNEL, EXCHANGE_TICKS, EXCHANGE_POLLS);
+        // SAFETY: `ram_token` is a live local.
+        let acked = unsafe {
+            park::ram_owner_begin::<M>(&ram_token, PARK_CHANNEL, EXCHANGE_TICKS, EXCHANGE_POLLS)
+        };
         let acked_at = sdk::systimer_ticks();
         if !acked {
             return self.fail(LeaseStage::BEGIN, FlashReply::FAILED);
@@ -177,8 +180,10 @@ impl Provider {
 
         let ram_token = park_token(&token);
         let end_at = sdk::systimer_ticks();
-        let ended =
-            park::ram_owner_end::<M>(&ram_token, PARK_CHANNEL, EXCHANGE_TICKS, EXCHANGE_POLLS);
+        // SAFETY: `ram_token` is a live local.
+        let ended = unsafe {
+            park::ram_owner_end::<M>(&ram_token, PARK_CHANNEL, EXCHANGE_TICKS, EXCHANGE_POLLS)
+        };
         let released_at = sdk::systimer_ticks();
         if !ended {
             return self.fail(LeaseStage::END, FlashReply::FAILED);

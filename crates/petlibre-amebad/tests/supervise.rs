@@ -93,3 +93,18 @@ fn a_trial_image_must_confirm_before_the_deadline() {
         ..trial
     }));
 }
+
+/// The app stores the state in an `AtomicU8` and prints the raw code.
+#[test]
+fn startup_codes_round_trip() {
+    for (state, code) in [
+        (Startup::Running, 0),
+        (Startup::Started, 1),
+        (Startup::Failed, 2),
+    ] {
+        assert_eq!(state.code(), code);
+        assert_eq!(Startup::from_code(code), state);
+    }
+    assert_eq!(Startup::from_code(3), Startup::Failed);
+    assert_eq!(Startup::from_code(u8::MAX), Startup::Failed);
+}

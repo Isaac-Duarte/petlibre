@@ -74,21 +74,80 @@ pub enum Record {
         ok: bool,
     },
     Closed {
-        reason: &'static str,
+        reason: CloseReason,
     },
 }
 
-fn fault_name(fault: Fault) -> &'static str {
-    match fault {
-        Fault::Refused(_) => "refused",
-        Fault::SubscribeRefused(_) => "subscribe_refused",
-        Fault::Protocol(mqtt::Error::TooLong) => "protocol_too_long",
-        Fault::Protocol(mqtt::Error::Malformed) => "protocol_malformed",
-        Fault::Protocol(mqtt::Error::Unexpected) => "protocol_unexpected",
-        Fault::OutOfOrder => "out_of_order",
-        Fault::ReplyTimeout => "reply_timeout",
-        Fault::Silence => "silence",
-        Fault::ForeignTopic => "foreign_topic",
+/// Why a session closed (`closed reason=`), also the health message's
+/// `last_error`. Written out rather than with `petlibre_core::named_enum!`:
+/// the FW08 isolation check lets this module name only its allowed paths.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CloseReason {
+    Wifi,
+    Closed,
+    Send,
+    Refused,
+    SubscribeRefused,
+    ProtocolTooLong,
+    ProtocolMalformed,
+    ProtocolUnexpected,
+    OutOfOrder,
+    ReplyTimeout,
+    Silence,
+    ForeignTopic,
+    HealthFormat,
+}
+
+impl CloseReason {
+    /// Every variant, in declaration order.
+    pub const ALL: &'static [Self] = &[
+        Self::Wifi,
+        Self::Closed,
+        Self::Send,
+        Self::Refused,
+        Self::SubscribeRefused,
+        Self::ProtocolTooLong,
+        Self::ProtocolMalformed,
+        Self::ProtocolUnexpected,
+        Self::OutOfOrder,
+        Self::ReplyTimeout,
+        Self::Silence,
+        Self::ForeignTopic,
+        Self::HealthFormat,
+    ];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Wifi => "wifi",
+            Self::Closed => "closed",
+            Self::Send => "send",
+            Self::Refused => "refused",
+            Self::SubscribeRefused => "subscribe_refused",
+            Self::ProtocolTooLong => "protocol_too_long",
+            Self::ProtocolMalformed => "protocol_malformed",
+            Self::ProtocolUnexpected => "protocol_unexpected",
+            Self::OutOfOrder => "out_of_order",
+            Self::ReplyTimeout => "reply_timeout",
+            Self::Silence => "silence",
+            Self::ForeignTopic => "foreign_topic",
+            Self::HealthFormat => "health_format",
+        }
+    }
+}
+
+impl From<Fault> for CloseReason {
+    fn from(fault: Fault) -> Self {
+        match fault {
+            Fault::Refused(_) => Self::Refused,
+            Fault::SubscribeRefused(_) => Self::SubscribeRefused,
+            Fault::Protocol(mqtt::Error::TooLong) => Self::ProtocolTooLong,
+            Fault::Protocol(mqtt::Error::Malformed) => Self::ProtocolMalformed,
+            Fault::Protocol(mqtt::Error::Unexpected) => Self::ProtocolUnexpected,
+            Fault::OutOfOrder => Self::OutOfOrder,
+            Fault::ReplyTimeout => Self::ReplyTimeout,
+            Fault::Silence => Self::Silence,
+            Fault::ForeignTopic => Self::ForeignTopic,
+        }
     }
 }
 
@@ -173,7 +232,7 @@ impl Link {
             .as_ref()
             .is_some_and(|o| o.generation != wifi.generation)
         {
-            self.close("wifi", log);
+            self.close(CloseReason::Wifi, log);
             return IDLE_MS;
         }
 
@@ -182,7 +241,7 @@ impl Link {
             TcpRecv::Data(n) => self.rx_len += n,
             TcpRecv::Timeout => {}
             TcpRecv::Closed => {
-                self.close("closed", log);
+                self.close(CloseReason::Closed, log);
                 return IDLE_MS;
             }
         }
@@ -204,12 +263,12 @@ impl Link {
                 let ok =
                     mqtt::encode_pingreq(&mut out).is_ok_and(|n| sdk::tcp_send(socket, &out[..n]));
                 if !ok {
-                    self.close("send", log);
+                    self.close(CloseReason::Send, log);
                     return IDLE_MS;
                 }
             }
             Tick::Closed(fault) => {
-                self.close(fault_name(fault), log);
+                self.close(fault.into(), log);
                 return IDLE_MS;
             }
         }
@@ -288,7 +347,7 @@ impl Link {
 
         self.rx_len = 0;
         if !sent {
-            self.close("send", log);
+            self.close(CloseReason::Send, log);
         }
         1
     }
@@ -329,7 +388,7 @@ impl Link {
             let used = match mqtt::decode(&self.rx[..self.rx_len]) {
                 Ok(None) => {
                     if self.rx_len == self.rx.len() {
-                        self.close("protocol_too_long", log);
+                        self.close(CloseReason::ProtocolTooLong, log);
                         return false;
                     }
                     return true;
@@ -340,7 +399,7 @@ impl Link {
                         Some(open) => open.session.on_error(error),
                         None => return false,
                     };
-                    self.close(fault_name(fault), log);
+                    self.close(fault.into(), log);
                     return false;
                 }
             };
@@ -350,7 +409,7 @@ impl Link {
             self.rx.copy_within(used..self.rx_len, 0);
             self.rx_len -= used;
             let Ok(Some((packet, _))) = mqtt::decode(&frame[..used]) else {
-                self.close("protocol_malformed", log);
+                self.close(CloseReason::ProtocolMalformed, log);
                 return false;
             };
             if !self.handle(packet, log) {
@@ -377,7 +436,7 @@ impl Link {
                     .subscribe(now, &mut out, request.as_str())
                     .is_ok_and(|n| sdk::tcp_send(socket, &out[..n]));
                 if !ok {
-                    self.close("send", log);
+                    self.close(CloseReason::Send, log);
                     return false;
                 }
                 true
@@ -397,11 +456,11 @@ impl Link {
             // This driver never subscribes a data topic (only the recovery
             // role's updater does), so these cannot arrive here.
             Event::DataReady | Event::Data(_) => {
-                self.close("out_of_order", log);
+                self.close(CloseReason::OutOfOrder, log);
                 false
             }
             Event::Closed(fault) => {
-                self.close(fault_name(fault), log);
+                self.close(fault.into(), log);
                 false
             }
         }
@@ -508,7 +567,7 @@ impl Link {
 
         let len = writer.len();
         if !self.send_publish("reply", &body[..len]) {
-            self.close("send", log);
+            self.close(CloseReason::Send, log);
             return false;
         }
 
@@ -525,13 +584,13 @@ impl Link {
         let mut writer = Buffer::new(&mut body);
         let snapshot = health::snapshot(self.boot, self.counters, true);
         if snapshot.write(&mut writer).is_err() {
-            self.close("health_format", log);
+            self.close(CloseReason::HealthFormat, log);
             return false;
         }
 
         let len = writer.len();
         if !self.send_publish("health", &body[..len]) {
-            self.close("send", log);
+            self.close(CloseReason::Send, log);
             return false;
         }
 
@@ -564,12 +623,12 @@ impl Link {
 
     /// Every close is a failure, so no DISCONNECT is sent: the broker then
     /// publishes the will and the server sees the feeder offline.
-    fn close(&mut self, reason: &'static str, log: &mut impl FnMut(Record)) {
+    fn close(&mut self, reason: CloseReason, log: &mut impl FnMut(Record)) {
         if let Some(open) = self.open.take() {
             sdk::tcp_close(open.socket);
         }
         self.rx_len = 0;
-        self.counters.last_error = Some(reason);
+        self.counters.last_error = Some(reason.as_str());
         log(Record::Closed { reason });
         self.back_off();
     }
@@ -619,6 +678,6 @@ pub fn describe(record: Record, out: &mut impl Write) -> core::fmt::Result {
             };
             write!(out, "request op={kind} ok={}", u8::from(ok))
         }
-        Record::Closed { reason } => write!(out, "closed reason={reason}"),
+        Record::Closed { reason } => write!(out, "closed reason={}", reason.as_str()),
     }
 }

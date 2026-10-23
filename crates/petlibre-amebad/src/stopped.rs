@@ -11,9 +11,8 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use crate::board::MOTOR_MASK;
 use crate::sdk::{self, IrqGuard};
 
-pub const PA_MASK: u32 = MOTOR_MASK | (1 << 15);
-pub const PB_MASK: u32 = 1 << 3;
-const IR_A_MASK: u32 = 1 << 15;
+pub const PA_MASK: u32 = MOTOR_MASK | sdk::IR_PA_BIT;
+pub const PB_MASK: u32 = sdk::IR_PB_BIT;
 
 /// Emitters the FW13 probe holds on under an armed supervisor budget: bit 0
 /// PA15, bit 1 PB3. Written only by that probe; read by health.
@@ -63,11 +62,11 @@ impl Snapshot {
     /// as supervised. Never true with none published.
     pub fn sensing(self) -> bool {
         let emitters = SUPERVISED.load(Ordering::Acquire);
-        let a = if emitters & 1 != 0 { IR_A_MASK } else { 0 };
+        let a = if emitters & 1 != 0 { sdk::IR_PA_BIT } else { 0 };
         let b = if emitters & 2 != 0 { PB_MASK } else { 0 };
         emitters != 0
             && self.motor_verified()
-            && self.pa & IR_A_MASK == a
+            && self.pa & sdk::IR_PA_BIT == a
             && self.latch_a == a
             && self.pb == b
             && self.latch_b == b
@@ -82,7 +81,7 @@ pub fn observe() -> Snapshot {
         pb: sdk::gpio_port_read(1, PB_MASK) & PB_MASK,
         dira: sdk::gpio_direction(0) & PA_MASK,
         dirb: sdk::gpio_direction(1) & PB_MASK,
-        latch_a: sdk::gpio_output_latch(0) & IR_A_MASK,
+        latch_a: sdk::gpio_output_latch(0) & sdk::IR_PA_BIT,
         latch_b: sdk::gpio_output_latch(1) & PB_MASK,
         swd: sdk::swd_pinmux(),
     }

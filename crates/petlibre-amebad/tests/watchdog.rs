@@ -271,18 +271,22 @@ fn flash_hold_cannot_refresh_or_extend_progress() {
     assert!(w.open(&CONFIG));
 
     fake::advance(64, false);
+    // SAFETY: null or a live coordinator.
     assert!(!unsafe { w.checkpoint_if_ready(1, core::ptr::null()) });
+    // SAFETY: null or a live coordinator.
     assert!(unsafe { w.checkpoint_if_ready(1, &*c) });
     assert!(hw(|h| h.watchdog_refreshes) == 1 && w.progress_at == 2);
 
     assert_eq!(c.request(FlashParty::PEER, 29, 1, 0), FlashReply::ACCEPTED);
     for n in 2..51 {
         fake::advance(32, false);
+        // SAFETY: null or a live coordinator.
         assert!(unsafe { w.checkpoint_if_ready(n, &*c) });
         assert!(w.progress == 1 && w.progress_at == 2 && hw(|h| h.watchdog_refreshes) == 1);
     }
 
     fake::advance(32, false);
+    // SAFETY: null or a live coordinator.
     assert!(!unsafe { w.checkpoint_if_ready(51, &*c) });
     assert!(w.fault == WatchdogFault::PROGRESS && hw(|h| h.watchdog_refreshes) == 1);
     close_port(&mut w);

@@ -8,6 +8,7 @@
 use core::ffi::c_void;
 use core::ptr::{self, addr_of};
 
+use petlibre_core::HALF_RANGE;
 use petlibre_core::adc_scale::{AdcCalibration, MAX_RAW, SAMPLES};
 use petlibre_core::feed_controller::MotorCommand;
 use petlibre_core::flash_coord::FlashCoord;
@@ -16,7 +17,7 @@ use petlibre_core::sensor_inputs::SensorReading;
 
 use crate::sdk::{self, GPIO_PORT_A, IrqGuard};
 
-pub const MOTOR_MASK: u32 = (1 << 13) | (1 << 14);
+pub use crate::sdk::MOTOR_MASK;
 const SENSOR_MASK: u32 = (1 << 16) | (1 << 17) | (1 << 19);
 const OPTICS: [u32; 2] = [15, 35];
 
@@ -108,7 +109,7 @@ unsafe extern "C" fn motor_pair(context: *mut c_void, a: bool, b: bool) -> bool 
         return false;
     }
 
-    let value = if a { 1 << 13 } else { 0 } | if b { 1 << 14 } else { 0 };
+    let value = if a { sdk::MOTOR_A_BIT } else { 0 } | if b { sdk::MOTOR_B_BIT } else { 0 };
     sdk::gpio_port_write(GPIO_PORT_A, MOTOR_MASK, value);
     let verified = sdk::gpio_port_read(GPIO_PORT_A, MOTOR_MASK) & MOTOR_MASK == value;
     drop(guard);
@@ -189,7 +190,7 @@ impl Board {
     /// Motor STOP and emitters OFF only: no sensor inputs, efuse or ADC, so
     /// `capture` refuses. For supervision checks with motion disabled.
     pub fn open_outputs(&mut self, deadtime_ms: u32, lease_ms: u32, now_ms: u32) -> bool {
-        if deadtime_ms == 0 || lease_ms <= deadtime_ms || lease_ms >= 0x8000_0000 {
+        if deadtime_ms == 0 || lease_ms <= deadtime_ms || lease_ms >= HALF_RANGE {
             return false;
         }
 

@@ -34,6 +34,27 @@ pub enum Startup {
     Failed,
 }
 
+impl Startup {
+    /// The state as the app's `AtomicU8` holds it (and its `PLSUP1` lines
+    /// print it).
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::Running => 0,
+            Self::Started => 1,
+            Self::Failed => 2,
+        }
+    }
+
+    /// The inverse of `code`; anything else reads as a failure.
+    pub const fn from_code(code: u8) -> Self {
+        match code {
+            0 => Self::Running,
+            1 => Self::Started,
+            _ => Self::Failed,
+        }
+    }
+}
+
 /// One feeder tick's view of the system.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Inputs {

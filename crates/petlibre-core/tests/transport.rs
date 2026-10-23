@@ -1072,3 +1072,17 @@ fn play_requests_name_one_known_tune() {
         assert_eq!(core::str::from_utf8(out.as_bytes()).unwrap(), expected);
     }
 }
+
+/// The C join shim reads these codes (0 build, 1 stored, 2 fallback).
+#[test]
+fn wifi_source_codes_round_trip() {
+    for (source, code) in [
+        (WifiSource::Build, 0),
+        (WifiSource::Stored, 1),
+        (WifiSource::Fallback, 2),
+    ] {
+        assert_eq!(source.code(), code);
+        assert_eq!(WifiSource::from_code(code), source);
+    }
+    assert_eq!(WifiSource::from_code(3), WifiSource::Build);
+}

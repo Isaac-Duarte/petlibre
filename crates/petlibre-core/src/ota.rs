@@ -13,7 +13,9 @@ pub const MAGIC: [u8; 8] = *b"PLOTA1\0\0";
 pub const MANIFEST_BODY: usize = 8 + 4 + 4 + 4 + 32 + 32;
 pub const MANIFEST_LEN: usize = MANIFEST_BODY + 64;
 
-pub const SECTOR: usize = 4096;
+/// One NOR erase sector, as flash offsets measure it and as buffers do.
+pub const SECTOR_BYTES: u32 = 0x1000;
+pub const SECTOR: usize = SECTOR_BYTES as usize;
 
 /// The factory loader's validity marker at the start of a bank.
 pub const MARKER: [u8; 8] = *b"81958711";
@@ -92,7 +94,7 @@ pub fn parse_manifest(
     if manifest.target_bank != 1 {
         return Err(ManifestError::Bank);
     }
-    if manifest.image_len < SECTOR as u32 || manifest.image_len > BANK1_BYTES {
+    if manifest.image_len < SECTOR_BYTES || manifest.image_len > BANK1_BYTES {
         return Err(ManifestError::Size);
     }
     if manifest.version <= installed_version {
@@ -228,7 +230,7 @@ impl Writer {
             return Err(self.fail(WriteError::Readback));
         }
 
-        self.sector_offset += SECTOR as u32;
+        self.sector_offset += SECTOR_BYTES;
         self.fill = 0;
         self.sector = [0xff; SECTOR];
         if self.received < self.manifest.image_len {

@@ -12,14 +12,15 @@
 //!
 //! Nothing here writes flash; the transport may call [`request`].
 
-use core::cell::UnsafeCell;
 use core::ffi::{c_uint, c_void};
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
+use petlibre_core::hex;
 use petlibre_core::net_store::{Credentials, NetStore};
 use petlibre_core::storage::JournalIo;
 use petlibre_core::transport::{WifiFields, WifiResult, WifiSource, WifiView};
 
+use crate::cell::TaskCell;
 use crate::sdk;
 
 /// The credential slots within the storage region (`0x345000`).
@@ -37,18 +38,22 @@ pub fn choose(stored: bool, failures: u32, joined_once: bool) -> WifiSource {
     }
 }
 
-const EMPTY: u8 = 0;
-const FILLING: u8 = 1;
-const QUEUED: u8 = 2;
+/// Who holds `PENDING`, as `STATE` stores it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+enum Hand {
+    /// Free for the transport to claim.
+    Empty = 0,
+    /// The claimant is writing the change.
+    Filling = 1,
+    /// Handed to the writer until `finish`.
+    Queued = 2,
+}
 
-struct Shared<T>(UnsafeCell<T>);
-// SAFETY: each value is guarded as documented where it is declared.
-unsafe impl<T> Sync for Shared<T> {}
-
-/// The queued change; written only by the claimant of `STATE` (EMPTY to
-/// FILLING), read only by the writer after QUEUED.
-static PENDING: Shared<Option<Credentials>> = Shared(UnsafeCell::new(None));
-static STATE: AtomicU8 = AtomicU8::new(EMPTY);
+/// The queued change; written only by the claimant of `STATE` (`Empty` to
+/// `Filling`), read only by the writer after `Queued`.
+static PENDING: TaskCell<Option<Credentials>> = TaskCell::new(None);
+static STATE: AtomicU8 = AtomicU8::new(Hand::Empty as u8);
 
 /// What NOR holds, published by the writer.
 static LOADED: AtomicBool = AtomicBool::new(false);
@@ -56,31 +61,11 @@ static WRITABLE: AtomicBool = AtomicBool::new(false);
 static STORED: AtomicBool = AtomicBool::new(false);
 static STORED_CRC: AtomicU32 = AtomicU32::new(0);
 static GENERATION: AtomicU32 = AtomicU32::new(0);
-/// `WifiSource` of this boot's joins, as a code.
-static SOURCE: AtomicU8 = AtomicU8::new(0);
-
-fn decode_hex(hex: &str, out: &mut [u8]) -> Option<usize> {
-    let bytes = hex.as_bytes();
-    if !bytes.len().is_multiple_of(2) || bytes.len() / 2 > out.len() {
-        return None;
-    }
-    let nibble = |c: u8| match c {
-        b'0'..=b'9' => Some(c - b'0'),
-        b'a'..=b'f' => Some(c - b'a' + 10),
-        _ => None,
-    };
-    for (i, pair) in bytes.as_chunks::<2>().0.iter().enumerate() {
-        out[i] = (nibble(pair[0])? << 4) | nibble(pair[1])?;
-    }
-    Some(bytes.len() / 2)
-}
+/// `WifiSource` of this boot's joins, as `WifiSource::code`.
+static SOURCE: AtomicU8 = AtomicU8::new(WifiSource::Build.code());
 
 pub fn source() -> WifiSource {
-    match SOURCE.load(Ordering::Acquire) {
-        1 => WifiSource::Stored,
-        2 => WifiSource::Fallback,
-        _ => WifiSource::Build,
-    }
+    WifiSource::from_code(SOURCE.load(Ordering::Acquire))
 }
 
 fn view() -> WifiView {
@@ -100,7 +85,7 @@ pub fn request(fields: WifiFields) -> WifiResult {
         return WifiResult::Busy;
     }
     if !fields.changes() {
-        let pending = STATE.load(Ordering::Acquire) != EMPTY;
+        let pending = STATE.load(Ordering::Acquire) != Hand::Empty as u8;
         return WifiResult::Current {
             view: view(),
             pending,
@@ -113,7 +98,10 @@ pub fn request(fields: WifiFields) -> WifiResult {
     let credentials = match (fields.ssid, fields.psk) {
         (Some(ssid), Some(psk)) => {
             let (mut s, mut p) = ([0u8; 32], [0u8; 63]);
-            let (Some(sn), Some(pn)) = (decode_hex(ssid, &mut s), decode_hex(psk, &mut p)) else {
+            let (Some(sn), Some(pn)) = (
+                hex::decode(ssid.as_bytes(), &mut s),
+                hex::decode(psk.as_bytes(), &mut p),
+            ) else {
                 return WifiResult::Invalid;
             };
             match Credentials::new(&s[..sn], &p[..pn]) {
@@ -125,14 +113,19 @@ pub fn request(fields: WifiFields) -> WifiResult {
     };
 
     if STATE
-        .compare_exchange(EMPTY, FILLING, Ordering::AcqRel, Ordering::Acquire)
+        .compare_exchange(
+            Hand::Empty as u8,
+            Hand::Filling as u8,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        )
         .is_err()
     {
         return WifiResult::Busy;
     }
-    // SAFETY: FILLING makes this the only accessor until QUEUED.
-    unsafe { *PENDING.0.get() = credentials };
-    STATE.store(QUEUED, Ordering::Release);
+    // SAFETY: `Filling` makes this the only accessor until `Queued`.
+    unsafe { *PENDING.get() = credentials };
+    STATE.store(Hand::Queued as u8, Ordering::Release);
     WifiResult::Current {
         view: view(),
         pending: true,
@@ -141,12 +134,12 @@ pub fn request(fields: WifiFields) -> WifiResult {
 
 /// The writer's half: the queued change (`Some(None)` clears), if any.
 pub fn pending() -> Option<Option<Credentials>> {
-    // SAFETY: QUEUED hands the value to the writer until `finish`.
-    (STATE.load(Ordering::Acquire) == QUEUED).then(|| unsafe { *PENDING.0.get() })
+    // SAFETY: `Queued` hands the value to the writer until `finish`.
+    (STATE.load(Ordering::Acquire) == Hand::Queued as u8).then(|| unsafe { *PENDING.get() })
 }
 
 pub fn finish() {
-    STATE.store(EMPTY, Ordering::Release);
+    STATE.store(Hand::Empty as u8, Ordering::Release);
 }
 
 /// The writer publishes what NOR holds; writable only once it is `armed`.
@@ -169,10 +162,10 @@ pub fn reset() {
         flag.store(false, Ordering::Release);
     }
     GENERATION.store(0, Ordering::Release);
-    SOURCE.store(0, Ordering::Release);
-    STATE.store(EMPTY, Ordering::Release);
+    SOURCE.store(WifiSource::Build.code(), Ordering::Release);
+    STATE.store(Hand::Empty as u8, Ordering::Release);
     // SAFETY: tests reset with no other accessor.
-    unsafe { *JOIN.0.get() = Join::default() };
+    unsafe { *JOIN.get() = Join::default() };
 }
 
 // ---- The join half, called by the C Wi-Fi task only.
@@ -186,12 +179,12 @@ struct Join {
 }
 
 /// Touched only by the C Wi-Fi task, through the two exports below.
-static JOIN: Shared<Join> = Shared(UnsafeCell::new(Join {
+static JOIN: TaskCell<Join> = TaskCell::new(Join {
     opened: false,
     stored: None,
     failures: 0,
     joined_once: false,
-}));
+});
 
 unsafe extern "C" fn read_only(
     _context: *mut c_void,
@@ -234,7 +227,7 @@ pub struct JoinCredentials {
     pub ssid_len: u32,
     pub psk: *const u8,
     pub psk_len: u32,
-    /// `WifiSource` as 0 build, 1 stored, 2 fallback.
+    /// `WifiSource::code`: 0 build, 1 stored, 2 fallback.
     pub source: u32,
 }
 
@@ -246,14 +239,10 @@ pub struct JoinCredentials {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn petlibre_wifi_select(out: *mut JoinCredentials) {
     // SAFETY: only the Wi-Fi task calls this.
-    let join = unsafe { &mut *JOIN.0.get() };
+    let join = unsafe { &mut *JOIN.get() };
     let stored = stored(join);
     let choice = choose(stored.is_some(), join.failures, join.joined_once);
-    let code = match choice {
-        WifiSource::Build => 0,
-        WifiSource::Stored => 1,
-        WifiSource::Fallback => 2,
-    };
+    let code = choice.code();
     SOURCE.store(code, Ordering::Release);
     // SAFETY: the caller's contract; JOIN is static, so the pointers live on.
     let out = unsafe { &mut *out };
@@ -270,7 +259,7 @@ pub unsafe extern "C" fn petlibre_wifi_select(out: *mut JoinCredentials) {
 #[unsafe(no_mangle)]
 pub extern "C" fn petlibre_wifi_outcome(joined: i32) {
     // SAFETY: only the Wi-Fi task calls this.
-    let join = unsafe { &mut *JOIN.0.get() };
+    let join = unsafe { &mut *JOIN.get() };
     if source() != WifiSource::Stored {
         return;
     }

@@ -15,6 +15,7 @@ pub unsafe extern "C" fn petlibre_feedback_events_init(
     now_ms: u32,
 ) -> bool {
     store(
+        // SAFETY: the C contract: `events` is null or valid for the call.
         unsafe { events.as_mut() },
         FeedbackEvents::new(capacity, max_age_ms, now_ms),
     )
@@ -26,6 +27,7 @@ pub unsafe extern "C" fn petlibre_feedback_events_push(
     captured_at_ms: u32,
     high: bool,
 ) -> bool {
+    // SAFETY: the C contract: `events` is null or valid for the call.
     unsafe { events.as_mut() }.is_some_and(|e| e.push(captured_at_ms, high))
 }
 
@@ -35,9 +37,11 @@ pub unsafe extern "C" fn petlibre_feedback_events_take(
     now_ms: u32,
     event: *mut FeedbackEvent,
 ) -> FeedbackTakeResult {
+    // SAFETY: the C contract: `events` is null or valid for the call.
     let Some(events) = (unsafe { events.as_mut() }) else {
         return FeedbackTakeResult::FAILED;
     };
+    // SAFETY: the C contract: `event` is null or valid for the call.
     let Some(out) = (unsafe { event.as_mut() }) else {
         events.fail(FeedbackFault::ARGUMENT);
         return FeedbackTakeResult::FAILED;
@@ -59,8 +63,11 @@ pub unsafe extern "C" fn petlibre_feedback_events_process(
     drive: FeedbackDrive,
 ) -> bool {
     match (
+        // SAFETY: the C contract: `events` is null or valid for the call.
         unsafe { events.as_mut() },
+        // SAFETY: the C contract: `controller` is null or valid for the call.
         unsafe { controller.as_mut() },
+        // SAFETY: the C contract: `sample` is null or valid for the call.
         unsafe { sample.as_ref() },
     ) {
         (Some(events), Some(controller), Some(sample)) => {

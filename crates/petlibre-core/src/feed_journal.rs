@@ -12,7 +12,10 @@ use core::ptr;
 use crate::feed_controller::{FeedReason, FeedRequest};
 use crate::feed_progress::{BowlMode, Direction};
 use crate::feed_storage::{OwnerOutcome, OwnerRecovery, OwnerResult, OwnerStorage};
-use crate::storage::{COMMIT, JournalIo, RECORD_BYTES, crc32, get, put};
+use crate::storage::{
+    COMMIT, COMMIT_AT, CRC_AT, JournalIo, LENGTH_AT, RECORD_BYTES, VERSION_AT, crc32, get_u16,
+    get_u32, get_u64, put_u16, put_u32, put_u64,
+};
 
 const GENESIS: u8 = 0;
 const INTENT: u8 = 1;
@@ -153,8 +156,8 @@ impl FeedJournal {
     fn encode(&self, v: &JournalView) -> [u8; RECORD_BYTES] {
         let mut p = [0u8; RECORD_BYTES];
         p[..8].copy_from_slice(&MAGIC);
-        put(&mut p[8..], 1, 2);
-        put(&mut p[10..], RECORD_BYTES as u64, 2);
+        put_u16(&mut p[VERSION_AT..], 1);
+        put_u16(&mut p[LENGTH_AT..], RECORD_BYTES as u16);
 
         p[12] = if v.recovery.pending_request {
             INTENT
@@ -169,53 +172,53 @@ impl FeedJournal {
             | (u8::from(v.recovery.phase_known) << 1)
             | (u8::from(v.result.motion_possible) << 2);
 
-        put(&mut p[16..], v.sequence, 8);
-        put(&mut p[24..], self.config.binding, 8);
-        put(&mut p[32..], v.recovery.high_water_id, 8);
+        put_u64(&mut p[16..], v.sequence);
+        put_u64(&mut p[24..], self.config.binding);
+        put_u64(&mut p[32..], v.recovery.high_water_id);
 
-        put(&mut p[40..], v.result.requested.into(), 2);
-        put(&mut p[42..], v.result.completed.into(), 2);
+        put_u16(&mut p[40..], v.result.requested);
+        put_u16(&mut p[42..], v.result.completed);
         p[44] = v.result.outcome.0 as u8;
         p[45] = v.result.reason.0 as u8;
-        put(&mut p[46..], self.config.max_portions.into(), 2);
+        put_u16(&mut p[46..], self.config.max_portions);
 
-        let checksum = crc32(&p[..120]);
-        put(&mut p[120..], checksum.into(), 4);
-        p[124..].copy_from_slice(&COMMIT);
+        let checksum = crc32(&p[..CRC_AT]);
+        put_u32(&mut p[CRC_AT..], checksum);
+        p[COMMIT_AT..].copy_from_slice(&COMMIT);
 
         p
     }
 
     fn decode(&self, p: &[u8; RECORD_BYTES]) -> Option<JournalView> {
         if p[..8] != MAGIC
-            || get(&p[8..], 2) != 1
-            || get(&p[10..], 2) != RECORD_BYTES as u64
+            || get_u16(&p[VERSION_AT..]) != 1
+            || usize::from(get_u16(&p[LENGTH_AT..])) != RECORD_BYTES
             || p[12] > RESULT
             || p[13] != self.config.mode.0 as u8
             || p[14] > 1
             || p[15] > 7
-            || get(&p[24..], 8) != self.config.binding
-            || get(&p[46..], 2) != u64::from(self.config.max_portions)
-            || !all(&p[48..120], 0)
-            || get(&p[120..], 4) != u64::from(crc32(&p[..120]))
+            || get_u64(&p[24..]) != self.config.binding
+            || get_u16(&p[46..]) != self.config.max_portions
+            || !all(&p[48..CRC_AT], 0)
+            || get_u32(&p[CRC_AT..]) != crc32(&p[..CRC_AT])
         {
             return None;
         }
 
         let v = JournalView {
-            sequence: get(&p[16..], 8),
+            sequence: get_u64(&p[16..]),
             has_result: p[12] == RESULT,
             recovery: OwnerRecovery {
-                high_water_id: get(&p[32..], 8),
+                high_water_id: get_u64(&p[32..]),
                 direction: Direction(p[14].into()),
                 credit_next_event: p[15] & 1 != 0,
                 phase_known: p[15] & 2 != 0,
                 pending_request: p[12] == INTENT,
             },
             result: OwnerResult {
-                id: get(&p[32..], 8),
-                requested: get(&p[40..], 2) as u16,
-                completed: get(&p[42..], 2) as u16,
+                id: get_u64(&p[32..]),
+                requested: get_u16(&p[40..]),
+                completed: get_u16(&p[42..]),
                 outcome: OwnerOutcome(p[44].into()),
                 reason: FeedReason(p[45].into()),
                 motion_possible: p[15] & 4 != 0,
@@ -309,7 +312,7 @@ impl FeedJournal {
         if all(&record, u8::MAX) {
             return Some((Scan::Erased, None));
         }
-        if record[124..] != COMMIT {
+        if record[COMMIT_AT..] != COMMIT {
             return Some((Scan::Dirty, None));
         }
 
@@ -373,11 +376,11 @@ impl FeedJournal {
         // leaves an uncommitted record that `scan` reports as dirty.
         let ok = (!erase || self.io.erase(slot))
             && matches!(self.scan(slot), Some((Scan::Erased, _)))
-            && self.io.program(slot, 0, &bytes[..124])
+            && self.io.program(slot, 0, &bytes[..COMMIT_AT])
             && self.io.read(slot, 0, &mut checked)
-            && bytes[..124] == checked[..124]
-            && all(&checked[124..], u8::MAX)
-            && self.io.program(slot, 124, &COMMIT)
+            && bytes[..COMMIT_AT] == checked[..COMMIT_AT]
+            && all(&checked[COMMIT_AT..], u8::MAX)
+            && self.io.program(slot, COMMIT_AT as u32, &COMMIT)
             && self.io.read(slot, 0, &mut checked)
             && bytes == checked;
 
@@ -542,14 +545,14 @@ impl FeedJournal {
     }
 }
 
-// SAFETY (all three): `context` is the journal pointer installed by
+// In all three, `context` is the journal pointer installed by
 // `FeedJournal::storage`, or null; the owner serializes all access.
 #[allow(unsafe_code)]
 unsafe extern "C" fn storage_recover(context: *mut c_void, recovery: *mut OwnerRecovery) -> bool {
+    // SAFETY: the storage contract: null or valid pointers, the journal
+    // installed by `FeedJournal::storage`.
     let (Some(journal), Some(recovery)) =
-        (unsafe { context.cast::<FeedJournal>().as_ref() }, unsafe {
-            recovery.as_mut()
-        })
+        (unsafe { (context.cast::<FeedJournal>().as_ref(), recovery.as_mut()) })
     else {
         return false;
     };
@@ -565,9 +568,8 @@ unsafe extern "C" fn storage_recover(context: *mut c_void, recovery: *mut OwnerR
 
 #[allow(unsafe_code)]
 unsafe extern "C" fn storage_reserve(context: *mut c_void, request: *const FeedRequest) -> bool {
-    match (unsafe { context.cast::<FeedJournal>().as_mut() }, unsafe {
-        request.as_ref()
-    }) {
+    // SAFETY: as for `storage_recover`.
+    match unsafe { (context.cast::<FeedJournal>().as_mut(), request.as_ref()) } {
         (Some(journal), Some(request)) => journal.reserve(request),
         _ => false,
     }
@@ -579,11 +581,14 @@ unsafe extern "C" fn storage_finish(
     result: *const OwnerResult,
     phase: *const OwnerRecovery,
 ) -> bool {
-    match (
-        unsafe { context.cast::<FeedJournal>().as_mut() },
-        unsafe { result.as_ref() },
-        unsafe { phase.as_ref() },
-    ) {
+    // SAFETY: as for `storage_recover`.
+    match unsafe {
+        (
+            context.cast::<FeedJournal>().as_mut(),
+            result.as_ref(),
+            phase.as_ref(),
+        )
+    } {
         (Some(journal), Some(result), Some(phase)) => journal.finish(result, phase),
         _ => false,
     }

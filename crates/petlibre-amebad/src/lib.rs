@@ -8,25 +8,11 @@
 #![allow(clippy::missing_safety_doc)]
 
 // The ports' public types carry SDK types, so the SDK crate is part of this API.
-pub use petlibre_amebad_common::{flash, trial};
+pub use petlibre_amebad_common::{cell, flash, trial};
 pub use petlibre_amebad_sdk as sdk;
 
 #[cfg(all(target_os = "none", not(feature = "km4")))]
 compile_error!("petlibre-amebad target builds are KM4-only; KM0 links petlibre-amebad-common");
-
-/// Declare a C-compatible enumeration that tolerates out-of-range values.
-macro_rules! c_enum {
-    ($(#[$meta:meta])* $name:ident { $($variant:ident = $value:expr),+ $(,)? }) => {
-        $(#[$meta])*
-        #[repr(transparent)]
-        #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-        pub struct $name(pub u32);
-
-        impl $name {
-            $(pub const $variant: Self = Self($value);)+
-        }
-    };
-}
 
 pub mod leds;
 pub mod startup;

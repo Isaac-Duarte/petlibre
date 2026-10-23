@@ -7,7 +7,7 @@
 
 use super::*;
 
-const SYSTICK_CTRL: *mut u32 = 0xe000_e010 as *mut u32;
+const SYSTICK_CTRL: *mut u32 = crate::sdk::SYSTICK_CTRL as usize as *mut u32;
 
 // Private RAM state; names are fixed by the firmware audit.
 #[unsafe(no_mangle)]
@@ -48,14 +48,18 @@ pub struct Hardware;
 impl HookCpu for Hardware {
     #[inline(always)]
     fn cells() -> HookCells {
-        HookCells {
-            transport: &raw mut hook_transport,
-            ticket: &raw mut hook_ticket,
-            last_id: &raw mut hook_last_id,
-            armed: &raw mut hook_armed,
-            faulted: &raw mut hook_faulted,
-            legacy_locked: &raw mut hook_legacy_locked,
-            lease_held: &raw mut hook_lease_held,
+        // SAFETY: the private statics above, which nothing but the
+        // interposer names.
+        unsafe {
+            HookCells {
+                transport: RamCell::new(&raw mut hook_transport),
+                ticket: RamCell::new(&raw mut hook_ticket),
+                last_id: RamCell::new(&raw mut hook_last_id),
+                armed: RamCell::new(&raw mut hook_armed),
+                faulted: RamCell::new(&raw mut hook_faulted),
+                legacy_locked: RamCell::new(&raw mut hook_legacy_locked),
+                lease_held: RamCell::new(&raw mut hook_lease_held),
+            }
         }
     }
 
@@ -128,6 +132,9 @@ impl HookCpu for Hardware {
         unsafe { petlibre_sdk_flash_legacy_unlock() }
     }
 
+    // `data` is the SDK's opaque IPC message pointer, handed back unchanged
+    // to the legacy handler it was meant for; nothing here dereferences it.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     #[inline(always)]
     fn legacy_ipc(data: *mut c_void, status: u32, channel: u32) {
         // SAFETY: as for `legacy_lock`.
@@ -148,7 +155,8 @@ pub extern "C" fn hook_fail(reason: HookFault) -> ! {
 pub unsafe extern "C" fn petlibre_amebad_flash_hooks_install(
     provider: *const HookProvider,
 ) -> bool {
-    install::<Hardware>(provider)
+    // SAFETY: the C caller passes null or a readable provider.
+    unsafe { install::<Hardware>(provider) }
 }
 
 #[unsafe(no_mangle)]

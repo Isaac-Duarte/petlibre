@@ -103,6 +103,7 @@ fn missing_authority_and_rebinding_never_enable_outputs() {
 
     let mut c = flash_attach(&mut b);
     let mut other = flash_ready();
+    // SAFETY: the fixture keeps the coordinator alive and in place.
     assert!(!unsafe { b.attach_flash(&mut *other) });
     assert_eq!(b.flash, &raw mut *c);
 

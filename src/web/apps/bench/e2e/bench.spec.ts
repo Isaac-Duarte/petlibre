@@ -1,10 +1,10 @@
 import { expect, test } from "@playwright/test";
 
-test("the overview shows the live run, the feeder and the bench", async ({ page }) => {
+test("the overview shows the live run, its log, the feeder and the bench", async ({ page }) => {
   await page.goto("/");
 
   await expect(page.getByRole("heading", { name: "itest", level: 1 })).toBeVisible();
-  await expect(page.getByText("Integration run in progress")).toBeVisible();
+  await expect(page.getByRole("log", { name: "Live log" })).toBeVisible();
   await expect(page.getByText("No local server configured")).toBeVisible();
   await expect(page.getByLabel("Bench hardware and tools")).toContainText("Power");
 });
@@ -52,8 +52,8 @@ test("the run builder writes the command and warns about skips", async ({ page }
   await expect(builder.locator("pre")).toHaveText("petlibre-bench --ui itest itest-e2e-05 --tier smoke --power");
 });
 
-test("the log shows the run's notes, filterable", async ({ page }) => {
-  await page.goto("/#/log");
+test("the overview log shows the run's notes, filterable", async ({ page }) => {
+  await page.goto("/");
 
   const log = page.getByRole("log", { name: "Live log" });
   await expect(log).toContainText("- requests: ping, health");
@@ -65,7 +65,7 @@ test("the log shows the run's notes, filterable", async ({ page }) => {
 test("both themes render without horizontal page scroll", async ({ page }) => {
   for (const colorScheme of ["light", "dark"] as const) {
     await page.emulateMedia({ colorScheme });
-    for (const view of ["overview", "tests", "sessions", "log"]) {
+    for (const view of ["overview", "tests", "sessions"]) {
       await page.goto(`/#/${view}`);
       await page.waitForLoadState("networkidle").catch(() => {});
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);

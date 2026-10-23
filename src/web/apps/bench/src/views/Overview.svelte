@@ -1,8 +1,9 @@
 <script lang="ts">
   import { app } from "../lib/bench.svelte";
+  import CapturePanel from "../parts/CapturePanel.svelte";
   import FeederPanel from "../parts/FeederPanel.svelte";
   import HistoryPanel from "../parts/HistoryPanel.svelte";
-  import LatestRun from "../parts/LatestRun.svelte";
+  import LogPanel from "../parts/LogPanel.svelte";
   import NowPanel from "../parts/NowPanel.svelte";
   import ScriptPanel from "../parts/ScriptPanel.svelte";
 </script>
@@ -14,7 +15,8 @@
 <div class="grid">
   <div class="main">
     <NowPanel />
-    <LatestRun />
+    <LogPanel />
+    <CapturePanel />
   </div>
   <div class="side">
     <FeederPanel />

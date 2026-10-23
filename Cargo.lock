@@ -1612,6 +1612,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "petlibre-fw-blink"
+version = "0.1.0"
+dependencies = [
+ "petlibre-sdk",
+]
+
+[[package]]
 name = "petlibre-fw-reference"
 version = "0.1.0"
 dependencies = [
@@ -1676,15 +1683,15 @@ version = "0.1.0"
 dependencies = [
  "petlibre-core",
  "petlibre-hal",
+ "petlibre-sdk-c",
 ]
 
 [[package]]
 name = "petlibre-sdk-c"
 version = "0.1.0"
 dependencies = [
+ "petlibre-amebad-sys",
  "petlibre-core",
- "petlibre-fw-reference",
- "petlibre-hal",
  "petlibre-hal-common",
  "petlibre-testkit",
 ]

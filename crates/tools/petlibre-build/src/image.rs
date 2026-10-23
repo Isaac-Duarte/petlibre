@@ -26,7 +26,7 @@ use crate::identity::{current_inputs, ota_public_key, source_identity};
 use crate::sdk::{Overrides, check_sdk_worktree, prepare, rust_archive};
 use crate::toolchain::{toolchain_lock, verify_toolchain};
 use crate::{
-    Core, Error, PROJECT, Profile, Repo, Result, Variant, digest, relative, require, text,
+    Core, Error, Firmware, PROJECT, Profile, Repo, Result, Variant, digest, relative, require, text,
 };
 
 /// C ABI symbols every core archive must define. The core ABI is a C
@@ -67,7 +67,7 @@ fn archive_symbols(core: Core) -> Vec<&'static str> {
 }
 
 /// The cargo environment of the archive builds: the checked environment
-/// plus what `petlibre-sdk-c`'s build script reads.
+/// plus what the SDK crates' build scripts read.
 fn cargo_environment(
     environment: &Environment,
     sdk: &Path,
@@ -92,31 +92,34 @@ fn cargo_environment(
     environment
 }
 
-/// Cross-compile one firmware archive per core and stage it beside the SDK.
+/// Cross-compile one firmware archive per core and stage it beside the SDK:
+/// KM0's from `petlibre-sdk-c`, KM4's from the firmware crate, which links
+/// the SDK runtime.
 fn build_rust(
     repo: &Repo,
     sdk: &Path,
     log: &File,
     environment: &Environment,
+    firmware: &Firmware,
     variant: Option<Variant>,
 ) -> Result<Vec<(Core, PathBuf)>> {
     let target_dir = sdk.parent().unwrap_or(sdk).join("rust-target");
     let mut archives = Vec::new();
     for core in Core::BOTH {
-        let feature = match variant {
-            Some(variant) if core == Core::Hp => variant.name(),
-            _ => core.feature(),
+        let (package, archive) = match core {
+            Core::Lp => (
+                "petlibre-sdk-c".to_string(),
+                "libpetlibre_sdk_c.a".to_string(),
+            ),
+            Core::Hp => (firmware.package(), firmware.archive()),
+        };
+        let features = match variant {
+            Some(variant) if core == Core::Hp => format!("{},{}", core.feature(), variant.name()),
+            _ => core.feature().to_string(),
         };
         let status = Command::new("cargo")
-            .args([
-                "build",
-                "--locked",
-                "--profile",
-                "firmware",
-                "-p",
-                "petlibre-sdk-c",
-            ])
-            .args(["--target", core.target(), "--features", feature])
+            .args(["build", "--locked", "--profile", "firmware", "-p", &package])
+            .args(["--target", core.target(), "--features", &features])
             .arg("--target-dir")
             .arg(&target_dir)
             .current_dir(&repo.root)
@@ -132,7 +135,8 @@ fn build_rust(
         fs::copy(
             target_dir
                 .join(core.target())
-                .join("firmware/libpetlibre_sdk_c.a"),
+                .join("firmware")
+                .join(archive),
             &staged,
         )?;
         archives.push((core, staged));
@@ -288,6 +292,7 @@ struct Rust {
 struct Build<'a> {
     repo: &'a Repo,
     profile: Profile,
+    firmware: Firmware,
     variant: Option<Variant>,
     toolchain: &'a Path,
     sdk: PathBuf,
@@ -326,8 +331,15 @@ impl Build<'_> {
                 identity,
                 ota_key,
             );
-            archives = build_rust(self.repo, &self.sdk, &log, &environment, self.variant)
-                .map_err(|_| logged("Rust firmware build failed"))?;
+            archives = build_rust(
+                self.repo,
+                &self.sdk,
+                &log,
+                &environment,
+                &self.firmware,
+                self.variant,
+            )
+            .map_err(|_| logged("Rust firmware build failed"))?;
         }
 
         for core in Core::BOTH {
@@ -468,7 +480,7 @@ impl Build<'_> {
         rust: Option<&Rust>,
     ) -> Result<BTreeMap<String, String>> {
         require(
-            current_inputs(self.repo, self.profile)? == *expected,
+            current_inputs(self.repo, self.profile, &self.firmware)? == *expected,
             "Sources changed during the build; rerun before trusting these outputs",
         )?;
         for (path, checksum) in overrides {
@@ -521,10 +533,19 @@ impl Build<'_> {
             audits.stack_audit = recorded(&audit::stack::audit(
                 &self.image_directory().join("target_img2.axf"),
                 &binutils.objdump(),
-                &audit::stack::task_sources(repo)?,
+                &audit::stack::task_sources(repo, &self.firmware)?,
             )?)?;
         }
         Ok(audits)
+    }
+}
+
+/// ` firmware <name>` for a Rust profile's progress line.
+fn when_rust(profile: Profile, firmware: &Firmware) -> String {
+    if profile.rust() {
+        format!(" firmware {}", firmware.name())
+    } else {
+        String::new()
     }
 }
 
@@ -548,11 +569,16 @@ pub fn build(
     repo: &Repo,
     profile: Profile,
     toolchain: &Path,
+    firmware: Firmware,
     variant: Option<Variant>,
 ) -> Result<()> {
     require(
         variant.is_none() || profile.firstboot(),
         "Image variants apply to plaf103-firstboot only",
+    )?;
+    require(
+        variant.is_none() || firmware.reference(),
+        "Image variants belong to the reference firmware",
     )?;
     let lock = repo.lock()?;
     remove_manifest(&repo.output(profile))?;
@@ -567,9 +593,9 @@ pub fn build(
     } else {
         None
     };
-    let expected = current_inputs(repo, profile)?;
+    let expected = current_inputs(repo, profile, &firmware)?;
     let ota_key = ota_public_key(repo, profile)?;
-    let identity = source_identity(profile, &expected, variant, ota_key.as_deref())?;
+    let identity = source_identity(profile, &firmware, &expected, variant, ota_key.as_deref())?;
     if profile.model() {
         audit::layout::audit(&repo.stock(), &repo.stock(), &repo.layout())
             .map_err(|e| Error::Layout(Box::new(e)))?;
@@ -580,6 +606,7 @@ pub fn build(
     let build = Build {
         repo,
         profile,
+        firmware,
         variant,
         toolchain,
         log: output.join("build.log"),
@@ -590,8 +617,9 @@ pub fn build(
         },
     };
     println!(
-        "Building {}{}; log: {}",
+        "Building {}{}{}; log: {}",
         profile.name(),
+        when_rust(profile, &build.firmware),
         variant
             .map(|v| format!(" variant {}", v.name()))
             .unwrap_or_default(),
@@ -627,9 +655,13 @@ pub fn build(
         startup_adc_policy: None,
         startup_wifi_policy: when(firstboot, "fw07-dns-v1"),
         startup_transport_policy: when(firstboot, "fw08-transport-v1"),
-        startup_optics_policy: when(firstboot && variant.is_none(), "fw13-optics-v2"),
+        startup_optics_policy: when(
+            firstboot && build.firmware.reference() && variant.is_none(),
+            "fw13-optics-v2",
+        ),
         startup_motion_policy: variant.and_then(Variant::motion_policy).map(Into::into),
         startup_trial_policy: variant.and_then(Variant::trial_policy).map(Into::into),
+        firmware: rust_build.then(|| build.firmware.name().into()),
         variant: variant.map(|v| v.name().into()),
         startup_update_policy: ota_key.as_ref().map(|_| "fw10-recovery-v1".into()),
         ota_public_key: ota_key,
@@ -666,6 +698,12 @@ pub fn build(
 /// its manifest, everything else from the build directory and the checkout.
 pub fn audit_build(repo: &Repo, build: &Path) -> Result<audit::Linked> {
     let manifest: BuildManifest = petlibre_formats::load(&build.join("manifest.json"))?;
+    let Some(name) = manifest.firmware.as_deref() else {
+        return Err(Error::Refused(
+            "The build manifest names no firmware; rebuild it".into(),
+        ));
+    };
+    let firmware = Firmware::new(repo, name)?;
     let objects = manifest
         .compiled_archives
         .into_iter()
@@ -675,5 +713,5 @@ pub fn audit_build(repo: &Repo, build: &Path) -> Result<audit::Linked> {
             Ok((core, build.join(archive.path)))
         })
         .collect::<Result<Vec<_>>>()?;
-    audit::linked(repo, build, &objects)
+    audit::linked(repo, build, &objects, &firmware)
 }

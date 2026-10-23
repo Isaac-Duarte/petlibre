@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use petlibre_build::audit::{self, Binutils, elf, hex, hooks, mains, park, tool};
 use petlibre_build::identity::current_inputs;
 use petlibre_build::image::audit_build;
-use petlibre_build::{Core, PROJECT, Profile, Repo};
+use petlibre_build::{Core, Firmware, PROJECT, Profile, Repo};
 use serde_json::Value;
 
 struct Build {
@@ -29,8 +29,10 @@ fn build() -> Build {
         &fs::read(dir.join("manifest.json")).expect("completed ignored first-boot build"),
     )
     .unwrap();
+    let firmware = Firmware::new(&repo, manifest["firmware"].as_str().unwrap()).unwrap();
     let current =
-        serde_json::to_value(current_inputs(&repo, Profile::Plaf103Firstboot).unwrap()).unwrap();
+        serde_json::to_value(current_inputs(&repo, Profile::Plaf103Firstboot, &firmware).unwrap())
+            .unwrap();
     assert_eq!(
         manifest["inputs"], current,
         "stale first-boot build; rebuild it before using it as evidence"

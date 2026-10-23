@@ -7,6 +7,10 @@ rust-version.workspace = true
 description = "Experimental PLAF103 reference firmware on the PetLibre SDK: the bench probes and the diagnostic image's optional tasks"
 publish.workspace = true
 
+# The KM4 archive petlibre-build links into the image.
+[lib]
+crate-type = ["staticlib", "rlib"]
+
 [features]
 # KM4 target builds with the pinned SDK bindings.
 km4 = ["petlibre-sdk/km4", "petlibre-hal/km4", "petlibre-hal/sdk"]

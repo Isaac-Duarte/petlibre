@@ -14,7 +14,7 @@ use clap::{Args, Parser, Subcommand};
 use petlibre_build::identity::{SourceId, current_inputs, source_id};
 use petlibre_build::image::{audit_build, build};
 use petlibre_build::toolchain::bootstrap;
-use petlibre_build::{Profile, Repo, Result, Variant};
+use petlibre_build::{Firmware, Profile, Repo, Result, Variant};
 
 #[derive(Parser)]
 #[command(about = "Build AmebaD experiments locally, without connecting to the feeder")]
@@ -33,24 +33,36 @@ enum Command {
         image: bool,
         #[command(flatten)]
         variant: VariantArgs,
+        #[command(flatten)]
+        firmware: FirmwareArgs,
     },
     /// Fetch and verify the pinned SDK and Linux toolchain.
     Bootstrap,
     /// Build the unchanged SDK example in a private worktree.
     Baseline,
     /// Build the Rust diagnostic application in a separate worktree.
-    Bringup,
+    Bringup {
+        #[command(flatten)]
+        firmware: FirmwareArgs,
+    },
     /// Build and audit the diagnostic with stock-derived OTA bank addresses.
-    Plaf103,
+    Plaf103 {
+        #[command(flatten)]
+        firmware: FirmwareArgs,
+    },
     /// Build and audit the UART-only SDK mains and the Rust application.
     Plaf103Firstboot {
         #[command(flatten)]
         variant: VariantArgs,
+        #[command(flatten)]
+        firmware: FirmwareArgs,
     },
     /// Print a profile's current inputs and their SHA-256 as JSON.
     Inputs {
         #[arg(value_enum)]
         profile: Profile,
+        #[command(flatten)]
+        firmware: FirmwareArgs,
     },
     /// Re-run a finished build's audits and print them as JSON, keyed as
     /// its manifest records them.
@@ -58,6 +70,19 @@ enum Command {
         #[arg(long, default_value = "private/firmware-build/plaf103-firstboot")]
         build: PathBuf,
     },
+}
+
+#[derive(Args)]
+struct FirmwareArgs {
+    /// The firmware under `firmwares/` that the KM4 image links.
+    #[arg(long, default_value = Firmware::DEFAULT)]
+    firmware: String,
+}
+
+impl FirmwareArgs {
+    fn firmware(&self, repo: &Repo) -> Result<Firmware> {
+        Firmware::new(repo, &self.firmware)
+    }
 }
 
 #[derive(Args)]
@@ -92,21 +117,23 @@ impl VariantArgs {
 
 fn run(command: Command) -> Result<()> {
     let repo = Repo::here()?;
-    let (profile, variant) = match command {
-        Command::SourceId { image, variant } => {
+    let (profile, firmware, variant) = match command {
+        Command::SourceId {
+            image,
+            variant,
+            firmware,
+        } => {
             let which = if image {
                 SourceId::Image(variant.variant())
             } else {
                 SourceId::Bare
             };
-            println!("{}", source_id(&repo, which)?);
+            println!("{}", source_id(&repo, which, &firmware.firmware(&repo)?)?);
             return Ok(());
         }
-        Command::Inputs { profile } => {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&current_inputs(&repo, profile)?)?
-            );
+        Command::Inputs { profile, firmware } => {
+            let inputs = current_inputs(&repo, profile, &firmware.firmware(&repo)?)?;
+            println!("{}", serde_json::to_string_pretty(&inputs)?);
             return Ok(());
         }
         Command::Audit { build } => {
@@ -117,20 +144,35 @@ fn run(command: Command) -> Result<()> {
             );
             return Ok(());
         }
-        Command::Bootstrap => (None, None),
-        Command::Baseline => (Some(Profile::Baseline), None),
-        Command::Bringup => (Some(Profile::Bringup), None),
-        Command::Plaf103 => (Some(Profile::Plaf103), None),
-        Command::Plaf103Firstboot { variant } => {
-            (Some(Profile::Plaf103Firstboot), variant.variant())
-        }
+        Command::Bootstrap => (None, None, None),
+        // The baseline links no Rust; its identity binds no firmware.
+        Command::Baseline => (
+            Some(Profile::Baseline),
+            Some(Firmware::new(&repo, Firmware::DEFAULT)?),
+            None,
+        ),
+        Command::Bringup { firmware } => (
+            Some(Profile::Bringup),
+            Some(firmware.firmware(&repo)?),
+            None,
+        ),
+        Command::Plaf103 { firmware } => (
+            Some(Profile::Plaf103),
+            Some(firmware.firmware(&repo)?),
+            None,
+        ),
+        Command::Plaf103Firstboot { variant, firmware } => (
+            Some(Profile::Plaf103Firstboot),
+            Some(firmware.firmware(&repo)?),
+            variant.variant(),
+        ),
     };
 
     // Build outputs and generated credential headers are private.
     rustix::process::umask(rustix::fs::Mode::from_raw_mode(0o077));
     let toolchain = bootstrap(&repo)?;
-    if let Some(profile) = profile {
-        build(&repo, profile, &toolchain, variant)?;
+    if let (Some(profile), Some(firmware)) = (profile, firmware) {
+        build(&repo, profile, &toolchain, firmware, variant)?;
     }
     Ok(())
 }

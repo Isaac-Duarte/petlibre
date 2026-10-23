@@ -14,12 +14,12 @@ use petlibre_formats::credentials::OtaKeyFile;
 use petlibre_formats::hex::is_lower_hex;
 use petlibre_formats::manifest::IdentitySnapshot;
 
-use crate::{Core, Error, Profile, Repo, Result, Variant, digest, relative, require};
+use crate::{Core, Error, Firmware, Profile, Repo, Result, Variant, digest, relative, require};
 
-/// Crates linked into, or testing, the firmware: the whole SDK and the
-/// firmwares. Host tools such as petlibre-local and petlibre-flash never
-/// change a firmware build's identity.
-const FIRMWARE_CRATES: [&str; 2] = ["crates/sdk", "firmwares"];
+/// Crates linked into, or testing, every firmware build: the whole SDK. The
+/// selected firmware's directory joins them; other firmwares and host tools
+/// such as petlibre-local and petlibre-flash never change a build's identity.
+const SDK_CRATES: &str = "crates/sdk";
 
 /// The builder's own sources (its fixture tests are not), plus the
 /// petlibre-flash modules whose OTA container and region checks the layout
@@ -98,7 +98,7 @@ fn rust_sources(repo: &Repo, dirs: &[&str]) -> Result<Vec<PathBuf>> {
 }
 
 /// Every file a profile's image depends on, in a stable order.
-fn source_inputs(repo: &Repo, profile: Profile) -> Result<Vec<PathBuf>> {
+fn source_inputs(repo: &Repo, profile: Profile, firmware: &Firmware) -> Result<Vec<PathBuf>> {
     let mut paths = vec![repo.path("firmware/sdk.lock.json"), repo.path(TOOL_LOCK)];
     paths.extend(rust_sources(repo, &[BUILDER_SOURCES])?);
     paths.extend(BUILDER_SHARED.map(|p| repo.path(p)));
@@ -109,7 +109,7 @@ fn source_inputs(repo: &Repo, profile: Profile) -> Result<Vec<PathBuf>> {
         );
         // ENTRY includes both generated credential headers.
         paths.extend([WIFI_CREDENTIALS, TRANSPORT_CREDENTIALS].map(|p| repo.path(p)));
-        paths.extend(rust_sources(repo, &FIRMWARE_CRATES)?);
+        paths.extend(rust_sources(repo, &[SDK_CRATES, &firmware.dir()])?);
     }
     if profile.model() {
         paths.push(repo.layout());
@@ -133,8 +133,12 @@ fn digests(repo: &Repo, paths: &[PathBuf]) -> Result<BTreeMap<String, String>> {
 }
 
 /// The current inputs of a profile with their digests.
-pub fn current_inputs(repo: &Repo, profile: Profile) -> Result<BTreeMap<String, String>> {
-    digests(repo, &source_inputs(repo, profile)?)
+pub fn current_inputs(
+    repo: &Repo,
+    profile: Profile,
+    firmware: &Firmware,
+) -> Result<BTreeMap<String, String>> {
+    digests(repo, &source_inputs(repo, profile, firmware)?)
 }
 
 /// The update-signing public key built into recovery-role images, or None
@@ -153,10 +157,12 @@ pub(crate) fn ota_public_key(repo: &Repo, profile: Profile) -> Result<Option<Str
     Ok(Some(key.public_key))
 }
 
-/// Bind the identity to a profile, variant, update key and root-relative
-/// input digests: SHA-256 of their canonical (sorted, compact) JSON.
+/// Bind the identity to a profile, the firmware a Rust profile links, the
+/// variant, the update key and root-relative input digests: SHA-256 of their
+/// canonical (sorted, compact) JSON.
 pub(crate) fn source_identity(
     profile: Profile,
+    firmware: &Firmware,
     inputs: &BTreeMap<String, String>,
     variant: Option<Variant>,
     ota_key: Option<&str>,
@@ -164,6 +170,7 @@ pub(crate) fn source_identity(
     let snapshot = IdentitySnapshot {
         profile: profile.name(),
         inputs,
+        firmware: profile.rust().then(|| firmware.name()),
         variant: variant.map(Variant::name),
         ota_public_key: ota_key,
     };
@@ -180,14 +187,14 @@ pub enum SourceId {
     Image(Option<Variant>),
 }
 
-pub fn source_id(repo: &Repo, which: SourceId) -> Result<String> {
+pub fn source_id(repo: &Repo, which: SourceId, firmware: &Firmware) -> Result<String> {
     let profile = Profile::Plaf103Firstboot;
-    let inputs = current_inputs(repo, profile)?;
+    let inputs = current_inputs(repo, profile, firmware)?;
     match which {
         SourceId::Image(variant) => {
             let key = ota_public_key(repo, profile)?;
-            source_identity(profile, &inputs, variant, key.as_deref())
+            source_identity(profile, firmware, &inputs, variant, key.as_deref())
         }
-        SourceId::Bare => source_identity(profile, &inputs, None, None),
+        SourceId::Bare => source_identity(profile, firmware, &inputs, None, None),
     }
 }

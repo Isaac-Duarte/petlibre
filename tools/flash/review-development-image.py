@@ -105,10 +105,12 @@ def review(build):
     raw = (build / "manifest.json").read_bytes()
     m = json.loads(raw)
     require(m["profile"] == "plaf103-firstboot", "Only the reviewed UART startup profile is supported")
+    require(isinstance(m.get("firmware"), str), "Build manifest names no firmware; rebuild it")
     require(m["sdk_revision"] == lock["sdk"]["revision"] and
             m["toolchain_sha256"] == lock["toolchain"]["sha256"], "Unexpected SDK/toolchain")
     require(revision(build / "sdk") == m["sdk_revision"], "SDK worktree revision differs")
-    expected_inputs = builder("inputs", m["profile"])
+    inputs_args = ("inputs", m["profile"], "--firmware", m["firmware"])
+    expected_inputs = builder(*inputs_args)
     require(m["inputs"] == expected_inputs, "Build inputs are stale or incomplete; rebuild before review")
     for name, expected in m["inputs"].items():
         require(digest(local(ROOT, name).read_bytes()) == expected, "Build input differs")
@@ -149,7 +151,7 @@ def review(build):
     mapping = mapping_cases(baseline, rom, image)
     # Detect edits during potentially lengthy disassembly/emulation.
     require((build / "manifest.json").read_bytes() == raw and
-            builder("inputs", m["profile"]) == expected_inputs,
+            builder(*inputs_args) == expected_inputs,
             "Build changed during review")
     for artifact in m["artifacts"]:
         require(digest(local(build, artifact["path"]).read_bytes()) == artifact["sha256"],

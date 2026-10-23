@@ -24,22 +24,37 @@ use serde::Serialize;
 
 use super::writes::demangle;
 use super::{HEADING, refuse, tool};
-use crate::{Repo, Result};
+use crate::{Firmware, Repo, Result};
 
-/// The KM4 task tables: the SDK runtime's and the firmware's.
-pub(crate) const TASK_SOURCES: [&str; 2] = [
-    "crates/sdk/petlibre-sdk/src/runtime.rs",
-    "firmwares/reference/src/app.rs",
-];
+/// The SDK runtime's task table; the firmware's tasks are found in its
+/// `src/`.
+pub(crate) const RUNTIME_SOURCE: &str = "crates/sdk/petlibre-sdk/src/runtime.rs";
 
-/// The task sources' text, which the audit reads its task table from.
-pub(crate) fn task_sources(repo: &Repo) -> Result<String> {
-    let mut text = String::new();
-    for path in TASK_SOURCES {
-        text.push_str(&std::fs::read_to_string(repo.path(path))?);
+/// The task sources' text, which the audit reads its task table from: the
+/// runtime, then every Rust file of the firmware's `src/`, in path order.
+pub(crate) fn task_sources(repo: &Repo, firmware: &Firmware) -> Result<String> {
+    let mut paths = Vec::new();
+    rust_files(&repo.path(&format!("{}/src", firmware.dir())), &mut paths)?;
+    paths.sort();
+
+    let mut text = std::fs::read_to_string(repo.path(RUNTIME_SOURCE))?;
+    for path in paths {
         text.push('\n');
+        text.push_str(&std::fs::read_to_string(path)?);
     }
     Ok(text)
+}
+
+fn rust_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) -> Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let path = entry?.path();
+        if path.is_dir() {
+            rust_files(&path, out)?;
+        } else if path.extension().is_some_and(|e| e == "rs") {
+            out.push(path);
+        }
+    }
+    Ok(())
 }
 
 /// The SDK trampoline frame and an exception stacked onto the task's stack

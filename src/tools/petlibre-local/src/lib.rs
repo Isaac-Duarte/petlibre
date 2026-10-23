@@ -20,5 +20,6 @@ pub mod protocol;
 pub mod replacement;
 pub mod request_auth;
 pub mod speak;
+pub mod stock_setup;
 pub mod storage;
 pub mod wifi_ble;

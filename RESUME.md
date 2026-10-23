@@ -7,6 +7,17 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
+**October 23, about 3 AM: Rust stock recovery on hardware (FW38 done, physical, owner present).**
+- **Code first:** `wellfed-flash` again reads reviews frozen before FW37 (`profile: plaf103-firstboot`, no `device`). Bank 0's image and the reference build have such reviews, so the give-way and the reinstall needed this. It also clears the emulated-fixture failures noted below.
+- **Runs** (release binaries rebuilt first):
+  - `give-way-prepare/-execute fw38-stock-01-giveway`, with `--fallback` naming the `itest-20261022-18-good-review` review: one 1 KiB frame at `0x186000`, no erase. Bank 0 `f244d9a9…` booted (`bank=0`).
+  - `loader fw38-stock-02-loader`, then `wellfed-flash read small`/`read full` (`private/flash-backups/fw38-stock-02-*`), then `stock-recovery prepare` (171 sectors, plan `f3879bca…`) and `execute` (`private/verification/fw38-stock-02-recovery-execute`). Every sector was read back, and the pre-marker 8 MiB verification matched. The marker was committed and its sector read back.
+  - The final full read was skipped at the owner's request: SIGINT once it began, so the journal ends `stopped`, `mutation_possible`.
+  - `boot fw38-stock-03-boot`: stock 1.1.15 from bank 1, no feeds scheduled. The stock log prints the unit's serial and cloud key and secret in plain text; keep that capture private.
+  - `flash-prepare/-execute fw38-stock-04-restore --bank 1`, from the `fw01-stock-review` source to the `itest-20261022-19-good-review` target. The inspection matched bank 1 byte for byte against the stock review. 170 sectors written. `f550a0e9…` booted on bank 1, confirmed.
+- **Flash now:** **Bank 1:** reference `f550a0e9…` (installed over UART; the last OTA version is still 67). **Bank 0:** unchanged (`f244d9a9…`). **Next manifest version:** 68.
+- **Bench state:** restored. Feeder off (both relays off), hotspot down, no server.
+
 **October 23: Python tools retired (FW38, offline, nothing run on the bench; built in a worktree, then merged to master).**
 - **What changed:**
   - No Python is left ([tools](src/tools/README.md)). `make check` and `make check-fixtures` take no `PYTHON=`, and `cargo xtask check-repository` refuses `.py` under `src/`.
@@ -17,7 +28,7 @@ image, bench state, next task, or acceptance evidence changes.
   - Python and Rust reviews of the same PLAF103 first-boot build were identical apart from `reviewer_sha256`, including every factory-loader run (`private/verification/python-to-rust-compare/`).
   - The factory and OTA-marker fixtures pass on the baseline.
   - `wellfed-flash`'s emulated CLI sessions pass (`tests/emulated.rs`): update, give-way/restore, status, stock recovery (full read, plan, execute; bank 1 restored, nothing else changed), and a mid-recovery fault that stops without retry.
-- **Not yet done:** `wellfed-flash stock-recovery` has never restored a bank on hardware. The Python client that did is gone, so FW38 stays in progress until a reviewed bench session runs it.
+- **Not yet done (done in the 3 AM session above):** a hardware stock recovery through `wellfed-flash`.
 - **Identity:** `wellfed-build`'s sources changed, so build IDs change and cached reviews are rebuilt once. Rebuild the release binaries before bench use.
 - **Checks:** `make check` (its three private credential files linked in temporarily for `check-cross`) and `make check-web` pass on the rebased branch. Against the main checkout's `private/` (`WELLFED_FIXTURE_ROOT`): the factory and OTA-marker fixtures and the emulated status, stock-recovery and fault sessions pass. The Python-vs-Rust review comparison and the emulated update and give-way sessions passed before the rebase onto FW37. After it, the update and give-way sessions are refused because `private/fixtures/development-{source,target}` were frozen before FW37 (`profile: plaf103-firstboot`, no `device`), which FW37's reader rejects. The review fixture is refused because the main checkout's first-boot build is stale. Refreeze those reviews from a current build (or decide whether `wellfed-flash` should keep reading pre-FW37 reviews; bank 0's installed image has one), then run `make check-fixtures`.
 - **Bench state:** untouched by this work.

@@ -8,7 +8,7 @@
 - `give-way`, then `update --restore-marker`, booted bank 0 and then bank 1.
 - `update --bank 0` installed a changed image: 140 sectors, verified.
 
-It is the only client. The Python development updater and give-way client were removed on October 22, 2026, after these checks, and the Python reader and stock-recovery client on October 23, 2026. **Stock recovery has not run on hardware in Rust.** The physical stock round trip was done with the Python client, and `wellfed-flash stock-recovery` has so far passed only under emulation (below). A reviewed bench procedure is still required for any device session; a passing check here does not authorize one.
+It is the only client. The Python development updater and give-way client were removed on October 22, 2026, after these checks, and the Python reader and stock-recovery client on October 23, 2026. **Stock recovery ran on hardware in Rust on October 23, 2026 (FW38):** bank 1 restored to stock, and stock 1.1.15 booted. That session skipped the final full read at the owner's request; the next update inspection matched bank 1 against the frozen stock review instead. A reviewed bench procedure is still required for any device session; a passing check here does not authorize one.
 
 Caution: run the bench from a checkout whose `private/` is a real directory. In a worktree where `private/` is a symlink, the evidence paths do not resolve inside the checkout, and the old Python bench's capture check refused there. The firmware build likewise refuses there, because the shared SDK tree records the main checkout's paths.
 

@@ -17,7 +17,7 @@ Later diagnostics also added artifact-bound startup, physical STOP/off requests,
 | `wellfed-flash inspect-journal` | Journal verification |
 | `wellfed-flash`'s emulated fixture tests (`wellfed-emu`) | The pinned helper on synthetic NOR: update, give-way, stock recovery and a mid-recovery fault; no hardware operation |
 
-The physical stock round trip above was done with the Python clients (`uart-stock-recovery.py` and its modules), removed October 23, 2026. `wellfed-flash stock-recovery` keeps their plan, journal and wire formats and has passed end to end only under emulation (a full read, a reviewed plan and its execution against the real helper instructions); it has not yet restored a bank on hardware.
+The physical stock round trip above was done with the Python clients (`uart-stock-recovery.py` and its modules), removed October 23, 2026. `wellfed-flash stock-recovery` keeps their plan, journal and wire formats. It restored bank 1 on the research unit on October 23, 2026 (FW38): a give-way first, then a full read, a reviewed plan and its execution; stock 1.1.15 booted from bank 1, and the reference build went back over UART.
 
 Writers require source-bound plans, current-image evidence, explicit serial identity, immutable inputs, and full preimage verification. Sector writes have durable intent records and exact readback. Activation withholds the first eight marker bytes until staged image and preserved ranges match; the final marker write adds no erase. Lost ACKs or uncertain writes stop without automatic retry or resume.
 

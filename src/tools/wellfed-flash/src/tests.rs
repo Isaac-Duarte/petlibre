@@ -1026,3 +1026,36 @@ fn frozen_reviews_bind_image_manifest_and_required_audits() {
     );
     assert!(!refused());
 }
+
+#[test]
+fn reviews_of_builds_before_device_names_still_read() {
+    let (checkout, root) = private_root();
+    let image = image(30000, 3);
+    let (directory, review, manifest) = frozen_build(checkout.path(), &image);
+
+    // A manifest as builds before FW37 wrote it: no device, the old profile
+    // name. Any other pairing stays unknown.
+    let freeze = |device: Option<&str>, profile: &str| {
+        let mut changed = manifest.clone();
+        let object = changed.as_object_mut().unwrap();
+        object.remove("device");
+        if let Some(device) = device {
+            object.insert("device".into(), json!(device));
+        }
+        object.insert("profile".into(), json!(profile));
+        let raw = changed.to_string();
+        let mut frozen = review.clone();
+        frozen["manifest_sha256"] = json!(sha256(raw.as_bytes()));
+        write(&directory.join("build-manifest.json"), raw.as_bytes());
+        write(
+            &directory.join("review.json"),
+            frozen.to_string().as_bytes(),
+        );
+        crate::review::frozen(&root, &directory, &BANK1).is_ok()
+    };
+
+    assert!(freeze(None, "plaf103-firstboot"));
+    assert!(freeze(Some("plaf103"), "firstboot"));
+    assert!(!freeze(Some("plaf103"), "plaf103-firstboot"));
+    assert!(!freeze(None, "firstboot"));
+}

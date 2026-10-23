@@ -50,7 +50,7 @@ pub struct Step {
     pub record: Option<Record>,
 }
 
-/// `PLPWR1 …` body.
+/// `PLBAT1 …` body.
 pub fn describe(record: Record, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
     match record {
         Record::Opened { ok } => write!(f, "open ok={}", u8::from(ok)),

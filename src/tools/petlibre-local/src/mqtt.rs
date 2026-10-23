@@ -164,6 +164,10 @@ impl Actor {
         let now = Utc::now();
         if !self.tracker.observe_health(payload, now) {
             warn!("ignored invalid replacement health");
+        } else if self.tracker.snapshot(now).online
+            && let Err(error) = self.controller.replacement_healthy(now)
+        {
+            warn!(%error, "replacement install not recorded as healthy");
         }
 
         // FW21: the firmware's wall clock comes only from here.

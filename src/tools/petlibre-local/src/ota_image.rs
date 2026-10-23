@@ -1,10 +1,13 @@
-//! Serve one pinned experiment/original pair; never publishes a device command.
+//! Serve one pinned experiment/original pair, or one reviewed replacement
+//! build; never publishes a device command.
 //!
 //! `ota-images` runs this HTTP server on the fixed trial port for a single
-//! peer and a 15-minute accept window. Both images are hash-pinned and held in
+//! peer and a 15-minute accept window. Every image is hash-bound and held in
 //! memory once loaded, so changing the files afterwards cannot change what is
-//! served. A private lease beside the config records the random URL token;
-//! trial dispatch requires that lease and a live listener.
+//! served: the stock pair by pinned digests, a replacement build by its frozen
+//! review's `ota_sha256`. A private lease beside the config records the
+//! random URL token and the served digest; trial dispatch requires that lease
+//! and a live listener.
 use std::{
     convert::Infallible, future::Future, io::Read, net::Ipv4Addr, path::Path, sync::Arc,
     time::Duration,
@@ -19,12 +22,15 @@ use axum::{
 use chrono::{DateTime, Utc};
 use hyper::{body::Incoming, server::conn::http1, service::service_fn};
 use hyper_util::rt::{TokioIo, TokioTimer};
-use petlibre_formats::canonical;
+use petlibre_formats::{
+    canonical,
+    review::{ImageKind, ImageReview},
+};
 use serde::{Deserialize, Serialize};
 use tokio::{net::TcpListener, task::JoinSet};
 use uuid::Uuid;
 
-use crate::{config::Config, storage};
+use crate::{config::Config, firmware_ota, storage};
 
 pub const ORIGINAL_SHA256: &str =
     "05147476fc70c91cc77ad7da6d6772376b2081d460ac7b1912e2d73868a09498";
@@ -44,27 +50,28 @@ pub enum Profile {
     #[default]
     StockVersion,
     CExecution,
+    /// A replacement-firmware build for stock to install (the stock-to-
+    /// replacement POC). `--directory` is its frozen review. There is no
+    /// original beside it: the way back to stock is the UART recovery.
+    Replacement,
 }
 
 impl Profile {
-    fn filename(self) -> &'static str {
+    /// The pinned experiment's file name and digest; `None` for a
+    /// replacement build, whose digest comes from its review.
+    fn pinned(self) -> Option<(&'static str, &'static str)> {
         match self {
-            Self::StockVersion => "version-test-1.1.16.bin",
-            Self::CExecution => "c-probe-1.1.17.bin",
+            Self::StockVersion => Some(("version-test-1.1.16.bin", TEST_SHA256)),
+            Self::CExecution => Some(("c-probe-1.1.17.bin", C_PROBE_SHA256)),
+            Self::Replacement => None,
         }
     }
 
-    fn route(self) -> &'static str {
+    pub fn route(self) -> &'static str {
         match self {
             Self::StockVersion => "test.bin",
             Self::CExecution => "probe.bin",
-        }
-    }
-
-    fn digest(self) -> &'static str {
-        match self {
-            Self::StockVersion => TEST_SHA256,
-            Self::CExecution => C_PROBE_SHA256,
+            Self::Replacement => "replacement.bin",
         }
     }
 }
@@ -79,6 +86,10 @@ pub struct Lease {
     pub expires_at: DateTime<Utc>,
     #[serde(default)]
     pub profile: Profile,
+    /// The served experiment's SHA-256. Required for a replacement build,
+    /// whose digest is not a constant; absent from older leases.
+    #[serde(default)]
+    pub sha256: Option<String>,
 }
 
 impl Lease {
@@ -103,25 +114,37 @@ impl Lease {
 }
 
 pub struct Images {
-    original: Bytes,
-    test: Bytes,
+    /// `None` for a replacement build, which has no return image here.
+    original: Option<Bytes>,
+    experiment: Bytes,
     profile: Profile,
+    /// The experiment's SHA-256, recorded in the lease.
+    sha256: String,
+}
+
+/// Read at most `IMAGE_BYTES`; a pinned image must be exactly that long.
+fn read_image(path: &Path, exact: bool) -> Result<Vec<u8>> {
+    let file = std::fs::File::open(path).context("open prepared OTA image")?;
+    let size = file.metadata()?.len();
+    ensure!(
+        if exact {
+            size == IMAGE_BYTES as u64
+        } else {
+            size <= IMAGE_BYTES as u64
+        },
+        "unexpected OTA file size"
+    );
+
+    let mut data = Vec::with_capacity(IMAGE_BYTES);
+    file.take((IMAGE_BYTES + 1) as u64).read_to_end(&mut data)?;
+    ensure!(data.len() as u64 == size, "OTA size changed while reading");
+    Ok(data)
 }
 
 impl Images {
     pub fn load(directory: &Path, profile: Profile) -> Result<Self> {
-        fn read(directory: &Path, filename: &str, expected: &str) -> Result<Bytes> {
-            let path = directory.join(filename);
-            let file = std::fs::File::open(path).context("open prepared OTA image")?;
-            ensure!(
-                file.metadata()?.len() == IMAGE_BYTES as u64,
-                "unexpected OTA file size"
-            );
-
-            let mut data = Vec::with_capacity(IMAGE_BYTES);
-            file.take((IMAGE_BYTES + 1) as u64).read_to_end(&mut data)?;
-            ensure!(data.len() == IMAGE_BYTES, "OTA size changed while reading");
-
+        fn pinned(directory: &Path, filename: &str, expected: &str) -> Result<Bytes> {
+            let data = read_image(&directory.join(filename), true)?;
             ensure!(
                 canonical::sha256(&data) == expected,
                 "OTA image hash mismatch"
@@ -129,10 +152,42 @@ impl Images {
             Ok(Bytes::from(data))
         }
 
+        let Some((filename, digest)) = profile.pinned() else {
+            return Self::replacement(directory);
+        };
         Ok(Self {
-            original: read(directory, "original-1.1.15.bin", ORIGINAL_SHA256)?,
-            test: read(directory, profile.filename(), profile.digest())?,
+            original: Some(pinned(directory, "original-1.1.15.bin", ORIGINAL_SHA256)?),
+            experiment: pinned(directory, filename, digest)?,
             profile,
+            sha256: digest.to_owned(),
+        })
+    }
+
+    /// A frozen review's `image.bin`, bound to the review's `ota_sha256`.
+    /// The review's layout audit is what establishes the container header,
+    /// byte-sum and inner images stock checks; the digest binds these bytes
+    /// to it. The loader-marker check repeats `ota-sign`'s.
+    fn replacement(review: &Path) -> Result<Self> {
+        let frozen: ImageReview =
+            petlibre_formats::load(&review.join("review.json")).context("read review.json")?;
+        ensure!(
+            frozen.image_kind == ImageKind::Build,
+            "review is not of a replacement build"
+        );
+
+        let data = read_image(&review.join("image.bin"), false)?;
+        let sha256 = canonical::sha256(&data);
+        ensure!(
+            sha256 == frozen.ota_sha256,
+            "image.bin does not match its review"
+        );
+        firmware_ota::payload(&data)?;
+
+        Ok(Self {
+            original: None,
+            experiment: Bytes::from(data),
+            profile: Profile::Replacement,
+            sha256,
         })
     }
 }
@@ -163,10 +218,13 @@ fn response(
         return StatusCode::BAD_REQUEST.into_response();
     }
 
-    let (data, kind) = if original {
-        (state.images.original.clone(), "original")
-    } else {
-        (state.images.test.clone(), state.images.profile.route())
+    let (data, kind) = match (original, &state.images.original) {
+        (true, Some(data)) => (data.clone(), "original"),
+        (true, None) => return StatusCode::NOT_FOUND.into_response(),
+        (false, _) => (
+            state.images.experiment.clone(),
+            state.images.profile.route(),
+        ),
     };
 
     tracing::info!(
@@ -289,6 +347,7 @@ pub async fn serve(
     directory: &Path,
     peer: Ipv4Addr,
     profile: Profile,
+    stop: impl Future<Output = ()>,
 ) -> Result<()> {
     let std::net::IpAddr::V4(host) = config.mqtt_listen.ip() else {
         anyhow::bail!("OTA image host must use IPv4");
@@ -308,6 +367,7 @@ pub async fn serve(
         peer,
         expires_at: Utc::now() + chrono::Duration::seconds(ACCEPT_WINDOW_SECONDS),
         profile,
+        sha256: Some(images.sha256.clone()),
     };
 
     let lease_path = Lease::path(config_path);
@@ -318,7 +378,7 @@ pub async fn serve(
     #[allow(clippy::print_stdout)]
     {
         println!(
-            "Image server only; no update requested. Stops accepting at {} or on Ctrl-C; active transfers drain.",
+            "Image server only; no update requested. Stops accepting at {} or on Ctrl-C or SIGTERM; active transfers drain.",
             lease.expires_at
         );
         println!("Server token: {}", lease.token);
@@ -327,15 +387,17 @@ pub async fn serve(
             lease.token,
             profile.route()
         );
-        println!(
-            "Original: http://{host}:{PORT}/ota/{}/original.bin",
-            lease.token
-        );
+        if images.original.is_some() {
+            println!(
+                "Original: http://{host}:{PORT}/ota/{}/original.bin",
+                lease.token
+            );
+        }
     }
 
     let result = run(listener, images, peer, lease.token, async {
         tokio::select! {
-            _ = tokio::signal::ctrl_c() => {},
+            _ = stop => {},
             _ = tokio::time::sleep(Duration::from_secs(ACCEPT_WINDOW_SECONDS as u64)) => {},
         }
     })
@@ -375,9 +437,11 @@ mod tests {
         let address = listener.local_addr().unwrap();
         let token = Uuid::new_v4();
         let images = Images {
-            original: Bytes::from_static(b"original-image"),
-            test: Bytes::from_static(b"test-image"),
+            original: (profile != Profile::Replacement)
+                .then(|| Bytes::from_static(b"original-image")),
+            experiment: Bytes::from_static(b"test-image"),
             profile,
+            sha256: String::new(),
         };
 
         let worker = tokio::spawn(run(listener, images, peer, token, std::future::pending()));
@@ -518,6 +582,7 @@ mod tests {
             peer: Ipv4Addr::new(10, 0, 0, 2),
             expires_at: Utc::now(),
             profile: Profile::StockVersion,
+            sha256: None,
         };
 
         storage::write_json(&Lease::path(&config), &lease).unwrap();
@@ -541,6 +606,97 @@ mod tests {
         assert_eq!(lease.profile, Profile::StockVersion);
     }
 
+    #[tokio::test]
+    async fn replacement_profile_serves_only_its_build() {
+        let (address, token, worker) =
+            start_profile(Ipv4Addr::LOCALHOST, Profile::Replacement).await;
+
+        for (file, status, body) in [
+            ("replacement.bin", 200, b"test-image".as_slice()),
+            ("original.bin", 404, b"".as_slice()),
+            ("test.bin", 404, b"".as_slice()),
+        ] {
+            let reply = exchange(
+                address,
+                &format!("GET /ota/{token}/{file} HTTP/1.1\r\nHost: lab\r\n\r\n"),
+            )
+            .await;
+            let (headers, received) = split(&reply);
+            assert!(headers.starts_with(&format!("HTTP/1.1 {status} ")));
+            assert_eq!(received, body);
+        }
+
+        worker.abort();
+    }
+
+    /// A review directory holding `image` and a review naming `digest`.
+    fn review(image: &[u8], digest: &str, kind: &str) -> tempfile::TempDir {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("image.bin"), image).unwrap();
+        let review = serde_json::json!({
+            "schema_version": 1,
+            "kind": "plaf103_development_image_review",
+            "image_kind": kind,
+            "ota_sha256": digest,
+            "payload_sha256": "",
+            "payload_bytes": 0,
+            "manifest_sha256": null,
+            "review": {"stock_sha256": ""},
+            "reviewer_sha256": "",
+            "application_boot_verified": false,
+        });
+        storage::write_json(&directory.path().join("review.json"), &review).unwrap();
+        directory
+    }
+
+    #[test]
+    fn a_replacement_build_loads_only_when_its_review_binds_it() {
+        let mut image = vec![0xff; 32];
+        image.extend_from_slice(b"81958711");
+        image.extend_from_slice(&[0x5a; 64]);
+        let digest = canonical::sha256(&image);
+
+        let good = review(&image, &digest, "build");
+        let images = Images::load(good.path(), Profile::Replacement).unwrap();
+        assert!(images.original.is_none());
+        assert_eq!(images.experiment.as_ref(), image.as_slice());
+        assert_eq!(images.sha256, digest);
+
+        let other = canonical::sha256(b"other");
+        assert!(
+            Images::load(review(&image, &other, "build").path(), Profile::Replacement).is_err()
+        );
+        assert!(
+            Images::load(
+                review(&image, &digest, "stock").path(),
+                Profile::Replacement
+            )
+            .is_err()
+        );
+
+        let mut unmarked = image.clone();
+        unmarked[32] = 0;
+        let unmarked_digest = canonical::sha256(&unmarked);
+        assert!(
+            Images::load(
+                review(&unmarked, &unmarked_digest, "build").path(),
+                Profile::Replacement
+            )
+            .is_err()
+        );
+
+        let mut oversized = image.clone();
+        oversized.resize(IMAGE_BYTES + 1, 0xff);
+        let oversized_digest = canonical::sha256(&oversized);
+        assert!(
+            Images::load(
+                review(&oversized, &oversized_digest, "build").path(),
+                Profile::Replacement
+            )
+            .is_err()
+        );
+    }
+
     #[test]
     #[ignore = "requires the private prepared stock-version experiment; run explicitly"]
     fn pinned_real_images_are_immutable_after_load_and_mutated_files_are_refused() {
@@ -551,19 +707,23 @@ mod tests {
         ] {
             let source = root.join("private/firmware/experiments").join(name);
             let directory = tempfile::tempdir().unwrap();
-            for name in ["original-1.1.15.bin", profile.filename()] {
+            let (filename, _) = profile.pinned().unwrap();
+            for name in ["original-1.1.15.bin", filename] {
                 std::fs::copy(source.join(name), directory.path().join(name)).unwrap();
             }
 
             let images = Images::load(directory.path(), profile).unwrap();
-            assert_eq!(images.original.len(), IMAGE_BYTES);
-            assert_eq!(images.test.len(), IMAGE_BYTES);
+            assert_eq!(images.original.as_ref().map(Bytes::len), Some(IMAGE_BYTES));
+            assert_eq!(images.experiment.len(), IMAGE_BYTES);
 
             let path = directory.path().join("original-1.1.15.bin");
             let mut data = std::fs::read(&path).unwrap();
             data[0x17040] ^= 1;
             std::fs::write(path, &data).unwrap();
-            assert_ne!(images.original[0x17040], data[0x17040]);
+            assert_ne!(
+                images.original.as_ref().map(|o| o[0x17040]),
+                Some(data[0x17040])
+            );
             assert!(Images::load(directory.path(), profile).is_err());
 
             std::fs::copy(
@@ -572,7 +732,7 @@ mod tests {
             )
             .unwrap();
 
-            let path = directory.path().join(profile.filename());
+            let path = directory.path().join(filename);
             let mut data = std::fs::read(&path).unwrap();
             data[0x17040] ^= 1;
             std::fs::write(path, &data).unwrap();

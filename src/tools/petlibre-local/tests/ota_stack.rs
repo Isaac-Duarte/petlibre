@@ -66,6 +66,7 @@ async fn run_cycle(profile: ota_image::Profile) {
             peer: Ipv4Addr::new(10, 0, 0, 2),
             expires_at: Utc::now() + chrono::Duration::minutes(15),
             profile,
+            sha256: None,
         },
     )
     .unwrap();
@@ -232,6 +233,7 @@ async fn run_cycle(profile: ota_image::Profile) {
     let pair = match profile {
         ota_image::Profile::StockVersion => [Image::Test, Image::Original],
         ota_image::Profile::CExecution => [Image::CProbe, Image::CProbeOriginal],
+        ota_image::Profile::Replacement => unreachable!("the stock pairs only"),
     };
     for (index, image) in pair.into_iter().enumerate() {
         let request = ota_trial::Input {

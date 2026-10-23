@@ -15,6 +15,8 @@ The practical image contract is:
 | A reachable plain HTTP endpoint serving the complete file | Direct `200`, explicit `Content-Length`, short URL, no compression or chunked body. U03, U04 |
 | An acceptable MQTT request and device state | Model, version, connectivity, idle/power conditions, time and memory checks occur before download. U02 |
 
+`petlibre-bench stock-ota` ([bench](../hardware/bench.md#stock-to-replacement-install-poc)) applies this contract to a replacement build (FW40). It is host-tested only, so it is not yet physical evidence of a stock-to-replacement install.
+
 ## Evidence identity and verification
 
 **Static analysis:** the inspected stock OTA is 1,376,288 bytes, SHA-256 `05147476fc70c91cc77ad7da6d6772376b2081d460ac7b1912e2d73868a09498`. Its KM4 executable segment starts at file offset `0x17040`, mapped at runtime address `0x0e000020`. All function addresses below use that runtime coordinate system.

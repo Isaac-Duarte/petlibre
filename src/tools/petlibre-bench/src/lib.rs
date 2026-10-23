@@ -54,6 +54,9 @@ pub enum Error {
     /// The server's status does not show what a wait is for, yet.
     #[error(transparent)]
     NotReady(#[from] server::NotReady),
+    /// The server does not yet see stock ready to be asked for an install.
+    #[error(transparent)]
+    StockNotReady(#[from] server::StockNotReady),
     /// The firmware did not answer a request. Requests go out at QoS 0, so
     /// one sent while the transport reconnects is lost.
     #[error("No reply to {op} within {seconds:.0} s")]

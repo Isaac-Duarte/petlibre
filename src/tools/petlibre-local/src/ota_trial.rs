@@ -1,7 +1,10 @@
-//! Fixed modified-stock/original trial requests; no arbitrary firmware or URLs.
+//! Fixed modified-stock/original trial requests, and the stock-to-replacement
+//! install; no arbitrary URLs.
 //!
-//! Each `Image` names one hash-pinned file on the `ota-images` server and the
-//! stock version it must start from. A restore (`Original`, `CProbeOriginal`)
+//! Each `Image` names one hash-bound file on the `ota-images` server and the
+//! stock version it must start from: the stock experiments by pinned digest,
+//! a replacement build by the digest its frozen review binds, which the
+//! server's lease carries and the record keeps. A restore (`Original`, `CProbeOriginal`)
 //! is allowed only after its experiment's version was reported. The controller
 //! persists a `Record` before the `OTA_UPGRADE` command goes out and never
 //! resends it.
@@ -21,6 +24,9 @@ pub const ORIGINAL_VERSION: &str = "1.1.15";
 pub const TEST_VERSION: &str = "1.1.16";
 /// The C-probe diagnostic image.
 pub const C_PROBE_VERSION: &str = "1.1.17";
+/// What a replacement build is announced as. Stock parses it only with
+/// `%d.%d.%d` and refuses its own version; nothing reports it back.
+pub const REPLACEMENT_VERSION: &str = "2.0.0";
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize, clap::ValueEnum)]
 #[serde(rename_all = "snake_case")]
@@ -29,12 +35,15 @@ pub enum Image {
     Original,
     CProbe,
     CProbeOriginal,
+    /// A replacement-firmware build. Stock writes it to bank 0 and
+    /// invalidates bank 1; the way back is the UART stock recovery.
+    Replacement,
 }
 
 impl Image {
     pub fn source_version(self) -> &'static str {
         match self {
-            Self::Test | Self::CProbe => ORIGINAL_VERSION,
+            Self::Test | Self::CProbe | Self::Replacement => ORIGINAL_VERSION,
             Self::Original => TEST_VERSION,
             Self::CProbeOriginal => C_PROBE_VERSION,
         }
@@ -45,6 +54,7 @@ impl Image {
             Self::Test => TEST_VERSION,
             Self::CProbe => C_PROBE_VERSION,
             Self::Original | Self::CProbeOriginal => ORIGINAL_VERSION,
+            Self::Replacement => REPLACEMENT_VERSION,
         }
     }
 
@@ -53,14 +63,18 @@ impl Image {
             Self::Test => "test.bin",
             Self::CProbe => "probe.bin",
             Self::Original | Self::CProbeOriginal => "original.bin",
+            Self::Replacement => ota_image::Profile::Replacement.route(),
         }
     }
 
-    fn digest(self) -> &'static str {
+    /// The pinned digest; `None` for a replacement build, whose digest is
+    /// the image server's.
+    pub fn digest(self) -> Option<&'static str> {
         match self {
-            Self::Test => ota_image::TEST_SHA256,
-            Self::CProbe => ota_image::C_PROBE_SHA256,
-            Self::Original | Self::CProbeOriginal => ota_image::ORIGINAL_SHA256,
+            Self::Test => Some(ota_image::TEST_SHA256),
+            Self::CProbe => Some(ota_image::C_PROBE_SHA256),
+            Self::Original | Self::CProbeOriginal => Some(ota_image::ORIGINAL_SHA256),
+            Self::Replacement => None,
         }
     }
 
@@ -68,6 +82,7 @@ impl Image {
         match self {
             Self::Test | Self::Original => ota_image::Profile::StockVersion,
             Self::CProbe | Self::CProbeOriginal => ota_image::Profile::CExecution,
+            Self::Replacement => ota_image::Profile::Replacement,
         }
     }
 
@@ -75,7 +90,7 @@ impl Image {
         match self {
             Self::Original => Some(Self::Test),
             Self::CProbeOriginal => Some(Self::CProbe),
-            Self::Test | Self::CProbe => None,
+            Self::Test | Self::CProbe | Self::Replacement => None,
         }
     }
 }
@@ -98,6 +113,10 @@ pub enum Phase {
     /// Operator-resolved after a quiet period with the source version still
     /// freshly reported. Never sends a command.
     NotInstalled,
+    /// A replacement install whose firmware then published online health on
+    /// its own role. Stock reports nothing once it has activated the
+    /// replacement, so this, not a version report, closes the trial.
+    ReplacementHealthy,
 }
 
 /// Explicit operator resolution of an uncertain or failed trial.
@@ -119,13 +138,18 @@ pub struct Record {
     pub download_reported: bool,
     #[serde(default)]
     pub resolution_note: Option<String>,
+    /// The digest the command announced: the pinned one, or the image
+    /// server's for a replacement build. Absent from records written before
+    /// replacement installs; a record's command is only built when it is new.
+    #[serde(default)]
+    pub image_sha256: String,
 }
 
 /// The stock `OTA_UPGRADE` command's own fields.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct Upgrade {
-    sha256: &'static str,
+struct Upgrade<'a> {
+    sha256: &'a str,
     target_pid: &'static str,
     target_software_version: &'static str,
     upgrade_type: u8,
@@ -136,7 +160,7 @@ impl Record {
     pub fn command(&self, config: &Config) -> Reply {
         let image = self.input.image;
         let upgrade = Upgrade {
-            sha256: image.digest(),
+            sha256: &self.image_sha256,
             target_pid: "PLAF103",
             target_software_version: image.target_version(),
             upgrade_type: 1,

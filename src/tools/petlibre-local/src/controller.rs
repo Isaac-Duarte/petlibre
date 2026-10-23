@@ -642,6 +642,16 @@ impl Controller {
         }) {
             return Err(Rejection::ImageServer);
         }
+        // A replacement build's digest is the one the image server bound to
+        // its review; the stock experiments' are pinned.
+        let Some(image_sha256) = input
+            .image
+            .digest()
+            .map(str::to_owned)
+            .or_else(|| lease.and_then(|lease| lease.sha256.clone()))
+        else {
+            return Err(Rejection::ImageServer);
+        };
 
         let record = ota_trial::Record {
             sequence: self.ledger.ota_trials.len() + 1,
@@ -651,6 +661,7 @@ impl Controller {
             phase: TrialPhase::Submitted,
             download_reported: false,
             resolution_note: None,
+            image_sha256,
         };
 
         // The hold is saved with the record, before the command is returned for
@@ -666,6 +677,34 @@ impl Controller {
 
         self.refresh(now);
         Ok((record.clone(), Some(record.command(&self.config))))
+    }
+
+    /// The replacement firmware published online health. If the latest trial
+    /// is a replacement install still open, that health is its evidence:
+    /// stock never reports again after activating it. Health from before
+    /// the submission (a build already running) proves nothing. Feeding
+    /// stays held, since only stock feeds through this server.
+    pub fn replacement_healthy(&mut self, now: DateTime<Utc>) -> Result<()> {
+        let Some(trial) = self
+            .ledger
+            .ota_trials
+            .values_mut()
+            .max_by_key(|r| r.sequence)
+        else {
+            return Ok(());
+        };
+        if trial.input.image != ota_trial::Image::Replacement
+            || !matches!(trial.phase, TrialPhase::Submitted | TrialPhase::Uncertain)
+            || now <= trial.created_at
+        {
+            return Ok(());
+        }
+
+        trial.phase = TrialPhase::ReplacementHealthy;
+        trial.updated_at = now;
+        self.save()?;
+        self.refresh(now);
+        Ok(())
     }
 
     /// Close the latest uncertain or failed trial from fresh version evidence.
@@ -871,6 +910,21 @@ impl Controller {
             return false;
         };
         if trial.phase == TrialPhase::VersionReported {
+            return false;
+        }
+        // Stock returns from a replacement install only over UART; its first
+        // fresh startup report afterwards releases feeding.
+        if trial.phase == TrialPhase::ReplacementHealthy {
+            let returned = channel == Channel::Event
+                && message.cmd == "DEVICE_START_EVENT"
+                && message.report.software_version.as_deref() == Some(ORIGINAL_VERSION)
+                && message
+                    .ts
+                    .is_some_and(|ts| ts >= trial.updated_at.timestamp_millis());
+            if returned && self.ledger.ota_hold {
+                self.ledger.ota_hold = false;
+                return true;
+            }
             return false;
         }
 

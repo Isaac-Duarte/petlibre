@@ -1754,6 +1754,7 @@ dependencies = [
  "tokio",
  "tower",
  "ts-rs",
+ "uuid",
 ]
 
 [[package]]

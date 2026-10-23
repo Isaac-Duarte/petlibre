@@ -21,6 +21,7 @@ fn lease(token: Uuid, now: DateTime<Utc>) -> Lease {
         peer: "10.0.0.2".parse().unwrap(),
         expires_at: now + Duration::minutes(15),
         profile: petlibre_local::ota_image::Profile::StockVersion,
+        sha256: None,
     }
 }
 
@@ -722,4 +723,131 @@ fn backwards_host_clock_restarts_the_resolution_observation_interval() {
             .phase,
         Phase::NotInstalled
     );
+}
+
+/// A live image-server lease for a replacement build with `sha256`.
+fn replacement_lease(token: Uuid, sha256: Option<&str>, now: DateTime<Utc>) -> Lease {
+    Lease {
+        profile: petlibre_local::ota_image::Profile::Replacement,
+        sha256: sha256.map(str::to_owned),
+        ..lease(token, now)
+    }
+}
+
+#[test]
+fn a_replacement_install_announces_the_served_digest_and_needs_stock() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = Controller::load(common::config(), dir.path().join("ledger.json")).unwrap();
+    c.enable_ota_trial();
+    let digest = "ab".repeat(32);
+
+    // Only a reported, externally powered stock 1.1.15 may be asked.
+    ready(&mut c, "1.1.16");
+    let now = Utc::now();
+    let request = input(Image::Replacement);
+    let images = replacement_lease(request.server_token, Some(&digest), now);
+    assert!(matches!(
+        c.ota_trial(request.clone(), Some(&images), now),
+        Err(Rejection::InvalidOta)
+    ));
+
+    // The lease must serve a replacement build and name its digest.
+    ready(&mut c, "1.1.15");
+    let now = Utc::now();
+    let pinned = lease(request.server_token, now);
+    assert!(matches!(
+        c.ota_trial(request.clone(), Some(&pinned), now),
+        Err(Rejection::ImageServer)
+    ));
+    let unnamed = replacement_lease(request.server_token, None, now);
+    assert!(matches!(
+        c.ota_trial(request.clone(), Some(&unnamed), now),
+        Err(Rejection::ImageServer)
+    ));
+
+    let (record, command) = c.ota_trial(request.clone(), Some(&images), now).unwrap();
+    let command = command.unwrap();
+    assert_eq!(record.image_sha256, digest);
+    assert_eq!(command.payload["sha256"], digest.as_str());
+    assert_eq!(command.payload["targetSoftwareVersion"], "2.0.0");
+    assert_eq!(command.payload["targetPid"], "PLAF103");
+    assert_eq!(command.payload["upgradeType"], 1);
+
+    // The stock URL parser copies into 128 bytes.
+    let url = command.payload["url"].as_str().unwrap();
+    assert!(url.starts_with("http://") && url.ends_with("/replacement.bin"));
+    assert!(url.len() < 128, "{url}");
+
+    // The same ID returns the record without a second command.
+    let (_, again) = c.ota_trial(request, Some(&images), now).unwrap();
+    assert!(again.is_none());
+}
+
+#[test]
+fn replacement_health_closes_only_an_open_replacement_install() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("ledger.json");
+    let mut c = Controller::load(common::config(), path.clone()).unwrap();
+    c.enable_ota_trial();
+    ready(&mut c, "1.1.15");
+    let digest = "cd".repeat(32);
+    let now = Utc::now();
+
+    // Health with no replacement trial changes nothing.
+    c.replacement_healthy(now).unwrap();
+    assert!(c.status.ota_trials.is_empty());
+
+    let request = input(Image::Replacement);
+    let images = replacement_lease(request.server_token, Some(&digest), now);
+    c.ota_trial(request.clone(), Some(&images), now).unwrap();
+    assert!(c.status.ota_hold);
+
+    // Health stamped at the submission itself proves nothing.
+    c.replacement_healthy(now).unwrap();
+    assert_eq!(c.status.ota_trials[0].phase, Phase::Submitted);
+
+    let later = now + Duration::seconds(200);
+    c.replacement_healthy(later).unwrap();
+    assert_eq!(c.status.ota_trials[0].phase, Phase::ReplacementHealthy);
+    assert!(
+        c.status.ota_hold,
+        "feeding stays held under the replacement"
+    );
+
+    // Persisted, and a restart does not reopen it.
+    drop(c);
+    let mut c = Controller::load(common::config(), path).unwrap();
+    assert_eq!(c.status.ota_trials[0].phase, Phase::ReplacementHealthy);
+
+    // Stock back (over UART) and starting releases feeding.
+    let back = later + Duration::minutes(30);
+    observe(
+        &mut c,
+        "event",
+        json!({"cmd":"DEVICE_START_EVENT","softwareVersion":"1.1.15",
+        "ts":back.timestamp_millis()}),
+        back,
+    );
+    assert!(!c.status.ota_hold);
+}
+
+#[test]
+fn an_uncertain_replacement_install_still_closes_on_health() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = Controller::load(common::config(), dir.path().join("ledger.json")).unwrap();
+    c.enable_ota_trial();
+    ready(&mut c, "1.1.15");
+    let now = Utc::now();
+
+    let request = input(Image::Replacement);
+    let digest = "ef".repeat(32);
+    let images = replacement_lease(request.server_token, Some(&digest), now);
+    c.ota_trial(request, Some(&images), now).unwrap();
+
+    // Stock's own session ends when it reboots into the new bank.
+    c.disconnected(now + Duration::seconds(100)).unwrap();
+    assert_eq!(c.status.ota_trials[0].phase, Phase::Uncertain);
+
+    c.replacement_healthy(now + Duration::seconds(200)).unwrap();
+    assert_eq!(c.status.ota_trials[0].phase, Phase::ReplacementHealthy);
 }

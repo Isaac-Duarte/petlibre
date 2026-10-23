@@ -269,7 +269,7 @@ impl Rig for Feeder {
         // Offers live in serve's memory only.
         self.offered = None;
         self.server = match &server {
-            Server::Serve => "serve".into(),
+            Server::Serve | Server::StockTrial => "serve".into(),
             Server::Broker => "broker".into(),
             Server::Faulty { fault, staged } => {
                 let stage = match fault {

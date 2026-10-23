@@ -3,7 +3,7 @@
 
 use std::sync::Mutex;
 
-use wellfed_core::net_store::{Credentials, NetStore};
+use wellfed_core::store::net::{Credentials, NetStore};
 use wellfed_core::transport::{WifiFields, WifiResult, WifiSource};
 use wellfed_hal::network::*;
 use wellfed_hal::sdk::fake;
@@ -33,7 +33,7 @@ fn select() -> (Vec<u8>, Vec<u8>, u32) {
 
 /// Write a credential record into the fake storage, as the writer would.
 fn store(credentials: Option<Credentials>) {
-    use wellfed_core::storage::JournalIo;
+    use wellfed_core::store::slot::JournalIo;
     use std::ffi::{c_uint, c_void};
     unsafe extern "C" fn read(
         _: *mut c_void,

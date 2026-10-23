@@ -11,7 +11,7 @@ use wellfed_core::transport::{
 };
 use wellfed_local::{
     config::FirmwareConfig,
-    request_auth::{self, RequestKey},
+    replacement::request_auth::{self, RequestKey},
     storage,
 };
 use serde_json::Value;
@@ -235,8 +235,8 @@ async fn firmware_codec_reports_health_and_answers_through_the_real_broker() {
     let time = mqtt::parse_request(payload).unwrap();
     assert_eq!(time.op, Ok(mqtt::Op::Time));
     let fields = time.time.unwrap();
-    let mut clock = wellfed_core::wall_clock::WallClock::new();
-    let sync = wellfed_core::wall_clock::Sync {
+    let mut clock = wellfed_core::clock::wall::WallClock::new();
+    let sync = wellfed_core::clock::wall::Sync {
         unix_ms: fields.unix_ms,
         offset_s: fields.offset_s,
         next_change_s: fields.next_change_s,
@@ -244,7 +244,7 @@ async fn firmware_codec_reports_health_and_answers_through_the_real_broker() {
     };
     assert_eq!(
         clock.sync(0, sync),
-        Ok(wellfed_core::wall_clock::Jump::First)
+        Ok(wellfed_core::clock::wall::Jump::First)
     );
 
     // A request from the API arrives on the request topic and parses.

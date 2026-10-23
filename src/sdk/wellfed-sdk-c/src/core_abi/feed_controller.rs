@@ -1,6 +1,6 @@
 //! Exports declared by `feed_controller.h`.
 
-use wellfed_core::feed_controller::{
+use wellfed_core::feed::controller::{
     FeedController, FeedLimits, FeedReason, FeedRequest, FeedSample, FeedStartResult,
 };
 

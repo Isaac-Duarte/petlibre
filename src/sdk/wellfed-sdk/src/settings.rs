@@ -9,13 +9,13 @@ use core::fmt;
 
 use wellfed_core::named_enum;
 
-use wellfed_core::net_store::{NetStatus, NetStore};
-use wellfed_core::settings_store::{Settings, SettingsStatus, SettingsStore};
+use wellfed_core::store::net::{NetStatus, NetStore};
+use wellfed_core::store::settings::{Settings, SettingsStatus, SettingsStore};
 use wellfed_core::transport::{SettingsFields, SettingsView};
-use wellfed_hal::arming::{self, Arming, Hooks, Poll};
 use wellfed_hal::flash::park::Mmio;
+use wellfed_hal::flash_lock::arming::{self, Arming, Hooks, Poll};
+use wellfed_hal::flash_lock::provider::Provider;
 use wellfed_hal::network::{self, NET_BASE};
-use wellfed_hal::provider::Provider;
 use wellfed_hal::settings;
 
 use crate::storage::{FlashOps, SETTINGS_BASE, SETTINGS_BINDING, slot_io};

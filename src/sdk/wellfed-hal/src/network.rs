@@ -18,8 +18,8 @@ use core::ffi::{c_uint, c_void};
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
 use wellfed_core::hex;
-use wellfed_core::net_store::{Credentials, NetStore};
-use wellfed_core::storage::JournalIo;
+use wellfed_core::store::net::{Credentials, NetStore};
+use wellfed_core::store::slot::JournalIo;
 use wellfed_core::transport::{WifiFields, WifiResult, WifiSource, WifiView};
 
 use crate::cell::TaskCell;
@@ -151,7 +151,7 @@ pub fn publish(store: &NetStore, armed: bool) {
     STORED_CRC.store(
         store
             .credentials
-            .map_or(0, |c| wellfed_core::storage::crc32(c.ssid())),
+            .map_or(0, |c| wellfed_core::store::slot::crc32(c.ssid())),
         Ordering::Release,
     );
     STORED.store(store.credentials.is_some(), Ordering::Release);

@@ -26,18 +26,18 @@
 
 use core::fmt;
 
-use wellfed_core::feed_controller::{FeedController, FeedLimits};
+use wellfed_core::feed::controller::{FeedController, FeedLimits};
+use wellfed_core::feed::sensor_inputs::{SensorFilter, SensorInputs, SensorLimits, SensorReading};
 use wellfed_core::flash_coord::{FlashCoord, FlashReply};
-use wellfed_core::sensor_inputs::{SensorFilter, SensorInputs, SensorLimits, SensorReading};
 
 use crate::{elapsed_ms, ticks_ms};
 use wellfed_hal::board::{self, Board, MOTOR_MASK};
-use wellfed_hal::config::{FLASH_LIMITS, SYSTIMER_HZ};
-use wellfed_hal::events::{Events, EventsConfig, EventsFault, EventsSnapshot};
 use wellfed_hal::flash::park::{self, Mmio, Reply};
-use wellfed_hal::provider::BOOT_COUNT_REGISTER;
+use wellfed_hal::flash_lock::provider::BOOT_COUNT_REGISTER;
 use wellfed_hal::sdk::{self, GPIO_PORT_A};
 use wellfed_hal::stopped;
+use wellfed_hal::supervision::config::{FLASH_LIMITS, SYSTIMER_HZ};
+use wellfed_hal::supervision::events::{Events, EventsConfig, EventsFault, EventsSnapshot};
 
 pub const POLL_MS: u32 = 2;
 /// Handshake polling before the supervisor (and its clock) is open.

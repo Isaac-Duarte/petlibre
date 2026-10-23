@@ -5,17 +5,17 @@ use core::ffi::c_void;
 use core::ptr;
 
 use super::*;
-use wellfed_core::feed_controller::{FeedLimits, FeedRequest};
-use wellfed_core::feed_journal::{FeedJournal, JournalConfig, JournalError};
-use wellfed_core::feed_progress::{BowlMode, Direction};
-use wellfed_core::feed_storage::{OwnerRecovery, OwnerResult, OwnerStorage};
+use wellfed_core::feed::controller::{FeedLimits, FeedRequest};
+use wellfed_core::feed::progress::{BowlMode, Direction};
+use wellfed_core::feed::sensor_inputs::SensorLimits;
+use wellfed_core::feed::storage::{OwnerRecovery, OwnerResult, OwnerStorage};
 use wellfed_core::flash_coord::{FlashCoord, FlashParty, FlashReply};
-use wellfed_core::sensor_inputs::SensorLimits;
+use wellfed_core::store::feed_journal::{FeedJournal, JournalConfig, JournalError};
 use wellfed_hal::board::MOTOR_MASK;
-use wellfed_hal::events::EventsConfig;
 use wellfed_hal::owner::{Owner, OwnerConfig, OwnerState, OwnerStatus, SubmitResult};
 use wellfed_hal::sdk::{self, fake};
-use wellfed_hal::watchdog::WatchdogConfig;
+use wellfed_hal::supervision::events::EventsConfig;
+use wellfed_hal::supervision::watchdog::WatchdogConfig;
 use wellfed_testkit::journal_flash::FakeJournalFlash;
 
 pub const CONFIG: OwnerConfig = OwnerConfig {

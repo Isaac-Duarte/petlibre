@@ -10,10 +10,10 @@
 //! Clock rates are nominal; the bench capture measures them.
 
 use wellfed_hal::board::Board;
-use wellfed_hal::events::{Events, EventsConfig, EventsSnapshot};
 use wellfed_hal::sdk;
 use wellfed_hal::stopped;
-use wellfed_hal::watchdog::{Watchdog, WatchdogConfig};
+use wellfed_hal::supervision::events::{Events, EventsConfig, EventsSnapshot};
+use wellfed_hal::supervision::watchdog::{Watchdog, WatchdogConfig};
 
 /// Backup-register marker (`PFW5` in ASCII) written before the watchdog is armed.
 pub const MARKER: u32 = 0x5046_5735;

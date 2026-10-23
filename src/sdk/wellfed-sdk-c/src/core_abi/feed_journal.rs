@@ -1,9 +1,9 @@
 //! Exports declared by `feed_journal.h`.
 
-use wellfed_core::feed_journal::{FeedJournal, JournalConfig, JournalError, JournalView};
-use wellfed_core::feed_progress::Direction;
-use wellfed_core::feed_storage::OwnerStorage;
-use wellfed_core::storage::JournalIo;
+use wellfed_core::feed::progress::Direction;
+use wellfed_core::feed::storage::OwnerStorage;
+use wellfed_core::store::feed_journal::{FeedJournal, JournalConfig, JournalError, JournalView};
+use wellfed_core::store::slot::JournalIo;
 
 use super::store;
 

@@ -150,7 +150,7 @@ Server-to-firmware requests can carry an HMAC so that a party with only the Wi-F
 ## Wi-Fi credentials (FW25)
 
 `{"id":…,"op":"wifi"}` reads which credentials joined this boot (`source`: `build`, `stored` or `fallback`), the stored SSID's CRC-32 (`stored`, or null) and the record generation; never the SSID or passphrase themselves. `"ssid":"<hex>","psk":"<hex>"` (1-32 bytes; 8-63 printable ASCII) stores credentials for the **next join** (the next boot, or the next attempt while the feeder is offline), and `"clear":1` returns to the build's. Both must be signed, and requests may be up to 448 bytes for the hex.
-- **Store:** `wellfed-core/src/net_store.rs`, two 128-byte records in storage sectors 5 and 6, written by the settings task inside a marked attempt. A power cut at every mutation reopens to the old or the new value and stays writable (host).
+- **Store:** `wellfed-core/src/store/net.rs`, two 128-byte records in storage sectors 5 and 6, written by the settings task inside a marked attempt. A power cut at every mutation reopens to the old or the new value and stays writable (host).
 - **Join:** before each attempt the C shim takes the build's credentials, and Rust (`amebad/src/network.rs`) substitutes the stored ones. After 5 failed attempts in a row with no success, the build's credentials take over until the next boot or the next save. A save while the feeder is offline is read at its next attempt, with a fresh count of 5 (FW34 BLE setup relies on this); while it is online nothing rejoins. The connect event's value names the source; health reports `wifi.source`.
 - **API:** `{"op":"wifi","ssid":"…","psk":"…"}` or `{"op":"wifi","clear":true}`; the server hex-encodes and signs it and never logs the values.
 - **Physical (October 22):**

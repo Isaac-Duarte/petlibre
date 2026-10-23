@@ -7,8 +7,7 @@ mod common;
 
 use chrono::Utc;
 use wellfed_local::{
-    ota_image,
-    ota_trial::{self, Image},
+    ota::{self, trial::Image},
     storage,
 };
 use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS};
@@ -25,15 +24,15 @@ use uuid::Uuid;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn explicit_api_trial_and_restore_publish_once_and_hold_manual_feeding() {
-    run_cycle(ota_image::Profile::StockVersion).await;
+    run_cycle(ota::image::Profile::StockVersion).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn c_probe_requires_explicit_queries_and_restores_without_replaying_any_command() {
-    run_cycle(ota_image::Profile::CExecution).await;
+    run_cycle(ota::image::Profile::CExecution).await;
 }
 
-async fn run_cycle(profile: ota_image::Profile) {
+async fn run_cycle(profile: ota::image::Profile) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("server.json");
     let mut config = common::config();
@@ -44,7 +43,7 @@ async fn run_cycle(profile: ota_image::Profile) {
         0,
         0,
         2 + (std::process::id() % 100) as u8
-            + if profile == ota_image::Profile::CExecution {
+            + if profile == ota::image::Profile::CExecution {
                 100
             } else {
                 0
@@ -58,10 +57,10 @@ async fn run_cycle(profile: ota_image::Profile) {
     storage::write_json(&path, &config).unwrap();
 
     let token = Uuid::new_v4();
-    let image_server = std::net::TcpListener::bind((host, ota_image::PORT)).unwrap();
+    let image_server = std::net::TcpListener::bind((host, ota::image::PORT)).unwrap();
     storage::write_json(
-        &ota_image::Lease::path(&path),
-        &ota_image::Lease {
+        &ota::image::Lease::path(&path),
+        &ota::image::Lease {
             token,
             peer: Ipv4Addr::new(10, 0, 0, 2),
             expires_at: Utc::now() + chrono::Duration::minutes(15),
@@ -122,12 +121,12 @@ async fn run_cycle(profile: ota_image::Profile) {
 
                         let target = message["targetSoftwareVersion"].as_str().unwrap();
                         let (file, digest) = if target == "1.1.16" {
-                            ("test.bin", wellfed_local::ota_image::TEST_SHA256)
+                            ("test.bin", wellfed_local::ota::image::TEST_SHA256)
                         } else if target == "1.1.17" {
-                            ("probe.bin", wellfed_local::ota_image::C_PROBE_SHA256)
+                            ("probe.bin", wellfed_local::ota::image::C_PROBE_SHA256)
                         } else {
                             assert_eq!(target, "1.1.15");
-                            ("original.bin", wellfed_local::ota_image::ORIGINAL_SHA256)
+                            ("original.bin", wellfed_local::ota::image::ORIGINAL_SHA256)
                         };
 
                         assert_eq!(message["sha256"], digest);
@@ -184,7 +183,7 @@ async fn run_cycle(profile: ota_image::Profile) {
     // Refusals send nothing: a token that does not match the lease, a missing
     // bearer token, and an unknown `url` field.
     let endpoint = format!("http://{}/api/ota/trial", config.http_listen);
-    let stale = ota_trial::Input {
+    let stale = ota::trial::Input {
         request_id: Uuid::new_v4(),
         image: Image::Test,
         server_token: Uuid::new_v4(),
@@ -200,7 +199,7 @@ async fn run_cycle(profile: ota_image::Profile) {
         reqwest::StatusCode::PRECONDITION_FAILED
     );
 
-    let denied = ota_trial::Input {
+    let denied = ota::trial::Input {
         request_id: Uuid::new_v4(),
         image: Image::Test,
         server_token: token,
@@ -231,12 +230,12 @@ async fn run_cycle(profile: ota_image::Profile) {
     assert_eq!(commands.load(Ordering::SeqCst), 0);
 
     let pair = match profile {
-        ota_image::Profile::StockVersion => [Image::Test, Image::Original],
-        ota_image::Profile::CExecution => [Image::CProbe, Image::CProbeOriginal],
-        ota_image::Profile::Replacement => unreachable!("the stock pairs only"),
+        ota::image::Profile::StockVersion => [Image::Test, Image::Original],
+        ota::image::Profile::CExecution => [Image::CProbe, Image::CProbeOriginal],
+        ota::image::Profile::Replacement => unreachable!("the stock pairs only"),
     };
     for (index, image) in pair.into_iter().enumerate() {
-        let request = ota_trial::Input {
+        let request = ota::trial::Input {
             request_id: Uuid::new_v4(),
             image,
             server_token: token,
@@ -377,7 +376,7 @@ async fn run_cycle(profile: ota_image::Profile) {
     assert_eq!(status["ota_trials"].as_array().unwrap().len(), 2);
     assert_eq!(
         queries.load(Ordering::SeqCst),
-        if profile == ota_image::Profile::CExecution {
+        if profile == ota::image::Profile::CExecution {
             2
         } else {
             0
@@ -430,7 +429,7 @@ async fn ordinary_server_refuses_trial_publication_by_default() {
     let response = http
         .post(format!("http://{}/api/ota/trial", config.http_listen))
         .bearer_auth(&config.api_token)
-        .json(&ota_trial::Input {
+        .json(&ota::trial::Input {
             request_id: Uuid::new_v4(),
             image: Image::Test,
             server_token: Uuid::new_v4(),

@@ -4,23 +4,23 @@
 use core::mem::{align_of, offset_of, size_of};
 
 use wellfed_core::adc_scale::AdcCalibration;
-use wellfed_core::feed_controller::{
+use wellfed_core::clock::tick::TickClock;
+use wellfed_core::feed::controller::{
     FeedController, FeedLimits, FeedReason, FeedRequest, FeedSample, FeedStartResult, FeedState,
     MotorCommand,
 };
-use wellfed_core::feed_journal::{FeedJournal, JournalConfig, JournalError, JournalView};
-use wellfed_core::feed_progress::{BowlMode, Direction, FeedProgress, ProgressResult};
-use wellfed_core::feed_storage::{OwnerOutcome, OwnerRecovery, OwnerResult, OwnerStorage};
-use wellfed_core::feedback_events::{
+use wellfed_core::feed::feedback::{
     FeedbackDrive, FeedbackEvent, FeedbackEvents, FeedbackFault, FeedbackTakeResult,
 };
+use wellfed_core::feed::motor_gate::{MotorGate, MotorGateFault};
+use wellfed_core::feed::progress::{BowlMode, Direction, FeedProgress, ProgressResult};
+use wellfed_core::feed::sensor_inputs::{SensorFilter, SensorInputs, SensorLimits, SensorReading};
+use wellfed_core::feed::storage::{OwnerOutcome, OwnerRecovery, OwnerResult, OwnerStorage};
 use wellfed_core::flash_coord::{
     FlashCoord, FlashFault, FlashLimits, FlashParty, FlashPhase, FlashReply, FlashToken,
 };
-use wellfed_core::motor_gate::{MotorGate, MotorGateFault};
-use wellfed_core::sensor_inputs::{SensorFilter, SensorInputs, SensorLimits, SensorReading};
-use wellfed_core::storage::JournalIo;
-use wellfed_core::tick_clock::TickClock;
+use wellfed_core::store::feed_journal::{FeedJournal, JournalConfig, JournalError, JournalView};
+use wellfed_core::store::slot::JournalIo;
 
 /// Size and alignment, then `field = offset` pairs.
 macro_rules! lock {

@@ -2,8 +2,8 @@
 
 use core::ffi::c_void;
 
-use wellfed_core::feed_controller::MotorCommand;
-use wellfed_core::motor_gate::{MotorGate, MotorWritePair};
+use wellfed_core::feed::controller::MotorCommand;
+use wellfed_core::feed::motor_gate::{MotorGate, MotorWritePair};
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn wellfed_motor_gate_init(

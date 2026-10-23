@@ -6,7 +6,8 @@
 use std::fmt;
 
 use wellfed_core::record::{Record, tag};
-use wellfed_hal::{audio, ble, confirm, stream, transport, updater, watch};
+use wellfed_hal::ota::{confirm, updater, watch};
+use wellfed_hal::{audio, ble, stream, transport};
 
 struct Body<F>(F);
 

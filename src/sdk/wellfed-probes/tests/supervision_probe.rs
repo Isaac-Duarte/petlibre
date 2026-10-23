@@ -4,7 +4,7 @@
 
 use wellfed_hal::board::MOTOR_MASK;
 use wellfed_hal::sdk::{self, fake};
-use wellfed_hal::watchdog::WatchdogFault;
+use wellfed_hal::supervision::watchdog::WatchdogFault;
 use wellfed_probes::supervision::{
     FEED_MS, MARKER, Probe, RESET_DEADLINE_MS, Record, SAMPLES, STALL_MS, Sample,
 };

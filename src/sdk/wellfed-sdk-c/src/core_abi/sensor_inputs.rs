@@ -1,8 +1,8 @@
 //! Exports declared by `sensor_inputs.h`.
 
 use wellfed_core::adc_scale::AdcCalibration;
-use wellfed_core::feed_controller::FeedSample;
-use wellfed_core::sensor_inputs::{SensorInputs, SensorLimits, SensorReading};
+use wellfed_core::feed::controller::FeedSample;
+use wellfed_core::feed::sensor_inputs::{SensorInputs, SensorLimits, SensorReading};
 
 use super::store;
 

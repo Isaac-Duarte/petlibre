@@ -6,9 +6,9 @@
 mod common;
 
 use common::*;
-use wellfed_core::feed_controller::MotorCommand;
+use wellfed_core::feed::controller::MotorCommand;
+use wellfed_core::feed::sensor_inputs::SensorReading;
 use wellfed_core::flash_coord::{FlashFault, FlashParty, FlashReply};
-use wellfed_core::sensor_inputs::SensorReading;
 use wellfed_hal::board::{Board, MOTOR_MASK};
 use wellfed_hal::sdk::{self, fake};
 

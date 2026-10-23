@@ -4,11 +4,11 @@
 use std::cell::{Cell, RefCell};
 
 use wellfed_core::ota::{CONFIRM_LEN, confirm_record, confirmed};
-use wellfed_hal::arming::{self, Hooks};
-use wellfed_hal::confirm::*;
 use wellfed_hal::flash::park::{self, Mmio};
 use wellfed_hal::flash::peer::MARKER_REGISTER;
-use wellfed_hal::provider::{ATTEMPT_BIT, Provider};
+use wellfed_hal::flash_lock::arming::{self, Hooks};
+use wellfed_hal::flash_lock::provider::{ATTEMPT_BIT, Provider};
+use wellfed_hal::ota::confirm::*;
 use wellfed_hal::sdk::fake;
 use wellfed_hal::stopped;
 use wellfed_hal::trial::{CONFIRM_SECTOR, identity};

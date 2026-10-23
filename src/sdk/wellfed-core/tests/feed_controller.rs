@@ -6,11 +6,11 @@
 //! ID is never accepted twice. The limits below are compressed test
 //! intervals, not hardware settings.
 
-use wellfed_core::feed_controller::{
+use wellfed_core::feed::controller::{
     FeedController, FeedLimits, FeedReason, FeedRequest, FeedSample, FeedStartResult, FeedState,
     MotorCommand,
 };
-use wellfed_core::feed_progress::{BowlMode, Direction};
+use wellfed_core::feed::progress::{BowlMode, Direction};
 
 /// Compressed test intervals; these are not deployable hardware settings.
 const LIMITS: FeedLimits = FeedLimits {

@@ -27,7 +27,7 @@ The optional ignored evidence register is `private/research/stock-updater/eviden
 
 ## MQTT request requirements
 
-**Static analysis, U02:** precheck function `0x0e018e30` reads these fields from the command object it receives. The enclosing service-command format is constructed in [the stock OTA trial controller](../../src/tools/wellfed-local/src/ota_trial.rs).
+**Static analysis, U02:** precheck function `0x0e018e30` reads these fields from the command object it receives. The enclosing service-command format is constructed in [the stock OTA trial controller](../../src/tools/wellfed-local/src/ota/trial.rs).
 
 | Field | Check recovered from stock 1.1.15 |
 | --- | --- |

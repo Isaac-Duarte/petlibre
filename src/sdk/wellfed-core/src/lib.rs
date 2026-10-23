@@ -73,27 +73,17 @@ macro_rules! named_enum {
 
 pub mod adc_scale;
 pub mod ble_setup;
-pub mod diagnostic;
-pub mod feed_controller;
-pub mod feed_journal;
-pub mod feed_progress;
-pub mod feed_storage;
-pub mod feedback_events;
+pub mod clock;
+pub mod feed;
 pub mod flash_coord;
 pub mod hex;
-pub mod motor_gate;
-pub mod net_store;
 pub mod ota;
 pub mod record;
 pub mod request_auth;
-pub mod sensor_inputs;
-pub mod settings_store;
 pub mod speaker_stream;
-pub mod storage;
-pub mod tick_clock;
+pub mod store;
 pub mod tone;
 pub mod transport;
-pub mod wall_clock;
 
 /// Distances at or beyond this are ambiguous for wrapping millisecond clocks.
 pub const HALF_RANGE: u32 = 0x8000_0000;

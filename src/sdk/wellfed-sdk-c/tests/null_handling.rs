@@ -4,16 +4,16 @@
 use core::ptr::{null, null_mut};
 
 use wellfed_core::adc_scale::AdcCalibration;
-use wellfed_core::feed_controller::{
+use wellfed_core::clock::tick::TickClock;
+use wellfed_core::feed::controller::{
     FeedController, FeedLimits, FeedReason, FeedRequest, FeedSample, FeedStartResult,
 };
-use wellfed_core::feed_journal::{FeedJournal, JournalConfig, JournalError, JournalView};
-use wellfed_core::feed_progress::{BowlMode, Direction, FeedProgress};
-use wellfed_core::feedback_events::{
+use wellfed_core::feed::feedback::{
     FeedbackDrive, FeedbackEvent, FeedbackEvents, FeedbackFault, FeedbackTakeResult,
 };
+use wellfed_core::feed::progress::{BowlMode, Direction, FeedProgress};
 use wellfed_core::flash_coord::{FlashCoord, FlashFault, FlashLimits, FlashReply};
-use wellfed_core::tick_clock::TickClock;
+use wellfed_core::store::feed_journal::{FeedJournal, JournalConfig, JournalError, JournalView};
 use wellfed_sdk_c::core_abi::*;
 use wellfed_testkit::journal_flash::FakeJournalFlash;
 

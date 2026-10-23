@@ -25,7 +25,7 @@ pub mod supervision;
 
 use core::fmt;
 
-use wellfed_hal::config::SYSTIMER_HZ;
+use wellfed_hal::supervision::config::SYSTIMER_HZ;
 use wellfed_hal::{sdk, startup};
 
 /// Logs one record line, `PLxxx1 …\r\n`. A line longer than the report

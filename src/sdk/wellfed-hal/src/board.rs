@@ -10,10 +10,10 @@ use core::ptr::{self, addr_of};
 
 use wellfed_core::HALF_RANGE;
 use wellfed_core::adc_scale::{AdcCalibration, SAMPLES};
-use wellfed_core::feed_controller::MotorCommand;
+use wellfed_core::feed::controller::MotorCommand;
+use wellfed_core::feed::motor_gate::{MotorGate, MotorGateFault};
+use wellfed_core::feed::sensor_inputs::SensorReading;
 use wellfed_core::flash_coord::FlashCoord;
-use wellfed_core::motor_gate::{MotorGate, MotorGateFault};
-use wellfed_core::sensor_inputs::SensorReading;
 
 use crate::adc;
 use crate::sdk::{self, GPIO_PORT_A, IrqGuard};

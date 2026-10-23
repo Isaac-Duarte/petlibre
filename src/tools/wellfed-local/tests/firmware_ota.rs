@@ -1,9 +1,9 @@
 //! FW10: the server's signing tool produces exactly what the firmware verifies.
 use wellfed_core::ota::{self, ManifestError, SECTOR};
-use wellfed_local::firmware_ota;
+use wellfed_local::ota::firmware;
 
 fn container(len: usize) -> Vec<u8> {
-    let mut out = vec![0u8; firmware_ota::CONTAINER_HEADER];
+    let mut out = vec![0u8; firmware::CONTAINER_HEADER];
     let mut payload: Vec<u8> = (0..len).map(|i| (i % 253) as u8).collect();
     payload[..8].copy_from_slice(&ota::MARKER);
     out.extend(payload);
@@ -14,15 +14,15 @@ fn container(len: usize) -> Vec<u8> {
 fn keygen_sign_and_firmware_verify_round_trip() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("ota-key.json");
-    let public = firmware_ota::keygen(&path).unwrap();
+    let public = firmware::keygen(&path).unwrap();
     assert!(
-        firmware_ota::keygen(&path).is_err(),
+        firmware::keygen(&path).is_err(),
         "keygen must not replace a key"
     );
 
-    let key = firmware_ota::load_key(&path).unwrap();
+    let key = firmware::load_key(&path).unwrap();
     let image = container(2 * SECTOR + 17);
-    let manifest = firmware_ota::sign(&key, &image, 9, [0x5a; 32]).unwrap();
+    let manifest = firmware::sign(&key, &image, 9, [0x5a; 32]).unwrap();
 
     let mut public_bytes = [0u8; 32];
     for (i, b) in public_bytes.iter_mut().enumerate() {
@@ -40,7 +40,7 @@ fn keygen_sign_and_firmware_verify_round_trip() {
     );
 
     // The firmware's writer accepts the signed payload end to end.
-    let payload = firmware_ota::payload(&image).unwrap();
+    let payload = firmware::payload(&image).unwrap();
     let mut writer = ota::Writer::new(parsed, 1024).unwrap();
     while let Some((offset, len)) = writer.next_request() {
         if writer
@@ -67,16 +67,14 @@ fn keygen_sign_and_firmware_verify_round_trip() {
 fn signing_refuses_images_the_firmware_would_refuse() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("k.json");
-    firmware_ota::keygen(&path).unwrap();
-    let key = firmware_ota::load_key(&path).unwrap();
+    firmware::keygen(&path).unwrap();
+    let key = firmware::load_key(&path).unwrap();
 
     let mut no_marker = container(SECTOR);
-    no_marker[firmware_ota::CONTAINER_HEADER] = b'0';
-    assert!(firmware_ota::sign(&key, &no_marker, 1, [0; 32]).is_err());
-    assert!(firmware_ota::sign(&key, &container(100), 1, [0; 32]).is_err());
-    assert!(
-        firmware_ota::sign(&key, &container(ota::BANK1_BYTES as usize + 1), 1, [0; 32]).is_err()
-    );
+    no_marker[firmware::CONTAINER_HEADER] = b'0';
+    assert!(firmware::sign(&key, &no_marker, 1, [0; 32]).is_err());
+    assert!(firmware::sign(&key, &container(100), 1, [0; 32]).is_err());
+    assert!(firmware::sign(&key, &container(ota::BANK1_BYTES as usize + 1), 1, [0; 32]).is_err());
 
     // A key file whose public half does not match its seed is refused.
     let mut file: serde_json::Value =
@@ -84,19 +82,19 @@ fn signing_refuses_images_the_firmware_would_refuse() {
     file["public_key"] = serde_json::Value::String("00".repeat(32));
     let bad = dir.path().join("bad.json");
     std::fs::write(&bad, serde_json::to_vec(&file).unwrap()).unwrap();
-    assert!(firmware_ota::load_key(&bad).is_err());
+    assert!(firmware::load_key(&bad).is_err());
 }
 
 #[test]
 fn an_offer_answers_manifest_and_chunks_within_its_image() {
-    use firmware_ota::Offer;
+    use firmware::Offer;
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("k.json");
-    firmware_ota::keygen(&path).unwrap();
-    let key = firmware_ota::load_key(&path).unwrap();
+    firmware::keygen(&path).unwrap();
+    let key = firmware::load_key(&path).unwrap();
 
     let image = container(SECTOR + 700);
-    let manifest = firmware_ota::sign(&key, &image, 3, [1; 32]).unwrap();
+    let manifest = firmware::sign(&key, &image, 3, [1; 32]).unwrap();
     let offer = Offer::new(&manifest, &image).unwrap();
     assert_eq!(offer.version, 3);
 
@@ -109,10 +107,7 @@ fn an_offer_answers_manifest_and_chunks_within_its_image() {
 
     let answer = Offer::answer(Some(&offer), &ota::encode_get(ota::Part::Chunk, 512, 512)).unwrap();
     let data = ota::decode_data(&answer).unwrap();
-    assert_eq!(
-        data.bytes,
-        &firmware_ota::payload(&image).unwrap()[512..1024]
-    );
+    assert_eq!(data.bytes, &firmware::payload(&image).unwrap()[512..1024]);
 
     for (offset, len) in [(SECTOR as u32 + 600, 512), (0, 513), (0, 0)] {
         let answer = Offer::answer(
@@ -140,15 +135,15 @@ fn an_offer_answers_manifest_and_chunks_within_its_image() {
 
 #[test]
 fn an_offer_is_served_to_completion_once() {
-    use firmware_ota::Offer;
+    use firmware::Offer;
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("k.json");
-    firmware_ota::keygen(&path).unwrap();
-    let key = firmware_ota::load_key(&path).unwrap();
+    firmware::keygen(&path).unwrap();
+    let key = firmware::load_key(&path).unwrap();
     let image = container(SECTOR + 700);
-    let manifest = firmware_ota::sign(&key, &image, 3, [1; 32]).unwrap();
+    let manifest = firmware::sign(&key, &image, 3, [1; 32]).unwrap();
     let mut offer = Some(Offer::new(&manifest, &image).unwrap());
-    let len = firmware_ota::payload(&image).unwrap().len() as u32;
+    let len = firmware::payload(&image).unwrap().len() as u32;
     let get = |part, offset, n| ota::encode_get(part, offset, n);
     let status = |answer: Option<Vec<u8>>| ota::decode_data(&answer.unwrap()).unwrap().status;
 

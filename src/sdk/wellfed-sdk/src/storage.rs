@@ -7,8 +7,8 @@
 
 use core::ffi::{c_uint, c_void};
 
-use wellfed_core::storage::JournalIo;
-use wellfed_hal::provider::Provider;
+use wellfed_core::store::slot::JournalIo;
+use wellfed_hal::flash_lock::provider::Provider;
 use wellfed_hal::sdk;
 
 /// Settings slots within the storage region: sectors 2 and 3 (0x342000).

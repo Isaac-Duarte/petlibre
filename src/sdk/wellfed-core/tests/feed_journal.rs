@@ -7,11 +7,11 @@
 //! committed state, an unresolved pending intent, or `CORRUPT`, never an idle
 //! journal that has forgotten a reserved request ID.
 
-use wellfed_core::feed_controller::{FeedReason, FeedRequest};
-use wellfed_core::feed_journal::{FeedJournal, JournalConfig, JournalError};
-use wellfed_core::feed_progress::{BowlMode, Direction};
-use wellfed_core::feed_storage::{OwnerOutcome, OwnerResult};
-use wellfed_core::storage::RECORD_BYTES;
+use wellfed_core::feed::controller::{FeedReason, FeedRequest};
+use wellfed_core::feed::progress::{BowlMode, Direction};
+use wellfed_core::feed::storage::{OwnerOutcome, OwnerResult};
+use wellfed_core::store::feed_journal::{FeedJournal, JournalConfig, JournalError};
+use wellfed_core::store::slot::RECORD_BYTES;
 use wellfed_testkit::journal_flash::{FakeJournalFlash, UNIT};
 
 /// Unit sizes for torn-write/restart coverage: the virtual feeder's 256, a
@@ -538,7 +538,7 @@ fn id_and_sequence_exhaustion() {
 
 #[test]
 fn wear_limit_refuses_new_reservations_but_never_strands_a_pending_one() {
-    use wellfed_core::feed_journal::WEAR_LIMIT;
+    use wellfed_core::store::feed_journal::WEAR_LIMIT;
 
     let mut f = FakeJournalFlash::default();
     let mut j = FeedJournal::default();

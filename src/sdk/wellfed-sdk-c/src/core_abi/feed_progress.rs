@@ -1,6 +1,6 @@
 //! Exports declared by `feed_progress.h`.
 
-use wellfed_core::feed_progress::{BowlMode, Direction, FeedProgress, ProgressResult};
+use wellfed_core::feed::progress::{BowlMode, Direction, FeedProgress, ProgressResult};
 
 use super::store;
 

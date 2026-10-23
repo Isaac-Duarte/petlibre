@@ -26,7 +26,9 @@ use serde::Serialize;
 
 use super::feeder::{self, FeederView};
 use super::runs;
-use super::views::{self, FlashCache, Snapshot, Sources};
+use super::views::health::{self, FlashCache};
+use super::views::snapshot::{self, Snapshot};
+use super::views::{Sources, sessions};
 use crate::config::STATUS_DIR;
 use crate::status::{self, LOG};
 use crate::{Error, Result, interrupted};
@@ -112,15 +114,15 @@ async fn view<T: Serialize + Send + 'static>(
 }
 
 async fn status(State(ui): State<Ui>) -> Response {
-    view(&ui, |ui| Some(views::snapshot(&ui.sources))).await
+    view(&ui, |ui| Some(snapshot::snapshot(&ui.sources))).await
 }
 
 async fn sessions(State(ui): State<Ui>) -> Response {
-    view(&ui, |ui| Some(views::sessions(&ui.sources))).await
+    view(&ui, |ui| Some(sessions::sessions(&ui.sources))).await
 }
 
 async fn session(State(ui): State<Ui>, UrlPath(name): UrlPath<String>) -> Response {
-    view(&ui, move |ui| views::session(&ui.sources, &name)).await
+    view(&ui, move |ui| sessions::session(&ui.sources, &name)).await
 }
 
 async fn health(State(ui): State<Ui>) -> Response {
@@ -128,7 +130,7 @@ async fn health(State(ui): State<Ui>) -> Response {
         // The cache holds only a hash; one left mid-update by a panicked
         // view is recomputed when the binary next changes, so take it as is.
         let mut flash = ui.flash.lock().unwrap_or_else(PoisonError::into_inner);
-        Some(views::health(&ui.sources, &mut flash))
+        Some(health::health(&ui.sources, &mut flash))
     })
     .await
 }
@@ -189,7 +191,7 @@ impl Cursor {
         let first = self.snapshot.is_none();
         let mut out = Vec::new();
 
-        let snapshot = views::snapshot(&self.ui.sources);
+        let snapshot = snapshot::snapshot(&self.ui.sources);
         let changed = self
             .snapshot
             .as_ref()

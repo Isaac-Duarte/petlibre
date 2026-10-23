@@ -10,7 +10,7 @@ use common::*;
 use wellfed_core::flash_coord::{FlashParty, FlashReply};
 use wellfed_hal::board::Board;
 use wellfed_hal::sdk::{self, fake};
-use wellfed_hal::watchdog::{Watchdog, WatchdogConfig, WatchdogFault};
+use wellfed_hal::supervision::watchdog::{Watchdog, WatchdogConfig, WatchdogFault};
 
 const CONFIG: WatchdogConfig = WatchdogConfig {
     systimer_hz: 32_000,

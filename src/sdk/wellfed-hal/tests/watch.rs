@@ -6,15 +6,15 @@ use std::sync::{Mutex, MutexGuard};
 
 use ed25519_dalek::{Signer, SigningKey};
 use wellfed_core::ota::{self, MAGIC, MARKER, Status};
-use wellfed_hal::arming::Hooks;
 use wellfed_hal::flash::park::{self, Mmio};
 use wellfed_hal::flash::peer::MARKER_REGISTER;
-use wellfed_hal::provider::{ATTEMPT_BIT, Provider};
+use wellfed_hal::flash_lock::arming::Hooks;
+use wellfed_hal::flash_lock::provider::{ATTEMPT_BIT, Provider};
+use wellfed_hal::ota::watch::*;
 use wellfed_hal::sdk::fake::api::FAKE_TRANSPORT;
 use wellfed_hal::sdk::fake::{self, TcpRecvScript};
 use wellfed_hal::sdk::{self, WifiEvent};
 use wellfed_hal::trial::identity;
-use wellfed_hal::watch::*;
 use wellfed_hal::{net_status, stopped};
 use sha2::{Digest, Sha256};
 

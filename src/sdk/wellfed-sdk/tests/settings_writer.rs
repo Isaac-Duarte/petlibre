@@ -4,12 +4,12 @@
 use std::cell::Cell;
 use std::sync::{Mutex, MutexGuard};
 
-use wellfed_core::settings_store::SettingsStatus;
+use wellfed_core::store::settings::SettingsStatus;
 use wellfed_core::transport::{SettingsFields, SettingsResult};
-use wellfed_hal::arming::Hooks;
 use wellfed_hal::flash::park::Mmio;
 use wellfed_hal::flash::peer::MARKER_REGISTER;
-use wellfed_hal::provider::Provider;
+use wellfed_hal::flash_lock::arming::Hooks;
+use wellfed_hal::flash_lock::provider::Provider;
 use wellfed_hal::sdk::{self, fake};
 use wellfed_hal::{network, settings};
 use wellfed_sdk::settings::{self as writer, ErrorStage, Record, Writer};

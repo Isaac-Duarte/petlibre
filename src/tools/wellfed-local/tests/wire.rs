@@ -8,7 +8,7 @@ mod common;
 use chrono::{TimeZone, Utc};
 use wellfed_local::{
     controller::{Controller, FeedInput},
-    ota_trial::{self, Image},
+    ota::{self, trial::Image},
     probe,
     protocol::{self, Reply},
 };
@@ -135,19 +135,19 @@ fn commands() {
         format!(r#"{{"cmd":"GET_CONFIG","msgId":"{ID}","ts":1792271861000}}"#)
     );
 
-    let trial = ota_trial::Record {
+    let trial = ota::trial::Record {
         sequence: 1,
-        input: ota_trial::Input {
+        input: ota::trial::Input {
             request_id: id,
             image: Image::CProbe,
             server_token: Uuid::nil(),
         },
         created_at: now,
         updated_at: now,
-        phase: ota_trial::Phase::Submitted,
+        phase: ota::trial::Phase::Submitted,
         download_reported: false,
         resolution_note: None,
-        image_sha256: wellfed_local::ota_image::C_PROBE_SHA256.into(),
+        image_sha256: wellfed_local::ota::image::C_PROBE_SHA256.into(),
     };
     let upgrade = trial.command(&config);
     assert_eq!(upgrade.topic, config.topic("service/sub"));
@@ -155,7 +155,7 @@ fn commands() {
         bytes(&upgrade),
         format!(
             r#"{{"cmd":"OTA_UPGRADE","msgId":"{ID}","sha256":"{}","targetPid":"PLAF103","targetSoftwareVersion":"1.1.17","ts":1792271861000,"upgradeType":1,"url":"http://127.0.0.1:8088/ota/00000000-0000-0000-0000-000000000000/probe.bin"}}"#,
-            wellfed_local::ota_image::C_PROBE_SHA256
+            wellfed_local::ota::image::C_PROBE_SHA256
         )
     );
 }

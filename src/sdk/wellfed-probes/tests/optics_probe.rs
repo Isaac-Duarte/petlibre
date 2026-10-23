@@ -5,10 +5,10 @@
 use std::cell::RefCell;
 
 use wellfed_hal::board::MOTOR_MASK;
-use wellfed_hal::events::EventsFault;
 use wellfed_hal::flash::park::{self, Mmio};
 use wellfed_hal::sdk::fake;
 use wellfed_hal::stopped;
+use wellfed_hal::supervision::events::EventsFault;
 use wellfed_probes::optics::{
     self, CYCLES, Emitters, LEASE_MS, Probe, Record, State, WINDOWS, Window, plan,
 };

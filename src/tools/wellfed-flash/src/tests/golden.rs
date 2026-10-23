@@ -9,7 +9,7 @@
 use serde_json::{Value, json};
 
 use super::*;
-use crate::development::{given_way, images, payload};
+use crate::writers::development::{given_way, images, payload};
 use wellfed_formats::canonical::{canonical, canonical_of};
 
 fn same(typed: &impl serde::Serialize, legacy: &Value) {
@@ -75,7 +75,7 @@ fn legacy_give_way_plan(fallback: &[u8], bank0: &[u8], bank1_sector: &[u8]) -> V
 }
 
 fn legacy_recovery_plan(baseline: &Baseline, current: &[u8], created_utc: &str) -> Value {
-    use crate::sector::END;
+    use crate::link::sector::END;
     let baseline = baseline.bytes();
     let mut sectors = Vec::new();
     let mut proposed = current.to_vec();
@@ -234,7 +234,7 @@ fn recovery_plans_keep_their_canonical_bytes() {
     let mut current = unit.flash.clone();
     current[START] = 0;
 
-    let plan = crate::recovery::plan(&unit.baseline, &current).unwrap();
+    let plan = crate::writers::recovery::plan(&unit.baseline, &current).unwrap();
     same(
         &plan,
         &legacy_recovery_plan(&unit.baseline, &current, &created(&plan)),
@@ -242,9 +242,9 @@ fn recovery_plans_keep_their_canonical_bytes() {
 
     // Nothing left to restore: no sectors and a null activation.
     let mut restored = current.clone();
-    restored[START..crate::sector::END]
-        .copy_from_slice(&unit.baseline.bytes()[START..crate::sector::END]);
-    let empty = crate::recovery::plan(&unit.baseline, &restored).unwrap();
+    restored[START..crate::link::sector::END]
+        .copy_from_slice(&unit.baseline.bytes()[START..crate::link::sector::END]);
+    let empty = crate::writers::recovery::plan(&unit.baseline, &restored).unwrap();
     same(
         &empty,
         &legacy_recovery_plan(&unit.baseline, &restored, &created(&empty)),
@@ -284,10 +284,10 @@ fn a_read_session_keeps_its_report_and_summary_fields() {
     };
     let output = checkout.path().join("private/observe");
 
-    let outcome = crate::read::run(
+    let outcome = crate::writers::read::run(
         &context,
-        &crate::read::Args {
-            mode: crate::read::Mode::Observe,
+        &crate::writers::read::Args {
+            mode: crate::writers::read::Mode::Observe,
             port: "/dev/ttyUSB0".into(),
             output: output.clone(),
             helper: None,
@@ -295,7 +295,7 @@ fn a_read_session_keeps_its_report_and_summary_fields() {
             rom_report: None,
             small_report: None,
             seconds: 1.0,
-            start_core: crate::protocol::Core::Km4,
+            start_core: crate::link::protocol::Core::Km4,
         },
     )
     .unwrap();
@@ -324,7 +324,10 @@ fn a_read_session_keeps_its_report_and_summary_fields() {
 
     // Saved pretty with sorted keys, as the untyped report was.
     assert_eq!(text, serde_json::to_string_pretty(&legacy).unwrap() + "\n");
-    assert_eq!(outcome.completion, crate::session::Completion::Complete);
+    assert_eq!(
+        outcome.completion,
+        crate::evidence::session::Completion::Complete
+    );
     assert_eq!(
         outcome.summary,
         json!({"status": "complete", "mode": "observe", "output": output,
@@ -420,10 +423,10 @@ fn reviewed_stock_recovery_keeps_its_canonical_bytes() {
     let unit = unit(development::payload(&installed, &BANK1).unwrap());
     let mut current = unit.flash.clone();
     current[START] = 0;
-    let plan = crate::recovery::plan(&unit.baseline, &current).unwrap();
+    let plan = crate::writers::recovery::plan(&unit.baseline, &current).unwrap();
 
     same(
-        &crate::stock::Reviewed {
+        &crate::writers::stock::Reviewed {
             schema_version: 1,
             kind: wellfed_formats::flash_plan::Kind::StockRecovery,
             port: "/dev/ttyUSB0".into(),
@@ -445,7 +448,7 @@ fn reviewed_stock_recovery_keeps_its_canonical_bytes() {
 
 #[test]
 fn journal_events_keep_their_fields() {
-    use crate::journal::{At, Event};
+    use crate::evidence::journal::{At, Event};
 
     let at = |offset, phase, event| {
         serde_json::to_value(At {
@@ -456,7 +459,7 @@ fn journal_events_keep_their_fields() {
         .unwrap()
     };
     let plain = |event: Event| serde_json::to_value(event).unwrap();
-    let assessment = crate::status::assess_range([0, 2, 0], START, START + SECTOR).unwrap();
+    let assessment = crate::link::status::assess_range([0, 2, 0], START, START + SECTOR).unwrap();
 
     let cases = [
         (

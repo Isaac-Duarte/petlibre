@@ -19,7 +19,7 @@ use std::{path::PathBuf, time::Duration, time::Instant};
 
 use anyhow::{Context, Result, bail};
 use wellfed_core::ota;
-use wellfed_local::{config::Config, firmware_ota::Offer};
+use wellfed_local::{config::Config, ota::firmware::Offer};
 use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

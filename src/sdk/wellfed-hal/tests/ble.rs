@@ -6,9 +6,9 @@
 use std::sync::{Mutex, MutexGuard};
 
 use wellfed_core::ble_setup::{OFFLINE_MS, PREFIX, parse_prefix, prefix};
-use wellfed_core::net_store::NetStore;
 use wellfed_core::request_auth::hmac_sha256;
-use wellfed_core::storage::JournalIo;
+use wellfed_core::store::net::NetStore;
+use wellfed_core::store::slot::JournalIo;
 use wellfed_hal::ble::{BleSetup, DropReason, FailStage, Record, RequestKind, SETUP};
 use wellfed_hal::sdk::fake::api::FAKE_REQUEST_KEY;
 use wellfed_hal::sdk::fake::{self, ble_record};

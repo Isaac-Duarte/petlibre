@@ -22,18 +22,20 @@
 //! passed on hardware and are retained in history; their lease sequence
 //! lives in `Provider`.
 
-use wellfed_core::feed_progress::BowlMode;
+use wellfed_core::clock::tick::TickClock;
+use wellfed_core::feed::progress::BowlMode;
 use wellfed_core::flash_coord::{FlashCoord, FlashFault, FlashPhase, FlashReply};
-use wellfed_core::settings_store::{Settings, SettingsStatus, SettingsStore, SlotState};
-use wellfed_core::tick_clock::TickClock;
+use wellfed_core::store::settings::{Settings, SettingsStatus, SettingsStore, SlotState};
 
-use wellfed_hal::config::{FLASH_LIMITS, SYSTIMER_HZ, WATCHDOG};
 use wellfed_hal::flash::park::{self, Mmio, Reply};
 use wellfed_hal::flash::peer::MARKER_REGISTER;
-use wellfed_hal::provider::{ATTEMPT_BIT, BOOT_COUNT_REGISTER, Provider, READY_TIMEOUT_MS};
+use wellfed_hal::flash_lock::provider::{
+    ATTEMPT_BIT, BOOT_COUNT_REGISTER, Provider, READY_TIMEOUT_MS,
+};
 use wellfed_hal::sdk;
 use wellfed_hal::stopped;
-use wellfed_hal::watchdog::Watchdog;
+use wellfed_hal::supervision::config::{FLASH_LIMITS, SYSTIMER_HZ, WATCHDOG};
+use wellfed_hal::supervision::watchdog::Watchdog;
 
 pub use wellfed_sdk::storage::{FlashOps, SETTINGS_BASE, SETTINGS_BINDING, slot_io};
 

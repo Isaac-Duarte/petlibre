@@ -1,18 +1,18 @@
 //! The owner task's lifecycle state machine: initialization, request
 //! reservation, preparation, feeding, result recording and shutdown.
 
-use wellfed_core::feed_controller::{
+use wellfed_core::feed::controller::{
     FeedController, FeedReason, FeedRequest, FeedStartResult, FeedState, MotorCommand,
 };
-use wellfed_core::feed_progress::{BowlMode, Direction};
-use wellfed_core::feed_storage::{OwnerOutcome, OwnerResult};
+use wellfed_core::feed::progress::{BowlMode, Direction};
+use wellfed_core::feed::sensor_inputs::{SensorInputs, SensorReading};
+use wellfed_core::feed::storage::{OwnerOutcome, OwnerResult};
 use wellfed_core::flash_coord::{FlashCoord, FlashFault, FlashPhase};
-use wellfed_core::sensor_inputs::{SensorInputs, SensorReading};
 
 use crate::board;
-use crate::events::EventsSnapshot;
 use crate::sdk::{self, IrqGuard};
-use crate::watchdog::WatchdogFault;
+use crate::supervision::events::EventsSnapshot;
+use crate::supervision::watchdog::WatchdogFault;
 
 use super::{Owner, OwnerFault, OwnerState, OwnerStatus};
 

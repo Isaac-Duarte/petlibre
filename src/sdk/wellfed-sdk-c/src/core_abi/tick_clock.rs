@@ -1,6 +1,6 @@
 //! Exports declared by `tick_clock.h`.
 
-use wellfed_core::tick_clock::TickClock;
+use wellfed_core::clock::tick::TickClock;
 
 use super::store;
 

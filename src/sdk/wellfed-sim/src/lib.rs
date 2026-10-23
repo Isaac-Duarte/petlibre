@@ -8,32 +8,27 @@
 //! inactive whenever a result is durable. Power cuts and watchdog resets
 //! restart the worker on the same journal image.
 
-use std::collections::BTreeMap;
 use std::fs;
-use std::io::{BufRead, BufReader, Read, Seek, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Command as Process, Stdio};
-use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
-use std::time::{Duration, Instant};
 
-use clap::ValueEnum;
-use wellfed_formats::canonical::{self, sha256};
+use wellfed_formats::canonical::sha256;
 use serde::Serialize;
 use serde_json::Value;
 
 pub mod protocol;
+mod report;
 pub mod scenario;
+mod worker;
 
 use protocol::{
-    Code, Command, Event, Fault, Journal, MOTORS, Outcome, Profile, Reason, State, Status,
-    StoragePhase, Submission,
+    Code, Command, Event, Fault, Journal, MOTORS, Outcome, Reason, State, Status, StoragePhase,
+    Submission,
 };
+pub use report::Report;
+use report::{Assertion, Entry, Enums, Limits, Logged, Note, identities, python_dumps};
 use scenario::{Action, Expectation, Scenario};
-
-/// How long the worker may take to answer one command.
-const RESPONSE: Duration = Duration::from_secs(5);
-const MAX_RESPONSE_BYTES: usize = 65536;
-const MAX_EVENTS: usize = 10000;
+use worker::RESPONSE;
+pub use worker::Worker;
 
 /// The worker's exit status after it persists a power cut.
 const POWER_CUT_EXIT: i32 = 75;
@@ -75,286 +70,6 @@ fn require(condition: bool, message: &'static str) -> Result<()> {
     } else {
         Err(HarnessError::Invalid(message))
     }
-}
-
-/// One worker process: a bounded request/response transport, with stderr
-/// kept for diagnostics.
-pub struct Worker {
-    child: Child,
-    stdin: ChildStdin,
-    lines: Receiver<std::io::Result<String>>,
-    errors: fs::File,
-}
-
-/// A value's command-line spelling.
-fn argument(value: &impl ValueEnum) -> String {
-    value
-        .to_possible_value()
-        .map(|possible| possible.get_name().to_owned())
-        .unwrap_or_default()
-}
-
-impl Worker {
-    pub fn start(
-        executable: &Path,
-        image: &Path,
-        profile: Profile,
-        journal: Journal,
-    ) -> Result<Self> {
-        let errors = tempfile::tempfile()?;
-        let mut child = Process::new(executable)
-            .arg(image)
-            .arg(argument(&profile))
-            .arg(argument(&journal))
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(errors.try_clone()?)
-            .spawn()
-            .map_err(HarnessError::WorkerStart)?;
-
-        let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
-            unreachable!("both pipes were requested above");
-        };
-        let (send, lines) = channel();
-        // A reader thread feeds a channel, so `read` can wait with a deadline.
-        std::thread::spawn(move || {
-            for line in BufReader::new(stdout).lines() {
-                if send.send(line).is_err() {
-                    return;
-                }
-            }
-        });
-
-        Ok(Self {
-            child,
-            stdin,
-            lines,
-            errors,
-        })
-    }
-
-    /// Events up to and including the next status or power cut.
-    pub fn read(&mut self) -> Result<Vec<Event>> {
-        let deadline = Instant::now() + RESPONSE;
-        let (mut events, mut bytes) = (Vec::new(), 0);
-
-        loop {
-            let left = deadline.saturating_duration_since(Instant::now());
-            let line = match self.lines.recv_timeout(left) {
-                Ok(Ok(line)) => line,
-                Ok(Err(_)) | Err(RecvTimeoutError::Disconnected) => return Err(self.exited()),
-                Err(RecvTimeoutError::Timeout) => return Err(HarnessError::WorkerTimeout),
-            };
-
-            bytes += line.len() + 1;
-            let event: Event = serde_json::from_str(&line).map_err(HarnessError::WorkerEvent)?;
-
-            let done = matches!(event, Event::Status(_) | Event::PowerCut { .. });
-            events.push(event);
-            if done {
-                return Ok(events);
-            }
-            if bytes > MAX_RESPONSE_BYTES || events.len() > MAX_EVENTS {
-                return Err(HarnessError::WorkerBounds);
-            }
-        }
-    }
-
-    fn exited(&mut self) -> HarnessError {
-        let code = self.wait(RESPONSE).ok().flatten();
-
-        let mut detail = String::new();
-        let _ = self.errors.rewind();
-        let _ = (&self.errors).take(4096).read_to_string(&mut detail);
-
-        HarnessError::WorkerExited { code, detail }
-    }
-
-    pub fn command(&mut self, command: &Command) -> Result<Vec<Event>> {
-        let line = serde_json::to_string(command)?;
-        writeln!(self.stdin, "{line}")
-            .and_then(|()| self.stdin.flush())
-            .map_err(|_| HarnessError::WorkerPipe)?;
-        self.read()
-    }
-
-    /// The exit status, if the worker exits within `timeout`.
-    pub fn wait(&mut self, timeout: Duration) -> std::io::Result<Option<i32>> {
-        let deadline = Instant::now() + timeout;
-        loop {
-            if let Some(status) = self.child.try_wait()? {
-                return Ok(Some(status.code().unwrap_or(-1)));
-            }
-            if Instant::now() >= deadline {
-                return Ok(None);
-            }
-            std::thread::sleep(Duration::from_millis(5));
-        }
-    }
-
-    pub fn close(mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
-/// Python's default `json.dumps(value, sort_keys=True)`, for the scenario hash
-/// the earlier reports carry. Unlike canonical form it keeps the default
-/// `", "` and `": "` separators.
-fn python_dumps(value: &Value, out: &mut Vec<u8>) {
-    match value {
-        Value::Array(items) => {
-            out.push(b'[');
-            for (i, item) in items.iter().enumerate() {
-                if i > 0 {
-                    out.extend_from_slice(b", ");
-                }
-                python_dumps(item, out);
-            }
-            out.push(b']');
-        }
-
-        Value::Object(map) => {
-            let mut keys: Vec<&String> = map.keys().collect();
-            keys.sort();
-            out.push(b'{');
-            for (i, key) in keys.into_iter().enumerate() {
-                if i > 0 {
-                    out.extend_from_slice(b", ");
-                }
-                canonical::string(key, out);
-                out.extend_from_slice(b": ");
-                python_dumps(&map[key], out);
-            }
-            out.push(b'}');
-        }
-
-        Value::String(text) => canonical::string(text, out),
-        other => out.extend_from_slice(other.to_string().as_bytes()),
-    }
-}
-
-/// Hashes of the worker and of every source that shapes it.
-#[derive(Debug, Serialize)]
-struct Identity {
-    worker_sha256: String,
-    sources: BTreeMap<String, String>,
-}
-
-fn identities(root: &Path, executable: &Path) -> Identity {
-    fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
-        let Ok(entries) = fs::read_dir(dir) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                if path.file_name() != Some("target".as_ref()) {
-                    walk(&path, out);
-                }
-            } else if matches!(
-                path.extension().and_then(|e| e.to_str()),
-                Some("rs" | "toml" | "h")
-            ) {
-                out.push(path);
-            }
-        }
-    }
-
-    let mut paths = Vec::new();
-    for krate in ["core", "hal", "testkit", "sim"] {
-        walk(&root.join(format!("src/sdk/wellfed-{krate}")), &mut paths);
-    }
-    if let Ok(entries) = fs::read_dir(root.join("src/firmware/vendor/sim")) {
-        paths.extend(entries.flatten().map(|e| e.path()).filter(|p| p.is_file()));
-    }
-    paths.push(root.join("Cargo.lock"));
-
-    let sources = paths
-        .iter()
-        .filter_map(|p| {
-            let data = fs::read(p).ok()?;
-            let name = p.strip_prefix(root).unwrap_or(p).display().to_string();
-            Some((name, sha256(&data)))
-        })
-        .collect();
-
-    Identity {
-        worker_sha256: fs::read(executable).map(|d| sha256(&d)).unwrap_or_default(),
-        sources,
-    }
-}
-
-/// Notes the harness adds to the worker's events in the report.
-#[derive(Debug, Serialize)]
-#[serde(tag = "event", rename_all = "snake_case")]
-enum Note {
-    Boot { profile: Profile },
-    Action { action: Value },
-    PowerRemoved { outputs: &'static str },
-    WatchdogResetRequested,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(untagged)]
-enum Logged {
-    Worker(Event),
-    Harness(Note),
-}
-
-#[derive(Debug, Serialize)]
-struct Entry {
-    at_ms: u64,
-    boot: u64,
-    #[serde(flatten)]
-    event: Logged,
-}
-
-#[derive(Debug, Serialize)]
-struct Assertion {
-    at_ms: u64,
-    label: String,
-    passed: bool,
-    actual: Value,
-    expected: Value,
-}
-
-/// The name tables for the indexes the report's events carry.
-#[derive(Debug, Serialize)]
-struct Enums {
-    state: &'static [State],
-    fault: &'static [Fault],
-    outcome: &'static [Outcome],
-    reason: &'static [Reason],
-    submission: &'static [Submission],
-    storage_phase: &'static [StoragePhase],
-    motor: [&'static str; 4],
-}
-
-/// What a passing report does not establish.
-#[derive(Debug, Serialize)]
-struct Limits {
-    synthetic_hardware_and_timing: bool,
-    physical_reliability_verified: bool,
-    full_boot_or_rtos_emulated: bool,
-    real_flash_provider: bool,
-    network_or_scheduler_implemented: bool,
-}
-
-/// One scenario's evidence. Serialize it through [`serde_json::to_value`]
-/// so its keys come out sorted, as the reports always have.
-#[derive(Debug, Serialize)]
-pub struct Report {
-    version: u32,
-    pub name: String,
-    profile: Profile,
-    scenario_sha256: String,
-    identity: Identity,
-    enums: Enums,
-    limits: Limits,
-    events: Vec<Entry>,
-    assertions: Vec<Assertion>,
-    pub passed: bool,
 }
 
 /// One scenario run: the worker for the current boot, the latest status, and
@@ -703,19 +418,4 @@ pub fn run_scenario(scenario: &Value, root: &Path, executable: &Path) -> Result<
         .tempdir_in(&directory)?;
 
     Simulation::new(scenario, root, executable, scratch.path())?.run()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn python_dumps_matches_the_default_separators() {
-        let mut out = Vec::new();
-        python_dumps(
-            &serde_json::json!({"b": [1, true, null], "a": "é"}),
-            &mut out,
-        );
-        assert_eq!(out, b"{\"a\": \"\\u00e9\", \"b\": [1, true, null]}");
-    }
 }

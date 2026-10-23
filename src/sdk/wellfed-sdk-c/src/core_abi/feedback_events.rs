@@ -1,7 +1,7 @@
 //! Exports declared by `feedback_events.h`.
 
-use wellfed_core::feed_controller::{FeedController, FeedReason, FeedSample};
-use wellfed_core::feedback_events::{
+use wellfed_core::feed::controller::{FeedController, FeedReason, FeedSample};
+use wellfed_core::feed::feedback::{
     FeedbackDrive, FeedbackEvent, FeedbackEvents, FeedbackFault, FeedbackTakeResult,
 };
 

@@ -1,4 +1,4 @@
-use wellfed_hal::supervise::{Inputs, LIVENESS_MS, Startup, TRIAL_DEADLINE_MS, feed};
+use wellfed_hal::supervision::supervise::{Inputs, LIVENESS_MS, Startup, TRIAL_DEADLINE_MS, feed};
 
 fn running(now_ms: u32, beat: u32) -> Inputs {
     Inputs {

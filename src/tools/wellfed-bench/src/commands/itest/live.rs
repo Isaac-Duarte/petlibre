@@ -74,7 +74,7 @@ struct ImageLease {
 
 /// `ota-images` writes it beside the server config.
 const IMAGE_LEASE: &str = "ota-image-server.json";
-/// The fixed trial port stock's URL names (`wellfed-local` `ota_image::PORT`).
+/// The fixed trial port stock's URL names (`wellfed-local` `ota::image::PORT`).
 const IMAGE_PORT: u16 = 8088;
 
 #[derive(Default)]

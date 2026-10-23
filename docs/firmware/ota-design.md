@@ -1,6 +1,6 @@
 # FW10/FW11 over-the-air update design
 
-Status: the recovery-role updater is implemented (`wellfed-hal/src/updater.rs`, host-tested in `wellfed-hal/tests/updater.rs`). On hardware (October 22, physical), the build booted from bank 0 after a UART give-way. It bound KM0, opened the watchdog, installed the lease provider into the flash-lock hooks and ran 180 s on one boot with the watchdog fed and no network; bank 1 was then restored. **First live update (October 22, physical).** With the hotspot up and `wellfed-local serve` holding an offer, a UART give-way booted bank 0, and the recovery role then:
+Status: the recovery-role updater is implemented (`wellfed-hal/src/ota/updater.rs`, host-tested in `wellfed-hal/tests/updater.rs`). On hardware (October 22, physical), the build booted from bank 0 after a UART give-way. It bound KM0, opened the watchdog, installed the lease provider into the flash-lock hooks and ran 180 s on one boot with the watchdog fed and no network; bank 1 was then restored. **First live update (October 22, physical).** With the hotspot up and `wellfed-local serve` holding an offer, a UART give-way booted bank 0, and the recovery role then:
 - joined the hotspot, connected, and verified manifest version 1 (663 552 bytes);
 - wrote 162 sectors under 2 703 leases, reading back every page;
 - programmed the marker last and logged `activated`;

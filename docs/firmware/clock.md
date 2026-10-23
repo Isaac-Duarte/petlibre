@@ -1,6 +1,6 @@
 # FW21 wall clock and missed-time policy
 
-Status: implemented and host-tested (`wellfed-core/src/wall_clock.rs`, `wellfed-hal/src/clock.rs`, the server's `replacement.rs`). Hardware evidence is recorded on the [board](../../FIRMWARE_BOARD.md).
+Status: implemented and host-tested (`wellfed-core/src/clock/wall.rs`, `wellfed-hal/src/clock.rs`, the server's `replacement/mod.rs`). Hardware evidence is recorded on the [board](../../FIRMWARE_BOARD.md).
 
 ## Source of time
 

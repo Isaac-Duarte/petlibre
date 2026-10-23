@@ -20,19 +20,19 @@
 use core::fmt;
 
 use wellfed_core::adc_scale::SAMPLES;
-use wellfed_core::feed_controller::{FeedController, FeedSample, MotorCommand};
+use wellfed_core::feed::controller::{FeedController, FeedSample, MotorCommand};
+use wellfed_core::feed::sensor_inputs::SensorReading;
 use wellfed_core::flash_coord::{FlashCoord, FlashReply};
-use wellfed_core::sensor_inputs::SensorReading;
 
 use crate::elapsed_ms;
 use crate::optics::FEED;
 use wellfed_hal::board::{Board, MOTOR_MASK};
-use wellfed_hal::config::{FLASH_LIMITS, SYSTIMER_HZ};
-use wellfed_hal::events::{Events, EventsConfig, EventsFault};
 use wellfed_hal::flash::park::{self, Mmio, Reply};
-use wellfed_hal::provider::BOOT_COUNT_REGISTER;
+use wellfed_hal::flash_lock::provider::BOOT_COUNT_REGISTER;
 use wellfed_hal::sdk::{self, GPIO_PORT_A};
 use wellfed_hal::stopped;
+use wellfed_hal::supervision::config::{FLASH_LIMITS, SYSTIMER_HZ};
+use wellfed_hal::supervision::events::{Events, EventsConfig, EventsFault};
 
 pub const POLL_MS: u32 = 2;
 pub const WAIT_MS: u32 = 10;

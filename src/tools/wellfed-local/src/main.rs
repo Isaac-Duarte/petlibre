@@ -16,11 +16,11 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use wellfed_local::{
     api::{self, ApiState},
-    broker,
     build_info::{self, BUILD},
     config::{self, Config},
     controller::{Controller, FeedInput, ResolveInput},
-    firmware_ota, mqtt, network, ota_image, ota_trial, probe,
+    mqtt::{self, broker},
+    network, ota, probe,
 };
 use reqwest::Method;
 use serde::Serialize;
@@ -116,8 +116,8 @@ enum Action {
         /// The feeder's address; found by its MAC on the hotspot otherwise.
         #[arg(long)]
         peer: Option<std::net::Ipv4Addr>,
-        #[arg(long, value_enum, default_value_t = ota_image::Profile::StockVersion)]
-        profile: ota_image::Profile,
+        #[arg(long, value_enum, default_value_t = ota::image::Profile::StockVersion)]
+        profile: ota::image::Profile,
     },
 
     /// Explicitly run GET_CONFIG once on a confirmed C-probe installation.
@@ -135,7 +135,7 @@ enum Action {
         #[arg(long)]
         request_id: Uuid,
         #[arg(long)]
-        image: ota_trial::Image,
+        image: ota::trial::Image,
         #[arg(long)]
         server_token: Uuid,
     },
@@ -328,7 +328,7 @@ async fn main() -> Result<()> {
             clear,
             address,
         } => {
-            use wellfed_local::wifi_ble::{Change, send};
+            use wellfed_local::replacement::wifi_ble::{Change, send};
             let config = Config::load(&config)?;
             let change = match (ssid, clear) {
                 (Some(ssid), _) => {
@@ -380,10 +380,10 @@ async fn main() -> Result<()> {
             let config = Config::load(&config)?;
             let host = match host {
                 Some(host) => host,
-                None => wellfed_local::speak::discover(&config)?,
+                None => wellfed_local::replacement::speak::discover(&config)?,
             };
             tokio::task::spawn_blocking(move || {
-                wellfed_local::speak::play(&config, &file, host, rate)
+                wellfed_local::replacement::speak::play(&config, &file, host, rate)
             })
             .await??;
         }
@@ -441,7 +441,7 @@ async fn main() -> Result<()> {
             let config = Config::load(&path)?;
             let peer = match peer {
                 Some(peer) => peer,
-                None => match wellfed_local::speak::discover(&config)? {
+                None => match wellfed_local::replacement::speak::discover(&config)? {
                     std::net::IpAddr::V4(peer) => peer,
                     std::net::IpAddr::V6(_) => {
                         anyhow::bail!("the feeder has no IPv4 neighbour entry")
@@ -455,7 +455,7 @@ async fn main() -> Result<()> {
                     _ = terminated() => {},
                 }
             };
-            ota_image::serve(config, &path, &directory, peer, profile, stop).await?;
+            ota::image::serve(config, &path, &directory, peer, profile, stop).await?;
         }
 
         Action::OtaTrialResolve {
@@ -467,7 +467,7 @@ async fn main() -> Result<()> {
                 config,
                 Method::POST,
                 "/api/ota/trial/resolve",
-                Some(&ota_trial::ResolveInput { request_id, note }),
+                Some(&ota::trial::ResolveInput { request_id, note }),
             )
             .await?;
         }
@@ -482,7 +482,7 @@ async fn main() -> Result<()> {
                 config,
                 Method::POST,
                 "/api/ota/trial",
-                Some(&ota_trial::Input {
+                Some(&ota::trial::Input {
                     request_id,
                     image,
                     server_token,
@@ -510,7 +510,7 @@ async fn main() -> Result<()> {
         }
 
         Action::OtaKeygen { output } => {
-            let public = firmware_ota::keygen(&output)?;
+            let public = ota::firmware::keygen(&output)?;
             println!("Wrote {}; public key {public}", output.display());
         }
 
@@ -521,11 +521,11 @@ async fn main() -> Result<()> {
             build_id,
             output,
         } => {
-            let manifest = firmware_ota::sign(
-                &firmware_ota::load_key(&key)?,
+            let manifest = ota::firmware::sign(
+                &ota::firmware::load_key(&key)?,
                 &std::fs::read(&image)?,
                 version,
-                firmware_ota::parse_build_id(&build_id)?,
+                ota::firmware::parse_build_id(&build_id)?,
             )?;
             anyhow::ensure!(!output.exists(), "refusing to replace {}", output.display());
             std::fs::write(&output, manifest)?;

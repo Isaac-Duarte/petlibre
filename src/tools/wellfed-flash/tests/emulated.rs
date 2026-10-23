@@ -19,7 +19,7 @@ use std::process::{Command, Stdio};
 
 use wellfed_emu::helper::{Call, Helper, Scope};
 use wellfed_emu::{HELPER, serve};
-use wellfed_flash::journal;
+use wellfed_flash::evidence::journal;
 use wellfed_flash::ota::container;
 use wellfed_formats::canonical::sha256;
 use serde_json::{Value, json};

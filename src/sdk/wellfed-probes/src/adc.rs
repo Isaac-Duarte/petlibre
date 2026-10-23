@@ -16,7 +16,7 @@ use wellfed_core::adc_scale::{AdcCalibration, SAMPLES};
 
 const SAMPLE_COUNT: u32 = 16;
 const _: () = assert!(SAMPLE_COUNT as usize == SAMPLES);
-use wellfed_core::sensor_inputs::SensorReading;
+use wellfed_core::feed::sensor_inputs::SensorReading;
 
 use wellfed_hal::board::Board;
 use wellfed_hal::sdk;

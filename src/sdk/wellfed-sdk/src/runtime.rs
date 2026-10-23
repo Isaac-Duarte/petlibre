@@ -17,17 +17,18 @@ use core::ffi::{CStr, c_void};
 use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
-use wellfed_hal::confirm::{self, Confirm, HookedStorage};
 use wellfed_hal::flash::hooks::{self, HookProvider, HookTicket};
 use wellfed_hal::flash::park::Hardware;
+use wellfed_hal::flash_lock::provider::Provider;
 use wellfed_hal::health::Boot;
-use wellfed_hal::provider::Provider;
-use wellfed_hal::supervise::{self, LIVENESS_MS, Startup};
+use wellfed_hal::ota::confirm::{self, Confirm, HookedStorage};
+use wellfed_hal::ota::updater::{self, Hooked, Hooks, Updater};
+use wellfed_hal::ota::watch::{self, SdkGiveWay, Watch};
+use wellfed_hal::supervision::config;
+use wellfed_hal::supervision::supervise::{self, LIVENESS_MS, Startup};
+use wellfed_hal::supervision::watchdog::Watchdog;
 use wellfed_hal::transport::{self, Link};
-use wellfed_hal::updater::{self, Hooked, Hooks, Updater};
-use wellfed_hal::watch::{self, SdkGiveWay, Watch};
-use wellfed_hal::watchdog::Watchdog;
-use wellfed_hal::{config, leds, power, sdk, startup, stopped, trial};
+use wellfed_hal::{leds, power, sdk, startup, stopped, trial};
 
 use crate::slot::Slot;
 use crate::wifi::{Probe, Record};
@@ -809,7 +810,7 @@ unsafe extern "C" fn diagnostic_task(_: *mut c_void) -> u32 {
     // every path after a passing diagnostic and the variant no longer links
     // the image the link audit pins.
     let forced_fail = cfg!(feature = "fw11-fail") && core::hint::black_box(true);
-    let passed = wellfed_core::diagnostic::run() && !forced_fail;
+    let passed = wellfed_core::feed::diagnostic::run() && !forced_fail;
     sdk::log(if passed {
         c"Synthetic core diagnostic: PASS\r\n"
     } else {

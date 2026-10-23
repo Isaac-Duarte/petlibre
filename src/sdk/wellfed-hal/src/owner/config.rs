@@ -3,16 +3,16 @@
 use core::ptr;
 
 use wellfed_core::adc_scale::AdcCalibration;
-use wellfed_core::feed_controller::{FeedController, FeedLimits};
-use wellfed_core::feed_progress::BowlMode;
-use wellfed_core::feedback_events::CAPACITY;
+use wellfed_core::feed::controller::{FeedController, FeedLimits};
+use wellfed_core::feed::feedback::CAPACITY;
+use wellfed_core::feed::progress::BowlMode;
+use wellfed_core::feed::sensor_inputs::{SensorInputs, SensorLimits};
 use wellfed_core::flash_coord::{FlashCoord, FlashLimits};
 use wellfed_core::interval_valid;
-use wellfed_core::sensor_inputs::{SensorInputs, SensorLimits};
 
-use crate::events::{self, EventsConfig};
 use crate::sdk;
-use crate::watchdog::WatchdogConfig;
+use crate::supervision::events::{self, EventsConfig};
+use crate::supervision::watchdog::WatchdogConfig;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]

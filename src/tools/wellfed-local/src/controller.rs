@@ -19,10 +19,11 @@ use uuid::Uuid;
 use crate::{
     build_info::BUILD,
     config::Config,
-    ota::{OtaReport, REPORT_LIMIT},
-    ota_image,
-    ota_trial::{self, Phase as TrialPhase},
-    ota_trial::{C_PROBE_VERSION, ORIGINAL_VERSION},
+    ota::{
+        self,
+        report::{OtaReport, REPORT_LIMIT},
+        trial::{C_PROBE_VERSION, ORIGINAL_VERSION, Phase as TrialPhase},
+    },
     probe,
     protocol::{self, Channel, ExecStep, Message, Reply},
     storage,
@@ -94,7 +95,7 @@ struct Ledger {
     device_id: String,
     feeds: BTreeMap<Uuid, FeedRecord>,
     #[serde(default)]
-    ota_trials: BTreeMap<Uuid, ota_trial::Record>,
+    ota_trials: BTreeMap<Uuid, ota::trial::Record>,
     #[serde(default)]
     ota_hold: bool,
     #[serde(default)]
@@ -115,7 +116,7 @@ pub struct Status {
     pub ota_reports: Vec<OtaReport>,
     pub ota_trial_enabled: bool,
     pub ota_hold: bool,
-    pub ota_trials: Vec<ota_trial::Record>,
+    pub ota_trials: Vec<ota::trial::Record>,
     pub probe_queries: Vec<probe::Record>,
     pub feeds: Vec<FeedRecord>,
     /// Replacement-firmware health (FW08); null without a firmware role.
@@ -532,7 +533,7 @@ impl Controller {
             .values()
             .max_by_key(|record| record.sequence)
             .filter(|record| {
-                record.input.image == ota_trial::Image::CProbe
+                record.input.image == ota::trial::Image::CProbe
                     && record.phase == TrialPhase::VersionReported
             })
             .ok_or(Rejection::InvalidProbe)?;
@@ -586,10 +587,10 @@ impl Controller {
     /// live listener. It is only consulted for a new request ID.
     pub fn ota_trial(
         &mut self,
-        input: ota_trial::Input,
-        lease: Option<&ota_image::Lease>,
+        input: ota::trial::Input,
+        lease: Option<&ota::image::Lease>,
         now: DateTime<Utc>,
-    ) -> std::result::Result<(ota_trial::Record, Option<Reply>), Rejection> {
+    ) -> std::result::Result<(ota::trial::Record, Option<Reply>), Rejection> {
         if self.storage_failed {
             return Err(Rejection::Storage);
         }
@@ -661,7 +662,7 @@ impl Controller {
             return Err(Rejection::ImageServer);
         };
 
-        let record = ota_trial::Record {
+        let record = ota::trial::Record {
             sequence: self.ledger.ota_trials.len() + 1,
             input,
             created_at: now,
@@ -701,7 +702,7 @@ impl Controller {
         else {
             return Ok(());
         };
-        if trial.input.image != ota_trial::Image::Replacement
+        if trial.input.image != ota::trial::Image::Replacement
             || !matches!(trial.phase, TrialPhase::Submitted | TrialPhase::Uncertain)
             || now <= trial.created_at
         {
@@ -720,9 +721,9 @@ impl Controller {
     /// observation interval; elapsed time alone cannot establish an idle device.
     pub fn resolve_trial(
         &mut self,
-        request: ota_trial::ResolveInput,
+        request: ota::trial::ResolveInput,
         now: DateTime<Utc>,
-    ) -> std::result::Result<ota_trial::Record, Rejection> {
+    ) -> std::result::Result<ota::trial::Record, Rejection> {
         if self.storage_failed {
             return Err(Rejection::Storage);
         }
@@ -885,7 +886,7 @@ impl Controller {
             .max_by_key(|r| r.sequence)
             .is_some_and(|r| {
                 r.input.request_id == trial_id
-                    && r.input.image == ota_trial::Image::CProbe
+                    && r.input.image == ota::trial::Image::CProbe
                     && r.phase == TrialPhase::VersionReported
             });
         let duplicate = self.ledger.probe_queries.values().any(|q| {

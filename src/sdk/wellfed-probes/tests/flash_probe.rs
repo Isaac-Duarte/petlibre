@@ -10,7 +10,7 @@
 use std::cell::{Cell, RefCell};
 
 use wellfed_core::flash_coord::{FlashFault, FlashPhase, FlashReply};
-use wellfed_core::settings_store::{SettingsStatus, SlotState};
+use wellfed_core::store::settings::{SettingsStatus, SlotState};
 use wellfed_hal::flash::hooks::HookTicket;
 use wellfed_hal::flash::park::{
     self, ACK, Mmio, RELEASE, RELEASED, REQUEST, SYSTICK_CTRL, TICKS, TIMEOUT,
@@ -18,7 +18,7 @@ use wellfed_hal::flash::park::{
 use wellfed_hal::flash::peer::{
     BACKUP_BASE, MARKER_REGISTER, PARK_CHANNEL, PARK_TICK_LIMIT, Peer,
 };
-use wellfed_hal::provider::{ATTEMPT_BIT, LeaseStage, Provider};
+use wellfed_hal::flash_lock::provider::{ATTEMPT_BIT, LeaseStage, Provider};
 use wellfed_hal::sdk::{self, fake};
 use wellfed_hal::stopped;
 use wellfed_probes::flash::{EXPECTED_ID, FlashOps, Probe, Record, STRESS_SAVES};

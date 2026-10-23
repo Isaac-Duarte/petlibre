@@ -20,7 +20,7 @@ pattern!(
 );
 pattern!(READ_SKIP, r"PLRDS1 skip marker=([0-9a-f]{8})\r\n");
 
-pub(super) const READ_BATCHES: [u64; 4] = [25, 50, 75, 100];
+const READ_BATCHES: [u64; 4] = [25, 50, 75, 100];
 /// JEDEC ID of the research unit's GigaDevice flash (boot log `Flash ID:c8, 40, 17`).
 const READ_ID: &str = "c84017";
 /// Reads, leases, phase IDLE, no fault.
@@ -54,7 +54,7 @@ static WRITE_DONE_RE: LazyLock<Regex> = LazyLock::new(|| {
 });
 static WRITE_SKIP: LazyLock<Regex> = LazyLock::new(|| re(r"PLWRS1 skip marker=([0-9a-f]{8})\r\n"));
 
-pub(super) const WRITE_CYCLES: [u64; 3] = [1, 2, 3];
+const WRITE_CYCLES: [u64; 3] = [1, 2, 3];
 /// Every sampled word of the 4 KiB scratch sector reads erased.
 const WRITE_BLANK: u64 = 1024;
 /// Cycles, leases, phase IDLE, no fault; frozen equals leases.
@@ -755,3 +755,6 @@ fn classify_flash_write(
     }
     Ok(Outcome::Pass)
 }
+
+#[cfg(test)]
+mod tests;

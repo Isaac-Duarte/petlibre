@@ -5,7 +5,7 @@
 //! `Micro_SwHandle` behavior. A finished request never counts further, even
 //! at the `u16` maximum.
 
-use wellfed_core::feed_progress::{BowlMode, Direction, FeedProgress, ProgressResult};
+use wellfed_core::feed::progress::{BowlMode, Direction, FeedProgress, ProgressResult};
 
 #[test]
 fn single_bowl_request() {

@@ -8,22 +8,11 @@
 
 #![forbid(unsafe_code)]
 
-pub mod development;
 pub mod error;
 pub mod evidence;
-pub mod journal;
+pub mod link;
 pub mod ota;
-pub mod protocol;
-pub mod read;
-pub mod recovery;
-pub mod report;
-pub mod review;
-pub mod sector;
-pub mod serial;
-pub mod session;
-pub mod status;
-pub mod stock;
-pub mod update;
+pub mod writers;
 
 #[cfg(test)]
 mod tests;

@@ -15,9 +15,9 @@ use clap::{Args, Parser, Subcommand};
 use serde::Serialize;
 use serde_json::Value;
 
-use wellfed_flash::protocol::{Core, INTERRUPTED};
-use wellfed_flash::session::{Completion, Context, Outcome};
-use wellfed_flash::{read, stock, update};
+use wellfed_flash::evidence::session::{Completion, Context, Outcome};
+use wellfed_flash::link::protocol::{Core, INTERRUPTED};
+use wellfed_flash::writers::{read, stock, update};
 
 #[derive(Parser)]
 #[command(
@@ -325,14 +325,14 @@ fn main() -> ExitCode {
             start,
             end,
         } => offline(
-            wellfed_flash::status::assess_range([sr1, sr2, sr3], start, end),
+            wellfed_flash::link::status::assess_range([sr1, sr2, sr3], start, end),
             |_| 0,
         ),
 
         Command::InspectJournal { journal } => offline(
             std::fs::read(&journal)
                 .map_err(wellfed_flash::Error::from)
-                .and_then(|data| wellfed_flash::journal::inspect(&data)),
+                .and_then(|data| wellfed_flash::evidence::journal::inspect(&data)),
             |receipt| u8::from(!receipt.verified_terminal),
         ),
     };

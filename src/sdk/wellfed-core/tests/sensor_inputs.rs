@@ -7,12 +7,12 @@
 //! change stops an active feed.
 
 use wellfed_core::adc_scale::{AdcCalibration, SAMPLES};
-use wellfed_core::feed_controller::{
+use wellfed_core::feed::controller::{
     FeedController, FeedLimits, FeedReason, FeedRequest, FeedSample, FeedStartResult, FeedState,
     MotorCommand,
 };
-use wellfed_core::feed_progress::{BowlMode, Direction};
-use wellfed_core::sensor_inputs::{SensorInputs, SensorLimits, SensorReading};
+use wellfed_core::feed::progress::{BowlMode, Direction};
+use wellfed_core::feed::sensor_inputs::{SensorInputs, SensorLimits, SensorReading};
 
 /// Compressed durations exercise software; no deployment defaults are implied.
 const LIMITS: SensorLimits = SensorLimits {

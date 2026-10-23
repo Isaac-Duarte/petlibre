@@ -7,17 +7,47 @@
 use std::fs;
 use std::path::Path;
 
-use petlibre_flash::ota::{STOCK_SHA256, container, regions};
-use petlibre_formats::layout::Layout;
-use serde_json::{Value, json};
+use petlibre_flash::ota::{Image, STOCK_SHA256, container, images};
+use petlibre_formats::layout::{Hex, Layout};
+use serde::Serialize;
 
+use super::word;
 use crate::{Result, require, sha256};
 
-fn word(data: &[u8], at: usize) -> Option<u64> {
-    Some(u32::from_le_bytes(data.get(at..at + 4)?.try_into().ok()?) as u64)
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct LayoutAudit {
+    schema_version: u32,
+    image: String,
+    bytes: usize,
+    sha256: String,
+    payload_bytes: usize,
+    /// The core images, as the flash client's container check reads them.
+    regions: Vec<Image>,
+    candidate_placements: Vec<Placement>,
+    checks: LayoutChecks,
+    boot_acceptance: &'static str,
+    physical_flash_capacity: &'static str,
+    scope: &'static str,
 }
 
-pub fn audit(image: &Path, stock: &Path, layout: &Path) -> Result<Value> {
+/// The candidate written at one bank.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct Placement {
+    bank_index: usize,
+    flash_offset: Hex,
+    end_exclusive: Hex,
+    erase_bytes: usize,
+}
+
+/// What the audit refused otherwise; always `true` in a written audit.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct LayoutChecks {
+    container_and_checksum: bool,
+    reference_table_matches: bool,
+    known_preserve_ranges_untouched: bool,
+}
+
+pub(crate) fn audit(image: &Path, stock: &Path, layout: &Path) -> Result<LayoutAudit> {
     let layout: Layout = petlibre_formats::load(layout)?;
     require(
         layout.schema_version == 1 && layout.stock_sha256 == STOCK_SHA256,
@@ -39,7 +69,8 @@ pub fn audit(image: &Path, stock: &Path, layout: &Path) -> Result<Value> {
     let mapped = layout.flash_mapping_base.0;
     let table = (0x17040 + layout.bank_table_runtime_address.0)
         .checked_sub(0x0E00_0020)
-        .unwrap_or(u64::MAX) as usize;
+        .and_then(|table| usize::try_from(table).ok())
+        .unwrap_or(usize::MAX);
     require(
         word(&stock, table) == Some(mapped + offsets[0])
             && word(&stock, table + 4) == Some(mapped + offsets[1]),
@@ -68,10 +99,10 @@ pub fn audit(image: &Path, stock: &Path, layout: &Path) -> Result<Value> {
         layout.sector_bytes == 4096 && payload.len() % 4096 == 0,
         "Unsupported sector alignment",
     )?;
-    let image_regions = regions(payload)?;
+    let image_regions = images(payload)?;
 
     let mut placements = Vec::new();
-    for (index, start) in offsets.iter().enumerate() {
+    for (bank_index, start) in offsets.iter().enumerate() {
         let end = start + payload.len() as u64;
         let overlaps: Vec<&str> = layout
             .known_preserve_ranges
@@ -83,20 +114,29 @@ pub fn audit(image: &Path, stock: &Path, layout: &Path) -> Result<Value> {
             overlaps.is_empty(),
             format!("Candidate overlaps known preserved data: {overlaps:?}"),
         )?;
-        placements.push(
-            json!({"bank_index": index, "flash_offset": format!("0x{start:08x}"),
-                               "end_exclusive": format!("0x{end:08x}"),
-                               "erase_bytes": payload.len()}),
-        );
+        placements.push(Placement {
+            bank_index,
+            flash_offset: Hex(*start),
+            end_exclusive: Hex(end),
+            erase_bytes: payload.len(),
+        });
     }
 
-    Ok(json!({
-        "schema_version": 1, "image": image.display().to_string(), "bytes": data.len(),
-        "sha256": sha256(&data), "payload_bytes": payload.len(),
-        "regions": image_regions, "candidate_placements": placements,
-        "checks": {"container_and_checksum": true, "reference_table_matches": true,
-                   "known_preserve_ranges_untouched": true},
-        "boot_acceptance": "unproven", "physical_flash_capacity": "unverified",
-        "scope": "Offline structural/known-range audit; not a flash plan or full partition validation",
-    }))
+    Ok(LayoutAudit {
+        schema_version: 1,
+        image: image.display().to_string(),
+        bytes: data.len(),
+        sha256: sha256(&data),
+        payload_bytes: payload.len(),
+        regions: image_regions,
+        candidate_placements: placements,
+        checks: LayoutChecks {
+            container_and_checksum: true,
+            reference_table_matches: true,
+            known_preserve_ranges_untouched: true,
+        },
+        boot_acceptance: "unproven",
+        physical_flash_capacity: "unverified",
+        scope: "Offline structural/known-range audit; not a flash plan or full partition validation",
+    })
 }

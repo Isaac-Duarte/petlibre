@@ -8,20 +8,21 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::LazyLock;
 
-use petlibre_flash::ota::{container, regions};
+use petlibre_flash::ota::{container, images};
 use regex::Regex;
-use serde_json::{Value, json};
+use serde::Serialize;
 
+use super::packaged::{self, PackagedText};
 use super::{
-    ADDRESSED, Binutils, DIRECT_BRANCH, INSTRUCTION, elf, file_sha256, hex, object_path, ota_image,
-    packaged, parse_hex, refuse, tool,
+    ADDRESSED, ArchiveRecord, Archives, Binutils, DIRECT_BRANCH, INSTRUCTION, elf, hex, ota_image,
+    parse_hex, refuse, tool,
 };
-use crate::{Result, require};
+use crate::{Core, Result, require};
 
-pub const SYMBOLS: [&str; 6] = [
+pub(crate) const SYMBOLS: [&str; 6] = [
     "petlibre_amebad_flash_park_publish",
     "petlibre_amebad_flash_park_wait",
     "petlibre_amebad_flash_sem_try_claim",
@@ -45,23 +46,32 @@ const INTEGER: &str = "adc adcs add adds addw and ands asr asrs bic bics clz cmn
     rsb rsbs sbc sbcs stm stmia stmdb str strb strd strh sub subs subw tst uxtb uxth";
 
 static IMMEDIATE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^#(-?(?:0x[0-9a-f]+|\d+))\b").unwrap());
-static IT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^it[te]{0,3}$").unwrap());
-static PC: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\bpc\b").unwrap());
-static TARGET: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b([0-9a-f]+)\s+<").unwrap());
-static LITERAL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r";\s*\(?([0-9a-f]+)\s+<").unwrap());
+    LazyLock::new(|| Regex::new(r"^#(-?(?:0x[0-9a-f]+|\d+))\b").expect("immediate pattern"));
+static IT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^it[te]{0,3}$").expect("IT block pattern"));
+static PC: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\bpc\b").expect("pc pattern"));
+static TARGET: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\b([0-9a-f]+)\s+<").expect("target pattern"));
+static LITERAL: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r";\s*\(?([0-9a-f]+)\s+<").expect("literal pattern"));
 
-/// An immediate operand (`#4096`, `#-0x10`) as a 32-bit value.
+/// An immediate operand (`#4096`, `#-0x10`) as a 32-bit value: negative
+/// ones as their two's complement.
 fn immediate(text: &str) -> Option<u64> {
     let value = &IMMEDIATE.captures(text.trim())?[1];
     let (negative, digits) = value
         .strip_prefix('-')
         .map_or((false, value), |rest| (true, rest));
     let magnitude = match digits.strip_prefix("0x") {
-        Some(hex) => i64::from_str_radix(hex, 16).ok()?,
+        Some(hex) => u64::from_str_radix(hex, 16).ok()?,
         None => digits.parse().ok()?,
     };
-    Some((if negative { -magnitude } else { magnitude }) as u64 & 0xffff_ffff)
+    let value = if negative {
+        magnitude.wrapping_neg()
+    } else {
+        magnitude
+    };
+    Some(value & 0xffff_ffff)
 }
 
 fn integer(mnemonic: &str) -> bool {
@@ -69,7 +79,7 @@ fn integer(mnemonic: &str) -> bool {
 }
 
 /// Strip a condition suffix (`bxeq` is `bx`).
-pub fn unconditional(base: &str) -> &str {
+fn unconditional(base: &str) -> &str {
     match base.len().checked_sub(2) {
         Some(at) if base.is_char_boundary(at) && CONDITIONS.contains(&&base[at..]) => &base[..at],
         _ => base,
@@ -83,12 +93,23 @@ pub fn unconditional(base: &str) -> &str {
 /// (a movt high half in the flash map is refused even without a movw).
 /// Bit-mask immediates are not treated as addresses, and values computed by
 /// other arithmetic are not proven.
+/// A parking function's checked instructions; every refused kind counts 0.
+#[derive(Debug, Clone, Serialize)]
+pub struct Leaf {
+    pub instructions: u32,
+    pub barriers: u32,
+    pub calls: u32,
+    pub foreign_branches: u32,
+    pub xip_literals: u32,
+    pub flash_address_constants: u32,
+}
+
 pub fn check_leaf(
     disassembly: &str,
     address: u64,
     size: u64,
     minimum_barriers: u32,
-) -> Result<Value> {
+) -> Result<Leaf> {
     let (mut count, mut barriers) = (0u32, 0u32);
     let mut low_halves: HashMap<String, u64> = HashMap::new();
     let inside = |at: u64| address <= at && at < address + size;
@@ -133,11 +154,11 @@ pub fn check_leaf(
 
         let code = operands.split(';').next().unwrap_or_default();
         let fields: Vec<&str> = code.split(',').map(str::trim).collect();
-        if conditional == "movw" && fields.len() == 2 && immediate(fields[1]).is_some() {
-            low_halves.insert(fields[0].into(), immediate(fields[1]).unwrap_or(0) & 0xffff);
-        } else if conditional == "movt" && fields.len() == 2 && immediate(fields[1]).is_some() {
-            let high = immediate(fields[1]).unwrap_or(0) & 0xffff;
-            let value = high << 16 | low_halves.remove(fields[0]).unwrap_or(0);
+        let operand = (fields.len() == 2).then(|| immediate(fields[1])).flatten();
+        if let (Some(low), "movw") = (operand, conditional) {
+            low_halves.insert(fields[0].into(), low & 0xffff);
+        } else if let (Some(high), "movt") = (operand, conditional) {
+            let value = (high & 0xffff) << 16 | low_halves.remove(fields[0]).unwrap_or(0);
             require(
                 !FLASH_MAPPING.contains(&value),
                 "Flash/XIP address formed by movw/movt in RAM parking code",
@@ -194,34 +215,66 @@ pub fn check_leaf(
         count > 0 && barriers >= minimum_barriers,
         "Missing parking instructions/barriers",
     )?;
-    Ok(
-        json!({"instructions": count, "barriers": barriers, "calls": 0,
-              "foreign_branches": 0, "xip_literals": 0, "flash_address_constants": 0}),
-    )
+    Ok(Leaf {
+        instructions: count,
+        barriers,
+        calls: 0,
+        foreign_branches: 0,
+        xip_literals: 0,
+        flash_address_constants: 0,
+    })
+}
+
+/// One retained parking function.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct Function {
+    address: String,
+    bytes: u64,
+    #[serde(flatten)]
+    leaf: Leaf,
+}
+
+/// One core's parking functions, bound to its linked archive and package.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct ParkImage {
+    #[serde(flatten)]
+    archive: ArchiveRecord,
+    packaged_text_verified: Vec<PackagedText>,
+    functions: BTreeMap<&'static str, Function>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct ParkAudit {
+    /// Keyed KM0/KM4.
+    images: BTreeMap<&'static str, ParkImage>,
+    activated: bool,
+    global_exclusion_proven: bool,
+    scope: &'static str,
 }
 
 /// `objects` maps KM0/KM4 to the linked Rust archive containing this code.
-pub fn audit(sdk: &Path, binutils: &Binutils, objects: &[(String, PathBuf)]) -> Result<Value> {
+pub(crate) fn audit(sdk: &Path, binutils: &Binutils, objects: &Archives) -> Result<ParkAudit> {
     let image = fs::read(ota_image(sdk))?;
     let payload = container(&image)?;
-    let regions = regions(payload)?;
+    let regions = images(payload)?;
     let objdump = binutils.objdump();
 
-    let mut result = serde_json::Map::new();
-    for (core, directory) in [("KM0", "lp"), ("KM4", "hp")] {
-        let elf = elf(sdk, directory);
+    let mut images = BTreeMap::new();
+    for core in Core::BOTH {
+        let elf = elf(sdk, core);
         let paired = packaged::verify(&elf, &objdump, payload, &regions, core)?;
 
-        let mut expected: Vec<&str> = SYMBOLS.to_vec();
-        if core == "KM4" {
+        let mut expected: Vec<&'static str> = SYMBOLS.to_vec();
+        if core == Core::Hp {
             expected.extend(KM4_SYMBOLS);
         }
         let table = tool(&objdump, &["-t"], &elf)?;
         let mut symbols = BTreeMap::new();
         for line in table.lines() {
             let fields: Vec<&str> = line.split_whitespace().collect();
-            if fields.len() == 6 && expected.contains(&fields[5]) {
-                let name = fields[5];
+            if fields.len() == 6
+                && let Some(&name) = expected.iter().find(|n| **n == fields[5])
+            {
                 require(
                     fields[2] == "F" && fields[3] == ".ram_image2.text",
                     format!("Parking function is not in application RAM: {name}"),
@@ -231,10 +284,10 @@ pub fn audit(sdk: &Path, binutils: &Binutils, objects: &[(String, PathBuf)]) -> 
         }
         require(
             symbols.len() == expected.len(),
-            format!("Missing retained parking functions in {core}"),
+            format!("Missing retained parking functions in {}", core.name()),
         )?;
 
-        let mut checked = serde_json::Map::new();
+        let mut functions = BTreeMap::new();
         for (name, (address, size)) in symbols {
             let listing = tool(
                 &objdump,
@@ -250,32 +303,35 @@ pub fn audit(sdk: &Path, binutils: &Binutils, objects: &[(String, PathBuf)]) -> 
             } else {
                 3
             };
-            let mut function = json!({"address": hex(address), "bytes": size});
-            if let (Some(out), Value::Object(leaf)) = (
-                function.as_object_mut(),
-                check_leaf(&listing, address, size, minimum)?,
-            ) {
-                out.extend(leaf);
-            }
-            checked.insert(name.to_string(), function);
+            let leaf = check_leaf(&listing, address, size, minimum)?;
+            functions.insert(
+                name,
+                Function {
+                    address: hex(address),
+                    bytes: size,
+                    leaf,
+                },
+            );
         }
 
-        let Some((_, object)) = objects.iter().find(|(c, _)| c == core) else {
-            return refuse(format!("No {core} archive"));
-        };
-        result.insert(
-            core.to_string(),
-            json!({"elf_sha256": file_sha256(&elf)?, "object_path": object_path(object, sdk)?,
-                   "object_sha256": file_sha256(object)?, "packaged_text_verified": paired,
-                   "functions": checked}),
+        let archive = ArchiveRecord::of(core, &elf, objects, sdk)?;
+        images.insert(
+            core.name(),
+            ParkImage {
+                archive,
+                packaged_text_verified: paired,
+                functions,
+            },
         );
     }
 
-    Ok(
-        json!({"images": result, "activated": false, "global_exclusion_proven": false,
-              "scope": "Retained leaf code, local branches/literals and packaged RAM placement; \
-                        runtime pointers, MMIO ownership, vectors, reset and SDK mediation require further evidence"}),
-    )
+    Ok(ParkAudit {
+        images,
+        activated: false,
+        global_exclusion_proven: false,
+        scope: "Retained leaf code, local branches/literals and packaged RAM placement; \
+                runtime pointers, MMIO ownership, vectors, reset and SDK mediation require further evidence",
+    })
 }
 
 #[cfg(test)]
@@ -285,7 +341,7 @@ mod tests {
     const ADDRESS: u64 = 0x1000_5000;
 
     /// A synthetic listing in the pinned objdump format; no SDK build required.
-    fn check(body: &[&str]) -> Result<Value> {
+    fn check(body: &[&str]) -> Result<Leaf> {
         let lines: Vec<String> = body
             .iter()
             .chain(&[
@@ -315,8 +371,8 @@ mod tests {
             "f04f 6300 mov.w r3, #134217728 ; 0x8000000",
         ])
         .unwrap();
-        assert_eq!(result["flash_address_constants"], 0);
-        assert_eq!(result["barriers"], 3);
+        assert_eq!(result.flash_address_constants, 0);
+        assert_eq!(result.barriers, 3);
     }
 
     #[test]

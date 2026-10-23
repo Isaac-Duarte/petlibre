@@ -11,18 +11,17 @@
 //! capacity, independent acquisition and restorability stay unverified.
 
 use std::fs::{self, File};
-use std::io::{Read, Write};
-use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
-use std::path::{Path, PathBuf};
-
-use serde_json::{Value, json};
+use std::io::Read;
+use std::os::unix::fs::MetadataExt;
+use std::path::Path;
 
 use petlibre_flash::ota;
 use petlibre_formats::layout::{Hex, Layout};
+use serde::Serialize;
 
-use crate::{Report, Result, digest, require};
+use crate::{Error, Result, digest, require};
 
-pub const LAYOUT: &str = "firmware/plaf103-layout.json";
+pub(crate) const LAYOUT: &str = "firmware/plaf103-layout.json";
 const MAX_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_RUNS: usize = 128;
 /// The bank marker `81958711` as two little-endian words; a valid bank's image
@@ -62,8 +61,17 @@ fn identity(m: &fs::Metadata) -> Identity {
     )
 }
 
-/// A stable regular-file snapshot; reports keep no plaintext.
-pub fn snapshot(path: &Path) -> Result<(Vec<u8>, Value, (u64, u64))> {
+/// An input as the report records it: by hash, never its content.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct FileInfo {
+    path: String,
+    bytes: usize,
+    sha256: String,
+}
+
+/// A stable regular-file snapshot: its bytes, its record and its device
+/// and inode, which tell two paths to the same file apart from two reads.
+fn snapshot(path: &Path) -> Result<(Vec<u8>, FileInfo, (u64, u64))> {
     let path = path.canonicalize()?;
     require(
         fs::metadata(&path)?.is_file(),
@@ -87,48 +95,71 @@ pub fn snapshot(path: &Path) -> Result<(Vec<u8>, Value, (u64, u64))> {
         "Input changed during the audit",
     )?;
 
-    let info =
-        json!({"path": path.display().to_string(), "bytes": data.len(), "sha256": digest(&data)});
+    let info = FileInfo {
+        path: path.display().to_string(),
+        bytes: data.len(),
+        sha256: digest(&data),
+    };
     Ok((data, info, (before.dev(), before.ino())))
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct Run {
+    start: usize,
+    end_exclusive: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct Differences {
+    different_bytes: usize,
+    runs_truncated: bool,
+    /// The first `MAX_RUNS` runs.
+    runs: Vec<Run>,
+    total_runs: usize,
 }
 
 /// Differing bytes and their runs; only the first `MAX_RUNS` runs are listed,
 /// but every run is counted.
-pub fn differences(first: &[u8], second: &[u8]) -> Value {
-    if first == second {
-        return json!({"different_bytes": 0, "runs": [], "total_runs": 0, "runs_truncated": false});
-    }
-
+fn differences(first: &[u8], second: &[u8]) -> Differences {
     let (mut count, mut total_runs) = (0usize, 0usize);
     let mut runs = Vec::new();
     let mut start: Option<usize> = None;
+    let mut close = |begin, end_exclusive, runs: &mut Vec<Run>| {
+        if runs.len() < MAX_RUNS {
+            runs.push(Run {
+                start: begin,
+                end_exclusive,
+            });
+        }
+        total_runs += 1;
+    };
 
     // A missing byte is a difference as well; partial reads cannot pass.
     let length = first.len().max(second.len());
     let shorter = first.len().min(second.len());
-    for offset in 0..length {
-        if offset >= shorter || first[offset] != second[offset] {
-            count += 1;
-            start.get_or_insert(offset);
-        } else if let Some(begin) = start.take() {
-            if runs.len() < MAX_RUNS {
-                runs.push(json!({"start": begin, "end_exclusive": offset}));
+    if first != second {
+        for offset in 0..length {
+            if offset >= shorter || first[offset] != second[offset] {
+                count += 1;
+                start.get_or_insert(offset);
+            } else if let Some(begin) = start.take() {
+                close(begin, offset, &mut runs);
             }
-            total_runs += 1;
+        }
+        if let Some(begin) = start {
+            close(begin, length, &mut runs);
         }
     }
 
-    if let Some(begin) = start {
-        if runs.len() < MAX_RUNS {
-            runs.push(json!({"start": begin, "end_exclusive": length}));
-        }
-        total_runs += 1;
+    Differences {
+        different_bytes: count,
+        runs_truncated: total_runs > runs.len(),
+        runs,
+        total_runs,
     }
-
-    json!({"different_bytes": count, "runs_truncated": total_runs > runs.len(), "runs": runs, "total_runs": total_runs})
 }
 
-pub fn suspicious_patterns(data: &[u8]) -> Vec<&'static str> {
+fn suspicious_patterns(data: &[u8]) -> Vec<&'static str> {
     let mut issues = Vec::new();
     if data.iter().all(|b| *b == 0xff) {
         issues.push("entire_read_is_erased_0xff");
@@ -144,10 +175,6 @@ pub fn suspicious_patterns(data: &[u8]) -> Vec<&'static str> {
     issues
 }
 
-fn refused(error: petlibre_flash::Error) -> crate::Error {
-    crate::Error::Refused(error.to_string())
-}
-
 fn reference(path: Option<&Path>) -> Result<Option<Vec<u8>>> {
     let Some(path) = path else { return Ok(None) };
     let (data, _, _) = snapshot(path)?;
@@ -156,49 +183,88 @@ fn reference(path: Option<&Path>) -> Result<Option<Vec<u8>>> {
         "Reference is not the pinned original 1.1.15 OTA",
     )?;
 
-    let payload = ota::container(&data).map_err(refused)?;
-    ota::regions(payload).map_err(refused)?;
+    let payload = ota::container(&data)?;
+    ota::regions(payload)?;
     Ok(Some(data))
 }
 
 /// A layout offset as an index into a read.
 fn offset(value: Hex) -> Result<usize> {
-    usize::try_from(value.0).map_err(|_| crate::Error::Refused("Unsupported layout".into()))
+    usize::try_from(value.0).map_err(|_| Error::Refused("Unsupported layout".into()))
 }
 
-fn banks(data: &[u8], layout: &Layout, original: Option<&[u8]>) -> Result<Vec<Value>> {
+/// One application bank's footprint in a read.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct Bank {
+    index: usize,
+    start: usize,
+    end_exclusive: usize,
+    stock_footprint_covered: bool,
+    /// Which bank boots is not established by a read.
+    currently_active: &'static str,
+    /// Only when the read covers the footprint.
+    #[serde(flatten)]
+    payload: Option<BankPayload>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct BankPayload {
+    payload_sha256: String,
+    marker_matches_known_magic: bool,
+    /// Only with the pinned stock reference.
+    #[serde(flatten)]
+    normalized: Option<Normalized>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct Normalized {
+    image_after_marker_normalization: &'static str,
+    marker_normalization_bytes: usize,
+    matches_original_except_marker: bool,
+}
+
+/// Name a bank's saved body against the pinned original.
+fn normalize(payload: &[u8], original: &[u8]) -> Normalized {
+    // The updater invalidates the previous bank's first marker. Restore ONLY
+    // eight bytes in RAM to identify its saved body; never emit or recommend
+    // writing this normalized image.
+    let normalized = [&original[32..40], &payload[8..]].concat();
+    let mut container = [&original[..32], &normalized[..]].concat();
+    let sum = normalized
+        .iter()
+        .fold(0u32, |s, b| s.wrapping_add(u32::from(*b)));
+    container[16..20].copy_from_slice(&sum.to_le_bytes());
+
+    Normalized {
+        image_after_marker_normalization: known_image(&digest(&container))
+            .unwrap_or("unrecognized"),
+        marker_normalization_bytes: 8,
+        matches_original_except_marker: normalized[..] == original[32..],
+    }
+}
+
+fn banks(data: &[u8], layout: &Layout, original: Option<&[u8]>) -> Result<Vec<Bank>> {
     let size = offset(Hex(layout.candidate_payload_cap_bytes))?;
+    let magic: Vec<u8> = IMAGE_MAGIC.iter().flat_map(|w| w.to_le_bytes()).collect();
+
     let mut result = Vec::new();
     for (index, &value) in layout.ota_bank_offsets.iter().enumerate() {
         let start = offset(value)?;
         let end = start + size;
-        let mut item = json!({"index": index, "start": start, "end_exclusive": end,
-                              "stock_footprint_covered": end <= data.len(), "currently_active": "unknown"});
+        let payload = data.get(start..end).map(|payload| BankPayload {
+            payload_sha256: digest(payload),
+            marker_matches_known_magic: payload[..8] == magic[..],
+            normalized: original.map(|original| normalize(payload, original)),
+        });
 
-        if end <= data.len() {
-            let payload = &data[start..end];
-            let magic: Vec<u8> = IMAGE_MAGIC.iter().flat_map(|w| w.to_le_bytes()).collect();
-            item["payload_sha256"] = json!(digest(payload));
-            item["marker_matches_known_magic"] = json!(payload[..8] == magic[..]);
-
-            if let Some(original) = original {
-                // The updater invalidates the previous bank's first marker.
-                // Restore ONLY eight bytes in RAM to identify its saved body;
-                // never emit or recommend writing this normalized image.
-                let normalized = [&original[32..40], &payload[8..]].concat();
-                let mut container = [&original[..32], &normalized[..]].concat();
-                let sum = normalized
-                    .iter()
-                    .fold(0u32, |s, b| s.wrapping_add(u32::from(*b)));
-                container[16..20].copy_from_slice(&sum.to_le_bytes());
-                item["image_after_marker_normalization"] =
-                    json!(known_image(&digest(&container)).unwrap_or("unrecognized"));
-                item["marker_normalization_bytes"] = json!(8);
-                item["matches_original_except_marker"] = json!(normalized[..] == original[32..]);
-            }
-        }
-
-        result.push(item);
+        result.push(Bank {
+            index,
+            start,
+            end_exclusive: end,
+            stock_footprint_covered: end <= data.len(),
+            currently_active: "unknown",
+            payload,
+        });
     }
 
     Ok(result)
@@ -216,7 +282,144 @@ pub struct Inputs<'a> {
     pub capacity_evidence: Option<&'a Path>,
 }
 
-pub fn audit(inputs: &Inputs) -> Result<Report> {
+/// One known preserve range in both reads.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct PreserveArea {
+    name: String,
+    start: usize,
+    end_exclusive: usize,
+    covered_in_both: bool,
+    /// Only when both reads cover the range.
+    #[serde(flatten)]
+    comparison: Option<AreaComparison>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct AreaComparison {
+    first_sha256: String,
+    second_sha256: String,
+    identical: bool,
+    different_bytes: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct ChangedSector {
+    start: usize,
+    known_preserve_areas: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct Checks {
+    lengths_match_supplied_capacity: bool,
+    byte_identical: bool,
+    no_detected_pattern_anomalies: bool,
+    all_observed_preserve_areas_covered: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct PerRead<T> {
+    first: T,
+    second: T,
+}
+
+/// What a comparison never establishes; every field is written `false`.
+#[derive(Debug, Clone, Default, Serialize)]
+pub(crate) struct Limits {
+    same_physical_unit_verified: bool,
+    independent_acquisitions_verified: bool,
+    physical_capacity_verified: bool,
+    read_method_verified_non_erasing: bool,
+    complete_partition_map: bool,
+    failed_boot_recovery_verified: bool,
+    boot_selection_verified: bool,
+    restorable_backup_verified: bool,
+}
+
+/// The backup audit's report.
+#[derive(Debug, Clone, Serialize)]
+pub struct BackupReport {
+    schema_version: u32,
+    created_at: String,
+    unit_label: String,
+    operator_supplied_capacity_bytes: u64,
+    capacity_evidence: Option<FileInfo>,
+    capacity_evidence_interpreted: bool,
+    inputs: [FileInfo; 2],
+    checks: Checks,
+    comparison_passed: bool,
+    differences: Differences,
+    changed_sectors: Vec<ChangedSector>,
+    pattern_anomalies: PerRead<Vec<&'static str>>,
+    known_preserve_areas: Vec<PreserveArea>,
+    application_banks: PerRead<Vec<Bank>>,
+    stock_reference_sha256: Option<String>,
+    limits: Limits,
+    scope: &'static str,
+    tool: &'static str,
+    tool_sha256: Option<String>,
+    layout_sha256: String,
+}
+
+impl BackupReport {
+    pub fn passed(&self) -> bool {
+        self.comparison_passed
+    }
+}
+
+fn preserve_areas(layout: &Layout, first: &[u8], second: &[u8]) -> Result<Vec<PreserveArea>> {
+    let mut areas = Vec::new();
+    for area in &layout.known_preserve_ranges {
+        let (start, end) = (offset(area.start)?, offset(area.end_exclusive)?);
+        let covered = end <= first.len().min(second.len());
+        let comparison = covered.then(|| {
+            let (a, b) = (&first[start..end], &second[start..end]);
+            AreaComparison {
+                first_sha256: digest(a),
+                second_sha256: digest(b),
+                identical: a == b,
+                different_bytes: a.iter().zip(b).filter(|(x, y)| x != y).count(),
+            }
+        });
+
+        areas.push(PreserveArea {
+            name: area.name.clone(),
+            start,
+            end_exclusive: end,
+            covered_in_both: covered,
+            comparison,
+        });
+    }
+    Ok(areas)
+}
+
+/// Every differing 4 KiB sector, with the known areas it overlaps.
+fn changed_sectors(layout: &Layout, first: &[u8], second: &[u8]) -> Vec<ChangedSector> {
+    let slice = |d: &[u8], start: usize| -> Vec<u8> {
+        d.get(start..(start + 4096).min(d.len()))
+            .unwrap_or(&[])
+            .to_vec()
+    };
+
+    (0..first.len().max(second.len()))
+        .step_by(4096)
+        .filter(|&start| slice(first, start) != slice(second, start))
+        .map(|start| {
+            let sector = start as u64..start as u64 + 4096;
+            let areas = layout
+                .known_preserve_ranges
+                .iter()
+                .filter(|r| sector.start < r.end_exclusive.0 && r.start.0 < sector.end)
+                .map(|r| r.name.clone())
+                .collect();
+            ChangedSector {
+                start,
+                known_preserve_areas: areas,
+            }
+        })
+        .collect()
+}
+
+pub fn audit(inputs: &Inputs) -> Result<BackupReport> {
     let capacity = inputs.capacity;
     require(
         0 < capacity && capacity <= MAX_BYTES && capacity.is_multiple_of(4096),
@@ -250,127 +453,59 @@ pub fn audit(inputs: &Inputs) -> Result<Report> {
     )?;
 
     let original = reference(inputs.stock)?;
-    let evidence = match inputs.capacity_evidence {
-        Some(path) => snapshot(path)?.1,
-        None => Value::Null,
+    let evidence = inputs
+        .capacity_evidence
+        .map(|path| Ok::<_, Error>(snapshot(path)?.1))
+        .transpose()?;
+
+    let differences = differences(&first, &second);
+    let anomalies = PerRead {
+        first: suspicious_patterns(&first),
+        second: suspicious_patterns(&second),
     };
+    let preserve = preserve_areas(&layout, &first, &second)?;
+    let checks = Checks {
+        lengths_match_supplied_capacity: first.len() as u64 == capacity
+            && second.len() as u64 == capacity,
+        byte_identical: differences.different_bytes == 0,
+        no_detected_pattern_anomalies: anomalies.first.is_empty() && anomalies.second.is_empty(),
+        all_observed_preserve_areas_covered: preserve.iter().all(|r| r.covered_in_both),
+    };
+    let passed = checks.lengths_match_supplied_capacity
+        && checks.byte_identical
+        && checks.no_detected_pattern_anomalies
+        && checks.all_observed_preserve_areas_covered;
 
-    let diff = differences(&first, &second);
-    let lengths_match = first.len() as u64 == capacity && second.len() as u64 == capacity;
-    let anomalies =
-        json!({"first": suspicious_patterns(&first), "second": suspicious_patterns(&second)});
-    let any_anomaly =
-        !suspicious_patterns(&first).is_empty() || !suspicious_patterns(&second).is_empty();
-
-    let mut preserve = Vec::new();
-    for area in &layout.known_preserve_ranges {
-        let (start, end) = (offset(area.start)?, offset(area.end_exclusive)?);
-        let covered = end <= first.len().min(second.len());
-        let mut entry = json!({"name": area.name, "start": start, "end_exclusive": end, "covered_in_both": covered});
-        if covered {
-            let (a, b) = (&first[start..end], &second[start..end]);
-            entry["first_sha256"] = json!(digest(a));
-            entry["second_sha256"] = json!(digest(b));
-            entry["identical"] = json!(a == b);
-            entry["different_bytes"] = json!(a.iter().zip(b).filter(|(x, y)| x != y).count());
-        }
-        preserve.push(entry);
-    }
-
-    let mut changed_sectors = Vec::new();
-    for start in (0..first.len().max(second.len())).step_by(4096) {
-        let slice = |d: &[u8]| {
-            d.get(start..(start + 4096).min(d.len()))
-                .unwrap_or(&[])
-                .to_vec()
-        };
-        if slice(&first) != slice(&second) {
-            let sector = start as u64..start as u64 + 4096;
-            let areas: Vec<&str> = layout
-                .known_preserve_ranges
-                .iter()
-                .filter(|r| sector.start < r.end_exclusive.0 && r.start.0 < sector.end)
-                .map(|r| r.name.as_str())
-                .collect();
-            changed_sectors.push(json!({"start": start, "known_preserve_areas": areas}));
-        }
-    }
-
-    let all_covered = preserve.iter().all(|r| r["covered_in_both"] == true);
-    let identical = diff["different_bytes"] == 0;
-    let passed = lengths_match && identical && !any_anomaly && all_covered;
-
-    let report = json!({
-        "schema_version": 1, "created_at": chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.6f+00:00").to_string(),
-        "unit_label": label, "operator_supplied_capacity_bytes": capacity,
-        "capacity_evidence": evidence, "capacity_evidence_interpreted": false,
-        "inputs": [first_info, second_info],
-        "checks": {"lengths_match_supplied_capacity": lengths_match, "byte_identical": identical,
-                   "no_detected_pattern_anomalies": !any_anomaly, "all_observed_preserve_areas_covered": all_covered},
-        "comparison_passed": passed, "differences": diff, "changed_sectors": changed_sectors,
-        "pattern_anomalies": anomalies, "known_preserve_areas": preserve,
-        "application_banks": {"first": banks(&first, &layout, original.as_deref())?,
-                              "second": banks(&second, &layout, original.as_deref())?},
-        "stock_reference_sha256": original.as_deref().map(digest),
-        "limits": {"same_physical_unit_verified": false, "independent_acquisitions_verified": false,
-                   "physical_capacity_verified": false, "read_method_verified_non_erasing": false,
-                   "complete_partition_map": false, "failed_boot_recovery_verified": false,
-                   "boot_selection_verified": false, "restorable_backup_verified": false},
-        "scope": "Offline comparison of supplied raw reads, not authorization or a procedure to flash or clone a unit",
-        "tool": "petlibre-audit backup",
-        "tool_sha256": std::env::current_exe().ok().and_then(|exe| fs::read(exe).ok()).map(|d| digest(&d)),
-        "layout_sha256": digest(&layout_raw),
-    });
-
-    Ok(match report {
-        Value::Object(map) => map,
-        _ => unreachable!(),
+    Ok(BackupReport {
+        schema_version: 1,
+        created_at: chrono::Utc::now()
+            .format("%Y-%m-%dT%H:%M:%S%.6f+00:00")
+            .to_string(),
+        unit_label: label.into(),
+        operator_supplied_capacity_bytes: capacity,
+        capacity_evidence: evidence,
+        capacity_evidence_interpreted: false,
+        inputs: [first_info, second_info],
+        checks,
+        comparison_passed: passed,
+        changed_sectors: changed_sectors(&layout, &first, &second),
+        differences,
+        pattern_anomalies: anomalies,
+        known_preserve_areas: preserve,
+        application_banks: PerRead {
+            first: banks(&first, &layout, original.as_deref())?,
+            second: banks(&second, &layout, original.as_deref())?,
+        },
+        stock_reference_sha256: original.as_deref().map(digest),
+        limits: Limits::default(),
+        scope: "Offline comparison of supplied raw reads, not authorization or a procedure to flash or clone a unit",
+        tool: "petlibre-audit backup",
+        tool_sha256: std::env::current_exe()
+            .ok()
+            .and_then(|exe| fs::read(exe).ok())
+            .map(|d| digest(&d)),
+        layout_sha256: digest(&layout_raw),
     })
-}
-
-/// A new private report: never an overwrite, a symlink target or an input.
-pub fn write_report(
-    root: &Path,
-    path: &Path,
-    report: &Report,
-    inputs: &[&Path],
-) -> Result<PathBuf> {
-    require(
-        fs::symlink_metadata(path).is_err(),
-        "Report already exists; choose a new path",
-    )?;
-
-    let parent = path
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    fs::DirBuilder::new()
-        .recursive(true)
-        .mode(0o700)
-        .create(parent)?;
-
-    let resolved = parent
-        .canonicalize()?
-        .join(path.file_name().unwrap_or_default());
-    require(
-        resolved.starts_with(root.join("private").canonicalize()?),
-        "Report must be under ignored private/",
-    )?;
-    require(
-        !inputs
-            .iter()
-            .any(|input| input.canonicalize().is_ok_and(|p| p == resolved)),
-        "Report cannot overwrite an input",
-    )?;
-
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(&resolved)?;
-    file.write_all(format!("{}\n", serde_json::to_string_pretty(report)?).as_bytes())?;
-    file.sync_all()?;
-    Ok(resolved)
 }
 
 #[cfg(test)]

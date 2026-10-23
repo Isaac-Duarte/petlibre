@@ -1543,13 +1543,14 @@ dependencies = [
 name = "petlibre-audit"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "chrono",
  "clap",
  "petlibre-flash",
  "petlibre-formats",
  "regex",
+ "serde",
  "serde_json",
- "sha2 0.11.1",
  "tempfile",
  "thiserror",
 ]
@@ -1591,6 +1592,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.1",
  "tempfile",
+ "thiserror",
 ]
 
 [[package]]

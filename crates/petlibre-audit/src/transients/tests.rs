@@ -1,6 +1,6 @@
 //! The FW30 transient auditor on synthetic captures; no analyzer or device.
 
-use serde_json::json;
+use serde_json::{Value, json};
 
 use super::*;
 use TransientMode::{Boot, Loader};
@@ -21,8 +21,12 @@ fn capture(segments: &[(u8, usize)]) -> Vec<u8> {
         .collect()
 }
 
-fn check(data: &[u8], mode: TransientMode) -> Report {
-    check_cycle(data, &CH, mode, RATE)
+fn check(data: &[u8], mode: TransientMode) -> Value {
+    serde_json::to_value(check_cycle(data, &CH, mode, RATE)).unwrap()
+}
+
+fn verify(capture: &Path) -> Result<Value> {
+    super::verify(capture).map(|report| serde_json::to_value(report).unwrap())
 }
 
 #[test]

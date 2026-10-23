@@ -1,11 +1,47 @@
 //! The startup auditor's checks: classifiers, policy binding both ways, and
 //! the FW06 handshake, mediated read and scratch-sector write records.
 
-use serde_json::json;
+use serde_json::{Value, json};
 
+use super::flash::{READ_BATCHES, WRITE_CYCLES};
 use super::*;
 use crate::capture::Time;
 use crate::test_support::*;
+
+// The classifiers as the JSON they report, so cases assert on report fields.
+
+fn classify(rx: &[u8], identity: &str, stopped: Stopped) -> Value {
+    report(super::classify(rx, identity, stopped))
+}
+
+fn classify_clock(rx: &[u8]) -> Value {
+    report(super::classify_clock(rx))
+}
+
+fn classify_led(rx: &[u8], version: u8) -> Value {
+    report(super::classify_led(rx, version))
+}
+
+fn classify_power(rx: &[u8], version: u8) -> Value {
+    report(super::classify_power(rx, version))
+}
+
+fn classify_routing(rx: &[u8], version: u8) -> Value {
+    report(super::classify_routing(rx, version))
+}
+
+/// The flash policies by the Python auditor's version numbers.
+fn flash_policy(version: u8) -> FlashPolicy {
+    match version {
+        1 => FlashPolicy::Hello,
+        2 => FlashPolicy::Park,
+        3 => FlashPolicy::Read,
+        4 => FlashPolicy::Write,
+        5 => FlashPolicy::Journal,
+        6 => FlashPolicy::Settings,
+        _ => panic!("no flash policy version {version}"),
+    }
+}
 
 const ID: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
@@ -346,16 +382,30 @@ const OUTPUTS_LINE: &[u8] =
 #[test]
 fn stopped_profile_requires_correct_levels_directions_and_order() {
     let good = [OUTPUTS_LINE, &boot(ID)].concat();
-    assert_eq!(outcome(&classify(&good, ID, true)), "pass");
-    assert_eq!(classify(&good, ID, true)["stopped_gpio_verified"], true);
+    assert_eq!(outcome(&classify(&good, ID, Stopped::Required)), "pass");
+    assert_eq!(
+        classify(&good, ID, Stopped::Required)["stopped_gpio_verified"],
+        true
+    );
 
     assert_eq!(
-        outcome(&classify(&[&good[..], &good].concat(), ID, true)),
+        outcome(&classify(
+            &[&good[..], &good].concat(),
+            ID,
+            Stopped::Required
+        )),
         "repeated_startup"
     );
-    assert_eq!(outcome(&classify(&boot(ID), ID, true)), "outputs_missing");
     assert_eq!(
-        outcome(&classify(&[&boot(ID)[..], OUTPUTS_LINE].concat(), ID, true)),
+        outcome(&classify(&boot(ID), ID, Stopped::Required)),
+        "outputs_missing"
+    );
+    assert_eq!(
+        outcome(&classify(
+            &[&boot(ID)[..], OUTPUTS_LINE].concat(),
+            ID,
+            Stopped::Required
+        )),
         "outputs_after_startup"
     );
 
@@ -367,7 +417,10 @@ fn stopped_profile_requires_correct_levels_directions_and_order() {
         (b"status=pass", b"status=fail"),
     ] {
         let rx = [&replace(OUTPUTS_LINE, old, new)[..], &boot(ID)].concat();
-        assert_eq!(outcome(&classify(&rx, ID, true)), "outputs_failed");
+        assert_eq!(
+            outcome(&classify(&rx, ID, Stopped::Required)),
+            "outputs_failed"
+        );
     }
 }
 
@@ -393,12 +446,15 @@ fn classification() {
         ([&b[..], PASS].concat(), "malformed_report"),
     ];
     for (rx, expected) in cases {
-        assert_eq!(outcome(&classify(&rx, ID, false)), expected);
+        assert_eq!(outcome(&classify(&rx, ID, Stopped::Optional)), expected);
     }
 
-    assert_eq!(classify(&b, ID, false)["reset_flags"], "00100000");
+    assert_eq!(
+        classify(&b, ID, Stopped::Optional)["reset_flags"],
+        "00100000"
+    );
     let bank0 = replace(&replace(&b, b"bank=1", b"bank=0"), b"03e7a000", b"03ffa000");
-    assert_eq!(outcome(&classify(&bank0, ID, false)), "pass");
+    assert_eq!(outcome(&classify(&bank0, ID, Stopped::Optional)), "pass");
 }
 
 #[test]
@@ -588,7 +644,7 @@ fn keyed_variant_builds_are_source_bound() {
 }
 
 /// A line arrives at the time of the latest flash record up to and including it.
-fn run_flash(lines: &[&[u8]], times: [f64; 4], version: u8, end: Option<Time>) -> Report {
+fn run_flash(lines: &[&[u8]], times: [f64; 4], version: u8, end: Option<Time>) -> Value {
     let mut rx = Vec::new();
     let mut spans = Vec::new();
     let mut now = 0.0;
@@ -610,7 +666,7 @@ fn run_flash(lines: &[&[u8]], times: [f64; 4], version: u8, end: Option<Time>) -
             .2))
     };
 
-    classify_flash(&rx, &arrival, version, end).unwrap()
+    report(super::classify_flash(&rx, &arrival, flash_policy(version), end).unwrap())
 }
 
 #[test]
@@ -987,7 +1043,13 @@ fn flash_handshake_policy_binding_and_legacy() {
     )
     .unwrap();
     assert_eq!(outcome(&legacy), "pass");
-    assert!(!legacy.keys().any(|k| k.starts_with("flash_")));
+    assert!(
+        !legacy
+            .as_object()
+            .unwrap()
+            .keys()
+            .any(|k| k.starts_with("flash_"))
+    );
 
     let image = [&legacy_image[..], b" ", FLASH_MARK].concat();
     let chunks = vec![
@@ -1128,7 +1190,7 @@ impl Stage {
         Self { f, base }
     }
 
-    fn audit(&self, (chunks, end): &(Chunks, f64)) -> Result<Report> {
+    fn audit(&self, (chunks, end): &(Chunks, f64)) -> Result<Value> {
         let plain: Vec<(f64, Vec<u8>)> = chunks.iter().map(|(t, d, _)| (*t, d.clone())).collect();
         self.f.capture(&plain, *end);
         self.f.verify(1.0)
@@ -1564,7 +1626,7 @@ fn read_policy_binding_both_ways() {
 }
 
 /// The flash records after the LED probe at the given times (per line), under `version`.
-fn run_lines(lines: &[&[u8]], version: u8, times: &[f64], end: Option<Time>) -> Report {
+fn run_lines(lines: &[&[u8]], version: u8, times: &[f64], end: Option<Time>) -> Value {
     let led = led_full(3);
     let mut rx = led[1..].concat();
     let mut marks = Vec::new();
@@ -1583,7 +1645,7 @@ fn run_lines(lines: &[&[u8]], version: u8, times: &[f64], end: Option<Time>) -> 
         Ok(at(*t))
     };
 
-    classify_flash(&rx, &arrival, version, end).unwrap()
+    report(super::classify_flash(&rx, &arrival, flash_policy(version), end).unwrap())
 }
 
 #[test]
@@ -1607,6 +1669,8 @@ fn earlier_policies_ignore_read_and_write_records() {
         for report in [hello, parked] {
             assert!(
                 !report
+                    .as_object()
+                    .unwrap()
                     .keys()
                     .any(|k| k.starts_with("flash_read_") || k.starts_with("flash_write_"))
             );
@@ -1631,7 +1695,13 @@ fn earlier_policies_ignore_read_and_write_records() {
     );
 
     assert_eq!(outcome(&read), "pass", "{read:?}");
-    assert!(!read.keys().any(|k| k.starts_with("flash_write_")));
+    assert!(
+        !read
+            .as_object()
+            .unwrap()
+            .keys()
+            .any(|k| k.starts_with("flash_write_"))
+    );
 }
 
 const WRITE_START_LINE: &[u8] = b"PLWRS1 start marker=00000000 watchdog=pass installed=1\r\n";
@@ -1739,7 +1809,13 @@ fn single_boot_write_passes_with_fixed_fields() {
     assert_eq!(report["flash_write_erase_ms_max"].as_f64(), Some(48.8));
     assert!((report["flash_write_seconds"].as_f64().unwrap() - 10.0).abs() < 1e-3);
     assert!((report["flash_write_tail_seconds"].as_f64().unwrap() - 30.0).abs() < 1e-3);
-    assert!(!report.keys().any(|k| k.starts_with("flash_read_")));
+    assert!(
+        !report
+            .as_object()
+            .unwrap()
+            .keys()
+            .any(|k| k.starts_with("flash_read_"))
+    );
     assert!(!json!(report).to_string().contains("PLWRS1"));
 
     // One foreign line, bounds at the limits and unrelated output after done still pass.

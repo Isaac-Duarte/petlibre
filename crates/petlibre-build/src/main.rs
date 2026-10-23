@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand};
-use petlibre_build::identity::{current_inputs, source_id};
+use petlibre_build::identity::{SourceId, current_inputs, source_id};
 use petlibre_build::image::{audit_build, build};
 use petlibre_build::toolchain::bootstrap;
 use petlibre_build::{Profile, Repo, Result, Variant};
@@ -46,7 +46,10 @@ enum Command {
         variant: VariantArgs,
     },
     /// Print a profile's current inputs and their SHA-256 as JSON.
-    Inputs { profile: String },
+    Inputs {
+        #[arg(value_enum)]
+        profile: Profile,
+    },
     /// Re-run a finished build's audits and print them as JSON, keyed as
     /// its manifest records them.
     Audit {
@@ -89,13 +92,15 @@ fn run(command: Command) -> Result<()> {
     let repo = Repo::here()?;
     let (profile, variant) = match command {
         Command::SourceId { image, variant } => {
-            println!("{}", source_id(&repo, image, variant.variant())?);
+            let which = if image {
+                SourceId::Image(variant.variant())
+            } else {
+                SourceId::Bare
+            };
+            println!("{}", source_id(&repo, which)?);
             return Ok(());
         }
         Command::Inputs { profile } => {
-            let profile = Profile::parse(&profile).ok_or_else(|| {
-                petlibre_build::Error::Refused(format!("Unknown profile {profile}"))
-            })?;
             println!(
                 "{}",
                 serde_json::to_string_pretty(&current_inputs(&repo, profile)?)?

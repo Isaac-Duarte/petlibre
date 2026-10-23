@@ -1,6 +1,6 @@
 //! The FW14 ADC auditor's checks.
 
-use serde_json::json;
+use serde_json::{Value, json};
 
 use super::*;
 use crate::startup::{ADC_MARK, PASS};
@@ -166,10 +166,10 @@ impl Adc {
         Self { f, base }
     }
 
-    fn audit(&self, (chunks, end): &Received) -> Result<Report> {
+    fn audit(&self, (chunks, end): &Received) -> Result<Value> {
         self.f.capture(chunks, *end);
         let p = self.f.path();
-        verify(p, &p.join("manifest.json"), &p.join("image.bin"))
+        verify(p, &p.join("manifest.json"), &p.join("image.bin")).map(report)
     }
 }
 
@@ -648,6 +648,9 @@ fn policy_binding_both_ways() {
 fn records_classify_and_flag_unparsed_text() {
     let rx = b"PLADC1 error n=1 ticks=2 stopped=1\r\nPLADC1 junk\r\n";
     let (found, intact) = records(rx);
-    assert_eq!(found.iter().map(|r| r.kind).collect::<String>(), "E");
+    assert_eq!(
+        found.iter().map(|r| r.kind).collect::<Vec<_>>(),
+        [Kind::Error]
+    );
     assert!(!intact);
 }

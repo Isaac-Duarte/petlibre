@@ -7,28 +7,32 @@
 
 use std::sync::LazyLock;
 
+use petlibre_formats::layout::Hex;
 use regex::Regex;
-use serde_json::{Value, json};
+use serde::Serialize;
 
+use super::{refuse, word};
 use crate::{Result, require, sha256};
 
-pub const STOCK_SHA256: &str = "05147476fc70c91cc77ad7da6d6772376b2081d460ac7b1912e2d73868a09498";
-pub const STOCK_BYTES: usize = 1_376_288;
-pub const TABLE_ADDRESS: u64 = 0x0C01_3328;
-pub const XIP_ADDRESS: u64 = 0x0C00_0020;
-pub const TABLE_ROWS: usize = 65;
+const STOCK_SHA256: &str = "05147476fc70c91cc77ad7da6d6772376b2081d460ac7b1912e2d73868a09498";
+const STOCK_BYTES: usize = 1_376_288;
+const TABLE_ADDRESS: u64 = 0x0C01_3328;
+const XIP_ADDRESS: u64 = 0x0C00_0020;
+const TABLE_ROWS: usize = 65;
 const ROW_BYTES: usize = 20;
 const CHANGED_PINS: [u32; 8] = [12, 13, 14, 15, 18, 30, 33, 34];
 const NO_PIN: u32 = 0xffff_ffff;
 
 static TABLE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?ms)const\s+PMAP_TypeDef\s+pmap_func\[\]\s*=\s*\{(?P<body>.*?)^\};").unwrap()
+    Regex::new(r"(?ms)const\s+PMAP_TypeDef\s+pmap_func\[\]\s*=\s*\{(?P<body>.*?)^\};")
+        .expect("table pattern")
 });
 static ROW: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^[ \t]*\{[ \t]*(_P[AB]_\d+|_PNC)[ \t]*,[ \t]*([^{}\r\n]+)\},[^\r\n]*$").unwrap()
+    Regex::new(r"^[ \t]*\{[ \t]*(_P[AB]_\d+|_PNC)[ \t]*,[ \t]*([^{}\r\n]+)\},[^\r\n]*$")
+        .expect("row pattern")
 });
 static ACTIVE_PULL: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^([^,]+,[ \t]*)GPIO_PuPd_[A-Z]+").unwrap());
+    LazyLock::new(|| Regex::new(r"^([^,]+,[ \t]*)GPIO_PuPd_[A-Z]+").expect("pull pattern"));
 
 type Row = [u32; 5];
 
@@ -53,7 +57,7 @@ fn flag(name: &str) -> Option<u32> {
 
 /// The stock table's bytes and rows: pin, active pull, sleep pull, low-power
 /// pull, flag.
-pub fn stock_table(reference: &[u8]) -> Result<(&[u8], Vec<Row>)> {
+fn stock_table(reference: &[u8]) -> Result<(&[u8], Vec<Row>)> {
     require(
         reference.len() == STOCK_BYTES && sha256(reference) == STOCK_SHA256,
         "Pin table requires the exact verified stock OTA",
@@ -65,7 +69,8 @@ pub fn stock_table(reference: &[u8]) -> Result<(&[u8], Vec<Row>)> {
         .0
         .iter()
         .map(|row| {
-            std::array::from_fn(|i| u32::from_le_bytes(row[i * 4..i * 4 + 4].try_into().unwrap()))
+            let (words, _) = row.as_chunks::<4>();
+            std::array::from_fn(|i| u32::from_le_bytes(words[i]))
         })
         .collect();
 
@@ -76,11 +81,13 @@ pub fn stock_table(reference: &[u8]) -> Result<(&[u8], Vec<Row>)> {
 }
 
 /// Patch the eight active pulls; refuse any other discrepancy with stock.
-pub fn overlay(source: &str, reference: &[u8]) -> Result<String> {
+pub(crate) fn overlay(source: &str, reference: &[u8]) -> Result<String> {
     let (_, expected) = stock_table(reference)?;
     let tables: Vec<_> = TABLE.captures_iter(source).collect();
-    require(tables.len() == 1, "Expected one pinned SDK pmap_func table")?;
-    let body = tables[0].name("body").expect("named group");
+    let [table] = &tables[..] else {
+        return refuse("Expected one pinned SDK pmap_func table");
+    };
+    let body = table.name("body").expect("TABLE always captures its body");
 
     let (mut output, mut rows, mut changed) = (String::new(), 0usize, Vec::new());
     for line in body.as_str().split_inclusive('\n') {
@@ -105,7 +112,7 @@ pub fn overlay(source: &str, reference: &[u8]) -> Result<String> {
                 })
                 .flatten();
             let Some(row) = parsed else {
-                return Err(crate::Error::Refused("Unrecognized SDK pad fields".into()));
+                return refuse("Unrecognized SDK pad fields");
             };
 
             require(
@@ -147,39 +154,56 @@ pub fn overlay(source: &str, reference: &[u8]) -> Result<String> {
     ))
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct PinmapAudit {
+    runtime_address: Hex,
+    rows: usize,
+    bytes: usize,
+    sha256: String,
+    matches_stock: bool,
+    scope: &'static str,
+}
+
 /// Check the linked table's bytes in a candidate OTA image against stock.
-pub fn audit_linked_table(candidate: &[u8], address: u64, reference: &[u8]) -> Result<Value> {
+pub(crate) fn audit_linked_table(
+    candidate: &[u8],
+    address: u64,
+    reference: &[u8],
+) -> Result<PinmapAudit> {
     let (expected, _) = stock_table(reference)?;
-    require(
-        candidate.len() >= 64,
-        "Candidate KM0 image header is truncated",
-    )?;
-    let word = |at: usize| u32::from_le_bytes(candidate[at..at + 4].try_into().unwrap()) as u64;
-    let (magic1, magic2, size, base) = (word(32), word(36), word(40), word(44));
+    let header = [32, 36, 40, 44].map(|at| word(candidate, at));
+    let ([Some(magic1), Some(magic2), Some(size), Some(base)], 64..) = (header, candidate.len())
+    else {
+        return refuse("Candidate KM0 image header is truncated");
+    };
     require(
         (magic1, magic2, base) == (0x3539_3138, 0x3131_3738, XIP_ADDRESS),
         "Unexpected candidate KM0 XIP header",
     )?;
 
-    let offset = address as i64 - base as i64;
-    require(
-        0 <= offset
-            && offset <= size as i64 - expected.len() as i64
-            && 64 + size as usize <= candidate.len(),
-        "Linked pad table is outside the KM0 XIP body",
-    )?;
-    let start = 64 + offset as usize;
+    // The table must lie inside the XIP body, which must lie inside the image.
+    let table = expected.len() as u64;
+    let start = address
+        .checked_sub(base)
+        .filter(|offset| offset + table <= size && 64 + size <= candidate.len() as u64)
+        .and_then(|offset| usize::try_from(64 + offset).ok());
+    let Some(start) = start else {
+        return refuse("Linked pad table is outside the KM0 XIP body");
+    };
     let actual = &candidate[start..start + expected.len()];
     require(
         actual == expected,
         "Linked KM0 pad table differs from verified stock",
     )?;
 
-    Ok(
-        json!({"runtime_address": format!("0x{address:08x}"), "rows": TABLE_ROWS,
-              "bytes": actual.len(), "sha256": sha256(actual), "matches_stock": true,
-              "scope": "Pad pull table only; reset levels, GPIO direction and physical behavior unverified"}),
-    )
+    Ok(PinmapAudit {
+        runtime_address: Hex(address),
+        rows: TABLE_ROWS,
+        bytes: actual.len(),
+        sha256: sha256(actual),
+        matches_stock: true,
+        scope: "Pad pull table only; reset levels, GPIO direction and physical behavior unverified",
+    })
 }
 
 #[cfg(test)]
@@ -205,9 +229,9 @@ mod tests {
     fn linked_stock_table_and_record_fields() {
         let (stock, _) = evidence();
         let report = audit_linked_table(&stock, TABLE_ADDRESS, &stock).unwrap();
-        assert_eq!(report["rows"], 65);
-        assert_eq!(report["bytes"], 1300);
-        assert_eq!(report["matches_stock"], true);
+        assert_eq!(report.rows, 65);
+        assert_eq!(report.bytes, 1300);
+        assert!(report.matches_stock);
         let (_, rows) = stock_table(&stock).unwrap();
         assert_eq!(rows[13], [13, 0, 255, 255, 1]);
         assert_eq!(rows[33], [33, 0, 255, 255, 0]);

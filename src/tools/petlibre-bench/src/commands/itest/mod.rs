@@ -72,6 +72,7 @@ enum Need {
     Power,
     Build,
     Destructive,
+    Stock,
 }
 
 impl Need {
@@ -80,6 +81,7 @@ impl Need {
             Self::Power => "--power",
             Self::Build => "--build",
             Self::Destructive => "--destructive",
+            Self::Stock => "--stock",
         }
     }
 
@@ -88,6 +90,9 @@ impl Need {
             Self::Power => "it cold-boots the feeder",
             Self::Build => "it builds a variant",
             Self::Destructive => "it cuts power during an update",
+            Self::Stock => {
+                "it leaves the replacement for stock and back, through the feeder routing"
+            }
         }
     }
 
@@ -96,6 +101,7 @@ impl Need {
             Self::Power => args.power,
             Self::Build => args.build,
             Self::Destructive => args.destructive,
+            Self::Stock => args.stock.is_some(),
         }
     }
 }
@@ -131,6 +137,12 @@ pub struct ItestArgs {
     /// from them over the air; if it does not, recovery is a UART flash.
     #[arg(long, requires = "power")]
     pub destructive: bool,
+    /// Allow the round trip to stock and back (`stock-roundtrip`), installing
+    /// this frozen stock review (the pinned 1.1.15). Stock reaches the server
+    /// only through `sudo petlibre-local network apply`, which the operator
+    /// runs; a failure on stock is a UART recovery.
+    #[arg(long, value_name = "STOCK_REVIEW", requires = "power")]
+    pub stock: Option<PathBuf>,
     /// Run the remaining scenarios after one fails (never after the feeder goes silent).
     #[arg(long)]
     pub keep_going: bool,
@@ -449,7 +461,18 @@ impl<'r> Ctx<'r> {
     /// Classify records from `since` against an offered `build` with the
     /// `ota` command's [`Watch`]; its outcome, or a timeout.
     fn watch(&mut self, build: &str, since: usize, seconds: f64) -> Result<Outcome> {
-        let mut watch = Watch::new(build);
+        self.watch_as(build, Target::Replacement, since, seconds)
+    }
+
+    /// As [`Self::watch`] for either target: stock passes on its banner.
+    fn watch_as(
+        &mut self,
+        build: &str,
+        target: Target,
+        since: usize,
+        seconds: f64,
+    ) -> Result<Outcome> {
+        let mut watch = Watch::of(build, target);
         let mut next = since;
         let deadline = self.rig.clock() + seconds;
         loop {
@@ -890,6 +913,10 @@ fn recovery_hint(name: &str, baseline: Option<&Baseline>) -> Vec<String> {
         "The feeder stopped answering. Recover it over UART with the reviewed tools:".into(),
         format!("  petlibre-bench flash-prepare {name}-recover --target {target}"),
         "  then review the plan and run flash-execute with the --expected-plan-sha256 it printed."
+            .into(),
+        // stock-roundtrip can stop on stock, which reports nothing here.
+        "If it stopped on stock: while stock still reports, petlibre-bench stock-ota brings the \
+         replacement back over the air; to put stock itself back, petlibre-bench stock-prepare."
             .into(),
     ]
 }

@@ -14,6 +14,9 @@ use crate::server::{ForgedCase, LocalStatus, Request};
 const BUILD: &str = "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90";
 const OTHER: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 const TOKEN: &str = "6f1c2b9e-7a43-4c55-9b0e-2d8a1f3c4e5d";
+/// The stock payload hash FW41 signs as its build ID.
+const STOCK: &str = "05147476fc70c91cc77ad7da6d6772376b2081d460ac7b1912e2d73868a09498";
+const STOCK_REVIEW: &str = "private/verification/stock-review";
 
 /// How the scripted install goes.
 #[derive(Clone, Copy, PartialEq)]
@@ -50,6 +53,8 @@ struct StockFeeder {
     health: Option<(String, u64, bool)>,
     offered: bool,
     served: Option<PathBuf>,
+    /// Stock runs (and reports once routed); false while a replacement does.
+    on_stock: bool,
     actions: Vec<String>,
     notes: Vec<String>,
 }
@@ -58,6 +63,8 @@ enum Change {
     Line(String),
     Report(Value),
     StockOffline,
+    /// Stock took over bank 1: the replacement is gone.
+    OnStock,
     /// Build, bank and whether it is the recovery role.
     Health(String, u64, bool),
     Phase(&'static str),
@@ -82,6 +89,7 @@ impl StockFeeder {
             health: None,
             offered: false,
             served: None,
+            on_stock: true,
             actions: Vec::new(),
             notes: Vec::new(),
         }
@@ -124,6 +132,10 @@ impl StockFeeder {
                 }
                 Change::Report(report) => self.reports.push(report),
                 Change::StockOffline => self.stock_online = false,
+                Change::OnStock => {
+                    self.on_stock = true;
+                    self.health = None;
+                }
                 Change::Health(build, bank, recovery) => {
                     self.health = Some((build, bank, recovery))
                 }
@@ -138,8 +150,23 @@ impl StockFeeder {
 }
 
 impl Rig for StockFeeder {
-    fn stage(&mut self, _args: &OtaArgs) -> Result<Option<Staged>> {
-        unreachable!("stock-ota stages before the rig")
+    /// Only the round trip stages through the rig: the stock review, or the
+    /// baseline's again.
+    fn stage(&mut self, args: &OtaArgs) -> Result<Option<Staged>> {
+        let review = args.review.clone().expect("the round trip offers reviews");
+        let stock = review == Path::new(STOCK_REVIEW);
+        Ok(Some(Staged {
+            build: if stock { STOCK } else { BUILD }.into(),
+            target: if stock {
+                crate::commands::ota::Target::Stock
+            } else {
+                crate::commands::ota::Target::Replacement
+            },
+            version: 73,
+            image: review.join("image.bin").display().to_string(),
+            manifest: format!("private/verification/{}-v73.manifest", args.name),
+            review,
+        }))
     }
 
     fn review_build(&mut self, _review: &Path) -> Result<String> {
@@ -158,7 +185,22 @@ impl Rig for StockFeeder {
     /// The bank-0 recovery role finds the offer at its next 10 s ask and
     /// installs it into bank 1, whose trial boot confirms.
     fn offer(&mut self, staged: Option<&Staged>) -> Result<()> {
-        self.offered = staged.is_some();
+        let Some(staged) = staged else {
+            self.actions.push("clear".into());
+            return Ok(());
+        };
+        // A stock offer: our running build installs it into bank 1, then
+        // stock prints its banner and, once routed, reports.
+        if staged.target == crate::commands::ota::Target::Stock {
+            self.actions.push("offer stock".into());
+            self.line(10.0, "PLOTA1 manifest version=73 bytes=1376256");
+            self.line(40.0, "PLOTA1 activated version=73 sectors=336");
+            self.line(45.0, "[stock] app_main:version:1.1.15");
+            self.at(46.0, Change::OnStock);
+            return Ok(());
+        }
+
+        self.offered = true;
         self.actions.push(format!(
             "offer on {}",
             self.health.as_ref().map_or("nothing".into(), |h| format!(
@@ -235,7 +277,11 @@ impl Rig for StockFeeder {
 
     fn uart(&mut self) -> Result<Vec<u8>> {
         self.release();
-        if self.script != Script::Unrouted && !self.stock_online && self.trial.is_none() {
+        if self.on_stock
+            && self.script != Script::Unrouted
+            && !self.stock_online
+            && self.trial.is_none()
+        {
             // Stock joins and reports a little after the run starts.
             self.at(40.0, Change::Line("[stock] mqtt connected".into()));
             self.stock_online = true;
@@ -597,4 +643,68 @@ fn an_earlier_request_the_server_never_resolves_stops_the_run() {
         [(READY, "pass"), (SETTLE, "fail"), (REQUEST, "skip")]
     );
     assert!(feeder.trial.is_none());
+}
+
+/// A feeder on the confirmed baseline, set for `stock-roundtrip`.
+fn on_baseline(script: Script) -> (StockFeeder, ItestArgs) {
+    let mut feeder = StockFeeder::new(script);
+    feeder.on_stock = false;
+    feeder.health = Some((BUILD.into(), 1, false));
+    let mut rig_args = args(true).rig_args();
+    rig_args.power = true;
+    rig_args.stock = Some(PathBuf::from(STOCK_REVIEW));
+    (feeder, rig_args)
+}
+
+fn baseline() -> super::super::Baseline {
+    super::super::Baseline {
+        build: BUILD.into(),
+        review: PathBuf::from("private/verification/poc1-review"),
+    }
+}
+
+#[test]
+fn the_round_trip_goes_to_stock_and_back_to_the_confirmed_baseline() {
+    let (mut feeder, rig_args) = on_baseline(Script::Installs);
+    let mut ctx = Ctx::new(&mut feeder, &rig_args);
+    ctx.baseline = Some(baseline());
+    roundtrip(&mut ctx).unwrap();
+    drop(ctx);
+
+    assert_eq!(
+        feeder.actions,
+        [
+            "offer stock",
+            "clear",
+            "server StockTrial",
+            "offer on bank 0 recovery",
+            "clear",
+            "server Serve"
+        ]
+    );
+    // Stock was asked once, for the baseline's own image.
+    assert_eq!(
+        feeder.served.as_deref(),
+        Some(Path::new("private/verification/poc1-review"))
+    );
+    assert_eq!(feeder.health, Some((BUILD.into(), 1, false)));
+    assert!(
+        feeder
+            .notes
+            .iter()
+            .any(|n| n.contains("Stock 1.1.15 started"))
+    );
+}
+
+#[test]
+fn stock_that_never_reaches_the_server_stops_the_round_trip_on_stock() {
+    let (mut feeder, rig_args) = on_baseline(Script::Unrouted);
+    let mut ctx = Ctx::new(&mut feeder, &rig_args);
+    ctx.baseline = Some(baseline());
+    let error = roundtrip(&mut ctx).unwrap_err();
+    drop(ctx);
+
+    assert!(error.to_string().contains("No stock 1.1.15"), "{error}");
+    assert!(feeder.trial.is_none(), "stock was never asked");
+    assert!(feeder.on_stock);
 }

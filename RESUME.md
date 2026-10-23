@@ -7,6 +7,12 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
+**October 23: config-driven builds (FW37, host only, nothing run on the bench).**
+- **What changed:** `petlibre-build build --profile PROFILE [--device] [--firmware] [--variant]`. Devices are `src/firmware/devices/<name>/device.json` (the PLAF103 layout moved to `src/firmware/devices/plaf103/layout.json`). Firmwares declare devices, policies and variants in `[package.metadata.petlibre]`; `petlibre-build list` prints them. The AmebaD code is under the builder's `src/platform/amebad/`.
+- **Renamed:** profiles `plaf103` and `plaf103-firstboot` are `device` and `firstboot`; outputs are `private/firmware-build/<device>/<profile>`; make targets `device` and `firstboot` (`DEVICE=`, `FIRMWARE=`, `VARIANT=`). The variant flags are `--variant <name>`. The manifest and identity bind `device`, so every identity changed: rebuild the release binaries, and `--build` makes a new review rather than reusing one.
+- **FW14:** `fw14-adc` is now a declared variant of the reference firmware: `--variant fw14-adc` replaces `--adc-probe`.
+- **Not yet:** a bench install of a build made through the new paths (FW37's finish line).
+
 **October 23, after midnight: battery inputs measured (FW14, physical, owner at the bench).**
 - **What changed:** `petlibre-build plaf103-firstboot --adc-probe` builds the `fw14-adc` variant (policy `fw14-adc-v2`): the reference firmware runs the read-only ADC probe in place of the optics probe, sampling once a second for as long as it runs. The probe never binds the KM0 flash handshake, so it reports `startup_done` at once and the build confirms. `petlibre-bench ota/itest --variant fw14-adc` builds it too. Checks: `make check`; a fresh `--adc-probe` build with every audit passing (`petlibre-adc` stack 1120 of 8192 B); review `fw14-batt-01-review` (`7c085e27…`).
 - **Runs:**

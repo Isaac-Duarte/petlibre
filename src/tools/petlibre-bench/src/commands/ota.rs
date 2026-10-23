@@ -41,7 +41,7 @@ const BUILD_STEPS: [&str; 2] = ["firmware build", "review image"];
 pub(crate) const HEALTH_STEP: &str = "health";
 
 /// The build's output, which the review freezes (root-relative).
-const BUILD_OUTPUT: &str = "private/firmware-build/plaf103-firstboot";
+const BUILD_OUTPUT: &str = "private/firmware-build/plaf103/firstboot";
 /// The firmware publishes health every 30 s; allow three periods.
 const HEALTH_SECONDS: f64 = 90.0;
 const HEALTH_POLL_SECONDS: f64 = 5.0;
@@ -85,14 +85,22 @@ pub enum Variant {
 }
 
 impl Variant {
-    /// The `petlibre-build` flag that selects it.
-    pub(crate) fn flag(self) -> &'static str {
+    /// The reference firmware's variant name, which `petlibre-build
+    /// --variant` selects.
+    pub(crate) fn name(self) -> &'static str {
         match self {
-            Self::Fw11Reset => "--trial-reset",
-            Self::Fw11Fail => "--trial-fail",
-            Self::Speaker => "--speaker",
-            Self::Fw14Adc => "--adc-probe",
+            Self::Fw11Reset => "fw11-reset",
+            Self::Fw11Fail => "fw11-fail",
+            Self::Speaker => "speaker",
+            Self::Fw14Adc => "fw14-adc",
         }
+    }
+
+    /// `--variant <name>` for `petlibre-build`, or nothing.
+    fn args(variant: Option<Self>) -> Vec<String> {
+        variant
+            .map(|v| vec!["--variant".to_string(), v.name().to_string()])
+            .unwrap_or_default()
     }
 }
 
@@ -119,7 +127,7 @@ pub struct OtaArgs {
     /// Frozen review to offer (its image.bin and build-manifest.json).
     #[arg(long, required_unless_present = "build", conflicts_with = "build")]
     pub review: Option<PathBuf>,
-    /// Build plaf103-firstboot and freeze it as private/verification/NAME-review
+    /// Build the PLAF103 firstboot profile and freeze it as private/verification/NAME-review
     /// first, unless a review built from the same sources is already there.
     #[arg(long)]
     pub build: bool,
@@ -904,7 +912,7 @@ impl Bench {
             return Ok(None);
         }
         let mut query = vec!["source-id".to_string(), "--image".into()];
-        query.extend(args.variant.map(|v| v.flag().to_string()));
+        query.extend(Variant::args(args.variant));
         let answer = self.tools.build_query(&query)?;
         let identity = answer.stdout.trim();
         if answer.code != 0 || !is_build_id(identity) {
@@ -940,8 +948,10 @@ impl Bench {
         review: &Path,
         timing: &mut Timing,
     ) -> Result<bool> {
-        let mut build = vec!["plaf103-firstboot".to_string()];
-        build.extend(args.variant.map(|v| v.flag().to_string()));
+        let mut build = ["build", "--profile", "firstboot"]
+            .map(String::from)
+            .to_vec();
+        build.extend(Variant::args(args.variant));
         timing.ran = true;
         let (code, seconds) = self.run_step(BUILD_STEPS[0], None, &build)?;
         timing.build = Some(seconds);

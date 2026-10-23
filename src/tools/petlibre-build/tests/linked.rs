@@ -2,17 +2,18 @@
 //! its manifest, and damage to the real listings and ELFs is refused.
 //!
 //! Optional evidence (`make check-fixtures`): these need the ignored
-//! `private/firmware-build/plaf103-firstboot` build of the current sources
+//! `private/firmware-build/plaf103/firstboot` build of the current sources
 //! and the pinned binutils, and fail when either is missing or stale.
 
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use petlibre_build::audit::{self, Binutils, elf, hex, hooks, mains, park, tool};
 use petlibre_build::identity::current_inputs;
 use petlibre_build::image::audit_build;
-use petlibre_build::{Core, Firmware, PROJECT, Profile, Repo};
+use petlibre_build::platform::amebad::audit::{self, Binutils, elf, hex, hooks, mains, park, tool};
+use petlibre_build::platform::amebad::{Core, PROJECT, binutils};
+use petlibre_build::{Device, Firmware, Profile, Repo};
 use serde_json::Value;
 
 struct Build {
@@ -24,21 +25,21 @@ struct Build {
 
 fn build() -> Build {
     let repo = Repo::here().unwrap();
-    let dir = repo.output(Profile::Plaf103Firstboot);
+    let device = Device::new(&repo, "plaf103").unwrap();
+    let dir = device.output(&repo, Profile::Firstboot);
     let manifest: Value = serde_json::from_slice(
         &fs::read(dir.join("manifest.json")).expect("completed ignored first-boot build"),
     )
     .unwrap();
     let firmware = Firmware::new(&repo, manifest["firmware"].as_str().unwrap()).unwrap();
-    let current =
-        serde_json::to_value(current_inputs(&repo, Profile::Plaf103Firstboot, &firmware).unwrap())
-            .unwrap();
+    let inputs = current_inputs(&repo, &device, Profile::Firstboot, &firmware).unwrap();
+    let current = serde_json::to_value(inputs).unwrap();
     assert_eq!(
         manifest["inputs"], current,
         "stale first-boot build; rebuild it before using it as evidence"
     );
     let binutils = Binutils {
-        dir: repo.binutils().unwrap(),
+        dir: binutils(&repo).unwrap(),
     };
     Build {
         repo,

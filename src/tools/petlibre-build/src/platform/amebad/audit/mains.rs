@@ -15,7 +15,8 @@ use serde::Serialize;
 
 use super::hooks::file_offset;
 use super::{ADDRESSED, Binutils, DIRECT_BRANCH, INSTRUCTION, elf, hex, parse_hex, refuse, tool};
-use crate::{Core, Result, require};
+use crate::platform::amebad::Core;
+use crate::{Result, require};
 
 /// The reviewed calls of each core's `main`, in order.
 pub fn expected(core: Core) -> &'static [&'static str] {

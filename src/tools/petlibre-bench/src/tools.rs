@@ -897,13 +897,13 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
 
         assert_eq!(
             tools
-                .build(&["plaf103-firstboot".into()], &mut status)
+                .build(&["build".into(), "firstboot".into()], &mut status)
                 .unwrap(),
             3
         );
         let root = tmp.path().canonicalize().unwrap();
         let lines = status.state.unwrap().lines;
-        assert!(lines.contains(&format!("plaf103-firstboot in {}", root.display())));
+        assert!(lines.contains(&format!("build in {}", root.display())));
         let answer = tools.build_query(&["source-id".into()]).unwrap();
         assert_eq!(
             (answer.code, answer.stdout.split(' ').next()),

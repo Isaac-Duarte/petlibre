@@ -15,7 +15,8 @@ use std::sync::LazyLock;
 use petlibre_formats::manifest::RustCompiler;
 use regex::Regex;
 
-use crate::{Core, Error, Repo, Result, require, text, which};
+use crate::platform::TARGETS;
+use crate::{Error, Repo, Result, require, text, which};
 
 const RUST_ENVIRONMENT: [&str; 13] = [
     "RUSTFLAGS",
@@ -36,9 +37,32 @@ const RUST_ENVIRONMENT_PREFIXES: [&str; 2] = ["CARGO_PROFILE_", "CARGO_UNSTABLE_
 
 pub(crate) type Environment = BTreeMap<String, String>;
 
-static TARGET_RUSTFLAGS: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^CARGO_TARGET_THUMBV8M_[A-Z_]+_RUSTFLAGS$").expect("literal pattern")
-});
+/// The Rust compiler a Rust profile builds with, resolved before and
+/// compared after compilation.
+pub(crate) struct Rust {
+    pub(crate) environment: Environment,
+    pub(crate) compiler: RustCompiler,
+}
+
+impl Rust {
+    /// This process's environment, checked, and the rustc it selects.
+    pub(crate) fn resolve(repo: &Repo) -> Result<Self> {
+        let environment = rust_environment(&repo.root, process_environment())?;
+        let compiler = rust_compiler(repo, &environment)?;
+        Ok(Self {
+            environment,
+            compiler,
+        })
+    }
+}
+
+/// `CARGO_TARGET_<TRIPLE>_RUSTFLAGS` of a firmware target.
+fn target_rustflags(name: &str) -> bool {
+    TARGETS.iter().any(|target| {
+        let triple = target.to_ascii_uppercase().replace(['-', '.'], "_");
+        name == format!("CARGO_TARGET_{triple}_RUSTFLAGS")
+    })
+}
 static HEADER: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\[\[?\s*([^\]]+?)\s*\]\]?$").expect("literal pattern"));
 static ASSIGNMENT: LazyLock<Regex> =
@@ -55,7 +79,7 @@ fn forbidden_variables(environment: &Environment) -> Vec<String> {
                 || RUST_ENVIRONMENT_PREFIXES
                     .iter()
                     .any(|prefix| name.starts_with(prefix))
-                || TARGET_RUSTFLAGS.is_match(name)
+                || target_rustflags(name)
         })
         .cloned()
         .collect()
@@ -150,8 +174,7 @@ fn forbidden_cargo_key(key: &[String], inline: bool) -> bool {
         }
         "target" if key.len() >= 2 => {
             let selector = &key[1];
-            let firmware = selector.starts_with("cfg(")
-                || Core::BOTH.iter().any(|core| core.target() == selector);
+            let firmware = selector.starts_with("cfg(") || TARGETS.contains(&selector.as_str());
             firmware && ((key.len() == 2 && inline) || (key.len() > 2 && key[2] == "rustflags"))
         }
         "target" => inline,

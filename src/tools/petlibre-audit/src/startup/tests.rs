@@ -614,7 +614,7 @@ fn evidence_artifact_binding_and_window() {
 
     fs::write(f.path().join("image.bin"), &image).unwrap();
     f.manifest["inputs"]["source"] = json!("e".repeat(64));
-    f.set("profile", json!("plaf103-firstboot"));
+    f.set("profile", json!("firstboot"));
     assert!(f.error(60.0).contains("not source-bound"));
 }
 

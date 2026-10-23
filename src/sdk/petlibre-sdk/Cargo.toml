@@ -11,7 +11,7 @@ publish.workspace = true
 # KM4 target builds with the pinned SDK bindings.
 km4 = ["petlibre-hal/km4", "petlibre-hal/sdk", "petlibre-sdk-c/km4"]
 # FW11 trial test: a candidate whose startup fails on a determined error.
-# Only `petlibre-build plaf103-firstboot --trial-fail` sets it.
+# Only the reference firmware's `fw11-fail` variant sets it.
 fw11-fail = []
 
 [dependencies]

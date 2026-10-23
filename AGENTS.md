@@ -42,7 +42,7 @@ Old on-disk evidence and stale file fields may break when that makes the code si
 | Change | Run |
 | --- | --- |
 | Any Rust edit | `cargo fmt --all`, then `make check PYTHON=.venv/bin/python` (the contributor gate) |
-| Builder, audits, formats or flash review | Also `make check-fixtures PYTHON=.venv/bin/python` against fresh builds (`make -C src/firmware/vendor plaf103 plaf103-firstboot`) |
+| Builder, audits, formats or flash review | Also `make check-fixtures PYTHON=.venv/bin/python` against fresh builds (`make -C src/firmware/vendor device firstboot`) |
 | Firmware crates | Also a fresh image build, so its link, RAM-park and stack audits run |
 | `src/web/`, or the views `petlibre-bench --ui` serves | Also `make check-web` (needs Node and pnpm): web types, unit tests, the build, and Playwright against the real binary |
 

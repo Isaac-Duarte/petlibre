@@ -8,6 +8,20 @@ The existing wrapper supports **Linux x86_64**. It needs Git, Make, Bash, tar (w
 
 The builder is `petlibre-build` (`src/tools/petlibre-build`); the make targets build it and run it as its own executable, because `cargo run` sets `RUSTUP_TOOLCHAIN`, which a firmware build refuses.
 
+## Devices, firmwares and profiles
+
+A build is a **profile** of a **firmware** on a **device**:
+
+```sh
+petlibre-build build --profile firstboot [--device plaf103] [--firmware reference] [--variant speaker]
+make -C src/firmware/vendor firstboot DEVICE=plaf103 FIRMWARE=reference VARIANT=speaker
+petlibre-build list    # the devices, and each firmware's devices and variants, as JSON
+```
+
+- **Device:** `src/firmware/devices/<name>/device.json` names the board's platform (the chip family) and the files that platform stages: the application entry and first-boot mains, plus the verified stock image and [layout](../../src/firmware/devices/plaf103/layout.json) the `device` and `firstboot` profiles derive their banks and pad table from. `--device` defaults to the only device; with several, a build must name one.
+- **Firmware:** a crate under `src/firmware/petlibre/` ([guide](../../src/firmware/petlibre/README.md)). Its `[package.metadata.petlibre]` table declares the devices it builds for, the startup policies of its normal first-boot image, and its opt-in image variants. A variant is the Cargo feature of the same name, and its policies replace the normal image's. A new firmware or variant needs no builder change.
+- **Platform:** code, not configuration (`petlibre-build`'s `src/platform/`). Its SDK overlays anchor on exact text in the pinned SDK and its audits read disassembly, so both fail closed. AmebaD is the only platform; another chip is a new variant of `Platform` and a module beside `amebad`.
+
 ```sh
 make -C src/firmware/vendor bootstrap
 make -C src/firmware/vendor baseline
@@ -22,25 +36,27 @@ Firmware builds refuse output-affecting Rust overrides instead of silently dropp
 
 ## Profiles
 
+Each profile adds stages to the one before.
+
 | Profile | Behavior and inputs |
 | --- | --- |
 | `baseline` | Unchanged SDK example, for build comparison |
-| `bringup` | SDK example with Rust diagnostic, STOP/off initialization, and bounded indicator entry hook |
-| `plaf103` | Diagnostic with stock-derived bank addresses and audited KM0 pin pulls; requires the verified stock OTA |
-| `plaf103-firstboot` | Minimal UART-only SDK mains plus Rust synthetic diagnostic; same stock-reference requirements |
+| `bringup` | SDK example with the Rust application, STOP/off initialization, and bounded indicator entry hook |
+| `device` | The application with the device's stock-derived bank addresses and audited KM0 pin pulls; requires the device's verified stock OTA |
+| `firstboot` | Minimal UART-only SDK mains plus the application, Wi-Fi, transport and updates; same stock-reference requirements. The image the bench reviews and installs; only this profile takes a variant |
 
 ```sh
-make -C src/firmware/vendor plaf103
-make -C src/firmware/vendor plaf103-firstboot
+make -C src/firmware/vendor device
+make -C src/firmware/vendor firstboot
 ```
 
-Those two profiles require a contributor-supplied exact stock reference at `private/firmware/PLAF103_OTA_010115.bin`; see [fixtures](fixtures.md). Builds proceed KM0 before KM4 and retain input hashes, artifact hashes, logs, and successful manifests. Bindgen gets SDK/newlib paths from the wrapper through `PETLIBRE_SDK_DIR` and `PETLIBRE_NEWLIB_INCLUDE`.
+For the PLAF103, those two profiles require a contributor-supplied exact stock reference at `private/firmware/PLAF103_OTA_010115.bin` (named in its `device.json`); see [fixtures](fixtures.md). Builds proceed KM0 before KM4 and retain input hashes, artifact hashes, logs, and successful manifests. Bindgen gets SDK/newlib paths from the wrapper through `PETLIBRE_SDK_DIR` and `PETLIBRE_NEWLIB_INCLUDE`.
 
 | Ignored location | Contents |
 | --- | --- |
 | `private/upstream/ameba-rtos-d/` | Pinned upstream checkout |
 | `private/toolchains/` | Downloaded archive and extracted compiler |
-| `private/firmware-build/<profile>/` | Generated SDK worktree, Rust archives, logs, and manifest |
+| `private/firmware-build/<device>/<profile>/` | Generated SDK worktree, Rust archives, logs, and manifest |
 
 Author changes in tracked source, not generated SDK worktrees. Profiles stage tracked files and apply audited overlays. Vendor timestamps mean output is not guaranteed byte-for-byte reproducible. A rebuilt UART diagnostic will generally differ from the exact artifact accepted by the retained writer; do not update its hash to bypass review.
 
@@ -48,6 +64,6 @@ Builds package application images and audit symbols/layout/pin pulls/flash hooks
 
 ## Source identity and physical startup behavior
 
-`cargo run -q -p petlibre-build -- source-id` computes the current firstboot-profile source ID offline without bootstrapping the SDK. `check-cross` supplies that ID to the SDK-independent KM0 port compile. `source-id --image` (with a variant flag, if any) prints instead the identity a build would embed, which also binds the variant and the update key. `petlibre-bench` uses it to reuse a review of the same sources. A compile-only check does not produce a reviewed installable image. SDK builds freeze the input map, embed its real identity, and record clock/output/LED/routing/shared-pad policies for host verification. Rust inputs are the Git-tracked and untracked, non-ignored files of the firmware crates under `crates/` (not `target` directories there, nor the host-only `petlibre-local` and `petlibre-flash`), plus the builder's own `src/` and the two `petlibre-flash` modules its layout audit shares, so a changed recipe or audit is a new identity; its fixture tests are not. Ignored editor or build files and the checkout's location do not change the ID; `source-id` therefore needs a Git checkout. `petlibre-build inputs PROFILE` prints the current input map, and `petlibre-build audit --build DIR` re-runs a finished build's audits as JSON; the image review uses both. Optional Python evidence suites that use an ignored build skip, reporting the changed inputs, when that manifest no longer matches the current sources; the builder's own fixture tests (`cargo test -p petlibre-build -- --ignored`, in `make check-fixtures`) fail instead.
+`cargo run -q -p petlibre-build -- source-id` computes the current firstboot-profile source ID offline without bootstrapping the SDK. `check-cross` supplies that ID to the SDK-independent KM0 port compile. `source-id --image` (with `--variant`, if any) prints instead the identity a build would embed, which also binds the variant and the update key. Every identity binds the device and profile names. `petlibre-bench` uses it to reuse a review of the same sources. A compile-only check does not produce a reviewed installable image. SDK builds freeze the input map, embed its real identity, and record clock/output/LED/routing/shared-pad policies for host verification. Rust inputs are the Git-tracked and untracked, non-ignored files of the SDK crates under `src/sdk/` and the selected firmware's crate (not `target` directories there, nor other firmwares or host tools), the device's `device.json` and the files it names that the profile stages, plus the builder's own `src/` and the two `petlibre-flash` modules its layout audit shares, so a changed recipe or audit is a new identity; its fixture tests are not. Ignored editor or build files and the checkout's location do not change the ID; `source-id` therefore needs a Git checkout. `petlibre-build inputs --profile PROFILE` prints the current input map, and `petlibre-build audit --build DIR` re-runs a finished build's audits as JSON; the image review uses both. Optional Python evidence suites that use an ignored build skip, reporting the changed inputs, when that manifest no longer matches the current sources; the builder's own fixture tests (`cargo test -p petlibre-build -- --ignored`, in `make check-fixtures`) fail instead.
 
 The diagnostic now configures STOP/off GPIO, restores shared-pad supply startup in the minimal KM0 main, and pulses the four indicators. An unopened feeding backend no longer means no physical GPIO changes. See [startup behavior and outstanding readback faults](../firmware/startup-diagnostics.md). Build commands themselves still do not access hardware. Use [development image review](uart-development.md) for a source-bound target; copied historical manifests may be stale after porting.

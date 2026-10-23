@@ -108,7 +108,8 @@ fn build(root: &Root, directory: &Path, review: &Review, image: &[u8]) -> Result
     let m: BuildManifest = serde_json::from_slice(&manifest_raw)?;
     let lock: SdkLock = petlibre_formats::load(&root.join("src/firmware/vendor/sdk.lock.json"))?;
     require(
-        m.profile == "plaf103-firstboot"
+        m.device == "plaf103"
+            && m.profile == "firstboot"
             && m.sdk_revision == lock.sdk.revision
             && m.toolchain_sha256 == lock.toolchain.sha256,
         "Unknown build profile",

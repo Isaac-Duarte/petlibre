@@ -17,10 +17,12 @@ use petlibre_formats::layout::Layout;
 use petlibre_formats::lock::SdkLock;
 use regex::Regex;
 
-use crate::audit::{hooks, pinmap};
-use crate::credentials::{transport_header, wifi_header};
-use crate::identity::{ENTRY, TRANSPORT_CREDENTIALS, WIFI_CREDENTIALS, firstboot_sources};
-use crate::{Core, Error, PROJECT, Profile, Repo, Result, digest, git, require, revision, run};
+use super::audit::{hooks, pinmap};
+use super::credentials::{transport_header, wifi_header};
+use super::{Amebad, Core, PROJECT, TRANSPORT_CREDENTIALS, WIFI_CREDENTIALS, source, toolchains};
+use crate::device::StockPaths;
+use crate::platform::Job;
+use crate::{Error, Profile, Repo, Result, Stage, digest, git, require, revision, run};
 
 const PLATFORM_OPTS: &str = "project/realtek_amebaD_va0_example/inc/inc_hp/platform_opts.h";
 const WIFI_HEADER: &str = "component/common/example/petlibre_wifi_credentials.h";
@@ -77,10 +79,10 @@ fn vendor_untracked() -> BTreeSet<String> {
 /// SDK paths this builder regenerates from the pinned revision for a profile.
 fn managed_sdk_paths(profile: Profile) -> BTreeSet<String> {
     let mut paths = BTreeSet::new();
-    if profile.model() {
+    if profile.has(Stage::Stock) {
         paths.extend([OTA_HEADER.to_string(), PINMAP.to_string()]);
     }
-    if profile.rust() {
+    if profile.has(Stage::Rust) {
         paths.extend([
             "component/common/example/example_entry.c".to_string(),
             hooks::SOURCE.to_string(),
@@ -93,7 +95,7 @@ fn managed_sdk_paths(profile: Profile) -> BTreeSet<String> {
             SRC_LP_MAKEFILE.to_string(),
         ]);
     }
-    if profile.firstboot() {
+    if profile.has(Stage::Firstboot) {
         paths.extend(Core::BOTH.map(|core| {
             format!(
                 "project/realtek_amebaD_va0_example/src/src_{}/main.c",
@@ -132,7 +134,8 @@ fn unexpected_sdk_changes(sdk: &Path, profile: Profile) -> Result<Vec<String>> {
         let allowed = match code {
             "??" => {
                 untracked.contains(path)
-                    || (profile.rust() && (path == WIFI_HEADER || path == TRANSPORT_HEADER))
+                    || (profile.has(Stage::Rust)
+                        && (path == WIFI_HEADER || path == TRANSPORT_HEADER))
             }
             " M" => {
                 managed.contains(path)
@@ -246,49 +249,51 @@ fn overlay(sdk: &Path, relative: &str, text: &str, overrides: &mut Overrides) ->
 }
 
 /// Create or check the profile's worktree and apply its overlays.
-/// `expected` holds the input digests the identity was computed from;
+/// The job's inputs hold the digests the identity was computed from;
 /// staged copies of inputs must still match them.
 pub(crate) fn prepare(
-    repo: &Repo,
-    profile: Profile,
-    expected: &BTreeMap<String, String>,
+    job: &Job,
+    board: &Amebad,
+    stock: Option<&StockPaths>,
+    lock: &SdkLock,
 ) -> Result<(PathBuf, Overrides)> {
-    let sdk = worktree(repo, profile, &repo.lock()?)?;
+    let (repo, profile) = (job.repo, job.profile);
+    let sdk = worktree(repo, &job.output, profile, lock)?;
 
     let mut overrides = Overrides::new();
     let staged = |source: &Path, copy: &Path, message: &str| -> Result<()> {
         let name = crate::relative(source, &repo.root)?;
         require(
-            expected.get(&name) == Some(&digest(copy)?),
+            job.inputs.get(&name) == Some(&digest(copy)?),
             format!("{message}: {name}"),
         )
     };
 
-    if profile.model() {
-        ota_addresses(repo, &sdk, &mut overrides)?;
-        let source = pinmap::overlay(&pinned(&sdk, PINMAP)?, &fs::read(repo.stock())?)?;
+    if let Some(stock) = stock {
+        ota_addresses(stock, &sdk, &mut overrides)?;
+        let source = pinmap::overlay(&pinned(&sdk, PINMAP)?, &fs::read(&stock.image)?)?;
         overlay(&sdk, PINMAP, &source, &mut overrides)?;
     }
-    if profile.rust() {
-        rust_overlays(repo, &sdk, &mut overrides, &staged)?;
+    if profile.has(Stage::Rust) {
+        rust_overlays(repo, board, &sdk, &mut overrides, &staged)?;
     }
-    if profile.firstboot() {
-        firstboot_overlays(repo, &sdk, &mut overrides, &staged)?;
+    if profile.has(Stage::Firstboot) {
+        firstboot_overlays(board, &sdk, &mut overrides, &staged)?;
     }
     Ok((sdk, overrides))
 }
 
 /// The profile's SDK worktree at the pinned revision, created on first
 /// use and refused when it drifted, with both cores' toolchain links.
-fn worktree(repo: &Repo, profile: Profile, lock: &SdkLock) -> Result<PathBuf> {
-    let sdk = repo.output(profile).join("sdk");
+fn worktree(repo: &Repo, output: &Path, profile: Profile, lock: &SdkLock) -> Result<PathBuf> {
+    let sdk = output.join("sdk");
     if !sdk.exists() {
-        fs::create_dir_all(sdk.parent().unwrap_or(&sdk))?;
+        fs::create_dir_all(output)?;
         run(Command::new("git")
             .args(["worktree", "add", "--detach"])
             .arg(&sdk)
             .arg(&lock.sdk.revision)
-            .current_dir(repo.source()))?;
+            .current_dir(source(repo)))?;
     }
     require(
         revision(&sdk)? == lock.sdk.revision,
@@ -297,7 +302,7 @@ fn worktree(repo: &Repo, profile: Profile, lock: &SdkLock) -> Result<PathBuf> {
     check_sdk_worktree(&sdk, profile)?;
 
     // Both cores use the same verified toolchain, rather than downloading copies.
-    let toolchains = repo.toolchains();
+    let toolchains = toolchains(repo);
     for core in Core::BOTH {
         let link = sdk.join(project(&format!("project_{}/toolchain/linux", core.dir())));
         if link.is_symlink() && fs::canonicalize(&link).ok() == fs::canonicalize(&toolchains).ok() {
@@ -319,6 +324,7 @@ fn worktree(repo: &Repo, profile: Profile, lock: &SdkLock) -> Result<PathBuf> {
 /// rules and RAM sections, the flash-hook rename and the credential headers.
 fn rust_overlays(
     repo: &Repo,
+    board: &Amebad,
     sdk: &Path,
     overrides: &mut Overrides,
     staged: &dyn Fn(&Path, &Path, &str) -> Result<()>,
@@ -332,10 +338,9 @@ fn rust_overlays(
         remove_file(&object_root.join("build/ram").join(format!("{name}.o")))?;
     }
 
-    let entry = repo.path(ENTRY);
     let destination = example.join("example_entry.c");
-    fs::copy(&entry, &destination)?;
-    staged(&entry, &destination, "Source changed while staging")?;
+    fs::copy(&board.entry, &destination)?;
+    staged(&board.entry, &destination, "Source changed while staging")?;
 
     // Earlier C builds modified these SDK makefiles; restore the pinned copies.
     for relative in [project(UTILITIES_MAKEFILE), SRC_LP_MAKEFILE.to_string()] {
@@ -419,8 +424,8 @@ fn rust_overlays(
 }
 
 /// Point the SDK's two OTA bank addresses at the stock layout's banks.
-fn ota_addresses(repo: &Repo, sdk: &Path, overrides: &mut Overrides) -> Result<()> {
-    let layout: Layout = petlibre_formats::load(&repo.layout())?;
+fn ota_addresses(stock: &StockPaths, sdk: &Path, overrides: &mut Overrides) -> Result<()> {
+    let layout: Layout = petlibre_formats::load(&stock.layout)?;
 
     let mut text = pinned(sdk, OTA_HEADER)?;
     for (index, offset) in layout.ota_bank_offsets.iter().enumerate() {
@@ -443,7 +448,7 @@ fn ota_addresses(repo: &Repo, sdk: &Path, overrides: &mut Overrides) -> Result<(
 }
 
 fn firstboot_overlays(
-    repo: &Repo,
+    board: &Amebad,
     sdk: &Path,
     overrides: &mut Overrides,
     staged: &dyn Fn(&Path, &Path, &str) -> Result<()>,
@@ -483,14 +488,14 @@ fn firstboot_overlays(
         fs::write(&stamp, format!("{options}\n"))?;
     }
 
-    for (core, source) in firstboot_sources(repo) {
+    for (core, source) in &board.mains {
         let relative = format!(
             "project/realtek_amebaD_va0_example/src/src_{}/main.c",
             core.dir()
         );
-        fs::copy(&source, sdk.join(&relative))?;
+        fs::copy(source, sdk.join(&relative))?;
         staged(
-            &source,
+            source,
             &sdk.join(&relative),
             "First-boot main changed while staging",
         )?;
@@ -533,7 +538,7 @@ mod tests {
         let tracked = vendor_mode_only()
             .into_iter()
             .chain(vendor_rebuilt())
-            .chain(managed_sdk_paths(Profile::Plaf103Firstboot))
+            .chain(managed_sdk_paths(Profile::Firstboot))
             .chain(["component/other.c".to_string()]);
         for name in tracked {
             let file = path.join(&name);
@@ -561,7 +566,7 @@ mod tests {
         }
         for name in vendor_rebuilt()
             .into_iter()
-            .chain(managed_sdk_paths(Profile::Plaf103Firstboot))
+            .chain(managed_sdk_paths(Profile::Firstboot))
         {
             fs::write(sdk.path.join(name), "regenerated").unwrap();
         }
@@ -571,11 +576,8 @@ mod tests {
             fs::write(file, "vendor output").unwrap();
         }
 
-        assert_eq!(
-            changes(&sdk, Profile::Plaf103Firstboot),
-            Vec::<String>::new()
-        );
-        check_sdk_worktree(&sdk.path, Profile::Plaf103Firstboot).unwrap();
+        assert_eq!(changes(&sdk, Profile::Firstboot), Vec::<String>::new());
+        check_sdk_worktree(&sdk.path, Profile::Firstboot).unwrap();
     }
 
     #[test]
@@ -596,26 +598,24 @@ mod tests {
             "?? component/new.c".to_string(),
         ];
         expected.sort();
-        assert_eq!(changes(&sdk, Profile::Plaf103Firstboot), expected);
+        assert_eq!(changes(&sdk, Profile::Firstboot), expected);
         // A first-boot main is only managed by the first-boot profile.
-        assert!(changes(&sdk, Profile::Plaf103).contains(&format!("M {main}")));
+        assert!(changes(&sdk, Profile::Device).contains(&format!("M {main}")));
 
-        let error = check_sdk_worktree(&sdk.path, Profile::Plaf103Firstboot).unwrap_err();
+        let error = check_sdk_worktree(&sdk.path, Profile::Firstboot).unwrap_err();
         assert!(error.to_string().contains("component/other.c"));
     }
 
     #[test]
     fn staged_and_deleted_entries_are_refused() {
         let sdk = sdk();
-        let managed: Vec<_> = managed_sdk_paths(Profile::Plaf103Firstboot)
-            .into_iter()
-            .collect();
+        let managed: Vec<_> = managed_sdk_paths(Profile::Firstboot).into_iter().collect();
         fs::write(sdk.path.join(&managed[0]), "staged").unwrap();
         git_in(&sdk.path, &["add", &managed[0]]);
         fs::remove_file(sdk.path.join(&managed[1])).unwrap();
 
         let mut expected = vec![format!("M {}", managed[0]), format!("D {}", managed[1])];
         expected.sort();
-        assert_eq!(changes(&sdk, Profile::Plaf103Firstboot), expected);
+        assert_eq!(changes(&sdk, Profile::Firstboot), expected);
     }
 }

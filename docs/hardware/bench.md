@@ -71,9 +71,9 @@ target/release/petlibre-bench ota fw12-unit-01 --build                     # bui
 target/release/petlibre-bench ota fw12-unit-02 --review private/verification/<review>
 ```
 
-- **Build (`--build`):** runs two children from the root, their output streamed to the progress log. First `petlibre-build plaf103-firstboot` (beside the bench binary, or `--build-bin`), then the Python review `src/tools/flash/review-development-image.py build --build private/firmware-build/plaf103-firstboot --output private/verification/NAME-review`. The run then continues as with `--review` on that directory.
+- **Build (`--build`):** runs two children from the root, their output streamed to the progress log. First `petlibre-build build --profile firstboot` (beside the bench binary, or `--build-bin`), then the Python review `src/tools/flash/review-development-image.py build --build private/firmware-build/plaf103/firstboot --output private/verification/NAME-review`. The run then continues as with `--review` on that directory.
   - The interpreter is `.venv/bin/python` unless `--python` names another.
-  - `--variant fw11-reset|fw11-fail` adds `--trial-reset` or `--trial-fail`. `fw16-pulse` is refused: motion builds stay manual, then go through `--review` with `--attended-motion`.
+  - `--variant fw11-reset|fw11-fail|speaker|fw14-adc` passes the same `--variant` to the build. `fw16-pulse` is refused: motion builds stay manual, then go through `--review` with `--attended-motion`.
   - A nonzero exit from either child stops without signing or offering.
   - Refused before anything runs: an existing `NAME-review`, a missing interpreter, `--variant` or `--python` without `--build`, and `--build` with `--review`.
 

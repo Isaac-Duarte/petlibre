@@ -17,7 +17,8 @@ use regex::Regex;
 use serde::Serialize;
 
 use super::{Binutils, HEADING, elf, index, parse_hex, refuse, tool, word};
-use crate::{Core, Result, digest, require};
+use crate::platform::amebad::Core;
+use crate::{Result, digest, require};
 
 /// Never in the image: eFuse MAC programming, eFuse-command issuers, the SDK
 /// Wi-Fi/FTL flash writers, the mbed flash write API and any shell entry.

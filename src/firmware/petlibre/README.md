@@ -3,7 +3,7 @@
 Each folder here is one firmware for the PLAF103, built on the PetLibre SDK (`src/sdk/petlibre-sdk`). Pick one at build time:
 
 ```sh
-make -C src/firmware/vendor plaf103-firstboot FIRMWARE=blink   # default: reference
+make -C src/firmware/vendor firstboot FIRMWARE=blink   # default: reference
 ```
 
 | Firmware | What it adds |
@@ -26,6 +26,20 @@ Not yet guaranteed: the feeder does not watch firmware tasks' liveness, so a hun
 ## Writing a firmware
 
 A firmware is a `no_std` crate in `src/firmware/petlibre/<name>`, with the package name `petlibre-fw-<name>`. It is a KM4 staticlib with a `km4` feature that enables `petlibre-sdk/km4`. Copy `blink`'s `Cargo.toml` and change the name.
+
+Its `[package.metadata.petlibre]` table is all the builder knows about it (`petlibre-build list` prints it):
+
+```toml
+[package.metadata.petlibre]
+devices = ["plaf103"]                       # boards under src/firmware/devices/
+policies = { optics = "fw13-optics-v2" }    # startup policies of the normal image, if any
+
+[package.metadata.petlibre.variants.loud]   # an opt-in image variant: the Cargo feature `loud`
+summary = "What the variant changes"
+policies = {}                               # replace the normal image's policies
+```
+
+The startup audit checks each policy against the image's markers, so declare only the policies the image really carries. A variant whose policies name a `motion` policy drives the motor (`list` marks it `"motion": true`); motion builds stay a manual, attended step. Build a variant with `--variant <name>` (`VARIANT=<name>` for make); only the `firstboot` profile takes one.
 
 Its target-only module defines the start hook and creates its tasks:
 

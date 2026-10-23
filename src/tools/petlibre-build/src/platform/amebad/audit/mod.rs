@@ -15,7 +15,9 @@ use std::sync::LazyLock;
 use regex::Regex;
 use serde::Serialize;
 
-use crate::{Core, Error, Firmware, PROJECT, Repo, Result, relative, text};
+use super::{Core, PROJECT, binutils};
+use crate::device::StockPaths;
+use crate::{Error, Firmware, Repo, Result, relative, text};
 
 pub mod hooks;
 pub(crate) mod layout;
@@ -134,24 +136,25 @@ pub struct Linked {
 /// the KM0/KM4 Rust archives it linked.
 pub(crate) fn linked(
     repo: &Repo,
+    stock: &StockPaths,
     build: &Path,
     objects: &Archives,
     firmware: &Firmware,
 ) -> Result<Linked> {
     let sdk = build.join("sdk");
     let binutils = Binutils {
-        dir: repo.binutils()?,
+        dir: binutils(repo)?,
     };
-    let stock = fs::read(repo.stock())?;
+    let stock_image = fs::read(&stock.image)?;
     let image = fs::read(ota_image(&sdk))?;
     let app = stack::task_sources(repo, firmware)?;
 
     Ok(Linked {
-        layout_audit: layout::audit(&ota_image(&sdk), &repo.stock(), &repo.layout())?,
+        layout_audit: layout::audit(&ota_image(&sdk), &stock.image, &stock.layout)?,
         km0_pinmap_audit: pinmap::audit_linked_table(
             &image,
             pmap_address(&sdk, &binutils)?,
-            &stock,
+            &stock_image,
         )?,
         ram_park_audit: park::audit(&sdk, &binutils, objects)?,
         sdk_hook_audit: hooks::audit(&sdk, &binutils, objects)?,

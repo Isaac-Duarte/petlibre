@@ -17,7 +17,8 @@ use super::{
     ArchiveRecord, Archives, Binutils, DIRECT_BRANCH, HEADING, INSTRUCTION, elf, hex, index,
     parse_hex, refuse, tool, word,
 };
-use crate::{Core, Result, require};
+use crate::platform::amebad::Core;
+use crate::{Result, require};
 
 pub(crate) const SOURCE: &str =
     "component/soc/realtek/amebad/fwlib/ram_common/rtl8721d_flash_ram.c";

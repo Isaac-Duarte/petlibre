@@ -14,20 +14,12 @@ crate-type = ["staticlib", "rlib"]
 [features]
 # KM4 target builds with the pinned SDK bindings.
 km4 = ["petlibre-sdk/km4", "petlibre-hal/km4", "petlibre-hal/sdk"]
-# FW16 first supervised motor pulse instead of the FW13 optics probe. Only
-# `petlibre-build plaf103-firstboot --motion-probe` sets it; never a default.
+# The image variants declared below. Only `petlibre-build --variant <name>`
+# sets one; none is ever a default.
 fw16-pulse = []
-# FW14 read-only power-input probe instead of the FW13 optics probe. Only
-# `petlibre-build plaf103-firstboot --adc-probe` sets it.
 fw14-adc = []
-# FW11 trial test: a candidate that stops feeding the watchdog right after
-# startup, before it could confirm. Only `petlibre-build plaf103-firstboot --trial-reset` sets it.
 fw11-reset = []
-# FW11 trial test: a candidate whose startup fails on a determined error.
-# Only `petlibre-build plaf103-firstboot --trial-fail` sets it.
 fw11-fail = ["petlibre-sdk/fw11-fail"]
-# Speaker variant: the normal image plus a signed network audio stream
-# (petlibre-hal stream.rs). Only `petlibre-build plaf103-firstboot --speaker` sets it.
 speaker = []
 
 [dependencies]
@@ -37,3 +29,31 @@ petlibre-core.workspace = true
 
 [lints]
 workspace = true
+
+# What petlibre-build reads: the devices this firmware builds for, the
+# startup policies its normal first-boot image carries (the startup audit
+# checks each against the image's markers), and its opt-in image variants.
+# A variant is the Cargo feature of the same name; its policies replace the
+# normal image's.
+[package.metadata.petlibre]
+devices = ["plaf103"]
+policies = { optics = "fw13-optics-v2" }
+
+[package.metadata.petlibre.variants.fw16-pulse]
+summary = "FW16: the first supervised motor pulse, once per cold boot, instead of the FW13 optics probe"
+policies = { motion = "fw16-pulse-v1" }
+
+[package.metadata.petlibre.variants.fw14-adc]
+summary = "FW14: samples the power inputs read-only, once a second, instead of the FW13 optics probe"
+policies = { adc = "fw14-adc-v2" }
+
+[package.metadata.petlibre.variants.fw11-reset]
+summary = "FW11 trial test: stops feeding the watchdog right after startup, before it could confirm"
+policies = { trial = "fw11-reset-v1" }
+
+[package.metadata.petlibre.variants.fw11-fail]
+summary = "FW11 trial test: startup fails on a determined error"
+policies = { trial = "fw11-fail-v1" }
+
+[package.metadata.petlibre.variants.speaker]
+summary = "The normal image plus a signed network audio stream (petlibre-hal stream.rs)"

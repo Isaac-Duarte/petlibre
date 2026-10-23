@@ -1096,8 +1096,8 @@ fn ota_build_builds_reviews_offers_and_checks_health_in_order() {
     assert_eq!(
         calls.ran,
         [
-            "build plaf103-firstboot --trial-reset",
-            "python src/tools/flash/review-development-image.py build --build private/firmware-build/plaf103-firstboot --output private/verification/unit-review",
+            "build build --profile firstboot --variant fw11-reset",
+            "python src/tools/flash/review-development-image.py build --build private/firmware-build/plaf103/firstboot --output private/verification/unit-review",
             "local ota-sign --image private/verification/unit-review/image.bin --version 1 --build-id 8a13e59efa15e56b5f5e32825909dc45e381a2027abc65d8de6658c40b302447 --output private/verification/unit-v1.manifest",
             "local ota-offer --manifest private/verification/unit-v1.manifest --image private/verification/unit-review/image.bin",
             "query status --config private/server.json",
@@ -1167,7 +1167,7 @@ fn ota_build_reuses_a_review_of_the_same_sources() {
     let calls = rig.tools.0.borrow();
     assert_eq!(
         calls.build_queries,
-        [["source-id", "--image", "--trial-reset"]]
+        [["source-id", "--image", "--variant", "fw11-reset"]]
     );
     assert!(
         calls.builds.is_empty() && calls.python.is_empty(),
@@ -1215,7 +1215,7 @@ fn ota_build_builds_when_no_complete_review_matches_or_asked_to() {
 
         let calls = rig.tools.0.borrow();
         assert!(
-            calls.ran[0].starts_with("build plaf103-firstboot"),
+            calls.ran[0].starts_with("build build --profile firstboot"),
             "{identity} {complete} {rebuild}: {:?}",
             calls.ran
         );
@@ -1282,7 +1282,7 @@ fn the_motion_variant_is_refused() {
     assert!(error.contains("motion builds stay manual"), "{error}");
     assert_eq!(ota::parse_variant("fw11-fail"), Ok(Variant::Fw11Fail));
     assert_eq!(ota::parse_variant("fw14-adc"), Ok(Variant::Fw14Adc));
-    assert_eq!(Variant::Fw14Adc.flag(), "--adc-probe");
+    assert_eq!(Variant::Fw14Adc.name(), "fw14-adc");
     assert!(ota::parse_variant("pulse").is_err());
 }
 

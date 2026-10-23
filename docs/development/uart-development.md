@@ -6,16 +6,16 @@ It is not replacement OTA, automatic rollback, a boot controller, or a partial-w
 
 ## Review and scope
 
-`review-development-image.py` freezes either the exact stock OTA or a reviewed `plaf103-firstboot` SDK build. Build review checks the current source snapshot, SDK revision/overlays, artifacts/archives, both core packages, linked mains/code, RAM parking/hooks, stock pulls, and modeled factory mapping. Frozen source reviews remain useful after later source changes. Freezing an arbitrary new application does not establish its behavior or physical acceptance.
+`review-development-image.py` freezes either the exact stock OTA or a reviewed PLAF103 `firstboot` SDK build. Build review checks the current source snapshot, SDK revision/overlays, artifacts/archives, both core packages, linked mains/code, RAM parking/hooks, stock pulls, and modeled factory mapping. Frozen source reviews remain useful after later source changes. Freezing an arbitrary new application does not establish its behavior or physical acceptance.
 
 Offline build/review commands use new output directories:
 
 ```sh
 .venv/bin/python src/tools/flash/review-development-image.py stock \
   --output private/verification/stock-review
-make -C src/firmware/vendor plaf103-firstboot
+make -C src/firmware/vendor firstboot
 .venv/bin/python src/tools/flash/review-development-image.py build \
-  --build private/firmware-build/plaf103-firstboot \
+  --build private/firmware-build/plaf103/firstboot \
   --output private/verification/development-review
 cargo run --locked -p petlibre-flash -- update --help
 ```

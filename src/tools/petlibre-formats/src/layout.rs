@@ -1,4 +1,4 @@
-//! `src/firmware/vendor/plaf103-layout.json`: the verified stock flash layout the
+//! `src/firmware/devices/<device>/layout.json`: a verified stock flash layout the
 //! builder points the SDK's banks at and the audits check images against.
 
 use std::fmt;
@@ -69,7 +69,7 @@ mod tests {
     fn the_checked_in_layout_loads() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../../src/firmware/vendor/plaf103-layout.json"
+            "/../../../src/firmware/devices/plaf103/layout.json"
         );
         let layout: Layout = crate::load(std::path::Path::new(path)).unwrap();
         assert_eq!(layout.schema_version, 1);

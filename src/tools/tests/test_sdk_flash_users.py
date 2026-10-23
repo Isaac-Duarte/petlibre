@@ -19,7 +19,7 @@ def module(name, filename):
 
 users = module("sdk_flash_users", "src/tools/audit/audit-sdk-flash-users.py")
 layout = module("ota_layout_for_flash_users", "src/tools/audit/audit-ota-layout.py")
-BUILD = ROOT / "private/firmware-build/plaf103"
+BUILD = ROOT / "private/firmware-build/plaf103/device"
 FRESH, STALE = current_build(BUILD)
 ELFS = {core: BUILD / users.PROJECT / project / "asdk/image/target_img2.axf"
         for core, project in (("KM0", "project_lp"), ("KM4", "project_hp"))}

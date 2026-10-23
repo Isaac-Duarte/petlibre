@@ -7,6 +7,29 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
+**October 23, morning to afternoon: stock 1.1.15 installs the replacement over its own updater (FW40, physical; built on branch `fw40-followup` in the `stock-ota-poc` worktree).**
+- **Runs:**
+  - `fw40-stock-ota-02`: stock accepted the request but could not reach the image port, and reported `OTA_INFORM` error 2003; it stayed on stock. Cause: `network apply` opened only 1883. It now also accepts 8088 from the feeder.
+  - `-03`/`-04`: the failed request could never be resolved, for two reasons: stock's ~61 s heartbeat restarted the server's 60 s quiet window, and idle stock reports no version. Fixes: the bound is now 90 s, and a refused resolve sends a read-only `ATTR_GET_SERVICE`. That request was closed by hand at the owner's choice (ledger backup `private/feed-ledger.json.before-fw40-manual-resolve`).
+  - **`fw40-stock-ota-05`:** stock downloaded `c33e1e6b…` in about 40 s, and it booted from bank 0. Its recovery role then polled `no_offer` with no health (fixed since).
+  - **`fw40-stock-ota-06-promote`** (`itest --only ota-update`): the bank-0 role installed the build into bank 1 (v77). Boot 1 hard-faulted in the optics probe; boot 2 confirmed.
+  - **Fault traced** (`fw40-diag-01`, `-02-nowifi`, `-03-wifi`): `PLOPT1 error kind=supervisor fault=7 stall=703` on the trial boot, `stall=702` on a cold boot with the hotspot up, and every window passing with it down. The first WPA3 join starves the QA task past its 300 ms lease.
+  - **Fix confirmed** (`fw40-diag-04`, OTA trial boot, v79): `PLWIF3 hold`, all 19 optics windows, `PLQA1 check stage=optics status=pass`, then the join and confirmation.
+- **Code** (host-tested, every audit passing):
+  - recovery-role health (`"role":"recovery"`) while the updater waits;
+  - `stock-ota` promotes by default (`--no-promote`);
+  - the Wi-Fi hold until `startup_done` (180 s cap; bank 0 never waits);
+  - `PLFLT1` fault registers and `PLOPT1 … stall=`;
+  - `wellfed-bench stock-prepare`/`stock-execute` (UART);
+  - `itest` `stock-roundtrip --stock <stock review>`;
+  - [consumer installation](docs/firmware/consumer-installation.md): stock's setup protocol, install flow, rollback design and architecture.
+- **Not yet physical:** recovery-role health with stock; `stock-roundtrip`; FW41's stock install; `stock-prepare`/`stock-execute`; the setup-frame test.
+- **Flash now:** **Bank 1:** `qa` with the Wi-Fi hold `96fa5d51…` (OTA v79, confirmed). **Bank 0:** `c33e1e6b…`, written by stock (no recovery-role health). Stock is in neither bank. **Next manifest version:** 80.
+- **Bench state:** feeder off, hotspot down, no server. The owner may still have `wellfed-local network apply` rules in place; `sudo wellfed-local network remove` clears them.
+- **Next:**
+  - `itest --only stock-roundtrip --stock <stock review> --power` with a fresh build (the owner runs `network apply` when it reaches stock);
+  - then the Phase 6 setup-frame test (owner present to put stock into setup mode).
+
 **October 23, about 6:30 AM: stock 1.1.15 restored over UART (owner request, physical, owner present).**
 - **Runs** (release binaries current):
   - `give-way-prepare/-execute stock-20261023-01-giveway` (fallback `itest-20261022-18-good-review`): one 1 KiB frame at `0x186000`; bank 0 `f244d9a9…` booted.

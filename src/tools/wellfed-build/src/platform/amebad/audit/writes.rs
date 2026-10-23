@@ -8,7 +8,7 @@
 //! anywhere in loaded bytes equal to a function's address, attributed to the
 //! enclosing symbol. Register-computed calls are not visible here.
 
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::path::Path;
 use std::sync::LazyLock;
@@ -307,27 +307,12 @@ fn references(
     }
     let listing = tool(objdump, &args, elf)?;
 
-    // Bytes of decoded instructions. A stored address in code is a
-    // literal-pool word, which the disassembler shows as data (.word); an
-    // instruction whose encoding happens to equal an address is not a
-    // reference (observed: an eor.w in SHA-512 spelled shell_cmd_table's
-    // address).
-    let mut code = HashSet::new();
-    for line in listing.lines() {
-        if let Some(m) = INSTRUCTION
-            .captures(line)
-            .filter(|m| !m[3].starts_with('.'))
-        {
-            let at = parse_hex(&m[1])?;
-            let bytes = m[2].replace(' ', "").len() as u64 / 2;
-            code.extend(at..at + bytes);
-        }
-    }
+    let code = instruction_bytes(&listing)?;
     for (start, data) in loaded(elf, objdump)? {
         for at in (0..data.len().saturating_sub(3)).step_by(4) {
             let location = start + at as u64;
             if let Some(target) = word(&data, at).and_then(|value| wanted.get(&value))
-                && !(0..4).all(|i| code.contains(&(location + i)))
+                && !one_instruction(&code, location)
             {
                 found
                     .entry(target.clone())
@@ -372,6 +357,35 @@ fn references(
         callers.retain(|n| n != target && !(n.starts_with("__") && n.ends_with("_veneer")));
     }
     Ok(found)
+}
+
+/// Each byte of a decoded instruction, mapped to that instruction's address.
+/// Data the disassembler recognizes (`.word`, `.short`) is not code.
+fn instruction_bytes(listing: &str) -> Result<HashMap<u64, u64>> {
+    let mut code = HashMap::new();
+    for line in listing.lines() {
+        if let Some(m) = INSTRUCTION
+            .captures(line)
+            .filter(|m| !m[3].starts_with('.'))
+        {
+            let at = parse_hex(&m[1])?;
+            let bytes = m[2].replace(' ', "").len() as u64 / 2;
+            code.extend((at..at + bytes).map(|byte| (byte, at)));
+        }
+    }
+    Ok(code)
+}
+
+/// Whether the four bytes at `location` are one decoded instruction. A
+/// stored address in code is a literal-pool word, which the disassembler
+/// shows as data (.word) or, without mapping symbols, as two unrelated
+/// 16-bit instructions (observed: CmdRamHelp's pointer to shell_cmd_table).
+/// Only a single instruction whose encoding happens to equal an address is
+/// not a reference (observed: an eor.w in SHA-512 spelled shell_cmd_table's
+/// address).
+fn one_instruction(code: &HashMap<u64, u64>, location: u64) -> bool {
+    let start = code.get(&location);
+    start.is_some() && (1..4).all(|i| code.get(&(location + i)) == start)
 }
 
 /// What one core's image may and must link.
@@ -545,6 +559,20 @@ mod tests {
             .captures("100057bc:\t100210f8 \t.word\t0x100210f8")
             .unwrap();
         assert!(word[3].starts_with('.'));
+    }
+
+    #[test]
+    fn a_literal_decoded_as_two_instructions_is_still_a_reference() {
+        let listing = " e014a28:\tea80 0e06 \teor.w\tlr, r0, r6\n \
+                       e002fd4:\t2fd0      \tcmp\tr7, #208\n \
+                       e002fd6:\t0e07      \tlsrs\tr7, r0, #24\n \
+                       e002fd8:\t8bd9      \t.short\t0x8bd9\n";
+        let code = instruction_bytes(listing).unwrap();
+
+        assert!(one_instruction(&code, 0xe014a28));
+        assert!(!one_instruction(&code, 0xe002fd4));
+        assert!(!one_instruction(&code, 0xe002fd8));
+        assert!(!one_instruction(&code, 0x1000));
     }
 
     #[test]

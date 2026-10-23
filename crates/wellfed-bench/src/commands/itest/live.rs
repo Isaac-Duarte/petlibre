@@ -14,14 +14,15 @@
 //! runs. The chain runs on its own thread ([`Capture`]), so the port stays
 //! held while the suite blocks on a build or the forger.
 
-use std::fs::{self, File};
+use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use serde::de::DeserializeOwned;
+use serde::de::{DeserializeOwned, IgnoredAny};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::{Fault, ItestArgs, Rig, Server};
@@ -29,16 +30,56 @@ use crate::commands::Bench;
 use crate::commands::ota::{OtaArgs, Staged, Timing};
 use crate::config::{CAPTURES, VERIFICATION};
 use crate::relay::{POWER, STRAP};
+use crate::server::{ForgedCase, LocalStatus, Request};
+use crate::status::StepState;
 use crate::tools::Capture;
 use crate::{Error, Result, require};
 
 /// The observer's own limit for one capture.
-pub const SEGMENT_SECONDS: f64 = 180.0;
+const SEGMENT_SECONDS: f64 = 180.0;
 const START_SECONDS: f64 = 20.0;
 const STOP_SECONDS: f64 = 10.0;
 const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
 /// The forger waits up to 90 s for health, then 10 s per case.
 const FORGE_SECONDS: u64 = 90;
+
+/// The parts of `wellfed-local`'s config (`--config`) the rig uses.
+#[derive(Deserialize)]
+struct ServerConfig {
+    api_token: String,
+    http_listen: SocketAddr,
+    mqtt_listen: SocketAddr,
+}
+
+/// `private/hotspot.json` (`--hotspot`).
+#[derive(Deserialize)]
+struct Hotspot {
+    /// The NetworkManager connection that serves the feeder's network.
+    connection: String,
+}
+
+/// `POST /api/replacement/ota/offer`; no fields clears the offer.
+#[derive(Serialize)]
+struct Offer<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    manifest: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    image: Option<&'a str>,
+}
+
+/// The server's answer to a request it sent on.
+#[derive(Deserialize)]
+struct Sent {
+    id: String,
+}
+
+/// Whether an API call carries the server's bearer token.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Auth {
+    Token,
+    /// `/health`, which answers anyone on loopback.
+    Anonymous,
+}
 
 #[derive(Default)]
 struct Children {
@@ -47,7 +88,7 @@ struct Children {
     fault: Option<Child>,
 }
 
-pub struct LiveRig<'b> {
+pub(super) struct LiveRig<'b> {
     bench: &'b mut Bench,
     name: String,
     started: Instant,
@@ -67,52 +108,32 @@ pub struct LiveRig<'b> {
     /// The segment being read, by index, and how far into it.
     reading: (usize, u64),
     /// Root-relative capture directories, for the summary.
-    pub captures: Vec<String>,
+    pub(super) captures: Vec<String>,
     server_log: PathBuf,
     restored: bool,
-}
-
-fn read_json<T: DeserializeOwned>(root: &Path, path: &Path) -> Result<T> {
-    let text = fs::read_to_string(root.join(path))
-        .map_err(|error| Error::Bench(format!("{}: {error}", path.display())))?;
-    serde_json::from_str(&text)
-        .map_err(|error| Error::Bench(format!("{}: {error}", path.display())))
-}
-
-fn address(config: &Value, key: &str) -> Result<SocketAddr> {
-    config[key]
-        .as_str()
-        .and_then(|text| text.parse().ok())
-        .ok_or_else(|| Error::Bench(format!("The server config has no usable {key}")))
 }
 
 impl<'b> LiveRig<'b> {
     /// Check everything that can refuse before the bench changes: configs,
     /// binaries, ports, unused evidence names and no `serve` running.
-    pub fn open(bench: &'b mut Bench, args: &ItestArgs, local_bin: PathBuf) -> Result<Self> {
+    pub(super) fn open(bench: &'b mut Bench, args: &ItestArgs, local_bin: PathBuf) -> Result<Self> {
         let root = bench.root.clone();
         let name = args.name().to_string();
-        let config: Value = read_json(&root, &args.config)?;
-        let hotspot: Value = read_json(&root, &args.hotspot)?;
-
-        let connection = hotspot["connection"]
-            .as_str()
-            .filter(|c| !c.is_empty())
-            .ok_or_else(|| Error::Bench(format!("{} has no connection", args.hotspot.display())))?
-            .to_string();
-        let token = config["api_token"]
-            .as_str()
-            .ok_or_else(|| Error::Bench("The server config has no api_token".into()))?
-            .to_string();
+        let config: ServerConfig = crate::load(&root, &args.config)?;
+        let hotspot: Hotspot = crate::load(&root, &args.hotspot)?;
+        require(
+            !hotspot.connection.is_empty(),
+            format!("{} has no connection", args.hotspot.display()),
+        )?;
 
         let rig = Self {
             name: name.clone(),
             started: Instant::now(),
             config_arg: args.config.display().to_string(),
-            http: address(&config, "http_listen")?,
-            mqtt: address(&config, "mqtt_listen")?,
-            token,
-            connection,
+            http: config.http_listen,
+            mqtt: config.mqtt_listen,
+            token: config.api_token,
+            connection: hotspot.connection,
             hotspot_was_up: None,
             hotspot_up: false,
             power: args.power,
@@ -151,7 +172,7 @@ impl<'b> LiveRig<'b> {
         rig.bench.fresh(&rig.server_log)?;
         rig.bench.fresh(&rig.segment_path(1))?;
         require(
-            rig.get("/health", false).is_err(),
+            rig.get::<IgnoredAny>("/health", Auth::Anonymous).is_err(),
             format!(
                 "Something already answers on {}; stop that serve first (the suite runs its own)",
                 rig.http
@@ -162,7 +183,7 @@ impl<'b> LiveRig<'b> {
 
     /// Bring the bench to its test state: hotspot up, feeder powered (with
     /// `--power`), the UART held and `serve` answering.
-    pub fn start(&mut self) -> Result<()> {
+    pub(super) fn start(&mut self) -> Result<()> {
         let up = self.hotspot_active()?;
         self.hotspot_was_up = Some(up);
         if up {
@@ -272,7 +293,7 @@ impl<'b> LiveRig<'b> {
     fn start_serve(&mut self) -> Result<()> {
         let mut child = self.spawn(&self.local_bin(), &["serve", "--config", &self.config_arg])?;
         let ready = self.until_ready(&mut child, "wellfed-local serve", || {
-            self.get("/health", false).is_ok()
+            self.get::<IgnoredAny>("/health", Auth::Anonymous).is_ok()
         });
         self.children.serve = Some(child);
         ready
@@ -333,24 +354,17 @@ impl<'b> LiveRig<'b> {
 
     /// One HTTP/1.1 exchange with `serve`'s loopback API; the status code
     /// and JSON body.
-    fn http(
-        &self,
-        method: &str,
-        path: &str,
-        auth: bool,
-        body: Option<&Value>,
-    ) -> Result<(u16, Value)> {
+    fn http(&self, method: &str, path: &str, auth: Auth, body: &str) -> Result<(u16, Value)> {
         let mut stream = TcpStream::connect_timeout(&self.http, Duration::from_secs(2))?;
         stream.set_read_timeout(Some(HTTP_TIMEOUT))?;
         stream.set_write_timeout(Some(HTTP_TIMEOUT))?;
 
-        let body = body.map(|b| b.to_string()).unwrap_or_default();
         let mut request = format!(
             "{method} {path} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n",
             self.http,
             body.len()
         );
-        if auth {
+        if auth == Auth::Token {
             request += &format!("Authorization: Bearer {}\r\n", self.token);
         }
         request += "\r\n";
@@ -362,22 +376,23 @@ impl<'b> LiveRig<'b> {
         parse_response(&response)
     }
 
-    fn get(&self, path: &str, auth: bool) -> Result<Value> {
-        match self.http("GET", path, auth, None)? {
-            (200, value) => Ok(value),
+    fn get<T: DeserializeOwned>(&self, path: &str, auth: Auth) -> Result<T> {
+        match self.http("GET", path, auth, "")? {
+            (200, value) => Ok(serde_json::from_value(value)?),
             (code, value) => Err(Error::Bench(format!("GET {path}: {code} {value}"))),
         }
     }
 
-    fn post(&self, path: &str, body: &Value) -> Result<Value> {
-        match self.http("POST", path, true, Some(body))? {
-            (200, value) => Ok(value),
+    fn post<T: DeserializeOwned>(&self, path: &str, body: &impl Serialize) -> Result<T> {
+        let body = serde_json::to_string(body)?;
+        match self.http("POST", path, Auth::Token, &body)? {
+            (200, value) => Ok(serde_json::from_value(value)?),
             (code, value) => Err(Error::Bench(format!("POST {path}: {code} {value}"))),
         }
     }
 
     /// Put the bench back as [`Self::start`] found it. Safe to repeat.
-    pub fn restore(&mut self) {
+    pub(super) fn restore(&mut self) {
         if self.restored {
             return;
         }
@@ -409,8 +424,9 @@ impl Drop for LiveRig<'_> {
 }
 
 /// Split an HTTP/1.1 response into its status code and JSON body, decoding
-/// a chunked body.
-pub fn parse_response(response: &[u8]) -> Result<(u16, Value)> {
+/// a chunked body. The body stays a `Value` until the caller types it, so a
+/// refusal's body can be shown whatever its shape.
+pub(super) fn parse_response(response: &[u8]) -> Result<(u16, Value)> {
     let text = String::from_utf8_lossy(response);
     let (head, body) = text
         .split_once("\r\n\r\n")
@@ -459,7 +475,7 @@ impl Rig for LiveRig<'_> {
     }
 
     fn review_build(&mut self, review: &Path) -> Result<String> {
-        let manifest = read_json(&self.bench.root, &review.join("build-manifest.json"))?;
+        let manifest = crate::load(&self.bench.root, &review.join("build-manifest.json"))?;
         crate::commands::ota::build_id(&manifest)
     }
 
@@ -486,7 +502,7 @@ impl Rig for LiveRig<'_> {
         }
     }
 
-    fn forge(&mut self) -> Result<Vec<Value>> {
+    fn forge(&mut self) -> Result<Vec<ForgedCase>> {
         require(
             self.children.serve.is_none(),
             "request_forger runs beside the bare broker only",
@@ -509,23 +525,21 @@ impl Rig for LiveRig<'_> {
     }
 
     fn offer(&mut self, staged: Option<&Staged>) -> Result<()> {
-        let body = match staged {
-            Some(staged) => serde_json::json!({"manifest": staged.manifest, "image": staged.image}),
-            None => serde_json::json!({}),
+        let body = Offer {
+            manifest: staged.map(|s| s.manifest.as_str()),
+            image: staged.map(|s| s.image.as_str()),
         };
-        self.post("/api/replacement/ota/offer", &body).map(|_| ())
+        self.post::<IgnoredAny>("/api/replacement/ota/offer", &body)
+            .map(|_| ())
     }
 
-    fn request(&mut self, body: &Value) -> Result<String> {
-        let answer = self.post("/api/replacement/request", body)?;
-        answer["id"]
-            .as_str()
-            .map(str::to_string)
-            .ok_or_else(|| Error::Bench(format!("Request answer has no id: {answer}")))
+    fn request(&mut self, request: &Request) -> Result<String> {
+        let sent: Sent = self.post("/api/replacement/request", request)?;
+        Ok(sent.id)
     }
 
-    fn status(&mut self) -> Result<Value> {
-        self.get("/api/status", true)
+    fn status(&mut self) -> Result<LocalStatus> {
+        self.get("/api/status", Auth::Token)
     }
 
     fn hotspot(&mut self, up: bool) -> Result<()> {
@@ -600,7 +614,7 @@ impl Rig for LiveRig<'_> {
         self.bench.status.line(text);
     }
 
-    fn scenario(&mut self, name: &str, state: &str) {
+    fn scenario(&mut self, name: &str, state: StepState) {
         self.bench.status.mark(name, state);
     }
 }

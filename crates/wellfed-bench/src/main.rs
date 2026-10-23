@@ -7,7 +7,7 @@
 //! reads; `demo` refuses to start while another command is recorded as
 //! running there.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::atomic::Ordering;
 
@@ -20,9 +20,7 @@ use wellfed_bench::commands::{
 use wellfed_bench::config::{Config, STATUS_DIR};
 use wellfed_bench::relay::Relay;
 use wellfed_bench::status::{self, Status};
-use wellfed_bench::tools::{
-    Processes, Tools, default_build_bin, default_flash_bin, default_local_bin,
-};
+use wellfed_bench::tools::{Processes, default_build_bin, default_flash_bin, default_local_bin};
 use wellfed_bench::{Error, INTERRUPTED, ui};
 
 #[derive(Parser)]
@@ -186,13 +184,20 @@ fn run(cli: Cli) -> wellfed_bench::Result<u8> {
         .root
         .canonicalize()
         .map_err(|error| Error::Bench(format!("--root {}: {error}", cli.root.display())))?;
-    let flash_bin = cli.flash_bin.clone().unwrap_or_else(default_flash_bin);
+    let tools = Processes {
+        root: root.clone(),
+        flash_bin: cli.flash_bin.unwrap_or_else(default_flash_bin),
+        local_bin: cli.local_bin.unwrap_or_else(default_local_bin),
+        build_bin: cli.build_bin.unwrap_or_else(default_build_bin),
+    };
 
     let page = if cli.ui {
-        let listen = ui::Listen::new(&cli.listen, cli.ui_port)?;
-        let handle = ui::start(root.clone(), flash_bin.clone(), &listen)?;
-        wellfed_bench::say!("Bench page on {} (Ctrl+C to stop)", listen.url());
-        Some(handle)
+        Some(start_page(
+            &root,
+            &tools.flash_bin,
+            &cli.listen,
+            cli.ui_port,
+        )?)
     } else {
         None
     };
@@ -226,56 +231,11 @@ fn run(cli: Cli) -> wellfed_bench::Result<u8> {
         )));
     }
 
-    let config = Config::load(&root)?;
-    // The over-the-air loop only captures, so it leaves the relay board free;
-    // the integration suite holds it only for --power's cold boots.
-    let relay = match &command {
-        Command::Ota(_) => Relay::detached(),
-        Command::Itest(args) if !args.power => Relay::detached(),
-        _ => Relay::open(&config.relay_port)?,
-    };
-    let local_bin = cli.local_bin.clone().unwrap_or_else(default_local_bin);
-    let tools = Processes {
-        root: root.clone(),
-        flash_bin,
-        local_bin: local_bin.clone(),
-        build_bin: cli.build_bin.clone().unwrap_or_else(default_build_bin),
-    };
-    let flash_tool = tools.flash_tool();
-    let mut bench = Bench {
-        root: root.clone(),
-        config,
-        relay,
-        status: Status::disabled(),
-        tools: Box::new(tools),
-        sleep: wellfed_bench::sleep,
-        off_seconds: cli.off_seconds,
-    };
-
+    let local_bin = tools.local_bin.clone();
+    let mut bench = open_bench(root, tools, &command, cli.off_seconds)?;
     // `status` only reads, so it leaves no status record behind.
-    let label = command.label();
     if !matches!(command, Command::Status) {
-        bench.status = Status::new(&root, status_dir);
-        let steps: Vec<&str> = match &command {
-            Command::Demo(args) => commands::demo_patterns(args)
-                .into_iter()
-                .map(pattern_name)
-                .collect(),
-            Command::Capture { .. } => vec!["capture"],
-            Command::Ota(args) => commands::ota::steps(args.build),
-            Command::Itest(args) => commands::itest::select(args)?
-                .iter()
-                .map(|scenario| scenario.name)
-                .collect(),
-            _ => commands::steps(label).to_vec(),
-        };
-        bench.status.begin(label, command.name(), &steps)?;
-        if matches!(command, Command::Itest(_)) {
-            bench.status.fix_steps();
-        }
-        if let Some(tool) = flash_tool {
-            bench.status.flash_tool(tool);
-        }
+        record_start(&mut bench, &command, status_dir)?;
     }
 
     let result = dispatch(&mut bench, &command, local_bin);
@@ -285,6 +245,77 @@ fn run(cli: Cli) -> wellfed_bench::Result<u8> {
     };
     bench.status.finish(code, error);
     result
+}
+
+/// Bind the progress page, so a busy port refuses before any bench command.
+fn start_page(
+    root: &Path,
+    flash_bin: &Path,
+    listen: &str,
+    port: u16,
+) -> wellfed_bench::Result<std::thread::JoinHandle<()>> {
+    let listen = ui::Listen::new(listen, port)?;
+    let handle = ui::start(root.to_path_buf(), flash_bin.to_path_buf(), &listen)?;
+    wellfed_bench::say!("Bench page on {} (Ctrl+C to stop)", listen.url());
+    Ok(handle)
+}
+
+/// The bench a command runs on: its config, the relay board when the
+/// command may switch it, and the real tools.
+fn open_bench(
+    root: PathBuf,
+    tools: Processes,
+    command: &Command,
+    off_seconds: f64,
+) -> wellfed_bench::Result<Bench> {
+    let config = Config::load(&root)?;
+    // The over-the-air loop only captures, so it leaves the relay board free;
+    // the integration suite holds it only for --power's cold boots.
+    let relay = match command {
+        Command::Ota(_) => Relay::detached(),
+        Command::Itest(args) if !args.power => Relay::detached(),
+        _ => Relay::open(&config.relay_port)?,
+    };
+
+    Ok(Bench {
+        root,
+        config,
+        relay,
+        status: Status::disabled(),
+        tools: Box::new(tools),
+        sleep: wellfed_bench::sleep,
+        off_seconds,
+    })
+}
+
+/// Start the command's progress record for the page: its steps and the
+/// flash client it runs.
+fn record_start(
+    bench: &mut Bench,
+    command: &Command,
+    status_dir: PathBuf,
+) -> wellfed_bench::Result<()> {
+    let label = command.label();
+    let steps: Vec<&str> = match command {
+        Command::Demo(args) => commands::demo_patterns(args)
+            .into_iter()
+            .map(pattern_name)
+            .collect(),
+        Command::Capture { .. } => vec!["capture"],
+        Command::Ota(args) => commands::ota::steps(args.source()),
+        Command::Itest(args) => commands::itest::steps(args)?,
+        _ => commands::steps(label).to_vec(),
+    };
+
+    bench.status = Status::new(&bench.root, status_dir);
+    bench.status.begin(label, command.name(), &steps)?;
+    if matches!(command, Command::Itest(_)) {
+        bench.status.fix_steps();
+    }
+    if let Some(tool) = bench.tools.flash_tool() {
+        bench.status.flash_tool(tool);
+    }
+    Ok(())
 }
 
 fn dispatch(

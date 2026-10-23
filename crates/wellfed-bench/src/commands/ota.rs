@@ -6,8 +6,8 @@
 //!
 //! The bench never starts the server or the hotspot, never switches a relay
 //! here, and never writes to the feeder. [`Watch`] classifies the feeder's
-//! `PL…` lines and [`health_matches`] reads a status document, both without
-//! I/O, so they are tested on real lines and documents.
+//! `PL…` lines without I/O, so it is tested on real lines; the server's
+//! health is read with [`LocalStatus::health_matches`].
 
 use std::fmt;
 use std::fs;
@@ -18,14 +18,14 @@ use clap::Args;
 use wellfed_core::record::{Record, tag};
 use wellfed_formats::capture::SerialEvent;
 use wellfed_formats::manifest::BuildManifest;
-use serde_json::Value;
 
 use super::Bench;
 use crate::config::{CAPTURES, VERIFICATION};
+use crate::server::LocalStatus;
 use crate::{Error, Result, require};
 
 /// Each capture segment; the classifier reads it once it ends.
-pub const SEGMENT_SECONDS: f64 = 60.0;
+const SEGMENT_SECONDS: f64 = 60.0;
 
 /// `wellfed-core::ota`'s signed manifest: magic, version (u32 LE at 8),
 /// image length, bank, hashes, then the 64-byte signature. Only the header is
@@ -34,21 +34,33 @@ const MANIFEST_MAGIC: &[u8; 8] = b"PLOTA1\0\0";
 const MANIFEST_LEN: usize = 148;
 
 /// Status steps after the two `wellfed-local` runs, in order.
-pub const STAGES: [&str; 4] = ["give way", "download", "new build boot", "confirm"];
+pub(crate) const STAGES: [&str; 4] = ["give way", "download", "new build boot", "confirm"];
 /// Status steps of `--build`, before signing.
-pub const BUILD_STEPS: [&str; 2] = ["firmware build", "review image"];
+const BUILD_STEPS: [&str; 2] = ["firmware build", "review image"];
 /// The last status step: the server's view of the new build.
-pub const HEALTH_STEP: &str = "health";
+pub(crate) const HEALTH_STEP: &str = "health";
 
 /// The build's output, which the review freezes (root-relative).
 const BUILD_OUTPUT: &str = "private/firmware-build/plaf103-firstboot";
 /// The firmware publishes health every 30 s; allow three periods.
-pub const HEALTH_SECONDS: f64 = 90.0;
+const HEALTH_SECONDS: f64 = 90.0;
 const HEALTH_POLL_SECONDS: f64 = 5.0;
 
+/// Where a run takes the image it offers from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Source {
+    /// A frozen review, `--review`.
+    Review,
+    /// `--build`: build this checkout and freeze its review first.
+    Build,
+}
+
 /// Status steps for one `ota` run.
-pub fn steps(build: bool) -> Vec<&'static str> {
-    let built: &[&str] = if build { &BUILD_STEPS } else { &[] };
+pub fn steps(source: Source) -> Vec<&'static str> {
+    let built: &[&str] = match source {
+        Source::Build => &BUILD_STEPS,
+        Source::Review => &[],
+    };
     built
         .iter()
         .chain(&["wellfed-local ota-sign", "wellfed-local ota-offer"])
@@ -72,7 +84,7 @@ pub enum Variant {
 
 impl Variant {
     /// The `wellfed-build` flag that selects it.
-    pub fn flag(self) -> &'static str {
+    pub(crate) fn flag(self) -> &'static str {
         match self {
             Self::Fw11Reset => "--trial-reset",
             Self::Fw11Fail => "--trial-fail",
@@ -82,7 +94,7 @@ impl Variant {
 }
 
 /// `--variant`'s parser, with a reason for the motion variant.
-pub fn parse_variant(text: &str) -> std::result::Result<Variant, String> {
+pub(crate) fn parse_variant(text: &str) -> std::result::Result<Variant, String> {
     match text {
         "fw11-reset" => Ok(Variant::Fw11Reset),
         "fw11-fail" => Ok(Variant::Fw11Fail),
@@ -130,14 +142,24 @@ pub struct OtaArgs {
     pub attended_motion: bool,
 }
 
+impl OtaArgs {
+    pub fn source(&self) -> Source {
+        if self.build {
+            Source::Build
+        } else {
+            Source::Review
+        }
+    }
+}
+
 /// The version in a manifest file's header, if it has one.
-pub fn manifest_version(bytes: &[u8]) -> Option<u32> {
+fn manifest_version(bytes: &[u8]) -> Option<u32> {
     (bytes.len() == MANIFEST_LEN && bytes[..8] == MANIFEST_MAGIC[..])
         .then(|| u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]))
 }
 
 /// The highest version among `*.manifest` files in `directory`, with its file.
-pub fn highest_signed(directory: &Path) -> Option<(u32, PathBuf)> {
+fn highest_signed(directory: &Path) -> Option<(u32, PathBuf)> {
     fs::read_dir(directory)
         .ok()?
         .flatten()
@@ -149,7 +171,7 @@ pub fn highest_signed(directory: &Path) -> Option<(u32, PathBuf)> {
 
 /// One thing the feeder reported, in the order it came.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Event {
+pub(crate) enum Event {
     /// The running build saw an offer; `same` when it is its own build.
     Offer {
         version: Option<u32>,
@@ -254,7 +276,7 @@ impl fmt::Display for Event {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Outcome {
+pub(crate) enum Outcome {
     /// The offered build started on bank 1, then confirmed itself.
     Passed,
     /// KM0 rejected the trial; `boot` is the last trial count seen.
@@ -265,7 +287,7 @@ pub enum Outcome {
 
 /// Classifies UART text, fed in pieces, against one offered build.
 #[derive(Debug)]
-pub struct Watch {
+pub(crate) struct Watch {
     build: String,
     pending: Vec<u8>,
     /// Stream bytes before `pending`.
@@ -288,7 +310,7 @@ const TAGS: [&str; 5] = [
 const MAX_LINE: usize = 4096;
 
 impl Watch {
-    pub fn new(build: &str) -> Self {
+    pub(crate) fn new(build: &str) -> Self {
         Self {
             build: build.to_ascii_lowercase(),
             pending: Vec::new(),
@@ -300,13 +322,13 @@ impl Watch {
         }
     }
 
-    pub fn outcome(&self) -> Option<&Outcome> {
+    pub(crate) fn outcome(&self) -> Option<&Outcome> {
         self.outcome.as_ref()
     }
 
     /// Take more UART bytes; the events in the complete lines among them. A
     /// partial last line waits for the next piece. Nothing counts after an outcome.
-    pub fn feed(&mut self, bytes: &[u8]) -> Vec<Event> {
+    pub(crate) fn feed(&mut self, bytes: &[u8]) -> Vec<Event> {
         self.feed_at(bytes)
             .into_iter()
             .map(|(_, event)| event)
@@ -315,7 +337,7 @@ impl Watch {
 
     /// As [`Self::feed`], with each event's stream offset: where its line
     /// ended, counted from the first byte ever fed.
-    pub fn feed_at(&mut self, bytes: &[u8]) -> Vec<(u64, Event)> {
+    pub(crate) fn feed_at(&mut self, bytes: &[u8]) -> Vec<(u64, Event)> {
         self.pending.extend_from_slice(bytes);
         let mut events = Vec::new();
 
@@ -424,7 +446,7 @@ impl Watch {
 
 /// When the receive byte at `offset` arrived, in Unix seconds, from a
 /// capture's `serial-events.jsonl` (one timed record per received chunk).
-pub fn arrival(events: &str, offset: u64) -> Option<f64> {
+pub(crate) fn arrival(events: &str, offset: u64) -> Option<f64> {
     let event = SerialEvent::parse_lines(events).find(|event| event.received(offset))?;
     let utc = chrono::DateTime::parse_from_rfc3339(&event.utc).ok()?;
     Some(utc.timestamp_micros() as f64 / 1e6)
@@ -433,14 +455,14 @@ pub fn arrival(events: &str, offset: u64) -> Option<f64> {
 /// When a feeder event was seen. `exact` when the capture's chunk timing gave
 /// it; otherwise it is the end of the segment it arrived in (up to 60 s late).
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Stamp {
+pub(crate) struct Stamp {
     pub at: f64,
     pub exact: bool,
 }
 
 /// The FW12 record: how long each phase of one run took, in seconds.
 #[derive(Debug, Default, Clone, PartialEq)]
-pub struct Timing {
+pub(crate) struct Timing {
     /// Some child ran, so there is something to report.
     pub ran: bool,
     /// `--build` found a review of the same sources and skipped the build.
@@ -461,7 +483,7 @@ fn between(from: Option<Stamp>, to: Option<Stamp>) -> Option<(f64, bool)> {
 }
 
 /// Seconds as `8.2 s` or `4 min 07 s`.
-pub fn duration(seconds: f64) -> String {
+pub(crate) fn duration(seconds: f64) -> String {
     if seconds < 60.0 {
         return format!("{seconds:.1} s");
     }
@@ -471,7 +493,8 @@ pub fn duration(seconds: f64) -> String {
 
 impl Timing {
     /// The summary lines, one per phase; a phase not reached shows `-`.
-    pub fn summary(&self, built: bool) -> Vec<String> {
+    pub(crate) fn summary(&self, source: Source) -> Vec<String> {
+        let built = source == Source::Build;
         let skipped = || if built { "-" } else { "skipped (--review)" }.to_string();
         let reused = || "reused (same sources)".to_string();
         let plain = |value: Option<f64>| value.map_or_else(|| "-".into(), duration);
@@ -521,84 +544,27 @@ impl Timing {
     }
 }
 
-/// Whether a `wellfed-local status` document shows `build` running and
-/// healthy on bank 1: a one-line report, or what is missing.
-pub fn health_matches(status: &Value, build: &str) -> std::result::Result<String, String> {
-    let replacement = &status["replacement"];
-    if replacement.is_null() {
-        return Err("the server has no replacement-firmware role".into());
-    }
-    let health = &replacement["health"];
-    if health.is_null() {
-        return Err("no health received yet".into());
-    }
-
-    let reported = health["build"].as_str().unwrap_or("").to_ascii_lowercase();
-    if reported != build {
-        return Err(format!(
-            "health reports build {}",
-            reported
-                .get(..12)
-                .filter(|s| !s.is_empty())
-                .unwrap_or("none")
-        ));
-    }
-    if health["bank"].as_u64() != Some(1) {
-        return Err(format!("health reports bank {}", health["bank"]));
-    }
-    if replacement["online"] != true {
-        return Err("health reports the firmware offline".into());
-    }
-    if replacement["stale"] != false {
-        return Err(format!(
-            "health is stale (age {} ms)",
-            replacement["age_ms"]
-        ));
-    }
-
-    let faults = health["faults"]
-        .as_array()
-        .map(|faults| {
-            faults
-                .iter()
-                .map(|f| f.as_str().map_or_else(|| f.to_string(), str::to_string))
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    let mut report = format!(
-        "Health: build {} on bank 1, seq {}, outputs {}, faults {}",
-        &build[..12],
-        health["seq"],
-        health["outputs"].as_str().unwrap_or("?"),
-        if faults.is_empty() {
-            "none".into()
-        } else {
-            faults.join(", ")
-        }
-    );
-    if let Some(clock) = health["clock"].as_object() {
-        let valid = if clock.contains_key("unix_ms") {
-            "valid"
-        } else {
-            "not set"
-        };
-        report += &format!(
-            ", clock {valid} (syncs {})",
-            clock.get("syncs").unwrap_or(&Value::Null)
-        );
-    }
-    Ok(report)
-}
-
 /// A signed update ready to offer: root-relative paths under private/, as
 /// the server's offer takes them.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Staged {
+pub(crate) struct Staged {
     pub build: String,
     pub version: u32,
     pub review: PathBuf,
     pub manifest: String,
     pub image: String,
+}
+
+/// What a run will offer, once every refusal has passed.
+struct OtaPlan {
+    /// Root-relative review: the one given, found, or about to be built.
+    review: PathBuf,
+    python: PathBuf,
+    /// No review of these sources exists yet, so `--build` builds one.
+    build: bool,
+    version: u32,
+    /// Where the signed manifest goes.
+    signed: PathBuf,
 }
 
 /// A frozen review's startup identity, or a refusal.
@@ -631,12 +597,17 @@ impl Bench {
 
     /// A root-relative path under private/, as `wellfed-local ota-offer` requires.
     fn private_arg(&self, path: &Path) -> Result<String> {
-        let relative = path.strip_prefix(&self.root).ok();
-        require(
-            relative.is_some_and(|r| r.starts_with("private")),
-            format!("{} must be under private/", path.display()),
-        )?;
-        Ok(relative.unwrap().display().to_string())
+        let Some(relative) = path
+            .strip_prefix(&self.root)
+            .ok()
+            .filter(|relative| relative.starts_with("private"))
+        else {
+            return Err(Error::Bench(format!(
+                "{} must be under private/",
+                path.display()
+            )));
+        };
+        Ok(relative.display().to_string())
     }
 
     fn ota_version(&self, given: Option<u32>) -> Result<u32> {
@@ -733,7 +704,7 @@ impl Bench {
 
         if timing.ran {
             timing.total = started.elapsed().as_secs_f64();
-            for line in timing.summary(args.build) {
+            for line in timing.summary(args.source()) {
                 self.note(&line);
             }
         }
@@ -785,59 +756,13 @@ impl Bench {
         args: &OtaArgs,
         timing: &mut Timing,
     ) -> Result<Option<Staged>> {
-        require(args.minutes > 0.0, "--minutes must be positive")?;
-        // clap counts a flag as always present, so this pairing is checked here.
-        require(
-            args.build || (args.variant.is_none() && args.python.is_none()),
-            "--variant and --python apply to --build only",
-        )?;
-        let mut review_arg = match (&args.review, args.build) {
-            (_, true) => PathBuf::from(VERIFICATION).join(format!("{}-review", args.name)),
-            (Some(review), false) => review.clone(),
-            (None, false) => return Err(Error::Bench("Give --review DIR or --build".into())),
-        };
+        let plan = self.ota_plan(args, timing)?;
 
-        // Everything that can refuse does so before the build starts.
-        let python = self.root.join(
-            args.python
-                .as_deref()
-                .unwrap_or(Path::new(".venv/bin/python")),
-        );
-        let mut cached = None;
-        if args.build {
-            require(
-                python.is_file(),
-                format!(
-                    "{} not found; create the virtual environment or pass --python",
-                    self.rel(&python)
-                ),
-            )?;
-            cached = self.cached_review(args)?;
-            match &cached {
-                Some(found) => {
-                    self.note(&format!(
-                        "Reusing {}: built from these sources (--rebuild to build anyway)",
-                        found.display()
-                    ));
-                    review_arg = found.clone();
-                    timing.reused = true;
-                }
-                None => self.fresh(&self.root.join(&review_arg))?,
-            }
-        }
-        let review = self.root.join(&review_arg);
-        self.unused_segments(&args.name)?;
-        let version = self.ota_version(args.version)?;
-        let signed = self
-            .root
-            .join(VERIFICATION)
-            .join(format!("{}-v{version}.manifest", args.name));
-        self.fresh(&signed)?;
-
-        if args.build && cached.is_none() && !self.ota_build(args, &python, &review_arg, timing)? {
+        if plan.build && !self.ota_build(args, &plan.python, &plan.review, timing)? {
             return Ok(None);
         }
 
+        let review = self.root.join(&plan.review);
         let image = review.join("image.bin");
         require(
             image.is_file(),
@@ -857,8 +782,81 @@ impl Bench {
         }
         say!("Build {build}");
 
-        let image_arg = self.private_arg(&image)?;
-        let signed_arg = self.private_arg(&signed)?;
+        self.ota_sign(plan, build, &image, timing)
+    }
+
+    /// Every refusal `ota_stage` can make, before anything is built: the
+    /// review to offer, the interpreter for a build, the version to sign.
+    fn ota_plan(&mut self, args: &OtaArgs, timing: &mut Timing) -> Result<OtaPlan> {
+        require(args.minutes > 0.0, "--minutes must be positive")?;
+        // clap counts a flag as always present, so this pairing is checked here.
+        require(
+            args.build || (args.variant.is_none() && args.python.is_none()),
+            "--variant and --python apply to --build only",
+        )?;
+        let mut review = match (&args.review, args.build) {
+            (_, true) => PathBuf::from(VERIFICATION).join(format!("{}-review", args.name)),
+            (Some(review), false) => review.clone(),
+            (None, false) => return Err(Error::Bench("Give --review DIR or --build".into())),
+        };
+
+        let python = self.root.join(
+            args.python
+                .as_deref()
+                .unwrap_or(Path::new(".venv/bin/python")),
+        );
+        let mut build = false;
+        if args.build {
+            require(
+                python.is_file(),
+                format!(
+                    "{} not found; create the virtual environment or pass --python",
+                    self.rel(&python)
+                ),
+            )?;
+            match self.cached_review(args)? {
+                Some(found) => {
+                    self.note(&format!(
+                        "Reusing {}: built from these sources (--rebuild to build anyway)",
+                        found.display()
+                    ));
+                    review = found;
+                    timing.reused = true;
+                }
+                None => {
+                    self.fresh(&self.root.join(&review))?;
+                    build = true;
+                }
+            }
+        }
+
+        self.unused_segments(&args.name)?;
+        let version = self.ota_version(args.version)?;
+        let signed = self
+            .root
+            .join(VERIFICATION)
+            .join(format!("{}-v{version}.manifest", args.name));
+        self.fresh(&signed)?;
+
+        Ok(OtaPlan {
+            review,
+            python,
+            build,
+            version,
+            signed,
+        })
+    }
+
+    /// Sign `image` as `plan`'s version of `build`; `None` if signing failed.
+    fn ota_sign(
+        &mut self,
+        plan: OtaPlan,
+        build: String,
+        image: &Path,
+        timing: &mut Timing,
+    ) -> Result<Option<Staged>> {
+        let image_arg = self.private_arg(image)?;
+        let signed_arg = self.private_arg(&plan.signed)?;
         fs::create_dir_all(self.root.join(VERIFICATION))?;
 
         let sign = [
@@ -866,7 +864,7 @@ impl Bench {
             "--image",
             &image_arg,
             "--version",
-            &version.to_string(),
+            &plan.version.to_string(),
             "--build-id",
             &build,
             "--output",
@@ -883,8 +881,8 @@ impl Bench {
 
         Ok(Some(Staged {
             build,
-            version,
-            review: review_arg,
+            version: plan.version,
+            review: plan.review,
             manifest: signed_arg,
             image: image_arg,
         }))
@@ -1070,15 +1068,15 @@ impl Bench {
                 return Err(Error::Interrupted);
             }
             let verdict = if output.code == 0 {
-                serde_json::from_str::<Value>(&output.stdout)
-                    .map_err(|error| format!("unreadable status: {error}"))
-                    .and_then(|status| health_matches(&status, build))
+                serde_json::from_str::<LocalStatus>(&output.stdout)
+                    .map_err(|error| Error::Bench(format!("unreadable status: {error}")))
+                    .and_then(|status| Ok(status.health_matches(build)?))
             } else {
-                Err(format!(
+                Err(Error::Bench(format!(
                     "wellfed-local status exited {}: {}",
                     output.code,
                     output.stderr.trim().lines().last().unwrap_or("")
-                ))
+                )))
             };
 
             match verdict {
@@ -1087,11 +1085,13 @@ impl Bench {
                     return Ok(());
                 }
                 // Only a changed reason is shown, so polling stays quiet.
-                Err(reason) if reason != last => {
-                    self.note(&format!("Waiting for health: {reason}"));
-                    last = reason;
+                Err(reason) => {
+                    let reason = reason.to_string();
+                    if reason != last {
+                        self.note(&format!("Waiting for health: {reason}"));
+                        last = reason;
+                    }
                 }
-                Err(_) => {}
             }
 
             if waited >= HEALTH_SECONDS {
@@ -1126,7 +1126,6 @@ impl Bench {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     const NEW: &str = "8a13e59efa15e56b5f5e32825909dc45e381a2027abc65d8de6658c40b302447";
     const OLD: &str = "5b8433a4f795cb2178c7a38a45087a6727e7a2621fc557d146cff607556f991e";
@@ -1334,42 +1333,12 @@ mod tests {
             ..Timing::default()
         };
 
-        let lines = timing.summary(false);
+        let lines = timing.summary(Source::Review);
         assert_eq!(lines[0], "Timing:");
         assert!(lines[1].ends_with("skipped (--review)"));
         assert!(lines[4].ends_with("1 min 00 s (to segment ends, up to 60 s off)"));
         assert!(lines[5].ends_with(" -") && lines[6].ends_with(" -"));
         assert!(lines[7].ends_with("3 min 20 s"));
-    }
-
-    fn status(health: Value, online: bool, stale: bool) -> Value {
-        json!({"replacement": {"health": health, "online": online, "stale": stale, "age_ms": 5}})
-    }
-
-    #[test]
-    fn health_must_show_the_build_on_bank_1_online_and_fresh() {
-        let good = json!({"build": NEW.to_uppercase(), "bank": 1, "seq": 3, "outputs": "sensing",
-                          "faults": ["watchdog", "flash_hook"], "clock": {"syncs": 0}});
-        assert_eq!(
-            health_matches(&status(good.clone(), true, false), NEW).unwrap(),
-            "Health: build 8a13e59efa15 on bank 1, seq 3, outputs sensing, faults watchdog, flash_hook, clock not set (syncs 0)"
-        );
-
-        let mut bank0 = good.clone();
-        bank0["bank"] = json!(0);
-        let mut old = good.clone();
-        old["build"] = json!(OLD);
-        for (status, reason) in [
-            (json!({"replacement": null}), "no replacement-firmware role"),
-            (status(Value::Null, false, true), "no health received yet"),
-            (status(old, true, false), "build 5b8433a4f795"),
-            (status(bank0, true, false), "bank 0"),
-            (status(good.clone(), false, false), "offline"),
-            (status(good, true, true), "stale (age 5 ms)"),
-        ] {
-            let error = health_matches(&status, NEW).unwrap_err();
-            assert!(error.contains(reason), "{error} vs {reason}");
-        }
     }
 
     #[test]

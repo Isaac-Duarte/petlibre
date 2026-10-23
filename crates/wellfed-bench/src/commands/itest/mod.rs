@@ -16,20 +16,22 @@
 use std::path::{Path, PathBuf};
 
 use clap::{Args, ValueEnum};
-use serde_json::{Value, json};
+use serde::Serialize;
 
-use super::ota::{Outcome, Staged, Watch, health_matches};
+use super::ota::{Outcome, Staged, Watch};
 use crate::config::VERIFICATION;
+use crate::server::{ForgedCase, Health, LocalStatus, Reply, Request};
+use crate::status::StepState;
 use crate::{Error, Result, require};
 
-pub mod live;
-pub mod log;
+mod live;
+mod log;
 mod scenarios;
 #[cfg(test)]
 mod tests;
 
 use log::{Log, Record};
-pub use scenarios::{DeviceState, SCENARIOS, Scenario};
+use scenarios::{DeviceState, SCENARIOS, Scenario};
 
 /// How often waits look at the UART and the server again.
 const POLL_SECONDS: f64 = 1.0;
@@ -38,12 +40,12 @@ const STATUS_POLL_SECONDS: f64 = 5.0;
 const REPLY_SECONDS: f64 = 20.0;
 /// The firmware publishes health every 30 s and the server calls it stale
 /// after 75 s; three periods covers a reconnect.
-pub const HEALTH_SECONDS: f64 = 120.0;
+const HEALTH_SECONDS: f64 = 120.0;
 /// Download, activation, trial boot and the 30 s confirmation take about
 /// four minutes; the slowest seen was under six.
-pub const INSTALL_SECONDS: f64 = 15.0 * 60.0;
+const INSTALL_SECONDS: f64 = 15.0 * 60.0;
 /// With no record for this long the feeder is presumed hung or bricked.
-pub const SILENT_SECONDS: f64 = 180.0;
+const SILENT_SECONDS: f64 = 180.0;
 
 /// How much of the suite a run takes on; each tier includes the cheaper ones.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
@@ -58,7 +60,7 @@ pub enum Tier {
 
 /// A session flag a scenario cannot run without.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Need {
+enum Need {
     Power,
     Build,
     Destructive,
@@ -139,7 +141,7 @@ pub struct ItestArgs {
 }
 
 impl ItestArgs {
-    pub fn name(&self) -> &str {
+    pub(crate) fn name(&self) -> &str {
         self.name.as_deref().unwrap_or("")
     }
 }
@@ -147,7 +149,7 @@ impl ItestArgs {
 /// Which `ota_fault_server` fault answers the recovery role's `ota/get`,
 /// with the stream offsets the FW10 drills used.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Fault {
+enum Fault {
     None,
     Corrupt,
     Range,
@@ -155,7 +157,7 @@ pub enum Fault {
 }
 
 impl Fault {
-    pub fn arg(self) -> &'static str {
+    fn arg(self) -> &'static str {
         match self {
             Self::None => "none",
             Self::Corrupt => "corrupt",
@@ -164,7 +166,7 @@ impl Fault {
         }
     }
 
-    pub fn at(self) -> u32 {
+    fn at(self) -> u32 {
         match self {
             Self::None | Self::Corrupt => 8192,
             Self::Range => 200_000,
@@ -175,7 +177,7 @@ impl Fault {
 
 /// What answers the feeder on the hotspot's broker address.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Server {
+enum Server {
     /// `wellfed-local serve`: broker, API, health and signed requests.
     Serve,
     /// `wellfed-local broker` alone, for `request_forger`.
@@ -186,7 +188,7 @@ pub enum Server {
 
 /// Every effect the suite has on the bench. The live rig talks to the real
 /// tools; the tests script one.
-pub trait Rig {
+trait Rig {
     /// Build (when `build`), review and sign the next version: [`super::Bench::ota_stage`].
     fn stage(&mut self, args: &super::OtaArgs) -> Result<Option<Staged>>;
     /// A frozen review's startup build ID.
@@ -194,13 +196,13 @@ pub trait Rig {
     /// Replace whatever answers the feeder now.
     fn server(&mut self, server: Server) -> Result<()>;
     /// Run `request_forger` beside the bare broker; its per-case lines.
-    fn forge(&mut self) -> Result<Vec<Value>>;
+    fn forge(&mut self) -> Result<Vec<ForgedCase>>;
     /// Load an offer into `serve`, or clear it.
     fn offer(&mut self, staged: Option<&Staged>) -> Result<()>;
     /// `POST /api/replacement/request`; the request ID.
-    fn request(&mut self, body: &Value) -> Result<String>;
+    fn request(&mut self, request: &Request) -> Result<String>;
     /// `GET /api/status`.
-    fn status(&mut self) -> Result<Value>;
+    fn status(&mut self) -> Result<LocalStatus>;
     fn hotspot(&mut self, up: bool) -> Result<()>;
     /// Cut the feeder's supply, wait, restore it: a cold boot.
     fn power_cycle(&mut self) -> Result<()>;
@@ -212,28 +214,27 @@ pub trait Rig {
     fn clock(&self) -> f64;
     /// One line for the operator and the progress page.
     fn note(&mut self, text: &str);
-    /// Show a scenario's state on the bench page (`running`, `done`,
-    /// `failed`, `skipped`).
-    fn scenario(&mut self, _name: &str, _state: &str) {}
+    /// Show a scenario's state on the bench page.
+    fn scenario(&mut self, _name: &str, _state: StepState) {}
 }
 
 /// The build the suite installed (or found running) and every later
 /// scenario returns the feeder to.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Baseline {
-    pub build: String,
-    pub review: PathBuf,
+struct Baseline {
+    build: String,
+    review: PathBuf,
 }
 
 /// A failure the suite cannot continue past: the feeder stopped answering.
 #[derive(Debug)]
-pub struct Silent(pub String);
+struct Silent(String);
 
-pub struct Ctx<'r> {
-    pub rig: &'r mut dyn Rig,
-    pub args: ItestArgs,
-    pub log: Log,
-    pub baseline: Option<Baseline>,
+struct Ctx<'r> {
+    rig: &'r mut dyn Rig,
+    args: ItestArgs,
+    log: Log,
+    baseline: Option<Baseline>,
     /// Each variant's review, once this run has built or found it.
     variants: Vec<(super::Variant, PathBuf)>,
     /// Silence counts from here (the run's start, or the end of an expected
@@ -246,7 +247,7 @@ pub struct Ctx<'r> {
 }
 
 impl<'r> Ctx<'r> {
-    pub fn new(rig: &'r mut dyn Rig, args: &ItestArgs) -> Self {
+    fn new(rig: &'r mut dyn Rig, args: &ItestArgs) -> Self {
         Self {
             args: args.clone(),
             log: Log::default(),
@@ -259,7 +260,7 @@ impl<'r> Ctx<'r> {
         }
     }
 
-    pub fn note(&mut self, text: &str) {
+    fn note(&mut self, text: &str) {
         self.rig.note(text);
     }
 
@@ -271,14 +272,14 @@ impl<'r> Ctx<'r> {
     }
 
     /// The UART position now: later expectations search from here.
-    pub fn mark(&mut self) -> Result<usize> {
+    fn mark(&mut self) -> Result<usize> {
         self.pull()?;
         Ok(self.log.len())
     }
 
     /// Wait up to `seconds` for a record at or after `since` that `matches`;
     /// the mark just past it.
-    pub fn expect(
+    fn expect(
         &mut self,
         what: &str,
         since: usize,
@@ -304,7 +305,7 @@ impl<'r> Ctx<'r> {
     /// Wait up to `seconds` for `n` records at or after `since` that
     /// `matches`; how many there were. The firmware logs a request after
     /// publishing its reply, so its record can trail the reply by a chunk.
-    pub fn expect_count(
+    fn expect_count(
         &mut self,
         since: usize,
         n: usize,
@@ -323,46 +324,30 @@ impl<'r> Ctx<'r> {
         }
     }
 
-    /// Whether a record matching `matches` arrives at or after `since`
-    /// within `seconds`, without failing either way.
-    pub fn sees(
-        &mut self,
-        since: usize,
-        seconds: f64,
-        matches: impl Fn(&Record) -> bool,
-    ) -> Result<bool> {
-        match self.expect("record", since, seconds, matches) {
-            Ok(_) => Ok(true),
-            Err(Error::Bench(_)) => Ok(false),
-            Err(error) => Err(error),
-        }
-    }
-
     /// Poll the server's status until `check` passes; its report.
-    pub fn until_status(
+    fn until_status(
         &mut self,
         what: &str,
         seconds: f64,
-        check: impl Fn(&Value) -> std::result::Result<String, String>,
+        check: impl Fn(&LocalStatus) -> Result<String>,
     ) -> Result<String> {
         let deadline = self.rig.clock() + seconds;
         let mut last = String::new();
         loop {
             // The UART keeps draining, so its captures stay in step.
             self.pull()?;
-            let verdict = self
-                .rig
-                .status()
-                .map_err(|error| error.to_string())
-                .and_then(|status| check(&status));
+            let verdict = self.rig.status().and_then(|status| check(&status));
             match verdict {
                 Ok(report) => return Ok(report),
-                Err(reason) if reason != last => {
-                    self.note(&format!("  Waiting for {what}: {reason}"));
-                    last = reason;
+                Err(reason) => {
+                    let reason = reason.to_string();
+                    if reason != last {
+                        self.note(&format!("  Waiting for {what}: {reason}"));
+                        last = reason;
+                    }
                 }
-                Err(_) => {}
             }
+
             if self.rig.clock() >= deadline {
                 return Err(Error::Bench(format!(
                     "No {what} within {seconds:.0} s ({last})"
@@ -373,50 +358,46 @@ impl<'r> Ctx<'r> {
         }
     }
 
-    /// Fresh online health from the feeder; the health object.
-    pub fn health(&mut self, seconds: f64) -> Result<Value> {
+    /// Fresh online health from the feeder.
+    fn health(&mut self, seconds: f64) -> Result<Health> {
         self.until_status("fresh health", seconds, |status| {
-            fresh_health(status).map(|_| String::new())
+            status.fresh_health()?;
+            Ok(String::new())
         })?;
+
         let status = self.rig.status()?;
-        fresh_health(&status).map_err(Error::Bench)
+        Ok(status.fresh_health()?.clone())
     }
 
     /// Send one request through the server and wait for the feeder's reply.
     /// Requests go out at QoS 0, so one sent as the transport reconnects is
     /// lost; with no reply it is sent once more. Every request the suite
     /// makes reads, or sets a value again, so a repeat is harmless.
-    pub fn ask(&mut self, body: Value) -> Result<Value> {
-        match self.ask_once(&body) {
-            Err(Error::Bench(reason)) if reason.starts_with("No reply") => {
-                self.note(&format!("  {reason}; asking again"));
-                self.ask_once(&body)
+    fn ask(&mut self, request: Request) -> Result<Reply> {
+        match self.ask_once(&request) {
+            Err(lost @ Error::NoReply { .. }) => {
+                self.note(&format!("  {lost}; asking again"));
+                self.ask_once(&request)
             }
             other => other,
         }
     }
 
-    fn ask_once(&mut self, body: &Value) -> Result<Value> {
-        let id = self.rig.request(body)?;
+    fn ask_once(&mut self, request: &Request) -> Result<Reply> {
+        let id = self.rig.request(request)?;
         let deadline = self.rig.clock() + REPLY_SECONDS;
         loop {
             self.pull()?;
             let status = self.rig.status()?;
-            let reply = status["replacement"]["replies"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .map(|reply| &reply["message"])
-                .find(|message| message["id"] == id.as_str())
-                .cloned();
-            if let Some(reply) = reply {
-                return Ok(reply);
+            if let Some(reply) = status.reply(&id) {
+                return Ok(reply.clone());
             }
+
             if self.rig.clock() >= deadline {
-                return Err(Error::Bench(format!(
-                    "No reply to {} within {REPLY_SECONDS:.0} s",
-                    body["op"]
-                )));
+                return Err(Error::NoReply {
+                    op: request.op(),
+                    seconds: REPLY_SECONDS,
+                });
             }
             self.alive()?;
             self.rig.wait(POLL_SECONDS)?;
@@ -425,7 +406,7 @@ impl<'r> Ctx<'r> {
 
     /// Offer `staged` through `serve` and classify the UART until the update
     /// passes, falls back or fails; the server's health must then agree.
-    pub fn install(&mut self, staged: &Staged) -> Result<Outcome> {
+    fn install(&mut self, staged: &Staged) -> Result<Outcome> {
         let since = self.mark()?;
         self.rig.offer(Some(staged))?;
         self.note(&format!(
@@ -442,7 +423,7 @@ impl<'r> Ctx<'r> {
 
     /// Classify records from `since` against an offered `build` with the
     /// `ota` command's [`Watch`]; its outcome, or a timeout.
-    pub fn watch(&mut self, build: &str, since: usize, seconds: f64) -> Result<Outcome> {
+    fn watch(&mut self, build: &str, since: usize, seconds: f64) -> Result<Outcome> {
         let mut watch = Watch::new(build);
         let mut next = since;
         let deadline = self.rig.clock() + seconds;
@@ -476,22 +457,22 @@ impl<'r> Ctx<'r> {
     }
 
     /// The server sees `build` on bank 1, online and fresh.
-    pub fn confirm(&mut self, build: &str) -> Result<()> {
+    fn confirm(&mut self, build: &str) -> Result<()> {
         let report = self.until_status("health from the new build", HEALTH_SECONDS, |status| {
-            health_matches(status, build)
+            Ok(status.health_matches(build)?)
         })?;
         self.note(&format!("  {report}"));
         Ok(())
     }
 
     /// Whether health already shows `build` running, without waiting.
-    pub fn running(&mut self, build: &str) -> bool {
+    fn running(&mut self, build: &str) -> bool {
         self.rig
             .status()
-            .is_ok_and(|status| health_matches(&status, build).is_ok())
+            .is_ok_and(|status| status.health_matches(build).is_ok())
     }
 
-    pub fn baseline(&self) -> Result<&Baseline> {
+    fn baseline(&self) -> Result<&Baseline> {
         self.baseline
             .as_ref()
             .ok_or_else(|| Error::Bench("No confirmed baseline build".into()))
@@ -499,9 +480,9 @@ impl<'r> Ctx<'r> {
 
     /// Re-sign the baseline review at the next version, for a scenario that
     /// needs a fresh offer of the same build.
-    pub fn resign(&mut self, label: &str) -> Result<Staged> {
+    fn resign(&mut self, label: &str) -> Result<Staged> {
         let review = self.baseline()?.review.clone();
-        let args = self.ota_args(label, Some(review), false);
+        let args = self.ota_args(label, Some(review));
         self.rig
             .stage(&args)?
             .ok_or_else(|| Error::Bench(format!("Signing {label} failed")))
@@ -509,22 +490,19 @@ impl<'r> Ctx<'r> {
 
     /// The fw11-fail variant signed at the next version: built once, then
     /// re-signed from its review.
-    pub fn failing(&mut self, label: &str) -> Result<Staged> {
+    fn failing(&mut self, label: &str) -> Result<Staged> {
         self.variant(label, super::Variant::Fw11Fail)
     }
 
     /// `variant` signed at the next version: built (or found by the review
     /// cache) once, then re-signed from its review.
-    pub fn variant(&mut self, label: &str, variant: super::Variant) -> Result<Staged> {
+    fn variant(&mut self, label: &str, variant: super::Variant) -> Result<Staged> {
         let known = self
             .variants
             .iter()
             .find(|(v, _)| *v == variant)
             .map(|(_, review)| review.clone());
-        let mut args = match known {
-            Some(review) => self.ota_args(label, Some(review), false),
-            None => self.ota_args(label, None, true),
-        };
+        let mut args = self.ota_args(label, known);
         if args.build {
             args.variant = Some(variant);
         }
@@ -539,7 +517,9 @@ impl<'r> Ctx<'r> {
         Ok(staged)
     }
 
-    pub fn ota_args(&self, label: &str, review: Option<PathBuf>, build: bool) -> super::OtaArgs {
+    /// `ota` arguments that offer `review`, or with none build this checkout.
+    fn ota_args(&self, label: &str, review: Option<PathBuf>) -> super::OtaArgs {
+        let build = review.is_none();
         super::OtaArgs {
             name: format!("{}-{label}", self.args.name()),
             review,
@@ -555,7 +535,7 @@ impl<'r> Ctx<'r> {
     }
 
     /// Let `seconds` pass with the UART drained and the feeder watched.
-    pub fn idle(&mut self, seconds: f64) -> Result<()> {
+    fn idle(&mut self, seconds: f64) -> Result<()> {
         let end = self.rig.clock() + seconds;
         while self.rig.clock() < end {
             self.pull()?;
@@ -585,7 +565,7 @@ impl<'r> Ctx<'r> {
     /// Run `wait` while the feeder is expected to be unreachable and possibly
     /// quiet (retrying a join it cannot make), bounded only by its own
     /// deadline; silence counts afresh once it ends.
-    pub fn offline<T>(&mut self, wait: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
+    fn offline<T>(&mut self, wait: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
         self.offline = true;
         let result = wait(self);
         self.offline = false;
@@ -595,7 +575,7 @@ impl<'r> Ctx<'r> {
 
     /// The feeder looks hung or bricked: no record for [`SILENT_SECONDS`]
     /// and no fresh health.
-    pub fn silent(&mut self) -> Option<Silent> {
+    fn silent(&mut self) -> Option<Silent> {
         if let Some(found) = self.went_silent.take() {
             return Some(found);
         }
@@ -609,7 +589,7 @@ impl<'r> Ctx<'r> {
         let healthy = self
             .rig
             .status()
-            .is_ok_and(|status| fresh_health(&status).is_ok());
+            .is_ok_and(|status| status.fresh_health().is_ok());
         (!healthy).then(|| {
             Silent(format!(
                 "no UART record or fresh health for {SILENT_SECONDS:.0} s"
@@ -618,52 +598,75 @@ impl<'r> Ctx<'r> {
     }
 }
 
-/// The health object when the server holds fresh online health.
-pub fn fresh_health(status: &Value) -> std::result::Result<Value, String> {
-    let replacement = &status["replacement"];
-    if replacement["health"].is_null() {
-        return Err("no health received yet".into());
-    }
-    if replacement["online"] != true {
-        return Err("the firmware is offline".into());
-    }
-    if replacement["stale"] != false {
-        return Err(format!(
-            "health is stale (age {} ms)",
-            replacement["age_ms"]
-        ));
-    }
-    Ok(replacement["health"].clone())
-}
-
 /// A reply's `ok`, or why not.
-pub fn reply_ok(reply: &Value) -> Result<()> {
-    require(
-        reply["ok"] == true,
-        format!("Reply refused: {}", compact(reply)),
-    )
+fn reply_ok(reply: &Reply) -> Result<()> {
+    require(reply.ok, format!("Reply refused: {}", compact(reply)))
 }
 
-pub fn compact(value: &Value) -> String {
+/// One line of JSON, for a failure message.
+fn compact(value: &impl Serialize) -> String {
     serde_json::to_string(value).unwrap_or_default()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Verdict {
+enum Verdict {
     Pass,
     Fail(String),
     Skip(String),
 }
 
+impl Verdict {
+    /// As the run's record writes it.
+    fn word(&self) -> &'static str {
+        match self {
+            Self::Pass => "pass",
+            Self::Fail(_) => "fail",
+            Self::Skip(_) => "skip",
+        }
+    }
+
+    fn reason(&self) -> Option<&str> {
+        match self {
+            Self::Pass => None,
+            Self::Fail(reason) | Self::Skip(reason) => Some(reason),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
-pub struct Report {
-    pub scenario: &'static str,
-    pub verdict: Verdict,
-    pub seconds: f64,
+struct Report {
+    scenario: &'static str,
+    verdict: Verdict,
+    seconds: f64,
+}
+
+/// `NAME-itest.json`: the run's record, per-scenario verdicts beside the
+/// captures they rest on.
+#[derive(Debug, Serialize)]
+struct RunRecord {
+    name: String,
+    /// Always `physical`: these verdicts come from the feeder on the bench.
+    evidence: &'static str,
+    scenarios: Vec<ScenarioRecord>,
+    silent: Option<String>,
+    captures: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct ScenarioRecord {
+    scenario: &'static str,
+    verdict: &'static str,
+    reason: Option<String>,
+    seconds: f64,
+}
+
+/// The names of the scenarios a run takes on: its status steps.
+pub fn steps(args: &ItestArgs) -> Result<Vec<&'static str>> {
+    Ok(select(args)?.iter().map(|scenario| scenario.name).collect())
 }
 
 /// The scenarios `--only` names, in suite order; ota-update always first.
-pub fn select(args: &ItestArgs) -> Result<Vec<&'static Scenario>> {
+fn select(args: &ItestArgs) -> Result<Vec<&'static Scenario>> {
     let only = &args.only;
     for name in only {
         require(
@@ -700,10 +703,7 @@ fn unmet(scenario: &Scenario, ctx: &Ctx) -> Option<String> {
 
 /// Run `scenarios` in order. A failure stops the rest unless `keep_going`;
 /// a silent feeder always stops them, with the recovery commands.
-pub fn run(
-    ctx: &mut Ctx,
-    scenarios: &[&'static Scenario],
-) -> Result<(Vec<Report>, Option<Silent>)> {
+fn run(ctx: &mut Ctx, scenarios: &[&'static Scenario]) -> Result<(Vec<Report>, Option<Silent>)> {
     let mut reports = Vec::new();
     let mut stop: Option<String> = None;
     let mut silent = None;
@@ -714,7 +714,7 @@ pub fn run(
         let skip = stop.clone().or_else(|| unmet(scenario, ctx));
         if let Some(reason) = skip {
             ctx.note(&format!("- {}: skipped, {reason}", scenario.name));
-            ctx.rig.scenario(scenario.name, "skipped");
+            ctx.rig.scenario(scenario.name, StepState::Skipped);
             reports.push(Report {
                 scenario: scenario.name,
                 verdict: Verdict::Skip(reason),
@@ -724,7 +724,7 @@ pub fn run(
         }
 
         ctx.note(&format!("- {}: {}", scenario.name, scenario.about));
-        ctx.rig.scenario(scenario.name, "running");
+        ctx.rig.scenario(scenario.name, StepState::Running);
         let started = ctx.rig.clock();
         let result = (scenario.run)(ctx);
         let seconds = ctx.rig.clock() - started;
@@ -763,9 +763,9 @@ pub fn run(
         }
 
         let shown = if verdict == Verdict::Pass {
-            "done"
+            StepState::Done
         } else {
-            "failed"
+            StepState::Failed
         };
         ctx.rig.scenario(scenario.name, shown);
         match &verdict {
@@ -792,36 +792,34 @@ pub fn run(
 }
 
 /// The run's record: per-scenario verdicts beside the captures.
-pub fn summary(
+fn summary(
     name: &str,
     reports: &[Report],
     silent: Option<&Silent>,
     captures: &[String],
-) -> Value {
-    let scenarios: Vec<Value> = reports
+) -> RunRecord {
+    let scenarios = reports
         .iter()
-        .map(|report| {
-            let (verdict, reason) = match &report.verdict {
-                Verdict::Pass => ("pass", None),
-                Verdict::Fail(reason) => ("fail", Some(reason)),
-                Verdict::Skip(reason) => ("skip", Some(reason)),
-            };
-            json!({"scenario": report.scenario, "verdict": verdict, "reason": reason,
-                   "seconds": (report.seconds * 10.0).round() / 10.0})
+        .map(|report| ScenarioRecord {
+            scenario: report.scenario,
+            verdict: report.verdict.word(),
+            reason: report.verdict.reason().map(str::to_string),
+            seconds: (report.seconds * 10.0).round() / 10.0,
         })
         .collect();
-    json!({
-        "name": name,
-        "evidence": "physical",
-        "scenarios": scenarios,
-        "silent": silent.map(|s| s.0.clone()),
-        "captures": captures,
-    })
+
+    RunRecord {
+        name: name.into(),
+        evidence: "physical",
+        scenarios,
+        silent: silent.map(|s| s.0.clone()),
+        captures: captures.to_vec(),
+    }
 }
 
 /// Exit status: 0 when nothing failed, 1 on a failure, 2 when the feeder
 /// went silent and needs UART recovery.
-pub fn exit_code(reports: &[Report], silent: Option<&Silent>) -> u8 {
+fn exit_code(reports: &[Report], silent: Option<&Silent>) -> u8 {
     if silent.is_some() {
         2
     } else if reports
@@ -836,7 +834,7 @@ pub fn exit_code(reports: &[Report], silent: Option<&Silent>) -> u8 {
 
 /// The operator's way back when the feeder stops answering: the reviewed
 /// UART tools, never run by the suite itself.
-pub fn recovery_hint(name: &str, baseline: Option<&Baseline>) -> Vec<String> {
+fn recovery_hint(name: &str, baseline: Option<&Baseline>) -> Vec<String> {
     let target = baseline.map_or_else(
         || "<the last confirmed review>".to_string(),
         |b| b.review.display().to_string(),
@@ -904,11 +902,11 @@ impl super::Bench {
         let (reports, silent) = result?;
         say!("Results:");
         for report in &reports {
-            let (verdict, reason) = match &report.verdict {
-                Verdict::Pass => ("pass", String::new()),
-                Verdict::Fail(reason) => ("FAIL", reason.clone()),
-                Verdict::Skip(reason) => ("skip", reason.clone()),
+            let verdict = match report.verdict {
+                Verdict::Fail(_) => "FAIL",
+                ref other => other.word(),
             };
+            let reason = report.verdict.reason().unwrap_or("");
             say!(
                 "  {:<18} {verdict:<5} {:>9}  {reason}",
                 report.scenario,

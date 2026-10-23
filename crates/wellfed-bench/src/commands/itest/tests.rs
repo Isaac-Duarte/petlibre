@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 use super::log::{Log, Record};
 use super::*;
 use crate::commands::ota::{OtaArgs, Variant};
+use crate::server::{ForgedCase, LocalStatus, Request};
 
 const GOOD: &str = "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90";
 const FAILING: &str = "f00df00df00df00df00df00df00df00df00df00df00df00df00df00df00df00d";
@@ -290,7 +291,7 @@ impl Rig for Feeder {
         Ok(())
     }
 
-    fn forge(&mut self) -> Result<Vec<Value>> {
+    fn forge(&mut self) -> Result<Vec<ForgedCase>> {
         self.actions.push("forge".into());
         let refused = json!({"ok": false, "error": "auth"});
         let replay = if self.replay_accepted {
@@ -304,12 +305,13 @@ impl Rig for Feeder {
         for _ in 0..refusals {
             self.line(1.5, "PLMQT1 request op=unauthenticated ok=0");
         }
-        Ok(vec![
-            json!({"case": "unsigned", "reply": refused}),
-            json!({"case": "wrong_key", "reply": refused}),
-            json!({"case": "valid", "reply": {"ok": true, "op": "settings"}}),
-            json!({"case": "replay", "reply": replay}),
-        ])
+        let lines = json!([
+            {"case": "unsigned", "reply": refused},
+            {"case": "wrong_key", "reply": refused},
+            {"case": "valid", "reply": {"ok": true, "op": "settings"}},
+            {"case": "replay", "reply": replay},
+        ]);
+        Ok(serde_json::from_value(lines)?)
     }
 
     fn offer(&mut self, staged: Option<&Staged>) -> Result<()> {
@@ -337,7 +339,9 @@ impl Rig for Feeder {
         Ok(())
     }
 
-    fn request(&mut self, body: &Value) -> Result<String> {
+    fn request(&mut self, request: &Request) -> Result<String> {
+        // Judged by its JSON, as the server forwards it.
+        let body = serde_json::to_value(request)?;
         let id = format!("00000000-0000-4000-8000-{:012}", self.requests);
         self.requests += 1;
         self.actions.push(format!("request {}", body["op"]));
@@ -399,10 +403,10 @@ impl Rig for Feeder {
         Ok(id)
     }
 
-    fn status(&mut self) -> Result<Value> {
+    fn status(&mut self) -> Result<LocalStatus> {
         self.release();
         let stale = !self.online || self.silent;
-        Ok(json!({"replacement": {
+        let status = json!({"replacement": {
             "health": {
                 "build": self.running, "bank": 1, "seq": 7, "outputs": "stopped", "faults": [],
                 "clock": {"syncs": 2, "unix_ms": 1_792_670_399_800i64},
@@ -414,7 +418,8 @@ impl Rig for Feeder {
             "online": self.online,
             "stale": stale,
             "replies": self.replies.iter().map(|m| json!({"message": m})).collect::<Vec<_>>(),
-        }}))
+        }});
+        Ok(serde_json::from_value(status)?)
     }
 
     fn hotspot(&mut self, up: bool) -> Result<()> {
@@ -823,12 +828,13 @@ fn the_record_lists_every_verdict_as_physical_evidence() {
             seconds: 0.0,
         },
     ];
-    let summary = summary(
+    let summary = serde_json::to_value(summary(
         "run1",
         &reports,
         None,
         &["private/captures/run1-uart-01".into()],
-    );
+    ))
+    .unwrap();
 
     assert_eq!(summary["evidence"], "physical");
     assert_eq!(summary["scenarios"][0]["seconds"], 241.0);

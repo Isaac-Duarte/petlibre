@@ -1,18 +1,17 @@
 //! `private/bench.json`: the ports and pinned evidence the bench uses.
 
 use std::collections::BTreeMap;
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use crate::{Error, Result};
+use crate::Result;
 
-pub const CONFIG: &str = "private/bench.json";
+pub(crate) const CONFIG: &str = "private/bench.json";
 pub const STATUS_DIR: &str = "private/bench-status";
 pub const CAPTURES: &str = "private/captures";
-pub const FLASH_BACKUPS: &str = "private/flash-backups";
-pub const VERIFICATION: &str = "private/verification";
+pub(crate) const FLASH_BACKUPS: &str = "private/flash-backups";
+pub(crate) const VERIFICATION: &str = "private/verification";
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
@@ -29,9 +28,6 @@ pub struct Config {
 
 impl Config {
     pub fn load(root: &Path) -> Result<Self> {
-        let path = root.join(CONFIG);
-        let text = fs::read_to_string(&path)
-            .map_err(|error| Error::Bench(format!("{CONFIG}: {error}")))?;
-        serde_json::from_str(&text).map_err(|error| Error::Bench(format!("{CONFIG}: {error}")))
+        crate::load(root, Path::new(CONFIG))
     }
 }

@@ -14,10 +14,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
-use serde_json::Value;
+use wellfed_formats::canonical::sha256;
+use serde::Deserialize;
 
 use crate::status::{FlashTool, Status, relative};
-use crate::{Error, Result, interrupted, require, sha256_hex};
+use crate::{Error, Result, interrupted, require};
 
 /// How long a receive-only capture may take to hold the UART port.
 const OBSERVER_START: Duration = Duration::from_secs(10);
@@ -70,8 +71,37 @@ pub struct Captured {
 
 pub trait Observer {
     /// Wait for the capture to end; its report's `result` on success.
-    fn finish(&mut self) -> Result<Value>;
+    fn finish(&mut self) -> Result<Observation>;
     fn kill(&mut self);
+}
+
+/// The `result` of a `wellfed-flash read observe` report, as far as the
+/// bench judges a boot or a loader entry by it. A missing field reads as
+/// nothing seen, which never confirms a loader.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct Observation {
+    pub bytes: u64,
+    pub nak_bytes: u64,
+    pub longest_nak_run: u64,
+    pub download_banner_seen: bool,
+    /// How many stock `app_main:version:` lines arrived.
+    pub stock_startup_markers: u64,
+    pub fault_marker_seen: bool,
+}
+
+/// An observe's `report.json`: `running` once it holds the port, then
+/// finished with its result.
+#[derive(Deserialize)]
+struct ObserveReport {
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    result: Option<Observation>,
+}
+
+fn observe_report(directory: &Path) -> Result<ObserveReport> {
+    crate::load(directory, Path::new("report.json"))
 }
 
 /// A chain of receive-only captures on its own thread. Each observe is still
@@ -125,11 +155,11 @@ pub fn default_build_bin() -> PathBuf {
     beside_this("wellfed-build")
 }
 
-pub fn flash_tool(root: &Path, path: &Path) -> Option<FlashTool> {
+pub(crate) fn flash_tool(root: &Path, path: &Path) -> Option<FlashTool> {
     let data = fs::read(path).ok()?;
     Some(FlashTool {
         path: relative(root, path),
-        sha256: sha256_hex(&data),
+        sha256: sha256(&data),
     })
 }
 
@@ -279,8 +309,6 @@ impl Tools for Processes {
             output: output.to_path_buf(),
         };
 
-        // The observer's report says `running` once it holds the port.
-        let report = output.join("report.json");
         let deadline = Instant::now() + OBSERVER_START;
         while Instant::now() < deadline {
             if interrupted() {
@@ -292,10 +320,8 @@ impl Tools for Processes {
                     "Observer exited before holding the port".into(),
                 ));
             }
-            let running = fs::read_to_string(&report)
-                .ok()
-                .and_then(|text| serde_json::from_str::<Value>(&text).ok())
-                .is_some_and(|report| report["status"] == "running");
+            let running = observe_report(output)
+                .is_ok_and(|report| report.status.as_deref() == Some("running"));
             if running {
                 return Ok(Box::new(observer));
             }
@@ -523,15 +549,15 @@ struct Observing {
 }
 
 impl Observer for Observing {
-    fn finish(&mut self) -> Result<Value> {
+    fn finish(&mut self) -> Result<Observation> {
         let code = exit_code(self.child.wait()?);
         require(
             code == 0,
             format!("Observer failed; see {}", self.output.display()),
         )?;
-        let report: Value =
-            serde_json::from_str(&fs::read_to_string(self.output.join("report.json"))?)?;
-        Ok(report["result"].clone())
+
+        let report = observe_report(&self.output)?;
+        Ok(report.result.unwrap_or_default())
     }
 
     fn kill(&mut self) {
@@ -646,7 +672,7 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
         let output = tmp.path().join("capture");
 
         let mut observer = tools.observe("uart", &output, 1.0).unwrap();
-        assert_eq!(observer.finish().unwrap()["bytes"], 7);
+        assert_eq!(observer.finish().unwrap().bytes, 7);
     }
 
     #[test]

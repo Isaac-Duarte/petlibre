@@ -1,29 +1,29 @@
 //! The feeder's UART as a searchable log. Every scenario asserts on the
 //! firmware's `PLxxxN` records (`PLMQT1 request op=ping ok=1`), which can sit
-//! after SDK noise on the same line; anything else is kept only for the
-//! failure tail. Times come from the rig's clock when the bytes were read,
-//! so they are as late as the polling interval.
+//! after SDK noise on the same line; anything else is kept for reading back.
+//! Times come from the rig's clock when the bytes were read, so they are as
+//! late as the polling interval.
 
-pub use wellfed_core::record::Record;
+pub(super) use wellfed_core::record::Record;
 
 /// A longer run without a line break is noise, not a record.
 const MAX_LINE: usize = 4096;
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Line {
+pub(super) struct Line {
     pub at: f64,
     pub text: String,
 }
 
 #[derive(Debug, Default)]
-pub struct Log {
+pub(super) struct Log {
     pending: Vec<u8>,
     lines: Vec<Line>,
 }
 
 impl Log {
     /// Take more UART bytes, read at `at`; a partial last line waits.
-    pub fn feed(&mut self, bytes: &[u8], at: f64) {
+    pub(super) fn feed(&mut self, bytes: &[u8], at: f64) {
         self.pending.extend_from_slice(bytes);
 
         while let Some(end) = self.pending.iter().position(|b| matches!(b, b'\n' | b'\r')) {
@@ -39,26 +39,22 @@ impl Log {
     }
 
     /// The position after the last complete line: a mark to search from.
-    pub fn len(&self) -> usize {
+    pub(super) fn len(&self) -> usize {
         self.lines.len()
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.lines.is_empty()
-    }
-
-    pub fn line(&self, index: usize) -> &Line {
+    pub(super) fn line(&self, index: usize) -> &Line {
         &self.lines[index]
     }
 
     /// The first line at or after `since` with a record that `matches`, by
     /// line index.
-    pub fn find(&self, since: usize, matches: impl Fn(&Record) -> bool) -> Option<usize> {
+    pub(super) fn find(&self, since: usize, matches: impl Fn(&Record) -> bool) -> Option<usize> {
         (since..self.lines.len()).find(|&i| Record::all(&self.lines[i].text).any(|r| matches(&r)))
     }
 
     /// How many records at or after `since` match.
-    pub fn count(&self, since: usize, matches: impl Fn(&Record) -> bool) -> usize {
+    pub(super) fn count(&self, since: usize, matches: impl Fn(&Record) -> bool) -> usize {
         self.lines[since.min(self.lines.len())..]
             .iter()
             .map(|line| Record::all(&line.text).filter(|r| matches(r)).count())
@@ -66,16 +62,11 @@ impl Log {
     }
 
     /// When the last record of any kind arrived.
-    pub fn last_record_at(&self) -> Option<f64> {
+    pub(super) fn last_record_at(&self) -> Option<f64> {
         self.lines
             .iter()
             .rev()
             .find(|line| Record::parse(&line.text).is_some())
             .map(|line| line.at)
-    }
-
-    /// The last `count` lines, for a failure report.
-    pub fn tail(&self, count: usize) -> &[Line] {
-        &self.lines[self.lines.len().saturating_sub(count)..]
     }
 }

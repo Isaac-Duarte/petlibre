@@ -32,12 +32,17 @@ uuid = "1.28.0"
 # Firmware targets.
 cortex-m = "0.7.7"
 
-# Firmware crates permit audited `unsafe` at the C ABI and MMIO boundaries only.
+# Every crate inherits these, tests included. Host crates also forbid
+# `unsafe` at their crate roots; firmware crates permit audited `unsafe` at
+# the C ABI and MMIO boundaries only, each block with a SAFETY comment. The
+# production-only lints (no unwrap, no narrowing `as`, …) run from
+# `make check-rust` over libraries and binaries, so tests stay free to unwrap.
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
 
 [workspace.lints.clippy]
 dbg_macro = "deny"
+undocumented_unsafe_blocks = "deny"
 
 # Firmware staticlibs: size-optimized, one LTO object per core so the linker
 # script can retain the RAM park section; unwinding is never generated.

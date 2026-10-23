@@ -182,7 +182,8 @@ impl Writer {
             lights: self.store.settings.lights,
             sound: self.store.settings.sound,
             volume: self.store.settings.volume,
-            generation: self.store.generation as u32,
+            // Reported as 32 bits; saturate rather than wrap to an old value.
+            generation: u32::try_from(self.store.generation).unwrap_or(u32::MAX),
             writable,
         });
         network::publish(&self.net, self.armed);

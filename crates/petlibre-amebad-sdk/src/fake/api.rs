@@ -767,7 +767,8 @@ pub fn wifi_start() -> bool {
 
 pub fn wifi_event(seq: u32) -> WifiPoll {
     with(|h| {
-        let recorded = h.wifi_events.len() as u32;
+        let recorded =
+            u32::try_from(h.wifi_events.len()).expect("a test records fewer than 2^32 events");
         if seq == 0 || seq > recorded {
             WifiPoll::Pending
         } else if recorded - seq >= h.wifi_ring {

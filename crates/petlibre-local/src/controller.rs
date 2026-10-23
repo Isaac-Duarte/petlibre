@@ -352,7 +352,7 @@ impl Controller {
 
     pub fn feed(
         &mut self,
-        request: FeedInput,
+        request: &FeedInput,
         now: DateTime<Utc>,
     ) -> std::result::Result<(FeedRecord, Option<Reply>), Rejection> {
         if self.storage_failed {
@@ -504,7 +504,7 @@ impl Controller {
     /// during this installation. No configuration query is sent on reconnect.
     pub fn probe_query(
         &mut self,
-        input: probe::Input,
+        input: &probe::Input,
         now: DateTime<Utc>,
     ) -> std::result::Result<(probe::Record, Option<Reply>), Rejection> {
         if self.storage_failed {

@@ -85,7 +85,7 @@ impl FakeJournalFlash {
         JournalIo {
             context: flash.cast(),
             // SAFETY: the caller guarantees a live flash; this is a read only.
-            unit_bytes: unsafe { (*flash).unit() } as u32,
+            unit_bytes: u32::try_from(unsafe { (*flash).unit() }).expect("a unit below 4 GiB"),
             read: Some(read_bytes),
             program: Some(program),
             erase: Some(erase),
@@ -156,7 +156,8 @@ fn erase_order(slot: usize, unit: usize) -> Rc<Vec<u32>> {
 }
 
 fn shuffled_bits(slot: usize, unit: usize) -> Vec<u32> {
-    let mut order: Vec<u32> = (0..(unit * 8) as u32).collect();
+    let bits = u32::try_from(unit * 8).expect("a unit below 512 MiB");
+    let mut order: Vec<u32> = (0..bits).collect();
     let mut state =
         0x9e37_79b9_7f4a_7c15u64 ^ (slot as u64 + 1).wrapping_mul(0xbf58_476d_1ce4_e5b9);
 
@@ -186,6 +187,8 @@ unsafe extern "C" fn read_bytes(
         return false;
     }
 
+    // SAFETY: the journal passes a writable buffer of `size` bytes, distinct
+    // from the flash.
     let out = unsafe { core::slice::from_raw_parts_mut(bytes.cast::<u8>(), size) };
     out.copy_from_slice(&f.bytes[slot][offset..offset + size]);
     true
@@ -213,10 +216,11 @@ unsafe extern "C" fn program(
         (slot, offset)
     };
 
-    // The caller's buffer is distinct from the flash.
+    // SAFETY: the journal passes `size` readable bytes, distinct from the flash.
     let input = unsafe { core::slice::from_raw_parts(bytes.cast::<u8>(), size) };
     for (i, &value) in input.iter().enumerate() {
         let index = offset + i;
+        // SAFETY: no reference into the flash is live across this call.
         let more = unsafe {
             mutate(flash, |f| {
                 assert_eq!(
@@ -253,6 +257,7 @@ unsafe extern "C" fn erase(context: *mut c_void, slot: c_uint) -> bool {
     };
 
     let order = erase_order(slot, unit);
+    // SAFETY: no reference into the flash is live across these calls.
     order.chunks(8).all(|bits| unsafe {
         mutate(flash, |f| {
             for &bit in bits {
@@ -286,10 +291,11 @@ mod tests {
         let mut f = FakeJournalFlash::default();
         let io = f.io();
         let data = [0x0fu8, 0xf0, 0x00, 0xff];
+        // SAFETY: the context is this test's live flash and `data` is 4 bytes.
         assert!(unsafe { io.program.unwrap()(io.context, 1, 4, data.as_ptr().cast(), 4) });
 
         assert_eq!(f.bytes[1][4..8], data);
-        assert_eq!(f.io().unit_bytes, UNIT as u32);
+        assert_eq!(f.io().unit_bytes, u32::try_from(UNIT).unwrap());
     }
 
     #[test]
@@ -318,12 +324,15 @@ mod tests {
         fn hook(context: *mut c_void) {
             // Reads the flash through the same pointer as the I/O context.
             let f = context.cast::<FakeJournalFlash>();
+            // SAFETY: the flash outlives the hook, and the I/O holds no
+            // reference while it runs.
             let seen = unsafe { (&(*f).bytes)[0][0] };
             assert!(seen == 0x0f || seen == u8::MAX);
         }
 
         let mut f = Box::new(FakeJournalFlash::default());
         let raw: *mut FakeJournalFlash = &raw mut *f;
+        // SAFETY: `raw` points at the boxed flash, which outlives this test.
         unsafe {
             (*raw).after_mutation = Some(hook);
             (*raw).mutation_context = raw.cast();

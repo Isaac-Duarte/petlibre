@@ -192,7 +192,7 @@ fn response(
 fn dispatch(
     state: &ImageState,
     peer: std::net::SocketAddr,
-    request: Request<Incoming>,
+    request: &Request<Incoming>,
 ) -> Response {
     if !matches!(*request.method(), Method::GET | Method::HEAD) {
         return StatusCode::METHOD_NOT_ALLOWED.into_response();
@@ -255,7 +255,7 @@ async fn run(
                 connections.spawn(async move {
                     let service = service_fn(move |request| {
                         let state = Arc::clone(&state);
-                        async move { Ok::<_, Infallible>(dispatch(&state, address, request)) }
+                        async move { Ok::<_, Infallible>(dispatch(&state, address, &request)) }
                     });
 
                     let mut http = http1::Builder::new();

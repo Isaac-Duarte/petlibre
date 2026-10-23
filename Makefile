@@ -11,9 +11,16 @@ help:
 
 check: check-rust check-cross check-virtual-feeder check-python check-docs
 
+# Library and binary code only: input never panics on `unwrap`, a narrowing
+# `as` never wraps silently, and nothing is `pub` that no caller can reach.
+# `expect` stays allowed for invariants, with the reason as its message.
+PRODUCTION_LINTS = -D clippy::unwrap_used -D clippy::cast_possible_truncation \
+	-D clippy::needless_pass_by_value -D unreachable_pub
+
 check-rust:
 	cargo fmt --all -- --check
 	cargo clippy --locked --workspace --all-targets -- -D warnings
+	cargo clippy --locked --workspace --lib --bins --exclude petlibre-bench -- -D warnings $(PRODUCTION_LINTS)
 	cargo test --locked --workspace --all-targets
 
 check-cross:

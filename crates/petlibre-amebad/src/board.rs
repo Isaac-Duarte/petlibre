@@ -159,8 +159,8 @@ impl Board {
 
         result.clock = sdk::adc_clock_enable();
         let mut efuse = [0u8; 4];
-        for (i, byte) in efuse.iter_mut().enumerate() {
-            match sdk::efuse_read8(0x1d0 + i as u32) {
+        for (byte, address) in efuse.iter_mut().zip(0x1d0u32..) {
+            match sdk::efuse_read8(address) {
                 Some(value) => *byte = value,
                 None => {
                     self.faulted = true;

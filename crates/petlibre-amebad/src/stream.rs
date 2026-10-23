@@ -204,7 +204,9 @@ impl Streamer {
                 TcpRecv::Data(n) => {
                     self.tail = (self.tail + n) % BUFFER;
                     self.held += n;
-                    self.bytes = self.bytes.wrapping_add(n as u32);
+                    self.bytes = self
+                        .bytes
+                        .wrapping_add(u32::try_from(n).unwrap_or(u32::MAX));
                     self.last_data = now;
                 }
                 TcpRecv::Timeout => return,
@@ -232,7 +234,8 @@ impl Streamer {
                 *sample = if 2 * i < take {
                     let at = (head + 2 * i) % BUFFER;
                     let raw = i16::from_le_bytes([ring[at], ring[(at + 1) % BUFFER]]);
-                    ((i32::from(raw) * gain) >> 15) as i16
+                    // `gain` is at most 2^15, so the scaled sample stays in range.
+                    i16::try_from((i32::from(raw) * gain) >> 15).unwrap_or(raw)
                 } else {
                     0
                 };

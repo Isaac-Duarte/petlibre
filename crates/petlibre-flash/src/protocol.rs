@@ -316,7 +316,7 @@ pub fn receive_flash(
             "Read packet checksum mismatch",
         )?;
 
-        if previous.is_some() && number == ((sequence - 1) & 0xff) as u8 {
+        if previous.is_some() && number == (sequence - 1).to_le_bytes()[0] {
             require(
                 previous.as_deref() == Some(payload) && duplicates < 8,
                 "Changed or excessive duplicate packet",
@@ -327,7 +327,7 @@ pub fn receive_flash(
         }
 
         require(
-            number == (sequence & 0xff) as u8,
+            number == sequence.to_le_bytes()[0],
             "Out-of-order read packet",
         )?;
         require(

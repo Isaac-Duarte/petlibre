@@ -3,6 +3,8 @@
 //!
 //! Exit status: 0 pass, 1 the evidence did not pass, 2 refused input.
 
+#![forbid(unsafe_code)]
+
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 

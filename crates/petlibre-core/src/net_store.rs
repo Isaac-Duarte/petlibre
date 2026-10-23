@@ -14,8 +14,8 @@
 use core::ffi::c_uint;
 
 use crate::storage::{
-    COMMIT, COMMIT_AT, CRC_AT, JournalIo, LENGTH_AT, RECORD_BYTES, VERSION_AT, crc32, get_u16,
-    get_u32, get_u64, put_u16, put_u32, put_u64,
+    COMMIT, COMMIT_AT, COMMIT_OFFSET, CRC_AT, JournalIo, LENGTH_AT, RECORD_BYTES, RECORD_LEN,
+    VERSION_AT, crc32, get_u16, get_u32, get_u64, put_u16, put_u32, put_u64,
 };
 
 pub const VERSION: u16 = 1;
@@ -45,9 +45,9 @@ impl Credentials {
         }
         let mut out = Self {
             ssid: [0; MAX_SSID],
-            ssid_len: ssid.len() as u8,
+            ssid_len: u8::try_from(ssid.len()).ok()?,
             psk: [0; 64],
-            psk_len: psk.len() as u8,
+            psk_len: u8::try_from(psk.len()).ok()?,
         };
         out.ssid[..ssid.len()].copy_from_slice(ssid);
         out.psk[..psk.len()].copy_from_slice(psk);
@@ -109,7 +109,7 @@ fn encode(generation: u64, credentials: Option<&Credentials>) -> [u8; RECORD_BYT
     let mut p = [0u8; RECORD_BYTES];
     p[..8].copy_from_slice(&MAGIC);
     put_u16(&mut p[VERSION_AT..], VERSION);
-    put_u16(&mut p[LENGTH_AT..], RECORD_BYTES as u16);
+    put_u16(&mut p[LENGTH_AT..], RECORD_LEN);
     put_u64(&mut p[12..], generation);
     if let Some(c) = credentials {
         p[20] = c.ssid_len;
@@ -235,7 +235,7 @@ impl NetStore {
             && self.io.read(slot, 0, &mut checked)
             && checked.iter().all(|&b| b == u8::MAX)
             && self.io.program(slot, 0, &bytes[..COMMIT_AT])
-            && self.io.program(slot, COMMIT_AT as u32, &COMMIT)
+            && self.io.program(slot, COMMIT_OFFSET, &COMMIT)
             && self.io.read(slot, 0, &mut checked)
             && bytes == checked;
         if !ok {

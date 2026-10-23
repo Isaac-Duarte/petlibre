@@ -745,8 +745,7 @@ fn write_sector(flash: &mut impl BankFlash, sector: u32, data: &[u8]) -> bool {
 
     let mut page = [u8::MAX; PIECE];
     let mut readback = [0u8; PIECE];
-    for (n, piece) in data.chunks(PIECE).enumerate() {
-        let offset = (n * PIECE) as u32;
+    for (piece, offset) in data.chunks(PIECE).zip((0u32..).step_by(PIECE)) {
         let padded = piece.len().next_multiple_of(4);
         page[..padded].fill(u8::MAX);
         page[..piece.len()].copy_from_slice(piece);

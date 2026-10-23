@@ -121,7 +121,7 @@ impl Actor {
         self.query_attributes(client)
     }
 
-    fn incoming(&mut self, client: &AsyncClient, publish: Publish) -> Result<()> {
+    fn incoming(&mut self, client: &AsyncClient, publish: &Publish) -> Result<()> {
         if publish.retain {
             warn!("ignored retained device message");
             return Ok(());
@@ -157,7 +157,7 @@ impl Actor {
             }
         }
 
-        self.device_message(client, &publish)
+        self.device_message(client, publish)
     }
 
     fn firmware_health(&mut self, client: &AsyncClient, payload: &[u8]) {
@@ -258,7 +258,7 @@ impl Actor {
     fn replacement_request(
         &mut self,
         client: &AsyncClient,
-        input: replacement::Input,
+        input: &replacement::Input,
     ) -> ReplacementResult {
         if self.config.firmware.is_none() {
             return Err(RequestError::Unconfigured);
@@ -298,12 +298,12 @@ impl Actor {
         let now = Utc::now();
         match request {
             Request::Feed(input, response) => {
-                let outcome = self.controller.feed(input, now);
+                let outcome = self.controller.feed(&input, now);
                 let result = self.dispatch(client, outcome)?;
                 let _ = response.send(result);
             }
             Request::ProbeQuery(input, response) => {
-                let outcome = self.controller.probe_query(input, now);
+                let outcome = self.controller.probe_query(&input, now);
                 let result = self.dispatch(client, outcome)?;
                 let _ = response.send(result);
             }
@@ -314,7 +314,7 @@ impl Actor {
             }
 
             Request::Replacement(input, response) => {
-                let _ = response.send(self.replacement_request(client, input));
+                let _ = response.send(self.replacement_request(client, &input));
             }
             other => self.request_without_device(other),
         }
@@ -327,13 +327,13 @@ impl Actor {
         let now = Utc::now();
         match request {
             Request::Feed(input, response) => {
-                let result = self.controller.feed(input, now).map(|(record, _)| record);
+                let result = self.controller.feed(&input, now).map(|(record, _)| record);
                 let _ = response.send(result);
             }
             Request::ProbeQuery(input, response) => {
                 let result = self
                     .controller
-                    .probe_query(input, now)
+                    .probe_query(&input, now)
                     .map(|(record, _)| record);
                 let _ = response.send(result);
             }
@@ -385,7 +385,7 @@ impl Actor {
                 event = eventloop.poll() => match event {
                     Ok(Event::Incoming(Packet::ConnAck(_))) => self.subscribe(&client).await?,
                     Ok(Event::Incoming(Packet::SubAck(ack))) => self.session_started(&client, &ack)?,
-                    Ok(Event::Incoming(Packet::Publish(message))) => self.incoming(&client, message)?,
+                    Ok(Event::Incoming(Packet::Publish(message))) => self.incoming(&client, &message)?,
                     Ok(_) => {}
                     Err(_) => {
                         warn!("MQTT disconnected; discarding pending outgoing messages");

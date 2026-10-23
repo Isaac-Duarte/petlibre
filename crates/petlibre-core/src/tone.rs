@@ -204,7 +204,12 @@ impl Player {
         self.at = 0;
         self.length = u32::from(note.ms) * SAMPLE_RATE / 1000;
         self.phase = 0;
-        self.increment = ((u64::from(note.hz) << 32) / u64::from(SAMPLE_RATE)) as u32;
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "every note is below the sample rate, so the step is below 2^32"
+        )]
+        let increment = ((u64::from(note.hz) << 32) / u64::from(SAMPLE_RATE)) as u32;
+        self.increment = increment;
     }
 
     pub fn done(&self) -> bool {
@@ -226,7 +231,12 @@ impl Player {
             }
             if self.increment != 0 {
                 let level = self.amplitude * self.envelope() / RELEASE as i32;
-                *sample = (sine(self.phase) * level / 32768) as i16;
+                #[expect(
+                    clippy::cast_possible_truncation,
+                    reason = "|sine| and level are at most 32767, so the product / 2^15 fits"
+                )]
+                let scaled = (sine(self.phase) * level / 32768) as i16;
+                *sample = scaled;
                 self.phase = self.phase.wrapping_add(self.increment);
             }
             self.at += 1;

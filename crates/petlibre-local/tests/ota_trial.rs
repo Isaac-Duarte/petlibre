@@ -124,7 +124,7 @@ fn default_disabled_and_guarded_versions_power_plans_and_active_feeds() {
 
     c.config.plans.clear();
     c.feed(
-        FeedInput {
+        &FeedInput {
             request_id: Uuid::new_v4(),
             portions: 1,
         },
@@ -198,7 +198,7 @@ fn journal_before_publish_duplicate_conflict_restart_and_timeout_never_replay() 
     assert!(submit(&mut c, request, now).unwrap().1.is_none());
     assert!(matches!(
         c.feed(
-            FeedInput {
+            &FeedInput {
                 request_id: Uuid::new_v4(),
                 portions: 1
             },

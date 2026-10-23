@@ -62,7 +62,8 @@ fn stock_table(reference: &[u8]) -> Result<(&[u8], Vec<Row>)> {
         reference.len() == STOCK_BYTES && sha256(reference) == STOCK_SHA256,
         "Pin table requires the exact verified stock OTA",
     )?;
-    let start = 64 + (TABLE_ADDRESS - XIP_ADDRESS) as usize;
+    let start =
+        64 + usize::try_from(TABLE_ADDRESS - XIP_ADDRESS).expect("a table inside the image");
     let data = &reference[start..start + TABLE_ROWS * ROW_BYTES];
     let rows: Vec<Row> = data
         .as_chunks::<ROW_BYTES>()

@@ -362,7 +362,7 @@ fn run_irq(index: usize) {
         // An unregistered line reaches the SDK default handler: nothing to model.
         let handler = h.irq[index]?;
         let previous = h.ipsr;
-        h.ipsr = index as u32 + 16;
+        h.ipsr = u32::try_from(index).expect("an IRQ line index") + 16;
         if index == TIMER2_IRQ {
             h.timer_irqs += 1;
         }
@@ -411,7 +411,7 @@ pub fn watchdog_advance(ticks: u32) {
             h.watchdog_reset_requests += 1;
             h.watchdog_vendor |= api::WDG_BIT_ISR_CLEAR;
         } else {
-            h.watchdog_ticks = elapsed as u32;
+            h.watchdog_ticks = u32::try_from(elapsed).expect("below the u32 watchdog period");
         }
     });
 }
@@ -430,7 +430,8 @@ pub fn advance(ticks: u32, run_timer: bool) {
         if u64::from(h.timer_phase) < period {
             return false;
         }
-        h.timer_phase = (u64::from(h.timer_phase) % period) as u32;
+        h.timer_phase = u32::try_from(u64::from(h.timer_phase) % period)
+            .expect("a remainder of a period at most 2^32");
         h.timer.sr |= api::TIM_IT_UPDATE;
         // Model a coalesced pending IRQ, not one callback per lost period.
         run_timer
@@ -464,8 +465,8 @@ pub fn edge(high: bool) {
 /// Run one complete iteration of the created task, as if it yielded at its delay.
 pub fn run_task() {
     let (step, context) = with(|h| {
-        assert!(h.task_live && h.task.is_some());
-        (h.task.unwrap(), h.task_context)
+        assert!(h.task_live);
+        (h.task.expect("a created task"), h.task_context)
     });
 
     // SAFETY: the step and context were registered by the port under test.

@@ -184,7 +184,8 @@ impl Writer {
     pub fn next_request(&self) -> Option<(u32, u32)> {
         (self.phase == Phase::Receiving && self.received < self.manifest.image_len).then(|| {
             let left = self.manifest.image_len - self.received;
-            (self.received, left.min(self.chunk as u32))
+            let chunk = u32::try_from(self.chunk).unwrap_or(u32::MAX);
+            (self.received, left.min(chunk))
         })
     }
 

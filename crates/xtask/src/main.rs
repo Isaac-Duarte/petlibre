@@ -5,6 +5,8 @@
 //! FW08 transport isolation rule. It is a maintenance check, not a secret
 //! scanner or a licensing audit.
 
+#![forbid(unsafe_code)]
+
 mod repository;
 
 use std::path::PathBuf;

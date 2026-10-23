@@ -5,6 +5,8 @@
 //! `cargo run`: cargo sets `RUSTUP_TOOLCHAIN`, which a firmware build refuses
 //! as a compiler override.
 
+#![forbid(unsafe_code)]
+
 use std::path::PathBuf;
 use std::process::ExitCode;
 

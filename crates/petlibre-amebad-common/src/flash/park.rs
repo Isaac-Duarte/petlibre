@@ -45,6 +45,24 @@ pub struct ParkToken {
     pub lease_hi: u32,
 }
 
+impl ParkToken {
+    /// The token for these words, each split as the IPC slots carry it.
+    #[inline(always)]
+    pub const fn new(authority: u64, peer: u64, lease: u64) -> Self {
+        let (authority_lo, authority_hi) = halves(authority);
+        let (peer_lo, peer_hi) = halves(peer);
+        let (lease_lo, lease_hi) = halves(lease);
+        Self {
+            authority_lo,
+            authority_hi,
+            peer_lo,
+            peer_hi,
+            lease_lo,
+            lease_hi,
+        }
+    }
+}
+
 /// Register access for one core. `KM0` selects the core-specific IPC bank,
 /// counter sampling and semaphore owner encoding.
 pub trait Mmio {
@@ -505,16 +523,19 @@ pub const fn session(boot_count: u32, ticks: u32, km0: bool) -> u64 {
     ((boot_count as u64) << 32) | ((ticks ^ tag) | 1) as u64
 }
 
+/// A token word split as the IPC slots carry it: low half, then high.
+#[inline(always)]
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "each half is taken on purpose"
+)]
+const fn halves(value: u64) -> (u32, u32) {
+    (value as u32, (value >> 32) as u32)
+}
+
 #[inline(always)]
 fn handshake(authority: u64, peer: u64) -> ParkToken {
-    ParkToken {
-        authority_lo: authority as u32,
-        authority_hi: (authority >> 32) as u32,
-        peer_lo: peer as u32,
-        peer_hi: (peer >> 32) as u32,
-        lease_lo: 0,
-        lease_hi: 0,
-    }
+    ParkToken::new(authority, peer, 0)
 }
 
 /// Stable peer publication: command and payload unchanged across one read.
@@ -534,11 +555,7 @@ pub fn peer_words<M: Mmio>() -> Option<(u32, u64, u64, u64)> {
 pub fn requested<M: Mmio>(authority: u64, peer: u64) -> Option<ParkToken> {
     match peer_words::<M>() {
         Some((REQUEST, a, p, lease)) if a == authority && p == peer && lease != 0 => {
-            Some(ParkToken {
-                lease_lo: lease as u32,
-                lease_hi: (lease >> 32) as u32,
-                ..handshake(a, p)
-            })
+            Some(ParkToken::new(a, p, lease))
         }
         _ => None,
     }

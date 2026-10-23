@@ -8,6 +8,8 @@
 //! every image prints is a hash of its exact inputs ([`identity`]), so a
 //! review of the same sources can be reused instead of rebuilt.
 
+#![forbid(unsafe_code)]
+
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};

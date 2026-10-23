@@ -120,7 +120,8 @@ impl FeedbackEvents {
             return (FeedbackTakeResult::FAILED, None);
         }
 
-        self.head = ((usize::from(self.head) + 1) % usize::from(self.capacity)) as u8;
+        // `head < capacity <= u8::MAX`, so the increment cannot overflow.
+        self.head = (self.head + 1) % self.capacity;
         self.count -= 1;
         (FeedbackTakeResult::EVENT, Some(front))
     }

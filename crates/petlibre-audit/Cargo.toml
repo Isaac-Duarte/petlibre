@@ -7,12 +7,6 @@ rust-version.workspace = true
 description = "Offline audits of PLAF103 evidence: startup captures, FW14 ADC, FW30 driver transients and full-flash comparisons"
 publish.workspace = true
 
-[lints.rust]
-unsafe_code = "forbid"
-
-[lints.clippy]
-dbg_macro = "deny"
-
 [dependencies]
 anyhow.workspace = true
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
@@ -26,3 +20,6 @@ thiserror.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+
+[lints]
+workspace = true

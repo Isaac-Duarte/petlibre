@@ -29,7 +29,8 @@ pub fn current() -> Option<SettingsView> {
     (packed & LOADED != 0).then(|| SettingsView {
         lights: packed & LIGHTS != 0,
         sound: packed & SOUND != 0,
-        volume: packed as u8,
+        // The volume is the packed word's low byte.
+        volume: packed.to_le_bytes()[0],
         generation: GENERATION.load(Ordering::Acquire),
         writable: packed & WRITABLE != 0,
     })
@@ -84,7 +85,7 @@ pub fn pending() -> Option<SettingsFields> {
     (packed & QUEUED != 0).then(|| SettingsFields {
         lights: (packed & SET_LIGHTS != 0).then_some(packed & LIGHTS != 0),
         sound: (packed & SET_SOUND != 0).then_some(packed & SOUND != 0),
-        volume: (packed & SET_VOLUME != 0).then_some(packed as u8),
+        volume: (packed & SET_VOLUME != 0).then_some(packed.to_le_bytes()[0]),
     })
 }
 

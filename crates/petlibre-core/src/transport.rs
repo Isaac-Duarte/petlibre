@@ -88,7 +88,7 @@ fn remaining_length(length: usize) -> Result<([u8; 4], usize), Error> {
     let mut used = 0;
 
     loop {
-        let mut digit = (value % 128) as u8;
+        let mut digit = (value % 128).to_le_bytes()[0];
         value /= 128;
         if value > 0 {
             digit |= 0x80;
@@ -803,8 +803,10 @@ pub fn parse_request(payload: &[u8]) -> Result<Request<'_>, RequestError> {
             sound: flag(options[1])?,
             volume: match options[2] {
                 None => None,
-                Some(v) if (0..=i64::from(MAX_VOLUME)).contains(&v) => Some(v as u8),
-                Some(_) => return Err(RequestError::Malformed),
+                Some(v) => match u8::try_from(v) {
+                    Ok(v) if v <= MAX_VOLUME => Some(v),
+                    _ => return Err(RequestError::Malformed),
+                },
             },
         }),
         _ if options.iter().any(Option::is_some) => return Err(RequestError::Malformed),

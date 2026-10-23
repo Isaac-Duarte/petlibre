@@ -94,9 +94,11 @@ impl Session {
 
     /// The nonce as health and requests write it: 16 lowercase hex characters.
     pub fn nonce_hex(&self) -> [u8; 16] {
+        let bytes = self.nonce.to_be_bytes();
         let mut out = [0u8; 16];
         for (i, slot) in out.iter_mut().enumerate() {
-            let nibble = (self.nonce >> (60 - 4 * i)) as u8 & 0xf;
+            let byte = bytes[i / 2];
+            let nibble = if i % 2 == 0 { byte >> 4 } else { byte & 0xf };
             *slot = b"0123456789abcdef"[usize::from(nibble)];
         }
         out

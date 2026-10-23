@@ -24,6 +24,7 @@ use petlibre_core::feed_controller::{FeedController, FeedSample, MotorCommand};
 use petlibre_core::flash_coord::{FlashCoord, FlashReply};
 use petlibre_core::sensor_inputs::SensorReading;
 
+use super::elapsed_ms;
 use crate::probes::optics::FEED;
 use petlibre_amebad::board::{Board, MOTOR_MASK};
 use petlibre_amebad::config::{FLASH_LIMITS, SYSTIMER_HZ};
@@ -96,7 +97,8 @@ impl Current {
         if self.samples == 0 {
             0
         } else {
-            (self.sum / u64::from(self.samples)) as u32
+            // The mean of u32 samples fits a u32.
+            u32::try_from(self.sum / u64::from(self.samples)).unwrap_or(u32::MAX)
         }
     }
 }
@@ -270,11 +272,6 @@ pub struct Probe {
 
 fn next(delay_ms: u32, record: Option<Record>) -> Step {
     Step { delay_ms, record }
-}
-
-fn elapsed_ms(since_raw: u32) -> u32 {
-    (u64::from(sdk::systimer_ticks().wrapping_sub(since_raw)) * 1000 / u64::from(SYSTIMER_HZ))
-        as u32
 }
 
 fn motor_pins_stopped() -> bool {

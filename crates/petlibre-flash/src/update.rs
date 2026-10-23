@@ -344,14 +344,14 @@ pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
         reviewed,
         raw,
     };
-    session_run(context, args, &loaded, Some(execution))
+    session_run(context, args, &loaded, Some(&execution))
 }
 
 fn session_run(
     context: &Context,
     args: &Args,
     loaded: &Loaded,
-    execution: Option<Execution<UpdateBindings, DevelopmentPlan>>,
+    execution: Option<&Execution<UpdateBindings, DevelopmentPlan>>,
 ) -> Result<Outcome> {
     let directory = context.root.output_directory(&args.evidence.output)?;
     if let Some(execution) = &execution {
@@ -617,14 +617,14 @@ pub fn give_way(context: &Context, args: &GiveWayArgs) -> Result<Outcome> {
         reviewed,
         raw,
     };
-    give_way_session(context, args, &loaded, Some(execution))
+    give_way_session(context, args, &loaded, Some(&execution))
 }
 
 fn give_way_session(
     context: &Context,
     args: &GiveWayArgs,
     loaded: &GiveWayLoaded,
-    execution: Option<Execution<GiveWayBindings, GiveWayPlan>>,
+    execution: Option<&Execution<GiveWayBindings, GiveWayPlan>>,
 ) -> Result<Outcome> {
     let directory = context.root.output_directory(&args.evidence.output)?;
     if let Some(execution) = &execution {

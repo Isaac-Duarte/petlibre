@@ -45,14 +45,7 @@ c_enum!(LeaseStage {
 });
 
 fn park_token(t: &FlashToken) -> ParkToken {
-    ParkToken {
-        authority_lo: t.authority_session as u32,
-        authority_hi: (t.authority_session >> 32) as u32,
-        peer_lo: t.peer_session as u32,
-        peer_hi: (t.peer_session >> 32) as u32,
-        lease_lo: t.lease as u32,
-        lease_hi: (t.lease >> 32) as u32,
-    }
+    ParkToken::new(t.authority_session, t.peer_session, t.lease)
 }
 
 fn beat() -> u32 {

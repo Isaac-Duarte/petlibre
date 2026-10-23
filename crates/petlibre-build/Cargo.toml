@@ -7,12 +7,6 @@ rust-version.workspace = true
 description = "Local AmebaD firmware builds: pinned SDK and toolchain, source-bound identity, SDK overlays and the linked-image audits"
 publish.workspace = true
 
-[lints.rust]
-unsafe_code = "forbid"
-
-[lints.clippy]
-dbg_macro = "deny"
-
 [dependencies]
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
 clap.workspace = true
@@ -25,3 +19,6 @@ serde_json.workspace = true
 sha2 = "0.11"
 tempfile.workspace = true
 thiserror.workspace = true
+
+[lints]
+workspace = true

@@ -11,6 +11,9 @@
 //! A failed capture trips the board and ends the probe.
 
 use petlibre_core::adc_scale::{AdcCalibration, SAMPLES};
+
+const SAMPLE_COUNT: u32 = 16;
+const _: () = assert!(SAMPLE_COUNT as usize == SAMPLES);
 use petlibre_core::sensor_inputs::SensorReading;
 
 use petlibre_amebad::board::Board;
@@ -41,7 +44,8 @@ impl Channel {
         Self {
             min: samples.iter().copied().min().unwrap_or_default(),
             max: samples.iter().copied().max().unwrap_or_default(),
-            mean: (sum / SAMPLES as u32) as u16,
+            // The mean of u16 samples fits a u16.
+            mean: u16::try_from(sum / SAMPLE_COUNT).unwrap_or(u16::MAX),
             scaled: calibration.scale_16(samples).unwrap_or_default(),
         }
     }

@@ -53,8 +53,18 @@ impl TickClock {
         }
 
         self.raw_at = raw;
-        self.fraction = (scaled % u64::from(self.ticks_per_second)) as u32;
-        self.millis = self.millis.wrapping_add(elapsed as u32);
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "a remainder of a u32 divisor"
+        )]
+        let fraction = (scaled % u64::from(self.ticks_per_second)) as u32;
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "checked below HALF_RANGE above"
+        )]
+        let elapsed = elapsed as u32;
+        self.fraction = fraction;
+        self.millis = self.millis.wrapping_add(elapsed);
         Some(self.millis)
     }
 

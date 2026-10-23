@@ -27,6 +27,13 @@ macro_rules! c_enum {
 
         impl $name {
             $($(#[$vmeta])* pub const $variant: Self = Self($value);)+
+
+            /// The low byte, as the one-byte fields of the NOR records store
+            /// the value. Every declared variant fits.
+            #[allow(clippy::cast_possible_truncation, reason = "record fields are one byte wide")]
+            pub const fn low_byte(self) -> u8 {
+                self.0 as u8
+            }
         }
     };
 }

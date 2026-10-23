@@ -90,7 +90,7 @@ fn query_is_journaled_once_and_requires_two_fresh_distinct_computed_replies() {
         request_id: Uuid::new_v4(),
     };
 
-    let (record, command) = c.probe_query(input.clone(), at).unwrap();
+    let (record, command) = c.probe_query(&input.clone(), at).unwrap();
     assert_eq!(record.trial_request_id, trial);
     assert_eq!(command.unwrap().payload["cmd"], "GET_CONFIG");
 
@@ -100,10 +100,10 @@ fn query_is_journaled_once_and_requires_two_fresh_distinct_computed_replies() {
         "submitted"
     );
 
-    assert!(c.probe_query(input.clone(), at).unwrap().1.is_none());
+    assert!(c.probe_query(&input.clone(), at).unwrap().1.is_none());
     assert!(matches!(
         c.probe_query(
-            probe::Input {
+            &probe::Input {
                 request_id: Uuid::new_v4()
             },
             at
@@ -138,7 +138,7 @@ fn query_is_journaled_once_and_requires_two_fresh_distinct_computed_replies() {
     let second = probe::Input {
         request_id: Uuid::new_v4(),
     };
-    c.probe_query(second, at).unwrap();
+    c.probe_query(&second, at).unwrap();
     observe(&mut c, "config", reply("device-generated-1", at), at);
     assert_eq!(c.status.probe_queries[0].phase, Phase::Submitted);
     observe(&mut c, "config", reply("device-generated-2", at), at);
@@ -167,20 +167,20 @@ fn pending_query_is_not_replayed_after_restart_and_does_not_block_original_resto
     let input = probe::Input {
         request_id: Uuid::new_v4(),
     };
-    c.probe_query(input.clone(), at + Duration::seconds(1))
+    c.probe_query(&input.clone(), at + Duration::seconds(1))
         .unwrap();
 
     drop(c);
     let mut c = Controller::load(common::config(), path).unwrap();
     assert_eq!(c.status.probe_queries[0].phase, Phase::Uncertain);
-    assert!(c.probe_query(input, at).unwrap().1.is_none());
+    assert!(c.probe_query(&input, at).unwrap().1.is_none());
 
     c.enable_ota_trial();
     let at = at + Duration::seconds(2);
     ready(&mut c, "1.1.17", at);
     assert!(matches!(
         c.probe_query(
-            probe::Input {
+            &probe::Input {
                 request_id: Uuid::new_v4()
             },
             at
@@ -213,13 +213,13 @@ fn profile_mismatch_and_unconfirmed_installation_cannot_execute_the_probe() {
         request_id: Uuid::new_v4(),
     };
     assert!(matches!(
-        c.probe_query(query.clone(), at),
+        c.probe_query(&query.clone(), at),
         Err(Rejection::OtaDisabled)
     ));
 
     c.enable_ota_trial();
     assert!(matches!(
-        c.probe_query(query, at),
+        c.probe_query(&query, at),
         Err(Rejection::InvalidProbe)
     ));
 
@@ -256,7 +256,7 @@ fn lost_query_times_out_and_cannot_be_retriggered_by_a_late_reply() {
 
     let at = at + Duration::seconds(1);
     c.probe_query(
-        probe::Input {
+        &probe::Input {
             request_id: Uuid::new_v4(),
         },
         at,

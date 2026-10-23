@@ -87,7 +87,7 @@ pub struct Worker {
 }
 
 /// A value's command-line spelling.
-fn argument(value: impl ValueEnum) -> String {
+fn argument(value: &impl ValueEnum) -> String {
     value
         .to_possible_value()
         .map(|possible| possible.get_name().to_owned())
@@ -104,8 +104,8 @@ impl Worker {
         let errors = tempfile::tempfile()?;
         let mut child = Process::new(executable)
             .arg(image)
-            .arg(argument(profile))
-            .arg(argument(journal))
+            .arg(argument(&profile))
+            .arg(argument(&journal))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(errors.try_clone()?)

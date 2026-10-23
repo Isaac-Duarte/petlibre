@@ -30,7 +30,7 @@ use crate::commands::ota::{OtaArgs, Staged, Timing};
 use crate::config::{CAPTURES, VERIFICATION};
 use crate::local_api::{Auth, LocalApi, ServerConfig};
 use crate::relay::{POWER, STRAP};
-use crate::server::{ForgedCase, LocalStatus, Request, TrialRequest};
+use crate::server::{ForgedCase, LocalStatus, Request, TrialRequest, TrialResolve};
 use crate::status::StepState;
 use crate::tools::Capture;
 use crate::{Error, Result, require};
@@ -582,6 +582,13 @@ impl Rig for LiveRig<'_> {
     fn stock_trial(&mut self, trial: &TrialRequest) -> Result<()> {
         self.api
             .post::<IgnoredAny>("/api/ota/trial", trial)
+            .map(|_| ())
+    }
+
+    fn resolve_trial(&mut self, request_id: &str, note: &str) -> Result<()> {
+        let body = TrialResolve { request_id, note };
+        self.api
+            .post::<IgnoredAny>("/api/ota/trial/resolve", &body)
             .map(|_| ())
     }
 }

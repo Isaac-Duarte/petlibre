@@ -39,6 +39,9 @@ struct StockFeeder {
     version: &'static str,
     reports: Vec<Value>,
     trial: Option<(String, &'static str)>,
+    /// A request from an earlier run: its ID, phase, and when the server's
+    /// evidence lets it be resolved.
+    earlier: Option<(String, &'static str, f64)>,
     /// The replacement's health: build and bank.
     health: Option<(String, u64)>,
     offered: bool,
@@ -70,6 +73,7 @@ impl StockFeeder {
             },
             reports: Vec::new(),
             trial: None,
+            earlier: None,
             health: None,
             offered: false,
             served: None,
@@ -159,9 +163,16 @@ impl Rig for StockFeeder {
 
     fn status(&mut self) -> Result<LocalStatus> {
         self.release();
+        // Newest first, as the server lists them.
+        let earlier = self
+            .earlier
+            .iter()
+            .map(|(id, phase, _)| (id.clone(), *phase));
         let trials: Vec<Value> = self
             .trial
-            .iter()
+            .clone()
+            .into_iter()
+            .chain(earlier)
             .map(|(id, phase)| {
                 json!({"input": {"request_id": id}, "phase": phase,
                                      "download_reported": !self.reports.is_empty()})
@@ -220,7 +231,29 @@ impl Rig for StockFeeder {
         Ok(TOKEN.into())
     }
 
+    fn resolve_trial(&mut self, request_id: &str, _note: &str) -> Result<()> {
+        let now = self.now;
+        let Some((id, phase, at)) = &mut self.earlier else {
+            panic!("nothing to resolve")
+        };
+        assert_eq!(id, request_id);
+        if now < *at {
+            return Err(Error::Bench(
+                "POST /api/ota/trial/resolve: 409 resolution needs more evidence".into(),
+            ));
+        }
+        *phase = "not_installed";
+        self.actions.push("resolved".into());
+        Ok(())
+    }
+
     fn stock_trial(&mut self, trial: &TrialRequest) -> Result<()> {
+        assert!(
+            self.earlier
+                .as_ref()
+                .is_none_or(|(_, phase, _)| *phase == "not_installed"),
+            "asked while an earlier request was still open"
+        );
         assert_eq!(trial.image, "replacement");
         assert_eq!(trial.server_token, TOKEN);
         require_none(&self.trial);
@@ -325,6 +358,7 @@ fn stock_installs_the_build_which_reports_from_bank_0() {
         verdicts(&reports),
         [
             (READY, "pass"),
+            (SETTLE, "pass"),
             (REQUEST, "pass"),
             (DOWNLOAD, "pass"),
             (BANK0, "pass")
@@ -361,6 +395,7 @@ fn promote_lets_the_bank_0_build_install_itself_into_bank_1() {
         verdicts(&reports),
         [
             (READY, "pass"),
+            (SETTLE, "pass"),
             (REQUEST, "pass"),
             (DOWNLOAD, "pass"),
             (PROMOTE, "pass")
@@ -381,6 +416,7 @@ fn a_feeder_not_reporting_stock_is_never_asked() {
             verdicts(&reports),
             [
                 (READY, "fail"),
+                (SETTLE, "skip"),
                 (REQUEST, "skip"),
                 (DOWNLOAD, "skip"),
                 (BANK0, "skip")
@@ -401,12 +437,13 @@ fn a_refused_request_fails_with_stock_s_error_and_is_not_resent() {
         verdicts(&reports),
         [
             (READY, "pass"),
+            (SETTLE, "pass"),
             (REQUEST, "pass"),
             (DOWNLOAD, "fail"),
             (BANK0, "skip")
         ]
     );
-    let Verdict::Fail(reason) = &reports[2].1 else {
+    let Verdict::Fail(reason) = &reports[3].1 else {
         unreachable!()
     };
     assert!(reason.contains("error 0x464"), "{reason}");
@@ -418,8 +455,8 @@ fn another_build_starting_after_activation_fails_the_install() {
     let mut feeder = StockFeeder::new(Script::WrongBuild);
     let reports = session(&mut feeder, false);
 
-    let Verdict::Fail(reason) = &reports[2].1 else {
-        panic!("{:?}", reports[2])
+    let Verdict::Fail(reason) = &reports[3].1 else {
+        panic!("{:?}", reports[3])
     };
     assert!(reason.contains("Build 0123456789ab started"), "{reason}");
 }
@@ -457,8 +494,14 @@ fn trial_phases_read_from_the_server_s_ledger() {
 
 #[test]
 fn the_steps_end_with_the_promotion_only_when_asked() {
-    assert_eq!(args(false).steps(), [READY, REQUEST, DOWNLOAD, BANK0]);
-    assert_eq!(args(true).steps(), [READY, REQUEST, DOWNLOAD, PROMOTE]);
+    assert_eq!(
+        args(false).steps(),
+        [READY, SETTLE, REQUEST, DOWNLOAD, BANK0]
+    );
+    assert_eq!(
+        args(true).steps(),
+        [READY, SETTLE, REQUEST, DOWNLOAD, PROMOTE]
+    );
 }
 
 fn session_reports(reports: &[(&'static str, Verdict)]) -> Vec<Report> {
@@ -470,4 +513,45 @@ fn session_reports(reports: &[(&'static str, Verdict)]) -> Vec<Report> {
             seconds: 0.0,
         })
         .collect()
+}
+
+#[test]
+fn an_earlier_failed_request_is_resolved_before_stock_is_asked_again() {
+    let mut feeder = StockFeeder::new(Script::Installs);
+    feeder.earlier = Some(("f5ef47b8".into(), "reported_error", 600.0));
+    let reports = session(&mut feeder, false);
+
+    assert_eq!(
+        verdicts(&reports),
+        [
+            (READY, "pass"),
+            (SETTLE, "pass"),
+            (REQUEST, "pass"),
+            (DOWNLOAD, "pass"),
+            (BANK0, "pass")
+        ]
+    );
+    assert_eq!(feeder.actions, ["resolved"]);
+    // One "not yet" line, however many polls it took.
+    assert_eq!(
+        feeder
+            .notes
+            .iter()
+            .filter(|n| n.contains("Not yet resolvable"))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn an_earlier_request_the_server_never_resolves_stops_the_run() {
+    let mut feeder = StockFeeder::new(Script::Installs);
+    feeder.earlier = Some(("f5ef47b8".into(), "uncertain", f64::INFINITY));
+    let reports = session(&mut feeder, false);
+
+    assert_eq!(
+        verdicts(&reports)[..3],
+        [(READY, "pass"), (SETTLE, "fail"), (REQUEST, "skip")]
+    );
+    assert!(feeder.trial.is_none());
 }

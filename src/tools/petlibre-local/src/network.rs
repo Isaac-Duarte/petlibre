@@ -1,5 +1,9 @@
 //! Explicit, reversible gateway changes scoped to one test-device MAC.
 //!
+//! The host accepts two ports from that MAC only: the broker, and the
+//! `ota-images` port stock downloads an update from. Both input rules carry
+//! the same tag, so `remove` deletes them together.
+//!
 //! Linux gateway only, run as root through `nft`. `rules` renders the
 //! transaction for preview; `apply` refuses unless the broker is listening and
 //! checks the complete transaction before committing it; `remove` deletes only
@@ -100,7 +104,9 @@ pub fn rules(config: &Config) -> Result<String> {
   }}
 }}
 insert rule inet computer_security input iifname "{interface}" ether saddr {mac} ip daddr {ip} tcp dport {port} counter accept comment "{COMMENT}"
-"#
+insert rule inet computer_security input iifname "{interface}" ether saddr {mac} ip daddr {ip} tcp dport {images} counter accept comment "{COMMENT}"
+"#,
+        images = crate::ota_image::PORT,
     ))
 }
 

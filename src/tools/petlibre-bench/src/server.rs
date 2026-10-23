@@ -54,6 +54,14 @@ pub(crate) struct TrialRequest {
     pub server_token: String,
 }
 
+/// `POST /api/ota/trial/resolve`: close a failed or uncertain trial from the
+/// server's own evidence; sends the device nothing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct TrialResolve<'a> {
+    pub request_id: &'a str,
+    pub note: &'a str,
+}
+
 /// One OTA trial in the server's ledger.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]

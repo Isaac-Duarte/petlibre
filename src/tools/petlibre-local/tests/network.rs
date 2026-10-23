@@ -12,6 +12,12 @@ fn routing_is_scoped_to_device_mac_and_hotspot_and_blocks_its_wan_only() {
     let rules = network::rules(&config).unwrap();
     assert!(rules.contains("ether saddr 02:00:00:00:00:42 tcp dport 1883"));
     assert!(rules.contains("dnat ip to 10.42.103.1:1883"));
+    // Stock downloads updates from the image server on its fixed port.
+    assert!(rules.contains("ip daddr 10.42.103.1 tcp dport 8088 counter accept"));
+    assert_eq!(
+        rules.matches("comment \"petlibre-local-broker\"").count(),
+        2
+    );
     assert!(rules.contains("iifname \"wlan1\" ether saddr 02:00:00:00:00:42 counter reject"));
     assert!(!rules.contains("flush ruleset"));
 

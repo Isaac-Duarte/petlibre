@@ -17,9 +17,9 @@ A feature card sequences behavior through the SDK; it never relaxes a FIRMWARE_B
 
 **Scope.** Parity means the device's own functions, not the vendor app or cloud. Out of scope: the vendor app and cloud, binding, upsell and care plans, camera and motion switches (other models), wire compatibility with the stock app, and recording through the on-board microphone (a CLI upload is enough). The stock behavior column comes from static analysis of the 1.1.15 image, the vendor app and captured traffic; fields shared across the vendor's models are not confirmed for the PLAF103 until FP01 says so.
 
-**Time policy.** There is no battery-backed RTC in use, so the clock is invalid after every cold boot ([clock](docs/firmware/clock.md)). The feeder needs no server: any one time source (NTP, the app, the server or Home Assistant) makes the clock valid, and it stays valid for at least 7 days without another sync (FW46). Until FW46 lands, only the server syncs. After a cold boot no schedule runs until a source syncs, and occurrences missed meanwhile follow FW21's missed-meal rule.
+**Time policy.** There is no battery-backed RTC in use, so the clock is invalid after every cold boot ([clock](docs/firmware/clock.md)). The feeder needs no server: any one time source (NTP, the app or the server) makes the clock valid, and it stays valid until its error could exceed a set bound (FW46); with no valid clock, scheduled meals hold and manual feeds still work. Until FW46 lands, only the server syncs. After a cold boot no schedule runs until a source syncs, and occurrences missed meanwhile follow FW21's missed-meal rule.
 
-**Server optional.** Every card here works with the app alone on the LAN; the server adds long history, remote access and push notifications (FP18). See [product architecture](docs/firmware/product-architecture.md).
+**Server optional.** Every card here works with the app alone on the LAN; the server adds long history and release fetching (FP18). See [product architecture](docs/firmware/product-architecture.md).
 
 ## Groundwork
 
@@ -60,8 +60,8 @@ A feature card sequences behavior through the SDK; it never relaxes a FIRMWARE_B
 
 | Card | Status | Evidence | Stock behavior | Prerequisites | Finish line |
 | --- | --- | --- | --- | --- | --- |
-| **FP16 Home Assistant integration** | Planned | — | — | FP03, FP05, FP07, FP08, FW49 | Home Assistant adds the feeder by auto-discovery with no add-on (FW49's ESPHome native API). Feed, food level, faults, battery, lock, lights and sound work from HA, and each plan shows as an enable switch and a time. Reconnects and automation replay cannot duplicate a feed, and feeding continues without Home Assistant. |
-| **FP18 Server mirror and notifications** | Planned | — | The vendor cloud: history, push alerts, remote control | FP06, FP08, FW47 | The optional server mirrors the feeder's events through FW47's cursor with no gaps across its own outages. It records live samples while connected and keeps both raw, forever by default, with CSV and JSON export and import. It holds pet profiles and food info, shows the derived views (refill estimate, grams and calories, anomalies, hardware health, audit log), sends push notifications for alerts, and gives remote access. Stopping the server changes nothing on the feeder. Details: [data](docs/firmware/product-architecture.md#data). |
+| **FP16 Home Assistant integration** | Planned (paused by owner, Oct 23) | — | — | FP03, FP05, FP07, FP08, FW47 | Paused; the route (ESPHome API on the feeder, FW49, or MQTT discovery through the server) is chosen when it resumes ([options](docs/firmware/product-architecture.md#home-assistant)). Either way reconnects and automation replay cannot duplicate a feed, and feeding continues without Home Assistant. |
+| **FP18 Server mirror** | Planned | — | The vendor cloud: history, remote control | FP06, FP08, FW47 | A new `petlibre-server` crate (shared pieces extracted from `petlibre-local` and the bench) mirrors the feeder's events through FW47's cursor with no gaps across its own outages, records live samples while connected, and keeps both raw, forever by default, with CSV and JSON export and import. It holds pet profiles and food info, shows the derived views, and fetches releases for the owner to approve. Stopping it changes nothing on the feeder. Notifications and remote access are deferred. Details: [data](docs/firmware/product-architecture.md#data). |
 | **FP17 Parity soak** | Planned | — | — | FP03–FP15, FW27 | A defined multi-day run on schedules alone, with power cuts, server outages and a battery stretch. Every meal is accounted for exactly once, and the result is compared with stock in the same scenarios. FW29 waits on this card. |
 
 ## Status at a glance
@@ -85,6 +85,6 @@ A feature card sequences behavior through the SDK; it never relaxes a FIRMWARE_B
 | FP13 Meal call | ⬜ Planned |
 | FP14 Battery and power | ⬜ Planned |
 | FP15 Reset button | ⬜ Planned |
-| FP16 Home Assistant integration | ⬜ Planned |
+| FP16 Home Assistant integration | ⬜ Planned (paused) |
 | FP17 Parity soak | ⬜ Planned |
-| FP18 Server mirror and notifications | ⬜ Planned |
+| FP18 Server mirror | ⬜ Planned |

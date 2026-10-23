@@ -16,17 +16,17 @@ use std::process::exit;
 
 use clap::Parser;
 
-use petlibre_core::feed_controller::{FeedLimits, FeedRequest};
-use petlibre_core::feed_journal::{FeedJournal, JournalConfig, JournalError};
-use petlibre_core::feed_progress::{BowlMode, Direction};
-use petlibre_core::feed_storage::{OwnerRecovery, OwnerResult, OwnerStorage};
+use petlibre_core::feed::controller::{FeedLimits, FeedRequest};
+use petlibre_core::feed::progress::{BowlMode, Direction};
+use petlibre_core::feed::sensor_inputs::SensorLimits;
+use petlibre_core::feed::storage::{OwnerRecovery, OwnerResult, OwnerStorage};
 use petlibre_core::flash_coord::{FlashCoord, FlashLimits, FlashReply};
-use petlibre_core::sensor_inputs::SensorLimits;
-use petlibre_core::storage::JournalIo;
-use petlibre_hal::events::EventsConfig;
+use petlibre_core::store::feed_journal::{FeedJournal, JournalConfig, JournalError};
+use petlibre_core::store::slot::JournalIo;
 use petlibre_hal::owner::{Owner, OwnerConfig};
 use petlibre_hal::sdk::fake;
-use petlibre_hal::watchdog::WatchdogConfig;
+use petlibre_hal::supervision::events::EventsConfig;
+use petlibre_hal::supervision::watchdog::WatchdogConfig;
 use petlibre_sim::protocol::{
     Code, Command, Event, Fault, IoOperation, IoStage, Journal, Outcome, Profile, Reason, State,
     Status, StoragePhase, WorkerArgs,

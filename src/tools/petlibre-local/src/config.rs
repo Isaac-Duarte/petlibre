@@ -19,7 +19,7 @@ use uuid::Uuid;
 
 use crate::{
     protocol::lenient,
-    request_auth::{self, RequestKey},
+    replacement::request_auth::{self, RequestKey},
     storage,
 };
 

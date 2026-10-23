@@ -17,17 +17,18 @@ use core::ffi::{CStr, c_void};
 use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
-use petlibre_hal::confirm::{self, Confirm, HookedStorage};
 use petlibre_hal::flash::hooks::{self, HookProvider, HookTicket};
 use petlibre_hal::flash::park::Hardware;
+use petlibre_hal::flash_lock::provider::Provider;
 use petlibre_hal::health::Boot;
-use petlibre_hal::provider::Provider;
-use petlibre_hal::supervise::{self, LIVENESS_MS, Startup};
+use petlibre_hal::ota::confirm::{self, Confirm, HookedStorage};
+use petlibre_hal::ota::updater::{self, Hooked, Hooks, Updater};
+use petlibre_hal::ota::watch::{self, SdkGiveWay, Watch};
+use petlibre_hal::supervision::config;
+use petlibre_hal::supervision::supervise::{self, LIVENESS_MS, Startup};
+use petlibre_hal::supervision::watchdog::Watchdog;
 use petlibre_hal::transport::{self, Link};
-use petlibre_hal::updater::{self, Hooked, Hooks, Updater};
-use petlibre_hal::watch::{self, SdkGiveWay, Watch};
-use petlibre_hal::watchdog::Watchdog;
-use petlibre_hal::{config, leds, power, sdk, startup, stopped, trial};
+use petlibre_hal::{leds, power, sdk, startup, stopped, trial};
 
 use crate::slot::Slot;
 use crate::wifi::{Probe, Record};
@@ -809,7 +810,7 @@ unsafe extern "C" fn diagnostic_task(_: *mut c_void) -> u32 {
     // every path after a passing diagnostic and the variant no longer links
     // the image the link audit pins.
     let forced_fail = cfg!(feature = "fw11-fail") && core::hint::black_box(true);
-    let passed = petlibre_core::diagnostic::run() && !forced_fail;
+    let passed = petlibre_core::feed::diagnostic::run() && !forced_fail;
     sdk::log(if passed {
         c"Synthetic core diagnostic: PASS\r\n"
     } else {

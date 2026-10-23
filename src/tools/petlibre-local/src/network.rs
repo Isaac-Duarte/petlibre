@@ -106,7 +106,7 @@ pub fn rules(config: &Config) -> Result<String> {
 insert rule inet computer_security input iifname "{interface}" ether saddr {mac} ip daddr {ip} tcp dport {port} counter accept comment "{COMMENT}"
 insert rule inet computer_security input iifname "{interface}" ether saddr {mac} ip daddr {ip} tcp dport {images} counter accept comment "{COMMENT}"
 "#,
-        images = crate::ota_image::PORT,
+        images = crate::ota::image::PORT,
     ))
 }
 

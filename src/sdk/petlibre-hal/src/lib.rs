@@ -19,7 +19,6 @@ pub mod startup;
 pub mod stopped;
 
 pub mod adc;
-pub mod arming;
 pub mod audio;
 // FW34: compiled for host tests, and on the target only for a Bluetooth
 // firmware, whose image links the C peripheral it calls.
@@ -27,21 +26,15 @@ pub mod audio;
 pub mod ble;
 pub mod board;
 pub mod clock;
-pub mod confirm;
 pub mod network;
 pub mod settings;
 pub mod stream;
-pub mod supervise;
 
-mod active;
-pub mod config;
-pub mod events;
+pub mod flash_lock;
 pub mod health;
 pub mod net_status;
+pub mod ota;
 pub mod owner;
 pub mod power;
-pub mod provider;
+pub mod supervision;
 pub mod transport;
-pub mod updater;
-pub mod watch;
-pub mod watchdog;

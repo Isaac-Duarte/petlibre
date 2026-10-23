@@ -6,9 +6,9 @@
 use std::sync::{Mutex, MutexGuard};
 
 use petlibre_core::ble_setup::{OFFLINE_MS, PREFIX, parse_prefix, prefix};
-use petlibre_core::net_store::NetStore;
 use petlibre_core::request_auth::hmac_sha256;
-use petlibre_core::storage::JournalIo;
+use petlibre_core::store::net::NetStore;
+use petlibre_core::store::slot::JournalIo;
 use petlibre_hal::ble::{BleSetup, DropReason, FailStage, Record, RequestKind, SETUP};
 use petlibre_hal::sdk::fake::api::FAKE_REQUEST_KEY;
 use petlibre_hal::sdk::fake::{self, ble_record};

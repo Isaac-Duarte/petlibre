@@ -10,10 +10,10 @@
 //! Clock rates are nominal; the bench capture measures them.
 
 use petlibre_hal::board::Board;
-use petlibre_hal::events::{Events, EventsConfig, EventsSnapshot};
 use petlibre_hal::sdk;
 use petlibre_hal::stopped;
-use petlibre_hal::watchdog::{Watchdog, WatchdogConfig};
+use petlibre_hal::supervision::events::{Events, EventsConfig, EventsSnapshot};
+use petlibre_hal::supervision::watchdog::{Watchdog, WatchdogConfig};
 
 /// Backup-register marker (`PFW5` in ASCII) written before the watchdog is armed.
 pub const MARKER: u32 = 0x5046_5735;

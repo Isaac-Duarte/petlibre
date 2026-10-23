@@ -16,7 +16,7 @@ use petlibre_core::adc_scale::{AdcCalibration, SAMPLES};
 
 const SAMPLE_COUNT: u32 = 16;
 const _: () = assert!(SAMPLE_COUNT as usize == SAMPLES);
-use petlibre_core::sensor_inputs::SensorReading;
+use petlibre_core::feed::sensor_inputs::SensorReading;
 
 use petlibre_hal::board::Board;
 use petlibre_hal::sdk;

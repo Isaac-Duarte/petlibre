@@ -6,7 +6,8 @@
 use std::fmt;
 
 use petlibre_core::record::{Record, tag};
-use petlibre_hal::{audio, ble, confirm, stream, transport, updater, watch};
+use petlibre_hal::ota::{confirm, updater, watch};
+use petlibre_hal::{audio, ble, stream, transport};
 
 struct Body<F>(F);
 

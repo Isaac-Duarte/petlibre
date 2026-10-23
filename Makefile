@@ -34,7 +34,7 @@ check-docs:
 
 check-fixtures:
 	cargo test --locked -p petlibre-emu -p petlibre-flash -- --ignored
-	cargo test --locked --lib ota_image::tests::pinned_real_images_are_immutable_after_load_and_mutated_files_are_refused -- --ignored --exact
+	cargo test --locked --lib ota::image::tests::pinned_real_images_are_immutable_after_load_and_mutated_files_are_refused -- --ignored --exact
 	cargo test --locked -p petlibre-audit --lib -- --ignored
 	cargo test --locked -p petlibre-build -- --ignored
 

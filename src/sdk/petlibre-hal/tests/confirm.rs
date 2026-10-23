@@ -4,11 +4,11 @@
 use std::cell::{Cell, RefCell};
 
 use petlibre_core::ota::{CONFIRM_LEN, confirm_record, confirmed};
-use petlibre_hal::arming::{self, Hooks};
-use petlibre_hal::confirm::*;
 use petlibre_hal::flash::park::{self, Mmio};
 use petlibre_hal::flash::peer::MARKER_REGISTER;
-use petlibre_hal::provider::{ATTEMPT_BIT, Provider};
+use petlibre_hal::flash_lock::arming::{self, Hooks};
+use petlibre_hal::flash_lock::provider::{ATTEMPT_BIT, Provider};
+use petlibre_hal::ota::confirm::*;
 use petlibre_hal::sdk::fake;
 use petlibre_hal::stopped;
 use petlibre_hal::trial::{CONFIRM_SECTOR, identity};

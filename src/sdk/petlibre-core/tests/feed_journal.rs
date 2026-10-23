@@ -7,11 +7,11 @@
 //! committed state, an unresolved pending intent, or `CORRUPT`, never an idle
 //! journal that has forgotten a reserved request ID.
 
-use petlibre_core::feed_controller::{FeedReason, FeedRequest};
-use petlibre_core::feed_journal::{FeedJournal, JournalConfig, JournalError};
-use petlibre_core::feed_progress::{BowlMode, Direction};
-use petlibre_core::feed_storage::{OwnerOutcome, OwnerResult};
-use petlibre_core::storage::RECORD_BYTES;
+use petlibre_core::feed::controller::{FeedReason, FeedRequest};
+use petlibre_core::feed::progress::{BowlMode, Direction};
+use petlibre_core::feed::storage::{OwnerOutcome, OwnerResult};
+use petlibre_core::store::feed_journal::{FeedJournal, JournalConfig, JournalError};
+use petlibre_core::store::slot::RECORD_BYTES;
 use petlibre_testkit::journal_flash::{FakeJournalFlash, UNIT};
 
 /// Unit sizes for torn-write/restart coverage: the virtual feeder's 256, a
@@ -538,7 +538,7 @@ fn id_and_sequence_exhaustion() {
 
 #[test]
 fn wear_limit_refuses_new_reservations_but_never_strands_a_pending_one() {
-    use petlibre_core::feed_journal::WEAR_LIMIT;
+    use petlibre_core::store::feed_journal::WEAR_LIMIT;
 
     let mut f = FakeJournalFlash::default();
     let mut j = FeedJournal::default();

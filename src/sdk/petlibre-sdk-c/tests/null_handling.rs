@@ -4,16 +4,16 @@
 use core::ptr::{null, null_mut};
 
 use petlibre_core::adc_scale::AdcCalibration;
-use petlibre_core::feed_controller::{
+use petlibre_core::clock::tick::TickClock;
+use petlibre_core::feed::controller::{
     FeedController, FeedLimits, FeedReason, FeedRequest, FeedSample, FeedStartResult,
 };
-use petlibre_core::feed_journal::{FeedJournal, JournalConfig, JournalError, JournalView};
-use petlibre_core::feed_progress::{BowlMode, Direction, FeedProgress};
-use petlibre_core::feedback_events::{
+use petlibre_core::feed::feedback::{
     FeedbackDrive, FeedbackEvent, FeedbackEvents, FeedbackFault, FeedbackTakeResult,
 };
+use petlibre_core::feed::progress::{BowlMode, Direction, FeedProgress};
 use petlibre_core::flash_coord::{FlashCoord, FlashFault, FlashLimits, FlashReply};
-use petlibre_core::tick_clock::TickClock;
+use petlibre_core::store::feed_journal::{FeedJournal, JournalConfig, JournalError, JournalView};
 use petlibre_sdk_c::core_abi::*;
 use petlibre_testkit::journal_flash::FakeJournalFlash;
 

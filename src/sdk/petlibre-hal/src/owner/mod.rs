@@ -9,17 +9,17 @@ use core::ffi::c_void;
 use core::ptr;
 
 use petlibre_core::c_enum;
-use petlibre_core::feed_controller::{FeedController, FeedRequest};
-use petlibre_core::feed_progress::BowlMode;
-use petlibre_core::feed_storage::{OwnerRecovery, OwnerResult, OwnerStorage};
+use petlibre_core::feed::controller::{FeedController, FeedRequest};
+use petlibre_core::feed::progress::BowlMode;
+use petlibre_core::feed::sensor_inputs::SensorInputs;
+use petlibre_core::feed::storage::{OwnerRecovery, OwnerResult, OwnerStorage};
 use petlibre_core::flash_coord::{FlashFault, FlashPhase};
-use petlibre_core::sensor_inputs::SensorInputs;
 
-use crate::active::active_pointer;
 use crate::board::{self, Board};
-use crate::events::{Events, EventsFault};
 use crate::sdk::{self, IrqGuard};
-use crate::watchdog::{Watchdog, WatchdogFault};
+use crate::supervision::active::active_pointer;
+use crate::supervision::events::{Events, EventsFault};
+use crate::supervision::watchdog::{Watchdog, WatchdogFault};
 
 mod config;
 mod state;

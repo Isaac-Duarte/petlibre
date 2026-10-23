@@ -26,7 +26,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use petlibre_local::config::Config;
-use petlibre_local::request_auth::{Request, RequestKey};
+use petlibre_local::replacement::request_auth::{Request, RequestKey};
 use rumqttc::{AsyncClient, Event, EventLoop, MqttOptions, Packet, QoS};
 use serde_json::{Value, json};
 use uuid::Uuid;

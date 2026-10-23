@@ -9,13 +9,13 @@ use core::fmt;
 
 use petlibre_core::named_enum;
 
-use petlibre_core::net_store::{NetStatus, NetStore};
-use petlibre_core::settings_store::{Settings, SettingsStatus, SettingsStore};
+use petlibre_core::store::net::{NetStatus, NetStore};
+use petlibre_core::store::settings::{Settings, SettingsStatus, SettingsStore};
 use petlibre_core::transport::{SettingsFields, SettingsView};
-use petlibre_hal::arming::{self, Arming, Hooks, Poll};
 use petlibre_hal::flash::park::Mmio;
+use petlibre_hal::flash_lock::arming::{self, Arming, Hooks, Poll};
+use petlibre_hal::flash_lock::provider::Provider;
 use petlibre_hal::network::{self, NET_BASE};
-use petlibre_hal::provider::Provider;
 use petlibre_hal::settings;
 
 use crate::storage::{FlashOps, SETTINGS_BASE, SETTINGS_BINDING, slot_io};

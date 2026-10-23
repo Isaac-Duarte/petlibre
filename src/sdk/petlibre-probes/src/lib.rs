@@ -25,7 +25,7 @@ pub mod supervision;
 
 use core::fmt;
 
-use petlibre_hal::config::SYSTIMER_HZ;
+use petlibre_hal::supervision::config::SYSTIMER_HZ;
 use petlibre_hal::{sdk, startup};
 
 /// Logs one record line, `PLxxx1 …\r\n`. A line longer than the report

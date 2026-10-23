@@ -7,8 +7,8 @@
 
 use core::ffi::{c_uint, c_void};
 
-use petlibre_core::storage::JournalIo;
-use petlibre_hal::provider::Provider;
+use petlibre_core::store::slot::JournalIo;
+use petlibre_hal::flash_lock::provider::Provider;
 use petlibre_hal::sdk;
 
 /// Settings slots within the storage region: sectors 2 and 3 (0x342000).

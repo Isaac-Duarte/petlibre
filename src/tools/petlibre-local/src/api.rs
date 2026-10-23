@@ -28,7 +28,7 @@ use crate::{
     build_info::BUILD,
     controller::{FeedInput, FeedRecord, Rejection, ResolveInput, Status},
     mqtt::Request,
-    ota_image, ota_trial, probe,
+    ota, probe,
     replacement::{self, Op, RequestError},
 };
 
@@ -169,18 +169,18 @@ async fn resolve(
 async fn ota_trial_request(
     State(state): State<ApiState>,
     headers: HeaderMap,
-    Json(input): Json<ota_trial::Input>,
-) -> Result<Json<ota_trial::Record>, ApiError> {
+    Json(input): Json<ota::trial::Input>,
+) -> Result<Json<ota::trial::Record>, ApiError> {
     authenticate(&headers, &state)?;
-    let lease = ota_image::Lease::current(&state.config_path, state.image_host).await;
+    let lease = ota::image::Lease::current(&state.config_path, state.image_host).await;
     operation(state, |response| Request::OtaTrial(input, lease, response)).await
 }
 
 async fn ota_trial_resolve(
     State(state): State<ApiState>,
     headers: HeaderMap,
-    Json(input): Json<ota_trial::ResolveInput>,
-) -> Result<Json<ota_trial::Record>, ApiError> {
+    Json(input): Json<ota::trial::ResolveInput>,
+) -> Result<Json<ota::trial::Record>, ApiError> {
     authenticate(&headers, &state)?;
     operation(state, |response| Request::ResolveTrial(input, response)).await
 }
@@ -314,7 +314,7 @@ async fn replacement_ota_offer(
                 std::fs::read(p).map_err(|e| bad(format!("{}: {e}", p.display())))
             };
             Some(
-                crate::firmware_ota::Offer::new(&read(&manifest)?, &read(&image)?)
+                crate::ota::firmware::Offer::new(&read(&manifest)?, &read(&image)?)
                     .map_err(|e| bad(e.to_string()))?,
             )
         }

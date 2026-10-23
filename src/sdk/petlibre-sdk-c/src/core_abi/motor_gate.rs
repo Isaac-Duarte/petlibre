@@ -2,8 +2,8 @@
 
 use core::ffi::c_void;
 
-use petlibre_core::feed_controller::MotorCommand;
-use petlibre_core::motor_gate::{MotorGate, MotorWritePair};
+use petlibre_core::feed::controller::MotorCommand;
+use petlibre_core::feed::motor_gate::{MotorGate, MotorWritePair};
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn petlibre_motor_gate_init(

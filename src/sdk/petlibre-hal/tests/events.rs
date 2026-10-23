@@ -7,18 +7,18 @@
 mod common;
 
 use common::*;
-use petlibre_core::feed_controller::{
+use petlibre_core::feed::controller::{
     FeedController, FeedLimits, FeedReason, FeedRequest, FeedSample, FeedStartResult, FeedState,
     MotorCommand,
 };
-use petlibre_core::feed_progress::{BowlMode, Direction};
-use petlibre_core::feedback_events::FeedbackFault;
+use petlibre_core::feed::feedback::FeedbackFault;
+use petlibre_core::feed::motor_gate::MotorGateFault;
+use petlibre_core::feed::progress::{BowlMode, Direction};
 use petlibre_core::flash_coord::FlashCoord;
-use petlibre_core::motor_gate::MotorGateFault;
 use petlibre_hal::board::{Board, MOTOR_MASK};
-use petlibre_hal::events::{Events, EventsConfig, EventsFault};
 use petlibre_hal::sdk::fake::{self, GPIOA_IRQ, TIMER2_IRQ};
 use petlibre_hal::sdk::{self, Irq, TIM_CR_CNT_STS};
+use petlibre_hal::supervision::events::{Events, EventsConfig, EventsFault};
 
 const CONFIG: EventsConfig = EventsConfig {
     ticks_per_second: 32_000,

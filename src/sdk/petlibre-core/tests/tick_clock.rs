@@ -5,7 +5,7 @@
 //! Many small reads must agree with one large read, and a backward or
 //! over-long step invalidates the clock instead of rebasing it.
 
-use petlibre_core::tick_clock::TickClock;
+use petlibre_core::clock::tick::TickClock;
 
 #[test]
 fn frequent_reads_preserve_fraction() {

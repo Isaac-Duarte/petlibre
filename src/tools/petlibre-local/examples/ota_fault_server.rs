@@ -19,7 +19,7 @@ use std::{path::PathBuf, time::Duration, time::Instant};
 
 use anyhow::{Context, Result, bail};
 use petlibre_core::ota;
-use petlibre_local::{config::Config, firmware_ota::Offer};
+use petlibre_local::{config::Config, ota::firmware::Offer};
 use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

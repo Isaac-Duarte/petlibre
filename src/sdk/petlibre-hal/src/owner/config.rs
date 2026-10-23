@@ -3,16 +3,16 @@
 use core::ptr;
 
 use petlibre_core::adc_scale::AdcCalibration;
-use petlibre_core::feed_controller::{FeedController, FeedLimits};
-use petlibre_core::feed_progress::BowlMode;
-use petlibre_core::feedback_events::CAPACITY;
+use petlibre_core::feed::controller::{FeedController, FeedLimits};
+use petlibre_core::feed::feedback::CAPACITY;
+use petlibre_core::feed::progress::BowlMode;
+use petlibre_core::feed::sensor_inputs::{SensorInputs, SensorLimits};
 use petlibre_core::flash_coord::{FlashCoord, FlashLimits};
 use petlibre_core::interval_valid;
-use petlibre_core::sensor_inputs::{SensorInputs, SensorLimits};
 
-use crate::events::{self, EventsConfig};
 use crate::sdk;
-use crate::watchdog::WatchdogConfig;
+use crate::supervision::events::{self, EventsConfig};
+use crate::supervision::watchdog::WatchdogConfig;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]

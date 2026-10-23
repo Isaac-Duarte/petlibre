@@ -6,15 +6,15 @@ use std::sync::{Mutex, MutexGuard};
 
 use ed25519_dalek::{Signer, SigningKey};
 use petlibre_core::ota::{self, MAGIC, MARKER, Status};
-use petlibre_hal::arming::Hooks;
 use petlibre_hal::flash::park::{self, Mmio};
 use petlibre_hal::flash::peer::MARKER_REGISTER;
-use petlibre_hal::provider::{ATTEMPT_BIT, Provider};
+use petlibre_hal::flash_lock::arming::Hooks;
+use petlibre_hal::flash_lock::provider::{ATTEMPT_BIT, Provider};
+use petlibre_hal::ota::watch::*;
 use petlibre_hal::sdk::fake::api::FAKE_TRANSPORT;
 use petlibre_hal::sdk::fake::{self, TcpRecvScript};
 use petlibre_hal::sdk::{self, WifiEvent};
 use petlibre_hal::trial::identity;
-use petlibre_hal::watch::*;
 use petlibre_hal::{net_status, stopped};
 use sha2::{Digest, Sha256};
 

@@ -4,7 +4,7 @@
 
 use petlibre_hal::board::MOTOR_MASK;
 use petlibre_hal::sdk::{self, fake};
-use petlibre_hal::watchdog::WatchdogFault;
+use petlibre_hal::supervision::watchdog::WatchdogFault;
 use petlibre_probes::supervision::{
     FEED_MS, MARKER, Probe, RESET_DEADLINE_MS, Record, SAMPLES, STALL_MS, Sample,
 };

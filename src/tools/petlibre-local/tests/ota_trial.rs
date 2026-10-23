@@ -8,8 +8,11 @@ use chrono::{DateTime, Duration, Utc};
 use petlibre_local::protocol::Channel;
 use petlibre_local::{
     controller::{Controller, FeedInput, Rejection},
-    ota_image::Lease,
-    ota_trial::{self, Image, Phase, ResolveInput},
+    ota::{
+        self,
+        image::Lease,
+        trial::{Image, Phase, ResolveInput},
+    },
     protocol::{Message, Reply},
 };
 use serde_json::json;
@@ -20,7 +23,7 @@ fn lease(token: Uuid, now: DateTime<Utc>) -> Lease {
         token,
         peer: "10.0.0.2".parse().unwrap(),
         expires_at: now + Duration::minutes(15),
-        profile: petlibre_local::ota_image::Profile::StockVersion,
+        profile: petlibre_local::ota::image::Profile::StockVersion,
         sha256: None,
     }
 }
@@ -28,9 +31,9 @@ fn lease(token: Uuid, now: DateTime<Utc>) -> Lease {
 /// Submit with a live image-server lease matching the request's token.
 fn submit(
     c: &mut Controller,
-    input: ota_trial::Input,
+    input: ota::trial::Input,
     now: DateTime<Utc>,
-) -> Result<(ota_trial::Record, Option<Reply>), Rejection> {
+) -> Result<(ota::trial::Record, Option<Reply>), Rejection> {
     let lease = lease(input.server_token, now);
     c.ota_trial(input, Some(&lease), now)
 }
@@ -69,8 +72,8 @@ fn ready(c: &mut Controller, version: &str) {
     .unwrap();
 }
 
-fn input(image: Image) -> ota_trial::Input {
-    ota_trial::Input {
+fn input(image: Image) -> ota::trial::Input {
+    ota::trial::Input {
         request_id: Uuid::new_v4(),
         image,
         server_token: Uuid::new_v4(),
@@ -164,7 +167,7 @@ fn journal_before_publish_duplicate_conflict_restart_and_timeout_never_replay() 
     assert_eq!(command.payload["upgradeType"], 1);
     assert_eq!(
         command.payload["sha256"],
-        petlibre_local::ota_image::TEST_SHA256
+        petlibre_local::ota::image::TEST_SHA256
     );
     assert!(
         command.payload["url"]
@@ -252,7 +255,7 @@ fn progress_and_stale_startup_cannot_confirm_trial_and_only_original_version_cle
     assert_eq!(command.payload["targetSoftwareVersion"], "1.1.15");
     assert_eq!(
         command.payload["sha256"],
-        petlibre_local::ota_image::ORIGINAL_SHA256
+        petlibre_local::ota::image::ORIGINAL_SHA256
     );
     assert!(
         command.payload["url"]
@@ -728,7 +731,7 @@ fn backwards_host_clock_restarts_the_resolution_observation_interval() {
 /// A live image-server lease for a replacement build with `sha256`.
 fn replacement_lease(token: Uuid, sha256: Option<&str>, now: DateTime<Utc>) -> Lease {
     Lease {
-        profile: petlibre_local::ota_image::Profile::Replacement,
+        profile: petlibre_local::ota::image::Profile::Replacement,
         sha256: sha256.map(str::to_owned),
         ..lease(token, now)
     }

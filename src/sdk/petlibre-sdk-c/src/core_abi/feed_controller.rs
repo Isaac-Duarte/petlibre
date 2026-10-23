@@ -1,6 +1,6 @@
 //! Exports declared by `feed_controller.h`.
 
-use petlibre_core::feed_controller::{
+use petlibre_core::feed::controller::{
     FeedController, FeedLimits, FeedReason, FeedRequest, FeedSample, FeedStartResult,
 };
 

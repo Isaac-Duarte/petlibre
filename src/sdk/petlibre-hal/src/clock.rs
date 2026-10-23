@@ -1,9 +1,9 @@
-//! FW21: the KM4 wall clock ([`petlibre_core::wall_clock`]). The transport's
+//! FW21: the KM4 wall clock ([`petlibre_core::clock::wall`]). The transport's
 //! `time` request is its only writer; health reads it. One instance, copied
 //! in and out with interrupts masked.
 
+use petlibre_core::clock::wall::{Jump, Sync as ClockSync, SyncError, WallClock};
 use petlibre_core::transport::{ClockHealth, TimeFields, TimeResult};
-use petlibre_core::wall_clock::{Jump, Sync as ClockSync, SyncError, WallClock};
 
 use crate::cell::TaskCell;
 use crate::sdk::{self, IrqGuard};

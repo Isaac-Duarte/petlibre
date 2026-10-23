@@ -5,10 +5,10 @@
 use std::cell::RefCell;
 
 use petlibre_hal::board::MOTOR_MASK;
-use petlibre_hal::events::EventsFault;
 use petlibre_hal::flash::park::{self, Mmio};
 use petlibre_hal::sdk::fake;
 use petlibre_hal::stopped;
+use petlibre_hal::supervision::events::EventsFault;
 use petlibre_probes::optics::{
     self, CYCLES, Emitters, LEASE_MS, Probe, Record, State, WINDOWS, Window, plan,
 };

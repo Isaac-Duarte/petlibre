@@ -10,7 +10,8 @@ use std::path::Path;
 
 use serde::Serialize;
 
-use super::views::{TailView, inside, modified, read, rx_view, tail_view};
+use super::views::tail::{TailView, rx_view, tail_view};
+use super::views::{inside, modified, read};
 use crate::commands::check_name;
 use crate::commands::itest::record::{RunRecord, SUFFIX, ScenarioVerdict};
 use crate::commands::itest::{CatalogEntry, catalog};

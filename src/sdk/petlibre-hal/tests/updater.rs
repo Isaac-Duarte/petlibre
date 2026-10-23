@@ -11,12 +11,12 @@ use ed25519_dalek::{Signer, SigningKey};
 use petlibre_core::ota::{self, MAGIC, MANIFEST_BODY, MARKER, Part, Status};
 use petlibre_hal::flash::park::{self, Mmio};
 use petlibre_hal::flash::peer::MARKER_REGISTER;
+use petlibre_hal::flash_lock::provider::{ATTEMPT_BIT, Provider};
 use petlibre_hal::health::Boot;
-use petlibre_hal::provider::{ATTEMPT_BIT, Provider};
+use petlibre_hal::ota::updater::*;
 use petlibre_hal::sdk::WifiEvent;
 use petlibre_hal::sdk::fake::api::FAKE_TRANSPORT;
 use petlibre_hal::sdk::fake::{self, TcpRecvScript};
-use petlibre_hal::updater::*;
 use petlibre_hal::{net_status, stopped};
 use sha2::{Digest, Sha256};
 

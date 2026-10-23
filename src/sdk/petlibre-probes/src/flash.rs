@@ -22,18 +22,20 @@
 //! passed on hardware and are retained in history; their lease sequence
 //! lives in `Provider`.
 
-use petlibre_core::feed_progress::BowlMode;
+use petlibre_core::clock::tick::TickClock;
+use petlibre_core::feed::progress::BowlMode;
 use petlibre_core::flash_coord::{FlashCoord, FlashFault, FlashPhase, FlashReply};
-use petlibre_core::settings_store::{Settings, SettingsStatus, SettingsStore, SlotState};
-use petlibre_core::tick_clock::TickClock;
+use petlibre_core::store::settings::{Settings, SettingsStatus, SettingsStore, SlotState};
 
-use petlibre_hal::config::{FLASH_LIMITS, SYSTIMER_HZ, WATCHDOG};
 use petlibre_hal::flash::park::{self, Mmio, Reply};
 use petlibre_hal::flash::peer::MARKER_REGISTER;
-use petlibre_hal::provider::{ATTEMPT_BIT, BOOT_COUNT_REGISTER, Provider, READY_TIMEOUT_MS};
+use petlibre_hal::flash_lock::provider::{
+    ATTEMPT_BIT, BOOT_COUNT_REGISTER, Provider, READY_TIMEOUT_MS,
+};
 use petlibre_hal::sdk;
 use petlibre_hal::stopped;
-use petlibre_hal::watchdog::Watchdog;
+use petlibre_hal::supervision::config::{FLASH_LIMITS, SYSTIMER_HZ, WATCHDOG};
+use petlibre_hal::supervision::watchdog::Watchdog;
 
 pub use petlibre_sdk::storage::{FlashOps, SETTINGS_BASE, SETTINGS_BINDING, slot_io};
 

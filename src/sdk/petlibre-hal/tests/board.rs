@@ -6,9 +6,9 @@
 mod common;
 
 use common::*;
-use petlibre_core::feed_controller::MotorCommand;
+use petlibre_core::feed::controller::MotorCommand;
+use petlibre_core::feed::sensor_inputs::SensorReading;
 use petlibre_core::flash_coord::{FlashFault, FlashParty, FlashReply};
-use petlibre_core::sensor_inputs::SensorReading;
 use petlibre_hal::board::{Board, MOTOR_MASK};
 use petlibre_hal::sdk::{self, fake};
 

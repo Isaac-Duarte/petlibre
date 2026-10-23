@@ -7,12 +7,12 @@
 //! change stops an active feed.
 
 use petlibre_core::adc_scale::{AdcCalibration, SAMPLES};
-use petlibre_core::feed_controller::{
+use petlibre_core::feed::controller::{
     FeedController, FeedLimits, FeedReason, FeedRequest, FeedSample, FeedStartResult, FeedState,
     MotorCommand,
 };
-use petlibre_core::feed_progress::{BowlMode, Direction};
-use petlibre_core::sensor_inputs::{SensorInputs, SensorLimits, SensorReading};
+use petlibre_core::feed::progress::{BowlMode, Direction};
+use petlibre_core::feed::sensor_inputs::{SensorInputs, SensorLimits, SensorReading};
 
 /// Compressed durations exercise software; no deployment defaults are implied.
 const LIMITS: SensorLimits = SensorLimits {

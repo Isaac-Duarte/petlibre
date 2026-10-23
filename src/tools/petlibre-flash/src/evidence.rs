@@ -1,5 +1,12 @@
 //! Private evidence: where inputs and outputs may live, how they are written,
-//! and the recording port every serial session goes through.
+//! and the recording port every serial session goes through. Its submodules
+//! are the records built on that: session reports, transaction journals and
+//! the frozen image reviews a writer consumes.
+
+pub mod journal;
+pub mod report;
+pub mod review;
+pub mod session;
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
@@ -9,8 +16,8 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 
 use crate::error::{Result, require};
-use crate::protocol::Port;
-use crate::report::Streams;
+use crate::evidence::report::Streams;
+use crate::link::protocol::Port;
 use petlibre_formats::canonical::sha256;
 use petlibre_formats::capture::{Direction, SerialEvent};
 

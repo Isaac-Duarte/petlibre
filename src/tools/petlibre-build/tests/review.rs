@@ -12,8 +12,8 @@ use std::path::PathBuf;
 use petlibre_build::Repo;
 use petlibre_build::review::{bank_payload, freeze, mapping_cases};
 use petlibre_emu::factory;
-use petlibre_flash::development::BANK1;
 use petlibre_flash::evidence::Root;
+use petlibre_flash::writers::development::BANK1;
 use petlibre_formats::manifest::BuildManifest;
 use petlibre_formats::review::{Details, ImageKind};
 
@@ -45,7 +45,7 @@ fn a_reviewed_build_is_frozen_and_accepted_by_the_flash_client() {
         .collect();
     assert_eq!(banks, [0, 1]);
     let root = Root::new(&repo.root).unwrap();
-    let frozen = petlibre_flash::review::frozen(&root, &output, &BANK1).unwrap();
+    let frozen = petlibre_flash::evidence::review::frozen(&root, &output, &BANK1).unwrap();
     assert_eq!(frozen.image, fs::read(output.join("image.bin")).unwrap());
 
     // A second freeze into the same directory is refused.
@@ -62,7 +62,7 @@ fn stock_is_frozen_by_hash_and_accepted_by_the_flash_client() {
     freeze(&repo, ImageKind::Stock, &PathBuf::new(), &output).unwrap();
 
     let root = Root::new(&repo.root).unwrap();
-    assert!(petlibre_flash::review::frozen(&root, &output, &BANK1).is_ok());
+    assert!(petlibre_flash::evidence::review::frozen(&root, &output, &BANK1).is_ok());
 }
 
 /// The actual factory loader accepts the first-boot build in either bank of

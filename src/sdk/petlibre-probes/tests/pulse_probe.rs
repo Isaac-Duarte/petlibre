@@ -4,10 +4,10 @@
 use std::cell::RefCell;
 
 use petlibre_hal::board::MOTOR_MASK;
-use petlibre_hal::events::EventsFault;
 use petlibre_hal::flash::park::{self, Mmio};
 use petlibre_hal::sdk::{self, fake};
 use petlibre_hal::stopped;
+use petlibre_hal::supervision::events::EventsFault;
 use petlibre_probes::pulse::{self, DELAY_MS, LEASE_MS, MARKER, PULSE_MS, Probe, Record};
 
 thread_local! {

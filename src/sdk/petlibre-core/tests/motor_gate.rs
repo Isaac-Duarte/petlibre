@@ -7,8 +7,8 @@
 
 use core::ffi::c_void;
 
-use petlibre_core::feed_controller::MotorCommand;
-use petlibre_core::motor_gate::{MotorGate, MotorGateFault};
+use petlibre_core::feed::controller::MotorCommand;
+use petlibre_core::feed::motor_gate::{MotorGate, MotorGateFault};
 
 #[derive(Default)]
 struct Output {

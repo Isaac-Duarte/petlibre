@@ -10,10 +10,10 @@ use core::ptr::{self, addr_of};
 
 use petlibre_core::HALF_RANGE;
 use petlibre_core::adc_scale::{AdcCalibration, SAMPLES};
-use petlibre_core::feed_controller::MotorCommand;
+use petlibre_core::feed::controller::MotorCommand;
+use petlibre_core::feed::motor_gate::{MotorGate, MotorGateFault};
+use petlibre_core::feed::sensor_inputs::SensorReading;
 use petlibre_core::flash_coord::FlashCoord;
-use petlibre_core::motor_gate::{MotorGate, MotorGateFault};
-use petlibre_core::sensor_inputs::SensorReading;
 
 use crate::adc;
 use crate::sdk::{self, GPIO_PORT_A, IrqGuard};

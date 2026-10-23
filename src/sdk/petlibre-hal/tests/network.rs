@@ -3,7 +3,7 @@
 
 use std::sync::Mutex;
 
-use petlibre_core::net_store::{Credentials, NetStore};
+use petlibre_core::store::net::{Credentials, NetStore};
 use petlibre_core::transport::{WifiFields, WifiResult, WifiSource};
 use petlibre_hal::network::*;
 use petlibre_hal::sdk::fake;
@@ -33,7 +33,7 @@ fn select() -> (Vec<u8>, Vec<u8>, u32) {
 
 /// Write a credential record into the fake storage, as the writer would.
 fn store(credentials: Option<Credentials>) {
-    use petlibre_core::storage::JournalIo;
+    use petlibre_core::store::slot::JournalIo;
     use std::ffi::{c_uint, c_void};
     unsafe extern "C" fn read(
         _: *mut c_void,

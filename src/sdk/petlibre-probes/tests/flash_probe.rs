@@ -10,7 +10,7 @@
 use std::cell::{Cell, RefCell};
 
 use petlibre_core::flash_coord::{FlashFault, FlashPhase, FlashReply};
-use petlibre_core::settings_store::{SettingsStatus, SlotState};
+use petlibre_core::store::settings::{SettingsStatus, SlotState};
 use petlibre_hal::flash::hooks::HookTicket;
 use petlibre_hal::flash::park::{
     self, ACK, Mmio, RELEASE, RELEASED, REQUEST, SYSTICK_CTRL, TICKS, TIMEOUT,
@@ -18,7 +18,7 @@ use petlibre_hal::flash::park::{
 use petlibre_hal::flash::peer::{
     BACKUP_BASE, MARKER_REGISTER, PARK_CHANNEL, PARK_TICK_LIMIT, Peer,
 };
-use petlibre_hal::provider::{ATTEMPT_BIT, LeaseStage, Provider};
+use petlibre_hal::flash_lock::provider::{ATTEMPT_BIT, LeaseStage, Provider};
 use petlibre_hal::sdk::{self, fake};
 use petlibre_hal::stopped;
 use petlibre_probes::flash::{EXPECTED_ID, FlashOps, Probe, Record, STRESS_SAVES};

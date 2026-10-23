@@ -18,8 +18,8 @@ use core::ffi::{c_uint, c_void};
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
 use petlibre_core::hex;
-use petlibre_core::net_store::{Credentials, NetStore};
-use petlibre_core::storage::JournalIo;
+use petlibre_core::store::net::{Credentials, NetStore};
+use petlibre_core::store::slot::JournalIo;
 use petlibre_core::transport::{WifiFields, WifiResult, WifiSource, WifiView};
 
 use crate::cell::TaskCell;
@@ -151,7 +151,7 @@ pub fn publish(store: &NetStore, armed: bool) {
     STORED_CRC.store(
         store
             .credentials
-            .map_or(0, |c| petlibre_core::storage::crc32(c.ssid())),
+            .map_or(0, |c| petlibre_core::store::slot::crc32(c.ssid())),
         Ordering::Release,
     );
     STORED.store(store.credentials.is_some(), Ordering::Release);

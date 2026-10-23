@@ -15,9 +15,9 @@ use clap::{Args, Parser, Subcommand};
 use serde::Serialize;
 use serde_json::Value;
 
-use petlibre_flash::protocol::{Core, INTERRUPTED};
-use petlibre_flash::session::{Completion, Context, Outcome};
-use petlibre_flash::{read, stock, update};
+use petlibre_flash::evidence::session::{Completion, Context, Outcome};
+use petlibre_flash::link::protocol::{Core, INTERRUPTED};
+use petlibre_flash::writers::{read, stock, update};
 
 #[derive(Parser)]
 #[command(
@@ -325,14 +325,14 @@ fn main() -> ExitCode {
             start,
             end,
         } => offline(
-            petlibre_flash::status::assess_range([sr1, sr2, sr3], start, end),
+            petlibre_flash::link::status::assess_range([sr1, sr2, sr3], start, end),
             |_| 0,
         ),
 
         Command::InspectJournal { journal } => offline(
             std::fs::read(&journal)
                 .map_err(petlibre_flash::Error::from)
-                .and_then(|data| petlibre_flash::journal::inspect(&data)),
+                .and_then(|data| petlibre_flash::evidence::journal::inspect(&data)),
             |receipt| u8::from(!receipt.verified_terminal),
         ),
     };

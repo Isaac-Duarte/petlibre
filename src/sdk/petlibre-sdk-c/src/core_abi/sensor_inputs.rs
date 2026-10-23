@@ -1,8 +1,8 @@
 //! Exports declared by `sensor_inputs.h`.
 
 use petlibre_core::adc_scale::AdcCalibration;
-use petlibre_core::feed_controller::FeedSample;
-use petlibre_core::sensor_inputs::{SensorInputs, SensorLimits, SensorReading};
+use petlibre_core::feed::controller::FeedSample;
+use petlibre_core::feed::sensor_inputs::{SensorInputs, SensorLimits, SensorReading};
 
 use super::store;
 

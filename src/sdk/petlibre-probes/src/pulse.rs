@@ -20,19 +20,19 @@
 use core::fmt;
 
 use petlibre_core::adc_scale::SAMPLES;
-use petlibre_core::feed_controller::{FeedController, FeedSample, MotorCommand};
+use petlibre_core::feed::controller::{FeedController, FeedSample, MotorCommand};
+use petlibre_core::feed::sensor_inputs::SensorReading;
 use petlibre_core::flash_coord::{FlashCoord, FlashReply};
-use petlibre_core::sensor_inputs::SensorReading;
 
 use crate::elapsed_ms;
 use crate::optics::FEED;
 use petlibre_hal::board::{Board, MOTOR_MASK};
-use petlibre_hal::config::{FLASH_LIMITS, SYSTIMER_HZ};
-use petlibre_hal::events::{Events, EventsConfig, EventsFault};
 use petlibre_hal::flash::park::{self, Mmio, Reply};
-use petlibre_hal::provider::BOOT_COUNT_REGISTER;
+use petlibre_hal::flash_lock::provider::BOOT_COUNT_REGISTER;
 use petlibre_hal::sdk::{self, GPIO_PORT_A};
 use petlibre_hal::stopped;
+use petlibre_hal::supervision::config::{FLASH_LIMITS, SYSTIMER_HZ};
+use petlibre_hal::supervision::events::{Events, EventsConfig, EventsFault};
 
 pub const POLL_MS: u32 = 2;
 pub const WAIT_MS: u32 = 10;

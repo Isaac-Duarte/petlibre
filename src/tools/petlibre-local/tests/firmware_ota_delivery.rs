@@ -8,7 +8,7 @@ use std::time::Duration;
 use common::{address, ready};
 use petlibre_core::ota::{self, Part, SECTOR, Status};
 use petlibre_core::transport as mqtt;
-use petlibre_local::{config::FirmwareConfig, firmware_ota, storage};
+use petlibre_local::{config::FirmwareConfig, ota::firmware, storage};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
@@ -87,17 +87,17 @@ async fn firmware_pulls_a_signed_update_through_the_real_broker() {
     storage::write_json(&path, &config).unwrap();
 
     // Owner side: key, a two-and-a-bit-sector image, a signed manifest.
-    firmware_ota::keygen(&private.join("ota-key.json")).unwrap();
-    let key = firmware_ota::load_key(&private.join("ota-key.json")).unwrap();
+    firmware::keygen(&private.join("ota-key.json")).unwrap();
+    let key = firmware::load_key(&private.join("ota-key.json")).unwrap();
     let public = key.verifying_key().to_bytes();
-    let mut container = vec![0u8; firmware_ota::CONTAINER_HEADER];
+    let mut container = vec![0u8; firmware::CONTAINER_HEADER];
     let mut payload: Vec<u8> = (0..2 * SECTOR + 300).map(|i| (i * 7 % 255) as u8).collect();
     payload[..8].copy_from_slice(&ota::MARKER);
     container.extend_from_slice(&payload);
     std::fs::write(private.join("image.bin"), &container).unwrap();
     std::fs::write(
         private.join("update.manifest"),
-        firmware_ota::sign(&key, &container, 2, [9; 32]).unwrap(),
+        firmware::sign(&key, &container, 2, [9; 32]).unwrap(),
     )
     .unwrap();
 

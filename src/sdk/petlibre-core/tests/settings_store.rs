@@ -7,11 +7,11 @@
 //! newer-schema record reads as defaults and is never overwritten until an
 //! explicit reset.
 
-use petlibre_core::feed_progress::BowlMode;
-use petlibre_core::settings_store::{
+use petlibre_core::feed::progress::BowlMode;
+use petlibre_core::store::settings::{
     Settings, SettingsStatus, SettingsStore, SlotState, WEAR_LIMIT,
 };
-use petlibre_core::storage::{RECORD_BYTES, crc32};
+use petlibre_core::store::slot::{RECORD_BYTES, crc32};
 use petlibre_testkit::journal_flash::{FakeJournalFlash, UNIT};
 
 const BINDING: u64 = 0x5046_5731_3502_0001;

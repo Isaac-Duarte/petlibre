@@ -1,6 +1,6 @@
 //! Exports declared by `feed_progress.h`.
 
-use petlibre_core::feed_progress::{BowlMode, Direction, FeedProgress, ProgressResult};
+use petlibre_core::feed::progress::{BowlMode, Direction, FeedProgress, ProgressResult};
 
 use super::store;
 

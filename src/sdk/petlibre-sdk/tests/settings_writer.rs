@@ -4,12 +4,12 @@
 use std::cell::Cell;
 use std::sync::{Mutex, MutexGuard};
 
-use petlibre_core::settings_store::SettingsStatus;
+use petlibre_core::store::settings::SettingsStatus;
 use petlibre_core::transport::{SettingsFields, SettingsResult};
-use petlibre_hal::arming::Hooks;
 use petlibre_hal::flash::park::Mmio;
 use petlibre_hal::flash::peer::MARKER_REGISTER;
-use petlibre_hal::provider::Provider;
+use petlibre_hal::flash_lock::arming::Hooks;
+use petlibre_hal::flash_lock::provider::Provider;
 use petlibre_hal::sdk::{self, fake};
 use petlibre_hal::{network, settings};
 use petlibre_sdk::settings::{self as writer, ErrorStage, Record, Writer};

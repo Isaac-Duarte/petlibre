@@ -19,7 +19,7 @@ use std::process::{Command, Stdio};
 
 use petlibre_emu::helper::{Call, Helper, Scope};
 use petlibre_emu::{HELPER, serve};
-use petlibre_flash::journal;
+use petlibre_flash::evidence::journal;
 use petlibre_flash::ota::container;
 use petlibre_formats::canonical::sha256;
 use serde_json::{Value, json};

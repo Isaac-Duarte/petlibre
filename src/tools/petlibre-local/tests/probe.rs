@@ -8,8 +8,11 @@ use chrono::{DateTime, Duration, Utc};
 use petlibre_local::protocol::Channel;
 use petlibre_local::{
     controller::{Controller, Rejection},
-    ota_image::{C_PROBE_SHA256, Lease, ORIGINAL_SHA256, Profile},
-    ota_trial::{self, Image},
+    ota::{
+        self,
+        image::{C_PROBE_SHA256, Lease, ORIGINAL_SHA256, Profile},
+        trial::Image,
+    },
     probe::{self, Phase},
 };
 use serde_json::{Value, json};
@@ -49,7 +52,7 @@ fn installed(c: &mut Controller, at: DateTime<Utc>) -> Uuid {
     ready(c, "1.1.15", at);
     c.enable_ota_trial();
     let images = lease(Profile::CExecution, at);
-    let input = ota_trial::Input {
+    let input = ota::trial::Input {
         request_id: Uuid::new_v4(),
         image: Image::CProbe,
         server_token: images.token,
@@ -190,7 +193,7 @@ fn pending_query_is_not_replayed_after_restart_and_does_not_block_original_resto
     ));
 
     let images = lease(Profile::CExecution, at);
-    let restore = ota_trial::Input {
+    let restore = ota::trial::Input {
         request_id: Uuid::new_v4(),
         image: Image::CProbeOriginal,
         server_token: images.token,
@@ -225,7 +228,7 @@ fn profile_mismatch_and_unconfirmed_installation_cannot_execute_the_probe() {
     ));
 
     let wrong = lease(Profile::StockVersion, at);
-    let input = ota_trial::Input {
+    let input = ota::trial::Input {
         request_id: Uuid::new_v4(),
         image: Image::CProbe,
         server_token: wrong.token,
@@ -237,7 +240,7 @@ fn profile_mismatch_and_unconfirmed_installation_cannot_execute_the_probe() {
 
     let correct = lease(Profile::CExecution, at);
     ready(&mut c, "1.1.17", at);
-    let restore = ota_trial::Input {
+    let restore = ota::trial::Input {
         request_id: Uuid::new_v4(),
         image: Image::CProbeOriginal,
         server_token: correct.token,

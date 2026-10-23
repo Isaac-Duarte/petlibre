@@ -8,15 +8,15 @@
 
 use core::ffi::c_void;
 
-use petlibre_core::feed_controller::{
+use petlibre_core::feed::controller::{
     FeedController, FeedLimits, FeedReason, FeedRequest, FeedSample, FeedStartResult, FeedState,
     MotorCommand,
 };
-use petlibre_core::feed_progress::{BowlMode, Direction};
-use petlibre_core::feedback_events::{
+use petlibre_core::feed::feedback::{
     CAPACITY, FeedbackDrive, FeedbackEvent, FeedbackEvents, FeedbackFault, FeedbackTakeResult,
 };
-use petlibre_core::motor_gate::{MotorGate, MotorGateFault};
+use petlibre_core::feed::motor_gate::{MotorGate, MotorGateFault};
+use petlibre_core::feed::progress::{BowlMode, Direction};
 
 /// Compressed intervals; none is a deployment default.
 const LIMITS: FeedLimits = FeedLimits {

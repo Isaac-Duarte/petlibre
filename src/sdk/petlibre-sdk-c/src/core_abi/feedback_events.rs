@@ -1,7 +1,7 @@
 //! Exports declared by `feedback_events.h`.
 
-use petlibre_core::feed_controller::{FeedController, FeedReason, FeedSample};
-use petlibre_core::feedback_events::{
+use petlibre_core::feed::controller::{FeedController, FeedReason, FeedSample};
+use petlibre_core::feed::feedback::{
     FeedbackDrive, FeedbackEvent, FeedbackEvents, FeedbackFault, FeedbackTakeResult,
 };
 

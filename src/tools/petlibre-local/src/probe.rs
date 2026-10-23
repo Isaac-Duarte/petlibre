@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use crate::{
     config::Config,
-    ota_trial::C_PROBE_VERSION,
+    ota::trial::C_PROBE_VERSION,
     protocol::{self, Channel, Message, Reply},
 };
 

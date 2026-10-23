@@ -1,6 +1,6 @@
 //! Exports declared by `tick_clock.h`.
 
-use petlibre_core::tick_clock::TickClock;
+use petlibre_core::clock::tick::TickClock;
 
 use super::store;
 

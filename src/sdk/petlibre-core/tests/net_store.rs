@@ -1,8 +1,8 @@
 //! FW25 stored Wi-Fi credentials: alternating saves, clear, validation, a
 //! power cut at every mutation, and a newer schema.
 
-use petlibre_core::net_store::{Credentials, NetStatus, NetStore};
-use petlibre_core::storage::{RECORD_BYTES, crc32};
+use petlibre_core::store::net::{Credentials, NetStatus, NetStore};
+use petlibre_core::store::slot::{RECORD_BYTES, crc32};
 use petlibre_testkit::journal_flash::{FakeJournalFlash, UNIT};
 
 fn open(f: &mut FakeJournalFlash) -> NetStore {

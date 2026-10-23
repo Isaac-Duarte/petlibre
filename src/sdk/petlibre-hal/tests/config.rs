@@ -2,9 +2,9 @@
 //! watchdog clock bounds cover both bench-measured expiries (FW05, FW06) and
 //! the flash lease fits up to the documented maximum sample period.
 
-use petlibre_hal::config::{FLASH_LIMITS, MAX_SAMPLE_PERIOD_MS, WATCHDOG};
 use petlibre_hal::owner::OwnerConfig;
-use petlibre_hal::watchdog::WatchdogConfig;
+use petlibre_hal::supervision::config::{FLASH_LIMITS, MAX_SAMPLE_PERIOD_MS, WATCHDOG};
+use petlibre_hal::supervision::watchdog::WatchdogConfig;
 
 fn owner(sample_period_ms: u32) -> OwnerConfig {
     let mut c = OwnerConfig {

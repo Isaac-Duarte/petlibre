@@ -5,17 +5,17 @@ use core::ffi::c_void;
 use core::ptr;
 
 use super::*;
-use petlibre_core::feed_controller::{FeedLimits, FeedRequest};
-use petlibre_core::feed_journal::{FeedJournal, JournalConfig, JournalError};
-use petlibre_core::feed_progress::{BowlMode, Direction};
-use petlibre_core::feed_storage::{OwnerRecovery, OwnerResult, OwnerStorage};
+use petlibre_core::feed::controller::{FeedLimits, FeedRequest};
+use petlibre_core::feed::progress::{BowlMode, Direction};
+use petlibre_core::feed::sensor_inputs::SensorLimits;
+use petlibre_core::feed::storage::{OwnerRecovery, OwnerResult, OwnerStorage};
 use petlibre_core::flash_coord::{FlashCoord, FlashParty, FlashReply};
-use petlibre_core::sensor_inputs::SensorLimits;
+use petlibre_core::store::feed_journal::{FeedJournal, JournalConfig, JournalError};
 use petlibre_hal::board::MOTOR_MASK;
-use petlibre_hal::events::EventsConfig;
 use petlibre_hal::owner::{Owner, OwnerConfig, OwnerState, OwnerStatus, SubmitResult};
 use petlibre_hal::sdk::{self, fake};
-use petlibre_hal::watchdog::WatchdogConfig;
+use petlibre_hal::supervision::events::EventsConfig;
+use petlibre_hal::supervision::watchdog::WatchdogConfig;
 use petlibre_testkit::journal_flash::FakeJournalFlash;
 
 pub const CONFIG: OwnerConfig = OwnerConfig {

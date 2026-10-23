@@ -296,7 +296,9 @@ fn firmware_request_key_adds_one_key_to_both_files_and_never_prints_it() {
     let config = Config::load(&config_path).unwrap();
     let firmware = config.firmware.as_ref().unwrap();
     let key = firmware.request_key.clone().unwrap();
-    assert!(petlibre_local::request_auth::valid_key_hex(&key));
+    assert!(petlibre_local::replacement::request_auth::valid_key_hex(
+        &key
+    ));
     assert!(firmware.request_key().is_some());
 
     // The credential file keeps every field and gains the same key.

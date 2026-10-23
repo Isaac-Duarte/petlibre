@@ -1,4 +1,4 @@
-use petlibre_core::wall_clock::{
+use petlibre_core::clock::wall::{
     Jump, MAX_UNCERTAINTY_MS, MIN_UNIX_MS, MISSED_GRACE_MS, Occurrence, STEP_MS, Sync, SyncError,
     WallClock, occurrence,
 };

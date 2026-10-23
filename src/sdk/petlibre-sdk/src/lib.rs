@@ -33,7 +33,7 @@ pub mod storage;
 pub mod wifi;
 
 #[cfg(target_os = "none")]
-pub use runtime::{request_reset, spawn, startup_done, watchdog_open};
+pub use runtime::{claim_adc, request_reset, spawn, startup_done, watchdog_open};
 pub use slot::Slot;
 
 /// The ports a firmware drives (indicators, audio, inputs). Startup,

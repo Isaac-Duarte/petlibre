@@ -27,7 +27,7 @@ use petlibre_hal::transport::{self, Link};
 use petlibre_hal::updater::{self, Hooked, Hooks, Updater};
 use petlibre_hal::watch::{self, SdkGiveWay, Watch};
 use petlibre_hal::watchdog::Watchdog;
-use petlibre_hal::{config, leds, sdk, startup, stopped, trial};
+use petlibre_hal::{config, leds, power, sdk, startup, stopped, trial};
 
 use crate::slot::Slot;
 use crate::wifi::{Probe, Record};
@@ -72,6 +72,61 @@ pub fn request_reset() {
 /// Whether the feeder opened the watchdog at startup.
 pub fn watchdog_open() -> bool {
     WATCHDOG_OPEN.load(Ordering::Acquire)
+}
+
+/// The firmware keeps the ADC for itself (the FW14 probe), so the runtime's
+/// power monitor never opens it and health reports power as unknown. Call
+/// from the start hook.
+pub fn claim_adc() {
+    ADC_CLAIMED.store(true, Ordering::Release);
+}
+
+static ADC_CLAIMED: AtomicBool = AtomicBool::new(false);
+/// Touched only by the power task; see `power_task`.
+static POWER: Slot<power::Monitor> = Slot::new();
+
+struct PowerLine(power::Record);
+
+impl core::fmt::Display for PowerLine {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        power::describe(self.0, f)
+    }
+}
+
+/// FW14: samples the battery and adapter for health. It waits for the
+/// startup probe to release its board, which owns the ADC until then.
+unsafe extern "C" fn power_task(_: *mut c_void) -> u32 {
+    if ADC_CLAIMED.load(Ordering::Acquire) {
+        sdk::log(c"PLPWR1 claimed\r\n");
+        return 0;
+    }
+    if !PROBE_DONE.load(Ordering::Acquire) {
+        return POWER_WAIT_MS;
+    }
+
+    // SAFETY: only this task touches the slot.
+    let monitor = unsafe { POWER.get_or_init(Default::default) };
+    let step = monitor.step();
+    if let Some(record) = step.record {
+        let mut report = startup::Report::new();
+        if let Ok(line) = report.record(format_args!("PLPWR1 {}\r\n", PowerLine(record))) {
+            sdk::log(line);
+        }
+    }
+    step.delay_ms
+}
+
+const POWER_WAIT_MS: u32 = 1_000;
+
+/// Below the transport: a late sample only ages, and health says how much.
+fn start_power() {
+    // SAFETY: the step takes no context and keeps its state in statics.
+    let created = unsafe { sdk::task_create(c"petlibre-pwr", 512, 1, power_task, ptr::null_mut()) };
+    sdk::log(if created {
+        c"PLPWR1 start created=1\r\n"
+    } else {
+        c"PLPWR1 start created=0\r\n"
+    });
 }
 
 static PROBING: AtomicBool = AtomicBool::new(false);
@@ -775,6 +830,7 @@ unsafe extern "C" fn diagnostic_task(_: *mut c_void) -> u32 {
         // SAFETY: every firmware defines the hook with `firmware!`; it runs
         // once, here, in this task.
         unsafe { petlibre_firmware_start() };
+        start_power();
         start_confirm();
     }
     STARTUP.store(Startup::Started.code(), Ordering::Release);

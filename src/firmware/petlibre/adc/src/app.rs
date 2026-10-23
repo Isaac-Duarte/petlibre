@@ -9,6 +9,9 @@ use petlibre_sdk::hal::sdk;
 petlibre_sdk::firmware!(start);
 
 fn start() {
+    // The probe keeps the ADC for as long as the build runs, so the
+    // runtime's power monitor stays off it.
+    petlibre_sdk::claim_adc();
     // The probe never binds the KM0 flash handshake, so confirmation need
     // not wait for it.
     petlibre_sdk::startup_done(true);

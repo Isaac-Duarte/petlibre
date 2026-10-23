@@ -14,6 +14,9 @@ use crate::sequence::{Line, Probes, Qa};
 petlibre_sdk::firmware!(start);
 
 fn start() {
+    // The power check samples the ADC after optics has reported
+    // `startup_done`, so the runtime's power monitor must stay off it.
+    petlibre_sdk::claim_adc();
     start_qa();
     start_audio();
 }

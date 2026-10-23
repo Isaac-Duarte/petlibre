@@ -12,9 +12,10 @@ use core::fmt::{self, Write};
 use crate::tone::Tune;
 
 /// Largest packet either side may send; bigger input closes the session.
-pub const MAX_PACKET: usize = 768;
-/// Health payload limit (512 bytes in FW08; 640 since the clock and nonce).
-pub const MAX_HEALTH: usize = 640;
+pub const MAX_PACKET: usize = 832;
+/// Health payload limit (512 bytes in FW08, 640 with the clock and nonce,
+/// 704 with the FW14 power inputs).
+pub const MAX_HEALTH: usize = 704;
 /// Request payload limit (256 bytes in FW08; 448 since signed Wi-Fi requests).
 pub const MAX_REQUEST: usize = 448;
 
@@ -944,6 +945,19 @@ pub struct Health {
     /// This session's request nonce, 16 lowercase hex characters, when the
     /// image has a request key.
     pub nonce: Option<[u8; 16]>,
+    /// FW14: the power inputs, `None` without a fresh sample.
+    pub power: Option<PowerHealth>,
+}
+
+/// A fresh power sample as health reports it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PowerHealth {
+    /// PA19: the adapter is connected.
+    pub adapter: bool,
+    /// The pack voltage, `None` when no pack is fitted.
+    pub battery_mv: Option<u32>,
+    /// Milliseconds since the sample was taken.
+    pub age_ms: u32,
 }
 
 /// A valid wall-clock reading as health reports it.
@@ -1028,10 +1042,26 @@ impl Health {
         match self.clock {
             Some(clock) => write!(
                 out,
-                ",\"clock\":{{\"syncs\":{},\"unix_ms\":{},\"offset_s\":{},\"uncertainty_ms\":{}}}}}",
+                ",\"clock\":{{\"syncs\":{},\"unix_ms\":{},\"offset_s\":{},\"uncertainty_ms\":{}}}",
                 self.clock_syncs, clock.unix_ms, clock.offset_s, clock.uncertainty_ms
-            ),
-            None => write!(out, ",\"clock\":{{\"syncs\":{}}}}}", self.clock_syncs),
+            )?,
+            None => write!(out, ",\"clock\":{{\"syncs\":{}}}", self.clock_syncs)?,
+        }
+
+        match self.power {
+            Some(power) => {
+                write!(
+                    out,
+                    ",\"power\":{{\"adapter\":{},\"battery_mv\":",
+                    power.adapter
+                )?;
+                match power.battery_mv {
+                    Some(mv) => write!(out, "{mv}")?,
+                    None => out.write_str("null")?,
+                }
+                write!(out, ",\"age_ms\":{}}}}}", power.age_ms)
+            }
+            None => out.write_str(",\"power\":null}"),
         }
     }
 }

@@ -158,8 +158,8 @@ fn decode_accepts_only_the_expected_packets() {
         decode(&[0x30, 0x80, 0x80, 0x80, 0x80, 1]),
         Err(Error::Malformed)
     );
-    // One byte over MAX_PACKET (769).
-    assert_eq!(decode(&[0x30, 0x81, 0x06]), Err(Error::TooLong));
+    // One byte over MAX_PACKET (833).
+    assert_eq!(decode(&[0x30, 0xc1, 0x06]), Err(Error::TooLong));
     assert_eq!(decode(&[0x30, 3, 0, 5, b't']), Err(Error::Malformed));
     assert_eq!(decode(&[0x30, 3, 0, 1, 0xff]), Err(Error::Malformed));
 }
@@ -461,6 +461,7 @@ fn health() -> Health {
         clock: None,
         clock_syncs: 0,
         nonce: None,
+        power: None,
     }
 }
 
@@ -478,7 +479,7 @@ fn health_renders_the_v1_schema_within_its_limit() {
     assert_eq!(
         text,
         format!(
-            r#"{{"schema":"petlibre.health","v":1,"online":true,"seq":12,"uptime_ms":61234,"build":"{build}","bank":1,"reset_flags":"00000000","boot_count":7,"outputs":"stopped","faults":[],"wifi":{{"rssi":-20,"attempt":2,"losses":{{"link":0,"dns":1}},"last_loss":"dns","source":"build"}},"transport":{{"connects":1,"last_error":null}},"clock":{{"syncs":0}}}}"#
+            r#"{{"schema":"petlibre.health","v":1,"online":true,"seq":12,"uptime_ms":61234,"build":"{build}","bank":1,"reset_flags":"00000000","boot_count":7,"outputs":"stopped","faults":[],"wifi":{{"rssi":-20,"attempt":2,"losses":{{"link":0,"dns":1}},"last_loss":"dns","source":"build"}},"transport":{{"connects":1,"last_error":null}},"clock":{{"syncs":0}},"power":null}}"#
         )
     );
 
@@ -506,6 +507,13 @@ fn health_renders_the_v1_schema_within_its_limit() {
         }),
         clock_syncs: u32::MAX,
         nonce: Some(*b"ffffffffffffffff"),
+        power: Some(PowerHealth {
+            adapter: true,
+            // A 3.3 V pin through the divider, and the staleness bound
+            // (`petlibre_hal::power`).
+            battery_mv: Some(6_808),
+            age_ms: 15_000,
+        }),
         ..health()
     };
 
@@ -521,7 +529,21 @@ fn health_renders_the_v1_schema_within_its_limit() {
             r#""last_error":"protocol_malformed"},"nonce":"ffffffffffffffff","clock":{"syncs":4294967295,"unix_ms":"#
         )
     );
-    assert!(text.ends_with(r#""uncertainty_ms":60000}}"#));
+    assert!(text.ends_with(
+        r#""uncertainty_ms":60000},"power":{"adapter":true,"battery_mv":6808,"age_ms":15000}}"#
+    ));
+
+    // No pack fitted.
+    let no_pack = render(&Health {
+        power: Some(PowerHealth {
+            adapter: true,
+            battery_mv: None,
+            age_ms: 0,
+        }),
+        ..health()
+    })
+    .unwrap();
+    assert!(no_pack.ends_with(r#","power":{"adapter":true,"battery_mv":null,"age_ms":0}}"#));
 
     let sensing = render(&Health {
         outputs: Outputs::Sensing,

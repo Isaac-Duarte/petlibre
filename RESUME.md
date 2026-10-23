@@ -7,9 +7,9 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
-**October 23, about 1 AM: buttons mapped (FW20, physical, owner pressing).** Branch `fw20-buttons` (worktree `.claude/worktrees/fw20-buttons`), not merged: another session was active on master.
-- **What changed:** variant `fw20-buttons` (`wellfed-build build --profile firstboot --variant fw20-buttons`): probe `probes/buttons.rs` in place of the optics probe; it configures PB4..PB7 as stock does and logs `PLBTN1` records (startup-diagnostics). Host tests in `tests/buttons_probe.rs`. Build: every audit passed (`wellfed-btn` 796 of 4096 B). Review `fw20-buttons-01-review` (`2943029a…`), frozen in the worktree and copied to the main `private/verification`.
-- **Runs** (worktree binaries, `--root` the main checkout): `itest-20261023-03 --only ota-update --power` installed it (v66, confirmed); `fw20-buttons-01-boot`; presses in `fw20-buttons-02-press` (free play) and `-03-press` (one at a time, left to right).
+**October 23, about 1 AM: buttons mapped (FW20, physical, owner pressing).** Built and run from a worktree, then merged to master.
+- **What changed:** variant `fw20-buttons` (`wellfed-build build --profile firstboot --variant fw20-buttons`): probe `probes/buttons.rs` in place of the optics probe; it configures PB4..PB7 as stock does and logs `PLBTN1` records (startup-diagnostics). Host tests in `tests/buttons_probe.rs`. Build: every audit passed (`wellfed-btn` 796 of 4096 B). Review `fw20-buttons-01-review` (`2943029a…`), in `private/verification`.
+- **Runs:** `itest-20261023-03 --only ota-update --power` installed it (v66, confirmed); `fw20-buttons-01-boot`; presses in `fw20-buttons-02-press` (free play) and `-03-press` (one at a time, left to right).
 - **Results:** Reset = PB4, Mic = PB5, Dispense 1 portion = PB6, Lock = PB7; active LOW; the lines idle high with the pad pulls off (board pull-ups); every edge single, no bounce at 2 ms.
 - **Restore:** `itest-20261023-04 --review itest-20261022-19-good-review --only ota-update --power` put the reference build back (v67, confirmed).
 - **Flash now:** **Bank 1:** reference `f550a0e9…` (OTA v67, confirmed). **Bank 0:** unchanged (`f244d9a9…`). **Next manifest version:** 68.

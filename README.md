@@ -23,7 +23,7 @@ The replacement is experimental. A diagnostic PASS does not establish working ph
 - [Development setup and checks](docs/development/README.md)
 - [Local server setup and API](docs/development/local-server.md)
 - [SDK firmware builds](docs/development/firmware-builds.md)
-- [Firmware feature board](FIRMWARE_BOARD.md) and [startup/indicator diagnostics](docs/firmware/startup-diagnostics.md)
+- [Firmware board](FIRMWARE_BOARD.md), [feature parity board](FEATURE_BOARD.md) and [startup/indicator diagnostics](docs/firmware/startup-diagnostics.md)
 - [UART development updates](docs/development/uart-development.md)
 
 ## Build and test

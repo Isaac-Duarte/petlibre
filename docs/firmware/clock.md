@@ -25,7 +25,7 @@ The request parser accepts integers only for `op:"time"`, and only exactly the f
 
 Health reports `"clock":{"syncs":N,"unix_ms":…,"offset_s":…,"uncertainty_ms":…}` while valid and `"clock":{"syncs":N}` otherwise. The health payload limit went from 512 to 576 bytes on both sides to fit it.
 
-## Missed-meal rule (for FW22)
+## Missed-meal rule (for FP03)
 
 `wall_clock::occurrence(due, evaluated, now)` decides each scheduled occurrence. `evaluated` is a persisted high-water mark of time already evaluated; after each evaluation it becomes `max(evaluated, now)`.
 

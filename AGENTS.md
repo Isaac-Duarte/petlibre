@@ -2,9 +2,9 @@
 
 ## Start here
 
-- Read [RESUME.md](RESUME.md) when continuing firmware work, then [FIRMWARE_BOARD.md](FIRMWARE_BOARD.md), [README.md](README.md) and the [development guide](docs/development/README.md). Use docs/hardware/ and docs/firmware/ for hardware assumptions and component contracts.
+- Read [RESUME.md](RESUME.md) when continuing firmware work, then [FIRMWARE_BOARD.md](FIRMWARE_BOARD.md), [FEATURE_BOARD.md](FEATURE_BOARD.md), [README.md](README.md) and the [development guide](docs/development/README.md). Use docs/hardware/ and docs/firmware/ for hardware assumptions and component contracts.
 - Keep RESUME's checkpoint and its ignored local evidence index current when bench state changes. Reconfirm physical state rather than assuming the handoff is live.
-- Keep FIRMWARE_BOARD.md current when implementation, dependencies or acceptance evidence change. Card status never authorizes physical operations.
+- Keep FIRMWARE_BOARD.md (SDK and hardware capability) and FEATURE_BOARD.md (owner-visible behavior and stock parity) current when implementation, dependencies or acceptance evidence change. Card status never authorizes physical operations.
 - Label every finding as physical observation, static analysis or simulation. Host checks do not establish hardware reliability.
 
 ## Hard rules

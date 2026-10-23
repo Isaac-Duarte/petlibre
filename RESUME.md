@@ -7,6 +7,20 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
+**October 23, early morning: one SDK, many firmwares on hardware (FW36 done, physical over the air, autonomous).**
+- **Runs** (release binaries rebuilt first):
+  - `itest-20261022-19 --build --tier smoke --power` passed (`ota-update` 4 min 16 s, `requests`, `request-auth`). The SDK-split reference build `f550a0e9…` (v61) confirmed on its trial boot; the UART shows the new order `PLMQT1`, `PLOPT1`, `PLAUD1`, then `PLCNF1 start`.
+  - `itest-20261022-20 --review` (review `fw36-blink-01-review`) `--only ota-update --power` installed `blink` (`2ea8035d…`, v62). It confirmed (`healthy_ms=30000`), and health came from bank 1. The UART shows `PLBLK1 start` and four output-only levels on PA0, then the settings writer and the offer check. The owner watched the connection indicator blink.
+  - `itest-20261022-21 --review` (review `itest-20261022-19-good-review`) `--only ota-update --power` put the reference build back (v63, trial boot, confirmed). A firmware cannot lock the device in.
+  - `PLOPT1 error kind=supervisor n=1 fault=7` on the reference boots is not new: every capture since `itest-20261022-10` has it.
+- **Flash now:**
+  - **Bank 1:** reference build `f550a0e9…` (OTA v63, confirmed).
+  - **Bank 0:** unchanged (`f244d9a9…`, recovery role).
+  - **Next manifest version:** 64.
+  - **Settings:** generation 3025 (lights 1, sound 1, volume 40).
+  - **Wi-Fi:** no stored credentials.
+- **Bench state:** restored. Feeder off (both relays off), hotspot down, no server.
+
 **October 22, late night: one SDK, many firmwares (FW36, host only, nothing run on the bench).**
 - **What changed:**
   - The workspace is `src/sdk/` (the SDK), `src/tools/` (host tools) and `src/firmware/wellfed/` (one crate per firmware). Renamed: `wellfed-amebad` to `wellfed-hal`, `-amebad-common` to `-hal-common`, `-amebad-sdk` to `-amebad-sys`, `-ffi` to `-sdk-c`, `-firstboot` to `wellfed-fw-reference` in `src/firmware/wellfed/reference`. C symbols are unchanged.
@@ -21,7 +35,6 @@ image, bench state, next task, or acceptance evidence changes.
   - New `src/firmware/wellfed/blink`: one task blinks the connection indicator, verifying each level. A `play` request on blink fills the audio mailbox and later ones answer `busy`.
   - Checks: `make check`; `plaf103` and `plaf103-firstboot` for `reference` (stack bounds as above), and `plaf103-firstboot` for `blink` (blink task 748 of 4096); `make check-fixtures` with no skips against each. `private/firmware-build/plaf103-firstboot` holds the reference build again.
 - **Layout (later the same night):** everything first-party is under `src/`: `src/sdk/` (SDK crates), `src/tools/` (Rust host tools beside the Python tools), `src/firmware/wellfed/` (firmwares), `src/firmware/vendor/` (the former `firmware/`: C ports, pins, layout, image build, so `make -C src/firmware/vendor plaf103-firstboot`), `src/web/` and `src/scripts/dev-dashboard`. The Python tools' bytes changed (their `ROOT` depth), so plans that recorded their hashes are stale. Rebuild the release binaries (`cargo build --release`) before bench use; the old ones read the old paths. Checks: `make check`, `make check-web`, fresh `plaf103` and `plaf103-firstboot` builds (stack bounds unchanged), and `make check-fixtures` with no skips.
-- **Next (FW36), on hardware:** the smoke suite on the reference firmware, then install `blink` and check it confirms and blinks, then OTA back to the reference firmware.
 
 **October 22, late night: faster integration runs (physical over the air and by UART, autonomous).**
 - **What changed:**

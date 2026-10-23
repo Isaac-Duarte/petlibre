@@ -7,6 +7,29 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
+**October 22, evening: idiomatic-Rust pass (physical over the air, autonomous).**
+- **What changed:** host tools read and write typed serde structs instead of `serde_json::Value`. Shared file formats live in the new `crates/petlibre-formats` (build manifest and identity, layout, locks, serial events, credentials, flash plans). Firmware got only codegen-neutral cleanups: `unsafe fn` contracts, `// SAFETY:` comments with `clippy::undocumented_unsafe_blocks` denied, one `c_enum!`, `TaskCell`, shared constants, and stage enums with identical record text. AGENTS.md now carries the Rust conventions and the owner's compatibility policy (old evidence may break; live interop and pinned checks may not).
+- **Bugs fixed (static):**
+  - `petlibre-audit startup` rebuilt the identity without the variant or update key, so it refused every current build.
+  - The bench's attended-motion gate passed an unparseable `build-manifest.json`.
+- **Checks:** `make check`; fresh `plaf103` and `plaf103-firstboot` builds, whose link, RAM-park, hook and stack audits pass with unchanged pins; `make check-fixtures` with no skips.
+- **Physical:**
+  - `itest-20261022-13 --build --tier smoke --power` passed after the formats crate.
+  - `itest-20261022-14 --build --power` passed all eight standard scenarios on the fully merged tree.
+  - Between the two runs, the owner had the speaker variant installed (`speaker-20261022-02`, `8356f235…`, OTA v47) and listened to `petlibre-local speak`.
+- **Flash now:**
+  - **Bank 1:** normal build `196652d97ee9…` (OTA v52, confirmed).
+  - **Bank 0:** `36c9a086…`.
+  - **Next manifest version:** 53.
+  - **Settings:** generation 3015 (lights 1, sound 1, volume 40).
+  - **Wi-Fi:** no stored credentials (generation 11).
+- **Bench state:** restored. Feeder off, hotspot down, no server.
+- **Open follow-ups:**
+  - `petlibre_formats::manifest::Audits` is still `Value`; the audit types live in petlibre-build.
+  - The bench's `LocalStatus` mirrors petlibre-local's status document instead of sharing a type.
+  - xtask's FW08 transport-isolation list blocks core `transport.rs` from the shared hex decoder and `named_enum!`.
+  - Deferred firmware items: the `PROVIDER` aliasing, merging the three record stores' framing, and `net_store::save`'s missing verify-before-commit.
+
 **October 22, late night: the firmware build is Rust (physical, autonomous).**
 - **`petlibre-build`** (`crates/petlibre-build`) replaces `firmware/tools/build.py` and its six audit modules (pad table, RAM park, SDK hooks, first-boot mains, flash/eFuse writers, task stacks), plus the OTA layout audit it ran as a child. `make -C firmware <profile>` and `check-cross` call it; run the executable itself, since `cargo run` sets `RUSTUP_TOOLCHAIN`, which a build refuses.
 - **Equivalence shown before deleting the Python:**

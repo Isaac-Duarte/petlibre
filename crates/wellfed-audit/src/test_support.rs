@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 
 use crate::capture::Time;
 use crate::startup::{find, verify};
-use crate::{Report, Result, digest};
+use crate::{Result, digest};
 
 pub fn t0() -> Time {
     DateTime::parse_from_rfc3339("2026-10-21T10:00:00+00:00").unwrap()
@@ -38,7 +38,12 @@ pub fn replace_n(data: &[u8], old: &[u8], new: &[u8], limit: usize) -> Vec<u8> {
     out
 }
 
-pub fn outcome(report: &Report) -> &str {
+/// A typed report as the JSON it is written as, for field assertions.
+pub fn report(typed: impl serde::Serialize) -> Value {
+    serde_json::to_value(typed).unwrap()
+}
+
+pub fn outcome(report: &Value) -> &str {
     report["outcome"].as_str().unwrap()
 }
 
@@ -146,9 +151,9 @@ impl Fixture {
         .unwrap();
     }
 
-    pub fn verify(&self, minimum: f64) -> Result<Report> {
+    pub fn verify(&self, minimum: f64) -> Result<Value> {
         let p = self.path();
-        verify(p, &p.join("manifest.json"), &p.join("image.bin"), minimum)
+        verify(p, &p.join("manifest.json"), &p.join("image.bin"), minimum).map(report)
     }
 
     pub fn error(&self, minimum: f64) -> String {

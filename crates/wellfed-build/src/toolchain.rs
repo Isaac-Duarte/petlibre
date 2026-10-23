@@ -17,7 +17,7 @@ use crate::identity::TOOL_LOCK;
 use crate::{Error, Repo, Result, digest, git, require, revision, run, text, which};
 
 /// Per-file hashes of the executables the SDK build and audits invoke.
-pub fn toolchain_lock(repo: &Repo, lock: &SdkLock) -> Result<BTreeMap<String, String>> {
+pub(crate) fn toolchain_lock(repo: &Repo, lock: &SdkLock) -> Result<BTreeMap<String, String>> {
     let pinned: ToolchainLock = wellfed_formats::load(&repo.path(TOOL_LOCK))?;
     require(
         pinned.archive_sha256 == lock.toolchain.sha256 && !pinned.files.is_empty(),
@@ -27,7 +27,7 @@ pub fn toolchain_lock(repo: &Repo, lock: &SdkLock) -> Result<BTreeMap<String, St
 }
 
 /// Fail closed unless every pinned compiler/binutils file matches.
-pub fn verify_toolchain(toolchain: &Path, pins: &BTreeMap<String, String>) -> Result<()> {
+pub(crate) fn verify_toolchain(toolchain: &Path, pins: &BTreeMap<String, String>) -> Result<()> {
     let base = fs::canonicalize(toolchain)?;
     for (name, expected) in pins {
         let path = fs::canonicalize(toolchain.join(name)).ok();
@@ -89,7 +89,7 @@ fn check_tree(directory: &Path, base: &Path) -> Result<()> {
 
 /// Extract `directory` of `archive` into `destination` through a private
 /// staging directory, verify it, then rename it into place.
-pub fn extract_toolchain(
+fn extract_toolchain(
     archive: &Path,
     destination: &Path,
     directory: &str,

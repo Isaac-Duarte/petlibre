@@ -1,11 +1,11 @@
 [package]
-license = "MIT"
+license.workspace = true
 name = "xtask"
 version = "0.1.0"
-edition = "2024"
-rust-version = "1.99"
+edition.workspace = true
+rust-version.workspace = true
 description = "Repository maintenance tasks: documentation links, tool dependencies, portability and transport isolation"
-publish = false
+publish.workspace = true
 
 [lints.rust]
 unsafe_code = "forbid"
@@ -14,8 +14,8 @@ unsafe_code = "forbid"
 dbg_macro = "deny"
 
 [dependencies]
-clap = { version = "4.6.7", features = ["derive"] }
+clap.workspace = true
 regex = "1"
 
 [dev-dependencies]
-tempfile = "3.27.0"
+tempfile.workspace = true

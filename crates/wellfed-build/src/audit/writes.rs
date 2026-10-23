@@ -14,14 +14,14 @@ use std::path::Path;
 use std::sync::LazyLock;
 
 use regex::Regex;
-use serde_json::{Value, json};
+use serde::Serialize;
 
-use super::{Binutils, HEADING, elf, file_sha256, parse_hex, refuse, tool};
-use crate::{Result, require};
+use super::{Binutils, HEADING, elf, index, parse_hex, refuse, tool, word};
+use crate::{Core, Result, digest, require};
 
 /// Never in the image: eFuse MAC programming, eFuse-command issuers, the SDK
 /// Wi-Fi/FTL flash writers, the mbed flash write API and any shell entry.
-pub const ABSENT: [&str; 19] = [
+const ABSENT: [&str; 19] = [
     "rtw_efuse_boot_write",
     "wifi_set_mac_address",
     "wlan_write_reconnect_data_to_flash",
@@ -47,7 +47,7 @@ static WRITES: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"^(EFUSE_LogicalMap_Write|EFUSE_PG_Packet|EFUSEWrite8|EFUSE_PMAP_WRITE8|FLASH_(Erase|EraseXIP|EreaseDwordsXIP|SetStatus|SetStatusBits|SetStatusXIP|SetStatusBitsXIP|SetSpiMode|WriteEn|WriteStream|TxData\w*|TxCmd\w*))$",
     )
-    .unwrap()
+    .expect("literal pattern")
 });
 
 type Pins = &'static [(&'static str, &'static [&'static str])];
@@ -150,24 +150,28 @@ const EXPECTED_LP: Pins = &[
 ];
 
 /// Calls and branches, conditional ones included (`bleq` inside an IT block).
-pub static BRANCH: LazyLock<Regex> = LazyLock::new(|| {
+static BRANCH: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"\b(?:blx?|b)(?:eq|ne|cs|hs|cc|lo|mi|pl|vs|vc|hi|ls|ge|lt|gt|le|al)?(?:\.[wn])?\s+([0-9a-f]+)\s+<([^>+]+)>",
     )
-    .unwrap()
+    .expect("literal pattern")
 });
 /// A disassembled line with its encoding: address, bytes, mnemonic.
-pub static INSTRUCTION: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\s*([0-9a-f]+):\t((?:[0-9a-f]{2,8} ?)+)\s*\t(\S+)").unwrap());
-static SECTION: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^\s*\d+\s+(\S+)\s+([0-9a-f]+)\s+([0-9a-f]+)\s+[0-9a-f]+\s+([0-9a-f]+)").unwrap()
+static INSTRUCTION: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^\s*([0-9a-f]+):\t((?:[0-9a-f]{2,8} ?)+)\s*\t(\S+)").expect("literal pattern")
 });
-static IDENTIFIER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^u?(\d+)_?").unwrap());
-static DISAMBIGUATOR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^s[0-9A-Za-z]*_").unwrap());
+static SECTION: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^\s*\d+\s+(\S+)\s+([0-9a-f]+)\s+([0-9a-f]+)\s+[0-9a-f]+\s+([0-9a-f]+)")
+        .expect("literal pattern")
+});
+static IDENTIFIER: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^u?(\d+)_?").expect("literal pattern"));
+static DISAMBIGUATOR: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^s[0-9A-Za-z]*_").expect("literal pattern"));
 
 /// A Rust v0 nested path (`_RNvNt...`) as `crate::module::item`, without the
 /// per-build crate hash, so pins survive rebuilds; other names unchanged.
-pub fn demangle(name: &str) -> String {
+pub(crate) fn demangle(name: &str) -> String {
     fn ident(text: &str, at: &mut usize) -> Option<String> {
         let m = IDENTIFIER.captures(text.get(*at..)?)?;
         *at += m.get(0)?.end();
@@ -243,16 +247,16 @@ fn loaded(elf: &Path, objdump: &Path) -> Result<Vec<(u64, Vec<u8>)>> {
     let lines: Vec<&str> = listing.lines().collect();
 
     let mut out = Vec::new();
-    for (index, line) in lines.iter().enumerate() {
+    for (at, line) in lines.iter().enumerate() {
         let Some(m) = SECTION.captures(line) else {
             continue;
         };
-        let flags = lines.get(index + 1).copied().unwrap_or_default();
+        let flags = lines.get(at + 1).copied().unwrap_or_default();
         if flags.contains("LOAD") && flags.contains("CONTENTS") {
             let (size, start, offset) = (
-                parse_hex(&m[2])? as usize,
+                index(parse_hex(&m[2])?)?,
                 parse_hex(&m[3])?,
-                parse_hex(&m[4])? as usize,
+                index(parse_hex(&m[4])?)?,
             );
             let begin = offset.min(data.len());
             let end = (offset + size).min(data.len());
@@ -320,9 +324,8 @@ fn references(
     }
     for (start, data) in loaded(elf, objdump)? {
         for at in (0..data.len().saturating_sub(3)).step_by(4) {
-            let value = u32::from_le_bytes(data[at..at + 4].try_into().unwrap_or_default()) as u64;
             let location = start + at as u64;
-            if let Some(target) = wanted.get(&value)
+            if let Some(target) = word(&data, at).and_then(|value| wanted.get(&value))
                 && !(0..4).all(|i| code.contains(&(location + i)))
             {
                 found
@@ -370,7 +373,8 @@ fn references(
     Ok(found)
 }
 
-struct Core {
+/// What one core's image may and must link.
+struct Rules {
     absent: Vec<&'static str>,
     expected: Pins,
     sections: &'static [&'static str],
@@ -378,7 +382,24 @@ struct Core {
     present: bool,
 }
 
-fn audit_core(elf: &Path, objdump: &Path, core: &Core) -> Result<Value> {
+/// One core's linked writers and every reference to them.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct CoreWrites {
+    elf_sha256: String,
+    absent: Vec<&'static str>,
+    write_targets: Vec<String>,
+    /// Each referenced target's enclosing symbols.
+    references: BTreeMap<String, BTreeSet<String>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct WritesAudit {
+    hp: CoreWrites,
+    lp: CoreWrites,
+    scope: &'static str,
+}
+
+fn audit_core(elf: &Path, objdump: &Path, core: &Rules) -> Result<CoreWrites> {
     let names = table(elf, objdump)?;
     let linked: Vec<&str> = {
         let mut linked: Vec<&str> = core
@@ -438,66 +459,52 @@ fn audit_core(elf: &Path, objdump: &Path, core: &Core) -> Result<Value> {
         }
     }
 
-    let references: BTreeMap<&String, &BTreeSet<String>> = found
-        .iter()
+    let references = found
+        .into_iter()
         .filter(|(_, callers)| !callers.is_empty())
         .collect();
-    Ok(
-        json!({"elf_sha256": file_sha256(elf)?, "absent": core.absent,
-              "write_targets": targets, "references": references}),
-    )
+    Ok(CoreWrites {
+        elf_sha256: digest(elf)?,
+        absent: core.absent.clone(),
+        write_targets: targets,
+        references,
+    })
 }
 
-pub fn audit(sdk: &Path, binutils: &Binutils) -> Result<Value> {
+pub(crate) fn audit(sdk: &Path, binutils: &Binutils) -> Result<WritesAudit> {
     let objdump = binutils.objdump();
     let lp_pinned: Vec<&str> = EXPECTED_LP.iter().map(|(t, _)| *t).collect();
     // KM0 needs the WLAN firmware entry for FW07; KM4 must not carry it.
-    let cores = [
-        (
-            "hp",
-            Core {
-                absent: ABSENT.to_vec(),
-                expected: EXPECTED_HP,
-                sections: &[".ram_image2.text", ".xip_image2.text"],
-                required: "wifi_FW_init_ram",
-                present: false,
-            },
-        ),
-        (
-            "lp",
-            Core {
-                absent: ABSENT
-                    .iter()
-                    .filter(|n| !lp_pinned.contains(n))
-                    .copied()
-                    .collect(),
-                expected: EXPECTED_LP,
-                sections: &[
-                    ".ram_image2.text",
-                    ".xip_image2.text",
-                    ".ram_retention.text",
-                ],
-                required: "wifi_FW_init_ram",
-                present: true,
-            },
-        ),
-    ];
+    let hp = Rules {
+        absent: ABSENT.to_vec(),
+        expected: EXPECTED_HP,
+        sections: &[".ram_image2.text", ".xip_image2.text"],
+        required: "wifi_FW_init_ram",
+        present: false,
+    };
+    let lp = Rules {
+        absent: ABSENT
+            .iter()
+            .filter(|n| !lp_pinned.contains(n))
+            .copied()
+            .collect(),
+        expected: EXPECTED_LP,
+        sections: &[
+            ".ram_image2.text",
+            ".xip_image2.text",
+            ".ram_retention.text",
+        ],
+        required: "wifi_FW_init_ram",
+        present: true,
+    };
 
-    let mut result = serde_json::Map::new();
-    for (name, core) in &cores {
-        result.insert(
-            name.to_string(),
-            audit_core(&elf(sdk, name), &objdump, core)?,
-        );
-    }
-    result.insert(
-        "scope".into(),
-        "Linked direct and stored-address references only; register-computed calls, \
-         ROM-internal paths (including the WLAN firmware's ROM half) and runtime behavior \
-         are not established."
-            .into(),
-    );
-    Ok(Value::Object(result))
+    Ok(WritesAudit {
+        hp: audit_core(&elf(sdk, Core::Hp), &objdump, &hp)?,
+        lp: audit_core(&elf(sdk, Core::Lp), &objdump, &lp)?,
+        scope: "Linked direct and stored-address references only; register-computed calls, \
+                ROM-internal paths (including the WLAN firmware's ROM half) and runtime behavior \
+                are not established.",
+    })
 }
 
 #[cfg(test)]

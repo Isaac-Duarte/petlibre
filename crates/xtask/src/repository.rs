@@ -93,7 +93,7 @@ regex!(TOOL, r"^(?:[A-Za-z0-9_-]+/)*[A-Za-z0-9_-]+\.py$");
 regex!(SCHEME, r"^[A-Za-z][A-Za-z0-9+.-]*:");
 
 /// What one run found: the counts for the success line, and every finding.
-pub struct Summary {
+pub(crate) struct Summary {
     pub files: usize,
     pub links: usize,
     pub errors: Vec<String>,
@@ -125,7 +125,7 @@ fn listed(root: &Path) -> io::Result<Vec<String>> {
 
 /// Run every check over `root`. An `Err` means the checkout could not be listed;
 /// failed checks are reported in [`Summary::errors`].
-pub fn check(root: &Path) -> io::Result<Summary> {
+pub(crate) fn check(root: &Path) -> io::Result<Summary> {
     let root = root.canonicalize()?;
     let names = listed(&root)?;
     let mut summary = Summary {
@@ -252,7 +252,7 @@ fn normalize(path: &Path) -> PathBuf {
 /// The string literals of a Python source, as `ast.Constant` strings: comments
 /// skipped, prefixes and triple quotes understood, escapes kept as written
 /// (a tool path never needs one).
-pub fn python_strings(source: &str) -> Vec<String> {
+pub(crate) fn python_strings(source: &str) -> Vec<String> {
     let chars: Vec<char> = source.chars().collect();
     let mut out = Vec::new();
     let mut i = 0;
@@ -274,7 +274,6 @@ pub fn python_strings(source: &str) -> Vec<String> {
             }
             let prefixed = start < i
                 && (start == 0 || !(chars[start - 1].is_alphanumeric() || chars[start - 1] == '_'));
-            let raw = prefixed && chars[start..i].iter().any(|p| *p == 'r' || *p == 'R');
             let formatted = prefixed && chars[start..i].iter().any(|p| *p == 'f' || *p == 'F');
 
             let triple = chars.get(i + 1) == Some(&c) && chars.get(i + 2) == Some(&c);
@@ -283,18 +282,9 @@ pub fn python_strings(source: &str) -> Vec<String> {
             let mut value = String::new();
 
             while j < chars.len() {
-                if chars[j] == '\\' && !raw {
-                    value.push(chars[j]);
-                    if let Some(next) = chars.get(j + 1) {
-                        value.push(*next);
-                    }
-                    j += 2;
-                    continue;
-                }
-
-                // A raw string still cannot end on an escaped quote, so the pair
-                // is kept and skipped exactly as above.
-                if chars[j] == '\\' && raw {
+                // Escapes are kept as written. A raw string still cannot end on
+                // an escaped quote, so it skips the pair the same way.
+                if chars[j] == '\\' {
                     value.push(chars[j]);
                     if let Some(next) = chars.get(j + 1) {
                         value.push(*next);
@@ -394,7 +384,7 @@ fn tool_dependencies(root: &Path, errors: &mut Vec<String>) {
     }
 }
 
-pub fn transport_isolation(root: &Path, errors: &mut Vec<String>) {
+pub(crate) fn transport_isolation(root: &Path, errors: &mut Vec<String>) {
     for (name, allowed) in TRANSPORT_ISOLATION {
         let Ok(source) = fs::read_to_string(root.join(name)) else {
             errors.push(format!("{name}: transport isolation target missing"));

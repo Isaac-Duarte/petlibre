@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use wellfed_build::audit::{self, Binutils, elf, hex, hooks, mains, park, tool};
 use wellfed_build::identity::current_inputs;
 use wellfed_build::image::audit_build;
-use wellfed_build::{PROJECT, Profile, Repo};
+use wellfed_build::{Core, PROJECT, Profile, Repo};
 use serde_json::Value;
 
 struct Build {
@@ -74,7 +74,7 @@ fn number(value: &Value) -> u64 {
 #[ignore = "needs the ignored first-boot build and pinned binutils"]
 fn audits_reproduce_the_build_manifest() {
     let build = build();
-    let audits = audit_build(&build.repo, &build.dir).unwrap();
+    let audits = serde_json::to_value(audit_build(&build.repo, &build.dir).unwrap()).unwrap();
     for (key, value) in audits.as_object().unwrap() {
         assert_eq!(value, &build.manifest[key], "{key}");
     }
@@ -88,7 +88,10 @@ fn parking_code_with_calls_branches_or_flash_literals_is_refused() {
         .as_object()
         .unwrap()
     {
-        let elf = elf(&sdk(&build), if core == "KM0" { "lp" } else { "hp" });
+        let elf = elf(
+            &sdk(&build),
+            if core == "KM0" { Core::Lp } else { Core::Hp },
+        );
         for (name, function) in image["functions"].as_object().unwrap() {
             let (address, size) = (number(&function["address"]), number(&function["bytes"]));
             let listing = listing(&build, &elf, address, size);
@@ -126,7 +129,7 @@ fn parking_code_with_calls_branches_or_flash_literals_is_refused() {
 fn hook_bypasses_in_real_listings_and_tables_are_refused() {
     let build = build();
     let objdump = build.binutils.objdump();
-    for core in ["lp", "hp"] {
+    for core in Core::BOTH {
         let elf = elf(&sdk(&build), core);
         let names = hooks::symbols(&elf, &objdump).unwrap();
         let listing = tool(
@@ -166,7 +169,7 @@ fn hook_bypasses_in_real_listings_and_tables_are_refused() {
 
 /// Each core's main: (core, address, size, listing, symbols, veneers).
 type Main = (
-    &'static str,
+    Core,
     u64,
     u64,
     String,
@@ -176,10 +179,10 @@ type Main = (
 
 fn mains(build: &Build) -> Vec<Main> {
     let objdump = build.binutils.objdump();
-    ["lp", "hp"]
+    Core::BOTH
         .into_iter()
         .map(|core| {
-            let function = &build.manifest["firstboot_startup_audit"]["mains"][core];
+            let function = &build.manifest["firstboot_startup_audit"]["mains"][core.dir()];
             let (address, size) = (number(&function["address"]), number(&function["bytes"]));
             let elf = elf(&sdk(build), core);
             let (symbols, _) = mains::listing_inputs(&elf, &objdump).unwrap();
@@ -230,14 +233,17 @@ fn a_corrupted_veneer_target_is_refused() {
     let build = build();
     let objdump = build.binutils.objdump();
     let copy = tempfile::tempdir().unwrap();
-    for core in ["lp", "hp"] {
-        let relative = format!("{PROJECT}/project_{core}/asdk/image/target_img2.axf");
+    for core in Core::BOTH {
+        let relative = format!(
+            "{PROJECT}/project_{}/asdk/image/target_img2.axf",
+            core.dir()
+        );
         let target = copy.path().join(&relative);
         fs::create_dir_all(target.parent().unwrap()).unwrap();
         fs::copy(sdk(&build).join(&relative), &target).unwrap();
     }
 
-    let elf = elf(copy.path(), "hp");
+    let elf = elf(copy.path(), Core::Hp);
     let (symbols, _) = mains::listing_inputs(&elf, &objdump).unwrap();
     let at =
         hooks::file_offset(&elf, &objdump, symbols["__vTaskStartScheduler_veneer"], 16).unwrap();

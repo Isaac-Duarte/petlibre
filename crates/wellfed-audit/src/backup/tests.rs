@@ -2,7 +2,10 @@
 
 use std::path::PathBuf;
 
+use serde_json::{Value, json};
+
 use super::*;
+use crate::write_report;
 
 /// Test fixture only, never a hardware-capacity assertion.
 const CAPACITY: u64 = 8 * 1024 * 1024;
@@ -59,7 +62,7 @@ impl Reads {
         second: &Path,
         capacity: u64,
         stock: Option<&Path>,
-    ) -> Result<Report> {
+    ) -> Result<Value> {
         let root = root();
         audit(&Inputs {
             root: &root,
@@ -70,9 +73,10 @@ impl Reads {
             stock,
             capacity_evidence: None,
         })
+        .map(|report| serde_json::to_value(report).unwrap())
     }
 
-    fn audit(&self) -> Report {
+    fn audit(&self) -> Value {
         self.audit_with(&self.first(), &self.second(), CAPACITY, None)
             .unwrap()
     }
@@ -224,7 +228,7 @@ fn alias_pattern_and_uncovered_areas_are_explicit() {
 #[test]
 fn same_file_hardlink_invalid_capacity_and_wrong_reference_are_refused() {
     let r = Reads::new();
-    let error = |result: Result<Report>| result.unwrap_err().to_string();
+    let error = |result: Result<Value>| result.unwrap_err().to_string();
 
     assert!(error(r.audit_with(&r.first(), &r.first(), CAPACITY, None)).contains("same file"));
 
@@ -282,7 +286,7 @@ fn report_is_private_exclusive_and_cannot_replace_inputs_or_follow_symlinks() {
 
     let public = r.dir.path().join("public.json");
     assert!(
-        write_report(&root, &public, &Report::new(), &[])
+        write_report(&root, &public, &json!({}), &[])
             .unwrap_err()
             .to_string()
             .contains("under ignored")
@@ -293,7 +297,7 @@ fn report_is_private_exclusive_and_cannot_replace_inputs_or_follow_symlinks() {
 fn diff_ranges_are_bounded_and_include_missing_tail_bytes() {
     let first = vec![0u8; 1024];
     let second: Vec<u8> = (0..512).flat_map(|_| [1u8, 0]).collect();
-    let report = differences(&first, &second);
+    let report = serde_json::to_value(differences(&first, &second)).unwrap();
 
     assert_eq!(report["different_bytes"], 512);
     assert_eq!(report["total_runs"], 512);
@@ -301,11 +305,11 @@ fn diff_ranges_are_bounded_and_include_missing_tail_bytes() {
     assert_eq!(report["runs_truncated"], true);
 
     assert_eq!(
-        differences(b"abc", b"abcdef")["runs"],
+        serde_json::to_value(differences(b"abc", b"abcdef")).unwrap()["runs"],
         json!([{"start": 3, "end_exclusive": 6}])
     );
 
-    let diff = differences(b"abcdef", b"aXcdYYZ");
+    let diff = serde_json::to_value(differences(b"abcdef", b"aXcdYYZ")).unwrap();
     assert_eq!(diff["different_bytes"], 4);
     assert_eq!(
         diff["runs"],
@@ -342,19 +346,21 @@ fn bank_body_is_identified_even_when_old_marker_is_invalid_but_not_after_other_c
 
     let layout: wellfed_formats::layout::Layout =
         wellfed_formats::load(&root.join(LAYOUT)).unwrap();
-    let result = banks(&data, &layout, Some(&original)).unwrap();
+    let result = serde_json::to_value(banks(&data, &layout, Some(&original)).unwrap()).unwrap();
 
     assert_eq!(result[0]["marker_matches_known_magic"], true);
     assert_eq!(result[1]["marker_matches_known_magic"], false);
     assert!(
         result
+            .as_array()
+            .unwrap()
             .iter()
             .all(|r| r["image_after_marker_normalization"] == "original-1.1.15")
     );
 
     data[0x186100] ^= 1;
     assert_eq!(
-        banks(&data, &layout, Some(&original)).unwrap()[1]["image_after_marker_normalization"],
+        serde_json::to_value(banks(&data, &layout, Some(&original)).unwrap()).unwrap()[1]["image_after_marker_normalization"],
         "unrecognized"
     );
 }

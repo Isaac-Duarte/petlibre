@@ -4,7 +4,8 @@
 //! OTA image) and fails closed on anything it cannot classify. They prove
 //! properties of the linked code, never runtime behavior; each result carries
 //! a `scope` saying what it does not establish. The build records them in the
-//! manifest and the frozen review re-runs the linked-code ones.
+//! manifest and the frozen review re-runs the linked-code ones, comparing
+//! them with the manifest's as whole objects, so both come from these types.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -12,35 +13,37 @@ use std::process::Command;
 use std::sync::LazyLock;
 
 use regex::Regex;
-use serde_json::{Value, json};
+use serde::Serialize;
 
-use crate::{Error, PROJECT, Repo, Result, relative, sha256, text};
+use crate::{Core, Error, PROJECT, Repo, Result, relative, text};
 
 pub mod hooks;
-pub mod layout;
+pub(crate) mod layout;
 pub mod mains;
-pub mod packaged;
+pub(crate) mod packaged;
 pub mod park;
-pub mod pinmap;
-pub mod stack;
-pub mod writes;
+pub(crate) mod pinmap;
+pub(crate) mod stack;
+pub(crate) mod writes;
 
 /// One `objdump -d` instruction (or `.word`): address, mnemonic, operands.
-pub static INSTRUCTION: LazyLock<Regex> = LazyLock::new(|| {
+pub(crate) static INSTRUCTION: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^\s*([0-9a-f]+):\s+(?:(?:[0-9a-f]{4}|[0-9a-f]{8})\s+)+([a-z.][a-z0-9.]*)\s*(.*)$")
-        .unwrap()
+        .expect("instruction pattern")
 });
 /// A line that addresses something, which then has to parse as [`INSTRUCTION`].
-pub static ADDRESSED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\s*[0-9a-f]+:\s").unwrap());
+pub(crate) static ADDRESSED: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\s*[0-9a-f]+:\s").expect("address pattern"));
 /// Unconditional and conditional direct branches (not calls).
-pub static DIRECT_BRANCH: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^b(?:eq|ne|cs|hs|cc|lo|mi|pl|vs|vc|hi|ls|ge|lt|gt|le)?(?:\.[nw])?$").unwrap()
+pub(crate) static DIRECT_BRANCH: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^b(?:eq|ne|cs|hs|cc|lo|mi|pl|vs|vc|hi|ls|ge|lt|gt|le)?(?:\.[nw])?$")
+        .expect("branch pattern")
 });
 /// A function heading in a disassembly: `0e000020 <name>:`.
-pub static HEADING: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^([0-9a-f]+) <([^>]+)>:$").unwrap());
+pub(crate) static HEADING: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^([0-9a-f]+) <([^>]+)>:$").expect("heading pattern"));
 
-pub fn refuse<T>(message: impl Into<String>) -> Result<T> {
+pub(crate) fn refuse<T>(message: impl Into<String>) -> Result<T> {
     Err(Error::Refused(message.into()))
 }
 
@@ -59,6 +62,17 @@ pub fn parse_hex(text: &str) -> Result<u64> {
         .map_err(|_| Error::Refused(format!("Not a hex number: {text}")))
 }
 
+/// A listed size or file offset as an index into the bytes it describes.
+pub(crate) fn index(value: u64) -> Result<usize> {
+    usize::try_from(value).map_err(|_| Error::Refused(format!("Offset out of range: {value:#x}")))
+}
+
+/// The little-endian word at `at`, if `data` holds one there.
+pub(crate) fn word(data: &[u8], at: usize) -> Option<u64> {
+    let bytes = data.get(at..)?.first_chunk::<4>()?;
+    Some(u64::from(u32::from_le_bytes(*bytes)))
+}
+
 /// The pinned binutils a build's audits use.
 #[derive(Debug, Clone)]
 pub struct Binutils {
@@ -75,23 +89,19 @@ impl Binutils {
     }
 }
 
-/// A core's linked image in an SDK worktree (`lp` is KM0, `hp` KM4).
-pub fn elf(sdk: &Path, core: &str) -> PathBuf {
+/// A core's linked image in an SDK worktree.
+pub fn elf(sdk: &Path, core: Core) -> PathBuf {
     sdk.join(PROJECT)
-        .join(format!("project_{core}/asdk/image/target_img2.axf"))
+        .join(format!("project_{}/asdk/image/target_img2.axf", core.dir()))
 }
 
-pub fn ota_image(sdk: &Path) -> PathBuf {
+pub(crate) fn ota_image(sdk: &Path) -> PathBuf {
     sdk.join(PROJECT).join("project_hp/asdk/image/OTA_All.bin")
 }
 
-pub fn file_sha256(path: &Path) -> Result<String> {
-    Ok(sha256(&fs::read(path)?))
-}
-
 /// The address of KM0's linked `pmap_func`, which the pad audit reads.
-pub fn pmap_address(sdk: &Path, binutils: &Binutils) -> Result<u64> {
-    let symbols = tool(&binutils.nm(), &["--defined-only"], &elf(sdk, "lp"))?;
+pub(crate) fn pmap_address(sdk: &Path, binutils: &Binutils) -> Result<u64> {
+    let symbols = tool(&binutils.nm(), &["--defined-only"], &elf(sdk, Core::Lp))?;
     let matches: Vec<&str> = symbols
         .lines()
         .map(|line| line.split_whitespace().collect::<Vec<_>>())
@@ -104,9 +114,25 @@ pub fn pmap_address(sdk: &Path, binutils: &Binutils) -> Result<u64> {
     }
 }
 
+/// The linked Rust archive of each core, as the manifest records them.
+pub type Archives = [(Core, PathBuf)];
+
 /// The audits of a finished first-boot build, keyed as its manifest
-/// records them. `objects` are the KM0/KM4 Rust archives it linked.
-pub fn linked(repo: &Repo, build: &Path, objects: &[(String, PathBuf)]) -> Result<Value> {
+/// records them.
+#[derive(Debug, Clone, Serialize)]
+pub struct Linked {
+    pub(crate) layout_audit: layout::LayoutAudit,
+    pub(crate) km0_pinmap_audit: pinmap::PinmapAudit,
+    pub(crate) ram_park_audit: park::ParkAudit,
+    pub(crate) sdk_hook_audit: hooks::HookAudit,
+    pub(crate) firstboot_startup_audit: mains::MainsAudit,
+    pub(crate) wifi_link_audit: writes::WritesAudit,
+    pub(crate) stack_audit: stack::StackAudit,
+}
+
+/// Run every linked-image audit of a first-boot build against `objects`,
+/// the KM0/KM4 Rust archives it linked.
+pub(crate) fn linked(repo: &Repo, build: &Path, objects: &Archives) -> Result<Linked> {
     let sdk = build.join("sdk");
     let binutils = Binutils {
         dir: repo.binutils()?,
@@ -115,18 +141,40 @@ pub fn linked(repo: &Repo, build: &Path, objects: &[(String, PathBuf)]) -> Resul
     let image = fs::read(ota_image(&sdk))?;
     let app = fs::read_to_string(repo.path(stack::APP_SOURCE))?;
 
-    Ok(json!({
-        "layout_audit": layout::audit(&ota_image(&sdk), &repo.stock(), &repo.layout())?,
-        "km0_pinmap_audit": pinmap::audit_linked_table(&image, pmap_address(&sdk, &binutils)?, &stock)?,
-        "ram_park_audit": park::audit(&sdk, &binutils, objects)?,
-        "sdk_hook_audit": hooks::audit(&sdk, &binutils, objects)?,
-        "firstboot_startup_audit": mains::audit(&sdk, &binutils)?,
-        "wifi_link_audit": writes::audit(&sdk, &binutils)?,
-        "stack_audit": stack::audit(&elf(&sdk, "hp"), &binutils.objdump(), &app)?,
-    }))
+    Ok(Linked {
+        layout_audit: layout::audit(&ota_image(&sdk), &repo.stock(), &repo.layout())?,
+        km0_pinmap_audit: pinmap::audit_linked_table(
+            &image,
+            pmap_address(&sdk, &binutils)?,
+            &stock,
+        )?,
+        ram_park_audit: park::audit(&sdk, &binutils, objects)?,
+        sdk_hook_audit: hooks::audit(&sdk, &binutils, objects)?,
+        firstboot_startup_audit: mains::audit(&sdk, &binutils)?,
+        wifi_link_audit: writes::audit(&sdk, &binutils)?,
+        stack_audit: stack::audit(&elf(&sdk, Core::Hp), &binutils.objdump(), &app)?,
+    })
 }
 
-/// An archive's path as the audits record it: relative to the build output.
-pub fn object_path(object: &Path, sdk: &Path) -> Result<String> {
-    relative(object, sdk.parent().unwrap_or(sdk))
+/// A core's archive, as the hook and park audits record it.
+#[derive(Debug, Clone, Serialize)]
+pub struct ArchiveRecord {
+    pub elf_sha256: String,
+    /// Relative to the build output.
+    pub object_path: String,
+    pub object_sha256: String,
+}
+
+impl ArchiveRecord {
+    pub(crate) fn of(core: Core, elf: &Path, objects: &Archives, sdk: &Path) -> Result<Self> {
+        let Some((_, object)) = objects.iter().find(|(c, _)| *c == core) else {
+            return refuse(format!("No {} archive", core.name()));
+        };
+
+        Ok(Self {
+            elf_sha256: crate::digest(elf)?,
+            object_path: relative(object, sdk.parent().unwrap_or(sdk))?,
+            object_sha256: crate::digest(object)?,
+        })
+    }
 }

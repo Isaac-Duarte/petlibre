@@ -5,21 +5,22 @@
 //! end in its terminal loop. This checks linked direct calls, not a complete
 //! startup or ROM side-effect proof.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::Path;
 use std::sync::LazyLock;
 
 use regex::Regex;
-use serde_json::{Value, json};
+use serde::Serialize;
 
 use super::hooks::file_offset;
 use super::{ADDRESSED, Binutils, DIRECT_BRANCH, INSTRUCTION, elf, hex, parse_hex, refuse, tool};
-use crate::{Result, require};
+use crate::{Core, Result, require};
 
-pub fn expected(core: &str) -> &'static [&'static str] {
+/// The reviewed calls of each core's `main`, in order.
+pub fn expected(core: Core) -> &'static [&'static str] {
     match core {
-        "lp" => &[
+        Core::Lp => &[
             "irq_register",
             "irq_enable",
             "pmu_acquire_wakelock",
@@ -32,7 +33,7 @@ pub fn expected(core: &str) -> &'static [&'static str] {
             "wellfed_flash_peer_start",
             "vTaskStartScheduler",
         ],
-        _ => &[
+        Core::Hp => &[
             "irq_register",
             "irq_enable",
             "ipc_table_init",
@@ -44,25 +45,35 @@ pub fn expected(core: &str) -> &'static [&'static str] {
     }
 }
 
-static TARGET: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^([0-9a-f]+)\s+<([^>]+)>").unwrap());
+static TARGET: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^([0-9a-f]+)\s+<([^>]+)>").expect("target pattern"));
 static REGISTER: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^(?:r(?:[0-9]|1[0-2])|ip|lr)$").unwrap());
+    LazyLock::new(|| Regex::new(r"^(?:r(?:[0-9]|1[0-2])|ip|lr)$").expect("register pattern"));
 static PC_LITERAL: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^(r[0-9]+|ip), \[pc, #(\d+)\]\s*$").unwrap());
+    LazyLock::new(|| Regex::new(r"^(r[0-9]+|ip), \[pc, #(\d+)\]\s*$").expect("literal pattern"));
 /// The standard Thumb long-branch veneer body, before its target word.
 const VENEER: [u8; 12] = [
     0x01, 0xb4, 0x02, 0x48, 0x84, 0x46, 0x01, 0xbc, 0x60, 0x47, 0x00, 0xbf,
 ];
+
+/// A `main`'s checked call sequence.
+#[derive(Debug, Clone, Serialize)]
+pub struct MainCalls {
+    pub instructions: u32,
+    pub resolved_calls: Vec<String>,
+    /// Always 0: any unresolved call is refused.
+    pub unresolved_calls: u32,
+}
 
 /// Resolve constant ROM calls; reject unknown, missing or reordered calls.
 pub fn check_main(
     listing: &str,
     address: u64,
     size: u64,
-    core: &str,
+    core: Core,
     symbols: &HashMap<String, u64>,
     veneers: &HashMap<u64, String>,
-) -> Result<Value> {
+) -> Result<MainCalls> {
     let reviewed = expected(core);
     let inside = |at: u64| address <= at && at < address + size;
 
@@ -169,9 +180,13 @@ pub fn check_main(
 
     require(
         instructions > 0 && terminal_loop && calls == reviewed,
-        format!("Unexpected first-boot {core} main calls: {calls:?}"),
+        format!("Unexpected first-boot {} main calls: {calls:?}", core.dir()),
     )?;
-    Ok(json!({"instructions": instructions, "resolved_calls": calls, "unresolved_calls": 0}))
+    Ok(MainCalls {
+        instructions,
+        resolved_calls: calls,
+        unresolved_calls: 0,
+    })
 }
 
 /// Symbol addresses by name.
@@ -197,11 +212,29 @@ pub fn listing_inputs(elf: &Path, objdump: &Path) -> Result<(Symbols, Vec<(u64, 
     Ok((symbols, mains))
 }
 
-pub fn audit(sdk: &Path, binutils: &Binutils) -> Result<Value> {
-    let objdump = binutils.objdump();
-    let mut result = serde_json::Map::new();
+/// One core's linked `main`.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct Main {
+    address: String,
+    bytes: u64,
+    #[serde(flatten)]
+    calls: MainCalls,
+}
 
-    for core in ["lp", "hp"] {
+#[derive(Debug, Clone, Serialize)]
+pub struct MainsAudit {
+    /// Keyed by the SDK's core directory names.
+    mains: BTreeMap<&'static str, Main>,
+    network_or_shell_started_by_main: bool,
+    feeder_backend_opened_by_application: bool,
+    scope: &'static str,
+}
+
+pub fn audit(sdk: &Path, binutils: &Binutils) -> Result<MainsAudit> {
+    let objdump = binutils.objdump();
+    let mut audited = BTreeMap::new();
+
+    for core in Core::BOTH {
         let elf = elf(sdk, core);
         let (symbols, mains) = listing_inputs(&elf, &objdump)?;
         let [(address, size)] = mains[..] else {
@@ -218,8 +251,11 @@ pub fn audit(sdk: &Path, binutils: &Binutils) -> Result<Value> {
                 return refuse(format!("Veneer without its target: {name}"));
             };
             let offset = file_offset(&elf, &objdump, at, 16)?;
+            let Ok(target) = u32::try_from(target | 1) else {
+                return refuse(format!("Veneer target outside the 32-bit map: {name}"));
+            };
             let mut body = VENEER.to_vec();
-            body.extend_from_slice(&((target | 1) as u32).to_le_bytes());
+            body.extend_from_slice(&target.to_le_bytes());
             require(
                 data.get(offset..offset + 16) == Some(&body[..]),
                 "Unreviewed first-boot veneer instructions/target",
@@ -236,20 +272,22 @@ pub fn audit(sdk: &Path, binutils: &Binutils) -> Result<Value> {
             ],
             &elf,
         )?;
-        let mut main = json!({"address": hex(address), "bytes": size});
-        if let (Some(out), Value::Object(checked)) = (
-            main.as_object_mut(),
-            check_main(&listing, address, size, core, &symbols, &veneers)?,
-        ) {
-            out.extend(checked);
-        }
-        result.insert(core.to_string(), main);
+        let calls = check_main(&listing, address, size, core, &symbols, &veneers)?;
+        audited.insert(
+            core.dir(),
+            Main {
+                address: hex(address),
+                bytes: size,
+                calls,
+            },
+        );
     }
 
-    Ok(
-        json!({"mains": result, "network_or_shell_started_by_main": false,
-              "feeder_backend_opened_by_application": false,
-              "scope": "Exact linked main call sequences, constant ROM pointers and linker veneers; vendor pre-main, IRQ handlers, \
-                        flash status/calibration, shared-pad supply helper and ROM effects require separate review"}),
-    )
+    Ok(MainsAudit {
+        mains: audited,
+        network_or_shell_started_by_main: false,
+        feeder_backend_opened_by_application: false,
+        scope: "Exact linked main call sequences, constant ROM pointers and linker veneers; vendor pre-main, IRQ handlers, \
+                flash status/calibration, shared-pad supply helper and ROM effects require separate review",
+    })
 }

@@ -14,11 +14,11 @@ use wellfed_formats::credentials::OtaKeyFile;
 use wellfed_formats::hex::is_lower_hex;
 use wellfed_formats::manifest::IdentitySnapshot;
 
-use crate::{Error, Profile, Repo, Result, Variant, digest, relative, require};
+use crate::{Core, Error, Profile, Repo, Result, Variant, digest, relative, require};
 
 /// Crates linked into, or testing, the firmware. Host tools such as
 /// wellfed-local and wellfed-flash never change a firmware build's identity.
-pub const FIRMWARE_CRATES: [&str; 8] = [
+const FIRMWARE_CRATES: [&str; 8] = [
     "wellfed-core",
     "wellfed-ffi",
     "wellfed-testkit",
@@ -41,20 +41,20 @@ const BUILDER_SHARED: [&str; 3] = [
 
 /// The application's generated-header inputs: read from ignored private
 /// files; only their hashes reach the manifest.
-pub const WIFI_CREDENTIALS: &str = "private/hotspot.json";
-pub const TRANSPORT_CREDENTIALS: &str = "private/fw-mqtt.json";
+pub(crate) const WIFI_CREDENTIALS: &str = "private/hotspot.json";
+pub(crate) const TRANSPORT_CREDENTIALS: &str = "private/fw-mqtt.json";
 /// FW10 update-signing key from `wellfed-local ota-keygen`. Only its public
 /// half reaches the build, the identity and the manifest.
-pub const OTA_KEY: &str = "private/ota-key.json";
+const OTA_KEY: &str = "private/ota-key.json";
 /// The SDK `example_entry.c` replacement; it includes both credential headers.
-pub const ENTRY: &str = "firmware/ports/amebad/example_entry.c";
-pub const TOOL_LOCK: &str = "firmware/probe/toolchain.lock.json";
+pub(crate) const ENTRY: &str = "firmware/ports/amebad/example_entry.c";
+pub(crate) const TOOL_LOCK: &str = "firmware/probe/toolchain.lock.json";
 
-/// The UART-only SDK mains of the first-boot profile, by SDK core directory.
-pub fn firstboot_sources(repo: &Repo) -> [(&'static str, PathBuf); 2] {
+/// The UART-only SDK mains of the first-boot profile.
+pub(crate) fn firstboot_sources(repo: &Repo) -> [(Core, PathBuf); 2] {
     [
-        ("lp", repo.path("firmware/ports/amebad/firstboot_km0.c")),
-        ("hp", repo.path("firmware/ports/amebad/firstboot_km4.c")),
+        (Core::Lp, repo.path("firmware/ports/amebad/firstboot_km0.c")),
+        (Core::Hp, repo.path("firmware/ports/amebad/firstboot_km4.c")),
     ]
 }
 
@@ -64,7 +64,7 @@ pub fn firstboot_sources(repo: &Repo) -> [(&'static str, PathBuf); 2] {
 /// Ignored files (editor backups, caches, build output) do not change the
 /// identity; `target` is excluded only as a directory below crates/, so the
 /// checkout's own location never matters.
-pub fn rust_sources(repo: &Repo, crates: &[&str]) -> Result<Vec<PathBuf>> {
+fn rust_sources(repo: &Repo, crates: &[&str]) -> Result<Vec<PathBuf>> {
     let rust = repo.path("crates");
     let listing = Command::new("git")
         .args([
@@ -107,7 +107,7 @@ pub fn rust_sources(repo: &Repo, crates: &[&str]) -> Result<Vec<PathBuf>> {
 }
 
 /// Every file a profile's image depends on, in a stable order.
-pub fn source_inputs(repo: &Repo, profile: Profile) -> Result<Vec<PathBuf>> {
+fn source_inputs(repo: &Repo, profile: Profile) -> Result<Vec<PathBuf>> {
     let mut paths = vec![repo.path("firmware/sdk.lock.json"), repo.path(TOOL_LOCK)];
     paths.extend(rust_sources(repo, &[BUILDER_SOURCES])?);
     paths.extend(BUILDER_SHARED.map(|p| repo.path(p)));
@@ -134,7 +134,7 @@ pub fn source_inputs(repo: &Repo, profile: Profile) -> Result<Vec<PathBuf>> {
 
 /// Each input's digest, keyed by its root-relative path as the manifest
 /// records it.
-pub fn digests(repo: &Repo, paths: &[PathBuf]) -> Result<BTreeMap<String, String>> {
+fn digests(repo: &Repo, paths: &[PathBuf]) -> Result<BTreeMap<String, String>> {
     paths
         .iter()
         .map(|path| Ok((relative(path, &repo.root)?, digest(path)?)))
@@ -148,7 +148,7 @@ pub fn current_inputs(repo: &Repo, profile: Profile) -> Result<BTreeMap<String, 
 
 /// The update-signing public key built into recovery-role images, or None
 /// without a key file.
-pub fn ota_public_key(repo: &Repo, profile: Profile) -> Result<Option<String>> {
+pub(crate) fn ota_public_key(repo: &Repo, profile: Profile) -> Result<Option<String>> {
     let path = repo.path(OTA_KEY);
     if !profile.firstboot() || !path.is_file() {
         return Ok(None);
@@ -164,7 +164,7 @@ pub fn ota_public_key(repo: &Repo, profile: Profile) -> Result<Option<String>> {
 
 /// Bind the identity to a profile, variant, update key and root-relative
 /// input digests: SHA-256 of their canonical (sorted, compact) JSON.
-pub fn source_identity(
+pub(crate) fn source_identity(
     profile: Profile,
     inputs: &BTreeMap<String, String>,
     variant: Option<Variant>,
@@ -179,33 +179,24 @@ pub fn source_identity(
     Ok(snapshot.identity()?)
 }
 
-/// What `source-id` prints: the bare first-boot identity check-cross
-/// compiles against, or with `image` the one a build of `variant` would
-/// embed (update key included), which the bench matches reviews by.
-pub fn source_id(repo: &Repo, image: bool, variant: Option<Variant>) -> Result<String> {
-    let profile = Profile::Plaf103Firstboot;
-    let inputs = current_inputs(repo, profile)?;
-    if image {
-        let key = ota_public_key(repo, profile)?;
-        source_identity(profile, &inputs, variant, key.as_deref())
-    } else {
-        source_identity(profile, &inputs, None, None)
-    }
+/// Which first-boot identity `source-id` prints.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceId {
+    /// The bare identity of the sources, which check-cross compiles against.
+    Bare,
+    /// The one a build of this variant would embed (update key included),
+    /// which the bench matches reviews by.
+    Image(Option<Variant>),
 }
 
-/// Paths in `inputs` whose digest differs from `recorded` (or that only one
-/// side has), sorted.
-pub fn changed(
-    recorded: &BTreeMap<String, String>,
-    inputs: &BTreeMap<String, String>,
-) -> Vec<String> {
-    let mut names: Vec<String> = recorded
-        .keys()
-        .chain(inputs.keys())
-        .filter(|name| recorded.get(*name) != inputs.get(*name))
-        .cloned()
-        .collect();
-    names.sort();
-    names.dedup();
-    names
+pub fn source_id(repo: &Repo, which: SourceId) -> Result<String> {
+    let profile = Profile::Plaf103Firstboot;
+    let inputs = current_inputs(repo, profile)?;
+    match which {
+        SourceId::Image(variant) => {
+            let key = ota_public_key(repo, profile)?;
+            source_identity(profile, &inputs, variant, key.as_deref())
+        }
+        SourceId::Bare => source_identity(profile, &inputs, None, None),
+    }
 }

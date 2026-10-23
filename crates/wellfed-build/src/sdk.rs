@@ -14,16 +14,17 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use wellfed_formats::layout::Layout;
+use wellfed_formats::lock::SdkLock;
 use regex::Regex;
 
 use crate::audit::{hooks, pinmap};
 use crate::credentials::{transport_header, wifi_header};
 use crate::identity::{ENTRY, TRANSPORT_CREDENTIALS, WIFI_CREDENTIALS, firstboot_sources};
-use crate::{Error, PROJECT, Profile, Repo, Result, digest, git, require, revision, run};
+use crate::{Core, Error, PROJECT, Profile, Repo, Result, digest, git, require, revision, run};
 
-pub const PLATFORM_OPTS: &str = "project/realtek_amebaD_va0_example/inc/inc_hp/platform_opts.h";
-pub const WIFI_HEADER: &str = "component/common/example/wellfed_wifi_credentials.h";
-pub const TRANSPORT_HEADER: &str = "component/common/example/wellfed_transport_credentials.h";
+const PLATFORM_OPTS: &str = "project/realtek_amebaD_va0_example/inc/inc_hp/platform_opts.h";
+const WIFI_HEADER: &str = "component/common/example/wellfed_wifi_credentials.h";
+const TRANSPORT_HEADER: &str = "component/common/example/wellfed_transport_credentials.h";
 const OTA_HEADER: &str = "component/soc/realtek/amebad/fwlib/include/rtl8721d_ota.h";
 const PINMAP: &str = "component/soc/realtek/amebad/fwlib/usrcfg/rtl8721dlp_pinmapcfg.c";
 const UTILITIES_MAKEFILE: &str = "project_hp/asdk/make/utilities_example/Makefile";
@@ -39,8 +40,8 @@ fn project(path: &str) -> String {
 /// observed in every profile's worktree: `check_execute_permission` sets the
 /// executable bit on these helpers (content must stay identical to the
 /// pinned revision) ...
-pub fn vendor_mode_only() -> BTreeSet<String> {
-    ["hp", "lp"]
+fn vendor_mode_only() -> BTreeSet<String> {
+    Core::BOTH
         .iter()
         .flat_map(|core| {
             [
@@ -50,19 +51,19 @@ pub fn vendor_mode_only() -> BTreeSet<String> {
                 "prepend_header.sh",
                 "prepend_ota_header.sh",
             ]
-            .map(|name| project(&format!("project_{core}/asdk/gnu_utility/{name}")))
+            .map(|name| project(&format!("project_{}/asdk/gnu_utility/{name}", core.dir())))
         })
         .collect()
 }
 
 /// ... the KM4 recipe re-archives this tracked library on every build ...
-pub fn vendor_rebuilt() -> BTreeSet<String> {
+fn vendor_rebuilt() -> BTreeSet<String> {
     [project("project_hp/asdk/lib/application/lib_user.a")].into()
 }
 
 /// ... and these untracked paths are the wrapper's toolchain links (checked
 /// separately) and two KM0 loader outputs copied by the vendor recipe.
-pub fn vendor_untracked() -> BTreeSet<String> {
+fn vendor_untracked() -> BTreeSet<String> {
     [
         "project_hp/toolchain/linux",
         "project_lp/toolchain/linux",
@@ -74,7 +75,7 @@ pub fn vendor_untracked() -> BTreeSet<String> {
 }
 
 /// SDK paths this builder regenerates from the pinned revision for a profile.
-pub fn managed_sdk_paths(profile: Profile) -> BTreeSet<String> {
+fn managed_sdk_paths(profile: Profile) -> BTreeSet<String> {
     let mut paths = BTreeSet::new();
     if profile.model() {
         paths.extend([OTA_HEADER.to_string(), PINMAP.to_string()]);
@@ -93,10 +94,12 @@ pub fn managed_sdk_paths(profile: Profile) -> BTreeSet<String> {
         ]);
     }
     if profile.firstboot() {
-        paths.extend(
-            ["lp", "hp"]
-                .map(|core| format!("project/realtek_amebaD_va0_example/src/src_{core}/main.c")),
-        );
+        paths.extend(Core::BOTH.map(|core| {
+            format!(
+                "project/realtek_amebaD_va0_example/src/src_{}/main.c",
+                core.dir()
+            )
+        }));
         paths.insert(PLATFORM_OPTS.to_string());
     }
     paths
@@ -105,7 +108,7 @@ pub fn managed_sdk_paths(profile: Profile) -> BTreeSet<String> {
 /// Worktree changes outside the builder's overrides and known vendor
 /// outputs, as `<code> <path>`, sorted. Ignored files are governed by the
 /// pinned SDK's own ignore rules and are not listed.
-pub fn unexpected_sdk_changes(sdk: &Path, profile: Profile) -> Result<Vec<String>> {
+fn unexpected_sdk_changes(sdk: &Path, profile: Profile) -> Result<Vec<String>> {
     let status = run(Command::new("git")
         .args([
             "status",
@@ -160,7 +163,7 @@ fn executable(path: &Path) -> bool {
         .is_ok_and(|m| m.permissions().mode() & 0o111 != 0)
 }
 
-pub fn check_sdk_worktree(sdk: &Path, profile: Profile) -> Result<()> {
+pub(crate) fn check_sdk_worktree(sdk: &Path, profile: Profile) -> Result<()> {
     let unexpected = unexpected_sdk_changes(sdk, profile)?;
     if unexpected.is_empty() {
         return Ok(());
@@ -178,12 +181,11 @@ pub fn check_sdk_worktree(sdk: &Path, profile: Profile) -> Result<()> {
 }
 
 /// Where a core's Rust archive is staged beside the SDK worktree.
-pub fn rust_archive(sdk: &Path, core: &str) -> PathBuf {
-    let feature = if core == "lp" { "km0" } else { "km4" };
+pub(crate) fn rust_archive(sdk: &Path, core: Core) -> PathBuf {
     sdk.parent()
         .unwrap_or(sdk)
         .join("rust-lib")
-        .join(format!("libwellfed_{feature}.a"))
+        .join(format!("libwellfed_{}.a", core.feature()))
 }
 
 /// The pinned revision's copy of an SDK file.
@@ -233,7 +235,7 @@ fn walk(directory: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
 }
 
 /// The build's SDK overlays, keyed by SDK-relative path with their digests.
-pub type Overrides = BTreeMap<String, String>;
+pub(crate) type Overrides = BTreeMap<String, String>;
 
 /// Write an overlay and record its digest.
 fn overlay(sdk: &Path, relative: &str, text: &str, overrides: &mut Overrides) -> Result<()> {
@@ -246,12 +248,39 @@ fn overlay(sdk: &Path, relative: &str, text: &str, overrides: &mut Overrides) ->
 /// Create or check the profile's worktree and apply its overlays.
 /// `expected` holds the input digests the identity was computed from;
 /// staged copies of inputs must still match them.
-pub fn prepare(
+pub(crate) fn prepare(
     repo: &Repo,
     profile: Profile,
     expected: &BTreeMap<String, String>,
 ) -> Result<(PathBuf, Overrides)> {
-    let lock = repo.lock()?;
+    let sdk = worktree(repo, profile, &repo.lock()?)?;
+
+    let mut overrides = Overrides::new();
+    let staged = |source: &Path, copy: &Path, message: &str| -> Result<()> {
+        let name = crate::relative(source, &repo.root)?;
+        require(
+            expected.get(&name) == Some(&digest(copy)?),
+            format!("{message}: {name}"),
+        )
+    };
+
+    if profile.model() {
+        ota_addresses(repo, &sdk, &mut overrides)?;
+        let source = pinmap::overlay(&pinned(&sdk, PINMAP)?, &fs::read(repo.stock())?)?;
+        overlay(&sdk, PINMAP, &source, &mut overrides)?;
+    }
+    if profile.rust() {
+        rust_overlays(repo, &sdk, &mut overrides, &staged)?;
+    }
+    if profile.firstboot() {
+        firstboot_overlays(repo, &sdk, &mut overrides, &staged)?;
+    }
+    Ok((sdk, overrides))
+}
+
+/// The profile's SDK worktree at the pinned revision, created on first
+/// use and refused when it drifted, with both cores' toolchain links.
+fn worktree(repo: &Repo, profile: Profile, lock: &SdkLock) -> Result<PathBuf> {
     let sdk = repo.output(profile).join("sdk");
     if !sdk.exists() {
         fs::create_dir_all(sdk.parent().unwrap_or(&sdk))?;
@@ -269,8 +298,8 @@ pub fn prepare(
 
     // Both cores use the same verified toolchain, rather than downloading copies.
     let toolchains = repo.toolchains();
-    for core in ["lp", "hp"] {
-        let link = sdk.join(project(&format!("project_{core}/toolchain/linux")));
+    for core in Core::BOTH {
+        let link = sdk.join(project(&format!("project_{}/toolchain/linux", core.dir())));
         if link.is_symlink() && fs::canonicalize(&link).ok() == fs::canonicalize(&toolchains).ok() {
             continue;
         }
@@ -283,118 +312,110 @@ pub fn prepare(
         )?;
         std::os::unix::fs::symlink(&toolchains, &link)?;
     }
+    Ok(sdk)
+}
 
-    let mut overrides = Overrides::new();
-    let staged = |source: &Path, copy: &Path, message: &str| -> Result<()> {
-        let name = crate::relative(source, &repo.root)?;
-        require(
-            expected.get(&name) == Some(&digest(copy)?),
-            format!("{message}: {name}"),
-        )
-    };
-
-    if profile.model() {
-        ota_addresses(repo, &sdk, &mut overrides)?;
-        let source = pinmap::overlay(&pinned(&sdk, PINMAP)?, &fs::read(repo.stock())?)?;
-        overlay(&sdk, PINMAP, &source, &mut overrides)?;
+/// The Rust profiles' overlays: the application entry, both cores' link
+/// rules and RAM sections, the flash-hook rename and the credential headers.
+fn rust_overlays(
+    repo: &Repo,
+    sdk: &Path,
+    overrides: &mut Overrides,
+    staged: &dyn Fn(&Path, &Path, &str) -> Result<()>,
+) -> Result<()> {
+    let example = sdk.join("component/common/example");
+    // The vendor makefiles name objects by basename and include old .d
+    // files. Rebuild only our objects to avoid stale links.
+    let object_root = sdk.join(project("project_hp/asdk"));
+    for name in ["plaf103_flash_park", "plaf103_flash_hooks"] {
+        remove_objects(&object_root.join("make/utilities_example"), name)?;
+        remove_file(&object_root.join("build/ram").join(format!("{name}.o")))?;
     }
 
-    if profile.rust() {
-        let example = sdk.join("component/common/example");
-        // The vendor makefiles name objects by basename and include old .d
-        // files. Rebuild only our objects to avoid stale links.
-        let object_root = sdk.join(project("project_hp/asdk"));
+    let entry = repo.path(ENTRY);
+    let destination = example.join("example_entry.c");
+    fs::copy(&entry, &destination)?;
+    staged(&entry, &destination, "Source changed while staging")?;
+
+    // Earlier C builds modified these SDK makefiles; restore the pinned copies.
+    for relative in [project(UTILITIES_MAKEFILE), SRC_LP_MAKEFILE.to_string()] {
+        git(sdk, &["checkout", "HEAD", "--", &relative])?;
+    }
+
+    // Both cores link the Rust archive: the KM4 application plus, on
+    // both, the RAM substrate and SDK interposer.
+    for core in Core::BOTH {
+        let relative = project(&format!("project_{}/asdk/Makefile", core.dir()));
+        let anchor = "target_img2.axf $(RAM_OBJS_LIST)";
+        let archive = rust_archive(sdk, core);
+        let text = replace_once(
+            &pinned(sdk, &relative)?,
+            anchor,
+            &format!("{anchor} {}", archive.display()),
+            "Pinned image2 link rule changed",
+        )?;
+        overlay(sdk, &relative, &text, overrides)?;
+    }
+    for directory in [
+        project("project_lp/asdk/make/project/src"),
+        project("project_lp/asdk/build/ram"),
+        "project/realtek_amebaD_va0_example/src/src_lp".to_string(),
+    ] {
         for name in ["plaf103_flash_park", "plaf103_flash_hooks"] {
-            remove_objects(&object_root.join("make/utilities_example"), name)?;
-            remove_file(&object_root.join("build/ram").join(format!("{name}.o")))?;
+            remove_objects(&sdk.join(&directory), name)?;
         }
+    }
+    for (core, linker) in [
+        (Core::Lp, "rlx8721d_img2.ld"),
+        (Core::Hp, "rlx8721d_img2_is.ld"),
+    ] {
+        let relative = project(&format!("project_{}/asdk/ld/{linker}", core.dir()));
+        let anchor = "*(.image2.ram.text*)";
+        let text = replace_once(
+            &pinned(sdk, &relative)?,
+            anchor,
+            &format!("KEEP(*(.image2.ram.text.wellfed_park))\n\t\t{anchor}"),
+            "Pinned RAM linker section changed",
+        )?;
+        overlay(sdk, &relative, &text, overrides)?;
+    }
+    let text = hooks::overlay(&pinned(sdk, hooks::SOURCE)?)?;
+    overlay(sdk, hooks::SOURCE, &text, overrides)?;
 
-        let entry = repo.path(ENTRY);
-        let destination = example.join("example_entry.c");
-        fs::copy(&entry, &destination)?;
-        staged(&entry, &destination, "Source changed while staging")?;
-
-        // Earlier C builds modified these SDK makefiles; restore the pinned copies.
-        for relative in [project(UTILITIES_MAKEFILE), SRC_LP_MAKEFILE.to_string()] {
-            git(&sdk, &["checkout", "HEAD", "--", &relative])?;
-        }
-
-        // Both cores link the Rust archive: the KM4 application plus, on
-        // both, the RAM substrate and SDK interposer.
-        for core in ["lp", "hp"] {
-            let relative = project(&format!("project_{core}/asdk/Makefile"));
-            let anchor = "target_img2.axf $(RAM_OBJS_LIST)";
-            let archive = rust_archive(&sdk, core);
-            let text = replace_once(
-                &pinned(&sdk, &relative)?,
-                anchor,
-                &format!("{anchor} {}", archive.display()),
-                "Pinned image2 link rule changed",
-            )?;
-            overlay(&sdk, &relative, &text, &mut overrides)?;
-        }
-        for directory in [
-            project("project_lp/asdk/make/project/src"),
-            project("project_lp/asdk/build/ram"),
-            "project/realtek_amebaD_va0_example/src/src_lp".to_string(),
-        ] {
-            for name in ["plaf103_flash_park", "plaf103_flash_hooks"] {
-                remove_objects(&sdk.join(&directory), name)?;
+    // SDK dependencies can retain the old public definitions otherwise.
+    for core in Core::BOTH {
+        let mut files = Vec::new();
+        walk(
+            &sdk.join(project(&format!("project_{}/asdk", core.dir()))),
+            &mut files,
+        )?;
+        for path in files {
+            let name = path.file_name().unwrap_or_default().to_string_lossy();
+            let suffix = path
+                .extension()
+                .map(|e| format!(".{}", e.to_string_lossy()));
+            if name.starts_with("rtl8721d_flash_ram.")
+                && suffix.is_some_and(|s| OBJECT_SUFFIXES.contains(&s.as_str()))
+            {
+                fs::remove_file(path)?;
             }
         }
-        for (core, linker) in [("lp", "rlx8721d_img2.ld"), ("hp", "rlx8721d_img2_is.ld")] {
-            let relative = project(&format!("project_{core}/asdk/ld/{linker}"));
-            let anchor = "*(.image2.ram.text*)";
-            let text = replace_once(
-                &pinned(&sdk, &relative)?,
-                anchor,
-                &format!("KEEP(*(.image2.ram.text.wellfed_park))\n\t\t{anchor}"),
-                "Pinned RAM linker section changed",
-            )?;
-            overlay(&sdk, &relative, &text, &mut overrides)?;
-        }
-        let text = hooks::overlay(&pinned(&sdk, hooks::SOURCE)?)?;
-        overlay(&sdk, hooks::SOURCE, &text, &mut overrides)?;
-
-        // SDK dependencies can retain the old public definitions otherwise.
-        for core in ["lp", "hp"] {
-            let mut files = Vec::new();
-            walk(
-                &sdk.join(project(&format!("project_{core}/asdk"))),
-                &mut files,
-            )?;
-            for path in files {
-                let name = path.file_name().unwrap_or_default().to_string_lossy();
-                let suffix = path
-                    .extension()
-                    .map(|e| format!(".{}", e.to_string_lossy()));
-                if name.starts_with("rtl8721d_flash_ram.")
-                    && suffix.is_some_and(|s| OBJECT_SUFFIXES.contains(&s.as_str()))
-                {
-                    fs::remove_file(path)?;
-                }
-            }
-        }
-
-        let wifi = repo.path(WIFI_CREDENTIALS);
-        fs::write(sdk.join(WIFI_HEADER), wifi_header(&fs::read(&wifi)?)?)?;
-        staged(&wifi, &wifi, "Wi-Fi credentials changed while staging")?;
-        let transport = repo.path(TRANSPORT_CREDENTIALS);
-        fs::write(
-            sdk.join(TRANSPORT_HEADER),
-            transport_header(&fs::read(&transport)?)?,
-        )?;
-        staged(
-            &transport,
-            &transport,
-            "Transport credentials changed while staging",
-        )?;
     }
 
-    if profile.firstboot() {
-        firstboot_overlays(repo, &sdk, &mut overrides, &staged)?;
-    }
-    Ok((sdk, overrides))
+    let wifi = repo.path(WIFI_CREDENTIALS);
+    fs::write(sdk.join(WIFI_HEADER), wifi_header(&fs::read(&wifi)?)?)?;
+    staged(&wifi, &wifi, "Wi-Fi credentials changed while staging")?;
+    let transport = repo.path(TRANSPORT_CREDENTIALS);
+    fs::write(
+        sdk.join(TRANSPORT_HEADER),
+        transport_header(&fs::read(&transport)?)?,
+    )?;
+    staged(
+        &transport,
+        &transport,
+        "Transport credentials changed while staging",
+    )?;
+    Ok(())
 }
 
 /// Point the SDK's two OTA bank addresses at the stock layout's banks.
@@ -407,8 +428,7 @@ fn ota_addresses(repo: &Repo, sdk: &Path, overrides: &mut Overrides) -> Result<(
         let pattern = Regex::new(&format!(
             r"(#define\s+LS_IMG2_OTA{}_ADDR\s+)0x[0-9A-Fa-f]+",
             index + 1
-        ))
-        .map_err(|e| Error::Refused(e.to_string()))?;
+        ))?;
         require(
             pattern.find_iter(&text).count() == 1,
             "Pinned SDK OTA address definition changed",
@@ -464,7 +484,10 @@ fn firstboot_overlays(
     }
 
     for (core, source) in firstboot_sources(repo) {
-        let relative = format!("project/realtek_amebaD_va0_example/src/src_{core}/main.c");
+        let relative = format!(
+            "project/realtek_amebaD_va0_example/src/src_{}/main.c",
+            core.dir()
+        );
         fs::copy(&source, sdk.join(&relative))?;
         staged(
             &source,

@@ -20,16 +20,31 @@ use std::fs;
 use std::path::Path;
 
 use wellfed_formats::transients::{TransientMode, TransientsManifest};
-use serde_json::{Value, json};
+use serde::Serialize;
 
-use crate::{Report, Result, require, round};
+use crate::{Error, Result, outcomes, require, round};
 
 const LINES: [&str; 4] = ["ina", "inb", "outa", "outb"];
 const LIMIT: &str = "Digital levels at the analyzer threshold (about 1.4 V for fx2lafw clones), sampled at the recorded \
     rate; a pulse shorter than one sample period can be missed. Floating driver outputs read LOW.";
 
+outcomes! {
+    /// A cycle's outcome, or the session's (`pass` only when every cycle passed).
+    pub enum TransientOutcome {
+        Pass => "pass",
+        Empty => "transients_empty",
+        LateStart => "transients_late_start",
+        InputDrive => "transients_input_drive",
+        OutputDrive => "transients_output_drive",
+        NoBrake => "transients_no_brake",
+        LeftBrake => "transients_left_brake",
+        LoaderDriven => "transients_loader_driven",
+        Fail => "transients_fail",
+    }
+}
+
 /// (value, start, length) for each run of `byte & mask` in the capture.
-pub fn runs(data: &[u8], mask: u8) -> Vec<(u8, usize, usize)> {
+pub(crate) fn runs(data: &[u8], mask: u8) -> Vec<(u8, usize, usize)> {
     let mut out = Vec::new();
     let mut start = 0;
     let mut current: Option<u8> = None;
@@ -50,44 +65,101 @@ pub fn runs(data: &[u8], mask: u8) -> Vec<(u8, usize, usize)> {
     out
 }
 
-pub fn check_cycle(
+/// Which way differing inputs drive the motor.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum Direction {
+    Forward,
+    Reverse,
+}
+
+/// The driver output that was high while the other was low.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum Output {
+    Outa,
+    Outb,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum Drive {
+    Direction(Direction),
+    High(Output),
+}
+
+/// One run of differing inputs or outputs.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct DriveEvent {
+    start_us: f64,
+    length_us: f64,
+    #[serde(flatten)]
+    drive: Drive,
+}
+
+/// What a non-empty capture's timeline showed.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct Timeline {
+    /// When the inputs first reached H/H, if they did.
+    brake_at_s: Option<f64>,
+    transitions: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct CycleCheck {
+    samples: usize,
+    seconds: f64,
+    input_drive: Vec<DriveEvent>,
+    output_drive: Vec<DriveEvent>,
+    #[serde(flatten)]
+    timeline: Option<Timeline>,
+    outcome: TransientOutcome,
+}
+
+pub(crate) fn check_cycle(
     data: &[u8],
     channels: &[u8; 4],
     mode: TransientMode,
     samplerate: f64,
-) -> Report {
+) -> CycleCheck {
     let bit: [u8; 4] = channels.map(|c| 1u8 << c);
     let mask = bit.iter().fold(0u8, |m, b| m | b);
     let us = 1e6 / samplerate;
-    let mut result = Report::new();
-    result.insert("samples".into(), json!(data.len()));
-    result.insert(
-        "seconds".into(),
-        json!(round(data.len() as f64 / samplerate, 6)),
-    );
-
-    let mut input_drive = Vec::new();
-    let mut output_drive = Vec::new();
-
+    let mut check = CycleCheck {
+        samples: data.len(),
+        seconds: round(data.len() as f64 / samplerate, 6),
+        input_drive: Vec::new(),
+        output_drive: Vec::new(),
+        timeline: None,
+        outcome: TransientOutcome::Empty,
+    };
     if data.is_empty() {
-        result.insert("input_drive".into(), json!([]));
-        result.insert("output_drive".into(), json!([]));
-        result.insert("outcome".into(), json!("transients_empty"));
-        return result;
+        return check;
     }
 
     let timeline = runs(data, mask);
     let on = |value: u8, line: usize| value & bit[line] != 0;
-    for (value, start, length) in &timeline {
-        let event = |extra: (&str, &str)| json!({"start_us": round(*start as f64 * us, 3), "length_us": round(*length as f64 * us, 3), extra.0: extra.1});
-        if on(*value, 0) != on(*value, 1) {
-            input_drive.push(event((
-                "direction",
-                if on(*value, 0) { "forward" } else { "reverse" },
-            )));
+    for &(value, start, length) in &timeline {
+        let event = |drive| DriveEvent {
+            start_us: round(start as f64 * us, 3),
+            length_us: round(length as f64 * us, 3),
+            drive,
+        };
+        if on(value, 0) != on(value, 1) {
+            check
+                .input_drive
+                .push(event(Drive::Direction(if on(value, 0) {
+                    Direction::Forward
+                } else {
+                    Direction::Reverse
+                })));
         }
-        if on(*value, 2) != on(*value, 3) {
-            output_drive.push(event(("high", if on(*value, 2) { "outa" } else { "outb" })));
+        if on(value, 2) != on(value, 3) {
+            check.output_drive.push(event(Drive::High(if on(value, 2) {
+                Output::Outa
+            } else {
+                Output::Outb
+            })));
         }
     }
 
@@ -96,52 +168,80 @@ pub fn check_cycle(
         .map(|(v, s, _)| (on(*v, 0), on(*v, 1), *s))
         .collect();
     let brake_at = inputs.iter().find(|(a, b, _)| *a && *b).map(|(_, _, s)| *s);
+    check.timeline = Some(Timeline {
+        brake_at_s: brake_at.map(|s| round(s as f64 / samplerate, 6)),
+        transitions: timeline.len() - 1,
+    });
 
-    result.insert("input_drive".into(), json!(input_drive));
-    result.insert("output_drive".into(), json!(output_drive));
-    result.insert(
-        "brake_at_s".into(),
-        brake_at.map_or(Value::Null, |s| json!(round(s as f64 / samplerate, 6))),
-    );
-    result.insert("transitions".into(), json!(timeline.len() - 1));
-
-    let outcome = if timeline[0].0 != 0 {
-        "transients_late_start"
-    } else if !input_drive.is_empty() {
-        "transients_input_drive"
-    } else if !output_drive.is_empty() {
-        "transients_output_drive"
+    check.outcome = if timeline[0].0 != 0 {
+        TransientOutcome::LateStart
+    } else if !check.input_drive.is_empty() {
+        TransientOutcome::InputDrive
+    } else if !check.output_drive.is_empty() {
+        TransientOutcome::OutputDrive
     } else if mode == TransientMode::Boot {
         let (a, b, _) = inputs[inputs.len() - 1];
         match brake_at {
+            // After the first brake the inputs must not return to standby.
             Some(at) if a && b => {
-                // After the first brake the inputs must not return to standby.
                 if inputs.iter().any(|(x, y, s)| *s > at && !(*x && *y)) {
-                    "transients_left_brake"
+                    TransientOutcome::LeftBrake
                 } else {
-                    "pass"
+                    TransientOutcome::Pass
                 }
             }
-            _ => "transients_no_brake",
+            _ => TransientOutcome::NoBrake,
         }
     } else if brake_at.is_some() {
-        "transients_loader_driven"
+        TransientOutcome::LoaderDriven
     } else {
-        "pass"
+        TransientOutcome::Pass
     };
-
-    result.insert("outcome".into(), json!(outcome));
-    result
+    check
 }
 
-pub fn verify(capture: &Path) -> Result<Report> {
-    let manifest: TransientsManifest = wellfed_formats::load(&capture.join("manifest.json"))?;
-    require(
-        manifest.schema_version == 1,
-        "Unsupported transients manifest",
-    )?;
-    let mode = manifest.mode;
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct Cycle {
+    file: String,
+    #[serde(flatten)]
+    check: CycleCheck,
+}
 
+#[derive(Debug, Clone, Copy, Serialize)]
+pub(crate) struct Range {
+    min: f64,
+    max: f64,
+}
+
+/// The session's totals, printed without the per-cycle detail.
+#[derive(Debug, Clone, Serialize)]
+pub struct TransientsSummary {
+    outcome: TransientOutcome,
+    mode: TransientMode,
+    samplerate: u64,
+    cycles: usize,
+    passed: usize,
+    input_drive_events: usize,
+    output_drive_events: usize,
+    brake_at_s: Option<Range>,
+    limit: &'static str,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TransientsReport {
+    #[serde(flatten)]
+    pub summary: TransientsSummary,
+    per_cycle: Vec<Cycle>,
+}
+
+impl TransientsReport {
+    pub fn passed(&self) -> bool {
+        self.summary.outcome == TransientOutcome::Pass
+    }
+}
+
+/// The four driver lines' analyzer channels: distinct, each 0-7.
+fn channels(manifest: &TransientsManifest) -> Result<[u8; 4]> {
     let channel = |name: &str| {
         manifest
             .channels
@@ -150,7 +250,7 @@ pub fn verify(capture: &Path) -> Result<Report> {
             .filter(|c| *c < 8)
     };
     let channels: Option<Vec<u8>> = LINES.iter().map(|n| channel(n)).collect();
-    let channels = channels
+    channels
         .and_then(|c| <[u8; 4]>::try_from(c).ok())
         .filter(|c| {
             let mut distinct = c.to_vec();
@@ -159,11 +259,19 @@ pub fn verify(capture: &Path) -> Result<Report> {
             distinct.len() == 4
         })
         .ok_or_else(|| {
-            crate::Error::Refused(
+            Error::Refused(
                 "Manifest needs four distinct channels 0-7 for INA, INB, OUTA and OUTB".into(),
             )
-        })?;
+        })
+}
 
+pub fn verify(capture: &Path) -> Result<TransientsReport> {
+    let manifest: TransientsManifest = wellfed_formats::load(&capture.join("manifest.json"))?;
+    require(
+        manifest.schema_version == 1,
+        "Unsupported transients manifest",
+    )?;
+    let channels = channels(&manifest)?;
     require(manifest.samplerate > 0, "Unsupported transients manifest")?;
     let samplerate = manifest.samplerate as f64;
 
@@ -180,41 +288,43 @@ pub fn verify(capture: &Path) -> Result<Report> {
             format!("{file} changed since capture"),
         )?;
 
-        let mut cycle = Report::new();
-        cycle.insert("file".into(), json!(file));
-        crate::update(&mut cycle, &check_cycle(&data, &channels, mode, samplerate));
-        cycles.push(cycle);
+        cycles.push(Cycle {
+            file: file.into(),
+            check: check_cycle(&data, &channels, manifest.mode, samplerate),
+        });
     }
 
-    let passed = cycles.iter().filter(|c| c["outcome"] == "pass").count();
+    let passed = cycles
+        .iter()
+        .filter(|c| c.check.outcome == TransientOutcome::Pass)
+        .count();
     let brakes: Vec<f64> = cycles
         .iter()
-        .filter_map(|c| c.get("brake_at_s").and_then(Value::as_f64))
+        .filter_map(|c| c.check.timeline.as_ref()?.brake_at_s)
         .collect();
-    let events = |key: &str| -> usize {
-        cycles
-            .iter()
-            .map(|c| c[key].as_array().map_or(0, Vec::len))
-            .sum()
-    };
-
-    let brake = if brakes.is_empty() {
-        Value::Null
-    } else {
-        json!({"min": brakes.iter().copied().fold(f64::INFINITY, f64::min),
-               "max": brakes.iter().copied().fold(f64::NEG_INFINITY, f64::max)})
-    };
-
-    let report = json!({
-        "outcome": if !cycles.is_empty() && passed == cycles.len() { "pass" } else { "transients_fail" },
-        "mode": mode, "samplerate": manifest.samplerate, "cycles": cycles.len(), "passed": passed,
-        "input_drive_events": events("input_drive"), "output_drive_events": events("output_drive"),
-        "brake_at_s": brake, "per_cycle": cycles, "limit": LIMIT,
+    let brake_at_s = (!brakes.is_empty()).then(|| Range {
+        min: brakes.iter().copied().fold(f64::INFINITY, f64::min),
+        max: brakes.iter().copied().fold(f64::NEG_INFINITY, f64::max),
     });
 
-    Ok(match report {
-        Value::Object(map) => map,
-        _ => unreachable!(),
+    let summary = TransientsSummary {
+        outcome: if !cycles.is_empty() && passed == cycles.len() {
+            TransientOutcome::Pass
+        } else {
+            TransientOutcome::Fail
+        },
+        mode: manifest.mode,
+        samplerate: manifest.samplerate,
+        cycles: cycles.len(),
+        passed,
+        input_drive_events: cycles.iter().map(|c| c.check.input_drive.len()).sum(),
+        output_drive_events: cycles.iter().map(|c| c.check.output_drive.len()).sum(),
+        brake_at_s,
+        limit: LIMIT,
+    };
+    Ok(TransientsReport {
+        summary,
+        per_cycle: cycles,
     })
 }
 

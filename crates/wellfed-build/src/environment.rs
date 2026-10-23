@@ -15,7 +15,7 @@ use std::sync::LazyLock;
 use wellfed_formats::manifest::RustCompiler;
 use regex::Regex;
 
-use crate::{Error, Repo, Result, require, text, which};
+use crate::{Core, Error, Repo, Result, require, text, which};
 
 const RUST_ENVIRONMENT: [&str; 13] = [
     "RUSTFLAGS",
@@ -34,21 +34,20 @@ const RUST_ENVIRONMENT: [&str; 13] = [
 ];
 const RUST_ENVIRONMENT_PREFIXES: [&str; 2] = ["CARGO_PROFILE_", "CARGO_UNSTABLE_"];
 
-/// Cargo targets of the two SDK cores: KM0 (`lp`) and KM4 (`hp`).
-pub const FIRMWARE_TARGETS: [&str; 2] = ["thumbv8m.base-none-eabi", "thumbv8m.main-none-eabihf"];
+pub(crate) type Environment = BTreeMap<String, String>;
 
-pub type Environment = BTreeMap<String, String>;
-
-static TARGET_RUSTFLAGS: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^CARGO_TARGET_THUMBV8M_[A-Z_]+_RUSTFLAGS$").unwrap());
+static TARGET_RUSTFLAGS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^CARGO_TARGET_THUMBV8M_[A-Z_]+_RUSTFLAGS$").expect("literal pattern")
+});
 static HEADER: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\[\[?\s*([^\]]+?)\s*\]\]?$").unwrap());
-static ASSIGNMENT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^([^=]+?)\s*=").unwrap());
+    LazyLock::new(|| Regex::new(r"^\[\[?\s*([^\]]+?)\s*\]\]?$").expect("literal pattern"));
+static ASSIGNMENT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^([^=]+?)\s*=").expect("literal pattern"));
 static KEY_PART: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#""[^"]*"|'[^']*'|[^.]+"#).unwrap());
+    LazyLock::new(|| Regex::new(r#""[^"]*"|'[^']*'|[^.]+"#).expect("literal pattern"));
 
 /// Environment names that would change the firmware compilation, sorted.
-pub fn forbidden_variables(environment: &Environment) -> Vec<String> {
+fn forbidden_variables(environment: &Environment) -> Vec<String> {
     environment
         .keys()
         .filter(|name| {
@@ -63,7 +62,7 @@ pub fn forbidden_variables(environment: &Environment) -> Vec<String> {
 }
 
 /// Cargo configuration files that apply to a build run from the root.
-pub fn cargo_config_files(root: &Path, environment: &Environment) -> Vec<PathBuf> {
+fn cargo_config_files(root: &Path, environment: &Environment) -> Vec<PathBuf> {
     let home = environment
         .get("CARGO_HOME")
         .filter(|home| !home.is_empty())
@@ -94,7 +93,7 @@ pub fn cargo_config_files(root: &Path, environment: &Environment) -> Vec<PathBuf
 /// Inline tables for `build`, `profile`, `target` or `unstable` are refused
 /// whole. Host-only `[target.<host triple>]` settings (such as a host linker)
 /// are allowed.
-pub fn cargo_config_overrides(text: &str) -> Vec<String> {
+fn cargo_config_overrides(text: &str) -> Vec<String> {
     let mut table = Vec::new();
     let mut found = Vec::new();
 
@@ -151,8 +150,8 @@ fn forbidden_cargo_key(key: &[String], inline: bool) -> bool {
         }
         "target" if key.len() >= 2 => {
             let selector = &key[1];
-            let firmware =
-                selector.starts_with("cfg(") || FIRMWARE_TARGETS.contains(&selector.as_str());
+            let firmware = selector.starts_with("cfg(")
+                || Core::BOTH.iter().any(|core| core.target() == selector);
             firmware && ((key.len() == 2 && inline) || (key.len() > 2 && key[2] == "rustflags"))
         }
         "target" => inline,
@@ -162,7 +161,7 @@ fn forbidden_cargo_key(key: &[String], inline: bool) -> bool {
 
 /// The cargo environment, refusing output-affecting overrides in it or in
 /// any cargo configuration file that applies.
-pub fn rust_environment(root: &Path, environment: Environment) -> Result<Environment> {
+pub(crate) fn rust_environment(root: &Path, environment: Environment) -> Result<Environment> {
     let names = forbidden_variables(&environment);
     require(
         names.is_empty(),
@@ -187,17 +186,17 @@ pub fn rust_environment(root: &Path, environment: Environment) -> Result<Environ
 }
 
 /// This process's environment.
-pub fn process_environment() -> Environment {
+pub(crate) fn process_environment() -> Environment {
     std::env::vars().collect()
 }
 
 /// The rustc cargo resolves from the root, which must be the pinned channel.
 /// Recorded in the manifest and compared again after the build.
-pub fn rust_compiler(repo: &Repo, environment: &Environment) -> Result<RustCompiler> {
+pub(crate) fn rust_compiler(repo: &Repo, environment: &Environment) -> Result<RustCompiler> {
     static CHANNEL: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r#"(?m)^channel\s*=\s*"([^"]+)""#).unwrap());
+        LazyLock::new(|| Regex::new(r#"(?m)^channel\s*=\s*"([^"]+)""#).expect("literal pattern"));
     static RELEASE: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"(?m)^release:\s*(\S+)$").unwrap());
+        LazyLock::new(|| Regex::new(r"(?m)^release:\s*(\S+)$").expect("literal pattern"));
 
     let pinned = fs::read_to_string(repo.path("rust-toolchain.toml"))?;
     let verbose = text(

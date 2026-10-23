@@ -7,19 +7,20 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::LazyLock;
 
 use regex::Regex;
-use serde_json::{Value, json};
+use serde::Serialize;
 
 use super::{
-    Binutils, DIRECT_BRANCH, HEADING, INSTRUCTION, elf, file_sha256, hex, object_path, parse_hex,
-    refuse, tool,
+    ArchiveRecord, Archives, Binutils, DIRECT_BRANCH, HEADING, INSTRUCTION, elf, hex, index,
+    parse_hex, refuse, tool, word,
 };
-use crate::{Error, Result, require};
+use crate::{Core, Result, require};
 
-pub const SOURCE: &str = "component/soc/realtek/amebad/fwlib/ram_common/rtl8721d_flash_ram.c";
+pub(crate) const SOURCE: &str =
+    "component/soc/realtek/amebad/fwlib/ram_common/rtl8721d_flash_ram.c";
 pub const RENAMES: [(&str, &str); 3] = [
     ("FLASH_Write_Lock", "wellfed_sdk_flash_legacy_lock"),
     ("FLASH_Write_Unlock", "wellfed_sdk_flash_legacy_unlock"),
@@ -41,10 +42,11 @@ const STATE: [&str; 7] = [
 ];
 
 static SECTION: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^\s*\d+\s+\.\S+\s+([0-9a-f]+)\s+([0-9a-f]+)\s+[0-9a-f]+\s+([0-9a-f]+)").unwrap()
+    Regex::new(r"^\s*\d+\s+\.\S+\s+([0-9a-f]+)\s+([0-9a-f]+)\s+[0-9a-f]+\s+([0-9a-f]+)")
+        .expect("section pattern")
 });
 static BRANCH_TARGET: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\b[0-9a-f]+\s+<([^>]+)>").unwrap());
+    LazyLock::new(|| Regex::new(r"\b[0-9a-f]+\s+<([^>]+)>").expect("branch target pattern"));
 
 fn functions() -> BTreeSet<&'static str> {
     RENAMES
@@ -55,11 +57,10 @@ fn functions() -> BTreeSet<&'static str> {
 }
 
 /// Rename the three public definitions; each must occur exactly once.
-pub fn overlay(source: &str) -> Result<String> {
+pub(crate) fn overlay(source: &str) -> Result<String> {
     let mut source = source.to_string();
     for (public, legacy) in RENAMES {
-        let pattern = Regex::new(&format!(r"(?m)^(void\s+){}(\s*\()", regex::escape(public)))
-            .map_err(|e| Error::Refused(e.to_string()))?;
+        let pattern = Regex::new(&format!(r"(?m)^(void\s+){}(\s*\()", regex::escape(public)))?;
         require(
             pattern.find_iter(&source).count() == 1,
             format!("Expected exactly one pinned SDK definition: {public}"),
@@ -74,7 +75,7 @@ pub fn overlay(source: &str) -> Result<String> {
 }
 
 /// A symbol table entry: address, size, kind (`F`/`O`) and section.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Symbol {
     pub address: u64,
     pub bytes: u64,
@@ -132,7 +133,7 @@ pub fn file_offset(elf: &Path, objdump: &Path, address: u64, size: u64) -> Resul
         if start <= address && address + size <= start + length {
             let at = offset + address - start;
             if at + size <= length_of_file {
-                return Ok(at as usize);
+                return index(at);
             }
         }
     }
@@ -149,21 +150,29 @@ pub fn verify_ipc_table(
     let table = &names["ipc_init_config"];
     require(table.bytes >= 36, "IPC table is too short")?;
     let at = file_offset(elf, objdump, table.address + 28, 4)?;
-    let data = fs::read(elf)?;
-    let pointer = u32::from_le_bytes(data[at..at + 4].try_into().unwrap_or_default()) as u64;
-    require(
-        pointer == names["FLASH_Write_IPC_Int"].address | 1,
-        "Flash IPC table bypasses the public hook",
-    )?;
-    Ok(pointer)
+    let public = names["FLASH_Write_IPC_Int"].address | 1;
+    match word(&fs::read(elf)?, at) {
+        Some(pointer) if pointer == public => Ok(pointer),
+        _ => refuse("Flash IPC table bypasses the public hook"),
+    }
 }
+
+/// A direct branch into a legacy entry, from its public wrapper.
+#[derive(Debug, Clone, Serialize)]
+pub struct Route {
+    pub caller: String,
+    pub address: String,
+}
+
+/// Each legacy entry's routes.
+pub type Routes = BTreeMap<&'static str, Vec<Route>>;
 
 /// Every direct branch to a legacy entry, which must come from its public
 /// wrapper.
-pub fn legacy_routes(disassembly: &str) -> Result<Value> {
-    let expected: BTreeMap<&str, &str> = RENAMES.iter().map(|(p, l)| (*l, *p)).collect();
-    let mut routes: BTreeMap<&str, Vec<Value>> =
-        expected.keys().map(|l| (*l, Vec::new())).collect();
+pub fn legacy_routes(disassembly: &str) -> Result<Routes> {
+    let expected: BTreeMap<&'static str, &'static str> =
+        RENAMES.iter().map(|(p, l)| (*l, *p)).collect();
+    let mut routes: Routes = expected.keys().map(|l| (*l, Vec::new())).collect();
     let mut owner: Option<String> = None;
 
     for line in disassembly.lines() {
@@ -190,7 +199,10 @@ pub fn legacy_routes(disassembly: &str) -> Result<Value> {
             format!("SDK caller bypasses hook: {caller} -> {legacy}"),
         )?;
         if let Some(calls) = routes.get_mut(legacy) {
-            calls.push(json!({"caller": caller, "address": format!("0x{}", &m[1])}));
+            calls.push(Route {
+                caller: caller.to_string(),
+                address: format!("0x{}", &m[1]),
+            });
         }
     }
 
@@ -198,16 +210,35 @@ pub fn legacy_routes(disassembly: &str) -> Result<Value> {
         routes.values().all(|calls| !calls.is_empty()),
         "Missing visible wrapper route to legacy hook",
     )?;
-    Ok(json!(routes))
+    Ok(routes)
+}
+
+/// One core's hook routes, bound to its linked archive.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct HookImage {
+    #[serde(flatten)]
+    archive: ArchiveRecord,
+    symbols: BTreeMap<String, Symbol>,
+    legacy_entry_routes: Routes,
+    ipc_channel_2_handler: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct HookAudit {
+    /// Keyed KM0/KM4.
+    images: BTreeMap<&'static str, HookImage>,
+    protocol_installed: bool,
+    global_exclusion_proven: bool,
+    scope: &'static str,
 }
 
 /// `objects` maps KM0/KM4 to the linked Rust archive containing this code.
-pub fn audit(sdk: &Path, binutils: &Binutils, objects: &[(String, PathBuf)]) -> Result<Value> {
+pub(crate) fn audit(sdk: &Path, binutils: &Binutils, objects: &Archives) -> Result<HookAudit> {
     let objdump = binutils.objdump();
-    let mut result = serde_json::Map::new();
+    let mut images = BTreeMap::new();
 
-    for (core, directory) in [("KM0", "lp"), ("KM4", "hp")] {
-        let elf = elf(sdk, directory);
+    for core in Core::BOTH {
+        let elf = elf(sdk, core);
         let names = symbols(&elf, &objdump)?;
         for name in functions() {
             let symbol = &names[name];
@@ -232,33 +263,26 @@ pub fn audit(sdk: &Path, binutils: &Binutils, objects: &[(String, PathBuf)]) -> 
         )?;
         let routes = legacy_routes(&listing)?;
 
-        let Some((_, object)) = objects.iter().find(|(c, _)| c == core) else {
-            return refuse(format!("No {core} archive"));
-        };
-        let symbols: serde_json::Map<String, Value> = names
-            .iter()
-            .map(|(name, s)| {
-                (
-                    name.clone(),
-                    json!({"address": s.address, "bytes": s.bytes, "kind": s.kind,
-                           "section": s.section}),
-                )
-            })
-            .collect();
-        result.insert(
-            core.to_string(),
-            json!({"elf_sha256": file_sha256(&elf)?, "object_path": object_path(object, sdk)?,
-                   "object_sha256": file_sha256(object)?, "symbols": symbols,
-                   "legacy_entry_routes": routes, "ipc_channel_2_handler": hex(pointer)}),
+        let archive = ArchiveRecord::of(core, &elf, objects, sdk)?;
+        images.insert(
+            core.name(),
+            HookImage {
+                archive,
+                symbols: names,
+                legacy_entry_routes: routes,
+                ipc_channel_2_handler: hex(pointer),
+            },
         );
     }
 
-    Ok(
-        json!({"images": result, "protocol_installed": false, "global_exclusion_proven": false,
-              "scope": "Public SDK hooks and IPC table route through RAM interposer; \
-                        legacy entry branches originate only in that interposer. \
-                        Indirect callers, provider implementation and global exclusion are unproven."}),
-    )
+    Ok(HookAudit {
+        images,
+        protocol_installed: false,
+        global_exclusion_proven: false,
+        scope: "Public SDK hooks and IPC table route through RAM interposer; \
+                legacy entry branches originate only in that interposer. \
+                Indirect callers, provider implementation and global exclusion are unproven.",
+    })
 }
 
 #[cfg(test)]
@@ -295,7 +319,7 @@ mod tests {
                        10000020 <FLASH_Write_IPC_Int>:\n 10000020:\tf000 b800 \tb.w\t10000300 <wellfed_sdk_flash_legacy_ipc>\n";
         let routes = legacy_routes(wrapped).unwrap();
         assert_eq!(
-            routes["wellfed_sdk_flash_legacy_ipc"][0]["caller"],
+            routes["wellfed_sdk_flash_legacy_ipc"][0].caller,
             "FLASH_Write_IPC_Int"
         );
 

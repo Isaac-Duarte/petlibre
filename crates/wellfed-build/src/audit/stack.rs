@@ -19,38 +19,45 @@ use std::path::Path;
 use std::sync::LazyLock;
 
 use regex::Regex;
-use serde_json::{Value, json};
+use serde::Serialize;
 
 use super::writes::demangle;
 use super::{HEADING, refuse, tool};
 use crate::Result;
 
 /// The KM4 application's task table.
-pub const APP_SOURCE: &str = "crates/wellfed-firstboot/src/app.rs";
+pub(crate) const APP_SOURCE: &str = "crates/wellfed-firstboot/src/app.rs";
 /// The SDK trampoline frame and an exception stacked onto the task's stack
 /// with the FPU context (26 words), rounded up.
-pub const OVERHEAD: u64 = 256;
+const OVERHEAD: u64 = 256;
 /// Unfollowed indirect calls: the bound must leave this share of the stack
 /// free.
-pub const MARGIN: f64 = 0.25;
+const MARGIN: f64 = 0.25;
 
 static TASK: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?s)task_create\(\s*c"([\w-]+)",\s*(\w+),\s*\d+,\s*(\w+),"#).unwrap()
+    Regex::new(r#"(?s)task_create\(\s*c"([\w-]+)",\s*(\w+),\s*\d+,\s*(\w+),"#)
+        .expect("stack audit pattern")
 });
 static CONSTANT: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"const (\w+): u16 = (\d+);").unwrap());
-static CALL: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\t(?:bl|blx|b\.w|b)(?:\.[nw])?\t[0-9a-f]+ <([^>+]+)>").unwrap());
-static INDIRECT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\tblx\tr\d+\b").unwrap());
-static PUSH: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^(?:push(?:\.w)?|stmdb(?:\.w)?\s+sp!,)\s*\{([^}]*)\}").unwrap());
+    LazyLock::new(|| Regex::new(r"const (\w+): u16 = (\d+);").expect("stack audit pattern"));
+static CALL: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\t(?:bl|blx|b\.w|b)(?:\.[nw])?\t[0-9a-f]+ <([^>+]+)>")
+        .expect("stack audit pattern")
+});
+static INDIRECT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\tblx\tr\d+\b").expect("stack audit pattern"));
+static PUSH: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^(?:push(?:\.w)?|stmdb(?:\.w)?\s+sp!,)\s*\{([^}]*)\}")
+        .expect("stack audit pattern")
+});
 static VPUSH: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^vpush\s*\{d(\d+)-d(\d+)\}").unwrap());
-static SUB: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^sub(?:\.w)?\s+sp,\s*(?:sp,\s*)?#(\d+)").unwrap());
+    LazyLock::new(|| Regex::new(r"^vpush\s*\{d(\d+)-d(\d+)\}").expect("stack audit pattern"));
+static SUB: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^sub(?:\.w)?\s+sp,\s*(?:sp,\s*)?#(\d+)").expect("stack audit pattern")
+});
 
 /// {entry function name: (task name, stack bytes)} from `app.rs` text.
-pub fn tasks(source: &str) -> BTreeMap<String, (String, u64)> {
+fn tasks(source: &str) -> BTreeMap<String, (String, u64)> {
     let constants: HashMap<&str, u64> = CONSTANT
         .captures_iter(source)
         .filter_map(|c| Some((c.get(1)?.as_str(), c[2].parse().ok()?)))
@@ -67,16 +74,16 @@ pub fn tasks(source: &str) -> BTreeMap<String, (String, u64)> {
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct Function {
-    pub frame: u64,
-    pub calls: BTreeSet<String>,
-    pub indirect: bool,
+struct Function {
+    frame: u64,
+    calls: BTreeSet<String>,
+    indirect: bool,
     sized: bool,
 }
 
 /// Each function's prologue frame, direct callees and whether it makes
 /// indirect calls, from `objdump -d`, in listing order.
-pub fn frames(listing: &str) -> Vec<(String, Function)> {
+fn frames(listing: &str) -> Vec<(String, Function)> {
     let mut functions: Vec<(String, Function)> = Vec::new();
     for line in listing.lines() {
         if let Some(heading) = HEADING.captures(line) {
@@ -119,7 +126,7 @@ pub fn frames(listing: &str) -> Vec<(String, Function)> {
 
 /// The deepest path from `entry`: (bytes, path, indirect calls on any path,
 /// functions where recursion was cut).
-pub fn worst(
+fn worst(
     functions: &HashMap<String, Function>,
     entry: &str,
 ) -> (u64, Vec<String>, bool, Vec<String>) {
@@ -166,8 +173,31 @@ pub fn worst(
     (depth, path, indirect, cut.into_iter().collect())
 }
 
+/// One task's static stack bound.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct TaskBound {
+    entry: String,
+    stack: u64,
+    bound: u64,
+    /// Whether any path makes an indirect call the walk cannot follow.
+    indirect: bool,
+    /// Functions where recursion was cut.
+    recursion: Vec<String>,
+    /// The deepest path's first functions.
+    path: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct StackAudit {
+    /// Keyed by task name.
+    tasks: BTreeMap<String, TaskBound>,
+    overhead: u64,
+    margin: f64,
+    scope: &'static str,
+}
+
 /// Per-task bounds; refuses if a task's bound leaves less than MARGIN free.
-pub fn audit(elf: &Path, objdump: &Path, source: &str) -> Result<Value> {
+pub(crate) fn audit(elf: &Path, objdump: &Path, source: &str) -> Result<StackAudit> {
     // A repeated heading starts that function over, as a later definition.
     let functions: HashMap<String, Function> =
         frames(&tool(objdump, &["-d"], elf)?).into_iter().collect();
@@ -181,7 +211,7 @@ pub fn audit(elf: &Path, objdump: &Path, source: &str) -> Result<Value> {
         by_short.entry(short).or_default().push(name.clone());
     }
 
-    let mut rows = serde_json::Map::new();
+    let mut rows = BTreeMap::new();
     for (entry, (task, stack)) in tasks(source) {
         let symbols = by_short.get(&entry).cloned().unwrap_or_default();
         let symbol = match &symbols[..] {
@@ -204,20 +234,27 @@ pub fn audit(elf: &Path, objdump: &Path, source: &str) -> Result<Value> {
         }
         rows.insert(
             task,
-            json!({"entry": entry, "stack": stack, "bound": bound, "indirect": indirect,
-                   "recursion": cut.iter().map(|n| demangle(n)).collect::<Vec<_>>(),
-                   "path": path}),
+            TaskBound {
+                entry,
+                stack,
+                bound,
+                indirect,
+                recursion: cut.iter().map(|n| demangle(n)).collect(),
+                path,
+            },
         );
     }
 
     if rows.is_empty() {
         return refuse("No application task entries found in the linked image");
     }
-    Ok(
-        json!({"tasks": rows, "overhead": OVERHEAD, "margin": MARGIN,
-              "scope": "Direct calls and prologue frames only; indirect calls are covered by the margin, \
-                        not bounded"}),
-    )
+    Ok(StackAudit {
+        tasks: rows,
+        overhead: OVERHEAD,
+        margin: MARGIN,
+        scope: "Direct calls and prologue frames only; indirect calls are covered by the margin, \
+                not bounded",
+    })
 }
 
 #[cfg(test)]

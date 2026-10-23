@@ -16,7 +16,7 @@ const BANNER: &str = "/* Generated from a private file by wellfed-build; never t
 
 /// Octal-escape everything but plain printable ASCII; never a trigraph or
 /// quote break.
-pub fn c_string(value: &[u8]) -> String {
+fn c_string(value: &[u8]) -> String {
     let mut out = String::from("\"");
     for &byte in value {
         if (0x20..0x7f).contains(&byte) && !b"\"\\?".contains(&byte) {
@@ -37,7 +37,7 @@ fn object<T: DeserializeOwned>(raw: &[u8]) -> serde_json::Result<T> {
 }
 
 /// The Wi-Fi header; refuses anything but a WPA2-sized passphrase.
-pub fn wifi_header(raw: &[u8]) -> Result<String> {
+pub(crate) fn wifi_header(raw: &[u8]) -> Result<String> {
     let WifiCredential { ssid, password } = object(raw)
         .map_err(|_| Error::Refused("Wi-Fi credentials need string ssid and password".into()))?;
     require(
@@ -54,7 +54,7 @@ pub fn wifi_header(raw: &[u8]) -> Result<String> {
 
 /// The broker settings header; refuses anything `wellfed-local
 /// firmware-credential` would not have written.
-pub fn transport_header(raw: &[u8]) -> Result<String> {
+pub(crate) fn transport_header(raw: &[u8]) -> Result<String> {
     let config: FirmwareCredential = object(raw).map_err(|error| {
         Error::Refused(format!(
             "Transport credentials need exactly the version 1 fields: {error}"

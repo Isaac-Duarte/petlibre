@@ -8,8 +8,6 @@
 //! every image prints is a hash of its exact inputs ([`identity`]), so a
 //! review of the same sources can be reused instead of rebuilt.
 
-// The manifest is one `json!` literal.
-
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -19,21 +17,23 @@ use wellfed_formats::lock::SdkLock;
 use sha2::{Digest, Sha256};
 
 pub mod audit;
-pub mod credentials;
-pub mod environment;
+pub(crate) mod credentials;
+pub(crate) mod environment;
+mod error;
 pub mod identity;
 pub mod image;
-pub mod sdk;
+pub(crate) mod sdk;
 pub mod toolchain;
 
-pub use wellfed_flash::error::{Error, Result, require};
+pub use error::{Error, Result, require};
+pub(crate) use wellfed_formats::canonical::sha256;
 
 /// The vendor project inside an SDK worktree.
 pub const PROJECT: &str = "project/realtek_amebaD_va0_example/GCC-RELEASE";
 
 /// The build profiles, from the unchanged SDK example to the reviewed
 /// UART-only first-boot image.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum Profile {
     Baseline,
     Bringup,
@@ -42,6 +42,7 @@ pub enum Profile {
 }
 
 impl Profile {
+    /// The manifest and output-directory name; also what the identity binds.
     pub fn name(self) -> &'static str {
         match self {
             Self::Baseline => "baseline",
@@ -49,17 +50,6 @@ impl Profile {
             Self::Plaf103 => "plaf103",
             Self::Plaf103Firstboot => "plaf103-firstboot",
         }
-    }
-
-    pub fn parse(name: &str) -> Option<Self> {
-        [
-            Self::Baseline,
-            Self::Bringup,
-            Self::Plaf103,
-            Self::Plaf103Firstboot,
-        ]
-        .into_iter()
-        .find(|profile| profile.name() == name)
     }
 
     /// Links the Rust application (everything but the unchanged example).
@@ -74,6 +64,62 @@ impl Profile {
 
     pub fn firstboot(self) -> bool {
         self == Self::Plaf103Firstboot
+    }
+}
+
+/// The AmebaD's two cores. The SDK names their projects `lp` and `hp`; the
+/// manifest and audits call them KM0 and KM4.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Core {
+    /// KM0, the low-power Cortex-M23.
+    Lp,
+    /// KM4, the application Cortex-M33.
+    Hp,
+}
+
+impl Core {
+    pub const BOTH: [Self; 2] = [Self::Lp, Self::Hp];
+
+    /// The SDK's directory suffix (`project_lp`, `src_hp`).
+    pub fn dir(self) -> &'static str {
+        match self {
+            Self::Lp => "lp",
+            Self::Hp => "hp",
+        }
+    }
+
+    /// The manifest's and audits' name.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Lp => "KM0",
+            Self::Hp => "KM4",
+        }
+    }
+
+    pub(crate) fn from_name(name: &str) -> Option<Self> {
+        Self::BOTH.into_iter().find(|core| core.name() == name)
+    }
+
+    /// The Cargo target of the core's firmware archive.
+    pub(crate) fn target(self) -> &'static str {
+        match self {
+            Self::Lp => "thumbv8m.base-none-eabi",
+            Self::Hp => "thumbv8m.main-none-eabihf",
+        }
+    }
+
+    /// The `wellfed-ffi` feature that builds the core's archive.
+    pub(crate) fn feature(self) -> &'static str {
+        match self {
+            Self::Lp => "km0",
+            Self::Hp => "km4",
+        }
+    }
+}
+
+impl std::fmt::Display for Core {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name())
     }
 }
 
@@ -102,11 +148,11 @@ impl Variant {
         }
     }
 
-    pub fn motion_policy(self) -> Option<&'static str> {
+    pub(crate) fn motion_policy(self) -> Option<&'static str> {
         (self == Self::Fw16Pulse).then_some("fw16-pulse-v1")
     }
 
-    pub fn trial_policy(self) -> Option<&'static str> {
+    pub(crate) fn trial_policy(self) -> Option<&'static str> {
         match self {
             Self::Fw11Reset => Some("fw11-reset-v1"),
             Self::Fw11Fail => Some("fw11-fail-v1"),
@@ -131,37 +177,29 @@ impl Repo {
         })
     }
 
-    pub fn at(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
-    }
-
-    pub fn path(&self, relative: &str) -> PathBuf {
+    pub(crate) fn path(&self, relative: &str) -> PathBuf {
         self.root.join(relative)
     }
 
-    pub fn firmware(&self) -> PathBuf {
-        self.path("firmware")
-    }
-
-    pub fn private(&self) -> PathBuf {
+    pub(crate) fn private(&self) -> PathBuf {
         self.path("private")
     }
 
     /// The pinned SDK checkout every profile's worktree comes from.
-    pub fn source(&self) -> PathBuf {
+    pub(crate) fn source(&self) -> PathBuf {
         self.path("private/upstream/ameba-rtos-d")
     }
 
-    pub fn toolchains(&self) -> PathBuf {
+    pub(crate) fn toolchains(&self) -> PathBuf {
         self.path("private/toolchains")
     }
 
     /// The verified stock image: the pad table and layout reference.
-    pub fn stock(&self) -> PathBuf {
+    pub(crate) fn stock(&self) -> PathBuf {
         self.path("private/firmware/PLAF103_OTA_010115.bin")
     }
 
-    pub fn layout(&self) -> PathBuf {
+    pub(crate) fn layout(&self) -> PathBuf {
         self.path("firmware/plaf103-layout.json")
     }
 
@@ -170,7 +208,7 @@ impl Repo {
     }
 
     /// `firmware/sdk.lock.json`.
-    pub fn lock(&self) -> Result<SdkLock> {
+    pub(crate) fn lock(&self) -> Result<SdkLock> {
         Ok(wellfed_formats::load(
             &self.path("firmware/sdk.lock.json"),
         )?)
@@ -186,7 +224,7 @@ impl Repo {
 }
 
 /// SHA-256 of a file, read in blocks: toolchain files and images are large.
-pub fn digest(path: &Path) -> Result<String> {
+pub(crate) fn digest(path: &Path) -> Result<String> {
     let mut file = fs::File::open(path)?;
     let mut hasher = Sha256::new();
     let mut block = vec![0; 1 << 20];
@@ -200,57 +238,53 @@ pub fn digest(path: &Path) -> Result<String> {
     Ok(wellfed_formats::hex::encode(&hasher.finalize()))
 }
 
-pub fn sha256(data: &[u8]) -> String {
-    wellfed_formats::canonical::sha256(data)
+fn program(command: &Command) -> String {
+    command.get_program().to_string_lossy().into_owned()
 }
 
 /// Run a command to completion, refusing a failed exit with its stderr.
-pub fn run(command: &mut Command) -> Result<Output> {
-    let output = command.output().map_err(|error| {
-        Error::Refused(format!(
-            "Cannot run {}: {error}",
-            command.get_program().to_string_lossy()
-        ))
+pub(crate) fn run(command: &mut Command) -> Result<Output> {
+    let output = command.output().map_err(|source| Error::Spawn {
+        program: program(command),
+        source,
     })?;
-    require(
-        output.status.success(),
-        format!(
-            "{} failed ({}): {}",
-            command.get_program().to_string_lossy(),
-            output.status,
-            String::from_utf8_lossy(&output.stderr).trim()
-        ),
-    )?;
+    if !output.status.success() {
+        return Err(Error::Tool {
+            program: program(command),
+            status: output.status,
+            stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        });
+    }
     Ok(output)
 }
 
 /// A command's stdout as text.
-pub fn text(command: &mut Command) -> Result<String> {
+pub(crate) fn text(command: &mut Command) -> Result<String> {
     String::from_utf8(run(command)?.stdout)
         .map_err(|_| Error::Refused("Tool output is not UTF-8".into()))
 }
 
 /// `git` in `directory`, stdout trimmed.
-pub fn git(directory: &Path, args: &[&str]) -> Result<String> {
+pub(crate) fn git(directory: &Path, args: &[&str]) -> Result<String> {
     Ok(text(Command::new("git").args(args).current_dir(directory))?
         .trim()
         .to_string())
 }
 
 /// The checked-out commit of a Git worktree.
-pub fn revision(directory: &Path) -> Result<String> {
+pub(crate) fn revision(directory: &Path) -> Result<String> {
     git(directory, &["rev-parse", "HEAD"])
 }
 
 /// `path` relative to `base`, as the manifest records it.
-pub fn relative(path: &Path, base: &Path) -> Result<String> {
+pub(crate) fn relative(path: &Path, base: &Path) -> Result<String> {
     path.strip_prefix(base)
         .map(|p| p.to_string_lossy().into_owned())
         .map_err(|_| Error::Refused(format!("{} is outside {}", path.display(), base.display())))
 }
 
 /// An executable on `path` (a `PATH` value), as `shutil.which` finds it.
-pub fn which(name: &str, path: Option<&str>) -> Option<PathBuf> {
+pub(crate) fn which(name: &str, path: Option<&str>) -> Option<PathBuf> {
     use std::os::unix::fs::PermissionsExt;
 
     path?

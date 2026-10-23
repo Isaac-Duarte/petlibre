@@ -129,8 +129,7 @@ target/release/petlibre-bench itest itest-20261022-04 --review private/verificat
 | `settings-persist` | Lights, sound and volume changed, then a cold boot, then read back; the originals are restored. | `--power` |
 | `wifi-fallback` | Credentials stored for an absent SSID (`PLCFG1 net saved stored=1`). After a cold boot, health shows `wifi.source` `fallback`. A signed clear and another cold boot return it to `build`. It refuses to start while credentials are stored. | `--power` |
 | `network-bounce` | The hotspot goes down for 20 s after `PLMQT1 closed`. It comes back up, then `PLMQT1 ready` and fresh health with more `transport.connects`. | |
-| `trial-fallback` | The `fw11-fail` variant installs and fails its trial, and KM0 gives way. Bank 0's recovery role then installs the baseline, re-signed and offered once the variant activated. | `--build` |
-| `ota-faults` | The variant's offer makes the confirmed build give way. `ota_fault_server` then serves the re-signed baseline with one fault per boot: corrupt → `stage=hash`, truncated → `range`, stalled → `timeout`, none of them activating. A clean download then confirms. | `--build --power` |
+| `ota-recovery` | The `fw11-fail` variant installs and fails its trial, and KM0 gives way. While it fails, `ota_fault_server` takes over, so bank 0's recovery role meets it on its first boot. It serves the re-signed baseline with one fault per boot: corrupt → `stage=hash`, truncated → `range`, stalled → `timeout`, none of them activating. A clean download then confirms and restores the baseline, so the fallback needs no restore install of its own. | `--build --power` |
 | `ota-power-cuts` | Installs the speaker variant (no motion). It has to be a build the feeder has not confirmed, because a confirmed one skips the trial. Two cuts follow. **Mid-download** (48 sectors in), the next boot must be bank 0 and its first progress record must show the download starting again. **10 s into trial boot 1**, before the 30 s confirmation, KM0 must count boot 1 again (backup registers clear on power loss), and the build must still confirm. A cut during activation itself is not attempted, since the marker write and reset take milliseconds. The re-signed baseline then goes back on. | `--build --power --destructive` |
 | `soak` | Pings every 30 s for `--soak-minutes` (default 60). It fails on any restart (`PLFW1 start`), any reconnect (`transport.connects`) or any missed reply, and reports the slowest reply. | soak tier |
 
@@ -150,12 +149,19 @@ Scenarios swap `serve` for `petlibre-local broker` plus `ota_fault_server` or `r
 
 **Evidence.**
 - **Captures:** receive-only, in back-to-back 180 s segments `private/captures/NAME-uart-01`, `-02`, … (the flash client's limit for one observe). A thread starts each segment as the last exits, so the port stays held while the suite blocks on a build or a child. Segments are read while they record, so a record arrives within about a second.
-- **Reviews and manifests:** `NAME-good`, `NAME-fail`, `NAME-restore`, `NAME-trigger`, `NAME-fault`, `NAME-cut-speaker` and `NAME-cut-restore`, in `private/verification/`. Each signs the next version, so a run uses up several. A reused review keeps its original name.
+- **Reviews and manifests:** `NAME-good`, `NAME-fail`, `NAME-restore`, `NAME-cut-speaker` and `NAME-cut-restore`, in `private/verification/`. Each signs the next version, so a run uses up several. A reused review keeps its original name.
 - **Record:** `private/verification/NAME-itest.json` holds each scenario's verdict, reason and duration, any silence, and the capture list, marked `"evidence": "physical"`.
 
 **Cold boots.** After a supply cut the server keeps reporting the old session's health as online and fresh until the broker's keepalive lapses, and a request sent then is lost. So after a cold boot the suite waits for `PLMQT1 ready` and accepts only health received after it.
 
-**Status (October 22, 2026).** **Physical, scaled suite:**
+**Status (October 22, 2026).** **Physical, faster suite:** `trial-fallback` and `ota-faults` are now one scenario, `ota-recovery`, and bank 0's recovery role pipelines its download. `itest-20261022-18 --build --power` passed the standard tier in 13.6 minutes (`-14`: 27.8):
+- `ota-update` took 164 s;
+- `ota-recovery` took 336 s, against 961 s for the two scenarios it replaces;
+- each download took 18–19 s.
+
+The runs below used the two separate scenarios.
+
+**Physical, scaled suite:**
 - `itest-20261022-09 --build --power --destructive` passed the eight functional scenarios. It showed the build cache, the continuous capture and the device-state check after every scenario working on hardware.
 - `ota-power-cuts` then failed: a reinstalled confirmed build gets no trial. It was rebuilt around the speaker variant, and `itest-20261022-10` passed it in 10 minutes (OTA v42–v44):
   - a cut at 48/171 sectors booted bank 0, and the download began again at 16/171;

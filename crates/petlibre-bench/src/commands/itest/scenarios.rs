@@ -23,7 +23,7 @@ pub(super) struct Scenario {
     pub run: fn(&mut Ctx) -> Result<()>,
 }
 
-pub(super) const SCENARIOS: [Scenario; 10] = [
+pub(super) const SCENARIOS: [Scenario; 9] = [
     Scenario {
         name: "ota-update",
         about: "install the build under test over the air and see it confirm",
@@ -73,20 +73,12 @@ pub(super) const SCENARIOS: [Scenario; 10] = [
         run: network_bounce,
     },
     Scenario {
-        name: "trial-fallback",
-        about: "a build that fails its trial gives way to bank 0, which restores the baseline",
-        tier: Tier::Standard,
-        needs: &[Need::Build],
-        baseline: false,
-        run: trial_fallback,
-    },
-    Scenario {
-        name: "ota-faults",
-        about: "corrupt, truncated and stalled downloads stop before activation; then a clean one",
+        name: "ota-recovery",
+        about: "a failed trial gives way to bank 0, which stops corrupt, truncated and stalled downloads, then restores the baseline",
         tier: Tier::Standard,
         needs: &[Need::Power, Need::Build],
         baseline: false,
-        run: ota_faults,
+        run: ota_recovery,
     },
     Scenario {
         name: "ota-power-cuts",
@@ -501,44 +493,15 @@ fn network_bounce(ctx: &mut Ctx) -> Result<()> {
     )
 }
 
-fn trial_fallback(ctx: &mut Ctx) -> Result<()> {
-    let build = ctx.baseline()?.build.clone();
+/// One failing trial, then the fault drills from the recovery role it falls
+/// back to, so the fallback needs no restore install of its own: the clean
+/// download at the end is the restore.
+fn ota_recovery(ctx: &mut Ctx) -> Result<()> {
     let failing = ctx.failing("fail")?;
     // Signed after the variant, so bank 0 accepts it as newer.
-    let restore = ctx.resign("restore")?;
+    let staged = ctx.resign("restore")?;
 
-    let since = ctx.mark()?;
-    ctx.rig.offer(Some(&failing))?;
-    ctx.expect("PLOTA1 activated", since, INSTALL_SECONDS, |r| {
-        r.tag == "PLOTA1" && r.first == "activated"
-    })?;
-    // Bank 0's recovery role takes whatever is offered after the fallback.
-    ctx.rig.offer(Some(&restore))?;
-
-    let outcome = ctx.watch(&failing.build, since, INSTALL_SECONDS)?;
-    require(
-        matches!(outcome, Outcome::FellBack { .. }),
-        format!("The failing build was not rejected: {outcome:?}"),
-    )?;
-
-    let since = ctx.mark()?;
-    let outcome = ctx.watch(&build, since, INSTALL_SECONDS)?;
-    require(
-        outcome == Outcome::Passed,
-        format!("The baseline did not come back: {outcome:?}"),
-    )?;
-    ctx.confirm(&build)?;
-    ctx.rig.offer(None)
-}
-
-fn ota_faults(ctx: &mut Ctx) -> Result<()> {
-    // A confirmed build ignores an offer of itself (`same=1`), so another
-    // build makes it give way; the fault server then serves the baseline,
-    // signed after it.
-    let trigger = ctx.failing("trigger")?;
-    let staged = ctx.resign("fault")?;
-
-    let result = faults(ctx, &trigger, &staged);
+    let result = recovery(ctx, &failing, &staged);
     if result.is_err() {
         ctx.note(
             "  The feeder may be left on bank 0's recovery role; serving the baseline and cold-booting it",
@@ -558,16 +521,17 @@ fn ota_faults(ctx: &mut Ctx) -> Result<()> {
     result
 }
 
-fn faults(ctx: &mut Ctx, trigger: &super::Staged, staged: &super::Staged) -> Result<()> {
+fn recovery(ctx: &mut Ctx, failing: &super::Staged, staged: &super::Staged) -> Result<()> {
     let since = ctx.mark()?;
-    ctx.rig.offer(Some(trigger))?;
-    ctx.expect("PLWCH1 give_way=1", since, OFFER_CHECK_SECONDS, |r| {
-        r.is("PLWCH1", &[("give_way", "1")])
+    ctx.rig.offer(Some(failing))?;
+    ctx.expect("PLOTA1 activated", since, INSTALL_SECONDS, |r| {
+        r.tag == "PLOTA1" && r.first == "activated"
     })?;
 
-    // The recovery role takes seconds to boot and join, so it meets the
-    // fault server, not `serve`. Each later case needs a cold boot: a
-    // stopped update hands over to the transport until the next one.
+    // The fault server takes over while the variant fails its trial, so
+    // bank 0's recovery role meets it on its first boot. Each later case
+    // needs a cold boot: a stopped update hands over to the transport until
+    // the next one.
     let cases = [
         (Fault::Corrupt, "hash"),
         (Fault::Range, "range"),
@@ -579,7 +543,13 @@ fn faults(ctx: &mut Ctx, trigger: &super::Staged, staged: &super::Staged) -> Res
             fault,
             staged: staged.clone(),
         })?;
-        if i > 0 {
+        if i == 0 {
+            let outcome = ctx.watch(&failing.build, since, INSTALL_SECONDS)?;
+            require(
+                matches!(outcome, Outcome::FellBack { .. }),
+                format!("The failing build was not rejected: {outcome:?}"),
+            )?;
+        } else {
             ctx.rig.power_cycle()?;
         }
 

@@ -7,6 +7,33 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
+**October 22, late night: faster integration runs (physical over the air and by UART, autonomous).**
+- **What changed:**
+  - **Pipelined OTA download:**
+    - The recovery role asks for all eight chunks of the sector it is staging at once, each with its own retries.
+    - It polls again after 1 ms while answers arrive, instead of after 50 ms.
+    - The writer (`petlibre-core::ota::Writer`) accepts a sector's chunks in any order and hashes the sector in order once complete.
+    - Sector order, the marker checks, readback, the whole-image hash and the marker-last commit are unchanged, and so is the wire format.
+  - **One scenario instead of two:** `trial-fallback` and `ota-faults` are now `ota-recovery`. The fault server takes over while the `fw11-fail` variant fails its trial, so bank 0's recovery role meets it directly, and the clean download is the restore.
+- **Checks:** `make check`; fresh `plaf103` and `plaf103-firstboot` builds with every audit passing (updater stack bound 9960 of 24576 B); `make check-fixtures` with no skips.
+- **Physical:**
+  - **Bank 0 reflashed over UART** (`fw10-pipeline-bank0-20261022-01..03`).
+    - Sessions 01 and 02 each stopped on a loader NAK (`0x15`) straight after an erase command: 01 at 0x66000, 02 at 0x68000 after one more sector.
+    - Session 03 (`--interrupted`, `--off-seconds 5`) staged the remaining 72 sectors, verified them, committed the marker and booted bank 1 (`69a0720a…`) cleanly.
+    - The NAK pattern is new evidence: nothing was retried, and the cause is not established.
+  - **`itest-20261022-18 --build --power`** passed all seven standard scenarios in **13.6 min** (`-14`: 27.8 min).
+    - The download takes **18–19 s** for 680 KB (about 37 KB/s; before: ~106 s at 6.5 KB/s).
+    - `ota-update` took 164 s (389 s before).
+    - `ota-recovery` took 336 s, against 961 s for the two scenarios it replaces.
+- **Flash now:**
+  - **Bank 1:** normal build `f244d9a9e1c0…` (OTA v60, confirmed).
+  - **Bank 0:** the same sources, frozen as `fw10-pipeline-review-20261022-01` (OTA SHA-256 `98225789…`).
+  - **Next manifest version:** 61.
+  - **Settings:** generation 3023 (lights 1, sound 1, volume 40).
+  - **Wi-Fi:** no stored credentials (generation 15).
+- **Bench state:** restored. Feeder off, hotspot down, no server.
+- **Not run:** `ota-power-cuts` (needs `--destructive`) with the new updater.
+
 **October 22, late night: the Rust conventions are enforced by lints (physical over the air, autonomous).**
 - **What changed:**
   - Every crate inherits `[workspace.lints]` (`unsafe_op_in_unsafe_fn`, `dbg_macro`, `undocumented_unsafe_blocks`). Host crates forbid `unsafe` at their crate roots.

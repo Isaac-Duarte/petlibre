@@ -381,6 +381,47 @@ fn installs_bank_1_with_its_marker_last_and_asks_for_a_restart() {
 }
 
 #[test]
+fn a_sectors_chunks_are_asked_together_and_answers_poll_again_at_once() {
+    let _guard = start();
+    connect_ok();
+    let signing = SigningKey::from_bytes(&SEED);
+    let payload = image(LEN);
+    let mut broker = Broker::new(Some(manifest(&signing, 3, &payload, LEN)), payload);
+    let mut flash = Flash::default();
+    let mut updater = Updater::new(FAKE_TRANSPORT, Some(key()));
+    let mut provider = Provider::default();
+    let mut answered = 0;
+
+    // Step until the manifest is pinned; that step asks for the whole first
+    // sector before any of it arrives.
+    let mut pinned = None;
+    for _ in 0..100 {
+        park::answer::<Core<true>>(0x0000_0001_4b30_abcd, &mut answered);
+        // SAFETY: `provider` outlives the loop and is not otherwise borrowed.
+        let step = unsafe { updater.step::<Core<false>, FakeHooks>(&mut provider, &mut flash) };
+        broker.reply();
+        if matches!(step.record, Some(Record::Manifest { .. })) {
+            pinned = Some(step);
+            break;
+        }
+        fake::advance(step.delay_ms * 32, false);
+        fake::with(|h| h.uptime_ms = h.uptime_ms.wrapping_add(step.delay_ms));
+    }
+    let Some(pinned) = pinned else {
+        panic!("the manifest was never pinned");
+    };
+
+    let chunks: Vec<_> = broker
+        .gets
+        .iter()
+        .filter(|g| g.0 == Part::Chunk)
+        .map(|g| g.1)
+        .collect();
+    assert_eq!(chunks, (0..4096).step_by(512).collect::<Vec<_>>());
+    assert_eq!(pinned.delay_ms, BUSY_MS);
+}
+
+#[test]
 fn a_manifest_signed_by_another_key_writes_nothing() {
     let _guard = start();
     connect_ok();
@@ -509,12 +550,16 @@ fn lost_answers_are_asked_again_then_the_update_stops() {
 
     assert!(run(&mut updater, &mut broker, &mut flash, 1000).restart);
 
-    let first = broker
-        .gets
-        .iter()
-        .filter(|g| **g == (Part::Chunk, 0, 512))
-        .count();
-    assert_eq!(first, 3);
+    // The first sector's chunks go out together; the two lost answers are
+    // asked for again, each once.
+    let asks = |offset| {
+        broker
+            .gets
+            .iter()
+            .filter(|g| **g == (Part::Chunk, offset, 512))
+            .count()
+    };
+    assert_eq!([asks(0), asks(512), asks(1024)], [2, 2, 1]);
 
     let _guard2 = (drop(_guard), start()).1;
     connect_ok();
@@ -531,9 +576,10 @@ fn lost_answers_are_asked_again_then_the_update_stops() {
             stage: ErrorStage::Timeout
         })
     );
+    // Every chunk of the first sector, each asked `MAX_TRIES` times.
     assert_eq!(
         broker.gets.iter().filter(|g| g.0 == Part::Chunk).count(),
-        MAX_TRIES as usize
+        8 * MAX_TRIES as usize
     );
     assert_eq!(flash.erases, 0);
 }

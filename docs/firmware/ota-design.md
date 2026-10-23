@@ -24,7 +24,9 @@ The updater: booted from bank 0, with a key built in (`PETLIBRE_OTA_PUBLIC_KEY`,
 | Broker and server restarted at 300 032 | `closed`, three refused connects, then resumed at 300 544 and activated |
 | Relay power cut at 201 728 | Next boot on bank 0, re-downloaded from 0, activated |
 
-After each stop, the marker was never written: the loader kept booting bank 0, and the recovery role handed over to the normal transport. The transfer runs at about 6.5 KB/s, a 672 KB image in about 100 s.
+After each stop, the marker was never written: the loader kept booting bank 0, and the recovery role handed over to the normal transport. The transfer ran at about 6.5 KB/s, a 672 KB image in about 100 s. Most of that was one 512-byte ask per round trip, each followed by the task's 50 ms poll delay.
+
+**Pipelined transfer (October 22, physical).** The recovery role now asks for all eight chunks of the sector it is staging at once, each with its own retries. It polls again after 1 ms while answers keep arriving. The writer accepts a sector's chunks in any order and hashes the sector in order once it is complete. Sectors are still written strictly in order, and the marker checks, readback, whole-image hash and marker-last commit are unchanged. It runs in bank 0, which was reflashed over UART for it. In `itest-20261022-18`, each 680 KB download took 18–19 s from manifest to activation, about 37 KB/s.
 
 The original design follows. It came from the FW09 bank policy (simulation and static analysis). Every write it describes is outside the bank-1 development updater's reviewed region, so the first hardware step needs an owner-reviewed procedure.
 
@@ -107,7 +109,7 @@ The recovery image pulls; it is never pushed:
 - It publishes `ota/get {offset, length}` on its own namespace, and the server answers `ota/data` with that chunk.
 - Chunks are at most 512 bytes, so an answer fits the FW08 codec's existing 640-byte packet bound with its topic, leaving the running transport's buffers unchanged. A compile-time assert keeps it that way.
 - The writer stages a whole sector in RAM, then the port erases, programs and reads it back in one lease.
-- A missing or late chunk is re-requested a bounded number of times, then the attempt fails into step 4's safe state.
+- The current sector's chunks are asked for together. A missing or late chunk is re-requested a bounded number of times, then the attempt fails into step 4's safe state.
 
 The server-side broker ACL gains these two topics for the firmware role only.
 

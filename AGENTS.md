@@ -1,15 +1,57 @@
 # Contributor and agent instructions
 
-- Read [RESUME.md](RESUME.md) when continuing firmware work. Keep its checkpoint and ignored local evidence index current when bench state changes; reconfirm physical state rather than assuming the handoff is live.
-- Keep FIRMWARE_BOARD.md current when implementation, dependencies, or acceptance evidence changes. Card status never authorizes physical operations.
-- Read README.md and docs/development/README.md before changing behavior. Use docs/hardware/ and docs/firmware/ for hardware assumptions and component contracts.
-- Work within this repository. A neighboring research archive is not a build dependency or an authorized mutation target.
-- Keep user changes and private evidence intact. Do not copy credentials, real device identifiers, captures, backups, vendor binaries, or decompiled artifacts into tracked files.
-- Keep first-party source in the Rust workspace; preserve existing crate names, public protocols, and C ABI unless the task requires a compatibility change.
-- Record whether a finding comes from physical observation, static analysis, or simulation. Host checks do not establish hardware reliability.
-- Write for the reader: separate the logical steps in a function body (setup, the work, the result) with a blank line, and keep long match arms, tests and builders broken into paragraphs. Comments and `//!` module docs explain why the code exists and how it fits the system (invariants, hardware or protocol constraints, ordering requirements), not what the next line does. Don't add comments that restate the code.
-- Run cargo fmt after Rust edits. Run the applicable checks; make check PYTHON=.venv/bin/python is the contributor gate. Missing optional fixtures are not successful evidence checks.
-- Never weaken pinned recovery hashes, marker sequencing, preservation checks, or no-retry behavior to make tests pass. Rebuilt diagnostics are not automatically compatible with the pinned writer.
-- Build/test commands must not flash hardware, operate motors, alter routing, or start persistent services. Such operations require an explicit user task and a reviewed device-specific procedure.
-- Do not infer authorization to commit, push, publish, or resume bench operations from historical research notes. Respect the contributor's Git identity.
-- Owner authorization (October 22, 2026), for an agent working an owner-assigned firmware task: it may flash any flash region through the reviewed bench tools, with as many installs as needed. For live tests it may bring the feeder hotspot up and run `wellfed-local serve`, including OTA offers, as a bounded foreground test process. It must restore the prior network and service state afterwards and record what ran. This does not cover motor motion, host firewall or system-service changes, publishing outside this repository's remote, or weakening any pinned check above.
+## Start here
+
+- Read [RESUME.md](RESUME.md) when continuing firmware work, then [FIRMWARE_BOARD.md](FIRMWARE_BOARD.md), [README.md](README.md) and the [development guide](docs/development/README.md). Use docs/hardware/ and docs/firmware/ for hardware assumptions and component contracts.
+- Keep RESUME's checkpoint and its ignored local evidence index current when bench state changes. Reconfirm physical state rather than assuming the handoff is live.
+- Keep FIRMWARE_BOARD.md current when implementation, dependencies or acceptance evidence change. Card status never authorizes physical operations.
+- Label every finding as physical observation, static analysis or simulation. Host checks do not establish hardware reliability.
+
+## Hard rules
+
+- Work within this repository. A neighboring research archive is not a build dependency or a mutation target.
+- Keep user changes and private evidence intact. Never copy credentials, real device identifiers, captures, backups, vendor binaries or decompiled artifacts into tracked files.
+- Never weaken pinned recovery hashes, marker sequencing, preservation checks or no-retry behavior to make tests pass. Rebuilt diagnostics are not automatically compatible with the pinned writer.
+- Build and test commands must not flash hardware, operate motors, alter routing or start persistent services. Those need an explicit user task and a reviewed device-specific procedure (or the authorization below).
+- Do not infer authorization to commit, push, publish or resume bench operations from historical notes. Respect the contributor's Git identity.
+
+## Rust conventions
+
+First-party code is the Rust workspace in `crates/`. Keep existing crate names, public protocols and the C ABI unless the task requires a compatibility change. Python tools are being replaced by Rust where sensible; once a Rust port is equivalent, delete the Python tool and its tests.
+
+- **Typed data.** Model JSON with `#[derive(Serialize, Deserialize)]` structs and enums. Use `serde_json::Value` only for JSON that is genuinely opaque: hashed or replayed verbatim, or passed through unread.
+- **Shared formats.** A file one crate writes and another reads gets its type in `wellfed-formats`, not a copy in each reader. Anything hashed goes through `wellfed_formats::canonical`, which fixes the bytes regardless of field order.
+- **Enums, not strings or flags.** Closed sets are enums (with `clap::ValueEnum` for CLI options). Prefer a two-variant enum over a `bool` parameter whose meaning isn't obvious at the call site.
+- **Errors.** Library crates expose a `thiserror` enum; binaries and CLI glue use `anyhow` with context. No `Result<_, String>` and no catch-all string variants where a typed variant fits. Checks go through the crate's `require` helper.
+- **No panics on input.** No `unwrap`/`expect` outside tests unless it guards an invariant the code just established, with the reason in the message. Use `let … else`, `try_from` and `?`.
+- **Narrow visibility.** Default to `pub(crate)`. Use `pub` only for what another crate or an integration test uses.
+- **One helper, one place.** Search before writing hex, hashing, HMAC, report-writing or serial helpers; the workspace already has them.
+- **Firmware.** Firmware crates are `no_std` staticlibs. `unsafe` belongs only at the C ABI and MMIO edge, and each block gets a `// SAFETY:` comment. Changing `repr(C)` types, `#[no_mangle]` symbols, the park/hook RAM code or flash record layouts changes audited binaries: rerun the link, RAM-park and stack audits and keep their pins.
+- **Readable code.** Separate the logical steps in a function body (setup, the work, the result) with a blank line, and break long match arms, tests and builders into paragraphs. Comments and `//!` docs explain why the code exists and how it fits the system (invariants, hardware or protocol constraints, ordering requirements), not what the next line does.
+
+## Compatibility
+
+Old on-disk evidence and stale file fields may break when that makes the code simpler; drop the legacy reader rather than carrying it. Some things are live interop rather than legacy, and must stay exact:
+- formats a current consumer reads (the Python tools still in `tools/`);
+- the stock and replacement firmware wire protocols;
+- canonical JSON that is hashed;
+- every pinned check in the hard rules.
+
+## Checks
+
+| Change | Run |
+| --- | --- |
+| Any Rust edit | `cargo fmt --all`, then `make check PYTHON=.venv/bin/python` (the contributor gate) |
+| Builder, audits, formats or flash review | Also `make check-fixtures PYTHON=.venv/bin/python` against fresh builds (`make -C firmware plaf103 plaf103-firstboot`) |
+| Firmware crates | Also a fresh image build, so its link, RAM-park and stack audits run |
+
+A skipped or missing fixture is not a passing check.
+
+## Owner authorization (October 22, 2026)
+
+For an agent working an owner-assigned firmware task:
+- It may flash any flash region through the reviewed bench tools, as many times as needed.
+- For live tests it may bring the feeder hotspot up and run `wellfed-local serve`, including OTA offers, as a bounded foreground test process.
+- Afterwards it must restore the prior network and service state and record what ran.
+
+This does not cover motor motion, host firewall or system-service changes, publishing outside this repository's remote, or weakening any pinned check above.

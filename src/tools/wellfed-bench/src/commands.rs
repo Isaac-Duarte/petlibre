@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use clap::{Args, ValueEnum};
 use wellfed_formats::canonical::sha256;
-use wellfed_formats::flash_plan::{DevelopmentPlan, GiveWayPlan};
+use wellfed_formats::flash_plan::{DevelopmentPlan, GiveWayPlan, StockRecoveryReviewed};
 use wellfed_formats::manifest::BuildManifest;
 use wellfed_formats::transients::{self, TransientCycle, TransientsManifest};
 use serde::Deserialize;
@@ -103,6 +103,28 @@ pub struct GiveWayExecuteArgs {
     #[arg(long)]
     pub expected_plan_sha256: String,
     #[arg(long, default_value_t = 30.0)]
+    pub boot_seconds: f64,
+}
+
+/// The original stock application back into bank 1 over UART.
+#[derive(Debug, Clone, Args)]
+pub struct StockArgs {
+    /// Session name for private evidence paths.
+    pub name: String,
+    /// Frozen review of bank 0's image. While bank 1 holds a valid image,
+    /// stock recovery refuses, so the session gives way to bank 0 first.
+    #[arg(long)]
+    pub fallback: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct StockExecuteArgs {
+    #[command(flatten)]
+    pub stock: StockArgs,
+    #[arg(long)]
+    pub expected_plan_sha256: String,
+    /// Stock's banner arrives within seconds; its log is long.
+    #[arg(long, default_value_t = 60.0)]
     pub boot_seconds: f64,
 }
 
@@ -766,6 +788,22 @@ impl Bench {
 
     /// Loader, bounded read, give-way inspection and plan; stop for review.
     pub fn give_way_prepare(&mut self, args: &GiveWayArgs) -> Result<u8> {
+        let Some(sha) = self.give_way_plan(args)? else {
+            return Ok(1);
+        };
+
+        let next = format!(
+            "wellfed-bench give-way-execute {} --fallback {} --expected-plan-sha256 {sha}",
+            args.name,
+            args.fallback.display()
+        );
+        say!("Review it, then: {next}");
+        self.status.next(next);
+        Ok(0)
+    }
+
+    /// The give-way plan's SHA-256 once prepared; `None` if a step failed.
+    fn give_way_plan(&mut self, args: &GiveWayArgs) -> Result<Option<String>> {
         let p = Paths::new(&self.root, &args.name);
         for path in [&p.loader, &p.bounded, &p.inspect, &p.plan] {
             self.fresh(path)?;
@@ -792,7 +830,7 @@ impl Bench {
             ),
         ];
         if !self.run_all(&steps)? {
-            return Ok(1);
+            return Ok(None);
         }
 
         let (raw, sha) = self.prepared(&p)?;
@@ -804,15 +842,7 @@ impl Bench {
             self.rel(&p.plan),
             plan.fallback_ota_sha256,
         );
-
-        let next = format!(
-            "wellfed-bench give-way-execute {} --fallback {} --expected-plan-sha256 {sha}",
-            args.name,
-            args.fallback.display()
-        );
-        say!("Review it, then: {next}");
-        self.status.next(next);
-        Ok(0)
+        Ok(Some(sha))
     }
 
     /// Execute a reviewed give-way in the still-powered helper session, then boot.
@@ -845,6 +875,156 @@ impl Bench {
         }
 
         self.boot(&p.boot, args.boot_seconds)?;
+        Ok(0)
+    }
+
+    /// The pinned original stock back into bank 1 over UART (the FW38
+    /// procedure), stopping for review at each plan. With `--fallback`, bank
+    /// 1 still holds a valid image, so this prepares the give-way to that
+    /// bank-0 review first; stock recovery refuses a valid target marker.
+    /// Otherwise: loader, bounded and full reads, then the recovery plan.
+    pub fn stock_prepare(&mut self, args: &StockArgs) -> Result<u8> {
+        if let Some(fallback) = &args.fallback {
+            let give_way = GiveWayArgs {
+                name: give_way_name(&args.name),
+                fallback: fallback.clone(),
+            };
+            let Some(sha) = self.give_way_plan(&give_way)? else {
+                return Ok(1);
+            };
+            let next = format!(
+                "wellfed-bench stock-execute {} --fallback {} --expected-plan-sha256 {sha}",
+                args.name,
+                fallback.display()
+            );
+            say!("Review it, then: {next}");
+            self.status.next(next);
+            return Ok(0);
+        }
+
+        let p = Paths::new(&self.root, &args.name);
+        for path in [&p.loader, &p.bounded, &p.full, &p.plan] {
+            self.fresh(path)?;
+        }
+        self.loader(&p.loader)?;
+
+        let read = self.read_args();
+        let reads = [
+            argv(&["read", "small"], &[&read, &self.out(&p.bounded)]),
+            argv(
+                &["read", "full"],
+                &[
+                    &read,
+                    &self.out(&p.full),
+                    &["--small-report".into(), self.report(&p.bounded)],
+                ],
+            ),
+        ];
+        if !self.run_all(&reads)? {
+            return Ok(1);
+        }
+
+        let current = p.full.join("flash-read.bin");
+        require(
+            !bank1_marker_valid(&current)?,
+            format!(
+                "Bank 1 holds a valid image, which stock recovery refuses; give way first: \
+                 wellfed-bench stock-prepare {} --fallback <bank-0 review>",
+                args.name
+            ),
+        )?;
+
+        let recover = argv(
+            &["stock-recovery", "prepare"],
+            &[
+                &self.evidence_args(&p),
+                &["--current".into(), self.path_arg(&current)],
+                &self.out(&p.plan),
+            ],
+        );
+        if self.run(&recover)? != 0 {
+            return Ok(1);
+        }
+
+        let (raw, sha) = self.prepared(&p)?;
+        let reviewed: StockRecoveryReviewed = serde_json::from_slice(&raw)?;
+        let plan = reviewed.recovery_plan;
+        say!(
+            "Stock plan {}: the pinned original into bank {}, {} sectors changed",
+            self.rel(&p.plan),
+            plan.target_bank,
+            plan.changed_sector_count,
+        );
+
+        let next = format!(
+            "wellfed-bench stock-execute {} --expected-plan-sha256 {sha}",
+            args.name
+        );
+        say!("Review it, then: {next} (about an hour: three 8 MiB reads)");
+        self.status.next(next);
+        Ok(0)
+    }
+
+    /// Execute what `stock-prepare` planned. With `--fallback`, the give-way,
+    /// then boot bank 0 and point at the recovery plan. Otherwise the stock
+    /// recovery, single-use in the still-powered helper session, then a boot
+    /// that must show stock's banner. The capture holds the unit's secrets.
+    pub fn stock_execute(&mut self, args: &StockExecuteArgs) -> Result<u8> {
+        let name = &args.stock.name;
+        if let Some(fallback) = &args.stock.fallback {
+            let give_way = GiveWayExecuteArgs {
+                give_way: GiveWayArgs {
+                    name: give_way_name(name),
+                    fallback: fallback.clone(),
+                },
+                expected_plan_sha256: args.expected_plan_sha256.clone(),
+                boot_seconds: args.boot_seconds,
+            };
+            let code = self.give_way_execute(&give_way)?;
+            if code == 0 {
+                let next = format!("wellfed-bench stock-prepare {name}");
+                say!("Bank 0 runs; bank 1 can take stock now: {next}");
+                self.status.next(next);
+            }
+            return Ok(code);
+        }
+
+        let p = Paths::new(&self.root, name);
+        require(
+            p.plan.is_file() && !p.execute.exists(),
+            "Prepared plan required; execution is single-use",
+        )?;
+        self.require_unbroken_power()?;
+
+        let command = argv(
+            &["stock-recovery", "execute"],
+            &[
+                &self.evidence_args(&p),
+                &[
+                    "--current".into(),
+                    self.path_arg(&p.full.join("flash-read.bin")),
+                    "--plan".into(),
+                    self.path_arg(&p.plan),
+                    "--expected-plan-sha256".into(),
+                    args.expected_plan_sha256.clone(),
+                ],
+                &self.out(&p.execute),
+            ],
+        );
+        if self.run(&command)? != 0 {
+            say!("Stock recovery stopped; the feeder stays powered and is not booted. No retry.");
+            return Ok(1);
+        }
+
+        let seen = self.boot(&p.boot, args.boot_seconds)?;
+        require(
+            seen.stock_startup_markers > 0,
+            "The boot capture shows no stock version banner",
+        )?;
+        say!(
+            "Stock boots from bank 1. {} holds the unit's serial and cloud keys: keep it private.",
+            self.rel(&p.boot)
+        );
         Ok(0)
     }
 
@@ -927,6 +1107,23 @@ fn execute_line(args: &UpdateArgs, sha: &str) -> String {
     line + &format!(" --expected-plan-sha256 {sha}")
 }
 
+/// The give-way session a stock return runs first, beside its own evidence.
+fn give_way_name(name: &str) -> String {
+    format!("{name}-giveway")
+}
+
+/// Whether a full read's bank 1 starts with the loader marker. Stock
+/// recovery refuses a valid one, and only a full read shows it.
+fn bank1_marker_valid(read: &Path) -> Result<bool> {
+    let bytes = fs::read(read)?;
+    let start = usize::try_from(wellfed_core::ota::BANK1_OFFSET)
+        .map_err(|_| Error::Bench("Bank 1 offset out of range".into()))?;
+    let marker = bytes
+        .get(start..start + wellfed_core::ota::MARKER.len())
+        .ok_or_else(|| Error::Bench(format!("{} is not a full read", read.display())))?;
+    Ok(marker == wellfed_core::ota::MARKER)
+}
+
 /// Expected serial bytes (out, back) of a development update, for the
 /// estimated bar. It mirrors the read sequence in wellfed-flash's
 /// `development::run`, so a change there must change this too.
@@ -981,6 +1178,14 @@ pub fn steps(command: &str) -> &'static [&'static str] {
             "wellfed-flash give-way prepare",
         ],
         "give-way-execute" => &["wellfed-flash give-way execute", "boot capture"],
+        // With --fallback, the stock commands run the give-way steps instead.
+        "stock-prepare" => &[
+            "loader entry",
+            READ_SMALL,
+            "wellfed-flash read full",
+            "wellfed-flash stock-recovery prepare",
+        ],
+        "stock-execute" => &["wellfed-flash stock-recovery execute", "boot capture"],
         "ota" => &[
             "wellfed-local ota-sign",
             "wellfed-local ota-offer",

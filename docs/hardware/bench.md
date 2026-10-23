@@ -1,6 +1,6 @@
 # Relay bench control
 
-`petlibre-bench` ([crates/petlibre-bench](../../crates/petlibre-bench)) powers the feeder, enters the ROM loader and chains the [Rust UART flash client](../development/rust-flash.md). It adds power and strap control only. Serial reads, inspections, plans and writes run as separate `petlibre-flash` processes, so their pinned checks, plan hashes and no-retry stops apply unchanged. Running it is a physical bench operation; build and check targets never call it.
+`petlibre-bench` ([crates/tools/petlibre-bench](../../crates/tools/petlibre-bench)) powers the feeder, enters the ROM loader and chains the [Rust UART flash client](../development/rust-flash.md). It adds power and strap control only. Serial reads, inspections, plans and writes run as separate `petlibre-flash` processes, so their pinned checks, plan hashes and no-retry stops apply unchanged. Running it is a physical bench operation; build and check targets never call it.
 
 Build both binaries together; the bench runs the `petlibre-flash` beside itself unless `--flash-bin` names another:
 

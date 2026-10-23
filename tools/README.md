@@ -2,7 +2,7 @@
 
 Scripts are grouped by what they do. Run them from the repository root with the project environment, for example `.venv/bin/python tools/flash/review-development-image.py --help`. Install `requirements-probe.txt` for checks and emulation, and also `requirements-hardware.txt` for serial access.
 
-What stays in Python, on purpose: stock recovery (the Rust port has not run it on hardware or under emulation), the unicorn emulations of vendor code (factory loader, ROM, flash helper), and the image review (it calls `petlibre-build` for the build's inputs and linked-code audits). Everything else is Rust, including the firmware build (`crates/petlibre-build`).
+What stays in Python, on purpose: stock recovery (the Rust port has not run it on hardware or under emulation), the unicorn emulations of vendor code (factory loader, ROM, flash helper), and the image review (it calls `petlibre-build` for the build's inputs and linked-code audits). Everything else is Rust, including the firmware build (`crates/tools/petlibre-build`).
 
 **Device** marks the only scripts that open a serial port. Everything else works offline. Physical operations need an explicit task and a reviewed procedure (see [AGENTS.md](../AGENTS.md)); a script being here does not authorize running it against the feeder.
 
@@ -14,7 +14,7 @@ What stays in Python, on purpose: stock recovery (the Rust port has not run it o
 
 ## Bench: relay control and progress
 
-The relay bench is the Rust binary `petlibre-bench` ([crates/petlibre-bench](../crates/petlibre-bench), [guide](../docs/hardware/bench.md)). It switches power and the loader strap, chains `petlibre-flash` for captures, dumps and updates, and serves the read-only progress page with `--ui`. `petlibre-bench demo` clicks the spare relays.
+The relay bench is the Rust binary `petlibre-bench` ([crates/tools/petlibre-bench](../crates/tools/petlibre-bench), [guide](../docs/hardware/bench.md)). It switches power and the loader strap, chains `petlibre-flash` for captures, dumps and updates, and serves the read-only progress page with `--ui`. `petlibre-bench demo` clicks the spare relays.
 
 ## Flash: reads, updates and recovery
 
@@ -35,7 +35,7 @@ The two `uart-*` clients own the serial port. The [Rust client](../docs/developm
 
 ## Audit: captures, images and flash
 
-The capture auditors (startup, FW14 ADC, FW30 driver transients) and the full-flash comparison are the Rust binary `petlibre-audit` ([crates/petlibre-audit](../crates/petlibre-audit)). They check a finalized receive-only capture against the build manifest and image it claims to run, and write evidence only under `private/`. The scripts left here emulate vendor code under unicorn or serve the firmware build.
+The capture auditors (startup, FW14 ADC, FW30 driver transients) and the full-flash comparison are the Rust binary `petlibre-audit` ([crates/tools/petlibre-audit](../crates/tools/petlibre-audit)). They check a finalized receive-only capture against the build manifest and image it claims to run, and write evidence only under `private/`. The scripts left here emulate vendor code under unicorn or serve the firmware build.
 
 | Script | Purpose |
 | --- | --- |

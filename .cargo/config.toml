@@ -1,3 +1,3 @@
 [alias]
-# Repository maintenance tasks (crates/xtask): `cargo xtask check-repository`.
+# Repository maintenance tasks (crates/tools/xtask): `cargo xtask check-repository`.
 xtask = "run --quiet --locked -p xtask --"

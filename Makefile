@@ -26,8 +26,8 @@ check-rust:
 	cargo test --locked --workspace --all-targets
 
 check-cross:
-	cargo build --locked -p petlibre-ffi --release --target thumbv8m.main-none-eabihf
-	PETLIBRE_BUILD_ID=$$(cargo run --quiet --locked --release -p petlibre-build -- source-id) cargo build --locked -p petlibre-ffi --release --target thumbv8m.base-none-eabi --features km0
+	cargo build --locked -p petlibre-sdk-c --release --target thumbv8m.main-none-eabihf
+	PETLIBRE_BUILD_ID=$$(cargo run --quiet --locked --release -p petlibre-build -- source-id) cargo build --locked -p petlibre-sdk-c --release --target thumbv8m.base-none-eabi --features km0
 
 check-python:
 	$(PYTHON) tools/check-python.py

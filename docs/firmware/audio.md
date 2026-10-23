@@ -29,7 +29,7 @@ From the stock KM4 image (`DL_AUDIO`, `audio_play_http_file`):
   - Tunes: `chime` (startup), `meal`, `coin`, `alert`, `test` (1 kHz for 1 s) and `twinkle`. Each lasts under 6 s.
   - **Loudness** follows the FW15 `volume` on a decibel scale: 0 is silent, then 0.3 dB per step up to a peak of 16000 (about −6 dBFS) at 100.
   - A linear scale was tried first; 40 and 80 sounded almost alike on the unit.
-- **Speaker task** (`petlibre-amebad/src/audio.rs`, task `petlibre-aud`, priority 2, normal role only):
+- **Speaker task** (`petlibre-hal/src/audio.rs`, task `petlibre-aud`, priority 2, normal role only):
   - A one-slot mailbox holds the tune, and the slot stays taken until playback ends, so a second request is `busy` rather than queued.
   - **Per tune:** open the codec, set PB23 HIGH, play 60 ms of silence while the amplifier settles, stream the tune, wait for the ring to drain (at most 400 ms), then set PB23 LOW and close.
   - **Bounded:** a ring that stops draining still ends playback at the tune's length plus 1 s, so the amplifier is never left on.
@@ -47,7 +47,7 @@ The transport reaches only `audio::request` (`cargo xtask check-repository` pins
 
 ## Speaker variant (network audio)
 
-`petlibre-build plaf103-firstboot --speaker` (or `petlibre-bench ota NAME --build --variant speaker`) builds the normal image plus a stream task (`petlibre-amebad/src/stream.rs`, task `petlibre-spk`). Motion is untouched, and OTA, recovery and confirmation work as in the normal image.
+`petlibre-build plaf103-firstboot --speaker` (or `petlibre-bench ota NAME --build --variant speaker`) builds the normal image plus a stream task (`petlibre-hal/src/stream.rs`, task `petlibre-spk`). Motion is untouched, and OTA, recovery and confirmation work as in the normal image.
 - **Handshake:** the task listens on TCP 7700, one client at a time. It sends a `PLSPK1` hello with a fresh challenge, and the client answers with a header (sample rate 8, 16, 32 or 48 kHz) and an HMAC under the FW08 request key (`petlibre-core/src/speaker_stream.rs`). The feeder replies with one status byte: `ok`, `unauthenticated`, `bad_header`, `busy` or `muted`. An image without a request key refuses every stream.
 - **Stream:**
   - After `ok`, the connection is raw 16-bit little-endian mono PCM.

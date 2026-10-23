@@ -1511,28 +1511,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
-name = "petlibre-amebad"
-version = "0.1.0"
-dependencies = [
- "ed25519-dalek",
- "petlibre-amebad-common",
- "petlibre-amebad-sdk",
- "petlibre-core",
- "petlibre-testkit",
- "sha2 0.10.9",
-]
-
-[[package]]
-name = "petlibre-amebad-common"
-version = "0.1.0"
-dependencies = [
- "cortex-m",
- "petlibre-amebad-sdk",
- "petlibre-core",
-]
-
-[[package]]
-name = "petlibre-amebad-sdk"
+name = "petlibre-amebad-sys"
 version = "0.1.0"
 dependencies = [
  "bindgen",
@@ -1606,25 +1585,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "petlibre-ffi"
-version = "0.1.0"
-dependencies = [
- "petlibre-amebad",
- "petlibre-amebad-common",
- "petlibre-core",
- "petlibre-firstboot",
- "petlibre-testkit",
-]
-
-[[package]]
-name = "petlibre-firstboot"
-version = "0.1.0"
-dependencies = [
- "petlibre-amebad",
- "petlibre-core",
-]
-
-[[package]]
 name = "petlibre-flash"
 version = "0.1.0"
 dependencies = [
@@ -1649,6 +1609,35 @@ dependencies = [
  "serde_json",
  "sha2 0.11.1",
  "thiserror",
+]
+
+[[package]]
+name = "petlibre-fw-reference"
+version = "0.1.0"
+dependencies = [
+ "petlibre-core",
+ "petlibre-hal",
+]
+
+[[package]]
+name = "petlibre-hal"
+version = "0.1.0"
+dependencies = [
+ "ed25519-dalek",
+ "petlibre-amebad-sys",
+ "petlibre-core",
+ "petlibre-hal-common",
+ "petlibre-testkit",
+ "sha2 0.10.9",
+]
+
+[[package]]
+name = "petlibre-hal-common"
+version = "0.1.0"
+dependencies = [
+ "cortex-m",
+ "petlibre-amebad-sys",
+ "petlibre-core",
 ]
 
 [[package]]
@@ -1681,14 +1670,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "petlibre-sdk-c"
+version = "0.1.0"
+dependencies = [
+ "petlibre-core",
+ "petlibre-fw-reference",
+ "petlibre-hal",
+ "petlibre-hal-common",
+ "petlibre-testkit",
+]
+
+[[package]]
 name = "petlibre-sim"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "petlibre-amebad",
  "petlibre-core",
  "petlibre-formats",
+ "petlibre-hal",
  "petlibre-testkit",
  "serde",
  "serde_json",

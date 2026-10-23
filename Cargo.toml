@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/*"]
+members = ["crates/sdk/*", "crates/tools/*", "firmwares/*"]
 resolver = "3"
 
 [workspace.package]
@@ -9,13 +9,13 @@ license = "MIT"
 publish = false
 
 [workspace.dependencies]
-petlibre-amebad = { path = "crates/petlibre-amebad" }
-petlibre-amebad-common = { path = "crates/petlibre-amebad-common" }
-petlibre-amebad-sdk = { path = "crates/petlibre-amebad-sdk" }
-petlibre-core = { path = "crates/petlibre-core" }
-petlibre-firstboot = { path = "crates/petlibre-firstboot" }
-petlibre-formats = { path = "crates/petlibre-formats" }
-petlibre-testkit = { path = "crates/petlibre-testkit" }
+petlibre-hal = { path = "crates/sdk/petlibre-hal" }
+petlibre-hal-common = { path = "crates/sdk/petlibre-hal-common" }
+petlibre-amebad-sys = { path = "crates/sdk/petlibre-amebad-sys" }
+petlibre-core = { path = "crates/sdk/petlibre-core" }
+petlibre-fw-reference = { path = "firmwares/reference" }
+petlibre-formats = { path = "crates/tools/petlibre-formats" }
+petlibre-testkit = { path = "crates/sdk/petlibre-testkit" }
 # Host tools.
 anyhow = "1.0.104"
 axum = "0.8.9"

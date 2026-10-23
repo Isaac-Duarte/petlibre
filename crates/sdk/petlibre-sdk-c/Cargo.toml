@@ -1,0 +1,32 @@
+[package]
+license.workspace = true
+name = "petlibre-sdk-c"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "C ABI for linking the Rust replacement firmware into the AmebaD SDK"
+publish.workspace = true
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[features]
+# Link the AmebaD ports for one core (target builds from petlibre-build).
+km0 = ["dep:petlibre-hal-common", "petlibre-hal-common/km0"]
+km4 = ["dep:petlibre-hal", "dep:petlibre-fw-reference", "petlibre-fw-reference/km4"]
+fw16-pulse = ["km4", "petlibre-fw-reference/fw16-pulse"]
+fw11-reset = ["km4", "petlibre-fw-reference/fw11-reset"]
+fw11-fail = ["km4", "petlibre-fw-reference/fw11-fail"]
+speaker = ["km4", "petlibre-fw-reference/speaker"]
+
+[dependencies]
+petlibre-core.workspace = true
+petlibre-hal = { workspace = true, optional = true }
+petlibre-hal-common = { workspace = true, optional = true }
+petlibre-fw-reference = { workspace = true, optional = true }
+
+[dev-dependencies]
+petlibre-testkit.workspace = true
+
+[lints]
+workspace = true

@@ -1,4 +1,4 @@
-"""The Rust flash client (crates/petlibre-flash) with the remaining Python tools.
+"""The Rust flash client (crates/tools/petlibre-flash) with the remaining Python tools.
 
 Without fixtures: status decoding and journal hashing agree with the Python
 stock-recovery modules, which still read the same journals. With fixtures: the
@@ -6,7 +6,7 @@ binary drives the pinned vendor helper under emulation, writes exactly the
 target, and its journal passes the Python journal inspector. No device opens.
 The plan and wire comparisons against the former Python updater are retired:
 the client matched it in emulation and on the research unit (FW32), and
-crates/petlibre-flash/src/tests.rs restates the wire policy independently.
+crates/tools/petlibre-flash/src/tests.rs restates the wire policy independently.
 """
 import hashlib
 import importlib.util

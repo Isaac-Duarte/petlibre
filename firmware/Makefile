@@ -16,4 +16,4 @@ bootstrap baseline bringup plaf103 plaf103-firstboot:
 	../target/release/petlibre-build $@
 
 test:
-	cargo test --locked -p petlibre-core -p petlibre-amebad-common -p petlibre-amebad -p petlibre-firstboot -p petlibre-ffi
+	cargo test --locked -p petlibre-core -p petlibre-hal-common -p petlibre-hal -p petlibre-fw-reference -p petlibre-sdk-c

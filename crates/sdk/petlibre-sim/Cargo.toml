@@ -1,0 +1,27 @@
+[package]
+license.workspace = true
+name = "petlibre-sim"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "Virtual feeder worker: the real owner on the fake SDK with a file-backed journal"
+publish.workspace = true
+
+[[bin]]
+name = "virtual-feeder-worker"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+petlibre-hal.workspace = true
+petlibre-core.workspace = true
+petlibre-formats.workspace = true
+petlibre-testkit.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

@@ -1,6 +1,6 @@
 # FW21 wall clock and missed-time policy
 
-Status: implemented and host-tested (`petlibre-core/src/wall_clock.rs`, `petlibre-amebad/src/clock.rs`, the server's `replacement.rs`). Hardware evidence is recorded on the [board](../../FIRMWARE_BOARD.md).
+Status: implemented and host-tested (`petlibre-core/src/wall_clock.rs`, `petlibre-hal/src/clock.rs`, the server's `replacement.rs`). Hardware evidence is recorded on the [board](../../FIRMWARE_BOARD.md).
 
 ## Source of time
 

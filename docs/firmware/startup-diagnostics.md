@@ -13,7 +13,7 @@ PLFW1 result diagnostic=pass backend=unopened
 
 Live RSIP mapping entry 0 identifies bank 0 or 1 when virtual `0x0c000000` maps to `0x08006000` or `0x08186000`; other mappings report unknown. Raw mapping and factory-preserved reset flags remain in the report. A zero reset word does not establish a particular physical reset cause.
 
-`petlibre-audit startup` ([crates/petlibre-audit](../../crates/petlibre-audit), a port of the former `audit-firmware-startup.py` with the same outcomes and report fields) verifies the frozen OTA/manifest, embedded identity, finalized receive-only capture hashes, event coverage, actual bank mapping, ordering, and observation interval. Missing/wrong build, faults, incomplete or malformed records, repeated startup, and policy-specific failures are distinct failing outcomes. It emits fixed fields rather than arbitrary device text. Example using your own complete evidence bundles:
+`petlibre-audit startup` ([crates/tools/petlibre-audit](../../crates/tools/petlibre-audit), a port of the former `audit-firmware-startup.py` with the same outcomes and report fields) verifies the frozen OTA/manifest, embedded identity, finalized receive-only capture hashes, event coverage, actual bank mapping, ordering, and observation interval. Missing/wrong build, faults, incomplete or malformed records, repeated startup, and policy-specific failures are distinct failing outcomes. It emits fixed fields rather than arbitrary device text. Example using your own complete evidence bundles:
 
 ```sh
 cargo run --locked -p petlibre-audit -- startup \

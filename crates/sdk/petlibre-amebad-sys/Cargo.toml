@@ -1,0 +1,26 @@
+[package]
+license.workspace = true
+name = "petlibre-amebad-sys"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "Pinned AmebaD SDK calls for the PLAF103 ports, with a deterministic host fake"
+publish.workspace = true
+build = "build.rs"
+
+[features]
+# Generate SDK bindings from the pinned AmebaD headers (target builds only).
+# Requires PETLIBRE_SDK_DIR and PETLIBRE_NEWLIB_INCLUDE; set by petlibre-build.
+sdk = ["dep:bindgen"]
+# Select the core; only KM4 calls the SDK.
+km0 = []
+km4 = []
+
+[target.'cfg(target_os = "none")'.dependencies]
+cortex-m.workspace = true
+
+[build-dependencies]
+bindgen = { version = "0.72.1", optional = true, default-features = false, features = ["runtime"] }
+
+[lints]
+workspace = true

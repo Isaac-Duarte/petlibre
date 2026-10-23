@@ -1,0 +1,24 @@
+[package]
+license.workspace = true
+name = "petlibre-hal-common"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "Experimental PLAF103 AmebaD routines both cores link: flash park, SDK flash hooks, the KM0 park peer and the OTA trial step"
+publish.workspace = true
+build = "build.rs"
+
+[features]
+# Select the core whose exported routines and MMIO owner encoding apply.
+km0 = ["petlibre-amebad-sys/km0"]
+km4 = ["petlibre-amebad-sys/km4"]
+
+[dependencies]
+petlibre-amebad-sys.workspace = true
+petlibre-core.workspace = true
+
+[target.'cfg(target_os = "none")'.dependencies]
+cortex-m.workspace = true
+
+[lints]
+workspace = true

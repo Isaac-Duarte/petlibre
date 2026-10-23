@@ -258,6 +258,10 @@ pub enum Record {
         kind: ErrorKind,
         n: u32,
         fault: u32,
+        /// Milliseconds since the last good sample: how long the task was
+        /// away when the owner lease (300 ms) ran out. `None` without a
+        /// readable clock.
+        stall_ms: Option<u32>,
     },
 }
 
@@ -383,8 +387,17 @@ pub fn describe(record: Record, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         }
 
         Record::Done { windows } => write!(f, "done windows={windows}"),
-        Record::Error { kind, n, fault } => {
-            write!(f, "error kind={} n={n} fault={fault}", kind.name())
+        Record::Error {
+            kind,
+            n,
+            fault,
+            stall_ms,
+        } => {
+            write!(f, "error kind={} n={n} fault={fault} stall=", kind.name())?;
+            match stall_ms {
+                Some(ms) => write!(f, "{ms}"),
+                None => f.write_str("-"),
+            }
         }
     }
 }
@@ -466,6 +479,10 @@ impl Probe {
     /// that, left retrying from its timer); then the error record.
     fn fail(&mut self, kind: ErrorKind) -> Step {
         let fault = self.events.fault.0;
+        let stall_ms = self
+            .events
+            .now_ms()
+            .map(|now| now.wrapping_sub(self.last_ms));
         if self.events.opened {
             self.events.close();
         } else {
@@ -477,6 +494,7 @@ impl Probe {
             kind,
             n: self.window.n,
             fault,
+            stall_ms,
         })
     }
 

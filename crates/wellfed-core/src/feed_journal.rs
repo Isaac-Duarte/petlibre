@@ -13,8 +13,8 @@ use crate::feed_controller::{FeedReason, FeedRequest};
 use crate::feed_progress::{BowlMode, Direction};
 use crate::feed_storage::{OwnerOutcome, OwnerRecovery, OwnerResult, OwnerStorage};
 use crate::storage::{
-    COMMIT, COMMIT_AT, CRC_AT, JournalIo, LENGTH_AT, RECORD_BYTES, VERSION_AT, crc32, get_u16,
-    get_u32, get_u64, put_u16, put_u32, put_u64,
+    COMMIT, COMMIT_AT, COMMIT_OFFSET, CRC_AT, JournalIo, LENGTH_AT, RECORD_BYTES, RECORD_LEN,
+    TAIL_CHUNK, VERSION_AT, crc32, get_u16, get_u32, get_u64, put_u16, put_u32, put_u64,
 };
 
 const GENESIS: u8 = 0;
@@ -157,7 +157,7 @@ impl FeedJournal {
         let mut p = [0u8; RECORD_BYTES];
         p[..8].copy_from_slice(&MAGIC);
         put_u16(&mut p[VERSION_AT..], 1);
-        put_u16(&mut p[LENGTH_AT..], RECORD_BYTES as u16);
+        put_u16(&mut p[LENGTH_AT..], RECORD_LEN);
 
         p[12] = if v.recovery.pending_request {
             INTENT
@@ -166,8 +166,8 @@ impl FeedJournal {
         } else {
             GENESIS
         };
-        p[13] = self.config.mode.0 as u8;
-        p[14] = v.recovery.direction.0 as u8;
+        p[13] = self.config.mode.low_byte();
+        p[14] = v.recovery.direction.low_byte();
         p[15] = u8::from(v.recovery.credit_next_event)
             | (u8::from(v.recovery.phase_known) << 1)
             | (u8::from(v.result.motion_possible) << 2);
@@ -178,8 +178,8 @@ impl FeedJournal {
 
         put_u16(&mut p[40..], v.result.requested);
         put_u16(&mut p[42..], v.result.completed);
-        p[44] = v.result.outcome.0 as u8;
-        p[45] = v.result.reason.0 as u8;
+        p[44] = v.result.outcome.low_byte();
+        p[45] = v.result.reason.low_byte();
         put_u16(&mut p[46..], self.config.max_portions);
 
         let checksum = crc32(&p[..CRC_AT]);
@@ -194,7 +194,7 @@ impl FeedJournal {
             || get_u16(&p[VERSION_AT..]) != 1
             || usize::from(get_u16(&p[LENGTH_AT..])) != RECORD_BYTES
             || p[12] > RESULT
-            || p[13] != self.config.mode.0 as u8
+            || p[13] != self.config.mode.low_byte()
             || p[14] > 1
             || p[15] > 7
             || get_u64(&p[24..]) != self.config.binding
@@ -297,16 +297,17 @@ impl FeedJournal {
             return None;
         }
 
-        let mut offset = RECORD_BYTES as u32;
+        let mut offset = u32::from(RECORD_LEN);
         while offset < self.io.unit_bytes {
-            let size = ((self.io.unit_bytes - offset) as usize).min(tail.len());
+            let chunk = (self.io.unit_bytes - offset).min(TAIL_CHUNK);
+            let size = chunk as usize;
             if !self.io.read(slot, offset, &mut tail[..size]) {
                 return None;
             }
             if !all(&tail[..size], u8::MAX) {
                 return Some((Scan::Invalid, None));
             }
-            offset += size as u32;
+            offset += chunk;
         }
 
         if all(&record, u8::MAX) {
@@ -362,7 +363,7 @@ impl FeedJournal {
             return self.fail(JournalError::CORRUPT);
         }
 
-        self.slot = slot as c_uint;
+        self.slot = c_uint::from(slot == 1);
         self.view = views[slot];
         self.opened = true;
         self.error = JournalError::OK;
@@ -380,7 +381,7 @@ impl FeedJournal {
             && self.io.read(slot, 0, &mut checked)
             && bytes[..COMMIT_AT] == checked[..COMMIT_AT]
             && all(&checked[COMMIT_AT..], u8::MAX)
-            && self.io.program(slot, COMMIT_AT as u32, &COMMIT)
+            && self.io.program(slot, COMMIT_OFFSET, &COMMIT)
             && self.io.read(slot, 0, &mut checked)
             && bytes == checked;
 

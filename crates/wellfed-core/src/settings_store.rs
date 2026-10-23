@@ -16,8 +16,8 @@ use core::ffi::c_uint;
 
 use crate::feed_progress::BowlMode;
 use crate::storage::{
-    COMMIT, COMMIT_AT, CRC_AT, JournalIo, LENGTH_AT, RECORD_BYTES, VERSION_AT, crc32, get_u16,
-    get_u32, get_u64, put_u16, put_u32, put_u64,
+    COMMIT, COMMIT_AT, COMMIT_OFFSET, CRC_AT, JournalIo, LENGTH_AT, RECORD_BYTES, RECORD_LEN,
+    TAIL_CHUNK, VERSION_AT, crc32, get_u16, get_u32, get_u64, put_u16, put_u32, put_u64,
 };
 
 pub const VERSION: u16 = 1;
@@ -152,11 +152,11 @@ impl SettingsStore {
         let mut p = [0u8; RECORD_BYTES];
         p[..8].copy_from_slice(&MAGIC);
         put_u16(&mut p[VERSION_AT..], VERSION);
-        put_u16(&mut p[LENGTH_AT..], RECORD_BYTES as u16);
+        put_u16(&mut p[LENGTH_AT..], RECORD_LEN);
         put_u64(&mut p[12..], generation);
         put_u64(&mut p[20..], self.binding);
 
-        p[28] = s.bowl_mode.0 as u8;
+        p[28] = s.bowl_mode.low_byte();
         p[29] = u8::from(s.lights) | (u8::from(s.sound) << 1);
         p[30] = s.volume;
         put_u16(&mut p[32..], s.utc_offset_minutes as u16);
@@ -212,15 +212,16 @@ impl SettingsStore {
         }
 
         let mut tail = [0u8; 64];
-        let mut offset = RECORD_BYTES as u32;
+        let mut offset = u32::from(RECORD_LEN);
         let mut tail_erased = true;
         while offset < self.io.unit_bytes {
-            let size = ((self.io.unit_bytes - offset) as usize).min(tail.len());
+            let chunk = (self.io.unit_bytes - offset).min(TAIL_CHUNK);
+            let size = chunk as usize;
             if !self.io.read(slot, offset, &mut tail[..size]) {
                 return None;
             }
             tail_erased &= tail[..size].iter().all(|&b| b == u8::MAX);
-            offset += size as u32;
+            offset += chunk;
         }
 
         let erased = record.iter().all(|&b| b == u8::MAX);
@@ -331,7 +332,7 @@ impl SettingsStore {
             && self.io.read(slot, 0, &mut checked)
             && bytes[..COMMIT_AT] == checked[..COMMIT_AT]
             && checked[COMMIT_AT..].iter().all(|&b| b == u8::MAX)
-            && self.io.program(slot, COMMIT_AT as u32, &COMMIT)
+            && self.io.program(slot, COMMIT_OFFSET, &COMMIT)
             && self.io.read(slot, 0, &mut checked)
             && bytes == checked;
 

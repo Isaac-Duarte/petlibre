@@ -151,7 +151,11 @@ pub fn publish(store: &NetStore, armed: bool) {
         Ordering::Release,
     );
     STORED.store(store.credentials.is_some(), Ordering::Release);
-    GENERATION.store(store.generation as u32, Ordering::Release);
+    // Health reports the low 32 bits; saturate rather than wrap to an old value.
+    GENERATION.store(
+        u32::try_from(store.generation).unwrap_or(u32::MAX),
+        Ordering::Release,
+    );
     WRITABLE.store(armed && store.writable(), Ordering::Release);
     LOADED.store(true, Ordering::Release);
 }
@@ -249,9 +253,9 @@ pub unsafe extern "C" fn wellfed_wifi_select(out: *mut JoinCredentials) {
     out.source = u32::from(code);
     if let (WifiSource::Stored, Some(c)) = (choice, join.stored.as_ref()) {
         out.ssid = c.ssid().as_ptr();
-        out.ssid_len = c.ssid().len() as u32;
+        out.ssid_len = u32::try_from(c.ssid().len()).unwrap_or(0);
         out.psk = c.psk().as_ptr();
-        out.psk_len = c.psk().len() as u32;
+        out.psk_len = u32::try_from(c.psk().len()).unwrap_or(0);
     }
 }
 

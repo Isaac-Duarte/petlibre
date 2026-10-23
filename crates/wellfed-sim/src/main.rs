@@ -263,7 +263,9 @@ unsafe extern "C" fn read_io(
     bytes: *mut c_void,
     size: usize,
 ) -> bool {
-    let read = unsafe { (*w()).base_io.read.unwrap() };
+    // SAFETY: the worker's world outlives every journal callback.
+    let read = unsafe { (*w()).base_io.read }.expect("the base flash reads");
+    // SAFETY: forwards the journal's own arguments to the base flash.
     let ok = unsafe { read(context, slot, offset, bytes, size) };
     io_event(IoOperation::Read, IoStage::End, slot, offset, size, ok);
     ok
@@ -287,7 +289,9 @@ unsafe extern "C" fn program_io(
         size,
         false,
     );
-    let program = unsafe { (*w()).base_io.program.unwrap() };
+    // SAFETY: the worker's world outlives every journal callback.
+    let program = unsafe { (*w()).base_io.program }.expect("the base flash programs");
+    // SAFETY: forwards the journal's own arguments to the base flash.
     let ok = unsafe { program(context, slot, offset, bytes, size) };
     io_event(IoOperation::Program, IoStage::End, slot, offset, size, ok);
     ok
@@ -296,7 +300,9 @@ unsafe extern "C" fn program_io(
 unsafe extern "C" fn erase_io(context: *mut c_void, slot: c_uint) -> bool {
     assert!(motor() == 0 && optics() == 0);
     io_event(IoOperation::Erase, IoStage::Begin, slot, 0, UNIT, false);
-    let erase = unsafe { (*w()).base_io.erase.unwrap() };
+    // SAFETY: the worker's world outlives every journal callback.
+    let erase = unsafe { (*w()).base_io.erase }.expect("the base flash erases");
+    // SAFETY: forwards the journal's own arguments to the base flash.
     let ok = unsafe { erase(context, slot) };
     io_event(IoOperation::Erase, IoStage::End, slot, 0, UNIT, ok);
     ok
@@ -343,7 +349,8 @@ unsafe extern "C" fn recover(_: *mut c_void, value: *mut OwnerRecovery) -> bool 
     storage_begin(StoragePhase::Recover);
     let s = journal_storage();
     // SAFETY: the journal storage callbacks with a live output pointer.
-    let ok = unsafe { (*w()).opened && s.recover.unwrap()(s.context, value) };
+    let ok =
+        unsafe { (*w()).opened && s.recover.expect("journal storage recovers")(s.context, value) };
     storage_end(ok);
     ok
 }
@@ -352,7 +359,7 @@ unsafe extern "C" fn reserve(_: *mut c_void, request: *const FeedRequest) -> boo
     storage_begin(StoragePhase::Reserve);
     let s = journal_storage();
     // SAFETY: as for `recover`.
-    let ok = unsafe { s.reserve.unwrap()(s.context, request) };
+    let ok = unsafe { s.reserve.expect("journal storage reserves")(s.context, request) };
     storage_end(ok);
     ok
 }
@@ -365,7 +372,7 @@ unsafe extern "C" fn finish(
     storage_begin(StoragePhase::Finish);
     let s = journal_storage();
     // SAFETY: as for `recover`.
-    let ok = unsafe { s.finish.unwrap()(s.context, result, phase) };
+    let ok = unsafe { s.finish.expect("journal storage finishes")(s.context, result, phase) };
     storage_end(ok);
     ok
 }
@@ -541,7 +548,8 @@ fn main() {
             release_ms: 10,
             total_ms: 40,
         };
-        (*world).authority = FlashCoord::new(&limits, 17, 0).unwrap();
+        (*world).authority =
+            FlashCoord::new(&limits, 17, 0).expect("the simulated limits are valid");
         assert_eq!(
             (*world).authority.ready(17, 29, true, 0),
             FlashReply::ACCEPTED

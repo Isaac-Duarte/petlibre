@@ -7,6 +7,9 @@
 //! Starting the service redirects no traffic; `network apply` is the separate,
 //! privileged step that does.
 
+#![forbid(unsafe_code)]
+#![warn(clippy::print_stdout)]
+
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result, bail};

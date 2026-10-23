@@ -78,7 +78,7 @@ pub fn sign(
     let payload = payload(container)?;
     let image_len = u32::try_from(payload.len()).context("image too large")?;
     ensure!(
-        (ota::SECTOR as u32..=ota::BANK1_BYTES).contains(&image_len),
+        (ota::SECTOR_BYTES..=ota::BANK1_BYTES).contains(&image_len),
         "image outside the reviewed bank-1 size bound"
     );
 
@@ -124,7 +124,13 @@ impl Offer {
         let payload = self::payload(container)?.to_vec();
         // Offsets follow `ota::manifest_body`: version at 8, image length at 12 and
         // the SHA-256 at 20..52.
-        let field = |at: usize| u32::from_le_bytes(manifest[at..at + 4].try_into().unwrap());
+        let field = |at: usize| {
+            u32::from_le_bytes(
+                *manifest[at..]
+                    .first_chunk()
+                    .expect("inside the checked manifest"),
+            )
+        };
         ensure!(
             field(12) as usize == payload.len(),
             "manifest length differs from the image"
@@ -198,8 +204,13 @@ impl Offer {
             }
         };
 
-        let mut out =
-            ota::encode_data_header(part, ota::Status::Ok, offset, body.len() as u32).to_vec();
+        let mut out = ota::encode_data_header(
+            part,
+            ota::Status::Ok,
+            offset,
+            u32::try_from(body.len()).ok()?,
+        )
+        .to_vec();
         out.extend_from_slice(body);
         Some(out)
     }

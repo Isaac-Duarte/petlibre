@@ -171,7 +171,7 @@ fn feed_command() {
     let id = Uuid::parse_str(ID).unwrap();
     let (_, command) = controller
         .feed(
-            FeedInput {
+            &FeedInput {
                 request_id: id,
                 portions: 1,
             },

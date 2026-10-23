@@ -13,6 +13,8 @@
 //! Each report is a typed struct whose fields are the report's keys; an
 //! audit's sub-checks are flattened into it, so the JSON stays one object.
 
+#![forbid(unsafe_code)]
+
 pub mod adc;
 pub mod backup;
 pub(crate) mod capture;

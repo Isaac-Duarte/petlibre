@@ -8,6 +8,8 @@ use core::ffi::{c_uint, c_void};
 use core::ptr;
 
 pub const RECORD_BYTES: usize = 128;
+/// [`RECORD_BYTES`] as the header's length field stores it.
+pub(crate) const RECORD_LEN: u16 = 128;
 pub(crate) const COMMIT: [u8; 4] = *b"CMIT";
 
 /// The header every store's record shares after its 8-byte magic: the format
@@ -18,8 +20,13 @@ pub(crate) const LENGTH_AT: usize = 10;
 pub(crate) const CRC_AT: usize = 120;
 /// `COMMIT`, programmed last, after the rest of the record verified.
 pub(crate) const COMMIT_AT: usize = 124;
+/// [`COMMIT_AT`] as a slot offset.
+pub(crate) const COMMIT_OFFSET: u32 = 124;
+/// How much of a unit's erased tail a scan reads at once.
+pub(crate) const TAIL_CHUNK: u32 = 64;
 
 const _: () = assert!(COMMIT_AT == CRC_AT + 4 && RECORD_BYTES == COMMIT_AT + COMMIT.len());
+const _: () = assert!(RECORD_LEN as usize == RECORD_BYTES && COMMIT_OFFSET as usize == COMMIT_AT);
 
 pub type ReadFn = unsafe extern "C" fn(
     context: *mut c_void,

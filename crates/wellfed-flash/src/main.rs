@@ -5,6 +5,8 @@
 //! after the port was opened (inspect the evidence; nothing is retried), 2
 //! refused before any serial access.
 
+#![forbid(unsafe_code)]
+
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::atomic::Ordering;

@@ -30,6 +30,7 @@ use wellfed_core::feed_controller::{FeedController, FeedLimits};
 use wellfed_core::flash_coord::{FlashCoord, FlashReply};
 use wellfed_core::sensor_inputs::{SensorFilter, SensorInputs, SensorLimits, SensorReading};
 
+use super::{elapsed_ms, ticks_ms};
 use wellfed_amebad::board::{self, Board, MOTOR_MASK};
 use wellfed_amebad::config::{FLASH_LIMITS, SYSTIMER_HZ};
 use wellfed_amebad::events::{Events, EventsConfig, EventsFault, EventsSnapshot};
@@ -91,6 +92,7 @@ pub const OFF_MS: u32 = 5000;
 pub const CYCLES: u32 = 3;
 /// Announced in the start record and bound to the startup policy.
 pub const PLAN: u32 = 2;
+#[expect(clippy::cast_possible_truncation, reason = "a handful of cycle steps")]
 pub const WINDOWS: u32 = 1 + CYCLES * 2 * CYCLE.len() as u32;
 
 /// Budget over a window's length; the probe turns the emitters off first.
@@ -439,11 +441,6 @@ fn next(delay_ms: u32, record: Option<Record>) -> Step {
     Step { delay_ms, record }
 }
 
-fn elapsed_ms(since_raw: u32) -> u32 {
-    (u64::from(sdk::systimer_ticks().wrapping_sub(since_raw)) * 1000 / u64::from(SYSTIMER_HZ))
-        as u32
-}
-
 fn levels(pins: u32) -> [bool; 3] {
     INPUT_PINS.map(|pin| pins & (1 << pin) != 0)
 }
@@ -659,7 +656,7 @@ impl Probe {
         w.stopped &=
             sdk::gpio_port_read(GPIO_PORT_A, MOTOR_MASK) == MOTOR_MASK && board::optics_are(a, b);
 
-        for (i, &high) in levels.iter().enumerate() {
+        for ((i, &high), input) in levels.iter().enumerate().zip(0u8..) {
             w.highs[i] += u32::from(high);
             if high == w.end[i] {
                 continue;
@@ -683,7 +680,7 @@ impl Probe {
             if index < EDGE_CAP {
                 self.edges[index] = Edge {
                     n: w.n,
-                    input: i as u8,
+                    input,
                     level: high,
                     ms: at,
                 };
@@ -805,7 +802,7 @@ impl Probe {
         stopped::set_supervised(0);
         let closed = self.events.close();
 
-        let cut_ms = cut.map(|t| (u64::from(t) * 1000 / u64::from(SYSTIMER_HZ)) as u32);
+        let cut_ms = cut.map(ticks_ms);
         let record = Record::Stall {
             cut_ms,
             fault: snapshot.fault.0,

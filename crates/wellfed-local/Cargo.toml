@@ -33,9 +33,5 @@ ed25519-dalek = "2"
 [dev-dependencies]
 tempfile.workspace = true
 
-[lints.rust]
-unsafe_code = "forbid"
-
-[lints.clippy]
-dbg_macro = "deny"
-print_stdout = "warn"
+[lints]
+workspace = true

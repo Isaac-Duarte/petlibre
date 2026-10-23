@@ -7,15 +7,12 @@ rust-version.workspace = true
 description = "Repository maintenance tasks: documentation links, tool dependencies, portability and transport isolation"
 publish.workspace = true
 
-[lints.rust]
-unsafe_code = "forbid"
-
-[lints.clippy]
-dbg_macro = "deny"
-
 [dependencies]
 clap.workspace = true
 regex = "1"
 
 [dev-dependencies]
 tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -113,7 +113,7 @@ fn retry_does_not_emit_another_command_and_restart_is_uncertain() {
     let id = Uuid::new_v4();
     assert!(
         c.feed(
-            FeedInput {
+            &FeedInput {
                 request_id: id,
                 portions: 1
             },
@@ -126,7 +126,7 @@ fn retry_does_not_emit_another_command_and_restart_is_uncertain() {
 
     assert!(
         c.feed(
-            FeedInput {
+            &FeedInput {
                 request_id: id,
                 portions: 1
             },
@@ -139,7 +139,7 @@ fn retry_does_not_emit_another_command_and_restart_is_uncertain() {
 
     assert!(matches!(
         c.feed(
-            FeedInput {
+            &FeedInput {
                 request_id: id,
                 portions: 2
             },
@@ -153,7 +153,7 @@ fn retry_does_not_emit_another_command_and_restart_is_uncertain() {
     ready(&mut restarted);
     let (record, command) = restarted
         .feed(
-            FeedInput {
+            &FeedInput {
                 request_id: id,
                 portions: 1,
             },
@@ -165,7 +165,7 @@ fn retry_does_not_emit_another_command_and_restart_is_uncertain() {
 
     assert!(matches!(
         restarted.feed(
-            FeedInput {
+            &FeedInput {
                 request_id: Uuid::new_v4(),
                 portions: 1
             },
@@ -177,7 +177,7 @@ fn retry_does_not_emit_another_command_and_restart_is_uncertain() {
     ready(&mut restarted);
     assert!(matches!(
         restarted.feed(
-            FeedInput {
+            &FeedInput {
                 request_id: Uuid::new_v4(),
                 portions: 1
             },
@@ -195,7 +195,7 @@ fn acceptance_is_not_completion_and_wrong_topic_cannot_acknowledge_a_feed() {
     let id = Uuid::new_v4();
 
     c.feed(
-        FeedInput {
+        &FeedInput {
             request_id: id,
             portions: 1,
         },
@@ -247,7 +247,7 @@ fn unrelated_grain_reports_cannot_advance_a_feed_with_matching_portion_counts() 
 
     let id = Uuid::new_v4();
     c.feed(
-        FeedInput {
+        &FeedInput {
             request_id: id,
             portions: 1,
         },
@@ -311,7 +311,7 @@ fn stock_feed_reuses_one_message_id_for_start_and_end_without_replaying() {
 
     let id = Uuid::new_v4();
     c.feed(
-        FeedInput {
+        &FeedInput {
             request_id: id,
             portions: 1,
         },
@@ -351,7 +351,7 @@ fn stock_feed_reuses_one_message_id_for_start_and_end_without_replaying() {
     ready(&mut c);
     let (record, command) = c
         .feed(
-            FeedInput {
+            &FeedInput {
                 request_id: id,
                 portions: 1,
             },
@@ -366,7 +366,7 @@ fn stock_feed_reuses_one_message_id_for_start_and_end_without_replaying() {
     c.status.last_seen = Some(later);
     let next = Uuid::new_v4();
     c.feed(
-        FeedInput {
+        &FeedInput {
             request_id: next,
             portions: 1,
         },
@@ -394,7 +394,7 @@ fn offline_invalid_amount_and_failed_persistence_cannot_send_a_feed() {
 
     assert!(matches!(
         c.feed(
-            FeedInput {
+            &FeedInput {
                 request_id: Uuid::new_v4(),
                 portions: 1
             },
@@ -406,7 +406,7 @@ fn offline_invalid_amount_and_failed_persistence_cannot_send_a_feed() {
     ready(&mut c);
     assert!(matches!(
         c.feed(
-            FeedInput {
+            &FeedInput {
                 request_id: Uuid::new_v4(),
                 portions: 0
             },
@@ -424,7 +424,7 @@ fn offline_invalid_amount_and_failed_persistence_cannot_send_a_feed() {
     let id = Uuid::new_v4();
     assert!(matches!(
         c.feed(
-            FeedInput {
+            &FeedInput {
                 request_id: id,
                 portions: 1
             },
@@ -435,7 +435,7 @@ fn offline_invalid_amount_and_failed_persistence_cannot_send_a_feed() {
 
     assert!(matches!(
         c.feed(
-            FeedInput {
+            &FeedInput {
                 request_id: id,
                 portions: 1
             },
@@ -462,7 +462,7 @@ fn timeout_is_uncertain_and_private_attributes_are_not_exposed() {
 
     let now = Utc::now();
     c.feed(
-        FeedInput {
+        &FeedInput {
             request_id: Uuid::new_v4(),
             portions: 1,
         },

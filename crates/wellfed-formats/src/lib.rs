@@ -10,6 +10,8 @@
 //! independently of field order; other files are written in declaration
 //! order and read as objects.
 
+#![forbid(unsafe_code)]
+
 pub mod canonical;
 pub mod capture;
 pub mod credentials;

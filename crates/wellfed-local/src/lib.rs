@@ -1,4 +1,8 @@
 //! Stock-firmware PLAF103 local server.
+
+#![forbid(unsafe_code)]
+#![warn(clippy::print_stdout)]
+
 pub mod api;
 pub mod broker;
 pub mod build_info;

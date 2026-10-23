@@ -63,6 +63,7 @@ async fn read_connect(stream: &mut TcpStream) -> Result<Vec<u8>> {
     let mut packet = vec![0x10];
     let mut length = body.len();
     loop {
+        #[expect(clippy::cast_possible_truncation, reason = "a remainder of 128")]
         let mut byte = (length % 128) as u8;
         length /= 128;
         if length > 0 {

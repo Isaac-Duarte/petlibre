@@ -71,7 +71,7 @@ pub(crate) struct Report<D> {
 
 impl<D> Report<D> {
     /// Record a stop as `<kind>: <message>`, as the Python clients do.
-    pub fn stop(&mut self, status: Status, error: &Error) {
+    pub(crate) fn stop(&mut self, status: Status, error: &Error) {
         self.status = status;
         self.error = Some(format!("{}: {error}", error.kind()));
     }
@@ -85,7 +85,7 @@ pub(crate) struct Session<D> {
 
 impl<D: Serialize> Session<D> {
     /// Write the prepared report.
-    pub fn open(path: PathBuf, details: D) -> Result<Self> {
+    pub(crate) fn open(path: PathBuf, details: D) -> Result<Self> {
         let session = Self {
             path,
             report: RefCell::new(Report {
@@ -101,28 +101,28 @@ impl<D: Serialize> Session<D> {
         Ok(session)
     }
 
-    pub fn save(&self) -> Result<()> {
+    pub(crate) fn save(&self) -> Result<()> {
         evidence::save_report(&self.path, &*self.report.borrow())
     }
 
     /// Change the report and save it at once.
-    pub fn update(&self, change: impl FnOnce(&mut Report<D>)) -> Result<()> {
+    pub(crate) fn update(&self, change: impl FnOnce(&mut Report<D>)) -> Result<()> {
         change(&mut self.report.borrow_mut());
         self.save()
     }
 
     /// Change the report in memory only; the next save writes it.
-    pub fn edit(&self, change: impl FnOnce(&mut Report<D>)) {
+    pub(crate) fn edit(&self, change: impl FnOnce(&mut Report<D>)) {
         change(&mut self.report.borrow_mut());
     }
 
-    pub fn read<T>(&self, read: impl FnOnce(&Report<D>) -> T) -> T {
+    pub(crate) fn read<T>(&self, read: impl FnOnce(&Report<D>) -> T) -> T {
         read(&self.report.borrow())
     }
 
     /// The last change, then the end time and stream hashes, saved once
     /// more. The report is returned even when that save fails.
-    pub fn close(
+    pub(crate) fn close(
         self,
         directory: &Path,
         change: impl FnOnce(&mut Report<D>),

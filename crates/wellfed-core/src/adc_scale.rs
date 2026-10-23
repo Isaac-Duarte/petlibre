@@ -1,6 +1,8 @@
 //! Stock-compatible ADC calibration and 16-sample scaling.
 
 pub const SAMPLES: usize = 16;
+const SAMPLES_U32: u32 = 16;
+const _: () = assert!(SAMPLES_U32 as usize == SAMPLES);
 pub const MAX_RAW: u16 = 4095;
 
 #[repr(C)]
@@ -48,7 +50,7 @@ impl AdcCalibration {
             sum += u32::from(sample);
         }
 
-        let mean_tenths = (sum / SAMPLES as u32) * 10;
+        let mean_tenths = (sum / SAMPLES_U32) * 10;
         // At most 40,950,000 after multiplication; no 32-bit overflow.
         let offset = u32::from(self.offset);
         Some(if mean_tenths <= offset {

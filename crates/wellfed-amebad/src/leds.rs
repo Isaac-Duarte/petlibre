@@ -154,8 +154,7 @@ pub fn observe(led: Led) -> Readback {
         latch_high: sdk::gpio_output_latch(pin >> 5) & (1 << (pin & 31)) != 0,
         input_high: sdk::gpio_read_bit(pin),
         input_highs: (0..INPUT_SAMPLES)
-            .filter(|_| sdk::gpio_read_bit(pin))
-            .count() as u32,
+            .fold(0, |highs, _| highs + u32::from(sdk::gpio_read_bit(pin))),
         input_readable: led.input_readable(),
         directions_ok: directions(),
         stopped_ok: stopped::observe().verified(),

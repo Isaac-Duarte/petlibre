@@ -6,8 +6,9 @@
 //! port faults on the stack limit, and FW11's trial caught it, but only after
 //! an update. This audit catches it at build time instead.
 //!
-//! For each task created in `app.rs` (`sdk::task_create(c"name", words,
-//! ...)`), it walks the direct call graph from the task's entry function and
+//! For each task created in the runtime or the firmware
+//! (`sdk::task_create(c"name", words, ...)` or `wellfed_sdk::spawn(...)`),
+//! it walks the direct call graph from the task's entry function and
 //! sums the frames along the deepest path. Frames come from each function's
 //! prologue (`push`, `stmdb sp!`, `vpush`, `sub sp`). Recursion is cut at the
 //! cycle, and indirect calls (`blx rN`, function pointers, `dyn` formatting)
@@ -23,10 +24,24 @@ use serde::Serialize;
 
 use super::writes::demangle;
 use super::{HEADING, refuse, tool};
-use crate::Result;
+use crate::{Repo, Result};
 
-/// The KM4 application's task table.
-pub(crate) const APP_SOURCE: &str = "firmwares/reference/src/app.rs";
+/// The KM4 task tables: the SDK runtime's and the firmware's.
+pub(crate) const TASK_SOURCES: [&str; 2] = [
+    "crates/sdk/wellfed-sdk/src/runtime.rs",
+    "firmwares/reference/src/app.rs",
+];
+
+/// The task sources' text, which the audit reads its task table from.
+pub(crate) fn task_sources(repo: &Repo) -> Result<String> {
+    let mut text = String::new();
+    for path in TASK_SOURCES {
+        text.push_str(&std::fs::read_to_string(repo.path(path))?);
+        text.push('\n');
+    }
+    Ok(text)
+}
+
 /// The SDK trampoline frame and an exception stacked onto the task's stack
 /// with the FPU context (26 words), rounded up.
 const OVERHEAD: u64 = 256;
@@ -35,7 +50,7 @@ const OVERHEAD: u64 = 256;
 const MARGIN: f64 = 0.25;
 
 static TASK: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?s)task_create\(\s*c"([\w-]+)",\s*(\w+),\s*\d+,\s*(\w+),"#)
+    Regex::new(r#"(?s)(?:task_create|spawn)\(\s*c"([\w-]+)",\s*(\w+),\s*\d+,\s*(\w+)\s*[,)]"#)
         .expect("stack audit pattern")
 });
 static CONSTANT: LazyLock<Regex> =
@@ -56,7 +71,7 @@ static SUB: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^sub(?:\.w)?\s+sp,\s*(?:sp,\s*)?#(\d+)").expect("stack audit pattern")
 });
 
-/// {entry function name: (task name, stack bytes)} from `app.rs` text.
+/// {entry function name: (task name, stack bytes)} from the task sources.
 fn tasks(source: &str) -> BTreeMap<String, (String, u64)> {
     let constants: HashMap<&str, u64> = CONSTANT
         .captures_iter(source)
@@ -285,7 +300,8 @@ mod tests {
     fn tasks_resolve_word_constants() {
         let source = "const PROBE_STACK_WORDS: u16 = 2048;\n\
                       sdk::task_create(\n    c\"wellfed-optics\",\n    PROBE_STACK_WORDS,\n    3,\n    optics_task,\n\
-                      let ok = sdk::task_create(c\"wellfed-wdg\", 512, 3, feeder_task, ptr::null_mut());";
+                      let ok = sdk::task_create(c\"wellfed-wdg\", 512, 3, feeder_task, ptr::null_mut());\n\
+                      unsafe { wellfed_sdk::spawn(c\"wellfed-aud\", 1024, 2, audio_task) };";
         let expected: BTreeMap<String, (String, u64)> = [
             (
                 "optics_task".to_string(),
@@ -295,6 +311,7 @@ mod tests {
                 "feeder_task".to_string(),
                 ("wellfed-wdg".to_string(), 2048),
             ),
+            ("audio_task".to_string(), ("wellfed-aud".to_string(), 4096)),
         ]
         .into();
         assert_eq!(tasks(source), expected);

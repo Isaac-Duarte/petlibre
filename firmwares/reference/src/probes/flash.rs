@@ -22,12 +22,9 @@
 //! passed on hardware and are retained in history; their lease sequence
 //! lives in `Provider`.
 
-use core::ffi::{c_uint, c_void};
-
 use wellfed_core::feed_progress::BowlMode;
 use wellfed_core::flash_coord::{FlashCoord, FlashFault, FlashPhase, FlashReply};
 use wellfed_core::settings_store::{Settings, SettingsStatus, SettingsStore, SlotState};
-use wellfed_core::storage::JournalIo;
 use wellfed_core::tick_clock::TickClock;
 
 use wellfed_hal::config::{FLASH_LIMITS, SYSTIMER_HZ, WATCHDOG};
@@ -38,13 +35,11 @@ use wellfed_hal::sdk;
 use wellfed_hal::stopped;
 use wellfed_hal::watchdog::Watchdog;
 
+pub use wellfed_sdk::storage::{FlashOps, SETTINGS_BASE, SETTINGS_BINDING, slot_io};
+
 pub const POLL_MS: u32 = 10;
 pub const OP_GAP_MS: u32 = 10;
 pub const FEED_PERIOD_MS: u32 = 250;
-/// Settings slots within the storage region: sectors 2 and 3 (0x342000).
-pub const SETTINGS_BASE: u32 = 2;
-/// Installation binding for the research unit's settings.
-pub const SETTINGS_BINDING: u64 = 0x5046_5731_3502_0001;
 /// Saves run back to back, so most cuts land inside one.
 pub const STRESS_SAVES: u32 = 1500;
 pub const STRESS_BATCH: u32 = 25;
@@ -52,72 +47,6 @@ pub const SAVE_GAP_MS: u32 = 1;
 
 /// The research unit's boot log reports flash ID c8 40 17 (GigaDevice, 8 MiB).
 pub const EXPECTED_ID: [u8; 3] = [0xc8, 0x40, 0x17];
-
-/// Mediated flash operations through the hooked SDK lock, bounded to the
-/// owner-approved storage region by sector index.
-pub trait FlashOps {
-    /// Install `provider` into the hooks; task context, IRQs enabled.
-    fn install(provider: *mut Provider) -> bool;
-    fn read_id() -> [u8; 3];
-    fn armed() -> bool;
-    fn erase(sector: u32) -> bool;
-    fn program(sector: u32, offset: u32, data: &[u8]) -> bool;
-    fn read(sector: u32, offset: u32, bytes: &mut [u8]) -> bool;
-}
-
-/// Slot `slot` of the pair starting at region sector `BASE`.
-fn slot_sector<const BASE: u32>(slot: c_uint) -> Option<u32> {
-    (slot < 2).then_some(BASE + slot)
-}
-
-// Slot I/O callbacks: the context is unused; slots map to fixed sectors.
-unsafe extern "C" fn io_read<F: FlashOps, const BASE: u32>(
-    _context: *mut c_void,
-    slot: c_uint,
-    offset: u32,
-    bytes: *mut c_void,
-    size: usize,
-) -> bool {
-    let Some(sector) = slot_sector::<BASE>(slot) else {
-        return false;
-    };
-    // SAFETY: the store passes a live buffer of `size` bytes.
-    let bytes = unsafe { core::slice::from_raw_parts_mut(bytes.cast::<u8>(), size) };
-    F::read(sector, offset, bytes)
-}
-
-unsafe extern "C" fn io_program<F: FlashOps, const BASE: u32>(
-    _context: *mut c_void,
-    slot: c_uint,
-    offset: u32,
-    bytes: *const c_void,
-    size: usize,
-) -> bool {
-    let Some(sector) = slot_sector::<BASE>(slot) else {
-        return false;
-    };
-    // SAFETY: as for `io_read`.
-    let bytes = unsafe { core::slice::from_raw_parts(bytes.cast::<u8>(), size) };
-    F::program(sector, offset, bytes)
-}
-
-unsafe extern "C" fn io_erase<F: FlashOps, const BASE: u32>(
-    _context: *mut c_void,
-    slot: c_uint,
-) -> bool {
-    slot_sector::<BASE>(slot).is_some_and(F::erase)
-}
-
-/// Two-unit slot I/O for the sector pair starting at `BASE`.
-pub fn slot_io<F: FlashOps, const BASE: u32>() -> JournalIo {
-    JournalIo {
-        context: core::ptr::null_mut(),
-        unit_bytes: sdk::SECTOR_BYTES,
-        read: Some(io_read::<F, BASE>),
-        program: Some(io_program::<F, BASE>),
-        erase: Some(io_erase::<F, BASE>),
-    }
-}
 
 /// The stress value for generation `g`; generation 0 is the defaults.
 pub fn stress_settings(generation: u64) -> Settings {

@@ -2,9 +2,9 @@
 //! logged once and in order, an overwritten event is reported and skipped,
 //! and the shim can be started only once.
 
-use wellfed_fw_reference::probes::wifi::{POLL_MS, Probe, Record, Step};
 use wellfed_hal::sdk::{WifiEvent, fake};
 use wellfed_hal::stopped;
+use wellfed_sdk::wifi::{POLL_MS, Probe, Record, Step};
 
 fn start() -> Probe {
     fake::reset_hardware();

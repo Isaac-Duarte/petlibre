@@ -7,7 +7,6 @@ pub mod flash;
 pub mod optics;
 pub mod pulse;
 pub mod supervision;
-pub mod wifi;
 
 use wellfed_hal::config::SYSTIMER_HZ;
 use wellfed_hal::sdk;

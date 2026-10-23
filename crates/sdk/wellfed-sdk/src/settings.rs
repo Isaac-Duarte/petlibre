@@ -18,7 +18,7 @@ use wellfed_hal::network::{self, NET_BASE};
 use wellfed_hal::provider::Provider;
 use wellfed_hal::settings;
 
-use crate::probes::flash::{FlashOps, SETTINGS_BASE, SETTINGS_BINDING, slot_io};
+use crate::storage::{FlashOps, SETTINGS_BASE, SETTINGS_BINDING, slot_io};
 
 pub const POLL_MS: u32 = 200;
 

@@ -6,14 +6,14 @@ use std::sync::{Mutex, MutexGuard};
 
 use wellfed_core::settings_store::SettingsStatus;
 use wellfed_core::transport::{SettingsFields, SettingsResult};
-use wellfed_fw_reference::probes::flash::{FlashOps, SETTINGS_BASE};
-use wellfed_fw_reference::settings::{self as writer, ErrorStage, Record, Writer};
 use wellfed_hal::arming::Hooks;
 use wellfed_hal::flash::park::Mmio;
 use wellfed_hal::flash::peer::MARKER_REGISTER;
 use wellfed_hal::provider::Provider;
 use wellfed_hal::sdk::{self, fake};
 use wellfed_hal::{network, settings};
+use wellfed_sdk::settings::{self as writer, ErrorStage, Record, Writer};
+use wellfed_sdk::storage::{FlashOps, SETTINGS_BASE};
 
 thread_local! {
     static ARMED: Cell<bool> = const { Cell::new(true) };

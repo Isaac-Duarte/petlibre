@@ -1617,6 +1617,7 @@ version = "0.1.0"
 dependencies = [
  "wellfed-core",
  "wellfed-hal",
+ "wellfed-sdk",
 ]
 
 [[package]]
@@ -1667,6 +1668,14 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "wellfed-sdk"
+version = "0.1.0"
+dependencies = [
+ "wellfed-core",
+ "wellfed-hal",
 ]
 
 [[package]]

@@ -7,6 +7,15 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
+**October 23, afternoon: FW20 done, the SDK button service on hardware (physical, owner pressing).**
+- **Runs:**
+  - `fw20-keys-01` (`ota --build --firmware buttons`, with a bounded `wellfed-local serve`): v87 confirmed; `PLKEY1 open inputs=1 pressed=none`.
+  - `capture fw20-keys-02` (180 s) and `fw20-keys-03` (30 s): a short press, short of a hold, level-1 and level-2 holds, growing chords and a broken chord, each also read back through the queue (`PLKEY1 read …`), none dropped ([buttons](docs/firmware/buttons.md)).
+- **Code:** `wellfed_core::buttons` (gestures), `wellfed_hal::buttons` (poll, queue, `PLKEY1`), `wellfed_sdk::buttons::start/next`; the stack audit reads `SDK_TASK_SOURCES`. Fresh `qa` builds, `make check-fixtures` and `make check` pass.
+- **Flash now:** **Bank 1:** `buttons` `5898dc09…` (v87, confirmed). **Bank 0:** `qa` `ef76b85e…`. **Next manifest version:** 88. Back to QA: `ota … --build` (default firmware `qa`).
+- **Bench state:** feeder on, hotspot up, no server; the owner's `network apply` rules as before.
+- **Next:** FP11 (child lock) is ready on the button service; FW42 setup-frame test.
+
 **October 23, early afternoon: the stock round trip runs UART-free, and FW35, FW37, FW39, FW40 and FW41 are done (physical, owner at the bench for QA, away for the rest).**
 - **Runs:**
   - `fw40-stock-ota-07` (`stock-ota --power`): stock 1.1.15, which the owner had put back, installed `qa` `ef76b85e…` in 40 s. It booted from bank 0, reported recovery-role health (first time with stock), and was promoted to bank 1 as v84, which confirmed. On the trial boot: `PLWIF3 hold`, then `PLQA1 check stage=optics status=pass`.

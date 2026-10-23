@@ -9,12 +9,13 @@ use core::ffi::c_void;
 use core::ptr::{self, addr_of};
 
 use wellfed_core::HALF_RANGE;
-use wellfed_core::adc_scale::{AdcCalibration, MAX_RAW, SAMPLES};
+use wellfed_core::adc_scale::{AdcCalibration, SAMPLES};
 use wellfed_core::feed_controller::MotorCommand;
 use wellfed_core::flash_coord::FlashCoord;
 use wellfed_core::motor_gate::{MotorGate, MotorGateFault};
 use wellfed_core::sensor_inputs::SensorReading;
 
+use crate::adc;
 use crate::sdk::{self, GPIO_PORT_A, IrqGuard};
 
 pub use crate::sdk::MOTOR_MASK;
@@ -157,30 +158,15 @@ impl Board {
             sdk::gpio_init(pin, false);
         }
 
-        result.clock = sdk::adc_clock_enable();
-        let mut efuse = [0u8; 4];
-        for (byte, address) in efuse.iter_mut().zip(0x1d0u32..) {
-            match sdk::efuse_read8(address) {
-                Some(value) => *byte = value,
-                None => {
-                    self.faulted = true;
-                    return result;
-                }
-            }
-        }
-
-        result.efuse = Some(efuse);
-        let calibration = AdcCalibration::decode(&efuse);
-        if !result.clock.verified() || calibration.is_none() {
+        let opened = adc::open();
+        result.clock = opened.clock;
+        result.efuse = opened.efuse;
+        let Some(calibration) = opened.calibration else {
             self.faulted = true;
             return result;
-        }
+        };
 
-        self.calibration = calibration.unwrap_or_default();
-        sdk::pad_disable(33);
-        sdk::pad_disable(34);
-        sdk::adc_init_manual();
-        sdk::adc_cmd(true);
+        self.calibration = calibration;
         self.sensors_ready = true;
         self.opened = true;
         result.ok = true;
@@ -368,19 +354,7 @@ impl Board {
     }
 
     fn adc_channel(&self, channel: u32, samples: &mut [u16; SAMPLES]) -> bool {
-        for sample in samples.iter_mut() {
-            sdk::adc_select(channel);
-            sdk::adc_clear_fifo();
-            sdk::adc_sw_trigger(true);
-            let ready = (0..self.adc_poll_limit).any(|_| sdk::adc_readable());
-            sdk::adc_sw_trigger(false);
-            if !ready {
-                sdk::adc_clear_fifo();
-                return false;
-            }
-            *sample = sdk::adc_read() & MAX_RAW;
-        }
-        true
+        adc::convert(channel, self.adc_poll_limit, samples)
     }
 
     /// Exclusive ADC ownership required. Polls are bounded per conversion.
@@ -424,8 +398,7 @@ impl Board {
         self.trip_now();
         self.optics(false);
         if self.sensors_ready {
-            sdk::adc_sw_trigger(false);
-            sdk::adc_cmd(false);
+            adc::close();
         }
         self.opened = false;
     }

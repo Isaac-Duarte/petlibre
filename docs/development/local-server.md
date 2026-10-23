@@ -52,7 +52,7 @@ This adds an optional `firmware` section to the configuration and writes the fir
 
 Every allowed topic is literal: wildcards in this namespace are refused. The firmware role cannot reach the stock `dl/PLAF103/...` topics, and the stock device role cannot reach this namespace. The broker has retained messages disabled, so the firmware publishes health without retain, and its will (`"online": false`) is not retained either. After a server restart, health appears with the next periodic publish.
 
-The server accepts health of schema `wellfed.health` version 1 with a boolean `online` and, if present, a `nonce` of 16 lowercase hex characters, up to 640 bytes, and replies up to 256 bytes with a UUID `id`. It counts and ignores anything else. Health older than 75 s is stale. A request is sent with QoS 0 only while health is fresh and online; otherwise the API refuses it instead of losing it unseen.
+The server accepts health of schema `wellfed.health` version 1 with a boolean `online` and, if present, a `nonce` of 16 lowercase hex characters, up to 704 bytes, and replies up to 256 bytes with a UUID `id`. It counts and ignores anything else. Health older than 75 s is stale. A request is sent with QoS 0 only while health is fresh and online; otherwise the API refuses it instead of losing it unseen.
 
 The firmware channel is plaintext MQTT on the isolated hotspot. Anyone with the Wi-Fi password could read it or impersonate either end, which is accepted only because the channel carries read-only health. Feeding or update commands must not use it until it is authenticated or encrypted.
 

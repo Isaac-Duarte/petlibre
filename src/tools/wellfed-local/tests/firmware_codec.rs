@@ -6,7 +6,9 @@ mod common;
 use std::time::Duration;
 
 use common::{address, ready, start, status};
-use wellfed_core::transport::{self as mqtt, Buffer, Event, Health, Loss, Session, State};
+use wellfed_core::transport::{
+    self as mqtt, Buffer, Event, Health, Loss, PowerHealth, Session, State,
+};
 use wellfed_local::{
     config::FirmwareConfig,
     request_auth::{self, RequestKey},
@@ -90,6 +92,11 @@ fn health_with(online: bool, seq: u32, nonce: Option<[u8; 16]>) -> Vec<u8> {
         clock: None,
         clock_syncs: 0,
         nonce,
+        power: Some(PowerHealth {
+            adapter: true,
+            battery_mv: Some(4_850),
+            age_ms: 1_200,
+        }),
     };
 
     let mut buf = [0; mqtt::MAX_HEALTH];
@@ -204,6 +211,10 @@ async fn firmware_codec_reports_health_and_answers_through_the_real_broker() {
     let replacement = wait_for(&config, &http, |r| r["health"]["seq"] == 1).await;
     assert_eq!(replacement["online"], true);
     assert_eq!(replacement["health"]["schema"], "wellfed.health");
+    assert_eq!(
+        replacement["health"]["power"],
+        serde_json::json!({"adapter": true, "battery_mv": 4850, "age_ms": 1200})
+    );
 
     // FW21: health with an unsynced clock brings a `time` request, which the
     // firmware's own parser and clock accept.

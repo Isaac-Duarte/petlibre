@@ -20,7 +20,7 @@ use crate::{
 pub const HEALTH_SCHEMA: &str = "wellfed.health";
 pub const HEALTH_VERSION: u64 = 1;
 
-pub const MAX_HEALTH_BYTES: usize = 640;
+pub const MAX_HEALTH_BYTES: usize = 704;
 pub const MAX_REPLY_BYTES: usize = 256;
 pub const REPLIES_KEPT: usize = 8;
 

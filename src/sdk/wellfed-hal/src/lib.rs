@@ -18,6 +18,7 @@ pub mod leds;
 pub mod startup;
 pub mod stopped;
 
+pub mod adc;
 pub mod arming;
 pub mod audio;
 // FW34: compiled for host tests, and on the target only for a Bluetooth
@@ -38,6 +39,7 @@ pub mod events;
 pub mod health;
 pub mod net_status;
 pub mod owner;
+pub mod power;
 pub mod provider;
 pub mod transport;
 pub mod updater;

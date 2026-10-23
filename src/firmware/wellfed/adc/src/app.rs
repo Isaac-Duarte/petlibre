@@ -9,6 +9,9 @@ use wellfed_sdk::hal::sdk;
 wellfed_sdk::firmware!(start);
 
 fn start() {
+    // The probe keeps the ADC for as long as the build runs, so the
+    // runtime's power monitor stays off it.
+    wellfed_sdk::claim_adc();
     // The probe never binds the KM0 flash handshake, so confirmation need
     // not wait for it.
     wellfed_sdk::startup_done(true);

@@ -10,7 +10,7 @@ make -C src/firmware/vendor firstboot FIRMWARE=buttons   # default: qa
 | --- | --- | --- |
 | [`qa`](qa) | QA | The default: a guided self-test of optics, power, buttons, indicators and speaker, ending in one `PLQA1 result` line ([QA guide](../../../docs/firmware/qa.md)) |
 | [`optics`](optics) | FW13 | The optics probe, once per boot |
-| [`buttons`](buttons) | FW20 | The panel buttons, read-only, logged for as long as the build runs |
+| [`buttons`](buttons) | FW20 | The panel buttons: raw lines and the SDK button service's gestures (press, holds, chords), logged for as long as the build runs |
 | [`adc`](adc) | FW14 | The power inputs, read-only, sampled once a second |
 | [`speaker`](speaker) | FW24 | The startup chime, requested tunes and the signed network audio stream |
 | [`motor`](motor) | FW16 | The first supervised motor pulse, in its `fw16-pulse` variant only; the normal image adds nothing |

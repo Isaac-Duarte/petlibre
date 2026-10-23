@@ -6,6 +6,7 @@ use std::path::Path;
 
 use serde::Serialize;
 
+use super::qa::{QaView, qa_view};
 use super::script::{ScriptView, script_view};
 use super::tail::{TailView, rx_view};
 use super::{Sources, history, inside, latest_capture, serial_sizes};
@@ -27,6 +28,8 @@ pub(crate) struct Snapshot {
     /// The latest capture's output.
     rx: Option<TailView>,
     script: Option<ScriptView>,
+    /// The QA firmware's guided run in the latest capture.
+    qa: Option<QaView>,
 }
 
 impl Snapshot {
@@ -48,12 +51,14 @@ pub(crate) fn snapshot(sources: &Sources) -> Snapshot {
     let mut history = history.split_off(shown);
     history.reverse();
 
+    let latest = latest_capture(root);
     Snapshot {
         now: now(),
         current,
         history,
-        rx: latest_capture(root).map(|dir| rx_view(root, &dir)),
+        rx: latest.as_deref().map(|dir| rx_view(root, dir)),
         script: script_view(sources),
+        qa: latest.as_deref().and_then(|dir| qa_view(root, dir)),
     }
 }
 

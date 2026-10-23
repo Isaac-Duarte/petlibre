@@ -306,6 +306,7 @@ A binary built without the feature refuses `--ui` before any bench command runs.
 The page has four views (keys `g o`, `g t`, `g s`, `g l`; `/` filters the log):
 - **Strip** (every view): relay and UART port presence, the last recorded relay states (not queried), the `wellfed-flash` hash, the build and bank from the newest replacement-firmware start banner in a capture, and the running command.
 - **Overview:**
+  - **Guided QA** (when the latest capture holds `PLQA1` records): coaches the newest [QA](../firmware/qa.md) run from its records. It shows what to do now in plain words ("Look at the Wi-Fi light. Lit: press Dispense. Dark: press Lock."), the time left on a button prompt, each check's state with the answers recorded so far, and the result. **Enable sound** beeps at each new prompt. It follows the records only; `wellfed-audit qa` still grades the run. The records are parsed by `wellfed_formats::qa`, which the audit shares.
   - **Now:** the command, its outcome and elapsed time. Steps show their own durations. While the command runs, bars show straight-line ETAs for the tool's own counts, an update's estimated transfer and the active capture. The next command to run after review is shown with a copy button. The tab title carries the state.
   - **Feeder:** online, stale or offline; health age, build, bank, faults, Wi-Fi credential source, clock and transport reconnects; recent request replies.
   - **Latest integration run:** each scenario's verdict, or the live run's progress.

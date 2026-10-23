@@ -71,7 +71,21 @@ run(
   [verdict("ota-update", "pass", 230), verdict("requests", "fail", 180, "no UART record or fresh health for 180 s")],
   "no UART record or fresh health for 180 s",
 );
-write("private/captures/itest-e2e-03-uart-01/serial-rx.bin", "PLFW1 start build=4d37c21a bank=1\r\nPLMQT1 ready ms=21\r\n");
+write(
+  "private/captures/itest-e2e-03-uart-01/serial-rx.bin",
+  [
+    "PLFW1 start build=4d37c21a bank=1",
+    "PLMQT1 ready ms=21",
+    "PLQA1 start stage=optics",
+    "PLQA1 check stage=optics status=pass",
+    "PLQA1 start stage=power",
+    "PLQA1 check stage=power status=pass",
+    "PLQA1 start stage=buttons",
+    "PLQA1 check stage=buttons status=pass",
+    "PLQA1 start stage=indicators",
+    "PLQA1 prompt look=PA0 yes=dispense no=lock",
+  ].join("\r\n") + "\r\n",
+);
 write("private/verification/itest-e2e-03-servers.log", "serve: listening on 127.0.0.1:8765\n");
 
 const server = spawn(binary, ["--root", root, "--ui", "--ui-port", port], { stdio: "inherit" });

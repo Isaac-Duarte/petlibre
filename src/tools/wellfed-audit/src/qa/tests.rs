@@ -9,9 +9,9 @@ use crate::test_support::*;
 /// tasks' lines as the firmware logs them.
 fn run(verdicts: [&str; 5]) -> Vec<u8> {
     let mut out = String::from("PLOPT1 start created=1 plan=2\r\n");
-    for (check, verdict) in CHECKS.iter().zip(verdicts) {
+    for (check, verdict) in Check::ALL.iter().map(|c| c.as_str()).zip(verdicts) {
         out += &format!("PLQA1 start stage={check}\r\n");
-        if *check == "buttons" {
+        if check == "buttons" {
             out += "PLQA1 prompt press=reset\r\nPLBTN1 change n=0 ms=10 from=f0 to=e0 edges=1 bounce_ms=0 settled=1 stopped=1\r\n";
             let status = if verdict == "pass" {
                 "status=pass"

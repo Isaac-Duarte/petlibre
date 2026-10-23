@@ -28,7 +28,7 @@ pub const SYNC_UNCERTAINTY_MS: u64 = 1000;
 pub const MAX_UNCERTAINTY_MS: u64 = 60_000;
 /// A sync within this of the running estimate is in step, not a jump.
 pub const STEP_MS: i64 = 2000;
-/// A scheduled occurrence at most this late still runs (FW22 policy).
+/// A scheduled occurrence at most this late still runs (FP03 policy).
 pub const MISSED_GRACE_MS: u64 = 15 * 60 * 1000;
 
 /// One sync as the server sends it.
@@ -179,7 +179,7 @@ pub enum Occurrence {
     Missed,
 }
 
-/// The missed-meal rule, for FW22. `evaluated_ms` is the persisted high-water
+/// The missed-meal rule, for FP03. `evaluated_ms` is the persisted high-water
 /// mark of time already evaluated (`None` for a new schedule); `now_ms` is a
 /// valid reading. Without a valid reading nothing runs.
 ///

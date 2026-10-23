@@ -2,7 +2,7 @@
 
 Handoff checkpoint: **October 23, 2026, Mountain time**. Read this, then
 [AGENTS.md](AGENTS.md), the [development guide](docs/development/README.md),
-and [FIRMWARE_BOARD.md](FIRMWARE_BOARD.md). Update this handoff when the installed
+and [FIRMWARE_BOARD.md](FIRMWARE_BOARD.md) (stock parity: [FEATURE_BOARD.md](FEATURE_BOARD.md)). Update this handoff when the installed
 image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped

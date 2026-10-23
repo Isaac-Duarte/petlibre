@@ -1,6 +1,7 @@
 //! EXPERIMENTAL FW20 bring-up firmware for the PLAF103 on the PetLibre SDK:
 //! the read-only panel-button probe (`petlibre_probes::buttons`), logging
-//! every press, release and bounce for as long as the build runs.
+//! every press, release and bounce, beside the SDK button service
+//! (`petlibre_sdk::buttons`), whose gestures its task reads.
 #![cfg_attr(target_os = "none", no_std)]
 
 #[cfg(all(target_os = "none", not(feature = "km4")))]

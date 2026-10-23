@@ -25,6 +25,7 @@
 #[cfg(all(target_os = "none", not(feature = "km4")))]
 compile_error!("petlibre-sdk target builds are KM4-only");
 
+pub mod buttons;
 #[cfg(target_os = "none")]
 mod runtime;
 pub mod settings;

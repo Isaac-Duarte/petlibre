@@ -26,18 +26,27 @@ use super::writes::demangle;
 use super::{HEADING, refuse, tool};
 use crate::{Firmware, Repo, Result};
 
-/// The SDK runtime's task table; the firmware's tasks are found in its
-/// `src/`.
-pub(crate) const RUNTIME_SOURCE: &str = "src/sdk/petlibre-sdk/src/runtime.rs";
+/// The SDK files that create tasks: the runtime's table, and the services a
+/// firmware may start (FW20's button task). The firmware's own tasks are
+/// found in its `src/`.
+pub(crate) const SDK_TASK_SOURCES: [&str; 2] = [
+    "src/sdk/petlibre-sdk/src/runtime.rs",
+    "src/sdk/petlibre-sdk/src/buttons.rs",
+];
 
 /// The task sources' text, which the audit reads its task table from: the
-/// runtime, then every Rust file of the firmware's `src/`, in path order.
+/// SDK's task files, then every Rust file of the firmware's `src/`, in path
+/// order.
 pub(crate) fn task_sources(repo: &Repo, firmware: &Firmware) -> Result<String> {
     let mut paths = Vec::new();
     rust_files(&repo.path(&format!("{}/src", firmware.dir())), &mut paths)?;
     paths.sort();
 
-    let mut text = std::fs::read_to_string(repo.path(RUNTIME_SOURCE))?;
+    let mut text = String::new();
+    for source in SDK_TASK_SOURCES {
+        text.push_str(&std::fs::read_to_string(repo.path(source))?);
+        text.push('\n');
+    }
     for path in paths {
         text.push('\n');
         text.push_str(&std::fs::read_to_string(path)?);
@@ -290,6 +299,26 @@ pub(crate) fn audit(elf: &Path, objdump: &Path, source: &str) -> Result<StackAud
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A task the SDK creates outside these files would link unaudited.
+    #[test]
+    fn every_sdk_file_that_creates_a_task_is_audited() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let mut files = Vec::new();
+        rust_files(&root.join("src/sdk/petlibre-sdk/src"), &mut files).unwrap();
+
+        for file in files {
+            let text = std::fs::read_to_string(&file).unwrap();
+            let relative = file
+                .strip_prefix(&root)
+                .unwrap()
+                .to_string_lossy()
+                .into_owned();
+            if TASK.is_match(&text) {
+                assert!(SDK_TASK_SOURCES.contains(&relative.as_str()), "{relative}");
+            }
+        }
+    }
 
     const LISTING: &str = "\
 00001000 <task>:

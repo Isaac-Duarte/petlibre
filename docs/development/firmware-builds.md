@@ -6,7 +6,7 @@ Host tests and cross-compilation checks need no vendor SDK. Full images use the 
 
 The existing wrapper supports **Linux x86_64**. It needs Git, Make, Bash, tar (with bzip2), curl, standard GNU tools, the pinned Rust toolchain, libclang for bindgen, and the 32-bit loader/runtime needed by Realtek's i686 compiler. Install platform prerequisites yourself; the wrapper installs no system packages.
 
-The builder is `wellfed-build` (`crates/wellfed-build`); the make targets build it and run it as its own executable, because `cargo run` sets `RUSTUP_TOOLCHAIN`, which a firmware build refuses.
+The builder is `wellfed-build` (`crates/tools/wellfed-build`); the make targets build it and run it as its own executable, because `cargo run` sets `RUSTUP_TOOLCHAIN`, which a firmware build refuses.
 
 ```sh
 make -C firmware bootstrap

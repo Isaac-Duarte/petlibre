@@ -1,6 +1,6 @@
 # FW10/FW11 over-the-air update design
 
-Status: the recovery-role updater is implemented (`wellfed-amebad/src/updater.rs`, host-tested in `wellfed-amebad/tests/updater.rs`). On hardware (October 22, physical), the build booted from bank 0 after a UART give-way. It bound KM0, opened the watchdog, installed the lease provider into the flash-lock hooks and ran 180 s on one boot with the watchdog fed and no network; bank 1 was then restored. **First live update (October 22, physical).** With the hotspot up and `wellfed-local serve` holding an offer, a UART give-way booted bank 0, and the recovery role then:
+Status: the recovery-role updater is implemented (`wellfed-hal/src/updater.rs`, host-tested in `wellfed-hal/tests/updater.rs`). On hardware (October 22, physical), the build booted from bank 0 after a UART give-way. It bound KM0, opened the watchdog, installed the lease provider into the flash-lock hooks and ran 180 s on one boot with the watchdog fed and no network; bank 1 was then restored. **First live update (October 22, physical).** With the hotspot up and `wellfed-local serve` holding an offer, a UART give-way booted bank 0, and the recovery role then:
 - joined the hotspot, connected, and verified manifest version 1 (663 552 bytes);
 - wrote 162 sectors under 2 703 leases, reading back every page;
 - programmed the marker last and logged `activated`;
@@ -14,7 +14,7 @@ The updater: booted from bank 0, with a key built in (`WELLFED_OTA_PUBLIC_KEY`, 
 - **The offer check:** a confirmed normal build runs `amebad/src/watch.rs`. Every minute it opens a short MQTT session of its own, as `<client_id>-ota`, publishes `ota/check`, and the server answers `ota/offered`.
 - **On hardware:** build W checked and found its own build on offer (`same=1`). After the owner side loaded signed v5 for another build, the next check made W clear its bank-1 marker (`sdk::bank1_give_way`, refused unless bank 0 is valid) and restart. Bank 0 installed v5, which confirmed itself after 30 s. Nothing went over UART.
 
-**Failure modes (October 22, physical).** `crates/wellfed-local/examples/ota_fault_server.rs` answers `ota/get` as the server role, beside `wellfed-local broker` only, with one injected fault:
+**Failure modes (October 22, physical).** `crates/tools/wellfed-local/examples/ota_fault_server.rs` answers `ota/get` as the server role, beside `wellfed-local broker` only, with one injected fault:
 
 | Fault | Result |
 | --- | --- |
@@ -60,7 +60,7 @@ If anything fails before step 4, bank 1's marker is still clear, so the loader k
 
 ## Boot confirmation and fallback (FW11)
 
-Implemented on KM0 (`wellfed-amebad-common/src/trial.rs`, `wellfed_trial_step` in `firstboot_km0.c`), before `km4_boot_on`:
+Implemented on KM0 (`wellfed-hal-common/src/trial.rs`, `wellfed_trial_step` in `firstboot_km0.c`), before `km4_boot_on`:
 - **Running bank:** read from bank 1's physical marker.
 - **Confirmation:** keyed by the build identity, not the image hash, since the normal image does not know its own OTA hash. The record lives in storage sector 4 (`0x344000`). So reinstalling the build the record already names skips the trial. KM0 logs `PLTRL1 confirmed=1` straight after activation, and the build logs `PLCNF1 confirmed=1 already=1`. The integration suite saw this on hardware (October 22). A test that needs a trial must therefore install a build the record does not name.
 - **Count:** backup register 4. Bits 0–15 hold the peer boot count, bits 16–23 the trial count, and bits 24–31 an identity tag.

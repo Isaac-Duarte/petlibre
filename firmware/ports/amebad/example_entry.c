@@ -106,7 +106,7 @@ static unsigned int wellfed_ms(TickType_t since)
 
 /* FW25 join credentials, shared with Rust (`network::JoinCredentials`):
  * prefilled with the build's, replaced by stored ones unless the fallback
- * has taken over (wellfed-amebad network.rs). */
+ * has taken over (wellfed-hal network.rs). */
 struct wellfed_join_credentials {
     const unsigned char *ssid;
     unsigned int ssid_len;
@@ -503,7 +503,7 @@ void wellfed_tcp_close(int s)
     lwip_close(s);
 }
 
-/* The speaker variant's listener (wellfed-amebad stream.rs): a socket on
+/* The speaker variant's listener (wellfed-hal stream.rs): a socket on
  * `port` for every local address, or -1. */
 int wellfed_tcp_listen(unsigned int port)
 {
@@ -546,7 +546,7 @@ int wellfed_tcp_accept(int listener, unsigned int timeout_ms)
 
 /* FW24: the speaker. Stock 1.1.15 plays through the codec's line output
  * (CODEC_Init application 8) from SPORT by GDMA and holds PB23 HIGH while it
- * plays, the amplifier enable that Rust drives (wellfed-amebad audio.rs).
+ * plays, the amplifier enable that Rust drives (wellfed-hal audio.rs).
  * This shim owns only the codec, SPORT and an 8-page DMA ring of 16-bit mono
  * at 8, 16, 32 or 48 kHz (the rates the I2S PLL divides to). Rust fills pages and decides when to open and close. When no
  * filled page is ready the DMA plays a zero page and counts an underrun, so

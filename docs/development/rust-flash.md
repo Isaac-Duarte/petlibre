@@ -1,6 +1,6 @@
 # Rust UART flash client
 
-`wellfed-flash` ([crates/wellfed-flash](../../crates/wellfed-flash)) is a Rust port of the UART clients in `tools/flash/`. It ships as a single binary with no Python or pyserial dependency. It keeps the Python clients' pinned helper, ROM and baseline checks, marker-last sequencing and terminal no-retry stops. Its reports, plans and journals use the same fields, so either implementation's later sessions accept the other's saved evidence.
+`wellfed-flash` ([crates/tools/wellfed-flash](../../crates/tools/wellfed-flash)) is a Rust port of the UART clients in `tools/flash/`. It ships as a single binary with no Python or pyserial dependency. It keeps the Python clients' pinned helper, ROM and baseline checks, marker-last sequencing and terminal no-retry stops. Its reports, plans and journals use the same fields, so either implementation's later sessions accept the other's saved evidence.
 
 **Evidence: physical (October 22, 2026) and host simulation.** On the research unit, after `tools/bench/bench.py loader`:
 - `read small` and `read status` matched a Python session byte for byte: data, bytes sent and bytes received.

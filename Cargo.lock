@@ -1511,28 +1511,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
-name = "wellfed-amebad"
-version = "0.1.0"
-dependencies = [
- "ed25519-dalek",
- "wellfed-amebad-common",
- "wellfed-amebad-sdk",
- "wellfed-core",
- "wellfed-testkit",
- "sha2 0.10.9",
-]
-
-[[package]]
-name = "wellfed-amebad-common"
-version = "0.1.0"
-dependencies = [
- "cortex-m",
- "wellfed-amebad-sdk",
- "wellfed-core",
-]
-
-[[package]]
-name = "wellfed-amebad-sdk"
+name = "wellfed-amebad-sys"
 version = "0.1.0"
 dependencies = [
  "bindgen",
@@ -1606,25 +1585,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wellfed-ffi"
-version = "0.1.0"
-dependencies = [
- "wellfed-amebad",
- "wellfed-amebad-common",
- "wellfed-core",
- "wellfed-firstboot",
- "wellfed-testkit",
-]
-
-[[package]]
-name = "wellfed-firstboot"
-version = "0.1.0"
-dependencies = [
- "wellfed-amebad",
- "wellfed-core",
-]
-
-[[package]]
 name = "wellfed-flash"
 version = "0.1.0"
 dependencies = [
@@ -1649,6 +1609,35 @@ dependencies = [
  "serde_json",
  "sha2 0.11.1",
  "thiserror",
+]
+
+[[package]]
+name = "wellfed-fw-reference"
+version = "0.1.0"
+dependencies = [
+ "wellfed-core",
+ "wellfed-hal",
+]
+
+[[package]]
+name = "wellfed-hal"
+version = "0.1.0"
+dependencies = [
+ "ed25519-dalek",
+ "wellfed-amebad-sys",
+ "wellfed-core",
+ "wellfed-hal-common",
+ "wellfed-testkit",
+ "sha2 0.10.9",
+]
+
+[[package]]
+name = "wellfed-hal-common"
+version = "0.1.0"
+dependencies = [
+ "cortex-m",
+ "wellfed-amebad-sys",
+ "wellfed-core",
 ]
 
 [[package]]
@@ -1681,14 +1670,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "wellfed-sdk-c"
+version = "0.1.0"
+dependencies = [
+ "wellfed-core",
+ "wellfed-fw-reference",
+ "wellfed-hal",
+ "wellfed-hal-common",
+ "wellfed-testkit",
+]
+
+[[package]]
 name = "wellfed-sim"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "wellfed-amebad",
  "wellfed-core",
  "wellfed-formats",
+ "wellfed-hal",
  "wellfed-testkit",
  "serde",
  "serde_json",

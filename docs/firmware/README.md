@@ -7,11 +7,11 @@ The local server talks to **stock 1.1.15** over its existing MQTT protocol. It d
 | Crate | Responsibility |
 | --- | --- |
 | `wellfed-core` | `no_std` controller, portion accounting, sensor qualification, ADC scaling, motor gate, feedback queue, monotonic clock, journal, and flash authority |
-| `wellfed-amebad-common` | The routines both cores link: RAM parking, SDK flash hooks, the KM0 park peer, and the OTA boot-trial step. The KM0 image contains only this crate |
-| `wellfed-amebad` | KM4 ports: GPIO/ADC board port, interrupt/timer supervision, watchdog, FreeRTOS owner, flash lease provider, transport, updater, build-bound startup reports, stopped outputs, and LED diagnostics. It re-exports the common crate's `flash` and `trial` |
-| `wellfed-firstboot` | The KM4 first-boot application entry and its bench probes (Wi-Fi, optics, ADC, supervision, flash stress, and the opt-in `fw16-pulse` motion variant) |
-| `wellfed-amebad-sdk` | Bindgen-backed KM4 calls into the pinned AmebaD SDK, and the deterministic host fake SDK used by tests and the simulator |
-| `wellfed-ffi` | C ABI and per-core static libraries joining Rust to SDK startup |
+| `wellfed-hal-common` | The routines both cores link: RAM parking, SDK flash hooks, the KM0 park peer, and the OTA boot-trial step. The KM0 image contains only this crate |
+| `wellfed-hal` | KM4 ports: GPIO/ADC board port, interrupt/timer supervision, watchdog, FreeRTOS owner, flash lease provider, transport, updater, build-bound startup reports, stopped outputs, and LED diagnostics. It re-exports the common crate's `flash` and `trial` |
+| `wellfed-fw-reference` | The KM4 first-boot application entry and its bench probes (Wi-Fi, optics, ADC, supervision, flash stress, and the opt-in `fw16-pulse` motion variant) |
+| `wellfed-amebad-sys` | Bindgen-backed KM4 calls into the pinned AmebaD SDK, and the deterministic host fake SDK used by tests and the simulator |
+| `wellfed-sdk-c` | C ABI and per-core static libraries joining Rust to SDK startup |
 | `wellfed-testkit`, `wellfed-sim` | Fake NOR journal storage and deterministic host worker |
 
 Minimal C hooks call the Rust entrypoint. The SDK still supplies startup, FreeRTOS, radio code, linker scripts, and image packaging. KM0 and KM4 are built separately. Header-derived bindings are generated for SDK-backed KM4 builds; host tests use fake bindings.

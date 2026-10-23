@@ -16,4 +16,4 @@ bootstrap baseline bringup plaf103 plaf103-firstboot:
 	../target/release/wellfed-build $@
 
 test:
-	cargo test --locked -p wellfed-core -p wellfed-amebad-common -p wellfed-amebad -p wellfed-firstboot -p wellfed-ffi
+	cargo test --locked -p wellfed-core -p wellfed-hal-common -p wellfed-hal -p wellfed-fw-reference -p wellfed-sdk-c

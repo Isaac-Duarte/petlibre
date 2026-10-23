@@ -1,6 +1,6 @@
 # Relay bench control
 
-`wellfed-bench` ([crates/wellfed-bench](../../crates/wellfed-bench)) powers the feeder, enters the ROM loader and chains the [Rust UART flash client](../development/rust-flash.md). It adds power and strap control only. Serial reads, inspections, plans and writes run as separate `wellfed-flash` processes, so their pinned checks, plan hashes and no-retry stops apply unchanged. Running it is a physical bench operation; build and check targets never call it.
+`wellfed-bench` ([crates/tools/wellfed-bench](../../crates/tools/wellfed-bench)) powers the feeder, enters the ROM loader and chains the [Rust UART flash client](../development/rust-flash.md). It adds power and strap control only. Serial reads, inspections, plans and writes run as separate `wellfed-flash` processes, so their pinned checks, plan hashes and no-retry stops apply unchanged. Running it is a physical bench operation; build and check targets never call it.
 
 Build both binaries together; the bench runs the `wellfed-flash` beside itself unless `--flash-bin` names another:
 

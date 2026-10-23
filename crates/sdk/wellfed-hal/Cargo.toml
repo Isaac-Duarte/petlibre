@@ -1,0 +1,28 @@
+[package]
+license.workspace = true
+name = "wellfed-hal"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "Experimental PLAF103 AmebaD KM4 ports: board, supervision, owner, transport and updater"
+publish.workspace = true
+build = "build.rs"
+
+[features]
+# Generate SDK bindings from the pinned AmebaD headers (target builds only).
+sdk = ["wellfed-amebad-sys/sdk"]
+# KM4 target builds; the KM0 image links only wellfed-hal-common.
+km4 = ["wellfed-hal-common/km4", "wellfed-amebad-sys/km4"]
+
+[dependencies]
+wellfed-hal-common.workspace = true
+wellfed-amebad-sys.workspace = true
+wellfed-core.workspace = true
+
+[dev-dependencies]
+ed25519-dalek = "2"
+wellfed-testkit.workspace = true
+sha2 = "0.10"
+
+[lints]
+workspace = true

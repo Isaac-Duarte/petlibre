@@ -1,0 +1,32 @@
+[package]
+license.workspace = true
+name = "wellfed-sdk-c"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "C ABI for linking the Rust replacement firmware into the AmebaD SDK"
+publish.workspace = true
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[features]
+# Link the AmebaD ports for one core (target builds from wellfed-build).
+km0 = ["dep:wellfed-hal-common", "wellfed-hal-common/km0"]
+km4 = ["dep:wellfed-hal", "dep:wellfed-fw-reference", "wellfed-fw-reference/km4"]
+fw16-pulse = ["km4", "wellfed-fw-reference/fw16-pulse"]
+fw11-reset = ["km4", "wellfed-fw-reference/fw11-reset"]
+fw11-fail = ["km4", "wellfed-fw-reference/fw11-fail"]
+speaker = ["km4", "wellfed-fw-reference/speaker"]
+
+[dependencies]
+wellfed-core.workspace = true
+wellfed-hal = { workspace = true, optional = true }
+wellfed-hal-common = { workspace = true, optional = true }
+wellfed-fw-reference = { workspace = true, optional = true }
+
+[dev-dependencies]
+wellfed-testkit.workspace = true
+
+[lints]
+workspace = true

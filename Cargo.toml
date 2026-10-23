@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/*"]
+members = ["crates/sdk/*", "crates/tools/*", "firmwares/*"]
 resolver = "3"
 
 [workspace.package]
@@ -9,13 +9,13 @@ license = "MIT"
 publish = false
 
 [workspace.dependencies]
-wellfed-amebad = { path = "crates/wellfed-amebad" }
-wellfed-amebad-common = { path = "crates/wellfed-amebad-common" }
-wellfed-amebad-sdk = { path = "crates/wellfed-amebad-sdk" }
-wellfed-core = { path = "crates/wellfed-core" }
-wellfed-firstboot = { path = "crates/wellfed-firstboot" }
-wellfed-formats = { path = "crates/wellfed-formats" }
-wellfed-testkit = { path = "crates/wellfed-testkit" }
+wellfed-hal = { path = "crates/sdk/wellfed-hal" }
+wellfed-hal-common = { path = "crates/sdk/wellfed-hal-common" }
+wellfed-amebad-sys = { path = "crates/sdk/wellfed-amebad-sys" }
+wellfed-core = { path = "crates/sdk/wellfed-core" }
+wellfed-fw-reference = { path = "firmwares/reference" }
+wellfed-formats = { path = "crates/tools/wellfed-formats" }
+wellfed-testkit = { path = "crates/sdk/wellfed-testkit" }
 # Host tools.
 anyhow = "1.0.104"
 axum = "0.8.9"

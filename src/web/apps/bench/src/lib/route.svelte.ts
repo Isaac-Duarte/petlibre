@@ -1,7 +1,7 @@
 // Hash routes, so a link to a run or session survives a reload and can be
 // pasted to someone on the same tailnet: #/tests/itest-20261022-07.
 
-export const TABS = ["overview", "tests", "sessions", "log"] as const;
+export const TABS = ["overview", "tests", "sessions"] as const;
 export type Tab = (typeof TABS)[number];
 
 function parse(hash: string): { tab: Tab; detail: string | null } {

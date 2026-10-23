@@ -8,10 +8,9 @@
   import Overview from "./views/Overview.svelte";
   import Tests from "./views/Tests.svelte";
   import Sessions from "./views/Sessions.svelte";
-  import Log from "./views/Log.svelte";
 
-  const NAMES: Record<Tab, string> = { overview: "Overview", tests: "Tests", sessions: "Sessions", log: "Log" };
-  const KEYS: Record<string, Tab> = { o: "overview", t: "tests", s: "sessions", l: "log" };
+  const NAMES: Record<Tab, string> = { overview: "Overview", tests: "Tests", sessions: "Sessions" };
+  const KEYS: Record<string, Tab> = { o: "overview", t: "tests", s: "sessions" };
 
   onMount(() => app.start());
 
@@ -22,7 +21,8 @@
     document.title = current ? `${current.outcome} ${current.command} – wellfed bench` : "wellfed bench";
   });
 
-  // "g" then a tab's letter, as in most developer tools; "/" filters the log.
+  // "g" then a tab's letter, as in most developer tools; "/" filters the log
+  // on the overview.
   let pending = false;
   function onkeydown(event: KeyboardEvent) {
     const target = event.target as HTMLElement | null;
@@ -38,7 +38,7 @@
     if (event.key === "g") pending = true;
     if (event.key === "/") {
       event.preventDefault();
-      route.go("log");
+      route.go("overview");
       queueMicrotask(() => document.getElementById("log-filter")?.focus());
     }
   }
@@ -89,10 +89,8 @@
       <Overview />
     {:else if route.tab === "tests"}
       <Tests />
-    {:else if route.tab === "sessions"}
-      <Sessions />
     {:else}
-      <Log />
+      <Sessions />
     {/if}
   </main>
 </div>

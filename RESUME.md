@@ -7,6 +7,42 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
+**October 23, morning: bring-up firmwares and QA (FW39, physical over the air and by UART capture, owner pressing).** Built in the `firmware-split` worktree, applied onto master after FW38.
+- **What changed:**
+  - The reference firmware is gone. In its place are `optics`, `buttons`, `adc`, `speaker`, `motor` (pulse only in its `fw16-pulse` variant) and `trial` (`fw11-reset`, `fw11-fail`), plus a guided `qa` firmware, now the default for `wellfed-build`, make and the bench ([firmwares](src/firmware/wellfed/README.md), [QA](docs/firmware/qa.md)).
+  - The probes moved unchanged to `src/sdk/wellfed-probes`. Policy names, markers and record formats are unchanged.
+  - New `wellfed-audit qa`.
+  - The bench takes `--firmware`. `ota-recovery` builds `trial`/`fw11-fail`, and `ota-power-cuts` builds `speaker`.
+  - The builder refuses a motion policy outside a variant.
+- **Checks:**
+  - `make check` and `make check-fixtures` pass, with no skips, against fresh `qa` `device` and `firstboot` builds. The emulated factory loader accepts the QA build in both banks.
+  - Fresh `firstboot` builds of every firmware and variant pass every audit. Firmware task stack bounds (bytes):
+    - `qa` 2596/8192, aud 644/4096;
+    - `optics` 2168/8192;
+    - `buttons` 704/4096;
+    - `adc` 760/8192;
+    - `speaker` aud 900/4096, spk 1720/4096;
+    - `motor/fw16-pulse` 1860/8192;
+    - `blink` 748/4096.
+- **Runs:**
+  - `itest-20261023-05 --build --tier smoke --power` passed. QA `201e76ff…` installed as v68 (`ota-update` 4 min 00 s), confirmed on its trial boot, then passed `requests` and `request-auth`. Its review `itest-20261023-05-good-review` is the new QA baseline.
+  - `boot fw39-qa-01-guided`: the 180 s capture ended during the button prompts. The owner was still learning the layout: Feed was pressed for Reset and Mic.
+  - `boot fw39-qa-02-guided`: a complete run. `wellfed-audit qa` graded it `qa_fail` (report `fw39-qa-02-guided-audit-2.json`).
+    - Startup, optics, power and all four buttons passed. Each prompted button arrived on its FW20 pin.
+    - The four indicators and the tone were all answered "no". The owner says these were mis-pressed: PA4, PB22 and the tone were answered within a second, the tone 0.2 s after it started.
+    - So indicators and speaker are **not established** by QA yet.
+- **Findings:**
+  - Optics passes on a cold boot. On the OTA trial boot it faulted at once (`PLOPT1 error kind=supervisor n=1 fault=7`, as on every reference boot since `itest-20261022-10`), so the fault follows the boot path rather than the probe.
+  - The UART frames lines as `\n\r`. The first `wellfed-audit qa` refused every record for that reason; it is fixed and tested.
+  - The first button cue is lost when the startup chime is still waiting for the settings.
+  - The optics run takes about 110 s on a cold boot, leaving about 70 s of a 180 s capture for the guided checks.
+- **Next:**
+  - Repeat the guided run with deliberate answers.
+  - Make QA ignore answers within about 0.5 s of a prompt or before the tone ends.
+  - Queue the first cue after the chime.
+- **Flash now:** **Bank 1:** QA `201e76ff…` (OTA v68, confirmed). **Bank 0:** unchanged (`f244d9a9…`). **Next manifest version:** 69. Restore the reference build with `--review itest-20261022-19-good-review` if needed.
+- **Bench state:** restored. Feeder off (both relays off), hotspot down, no server.
+
 **October 23, about 3 AM: Rust stock recovery on hardware (FW38 done, physical, owner present).**
 - **Code first:** `wellfed-flash` again reads reviews frozen before FW37 (`profile: plaf103-firstboot`, no `device`). Bank 0's image and the reference build have such reviews, so the give-way and the reinstall needed this. It also clears the emulated-fixture failures noted below.
 - **Runs** (release binaries rebuilt first):

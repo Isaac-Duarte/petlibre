@@ -236,8 +236,8 @@ struct Ctx<'r> {
     args: ItestArgs,
     log: Log,
     baseline: Option<Baseline>,
-    /// Each variant's review, once this run has built or found it.
-    variants: Vec<(super::Variant, PathBuf)>,
+    /// Each image's review, once this run has built or found it.
+    images: Vec<(super::Image, PathBuf)>,
     /// Silence counts from here (the run's start, or the end of an expected
     /// offline window) until a later record.
     heard: f64,
@@ -253,7 +253,7 @@ impl<'r> Ctx<'r> {
             args: args.clone(),
             log: Log::default(),
             baseline: None,
-            variants: Vec::new(),
+            images: Vec::new(),
             heard: rig.clock(),
             offline: false,
             went_silent: None,
@@ -489,31 +489,31 @@ impl<'r> Ctx<'r> {
             .ok_or_else(|| Error::Bench(format!("Signing {label} failed")))
     }
 
-    /// The fw11-fail variant signed at the next version: built once, then
-    /// re-signed from its review.
+    /// The trial firmware's fw11-fail variant signed at the next version:
+    /// built once, then re-signed from its review.
     fn failing(&mut self, label: &str) -> Result<Staged> {
-        self.variant(label, super::Variant::Fw11Fail)
+        self.image(label, super::Image::trial(super::Variant::Fw11Fail))
     }
 
-    /// `variant` signed at the next version: built (or found by the review
+    /// `image` signed at the next version: built (or found by the review
     /// cache) once, then re-signed from its review.
-    fn variant(&mut self, label: &str, variant: super::Variant) -> Result<Staged> {
+    fn image(&mut self, label: &str, image: super::Image) -> Result<Staged> {
         let known = self
-            .variants
+            .images
             .iter()
-            .find(|(v, _)| *v == variant)
+            .find(|(i, _)| *i == image)
             .map(|(_, review)| review.clone());
         let mut args = self.ota_args(label, known);
         if args.build {
-            args.variant = Some(variant);
+            args.firmware = Some(image.firmware);
+            args.variant = image.variant;
         }
-        let staged = self.rig.stage(&args)?.ok_or_else(|| {
-            Error::Bench(format!(
-                "Building or signing the {variant:?} variant failed"
-            ))
-        })?;
+        let staged = self
+            .rig
+            .stage(&args)?
+            .ok_or_else(|| Error::Bench(format!("Building or signing {image} failed")))?;
         if args.build {
-            self.variants.push((variant, staged.review.clone()));
+            self.images.push((image, staged.review.clone()));
         }
         Ok(staged)
     }
@@ -526,6 +526,7 @@ impl<'r> Ctx<'r> {
             review,
             build,
             rebuild: build && self.args.rebuild,
+            firmware: None,
             variant: None,
             config: self.args.config.clone(),
             version: None,

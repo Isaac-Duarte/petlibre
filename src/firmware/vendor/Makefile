@@ -4,7 +4,7 @@
 # ../wellfed/ that the Rust profiles link, and an optional image variant
 # the firmware declares (`make list`).
 DEVICE ?=
-FIRMWARE ?= reference
+FIRMWARE ?= qa
 VARIANT ?=
 
 BUILD = ../../../target/release/wellfed-build
@@ -19,7 +19,7 @@ help:
 	@echo "device: build/audit the application with the device's stock-derived OTA bank addresses"
 	@echo "firstboot: build/audit UART-only SDK mains and the Rust application"
 	@echo "test: run hardware-independent Rust firmware tests on the host"
-	@echo "DEVICE=<name> FIRMWARE=<name> VARIANT=<name> pick what to build (default: the only device, reference, none)."
+	@echo "DEVICE=<name> FIRMWARE=<name> VARIANT=<name> pick what to build (default: the only device, qa, none)."
 	@echo "These targets only build desktop artifacts; there is no flash target."
 
 # wellfed-build runs as its own executable: `cargo run` would set
@@ -37,7 +37,9 @@ baseline bringup device firstboot: $(BUILD)
 	$(BUILD) build --profile $@ $(DEVICE_ARG) --firmware $(FIRMWARE) $(VARIANT_ARG)
 
 test:
-	cargo test --locked -p wellfed-core -p wellfed-hal-common -p wellfed-hal -p wellfed-sdk -p wellfed-sdk-c -p wellfed-fw-reference -p wellfed-fw-blink
+	cargo test --locked -p wellfed-core -p wellfed-hal-common -p wellfed-hal -p wellfed-sdk -p wellfed-sdk-c -p wellfed-probes \
+		-p wellfed-fw-qa -p wellfed-fw-optics -p wellfed-fw-buttons -p wellfed-fw-adc \
+		-p wellfed-fw-speaker -p wellfed-fw-motor -p wellfed-fw-trial -p wellfed-fw-blink
 
 .PHONY: FORCE
 FORCE:

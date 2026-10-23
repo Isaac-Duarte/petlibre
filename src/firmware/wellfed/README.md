@@ -3,13 +3,21 @@
 Each folder here is one firmware for the PLAF103, built on the Wellfed SDK (`src/sdk/wellfed-sdk`). Pick one at build time:
 
 ```sh
-make -C src/firmware/vendor firstboot FIRMWARE=blink   # default: reference
+make -C src/firmware/vendor firstboot FIRMWARE=buttons   # default: qa
 ```
 
-| Firmware | What it adds |
-| --- | --- |
-| [`reference`](reference) | The diagnostic image's optics probe, startup chime and speaker stream, its bench probes, and the opt-in FW16 motion and FW11 trial variants |
-| [`blink`](blink) | One task that blinks the connection indicator; the smallest firmware and the template for new ones |
+| Firmware | Card | What it adds |
+| --- | --- | --- |
+| [`qa`](qa) | QA | The default: a guided self-test of optics, power, buttons, indicators and speaker, ending in one `PLQA1 result` line ([QA guide](../../../docs/firmware/qa.md)) |
+| [`optics`](optics) | FW13 | The optics probe, once per boot |
+| [`buttons`](buttons) | FW20 | The panel buttons, read-only, logged for as long as the build runs |
+| [`adc`](adc) | FW14 | The power inputs, read-only, sampled once a second |
+| [`speaker`](speaker) | FW24 | The startup chime, requested tunes and the signed network audio stream |
+| [`motor`](motor) | FW16 | The first supervised motor pulse, in its `fw16-pulse` variant only; the normal image adds nothing |
+| [`trial`](trial) | FW11 | Trial images KM0 must roll back: `fw11-reset` and `fw11-fail` |
+| [`blink`](blink) | FW36 | One task that blinks the connection indicator; the smallest firmware and the template for new ones |
+
+The probes these firmwares run live once, in `src/sdk/wellfed-probes`, so a single-purpose firmware and QA step the same code. Each firmware owns the tasks that step them.
 
 ## What the SDK runtime guarantees
 
@@ -39,7 +47,7 @@ summary = "What the variant changes"
 policies = {}                               # replace the normal image's policies
 ```
 
-The startup audit checks each policy against the image's markers, so declare only the policies the image really carries. A variant whose policies name a `motion` policy drives the motor (`list` marks it `"motion": true`); motion builds stay a manual, attended step. Build a variant with `--variant <name>` (`VARIANT=<name>` for make); only the `firstboot` profile takes one.
+The startup audit checks each policy against the image's markers, so declare only the policies the image really carries. A variant whose policies name a `motion` policy drives the motor (`list` marks it `"motion": true`); motion builds stay a manual, attended step. Only a variant may name one: the builder refuses a motion policy on the normal image, because only first-boot builds record policies, and a motion image must always show its policy to the bench's attended-motion gate. Build a variant with `--variant <name>` (`VARIANT=<name>` for make); only the `firstboot` profile takes one.
 
 Its target-only module defines the start hook and creates its tasks:
 
@@ -59,8 +67,9 @@ fn start() {
 - A task is a step function. It returns the milliseconds to sleep before the next step, or zero to end the task. Keep each task's state in a `wellfed_sdk::Slot` static owned by that task.
 - Call `startup_done(true)` once the firmware has finished any startup work that holds the KM0 flash handshake. The runtime does not confirm the build before then.
 - Drive hardware through `wellfed_sdk::hal`. Indicator requests are refused unless outputs read back stopped.
-- Log records as `PL<NAME>1 …` lines through `hal::startup::Report`, as `blink` does.
+- Log records as `PL<NAME>1 …` lines, through `wellfed_probes::log` or `hal::startup::Report` as `blink` does.
+- To run a bench probe, depend on `wellfed-probes` and step its `Probe` from your own task, as `optics` does.
 
-The build's stack audit finds every `spawn(c"name", WORDS, priority, entry)` call in the firmware's `src/`, so keep that call shape, with the stack size as a literal or a `const NAME: u16`. Each task's static bound must leave a quarter of its stack free.
+The build's stack audit finds every `spawn(c"name", WORDS, priority, entry)` call in the firmware's `src/`, so keep that call shape, with the stack size as a literal or a `const NAME: u16`, and keep the call in the firmware crate rather than a shared library. Each task's static bound must leave a quarter of its stack free.
 
-Host tests run the firmware's logic against the SDK fake (`wellfed_sdk::hal::sdk::fake`); see `blink/tests/`.
+Host tests run the firmware's logic against the SDK fake (`wellfed_sdk::hal::sdk::fake`); see `blink/tests/` and `qa/tests/`.

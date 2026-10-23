@@ -97,7 +97,7 @@ struct Target {
     #[command(flatten)]
     device: DeviceArgs,
     /// The firmware under `src/firmware/wellfed/` that the image links.
-    #[arg(long, default_value = "reference")]
+    #[arg(long, default_value = "qa")]
     firmware: String,
     /// An image variant the firmware declares (`wellfed-build list`).
     #[arg(long)]

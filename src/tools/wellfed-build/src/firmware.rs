@@ -129,6 +129,14 @@ impl Firmware {
             !declaration.devices.is_empty(),
             format!("Firmware {name} declares no devices"),
         )?;
+        // Policies reach the manifest of first-boot builds only, and only a
+        // variant is limited to those, so a motion image must be a variant:
+        // otherwise a non-first-boot build could drive the motor with no
+        // motion policy for the bench's attended-motion gate to see.
+        require(
+            declaration.policies.motion.is_none(),
+            format!("Firmware {name}'s normal image names a motion policy; make it a variant"),
+        )?;
 
         let mut variants = Vec::new();
         for (variant, declared) in declaration.variants {
@@ -299,6 +307,13 @@ quiet = { summary = "No probes" }
         let misspelt = MANIFEST.replace("optics =", "optic =");
         assert!(Firmware::parse("demo", &misspelt).is_err());
 
+        let moving = MANIFEST.replace(
+            "policies = { optics = \"fw13-optics-v2\" }",
+            "policies = { motion = \"fw16-pulse-v1\" }",
+        );
+        let error = Firmware::parse("demo", &moving).unwrap_err().to_string();
+        assert!(error.contains("make it a variant"), "{error}");
+
         let undeclared = "[package]\nname = \"wellfed-fw-demo\"\n";
         assert!(Firmware::parse("demo", undeclared).is_err());
     }
@@ -307,7 +322,10 @@ quiet = { summary = "No probes" }
     fn the_checked_in_firmwares_declare_themselves() {
         let repo = Repo::here().unwrap();
         let firmwares = Firmware::all(&repo).unwrap();
-        assert!(firmwares.iter().any(|f| f.name() == "reference"));
-        assert!(firmwares.iter().any(|f| f.name() == "blink"));
+        for name in [
+            "qa", "optics", "buttons", "adc", "speaker", "motor", "trial", "blink",
+        ] {
+            assert!(firmwares.iter().any(|f| f.name() == name), "{name}");
+        }
     }
 }

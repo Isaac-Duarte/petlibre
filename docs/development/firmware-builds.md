@@ -13,8 +13,8 @@ The builder is `wellfed-build` (`src/tools/wellfed-build`); the make targets bui
 A build is a **profile** of a **firmware** on a **device**:
 
 ```sh
-wellfed-build build --profile firstboot [--device plaf103] [--firmware reference] [--variant speaker]
-make -C src/firmware/vendor firstboot DEVICE=plaf103 FIRMWARE=reference VARIANT=speaker
+wellfed-build build --profile firstboot [--device plaf103] [--firmware qa] [--variant fw11-fail]
+make -C src/firmware/vendor firstboot DEVICE=plaf103 FIRMWARE=trial VARIANT=fw11-fail
 wellfed-build list    # the devices, and each firmware's devices and variants, as JSON
 ```
 

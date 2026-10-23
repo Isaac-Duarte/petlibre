@@ -1,0 +1,20 @@
+[package]
+license.workspace = true
+name = "wellfed-probes"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "Experimental PLAF103 bench probes (optics, buttons, power inputs, motor pulse, speaker records) shared by the Wellfed firmwares"
+publish.workspace = true
+
+[features]
+# KM4 target builds with the pinned SDK bindings.
+km4 = ["wellfed-sdk/km4", "wellfed-hal/km4", "wellfed-hal/sdk"]
+
+[dependencies]
+wellfed-sdk.workspace = true
+wellfed-hal.workspace = true
+wellfed-core.workspace = true
+
+[lints]
+workspace = true

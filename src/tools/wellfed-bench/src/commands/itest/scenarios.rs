@@ -593,9 +593,12 @@ fn record_before(ctx: &Ctx, mark: usize, field: &str) -> Option<String> {
 fn ota_power_cuts(ctx: &mut Ctx) -> Result<()> {
     let build = ctx.baseline()?.build.clone();
     // The feeder skips the trial for a build it has confirmed before, so the
-    // cuts happen while it installs the speaker variant (no motion), which
+    // cuts happen while it installs the speaker firmware (no motion), which
     // it has not; the baseline goes back on afterwards.
-    let speaker = ctx.variant("cut-speaker", crate::commands::Variant::Speaker)?;
+    let speaker = ctx.image(
+        "cut-speaker",
+        crate::commands::Image::of(crate::commands::Firmware::Speaker),
+    )?;
     let restore = ctx.resign("cut-restore")?;
 
     let result = power_cuts(ctx, &speaker);

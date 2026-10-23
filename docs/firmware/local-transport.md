@@ -161,7 +161,7 @@ Server-to-firmware requests can carry an HMAC so that a party with only the Wi-F
 ## Device settings (FW25)
 
 `{"id":…,"op":"settings"}` reads the device settings: lights, sound, volume, the record generation, and whether NOR may be written. With `"lights":0|1`, `"sound":0|1` or `"volume":0..100` it queues one change, which **must be signed**. The reply reports the current values and `"pending":true`. A second change while one is queued gets `error: busy`, and an unwritable store gets `error: read_only`.
-- **Writer:** the firmware's settings task (`wellfed-fw-reference/src/settings.rs`) owns the FW15 store in storage sectors 2 and 3. It starts after the boot is confirmed, arms the flash-lock hooks if the confirmation did not, and only then lets the offer check start, so the two never arm at once. Each save sets the arming attempt marker and clears it after.
+- **Writer:** the firmware's settings task (`src/sdk/wellfed-sdk/src/settings.rs`, part of the runtime every firmware runs inside) owns the FW15 store in storage sectors 2 and 3. It starts after the boot is confirmed, arms the flash-lock hooks if the confirmation did not, and only then lets the offer check start, so the two never arm at once. Each save sets the arming attempt marker and clears it after.
 - **Transport isolation:** the transport may only call `settings::request`, which queues and reads atomics and never touches flash.
 - **Records:** `PLCFG1 start`, `open status=… generation=… lights=… sound=… volume=…`, the arming records, `saved …` and `error stage=unarmed|save status=…`.
 - **API:** `POST /api/replacement/request` takes `{"op":"settings"}` or `{"op":"settings","lights":true,"volume":40}`; the server signs it.

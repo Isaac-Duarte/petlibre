@@ -181,12 +181,12 @@ mod tests {
             device: "plaf103",
             profile: "firstboot",
             inputs: &inputs,
-            firmware: Some("reference"),
-            variant: Some("speaker"),
+            firmware: Some("trial"),
+            variant: Some("fw11-fail"),
             ota_public_key: Some("ab"),
         };
         let untyped = json!({"device": "plaf103", "profile": "firstboot", "inputs": inputs,
-                             "firmware": "reference", "variant": "speaker",
+                             "firmware": "trial", "variant": "fw11-fail",
                              "ota_public_key": "ab"});
         assert_eq!(
             snapshot.identity().unwrap(),

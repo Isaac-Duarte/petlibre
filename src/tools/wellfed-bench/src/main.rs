@@ -439,9 +439,11 @@ mod tests {
     }
 
     #[test]
-    fn ota_build_takes_a_no_motion_variant_and_config() {
+    fn ota_build_takes_a_no_motion_image_and_config() {
         let cli = ota(&[
             "--build",
+            "--firmware",
+            "trial",
             "--variant",
             "fw11-fail",
             "--config",
@@ -453,19 +455,21 @@ mod tests {
             panic!("not ota")
         };
         assert!(args.build && args.review.is_none());
+        assert_eq!(args.firmware, Some(commands::Firmware::Trial));
         assert_eq!(args.variant, Some(commands::Variant::Fw11Fail));
         assert_eq!(args.config, PathBuf::from("private/other.json"));
     }
 
     #[test]
-    fn ota_refuses_the_motion_variant_and_mixed_sources() {
-        let error = ota(&["--build", "--variant", "fw16-pulse"])
-            .err()
-            .unwrap()
-            .to_string();
-        assert!(error.contains("motion builds stay manual"), "{error}");
+    fn ota_refuses_motion_and_mixed_sources() {
+        for motion in [&["--variant", "fw16-pulse"], &["--firmware", "motor"]] {
+            let args = [&["--build"][..], motion].concat();
+            let error = ota(&args).err().unwrap().to_string();
+            assert!(error.contains("motion builds stay manual"), "{error}");
+        }
 
-        // --variant without --build is refused by the command.
+        // --firmware and --variant without --build are refused by the
+        // command.
         for extra in [&["--build", "--review", "private/verification/r"][..], &[]] {
             assert!(ota(extra).is_err(), "{extra:?}");
         }

@@ -13,7 +13,7 @@ wellfed-hal = { path = "src/sdk/wellfed-hal" }
 wellfed-hal-common = { path = "src/sdk/wellfed-hal-common" }
 wellfed-amebad-sys = { path = "src/sdk/wellfed-amebad-sys" }
 wellfed-core = { path = "src/sdk/wellfed-core" }
-wellfed-fw-reference = { path = "src/firmware/wellfed/reference" }
+wellfed-probes = { path = "src/sdk/wellfed-probes" }
 wellfed-sdk = { path = "src/sdk/wellfed-sdk" }
 wellfed-sdk-c = { path = "src/sdk/wellfed-sdk-c" }
 wellfed-fw-blink = { path = "src/firmware/wellfed/blink" }

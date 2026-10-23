@@ -45,9 +45,9 @@ A signed `{"op":"play","tune":"<name>"}` queues a tune (see [local transport](lo
 
 The transport reaches only `audio::request` (`cargo xtask check-repository` pins it).
 
-## Speaker variant (network audio)
+## Speaker firmware (network audio)
 
-`wellfed-build build --profile firstboot --variant speaker` (or `wellfed-bench ota NAME --build --variant speaker`) builds the normal image plus a stream task (`wellfed-hal/src/stream.rs`, task `wellfed-spk`). Motion is untouched, and OTA, recovery and confirmation work as in the normal image.
+`wellfed-build build --profile firstboot --firmware speaker` (or `wellfed-bench ota NAME --build --firmware speaker`) builds the `speaker` firmware: the tune task and a stream task (`wellfed-hal/src/stream.rs`, task `wellfed-spk`). Until the firmware split this was the reference firmware's `speaker` variant; the evidence below ran on that. Motion is untouched, and OTA, recovery and confirmation work as in every firmware.
 - **Handshake:** the task listens on TCP 7700, one client at a time. It sends a `PLSPK1` hello with a fresh challenge, and the client answers with a header (sample rate 8, 16, 32 or 48 kHz) and an HMAC under the FW08 request key (`wellfed-core/src/speaker_stream.rs`). The feeder replies with one status byte: `ok`, `unauthenticated`, `bad_header`, `busy` or `muted`. An image without a request key refuses every stream.
 - **Stream:**
   - After `ok`, the connection is raw 16-bit little-endian mono PCM.

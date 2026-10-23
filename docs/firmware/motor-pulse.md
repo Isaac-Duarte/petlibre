@@ -4,9 +4,9 @@ Status: prepared offline: probe, host tests, build variant and guards. Not insta
 
 ## What the image does
 
-`wellfed-build build --profile firstboot --variant fw16-pulse` builds the `fw16-pulse` variant. It records `startup_motion_policy: fw16-pulse-v1` (declared in the reference firmware's `Cargo.toml`) and `variant: fw16-pulse` in the manifest, gets its own build ID, and replaces the FW13 optics probe. Nothing else builds it.
+`wellfed-build build --profile firstboot --firmware motor --variant fw16-pulse` builds the `motor` firmware's `fw16-pulse` variant. It records `startup_motion_policy: fw16-pulse-v1` (declared in `src/firmware/wellfed/motor/Cargo.toml`) and `variant: fw16-pulse` in the manifest and gets its own build ID. The motor firmware's normal image adds no task, and the builder refuses a motion policy outside a variant, so nothing else can drive the motor. The bench never builds it.
 
-After the LED probe, `probes/pulse.rs`:
+After the LED probe, the pulse probe (`src/sdk/wellfed-probes/src/pulse.rs`):
 1. Skips everything unless this is a clean cold boot: reset reason 0 and its backup-register marker clear.
 2. Opens the board (motor STOP, emitters OFF, sensors), binds a fresh flash authority to the KM0 peer and opens the supervisor (TIM2 at 10 ms, owner and motor lease 200 ms). It enables feedback capture.
 3. Logs `armed`, then waits 60 s, renewing its owner lease every 2 ms, so the operator can be ready.

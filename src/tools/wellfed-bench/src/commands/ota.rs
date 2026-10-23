@@ -70,37 +70,88 @@ pub fn steps(source: Source) -> Vec<&'static str> {
         .collect()
 }
 
-/// A no-motion image variant `--build` may make. The FW16 motion variant is
-/// refused here: motion builds stay a manual, attended step.
+/// Why the bench never builds the motor firmware itself.
+const MOTION_MANUAL: &str = "drives the motor; motion builds stay manual (build and review it yourself, then use --review with --attended-motion)";
+
+/// A no-motion firmware `--build` may make (`src/firmware/wellfed/<name>`).
+/// The FW16 motor firmware is refused here: motion builds stay a manual,
+/// attended step.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Firmware {
+    /// The guided QA self-test; `wellfed-build`'s default.
+    #[default]
+    Qa,
+    /// FW13: the optics probe.
+    Optics,
+    /// FW20: the panel buttons, read-only.
+    Buttons,
+    /// FW14: read-only power-input samples.
+    Adc,
+    /// FW24: tunes and the signed network audio stream.
+    Speaker,
+    /// Blinks the connection indicator.
+    Blink,
+    /// FW11 trial images, one per `Variant`.
+    Trial,
+}
+
+impl Firmware {
+    const ALL: [Self; 7] = [
+        Self::Qa,
+        Self::Optics,
+        Self::Buttons,
+        Self::Adc,
+        Self::Speaker,
+        Self::Blink,
+        Self::Trial,
+    ];
+
+    /// The firmware's directory name, which `wellfed-build --firmware`
+    /// selects.
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::Qa => "qa",
+            Self::Optics => "optics",
+            Self::Buttons => "buttons",
+            Self::Adc => "adc",
+            Self::Speaker => "speaker",
+            Self::Blink => "blink",
+            Self::Trial => "trial",
+        }
+    }
+}
+
+/// `--firmware`'s parser, with a reason for the motor firmware.
+pub(crate) fn parse_firmware(text: &str) -> std::result::Result<Firmware, String> {
+    if text == "motor" {
+        return Err(format!("motor {MOTION_MANUAL}"));
+    }
+    Firmware::ALL
+        .into_iter()
+        .find(|firmware| firmware.name() == text)
+        .ok_or_else(|| {
+            let known: Vec<&str> = Firmware::ALL.iter().map(|f| f.name()).collect();
+            format!("unknown firmware {text:?}; use {}", known.join(", "))
+        })
+}
+
+/// A variant of the trial firmware; no other firmware the bench builds has
+/// one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Variant {
     /// FW11: never confirms; the watchdog resets it, so KM0 falls back.
     Fw11Reset,
     /// FW11: fails its startup diagnostic on purpose.
     Fw11Fail,
-    /// The normal image plus a signed network audio stream.
-    Speaker,
-    /// FW14: read-only power-input samples in place of the optics probe.
-    Fw14Adc,
 }
 
 impl Variant {
-    /// The reference firmware's variant name, which `wellfed-build
-    /// --variant` selects.
+    /// The variant's name, which `wellfed-build --variant` selects.
     pub(crate) fn name(self) -> &'static str {
         match self {
             Self::Fw11Reset => "fw11-reset",
             Self::Fw11Fail => "fw11-fail",
-            Self::Speaker => "speaker",
-            Self::Fw14Adc => "fw14-adc",
         }
-    }
-
-    /// `--variant <name>` for `wellfed-build`, or nothing.
-    fn args(variant: Option<Self>) -> Vec<String> {
-        variant
-            .map(|v| vec!["--variant".to_string(), v.name().to_string()])
-            .unwrap_or_default()
     }
 }
 
@@ -109,14 +160,52 @@ pub(crate) fn parse_variant(text: &str) -> std::result::Result<Variant, String> 
     match text {
         "fw11-reset" => Ok(Variant::Fw11Reset),
         "fw11-fail" => Ok(Variant::Fw11Fail),
-        "speaker" => Ok(Variant::Speaker),
-        "fw14-adc" => Ok(Variant::Fw14Adc),
-        "fw16-pulse" => Err(
-            "fw16-pulse drives the motor; motion builds stay manual (build and review it yourself, then use --review with --attended-motion)".into(),
-        ),
+        "fw16-pulse" => Err(format!("fw16-pulse {MOTION_MANUAL}")),
         other => Err(format!(
-            "unknown variant {other:?}; use fw11-reset, fw11-fail, speaker or fw14-adc"
+            "unknown variant {other:?}; the trial firmware has fw11-reset and fw11-fail"
         )),
+    }
+}
+
+/// What `--build` makes: a firmware and, for the trial firmware, a variant.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Image {
+    pub firmware: Firmware,
+    pub variant: Option<Variant>,
+}
+
+impl Image {
+    pub(crate) const fn of(firmware: Firmware) -> Self {
+        Self {
+            firmware,
+            variant: None,
+        }
+    }
+
+    pub(crate) const fn trial(variant: Variant) -> Self {
+        Self {
+            firmware: Firmware::Trial,
+            variant: Some(variant),
+        }
+    }
+
+    /// `--firmware <name> [--variant <name>]` for `wellfed-build`.
+    fn args(self) -> Vec<String> {
+        let mut args = vec!["--firmware".to_string(), self.firmware.name().to_string()];
+        if let Some(variant) = self.variant {
+            args.extend(["--variant".to_string(), variant.name().to_string()]);
+        }
+        args
+    }
+}
+
+impl fmt::Display for Image {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.firmware.name())?;
+        match self.variant {
+            Some(variant) => write!(f, " ({})", variant.name()),
+            None => Ok(()),
+        }
     }
 }
 
@@ -134,7 +223,11 @@ pub struct OtaArgs {
     /// With --build: build even when a review of the same sources exists.
     #[arg(long, requires = "build")]
     pub rebuild: bool,
-    /// No-motion variant for --build: fw11-reset, fw11-fail, speaker or fw14-adc.
+    /// No-motion firmware for --build: qa (the default), optics, buttons, adc, speaker, blink
+    /// or trial.
+    #[arg(long, value_parser = parse_firmware)]
+    pub firmware: Option<Firmware>,
+    /// Trial variant for --build --firmware trial: fw11-reset or fw11-fail.
     #[arg(long, value_parser = parse_variant)]
     pub variant: Option<Variant>,
     /// wellfed-local config for the health check's `status` (root-relative).
@@ -157,6 +250,14 @@ impl OtaArgs {
             Source::Build
         } else {
             Source::Review
+        }
+    }
+
+    /// What `--build` makes.
+    pub(crate) fn image(&self) -> Image {
+        Image {
+            firmware: self.firmware.unwrap_or_default(),
+            variant: self.variant,
         }
     }
 }
@@ -794,8 +895,12 @@ impl Bench {
         require(args.minutes > 0.0, "--minutes must be positive")?;
         // clap counts a flag as always present, so this pairing is checked here.
         require(
-            args.build || args.variant.is_none(),
-            "--variant applies to --build only",
+            args.build || (args.firmware.is_none() && args.variant.is_none()),
+            "--firmware and --variant apply to --build only",
+        )?;
+        require(
+            args.variant.is_none() || args.firmware == Some(Firmware::Trial),
+            "--variant applies to --firmware trial only",
         )?;
         let mut review = match (&args.review, args.build) {
             (_, true) => PathBuf::from(VERIFICATION).join(format!("{}-review", args.name)),
@@ -886,7 +991,7 @@ impl Bench {
             return Ok(None);
         }
         let mut query = vec!["source-id".to_string(), "--image".into()];
-        query.extend(Variant::args(args.variant));
+        query.extend(args.image().args());
         let answer = self.tools.build_query(&query)?;
         let identity = answer.stdout.trim();
         if answer.code != 0 || !is_build_id(identity) {
@@ -919,7 +1024,7 @@ impl Bench {
         let mut build = ["build", "--profile", "firstboot"]
             .map(String::from)
             .to_vec();
-        build.extend(Variant::args(args.variant));
+        build.extend(args.image().args());
         timing.ran = true;
         let (code, seconds) = self.run_step(BUILD_STEPS[0], &build)?;
         timing.build = Some(seconds);

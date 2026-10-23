@@ -1653,6 +1653,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "wellfed-fw-adc"
+version = "0.1.0"
+dependencies = [
+ "wellfed-probes",
+ "wellfed-sdk",
+]
+
+[[package]]
 name = "wellfed-fw-blink"
 version = "0.1.0"
 dependencies = [
@@ -1660,11 +1668,50 @@ dependencies = [
 ]
 
 [[package]]
-name = "wellfed-fw-reference"
+name = "wellfed-fw-buttons"
+version = "0.1.0"
+dependencies = [
+ "wellfed-probes",
+ "wellfed-sdk",
+]
+
+[[package]]
+name = "wellfed-fw-motor"
+version = "0.1.0"
+dependencies = [
+ "wellfed-probes",
+ "wellfed-sdk",
+]
+
+[[package]]
+name = "wellfed-fw-optics"
+version = "0.1.0"
+dependencies = [
+ "wellfed-probes",
+ "wellfed-sdk",
+]
+
+[[package]]
+name = "wellfed-fw-qa"
 version = "0.1.0"
 dependencies = [
  "wellfed-core",
- "wellfed-hal",
+ "wellfed-probes",
+ "wellfed-sdk",
+]
+
+[[package]]
+name = "wellfed-fw-speaker"
+version = "0.1.0"
+dependencies = [
+ "wellfed-probes",
+ "wellfed-sdk",
+]
+
+[[package]]
+name = "wellfed-fw-trial"
+version = "0.1.0"
+dependencies = [
  "wellfed-sdk",
 ]
 
@@ -1716,6 +1763,15 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "wellfed-probes"
+version = "0.1.0"
+dependencies = [
+ "wellfed-core",
+ "wellfed-hal",
+ "wellfed-sdk",
 ]
 
 [[package]]

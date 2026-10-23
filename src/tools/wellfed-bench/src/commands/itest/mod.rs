@@ -232,6 +232,10 @@ trait Rig {
     fn stock_trial(&mut self, _trial: &TrialRequest) -> Result<()> {
         Err(Error::Bench("This rig sends no stock trials".into()))
     }
+    /// `POST /api/ota/trial/resolve`; refused until the server's evidence allows it.
+    fn resolve_trial(&mut self, _request_id: &str, _note: &str) -> Result<()> {
+        Err(Error::Bench("This rig resolves no stock trials".into()))
+    }
 }
 
 /// The build the suite installed (or found running) and every later

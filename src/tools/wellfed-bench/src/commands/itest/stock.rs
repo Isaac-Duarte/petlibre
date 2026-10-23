@@ -45,9 +45,14 @@ use wellfed_core::record::tag;
 const STOCK_SECONDS: f64 = 5.0 * 60.0;
 /// The server records the install's health as soon as it arrives.
 const CLOSE_SECONDS: f64 = 30.0;
+/// The server's resolution window (20 min after the request, 10 quiet
+/// connected minutes) plus margin.
+const SETTLE_SECONDS: f64 = 25.0 * 60.0;
+const SETTLE_POLL_SECONDS: f64 = 30.0;
 
 /// The run's stages, in order: its status steps and record entries.
 const READY: &str = "stock-ready";
+const SETTLE: &str = "stock-settle";
 const REQUEST: &str = "stock-request";
 const DOWNLOAD: &str = "stock-install";
 const BANK0: &str = "bank0-health";
@@ -86,7 +91,7 @@ impl StockOtaArgs {
     /// The stages this run takes on.
     pub fn steps(&self) -> Vec<&'static str> {
         let last = if self.promote { PROMOTE } else { BANK0 };
-        vec![READY, REQUEST, DOWNLOAD, last]
+        vec![READY, SETTLE, REQUEST, DOWNLOAD, last]
     }
 
     /// The `ota` arguments that build and sign the payload. The signed
@@ -165,6 +170,7 @@ fn run(ctx: &mut Ctx, args: &StockOtaArgs, staged: &Staged) -> (Vec<Report>, Opt
         let begun = ctx.rig.clock();
         let result = match name {
             READY => ready(ctx),
+            SETTLE => settle(ctx),
             REQUEST => request(ctx, args, staged, &request_id),
             DOWNLOAD => install(ctx, &staged.build, &request_id).map(|at| started = at),
             BANK0 => bank0(ctx, &staged.build, &request_id),
@@ -346,6 +352,57 @@ fn promote(ctx: &mut Ctx, build: &str, request_id: &str, since: usize) -> Result
     }
     ctx.confirm(build)?;
     closed(ctx, request_id)
+}
+
+/// An earlier request that failed or is uncertain blocks a new one until
+/// the server resolves it. The server decides from its own evidence: 20
+/// minutes after that request, 10 quiet connected minutes, and stock still
+/// reporting its version, which then reads as not installed. This only asks
+/// it, every 30 s; stock is sent nothing.
+fn settle(ctx: &mut Ctx) -> Result<()> {
+    let status = ctx.rig.status()?;
+    let Some(open) = status.ota_trials.first().filter(|trial| {
+        matches!(
+            trial.phase,
+            TrialPhase::Submitted | TrialPhase::Uncertain | TrialPhase::ReportedError
+        )
+    }) else {
+        return Ok(());
+    };
+    let id = open.input.request_id.clone();
+    ctx.note(&format!(
+        "  Earlier request {id} is {:?}; waiting for the server to resolve it",
+        open.phase
+    ));
+
+    let note = format!("stock-ota: stock still reports {STOCK_VERSION} after the request");
+    let deadline = ctx.rig.clock() + SETTLE_SECONDS;
+    let mut last = String::new();
+    ctx.offline(|ctx| {
+        loop {
+            ctx.pull()?;
+            match ctx.rig.resolve_trial(&id, &note) {
+                Ok(()) => {
+                    ctx.note("  Resolved: not installed");
+                    return Ok(());
+                }
+                Err(error) => {
+                    let reason = error.to_string();
+                    if reason != last {
+                        ctx.note(&format!("  Not yet resolvable: {reason}"));
+                        last = reason;
+                    }
+                }
+            }
+            if ctx.rig.clock() >= deadline {
+                return Err(Error::Bench(format!(
+                    "The server did not resolve {id} within {:.0} min",
+                    SETTLE_SECONDS / 60.0
+                )));
+            }
+            ctx.rig.wait(SETTLE_POLL_SECONDS)?;
+        }
+    })
 }
 
 /// The server records the install as healthy.

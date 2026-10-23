@@ -184,11 +184,12 @@ target/release/wellfed-bench stock-ota poc-02 --firmware ble --promote --power
 sudo target/release/wellfed-local network remove
 ```
 
-**Routing is the operator's.** Stock connects to its vendor broker on TCP 1883. Only `network apply`, a host firewall change, redirects the feeder's traffic to this server, and only the operator runs it and removes it. Without it stock never reports, and the first stage fails after 5 minutes with nothing sent.
+**Routing is the operator's.** Stock connects to its vendor broker on TCP 1883. Only `network apply`, a host firewall change, redirects the feeder's traffic to this server, and only the operator runs it and removes it. It also accepts the image server's TCP 8088 from the feeder's MAC. Without that rule, stock connects for about 25 s and then reports `OTA_INFORM` error 2003 (seen in `fw40-stock-ota-02`). `network apply` refuses until a broker listens, so run it once the run reaches `stock-ready`. Without it stock never reports, and the first stage fails after 5 minutes with nothing sent.
 
 **Stages.**
 1. **Build:** before the bench is touched, `--build` stages the firmware as `ota --build` does: build, review, then sign the next manifest version. Stock ignores the manifest; only `--promote` uses it.
 2. **`stock-ready`:** the run brings the bench up as `itest` does, but with `serve --enable-ota-trial`. It then waits for fresh stock telemetry with `softwareVersion` 1.1.15 and `powerType` 1.
+3. **`stock-settle`:** an earlier request that failed or is uncertain blocks a new one. The run asks the server every 30 s to resolve it, for up to 25 minutes. The server decides from its own evidence: 20 minutes since that request, 10 quiet connected minutes, and stock still reporting 1.1.15.
 3. **`stock-request`:** `wellfed-local ota-images --profile replacement` serves the review's `image.bin`, bound to the review's `ota_sha256`. Its peer is found by the feeder's MAC. Then one `POST /api/ota/trial`. The server persists the request, then sends stock one `OTA_UPGRADE`:
    - target version `2.0.0`;
    - the image's SHA-256;

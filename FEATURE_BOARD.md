@@ -26,7 +26,7 @@ A feature card sequences behavior through the SDK; it never relaxes a FIRMWARE_B
 | Card | Status | Evidence | Stock behavior | Prerequisites | Finish line |
 | --- | --- | --- | --- | --- | --- |
 | **FP01 Stock feature inventory** | Planned | — | — | — | A static pass over 1.1.15 and the vendor app pins, for every FP card, the stock limits (plans, portions per feed, portion size), defaults (desiccant period, lock timeouts, volume), button holds and battery-mode behavior. Each item is a recorded finding or an explicit unknown; nothing is guessed. Results go in [stock behavior](docs/firmware/stock-behavior.md). |
-| **FP02 Owner control CLI** | Planned | — | The vendor app | FW08, FW25 | `wellfed-local` subcommands cover every FP setting and action through signed requests: feed, schedules, settings, history and status. This stands in for the app, and FP16 reuses the same interface. |
+| **FP02 Owner control CLI** | Planned | — | The vendor app | FW08, FW25 | `wellfed-local` subcommands cover every FP setting and action through signed requests: feed, schedules, settings, history and status. This stands in for the app (FP19) until it exists. |
 
 ## Feeding
 
@@ -62,6 +62,7 @@ A feature card sequences behavior through the SDK; it never relaxes a FIRMWARE_B
 | --- | --- | --- | --- | --- | --- |
 | **FP16 Home Assistant integration** | Planned (paused by owner, Oct 23) | — | — | FP03, FP05, FP07, FP08, FW47 | Paused; the route (ESPHome API on the feeder, FW49, or MQTT discovery through the server) is chosen when it resumes ([options](docs/firmware/product-architecture.md#home-assistant)). Either way reconnects and automation replay cannot duplicate a feed, and feeding continues without Home Assistant. |
 | **FP18 Server mirror** | Planned | — | The vendor cloud: history, remote control | FP06, FP08, FW47 | A new `wellfed-server` crate (shared pieces extracted from `wellfed-local` and the bench) mirrors the feeder's events through FW47's cursor with no gaps across its own outages, records live samples while connected, and keeps both raw, forever by default, with CSV and JSON export and import. It holds pet profiles and food info, shows the derived views, and fetches releases for the owner to approve. Stopping it changes nothing on the feeder. Notifications and remote access are deferred. Details: [data](docs/firmware/product-architecture.md#data). |
+| **FP19 Android app** | Planned | — | The vendor app | FW45, FW47 | A Flutter Android app over the sans-IO `wellfed-client` core, released as a GitHub APK. First a spike against a host-simulated feeder: BLE setup, NSD discovery and a Noise session on a real phone. Then setup and pairing, invites, several feeders, feed, schedules, settings, history and status, plus server history when a server exists, and the stock installer. Every action goes through the device API; nothing bypasses the feeding owner. |
 | **FP17 Parity soak** | Planned | — | — | FP03–FP15, FW27 | A defined multi-day run on schedules alone, with power cuts, server outages and a battery stretch. Every meal is accounted for exactly once, and the result is compared with stock in the same scenarios. FW29 waits on this card. |
 
 ## Status at a glance
@@ -88,3 +89,4 @@ A feature card sequences behavior through the SDK; it never relaxes a FIRMWARE_B
 | FP16 Home Assistant integration | ⬜ Planned (paused) |
 | FP17 Parity soak | ⬜ Planned |
 | FP18 Server mirror | ⬜ Planned |
+| FP19 Android app | ⬜ Planned |

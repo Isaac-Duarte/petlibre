@@ -1,7 +1,7 @@
 //! A firmware crate under `src/firmware/wellfed/`, and what its
 //! `[package.metadata.wellfed]` table declares: the devices it builds for,
-//! the startup policies of its normal first-boot image and its opt-in image
-//! variants.
+//! whether it links the device's Bluetooth stack, the startup policies of its
+//! normal first-boot image and its opt-in image variants.
 //!
 //! That table is the builder's only firmware-specific knowledge, so a new
 //! firmware or variant needs no builder change. `Cargo.toml` is an identity
@@ -76,6 +76,8 @@ struct Metadata {
 struct Declaration {
     devices: Vec<String>,
     #[serde(default)]
+    bluetooth: bool,
+    #[serde(default)]
     policies: Policies,
     #[serde(default)]
     variants: BTreeMap<String, VariantDeclaration>,
@@ -96,6 +98,7 @@ struct VariantDeclaration {
 pub struct Firmware {
     name: String,
     devices: Vec<String>,
+    bluetooth: bool,
     policies: Policies,
     variants: Vec<Variant>,
 }
@@ -153,6 +156,7 @@ impl Firmware {
         Ok(Self {
             name: name.to_string(),
             devices: declaration.devices,
+            bluetooth: declaration.bluetooth,
             policies: declaration.policies,
             variants,
         })
@@ -174,6 +178,12 @@ impl Firmware {
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// Links the device's Bluetooth stack (FW34). Every variant shares it, so
+    /// one firmware's images never differ in whether the radio runs BT.
+    pub fn bluetooth(&self) -> bool {
+        self.bluetooth
     }
 
     /// Refused unless the firmware declares `device`.
@@ -233,6 +243,7 @@ impl Firmware {
         FirmwareEntry {
             name: self.name.clone(),
             devices: self.devices.clone(),
+            bluetooth: self.bluetooth,
             variants: self
                 .variants
                 .iter()
@@ -319,13 +330,29 @@ quiet = { summary = "No probes" }
     }
 
     #[test]
+    fn bluetooth_is_opt_in() {
+        assert!(!Firmware::parse("demo", MANIFEST).unwrap().bluetooth());
+        let radio = MANIFEST.replace(
+            "devices = [\"plaf103\"]\n",
+            "devices = [\"plaf103\"]\nbluetooth = true\n",
+        );
+        assert!(Firmware::parse("demo", &radio).unwrap().bluetooth());
+    }
+
+    #[test]
     fn the_checked_in_firmwares_declare_themselves() {
         let repo = Repo::here().unwrap();
         let firmwares = Firmware::all(&repo).unwrap();
         for name in [
-            "qa", "optics", "buttons", "adc", "speaker", "motor", "trial", "blink",
+            "qa", "optics", "buttons", "adc", "speaker", "motor", "trial", "blink", "ble",
         ] {
-            assert!(firmwares.iter().any(|f| f.name() == name), "{name}");
+            let firmware = firmwares.iter().find(|f| f.name() == name);
+            assert!(firmware.is_some(), "{name}");
+            assert_eq!(
+                firmware.is_some_and(Firmware::bluetooth),
+                name == "ble",
+                "{name}"
+            );
         }
     }
 }

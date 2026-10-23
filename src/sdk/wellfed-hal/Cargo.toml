@@ -13,6 +13,8 @@ build = "build.rs"
 sdk = ["wellfed-amebad-sys/sdk"]
 # KM4 target builds; the KM0 image links only wellfed-hal-common.
 km4 = ["wellfed-hal-common/km4", "wellfed-amebad-sys/km4"]
+# FW34: BLE setup; needs a Bluetooth firmware's image.
+bluetooth = ["wellfed-amebad-sys/bluetooth"]
 
 [dependencies]
 wellfed-hal-common.workspace = true

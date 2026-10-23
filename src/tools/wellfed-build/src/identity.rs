@@ -92,7 +92,7 @@ fn source_inputs(
     profile: Profile,
     firmware: &Firmware,
 ) -> Result<Vec<PathBuf>> {
-    let mut paths = device.platform(repo).inputs(repo, profile);
+    let mut paths = device.platform(repo).inputs(repo, profile, firmware)?;
     paths.push(repo.path(&device.config_path()));
     paths.extend(rust_sources(repo, &[BUILDER_SOURCES])?);
     paths.extend(BUILDER_SHARED.map(|p| repo.path(p)));

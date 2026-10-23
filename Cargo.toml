@@ -17,6 +17,7 @@ wellfed-probes = { path = "src/sdk/wellfed-probes" }
 wellfed-sdk = { path = "src/sdk/wellfed-sdk" }
 wellfed-sdk-c = { path = "src/sdk/wellfed-sdk-c" }
 wellfed-fw-blink = { path = "src/firmware/wellfed/blink" }
+wellfed-fw-ble = { path = "src/firmware/wellfed/ble" }
 wellfed-formats = { path = "src/tools/wellfed-formats" }
 wellfed-emu = { path = "src/tools/wellfed-emu" }
 wellfed-testkit = { path = "src/sdk/wellfed-testkit" }

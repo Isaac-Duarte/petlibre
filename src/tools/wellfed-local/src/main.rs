@@ -217,6 +217,23 @@ enum Action {
         rate: u32,
     },
 
+    /// FW34: give an offline feeder (ble firmware) Wi-Fi credentials over
+    /// Bluetooth LE. The passphrase is read from stdin, never the command
+    /// line. With neither --ssid nor --clear, reads which are in use.
+    BleWifi {
+        #[arg(long, default_value = "private/server.json")]
+        config: PathBuf,
+        /// The network to join; its passphrase comes from stdin.
+        #[arg(long, conflicts_with = "clear")]
+        ssid: Option<String>,
+        /// Return to the build's credentials.
+        #[arg(long)]
+        clear: bool,
+        /// The feeder's Bluetooth address; found by its setup service otherwise.
+        #[arg(long)]
+        address: Option<bluer::Address>,
+    },
+
     /// Explicit feeder-only gateway routing and WAN isolation; needs sudo.
     Network {
         #[command(subcommand)]
@@ -280,6 +297,27 @@ async fn main() -> Result<()> {
         } => serve(config, enable_ota_trial).await?,
         Action::Status { config } => {
             api_request(config, Method::GET, "/api/status", None::<&()>).await?
+        }
+        Action::BleWifi {
+            config,
+            ssid,
+            clear,
+            address,
+        } => {
+            use wellfed_local::wifi_ble::{Change, send};
+            let config = Config::load(&config)?;
+            let change = match (ssid, clear) {
+                (Some(ssid), _) => {
+                    println!("Passphrase for {ssid} (read from stdin):");
+                    let mut psk = String::new();
+                    std::io::stdin().read_line(&mut psk)?;
+                    let psk = psk.trim_end_matches(['\r', '\n']).to_owned();
+                    Change::Store { ssid, psk }
+                }
+                (None, true) => Change::Clear,
+                (None, false) => Change::Read,
+            };
+            println!("{}", send(&config, address, change).await?);
         }
         Action::Speak {
             config,

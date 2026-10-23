@@ -123,6 +123,31 @@ fn joins_use_stored_credentials_until_they_keep_failing() {
 }
 
 #[test]
+fn a_save_mid_boot_is_joined_with_a_fresh_count() {
+    let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    fake::reset_hardware();
+    reset();
+    store(Some(Credentials::new(b"old-net", b"old-pass1").unwrap()));
+    for _ in 0..FALLBACK_AFTER {
+        select();
+        wellfed_wifi_outcome(0);
+    }
+    assert_eq!(select().2, 2, "fallen back to the build's");
+
+    // FW34 BLE setup (or FW25 over MQTT) saves new credentials while offline.
+    store(Some(Credentials::new(b"new-net", b"new-pass1").unwrap()));
+    for attempt in 0..FALLBACK_AFTER {
+        assert_eq!(
+            select(),
+            (b"new-net".to_vec(), b"new-pass1".to_vec(), 1),
+            "attempt {attempt}"
+        );
+        wellfed_wifi_outcome(0);
+    }
+    assert_eq!(select().2, 2, "the new ones can still fall back");
+}
+
+#[test]
 fn requests_queue_valid_credentials_or_a_clear() {
     let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     fake::reset_hardware();

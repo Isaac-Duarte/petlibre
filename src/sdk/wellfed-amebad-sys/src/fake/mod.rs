@@ -16,9 +16,9 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 
 use super::{
-    AUDIO_PAGE_SAMPLES, AUDIO_PAGES, GpioRouting, IR_PA_BIT, IR_PB_BIT, Irq, Isr, LpClock,
-    MOTOR_MASK, SECTOR_BYTES, STORAGE_SECTORS, TaskStep, TcpRecv, TransportConfig, WifiEvent,
-    WifiPoll,
+    AUDIO_PAGE_SAMPLES, AUDIO_PAGES, Advertising, BleEvent, BlePoll, BleService, BleStats,
+    GpioRouting, IR_PA_BIT, IR_PB_BIT, Irq, Isr, LpClock, MOTOR_MASK, SECTOR_BYTES,
+    STORAGE_SECTORS, TaskStep, TcpRecv, TransportConfig, WifiEvent, WifiPoll,
 };
 
 pub const GPIOA_IRQ: usize = 4;
@@ -182,6 +182,20 @@ pub struct Hardware {
     pub audio_underruns: u32,
     /// The page handed out by `audio_page`, leaked once per thread.
     pub audio_scratch: *mut [i16; AUDIO_PAGE_SAMPLES],
+
+    /// FW34: the BLE peripheral. Tests record events with [`ble_record`]
+    /// and push the bytes a host would write.
+    pub ble_started: Option<BleService>,
+    pub ble_events: Vec<BleEvent>,
+    pub ble_ring: u32,
+    /// What the port last asked for.
+    pub ble_advertising: Advertising,
+    pub ble_control: VecDeque<u8>,
+    /// Everything notified, in order.
+    pub ble_notified: Vec<u8>,
+    pub ble_notify_fails: bool,
+    pub ble_disconnects: u32,
+    pub ble_stats: BleStats,
 }
 
 impl Default for Hardware {
@@ -296,6 +310,16 @@ impl Default for Hardware {
             audio_played: Vec::new(),
             audio_underruns: 0,
             audio_scratch: core::ptr::null_mut(),
+
+            ble_started: None,
+            ble_events: Vec::new(),
+            ble_ring: 16,
+            ble_advertising: Advertising::Off,
+            ble_control: VecDeque::new(),
+            ble_notified: Vec::new(),
+            ble_notify_fails: false,
+            ble_disconnects: 0,
+            ble_stats: BleStats::default(),
         }
     }
 }
@@ -322,6 +346,20 @@ pub fn play_audio(pages: usize) {
                 None => h.audio_underruns += 1,
             }
         }
+    });
+}
+
+/// Record a BLE event as `wellfed_ble.c` would, numbered in order.
+pub fn ble_record(kind: u32, result: i32, value: u32) {
+    with(|h| {
+        let seq =
+            u32::try_from(h.ble_events.len() + 1).expect("a test records fewer than 2^32 events");
+        h.ble_events.push(BleEvent {
+            seq,
+            kind,
+            result,
+            value,
+        });
     });
 }
 

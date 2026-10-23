@@ -16,6 +16,7 @@ make -C src/firmware/vendor firstboot FIRMWARE=buttons   # default: qa
 | [`motor`](motor) | FW16 | The first supervised motor pulse, in its `fw16-pulse` variant only; the normal image adds nothing |
 | [`trial`](trial) | FW11 | Trial images KM0 must roll back: `fw11-reset` and `fw11-fail` |
 | [`blink`](blink) | FW36 | One task that blinks the connection indicator; the smallest firmware and the template for new ones |
+| [`ble`](ble) | FW34 | Bluetooth LE bring-up: after two minutes offline, advertises a setup service through which `wellfed-local ble-wifi` sends signed Wi-Fi credentials; links the device's BLE stack (`bluetooth = true`) |
 
 The probes these firmwares run live once, in `src/sdk/wellfed-probes`, so a single-purpose firmware and QA step the same code. Each firmware owns the tasks that step them.
 
@@ -40,6 +41,7 @@ Its `[package.metadata.wellfed]` table is all the builder knows about it (`wellf
 ```toml
 [package.metadata.wellfed]
 devices = ["plaf103"]                       # boards under src/firmware/devices/
+bluetooth = true                            # link the device's BLE stack (default false)
 policies = { optics = "fw13-optics-v2" }    # startup policies of the normal image, if any
 
 [package.metadata.wellfed.variants.loud]   # an opt-in image variant: the Cargo feature `loud`

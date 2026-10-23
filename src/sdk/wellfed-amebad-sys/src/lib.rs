@@ -166,6 +166,75 @@ pub enum WifiPoll {
     Lost,
 }
 
+/// FW34: one event from the BLE peripheral's ring (`wellfed_ble.c`),
+/// numbered from 1 as [`WifiEvent`] is. `kind` is one of the associated
+/// constants.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BleEvent {
+    pub seq: u32,
+    pub kind: u32,
+    /// Ready: 0 or a failure (`READY_*`); disconnect: the HCI cause.
+    pub result: i32,
+    /// Advertising: 1 started, 0 stopped; connect: the interval in 1.25 ms
+    /// units; MTU; notify: 1 enabled, 0 disabled.
+    pub value: u32,
+}
+
+impl BleEvent {
+    pub const READY: u32 = 1;
+    pub const ADVERTISING: u32 = 2;
+    pub const CONNECT: u32 = 3;
+    pub const DISCONNECT: u32 = 4;
+    pub const MTU: u32 = 5;
+    pub const NOTIFY: u32 = 8;
+
+    /// Ready failures: the radio never came up, then the stack's own steps.
+    pub const READY_WIFI: i32 = -1;
+    pub const READY_BTE: i32 = -2;
+    pub const READY_SERVICE: i32 = -3;
+    pub const READY_STACK: i32 = -4;
+}
+
+/// `ble_event(seq)` outcome.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BlePoll {
+    Pending,
+    Event(BleEvent),
+    /// The ring overwrote it before it was read.
+    Lost,
+}
+
+/// What the BLE peripheral advertises and serves: the name in its scan
+/// response, and its service's 128-bit UUIDs as the stack takes them
+/// (little-endian).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BleService {
+    pub name: &'static [u8],
+    pub service: [u8; 16],
+    pub control: [u8; 16],
+}
+
+/// Whether the peripheral advertises while no host is connected.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Advertising {
+    On,
+    Off,
+}
+
+/// The BLE peripheral's counters and link state.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BleStats {
+    /// Bytes refused because a ring was full.
+    pub control_dropped: u32,
+    pub notify_dropped: u32,
+    /// The FreeRTOS heap's free bytes, which the BT stack allocates from.
+    pub heap_free: u32,
+    pub mtu: u32,
+    pub connected: u32,
+}
+
 /// FW08 broker settings, from the generated credentials header the build
 /// writes into the SDK worktree (`example_entry.c`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

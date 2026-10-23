@@ -10,6 +10,8 @@ publish.workspace = true
 [features]
 # KM4 target builds with the pinned SDK bindings.
 km4 = ["wellfed-sdk/km4", "wellfed-hal/km4", "wellfed-hal/sdk"]
+# FW34: the BLE setup records; only a Bluetooth firmware links them.
+bluetooth = ["wellfed-sdk/bluetooth", "wellfed-hal/bluetooth"]
 
 [dependencies]
 wellfed-sdk.workspace = true

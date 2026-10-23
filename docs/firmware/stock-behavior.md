@@ -16,6 +16,14 @@ Recovered feeding code tracks feedback events, logical direction, single/double-
 
 Food/outlet optical filtering, power-dependent emitter duty, current estimates, battery lookup logic, four button roles, indicator selection, and audio completion paths have been investigated. A recovered branch does not establish physical signal polarity, actual timing, or complete feature support in replacement firmware.
 
+## Bluetooth LE
+
+Static analysis of the 1.1.15 KM4 image and the vendor app shows that stock links the full Realtek BLE stack, with its embedded controller patch and Wi-Fi coexistence. It runs as a GATT peripheral for two jobs only:
+- **Setup:** the app writes Wi-Fi and MQTT settings and binds the device, then reads the result. It uses a 16-bit service `ffee` with characteristics `ffe1`–`ffe4`.
+- **Offline diagnostics:** after about two minutes offline the feeder advertises and sends a compact report by notification, then stops advertising once it is back online.
+
+Advertising runs only on mains power. Nothing found ties BLE to feeding, schedules or settings commands, which go over MQTT. Pairing appears only as SDK plumbing; the setup flow seems to rely on plain GATT with app-side encryption. Bond storage uses the SDK's FTL flash layer, whose sector was not located. The replacement's own BLE design is in [Bluetooth](bluetooth.md).
+
 ## Clock and schedules
 
 The server responds with the captured authoritative plan snapshot; it does not expose schedule editing or automatically push plans. Nonempty plans remain unvalidated for this release, and clock calibration is held when plans exist. Responses use the configured IANA timezone, including DST transition information. The full stock timezone/timer activation and cloud plan-construction contracts remain unresolved.

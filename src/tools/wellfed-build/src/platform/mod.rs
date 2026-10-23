@@ -79,7 +79,13 @@ impl Platform {
             PlatformConfig::Amebad {
                 entry,
                 firstboot_mains,
-            } => Self::Amebad(amebad::Amebad::new(repo, entry, firstboot_mains)),
+                bluetooth,
+            } => Self::Amebad(amebad::Amebad::new(
+                repo,
+                entry,
+                firstboot_mains,
+                bluetooth.as_deref(),
+            )),
         }
     }
 
@@ -91,10 +97,17 @@ impl Platform {
         }
     }
 
-    /// The platform's and the board's files a profile's image depends on.
-    pub(crate) fn inputs(&self, repo: &Repo, profile: Profile) -> Vec<PathBuf> {
+    /// The platform's and the board's files a profile's image of
+    /// `firmware` depends on; refused when the firmware needs a board file
+    /// the device lacks.
+    pub(crate) fn inputs(
+        &self,
+        repo: &Repo,
+        profile: Profile,
+        firmware: &Firmware,
+    ) -> Result<Vec<PathBuf>> {
         match self {
-            Self::Amebad(amebad) => amebad.inputs(repo, profile),
+            Self::Amebad(amebad) => amebad.inputs(repo, profile, firmware),
         }
     }
 

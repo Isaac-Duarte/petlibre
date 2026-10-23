@@ -9,6 +9,12 @@ Brand and product imagery for the app, the web UI and the docs.
 | `renders/` | Generated, committed images, so the app and web build without Blender |
 | `brand/` | The logo, palette and type, once a direction is chosen |
 
+## License
+
+The visual assets here (the model, renders, logos and other brand artwork) are licensed under [Creative Commons Attribution 4.0](https://creativecommons.org/licenses/by/4.0/) (CC BY 4.0). Credit "Wellfed contributors". Code, including `model/render.py`, stays under the repository's MIT license.
+
+PETLIBRO and Granary are the vendor's names, used here only to say which hardware the firmware runs on. The license covers our artwork, not their marks or industrial design.
+
 ## Rendering
 
 ```sh

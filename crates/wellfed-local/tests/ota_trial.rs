@@ -5,6 +5,7 @@
 mod common;
 
 use chrono::{DateTime, Duration, Utc};
+use wellfed_local::protocol::Channel;
 use wellfed_local::{
     controller::{Controller, FeedInput, Rejection},
     ota_image::Lease,
@@ -35,7 +36,8 @@ fn submit(
 
 fn observe(c: &mut Controller, channel: &str, value: serde_json::Value, now: DateTime<Utc>) {
     let message: Message = serde_json::from_value(value).unwrap();
-    c.observe(channel, &message, now).unwrap();
+    c.observe(Channel::from_name(channel).unwrap(), &message, now)
+        .unwrap();
 }
 
 /// Simulate continued feeder presence; broker connectivity alone is insufficient.
@@ -57,7 +59,7 @@ fn resolve(id: Uuid) -> ResolveInput {
 fn ready(c: &mut Controller, version: &str) {
     c.status.broker_connected = true;
     c.observe(
-        "event",
+        Channel::Event,
         &serde_json::from_value(json!({"cmd":"ATTR_PUSH_EVENT",
         "softwareVersion":version,"powerType":1}))
         .unwrap(),
@@ -222,7 +224,7 @@ fn progress_and_stale_startup_cannot_confirm_trial_and_only_original_version_cle
         json!({"cmd":"DEVICE_START_EVENT","ts":now.timestamp_millis()-1,"softwareVersion":"1.1.16"}),
     ] {
         let message: Message = serde_json::from_value(value).unwrap();
-        c.observe("event", &message, now).unwrap();
+        c.observe(Channel::Event, &message, now).unwrap();
     }
 
     assert_eq!(c.status.ota_trials[0].phase, Phase::Submitted);
@@ -233,7 +235,7 @@ fn progress_and_stale_startup_cannot_confirm_trial_and_only_original_version_cle
         "ts":(now+Duration::seconds(20)).timestamp_millis(),"softwareVersion":"1.1.16"}))
     .unwrap();
     c.status.broker_connected = true;
-    c.observe("event", &boot, now + Duration::seconds(20))
+    c.observe(Channel::Event, &boot, now + Duration::seconds(20))
         .unwrap();
     assert_eq!(c.status.ota_trials[0].phase, Phase::VersionReported);
     assert!(c.status.ota_hold);
@@ -261,7 +263,7 @@ fn progress_and_stale_startup_cannot_confirm_trial_and_only_original_version_cle
     let boot: Message = serde_json::from_value(json!({"cmd":"DEVICE_START_EVENT",
         "ts":(now+Duration::seconds(40)).timestamp_millis(),"softwareVersion":"1.1.15"}))
     .unwrap();
-    c.observe("event", &boot, now + Duration::seconds(40))
+    c.observe(Channel::Event, &boot, now + Duration::seconds(40))
         .unwrap();
 
     assert!(!c.status.ota_hold);
@@ -289,7 +291,7 @@ fn precheck_rejection_storage_failure_and_wrong_request_errors_do_not_resend() {
             json!({"cmd":"OTA_UPGRADE","msgId":id,"phase":"precheck","errCode":1101}),
         )
         .unwrap();
-        c.observe("service", &message, now).unwrap();
+        c.observe(Channel::Service, &message, now).unwrap();
         assert_eq!(
             c.status.ota_trials[0].phase,
             if id == request.request_id {
@@ -343,8 +345,12 @@ fn an_error_after_progress_cannot_clear_the_persistent_feeding_hold() {
         json!({"cmd":"OTA_PROGRESS","msgId":request.request_id,"progress":10}),
         json!({"cmd":"OTA_UPGRADE","msgId":request.request_id,"phase":"precheck","errCode":1101}),
     ] {
-        c.observe("system", &serde_json::from_value(value).unwrap(), now)
-            .unwrap();
+        c.observe(
+            Channel::System,
+            &serde_json::from_value(value).unwrap(),
+            now,
+        )
+        .unwrap();
     }
 
     assert!(c.status.ota_hold);

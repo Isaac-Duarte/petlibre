@@ -6,7 +6,7 @@
 //! repeated request ID returns the stored record without a second command,
 //! and loading the ledger or losing the broker connection marks in-flight
 //! operations uncertain. An OTA trial sets `ota_hold`, which blocks feeding
-//! until the original 1.1.15 application is reported again.
+//! until the original application (`ORIGINAL_VERSION`) is reported again.
 
 use std::{collections::BTreeMap, fs, path::PathBuf};
 
@@ -22,8 +22,9 @@ use crate::{
     ota::{OtaReport, REPORT_LIMIT},
     ota_image,
     ota_trial::{self, Phase as TrialPhase},
+    ota_trial::{C_PROBE_VERSION, ORIGINAL_VERSION},
     probe,
-    protocol::{self, Message, Reply},
+    protocol::{self, Channel, ExecStep, Message, Reply},
     storage,
 };
 
@@ -118,6 +119,25 @@ pub struct Status {
     pub replacement: Option<crate::replacement::Snapshot>,
 }
 
+impl Status {
+    fn reported_version(&self) -> Option<&str> {
+        self.attributes
+            .get("softwareVersion")
+            .and_then(Value::as_str)
+    }
+
+    fn power_type(&self) -> Option<u64> {
+        self.attributes.get("powerType").and_then(Value::as_u64)
+    }
+}
+
+/// `MANUAL_FEEDING_SERVICE`'s own field.
+#[derive(Serialize)]
+struct ManualFeeding {
+    #[serde(rename = "grainNum")]
+    grain_num: u8,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FeedInput {
@@ -132,53 +152,45 @@ pub struct ResolveInput {
     pub note: String,
 }
 
-#[derive(Clone, Copy, Debug)]
+/// Why an operation was refused; the API returns the message as its error.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum Rejection {
+    #[error("device is offline or telemetry is stale")]
     Offline,
+    #[error("portions are outside the configured limit")]
     InvalidPortions,
+    #[error("request ID conflicts with a different operation")]
     Conflict,
+    #[error("a feed is active or uncertain; inspect its outcome first")]
     Busy,
+    #[error("wait at least 60 seconds between feed requests")]
     Cooldown,
+    #[error("operation ledger is full; archive it explicitly before continuing")]
     Full,
+    #[error("persistent storage failed; command was not authorized")]
     Storage,
+    #[error("restart serve with --enable-ota-trial to allow the fixed experiment")]
     OtaDisabled,
+    #[error(
+        "trial requires valid IDs, recent expected-version and external-power reports and no plans"
+    )]
     InvalidOta,
+    #[error(
+        "OTA trial is active or uncertain; feeding remains held until a fresh original-version startup report"
+    )]
     OtaActive,
+    #[error(
+        "image server is not listening with this token, or its accept window ends within five minutes"
+    )]
     ImageServer,
+    #[error(
+        "resolution needs the latest uncertain/failed trial, 20 minutes since submission, 10 quiet connected minutes without OTA reports and a fresh source- or target-version report"
+    )]
     ResolutionEvidence,
+    #[error(
+        "query needs a freshly reported, confirmed C-probe installation and no pending or uncertain query for that installation"
+    )]
     InvalidProbe,
-}
-
-impl Rejection {
-    pub fn message(self) -> &'static str {
-        match self {
-            Self::Offline => "device is offline or telemetry is stale",
-            Self::InvalidPortions => "portions are outside the configured limit",
-            Self::Conflict => "request ID conflicts with a different operation",
-            Self::Busy => "a feed is active or uncertain; inspect its outcome first",
-            Self::Cooldown => "wait at least 60 seconds between feed requests",
-            Self::Full => "operation ledger is full; archive it explicitly before continuing",
-            Self::Storage => "persistent storage failed; command was not authorized",
-            Self::OtaDisabled => {
-                "restart serve with --enable-ota-trial to allow the fixed experiment"
-            }
-            Self::InvalidOta => {
-                "trial requires valid IDs, recent expected-version and external-power reports and no plans"
-            }
-            Self::OtaActive => {
-                "OTA trial is active or uncertain; feeding remains held until a fresh original-version startup report"
-            }
-            Self::ImageServer => {
-                "image server is not listening with this token, or its accept window ends within five minutes"
-            }
-            Self::ResolutionEvidence => {
-                "resolution needs the latest uncertain/failed trial, 20 minutes since submission, 10 quiet connected minutes without OTA reports and a fresh source- or target-version report"
-            }
-            Self::InvalidProbe => {
-                "query needs a freshly reported, confirmed C-probe installation and no pending or uncertain query for that installation"
-            }
-        }
-    }
 }
 
 pub struct Controller {
@@ -399,13 +411,16 @@ impl Controller {
             return Err(Rejection::Storage);
         }
 
-        let mut command = protocol::service(
+        let command = protocol::command(
             &self.config,
+            Channel::Service,
             "MANUAL_FEEDING_SERVICE",
             request.request_id,
             now,
+            &ManualFeeding {
+                grain_num: request.portions,
+            },
         );
-        command.payload["grainNum"] = Value::from(request.portions);
         self.refresh(now);
         Ok((record, Some(command)))
     }
@@ -520,7 +535,7 @@ impl Controller {
             .ok_or(Rejection::InvalidProbe)?;
         if input.request_id.is_nil()
             || !Self::fresh(self.status.version_reported_at, now)
-            || self.reported_version() != Some("1.1.17")
+            || self.status.reported_version() != Some(C_PROBE_VERSION)
             || self.ledger.probe_queries.values().any(|query| {
                 query.trial_request_id == trial.input.request_id
                     && query.phase != probe::Phase::ProofReported
@@ -557,13 +572,6 @@ impl Controller {
 
     fn fresh(seen: Option<DateTime<Utc>>, now: DateTime<Utc>) -> bool {
         seen.is_some_and(|seen| (0..EVIDENCE_SECONDS).contains(&(now - seen).num_seconds()))
-    }
-
-    fn reported_version(&self) -> Option<&str> {
-        self.status
-            .attributes
-            .get("softwareVersion")
-            .and_then(Value::as_str)
     }
 
     /// `lease` is the image server's private lease, already checked to have a
@@ -607,18 +615,8 @@ impl Controller {
                         r.input.image == installation && r.phase == TrialPhase::VersionReported
                     })
                 })
-            || self
-                .status
-                .attributes
-                .get("softwareVersion")
-                .and_then(Value::as_str)
-                != Some(input.image.source_version())
-            || self
-                .status
-                .attributes
-                .get("powerType")
-                .and_then(Value::as_u64)
-                != Some(1)
+            || self.status.reported_version() != Some(input.image.source_version())
+            || self.status.power_type() != Some(1)
         {
             return Err(Rejection::InvalidOta);
         }
@@ -692,10 +690,12 @@ impl Controller {
             .values()
             .max_by_key(|r| r.sequence)
             .map(|r| r.input.request_id);
+        let quiet = (now - self.ota_quiet_since).num_seconds() >= QUIET_SECONDS;
+        let status = &self.status;
         let record = self
             .ledger
             .ota_trials
-            .get(&request.request_id)
+            .get_mut(&request.request_id)
             .ok_or(Rejection::Conflict)?;
         if !matches!(
             record.phase,
@@ -704,19 +704,17 @@ impl Controller {
             return Err(Rejection::Conflict);
         }
 
-        let reported = self.reported_version();
         let image = record.input.image;
         let evidence = latest == Some(request.request_id)
-            && self.status.device_online
-            && Self::fresh(self.status.version_reported_at, now)
-            && self
-                .status
+            && status.device_online
+            && Self::fresh(status.version_reported_at, now)
+            && status
                 .version_reported_at
                 .is_some_and(|seen| seen > record.created_at)
             && (now - record.created_at).num_seconds() >= RESOLVE_AFTER_SECONDS
-            && (now - self.ota_quiet_since).num_seconds() >= QUIET_SECONDS;
+            && quiet;
 
-        let phase = match reported {
+        let phase = match status.reported_version() {
             _ if !evidence => return Err(Rejection::ResolutionEvidence),
             Some(version) if version == image.target_version() => TrialPhase::VersionReported,
             Some(version) if version == image.source_version() => TrialPhase::NotInstalled,
@@ -725,15 +723,10 @@ impl Controller {
 
         // Feeding resumes only when the original application is reported.
         let original_running = match phase {
-            TrialPhase::VersionReported => image.target_version() == "1.1.15",
-            _ => image.source_version() == "1.1.15",
+            TrialPhase::VersionReported => image.target_version() == ORIGINAL_VERSION,
+            _ => image.source_version() == ORIGINAL_VERSION,
         };
 
-        let record = self
-            .ledger
-            .ota_trials
-            .get_mut(&request.request_id)
-            .expect("record checked above");
         record.phase = phase;
         record.resolution_note = Some(request.note);
         record.updated_at = now;
@@ -750,20 +743,36 @@ impl Controller {
         Ok(result)
     }
 
-    pub fn observe(&mut self, channel: &str, message: &Message, now: DateTime<Utc>) -> Result<()> {
+    pub fn observe(
+        &mut self,
+        channel: Channel,
+        message: &Message,
+        now: DateTime<Utc>,
+    ) -> Result<()> {
+        self.observe_telemetry(message, now);
+
+        // Every handler runs: one message can carry several kinds of evidence.
+        let mut changed = self.observe_probe_proof(channel, message, now);
+        changed |= self.observe_trial(channel, message, now);
+        changed |= self.observe_feed_acceptance(channel, message, now);
+        changed |= self.observe_grain_output(channel, message, now);
+
+        if changed {
+            self.save()?;
+        }
+        self.refresh(now);
+        Ok(())
+    }
+
+    fn observe_telemetry(&mut self, message: &Message, now: DateTime<Utc>) {
         // Check the gap before overwriting last_seen, including when the MQTT
         // actor did not get a chance to run its expiry tick during the gap.
         self.check_observation_interval(now);
         self.status.last_seen = Some(now);
-        if message
-            .fields
-            .get("softwareVersion")
-            .is_some_and(Value::is_string)
-        {
+        if message.report.software_version.is_some() {
             self.status.version_reported_at = Some(now);
         }
-
-        if message.fields.get("powerType").is_some_and(Value::is_u64) {
+        if message.report.power_type.is_some() {
             self.status.power_reported_at = Some(now);
         }
 
@@ -804,210 +813,217 @@ impl Controller {
                 self.status.attributes.insert(key.to_owned(), value.clone());
             }
         }
+    }
 
-        let mut changed = false;
-        // Accept only fresh, computed replies to an explicit outstanding query.
-        // A repeated device-generated ID cannot establish a second execution.
-        let proof = self
+    /// Accept only fresh, computed replies to an explicit outstanding query.
+    /// A repeated device-generated ID cannot establish a second execution.
+    fn observe_probe_proof(
+        &mut self,
+        channel: Channel,
+        message: &Message,
+        now: DateTime<Utc>,
+    ) -> bool {
+        let Some((id, trial_id, proof)) = self.ledger.probe_queries.values().find_map(|query| {
+            query
+                .report(channel, message, now)
+                .map(|proof| (query.request_id, query.trial_request_id, proof))
+        }) else {
+            return false;
+        };
+
+        let installed = self
             .ledger
-            .probe_queries
+            .ota_trials
             .values()
-            .filter_map(|query| {
-                query
-                    .report(channel, message, now)
-                    .map(|proof| (query.request_id, query.trial_request_id, proof))
-            })
-            .next();
-
-        if let Some((id, trial_id, proof)) = proof {
-            let installed = self
-                .ledger
-                .ota_trials
-                .values()
-                .max_by_key(|r| r.sequence)
-                .is_some_and(|r| {
-                    r.input.request_id == trial_id
-                        && r.input.image == ota_trial::Image::CProbe
-                        && r.phase == TrialPhase::VersionReported
-                });
-            let duplicate = self.ledger.probe_queries.values().any(|q| {
-                q.proof
-                    .as_ref()
-                    .is_some_and(|p| p.message_id == proof.message_id)
+            .max_by_key(|r| r.sequence)
+            .is_some_and(|r| {
+                r.input.request_id == trial_id
+                    && r.input.image == ota_trial::Image::CProbe
+                    && r.phase == TrialPhase::VersionReported
             });
-            if installed && !duplicate {
-                let query = self
-                    .ledger
-                    .probe_queries
-                    .get_mut(&id)
-                    .expect("query found above");
-                query.phase = probe::Phase::ProofReported;
-                query.proof = Some(proof);
-                changed = true;
-            }
-        }
+        let duplicate = self.ledger.probe_queries.values().any(|q| {
+            q.proof
+                .as_ref()
+                .is_some_and(|p| p.message_id == proof.message_id)
+        });
 
-        if let Some(trial) = self
+        if installed
+            && !duplicate
+            && let Some(query) = self.ledger.probe_queries.get_mut(&id)
+        {
+            query.phase = probe::Phase::ProofReported;
+            query.proof = Some(proof);
+            return true;
+        }
+        false
+    }
+
+    /// The latest trial's download, precheck-error and startup reports.
+    fn observe_trial(&mut self, channel: Channel, message: &Message, now: DateTime<Utc>) -> bool {
+        let original_reported = Self::fresh(self.status.version_reported_at, now)
+            && self.status.reported_version() == Some(ORIGINAL_VERSION);
+        let Some(trial) = self
             .ledger
             .ota_trials
             .values_mut()
             .max_by_key(|r| r.sequence)
-        {
-            let pending = trial.phase != TrialPhase::VersionReported;
-            let matched = message
-                .msg_id
-                .as_deref()
-                .and_then(|id| Uuid::parse_str(id).ok())
-                == Some(trial.input.request_id);
-
-            if pending && matched && matches!(message.cmd.as_str(), "OTA_PROGRESS" | "OTA_INFORM") {
-                trial.download_reported = true;
-                trial.updated_at = now;
-                changed = true;
-            }
-
-            if pending
-                && matches!(message.cmd.as_str(), "OTA_UPGRADE" | "OTA_INFORM")
-                && matched
-                && message
-                    .fields
-                    .get("errCode")
-                    .and_then(Value::as_u64)
-                    .is_some_and(|n| n != 0)
-            {
-                // Stock OTA_UPGRADE reports are only triggered by the request
-                // handler (0x0e016ba0); a nonzero errCode comes only from its
-                // rejected-precheck branch. Their phase label is hard-coded to
-                // "precheck", so it is not evidence. "Already active" (0x464) is
-                // excluded: that rejection means another download is running.
-                // Other errors cannot establish the original application is intact.
-                let error = message.fields.get("errCode").and_then(Value::as_u64);
-                let precheck_only = trial.phase == TrialPhase::Submitted
-                    && trial.input.image.source_version() == "1.1.15"
-                    && !trial.download_reported
-                    && message.cmd == "OTA_UPGRADE"
-                    && error != Some(OTA_ALREADY_ACTIVE)
-                    && Self::fresh(self.status.version_reported_at, now)
-                    && self
-                        .status
-                        .attributes
-                        .get("softwareVersion")
-                        .and_then(Value::as_str)
-                        == Some("1.1.15");
-
-                trial.phase = TrialPhase::ReportedError;
-                trial.updated_at = now;
-                if precheck_only {
-                    self.ledger.ota_hold = false;
-                }
-                changed = true;
-            }
-
-            if pending
-                && channel == "event"
-                && message.cmd == "DEVICE_START_EVENT"
-                && message
-                    .fields
-                    .get("softwareVersion")
-                    .and_then(Value::as_str)
-                    == Some(trial.input.image.target_version())
-                && message.ts.is_some_and(|ts| {
-                    ts >= trial.created_at.timestamp_millis()
-                        && ts <= now.timestamp_millis().saturating_add(10_000)
-                })
-            {
-                trial.phase = TrialPhase::VersionReported;
-                trial.updated_at = now;
-                // Also re-holds if a resolved "not installed" test later boots.
-                self.ledger.ota_hold = trial.input.image.target_version() != "1.1.15";
-                changed = true;
-            }
+        else {
+            return false;
+        };
+        if trial.phase == TrialPhase::VersionReported {
+            return false;
         }
 
-        if channel == "service"
-            && message.cmd == "MANUAL_FEEDING_SERVICE"
-            && let Some(id) = message
-                .msg_id
-                .as_deref()
-                .and_then(|v| Uuid::parse_str(v).ok())
-            && let Some(record) = self.ledger.feeds.get_mut(&id)
-            && record.phase == FeedPhase::Dispatching
-            && message.fields.get("code").and_then(Value::as_i64).is_some()
-        {
-            record.phase = if message.fields.get("code").and_then(Value::as_i64) == Some(0) {
-                FeedPhase::Accepted
-            } else {
-                FeedPhase::Uncertain
-            };
-            record.updated_at = now;
+        let matched = message.request_id() == Some(trial.input.request_id);
+        let mut changed = false;
+
+        if matched && matches!(message.cmd.as_str(), "OTA_PROGRESS" | "OTA_INFORM") {
+            trial.download_reported = true;
+            trial.updated_at = now;
             changed = true;
         }
 
-        if channel == "event"
-            && message.cmd == "GRAIN_OUTPUT_EVENT"
-            && message.fields.get("type").and_then(Value::as_u64) == Some(2)
-            && let Some(request_id) = message
-                .msg_id
-                .as_deref()
-                .and_then(|id| Uuid::parse_str(id).ok())
+        if matched
+            && matches!(message.cmd.as_str(), "OTA_UPGRADE" | "OTA_INFORM")
+            && let Some(error) = message.report.err_code.filter(|&code| code != 0)
         {
-            let event_id = message.msg_id.as_deref();
-            let step = message.fields.get("execStep").and_then(Value::as_str);
+            // Stock OTA_UPGRADE reports are only triggered by the request
+            // handler (0x0e016ba0); a nonzero errCode comes only from its
+            // rejected-precheck branch. Their phase label is hard-coded to
+            // "precheck", so it is not evidence. "Already active" (0x464) is
+            // excluded: that rejection means another download is running.
+            // Other errors cannot establish the original application is intact.
+            let precheck_only = trial.phase == TrialPhase::Submitted
+                && trial.input.image.source_version() == ORIGINAL_VERSION
+                && !trial.download_reported
+                && message.cmd == "OTA_UPGRADE"
+                && error != OTA_ALREADY_ACTIVE
+                && original_reported;
 
-            // Stock manual reports carry the submitted request ID for both
-            // steps. Correlate it before counts; unrelated or overwritten IDs
-            // must leave the pending request unresolved. Deduplicate each step
-            // independently so its start cannot hide its completion.
-            let already_seen = event_id.is_some_and(|id| {
-                self.ledger.feeds.values().any(|r| match step {
-                    Some("GRAIN_START") => r.start_event_id.as_deref() == Some(id),
-                    Some("GRAIN_END") => r.completion_event_id.as_deref() == Some(id),
-                    _ => false,
-                })
-            });
-
-            if !already_seen
-                && let Some(record) = self.ledger.feeds.get_mut(&request_id)
-                && matches!(record.phase, FeedPhase::Accepted | FeedPhase::Started)
-            {
-                let expected = message.fields.get("expectGrainNum").and_then(Value::as_u64);
-                if expected == Some(u64::from(record.portions)) {
-                    match step {
-                        Some("GRAIN_START") if record.phase == FeedPhase::Accepted => {
-                            record.phase = FeedPhase::Started;
-                            record.start_event_id = message.msg_id.clone();
-                            changed = true;
-                        }
-
-                        Some("GRAIN_END")
-                            if record.phase == FeedPhase::Started
-                                && message.fields.get("finished") == Some(&Value::Bool(true)) =>
-                        {
-                            record.phase =
-                                if message.fields.get("actualGrainNum").and_then(Value::as_u64)
-                                    == expected
-                                {
-                                    FeedPhase::Completed
-                                } else {
-                                    FeedPhase::Uncertain
-                                };
-                            record.completion_event_id = message.msg_id.clone();
-                            changed = true;
-                        }
-                        _ => {}
-                    }
-
-                    if changed {
-                        record.updated_at = now;
-                    }
-                }
+            trial.phase = TrialPhase::ReportedError;
+            trial.updated_at = now;
+            if precheck_only {
+                self.ledger.ota_hold = false;
             }
+            changed = true;
         }
 
-        if changed {
-            self.save()?;
+        let target = trial.input.image.target_version();
+        if channel == Channel::Event
+            && message.cmd == "DEVICE_START_EVENT"
+            && message.report.software_version.as_deref() == Some(target)
+            && message.ts.is_some_and(|ts| {
+                ts >= trial.created_at.timestamp_millis()
+                    && ts <= now.timestamp_millis().saturating_add(10_000)
+            })
+        {
+            trial.phase = TrialPhase::VersionReported;
+            trial.updated_at = now;
+            // Also re-holds if a resolved "not installed" test later boots.
+            self.ledger.ota_hold = target != ORIGINAL_VERSION;
+            changed = true;
         }
-        self.refresh(now);
-        Ok(())
+
+        changed
+    }
+
+    /// The device's answer to `MANUAL_FEEDING_SERVICE`: accepted or not.
+    fn observe_feed_acceptance(
+        &mut self,
+        channel: Channel,
+        message: &Message,
+        now: DateTime<Utc>,
+    ) -> bool {
+        if channel != Channel::Service || message.cmd != "MANUAL_FEEDING_SERVICE" {
+            return false;
+        }
+        let (Some(id), Some(code)) = (message.request_id(), message.report.code) else {
+            return false;
+        };
+        let Some(record) = self
+            .ledger
+            .feeds
+            .get_mut(&id)
+            .filter(|record| record.phase == FeedPhase::Dispatching)
+        else {
+            return false;
+        };
+
+        record.phase = if code == 0 {
+            FeedPhase::Accepted
+        } else {
+            FeedPhase::Uncertain
+        };
+        record.updated_at = now;
+        true
+    }
+
+    /// A manual feed's start and end reports.
+    fn observe_grain_output(
+        &mut self,
+        channel: Channel,
+        message: &Message,
+        now: DateTime<Utc>,
+    ) -> bool {
+        let report = &message.report;
+        if channel != Channel::Event
+            || message.cmd != "GRAIN_OUTPUT_EVENT"
+            || report.kind != Some(2)
+        {
+            return false;
+        }
+        let (Some(event_id), Some(request_id)) = (message.msg_id.as_deref(), message.request_id())
+        else {
+            return false;
+        };
+
+        // Stock manual reports carry the submitted request ID for both
+        // steps. Correlate it before counts; unrelated or overwritten IDs
+        // must leave the pending request unresolved. Deduplicate each step
+        // independently so its start cannot hide its completion.
+        let already_seen = self.ledger.feeds.values().any(|r| match report.exec_step {
+            Some(ExecStep::GrainStart) => r.start_event_id.as_deref() == Some(event_id),
+            Some(ExecStep::GrainEnd) => r.completion_event_id.as_deref() == Some(event_id),
+            None => false,
+        });
+        if already_seen {
+            return false;
+        }
+
+        let Some(record) = self
+            .ledger
+            .feeds
+            .get_mut(&request_id)
+            .filter(|record| matches!(record.phase, FeedPhase::Accepted | FeedPhase::Started))
+        else {
+            return false;
+        };
+        let expected = report.expect_grain_num;
+        if expected != Some(u64::from(record.portions)) {
+            return false;
+        }
+
+        match report.exec_step {
+            Some(ExecStep::GrainStart) if record.phase == FeedPhase::Accepted => {
+                record.phase = FeedPhase::Started;
+                record.start_event_id = Some(event_id.to_owned());
+            }
+
+            Some(ExecStep::GrainEnd)
+                if record.phase == FeedPhase::Started && report.finished == Some(true) =>
+            {
+                record.phase = if report.actual_grain_num == expected {
+                    FeedPhase::Completed
+                } else {
+                    FeedPhase::Uncertain
+                };
+                record.completion_event_id = Some(event_id.to_owned());
+            }
+
+            _ => return false,
+        }
+
+        record.updated_at = now;
+        true
     }
 }

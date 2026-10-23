@@ -12,12 +12,14 @@
 //! built here as text in a fixed field order rather than through a JSON map.
 //! The key is secret: [`RequestKey`] has no `Debug` and is never logged.
 
-use std::{fmt::Write as _, fs, io::Read, path::Path};
+use std::{fmt::Write as _, path::Path};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use wellfed_core::request_auth::hmac_sha256;
 use wellfed_formats::hex;
 use uuid::Uuid;
+
+use crate::storage;
 
 /// The firmware's request limit (wellfed-core `MAX_REQUEST`), raised from
 /// 256 for signed `time` requests (about 260 bytes) and again for signed
@@ -56,18 +58,9 @@ impl RequestKey {
             .map(Self)
     }
 
-    /// 32 bytes from the operating system's CSPRNG (`/dev/urandom`, which
-    /// the kernel seeds before userspace can run this command).
+    /// 32 bytes from the operating system's CSPRNG.
     pub fn generate() -> Result<Self> {
-        Self::generate_from(Path::new("/dev/urandom"))
-    }
-
-    fn generate_from(source: &Path) -> Result<Self> {
-        let mut key = [0u8; 32];
-        fs::File::open(source)
-            .and_then(|mut file| file.read_exact(&mut key))
-            .context("read the system random source")?;
-        Ok(Self(key))
+        storage::random(Path::new(storage::SYSTEM_RANDOM)).map(Self)
     }
 
     pub fn to_hex(&self) -> String {
@@ -166,7 +159,7 @@ mod tests {
         let a = RequestKey::generate().unwrap().to_hex();
         let b = RequestKey::generate().unwrap().to_hex();
         assert!(valid_key_hex(&a) && a != b);
-        assert!(RequestKey::generate_from(Path::new("/nonexistent/random")).is_err());
+        assert!(storage::random::<32>(Path::new("/nonexistent/random")).is_err());
     }
 
     #[test]

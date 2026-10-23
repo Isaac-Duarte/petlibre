@@ -9,18 +9,19 @@
 
 use std::{sync::Arc, time::Duration};
 
-use anyhow::Result;
+use anyhow::{Result, ensure};
 use chrono::Utc;
-use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS, SubscribeFilter};
+use rumqttc::{AsyncClient, Event, MqttOptions, Packet, Publish, QoS, SubscribeFilter};
 use tokio::sync::{mpsc, oneshot, watch};
 use tracing::{info, warn};
 
 use crate::{
     config::Config,
     controller::{Controller, FeedInput, FeedRecord, Rejection, ResolveInput, Status},
-    firmware_ota, ota_image, ota_trial, probe, protocol,
+    firmware_ota, ota_image, ota_trial, probe,
+    protocol::{self, Reply},
     replacement::{self, RequestError},
-    request_auth::RequestKey,
+    request_auth::{self, RequestKey},
 };
 
 pub type OperationResult = std::result::Result<FeedRecord, Rejection>;
@@ -43,65 +44,330 @@ pub enum Request {
     OtaOffer(Option<firmware_ota::Offer>, oneshot::Sender<bool>),
 }
 
-/// The controller's status plus the replacement-firmware snapshot at `now`.
-fn publish_status(
-    status: &watch::Sender<Status>,
-    controller: &Controller,
-    tracker: &replacement::Tracker,
-) {
-    let mut value = controller.status.clone();
-    if controller.config.firmware.is_some() {
-        value.replacement = Some(tracker.snapshot(Utc::now()));
-    }
-    status.send_replace(value);
+/// QoS 0, no retain, no offline session, and a new client on reconnect: a
+/// command published here is never replayed.
+fn publish(client: &AsyncClient, reply: Reply) -> Result<()> {
+    client.try_publish(
+        reply.topic,
+        QoS::AtMostOnce,
+        false,
+        serde_json::to_vec(&reply.payload)?,
+    )?;
+    Ok(())
 }
 
-/// Send one allowlisted request on QoS 0 only to fresh, online firmware; never
-/// queued for a later connection. Signed when the server has a request key
-/// and the firmware's health reports a nonce.
-fn replacement_request(
-    config: &Config,
-    client: &AsyncClient,
-    tracker: &mut replacement::Tracker,
-    key: Option<&RequestKey>,
-    input: replacement::Input,
-) -> ReplacementResult {
-    if config.firmware.is_none() {
-        return Err(RequestError::Unconfigured);
-    }
-    if !tracker.snapshot(Utc::now()).online {
-        return Err(RequestError::Offline);
-    }
-    let id = uuid::Uuid::new_v4();
-    let payload = tracker.finish(input.wire(id), key)?;
-    client
-        .try_publish(
-            config.firmware_topic("request"),
-            QoS::AtMostOnce,
-            false,
-            payload,
-        )
-        .map_err(|_| RequestError::Offline)?;
-    Ok(id)
-}
-
-pub async fn run(
+/// The actor's state that outlives one broker connection.
+struct Actor {
     config: Arc<Config>,
-    mut controller: Controller,
-    mut requests: mpsc::Receiver<Request>,
+    controller: Controller,
     status: watch::Sender<Status>,
-) -> Result<()> {
-    // Survives reconnects: health ages out rather than vanishing.
-    let mut tracker = replacement::Tracker::default();
-    // Validated on load; never logged or reported.
-    let key = config
-        .firmware
-        .as_ref()
-        .and_then(|firmware| firmware.request_key());
-    // Owner-loaded only; never persisted, never offered unasked.
-    let mut offer: Option<firmware_ota::Offer> = None;
+    /// Survives reconnects: health ages out rather than vanishing.
+    tracker: replacement::Tracker,
+    /// Validated on load; never logged or reported.
+    key: Option<RequestKey>,
+    /// Owner-loaded only; never persisted, never offered unasked.
+    offer: Option<firmware_ota::Offer>,
+}
 
-    loop {
+impl Actor {
+    /// The controller's status plus the replacement-firmware snapshot at `now`.
+    fn publish_status(&self) {
+        let mut value = self.controller.status.clone();
+        if self.config.firmware.is_some() {
+            value.replacement = Some(self.tracker.snapshot(Utc::now()));
+        }
+        self.status.send_replace(value);
+    }
+
+    /// One SUBSCRIBE, so one SUBACK starts the session.
+    async fn subscribe(&self, client: &AsyncClient) -> Result<()> {
+        let config = &self.config;
+        let mut filters = vec![SubscribeFilter::new(
+            config.topic("+/post"),
+            QoS::AtLeastOnce,
+        )];
+        if config.firmware.is_some() {
+            for topic in ["health", "reply", "ota/get", "ota/check"] {
+                filters.push(SubscribeFilter::new(
+                    config.firmware_topic(topic),
+                    QoS::AtMostOnce,
+                ));
+            }
+        }
+
+        client.subscribe_many(filters).await?;
+        info!("local MQTT server connected");
+        Ok(())
+    }
+
+    fn query_attributes(&self, client: &AsyncClient) -> Result<()> {
+        let query = protocol::service(
+            &self.config,
+            "ATTR_GET_SERVICE",
+            uuid::Uuid::new_v4(),
+            Utc::now(),
+        );
+        publish(client, query)
+    }
+
+    fn session_started(&mut self, client: &AsyncClient, ack: &rumqttc::SubAck) -> Result<()> {
+        ensure!(
+            ack.return_codes
+                .iter()
+                .all(|code| matches!(code, rumqttc::SubscribeReasonCode::Success(_))),
+            "broker refused server subscription"
+        );
+        self.controller.connected(Utc::now());
+        self.query_attributes(client)
+    }
+
+    fn incoming(&mut self, client: &AsyncClient, publish: Publish) -> Result<()> {
+        if publish.retain {
+            warn!("ignored retained device message");
+            return Ok(());
+        }
+
+        if self.config.firmware.is_some() {
+            let topic = |suffix| self.config.firmware_topic(suffix);
+            if publish.topic == topic("health") {
+                self.firmware_health(client, &publish.payload);
+                return Ok(());
+            }
+            if publish.topic == topic("ota/get") {
+                self.firmware_update_request(client, &publish.payload);
+                return Ok(());
+            }
+            if publish.topic == topic("ota/check") {
+                // The normal role's offer check: the manifest only, and never
+                // counted as a delivery.
+                let offered = firmware_ota::Offer::check(self.offer.as_ref());
+                let _ = client.try_publish(
+                    self.config.firmware_topic("ota/offered"),
+                    QoS::AtMostOnce,
+                    false,
+                    offered,
+                );
+                return Ok(());
+            }
+            if publish.topic == topic("reply") {
+                if !self.tracker.observe_reply(&publish.payload, Utc::now()) {
+                    warn!("ignored invalid replacement reply");
+                }
+                return Ok(());
+            }
+        }
+
+        self.device_message(client, &publish)
+    }
+
+    fn firmware_health(&mut self, client: &AsyncClient, payload: &[u8]) {
+        let now = Utc::now();
+        if !self.tracker.observe_health(payload, now) {
+            warn!("ignored invalid replacement health");
+        }
+
+        // FW21: the firmware's wall clock comes only from here.
+        if !self.tracker.time_due(now) {
+            return;
+        }
+        let request = replacement::time_request(uuid::Uuid::new_v4(), now, self.config.timezone);
+        match self.tracker.finish(request, self.key.as_ref()) {
+            Ok(payload) => {
+                let signed = payload.contains(request_auth::MAC_FIELD);
+                let sent = client.try_publish(
+                    self.config.firmware_topic("request"),
+                    QoS::AtMostOnce,
+                    false,
+                    payload,
+                );
+                if sent.is_ok() {
+                    self.tracker.time_sent(now);
+                    info!(signed, "replacement clock sync sent");
+                }
+            }
+            Err(error) => warn!(%error, "replacement clock sync not sent"),
+        }
+    }
+
+    fn firmware_update_request(&mut self, client: &AsyncClient, payload: &[u8]) {
+        let (answer, dropped) = firmware_ota::Offer::serve(&mut self.offer, payload);
+        if dropped {
+            warn!(
+                "replacement update offer dropped: delivered once, then asked for again after a fallback; offer again to retry"
+            );
+        }
+
+        match answer {
+            Some(answer) => {
+                let _ = client.try_publish(
+                    self.config.firmware_topic("ota/data"),
+                    QoS::AtMostOnce,
+                    false,
+                    answer,
+                );
+            }
+            None => warn!("ignored malformed replacement update request"),
+        }
+    }
+
+    fn device_message(&mut self, client: &AsyncClient, incoming: &Publish) -> Result<()> {
+        let Ok((channel, message)) =
+            protocol::parse(&self.config, &incoming.topic, &incoming.payload)
+        else {
+            warn!("ignored invalid device message");
+            return Ok(());
+        };
+
+        let first_seen = self.controller.status.last_seen.is_none();
+        self.controller.observe(channel, &message, Utc::now())?;
+        if let Some(reply) = protocol::reply(&self.config, channel, &message, Utc::now()) {
+            publish(client, reply)?;
+        }
+        if first_seen || message.cmd == "DEVICE_START_EVENT" {
+            self.query_attributes(client)?;
+        }
+
+        info!(command = %message.cmd, "device message");
+        Ok(())
+    }
+
+    /// Hand a newly authorized command to MQTT. If it cannot be queued the
+    /// connection is treated as lost, which marks the operation uncertain.
+    fn dispatch<T>(
+        &mut self,
+        client: &AsyncClient,
+        outcome: std::result::Result<(T, Option<Reply>), Rejection>,
+    ) -> Result<std::result::Result<T, Rejection>> {
+        let (record, command) = match outcome {
+            Ok(accepted) => accepted,
+            Err(rejection) => return Ok(Err(rejection)),
+        };
+
+        if let Some(command) = command
+            && publish(client, command).is_err()
+        {
+            self.controller.disconnected(Utc::now())?;
+            return Ok(Err(Rejection::Offline));
+        }
+        Ok(Ok(record))
+    }
+
+    /// Send one allowlisted request on QoS 0 only to fresh, online firmware;
+    /// never queued for a later connection. Signed when the server has a
+    /// request key and the firmware's health reports a nonce.
+    fn replacement_request(
+        &mut self,
+        client: &AsyncClient,
+        input: replacement::Input,
+    ) -> ReplacementResult {
+        if self.config.firmware.is_none() {
+            return Err(RequestError::Unconfigured);
+        }
+        if !self.tracker.snapshot(Utc::now()).online {
+            return Err(RequestError::Offline);
+        }
+
+        let id = uuid::Uuid::new_v4();
+        let payload = self.tracker.finish(input.wire(id), self.key.as_ref())?;
+        client
+            .try_publish(
+                self.config.firmware_topic("request"),
+                QoS::AtMostOnce,
+                false,
+                payload,
+            )
+            .map_err(|_| RequestError::Offline)?;
+        Ok(id)
+    }
+
+    fn set_offer(&mut self, next: Option<firmware_ota::Offer>) -> bool {
+        match &next {
+            Some(offer) => info!(
+                version = offer.version,
+                bytes = offer.payload.len(),
+                "replacement update offered"
+            ),
+            None => info!("replacement update offer cleared"),
+        }
+        // An offer is server state, not a device command: kept across reconnects.
+        self.offer = next;
+        self.config.firmware.is_some()
+    }
+
+    fn request(&mut self, client: &AsyncClient, request: Request) -> Result<()> {
+        let now = Utc::now();
+        match request {
+            Request::Feed(input, response) => {
+                let outcome = self.controller.feed(input, now);
+                let result = self.dispatch(client, outcome)?;
+                let _ = response.send(result);
+            }
+            Request::ProbeQuery(input, response) => {
+                let outcome = self.controller.probe_query(input, now);
+                let result = self.dispatch(client, outcome)?;
+                let _ = response.send(result);
+            }
+            Request::OtaTrial(input, lease, response) => {
+                let outcome = self.controller.ota_trial(input, lease.as_ref(), now);
+                let result = self.dispatch(client, outcome)?;
+                let _ = response.send(result);
+            }
+
+            Request::Replacement(input, response) => {
+                let _ = response.send(self.replacement_request(client, input));
+            }
+            other => self.request_without_device(other),
+        }
+        Ok(())
+    }
+
+    /// Requests that send nothing, or (while disconnected) are refused or
+    /// recorded without a command: nothing accumulates for a later session.
+    fn request_without_device(&mut self, request: Request) {
+        let now = Utc::now();
+        match request {
+            Request::Feed(input, response) => {
+                let result = self.controller.feed(input, now).map(|(record, _)| record);
+                let _ = response.send(result);
+            }
+            Request::ProbeQuery(input, response) => {
+                let result = self
+                    .controller
+                    .probe_query(input, now)
+                    .map(|(record, _)| record);
+                let _ = response.send(result);
+            }
+            Request::OtaTrial(input, lease, response) => {
+                let result = self
+                    .controller
+                    .ota_trial(input, lease.as_ref(), now)
+                    .map(|(record, _)| record);
+                let _ = response.send(result);
+            }
+            Request::Replacement(_, response) => {
+                let error = if self.config.firmware.is_some() {
+                    RequestError::Offline
+                } else {
+                    RequestError::Unconfigured
+                };
+                let _ = response.send(Err(error));
+            }
+
+            Request::Resolve(input, response) => {
+                let _ = response.send(self.controller.resolve(input, now));
+            }
+            Request::ResolveTrial(input, response) => {
+                let _ = response.send(self.controller.resolve_trial(input, now));
+            }
+            Request::OtaOffer(next, response) => {
+                let _ = response.send(self.set_offer(next));
+            }
+        }
+    }
+
+    /// One broker connection, until it drops or the request channel closes.
+    async fn session(&mut self, requests: &mut mpsc::Receiver<Request>) -> Result<Session> {
+        let config = &self.config;
         let mut options = MqttOptions::new(
             config.server_client_id(),
             config.mqtt_listen.ip().to_string(),
@@ -116,203 +382,79 @@ pub async fn run(
 
         loop {
             tokio::select! {
-                event = eventloop.poll() => {
-                    match event {
-                        Ok(Event::Incoming(Packet::ConnAck(_))) => {
-                            // One SUBSCRIBE, so one SUBACK starts the session below.
-                            let mut filters = vec![SubscribeFilter::new(config.topic("+/post"),QoS::AtLeastOnce)];
-                            if config.firmware.is_some() {
-                                filters.push(SubscribeFilter::new(config.firmware_topic("health"),QoS::AtMostOnce));
-                                filters.push(SubscribeFilter::new(config.firmware_topic("reply"),QoS::AtMostOnce));
-                                filters.push(SubscribeFilter::new(config.firmware_topic("ota/get"),QoS::AtMostOnce));
-                                filters.push(SubscribeFilter::new(config.firmware_topic("ota/check"),QoS::AtMostOnce));
-                            }
-                            client.subscribe_many(filters).await?;
-                            info!("local MQTT server connected");
-                        }
-
-                        Ok(Event::Incoming(Packet::SubAck(ack))) => {
-                            anyhow::ensure!(ack.return_codes.iter().all(|code|matches!(code,rumqttc::SubscribeReasonCode::Success(_))),"broker refused server subscription");
-                            controller.connected(Utc::now());
-                            let query = protocol::service(&config,"ATTR_GET_SERVICE",uuid::Uuid::new_v4(),Utc::now());
-                            client.try_publish(query.topic,QoS::AtMostOnce,false,serde_json::to_vec(&query.payload)?)?;
-                        }
-
-                        Ok(Event::Incoming(Packet::Publish(publish))) => {
-                            if publish.retain { warn!("ignored retained device message"); continue; }
-                            if config.firmware.is_some() && publish.topic == config.firmware_topic("health") {
-                                if !tracker.observe_health(&publish.payload,Utc::now()) { warn!("ignored invalid replacement health"); }
-                                // FW21: the firmware's wall clock comes only from here.
-                                let now = Utc::now();
-                                if tracker.time_due(now) {
-                                    let request = replacement::time_request(uuid::Uuid::new_v4(),now,config.timezone);
-                                    match tracker.finish(request,key.as_ref()) {
-                                        Ok(payload) => {
-                                            let signed = payload.contains(crate::request_auth::MAC_FIELD);
-                                            if client.try_publish(config.firmware_topic("request"),QoS::AtMostOnce,false,payload).is_ok() {
-                                                tracker.time_sent(now);
-                                                info!(signed,"replacement clock sync sent");
-                                            }
-                                        }
-                                        Err(error) => warn!(error=error.message(),"replacement clock sync not sent"),
-                                    }
-                                }
-                                publish_status(&status,&controller,&tracker);
-                                continue;
-                            }
-
-                            if config.firmware.is_some() && publish.topic == config.firmware_topic("ota/get") {
-                                let (answer,dropped) = firmware_ota::Offer::serve(&mut offer,&publish.payload);
-                                if dropped { warn!("replacement update offer dropped: delivered once, then asked for again after a fallback; offer again to retry"); }
-                                match answer {
-                                    Some(answer) => { let _ = client.try_publish(config.firmware_topic("ota/data"),QoS::AtMostOnce,false,answer); }
-                                    None => warn!("ignored malformed replacement update request"),
-                                }
-                                continue;
-                            }
-
-                            if config.firmware.is_some() && publish.topic == config.firmware_topic("ota/check") {
-                                // The normal role's offer check: the manifest only, and never counted as a delivery.
-                                let _ = client.try_publish(config.firmware_topic("ota/offered"),QoS::AtMostOnce,false,firmware_ota::Offer::check(offer.as_ref()));
-                                continue;
-                            }
-
-                            if config.firmware.is_some() && publish.topic == config.firmware_topic("reply") {
-                                if !tracker.observe_reply(&publish.payload,Utc::now()) { warn!("ignored invalid replacement reply"); }
-                                publish_status(&status,&controller,&tracker);
-                                continue;
-                            }
-
-                            match protocol::parse(&config,&publish.topic,&publish.payload) {
-                                Ok((channel,message)) => {
-                                    let first_seen=controller.status.last_seen.is_none();
-                                    controller.observe(&channel,&message,Utc::now())?;
-                                    if let Some(reply) = protocol::reply(&config,&channel,&message,Utc::now()) {
-                                        client.try_publish(reply.topic,QoS::AtMostOnce,false,serde_json::to_vec(&reply.payload)?)?;
-                                    }
-                                    if first_seen || message.cmd=="DEVICE_START_EVENT" {
-                                        let query=protocol::service(&config,"ATTR_GET_SERVICE",uuid::Uuid::new_v4(),Utc::now());
-                                        client.try_publish(query.topic,QoS::AtMostOnce,false,serde_json::to_vec(&query.payload)?)?;
-                                    }
-                                    info!(command=%message.cmd,"device message");
-                                }
-                                Err(_) => warn!("ignored invalid device message"),
-                            }
-                        }
-
-                        Ok(_) => {}
-                        Err(_) => {
-                            warn!("MQTT disconnected; discarding pending outgoing messages");
-                            controller.disconnected(Utc::now())?;
-                            publish_status(&status,&controller,&tracker);
-                            break;
-                        }
+                event = eventloop.poll() => match event {
+                    Ok(Event::Incoming(Packet::ConnAck(_))) => self.subscribe(&client).await?,
+                    Ok(Event::Incoming(Packet::SubAck(ack))) => self.session_started(&client, &ack)?,
+                    Ok(Event::Incoming(Packet::Publish(message))) => self.incoming(&client, message)?,
+                    Ok(_) => {}
+                    Err(_) => {
+                        warn!("MQTT disconnected; discarding pending outgoing messages");
+                        self.controller.disconnected(Utc::now())?;
+                        self.publish_status();
+                        return Ok(Session::Dropped);
                     }
-                }
+                },
 
-                request = requests.recv() => {
-                    let Some(request) = request else { return Ok(()); };
-                    match request {
-                        Request::Feed(input,response) => {
-                            let outcome = controller.feed(input,Utc::now());
-                            let result = match outcome {
-                                Ok((record,Some(command))) => {
-                                    // QoS 0, no retain, no offline session, and a new
-                                    // client/eventloop on reconnect: never replay a feed.
-                                    if client.try_publish(command.topic,QoS::AtMostOnce,false,serde_json::to_vec(&command.payload)?).is_err() {
-                                        controller.disconnected(Utc::now())?;
-                                        Err(Rejection::Offline)
-                                    } else { Ok(record) }
-                                }
-                                Ok((record,None)) => Ok(record),
-                                Err(error) => Err(error),
-                            };
-                            let _ = response.send(result);
-                        }
+                request = requests.recv() => match request {
+                    Some(request) => self.request(&client, request)?,
+                    None => return Ok(Session::Closed),
+                },
 
-                        Request::Resolve(input,response) => { let _ = response.send(controller.resolve(input,Utc::now())); }
-                        Request::ResolveTrial(input,response) => { let _ = response.send(controller.resolve_trial(input,Utc::now())); }
-                        Request::Replacement(input,response) => { let _ = response.send(replacement_request(&config,&client,&mut tracker,key.as_ref(),input)); }
-
-                        Request::OtaOffer(next,response) => {
-                            if let Some(o) = &next { info!(version=o.version,bytes=o.payload.len(),"replacement update offered"); }
-                            else { info!("replacement update offer cleared"); }
-                            offer = next;
-                            let _ = response.send(config.firmware.is_some());
-                        }
-
-                        Request::ProbeQuery(input,response) => {
-                            let result = match controller.probe_query(input,Utc::now()) {
-                                Ok((record,Some(command))) => {
-                                    if client.try_publish(command.topic,QoS::AtMostOnce,false,serde_json::to_vec(&command.payload)?).is_err() {
-                                        controller.disconnected(Utc::now())?;
-                                        Err(Rejection::Offline)
-                                    } else { Ok(record) }
-                                }
-                                Ok((record,None)) => Ok(record),
-                                Err(error) => Err(error),
-                            };
-                            let _ = response.send(result);
-                        }
-
-                        Request::OtaTrial(input,lease,response) => {
-                            let result = match controller.ota_trial(input,lease.as_ref(),Utc::now()) {
-                                Ok((record,Some(command))) => {
-                                    if client.try_publish(command.topic,QoS::AtMostOnce,false,serde_json::to_vec(&command.payload)?).is_err() {
-                                        controller.disconnected(Utc::now())?;
-                                        Err(Rejection::Offline)
-                                    } else { Ok(record) }
-                                }
-                                Ok((record,None)) => Ok(record),
-                                Err(error) => Err(error),
-                            };
-                            let _ = response.send(result);
-                        }
-                    }
-                }
-
-                _ = tick.tick() => { controller.expire(Utc::now())?; }
+                _ = tick.tick() => self.controller.expire(Utc::now())?,
             }
-            publish_status(&status, &controller, &tracker);
+            self.publish_status();
         }
+    }
 
-        // Serve API requests while offline without accumulating commands for a
-        // future session. All newly submitted feeds are rejected by the controller.
+    /// Serve API requests between connections without accumulating commands
+    /// for a future session; the controller rejects new feeds while offline.
+    async fn between_sessions(&mut self, requests: &mut mpsc::Receiver<Request>) -> Session {
         let delay = tokio::time::sleep(Duration::from_secs(2));
         tokio::pin!(delay);
         loop {
             tokio::select! {
-                _ = &mut delay => break,
-                request = requests.recv() => {
-                    match request {
-                        Some(Request::Feed(input,response)) => {
-                            let result = controller.feed(input,Utc::now()).map(|(record,_)|record);
-                            let _ = response.send(result);
-                        }
-                        Some(Request::Resolve(input,response)) => { let _ = response.send(controller.resolve(input,Utc::now())); }
-
-                        Some(Request::OtaTrial(input,lease,response)) => {
-                            let result = controller.ota_trial(input,lease.as_ref(),Utc::now()).map(|(record,_)|record);
-                            let _ = response.send(result);
-                        }
-                        Some(Request::ResolveTrial(input,response)) => { let _ = response.send(controller.resolve_trial(input,Utc::now())); }
-
-                        Some(Request::ProbeQuery(input,response)) => {
-                            let result = controller.probe_query(input,Utc::now()).map(|(record,_)|record);
-                            let _ = response.send(result);
-                        }
-
-                        Some(Request::Replacement(_,response)) => {
-                            let error = if config.firmware.is_some() { RequestError::Offline } else { RequestError::Unconfigured };
-                            let _ = response.send(Err(error));
-                        }
-
-                        // An offer is server state, not a device command: keep it across reconnects.
-                        Some(Request::OtaOffer(next,response)) => { offer = next; let _ = response.send(config.firmware.is_some()); }
-                        None => return Ok(()),
-                    }
-                }
+                _ = &mut delay => return Session::Dropped,
+                request = requests.recv() => match request {
+                    Some(request) => self.request_without_device(request),
+                    None => return Session::Closed,
+                },
             }
+        }
+    }
+}
+
+/// How a connection (or the pause after one) ended.
+enum Session {
+    Dropped,
+    /// The API side has gone: the actor stops.
+    Closed,
+}
+
+pub async fn run(
+    config: Arc<Config>,
+    controller: Controller,
+    mut requests: mpsc::Receiver<Request>,
+    status: watch::Sender<Status>,
+) -> Result<()> {
+    let key = config
+        .firmware
+        .as_ref()
+        .and_then(|firmware| firmware.request_key());
+    let mut actor = Actor {
+        config,
+        controller,
+        status,
+        tracker: replacement::Tracker::default(),
+        key,
+        offer: None,
+    };
+
+    loop {
+        if let Session::Closed = actor.session(&mut requests).await? {
+            return Ok(());
+        }
+        if let Session::Closed = actor.between_sessions(&mut requests).await {
+            return Ok(());
         }
     }
 }

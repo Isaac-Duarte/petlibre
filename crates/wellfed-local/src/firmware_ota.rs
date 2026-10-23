@@ -6,7 +6,7 @@
 //! in memory and answered over `ota/get`. Each offer is served to completion
 //! once; a manifest request after its last chunk means the candidate fell
 //! back, so the offer is dropped until the owner offers it again.
-use std::{fs, io::Read, path::Path};
+use std::{fs, path::Path};
 
 use anyhow::{Context, Result, ensure};
 use ed25519_dalek::{Signer, SigningKey};
@@ -27,10 +27,7 @@ fn unhex<const N: usize>(text: &str) -> Result<[u8; N]> {
 /// Create a new signing key; refuses to replace one. Returns the public key
 /// (hex), which the firmware build embeds.
 pub fn keygen(output: &Path) -> Result<String> {
-    let mut seed = [0u8; 32];
-    fs::File::open("/dev/urandom")
-        .and_then(|mut random| random.read_exact(&mut seed))
-        .context("read the system random source")?;
+    let seed: [u8; 32] = storage::random(Path::new(storage::SYSTEM_RANDOM))?;
 
     let public_key = hex::encode(&SigningKey::from_bytes(&seed).verifying_key().to_bytes());
     storage::write_new_json(

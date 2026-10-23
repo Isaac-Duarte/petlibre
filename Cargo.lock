@@ -1670,6 +1670,7 @@ dependencies = [
  "sha2 0.11.1",
  "subtle",
  "tempfile",
+ "thiserror",
  "tokio",
  "tracing",
  "tracing-subscriber",

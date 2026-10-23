@@ -5,6 +5,7 @@
 mod common;
 
 use chrono::{Duration, Utc};
+use wellfed_local::protocol::Channel;
 use wellfed_local::{
     controller::{Controller, FeedInput, FeedPhase, Rejection},
     protocol::Message,
@@ -14,7 +15,9 @@ use uuid::Uuid;
 
 fn observe(controller: &mut Controller, channel: &str, value: serde_json::Value) {
     let message: Message = serde_json::from_value(value).unwrap();
-    controller.observe(channel, &message, Utc::now()).unwrap();
+    controller
+        .observe(Channel::from_name(channel).unwrap(), &message, Utc::now())
+        .unwrap();
 }
 
 fn ready(controller: &mut Controller) {
@@ -64,7 +67,7 @@ fn ota_reports_keep_distinct_phases_with_shared_ids_and_bound_history() {
     assert!(
         wellfed_local::protocol::reply(
             &c.config,
-            "system",
+            Channel::System,
             &serde_json::from_value(json!({"cmd":"OTA_INFORM","state":5})).unwrap(),
             Utc::now()
         )

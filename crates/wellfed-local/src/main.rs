@@ -19,6 +19,8 @@ use wellfed_local::{
     controller::{Controller, FeedInput, ResolveInput},
     firmware_ota, mqtt, network, ota_image, ota_trial, probe,
 };
+use reqwest::Method;
+use serde::Serialize;
 use tokio::{
     process::Command,
     sync::{mpsc, watch},
@@ -273,7 +275,9 @@ async fn main() -> Result<()> {
             config,
             enable_ota_trial,
         } => serve(config, enable_ota_trial).await?,
-        Action::Status { config } => api_request(config, "GET", "/api/status", None).await?,
+        Action::Status { config } => {
+            api_request(config, Method::GET, "/api/status", None::<&()>).await?
+        }
         Action::Speak {
             config,
             file,
@@ -298,12 +302,12 @@ async fn main() -> Result<()> {
         } => {
             api_request(
                 config,
-                "POST",
+                Method::POST,
                 "/api/feed",
-                Some(serde_json::to_value(FeedInput {
+                Some(&FeedInput {
                     request_id,
                     portions,
-                })?),
+                }),
             )
             .await?
         }
@@ -315,9 +319,9 @@ async fn main() -> Result<()> {
         } => {
             api_request(
                 config,
-                "POST",
+                Method::POST,
                 "/api/feed/resolve",
-                Some(serde_json::to_value(ResolveInput { request_id, note })?),
+                Some(&ResolveInput { request_id, note }),
             )
             .await?
         }
@@ -327,9 +331,9 @@ async fn main() -> Result<()> {
         Action::ProbeQuery { config, request_id } => {
             api_request(
                 config,
-                "POST",
+                Method::POST,
                 "/api/probe/query",
-                Some(serde_json::to_value(probe::Input { request_id })?),
+                Some(&probe::Input { request_id }),
             )
             .await?
         }
@@ -351,12 +355,9 @@ async fn main() -> Result<()> {
         } => {
             api_request(
                 config,
-                "POST",
+                Method::POST,
                 "/api/ota/trial/resolve",
-                Some(serde_json::to_value(ota_trial::ResolveInput {
-                    request_id,
-                    note,
-                })?),
+                Some(&ota_trial::ResolveInput { request_id, note }),
             )
             .await?;
         }
@@ -369,13 +370,13 @@ async fn main() -> Result<()> {
         } => {
             api_request(
                 config,
-                "POST",
+                Method::POST,
                 "/api/ota/trial",
-                Some(serde_json::to_value(ota_trial::Input {
+                Some(&ota_trial::Input {
                     request_id,
                     image,
                     server_token,
-                })?),
+                }),
             )
             .await?;
         }
@@ -436,9 +437,9 @@ async fn main() -> Result<()> {
             );
             api_request(
                 config,
-                "POST",
+                Method::POST,
                 "/api/replacement/ota/offer",
-                Some(serde_json::json!({"manifest": manifest, "image": image})),
+                Some(&api::OfferInput { manifest, image }),
             )
             .await?;
         }
@@ -563,9 +564,9 @@ async fn serve(path: PathBuf, enable_ota_trial: bool) -> Result<()> {
 #[allow(clippy::print_stdout)]
 async fn api_request(
     path: PathBuf,
-    method: &str,
+    method: Method,
     route: &str,
-    body: Option<serde_json::Value>,
+    body: Option<&impl Serialize>,
 ) -> Result<()> {
     let config = Config::load(&path)?;
     let client = reqwest::Client::builder()
@@ -574,13 +575,10 @@ async fn api_request(
         .build()?;
 
     let mut request = client
-        .request(
-            method.parse()?,
-            format!("http://{}{route}", config.http_listen),
-        )
+        .request(method, format!("http://{}{route}", config.http_listen))
         .bearer_auth(config.api_token);
     if let Some(body) = body {
-        request = request.json(&body);
+        request = request.json(body);
     }
 
     let response = request.send().await?;

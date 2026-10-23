@@ -5,6 +5,7 @@
 mod common;
 
 use chrono::{DateTime, Duration, Utc};
+use wellfed_local::protocol::Channel;
 use wellfed_local::{
     controller::{Controller, Rejection},
     ota_image::{C_PROBE_SHA256, Lease, ORIGINAL_SHA256, Profile},
@@ -15,8 +16,12 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 fn observe(c: &mut Controller, channel: &str, value: Value, at: DateTime<Utc>) {
-    c.observe(channel, &serde_json::from_value(value).unwrap(), at)
-        .unwrap();
+    c.observe(
+        Channel::from_name(channel).unwrap(),
+        &serde_json::from_value(value).unwrap(),
+        at,
+    )
+    .unwrap();
 }
 
 fn ready(c: &mut Controller, version: &str, at: DateTime<Utc>) {

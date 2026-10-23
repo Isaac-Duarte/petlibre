@@ -6,8 +6,8 @@
 //! served. A private lease beside the config records the random URL token;
 //! trial dispatch requires that lease and a live listener.
 use std::{
-    convert::Infallible, fmt::Write, future::Future, io::Read, net::Ipv4Addr, path::Path,
-    sync::Arc, time::Duration,
+    convert::Infallible, future::Future, io::Read, net::Ipv4Addr, path::Path, sync::Arc,
+    time::Duration,
 };
 
 use anyhow::{Context, Result, ensure};
@@ -19,8 +19,8 @@ use axum::{
 use chrono::{DateTime, Utc};
 use hyper::{body::Incoming, server::conn::http1, service::service_fn};
 use hyper_util::rt::{TokioIo, TokioTimer};
+use wellfed_formats::canonical;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use tokio::{net::TcpListener, task::JoinSet};
 use uuid::Uuid;
 
@@ -122,11 +122,10 @@ impl Images {
             file.take((IMAGE_BYTES + 1) as u64).read_to_end(&mut data)?;
             ensure!(data.len() == IMAGE_BYTES, "OTA size changed while reading");
 
-            let mut actual = String::with_capacity(64);
-            for byte in Sha256::digest(&data) {
-                write!(actual, "{byte:02x}").expect("format hash into String");
-            }
-            ensure!(actual == expected, "OTA image hash mismatch");
+            ensure!(
+                canonical::sha256(&data) == expected,
+                "OTA image hash mismatch"
+            );
             Ok(Bytes::from(data))
         }
 

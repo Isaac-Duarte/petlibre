@@ -6,6 +6,9 @@
 //! `Request` to the MQTT actor and wait up to 5 s. A timeout leaves the outcome
 //! unknown, so the caller queries status or repeats the same request ID
 //! instead of creating a new one.
+//!
+//! Response structs declare their fields in sorted order, the order the
+//! `json!` bodies they replaced had.
 
 use std::{sync::Arc, time::Duration};
 
@@ -13,19 +16,20 @@ use axum::{
     Json, Router,
     extract::{DefaultBodyLimit, State},
     http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
     routing::{get, post},
 };
-use serde::Serialize;
-use serde_json::{Value, json};
+use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 use tokio::sync::{mpsc, oneshot, watch};
+use uuid::Uuid;
 
 use crate::{
     build_info::BUILD,
     controller::{FeedInput, FeedRecord, Rejection, ResolveInput, Status},
     mqtt::Request,
     ota_image, ota_trial, probe,
-    replacement::{self, RequestError},
+    replacement::{self, Op, RequestError},
 };
 
 #[derive(Clone)]
@@ -38,7 +42,63 @@ pub struct ApiState {
     pub image_host: std::net::IpAddr,
 }
 
-type ApiError = (StatusCode, Json<Value>);
+/// A refused request: its status and the `{"error": ..}` body.
+#[derive(Debug)]
+pub struct ApiError {
+    status: StatusCode,
+    message: String,
+}
+
+#[derive(Serialize)]
+struct ErrorBody<'a> {
+    error: &'a str,
+}
+
+impl ApiError {
+    fn new(status: StatusCode, message: impl Into<String>) -> Self {
+        Self {
+            status,
+            message: message.into(),
+        }
+    }
+}
+
+impl IntoResponse for ApiError {
+    fn into_response(self) -> Response {
+        let body = ErrorBody {
+            error: &self.message,
+        };
+        (self.status, Json(body)).into_response()
+    }
+}
+
+impl From<Rejection> for ApiError {
+    fn from(error: Rejection) -> Self {
+        let status = match error {
+            Rejection::Offline => StatusCode::SERVICE_UNAVAILABLE,
+            Rejection::InvalidPortions => StatusCode::UNPROCESSABLE_ENTITY,
+            Rejection::InvalidOta | Rejection::ResolutionEvidence | Rejection::InvalidProbe => {
+                StatusCode::UNPROCESSABLE_ENTITY
+            }
+            Rejection::ImageServer => StatusCode::PRECONDITION_FAILED,
+            Rejection::OtaDisabled => StatusCode::FORBIDDEN,
+            Rejection::Storage => StatusCode::INTERNAL_SERVER_ERROR,
+            Rejection::Cooldown => StatusCode::TOO_MANY_REQUESTS,
+            _ => StatusCode::CONFLICT,
+        };
+        Self::new(status, error.to_string())
+    }
+}
+
+impl From<RequestError> for ApiError {
+    fn from(error: RequestError) -> Self {
+        let status = match error {
+            RequestError::Unconfigured => StatusCode::NOT_FOUND,
+            RequestError::Offline | RequestError::Exhausted => StatusCode::SERVICE_UNAVAILABLE,
+        };
+        Self::new(status, error.to_string())
+    }
+}
 
 fn authenticate(headers: &HeaderMap, state: &ApiState) -> Result<(), ApiError> {
     let supplied = headers
@@ -50,27 +110,11 @@ fn authenticate(headers: &HeaderMap, state: &ApiState) -> Result<(), ApiError> {
     if bool::from(supplied.as_bytes().ct_eq(state.token.as_bytes())) {
         Ok(())
     } else {
-        Err((
+        Err(ApiError::new(
             StatusCode::UNAUTHORIZED,
-            Json(json!({"error":"bearer token required"})),
+            "bearer token required",
         ))
     }
-}
-
-fn reject(error: Rejection) -> ApiError {
-    let status = match error {
-        Rejection::Offline => StatusCode::SERVICE_UNAVAILABLE,
-        Rejection::InvalidPortions => StatusCode::UNPROCESSABLE_ENTITY,
-        Rejection::InvalidOta | Rejection::ResolutionEvidence | Rejection::InvalidProbe => {
-            StatusCode::UNPROCESSABLE_ENTITY
-        }
-        Rejection::ImageServer => StatusCode::PRECONDITION_FAILED,
-        Rejection::OtaDisabled => StatusCode::FORBIDDEN,
-        Rejection::Storage => StatusCode::INTERNAL_SERVER_ERROR,
-        Rejection::Cooldown => StatusCode::TOO_MANY_REQUESTS,
-        _ => StatusCode::CONFLICT,
-    };
-    (status, Json(json!({"error":error.message()})))
 }
 
 async fn operation<T: Serialize>(
@@ -81,21 +125,19 @@ async fn operation<T: Serialize>(
     state
         .requests
         .try_send(build(send))
-        .map_err(|_| reject(Rejection::Offline))?;
+        .map_err(|_| Rejection::Offline)?;
 
     let result = tokio::time::timeout(Duration::from_secs(5), receive)
         .await
         .map_err(|_| {
-            (
+            ApiError::new(
                 StatusCode::GATEWAY_TIMEOUT,
-                Json(
-                    json!({"error":"outcome unknown; query status or repeat the SAME request ID"}),
-                ),
+                "outcome unknown; query status or repeat the SAME request ID",
             )
         })?
-        .map_err(|_| reject(Rejection::Offline))?;
+        .map_err(|_| Rejection::Offline)?;
 
-    result.map(Json).map_err(reject)
+    Ok(Json(result?))
 }
 
 async fn status(
@@ -143,17 +185,27 @@ async fn ota_trial_resolve(
     operation(state, |response| Request::ResolveTrial(input, response)).await
 }
 
+/// `/health`: which build is serving, without authentication.
+#[derive(Debug, PartialEq, Serialize)]
+struct ServiceInfo {
+    build_clean: bool,
+    build_commit: &'static str,
+    service: &'static str,
+    version: &'static str,
+}
+
+async fn service_info() -> Json<ServiceInfo> {
+    Json(ServiceInfo {
+        build_clean: BUILD.clean,
+        build_commit: BUILD.commit,
+        service: "wellfed-local",
+        version: env!("CARGO_PKG_VERSION"),
+    })
+}
+
 pub fn router(state: ApiState) -> Router {
     Router::new()
-        .route(
-            "/health",
-            get(|| async {
-                Json(
-                    json!({"service":"wellfed-local","version":env!("CARGO_PKG_VERSION"),
-                    "build_commit":BUILD.commit,"build_clean":BUILD.clean}),
-                )
-            }),
-        )
+        .route("/health", get(service_info))
         .route("/api/status", get(status))
         .route("/api/feed", post(feed))
         .route("/api/feed/resolve", post(resolve))
@@ -166,53 +218,68 @@ pub fn router(state: ApiState) -> Router {
         .with_state(state)
 }
 
+/// What a client may send `/api/replacement/request`.
+fn request_usage() -> String {
+    let ops = Op::ALL.map(|op| format!("\"{}\"", op.name())).join("|");
+    format!(
+        "expected {{\"op\":{ops}}}; settings may set lights, sound (booleans) and volume (0-100); wifi may set ssid (1-32 bytes) with psk (8-63 printable ASCII), or clear: true; play needs tune: {}",
+        replacement::tune_names()
+    )
+}
+
+/// The request ID a replacement request went out under.
+#[derive(Debug, PartialEq, Serialize)]
+struct Sent {
+    id: Uuid,
+    op: Op,
+}
+
 /// One read-only diagnostic request to the replacement firmware. The body is
 /// parsed here so any unsupported operation is a plain 400.
 async fn replacement_request(
     State(state): State<ApiState>,
     headers: HeaderMap,
     body: axum::body::Bytes,
-) -> Result<Json<Value>, ApiError> {
+) -> Result<Json<Sent>, ApiError> {
     authenticate(&headers, &state)?;
 
     let input: replacement::Input = serde_json::from_slice(&body)
         .ok()
         .filter(replacement::Input::valid)
-        .ok_or_else(|| {
-            (
-                StatusCode::BAD_REQUEST,
-                Json(json!({"error":"expected {\"op\":\"health\"|\"ping\"|\"settings\"|\"wifi\"|\"play\"}; settings may set lights, sound (booleans) and volume (0-100); wifi may set ssid (1-32 bytes) with psk (8-63 printable ASCII), or clear: true; play needs tune: chime, meal, coin, alert, test or twinkle"})),
-            )
-        })?;
+        .ok_or_else(|| ApiError::new(StatusCode::BAD_REQUEST, request_usage()))?;
 
     let (send, receive) = oneshot::channel();
-    let offline = |error: RequestError| {
-        let status = match error {
-            RequestError::Unconfigured => StatusCode::NOT_FOUND,
-            RequestError::Offline | RequestError::Exhausted => StatusCode::SERVICE_UNAVAILABLE,
-        };
-        (status, Json(json!({"error":error.message()})))
-    };
-
     let op = input.op;
     state
         .requests
         .try_send(Request::Replacement(input, send))
-        .map_err(|_| offline(RequestError::Offline))?;
+        .map_err(|_| RequestError::Offline)?;
     let id = tokio::time::timeout(Duration::from_secs(5), receive)
         .await
-        .map_err(|_| offline(RequestError::Offline))?
-        .map_err(|_| offline(RequestError::Offline))?
-        .map_err(offline)?;
+        .map_err(|_| RequestError::Offline)?
+        .map_err(|_| RequestError::Offline)??;
 
-    Ok(Json(json!({"id":id,"op":op})))
+    Ok(Json(Sent { id, op }))
 }
 
-#[derive(serde::Deserialize)]
-struct OfferInput {
+/// `/api/replacement/ota/offer`'s body.
+#[derive(Debug, Deserialize, Serialize)]
+pub struct OfferInput {
     /// Both relative paths under `private/`; absent to clear the offer.
-    manifest: Option<String>,
-    image: Option<String>,
+    pub manifest: Option<String>,
+    pub image: Option<String>,
+}
+
+/// The offer now loaded, or `None` once cleared.
+#[derive(Debug, PartialEq, Serialize)]
+struct Offered {
+    offer: Option<OfferSummary>,
+}
+
+#[derive(Debug, PartialEq, Serialize)]
+struct OfferSummary {
+    bytes: usize,
+    version: u32,
 }
 
 fn private_path(name: &str) -> Option<std::path::PathBuf> {
@@ -232,9 +299,9 @@ async fn replacement_ota_offer(
     State(state): State<ApiState>,
     headers: HeaderMap,
     Json(input): Json<OfferInput>,
-) -> Result<Json<Value>, ApiError> {
+) -> Result<Json<Offered>, ApiError> {
     authenticate(&headers, &state)?;
-    let bad = |message: String| (StatusCode::BAD_REQUEST, Json(json!({"error": message})));
+    let bad = |message: String| ApiError::new(StatusCode::BAD_REQUEST, message);
 
     let offer = match (input.manifest.as_deref(), input.image.as_deref()) {
         (None, None) => None,
@@ -258,17 +325,13 @@ async fn replacement_ota_offer(
         }
     };
 
-    let summary = offer
-        .as_ref()
-        .map(|o| json!({"version": o.version, "bytes": o.payload.len()}));
+    let summary = offer.as_ref().map(|o| OfferSummary {
+        bytes: o.payload.len(),
+        version: o.version,
+    });
 
     let (send, receive) = oneshot::channel();
-    let unavailable = || {
-        (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(json!({"error":"server busy"})),
-        )
-    };
+    let unavailable = || ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "server busy");
 
     state
         .requests
@@ -281,13 +344,13 @@ async fn replacement_ota_offer(
         .map_err(|_| unavailable())?;
 
     if !configured {
-        return Err((
+        return Err(ApiError::new(
             StatusCode::NOT_FOUND,
-            Json(json!({"error":"no replacement-firmware role configured"})),
+            "no replacement-firmware role configured",
         ));
     }
 
-    Ok(Json(json!({"offer": summary})))
+    Ok(Json(Offered { offer: summary }))
 }
 
 async fn probe_query(
@@ -297,4 +360,53 @@ async fn probe_query(
 ) -> Result<Json<probe::Record>, ApiError> {
     authenticate(&headers, &state)?;
     operation(state, |response| Request::ProbeQuery(input, response)).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn body(value: &impl Serialize) -> String {
+        serde_json::to_string(value).unwrap()
+    }
+
+    /// The bodies the `json!` replies wrote, byte for byte.
+    #[test]
+    fn bodies_keep_their_sorted_keys() {
+        assert_eq!(
+            body(&ServiceInfo {
+                build_clean: true,
+                build_commit: "abc",
+                service: "wellfed-local",
+                version: "0.1.0",
+            }),
+            r#"{"build_clean":true,"build_commit":"abc","service":"wellfed-local","version":"0.1.0"}"#
+        );
+        assert_eq!(
+            body(&Sent {
+                id: Uuid::nil(),
+                op: Op::Play,
+            }),
+            r#"{"id":"00000000-0000-0000-0000-000000000000","op":"play"}"#
+        );
+        assert_eq!(
+            body(&Offered {
+                offer: Some(OfferSummary {
+                    bytes: 4096,
+                    version: 7,
+                }),
+            }),
+            r#"{"offer":{"bytes":4096,"version":7}}"#
+        );
+        assert_eq!(body(&Offered { offer: None }), r#"{"offer":null}"#);
+        assert_eq!(body(&ErrorBody { error: "x" }), r#"{"error":"x"}"#);
+    }
+
+    #[test]
+    fn the_usage_names_every_operation_and_tune() {
+        assert_eq!(
+            request_usage(),
+            "expected {\"op\":\"health\"|\"ping\"|\"settings\"|\"wifi\"|\"play\"}; settings may set lights, sound (booleans) and volume (0-100); wifi may set ssid (1-32 bytes) with psk (8-63 printable ASCII), or clear: true; play needs tune: chime, meal, coin, alert, test or twinkle"
+        );
+    }
 }

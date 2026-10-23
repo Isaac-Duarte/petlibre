@@ -12,11 +12,13 @@ use std::{fs, net::SocketAddr, path::Path};
 use anyhow::{Context, Result, bail, ensure};
 use chrono_tz::Tz;
 use wellfed_formats::credentials::FirmwareCredential;
+use wellfed_formats::hex;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value};
 use uuid::Uuid;
 
 use crate::{
+    protocol::lenient,
     request_auth::{self, RequestKey},
     storage,
 };
@@ -40,7 +42,8 @@ pub struct Config {
     pub timezone: Tz,
     pub max_portions: u8,
     pub plans: Vec<Value>,
-    pub binding_response: Option<Value>,
+    /// The captured cloud `BINDING` reply, replayed verbatim.
+    pub binding_response: Option<Map<String, Value>>,
 
     pub hotspot_interface: String,
     pub target_mac: String,
@@ -278,6 +281,63 @@ pub struct ImportOptions {
     pub timezone: Tz,
 }
 
+/// One captured CONNECT record, as the capture tooling exports it.
+#[derive(Deserialize)]
+struct ConnectRecord {
+    #[serde(rename = "mqtt.clientid")]
+    client_id: String,
+    #[serde(rename = "mqtt.username")]
+    username: String,
+    #[serde(rename = "mqtt.passwd")]
+    password: String,
+}
+
+/// The parts of a `tshark -T json` packet the import reads. Every layer is
+/// optional and lenient: a frame of another shape (tshark writes an array for
+/// several MQTT messages in one frame) is skipped, not an error.
+#[derive(Deserialize)]
+struct Packet {
+    #[serde(rename = "_source", default, deserialize_with = "lenient")]
+    source: Option<Source>,
+}
+
+#[derive(Deserialize)]
+struct Source {
+    layers: Layers,
+}
+
+#[derive(Deserialize)]
+struct Layers {
+    #[serde(default, deserialize_with = "lenient")]
+    mqtt: Option<MqttLayer>,
+    #[serde(default, deserialize_with = "lenient")]
+    eth: Option<EthLayer>,
+}
+
+#[derive(Deserialize)]
+struct MqttLayer {
+    #[serde(rename = "mqtt.topic", default, deserialize_with = "lenient")]
+    topic: Option<String>,
+    /// The payload as colon-separated (or plain) hex.
+    #[serde(rename = "mqtt.msg", default, deserialize_with = "lenient")]
+    msg: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct EthLayer {
+    #[serde(rename = "eth.src", default, deserialize_with = "lenient")]
+    src: Option<String>,
+}
+
+/// A captured message the import keeps: the plan snapshot or the binding.
+#[derive(Deserialize)]
+struct Captured {
+    #[serde(default, deserialize_with = "lenient")]
+    cmd: Option<String>,
+    #[serde(default, deserialize_with = "lenient")]
+    plans: Option<Vec<Value>>,
+}
+
 pub fn import(
     credentials: &Path,
     capture: &Path,
@@ -289,28 +349,26 @@ pub fn import(
         "configuration already exists; refusing to replace secrets"
     );
 
-    let credentials: Vec<Value> = serde_json::from_slice(&fs::read(credentials)?)?;
-    ensure!(
-        credentials.len() == 1,
-        "expected exactly one captured CONNECT record"
-    );
+    let credentials: Vec<ConnectRecord> = serde_json::from_slice(&fs::read(credentials)?)
+        .context("CONNECT credential fields missing")?;
+    let [credential] = <[ConnectRecord; 1]>::try_from(credentials)
+        .ok()
+        .context("expected exactly one captured CONNECT record")?;
 
-    let get = |field: &str| -> Result<String> {
-        Ok(credentials[0][field]
-            .as_str()
-            .context("CONNECT credential field missing")?
-            .to_owned())
-    };
-
-    let packets: Vec<Value> = serde_json::from_slice(&fs::read(capture)?)?;
+    let packets: Vec<Packet> = serde_json::from_slice(&fs::read(capture)?)?;
     let mut device_id = None;
     let mut plans = None;
     let mut binding_response = None;
     let mut target_mac = None;
 
     for packet in packets {
-        let mqtt = &packet["_source"]["layers"]["mqtt"];
-        let Some(topic) = mqtt["mqtt.topic"].as_str() else {
+        let Some(layers) = packet.source.map(|source| source.layers) else {
+            continue;
+        };
+        let Some(mqtt) = layers.mqtt else {
+            continue;
+        };
+        let Some(topic) = mqtt.topic else {
             continue;
         };
 
@@ -324,42 +382,39 @@ pub fn import(
         device_id = Some(parts[2].to_owned());
 
         if parts[5] == "post"
-            && let Some(mac) = packet["_source"]["layers"]["eth"]["eth.src"].as_str()
+            && let Some(mac) = layers.eth.and_then(|eth| eth.src)
         {
             ensure!(
                 target_mac.as_deref().is_none_or(|previous| previous == mac),
                 "capture contains multiple device MAC addresses"
             );
-            target_mac = Some(mac.to_owned());
+            target_mac = Some(mac);
         }
 
-        let Some(hex) = mqtt["mqtt.msg"].as_str() else {
+        let Some(bytes) = mqtt
+            .msg
+            .and_then(|text| hex::decode_vec(&text.replace(':', "")))
+        else {
             continue;
         };
-        let compact = hex.replace(':', "");
-        if compact.len() % 2 != 0 || !compact.is_ascii() {
+        let Ok(message) = serde_json::from_slice::<Map<String, Value>>(&bytes) else {
             continue;
-        }
-        let bytes: Result<Vec<u8>, _> = (0..compact.len())
-            .step_by(2)
-            .map(|i| u8::from_str_radix(&compact[i..i + 2], 16))
-            .collect();
-        let Ok(bytes) = bytes else { continue };
-        let Ok(message) = serde_json::from_slice::<Value>(&bytes) else {
+        };
+        let Ok(captured) = Captured::deserialize(&message) else {
             continue;
         };
 
         if parts[5] == "sub"
             && matches!(
-                message["cmd"].as_str(),
+                captured.cmd.as_deref(),
                 Some("GET_FEEDING_PLAN_EVENT" | "FEEDING_PLAN_SERVICE")
             )
-            && let Some(values) = message["plans"].as_array()
+            && let Some(values) = captured.plans
         {
-            plans = Some(values.clone());
+            plans = Some(values);
         }
 
-        if parts[4] == "system" && parts[5] == "sub" && message["cmd"] == "BINDING" {
+        if parts[4] == "system" && parts[5] == "sub" && captured.cmd.as_deref() == Some("BINDING") {
             binding_response = Some(message);
         }
     }
@@ -367,9 +422,9 @@ pub fn import(
     let config = Config {
         version: 1,
         device_id: device_id.context("capture has no PLAF103 topics")?,
-        device_client_id: get("mqtt.clientid")?,
-        device_username: get("mqtt.username")?,
-        device_password: get("mqtt.passwd")?,
+        device_client_id: credential.client_id,
+        device_username: credential.username,
+        device_password: credential.password,
         server_password: Uuid::new_v4().simple().to_string(),
         api_token: Uuid::new_v4().simple().to_string(),
         mqtt_listen: options.mqtt_listen,

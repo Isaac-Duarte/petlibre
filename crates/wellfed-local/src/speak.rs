@@ -14,11 +14,18 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail, ensure};
 use wellfed_core::speaker_stream::{self, HEADER_LEN, HELLO_LEN, PORT, RATES, Status};
-use serde_json::Value;
+use serde::Deserialize;
 
 use crate::config::Config;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// One `ip -j neigh` entry; incomplete entries have no `lladdr`.
+#[derive(Deserialize)]
+struct Neighbour {
+    dst: String,
+    lladdr: Option<String>,
+}
 
 /// The feeder's address on the hotspot: its MAC in the interface's neighbour table.
 pub fn discover(config: &Config) -> Result<IpAddr> {
@@ -28,18 +35,16 @@ pub fn discover(config: &Config) -> Result<IpAddr> {
         .context("run ip neigh")?;
     ensure!(output.status.success(), "ip neigh failed");
 
-    let neighbours: Value = serde_json::from_slice(&output.stdout)?;
-    let mac = config.target_mac.to_ascii_lowercase();
+    let neighbours: Vec<Neighbour> = serde_json::from_slice(&output.stdout)?;
     neighbours
-        .as_array()
         .into_iter()
-        .flatten()
         .filter(|entry| {
-            entry["lladdr"]
-                .as_str()
-                .is_some_and(|lladdr| lladdr.eq_ignore_ascii_case(&mac))
+            entry
+                .lladdr
+                .as_deref()
+                .is_some_and(|lladdr| lladdr.eq_ignore_ascii_case(&config.target_mac))
         })
-        .find_map(|entry| entry["dst"].as_str()?.parse::<IpAddr>().ok())
+        .find_map(|entry| entry.dst.parse::<IpAddr>().ok())
         .with_context(|| {
             format!(
                 "feeder not in {}'s neighbour table; is it joined? Pass --host",

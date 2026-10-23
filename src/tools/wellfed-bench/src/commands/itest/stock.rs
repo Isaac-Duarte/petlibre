@@ -32,7 +32,7 @@ use super::{
     Tier, Verdict, live,
 };
 use crate::commands::ota::{
-    Firmware, Outcome, Staged, Timing, Variant, parse_firmware, parse_variant,
+    Firmware, Outcome, Staged, Target, Timing, Variant, parse_firmware, parse_variant,
 };
 use crate::config::VERIFICATION;
 use crate::server::{OtaReport, STOCK_VERSION, TrialRequest};
@@ -126,12 +126,75 @@ impl StockOtaArgs {
             list: false,
             power: self.power,
             destructive: false,
+            stock: None,
             keep_going: false,
             rebuild: false,
             config: self.config.clone(),
             hotspot: self.hotspot.clone(),
         }
     }
+}
+
+/// `itest` scenario `stock-roundtrip`: from the confirmed baseline to stock
+/// 1.1.15 over our own signed update (FW41), then back over stock's updater
+/// (FW40) and the bank-0 recovery role's promotion. It ends where it began:
+/// the baseline confirmed on bank 1, `serve` answering. Bank 0 then holds
+/// the baseline too, written by stock.
+pub(super) fn roundtrip(ctx: &mut Ctx) -> Result<()> {
+    let baseline = ctx.baseline()?.clone();
+    // `unmet` skips the scenario without it.
+    let review = ctx
+        .args
+        .stock
+        .clone()
+        .ok_or_else(|| Error::Bench("stock-roundtrip needs --stock STOCK_REVIEW".into()))?;
+
+    // To stock: our updater writes it into bank 1, then its banner shows.
+    let to_stock = ctx.ota_args("stock", Some(review.clone()));
+    let stock = ctx
+        .rig
+        .stage(&to_stock)?
+        .ok_or_else(|| Error::Bench("Signing the stock review failed".into()))?;
+    if stock.target != Target::Stock {
+        return Err(Error::Bench(format!(
+            "{} is not a stock review",
+            review.display()
+        )));
+    }
+    let since = ctx.mark()?;
+    ctx.rig.offer(Some(&stock))?;
+    ctx.note("  Offered stock; the running build installs it into bank 1");
+    let outcome =
+        ctx.offline(|ctx| ctx.watch_as(&stock.build, Target::Stock, since, INSTALL_SECONDS))?;
+    if outcome != Outcome::Passed {
+        return Err(Error::Bench(format!("Stock did not start: {outcome:?}")));
+    }
+    ctx.rig.offer(None)?;
+
+    // On stock: it reports to a trial-enabled server, routed by the operator.
+    ctx.rig.server(Server::StockTrial)?;
+    ctx.note(
+        "  Stock reaches this server only through the feeder routing: \
+         `sudo wellfed-local network apply` while this waits",
+    );
+    ready(ctx)?;
+    settle(ctx)?;
+
+    // Back: stock installs the baseline into bank 0, which then promotes it.
+    let back = ctx.ota_args("back", Some(baseline.review.clone()));
+    let staged = ctx
+        .rig
+        .stage(&back)?
+        .ok_or_else(|| Error::Bench("Signing the baseline again failed".into()))?;
+    let request_id = uuid::Uuid::new_v4().to_string();
+    request(ctx, &staged, &request_id)?;
+    install(ctx, &staged.build, &request_id)?;
+    bank0(ctx, &staged.build, &request_id)?;
+    promote(ctx, &staged)?;
+    ctx.rig.offer(None)?;
+
+    ctx.rig.server(Server::Serve)?;
+    ctx.health(HEALTH_SECONDS).map(|_| ())
 }
 
 /// A trial's phase as the server's ledger writes it.

@@ -450,10 +450,6 @@ const TAGS: [&str; 5] = [
 const MAX_LINE: usize = 4096;
 
 impl Watch {
-    pub(crate) fn new(build: &str) -> Self {
-        Self::of(build, Target::Replacement)
-    }
-
     pub(crate) fn of(build: &str, target: Target) -> Self {
         Self {
             build: build.to_ascii_lowercase(),
@@ -1330,7 +1326,7 @@ mod tests {
 
     #[test]
     fn a_confirmed_new_build_passes() {
-        let mut watch = Watch::new(&NEW.to_uppercase());
+        let mut watch = Watch::of(&NEW.to_uppercase(), Target::Replacement);
         let events = watch.feed(passing_run().as_bytes());
 
         assert_eq!(watch.outcome(), Some(&Outcome::Passed));
@@ -1402,7 +1398,7 @@ mod tests {
         assert_eq!(watch.outcome(), None);
 
         // A replacement watch ignores the banner entirely.
-        let mut replacement = Watch::new(NEW);
+        let mut replacement = Watch::of(NEW, Target::Replacement);
         replacement.feed(b"PLOTA1 activated version=1\r\n[0]app_main:version:1.1.15\r\n");
         assert_eq!(replacement.outcome(), None);
     }
@@ -1410,7 +1406,7 @@ mod tests {
     #[test]
     fn lines_split_across_segments_still_classify() {
         let run = passing_run();
-        let mut watch = Watch::new(NEW);
+        let mut watch = Watch::of(NEW, Target::Replacement);
         let mut events = Vec::new();
         for piece in run.as_bytes().chunks(7) {
             events.extend(watch.feed(piece));
@@ -1425,7 +1421,7 @@ mod tests {
 
     #[test]
     fn a_confirmation_before_the_new_build_starts_does_not_pass() {
-        let mut watch = Watch::new(NEW);
+        let mut watch = Watch::of(NEW, Target::Replacement);
         watch.feed(format!("{}PLCNF1 confirmed=1 already=1\n", start(OLD, 1)).as_bytes());
         assert_eq!(watch.outcome(), None);
 
@@ -1446,7 +1442,7 @@ mod tests {
 
     #[test]
     fn a_rejected_trial_falls_back_with_its_boot_count() {
-        let mut watch = Watch::new(NEW);
+        let mut watch = Watch::of(NEW, Target::Replacement);
         let log = [
             "PLOTA1 activated version=11 bytes=671744 sectors=164\r\n".to_string(),
             "PLTRL1 confirmed=0 boot=1 limit=3\r\n".into(),
@@ -1469,7 +1465,7 @@ mod tests {
 
     #[test]
     fn a_give_way_before_activation_is_not_a_fallback() {
-        let mut watch = Watch::new(NEW);
+        let mut watch = Watch::of(NEW, Target::Replacement);
         let events =
             watch.feed(b"PLTRL1 confirmed=0 boot=3 limit=3\nPLTRL1 give_way=1 marker=00 reset=1\n");
 
@@ -1479,7 +1475,7 @@ mod tests {
 
     #[test]
     fn an_update_error_reports_its_stage() {
-        let mut watch = Watch::new(NEW);
+        let mut watch = Watch::of(NEW, Target::Replacement);
         let events = watch.feed(b"noise PLOTA1 error stage=hash\r\nPLOTA1 no_offer\r\n");
 
         assert_eq!(
@@ -1498,7 +1494,7 @@ mod tests {
 
     #[test]
     fn events_carry_the_stream_offset_of_their_line_end() {
-        let mut watch = Watch::new(NEW);
+        let mut watch = Watch::of(NEW, Target::Replacement);
         let first = watch.feed_at(b"noise\nPLWCH1 give_way=1 version=2\nPLOTA1 act");
         assert_eq!(first, [(33, Event::GiveWay { version: Some(2) })]);
 

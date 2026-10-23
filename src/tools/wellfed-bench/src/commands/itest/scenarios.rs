@@ -23,7 +23,7 @@ pub(super) struct Scenario {
     pub run: fn(&mut Ctx) -> Result<()>,
 }
 
-pub(super) const SCENARIOS: [Scenario; 9] = [
+pub(super) const SCENARIOS: [Scenario; 10] = [
     Scenario {
         name: "ota-update",
         about: "install the build under test over the air and see it confirm",
@@ -87,6 +87,14 @@ pub(super) const SCENARIOS: [Scenario; 9] = [
         needs: &[Need::Power, Need::Build, Need::Destructive],
         baseline: false,
         run: ota_power_cuts,
+    },
+    Scenario {
+        name: "stock-roundtrip",
+        about: "to stock 1.1.15 over our updater, then back over stock's own and the bank-0 promotion",
+        tier: Tier::Standard,
+        needs: &[Need::Power, Need::Stock],
+        baseline: false,
+        run: super::stock::roundtrip,
     },
     Scenario {
         name: "soak",

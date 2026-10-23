@@ -550,10 +550,12 @@ fn the_full_suite_passes_on_a_well_behaved_feeder() {
     ];
     let (reports, silent) = suite(&mut feeder, &flags);
 
+    // The round trip to stock needs --stock (it has its own scripted feeder).
     let failures: Vec<_> = reports
         .iter()
         .filter_map(|r| match &r.verdict {
             Verdict::Pass => None,
+            Verdict::Skip(_) if r.scenario == "stock-roundtrip" => None,
             other => Some(format!("{}: {other:?}", r.scenario)),
         })
         .collect();
@@ -589,6 +591,7 @@ fn without_power_or_build_those_scenarios_are_skipped_not_passed() {
             ("network-bounce", "pass"),
             ("ota-recovery", "skip"),
             ("ota-power-cuts", "skip"),
+            ("stock-roundtrip", "skip"),
         ]
     );
     assert!(!feeder.actions.iter().any(|a| a == "power cycle"));

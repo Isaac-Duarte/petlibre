@@ -3,6 +3,7 @@
 //! feature, ever drives the motor.
 
 pub mod adc;
+pub mod buttons;
 pub mod flash;
 pub mod optics;
 pub mod pulse;

@@ -18,6 +18,7 @@ km4 = ["petlibre-sdk/km4", "petlibre-hal/km4", "petlibre-hal/sdk"]
 # sets one; none is ever a default.
 fw16-pulse = []
 fw14-adc = []
+fw20-buttons = []
 fw11-reset = []
 fw11-fail = ["petlibre-sdk/fw11-fail"]
 speaker = []
@@ -46,6 +47,9 @@ policies = { motion = "fw16-pulse-v1" }
 [package.metadata.petlibre.variants.fw14-adc]
 summary = "FW14: samples the power inputs read-only, once a second, instead of the FW13 optics probe"
 policies = { adc = "fw14-adc-v2" }
+
+[package.metadata.petlibre.variants.fw20-buttons]
+summary = "FW20: logs the four panel buttons' levels and bounce, read-only, instead of the FW13 optics probe"
 
 [package.metadata.petlibre.variants.fw11-reset]
 summary = "FW11 trial test: stops feeding the watchdog right after startup, before it could confirm"

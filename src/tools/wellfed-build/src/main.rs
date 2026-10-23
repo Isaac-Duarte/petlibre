@@ -91,6 +91,9 @@ struct VariantArgs {
     /// Build the FW16 motor-pulse variant (drives the motor once per cold boot).
     #[arg(long)]
     motion_probe: bool,
+    /// Build the FW14 power-input variant (samples the ADC instead of the optics probe).
+    #[arg(long)]
+    adc_probe: bool,
     /// Build the FW11 trial-test variant (watchdog resets it after startup).
     #[arg(long)]
     trial_reset: bool,
@@ -106,6 +109,7 @@ impl VariantArgs {
     fn variant(&self) -> Option<Variant> {
         [
             (self.motion_probe, Variant::Fw16Pulse),
+            (self.adc_probe, Variant::Fw14Adc),
             (self.trial_reset, Variant::Fw11Reset),
             (self.trial_fail, Variant::Fw11Fail),
             (self.speaker, Variant::Speaker),

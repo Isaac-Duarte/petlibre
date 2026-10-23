@@ -652,7 +652,7 @@ pub fn build(
         startup_shared_pad_policy: when(firstboot, "before-km4-v3"),
         startup_gpio_clock_policy: when(rust_build, "explicit-enable-v1"),
         startup_flash_handshake_policy: None,
-        startup_adc_policy: None,
+        startup_adc_policy: variant.and_then(Variant::adc_policy).map(Into::into),
         startup_wifi_policy: when(firstboot, "fw07-dns-v1"),
         startup_transport_policy: when(firstboot, "fw08-transport-v1"),
         startup_optics_policy: when(

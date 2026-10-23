@@ -26,9 +26,9 @@ The table records stock 1.1.15 software roles. The SDK pin encoding is `(port <<
 | PA17 | Food-level input; LOW when the beam is blocked (food present), HIGH when lit (FW13, physical) | How much food it takes to read present |
 | PA16 | Outlet input and passage latch; LOW when blocked, HIGH when clear (FW13, physical) | Passage pulses with real food (FW16) and timer activation |
 | PA15 / PB3 | Optical emitter enables, HIGH on: PA15 lights the food receiver, PB3 the outlet receiver (FW13, physical). PB3 is also SWD_CLK and needs SWD released first | Emitter current, duty limits and electrical OFF levels (FW30) |
-| PA19 | External-power presence input | Electrical transition behavior |
+| PA19 | External-power presence input; HIGH with the adapter, LOW on batteries (FW14, physical) | Its electrical levels and timing at the transition |
 | PB1 | ADC current estimate | Current scaling and trip thresholds |
-| PB2 | ADC battery/power measurement | Divider scaling, calibration, and battery percentage |
+| PB2 | ADC battery/power measurement (channel 5) | Measured Oct 23: tracks the pack through a divider of about 2.06; battery percentage and low-voltage thresholds remain |
 | PA25 | Buzzer output; initially low | Real buzzer characteristics; FW24 plays through the speaker instead |
 | PB23 | Audio amplifier enable: stock holds it HIGH while the codec plays; FW24 does the same and the speaker plays (physical) | Electrical level and the amplifier part |
 | PB5 / PB4 / PB7 / PB6 | Four button inputs | Printed-label mapping and physical debounce |

@@ -80,6 +80,8 @@ pub enum Variant {
     Fw11Fail,
     /// The normal image plus a signed network audio stream.
     Speaker,
+    /// FW14: read-only power-input samples in place of the optics probe.
+    Fw14Adc,
 }
 
 impl Variant {
@@ -89,6 +91,7 @@ impl Variant {
             Self::Fw11Reset => "--trial-reset",
             Self::Fw11Fail => "--trial-fail",
             Self::Speaker => "--speaker",
+            Self::Fw14Adc => "--adc-probe",
         }
     }
 }
@@ -99,11 +102,12 @@ pub(crate) fn parse_variant(text: &str) -> std::result::Result<Variant, String> 
         "fw11-reset" => Ok(Variant::Fw11Reset),
         "fw11-fail" => Ok(Variant::Fw11Fail),
         "speaker" => Ok(Variant::Speaker),
+        "fw14-adc" => Ok(Variant::Fw14Adc),
         "fw16-pulse" => Err(
             "fw16-pulse drives the motor; motion builds stay manual (build and review it yourself, then use --review with --attended-motion)".into(),
         ),
         other => Err(format!(
-            "unknown variant {other:?}; use fw11-reset, fw11-fail or speaker"
+            "unknown variant {other:?}; use fw11-reset, fw11-fail, speaker or fw14-adc"
         )),
     }
 }
@@ -122,7 +126,7 @@ pub struct OtaArgs {
     /// With --build: build even when a review of the same sources exists.
     #[arg(long, requires = "build")]
     pub rebuild: bool,
-    /// No-motion variant for --build: fw11-reset, fw11-fail or speaker.
+    /// No-motion variant for --build: fw11-reset, fw11-fail, speaker or fw14-adc.
     #[arg(long, value_parser = parse_variant)]
     pub variant: Option<Variant>,
     /// Python for --build's review (default: .venv/bin/python under --root).

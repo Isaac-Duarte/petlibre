@@ -2,8 +2,9 @@
 //! Wellfed SDK runtime. In the normal role it adds the FW13 optics probe
 //! (which exercises the emitters and reads the food, outlet and feedback
 //! inputs, motor STOP throughout) and the FW24 startup chime; the speaker
-//! variant adds the signed network audio stream, and the FW16 and FW11
-//! variants replace the optics probe with a motor pulse or a trial reset.
+//! variant adds the signed network audio stream, and the FW16, FW14 and
+//! FW11 variants replace the optics probe with a motor pulse, the read-only
+//! power-input probe or a trial reset.
 //!
 //! Everything else, from startup to confirmation, updates and recovery, is
 //! the runtime's (`wellfed_sdk`).
@@ -99,7 +100,7 @@ fn start_optics() {
 
 /// Above the diagnostic and transport tasks, so their logging cannot hold
 /// off the owner lease the supervisor enforces.
-#[cfg(not(any(feature = "fw16-pulse", feature = "fw11-reset")))]
+#[cfg(not(any(feature = "fw16-pulse", feature = "fw14-adc", feature = "fw11-reset")))]
 fn start_optics() {
     // SAFETY: the step ignores its context and keeps its state in statics.
     let created =
@@ -110,6 +111,106 @@ fn start_optics() {
         c"PLOPT1 start created=0 plan=2\r\n"
     });
     const _: () = assert!(optics::PLAN == 2);
+}
+
+/// Touched only by the ADC task; see `adc_task`.
+#[cfg(feature = "fw14-adc")]
+static ADC: Slot<crate::probes::adc::Probe> = Slot::new();
+
+#[cfg(feature = "fw14-adc")]
+fn log_adc(record: crate::probes::adc::Record) {
+    use crate::probes::adc::{Efuse, Record, Values};
+
+    let bit = u8::from;
+    let pass = |ok: bool| if ok { "pass" } else { "fail" };
+    let mut report = startup::Report::new();
+    let line = match record {
+        Record::Open {
+            outputs,
+            clock,
+            efuse,
+            calibration,
+            ok,
+        } => {
+            // Two lines: one record exceeds the report buffer.
+            if let Ok(line) = report.record(format_args!(
+                "PLADC1 clock function_before={:08x} clock_before={:08x} function_after={:08x} clock_after={:08x} status={}\r\n",
+                clock.function_before,
+                clock.clock_before,
+                clock.function_after,
+                clock.clock_after,
+                pass(clock.verified()),
+            )) {
+                sdk::log(line);
+            }
+            report.record(format_args!(
+                "PLADC1 open outputs={} efuse={} offset={} gain={} default_offset={} default_gain={} status={}\r\n",
+                bit(outputs),
+                Efuse(efuse),
+                calibration.offset,
+                calibration.gain,
+                bit(calibration.default_offset),
+                bit(calibration.default_gain),
+                pass(ok),
+            ))
+        }
+
+        Record::Sample {
+            n,
+            ticks,
+            food,
+            outlet,
+            dc,
+            stopped,
+            current,
+            battery,
+            supply,
+        } => report.record(format_args!(
+            "PLADC1 sample n={n} ticks={ticks} food={} outlet={} dc={} stopped={} current={} battery={} supply={}\r\n",
+            bit(food),
+            bit(outlet),
+            bit(dc),
+            bit(stopped),
+            Values(current),
+            Values(battery),
+            Values(supply),
+        )),
+
+        Record::Error { n, ticks, stopped } => report.record(format_args!(
+            "PLADC1 error n={n} ticks={ticks} stopped={}\r\n",
+            bit(stopped)
+        )),
+    };
+    if let Ok(line) = line {
+        sdk::log(line);
+    }
+}
+
+#[cfg(feature = "fw14-adc")]
+unsafe extern "C" fn adc_task(_: *mut c_void) -> u32 {
+    // SAFETY: only this task touches the slot; the probe stays in place.
+    let probe = unsafe { ADC.get_or_init(Default::default) };
+    let step = probe.step();
+    if let Some(record) = step.record {
+        log_adc(record);
+    }
+    step.delay_ms
+}
+
+/// FW14 builds sample the power inputs in place of the optics probe, for
+/// as long as the build runs. The probe never binds the KM0 flash
+/// handshake, so confirmation need not wait for it.
+#[cfg(feature = "fw14-adc")]
+fn start_optics() {
+    wellfed_sdk::startup_done(true);
+
+    // SAFETY: the step ignores its context and keeps its state in statics.
+    let created = unsafe { wellfed_sdk::spawn(c"wellfed-adc", PROBE_STACK_WORDS, 3, adc_task) };
+    // Only on failure: every PLADC1 line the audit sees must be a probe
+    // record, so this one fails it.
+    if !created {
+        sdk::log(c"PLADC1 start created=0\r\n");
+    }
 }
 /// Touched only by the audio task; see `audio_task`.
 static SPEAKER: Slot<audio::Speaker> = Slot::new();

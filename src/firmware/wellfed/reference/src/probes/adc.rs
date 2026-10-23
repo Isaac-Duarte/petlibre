@@ -10,6 +10,8 @@
 //! select takes effect. Every sample re-verifies stopped outputs.
 //! A failed capture trips the board and ends the probe.
 
+use core::fmt;
+
 use wellfed_core::adc_scale::{AdcCalibration, SAMPLES};
 
 const SAMPLE_COUNT: u32 = 16;
@@ -47,6 +49,28 @@ impl Channel {
             // The mean of u16 samples fits a u16.
             mean: u16::try_from(sum / SAMPLE_COUNT).unwrap_or(u16::MAX),
             scaled: calibration.scale_16(samples).unwrap_or_default(),
+        }
+    }
+}
+
+/// `min,max,mean,scaled`, as the `PLADC1 sample` record prints a channel.
+pub struct Values(pub Channel);
+
+impl fmt::Display for Values {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let c = self.0;
+        write!(f, "{},{},{},{}", c.min, c.max, c.mean, c.scaled)
+    }
+}
+
+/// The four efuse calibration bytes in read order as hex, or `none`.
+pub struct Efuse(pub Option<[u8; 4]>);
+
+impl fmt::Display for Efuse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Some(b) => write!(f, "{:02x}{:02x}{:02x}{:02x}", b[0], b[1], b[2], b[3]),
+            None => f.write_str("none"),
         }
     }
 }

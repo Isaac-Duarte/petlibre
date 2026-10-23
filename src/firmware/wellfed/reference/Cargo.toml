@@ -17,6 +17,9 @@ km4 = ["wellfed-sdk/km4", "wellfed-hal/km4", "wellfed-hal/sdk"]
 # FW16 first supervised motor pulse instead of the FW13 optics probe. Only
 # `wellfed-build plaf103-firstboot --motion-probe` sets it; never a default.
 fw16-pulse = []
+# FW14 read-only power-input probe instead of the FW13 optics probe. Only
+# `wellfed-build plaf103-firstboot --adc-probe` sets it.
+fw14-adc = []
 # FW11 trial test: a candidate that stops feeding the watchdog right after
 # startup, before it could confirm. Only `wellfed-build plaf103-firstboot --trial-reset` sets it.
 fw11-reset = []

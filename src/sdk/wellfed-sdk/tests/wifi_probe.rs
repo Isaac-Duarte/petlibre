@@ -119,3 +119,43 @@ fn a_second_start_is_refused() {
     );
     assert_eq!(again.step().record, None);
 }
+
+#[test]
+fn the_radio_waits_until_startup_work_is_done_and_says_so_once() {
+    fake::reset_hardware();
+    fake::with(|h| h.interrupts = 1);
+    assert!(stopped::initialize().verified());
+    let mut probe = Probe::default();
+
+    assert_eq!(
+        probe.step_when(false),
+        Step {
+            delay_ms: POLL_MS,
+            record: Some(Record::Hold)
+        }
+    );
+    for _ in 0..10 {
+        assert_eq!(
+            probe.step_when(false),
+            Step {
+                delay_ms: POLL_MS,
+                record: None
+            }
+        );
+    }
+    assert!(!fake::with(|h| h.wifi_started), "held off the radio");
+
+    assert_eq!(
+        probe.step_when(true),
+        Step {
+            delay_ms: POLL_MS,
+            record: Some(Record::Start { created: true })
+        }
+    );
+    // Started: the hold no longer applies.
+    push(1, 1, 0);
+    assert!(matches!(
+        probe.step_when(false).record,
+        Some(Record::Event { .. })
+    ));
+}

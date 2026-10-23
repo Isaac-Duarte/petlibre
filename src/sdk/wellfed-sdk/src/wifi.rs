@@ -26,6 +26,8 @@ pub enum Record {
     Overrun {
         seq: u32,
     },
+    /// The radio waits for the firmware's startup work (logged once).
+    Hold,
 }
 
 /// `delay_ms == 0` ends the probe.
@@ -39,6 +41,7 @@ pub struct Step {
 pub struct Probe {
     started: bool,
     done: bool,
+    held: bool,
     /// The next event to read.
     next: u32,
 }
@@ -48,6 +51,19 @@ fn step(delay_ms: u32, record: Option<Record>) -> Step {
 }
 
 impl Probe {
+    /// As [`Self::step`], with the radio held off until `ready`. The first
+    /// join's WPA3 handshake starves lower-priority tasks for about 700 ms
+    /// (physical, fw40-diag-03-wifi), past a startup probe's 300 ms owner
+    /// lease; scanning alone does not. Once started, `ready` is ignored.
+    pub fn step_when(&mut self, ready: bool) -> Step {
+        if !self.started && !self.done && !ready {
+            let record = (!self.held).then_some(Record::Hold);
+            self.held = true;
+            return step(POLL_MS, record);
+        }
+        self.step()
+    }
+
     /// One task iteration in task context.
     pub fn step(&mut self) -> Step {
         if self.done {

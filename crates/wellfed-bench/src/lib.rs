@@ -7,6 +7,8 @@
 //! retries, and never boots after a stopped update. Ports and evidence paths
 //! come from the ignored `private/bench.json`; see docs/hardware/bench.md.
 
+#![forbid(unsafe_code)]
+
 /// `println!` that ignores a closed stdout. A reader such as `head` exiting
 /// must not panic a sequence partway, past its power-off cleanup.
 #[macro_export]

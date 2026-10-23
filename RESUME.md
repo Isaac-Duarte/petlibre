@@ -7,6 +7,30 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
+**October 22, late night: the Rust conventions are enforced by lints (physical over the air, autonomous).**
+- **What changed:**
+  - Every crate inherits `[workspace.lints]` (`unsafe_op_in_unsafe_fn`, `dbg_macro`, `undocumented_unsafe_blocks`). Host crates forbid `unsafe` at their crate roots.
+  - `make check-rust` adds a Clippy pass over libraries and binaries with `PRODUCTION_LINTS`: `unwrap_used`, `cast_possible_truncation`, `needless_pass_by_value` and `unreachable_pub`. Tests are exempt.
+  - The 60 sites it found are fixed, with no change to record bytes:
+    - typed record constants (`RECORD_LEN`, `COMMIT_OFFSET`, `TAIL_CHUNK`);
+    - `c_enum::low_byte()`;
+    - `ParkToken::new` replacing three lo/hi splits;
+    - `try_from` for bounded values;
+    - an `#[expect]` with its reason for deliberate truncation.
+  - **One visible change:** health and settings generations now saturate at `u32::MAX` instead of wrapping.
+- **Checks:** `make check`; fresh `plaf103` and `plaf103-firstboot` builds with link, RAM-park, hook and stack audits passing on unchanged pins; `make check-fixtures` with no skips.
+- **Physical:**
+  - `itest-20261022-17 --build --power` passed all eight standard scenarios on the firmware lint changes (OTA v53–v57).
+  - Runs `-15` and `-16` failed at the build step before anything reached the feeder. The cause was the harness setup: `wellfed-build` compiles in its repository root (`CARGO_MANIFEST_DIR`), so a worktree's builder builds from that worktree. Run `itest` from the main checkout's binaries, or pass `--build-bin`.
+  - The bench's own lint fixes (a borrowed request and two duration casts) landed after `-17`. They are host-checked only.
+- **Flash now:**
+  - **Bank 1:** normal build `69a0720a8884…` (OTA v57, confirmed).
+  - **Bank 0:** `36c9a086…`.
+  - **Next manifest version:** 58.
+  - **Settings:** generation 3019 (lights 1, sound 1, volume 40).
+  - **Wi-Fi:** no stored credentials (generation 13).
+- **Bench state:** restored. Feeder off, hotspot down, no server.
+
 **October 22, night: bench console (FW35, host only, nothing run on the bench).**
 - **What changed:**
   - `wellfed-bench --ui` is now a Svelte app in `web/` (pnpm workspace), embedded only with `--features ui`. Without the feature, `--ui` refuses. `make ui` builds it.

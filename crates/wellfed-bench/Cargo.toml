@@ -7,12 +7,6 @@ rust-version.workspace = true
 description = "Relay bench for the PLAF103 research unit: feeder power, loader strap, chained wellfed-flash sessions and a read-only progress page"
 publish.workspace = true
 
-[lints.rust]
-unsafe_code = "forbid"
-
-[lints.clippy]
-dbg_macro = "deny"
-
 [dependencies]
 anyhow.workspace = true
 axum = { workspace = true, optional = true }
@@ -39,3 +33,6 @@ ts-rs = { version = "12", features = ["serde-json-impl"] }
 # The web page (`--ui`). Build web/apps/bench/dist first (`make ui`); the
 # server embeds it at compile time.
 ui = ["dep:axum", "dep:futures-util", "dep:rust-embed", "dep:tokio"]
+
+[lints]
+workspace = true

@@ -22,7 +22,7 @@ PRODUCTION_LINTS = -D clippy::unwrap_used -D clippy::cast_possible_truncation \
 check-rust:
 	cargo fmt --all -- --check
 	cargo clippy --locked --workspace --all-targets -- -D warnings
-	cargo clippy --locked --workspace --lib --bins --exclude wellfed-bench -- -D warnings $(PRODUCTION_LINTS)
+	cargo clippy --locked --workspace --lib --bins -- -D warnings $(PRODUCTION_LINTS)
 	cargo test --locked --workspace --all-targets
 
 check-cross:

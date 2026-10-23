@@ -377,11 +377,11 @@ impl<'r> Ctx<'r> {
     /// Requests go out at QoS 0, so one sent as the transport reconnects is
     /// lost; with no reply it is sent once more. Every request the suite
     /// makes reads, or sets a value again, so a repeat is harmless.
-    fn ask(&mut self, request: Request) -> Result<Reply> {
-        match self.ask_once(&request) {
+    fn ask(&mut self, request: &Request) -> Result<Reply> {
+        match self.ask_once(request) {
             Err(lost @ Error::NoReply { .. }) => {
                 self.note(&format!("  {lost}; asking again"));
-                self.ask_once(&request)
+                self.ask_once(request)
             }
             other => other,
         }

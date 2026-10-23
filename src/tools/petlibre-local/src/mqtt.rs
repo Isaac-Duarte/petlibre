@@ -320,6 +320,21 @@ impl Actor {
             Request::Replacement(input, response) => {
                 let _ = response.send(self.replacement_request(client, &input));
             }
+            Request::ResolveTrial(input, response) => {
+                let result = self.controller.resolve_trial(input, now);
+                // The evidence includes a version report from the last five
+                // minutes, which stock sends only around a connect. A
+                // read-only attribute query refreshes it for the caller's
+                // next attempt; its answer is not an OTA report, so the quiet
+                // interval runs on.
+                if result.as_ref().err() == Some(&Rejection::ResolutionEvidence)
+                    && self.controller.status.device_online
+                    && !self.controller.version_fresh(now)
+                {
+                    self.query_attributes(client)?;
+                }
+                let _ = response.send(result);
+            }
             other => self.request_without_device(other),
         }
         Ok(())

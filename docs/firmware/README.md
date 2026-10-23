@@ -4,7 +4,7 @@
 
 The local server talks to **stock 1.1.15** over its existing MQTT protocol. It does not run inside the feeder. The replacement firmware uses Rust application components on the Realtek AmebaD SDK. Its current physical milestones include build-bound diagnostic startup, stopped-output GPIO startup, and bounded visible indicator control; functional feeding remains unimplemented on hardware.
 
-Stock 1.1.15 can install the replacement over its own updater, with no UART write (physical, FW40). [Consumer installation](consumer-installation.md) covers stock's setup protocol, the install flow an app would run, the way back to stock, and the server and app architecture. [Stock OTA requirements](stock-ota-requirements.md) has the image contract.
+Stock 1.1.15 can install the replacement over its own updater, with no UART write (physical, FW40). [Consumer installation](consumer-installation.md) covers stock's setup protocol, the install flow an app would run, the way back to stock, and the server and app architecture. [Stock OTA requirements](stock-ota-requirements.md) has the image contract. [Product architecture](product-architecture.md) has the target the SDK is built toward: one firmware, an optional server, a feeder-hosted API and native Home Assistant.
 
 | Crate | Responsibility |
 | --- | --- |
@@ -40,11 +40,11 @@ The core diagnostic uses synthetic inputs and memory-only motor outputs. Separat
 | Runtime reliability | Host-tested leases, ISR supervision, watchdog, and flash coordination | Real timing, reset/sleep behavior, sustained runs and complete flash mediation |
 | Networking and local protocol | Stock server implemented separately; replacement Wi-Fi join, DHCP, DNS checks and reconnect on hardware (FW07); health transport [designed](local-transport.md) (FW08) | Health/diagnostic transport, provisioning, commands, authenticated channel |
 | Schedules | Stock semantics investigated | Replacement persistence, timezone/DST, occurrence identity, interrupted-meal policy |
-| Panel and audio | Stock roles partially recovered | Replacement buttons/lock/reset, complete indicator policies, audio playback and deadlines |
-| Home Assistant | Deferred | Interface and integration after useful standalone operation |
+| Panel and audio | Stock roles partially recovered; [button service](buttons.md) (debounce, holds, chords) and audio playback on hardware | Lock and reset behavior (FP11, FP15), complete indicator policies, audio deadlines |
+| Home Assistant | [Designed](product-architecture.md#home-assistant): the ESPHome native API, auto-discovered (FW49, FP16) | Everything; follows the device-hosted API (FW47) |
 
 Rust ports retain caller-owned objects shared with ISRs through critical sections; a fully interrupt-safe ownership model remains future work. SDK build success and model coverage do not establish electrical safety or physical reliability.
 
-Continue with [boot and flash](boot-and-flash.md), [audio](audio.md), [Bluetooth](bluetooth.md), [stock behavior](stock-behavior.md), [SDK builds](../development/firmware-builds.md), or [host simulation](../development/README.md).
+Continue with [boot and flash](boot-and-flash.md), [audio](audio.md), [buttons](buttons.md), [Bluetooth](bluetooth.md), [stock behavior](stock-behavior.md), [SDK builds](../development/firmware-builds.md), or [host simulation](../development/README.md).
 
 Use the [firmware feature board](../../FIRMWARE_BOARD.md) for FW01–FW29 prerequisites, current acceptance scope, and remaining work.

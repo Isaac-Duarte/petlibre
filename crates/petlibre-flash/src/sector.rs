@@ -6,11 +6,12 @@
 
 use std::sync::Arc;
 
-use serde_json::{Value, json};
+use serde::Serialize;
 
-use crate::error::{Result, require};
+use crate::error::{Result, refuse, require};
+use crate::journal::{At, Event, Located, Record};
 use crate::protocol::{self, ACK, CAPACITY, EOT, Port, SECTOR};
-use crate::status::{self, Record, fields};
+use crate::status;
 use petlibre_formats::canonical::sha256;
 
 /// The research unit's original full-flash backup.
@@ -67,10 +68,17 @@ pub fn bounded_frame(
         start <= offset && offset + 1024 <= end && offset.is_multiple_of(1024),
         message,
     )?;
-    let payload: &[u8; 1024] = payload
-        .try_into()
-        .map_err(|_| crate::Error::Refused("Full immutable 1 KiB payload required".into()))?;
-    Ok(protocol::frame(number, FLASH_BASE + offset as u32, payload))
+    let Ok(payload) = <&[u8; 1024]>::try_from(payload) else {
+        return refuse("Full immutable 1 KiB payload required");
+    };
+    let Some(address) = u32::try_from(offset)
+        .ok()
+        .and_then(|offset| FLASH_BASE.checked_add(offset))
+    else {
+        return refuse(message);
+    };
+
+    Ok(protocol::frame(number, address, payload))
 }
 
 pub fn program_frame(number: u8, offset: usize, payload: &[u8]) -> Result<Vec<u8>> {
@@ -94,26 +102,28 @@ pub fn program_packets(port: &mut dyn Port, frames: &[Vec<u8>], record: &mut Rec
 
     for (index, frame) in frames.iter().enumerate() {
         let sequence = index + 1;
-        record(
-            "program_packet_intent",
-            fields(json!({"sequence": sequence, "frame_sha256": sha256(frame)})),
-        )?;
+        record(Event::ProgramPacketIntent {
+            sequence,
+            frame_sha256: sha256(frame),
+        })?;
         protocol::send(port, frame)?;
         protocol::expect(port, ACK)?;
-        record("program_packet_ack", fields(json!({"sequence": sequence})))?;
+        record(Event::ProgramPacketAck { sequence })?;
     }
 
-    record("program_eot_intent", Default::default())?;
+    record(Event::ProgramEotIntent {})?;
     protocol::send(port, &[EOT])?;
     protocol::expect(port, ACK)
 }
 
 /// Erase one sector after durable intent, and verify the erase.
 pub fn erase_sector(port: &mut dyn Port, offset: usize) -> Result<()> {
+    let request = protocol::erase_request(offset)?;
+
     // Durable storage can stall beyond the helper's 50 ms ready interval.
     // Drain idle bytes after that stall, immediately before transmission.
     protocol::command_ready(port)?;
-    protocol::send(port, &protocol::erase_request(offset))?;
+    protocol::send(port, &request)?;
     protocol::expect(port, ACK)
 }
 
@@ -126,16 +136,32 @@ pub fn sector_payload(baseline: &Baseline, offset: usize) -> Vec<u8> {
     payload
 }
 
-fn sector_frames(offset: usize, payload: &[u8]) -> Result<Vec<Vec<u8>>> {
-    (0..4)
-        .map(|i| {
-            program_frame(
-                i as u8 + 1,
-                offset + i * 1024,
-                &payload[i * 1024..(i + 1) * 1024],
-            )
+/// A sector's four program frames, numbered 1-4.
+pub fn sector_frames(
+    offset: usize,
+    payload: &[u8],
+    frame: impl Fn(u8, usize, &[u8]) -> Result<Vec<u8>>,
+) -> Result<Vec<Vec<u8>>> {
+    require(payload.len() == SECTOR, "Full sector payload required")?;
+
+    (1..=4u8)
+        .zip(payload.chunks(1024))
+        .map(|(number, chunk)| {
+            let at = offset + usize::from(number - 1) * 1024;
+            frame(number, at, chunk)
         })
         .collect()
+}
+
+/// One restored sector, as the recovery report lists it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Restored {
+    pub offset: usize,
+    pub bytes: usize,
+    pub before_sha256: String,
+    pub after_sha256: String,
+    pub program_packets: usize,
+    pub marker_withheld: bool,
 }
 
 /// Restore one original bank-1 sector of this pinned unit; never retried.
@@ -144,8 +170,8 @@ pub fn restore_sector(
     baseline: &Baseline,
     offset: usize,
     expected_before: &str,
-    journal: &mut Record,
-) -> Result<Value> {
+    journal: &mut Located,
+) -> Result<Restored> {
     require(
         (START..=END - SECTOR).contains(&offset) && offset.is_multiple_of(SECTOR),
         "Sector outside aligned stock bank 1",
@@ -157,15 +183,26 @@ pub fn restore_sector(
 
     let payload = sector_payload(baseline, offset);
     let after = sha256(&payload);
-    let frames = sector_frames(offset, &payload)?;
+    let frames = sector_frames(offset, &payload, program_frame)?;
     let mut mutation_possible = false;
 
-    let mut record = |event: &str, mut extra: serde_json::Map<String, Value>| {
-        extra.insert("offset".into(), json!(offset));
-        journal(event, extra)
+    let mut record = |event: Event| {
+        journal(At {
+            offset,
+            phase: None,
+            event,
+        })
+    };
+    let restored = |program_packets, marker_withheld| Restored {
+        offset,
+        bytes: SECTOR,
+        before_sha256: expected_before.to_string(),
+        after_sha256: after.clone(),
+        program_packets,
+        marker_withheld,
     };
 
-    let result = (|| -> Result<Value> {
+    let result = (|| -> Result<Restored> {
         let before = read_sector(port, offset)?;
         require(
             sha256(&before) == expected_before,
@@ -173,11 +210,10 @@ pub fn restore_sector(
         )?;
 
         if offset == START && before == payload {
-            record("marker_already_staged", fields(json!({"sha256": after})))?;
-            return Ok(
-                json!({"offset": offset, "bytes": SECTOR, "before_sha256": expected_before,
-                             "after_sha256": after, "program_packets": 0, "marker_withheld": true}),
-            );
+            record(Event::MarkerAlreadyStaged {
+                sha256: after.clone(),
+            })?;
+            return Ok(restored(0, true));
         }
 
         require(
@@ -192,15 +228,14 @@ pub fn restore_sector(
             )?;
         }
 
-        record(
-            "before_verified",
-            fields(json!({"sha256": expected_before})),
-        )?;
+        record(Event::BeforeVerified {
+            sha256: expected_before.to_string(),
+        })?;
         status::check_status(port, offset, offset + SECTOR, "before_erase", &mut record)?;
-        record(
-            "erase_intent",
-            fields(json!({"bytes": SECTOR, "after_sha256": after})),
-        )?;
+        record(Event::EraseIntent {
+            bytes: SECTOR,
+            after_sha256: Some(after.clone()),
+        })?;
 
         // From here on a stop may have changed flash, and its record says so.
         mutation_possible = true;
@@ -209,7 +244,7 @@ pub fn restore_sector(
             read_sector(port, offset)? == [0xff; SECTOR],
             "Erase readback is not all 0xff; no program attempted",
         )?;
-        record("erase_readback_verified", Default::default())?;
+        record(Event::EraseReadbackVerified {})?;
 
         status::check_status(port, offset, offset + SECTOR, "before_program", &mut record)?;
         program_packets(port, &frames, &mut record)?;
@@ -218,20 +253,28 @@ pub fn restore_sector(
             "Program readback differs from exact baseline sector",
         )?;
 
-        record("sector_verified", fields(json!({"sha256": after})))?;
-        Ok(
-            json!({"offset": offset, "bytes": SECTOR, "before_sha256": expected_before,
-                  "after_sha256": after, "program_packets": 4, "marker_withheld": offset == START}),
-        )
+        record(Event::SectorVerified {
+            sha256: after.clone(),
+        })?;
+        Ok(restored(4, offset == START))
     })();
 
     if let Err(error) = &result {
-        let _ = record(
-            "stopped",
-            fields(json!({"mutation_possible": mutation_possible, "error_type": error.kind()})),
-        );
+        let _ = record(Event::Stopped {
+            mutation_possible,
+            error_type: error.kind(),
+        });
     }
     result
+}
+
+/// The marker commit, as the recovery report records it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct MarkerCommit {
+    pub snapshot_sha256: String,
+    pub marker_bytes: usize,
+    pub program_packets: usize,
+    pub additional_erases: usize,
 }
 
 /// Commit the eight marker bytes after exact staged-image verification.
@@ -244,8 +287,8 @@ pub fn commit_marker(
     baseline: &Baseline,
     current: &[u8],
     snapshot: &mut dyn FnMut(&mut dyn Port) -> Result<Vec<u8>>,
-    journal: &mut Record,
-) -> Result<Value> {
+    journal: &mut Located,
+) -> Result<MarkerCommit> {
     require(
         current.len() == CAPACITY,
         "Exact current full snapshot required",
@@ -258,13 +301,15 @@ pub fn commit_marker(
     let staged_sector = staged[START..START + SECTOR].to_vec();
     let mut mutation_possible = false;
 
-    let mut record = |event: &str, mut extra: serde_json::Map<String, Value>| {
-        extra.insert("offset".into(), json!(START));
-        extra.insert("phase".into(), json!("marker_commit"));
-        journal(event, extra)
+    let mut record = |event: Event| {
+        journal(At {
+            offset: START,
+            phase: Some("marker_commit"),
+            event,
+        })
     };
 
-    let result = (|| -> Result<(Value, Vec<u8>)> {
+    let result = (|| -> Result<MarkerCommit> {
         let mut full = |port: &mut dyn Port| -> Result<Vec<u8>> {
             let data = snapshot(port)?;
             require(
@@ -283,10 +328,9 @@ pub fn commit_marker(
             "Marker sector changed after full verification",
         )?;
 
-        record(
-            "marker_preconditions_verified",
-            fields(json!({"staged_snapshot_sha256": sha256(&staged)})),
-        )?;
+        record(Event::MarkerPreconditionsVerified {
+            staged_snapshot_sha256: sha256(&staged),
+        })?;
         status::check_status(
             port,
             START,
@@ -296,10 +340,9 @@ pub fn commit_marker(
         )?;
 
         let frame = program_frame(1, START, &baseline.bytes()[START..START + 1024])?;
-        record(
-            "marker_commit_intent",
-            fields(json!({"proposed_snapshot_sha256": sha256(&proposed)})),
-        )?;
+        record(Event::MarkerCommitIntent {
+            proposed_snapshot_sha256: sha256(&proposed),
+        })?;
 
         mutation_possible = true;
         program_packets(port, &[frame], &mut record)?;
@@ -313,26 +356,23 @@ pub fn commit_marker(
             after == proposed,
             "Final image or preserved ranges differ after marker commit",
         )?;
-        record(
-            "marker_commit_verified",
-            fields(json!({"snapshot_sha256": sha256(&after)})),
-        )?;
+        record(Event::MarkerCommitVerified {
+            snapshot_sha256: sha256(&after),
+        })?;
 
-        Ok((
-            json!({"snapshot_sha256": sha256(&after), "marker_bytes": 8, "program_packets": 1,
-                   "additional_erases": 0}),
-            after,
-        ))
+        Ok(MarkerCommit {
+            snapshot_sha256: sha256(&after),
+            marker_bytes: 8,
+            program_packets: 1,
+            additional_erases: 0,
+        })
     })();
 
-    match result {
-        Ok((report, _)) => Ok(report),
-        Err(error) => {
-            let _ = record(
-                "stopped",
-                fields(json!({"mutation_possible": mutation_possible, "error_type": error.kind()})),
-            );
-            Err(error)
-        }
+    if let Err(error) = &result {
+        let _ = record(Event::Stopped {
+            mutation_possible,
+            error_type: error.kind(),
+        });
     }
+    result
 }

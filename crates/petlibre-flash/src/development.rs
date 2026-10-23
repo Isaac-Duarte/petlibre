@@ -13,14 +13,18 @@
 //! frames followed by erased flash, the only state a stopped program of an
 //! erased sector leaves.
 
-use serde_json::{Map, Value, json};
+use std::path::Path;
 
-use crate::error::{Error, Result, require};
-use crate::journal::Journal;
+use serde::Serialize;
+
+use crate::error::{Result, refuse, require};
+use crate::evidence::Root;
+use crate::journal::{At, Event, Journal};
 use crate::protocol::{Port, SECTOR};
 use crate::sector::{self, Baseline};
-use crate::status::{self, fields};
-use petlibre_formats::canonical::{canonical, sha256};
+use crate::status;
+use petlibre_formats::canonical::{canonical_of, sha256};
+use petlibre_formats::flash_plan::{DevelopmentPlan, GiveWayPlan, Kind, PlannedSector, Region};
 
 /// One program packet's payload; a sector takes four.
 pub const FRAME: usize = 1024;
@@ -30,12 +34,11 @@ pub const FACTORY: (usize, usize) = (0, 0x6000);
 /// Bank 1 has priority, so clearing its marker is how bank 0 gets to boot;
 /// see docs/firmware/bank-policy.md.
 pub const MARKER: &[u8; 8] = b"81958711";
-pub const GIVE_WAY_KIND: &str = "plaf103_bank1_give_way";
 
 /// One bank's region, and the other bank's first sector read as a guard.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Layout {
-    pub kind: &'static str,
+    pub kind: Kind,
     pub bank: u8,
     pub start: usize,
     pub end: usize,
@@ -43,7 +46,7 @@ pub struct Layout {
 }
 
 pub const BANK1: Layout = Layout {
-    kind: "plaf103_bank1_development_update",
+    kind: Kind::Bank1Update,
     bank: 1,
     start: sector::START,
     end: sector::END,
@@ -52,7 +55,7 @@ pub const BANK1: Layout = Layout {
 
 /// Bank 0 keeps the reviewed stock footprint (0x150000), like bank 1.
 pub const BANK0: Layout = Layout {
-    kind: "plaf103_bank0_development_update",
+    kind: Kind::Bank0Update,
     bank: 0,
     start: 0x6000,
     end: 0x156000,
@@ -63,7 +66,7 @@ pub fn layout(bank: u8) -> Result<Layout> {
     match bank {
         0 => Ok(BANK0),
         1 => Ok(BANK1),
-        _ => Err(Error::Refused("Unknown bank".into())),
+        _ => refuse("Unknown bank"),
     }
 }
 
@@ -77,7 +80,7 @@ pub fn payload<'a>(image: &'a [u8], layout: &Layout) -> Result<&'a [u8]> {
             layout.bank
         ),
     )?;
-    crate::ota::regions(data)?;
+    crate::ota::images(data)?;
     Ok(data)
 }
 
@@ -169,9 +172,9 @@ pub fn images(update: &Update, current: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
                 layout.bank == 0,
                 "Only bank 0 may be overwritten without a source review",
             )?;
-            let original = update.original.filter(|o| o.len() == new.len());
-            let original = original
-                .ok_or_else(|| Error::Refused("Pinned original bank-0 region required".into()))?;
+            let Some(original) = update.original.filter(|o| o.len() == new.len()) else {
+                return refuse("Pinned original bank-0 region required");
+            };
             require(
                 &original[..8] != MARKER,
                 "The original bank 0 is valid; review it as the source instead",
@@ -252,7 +255,7 @@ pub fn images(update: &Update, current: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
 
 /// The reviewed plan; `other` is the inspected other-bank sector, whose hash
 /// it pins.
-pub fn plan(update: &Update, current: &[u8], other: Option<&[u8]>) -> Result<Value> {
+pub fn plan(update: &Update, current: &[u8], other: Option<&[u8]>) -> Result<DevelopmentPlan> {
     let layout = &update.layout;
     let (proposed, staged) = images(update, current)?;
     let changed = current != proposed;
@@ -271,35 +274,53 @@ pub fn plan(update: &Update, current: &[u8], other: Option<&[u8]>) -> Result<Val
     )?;
 
     let target = payload(update.target, layout)?;
-    let mut out = json!({
-        "schema_version": 1, "kind": layout.kind, "bank": layout.bank,
-        "interrupted": update.interrupted,
-        "source_ota_sha256": update.source.map(sha256),
-        "target_ota_sha256": sha256(update.target),
-        "source_payload_bytes": match update.source {
-            None => 0, Some(source) => payload(source, layout)?.len() },
-        "target_payload_bytes": target.len(),
-        "region": {"offset": layout.start, "bytes": current.len()},
-        "current_region_sha256": sha256(current), "staged_region_sha256": sha256(&staged),
-        "proposed_region_sha256": sha256(&proposed),
-        "ordered_sectors": offsets.iter().map(|i| json!({
-            "offset": layout.start + i, "bytes": SECTOR,
-            "before_sha256": sha256(&current[*i..i + SECTOR]),
-            "staged_sha256": sha256(&staged[*i..i + SECTOR])})).collect::<Vec<_>>(),
-        "erase_sectors": offsets.len(), "staging_packets": offsets.len() * 4,
-        "commit_packets": u8::from(changed), "additional_commit_erases": 0,
-        "retained_tail_sha256": sha256(&current[target.len().min(current.len())..]),
-        "scope": "Application union and factory/other-bank guards read back; other flash is not scanned",
-    });
+    let source_payload_bytes = match update.source {
+        None => 0,
+        Some(source) => payload(source, layout)?.len(),
+    };
+    let ordered_sectors = offsets
+        .iter()
+        .map(|i| PlannedSector {
+            offset: wide(layout.start + i),
+            bytes: wide(SECTOR),
+            before_sha256: sha256(&current[*i..i + SECTOR]),
+            staged_sha256: sha256(&staged[*i..i + SECTOR]),
+        })
+        .collect();
 
-    if let Some(other) = other {
-        out["other_bank_sha256"] = json!(sha256(other));
-    }
-    if update.restore {
-        out["restore_marker"] = json!(true);
-    }
+    Ok(DevelopmentPlan {
+        schema_version: 1,
+        kind: layout.kind,
+        bank: layout.bank,
+        interrupted: update.interrupted,
+        source_ota_sha256: update.source.map(sha256),
+        target_ota_sha256: sha256(update.target),
+        source_payload_bytes: wide(source_payload_bytes),
+        target_payload_bytes: wide(target.len()),
+        region: Region {
+            offset: wide(layout.start),
+            bytes: wide(current.len()),
+        },
+        current_region_sha256: sha256(current),
+        staged_region_sha256: sha256(&staged),
+        proposed_region_sha256: sha256(&proposed),
+        ordered_sectors,
+        erase_sectors: wide(offsets.len()),
+        staging_packets: wide(offsets.len() * 4),
+        commit_packets: u64::from(changed),
+        additional_commit_erases: 0,
+        retained_tail_sha256: sha256(&current[target.len().min(current.len())..]),
+        scope:
+            "Application union and factory/other-bank guards read back; other flash is not scanned"
+                .into(),
+        other_bank_sha256: other.map(sha256),
+        restore_marker: update.restore,
+    })
+}
 
-    Ok(out)
+/// Plans count in `u64`, which every host `usize` fits.
+fn wide(value: usize) -> u64 {
+    value as u64
 }
 
 /// A pinned full-flash read's bytes over the target's extent in this bank.
@@ -338,31 +359,54 @@ pub struct Acquired {
 
 pub type Acquire<'a> = dyn FnMut(&mut dyn Port) -> Result<Acquired> + 'a;
 
-fn same(a: &Value, b: &Value) -> Result<bool> {
-    Ok(canonical(a)? == canonical(b)?)
+fn same(a: &impl Serialize, b: &impl Serialize) -> Result<bool> {
+    Ok(canonical_of(a)? == canonical_of(b)?)
+}
+
+/// The report a verified transaction saves beside its journal.
+#[derive(Debug, Clone, Serialize)]
+pub struct Verified {
+    pub status: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub region_sha256: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub erase_sectors: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub after_sha256: Option<String>,
+    pub application_boot_verified: bool,
+    pub scope: String,
+}
+
+/// A reviewed development transaction and everything its plan derives from.
+pub struct Transaction<'a> {
+    pub baseline: &'a Baseline,
+    pub update: &'a Update<'a>,
+    /// The inspected application region.
+    pub current: &'a [u8],
+    /// The inspected other-bank guard sector.
+    pub other: Option<&'a [u8]>,
+    pub reviewed: &'a DevelopmentPlan,
 }
 
 /// Execute a reviewed development plan; the journal goes to `output`.
-#[allow(clippy::too_many_arguments)]
 pub fn run(
     port: &mut dyn Port,
-    root: &crate::evidence::Root,
-    baseline: &Baseline,
-    update: &Update,
-    current: &[u8],
-    other: Option<&[u8]>,
-    reviewed: &Value,
+    root: &Root,
+    transaction: &Transaction,
     acquire: &mut Acquire,
-    output: &std::path::Path,
+    output: &Path,
     progress: &mut dyn FnMut(usize, usize),
-) -> Result<Value> {
+) -> Result<Verified> {
+    let Transaction {
+        baseline,
+        update,
+        current,
+        other,
+        reviewed,
+    } = *transaction;
     let layout = update.layout;
     let start = layout.start;
     let expected = plan(update, current, other)?;
-    let other_sha256 = expected
-        .get("other_bank_sha256")
-        .and_then(Value::as_str)
-        .map(str::to_string);
 
     require(
         same(reviewed, &expected)?,
@@ -372,49 +416,51 @@ pub fn run(
 
     // Freeze all packets before creating durable intent or touching the transport.
     let mut sectors = Vec::new();
-    for entry in expected["ordered_sectors"].as_array().unwrap() {
-        let offset = entry["offset"].as_u64().unwrap() as usize;
-        let at = offset - start;
+    for entry in &expected.ordered_sectors {
+        let Some((offset, at)) = usize::try_from(entry.offset)
+            .ok()
+            .and_then(|offset| Some((offset, offset.checked_sub(start)?)))
+        else {
+            return refuse("Planned sector outside the bank");
+        };
+
         let data = staged[at..at + SECTOR].to_vec();
-        let frames = (0..4)
-            .map(|n| {
-                frame(
-                    &layout,
-                    n as u8 + 1,
-                    offset + n * 1024,
-                    &data[n * 1024..(n + 1) * 1024],
-                )
-            })
-            .collect::<Result<Vec<_>>>()?;
+        let frames = sector::sector_frames(offset, &data, |number, at, chunk| {
+            frame(&layout, number, at, chunk)
+        })?;
         sectors.push((offset, data, frames));
     }
 
     let commit = frame(&layout, 1, start, &proposed[..1024])?;
     let mut journal = Journal::create(root, output)?;
 
-    let result = (|| -> Result<Value> {
-        journal.append("transaction_start", fields(json!({"plan": expected})))?;
+    let result = (|| -> Result<Verified> {
+        journal.append(&Event::DevelopmentStart {
+            plan: expected.clone(),
+        })?;
 
         // Every acquisition re-checks the factory region and the other bank's
         // guard, not only the application region being written.
-        let mut check = |port: &mut dyn Port, journal: &mut Journal, want: &[u8], phase: &str| {
-            let acquired = acquire(port)?;
-            guards(
-                baseline,
-                &acquired.factory,
-                &acquired.other,
-                &layout,
-                other_sha256.as_deref(),
-            )?;
-            require(
-                acquired.application == want,
-                format!("{phase} application region differs"),
-            )?;
-            journal.append(
-                "region_verified",
-                fields(json!({"phase": phase, "sha256": sha256(want), "bytes": want.len()})),
-            )
-        };
+        let mut check =
+            |port: &mut dyn Port, journal: &mut Journal, want: &[u8], phase: &'static str| {
+                let acquired = acquire(port)?;
+                guards(
+                    baseline,
+                    &acquired.factory,
+                    &acquired.other,
+                    &layout,
+                    expected.other_bank_sha256.as_deref(),
+                )?;
+                require(
+                    acquired.application == want,
+                    format!("{phase} application region differs"),
+                )?;
+                journal.append(&Event::RegionVerified {
+                    phase,
+                    sha256: sha256(want),
+                    bytes: want.len(),
+                })
+            };
 
         check(port, &mut journal, current, "preimage")?;
 
@@ -426,20 +472,26 @@ pub fn run(
                 "Sector preimage drift",
             )?;
 
-            let mut record = |event: &str, mut extra: Map<String, Value>| {
-                extra.insert("offset".into(), json!(offset));
-                journal.append(event, extra)
+            let mut record = |event: Event| {
+                journal.append(&At {
+                    offset,
+                    phase: None,
+                    event,
+                })
             };
 
             status::check_status(port, offset, offset + SECTOR, "before_erase", &mut record)?;
-            record("erase_intent", fields(json!({"bytes": SECTOR})))?;
+            record(Event::EraseIntent {
+                bytes: SECTOR,
+                after_sha256: None,
+            })?;
             // After the journal fsync: no stale idle-ready byte.
             sector::erase_sector(port, offset)?;
             require(
                 sector::read_sector(port, offset)? == [0xff; SECTOR],
                 "Erase readback differs",
             )?;
-            record("erase_verified", Map::new())?;
+            record(Event::EraseVerified {})?;
 
             status::check_status(port, offset, offset + SECTOR, "before_program", &mut record)?;
             sector::program_packets(port, frames, &mut record)?;
@@ -447,7 +499,9 @@ pub fn run(
                 sector::read_sector(port, offset)? == *data,
                 "Program readback differs",
             )?;
-            record("sector_staged", fields(json!({"sha256": sha256(data)})))?;
+            record(Event::SectorStaged {
+                sha256: sha256(data),
+            })?;
 
             progress(number + 1, sectors.len());
         }
@@ -461,10 +515,12 @@ pub fn run(
                 "Marker sector drift",
             )?;
 
-            let mut record = |event: &str, mut extra: Map<String, Value>| {
-                extra.insert("offset".into(), json!(start));
-                extra.insert("phase".into(), json!("marker_commit"));
-                journal.append(event, extra)
+            let mut record = |event: Event| {
+                journal.append(&At {
+                    offset: start,
+                    phase: Some("marker_commit"),
+                    event,
+                })
             };
 
             status::check_status(
@@ -474,10 +530,9 @@ pub fn run(
                 "before_marker_commit",
                 &mut record,
             )?;
-            record(
-                "marker_commit_intent",
-                fields(json!({"target_region_sha256": sha256(&proposed)})),
-            )?;
+            record(Event::DevelopmentCommitIntent {
+                target_region_sha256: sha256(&proposed),
+            })?;
             sector::program_packets(port, std::slice::from_ref(&commit), &mut record)?;
             require(
                 sector::read_sector(port, start)? == proposed[..SECTOR],
@@ -485,28 +540,32 @@ pub fn run(
             )?;
 
             check(port, &mut journal, &proposed, "final")?;
-            journal.append(
-                "marker_commit_verified",
-                fields(json!({"sha256": sha256(&proposed)})),
-            )?;
+            journal.append(&Event::DevelopmentCommitVerified {
+                sha256: sha256(&proposed),
+            })?;
         }
 
-        journal.append(
-            "transaction_verified",
-            fields(json!({"snapshot_sha256": sha256(&proposed), "erase_sectors": sectors.len()})),
-        )?;
+        journal.append(&Event::DevelopmentVerified {
+            snapshot_sha256: sha256(&proposed),
+            erase_sectors: sectors.len(),
+        })?;
 
-        let report = json!({"status": "verified_via_supplied_transports",
-                            "region_sha256": sha256(&proposed), "erase_sectors": sectors.len(),
-                            "application_boot_verified": false, "scope": expected["scope"]});
-        journal.save_report(report.clone())?;
+        let report = Verified {
+            status: "verified_via_supplied_transports",
+            region_sha256: Some(sha256(&proposed)),
+            erase_sectors: Some(sectors.len()),
+            after_sha256: None,
+            application_boot_verified: false,
+            scope: expected.scope.clone(),
+        };
+        journal.save_report(&report)?;
         Ok(report)
     })();
 
     // A stop is terminal and never retried; an interrupted transaction is
     // finished by a fresh acquisition in interrupted mode.
     if let Err(error) = &result {
-        journal.stopped(error, Map::new());
+        journal.stopped(error, None);
     }
     result
 }
@@ -515,7 +574,7 @@ pub fn run(
 /// bank 0, which must hold exactly the reviewed `fallback` image: a valid
 /// marker over a damaged body would leave nothing to boot. NOR programming
 /// only clears bits, so the other 1023 bytes are rewritten unchanged.
-pub fn give_way_plan(fallback: &[u8], bank0: &[u8], bank1_sector: &[u8]) -> Result<Value> {
+pub fn give_way_plan(fallback: &[u8], bank0: &[u8], bank1_sector: &[u8]) -> Result<GiveWayPlan> {
     let want = payload(fallback, &BANK0)?;
     require(
         bank0 == want,
@@ -531,13 +590,18 @@ pub fn give_way_plan(fallback: &[u8], bank0: &[u8], bank1_sector: &[u8]) -> Resu
     )?;
 
     let after = given_way(bank1_sector);
-    Ok(json!({
-        "schema_version": 1, "kind": GIVE_WAY_KIND, "bank": 1, "offset": sector::START,
-        "fallback_ota_sha256": sha256(fallback), "bank0_region_sha256": sha256(bank0),
-        "before_sha256": sha256(bank1_sector), "after_sha256": sha256(&after),
-        "program_frame_sha256": sha256(&sector::program_frame(1, sector::START, &after[..1024])?),
-        "scope": "One 1 KiB program frame at bank 1's start; no erase",
-    }))
+    Ok(GiveWayPlan {
+        schema_version: 1,
+        kind: Kind::GiveWay,
+        bank: 1,
+        offset: wide(sector::START),
+        fallback_ota_sha256: sha256(fallback),
+        bank0_region_sha256: sha256(bank0),
+        before_sha256: sha256(bank1_sector),
+        after_sha256: sha256(&after),
+        program_frame_sha256: sha256(&sector::program_frame(1, sector::START, &after[..1024])?),
+        scope: "One 1 KiB program frame at bank 1's start; no erase".into(),
+    })
 }
 
 pub fn given_way(bank1_sector: &[u8]) -> Vec<u8> {
@@ -550,18 +614,29 @@ pub fn given_way(bank1_sector: &[u8]) -> Vec<u8> {
 /// first sector.
 pub type AcquireGuards<'a> = dyn FnMut(&mut dyn Port) -> Result<[Vec<u8>; 3]> + 'a;
 
-#[allow(clippy::too_many_arguments)]
+/// A reviewed give-way and the inspected bytes its plan derives from.
+pub struct GiveWay<'a> {
+    pub baseline: &'a Baseline,
+    pub fallback: &'a [u8],
+    pub bank0: &'a [u8],
+    pub bank1_sector: &'a [u8],
+    pub reviewed: &'a GiveWayPlan,
+}
+
 pub fn run_give_way(
     port: &mut dyn Port,
-    root: &crate::evidence::Root,
-    baseline: &Baseline,
-    fallback: &[u8],
-    bank0: &[u8],
-    bank1_sector: &[u8],
-    reviewed: &Value,
+    root: &Root,
+    give_way: &GiveWay,
     acquire: &mut AcquireGuards,
-    output: &std::path::Path,
-) -> Result<Value> {
+    output: &Path,
+) -> Result<Verified> {
+    let GiveWay {
+        baseline,
+        fallback,
+        bank0,
+        bank1_sector,
+        reviewed,
+    } = *give_way;
     let expected = give_way_plan(fallback, bank0, bank1_sector)?;
     require(same(reviewed, &expected)?, "Reviewed give-way plan differs")?;
 
@@ -569,28 +644,31 @@ pub fn run_give_way(
     let packet = sector::program_frame(1, sector::START, &after[..1024])?;
     let mut journal = Journal::create(root, output)?;
 
-    let result = (|| -> Result<Value> {
-        journal.append("transaction_start", fields(json!({"plan": expected})))?;
-        let mut check = |port: &mut dyn Port, journal: &mut Journal, want: &[u8], phase: &str| {
-            let [factory, region, first] = acquire(port)?;
-            require(
-                factory == baseline.bytes()[..FACTORY.1],
-                format!("{phase}: factory region differs"),
-            )?;
-            require(
-                region == bank0,
-                format!("{phase}: bank 0 differs from the reviewed fallback"),
-            )?;
-            require(
-                first == want,
-                format!("{phase}: bank 1's first sector differs"),
-            )?;
-            journal.append("guards_verified", fields(json!({"phase": phase})))
-        };
+    let result = (|| -> Result<Verified> {
+        journal.append(&Event::GiveWayStart {
+            plan: expected.clone(),
+        })?;
+        let mut check =
+            |port: &mut dyn Port, journal: &mut Journal, want: &[u8], phase: &'static str| {
+                let [factory, region, first] = acquire(port)?;
+                require(
+                    factory == baseline.bytes()[..FACTORY.1],
+                    format!("{phase}: factory region differs"),
+                )?;
+                require(
+                    region == bank0,
+                    format!("{phase}: bank 0 differs from the reviewed fallback"),
+                )?;
+                require(
+                    first == want,
+                    format!("{phase}: bank 1's first sector differs"),
+                )?;
+                journal.append(&Event::GuardsVerified { phase })
+            };
 
         check(port, &mut journal, bank1_sector, "preimage")?;
 
-        let mut record = |event: &str, extra: Map<String, Value>| journal.append(event, extra);
+        let mut record = |event: Event| journal.append(&event);
         status::check_status(
             port,
             sector::START,
@@ -598,10 +676,9 @@ pub fn run_give_way(
             "before_give_way",
             &mut record,
         )?;
-        record(
-            "give_way_intent",
-            fields(json!({"frame_sha256": sha256(&packet)})),
-        )?;
+        record(Event::GiveWayIntent {
+            frame_sha256: sha256(&packet),
+        })?;
 
         sector::program_packets(port, std::slice::from_ref(&packet), &mut record)?;
         require(
@@ -610,20 +687,24 @@ pub fn run_give_way(
         )?;
 
         check(port, &mut journal, &after, "final")?;
-        journal.append(
-            "give_way_verified",
-            fields(json!({"after_sha256": sha256(&after)})),
-        )?;
+        journal.append(&Event::GiveWayVerified {
+            after_sha256: sha256(&after),
+        })?;
 
-        let report = json!({"status": "verified_via_supplied_transports",
-                            "after_sha256": sha256(&after), "application_boot_verified": false,
-                            "scope": expected["scope"]});
-        journal.save_report(report.clone())?;
+        let report = Verified {
+            status: "verified_via_supplied_transports",
+            region_sha256: None,
+            erase_sectors: None,
+            after_sha256: Some(sha256(&after)),
+            application_boot_verified: false,
+            scope: expected.scope.clone(),
+        };
+        journal.save_report(&report)?;
         Ok(report)
     })();
 
     if let Err(error) = &result {
-        journal.stopped(error, Map::new());
+        journal.stopped(error, None);
     }
     result
 }

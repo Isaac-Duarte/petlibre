@@ -5,7 +5,7 @@
 //! Development updates and frozen reviews take a bank's payload only through
 //! `container` and `regions`, so an image outside this one profile is refused.
 
-use serde_json::{Value, json};
+use serde::Serialize;
 
 use crate::error::{Result, require};
 
@@ -17,7 +17,8 @@ const IMAGE_MAGIC: [u32; 2] = [0x35393138, 0x31313738];
 
 fn words(data: &[u8], at: usize) -> [u32; 8] {
     std::array::from_fn(|i| {
-        u32::from_le_bytes(data[at + i * 4..at + i * 4 + 4].try_into().unwrap())
+        let word = at + i * 4;
+        u32::from_le_bytes([data[word], data[word + 1], data[word + 2], data[word + 3]])
     })
 }
 
@@ -61,8 +62,25 @@ pub fn container(data: &[u8]) -> Result<&[u8]> {
     Ok(payload)
 }
 
+/// One core image in a bank payload, as `audit-ota-layout.py` lists it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Image {
+    pub name: &'static str,
+    pub payload_header_offset: usize,
+    pub body_bytes: usize,
+    pub runtime_address: String,
+}
+
+/// [`images`] as JSON, the form `petlibre-build`'s audits still read.
+pub fn regions(payload: &[u8]) -> Result<Vec<serde_json::Value>> {
+    images(payload)?
+        .iter()
+        .map(|image| Ok(serde_json::to_value(image)?))
+        .collect()
+}
+
 /// Both cores' images at their exact addresses, with only erased padding.
-pub fn regions(payload: &[u8]) -> Result<Vec<Value>> {
+pub fn images(payload: &[u8]) -> Result<Vec<Image>> {
     let profile = [
         ("km0_xip", 0x0C00_0020u32),
         ("km0_ram", 0x0008_3000),
@@ -103,10 +121,12 @@ pub fn regions(payload: &[u8]) -> Result<Vec<Value>> {
             format!("{name} body exceeds payload"),
         )?;
 
-        result.push(
-            json!({"name": name, "payload_header_offset": offset, "body_bytes": body,
-                           "runtime_address": format!("0x{address:08x}")}),
-        );
+        result.push(Image {
+            name,
+            payload_header_offset: offset,
+            body_bytes: body,
+            runtime_address: format!("0x{address:08x}"),
+        });
         offset += 32 + body;
     }
 
@@ -168,7 +188,8 @@ pub mod tests {
         let payload = synthetic_payload(5000, 9000, 1);
         let image = wrap(&payload);
         assert_eq!(container(&image).unwrap(), &payload[..]);
-        assert_eq!(regions(&payload).unwrap().len(), 5);
+        assert_eq!(images(&payload).unwrap().len(), 5);
+        assert_eq!(regions(&payload).unwrap()[2]["name"], "km4_xip");
 
         let mut bad = image.clone();
         bad[40] ^= 1;
@@ -177,7 +198,7 @@ pub mod tests {
         let mut padding = payload.clone();
         let last = padding.len() - 1;
         padding[last] = 0;
-        assert!(regions(&padding).is_err());
+        assert!(images(&padding).is_err());
 
         assert!(container(&image[..image.len() - 1]).is_err());
     }

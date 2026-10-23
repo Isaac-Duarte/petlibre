@@ -14,6 +14,7 @@ pub mod ota;
 pub mod protocol;
 pub mod read;
 pub mod recovery;
+pub mod report;
 pub mod review;
 pub mod sector;
 pub mod serial;

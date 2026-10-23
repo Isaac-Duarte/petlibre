@@ -6,10 +6,11 @@ use std::io::{self, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
-use serde_json::Value;
+use serde::Serialize;
 
 use crate::error::{Result, require};
 use crate::protocol::Port;
+use crate::report::Streams;
 use petlibre_formats::canonical::sha256;
 use petlibre_formats::capture::{Direction, SerialEvent};
 
@@ -136,8 +137,10 @@ pub fn write_new(path: &Path, data: &[u8]) -> Result<()> {
 }
 
 /// Rewrite a session report in place (its last state is what matters).
-pub fn save_report(path: &Path, report: &Value) -> Result<()> {
-    let mut text = serde_json::to_string_pretty(report)?;
+///
+/// Written through `Value`, so keys stay sorted whatever the type declares.
+pub fn save_report(path: &Path, report: &impl Serialize) -> Result<()> {
+    let mut text = serde_json::to_string_pretty(&serde_json::to_value(report)?)?;
     text.push('\n');
     OpenOptions::new()
         .write(true)
@@ -150,11 +153,15 @@ pub fn save_report(path: &Path, report: &Value) -> Result<()> {
 }
 
 /// Hashes of the finished serial streams, as reports record them.
-pub fn stream_hashes(directory: &Path, report: &mut Value) {
-    for name in ["serial-rx.bin", "serial-tx.bin"] {
-        if let Ok(data) = fs::read(directory.join(name)) {
-            report[format!("{name}_sha256")] = Value::String(sha256(&data));
-        }
+pub fn stream_hashes(directory: &Path) -> Streams {
+    let hash = |name: &str| {
+        fs::read(directory.join(name))
+            .ok()
+            .map(|data| sha256(&data))
+    };
+    Streams {
+        rx_sha256: hash("serial-rx.bin"),
+        tx_sha256: hash("serial-tx.bin"),
     }
 }
 
@@ -186,15 +193,14 @@ impl<P: Port> EvidencePort<P> {
         })
     }
 
-    fn record(&mut self, transmit: bool, data: &[u8]) -> io::Result<()> {
+    fn record(&mut self, direction: Direction, data: &[u8]) -> io::Result<()> {
         if data.is_empty() {
             return Ok(());
         }
 
-        let (stream, index, direction) = if transmit {
-            (&mut self.tx, 1, Direction::Tx)
-        } else {
-            (&mut self.rx, 0, Direction::Rx)
+        let (stream, index) = match direction {
+            Direction::Tx => (&mut self.tx, 1),
+            Direction::Rx => (&mut self.rx, 0),
         };
 
         stream.write_all(data)?;
@@ -216,12 +222,12 @@ impl<P: Port> EvidencePort<P> {
 impl<P: Port> Port for EvidencePort<P> {
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
         let count = self.port.read(buffer)?;
-        self.record(false, &buffer[..count])?;
+        self.record(Direction::Rx, &buffer[..count])?;
         Ok(count)
     }
 
     fn write(&mut self, data: &[u8]) -> io::Result<usize> {
-        self.record(true, data)?;
+        self.record(Direction::Tx, data)?;
         self.port.write(data)
     }
 

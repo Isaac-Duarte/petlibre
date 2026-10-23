@@ -49,3 +49,8 @@ pub fn require(condition: bool, message: impl Into<String>) -> Result<()> {
         Err(Error::Refused(message.into()))
     }
 }
+
+/// Refuse with `message`: the unconditional form of [`require`].
+pub fn refuse<T>(message: impl Into<String>) -> Result<T> {
+    Err(Error::Refused(message.into()))
+}

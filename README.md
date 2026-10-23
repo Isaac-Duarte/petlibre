@@ -43,8 +43,9 @@ Initial setup downloads dependencies. Checks use host models and loopback networ
 
 | Location | Contents |
 | --- | --- |
-| `crates/` | Every Rust crate, one folder per package: `petlibre-local` (stock-firmware local server), `petlibre-flash` (UART flash reads, updates and recovery), `petlibre-bench` (relay bench and its progress page), `petlibre-audit` (offline evidence audits), `petlibre-build` (SDK firmware builds and their link audits), `petlibre-formats` (the file formats those host tools share: build manifests and identities, layout, locks, captures, credentials), `xtask` (`cargo xtask check-repository`), and the replacement-firmware crates, including `petlibre-sim` (the virtual feeder) |
+| `crates/` | Every Rust crate, one folder per package: `petlibre-local` (stock-firmware local server), `petlibre-flash` (UART flash reads, updates and recovery), `petlibre-bench` (relay bench and its progress page, built in with `--features ui`), `petlibre-audit` (offline evidence audits), `petlibre-build` (SDK firmware builds and their link audits), `petlibre-formats` (the file formats those host tools share: build manifests and identities, layout, locks, captures, credentials), `xtask` (`cargo xtask check-repository`), and the replacement-firmware crates, including `petlibre-sim` (the virtual feeder) |
 | `firmware/` | SDK hooks and C ports, pinned builds, layout, and simulator build |
+| `web/` | Optional web frontends (pnpm workspace): the bench page, shared design tokens and components, and API types generated from Rust. `make ui` builds them |
 | `tools/` | Image review, emulation, and experimental recovery tools/tests |
 | `docs/` | Hardware findings, firmware contracts, and contributor workflows |
 | `private/` | Ignored contributor-owned secrets, evidence, dependencies, and artifacts |

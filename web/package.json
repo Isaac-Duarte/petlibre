@@ -1,0 +1,15 @@
+{
+  "name": "petlibre-web",
+  "private": true,
+  "description": "Optional web frontends for the petlibre tools, embedded into their binaries at build time",
+  "packageManager": "pnpm@11.28.5",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "pnpm -r --filter ./apps/* build",
+    "check": "pnpm -r check",
+    "test": "pnpm -r test",
+    "e2e": "pnpm -r e2e"
+  }
+}

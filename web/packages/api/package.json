@@ -1,0 +1,15 @@
+{
+  "name": "@petlibre/api",
+  "private": true,
+  "type": "module",
+  "description": "Typed clients for the petlibre tools' HTTP views; the types are generated from Rust",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "check": "tsc -p ."
+  },
+  "devDependencies": {
+    "typescript": "6.0.3"
+  }
+}

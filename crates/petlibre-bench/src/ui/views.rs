@@ -22,9 +22,11 @@ use crate::commands::{Paths, check_name};
 use crate::config::{CAPTURES, CONFIG, Config, FLASH_BACKUPS, STATUS_DIR, VERIFICATION};
 use crate::now;
 use crate::status::{
-    self, Current, FlashTool, HISTORY, HistoryEntry, Outcome, Progress, RELAYS, RelayState, SCRIPT,
-    Step,
+    self, Current, FlashTool, HISTORY, HistoryEntry, Outcome, Progress, RELAYS, RelayState, Step,
 };
+
+/// An operator script the owner writes by hand, in the status directory.
+const SCRIPT: &str = "script.json";
 
 const TAIL_BYTES: u64 = 12_000;
 const TAIL_LINES: usize = 60;
@@ -48,13 +50,13 @@ impl Sources {
     }
 }
 
-fn modified(path: &Path) -> Option<f64> {
+pub(super) fn modified(path: &Path) -> Option<f64> {
     let time = fs::metadata(path).ok()?.modified().ok()?;
     Some(time.duration_since(UNIX_EPOCH).ok()?.as_secs_f64())
 }
 
 /// `relative` under `base` (both under `root`), with no escape by `..` or links.
-fn inside(root: &Path, base: &str, relative: &str) -> Option<PathBuf> {
+pub(super) fn inside(root: &Path, base: &str, relative: &str) -> Option<PathBuf> {
     let relative = Path::new(relative);
     if relative.is_absolute()
         || relative
@@ -86,25 +88,34 @@ fn printable(data: &[u8]) -> String {
 
 /// A JSON file under the root, if it reads as `T`; the views show what is
 /// there and skip what is not.
-fn read<T: serde::de::DeserializeOwned>(path: &Path) -> Option<T> {
+pub(super) fn read<T: serde::de::DeserializeOwned>(path: &Path) -> Option<T> {
     petlibre_formats::load(path).ok()
 }
 
-/// A capture's serial-rx.bin: size, modification time and printable tail.
+/// A file's size, modification time and printable tail: a capture's
+/// serial-rx.bin or a run's server log.
 #[derive(Debug, Clone, PartialEq, Serialize)]
-pub(crate) struct RxView {
-    /// Root-relative capture directory.
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub(crate) struct TailView {
+    /// Root-relative: the capture directory, or the file itself.
     path: String,
     bytes: u64,
     modified: Option<f64>,
     tail: Vec<String>,
 }
 
-fn rx_view(root: &Path, directory: &Path) -> RxView {
-    let rx = directory.join("serial-rx.bin");
-    let path = status::relative(root, directory);
-    let Ok(mut file) = fs::File::open(&rx) else {
-        return RxView {
+/// A capture directory's received bytes.
+pub(super) fn rx_view(root: &Path, directory: &Path) -> TailView {
+    tail_view(
+        &directory.join("serial-rx.bin"),
+        status::relative(root, directory),
+    )
+}
+
+/// The last [`TAIL_LINES`] non-blank printable lines of `file`.
+pub(super) fn tail_view(file: &Path, path: String) -> TailView {
+    let Ok(mut opened) = fs::File::open(file) else {
+        return TailView {
             path,
             bytes: 0,
             modified: None,
@@ -112,13 +123,13 @@ fn rx_view(root: &Path, directory: &Path) -> RxView {
         };
     };
 
-    let size = file.metadata().map_or(0, |m| m.len());
+    let size = opened.metadata().map_or(0, |m| m.len());
     let mut data = Vec::new();
-    if file
+    if opened
         .seek(SeekFrom::Start(size.saturating_sub(TAIL_BYTES)))
         .is_ok()
     {
-        let _ = file.read_to_end(&mut data);
+        let _ = opened.read_to_end(&mut data);
     }
 
     let text = printable(&data);
@@ -127,10 +138,10 @@ fn rx_view(root: &Path, directory: &Path) -> RxView {
         .iter()
         .map(|line| (*line).to_string())
         .collect();
-    RxView {
+    TailView {
         path,
         bytes: size,
-        modified: modified(&rx),
+        modified: modified(file),
         tail,
     }
 }
@@ -145,6 +156,7 @@ fn history(sources: &Sources) -> Vec<HistoryEntry> {
 
 /// `/api/status`: everything the "Now" view shows, as one snapshot.
 #[derive(Debug, Clone, PartialEq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub(crate) struct Snapshot {
     /// The bench host's clock, so the page's timers agree with it.
     now: f64,
@@ -152,7 +164,7 @@ pub(crate) struct Snapshot {
     /// Newest first.
     history: Vec<HistoryEntry>,
     /// The latest capture's output.
-    rx: Option<RxView>,
+    rx: Option<TailView>,
     script: Option<ScriptView>,
 }
 
@@ -187,6 +199,7 @@ pub(crate) fn snapshot(sources: &Sources) -> Snapshot {
 /// `current.json` as the page reads it: a dead process's `running` record
 /// shows as `ended`, and capture and transfer carry what has arrived so far.
 #[derive(Debug, Clone, PartialEq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 struct CurrentView {
     pid: u32,
     command: String,
@@ -213,15 +226,17 @@ struct CurrentView {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 struct CaptureView {
     #[serde(flatten)]
-    rx: RxView,
+    rx: TailView,
     seconds: f64,
     elapsed: f64,
 }
 
 /// Serial bytes so far against the plan's estimate, for the install bar.
 #[derive(Debug, Clone, PartialEq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 struct TransferView {
     tx: u64,
     rx: u64,
@@ -328,21 +343,25 @@ struct Script {
     /// Bytes in that capture that start the script's clock.
     #[serde(default)]
     anchor: String,
-    /// Passed to the page unread: it alone gives the steps meaning.
-    #[serde(default = "no_steps")]
-    steps: Value,
+    #[serde(default)]
+    steps: Vec<ScriptStep>,
 }
 
-fn no_steps() -> Value {
-    Value::Array(Vec::new())
+/// One instruction, shown from `at` seconds after the anchor arrived.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+struct ScriptStep {
+    at: f64,
+    text: String,
 }
 
 /// The optional operator script: timed steps from an anchor in a capture.
 #[derive(Debug, Clone, PartialEq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 struct ScriptView {
     title: String,
     capture: String,
-    steps: Value,
+    steps: Vec<ScriptStep>,
     anchor: String,
     /// When the anchor arrived; `None` until it has.
     started: Option<f64>,
@@ -381,11 +400,13 @@ fn report_status(path: &Path) -> Option<String> {
 
 /// `/api/sessions`: recent session names with the evidence each one has.
 #[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub(crate) struct Sessions {
     sessions: Vec<SessionRow>,
 }
 
 #[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 struct SessionRow {
     name: String,
     modified: f64,
@@ -508,6 +529,7 @@ fn plan_summary(path: &Path) -> Option<Value> {
 
 /// `/api/sessions/{name}`: one session's evidence, plan and next command.
 #[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub(crate) struct SessionView {
     name: String,
     parts: Vec<PartView>,
@@ -516,6 +538,7 @@ pub(crate) struct SessionView {
 }
 
 #[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 struct PartView {
     kind: &'static str,
     path: String,
@@ -529,6 +552,7 @@ struct PartView {
 
 /// A plan's summary, or any other part's report (`null` when it has none).
 #[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "lowercase")]
 enum PartDetail {
     Plan(Option<Value>),
@@ -536,6 +560,7 @@ enum PartDetail {
 }
 
 #[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 struct Serial {
     tx: u64,
     rx: u64,
@@ -597,6 +622,7 @@ pub(crate) fn session(sources: &Sources, name: &str) -> Option<SessionView> {
 /// `/api/health`: ports, last relay states, flash client and the image the
 /// feeder last booted.
 #[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub(crate) struct HealthView {
     /// Root-relative `bench.json`.
     config: &'static str,
@@ -611,6 +637,7 @@ pub(crate) struct HealthView {
 
 /// Whether each configured path exists, or why the config does not read.
 #[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(untagged)]
 enum Ports {
     Found {
@@ -625,6 +652,7 @@ enum Ports {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub(crate) struct FlashToolView {
     path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -634,6 +662,7 @@ pub(crate) struct FlashToolView {
 
 /// The newest replacement-firmware start banner in a capture.
 #[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 struct Installed {
     capture: String,
     /// When that capture was last written.
@@ -644,6 +673,7 @@ struct Installed {
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "lowercase")]
 enum Role {
     Normal,
@@ -752,6 +782,32 @@ impl FlashCache {
         self.value = Some(view.clone());
         view
     }
+}
+
+/// This module's page types, for [`super::bindings`].
+#[cfg(test)]
+pub(super) fn bindings(cfg: &ts_rs::Config) -> Vec<String> {
+    use super::bindings::decl;
+    vec![
+        decl::<TailView>(cfg),
+        decl::<Snapshot>(cfg),
+        decl::<CurrentView>(cfg),
+        decl::<CaptureView>(cfg),
+        decl::<TransferView>(cfg),
+        decl::<ScriptStep>(cfg),
+        decl::<ScriptView>(cfg),
+        decl::<Sessions>(cfg),
+        decl::<SessionRow>(cfg),
+        decl::<SessionView>(cfg),
+        decl::<PartView>(cfg),
+        decl::<PartDetail>(cfg),
+        decl::<Serial>(cfg),
+        decl::<HealthView>(cfg),
+        decl::<Ports>(cfg),
+        decl::<FlashToolView>(cfg),
+        decl::<Installed>(cfg),
+        decl::<Role>(cfg),
+    ]
 }
 
 #[cfg(test)]
@@ -904,10 +960,12 @@ mod tests {
         assert_eq!(capture["tail"], json!(["hello"]));
         assert_eq!(capture["seconds"], 60.0);
         assert!(capture["elapsed"].as_f64().unwrap() <= 60.0);
-        assert_eq!(
-            view["current"]["steps"],
-            json!([{"label": "capture", "state": "running"}])
-        );
+        let step = &view["current"]["steps"][0];
+        assert_eq!(step["label"], "capture");
+        assert_eq!(step["state"], "running");
+        assert!(step["started"].as_f64().is_some());
+        assert!(step.get("finished").is_none());
+        assert_eq!(view["current"]["steps"].as_array().map(Vec::len), Some(1));
     }
 
     #[test]
@@ -938,7 +996,7 @@ mod tests {
             Some(expected.timestamp_millis() as f64 / 1e3)
         );
         assert_eq!(script["capture_exists"], true);
-        assert_eq!(script["steps"], json!([{"at": 0, "text": "go"}]));
+        assert_eq!(script["steps"], json!([{"at": 0.0, "text": "go"}]));
         assert_eq!(script["title"], "t");
     }
 

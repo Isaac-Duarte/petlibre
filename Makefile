@@ -1,12 +1,14 @@
 PYTHON ?= python3
 
-.PHONY: help check check-rust check-python check-cross check-virtual-feeder check-docs check-fixtures
+.PHONY: help check check-rust check-python check-cross check-virtual-feeder check-docs check-fixtures ui check-web
 
 help:
 	@echo "check: formatting, Clippy, Rust/Python tests, cross-builds, simulator, repository checks"
 	@echo "check-rust / check-python / check-cross / check-virtual-feeder / check-docs: individual checks"
 	@echo "check-fixtures: optional reference-binary/SDK evidence; fails if unavailable"
 	@echo "Set PYTHON=.venv/bin/python after installing tools/requirements-probe.txt."
+	@echo "ui: build the web page (pnpm in web/) that petlibre-bench embeds with --features ui"
+	@echo "check-web: web types, unit tests, build, then the page end to end against petlibre-bench"
 	@echo "Checks do not open serial ports, change routing, or send device commands."
 
 check: check-rust check-cross check-virtual-feeder check-python check-docs
@@ -41,3 +43,18 @@ check-fixtures:
 	cargo test --locked --lib ota_image::tests::pinned_real_images_are_immutable_after_load_and_mutated_files_are_refused -- --ignored --exact
 	cargo test --locked -p petlibre-audit --lib -- --ignored
 	cargo test --locked -p petlibre-build -- --ignored
+
+# The optional web page. Node and pnpm are needed only here, never by `check`.
+ui:
+	pnpm -C web install --frozen-lockfile
+	pnpm -C web build
+
+# The end-to-end tests serve a synthetic private/ tree from a temporary
+# directory; they never read this checkout's evidence or open a port to hardware.
+check-web: ui
+	pnpm -C web check
+	pnpm -C web test
+	cargo clippy --locked -p petlibre-bench --all-targets --features ui -- -D warnings
+	cargo test --locked -p petlibre-bench --features ui
+	cargo build --locked -p petlibre-bench --features ui
+	pnpm -C web e2e

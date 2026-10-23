@@ -19,6 +19,7 @@ macro_rules! say {
 
 pub mod commands;
 pub mod config;
+mod local_api;
 pub mod relay;
 mod server;
 pub mod status;

@@ -7,6 +7,15 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
+**October 22, night: bench console (FW35, host only, nothing run on the bench).**
+- **What changed:**
+  - `petlibre-bench --ui` is now a Svelte app in `web/` (pnpm workspace), embedded only with `--features ui`. Without the feature, `--ui` refuses. `make ui` builds it.
+  - New read-only views: `/api/tests` (catalog, runs, per-scenario stats), `/api/tests/{name}` and `/api/feeder` (`petlibre-local` `GET /api/status` via `private/server.json`, plus an SSE `feeder` event).
+  - The itest record is a typed `RunRecord`, written and read through one type. The HTTP client is shared in `local_api.rs`, and steps carry start and finish times.
+  - The old `assets/` page is deleted.
+- **Checks:** `make check` and `make check-web` (Vitest, `svelte-check`, Playwright against the binary on a synthetic tree).
+- **Next:** with the owner, watch the Feeder and Tests views through a live `itest` run to finish FW35.
+
 **October 22, evening: idiomatic-Rust pass (physical over the air, autonomous).**
 - **What changed:** host tools read and write typed serde structs instead of `serde_json::Value`. Shared file formats live in the new `crates/petlibre-formats` (build manifest and identity, layout, locks, serial events, credentials, flash plans). Firmware got only codegen-neutral cleanups: `unsafe fn` contracts, `// SAFETY:` comments with `clippy::undocumented_unsafe_blocks` denied, one `c_enum!`, `TaskCell`, shared constants, and stage enums with identical record text. AGENTS.md now carries the Rust conventions and the owner's compatibility policy (old evidence may break; live interop and pinned checks may not).
 - **Bugs fixed (static):**

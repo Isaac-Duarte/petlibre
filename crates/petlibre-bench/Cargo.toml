@@ -15,21 +15,27 @@ dbg_macro = "deny"
 
 [dependencies]
 anyhow.workspace = true
-axum.workspace = true
+axum = { workspace = true, optional = true }
 chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 clap.workspace = true
 ctrlc.workspace = true
 petlibre-core.workspace = true
-futures-util = { version = "0.3", default-features = false }
-rust-embed = { version = "8.13.0", features = ["debug-embed"] }
+futures-util = { version = "0.3", default-features = false, optional = true }
+rust-embed = { version = "8.13.0", features = ["debug-embed"], optional = true }
 rustix = { version = "1", features = ["fs", "process"] }
 petlibre-formats.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serialport.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread", "net", "time", "macros"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "time", "macros"], optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true
 tower = { version = "0.5", features = ["util"] }
+ts-rs = { version = "12", features = ["serde-json-impl"] }
+
+[features]
+# The web page (`--ui`). Build web/apps/bench/dist first (`make ui`); the
+# server embeds it at compile time.
+ui = ["dep:axum", "dep:futures-util", "dep:rust-embed", "dep:tokio"]

@@ -74,7 +74,7 @@ The vendor app provisions a PLAF103 through the feeder's **setup access point**,
 - How is a feeder reset or unbound? Is there a button hold? What does `UNBIND` (`0e015fd4`, not decompiled) clear?
 - Are the credentials fixed at the factory, or derived from the serial? Either way they arrive at our broker unchanged.
 
-**Planned physical test:** with stock on the feeder and in setup mode, the bench host joins its access point and sends one type-3 frame. The frame names the bench hotspot and `10.42.103.1:1883`. If stock then joins the hotspot and connects to `wellfed-local` with its own credentials, the redirect and the captured credentials are no longer needed.
+**Planned physical test:** with stock on the feeder and in setup mode, the bench host joins its access point. It then sends one type-3 frame with `wellfed-local setup-send --ssid <hotspot> --id <digits>`, which reads the passphrase from stdin and names this server's broker (`10.42.103.1:1883`) unless `--broker` is given. The frame encoder is host-tested against the parser's length rule and field limits. If stock then joins the hotspot and connects to `wellfed-local` with its own credentials, the redirect and the captured credentials are no longer needed.
 
 ## What a self-hosted server must answer (static, partly physical)
 

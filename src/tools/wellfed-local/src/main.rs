@@ -238,6 +238,26 @@ enum Action {
         address: Option<bluer::Address>,
     },
 
+    /// FW42 test: point a stock feeder in setup mode at a network and this
+    /// server with stock's own type-3 setup frame, sent once to its setup
+    /// access point (join that network first). The passphrase is read from
+    /// stdin, never the command line.
+    SetupSend {
+        #[arg(long, default_value = "private/server.json")]
+        config: PathBuf,
+        /// The network stock should join; its passphrase comes from stdin.
+        #[arg(long)]
+        ssid: String,
+        /// The account ID stock keeps beside the broker (ASCII digits).
+        #[arg(long)]
+        id: String,
+        /// The broker; this server's MQTT address otherwise.
+        #[arg(long)]
+        broker: Option<std::net::SocketAddr>,
+        #[arg(long, default_value = wellfed_local::stock_setup::SETUP_ADDRESS)]
+        to: std::net::SocketAddr,
+    },
+
     /// Explicit feeder-only gateway routing and WAN isolation; needs sudo.
     Network {
         #[command(subcommand)]
@@ -322,6 +342,34 @@ async fn main() -> Result<()> {
                 (None, false) => Change::Read,
             };
             println!("{}", send(&config, address, change).await?);
+        }
+        Action::SetupSend {
+            config,
+            ssid,
+            id,
+            broker,
+            to,
+        } => {
+            use wellfed_local::stock_setup::{Setup, send};
+            let broker = broker.unwrap_or(Config::load(&config)?.mqtt_listen);
+            println!("Passphrase for {ssid} (read from stdin):");
+            let mut password = String::new();
+            std::io::stdin().read_line(&mut password)?;
+            let setup = Setup {
+                ssid,
+                password: password.trim_end_matches(['\r', '\n']).to_owned(),
+                host: broker.ip().to_string(),
+                port: broker.port(),
+                id,
+            };
+            match send(&setup, to, std::time::Duration::from_secs(5))? {
+                Some(answer) => println!(
+                    "Sent once to {to}; the feeder answered {} bytes: {}",
+                    answer.len(),
+                    wellfed_formats::hex::encode(&answer)
+                ),
+                None => println!("Sent once to {to}; no answer within 5 s (not resent)"),
+            }
         }
         Action::Speak {
             config,

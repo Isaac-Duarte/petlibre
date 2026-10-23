@@ -562,6 +562,31 @@ fn evidence_artifact_binding_and_window() {
     assert!(f.error(60.0).contains("not source-bound"));
 }
 
+/// Builds signed with the update key, and variant builds, embed an identity
+/// that binds the key and variant too.
+#[test]
+fn keyed_variant_builds_are_source_bound() {
+    let mut f = Fixture::new(json!({"source": "f".repeat(64)}));
+    f.manifest["variant"] = json!("speaker");
+    f.manifest["ota_public_key"] = json!("ab".repeat(32));
+    let id = f.typed().source_identity().unwrap();
+    assert_ne!(id, f.identity);
+    f.manifest["startup_identity"] = json!(id);
+
+    let image = [
+        &b"container "[..],
+        format!("PLFW1 start build={id} ").as_bytes(),
+    ]
+    .concat();
+    f.image(&image);
+    f.capture(&[(0.0, boot(&id))], 120.0);
+    assert_eq!(outcome(&f.verify(60.0).unwrap()), "pass");
+
+    // The same sources without the variant are another build.
+    f.set("variant", Value::Null);
+    assert!(f.error(60.0).contains("not source-bound"));
+}
+
 /// A line arrives at the time of the latest flash record up to and including it.
 fn run_flash(lines: &[&[u8]], times: [f64; 4], version: u8, end: Option<Time>) -> Report {
     let mut rx = Vec::new();
@@ -1528,7 +1553,7 @@ fn read_policy_binding_both_ways() {
     let arrival = |_: usize| Ok(t0());
     let error = startup(
         &rx,
-        &s.f.manifest,
+        &s.f.typed(),
         &image,
         &s.f.identity,
         Some(&arrival),
@@ -2022,7 +2047,7 @@ fn write_policy_binding_both_ways() {
     let arrival = |_: usize| Ok(t0());
     let error = startup(
         &rx,
-        &s.f.manifest,
+        &s.f.typed(),
         &image,
         &s.f.identity,
         Some(&arrival),

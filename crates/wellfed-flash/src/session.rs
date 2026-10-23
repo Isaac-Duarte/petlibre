@@ -6,11 +6,11 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value, json};
 
-use crate::canonical::{canonical, sha256};
 use crate::error::{Result, require};
 use crate::evidence::{self, EvidencePort, Root};
 use crate::protocol::{self, HELPER_SHA256, Port, ROM_SHA256};
 use crate::sector::Baseline;
+use wellfed_formats::canonical::{canonical, sha256};
 
 pub const DEFAULT_HELPER: &str =
     "private/upstream/ameba-rtos-d/tools/AmebaD/Image_Tool/imgtool_flashloader_amebad.bin";

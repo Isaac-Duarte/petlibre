@@ -11,6 +11,7 @@ use std::{fs, net::SocketAddr, path::Path};
 
 use anyhow::{Context, Result, bail, ensure};
 use chrono_tz::Tz;
+use wellfed_formats::credentials::FirmwareCredential;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
@@ -174,23 +175,6 @@ impl Config {
     pub fn firmware_topic(&self, suffix: &str) -> String {
         self.firmware_namespace() + suffix
     }
-}
-
-/// The private file the replacement-firmware build reads (FW08).
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct FirmwareCredential {
-    pub version: u32,
-    pub broker: std::net::Ipv4Addr,
-    pub port: u16,
-    pub device_id: String,
-    pub client_id: String,
-    pub username: String,
-    pub password: String,
-    pub namespace: String,
-    /// Request-signing key, added by `firmware-request-key`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub request_key: Option<String>,
 }
 
 /// Add the replacement-firmware role to a stopped server's configuration and

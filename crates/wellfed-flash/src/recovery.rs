@@ -10,13 +10,13 @@ use std::path::Path;
 
 use serde_json::{Map, Value, json};
 
-use crate::canonical::{canonical, sha256};
 use crate::error::{Result, require};
 use crate::evidence::{Root, utc};
 use crate::journal::Journal;
 use crate::protocol::{CAPACITY, Port, SECTOR};
 use crate::sector::{self, Baseline, END, START};
 use crate::status::fields;
+use wellfed_formats::canonical::{canonical, sha256};
 
 pub const KIND: &str = "original_stock_bank1_recovery";
 
@@ -120,7 +120,7 @@ pub fn without_time(plan: &Value) -> Result<Vec<u8>> {
     if let Some(map) = plan.as_object_mut() {
         map.remove("created_utc");
     }
-    canonical(&plan)
+    Ok(canonical(&plan)?)
 }
 
 pub fn validate_plan(baseline: &Baseline, current: &[u8], manifest: &Value) -> Result<Value> {

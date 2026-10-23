@@ -13,7 +13,7 @@ cargo build --locked
 make check PYTHON=.venv/bin/python
 ```
 
-The Python scripts are grouped into `tools/flash`, `tools/audit` and `tools/emulate`; the [tools index](../../tools/README.md) lists what each does and which ones open a serial port. The Rust crates live in `crates/`, one folder per package; `wellfed-flash` is the [Rust UART flash client](rust-flash.md), `wellfed-bench` the [relay bench](../hardware/bench.md), and `wellfed-audit` the offline evidence audits (startup, FW14 ADC, FW30 transients, full-flash comparison). `cargo xtask check-repository` is the repository check.
+The Python scripts are grouped into `tools/flash`, `tools/audit` and `tools/emulate`; the [tools index](../../tools/README.md) lists what each does and which ones open a serial port. The Rust crates live in `crates/`, one folder per package; `wellfed-flash` is the [Rust UART flash client](rust-flash.md), `wellfed-bench` the [relay bench](../hardware/bench.md), `wellfed-audit` the offline evidence audits (startup, FW14 ADC, FW30 transients, full-flash comparison), and `wellfed-formats` the files those tools pass to each other (build manifest and identity, stock layout, SDK/toolchain locks, serial-event records, credential and key files), typed once rather than read as untyped JSON in each. `cargo xtask check-repository` is the repository check.
 
 Rustup/Cargo and pip download dependencies on initial setup. Check targets do not install packages, fetch SDKs, contact a device, change firewall rules, or start persistent services. Network tests bind loopback sockets with synthetic identities. Environments that prohibit local sockets need permission to run those tests; skipping them is not a passing result.
 

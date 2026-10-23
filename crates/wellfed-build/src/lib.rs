@@ -9,14 +9,13 @@
 //! review of the same sources can be reused instead of rebuilt.
 
 // The manifest is one `json!` literal.
-#![recursion_limit = "256"]
 
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use serde_json::Value;
+use wellfed_formats::lock::SdkLock;
 use sha2::{Digest, Sha256};
 
 pub mod audit;
@@ -171,45 +170,18 @@ impl Repo {
     }
 
     /// `firmware/sdk.lock.json`.
-    pub fn lock(&self) -> Result<Lock> {
-        Lock::parse(&fs::read(self.path("firmware/sdk.lock.json"))?)
+    pub fn lock(&self) -> Result<SdkLock> {
+        Ok(wellfed_formats::load(
+            &self.path("firmware/sdk.lock.json"),
+        )?)
     }
 
     /// The pinned toolchain's binutils directory.
     pub fn binutils(&self) -> Result<PathBuf> {
         Ok(self
             .toolchains()
-            .join(&self.lock()?.toolchain_directory)
+            .join(&self.lock()?.toolchain.directory)
             .join("bin"))
-    }
-}
-
-/// The pinned SDK revision and toolchain archive.
-#[derive(Debug, Clone)]
-pub struct Lock {
-    pub sdk_url: String,
-    pub sdk_revision: String,
-    pub toolchain_url: String,
-    pub toolchain_sha256: String,
-    pub toolchain_directory: String,
-}
-
-impl Lock {
-    pub fn parse(raw: &[u8]) -> Result<Self> {
-        let lock: Value = serde_json::from_slice(raw)?;
-        let field = |section: &str, key: &str| {
-            lock[section][key]
-                .as_str()
-                .map(str::to_string)
-                .ok_or_else(|| Error::Refused(format!("sdk.lock.json lacks {section}.{key}")))
-        };
-        Ok(Self {
-            sdk_url: field("sdk", "url")?,
-            sdk_revision: field("sdk", "revision")?,
-            toolchain_url: field("toolchain", "url")?,
-            toolchain_sha256: field("toolchain", "sha256")?,
-            toolchain_directory: field("toolchain", "directory")?,
-        })
     }
 }
 
@@ -225,11 +197,11 @@ pub fn digest(path: &Path) -> Result<String> {
         }
         hasher.update(&block[..read]);
     }
-    Ok(wellfed_flash::canonical::hex(&hasher.finalize()))
+    Ok(wellfed_formats::hex::encode(&hasher.finalize()))
 }
 
 pub fn sha256(data: &[u8]) -> String {
-    wellfed_flash::canonical::sha256(data)
+    wellfed_formats::canonical::sha256(data)
 }
 
 /// Run a command to completion, refusing a failed exit with its stderr.

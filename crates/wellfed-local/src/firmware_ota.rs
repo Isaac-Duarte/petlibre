@@ -11,7 +11,8 @@ use std::{fs, io::Read, path::Path};
 use anyhow::{Context, Result, ensure};
 use ed25519_dalek::{Signer, SigningKey};
 use wellfed_core::ota::{self, MANIFEST_LEN, MARKER, Manifest};
-use serde::{Deserialize, Serialize};
+use wellfed_formats::credentials::OtaKeyFile;
+use wellfed_formats::hex;
 use sha2::{Digest, Sha256};
 
 use crate::storage;
@@ -19,28 +20,8 @@ use crate::storage;
 /// The OTA container's header precedes the bank contents.
 pub const CONTAINER_HEADER: usize = 32;
 
-#[derive(Debug, Deserialize, Serialize)]
-pub struct KeyFile {
-    pub version: u32,
-    /// Ed25519 seed; never leaves private/.
-    pub seed: String,
-    pub public_key: String,
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-
 fn unhex<const N: usize>(text: &str) -> Result<[u8; N]> {
-    ensure!(
-        text.len() == 2 * N && text.is_ascii(),
-        "expected {N} hex bytes"
-    );
-    let mut out = [0u8; N];
-    for (i, byte) in out.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(&text[2 * i..2 * i + 2], 16).context("invalid hex")?;
-    }
-    Ok(out)
+    hex::decode(text).with_context(|| format!("expected {N} hex bytes"))
 }
 
 /// Create a new signing key; refuses to replace one. Returns the public key
@@ -51,12 +32,12 @@ pub fn keygen(output: &Path) -> Result<String> {
         .and_then(|mut random| random.read_exact(&mut seed))
         .context("read the system random source")?;
 
-    let public_key = hex(&SigningKey::from_bytes(&seed).verifying_key().to_bytes());
+    let public_key = hex::encode(&SigningKey::from_bytes(&seed).verifying_key().to_bytes());
     storage::write_new_json(
         output,
-        &KeyFile {
+        &OtaKeyFile {
             version: 1,
-            seed: hex(&seed),
+            seed: hex::encode(&seed),
             public_key: public_key.clone(),
         },
     )?;
@@ -65,11 +46,11 @@ pub fn keygen(output: &Path) -> Result<String> {
 }
 
 pub fn load_key(path: &Path) -> Result<SigningKey> {
-    let key: KeyFile = serde_json::from_slice(&fs::read(path)?).context("parse the key file")?;
+    let key: OtaKeyFile = serde_json::from_slice(&fs::read(path)?).context("parse the key file")?;
     ensure!(key.version == 1, "unsupported key file version");
     let signing = SigningKey::from_bytes(&unhex::<32>(&key.seed)?);
     ensure!(
-        hex(&signing.verifying_key().to_bytes()) == key.public_key,
+        hex::encode(&signing.verifying_key().to_bytes()) == key.public_key,
         "key file's public key does not match its seed"
     );
     Ok(signing)

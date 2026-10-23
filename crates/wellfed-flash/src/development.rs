@@ -15,12 +15,12 @@
 
 use serde_json::{Map, Value, json};
 
-use crate::canonical::{canonical, sha256};
 use crate::error::{Error, Result, require};
 use crate::journal::Journal;
 use crate::protocol::{Port, SECTOR};
 use crate::sector::{self, Baseline};
 use crate::status::{self, fields};
+use wellfed_formats::canonical::{canonical, sha256};
 
 /// One program packet's payload; a sector takes four.
 pub const FRAME: usize = 1024;

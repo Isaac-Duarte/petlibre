@@ -11,8 +11,8 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
-use crate::canonical::sha256;
 use crate::error::{Error, Result, require};
+use wellfed_formats::canonical::sha256;
 
 /// The reviewed vendor flash helper, which runs from RAM; no other bytes are
 /// ever uploaded.

@@ -8,45 +8,36 @@ use std::fs;
 use std::path::Path;
 
 use wellfed_flash::ota::{STOCK_SHA256, container, regions};
+use wellfed_formats::layout::Layout;
 use serde_json::{Value, json};
 
-use super::parse_hex;
 use crate::{Result, require, sha256};
 
 fn word(data: &[u8], at: usize) -> Option<u64> {
     Some(u32::from_le_bytes(data.get(at..at + 4)?.try_into().ok()?) as u64)
 }
 
-fn hex_field(value: &Value) -> Result<u64> {
-    parse_hex(value.as_str().unwrap_or_default())
-}
-
 pub fn audit(image: &Path, stock: &Path, layout: &Path) -> Result<Value> {
-    let layout: Value = serde_json::from_slice(&fs::read(layout)?)?;
+    let layout: Layout = wellfed_formats::load(layout)?;
     require(
-        layout["schema_version"] == 1 && layout["stock_sha256"] == STOCK_SHA256,
+        layout.schema_version == 1 && layout.stock_sha256 == STOCK_SHA256,
         "Unsupported layout/reference identity",
     )?;
 
     let stock = fs::read(stock)?;
     require(
-        layout["stock_bytes"].as_u64() == Some(stock.len() as u64)
-            && sha256(&stock) == STOCK_SHA256,
+        layout.stock_bytes == stock.len() as u64 && sha256(&stock) == STOCK_SHA256,
         "Stock reference is not the verified PLAF103 1.1.15 image",
     )?;
     let reference = container(&stock)?;
 
-    let offsets = layout["ota_bank_offsets"]
-        .as_array()
-        .map(|offsets| offsets.iter().map(hex_field).collect::<Result<Vec<_>>>())
-        .transpose()?
-        .unwrap_or_default();
+    let offsets: Vec<u64> = layout.ota_bank_offsets.iter().map(|o| o.0).collect();
     require(
         offsets.len() == 2 && offsets[0] < offsets[1],
         "Invalid bank offsets",
     )?;
-    let mapped = hex_field(&layout["flash_mapping_base"])?;
-    let table = (0x17040 + hex_field(&layout["bank_table_runtime_address"])?)
+    let mapped = layout.flash_mapping_base.0;
+    let table = (0x17040 + layout.bank_table_runtime_address.0)
         .checked_sub(0x0E00_0020)
         .unwrap_or(u64::MAX) as usize;
     require(
@@ -55,7 +46,7 @@ pub fn audit(image: &Path, stock: &Path, layout: &Path) -> Result<Value> {
         "Layout bank offsets do not match the verified stock table",
     )?;
     require(
-        layout["candidate_payload_cap_bytes"].as_u64() == Some(reference.len() as u64),
+        layout.candidate_payload_cap_bytes == reference.len() as u64,
         "Unsupported candidate size cap",
     )?;
 
@@ -74,24 +65,20 @@ pub fn audit(image: &Path, stock: &Path, layout: &Path) -> Result<Value> {
         "Candidate crosses the next bank start",
     )?;
     require(
-        layout["sector_bytes"] == 4096 && payload.len() % 4096 == 0,
+        layout.sector_bytes == 4096 && payload.len() % 4096 == 0,
         "Unsupported sector alignment",
     )?;
     let image_regions = regions(payload)?;
 
-    let preserved = layout["known_preserve_ranges"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
     let mut placements = Vec::new();
     for (index, start) in offsets.iter().enumerate() {
         let end = start + payload.len() as u64;
-        let mut overlaps = Vec::new();
-        for range in &preserved {
-            if *start < hex_field(&range["end_exclusive"])? && hex_field(&range["start"])? < end {
-                overlaps.push(range["name"].clone());
-            }
-        }
+        let overlaps: Vec<&str> = layout
+            .known_preserve_ranges
+            .iter()
+            .filter(|range| *start < range.end_exclusive.0 && range.start.0 < end)
+            .map(|range| range.name.as_str())
+            .collect();
         require(
             overlaps.is_empty(),
             format!("Candidate overlaps known preserved data: {overlaps:?}"),

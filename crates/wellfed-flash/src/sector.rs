@@ -8,10 +8,10 @@ use std::sync::Arc;
 
 use serde_json::{Value, json};
 
-use crate::canonical::sha256;
 use crate::error::{Result, require};
 use crate::protocol::{self, ACK, CAPACITY, EOT, Port, SECTOR};
 use crate::status::{self, Record, fields};
+use wellfed_formats::canonical::sha256;
 
 /// The research unit's original full-flash backup.
 pub const BASELINE_SHA256: &str =
@@ -151,7 +151,7 @@ pub fn restore_sector(
         "Sector outside aligned stock bank 1",
     )?;
     require(
-        crate::canonical::is_sha256(expected_before),
+        wellfed_formats::hex::is_sha256(expected_before),
         "Expected before-sector hash required",
     )?;
 

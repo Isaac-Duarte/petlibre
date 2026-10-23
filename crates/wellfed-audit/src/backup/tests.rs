@@ -340,7 +340,8 @@ fn bank_body_is_identified_even_when_old_marker_is_invalid_but_not_after_other_c
     }
     data[0x186000..0x186004].copy_from_slice(&[0; 4]);
 
-    let layout: Value = serde_json::from_slice(&fs::read(root.join(LAYOUT)).unwrap()).unwrap();
+    let layout: wellfed_formats::layout::Layout =
+        wellfed_formats::load(&root.join(LAYOUT)).unwrap();
     let result = banks(&data, &layout, Some(&original)).unwrap();
 
     assert_eq!(result[0]["marker_matches_known_magic"], true);

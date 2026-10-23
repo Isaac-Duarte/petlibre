@@ -6,11 +6,12 @@ use std::io::{self, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
-use serde_json::{Value, json};
+use serde_json::Value;
 
-use crate::canonical::sha256;
 use crate::error::{Result, require};
 use crate::protocol::Port;
+use wellfed_formats::canonical::sha256;
+use wellfed_formats::capture::{Direction, SerialEvent};
 
 /// ISO-8601 UTC as Python's `datetime.now(timezone.utc).isoformat()` gives.
 pub fn utc() -> String {
@@ -164,7 +165,7 @@ pub struct EvidencePort<P: Port> {
     rx: File,
     tx: File,
     events: File,
-    offsets: [usize; 2],
+    offsets: [u64; 2],
 }
 
 impl<P: Port> EvidencePort<P> {
@@ -191,19 +192,23 @@ impl<P: Port> EvidencePort<P> {
         }
 
         let (stream, index, direction) = if transmit {
-            (&mut self.tx, 1, "tx")
+            (&mut self.tx, 1, Direction::Tx)
         } else {
-            (&mut self.rx, 0, "rx")
+            (&mut self.rx, 0, Direction::Rx)
         };
 
         stream.write_all(data)?;
         stream.flush()?;
 
-        let event = json!({"utc": utc(), "direction": direction,
-                           "offset": self.offsets[index], "bytes": data.len()});
-        writeln!(self.events, "{event}")?;
+        let event = SerialEvent {
+            utc: utc(),
+            direction,
+            offset: self.offsets[index],
+            bytes: data.len() as u64,
+        };
+        writeln!(self.events, "{}", serde_json::to_string(&event)?)?;
         self.events.flush()?;
-        self.offsets[index] += data.len();
+        self.offsets[index] += event.bytes;
         Ok(())
     }
 }

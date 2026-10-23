@@ -32,6 +32,16 @@ pub enum Error {
     Json(#[from] serde_json::Error),
 }
 
+impl From<wellfed_formats::Error> for Error {
+    fn from(error: wellfed_formats::Error) -> Self {
+        match error {
+            wellfed_formats::Error::NotInteger => Self::Refused(error.to_string()),
+            wellfed_formats::Error::Io(error) => Self::Io(error),
+            wellfed_formats::Error::Json(error) => Self::Json(error),
+        }
+    }
+}
+
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// Refuse the input unless `condition` holds. A refusal (exit status 2) means
@@ -44,7 +54,7 @@ pub fn require(condition: bool, message: impl Into<String>) -> Result<()> {
     }
 }
 
-pub use wellfed_flash::canonical::sha256 as digest;
+pub use wellfed_formats::canonical::sha256 as digest;
 
 /// A JSON object under construction, as the Python reports' dicts.
 pub type Report = Map<String, Value>;

@@ -10,12 +10,12 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
-use crate::canonical::sha256;
 use crate::error::{Result, require};
 use crate::evidence::{self, utc};
 use crate::protocol::{self, CAPACITY, HELPER_SHA256, Port, ROM_BYTES, ROM_SHA256};
 use crate::session::{self, Context, Outcome, progress};
 use crate::status;
+use wellfed_formats::canonical::sha256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {

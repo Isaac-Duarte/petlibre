@@ -14,13 +14,13 @@ use std::rc::Rc;
 
 use serde_json::{Value, json};
 
-use crate::canonical::sha256;
 use crate::development::{self, Acquired, BANK0, BANK1, Layout, MARKER, Update};
 use crate::evidence::Root;
 use crate::ota::tests::{synthetic_payload, wrap};
 use crate::protocol::{self, ACK, CAPACITY, EOT, NAK, Port, SECTOR, STX};
 use crate::sector::{self, Baseline, START};
 use crate::session::{Context, Pin};
+use wellfed_formats::canonical::sha256;
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
 enum Fault {
@@ -926,7 +926,8 @@ fn the_cli_refuses_an_unpinned_helper_before_any_serial_access() {
 
 /// A frozen review of a firstboot build, and the checkout around it.
 fn frozen_build(checkout: &Path, image: &[u8]) -> (PathBuf, Value, Value) {
-    let lock = json!({"sdk": {"revision": "r1"}, "toolchain": {"sha256": "t".repeat(64)}});
+    let lock = json!({"sdk": {"url": "sdk", "revision": "r1"},
+                      "toolchain": {"url": "toolchain", "sha256": "t".repeat(64), "directory": "asdk"}});
     write(
         &checkout.join("firmware/sdk.lock.json"),
         lock.to_string().as_bytes(),

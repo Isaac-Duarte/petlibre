@@ -12,8 +12,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::LazyLock;
 
+use wellfed_formats::manifest::RustCompiler;
 use regex::Regex;
-use serde_json::{Value, json};
 
 use crate::{Error, Repo, Result, require, text, which};
 
@@ -193,7 +193,7 @@ pub fn process_environment() -> Environment {
 
 /// The rustc cargo resolves from the root, which must be the pinned channel.
 /// Recorded in the manifest and compared again after the build.
-pub fn rust_compiler(repo: &Repo, environment: &Environment) -> Result<Value> {
+pub fn rust_compiler(repo: &Repo, environment: &Environment) -> Result<RustCompiler> {
     static CHANNEL: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r#"(?m)^channel\s*=\s*"([^"]+)""#).unwrap());
     static RELEASE: LazyLock<Regex> =
@@ -228,12 +228,15 @@ pub fn rust_compiler(repo: &Repo, environment: &Environment) -> Result<Value> {
         ),
         None => None,
     };
-    let lines: Vec<&str> = verbose.trim().lines().collect();
-    Ok(json!({
-        "version": verbose.lines().next().ok_or_else(|| Error::Refused("rustc printed nothing".into()))?,
-        "verbose": lines,
-        "path": path,
-    }))
+    let version = verbose
+        .lines()
+        .next()
+        .ok_or_else(|| Error::Refused("rustc printed nothing".into()))?;
+    Ok(RustCompiler {
+        version: version.to_string(),
+        verbose: verbose.trim().lines().map(str::to_string).collect(),
+        path,
+    })
 }
 
 #[cfg(test)]

@@ -23,6 +23,7 @@ wellfed-core.workspace = true
 futures-util = { version = "0.3", default-features = false }
 rust-embed = { version = "8.13.0", features = ["debug-embed"] }
 rustix = { version = "1", features = ["fs", "process"] }
+wellfed-formats.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serialport.workspace = true

@@ -13,7 +13,6 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value, json};
 
-use crate::canonical::{canonical, sha256};
 use crate::development::{self, Acquired, BANK0, FACTORY, Layout, Update};
 use crate::error::{Error, Result, require};
 use crate::evidence::{self, utc};
@@ -22,6 +21,7 @@ use crate::review::{Frozen, frozen};
 use crate::sector::{self, Baseline};
 use crate::session::{self, Context, Outcome, progress};
 use crate::status;
+use wellfed_formats::canonical::{canonical, sha256};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {

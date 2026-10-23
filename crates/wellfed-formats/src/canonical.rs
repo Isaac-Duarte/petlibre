@@ -6,26 +6,14 @@
 //! over these bytes and bindings are compared in this form, so any change to
 //! the encoding breaks agreement with records already written.
 
+use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use crate::error::{Result, require};
+use crate::{Error, Result, hex};
 
 pub fn sha256(data: &[u8]) -> String {
-    hex(&Sha256::digest(data))
-}
-
-pub fn hex(data: &[u8]) -> String {
-    data.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
-/// Lowercase hex only, the form [`sha256`] writes, so digests compare as
-/// plain strings.
-pub fn is_sha256(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    hex::encode(&Sha256::digest(data))
 }
 
 /// Canonical bytes; only integers are accepted as numbers, since no plan,
@@ -36,16 +24,20 @@ pub fn canonical(value: &Value) -> Result<Vec<u8>> {
     Ok(out)
 }
 
+/// Canonical bytes of a typed value: the same bytes as for its `Value`.
+pub fn canonical_of<T: Serialize>(value: &T) -> Result<Vec<u8>> {
+    canonical(&serde_json::to_value(value)?)
+}
+
 fn write(value: &Value, out: &mut Vec<u8>) -> Result<()> {
     match value {
         Value::Null => out.extend_from_slice(b"null"),
         Value::Bool(true) => out.extend_from_slice(b"true"),
         Value::Bool(false) => out.extend_from_slice(b"false"),
         Value::Number(number) => {
-            require(
-                number.is_i64() || number.is_u64(),
-                "Canonical JSON carries integers only",
-            )?;
+            if !(number.is_i64() || number.is_u64()) {
+                return Err(Error::NotInteger);
+            }
             out.extend_from_slice(number.to_string().as_bytes());
         }
         Value::String(text) => string(text, out),
@@ -79,8 +71,8 @@ fn write(value: &Value, out: &mut Vec<u8>) -> Result<()> {
     Ok(())
 }
 
-/// Python's default `ensure_ascii` escaping.
-fn string(text: &str, out: &mut Vec<u8>) {
+/// Python's default `ensure_ascii` escaping of a JSON string, quotes included.
+pub fn string(text: &str, out: &mut Vec<u8>) {
     out.push(b'"');
     for c in text.chars() {
         match c {
@@ -133,7 +125,7 @@ mod tests {
             sha256(b""),
             "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         );
-        assert!(is_sha256(&sha256(b"x")));
-        assert!(!is_sha256(&sha256(b"x").to_uppercase()));
+        assert!(hex::is_sha256(&sha256(b"x")));
+        assert!(!hex::is_sha256(&sha256(b"x").to_uppercase()));
     }
 }

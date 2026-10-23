@@ -19,6 +19,7 @@
 use std::fs;
 use std::path::Path;
 
+use wellfed_formats::transients::{TransientMode, TransientsManifest};
 use serde_json::{Value, json};
 
 use crate::{Report, Result, require, round};
@@ -49,7 +50,12 @@ pub fn runs(data: &[u8], mask: u8) -> Vec<(u8, usize, usize)> {
     out
 }
 
-pub fn check_cycle(data: &[u8], channels: &[u8; 4], mode: &str, samplerate: f64) -> Report {
+pub fn check_cycle(
+    data: &[u8],
+    channels: &[u8; 4],
+    mode: TransientMode,
+    samplerate: f64,
+) -> Report {
     let bit: [u8; 4] = channels.map(|c| 1u8 << c);
     let mask = bit.iter().fold(0u8, |m, b| m | b);
     let us = 1e6 / samplerate;
@@ -105,7 +111,7 @@ pub fn check_cycle(data: &[u8], channels: &[u8; 4], mode: &str, samplerate: f64)
         "transients_input_drive"
     } else if !output_drive.is_empty() {
         "transients_output_drive"
-    } else if mode == "boot" {
+    } else if mode == TransientMode::Boot {
         let (a, b, _) = inputs[inputs.len() - 1];
         match brake_at {
             Some(at) if a && b => {
@@ -129,19 +135,19 @@ pub fn check_cycle(data: &[u8], channels: &[u8; 4], mode: &str, samplerate: f64)
 }
 
 pub fn verify(capture: &Path) -> Result<Report> {
-    let manifest: Value =
-        serde_json::from_str(&fs::read_to_string(capture.join("manifest.json"))?)?;
-    let mode = manifest["mode"].as_str().unwrap_or("");
+    let manifest: TransientsManifest = wellfed_formats::load(&capture.join("manifest.json"))?;
     require(
-        manifest["schema_version"] == 1 && ["boot", "loader"].contains(&mode),
+        manifest.schema_version == 1,
         "Unsupported transients manifest",
     )?;
+    let mode = manifest.mode;
 
     let channel = |name: &str| {
-        manifest["channels"][name]
-            .as_u64()
+        manifest
+            .channels
+            .get(name)
+            .and_then(|&c| u8::try_from(c).ok())
             .filter(|c| *c < 8)
-            .map(|c| c as u8)
     };
     let channels: Option<Vec<u8>> = LINES.iter().map(|n| channel(n)).collect();
     let channels = channels
@@ -158,23 +164,19 @@ pub fn verify(capture: &Path) -> Result<Report> {
             )
         })?;
 
-    let samplerate = manifest["samplerate"].as_f64().unwrap_or(0.0);
-    require(samplerate > 0.0, "Unsupported transients manifest")?;
+    require(manifest.samplerate > 0, "Unsupported transients manifest")?;
+    let samplerate = manifest.samplerate as f64;
 
     let mut cycles = Vec::new();
-    for entry in manifest["cycles"]
-        .as_array()
-        .map(Vec::as_slice)
-        .unwrap_or(&[])
-    {
-        let file = entry["file"].as_str().unwrap_or("");
+    for entry in &manifest.cycles {
+        let file = entry.file.as_str();
         require(
             Path::new(file).components().count() == 1 && !file.is_empty(),
             "Unsupported transients manifest",
         )?;
         let data = fs::read(capture.join(file))?;
         require(
-            entry["bytes"] == data.len(),
+            entry.bytes == data.len() as u64,
             format!("{file} changed since capture"),
         )?;
 
@@ -205,7 +207,7 @@ pub fn verify(capture: &Path) -> Result<Report> {
 
     let report = json!({
         "outcome": if !cycles.is_empty() && passed == cycles.len() { "pass" } else { "transients_fail" },
-        "mode": mode, "samplerate": manifest["samplerate"], "cycles": cycles.len(), "passed": passed,
+        "mode": mode, "samplerate": manifest.samplerate, "cycles": cycles.len(), "passed": passed,
         "input_drive_events": events("input_drive"), "output_drive_events": events("output_drive"),
         "brake_at_s": brake, "per_cycle": cycles, "limit": LIMIT,
     });

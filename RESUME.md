@@ -7,9 +7,10 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
-**October 23, about 5 AM: FW14 power in health (physical over the air, adapter only).**
+**October 23, about 5 AM: FW14 done (power in health, physical over the air, owner at the bench).**
 - **What changed:** the SDK runtime's power monitor (`wellfed-hal` `power.rs`, task `wellfed-pwr`) samples ADC channel 5 and PA19 every 5 s once the startup probe releases the ADC; health gains `power` (limits now 704 B health, 832 B packet). The `adc` and `qa` firmwares claim the ADC. UART tag `PLBAT1` (`PLPWR1` is KM0's shared-pad record; the first install used it by mistake). Write audit fix: a literal decoded as two 16-bit instructions now counts as a reference (`662686a`).
 - **Runs:** `itest-20261023-fw14-01` (v71, `PLPWR1` tags) and `itest-20261023-fw14-02` (v72, review `fw14-power-04-review`, `optics` firmware), both confirmed. Then a bounded session (relay on, hotspot up, `serve` under 5 min): health `power` `null` for about 100 s, then `{"adapter":true,"age_ms":3787,"battery_mv":null}`.
+- **With a pack:** the owner fitted three D cells while serving: `"adapter":true,"battery_mv":4862`; adapter pulled: `"adapter":false,"battery_mv":4755` (meter earlier 4.85 / 4.77 V). FW14 is Done (no-load scope); motor current is carried to FW16.
 - **Pre-existing, not FW14:** `PLOPT1 error kind=supervisor n=1 fault=7`; the `make check-fixtures` emulation tests refuse the pre-FW37 profile name in the `private/fixtures` reviews.
 - **Flash now:** **Bank 1:** `optics` with the power monitor (OTA v72, confirmed). **Bank 0:** unchanged (`f244d9a9…`). **Next manifest version:** 73.
 - **Bench state:** restored. Batteries out, feeder off, hotspot down, no server.

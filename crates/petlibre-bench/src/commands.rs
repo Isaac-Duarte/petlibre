@@ -15,7 +15,9 @@ use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 use clap::{Args, ValueEnum};
-use serde_json::{Value, json};
+use petlibre_formats::manifest::BuildManifest;
+use petlibre_formats::transients::{self, TransientCycle, TransientsManifest};
+use serde_json::Value;
 
 use crate::config::{CAPTURES, Config, FLASH_BACKUPS, VERIFICATION};
 use crate::relay::{POWER, Relay, SPARES, STRAP};
@@ -426,12 +428,18 @@ impl Bench {
                     .map(|(name, channel)| ((*name).to_string(), *channel))
                     .collect()
             });
-        let mut manifest = json!({
-            "schema_version": 1,
-            "mode": match args.mode { TransientMode::Boot => "boot", TransientMode::Loader => "loader" },
-            "samplerate": args.samplerate, "seconds": args.seconds,
-            "arming_seconds": ANALYZER_ARMING_SECONDS, "channels": channels, "cycles": [],
-        });
+        let mut manifest = TransientsManifest {
+            schema_version: 1,
+            mode: match args.mode {
+                TransientMode::Boot => transients::TransientMode::Boot,
+                TransientMode::Loader => transients::TransientMode::Loader,
+            },
+            samplerate: args.samplerate,
+            seconds: args.seconds,
+            arming_seconds: ANALYZER_ARMING_SECONDS,
+            channels: channels.into_iter().map(|(k, v)| (k, v.into())).collect(),
+            cycles: Vec::new(),
+        };
 
         // Power off whether or not the cycles succeeded, then report the
         // cycles' failure ahead of the power-off's.
@@ -451,7 +459,7 @@ impl Bench {
         &mut self,
         args: &TransientArgs,
         out: &Path,
-        manifest: &mut Value,
+        manifest: &mut TransientsManifest,
     ) -> Result<()> {
         for n in 1..=args.cycles {
             self.status.step(&format!("cycle {n}/{}", args.cycles));
@@ -471,10 +479,11 @@ impl Bench {
             // Rewritten after every cycle, so a stopped session keeps the
             // manifest of the cycles it finished.
             let bytes = fs::metadata(out.join(&name)).map_or(0, |m| m.len());
-            manifest["cycles"].as_array_mut().unwrap().push(json!({
-                "file": name, "bytes": bytes,
-                "power_on_after_launch_s": ((powered - started) * 1000.0).round() / 1000.0,
-            }));
+            manifest.cycles.push(TransientCycle {
+                file: name,
+                bytes,
+                power_on_after_launch_s: ((powered - started) * 1000.0).round() / 1000.0,
+            });
             fs::write(
                 out.join("manifest.json"),
                 serde_json::to_string_pretty(manifest)?,
@@ -620,27 +629,34 @@ impl Bench {
         out
     }
 
-    /// A target whose manifest names a motion policy drives the motor after boot.
+    /// A target whose manifest names a motion policy drives the motor after
+    /// boot. A target without a manifest (stock, diagnostics) has no policy;
+    /// one whose manifest cannot be read is refused rather than assumed safe.
     pub fn require_attended_motion(&self, args: &UpdateArgs) -> Result<()> {
-        let Some(manifest) = fs::read_to_string(args.target.join("build-manifest.json"))
-            .ok()
-            .and_then(|text| serde_json::from_str::<Value>(&text).ok())
-        else {
+        let path = args.target.join("build-manifest.json");
+        if !path.exists() {
             return Ok(());
-        };
+        }
+
+        let manifest: BuildManifest = petlibre_formats::load(&path).map_err(|error| {
+            Error::Bench(format!(
+                "Cannot read {} to check its motion policy: {error}",
+                self.rel(&path)
+            ))
+        })?;
         self.attended_motion(&manifest, args.attended_motion)
     }
 
     /// Refuse a build manifest naming a motion policy unless `allowed`.
-    fn attended_motion(&self, manifest: &Value, allowed: bool) -> Result<()> {
-        let policy = &manifest["startup_motion_policy"];
-        if !truthy(policy) {
+    fn attended_motion(&self, manifest: &BuildManifest, allowed: bool) -> Result<()> {
+        let Some(policy) = manifest
+            .startup_motion_policy
+            .as_deref()
+            .filter(|p| !p.is_empty())
+        else {
             return Ok(());
-        }
+        };
 
-        let policy = policy
-            .as_str()
-            .map_or_else(|| policy.to_string(), str::to_string);
         require(
             allowed,
             format!(

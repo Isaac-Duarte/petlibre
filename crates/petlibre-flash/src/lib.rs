@@ -6,7 +6,6 @@
 //! baseline and marker-last sequencing, and stops terminally without retry.
 //! Host tests and emulation establish none of its hardware behavior.
 
-pub mod canonical;
 pub mod development;
 pub mod error;
 pub mod evidence;

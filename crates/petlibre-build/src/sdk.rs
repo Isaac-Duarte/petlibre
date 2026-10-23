@@ -13,6 +13,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use petlibre_formats::layout::Layout;
 use regex::Regex;
 
 use crate::audit::{hooks, pinmap};
@@ -257,11 +258,11 @@ pub fn prepare(
         run(Command::new("git")
             .args(["worktree", "add", "--detach"])
             .arg(&sdk)
-            .arg(&lock.sdk_revision)
+            .arg(&lock.sdk.revision)
             .current_dir(repo.source()))?;
     }
     require(
-        revision(&sdk)? == lock.sdk_revision,
+        revision(&sdk)? == lock.sdk.revision,
         "Build worktree has an unexpected SDK revision",
     )?;
     check_sdk_worktree(&sdk, profile)?;
@@ -398,21 +399,11 @@ pub fn prepare(
 
 /// Point the SDK's two OTA bank addresses at the stock layout's banks.
 fn ota_addresses(repo: &Repo, sdk: &Path, overrides: &mut Overrides) -> Result<()> {
-    let layout: serde_json::Value = serde_json::from_slice(&fs::read(repo.layout())?)?;
-    let hex = |value: &serde_json::Value| {
-        value
-            .as_str()
-            .and_then(|v| u64::from_str_radix(v.trim_start_matches("0x"), 16).ok())
-            .ok_or_else(|| Error::Refused("Layout addresses must be hex strings".into()))
-    };
-    let base = hex(&layout["flash_mapping_base"])?;
-    let offsets = layout["ota_bank_offsets"]
-        .as_array()
-        .ok_or_else(|| Error::Refused("Layout lacks ota_bank_offsets".into()))?;
+    let layout: Layout = petlibre_formats::load(&repo.layout())?;
 
     let mut text = pinned(sdk, OTA_HEADER)?;
-    for (index, offset) in offsets.iter().enumerate() {
-        let address = base + hex(offset)?;
+    for (index, offset) in layout.ota_bank_offsets.iter().enumerate() {
+        let address = layout.flash_mapping_base.0 + offset.0;
         let pattern = Regex::new(&format!(
             r"(#define\s+LS_IMG2_OTA{}_ADDR\s+)0x[0-9A-Fa-f]+",
             index + 1

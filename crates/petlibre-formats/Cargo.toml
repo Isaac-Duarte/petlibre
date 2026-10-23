@@ -1,0 +1,20 @@
+[package]
+license.workspace = true
+name = "petlibre-formats"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "File formats the host tools share: canonical JSON, build manifests and identities, the stock layout, locks, captures and credentials"
+publish.workspace = true
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+dbg_macro = "deny"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.11"
+thiserror.workspace = true

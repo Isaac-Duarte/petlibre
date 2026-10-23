@@ -8,10 +8,12 @@ use std::path::Path;
 
 use serde_json::Value;
 
-use crate::canonical::sha256;
 use crate::development::{Layout, payload};
 use crate::error::{Result, require};
 use crate::evidence::Root;
+use petlibre_formats::canonical::sha256;
+use petlibre_formats::lock::SdkLock;
+use petlibre_formats::manifest::BuildManifest;
 
 pub struct Frozen {
     pub image: Vec<u8>,
@@ -67,33 +69,18 @@ fn build(root: &Root, directory: &Path, review: &Value, image: &[u8]) -> Result<
         "Frozen manifest mismatch",
     )?;
 
-    let m: Value = serde_json::from_slice(&manifest_raw)?;
-    let lock: Value = serde_json::from_slice(&std::fs::read(root.join("firmware/sdk.lock.json"))?)?;
+    let m: BuildManifest = serde_json::from_slice(&manifest_raw)?;
+    let lock: SdkLock = petlibre_formats::load(&root.join("firmware/sdk.lock.json"))?;
     require(
-        m["profile"] == "plaf103-firstboot"
-            && m["sdk_revision"] == lock["sdk"]["revision"]
-            && m["toolchain_sha256"] == lock["toolchain"]["sha256"],
+        m.profile == "plaf103-firstboot"
+            && m.sdk_revision == lock.sdk.revision
+            && m.toolchain_sha256 == lock.toolchain.sha256,
         "Unknown build profile",
     )?;
 
-    let ota: Vec<&Value> = m["artifacts"]
-        .as_array()
-        .map(|artifacts| {
-            artifacts
-                .iter()
-                .filter(|a| {
-                    a["path"]
-                        .as_str()
-                        .and_then(|path| Path::new(path).file_name())
-                        .is_some_and(|name| name == "OTA_All.bin")
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+    let ota = m.artifact("OTA_All.bin");
     require(
-        ota.len() == 1
-            && ota[0]["sha256"] == sha256(image).as_str()
-            && is_int(&ota[0]["bytes"], image.len()),
+        ota.is_some_and(|ota| ota.sha256 == sha256(image) && ota.bytes == image.len() as u64),
         "Manifest/image mismatch",
     )?;
 
@@ -105,14 +92,14 @@ fn build(root: &Root, directory: &Path, review: &Value, image: &[u8]) -> Result<
         .map(|cores| cores.keys().map(String::as_str).collect())
         .unwrap_or_default();
     names.sort();
-    let audit = &m["km0_pinmap_audit"];
+    let startup = m.audits.firstboot_startup_audit.as_ref();
+    let audit = m.audits.km0_pinmap_audit.as_ref();
     require(
         !mains.is_null()
-            && *mains == m["firstboot_startup_audit"]["mains"]
+            && startup.is_some_and(|startup| *mains == startup["mains"])
             && names == ["hp", "lp"]
-            && details["pinmap"] == *audit
-            && !audit.is_null()
-            && audit["matches_stock"] == true,
+            && audit
+                .is_some_and(|audit| details["pinmap"] == *audit && audit["matches_stock"] == true),
         "Frozen linked/startup/pad review missing",
     )?;
 
@@ -125,14 +112,10 @@ fn build(root: &Root, directory: &Path, review: &Value, image: &[u8]) -> Result<
             && banks.len() == 2
             && is_int(banks[0], 0)
             && is_int(banks[1], 1)
-            && [
-                "ota_payload_matches",
-                "ota_checksum_matches",
-                "source_snapshot_unchanged",
-                "staged_sources_without_diagnostics",
-            ]
-            .iter()
-            .all(|check| m["checks"][*check] == true),
+            && m.checks.ota_payload_matches
+            && m.checks.ota_checksum_matches
+            && m.checks.source_snapshot_unchanged
+            && m.checks.staged_sources_without_diagnostics,
         "Incomplete build/mapping review",
     )
 }

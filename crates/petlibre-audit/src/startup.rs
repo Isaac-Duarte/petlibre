@@ -19,6 +19,7 @@ use std::fs;
 use std::path::Path;
 use std::sync::LazyLock;
 
+use petlibre_formats::manifest::BuildManifest;
 use regex::bytes::{Captures, Match, Regex};
 use serde_json::{Value, json};
 
@@ -1247,7 +1248,7 @@ pub fn classify(rx: &[u8], identity: &str, require_stopped: bool) -> Report {
 
 /// A loaded, validated startup capture and the build it claims to run.
 pub struct Loaded {
-    pub manifest: Value,
+    pub manifest: BuildManifest,
     pub identity: String,
     pub image: Vec<u8>,
     pub capture: Capture,
@@ -1255,34 +1256,18 @@ pub struct Loaded {
 
 /// Bind the image to its source-bound manifest and validate a receive-only capture.
 pub fn load(capture: &Path, manifest_path: &Path, image_path: &Path) -> Result<Loaded> {
-    let manifest: Value = serde_json::from_slice(&fs::read(manifest_path)?)?;
-    let bound = json!({"profile": manifest["profile"], "inputs": manifest["inputs"]});
-    let canonical = petlibre_flash::canonical::canonical(&bound)
-        .map_err(|error| crate::Error::Refused(error.to_string()))?;
-    let identity = digest(&canonical);
+    let manifest: BuildManifest = petlibre_formats::load(manifest_path)?;
+    let identity = manifest.source_identity()?;
     require(
-        manifest["startup_identity"] == identity.as_str(),
+        manifest.startup_identity.as_deref() == Some(identity.as_str()),
         "Build identity is not source-bound",
     )?;
 
     let image = fs::read(image_path)?;
-    let ota: Vec<&Value> = manifest["artifacts"]
-        .as_array()
-        .map(|a| {
-            a.iter()
-                .filter(|a| {
-                    a["path"]
-                        .as_str()
-                        .and_then(|p| Path::new(p).file_name())
-                        .is_some_and(|name| name == "OTA_All.bin")
-                })
-                .collect()
-        })
-        .unwrap_or_default();
     require(
-        ota.len() == 1
-            && ota[0]["sha256"] == digest(&image).as_str()
-            && ota[0]["bytes"] == image.len(),
+        manifest
+            .artifact("OTA_All.bin")
+            .is_some_and(|ota| ota.sha256 == digest(&image) && ota.bytes == image.len() as u64),
         "Artifact/manifest mismatch",
     )?;
     require(
@@ -1307,15 +1292,14 @@ pub fn load(capture: &Path, manifest_path: &Path, image_path: &Path) -> Result<L
 
 /// A manifest policy: absent (None) or one of `allowed`.
 fn policy<'m>(
-    manifest: &'m Value,
-    key: &str,
+    declared: Option<&'m str>,
     allowed: &[&str],
     message: &str,
 ) -> Result<Option<&'m str>> {
-    match manifest.get(key) {
-        None | Some(Value::Null) => Ok(None),
-        Some(Value::String(value)) if allowed.contains(&value.as_str()) => Ok(Some(value)),
-        _ => Err(crate::Error::Refused(message.into())),
+    match declared {
+        None => Ok(None),
+        Some(value) if allowed.contains(&value) => Ok(Some(value)),
+        Some(_) => Err(crate::Error::Refused(message.into())),
     }
 }
 
@@ -1326,7 +1310,7 @@ fn policy<'m>(
 /// clean tail.
 pub fn startup(
     rx: &[u8],
-    manifest: &Value,
+    manifest: &BuildManifest,
     image: &[u8],
     identity: &str,
     arrival: Option<Arrival>,
@@ -1334,20 +1318,15 @@ pub fn startup(
 ) -> Result<Report> {
     let has = |mark: &[u8]| contains(image, mark);
 
-    let supervision = policy(
-        manifest,
-        "startup_supervision_policy",
-        &["fw05-probe-v1"],
-        "Unknown startup supervision policy",
-    )?;
+    // No current build declares the FW05 probe, so its records mean the image
+    // is not the build the manifest describes.
     require(
-        supervision.is_some() == has(SUPERVISION_MARK),
+        !has(SUPERVISION_MARK),
         "Supervision policy/artifact mismatch",
     )?;
 
     let output = policy(
-        manifest,
-        "startup_output_policy",
+        manifest.startup_output_policy.as_deref(),
         &["stop-only"],
         "Unknown startup output policy",
     )?;
@@ -1362,8 +1341,7 @@ pub fn startup(
     let passed = |r: &Report| r["outcome"] == "pass";
 
     let clock_policy = policy(
-        manifest,
-        "startup_gpio_clock_policy",
+        manifest.startup_gpio_clock_policy.as_deref(),
         &["explicit-enable-v1"],
         "Unknown GPIO clock policy",
     )?;
@@ -1396,8 +1374,7 @@ pub fn startup(
     }
 
     let led_policy = policy(
-        manifest,
-        "startup_led_policy",
+        manifest.startup_led_policy.as_deref(),
         &[
             "bounded-probe-v1",
             "bounded-probe-v2",
@@ -1451,8 +1428,7 @@ pub fn startup(
     }
 
     let routing_policy = policy(
-        manifest,
-        "startup_gpio_routing_policy",
+        manifest.startup_gpio_routing_policy.as_deref(),
         &["read-only-v1", "read-only-v2", "read-only-v3"],
         "Unknown GPIO routing policy",
     )?;
@@ -1482,8 +1458,7 @@ pub fn startup(
     }
 
     let power_policy = policy(
-        manifest,
-        "startup_shared_pad_policy",
+        manifest.startup_shared_pad_policy.as_deref(),
         &["before-km4-v1", "before-km4-v2", "before-km4-v3"],
         "Unknown shared-pad policy",
     )?;
@@ -1516,8 +1491,7 @@ pub fn startup(
     // The probes below are only bound to the image here; this audit does not
     // classify their records.
     let wifi = policy(
-        manifest,
-        "startup_wifi_policy",
+        manifest.startup_wifi_policy.as_deref(),
         &["fw07-scan-v1", "fw07-join-v1", "fw07-dns-v1"],
         "Unknown Wi-Fi policy",
     )?;
@@ -1539,8 +1513,7 @@ pub fn startup(
     )?;
 
     let transport = policy(
-        manifest,
-        "startup_transport_policy",
+        manifest.startup_transport_policy.as_deref(),
         &["fw08-transport-v1"],
         "Unknown transport policy",
     )?;
@@ -1554,8 +1527,7 @@ pub fn startup(
     )?;
 
     let optics = policy(
-        manifest,
-        "startup_optics_policy",
+        manifest.startup_optics_policy.as_deref(),
         &["fw13-optics-v1", "fw13-optics-v2"],
         "Unknown optics policy",
     )?;
@@ -1573,8 +1545,7 @@ pub fn startup(
     )?;
 
     let motion = policy(
-        manifest,
-        "startup_motion_policy",
+        manifest.startup_motion_policy.as_deref(),
         &["fw16-pulse-v1"],
         "Unknown motion policy",
     )?;
@@ -1592,8 +1563,7 @@ pub fn startup(
     )?;
 
     let trial = policy(
-        manifest,
-        "startup_trial_policy",
+        manifest.startup_trial_policy.as_deref(),
         &["fw11-reset-v1"],
         "Unknown trial policy",
     )?;
@@ -1607,8 +1577,7 @@ pub fn startup(
     )?;
 
     let adc = policy(
-        manifest,
-        "startup_adc_policy",
+        manifest.startup_adc_policy.as_deref(),
         &["fw14-adc-v1", "fw14-adc-v2"],
         "Unknown ADC policy",
     )?;
@@ -1626,8 +1595,7 @@ pub fn startup(
     )?;
 
     let flash_policy = policy(
-        manifest,
-        "startup_flash_handshake_policy",
+        manifest.startup_flash_handshake_policy.as_deref(),
         &[
             "fw06-hello-v1",
             "fw06-park-v1",

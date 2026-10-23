@@ -309,10 +309,7 @@ pub fn check_adc(
 
 pub fn verify(capture: &Path, manifest: &Path, image: &Path) -> Result<Report> {
     let loaded = startup::load(capture, manifest, image)?;
-    let policy = loaded
-        .manifest
-        .get("startup_adc_policy")
-        .and_then(Value::as_str);
+    let policy = loaded.manifest.startup_adc_policy.as_deref();
     require(
         policy.is_some_and(|p| POLICIES.contains(&p)),
         "ADC policy required",

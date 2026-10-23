@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{Value, json};
 
 use petlibre_flash::ota;
+use petlibre_formats::layout::{Hex, Layout};
 
 use crate::{Report, Result, digest, require};
 
@@ -160,26 +161,16 @@ fn reference(path: Option<&Path>) -> Result<Option<Vec<u8>>> {
     Ok(Some(data))
 }
 
-fn hex_offset(value: &Value) -> Result<usize> {
-    value
-        .as_str()
-        .and_then(|text| {
-            usize::from_str_radix(text.trim_start_matches("0x").trim_start_matches("0X"), 16).ok()
-        })
-        .ok_or_else(|| crate::Error::Refused("Unsupported layout".into()))
+/// A layout offset as an index into a read.
+fn offset(value: Hex) -> Result<usize> {
+    usize::try_from(value.0).map_err(|_| crate::Error::Refused("Unsupported layout".into()))
 }
 
-fn banks(data: &[u8], layout: &Value, original: Option<&[u8]>) -> Result<Vec<Value>> {
-    let size = layout["candidate_payload_cap_bytes"].as_u64().unwrap_or(0) as usize;
+fn banks(data: &[u8], layout: &Layout, original: Option<&[u8]>) -> Result<Vec<Value>> {
+    let size = offset(Hex(layout.candidate_payload_cap_bytes))?;
     let mut result = Vec::new();
-    for (index, value) in layout["ota_bank_offsets"]
-        .as_array()
-        .map(Vec::as_slice)
-        .unwrap_or(&[])
-        .iter()
-        .enumerate()
-    {
-        let start = hex_offset(value)?;
+    for (index, &value) in layout.ota_bank_offsets.iter().enumerate() {
+        let start = offset(value)?;
         let end = start + size;
         let mut item = json!({"index": index, "start": start, "end_exclusive": end,
                               "stock_footprint_covered": end <= data.len(), "currently_active": "unknown"});
@@ -243,11 +234,11 @@ pub fn audit(inputs: &Inputs) -> Result<Report> {
 
     let layout_path = inputs.root.join(LAYOUT);
     let layout_raw = fs::read(&layout_path)?;
-    let layout: Value = serde_json::from_slice(&layout_raw)?;
+    let layout: Layout = serde_json::from_slice(&layout_raw)?;
     require(
-        layout["schema_version"] == 1
-            && layout["sector_bytes"] == 4096
-            && layout["stock_sha256"] == ota::STOCK_SHA256,
+        layout.schema_version == 1
+            && layout.sector_bytes == 4096
+            && layout.stock_sha256 == ota::STOCK_SHA256,
         "Unsupported layout",
     )?;
 
@@ -272,17 +263,10 @@ pub fn audit(inputs: &Inputs) -> Result<Report> {
         !suspicious_patterns(&first).is_empty() || !suspicious_patterns(&second).is_empty();
 
     let mut preserve = Vec::new();
-    for area in layout["known_preserve_ranges"]
-        .as_array()
-        .map(Vec::as_slice)
-        .unwrap_or(&[])
-    {
-        let (start, end) = (
-            hex_offset(&area["start"])?,
-            hex_offset(&area["end_exclusive"])?,
-        );
+    for area in &layout.known_preserve_ranges {
+        let (start, end) = (offset(area.start)?, offset(area.end_exclusive)?);
         let covered = end <= first.len().min(second.len());
-        let mut entry = json!({"name": area["name"], "start": start, "end_exclusive": end, "covered_in_both": covered});
+        let mut entry = json!({"name": area.name, "start": start, "end_exclusive": end, "covered_in_both": covered});
         if covered {
             let (a, b) = (&first[start..end], &second[start..end]);
             entry["first_sha256"] = json!(digest(a));
@@ -301,13 +285,12 @@ pub fn audit(inputs: &Inputs) -> Result<Report> {
                 .to_vec()
         };
         if slice(&first) != slice(&second) {
-            let areas: Vec<&Value> = preserve
+            let sector = start as u64..start as u64 + 4096;
+            let areas: Vec<&str> = layout
+                .known_preserve_ranges
                 .iter()
-                .filter(|r| {
-                    start < r["end_exclusive"].as_u64().unwrap_or(0) as usize
-                        && (r["start"].as_u64().unwrap_or(0) as usize) < start + 4096
-                })
-                .map(|r| &r["name"])
+                .filter(|r| sector.start < r.end_exclusive.0 && r.start.0 < sector.end)
+                .map(|r| r.name.as_str())
                 .collect();
             changed_sectors.push(json!({"start": start, "known_preserve_areas": areas}));
         }

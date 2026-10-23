@@ -21,6 +21,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use super::{Fault, ItestArgs, Rig, Server};
@@ -71,7 +72,7 @@ pub struct LiveRig<'b> {
     restored: bool,
 }
 
-fn read_json(root: &Path, path: &Path) -> Result<Value> {
+fn read_json<T: DeserializeOwned>(root: &Path, path: &Path) -> Result<T> {
     let text = fs::read_to_string(root.join(path))
         .map_err(|error| Error::Bench(format!("{}: {error}", path.display())))?;
     serde_json::from_str(&text)
@@ -91,8 +92,8 @@ impl<'b> LiveRig<'b> {
     pub fn open(bench: &'b mut Bench, args: &ItestArgs, local_bin: PathBuf) -> Result<Self> {
         let root = bench.root.clone();
         let name = args.name().to_string();
-        let config = read_json(&root, &args.config)?;
-        let hotspot = read_json(&root, &args.hotspot)?;
+        let config: Value = read_json(&root, &args.config)?;
+        let hotspot: Value = read_json(&root, &args.hotspot)?;
 
         let connection = hotspot["connection"]
             .as_str()

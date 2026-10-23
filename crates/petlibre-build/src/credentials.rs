@@ -5,11 +5,11 @@
 //! inputs). Values are octal-escaped C strings, so no SSID or password can
 //! break out of its literal.
 
-use std::net::Ipv4Addr;
-
+use petlibre_formats::credentials::{FirmwareCredential, WifiCredential};
+use petlibre_formats::hex::is_lower_hex;
+use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 
-use crate::identity::is_lower_hex;
 use crate::{Error, Result, require};
 
 const BANNER: &str = "/* Generated from a private file by petlibre-build; never tracked. */\n";
@@ -29,26 +29,17 @@ pub fn c_string(value: &[u8]) -> String {
     out
 }
 
-fn object(raw: &[u8]) -> Result<Map<String, Value>> {
-    match serde_json::from_slice(raw)? {
-        Value::Object(map) => Ok(map),
-        _ => Err(Error::Refused(
-            "Credentials file is not a JSON object".into(),
-        )),
-    }
+/// A credential file, which must be an object: derived structs would also
+/// accept their fields as an array.
+fn object<T: DeserializeOwned>(raw: &[u8]) -> serde_json::Result<T> {
+    let map: Map<String, Value> = serde_json::from_slice(raw)?;
+    serde_json::from_value(Value::Object(map))
 }
 
 /// The Wi-Fi header; refuses anything but a WPA2-sized passphrase.
 pub fn wifi_header(raw: &[u8]) -> Result<String> {
-    let config = object(raw)?;
-    let (Some(ssid), Some(password)) = (
-        config.get("ssid").and_then(Value::as_str),
-        config.get("password").and_then(Value::as_str),
-    ) else {
-        return Err(Error::Refused(
-            "Wi-Fi credentials need string ssid and password".into(),
-        ));
-    };
+    let WifiCredential { ssid, password } = object(raw)
+        .map_err(|_| Error::Refused("Wi-Fi credentials need string ssid and password".into()))?;
     require(
         (1..=32).contains(&ssid.len()) && (8..=63).contains(&password.len()),
         "Wi-Fi credentials need a 1-32 byte SSID and an 8-63 byte passphrase",
@@ -64,39 +55,23 @@ pub fn wifi_header(raw: &[u8]) -> Result<String> {
 /// The broker settings header; refuses anything `petlibre-local
 /// firmware-credential` would not have written.
 pub fn transport_header(raw: &[u8]) -> Result<String> {
-    const FIELDS: [&str; 8] = [
-        "version",
-        "broker",
-        "port",
-        "device_id",
-        "client_id",
-        "username",
-        "password",
-        "namespace",
-    ];
-    let config = object(raw)?;
-    // `request_key` (petlibre-local firmware-request-key) is optional.
+    let config: FirmwareCredential = object(raw).map_err(|error| {
+        Error::Refused(format!(
+            "Transport credentials need exactly the version 1 fields: {error}"
+        ))
+    })?;
     require(
-        FIELDS.iter().all(|field| config.contains_key(*field))
-            && config
-                .keys()
-                .all(|key| FIELDS.contains(&key.as_str()) || key == "request_key")
-            && config["version"].as_u64() == Some(1),
+        config.version == 1,
         "Transport credentials need exactly the version 1 fields",
     )?;
-    let text = |key: &str| config[key].as_str().unwrap_or_default();
 
-    let request_key = match config.get("request_key") {
-        None | Some(Value::Null) => "",
-        Some(Value::String(key)) => key,
-        Some(_) => "-",
-    };
+    let request_key = config.request_key.as_deref().unwrap_or_default();
     require(
         request_key.is_empty() || is_lower_hex(request_key, 64),
         "Transport request key must be 64 lowercase hex characters",
     )?;
 
-    let device = text("device_id");
+    let device = &config.device_id;
     require(
         (1..=64).contains(&device.len())
             && device
@@ -105,33 +80,22 @@ pub fn transport_header(raw: &[u8]) -> Result<String> {
         "Transport credentials need a plain device ID",
     )?;
 
-    let broker: Ipv4Addr = text("broker")
-        .parse()
-        .map_err(|_| Error::Refused("Transport broker is not an IPv4 address".into()))?;
+    let broker = config.broker;
     require(
         !broker.is_unspecified() && !broker.is_multicast() && !broker.is_broadcast(),
         "Transport broker must be a unicast IPv4 address",
     )?;
-
-    let port = config["port"]
-        .as_u64()
-        .filter(|port| (1..=65535).contains(port));
-    let Some(port) = port else {
-        return Err(Error::Refused("Transport port out of range".into()));
-    };
+    require(config.port != 0, "Transport port out of range")?;
     require(
-        text("client_id") == format!("petlibre-fw-{device}")
-            && text("username") == "petlibre-fw"
-            && text("namespace") == format!("petlibre/1/{device}/"),
+        config.client_id == format!("petlibre-fw-{device}")
+            && config.username == "petlibre-fw"
+            && config.namespace == format!("petlibre/1/{device}/"),
         "Transport identity does not match the device ID",
     )?;
 
-    let password = text("password");
+    let password = &config.password;
     require(
-        (32..=128).contains(&password.len())
-            && password
-                .bytes()
-                .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')),
+        (32..=128).contains(&password.len()) && is_lower_hex(password, password.len()),
         "Transport password must be 32-128 lowercase hex characters",
     )?;
 
@@ -140,9 +104,14 @@ pub fn transport_header(raw: &[u8]) -> Result<String> {
         out.push_str(&format!("#define PETLIBRE_MQTT_{key} {value}\n"));
     };
     define("BROKER", format!("0x{:08x}U", u32::from(broker)));
-    define("PORT", format!("{port}U"));
-    for key in ["client_id", "username", "password", "namespace"] {
-        define(&key.to_uppercase(), c_string(text(key).as_bytes()));
+    define("PORT", format!("{}U", config.port));
+    for (key, value) in [
+        ("CLIENT_ID", &config.client_id),
+        ("USERNAME", &config.username),
+        ("PASSWORD", &config.password),
+        ("NAMESPACE", &config.namespace),
+    ] {
+        define(key, c_string(value.as_bytes()));
     }
     define("REQUEST_KEY", c_string(request_key.as_bytes()));
     Ok(out)

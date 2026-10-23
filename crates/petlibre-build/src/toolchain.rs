@@ -11,28 +11,19 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
-use serde_json::Value;
+use petlibre_formats::lock::{SdkLock, ToolchainLock};
 
 use crate::identity::TOOL_LOCK;
-use crate::{Error, Lock, Repo, Result, digest, git, require, revision, run, text, which};
+use crate::{Error, Repo, Result, digest, git, require, revision, run, text, which};
 
 /// Per-file hashes of the executables the SDK build and audits invoke.
-pub fn toolchain_lock(repo: &Repo, lock: &Lock) -> Result<BTreeMap<String, String>> {
-    let pinned: Value = serde_json::from_slice(&fs::read(repo.path(TOOL_LOCK))?)?;
-    let files: BTreeMap<String, String> = pinned["files"]
-        .as_object()
-        .map(|files| {
-            files
-                .iter()
-                .filter_map(|(name, sum)| Some((name.clone(), sum.as_str()?.to_string())))
-                .collect()
-        })
-        .unwrap_or_default();
+pub fn toolchain_lock(repo: &Repo, lock: &SdkLock) -> Result<BTreeMap<String, String>> {
+    let pinned: ToolchainLock = petlibre_formats::load(&repo.path(TOOL_LOCK))?;
     require(
-        pinned["archive_sha256"] == lock.toolchain_sha256.as_str() && !files.is_empty(),
+        pinned.archive_sha256 == lock.toolchain.sha256 && !pinned.files.is_empty(),
         "Toolchain file pins do not describe the pinned SDK archive",
     )?;
-    Ok(files)
+    Ok(pinned.files)
 }
 
 /// Fail closed unless every pinned compiler/binutils file matches.
@@ -170,22 +161,23 @@ pub fn bootstrap(repo: &Repo) -> Result<PathBuf> {
     if !source.exists() {
         fs::create_dir_all(source.parent().unwrap_or(&repo.root))?;
         run(Command::new("git").arg("init").arg(&source))?;
-        git(&source, &["remote", "add", "origin", &lock.sdk_url])?;
+        git(&source, &["remote", "add", "origin", &lock.sdk.url])?;
         git(
             &source,
-            &["fetch", "--depth", "1", "origin", &lock.sdk_revision],
+            &["fetch", "--depth", "1", "origin", &lock.sdk.revision],
         )?;
         git(&source, &["checkout", "--detach", "FETCH_HEAD"])?;
     }
     require(
-        revision(&source)? == lock.sdk_revision,
+        revision(&source)? == lock.sdk.revision,
         "SDK checkout does not match sdk.lock.json; left unchanged",
     )?;
 
     let toolchains = repo.toolchains();
     fs::create_dir_all(&toolchains)?;
     let name = lock
-        .toolchain_url
+        .toolchain
+        .url
         .rsplit('/')
         .next()
         .unwrap_or("toolchain.tar.bz2");
@@ -197,22 +189,22 @@ pub fn bootstrap(repo: &Repo) -> Result<PathBuf> {
             .args(["--fail", "--location", "--silent", "--show-error"])
             .args(["--connect-timeout", "60", "--output"])
             .arg(&partial)
-            .arg(&lock.toolchain_url))?;
+            .arg(&lock.toolchain.url))?;
         require(
-            digest(&partial)? == lock.toolchain_sha256,
+            digest(&partial)? == lock.toolchain.sha256,
             format!("Toolchain checksum mismatch: {}", partial.display()),
         )?;
         fs::rename(&partial, &archive)?;
     }
     require(
-        digest(&archive)? == lock.toolchain_sha256,
+        digest(&archive)? == lock.toolchain.sha256,
         format!("Toolchain checksum mismatch: {}", archive.display()),
     )?;
 
     let pins = toolchain_lock(repo, &lock)?;
-    let toolchain = toolchains.join(&lock.toolchain_directory);
+    let toolchain = toolchains.join(&lock.toolchain.directory);
     if !toolchain.exists() {
-        extract_toolchain(&archive, &toolchains, &lock.toolchain_directory, &pins)?;
+        extract_toolchain(&archive, &toolchains, &lock.toolchain.directory, &pins)?;
     }
     verify_toolchain(&toolchain, &pins)?;
 
@@ -333,7 +325,7 @@ mod tests {
         let repo = Repo::here().unwrap();
         let mut lock = repo.lock().unwrap();
         assert!(!toolchain_lock(&repo, &lock).unwrap().is_empty());
-        lock.toolchain_sha256 = "0".repeat(64);
+        lock.toolchain.sha256 = "0".repeat(64);
         assert!(toolchain_lock(&repo, &lock).is_err());
     }
 }

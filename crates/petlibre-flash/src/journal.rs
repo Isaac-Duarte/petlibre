@@ -12,9 +12,9 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value, json};
 
-use crate::canonical::{canonical, sha256};
 use crate::error::{Result, require};
 use crate::evidence::{Root, sync_directory, utc};
+use petlibre_formats::canonical::{canonical, sha256};
 
 /// Intent events after which flash may already differ from the preimage.
 const MUTATIONS: [&str; 3] = [

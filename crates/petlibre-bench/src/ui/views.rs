@@ -199,18 +199,7 @@ pub fn anchor_time(directory: &Path, anchor: &str) -> Option<f64> {
 
     // The receive event whose byte range holds that offset carries its time.
     let events = fs::read_to_string(directory.join("serial-events.jsonl")).ok()?;
-    events
-        .lines()
-        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
-        .find(|event| {
-            let start = event["offset"].as_u64().unwrap_or(u64::MAX);
-            let bytes = event["bytes"].as_u64().unwrap_or(0);
-            event["direction"] == "rx" && start <= offset && offset < start.saturating_add(bytes)
-        })
-        .and_then(|event| {
-            let utc = chrono::DateTime::parse_from_rfc3339(event["utc"].as_str()?).ok()?;
-            Some(utc.timestamp_micros() as f64 / 1e6)
-        })
+    crate::commands::ota::arrival(&events, offset)
 }
 
 /// The optional operator script: timed steps from an anchor in a capture.

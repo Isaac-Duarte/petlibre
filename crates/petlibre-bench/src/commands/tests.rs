@@ -4,6 +4,8 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
+use serde_json::json;
+
 use super::*;
 use crate::relay::FakeBoard;
 use crate::status::FlashTool;
@@ -521,6 +523,17 @@ fn motion_targets_need_the_attended_flag() {
     )
     .unwrap();
     rig.bench.require_attended_motion(&args).unwrap();
+
+    // No manifest: a stock or diagnostic target with no policy.
+    fs::remove_file(target.join("build-manifest.json")).unwrap();
+    rig.bench.require_attended_motion(&args).unwrap();
+
+    // A manifest that cannot be read is not taken as having no policy.
+    for unreadable in ["{", r#"{"startup_motion_policy": 1}"#] {
+        fs::write(target.join("build-manifest.json"), unreadable).unwrap();
+        let error = rig.bench.require_attended_motion(&args).unwrap_err();
+        assert!(error.to_string().contains("motion policy"), "{unreadable}");
+    }
 }
 
 #[test]

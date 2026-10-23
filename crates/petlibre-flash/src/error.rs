@@ -18,6 +18,16 @@ pub enum Error {
     Json(#[from] serde_json::Error),
 }
 
+impl From<petlibre_formats::Error> for Error {
+    fn from(error: petlibre_formats::Error) -> Self {
+        match error {
+            petlibre_formats::Error::NotInteger => Self::Refused(error.to_string()),
+            petlibre_formats::Error::Io(error) => Self::Io(error),
+            petlibre_formats::Error::Json(error) => Self::Json(error),
+        }
+    }
+}
+
 impl Error {
     /// The short kind recorded in journals and stop reports.
     pub fn kind(&self) -> &'static str {

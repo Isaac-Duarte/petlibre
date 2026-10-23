@@ -17,8 +17,10 @@ dbg_macro = "deny"
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
 clap.workspace = true
 petlibre-flash = { version = "0.1.0", path = "../petlibre-flash" }
+petlibre-formats.workspace = true
 regex = "1"
 rustix = { version = "1", features = ["process", "fs"] }
+serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.11"
 tempfile.workspace = true

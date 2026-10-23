@@ -7,13 +7,14 @@
 //! sources are inputs, so a changed recipe or audit is a new identity.
 
 use std::collections::BTreeMap;
-use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
-use serde_json::{Value, json};
+use petlibre_formats::credentials::OtaKeyFile;
+use petlibre_formats::hex::is_lower_hex;
+use petlibre_formats::manifest::IdentitySnapshot;
 
-use crate::{Error, Profile, Repo, Result, Variant, digest, relative, require, sha256};
+use crate::{Error, Profile, Repo, Result, Variant, digest, relative, require};
 
 /// Crates linked into, or testing, the firmware. Host tools such as
 /// petlibre-local and petlibre-flash never change a firmware build's identity.
@@ -153,20 +154,12 @@ pub fn ota_public_key(repo: &Repo, profile: Profile) -> Result<Option<String>> {
         return Ok(None);
     }
 
-    let key: Value = serde_json::from_slice(&fs::read(&path)?)?;
-    let key = key["public_key"].as_str().unwrap_or_default();
+    let key: OtaKeyFile = petlibre_formats::load(&path)?;
     require(
-        is_lower_hex(key, 64),
+        is_lower_hex(&key.public_key, 64),
         "Update key file needs a 64-character lowercase hex public key",
     )?;
-    Ok(Some(key.to_string()))
-}
-
-pub fn is_lower_hex(value: &str, len: usize) -> bool {
-    value.len() == len
-        && value
-            .bytes()
-            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    Ok(Some(key.public_key))
 }
 
 /// Bind the identity to a profile, variant, update key and root-relative
@@ -177,14 +170,13 @@ pub fn source_identity(
     variant: Option<Variant>,
     ota_key: Option<&str>,
 ) -> Result<String> {
-    let mut snapshot = json!({"profile": profile.name(), "inputs": inputs});
-    if let Some(variant) = variant {
-        snapshot["variant"] = variant.name().into();
-    }
-    if let Some(key) = ota_key {
-        snapshot["ota_public_key"] = key.into();
-    }
-    Ok(sha256(&petlibre_flash::canonical::canonical(&snapshot)?))
+    let snapshot = IdentitySnapshot {
+        profile: profile.name(),
+        inputs,
+        variant: variant.map(Variant::name),
+        ota_public_key: ota_key,
+    };
+    Ok(snapshot.identity()?)
 }
 
 /// What `source-id` prints: the bare first-boot identity check-cross

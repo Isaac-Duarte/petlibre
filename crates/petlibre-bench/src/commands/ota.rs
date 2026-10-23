@@ -16,9 +16,11 @@ use std::time::Instant;
 
 use clap::Args;
 use petlibre_core::record::{Record, tag};
+use petlibre_formats::capture::SerialEvent;
+use petlibre_formats::manifest::BuildManifest;
 use serde_json::Value;
 
-use super::{Bench, truthy};
+use super::Bench;
 use crate::config::{CAPTURES, VERIFICATION};
 use crate::{Error, Result, require};
 
@@ -423,18 +425,8 @@ impl Watch {
 /// When the receive byte at `offset` arrived, in Unix seconds, from a
 /// capture's `serial-events.jsonl` (one timed record per received chunk).
 pub fn arrival(events: &str, offset: u64) -> Option<f64> {
-    let event = events
-        .lines()
-        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
-        .find(|event| {
-            let start = event["offset"].as_u64();
-            let bytes = event["bytes"].as_u64();
-            event["direction"] == "rx"
-                && start
-                    .zip(bytes)
-                    .is_some_and(|(start, bytes)| (start..start + bytes).contains(&offset))
-        })?;
-    let utc = chrono::DateTime::parse_from_rfc3339(event["utc"].as_str()?).ok()?;
+    let event = SerialEvent::parse_lines(events).find(|event| event.received(offset))?;
+    let utc = chrono::DateTime::parse_from_rfc3339(&event.utc).ok()?;
     Some(utc.timestamp_micros() as f64 / 1e6)
 }
 
@@ -610,8 +602,8 @@ pub struct Staged {
 }
 
 /// A frozen review's startup identity, or a refusal.
-pub(crate) fn build_id(manifest: &Value) -> Result<String> {
-    let id = manifest["startup_identity"].as_str().unwrap_or("");
+pub(crate) fn build_id(manifest: &BuildManifest) -> Result<String> {
+    let id = manifest.startup_identity.as_deref().unwrap_or_default();
     require(
         is_build_id(id),
         "Review build-manifest.json has no 64-hex startup_identity",
@@ -851,19 +843,17 @@ impl Bench {
             image.is_file(),
             format!("{} has no image.bin", self.rel(&review)),
         )?;
-        let manifest: Value = fs::read_to_string(review.join("build-manifest.json"))
-            .ok()
-            .and_then(|text| serde_json::from_str(&text).ok())
-            .ok_or_else(|| {
-                Error::Bench(format!(
-                    "{} has no readable build-manifest.json",
-                    self.rel(&review)
-                ))
-            })?;
+        let manifest: BuildManifest = petlibre_formats::load(&review.join("build-manifest.json"))
+            .map_err(|error| {
+            Error::Bench(format!(
+                "{} has no readable build-manifest.json: {error}",
+                self.rel(&review)
+            ))
+        })?;
         let build = build_id(&manifest)?;
         self.attended_motion(&manifest, args.attended_motion)?;
-        if truthy(&manifest["variant"]) {
-            say!("Variant {}", manifest["variant"]);
+        if let Some(variant) = &manifest.variant {
+            say!("Variant {variant}");
         }
         say!("Build {build}");
 
@@ -929,10 +919,8 @@ impl Bench {
                         .all(|file| dir.join(file).is_file())
             })
             .filter(|dir| {
-                fs::read_to_string(dir.join("build-manifest.json"))
-                    .ok()
-                    .and_then(|text| serde_json::from_str::<Value>(&text).ok())
-                    .is_some_and(|manifest| manifest["startup_identity"] == identity)
+                petlibre_formats::load::<BuildManifest>(&dir.join("build-manifest.json"))
+                    .is_ok_and(|manifest| manifest.startup_identity.as_deref() == Some(identity))
             })
             .max_by_key(|dir| dir.metadata().and_then(|m| m.modified()).ok());
         Ok(newest.map(|dir| PathBuf::from(VERIFICATION).join(dir.file_name().unwrap_or_default())))

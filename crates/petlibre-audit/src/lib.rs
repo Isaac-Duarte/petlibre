@@ -32,6 +32,16 @@ pub enum Error {
     Json(#[from] serde_json::Error),
 }
 
+impl From<petlibre_formats::Error> for Error {
+    fn from(error: petlibre_formats::Error) -> Self {
+        match error {
+            petlibre_formats::Error::NotInteger => Self::Refused(error.to_string()),
+            petlibre_formats::Error::Io(error) => Self::Io(error),
+            petlibre_formats::Error::Json(error) => Self::Json(error),
+        }
+    }
+}
+
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// Refuse the input unless `condition` holds. A refusal (exit status 2) means
@@ -44,7 +54,7 @@ pub fn require(condition: bool, message: impl Into<String>) -> Result<()> {
     }
 }
 
-pub use petlibre_flash::canonical::sha256 as digest;
+pub use petlibre_formats::canonical::sha256 as digest;
 
 /// A JSON object under construction, as the Python reports' dicts.
 pub type Report = Map<String, Value>;

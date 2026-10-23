@@ -14,8 +14,9 @@ use std::process::{Command, Stdio};
 use std::sync::LazyLock;
 
 use chrono::{SecondsFormat, Utc};
+use petlibre_formats::manifest::{Artifact, Audits, BuildChecks, BuildManifest, CompiledArchive};
 use regex::Regex;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::audit::{self, Binutils, park};
 use crate::environment::{process_environment, rust_compiler, rust_environment};
@@ -354,8 +355,11 @@ pub fn build(
             path.is_file() && bytes > 0,
             format!("Missing build artifact: {}", path.display()),
         )?;
-        artifacts.push(json!({"path": relative(&path, &output)?, "bytes": bytes,
-                              "sha256": digest(&path)?}));
+        artifacts.push(Artifact {
+            path: relative(&path, &output)?,
+            bytes,
+            sha256: digest(&path)?,
+        });
     }
 
     let image_directory = sdk.join(PROJECT).join("project_hp/asdk/image");
@@ -411,10 +415,14 @@ pub fn build(
                     missing.join(", ")
                 ),
             )?;
-            compiled_archives.push(json!({"core": core_name(core), "target": triple,
-                                          "path": relative(archive, &output)?,
-                                          "sha256": digest(archive)?, "symbols": required,
-                                          "hardware_activated": false}));
+            compiled_archives.push(CompiledArchive {
+                core: core_name(core).into(),
+                target: triple.to_string(),
+                path: relative(archive, &output)?,
+                sha256: digest(archive)?,
+                symbols: required.iter().map(|s| s.to_string()).collect(),
+                hardware_activated: false,
+            });
         }
     }
 
@@ -439,81 +447,82 @@ pub fn build(
     }
 
     let stock = fs::read(repo.stock()).ok();
-    let mut audits = json!({});
+    let mut audits = Audits::default();
     if profile.model() {
         let stock = stock.as_deref().unwrap_or_default();
-        audits["layout_audit"] = audit::layout::audit(
-            &image_directory.join("OTA_All.bin"),
-            &repo.stock(),
-            &repo.layout(),
-        )
-        .map_err(|e| Error::Refused(format!("Offline layout audit failed: {e}")))?;
-        audits["km0_pinmap_audit"] =
-            audit::pinmap::audit_linked_table(&ota, audit::pmap_address(&sdk, &binutils)?, stock)?;
+        audits.layout_audit = Some(
+            audit::layout::audit(
+                &image_directory.join("OTA_All.bin"),
+                &repo.stock(),
+                &repo.layout(),
+            )
+            .map_err(|e| Error::Refused(format!("Offline layout audit failed: {e}")))?,
+        );
+        audits.km0_pinmap_audit = Some(audit::pinmap::audit_linked_table(
+            &ota,
+            audit::pmap_address(&sdk, &binutils)?,
+            stock,
+        )?);
     }
     if profile.rust() {
-        audits["ram_park_audit"] = park::audit(&sdk, &binutils, &archives)?;
-        audits["sdk_hook_audit"] = audit::hooks::audit(&sdk, &binutils, &archives)?;
+        audits.ram_park_audit = Some(park::audit(&sdk, &binutils, &archives)?);
+        audits.sdk_hook_audit = Some(audit::hooks::audit(&sdk, &binutils, &archives)?);
     }
     if profile.firstboot() {
-        audits["firstboot_startup_audit"] = audit::mains::audit(&sdk, &binutils)?;
-        audits["wifi_link_audit"] = audit::writes::audit(&sdk, &binutils)?;
-        audits["stack_audit"] = audit::stack::audit(
+        audits.firstboot_startup_audit = Some(audit::mains::audit(&sdk, &binutils)?);
+        audits.wifi_link_audit = Some(audit::writes::audit(&sdk, &binutils)?);
+        audits.stack_audit = Some(audit::stack::audit(
             &image_directory.join("target_img2.axf"),
             &binutils.objdump(),
             &fs::read_to_string(repo.path(audit::stack::APP_SOURCE))?,
-        )?;
+        )?);
     }
-    let audit = |key: &str| audits.get(key).cloned().unwrap_or(Value::Null);
 
     let rust = profile.rust();
     let firstboot = profile.firstboot();
     let when = |condition: bool, value: &str| condition.then(|| value.to_string());
-    let manifest = json!({
-        "profile": profile.name(),
-        "sdk_revision": lock.sdk_revision,
-        "startup_identity": when(rust, &identity),
-        "startup_output_policy": when(rust, "stop-only"),
+    let manifest = BuildManifest {
+        profile: profile.name().into(),
+        sdk_revision: lock.sdk.revision,
+        startup_identity: when(rust, &identity),
+        startup_output_policy: when(rust, "stop-only"),
         // The FW04 pulse probe is gone; startup only drives the indicators LOW.
-        "startup_led_policy": when(rust, "low-only-v1"),
-        "startup_gpio_routing_policy": when(rust, "read-only-v3"),
-        "startup_shared_pad_policy": when(firstboot, "before-km4-v3"),
-        "startup_gpio_clock_policy": when(rust, "explicit-enable-v1"),
-        "startup_flash_handshake_policy": null,
-        "startup_adc_policy": null,
-        "startup_wifi_policy": when(firstboot, "fw07-dns-v1"),
-        "startup_transport_policy": when(firstboot, "fw08-transport-v1"),
-        "startup_optics_policy": when(firstboot && variant.is_none(), "fw13-optics-v2"),
-        "startup_motion_policy": variant.and_then(Variant::motion_policy),
-        "startup_trial_policy": variant.and_then(Variant::trial_policy),
-        "variant": variant.map(Variant::name),
-        "startup_update_policy": ota_key.as_ref().map(|_| "fw10-recovery-v1"),
-        "ota_public_key": ota_key,
-        "toolchain_sha256": lock.toolchain_sha256,
-        "built_at": Utc::now().to_rfc3339_opts(SecondsFormat::Micros, false),
-        "inputs": expected,
-        "sdk_overrides": overrides,
-        "compiled_archives": compiled_archives,
-        "rust_toolchain": compiler.as_ref().map(|c| c["version"].clone()),
-        "rust_compiler": compiler,
-        "toolchain_files": pins,
-        "layout_audit": audit("layout_audit"),
-        "km0_pinmap_audit": audit("km0_pinmap_audit"),
-        "ram_park_audit": audit("ram_park_audit"),
-        "sdk_hook_audit": audit("sdk_hook_audit"),
-        "firstboot_startup_audit": audit("firstboot_startup_audit"),
-        "wifi_link_audit": audit("wifi_link_audit"),
-        "stack_audit": audit("stack_audit"),
-        "bootloader_replacement_supported": false,
-        "artifacts": artifacts,
-        "checks": {"ota_payload_matches": true, "ota_checksum_matches": true,
-                   "bringup_banner_present": banner,
-                   "required_core_symbols": required_symbols,
-                   "source_snapshot_unchanged": true,
-                   "sdk_worktree_within_allowlist": true,
-                   "staged_sources_without_diagnostics": true},
-        "device_compatibility": "Unverified SDK development image; desktop build only",
-    });
+        startup_led_policy: when(rust, "low-only-v1"),
+        startup_gpio_routing_policy: when(rust, "read-only-v3"),
+        startup_shared_pad_policy: when(firstboot, "before-km4-v3"),
+        startup_gpio_clock_policy: when(rust, "explicit-enable-v1"),
+        startup_flash_handshake_policy: None,
+        startup_adc_policy: None,
+        startup_wifi_policy: when(firstboot, "fw07-dns-v1"),
+        startup_transport_policy: when(firstboot, "fw08-transport-v1"),
+        startup_optics_policy: when(firstboot && variant.is_none(), "fw13-optics-v2"),
+        startup_motion_policy: variant.and_then(Variant::motion_policy).map(Into::into),
+        startup_trial_policy: variant.and_then(Variant::trial_policy).map(Into::into),
+        variant: variant.map(|v| v.name().into()),
+        startup_update_policy: ota_key.as_ref().map(|_| "fw10-recovery-v1".into()),
+        ota_public_key: ota_key,
+        toolchain_sha256: lock.toolchain.sha256,
+        built_at: Utc::now().to_rfc3339_opts(SecondsFormat::Micros, false),
+        inputs: expected,
+        sdk_overrides: overrides,
+        compiled_archives,
+        rust_toolchain: compiler.as_ref().map(|c| c.version.clone()),
+        rust_compiler: compiler,
+        toolchain_files: pins,
+        audits,
+        bootloader_replacement_supported: false,
+        artifacts,
+        checks: BuildChecks {
+            ota_payload_matches: true,
+            ota_checksum_matches: true,
+            bringup_banner_present: banner,
+            required_core_symbols: required_symbols.iter().map(|s| s.to_string()).collect(),
+            source_snapshot_unchanged: true,
+            sdk_worktree_within_allowlist: true,
+            staged_sources_without_diagnostics: true,
+        },
+        device_compatibility: "Unverified SDK development image; desktop build only".into(),
+    };
 
     let path = output.join("manifest.json");
     fs::write(&path, serde_json::to_string_pretty(&manifest)? + "\n")?;
@@ -530,20 +539,11 @@ fn contains(haystack: &[u8], needle: &[u8]) -> bool {
 /// Re-run a finished build's audits for its review: the archives come from
 /// its manifest, everything else from the build directory and the checkout.
 pub fn audit_build(repo: &Repo, build: &Path) -> Result<Value> {
-    let manifest: Value = serde_json::from_slice(&fs::read(build.join("manifest.json"))?)?;
-    let objects: Vec<(String, PathBuf)> = manifest["compiled_archives"]
-        .as_array()
-        .map(|archives| {
-            archives
-                .iter()
-                .filter_map(|a| {
-                    Some((
-                        a["core"].as_str()?.to_string(),
-                        build.join(a["path"].as_str()?),
-                    ))
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+    let manifest: BuildManifest = petlibre_formats::load(&build.join("manifest.json"))?;
+    let objects: Vec<(String, PathBuf)> = manifest
+        .compiled_archives
+        .into_iter()
+        .map(|a| (a.core, build.join(a.path)))
+        .collect();
     audit::linked(repo, build, &objects)
 }

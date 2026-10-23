@@ -4,6 +4,7 @@ use std::fs;
 use std::path::Path;
 
 use chrono::{DateTime, Duration};
+use petlibre_formats::manifest::BuildManifest;
 use serde_json::{Value, json};
 
 use crate::capture::Time;
@@ -76,7 +77,7 @@ pub struct Fixture {
 impl Fixture {
     pub fn new(inputs: Value) -> Self {
         let mut manifest = json!({"profile": "plaf103-firstboot", "inputs": inputs});
-        let identity = digest(&petlibre_flash::canonical::canonical(&manifest).unwrap());
+        let identity = digest(&petlibre_formats::canonical::canonical(&manifest).unwrap());
         manifest["startup_identity"] = json!(identity);
 
         Self {
@@ -84,6 +85,11 @@ impl Fixture {
             manifest,
             identity,
         }
+    }
+
+    /// The manifest as the audit loads it.
+    pub fn typed(&self) -> BuildManifest {
+        serde_json::from_value(self.manifest.clone()).unwrap()
     }
 
     pub fn path(&self) -> &Path {

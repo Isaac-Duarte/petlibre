@@ -12,13 +12,13 @@ use std::path::PathBuf;
 
 use serde_json::{Value, json};
 
-use crate::canonical::{canonical, sha256};
 use crate::error::{Result, require};
 use crate::evidence::{self, utc};
 use crate::protocol::{self, CAPACITY, HELPER_SHA256, Port};
 use crate::recovery::{self, KIND};
 use crate::session::{self, Context, Outcome, progress};
 use crate::update::Evidence;
+use petlibre_formats::canonical::{canonical, sha256};
 
 pub struct Args {
     pub execute: bool,
@@ -94,7 +94,7 @@ fn comparable(reviewed: &Value) -> Result<Vec<u8>> {
         .as_object_mut()
         .unwrap()
         .remove("created_utc");
-    canonical(&result)
+    Ok(canonical(&result)?)
 }
 
 pub fn run(context: &Context, args: &Args) -> Result<Outcome> {

@@ -105,7 +105,7 @@ Subscribe { samples }                 Sample { at, metric, value }
 
 ### Shape
 
-- **Resources** live under `/api/v1`. They use JSON bodies, `camelCase` fields (matching the TS and Dart conventions), UUIDv7 IDs and RFC 3339 timestamps with offsets.
+- **Resources** live under `/api/v1`. They use JSON bodies, `snake_case` fields (serde's default for Rust field names, so no rename attributes; the generated TS and Dart types use the same names), UUIDv7 IDs and RFC 3339 timestamps with offsets.
 - **Errors** use RFC 9457 `application/problem+json`, with a typed `code` from a closed enum in `petlibre-api` and no catch-all string.
 - **Writes** carry an `Idempotency-Key` header, which the server forwards as the device request ID. Edits carry `If-Match` with the generation, and a stale one gets `412` with the current resource.
 - **Live updates.** `GET /api/v1/stream` is Server-Sent Events for every feeder the user can see: events, samples (opt in per metric), connection state and command results. It resumes with `Last-Event-ID`, mapped to the server's own event sequence.

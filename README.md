@@ -32,7 +32,7 @@ Install Rust through rustup, Python 3.10.12 or newer with venv/pip, and GNU Make
 
 ```sh
 python3 -m venv .venv
-.venv/bin/python -m pip install -r tools/requirements-probe.txt
+.venv/bin/python -m pip install -r src/tools/requirements-probe.txt
 cargo build --locked
 make check PYTHON=.venv/bin/python
 ```
@@ -43,12 +43,12 @@ Initial setup downloads dependencies. Checks use host models and loopback networ
 
 | Location | Contents |
 | --- | --- |
-| `crates/sdk/` | The Wellfed SDK that firmwares build on: `wellfed-sdk` (the runtime every firmware runs inside, and the firmware API), `wellfed-core` (hardware-independent feeding, journal and flash logic), `wellfed-hal` and `wellfed-hal-common` (AmebaD ports), `wellfed-amebad-sys` (pinned vendor SDK bindings and the host fake), `wellfed-sdk-c` (the C ABI and per-core archives), `wellfed-testkit` and `wellfed-sim` (the virtual feeder) |
-| `crates/tools/` | Host tools: `wellfed-local` (stock-firmware local server), `wellfed-flash` (UART flash reads, updates and recovery), `wellfed-bench` (relay bench and its progress page, built in with `--features ui`), `wellfed-audit` (offline evidence audits), `wellfed-build` (SDK firmware builds and their link audits), `wellfed-formats` (the file formats those host tools share), `xtask` (`cargo xtask check-repository`) |
-| `firmwares/` | One crate per firmware built on the SDK ([guide](firmwares/README.md)): `reference` (the diagnostic application and its bench variants) and `blink` (the minimal template) |
-| `firmware/` | SDK hooks and C ports, pinned builds, layout, and simulator build |
-| `web/` | Optional web frontends (pnpm workspace): the bench page, shared design tokens and components, and API types generated from Rust. `make ui` builds them |
-| `tools/` | Image review, emulation, and experimental recovery tools/tests |
+| `src/sdk/` | The Wellfed SDK that firmwares build on: `wellfed-sdk` (the runtime every firmware runs inside, and the firmware API), `wellfed-core` (hardware-independent feeding, journal and flash logic), `wellfed-hal` and `wellfed-hal-common` (AmebaD ports), `wellfed-amebad-sys` (pinned vendor SDK bindings and the host fake), `wellfed-sdk-c` (the C ABI and per-core archives), `wellfed-testkit` and `wellfed-sim` (the virtual feeder) |
+| `src/tools/` | Host tools: `wellfed-local` (stock-firmware local server), `wellfed-flash` (UART flash reads, updates and recovery), `wellfed-bench` (relay bench and its progress page, built in with `--features ui`), `wellfed-audit` (offline evidence audits), `wellfed-build` (SDK firmware builds and their link audits), `wellfed-formats` (the file formats those host tools share), `xtask` (`cargo xtask check-repository`); and the remaining Python tools (image review, emulation, experimental recovery) with their tests |
+| `src/firmware/wellfed/` | One crate per firmware built on the SDK ([guide](src/firmware/wellfed/README.md)): `reference` (the diagnostic application and its bench variants) and `blink` (the minimal template) |
+| `src/firmware/vendor/` | The vendor SDK side: C entry hooks and ports, the pinned SDK and toolchain locks, the stock layout, simulator scenarios, and the image build (`make -C src/firmware/vendor`) |
+| `src/web/` | Optional web frontends (pnpm workspace): the bench page, shared design tokens and components, and API types generated from Rust. `make ui` builds them |
+| `src/scripts/` | Developer scripts: `dev-dashboard` serves the bench page for this checkout |
 | `docs/` | Hardware findings, firmware contracts, and contributor workflows |
 | `private/` | Ignored contributor-owned secrets, evidence, dependencies, and artifacts |
 

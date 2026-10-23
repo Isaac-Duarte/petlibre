@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/sdk/*", "crates/tools/*", "firmwares/*"]
+members = ["src/sdk/*", "src/tools/wellfed-*", "src/tools/xtask", "src/firmware/wellfed/*"]
 resolver = "3"
 
 [workspace.package]
@@ -9,16 +9,16 @@ license = "MIT"
 publish = false
 
 [workspace.dependencies]
-wellfed-hal = { path = "crates/sdk/wellfed-hal" }
-wellfed-hal-common = { path = "crates/sdk/wellfed-hal-common" }
-wellfed-amebad-sys = { path = "crates/sdk/wellfed-amebad-sys" }
-wellfed-core = { path = "crates/sdk/wellfed-core" }
-wellfed-fw-reference = { path = "firmwares/reference" }
-wellfed-sdk = { path = "crates/sdk/wellfed-sdk" }
-wellfed-sdk-c = { path = "crates/sdk/wellfed-sdk-c" }
-wellfed-fw-blink = { path = "firmwares/blink" }
-wellfed-formats = { path = "crates/tools/wellfed-formats" }
-wellfed-testkit = { path = "crates/sdk/wellfed-testkit" }
+wellfed-hal = { path = "src/sdk/wellfed-hal" }
+wellfed-hal-common = { path = "src/sdk/wellfed-hal-common" }
+wellfed-amebad-sys = { path = "src/sdk/wellfed-amebad-sys" }
+wellfed-core = { path = "src/sdk/wellfed-core" }
+wellfed-fw-reference = { path = "src/firmware/wellfed/reference" }
+wellfed-sdk = { path = "src/sdk/wellfed-sdk" }
+wellfed-sdk-c = { path = "src/sdk/wellfed-sdk-c" }
+wellfed-fw-blink = { path = "src/firmware/wellfed/blink" }
+wellfed-formats = { path = "src/tools/wellfed-formats" }
+wellfed-testkit = { path = "src/sdk/wellfed-testkit" }
 # Host tools.
 anyhow = "1.0.104"
 axum = "0.8.9"

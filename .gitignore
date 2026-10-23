@@ -14,10 +14,10 @@ __pycache__/
 
 # Web frontends: dependencies, builds (embedded by `--features ui`) and test output
 node_modules/
-/web/**/dist/
-/web/**/test-results/
-/web/**/playwright-report/
-/web/**/.vite/
+/src/web/**/dist/
+/src/web/**/test-results/
+/src/web/**/playwright-report/
+/src/web/**/.vite/
 *.tsbuildinfo
 
 # Agent worktrees: scratch checkouts, not sources

@@ -9,17 +9,18 @@ image, bench state, next task, or acceptance evidence changes.
 
 **October 22, late night: one SDK, many firmwares (FW36, host only, nothing run on the bench).**
 - **What changed:**
-  - The workspace is `crates/sdk/` (the SDK), `crates/tools/` (host tools) and `firmwares/` (one crate per firmware). Renamed: `wellfed-amebad` to `wellfed-hal`, `-amebad-common` to `-hal-common`, `-amebad-sdk` to `-amebad-sys`, `-ffi` to `-sdk-c`, `-firstboot` to `wellfed-fw-reference` in `firmwares/reference`. C symbols are unchanged.
+  - The workspace is `src/sdk/` (the SDK), `src/tools/` (host tools) and `src/firmware/wellfed/` (one crate per firmware). Renamed: `wellfed-amebad` to `wellfed-hal`, `-amebad-common` to `-hal-common`, `-amebad-sdk` to `-amebad-sys`, `-ffi` to `-sdk-c`, `-firstboot` to `wellfed-fw-reference` in `src/firmware/wellfed/reference`. C symbols are unchanged.
   - New `wellfed-sdk`: the KM4 runtime from `app.rs` (entry, startup, Wi-Fi and transport, feeder, confirmation, settings writer, updater, offer check). Bank 0 never starts firmware code. A firmware defines `firmware!(start)` and creates tasks with `wellfed_sdk::spawn`; it reports `startup_done` before the runtime confirms.
   - The reference firmware's tasks now start before the confirmation task, so `PLAUD1 start` logs before `PLCNF1 start`.
   - The stack audit reads its task table from the runtime and the firmware.
 - **Checks:** `make check`; fresh `plaf103` and `plaf103-firstboot` builds with every audit passing; `make check-fixtures` with no skips. Stack bounds unchanged except audio 1040 to 728 and optics 4352 to 4380 (of 8192), both from cross-crate inlining.
 - **Not yet physical:** the split images have not run on the feeder.
 - **Firmware selection (later the same night):**
-  - `wellfed-build --firmware <name>` (default `reference`; `make -C firmware … FIRMWARE=<name>`). The KM4 archive is the firmware crate; KM0's is `wellfed-sdk-c`, which every firmware also links through `wellfed-sdk` for the core C ABI and the panic handler.
+  - `wellfed-build --firmware <name>` (default `reference`; `make -C src/firmware/vendor … FIRMWARE=<name>`). The KM4 archive is the firmware crate; KM0's is `wellfed-sdk-c`, which every firmware also links through `wellfed-sdk` for the core C ABI and the panic handler.
   - The firmware name joins the identity and the manifest (`firmware`). Only the chosen firmware's sources are inputs. `audit` and the Python review read it from the manifest, and image variants are refused for any firmware but `reference`.
-  - New `firmwares/blink`: one task blinks the connection indicator, verifying each level. A `play` request on blink fills the audio mailbox and later ones answer `busy`.
+  - New `src/firmware/wellfed/blink`: one task blinks the connection indicator, verifying each level. A `play` request on blink fills the audio mailbox and later ones answer `busy`.
   - Checks: `make check`; `plaf103` and `plaf103-firstboot` for `reference` (stack bounds as above), and `plaf103-firstboot` for `blink` (blink task 748 of 4096); `make check-fixtures` with no skips against each. `private/firmware-build/plaf103-firstboot` holds the reference build again.
+- **Layout (later the same night):** everything first-party is under `src/`: `src/sdk/` (SDK crates), `src/tools/` (Rust host tools beside the Python tools), `src/firmware/wellfed/` (firmwares), `src/firmware/vendor/` (the former `firmware/`: C ports, pins, layout, image build, so `make -C src/firmware/vendor plaf103-firstboot`), `src/web/` and `src/scripts/dev-dashboard`. The Python tools' bytes changed (their `ROOT` depth), so plans that recorded their hashes are stale. Rebuild the release binaries (`cargo build --release`) before bench use; the old ones read the old paths. Checks: `make check`, `make check-web`, fresh `plaf103` and `plaf103-firstboot` builds (stack bounds unchanged), and `make check-fixtures` with no skips.
 - **Next (FW36), on hardware:** the smoke suite on the reference firmware, then install `blink` and check it confirms and blinks, then OTA back to the reference firmware.
 
 **October 22, late night: faster integration runs (physical over the air and by UART, autonomous).**
@@ -75,7 +76,7 @@ image, bench state, next task, or acceptance evidence changes.
 
 **October 22, night: bench console (FW35, host only, nothing run on the bench).**
 - **What changed:**
-  - `wellfed-bench --ui` is now a Svelte app in `web/` (pnpm workspace), embedded only with `--features ui`. Without the feature, `--ui` refuses. `make ui` builds it.
+  - `wellfed-bench --ui` is now a Svelte app in `src/web/` (pnpm workspace), embedded only with `--features ui`. Without the feature, `--ui` refuses. `make ui` builds it.
   - New read-only views: `/api/tests` (catalog, runs, per-scenario stats), `/api/tests/{name}` and `/api/feeder` (`wellfed-local` `GET /api/status` via `private/server.json`, plus an SSE `feeder` event).
   - The itest record is a typed `RunRecord`, written and read through one type. The HTTP client is shared in `local_api.rs`, and steps carry start and finish times.
   - The old `assets/` page is deleted.
@@ -83,7 +84,7 @@ image, bench state, next task, or acceptance evidence changes.
 - **Next:** with the owner, watch the Feeder and Tests views through a live `itest` run to finish FW35.
 
 **October 22, evening: idiomatic-Rust pass (physical over the air, autonomous).**
-- **What changed:** host tools read and write typed serde structs instead of `serde_json::Value`. Shared file formats live in the new `crates/tools/wellfed-formats` (build manifest and identity, layout, locks, serial events, credentials, flash plans). Firmware got only codegen-neutral cleanups: `unsafe fn` contracts, `// SAFETY:` comments with `clippy::undocumented_unsafe_blocks` denied, one `c_enum!`, `TaskCell`, shared constants, and stage enums with identical record text. AGENTS.md now carries the Rust conventions and the owner's compatibility policy (old evidence may break; live interop and pinned checks may not).
+- **What changed:** host tools read and write typed serde structs instead of `serde_json::Value`. Shared file formats live in the new `src/tools/wellfed-formats` (build manifest and identity, layout, locks, serial events, credentials, flash plans). Firmware got only codegen-neutral cleanups: `unsafe fn` contracts, `// SAFETY:` comments with `clippy::undocumented_unsafe_blocks` denied, one `c_enum!`, `TaskCell`, shared constants, and stage enums with identical record text. AGENTS.md now carries the Rust conventions and the owner's compatibility policy (old evidence may break; live interop and pinned checks may not).
 - **Bugs fixed (static):**
   - `wellfed-audit startup` rebuilt the identity without the variant or update key, so it refused every current build.
   - The bench's attended-motion gate passed an unparseable `build-manifest.json`.
@@ -106,7 +107,7 @@ image, bench state, next task, or acceptance evidence changes.
   - Deferred firmware items: the `PROVIDER` aliasing, merging the three record stores' framing, and `net_store::save`'s missing verify-before-commit.
 
 **October 22, late night: the firmware build is Rust (physical, autonomous).**
-- **`wellfed-build`** (`crates/tools/wellfed-build`) replaces `firmware/tools/build.py` and its six audit modules (pad table, RAM park, SDK hooks, first-boot mains, flash/eFuse writers, task stacks), plus the OTA layout audit it ran as a child. `make -C firmware <profile>` and `check-cross` call it; run the executable itself, since `cargo run` sets `RUSTUP_TOOLCHAIN`, which a build refuses.
+- **`wellfed-build`** (`src/tools/wellfed-build`) replaces `firmware/tools/build.py` and its six audit modules (pad table, RAM park, SDK hooks, first-boot mains, flash/eFuse writers, task stacks), plus the OTA layout audit it ran as a child. `make -C src/firmware/vendor <profile>` and `check-cross` call it; run the executable itself, since `cargo run` sets `RUSTUP_TOOLCHAIN`, which a build refuses.
 - **Equivalence shown before deleting the Python:**
   - Static: on the same Python-built speaker tree, all seven Rust audits equal the manifest's.
   - Static: identities equal Python's `source_identity` for the same inputs (bare, image, speaker, fw11-fail).
@@ -211,7 +212,7 @@ image, bench state, next task, or acceptance evidence changes.
 - **Sizes:** only `wellfed_app_start` changed (0x178 to 0x1a6). It calls the same functions; the difference is LTO register allocation.
 - **Rebuild needed:** the firmware source ID changed, so every ignored build is stale. Rebuild and review before any install.
 
-**October 22, Python to Rust (offline, nothing run on the bench).** The owner's direction is Rust wherever it makes sense; once a Rust version is shown equivalent, the Python tool and its tests go ([tools/README.md](tools/README.md) lists what went and what stays).
+**October 22, Python to Rust (offline, nothing run on the bench).** The owner's direction is Rust wherever it makes sense; once a Rust version is shown equivalent, the Python tool and its tests go ([src/tools/README.md](src/tools/README.md) lists what went and what stays).
 - **Ported, with equivalence shown before deletion:**
   - `wellfed-audit` replaces the startup, FW14 ADC, FW30 transient and full-flash auditors. Every call the old tests made, plus 227 real captures and 2 real read pairs, gave identical reports.
   - `wellfed-sim`'s `virtual-feeder` replaces the Python harness: identical reports on all 8 scenarios.
@@ -221,7 +222,7 @@ image, bench state, next task, or acceptance evidence changes.
 - **Kept in Python on purpose:** stock recovery, the unicorn emulations, the image review and the build helpers.
 - **Rebuild before relying on the private builds:** the firmware build inputs changed (`Cargo.lock`, the probe crate removed). The fixture suite skips 14 stale-build checks until the builds are refreshed; frozen reviews stay valid.
 
-**October 22, latest (offline, nothing run on the bench).** FW33: the relay bench is now the Rust `wellfed-bench` (crate `crates/tools/wellfed-bench`). It chains `wellfed-flash` as a child process and serves the read-only page with `--ui`. `bench.py`, `bench-dashboard.py`, `relay-demo.py`, `uart-give-way.py` and seven finished one-off Python analyses are removed (list in [tools/README.md](tools/README.md)). It is host-tested only. **Next:** with the owner, build both binaries (`cargo build --locked --release -p wellfed-bench -p wellfed-flash`), then run `status`, `on`/`off`, `loader` and a no-op `flash-prepare`/`flash-execute` with `--ui` ([bench](docs/hardware/bench.md)).
+**October 22, latest (offline, nothing run on the bench).** FW33: the relay bench is now the Rust `wellfed-bench` (crate `src/tools/wellfed-bench`). It chains `wellfed-flash` as a child process and serves the read-only page with `--ui`. `bench.py`, `bench-dashboard.py`, `relay-demo.py`, `uart-give-way.py` and seven finished one-off Python analyses are removed (list in [src/tools/README.md](src/tools/README.md)). It is host-tested only. **Next:** with the owner, build both binaries (`cargo build --locked --release -p wellfed-bench -p wellfed-flash`), then run `status`, `on`/`off`, `loader` and a no-op `flash-prepare`/`flash-execute` with `--ui` ([bench](docs/hardware/bench.md)).
 
 **October 22, later (physical).** The **first live OTA** and a **hands-off OTA** both succeeded (FW10). The second was started by the running normal image, with no UART. FW11 trial, fallback and confirmation work on hardware (see the board).
 - **Flash now:** bank 1 holds OTA-installed `fw10-watch-review-20261022-01` (`4d37c21a…`, v6, confirmed, offer watcher running). Bank 0 holds the same build, installed by the Rust client (FW32). Bank 0 holds `fw10-recovery-review-20261022-02` (`635476bd…`), the fixed updater.
@@ -258,7 +259,7 @@ levels to FW30. See [optical inputs](docs/firmware/optical-inputs.md). FW31:
 the relay bench installed a changed image (one loader NAK, finished with
 `--interrupted`) and ran a full 8 MiB dump. Only bank 1 differs from the FW08
 read B, and it matches the installed review byte for byte.
-`tools/bench/bench-dashboard.py` shows bench progress on localhost.
+`src/tools/bench/bench-dashboard.py` shows bench progress on localhost.
 
 **FW14 (current, battery and external power inputs) is in progress.** FW15 is done (storage scope); real-motion journal wiring is carried to FW16.
 
@@ -497,7 +498,7 @@ to FW27.
   Wi-Fi probe.
 - C TCP helpers in `example_entry.c`.
 - The server's firmware role, `firmware-credential` command and API.
-- A structural no-dispense check in `cargo xtask check-repository` (formerly `tools/check-repository.py`).
+- A structural no-dispense check in `cargo xtask check-repository` (formerly `src/tools/check-repository.py`).
 - `audit-firmware-transport.py` (removed after FW08 closed; its reports remain).
 
 `private/fw-mqtt.json` now exists. `private/server.json` gained a `firmware`

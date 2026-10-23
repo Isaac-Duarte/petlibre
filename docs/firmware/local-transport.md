@@ -101,7 +101,7 @@ Anything else gets `ok:false`, `error:"unsupported"`, and is logged. Requests ca
 
 **Decision:** no reboot, no log dump and no settings read in v1. A remote reboot could make a fault hard to see, so it waits for FW11's boot policy. Log streaming needs a size and rate budget.
 
-**Structural no-dispense rule.** The transport's code may depend on the health snapshot and its own socket, nothing else. `cargo xtask check-repository` (crates/tools/xtask, part of `make check`) lists every path that `wellfed-core`'s `transport.rs` and the KM4 `transport.rs` may name. The KM4 driver may name the core transport, the `sdk` socket, clock and config wrappers, `net_status::read` and `health::snapshot`, and nothing else. Glob imports, `unsafe`, externs, module declarations and mutable statics are refused in both files. The health snapshot is built by `health.rs`, which only reads. FW16 will add the matching link check when a motor controller exists.
+**Structural no-dispense rule.** The transport's code may depend on the health snapshot and its own socket, nothing else. `cargo xtask check-repository` (src/tools/xtask, part of `make check`) lists every path that `wellfed-core`'s `transport.rs` and the KM4 `transport.rs` may name. The KM4 driver may name the core transport, the `sdk` socket, clock and config wrappers, `net_status::read` and `health::snapshot`, and nothing else. Glob imports, `unsafe`, externs, module declarations and mutable statics are refused in both files. The health snapshot is built by `health.rs`, which only reads. FW16 will add the matching link check when a motor controller exists.
 
 ## Authentication and exposure
 

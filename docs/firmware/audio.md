@@ -19,7 +19,7 @@ From the stock KM4 image (`DL_AUDIO`, `audio_play_http_file`):
 
 ## Replacement design
 
-- **C shim** (`firmware/ports/amebad/example_entry.c`):
+- **C shim** (`src/firmware/vendor/ports/amebad/example_entry.c`):
   - Opens the codec as stock does, at 16 kHz, 16-bit mono, line out, plus SPORT and an 8-page GDMA ring (16 ms pages).
   - When no filled page is ready, the DMA plays a zero page and counts an underrun, so the stream never stops by itself.
   - Close stops the DMA, frees its channel, and stops SPORT and the codec output.

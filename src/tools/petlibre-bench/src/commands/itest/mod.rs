@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use clap::{Args, ValueEnum};
 use serde::Serialize;
 
-use super::ota::{Outcome, Staged, Watch};
+use super::ota::{Outcome, Staged, Target, Watch};
 use crate::config::VERIFICATION;
 use crate::server::{ForgedCase, Health, LocalStatus, Reply, Request, TrialRequest};
 use crate::status::StepState;
@@ -423,6 +423,11 @@ impl<'r> Ctx<'r> {
     /// Offer `staged` through `serve` and classify the UART until the update
     /// passes, falls back or fails; the server's health must then agree.
     fn install(&mut self, staged: &Staged) -> Result<Outcome> {
+        // The suite's scenarios need health and a trial, which stock has not.
+        require(
+            staged.target == Target::Replacement,
+            "The integration suite installs replacement builds only; offer stock with `petlibre-bench ota`",
+        )?;
         let since = self.mark()?;
         self.rig.offer(Some(staged))?;
         self.note(&format!(

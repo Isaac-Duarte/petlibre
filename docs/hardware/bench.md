@@ -69,7 +69,10 @@ Stock recovery keeps its own commands. Use `loader` to enter the ROM, then run `
 ```sh
 target/release/petlibre-bench ota fw12-unit-01 --build                     # build, review, offer, verify
 target/release/petlibre-bench ota fw12-unit-02 --review private/verification/<review>
+target/release/petlibre-bench ota stock-01 --review private/verification/<stock review>   # back to stock (FW41)
 ```
+
+**Back to stock over the air (FW41, host-tested).** A review whose `review.json` says `image_kind: stock` installs through the same signed update: the bench signs the stock payload with its `payload_sha256` as the build ID, the running replacement gives way, and bank 0's updater writes and verifies bank 1 before the marker, as for any build. The run passes on stock's `app_main:version:` banner after activation; there is no health step, since stock does not report to this server. Stock has no trial, so a stock image that failed to boot would need the UART [stock recovery](recovery.md). The integration suite refuses stock reviews. The UART route reads the whole flash three times and took about 65 minutes on October 23; this route writes only bank 1 and should take a few minutes.
 
 - **Build (`--build`):** runs two children from the root, their output streamed to the progress log. First `petlibre-build build --profile firstboot` (beside the bench binary, or `--build-bin`), then the review `petlibre-build review build --build private/firmware-build/plaf103/firstboot --output private/verification/NAME-review`. The run then continues as with `--review` on that directory.
   - `--firmware qa|optics|buttons|adc|speaker|blink|trial` passes the same `--firmware` to the build (default `qa`), and `--variant fw11-reset|fw11-fail` picks a trial image with `--firmware trial`. The `motor` firmware and its `fw16-pulse` variant are refused: motion builds stay manual, then go through `--review` with `--attended-motion`.

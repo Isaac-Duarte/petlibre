@@ -4,6 +4,13 @@
 //! build confirms, falls back, or time runs out, then check that the server's
 //! health shows the new build. Each phase is timed for the FW12 record.
 //!
+//! A review of the original stock image (`image_kind: stock`) installs the
+//! same way, through the replacement's own signed update: its payload hash
+//! stands in for a build ID, success is stock's `app_main:version:` banner
+//! after activation, and there is no health to check, since stock does not
+//! report to this server. Stock has no trial, so a stock image that failed to
+//! boot would need the UART recovery.
+//!
 //! The bench never starts the server or the hotspot, never switches a relay
 //! here, and never writes to the feeder. [`Watch`] classifies the feeder's
 //! `PL…` lines without I/O, so it is tested on real lines; the server's
@@ -18,6 +25,7 @@ use clap::Args;
 use petlibre_core::record::{Record, tag};
 use petlibre_formats::capture::SerialEvent;
 use petlibre_formats::manifest::BuildManifest;
+use petlibre_formats::review::{ImageKind, ImageReview};
 
 use super::Bench;
 use crate::config::{CAPTURES, VERIFICATION};
@@ -322,6 +330,10 @@ pub(crate) enum Event {
     Confirmed {
         detail: String,
     },
+    /// Stock's application banner after activation: a stock install passed.
+    StockStarted {
+        version: String,
+    },
     FellBack {
         boot: Option<u32>,
     },
@@ -379,6 +391,7 @@ impl fmt::Display for Event {
             }
             Self::EarlyGiveWay => write!(f, "KM0 gave way to bank 0 before the new build ran"),
             Self::Confirmed { detail } => write!(f, "New build confirmed ({detail})"),
+            Self::StockStarted { version } => write!(f, "Stock {version} started on bank 1"),
             Self::FellBack { boot } => write!(
                 f,
                 "KM0 rejected the trial after boot {}; bank 0 runs again",
@@ -399,10 +412,23 @@ pub(crate) enum Outcome {
     Failed { stage: String },
 }
 
+/// What an offered image is, from its review's `image_kind`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Target {
+    /// A replacement build: it must start on bank 1 and confirm.
+    Replacement,
+    /// The original stock image: it must print its banner after activation.
+    Stock,
+}
+
+/// Stock's application banner, followed by its version (`1.1.15`).
+const STOCK_BANNER: &str = "app_main:version:";
+
 /// Classifies UART text, fed in pieces, against one offered build.
 #[derive(Debug)]
 pub(crate) struct Watch {
     build: String,
+    target: Target,
     pending: Vec<u8>,
     /// Stream bytes before `pending`.
     consumed: u64,
@@ -425,8 +451,13 @@ const MAX_LINE: usize = 4096;
 
 impl Watch {
     pub(crate) fn new(build: &str) -> Self {
+        Self::of(build, Target::Replacement)
+    }
+
+    pub(crate) fn of(build: &str, target: Target) -> Self {
         Self {
             build: build.to_ascii_lowercase(),
+            target,
             pending: Vec::new(),
             consumed: 0,
             started: false,
@@ -473,6 +504,19 @@ impl Watch {
     }
 
     fn line(&mut self, line: &str) -> Option<Event> {
+        if self.target == Target::Stock
+            && self.activated
+            && let Some(at) = line.find(STOCK_BANNER)
+        {
+            let version = line[at + STOCK_BANNER.len()..]
+                .split_whitespace()
+                .next()
+                .unwrap_or("?")
+                .to_string();
+            self.outcome = Some(Outcome::Passed);
+            return Some(Event::StockStarted { version });
+        }
+
         let record = Record::all(line).find(|record| TAGS.contains(&record.tag))?;
         let first = record.first;
 
@@ -667,6 +711,7 @@ impl Timing {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Staged {
     pub build: String,
+    pub target: Target,
     pub version: u32,
     pub review: PathBuf,
     pub manifest: String,
@@ -847,7 +892,11 @@ impl Bench {
             staged.version,
             args.minutes
         );
-        self.ota_watch(args, &staged.build, staged.version, timing)?;
+        self.ota_watch(args, &staged, timing)?;
+        if staged.target == Target::Stock {
+            say!("Stock does not report to this server; no health to check");
+            return Ok(0);
+        }
 
         let checking = Instant::now();
         let health = self.ota_health(args, &staged.build);
@@ -876,6 +925,31 @@ impl Bench {
             image.is_file(),
             format!("{} has no image.bin", self.rel(&review)),
         )?;
+        // Without a review.json the review can only be a build: a stock
+        // review is recognized by it, and a build still needs its manifest below.
+        let described = review.join("review.json");
+        let frozen: Option<ImageReview> = if described.is_file() {
+            Some(petlibre_formats::load(&described).map_err(|error| {
+                Error::Bench(format!(
+                    "{} has an unreadable review.json: {error}",
+                    self.rel(&review)
+                ))
+            })?)
+        } else {
+            None
+        };
+        if let Some(frozen) = frozen.filter(|f| f.image_kind == ImageKind::Stock) {
+            // Stock has no startup identity; its payload hash names it and can
+            // never equal a replacement build's identity.
+            let build = frozen.payload_sha256.to_ascii_lowercase();
+            require(
+                is_build_id(&build),
+                "Stock review has no 64-hex payload_sha256",
+            )?;
+            say!("Stock image, payload {}", &build[..12]);
+            return self.ota_sign(plan, build, Target::Stock, &image, timing);
+        }
+
         let manifest: BuildManifest = petlibre_formats::load(&review.join("build-manifest.json"))
             .map_err(|error| {
             Error::Bench(format!(
@@ -890,7 +964,7 @@ impl Bench {
         }
         say!("Build {build}");
 
-        self.ota_sign(plan, build, &image, timing)
+        self.ota_sign(plan, build, Target::Replacement, &image, timing)
     }
 
     /// Every refusal `ota_stage` can make, before anything is built: the
@@ -951,6 +1025,7 @@ impl Bench {
         &mut self,
         plan: OtaPlan,
         build: String,
+        target: Target,
         image: &Path,
         timing: &mut Timing,
     ) -> Result<Option<Staged>> {
@@ -980,6 +1055,7 @@ impl Bench {
 
         Ok(Some(Staged {
             build,
+            target,
             version: plan.version,
             review: plan.review,
             manifest: signed_arg,
@@ -1058,14 +1134,9 @@ impl Bench {
 
     /// Receive-only capture segments, classified as each one ends; Ok once
     /// the new build confirmed.
-    fn ota_watch(
-        &mut self,
-        args: &OtaArgs,
-        build: &str,
-        version: u32,
-        timing: &mut Timing,
-    ) -> Result<()> {
-        let mut watch = Watch::new(build);
+    fn ota_watch(&mut self, args: &OtaArgs, staged: &Staged, timing: &mut Timing) -> Result<()> {
+        let (build, version) = (staged.build.as_str(), staged.version);
+        let mut watch = Watch::of(build, staged.target);
         let total = args.minutes * 60.0;
         let mut elapsed = 0.0;
         let mut stage = 0;
@@ -1102,7 +1173,9 @@ impl Bench {
                 match event {
                     Event::GiveWay { .. } => _ = timing.give_way.get_or_insert(stamp),
                     Event::Activated { .. } => _ = timing.activated.get_or_insert(stamp),
-                    Event::Confirmed { .. } => timing.confirmed = Some(stamp),
+                    Event::Confirmed { .. } | Event::StockStarted { .. } => {
+                        timing.confirmed = Some(stamp)
+                    }
                     _ => {}
                 }
                 self.ota_event(&event, &mut stage);
@@ -1112,8 +1185,12 @@ impl Bench {
             match watch.outcome() {
                 None => {}
                 Some(Outcome::Passed) => {
+                    let what = match staged.target {
+                        Target::Replacement => "confirmed",
+                        Target::Stock => "stock, running",
+                    };
                     say!(
-                        "Passed: version {version} ({}) confirmed on bank 1; captures {}-01…{n:02}",
+                        "Passed: version {version} ({}) {what} on bank 1; captures {}-01…{n:02}",
                         &build[..12],
                         args.name
                     );
@@ -1208,7 +1285,7 @@ impl Bench {
         let next = match event {
             Event::Manifest { .. } | Event::Progress { .. } => 1,
             Event::Activated { .. } => 2,
-            Event::Started { new: true, .. } => 3,
+            Event::Started { new: true, .. } | Event::StockStarted { .. } => 3,
             _ => return,
         };
         if next > *stage {
@@ -1293,6 +1370,41 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn a_stock_install_passes_on_its_banner_after_activation() {
+        let run = [
+            "PLWCH1 offer=1 version=73\r\n",
+            "PLWCH1 give_way=1 version=73 restart=1\r\n",
+            &start(OLD, 0),
+            "PLOTA1 manifest version=73 bytes=1376256\r\n",
+            "PLOTA1 activated version=73 bytes=1376256 sectors=336\r\n",
+            "ROM:[V1.1]\r\n[0]app_main:version:1.1.15 DATE:Jul 16 2026 TIME:10:00:00\r\n",
+        ]
+        .concat();
+        let mut watch = Watch::of(NEW, Target::Stock);
+        let events = watch.feed(run.as_bytes());
+
+        assert_eq!(watch.outcome(), Some(&Outcome::Passed));
+        assert_eq!(
+            events.last(),
+            Some(&Event::StockStarted {
+                version: "1.1.15".into()
+            })
+        );
+    }
+
+    #[test]
+    fn a_stock_banner_before_activation_is_not_a_pass() {
+        let mut watch = Watch::of(NEW, Target::Stock);
+        watch.feed(b"[0]app_main:version:1.1.15 DATE:Jul 16 2026\r\n");
+        assert_eq!(watch.outcome(), None);
+
+        // A replacement watch ignores the banner entirely.
+        let mut replacement = Watch::new(NEW);
+        replacement.feed(b"PLOTA1 activated version=1\r\n[0]app_main:version:1.1.15\r\n");
+        assert_eq!(replacement.outcome(), None);
     }
 
     #[test]

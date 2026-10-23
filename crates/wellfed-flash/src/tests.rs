@@ -16,11 +16,14 @@ use serde_json::{Value, json};
 
 use crate::development::{self, Acquired, BANK0, BANK1, Layout, MARKER, Update};
 use crate::evidence::Root;
+use crate::journal::Receipt;
 use crate::ota::tests::{synthetic_payload, wrap};
 use crate::protocol::{self, ACK, CAPACITY, EOT, NAK, Port, SECTOR, STX};
 use crate::sector::{self, Baseline, START};
 use crate::session::{Context, Pin};
 use wellfed_formats::canonical::sha256;
+
+mod golden;
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
 enum Fault {
@@ -398,9 +401,7 @@ fn image(km4: usize, seed: u8) -> Vec<u8> {
 /// A variant differing in two sectors, optionally one sector larger.
 fn variant(image: &[u8], grow: bool) -> Vec<u8> {
     let mut payload = development::payload(image, &BANK1).unwrap().to_vec();
-    let split = crate::ota::regions(&payload).unwrap()[2]["payload_header_offset"]
-        .as_u64()
-        .unwrap() as usize;
+    let split = crate::ota::images(&payload).unwrap()[2].payload_header_offset;
     payload[split + 4096 + 53] ^= 1;
     payload[split + 8192 + 71] ^= 1;
 
@@ -441,7 +442,7 @@ fn develop(
     port: &mut Fake,
     update: &Update,
     output: &str,
-) -> crate::Result<Value> {
+) -> crate::Result<development::Verified> {
     let layout = update.layout;
     let length = development::extent(update.source, update.target, &layout)?;
     let current = protocol::read_region(port, layout.start, length)?;
@@ -450,14 +451,17 @@ fn develop(
 
     port.0.borrow_mut().tx.clear();
     let mut acquire = acquire_for(layout, length);
+    let transaction = development::Transaction {
+        baseline: &unit.baseline,
+        update,
+        current: &current,
+        other: Some(&other),
+        reviewed: &plan,
+    };
     development::run(
         port,
         root,
-        &unit.baseline,
-        update,
-        &current,
-        Some(&other),
-        &plan,
+        &transaction,
         &mut acquire,
         &root.join("private").join(output),
         &mut |_, _| {},
@@ -475,7 +479,7 @@ fn update<'a>(source: Option<&'a [u8]>, target: &'a [u8], layout: Layout) -> Upd
     }
 }
 
-fn receipt(root: &Root, output: &str) -> Value {
+fn receipt(root: &Root, output: &str) -> Receipt {
     crate::journal::inspect(
         &fs::read(root.join("private").join(output).join("journal.jsonl")).unwrap(),
     )
@@ -502,7 +506,7 @@ fn development_update_matches_the_independent_wire_and_changes_only_its_sectors(
         )
         .unwrap();
 
-        assert_eq!(report["status"], "verified_via_supplied_transports");
+        assert_eq!(report.status, "verified_via_supplied_transports");
         let helper = port.0.borrow();
         let length = old.len().max(new.len());
         let current = &unit.flash[START..START + length];
@@ -519,8 +523,8 @@ fn development_update_matches_the_independent_wire_and_changes_only_its_sectors(
         }
 
         let receipt = receipt(&root, "t");
-        assert_eq!(receipt["verified_terminal"], true);
-        assert_eq!(receipt["erase_order"], json!(helper.erased));
+        assert!(receipt.verified_terminal);
+        assert_eq!(json!(receipt.erase_order), json!(helper.erased));
     }
 }
 
@@ -540,11 +544,11 @@ fn a_noop_update_acquires_once_and_writes_nothing() {
     )
     .unwrap();
 
-    assert_eq!(report["erase_sectors"], 0);
+    assert_eq!(report.erase_sectors, Some(0));
     let helper = port.0.borrow();
     assert!(helper.erased.is_empty());
     assert!(helper.flash == unit.flash);
-    assert_eq!(receipt(&root, "t")["mutation_intent_recorded"], false);
+    assert!(!receipt(&root, "t").mutation_intent_recorded);
 }
 
 #[test]
@@ -573,8 +577,8 @@ fn protection_or_a_changed_guard_stops_before_any_mutation() {
     );
     assert!(port.0.borrow().erased.is_empty());
     let stopped = receipt(&root, "t");
-    assert_eq!(stopped["terminal_event"], "transaction_stopped");
-    assert_eq!(stopped["mutation_intent_recorded"], false);
+    assert_eq!(stopped.terminal_event, "transaction_stopped");
+    assert!(!stopped.mutation_intent_recorded);
 
     // Bank 0 is neither the pinned baseline nor a valid image.
     let (_checkout, root) = private_root();
@@ -617,8 +621,8 @@ fn a_lost_ack_is_terminal_and_the_interrupted_mode_finishes_from_a_fresh_read() 
 
         assert!(stop.is_err());
         let stopped = receipt(&root, "first");
-        assert_eq!(stopped["terminal_event"], "transaction_stopped");
-        assert_eq!(stopped["mutation_intent_recorded"], true);
+        assert_eq!(stopped.terminal_event, "transaction_stopped");
+        assert!(stopped.mutation_intent_recorded);
         let report: Value =
             serde_json::from_slice(&fs::read(root.join("private/first/report.json")).unwrap())
                 .unwrap();
@@ -752,14 +756,17 @@ fn give_way_then_restore_marker_round_trip() {
         ])
     };
 
+    let give_way = development::GiveWay {
+        baseline: &unit.baseline,
+        fallback: &fallback,
+        bank0: &bank0,
+        bank1_sector: &first,
+        reviewed: &plan,
+    };
     development::run_give_way(
         &mut port,
         &root,
-        &unit.baseline,
-        &fallback,
-        &bank0,
-        &first,
-        &plan,
+        &give_way,
         &mut acquire,
         &root.join("private/give-way"),
     )
@@ -790,15 +797,16 @@ fn stock_recovery_restores_bank1_and_preserves_everything_else() {
     current[START] = 0;
     let plan = crate::recovery::plan(&unit.baseline, &current).unwrap();
 
-    let offsets: Vec<u64> = plan["ordered_sector_payloads"]
-        .as_array()
-        .unwrap()
+    let offsets: Vec<usize> = plan
+        .ordered_sector_payloads
         .iter()
-        .map(|s| s["offset"].as_u64().unwrap())
+        .map(|s| s.offset)
         .collect();
     assert!(offsets.len() > 1);
-    assert_eq!(*offsets.last().unwrap(), START as u64, "marker sector last");
+    assert_eq!(*offsets.last().unwrap(), START, "marker sector last");
 
+    // The reviewed plan as its file holds it.
+    let plan = serde_json::to_value(&plan).unwrap();
     let mut port = Fake::new(current.clone());
     let mut snapshot = |port: &mut dyn Port| protocol::read_region(port, 0, CAPACITY);
     let report = crate::recovery::run_transaction(
@@ -815,11 +823,11 @@ fn stock_recovery_restores_bank1_and_preserves_everything_else() {
     let mut want = current.clone();
     want[START..sector::END].copy_from_slice(&unit.baseline.bytes()[START..sector::END]);
     assert!(port.0.borrow().flash == want);
-    assert_eq!(report["snapshot_sha256"], sha256(&want).as_str());
+    assert_eq!(report.snapshot_sha256, sha256(&want));
 
     let receipt = receipt(&root, "recovery");
-    assert_eq!(receipt["verified_terminal"], true);
-    assert_eq!(receipt["transaction_id"], report["transaction_id"]);
+    assert!(receipt.verified_terminal);
+    assert_eq!(receipt.transaction_id, Some(json!(report.transaction_id)));
 
     // A changed plan is refused before any journal exists.
     let mut changed = plan.clone();

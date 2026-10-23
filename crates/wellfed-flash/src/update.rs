@@ -8,25 +8,32 @@
 //! transaction. An interrupted update is planned afresh from a new
 //! inspection; its stopped journal is never read.
 
-use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 
-use serde_json::{Map, Value, json};
+use serde::Serialize;
+use serde::de::IgnoredAny;
 
-use crate::development::{self, Acquired, BANK0, FACTORY, Layout, Update};
-use crate::error::{Error, Result, require};
-use crate::evidence::{self, utc};
+use crate::development::{self, Acquired, BANK0, FACTORY, GiveWay, Layout, Transaction, Update};
+use crate::error::{Result, refuse, require};
+use crate::journal::Event;
 use crate::protocol::{CAPACITY, Port, SECTOR};
+use crate::report::{Session, Status, Transport};
 use crate::review::{Frozen, frozen};
 use crate::sector::{self, Baseline};
-use crate::session::{self, Context, Outcome, progress};
+use crate::session::{self, Completion, Context, Outcome, Region, Saved, progress};
 use crate::status;
-use wellfed_formats::canonical::{canonical, sha256};
+use wellfed_formats::canonical::{canonical_of, sha256};
+use wellfed_formats::flash_plan::{
+    DevelopmentPlan, GiveWayBindings, GiveWayPlan, Kind, Reviewed, UpdateBindings,
+};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum Mode {
+    /// Read the region and guards; write nothing.
     Inspect,
+    /// Write a reviewed plan from a completed inspection; no serial access.
     Prepare,
+    /// Execute exactly the reviewed plan.
     Execute,
 }
 
@@ -70,7 +77,7 @@ struct Loaded {
     source: Option<Frozen>,
     target: Frozen,
     original: Option<Vec<u8>>,
-    bindings: Value,
+    bindings: UpdateBindings,
 }
 
 impl Loaded {
@@ -78,10 +85,10 @@ impl Loaded {
         Update {
             source: self.source.as_ref().map(|f| f.image.as_slice()),
             target: &self.target.image,
-            interrupted: self.bindings["interrupted"] == true,
+            interrupted: self.bindings.interrupted,
             layout: self.layout,
             original: self.original.as_deref(),
-            restore: self.bindings["restore_marker"] == true,
+            restore: self.bindings.restore_marker,
         }
     }
 
@@ -93,6 +100,75 @@ impl Loaded {
         )?;
         Ok([FACTORY, self.layout.other, (self.layout.start, length)])
     }
+}
+
+/// What an execution acts on, all checked before serial access.
+struct Execution<B, P> {
+    /// The two inspected regions the plan derives from: the application
+    /// region and other-bank sector of an update, or bank 0 and bank 1's
+    /// first sector of a give-way.
+    inspected: [Vec<u8>; 2],
+    reviewed: Reviewed<B, P>,
+    /// The reviewed plan file's exact bytes.
+    raw: Vec<u8>,
+}
+
+/// An update or give-way session report's fields beyond the lifecycle.
+#[derive(Serialize)]
+struct Details<'a, B> {
+    mode: &'static str,
+    bindings: &'a B,
+    helper_upload_attempted: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    baud: Option<u32>,
+    observations: Vec<Vec<Region>>,
+    status_checks: Vec<Event>,
+    application_boot_verified: bool,
+    tool: &'static str,
+    transport: Transport,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    scope: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    result: Option<development::Verified>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reviewed_plan_sha256: Option<String>,
+}
+
+impl<'a, B> Details<'a, B> {
+    fn new(context: &Context, mode: Mode, bindings: &'a B) -> Self {
+        Self {
+            mode: mode.name(),
+            bindings,
+            helper_upload_attempted: false,
+            baud: None,
+            observations: Vec::new(),
+            status_checks: Vec::new(),
+            application_boot_verified: false,
+            tool: "wellfed-flash",
+            transport: context.transport(),
+            scope: None,
+            result: None,
+            reviewed_plan_sha256: None,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct Summary<'a> {
+    status: Status,
+    mode: &'static str,
+    output: &'a Path,
+    result: Option<development::Verified>,
+    error: Option<String>,
+}
+
+#[derive(Serialize)]
+struct Prepared<'a> {
+    status: &'static str,
+    plan: &'a Path,
+    plan_sha256: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    erase_sectors: Option<u64>,
 }
 
 /// Session evidence both commands check before any serial access.
@@ -126,12 +202,11 @@ fn load(context: &Context, args: &Args) -> Result<Loaded> {
     let original = match &source {
         Some(_) => None,
         None => {
-            let path = args.original_read.as_deref().ok_or_else(|| {
-                Error::Refused(
-                    "Overwriting bank 0 needs --original-read: a full flash read pinning its current contents"
-                        .into(),
-                )
-            })?;
+            let Some(path) = args.original_read.as_deref() else {
+                return refuse(
+                    "Overwriting bank 0 needs --original-read: a full flash read pinning its current contents",
+                );
+            };
             let read = root.private_file(path)?;
             require(
                 read.len() == CAPACITY,
@@ -145,17 +220,20 @@ fn load(context: &Context, args: &Args) -> Result<Loaded> {
         }
     };
 
-    let bindings = json!({
-        "schema_version": 1, "kind": layout.kind, "port": args.evidence.port,
-        "interrupted": args.interrupted,
-        "original_read_sha256": original.as_deref().map(sha256),
-        "restore_marker": args.restore_marker,
-        "source_review_sha256": source.as_ref().map(|f| &f.review_sha256),
-        "target_review_sha256": target.review_sha256,
-        "baseline_sha256": baseline.sha256(),
-        "rom_report_sha256": sha256(&rom), "bounded_read_report_sha256": sha256(&small),
-        "tool_sha256": context.tools(),
-    });
+    let bindings = UpdateBindings {
+        schema_version: 1,
+        kind: layout.kind,
+        port: args.evidence.port.clone(),
+        interrupted: args.interrupted,
+        original_read_sha256: original.as_deref().map(sha256),
+        restore_marker: args.restore_marker,
+        source_review_sha256: source.as_ref().map(|f| f.review_sha256.clone()),
+        target_review_sha256: target.review_sha256.clone(),
+        baseline_sha256: baseline.sha256(),
+        rom_report_sha256: sha256(&rom),
+        bounded_read_report_sha256: sha256(&small),
+        tool_sha256: context.tools(),
+    };
 
     let original = original
         .map(|read| development::original_region(&read, &target.image, &layout))
@@ -171,6 +249,23 @@ fn load(context: &Context, args: &Args) -> Result<Loaded> {
     })
 }
 
+/// The one permitted status pair an inspection must have recorded.
+fn status_permitted(report: &Saved<IgnoredAny>) -> Result<()> {
+    let checks = report.status_checks.as_deref();
+    require(
+        checks.is_some_and(|c| {
+            c.len() == 1
+                && c[0].event.as_deref() == Some("flash_status_checked")
+                && c[0]
+                    .assessment
+                    .as_ref()
+                    .and_then(|a| a.software_preconditions_met)
+                    == Some(true)
+        }),
+        "Permitted inspection status pair missing",
+    )
+}
+
 /// The inspected application region and the other bank's first sector.
 fn inspected(
     context: &Context,
@@ -183,7 +278,7 @@ fn inspected(
         &loaded.bindings,
     )?;
 
-    let values = session::inspected_transfers(
+    let [factory, other, application] = session::inspected_transfers(
         &context.root,
         &path,
         &report,
@@ -191,35 +286,11 @@ fn inspected(
         "Complete region/guards required",
     )?;
 
-    development::guards(
-        &loaded.baseline,
-        &values[0],
-        &values[1],
-        &loaded.layout,
-        None,
-    )?;
-    development::images(&loaded.update(), &values[2])?;
+    development::guards(&loaded.baseline, &factory, &other, &loaded.layout, None)?;
+    development::images(&loaded.update(), &application)?;
+    status_permitted(&report)?;
 
-    let checks = report["status_checks"].as_array();
-    require(
-        checks.is_some_and(|c| {
-            c.len() == 1
-                && c[0]["event"] == "flash_status_checked"
-                && c[0]["assessment"]["software_preconditions_met"] == true
-        }),
-        "Permitted inspection status pair missing",
-    )?;
-
-    let [_, other, application] = <[Vec<u8>; 3]>::try_from(values).unwrap();
     Ok((application, other, sha))
-}
-
-fn without_review(reviewed: &Value) -> Value {
-    let mut bindings = reviewed.clone();
-    let map = bindings.as_object_mut().unwrap();
-    map.remove("inspection_report_sha256");
-    map.remove("operation_plan");
-    bindings
 }
 
 pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
@@ -229,17 +300,20 @@ pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
     }
 
     let (current, other, report_sha) = inspected(context, args, &loaded)?;
-    let mut reviewed = loaded.bindings.clone();
-    reviewed["inspection_report_sha256"] = json!(report_sha);
-    reviewed["operation_plan"] = development::plan(&loaded.update(), &current, Some(&other))?;
+    let reviewed = Reviewed {
+        bindings: loaded.bindings.clone(),
+        inspection_report_sha256: report_sha,
+        operation_plan: development::plan(&loaded.update(), &current, Some(&other))?,
+    };
 
     if args.mode == Mode::Prepare {
         let sha = session::write_plan(&context.root, &args.evidence.output, &reviewed)?;
         progress(&format!("Prepared development plan SHA256: {sha}"));
-        return Ok(Outcome {
-            complete: true,
-            summary: json!({"status": "prepared", "plan": args.evidence.output, "plan_sha256": sha,
-                            "erase_sectors": reviewed["operation_plan"]["erase_sectors"]}),
+        return Outcome::done(&Prepared {
+            status: "prepared",
+            plan: &args.evidence.output,
+            plan_sha256: sha,
+            erase_sectors: Some(reviewed.operation_plan.erase_sectors),
         });
     }
 
@@ -252,8 +326,8 @@ pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
 
     // Recheck the operation and bindings themselves before serial access.
     require(
-        canonical(&reviewed["operation_plan"])?
-            == canonical(&development::plan(
+        canonical_of(&reviewed.operation_plan)?
+            == canonical_of(&development::plan(
                 &loaded.update(),
                 &current,
                 Some(&other),
@@ -261,47 +335,46 @@ pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
         "Operation differs before serial access",
     )?;
     require(
-        canonical(&without_review(&reviewed))? == canonical(&loaded.bindings)?,
+        canonical_of(&reviewed.bindings)? == canonical_of(&loaded.bindings)?,
         "Execution bindings differ before serial access",
     )?;
 
-    session_run(
-        context,
-        args,
-        &loaded,
-        Some((current, other, reviewed, raw)),
-    )
+    let execution = Execution {
+        inspected: [current, other],
+        reviewed,
+        raw,
+    };
+    session_run(context, args, &loaded, Some(execution))
 }
 
 fn session_run(
     context: &Context,
     args: &Args,
     loaded: &Loaded,
-    execution: Option<Execution>,
+    execution: Option<Execution<UpdateBindings, DevelopmentPlan>>,
 ) -> Result<Outcome> {
     let directory = context.root.output_directory(&args.evidence.output)?;
-    if let Some((_, _, _, raw)) = &execution {
-        session::keep_plan(&directory, raw)?;
+    if let Some(execution) = &execution {
+        session::keep_plan(&directory, &execution.raw)?;
     }
 
-    let report_path = directory.join("report.json");
-    let report = RefCell::new(json!({
-        "mode": args.mode.name(), "status": "prepared", "start_utc": utc(),
-        "bindings": loaded.bindings, "helper_upload_attempted": false, "baud": 115200,
-        "observations": [], "status_checks": [], "application_boot_verified": false,
-        "tool": "wellfed-flash", "transport": context.transport(),
-        "scope": "Application union and factory/other-bank guards only; unscanned flash preserved by write scope",
-    }));
-    let save = || evidence::save_report(&report_path, &report.borrow());
-    save()?;
+    let report = Session::open(
+        directory.join("report.json"),
+        Details {
+            baud: Some(115200),
+            scope: Some(
+                "Application union and factory/other-bank guards only; unscanned flash preserved by write scope",
+            ),
+            ..Details::new(context, args.mode, &loaded.bindings)
+        },
+    )?;
 
     let extents = loaded.extents()?;
     let update = loaded.update();
 
-    let result = (|| -> Result<Option<Value>> {
+    let result = (|| -> Result<Option<development::Verified>> {
         let mut port = context.record(&args.evidence.port, &directory)?;
-        report.borrow_mut()["status"] = json!("running");
-        save()?;
+        report.update(|r| r.status = Status::Running)?;
 
         progress(&format!(
             "Development {} of bank {}; region {} bytes; no full-flash scans",
@@ -311,7 +384,7 @@ fn session_run(
         ));
 
         let mut acquire = |port: &mut dyn Port| -> Result<Acquired> {
-            let number = report.borrow()["observations"].as_array().unwrap().len() + 1;
+            let number = report.read(|r| r.details.observations.len()) + 1;
             let mut observation = Vec::new();
             let mut values = Vec::new();
 
@@ -324,14 +397,12 @@ fn session_run(
                 values.push(data);
             }
 
-            report.borrow_mut()["observations"]
-                .as_array_mut()
-                .unwrap()
-                .push(Value::Array(observation));
-            save()?;
+            report.update(|r| r.details.observations.push(observation))?;
             progress(&format!("Region acquisition {number} complete"));
 
-            let [factory, other, application] = <[Vec<u8>; 3]>::try_from(values).unwrap();
+            let Ok([factory, other, application]) = <[Vec<u8>; 3]>::try_from(values) else {
+                return refuse("Incomplete region acquisition");
+            };
             Ok(Acquired {
                 application,
                 factory,
@@ -351,13 +422,9 @@ fn session_run(
                 )?;
                 development::images(&update, &acquired.application)?;
 
-                let mut record = |event: &str, extra: Map<String, Value>| {
-                    let mut entry = extra;
-                    entry.insert("event".into(), json!(event));
-                    report.borrow_mut()["status_checks"]
-                        .as_array_mut()
-                        .unwrap()
-                        .push(Value::Object(entry));
+                // Written with the report at its next save.
+                let mut record = |event: Event| {
+                    report.edit(|r| r.details.status_checks.push(event));
                     Ok(())
                 };
 
@@ -371,21 +438,25 @@ fn session_run(
                 Ok(None)
             }
 
-            Some((current, other, reviewed, _)) => {
+            Some(execution) => {
+                let [current, other] = &execution.inspected;
                 let mut counter = |n: usize, total: usize| {
                     if n == 1 || n.is_multiple_of(8) || n == total {
                         progress(&format!("Verified changed sectors: {n}/{total}"));
                     }
                 };
 
+                let transaction = Transaction {
+                    baseline: &loaded.baseline,
+                    update: &update,
+                    current,
+                    other: Some(other),
+                    reviewed: &execution.reviewed.operation_plan,
+                };
                 development::run(
                     &mut port,
                     &context.root,
-                    &loaded.baseline,
-                    &update,
-                    current,
-                    Some(other),
-                    &reviewed["operation_plan"],
+                    &transaction,
                     &mut acquire,
                     &directory.join("transaction"),
                     &mut counter,
@@ -397,57 +468,52 @@ fn session_run(
 
     finish(
         &directory,
-        &report,
+        report,
         result,
-        execution.as_ref().map(|e| &e.3),
+        execution.as_ref().map(|e| e.raw.as_slice()),
     )
 }
 
 /// Close a session's report the way the Python clients do.
-fn finish(
+fn finish<B: Serialize>(
     directory: &Path,
-    report: &RefCell<Value>,
-    result: Result<Option<Value>>,
-    raw_plan: Option<&Vec<u8>>,
+    report: Session<Details<'_, B>>,
+    result: Result<Option<development::Verified>>,
+    raw_plan: Option<&[u8]>,
 ) -> Result<Outcome> {
-    let complete = result.is_ok();
-    {
-        let mut report = report.borrow_mut();
+    let completion = match &result {
+        Ok(_) => Completion::Complete,
+        Err(_) => Completion::Stopped,
+    };
+
+    let (report, saved) = report.close(directory, |r| {
         match result {
-            Ok(None) => report["status"] = json!("complete"),
+            Ok(None) => r.status = Status::Complete,
             Ok(Some(result)) => {
-                report["status"] = json!("verified");
-                report["result"] = result;
-                report["reviewed_plan_sha256"] = json!(sha256(raw_plan.unwrap()));
+                r.status = Status::Verified;
+                r.details.result = Some(result);
+                r.details.reviewed_plan_sha256 = raw_plan.map(sha256);
             }
-            Err(error) => {
-                report["status"] = json!("stopped");
-                report["error"] = json!(format!("{}: {error}", error.kind()));
-            }
+            Err(error) => r.stop(Status::Stopped, &error),
         }
 
-        progress(if complete {
-            "Completed; application boot remains a separate bench check"
-        } else {
-            "Stopped without replay; keep application boot excluded and inspect evidence"
+        progress(match completion {
+            Completion::Complete => "Completed; application boot remains a separate bench check",
+            Completion::Stopped => {
+                "Stopped without replay; keep application boot excluded and inspect evidence"
+            }
         });
-        report["end_utc"] = json!(utc());
-        evidence::stream_hashes(directory, &mut report);
-    }
+    });
 
-    let saved = evidence::save_report(&directory.join("report.json"), &report.borrow());
-    let report = report.borrow();
-    Ok(session::closed(
-        complete,
-        json!({"status": report["status"], "mode": report["mode"], "output": directory,
-               "result": report.get("result"), "error": report.get("error")}),
-        saved,
-    ))
+    let summary = Summary {
+        status: report.status,
+        mode: report.details.mode,
+        output: directory,
+        result: report.details.result,
+        error: report.error,
+    };
+    Ok(session::closed(completion, &summary, saved))
 }
-
-/// What an execution acts on, all checked before serial access: two
-/// inspected regions, the reviewed plan and its exact bytes.
-type Execution = (Vec<u8>, Vec<u8>, Value, Vec<u8>);
 
 pub struct GiveWayArgs {
     pub mode: Mode,
@@ -455,13 +521,13 @@ pub struct GiveWayArgs {
     pub fallback: PathBuf,
 }
 
-struct GiveWay {
+struct GiveWayLoaded {
     baseline: Baseline,
     fallback: Vec<u8>,
-    bindings: Value,
+    bindings: GiveWayBindings,
 }
 
-impl GiveWay {
+impl GiveWayLoaded {
     fn extents(&self) -> Result<[(&'static str, usize, usize); 3]> {
         Ok([
             ("factory", 0, 0x6000),
@@ -475,16 +541,20 @@ impl GiveWay {
     }
 }
 
-fn give_way_load(context: &Context, args: &GiveWayArgs) -> Result<GiveWay> {
+fn give_way_load(context: &Context, args: &GiveWayArgs) -> Result<GiveWayLoaded> {
     let fallback = frozen(&context.root, &args.fallback, &BANK0)?;
     let (baseline, rom, small) = continued(context, &args.evidence)?;
-    let bindings = json!({
-        "schema_version": 1, "kind": development::GIVE_WAY_KIND, "port": args.evidence.port,
-        "fallback_review_sha256": fallback.review_sha256, "baseline_sha256": baseline.sha256(),
-        "rom_report_sha256": sha256(&rom), "bounded_read_report_sha256": sha256(&small),
-        "tool_sha256": context.tools(),
-    });
-    Ok(GiveWay {
+    let bindings = GiveWayBindings {
+        schema_version: 1,
+        kind: Kind::GiveWay,
+        port: args.evidence.port.clone(),
+        fallback_review_sha256: fallback.review_sha256,
+        baseline_sha256: baseline.sha256(),
+        rom_report_sha256: sha256(&rom),
+        bounded_read_report_sha256: sha256(&small),
+        tool_sha256: context.tools(),
+    };
+    Ok(GiveWayLoaded {
         baseline,
         fallback: fallback.image,
         bindings,
@@ -502,8 +572,10 @@ pub fn give_way(context: &Context, args: &GiveWayArgs) -> Result<Outcome> {
         args.evidence.inspection.as_deref(),
         &loaded.bindings,
     )?;
-    let extents: Vec<(usize, usize)> = loaded.extents()?.iter().map(|(_, o, l)| (*o, *l)).collect();
-    let values = session::inspected_transfers(
+    let extents = loaded
+        .extents()?
+        .map(|(_, offset, length)| (offset, length));
+    let [factory, bank0, bank1] = session::inspected_transfers(
         &context.root,
         &path,
         &report,
@@ -512,21 +584,24 @@ pub fn give_way(context: &Context, args: &GiveWayArgs) -> Result<Outcome> {
     )?;
 
     require(
-        values[0] == loaded.baseline.bytes()[..0x6000],
+        factory == loaded.baseline.bytes()[..0x6000],
         "Factory region differs from the pinned baseline",
     )?;
 
-    let operation = development::give_way_plan(&loaded.fallback, &values[1], &values[2])?;
-    let mut reviewed = loaded.bindings.clone();
-    reviewed["inspection_report_sha256"] = json!(report_sha);
-    reviewed["operation_plan"] = operation;
+    let reviewed = Reviewed {
+        bindings: loaded.bindings.clone(),
+        inspection_report_sha256: report_sha,
+        operation_plan: development::give_way_plan(&loaded.fallback, &bank0, &bank1)?,
+    };
 
     if args.mode == Mode::Prepare {
         let sha = session::write_plan(&context.root, &args.evidence.output, &reviewed)?;
         progress(&format!("Prepared give-way plan SHA256: {sha}"));
-        return Ok(Outcome {
-            complete: true,
-            summary: json!({"status": "prepared", "plan": args.evidence.output, "plan_sha256": sha}),
+        return Outcome::done(&Prepared {
+            status: "prepared",
+            plan: &args.evidence.output,
+            plan_sha256: sha,
+            erase_sectors: None,
         });
     }
 
@@ -537,39 +612,38 @@ pub fn give_way(context: &Context, args: &GiveWayArgs) -> Result<Outcome> {
         &reviewed,
     )?;
 
-    let [_, bank0, bank1] = <[Vec<u8>; 3]>::try_from(values).unwrap();
-    give_way_session(context, args, &loaded, Some((bank0, bank1, reviewed, raw)))
+    let execution = Execution {
+        inspected: [bank0, bank1],
+        reviewed,
+        raw,
+    };
+    give_way_session(context, args, &loaded, Some(execution))
 }
 
 fn give_way_session(
     context: &Context,
     args: &GiveWayArgs,
-    loaded: &GiveWay,
-    execution: Option<Execution>,
+    loaded: &GiveWayLoaded,
+    execution: Option<Execution<GiveWayBindings, GiveWayPlan>>,
 ) -> Result<Outcome> {
     let directory = context.root.output_directory(&args.evidence.output)?;
-    if let Some((_, _, _, raw)) = &execution {
-        session::keep_plan(&directory, raw)?;
+    if let Some(execution) = &execution {
+        session::keep_plan(&directory, &execution.raw)?;
     }
 
-    let report_path = directory.join("report.json");
-    let report = RefCell::new(json!({
-        "mode": args.mode.name(), "status": "prepared", "start_utc": utc(),
-        "bindings": loaded.bindings, "helper_upload_attempted": false, "observations": [],
-        "status_checks": [], "application_boot_verified": false, "tool": "wellfed-flash", "transport": context.transport(),
-    }));
-    let save = || evidence::save_report(&report_path, &report.borrow());
-    save()?;
+    let report = Session::open(
+        directory.join("report.json"),
+        Details::new(context, args.mode, &loaded.bindings),
+    )?;
 
     let extents = loaded.extents()?;
 
-    let result = (|| -> Result<Option<Value>> {
+    let result = (|| -> Result<Option<development::Verified>> {
         let mut port = context.record(&args.evidence.port, &directory)?;
-        report.borrow_mut()["status"] = json!("running");
-        save()?;
+        report.update(|r| r.status = Status::Running)?;
 
         let mut acquire = |port: &mut dyn Port| -> Result<[Vec<u8>; 3]> {
-            let number = report.borrow()["observations"].as_array().unwrap().len() + 1;
+            let number = report.read(|r| r.details.observations.len()) + 1;
             let mut observation = Vec::new();
             let mut values = Vec::new();
 
@@ -580,13 +654,13 @@ fn give_way_session(
                 values.push(data);
             }
 
-            report.borrow_mut()["observations"]
-                .as_array_mut()
-                .unwrap()
-                .push(Value::Array(observation));
-            save()?;
+            report.update(|r| r.details.observations.push(observation))?;
             progress(&format!("Guard acquisition {number} complete"));
-            Ok(<[Vec<u8>; 3]>::try_from(values).unwrap())
+
+            let Ok(values) = <[Vec<u8>; 3]>::try_from(values) else {
+                return refuse("Incomplete guard acquisition");
+            };
+            Ok(values)
         };
 
         match &execution {
@@ -598,13 +672,9 @@ fn give_way_session(
                 )?;
                 development::give_way_plan(&loaded.fallback, &region, &first)?;
 
-                let mut record = |event: &str, extra: Map<String, Value>| {
-                    let mut entry = extra;
-                    entry.insert("event".into(), json!(event));
-                    report.borrow_mut()["status_checks"]
-                        .as_array_mut()
-                        .unwrap()
-                        .push(Value::Object(entry));
+                // Written with the report at its next save.
+                let mut record = |event: Event| {
+                    report.edit(|r| r.details.status_checks.push(event));
                     Ok(())
                 };
 
@@ -618,25 +688,161 @@ fn give_way_session(
                 Ok(None)
             }
 
-            Some((bank0, bank1, reviewed, _)) => development::run_give_way(
-                &mut port,
-                &context.root,
-                &loaded.baseline,
-                &loaded.fallback,
-                bank0,
-                bank1,
-                &reviewed["operation_plan"],
-                &mut acquire,
-                &directory.join("transaction"),
-            )
-            .map(Some),
+            Some(execution) => {
+                let [bank0, bank1] = &execution.inspected;
+                let give_way = GiveWay {
+                    baseline: &loaded.baseline,
+                    fallback: &loaded.fallback,
+                    bank0,
+                    bank1_sector: bank1,
+                    reviewed: &execution.reviewed.operation_plan,
+                };
+                development::run_give_way(
+                    &mut port,
+                    &context.root,
+                    &give_way,
+                    &mut acquire,
+                    &directory.join("transaction"),
+                )
+                .map(Some)
+            }
         }
     })();
 
     finish(
         &directory,
-        &report,
+        report,
         result,
-        execution.as_ref().map(|e| &e.3),
+        execution.as_ref().map(|e| e.raw.as_slice()),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::{Value, json};
+
+    use super::*;
+    use crate::evidence::Root;
+    use crate::session::Pin;
+
+    fn context(checkout: &Path) -> Context {
+        Context {
+            root: Root::new(checkout).unwrap(),
+            tool_sha256: "t".repeat(64),
+            open: Box::new(|_| refuse("No port in this test")),
+            pin: Pin::Research,
+        }
+    }
+
+    fn saved(path: &Path) -> Value {
+        serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn update_reports_keep_their_fields() {
+        let checkout = tempfile::tempdir().unwrap();
+        std::fs::create_dir(checkout.path().join("private")).unwrap();
+        let context = context(checkout.path());
+        let directory = checkout.path().join("private");
+        let bindings = json!({"kind": "plaf103_bank1_development_update"});
+
+        let report = Session::open(
+            directory.join("report.json"),
+            Details {
+                baud: Some(115200),
+                scope: Some("scope"),
+                ..Details::new(&context, Mode::Execute, &bindings)
+            },
+        )
+        .unwrap();
+        let prepared = saved(&directory.join("report.json"));
+        assert_eq!(
+            prepared,
+            json!({
+                "mode": "execute", "status": "prepared", "start_utc": prepared["start_utc"],
+                "bindings": bindings, "helper_upload_attempted": false, "baud": 115200,
+                "observations": [], "status_checks": [], "application_boot_verified": false,
+                "tool": "wellfed-flash", "transport": "serial", "scope": "scope",
+            })
+        );
+
+        let verified = development::Verified {
+            status: "verified_via_supplied_transports",
+            region_sha256: Some("r".into()),
+            erase_sectors: Some(2),
+            after_sha256: None,
+            application_boot_verified: false,
+            scope: "scope".into(),
+        };
+        let outcome = finish(&directory, report, Ok(Some(verified)), Some(b"plan")).unwrap();
+        let result = json!({"status": "verified_via_supplied_transports", "region_sha256": "r",
+                            "erase_sectors": 2, "application_boot_verified": false,
+                            "scope": "scope"});
+
+        let closed = saved(&directory.join("report.json"));
+        assert_eq!(
+            closed,
+            json!({
+                "mode": "execute", "status": "verified", "start_utc": prepared["start_utc"],
+                "bindings": bindings, "helper_upload_attempted": false, "baud": 115200,
+                "observations": [], "status_checks": [], "application_boot_verified": false,
+                "tool": "wellfed-flash", "transport": "serial", "scope": "scope",
+                "result": result, "reviewed_plan_sha256": sha256(b"plan"),
+                "end_utc": closed["end_utc"],
+            })
+        );
+        assert_eq!(outcome.completion, Completion::Complete);
+        assert_eq!(
+            outcome.summary,
+            json!({"status": "verified", "mode": "execute", "output": directory,
+                   "result": result, "error": null})
+        );
+    }
+
+    #[test]
+    fn a_stopped_give_way_report_keeps_its_fields() {
+        let checkout = tempfile::tempdir().unwrap();
+        std::fs::create_dir(checkout.path().join("private")).unwrap();
+        let context = context(checkout.path());
+        let directory = checkout.path().join("private");
+        let bindings = json!({"kind": "plaf103_bank1_give_way"});
+
+        let report = Session::open(
+            directory.join("report.json"),
+            Details::new(&context, Mode::Inspect, &bindings),
+        )
+        .unwrap();
+        report.edit(|r| {
+            r.details.status_checks.push(Event::FlashStatusUnstable {
+                boundary: "inspection",
+                start: 1,
+                end_exclusive: 2,
+                first: [0, 0, 0],
+                second: [1, 0, 0],
+            })
+        });
+        let outcome = finish(&directory, report, refuse("No port"), None).unwrap();
+
+        let closed = saved(&directory.join("report.json"));
+        assert_eq!(
+            closed,
+            json!({
+                "mode": "inspect", "status": "stopped", "start_utc": closed["start_utc"],
+                "bindings": bindings, "helper_upload_attempted": false,
+                "observations": [],
+                "status_checks": [{"event": "flash_status_unstable", "boundary": "inspection",
+                                   "start": 1, "end_exclusive": 2,
+                                   "first": [0, 0, 0], "second": [1, 0, 0]}],
+                "application_boot_verified": false,
+                "tool": "wellfed-flash", "transport": "serial",
+                "error": "refused: No port", "end_utc": closed["end_utc"],
+            })
+        );
+        assert_eq!(outcome.completion, Completion::Stopped);
+        assert_eq!(
+            outcome.summary,
+            json!({"status": "stopped", "mode": "inspect", "output": directory,
+                   "result": null, "error": "refused: No port"})
+        );
+    }
 }

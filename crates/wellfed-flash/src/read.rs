@@ -4,25 +4,32 @@
 //! Port of `main` in `tools/flash/uart-flash-read.py`; its reports keep the
 //! same fields, so either implementation's later sessions accept them.
 
-use std::cell::RefCell;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use serde_json::{Value, json};
+use serde::Serialize;
 
-use crate::error::{Result, require};
-use crate::evidence::{self, utc};
-use crate::protocol::{self, CAPACITY, HELPER_SHA256, Port, ROM_BYTES, ROM_SHA256};
-use crate::session::{self, Context, Outcome, progress};
-use crate::status;
+use crate::error::{Result, refuse, require};
+use crate::protocol::{
+    self, CAPACITY, Core, HELPER_SHA256, Observation, Port, ROM_BYTES, ROM_SHA256, RomInspection,
+    Transfer,
+};
+use crate::report::{Session, Status, Transport};
+use crate::session::{self, Completion, Context, Outcome, progress};
+use crate::status::{self, Assessment};
 use wellfed_formats::canonical::sha256;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum Mode {
+    /// Receive only, for --seconds.
     Observe,
+    /// Sample the ROM through the stock console before any helper upload.
     InspectRom,
+    /// Upload the pinned helper to the observed loader and read 4 KiB.
     Small,
+    /// Continue the bounded read's helper session and read all 8 MiB.
     Full,
+    /// Continue the bounded read's helper session and read the status registers.
     Status,
 }
 
@@ -48,14 +55,81 @@ pub struct Args {
     pub rom_report: Option<PathBuf>,
     pub small_report: Option<PathBuf>,
     pub seconds: f64,
-    pub start_km4: bool,
+    /// Which core owns the console when ROM inspection starts.
+    pub start_core: Core,
+}
+
+/// Two matching status observations and what they permit for bank 1.
+#[derive(Debug, Clone, Serialize)]
+pub struct StatusInspection {
+    pub observations: Vec<[u8; 3]>,
+    pub matching: bool,
+    pub bank1_assessment: Assessment,
+    pub status_write_commands: bool,
+    pub limit: &'static str,
+}
+
+/// A bounded or full read into `flash-read.bin`.
+#[derive(Debug, Clone, Serialize)]
+pub struct FlashRead {
+    #[serde(flatten)]
+    pub transfer: Transfer,
+    pub sha256: String,
+    pub offset: usize,
+}
+
+/// A read session's result, by mode.
+#[derive(Debug, Clone, Serialize)]
+#[serde(untagged)]
+pub enum Reading {
+    Observation(Observation),
+    Rom(RomInspection),
+    Status(StatusInspection),
+    Flash(FlashRead),
+}
+
+/// The reader's report fields beyond the shared lifecycle.
+#[derive(Debug, Serialize)]
+struct Details {
+    mode: &'static str,
+    port: String,
+    baud: u32,
+    format: &'static str,
+    helper_sha256: Option<&'static str>,
+    flash_write_or_erase_commands: bool,
+    capacity_bytes: usize,
+    tool: &'static str,
+    transport: Transport,
+    tool_sha256: String,
+    limitations: [&'static str; 4],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    helper_upload_attempted: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    helper_upload_completed: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    continuing_helper_session: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bounded_read_report_sha256: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    status_observations: Option<Vec<[u8; 3]>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    result: Option<Reading>,
+}
+
+#[derive(Serialize)]
+struct Summary<'a> {
+    status: Status,
+    mode: &'static str,
+    output: &'a Path,
+    result: Option<Reading>,
+    error: Option<String>,
 }
 
 /// Two fixed status observations, each kept before stability is checked.
 pub fn inspect_status(
     port: &mut dyn Port,
     record: &mut dyn FnMut([u8; 3]) -> Result<()>,
-) -> Result<Value> {
+) -> Result<StatusInspection> {
     let mut observations = Vec::new();
     for _ in 0..2 {
         let values = status::read_status_registers(port)?;
@@ -63,17 +137,21 @@ pub fn inspect_status(
         record(values)?;
     }
 
+    let [first, second] = observations[..] else {
+        return refuse("Two status observations required");
+    };
     require(
-        observations[0] == observations[1],
+        first == second,
         "Status observations differ; stop without retry",
     )?;
 
-    Ok(json!({
-        "observations": observations, "matching": true,
-        "bank1_assessment": status::assess_range(observations[1], 0x186000, 0x2D6000)?,
-        "status_write_commands": false,
-        "limit": "Sequential read observations only; physical write permission not established",
-    }))
+    Ok(StatusInspection {
+        bank1_assessment: status::assess_range(second, 0x186000, 0x2D6000)?,
+        observations,
+        matching: true,
+        status_write_commands: false,
+        limit: "Sequential read observations only; physical write permission not established",
+    })
 }
 
 pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
@@ -105,58 +183,67 @@ pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
             }
         }
 
-        _ => {
+        Mode::Small | Mode::Full | Mode::Status => {
             helper = Some(context.helper(args.helper.as_deref())?);
-            let rom = args.rom_report.as_deref().ok_or_else(|| {
-                crate::Error::Refused(
-                    "A reviewed successful ROM inspection report is required".into(),
-                )
-            })?;
+            let Some(rom) = args.rom_report.as_deref() else {
+                return refuse("A reviewed successful ROM inspection report is required");
+            };
             session::validate_rom_report(context, rom)?;
 
             if args.mode == Mode::Status {
-                continued = Some(session::validate_status_session(
+                let raw = session::validate_status_session(
                     context,
                     args.small_report.as_deref(),
                     &args.port,
-                )?);
+                )?;
+                continued = args.small_report.as_deref().map(|path| (path, raw));
             }
 
             if args.mode == Mode::Full {
-                let small = args.small_report.as_deref().ok_or_else(|| {
-                    crate::Error::Refused("A completed bounded read is required first".into())
-                })?;
-                continued = Some(session::validate_small_for_full(
-                    context, small, &args.port,
-                )?);
+                let Some(small) = args.small_report.as_deref() else {
+                    return refuse("A completed bounded read is required first");
+                };
+                let raw = session::validate_small_for_full(context, small, &args.port)?;
+                continued = Some((small, raw));
             }
         }
     }
 
     let directory = root.output_directory(&args.output)?;
-    let report_path = directory.join("report.json");
-
-    let metadata = RefCell::new(json!({
-        "mode": args.mode.name(), "port": args.port, "baud": 115200, "format": "8N1",
-        "start_utc": utc(), "status": "prepared",
-        "helper_sha256": helper.as_ref().map(|_| HELPER_SHA256),
-        "flash_write_or_erase_commands": false, "capacity_bytes": CAPACITY,
-        "tool": "wellfed-flash", "transport": context.transport(), "tool_sha256": context.tool_sha256,
-        "limitations": ["No failed-boot recovery established",
-                        "Actual ROM side effects not exhaustively verified",
-                        "Helper disables OTF; a raw dump may contain ciphertext",
-                        "External flash excludes separate OTP/eFuse"],
-    }));
 
     // The prepared report exists before the port opens, so any later stop
     // has a report to update.
-    let save = || evidence::save_report(&report_path, &metadata.borrow());
-    save()?;
+    let report = Session::open(
+        directory.join("report.json"),
+        Details {
+            mode: args.mode.name(),
+            port: args.port.clone(),
+            baud: 115200,
+            format: "8N1",
+            helper_sha256: helper.as_ref().map(|_| HELPER_SHA256),
+            flash_write_or_erase_commands: false,
+            capacity_bytes: CAPACITY,
+            tool: "wellfed-flash",
+            transport: context.transport(),
+            tool_sha256: context.tool_sha256.clone(),
+            limitations: [
+                "No failed-boot recovery established",
+                "Actual ROM side effects not exhaustively verified",
+                "Helper disables OTF; a raw dump may contain ciphertext",
+                "External flash excludes separate OTP/eFuse",
+            ],
+            helper_upload_attempted: None,
+            helper_upload_completed: None,
+            continuing_helper_session: None,
+            bounded_read_report_sha256: None,
+            status_observations: None,
+            result: None,
+        },
+    )?;
 
-    let result = (|| -> Result<Value> {
+    let result = (|| -> Result<Reading> {
         let mut port = context.record(&args.port, &directory)?;
-        metadata.borrow_mut()["status"] = json!("running");
-        save()?;
+        report.update(|r| r.status = Status::Running)?;
 
         progress(&format!(
             "Recording {} in {}",
@@ -164,81 +251,85 @@ pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
             directory.display()
         ));
 
-        let continuing = |metadata: &mut Value| {
-            metadata["helper_upload_attempted"] = json!(false);
-            metadata["continuing_helper_session"] =
-                json!(args.small_report.as_ref().unwrap().display().to_string());
-            metadata["bounded_read_report_sha256"] = json!(sha256(continued.as_ref().unwrap()));
+        let continuing = |details: &mut Details| {
+            details.helper_upload_attempted = Some(false);
+            if let Some((path, raw)) = &continued {
+                details.continuing_helper_session = Some(path.display().to_string());
+                details.bounded_read_report_sha256 = Some(sha256(raw));
+            }
         };
 
         match args.mode {
-            Mode::Observe => protocol::observe(&mut port, args.seconds),
-            Mode::InspectRom => protocol::inspect_rom(&mut port, &candidates, args.start_km4),
+            Mode::Observe => protocol::observe(&mut port, args.seconds).map(Reading::Observation),
+            Mode::InspectRom => {
+                protocol::inspect_rom(&mut port, &candidates, args.start_core).map(Reading::Rom)
+            }
 
             Mode::Status => {
-                continuing(&mut metadata.borrow_mut());
-                metadata.borrow_mut()["status_observations"] = json!([]);
-                save()?;
+                report.update(|r| {
+                    continuing(&mut r.details);
+                    r.details.status_observations = Some(Vec::new());
+                })?;
                 inspect_status(&mut port, &mut |values| {
-                    metadata.borrow_mut()["status_observations"]
-                        .as_array_mut()
-                        .unwrap()
-                        .push(json!(values));
-                    save()
+                    report.update(|r| {
+                        r.details
+                            .status_observations
+                            .get_or_insert_default()
+                            .push(values);
+                    })
                 })
+                .map(Reading::Status)
             }
 
             Mode::Small | Mode::Full => {
                 if args.mode == Mode::Small {
+                    let Some(helper) = &helper else {
+                        return refuse("The pinned helper is required");
+                    };
+
                     // Require the already-observed ROM loader; never auto-enter it.
-                    metadata.borrow_mut()["helper_upload_attempted"] = json!(true);
-                    save()?;
-                    protocol::upload_helper(&mut port, helper.as_ref().unwrap())?;
-                    metadata.borrow_mut()["helper_upload_completed"] = json!(true);
+                    report.update(|r| r.details.helper_upload_attempted = Some(true))?;
+                    protocol::upload_helper(&mut port, helper)?;
+                    report.update(|r| r.details.helper_upload_completed = Some(true))?;
                 } else {
                     // Continue the bounded read's helper session: uploading over
                     // the running helper would overwrite its own RAM code.
-                    continuing(&mut metadata.borrow_mut());
+                    report.update(|r| continuing(&mut r.details))?;
                 }
-                save()?;
-                full_or_small(&mut port, &directory, args.mode)
+                full_or_small(&mut port, &directory, args.mode).map(Reading::Flash)
             }
         }
     })();
 
-    let complete = result.is_ok();
-    {
-        let mut metadata = metadata.borrow_mut();
-        match result {
-            Ok(result) => {
-                metadata["result"] = result;
-                metadata["status"] = json!("complete");
-                progress("Completed; evidence retained privately");
-            }
-            Err(error) => {
-                metadata["status"] = json!("failed");
-                metadata["error"] = json!(format!("{}: {error}", error.kind()));
-                progress(
-                    "Stopped; inspect private report and capture. No automatic retry or fallback.",
-                );
-            }
+    let completion = match &result {
+        Ok(_) => Completion::Complete,
+        Err(_) => Completion::Stopped,
+    };
+    let (report, saved) = report.close(&directory, |r| match result {
+        Ok(result) => {
+            r.details.result = Some(result);
+            r.status = Status::Complete;
+            progress("Completed; evidence retained privately");
         }
-        metadata["end_utc"] = json!(utc());
-        evidence::stream_hashes(&directory, &mut metadata);
-    }
+        Err(error) => {
+            r.stop(Status::Failed, &error);
+            progress(
+                "Stopped; inspect private report and capture. No automatic retry or fallback.",
+            );
+        }
+    });
 
-    let saved = save();
-    let metadata = metadata.into_inner();
-    Ok(session::closed(
-        complete,
-        json!({"status": metadata["status"], "mode": args.mode.name(),
-               "output": directory, "result": metadata.get("result"),
-               "error": metadata.get("error")}),
-        saved,
-    ))
+    let summary = Summary {
+        status: report.status,
+        mode: args.mode.name(),
+        output: &directory,
+        result: report.details.result,
+        error: report.error,
+    };
+    Ok(session::closed(completion, &summary, saved))
 }
 
-fn full_or_small(port: &mut dyn Port, directory: &Path, mode: Mode) -> Result<Value> {
+fn full_or_small(port: &mut dyn Port, directory: &Path, mode: Mode) -> Result<FlashRead> {
     let length = if mode == Mode::Small { 4096 } else { CAPACITY };
     let partial = directory.join("flash-read.bin.part");
     let mut output = fs::OpenOptions::new()
@@ -260,8 +351,9 @@ fn full_or_small(port: &mut dyn Port, directory: &Path, mode: Mode) -> Result<Va
     require(!finished.exists(), "Refusing to overwrite a completed read")?;
     fs::rename(&partial, &finished)?;
 
-    let mut result = Value::Object(transfer.json());
-    result["sha256"] = json!(sha256(&fs::read(&finished)?));
-    result["offset"] = json!(0);
-    Ok(result)
+    Ok(FlashRead {
+        transfer,
+        sha256: sha256(&fs::read(&finished)?),
+        offset: 0,
+    })
 }

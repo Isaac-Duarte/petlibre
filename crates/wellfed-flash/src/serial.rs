@@ -91,8 +91,11 @@ impl Emulated {
     }
 
     fn call(&mut self, op: u8, argument: usize, data: &[u8]) -> io::Result<Vec<u8>> {
+        let argument = u32::try_from(argument).map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidInput, "Emulator request too large")
+        })?;
         let mut request = vec![op];
-        request.extend_from_slice(&(argument as u32).to_le_bytes());
+        request.extend_from_slice(&argument.to_le_bytes());
         request.extend_from_slice(data);
         self.0.write_all(&request)?;
 

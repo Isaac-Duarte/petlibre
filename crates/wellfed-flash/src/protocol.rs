@@ -9,9 +9,11 @@ use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use serde_json::{Value, json};
+use std::collections::BTreeMap;
 
-use crate::error::{Error, Result, require};
+use serde::Serialize;
+
+use crate::error::{Result, refuse, require};
 use wellfed_formats::canonical::sha256;
 
 /// The reviewed vendor flash helper, which runs from RAM; no other bytes are
@@ -66,7 +68,7 @@ pub fn load_helper(data: Vec<u8>) -> Result<Vec<u8>> {
         "Helper does not match the reviewed vendor binary",
     )?;
     require(
-        u32::from_le_bytes(data[..4].try_into().unwrap()) == HELPER_ADDRESS + 0x21,
+        data.first_chunk().map(|word| u32::from_le_bytes(*word)) == Some(HELPER_ADDRESS + 0x21),
         "Unexpected helper entry pointer",
     )?;
     Ok(data)
@@ -81,16 +83,31 @@ pub fn read_request(offset: usize, length: usize) -> Result<[u8; 6]> {
         offset + length <= CAPACITY,
         "Read exceeds the identified flash capacity",
     )?;
-    let offset = (offset as u32).to_le_bytes();
-    let sectors = ((length / SECTOR) as u16).to_le_bytes();
+    let offset = address(offset)?;
+    let Ok(sectors) = u16::try_from(length / SECTOR) else {
+        return refuse("Read exceeds the helper's sector count");
+    };
+
+    let sectors = sectors.to_le_bytes();
     Ok([
         0x20, offset[0], offset[1], offset[2], sectors[0], sectors[1],
     ])
 }
 
-pub fn erase_request(offset: usize) -> [u8; 6] {
-    let offset = (offset as u32).to_le_bytes();
-    [0x17, offset[0], offset[1], offset[2], 0x01, 0x00]
+/// The three address bytes requests carry; the 8 MiB array needs no more.
+fn address(offset: usize) -> Result<[u8; 3]> {
+    require(offset < CAPACITY, "Address outside the 8 MiB array")?;
+    let Ok(offset) = u32::try_from(offset) else {
+        return refuse("Address outside the 8 MiB array");
+    };
+
+    let [low, middle, high, _] = offset.to_le_bytes();
+    Ok([low, middle, high])
+}
+
+pub fn erase_request(offset: usize) -> Result<[u8; 6]> {
+    let [low, middle, high] = address(offset)?;
+    Ok([0x17, low, middle, high, 0x01, 0x00])
 }
 
 fn checksum(body: &[u8]) -> u8 {
@@ -127,11 +144,12 @@ pub fn upload_frame(helper: &[u8], index: usize) -> Result<Vec<u8>> {
     let mut payload = [0xffu8; 1024];
     let chunk = &helper[index * 1024..helper.len().min((index + 1) * 1024)];
     payload[..chunk.len()].copy_from_slice(chunk);
-    Ok(frame(
-        index as u8 + 1,
-        HELPER_ADDRESS + index as u32 * 1024,
-        &payload,
-    ))
+
+    // The pinned helper is five packets, so both always fit.
+    let (Ok(number), Ok(at)) = (u8::try_from(index + 1), u32::try_from(index * 1024)) else {
+        return refuse("Invalid helper packet index");
+    };
+    Ok(frame(number, HELPER_ADDRESS + at, &payload))
 }
 
 fn seconds(value: f64) -> Duration {
@@ -213,7 +231,7 @@ pub fn baudcheck(port: &mut dyn Port) -> Result<()> {
         match exact_read(port, 1, 1.0)?[0] {
             ACK => return Ok(()),
             NAK => {}
-            _ => return Err(Error::Refused("Unexpected BAUDCHK response".into())),
+            _ => return refuse("Unexpected BAUDCHK response"),
         }
     }
 }
@@ -235,22 +253,12 @@ pub fn upload_helper(port: &mut dyn Port, helper: &[u8]) -> Result<()> {
     wait_naks(port, 3, 5.0)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A completed read as reports record it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct Transfer {
     pub bytes: usize,
     pub packets: usize,
     pub duplicate_packets: usize,
-}
-
-impl Transfer {
-    pub fn json(&self) -> serde_json::Map<String, Value> {
-        let Value::Object(map) = json!({"bytes": self.bytes, "packets": self.packets,
-                                        "duplicate_packets": self.duplicate_packets})
-        else {
-            unreachable!()
-        };
-        map
-    }
 }
 
 /// Exact checksum-framed read; malformed, partial or cancelled reads fail closed.
@@ -387,8 +395,21 @@ fn count(haystack: &[u8], needle: &[u8]) -> usize {
 
 const FAULTS: [&[u8]; 3] = [b"Hard Fault", b"HardFault", b"Fault on thread"];
 
+/// What a receive-only observation saw.
+#[derive(Debug, Clone, Serialize)]
+pub struct Observation {
+    pub bytes: usize,
+    pub transmitted_bytes: usize,
+    pub nak_bytes: usize,
+    pub longest_nak_run: usize,
+    pub download_banner_seen: bool,
+    pub stock_startup_markers: usize,
+    pub fault_marker_seen: bool,
+    pub limit: &'static str,
+}
+
 /// Receive only: NAKs are observations, never an automatic loader assertion.
-pub fn observe(port: &mut dyn Port, seconds: f64) -> Result<Value> {
+pub fn observe(port: &mut dyn Port, seconds: f64) -> Result<Observation> {
     require(
         (1.0..=180.0).contains(&seconds),
         "Observation must be 1-180 seconds",
@@ -401,15 +422,16 @@ pub fn observe(port: &mut dyn Port, seconds: f64) -> Result<Value> {
         .max()
         .unwrap_or(0);
 
-    Ok(json!({
-        "bytes": data.len(), "transmitted_bytes": 0,
-        "nak_bytes": data.iter().filter(|byte| **byte == NAK).count(),
-        "longest_nak_run": longest,
-        "download_banner_seen": contains(&data, b"#Flash Download Start"),
-        "stock_startup_markers": count(&data, b"app_main:version:"),
-        "fault_marker_seen": FAULTS.iter().any(|fault| contains(&data, fault)),
-        "limit": "Serial output only; operator must establish power/strap state and loader identity",
-    }))
+    Ok(Observation {
+        bytes: data.len(),
+        transmitted_bytes: 0,
+        nak_bytes: data.iter().filter(|byte| **byte == NAK).count(),
+        longest_nak_run: longest,
+        download_banner_seen: contains(&data, b"#Flash Download Start"),
+        stock_startup_markers: count(&data, b"app_main:version:"),
+        fault_marker_seen: FAULTS.iter().any(|fault| contains(&data, fault)),
+        limit: "Serial output only; operator must establish power/strap state and loader identity",
+    })
 }
 
 fn rom_command(command: &[u8]) -> bool {
@@ -481,11 +503,16 @@ fn dumped_words(reply: &[u8], address: u32) -> Vec<u32> {
             cursor += 1;
         }
         let digits = &reply[cursor..reply.len().min(cursor + 8)];
-        if digits.len() == 8 && digits.iter().all(u8::is_ascii_hexdigit) {
-            values.push(u32::from_str_radix(std::str::from_utf8(digits).unwrap(), 16).unwrap());
-            at = cursor + 8;
-        } else {
-            at += 1;
+        let word = std::str::from_utf8(digits)
+            .ok()
+            .filter(|digits| digits.len() == 8 && digits.bytes().all(|b| b.is_ascii_hexdigit()))
+            .and_then(|digits| u32::from_str_radix(digits, 16).ok());
+        match word {
+            Some(word) => {
+                values.push(word);
+                at = cursor + 8;
+            }
+            None => at += 1,
         }
     }
     values
@@ -498,19 +525,42 @@ pub fn rom_sample_addresses() -> Vec<u32> {
         .collect()
 }
 
+/// The core that owns the stock console when ROM inspection starts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum Core {
+    Km4,
+    Km0,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Sample {
+    pub address: String,
+    pub value: String,
+}
+
+/// The sampled ROM words and the pinned candidates they still match.
+#[derive(Debug, Clone, Serialize)]
+pub struct RomInspection {
+    pub sampled_words: Vec<Sample>,
+    /// Candidate path to its SHA-256.
+    pub matching_candidates: BTreeMap<String, String>,
+    pub returned_to_km4: bool,
+    pub limit: &'static str,
+}
+
 /// Enter KM0 only after verifying both actual help-table identities.
 pub fn inspect_rom(
     port: &mut dyn Port,
     candidates: &[(String, Vec<u8>)],
-    start_km4: bool,
-) -> Result<Value> {
+    start: Core,
+) -> Result<RomInspection> {
     let initial = collect(port, 0.5)?;
     require(
         !contains(&initial, b"Hard Fault"),
         "Unexpected pre-existing fault output",
     )?;
 
-    if start_km4 {
+    if start == Core::Km4 {
         let high = console_query(port, b"?\r\n", 1.0)?;
         require(
             is_km4_help(&high),
@@ -545,24 +595,25 @@ pub fn inspect_rom(
             format!("ROM differs from candidate at {address:#x}; helper upload blocked"),
         )?;
 
-        samples.push(
-            json!({"address": format!("0x{address:08x}"), "value": format!("0x{value:08x}")}),
-        );
+        samples.push(Sample {
+            address: format!("0x{address:08x}"),
+            value: format!("0x{value:08x}"),
+        });
     }
 
     console_query(port, b">>\r\n", 0.5)?;
     let high = console_query(port, b"?\r\n", 1.0)?;
     require(is_km4_help(&high), "KM4 console return not verified")?;
 
-    let matching: serde_json::Map<String, Value> = surviving
-        .iter()
-        .map(|(name, rom)| (name.clone(), Value::String(sha256(rom))))
-        .collect();
-
-    Ok(json!({
-        "sampled_words": samples, "matching_candidates": matching, "returned_to_km4": true,
-        "limit": "Sampled ROM identity only; not whole-ROM or all-side-effect verification",
-    }))
+    Ok(RomInspection {
+        sampled_words: samples,
+        matching_candidates: surviving
+            .iter()
+            .map(|(name, rom)| (name.clone(), sha256(rom)))
+            .collect(),
+        returned_to_km4: true,
+        limit: "Sampled ROM identity only; not whole-ROM or all-side-effect verification",
+    })
 }
 
 #[cfg(test)]
@@ -578,7 +629,11 @@ mod tests {
         assert!(read_request(0x100, 4096).is_err());
         assert!(read_request(0, 0).is_err());
         assert!(read_request(CAPACITY - 4096, 8192).is_err());
-        assert_eq!(erase_request(0x186000), [0x17, 0x00, 0x60, 0x18, 1, 0]);
+        assert_eq!(
+            erase_request(0x186000).unwrap(),
+            [0x17, 0x00, 0x60, 0x18, 1, 0]
+        );
+        assert!(erase_request(CAPACITY).is_err());
     }
 
     #[test]

@@ -9,11 +9,12 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::atomic::Ordering;
 
-use clap::{Args, Parser, Subcommand, ValueEnum};
-use serde_json::{Value, json};
+use clap::{Args, Parser, Subcommand};
+use serde::Serialize;
+use serde_json::Value;
 
-use wellfed_flash::protocol::INTERRUPTED;
-use wellfed_flash::session::{Context, Outcome};
+use wellfed_flash::protocol::{Core, INTERRUPTED};
+use wellfed_flash::session::{Completion, Context, Outcome};
 use wellfed_flash::{read, stock, update};
 
 #[derive(Parser)]
@@ -82,29 +83,9 @@ fn number<T: TryFrom<u64>>(text: &str) -> Result<T, String> {
     T::try_from(value).map_err(|_| format!("{text} is out of range"))
 }
 
-#[derive(Clone, Copy, ValueEnum)]
-enum ReadMode {
-    /// Receive only, for --seconds.
-    Observe,
-    /// Sample the ROM through the stock console before any helper upload.
-    InspectRom,
-    /// Upload the pinned helper to the observed loader and read 4 KiB.
-    Small,
-    /// Continue the bounded read's helper session and read all 8 MiB.
-    Full,
-    /// Continue the bounded read's helper session and read the status registers.
-    Status,
-}
-
-#[derive(Clone, Copy, ValueEnum)]
-enum Core {
-    Km4,
-    Km0,
-}
-
 #[derive(Args)]
 struct ReadArgs {
-    mode: ReadMode,
+    mode: read::Mode,
     #[arg(long)]
     port: String,
     /// New private output directory.
@@ -126,16 +107,6 @@ struct ReadArgs {
     /// Known console owner for ROM inspection; never inferred on a mismatch.
     #[arg(long, value_enum, default_value = "km4")]
     start_core: Core,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
-enum Phase {
-    /// Read the region and guards; write nothing.
-    Inspect,
-    /// Write a reviewed plan from a completed inspection; no serial access.
-    Prepare,
-    /// Execute exactly the reviewed plan.
-    Execute,
 }
 
 #[derive(Args)]
@@ -181,17 +152,9 @@ impl EvidenceArgs {
     }
 }
 
-fn phase(phase: Phase) -> update::Mode {
-    match phase {
-        Phase::Inspect => update::Mode::Inspect,
-        Phase::Prepare => update::Mode::Prepare,
-        Phase::Execute => update::Mode::Execute,
-    }
-}
-
 #[derive(Args)]
 struct UpdateArgs {
-    phase: Phase,
+    phase: update::Mode,
     #[command(flatten)]
     evidence: EvidenceArgs,
     /// Frozen review directory of the image to install.
@@ -216,7 +179,7 @@ struct UpdateArgs {
 
 #[derive(Args)]
 struct GiveWayArgs {
-    phase: Phase,
+    phase: update::Mode,
     #[command(flatten)]
     evidence: EvidenceArgs,
     /// Frozen review of the image bank 0 must hold exactly.
@@ -224,15 +187,9 @@ struct GiveWayArgs {
     fallback: PathBuf,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
-enum StockPhase {
-    Prepare,
-    Execute,
-}
-
 #[derive(Args)]
 struct StockArgs {
-    phase: StockPhase,
+    phase: stock::Phase,
     #[command(flatten)]
     evidence: EvidenceArgs,
     /// The complete full read (flash-read.bin) of this helper session.
@@ -249,17 +206,43 @@ fn device(
         Err(error) => return refused(&error),
     };
     match run(&context) {
-        Ok(outcome) => (u8::from(!outcome.complete), outcome.summary),
+        Ok(outcome) => (
+            u8::from(outcome.completion == Completion::Stopped),
+            outcome.summary,
+        ),
         Err(error) => refused(&error),
     }
 }
 
+#[derive(Serialize)]
+struct Refusal {
+    status: &'static str,
+    error_type: &'static str,
+    error: String,
+}
+
 fn refused(error: &wellfed_flash::Error) -> (u8, Value) {
     eprintln!("Refused before serial access: {error}");
-    (
-        2,
-        json!({"status": "refused", "error_type": error.kind(), "error": error.to_string()}),
-    )
+    let refusal = Refusal {
+        status: "refused",
+        error_type: error.kind(),
+        error: error.to_string(),
+    };
+
+    // Strings only, so this always encodes.
+    (2, serde_json::to_value(refusal).unwrap_or_default())
+}
+
+/// An offline command's result, refused if it fails or cannot be encoded.
+fn offline<T: Serialize>(
+    result: wellfed_flash::Result<T>,
+    code: impl FnOnce(&T) -> u8,
+) -> (u8, Value) {
+    let encoded = result.and_then(|value| {
+        let summary = serde_json::to_value(&value)?;
+        Ok((code(&value), summary))
+    });
+    encoded.unwrap_or_else(|error| refused(&error))
 }
 
 fn main() -> ExitCode {
@@ -271,18 +254,10 @@ fn main() -> ExitCode {
 
     let (code, summary) = match cli.command {
         Command::Read(args) => device(root, |context| {
-            let mode = match args.mode {
-                ReadMode::Observe => read::Mode::Observe,
-                ReadMode::InspectRom => read::Mode::InspectRom,
-                ReadMode::Small => read::Mode::Small,
-                ReadMode::Full => read::Mode::Full,
-                ReadMode::Status => read::Mode::Status,
-            };
-
             read::run(
                 context,
                 &read::Args {
-                    mode,
+                    mode: args.mode,
                     port: args.port,
                     output: args.output,
                     helper: args.helper,
@@ -290,7 +265,7 @@ fn main() -> ExitCode {
                     rom_report: args.rom_report,
                     small_report: args.small_report,
                     seconds: args.seconds,
-                    start_km4: matches!(args.start_core, Core::Km4),
+                    start_core: args.start_core,
                 },
             )
         }),
@@ -299,7 +274,7 @@ fn main() -> ExitCode {
             update::run(
                 context,
                 &update::Args {
-                    mode: phase(args.phase),
+                    mode: args.phase,
                     evidence: args.evidence.evidence(),
                     target: args.target,
                     source: args.source,
@@ -315,7 +290,7 @@ fn main() -> ExitCode {
             update::give_way(
                 context,
                 &update::GiveWayArgs {
-                    mode: phase(args.phase),
+                    mode: args.phase,
                     evidence: args.evidence.evidence(),
                     fallback: args.fallback,
                 },
@@ -326,7 +301,7 @@ fn main() -> ExitCode {
             stock::run(
                 context,
                 &stock::Args {
-                    execute: args.phase == StockPhase::Execute,
+                    phase: args.phase,
                     evidence: args.evidence.evidence(),
                     current: args.current,
                 },
@@ -338,10 +313,7 @@ fn main() -> ExitCode {
             current,
             output,
         } => device(root, |context| {
-            stock::plan_offline(context, &baseline, &current, &output).map(|summary| Outcome {
-                complete: true,
-                summary,
-            })
+            stock::plan_offline(context, &baseline, &current, &output)
         }),
 
         Command::DecodeStatus {
@@ -350,20 +322,17 @@ fn main() -> ExitCode {
             sr3,
             start,
             end,
-        } => match wellfed_flash::status::assess_range([sr1, sr2, sr3], start, end) {
-            Ok(value) => (0, value),
-            Err(error) => refused(&error),
-        },
+        } => offline(
+            wellfed_flash::status::assess_range([sr1, sr2, sr3], start, end),
+            |_| 0,
+        ),
 
-        Command::InspectJournal { journal } => {
-            match std::fs::read(&journal)
+        Command::InspectJournal { journal } => offline(
+            std::fs::read(&journal)
                 .map_err(wellfed_flash::Error::from)
-                .and_then(|data| wellfed_flash::journal::inspect(&data))
-            {
-                Ok(value) => (u8::from(value["verified_terminal"] != true), value),
-                Err(error) => refused(&error),
-            }
-        }
+                .and_then(|data| wellfed_flash::journal::inspect(&data)),
+            |receipt| u8::from(!receipt.verified_terminal),
+        ),
     };
 
     println!("{summary}");

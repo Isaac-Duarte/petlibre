@@ -6,32 +6,54 @@
 //! invalid target marker is required for a changed-bank recovery. The Python
 //! client's write-back acceptance-test modes are not ported.
 
-use std::cell::RefCell;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use serde_json::{Value, json};
+use serde::Serialize;
+use serde_json::Value;
 
-use crate::error::{Result, require};
-use crate::evidence::{self, utc};
-use crate::protocol::{self, CAPACITY, HELPER_SHA256, Port};
-use crate::recovery::{self, KIND};
-use crate::session::{self, Context, Outcome, progress};
+use crate::error::{Result, refuse, require};
+use crate::evidence;
+use crate::protocol::{self, CAPACITY, HELPER_SHA256, Port, Transfer};
+use crate::recovery::{self, Plan};
+use crate::report::{Session, Status, Transport};
+use crate::sector::Baseline;
+use crate::session::{self, Completion, Context, Outcome, ReadResult, Saved, progress};
 use crate::update::Evidence;
 use wellfed_formats::canonical::{canonical, sha256};
+use wellfed_formats::flash_plan::{Kind, ToolHashes};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum Phase {
+    /// Write a reviewed plan from a complete full read; no serial access.
+    Prepare,
+    /// Execute exactly the reviewed plan.
+    Execute,
+}
 
 pub struct Args {
-    pub execute: bool,
+    pub phase: Phase,
     pub evidence: Evidence,
     /// A complete full read from this helper session, beside its report.
     pub current: PathBuf,
 }
 
+/// The reviewed stock-recovery plan: the offline plan and the session
+/// evidence it continues.
+#[derive(Debug, Clone, Serialize)]
+pub struct Reviewed {
+    pub schema_version: u32,
+    pub kind: Kind,
+    pub port: String,
+    pub recovery_plan: Plan,
+    pub current_report_sha256: String,
+    pub bounded_read_report_sha256: String,
+    pub rom_report_sha256: String,
+    pub tool_sha256: ToolHashes,
+}
+
 /// All local provenance checks run before serial access or output creation.
-fn prepare_inputs(
-    context: &Context,
-    args: &Args,
-) -> Result<(crate::sector::Baseline, Vec<u8>, Value)> {
+fn prepare_inputs(context: &Context, args: &Args) -> Result<(Baseline, Vec<u8>, Reviewed)> {
     let root = &context.root;
     let evidence = &args.evidence;
     let baseline = context.baseline(&evidence.baseline)?;
@@ -49,73 +71,86 @@ fn prepare_inputs(
         .map(|p| p.join("report.json"))
         .unwrap_or_default();
     let raw_report = root.private_file(&report_path)?;
-    let report: Value = serde_json::from_slice(&raw_report)?;
-    context.same_transport(&report)?;
+    let report: Saved<ReadResult> = serde_json::from_slice(&raw_report)?;
+    context.same_transport(report.transport)?;
 
-    let result = &report["result"];
+    let result = report.result.as_ref();
     require(
-        report["mode"] == "read-full"
-            && report["status"] == "complete"
-            && report["port"] == evidence.port.as_str()
-            && report["helper_sha256"] == HELPER_SHA256
-            && report["helper_upload_attempted"] == false
-            && report["bounded_read_report_sha256"] == sha256(&small).as_str()
-            && result["offset"].as_u64() == Some(0)
-            && result["bytes"].as_u64() == Some(CAPACITY as u64)
-            && result["sha256"] == sha256(&current).as_str(),
+        report.status == Some(Status::Complete)
+            && report.mode.as_deref() == Some("read-full")
+            && report.port.as_deref() == Some(evidence.port.as_str())
+            && report.helper_sha256.as_deref() == Some(HELPER_SHA256)
+            && report.helper_upload_attempted == Some(false)
+            && report.bounded_read_report_sha256.as_deref() == Some(&sha256(&small))
+            && result.and_then(|r| r.offset) == Some(0)
+            && result.and_then(|r| r.bytes) == u64::try_from(CAPACITY).ok()
+            && result.and_then(|r| r.sha256.as_deref()) == Some(&sha256(&current)),
         "Complete full-read report from this helper session required",
     )?;
     session::streams_match(
         root,
         &report_path,
-        &report,
+        &report.streams,
         "Full-read serial evidence hash mismatch",
     )?;
 
-    let reviewed = json!({
-        "schema_version": 1, "kind": KIND, "port": evidence.port, "recovery_plan": plan,
-        "current_report_sha256": sha256(&raw_report),
-        "bounded_read_report_sha256": sha256(&small), "rom_report_sha256": sha256(&rom),
-        "tool_sha256": context.tools(),
-    });
+    let reviewed = Reviewed {
+        schema_version: 1,
+        kind: Kind::StockRecovery,
+        port: evidence.port.clone(),
+        recovery_plan: plan,
+        current_report_sha256: sha256(&raw_report),
+        bounded_read_report_sha256: sha256(&small),
+        rom_report_sha256: sha256(&rom),
+        tool_sha256: context.tools(),
+    };
 
     Ok((baseline, current, reviewed))
 }
 
-/// Everything but the nested planner's creation time, never a guard.
+/// Everything but the nested planner's creation time, never a guard. The
+/// reviewed file is compared as written, so this works on its JSON.
 fn comparable(reviewed: &Value) -> Result<Vec<u8>> {
     let mut result = reviewed.clone();
-    require(
-        result["recovery_plan"]["created_utc"].is_string(),
-        "Plan creation time required",
-    )?;
+    let plan = result
+        .get_mut("recovery_plan")
+        .and_then(Value::as_object_mut);
+    let Some(plan) = plan.filter(|plan| plan.get("created_utc").is_some_and(Value::is_string))
+    else {
+        return refuse("Plan creation time required");
+    };
 
-    result["recovery_plan"]
-        .as_object_mut()
-        .unwrap()
-        .remove("created_utc");
+    plan.remove("created_utc");
     Ok(canonical(&result)?)
+}
+
+#[derive(Serialize)]
+struct Prepared<'a> {
+    status: &'static str,
+    operation: Kind,
+    plan: &'a Path,
+    plan_sha256: String,
+    changed_sectors: usize,
 }
 
 pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
     let (baseline, current, expected) = prepare_inputs(context, args)?;
     let evidence = &args.evidence;
 
-    if !args.execute {
+    if args.phase == Phase::Prepare {
         let sha = session::write_plan(&context.root, &evidence.output, &expected)?;
         progress(&format!("Prepared bank-1 recovery plan SHA256: {sha}"));
-        return Ok(Outcome {
-            complete: true,
-            summary: json!({"status": "prepared", "operation": KIND, "plan": evidence.output,
-                            "plan_sha256": sha,
-                            "changed_sectors": expected["recovery_plan"]["changed_sector_count"]}),
+        return Outcome::done(&Prepared {
+            status: "prepared",
+            operation: Kind::StockRecovery,
+            plan: &evidence.output,
+            plan_sha256: sha,
+            changed_sectors: expected.recovery_plan.changed_sector_count,
         });
     }
 
     let (Some(plan), Some(expected_sha)) = (&evidence.plan, &evidence.expected_plan_sha256) else {
-        return Err(crate::Error::Refused(
-            "Exact reviewed plan/hash required".into(),
-        ));
+        return refuse("Exact reviewed plan/hash required");
     };
 
     let raw = context.root.private_file(plan)?;
@@ -126,21 +161,57 @@ pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
 
     let reviewed: Value = serde_json::from_slice(&raw)?;
     require(
-        comparable(&reviewed)? == comparable(&expected)?,
+        comparable(&reviewed)? == comparable(&serde_json::to_value(&expected)?)?,
         "Reviewed plan/source/evidence differs",
     )?;
 
-    recovery::validate_plan(&baseline, &current, &reviewed["recovery_plan"])?;
-    execute(context, args, &baseline, &current, &reviewed, &raw)
+    let manifest = &reviewed["recovery_plan"];
+    recovery::validate_plan(&baseline, &current, manifest)?;
+    execute(context, args, &baseline, &current, manifest, &raw)
+}
+
+/// One full snapshot as the session report lists it.
+#[derive(Debug, Clone, Serialize)]
+struct Snapshot {
+    #[serde(flatten)]
+    transfer: Transfer,
+    file: String,
+    sha256: String,
+}
+
+/// The stock session's report fields beyond the shared lifecycle.
+#[derive(Serialize)]
+struct Details {
+    port: String,
+    operation: Kind,
+    reviewed_plan_sha256: String,
+    helper_upload_attempted: bool,
+    snapshots: Vec<Snapshot>,
+    transaction_directory: &'static str,
+    physical_recovery_verified: bool,
+    tool: &'static str,
+    transport: Transport,
+    scope: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    snapshot_sha256: Option<String>,
+}
+
+#[derive(Serialize)]
+struct Summary<'a> {
+    status: Status,
+    operation: Kind,
+    output: &'a Path,
+    snapshot_sha256: Option<String>,
+    error: Option<String>,
 }
 
 /// Open once; the transaction owns durable mutation intent and activation order.
 fn execute(
     context: &Context,
     args: &Args,
-    baseline: &crate::sector::Baseline,
+    baseline: &Baseline,
     current: &[u8],
-    reviewed: &Value,
+    manifest: &Value,
     raw: &[u8],
 ) -> Result<Outcome> {
     let directory = context.root.output_directory(&args.evidence.output)?;
@@ -149,26 +220,31 @@ fn execute(
         evidence::sync_directory(parent)?;
     }
 
-    let path = directory.join("session.json");
-    let state = RefCell::new(json!({
-        "status": "prepared", "start_utc": utc(), "port": args.evidence.port, "operation": KIND,
-        "reviewed_plan_sha256": sha256(raw), "helper_upload_attempted": false,
-        "snapshots": [], "transaction_directory": "transaction",
-        "physical_recovery_verified": false, "tool": "wellfed-flash", "transport": context.transport(),
-        "scope": "Supervised serial stock restore; physical acceptance requires external bench evidence",
-    }));
-    let save = || evidence::save_report(&path, &state.borrow());
-    save()?;
+    let state = Session::open(
+        directory.join("session.json"),
+        Details {
+            port: args.evidence.port.clone(),
+            operation: Kind::StockRecovery,
+            reviewed_plan_sha256: sha256(raw),
+            helper_upload_attempted: false,
+            snapshots: Vec::new(),
+            transaction_directory: "transaction",
+            physical_recovery_verified: false,
+            tool: "wellfed-flash",
+            transport: context.transport(),
+            scope: "Supervised serial stock restore; physical acceptance requires external bench evidence",
+            snapshot_sha256: None,
+        },
+    )?;
 
-    let result = (|| -> Result<Value> {
+    let result = (|| -> Result<recovery::Recovered> {
         let mut port = context.record(&args.evidence.port, &directory)?;
-        state.borrow_mut()["status"] = json!("running");
-        save()?;
+        state.update(|s| s.status = Status::Running)?;
 
         progress("Original bank-1 operation; fresh full verification before any mutation");
 
         let mut snapshot = |port: &mut dyn Port| -> Result<Vec<u8>> {
-            let number = state.borrow()["snapshots"].as_array().unwrap().len() + 1;
+            let number = state.read(|s| s.details.snapshots.len()) + 1;
             let partial = directory.join(format!("snapshot-{number:02}.bin.part"));
             let mut file = fs::OpenOptions::new()
                 .write(true)
@@ -187,15 +263,12 @@ fn execute(
             fs::rename(&partial, directory.join(&name))?;
             evidence::sync_directory(&directory)?;
 
-            let mut entry = Value::Object(transfer.json());
-            entry["file"] = json!(name);
-            entry["sha256"] = json!(sha256(&data));
-
-            state.borrow_mut()["snapshots"]
-                .as_array_mut()
-                .unwrap()
-                .push(entry);
-            save()?;
+            let entry = Snapshot {
+                transfer,
+                file: name,
+                sha256: sha256(&data),
+            };
+            state.update(|s| s.details.snapshots.push(entry))?;
             Ok(data)
         };
 
@@ -204,52 +277,56 @@ fn execute(
             &context.root,
             baseline,
             current,
-            &reviewed["recovery_plan"],
+            manifest,
             &mut snapshot,
             &directory.join("transaction"),
         )
     })();
 
-    let complete = result.is_ok();
-    {
-        let mut state = state.borrow_mut();
-        match result {
-            Ok(report) => {
-                state["status"] = json!("verified");
-                state["snapshot_sha256"] = report["snapshot_sha256"].clone();
-                progress(
-                    "Bank-1 recovery and preserved ranges verified; keep application boot excluded until review",
-                );
-            }
-            Err(error) => {
-                state["status"] = json!("stopped");
-                state["error"] = json!(format!("{}: {error}", error.kind()));
-                progress(
-                    "Stopped without replay. Keep application boot excluded and review private evidence.",
-                );
-            }
+    let completion = match &result {
+        Ok(_) => Completion::Complete,
+        Err(_) => Completion::Stopped,
+    };
+    let (state, saved) = state.close(&directory, |s| match result {
+        Ok(report) => {
+            s.status = Status::Verified;
+            s.details.snapshot_sha256 = Some(report.snapshot_sha256);
+            progress(
+                "Bank-1 recovery and preserved ranges verified; keep application boot excluded until review",
+            );
         }
-        state["end_utc"] = json!(utc());
-        evidence::stream_hashes(&directory, &mut state);
-    }
+        Err(error) => {
+            s.stop(Status::Stopped, &error);
+            progress(
+                "Stopped without replay. Keep application boot excluded and review private evidence.",
+            );
+        }
+    });
 
-    let saved = save();
-    let state = state.into_inner();
-    Ok(session::closed(
-        complete,
-        json!({"status": state["status"], "operation": KIND, "output": directory,
-               "snapshot_sha256": state.get("snapshot_sha256"), "error": state.get("error")}),
-        saved,
-    ))
+    let summary = Summary {
+        status: state.status,
+        operation: Kind::StockRecovery,
+        output: &directory,
+        snapshot_sha256: state.details.snapshot_sha256,
+        error: state.error,
+    };
+    Ok(session::closed(completion, &summary, saved))
+}
+
+#[derive(Serialize)]
+struct Planned<'a> {
+    status: &'static str,
+    output: &'a Path,
+    changed_sector_count: usize,
 }
 
 /// Offline: write a recovery plan and its sector payloads; no device I/O.
 pub fn plan_offline(
     context: &Context,
-    baseline: &std::path::Path,
-    current: &std::path::Path,
-    output: &std::path::Path,
-) -> Result<Value> {
+    baseline: &Path,
+    current: &Path,
+    output: &Path,
+) -> Result<Outcome> {
     let baseline = context.baseline(baseline)?;
     let current = fs::read(current)?;
     let plan = recovery::plan(&baseline, &current)?;
@@ -260,14 +337,82 @@ pub fn plan_offline(
         evidence::write_new(&directory.join(name), &data)?;
     }
 
-    let mut text = serde_json::to_string_pretty(&plan)?;
+    // Through `Value`, so keys stay in the sorted order earlier plans had.
+    let mut text = serde_json::to_string_pretty(&serde_json::to_value(&plan)?)?;
     text.push('\n');
     evidence::write_new(&directory.join("plan.json"), text.as_bytes())?;
 
     progress(&format!(
         "Offline plan: {} application-bank sectors; no device I/O",
-        plan["changed_sector_count"]
+        plan.changed_sector_count
     ));
-    Ok(json!({"status": "planned", "output": directory,
-              "changed_sector_count": plan["changed_sector_count"]}))
+    Outcome::done(&Planned {
+        status: "planned",
+        output: &directory,
+        changed_sector_count: plan.changed_sector_count,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn session_state_keeps_its_fields() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("session.json");
+        let state = Session::open(
+            path.clone(),
+            Details {
+                port: "/dev/ttyUSB0".into(),
+                operation: Kind::StockRecovery,
+                reviewed_plan_sha256: "p".into(),
+                helper_upload_attempted: false,
+                snapshots: Vec::new(),
+                transaction_directory: "transaction",
+                physical_recovery_verified: false,
+                tool: "wellfed-flash",
+                transport: Transport::Emulator,
+                scope: "scope",
+                snapshot_sha256: None,
+            },
+        )
+        .unwrap();
+
+        state
+            .update(|s| {
+                s.details.snapshots.push(Snapshot {
+                    transfer: Transfer {
+                        bytes: CAPACITY,
+                        packets: CAPACITY / 1024,
+                        duplicate_packets: 0,
+                    },
+                    file: "snapshot-01.bin".into(),
+                    sha256: "s".into(),
+                })
+            })
+            .unwrap();
+        let (state, saved) = state.close(directory.path(), |s| {
+            s.status = Status::Verified;
+            s.details.snapshot_sha256 = Some("a".into());
+        });
+        saved.unwrap();
+
+        let written: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(
+            written,
+            json!({
+                "status": "verified", "start_utc": state.start_utc, "port": "/dev/ttyUSB0",
+                "operation": "original_stock_bank1_recovery", "reviewed_plan_sha256": "p",
+                "helper_upload_attempted": false,
+                "snapshots": [{"bytes": CAPACITY, "packets": CAPACITY / 1024,
+                               "duplicate_packets": 0, "file": "snapshot-01.bin", "sha256": "s"}],
+                "transaction_directory": "transaction", "physical_recovery_verified": false,
+                "tool": "wellfed-flash", "transport": "emulator", "scope": "scope",
+                "snapshot_sha256": "a", "end_utc": state.end_utc,
+            })
+        );
+    }
 }

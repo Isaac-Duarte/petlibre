@@ -14,7 +14,7 @@ The updater: booted from bank 0, with a key built in (`PETLIBRE_OTA_PUBLIC_KEY`,
 - **The offer check:** a confirmed normal build runs `amebad/src/watch.rs`. Every minute it opens a short MQTT session of its own, as `<client_id>-ota`, publishes `ota/check`, and the server answers `ota/offered`.
 - **On hardware:** build W checked and found its own build on offer (`same=1`). After the owner side loaded signed v5 for another build, the next check made W clear its bank-1 marker (`sdk::bank1_give_way`, refused unless bank 0 is valid) and restart. Bank 0 installed v5, which confirmed itself after 30 s. Nothing went over UART.
 
-**Failure modes (October 22, physical).** `crates/tools/petlibre-local/examples/ota_fault_server.rs` answers `ota/get` as the server role, beside `petlibre-local broker` only, with one injected fault:
+**Failure modes (October 22, physical).** `src/tools/petlibre-local/examples/ota_fault_server.rs` answers `ota/get` as the server role, beside `petlibre-local broker` only, with one injected fault:
 
 | Fault | Result |
 | --- | --- |
@@ -117,7 +117,7 @@ The server-side broker ACL gains these two topics for the firmware role only.
 
 - **Core (done):** `petlibre-core::ota`, using `ed25519-dalek` and `sha2` with default features off, so it stays `no_std`. It holds manifest parsing and signature verification, the bank-1 sector writer, the trial decision and the confirmation record. The manifest refuses tampering, the wrong key, a bank other than 1, a size outside one sector to 0x150000, and downgrades. The writer withholds the marker until every sector reads back and the whole-image SHA-256 matches, and it refuses out-of-order chunks, a missing marker, failed readback, corruption and truncation. Host tests include RFC 8032 test 1.
 - **Fakes:** the bank-role decision and the KM0 trial counter, against the fake SDK.
-- **Emulation (done):** `tools/emulate/emulate-ota-markers.py` hands each modeled flash state to the factory loader's own selection code. The states are every step above, a bank-1 marker cut after each of its 8 bytes, and erased or staged bodies. It passed all 14 states for both stock and the replacement build. Only the forbidden step, giving way with no valid recovery in bank 0, leaves nothing to boot. Any single cleared bit in bank 1's marker gives way to bank 0.
+- **Emulation (done):** `src/tools/emulate/emulate-ota-markers.py` hands each modeled flash state to the factory loader's own selection code. The states are every step above, a bank-1 marker cut after each of its 8 bytes, and erased or staged bodies. It passed all 14 states for both stock and the replacement build. Only the forbidden step, giving way with no valid recovery in bank 0, leaves nothing to boot. Any single cleared bit in bank 1's marker gives way to bank 0.
 - **Server:** manifest signing (done: `petlibre-local ota-keygen` and `ota-sign`, round-tripped through the firmware's own parser and writer in a test). Delivery is done too: `ota-offer`, the broker ACL and the server's answers. A loopback test has the firmware's own codec, parser and writer pull a signed image through the real broker and server.
 
 ## Hardware stages (owner-reviewed)

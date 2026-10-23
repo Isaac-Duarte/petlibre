@@ -1,8 +1,8 @@
 # Rust UART flash client
 
-`petlibre-flash` ([crates/tools/petlibre-flash](../../crates/tools/petlibre-flash)) is a Rust port of the UART clients in `tools/flash/`. It ships as a single binary with no Python or pyserial dependency. It keeps the Python clients' pinned helper, ROM and baseline checks, marker-last sequencing and terminal no-retry stops. Its reports, plans and journals use the same fields, so either implementation's later sessions accept the other's saved evidence.
+`petlibre-flash` ([src/tools/petlibre-flash](../../src/tools/petlibre-flash)) is a Rust port of the UART clients in `src/tools/flash/`. It ships as a single binary with no Python or pyserial dependency. It keeps the Python clients' pinned helper, ROM and baseline checks, marker-last sequencing and terminal no-retry stops. Its reports, plans and journals use the same fields, so either implementation's later sessions accept the other's saved evidence.
 
-**Evidence: physical (October 22, 2026) and host simulation.** On the research unit, after `tools/bench/bench.py loader`:
+**Evidence: physical (October 22, 2026) and host simulation.** On the research unit, after `src/tools/bench/bench.py loader`:
 - `read small` and `read status` matched a Python session byte for byte: data, bytes sent and bytes received.
 - A no-op `update` erased nothing and verified the region.
 - `give-way`, then `update --restore-marker`, booted bank 0 and then bank 1.
@@ -28,7 +28,7 @@ Build with `cargo build --locked -p petlibre-flash`; the binary is `target/debug
 
 `petlibre-flash <command> --help` lists each command's arguments. The device commands keep the Python sequence. A bounded `read small` uploads the pinned helper to a loader the operator has already entered. Later sessions continue that helper session. Every write is `inspect`, then `prepare` (no serial access, writes the plan and prints its SHA-256), then `execute` with exactly that plan and hash. A plan binds the SHA-256 of the binary that prepared it, so a rebuilt binary must prepare afresh, just as an edited Python client must.
 
-Frozen image reviews still come from `tools/flash/review-development-image.py`, which re-runs the build's linked-code and factory-mapping audits. The Rust client only checks that a frozen review is complete and still matches its image.
+Frozen image reviews still come from `src/tools/flash/review-development-image.py`, which re-runs the build's linked-code and factory-mapping audits. The Rust client only checks that a frozen review is complete and still matches its image.
 
 Not ported: the stock write-back acceptance tests (`uart-stock-recovery.py prepare-activation-test`, `bank-writeback-test`); the standalone diagnostic installer was removed instead. The relay bench, [`petlibre-bench`](../hardware/bench.md), chains this client as a separate process, so plans stay bound to the `petlibre-flash` binary itself.
 
@@ -47,6 +47,6 @@ Ctrl-C stops a session terminally and records the stop, as the Python clients' `
 ## Verification
 
 - `cargo test -p petlibre-flash` runs every transaction against a modeled helper with a synthetic baseline, which only test builds accept. It covers wire order checked against an independently restated policy, sector scope, lost ACKs, the interrupted mode, both banks, give-way with restore, stock recovery and refusals.
-- `tools/tests/test_flash_rust.py` checks status decoding and journal hashing against the Python stock-recovery modules. With fixtures (`make check-fixtures`), it serves the pinned vendor helper under unicorn on a Unix socket (`PETLIBRE_FLASH_EMULATOR`) and drives the binary through update and give-way/restore with the real frozen reviews and session reports: exactly the target is written, and the journal passes the Python inspector. Until October 22, 2026 it also required the Rust plan and wire to equal the Python updater's; those passed, together with the FW32 hardware checks, and the Python updater (`uart-development.py`, `development-bank.py`, `development-wire-policy.py`) was then removed. When `PETLIBRE_FLASH_EMULATOR` is set, reports record `"transport": "emulator"`, and a session continues only evidence from the same transport (Python reports count as serial).
+- `src/tools/tests/test_flash_rust.py` checks status decoding and journal hashing against the Python stock-recovery modules. With fixtures (`make check-fixtures`), it serves the pinned vendor helper under unicorn on a Unix socket (`PETLIBRE_FLASH_EMULATOR`) and drives the binary through update and give-way/restore with the real frozen reviews and session reports: exactly the target is written, and the journal passes the Python inspector. Until October 22, 2026 it also required the Rust plan and wire to equal the Python updater's; those passed, together with the FW32 hardware checks, and the Python updater (`uart-development.py`, `development-bank.py`, `development-wire-policy.py`) was then removed. When `PETLIBRE_FLASH_EMULATOR` is set, reports record `"transport": "emulator"`, and a session continues only evidence from the same transport (Python reports count as serial).
 
 Emulation runs the helper's command parser and packet checks as ARM code. It models the ROM UART and flash calls, so it does not establish physical write acceptance, timing or power-cut behavior. Stock recovery is not exercised under emulation, because each verification reads the full 8 MiB.

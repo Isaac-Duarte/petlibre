@@ -1,20 +1,20 @@
 # SDK-backed firmware builds
 
-Host tests and cross-compilation checks need no vendor SDK. Full images use the pinned Realtek AmebaD SDK and ASDK compiler specified by [sdk.lock.json](../../firmware/sdk.lock.json). The SDK baseline is a family-level reference, not a source match for stock `sdk-amebad_v6.2C-RC`.
+Host tests and cross-compilation checks need no vendor SDK. Full images use the pinned Realtek AmebaD SDK and ASDK compiler specified by [sdk.lock.json](../../src/firmware/vendor/sdk.lock.json). The SDK baseline is a family-level reference, not a source match for stock `sdk-amebad_v6.2C-RC`.
 
 ## Prerequisites and explicit setup
 
 The existing wrapper supports **Linux x86_64**. It needs Git, Make, Bash, tar (with bzip2), curl, standard GNU tools, the pinned Rust toolchain, libclang for bindgen, and the 32-bit loader/runtime needed by Realtek's i686 compiler. Install platform prerequisites yourself; the wrapper installs no system packages.
 
-The builder is `petlibre-build` (`crates/tools/petlibre-build`); the make targets build it and run it as its own executable, because `cargo run` sets `RUSTUP_TOOLCHAIN`, which a firmware build refuses.
+The builder is `petlibre-build` (`src/tools/petlibre-build`); the make targets build it and run it as its own executable, because `cargo run` sets `RUSTUP_TOOLCHAIN`, which a firmware build refuses.
 
 ```sh
-make -C firmware bootstrap
-make -C firmware baseline
-make -C firmware bringup
+make -C src/firmware/vendor bootstrap
+make -C src/firmware/vendor baseline
+make -C src/firmware/vendor bringup
 ```
 
-`bootstrap` explicitly fetches the SDK revision and downloads/checksums the compiler archive. The archive digest was computed from the official release download; it is not an independently supplied upstream signature. Existing unexpected SDK revisions are refused. The compiler is extracted into a temporary directory (only entries under its pinned directory; links must stay inside it, and special files are refused), checked, then renamed into place; an existing partial tree is refused rather than reused. Every run verifies the pinned compiler/binutils file hashes in [toolchain.lock.json](../../firmware/probe/toolchain.lock.json). Check targets never bootstrap implicitly.
+`bootstrap` explicitly fetches the SDK revision and downloads/checksums the compiler archive. The archive digest was computed from the official release download; it is not an independently supplied upstream signature. Existing unexpected SDK revisions are refused. The compiler is extracted into a temporary directory (only entries under its pinned directory; links must stay inside it, and special files are refused), checked, then renamed into place; an existing partial tree is refused rather than reused. Every run verifies the pinned compiler/binutils file hashes in [toolchain.lock.json](../../src/firmware/vendor/probe/toolchain.lock.json). Check targets never bootstrap implicitly.
 
 A reused SDK worktree is refused, with the offending paths named, when `git status` shows anything outside the profile's own overlays and the exact vendor-recipe outputs listed in `petlibre-build`'s `sdk.rs` (executable-bit changes with unchanged content, the rebuilt `lib_user.a`, toolchain links and two KM0 loader outputs). Nothing is cleaned automatically; review, then restore or recreate the worktree. Files ignored by the SDK's own rules are not checked.
 
@@ -30,8 +30,8 @@ Firmware builds refuse output-affecting Rust overrides instead of silently dropp
 | `plaf103-firstboot` | Minimal UART-only SDK mains plus Rust synthetic diagnostic; same stock-reference requirements |
 
 ```sh
-make -C firmware plaf103
-make -C firmware plaf103-firstboot
+make -C src/firmware/vendor plaf103
+make -C src/firmware/vendor plaf103-firstboot
 ```
 
 Those two profiles require a contributor-supplied exact stock reference at `private/firmware/PLAF103_OTA_010115.bin`; see [fixtures](fixtures.md). Builds proceed KM0 before KM4 and retain input hashes, artifact hashes, logs, and successful manifests. Bindgen gets SDK/newlib paths from the wrapper through `PETLIBRE_SDK_DIR` and `PETLIBRE_NEWLIB_INCLUDE`.

@@ -7,14 +7,14 @@ The `petlibre-local` executable provides an embedded authenticated broker, stock
 ```sh
 cargo build --locked
 ./target/debug/petlibre-local init \
-  --credentials crates/tools/petlibre-local/examples/mqtt-credentials.json \
-  --capture crates/tools/petlibre-local/examples/mqtt-capture.json \
+  --credentials src/tools/petlibre-local/examples/mqtt-credentials.json \
+  --capture src/tools/petlibre-local/examples/mqtt-capture.json \
   --mqtt-listen 127.0.0.1:18883 \
   --hotspot-interface test_wifi \
   --output private/example-server.json
 ```
 
-The [example inputs](../../crates/tools/petlibre-local/examples/README.md) contain only synthetic identities. This command writes configuration and sends no device commands. A second import to the same path is refused. `--timezone` accepts an IANA timezone and defaults to `UTC`. The generated API token and server password are independent; configuration is mode 0600 on Unix.
+The [example inputs](../../src/tools/petlibre-local/examples/README.md) contain only synthetic identities. This command writes configuration and sends no device commands. A second import to the same path is refused. `--timezone` accepts an IANA timezone and defaults to `UTC`. The generated API token and server password are independent; configuration is mode 0600 on Unix.
 
 ## Configure an actual device
 

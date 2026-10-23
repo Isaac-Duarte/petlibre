@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/sdk/*", "crates/tools/*", "firmwares/*"]
+members = ["src/sdk/*", "src/tools/petlibre-*", "src/tools/xtask", "src/firmware/petlibre/*"]
 resolver = "3"
 
 [workspace.package]
@@ -9,16 +9,16 @@ license = "MIT"
 publish = false
 
 [workspace.dependencies]
-petlibre-hal = { path = "crates/sdk/petlibre-hal" }
-petlibre-hal-common = { path = "crates/sdk/petlibre-hal-common" }
-petlibre-amebad-sys = { path = "crates/sdk/petlibre-amebad-sys" }
-petlibre-core = { path = "crates/sdk/petlibre-core" }
-petlibre-fw-reference = { path = "firmwares/reference" }
-petlibre-sdk = { path = "crates/sdk/petlibre-sdk" }
-petlibre-sdk-c = { path = "crates/sdk/petlibre-sdk-c" }
-petlibre-fw-blink = { path = "firmwares/blink" }
-petlibre-formats = { path = "crates/tools/petlibre-formats" }
-petlibre-testkit = { path = "crates/sdk/petlibre-testkit" }
+petlibre-hal = { path = "src/sdk/petlibre-hal" }
+petlibre-hal-common = { path = "src/sdk/petlibre-hal-common" }
+petlibre-amebad-sys = { path = "src/sdk/petlibre-amebad-sys" }
+petlibre-core = { path = "src/sdk/petlibre-core" }
+petlibre-fw-reference = { path = "src/firmware/petlibre/reference" }
+petlibre-sdk = { path = "src/sdk/petlibre-sdk" }
+petlibre-sdk-c = { path = "src/sdk/petlibre-sdk-c" }
+petlibre-fw-blink = { path = "src/firmware/petlibre/blink" }
+petlibre-formats = { path = "src/tools/petlibre-formats" }
+petlibre-testkit = { path = "src/sdk/petlibre-testkit" }
 # Host tools.
 anyhow = "1.0.104"
 axum = "0.8.9"

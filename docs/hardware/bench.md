@@ -1,6 +1,6 @@
 # Relay bench control
 
-`petlibre-bench` ([crates/tools/petlibre-bench](../../crates/tools/petlibre-bench)) powers the feeder, enters the ROM loader and chains the [Rust UART flash client](../development/rust-flash.md). It adds power and strap control only. Serial reads, inspections, plans and writes run as separate `petlibre-flash` processes, so their pinned checks, plan hashes and no-retry stops apply unchanged. Running it is a physical bench operation; build and check targets never call it.
+`petlibre-bench` ([src/tools/petlibre-bench](../../src/tools/petlibre-bench)) powers the feeder, enters the ROM loader and chains the [Rust UART flash client](../development/rust-flash.md). It adds power and strap control only. Serial reads, inspections, plans and writes run as separate `petlibre-flash` processes, so their pinned checks, plan hashes and no-retry stops apply unchanged. Running it is a physical bench operation; build and check targets never call it.
 
 Build both binaries together; the bench runs the `petlibre-flash` beside itself unless `--flash-bin` names another:
 
@@ -71,7 +71,7 @@ target/release/petlibre-bench ota fw12-unit-01 --build                     # bui
 target/release/petlibre-bench ota fw12-unit-02 --review private/verification/<review>
 ```
 
-- **Build (`--build`):** runs two children from the root, their output streamed to the progress log. First `petlibre-build plaf103-firstboot` (beside the bench binary, or `--build-bin`), then the Python review `tools/flash/review-development-image.py build --build private/firmware-build/plaf103-firstboot --output private/verification/NAME-review`. The run then continues as with `--review` on that directory.
+- **Build (`--build`):** runs two children from the root, their output streamed to the progress log. First `petlibre-build plaf103-firstboot` (beside the bench binary, or `--build-bin`), then the Python review `src/tools/flash/review-development-image.py build --build private/firmware-build/plaf103-firstboot --output private/verification/NAME-review`. The run then continues as with `--review` on that directory.
   - The interpreter is `.venv/bin/python` unless `--python` names another.
   - `--variant fw11-reset|fw11-fail` adds `--trial-reset` or `--trial-fail`. `fw16-pulse` is refused: motion builds stay manual, then go through `--review` with `--attended-motion`.
   - A nonzero exit from either child stops without signing or offering.
@@ -184,14 +184,14 @@ The fields match what the Python bench wrote, so older history still shows.
 - `petlibre-bench --ui` alone runs until Ctrl+C.
 - `petlibre-bench --ui flash-execute …` serves it while that command runs.
 
-**Building it.** The page is optional. It is a Svelte app in `web/apps/bench`, which the binary embeds only when built with the `ui` feature:
+**Building it.** The page is optional. It is a Svelte app in `src/web/apps/bench`, which the binary embeds only when built with the `ui` feature:
 
 ```
-make ui                                   # pnpm in web/: builds web/apps/bench/dist
+make ui                                   # pnpm in src/web/: builds src/web/apps/bench/dist
 cargo build --locked --release -p petlibre-bench --features ui
 ```
 
-A binary built without the feature refuses `--ui` before any bench command runs. Node and pnpm are needed only for `make ui` and `make check-web`, never for `make check`. The page's TypeScript types (`web/packages/api/src/bench.gen.ts`) are generated from the Rust views, and a test in `make check` fails when they are stale (`UPDATE_BINDINGS=1 cargo test -p petlibre-bench bindings` rewrites them).
+A binary built without the feature refuses `--ui` before any bench command runs. Node and pnpm are needed only for `make ui` and `make check-web`, never for `make check`. The page's TypeScript types (`src/web/packages/api/src/bench.gen.ts`) are generated from the Rust views, and a test in `make check` fails when they are stale (`UPDATE_BINDINGS=1 cargo test -p petlibre-bench bindings` rewrites them).
 
 **What it reads.** The page reads only the status files, the evidence directories and the local server's status. It never opens a serial port, so it can run beside any command, and nothing it does writes. The feeder panel asks `petlibre-local serve` for `GET /api/status` on the address and token in `private/server.json`, every 5 seconds; that read changes nothing on the server or the feeder. When the server is down or not configured, the panel says so.
 
@@ -228,7 +228,7 @@ For a timed operator run, an optional `private/bench-status/script.json` lists s
 
 ## Evidence
 
-The Rust bench is host-tested only: fake relay board and flash client, the page's handlers in process, and the real binary against synthetic status files (October 22, 2026). The web page is host-tested too (October 22, 2026, simulation): unit tests for its log reading, run builder and formatting, and Playwright against the real binary serving a synthetic `private/` tree, on desktop and phone sizes in both themes. Its feeder panel has not yet read a live `petlibre-local serve`. Its sequences port the Python bench line for line. The physical evidence below was gathered with the Python `tools/bench/bench.py`, which it replaces; repeat `status`, `on`/`off`, `loader` and a no-op `flash-prepare`/`flash-execute` under a reviewed session before relying on it.
+The Rust bench is host-tested only: fake relay board and flash client, the page's handlers in process, and the real binary against synthetic status files (October 22, 2026). The web page is host-tested too (October 22, 2026, simulation): unit tests for its log reading, run builder and formatting, and Playwright against the real binary serving a synthetic `private/` tree, on desktop and phone sizes in both themes. Its feeder panel has not yet read a live `petlibre-local serve`. Its sequences port the Python bench line for line. The physical evidence below was gathered with the Python `src/tools/bench/bench.py`, which it replaces; repeat `status`, `on`/`off`, `loader` and a no-op `flash-prepare`/`flash-execute` under a reviewed session before relying on it.
 
 **Full live test (physical, October 22, 2026, Python bench).** Every command was exercised on the research unit, except `transients`, which needs the analyzer:
 - **Commands:** `status`, `on`, `capture` (power untouched), `off`, `boot`, `loader` and `dump`. The dump was a full 8 MiB read, and comparing it with the previous one showed exactly the expected changes.

@@ -8,12 +8,12 @@ Run from the repository root:
 
 ```sh
 python3 -m venv .venv
-.venv/bin/python -m pip install -r tools/requirements-probe.txt
+.venv/bin/python -m pip install -r src/tools/requirements-probe.txt
 cargo build --locked
 make check PYTHON=.venv/bin/python
 ```
 
-The Python scripts are grouped into `tools/flash`, `tools/audit` and `tools/emulate`; the [tools index](../../tools/README.md) lists what each does and which ones open a serial port. The Rust crates live in `crates/`, one folder per package; `petlibre-flash` is the [Rust UART flash client](rust-flash.md), `petlibre-bench` the [relay bench](../hardware/bench.md), `petlibre-audit` the offline evidence audits (startup, FW14 ADC, FW30 transients, full-flash comparison), and `petlibre-formats` the files those tools pass to each other (build manifest and identity, stock layout, SDK/toolchain locks, serial-event records, credential and key files), typed once rather than read as untyped JSON in each. `cargo xtask check-repository` is the repository check.
+The Python scripts are grouped into `src/tools/flash`, `src/tools/audit` and `src/tools/emulate`; the [tools index](../../src/tools/README.md) lists what each does and which ones open a serial port. The Rust crates live in `crates/`, one folder per package; `petlibre-flash` is the [Rust UART flash client](rust-flash.md), `petlibre-bench` the [relay bench](../hardware/bench.md), `petlibre-audit` the offline evidence audits (startup, FW14 ADC, FW30 transients, full-flash comparison), and `petlibre-formats` the files those tools pass to each other (build manifest and identity, stock layout, SDK/toolchain locks, serial-event records, credential and key files), typed once rather than read as untyped JSON in each. `cargo xtask check-repository` is the repository check.
 
 Rustup/Cargo and pip download dependencies on initial setup. Check targets do not install packages, fetch SDKs, contact a device, change firewall rules, or start persistent services. Network tests bind loopback sockets with synthetic identities. Environments that prohibit local sockets need permission to run those tests; skipping them is not a passing result.
 
@@ -38,11 +38,11 @@ Generated Rust artifacts live in `target/`; the simulator worker and temporary v
 ```sh
 cargo fmt --all
 make check-rust
-make -C firmware test
+make -C src/firmware/vendor test
 make check-virtual-feeder
 ```
 
-The simulator connects the real Rust owner/controller/ports to fake SDK inputs and NOR storage. It covers command IDs, sensor faults, blocked outlet, missing feedback, watchdog stalls, and interrupted journal writes. It does not model all electrical behavior. Example scenarios are in [firmware/sim/scenarios](../../firmware/sim/scenarios); run one with `cargo run -p petlibre-sim --bin virtual-feeder -- --scenario FILE --report NEW-FILE`.
+The simulator connects the real Rust owner/controller/ports to fake SDK inputs and NOR storage. It covers command IDs, sensor faults, blocked outlet, missing feedback, watchdog stalls, and interrupted journal writes. It does not model all electrical behavior. Example scenarios are in [src/firmware/vendor/sim/scenarios](../../src/firmware/vendor/sim/scenarios); run one with `cargo run -p petlibre-sim --bin virtual-feeder -- --scenario FILE --report NEW-FILE`.
 
 The repository is self-contained: SDK/toolchain copies and fixtures resolve locally. Original research documents/tools/history are retained in ignored `private/research-archive/`; see [provenance](provenance.md). Historical evidence paths are records, not instructions to access another checkout.
 

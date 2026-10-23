@@ -187,7 +187,7 @@ Three bench routes cover stock 1.1.15:
 target/release/wellfed-bench ota NAME --review <frozen stock review>
 ```
 
-Our running build signs the pinned stock payload, gives way, and its bank-0 recovery role writes stock into bank 1. The command passes on stock's `app_main:version:` banner and skips the health step, since stock does not report to this server. Stock's own KM0 then runs, so our trial counter never counts it. If stock failed to boot from bank 1, the only way back would be UART. Status: host-tested (FW41).
+Our running build signs the pinned stock payload, gives way, and its bank-0 recovery role writes stock into bank 1. The command passes on stock's `app_main:version:` banner and skips the health step, since stock does not report to this server. Stock's own KM0 then runs, so our trial counter never counts it. If stock failed to boot from bank 1, the only way back would be UART. Status: physical (FW41, October 23, 2026): the first step of `fw41-roundtrip-01` (336 sectors written by the recovery role, then stock 1.1.15 on bank 1).
 
 ### To stock over UART
 
@@ -260,7 +260,7 @@ sudo target/release/wellfed-local network remove                               #
   - `fw40-stock-ota-05`: stock installed a `qa` build in about 40 s, and it booted from bank 0.
   - `fw40-stock-ota-06-promote`: an `itest --only ota-update` offer moved that build into bank 1, where it confirmed.
   - Those runs found the image-port rule, the heartbeat bound and the stale version report fixed above. They also showed the old `bank0-health` could never pass: the recovery role reported no health.
-- **Host:** recovery-role health and the default promotion are host-tested; they have not yet run with stock.
+  - `fw40-stock-ota-07`: the whole sequence with a fresh `qa` build. Stock installed it in 40 s, the recovery role reported health from bank 0, and the promotion (v84) confirmed with optics passing on the trial boot.
 
 ### `itest` scenario `stock-roundtrip`
 
@@ -274,7 +274,7 @@ From the confirmed baseline:
 3. **Back:** stock is asked to install the baseline, which starts on bank 0 and reports recovery-role health, then is promoted into bank 1. It confirms at once, since it was confirmed before.
 4. **Restore:** back to `serve` with fresh health.
 
-`--stock` requires `--power`. A failure on stock stops the suite with a stock-aware recovery hint. Status: host-tested on a scripted stock feeder.
+`--stock` requires `--power`. A failure on stock stops the suite with a stock-aware recovery hint. Status: physical (October 23, 2026): `fw41-roundtrip-01` passed in 6 min 31 s from `qa` v84; the promotion (v86) confirmed at once. With the owner's `network apply` rules already in place, nobody had to touch the bench.
 
 ## Progress page
 

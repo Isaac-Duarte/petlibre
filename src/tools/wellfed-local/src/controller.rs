@@ -573,6 +573,11 @@ impl Controller {
         ))
     }
 
+    /// Whether stock reported its version recently enough for an OTA decision.
+    pub fn version_fresh(&self, now: DateTime<Utc>) -> bool {
+        Self::fresh(self.status.version_reported_at, now)
+    }
+
     fn fresh(seen: Option<DateTime<Utc>>, now: DateTime<Utc>) -> bool {
         seen.is_some_and(|seen| (0..EVIDENCE_SECONDS).contains(&(now - seen).num_seconds()))
     }

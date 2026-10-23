@@ -20,7 +20,7 @@ use serde::Serialize;
 
 use super::ota::{Outcome, Staged, Watch};
 use crate::config::VERIFICATION;
-use crate::server::{ForgedCase, Health, LocalStatus, Reply, Request};
+use crate::server::{ForgedCase, Health, LocalStatus, Reply, Request, TrialRequest};
 use crate::status::StepState;
 use crate::{Error, Result, require};
 
@@ -28,8 +28,12 @@ mod live;
 mod log;
 pub(crate) mod record;
 mod scenarios;
+mod stock;
 #[cfg(test)]
 mod tests;
+
+pub use stock::StockOtaArgs;
+pub(crate) use stock::TrialPhase;
 
 use log::{Log, Record};
 use record::{Evidence, RunRecord, ScenarioRecord, ScenarioVerdict};
@@ -181,6 +185,8 @@ impl Fault {
 enum Server {
     /// `wellfed-local serve`: broker, API, health and signed requests.
     Serve,
+    /// `serve --enable-ota-trial`, so it may ask stock to install an image.
+    StockTrial,
     /// `wellfed-local broker` alone, for `request_forger`.
     Broker,
     /// The bare broker plus `ota_fault_server` offering `staged`.
@@ -217,6 +223,15 @@ trait Rig {
     fn note(&mut self, text: &str);
     /// Show a scenario's state on the bench page.
     fn scenario(&mut self, _name: &str, _state: StepState) {}
+    /// Start `ota-images` serving `review`'s build to the feeder; the URL
+    /// token from its lease. Only `stock-ota` uses it.
+    fn images(&mut self, _review: &Path) -> Result<String> {
+        Err(Error::Bench("This rig serves no images".into()))
+    }
+    /// `POST /api/ota/trial`: stock gets one `OTA_UPGRADE`, never resent.
+    fn stock_trial(&mut self, _trial: &TrialRequest) -> Result<()> {
+        Err(Error::Bench("This rig sends no stock trials".into()))
+    }
 }
 
 /// The build the suite installed (or found running) and every later
@@ -905,7 +920,7 @@ impl super::Bench {
         std::fs::create_dir_all(self.root.join(VERIFICATION))?;
 
         let mut rig = live::LiveRig::open(self, args, local_bin)?;
-        let (result, baseline) = match rig.start() {
+        let (result, baseline) = match rig.start(Server::Serve) {
             Ok(()) => {
                 let mut ctx = Ctx::new(&mut rig, args);
                 let result = run(&mut ctx, &scenarios);

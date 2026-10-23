@@ -24,6 +24,78 @@ pub(crate) struct LocalStatus {
     /// `None` when the server has no replacement-firmware role.
     #[serde(default)]
     pub replacement: Option<Replacement>,
+    /// Stock telemetry is current (the stock-to-replacement install).
+    #[serde(default)]
+    pub device_online: bool,
+    /// Stock's reported attributes: `softwareVersion`, `powerType`, ….
+    #[serde(default)]
+    pub attributes: Map<String, Value>,
+    /// RFC 3339; when stock last reported its version.
+    #[serde(default)]
+    pub version_reported_at: Option<String>,
+    #[serde(default)]
+    pub ota_trial_enabled: bool,
+    /// Newest first.
+    #[serde(default)]
+    pub ota_trials: Vec<Trial>,
+    /// Stock's own OTA reports, oldest first.
+    #[serde(default)]
+    pub ota_reports: Vec<OtaReport>,
+}
+
+/// `POST /api/ota/trial` for the replacement image: the server sends stock
+/// one `OTA_UPGRADE` for it and never resends.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct TrialRequest {
+    pub request_id: String,
+    /// Always `replacement`; the stock experiments are not the bench's.
+    pub image: &'static str,
+    /// The image server's lease token.
+    pub server_token: String,
+}
+
+/// One OTA trial in the server's ledger.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub(crate) struct Trial {
+    pub input: TrialInput,
+    pub phase: crate::commands::itest::TrialPhase,
+    pub download_reported: bool,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub(crate) struct TrialInput {
+    pub request_id: String,
+}
+
+/// A stock `OTA_UPGRADE`, `OTA_PROGRESS` or `OTA_INFORM` report.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(default)]
+pub(crate) struct OtaReport {
+    /// RFC 3339; tells repeated reports apart.
+    pub received_at: String,
+    pub command: String,
+    pub message_id: Option<String>,
+    pub phase: Option<String>,
+    pub progress: Option<u8>,
+    pub error_code: Option<u32>,
+}
+
+impl std::fmt::Display for OtaReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "stock {}", self.command)?;
+        if let Some(phase) = &self.phase {
+            write!(f, " phase {phase}")?;
+        }
+        if let Some(progress) = self.progress {
+            write!(f, " {progress}%")?;
+        }
+        match self.error_code {
+            Some(code) if code != 0 => write!(f, " error 0x{code:x}"),
+            _ => Ok(()),
+        }
+    }
 }
 
 /// The server's view of the replacement firmware.
@@ -249,6 +321,24 @@ pub enum NotReady {
     WifiSource(Option<String>),
 }
 
+/// The only stock release a replacement install starts from.
+pub(crate) const STOCK_VERSION: &str = "1.1.15";
+
+/// Why the server's stock view does not allow an install yet.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum StockNotReady {
+    #[error("no current stock telemetry (is the feeder on the hotspot and routed?)")]
+    Offline,
+    #[error("stock reports version {}, not {STOCK_VERSION}", shown(.0))]
+    Version(Option<String>),
+    #[error("no stock version report yet")]
+    NoVersionReport,
+    #[error("stock reports power type {} (1 is the adapter)", shown(.0))]
+    Power(Option<u64>),
+    #[error("serve was started without --enable-ota-trial")]
+    TrialDisabled,
+}
+
 fn shown<T: Display>(value: &Option<T>) -> String {
     value
         .as_ref()
@@ -258,6 +348,39 @@ fn shown<T: Display>(value: &Option<T>) -> String {
 impl LocalStatus {
     pub(crate) fn replacement(&self) -> Result<&Replacement, NotReady> {
         self.replacement.as_ref().ok_or(NotReady::NoRole)
+    }
+
+    /// Stock 1.1.15 is online, freshly reported and on its adapter: what the
+    /// server's trial gate also requires before asking it to install.
+    pub(crate) fn stock_ready(&self) -> Result<String, StockNotReady> {
+        if !self.device_online {
+            return Err(StockNotReady::Offline);
+        }
+        let version = self
+            .attributes
+            .get("softwareVersion")
+            .and_then(Value::as_str);
+        if version != Some(STOCK_VERSION) {
+            return Err(StockNotReady::Version(version.map(str::to_string)));
+        }
+        if self.version_reported_at.is_none() {
+            return Err(StockNotReady::NoVersionReport);
+        }
+        let power = self.attributes.get("powerType").and_then(Value::as_u64);
+        if power != Some(1) {
+            return Err(StockNotReady::Power(power));
+        }
+        if !self.ota_trial_enabled {
+            return Err(StockNotReady::TrialDisabled);
+        }
+        Ok(format!("Stock {STOCK_VERSION} online on external power"))
+    }
+
+    /// The trial with `request_id`.
+    pub(crate) fn trial(&self, request_id: &str) -> Option<&Trial> {
+        self.ota_trials
+            .iter()
+            .find(|trial| trial.input.request_id == request_id)
     }
 
     /// When the server last received health.
@@ -290,6 +413,12 @@ impl LocalStatus {
     /// Whether fresh health shows `build` (lowercase) running on bank 1: a
     /// one-line report of it.
     pub(crate) fn health_matches(&self, build: &str) -> Result<String, NotReady> {
+        self.health_on(build, 1)
+    }
+
+    /// As [`Self::health_matches`] on `bank`: bank 0 after stock installed
+    /// the build, since stock writes the bank it is not running from.
+    pub(crate) fn health_on(&self, build: &str, bank: u64) -> Result<String, NotReady> {
         let health = self.fresh_health()?;
 
         let reported = health.build.to_ascii_lowercase();
@@ -297,7 +426,7 @@ impl LocalStatus {
             let short = reported.get(..12).filter(|s| !s.is_empty());
             return Err(NotReady::Build(short.unwrap_or("none").into()));
         }
-        if health.bank != Some(1) {
+        if health.bank != Some(bank) {
             return Err(NotReady::Bank(health.bank));
         }
 
@@ -307,7 +436,7 @@ impl LocalStatus {
             health.faults.join(", ")
         };
         let mut report = format!(
-            "Health: build {} on bank 1, seq {}, outputs {}, faults {faults}",
+            "Health: build {} on bank {bank}, seq {}, outputs {}, faults {faults}",
             &build[..build.len().min(12)],
             shown(&health.seq),
             health.outputs.as_deref().unwrap_or("?"),

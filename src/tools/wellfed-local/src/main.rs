@@ -103,15 +103,19 @@ enum Action {
     /// Print an operation identifier without sending a command.
     NewRequestId,
 
-    /// Serve a pinned experiment/original pair on the fixed trial port; never
-    /// sends an OTA command. Writes a private token lease beside the config.
+    /// Serve a pinned experiment/original pair, or a reviewed replacement
+    /// build, on the fixed trial port; never sends an OTA command. Writes a
+    /// private token lease beside the config.
     OtaImages {
         #[arg(long, default_value = "private/server.json")]
         config: PathBuf,
+        /// The prepared experiment directory, or for `--profile replacement`
+        /// the frozen review (its `review.json` and `image.bin`).
         #[arg(long)]
         directory: PathBuf,
+        /// The feeder's address; found by its MAC on the hotspot otherwise.
         #[arg(long)]
-        peer: std::net::Ipv4Addr,
+        peer: Option<std::net::Ipv4Addr>,
         #[arg(long, value_enum, default_value_t = ota_image::Profile::StockVersion)]
         profile: ota_image::Profile,
     },
@@ -386,7 +390,24 @@ async fn main() -> Result<()> {
             profile,
         } => {
             let path = config.canonicalize()?;
-            ota_image::serve(Config::load(&path)?, &path, &directory, peer, profile).await?;
+            let config = Config::load(&path)?;
+            let peer = match peer {
+                Some(peer) => peer,
+                None => match wellfed_local::speak::discover(&config)? {
+                    std::net::IpAddr::V4(peer) => peer,
+                    std::net::IpAddr::V6(_) => {
+                        anyhow::bail!("the feeder has no IPv4 neighbour entry")
+                    }
+                },
+            };
+            // The bench stops it with SIGTERM; either way its lease is removed.
+            let stop = async {
+                tokio::select! {
+                    _ = tokio::signal::ctrl_c() => {},
+                    _ = terminated() => {},
+                }
+            };
+            ota_image::serve(config, &path, &directory, peer, profile, stop).await?;
         }
 
         Action::OtaTrialResolve {

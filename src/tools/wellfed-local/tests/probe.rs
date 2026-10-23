@@ -41,6 +41,7 @@ fn lease(profile: Profile, at: DateTime<Utc>) -> Lease {
         peer: "10.0.0.2".parse().unwrap(),
         expires_at: at + Duration::minutes(15),
         profile,
+        sha256: None,
     }
 }
 

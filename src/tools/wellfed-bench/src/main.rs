@@ -17,7 +17,7 @@ use clap::{Parser, Subcommand};
 
 use wellfed_bench::commands::{
     self, Bench, DemoArgs, ExecuteArgs, GiveWayArgs, GiveWayExecuteArgs, ItestArgs, OtaArgs,
-    TransientArgs, UpdateArgs, check_name, pattern_name,
+    StockOtaArgs, TransientArgs, UpdateArgs, check_name, pattern_name,
 };
 use wellfed_bench::config::{Config, STATUS_DIR};
 use wellfed_bench::relay::Relay;
@@ -119,6 +119,13 @@ enum Command {
     /// UART capture, installs over the air, restores the bench afterwards.
     /// Cold boots only with --power; never flashes over UART.
     Itest(ItestArgs),
+    /// Stock-to-replacement POC: with the feeder on stock 1.1.15, build a
+    /// replacement image and have stock install it over its own updater.
+    /// Runs its own hotspot, trial-enabled server and UART capture, sends
+    /// stock one request, restores the bench afterwards. Never flashes over
+    /// UART and never changes routing (`wellfed-local network apply` is the
+    /// operator's).
+    StockOta(StockOtaArgs),
 
     /// Click the spare relays 3 and 4 in patterns; never switches power or the strap.
     Demo(DemoArgs),
@@ -141,6 +148,7 @@ impl Command {
             Self::GiveWayExecute(_) => "give-way-execute",
             Self::Ota(_) => "ota",
             Self::Itest(_) => "itest",
+            Self::StockOta(_) => "stock-ota",
             Self::Demo(_) => "demo",
         }
     }
@@ -159,6 +167,7 @@ impl Command {
             Self::GiveWayExecute(args) => Some(&args.give_way.name),
             Self::Ota(args) => Some(&args.name),
             Self::Itest(args) => args.name.as_deref(),
+            Self::StockOta(args) => Some(&args.name),
         }
     }
 }
@@ -292,6 +301,7 @@ fn open_bench(
     let relay = match command {
         Command::Ota(_) => Relay::detached(),
         Command::Itest(args) if !args.power => Relay::detached(),
+        Command::StockOta(args) if !args.power => Relay::detached(),
         _ => Relay::open(&config.relay_port)?,
     };
 
@@ -322,12 +332,13 @@ fn record_start(
         Command::Capture { .. } => vec!["capture"],
         Command::Ota(args) => commands::ota::steps(args.source()),
         Command::Itest(args) => commands::itest::steps(args)?,
+        Command::StockOta(args) => args.steps(),
         _ => commands::steps(label).to_vec(),
     };
 
     bench.status = Status::new(&bench.root, status_dir);
     bench.status.begin(label, command.name(), &steps)?;
-    if matches!(command, Command::Itest(_)) {
+    if matches!(command, Command::Itest(_) | Command::StockOta(_)) {
         bench.status.fix_steps();
     }
     if let Some(tool) = bench.tools.flash_tool() {
@@ -360,6 +371,7 @@ fn dispatch(
         Command::GiveWayExecute(args) => bench.give_way_execute(args),
         Command::Ota(args) => bench.ota(args),
         Command::Itest(args) => bench.itest(args, local_bin),
+        Command::StockOta(args) => bench.stock_ota(args, local_bin),
         Command::Demo(args) => bench.demo(args),
     }
 }
@@ -392,6 +404,27 @@ mod tests {
         assert!(!args.attended_motion && !args.build);
         assert_eq!(args.config, PathBuf::from("private/server.json"));
         assert_eq!(cli.local_bin, Some(PathBuf::from("bin/wellfed-local")));
+    }
+
+    #[test]
+    fn stock_ota_takes_a_name_its_firmware_and_promote() {
+        let cli = Cli::try_parse_from([
+            "wellfed-bench",
+            "stock-ota",
+            "poc-01",
+            "--firmware",
+            "ble",
+            "--promote",
+        ])
+        .unwrap();
+        let Some(Command::StockOta(args)) = &cli.command else {
+            panic!("not stock-ota")
+        };
+        assert_eq!(args.name, "poc-01");
+        assert!(args.promote && !args.power);
+        assert_eq!(cli.command.as_ref().map(Command::label), Some("stock-ota"));
+
+        assert!(Cli::try_parse_from(["wellfed-bench", "stock-ota"]).is_err());
     }
 
     #[test]

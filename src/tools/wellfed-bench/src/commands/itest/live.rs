@@ -30,7 +30,7 @@ use crate::commands::ota::{OtaArgs, Staged, Timing};
 use crate::config::{CAPTURES, VERIFICATION};
 use crate::local_api::{Auth, LocalApi, ServerConfig};
 use crate::relay::{POWER, STRAP};
-use crate::server::{ForgedCase, LocalStatus, Request};
+use crate::server::{ForgedCase, LocalStatus, Request, TrialRequest};
 use crate::status::StepState;
 use crate::tools::Capture;
 use crate::{Error, Result, require};
@@ -65,11 +65,24 @@ struct Sent {
     id: String,
 }
 
+/// `wellfed-local ota-images` writes this beside the config; only its token
+/// goes into the trial request.
+#[derive(Deserialize, PartialEq)]
+struct ImageLease {
+    token: String,
+}
+
+/// `ota-images` writes it beside the server config.
+const IMAGE_LEASE: &str = "ota-image-server.json";
+/// The fixed trial port stock's URL names (`wellfed-local` `ota_image::PORT`).
+const IMAGE_PORT: u16 = 8088;
+
 #[derive(Default)]
 struct Children {
     serve: Option<Child>,
     broker: Option<Child>,
     fault: Option<Child>,
+    images: Option<Child>,
 }
 
 pub(super) struct LiveRig<'b> {
@@ -166,8 +179,8 @@ impl<'b> LiveRig<'b> {
     }
 
     /// Bring the bench to its test state: hotspot up, feeder powered (with
-    /// `--power`), the UART held and `serve` answering.
-    pub(super) fn start(&mut self) -> Result<()> {
+    /// `--power`), the UART held and `server` answering.
+    pub(super) fn start(&mut self, server: Server) -> Result<()> {
         let up = self.hotspot_active()?;
         self.hotspot_was_up = Some(up);
         if up {
@@ -195,7 +208,7 @@ impl<'b> LiveRig<'b> {
                 .capture(&port, SEGMENT_SECONDS, Box::new(segment))?,
         );
         self.uart()?;
-        self.server(Server::Serve)
+        self.server(server)
     }
 
     fn local_bin(&self) -> PathBuf {
@@ -274,8 +287,14 @@ impl<'b> LiveRig<'b> {
         )))
     }
 
-    fn start_serve(&mut self) -> Result<()> {
-        let mut child = self.spawn(&self.local_bin(), &["serve", "--config", &self.config_arg])?;
+    /// `serve`; with `trial`, `--enable-ota-trial`, which refuses a binary
+    /// not built from a clean commit.
+    fn start_serve(&mut self, trial: bool) -> Result<()> {
+        let mut args = vec!["serve", "--config", &self.config_arg];
+        if trial {
+            args.push("--enable-ota-trial");
+        }
+        let mut child = self.spawn(&self.local_bin(), &args)?;
         let ready = self.until_ready(&mut child, "wellfed-local serve", || {
             self.api
                 .get::<IgnoredAny>("/health", Auth::Anonymous)
@@ -333,6 +352,7 @@ impl<'b> LiveRig<'b> {
     }
 
     fn stop_servers(&mut self) {
+        Self::stop(self.children.images.take());
         Self::stop(self.children.fault.take());
         Self::stop(self.children.serve.take());
         Self::stop(self.children.broker.take());
@@ -384,6 +404,7 @@ impl Rig for LiveRig<'_> {
         self.stop_servers();
         let label = match &server {
             Server::Serve => "wellfed-local serve".to_string(),
+            Server::StockTrial => "wellfed-local serve --enable-ota-trial".to_string(),
             Server::Broker => "wellfed-local broker alone".to_string(),
             Server::Faulty { fault, staged } => format!(
                 "broker + ota_fault_server ({}, version {})",
@@ -394,7 +415,8 @@ impl Rig for LiveRig<'_> {
         self.note(&format!("  Server: {label}"));
 
         match server {
-            Server::Serve => self.start_serve(),
+            Server::Serve => self.start_serve(false),
+            Server::StockTrial => self.start_serve(true),
             Server::Broker => self.start_broker(),
             Server::Faulty { fault, staged } => {
                 self.start_broker()?;
@@ -518,5 +540,48 @@ impl Rig for LiveRig<'_> {
 
     fn scenario(&mut self, name: &str, state: StepState) {
         self.bench.status.mark(name, state);
+    }
+
+    /// The server finds the feeder's address by its MAC, so it must have
+    /// joined the hotspot first. A lease left by an earlier server is told
+    /// apart by its token.
+    fn images(&mut self, review: &Path) -> Result<String> {
+        Self::stop(self.children.images.take());
+        let config = self.bench.root.join(&self.config_arg);
+        let lease_path = config.parent().unwrap_or(Path::new(".")).join(IMAGE_LEASE);
+        let read = |path: &Path| -> Option<ImageLease> {
+            serde_json::from_slice(&std::fs::read(path).ok()?).ok()
+        };
+        let before = read(&lease_path);
+
+        let review = review.display().to_string();
+        self.note(&format!("  Image server: {review}"));
+        let args = [
+            "ota-images",
+            "--config",
+            &self.config_arg,
+            "--directory",
+            &review,
+            "--profile",
+            "replacement",
+        ];
+        let mut child = self.spawn(&self.local_bin(), &args)?;
+        let listener = SocketAddr::new(self.mqtt.ip(), IMAGE_PORT);
+        let ready = self.until_ready(&mut child, "wellfed-local ota-images", || {
+            read(&lease_path).is_some_and(|lease| Some(&lease) != before.as_ref())
+                && TcpStream::connect_timeout(&listener, Duration::from_millis(500)).is_ok()
+        });
+        self.children.images = Some(child);
+        ready?;
+
+        read(&lease_path)
+            .map(|lease| lease.token)
+            .ok_or_else(|| Error::Bench("The image server's lease disappeared".into()))
+    }
+
+    fn stock_trial(&mut self, trial: &TrialRequest) -> Result<()> {
+        self.api
+            .post::<IgnoredAny>("/api/ota/trial", trial)
+            .map(|_| ())
     }
 }

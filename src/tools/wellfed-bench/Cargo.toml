@@ -23,6 +23,7 @@ serde_json.workspace = true
 serialport.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "net", "time", "macros"], optional = true }
+uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
 tempfile.workspace = true

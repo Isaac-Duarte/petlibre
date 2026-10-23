@@ -147,6 +147,7 @@ fn commands() {
         phase: ota_trial::Phase::Submitted,
         download_reported: false,
         resolution_note: None,
+        image_sha256: wellfed_local::ota_image::C_PROBE_SHA256.into(),
     };
     let upgrade = trial.command(&config);
     assert_eq!(upgrade.topic, config.topic("service/sub"));

@@ -634,7 +634,7 @@ fn uncertain_restore_resolves_by_reported_version_and_hold_follows_the_original(
 #[test]
 fn feeder_telemetry_gaps_restart_resolution_quiet_time_with_or_without_expiry_ticks() {
     for run_expiry_tick in [false, true] {
-        for gap_seconds in [60, 900] {
+        for gap_seconds in [90, 900] {
             let dir = tempfile::tempdir().unwrap();
             let mut c = Controller::load(common::config(), dir.path().join("ledger.json")).unwrap();
             ready(&mut c, "1.1.15");
@@ -850,4 +850,41 @@ fn an_uncertain_replacement_install_still_closes_on_health() {
 
     c.replacement_healthy(now + Duration::seconds(200)).unwrap();
     assert_eq!(c.status.ota_trials[0].phase, Phase::ReplacementHealthy);
+}
+
+#[test]
+fn stock_s_61_second_heartbeat_keeps_the_quiet_interval_running() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = Controller::load(common::config(), dir.path().join("ledger.json")).unwrap();
+    c.enable_ota_trial();
+    ready(&mut c, "1.1.15");
+    let now = Utc::now();
+
+    let request = input(Image::Replacement);
+    let images = replacement_lease(request.server_token, Some(&"ab".repeat(32)), now);
+    c.ota_trial(request.clone(), Some(&images), now).unwrap();
+    observe(
+        &mut c,
+        "service",
+        json!({"cmd":"OTA_INFORM","msgId":request.request_id.to_string(),"errCode":2003}),
+        now + Duration::seconds(30),
+    );
+    assert_eq!(c.status.ota_trials[0].phase, Phase::ReportedError);
+
+    // Heartbeats 61 s apart, as stock 1.1.15 sends them, for 21 minutes,
+    // with a fresh version report at the end.
+    let mut at = now + Duration::seconds(61);
+    while at < now + Duration::minutes(21) {
+        observe(&mut c, "heart", json!({"cmd":"HEARTBEAT"}), at);
+        at += Duration::seconds(61);
+    }
+    observe(
+        &mut c,
+        "event",
+        json!({"cmd":"ATTR_PUSH_EVENT","softwareVersion":"1.1.15","powerType":1}),
+        at,
+    );
+
+    let record = c.resolve_trial(resolve(request.request_id), at).unwrap();
+    assert_eq!(record.phase, Phase::NotInstalled);
 }

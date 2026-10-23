@@ -13,6 +13,9 @@ km4 = ["petlibre-hal/km4", "petlibre-hal/sdk", "petlibre-sdk-c/km4"]
 # FW11 trial test: a candidate whose startup fails on a determined error.
 # Only the trial firmware's `fw11-fail` variant sets it.
 fw11-fail = []
+# FW34: the BLE peripheral. A firmware enables it with `bluetooth = true`
+# in its metadata, which links the device's BLE source.
+bluetooth = ["petlibre-hal/bluetooth"]
 
 [dependencies]
 petlibre-sdk-c.workspace = true

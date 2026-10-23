@@ -16,6 +16,8 @@ use super::{
     MOTOR_MASK, SECTOR_BYTES, STORAGE_OFFSET, STORAGE_SECTORS, SYSTICK_CTRL, TaskStep, TcpRecv,
     TransportConfig, WifiEvent, WifiPoll,
 };
+#[cfg(feature = "bluetooth")]
+use super::{Advertising, BleEvent, BlePoll, BleService, BleStats};
 
 #[allow(
     non_camel_case_types,
@@ -1114,4 +1116,95 @@ pub fn flash_mmu_entry0() -> FlashMmuEntry {
             offset: ptr::read_volatile(ptr::addr_of!((*rsip).FLASH_MMU[0].MMU_ENTRYx_OFFSET)),
         }
     }
+}
+
+/// What `petlibre_ble.c` copies at start.
+#[cfg(feature = "bluetooth")]
+#[repr(C)]
+struct RawBleConfig {
+    name: *const u8,
+    name_len: u32,
+    service: [u8; 16],
+    control: [u8; 16],
+}
+
+#[cfg(feature = "bluetooth")]
+unsafe extern "C" {
+    fn petlibre_ble_start(config: *const RawBleConfig) -> i32;
+    fn petlibre_ble_event_read(seq: u32, out: *mut BleEvent) -> i32;
+    fn petlibre_ble_control_read(buffer: *mut u8, length: u32) -> u32;
+    fn petlibre_ble_notify(data: *const u8, length: u32) -> i32;
+    fn petlibre_ble_disconnect() -> i32;
+    fn petlibre_ble_advertise(on: i32) -> i32;
+    fn petlibre_ble_stats(out: *mut BleStats);
+}
+
+/// FW34: start the BLE peripheral's task (`petlibre_ble.c`), which waits for
+/// the Wi-Fi radio, then serves `service` (advertising only when asked); true
+/// once, when the task was created.
+#[cfg(feature = "bluetooth")]
+pub fn ble_start(service: &BleService) -> bool {
+    let config = RawBleConfig {
+        name: service.name.as_ptr(),
+        name_len: u32::try_from(service.name.len()).unwrap_or(0),
+        service: service.service,
+        control: service.control,
+    };
+    // SAFETY: the C shim copies the config during the call; the name is static.
+    unsafe { petlibre_ble_start(&config) != 0 }
+}
+
+#[cfg(feature = "bluetooth")]
+pub fn ble_event(seq: u32) -> BlePoll {
+    let mut event = BleEvent::default();
+    // SAFETY: the C shim in `petlibre_ble.c`; any buffer is live for the call.
+    match unsafe { petlibre_ble_event_read(seq, &mut event) } {
+        1 => BlePoll::Event(event),
+        0 => BlePoll::Pending,
+        _ => BlePoll::Lost,
+    }
+}
+
+/// Control bytes written since the connection began.
+#[cfg(feature = "bluetooth")]
+pub fn ble_control_read(buffer: &mut [u8]) -> usize {
+    let length = u32::try_from(buffer.len()).unwrap_or(u32::MAX);
+    // SAFETY: the C shim copies at most `length` bytes into the live buffer.
+    let n = unsafe { petlibre_ble_control_read(buffer.as_mut_ptr(), length) };
+    usize::try_from(n).unwrap_or(0)
+}
+
+/// Queue `data` as control notifications; false when the queue is full.
+#[cfg(feature = "bluetooth")]
+#[must_use]
+pub fn ble_notify(data: &[u8]) -> bool {
+    let Ok(length) = u32::try_from(data.len()) else {
+        return false;
+    };
+    // SAFETY: the C shim copies the bytes during the call.
+    unsafe { petlibre_ble_notify(data.as_ptr(), length) != 0 }
+}
+
+/// Advertise, or stop, whenever no host is connected; false when the BLE
+/// task is not running yet.
+#[cfg(feature = "bluetooth")]
+pub fn ble_advertise(advertising: Advertising) -> bool {
+    let on = i32::from(advertising == Advertising::On);
+    // SAFETY: the C shim in `petlibre_ble.c`, with a plain value.
+    unsafe { petlibre_ble_advertise(on) != 0 }
+}
+
+/// Ask the BLE task to drop the connection.
+#[cfg(feature = "bluetooth")]
+pub fn ble_disconnect() -> bool {
+    // SAFETY: the C shim in `petlibre_ble.c`, with no arguments.
+    unsafe { petlibre_ble_disconnect() != 0 }
+}
+
+#[cfg(feature = "bluetooth")]
+pub fn ble_stats() -> BleStats {
+    let mut stats = BleStats::default();
+    // SAFETY: the C shim in `petlibre_ble.c`; any buffer is live for the call.
+    unsafe { petlibre_ble_stats(&mut stats) };
+    stats
 }

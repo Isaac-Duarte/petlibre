@@ -2,13 +2,15 @@
 //!
 //! - **Transport half:** a signed `wifi` request is checked by the store's own
 //!   rules and queued for the settings writer, which saves it to NOR (storage
-//!   sectors 5 and 6). It takes effect at the next boot.
+//!   sectors 5 and 6).
 //! - **Join half:** before each join attempt the C shim asks for credentials
 //!   (`petlibre_wifi_select`) and then reports the outcome
 //!   (`petlibre_wifi_outcome`). Stored credentials are used until
 //!   [`FALLBACK_AFTER`] attempts in a row fail without one success this boot;
-//!   then the build's credentials take over for the rest of the boot, so a bad
-//!   save cannot strand the feeder.
+//!   then the build's credentials take over, so a bad save cannot strand the
+//!   feeder. A save during the boot (FW25 `wifi` over MQTT, or FW34 BLE setup)
+//!   takes effect at the next join: the new credentials are read again and
+//!   get their own run of attempts before the build's take over.
 //!
 //! Nothing here writes flash; the transport may call [`request`].
 
@@ -61,6 +63,8 @@ static WRITABLE: AtomicBool = AtomicBool::new(false);
 static STORED: AtomicBool = AtomicBool::new(false);
 static STORED_CRC: AtomicU32 = AtomicU32::new(0);
 static GENERATION: AtomicU32 = AtomicU32::new(0);
+/// Set by a save after the first load; the join half then reads again.
+static RELOAD: AtomicBool = AtomicBool::new(false);
 /// `WifiSource` of this boot's joins, as `WifiSource::code`.
 static SOURCE: AtomicU8 = AtomicU8::new(WifiSource::Build.code());
 
@@ -152,17 +156,21 @@ pub fn publish(store: &NetStore, armed: bool) {
     );
     STORED.store(store.credentials.is_some(), Ordering::Release);
     // Health reports the low 32 bits; saturate rather than wrap to an old value.
-    GENERATION.store(
-        u32::try_from(store.generation).unwrap_or(u32::MAX),
-        Ordering::Release,
-    );
+    let generation = u32::try_from(store.generation).unwrap_or(u32::MAX);
+    let previous = GENERATION.swap(generation, Ordering::AcqRel);
     WRITABLE.store(armed && store.writable(), Ordering::Release);
-    LOADED.store(true, Ordering::Release);
+    let loaded = LOADED.swap(true, Ordering::AcqRel);
+
+    // A save after the first load: the next join reads the new credentials
+    // and gives them a fresh run of attempts before any fallback.
+    if loaded && generation != previous {
+        RELOAD.store(true, Ordering::Release);
+    }
 }
 
 /// Forget everything (host tests).
 pub fn reset() {
-    for flag in [&LOADED, &WRITABLE, &STORED] {
+    for flag in [&LOADED, &WRITABLE, &STORED, &RELOAD] {
         flag.store(false, Ordering::Release);
     }
     GENERATION.store(0, Ordering::Release);
@@ -244,6 +252,9 @@ pub struct JoinCredentials {
 pub unsafe extern "C" fn petlibre_wifi_select(out: *mut JoinCredentials) {
     // SAFETY: only the Wi-Fi task calls this.
     let join = unsafe { &mut *JOIN.get() };
+    if RELOAD.swap(false, Ordering::AcqRel) {
+        *join = Join::default();
+    }
     let stored = stored(join);
     let choice = choose(stored.is_some(), join.failures, join.joined_once);
     let code = choice.code();

@@ -2,8 +2,8 @@
 //!
 //! A device names its platform (the chip family whose SDK, overlays and
 //! audits are code in the builder) and the board-level files that platform
-//! takes: the application entry and first-boot mains it stages, and the
-//! verified stock image and layout the device profiles derive their flash
+//! takes: the application entry and first-boot mains it stages, the
+//! Bluetooth source a firmware may opt into, and the verified stock image and layout the device profiles derive their flash
 //! banks and pad table from. Every path is root-relative, and the builder
 //! binds every one a profile reads into its identity.
 
@@ -40,6 +40,10 @@ pub enum PlatformConfig {
         entry: String,
         /// The UART-only SDK mains the first-boot profile stages.
         firstboot_mains: AmebadMains,
+        /// The BLE peripheral beside the entry, staged for a firmware that
+        /// declares `bluetooth = true`; absent on a board without it.
+        #[serde(default)]
+        bluetooth: Option<String>,
     },
 }
 

@@ -20,6 +20,10 @@ pub mod stopped;
 
 pub mod arming;
 pub mod audio;
+// FW34: compiled for host tests, and on the target only for a Bluetooth
+// firmware, whose image links the C peripheral it calls.
+#[cfg(any(not(target_os = "none"), feature = "bluetooth"))]
+pub mod ble;
 pub mod board;
 pub mod clock;
 pub mod confirm;

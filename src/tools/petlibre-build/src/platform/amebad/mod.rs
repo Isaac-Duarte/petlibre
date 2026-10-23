@@ -136,14 +136,16 @@ pub(crate) fn archives(recorded: &[(String, PathBuf)]) -> Result<Vec<(Core, Path
         .collect()
 }
 
-/// A device's AmebaD board files: the application entry and the first-boot
-/// mains, as checkout paths.
+/// A device's AmebaD board files: the application entry, the first-boot
+/// mains and the BLE peripheral, as checkout paths.
 #[derive(Debug, Clone)]
 pub(crate) struct Amebad {
     /// The SDK `example_entry.c` replacement; it includes both credential
     /// headers.
     pub(crate) entry: PathBuf,
     pub(crate) mains: [(Core, PathBuf); 2],
+    /// Staged beside the entry for a Bluetooth firmware ([`sdk`]).
+    pub(crate) bluetooth: Option<PathBuf>,
 }
 
 /// C ABI symbols every core archive must define. The core ABI is a C
@@ -320,7 +322,8 @@ fn bounded(line: &str, limit: usize) -> String {
 /// Compiler warnings or errors in the sources this builder staged.
 fn staged_diagnostics(log: &Path, profile: Profile) -> Vec<String> {
     static ENTRY: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"example_entry\.c:.*(?:warning|error):").expect("entry pattern")
+        Regex::new(r"/(?:example_entry|petlibre_ble)\.c:.*(?:warning|error):")
+            .expect("entry pattern")
     });
     static MAINS: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"/src_(?:lp|hp)/main\.c:.*(?:warning|error):").expect("mains pattern")
@@ -635,28 +638,55 @@ impl Build<'_> {
 }
 
 impl Amebad {
-    pub(crate) fn new(repo: &Repo, entry: &str, mains: &AmebadMains) -> Self {
+    pub(crate) fn new(
+        repo: &Repo,
+        entry: &str,
+        mains: &AmebadMains,
+        bluetooth: Option<&str>,
+    ) -> Self {
         Self {
             entry: repo.path(entry),
             mains: [
                 (Core::Lp, repo.path(&mains.km0)),
                 (Core::Hp, repo.path(&mains.km4)),
             ],
+            bluetooth: bluetooth.map(|path| repo.path(path)),
         }
     }
 
+    /// The BLE source a Rust profile of `firmware` stages, if it is a
+    /// Bluetooth firmware; refused when the board has none.
+    pub(crate) fn bluetooth_source(&self, firmware: &Firmware) -> Result<Option<&Path>> {
+        if !firmware.bluetooth() {
+            return Ok(None);
+        }
+        let Some(source) = &self.bluetooth else {
+            return Err(Error::Refused(format!(
+                "Firmware {} needs Bluetooth, which this device does not declare",
+                firmware.name()
+            )));
+        };
+        Ok(Some(source))
+    }
+
     /// The pins, and the board files a profile stages.
-    pub(crate) fn inputs(&self, repo: &Repo, profile: Profile) -> Vec<PathBuf> {
+    pub(crate) fn inputs(
+        &self,
+        repo: &Repo,
+        profile: Profile,
+        firmware: &Firmware,
+    ) -> Result<Vec<PathBuf>> {
         let mut paths = vec![repo.path(SDK_LOCK), repo.path(TOOL_LOCK)];
         if profile.has(Stage::Rust) {
             // The entry includes both generated credential headers.
             paths.push(self.entry.clone());
             paths.extend([WIFI_CREDENTIALS, TRANSPORT_CREDENTIALS].map(|p| repo.path(p)));
+            paths.extend(self.bluetooth_source(firmware)?.map(Path::to_path_buf));
         }
         if profile.has(Stage::Firstboot) {
             paths.extend(self.mains.iter().map(|(_, path)| path.clone()));
         }
-        paths
+        Ok(paths)
     }
 
     pub(crate) fn build(&self, job: &Job) -> Result<Built> {

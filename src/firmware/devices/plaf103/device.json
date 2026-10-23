@@ -8,6 +8,7 @@
   "platform": {
     "kind": "amebad",
     "entry": "src/firmware/vendor/ports/amebad/example_entry.c",
+    "bluetooth": "src/firmware/vendor/ports/amebad/petlibre_ble.c",
     "firstboot_mains": {
       "km0": "src/firmware/vendor/ports/amebad/firstboot_km0.c",
       "km4": "src/firmware/vendor/ports/amebad/firstboot_km4.c"

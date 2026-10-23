@@ -43,6 +43,6 @@ The core diagnostic uses synthetic inputs and memory-only motor outputs. Separat
 
 Rust ports retain caller-owned objects shared with ISRs through critical sections; a fully interrupt-safe ownership model remains future work. SDK build success and model coverage do not establish electrical safety or physical reliability.
 
-Continue with [boot and flash](boot-and-flash.md), [audio](audio.md), [stock behavior](stock-behavior.md), [SDK builds](../development/firmware-builds.md), or [host simulation](../development/README.md).
+Continue with [boot and flash](boot-and-flash.md), [audio](audio.md), [Bluetooth](bluetooth.md), [stock behavior](stock-behavior.md), [SDK builds](../development/firmware-builds.md), or [host simulation](../development/README.md).
 
 Use the [firmware feature board](../../FIRMWARE_BOARD.md) for FW01–FW29 prerequisites, current acceptance scope, and remaining work.

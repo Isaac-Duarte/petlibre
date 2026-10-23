@@ -21,3 +21,4 @@ pub mod replacement;
 pub mod request_auth;
 pub mod speak;
 pub mod storage;
+pub mod wifi_ble;

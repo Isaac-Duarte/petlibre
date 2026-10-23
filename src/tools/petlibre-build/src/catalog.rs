@@ -20,6 +20,8 @@ pub struct DeviceEntry {
 pub struct FirmwareEntry {
     pub name: String,
     pub devices: Vec<String>,
+    /// Links the device's Bluetooth stack.
+    pub bluetooth: bool,
     pub variants: Vec<VariantEntry>,
 }
 

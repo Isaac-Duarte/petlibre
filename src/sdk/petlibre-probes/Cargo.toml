@@ -10,6 +10,8 @@ publish.workspace = true
 [features]
 # KM4 target builds with the pinned SDK bindings.
 km4 = ["petlibre-sdk/km4", "petlibre-hal/km4", "petlibre-hal/sdk"]
+# FW34: the BLE setup records; only a Bluetooth firmware links them.
+bluetooth = ["petlibre-sdk/bluetooth", "petlibre-hal/bluetooth"]
 
 [dependencies]
 petlibre-sdk.workspace = true

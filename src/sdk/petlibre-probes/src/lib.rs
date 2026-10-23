@@ -13,6 +13,9 @@
 #![cfg_attr(target_os = "none", no_std)]
 
 pub mod adc;
+// FW34: only a Bluetooth firmware links the BLE setup task.
+#[cfg(any(not(target_os = "none"), feature = "bluetooth"))]
+pub mod ble;
 pub mod buttons;
 pub mod flash;
 pub mod optics;

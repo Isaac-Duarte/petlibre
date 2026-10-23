@@ -17,6 +17,7 @@ petlibre-probes = { path = "src/sdk/petlibre-probes" }
 petlibre-sdk = { path = "src/sdk/petlibre-sdk" }
 petlibre-sdk-c = { path = "src/sdk/petlibre-sdk-c" }
 petlibre-fw-blink = { path = "src/firmware/petlibre/blink" }
+petlibre-fw-ble = { path = "src/firmware/petlibre/ble" }
 petlibre-formats = { path = "src/tools/petlibre-formats" }
 petlibre-emu = { path = "src/tools/petlibre-emu" }
 petlibre-testkit = { path = "src/sdk/petlibre-testkit" }

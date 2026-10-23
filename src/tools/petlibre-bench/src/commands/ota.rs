@@ -91,18 +91,21 @@ pub enum Firmware {
     Speaker,
     /// Blinks the connection indicator.
     Blink,
+    /// FW34: Bluetooth LE bring-up and Wi-Fi setup over BLE.
+    Ble,
     /// FW11 trial images, one per `Variant`.
     Trial,
 }
 
 impl Firmware {
-    const ALL: [Self; 7] = [
+    const ALL: [Self; 8] = [
         Self::Qa,
         Self::Optics,
         Self::Buttons,
         Self::Adc,
         Self::Speaker,
         Self::Blink,
+        Self::Ble,
         Self::Trial,
     ];
 
@@ -116,6 +119,7 @@ impl Firmware {
             Self::Adc => "adc",
             Self::Speaker => "speaker",
             Self::Blink => "blink",
+            Self::Ble => "ble",
             Self::Trial => "trial",
         }
     }
@@ -223,7 +227,7 @@ pub struct OtaArgs {
     /// With --build: build even when a review of the same sources exists.
     #[arg(long, requires = "build")]
     pub rebuild: bool,
-    /// No-motion firmware for --build: qa (the default), optics, buttons, adc, speaker, blink
+    /// No-motion firmware for --build: qa (the default), optics, buttons, adc, speaker, blink, ble
     /// or trial.
     #[arg(long, value_parser = parse_firmware)]
     pub firmware: Option<Firmware>,

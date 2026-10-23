@@ -778,3 +778,64 @@ pub fn wifi_event(seq: u32) -> WifiPoll {
         }
     })
 }
+
+/// Starts once; tests record events with [`ble_record`].
+pub fn ble_start(service: &BleService) -> bool {
+    with(|h| {
+        let first = h.ble_started.is_none();
+        h.ble_started = Some(*service);
+        first
+    })
+}
+
+pub fn ble_event(seq: u32) -> BlePoll {
+    with(|h| {
+        let recorded =
+            u32::try_from(h.ble_events.len()).expect("a test records fewer than 2^32 events");
+        if seq == 0 || seq > recorded {
+            BlePoll::Pending
+        } else if recorded - seq >= h.ble_ring {
+            BlePoll::Lost
+        } else {
+            BlePoll::Event(h.ble_events[seq as usize - 1])
+        }
+    })
+}
+
+fn drain(queue: &mut VecDeque<u8>, buffer: &mut [u8]) -> usize {
+    let n = queue.len().min(buffer.len());
+    for (slot, byte) in buffer.iter_mut().zip(queue.drain(..n)) {
+        *slot = byte;
+    }
+    n
+}
+
+pub fn ble_control_read(buffer: &mut [u8]) -> usize {
+    with(|h| drain(&mut h.ble_control, buffer))
+}
+
+#[must_use]
+pub fn ble_notify(data: &[u8]) -> bool {
+    with(|h| {
+        if h.ble_notify_fails {
+            h.ble_stats.notify_dropped += u32::try_from(data.len()).unwrap_or(u32::MAX);
+            return false;
+        }
+        h.ble_notified.extend_from_slice(data);
+        true
+    })
+}
+
+pub fn ble_advertise(advertising: Advertising) -> bool {
+    with(|h| h.ble_advertising = advertising);
+    true
+}
+
+pub fn ble_disconnect() -> bool {
+    with(|h| h.ble_disconnects += 1);
+    true
+}
+
+pub fn ble_stats() -> BleStats {
+    with(|h| h.ble_stats)
+}

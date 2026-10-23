@@ -7,6 +7,38 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
+**October 23, later: BLE Wi-Fi setup replaces the BLE speaker (FW34, physical over the air, by BLE and by UART capture; uncommitted on master).**
+- **What changed** ([design](docs/firmware/bluetooth.md)):
+  - The audio demo is gone. The `ble` firmware advertises after 120 s offline and takes one signed FW25 `wifi` request per hello over a private GATT service.
+  - `petlibre-local ble-wifi --ssid NAME` sends it, with the passphrase on stdin.
+  - A credential save mid-boot is now joined at the next attempt with a fresh count of 5 (`network.rs`), for MQTT too.
+  - The client polls BlueZ's device list without a discovery filter: `bluetoothd` 5.87 segfaulted twice around a filtered discovery.
+- **Runs:**
+  - `fw34-setup-01` (`itest --review private/verification/fw34-setup-01-review --only ota-update --power`) installed it as v70, and it confirmed.
+  - `boot fw34-setup-02-offline` with the hotspot down: `PLBLE1 ready heap_free=131072`, then `advertising on=1` about 124 s after boot.
+  - `capture fw34-setup-03-provision`:
+    - `ble-wifi` sent the hotspot's credentials; the reply was `ok:true,pending:true,writable:true`.
+    - UART: `request op=wifi ok=1` and `net saved generation=16 stored=1`, with the link up through the flash write.
+    - With the hotspot brought up, join attempt 14 connected with source `stored` (`kind=connect value=00000001`); the build's credentials had already failed 13 times. DHCP and DNS followed, then `advertising on=0`.
+  - Stored credentials are now the hotspot's own (the same network as the build's); a signed `wifi` clear returns to the build's.
+- **Checks:**
+  - `make check` passes. The `consumer-installation.md` links master carried without the file are removed.
+  - Host tests: `petlibre-hal` `ble`, `network` and `records`; `petlibre-local` `wifi_ble`.
+  - Fresh `ble` firstboot with every audit passing (task 1568 of 4096 B, image 832 KB).
+- **Flash now:** **Bank 1:** `ble` setup build (OTA v70, confirmed). **Bank 0:** unchanged (`f244d9a9…`). **Next manifest version:** 71.
+- **Bench state:** restored. Feeder off (relays off), hotspot down, no server.
+- **Next:** advertise only on mains power (PA19), as stock does; put BLE behind a settings flag; OTA QA back if needed.
+
+**October 23: BLE bring-up on the feeder with a BLE speaker (FW34, physical over the air and by UART capture, owner listening).**
+- **Runs:**
+  - `fw34-ble-02` (`itest --review private/verification/fw34-ble-01-review --tier smoke --power`) installed `ble` as v69. It confirmed and passed `ota-update`, `requests` and `request-auth` with BLE up.
+  - `boot fw34-ble-03-speaker`, then `fw34-ble-04-speaker`:
+    - BlueZ saw `PetLibre` advertising, and the link settled at MTU 247, data length 251, 2M PHY and a 7.5–15 ms interval.
+    - A signed 10 s, 16 kHz stream played clean (owner listening): `done bytes=320000 underruns=24 dropped=0`.
+    - The host client needed `notify_io()` (the hello raced `notify()`) and write requests (`bluer` writes default to commands).
+  - Phones cannot use it: it is LE-only and needs the request key.
+- **Flash then:** **Bank 1:** `ble` speaker build (OTA v69, confirmed). **Bank 0:** unchanged.
+
 **October 23, morning: bring-up firmwares and QA (FW39, physical over the air and by UART capture, owner pressing).** Built in the `firmware-split` worktree, applied onto master after FW38.
 - **What changed:**
   - The reference firmware is gone. In its place are `optics`, `buttons`, `adc`, `speaker`, `motor` (pulse only in its `fw16-pulse` variant) and `trial` (`fw11-reset`, `fw11-fail`), plus a guided `qa` firmware, now the default for `petlibre-build`, make and the bench ([firmwares](src/firmware/petlibre/README.md), [QA](docs/firmware/qa.md)).

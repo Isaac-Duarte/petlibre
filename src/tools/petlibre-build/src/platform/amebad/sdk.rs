@@ -31,6 +31,14 @@ const OTA_HEADER: &str = "component/soc/realtek/amebad/fwlib/include/rtl8721d_ot
 const PINMAP: &str = "component/soc/realtek/amebad/fwlib/usrcfg/rtl8721dlp_pinmapcfg.c";
 const UTILITIES_MAKEFILE: &str = "project_hp/asdk/make/utilities_example/Makefile";
 const SRC_LP_MAKEFILE: &str = "project/realtek_amebaD_va0_example/src/src_lp/Makefile";
+/// The KM4 build options; `CONFIG_BT_EN` adds the BT board code and `btgap.a`.
+const HP_CONFIG: &str = "project_hp/asdk/config/.config";
+const HCI_BOARD: &str = "component/common/bluetooth/realtek/sdk/board/amebad/src/hci/hci_board.c";
+/// Compiles the SDK's FTL store, whose entry points the BLE peripheral
+/// replaces.
+const FTL_MAKEFILE: &str = "project_hp/asdk/make/file_system/ftl/Makefile";
+/// Where a Bluetooth firmware's BLE peripheral is staged.
+const BLE_SOURCE: &str = "component/common/example/petlibre_ble.c";
 /// Object suffixes the vendor makefiles leave beside a source.
 const OBJECT_SUFFIXES: [&str; 5] = [".o", ".d", ".i", ".s", ".su"];
 
@@ -93,6 +101,10 @@ fn managed_sdk_paths(profile: Profile) -> BTreeSet<String> {
             // Restored from the pinned revision before every application build.
             project(UTILITIES_MAKEFILE),
             SRC_LP_MAKEFILE.to_string(),
+            // Overlaid for a Bluetooth firmware, restored for any other.
+            project(HP_CONFIG),
+            project(FTL_MAKEFILE),
+            HCI_BOARD.to_string(),
         ]);
     }
     if profile.has(Stage::Firstboot) {
@@ -135,7 +147,7 @@ fn unexpected_sdk_changes(sdk: &Path, profile: Profile) -> Result<Vec<String>> {
             "??" => {
                 untracked.contains(path)
                     || (profile.has(Stage::Rust)
-                        && (path == WIFI_HEADER || path == TRANSPORT_HEADER))
+                        && (path == WIFI_HEADER || path == TRANSPORT_HEADER || path == BLE_SOURCE))
             }
             " M" => {
                 managed.contains(path)
@@ -276,10 +288,13 @@ pub(crate) fn prepare(
     }
     if profile.has(Stage::Rust) {
         rust_overlays(repo, board, &sdk, &mut overrides, &staged)?;
+        let bluetooth = board.bluetooth_source(job.firmware)?;
+        bluetooth_overlays(&sdk, bluetooth, &mut overrides, &staged)?;
     }
     if profile.has(Stage::Firstboot) {
         firstboot_overlays(board, &sdk, &mut overrides, &staged)?;
     }
+    recompile_on_option_change(&sdk)?;
     Ok((sdk, overrides))
 }
 
@@ -447,6 +462,115 @@ fn ota_addresses(stock: &StockPaths, sdk: &Path, overrides: &mut Overrides) -> R
     overlay(sdk, OTA_HEADER, &text, overrides)
 }
 
+/// FW34: a Bluetooth firmware links the BT board code, the vendor host
+/// stack and its BLE peripheral; any other build restores the pinned files
+/// and drops the staged peripheral, so the two never mix in one worktree.
+///
+/// Only the makefile option is set. `CONFIG_BT` stays undefined in C, so the
+/// boot-time FTL init (`CONFIG_FTL_ENABLED`), the BT AT commands and the
+/// vendor examples stay out.
+fn bluetooth_overlays(
+    sdk: &Path,
+    bluetooth: Option<&Path>,
+    overrides: &mut Overrides,
+    staged: &dyn Fn(&Path, &Path, &str) -> Result<()>,
+) -> Result<()> {
+    let objects = sdk.join(project("project_hp/asdk"));
+    remove_objects(&objects.join("make/utilities_example"), "petlibre_ble")?;
+    remove_file(&objects.join("build/ram/petlibre_ble.o"))?;
+    let destination = sdk.join(BLE_SOURCE);
+    let Some(source) = bluetooth else {
+        for relative in [
+            project(HP_CONFIG),
+            project(FTL_MAKEFILE),
+            HCI_BOARD.to_string(),
+        ] {
+            git(sdk, &["checkout", "HEAD", "--", &relative])?;
+        }
+        return remove_file(&destination);
+    };
+
+    fs::copy(source, &destination)?;
+    staged(source, &destination, "Source changed while staging")?;
+    // rust_overlays restored this makefile from the pinned revision.
+    let makefile = project(UTILITIES_MAKEFILE);
+    let anchor = "CSRC += $(DIR)/example_entry.c\n";
+    let text = replace_once(
+        &pinned(sdk, &makefile)?,
+        anchor,
+        &format!("{anchor}CSRC += $(DIR)/petlibre_ble.c\n"),
+        "Pinned example source list changed",
+    )?;
+    overlay(sdk, &makefile, &text, overrides)?;
+
+    let config = project(HP_CONFIG);
+    let text = replace_once(
+        &pinned(sdk, &config)?,
+        "# CONFIG_BT_EN is not set\n",
+        "CONFIG_BT_EN=y\n",
+        "Pinned BT option changed",
+    )?;
+    overlay(sdk, &config, &text, overrides)?;
+
+    // The vendor stack stores bonds through FTL, which erases and programs a
+    // fixed sector inside OTA bank 0. Every build compiles FTL and drops it
+    // at link; here the stack references its entry points, so leave it out
+    // and let the peripheral's refusing definitions stand in.
+    let makefile = project(FTL_MAKEFILE);
+    let text = replace_once(
+        &pinned(sdk, &makefile)?,
+        "CSRC += $(DIR)/ftl.c\n",
+        "# petlibre: the BLE peripheral replaces FTL's entry points.\n",
+        "Pinned FTL source list changed",
+    )?;
+    overlay(sdk, &makefile, &text, overrides)?;
+
+    // The board code reads switches from the system data sector (flash
+    // 0x3028), active low: they choose the controller patch (embedded, or
+    // read from a fixed address inside our OTA banks), a trace UART on PA26,
+    // the controller's log and whether the host stack starts at all. Pin
+    // them to an erased sector's values, as the research unit's are, so the
+    // image never depends on a unit's system data and never takes a flash
+    // lease for this read.
+    let anchor = "\tdevice_mutex_lock(RT_DEV_LOCK_FLASH);\n\tFLASH_Write_Lock();\n\tret = \
+                  (HAL_READ32(SPI_FLASH_BASE, FLASH_SYSTEM_DATA_ADDR + 0x28) & x);\n\tFLASH_Write_Unlock();\n\t\
+                  device_mutex_unlock(RT_DEV_LOCK_FLASH);\n";
+    let text = replace_once(
+        &pinned(sdk, HCI_BOARD)?,
+        anchor,
+        "\t/* petlibre: an erased system data sector's switches. */\n\tret = x;\n",
+        "Pinned BT system data switch read changed",
+    )?;
+    overlay(sdk, HCI_BOARD, &text, overrides)
+}
+
+/// The vendor makefiles track no header dependencies, so objects compiled
+/// under other KM4 options would be linked as they are. Recompile every KM4
+/// object (all untracked build outputs) when the options or the build
+/// configuration change.
+fn recompile_on_option_change(sdk: &Path) -> Result<()> {
+    let stamp = sdk.parent().unwrap_or(sdk).join("hp-options.sha256");
+    let options = format!(
+        "{} {}",
+        digest(&sdk.join(PLATFORM_OPTS))?,
+        digest(&sdk.join(project(HP_CONFIG)))?
+    );
+    if fs::read_to_string(&stamp).ok().as_deref().map(str::trim) == Some(options.as_str()) {
+        return Ok(());
+    }
+
+    let mut files = Vec::new();
+    walk(&sdk.join(project("project_hp/asdk")), &mut files)?;
+    for path in files
+        .iter()
+        .filter(|p| p.extension().is_some_and(|e| e == "o"))
+    {
+        fs::remove_file(path)?;
+    }
+    fs::write(&stamp, format!("{options}\n"))?;
+    Ok(())
+}
+
 fn firstboot_overlays(
     board: &Amebad,
     sdk: &Path,
@@ -465,28 +589,6 @@ fn firstboot_overlays(
         "Pinned fast-connect option changed",
     )?;
     overlay(sdk, PLATFORM_OPTS, &text, overrides)?;
-
-    // The vendor makefiles track no header dependencies, so objects compiled
-    // under other platform options would be linked as they are. Recompile
-    // every KM4 object (all untracked build outputs) when these options change.
-    let stamp = sdk.parent().unwrap_or(sdk).join("hp-platform-opts.sha256");
-    let options = &overrides[PLATFORM_OPTS];
-    if fs::read_to_string(&stamp)
-        .map(|s| s.trim().to_string())
-        .ok()
-        .as_ref()
-        != Some(options)
-    {
-        let mut files = Vec::new();
-        walk(&sdk.join(project("project_hp/asdk")), &mut files)?;
-        for path in files
-            .iter()
-            .filter(|p| p.extension().is_some_and(|e| e == "o"))
-        {
-            fs::remove_file(path)?;
-        }
-        fs::write(&stamp, format!("{options}\n"))?;
-    }
 
     for (core, source) in &board.mains {
         let relative = format!(

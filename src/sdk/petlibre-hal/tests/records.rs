@@ -6,7 +6,7 @@
 use std::fmt;
 
 use petlibre_core::record::{Record, tag};
-use petlibre_hal::{audio, confirm, stream, transport, updater, watch};
+use petlibre_hal::{audio, ble, confirm, stream, transport, updater, watch};
 
 struct Body<F>(F);
 
@@ -223,6 +223,51 @@ fn stage_and_reason_words_are_unchanged() {
         displayed(stream::EndReason::ALL, stream::EndReason::as_str),
         ["closed", "stall"]
     );
+    assert_eq!(
+        displayed(ble::FailStage::ALL, ble::FailStage::as_str),
+        ["task", "radio", "bte", "service", "stack", "timeout"]
+    );
+    assert_eq!(
+        displayed(ble::DropReason::ALL, ble::DropReason::as_str),
+        ["no_key", "notify", "too_long", "malformed", "timeout"]
+    );
+}
+
+#[test]
+fn ble_records_carry_what_a_bench_run_reads() {
+    let wifi = line(tag::BLE, |f| {
+        ble::describe(
+            ble::Record::Request {
+                kind: ble::RequestKind::Wifi,
+                ok: true,
+            },
+            f,
+        )
+    });
+    let record = read(&wifi);
+    assert_eq!(record.first, "request");
+    assert!(record.is(tag::BLE, &[("op", "wifi"), ("ok", "1")]));
+
+    let refused = line(tag::BLE, |f| {
+        ble::describe(
+            ble::Record::Request {
+                kind: ble::RequestKind::Unauthenticated,
+                ok: false,
+            },
+            f,
+        )
+    });
+    assert!(read(&refused).is(tag::BLE, &[("op", "unauthenticated"), ("ok", "0")]));
+
+    let advertising = line(tag::BLE, |f| {
+        ble::describe(ble::Record::Advertising { on: true }, f)
+    });
+    assert!(read(&advertising).is(tag::BLE, &[("on", "1")]));
+
+    let disconnect = line(tag::BLE, |f| {
+        ble::describe(ble::Record::Disconnect { cause: 0x113 }, f)
+    });
+    assert!(read(&disconnect).is(tag::BLE, &[("cause", "0x113")]));
 }
 
 #[test]

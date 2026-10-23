@@ -17,7 +17,7 @@ use clap::{Parser, Subcommand};
 
 use petlibre_bench::commands::{
     self, Bench, DemoArgs, ExecuteArgs, GiveWayArgs, GiveWayExecuteArgs, ItestArgs, OtaArgs,
-    StockOtaArgs, TransientArgs, UpdateArgs, check_name, pattern_name,
+    StockArgs, StockExecuteArgs, StockOtaArgs, TransientArgs, UpdateArgs, check_name, pattern_name,
 };
 use petlibre_bench::config::{Config, STATUS_DIR};
 use petlibre_bench::relay::Relay;
@@ -111,6 +111,12 @@ enum Command {
     GiveWayPrepare(GiveWayArgs),
     /// Clear bank 1's first marker byte, then boot.
     GiveWayExecute(GiveWayExecuteArgs),
+    /// The pinned original stock back into bank 1 over UART: with --fallback,
+    /// the give-way to bank 0 first; otherwise loader, full read and the
+    /// recovery plan. Stops for review.
+    StockPrepare(StockArgs),
+    /// Execute what stock-prepare planned, then boot.
+    StockExecute(StockExecuteArgs),
     /// Sign and offer a review (or `--build` one first) to the running local
     /// server, watch the UART until it confirms or falls back, then check the
     /// server's health; never touches power.
@@ -146,6 +152,8 @@ impl Command {
             Self::FlashExecute(_) => "flash-execute",
             Self::GiveWayPrepare(_) => "give-way-prepare",
             Self::GiveWayExecute(_) => "give-way-execute",
+            Self::StockPrepare(_) => "stock-prepare",
+            Self::StockExecute(_) => "stock-execute",
             Self::Ota(_) => "ota",
             Self::Itest(_) => "itest",
             Self::StockOta(_) => "stock-ota",
@@ -165,6 +173,8 @@ impl Command {
             Self::FlashExecute(args) => Some(&args.update.name),
             Self::GiveWayPrepare(args) => Some(&args.name),
             Self::GiveWayExecute(args) => Some(&args.give_way.name),
+            Self::StockPrepare(args) => Some(&args.name),
+            Self::StockExecute(args) => Some(&args.stock.name),
             Self::Ota(args) => Some(&args.name),
             Self::Itest(args) => args.name.as_deref(),
             Self::StockOta(args) => Some(&args.name),
@@ -333,6 +343,12 @@ fn record_start(
         Command::Ota(args) => commands::ota::steps(args.source()),
         Command::Itest(args) => commands::itest::steps(args)?,
         Command::StockOta(args) => args.steps(),
+        Command::StockPrepare(args) if args.fallback.is_some() => {
+            commands::steps("give-way-prepare").to_vec()
+        }
+        Command::StockExecute(args) if args.stock.fallback.is_some() => {
+            commands::steps("give-way-execute").to_vec()
+        }
         _ => commands::steps(label).to_vec(),
     };
 
@@ -369,6 +385,8 @@ fn dispatch(
         Command::FlashExecute(args) => bench.flash_execute(args),
         Command::GiveWayPrepare(args) => bench.give_way_prepare(args),
         Command::GiveWayExecute(args) => bench.give_way_execute(args),
+        Command::StockPrepare(args) => bench.stock_prepare(args),
+        Command::StockExecute(args) => bench.stock_execute(args),
         Command::Ota(args) => bench.ota(args),
         Command::Itest(args) => bench.itest(args, local_bin),
         Command::StockOta(args) => bench.stock_ota(args, local_bin),

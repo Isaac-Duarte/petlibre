@@ -560,7 +560,15 @@ fn a_fault_mid_recovery_stops_without_retry() {
     let mut reader = helper(&f, &flash, bank1_sectors(BANK1_END - BANK1));
     let (current, plan, sha) = recovery(&f, &mut reader);
 
-    let reviewed: Value = serde_json::from_slice(&fs::read(&plan).unwrap()).unwrap();
+    let raw = fs::read(&plan).unwrap();
+    // The bench's typed view reads what this client writes.
+    let view: petlibre_formats::flash_plan::StockRecoveryReviewed =
+        serde_json::from_slice(&raw).unwrap();
+    assert_eq!(view.kind, petlibre_formats::flash_plan::Kind::StockRecovery);
+    assert_eq!(view.recovery_plan.target_bank, 1);
+    assert!(view.recovery_plan.changed_sector_count > 0);
+
+    let reviewed: Value = serde_json::from_slice(&raw).unwrap();
     let order: Vec<u64> = reviewed["recovery_plan"]["ordered_sector_payloads"]
         .as_array()
         .unwrap()

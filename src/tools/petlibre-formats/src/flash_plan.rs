@@ -129,6 +129,23 @@ pub struct GiveWayPlan {
     pub scope: String,
 }
 
+/// A reviewed stock-recovery plan as the bench reads it: which bank the
+/// pinned original goes back into and how much of it changes. The writer is
+/// `petlibre-flash`'s `stock::Reviewed`, which holds much more; its emulated
+/// stock-recovery test parses every plan it writes through this view.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct StockRecoveryReviewed {
+    pub kind: Kind,
+    pub recovery_plan: StockRecoveryPlan,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct StockRecoveryPlan {
+    pub baseline_sha256: String,
+    pub target_bank: u8,
+    pub changed_sector_count: usize,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

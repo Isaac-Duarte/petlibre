@@ -67,6 +67,12 @@ fn plan(command: &str) -> String {
             program_frame_sha256: "p".into(),
             scope: "test".into(),
         }),
+        // Stock recovery's plan has its own shape (petlibre-flash `stock::Reviewed`).
+        "stock-recovery" => {
+            return json!({"kind": "original_stock_bank1_recovery", "recovery_plan": {
+                "baseline_sha256": "b", "target_bank": 1, "changed_sector_count": 204}})
+            .to_string();
+        }
         _ => json!(development(1, 4)),
     };
     json!({"operation_plan": operation}).to_string()
@@ -120,6 +126,8 @@ struct Calls {
     status_default: String,
     /// Every child in order: `build <args>`, `local <args>`, `query <args>`.
     ran: Vec<String>,
+    /// Whether a full read's bank 1 starts with the loader marker.
+    bank1_valid: bool,
 }
 
 #[derive(Clone, Default)]
@@ -197,6 +205,18 @@ impl Tools for FakeTools {
         if code == 0 && args[1] == "prepare" {
             let at = args.iter().position(|a| a == "--output").unwrap();
             fs::write(&args[at + 1], plan(&args[0]))?;
+        }
+        // A full read writes the image up to bank 1's marker.
+        if code == 0 && args[..2] == ["read", "full"] {
+            let output = PathBuf::from(flag(args, "--output"));
+            fs::create_dir_all(&output)?;
+            let mut image = vec![0xffu8; 0x186000];
+            image.extend(if calls.bank1_valid {
+                *b"81958711"
+            } else {
+                *b"\x001958711"
+            });
+            fs::write(output.join("flash-read.bin"), image)?;
         }
         Ok(code)
     }
@@ -557,6 +577,129 @@ fn give_way_prepare_then_execute() {
     let last = calls.flash.last().unwrap();
     assert_eq!(last[..2], ["give-way", "execute"]);
     assert!(last.contains(&"--fallback".to_string()));
+}
+
+fn stock(name: &str, fallback: Option<&str>) -> StockArgs {
+    StockArgs {
+        name: name.into(),
+        fallback: fallback.map(PathBuf::from),
+    }
+}
+
+fn stock_banner() -> Observation {
+    Observation {
+        bytes: 4000,
+        stock_startup_markers: 1,
+        ..Observation::default()
+    }
+}
+
+#[test]
+fn stock_prepare_then_execute_puts_the_original_back_into_bank_1() {
+    let mut rig = rig();
+    fs::create_dir_all(rig.bench.root.join(VERIFICATION)).unwrap();
+    let args = stock("st", None);
+    assert_eq!(rig.bench.stock_prepare(&args).unwrap(), 0);
+
+    {
+        let calls = rig.tools.0.borrow();
+        let commands: Vec<_> = calls.flash.iter().map(|a| a[..2].join(" ")).collect();
+        assert_eq!(
+            commands,
+            ["read small", "read full", "stock-recovery prepare"]
+        );
+        // The recovery continues the full read of this helper session.
+        let prepare = calls.flash.last().unwrap();
+        assert!(flag(prepare, "--current").ends_with("st-full/flash-read.bin"));
+        assert!(flag(prepare, "--small-report").ends_with("st-bounded/report.json"));
+    }
+
+    rig.tools.0.borrow_mut().results.push_back(stock_banner());
+    let execute = StockExecuteArgs {
+        stock: args,
+        expected_plan_sha256: sha256(plan("stock-recovery").as_bytes()),
+        boot_seconds: 10.0,
+    };
+    assert_eq!(rig.bench.stock_execute(&execute).unwrap(), 0);
+
+    let calls = rig.tools.0.borrow();
+    let last = calls.flash.last().unwrap();
+    assert_eq!(last[..2], ["stock-recovery", "execute"]);
+    assert_eq!(
+        flag(last, "--expected-plan-sha256"),
+        execute.expected_plan_sha256
+    );
+    assert!(flag(last, "--plan").ends_with("st-plan.json"));
+    assert!(flag(last, "--current").ends_with("st-full/flash-read.bin"));
+}
+
+#[test]
+fn a_valid_bank_1_needs_the_give_way_first() {
+    let mut rig = rig();
+    rig.tools.0.borrow_mut().bank1_valid = true;
+
+    let error = rig.bench.stock_prepare(&stock("st", None)).unwrap_err();
+    assert!(error.to_string().contains("--fallback"), "{error}");
+    let calls = rig.tools.0.borrow();
+    assert!(!calls.flash.iter().any(|a| a[0] == "stock-recovery"));
+}
+
+#[test]
+fn with_a_fallback_the_stock_commands_give_way_first() {
+    let mut rig = rig();
+    fs::create_dir_all(rig.bench.root.join(VERIFICATION)).unwrap();
+    let args = stock("st", Some("bank0-review"));
+    assert_eq!(rig.bench.stock_prepare(&args).unwrap(), 0);
+    {
+        let calls = rig.tools.0.borrow();
+        let last = calls.flash.last().unwrap();
+        assert_eq!(last[..2], ["give-way", "prepare"]);
+        assert!(flag(last, "--output").ends_with("st-giveway-plan.json"));
+    }
+
+    rig.tools.0.borrow_mut().results.push_back(boot_result());
+    let execute = StockExecuteArgs {
+        stock: args,
+        expected_plan_sha256: sha256(plan("give-way").as_bytes()),
+        boot_seconds: 10.0,
+    };
+    assert_eq!(rig.bench.stock_execute(&execute).unwrap(), 0);
+    let calls = rig.tools.0.borrow();
+    assert_eq!(calls.flash.last().unwrap()[..2], ["give-way", "execute"]);
+    assert!(!calls.flash.iter().any(|a| a[0] == "stock-recovery"));
+}
+
+#[test]
+fn a_stock_boot_without_its_banner_fails() {
+    let mut rig = rig();
+    fs::create_dir_all(rig.bench.root.join(VERIFICATION)).unwrap();
+    let args = stock("st", None);
+    assert_eq!(rig.bench.stock_prepare(&args).unwrap(), 0);
+
+    rig.tools.0.borrow_mut().results.push_back(boot_result());
+    let execute = StockExecuteArgs {
+        stock: args,
+        expected_plan_sha256: sha256(plan("stock-recovery").as_bytes()),
+        boot_seconds: 10.0,
+    };
+    let error = rig.bench.stock_execute(&execute).unwrap_err();
+    assert!(
+        error.to_string().contains("stock version banner"),
+        "{error}"
+    );
+}
+
+#[test]
+fn stock_execute_needs_its_plan() {
+    let mut rig = rig();
+    let execute = StockExecuteArgs {
+        stock: stock("none", None),
+        expected_plan_sha256: "0".repeat(64),
+        boot_seconds: 10.0,
+    };
+    let error = rig.bench.stock_execute(&execute).unwrap_err();
+    assert!(error.to_string().contains("single-use"), "{error}");
+    assert!(rig.tools.0.borrow().flash.is_empty());
 }
 
 #[test]

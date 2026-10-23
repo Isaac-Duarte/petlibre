@@ -39,6 +39,10 @@ const HCI_BOARD: &str = "component/common/bluetooth/realtek/sdk/board/amebad/src
 const FTL_MAKEFILE: &str = "project_hp/asdk/make/file_system/ftl/Makefile";
 /// Where a Bluetooth firmware's BLE peripheral is staged.
 const BLE_SOURCE: &str = "component/common/example/petlibre_ble.c";
+/// KM4's hard fault handler, which gains a `PLFLT1` line of the fault status
+/// registers (FW40): its backtrace alone cannot tell an imprecise bus fault
+/// from a corrupted pointer.
+const APP_START: &str = "component/soc/realtek/amebad/fwlib/ram_hp/rtl8721dhp_app_start.c";
 /// Object suffixes the vendor makefiles leave beside a source.
 const OBJECT_SUFFIXES: [&str; 5] = [".o", ".d", ".i", ".s", ".su"];
 
@@ -105,6 +109,7 @@ fn managed_sdk_paths(profile: Profile) -> BTreeSet<String> {
             project(HP_CONFIG),
             project(FTL_MAKEFILE),
             HCI_BOARD.to_string(),
+            APP_START.to_string(),
         ]);
     }
     if profile.has(Stage::Firstboot) {
@@ -216,6 +221,25 @@ fn pinned(sdk: &Path, relative: &str) -> Result<String> {
 fn replace_once(text: &str, anchor: &str, with: &str, message: &str) -> Result<String> {
     require(text.matches(anchor).count() == 1, message)?;
     Ok(text.replacen(anchor, with, 1))
+}
+
+/// Print the Cortex-M33 fault status and address registers before the
+/// vendor backtrace. CFSR's IMPRECISERR or a BFAR in a peripheral marks a
+/// bus fault the stacked PC does not point at. Read-only; the handler still
+/// ends in its own loop.
+fn fault_registers(pinned: &str) -> Result<String> {
+    let anchor = "\tcm_backtrace_fault((uint32_t)(IsPstack ? pstack : mstack), lr_value);";
+    replace_once(
+        pinned,
+        anchor,
+        &format!(
+            "\tDBG_8195A(\"PLFLT1 cfsr=%x hfsr=%x mmfar=%x bfar=%x lr=%x psp=%d\\r\\n\",\n\
+             \t\t*(volatile uint32_t *)0xE000ED28, *(volatile uint32_t *)0xE000ED2C,\n\
+             \t\t*(volatile uint32_t *)0xE000ED34, *(volatile uint32_t *)0xE000ED38,\n\
+             \t\tlr_value, IsPstack);\n{anchor}"
+        ),
+        "Pinned hard fault handler changed",
+    )
 }
 
 fn remove_file(path: &Path) -> Result<()> {
@@ -401,6 +425,8 @@ fn rust_overlays(
     }
     let text = hooks::overlay(&pinned(sdk, hooks::SOURCE)?)?;
     overlay(sdk, hooks::SOURCE, &text, overrides)?;
+    let text = fault_registers(&pinned(sdk, APP_START)?)?;
+    overlay(sdk, APP_START, &text, overrides)?;
 
     // SDK dependencies can retain the old public definitions otherwise.
     for core in Core::BOTH {
@@ -719,5 +745,18 @@ mod tests {
         let mut expected = vec![format!("M {}", managed[0]), format!("D {}", managed[1])];
         expected.sort();
         assert_eq!(changes(&sdk, Profile::Firstboot), expected);
+    }
+
+    #[test]
+    fn the_fault_handler_prints_its_registers_before_the_backtrace() {
+        let pinned = "\tu8 IsPstack = 0;\n\tcm_backtrace_fault((uint32_t)(IsPstack ? pstack : mstack), lr_value);\n\twhile(1);\n";
+        let text = fault_registers(pinned).unwrap();
+        let line = text.find("PLFLT1 cfsr=").unwrap();
+        assert!(line < text.find("cm_backtrace_fault").unwrap());
+        assert!(text.contains("0xE000ED28") && text.contains("0xE000ED38"));
+
+        // A changed handler is refused, not patched elsewhere.
+        assert!(fault_registers("\twhile(1);\n").is_err());
+        assert!(fault_registers(&pinned.repeat(2)).is_err());
     }
 }

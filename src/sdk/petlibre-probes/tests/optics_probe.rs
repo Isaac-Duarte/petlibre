@@ -443,13 +443,26 @@ fn a_lost_owner_lease_mid_window_ends_the_probe_stopped() {
     assert_eq!(b.probe.events.fault, EventsFault::OWNER);
     assert_eq!(b.step(&mut during), 0);
 
-    let Some(Record::Error { kind, n, fault }) = b.records.last().copied() else {
+    let Some(Record::Error {
+        kind,
+        n,
+        fault,
+        stall_ms,
+    }) = b.records.last().copied()
+    else {
         panic!("{:?}", b.records.last());
     };
 
     assert_eq!(
         (kind, n, fault),
         (optics::ErrorKind::Supervisor, 1, EventsFault::OWNER.0)
+    );
+    // The record says how long the task was away: past the lease.
+    assert!(stall_ms.is_some_and(|ms| ms >= LEASE_MS), "{stall_ms:?}");
+    let text = line(b.records.last().copied().unwrap());
+    assert!(
+        text.starts_with("PLOPT1 error kind=supervisor n=1 fault=7 stall="),
+        "{text}"
     );
     assert!(stopped::observe().verified() && !stopped::observe().sensing());
 }

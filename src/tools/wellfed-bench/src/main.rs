@@ -407,21 +407,21 @@ mod tests {
     }
 
     #[test]
-    fn stock_ota_takes_a_name_its_firmware_and_promote() {
+    fn stock_ota_takes_a_name_its_firmware_and_no_promote() {
         let cli = Cli::try_parse_from([
             "wellfed-bench",
             "stock-ota",
             "poc-01",
             "--firmware",
             "ble",
-            "--promote",
+            "--no-promote",
         ])
         .unwrap();
         let Some(Command::StockOta(args)) = &cli.command else {
             panic!("not stock-ota")
         };
         assert_eq!(args.name, "poc-01");
-        assert!(args.promote && !args.power);
+        assert!(args.no_promote && !args.power);
         assert_eq!(cli.command.as_ref().map(Command::label), Some("stock-ota"));
 
         assert!(Cli::try_parse_from(["wellfed-bench", "stock-ota"]).is_err());

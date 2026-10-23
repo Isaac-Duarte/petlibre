@@ -90,6 +90,11 @@ source: string | null, };
 export type Transport = { connects: number, };
 
 /**
+ * Who reports health, when it is not the normal role.
+ */
+export type HealthRole = "recovery";
+
+/**
  * The firmware's health message.
  */
 export type Health = { 
@@ -100,7 +105,12 @@ build: string, bank: number | null, seq: number | null, outputs: string | null, 
 /**
  * Absent from builds before FW21.
  */
-clock: Clock | null, wifi: Wifi, transport: Transport, };
+clock: Clock | null, wifi: Wifi, transport: Transport, 
+/**
+ * Only the bank-0 recovery role reports one, while it waits for an
+ * update (FW40).
+ */
+role: HealthRole | null, };
 
 /**
  * A file's size, modification time and printable tail: a capture's

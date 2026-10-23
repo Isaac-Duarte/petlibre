@@ -2,7 +2,7 @@
 
 Start with [development setup](docs/development/README.md), then choose the local server, portable firmware core, AmebaD port, or documentation. No hardware is needed for ordinary checks.
 
-Keep changes focused and include regression coverage for behavior changes. Run `cargo fmt --all` after Rust edits and `make check PYTHON=.venv/bin/python` before submitting. Report which optional evidence or hardware checks were actually performed; do not equate unavailable fixtures with passing validation.
+Keep changes focused and include regression coverage for behavior changes. Run `cargo fmt --all` after Rust edits and `make check` before submitting. Report which optional evidence or hardware checks were actually performed; do not equate unavailable fixtures with passing validation.
 
 For hardware findings, record model/revision, stock firmware version, observation method, uncertainty, and a redacted result. Distinguish software pin assignments from measured electrical wiring. Describe reproduction without requiring another contributor's private archive.
 

@@ -1,10 +1,12 @@
 //! Prepare or execute exact original bank-1 recovery on the research unit.
 //!
-//! Port of the `prepare`/`execute` modes of `src/tools/flash/uart-stock-recovery.py`.
+//! Port of the `prepare`/`execute` modes of the former
+//! `src/tools/flash/uart-stock-recovery.py`, which did the physical stock
+//! round trip; this port has run only under emulation (`tests/emulated.rs`).
 //! It continues an established pinned helper session from a complete full
 //! read; it never uploads, changes status, enters a loader or boots. An
 //! invalid target marker is required for a changed-bank recovery. The Python
-//! client's write-back acceptance-test modes are not ported.
+//! client's write-back acceptance-test modes were retired, not ported.
 
 use std::fs;
 use std::path::{Path, PathBuf};

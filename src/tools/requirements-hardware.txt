@@ -1,3 +1,0 @@
--r requirements-probe.txt
-# Optional serial transport; never required by contributor checks.
-pyserial==3.5

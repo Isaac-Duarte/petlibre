@@ -13,14 +13,14 @@ The research unit's idle TX was measured at approximately **3.29 V**. Readable n
 | RX | Disconnected | Adapter TXD |
 | Power | No adapter connection | No adapter connection |
 
-Optional serial support is installed explicitly:
+The [Rust flash client](../development/rust-flash.md) owns the serial port:
 
 ```sh
-.venv/bin/python -m pip install -r src/tools/requirements-hardware.txt
-.venv/bin/python src/tools/flash/uart-flash-read.py --help
+cargo build --locked --release -p petlibre-flash
+target/release/petlibre-flash read --help
 ```
 
-The `observe` mode receives without serial writes and records raw bytes plus metadata. Choose your own stable device path and a new output directory under `private/`. Close other serial clients first. Other modes can execute commands or upload a RAM helper; they are separate operations.
+The `read observe` mode receives without serial writes and records raw bytes plus metadata. Choose your own stable device path and a new output directory under `private/`. Close other serial clients first. Other modes can execute commands or upload a RAM helper; they are separate operations.
 
 ## Independent download entry
 

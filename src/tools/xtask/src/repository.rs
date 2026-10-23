@@ -1,5 +1,4 @@
-//! The repository check behind `cargo xtask check-repository`, ported from
-//! `src/tools/check-repository.py`.
+//! The repository check behind `cargo xtask check-repository`.
 //!
 //! It scans the files Git would publish (tracked plus untracked-but-not-ignored),
 //! so ignored local evidence is never read. Every finding is collected into
@@ -89,7 +88,6 @@ regex!(USER_PATH, r"/(?:home|Users|mnt|media)/[A-Za-z0-9_.-]+/");
 regex!(DATED, r#"private/[^\s"']*202610\d{2}"#);
 
 regex!(LINK, r"\]\(([^)]+)\)");
-regex!(TOOL, r"^(?:[A-Za-z0-9_-]+/)*[A-Za-z0-9_-]+\.py$");
 regex!(SCHEME, r"^[A-Za-z][A-Za-z0-9+.-]*:");
 
 /// What one run found: the counts for the success line, and every finding.
@@ -138,7 +136,6 @@ pub(crate) fn check(root: &Path) -> io::Result<Summary> {
         check_file(&root, name, &mut summary);
     }
 
-    tool_dependencies(&root, &mut summary.errors);
     transport_isolation(&root, &mut summary.errors);
     Ok(summary)
 }
@@ -159,6 +156,12 @@ fn check_file(root: &Path, name: &str, summary: &mut Summary) {
     }
 
     let extension = relative.extension().and_then(|e| e.to_str()).unwrap_or("");
+    // The Python tools were ported to Rust and removed (October 23, 2026).
+    if extension == "py" && first == "src" {
+        summary.errors.push(format!(
+            "{name}: first-party tools are Rust; no Python sources under src/"
+        ));
+    }
     if EVIDENCE.contains(&extension.to_lowercase().as_str()) {
         summary.errors.push(format!(
             "{name}: binary/evidence files need explicit provenance review"
@@ -249,141 +252,6 @@ fn normalize(path: &Path) -> PathBuf {
     out
 }
 
-/// The string literals of a Python source, as `ast.Constant` strings: comments
-/// skipped, prefixes and triple quotes understood, escapes kept as written
-/// (a tool path never needs one).
-pub(crate) fn python_strings(source: &str) -> Vec<String> {
-    let chars: Vec<char> = source.chars().collect();
-    let mut out = Vec::new();
-    let mut i = 0;
-
-    while i < chars.len() {
-        let c = chars[i];
-        if c == '#' {
-            while i < chars.len() && chars[i] != '\n' {
-                i += 1;
-            }
-            continue;
-        }
-
-        if c == '"' || c == '\'' {
-            // A prefix such as r, b, f or rb sits right before the quote.
-            let mut start = i;
-            while start > 0 && "rRbBfFuU".contains(chars[start - 1]) {
-                start -= 1;
-            }
-            let prefixed = start < i
-                && (start == 0 || !(chars[start - 1].is_alphanumeric() || chars[start - 1] == '_'));
-            let formatted = prefixed && chars[start..i].iter().any(|p| *p == 'f' || *p == 'F');
-
-            let triple = chars.get(i + 1) == Some(&c) && chars.get(i + 2) == Some(&c);
-            let quote_len = if triple { 3 } else { 1 };
-            let mut j = i + quote_len;
-            let mut value = String::new();
-
-            while j < chars.len() {
-                // Escapes are kept as written. A raw string still cannot end on
-                // an escaped quote, so it skips the pair the same way.
-                if chars[j] == '\\' {
-                    value.push(chars[j]);
-                    if let Some(next) = chars.get(j + 1) {
-                        value.push(*next);
-                    }
-                    j += 2;
-                    continue;
-                }
-
-                let closes = if triple {
-                    chars[j] == c && chars.get(j + 1) == Some(&c) && chars.get(j + 2) == Some(&c)
-                } else {
-                    chars[j] == c || chars[j] == '\n'
-                };
-                if closes {
-                    break;
-                }
-                value.push(chars[j]);
-                j += 1;
-            }
-
-            // An f-string's literal text is not one constant; it never names a tool alone.
-            if !formatted {
-                out.push(value);
-            }
-            i = j + quote_len;
-            continue;
-        }
-
-        i += 1;
-    }
-
-    out
-}
-
-fn python_files(directory: &Path, recursive: bool, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(directory) else {
-        return;
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if recursive && name != "tests" && name != "__pycache__" {
-                python_files(&path, recursive, out);
-            }
-        } else if path.extension().is_some_and(|e| e == "py") {
-            out.push(path);
-        }
-    }
-}
-
-/// The remaining Python tools load siblings dynamically; catch a missing one
-/// before an optional fixture test can mask it through an unavailable input.
-fn tool_dependencies(root: &Path, errors: &mut Vec<String>) {
-    let tools = root.join("src/tools");
-
-    let mut scripts = Vec::new();
-    python_files(&tools, true, &mut scripts);
-    scripts.sort();
-
-    for path in scripts {
-        let directory = path.parent().unwrap_or(root);
-        let Ok(source) = fs::read_to_string(&path) else {
-            continue;
-        };
-
-        for value in python_strings(&source) {
-            if !TOOL.is_match(&value) {
-                continue;
-            }
-
-            // Resolve as the Python loader does: a repository-relative `src/tools/...`,
-            // then a bare name beside the script or in `src/tools/`, then a
-            // category-qualified name.
-            let dest = if value.starts_with("src/tools/") {
-                root.join(&value)
-            } else if !value.contains('/') {
-                let dest = directory.join(&value);
-                if dest.exists() {
-                    dest
-                } else {
-                    tools.join(&value)
-                }
-            } else if tools.join(value.split('/').next().unwrap_or("")).is_dir() {
-                // A category-qualified sibling, e.g. "flash/uart-flash-read.py".
-                tools.join(&value)
-            } else {
-                continue;
-            };
-
-            if !dest.is_file() {
-                let shown = path.strip_prefix(root).unwrap_or(&path).display();
-                errors.push(format!("{shown}: missing tool dependency {value}"));
-            }
-        }
-    }
-}
-
 pub(crate) fn transport_isolation(root: &Path, errors: &mut Vec<String>) {
     for (name, allowed) in TRANSPORT_ISOLATION {
         let Ok(source) = fs::read_to_string(root.join(name)) else {
@@ -452,14 +320,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn python_strings_skip_comments_and_f_strings() {
-        let source = "x = 'flash/a.py'  # 'flash/b.py'\ny = f\"c/{n}.py\"\nz = r'''d\n.py'''\nw = rb\"e.py\"\n";
-        assert_eq!(python_strings(source), ["flash/a.py", "d\n.py", "e.py"]);
-        assert_eq!(python_strings("'it''s'"), ["it", "s"]);
-        assert_eq!(python_strings(r#""a\"b""#), [r#"a\"b"#]);
-    }
-
-    #[test]
     fn markdown_link_targets() {
         assert_eq!(local_path("docs/a.md#part").as_deref(), Some("docs/a.md"));
         assert_eq!(local_path("a%20b.md").as_deref(), Some("a b.md"));
@@ -507,18 +367,14 @@ mod tests {
     }
 
     #[test]
-    fn published_paths_links_and_tool_strings() {
+    fn published_paths_links_and_sources() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().canonicalize().unwrap();
-        fs::create_dir_all(root.join("src/tools/flash")).unwrap();
-        fs::write(
-            root.join("src/tools/flash/a.py"),
-            "LOAD = 'flash/b.py'\nOTHER = 'flash/a.py'\n",
-        )
-        .unwrap();
+        fs::create_dir_all(root.join("src/tools")).unwrap();
+        fs::write(root.join("src/tools/a.py"), "print()\n").unwrap();
         fs::write(
             root.join("README.md"),
-            "[ok](src/tools/flash/a.py) [gone](missing.md) [web](https://x)\n",
+            "[ok](src/tools/a.py) [gone](missing.md) [web](https://x)\n",
         )
         .unwrap();
 
@@ -527,10 +383,9 @@ mod tests {
             links: 0,
             errors: Vec::new(),
         };
-        for name in ["README.md", "private/x.json", "dump.bin"] {
+        for name in ["README.md", "private/x.json", "dump.bin", "src/tools/a.py"] {
             check_file(&root, name, &mut summary);
         }
-        tool_dependencies(&root, &mut summary.errors);
 
         assert_eq!(summary.links, 2);
         assert_eq!(
@@ -539,7 +394,7 @@ mod tests {
                 "README.md: missing/nonlocal link missing.md",
                 "private/x.json: local inputs or agent state must not be published",
                 "dump.bin: binary/evidence files need explicit provenance review",
-                "src/tools/flash/a.py: missing tool dependency flash/b.py",
+                "src/tools/a.py: first-party tools are Rust; no Python sources under src/",
             ]
         );
     }

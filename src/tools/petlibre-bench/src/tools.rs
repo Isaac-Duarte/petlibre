@@ -1,6 +1,6 @@
 //! The child processes the bench chains: `petlibre-flash`, `petlibre-local`
 //! (signing, offering and checking an over-the-air update), `petlibre-build`
-//! and the Python review for `ota --build`, and `sigrok-cli`.
+//! (the build and review for `ota --build`), and `sigrok-cli`.
 //!
 //! `petlibre-flash` runs as its own process, never linked in. Its plans bind
 //! the SHA-256 of the running executable, and that has to stay the flash
@@ -35,10 +35,9 @@ pub trait Tools {
     /// Run one `petlibre-local` query (`status`) and keep its output instead
     /// of showing it: its stdout is a JSON document to parse.
     fn local_query(&mut self, args: &[String]) -> Result<Captured>;
-    /// Run a Python tool from the checkout root, streaming both of its
-    /// outputs as they come; returns its exit status.
-    fn python(&mut self, python: &Path, args: &[String], status: &mut Status) -> Result<i32>;
-    /// Run one `petlibre-build` command (a firmware build) the same way.
+    /// Run one `petlibre-build` command (a firmware build or review) from the
+    /// checkout root, streaming both of its outputs as they come; returns its
+    /// exit status.
     fn build(&mut self, args: &[String], status: &mut Status) -> Result<i32>;
     /// Run one `petlibre-build` query (`source-id`) and keep its output.
     fn build_query(&mut self, args: &[String]) -> Result<Captured>;
@@ -357,19 +356,6 @@ impl Tools for Processes {
             stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
             stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
         })
-    }
-
-    fn python(&mut self, python: &Path, args: &[String], status: &mut Status) -> Result<i32> {
-        require(
-            python.is_file(),
-            format!(
-                "{} not found; create the virtual environment or pass --python",
-                python.display()
-            ),
-        )?;
-        let mut command = Command::new(python);
-        command.current_dir(&self.root).args(args);
-        stream_both(command, status)
     }
 
     fn build(&mut self, args: &[String], status: &mut Status) -> Result<i32> {
@@ -837,50 +823,15 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
     }
 
     #[test]
-    fn python_streams_both_outputs_from_the_root() {
-        let _serial = serial();
-        let tmp = tempfile::tempdir().unwrap();
-        let script = tmp.path().join("build.py");
-        fs::write(
-            &script,
-            "echo \"built in $(pwd)\"; printf 'bad \\377\\n' >&2; exit 4\n",
-        )
-        .unwrap();
-        let mut tools = Processes {
-            root: tmp.path().into(),
-            flash_bin: tmp.path().join("absent"),
-            local_bin: tmp.path().join("absent"),
-            build_bin: tmp.path().join("absent"),
-        };
-        let mut status = Status::new(tmp.path(), tmp.path().join("status"));
-        status.begin("ota", Some("unit"), &[]).unwrap();
-
-        let code = tools
-            .python(
-                Path::new("/bin/sh"),
-                &[script.display().to_string()],
-                &mut status,
-            )
-            .unwrap();
-
-        assert_eq!(code, 4);
-        let root = tmp.path().canonicalize().unwrap();
-        let lines = status.state.unwrap().lines;
-        assert!(lines.contains(&format!("built in {}", root.display())));
-        assert!(lines.contains(&"bad \u{fffd}".to_string()), "{lines:?}");
-
-        let error = tools
-            .python(&tmp.path().join("absent"), &[], &mut Status::disabled())
-            .unwrap_err();
-        assert!(error.to_string().contains("--python"));
-    }
-
-    #[test]
-    fn the_builder_runs_from_the_root_and_must_exist() {
+    fn the_builder_streams_both_outputs_from_the_root_and_must_exist() {
         let _serial = serial();
         let tmp = tempfile::tempdir().unwrap();
         let builder = tmp.path().join("petlibre-build");
-        fs::write(&builder, "#!/bin/sh\necho \"$1 in $(pwd)\"; exit 3\n").unwrap();
+        fs::write(
+            &builder,
+            "#!/bin/sh\necho \"$1 in $(pwd)\"; printf 'bad \\377\\n' >&2; exit 3\n",
+        )
+        .unwrap();
         fs::set_permissions(
             &builder,
             std::os::unix::fs::PermissionsExt::from_mode(0o755),
@@ -904,6 +855,7 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
         let root = tmp.path().canonicalize().unwrap();
         let lines = status.state.unwrap().lines;
         assert!(lines.contains(&format!("build in {}", root.display())));
+        assert!(lines.contains(&"bad \u{fffd}".to_string()), "{lines:?}");
         let answer = tools.build_query(&["source-id".into()]).unwrap();
         assert_eq!(
             (answer.code, answer.stdout.split(' ').next()),

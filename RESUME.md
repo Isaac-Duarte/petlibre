@@ -7,6 +7,21 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
+**October 23: Python tools retired (FW38, offline, nothing run on the bench; built in a worktree, then merged to master).**
+- **What changed:**
+  - No Python is left ([tools](src/tools/README.md)). `make check` and `make check-fixtures` take no `PYTHON=`, and `cargo xtask check-repository` refuses `.py` under `src/`.
+  - New `petlibre-emu` runs the factory loader (mapping, bank selection) and the pinned UART helper under Unicorn (the `unicorn-engine` crate, GPL-2.0; builds need CMake, and Linux links libatomic).
+  - `petlibre-build review stock|build` replaces `review-development-image.py`. `petlibre-bench ota --build` runs it, and its `--python` option is gone. `review.json` is typed in `petlibre-formats` and read by `petlibre-flash`; Python-written reviews still read.
+  - Dropped as finished research: the write-back acceptance tests, the ROM route, probe-slot, reset-decoder and SDK flash-user reports. The `emulate-ota-markers.py` states are now `petlibre-emu` fixtures.
+- **Evidence (emulation and static, not physical):**
+  - Python and Rust reviews of the same PLAF103 first-boot build were identical apart from `reviewer_sha256`, including every factory-loader run (`private/verification/python-to-rust-compare/`).
+  - The factory and OTA-marker fixtures pass on the baseline.
+  - `petlibre-flash`'s emulated CLI sessions pass (`tests/emulated.rs`): update, give-way/restore, status, stock recovery (full read, plan, execute; bank 1 restored, nothing else changed), and a mid-recovery fault that stops without retry.
+- **Not yet done:** `petlibre-flash stock-recovery` has never restored a bank on hardware. The Python client that did is gone, so FW38 stays in progress until a reviewed bench session runs it.
+- **Identity:** `petlibre-build`'s sources changed, so build IDs change and cached reviews are rebuilt once. Rebuild the release binaries before bench use.
+- **Checks:** `make check` (its three private credential files linked in temporarily for `check-cross`) and `make check-web` pass on the rebased branch. Against the main checkout's `private/` (`PETLIBRE_FIXTURE_ROOT`): the factory and OTA-marker fixtures and the emulated status, stock-recovery and fault sessions pass. The Python-vs-Rust review comparison and the emulated update and give-way sessions passed before the rebase onto FW37. After it, the update and give-way sessions are refused because `private/fixtures/development-{source,target}` were frozen before FW37 (`profile: plaf103-firstboot`, no `device`), which FW37's reader rejects. The review fixture is refused because the main checkout's first-boot build is stale. Refreeze those reviews from a current build (or decide whether `petlibre-flash` should keep reading pre-FW37 reviews; bank 0's installed image has one), then run `make check-fixtures`.
+- **Bench state:** untouched by this work.
+
 **October 23, about 1 AM: buttons mapped (FW20, physical, owner pressing).** Built and run from a worktree, then merged to master.
 - **What changed:** variant `fw20-buttons` (`petlibre-build build --profile firstboot --variant fw20-buttons`): probe `probes/buttons.rs` in place of the optics probe; it configures PB4..PB7 as stock does and logs `PLBTN1` records (startup-diagnostics). Host tests in `tests/buttons_probe.rs`. Build: every audit passed (`petlibre-btn` 796 of 4096 B). Review `fw20-buttons-01-review` (`2943029a…`), in `private/verification`.
 - **Runs:** `itest-20261023-03 --only ota-update --power` installed it (v66, confirmed); `fw20-buttons-01-boot`; presses in `fw20-buttons-02-press` (free play) and `-03-press` (one at a time, left to right).

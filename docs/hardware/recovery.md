@@ -12,10 +12,12 @@ Later diagnostics also added artifact-bound startup, physical STOP/off requests,
 
 | Tools | Purpose |
 | --- | --- |
-| `uart-flash-read.py`, `flash-status.py`, `petlibre-audit backup` | Restricted inspection/read transport, protection decoding, and independent backup comparison |
-| `plan-stock-recovery.py`, `recovery-transaction.py`, `uart-stock-recovery.py` | Offline plan and explicit stock-bank transport; ordinary recovery refuses a still-bootable target bank |
-| `inspect-recovery-transaction.py`, wire-policy tools | Journal and transmitted-byte verification |
-| Recovery emulators and fixture tests | Supplied helper/NOR fault scenarios; no hardware operation |
+| `petlibre-flash read`, `petlibre-flash decode-status`, `petlibre-audit backup` | Restricted inspection/read transport, protection decoding, and independent backup comparison |
+| `petlibre-flash plan-stock-recovery`, `petlibre-flash stock-recovery` | Offline plan and explicit stock-bank transport; ordinary recovery refuses a still-bootable target bank |
+| `petlibre-flash inspect-journal` | Journal verification |
+| `petlibre-flash`'s emulated fixture tests (`petlibre-emu`) | The pinned helper on synthetic NOR: update, give-way, stock recovery and a mid-recovery fault; no hardware operation |
+
+The physical stock round trip above was done with the Python clients (`uart-stock-recovery.py` and its modules), removed October 23, 2026. `petlibre-flash stock-recovery` keeps their plan, journal and wire formats and has passed end to end only under emulation (a full read, a reviewed plan and its execution against the real helper instructions); it has not yet restored a bank on hardware.
 
 Writers require source-bound plans, current-image evidence, explicit serial identity, immutable inputs, and full preimage verification. Sector writes have durable intent records and exact readback. Activation withholds the first eight marker bytes until staged image and preserved ranges match; the final marker write adds no erase. Lost ACKs or uncertain writes stop without automatic retry or resume.
 

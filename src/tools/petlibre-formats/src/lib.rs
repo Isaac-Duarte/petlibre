@@ -21,6 +21,7 @@ pub mod hex;
 pub mod layout;
 pub mod lock;
 pub mod manifest;
+pub mod review;
 pub mod transients;
 
 #[derive(Debug, thiserror::Error)]

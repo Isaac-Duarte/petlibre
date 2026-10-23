@@ -906,7 +906,8 @@ fn the_cli_refuses_an_unpinned_helper_before_any_serial_access() {
             json!({"schema_version": 1, "kind": "plaf103_development_image_review",
                    "image_kind": "stock", "ota_sha256": sha256(image),
                    "payload_sha256": sha256(payload), "payload_bytes": payload.len(),
-                   "manifest_sha256": null})
+                   "manifest_sha256": null, "review": {"stock_sha256": sha256(image)},
+                   "reviewer_sha256": "0".repeat(64), "application_boot_verified": false})
             .to_string()
             .as_bytes(),
         );
@@ -952,12 +953,17 @@ fn frozen_build(checkout: &Path, image: &[u8]) -> (PathBuf, Value, Value) {
     });
 
     let payload = development::payload(image, &BANK1).unwrap();
+    // The loader runs themselves are not checked here, only that both banks ran.
+    let run = json!({"stop": "0x8f000", "result": 1, "configs": [], "commands": [],
+                     "final_registers": [[0, 0, 0, 0], [0, 0, 0, 0]]});
+    let case = |bank: u8| json!({"bank": bank, "bank_check": run, "selection": run});
     let review = json!({
         "schema_version": 1, "kind": "plaf103_development_image_review", "image_kind": "build",
         "ota_sha256": sha256(image), "payload_sha256": sha256(payload), "payload_bytes": payload.len(),
         "manifest_sha256": sha256(manifest.to_string().as_bytes()),
         "review": {"startup_mains": mains, "pinmap": pinmap, "layout": {"sha256": sha256(image)},
-                   "factory_mapping": [{"bank": 0}, {"bank": 1}]},
+                   "factory_mapping": [case(0), case(1)], "scope": "unit"},
+        "reviewer_sha256": "0".repeat(64), "application_boot_verified": false,
     });
 
     let directory = checkout.join("private/review");

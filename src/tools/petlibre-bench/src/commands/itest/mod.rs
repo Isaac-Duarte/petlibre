@@ -133,9 +133,6 @@ pub struct ItestArgs {
     /// With --build: build even when a review of the same sources exists.
     #[arg(long, requires = "build")]
     pub rebuild: bool,
-    /// Python for --build's review (default: .venv/bin/python under --root).
-    #[arg(long)]
-    pub python: Option<PathBuf>,
     /// petlibre-local config the suite serves with (root-relative).
     #[arg(long, default_value = crate::local_api::SERVER_CONFIG)]
     pub config: PathBuf,
@@ -530,7 +527,6 @@ impl<'r> Ctx<'r> {
             build,
             rebuild: build && self.args.rebuild,
             variant: None,
-            python: self.args.python.clone(),
             config: self.args.config.clone(),
             version: None,
             minutes: INSTALL_SECONDS / 60.0,

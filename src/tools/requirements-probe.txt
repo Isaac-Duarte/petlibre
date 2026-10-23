@@ -1,3 +1,0 @@
-# Offline ARM instruction emulator; install into an ignored private environment.
-unicorn==2.1.4
-capstone==5.0.9

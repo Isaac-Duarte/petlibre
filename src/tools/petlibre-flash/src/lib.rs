@@ -1,8 +1,8 @@
 //! UART flash reads, region-scoped development updates, give-ways and
 //! original-stock recovery for the PLAF103 research unit.
 //!
-//! A Rust port of the Python clients under `src/tools/flash/`, keeping their
-//! report, plan and journal formats. Every writer keeps the pinned helper,
+//! Ported from the Python clients formerly under `src/tools/flash/`, keeping
+//! their report, plan and journal formats. Every writer keeps the pinned helper,
 //! baseline and marker-last sequencing, and stops terminally without retry.
 //! Host tests and emulation establish none of its hardware behavior.
 

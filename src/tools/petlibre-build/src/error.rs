@@ -31,6 +31,9 @@ pub enum Error {
     /// The OTA container or region checks shared with the flash client.
     #[error(transparent)]
     Ota(#[from] petlibre_flash::Error),
+    /// The factory-loader emulation refused the image or failed.
+    #[error(transparent)]
+    Emulation(#[from] petlibre_emu::Error),
     #[error(transparent)]
     Pattern(#[from] regex::Error),
     #[error("{0}")]

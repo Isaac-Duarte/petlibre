@@ -3,7 +3,8 @@
 //! The report exists before the port opens and is rewritten after each
 //! step, so a stop at any point leaves its latest state on disk. Each
 //! command adds its own fields (`D`) to the lifecycle shared here; later
-//! sessions and the Python tools read the result back by field name.
+//! sessions read the result back by field name, as they read the reports
+//! the former Python clients wrote.
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};

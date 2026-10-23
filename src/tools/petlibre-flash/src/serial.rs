@@ -80,9 +80,9 @@ impl Port for Serial {
     }
 }
 
-/// An emulated helper served over a Unix socket (offline tests only; see
-/// `src/tools/tests/test_flash_rust.py`). Each read asks the emulator to run the
-/// helper until it has output, as the in-process Python peers do.
+/// An emulated helper served over a Unix socket (offline tests only;
+/// `petlibre-emu`'s `serve`, driven by `tests/emulated.rs`). Each read asks
+/// the emulator to run the helper until it has output.
 pub struct Emulated(std::os::unix::net::UnixStream);
 
 impl Emulated {

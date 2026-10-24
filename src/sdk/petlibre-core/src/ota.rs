@@ -1,4 +1,4 @@
-//! FW10/FW11 update logic (design: docs/firmware/ota-design.md): the signed
+//! Update logic (design: docs/firmware/ota-design.md): the signed
 //! manifest, the bank-1 sector writer and the boot-trial decision.
 //!
 //! Sans-IO. The board port fetches chunks, runs each erase/program/readback
@@ -335,7 +335,7 @@ pub fn confirmed(record: &[u8], image_sha256: &[u8; 32]) -> Option<u32> {
 
 /// Delivery over the local transport: the updater pulls the manifest, then
 /// the image in chunks, on `ota/get`; the server answers on `ota/data`.
-/// 512 so a chunk answer fits the FW08 codec's existing packet bound with the
+/// 512 so a chunk answer fits the codec's existing packet bound with the
 /// topic: no change to the running transport's buffers. Divides a sector.
 pub const MAX_CHUNK: u32 = 512;
 pub const GET_LEN: usize = 9;

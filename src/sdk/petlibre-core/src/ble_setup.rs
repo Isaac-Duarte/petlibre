@@ -1,4 +1,4 @@
-//! FW45 BLE setup mode's GATT layout and framing.
+//! BLE setup mode's GATT layout and framing.
 //!
 //! In setup mode the feeder advertises one private service (UUIDs below)
 //! whose control characteristic (write, notify) carries length-prefixed

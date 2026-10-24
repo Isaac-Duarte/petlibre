@@ -4,7 +4,7 @@ name = "petlibre-fw-feeder"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
-description = "Experimental PLAF103 product firmware on the PetLibre SDK: the panel and its child lock (FP11), BLE setup and pairing (FW45), and the device API's measured budget (FW44)"
+description = "Experimental PLAF103 product firmware on the PetLibre SDK: the panel and its child lock, BLE setup and pairing, and the device API's measured budget"
 publish.workspace = true
 
 # The KM4 archive petlibre-build links into the image.
@@ -15,7 +15,7 @@ crate-type = ["staticlib", "rlib"]
 # KM4 target builds with the pinned SDK bindings and the BLE peripheral,
 # which the product image always links and starts only in setup mode.
 km4 = ["petlibre-sdk/km4", "petlibre-sdk/bluetooth"]
-# FW45: stream raw noise samples for the host's entropy estimate.
+# Stream raw noise samples for the host's entropy estimate.
 entropy = []
 
 [dependencies]
@@ -37,4 +37,4 @@ devices = ["plaf103"]
 bluetooth = true
 
 [package.metadata.petlibre.variants.entropy]
-summary = "Raw clock-jitter and ADC samples over UART, for the host's entropy estimate (FW45 measurement)"
+summary = "Raw clock-jitter and ADC samples over UART, for the host's entropy estimate"

@@ -1,4 +1,4 @@
-//! FW45 BLE setup mode: a new owner's phone (or the `petlibre` CLI) gives
+//! BLE setup mode: a new owner's phone (or the `petlibre` CLI) gives
 //! the feeder Wi-Fi and its key, and learns the feeder's.
 //!
 //! Lock and Mic held on an unlocked panel start it (`pairing`). The loop

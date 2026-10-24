@@ -1,4 +1,4 @@
-//! FW20 bench probe on KM4: the four panel buttons, read-only.
+//! Bench probe on KM4: the four panel buttons, read-only.
 //!
 //! Stock configures PB4..PB7 as inputs with no pull and takes their edges by
 //! interrupt; which printed button is which pin, and its pressed level, are

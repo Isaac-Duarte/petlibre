@@ -1,4 +1,4 @@
-//! KM0 side of the FW06 boot handshake: answer the KM4 authority's HELLO
+//! KM0 side of the boot handshake: answer the KM4 authority's HELLO
 //! with this boot's peer session. Task context from XIP; no flash lease
 //! exists yet, so nothing here parks or touches flash.
 //!
@@ -6,7 +6,7 @@
 //! republishes READY with a new session that long after answering, as a
 //! rebooted KM0 would, once per boot.
 //!
-//! FW06 stage C: an IPC channel-16 request parks this core in RAM through
+//! An IPC channel-16 request parks this core in RAM through
 //! `park::wait` until the exact RELEASE. A task-driven heartbeat in a
 //! backup register lets KM4 see that the core really stopped. When the
 //! backup marker reads `WITHHOLD_MARKER`, lease `INJECT_LEASE` is ignored
@@ -14,7 +14,7 @@
 
 use crate::flash::park::{self, Mmio};
 
-/// SDK SYSTIMER rate, as measured in FW05.
+/// SDK SYSTIMER rate, as measured on the bench.
 const TICKS_PER_SECOND: u32 = 32_768;
 
 pub const INJECT_PEER_LOSS_MS: Option<u32> = None;

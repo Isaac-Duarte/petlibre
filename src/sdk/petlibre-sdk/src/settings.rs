@@ -1,19 +1,19 @@
-//! FW25: the device settings writer, normal role. It opens the FW15 store in
+//! The device settings writer, normal role. It opens the store in
 //! storage sectors 2 and 3, publishes it for the transport
 //! (`petlibre_hal::settings`), arms the flash-lock hooks once as the
 //! confirmation does, and then saves each signed change the transport queues.
 //! Each save sets the arming attempt marker and clears it after, so a hang
 //! inside a save resets at most once per power cycle.
 //!
-//! FW45: once armed it also keeps the keys. It mixes the seed stored across
+//! Once armed it also keeps the keys. It mixes the seed stored across
 //! boots into the generator and stores the next one (sectors 7 and 8), and
 //! opens the identity and client store (sectors 9 and 10), creating the
 //! feeder's identity secret on the first boot that has a generator. It
 //! publishes the identity for the loop task and applies the client changes
 //! the loop queues (`petlibre_hal::keys`): enrollments, revocations and the
-//! FP15 reset, which forgets every client and draws a new identity.
+//! Reset, which forgets every client and draws a new identity.
 //!
-//! FW47: it also keeps the event history (sectors 13-24,
+//! It also keeps the event history (sectors 13-24,
 //! `petlibre_core::store::events`). It appends the records the loop queues
 //! and answers the device API's reads (`petlibre_hal::events`), polling
 //! faster while either waits, so a reconnecting client catches up in
@@ -90,7 +90,7 @@ pub enum Record {
         stage: ErrorStage,
         status: SettingsStatus,
     },
-    /// FW25 Wi-Fi credentials (sectors 5 and 6): what the store holds.
+    /// Wi-Fi credentials (sectors 5 and 6): what the store holds.
     NetOpen {
         status: NetStatus,
         generation: u64,
@@ -103,7 +103,7 @@ pub enum Record {
     NetError {
         stage: ErrorStage,
     },
-    /// FW45: the stored seed and the client store.
+    /// The stored seed and the client store.
     Keys {
         seed: SeedStatus,
         /// The stored seed went into the generator.
@@ -119,7 +119,7 @@ pub enum Record {
         result: KeyResult,
         enrolled: usize,
     },
-    /// FW47: the event ring as opened.
+    /// The event ring as opened.
     Events {
         open: bool,
         last: Option<u64>,
@@ -303,7 +303,7 @@ fn changed(current: Settings, fields: SettingsFields) -> Settings {
 }
 
 impl Writer {
-    /// FW45's keys: mix the stored seed in and store the next, then open
+    /// The keys: mix the stored seed in and store the next, then open
     /// the client store and create the identity if it has none. Writes only
     /// when `writable` (armed, normal stage), each under its own attempt
     /// marker.

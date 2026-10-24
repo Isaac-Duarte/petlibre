@@ -3,7 +3,7 @@
 //!
 //! A crate-split build overflowed the optics task's 4 KiB stack on hardware:
 //! LTO inlined a 3 KiB temporary into the task's frame. The SDK's ARMv8-M
-//! port faults on the stack limit, and FW11's trial caught it, but only after
+//! port faults on the stack limit, and the trial caught it, but only after
 //! an update. This audit catches it at build time instead.
 //!
 //! For each task created in the runtime or the firmware
@@ -29,7 +29,7 @@ use crate::{Firmware, Repo, Result};
 /// The SDK runtime's task table.
 pub(crate) const RUNTIME_SOURCE: &str = "src/sdk/petlibre-sdk/src/runtime.rs";
 /// SDK services a firmware may start, whose tasks count as the firmware's
-/// (FW20's button task).
+/// (the button task).
 pub(crate) const SERVICE_SOURCES: [&str; 1] = ["src/sdk/petlibre-sdk/src/buttons.rs"];
 /// The firmware's share of the SDK's eight task slots: the runtime holds six
 /// at its peak in the normal role. `petlibre_sdk::FIRMWARE_TASKS` enforces the
@@ -104,7 +104,7 @@ static VPUSH: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^vpush\s*\{d(\d+)-d(\d+)\}").expect("stack audit pattern"));
 static SUB: LazyLock<Regex> = LazyLock::new(|| {
     // `subw` is Thumb-2's 12-bit-immediate form, which LLVM picks for frames
-    // up to 4 KiB; missing it hid curve25519's 1948-byte frame (FW44).
+    // up to 4 KiB; missing it hid curve25519's 1948-byte frame.
     Regex::new(r"^sub(?:w|\.w)?\s+sp,\s*(?:sp,\s*)?#(\d+)").expect("stack audit pattern")
 });
 

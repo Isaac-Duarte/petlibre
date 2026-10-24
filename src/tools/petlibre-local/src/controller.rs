@@ -60,7 +60,7 @@ struct Ledger {
 /// The ledger's file name beside the config.
 pub const LEDGER_FILE: &str = "stock-ledger.json";
 
-/// The ledger before FW51, which also held feeds and probe queries. It is
+/// The retired ledger, which also held feeds and probe queries. It is
 /// never read: an operator archives it after checking no trial in it is open.
 pub const RETIRED_LEDGER_FILE: &str = "feed-ledger.json";
 
@@ -78,7 +78,7 @@ pub struct Status {
     pub ota_reports: Vec<OtaReport>,
     pub ota_trial_enabled: bool,
     pub ota_trials: Vec<ota::trial::Record>,
-    /// Replacement-firmware health (FW08); null without a firmware role.
+    /// Replacement-firmware health; null without a firmware role.
     pub replacement: Option<crate::replacement::Snapshot>,
 }
 
@@ -139,7 +139,7 @@ impl Controller {
         let retired = path.with_file_name(RETIRED_LEDGER_FILE);
         ensure!(
             !retired.exists(),
-            "{} is the ledger from before FW51, which held feeds and probe queries; check that no trial in it is submitted, uncertain or failed, then archive it (rename it) and start again",
+            "{} is the retired ledger, which held feeds and probe queries; check that no trial in it is submitted, uncertain or failed, then archive it (rename it) and start again",
             retired.display()
         );
 

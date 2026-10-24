@@ -1,4 +1,4 @@
-//! Tests for the FW10/FW11 update logic: signed manifest parsing (with an
+//! Tests for the update logic: signed manifest parsing (with an
 //! RFC 8032 vector), the bank-1 sector writer, the boot-trial decision,
 //! confirmation records and the delivery messages.
 //!

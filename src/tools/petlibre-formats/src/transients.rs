@@ -1,4 +1,4 @@
-//! A FW30 driver-transient session's `manifest.json`: the bench writes it
+//! A driver-transient session's `manifest.json`: the bench writes it
 //! after every power cycle, `petlibre-audit transients` reads it.
 
 use std::collections::BTreeMap;

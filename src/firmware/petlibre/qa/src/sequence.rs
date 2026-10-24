@@ -3,15 +3,15 @@
 //!
 //! Two unattended checks run first, then three guided ones:
 //!
-//! 1. **Optics**: the FW13 optics probe, whole (about 100 s). It holds the
+//! 1. **Optics**: the optics probe, whole (about 100 s). It holds the
 //!    KM0 flash handshake, so the firmware reports `startup_done` only once
 //!    it ends.
-//! 2. **Power**: `POWER_SAMPLES` samples of the FW14 ADC probe, then its
+//! 2. **Power**: `POWER_SAMPLES` samples of the ADC probe, then its
 //!    board closes. The values are reported, never judged: the divider and
 //!    the limits are not established, so a pass means the probe opened,
 //!    every sample converted and the outputs read back stopped.
 //! 3. **Buttons**: the operator presses each button in panel order when
-//!    prompted. The press must arrive on that button's pin (FW20 mapping:
+//!    prompted. The press must arrive on that button's pin (the bench's mapping:
 //!    PB4..PB7, active LOW) within `ANSWER_MS`.
 //! 4. **Indicators**: each indicator is driven HIGH with readback, and the
 //!    operator answers whether it lit: Dispense yes, Lock no.

@@ -59,7 +59,7 @@ enum Command {
         minimum_seconds: f64,
     },
 
-    /// The FW14 read-only power-input samples after a passing startup.
+    /// The read-only power-input samples after a passing startup.
     Adc {
         #[command(flatten)]
         args: CaptureArgs,
@@ -71,7 +71,7 @@ enum Command {
         args: CaptureArgs,
     },
 
-    /// FW30 logic-analyzer cycles from `petlibre-bench transients`: any motor-driver drive.
+    /// Logic-analyzer cycles from `petlibre-bench transients`: any motor-driver drive.
     Transients {
         /// The session directory with manifest.json and the cycle files.
         #[arg(long)]

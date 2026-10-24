@@ -3,7 +3,7 @@
 //! settings and the Wi-Fi source as before. One that changes device state
 //! restores it on failure too, as far as the feeder still answers.
 //!
-//! Every request goes over the device API (FW47) as the owner's key; a write
+//! Every request goes over the device API as the owner's key; a write
 //! names the store generation it read, so the feeder refuses it as stale if
 //! anything changed in between.
 
@@ -187,7 +187,7 @@ fn ota_update(ctx: &mut Ctx) -> Result<()> {
         build: staged.build,
         review: staged.review,
     });
-    // No server sets the clock since FW47; the later scenarios want it valid.
+    // No server sets the clock; the later scenarios want it valid.
     ctx.sync_clock()
 }
 

@@ -1,4 +1,4 @@
-//! FW45 BLE setup, the feeder's side of one session ([`petlibre_proto::setup`]).
+//! BLE setup, the feeder's side of one session ([`petlibre_proto::setup`]).
 //!
 //! The firmware hands each message from the setup characteristic to a
 //! [`Responder`] and sends what it returns:

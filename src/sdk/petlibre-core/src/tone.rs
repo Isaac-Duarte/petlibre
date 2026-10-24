@@ -1,10 +1,10 @@
-//! FW24: built-in tunes rendered as 16 kHz, 16-bit mono PCM for the codec's
+//! Built-in tunes rendered as 16 kHz, 16-bit mono PCM for the codec's
 //! DMA pages.
 //!
 //! A tune is a short, fixed list of notes; nothing here comes from the
 //! network except the tune's code, so playback is bounded by the longest
 //! tune. Each note is a sine with a short attack and release, so starts and
-//! stops do not click through the amplifier. Loudness follows the FW15
+//! stops do not click through the amplifier. Loudness follows the
 //! `volume` setting (0-100) on a decibel scale; muting is the caller's
 //! decision.
 
@@ -87,7 +87,7 @@ pub enum Tune {
     /// Mealtime call.
     Meal,
     Coin,
-    /// Three short beeps, for faults (FW19/FW23).
+    /// Three short beeps, for faults.
     Alert,
     /// One second at 1 kHz, for checking the output path.
     Test,

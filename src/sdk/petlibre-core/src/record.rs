@@ -14,20 +14,20 @@ pub mod tag {
     pub const START: &str = "PLFW1";
     /// KM0's boot trial: `confirmed=0 boot=N limit=3`, `give_way=1`.
     pub const TRIAL: &str = "PLTRL1";
-    /// FW11 confirmation: `confirmed=1 healthy_ms=…`.
+    /// Confirmation: `confirmed=1 healthy_ms=…`.
     pub const CONFIRM: &str = "PLCNF1";
-    /// FW10 offer check: `offer=1 same=1`, `give_way=1 version=…`.
+    /// Offer check: `offer=1 same=1`, `give_way=1 version=…`.
     pub const WATCH: &str = "PLWCH1";
-    /// FW10 recovery-role updater: `manifest`, `progress sectors=N/T`,
+    /// Recovery-role updater: `manifest`, `progress sectors=N/T`,
     /// `activated`, `error stage=…`.
     pub const UPDATE: &str = "PLOTA1";
-    /// FW08 transport: `connect`, `ready`, `request op=… ok=…`, `closed`.
+    /// Health transport: `connect`, `ready`, `request op=… ok=…`, `closed`.
     pub const TRANSPORT: &str = "PLMQT1";
-    /// FW15/FW25 settings writer: `saved generation=…`, `net saved stored=…`.
+    /// Settings writer: `saved generation=…`, `net saved stored=…`.
     pub const SETTINGS: &str = "PLCFG1";
-    /// FW21 wall clock: `sync ok=…`.
+    /// Wall clock: `sync ok=…`.
     pub const CLOCK: &str = "PLTIM1";
-    /// FW34 BLE setup: `ready`, `advertising`, `connect`, `request op=wifi ok=…`.
+    /// BLE setup: `ready`, `advertising`, `connect`, `request op=wifi ok=…`.
     pub const BLE: &str = "PLBLE1";
 }
 

@@ -1,4 +1,4 @@
-//! FW11 confirmation on KM4, normal role (booted from bank 1).
+//! Confirmation on KM4, normal role (booted from bank 1).
 //!
 //! KM0 counts this image's boots until a record in storage sector
 //! `trial::CONFIRM_SECTOR` names its build identity (`trial.rs`). Once the

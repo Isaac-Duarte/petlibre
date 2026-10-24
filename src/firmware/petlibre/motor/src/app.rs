@@ -1,17 +1,17 @@
-//! The firmware's start hook and, in the `fw16-pulse` variant, its one task.
+//! The firmware's start hook and, in the `pulse` variant, its one task.
 
 petlibre_sdk::firmware!(start);
 
 /// The normal image: no task, so nothing holds the KM0 flash handshake.
-#[cfg(not(feature = "fw16-pulse"))]
+#[cfg(not(feature = "pulse"))]
 fn start() {
     petlibre_sdk::startup_done(true);
 }
 
-#[cfg(feature = "fw16-pulse")]
+#[cfg(feature = "pulse")]
 use pulse::start;
 
-#[cfg(feature = "fw16-pulse")]
+#[cfg(feature = "pulse")]
 mod pulse {
     use core::ffi::c_void;
 

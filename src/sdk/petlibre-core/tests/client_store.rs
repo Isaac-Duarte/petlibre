@@ -1,4 +1,4 @@
-//! FW45's client table: identity, enrollment, revocation and the FP15 reset
+//! The client table: identity, enrollment, revocation and the reset
 //! across reopens, its limits, a power cut at every mutation, and a newer
 //! schema.
 

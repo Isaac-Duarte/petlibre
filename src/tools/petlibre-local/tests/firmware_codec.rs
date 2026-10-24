@@ -1,6 +1,6 @@
-//! FW08: the replacement firmware's own MQTT codec and session (petlibre-core)
-//! against the server's real broker and API, over loopback TCP. Since FW47
-//! the server sends no requests (they go over the device API); what is left
+//! The replacement firmware's own MQTT codec and session (petlibre-core)
+//! against the server's real broker and API, over loopback TCP. The server
+//! sends no requests (they go over the device API); what is left
 //! here is health, the recovery role's health and the will.
 
 mod common;
@@ -214,7 +214,7 @@ async fn firmware_codec_reports_health_through_the_real_broker() {
         serde_json::json!({"adapter": true, "battery_mv": 4850, "age_ms": 1200})
     );
 
-    // FW40: the bank-0 recovery role's health, exactly as it formats it,
+    // The bank-0 recovery role's health, exactly as it formats it,
     // reads as online with its role (a build stock just installed).
     let body = health_as(true, 2, 0, mqtt::Role::Recovery);
     let n = mqtt::encode_publish(&mut out, &config.firmware_topic("health"), &body, false).unwrap();

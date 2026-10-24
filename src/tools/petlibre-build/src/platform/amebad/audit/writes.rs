@@ -1,4 +1,4 @@
-//! Flash-write and eFuse-write reachability in both core images (FW07).
+//! Flash-write and eFuse-write reachability in both core images.
 //!
 //! Linking the Wi-Fi driver brings in code that can program eFuse, which is
 //! one-time programmable, and the SDK's Wi-Fi flash users default to sectors
@@ -77,9 +77,9 @@ const EXPECTED_HP: Pins = &[
         &["FLASH_TxData12BXIP", "FLASH_WriteStream", "cmd_flash"],
     ),
     ("FLASH_TxData256B", &["FLASH_TxData256BXIP"]),
-    // FW10: the recovery updater's bank-1 wrappers, which refuse unless the
+    // The recovery updater's bank-1 wrappers, which refuse unless the
     // image runs from bank 0 and stay inside bank 1 (amebad-sdk target.rs).
-    // FW11: the storage-region wrappers (0x340000-0x360000), which the
+    // The storage-region wrappers (0x340000-0x360000), which the
     // normal role's confirmation write uses.
     (
         "FLASH_EraseXIP",
@@ -89,7 +89,7 @@ const EXPECTED_HP: Pins = &[
             "petlibre_amebad_sys::target::storage_erase",
         ],
     ),
-    // FW10 give-way: bank 1's first marker byte only, from bank 1, with bank 0 valid.
+    // Give-way: bank 1's first marker byte only, from bank 1, with bank 0 valid.
     (
         "FLASH_TxData256BXIP",
         &[
@@ -132,7 +132,7 @@ const EXPECTED_LP: Pins = &[
         "FLASH_TxData12B",
         &["FLASH_TxData12BXIP", "FLASH_WriteStream"],
     ),
-    // FW11: the boot trial clears bank 1's first marker byte, before KM4 runs.
+    // The boot trial clears bank 1's first marker byte, before KM4 runs.
     (
         "FLASH_TxData256B",
         &["FLASH_TxData256BXIP", "petlibre_trial_program"],
@@ -517,7 +517,7 @@ fn audit_core(elf: &Path, objdump: &Path, core: &Rules) -> Result<CoreWrites> {
 pub(crate) fn audit(sdk: &Path, binutils: &Binutils) -> Result<WritesAudit> {
     let objdump = binutils.objdump();
     let lp_pinned: Vec<&str> = EXPECTED_LP.iter().map(|(t, _)| *t).collect();
-    // KM0 needs the WLAN firmware entry for FW07; KM4 must not carry it.
+    // KM0 needs the WLAN firmware entry for Wi-Fi; KM4 must not carry it.
     let hp = Rules {
         absent: ABSENT.to_vec(),
         expected: EXPECTED_HP,

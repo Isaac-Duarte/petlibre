@@ -1,9 +1,9 @@
-//! FW06 bench probe on KM4.
+//! Bench probe on KM4.
 //!
 //! Stage B: announce a fresh authority session and bind the KM0 peer's READY
 //! into a `FlashCoord` only after stopped-output readback.
 //!
-//! FW15 (owner-approved region `sdk::STORAGE_OFFSET`): with `Provider`
+//! Settings stress (owner-approved region `sdk::STORAGE_OFFSET`): with `Provider`
 //! installed in the SDK flash-lock hooks, stress the settings store on real
 //! NOR for a physical power-cut test. Each boot opens the store and reports
 //! its status, generation and contents; every saved value is derived from its
@@ -16,9 +16,9 @@
 //! Arming sets `ATTEMPT_BIT` (survives a watchdog reset, cleared by power
 //! loss); a boot that finds it set skips, so a hook fault resets at most once.
 //!
-//! The FW15 journal sequence (create, reserve/finish across resets, pending
+//! The journal sequence (create, reserve/finish across resets, pending
 //! refusal, torn record) passed on hardware and is retained in history.
-//! FW06 stages C-E (park round trip, mediated reads, scratch-sector cycles)
+//! Stages C-E (park round trip, mediated reads, scratch-sector cycles)
 //! passed on hardware and are retained in history; their lease sequence
 //! lives in `Provider`.
 

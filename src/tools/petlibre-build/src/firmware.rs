@@ -180,7 +180,7 @@ impl Firmware {
         &self.name
     }
 
-    /// Links the device's Bluetooth stack (FW34). Every variant shares it, so
+    /// Links the device's Bluetooth stack. Every variant shares it, so
     /// one firmware's images never differ in whether the radio runs BT.
     pub fn bluetooth(&self) -> bool {
         self.bluetooth

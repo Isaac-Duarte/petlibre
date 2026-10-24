@@ -1,4 +1,4 @@
-//! FW45 BLE setup mode's link: framed messages over Bluetooth LE.
+//! BLE setup mode's link: framed messages over Bluetooth LE.
 //!
 //! The C peripheral (`petlibre_ble.c`) serves the service in
 //! `petlibre_core::ble_setup`. This task starts it, advertises while the

@@ -1,4 +1,4 @@
-//! FW45 setup mode in the loop, against the fake BLE peripheral and the real
+//! Setup mode in the loop, against the fake BLE peripheral and the real
 //! client session (`petlibre-client`), with the settings writer played by the
 //! test: an ask whose code the owner keys in and the client proves enrolls
 //! the client's key and saves its Wi-Fi before `Done` and the reboot; an

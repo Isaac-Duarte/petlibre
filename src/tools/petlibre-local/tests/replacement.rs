@@ -1,6 +1,6 @@
-//! The FW08 replacement-firmware role end to end with a generic MQTT client:
+//! The replacement-firmware role end to end with a generic MQTT client:
 //! health reaches the API and each role stays inside its own topics. Since
-//! FW47 the server sends the firmware no requests: they go over the device
+//! The server sends the firmware no requests: they go over the device
 //! API, and the retired request route is gone.
 
 mod common;

@@ -1,5 +1,5 @@
-//! Arming the SDK flash-lock hooks for one KM4 writer (FW10 updater, FW11
-//! confirmation), as the FW15 probe proved on hardware: announce a fresh
+//! Arming the SDK flash-lock hooks for one KM4 writer (the updater, the
+//! confirmation), as the probe proved on hardware: announce a fresh
 //! authority, bind the KM0 peer's READY with verified stopped outputs, set
 //! the attempt marker, then open the watchdog and install the lease
 //! provider. A boot that finds the attempt marker set skips: a hook fault

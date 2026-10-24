@@ -1,4 +1,4 @@
-//! FW24: the speaker. Stock 1.1.15 plays through the codec's line output and
+//! The speaker. Stock 1.1.15 plays through the codec's line output and
 //! holds PB23 HIGH while it plays; this port does the same, one built-in tune
 //! at a time (`petlibre_core::tone`).
 //!
@@ -6,7 +6,7 @@
 //! opens the codec, enables the amplifier, streams the tune into the DMA ring,
 //! waits for the ring to drain and closes everything again. The slot stays
 //! taken until then, so a second request is `busy`, never queued behind. The
-//! FW15 `sound` setting mutes requests and its `volume` sets loudness.
+//! `sound` setting mutes requests and its `volume` sets loudness.
 //! Nothing here touches the motor, the emitters or flash, and the transport
 //! only reaches [`request`].
 //!

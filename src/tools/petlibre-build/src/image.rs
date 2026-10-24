@@ -145,7 +145,7 @@ pub fn build(repo: &Repo, request: &Request, toolchain: &Path) -> Result<PathBuf
         startup_identity: when(rust_build, &identity),
         // The SDK runtime's startup, the same for every firmware.
         startup_output_policy: when(rust_build, "stop-only"),
-        // The FW04 pulse probe is gone; startup only drives the indicators LOW.
+        // The pulse probe is gone; startup only drives the indicators LOW.
         startup_led_policy: when(rust_build, "low-only-v1"),
         startup_gpio_routing_policy: when(rust_build, "read-only-v3"),
         startup_shared_pad_policy: when(firstboot, "before-km4-v3"),

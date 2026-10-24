@@ -1,4 +1,4 @@
-//! FW47's event ring: order and numbering across reopens, wrapping the
+//! The event ring: order and numbering across reopens, wrapping the
 //! ring, gaps for cursors older than the ring, and a power cut at every
 //! mutation of an append and of the erase that makes room.
 

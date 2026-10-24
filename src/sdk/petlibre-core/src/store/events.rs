@@ -1,4 +1,4 @@
-//! FW47's durable event ring: at least 7 days of the feeder's history in
+//! The durable event ring: at least 7 days of the feeder's history in
 //! storage sectors 13-24 ([resource budget]).
 //!
 //! Records are 32 bytes, appended in order through a ring of erase units:

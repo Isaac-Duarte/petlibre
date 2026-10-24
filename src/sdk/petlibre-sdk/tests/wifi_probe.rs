@@ -1,4 +1,4 @@
-//! FW07 Wi-Fi probe against the fake SDK's event ring: every shim event is
+//! Wi-Fi probe against the fake SDK's event ring: every shim event is
 //! logged once and in order, an overwritten event is reported and skipped,
 //! and the shim can be started only once.
 

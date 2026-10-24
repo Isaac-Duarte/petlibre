@@ -6,7 +6,7 @@
 //! gesture first and the panel gets only those it leaves, so a Dispense
 //! press that confirms a pairing, or that is part of setup's code, feeds
 //! nothing. An allowed Reset hold queues
-//! FP15's key reset for the settings writer (`petlibre_hal::keys`). An
+//! The key reset for the settings writer (`petlibre_hal::keys`). An
 //! allowed Lock and Mic hold starts BLE setup mode (`setup`), which runs in
 //! this loop until it reboots. The product's other owners (feeding, the
 //! device API) join this loop as they land, so the firmware stays within its
@@ -41,7 +41,7 @@ pub enum Record {
     },
     Panel(Event),
     Pairing(pairing::Event),
-    /// An allowed Reset hold asked the settings writer for FP15's key reset.
+    /// An allowed Reset hold asked the settings writer for the key reset.
     Reset {
         requested: Requested,
     },

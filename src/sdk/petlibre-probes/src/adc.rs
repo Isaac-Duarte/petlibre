@@ -1,4 +1,4 @@
-//! FW14 bench probe on KM4: read-only power inputs.
+//! Bench probe on KM4: read-only power inputs.
 //!
 //! Opens the board's outputs (motor STOP, emitters OFF, no flash authority,
 //! so every drive is refused), then its sensors: the explicit LP ADC clock

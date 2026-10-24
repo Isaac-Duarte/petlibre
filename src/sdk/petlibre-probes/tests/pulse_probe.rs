@@ -1,4 +1,4 @@
-//! FW16 pulse probe against the fake SDK, with the KM0 peer's handshake
+//! Pulse probe against the fake SDK, with the KM0 peer's handshake
 //! answered through a shared IPC register model.
 
 use std::cell::RefCell;

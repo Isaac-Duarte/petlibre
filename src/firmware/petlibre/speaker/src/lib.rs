@@ -1,4 +1,4 @@
-//! EXPERIMENTAL FW24 bring-up firmware for the PLAF103 on the PetLibre SDK:
+//! EXPERIMENTAL bring-up firmware for the PLAF103 on the PetLibre SDK:
 //! the startup chime and requested tunes (`petlibre_hal::audio`), and the
 //! signed network audio stream `petlibre-local speak` plays
 //! (`petlibre_hal::stream`).

@@ -4,7 +4,7 @@
 //! Messages are postcard-encoded serde types, so the feeder (no allocation),
 //! the host client and the app's generated bindings read one definition.
 //! Nothing here does IO or cryptography: the caller seals and opens the bytes.
-//! FW45's BLE setup exchange ([`setup`]) and FW47's device API ([`api`])
+//! The BLE setup exchange ([`setup`]) and the device API ([`api`])
 //! share `petlibre_core::frame`'s length-prefixed frames.
 //!
 //! [API design]: ../../../../docs/api/README.md

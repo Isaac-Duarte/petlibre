@@ -1,4 +1,4 @@
-//! FW45 setup code: the owner carries a one-time code from the client's
+//! Setup code: the owner carries a one-time code from the client's
 //! screen to the feeder's buttons, and both sides prove they hold it.
 //!
 //! BLE setup's Noise XX handshake trusts whichever feeder answers, so a

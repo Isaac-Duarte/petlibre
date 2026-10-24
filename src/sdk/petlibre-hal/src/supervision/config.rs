@@ -1,8 +1,8 @@
 //! Production supervision constants derived from bench measurements.
 //!
-//! Physical, research unit, count 11 / divisor 31 (131 040 counts): in FW05
+//! Physical, research unit, count 11 / divisor 31 (131 040 counts): in the supervision probe
 //! the KM4 watchdog reset the platform about 3.0-3.1 s after the last refresh
-//! (effective clock near 43 kHz); in the FW06 park capture both injected
+//! (effective clock near 43 kHz); in the park capture both injected
 //! resets came about 4.0-4.2 s after it (near 31-33 kHz). The cause of the
 //! difference is unknown. The bounds cover both with margin; they are not a
 //! characterization of the clock.
@@ -11,7 +11,7 @@ use petlibre_core::flash_coord::FlashLimits;
 
 use crate::supervision::watchdog::WatchdogConfig;
 
-/// SDK-documented 31 us SYSTIMER tick; FW05 measured it within host timing
+/// SDK-documented 31 us SYSTIMER tick; the supervision probe measured it within host timing
 /// uncertainty (about -475 ppm, +/-0.1 %).
 pub const SYSTIMER_HZ: u32 = 32_768;
 
@@ -29,7 +29,7 @@ pub const WATCHDOG: WatchdogConfig = WatchdogConfig {
 
 /// One mediated flash lease. `active_ms` covers a 4 KiB sector erase on a
 /// typical part; block and chip erases do not fit and must stay unlinked.
-/// The real part and its erase time are still to be measured (FW06).
+/// The real part and its erase time are still to be measured.
 pub const FLASH_LIMITS: FlashLimits = FlashLimits {
     quiesce_ms: 100,
     park_ms: 50,
@@ -43,7 +43,7 @@ pub const FLASH_LIMITS: FlashLimits = FlashLimits {
 pub const MAX_SAMPLE_PERIOD_MS: u32 =
     (WATCHDOG.max_progress_gap_ms - FLASH_LIMITS.total_ms - 2 * 10 - 1) / 2;
 
-// Margin around both measurements: 43 kHz (FW05) and 31 kHz (FW06).
+// Margin around both measurements: 43 kHz and 31 kHz.
 const _: () = assert!(
     FLASH_LIMITS.total_ms < WATCHDOG.max_progress_gap_ms
         && WATCHDOG.clock_max_hz >= 43_000 * 5 / 4

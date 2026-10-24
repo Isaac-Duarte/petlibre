@@ -1,16 +1,16 @@
 //! The KM4 runtime every firmware runs inside.
 //!
 //! Startup: stopped outputs, the synthetic core diagnostic and the indicator
-//! check, then the FW07 network join (the Wi-Fi probe, stepped by the
-//! diagnostic task). The FW08 transport, which reports health to the local
-//! server's broker, runs only in the recovery role since FW47: the normal
+//! check, then the network join (the Wi-Fi probe, stepped by the
+//! diagnostic task). The transport, which reports health to the local
+//! server's broker, runs only in the recovery role: the normal
 //! role's firmware serves the device API.
 //!
-//! Booted from bank 0 (the recovery role), the FW10 updater runs and the
+//! Booted from bank 0 (the recovery role), the updater runs and the
 //! firmware never starts, so a broken firmware can always be replaced. In
 //! the normal role the firmware's own tasks start (`firmware!`), then the
-//! FW11 confirmation task and the feeder confirm a healthy build, and only
-//! then do the FW25 settings writer and the FW10 offer check start. A hung
+//! Confirmation task and the feeder confirm a healthy build, and only
+//! then do the settings writer and the offer check start. A hung
 //! runtime task stops the feeding, so a hang becomes a watchdog reset that
 //! KM0 counts.
 
@@ -87,7 +87,7 @@ pub fn watchdog_open() -> bool {
     WATCHDOG_OPEN.load(Ordering::Acquire)
 }
 
-/// The firmware keeps the ADC for itself (the FW14 probe), so the runtime's
+/// The firmware keeps the ADC for itself (the probe), so the runtime's
 /// power monitor never opens it and health reports power as unknown. Call
 /// from the start hook.
 pub fn claim_adc() {
@@ -106,7 +106,7 @@ impl core::fmt::Display for PowerLine {
     }
 }
 
-/// FW14: samples the battery and adapter for health. It waits for the
+/// Samples the battery and adapter for health. It waits for the
 /// startup probe to release its board, which owns the ADC until then.
 unsafe extern "C" fn power_task(_: *mut c_void) -> u32 {
     if ADC_CLAIMED.load(Ordering::Acquire) {
@@ -188,7 +188,7 @@ unsafe extern "C" fn net_task(_: *mut c_void) -> u32 {
 }
 
 /// A signed request's HMAC and reply is the deepest path: 5488 bytes once the
-/// stack audit counted `subw` frames (FW44), past 6 KiB's margin.
+/// stack audit counted `subw` frames, past 6 KiB's margin.
 const NET_STACK_WORDS: u16 = 2048;
 
 fn start_transport() {
@@ -222,7 +222,7 @@ static PROVIDER: TaskCell<Provider> = TaskCell::new(Provider::UNBOUND);
 static WATCHDOG: Slot<Watchdog> = Slot::new();
 static WATCHDOG_OPEN: AtomicBool = AtomicBool::new(false);
 
-/// The flash writer's (updater or FW11 confirmation) last step, in uptime
+/// The flash writer's (updater or confirmation) last step, in uptime
 /// milliseconds.
 static HEARTBEAT: AtomicU32 = AtomicU32::new(0);
 /// The writer ended without activating: feed while outputs stay stopped.
@@ -230,7 +230,7 @@ static UPDATER_DONE: AtomicBool = AtomicBool::new(false);
 /// Bank 1 is activated: stop feeding so the watchdog resets the platform.
 static RESTART: AtomicBool = AtomicBool::new(false);
 
-/// The transport task's last step and state, for the feeder and FW11.
+/// The transport task's last step and state, for the feeder and confirmation.
 static NET_BEAT: AtomicU32 = AtomicU32::new(0);
 static NET_RUNNING: AtomicBool = AtomicBool::new(false);
 /// The offer-check task's last step, while it runs.
@@ -242,7 +242,7 @@ static PROBE_DONE: AtomicBool = AtomicBool::new(false);
 
 const FEED_MS: u32 = 250;
 
-/// FW11 supervision state for the feeder (`supervise.rs`), as `Startup::code`.
+/// Supervision state for the feeder (`supervise.rs`), as `Startup::code`.
 static STARTUP: AtomicU8 = AtomicU8::new(Startup::Running.code());
 /// The diagnostic task's last step, while startup runs.
 static STARTUP_BEAT: AtomicU32 = AtomicU32::new(0);
@@ -382,7 +382,7 @@ unsafe extern "C" fn updater_task(_: *mut c_void) -> u32 {
 /// then the role's tasks keep stepping and outputs stay stopped. A hang, a
 /// hook fault (IRQs masked), an activation, or a trial image that fails or
 /// never confirms all stop the feeding, and the watchdog resets the
-/// platform, which KM0's FW11 trial counts.
+/// platform, which KM0's boot trial counts.
 unsafe extern "C" fn feeder_task(_: *mut c_void) -> u32 {
     static PROGRESS: AtomicU32 = AtomicU32::new(0);
     static STOPPED: AtomicBool = AtomicBool::new(false);
@@ -399,7 +399,7 @@ unsafe extern "C" fn feeder_task(_: *mut c_void) -> u32 {
             sdk::log(line);
         }
         if !opened {
-            return 0; // Unsupervised, as before FW11; nothing to feed.
+            return 0; // Unsupervised: nothing to feed.
         }
     }
 
@@ -460,7 +460,7 @@ impl core::fmt::Display for ConfirmLine {
     }
 }
 
-/// FW11: confirm this build once it has stayed healthy, after the startup
+/// Confirm this build once it has stayed healthy, after the startup
 /// probe has released the KM0 handshake.
 unsafe extern "C" fn confirm_task(_: *mut c_void) -> u32 {
     let now = sdk::uptime_ms();
@@ -469,8 +469,8 @@ unsafe extern "C" fn confirm_task(_: *mut c_void) -> u32 {
         return 0;
     };
     let provider = PROVIDER.get();
-    // The network path FW07 checks (DHCP, then a DNS lookup) stands in for
-    // the broker session the normal role no longer opens (FW47).
+    // The network path the Wi-Fi probe checks (DHCP, then a DNS lookup) stands in for
+    // the broker session the normal role no longer opens.
     let healthy = net_status::read().dns_ok
         && PROBE_DONE.load(Ordering::Acquire)
         && stopped::observe().verified();
@@ -515,7 +515,7 @@ impl core::fmt::Display for WatchLine {
     }
 }
 
-/// FW10: once confirmed, check for an offer and give way to bank 0's
+/// Once confirmed, check for an offer and give way to bank 0's
 /// updater when one names another build.
 unsafe extern "C" fn watch_task(_: *mut c_void) -> u32 {
     let now = sdk::uptime_ms();
@@ -593,7 +593,7 @@ impl core::fmt::Display for SettingsLine {
     }
 }
 
-/// FW25: load the device settings, arm the hooks, then save signed changes.
+/// Load the device settings, arm the hooks, then save signed changes.
 unsafe extern "C" fn settings_task(_: *mut c_void) -> u32 {
     SETTINGS_BEAT.store(sdk::uptime_ms(), Ordering::Release);
     let Some(mut writer) = SETTINGS.enter_or_init(Default::default) else {
@@ -671,7 +671,7 @@ fn start_watch() {
     });
 }
 
-/// The normal role's FW11 confirmation task. The feeder, started with the
+/// The normal role's confirmation task. The feeder, started with the
 /// application, already supervises it.
 fn start_confirm() {
     HEARTBEAT.store(sdk::uptime_ms(), Ordering::Release);
@@ -844,11 +844,11 @@ unsafe extern "C" fn diagnostic_task(_: *mut c_void) -> u32 {
         sdk::log(line);
     }
 
-    // FW11 test variant: a determined startup failure, which a trial image
+    // Test variant: a determined startup failure, which a trial image
     // must turn into a counted reset. Opaque to the optimizer, or LTO drops
     // every path after a passing diagnostic and the variant no longer links
     // the image the link audit pins.
-    let forced_fail = cfg!(feature = "fw11-fail") && core::hint::black_box(true);
+    let forced_fail = cfg!(feature = "trial-fail") && core::hint::black_box(true);
     let passed = petlibre_core::feed::diagnostic::run() && !forced_fail;
     sdk::log(if passed {
         c"Synthetic core diagnostic: PASS\r\n"
@@ -870,8 +870,8 @@ unsafe extern "C" fn diagnostic_task(_: *mut c_void) -> u32 {
         return startup_failed();
     }
 
-    // The indicators stay LOW (policy low-only-v1): the FW04 pulse probe
-    // proved them and cost every boot about 15 s; FW23 gives them meaning.
+    // The indicators stay LOW (policy low-only-v1): the pulse probe
+    // proved them and cost every boot about 15 s; a later card gives them meaning.
     if !(leds::all_low() && stopped::observe().verified()) {
         sdk::log(c"PLLED1 error finish=unverified\r\n");
         return startup_failed();
@@ -883,9 +883,9 @@ unsafe extern "C" fn diagnostic_task(_: *mut c_void) -> u32 {
     if startup::snapshot().bank() == Some(0) {
         start_updater();
     } else {
-        // FW45: before any other task can use the ADC or want a secret.
+        // Before any other task can use the ADC or want a secret.
         log_rng(rng::start());
-        // FW47: no MQTT session in the normal role; requests and health
+        // No MQTT session in the normal role; requests and health
         // go over the firmware's device API.
         // SAFETY: every firmware defines the hook with `firmware!`; it runs
         // once, here, in this task.
@@ -901,7 +901,7 @@ unsafe extern "C" fn diagnostic_task(_: *mut c_void) -> u32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn petlibre_app_start() {
     let snapshot = stopped::initialize();
-    // FW11: supervise from the first scheduled step, so a startup fault or
+    // Supervise from the first scheduled step, so a startup fault or
     // hang is a reset KM0 can count.
     // SAFETY: the step takes no context and keeps its state in statics.
     if !unsafe { sdk::task_create(c"petlibre-wdg", 512, 3, feeder_task, ptr::null_mut()) } {

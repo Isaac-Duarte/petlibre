@@ -1,4 +1,4 @@
-//! FW10 bench test aid: answer the replacement firmware's `ota/get` as the
+//! Bench test aid: answer the replacement firmware's `ota/get` as the
 //! server role, optionally with one injected fault, so the updater's failure
 //! paths can be exercised on hardware. Run beside `petlibre-local broker`
 //! only, never beside `serve` (two servers would both answer). The real

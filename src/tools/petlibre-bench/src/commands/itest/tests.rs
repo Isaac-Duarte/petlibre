@@ -31,7 +31,7 @@ enum Event {
     Recovery,
 }
 
-/// A feeder that answers the way the hardware did in the FW10–FW25 drills.
+/// A feeder that answers the way the hardware did in the update and settings drills.
 struct Feeder {
     now: f64,
     pending: Vec<(f64, Event)>,
@@ -254,7 +254,7 @@ impl Rig for Feeder {
             .clone()
             .unwrap_or_else(|| PathBuf::from(format!("private/verification/{}-review", args.name)));
         // A re-signed review keeps its build.
-        let failing = args.variant == Some(Variant::Fw11Fail)
+        let failing = args.variant == Some(Variant::Fail)
             || review.to_string_lossy().ends_with("-fail-review");
         let speaker = args.firmware == Some(Firmware::Speaker)
             || review.to_string_lossy().contains("speaker");

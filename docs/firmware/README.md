@@ -16,7 +16,7 @@ Stock 1.1.15 can install the replacement over its own updater, with no UART writ
 | `petlibre-feeder` (`src/product/petlibre-feeder`) | Product policy, `no_std` and host-tested: the panel's child lock (FP11), pairing and BLE setup (FW45), and the [device API](device-api.md)'s sans-IO server (FW47); schedules and alerts later ([product architecture](product-architecture.md)) |
 | `petlibre-fw-feeder` (`src/firmware/petlibre/feeder`) | The product firmware: the button service and one loop task that owns the panel, BLE setup mode and the [device API](device-api.md) with its sockets and mDNS; the feeding owner joins that loop |
 | `petlibre-fw-qa` (`src/firmware/petlibre/qa`) | The default firmware: a [guided self-test](qa.md) of optics, power, buttons, indicators and speaker |
-| `petlibre-fw-optics`, `-buttons`, `-adc`, `-speaker`, `-motor`, `-trial` | One bring-up area each ([table](../../src/firmware/petlibre/README.md)); `motor` drives the motor only in its `fw16-pulse` variant |
+| `petlibre-fw-optics`, `-buttons`, `-adc`, `-speaker`, `-motor`, `-trial` | One bring-up area each ([table](../../src/firmware/petlibre/README.md)); `motor` drives the motor only in its `pulse` variant |
 | `petlibre-fw-blink` (`src/firmware/petlibre/blink`) | The minimal firmware: one task blinks the connection indicator. The [firmware guide](../../src/firmware/petlibre/README.md) covers writing one |
 | `petlibre-amebad-sys` | Bindgen-backed KM4 calls into the pinned AmebaD SDK, and the deterministic host fake SDK used by tests and the simulator |
 | `petlibre-sdk-c` | The KM0 archive, and the panic handler every firmware archive links |

@@ -58,7 +58,7 @@ pub enum Error {
     /// The server does not yet see stock ready to be asked for an install.
     #[error(transparent)]
     StockNotReady(#[from] server::StockNotReady),
-    /// A device API session (FW47) could not be opened or did not answer.
+    /// A device API session could not be opened or did not answer.
     #[error(transparent)]
     Device(#[from] device::DeviceError),
     #[error(transparent)]

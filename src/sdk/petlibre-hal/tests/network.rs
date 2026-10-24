@@ -1,4 +1,4 @@
-//! FW25 stored Wi-Fi credentials: the request queue, and the join
+//! Stored Wi-Fi credentials: the request queue, and the join
 //! half's choice between stored and build credentials with fallback.
 
 use std::sync::Mutex;
@@ -134,7 +134,7 @@ fn a_save_mid_boot_is_joined_with_a_fresh_count() {
     }
     assert_eq!(select().2, 2, "fallen back to the build's");
 
-    // FW34 BLE setup (or FW25 over MQTT) saves new credentials while offline.
+    // BLE setup (or the device API) saves new credentials while offline.
     store(Some(Credentials::new(b"new-net", b"new-pass1").unwrap()));
     for attempt in 0..FALLBACK_AFTER {
         assert_eq!(

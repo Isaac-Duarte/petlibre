@@ -1,4 +1,4 @@
-//! FW20: the panel buttons for a firmware that wants them. The firmware
+//! The panel buttons for a firmware that wants them. The firmware
 //! starts the service from its start hook with its hold thresholds, then
 //! reads gestures from the one task that owns what the buttons do:
 //!

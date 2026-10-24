@@ -2,7 +2,7 @@
 //!
 //! It answers the stock device on its namespace, carries the
 //! replacement-firmware health and update topics when a firmware role is
-//! configured, and serves API requests arriving over a channel. Since FW47 it
+//! configured, and serves API requests arriving over a channel. It
 //! sends the replacement firmware no requests: those go over the Noise device
 //! API, and only bank 0's recovery role still publishes health here. Commands
 //! go out on QoS 0 without retain, and every reconnect builds a new client, so

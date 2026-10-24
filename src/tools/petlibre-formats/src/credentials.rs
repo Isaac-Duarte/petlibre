@@ -5,7 +5,7 @@ use std::net::Ipv4Addr;
 
 use serde::{Deserialize, Serialize};
 
-/// The replacement firmware's broker credential (FW08), as
+/// The replacement firmware's broker credential, as
 /// `petlibre-local firmware-credential` writes it.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]

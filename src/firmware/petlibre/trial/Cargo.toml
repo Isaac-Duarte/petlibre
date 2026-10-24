@@ -4,7 +4,7 @@ name = "petlibre-fw-trial"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
-description = "Experimental PLAF103 test firmware on the PetLibre SDK: FW11 trial images that must roll back"
+description = "Experimental PLAF103 test firmware on the PetLibre SDK: boot-trial images that must roll back"
 publish.workspace = true
 
 # The KM4 archive petlibre-build links into the image.
@@ -15,8 +15,8 @@ crate-type = ["staticlib", "rlib"]
 # KM4 target builds with the pinned SDK bindings.
 km4 = ["petlibre-sdk/km4"]
 # The variants declared below; only `petlibre-build --variant` sets one.
-fw11-reset = []
-fw11-fail = ["petlibre-sdk/fw11-fail"]
+stall = []
+fail = ["petlibre-sdk/trial-fail"]
 
 [dependencies]
 petlibre-sdk.workspace = true
@@ -29,10 +29,10 @@ workspace = true
 [package.metadata.petlibre]
 devices = ["plaf103"]
 
-[package.metadata.petlibre.variants.fw11-reset]
-summary = "FW11 trial test: stops feeding the watchdog right after startup, before it could confirm"
+[package.metadata.petlibre.variants.stall]
+summary = "Boot-trial test: stops feeding the watchdog right after startup, before it could confirm"
 policies = { trial = "fw11-reset-v1" }
 
-[package.metadata.petlibre.variants.fw11-fail]
-summary = "FW11 trial test: startup fails on a determined error"
+[package.metadata.petlibre.variants.fail]
+summary = "Boot-trial test: startup fails on a determined error"
 policies = { trial = "fw11-fail-v1" }

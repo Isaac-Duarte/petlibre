@@ -1,4 +1,4 @@
-//! FW14 power monitor against the fake ADC: health reports a fresh sample
+//! Power monitor against the fake ADC: health reports a fresh sample
 //! with its age, nothing once it is stale or the ADC fails, and no pack
 //! voltage when the channel reads near zero.
 

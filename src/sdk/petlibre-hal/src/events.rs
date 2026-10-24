@@ -1,4 +1,4 @@
-//! FW47: the event history, carried between the loop task and the settings
+//! The event history, carried between the loop task and the settings
 //! writer, which alone writes the ring in storage sectors 13-24
 //! (`petlibre_core::store::events`).
 //!

@@ -2,7 +2,7 @@
 //! and carry `petlibre_client::setup`'s messages over its control
 //! characteristic.
 //!
-//! BlueZ quirks met on the bench (FW34) shape this: a filtered discovery
+//! BlueZ quirks met on the bench shape this: a filtered discovery
 //! crashed bluetoothd 5.87, so discovery is unfiltered and the service UUID
 //! is checked here; and `notify()` can miss a notification sent as soon as
 //! they are enabled, so the socket from `notify_io()` is held instead.

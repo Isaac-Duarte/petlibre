@@ -4,14 +4,14 @@
 //! `petlibre-feeder`, and grows owner by owner.
 //!
 //! So far it runs the panel: the button service and one loop task that keeps
-//! the child lock (FP11), shows it on the lock indicator, and takes signed
+//! the child lock, shows it on the lock indicator, and takes signed
 //! lock changes from the network. The loop also holds the feeder's identity
 //! key pair and the pairing policy: a Reset hold clears the keys, and a Lock
 //! and Mic hold starts BLE setup mode, where a new owner's phone gives the
-//! feeder Wi-Fi and its key (FW45). The loop also serves the device API
-//! (FW47, `api`): Noise sessions over TCP, advertised over mDNS, with the
+//! feeder Wi-Fi and its key. The loop also serves the device API
+//! (`api`): Noise sessions over TCP, advertised over mDNS, with the
 //! event history and live samples. The `entropy` variant streams raw noise
-//! samples for FW45. It never touches the motor or the infrared emitters.
+//! samples for the host's entropy estimate. It never touches the motor or the infrared emitters.
 //!
 //! [product architecture]: ../../../../docs/firmware/product-architecture.md
 #![cfg_attr(target_os = "none", no_std)]

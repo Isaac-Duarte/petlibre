@@ -4,7 +4,7 @@ Status: prepared offline: probe, host tests, build variant and guards. Not insta
 
 ## What the image does
 
-`petlibre-build build --profile firstboot --firmware motor --variant fw16-pulse` builds the `motor` firmware's `fw16-pulse` variant. It records `startup_motion_policy: fw16-pulse-v1` (declared in `src/firmware/petlibre/motor/Cargo.toml`) and `variant: fw16-pulse` in the manifest and gets its own build ID. The motor firmware's normal image adds no task, and the builder refuses a motion policy outside a variant, so nothing else can drive the motor. The bench never builds it.
+`petlibre-build build --profile firstboot --firmware motor --variant pulse` builds the `motor` firmware's `pulse` variant. It records `startup_motion_policy: fw16-pulse-v1` (declared in `src/firmware/petlibre/motor/Cargo.toml`) and `variant: pulse` in the manifest and gets its own build ID. The motor firmware's normal image adds no task, and the builder refuses a motion policy outside a variant, so nothing else can drive the motor. The bench never builds it.
 
 After the LED probe, the pulse probe (`src/sdk/petlibre-probes/src/pulse.rs`):
 1. Skips everything unless this is a clean cold boot: reset reason 0 and its backup-register marker clear.

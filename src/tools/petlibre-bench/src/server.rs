@@ -1,5 +1,5 @@
 //! What the bench reads from and sends to `petlibre-local`: its status
-//! document (`GET /api/status`) and the stock trial bodies. Since FW47 the
+//! document (`GET /api/status`) and the stock trial bodies. The
 //! server relays no requests (they go over the device API, `crate::device`)
 //! and only bank 0's recovery role reports health over MQTT.
 //!
@@ -115,7 +115,7 @@ pub(crate) struct Replacement {
     pub age_ms: Option<i64>,
     pub online: bool,
     pub stale: bool,
-    /// Empty since FW47, when the server stopped relaying requests; the
+    /// Empty since the server stopped relaying requests; the
     /// page still lists them until its types drop the field.
     pub replies: Vec<Relayed>,
 }
@@ -145,12 +145,12 @@ pub(crate) struct Health {
     pub seq: Option<u64>,
     pub outputs: Option<String>,
     pub faults: Vec<String>,
-    /// Absent from builds before FW21.
+    /// Absent from builds without the wall clock.
     pub clock: Option<Clock>,
     pub wifi: Wifi,
     pub transport: Transport,
     /// Only the bank-0 recovery role reports one, while it waits for an
-    /// update (FW40).
+    /// update.
     pub role: Option<HealthRole>,
 }
 
@@ -311,7 +311,7 @@ impl LocalStatus {
     }
 
     /// The bank-0 recovery role's health from `build`, while it waits for an
-    /// update: what a build stock just installed reports (FW40).
+    /// update: what a build stock just installed reports.
     pub(crate) fn recovery_health(&self, build: &str) -> Result<String, NotReady> {
         let report = self.health_on(build, 0)?;
         match self.fresh_health()?.role {

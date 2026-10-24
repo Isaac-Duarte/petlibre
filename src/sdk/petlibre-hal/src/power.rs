@@ -1,4 +1,4 @@
-//! FW14 power inputs for health: the battery pack on ADC channel 5 and the
+//! Power inputs for health: the battery pack on ADC channel 5 and the
 //! adapter on PA19, sampled every `SAMPLE_MS` by the runtime's power task.
 //!
 //! Health reports a sample only while it is fresh (`STALE_MS`), so a stalled

@@ -1,4 +1,4 @@
-//! FW20 read-only button probe against the fake SDK: the pins become
+//! Read-only button probe against the fake SDK: the pins become
 //! inputs, a bouncing press is one record with its bounce, a floating line
 //! is bounded, and the motor pins never leave STOP.
 

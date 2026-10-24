@@ -127,14 +127,14 @@ enum Action {
         output: PathBuf,
     },
 
-    /// Create the replacement firmware's update-signing key (FW10); never
+    /// Create the replacement firmware's update-signing key; never
     /// replaces one. Prints the public key the firmware build embeds.
     OtaKeygen {
         #[arg(long, default_value = "private/ota-key.json")]
         output: PathBuf,
     },
 
-    /// Sign a reviewed replacement image's update manifest (FW10).
+    /// Sign a reviewed replacement image's update manifest.
     OtaSign {
         #[arg(long, default_value = "private/ota-key.json")]
         key: PathBuf,
@@ -151,7 +151,7 @@ enum Action {
         output: PathBuf,
     },
 
-    /// Offer a signed replacement update to the running server (FW10), or
+    /// Offer a signed replacement update to the running server, or
     /// clear the offer. Paths are relative and under private/; nothing is
     /// sent to the firmware until it asks.
     OtaOffer {
@@ -165,7 +165,7 @@ enum Action {
         clear: bool,
     },
 
-    /// FW42 test: point a stock feeder in setup mode at a network and this
+    /// Point a stock feeder in setup mode at a network and this
     /// server with stock's own type-3 setup frame, sent once to its setup
     /// access point (join that network first). The passphrase is read from
     /// stdin, never the command line.

@@ -1,10 +1,10 @@
-//! FW20: the button service. The firmware's button task polls PB4..PB7 every
+//! The button service. The firmware's button task polls PB4..PB7 every
 //! `POLL_MS` and turns the levels into gestures (`petlibre_core::buttons`).
 //! Each gesture goes into a small queue for the one firmware task that reads
 //! them, and to the UART as a `PLKEY1` record.
 //!
 //! The pins are configured as stock leaves them: inputs with no pad pull,
-//! since the board has its own pull-ups (FW20, physical). Polling rather than
+//! since the board has its own pull-ups (physical). Polling rather than
 //! edge interrupts keeps the service out of interrupt context; a 5 ms poll
 //! is well inside the 30 ms debounce and the 0.1 s shortest press seen.
 //! Nothing here touches the motor, the emitters or flash.

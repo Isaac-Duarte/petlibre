@@ -1,4 +1,4 @@
-//! FW45's runtime generator on the fake: a noisy ADC starts it after the
+//! The runtime generator on the fake: a noisy ADC starts it after the
 //! 1,024-sample start-up test, a steady one fails the health tests and an
 //! unreadable one fails to open, and without a generator nothing is drawn.
 

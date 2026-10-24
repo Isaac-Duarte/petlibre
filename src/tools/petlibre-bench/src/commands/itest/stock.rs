@@ -8,7 +8,7 @@
 //! it is not running from) and invalidates bank 1 ([stock OTA requirements]).
 //! The factory loader then boots the build from bank 0, where its recovery
 //! role reports health over MQTT while it waits for an update; the promoted
-//! build on bank 1 is confirmed over the device API (FW47).
+//! build on bank 1 is confirmed over the device API.
 //!
 //! The request goes out once and is never resent: a rejected stock precheck
 //! can erase the stock OTA status sector, and an uncertain one may still be
@@ -67,7 +67,7 @@ pub struct StockOtaArgs {
     /// or trial.
     #[arg(long, value_parser = parse_firmware)]
     pub firmware: Option<Firmware>,
-    /// Trial variant for --firmware trial: fw11-reset or fw11-fail.
+    /// Trial variant for --firmware trial: stall or fail.
     #[arg(long, value_parser = parse_variant)]
     pub variant: Option<Variant>,
     /// Build even when a review of the same sources exists.
@@ -143,8 +143,8 @@ impl StockOtaArgs {
 }
 
 /// `itest` scenario `stock-roundtrip`: from the confirmed baseline to stock
-/// 1.1.15 over our own signed update (FW41), then back over stock's updater
-/// (FW40) and the bank-0 recovery role's promotion. It ends where it began:
+/// 1.1.15 over our own signed update, then back over stock's updater
+/// and the bank-0 recovery role's promotion. It ends where it began:
 /// the baseline confirmed on bank 1, `serve` answering. Bank 0 then holds
 /// the baseline too, written by stock.
 pub(super) fn roundtrip(ctx: &mut Ctx) -> Result<()> {

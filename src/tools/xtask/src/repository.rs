@@ -13,7 +13,7 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
-/// FW08 no-dispense rule: network-facing transport code may name only these
+/// No-dispense rule: network-facing transport code may name only these
 /// paths (full matches), so nothing reachable from the network can touch
 /// feeding, outputs, settings, flash or updates. Paths whose first segment is
 /// capitalized (types, enum variants, Self) are local and always allowed.
@@ -34,7 +34,7 @@ const TRANSPORT_ISOLATION: [(&str, &[&str]); 2] = [
             r"health::(snapshot|Link|Boot)(::default)?",
             r"crate::net_status",
             r"net_status::read",
-            // Since FW47 the transport carries health only: requests go over
+            // The transport carries health only: requests go over
             // the device API, so it reaches no mailbox at all.
             r"crate::sdk(::(TcpRecv|TransportConfig|self))?",
             r"sdk::(tcp_connect|tcp_send|tcp_recv|tcp_close|uptime_ms|TcpRecv|TransportConfig)",
@@ -50,7 +50,11 @@ const PRIMITIVES: [&str; 13] = [
 // Top-level directories that hold local inputs or agent state.
 const UNPUBLISHED: [&str; 6] = ["private", ".venv", "target", ".aws", ".codex", ".agents"];
 const EVIDENCE: [&str; 5] = ["bin", "pcap", "pcapng", "img", "apk"];
-const TEXT: [&str; 7] = ["md", "rs", "py", "toml", "json", "yml", "txt"];
+const TEXT: [&str; 10] = [
+    "md", "rs", "py", "toml", "json", "yml", "txt", "c", "h", "ts",
+];
+/// Sources under `src/` that must not cite a board card.
+const CARD_FREE: [&str; 6] = ["rs", "c", "h", "toml", "md", "ts"];
 
 macro_rules! regex {
     ($name:ident, $pattern:expr) => {
@@ -69,6 +73,9 @@ regex!(GLOB, r"\buse\s+[^;]*\*");
 
 regex!(USER_PATH, r"/(?:home|Users|mnt|media)/[A-Za-z0-9_.-]+/");
 regex!(DATED, r#"private/[^\s"']*202610\d{2}"#);
+// A board card's id: the firmware or feature board's prefix and a number.
+// Pinned policy names are lowercase and stay.
+regex!(CARD, r"\b(?:FW|FP)\d{1,3}[a-z]?\b");
 
 regex!(LINK, r"\]\(([^)]+)\)");
 regex!(SCHEME, r"^[A-Za-z][A-Za-z0-9+.-]*:");
@@ -167,6 +174,12 @@ fn check_file(root: &Path, name: &str, summary: &mut Summary) {
         summary
             .errors
             .push(format!("{name}: dated private fixture path"));
+    }
+    // Comments carry the constraint; a card's history lives on the boards.
+    if first == "src" && CARD_FREE.contains(&extension) && CARD.is_match(&content) {
+        summary.errors.push(format!(
+            "{name}: cites a board card; state the constraint instead"
+        ));
     }
 
     if extension == "md" {
@@ -366,7 +379,17 @@ mod tests {
             links: 0,
             errors: Vec::new(),
         };
-        for name in ["README.md", "private/x.json", "dump.bin", "src/tools/a.py"] {
+        let card = ["FW", "16"].concat();
+        fs::write(root.join("src/tools/b.rs"), format!("// {card}\n")).unwrap();
+        fs::write(root.join("src/tools/c.rs"), "// fw16-pulse-v1\n").unwrap();
+        for name in [
+            "README.md",
+            "private/x.json",
+            "dump.bin",
+            "src/tools/a.py",
+            "src/tools/b.rs",
+            "src/tools/c.rs",
+        ] {
             check_file(&root, name, &mut summary);
         }
 
@@ -378,6 +401,7 @@ mod tests {
                 "private/x.json: local inputs or agent state must not be published",
                 "dump.bin: binary/evidence files need explicit provenance review",
                 "src/tools/a.py: first-party tools are Rust; no Python sources under src/",
+                "src/tools/b.rs: cites a board card; state the constraint instead",
             ]
         );
     }

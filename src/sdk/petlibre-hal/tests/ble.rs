@@ -1,4 +1,4 @@
-//! FW45 setup mode's BLE link against the fake peripheral: it advertises
+//! Setup mode's BLE link against the fake peripheral: it advertises
 //! only while asked and nobody is connected, reassembles a host's framed
 //! writes into one held message, frames what the firmware sends, and drops
 //! a host that overruns the frame limit or outstays the session.

@@ -55,7 +55,7 @@ impl AuthProvider for DeviceAuth {
             .firmware
             .as_ref()
             .is_some_and(|f| firmware_login(&f.client_id));
-        // FW10: the normal role's offer check, a second session beside the
+        // The normal role's offer check, a second session beside the
         // transport's, so it needs its own client ID.
         let watcher = config
             .firmware

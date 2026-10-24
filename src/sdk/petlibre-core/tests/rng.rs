@@ -1,4 +1,4 @@
-//! FW45's generator: HMAC-DRBG against NIST's published vector, the health
+//! The generator: HMAC-DRBG against NIST's published vector, the health
 //! cutoffs against SP 800-90B's table, each health test tripped by a broken
 //! source, and the pool refusing output until the start-up test and its
 //! entropy claim are met.

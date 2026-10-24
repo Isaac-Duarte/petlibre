@@ -43,7 +43,7 @@ impl Policies {
     pub(super) fn bind(manifest: &BuildManifest, image: &[u8]) -> Result<Self> {
         let has = |mark: &[u8]| contains(image, mark);
 
-        // No current build declares the FW05 probe, so its records mean the
+        // No current build declares the probe, so its records mean the
         // image is not the build the manifest describes.
         require(
             !has(SUPERVISION_MARK),
@@ -230,7 +230,7 @@ fn bind_unclassified(
     )?;
     require(
         !transport || wifi == Some(Wifi::Dns),
-        "Transport requires the FW07 DNS policy",
+        "Transport requires the DNS policy",
     )?;
 
     let optics = version(

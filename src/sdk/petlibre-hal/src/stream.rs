@@ -2,7 +2,7 @@
 //!
 //! The task listens on `speaker_stream::PORT`, one client at a time. A client
 //! must pass the signed `PLSPK1` handshake (`petlibre_core::speaker_stream`)
-//! under the FW08 request key; an image without a key refuses every stream.
+//! under the request key; an image without a key refuses every stream.
 //! After `Ok` the connection carries 16-bit mono PCM, which fills a 64 KiB
 //! jitter buffer (1 s at 32 kHz). Playback starts once the buffer is half
 //! full and feeds the codec's DMA pages as they free up. TCP backpressure
@@ -11,7 +11,7 @@
 //! amplifier and codec close.
 //!
 //! The output is shared with the tune player through `audio::claim_stream`;
-//! the FW15 `sound` setting refuses streams (`muted`) and `volume` scales
+//! the `sound` setting refuses streams (`muted`) and `volume` scales
 //! them. Nothing here touches the motor, the emitters or flash.
 
 use core::fmt;

@@ -1,4 +1,4 @@
-//! EXPERIMENTAL FW14 bring-up firmware for the PLAF103 on the PetLibre SDK:
+//! EXPERIMENTAL bring-up firmware for the PLAF103 on the PetLibre SDK:
 //! the read-only power-input probe (`petlibre_probes::adc`), sampling once a
 //! second for as long as the build runs.
 #![cfg_attr(target_os = "none", no_std)]

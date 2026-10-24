@@ -1,6 +1,6 @@
-//! The owner's client key for the feeder's protocols (FW45): the `petlibre`
+//! The owner's client key for the feeder's protocols: the `petlibre`
 //! CLI creates it at its first setup and records each feeder that enrolled
-//! it; FW47's sessions read it. The secret never leaves `private/`.
+//! it; the sessions read it. The secret never leaves `private/`.
 
 use serde::{Deserialize, Serialize};
 

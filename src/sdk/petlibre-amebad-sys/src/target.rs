@@ -692,7 +692,7 @@ pub fn bank1_read(sector: u32, offset: u32, bytes: &mut [u8]) -> bool {
     true
 }
 
-/// FW10 give-way from the running normal image: clear only the first byte
+/// Give-way from the running normal image: clear only the first byte
 /// of bank 1's marker (one page program; bytes 1-3 rewritten unchanged, as
 /// NOR programming only clears bits), through the hooked lock. Refused
 /// unless running from bank 1 with bank 1's marker intact and bank 0's
@@ -1010,7 +1010,7 @@ unsafe extern "C" {
     fn petlibre_audio_close();
 }
 
-/// FW24: start the codec's line output and its DMA ring (`example_entry.c`)
+/// Start the codec's line output and its DMA ring (`example_entry.c`)
 /// at `rate_hz` (8, 16, 32 or 48 kHz); false for another rate, when already
 /// open or when no DMA channel was free.
 pub fn audio_open(rate_hz: u32) -> bool {
@@ -1120,7 +1120,7 @@ unsafe extern "C" {
     fn petlibre_ipv4() -> u32;
 }
 
-/// FW47: the device API's non-blocking listener on `port`, or `None`.
+/// The device API's non-blocking listener on `port`, or `None`.
 pub fn api_listen(port: u16) -> Option<i32> {
     // SAFETY: the C shim in `example_entry.c`; any buffer is live for the call.
     let socket = unsafe { petlibre_api_listen(u32::from(port)) };
@@ -1157,7 +1157,7 @@ pub fn api_send(socket: i32, data: &[u8]) -> Option<usize> {
     usize::try_from(sent).ok()
 }
 
-/// FW47: the mDNS socket (UDP 5353, joined to 224.0.0.251), or `None`.
+/// The mDNS socket (UDP 5353, joined to 224.0.0.251), or `None`.
 pub fn mdns_open() -> Option<i32> {
     // SAFETY: the C shim in `example_entry.c`; any buffer is live for the call.
     let socket = unsafe { petlibre_mdns_open() };
@@ -1275,7 +1275,7 @@ unsafe extern "C" {
     fn petlibre_ble_stats(out: *mut BleStats);
 }
 
-/// FW34: start the BLE peripheral's task (`petlibre_ble.c`), which waits for
+/// Start the BLE peripheral's task (`petlibre_ble.c`), which waits for
 /// the Wi-Fi radio, then serves `service` (advertising only when asked); true
 /// once, when the task was created.
 #[cfg(feature = "bluetooth")]

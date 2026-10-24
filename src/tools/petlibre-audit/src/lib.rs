@@ -5,9 +5,9 @@
 //! fields, so either version's reports read the same:
 //! - `startup`: a receive-only startup capture against its source-bound build
 //!   (`audit-firmware-startup.py`)
-//! - `adc`: the FW14 power-input samples (`audit-firmware-adc.py`)
+//! - `adc`: the power-input samples (`audit-firmware-adc.py`)
 //! - `qa`: the QA firmware's guided self-test (new in Rust; no Python auditor)
-//! - `transients`: FW30 logic-analyzer captures of the motor driver
+//! - `transients`: logic-analyzer captures of the motor driver
 //!   (`audit-driver-transients.py`)
 //! - `backup`: two full-flash reads compared (`audit-flash-backup.py`)
 //!

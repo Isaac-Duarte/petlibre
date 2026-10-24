@@ -1,4 +1,4 @@
-//! When the KM4 watchdog feeder feeds (FW11).
+//! When the KM4 watchdog feeder feeds.
 //!
 //! The feeder opens the watchdog on its first step, before the startup
 //! diagnostic and probes run, so a fault or hang anywhere in startup becomes

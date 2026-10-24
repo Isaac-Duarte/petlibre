@@ -1,4 +1,4 @@
-//! The FW08 health snapshot, built from data the firmware already has. This
+//! The health snapshot, built from data the firmware already has. This
 //! is the transport's only view of the rest of the firmware: it reads, and
 //! returns a plain value.
 
@@ -6,7 +6,7 @@ use petlibre_core::transport::{Health, Loss, Outputs, Role};
 
 use crate::{clock, net_status, network, power, sdk, startup, stopped};
 
-/// KM0 user backup register 4: the FW06 peer's boot count.
+/// KM0 user backup register 4: the peer's boot count.
 const BOOT_COUNT_REGISTER: u32 = 4;
 const FAULT_STOPPED_READBACK: u32 = 1 << 2;
 

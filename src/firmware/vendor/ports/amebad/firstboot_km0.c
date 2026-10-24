@@ -46,14 +46,14 @@ __attribute__((noinline)) void petlibre_shared_pad_power_init(void)
 u32 petlibre_amebad_flash_peer_step(u32 boot_count, u32 ticks);
 void petlibre_amebad_flash_peer_irq(VOID *data, u32 status, u32 channel);
 
-/* FW06 peer: the Rust step answers KM4's HELLO and bumps a heartbeat in backup
+/* KM0 peer: the Rust step answers KM4's HELLO and bumps a heartbeat in backup
  * register 5 every tick; IPC channel 16 parks this core in RAM for a lease.
  * The boot count lives in user backup register 4, which survives a watchdog
  * platform reset but not power loss. */
 static void petlibre_flash_peer_task(void *context)
 {
     (void)context;
-    /* Bits 16-31 belong to the FW11 trial (petlibre_trial_step). */
+    /* Bits 16-31 belong to the trial (petlibre_trial_step). */
     u32 reg = BKUP_Read(BKUP_REG4);
     u32 count = (reg + 1) & 0xFFFFU;
     BKUP_Write(BKUP_REG4, (reg & 0xFFFF0000U) | count);
@@ -71,12 +71,12 @@ __attribute__((noinline)) void petlibre_flash_peer_start(void)
                 tskIDLE_PRIORITY + 1, NULL);
 }
 
-/* FW07: on AmebaD the WLAN firmware runs on KM0 (lib_wifi_fw.a). Without
+/* On AmebaD the WLAN firmware runs on KM0 (lib_wifi_fw.a). Without
  * it the KM4 driver's firmware commands are never consumed ("fw cmd fifo
  * full", "FW Enable failed") and DHCP never reaches the access point. The
  * vendor main starts it under the same backup-register bit, which app_start
  * sets from ps_config.km0_config_wifi_enable. It only creates its tasks
- * here; they run once the scheduler starts. An FW06 park masks interrupts,
+ * here; they run once the scheduler starts. A park masks interrupts,
  * so none of its code runs while KM4 owns flash. */
 __attribute__((noinline)) void petlibre_wifi_fw_start(void)
 {
@@ -87,7 +87,7 @@ __attribute__((noinline)) void petlibre_wifi_fw_start(void)
 
 u32 petlibre_amebad_trial_decide(const u8 *bank1, const u8 *bank0, const u8 *record, u32 *reg);
 
-/* FW11 boot trial (amebad-common/src/trial.rs decides): before KM4 runs, count an
+/* Boot trial (amebad-common/src/trial.rs decides): before KM4 runs, count an
  * unconfirmed bank-1 image's boots in backup register 4 and, at the limit
  * with a valid bank 0, clear bank 1's first marker byte and reset so the
  * loader falls back to bank 0. KM4 is off, so the SDK flash lock only masks

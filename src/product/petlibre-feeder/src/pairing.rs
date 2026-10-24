@@ -1,4 +1,4 @@
-//! FW45: who may become a client, and when.
+//! Who may become a client, and when.
 //!
 //! Four ways in ([product architecture]), each needing either someone at
 //! the feeder or a client already trusted:
@@ -9,7 +9,7 @@
 //!   setup session then admits the app as an owner only if it proves the
 //!   same code (`petlibre_core::setup_code`); a press alone is not enough,
 //!   since it cannot tell the owner's phone from a relay in radio range.
-//! - **Signer:** an owner offers an Ed25519 update-signing key (FW48); a
+//! - **Signer:** an owner offers an Ed25519 update-signing key; a
 //!   Dispense press confirms it the same way.
 //! - **Invite:** a paired client mints a single-use invite that expires
 //!   after [`Config::invite_ms`]. Its secret is the PSK of the redeeming
@@ -18,7 +18,7 @@
 //!   cancels them.
 //! - **Recovery:** with the panel unlocked, holding Lock and Dispense
 //!   together opens a LAN window. A client that connects in it runs the same
-//!   exchange as BLE setup over the device API (FW47): its offer closes the
+//!   exchange as BLE setup over the device API: its offer closes the
 //!   window ([`Pairing::recovery`]) and the owner keys its code in, so a
 //!   neighbour on the LAN cannot slip in while the window is open. This is
 //!   the way back in when every client is lost; a locked panel cannot open

@@ -1,7 +1,7 @@
 //! The child processes the bench chains: `petlibre-flash`, `petlibre-local`
 //! (signing and offering an over-the-air update), `petlibre-build` (the
 //! build and review for `ota --build`), and `sigrok-cli`; and the device API
-//! session (FW47) that checks an update's result.
+//! session that checks an update's result.
 //!
 //! `petlibre-flash` runs as its own process, never linked in. Its plans bind
 //! the SHA-256 of the running executable, and that has to stay the flash

@@ -1,7 +1,7 @@
 //! Repository maintenance tasks, run as `cargo xtask <task>`.
 //!
 //! `check-repository` checks local documentation links, portable repository
-//! inputs, that no Python returns under `src/`, and the FW08 transport
+//! inputs, that no Python returns under `src/`, and the transport
 //! isolation rule. It is a maintenance check, not a secret
 //! scanner or a licensing audit.
 

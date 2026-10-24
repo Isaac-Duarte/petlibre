@@ -1,4 +1,4 @@
-//! The FW30 transient auditor on synthetic captures; no analyzer or device.
+//! The transient auditor on synthetic captures; no analyzer or device.
 
 use serde_json::{Value, json};
 

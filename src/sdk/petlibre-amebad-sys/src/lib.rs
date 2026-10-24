@@ -23,8 +23,8 @@ pub const ADC_ENABLE_BIT: u32 = 1 << 8;
 /// (SWD_CLK). While set, GPIO writes to PB3 do not reach the pad.
 pub const SWD_PMUX_BIT: u32 = 1;
 
-/// The PLAF103 board: every GPIO and ADC channel the ports use, in one place
-/// (FW50). A GPIO is `port * 32 + bit` (PA13 is 13, PB3 is 35). Roles and
+/// The PLAF103 board: every GPIO and ADC channel the ports use, in one place.
+/// A GPIO is `port * 32 + bit` (PA13 is 13, PB3 is 35). Roles and
 /// polarities are stock-derived and bench-checked where the cards say so;
 /// [device layer](../../../../docs/firmware/device-layer.md) lists what else
 /// is board-specific and where it lives.
@@ -149,7 +149,7 @@ pub const BANK0_OFFSET: u32 = 0x6000;
 pub const MARKER: [u8; 8] = *b"81958711";
 
 /// Owner-approved replacement-firmware storage: 32 sectors at
-/// 0x340000-0x360000. FW15 approved the first 16; FW44 extended it with the
+/// 0x340000-0x360000. The owner approved the first 16, then extended it with the
 /// owner's approval (October 23, 2026) for client keys, plans and the 7-day
 /// event ring. A static pass over stock 1.1.15 found no fixed or bounded
 /// computed flash access in 0x306000-0x3e8000, and every full dump of the
@@ -161,7 +161,7 @@ pub const STORAGE_SECTORS: u32 = 32;
 /// One NOR erase sector.
 pub const SECTOR_BYTES: u32 = 0x1000;
 
-/// FW45: who owns each sector of the storage region, in one place. Each
+/// Who owns each sector of the storage region, in one place. Each
 /// store keeps its sectors to itself, so a torn record is always its own.
 pub mod storage {
     use super::STORAGE_SECTORS;
@@ -179,25 +179,25 @@ pub mod storage {
         }
     }
 
-    /// The feed journal's slot pair (FW15).
+    /// The feed journal's slot pair.
     pub const JOURNAL: Sectors = Sectors { first: 0, count: 2 };
-    /// Device settings (FW15).
+    /// Device settings.
     pub const SETTINGS: Sectors = Sectors { first: 2, count: 2 };
-    /// The boot confirmation record (FW11).
+    /// The boot confirmation record.
     pub const CONFIRM: Sectors = Sectors { first: 4, count: 1 };
-    /// Wi-Fi credentials (FW25).
+    /// Wi-Fi credentials.
     pub const NET: Sectors = Sectors { first: 5, count: 2 };
-    /// The random generator's seed carried across boots (FW45).
+    /// The random generator's seed carried across boots.
     pub const SEED: Sectors = Sectors { first: 7, count: 2 };
-    /// The feeder's identity key and enrolled clients (FW45).
+    /// The feeder's identity key and enrolled clients.
     pub const CLIENTS: Sectors = Sectors { first: 9, count: 2 };
-    /// Reserved for feeding plans (FP03).
+    /// Reserved for feeding plans.
     pub const PLANS: Sectors = Sectors {
         first: 11,
         count: 2,
     };
     /// Reserved for the 7-day event ring: 11 sectors of records and one
-    /// being erased (FW47, sized by FW44).
+    /// being erased (sized by the resource budget).
     pub const EVENTS: Sectors = Sectors {
         first: 13,
         count: 12,
@@ -221,7 +221,7 @@ pub mod storage {
     const _: () = assert!(disjoint_and_inside());
 }
 
-/// FW24: samples in one codec DMA page (16 ms at 16 kHz, 16-bit mono),
+/// Samples in one codec DMA page (16 ms at 16 kHz, 16-bit mono),
 /// `PETLIBRE_AUDIO_PAGE` in `example_entry.c`.
 pub const AUDIO_PAGE_SAMPLES: usize = 256;
 /// Pages in the ring.
@@ -266,7 +266,7 @@ pub enum WifiPoll {
     Lost,
 }
 
-/// FW34: one event from the BLE peripheral's ring (`petlibre_ble.c`),
+/// One event from the BLE peripheral's ring (`petlibre_ble.c`),
 /// numbered from 1 as [`WifiEvent`] is. `kind` is one of the associated
 /// constants.
 #[repr(C)]
@@ -335,7 +335,7 @@ pub struct BleStats {
     pub connected: u32,
 }
 
-/// FW08 broker settings, from the generated credentials header the build
+/// Broker settings, from the generated credentials header the build
 /// writes into the SDK worktree (`example_entry.c`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TransportConfig {
@@ -360,7 +360,7 @@ pub enum TcpRecv {
     Closed,
 }
 
-/// FW47: what a non-blocking device API receive found.
+/// What a non-blocking device API receive found.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ApiRecv {
     Data(usize),
@@ -370,7 +370,7 @@ pub enum ApiRecv {
     Closed,
 }
 
-/// FW47: what a non-blocking accept found.
+/// What a non-blocking accept found.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Accepted {
     Socket(i32),
@@ -380,7 +380,7 @@ pub enum Accepted {
     Error,
 }
 
-/// FW47: one mDNS datagram, if one waits.
+/// One mDNS datagram, if one waits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Datagram {
     Got { len: usize, ip: u32, port: u16 },
@@ -389,7 +389,7 @@ pub enum Datagram {
 }
 
 /// The core's SysTick, which counts down at the CPU clock from `reload` to
-/// zero and FreeRTOS reloads for its tick (FW45 reads it as a noise source).
+/// zero and FreeRTOS reloads for its tick (the entropy source reads it as noise).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Systick {
     pub value: u32,

@@ -1,4 +1,4 @@
-//! FW45's admission rules against synthetic gestures and requests: setup
+//! The admission rules against synthetic gestures and requests: setup
 //! takes its code from the buttons in time, a press confirms a signer offer,
 //! invites are single-use, expire
 //! and never grant more than their issuer holds, and the recovery window

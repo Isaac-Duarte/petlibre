@@ -1,4 +1,4 @@
-//! FW45's noise measurement (the `entropy` variant): streams raw samples
+//! The noise measurement (the `entropy` variant): streams raw samples
 //! from each noise source over UART, so the host can estimate their
 //! min-entropy (SP 800-90B) before the generator claims any.
 //!

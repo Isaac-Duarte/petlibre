@@ -1,4 +1,4 @@
-//! FW10 recovery-role updater against the fake SDK: a scripted broker that
+//! Recovery-role updater against the fake SDK: a scripted broker that
 //! answers `ota/get` from a signed offer, the fake bank-1 NOR model (running
 //! from bank 0), and the KM0 peer answering HELLO through the real
 //! `park::answer`. Flash leases are not modelled here; `flash_probe` covers
@@ -620,7 +620,7 @@ fn no_offer_is_asked_again_later() {
     assert_eq!(flash.erases, 0);
 
     // Health while waiting, at most every 30 s, from bank 0 and marked as
-    // the recovery role (FW40: a stock-installed build reports).
+    // the recovery role (a stock-installed build reports).
     assert_eq!(broker.health.len(), 2, "{:?}", broker.health);
     let first = &broker.health[0];
     assert!(first.contains(r#""bank":0"#) && first.contains(r#""role":"recovery""#));

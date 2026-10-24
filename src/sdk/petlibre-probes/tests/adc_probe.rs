@@ -1,4 +1,4 @@
-//! FW14 read-only ADC probe against the fake SDK: the LP ADC enable is
+//! Read-only ADC probe against the fake SDK: the LP ADC enable is
 //! explicit and verified, a failed enable, efuse read or conversion ends the
 //! probe, and the motor pins never leave STOP.
 

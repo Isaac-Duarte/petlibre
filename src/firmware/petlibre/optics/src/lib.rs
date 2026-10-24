@@ -1,4 +1,4 @@
-//! EXPERIMENTAL FW13 bring-up firmware for the PLAF103 on the PetLibre SDK:
+//! EXPERIMENTAL bring-up firmware for the PLAF103 on the PetLibre SDK:
 //! the optics probe (`petlibre_probes::optics`), once per boot. It drives
 //! the infrared emitters and reads the food, outlet and feedback inputs,
 //! with the motor at STOP throughout.

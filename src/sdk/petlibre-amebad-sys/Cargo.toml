@@ -15,7 +15,7 @@ sdk = ["dep:bindgen"]
 # Select the core; only KM4 calls the SDK.
 km0 = []
 km4 = []
-# FW34: the BLE peripheral's calls; only a firmware that declares
+# The BLE peripheral's calls; only a firmware that declares
 # `bluetooth = true` links `petlibre_ble.c`, which defines them.
 bluetooth = []
 

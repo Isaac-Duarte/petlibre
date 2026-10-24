@@ -94,17 +94,17 @@ const SHARE_PAD_HELPER: u64 = 0x3ff;
 // Each probe's record format, as linked into the image, binds its policy.
 const SUPERVISION_MARK: &[u8] = b"PLTMR1 open board=";
 const FLASH_MARK: &[u8] = b"PLFLS1 hello authority=";
-/// FW06 stage C park round trip follows READY.
+/// Park round trip follows READY.
 const PARK_MARK: &[u8] = b"PLPRK1 start mode=";
-/// FW06 stage D mediated flash read follows READY.
+/// Mediated flash read follows READY.
 const READ_MARK: &[u8] = b"PLRDS1 start marker=";
-/// FW06 stage E owner-approved scratch-sector write follows READY.
+/// Owner-approved scratch-sector write follows READY.
 const WRITE_MARK: &[u8] = b"PLWRS1 start marker=";
-/// FW15 flash journal on NOR follows READY.
+/// Flash journal on NOR follows READY.
 const JOURNAL_MARK: &[u8] = b"PLJNL1 start mode=";
-/// FW15 settings-store power-cut stress follows READY.
+/// Settings-store power-cut stress follows READY.
 const SETTINGS_MARK: &[u8] = b"PLSET1 start marker=";
-/// FW14 read-only power-input samples follow the LED probe.
+/// Read-only power-input samples follow the LED probe.
 pub(crate) const ADC_MARK: &[u8] = b"PLADC1 open outputs=";
 /// fw14-adc-v2 samples add internal channel 10.
 const ADC_SUPPLY_MARK: &[u8] = b" supply=";
@@ -112,12 +112,12 @@ const WIFI_MARK: &[u8] = b"PLWIF1 start created=";
 const WIFI_JOIN_MARK: &[u8] = b"PLWIF2 start created=";
 const WIFI_DNS_MARK: &[u8] = b"PLWIF3 start created=";
 const TRANSPORT_MARK: &[u8] = b"PLMQT1 start created=";
-/// FW11 trial test: the watchdog resets it after startup.
+/// Trial test: the watchdog resets it after startup.
 const TRIAL_RESET_MARK: &[u8] = b"PLTRL1 test=reset watchdog=";
 const OPTICS_MARK: &[u8] = b"PLOPT1 start created=";
 /// fw13-optics-v2: 5 s windows.
 const OPTICS_PLAN2_MARK: &[u8] = b" plan=2\r\n";
-/// FW16 single supervised pulse follows the LED probe.
+/// Single supervised pulse follows the LED probe.
 const MOTION_MARK: &[u8] = b"PLMOT1 start created=";
 /// The KM0 printf format of the before-KM4 (v3) shared-pad record, as linked.
 const POWER_V3_FORMAT: &[u8] = b"after_pad=%08x ext_a=%08x,%08x,%08x,%08x";

@@ -1,4 +1,4 @@
-//! FW10 offer check in the normal role (booted from bank 1), after FW11
+//! Offer check in the normal role (booted from bank 1), after
 //! confirmation.
 //!
 //! Every `CHECK_MS` it opens a short MQTT session of its own, as

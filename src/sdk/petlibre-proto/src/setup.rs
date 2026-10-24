@@ -1,4 +1,4 @@
-//! FW45 BLE setup: a new client's first session with a feeder in setup mode.
+//! BLE setup: a new client's first session with a feeder in setup mode.
 //!
 //! The client (the app, or the owner's `petlibre` CLI) runs a Noise XX
 //! handshake as initiator over the feeder's setup characteristic, with

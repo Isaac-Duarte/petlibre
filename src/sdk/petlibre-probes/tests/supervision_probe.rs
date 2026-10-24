@@ -1,4 +1,4 @@
-//! FW05 supervision probe against the fake SDK: timer and SYSTIMER samples,
+//! Supervision probe against the fake SDK: timer and SYSTIMER samples,
 //! a task stall, then a supervised watchdog reset. A backup-register marker
 //! or a nonzero boot reason must skip the probe, so a reset cannot repeat it.
 

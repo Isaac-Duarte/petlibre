@@ -1,4 +1,4 @@
-//! The FW14 ADC auditor's checks.
+//! The ADC auditor's checks.
 
 use serde_json::{Value, json};
 

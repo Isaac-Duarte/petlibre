@@ -1,4 +1,4 @@
-//! FW47 device API, the client's side ([`petlibre_proto::api`]).
+//! Device API, the client's side ([`petlibre_proto::api`]).
 //!
 //! The caller owns the TCP connection and moves bytes; this module frames,
 //! seals and checks them:

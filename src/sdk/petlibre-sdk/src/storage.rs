@@ -13,10 +13,10 @@ use petlibre_hal::sdk;
 
 /// Settings slots within the storage region: sectors 2 and 3 (0x342000).
 pub const SETTINGS_BASE: u32 = sdk::storage::SETTINGS.first;
-/// FW45: the generator's seed across boots, and the identity and clients.
+/// The generator's seed across boots, and the identity and clients.
 pub const SEED_BASE: u32 = sdk::storage::SEED.first;
 pub const CLIENTS_BASE: u32 = sdk::storage::CLIENTS.first;
-/// FW47: the event ring.
+/// The event ring.
 pub const EVENTS_BASE: u32 = sdk::storage::EVENTS.first;
 pub const EVENTS_UNITS: u32 = sdk::storage::EVENTS.count;
 /// Installation binding for the research unit's settings.

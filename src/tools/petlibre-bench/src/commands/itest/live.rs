@@ -189,8 +189,9 @@ impl<'b> LiveRig<'b> {
             if !on {
                 self.note("Feeder supply was off; switching it on");
                 self.bench.set(STRAP, false)?;
-                self.bench.set(POWER, true)?;
             }
+            // Also connects a powered feeder's UART, which may be isolated.
+            self.bench.power_on()?;
         }
 
         let (root, name) = (self.bench.root.clone(), self.name.clone());
@@ -469,7 +470,7 @@ impl Rig for LiveRig<'_> {
         self.note("  Cold boot: supply off, then on");
         self.bench.cut_power()?;
         (self.bench.sleep)(self.bench.off_seconds)?;
-        self.bench.set(POWER, true)
+        self.bench.power_on()
     }
 
     fn uart(&mut self) -> Result<Vec<u8>> {

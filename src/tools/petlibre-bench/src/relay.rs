@@ -1,6 +1,6 @@
 //! DSD TECH SH-UR04A relay board: CP2102, 9600 8N1, `AT+CHn=0/1` and `AT+CHn=?`.
 //!
-//! The bench commands drive the feeder's power and boot strap through
+//! The bench commands drive the feeder's power, boot strap and UART lines through
 //! [`Relay`]. Every command must come back with `OK`, and a set must echo the
 //! exact channel and value; anything else is an error, so a sequence stops
 //! rather than assuming a relay moved. `FakeBoard` stands in for the board
@@ -15,7 +15,11 @@ use crate::{Result, require};
 pub(crate) const POWER: u8 = 1;
 /// Holds feeder TX to GND through the 4.7 kΩ strap.
 pub(crate) const STRAP: u8 = 2;
-pub(crate) const SPARES: [u8; 2] = [3, 4];
+/// The UART adapter's two lines, each through one relay: 3 carries adapter
+/// TXD to the feeder's RX, 4 the feeder's TX to adapter RXD (the strap stays
+/// on the feeder side). A powered adapter holds both lines high, which can
+/// back-power a feeder that is off, so they open while it is.
+pub(crate) const UART: [u8; 2] = [3, 4];
 
 /// One command line out, one reply line back.
 pub(crate) trait Link: Send {

@@ -19,9 +19,10 @@ A DSD TECH SH-UR04A USB relay board (CP2102 serial, 9600 8N1) adds two switches 
 | --- | --- | --- | --- |
 | 1 | COM1, NO1 | In series with USB 5V between two screw-terminal USB-A adapters; GND, D+ and D− pass straight through | Feeder power |
 | 2 | COM2, NO2 | Feeder TX side of the 4.7 kΩ strap resistor, and GND | Replaces the loader-entry button |
-| 3, 4 | — | Unused | Spare |
+| 3 | COM3, NO3 | In series with adapter TXD → feeder RX | UART into the feeder |
+| 4 | COM4, NO4 | In series with feeder TX → adapter RXD, on the adapter side of the strap | UART out of the feeder |
 
-Normally-open contacts leave the feeder off and the strap released when the relay board loses USB. The board answers `AT` with `OK`; `AT+CHn=1`, `AT+CHn=0` and `AT+CHn=?` set and query channel *n*. Its front buttons toggle the same state, which queries report.
+Normally-open contacts leave the feeder off and the strap released when the relay board loses USB. A powered adapter holds its TXD and RXD lines high, which can back-power a feeder that is off through its UART pins, so relays 3 and 4 isolate them: every power cut opens them after the supply, and every power-on closes them just before it. `capture` connects them only on a powered feeder. `--uart-when-off connected` leaves them closed through the cuts, as the bench was before they were wired, for comparison. GND stays connected. `ota`, and `itest` without `--power`, leave the relay board alone, so they need a feeder the bench powered (which connected the UART). The board answers `AT` with `OK`; `AT+CHn=1`, `AT+CHn=0` and `AT+CHn=?` set and query channel *n*. Its front buttons toggle the same state, which queries report.
 
 The relay board also enumerates as a USB serial port and can take the name the UART adapter used to have. Use `/dev/serial/by-id/` paths. They live in the ignored `private/bench.json` with the pinned baseline and ROM report:
 
@@ -50,7 +51,6 @@ The relay board also enumerates as a USB serial port and can take the name the U
 | `give-way-prepare NAME`, `give-way-execute NAME` | The same pair for `give-way` (`--fallback` names bank 0's frozen review) |
 | `ota NAME --review DIR`, `ota NAME --build` | With `--build`, first runs `petlibre-build` and the review freeze. Signs the review with `petlibre-local ota-sign`, offers it with `ota-offer` to the server already running, takes receive-only UART captures until the new build confirms, falls back or `--minutes` (20) pass, then polls `petlibre-local status` until the server's health shows the build. Prints a timing summary. Never touches power or opens the relay board |
 | `itest NAME` | Real-device integration scenarios ([below](#integration-suite)): runs its own hotspot, `serve` and receive-only UART capture, installs over the air, and restores the bench at the end. Opens the relay board only with `--power`, for cold boots |
-| `demo [PATTERN…]` | Clicks spare relays 3 and 4 (chase, blink, heartbeat, Morse); reads but never sets power or the strap; refuses while another bench command runs; at most 120 toggles, and both spares end off |
 
 `petlibre-bench <command> --help` lists the flags. `flash-prepare`/`flash-execute` take the updater's `--bank`, `--source`, `--original-read`, `--target`, `--interrupted` and `--restore-marker`, and `--attended-motion` for a target whose manifest names a motion policy.
 

@@ -31,7 +31,17 @@ image, bench state, next task, or acceptance evidence changes.
   - **Next manifest version:** 140.
 - **Bench state:** feeder on, hotspot as before, no server.
 - **Next:**
-  - Test UART back power as the cause of the bank-0 anomaly. The adapter holds its lines high while the feeder is off. Owner: put the adapter's TXD and RXD lines on spare relays 3 and 4, with GND left connected. Then the bench opens them for each power-off, and `ota-recovery` runs repeatedly at 2 s off with the UART switched out and left in ([device API](docs/firmware/device-api.md#left)).
+  - Test UART back power as the cause of the bank-0 anomaly: `ota-recovery` repeated at 2 s off, isolated (the default) and with `--uart-when-off connected` ([device API](docs/firmware/device-api.md#left)).
+- **Bench, later the same evening:**
+  - The owner wired the adapter's TXD and RXD lines through relays 3 and 4; GND stays common.
+  - `petlibre-bench` opens those relays after every power cut and closes them just before power-on.
+  - `--uart-when-off connected` keeps the old behaviour, for comparison.
+  - The `demo` command is gone.
+  - All four relay paths were checked on hardware:
+    - with the relays open, a cold boot gave 0 bytes (`relaytest-05-open-boot`);
+    - closed, the capture started at the ROM's first line (`relaytest-06-bench`);
+    - the loader's bounded 4 KiB read went through relay 3 (`relaytest-07-small2`).
+  - A wiring diagram for a bench PCB is at `private/bench-wiring.svg`.
   - `stock-roundtrip` with the owner present (`--stock`).
 
 **October 24, latest: firmware cleanups (static analysis, host tests and image builds; nothing run on the bench; committed on master, not pushed).**

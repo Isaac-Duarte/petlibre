@@ -4,8 +4,7 @@
 //!
 //! Every subcommand except `status` is a physical bench operation. All but
 //! `status` record their steps under `private/bench-status`, which the page
-//! reads; `demo` refuses to start while another command is recorded as
-//! running there.
+//! reads.
 
 #![forbid(unsafe_code)]
 
@@ -16,12 +15,12 @@ use std::sync::atomic::Ordering;
 use clap::{Parser, Subcommand};
 
 use wellfed_bench::commands::{
-    self, Bench, DemoArgs, ExecuteArgs, GiveWayArgs, GiveWayExecuteArgs, ItestArgs, OtaArgs,
-    StockArgs, StockExecuteArgs, StockOtaArgs, TransientArgs, UpdateArgs, check_name, pattern_name,
+    self, Bench, ExecuteArgs, GiveWayArgs, GiveWayExecuteArgs, ItestArgs, OtaArgs, StockArgs,
+    StockExecuteArgs, StockOtaArgs, TransientArgs, UartWhenOff, UpdateArgs, check_name,
 };
 use wellfed_bench::config::{Config, STATUS_DIR};
 use wellfed_bench::relay::Relay;
-use wellfed_bench::status::{self, Status};
+use wellfed_bench::status::Status;
 use wellfed_bench::tools::{Processes, default_build_bin, default_flash_bin, default_local_bin};
 use wellfed_bench::{Error, INTERRUPTED};
 
@@ -44,6 +43,9 @@ struct Cli {
     /// Power-off time before a cold boot, in seconds.
     #[arg(long, global = true, default_value_t = 2.0)]
     off_seconds: f64,
+    /// What the UART lines (relays 3 and 4) do while the feeder is off.
+    #[arg(long, global = true, value_enum, default_value_t = UartWhenOff::Isolated)]
+    uart_when_off: UartWhenOff,
     /// The wellfed-flash binary (default: beside this one).
     #[arg(long, global = true)]
     flash_bin: Option<PathBuf>,
@@ -132,9 +134,6 @@ enum Command {
     /// UART and never changes routing (`wellfed-local network apply` is the
     /// operator's).
     StockOta(StockOtaArgs),
-
-    /// Click the spare relays 3 and 4 in patterns; never switches power or the strap.
-    Demo(DemoArgs),
 }
 
 impl Command {
@@ -157,13 +156,12 @@ impl Command {
             Self::Ota(_) => "ota",
             Self::Itest(_) => "itest",
             Self::StockOta(_) => "stock-ota",
-            Self::Demo(_) => "demo",
         }
     }
 
     fn name(&self) -> Option<&str> {
         match self {
-            Self::Status | Self::Off | Self::On | Self::Demo(_) => None,
+            Self::Status | Self::Off | Self::On => None,
             Self::Capture { name, .. }
             | Self::Boot { name, .. }
             | Self::Loader { name }
@@ -242,18 +240,10 @@ fn run(cli: Cli) -> wellfed_bench::Result<u8> {
         check_name(name)?;
     }
 
-    // The demo refuses to click relays beside another bench command.
     let status_dir = root.join(STATUS_DIR);
-    if matches!(command, Command::Demo(_))
-        && let Some(running) = status::busy(&status_dir)
-    {
-        return Err(Error::Bench(format!(
-            "Bench command '{running}' is running; try again when it ends"
-        )));
-    }
 
     let local_bin = tools.local_bin.clone();
-    let mut bench = open_bench(root, tools, &command, cli.off_seconds)?;
+    let mut bench = open_bench(root, tools, &command, cli.off_seconds, cli.uart_when_off)?;
     // `status` only reads, so it leaves no status record behind.
     if !matches!(command, Command::Status) {
         record_start(&mut bench, &command, status_dir)?;
@@ -304,6 +294,7 @@ fn open_bench(
     tools: Processes,
     command: &Command,
     off_seconds: f64,
+    uart_when_off: UartWhenOff,
 ) -> wellfed_bench::Result<Bench> {
     let config = Config::load(&root)?;
     // The over-the-air loop only captures, so it leaves the relay board free;
@@ -323,6 +314,7 @@ fn open_bench(
         tools: Box::new(tools),
         sleep: wellfed_bench::sleep,
         off_seconds,
+        uart_when_off,
     })
 }
 
@@ -335,10 +327,6 @@ fn record_start(
 ) -> wellfed_bench::Result<()> {
     let label = command.label();
     let steps: Vec<&str> = match command {
-        Command::Demo(args) => commands::demo_patterns(args)
-            .into_iter()
-            .map(pattern_name)
-            .collect(),
         Command::Capture { .. } => vec!["capture"],
         Command::Ota(args) => commands::ota::steps(args.source()),
         Command::Itest(args) => commands::itest::steps(args)?,
@@ -390,7 +378,6 @@ fn dispatch(
         Command::Ota(args) => bench.ota(args),
         Command::Itest(args) => bench.itest(args, local_bin),
         Command::StockOta(args) => bench.stock_ota(args, local_bin),
-        Command::Demo(args) => bench.demo(args),
     }
 }
 

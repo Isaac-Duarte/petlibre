@@ -334,6 +334,7 @@ fn rig() -> Rig {
         tools: Box::new(tools.clone()),
         sleep: |_| Ok(()),
         off_seconds: 2.0,
+        uart_when_off: UartWhenOff::Isolated,
     };
 
     Rig {
@@ -381,9 +382,47 @@ fn loader_holds_strap_across_power_on_and_leaves_feeder_powered() {
     assert_eq!(rig.tools.0.borrow().observed, [out]);
     assert_eq!(
         rig.board.log(),
-        [(2, false), (1, false), (2, true), (1, true), (2, false)]
+        [
+            (2, false),
+            (1, false),
+            (3, false),
+            (4, false),
+            (2, true),
+            (3, true),
+            (4, true),
+            (1, true),
+            (2, false)
+        ]
     );
-    assert_eq!(rig.board.state(), [true, false, false, false]);
+    assert_eq!(rig.board.state(), [true, false, true, true]);
+}
+
+#[test]
+fn the_uart_is_isolated_while_off_unless_asked_to_stay_connected() {
+    let mut rig = rig();
+    rig.bench.off().unwrap();
+    assert_eq!(rig.board.state(), [false; 4]);
+    rig.bench.on().unwrap();
+    assert_eq!(rig.board.state(), [true, false, true, true]);
+
+    rig.bench.uart_when_off = UartWhenOff::Connected;
+    rig.bench.off().unwrap();
+    assert_eq!(rig.board.state(), [false, false, true, true]);
+}
+
+#[test]
+fn a_capture_connects_a_powered_feeders_uart_only() {
+    let mut rig = rig();
+    rig.bench.capture("unpowered", 1.0).unwrap();
+    assert_eq!(
+        rig.board.state(),
+        [false; 4],
+        "an unpowered feeder stays isolated"
+    );
+
+    rig.board.inner.lock().unwrap().on[1] = true;
+    rig.bench.capture("powered", 1.0).unwrap();
+    assert_eq!(rig.board.state(), [true, false, true, true]);
 }
 
 #[test]
@@ -787,10 +826,20 @@ fn boot_cycles_power_on_after_arming_and_end_off() {
         0
     );
 
-    // Each cycle: strap released and power off, then power on, then off.
+    // Each cycle: strap released, power off and the UART isolated, then the
+    // UART connected and power on, then off.
     assert_eq!(
-        rig.board.log()[..4],
-        [(2, false), (1, false), (1, true), (2, false)]
+        rig.board.log()[..8],
+        [
+            (2, false),
+            (1, false),
+            (3, false),
+            (4, false),
+            (3, true),
+            (4, true),
+            (1, true),
+            (2, false)
+        ]
     );
     assert!(!rig.board.state()[0]);
 
@@ -819,8 +868,18 @@ fn loader_cycles_hold_the_strap_across_power_on() {
         .unwrap();
 
     assert_eq!(
-        rig.board.log()[..5],
-        [(2, false), (1, false), (2, true), (1, true), (2, false)]
+        rig.board.log()[..9],
+        [
+            (2, false),
+            (1, false),
+            (3, false),
+            (4, false),
+            (2, true),
+            (3, true),
+            (4, true),
+            (1, true),
+            (2, false)
+        ]
     );
     assert_eq!(rig.board.state()[..2], [false, false]);
 }
@@ -850,43 +909,6 @@ fn a_failed_capture_stops_with_power_off() {
             .is_err()
     );
     assert_eq!(rig.board.state()[..2], [false, false]);
-}
-
-#[test]
-fn demo_switches_only_spares_and_ends_them_off() {
-    let mut rig = rig();
-    rig.bench.on().unwrap();
-    let before = rig.board.log().len();
-    let args = DemoArgs {
-        patterns: vec![],
-        speed: 1.0,
-        text: "SOS".into(),
-    };
-
-    assert_eq!(rig.bench.demo(&args).unwrap(), 0);
-
-    let log = rig.board.log();
-    assert!(
-        log[before..]
-            .iter()
-            .all(|(channel, _)| SPARES.contains(channel))
-    );
-    assert_eq!(rig.board.state(), [true, false, false, false]);
-}
-
-#[test]
-fn demo_stops_at_the_toggle_cap_and_still_ends_off() {
-    let mut rig = rig();
-    let args = DemoArgs {
-        patterns: vec![Pattern::Morse],
-        speed: 1.0,
-        // Each E is two toggles: more than the cap allows.
-        text: "E".repeat(70),
-    };
-
-    let error = rig.bench.demo(&args).unwrap_err();
-    assert!(error.to_string().contains("Toggle cap"));
-    assert_eq!(rig.board.state()[2..], [false, false]);
 }
 
 #[test]

@@ -22,7 +22,7 @@ use wellfed_formats::transients::{self, TransientCycle, TransientsManifest};
 use serde::Deserialize;
 
 use crate::config::{CAPTURES, Config, FLASH_BACKUPS, VERIFICATION};
-use crate::relay::{POWER, Relay, SPARES, STRAP};
+use crate::relay::{POWER, Relay, STRAP, UART};
 use crate::status::{Status, relative};
 use crate::tools::{Analyzer, Observation, Observer, Tools};
 use crate::{Error, Result, now, require};
@@ -149,27 +149,6 @@ pub struct TransientArgs {
     pub samplerate: u64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum Pattern {
-    Chase,
-    Blink,
-    Heartbeat,
-    Morse,
-}
-
-#[derive(Debug, Clone, Args)]
-pub struct DemoArgs {
-    /// Patterns to show; default all, in order.
-    #[arg(value_enum)]
-    pub patterns: Vec<Pattern>,
-    /// Faster above 1 (rate-limited).
-    #[arg(long, default_value_t = 1.0)]
-    pub speed: f64,
-    /// Morse message on relay 3.
-    #[arg(long, default_value = "OK")]
-    pub text: String,
-}
-
 /// Evidence locations for one session name.
 pub(crate) struct Paths {
     pub loader: PathBuf,
@@ -214,6 +193,16 @@ fn argv(head: &[&str], parts: &[&[String]]) -> Vec<String> {
         .collect()
 }
 
+/// What the UART lines do while the feeder is off.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+pub enum UartWhenOff {
+    /// Relays 3 and 4 open, so the adapter cannot back-power the feeder.
+    #[default]
+    Isolated,
+    /// Left connected, as the bench was before they were wired: to compare.
+    Connected,
+}
+
 pub struct Bench {
     pub root: PathBuf,
     pub config: Config,
@@ -223,6 +212,7 @@ pub struct Bench {
     /// Interruptible in production; instant in tests.
     pub sleep: fn(f64) -> Result<()>,
     pub off_seconds: f64,
+    pub uart_when_off: UartWhenOff,
 }
 
 impl Bench {
@@ -242,10 +232,31 @@ impl Bench {
         Ok(on)
     }
 
-    /// Release the strap and cut power, with no wait: safe in cleanup paths.
+    /// Release the strap and cut power, then isolate the UART, with no wait:
+    /// safe in cleanup paths.
     pub(crate) fn cut_power(&mut self) -> Result<()> {
         self.set(STRAP, false)?;
-        self.set(POWER, false)
+        self.set(POWER, false)?;
+        if self.uart_when_off == UartWhenOff::Isolated {
+            for channel in UART {
+                self.set(channel, false)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Connect the UART, then power the feeder. The lines go live a relay's
+    /// switching time before the supply, so the ROM's first bytes are kept.
+    pub(crate) fn power_on(&mut self) -> Result<()> {
+        self.connect_uart()?;
+        self.set(POWER, true)
+    }
+
+    fn connect_uart(&mut self) -> Result<()> {
+        for channel in UART {
+            self.set(channel, true)?;
+        }
+        Ok(())
     }
 
     fn power_off(&mut self, seconds: f64) -> Result<()> {
@@ -317,7 +328,7 @@ impl Bench {
 
     pub fn on(&mut self) -> Result<u8> {
         self.set(STRAP, false)?;
-        self.set(POWER, true)?;
+        self.power_on()?;
         Ok(0)
     }
 
@@ -326,10 +337,14 @@ impl Bench {
         Ok(0)
     }
 
-    /// Record the running feeder without touching power.
+    /// Record the running feeder without touching power. A powered feeder's
+    /// UART is connected first; an unpowered one's stays isolated.
     pub fn capture(&mut self, name: &str, seconds: f64) -> Result<u8> {
         let output = self.root.join(CAPTURES).join(name);
         self.fresh(&output)?;
+        if self.get(POWER)? {
+            self.connect_uart()?;
+        }
         let mut observer = self.start_observer(&output, seconds)?;
         let result = self.finish_observer(observer.as_mut())?;
         say!("Captured {} bytes in {}", result.bytes, self.rel(&output));
@@ -342,7 +357,7 @@ impl Bench {
         self.fresh(output)?;
         self.power_off(self.off_seconds)?;
         let mut observer = self.start_observer(output, seconds)?;
-        if let Err(error) = self.set(POWER, true) {
+        if let Err(error) = self.power_on() {
             observer.kill();
             return Err(error);
         }
@@ -377,7 +392,7 @@ impl Bench {
         // than leave the feeder strapped or half in the loader.
         let entered = (|| {
             self.set(STRAP, true)?;
-            self.set(POWER, true)?;
+            self.power_on()?;
             (self.sleep)(STRAP_SECONDS)?;
             self.set(STRAP, false)?;
             let result = self.finish_observer(observer.as_mut())?;
@@ -520,11 +535,11 @@ impl Bench {
         let powered = now();
         if args.mode == TransientMode::Loader {
             self.set(STRAP, true)?;
-            self.set(POWER, true)?;
+            self.power_on()?;
             (self.sleep)(STRAP_SECONDS)?;
             self.set(STRAP, false)?;
         } else {
-            self.set(POWER, true)?;
+            self.power_on()?;
         }
 
         let code = analyzer.wait(Duration::from_secs_f64(args.seconds + 30.0))?;
@@ -1027,59 +1042,6 @@ impl Bench {
         );
         Ok(0)
     }
-
-    /// Click the spare relays; power and the strap are read, never set.
-    pub fn demo(&mut self, args: &DemoArgs) -> Result<u8> {
-        let power = self.get(POWER)?;
-        let strap = self.get(STRAP)?;
-        say!(
-            "Feeder power {}, strap {}: left as is",
-            if power { "on" } else { "off" },
-            if strap { "held" } else { "released" }
-        );
-
-        let patterns = demo_patterns(args);
-        let mut show = Show {
-            bench: self,
-            step: (0.25 / args.speed.max(f64::MIN_POSITIVE)).max(MIN_STEP),
-            toggles: 0,
-            on: [false; 2],
-        };
-
-        let shown = (|| {
-            for pattern in &patterns {
-                let label = pattern_name(*pattern);
-                show.bench.status.step(label);
-                say!("{label}...");
-                match pattern {
-                    Pattern::Chase => show.chase(4)?,
-                    Pattern::Blink => show.blink(3)?,
-                    Pattern::Heartbeat => show.heartbeat(3)?,
-                    Pattern::Morse => show.morse(&args.text)?,
-                }
-            }
-            Ok(())
-        })();
-        let toggles = show.toggles;
-
-        // Both spares end off whatever happened; try each even if one fails.
-        let mut failure = shown.err();
-        for channel in SPARES {
-            if let Err(error) = self.set(channel, false) {
-                failure = Some(Error::Bench(format!(
-                    "Spare {channel} may still be on: {error}"
-                )));
-            }
-        }
-
-        match failure {
-            Some(error) => Err(error),
-            None => {
-                say!("Done: {toggles} toggles");
-                Ok(0)
-            }
-        }
-    }
 }
 
 /// The execute command matching a prepare: same evidence flags, plus the hash.
@@ -1196,167 +1158,6 @@ pub fn steps(command: &str) -> &'static [&'static str] {
             ota::HEALTH_STEP,
         ],
         _ => &[],
-    }
-}
-
-/// Seconds between toggles; the board clicks audibly.
-const MIN_STEP: f64 = 0.12;
-/// Per run, to bound contact wear.
-const MAX_TOGGLES: u32 = 120;
-
-pub fn pattern_name(pattern: Pattern) -> &'static str {
-    match pattern {
-        Pattern::Chase => "chase",
-        Pattern::Blink => "blink",
-        Pattern::Heartbeat => "heartbeat",
-        Pattern::Morse => "morse",
-    }
-}
-
-pub fn demo_patterns(args: &DemoArgs) -> Vec<Pattern> {
-    if args.patterns.is_empty() {
-        vec![
-            Pattern::Chase,
-            Pattern::Blink,
-            Pattern::Heartbeat,
-            Pattern::Morse,
-        ]
-    } else {
-        args.patterns.clone()
-    }
-}
-
-fn morse(letter: char) -> &'static str {
-    match letter {
-        'A' => ".-",
-        'B' => "-...",
-        'C' => "-.-.",
-        'D' => "-..",
-        'E' => ".",
-        'F' => "..-.",
-        'G' => "--.",
-        'H' => "....",
-        'I' => "..",
-        'J' => ".---",
-        'K' => "-.-",
-        'L' => ".-..",
-        'M' => "--",
-        'N' => "-.",
-        'O' => "---",
-        'P' => ".--.",
-        'Q' => "--.-",
-        'R' => ".-.",
-        'S' => "...",
-        'T' => "-",
-        'U' => "..-",
-        'V' => "...-",
-        'W' => ".--",
-        'X' => "-..-",
-        'Y' => "-.--",
-        'Z' => "--..",
-        ' ' => " ",
-        _ => "",
-    }
-}
-
-struct Show<'a> {
-    bench: &'a mut Bench,
-    step: f64,
-    toggles: u32,
-    on: [bool; 2],
-}
-
-/// Which spare relays a step of a pattern holds on.
-#[derive(Clone, Copy)]
-enum Lit {
-    Neither,
-    Third,
-    Fourth,
-    Both,
-}
-
-impl Lit {
-    /// Relay 3's state, then relay 4's.
-    fn states(self) -> (bool, bool) {
-        match self {
-            Self::Neither => (false, false),
-            Self::Third => (true, false),
-            Self::Fourth => (false, true),
-            Self::Both => (true, true),
-        }
-    }
-}
-
-impl Show<'_> {
-    fn set(&mut self, channel: u8, on: bool, hold: f64) -> Result<()> {
-        let index = SPARES
-            .iter()
-            .position(|spare| *spare == channel)
-            .ok_or_else(|| {
-                Error::Bench(format!(
-                    "Relay {channel} is not a spare; the demo never switches it"
-                ))
-            })?;
-
-        // Only actual changes count toward the cap; a repeat is just a hold.
-        if self.on[index] != on {
-            require(
-                self.toggles < MAX_TOGGLES,
-                format!("Toggle cap ({MAX_TOGGLES}) reached"),
-            )?;
-            self.bench.set(channel, on)?;
-            self.on[index] = on;
-            self.toggles += 1;
-        }
-        (self.bench.sleep)(self.step * hold)
-    }
-
-    /// Set both spares to `lit`, then wait `hold` steps.
-    fn hold(&mut self, lit: Lit, hold: f64) -> Result<()> {
-        let (third, fourth) = lit.states();
-        self.set(3, third, 0.0)?;
-        self.set(4, fourth, hold)
-    }
-
-    fn chase(&mut self, rounds: u32) -> Result<()> {
-        for _ in 0..rounds {
-            self.hold(Lit::Third, 1.0)?;
-            self.hold(Lit::Fourth, 1.0)?;
-        }
-        self.hold(Lit::Neither, 1.0)
-    }
-
-    fn blink(&mut self, times: u32) -> Result<()> {
-        for _ in 0..times {
-            self.hold(Lit::Both, 2.0)?;
-            self.hold(Lit::Neither, 2.0)?;
-        }
-        Ok(())
-    }
-
-    fn heartbeat(&mut self, beats: u32) -> Result<()> {
-        for _ in 0..beats {
-            self.hold(Lit::Both, 0.6)?;
-            self.hold(Lit::Neither, 0.6)?;
-            self.hold(Lit::Both, 0.6)?;
-            self.hold(Lit::Neither, 4.0)?;
-        }
-        Ok(())
-    }
-
-    fn morse(&mut self, text: &str) -> Result<()> {
-        for letter in text.to_uppercase().chars() {
-            for symbol in morse(letter).chars() {
-                if symbol == ' ' {
-                    (self.bench.sleep)(self.step * 4.0)?;
-                    continue;
-                }
-                self.set(3, true, if symbol == '.' { 1.0 } else { 3.0 })?;
-                self.set(3, false, 1.0)?;
-            }
-            (self.bench.sleep)(self.step * 2.0)?;
-        }
-        Ok(())
     }
 }
 

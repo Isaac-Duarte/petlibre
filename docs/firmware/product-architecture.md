@@ -53,8 +53,8 @@ The owner's target (Oct 23, 2026): the Petlibro experience, fully open and usabl
 In code:
 
 - **SDK (`src/sdk/`):** mechanisms only. The runtime, clock and time sources, journal, feeding owner, buttons, event log, Noise transport, BLE setup mode and updater.
-- **`petlibre-feeder`:** a `no_std` library with the product policy. Schedules, child lock, alerts, the history policy, and the request and entity model the API exposes. It is host-tested, and the server's simulator can reuse it.
-- **Firmware (`src/firmware/petlibre/feeder`):** the PLAF103's glue between the two. Another model gets its own thin firmware.
+- **`petlibre-feeder` (`src/product/petlibre-feeder`):** a `no_std` library with the product policy. Schedules, child lock, alerts, the history policy, and the request and entity model the API exposes. It is host-tested, and the server's simulator can reuse it.
+- **Firmware (`src/firmware/petlibre/feeder`):** the PLAF103's glue between the two. Another model gets its own thin firmware. It exists since FP11 with the panel's owner as its one loop task; the other owners join that loop.
 - **`petlibre-client`:** a sans-IO Rust core. It turns bytes in into bytes out (the Noise handshake, pairing, invites, requests, event-cursor sync and the installer's steps) and never opens a socket or a radio. The server drives it with tokio, the Android app with Dart IO, and WASM can run it later.
 - **`petlibre-server`:** the owner's server. Shared pieces (the Noise client, the request types, the release and signing code) come out of `petlibre-local` and `petlibre-bench` into libraries. `petlibre-local` stays the bench and stock-protocol tool, and gets simpler as those pieces leave.
 

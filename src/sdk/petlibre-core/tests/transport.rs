@@ -368,6 +368,7 @@ fn requests_parse_only_the_fixed_shape() {
             settings: None,
             wifi: None,
             tune: None,
+            lock: None,
             auth: None
         })
     );
@@ -382,6 +383,7 @@ fn requests_parse_only_the_fixed_shape() {
             settings: None,
             wifi: None,
             tune: None,
+            lock: None,
             auth: None
         })
     );
@@ -396,6 +398,7 @@ fn requests_parse_only_the_fixed_shape() {
             settings: None,
             wifi: None,
             tune: None,
+            lock: None,
             auth: None
         })
     );
@@ -602,6 +605,7 @@ fn replies_never_echo_unsupported_names() {
             settings: None,
             wifi: None,
             tune: None,
+            lock: None,
             auth: None,
         },
         5,
@@ -622,6 +626,7 @@ fn replies_never_echo_unsupported_names() {
             settings: None,
             wifi: None,
             tune: None,
+            lock: None,
             auth: None,
         },
         5,
@@ -642,6 +647,7 @@ fn replies_never_echo_unsupported_names() {
             settings: None,
             wifi: None,
             tune: None,
+            lock: None,
             auth: None,
         },
         5,
@@ -780,6 +786,7 @@ fn time_requests_carry_exactly_their_integer_fields() {
             settings: None,
             wifi: None,
             tune: None,
+            lock: None,
             auth: None,
         })
     );
@@ -830,6 +837,7 @@ fn time_replies_report_the_jump_or_the_refusal() {
         settings: None,
         wifi: None,
         tune: None,
+        lock: None,
         auth: None,
     };
     let mut buf = [0; MAX_REQUEST];
@@ -1093,6 +1101,66 @@ fn play_requests_name_one_known_tune() {
         let mut out = Buffer::new(&mut buf);
         write_play_reply(&mut out, &request, result).unwrap();
         let expected = format!(r#"{{"id":"{ID}","op":"play",{tail}"#);
+        assert_eq!(core::str::from_utf8(out.as_bytes()).unwrap(), expected);
+    }
+}
+
+#[test]
+fn lock_requests_read_or_set_the_panel_lock() {
+    let read = format!(r#"{{"id":"{ID}","op":"lock"}}"#);
+    let request = parse_request(read.as_bytes()).unwrap();
+    assert_eq!(request.op, Ok(Op::Lock));
+    assert_eq!(request.lock, Some(LockFields { locked: None }));
+    assert!(!request.lock.unwrap().changes());
+
+    for (value, locked) in [(0, false), (1, true)] {
+        let set = format!(r#"{{"id":"{ID}","op":"lock","locked":{value}}}"#);
+        let request = parse_request(set.as_bytes()).unwrap();
+        assert_eq!(
+            request.lock,
+            Some(LockFields {
+                locked: Some(locked)
+            })
+        );
+        assert!(request.lock.unwrap().changes());
+    }
+
+    for bad in [
+        format!(r#"{{"id":"{ID}","op":"lock","locked":2}}"#),
+        format!(r#"{{"id":"{ID}","op":"lock","locked":"1"}}"#),
+        format!(r#"{{"id":"{ID}","op":"lock","locked":1,"locked":0}}"#),
+        format!(r#"{{"id":"{ID}","op":"settings","locked":1}}"#),
+        format!(r#"{{"id":"{ID}","op":"lock","sound":1}}"#),
+    ] {
+        assert_eq!(
+            parse_request(bad.as_bytes()),
+            Err(RequestError::Malformed),
+            "{bad}"
+        );
+    }
+
+    let mut buf = [0; MAX_REQUEST];
+    for (result, tail) in [
+        (
+            LockResult::Current {
+                locked: true,
+                pending: false,
+            },
+            r#""ok":true,"pending":false,"locked":1}"#,
+        ),
+        (
+            LockResult::Current {
+                locked: true,
+                pending: true,
+            },
+            r#""ok":true,"pending":true,"locked":1}"#,
+        ),
+        (LockResult::Busy, r#""ok":false,"error":"busy"}"#),
+        (LockResult::Unserved, r#""ok":false,"error":"unserved"}"#),
+    ] {
+        let mut out = Buffer::new(&mut buf);
+        write_lock_reply(&mut out, &request, result).unwrap();
+        let expected = format!(r#"{{"id":"{ID}","op":"lock",{tail}"#);
         assert_eq!(core::str::from_utf8(out.as_bytes()).unwrap(), expected);
     }
 }

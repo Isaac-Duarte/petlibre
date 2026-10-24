@@ -1795,6 +1795,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "petlibre-feeder"
+version = "0.1.0"
+dependencies = [
+ "petlibre-core",
+]
+
+[[package]]
 name = "petlibre-flash"
 version = "0.1.0"
 dependencies = [
@@ -1850,6 +1857,14 @@ name = "petlibre-fw-buttons"
 version = "0.1.0"
 dependencies = [
  "petlibre-probes",
+ "petlibre-sdk",
+]
+
+[[package]]
+name = "petlibre-fw-feeder"
+version = "0.1.0"
+dependencies = [
+ "petlibre-feeder",
  "petlibre-sdk",
 ]
 

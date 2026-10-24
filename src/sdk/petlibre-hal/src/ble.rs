@@ -127,6 +127,7 @@ fn kind_name(kind: RequestKind) -> &'static str {
         RequestKind::Settings => "settings",
         RequestKind::Wifi => "wifi",
         RequestKind::Play => "play",
+        RequestKind::Lock => "lock",
         RequestKind::Unauthenticated => "unauthenticated",
         RequestKind::Unsupported => "unsupported",
         RequestKind::Malformed => "malformed",

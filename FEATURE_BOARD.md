@@ -4,10 +4,10 @@ This board tracks the owner-visible behavior the replacement firmware needs to m
 
 ## Current status
 
-- **Done:** none.
+- **Done:** FP11 (child lock).
 - **In progress:** none.
 - **Critical path to parity:** FW30 → FW16 → FW17 → FW18 → FP03. Nothing a pet depends on works before FW17 can feed.
-- **Startable without motion:** FP01, FP02, FP04 (host-tested against the snapshot format), FP09, FP11 (ready: FW20's button service is done), and the reporting halves of FP12 and FP14.
+- **Startable without motion:** FP01, FP02, FP04 (host-tested against the snapshot format), FP09, and the reporting halves of FP12 and FP14.
 
 ## Using the board
 
@@ -50,7 +50,7 @@ A feature card sequences behavior through the SDK; it never relaxes a FIRMWARE_B
 
 | Card | Status | Evidence | Stock behavior | Prerequisites | Finish line |
 | --- | --- | --- | --- | --- | --- |
-| **FP11 Child lock** | Ready | — | `childLockSwitch`, auto-lock and unlock durations | FW20 | Lock and unlock by button hold and from the CLI, relocking after stock's timeout. A locked panel refuses feeds and setting changes but keeps recovery access. |
+| **FP11 Child lock** | **Done** | **Physical (Oct 23, owner pressing and watching PA4):** `feeder` v93 (`fp11-panel-01`) booted locked; in `fp11-panel-03` Dispense and Mic were refused, a 5.5 s Lock hold unlocked, the panel relocked after 30 s idle, and signed `lock` requests unlocked and relocked it (`source=remote`), with PA4 following each change. **Host and build (Oct 23):** `petlibre-feeder`'s `panel` keeps stock's rules (Lock held 5 s toggles, 30 s idle relock, locked panel refuses Dispense, Mic and the Reset hold) and starts locked; the `feeder` firmware shows it on PA4 and takes a signed `lock` request (`petlibre-local` API). Policy, owner, mailbox, parser and API host-tested; the image builds with its link, RAM-park and stack audits (loop task 960 B). Stock's rules are static analysis and emulation ([stock behavior](docs/firmware/stock-behavior.md#panel-buttons-and-child-lock)). `disableHardwareButton` is not implemented (FP15). | The PLAF103 has no `childLock*` fields; stock locks the panel with a 5 s Lock hold and relocks after 30 s idle. `disableHardwareButton` is separate | FW20 | Lock and unlock by button hold and from the CLI, relocking after stock's timeout. A locked panel refuses feeds and setting changes but keeps recovery access. |
 | **FP12 Lights and sound settings** | Planned | — | `lightSwitch`, `soundSwitch`, `volume` | FW23, FW24, FW25 | Each setting persists and behaves as stock: which indicator states show when lights are off, mute, volume steps and quiet windows. |
 | **FP13 Meal call** | Planned | — | `enableAudio`, `audioUrl`; the Mic button records on stock | FW24, FP03 | The owner uploads a clip from the CLI, and it plays before each scheduled meal whose plan enables it, through FW24's playback. Audio never delays or blocks a feed (FW17 guarantee). Recording through the on-board microphone is out of scope. |
 | **FP14 Battery and power** | Planned | — | `powerType`, `electricQuantity`, `enableBatteryPercent` | FW14, FW26 | Adapter or battery and a battery percentage on stock's curve. Battery-mode behavior matches stock (which radios stay up, whether schedules run), and low battery has a defined result. |
@@ -81,7 +81,7 @@ A feature card sequences behavior through the SDK; it never relaxes a FIRMWARE_B
 | FP08 Jam and outlet faults | ⬜ Planned |
 | FP09 Desiccant reminder | ⬜ Planned |
 | FP10 Meal reminder | ⬜ Planned |
-| FP11 Child lock | 🟢 Ready |
+| FP11 Child lock | ✅ Done |
 | FP12 Lights and sound settings | ⬜ Planned |
 | FP13 Meal call | ⬜ Planned |
 | FP14 Battery and power | ⬜ Planned |

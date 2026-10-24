@@ -103,10 +103,12 @@ pub enum Firmware {
     Ble,
     /// FW11 trial images, one per `Variant`.
     Trial,
+    /// The product firmware (FP11 onwards).
+    Feeder,
 }
 
 impl Firmware {
-    const ALL: [Self; 8] = [
+    const ALL: [Self; 9] = [
         Self::Qa,
         Self::Optics,
         Self::Buttons,
@@ -115,6 +117,7 @@ impl Firmware {
         Self::Blink,
         Self::Ble,
         Self::Trial,
+        Self::Feeder,
     ];
 
     /// The firmware's directory name, which `petlibre-build --firmware`
@@ -129,6 +132,7 @@ impl Firmware {
             Self::Blink => "blink",
             Self::Ble => "ble",
             Self::Trial => "trial",
+            Self::Feeder => "feeder",
         }
     }
 }

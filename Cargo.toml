@@ -1,5 +1,11 @@
 [workspace]
-members = ["src/sdk/*", "src/tools/petlibre-*", "src/tools/xtask", "src/firmware/petlibre/*"]
+members = [
+    "src/sdk/*",
+    "src/product/*",
+    "src/tools/petlibre-*",
+    "src/tools/xtask",
+    "src/firmware/petlibre/*",
+]
 resolver = "3"
 
 [workspace.package]
@@ -16,6 +22,7 @@ petlibre-core = { path = "src/sdk/petlibre-core" }
 petlibre-probes = { path = "src/sdk/petlibre-probes" }
 petlibre-sdk = { path = "src/sdk/petlibre-sdk" }
 petlibre-sdk-c = { path = "src/sdk/petlibre-sdk-c" }
+petlibre-feeder = { path = "src/product/petlibre-feeder" }
 petlibre-fw-blink = { path = "src/firmware/petlibre/blink" }
 petlibre-fw-ble = { path = "src/firmware/petlibre/ble" }
 petlibre-formats = { path = "src/tools/petlibre-formats" }

@@ -3,6 +3,7 @@
 Status: physical (October 23, 2026), with the owner answering. Every check and item has passed on the feeder across two guided cold boots of `qa` `ef76b85e…` (v84), each graded by `wellfed-audit qa`:
 - `fw39-qa-03-guided`: optics, power, all four buttons, three indicators and the speaker passed; PA0 failed as `no` (the owner mis-pressed Lock about 0.9 s after the prompt).
 - `fw39-qa-04-guided`, coached by the bench page's guided-QA panel: optics, power, all four indicators, the speaker and three buttons passed; Reset timed out with no press on the line (the owner missed the prompt).
+- `qa-20261023-02-guided` (`qa` `645c1cd4…`, v92): **every check and item passed** in one run, graded `pass`; the first complete passing run.
 
 The sequence also runs against the SDK fake with a scripted operator.
 

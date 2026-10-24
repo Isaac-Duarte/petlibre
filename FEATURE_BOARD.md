@@ -54,7 +54,7 @@ A feature card sequences behavior through the SDK; it never relaxes a FIRMWARE_B
 | **FP12 Lights and sound settings** | Planned | — | `lightSwitch`, `soundSwitch` on and `volume` 50 by default; volume 0 mutes; an aging type selects always on or an inclusive start–end window ([FP01](docs/devices/plaf103/stock/README.md#feature-limits-and-defaults-fp01)) | FW23, FW24, FW25 | Each setting persists and behaves as stock: which indicator states show when lights are off, mute, volume steps and quiet windows. |
 | **FP13 Meal call** | Planned | — | `enableAudio`, `audioUrl`; plays `audioTimes` times before a plan's feed when sound is allowed, never blocking it; the Mic button records on stock ([FP01](docs/devices/plaf103/stock/README.md#feature-limits-and-defaults-fp01)) | FW24, FP03 | The owner uploads a clip from the CLI, and it plays before each scheduled meal whose plan enables it, through FW24's playback. Audio never delays or blocks a feed (FW17 guarantee). Recording through the on-board microphone is out of scope. |
 | **FP14 Battery and power** | Planned | — | `powerType` 1/2/3, `electricQuantity` on a 1650–2250 ADC curve. On battery stock drops Wi-Fi after 5 s, still runs meals, refuses OTA, and suspends below 0 % ([FP01](docs/devices/plaf103/stock/README.md#feature-limits-and-defaults-fp01)) | FW14, FW26 | Adapter or battery and a battery percentage on stock's curve. Battery-mode behavior matches stock (which radios stay up, whether schedules run), and low battery has a defined result. |
-| **FP15 Reset button** | Planned | — | One Reset hold (about 5 s) starts the factory restore; no Wi-Fi-only hold. What it clears is unknown ([FP01](docs/devices/plaf103/stock/README.md#feature-limits-and-defaults-fp01)) | FW20, FW25 | Each hold does what stock does and clears exactly what stock clears; recovery access survives. |
+| **FP15 Reset button** | In progress | **Physical (Oct 24, `feeder` v107, owner pressing):** a Reset hold on an unlocked panel forgets every paired client and takes a new identity (`fw45-pair-04`), which survives a cold boot; a locked panel refuses the hold and the keys stay. Settings and Wi-Fi are kept for now, until stock's restore is known. The recovery window (Lock then Dispense held, unlocked panel) stays open to a new owner after a reset (FW45). | One Reset hold (about 5 s) starts the factory restore; no Wi-Fi-only hold. What it clears is unknown ([FP01](docs/devices/plaf103/stock/README.md#feature-limits-and-defaults-fp01)) | FW20, FW25 | Each hold does what stock does and clears exactly what stock clears; recovery access survives. |
 
 ## Integration and acceptance
 
@@ -87,7 +87,7 @@ A feature card sequences behavior through the SDK; it never relaxes a FIRMWARE_B
 | FP12 Lights and sound settings | ⬜ Planned |
 | FP13 Meal call | ⬜ Planned |
 | FP14 Battery and power | ⬜ Planned |
-| FP15 Reset button | ⬜ Planned |
+| FP15 Reset button | 🚧 In progress |
 | FP16 Home Assistant integration | ⬜ Planned (paused) |
 | FP17 Parity soak | ⬜ Planned |
 | FP18 Server mirror | ⬜ Planned |

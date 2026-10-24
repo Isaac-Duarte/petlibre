@@ -1,8 +1,11 @@
 //! The firmware's one loop task: the panel's owner.
 //!
 //! Each step it reads the button service's gestures and a queued remote lock
-//! change, steps the lock policy (`petlibre_feeder::panel`) and shows the lock
-//! on its indicator. The product's other owners (feeding, the device API)
+//! change, steps the pairing and lock policies (`petlibre_feeder::pairing`
+//! and `panel`) and shows the lock on its indicator. Pairing sees each
+//! gesture first and the panel gets only those it leaves, so a Dispense
+//! press that confirms a pairing feeds nothing. An allowed Reset hold queues
+//! FP15's key reset for the settings writer (`petlibre_hal::keys`). The product's other owners (feeding, the device API)
 //! join this loop as they land, so the firmware stays within its two tasks:
 //! this loop and the button service.
 //!
@@ -15,8 +18,10 @@
 
 use core::fmt;
 
-use petlibre_feeder::panel::{Config, Event, Lock, Panel};
+use petlibre_feeder::pairing::{self, Pairing};
+use petlibre_feeder::panel::{Action, Config, Event, Lock, Panel};
 use petlibre_sdk::buttons::Gesture;
+use petlibre_sdk::hal::keys::{self, Change, Requested};
 use petlibre_sdk::hal::leds::{self, Decision, Led};
 
 /// Between steps; a gesture waits at most this long in the queue.
@@ -29,6 +34,11 @@ pub enum Record {
         lock: Lock,
     },
     Panel(Event),
+    Pairing(pairing::Event),
+    /// An allowed Reset hold asked the settings writer for FP15's key reset.
+    Reset {
+        requested: Requested,
+    },
     /// The indicator failed and stays off for the rest of the boot.
     Indicator {
         decision: Option<Decision>,
@@ -47,6 +57,8 @@ pub fn describe(record: Record, f: &mut impl fmt::Write) -> fmt::Result {
             "ask action={action} result={}",
             if allowed { "allowed" } else { "refused" }
         ),
+        Record::Pairing(event) => pair(event, f),
+        Record::Reset { requested } => write!(f, "reset keys={requested}"),
         Record::Indicator { decision } => write!(
             f,
             "indicator led={} stop={}",
@@ -58,6 +70,20 @@ pub fn describe(record: Record, f: &mut impl fmt::Write) -> fmt::Result {
                 Some(Decision::Abort) => "abort",
             }
         ),
+    }
+}
+
+fn pair(event: pairing::Event, f: &mut impl fmt::Write) -> fmt::Result {
+    use pairing::Event as E;
+    match event {
+        E::Confirming { path } => write!(f, "pair confirming path={path}"),
+        E::Admit { path, role } => write!(f, "pair admit path={path} role={role}"),
+        E::Invited { id } => write!(f, "pair invited id={id}"),
+        E::RecoveryOpened => f.write_str("pair recovery state=opened"),
+        E::RecoveryClosed => f.write_str("pair recovery state=closed"),
+        E::Refused { path, refusal } => {
+            write!(f, "pair refused path={path} refusal={refusal}")
+        }
     }
 }
 
@@ -87,6 +113,7 @@ enum Indicator {
 #[derive(Debug)]
 pub struct Owner {
     panel: Option<Panel>,
+    pairing: Pairing,
     indicator: Indicator,
 }
 
@@ -94,6 +121,7 @@ impl Default for Owner {
     fn default() -> Self {
         Self {
             panel: None,
+            pairing: Pairing::new(pairing::Config::DEFAULT),
             // The runtime starts every indicator LOW.
             indicator: Indicator::Shown(false),
         }
@@ -120,8 +148,22 @@ impl Owner {
         });
 
         for gesture in inputs.gestures {
-            if let Some(event) = panel.gesture(now, gesture) {
-                record(Record::Panel(event));
+            if let Some(event) = self.pairing.gesture(now, gesture, panel.lock()) {
+                record(Record::Pairing(event));
+                continue;
+            }
+            let Some(event) = panel.gesture(now, gesture) else {
+                continue;
+            };
+            record(Record::Panel(event));
+            if event
+                == (Event::Asked {
+                    action: Action::Reset,
+                    allowed: true,
+                })
+            {
+                let requested = keys::request(Change::Reset);
+                record(Record::Reset { requested });
             }
         }
         let remote = inputs
@@ -129,6 +171,9 @@ impl Owner {
             .and_then(|locked| panel.remote(now, Lock::from_locked(locked)));
         for event in [remote, panel.tick(now)].into_iter().flatten() {
             record(Record::Panel(event));
+        }
+        while let Some(event) = self.pairing.tick(now) {
+            record(Record::Pairing(event));
         }
 
         let want = panel.lock().locked() && inputs.lights;

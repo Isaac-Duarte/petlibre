@@ -8,13 +8,16 @@
 //! FW45: once armed it also keeps the keys. It mixes the seed stored across
 //! boots into the generator and stores the next one (sectors 7 and 8), and
 //! opens the identity and client store (sectors 9 and 10), creating the
-//! feeder's identity secret on the first boot that has a generator.
+//! feeder's identity secret on the first boot that has a generator. It
+//! publishes the identity for the loop task and applies the client changes
+//! the loop queues (`petlibre_hal::keys`): enrollments, revocations and the
+//! FP15 reset, which forgets every client and draws a new identity.
 
 use core::fmt;
 
 use petlibre_core::named_enum;
 
-use petlibre_core::store::clients::{ClientStatus, ClientStore};
+use petlibre_core::store::clients::{ClientError, ClientStatus, ClientStore};
 use petlibre_core::store::net::{NetStatus, NetStore};
 use petlibre_core::store::seed::{SeedStatus, SeedStore};
 use petlibre_core::store::settings::{Settings, SettingsStatus, SettingsStore};
@@ -22,6 +25,7 @@ use petlibre_core::transport::{SettingsFields, SettingsView};
 use petlibre_hal::flash::park::Mmio;
 use petlibre_hal::flash_lock::arming::{self, Arming, Hooks, Poll};
 use petlibre_hal::flash_lock::provider::Provider;
+use petlibre_hal::keys::{self, Change};
 use petlibre_hal::network::{self, NET_BASE};
 use petlibre_hal::{rng, settings};
 
@@ -45,6 +49,42 @@ named_enum! {
         /// No generator, a store it may not write, or unarmed.
         Missing = "missing",
         Failed = "failed",
+    }
+}
+
+named_enum! {
+    /// A client store change the loop queued.
+    pub enum KeyChange {
+        Enroll = "enroll",
+        Revoke = "revoke",
+        Reset = "reset",
+    }
+}
+
+named_enum! {
+    /// What became of a queued client store change.
+    pub enum KeyResult {
+        Done = "done",
+        Unarmed = "unarmed",
+        /// A reset needs a new identity, and the generator never started.
+        NoGenerator = "no-generator",
+        NotWritable = "not-writable",
+        Full = "full",
+        Duplicate = "duplicate",
+        NotFound = "not-found",
+        Io = "io",
+    }
+}
+
+impl From<ClientError> for KeyResult {
+    fn from(error: ClientError) -> Self {
+        match error {
+            ClientError::NotWritable | ClientError::IdentitySet => Self::NotWritable,
+            ClientError::Full => Self::Full,
+            ClientError::Duplicate => Self::Duplicate,
+            ClientError::NotFound => Self::NotFound,
+            ClientError::Io => Self::Io,
+        }
     }
 }
 
@@ -87,6 +127,11 @@ pub enum Record {
         clients: ClientStatus,
         enrolled: usize,
         identity: Identity,
+    },
+    KeysChanged {
+        change: KeyChange,
+        result: KeyResult,
+        enrolled: usize,
     },
 }
 
@@ -164,6 +209,14 @@ pub fn describe(record: Record, f: &mut impl fmt::Write) -> fmt::Result {
             u8::from(mixed),
             u8::from(saved),
             client_status(clients),
+        ),
+        Record::KeysChanged {
+            change,
+            result,
+            enrolled,
+        } => write!(
+            f,
+            "keys change={change} result={result} enrolled={enrolled}"
         ),
     }
 }
@@ -274,6 +327,9 @@ impl Writer {
         } else {
             Identity::Missing
         };
+        if let Some(secret) = self.clients.identity() {
+            keys::publish_identity(secret);
+        }
 
         Record::Keys {
             seed: self.seed.status,
@@ -283,6 +339,50 @@ impl Writer {
             enrolled: self.clients.clients().count(),
             identity,
         }
+    }
+
+    /// Apply one queued client change, each write under its own attempt
+    /// marker. A reset draws its new identity from the generator or does not
+    /// happen: a weaker key is never written.
+    fn change(&mut self, change: Change, writable: bool) -> Record {
+        let kind = match change {
+            Change::Enroll { .. } => KeyChange::Enroll,
+            Change::Revoke { .. } => KeyChange::Revoke,
+            Change::Reset => KeyChange::Reset,
+        };
+        let result = match change {
+            _ if !writable => KeyResult::Unarmed,
+            Change::Enroll { key, label, role } => {
+                self.apply(|clients| clients.enroll(key, label, role))
+            }
+            Change::Revoke { key } => self.apply(|clients| clients.revoke(&key)),
+            Change::Reset => match rng::bytes() {
+                Some(identity) => self.apply(|clients| clients.reset(&identity)),
+                None => KeyResult::NoGenerator,
+            },
+        };
+
+        if kind == KeyChange::Reset
+            && result == KeyResult::Done
+            && let Some(secret) = self.clients.identity()
+        {
+            keys::publish_identity(secret);
+        }
+        Record::KeysChanged {
+            change: kind,
+            result,
+            enrolled: self.clients.clients().count(),
+        }
+    }
+
+    fn apply(
+        &mut self,
+        write: impl FnOnce(&mut ClientStore) -> Result<(), ClientError>,
+    ) -> KeyResult {
+        arming::set_attempt();
+        let result = write(&mut self.clients);
+        arming::clear_attempt();
+        result.map_or_else(KeyResult::from, |()| KeyResult::Done)
     }
 
     fn publish(&self) {
@@ -375,6 +475,12 @@ impl Writer {
                     let writable = self.stage == Stage::Idle && H::armed();
                     // SAFETY: the slot I/O callbacks are static functions.
                     let record = unsafe { self.keys::<F>(writable) };
+                    return next(POLL_MS, Some(record));
+                }
+                if let Some(change) = keys::pending() {
+                    let writable = self.stage == Stage::Idle && H::armed();
+                    let record = self.change(change, writable);
+                    keys::finish();
                     return next(POLL_MS, Some(record));
                 }
                 if let Some(credentials) = network::pending() {

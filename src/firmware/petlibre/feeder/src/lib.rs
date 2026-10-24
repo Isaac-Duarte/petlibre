@@ -5,7 +5,8 @@
 //!
 //! So far it runs the panel: the button service and one loop task that keeps
 //! the child lock (FP11), shows it on the lock indicator, and takes signed
-//! lock changes from the network. The loop also measures the device API's
+//! lock changes from the network. The loop also holds the feeder's identity
+//! key pair and the pairing policy, and a Reset hold clears the keys (FW45). The loop also measures the device API's
 //! fixed costs (FW44, `budget`), and the `setup` variant runs BLE setup mode
 //! beside it; the `entropy` variant streams raw noise samples for FW45. It
 //! never touches the motor or the infrared emitters.
@@ -20,4 +21,5 @@ compile_error!("petlibre-fw-feeder target builds are KM4-only");
 mod app;
 pub mod budget;
 pub mod entropy;
+pub mod keys;
 pub mod owner;

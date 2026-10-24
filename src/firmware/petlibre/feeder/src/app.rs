@@ -8,6 +8,7 @@ use petlibre_sdk::Slot;
 use petlibre_sdk::hal::{panel, sdk, settings, startup};
 
 use crate::budget::{self, Budget};
+use crate::keys::{self, Identity};
 use crate::owner::{self, Inputs, Owner};
 
 petlibre_sdk::firmware!(start);
@@ -38,6 +39,8 @@ const LOOP_STACK_WORDS: u16 = 1536;
 
 /// Touched only by the loop task; see `loop_task`.
 static OWNER: Slot<Owner> = Slot::new();
+/// Touched only by the loop task.
+static IDENTITY: Slot<Identity> = Slot::new();
 /// The session table is larger than the loop's stack, so it is built at
 /// compile time. Touched only by the loop task.
 static BUDGET: Slot<Budget> = Slot::filled(Budget::new());
@@ -59,6 +62,14 @@ struct Panel(owner::Record);
 impl core::fmt::Display for Panel {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         owner::describe(self.0, f)
+    }
+}
+
+struct Key(keys::Record);
+
+impl core::fmt::Display for Key {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        keys::describe(self.0, f)
     }
 }
 
@@ -88,6 +99,12 @@ unsafe extern "C" fn loop_task(_: *mut c_void) -> u32 {
     let mut delay_ms = owner.step(inputs, |record| {
         log(format_args!("PLPANEL1 {}\r\n", Panel(record)))
     });
+
+    // SAFETY: only this task touches the slot.
+    let identity = unsafe { IDENTITY.get_or_init(Identity::default) };
+    if let Some(record) = identity.step() {
+        log(format_args!("PLID1 {}\r\n", Key(record)));
+    }
 
     // Requests read what the owner holds after this step.
     if let Some(lock) = owner.lock() {

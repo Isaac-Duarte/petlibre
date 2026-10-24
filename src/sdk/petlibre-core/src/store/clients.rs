@@ -387,7 +387,7 @@ impl ClientStore {
         }
         let mut table = self.table;
         table.identity = Some(*secret);
-        self.save(table)
+        self.save(&table)
     }
 
     /// Enroll a client; its `enrolled` field is set from the new generation.
@@ -407,7 +407,7 @@ impl ClientStore {
             role,
             enrolled: self.generation + 1,
         });
-        self.save(table)
+        self.save(&table)
     }
 
     /// Forget one client. Its sessions are the caller's to close.
@@ -419,12 +419,12 @@ impl ClientStore {
             .find(|slot| slot.is_some_and(|client| &client.key == key))
             .ok_or(ClientError::NotFound)?;
         *slot = None;
-        self.save(table)
+        self.save(&table)
     }
 
     /// FP15's reset: no clients, and `identity` as the feeder's new key.
     pub fn reset(&mut self, identity: &[u8; 32]) -> Result<(), ClientError> {
-        self.save(Table {
+        self.save(&Table {
             identity: Some(*identity),
             ..Table::EMPTY
         })
@@ -432,7 +432,7 @@ impl ClientStore {
 
     /// Write `table` to the other unit: erase, program, verify, commit,
     /// verify. A failure keeps the previous table in memory.
-    fn save(&mut self, table: Table) -> Result<(), ClientError> {
+    fn save(&mut self, table: &Table) -> Result<(), ClientError> {
         if !self.writable() || self.io.program.is_none() || self.io.erase.is_none() {
             return Err(ClientError::NotWritable);
         }
@@ -442,7 +442,7 @@ impl ClientStore {
         } else {
             1 - self.slot
         };
-        let bytes = encode(generation, &table);
+        let bytes = encode(generation, table);
         let mut checked = [0u8; RECORD_BYTES];
         let ok = self.io.erase(slot)
             && self.io.read(slot, 0, &mut checked)
@@ -457,7 +457,7 @@ impl ClientStore {
         }
         self.slot = slot;
         self.generation = generation;
-        self.table = table;
+        self.table = *table;
         Ok(())
     }
 }

@@ -16,7 +16,8 @@ image, bench state, next task, or acceptance evidence changes.
   - A signed clear emptied the Wi-Fi store (generation 20); then setup mode's 15-minute idle reboot ran and the feeder came back with `source: build`.
 - **Flash now:** **Bank 1:** `feeder` v109 (confirmed). **Bank 0:** `qa` `ef76b85e…`. **Next manifest version:** 110. The client store holds one owner: the bench CLI's key in `private/wellfed-owner.json`.
 - **Bench state:** feeder on, hotspot up, no server.
-- **Next:** FW45 broker credentials, or FW30 pins with the meter. Mains-only advertising is host-tested only (check on batteries).
+- **Batteries (`fw45-battery-01`–`03`):** in setup mode, the adapter relay off gave `adapter=0` and `advertising on=0` with no reset; back on gave `advertising on=1`. Broker credentials moved to FW47 (owner). Setup mode then ends with its idle reboot.
+- **Next:** close FW45 (revocation and signer enrollment to FW47/FW48), then plan FW47; or FW30 pins with the meter.
 
 **October 24, night: FW45 BLE setup mode (host and image builds; nothing run on the bench).**
 - **Owner decisions:** a Lock and Mic hold (5 s, unlocked panel) starts setup mode; no automatic setup after a Wi-Fi loss; the `ble` firmware, the feeder's `setup` variant and the HMAC BLE exchange are retired.

@@ -41,7 +41,9 @@ unsafe extern "C" {
 
 /// Creates one of the firmware's tasks. `step` runs, then the task sleeps
 /// for the milliseconds it returned; zero ends the task. Firmware tasks
-/// start only in the normal role, after the startup checks passed.
+/// start only in the normal role, after the startup checks passed, and come
+/// from the firmware's budget of [`FIRMWARE_TASKS`](crate::FIRMWARE_TASKS):
+/// past it, `spawn` refuses rather than take a runtime task's slot.
 ///
 /// # Safety
 /// `step` must be sound to call from the new task with a null context, again
@@ -52,8 +54,17 @@ pub unsafe fn spawn(
     priority: u32,
     step: sdk::TaskStep,
 ) -> bool {
+    if !crate::tasks::reserve() {
+        sdk::log(c"PLFW1 error firmware_tasks=full\r\n");
+        return false;
+    }
+
     // SAFETY: the caller's contract, with no context.
-    unsafe { sdk::task_create(name, stack_words, priority, step, ptr::null_mut()) }
+    let created = unsafe { sdk::task_create(name, stack_words, priority, step, ptr::null_mut()) };
+    if !created {
+        crate::tasks::release();
+    }
+    created
 }
 
 /// The firmware's startup work that holds the KM0 flash handshake (an

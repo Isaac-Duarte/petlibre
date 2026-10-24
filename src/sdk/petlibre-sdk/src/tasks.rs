@@ -1,11 +1,12 @@
 //! The firmware's share of the SDK's eight task slots.
 //!
-//! In the normal role the runtime holds six slots at its peak: the watchdog
-//! feeder, the startup task, the transport and the power monitor run for the
-//! whole boot, and confirmation, the settings writer and the offer check
-//! overlap in pairs as each starts the next. A firmware that took one of
-//! those slots left the build unable to save settings or see an update offer
-//! (`fw44-simon-01`, physical), so a firmware's tasks come from this budget,
+//! In the normal role the runtime holds three slots for the whole boot: the
+//! watchdog feeder, the startup task and the service task, whose stages are
+//! the power monitor, confirmation, the settings writer and the offer check.
+//! The firmware gets four, leaving one spare. When those stages were tasks
+//! of their own, a firmware that took one of their slots left the build
+//! unable to save settings or see an update offer (a physical run; see
+//! RESUME), so a firmware's tasks come from this budget,
 //! its SDK services' included, and the build's stack audit refuses an image
 //! that would exceed it.
 //!
@@ -14,7 +15,7 @@
 
 use core::sync::atomic::{AtomicU8, Ordering};
 
-pub const FIRMWARE_TASKS: u8 = 2;
+pub const FIRMWARE_TASKS: u8 = 4;
 
 static STARTED: AtomicU8 = AtomicU8::new(0);
 
@@ -40,7 +41,7 @@ mod tests {
     fn the_budget_runs_out_and_a_failed_creation_returns_its_share() {
         STARTED.store(0, Ordering::Release);
 
-        assert!(reserve() && reserve());
+        assert!((0..FIRMWARE_TASKS).all(|_| reserve()));
         assert!(!reserve());
         release();
         assert!(reserve());

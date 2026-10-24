@@ -9,9 +9,9 @@
 //! Booted from bank 0 (the recovery role), the updater runs and the
 //! firmware never starts, so a broken firmware can always be replaced. In
 //! the normal role the firmware's own tasks start (`firmware!`), then the
-//! Confirmation task and the feeder confirm a healthy build, and only
-//! then do the settings writer and the offer check start. A hung
-//! runtime task stops the feeding, so a hang becomes a watchdog reset that
+//! service task: it samples power, confirms a healthy build with the
+//! feeder, and only then opens the settings writer and the offer check. A
+//! hung runtime task stops the feeding, so a hang becomes a watchdog reset that
 //! KM0 counts.
 
 use core::ffi::{CStr, c_void};
@@ -95,7 +95,7 @@ pub fn claim_adc() {
 }
 
 static ADC_CLAIMED: AtomicBool = AtomicBool::new(false);
-/// Touched only by the power task; see `power_task`.
+/// The service task's power stage; see `power_step`.
 static POWER: Slot<power::Monitor> = Slot::new();
 
 struct PowerLine(power::Record);
@@ -108,7 +108,7 @@ impl core::fmt::Display for PowerLine {
 
 /// Samples the battery and adapter for health. It waits for the
 /// startup probe to release its board, which owns the ADC until then.
-unsafe extern "C" fn power_task(_: *mut c_void) -> u32 {
+fn power_step() -> u32 {
     if ADC_CLAIMED.load(Ordering::Acquire) {
         sdk::log(c"PLBAT1 claimed\r\n");
         return 0;
@@ -131,17 +131,6 @@ unsafe extern "C" fn power_task(_: *mut c_void) -> u32 {
 }
 
 const POWER_WAIT_MS: u32 = 1_000;
-
-/// Below the transport: a late sample only ages, and health says how much.
-fn start_power() {
-    // SAFETY: the step takes no context and keeps its state in statics.
-    let created = unsafe { sdk::task_create(c"wellfed-pwr", 512, 1, power_task, ptr::null_mut()) };
-    sdk::log(if created {
-        c"PLBAT1 start created=1\r\n"
-    } else {
-        c"PLBAT1 start created=0\r\n"
-    });
-}
 
 static PROBING: AtomicBool = AtomicBool::new(false);
 static PROBE: Slot<Probe> = Slot::new();
@@ -213,9 +202,9 @@ fn start_transport() {
 static UPDATER: Slot<Updater> = Slot::new();
 /// The lease provider the SDK flash-lock hooks call. Never borrowed: every
 /// task passes its raw pointer, because the armed hooks dereference it from
-/// whichever task holds the SDK flash lock. Arming writes it in sequence
-/// (the updater or the confirmation task, then the settings writer, then
-/// the offer check only if the hooks are still unarmed), never two at once.
+/// whichever task holds the SDK flash lock. Arming writes it from one task, in
+/// sequence: the updater, or the service task's confirmation, settings and
+/// offer-check stages (the last only if the hooks are still unarmed).
 static PROVIDER: TaskCell<Provider> = TaskCell::new(Provider::UNBOUND);
 /// Opened by whichever task arms first (the feeder task at startup), then
 /// handed to the feeder task, which feeds it.
@@ -233,8 +222,6 @@ static RESTART: AtomicBool = AtomicBool::new(false);
 /// The transport task's last step and state, for the feeder and confirmation.
 static NET_BEAT: AtomicU32 = AtomicU32::new(0);
 static NET_RUNNING: AtomicBool = AtomicBool::new(false);
-/// The offer-check task's last step, while it runs.
-static WATCH_BEAT: AtomicU32 = AtomicU32::new(0);
 static WATCH_RUNNING: AtomicBool = AtomicBool::new(false);
 /// The startup optics (or pulse) probe has ended and released the KM0
 /// handshake, so another writer may bind it.
@@ -406,8 +393,7 @@ unsafe extern "C" fn feeder_task(_: *mut c_void) -> u32 {
     let now = sdk::uptime_ms();
     let fresh = |beat: &AtomicU32| now.wrapping_sub(beat.load(Ordering::Acquire)) < LIVENESS_MS;
     let alive = (!NET_RUNNING.load(Ordering::Acquire) || fresh(&NET_BEAT))
-        && (!WATCH_RUNNING.load(Ordering::Acquire) || fresh(&WATCH_BEAT))
-        && (!SETTINGS_RUNNING.load(Ordering::Acquire) || fresh(&SETTINGS_BEAT))
+        && (!SERVICE_RUNNING.load(Ordering::Acquire) || fresh(&SERVICE_BEAT))
         && (UPDATER_DONE.load(Ordering::Acquire) || fresh(&HEARTBEAT));
 
     // Stopped, or motor STOP with exactly the supervised emitters lit (the
@@ -449,7 +435,7 @@ unsafe extern "C" fn feeder_task(_: *mut c_void) -> u32 {
     FEED_MS
 }
 
-/// Touched only by the confirmation task; see `confirm_task`.
+/// The service task's confirmation stage; see `confirm_step`.
 static CONFIRM: Slot<Confirm> = Slot::new();
 
 struct ConfirmLine(confirm::Record);
@@ -462,7 +448,7 @@ impl core::fmt::Display for ConfirmLine {
 
 /// Confirm this build once it has stayed healthy, after the startup
 /// probe has released the KM0 handshake.
-unsafe extern "C" fn confirm_task(_: *mut c_void) -> u32 {
+fn confirm_step() -> u32 {
     let now = sdk::uptime_ms();
     HEARTBEAT.store(now, Ordering::Release);
     let Some(mut confirm) = CONFIRM.enter_or_init(Confirm::default) else {
@@ -504,7 +490,7 @@ unsafe extern "C" fn confirm_task(_: *mut c_void) -> u32 {
     step.delay_ms
 }
 
-/// Touched only by the offer-check task; see `watch_task`.
+/// The service task's offer-check stage; see `watch_step`.
 static WATCH: Slot<Watch> = Slot::new();
 
 struct WatchLine(watch::Record);
@@ -517,9 +503,8 @@ impl core::fmt::Display for WatchLine {
 
 /// Once confirmed, check for an offer and give way to bank 0's
 /// updater when one names another build.
-unsafe extern "C" fn watch_task(_: *mut c_void) -> u32 {
+fn watch_step() -> u32 {
     let now = sdk::uptime_ms();
-    WATCH_BEAT.store(now, Ordering::Release);
     let watch = WATCH.enter_or_try_init(|| {
         let watch = sdk::transport_config().map(|config| Watch::new(config, updater::public_key()));
         if watch.is_none() {
@@ -543,7 +528,6 @@ unsafe extern "C" fn watch_task(_: *mut c_void) -> u32 {
         }
     }
 
-    WATCH_BEAT.store(sdk::uptime_ms(), Ordering::Release);
     if step.delay_ms == 0 {
         if step.restart {
             RESTART.store(true, Ordering::Release);
@@ -553,7 +537,6 @@ unsafe extern "C" fn watch_task(_: *mut c_void) -> u32 {
     step.delay_ms
 }
 
-/// 24 KiB, as the updater: the manifest check verifies Ed25519.
 /// The settings writer's storage: the SDK wrappers, refused unless the
 /// hooks are armed (reads are mapped and need no lease).
 struct SdkStorage;
@@ -579,10 +562,8 @@ impl crate::storage::FlashOps for SdkStorage {
     }
 }
 
-/// Touched only by the settings task; see `settings_task`.
+/// The service task's settings stage; see `settings_step`.
 static SETTINGS: Slot<crate::settings::Writer> = Slot::new();
-/// The settings task's last step, while it runs.
-static SETTINGS_BEAT: AtomicU32 = AtomicU32::new(0);
 static SETTINGS_RUNNING: AtomicBool = AtomicBool::new(false);
 
 struct SettingsLine(crate::settings::Record);
@@ -594,8 +575,7 @@ impl core::fmt::Display for SettingsLine {
 }
 
 /// Load the device settings, arm the hooks, then save signed changes.
-unsafe extern "C" fn settings_task(_: *mut c_void) -> u32 {
-    SETTINGS_BEAT.store(sdk::uptime_ms(), Ordering::Release);
+fn settings_step() -> u32 {
     let Some(mut writer) = SETTINGS.enter_or_init(Default::default) else {
         return 0;
     };
@@ -612,78 +592,141 @@ unsafe extern "C" fn settings_task(_: *mut c_void) -> u32 {
     if step.settled {
         start_watch();
     }
-    SETTINGS_BEAT.store(sdk::uptime_ms(), Ordering::Release);
     if step.delay_ms == 0 {
         SETTINGS_RUNNING.store(false, Ordering::Release);
     }
     step.delay_ms
 }
 
+/// Starts the settings stage in the service task, which steps it from its
+/// next pass. `created` keeps its meaning for the bench: the stage runs.
 fn start_settings() {
-    SETTINGS_BEAT.store(sdk::uptime_ms(), Ordering::Release);
     SETTINGS_RUNNING.store(true, Ordering::Release);
-    // SAFETY: the step takes no context and keeps its state in statics.
-    let created = unsafe {
-        sdk::task_create(
-            c"wellfed-cfg",
-            SETTINGS_STACK_WORDS,
-            2,
-            settings_task,
-            ptr::null_mut(),
-        )
-    };
-    if !created {
-        SETTINGS_RUNNING.store(false, Ordering::Release);
-        start_watch();
-    }
-    sdk::log(if created {
-        c"PLCFG1 start created=1\r\n"
-    } else {
-        c"PLCFG1 start created=0\r\n"
-    });
+    sdk::log(c"PLCFG1 start created=1\r\n");
 }
-
-/// The store's 128-byte records and the arming state; 4 KiB like the
-/// confirmation task (the build's stack audit checks the bound).
-const SETTINGS_STACK_WORDS: u16 = 1024;
 
 fn start_watch() {
-    WATCH_BEAT.store(sdk::uptime_ms(), Ordering::Release);
     WATCH_RUNNING.store(true, Ordering::Release);
-    // SAFETY: the step takes no context and keeps its state in statics.
-    let created = unsafe {
-        sdk::task_create(
-            c"wellfed-wch",
-            UPDATER_STACK_WORDS,
-            2,
-            watch_task,
-            ptr::null_mut(),
-        )
-    };
-    if !created {
-        WATCH_RUNNING.store(false, Ordering::Release);
-    }
-
-    sdk::log(if created {
-        c"PLWCH1 start created=1\r\n"
-    } else {
-        c"PLWCH1 start created=0\r\n"
-    });
+    sdk::log(c"PLWCH1 start created=1\r\n");
 }
 
-/// The normal role's confirmation task. The feeder, started with the
+/// The normal role's confirmation stage. The feeder, started with the
 /// application, already supervises it.
-fn start_confirm() {
+fn start_confirm(service: bool) {
     HEARTBEAT.store(sdk::uptime_ms(), Ordering::Release);
-    // SAFETY: the step takes no context and keeps its state in statics.
-    let created =
-        unsafe { sdk::task_create(c"wellfed-cnf", 1024, 2, confirm_task, ptr::null_mut()) };
+    CONFIRM_RUNNING.store(service, Ordering::Release);
     let opened = WATCHDOG_OPEN.load(Ordering::Acquire);
-    sdk::log(match (created, opened) {
+    sdk::log(match (service, opened) {
         (true, true) => c"PLCNF1 start created=1 watchdog=1\r\n",
         (true, false) => c"PLCNF1 start created=1 watchdog=0\r\n",
         _ => c"PLCNF1 start created=0 watchdog=0\r\n",
     });
+}
+
+static POWER_RUNNING: AtomicBool = AtomicBool::new(false);
+static CONFIRM_RUNNING: AtomicBool = AtomicBool::new(false);
+/// The service task's last pass, while any of its stages runs.
+static SERVICE_BEAT: AtomicU32 = AtomicU32::new(0);
+static SERVICE_RUNNING: AtomicBool = AtomicBool::new(false);
+
+/// When each stage next wants a step; `None` means now.
+#[derive(Default)]
+struct Due {
+    power: Option<u32>,
+    confirm: Option<u32>,
+    settings: Option<u32>,
+    watch: Option<u32>,
+}
+
+/// The service task's own.
+static DUE: Slot<Due> = Slot::new();
+
+/// One stage of the service task: stepped when due, and stopped once its
+/// step returns zero. Generic, so each step is a direct call the stack audit
+/// follows.
+fn stage(
+    running: &AtomicBool,
+    due: &mut Option<u32>,
+    now: u32,
+    step: impl FnOnce() -> u32,
+) -> Option<u32> {
+    if !running.load(Ordering::Acquire) {
+        return None;
+    }
+    if due.is_none_or(|at| now.wrapping_sub(at) < u32::MAX / 2) {
+        let delay = step();
+        SERVICE_BEAT.store(sdk::uptime_ms(), Ordering::Release);
+        if delay == 0 {
+            running.store(false, Ordering::Release);
+            return None;
+        }
+        *due = Some(sdk::uptime_ms().wrapping_add(delay));
+    }
+    due.map(|at| at.wrapping_sub(sdk::uptime_ms()).min(u32::MAX / 2))
+}
+
+/// The normal role's runtime work in one cooperative task: the power monitor,
+/// then the chain that confirms the build, opens the settings writer (which
+/// arms the hooks) and, once that settles, the offer check. One task instead
+/// of four leaves the firmware its share of the eight task slots; the chain
+/// already ran its stages one after another, so none arms beside another.
+/// The longest step is the offer check's broker connect (3 s), well inside
+/// the feeder's liveness window, so a stage waiting on it delays a settings
+/// save or a power sample but never trips supervision.
+unsafe extern "C" fn service_task(_: *mut c_void) -> u32 {
+    let Some(mut due) = DUE.enter_or_init(Due::default) else {
+        SERVICE_RUNNING.store(false, Ordering::Release);
+        return 0;
+    };
+
+    let now = sdk::uptime_ms();
+    SERVICE_BEAT.store(now, Ordering::Release);
+    let waits = [
+        stage(&POWER_RUNNING, &mut due.power, now, power_step),
+        stage(&CONFIRM_RUNNING, &mut due.confirm, now, confirm_step),
+        stage(&SETTINGS_RUNNING, &mut due.settings, now, settings_step),
+        stage(&WATCH_RUNNING, &mut due.watch, now, watch_step),
+    ];
+
+    match waits.into_iter().flatten().min() {
+        Some(wait) => wait.max(1),
+        None => {
+            SERVICE_RUNNING.store(false, Ordering::Release);
+            0
+        }
+    }
+}
+
+/// 24 KiB, as the updater: the offer check's manifest verifies Ed25519.
+const SERVICE_STACK_WORDS: u16 = 6144;
+
+/// The normal role's service task, with the power monitor and confirmation
+/// as its first stages.
+fn start_service() {
+    SERVICE_BEAT.store(sdk::uptime_ms(), Ordering::Release);
+    SERVICE_RUNNING.store(true, Ordering::Release);
+    POWER_RUNNING.store(true, Ordering::Release);
+    // SAFETY: the step takes no context and keeps its state in statics.
+    let created = unsafe {
+        sdk::task_create(
+            c"wellfed-svc",
+            SERVICE_STACK_WORDS,
+            2,
+            service_task,
+            ptr::null_mut(),
+        )
+    };
+    if !created {
+        SERVICE_RUNNING.store(false, Ordering::Release);
+        POWER_RUNNING.store(false, Ordering::Release);
+    }
+
+    sdk::log(if created {
+        c"PLBAT1 start created=1\r\n"
+    } else {
+        c"PLBAT1 start created=0\r\n"
+    });
+    start_confirm(created);
 }
 
 /// The recovery role: the updater, below the feeder so a long network wait
@@ -890,8 +933,7 @@ unsafe extern "C" fn diagnostic_task(_: *mut c_void) -> u32 {
         // SAFETY: every firmware defines the hook with `firmware!`; it runs
         // once, here, in this task.
         unsafe { wellfed_firmware_start() };
-        start_power();
-        start_confirm();
+        start_service();
     }
     STARTUP.store(Startup::Started.code(), Ordering::Release);
     1

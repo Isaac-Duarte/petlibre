@@ -31,10 +31,10 @@ pub(crate) const RUNTIME_SOURCE: &str = "src/sdk/wellfed-sdk/src/runtime.rs";
 /// SDK services a firmware may start, whose tasks count as the firmware's
 /// (the button task).
 pub(crate) const SERVICE_SOURCES: [&str; 1] = ["src/sdk/wellfed-sdk/src/buttons.rs"];
-/// The firmware's share of the SDK's eight task slots: the runtime holds six
-/// at its peak in the normal role. `wellfed_sdk::FIRMWARE_TASKS` enforces the
+/// The firmware's share of the SDK's eight task slots: the runtime holds three
+/// in the normal role, and one stays spare. `wellfed_sdk::FIRMWARE_TASKS` enforces the
 /// same budget at run time, and a test keeps the two equal.
-const FIRMWARE_TASKS: usize = 2;
+const FIRMWARE_TASKS: usize = 4;
 
 /// The text the audit reads its task table from.
 pub(crate) struct TaskSources {
@@ -377,26 +377,27 @@ mod tests {
     }
 
     #[test]
-    fn only_linked_firmware_tasks_count_and_a_third_is_refused() {
+    fn only_linked_firmware_tasks_count_and_one_past_the_share_is_refused() {
         let sources = |firmware: &str| TaskSources {
             runtime: "sdk::task_create(c\"wellfed-net\", 1536, 2, net_task, ptr::null_mut());"
                 .into(),
             firmware: firmware.into(),
         };
-        let two = "spawn(c\"fw-a\", 512, 2, a_task); spawn(c\"fw-b\", 512, 2, b_task); \
-                   sdk::task_create(c\"wellfed-key\", 512, 3, key_task, ptr::null_mut());";
+        let four = "spawn(c\"fw-a\", 512, 2, a_task); spawn(c\"fw-b\", 512, 2, b_task); \
+                    spawn(c\"fw-c\", 512, 2, c_task); spawn(c\"fw-d\", 512, 2, d_task); \
+                    sdk::task_create(c\"wellfed-key\", 512, 3, key_task, ptr::null_mut());";
 
         let linked = |entry: &str| entry != "key_task";
         assert_eq!(
-            firmware_tasks(&sources(two), linked).unwrap(),
-            ["fw-a", "fw-b"],
+            firmware_tasks(&sources(four), linked).unwrap(),
+            ["fw-a", "fw-b", "fw-c", "fw-d"],
             "an unused service links no task"
         );
 
-        let refused = firmware_tasks(&sources(two), |_| true)
+        let refused = firmware_tasks(&sources(four), |_| true)
             .unwrap_err()
             .to_string();
-        assert!(refused.contains("starts 3 tasks"), "{refused}");
+        assert!(refused.contains("starts 5 tasks"), "{refused}");
     }
 
     const LISTING: &str = "\

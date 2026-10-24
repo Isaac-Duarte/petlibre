@@ -10,7 +10,7 @@ The owner's target (Oct 23, 2026): the Petlibro experience, fully open and usabl
 | State | The feeder owns plans, settings, keys and recent history | Server-owned state would contradict running with no server |
 | Offline | No server and no cloud, but on Wi-Fi; public NTP allowed | — |
 | Users | Owners with only the app, and self-hosters with a server | — |
-| Tasks | The firmware's two tasks are the button service and one loop that runs the network and feeding | A task per client, or a larger runtime slot table: each task needs its own stack holding Noise state, and growing the table reopens the runtime's startup ordering ([task slots](../../src/firmware/wellfed/README.md#what-the-sdk-runtime-guarantees), `fw44-simon-01`) |
+| Tasks | The firmware uses two of its four tasks: the button service and one loop that runs the network and feeding | A task per client: each task needs its own stack holding Noise state, and four sessions would take every slot the firmware has ([task slots](../../src/firmware/wellfed/README.md#what-the-sdk-runtime-guarantees), `fw44-simon-01`) |
 | Device API | The feeder hosts one message stream: typed requests and responses, plus pushed events and samples | REST plus an event stream: an HTTP parser and several connections cost RAM, and encryption would mean TLS. MQTT client: a phone can't host a broker |
 | Encryption | Noise for every client | HMAC signing alone leaves schedules and keys readable on the LAN. TLS costs mbedTLS RAM, and self-signed certificates are hard for owners to trust |
 | Setup | BLE, started only in a setup mode the owner asks for with a button hold, and ended by a reboot | Always-on BLE pays heap, tasks and radio time forever. The feeder's own access point makes the phone switch networks. Both paths would double the setup surface |
@@ -93,7 +93,7 @@ Built in FW47 (October 24, [device API](device-api.md)): sessions are Noise IK r
 
   A Rust client library is shared by the app, the server and the CLI.
 - **Writes** carry the generation they were based on, and a stale write gets a refusal naming the current generation. The FW15 settings store already counts generations.
-- **One loop task.** A firmware gets two tasks, the button service's included ([task slots](../../src/firmware/wellfed/README.md#what-the-sdk-runtime-guarantees)), so the API runs in the firmware's other task as a single loop:
+- **One loop task.** A firmware gets four tasks, the button service's included ([task slots](../../src/firmware/wellfed/README.md#what-the-sdk-runtime-guarantees)), and each needs its own stack, so the API runs in one task as a single loop:
   - it polls the listener and every client socket without blocking;
   - each pass does a bounded amount of work per client, then steps the feeding owner, so a flood or a malformed client costs only its turn and cannot stall feeding or the watchdog;
   - a Noise handshake is one step, and its time on the KM4 bounds the loop's latency (FW44 measures it);

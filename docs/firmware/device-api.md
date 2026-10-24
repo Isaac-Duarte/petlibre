@@ -4,7 +4,7 @@ Status: physical (October 24, 2026), LAN recovery with the owner at the panel. T
 
 ## In the firmware
 
-- **One loop task.** The firmware's two tasks are the button service and the loop ([task slots](../../src/firmware/wellfed/README.md#what-the-sdk-runtime-guarantees)), so `wellfed-fw-feeder`'s `api` module steps the API inside the loop, after the panel's owner. Every socket call is non-blocking (`wellfed_api_*` in `example_entry.c`): the loop takes what is ready and moves on.
+- **One loop task.** The feeder runs two tasks, the button service and the loop ([task slots](../../src/firmware/wellfed/README.md#what-the-sdk-runtime-guarantees)), and `wellfed-fw-feeder`'s `api` module steps the API inside the loop, after the panel's owner. Every socket call is non-blocking (`wellfed_api_*` in `example_entry.c`): the loop takes what is ready and moves on.
 - **Sans-IO server.** `wellfed_feeder::api::Server` holds four session slots. The firmware's driver copies received bytes in and sends what a slot holds; the server never touches a socket, so host tests drive it with `wellfed-client` directly.
 - **One handshake operation per pass,** across all slots, and none while a feed runs (the input is there; there is no feeding owner yet). A slot reads one frame per pass and writes again only once its last frame is out, so a flooding client costs its own turn.
 - **Sessions are Noise IK** under the feeder's identity: the client's key travels encrypted in the first message, and the feeder checks it against the enrolled clients the settings writer publishes (`wellfed_hal::keys::publish_clients`). When the table changes, every session whose key is gone closes.

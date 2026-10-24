@@ -39,6 +39,15 @@ The Android app in `src/app/` is the only Dart in the repository. Its protocol l
 - **Feeding safety.** Every feed and state change goes through the device API like any other client. The app holds no schedule or feeding logic of its own, and a retry never resends a request the core marked uncertain.
 - **Lints.** `analysis_options.yaml` enables strict analysis; fix warnings rather than suppressing them, and give a deliberate `// ignore:` its reason on the same line.
 
+## Web conventions
+
+The web frontends in `src/web/` follow the [web UI design](docs/web/README.md); its quality standard is the full rule set. In short:
+
+- **Generated contracts.** The server UI's types and client come from `openapi.json`, the bench's from ts-rs, and colors and spacing from `assets/brand/tokens.json`. Never hand-write a TypeScript copy of a Rust type or a hex value.
+- **Boundaries.** Only `packages/ui` imports bits-ui, and only the API layer touches `fetch`, `EventSource` or `BroadcastChannel`. ESLint enforces both.
+- **Feeding safety.** Mutations never retry. A feed keeps one idempotency key from confirm to a terminal result, and an uncertain feed is never retried.
+- **Strict and quiet.** Strict TypeScript with no `any`, non-null assertions or casts outside generated code; zero warnings from svelte-check, ESLint and Prettier; a deliberate lint disable carries its reason on the same line.
+
 ## Compatibility
 
 Old on-disk evidence and stale file fields may break when that makes the code simpler; drop the legacy reader rather than carrying it. Some things are live interop rather than legacy, and must stay exact:

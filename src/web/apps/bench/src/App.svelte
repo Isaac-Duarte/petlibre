@@ -2,6 +2,7 @@
   import { LiveDot, clockTime } from "@petlibre/ui";
   import { onMount } from "svelte";
   import { app } from "./lib/bench.svelte";
+  import { favicon } from "./lib/brand";
   import { route, TABS, type Tab } from "./lib/route.svelte";
   import { theme } from "./lib/theme.svelte";
   import BenchStrip from "./parts/BenchStrip.svelte";
@@ -51,9 +52,14 @@
 
 <svelte:window {onkeydown} />
 
+<svelte:head>
+  <link rel="icon" href={favicon} type="image/svg+xml" />
+</svelte:head>
+
 <div class="shell">
   <header class="top">
     <a class="mark" href={route.href("overview")}>
+      <img src={favicon} alt="" width="28" height="28" />
       <span class="word">petlibre</span>
       <span class="tool">bench</span>
     </a>
@@ -135,6 +141,10 @@
     gap: 6px;
     color: var(--color-text);
     text-decoration: none;
+  }
+  .mark img {
+    align-self: center;
+    margin-right: 4px;
   }
   .word {
     font-size: var(--text-lg);

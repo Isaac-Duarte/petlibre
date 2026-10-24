@@ -344,7 +344,7 @@ quiet = { summary = "No probes" }
         let repo = Repo::here().unwrap();
         let firmwares = Firmware::all(&repo).unwrap();
         for name in [
-            "qa", "optics", "buttons", "adc", "speaker", "motor", "trial", "blink", "ble",
+            "qa", "optics", "buttons", "adc", "speaker", "motor", "trial", "blink", "ble", "feeder",
         ] {
             let firmware = firmwares.iter().find(|f| f.name() == name);
             assert!(firmware.is_some(), "{name}");

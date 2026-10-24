@@ -7,6 +7,13 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
+**October 23, late night: FP11 child lock done on hardware (physical, owner pressing and watching PA4).**
+- **Runs:** `ota fp11-panel-01 --build --firmware feeder` installed `feeder` `055f9afa…` (v93, confirmed in 3 min 40 s), with a bounded `serve`, stopped afterwards. Boot: `PLPANEL1 start lock=locked`, both firmware tasks created (`wellfed-loop`, `wellfed-key`). `capture fp11-panel-03` (180 s; `fp11-panel-02` caught no presses): Dispense and Mic refused while locked, a 5.5 s Lock hold unlocked, the panel relocked on its own after 30 s idle, then two signed `lock` unlock/lock pairs through the API, each logged `source=remote`. The owner saw PA4 on while locked and off while unlocked at every step.
+- **Code:** the `wellfed-feeder` policy crate (`src/product/`), the `feeder` product firmware, the signed `lock` op (core parser, HAL mailbox `panel.rs`, `wellfed-local` API), and `wellfed-bench ota --firmware feeder`. `make check`, `make check-fixtures` (fresh `device` and `firstboot` builds) and the `feeder` image audits pass.
+- **Flash now:** **Bank 1:** `feeder` `055f9afa…` (v93, confirmed). **Bank 0:** `qa` `ef76b85e…`. **Next manifest version:** 94.
+- **Bench state:** feeder on, hotspot up, no server.
+- **Next:** FW44 (product resource budget) on the `feeder` image, then FW50.
+
 **October 23, night: a complete passing QA run (physical, owner answering).** `ota qa-20261023-01 --build` installed `qa` `645c1cd4…` (v92, with the task budget), with a bounded `serve` that was stopped afterwards. `boot qa-20261023-02-guided`: every check and item passed, and `wellfed-audit qa` graded it `pass`. **Flash now:** **Bank 1:** `qa` `645c1cd4…` (v92, confirmed). **Bank 0:** `qa` `ef76b85e…`. **Next manifest version:** 93. **Bench state:** feeder on, hotspot up, no server.
 
 **October 23, late evening: FW30 meter work paused; the two-task firmware budget is enforced (`d6c57b9`).**

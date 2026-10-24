@@ -172,6 +172,10 @@ Server-to-firmware requests can carry an HMAC so that a party with only the Wi-F
 
 `{"id":…,"op":"play","tune":"chime|meal|coin|alert|test|twinkle"}` queues one built-in tune; it **must be signed**. The reply is `"ok":true,"tune":…`, or `error: muted` (the `sound` setting is off) or `error: busy` (a tune is playing, or the settings are not loaded yet). An unknown tune is malformed. The transport may only call `audio::request`, which reads the settings and fills a one-slot mailbox. API: `POST /api/replacement/request` with `{"op":"play","tune":"coin"}`. Design and evidence: [audio](audio.md).
 
+## Child lock (FP11)
+
+`{"id":…,"op":"lock"}` reads the panel's child lock. With `"locked":0|1` it queues one change for the panel's owner, which **must be signed**. The reply is `"ok":true,"pending":…,"locked":0|1`, with the lock as the owner last published it, or `error: busy` (a change is already queued) or `error: unserved` (this firmware runs no panel owner; only `feeder` does). An unlock from here relocks after the same 30 s idle time as a button unlock. The transport may only call `panel::request`, which reads and fills a one-slot mailbox (`wellfed-hal/src/panel.rs`). API: `POST /api/replacement/request` with `{"op":"lock"}` or `{"op":"lock","locked":false}`. Policy and evidence: [stock behavior](stock-behavior.md#panel-buttons-and-child-lock).
+
 ## Server side
 
 - **Config:** an optional `firmware` section (client ID, username, password). The config format stays version 1; a config without the section behaves exactly as today.

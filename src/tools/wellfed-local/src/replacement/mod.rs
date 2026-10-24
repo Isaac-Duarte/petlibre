@@ -55,15 +55,18 @@ pub enum Op {
     Wifi,
     /// FW24: play one built-in tune (signed).
     Play,
+    /// FP11: read the panel's child lock, or set it (signed).
+    Lock,
 }
 
 impl Op {
-    pub(crate) const ALL: [Self; 5] = [
+    pub(crate) const ALL: [Self; 6] = [
         Self::Health,
         Self::Ping,
         Self::Settings,
         Self::Wifi,
         Self::Play,
+        Self::Lock,
     ];
 
     pub fn name(self) -> &'static str {
@@ -73,6 +76,7 @@ impl Op {
             Self::Settings => "settings",
             Self::Wifi => "wifi",
             Self::Play => "play",
+            Self::Lock => "lock",
         }
     }
 }
@@ -136,6 +140,10 @@ pub struct Input {
     /// `play` only: a built-in tune, by its `wellfed_core::tone` name.
     #[serde(default, deserialize_with = "tune")]
     pub tune: Option<Tune>,
+    /// `lock` only: true to lock the panel, false to unlock it (it relocks
+    /// after the firmware's idle time); absent to read it.
+    #[serde(default)]
+    pub locked: Option<bool>,
 }
 
 impl std::fmt::Debug for Input {
@@ -158,11 +166,13 @@ impl Input {
             psk: None,
             clear: None,
             tune: None,
+            locked: None,
         }
     }
 
-    /// Setting fields only with `settings`, a volume of at most 100, and a
-    /// known tune exactly with `play`, as the firmware's parser requires.
+    /// Setting fields only with `settings`, a volume of at most 100, a
+    /// known tune exactly with `play`, and `locked` only with `lock`, as the
+    /// firmware's parser requires.
     pub fn valid(&self) -> bool {
         let fields = self.lights.is_some() || self.sound.is_some() || self.volume.is_some();
         let wifi = match (&self.ssid, &self.psk, self.clear) {
@@ -177,7 +187,12 @@ impl Input {
             _ => false,
         };
         let tune = self.tune.is_some() == (self.op == Op::Play);
-        (self.op == Op::Settings || !fields) && self.volume.is_none_or(|v| v <= 100) && wifi && tune
+        let lock = self.op == Op::Lock || self.locked.is_none();
+        (self.op == Op::Settings || !fields)
+            && self.volume.is_none_or(|v| v <= 100)
+            && wifi
+            && tune
+            && lock
     }
 
     /// The request without its closing brace, fields in the firmware's order.
@@ -203,6 +218,9 @@ impl Input {
         }
         if let Some(tune) = self.tune {
             request = request.name_field("tune", tune.name());
+        }
+        if let Some(locked) = self.locked {
+            request = request.field("locked", flag(locked));
         }
         request
     }
@@ -529,6 +547,32 @@ mod tests {
             r#"{"op":"play","tune":"siren"}"#,
             r#"{"op":"play","tune":"coin\"}"#,
             r#"{"op":"ping","tune":"coin"}"#,
+        ] {
+            assert!(parse(bad).is_none(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn lock_inputs_read_or_set_the_panel_lock() {
+        let parse = |text: &str| {
+            serde_json::from_str::<Input>(text)
+                .ok()
+                .filter(Input::valid)
+        };
+        let read = parse(r#"{"op":"lock"}"#).unwrap();
+        assert_eq!(
+            read.wire(Uuid::nil()).unsigned(),
+            format!(r#"{{"id":"{}","op":"lock"}}"#, Uuid::nil())
+        );
+        let unlock = parse(r#"{"op":"lock","locked":false}"#).unwrap();
+        assert_eq!(
+            unlock.wire(Uuid::nil()).unsigned(),
+            format!(r#"{{"id":"{}","op":"lock","locked":0}}"#, Uuid::nil())
+        );
+        for bad in [
+            r#"{"op":"lock","locked":1}"#,
+            r#"{"op":"settings","locked":true}"#,
+            r#"{"op":"lock","sound":true}"#,
         ] {
             assert!(parse(bad).is_none(), "{bad}");
         }

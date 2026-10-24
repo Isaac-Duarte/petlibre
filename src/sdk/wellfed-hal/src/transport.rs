@@ -3,8 +3,10 @@
 //!
 //! Network-facing: this file reaches only the core transport, the socket and
 //! clock wrappers, the Wi-Fi status reader and the health snapshot (a
-//! repository check enforces the list). Nothing here can touch feeding,
-//! outputs, settings, flash or updates.
+//! repository check enforces the list), plus the one-slot mailboxes that
+//! queue settings, credentials, a tune or a panel-lock change for the task
+//! that owns them. Nothing here can touch feeding, outputs, flash or
+//! updates.
 
 use core::fmt::Write;
 
@@ -18,6 +20,7 @@ use crate::clock;
 use crate::health::{self, Boot};
 use crate::net_status;
 use crate::network;
+use crate::panel;
 use crate::sdk::{self, TcpRecv, TransportConfig};
 use crate::settings;
 
@@ -47,6 +50,7 @@ pub enum RequestKind {
     Settings,
     Wifi,
     Play,
+    Lock,
     /// Refused: a bad signature, or a state change that came unsigned.
     Unauthenticated,
     Unsupported,
@@ -506,7 +510,8 @@ impl Link {
         // good one, and an image without a request key refuses every change.
         let changes = matches!(request.op, Ok(Op::Time | Op::Play))
             || request.settings.is_some_and(|fields| fields.changes())
-            || request.wifi.is_some_and(|fields| fields.changes());
+            || request.wifi.is_some_and(|fields| fields.changes())
+            || request.lock.is_some_and(|fields| fields.changes());
         let refused = (signed.is_some() || changes) && !authentic;
 
         let kind = match request.op {
@@ -517,6 +522,7 @@ impl Link {
             Ok(Op::Settings) => RequestKind::Settings,
             Ok(Op::Wifi) => RequestKind::Wifi,
             Ok(Op::Play) => RequestKind::Play,
+            Ok(Op::Lock) => RequestKind::Lock,
             Err(_) => RequestKind::Unsupported,
         };
 
@@ -539,6 +545,14 @@ impl Link {
                 (
                     mqtt::write_settings_reply(&mut writer, &request, result),
                     matches!(result, mqtt::SettingsResult::Current { .. }),
+                )
+            }
+            // FP11: read the panel lock, or queue a change for its owner.
+            _ if request.lock.is_some() => {
+                let result = panel::request(request.lock.unwrap_or_default());
+                (
+                    mqtt::write_lock_reply(&mut writer, &request, result),
+                    matches!(result, mqtt::LockResult::Current { .. }),
                 )
             }
             // FW24: queue a tune for the speaker.
@@ -672,6 +686,7 @@ pub fn describe(record: Record, out: &mut impl Write) -> core::fmt::Result {
                 RequestKind::Settings => "settings",
                 RequestKind::Wifi => "wifi",
                 RequestKind::Play => "play",
+                RequestKind::Lock => "lock",
                 RequestKind::Unauthenticated => "unauthenticated",
                 RequestKind::Unsupported => "unsupported",
                 RequestKind::Malformed => "malformed",

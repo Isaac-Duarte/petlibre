@@ -16,6 +16,29 @@ Recovered feeding code tracks feedback events, logical direction, single/double-
 
 Food/outlet optical filtering, power-dependent emitter duty, current estimates, battery lookup logic, four button roles, indicator selection, and audio completion paths have been investigated. A recovered branch does not establish physical signal polarity, actual timing, or complete feature support in replacement firmware.
 
+## Panel buttons and child lock
+
+Static analysis and offline emulation of the stock 1.1.15 panel handlers (October 18, 2026; nothing run on the feeder). Stock's event task runs its button handler once per loop with a 50-tick delay at 1 kHz, and every boundary below is a count of those visits, so the durations are nominal: handler and scheduling time add to them, and none was measured on the feeder.
+
+| Behavior | Stock boundary | Nominal |
+| --- | --- | --- |
+| Lock (PB7) held toggles the panel lock, once per hold | 100th pressed visit | About 5 s |
+| An unlocked panel relocks | 600th idle visit | About 30 s |
+| Reset (PB4) held on an unlocked panel starts the factory restore | 100th pressed visit | About 5 s |
+| Dispense (PB6) asks for one feed, once per press | The pressed visit | — |
+
+- **Locked:** Dispense, Mic (PB5) and the Reset hold do nothing. Lock still toggles, so the panel can always be unlocked.
+- **Idle:** activity on Mic, Reset or Dispense restarts the relock count.
+- **Indicator:** PA4 is driven HIGH while locked and LOW while unlocked. The `lights` setting off drives every indicator LOW.
+- **App setting:** the PLAF103 has no `childLock*` fields; the vendor app reports `childLockSwitch` and both lock durations as `null` for it. Its app-side setting is `disableHardwareButton` (configuration `+0x91`), which disables the panel except for a recovery sequence: Lock held about 3 s, then Reset held about 3 s, starts the factory restore.
+- **Unknown:** the lock state at boot. Its flag's address falls inside the RAM image's code, so its initial value was not recovered.
+
+**Replacement (FP11, physical on October 23 with the owner pressing; host-tested):** `wellfed-feeder`'s `panel` keeps these rules over the SDK button service's gestures, with one 5 s hold threshold, and the `feeder` firmware shows the lock on PA4. Choices where stock is unknown or differs:
+- The panel starts locked at every boot, so an unattended reboot never leaves Dispense live.
+- Any gesture, Lock included, restarts the relock, and a button still held holds it off until its release. Stock counts only Mic, Reset and Dispense.
+- A signed `lock` request locks or unlocks from the network ([local transport](local-transport.md#child-lock-fp11)). A remote unlock relocks on the same 30 s timer.
+- `disableHardwareButton` and its recovery sequence are not implemented; FP15 owns resets.
+
 ## Bluetooth LE
 
 Static analysis of the 1.1.15 KM4 image and the vendor app shows that stock links the full Realtek BLE stack, with its embedded controller patch and Wi-Fi coexistence. It runs as a GATT peripheral for two jobs only:

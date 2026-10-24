@@ -1,5 +1,11 @@
 [workspace]
-members = ["src/sdk/*", "src/tools/wellfed-*", "src/tools/xtask", "src/firmware/wellfed/*"]
+members = [
+    "src/sdk/*",
+    "src/product/*",
+    "src/tools/wellfed-*",
+    "src/tools/xtask",
+    "src/firmware/wellfed/*",
+]
 resolver = "3"
 
 [workspace.package]
@@ -16,6 +22,7 @@ wellfed-core = { path = "src/sdk/wellfed-core" }
 wellfed-probes = { path = "src/sdk/wellfed-probes" }
 wellfed-sdk = { path = "src/sdk/wellfed-sdk" }
 wellfed-sdk-c = { path = "src/sdk/wellfed-sdk-c" }
+wellfed-feeder = { path = "src/product/wellfed-feeder" }
 wellfed-fw-blink = { path = "src/firmware/wellfed/blink" }
 wellfed-fw-ble = { path = "src/firmware/wellfed/ble" }
 wellfed-formats = { path = "src/tools/wellfed-formats" }

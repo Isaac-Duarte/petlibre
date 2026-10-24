@@ -557,6 +557,8 @@ pub enum Op {
     Wifi,
     /// FW24: play one built-in tune.
     Play,
+    /// FP11: read, or with `locked`, set the panel's child lock.
+    Lock,
 }
 
 /// The fields of a `wifi` request: hex `ssid` and `psk` together, or
@@ -602,6 +604,19 @@ impl SettingsFields {
     }
 }
 
+/// The fields of a `lock` request; none present reads the lock.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LockFields {
+    pub locked: Option<bool>,
+}
+
+impl LockFields {
+    /// Whether the request changes anything (and so must be signed).
+    pub fn changes(&self) -> bool {
+        self.locked.is_some()
+    }
+}
+
 /// Largest `volume` a `settings` request may set, and the store accepts.
 pub const MAX_VOLUME: u8 = 100;
 
@@ -629,6 +644,8 @@ pub struct Request<'a> {
     pub wifi: Option<WifiFields<'a>>,
     /// Present exactly when `op` is `play`: a known tune's name.
     pub tune: Option<Tune>,
+    /// Present exactly when `op` is `lock`.
+    pub lock: Option<LockFields>,
     /// The session nonce and sequence number of a signed request
     /// ([`crate::request_auth`] checks them with the MAC).
     pub auth: Option<(&'a str, u32)>,
@@ -688,6 +705,7 @@ pub fn parse_request(payload: &[u8]) -> Result<Request<'_>, RequestError> {
     let mut numbers: [Option<i64>; 4] = [None; 4];
     let mut seq = None;
     let mut options: [Option<i64>; 3] = [None; 3];
+    let mut locked = None;
     for pair in inner.split(',') {
         let (key, value) = pair.split_once(':').ok_or(RequestError::Malformed)?;
         let key = unquote(key).ok_or(RequestError::Malformed)?;
@@ -708,6 +726,13 @@ pub fn parse_request(payload: &[u8]) -> Result<Request<'_>, RequestError> {
         if let Some(index) = option {
             let value = integer(value).ok_or(RequestError::Malformed)?;
             if options[index].replace(value).is_some() {
+                return Err(RequestError::Malformed);
+            }
+            continue;
+        }
+        if key == "locked" {
+            let value = integer(value).ok_or(RequestError::Malformed)?;
+            if locked.replace(value).is_some() {
                 return Err(RequestError::Malformed);
             }
             continue;
@@ -764,6 +789,7 @@ pub fn parse_request(payload: &[u8]) -> Result<Request<'_>, RequestError> {
         "settings" => Ok(Op::Settings),
         "wifi" => Ok(Op::Wifi),
         "play" => Ok(Op::Play),
+        "lock" => Ok(Op::Lock),
         other => Err(other),
     };
 
@@ -814,6 +840,14 @@ pub fn parse_request(payload: &[u8]) -> Result<Request<'_>, RequestError> {
         _ => None,
     };
 
+    let lock = match op {
+        Ok(Op::Lock) => Some(LockFields {
+            locked: flag(locked)?,
+        }),
+        _ if locked.is_some() => return Err(RequestError::Malformed),
+        _ => None,
+    };
+
     let time = match (op, numbers) {
         (
             Ok(Op::Time),
@@ -851,6 +885,7 @@ pub fn parse_request(payload: &[u8]) -> Result<Request<'_>, RequestError> {
         settings,
         wifi,
         tune,
+        lock,
         auth,
     })
 }
@@ -1190,6 +1225,44 @@ pub fn write_play_reply(
     }
 }
 
+/// How a `lock` request ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LockResult {
+    /// The lock as the panel's owner last published it; `pending` once a
+    /// change is queued for that owner.
+    Current { locked: bool, pending: bool },
+    /// A change is already queued.
+    Busy,
+    /// This firmware runs no panel owner, so there is no lock to set.
+    Unserved,
+}
+
+/// The reply to a `lock` request.
+pub fn write_lock_reply(
+    out: &mut impl Write,
+    request: &Request,
+    result: LockResult,
+) -> fmt::Result {
+    match result {
+        LockResult::Current { locked, pending } => write!(
+            out,
+            "{{\"id\":\"{}\",\"op\":\"lock\",\"ok\":true,\"pending\":{pending},\"locked\":{}}}",
+            request.id,
+            u8::from(locked),
+        ),
+        LockResult::Busy | LockResult::Unserved => write!(
+            out,
+            "{{\"id\":\"{}\",\"op\":\"lock\",\"ok\":false,\"error\":\"{}\"}}",
+            request.id,
+            if result == LockResult::Busy {
+                "busy"
+            } else {
+                "unserved"
+            }
+        ),
+    }
+}
+
 /// Which credentials the Wi-Fi join uses this boot.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum WifiSource {
@@ -1335,6 +1408,7 @@ pub fn write_reply(out: &mut impl Write, request: &Request, uptime_ms: u32) -> f
                 Op::Settings => "settings",
                 Op::Wifi => "wifi",
                 Op::Play => "play",
+                Op::Lock => "lock",
             };
             write!(
                 out,

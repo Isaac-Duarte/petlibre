@@ -50,6 +50,9 @@ const TRANSPORT_ISOLATION: [(&str, &[&str]); 2] = [
             // FW24: queue a built-in tune for the speaker; no other output.
             r"crate::audio",
             r"audio::request",
+            // FP11: queue a panel-lock change for the panel's owner.
+            r"crate::panel",
+            r"panel::request",
             // Signed requests: verification only (request_auth.rs).
             r"wellfed_core::request_auth",
             r"request_auth::(split|Session)(::(new|nonce_hex))?",

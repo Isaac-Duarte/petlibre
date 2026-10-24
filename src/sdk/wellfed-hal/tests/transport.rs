@@ -657,3 +657,62 @@ fn play_only_signed() {
     audio::reset();
     settings::reset();
 }
+
+#[test]
+fn lock_reads_unsigned_and_changes_only_signed() {
+    use wellfed_hal::panel;
+    use wellfed_hal::sdk::fake::api::FAKE_REQUEST_KEY;
+    let (_guard, mut link) = start();
+    panel::reset();
+    connect(&mut link);
+    let nonce = health_nonce();
+
+    // No panel owner yet: there is no lock to read.
+    rx(&encoded(&format!(r#"{{"id":"{ID}","op":"lock"}}"#)));
+    assert_eq!(
+        run(&mut link, 1),
+        vec![Record::Request {
+            kind: RequestKind::Lock,
+            ok: false
+        }]
+    );
+
+    panel::publish(true);
+    rx(&encoded(&format!(
+        r#"{{"id":"{ID}","op":"lock","locked":0}}"#
+    )));
+    assert_eq!(
+        run(&mut link, 1),
+        vec![Record::Request {
+            kind: RequestKind::Unauthenticated,
+            ok: false
+        }]
+    );
+    assert_eq!(panel::take(), None, "an unsigned change queues nothing");
+
+    let prefix = format!(r#"{{"id":"{ID}","op":"lock","locked":0,"nonce":"{nonce}","seq":1"#);
+    rx(&signed_publish(&FAKE_REQUEST_KEY, &prefix));
+    assert_eq!(
+        run(&mut link, 1),
+        vec![Record::Request {
+            kind: RequestKind::Lock,
+            ok: true
+        }]
+    );
+
+    let replies: Vec<String> = published()
+        .into_iter()
+        .filter(|(t, _)| t.ends_with("/reply"))
+        .map(|(_, p)| p)
+        .collect();
+    assert_eq!(
+        replies[0],
+        format!(r#"{{"id":"{ID}","op":"lock","ok":false,"error":"unserved"}}"#)
+    );
+    assert_eq!(
+        replies[2],
+        format!(r#"{{"id":"{ID}","op":"lock","ok":true,"pending":true,"locked":1}}"#)
+    );
+    assert_eq!(panel::take(), Some(false));
+    panel::reset();
+}

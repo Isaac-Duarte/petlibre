@@ -368,6 +368,13 @@ pub fn adc_read() -> u16 {
         match h.adc_channel {
             4 => h.current_adc,
             5 => h.battery_adc,
+            10 if h.adc_noise != 0 => {
+                // xorshift32 in the low byte, as noise would be.
+                h.adc_noise ^= h.adc_noise << 13;
+                h.adc_noise ^= h.adc_noise >> 17;
+                h.adc_noise ^= h.adc_noise << 5;
+                (h.supply_adc & !0xff) | u16::from(h.adc_noise.to_le_bytes()[0])
+            }
             10 => h.supply_adc,
             channel => panic!("unmodelled ADC channel {channel}"),
         }
@@ -641,6 +648,11 @@ pub fn panic_outputs_safe() {
 
 pub fn log(message: &CStr) {
     print!("{}", message.to_string_lossy());
+}
+
+/// One host thread drives the fake, so nothing else can be scheduled.
+pub fn unscheduled<R>(f: impl FnOnce() -> R) -> R {
+    f()
 }
 
 /// Fixed synthetic broker settings.

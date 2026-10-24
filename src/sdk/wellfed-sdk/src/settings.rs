@@ -4,21 +4,28 @@
 //! confirmation does, and then saves each signed change the transport queues.
 //! Each save sets the arming attempt marker and clears it after, so a hang
 //! inside a save resets at most once per power cycle.
+//!
+//! FW45: once armed it also keeps the keys. It mixes the seed stored across
+//! boots into the generator and stores the next one (sectors 7 and 8), and
+//! opens the identity and client store (sectors 9 and 10), creating the
+//! feeder's identity secret on the first boot that has a generator.
 
 use core::fmt;
 
 use wellfed_core::named_enum;
 
+use wellfed_core::store::clients::{ClientStatus, ClientStore};
 use wellfed_core::store::net::{NetStatus, NetStore};
+use wellfed_core::store::seed::{SeedStatus, SeedStore};
 use wellfed_core::store::settings::{Settings, SettingsStatus, SettingsStore};
 use wellfed_core::transport::{SettingsFields, SettingsView};
 use wellfed_hal::flash::park::Mmio;
 use wellfed_hal::flash_lock::arming::{self, Arming, Hooks, Poll};
 use wellfed_hal::flash_lock::provider::Provider;
 use wellfed_hal::network::{self, NET_BASE};
-use wellfed_hal::settings;
+use wellfed_hal::{rng, settings};
 
-use crate::storage::{FlashOps, SETTINGS_BASE, SETTINGS_BINDING, slot_io};
+use crate::storage::{CLIENTS_BASE, FlashOps, SEED_BASE, SETTINGS_BASE, SETTINGS_BINDING, slot_io};
 
 pub const POLL_MS: u32 = 200;
 
@@ -27,6 +34,17 @@ named_enum! {
     pub enum ErrorStage {
         Unarmed = "unarmed",
         Save = "save",
+    }
+}
+
+named_enum! {
+    /// What became of the feeder's identity secret this boot.
+    pub enum Identity {
+        Loaded = "loaded",
+        Created = "created",
+        /// No generator, a store it may not write, or unarmed.
+        Missing = "missing",
+        Failed = "failed",
     }
 }
 
@@ -58,6 +76,17 @@ pub enum Record {
     },
     NetError {
         stage: ErrorStage,
+    },
+    /// FW45: the stored seed and the client store.
+    Keys {
+        seed: SeedStatus,
+        /// The stored seed went into the generator.
+        mixed: bool,
+        /// The next boot's seed was stored.
+        saved: bool,
+        clients: ClientStatus,
+        enrolled: usize,
+        identity: Identity,
     },
 }
 
@@ -121,6 +150,41 @@ pub fn describe(record: Record, f: &mut impl fmt::Write) -> fmt::Result {
             u8::from(stored)
         ),
         Record::NetError { stage } => write!(f, "net error stage={stage}"),
+        Record::Keys {
+            seed,
+            mixed,
+            saved,
+            clients,
+            enrolled,
+            identity,
+        } => write!(
+            f,
+            "keys seed={} mixed={} saved={} clients={} enrolled={enrolled} identity={identity}",
+            seed_status(seed),
+            u8::from(mixed),
+            u8::from(saved),
+            client_status(clients),
+        ),
+    }
+}
+
+fn seed_status(status: SeedStatus) -> &'static str {
+    match status {
+        SeedStatus::Unopened => "unopened",
+        SeedStatus::Empty => "empty",
+        SeedStatus::Loaded => "loaded",
+        SeedStatus::ReadOnly => "read-only",
+        SeedStatus::Io => "io",
+    }
+}
+
+fn client_status(status: ClientStatus) -> &'static str {
+    match status {
+        ClientStatus::Unopened => "unopened",
+        ClientStatus::Empty => "empty",
+        ClientStatus::Loaded => "loaded",
+        ClientStatus::ReadOnly => "read-only",
+        ClientStatus::Io => "io",
     }
 }
 
@@ -160,6 +224,9 @@ pub struct Writer {
     /// The credential store's open record, logged on the next step.
     net_opened: bool,
     armed: bool,
+    seed: SeedStore,
+    clients: ClientStore,
+    keys_opened: bool,
 }
 
 fn changed(current: Settings, fields: SettingsFields) -> Settings {
@@ -172,6 +239,52 @@ fn changed(current: Settings, fields: SettingsFields) -> Settings {
 }
 
 impl Writer {
+    /// FW45's keys: mix the stored seed in and store the next, then open
+    /// the client store and create the identity if it has none. Writes only
+    /// when `writable` (armed, normal stage), each under its own attempt
+    /// marker.
+    ///
+    /// # Safety
+    /// `F`'s operations are sound for the storage region.
+    unsafe fn keys<F: FlashOps>(&mut self, writable: bool) -> Record {
+        // SAFETY: the slot I/O callbacks are static functions.
+        unsafe { self.seed.open(slot_io::<F, SEED_BASE>()) };
+        let mixed = self.seed.seed().is_some_and(|seed| rng::mix(seed));
+        let saved = writable
+            && rng::bytes().is_some_and(|next| {
+                arming::set_attempt();
+                let saved = self.seed.save(&next);
+                arming::clear_attempt();
+                saved
+            });
+
+        // SAFETY: as above.
+        unsafe { self.clients.open(slot_io::<F, CLIENTS_BASE>()) };
+        let identity = if self.clients.identity().is_some() {
+            Identity::Loaded
+        } else if let Some(secret) = rng::bytes().filter(|_| writable && self.clients.writable()) {
+            arming::set_attempt();
+            let created = self.clients.set_identity(&secret).is_ok();
+            arming::clear_attempt();
+            if created {
+                Identity::Created
+            } else {
+                Identity::Failed
+            }
+        } else {
+            Identity::Missing
+        };
+
+        Record::Keys {
+            seed: self.seed.status,
+            mixed,
+            saved,
+            clients: self.clients.status,
+            enrolled: self.clients.clients().count(),
+            identity,
+        }
+    }
+
     fn publish(&self) {
         let writable = self.armed
             && matches!(
@@ -256,6 +369,13 @@ impl Writer {
                             stored: self.net.credentials.is_some(),
                         }),
                     );
+                }
+                if !self.keys_opened {
+                    self.keys_opened = true;
+                    let writable = self.stage == Stage::Idle && H::armed();
+                    // SAFETY: the slot I/O callbacks are static functions.
+                    let record = unsafe { self.keys::<F>(writable) };
+                    return next(POLL_MS, Some(record));
                 }
                 if let Some(credentials) = network::pending() {
                     let record = if self.stage == Stage::Serve || !H::armed() {

@@ -208,8 +208,12 @@ impl Budget {
     }
 }
 
-/// 32 bytes for a throwaway key: the board's entropy under a label.
+/// 32 bytes for a throwaway key: from the generator (FW45), or the
+/// board's timer mix under a label if it never started.
 fn secret(label: &[u8]) -> [u8; 32] {
+    if let Some(bytes) = wellfed_sdk::hal::rng::bytes() {
+        return bytes;
+    }
     let words = sdk::entropy();
     let mut bytes = [0; 16];
     let (chunks, _) = bytes.as_chunks_mut::<4>();

@@ -13,6 +13,9 @@ use wellfed_hal::sdk;
 
 /// Settings slots within the storage region: sectors 2 and 3 (0x342000).
 pub const SETTINGS_BASE: u32 = sdk::storage::SETTINGS.first;
+/// FW45: the generator's seed across boots, and the identity and clients.
+pub const SEED_BASE: u32 = sdk::storage::SEED.first;
+pub const CLIENTS_BASE: u32 = sdk::storage::CLIENTS.first;
 /// Installation binding for the research unit's settings.
 pub const SETTINGS_BINDING: u64 = 0x5046_5731_3502_0001;
 

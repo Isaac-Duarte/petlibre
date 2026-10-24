@@ -167,13 +167,10 @@ impl Table {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "two scans live only during open, which the loop's stack audit bounds"
-)]
 enum Scan {
     Erased,
-    Valid(u64, Table),
+    /// The generation; the table went to the caller's buffer.
+    Valid(u64),
     Future,
     Invalid,
 }
@@ -264,7 +261,9 @@ fn decode_entry(entry: &[u8]) -> Result<Option<Client>, ()> {
     }))
 }
 
-fn decode(p: &[u8; RECORD_BYTES]) -> Scan {
+/// Decode `p`, leaving a valid record's table in `table` (any other result
+/// leaves `table` unspecified).
+fn decode(p: &[u8; RECORD_BYTES], table: &mut Table) -> Scan {
     if p.iter().all(|&b| b == u8::MAX) {
         return Scan::Erased;
     }
@@ -287,7 +286,7 @@ fn decode(p: &[u8; RECORD_BYTES]) -> Scan {
         return Scan::Invalid;
     }
 
-    let mut table = Table::EMPTY;
+    *table = Table::EMPTY;
     match p[HAS_IDENTITY_AT] {
         0 if p[IDENTITY_AT..HAS_IDENTITY_AT].iter().all(|&b| b == 0) => {}
         1 => {
@@ -307,13 +306,17 @@ fn decode(p: &[u8; RECORD_BYTES]) -> Scan {
         };
         *slot = client;
     }
-    Scan::Valid(generation, table)
+    Scan::Valid(generation)
 }
 
 impl ClientStore {
-    fn scan(&self, slot: c_uint) -> Option<Scan> {
+    /// Scan `slot` into the store's own table, so open never holds two
+    /// decoded tables on the stack.
+    fn scan(&mut self, slot: c_uint) -> Option<Scan> {
         let mut record = [0u8; RECORD_BYTES];
-        self.io.read(slot, 0, &mut record).then(|| decode(&record))
+        self.io
+            .read(slot, 0, &mut record)
+            .then(|| decode(&record, &mut self.table))
     }
 
     /// Bind to two exclusive erase units and load the newest valid table.
@@ -336,19 +339,23 @@ impl ClientStore {
         };
 
         let pick = match (a, b) {
-            (Scan::Valid(ga, ta), Scan::Valid(gb, tb)) => {
-                Some(if ga >= gb { (0, ga, ta) } else { (1, gb, tb) })
-            }
-            (Scan::Valid(g, t), _) => Some((0, g, t)),
-            (_, Scan::Valid(g, t)) => Some((1, g, t)),
+            (Scan::Valid(ga), Scan::Valid(gb)) => Some(if ga >= gb { (0, ga) } else { (1, gb) }),
+            (Scan::Valid(g), _) => Some((0, g)),
+            (_, Scan::Valid(g)) => Some((1, g)),
             _ => None,
         };
+        // Both scans wrote the table; reload the winner's, or start empty.
+        self.table = Table::EMPTY;
         self.status = if a == Scan::Future || b == Scan::Future {
             ClientStatus::ReadOnly
-        } else if let Some((slot, generation, table)) = pick {
+        } else if let Some((slot, generation)) = pick {
+            if self.scan(slot) != Some(Scan::Valid(generation)) {
+                self.table = Table::EMPTY;
+                self.status = ClientStatus::Io;
+                return self.status;
+            }
             self.slot = slot;
             self.generation = generation;
-            self.table = table;
             ClientStatus::Loaded
         } else {
             ClientStatus::Empty

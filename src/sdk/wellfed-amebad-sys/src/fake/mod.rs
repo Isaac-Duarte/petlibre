@@ -116,6 +116,9 @@ pub struct Hardware {
     /// Added to `raw_ticks` after each read, so a sampler polling for the
     /// next 32 kHz edge sees one; zero holds the timer still.
     pub ticks_per_read: u32,
+    /// Nonzero: the supply channel's low byte is pseudo-random noise from
+    /// this xorshift state, for FW45's generator; zero reads it steady.
+    pub adc_noise: u32,
     /// SysTick's current value and reload; each read counts the value down
     /// by `systick_step`, wrapping at the reload as the core's counter does.
     pub systick_value: u32,
@@ -262,6 +265,7 @@ impl Default for Hardware {
             blocked_optics_write: false,
             raw_ticks: 0,
             ticks_per_read: 0,
+            adc_noise: 0,
             systick_value: 0,
             systick_reload: 0,
             systick_step: 0,

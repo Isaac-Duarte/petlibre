@@ -1112,6 +1112,14 @@ pub fn uptime_ms() -> u32 {
 /// is paused for the print (interrupts keep running). Before the scheduler
 /// starts, or from an interrupt, it prints directly.
 pub fn log(message: &CStr) {
+    // SAFETY: a NUL-terminated format and string.
+    unscheduled(|| unsafe { raw::_rtl_printf(c"%s".as_ptr(), message.as_ptr()) });
+}
+
+/// Run `f` with no other task scheduled: from a task, the scheduler is
+/// paused for the call (interrupts keep running); before the scheduler
+/// starts, or from an interrupt, it runs directly. `f` must not block.
+pub fn unscheduled<R>(f: impl FnOnce() -> R) -> R {
     let task = ipsr() == 0
         // SAFETY: the pinned SDK routine, with plain-value arguments.
         && unsafe { raw::xTaskGetSchedulerState() } == k::WELLFED_SCHEDULER_RUNNING as _;
@@ -1119,12 +1127,12 @@ pub fn log(message: &CStr) {
         // SAFETY: the pinned SDK routine, with plain-value arguments.
         unsafe { raw::vTaskSuspendAll() };
     }
-    // SAFETY: a NUL-terminated format and string.
-    unsafe { raw::_rtl_printf(c"%s".as_ptr(), message.as_ptr()) };
+    let result = f();
     if task {
         // SAFETY: the pinned SDK routine, with plain-value arguments.
         unsafe { raw::xTaskResumeAll() };
     }
+    result
 }
 
 /// Read the live KM0 image mapping. No flash/status/register writes are made

@@ -30,6 +30,7 @@ pub mod clock;
 pub mod entropy;
 pub mod network;
 pub mod panel;
+pub mod rng;
 pub mod settings;
 pub mod stream;
 

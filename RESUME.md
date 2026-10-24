@@ -7,6 +7,16 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
+**October 24, morning: FW45 generator and keys in the firmware (physical, no owner action).**
+- **Owner-approved migration (FW51):** `private/feed-ledger.json` renamed to `feed-ledger.json.before-fw51` (every trial finished; `ota_hold` was true). `max_portions` removed from `private/server.json`, with a backup in `server.json.before-fw51`.
+- **Runs:** bounded `serve`, stopped afterwards.
+  - `ota fw45-keys-01` stopped before the offer: the pre-migration config was refused.
+  - `ota fw45-keys-02` (v106, confirmed) logged `PLRNG1 boot result=ready samples=1024` and `PLCFG1 keys seed=empty saved=1 identity=created`.
+  - `boot fw45-restart-01`–`16`: every boot was ready, with distinct first samples and checks, and logged `seed=loaded mixed=1 saved=1 identity=loaded`.
+- **Flash now:** **Bank 1:** `feeder` `a675ccc5…` (v106, confirmed), carrying the generator and the stored identity. **Bank 0:** `qa` `ef76b85e…`. **Next manifest version:** 107. Storage sectors 7–10 now hold the seed and the identity.
+- **Bench state:** feeder on, hotspot up, no server.
+- **Next:** FW30 pins 2–4 with the owner at the meter, then the transients with the logic analyzer, then FW16. FW45 continues with pairing.
+
 **October 24: FW51 done, the research paths out of `wellfed-local` (host only, nothing run on the bench; [tools roadmap](docs/development/tools-roadmap.md)).**
 - **Removed:** stock control (`feed`, `resolve`, `new-request-id`, `/api/feed`), the C-probe and modified-stock trials (`probe-query`, the `1.1.16`/C-probe images, `ota-images --profile`), `speak` and `ble-wifi`. The install trial's guards and no-resend rule are unchanged.
 - **Before the next `serve` (owner, once):** `wellfed-local serve` now refuses to start beside `private/feed-ledger.json`. Check that no trial in it is submitted, uncertain or failed, then rename it (for example to `feed-ledger.json.before-fw51`); the new ledger is `private/stock-ledger.json`. Also delete the `max_portions` line from `private/server.json`, which the config now refuses as an unknown field.
@@ -635,9 +645,9 @@ Bench lessons from stage C:
 
 Per the latest checkpoint at the top of this file (reconfirm before relying on it):
 
-- **Bank 1 (boots):** the `feeder` firmware `76c9013e…`, OTA v104, confirmed (`fw45-rng-restore-01`). It carries the runtime (supervision, clock, signed requests, settings writer, offer check), the button service and the FP11 child lock, and the FW44 Noise session table. It drives no motor.
+- **Bank 1 (boots):** the `feeder` firmware `a675ccc5…`, OTA v106, confirmed (`fw45-keys-02`), with the FW45 generator and identity. It carries the runtime (supervision, clock, signed requests, settings writer, offer check), the button service and the FP11 child lock, and the FW44 Noise session table. It drives no motor.
 - **Bank 0 (recovery):** `qa` `ef76b85e…`, written by stock 1.1.15's updater in `fw40-stock-ota-07`. Only its runtime's recovery role runs from bank 0.
-- **Next manifest version:** 105.
+- **Next manifest version:** 107.
 
 Wi-Fi and broker credentials come from private files; images stay under `private/`.
 

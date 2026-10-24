@@ -29,6 +29,9 @@ pub mod tag {
     pub const CLOCK: &str = "PLTIM1";
     /// BLE setup: `ready`, `advertising`, `connect`, `request op=wifi ok=…`.
     pub const BLE: &str = "PLBLE1";
+    /// The panic handler: `panic file=… line=… col=…`, then a halt the
+    /// watchdog resets.
+    pub const PANIC: &str = "PLPNC1";
 }
 
 /// One record: its tag (`PLMQT1`), first word, and `key=value` fields.

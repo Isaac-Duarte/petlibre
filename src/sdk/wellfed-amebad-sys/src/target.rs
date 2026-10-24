@@ -447,6 +447,42 @@ pub fn panic_outputs_safe() {
     cortex_m::asm::dsb();
 }
 
+/// The panic handler's `PLPNC1` line: where the panic happened, printed
+/// directly, since interrupts are already masked and the scheduler cannot be
+/// paused from here. The message is not formatted: that could panic again
+/// or need more stack than the panicking task has left. No backup register
+/// is free to carry it across the reset, so the UART is its only record.
+pub fn panic_record(file: &str, line: u32, column: u32) {
+    // SAFETY: only the panic handler writes the buffer, with interrupts masked
+    // and nothing after it but the halt, so no other access can overlap.
+    let path = unsafe { &mut *PANIC_PATH.0.get() };
+    // The path's tail, NUL-terminated: a long path keeps its file name.
+    let tail = &file.as_bytes()[file.len().saturating_sub(path.len() - 1)..];
+    path[..tail.len()].copy_from_slice(tail);
+    path[tail.len()] = 0;
+    let line = core::ffi::c_int::try_from(line).unwrap_or(core::ffi::c_int::MAX);
+    let column = core::ffi::c_int::try_from(column).unwrap_or(core::ffi::c_int::MAX);
+
+    // SAFETY: a NUL-terminated format and buffer, and plain integers.
+    unsafe {
+        raw::_rtl_printf(
+            c"PLPNC1 panic file=%s line=%d col=%d\r\n".as_ptr(),
+            path.as_ptr(),
+            line,
+            column,
+        )
+    };
+}
+
+/// The panic record's path, in a static: a panic can come from a task's
+/// deepest frame, so the handler keeps its own frame small.
+struct PanicPath(core::cell::UnsafeCell<[u8; 96]>);
+
+// SAFETY: see `panic_record`, its only user.
+unsafe impl Sync for PanicPath {}
+
+static PANIC_PATH: PanicPath = PanicPath(core::cell::UnsafeCell::new([0; 96]));
+
 fn tim2() -> *mut raw::RTIM_TypeDef {
     k::WELLFED_TIM2_BASE as usize as *mut raw::RTIM_TypeDef
 }

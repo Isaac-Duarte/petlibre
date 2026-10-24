@@ -9,7 +9,7 @@
 
 use core::ffi::{CStr, c_void};
 use core::ptr;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use super::{
     AUDIO_PAGE_SAMPLES, FlashMmuEntry, GpioRouting, IR_PA_BIT, IR_PB_BIT, Irq, Isr, LpClock,
@@ -819,6 +819,10 @@ pub fn set_lp_km0_ctrl(value: u32) {
 
 struct TaskSlot {
     claimed: AtomicBool,
+    /// The live task's FreeRTOS handle; zero while unclaimed or once it ends.
+    handle: AtomicUsize,
+    /// The live task's identity for [`current_task`], never reused.
+    id: AtomicUsize,
     step: core::cell::UnsafeCell<Option<TaskStep>>,
     context: core::cell::UnsafeCell<*mut c_void>,
 }
@@ -828,9 +832,16 @@ struct TaskSlot {
 // under `task_create`'s contract.
 unsafe impl Sync for TaskSlot {}
 
+/// Marks a [`task_create`] identity: FreeRTOS handles are RAM addresses below
+/// `0x8000_0000`, so the two never collide.
+const SPAWNED: usize = 1 << (usize::BITS - 1);
+static NEXT_TASK_ID: AtomicUsize = AtomicUsize::new(1);
+
 static TASKS: [TaskSlot; 8] = [const {
     TaskSlot {
         claimed: AtomicBool::new(false),
+        handle: AtomicUsize::new(0),
+        id: AtomicUsize::new(0),
         step: core::cell::UnsafeCell::new(None),
         context: core::cell::UnsafeCell::new(ptr::null_mut()),
     }
@@ -853,6 +864,8 @@ unsafe extern "C" fn trampoline(argument: *mut c_void) {
         unsafe { raw::vTaskDelay(delay) };
     }
 
+    // The handle may go to the next task; this one's identity never does.
+    slot.handle.store(0, Ordering::Release);
     slot.claimed.store(false, Ordering::Release);
     // SAFETY: the pinned SDK routine, with plain-value arguments.
     unsafe { raw::vTaskDelete(ptr::null_mut()) }
@@ -883,6 +896,10 @@ pub unsafe fn task_create(
         *slot.step.get() = Some(step);
         *slot.context.get() = context;
     }
+    slot.id.store(
+        SPAWNED | NEXT_TASK_ID.fetch_add(1, Ordering::Relaxed),
+        Ordering::Release,
+    );
 
     // SAFETY: the pinned SDK routine; `name` is static and the argument is a static slot.
     let created = unsafe {
@@ -892,11 +909,13 @@ pub unsafe fn task_create(
             stack_words,
             ptr::from_ref(slot).cast_mut().cast(),
             k::PETLIBRE_IDLE_PRIORITY + priority,
-            ptr::null_mut(),
+            // FreeRTOS writes the handle before the task can first run.
+            slot.handle.as_ptr().cast(),
         )
     } == k::PETLIBRE_PD_PASS as raw::BaseType_t;
 
     if !created {
+        slot.handle.store(0, Ordering::Release);
         slot.claimed.store(false, Ordering::Release);
     }
     created
@@ -1200,8 +1219,9 @@ pub fn uptime_ms() -> u32 {
 }
 
 /// The running task's identity, nonzero and stable for the task's life; zero
-/// from an interrupt or before the scheduler starts. A task created after
-/// another ended may reuse its handle.
+/// from an interrupt or before the scheduler starts. A task from
+/// [`task_create`] gets an identity no later task reuses, even one that
+/// inherits its handle; the SDK's own tasks are known by their handle.
 pub fn current_task() -> usize {
     if ipsr() != 0
         // SAFETY: the pinned SDK routine, with plain-value arguments.
@@ -1210,7 +1230,11 @@ pub fn current_task() -> usize {
         return 0;
     }
     // SAFETY: the pinned SDK routine; it reads the current TCB pointer.
-    unsafe { raw::xTaskGetCurrentTaskHandle() as usize }
+    let handle = unsafe { raw::xTaskGetCurrentTaskHandle() as usize };
+    TASKS
+        .iter()
+        .find(|slot| slot.handle.load(Ordering::Acquire) == handle)
+        .map_or(handle, |slot| slot.id.load(Ordering::Acquire))
 }
 
 /// One line, not split by another task's print: from a task, the scheduler

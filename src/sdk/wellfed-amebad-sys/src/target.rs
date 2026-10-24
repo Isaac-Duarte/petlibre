@@ -13,8 +13,8 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use super::{
     AUDIO_PAGE_SAMPLES, FlashMmuEntry, GpioRouting, IR_PA_BIT, IR_PB_BIT, Irq, Isr, LpClock,
-    MOTOR_MASK, SECTOR_BYTES, STORAGE_OFFSET, STORAGE_SECTORS, SYSTICK_CTRL, TaskStep, TcpRecv,
-    TransportConfig, WifiEvent, WifiPoll,
+    MOTOR_MASK, SECTOR_BYTES, STORAGE_OFFSET, STORAGE_SECTORS, SYSTICK_CTRL, Systick, TaskStep,
+    TcpRecv, TransportConfig, WifiEvent, WifiPoll,
 };
 #[cfg(feature = "bluetooth")]
 use super::{Advertising, BleEvent, BlePoll, BleService, BleStats};
@@ -333,6 +333,15 @@ pub fn adc_read() -> u16 {
 pub fn systimer_ticks() -> u32 {
     // SAFETY: the pinned SDK routine, with plain-value arguments.
     unsafe { raw::SYSTIMER_TickGet() }
+}
+
+pub fn systick() -> Systick {
+    // SAFETY: the architectural reload and current-value registers after
+    // SYSTICK_CTRL, read only; FreeRTOS owns the timer.
+    let reload = unsafe { ptr::read_volatile(reg(SYSTICK_CTRL + 4)) } & 0x00ff_ffff;
+    // SAFETY: as above.
+    let value = unsafe { ptr::read_volatile(reg(SYSTICK_CTRL + 8)) } & 0x00ff_ffff;
+    Systick { value, reload }
 }
 
 /// The FreeRTOS heap's free bytes now.

@@ -1,6 +1,6 @@
 # Keys, randomness and pairing (FW45)
 
-Status: host-tested groundwork (October 24, 2026). Nothing here runs on the feeder yet. The firmware still uses its old entropy mix, and no client can pair. This page records the design the code implements, and what is left before the [FW45 card](../../FIRMWARE_BOARD.md) can close.
+Status: host-tested groundwork, plus a physical measurement of the noise sources (October 24, 2026). The generator is not wired into the firmware yet: the firmware still uses its old entropy mix, and no client can pair. This page records the design the code implements, and what is left before the [FW45 card](../../FIRMWARE_BOARD.md) can close.
 
 ## No hardware RNG
 
@@ -12,7 +12,7 @@ Status: host-tested groundwork (October 24, 2026). Nothing here runs on the feed
 - The request nonce only has to differ between sessions, which timers give. A long-term key needs real entropy.
 
 **What replaces it** (`wellfed-core::rng`):
-1. **Raw noise.** The firmware samples physical noise: the KM4 cycle counter against the 32 kHz system timer, and the low bits of an ADC channel. These are planned sources; neither is measured yet.
+1. **Raw noise** (`wellfed-hal::entropy`): the low byte of a raw ADC conversion of the chip's internal supply, and SysTick's cycle count between 32 kHz timer edges. Both were measured on the bench ([below](#measured-noise-physical-october-24)).
 2. **Health tests** (SP 800-90B 4.4):
    - A Repetition Count Test and an Adaptive Proportion Test (window 512) on every sample.
    - Their cutoffs come from the min-entropy the source claims per sample, at a false-alarm rate of 2^-20; they match the standard's table.
@@ -27,7 +27,38 @@ Status: host-tested groundwork (October 24, 2026). Nothing here runs on the feed
    - It stores the next seed before anything uses the generator.
    - So a boot whose source repeats an earlier boot's input still never repeats an earlier stream.
 
-**The per-sample claim is the open question.** It has to come from bench data: raw samples from each source on the feeder, assessed with a 90B estimator. Until then any claim is a placeholder, and the generator is not wired into the firmware.
+## Measured noise (physical, October 24)
+
+**Method:**
+- The `feeder` firmware's `entropy` variant (v103) streamed one-byte samples over UART (`PLRNG1` records) from a cold boot: 1,000,048 from each source.
+- The research unit ran on USB power at room temperature.
+- NIST's SP 800-90B tool assessed the stream (`ea_non_iid`, non-IID track, 8-bit symbols), built from its public repository. The tool and its scripts stay outside the repository.
+- The captures are `fw45-rng-05` to `fw45-rng-11`. Segments end at the flash tool's 512 KiB observe limit, so a few records fell between them.
+
+**Control:** the same tool rates 1,000,000 bytes of `/dev/urandom` at 6.92 bits per sample. Its estimators are conservative, so 8 is never reached.
+
+| Source | Samples assessed | H_original | 8 × H_bitstring | Min-entropy per sample | On-device health tests at 1 bit |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Clock jitter: SysTick cycles between 32 kHz edges, low byte | 999,712 | 0.189 | 0.310 | **0.19** | passed |
+| ADC internal supply channel (10), low byte of a raw conversion | 972,272 | 2.050 | 1.441 | **1.44** | passed |
+
+**Clock jitter:**
+- Three values make up 90 % of the jitter samples (0x6f 36 %, 0x39 36 %, 0x70 17 %).
+- So the CPU clock and the 32 kHz timer are nearly locked together: the count varies mainly with interrupts.
+- It is too weak to claim much.
+
+**ADC:** spread over 92 values, the most common 22 %.
+
+**Health tests:** both sources passed at a 1-bit claim. That shows the tests catch stuck or grossly broken sources, not an over-claim: the jitter source passed with a fifth of that.
+
+**Choice:**
+- The generator claims **1 bit per ADC sample** (8 eighths), below the measured 1.44. A 256-bit input then needs 512 samples, after the 1,024-sample start-up test.
+- The jitter samples are hashed into the pool too, but are credited nothing.
+
+**Not yet covered:**
+- **One unit, one condition:** battery power and temperature were not tested.
+- **Restart test:** 90B's restart test (samples across many cold boots) has not been run.
+- **ADC sharing:** the ADC is shared with the runtime's power monitor, so wiring needs a way for both to use it.
 
 ## Storage sectors
 
@@ -80,7 +111,7 @@ The timeouts are ours: stock pairs through the vendor cloud and has no equivalen
 
 ## Left for FW45
 
-1. **Entropy sources:** a sampler for the cycle-counter jitter and ADC sources, a bench capture of raw samples, and a min-entropy estimate per source.
+1. **ADC sharing and restart:** let the generator and the power monitor share the ADC; run the restart test across cold boots.
 2. **Wiring:** connect the pool, the seed store and the DRBG at boot. Replace `entropy()` at the transport, BLE and FW44 budget call sites.
 3. **Firmware stores:** open the client store in the firmware, generate the identity on first boot, and apply `Admit` events.
 4. **BLE setup:** the BLE setup exchange (Wi-Fi in, the app's key in, the feeder's key out), with BLE only in a boot-chosen setup mode.

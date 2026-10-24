@@ -56,18 +56,26 @@ pub fn open() -> Opened {
 /// times. False on the first conversion that never completes.
 pub fn convert(channel: u32, poll_limit: u32, samples: &mut [u16; SAMPLES]) -> bool {
     for sample in samples.iter_mut() {
-        sdk::adc_select(channel);
-        sdk::adc_clear_fifo();
-        sdk::adc_sw_trigger(true);
-        let ready = (0..poll_limit).any(|_| sdk::adc_readable());
-        sdk::adc_sw_trigger(false);
-        if !ready {
-            sdk::adc_clear_fifo();
+        let Some(raw) = convert_one(channel, poll_limit) else {
             return false;
-        }
-        *sample = sdk::adc_read() & MAX_RAW;
+        };
+        *sample = raw;
     }
     true
+}
+
+/// One raw conversion of `channel`, or `None` if it never completes.
+pub fn convert_one(channel: u32, poll_limit: u32) -> Option<u16> {
+    sdk::adc_select(channel);
+    sdk::adc_clear_fifo();
+    sdk::adc_sw_trigger(true);
+    let ready = (0..poll_limit).any(|_| sdk::adc_readable());
+    sdk::adc_sw_trigger(false);
+    if !ready {
+        sdk::adc_clear_fifo();
+        return None;
+    }
+    Some(sdk::adc_read() & MAX_RAW)
 }
 
 pub fn close() {

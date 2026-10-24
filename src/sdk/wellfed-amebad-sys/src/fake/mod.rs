@@ -18,7 +18,7 @@ use std::collections::VecDeque;
 use super::{
     AUDIO_PAGE_SAMPLES, AUDIO_PAGES, Advertising, BleEvent, BlePoll, BleService, BleStats,
     GpioRouting, IR_PA_BIT, IR_PB_BIT, Irq, Isr, LpClock, MOTOR_MASK, SECTOR_BYTES,
-    STORAGE_SECTORS, TaskStep, TcpRecv, TransportConfig, WifiEvent, WifiPoll, board,
+    STORAGE_SECTORS, Systick, TaskStep, TcpRecv, TransportConfig, WifiEvent, WifiPoll, board,
 };
 
 pub const GPIOA_IRQ: usize = 4;
@@ -113,6 +113,14 @@ pub struct Hardware {
     pub blocked_optics_write: bool,
 
     pub raw_ticks: u32,
+    /// Added to `raw_ticks` after each read, so a sampler polling for the
+    /// next 32 kHz edge sees one; zero holds the timer still.
+    pub ticks_per_read: u32,
+    /// SysTick's current value and reload; each read counts the value down
+    /// by `systick_step`, wrapping at the reload as the core's counter does.
+    pub systick_value: u32,
+    pub systick_reload: u32,
+    pub systick_step: u32,
     /// The FreeRTOS heap: free now, and the least it has been.
     pub heap_free: u32,
     pub heap_min_free: u32,
@@ -253,6 +261,10 @@ impl Default for Hardware {
             blocked_motor_write: false,
             blocked_optics_write: false,
             raw_ticks: 0,
+            ticks_per_read: 0,
+            systick_value: 0,
+            systick_reload: 0,
+            systick_step: 0,
             heap_free: 200 * 1024,
             heap_min_free: 180 * 1024,
             timer_phase: 0,

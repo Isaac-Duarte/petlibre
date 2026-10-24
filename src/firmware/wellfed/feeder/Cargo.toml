@@ -17,6 +17,8 @@ crate-type = ["staticlib", "rlib"]
 km4 = ["wellfed-sdk/km4", "wellfed-sdk/bluetooth"]
 # FW44: start BLE setup mode at boot, to measure the image with it running.
 setup = []
+# FW45: stream raw noise samples for the host's entropy estimate.
+entropy = []
 
 [dependencies]
 wellfed-core.workspace = true
@@ -34,3 +36,6 @@ bluetooth = true
 
 [package.metadata.wellfed.variants.setup]
 summary = "BLE setup mode from boot, beside the panel and the budget run (FW44 measurement)"
+
+[package.metadata.wellfed.variants.entropy]
+summary = "Raw clock-jitter and ADC samples over UART, for the host's entropy estimate (FW45 measurement)"

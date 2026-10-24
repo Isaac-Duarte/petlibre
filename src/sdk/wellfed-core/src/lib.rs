@@ -72,6 +72,7 @@ macro_rules! named_enum {
 }
 
 pub mod adc_scale;
+pub mod base64;
 pub mod ble_setup;
 pub mod buttons;
 pub mod clock;

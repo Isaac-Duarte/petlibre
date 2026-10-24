@@ -375,7 +375,23 @@ pub fn adc_read() -> u16 {
 }
 
 pub fn systimer_ticks() -> u32 {
-    with(|h| h.raw_ticks)
+    with(|h| {
+        let ticks = h.raw_ticks;
+        h.raw_ticks = ticks.wrapping_add(h.ticks_per_read);
+        ticks
+    })
+}
+
+pub fn systick() -> Systick {
+    with(|h| {
+        let value = h.systick_value;
+        let period = h.systick_reload + 1;
+        h.systick_value = (value + period - h.systick_step % period) % period;
+        Systick {
+            value,
+            reload: h.systick_reload,
+        }
+    })
 }
 
 pub fn heap_free() -> u32 {

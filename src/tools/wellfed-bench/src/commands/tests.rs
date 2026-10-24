@@ -1475,6 +1475,8 @@ fn a_variant_needs_the_firmware_that_declares_it() {
     }
     assert_eq!(ota::parse_variant("setup"), Ok(Variant::Setup));
     assert_eq!(Variant::Setup.firmware(), Firmware::Feeder);
+    assert_eq!(ota::parse_variant("entropy"), Ok(Variant::Entropy));
+    assert_eq!(Variant::Entropy.firmware(), Firmware::Feeder);
 }
 
 #[test]

@@ -1,4 +1,4 @@
-//! FW11 boot trial on KM0, before KM4 starts.
+//! Boot trial on KM0, before KM4 starts.
 //!
 //! The factory loader keeps a valid bank 1 on every reset, so a candidate
 //! that crashes after boot would be selected forever. KM0 therefore counts
@@ -12,7 +12,7 @@
 //! - **Confirmation:** a record in storage sector `CONFIRM_SECTOR` naming
 //!   this build's identity. KM4 writes it once the image proves healthy.
 //! - **Count:** backup register 4, which survives a watchdog reset but not
-//!   power loss. Bits 0-15 hold the KM0 boot count (the FW06 peer session),
+//!   power loss. Bits 0-15 hold the KM0 boot count (the peer session),
 //!   bits 16-23 the trial count, and bits 24-31 a tag from the identity, so
 //!   a count never carries over to a different image.
 

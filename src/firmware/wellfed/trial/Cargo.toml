@@ -4,7 +4,7 @@ name = "wellfed-fw-trial"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
-description = "Experimental PLAF103 test firmware on the Wellfed SDK: FW11 trial images that must roll back"
+description = "Experimental PLAF103 test firmware on the Wellfed SDK: boot-trial images that must roll back"
 publish.workspace = true
 
 # The KM4 archive wellfed-build links into the image.
@@ -15,8 +15,8 @@ crate-type = ["staticlib", "rlib"]
 # KM4 target builds with the pinned SDK bindings.
 km4 = ["wellfed-sdk/km4"]
 # The variants declared below; only `wellfed-build --variant` sets one.
-fw11-reset = []
-fw11-fail = ["wellfed-sdk/fw11-fail"]
+stall = []
+fail = ["wellfed-sdk/trial-fail"]
 
 [dependencies]
 wellfed-sdk.workspace = true
@@ -29,10 +29,10 @@ workspace = true
 [package.metadata.wellfed]
 devices = ["plaf103"]
 
-[package.metadata.wellfed.variants.fw11-reset]
-summary = "FW11 trial test: stops feeding the watchdog right after startup, before it could confirm"
+[package.metadata.wellfed.variants.stall]
+summary = "Boot-trial test: stops feeding the watchdog right after startup, before it could confirm"
 policies = { trial = "fw11-reset-v1" }
 
-[package.metadata.wellfed.variants.fw11-fail]
-summary = "FW11 trial test: startup fails on a determined error"
+[package.metadata.wellfed.variants.fail]
+summary = "Boot-trial test: startup fails on a determined error"
 policies = { trial = "fw11-fail-v1" }

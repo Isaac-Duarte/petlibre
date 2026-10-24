@@ -1,4 +1,4 @@
-//! EXPERIMENTAL FW20 bring-up firmware for the PLAF103 on the Wellfed SDK:
+//! EXPERIMENTAL bring-up firmware for the PLAF103 on the Wellfed SDK:
 //! the read-only panel-button probe (`wellfed_probes::buttons`), logging
 //! every press, release and bounce, beside the SDK button service
 //! (`wellfed_sdk::buttons`), whose gestures its task reads.

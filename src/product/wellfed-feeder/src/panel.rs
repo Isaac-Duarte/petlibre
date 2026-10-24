@@ -1,4 +1,4 @@
-//! FP11: the panel's child lock, as stock 1.1.15 keeps it.
+//! The panel's child lock, as stock 1.1.15 keeps it.
 //!
 //! Stock's panel task runs every 50 ticks and counts visits (static analysis
 //! and emulation of the stock handlers, [stock behavior]):
@@ -85,11 +85,11 @@ named_enum! {
 named_enum! {
     /// What the panel asks for.
     pub enum Action {
-        /// Dispense pressed: one manual feed (FP05).
+        /// Dispense pressed: one manual feed.
         Feed = "feed",
-        /// Mic pressed: stock's audio selection (FP13).
+        /// Mic pressed: stock's audio selection.
         Mic = "mic",
-        /// Reset held: stock's factory restore (FP15).
+        /// Reset held: stock's factory restore.
         Reset = "reset",
     }
 }

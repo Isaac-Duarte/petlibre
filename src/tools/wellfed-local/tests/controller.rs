@@ -1,6 +1,6 @@
 //! Controller behavior without a broker: the bounded, filtered status the
-//! API exposes, the ledger's lock, and the refusal of a ledger from before
-//! FW51. Install trials are `ota_trial.rs`.
+//! API exposes, the ledger's lock, and the refusal of a retired ledger.
+//! Install trials are `ota_trial.rs`.
 
 mod common;
 

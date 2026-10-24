@@ -15,7 +15,7 @@ use crate::server::LocalStatus;
 const BUILD: &str = "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90";
 const OTHER: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 const TOKEN: &str = "6f1c2b9e-7a43-4c55-9b0e-2d8a1f3c4e5d";
-/// The stock payload hash FW41 signs as its build ID.
+/// The stock payload hash the stock-update path signs as its build ID.
 const STOCK: &str = "05147476fc70c91cc77ad7da6d6772376b2081d460ac7b1912e2d73868a09498";
 const STOCK_REVIEW: &str = "private/verification/stock-review";
 
@@ -142,7 +142,7 @@ impl StockFeeder {
                     self.health = None;
                     self.api = None;
                 }
-                // Since FW47 the normal role reports over the device API only.
+                // The normal role reports over the device API only.
                 Change::Health(build, 1, false) => {
                     self.health = None;
                     self.api = Some(build);

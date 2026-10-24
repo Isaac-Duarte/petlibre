@@ -2,7 +2,7 @@
 //!
 //! Port of the `prepare`/`execute` modes of the former
 //! `src/tools/flash/uart-stock-recovery.py`, which did the physical stock
-//! round trip; this port did it again on October 23, 2026 (FW38).
+//! round trip; this port did it again on October 23, 2026.
 //! It continues an established pinned helper session from a complete full
 //! read; it never uploads, changes status, enters a loader or boots. An
 //! invalid target marker is required for a changed-bank recovery. The Python

@@ -1,4 +1,4 @@
-//! FW45 BLE setup, the client's side ([`wellfed_proto::setup`]).
+//! BLE setup, the client's side ([`wellfed_proto::setup`]).
 //!
 //! One [`Session`] per connection, as the Noise XX initiator:
 //! 1. [`Session::start`] gives the first handshake message.

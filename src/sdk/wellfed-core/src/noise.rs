@@ -3,14 +3,14 @@
 //!
 //! - **XX** pairs a client the feeder has never seen: both static keys travel
 //!   encrypted, and each side learns the other's.
-//! - **IK** opens a paired client's session on the device API (FW47): the
+//! - **IK** opens a paired client's session on the device API: the
 //!   client already holds the feeder's static key and sends its own encrypted
 //!   in the first message, so the feeder learns which client is connecting
 //!   without trying each enrolled key, in one round trip with no identity in
 //!   clear.
 //! - **KK** reconnects when both sides already hold the other's static key
-//!   (FW44's budget measured it).
-//! - **XXpsk3** is XX bound to an invite's secret (FW45): the third message
+//!   (the budget measured it).
+//! - **XXpsk3** is XX bound to an invite's secret: the third message
 //!   fails unless both sides hold the same pre-shared key. The responder
 //!   learns which invite from the first message's payload, so it sets the
 //!   key after the handshake starts.
@@ -19,7 +19,7 @@
 //! in and gets lengths back, so the feeder's loop task and the host client
 //! (`wellfed-client`) run the same code. It draws no randomness either; the
 //! caller supplies the one ephemeral secret a handshake needs, from the
-//! feeder's vetted generator (FW45) or the host's OS. A secret must never be
+//! feeder's vetted generator or the host's OS. A secret must never be
 //! reused, or the session keys repeat.
 //!
 //! Host tests check every handshake against `snow` in both roles, so the two
@@ -289,7 +289,7 @@ impl Keypair {
         // The Montgomery ladder on the base point, not `PublicKey::from`:
         // without precomputed tables that path runs a general Edwards
         // multiplication whose 1.9 KiB frame overflowed the feeder's loop
-        // task (FW44). The ladder is the one every DH already uses.
+        // task. The ladder is the one every DH already uses.
         let public = x25519(secret, X25519_BASEPOINT_BYTES);
         Self {
             secret: StaticSecret::from(secret),

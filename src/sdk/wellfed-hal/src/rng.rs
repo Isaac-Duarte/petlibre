@@ -1,4 +1,4 @@
-//! FW45: the firmware's one random generator, for every key and nonce.
+//! The firmware's one random generator, for every key and nonce.
 //!
 //! [`start`] runs once in the startup task, before the transport, the power
 //! monitor or the firmware can touch the ADC. It fills a health-tested pool

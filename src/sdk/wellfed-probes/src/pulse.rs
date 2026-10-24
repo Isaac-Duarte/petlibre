@@ -1,8 +1,8 @@
-//! FW16 first supervised motor pulse, built only as the `fw16-pulse` variant
-//! (feature `fw16-pulse`, policy `fw16-pulse-v1`). Never the default image.
+//! First supervised motor pulse, built only as the `pulse` variant
+//! (feature `pulse`, policy `fw16-pulse-v1`). Never the default image.
 //!
 //! Opens the board (motor STOP, emitters OFF, sensors), binds a fresh flash
-//! authority to the KM0 peer and opens the supervisor, exactly as the FW13
+//! authority to the KM0 peer and opens the supervisor, exactly as the optics
 //! probe does. It then waits `DELAY_MS` renewing its owner lease, so the
 //! operator can be ready, and drives once: `DIRECTION` for `PULSE_MS`, then
 //! STOP, then watches for `AFTER_MS`. Polling every `POLL_MS`, it counts PA18

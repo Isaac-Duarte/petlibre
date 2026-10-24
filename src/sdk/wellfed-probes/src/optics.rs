@@ -1,4 +1,4 @@
-//! FW13 bench probe on KM4: food (PA17), outlet (PA16) and feedback (PA18)
+//! Bench probe on KM4: food (PA17), outlet (PA16) and feedback (PA18)
 //! inputs with the infrared emitters on, motor STOP throughout.
 //!
 //! Opens the board (motor STOP, emitters OFF, sensor inputs), binds a fresh
@@ -11,7 +11,7 @@
 //! Sequence (plan 2): a baseline window with both emitters off, then
 //! `CYCLES` cycles of PA15 alone, PB3 alone and both, each followed by an
 //! off window, every window 5 s so an operator can read a meter in each.
-//! Plan 1 (2/2/4 s windows, 4 s off, six cycles) ran the FW13 acceptance. Every
+//! Plan 1 (2/2/4 s windows, 4 s off, six cycles) ran the acceptance. Every
 //! `POLL_MS` the probe reads PA16..PA19 in one port access and records, per
 //! window, high counts, the time to each input's first change (settling),
 //! the shortest complete LOW run (pulse capture) and up to `EDGE_CAP` edges.

@@ -1,4 +1,4 @@
-//! FW20 button service against the fake SDK: the pins open as inputs, a
+//! Button service against the fake SDK: the pins open as inputs, a
 //! press and a hold come out as gestures in order, the reader takes them from
 //! the queue, and a full queue drops new gestures rather than old ones.
 

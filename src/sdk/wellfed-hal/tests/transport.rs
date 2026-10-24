@@ -1,4 +1,4 @@
-//! FW08 transport link against fake SDK sockets and a scripted broker: it
+//! Transport link against fake SDK sockets and a scripted broker: it
 //! waits for DNS, connects with an offline will, publishes non-retained
 //! health, answers only the read-only request allowlist, and on any protocol,
 //! socket or Wi-Fi failure closes with a reason and backs off.
@@ -252,7 +252,7 @@ fn requests_are_ignored_and_never_answered() {
         .into_iter()
         .filter(|(t, _)| t.ends_with("/reply"))
         .count();
-    assert_eq!(replies, 0, "requests go over the device API since FW47");
+    assert_eq!(replies, 0, "requests go over the device API");
     assert!(link.ready(), "an ignored request keeps the session");
 }
 

@@ -4,7 +4,7 @@ name = "wellfed-fw-speaker"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
-description = "Experimental PLAF103 bring-up firmware on the Wellfed SDK: the FW24 startup chime, tunes and signed network audio stream"
+description = "Experimental PLAF103 bring-up firmware on the Wellfed SDK: the startup chime, tunes and signed network audio stream"
 publish.workspace = true
 
 # The KM4 archive wellfed-build links into the image.

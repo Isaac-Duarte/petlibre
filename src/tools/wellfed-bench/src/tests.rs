@@ -98,7 +98,7 @@ fn ota_build_takes_a_no_motion_image_and_config() {
         "--firmware",
         "trial",
         "--variant",
-        "fw11-fail",
+        "fail",
         "--config",
         "private/other.json",
     ])
@@ -109,13 +109,13 @@ fn ota_build_takes_a_no_motion_image_and_config() {
     };
     assert!(args.build && args.review.is_none());
     assert_eq!(args.firmware, Some(commands::Firmware::Trial));
-    assert_eq!(args.variant, Some(commands::Variant::Fw11Fail));
+    assert_eq!(args.variant, Some(commands::Variant::Fail));
     assert_eq!(args.config, PathBuf::from("private/other.json"));
 }
 
 #[test]
 fn ota_refuses_motion_and_mixed_sources() {
-    for motion in [&["--variant", "fw16-pulse"], &["--firmware", "motor"]] {
+    for motion in [&["--variant", "pulse"], &["--firmware", "motor"]] {
         let args = [&["--build"][..], motion].concat();
         let error = ota(&args).err().unwrap().to_string();
         assert!(error.contains("motion builds stay manual"), "{error}");

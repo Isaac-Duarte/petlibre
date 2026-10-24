@@ -40,7 +40,7 @@ const FTL_MAKEFILE: &str = "project_hp/asdk/make/file_system/ftl/Makefile";
 /// Where a Bluetooth firmware's BLE peripheral is staged.
 const BLE_SOURCE: &str = "component/common/example/wellfed_ble.c";
 /// KM4's hard fault handler, which gains a `PLFLT1` line of the fault status
-/// registers (FW40): its backtrace alone cannot tell an imprecise bus fault
+/// registers: its backtrace alone cannot tell an imprecise bus fault
 /// from a corrupted pointer.
 const APP_START: &str = "component/soc/realtek/amebad/fwlib/ram_hp/rtl8721dhp_app_start.c";
 /// Object suffixes the vendor makefiles leave beside a source.
@@ -502,7 +502,7 @@ fn ota_addresses(stock: &StockPaths, sdk: &Path, overrides: &mut Overrides) -> R
     overlay(sdk, OTA_HEADER, &text, overrides)
 }
 
-/// FW34: a Bluetooth firmware links the BT board code, the vendor host
+/// A Bluetooth firmware links the BT board code, the vendor host
 /// stack and its BLE peripheral; any other build restores the pinned files
 /// and drops the staged peripheral, so the two never mix in one worktree.
 ///

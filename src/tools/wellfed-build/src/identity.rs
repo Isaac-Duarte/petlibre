@@ -34,7 +34,7 @@ const BUILDER_SHARED: [&str; 3] = [
     "src/tools/wellfed-flash/src/error.rs",
 ];
 
-/// FW10 update-signing key from `wellfed-local ota-keygen`. Only its public
+/// Update-signing key from `wellfed-local ota-keygen`. Only its public
 /// half reaches the build, the identity and the manifest.
 const OTA_KEY: &str = "private/ota-key.json";
 

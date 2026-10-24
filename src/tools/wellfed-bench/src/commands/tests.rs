@@ -256,7 +256,7 @@ impl Tools for FakeTools {
             fs::create_dir_all(&review)?;
             fs::write(review.join("image.bin"), [0u8; 16])?;
             let manifest = json!({"startup_identity": BUILD, "startup_motion_policy": null,
-                                  "firmware": "feeder", "variant": "fw11-reset"});
+                                  "firmware": "feeder", "variant": "stall"});
             fs::write(review.join("build-manifest.json"), manifest.to_string())?;
         }
         Ok(code)
@@ -891,7 +891,7 @@ fn demo_stops_at_the_toggle_cap_and_still_ends_off() {
 
 #[test]
 fn update_traffic_matches_observed_installs() {
-    // Totals observed on October 22, 2026 (FW32 bench): a 158-sector bank-0
+    // Totals observed on October 22, 2026 (bench): a 158-sector bank-0
     // install and a no-op, both over a 0xa4000-byte region.
     let close = |estimate: u64, actual: u64| estimate.abs_diff(actual) * 100 <= actual;
 
@@ -1199,7 +1199,7 @@ fn build_args() -> OtaArgs {
         build: true,
         rebuild: false,
         firmware: Some(Firmware::Trial),
-        variant: Some(Variant::Fw11Reset),
+        variant: Some(Variant::Stall),
         config: "private/server.json".into(),
         keys: "private/wellfed-owner.json".into(),
         version: None,
@@ -1257,7 +1257,7 @@ fn ota_build_builds_reviews_offers_and_checks_health_in_order() {
     assert_eq!(
         calls.ran,
         [
-            "build build --profile firstboot --firmware trial --variant fw11-reset",
+            "build build --profile firstboot --firmware trial --variant stall",
             "build review build --build private/firmware-build/plaf103/firstboot --output private/verification/unit-review",
             "local ota-sign --image private/verification/unit-review/image.bin --version 1 --build-id 8a13e59efa15e56b5f5e32825909dc45e381a2027abc65d8de6658c40b302447 --output private/verification/unit-v1.manifest",
             "local ota-offer --manifest private/verification/unit-v1.manifest --image private/verification/unit-review/image.bin",
@@ -1348,7 +1348,7 @@ fn ota_build_reuses_a_review_of_the_same_sources() {
             "--firmware",
             "trial",
             "--variant",
-            "fw11-reset"
+            "stall"
         ]]
     );
     assert!(calls.builds.is_empty(), "nothing built or reviewed");
@@ -1441,7 +1441,7 @@ fn ota_build_refuses_an_existing_review_up_front() {
 fn build_options_without_build_are_refused() {
     let mut rig = rig();
     let mut args = plain_review(&rig);
-    args.variant = Some(Variant::Fw11Fail);
+    args.variant = Some(Variant::Fail);
 
     let error = rig.bench.ota(&args).unwrap_err().to_string();
     assert!(error.contains("--build only"), "{error}");
@@ -1450,12 +1450,12 @@ fn build_options_without_build_are_refused() {
 
 #[test]
 fn the_motor_firmware_and_its_variant_are_refused() {
-    let error = ota::parse_variant("fw16-pulse").unwrap_err();
+    let error = ota::parse_variant("pulse").unwrap_err();
     assert!(error.contains("motion builds stay manual"), "{error}");
     let error = ota::parse_firmware("motor").unwrap_err();
     assert!(error.contains("motion builds stay manual"), "{error}");
 
-    assert_eq!(ota::parse_variant("fw11-fail"), Ok(Variant::Fw11Fail));
+    assert_eq!(ota::parse_variant("fail"), Ok(Variant::Fail));
     assert_eq!(ota::parse_firmware("adc"), Ok(Firmware::Adc));
     assert_eq!(Firmware::Speaker.name(), "speaker");
     assert!(ota::parse_variant("fw14-adc").is_err());
@@ -1467,7 +1467,7 @@ fn a_variant_needs_the_firmware_that_declares_it() {
     for (firmware, variant) in [
         (Firmware::Speaker, None),
         (Firmware::Trial, Some(Variant::Entropy)),
-        (Firmware::Feeder, Some(Variant::Fw11Fail)),
+        (Firmware::Feeder, Some(Variant::Fail)),
     ] {
         let mut rig = rig();
         let mut args = build_args();
@@ -1480,7 +1480,10 @@ fn a_variant_needs_the_firmware_that_declares_it() {
         assert!(error.contains("the firmware that declares it"), "{error}");
         assert!(rig.tools.0.borrow().ran.is_empty());
     }
-    assert!(ota::parse_variant("setup").is_err(), "retired with FW45");
+    assert!(
+        ota::parse_variant("setup").is_err(),
+        "the setup variant was retired"
+    );
     assert_eq!(ota::parse_variant("entropy"), Ok(Variant::Entropy));
     assert_eq!(Variant::Entropy.firmware(), Firmware::Feeder);
 }
@@ -1515,7 +1518,7 @@ fn a_status_that_never_shows_the_build_fails_after_confirmation() {
     assert!(!health.ends_with('-'), "{health}");
 }
 
-/// A bring-up firmware serves no device API (FW47): its UART confirmation
+/// A bring-up firmware serves no device API: its UART confirmation
 /// is the whole check, and no status is asked for.
 #[test]
 fn a_firmware_without_the_device_api_passes_on_its_confirmation() {

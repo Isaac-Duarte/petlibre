@@ -1,4 +1,4 @@
-//! FW24 speaker records as line bodies: the startup chime and tunes
+//! Speaker records as line bodies: the startup chime and tunes
 //! (`PLAUD1`, `wellfed_hal::audio`) and the signed network stream
 //! (`PLSPK1`, `wellfed_hal::stream`). The players themselves are the HAL's;
 //! this only lets a firmware log their records through [`crate::log`].

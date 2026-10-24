@@ -1,4 +1,4 @@
-//! FW05 bench probe: SYSTIMER and TIM2 supervision timing, a task stall with
+//! Bench probe: SYSTIMER and TIM2 supervision timing, a task stall with
 //! the timer still running, and one supervised watchdog reset. Motion stays
 //! disabled: the board opens stopped and no drive or emitter is requested.
 //!

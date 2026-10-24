@@ -1,4 +1,4 @@
-//! FW25 stored Wi-Fi credentials: alternating saves, clear, validation, a
+//! Stored Wi-Fi credentials: alternating saves, clear, validation, a
 //! power cut at every mutation, and a newer schema.
 
 use wellfed_core::store::net::{Credentials, NetStatus, NetStore};

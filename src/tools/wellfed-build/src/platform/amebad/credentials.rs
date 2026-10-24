@@ -1,4 +1,4 @@
-//! The generated credential headers: FW07 Wi-Fi join and FW08 broker
+//! The generated credential headers: the Wi-Fi join and the broker
 //! settings, read from ignored private files into untracked SDK headers.
 //!
 //! Only the private files' hashes reach the manifest (they are identity

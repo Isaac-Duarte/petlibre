@@ -1,4 +1,4 @@
-//! FW10 delivery: the firmware's own codec pulls a signed update from the
+//! Update delivery: the firmware's own codec pulls a signed update from the
 //! real broker and server, and the firmware's own parser and writer accept it.
 
 mod common;

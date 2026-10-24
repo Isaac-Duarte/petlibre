@@ -1,4 +1,4 @@
-//! FW47 device API, the feeder's side ([`wellfed_proto::api`]).
+//! Device API, the feeder's side ([`wellfed_proto::api`]).
 //!
 //! A [`Server`] holds [`SESSIONS`] fixed slots, one per TCP connection, and
 //! never touches a socket: the firmware's driver copies received bytes into
@@ -8,7 +8,7 @@
 //! per pass of the loop task:
 //! - **One handshake operation per pass,** across all slots, and none while
 //!   a feed runs: an X25519 costs about 27 ms on the KM4, so four clients
-//!   connecting at once cannot stack up to hold the loop (FW44).
+//!   connecting at once cannot stack up to hold the loop.
 //! - **One frame per slot per pass,** and a slot writes again only once its
 //!   last frame is sent, so a flood costs only its own turn.
 //! - **Every write has an id** the server remembers per client key, so a
@@ -47,7 +47,7 @@ use wellfed_proto::setup::{
     WifiSaved as SetupWifiSaved,
 };
 
-/// Connections served at once (FW44: lwIP leaves room for four).
+/// Connections served at once (lwIP leaves room for four).
 pub const SESSIONS: usize = 4;
 /// Write ids remembered per client.
 pub const REMEMBERED: usize = 32;
@@ -279,7 +279,7 @@ enum Phase {
         role: Role,
         ticket: Option<u32>,
     },
-    /// The recovery window's session: FW45's setup exchange over this
+    /// The recovery window's session: the setup exchange over this
     /// stream, so the owner keys the client's code in before it is enrolled.
     Recovery(Rescue),
     /// Send what is left, then close.

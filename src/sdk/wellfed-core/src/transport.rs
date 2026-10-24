@@ -1,8 +1,8 @@
-//! FW08 local health transport: an MQTT 3.1.1 client subset, its session
-//! state machine and the health encoder. Since FW47 it carries only health
-//! and the FW10 offer check and download; requests go over the device API,
+//! Local health transport: an MQTT 3.1.1 client subset, its session
+//! state machine and the health encoder. It carries only health
+//! and the offer check and download; requests go over the device API,
 //! and the mailbox types the API fills (settings, Wi-Fi, lock, tune, clock)
-//! still live here until FW48 retires the broker.
+//! still live here until the broker is retired.
 //!
 //! Sans-IO: the caller owns the socket, feeds received bytes in and writes the
 //! returned bytes out. Nothing here allocates. This module reaches no other
@@ -14,10 +14,10 @@ use core::fmt::{self, Write};
 
 /// Largest packet either side may send; bigger input closes the session.
 pub const MAX_PACKET: usize = 832;
-/// Health payload limit (512 bytes in FW08, 640 with the clock and nonce,
-/// 704 with the FW14 power inputs).
+/// Health payload limit (512 bytes at first, 640 with the clock and nonce,
+/// 704 with the power inputs).
 pub const MAX_HEALTH: usize = 704;
-/// Largest payload on the session's subscribed topic (an FW10 offer).
+/// Largest payload on the session's subscribed topic (an offer).
 pub const MAX_PAYLOAD: usize = 448;
 pub const KEEPALIVE_S: u16 = 30;
 /// Send PINGREQ after this long without sending anything.
@@ -321,7 +321,7 @@ pub enum Event<'a> {
     /// SUBACK accepted: the session is ready; publish health now.
     Ready,
     Pong,
-    /// A payload on the subscribed topic (an offer, for the FW10 check).
+    /// A payload on the subscribed topic (an offer, for the check).
     Request(&'a [u8]),
     /// SUBACK for [`Session::subscribe_data`]: data publishes may now arrive.
     DataReady,
@@ -620,7 +620,7 @@ impl Write for Buffer<'_> {
     }
 }
 
-/// Wi-Fi loss cause, as the FW07 shim reports it.
+/// Wi-Fi loss cause, as the shim reports it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Loss {
     None,
@@ -640,7 +640,7 @@ pub enum Outputs {
 
 /// Which role is reporting. The bank-0 recovery role reports while it waits
 /// for an update, so a feeder whose bank 1 is invalid (just installed by
-/// stock, FW40) is still visible; only that role writes the field, so normal
+/// stock) is still visible; only that role writes the field, so normal
 /// health is unchanged.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Role {
@@ -674,15 +674,15 @@ pub struct Health {
     pub last_loss: Loss,
 
     pub connects: u32,
-    /// FW25: which credentials joined this boot.
+    /// Which credentials joined this boot.
     pub wifi_source: WifiSource,
     /// Fault code of the last closed session, if any.
     pub last_error: Option<&'static str>,
 
-    /// FW21: the wall clock, `None` while invalid.
+    /// The wall clock, `None` while invalid.
     pub clock: Option<ClockHealth>,
     pub clock_syncs: u32,
-    /// FW14: the power inputs, `None` without a fresh sample.
+    /// The power inputs, `None` without a fresh sample.
     pub power: Option<PowerHealth>,
     pub role: Role,
 }

@@ -1,10 +1,10 @@
-//! FW45: the client store's changes and the feeder's identity, carried
+//! The client store's changes and the feeder's identity, carried
 //! between the loop task and the settings writer.
 //!
 //! The settings writer alone writes the client store (storage sectors 9 and
 //! 10), and the loop task alone runs handshakes and reads the panel. So the
 //! loop queues a change here with [`request`] (an enrollment once a
-//! handshake admits a client, a revocation, or the FP15 reset), and the
+//! handshake admits a client, a revocation, or the reset), and the
 //! writer takes it with [`pending`] and frees the slot with [`finish`],
 //! naming the [`KeyResult`]. A second change before the writer takes the
 //! first is [`Requested::Busy`], never queued behind it. A caller that must
@@ -16,7 +16,7 @@
 //! copies it with [`identity_since`] to derive the public key. The secret
 //! stays in RAM: no log, request or record carries it. The writer also
 //! publishes the enrolled clients ([`publish_clients`]), which the device
-//! API reads to admit a session (FW47).
+//! API reads to admit a session.
 
 use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 
@@ -36,7 +36,7 @@ pub enum Change {
     Revoke {
         key: [u8; 32],
     },
-    /// FP15: forget every client and take a new identity.
+    /// Forget every client and take a new identity.
     Reset,
 }
 

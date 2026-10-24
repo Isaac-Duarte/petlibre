@@ -1,7 +1,7 @@
-//! FW25: Wi-Fi credentials without a rebuild.
+//! Wi-Fi credentials without a rebuild.
 //!
-//! - **Request half:** credentials from the device API (FW47, [`change`]) or
-//!   from BLE setup (FW45, [`save`]), checked by the store's own rules, are
+//! - **Request half:** credentials from the device API ([`change`]) or
+//!   from BLE setup ([`save`]), checked by the store's own rules, are
 //!   queued for the settings writer, which saves them to NOR (storage
 //!   sectors 5 and 6).
 //! - **Join half:** before each join attempt the C shim asks for credentials
@@ -9,7 +9,7 @@
 //!   (`wellfed_wifi_outcome`). Stored credentials are used until
 //!   [`FALLBACK_AFTER`] attempts in a row fail without one success this boot;
 //!   then the build's credentials take over, so a bad save cannot strand the
-//!   feeder. A save during the boot (a device API write, or FW45 BLE setup)
+//!   feeder. A save during the boot (a device API write, or BLE setup)
 //!   takes effect at the next join: the new credentials are read again and
 //!   get their own run of attempts before the build's take over.
 //!

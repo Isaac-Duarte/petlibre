@@ -1,4 +1,4 @@
-//! FW21: the KM4 wall clock ([`wellfed_core::clock::wall`]). The transport's
+//! The KM4 wall clock ([`wellfed_core::clock::wall`]). The transport's
 //! `time` request is its only writer; health reads it. One instance, copied
 //! in and out with interrupts masked.
 

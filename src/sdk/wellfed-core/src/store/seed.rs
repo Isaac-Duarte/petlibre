@@ -1,4 +1,4 @@
-//! FW45: the random generator's seed, carried across boots.
+//! The random generator's seed, carried across boots.
 //!
 //! Two alternating 128-byte records on the shared slot layout: magic
 //! `PLFSEED1`, version, record size, generation, the 32-byte seed, zero

@@ -4,7 +4,7 @@ name = "wellfed-fw-optics"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
-description = "Experimental PLAF103 bring-up firmware on the Wellfed SDK: the FW13 optics probe"
+description = "Experimental PLAF103 bring-up firmware on the Wellfed SDK: the optics probe"
 publish.workspace = true
 
 # The KM4 archive wellfed-build links into the image.

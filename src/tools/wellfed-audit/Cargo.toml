@@ -4,7 +4,7 @@ name = "wellfed-audit"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
-description = "Offline audits of PLAF103 evidence: startup captures, FW14 ADC, FW30 driver transients and full-flash comparisons"
+description = "Offline audits of PLAF103 evidence: startup captures, ADC samples, driver transients and full-flash comparisons"
 publish.workspace = true
 
 [dependencies]

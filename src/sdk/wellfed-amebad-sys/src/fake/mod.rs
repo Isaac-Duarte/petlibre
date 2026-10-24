@@ -82,7 +82,7 @@ pub struct Hardware {
     /// Internal channel 10: the chip's own supply measurement.
     pub supply_adc: u16,
 
-    /// FW08 TCP script: each connect takes the next result (default: refused).
+    /// TCP script: each connect takes the next result (default: refused).
     pub tcp_connects: VecDeque<Option<i32>>,
     /// Each receive takes the next item; an empty queue is a timeout.
     pub tcp_rx: VecDeque<TcpRecvScript>,
@@ -93,7 +93,7 @@ pub struct Hardware {
     pub tcp_listen_fails: bool,
     /// Connections `tcp_accept` hands out, in order.
     pub tcp_accepts: VecDeque<i32>,
-    /// FW47 device API sockets: connections waiting to be accepted, the
+    /// Device API sockets: connections waiting to be accepted, the
     /// bytes each has for the feeder, what the feeder sent on each, the
     /// peers that closed, and how much one send may take.
     pub api_waiting: VecDeque<i32>,
@@ -101,7 +101,7 @@ pub struct Hardware {
     pub api_tx: std::collections::BTreeMap<i32, Vec<u8>>,
     pub api_hung_up: Vec<i32>,
     pub api_send_room: usize,
-    /// FW47 mDNS: datagrams waiting, what was sent, and the station address.
+    /// mDNS: datagrams waiting, what was sent, and the station address.
     pub mdns_rx: VecDeque<(Vec<u8>, u32, u16)>,
     pub mdns_tx: Vec<(Vec<u8>, u32, u16)>,
     pub ipv4: u32,
@@ -129,7 +129,7 @@ pub struct Hardware {
     /// next 32 kHz edge sees one; zero holds the timer still.
     pub ticks_per_read: u32,
     /// Nonzero: the supply channel's low byte is pseudo-random noise from
-    /// this xorshift state, for FW45's generator; zero reads it steady.
+    /// this xorshift state, for the generator; zero reads it steady.
     pub adc_noise: u32,
     /// SysTick's current value and reload; each read counts the value down
     /// by `systick_step`, wrapping at the reload as the core's counter does.
@@ -197,7 +197,7 @@ pub struct Hardware {
     pub bank0_marker: [u8; 8],
     pub storage_erases: [u32; crate::STORAGE_SECTORS as usize],
 
-    /// FW24: the codec ring. Filled pages wait in `audio_queue` until
+    /// The codec ring. Filled pages wait in `audio_queue` until
     /// [`play_audio`] moves them to `audio_played`.
     pub audio_open: bool,
     pub audio_open_fails: bool,
@@ -209,7 +209,7 @@ pub struct Hardware {
     /// The page handed out by `audio_page`, leaked once per thread.
     pub audio_scratch: *mut [i16; AUDIO_PAGE_SAMPLES],
 
-    /// FW34: the BLE peripheral. Tests record events with [`ble_record`]
+    /// The BLE peripheral. Tests record events with [`ble_record`]
     /// and push the bytes a host would write.
     pub ble_started: Option<BleService>,
     pub ble_events: Vec<BleEvent>,

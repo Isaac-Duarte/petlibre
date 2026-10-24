@@ -1,4 +1,4 @@
-//! FW10/FW11 on KM4: the recovery-role updater, the normal role's
+//! On KM4: the recovery-role updater, the normal role's
 //! confirmation, and its offer watch.
 
 pub mod confirm;

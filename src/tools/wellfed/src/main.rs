@@ -1,13 +1,13 @@
 //! `wellfed`, the owner's command line ([tools roadmap]).
 //!
 //! `wellfed setup` pairs this computer with a feeder in BLE setup mode
-//! (FW45): it shows a one-time code for the owner to key in on the feeder's
+//!: it shows a one-time code for the owner to key in on the feeder's
 //! buttons, and once the feeder has proven the code it gives the feeder
 //! Wi-Fi, enrolls this computer's key as an owner and records the feeder's
 //! identity.
 //! The protocol is `wellfed-client`'s, the same the Android app runs.
 //!
-//! The other commands open a session on the device API (FW47): Noise over
+//! The other commands open a session on the device API: Noise over
 //! TCP to the feeder found over mDNS, as a key it enrolled. They print the
 //! feeder's answers as JSON.
 //!

@@ -76,7 +76,7 @@ fn start_qa() {
 /// Touched only by the audio task; see `audio_task`.
 static SPEAKER: Slot<audio::Speaker> = Slot::new();
 
-/// FW24: the startup chime, then the tunes QA queues.
+/// The startup chime, then the tunes QA queues.
 unsafe extern "C" fn audio_task(_: *mut c_void) -> u32 {
     let Some(mut speaker) = SPEAKER.enter_or_init(Default::default) else {
         return 0;

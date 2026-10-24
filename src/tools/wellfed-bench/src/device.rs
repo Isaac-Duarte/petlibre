@@ -1,4 +1,4 @@
-//! The feeder's device API (FW47) as the bench speaks it: a Noise session
+//! The feeder's device API as the bench speaks it: a Noise session
 //! over TCP port 4747 as the owner's enrolled key (`wellfed setup` wrote
 //! it to `private/wellfed-owner.json`), carrying the requests the suite and
 //! the `ota` command make.

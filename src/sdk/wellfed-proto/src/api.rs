@@ -1,4 +1,4 @@
-//! FW47 device API: one Noise session per client over TCP.
+//! Device API: one Noise session per client over TCP.
 //!
 //! A connection starts with one clear [`Open`] frame naming the session:
 //! - [`Open::Session`]: an enrolled client, Noise IK under [`PROLOGUE`]. The
@@ -10,7 +10,7 @@
 //!   invite's secret as the PSK. The third message carries a [`Join`] and
 //!   the feeder's first transport message a [`Joined`]; the client then
 //!   reconnects with [`Open::Session`].
-//! - [`Open::Recovery`]: the button-hold window. The connection runs FW45's
+//! - [`Open::Recovery`]: the button-hold window. The connection runs BLE setup's
 //!   setup exchange ([`crate::setup`]) unchanged, code proof included, so a
 //!   LAN neighbor cannot slip in while the window is open.
 //!
@@ -36,7 +36,7 @@ pub const PROTOCOL_MAJOR: u16 = 1;
 /// The oldest major this feeder still serves.
 pub const PROTOCOL_MAJOR_MIN: u16 = 1;
 
-/// The largest frame either way, Noise tag included (FW44).
+/// The largest frame either way, Noise tag included.
 pub const FRAME_MAX: usize = 1024;
 /// The largest message a frame can seal.
 pub const MESSAGE_MAX: usize = FRAME_MAX - 16;
@@ -169,7 +169,7 @@ pub enum Op<'a> {
     RevokeClient {
         key: [u8; 32],
     },
-    /// Not served until the feeding owner lands (FW16/FW17).
+    /// Not served until the feeding owner lands.
     Feed {
         portions: u8,
     },
@@ -201,7 +201,7 @@ pub enum Tune {
     Twinkle,
 }
 
-/// The wall clock and the zone's next change, as FW21 takes them.
+/// The wall clock and the zone's next change, as the wall clock takes them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TimeSync {
     pub unix_ms: u64,
@@ -286,7 +286,7 @@ pub struct Status<'a> {
     pub rssi: i32,
     pub wifi: WifiSource,
     pub link_losses: u32,
-    /// Losses noticed by a failed DNS check rather than the link (FW07).
+    /// Losses noticed by a failed DNS check rather than the link.
     pub dns_losses: u32,
     /// Unix milliseconds, `None` while the clock is invalid.
     pub clock_ms: Option<u64>,

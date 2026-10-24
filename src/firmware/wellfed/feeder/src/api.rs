@@ -1,4 +1,4 @@
-//! FW47: the device API in the loop task. It owns the sockets and steps
+//! The device API in the loop task. It owns the sockets and steps
 //! `wellfed_feeder::api`'s server once per pass:
 //! - the listener on [`PORT`] and up to [`SESSIONS`] connections, every
 //!   call non-blocking, so the loop never waits on a client;
@@ -221,7 +221,7 @@ impl Api {
                 device: &mut device,
                 pairing,
                 identity,
-                // No feeding owner yet (FW16/FW17).
+                // No feeding owner yet.
                 feeding: false,
                 recovery,
             },

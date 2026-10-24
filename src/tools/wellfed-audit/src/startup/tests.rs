@@ -320,7 +320,7 @@ fn led_v3_labels_port_a_output_only_and_never_passes_them() {
     let report = classify_led(&full, 3);
     assert_eq!(outcome(&report), "pass");
     assert_eq!(report["led_output_only_pins"], json!(["PA0", "PA2", "PA4"]));
-    // FW04 accepts the sequence, but only PB22 was input-verified.
+    // Accepts the sequence, but only PB22 was input-verified.
     assert_eq!(report["led_probe_verified"], false);
     assert_eq!(report["led_input_verified_pins"], json!(["PB22"]));
 

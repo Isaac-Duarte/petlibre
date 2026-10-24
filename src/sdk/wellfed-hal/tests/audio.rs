@@ -1,4 +1,4 @@
-//! FW24 speaker task against the fake codec ring: the startup chime waits for
+//! Speaker task against the fake codec ring: the startup chime waits for
 //! the settings and honors `sound`, one tune plays at a time with the
 //! amplifier enabled only while the codec is open, and the ring drains
 //! before everything closes.

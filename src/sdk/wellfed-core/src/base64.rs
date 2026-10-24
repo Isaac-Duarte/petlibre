@@ -1,4 +1,4 @@
-//! Standard base64 (RFC 4648, padded), for binary in text records: FW45's
+//! Standard base64 (RFC 4648, padded), for binary in text records: the
 //! raw noise samples travel over UART this way, a third denser than hex.
 
 const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

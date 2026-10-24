@@ -103,12 +103,12 @@ export type Health = {
  */
 build: string, bank: number | null, seq: number | null, outputs: string | null, faults: Array<string>, 
 /**
- * Absent from builds before FW21.
+ * Absent from builds without the wall clock.
  */
 clock: Clock | null, wifi: Wifi, transport: Transport, 
 /**
  * Only the bank-0 recovery role reports one, while it waits for an
- * update (FW40).
+ * update.
  */
 role: HealthRole | null, };
 

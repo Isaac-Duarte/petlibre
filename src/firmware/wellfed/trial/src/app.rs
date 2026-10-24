@@ -4,7 +4,7 @@ wellfed_sdk::firmware!(start);
 
 /// Stop feeding the watchdog, as a hung candidate would, so KM0 counts the
 /// reset. Outputs stay stopped.
-#[cfg(feature = "fw11-reset")]
+#[cfg(feature = "stall")]
 fn start() {
     use wellfed_sdk::hal::sdk;
 
@@ -16,9 +16,9 @@ fn start() {
     });
 }
 
-/// The normal image and `fw11-fail` (whose failure is the runtime's): no
+/// The normal image and `fail` (whose failure is the runtime's): no
 /// task, so nothing holds the KM0 flash handshake.
-#[cfg(not(feature = "fw11-reset"))]
+#[cfg(not(feature = "stall"))]
 fn start() {
     wellfed_sdk::startup_done(true);
 }

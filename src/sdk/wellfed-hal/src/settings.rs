@@ -1,4 +1,4 @@
-//! FW25: the device settings as the transport sees them. The settings writer
+//! The device settings as the transport sees them. The settings writer
 //! (firstboot `settings.rs`) publishes what NOR holds; a signed `settings`
 //! request queues one change for it. Nothing here touches flash, so the
 //! transport may call it (see `cargo xtask check-repository`).

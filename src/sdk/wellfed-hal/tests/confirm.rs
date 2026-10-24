@@ -1,4 +1,4 @@
-//! FW11 confirmation write against the fake SDK storage model, with the
+//! Confirmation write against the fake SDK storage model, with the
 //! KM0 peer answering HELLO through the real `park::answer`.
 
 use std::cell::{Cell, RefCell};

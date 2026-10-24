@@ -1,11 +1,11 @@
-//! FW20: the panel buttons as gestures. A press, a hold past each of the
+//! The panel buttons as gestures. A press, a hold past each of the
 //! firmware's thresholds and the release, with buttons pressed together read
 //! as one chord.
 //!
 //! The engine takes the pressed set each poll and keeps no clock of its own.
 //! Each line is debounced on its own: it changes only after reading its new
 //! level for `debounce_ms` without a break. On the research unit no line
-//! bounced at a 2 ms poll (FW20, physical), so the debounce only guards against
+//! bounced at a 2 ms poll (physical), so the debounce only guards against
 //! a noisy contact.
 //!
 //! A gesture starts when the first button settles pressed and ends when every
@@ -14,7 +14,7 @@
 //! while the whole chord stays pressed. Letting go of one button of a chord
 //! ends its holds but not the gesture, so a two-button hold never turns into
 //! a one-button hold. What a gesture means (feed, lock, reset) is the
-//! firmware's, and stock's hold durations are FP01's to record.
+//! firmware's, and stock's hold durations are the to record.
 
 use crate::deadline_passed;
 
@@ -22,7 +22,7 @@ use crate::deadline_passed;
 pub const MAX_HOLDS: usize = 3;
 
 crate::named_enum! {
-    /// The panel buttons, in pin order PB4..PB7 (FW20, physical).
+    /// The panel buttons, in pin order PB4..PB7 (physical).
     pub enum Button {
         Reset = "reset",
         Mic = "mic",
@@ -54,7 +54,7 @@ impl Buttons {
     }
 
     /// The pressed buttons in a port B input word. The buttons are active LOW
-    /// on PB4..PB7, with board pull-ups (FW20, physical).
+    /// on PB4..PB7, with board pull-ups (physical).
     pub const fn from_port_b(levels: u32) -> Self {
         #[expect(
             clippy::cast_possible_truncation,
@@ -115,7 +115,7 @@ pub struct Config {
 }
 
 impl Config {
-    /// Bench values for FW20's checks, not stock's: FP01 records those.
+    /// Bench values for the checks, not stock's: the panel card records those.
     pub const BENCH: Self = Self {
         debounce_ms: 30,
         holds_ms: [2_000, 5_000, 0],

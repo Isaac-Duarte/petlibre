@@ -1,4 +1,4 @@
-//! Wire-level tests for the FW08 local transport: MQTT 3.1.1 subset encoding
+//! Wire-level tests for the local transport: MQTT 3.1.1 subset encoding
 //! and decoding, the session state machine, request parsing and the health
 //! and reply encoders.
 //!

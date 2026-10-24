@@ -95,7 +95,7 @@ enum Command {
         /// Capture name under private/captures/.
         name: String,
     },
-    /// Repeated logic-analyzer captures of power-ons or loader entries (FW30).
+    /// Repeated logic-analyzer captures of power-ons or loader entries.
     Transients(TransientArgs),
 
     /// Loader, bounded read, then full flash read.

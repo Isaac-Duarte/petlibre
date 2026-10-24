@@ -1,4 +1,4 @@
-//! Wi-Fi state shared between the FW07 probe (the only writer) and the FW08
+//! Wi-Fi state shared between the probe (the only writer) and the health
 //! transport task (a reader), as atomics: no lock, and no reference from the
 //! transport into the probe.
 
@@ -32,7 +32,7 @@ pub struct Status {
     pub generation: u32,
 }
 
-/// Fold one shim event in (FW07 probe task only).
+/// Fold one shim event in (Wi-Fi probe task only).
 pub fn observe(event: &WifiEvent) {
     match event.kind {
         WifiEvent::SCAN if event.result == 0 && event.value == 1 => {

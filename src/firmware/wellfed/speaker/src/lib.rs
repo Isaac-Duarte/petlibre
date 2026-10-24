@@ -1,4 +1,4 @@
-//! EXPERIMENTAL FW24 bring-up firmware for the PLAF103 on the Wellfed SDK:
+//! EXPERIMENTAL bring-up firmware for the PLAF103 on the Wellfed SDK:
 //! the startup chime and requested tunes (`wellfed_hal::audio`), and the
 //! signed network audio stream `wellfed-local speak` plays
 //! (`wellfed_hal::stream`).

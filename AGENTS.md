@@ -27,7 +27,7 @@ Everything first-party is under `src/`. The Rust workspace is `src/sdk/` (the SD
 - **Narrow visibility.** Default to `pub(crate)`. Use `pub` only for what another crate or an integration test uses.
 - **One helper, one place.** Search before writing hex, hashing, HMAC, report-writing or serial helpers; the workspace already has them.
 - **Firmware.** Firmware crates are `no_std` staticlibs. `unsafe` belongs only at the C interface and MMIO edge, and each block gets a `// SAFETY:` comment. Changing `repr(C)` types, `#[no_mangle]` symbols, the park/hook RAM code or flash record layouts changes audited binaries: rerun the link, RAM-park and stack audits and keep their pins.
-- **Readable code.** Separate the logical steps in a function body (setup, the work, the result) with a blank line, and break long match arms, tests and builders into paragraphs. Comments and `//!` docs explain why the code exists and how it fits the system (invariants, hardware or protocol constraints, ordering requirements), not what the next line does.
+- **Readable code.** Separate the logical steps in a function body (setup, the work, the result) with a blank line, and break long match arms, tests and builders into paragraphs. Comments and `//!` docs explain why the code exists and how it fits the system (invariants, hardware or protocol constraints, ordering requirements), not what the next line does. They state the constraint itself, not the board card it came from: card history lives on the boards and in RESUME, and `cargo xtask check-repository` refuses card ids under `src/`.
 
 ## App conventions
 

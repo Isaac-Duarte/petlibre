@@ -1,7 +1,7 @@
-//! FW47: the feeder's own mDNS advertisement (RFC 6762, DNS-SD RFC 6763),
+//! The feeder's own mDNS advertisement (RFC 6762, DNS-SD RFC 6763),
 //! sans-IO, for the loop task's one UDP socket.
 //!
-//! The vendor responder is 33.5 KB of code and starts its own task (FW44).
+//! The vendor responder is 33.5 KB of code and starts its own task.
 //! The feeder needs only one service, so this answers four records and
 //! nothing else:
 //! - `PTR _wellfed._tcp.local` → `wellfed-XXXXXXXX._wellfed._tcp.local`

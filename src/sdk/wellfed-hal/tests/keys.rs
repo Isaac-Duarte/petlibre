@@ -1,4 +1,4 @@
-//! FW45's key mailbox: one queued change at a time for the settings writer,
+//! The key mailbox: one queued change at a time for the settings writer,
 //! and the identity published back with a new generation each time.
 
 use std::sync::{Mutex, MutexGuard};

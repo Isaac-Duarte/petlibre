@@ -1,4 +1,4 @@
-//! The FW45 noise capture against the SDK fake: each source starts, streams
+//! The noise capture against the SDK fake: each source starts, streams
 //! numbered records of `LINE` samples and ends with its health result, then
 //! the ADC follows the jitter source; a source that stops giving samples is
 //! given up, and the records format as the host parses them.

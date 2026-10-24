@@ -1,5 +1,5 @@
 //! The actual factory loader on the pinned baseline: bank checks, mappings,
-//! selection and the FW10/FW11 OTA marker sequence. Emulation only.
+//! selection and the OTA marker sequence. Emulation only.
 //!
 //! Needs the ignored baseline, SDK ROM and stock OTA (see
 //! `docs/development/fixtures.md`); `WELLFED_FIXTURE_ROOT` names another

@@ -1,4 +1,4 @@
-//! FW45: raw noise for the random generator. The AmebaD exposes no hardware
+//! Raw noise for the random generator. The AmebaD exposes no hardware
 //! RNG, so two physical sources stand in, both still unmeasured:
 //! - **Clock jitter:** the CPU-clock SysTick count between successive edges
 //!   of the 32 kHz system timer. The two clocks come from different

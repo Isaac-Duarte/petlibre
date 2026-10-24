@@ -4,7 +4,7 @@
 //!
 //! A probe is a step function over its own state; the firmware owns the task
 //! that steps it (the build's stack audit finds tasks only in the firmware's
-//! own sources). Each probe reads back stopped motor outputs; only the FW16
+//! own sources). Each probe reads back stopped motor outputs; only the motor
 //! pulse probe ever drives the motor, and only the `motor` firmware runs it.
 //! The flash and supervision probes are retained for their host tests; no
 //! firmware links them, and the startup audit refuses an image that does.

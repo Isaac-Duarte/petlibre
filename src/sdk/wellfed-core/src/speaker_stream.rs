@@ -2,7 +2,7 @@
 //!
 //! The feeder listens on [`PORT`]. On each connection it sends a hello: the
 //! magic and a fresh challenge. The client answers with a header (magic,
-//! sample rate, zero flags) and an HMAC-SHA256 under the FW08 request key
+//! sample rate, zero flags) and an HMAC-SHA256 under the request key
 //! over the challenge and those fields, so only the key holder can play and a
 //! recorded session cannot be replayed. The feeder replies with one status
 //! byte; after `Ok` the rest of the connection is raw 16-bit little-endian

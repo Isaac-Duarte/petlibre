@@ -12,7 +12,7 @@ The `feeder` image as of FW44:
 - **BLE setup mode:** the `setup` variant started `BleSetup` in the loop from boot. The normal image links the stack but never starts it. FW45 retired the variant (October 24): setup mode now starts on the owner's gesture, at the same cost.
 
 Not linked yet, and costed from other builds instead:
-- **Feeding owner:** the `motor` firmware with and without its `fw16-pulse` variant.
+- **Feeding owner:** the `motor` firmware with and without its `pulse` variant.
 - **mDNS:** the vendor library, `lib_mdns.a`.
 - **Device API protocol (FW47):** no socket is opened, because pairing and keys are FW45's.
 
@@ -26,7 +26,7 @@ Each OTA bank holds 1,376,256 bytes, stock 1.1.15's own size (`layout.json`).
 | `feeder` at FP11 (panel only) | 684,032 | 50 % |
 | `feeder` normal (Noise, session table; BLE linked out) | 720,896 | 52 % |
 | `feeder` with BLE reachable (`setup`) | 868,352 | 63 % |
-| Feeding owner, from `motor` + `fw16-pulse` | +12,288 | +1 % |
+| Feeding owner, from `motor` + `pulse` | +12,288 | +1 % |
 | mDNS, vendor library code | about +33,500 | +2 % |
 
 - **BLE:** about 147 KB, which the product always carries, because any boot can enter setup mode. Count the `setup` figure.

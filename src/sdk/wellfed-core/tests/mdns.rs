@@ -1,4 +1,4 @@
-//! FW47's mDNS responder against an independent DNS codec (`simple-dns`):
+//! The mDNS responder against an independent DNS codec (`simple-dns`):
 //! the answers a browser and a resolver ask for, legacy unicast, the
 //! announcements, and packets it must ignore.
 

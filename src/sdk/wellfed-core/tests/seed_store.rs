@@ -1,4 +1,4 @@
-//! FW45's stored seed: every boot starts from a new stored seed, a cut save
+//! The stored seed: every boot starts from a new stored seed, a cut save
 //! keeps the old or the new seed and stays writable, and a newer schema is
 //! read-only.
 

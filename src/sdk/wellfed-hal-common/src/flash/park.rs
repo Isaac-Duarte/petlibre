@@ -118,7 +118,7 @@ fn valid(t: &ParkToken) -> bool {
 
 /// SysTick CTRL ENABLE and TICKINT: clear means SysTick neither counts nor
 /// interrupts. CLKSOURCE (bit 2) is excluded: on the KM4 Cortex-M33 it is
-/// read-only 1 without an external reference clock (physical FW06 capture:
+/// read-only 1 without an external reference clock (physical capture:
 /// a 0-2 mask refused every park before publishing). COUNTFLAG (bit 16) is
 /// excluded too: it stays set after a CTRL=0 write until CTRL is read.
 pub const SYSTICK_CONTROL_BITS: u32 = 3;

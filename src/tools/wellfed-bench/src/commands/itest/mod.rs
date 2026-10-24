@@ -9,7 +9,7 @@
 //!
 //! Every physical action goes through [`Rig`]: the live rig owns the
 //! hotspot, the `wellfed-local` children, the UART captures, the device
-//! API sessions (FW47: every request, and the normal role's status) and
+//! API sessions (every request, and the normal role's status) and
 //! (only with `--power`) the feeder supply relay, and restores what it
 //! changed when the run ends. `serve` still offers updates and hears bank
 //! 0's recovery role over MQTT. Scenarios see only the trait, so they are
@@ -173,7 +173,7 @@ impl ItestArgs {
 }
 
 /// Which `ota_fault_server` fault answers the recovery role's `ota/get`,
-/// with the stream offsets the FW10 drills used.
+/// with the stream offsets the drills used.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Fault {
     None,
@@ -431,7 +431,7 @@ impl<'r> Ctx<'r> {
     }
 
     /// Set the feeder's clock from the host's: nothing else does since the
-    /// server stopped sending FW21's sync (FW47).
+    /// server stopped sending the sync.
     fn sync_clock(&mut self) -> Result<()> {
         match self.ask(&Ask::SyncClock)? {
             Answer::Done { .. } => Ok(()),
@@ -543,10 +543,10 @@ impl<'r> Ctx<'r> {
             .ok_or_else(|| Error::Bench(format!("Signing {label} failed")))
     }
 
-    /// The trial firmware's fw11-fail variant signed at the next version:
+    /// The trial firmware's fail variant signed at the next version:
     /// built once, then re-signed from its review.
     fn failing(&mut self, label: &str) -> Result<Staged> {
-        self.image(label, super::Image::trial(super::Variant::Fw11Fail))
+        self.image(label, super::Image::trial(super::Variant::Fail))
     }
 
     /// `image` signed at the next version: built (or found by the review
@@ -580,7 +580,7 @@ impl<'r> Ctx<'r> {
             review,
             build,
             rebuild: build && self.args.rebuild,
-            // The suite talks to the device API (FW47), which only the
+            // The suite talks to the device API, which only the
             // product firmware serves.
             firmware: build.then_some(super::Firmware::Feeder),
             variant: None,

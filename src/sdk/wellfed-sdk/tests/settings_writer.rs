@@ -1,4 +1,4 @@
-//! FW25 settings writer against the fake SDK storage, with the hooks already
+//! Settings writer against the fake SDK storage, with the hooks already
 //! armed (arming itself is covered by the confirmation and updater tests).
 
 use std::cell::Cell;
@@ -474,7 +474,7 @@ fn key_change_records_format() {
     assert_eq!(text, "keys change=reset result=no-generator enrolled=0");
 }
 
-/// FW47: the loop's queued events reach the ring, survive a reboot, and
+/// The loop's queued events reach the ring, survive a reboot, and
 /// come back through the read mailbox in order.
 #[test]
 fn queued_events_are_appended_and_read_back_after_a_reboot() {

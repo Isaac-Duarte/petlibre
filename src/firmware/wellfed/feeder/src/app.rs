@@ -36,8 +36,8 @@ fn start() {
 
 /// The step, a Noise operation and one formatted record; the build's stack
 /// audit checks the bound. A handshake operation's X25519 is the deepest
-/// path (FW44: 3820 bytes). The device API took the bound to 4,552 bytes,
-/// just inside 6 KiB's margin (FW47), so the loop has 8 KiB: the feeding
+/// path (3820 bytes). The device API took the bound to 4,552 bytes,
+/// just inside 6 KiB's margin, so the loop has 8 KiB: the feeding
 /// owner joins it next.
 const LOOP_STACK_WORDS: u16 = 2048;
 

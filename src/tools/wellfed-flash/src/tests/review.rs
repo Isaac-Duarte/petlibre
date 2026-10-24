@@ -103,7 +103,7 @@ fn reviews_of_builds_before_device_names_still_read() {
     let image = image(30000, 3);
     let (directory, review, manifest) = frozen_build(checkout.path(), &image);
 
-    // A manifest as builds before FW37 wrote it: no device, the old profile
+    // A manifest as older builds wrote it: no device, the old profile
     // name. Any other pairing stays unknown.
     let freeze = |device: Option<&str>, profile: &str| {
         let mut changed = manifest.clone();

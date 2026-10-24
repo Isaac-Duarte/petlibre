@@ -834,7 +834,7 @@ fn reboot_and_time_sync_reach_the_device() {
     assert!(rig.device.rebooted);
 }
 
-/// Run a LAN recovery session to its last reply: FW45's setup exchange over
+/// Run a LAN recovery session to its last reply: the setup exchange over
 /// the device API, with the owner keying `keyed` in on the panel when the
 /// feeder asks. `None` when the feeder dropped the connection.
 fn recover(

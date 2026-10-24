@@ -1,5 +1,5 @@
 //! Checks that the production supervision constants stay consistent: the
-//! watchdog clock bounds cover both bench-measured expiries (FW05, FW06) and
+//! watchdog clock bounds cover both bench-measured expiries and
 //! the flash lease fits up to the documented maximum sample period.
 
 use wellfed_hal::owner::OwnerConfig;
@@ -20,7 +20,7 @@ fn owner(sample_period_ms: u32) -> OwnerConfig {
 fn watchdog_bounds_cover_the_fw05_measurement() {
     assert!(WATCHDOG.valid());
 
-    // Both measured expiries (FW05 ~3.0-3.1 s, FW06 ~4.0-4.2 s) lie inside the span.
+    // Both measured expiries (supervision probe ~3.0-3.1 s, flash probe ~4.0-4.2 s) lie inside the span.
     let counts = 4095u64 * 32;
     for measured_ms in [3000u64, 3100, 4000, 4200] {
         let hz = counts * 1000 / measured_ms;
@@ -29,7 +29,7 @@ fn watchdog_bounds_cover_the_fw05_measurement() {
         );
     }
 
-    // The FW05 probe bounds (25-45 kHz) left only ~5 % headroom above 43 kHz.
+    // The probe bounds (25-45 kHz) left only ~5 % headroom above 43 kHz.
     let narrow = WatchdogConfig {
         clock_max_hz: 45_000,
         ..WATCHDOG

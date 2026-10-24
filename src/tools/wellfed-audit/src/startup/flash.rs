@@ -1,4 +1,4 @@
-//! The FW06/FW15 flash-coordination records: the KM0/KM4 HELLO/READY
+//! The flash-coordination records: the KM0/KM4 HELLO/READY
 //! binding, then whichever stage the build's policy runs after READY.
 
 use regex::bytes::{Captures, Match};
@@ -224,7 +224,7 @@ impl<'h> Flash<'h> {
     }
 }
 
-/// FW06 HELLO/READY binding, then one injected peer change and the 30 s watch.
+/// HELLO/READY binding, then one injected peer change and the 30 s watch.
 ///
 /// The park policy checks only HELLO/READY: it refuses peer/done records and
 /// requires the park round trip's start record after READY instead. The read
@@ -313,7 +313,7 @@ fn flash_outcome(
         led_done: find(rx, LED_DONE),
     };
 
-    // The FW15 stages run alone: no earlier stage's records may appear.
+    // The stages run alone: no earlier stage's records may appear.
     let earlier: &[&[u8]] = match policy {
         FlashPolicy::Journal => &[b"PLPRK1", b"PLRDS1", b"PLWRS1"],
         FlashPolicy::Settings => &[b"PLPRK1", b"PLRDS1", b"PLWRS1", b"PLJNL1"],

@@ -14,7 +14,7 @@ use crate::sdk::{self, IrqGuard};
 pub const PA_MASK: u32 = MOTOR_MASK | sdk::IR_PA_BIT;
 pub const PB_MASK: u32 = sdk::IR_PB_BIT;
 
-/// Emitters the FW13 probe holds on under an armed supervisor budget: bit 0
+/// Emitters the probe holds on under an armed supervisor budget: bit 0
 /// PA15, bit 1 PB3. Written only by that probe; read by health.
 static SUPERVISED: AtomicU32 = AtomicU32::new(0);
 

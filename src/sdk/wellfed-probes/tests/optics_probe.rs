@@ -1,4 +1,4 @@
-//! FW13 optics probe against the fake SDK, with the KM0 peer's handshake
+//! Optics probe against the fake SDK, with the KM0 peer's handshake
 //! answered through a shared IPC register model and the receivers driven
 //! from the emitter latches by a synthetic optical path.
 

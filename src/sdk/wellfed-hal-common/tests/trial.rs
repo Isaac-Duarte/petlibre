@@ -1,4 +1,4 @@
-//! FW11 KM0 boot-trial decisions: no flash or register access here.
+//! KM0 boot-trial decisions: no flash or register access here.
 
 use wellfed_core::ota::{CONFIRM_LEN, MARKER, confirm_record};
 use wellfed_hal_common::trial::{Decision, LIMIT, decide};

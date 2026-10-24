@@ -1,4 +1,4 @@
-//! Replacement-firmware update signing (FW10). Owner-side only: creates the
+//! Replacement-firmware update signing. Owner-side only: creates the
 //! offline signing key and signs a reviewed image's manifest in the format
 //! `wellfed-core::ota` verifies. Nothing here talks to a device.
 //!

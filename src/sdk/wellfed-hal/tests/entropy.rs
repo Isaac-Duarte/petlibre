@@ -1,4 +1,4 @@
-//! FW45's raw samplers on the fake: the jitter sampler measures SysTick
+//! The raw samplers on the fake: the jitter sampler measures SysTick
 //! cycles between 32 kHz edges across a wrap, and refuses a stopped timer or
 //! a SysTick that is not running; the ADC sampler keeps a conversion's low
 //! byte.

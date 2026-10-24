@@ -1,7 +1,7 @@
 /* Hooks called by the vendor's KM4 main; preserve its startup and RTOS setup.
  * The application itself is the Rust staticlib linked into this image.
  *
- * FW07 stage D: one task joins the configured network and keeps it. It runs
+ * One task joins the configured network and keeps it. It runs
  * LwIP_Init and wifi_on(STA), then repeats: scan for the network (to learn
  * its security), wifi_connect, DHCP; on success it resolves a fixed public
  * name every few seconds and watches the link. When the link drops, or DNS
@@ -13,7 +13,7 @@
  * from a private file; neither is ever logged here. Nothing registers fast
  * connect or calls rtw_efuse_boot_write.
  *
- * FW08: blocking TCP helpers for the Rust transport client, and the broker
+ * Blocking TCP helpers for the Rust transport client, and the broker
  * settings from a second generated header. The client and its protocol are
  * Rust (wellfed-core transport); nothing here parses network data.
  */
@@ -105,7 +105,7 @@ static unsigned int wellfed_ms(TickType_t since)
     return (unsigned int)((xTaskGetTickCount() - since) * portTICK_PERIOD_MS);
 }
 
-/* FW25 join credentials, shared with Rust (`network::JoinCredentials`):
+/* Join credentials, shared with Rust (`network::JoinCredentials`):
  * prefilled with the build's, replaced by stored ones unless the fallback
  * has taken over (wellfed-hal network.rs). */
 struct wellfed_join_credentials {
@@ -545,7 +545,7 @@ int wellfed_tcp_accept(int listener, unsigned int timeout_ms)
     return s;
 }
 
-/* FW47: the device API's sockets. The loop task serves every client and
+/* The device API's sockets. The loop task serves every client and
  * steps the feeding owner between them, so nothing here ever waits: each
  * call takes what is ready now and returns (wellfed-hal api.rs). */
 static void wellfed_nonblocking(int s)
@@ -691,7 +691,7 @@ unsigned int wellfed_ipv4(void)
     return ((unsigned int)a[0] << 24) | ((unsigned int)a[1] << 16) | ((unsigned int)a[2] << 8) | a[3];
 }
 
-/* FW24: the speaker. Stock 1.1.15 plays through the codec's line output
+/* The speaker. Stock 1.1.15 plays through the codec's line output
  * (CODEC_Init application 8) from SPORT by GDMA and holds PB23 HIGH while it
  * plays, the amplifier enable that Rust drives (wellfed-hal audio.rs).
  * This shim owns only the codec, SPORT and an 8-page DMA ring of 16-bit mono

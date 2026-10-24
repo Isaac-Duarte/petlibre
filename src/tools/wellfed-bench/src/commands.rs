@@ -39,7 +39,7 @@ const LOADER_NAK_RUN: u64 = 8;
 
 /// Observed per staged frame, framing included; for progress only.
 const FRAME_TX_BYTES: u64 = 1056;
-/// FW30 logic analyzer (sigrok fx2lafw, 8 channels). Capture starts this long
+/// Logic analyzer (sigrok fx2lafw, 8 channels). Capture starts this long
 /// before power-on so the unpowered state is recorded first; the first open
 /// also uploads the analyzer's firmware, which takes about a second.
 const ANALYZER_ARMING_SECONDS: f64 = 3.0;
@@ -413,7 +413,7 @@ impl Bench {
         }
     }
 
-    /// Repeated captured power-ons (or loader entries) for FW30's driver-input check.
+    /// Repeated captured power-ons (or loader entries) for the driver-input check.
     ///
     /// Each cycle: power off, start the analyzer, wait for it to arm, power on
     /// (holding the strap for a loader entry), let the capture finish, power off.
@@ -878,7 +878,7 @@ impl Bench {
         Ok(0)
     }
 
-    /// The pinned original stock back into bank 1 over UART (the FW38
+    /// The pinned original stock back into bank 1 over UART (the restore
     /// procedure), stopping for review at each plan. With `--fallback`, bank
     /// 1 still holds a valid image, so this prepares the give-way to that
     /// bank-0 review first; stock recovery refuses a valid target marker.

@@ -1,7 +1,7 @@
-//! Replacement-firmware health (FW08).
+//! Replacement-firmware health.
 //!
-//! The firmware publishes a versioned health object over MQTT. Since FW47
-//! only bank 0's recovery role still does: the normal role answers requests
+//! The firmware publishes a versioned health object over MQTT. Only
+//! bank 0's recovery role still does: the normal role answers requests
 //! and reports its status over the Noise device API instead, and this server
 //! sends it nothing but OTA offer answers. The code here validates only what
 //! the server relies on and keeps the latest health in memory.

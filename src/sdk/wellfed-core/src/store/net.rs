@@ -1,4 +1,4 @@
-//! FW25: Wi-Fi credentials stored on NOR, set without a rebuild.
+//! Wi-Fi credentials stored on NOR, set without a rebuild.
 //!
 //! Two alternating 128-byte records on the same slot I/O as the settings
 //! store: magic `PLFNET01`, version, record size, generation, SSID length,

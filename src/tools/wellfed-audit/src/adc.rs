@@ -1,4 +1,4 @@
-//! A finalized receive-only FW14 power-input capture against its build artifact.
+//! A finalized receive-only power-input capture against its build artifact.
 //!
 //! Port of `audit-firmware-adc.py`. A passing capture is one startup whose LED
 //! probe completes, then the read-only ADC probe:

@@ -272,8 +272,9 @@ fn with_firmware_role(dir: &TempDir) -> (std::path::PathBuf, std::path::PathBuf)
     (config, credential)
 }
 
-/// FW47 retired request signing, but configurations written with the FW25
-/// key still load (the format denies unknown fields) until FW48 drops it.
+/// Requests are no longer signed, but configurations written with the old
+/// request key still load (the format denies unknown fields) until the
+/// broker credentials go.
 #[test]
 fn a_configuration_with_the_retired_request_key_still_loads() {
     let dir = TempDir::new().unwrap();

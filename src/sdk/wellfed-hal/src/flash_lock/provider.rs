@@ -1,7 +1,7 @@
 //! The KM4 lease provider for the SDK flash-lock hooks: each SDK flash
 //! operation reserves a `FlashCoord` lease, verifies stopped outputs, parks
-//! KM0 in RAM and releases it afterwards. The FW06 and FW15 probes proved
-//! the sequence on hardware; the FW10 updater, FW11 confirmation and the
+//! KM0 in RAM and releases it afterwards. The probes proved
+//! the sequence on hardware; the updater, confirmation and the
 //! offer watch arm it through `arming`.
 //!
 //! Every failed step is final: the hook returns false, which halts in RAM

@@ -1,4 +1,4 @@
-//! FW10: the server's signing tool produces exactly what the firmware verifies.
+//! The server's signing tool produces exactly what the firmware verifies.
 use wellfed_core::ota::{self, ManifestError, SECTOR};
 use wellfed_local::ota::firmware;
 

@@ -1,4 +1,4 @@
-//! FP11: the panel's child lock between the transport and the task that owns
+//! The panel's child lock between the transport and the task that owns
 //! the panel.
 //!
 //! The lock itself is firmware policy (`wellfed-feeder`); this module only

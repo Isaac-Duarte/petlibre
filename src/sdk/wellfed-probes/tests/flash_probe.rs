@@ -1,4 +1,4 @@
-//! KM4 handshake and FW15 settings stress probe against the fake SDK (with a
+//! KM4 handshake and settings stress probe against the fake SDK (with a
 //! NOR model of the storage region) and a shared IPC model. Power cuts are
 //! injected at a chosen mutating flash call: that call takes half effect and
 //! the boot ends with backup registers cleared, as unplugging would. KM0 is modelled

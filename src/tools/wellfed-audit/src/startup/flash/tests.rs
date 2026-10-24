@@ -1,4 +1,4 @@
-//! The flash-coordination records: the FW06 HELLO/READY handshake and its
+//! The flash-coordination records: the HELLO/READY handshake and its
 //! policy binding, then the mediated read and scratch-sector write records.
 
 use serde_json::{Value, json};
@@ -490,7 +490,7 @@ fn flash_handshake_policy_binding_and_legacy() {
     assert!(error.contains("requires the LED probe policy"));
 }
 
-// FW06 stage D (mediated read) and stage E (scratch-sector write).
+// Stage D (mediated read) and stage E (scratch-sector write).
 
 const HELLO: &[u8] = b"PLFLS1 hello authority=000000010000a1b2 count=1\r\n";
 const READY: &[u8] = b"PLFLS1 ready peer=000000010000c3d4 reply=0 phase=1 fault=0 inactive=1\r\n";

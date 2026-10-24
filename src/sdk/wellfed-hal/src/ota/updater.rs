@@ -1,9 +1,9 @@
-//! FW10 recovery-role updater on KM4. Runs only when the image booted from
-//! bank 0 (the factory loader's fallback), in place of the FW08 transport.
+//! Recovery-role updater on KM4. Runs only when the image booted from
+//! bank 0 (the factory loader's fallback), in place of the transport.
 //!
-//! Arming follows the FW15 probe: bind the KM0 peer, set the attempt marker,
+//! Arming follows the probe: bind the KM0 peer, set the attempt marker,
 //! open the watchdog and install the lease provider into the SDK flash-lock
-//! hooks. Every bank-1 erase and page program then parks KM0 under one FW06
+//! hooks. Every bank-1 erase and page program then parks KM0 under one
 //! lease. A boot that finds the attempt marker set skips the update, so a
 //! hook fault or hang resets at most once per power cycle.
 //!
@@ -534,7 +534,7 @@ impl Updater {
 
     /// Health from this session while no update is offered, at most every
     /// [`HEALTH_MS`], so a feeder whose bank 1 is invalid (just installed by
-    /// stock, FW40) still reports. The transport shares the client ID, so it
+    /// stock) still reports. The transport shares the client ID, so it
     /// cannot run beside the updater. Nothing here touches flash. `false` only
     /// when the send failed; a health that does not format is skipped.
     fn report(&mut self, now: u32) -> bool {

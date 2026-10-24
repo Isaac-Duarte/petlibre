@@ -1,8 +1,8 @@
-//! FW08 transport driver on KM4: one outbound MQTT connection to the local
-//! server's broker, carrying health only. Since FW47 every request goes over
+//! Transport driver on KM4: one outbound MQTT connection to the local
+//! server's broker, carrying health only. Every request goes over
 //! the device API, so a request published here is ignored and never
 //! answered; the bank-0 recovery role still reports health this way while
-//! the broker serves the FW10 offers (until FW48).
+//! the broker serves the offers until it is retired.
 //!
 //! Network-facing: this file reaches only the core transport, the socket
 //! and clock wrappers, the Wi-Fi status reader and the health snapshot (a
@@ -60,7 +60,7 @@ pub enum Record {
 
 /// Why a session closed (`closed reason=`), also the health message's
 /// `last_error`. Written out rather than with `wellfed_core::named_enum!`:
-/// the FW08 isolation check lets this module name only its allowed paths.
+/// the isolation check lets this module name only its allowed paths.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CloseReason {
     Wifi,

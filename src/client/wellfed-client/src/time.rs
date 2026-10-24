@@ -1,4 +1,4 @@
-//! FW21's clock sync as the device API carries it (`Op::TimeSync`): the
+//! The clock sync as the device API carries it (`Op::TimeSync`): the
 //! wall clock, the zone's offset now, and its next change, so the feeder
 //! keeps local time across a DST change without another sync.
 

@@ -1,4 +1,4 @@
-//! FW45's identity in the loop: the public key derived from what the
+//! The identity in the loop: the public key derived from what the
 //! settings writer publishes, once per generation, logged by fingerprint.
 
 use wellfed_fw_feeder::keys::{Identity, Record, describe};

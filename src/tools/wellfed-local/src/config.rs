@@ -43,7 +43,7 @@ pub struct Config {
     pub hotspot_interface: String,
     pub target_mac: String,
 
-    /// Replacement-firmware MQTT role (FW08); absent for stock-only setups.
+    /// Replacement-firmware MQTT role; absent for stock-only setups.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub firmware: Option<FirmwareConfig>,
 }
@@ -55,10 +55,10 @@ pub struct FirmwareConfig {
     pub client_id: String,
     pub username: String,
     pub password: String,
-    /// The FW25 request-signing key. Unused since FW47, when requests moved
+    /// The request-signing key. Unused since requests moved
     /// from MQTT to the Noise device API; kept only so existing
     /// configurations still parse (`deny_unknown_fields`), and removed with
-    /// the broker credentials in FW48.
+    /// the broker credentials.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request_key: Option<String>,
 }

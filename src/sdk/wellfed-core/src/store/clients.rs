@@ -1,4 +1,4 @@
-//! FW45: the feeder's identity key and its enrolled clients.
+//! The feeder's identity key and its enrolled clients.
 //!
 //! A client is its static key: an X25519 key for the device API's Noise
 //! sessions, or an Ed25519 key for an owner's update signatures. The whole
@@ -23,7 +23,7 @@
 //!
 //! The identity secret sits in plain flash: the board has no secure element,
 //! so anyone who can read the flash chip can impersonate this feeder. The
-//! factory reset ([`ClientStore::reset`], FP15) forgets every client and
+//! factory reset ([`ClientStore::reset`]) forgets every client and
 //! takes a new identity, so old clients must pair again.
 
 use core::ffi::c_uint;
@@ -35,7 +35,7 @@ use crate::store::slot::{
 
 pub const VERSION: u16 = 1;
 const MAGIC: [u8; 8] = *b"PLFCLI01";
-/// Enrolled clients, apart from the four concurrent sessions (FW44).
+/// Enrolled clients, apart from the four concurrent sessions.
 pub const CLIENTS: usize = 8;
 pub const LABEL_LEN: usize = 16;
 
@@ -60,7 +60,7 @@ const _: () = assert!(ENROLLED_AT + 8 <= ENTRY_BYTES && RECORD_BYTES <= 4096);
 const _: () = assert!(COMMIT_OFFSET as usize == COMMIT_AT && RECORD_LEN as usize == RECORD_BYTES);
 
 named_enum! {
-    /// What a client may do; the device API enforces it (FW47).
+    /// What a client may do; the device API enforces it.
     pub enum Role {
         /// Everything, including inviting and revoking clients.
         Owner = "owner",
@@ -68,7 +68,7 @@ named_enum! {
         Member = "member",
         /// The optional server: history and release fetching.
         Server = "server",
-        /// An owner's Ed25519 key for update signatures (FW48).
+        /// An owner's Ed25519 key for update signatures.
         UpdateSigner = "update-signer",
     }
 }
@@ -422,7 +422,7 @@ impl ClientStore {
         self.save(&table)
     }
 
-    /// FP15's reset: no clients, and `identity` as the feeder's new key.
+    /// The reset: no clients, and `identity` as the feeder's new key.
     pub fn reset(&mut self, identity: &[u8; 32]) -> Result<(), ClientError> {
         self.save(&Table {
             identity: Some(*identity),

@@ -1,4 +1,4 @@
-//! FW45: the random generator behind every key and nonce.
+//! The random generator behind every key and nonce.
 //!
 //! The AmebaD has no hardware RNG the SDK exposes: its `rtw_get_random_bytes`
 //! is ROM `Rand()`, a Tausworthe generator seeded with a constant (static

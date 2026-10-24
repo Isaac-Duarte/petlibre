@@ -1,4 +1,4 @@
-//! A device API session over TCP (FW47): find the feeder over mDNS, open
+//! A device API session over TCP: find the feeder over mDNS, open
 //! `wellfed-client`'s session against its identity, and move bytes.
 
 use std::net::{IpAddr, SocketAddr};

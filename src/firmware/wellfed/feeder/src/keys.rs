@@ -1,12 +1,12 @@
-//! FW45: the feeder's identity key pair, held by the loop task.
+//! The feeder's identity key pair, held by the loop task.
 //!
 //! The settings writer keeps the identity secret in the client store and
 //! publishes it (`wellfed_hal::keys`); the loop derives the public key
 //! here, where the handshakes that need both will run. The derivation is an
 //! X25519 multiplication, which the settings task's stack cannot hold and
-//! the loop's already does for every handshake (FW44).
+//! the loop's already does for every handshake.
 //!
-//! A boot's first publish and each FP15 reset bring a new generation. The
+//! A boot's first publish and each factory reset bring a new generation. The
 //! record carries only the public key's first bytes: enough to tell
 //! identities apart across boots and resets, and no secret.
 

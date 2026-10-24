@@ -21,7 +21,7 @@ pub struct Config {
     pub baseline: PathBuf,
     /// Root-relative: the ROM inspection report.
     pub rom_report: PathBuf,
-    /// FW30 analyzer channel names; recorded in transient manifests only.
+    /// Analyzer channel names; recorded in transient manifests only.
     #[serde(default)]
     pub analyzer_channels: Option<BTreeMap<String, u8>>,
 }

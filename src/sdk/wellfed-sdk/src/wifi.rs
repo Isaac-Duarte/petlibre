@@ -1,4 +1,4 @@
-//! FW07 stage D bench probe on KM4: join the configured network and keep it.
+//! Bench probe on KM4: join the configured network and keep it.
 //!
 //! Starts the KM4 Wi-Fi shim (`example_entry.c`), which owns the connection:
 //! radio on, then scan, connect and DHCP, then periodic DNS lookups while it

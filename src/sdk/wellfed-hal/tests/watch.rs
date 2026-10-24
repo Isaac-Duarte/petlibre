@@ -1,4 +1,4 @@
-//! FW10 normal-role offer check against the fake SDK: a scripted broker
+//! Normal-role offer check against the fake SDK: a scripted broker
 //! answering `ota/check`, and the fake bank model for the give-way.
 
 use std::cell::{Cell, RefCell};

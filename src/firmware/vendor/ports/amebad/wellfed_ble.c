@@ -1,4 +1,4 @@
-/* FW34: the Bluetooth LE peripheral a firmware with `bluetooth = true`
+/* The Bluetooth LE peripheral a firmware with `bluetooth = true`
  * links beside example_entry.c (wellfed-build stages it only then).
  *
  * One task waits for the Wi-Fi shim's radio (hci_board_init refuses to

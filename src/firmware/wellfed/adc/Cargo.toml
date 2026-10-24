@@ -4,7 +4,7 @@ name = "wellfed-fw-adc"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
-description = "Experimental PLAF103 bring-up firmware on the Wellfed SDK: the FW14 power-input probe, read-only"
+description = "Experimental PLAF103 bring-up firmware on the Wellfed SDK: the power-input probe, read-only"
 publish.workspace = true
 
 # The KM4 archive wellfed-build links into the image.

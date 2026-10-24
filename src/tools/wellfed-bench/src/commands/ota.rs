@@ -1,9 +1,9 @@
-//! FW12 over-the-air iteration: optionally build and freeze a review with
+//! Over-the-air iteration: optionally build and freeze a review with
 //! `wellfed-build`, sign it with `wellfed-local`, offer it to the server
 //! that is already running, watch receive-only UART captures until the new
 //! build confirms, falls back, or time runs out, then check that the device
-//! API (FW47) reports the new build on bank 1. Each phase is timed for the
-//! FW12 record.
+//! API reports the new build on bank 1. Each phase is timed for the
+//! timing record.
 //!
 //! A review of the original stock image (`image_kind: stock`) installs the
 //! same way, through the replacement's own signed update: its payload hash
@@ -83,26 +83,26 @@ pub fn steps(source: Source) -> Vec<&'static str> {
 const MOTION_MANUAL: &str = "drives the motor; motion builds stay manual (build and review it yourself, then use --review with --attended-motion)";
 
 /// A no-motion firmware `--build` may make (`src/firmware/wellfed/<name>`).
-/// The FW16 motor firmware is refused here: motion builds stay a manual,
+/// The motor firmware is refused here: motion builds stay a manual,
 /// attended step.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Firmware {
     /// The guided QA self-test; `wellfed-build`'s default.
     #[default]
     Qa,
-    /// FW13: the optics probe.
+    /// The optics probe.
     Optics,
-    /// FW20: the panel buttons, read-only.
+    /// The panel buttons, read-only.
     Buttons,
-    /// FW14: read-only power-input samples.
+    /// Read-only power-input samples.
     Adc,
-    /// FW24: tunes and the signed network audio stream.
+    /// Tunes and the signed network audio stream.
     Speaker,
     /// Blinks the connection indicator.
     Blink,
-    /// FW11 trial images, one per `Variant`.
+    /// Trial images, one per `Variant`.
     Trial,
-    /// The product firmware (FP11 onwards).
+    /// The product firmware.
     Feeder,
 }
 
@@ -152,11 +152,11 @@ pub(crate) fn parse_firmware(text: &str) -> std::result::Result<Firmware, String
 /// Motion variants are never among them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Variant {
-    /// FW11: never confirms; the watchdog resets it, so KM0 falls back.
-    Fw11Reset,
-    /// FW11: fails its startup diagnostic on purpose.
-    Fw11Fail,
-    /// FW45: the feeder streaming raw noise samples.
+    /// Never confirms; the watchdog resets it, so KM0 falls back.
+    Stall,
+    /// Fails its startup diagnostic on purpose.
+    Fail,
+    /// The feeder streaming raw noise samples.
     Entropy,
 }
 
@@ -164,8 +164,8 @@ impl Variant {
     /// The variant's name, which `wellfed-build --variant` selects.
     pub(crate) fn name(self) -> &'static str {
         match self {
-            Self::Fw11Reset => "fw11-reset",
-            Self::Fw11Fail => "fw11-fail",
+            Self::Stall => "stall",
+            Self::Fail => "fail",
             Self::Entropy => "entropy",
         }
     }
@@ -173,7 +173,7 @@ impl Variant {
     /// The firmware that declares it.
     pub(crate) fn firmware(self) -> Firmware {
         match self {
-            Self::Fw11Reset | Self::Fw11Fail => Firmware::Trial,
+            Self::Stall | Self::Fail => Firmware::Trial,
             Self::Entropy => Firmware::Feeder,
         }
     }
@@ -182,12 +182,12 @@ impl Variant {
 /// `--variant`'s parser, with a reason for the motion variant.
 pub(crate) fn parse_variant(text: &str) -> std::result::Result<Variant, String> {
     match text {
-        "fw11-reset" => Ok(Variant::Fw11Reset),
-        "fw11-fail" => Ok(Variant::Fw11Fail),
+        "stall" => Ok(Variant::Stall),
+        "fail" => Ok(Variant::Fail),
         "entropy" => Ok(Variant::Entropy),
-        "fw16-pulse" => Err(format!("fw16-pulse {MOTION_MANUAL}")),
+        "pulse" => Err(format!("pulse {MOTION_MANUAL}")),
         other => Err(format!(
-            "unknown variant {other:?}; the trial firmware has fw11-reset and fw11-fail, the feeder entropy"
+            "unknown variant {other:?}; the trial firmware has stall and fail, the feeder entropy"
         )),
     }
 }
@@ -252,7 +252,7 @@ pub struct OtaArgs {
     /// trial or feeder.
     #[arg(long, value_parser = parse_firmware)]
     pub firmware: Option<Firmware>,
-    /// Variant for --build: fw11-reset or fw11-fail with --firmware trial, entropy with
+    /// Variant for --build: stall or fail with --firmware trial, entropy with
     /// --firmware feeder.
     #[arg(long, value_parser = parse_variant)]
     pub variant: Option<Variant>,
@@ -645,7 +645,7 @@ pub(crate) struct Stamp {
     pub exact: bool,
 }
 
-/// The FW12 record: how long each phase of one run took, in seconds.
+/// The `ota` timing record: how long each phase of one run took, in seconds.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub(crate) struct Timing {
     /// Some child ran, so there is something to report.
@@ -924,7 +924,7 @@ impl Bench {
             say!("Stock serves no device API; no status to check");
             return Ok(0);
         }
-        // Since FW47 only the product firmware reports anything after its
+        // Only the product firmware reports anything after its
         // trial: the bring-up firmwares open no MQTT session and serve no
         // API, so their UART confirmation is the whole check.
         let described = self.root.join(&staged.review).join("build-manifest.json");

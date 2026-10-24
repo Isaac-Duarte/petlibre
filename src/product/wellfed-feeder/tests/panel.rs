@@ -1,4 +1,4 @@
-//! FP11's lock rules against synthetic gestures: the Lock hold toggles, a
+//! The lock rules against synthetic gestures: the Lock hold toggles, a
 //! locked panel refuses Dispense, Mic and the Reset hold, and an idle unlocked
 //! panel relocks on stock's timer, counted from the last release.
 

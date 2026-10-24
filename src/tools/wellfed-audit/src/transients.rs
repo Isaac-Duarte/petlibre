@@ -1,4 +1,4 @@
-//! FW30 logic-analyzer captures of the motor driver, checked for any drive.
+//! Logic-analyzer captures of the motor driver, checked for any drive.
 //!
 //! Port of `audit-driver-transients.py`. It reads a `wellfed-bench transients`
 //! session: raw sigrok bytes (one byte per sample, bit n = channel Dn) plus a

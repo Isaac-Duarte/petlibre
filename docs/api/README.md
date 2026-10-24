@@ -109,13 +109,16 @@ Subscribe { samples }                 Sample { at, metric, value }
 - **Resources** live under `/api/v1`. They use JSON bodies, `snake_case` fields (serde's default for Rust field names, so no rename attributes; the generated TS and Dart types use the same names), UUIDv7 IDs and RFC 3339 timestamps with offsets.
 - **Errors** use RFC 9457 `application/problem+json`, with a typed `code` from a closed enum in `petlibre-api` and no catch-all string.
 - **Writes** carry an `Idempotency-Key` header, which the server forwards as the device request ID. Edits carry `If-Match` with the generation, and a stale one gets `412` with the current resource.
-- **Live updates.** `GET /api/v1/stream` is Server-Sent Events for every feeder the user can see: events, samples (opt in per metric), connection state and command results. It resumes with `Last-Event-ID`, mapped to the server's own event sequence.
-- **OpenAPI** is generated from the handlers (utoipa) into a committed `openapi.json`. A test fails when it is stale, as with `bench.gen.ts`. TypeScript types come from `petlibre-api` (ts-rs) and Dart types through flutter_rust_bridge. A test checks the app's hand-written endpoint list against the spec.
+- **Live updates.** `GET /api/v1/stream` is Server-Sent Events for every feeder the user can see: events, samples (opt in per metric), connection state and command results. It resumes with `Last-Event-ID`, mapped to the server's own event sequence; when that ID is too old to resume, the server sends a `resync` event and the client refetches. Every event payload is a typed schema in `openapi.json` (a `StreamEvent` enum).
+- **OpenAPI** is generated from the handlers (utoipa) into a committed `openapi.json`. A test fails when it is stale, as with `bench.gen.ts`. The web UI's types and client come from that file through `openapi-typescript` and `openapi-fetch` ([web UI](../web/README.md)), so `petlibre-api` carries no ts-rs derives. Dart types come through flutter_rust_bridge, and a test checks the app's hand-written endpoint list against the spec.
 
 ### First resources
 
 ```text
+GET    /api/v1/setup                        whether a fresh server awaits its first owner
+POST   /api/v1/setup                        create the first owner (refused once any account exists)
 POST   /api/v1/session                      log in (cookie)   DELETE: log out
+GET    /api/v1/household                    name, units (g or oz), time format   PATCH (owner)
 GET    /api/v1/users      POST, PATCH, DELETE /users/{id}
 GET    /api/v1/tokens     POST (an app token, shown once), DELETE /tokens/{id}
 GET    /api/v1/feeders                       paired feeders with connection state
@@ -127,6 +130,9 @@ GET    /api/v1/feeders/{id}/settings         PATCH with If-Match
 GET    /api/v1/feeders/{id}/events           ?after=&limit=&kind=
 GET    /api/v1/feeders/{id}/samples          ?metric=&from=&to=&resolution=raw|hour
 GET    /api/v1/feeders/{id}/clients          clients the feeder knows; DELETE revokes
+GET    /api/v1/feeders/{id}/food             food remaining and refill estimate (derived)
+GET    /api/v1/pets/{id}/intake              grams and calories against target  ?from=&to=
+GET    /api/v1/audit                         who did what through the server  ?after=&limit=
 GET    /api/v1/releases                      fetched and verified releases
 POST   /api/v1/feeders/{id}/install          owner-approved install of a release
 GET    /api/v1/pets    /foods                CRUD, owner data the feeder doesn't hold
@@ -138,7 +144,8 @@ GET    /health                               no auth; liveness and version
 
 ### Auth
 
-- **Users** log in with argon2-hashed passwords. Browsers get a session cookie (`HttpOnly`, `SameSite=Strict`, `Secure` behind TLS), and every cookie-authenticated write checks CSRF.
+- **Users** log in with argon2-hashed passwords. Browsers get a session cookie (`HttpOnly`, `SameSite=Strict`, `Secure` when a trusted proxy reports HTTPS). Every cookie-authenticated write must carry a JSON body and an `Origin` matching the server, and `Sec-Fetch-Site: same-origin` when the browser sends it; browsers send Fetch Metadata only over HTTPS, and most owners use plain HTTP on the LAN.
+- **The first owner** is created by the first visitor to a fresh server through `/setup`, which closes once any account exists.
 - **Phones** get a long-lived bearer token, stored hashed and revocable. Each token names its user, so the audit log names the person.
 - **Roles** are owner and member: members feed and edit schedules, and owners also manage users, tokens, feeders and installs. This is a closed enum, checked in one middleware layer plus per-handler extractors.
 - **The server has its own feeder key** per feeder, enrolled by invite like any client, so the feeder's audit shows "server (on behalf of user X)".
@@ -150,7 +157,7 @@ GET    /health                               no auth; liveness and version
 - **Queries** use `sqlx::query_as!`, with the offline metadata (`.sqlx/`) committed, so builds need no database. SQL lives only in `petlibre-store`.
 - **Time** is stored as integer Unix milliseconds (UTC), with zones as IANA names. `jiff` converts at the store boundary.
 - **Tables (first cut):**
-  - `users`, `sessions`, `tokens`
+  - `household` (one row: name, units, time format), `users`, `sessions`, `tokens`
   - `feeders` (identity, key material, cursor) and `feeder_state` (cached plans, settings and status, with generation)
   - `events` (raw, keyed by feeder and `seq`, with a unique constraint so the cursor sync is idempotent)
   - `samples` (feeder, metric, time and value) and `sample_rollups` (hourly)
@@ -179,7 +186,7 @@ Pinned in `[workspace.dependencies]`; a new dependency needs a reason in its pul
 | Database | `sqlx` with SQLite, migrations and macros |
 | Time | `jiff` |
 | Crypto | a `no_std` Noise implementation (chosen in FW45), `argon2`, `rand_core` |
-| OpenAPI and types | `utoipa`, `utoipa-axum`, `ts-rs` (already), `flutter_rust_bridge` |
+| OpenAPI and types | `utoipa`, `utoipa-axum`, `flutter_rust_bridge`; `ts-rs` (already) stays for the bench's views only |
 | Discovery | `mdns-sd` |
 | Releases | `reqwest` with rustls (already in `petlibre-local`), `ed25519-dalek` (already) |
 | Observability | `tracing` and `tracing-subscriber` (already) |

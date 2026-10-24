@@ -7,7 +7,7 @@ This board tracks the owner-visible behavior the replacement firmware needs to m
 - **Done:** FP01 (stock feature inventory), FP11 (child lock).
 - **In progress:** none.
 - **Critical path to parity:** FW30 → FW16 → FW17 → FW18 → FP03. Nothing a pet depends on works before FW17 can feed.
-- **Startable without motion:** FP02, FP04 (host-tested against the snapshot format), FP09, and the reporting halves of FP12 and FP14.
+- **Startable without motion:** FP20 (web foundations, needing no server), FP02, FP04 (host-tested against the snapshot format), FP09, and the reporting halves of FP12 and FP14.
 
 ## Using the board
 
@@ -63,6 +63,8 @@ A feature card sequences behavior through the SDK; it never relaxes a FIRMWARE_B
 | **FP16 Home Assistant integration** | Planned (paused by owner, Oct 23) | — | — | FP03, FP05, FP07, FP08, FW47 | Paused; the route (ESPHome API on the feeder, FW49, or MQTT discovery through the server) is chosen when it resumes ([options](docs/firmware/product-architecture.md#home-assistant)). Either way reconnects and automation replay cannot duplicate a feed, and feeding continues without Home Assistant. |
 | **FP18 Server mirror** | Planned | — | The vendor cloud: history, remote control | FP06, FP08, FW47 | A new `petlibre-server` crate (shared pieces extracted from `petlibre-local` and the bench) mirrors the feeder's events through FW47's cursor with no gaps across its own outages, records live samples while connected, and keeps both raw, forever by default, with CSV and JSON export and import. It holds pet profiles and food info, shows the derived views, and fetches releases for the owner to approve. Stopping it changes nothing on the feeder. Notifications and remote access are deferred. Details: [data](docs/firmware/product-architecture.md#data). |
 | **FP19 Android app** | Planned | — | The vendor app | FW45, FW47 | A Flutter Android app over the sans-IO `petlibre-client` core, released as a GitHub APK. First a spike against a host-simulated feeder: BLE setup, NSD discovery and a Noise session on a real phone. Then setup and pairing, invites, several feeders, feed, schedules, settings, history and status, plus server history when a server exists, and the stock installer. Every action goes through the device API; nothing bypasses the feeding owner. |
+| **FP20 Web foundations** | Ready | — | — | — | Step 1 of the [web UI design](docs/web/README.md#build-order): `assets/brand/tokens.json` gains state colors, spacing and a type scale, and a generator writes the CSS with a contrast test that fails below WCAG AA in either theme; `@petlibre/ui` wraps bits-ui for every interactive widget; the bench page moves to the Midnight tokens; ESLint, Prettier and the dependency policy run in `make check-web`. Done when `make check-web` passes with the bench on the new tokens and the bench's Playwright suite unchanged in what it asserts. |
+| **FP21 Server web UI** | Planned | — | The vendor app | FP18, FP20, FW47 | Steps 2–6 of the [web UI design](docs/web/README.md#build-order): the SvelteKit app embedded in `petlibre-server`, with feed, status, schedules, history and charts, pets and food, and admin. Done when every screen passes Playwright against the real server and the simulated feeder on desktop and phone, axe-core finds nothing on any route in either theme, and the feeding-safety tests (double press, cut mid-feed, retry with the same key) each end with exactly one feed. |
 | **FP17 Parity soak** | Planned | — | — | FP03–FP15, FW27 | A defined multi-day run on schedules alone, with power cuts, server outages and a battery stretch. Every meal is accounted for exactly once, and the result is compared with stock in the same scenarios. FW29 waits on this card. |
 
 ## Status at a glance
@@ -90,3 +92,5 @@ A feature card sequences behavior through the SDK; it never relaxes a FIRMWARE_B
 | FP17 Parity soak | ⬜ Planned |
 | FP18 Server mirror | ⬜ Planned |
 | FP19 Android app | ⬜ Planned |
+| FP20 Web foundations | 🟢 Ready |
+| FP21 Server web UI | ⬜ Planned |

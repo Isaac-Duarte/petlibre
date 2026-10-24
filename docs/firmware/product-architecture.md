@@ -61,7 +61,7 @@ In code:
 ## Frontends
 
 - **Android app (Flutter).** It owns all IO through mature plugins: BLE (`flutter_blue_plus`), mDNS/NSD, sockets and joining a Wi-Fi network for the installer. All protocol logic goes through `petlibre-client` over `flutter_rust_bridge`, which also generates the Dart types. The app talks to feeders on the LAN directly, and to a `petlibre-server` over HTTP for long history and pet profiles when one exists. It can also run the stock installer: it joins stock's setup access point, sends the `DL` frame and serves the image in the foreground for about 3 minutes ([consumer installation](consumer-installation.md)).
-- **Server web UI (Svelte, `src/web`).** It reuses the bench's stack and the TypeScript types generated from Rust. Browsers reach the feeder only through the server.
+- **Server web UI (Svelte, `src/web`).** A SvelteKit single-page app embedded in `petlibre-server`, sharing the bench's tokens and components, with its types generated from the server's `openapi.json` ([web UI design](../web/README.md)). Browsers reach the feeder only through the server.
 - **Two UIs.** The app and the web UI are separate codebases. That cost is accepted for a native-feeling mobile app; Rust-generated types keep their data models identical.
 - **Spike first.** Before building screens, a throwaway Android app proves the risky parts against a host-simulated feeder: BLE scanning and writes, NSD discovery on a real network, and a Noise session through `petlibre-client`.
 

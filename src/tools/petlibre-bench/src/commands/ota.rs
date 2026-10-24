@@ -358,6 +358,8 @@ pub(crate) enum Event {
     Failed {
         stage: String,
     },
+    /// The recovery role found its attempt marker set and did not arm.
+    Skipped,
 }
 
 impl fmt::Display for Event {
@@ -416,6 +418,10 @@ impl fmt::Display for Event {
                 or_q(boot)
             ),
             Self::Failed { stage } => write!(f, "Update error at stage {stage}"),
+            Self::Skipped => write!(
+                f,
+                "Recovery role skipped the update: an earlier attempt this power cycle reset"
+            ),
         }
     }
 }
@@ -428,6 +434,9 @@ pub(crate) enum Outcome {
     FellBack { boot: Option<u32> },
     /// The recovery role stopped the update before activation.
     Failed { stage: String },
+    /// An attempt reset (a fault or hang) and left the attempt marker set,
+    /// so the recovery role will not try again until a cold boot.
+    Skipped,
 }
 
 /// What an offered image is, from its review's `image_kind`.
@@ -570,6 +579,10 @@ impl Watch {
                     Some(Event::Failed { stage })
                 }
                 "no_offer" => Some(Event::NoOffer),
+                "skip" => {
+                    self.outcome = Some(Outcome::Skipped);
+                    Some(Event::Skipped)
+                }
                 _ => None,
             },
 
@@ -1239,6 +1252,12 @@ impl Bench {
                         args.name
                     )));
                 }
+                Some(Outcome::Skipped) => {
+                    return Err(Error::Bench(format!(
+                        "An update attempt reset and the recovery role will not retry until a cold boot; look for a fault before the skip. Captures {}-01…{n:02}",
+                        args.name
+                    )));
+                }
             }
         }
 
@@ -1492,6 +1511,15 @@ mod tests {
 
         assert_eq!(watch.outcome(), None);
         assert_eq!(events.last(), Some(&Event::EarlyGiveWay));
+    }
+
+    #[test]
+    fn a_skipped_attempt_ends_the_watch() {
+        let mut watch = Watch::of(NEW, Target::Replacement);
+        let events = watch.feed(b"PLOTA1 ready reply=0 inactive=1\r\nPLOTA1 skip marker=0x100\r\n");
+
+        assert_eq!(watch.outcome(), Some(&Outcome::Skipped));
+        assert_eq!(events, [Event::Skipped]);
     }
 
     #[test]

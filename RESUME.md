@@ -7,7 +7,18 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
-**October 24, later: SDK cleanup (static analysis, host tests and image builds; nothing run on the bench; uncommitted in the main checkout).**
+**October 24, latest: firmware cleanups (static analysis, host tests and image builds; nothing run on the bench; committed on master, not pushed).**
+- **Card ids out of code:** comments and messages under `src/` state the constraint, not the card, and `cargo xtask check-repository` refuses card ids there. The variants are renamed: trial `stall` and `fail`, motor `pulse`, and the SDK feature `trial-fail`; pinned policy names (`fw16-pulse-v1`, `fw11-reset-v1`, …) are unchanged.
+- **RAM hooks:** the interposer's seven `static mut`s are `RamStatic` cells with the same symbols in `.ram_image2.bss`.
+- **Task identities:** `task_create` gives each task an identity no later task reuses, so a slot whose task ended stays locked.
+- **One service task:** the power monitor, confirmation, settings writer and offer check are stages of `petlibre-svc` (24 KiB, bound 11,108). The runtime holds three slots in the normal role, and `FIRMWARE_TASKS` is four with one spare. **Not yet shown on hardware:** that settings saves and offer checks still work with a firmware using all four (the failure a physical run found when the stages were separate tasks), and the stages' timing in one task.
+- **Panic record:** the KM4 panic handler prints `PLPNC1 panic file=… line=… col=…` after stopping the outputs. UART only: every free backup register is taken.
+- **Traits:** `SlotIo`, `OwnerStorage` and `MotorPins` replace the Rust-to-Rust callback tables; the stores' `open` is safe. The flash-lock hook provider stays a C table.
+- **Stack audit:** it now follows linker veneers (it stopped at them before, so calls into RAM and ROM were missed) and bounds indirect calls by class: `core::fmt` by the deepest formatting method each task's code references, nested four deep, and the flash hooks by the deepest provider callback. A Rust indirect call outside those is refused; vendor C sites are listed per task and covered by the 25 % margin. Bounds in the `feeder` firstboot image: loop 4,668 of 8 KiB, button service 1,272 of 2 KiB, watchdog feeder 1,364 of 2 KiB.
+- **Checks:** `make check`, the virtual-feeder reports byte-identical before and after the traits, every firmware and variant built in `firstboot` with its audits, `make check-fixtures`.
+- **Flash and bench:** unchanged from the entries below.
+
+**October 24, later: SDK cleanup (static analysis, host tests and image builds; nothing run on the bench; committed as `cd3c8ce`).**
 - **Core C ABI removed:** `petlibre-sdk-c/src/core_abi` had no C caller. The crate is now the KM0 archive and the panic handler, and the build's archive check requires only `petlibre_app_start` plus the park and hook symbols. AGENTS.md says which C interface stays.
 - **Enums:** every `c_enum!` (27 types) is a Rust enum, `#[repr(u32)]` so the layouts and the RAM hook code keep their shape. Records print `code()`, and the journal and settings decode bytes through `from_byte`; `record_codes.rs` pins the persisted bytes. `repr(C)` stays only where C or an `extern "C"` callback reads the type.
 - **`Slot`:** access is safe. The first task to enter owns a slot, any other task or a second entry gets `None`, and `release` hands one over (the button service, the watchdog). The flash-lock provider is a const `TaskCell` reached only by raw pointer, so no task borrows it while the armed hooks use it; arming was already sequenced.
@@ -180,7 +191,7 @@ image, bench state, next task, or acceptance evidence changes.
 **October 23, late evening: FW30 meter work paused; the two-task firmware budget is enforced (`d6c57b9`).**
 - **Runs (physical, owner probing):** `ota fw30-optics-01 --build --firmware optics` (v91, confirmed, with a bounded `serve`, stopped afterwards). Then cold boots with an operator script on the bench page (`private/bench-status/script.json`, removed afterwards): `fw30-pin1-01`, where **CON2 pin 1 read 0 V in every emitter state (ground)**, and `fw30-pin2-01`, captured but with the owner's six readings not yet recorded. The `fw30-pb3-01`–`07` captures were aborted restarts.
 - **Learned:** the optics run starts within about a second of the first boot output; `boot --off-seconds 15` gives the operator a lead. Its windows are fixed at 5 s by `fw13-optics-v2`, so one cycle (30 s) covers every state for one pin.
-- **Code:** `petlibre_sdk::FIRMWARE_TASKS` = 2 budgets `spawn` and `buttons::start`, and the stack audit refuses an image that links more than two firmware tasks.
+- **Code:** `petlibre_sdk::FIRMWARE_TASKS` (two then, four since the service task) budgets `spawn` and `buttons::start`, and the stack audit refuses an image that links more firmware tasks.
 - **Flash now:** **Bank 1:** `optics` (v91, confirmed). **Bank 0:** `qa` `ef76b85e…`. **Next manifest version:** 92.
 - **Bench state:** feeder off (relay 1 off), hotspot up, no server; the owner's `network apply` rules as before.
 - **Next (FW30):** pin 2's readings from the owner, then pins 3 and 4 (one 30 s cycle each), then the transients when the logic analyzer arrives (Saturday). Polarity: carry to FW16's first pulse, or trace it, which is the owner's call.

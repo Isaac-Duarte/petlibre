@@ -10,10 +10,23 @@
 //! (`sdk::task_create(c"name", words, ...)` or `petlibre_sdk::spawn(...)`),
 //! it walks the direct call graph from the task's entry function and
 //! sums the frames along the deepest path. Frames come from each function's
-//! prologue (`push`, `stmdb sp!`, `vpush`, `sub sp`). Recursion is cut at the
-//! cycle, and indirect calls (`blx rN`, function pointers, `dyn` formatting)
-//! cannot be followed, so the bound requires a margin rather than an exact
-//! fit.
+//! prologue (`push`, `stmdb sp!`, `vpush`, `sub sp`), and a linker veneer
+//! (`__name_veneer`, the long branch into RAM or ROM) leads to its target.
+//! Recursion is cut at the cycle.
+//!
+//! An indirect call (`blx rN`) is bounded by what it can reach:
+//! - inside `core::fmt`, by the deepest formatting method in the image
+//!   (`Display::fmt`, `Write::write_str` and the rest), nested up to
+//!   [`FMT_NESTING`] levels;
+//! - inside the RAM flash hooks, by the deepest provider callback the runtime
+//!   installs ([`PROVIDER_CALLBACKS`]);
+//! - inside vendor C (lwIP, the codec, the SDK's flash and ADC routines), not
+//!   at all: those sites are listed per task, and the margin covers them.
+//!
+//! Any other indirect call in Rust is refused, so a new function pointer or
+//! `dyn` call needs a class here or a direct call instead. The margin stays
+//! for what the walk does not model: exception nesting beyond one frame and
+//! the vendor C sites.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
@@ -22,7 +35,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 use serde::Serialize;
 
-use super::writes::demangle;
+use super::writes::{demangle, loaded};
 use super::{HEADING, refuse, tool};
 use crate::{Firmware, Repo, Result};
 
@@ -80,9 +93,30 @@ fn rust_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) -> Result<()> {
 /// The SDK trampoline frame and an exception stacked onto the task's stack
 /// with the FPU context (26 words), rounded up.
 const OVERHEAD: u64 = 256;
-/// Unfollowed indirect calls: the bound must leave this share of the stack
-/// free.
+/// What the walk does not model (the vendor C indirect sites, deeper
+/// exception nesting): the bound must leave this share of the stack free.
 const MARGIN: f64 = 0.25;
+/// How deeply one formatting call may nest another: a record's `Display`
+/// writes fields whose own `Display` writes through the report's `Write`.
+const FMT_NESTING: usize = 4;
+/// The flash-lock interposer's functions, whose indirect calls reach the
+/// installed provider.
+const HOOK_SITES: [&str; 5] = [
+    "FLASH_Write_Lock",
+    "FLASH_Write_Unlock",
+    "FLASH_Write_IPC_Int",
+    "hook_fail",
+    "petlibre_amebad_flash_hooks_install",
+];
+/// The provider callbacks `petlibre-sdk`'s runtime installs into the hooks,
+/// by the end of their (mangled) names.
+const PROVIDER_CALLBACKS: [&str; 5] = [
+    "7runtime10hook_ready",
+    "7runtime12hook_acquire",
+    "7runtime12hook_release",
+    "7runtime9hook_peer",
+    "petlibre_amebad_flash_provider_fault",
+];
 
 static TASK: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?s)(?:task_create|spawn)\(\s*c"([\w-]+)",\s*(\w+),\s*\d+,\s*(\w+)\s*[,)]"#)
@@ -96,6 +130,24 @@ static CALL: LazyLock<Regex> = LazyLock::new(|| {
 });
 static INDIRECT: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\tblx\tr\d+\b").expect("stack audit pattern"));
+/// Half of an address built in a register: `movw r0, #51187` (low) then
+/// `movt r0, #3585` (high).
+static MOVE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^mov([wt])\s+(\w+), #(\d+)").expect("stack audit pattern"));
+/// A literal word in a function's pool.
+static WORD: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\.word\s+0x([0-9a-f]+)").expect("stack audit pattern"));
+/// How many words of a vtable (or other table) a reference may name
+/// functions in: the drop, size and alignment slots, then the methods.
+const TABLE_WORDS: u64 = 8;
+/// A formatting trait method, by its mangled name: `<T as Display>::fmt` and
+/// the other `core::fmt` traits, and `Write`'s methods.
+static FMT_METHOD: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"^_RNv[XY].*(?:(?:7Display|5Debug|8LowerHex|8UpperHex|5Octal|6Binary|8LowerExp|8UpperExp|7Pointer)3fmt|5Write(?:9write_str|10write_char|9write_fmt))",
+    )
+    .expect("stack audit pattern")
+});
 static PUSH: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^(?:push(?:\.w)?|stmdb(?:\.w)?\s+sp!,)\s*\{([^}]*)\}")
         .expect("stack audit pattern")
@@ -127,19 +179,30 @@ fn tasks(source: &str) -> BTreeMap<String, (String, u64)> {
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 struct Function {
+    address: u64,
     frame: u64,
     calls: BTreeSet<String>,
     indirect: bool,
     sized: bool,
+    /// Addresses the function builds or loads (`movw`/`movt` pairs and
+    /// literal words): the formatting methods and vtables it passes on.
+    refs: BTreeSet<u64>,
 }
 
 /// Each function's prologue frame, direct callees and whether it makes
 /// indirect calls, from `objdump -d`, in listing order.
 fn frames(listing: &str) -> Vec<(String, Function)> {
     let mut functions: Vec<(String, Function)> = Vec::new();
+    let mut low: HashMap<String, u64> = HashMap::new();
     for line in listing.lines() {
         if let Some(heading) = HEADING.captures(line) {
-            functions.push((heading[2].to_string(), Function::default()));
+            let address = u64::from_str_radix(&heading[1], 16).unwrap_or_default();
+            let f = Function {
+                address,
+                ..Function::default()
+            };
+            functions.push((heading[2].to_string(), f));
+            low.clear();
             continue;
         }
         let Some((_, f)) = functions.last_mut() else {
@@ -171,42 +234,189 @@ fn frames(listing: &str) -> Vec<(String, Function)> {
             f.calls.insert(call[1].to_string());
         } else if INDIRECT.is_match(line) {
             f.indirect = true;
+        } else if let Some(m) = MOVE.captures(insn) {
+            let value: u64 = m[3].parse().unwrap_or_default();
+            if &m[1] == "w" {
+                low.insert(m[2].to_string(), value);
+            } else if let Some(low) = low.remove(&m[2]) {
+                f.refs.insert(value << 16 | low);
+            }
+        } else if let Some(word) = WORD.captures(insn) {
+            f.refs
+                .insert(u64::from_str_radix(&word[1], 16).unwrap_or_default());
         }
     }
     functions
 }
 
-/// The deepest path from `entry`: (bytes, path, indirect calls on any path,
-/// functions where recursion was cut).
-fn worst(
-    functions: &HashMap<String, Function>,
-    entry: &str,
-) -> (u64, Vec<String>, bool, Vec<String>) {
-    type Walk = (u64, Vec<String>, bool);
+/// What an indirect call can reach, by the function that makes it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Indirect {
+    /// `core::fmt`: a formatting method.
+    Fmt,
+    /// The flash hooks: an installed provider callback.
+    Hook,
+    /// Anything else: unbounded. Vendor C is listed; Rust is refused.
+    Unbounded,
+}
+
+fn classify(name: &str) -> Indirect {
+    if HOOK_SITES.contains(&name) {
+        Indirect::Hook
+    } else if name.starts_with("_R") && name.contains("4core3fmt") {
+        Indirect::Fmt
+    } else {
+        Indirect::Unbounded
+    }
+}
+
+/// What a walk charges each class of indirect call.
+#[derive(Debug, Clone, Copy, Default)]
+struct Charges {
+    fmt: u64,
+    hook: u64,
+}
+
+/// A function's deepest path: bytes, the path, and the functions on any
+/// path whose indirect calls stay unbounded.
+type Walk = (u64, Vec<String>, BTreeSet<String>);
+
+struct Graph<'a> {
+    functions: &'a HashMap<String, Function>,
+    classes: HashMap<&'a str, Indirect>,
+    by_address: HashMap<u64, &'a str>,
+    /// The image's loaded sections, for the tables a reference points into.
+    data: &'a [(u64, Vec<u8>)],
+}
+
+impl<'a> Graph<'a> {
+    fn new(functions: &'a HashMap<String, Function>, data: &'a [(u64, Vec<u8>)]) -> Self {
+        let classes = functions
+            .iter()
+            .filter(|(_, f)| f.indirect)
+            .map(|(name, _)| (name.as_str(), classify(name)))
+            .collect();
+        let by_address = functions
+            .iter()
+            .map(|(name, f)| (f.address, name.as_str()))
+            .collect();
+        Self {
+            functions,
+            classes,
+            by_address,
+            data,
+        }
+    }
+
+    /// The function at `value`, a Thumb code address.
+    fn function_at(&self, value: u64) -> Option<&'a str> {
+        self.by_address.get(&(value & !1)).copied()
+    }
+
+    /// The functions `value` names: itself, or those among the first words of
+    /// the table it points into (a vtable).
+    fn resolve(&self, value: u64, out: &mut BTreeSet<&'a str>) {
+        if let Some(name) = self.function_at(value) {
+            out.insert(name);
+            return;
+        }
+        let Some((start, bytes)) = self
+            .data
+            .iter()
+            .find(|(start, bytes)| (*start..*start + bytes.len() as u64).contains(&value))
+        else {
+            return;
+        };
+        for word in 0..TABLE_WORDS {
+            let Ok(at) = usize::try_from(value - start + 4 * word) else {
+                break;
+            };
+            let Some(&raw) = bytes.get(at..at + 4).and_then(|b| b.first_chunk::<4>()) else {
+                break;
+            };
+            if let Some(name) = self.function_at(u64::from(u32::from_le_bytes(raw))) {
+                out.insert(name);
+            }
+        }
+    }
+
+    /// The formatting methods `entry` can reach: referenced from any function
+    /// it calls, and from those methods in turn.
+    fn fmt_targets(&self, entry: &'a str) -> BTreeSet<&'a str> {
+        let (mut seen, mut targets, mut stack) = (BTreeSet::new(), BTreeSet::new(), vec![entry]);
+        while let Some(name) = stack.pop() {
+            if !seen.insert(name) {
+                continue;
+            }
+            let Some(f) = self.functions.get(name) else {
+                continue;
+            };
+            stack.extend(f.calls.iter().map(String::as_str));
+
+            let mut named = BTreeSet::new();
+            for value in &f.refs {
+                self.resolve(*value, &mut named);
+            }
+            for target in named {
+                if FMT_METHOD.is_match(target) && targets.insert(target) {
+                    stack.push(target);
+                }
+            }
+        }
+        targets
+    }
+
+    /// What `entry`'s formatting calls are charged: its deepest formatting
+    /// method, nested [`FMT_NESTING`] deep.
+    fn fmt_charge(&self, entry: &'a str, hook: u64) -> u64 {
+        let targets = self.fmt_targets(entry);
+        let mut charges = Charges { fmt: 0, hook };
+        for _ in 0..FMT_NESTING {
+            charges.fmt = self.deepest(targets.iter().copied(), charges);
+        }
+        charges.fmt
+    }
+
+    /// The deepest path from `entry` under `charges`, and the functions where
+    /// recursion was cut.
+    fn worst(&self, entry: &str, charges: Charges) -> (Walk, Vec<String>) {
+        let (mut memo, mut cut) = (HashMap::new(), BTreeSet::new());
+        let walk = self.walk(entry, charges, &mut Vec::new(), &mut memo, &mut cut);
+        (walk, cut.into_iter().collect())
+    }
 
     fn walk(
+        &self,
         name: &str,
+        charges: Charges,
         visiting: &mut Vec<String>,
-        functions: &HashMap<String, Function>,
         memo: &mut HashMap<String, Walk>,
         cut: &mut BTreeSet<String>,
     ) -> Walk {
         if visiting.iter().any(|v| v == name) {
             cut.insert(name.to_string());
-            return (0, Vec::new(), false);
+            return (0, Vec::new(), BTreeSet::new());
         }
         if let Some(known) = memo.get(name) {
             return known.clone();
         }
-        let Some(f) = functions.get(name) else {
-            return (0, vec![name.to_string()], false);
+        let Some(f) = self.functions.get(name) else {
+            return (0, vec![name.to_string()], BTreeSet::new());
         };
 
-        let (mut best, mut path, mut indirect) = (0, Vec::new(), f.indirect);
+        let (mut best, mut path, mut vendor) = (0, Vec::new(), BTreeSet::new());
+        match self.classes.get(name) {
+            Some(Indirect::Fmt) => (best, path) = (charges.fmt, vec!["<fmt>".to_string()]),
+            Some(Indirect::Hook) => (best, path) = (charges.hook, vec!["<provider>".to_string()]),
+            Some(Indirect::Unbounded) => {
+                vendor.insert(name.to_string());
+            }
+            None => {}
+        }
         visiting.push(name.to_string());
         for callee in &f.calls {
-            let (depth, deeper, nested) = walk(callee, visiting, functions, memo, cut);
-            indirect |= nested;
+            let (depth, deeper, nested) = self.walk(callee, charges, visiting, memo, cut);
+            vendor.extend(nested);
             if depth > best {
                 (best, path) = (depth, deeper);
             }
@@ -215,14 +425,66 @@ fn worst(
 
         let mut full = vec![name.to_string()];
         full.extend(path);
-        let result = (f.frame + best, full, indirect);
+        let result = (f.frame + best, full, vendor);
         memo.insert(name.to_string(), result.clone());
         result
     }
 
-    let (mut memo, mut cut) = (HashMap::new(), BTreeSet::new());
-    let (depth, path, indirect) = walk(entry, &mut Vec::new(), functions, &mut memo, &mut cut);
-    (depth, path, indirect, cut.into_iter().collect())
+    /// The deepest of `targets` under `charges`.
+    fn deepest<'n>(&self, targets: impl Iterator<Item = &'n str>, charges: Charges) -> u64 {
+        targets
+            .map(|target| self.worst(target, charges).0.0)
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// What a call into the flash hooks is charged: the deepest provider
+    /// callback, with its own formatting charged as for a task.
+    fn hook_charge(&self) -> Result<u64> {
+        if !self.classes.values().any(|class| *class == Indirect::Hook) {
+            return Ok(0);
+        }
+        let callbacks: Vec<&str> = self
+            .functions
+            .keys()
+            .filter(|name| PROVIDER_CALLBACKS.iter().any(|end| name.ends_with(end)))
+            .map(String::as_str)
+            .collect();
+        if callbacks.is_empty() {
+            return refuse("The flash hooks link, but no provider callback the runtime installs");
+        }
+        Ok(callbacks
+            .into_iter()
+            .map(|callback| {
+                let fmt = self.fmt_charge(callback, 0);
+                self.worst(callback, Charges { fmt, hook: 0 }).0.0
+            })
+            .max()
+            .unwrap_or(0))
+    }
+
+    /// The charges for `entry`'s task.
+    fn charges(&self, entry: &'a str, hook: u64) -> Charges {
+        Charges {
+            fmt: self.fmt_charge(entry, hook),
+            hook,
+        }
+    }
+}
+
+/// `functions` with each veneer leading to its target.
+fn link(mut functions: HashMap<String, Function>) -> HashMap<String, Function> {
+    for (name, f) in &mut functions {
+        if let Some(target) = veneer(name) {
+            f.calls.insert(target.to_string());
+        }
+    }
+    functions
+}
+
+/// `__name_veneer`'s target.
+fn veneer(name: &str) -> Option<&str> {
+    name.strip_prefix("__")?.strip_suffix("_veneer")
 }
 
 /// One task's static stack bound.
@@ -231,8 +493,12 @@ pub(crate) struct TaskBound {
     entry: String,
     stack: u64,
     bound: u64,
-    /// Whether any path makes an indirect call the walk cannot follow.
-    indirect: bool,
+    /// What its formatting calls are charged: the deepest formatting method
+    /// it can reach, nested.
+    fmt_bound: u64,
+    /// Vendor C functions on any path whose indirect calls the walk does not
+    /// bound; the margin covers them.
+    unbounded: Vec<String>,
     /// Functions where recursion was cut.
     recursion: Vec<String>,
     /// The deepest path's first functions.
@@ -248,6 +514,11 @@ pub(crate) struct StackAudit {
     firmware_task_limit: usize,
     overhead: u64,
     margin: f64,
+    /// How many levels of nested formatting each task's `fmt_bound` covers.
+    fmt_nesting: usize,
+    /// What an indirect call inside the flash hooks is charged: the deepest
+    /// provider callback.
+    provider_bound: u64,
     scope: &'static str,
 }
 
@@ -255,8 +526,10 @@ pub(crate) struct StackAudit {
 /// or if the firmware starts more tasks than its share of the slots.
 pub(crate) fn audit(elf: &Path, objdump: &Path, sources: &TaskSources) -> Result<StackAudit> {
     // A repeated heading starts that function over, as a later definition.
-    let functions: HashMap<String, Function> =
-        frames(&tool(objdump, &["-d"], elf)?).into_iter().collect();
+    let functions = link(frames(&tool(objdump, &["-d"], elf)?).into_iter().collect());
+    let data = loaded(elf, objdump)?;
+    let graph = Graph::new(&functions, &data);
+    let hook = graph.hook_charge()?;
     let mut by_short: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for name in functions.keys() {
         let short = demangle(name)
@@ -280,7 +553,15 @@ pub(crate) fn audit(elf: &Path, objdump: &Path, sources: &TaskSources) -> Result
             _ => return refuse(format!("Ambiguous task entry {entry}: {symbols:?}")),
         };
 
-        let (depth, path, indirect, cut) = worst(&functions, symbol);
+        let charges = graph.charges(symbol, hook);
+        let ((depth, path, unbounded), cut) = graph.worst(symbol, charges);
+        if let Some(rust) = unbounded.iter().find(|name| name.starts_with("_R")) {
+            return refuse(format!(
+                "Task {task} reaches an unbounded indirect call in {}: give it a class in the \
+                 stack audit or call it directly",
+                demangle(rust)
+            ));
+        }
         let bound = depth + OVERHEAD;
         let path: Vec<String> = path.iter().take(12).map(|n| demangle(n)).collect();
         if bound as f64 > stack as f64 * (1.0 - MARGIN) {
@@ -297,7 +578,8 @@ pub(crate) fn audit(elf: &Path, objdump: &Path, sources: &TaskSources) -> Result
                 entry,
                 stack,
                 bound,
-                indirect,
+                fmt_bound: charges.fmt,
+                unbounded: unbounded.iter().map(|n| demangle(n)).collect(),
                 recursion: cut.iter().map(|n| demangle(n)).collect(),
                 path,
             },
@@ -313,8 +595,11 @@ pub(crate) fn audit(elf: &Path, objdump: &Path, sources: &TaskSources) -> Result
         firmware_task_limit: FIRMWARE_TASKS,
         overhead: OVERHEAD,
         margin: MARGIN,
-        scope: "Direct calls and prologue frames only; indirect calls are covered by the margin, \
-                not bounded",
+        fmt_nesting: FMT_NESTING,
+        provider_bound: hook,
+        scope: "Direct calls, veneers and prologue frames; indirect calls in core::fmt and the \
+                flash hooks bounded by class; vendor C indirect calls listed and covered by the \
+                margin",
     })
 }
 
@@ -453,10 +738,108 @@ mod tests {
         assert_eq!(functions["deep"].frame, 36 + 16 + 836);
         assert_eq!(functions["wide"].frame, 8 + 1948, "subw counts");
 
-        let (depth, path, indirect, cut) = worst(&functions, "task");
+        let graph = Graph::new(&functions, &[]);
+        let ((depth, path, unbounded), cut) = graph.worst("task", Charges::default());
         assert_eq!(depth, 3300 + 888 + 8);
         assert_eq!(path, ["task", "deep", "shallow"]);
-        assert!(indirect);
+        assert_eq!(unbounded, ["task".to_string()].into(), "vendor C, listed");
         assert_eq!(cut, ["deep"]);
+    }
+
+    /// A Rust task formatting a record through `core::fmt::write`, whose
+    /// `Display` writes again, then calls into RAM through a veneer that
+    /// takes the flash lock.
+    const CLASSES: &str = "\
+00001000 <_RNvNtCs1_3app4task>:
+    1000:\tb500      \tpush\t{lr}
+    100a:\tf243 0001 \tmovw\tr0, #12289\t; 0x3001
+    100e:\tf2c0 0000 \tmovt\tr0, #0
+    1002:\tf000 f800 \tbl\t2000 <_RNvNtCs2_4core3fmt5write>
+    1006:\tf000 f800 \tbl\t5000 <__FLASH_Write_Lock_veneer>
+
+00002000 <_RNvNtCs2_4core3fmt5write>:
+    2000:\tb5f0      \tpush\t{r4, r5, r6, r7, lr}
+    2002:\tb090      \tsub\tsp, #64
+    2004:\t4798      \tblx\tr3
+
+00003000 <_RNvXNtCs1_3app4LineNtNtCs2_4core3fmt7Display3fmt>:
+    3000:\tb580      \tpush\t{r7, lr}
+    3002:\tb088      \tsub\tsp, #32
+    3004:\tf000 f800 \tbl\t2000 <_RNvNtCs2_4core3fmt5write>
+    3008:\t00004001 \t.word\t0x00004001
+
+00004000 <_RNvXNtCs1_3app6ReportNtNtCs2_4core3fmt5Write9write_str>:
+    4000:\tb510      \tpush\t{r4, lr}
+
+00005000 <__FLASH_Write_Lock_veneer>:
+    5000:\tb401      \tpush\t{r0}
+    5002:\t4760      \tbx\tip
+
+00006000 <FLASH_Write_Lock>:
+    6000:\tb538      \tpush\t{r3, r4, r5, lr}
+    6002:\t4790      \tblx\tr2
+
+00007000 <_RNvNtCs3_12petlibre_sdk7runtime12hook_acquire>:
+    7000:\tb5f0      \tpush\t{r4, r5, r6, r7, lr}
+    7002:\tb0c0      \tsub\tsp, #256
+
+00008000 <_RNvNtCs1_3app6callee>:
+    8000:\tb500      \tpush\t{lr}
+    8002:\t4798      \tblx\tr3
+";
+
+    #[test]
+    fn indirect_calls_are_charged_by_class_through_veneers() {
+        let functions = link(frames(CLASSES).into_iter().collect());
+        let graph = Graph::new(&functions, &[]);
+        let task = "_RNvNtCs1_3app4task";
+        assert_eq!(
+            graph.fmt_targets(task).into_iter().collect::<Vec<_>>(),
+            [
+                "_RNvXNtCs1_3app4LineNtNtCs2_4core3fmt7Display3fmt",
+                "_RNvXNtCs1_3app6ReportNtNtCs2_4core3fmt5Write9write_str"
+            ],
+            "the task's Display, and the Write it references"
+        );
+        assert!(graph.fmt_targets("_RNvNtCs1_3app6callee").is_empty());
+        let charges = graph.charges(task, graph.hook_charge().unwrap());
+
+        // `write` (84) under each nesting level: Display (40) + write again,
+        // four levels deep, the innermost charged nothing.
+        let write = 20 + 64;
+        let display = 8 + 32;
+        assert_eq!(charges.fmt, 4 * (display + write));
+        assert_eq!(charges.hook, 20 + 256, "the acquire callback");
+
+        let ((depth, path, unbounded), _) = graph.worst(task, charges);
+        let lock = 4 + 16 + charges.hook;
+        assert_eq!(depth, 4 + (write + charges.fmt).max(lock));
+        assert_eq!(
+            path[..3],
+            ["_RNvNtCs1_3app4task", "_RNvNtCs2_4core3fmt5write", "<fmt>"]
+        );
+        assert!(unbounded.is_empty());
+    }
+
+    #[test]
+    fn an_unclassified_rust_indirect_call_is_reported_for_refusal() {
+        let functions = link(frames(CLASSES).into_iter().collect());
+        let graph = Graph::new(&functions, &[]);
+
+        let ((_, _, unbounded), _) = graph.worst("_RNvNtCs1_3app6callee", Charges::default());
+        assert_eq!(unbounded, ["_RNvNtCs1_3app6callee".to_string()].into());
+        assert!(FMT_METHOD.is_match("_RNvXNtCs1_3app4LineNtNtCs2_4core3fmt7Display3fmt"));
+        assert!(!FMT_METHOD.is_match("_RNvNtCs2_4core3fmt5write"));
+    }
+
+    #[test]
+    fn hooks_without_a_provider_callback_are_refused() {
+        let listing = "\
+00006000 <FLASH_Write_Lock>:
+    6000:\tb538      \tpush\t{r3, r4, r5, lr}
+    6002:\t4790      \tblx\tr2
+";
+        let functions = link(frames(listing).into_iter().collect());
+        assert!(Graph::new(&functions, &[]).hook_charge().is_err());
     }
 }

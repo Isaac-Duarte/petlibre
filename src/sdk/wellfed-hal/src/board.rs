@@ -16,11 +16,15 @@ use wellfed_core::feed::sensor_inputs::SensorReading;
 use wellfed_core::flash_coord::FlashCoord;
 
 use crate::adc;
+use crate::sdk::board::{
+    ADAPTER, ADC_BATTERY, ADC_CURRENT, ADC_SUPPLY, FEEDBACK, FOOD, IR_PA, IR_PB, MOTOR_A, MOTOR_B,
+    OUTLET, bit,
+};
 use crate::sdk::{self, GPIO_PORT_A, IrqGuard};
 
 pub use crate::sdk::MOTOR_MASK;
-const SENSOR_MASK: u32 = (1 << 16) | (1 << 17) | (1 << 19);
-const OPTICS: [u32; 2] = [15, 35];
+const SENSOR_MASK: u32 = bit(OUTLET) | bit(FOOD) | bit(ADAPTER);
+const OPTICS: [u32; 2] = [IR_PA, IR_PB];
 
 /// Polls per conversion accepted by `open` and `open_sensors`.
 pub const MAX_ADC_POLLS: u32 = 1_000_000;
@@ -154,7 +158,7 @@ impl Board {
         self.opened = false;
         self.adc_poll_limit = adc_poll_limit;
 
-        for pin in 16..=19 {
+        for pin in [OUTLET, FOOD, FEEDBACK, ADAPTER] {
             sdk::gpio_init(pin, false);
         }
 
@@ -188,8 +192,8 @@ impl Board {
 
         // Preload before output enable; actual reset/ROM-init behavior needs measurement.
         sdk::gpio_port_write(GPIO_PORT_A, MOTOR_MASK, MOTOR_MASK);
-        sdk::gpio_init(13, true);
-        sdk::gpio_init(14, true);
+        sdk::gpio_init(MOTOR_A, true);
+        sdk::gpio_init(MOTOR_B, true);
         let context = ptr::from_mut(self).cast();
         // SAFETY: the callback reads this fixed-address board while opened.
         let motor_ok = unsafe {
@@ -343,7 +347,8 @@ impl Board {
     /// 16 bounded conversions of `channel`: 4 (current), 5 (battery) or 10
     /// (the chip's internal supply measurement). Exclusive ADC ownership required.
     pub fn sample_channel(&mut self, channel: u32, samples: &mut [u16; SAMPLES]) -> bool {
-        if !self.opened || self.faulted || !self.sensors_ready || !matches!(channel, 4 | 5 | 10) {
+        let known = [ADC_CURRENT, ADC_BATTERY, ADC_SUPPLY].contains(&channel);
+        if !self.opened || self.faulted || !self.sensors_ready || !known {
             return false;
         }
         let ok = self.adc_channel(channel, samples);
@@ -363,9 +368,9 @@ impl Board {
         if self.capture_gpio(reading).is_none() {
             return false;
         }
-        reading.current_adc_valid = self.adc_channel(4, &mut reading.current);
+        reading.current_adc_valid = self.adc_channel(ADC_CURRENT, &mut reading.current);
         if reading.current_adc_valid {
-            reading.battery_adc_valid = self.adc_channel(5, &mut reading.battery);
+            reading.battery_adc_valid = self.adc_channel(ADC_BATTERY, &mut reading.battery);
         }
         if !reading.current_adc_valid || !reading.battery_adc_valid {
             self.trip_now();
@@ -382,11 +387,11 @@ impl Board {
         if !self.opened || self.faulted || !self.sensors_ready {
             return None;
         }
-        let pins = sdk::gpio_port_read(GPIO_PORT_A, SENSOR_MASK | (1 << 18));
+        let pins = sdk::gpio_port_read(GPIO_PORT_A, SENSOR_MASK | bit(FEEDBACK));
         reading.gpio_valid = true;
-        reading.food_high = pins & (1 << 17) != 0;
-        reading.outlet_high = pins & (1 << 16) != 0;
-        reading.dc_present = pins & (1 << 19) != 0;
+        reading.food_high = pins & bit(FOOD) != 0;
+        reading.outlet_high = pins & bit(OUTLET) != 0;
+        reading.dc_present = pins & bit(ADAPTER) != 0;
         reading.optics_enabled = self.optics_enabled && optics_are(true, true);
         Some(pins)
     }

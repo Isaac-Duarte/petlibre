@@ -23,15 +23,52 @@ pub const ADC_ENABLE_BIT: u32 = 1 << 8;
 /// (SWD_CLK). While set, GPIO writes to PB3 do not reach the pad.
 pub const SWD_PMUX_BIT: u32 = 1;
 
-/// Stock-derived motor driver inputs PA13 and PA14 (port A); both HIGH
-/// requests STOP.
-pub const MOTOR_A_BIT: u32 = 1 << 13;
-pub const MOTOR_B_BIT: u32 = 1 << 14;
+/// The PLAF103 board: every GPIO and ADC channel the ports use, in one place
+/// (FW50). A GPIO is `port * 32 + bit` (PA13 is 13, PB3 is 35). Roles and
+/// polarities are stock-derived and bench-checked where the cards say so;
+/// [device layer](../../../../docs/firmware/device-layer.md) lists what else
+/// is board-specific and where it lives.
+pub mod board {
+    /// Motor driver inputs; both HIGH requests STOP (brake).
+    pub const MOTOR_A: u32 = 13;
+    pub const MOTOR_B: u32 = 14;
+    /// Infrared emitter latches, LOW for OFF. PB3 is also SWD_CLK.
+    pub const IR_PA: u32 = 15;
+    pub const IR_PB: u32 = 32 + 3;
+    /// Sensor inputs: outlet beam, food beam, feedback switch, adapter.
+    pub const OUTLET: u32 = 16;
+    pub const FOOD: u32 = 17;
+    pub const FEEDBACK: u32 = 18;
+    pub const ADAPTER: u32 = 19;
+    /// Panel buttons, active LOW: reset, mic, dispense, lock (PB4–PB7).
+    pub const BUTTONS: [u32; 4] = [32 + 4, 32 + 5, 32 + 6, 32 + 7];
+    /// Indicators: connection, food, lock (PA0, PA2, PA4) and fault (PB22).
+    pub const LED_CONNECTION: u32 = 0;
+    pub const LED_FOOD: u32 = 2;
+    pub const LED_LOCK: u32 = 4;
+    pub const LED_FAULT: u32 = 32 + 22;
+    /// Speaker amplifier enable, HIGH while playing.
+    pub const AMP: u32 = 32 + 23;
+    /// ADC channels: motor current and the battery pack. Channel 10, the
+    /// chip's own supply, is the AmebaD's, not the board's.
+    pub const ADC_CURRENT: u32 = 4;
+    pub const ADC_BATTERY: u32 = 5;
+    pub const ADC_SUPPLY: u32 = 10;
+
+    /// The pin's bit in its port register.
+    pub const fn bit(pin: u32) -> u32 {
+        1 << (pin & 31)
+    }
+}
+
+/// Motor driver inputs PA13 and PA14 (port A); both HIGH requests STOP.
+pub const MOTOR_A_BIT: u32 = board::bit(board::MOTOR_A);
+pub const MOTOR_B_BIT: u32 = board::bit(board::MOTOR_B);
 pub const MOTOR_MASK: u32 = MOTOR_A_BIT | MOTOR_B_BIT;
-/// Stock-derived infrared emitter latches, LOW for OFF: PA15 on port A and
-/// PB3 (also SWD_CLK) on port B.
-pub const IR_PA_BIT: u32 = 1 << 15;
-pub const IR_PB_BIT: u32 = 1 << 3;
+/// Infrared emitter latches, LOW for OFF: PA15 on port A and PB3 (also
+/// SWD_CLK) on port B.
+pub const IR_PA_BIT: u32 = board::bit(board::IR_PA);
+pub const IR_PB_BIT: u32 = board::bit(board::IR_PB);
 
 /// The architectural SysTick control and status register (CTRL).
 pub const SYSTICK_CTRL: u32 = 0xe000_e010;
@@ -111,13 +148,16 @@ pub const BANK0_OFFSET: u32 = 0x6000;
 /// The factory loader's valid-image marker at the start of each bank.
 pub const MARKER: [u8; 8] = *b"81958711";
 
-/// Owner-approved replacement-firmware storage (FW15): 16 sectors at
-/// 0x340000-0x350000, blank in the research unit's backup and referenced
-/// nowhere in stock 1.1.15. Clear of bank 0, of a full-size bank 1 (ends no
-/// later than 0x306000) and of the stock settings (0x3e8000). Callers name a
-/// sector index; nothing takes a flash address.
+/// Owner-approved replacement-firmware storage: 32 sectors at
+/// 0x340000-0x360000. FW15 approved the first 16; FW44 extended it with the
+/// owner's approval (October 23, 2026) for client keys, plans and the 7-day
+/// event ring. A static pass over stock 1.1.15 found no fixed or bounded
+/// computed flash access in 0x306000-0x3e8000, and every full dump of the
+/// research unit is blank there. Clear of bank 0, of a full-size bank 1
+/// (ends no later than 0x306000) and of the stock settings (0x3e8000).
+/// Callers name a sector index; nothing takes a flash address.
 pub const STORAGE_OFFSET: u32 = 0x34_0000;
-pub const STORAGE_SECTORS: u32 = 16;
+pub const STORAGE_SECTORS: u32 = 32;
 /// One NOR erase sector.
 pub const SECTOR_BYTES: u32 = 0x1000;
 

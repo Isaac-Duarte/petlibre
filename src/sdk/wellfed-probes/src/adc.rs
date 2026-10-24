@@ -226,7 +226,10 @@ impl Probe {
         let mut reading = SensorReading::default();
         let begin = sdk::systimer_ticks();
         let mut supply = [0u16; SAMPLES];
-        let ok = self.board.capture(&mut reading) && self.board.sample_channel(10, &mut supply);
+        let ok = self.board.capture(&mut reading)
+            && self
+                .board
+                .sample_channel(sdk::board::ADC_SUPPLY, &mut supply);
         let ticks = sdk::systimer_ticks().wrapping_sub(begin);
         let stopped = stopped::observe().verified();
 

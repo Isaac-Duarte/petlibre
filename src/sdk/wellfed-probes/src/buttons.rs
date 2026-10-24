@@ -19,7 +19,7 @@ use wellfed_hal::sdk;
 use wellfed_hal::stopped;
 
 /// PB4..PB7 as SDK pin numbers (port B is pins 32..63).
-pub const PINS: [u32; 4] = [36, 37, 38, 39];
+pub const PINS: [u32; 4] = sdk::board::BUTTONS;
 const PORT_B: u32 = 1;
 /// The four button bits in the port B input word.
 pub const MASK: u32 = 0xf0;

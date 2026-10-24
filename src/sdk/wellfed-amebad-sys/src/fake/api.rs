@@ -296,7 +296,7 @@ pub fn pad_control(pin: u32) -> u32 {
 
 pub fn gpio_write_bit(pin: u32, high: bool) {
     let blocked = with(|h| {
-        pin == 35 && ((high && h.blocked_optics_write) || (!high && h.blocked_optics_off))
+        pin == board::IR_PB && ((high && h.blocked_optics_write) || (!high && h.blocked_optics_off))
     });
     if blocked {
         return;
@@ -389,7 +389,7 @@ pub fn heap_min_free() -> u32 {
 pub fn gtimer_clock_enable() {}
 
 pub fn gpio_int_config(pin: u32, enabled: bool) {
-    assert_eq!(pin, 18);
+    assert_eq!(pin, board::FEEDBACK);
     with(|h| {
         if enabled {
             h.gpio.int_mask &= !(1 << pin);
@@ -400,7 +400,7 @@ pub fn gpio_int_config(pin: u32, enabled: bool) {
 }
 
 pub fn gpio_int_mode(pin: u32, enabled: bool) {
-    assert_eq!(pin, 18);
+    assert_eq!(pin, board::FEEDBACK);
     with(|h| {
         if enabled {
             h.gpio.int_en |= 1 << pin;

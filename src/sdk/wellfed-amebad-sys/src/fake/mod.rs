@@ -18,7 +18,7 @@ use std::collections::VecDeque;
 use super::{
     AUDIO_PAGE_SAMPLES, AUDIO_PAGES, Advertising, BleEvent, BlePoll, BleService, BleStats,
     GpioRouting, IR_PA_BIT, IR_PB_BIT, Irq, Isr, LpClock, MOTOR_MASK, SECTOR_BYTES,
-    STORAGE_SECTORS, TaskStep, TcpRecv, TransportConfig, WifiEvent, WifiPoll,
+    STORAGE_SECTORS, TaskStep, TcpRecv, TransportConfig, WifiEvent, WifiPoll, board,
 };
 
 pub const GPIOA_IRQ: usize = 4;
@@ -213,7 +213,7 @@ impl Default for Hardware {
             blocked_gpio_clock: false,
 
             output: [0; 2],
-            input: [(1 << 16) | (1 << 19), 0],
+            input: [board::bit(board::OUTLET) | board::bit(board::ADAPTER), 0],
             direction: [0; 2],
             interrupts: 0,
             polls: 0,

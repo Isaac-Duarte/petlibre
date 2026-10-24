@@ -10,11 +10,12 @@ Where each tool is going (`petlibre-local` split up and retired, the bench split
 | --- | --- | --- |
 | [petlibre-flash](petlibre-flash) | yes | The UART flash client: restricted reads, region-scoped development updates, give-ways and original-stock recovery, each inspect → prepare → execute ([guide](../../docs/development/rust-flash.md)) |
 | [petlibre-bench](petlibre-bench) | yes | The relay bench: power and loader strap, chained `petlibre-flash` sessions, the over-the-air loop, and the read-only progress page with `--features ui` ([guide](../../docs/devices/plaf103/bench.md)) |
+| [petlibre](petlibre) | yes (Bluetooth) | The owner's command line: `petlibre setup` pairs this computer with a feeder in BLE setup mode and gives it Wi-Fi, through `petlibre-client` ([Bluetooth](../../docs/firmware/bluetooth.md#setup-exchange)); the device API's commands follow FW47 |
 | [petlibre-local](petlibre-local) | no (network) | The bench's local server: the stock-to-replacement install, the replacement firmware's MQTT transport, signed OTA offers and status ([guide](../../docs/development/local-server.md)); being retired |
 | [petlibre-build](petlibre-build) | no | SDK firmware builds, their linked-image audits, and `review`, which freezes a reviewed build or the stock OTA for `petlibre-flash` ([firmware builds](../../docs/development/firmware-builds.md), [development updates](../../docs/development/uart-development.md)) |
 | [petlibre-audit](petlibre-audit) | no | Offline audits of finalized receive-only captures (startup, FW14 ADC, FW30 driver transients) and full-flash backup comparison |
 | [petlibre-emu](petlibre-emu) | no | The vendor factory loader (mapping and bank selection) and UART flash helper, executed under Unicorn on supplied state: the review's mapping check, the OTA marker fixtures, and `petlibre-flash`'s emulated sessions |
-| [petlibre-formats](petlibre-formats) | no | The files these tools pass to each other (build manifest, frozen review, stock layout, locks, captures, credentials, flash plans), typed once |
+| [petlibre-formats](petlibre-formats) | no | The files these tools pass to each other (build manifest, frozen review, stock layout, locks, captures, credentials and keys, flash plans), typed once, and the private-file writer |
 | [xtask](xtask) | no | `cargo xtask check-repository`: documentation links, portability, no Python under `src/`, transport isolation |
 
 ## Removed Python tools

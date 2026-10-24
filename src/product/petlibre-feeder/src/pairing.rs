@@ -2,9 +2,10 @@
 //!
 //! Four ways in ([product architecture]), each needing either someone at
 //! the feeder or a client already trusted:
-//! - **Setup:** in BLE setup mode the app sends Wi-Fi and its key; it is
-//!   admitted as an owner only after a Dispense press within the
-//!   confirmation window.
+//! - **Setup:** holding Lock and Mic together on an unlocked panel starts
+//!   BLE setup mode ([`Event::SetupOpened`]). There the app sends Wi-Fi and
+//!   its key; it is admitted as an owner only after a Dispense press within
+//!   the confirmation window.
 //! - **Signer:** an owner offers an Ed25519 update-signing key (FW48); a
 //!   Dispense press confirms it the same way.
 //! - **Invite:** a paired client mints a single-use invite that expires
@@ -46,7 +47,8 @@ pub struct Config {
     pub invite_ms: u32,
     /// How long the recovery window stays open.
     pub recovery_ms: u32,
-    /// The hold level (of the panel's button thresholds) that opens recovery.
+    /// The hold level (of the panel's button thresholds) that opens
+    /// recovery or setup mode.
     pub hold_level: u8,
 }
 
@@ -111,6 +113,9 @@ pub enum Event {
     },
     RecoveryOpened,
     RecoveryClosed,
+    /// Start BLE setup mode: the firmware brings up the radio until setup
+    /// ends with a reboot.
+    SetupOpened,
     Refused {
         path: Path,
         refusal: Refusal,
@@ -174,6 +179,14 @@ impl Pairing {
         self.offer(now_ms, Path::Signer, Role::UpdateSigner)
     }
 
+    /// The client behind a pending `path` offer went away: forget it, so the
+    /// next Dispense press feeds again.
+    pub fn cancel(&mut self, path: Path) {
+        if self.pending.is_some_and(|pending| pending.path == path) {
+            self.pending = None;
+        }
+    }
+
     fn offer(&mut self, now_ms: u32, path: Path, role: Role) -> Event {
         if self.pending.is_some() {
             return refused(path, Refusal::Busy);
@@ -189,6 +202,7 @@ impl Pairing {
     /// One gesture from the button service; `Some` means it was consumed.
     pub fn gesture(&mut self, now_ms: u32, gesture: Gesture, lock: Lock) -> Option<Event> {
         let recovery = Buttons::of(Button::Lock).with(Button::Dispense);
+        let setup = Buttons::of(Button::Lock).with(Button::Mic);
         match gesture {
             Gesture::Down { chord } if chord == Buttons::of(Button::Dispense) => {
                 let pending = self.pending.take()?;
@@ -208,6 +222,12 @@ impl Pairing {
                 }
                 self.recovery_until = Some(now_ms.wrapping_add(self.config.recovery_ms));
                 Some(Event::RecoveryOpened)
+            }
+            Gesture::Hold { chord, level } if chord == setup && level == self.config.hold_level => {
+                if lock.locked() {
+                    return Some(refused(Path::Setup, Refusal::Locked));
+                }
+                Some(Event::SetupOpened)
             }
             _ => None,
         }

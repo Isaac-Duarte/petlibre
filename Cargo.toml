@@ -2,9 +2,11 @@
 members = [
     "src/sdk/*",
     "src/product/*",
+    "src/client/*",
+    "src/tools/petlibre",
     "src/tools/petlibre-*",
     "src/tools/xtask",
-    "src/firmware/petlibre/*",
+    "src/firmware/petlibre/*", "src/client/petlibre-client",
 ]
 resolver = "3"
 
@@ -19,12 +21,13 @@ petlibre-hal = { path = "src/sdk/petlibre-hal" }
 petlibre-hal-common = { path = "src/sdk/petlibre-hal-common" }
 petlibre-amebad-sys = { path = "src/sdk/petlibre-amebad-sys" }
 petlibre-core = { path = "src/sdk/petlibre-core" }
+petlibre-proto = { path = "src/sdk/petlibre-proto" }
 petlibre-probes = { path = "src/sdk/petlibre-probes" }
 petlibre-sdk = { path = "src/sdk/petlibre-sdk" }
 petlibre-sdk-c = { path = "src/sdk/petlibre-sdk-c" }
 petlibre-feeder = { path = "src/product/petlibre-feeder" }
+petlibre-client = { path = "src/client/petlibre-client" }
 petlibre-fw-blink = { path = "src/firmware/petlibre/blink" }
-petlibre-fw-ble = { path = "src/firmware/petlibre/ble" }
 petlibre-formats = { path = "src/tools/petlibre-formats" }
 petlibre-emu = { path = "src/tools/petlibre-emu" }
 petlibre-testkit = { path = "src/sdk/petlibre-testkit" }

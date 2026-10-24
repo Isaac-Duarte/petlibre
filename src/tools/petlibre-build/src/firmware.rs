@@ -344,13 +344,13 @@ quiet = { summary = "No probes" }
         let repo = Repo::here().unwrap();
         let firmwares = Firmware::all(&repo).unwrap();
         for name in [
-            "qa", "optics", "buttons", "adc", "speaker", "motor", "trial", "blink", "ble", "feeder",
+            "qa", "optics", "buttons", "adc", "speaker", "motor", "trial", "blink", "feeder",
         ] {
             let firmware = firmwares.iter().find(|f| f.name() == name);
             assert!(firmware.is_some(), "{name}");
             assert_eq!(
                 firmware.is_some_and(Firmware::bluetooth),
-                matches!(name, "ble" | "feeder"),
+                name == "feeder",
                 "{name}"
             );
         }

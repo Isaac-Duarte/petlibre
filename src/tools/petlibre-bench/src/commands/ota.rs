@@ -99,8 +99,6 @@ pub enum Firmware {
     Speaker,
     /// Blinks the connection indicator.
     Blink,
-    /// FW34: Bluetooth LE bring-up and Wi-Fi setup over BLE.
-    Ble,
     /// FW11 trial images, one per `Variant`.
     Trial,
     /// The product firmware (FP11 onwards).
@@ -108,14 +106,13 @@ pub enum Firmware {
 }
 
 impl Firmware {
-    const ALL: [Self; 9] = [
+    const ALL: [Self; 8] = [
         Self::Qa,
         Self::Optics,
         Self::Buttons,
         Self::Adc,
         Self::Speaker,
         Self::Blink,
-        Self::Ble,
         Self::Trial,
         Self::Feeder,
     ];
@@ -130,7 +127,6 @@ impl Firmware {
             Self::Adc => "adc",
             Self::Speaker => "speaker",
             Self::Blink => "blink",
-            Self::Ble => "ble",
             Self::Trial => "trial",
             Self::Feeder => "feeder",
         }

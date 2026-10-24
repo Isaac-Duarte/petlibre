@@ -39,7 +39,7 @@ baseline bringup device firstboot: $(BUILD)
 test:
 	cargo test --locked -p petlibre-core -p petlibre-hal-common -p petlibre-hal -p petlibre-sdk -p petlibre-sdk-c -p petlibre-probes \
 		-p petlibre-fw-qa -p petlibre-fw-optics -p petlibre-fw-buttons -p petlibre-fw-adc \
-		-p petlibre-fw-speaker -p petlibre-fw-motor -p petlibre-fw-trial -p petlibre-fw-blink -p petlibre-fw-ble -p petlibre-fw-feeder -p petlibre-feeder
+		-p petlibre-fw-speaker -p petlibre-fw-motor -p petlibre-fw-trial -p petlibre-fw-blink -p petlibre-fw-feeder -p petlibre-feeder
 
 .PHONY: FORCE
 FORCE:

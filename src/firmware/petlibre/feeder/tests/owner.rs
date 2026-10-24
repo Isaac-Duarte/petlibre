@@ -3,13 +3,15 @@
 //! relock, keeps the indicator off while the lights are off, and stops
 //! driving the indicator for good when outputs stop reading back stopped.
 //! Pairing sees gestures first: the recovery chord opens its window only on
-//! an unlocked panel, and an unlocked Reset hold queues the key reset.
+//! an unlocked panel, an unlocked Reset hold queues the key reset, and an
+//! unlocked Lock and Mic hold starts BLE setup mode.
 
 use petlibre_feeder::pairing;
 use petlibre_feeder::panel::{Action, Event, Lock, Source};
 use petlibre_fw_feeder::owner::{Inputs, Owner, POLL_MS, Record};
+use petlibre_fw_feeder::setup;
 use petlibre_sdk::buttons::{Button, Buttons, Gesture};
-use petlibre_sdk::hal::keys::{self, Change, Requested};
+use petlibre_sdk::hal::keys::{self, Change, KeyResult, Requested};
 use petlibre_sdk::hal::leds::{self, Led};
 use petlibre_sdk::hal::sdk::{self, fake};
 use petlibre_sdk::hal::stopped;
@@ -36,6 +38,7 @@ fn step(
             gestures: gestures.iter().copied(),
             remote,
             lights,
+            identity: None,
         },
         |record| records.push(record),
     );
@@ -367,5 +370,46 @@ fn an_unlocked_reset_hold_queues_the_key_reset() {
         },
         "one reset waits for the writer at a time"
     );
-    keys::finish();
+    keys::finish(KeyResult::Done);
+}
+
+#[test]
+fn lock_and_mic_held_start_setup_mode_only_when_unlocked() {
+    let mut owner = ready();
+    let now = settle(&mut owner, 0, true);
+    let (_, records) = step(
+        &mut owner,
+        now,
+        &[hold(&[Button::Lock, Button::Mic])],
+        None,
+        true,
+    );
+    assert_eq!(
+        records,
+        [Record::Pairing(pairing::Event::Refused {
+            path: pairing::Path::Setup,
+            refusal: pairing::Refusal::Locked,
+        })]
+    );
+
+    step(&mut owner, now, &[lock_hold()], None, true);
+    let (_, records) = step(
+        &mut owner,
+        now,
+        &[hold(&[Button::Lock, Button::Mic])],
+        None,
+        true,
+    );
+    assert_eq!(
+        records[..2],
+        [
+            Record::Pairing(pairing::Event::SetupOpened),
+            Record::Setup(setup::Record::Start),
+        ]
+    );
+    assert!(
+        sdk::fake::with(|h| h.ble_started.is_some()),
+        "the stack starts"
+    );
+    assert!(!owner.reboot_due(now));
 }

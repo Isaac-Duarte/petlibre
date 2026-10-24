@@ -390,12 +390,17 @@ fn key_changes_apply_and_a_reset_publishes_a_new_identity() {
         change(&mut writer, &mut provider, phone),
         changed(KeyChange::Enroll, KeyResult::Done, 1)
     );
+    let enrolled = keys::ticket();
+    assert_eq!(keys::outcome(enrolled), Some(KeyResult::Done));
     assert!(ATTEMPT_SEEN.with(Cell::get));
     assert_eq!(sdk::backup_read(MARKER_REGISTER), 0);
     assert_eq!(
         change(&mut writer, &mut provider, phone),
         changed(KeyChange::Enroll, KeyResult::Duplicate, 1)
     );
+    // A caller holding the earlier ticket no longer sees an outcome.
+    assert_eq!(keys::outcome(enrolled), None);
+    assert_eq!(keys::outcome(keys::ticket()), Some(KeyResult::Duplicate));
     assert_eq!(
         keys::identity_since(first),
         None,

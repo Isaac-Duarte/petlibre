@@ -1,35 +1,24 @@
-//! FW34 BLE setup: Wi-Fi credentials for a feeder that cannot reach its
-//! network, over Bluetooth LE.
+//! FW45 BLE setup mode's GATT layout and framing.
 //!
-//! Stock 1.1.15 does the same job with the vendor app; this replacement keeps
-//! the role and uses the FW25 `wifi` request instead of the vendor protocol.
-//! The feeder advertises one private service (UUIDs below) only while it has
-//! been offline for [`OFFLINE_MS`], and its control characteristic (write,
-//! notify) carries length-prefixed messages each way: a u16 little-endian
-//! length, then that many bytes of JSON.
+//! In setup mode the feeder advertises one private service (UUIDs below)
+//! whose control characteristic (write, notify) carries length-prefixed
+//! messages each way: a u16 little-endian length, then that many bytes. The
+//! messages are a Noise XX handshake and the setup exchange sealed after it
+//! (`petlibre_proto::setup`); the feeder's link (`petlibre_hal::ble`) and the
+//! host client (`petlibre-client`) share this framing.
 //!
-//! 1. When the host enables notifications, the feeder draws a fresh
-//!    `request_auth::Session` and sends a [`hello`] naming its nonce.
-//! 2. The host sends one signed `wifi` request under that nonce, exactly as
-//!    the server would over MQTT (`{"id":…,"op":"wifi","ssid":hex,"psk":hex,
-//!    "nonce":…,"seq":…,"mac":…}`, or `"clear":1`).
-//! 3. The feeder answers with the transport's own `wifi` reply.
-//!
-//! Every BLE request must be signed, reads included, because anyone in range
-//! can connect. Only `wifi` is served; nothing over BLE can dispense food or
-//! change any other setting.
+//! Stock 1.1.15 uses BLE for the same job with the vendor app; nothing over
+//! BLE can dispense food or change anything but Wi-Fi and the client list.
 
 /// The service and its control characteristic, as 128-bit UUIDs. The feeder
 /// hands them to the stack little-endian ([`uuid_le`]).
 pub const SERVICE: u128 = 0x504c_5345_5455_5000_8000_0000_0000_0000;
 pub const CONTROL: u128 = SERVICE + 1;
 
-/// The feeder advertises once it has been offline this long, as stock does
-/// after about two minutes.
-pub const OFFLINE_MS: u32 = 120_000;
-
-/// The longest message either way: a signed `wifi` request at its limit.
-pub const MAX_MESSAGE: usize = crate::transport::MAX_REQUEST;
+/// The longest message either way. The longest is the handshake's third
+/// message: two sealed fields and a request with the longest label and
+/// credentials, well under this.
+pub const MAX_MESSAGE: usize = 448;
 /// The length prefix.
 pub const PREFIX: usize = 2;
 
@@ -51,15 +40,6 @@ pub fn parse_prefix(prefix: [u8; PREFIX]) -> Option<usize> {
     (len <= MAX_MESSAGE).then_some(len)
 }
 
-/// `{"op":"hello","nonce":"<16 hex>"}`.
-pub const HELLO_LEN: usize = 41;
-
-pub fn hello(nonce_hex: &[u8; 16]) -> [u8; HELLO_LEN] {
-    let mut out = *b"{\"op\":\"hello\",\"nonce\":\"0000000000000000\"}";
-    out[23..39].copy_from_slice(nonce_hex);
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -74,13 +54,7 @@ mod tests {
     }
 
     #[test]
-    fn the_hello_names_the_nonce() {
-        let hello = hello(b"0123456789abcdef");
-        assert_eq!(&hello, br#"{"op":"hello","nonce":"0123456789abcdef"}"#);
-        assert_eq!(
-            uuid_le(CONTROL)[0],
-            1,
-            "the stack takes UUIDs little-endian"
-        );
+    fn uuids_go_to_the_stack_little_endian() {
+        assert_eq!(uuid_le(CONTROL)[0], 1);
     }
 }

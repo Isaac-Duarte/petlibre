@@ -10,6 +10,7 @@ use petlibre_sdk::hal::{panel, sdk, settings, startup};
 use crate::budget::{self, Budget};
 use crate::keys::{self, Identity};
 use crate::owner::{self, Inputs, Owner};
+use crate::setup;
 
 petlibre_sdk::firmware!(start);
 
@@ -46,8 +47,6 @@ static IDENTITY: Slot<Identity> = Slot::new();
 static BUDGET: Slot<Budget> = Slot::filled(Budget::new());
 #[cfg(feature = "entropy")]
 static CAPTURE: Slot<crate::entropy::Capture> = Slot::filled(crate::entropy::Capture::new());
-#[cfg(feature = "setup")]
-static SETUP: Slot<petlibre_sdk::hal::ble::BleSetup> = Slot::new();
 
 /// Writes one `PL…1` record line.
 fn log(args: core::fmt::Arguments<'_>) {
@@ -89,21 +88,30 @@ unsafe extern "C" fn loop_task(_: *mut c_void) -> u32 {
         return 0;
     };
 
+    // SAFETY: only this task touches the slot.
+    let identity = unsafe { IDENTITY.get_or_init(Identity::default) };
+    if let Some(record) = identity.step() {
+        log(format_args!("PLID1 {}\r\n", Key(record)));
+    }
+
     let now_ms = sdk::uptime_ms();
     let inputs = Inputs {
         now_ms,
         gestures: core::iter::from_fn(petlibre_sdk::buttons::next),
         remote: panel::take(),
         lights: settings::current().is_none_or(|view| view.lights),
+        identity: identity.keypair(),
     };
-    let mut delay_ms = owner.step(inputs, |record| {
-        log(format_args!("PLPANEL1 {}\r\n", Panel(record)))
+    let mut delay_ms = owner.step(inputs, |record| match record {
+        owner::Record::Setup(setup::Record::Ble(_)) => {
+            log(format_args!("PLBLE1 {}\r\n", Panel(record)));
+        }
+        owner::Record::Setup(_) => log(format_args!("PLSET1 {}\r\n", Panel(record))),
+        _ => log(format_args!("PLPANEL1 {}\r\n", Panel(record))),
     });
 
-    // SAFETY: only this task touches the slot.
-    let identity = unsafe { IDENTITY.get_or_init(Identity::default) };
-    if let Some(record) = identity.step() {
-        log(format_args!("PLID1 {}\r\n", Key(record)));
+    if owner.reboot_due(now_ms) {
+        petlibre_sdk::request_reset();
     }
 
     // Requests read what the owner holds after this step.
@@ -128,17 +136,6 @@ unsafe extern "C" fn loop_task(_: *mut c_void) -> u32 {
         delay_ms = delay_ms.min(delay);
     }
 
-    #[cfg(feature = "setup")]
-    {
-        // SAFETY: only this task touches the slot.
-        let setup = unsafe { SETUP.get_or_init(Default::default) };
-        let step = setup.step();
-        if let Some(record) = step.record {
-            log(format_args!("PLBLE1 {}\r\n", Ble(record)));
-        }
-        delay_ms = delay_ms.min(step.delay_ms.max(1));
-    }
-
     delay_ms
 }
 
@@ -149,15 +146,5 @@ struct Rng(crate::entropy::Record);
 impl core::fmt::Display for Rng {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         crate::entropy::describe(self.0, f)
-    }
-}
-
-#[cfg(feature = "setup")]
-struct Ble(petlibre_sdk::hal::ble::Record);
-
-#[cfg(feature = "setup")]
-impl core::fmt::Display for Ble {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        petlibre_sdk::hal::ble::describe(self.0, f)
     }
 }

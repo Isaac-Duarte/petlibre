@@ -15,9 +15,8 @@ make -C src/firmware/vendor firstboot FIRMWARE=buttons   # default: qa
 | [`speaker`](speaker) | FW24 | The startup chime, requested tunes and the signed network audio stream |
 | [`motor`](motor) | FW16 | The first supervised motor pulse, in its `fw16-pulse` variant only; the normal image adds nothing |
 | [`trial`](trial) | FW11 | Trial images KM0 must roll back: `fw11-reset` and `fw11-fail` |
-| [`feeder`](feeder) | FP11 | The product firmware, growing owner by owner: so far the panel, whose child lock follows stock (5 s Lock hold, 30 s idle relock), shows on PA4 and takes a signed `lock` request; its loop task and the button service are its two tasks |
+| [`feeder`](feeder) | FP11 | The product firmware, growing owner by owner: so far the panel, whose child lock follows stock (5 s Lock hold, 30 s idle relock), shows on PA4 and takes a signed `lock` request, and BLE setup mode (FW45: a Lock and Mic hold, then a phone's key and Wi-Fi, confirmed by Dispense); its loop task and the button service are its two tasks. Links the device's BLE stack (`bluetooth = true`) and starts it only in setup mode |
 | [`blink`](blink) | FW36 | One task that blinks the connection indicator; the smallest firmware and the template for new ones |
-| [`ble`](ble) | FW34 | Bluetooth LE bring-up: after two minutes offline, advertises a setup service through which `petlibre-local ble-wifi` sends signed Wi-Fi credentials; links the device's BLE stack (`bluetooth = true`) |
 
 The probes these firmwares run live once, in `src/sdk/petlibre-probes`, so a single-purpose firmware and QA step the same code. Each firmware owns the tasks that step them.
 

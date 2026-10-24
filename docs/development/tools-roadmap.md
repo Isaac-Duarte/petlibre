@@ -66,7 +66,7 @@ Every hardware test runs through `petlibre-local` today, so it shrinks in step w
 | 1 | Nothing | Delete stock control, the C-probe and modified-stock trials, `speak` and `ble-wifi`. The ledger keeps only install trials |
 | 2 | Nothing | Split the bench into `petlibre-relay`, `petlibre-bench`, `petlibre-itest` and `petlibre-dashboard`, with their shared files in `petlibre-formats` |
 | 3 | FW42 | The setup frame provisions stock: the broker trusts a new feeder on first use during an install, and `init` and `network` are deleted |
-| 4 | FW45, FW47 | `petlibre-client` and the `petlibre` CLI; the bench and suite talk to the feeder over the device API; the MQTT firmware role and its credentials are deleted |
+| 4 | FW45, FW47 | `petlibre-client` and the `petlibre` CLI (begun Oct 24 with FW45: the BLE setup session and `petlibre setup`); the bench and suite talk to the feeder over the device API; the MQTT firmware role and its credentials are deleted |
 | 5 | FW48 | Offers over the device API; signing moves to `petlibre-build`; the fault server is rebuilt on `petlibre-client` |
 | 6 | FW43 | What is left of the stock path moves into `petlibre-stock` and `petlibre-client`'s installer steps; `petlibre-local` is deleted |
 

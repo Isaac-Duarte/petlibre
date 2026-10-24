@@ -1,6 +1,6 @@
 # API design
 
-The contracts between the feeder, the owner's server, the Android app and the web UI, and the crates that implement them. This is a design (Oct 23, 2026); nothing here is built yet. The product decisions it serves are in [product architecture](../firmware/product-architecture.md).
+The contracts between the feeder, the owner's server, the Android app and the web UI, and the crates that implement them. This is a design (Oct 23, 2026). The first pieces exist since FW45 (Oct 24): `petlibre-proto`'s setup messages, `petlibre-client`'s setup session, and the owner's `petlibre setup` over BLE ([Bluetooth](../firmware/bluetooth.md#setup-exchange)). The product decisions it serves are in [product architecture](../firmware/product-architecture.md).
 
 There are three contracts, and each changes at a different cost:
 

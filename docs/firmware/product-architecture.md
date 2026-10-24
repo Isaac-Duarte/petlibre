@@ -13,7 +13,7 @@ The owner's target (Oct 23, 2026): the Petlibro experience, fully open and usabl
 | Tasks | The firmware's two tasks are the button service and one loop that runs the network and feeding | A task per client, or a larger runtime slot table: each task needs its own stack holding Noise state, and growing the table reopens the runtime's startup ordering ([task slots](../../src/firmware/petlibre/README.md#what-the-sdk-runtime-guarantees), `fw44-simon-01`) |
 | Device API | The feeder hosts one message stream: typed requests and responses, plus pushed events and samples | REST plus an event stream: an HTTP parser and several connections cost RAM, and encryption would mean TLS. MQTT client: a phone can't host a broker |
 | Encryption | Noise for every client | HMAC signing alone leaves schedules and keys readable on the LAN. TLS costs mbedTLS RAM, and self-signed certificates are hard for owners to trust |
-| Setup | BLE, started only at boot when setup is needed | Always-on BLE pays heap, tasks and radio time forever. The feeder's own access point makes the phone switch networks. Both paths would double the setup surface |
+| Setup | BLE, started only in a setup mode the owner asks for with a button hold, and ended by a reboot | Always-on BLE pays heap, tasks and radio time forever. The feeder's own access point makes the phone switch networks. Both paths would double the setup surface |
 | More clients | An invite from a paired client, or a button-hold pairing window | Invites alone leave no way back if every client is lost; the button alone means a walk to the feeder every time |
 | Concurrent edits | Each write names the generation it was based on, and a stale write is refused | Last writer wins can silently undo someone else's schedule change |
 | Updates | The app or server fetches signed releases, and the owner approves each install | Automatic installs would put a late-misbehaving release on every feeder a pet depends on |
@@ -67,10 +67,13 @@ In code:
 
 ## Setup and pairing
 
-- **BLE runs only in setup mode, chosen at boot.** The runtime starts the BLE stack when the feeder has no Wi-Fi credentials, has lost Wi-Fi past a timeout, or a button hold asked for setup. When setup finishes, the feeder reboots without BLE.
+- **BLE runs only in setup mode.** A normal boot never starts the BLE stack. Holding Lock, then Mic, for 5 s on an unlocked panel starts it on the running feeder (FW45, [Bluetooth](bluetooth.md)). When setup finishes, or after 15 minutes without a session, the feeder reboots without BLE.
+  - **Not automatic:** losing Wi-Fi does not start setup mode (owner, October 24, 2026). A moved feeder needs the button hold.
+  - **Not at boot:** every KM0 backup register the SDK leaves free is taken (marker, diagnostics, two boot counts, heartbeat), so there is nowhere to carry "set up on the next boot" across a reset. Starting the stack live and rebooting to end it gives the same costs.
   - This never tears the stack down live. AmebaD's BT deinit is unverified on the bench and could leak heap.
+  - **Consumer first boot:** a consumer image with no stored and no build credentials should start in setup mode. That waits for build credentials becoming optional (FW42); every development image has them.
   - A running feeder pays only BLE's flash cost: the linked stack and an 11.5 KB controller patch ([Bluetooth](bluetooth.md)). Heap, the C tasks (outside our stack audit) and shared radio time are spent only in setup mode.
-- **First client.** In one BLE session the app sends Wi-Fi credentials and receives its own client key. A button press on the feeder confirms.
+- **First client.** In one BLE session (Noise XX) the app sends Wi-Fi credentials and its own client key, and learns the feeder's identity key. A Dispense press on the feeder confirms, and the key becomes an owner key.
 - **More clients:**
   - **Invite:** a paired client creates a short-lived invite (QR or link), which the new client redeems over the LAN. This is how the server and the CLI join.
   - **Button-hold window:** for a short time the feeder accepts one new client over the LAN. This is also recovery when every paired client is lost.

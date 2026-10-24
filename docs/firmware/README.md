@@ -17,7 +17,6 @@ Stock 1.1.15 can install the replacement over its own updater, with no UART writ
 | `petlibre-fw-feeder` (`src/firmware/petlibre/feeder`) | The product firmware: the button service and one loop task that owns the panel, with the FW44 Noise session table; the feeding owner and device API join that loop ([resource budget](resource-budget.md)) |
 | `petlibre-fw-qa` (`src/firmware/petlibre/qa`) | The default firmware: a [guided self-test](qa.md) of optics, power, buttons, indicators and speaker |
 | `petlibre-fw-optics`, `-buttons`, `-adc`, `-speaker`, `-motor`, `-trial` | One bring-up area each ([table](../../src/firmware/petlibre/README.md)); `motor` drives the motor only in its `fw16-pulse` variant |
-| `petlibre-fw-ble` (`src/firmware/petlibre/ble`) | Bluetooth LE bring-up and Wi-Fi setup over BLE ([Bluetooth](bluetooth.md)) |
 | `petlibre-fw-blink` (`src/firmware/petlibre/blink`) | The minimal firmware: one task blinks the connection indicator. The [firmware guide](../../src/firmware/petlibre/README.md) covers writing one |
 | `petlibre-amebad-sys` | Bindgen-backed KM4 calls into the pinned AmebaD SDK, and the deterministic host fake SDK used by tests and the simulator |
 | `petlibre-sdk-c` | The core C ABI, the KM0 archive, and the panic handler every firmware archive links |

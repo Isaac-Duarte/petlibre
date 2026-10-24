@@ -192,3 +192,36 @@ fn a_lone_lock_hold_is_the_panels() {
     };
     assert_eq!(p.gesture(0, hold, Lock::Unlocked), None);
 }
+
+#[test]
+fn lock_and_mic_held_open_setup_mode_only_when_unlocked() {
+    let mut p = Pairing::new(Config::DEFAULT);
+    let setup = Gesture::Hold {
+        chord: Buttons::of(Button::Lock).with(Button::Mic),
+        level: 1,
+    };
+    assert_eq!(
+        p.gesture(0, setup, Lock::Locked),
+        Some(refused(Path::Setup, Refusal::Locked))
+    );
+    assert_eq!(
+        p.gesture(0, setup, Lock::Unlocked),
+        Some(Event::SetupOpened)
+    );
+
+    // Growing the chord is not a hold: Lock then Mic pressed reach the panel.
+    let grown = Gesture::Down {
+        chord: Buttons::of(Button::Lock).with(Button::Mic),
+    };
+    assert_eq!(p.gesture(0, grown, Lock::Unlocked), None);
+}
+
+#[test]
+fn a_cancelled_setup_leaves_the_next_press_to_the_panel() {
+    let mut p = Pairing::new(Config::DEFAULT);
+    assert_eq!(p.setup(0), Event::Confirming { path: Path::Setup });
+    p.cancel(Path::Signer);
+    p.cancel(Path::Setup);
+    assert_eq!(p.gesture(10, press(Button::Dispense), Lock::Unlocked), None);
+    assert_eq!(p.setup(20), Event::Confirming { path: Path::Setup });
+}

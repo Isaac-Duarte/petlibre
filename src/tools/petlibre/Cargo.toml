@@ -1,0 +1,25 @@
+[package]
+license.workspace = true
+name = "petlibre"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "The owner's command line: BLE setup of a feeder (FW45), and the device API as it lands"
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+bluer = { version = "0.17.4", features = ["bluetoothd"] }
+clap.workspace = true
+futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
+petlibre-client.workspace = true
+petlibre-core.workspace = true
+petlibre-formats.workspace = true
+petlibre-proto.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "time"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

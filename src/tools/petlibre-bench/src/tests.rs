@@ -33,7 +33,7 @@ fn stock_ota_takes_a_name_its_firmware_and_no_promote() {
         "stock-ota",
         "poc-01",
         "--firmware",
-        "ble",
+        "feeder",
         "--no-promote",
     ])
     .unwrap();

@@ -25,6 +25,7 @@ use petlibre_core::transport::{SettingsFields, SettingsView};
 use petlibre_hal::flash::park::Mmio;
 use petlibre_hal::flash_lock::arming::{self, Arming, Hooks, Poll};
 use petlibre_hal::flash_lock::provider::Provider;
+pub use petlibre_hal::keys::KeyResult;
 use petlibre_hal::keys::{self, Change};
 use petlibre_hal::network::{self, NET_BASE};
 use petlibre_hal::{rng, settings};
@@ -58,33 +59,6 @@ named_enum! {
         Enroll = "enroll",
         Revoke = "revoke",
         Reset = "reset",
-    }
-}
-
-named_enum! {
-    /// What became of a queued client store change.
-    pub enum KeyResult {
-        Done = "done",
-        Unarmed = "unarmed",
-        /// A reset needs a new identity, and the generator never started.
-        NoGenerator = "no-generator",
-        NotWritable = "not-writable",
-        Full = "full",
-        Duplicate = "duplicate",
-        NotFound = "not-found",
-        Io = "io",
-    }
-}
-
-impl From<ClientError> for KeyResult {
-    fn from(error: ClientError) -> Self {
-        match error {
-            ClientError::NotWritable | ClientError::IdentitySet => Self::NotWritable,
-            ClientError::Full => Self::Full,
-            ClientError::Duplicate => Self::Duplicate,
-            ClientError::NotFound => Self::NotFound,
-            ClientError::Io => Self::Io,
-        }
     }
 }
 
@@ -342,7 +316,7 @@ impl Writer {
     }
 
     /// Apply one queued client change, each write under its own attempt
-    /// marker. A reset draws its new identity from the generator or does not
+    /// marker, and free the mailbox with its result. A reset draws its new identity from the generator or does not
     /// happen: a weaker key is never written.
     fn change(&mut self, change: Change, writable: bool) -> Record {
         let kind = match change {
@@ -368,6 +342,7 @@ impl Writer {
         {
             keys::publish_identity(secret);
         }
+        keys::finish(result);
         Record::KeysChanged {
             change: kind,
             result,
@@ -480,7 +455,6 @@ impl Writer {
                 if let Some(change) = keys::pending() {
                     let writable = self.stage == Stage::Idle && H::armed();
                     let record = self.change(change, writable);
-                    keys::finish();
                     return next(POLL_MS, Some(record));
                 }
                 if let Some(credentials) = network::pending() {

@@ -6,10 +6,11 @@
 //! So far it runs the panel: the button service and one loop task that keeps
 //! the child lock (FP11), shows it on the lock indicator, and takes signed
 //! lock changes from the network. The loop also holds the feeder's identity
-//! key pair and the pairing policy, and a Reset hold clears the keys (FW45). The loop also measures the device API's
-//! fixed costs (FW44, `budget`), and the `setup` variant runs BLE setup mode
-//! beside it; the `entropy` variant streams raw noise samples for FW45. It
-//! never touches the motor or the infrared emitters.
+//! key pair and the pairing policy: a Reset hold clears the keys, and a Lock
+//! and Mic hold starts BLE setup mode, where a new owner's phone gives the
+//! feeder Wi-Fi and its key (FW45). The loop also measures the device API's
+//! fixed costs (FW44, `budget`); the `entropy` variant streams raw noise
+//! samples for FW45. It never touches the motor or the infrared emitters.
 //!
 //! [product architecture]: ../../../../docs/firmware/product-architecture.md
 #![cfg_attr(target_os = "none", no_std)]
@@ -23,3 +24,4 @@ pub mod budget;
 pub mod entropy;
 pub mod keys;
 pub mod owner;
+pub mod setup;

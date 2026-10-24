@@ -53,7 +53,7 @@ petlibre-server ─► petlibre-service ─► petlibre-store ─► petlibre-ap
 - **`petlibre-client`** holds no sockets, timers or radios. Its callers feed it bytes and the current time and send what it returns. The server drives it with tokio, the app with Dart IO, the CLI and bench with tokio, and the host simulator directly in tests.
 - **`petlibre-api`** builds for every target, including the app's Android library, so it carries no server dependencies.
 - **`petlibre-service`** never sees an HTTP type, and **`petlibre-server`** never sees SQL. A handler parses, authorizes, calls one service method and maps the result.
-- **`petlibre-local`** stays the bench and stock-protocol tool. Its replacement-firmware path moves to `petlibre-client`, and its MQTT replacement transport is removed once FW47 lands.
+- **`petlibre-local`** is retired in stages ([tools roadmap](../development/tools-roadmap.md)): its stock install path moves to a `petlibre-stock` library and `petlibre-client`'s installer steps, its replacement path to `petlibre-client` and the owner's `petlibre` CLI, and its MQTT replacement transport is removed once FW47 lands.
 - **Workspace members** gain `src/client/*` and `src/server/*`. Shared versions stay in `[workspace.dependencies]`.
 
 ## Device protocol

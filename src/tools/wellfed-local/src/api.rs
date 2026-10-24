@@ -374,7 +374,7 @@ mod tests {
     fn the_usage_names_every_operation_and_tune() {
         assert_eq!(
             request_usage(),
-            "expected {\"op\":\"health\"|\"ping\"|\"settings\"|\"wifi\"|\"play\"|\"lock\"}; settings may set lights, sound (booleans) and volume (0-100); wifi may set ssid (1-32 bytes) with psk (8-63 printable ASCII), or clear: true; play needs tune: chime, meal, coin, alert, test or twinkle; lock may set locked (boolean)"
+            "expected {\"op\":\"health\"|\"ping\"|\"settings\"|\"wifi\"|\"play\"|\"lock\"}; settings may set lights, sound (booleans) and volume (0-100); wifi may set ssid (1-32 bytes) with psk (8-63 printable ASCII), or clear: true; play needs tune: chime, meal, coin, alert, test, twinkle or key; lock may set locked (boolean)"
         );
     }
 }

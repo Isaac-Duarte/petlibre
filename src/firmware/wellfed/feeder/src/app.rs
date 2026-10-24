@@ -39,7 +39,9 @@ fn start() {
 const LOOP_STACK_WORDS: u16 = 1536;
 
 /// Touched only by the loop task; see `loop_task`.
-static OWNER: Slot<Owner> = Slot::new();
+/// Built at compile time: it holds setup mode's state, which the loop's
+/// stack cannot afford to move.
+static OWNER: Slot<Owner> = Slot::filled(Owner::new());
 /// Touched only by the loop task.
 static IDENTITY: Slot<Identity> = Slot::new();
 /// The session table is larger than the loop's stack, so it is built at
@@ -82,9 +84,7 @@ impl core::fmt::Display for Api {
 
 unsafe extern "C" fn loop_task(_: *mut c_void) -> u32 {
     // SAFETY: only this task touches the slots.
-    let (owner, Some(budget)) = (unsafe { OWNER.get_or_init(Owner::default) }, unsafe {
-        BUDGET.get()
-    }) else {
+    let (Some(owner), Some(budget)) = (unsafe { OWNER.get() }, unsafe { BUDGET.get() }) else {
         return 0;
     };
 
@@ -105,6 +105,9 @@ unsafe extern "C" fn loop_task(_: *mut c_void) -> u32 {
     let mut delay_ms = owner.step(inputs, |record| match record {
         owner::Record::Setup(setup::Record::Ble(_)) => {
             log(format_args!("PLBLE1 {}\r\n", Panel(record)));
+        }
+        owner::Record::Setup(setup::Record::Audio(_)) => {
+            log(format_args!("PLAUD1 {}\r\n", Panel(record)));
         }
         owner::Record::Setup(_) => log(format_args!("PLSET1 {}\r\n", Panel(record))),
         _ => log(format_args!("PLPANEL1 {}\r\n", Panel(record))),

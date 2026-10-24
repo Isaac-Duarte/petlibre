@@ -64,7 +64,7 @@ pub fn split(payload: &[u8]) -> Option<Signed<'_>> {
 }
 
 /// Equal without an early exit, so timing does not reveal a partial match.
-fn same(a: &[u8; 32], b: &[u8; 32]) -> bool {
+pub(crate) fn same(a: &[u8; 32], b: &[u8; 32]) -> bool {
     a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 

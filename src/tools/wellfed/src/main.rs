@@ -1,8 +1,10 @@
 //! `wellfed`, the owner's command line ([tools roadmap]).
 //!
 //! `wellfed setup` pairs this computer with a feeder in BLE setup mode
-//! (FW45): it gives the feeder Wi-Fi, enrolls this computer's key as an
-//! owner once someone presses Dispense, and records the feeder's identity.
+//! (FW45): it shows a one-time code for the owner to key in on the feeder's
+//! buttons, and once the feeder has proven the code it gives the feeder
+//! Wi-Fi, enrolls this computer's key as an owner and records the feeder's
+//! identity.
 //! The protocol is `wellfed-client`'s, the same the Android app runs. The
 //! device API's commands (feed, plans, settings, history) join as FW47
 //! lands.
@@ -20,7 +22,8 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand};
-use wellfed_client::setup::{Ask, Credentials, Session, Step};
+use wellfed_client::setup::{Ask, Credentials, Session, Step, panel_position};
+use wellfed_core::setup_code::Code;
 use wellfed_formats::private;
 use wellfed_proto::setup::{Enrolled, Refusal, Reply, WifiSaved};
 
@@ -93,9 +96,12 @@ async fn setup(args: SetupArgs) -> Result<()> {
         label: key.label().to_string(),
         wifi,
     };
-    let ephemeral: [u8; 32] =
-        private::random(OwnerKey::system()).context("read the system random source")?;
-    let mut session = Session::new(key.keypair(), ephemeral, ask)?;
+    let random = OwnerKey::system();
+    let ephemeral: [u8; 32] = private::random(random).context("read the system random source")?;
+    let seed: [u8; 32] = private::random(random).context("read the system random source")?;
+    let bits: [u8; 2] = private::random(random).context("read the system random source")?;
+    let code = Code::from_bits(u16::from_le_bytes(bits));
+    let mut session = Session::new(key.keypair(), ephemeral, ask, code, seed)?;
 
     let mut link = Link::open(args.address).await?;
     let result = exchange(&mut session, &mut link).await;
@@ -103,7 +109,7 @@ async fn setup(args: SetupArgs) -> Result<()> {
     let enrolled = result?;
 
     let Some(identity) = session.feeder_key() else {
-        bail!("the feeder never sent its key");
+        bail!("the feeder never proved the code");
     };
     key.remember(&identity)?;
     println!(
@@ -123,8 +129,8 @@ async fn exchange(session: &mut Session, link: &mut Link) -> Result<String> {
         match session.receive(&message)? {
             Step::Send(bytes) => link.send(&bytes).await?,
             Step::Reply(reply) => match outcome(reply) {
-                Outcome::Confirming(seconds) => {
-                    eprintln!("Press Dispense on the feeder within {seconds} s to confirm.");
+                Outcome::EnterCode(seconds) => {
+                    eprintln!("{}", instructions(session.code(), seconds));
                     wait = Duration::from_secs(seconds.into()) + CONFIRM_SLACK;
                 }
                 Outcome::Done(text) => return Ok(text),
@@ -134,15 +140,35 @@ async fn exchange(session: &mut Session, link: &mut Link) -> Result<String> {
     }
 }
 
+/// The code as the owner keys it in: button positions, then their names.
+fn instructions(code: Code, seconds: u16) -> String {
+    let presses = code.presses();
+    let positions: Vec<String> = presses
+        .iter()
+        .map(|&b| panel_position(b).to_string())
+        .collect();
+    let names: Vec<&str> = presses.iter().map(|b| b.as_str()).collect();
+    format!(
+        "Within {seconds} s, press these buttons on the feeder one at a time \
+         (numbered from the left: 1 Lock, 2 Dispense, 3 Mic, 4 Reset):\n\n    \
+         {}\n    ({})\n\nThe code proves this computer is talking to that feeder; \
+         it is used once.",
+        positions.join(" "),
+        names.join(", ")
+    )
+}
+
 enum Outcome {
-    Confirming(u16),
+    EnterCode(u16),
     Done(String),
     Refused(&'static str),
 }
 
 fn outcome(reply: Reply) -> Outcome {
     match reply {
-        Reply::Confirming { seconds } => Outcome::Confirming(seconds),
+        Reply::EnterCode { seconds } => Outcome::EnterCode(seconds),
+        // The session answers the proof's steps itself.
+        Reply::Round { .. } => Outcome::Refused("it sent a proof step out of turn"),
         Reply::Done { enrolled, wifi } => Outcome::Done(format!(
             "{}, {}",
             match enrolled {
@@ -155,8 +181,11 @@ fn outcome(reply: Reply) -> Outcome {
             }
         )),
         Reply::Refused(refusal) => Outcome::Refused(match refusal {
-            Refusal::Busy => "another setup is waiting for its press",
-            Refusal::Unconfirmed => "nobody pressed Dispense in time",
+            Refusal::Busy => "another setup is waiting for its code",
+            Refusal::Unconfirmed => "the code was not keyed in in time",
+            Refusal::WrongCode => {
+                "the code keyed in does not match: mistyped, or another device is relaying"
+            }
             Refusal::Full => "every client slot is taken; revoke one first",
             Refusal::NotWritable => "its store cannot be written now",
             Refusal::Invalid => "it rejected the label or the Wi-Fi credentials",

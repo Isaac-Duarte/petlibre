@@ -171,7 +171,7 @@ Server-to-firmware requests can carry an HMAC so that a party with only the Wi-F
 
 ## Speaker (FW24)
 
-`{"id":…,"op":"play","tune":"chime|meal|coin|alert|test|twinkle"}` queues one built-in tune; it **must be signed**. The reply is `"ok":true,"tune":…`, or `error: muted` (the `sound` setting is off) or `error: busy` (a tune is playing, or the settings are not loaded yet). An unknown tune is malformed. The transport may only call `audio::request`, which reads the settings and fills a one-slot mailbox. API: `POST /api/replacement/request` with `{"op":"play","tune":"coin"}`. Design and evidence: [audio](audio.md).
+`{"id":…,"op":"play","tune":"chime|meal|coin|alert|test|twinkle|key"}` queues one built-in tune; it **must be signed**. The reply is `"ok":true,"tune":…`, or `error: muted` (the `sound` setting is off) or `error: busy` (a tune is playing, or the settings are not loaded yet). An unknown tune is malformed. The transport may only call `audio::request`, which reads the settings and fills a one-slot mailbox. API: `POST /api/replacement/request` with `{"op":"play","tune":"coin"}`. Design and evidence: [audio](audio.md).
 
 ## Child lock (FP11)
 

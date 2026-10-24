@@ -26,12 +26,12 @@ From the stock KM4 image (`DL_AUDIO`, `audio_play_http_file`):
   - Following the SDK's line-out path, `CODEC_Init` rewrites the audio LDO trim (the same value KM0 already writes) and disables the PB28–PB31 pads. It touches no pin this firmware uses.
 - **Tunes** (`wellfed-core/src/tone.rs`):
   - Fixed note lists rendered as sines, with a 4 ms attack and a 10 ms release so notes don't click.
-  - Tunes: `chime` (startup), `meal`, `coin`, `alert`, `test` (1 kHz for 1 s) and `twinkle`. Each lasts under 6 s.
+  - Tunes: `chime` (startup), `meal`, `coin`, `alert`, `test` (1 kHz for 1 s), `twinkle` and `key` (one 80 ms tick, BLE setup's press feedback). Each lasts under 6 s.
   - **Loudness** follows the FW15 `volume` on a decibel scale: 0 is silent, then 0.3 dB per step up to a peak of 16000 (about −6 dBFS) at 100.
   - A linear scale was tried first; 40 and 80 sounded almost alike on the unit.
 - **Speaker task** (`wellfed-hal/src/audio.rs`, task `wellfed-aud`, priority 2, normal role only):
   - A one-slot mailbox holds the tune, and the slot stays taken until playback ends, so a second request is `busy` rather than queued.
-  - **Per tune:** open the codec, set PB23 HIGH, play 60 ms of silence while the amplifier settles, stream the tune, wait for the ring to drain (at most 400 ms), then set PB23 LOW and close.
+  - **Per tune:** open the codec, set PB23 HIGH, play 150 ms of silence while the amplifier settles (60 ms swallowed a 50 ms tick whole on the unit, October 24), stream the tune, wait for the ring to drain (at most 400 ms), then set PB23 LOW and close.
   - **Bounded:** a ring that stops draining still ends playback at the tune's length plus 1 s, so the amplifier is never left on.
   - **Startup:** the startup chime plays once the settings are loaded, unless `sound` is off.
 - **Feeding:** audio is independent of it. The task touches only the codec, its DMA and PB23, never the motor, the emitters or flash.

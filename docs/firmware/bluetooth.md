@@ -2,7 +2,7 @@
 
 Stock 1.1.15 uses Bluetooth LE to give an offline feeder its Wi-Fi and MQTT settings from the vendor app ([stock behavior](../devices/plaf103/stock/README.md#bluetooth-le)). The `feeder` firmware keeps that role in **BLE setup mode** (FW45):
 - **When:** the owner holds Lock, then Mic, for 5 s on an unlocked panel. A normal boot never starts the BLE stack.
-- **What:** the owner's phone (or `wellfed setup`) runs a Noise XX handshake with the feeder and asks, encrypted, for Wi-Fi and enrollment. A Dispense press confirms, and the phone's key becomes an owner key.
+- **What:** the owner's phone (or `wellfed setup`) runs a Noise XX handshake with the feeder and shows a one-time code of 6 button presses. The owner keys it in on the feeder, which ticks for each press, both sides prove the code to each other, and only then does the phone send its Wi-Fi and its key become an owner key.
 - **Then:** the feeder saves the Wi-Fi for its next join and reboots without BLE.
 
 FW34 brought the stack up in a `ble` bring-up firmware, which sent signed FW25 `wifi` requests in the clear; FW45 retired both on October 24, 2026.
@@ -29,7 +29,7 @@ The link audit is unchanged and passes: `ftl_init` and every flash erase and pro
 ## Runtime
 
 `wellfed_ble.c` starts one task (`wellfed_ble`, 1024 words, priority 1). It waits up to 60 s for the Wi-Fi shim's radio, because `hci_board_init` refuses before `wifi_on`. It then brings the stack up in the vendor example's order and runs the GAP message loop:
-- **One link.** `gap_config_le_key_storage_flag(0)` keeps no keys, and BLE pairing is off: a just-works request is rejected. Access control is the Noise handshake and the Dispense press.
+- **One link.** `gap_config_le_key_storage_flag(0)` keeps no keys, and BLE pairing is off: a just-works request is rejected. Access control is the Noise handshake and the owner's code.
 - **Advertising:** only while Rust asks for it. It is connectable, about 100 ms, with the 128-bit service UUID; the scan response carries the name `Wellfed`.
 - **GATT callbacks** only copy bytes into rings (control 1 KiB, outgoing notifications 512 B) and record events.
 - **Rust requests** (notify, advertise, disconnect) go through the task's IO queue, so every stack call runs on the task that started the stack.
@@ -46,25 +46,48 @@ The Rust side is the `feeder` firmware's loop task (`feeder/src/setup.rs`), whic
 
 The UUIDs and framing are in `wellfed_core::ble_setup`. Service `504c5345-5455-5000-8000-000000000000` has one control characteristic (`…0001`, write and notify). Every message in either direction is a u16 little-endian length, then that many bytes, at most 448. Each side reassembles the pieces itself, so nothing depends on the negotiated MTU.
 
-The messages are `wellfed_proto::setup` (postcard), carried by Noise XX with the prologue `wellfed-setup-v1`. The client is the initiator and the feeder the responder under its identity key ([pairing](pairing.md)):
+The messages are `wellfed_proto::setup` (postcard), carried by Noise XX with the prologue `wellfed-setup-v2`. The client is the initiator and the feeder the responder under its identity key ([pairing](pairing.md)):
 1. The client enables notifications and sends XX's first message (its ephemeral key).
-2. The feeder answers with the second, which carries its identity key encrypted. The client now knows the feeder's key; its first 8 bytes match the feeder's `PLID1` fingerprint.
-3. The client sends the third message: its own static key, and its `Request` (a label and optional Wi-Fi) as the encrypted payload. The passphrase never crosses the air in the clear.
-4. The feeder checks the label and credentials against the stores' rules, offers the key to pairing, and replies `Confirming { seconds: 60 }`.
-5. A Dispense press within 60 s admits it. The settings writer enrolls the key as an owner, then saves the Wi-Fi. The feeder replies `Done { enrolled, wifi }` and reboots without BLE about 3 s later. The Wi-Fi task's next join, after the reboot, uses the saved credentials.
+2. The feeder answers with the second, which carries its identity key encrypted.
+3. The client sends the third message: its own static key, and its `Request` (a label) as the encrypted payload.
+4. The feeder checks the label, offers the key to pairing, and replies `EnterCode { seconds: 60 }`. The client shows its code: 6 presses, each one of the four buttons, numbered from the left (1 Lock, 2 Dispense, 3 Mic, 4 Reset).
+5. The owner keys the code in within 60 s. Pairing takes every gesture until the code is complete: each single-button press counts, chords and holds count for nothing, and nothing reaches the panel, so no press feeds, toggles the lock or resets the keys. The speaker ticks (`key`) for each press that counts.
+6. The feeder and the client prove the code to each other (`wellfed_core::setup_code`, below), within 15 s of the last press.
+7. Once the feeder has proven the code, the client's last step carries the Wi-Fi. When that step opens, the settings writer enrolls the key as an owner, then saves the Wi-Fi. The feeder replies `Done { enrolled, wifi }` and reboots without BLE about 3 s later. The Wi-Fi task's next join, after the reboot, uses the saved credentials. Only now does the client trust the feeder's key; its first 8 bytes match the feeder's `PLID1` fingerprint.
+8. The speaker plays `coin` once the feeder replies `Done`, and `alert` when the code was wrong or never finished. The feeder's two firmware tasks are taken, so setup mode's loop steps the speaker itself, and `sound` off mutes all three. Linking the speaker into the feeder costs about 9 KB of flash and 4.8 KB of static RAM (mostly the codec's DMA ring), and setup mode's state now lives in the owner's static, built at compile time: built on the loop's stack it pushed the stack bound to 8,228 of 6,144 bytes. The loop's bound is 4,396 bytes, under the audit's limit of 4,608.
+
+### Why a code
+
+XX alone trusts whichever device answers. With a Dispense press as the only check, a device in radio range during the window could relay between the phone and the feeder: the phone would see the relay's key as the feeder's, the press would enroll the relay as an owner, and the relay would read the Wi-Fi passphrase. The feeder has no display for a comparison, so the owner carries a secret the other way: from the phone's screen to the feeder's buttons.
+
+**The proof** (static analysis and host tests; modeled on Bluetooth's passkey entry):
+- Both sides bind every step to their own Noise handshake hash. A relay has a different handshake on each leg, so a step from one leg never opens on the other.
+- A proof of the whole code at once could be tried against every code offline, so the exchange goes one press at a time. For press `i`, each side sends a commitment, HMAC-SHA256 keyed by a fresh nonce over the side, `i`, the press and the hash, and opens it (sends the nonce) only after the other side's commitment to press `i` has arrived. The feeder opens first; each message opens the sender's last commitment and commits to its next press, so the proof is 7 messages each way.
+- A relay must commit to each press before it learns it, on one leg or the other. Failing one leg teaches it one press, so it fools the phone with odds of 4^-5 (1 in 1,024) and gets enrolled with odds of 4^-6 (1 in 4,096), once per code the owner keys in. Six presses trade some margin for a code that is quick to key in; `PRESSES` sets it. Each code is used once.
+- The client sends the Wi-Fi only in its last step, after the feeder's last opening has matched, and accepts `Done` only after that, so a relay that fails the proof gets neither the passphrase nor a believed `Done`.
 
 Refusals, each followed by the link closing (setup mode stays for another try):
-- No press in time: `Refused(Unconfirmed)`. Another ask already waiting: `Busy`. Eight clients already: `Full`. A store that cannot be written: `NotWritable`. A label or credentials the stores refuse: `Invalid`.
-- A failed handshake (another protocol or version, tampering), a message after the ask, or one over 448 bytes drops the link without a reply.
-- A client that disconnects while its ask waits cancels it, so the next Dispense press feeds again. One that leaves after its press still gets enrolled and its Wi-Fi saved, and a client connecting meanwhile is dropped (`fault stage=busy`) until that finishes.
+- Code not keyed in, or the proof not finished, in time: `Refused(Unconfirmed)`. The client's proof failing at the feeder: `Refused(WrongCode)`. Another ask already waiting: `Busy`. Eight clients already: `Full`. A store that cannot be written: `NotWritable`. A label or credentials the stores refuse: `Invalid`.
+- The feeder's proof failing at the client: the client stops without sending its Wi-Fi and reports a mismatch (mistyped, or another device answering); the feeder then times the proof out.
+- A failed handshake (another protocol or version, tampering), a message out of turn, or one over 448 bytes drops the link without a reply.
+- A client that disconnects while its ask waits for the code cancels it, so the next Dispense press feeds again. One that leaves after the proof still gets enrolled and its Wi-Fi saved, and a client connecting meanwhile is dropped (`fault stage=busy`) until that finishes.
 
 Nothing over BLE can feed, play or change any setting but Wi-Fi and the client list.
 
-Host: `wellfed setup --ssid NAME` (the owner's CLI) reads the passphrase from stdin, creates the computer's client key in `private/wellfed-owner.json` on first use, and records the feeder's identity there after `Done`. It goes through BlueZ (`bluer`) and finds the feeder by its service UUID among devices advertising now, or by `--address`. The protocol is `wellfed-client`'s, which the Android app shares.
+Host: `wellfed setup --ssid NAME` (the owner's CLI) reads the passphrase from stdin, creates the computer's client key in `private/wellfed-owner.json` on first use, prints the code with each button's position and name, and records the feeder's identity there after `Done`. It goes through BlueZ (`bluer`) and finds the feeder by its service UUID among devices advertising now, or by `--address`. The protocol is `wellfed-client`'s, which the Android app shares.
 
 ## Evidence
 
-- **Physical (Oct 24), FW45 setup mode** (owner pressing; no motion):
+- **Physical (Oct 24), the setup code** (owner pressing; no motion; bounded `serve`, stopped afterwards):
+  - `ota fw45-code-02` installed `feeder` v111 (`e5650894`), confirmed, health clean.
+  - `capture fw45-code-05`: the CLI's code keyed in: six `pair setup keyed=` records, each with a `key` tick logged; `pair setup state=entered`, `PLSET1 proving`, `proven wifi=1`; the CLI's key was already enrolled (`result=duplicate`), the Wi-Fi saved (generation 21), `reply done enrolled=already wifi=saved`, `coin`, the reboot without BLE, the identity unchanged (`8019237d8eba8b9d`, as the CLI recorded), and the rejoin with `source: stored`.
+  - `capture fw45-code-06`: every tick was logged as played, but the owner heard none, while the longer `alert` was heard. The amplifier's settle went from 60 to 150 ms and the tick from 50 to 80 ms; `ota fw45-code-07` installed v112 (`bc5561ae`), confirmed, and the owner then reported hearing the ticks.
+  - `capture fw45-code-04` and `-06`: windows that ran out before the sixth press refused with `unconfirmed` and `alert`; presses after the window went to the locked panel (`ask action=feed result=refused`).
+  - `capture fw45-code-09`: a second client connected while the first's code was pending, with no disconnect seen for the first. It got `busy`, and the owner's presses then counted towards an offer nobody held. Fixed on the host (a new client's ask replaces a stale setup offer, `a_new_client_replaces_an_ask_whose_link_vanished`); not yet on hardware.
+  - **Not run on hardware:** the proof failing on a mistyped code (`wrong-code`). Host tests cover it.
+  - **CLI discovery:** BlueZ listed the advertising feeder with the setup UUID, but `wellfed setup`'s search missed it twice; `--address` after a `bluetoothctl scan le` connected every time. Open.
+  - Afterwards a signed clear emptied the Wi-Fi store (generation 22).
+- **Physical (Oct 24), FW45 setup mode with a Dispense press** (v108–v109; replaced by the code; owner pressing; no motion):
   - `ota fw45-setup-01` installed `feeder` v108 (`46255eec`), confirmed.
   - `capture fw45-setup-02`: the owner unlocked and held Lock and Mic: `pair setup state=opened`, `PLSET1 start`, `PLBLE1 ready heap_free=104416` (Wi-Fi already up, so lower than FW44's boot-time figure), advertising, then a link at MTU 247. `wellfed setup` found the feeder and finished the handshake (`asked wifi=1`, `reply confirming seconds=60`). After the Dispense press: `pair admit path=setup role=owner`, `PLCFG1 keys change=enroll result=done enrolled=1`, `net saved generation=19 stored=1`, `reply done enrolled=new wifi=saved`, `reboot ended=done`. The feeder rebooted with no BLE record, kept `enrolled=1`, and its `PLID1` fingerprint `8019237d8eba8b9d` matched the CLI's. The server saw it online with `source: stored` 23 s into the new boot.
   - `capture fw45-setup-03`: on a locked panel the chord was refused (`refusal=locked`). With no press, the feeder refused after 60 s (`reply refused reason=unconfirmed`), but it dropped the link right after the reply and the CLI never reported it; the CLI then stalled in BlueZ's disconnect.
@@ -85,14 +108,15 @@ Host: `wellfed setup --ssid NAME` (the owner's CLI) reads the passphrase from st
   - With BLE running, the smoke tier passed: OTA install and confirmation, signed requests, refusals, and two settings saves to NOR.
   - That audio demo has since been removed for this setup role.
 - **Host (Oct 24, FW45):**
-  - `wellfed-client/tests/setup.rs`: the client against the feeder's responder through BLE framing (both keys exchanged, the ask decoded and checked), refusals, a tampered handshake and a foreign prologue failing closed.
-  - `feeder/tests/setup.rs`: setup mode in the loop against the fake peripheral and a scripted writer (press, enroll, Wi-Fi save, `Done`, reboot); an unanswered ask; a client that leaves; a foreign first message; mains-only advertising and the idle reboot.
+  - `wellfed-core/tests/setup_code.rs`: the proof press by press: one code under one handshake proves both sides; a wrong press fails at that press, before the checking side opens its own; a relay between two handshakes and a reflected message fail at the first opening; turns and message shapes.
+  - `wellfed-client/tests/setup.rs`: the client against the feeder's responder through BLE framing (keys exchanged, the code proven, the Wi-Fi only after), a mistyped code stopping the client before its Wi-Fi, a `Done` without the proof rejected, refusals, a tampered handshake and a foreign prologue failing closed.
+  - `feeder/tests/setup.rs`: setup mode in the loop against the fake peripheral and a scripted writer (code keyed in, proof, enroll, Wi-Fi save, `Done`, reboot); a wrong code enrolling nothing and timing out; a tick per press then `coin`, or `alert` for a wrong code, and silence with `sound` off; an unanswered ask; a client that leaves; a foreign first message; mains-only advertising and the idle reboot.
   - `wellfed-hal/tests/ble.rs`: advertising on request only, framed messages held until consumed, oversized frames and long sessions dropped, the radio failure.
   - `wellfed-hal/tests/network.rs` covers the mid-boot save being joined with a fresh count.
 
 ## Open questions for the bench
 
-- **Setup end to end (FW45):** the Lock and Mic hold starts setup mode, `wellfed setup` and a Dispense press enroll the key and save the Wi-Fi, and the feeder reboots and joins with `source: stored`.
+- **Setup code (FW45):** physical on October 24 ([evidence](#evidence)). Still to run: a deliberately mistyped code (`wrong-code` at the CLI, `refused reason=unconfirmed` and `alert` after 15 s), the stale-offer fix, and why the CLI's search misses an advertising feeder.
 - **Flash writes with BLE up:** the settings writer and confirmation record mask interrupts during a sector operation. Watch for HCI disruption.
 - **Heap:** `ready heap_free` read 45–70 KB with the speaker build.
 - **Task stacks:** the C-created BT tasks (`bte_task`, `trace_task`, the HCI send task and `wellfed_ble`) are outside the stack audit. They rest on the SDK's sizes and FW44's setup-mode heap figure.

@@ -2,7 +2,7 @@
 
 Status (October 24, 2026):
 - **Physical:** the generator runs in every firmware from boot. The feeder keeps its identity and seed across cold boots.
-- **Physical (October 24):** BLE setup mode end to end: `wellfed setup` enrolled the CLI's key as an owner after a Dispense press, and the feeder rejoined with the saved Wi-Fi. **Host-tested only:** the invite, signer and recovery paths. This page records the design the code implements, and what is left before the [FW45 card](../../FIRMWARE_BOARD.md) can close.
+- **Physical (October 24):** BLE setup mode end to end: `wellfed setup` enrolled the CLI's key as an owner after a Dispense press, and the feeder rejoined with the saved Wi-Fi. **Host-tested only:** the setup code that replaced that press (October 24, [why](bluetooth.md#why-a-code)), and the invite, signer and recovery paths. This page records the design the code implements, and what is left before the [FW45 card](../../FIRMWARE_BOARD.md) can close.
 
 ## No hardware RNG
 
@@ -147,12 +147,12 @@ All storage-region sectors are now named in one table, `wellfed_amebad_sys::stor
 
 | Path | Who starts it | Confirmed by | Role |
 | --- | --- | --- | --- |
-| Setup | The app over BLE in setup mode, which a Lock and Mic hold on an unlocked panel starts | A Dispense press within 60 s | Owner |
+| Setup | The app over BLE in setup mode, which a Lock and Mic hold on an unlocked panel starts | The app's one-time code keyed in on the buttons within 60 s, then proven by the app ([why](bluetooth.md#why-a-code)) | Owner |
 | Signer | An owner over the API | A Dispense press within 60 s | Update signer |
 | Invite | A paired client: an owner invites any role but a signer, a member invites members | The invite's secret as the PSK of a Noise XXpsk3 handshake, within 10 min, once | As invited |
 | Recovery | Lock and Dispense held together for 5 s on an unlocked panel | A plain XX handshake within 2 min; the window then closes | Owner |
 
-- **Dispense press:** a pending confirmation takes the next Dispense press even on a locked panel, since that press answers a pairing someone at the feeder started; it feeds nothing.
+- **Dispense press and code:** a pending signer confirmation takes the next Dispense press, and a pending setup code every gesture until it is complete, even on a locked panel, since those presses answer a pairing someone at the feeder started; they feed nothing. Records count the presses (`pair setup keyed=N`) and never name them.
 - **Recovery and the lock:** a locked panel cannot open recovery.
 - **Invite lifetime:** at most two invites are outstanding, and they live in RAM, so a reboot cancels them.
 - **Invite id:** the invite's id travels in the first handshake message's payload. That payload is not secret, and the responder needs it to choose the PSK before the third message.
@@ -162,7 +162,7 @@ The timeouts are ours: stock pairs through the vendor cloud and has no equivalen
 
 ## Left for FW45
 
-1. **BLE setup on hardware:** done (physical, October 24, [evidence](bluetooth.md#evidence)): the Lock and Mic hold, `wellfed setup`, the press, the enrollment surviving the reboot and the rejoin with the saved Wi-Fi; the locked and no-press refusals. Advertising only on mains held on batteries too.
+1. **BLE setup on hardware:** done (physical, October 24, [evidence](bluetooth.md#evidence)): the Lock and Mic hold, `wellfed setup`, the press, the enrollment surviving the reboot and the rejoin with the saved Wi-Fi; the locked and no-press refusals. Advertising only on mains held on batteries too. Since then the press became the owner's code: keyed in and proven on hardware (v111–v112); a mistyped code and the stale-offer fix are host-tested only.
 2. **Broker credentials:** stop treating them as a build input.
 3. **Optional confidence:** the full ~1,000-boot restart test, and the noise measurement on battery and when warm.
 
@@ -170,9 +170,10 @@ The timeouts are ours: stock pairs through the vendor cloud and has no equivalen
 
 The exchange and its refusals are in [Bluetooth](bluetooth.md#setup-exchange). The pieces:
 - **`wellfed-proto::setup`:** the request and replies (postcard), shared by the feeder and every client.
-- **`wellfed-feeder::setup::Responder`:** the feeder's side of Noise XX under its identity, returning the client's checked offer: its key, a label the client store accepts, and credentials the Wi-Fi store accepts.
+- **`wellfed-core::setup_code`:** the owner's code and the press-by-press proof both sides run, bound to the handshake hash.
+- **`wellfed-feeder::setup::Responder`:** the feeder's side of Noise XX under its identity, returning the client's checked offer (its key and a label the client store accepts), then running the proof and returning the Wi-Fi from the client's last step, checked against the Wi-Fi store's rules.
 - **`wellfed-client::setup::Session`:** the client's side, with the BLE framing. The owner's `wellfed setup` and the Android app share it.
-- **The loop (`feeder/src/setup.rs`):** starts the stack on the gesture, offers the key to pairing (`Pairing::setup`), and after the press queues the enrollment in the keys mailbox, waits for its result (`keys::ticket` and `keys::outcome`), then queues the Wi-Fi (`network::save`) and waits for the writer. A client that leaves before the press cancels its offer (`Pairing::cancel`), so the next press feeds again.
+- **The loop (`feeder/src/setup.rs`):** starts the stack on the gesture, offers the key to pairing (`Pairing::setup`), which collects the code from the buttons, runs the proof, and once the client has proven it queues the enrollment in the keys mailbox, waits for its result (`keys::ticket` and `keys::outcome`), then queues the Wi-Fi (`network::save`) and waits for the writer. A client that leaves before the proof cancels its offer (`Pairing::cancel`), so the next press feeds again.
 - **Not at boot:** the product architecture first chose setup mode at boot, but every free KM0 backup register is taken, so a "setup next boot" flag has nowhere to live. The gesture starts the stack on the running feeder instead, and a reboot still ends it.
 
 The LAN handshakes for invites and the recovery window run over FW47's Noise stream and land with it. The policy and the window are already in the firmware.

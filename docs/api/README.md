@@ -191,7 +191,7 @@ Pinned in `[workspace.dependencies]`; a new dependency needs a reason in its pul
 | Releases | `reqwest` with rustls (already in `wellfed-local`), `ed25519-dalek` (already) |
 | Observability | `tracing` and `tracing-subscriber` (already) |
 | Tests | `insta` (snapshots), `proptest` (codec round trips), `tower::ServiceExt` (in-process requests), `sqlx::test` |
-| Hygiene | `cargo-deny` (licenses, advisories, duplicates), `cargo-nextest` |
+| Hygiene | `cargo-deny` (licenses, advisories, duplicates) and `cargo-nextest`, both in place ([Rust standard](../development/rust.md)) |
 
 ## Quality standard
 

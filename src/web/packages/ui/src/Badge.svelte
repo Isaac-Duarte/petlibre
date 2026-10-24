@@ -24,29 +24,29 @@
     gap: 6px;
     height: 22px;
     padding: 0 10px;
-    border-radius: var(--pill);
-    font-size: var(--t-xs);
+    border-radius: var(--radius-pill);
+    font-size: var(--text-xs);
     font-weight: 600;
     white-space: nowrap;
-    background: var(--sunken);
-    color: var(--muted);
+    background: var(--color-sunken);
+    color: var(--color-text-muted);
     border: 1px solid transparent;
   }
   .pass {
-    background: var(--pass-soft);
-    color: var(--pass);
+    background: var(--color-ok-soft);
+    color: var(--color-ok);
   }
   .fail {
-    background: var(--fail-soft);
-    color: var(--fail);
+    background: var(--color-fault-soft);
+    color: var(--color-fault);
   }
   .live {
-    background: var(--accent-soft);
-    color: var(--accent);
+    background: var(--color-accent-soft);
+    color: var(--color-accent);
   }
   .warn {
-    background: var(--warn-soft);
-    color: var(--warn);
+    background: var(--color-warning-soft);
+    color: var(--color-warning);
   }
   .quiet {
     background: transparent;

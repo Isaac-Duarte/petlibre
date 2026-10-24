@@ -13,6 +13,7 @@
       area.value = text;
       document.body.append(area);
       area.select();
+      // eslint-disable-next-line @typescript-eslint/no-deprecated -- the only copy that works outside a secure context
       document.execCommand("copy");
       area.remove();
     }
@@ -30,15 +31,15 @@
   .copy {
     height: 26px;
     padding: 0 12px;
-    border-radius: var(--pill);
-    border: 1px solid var(--line-strong);
-    background: var(--surface);
-    font-size: var(--t-xs);
+    border-radius: var(--radius-pill);
+    border: 1px solid var(--color-line-strong);
+    background: var(--color-surface);
+    font-size: var(--text-xs);
     font-weight: 500;
     cursor: pointer;
     white-space: nowrap;
   }
   .copy:hover {
-    border-color: var(--ink);
+    border-color: var(--color-text);
   }
 </style>

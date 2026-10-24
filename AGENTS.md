@@ -17,7 +17,7 @@
 
 ## Rust conventions
 
-Everything first-party is under `src/`. The Rust workspace is `src/sdk/` (the SDK every firmware builds on), `src/product/` (product policy shared by the firmware and the server, starting with `wellfed-feeder`), `src/tools/wellfed-*` and `src/tools/xtask` (host tools) and `src/firmware/wellfed/` (one crate per firmware); `src/firmware/vendor/` holds the AmebaD C ports, pins and image build, `src/web/` the web frontends and `src/app/` the Flutter Android app. The compiler enforces most of these rules. Every crate inherits `[workspace.lints]`, and `make check-rust` runs a second Clippy pass over libraries and binaries with `PRODUCTION_LINTS` (no `unwrap`, no narrowing `as`, no needless by-value parameters, no unreachable `pub`). A deliberate exception is an `#[expect(lint, reason = "…")]` at the narrowest scope. Keep existing crate names, public protocols and the C ABI unless the task requires a compatibility change. Every host tool is Rust; the Python tools were ported or retired by October 23, 2026, and `cargo xtask check-repository` refuses Python under `src/`.
+Everything first-party is under `src/`. The Rust workspace is `src/sdk/` (the SDK every firmware builds on), `src/product/` (product policy shared by the firmware and the server, starting with `wellfed-feeder`), `src/tools/wellfed-*` and `src/tools/xtask` (host tools) and `src/firmware/wellfed/` (one crate per firmware); `src/firmware/vendor/` holds the AmebaD C ports, pins and image build, `src/web/` the web frontends and `src/app/` the Flutter Android app. The [Rust standard](docs/development/rust.md) is the full rule set, with what enforces each rule; in short, the compiler enforces most of them. Every crate inherits `[workspace.lints]`, and `make check-rust` runs a second Clippy pass over libraries and binaries with `PRODUCTION_LINTS` (no `unwrap`, no narrowing `as`, no needless by-value parameters, no unreachable `pub`). `make check-deps` runs cargo-deny over licenses, advisories and sources (`deny.toml`), and tests run under cargo-nextest. A deliberate exception is an `#[expect(lint, reason = "…")]` at the narrowest scope. Keep existing crate names, public protocols and the C ABI unless the task requires a compatibility change. Every host tool is Rust; the Python tools were ported or retired by October 23, 2026, and `cargo xtask check-repository` refuses Python under `src/`.
 
 - **Typed data.** Model JSON with `#[derive(Serialize, Deserialize)]` structs and enums. Use `serde_json::Value` only for JSON that is genuinely opaque: hashed or replayed verbatim, or passed through unread.
 - **Shared formats.** A file one crate writes and another reads gets its type in `wellfed-formats`, not a copy in each reader. Anything hashed goes through `wellfed_formats::canonical`, which fixes the bytes regardless of field order.
@@ -41,10 +41,11 @@ The Android app in `src/app/` is the only Dart in the repository. Its protocol l
 
 ## Web conventions
 
-The web frontends in `src/web/` follow the [web UI design](docs/web/README.md); its quality standard is the full rule set. In short:
+The web frontends in `src/web/` follow the [TypeScript standard](docs/development/typescript.md) (the full rule set and its enforcement) and the [web UI design](docs/web/README.md). In short:
 
 - **Generated contracts.** The server UI's types and client come from `openapi.json`, the bench's from ts-rs, and colors and spacing from `assets/brand/tokens.json`. Never hand-write a TypeScript copy of a Rust type or a hex value.
 - **Boundaries.** Only `packages/ui` imports bits-ui, and only the API layer touches `fetch`, `EventSource` or `BroadcastChannel`. ESLint enforces both.
+- **Dependencies.** Exact versions, a frozen lockfile, a 7-day minimum release age, no install scripts unless listed, and an allowed license (`pnpm run licenses`).
 - **Feeding safety.** Mutations never retry. A feed keeps one idempotency key from confirm to a terminal result, and an uncertain feed is never retried.
 - **Strict and quiet.** Strict TypeScript with no `any`, non-null assertions or casts outside generated code; zero warnings from svelte-check, ESLint and Prettier; a deliberate lint disable carries its reason on the same line.
 
@@ -63,7 +64,8 @@ Old on-disk evidence and stale file fields may break when that makes the code si
 | Any Rust edit | `cargo fmt --all`, then `make check` (the contributor gate) |
 | Builder, audits, formats or flash review | Also `make check-fixtures` against fresh builds (`make -C src/firmware/vendor device firstboot`) |
 | Firmware crates | Also a fresh image build, so its link, RAM-park and stack audits run |
-| `src/web/`, or the views `wellfed-bench --ui` serves | Also `make check-web` (needs Node and pnpm): web types, unit tests, the build, and Playwright against the real binary |
+| `src/web/`, or the views `wellfed-bench --ui` serves | Also `make check-web` (needs Node and pnpm): ESLint, Prettier, licenses, web types, unit tests, the build, and Playwright against the real binary |
+| `Cargo.lock` or `deny.toml` | `make check` includes `check-deps` (cargo-deny); its first run downloads the RustSec database |
 | `src/app/`, or a `wellfed-client` type the app uses | Also `make check-app` (needs the Flutter SDK): bindings regenerated with no diff, `dart format`, `flutter analyze`, `flutter test`, and a debug APK build |
 
 A skipped or missing fixture is not a passing check. `make check-app` arrives with the first app code (FP19); until then no change touches `src/app/`.

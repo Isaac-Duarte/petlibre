@@ -1,4 +1,4 @@
-import "@wellfed/ui/tokens.css";
+import "@wellfed/ui/base.css";
 import { mount } from "svelte";
 import App from "./App.svelte";
 

@@ -1,6 +1,15 @@
 import type { CatalogEntry, ScenarioStats, Snapshot } from "@wellfed/api";
 import { describe, expect, it } from "vitest";
-import { includes, itestCommand, liveRun, missingFlags, nextRunName, passRate, runLabel, type RunOptions } from "./tests";
+import {
+  includes,
+  itestCommand,
+  liveRun,
+  missingFlags,
+  nextRunName,
+  passRate,
+  runLabel,
+  type RunOptions,
+} from "./tests";
 
 const catalog: CatalogEntry[] = [
   { name: "ota-update", about: "install", tier: "smoke", needs: [], baseline: true },
@@ -14,6 +23,11 @@ const catalog: CatalogEntry[] = [
   },
   { name: "soak", about: "pings", tier: "soak", needs: [], baseline: false },
 ];
+
+/** A scenario's stats with only the counts the test is about. */
+function stats(pass: number, fail: number, skip: number): ScenarioStats {
+  return { scenario: "requests", pass, fail, skip, median_seconds: null, last_failure: null, history: [], flips: 0 };
+}
 
 const options: RunOptions = {
   name: "itest-20261022-15",
@@ -86,7 +100,8 @@ describe("run builder", () => {
   });
 
   it("names the flags a scenario would be skipped without", () => {
-    const persist = catalog[2]!;
+    const persist = catalog[2];
+    if (!persist) throw new Error("the catalog fixture has three entries");
     expect(missingFlags(persist, options)).toEqual(["--power"]);
     expect(missingFlags(persist, { ...options, power: true })).toEqual([]);
   });
@@ -103,16 +118,17 @@ describe("run builder", () => {
 
   it("suggests the next run name for today", () => {
     const today = new Date(2026, 9, 22);
-    expect(nextRunName(["itest-20261022-09", "itest-20261022-14", "itest-20261021-30"], today)).toBe("itest-20261022-15");
+    expect(nextRunName(["itest-20261022-09", "itest-20261022-14", "itest-20261021-30"], today)).toBe(
+      "itest-20261022-15",
+    );
     expect(nextRunName([], today)).toBe("itest-20261022-01");
   });
 });
 
 describe("history", () => {
   it("rates passes over runs that reached a verdict", () => {
-    const stats = { pass: 3, fail: 1, skip: 5 } as ScenarioStats;
-    expect(passRate(stats)).toBe(0.75);
-    expect(passRate({ pass: 0, fail: 0, skip: 2 } as ScenarioStats)).toBeNull();
+    expect(passRate(stats(3, 1, 5))).toBe(0.75);
+    expect(passRate(stats(0, 0, 2))).toBeNull();
   });
 
   it("labels run columns by their sequence number", () => {

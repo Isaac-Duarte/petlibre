@@ -1,0 +1,109 @@
+/*
+ * The page base every wellfed web frontend imports: the Midnight tokens
+ * (generated from assets/brand/tokens.json), the bundled fonts and element
+ * defaults. Components use the token names only, so a theme switch
+ * (prefers-color-scheme, or data-theme on <html>) never needs a branch.
+ */
+@import "@wellfed/tokens/tokens.css";
+
+/* Latin only: the page is embedded in a binary, and its text is English and hex. */
+@font-face {
+  font-family: "Inter Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("@fontsource-variable/inter/files/inter-latin-wght-normal.woff2") format("woff2-variations");
+}
+
+@font-face {
+  font-family: "JetBrains Mono Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 800;
+  src: url("@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2")
+    format("woff2-variations");
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-background);
+  color: var(--color-text);
+  font: var(--weight-body) var(--text-base) / 1.5 var(--font);
+  font-feature-settings:
+    "tnum" 1,
+    "cv11" 1;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.01em;
+}
+
+h2 {
+  font-size: var(--text-md);
+}
+
+h3 {
+  font-size: var(--text-base);
+}
+
+code,
+pre,
+kbd {
+  font-family: var(--mono);
+  font-size: 0.92em;
+}
+
+a {
+  color: var(--color-accent);
+  text-underline-offset: 2px;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: none;
+  /* The ring follows each element's own radius. */
+  box-shadow: var(--focus);
+}
+
+/* Read by assistive technology, not shown: a fuller accessible name. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+::selection {
+  background: var(--color-accent-soft);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

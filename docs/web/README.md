@@ -1,6 +1,6 @@
 # Web UI design
 
-The architecture, conventions and quality bar for `wellfed-server`'s web UI: the browser front end that household members use to feed, schedule, follow history and run the server. This is a design (Oct 24, 2026); nothing here is built yet. It serves the [product architecture](../firmware/product-architecture.md) and sits on the [server HTTP API](../api/README.md#server-http-api), which it changes in a few places (listed under [API changes](#api-changes)).
+The architecture, conventions and quality bar for `wellfed-server`'s web UI: the browser front end that household members use to feed, schedule, follow history and run the server. This is a design (Oct 24, 2026). Step 1 of the [build order](#build-order), the foundations, is built (FP20); the server app is not. It serves the [product architecture](../firmware/product-architecture.md) and sits on the [server HTTP API](../api/README.md#server-http-api), which it changes in a few places (listed under [API changes](#api-changes)).
 
 The UI is a single-page app embedded in the server binary. It talks only to the server, never to a feeder, and ships in the same binary as the API it calls, so the two can never disagree about a version.
 
@@ -45,7 +45,7 @@ Every screen works at phone width (mobile-first, full parity). Developers use th
 ```text
 src/web/
   apps/
-    bench/                 the bench page (unchanged stack; moves to the new tokens)
+    bench/                 the bench page (its own stack, on the shared tokens and components)
     server/                the server UI: SvelteKit, embedded by wellfed-server
   packages/
     tokens/                generated CSS from assets/brand/tokens.json, plus the contrast test
@@ -147,7 +147,7 @@ The [API rules](../api/README.md#server-runtime) carry through to the browser:
 ## Look and feel
 
 - **Brand:** Midnight ([brand](../../assets/brand/README.md)): Night `#0B1424`, Navy `#13213A`, Signal `#2563EB` (`signal_on_dark` `#3B82F6` on dark grounds), Mist `#F4F6FA`, and Kibble `#E0A13A` for food states only. Inter: 800 for display, 400 to 600 for UI. Radii 12 (controls), 20 (cards), 14 (icons).
-- **A light app with one confident blue,** with dark surfaces for brand moments (login, welcome, empty states), and a full dark theme built from night, navy and the on-dark text colors.
+- **A light app with one confident blue,** with dark surfaces for brand moments (login, welcome, empty states), and a full dark theme in neutral graphite grays (`graphite*` in `tokens.json`), with the signal blue kept for accents. Night and navy stay for the brand surfaces.
 - **Device imagery** comes only from `assets/renders/`: `card` and `card-dark` on cards, `front-food-*` for the food level, `panel` with hotspots for button and indicator help. Indicators are drawn over the render from the hotspot JSON; only the fault light's red is a recorded color, so other lit indicators show as a highlight, not a guessed color. The "not affiliated" line stays wherever the device appears with our brand.
 - **Tokens to add to `tokens.json`:** state colors (ok, warning, fault, info) for both themes, a spacing scale, a type scale, focus ring, elevation and motion durations. The generator fails the build when a text and background pair named in the file misses WCAG AA contrast.
 - **The bench moves to the same tokens,** keeping its denser layout and monospace numbers.
@@ -185,17 +185,11 @@ What this design asks of the [API doc](../api/README.md), applied there:
 
 ## Quality standard
 
-The repository's [conventions](../../AGENTS.md) apply where they fit. On top of them:
+The [TypeScript standard](../development/typescript.md) is the full rule set for the code (strict types, no `any`, `!` or `as` outside the API boundary, zero warnings, runes only, the dependency policy) and names what enforces each rule. On top of it, the UI holds to:
 
-- **Strict TypeScript:** the existing base (`strict`, `noUncheckedIndexedAccess`, `verbatimModuleSyntax`) everywhere. No `any`, no non-null assertions, and no `as` casts outside the generated boundary. A deliberate exception is a lint disable on one line with its reason, as `#[expect(…, reason)]` is in Rust.
-- **Zero warnings:** `svelte-check --fail-on-warnings`, ESLint with no warnings, and `prettier --check`, all in `make check-web`.
-- **Runes only.** `$state`, `$derived` and `$props`; no `svelte/store` in app code. Prefer `$derived` to `$effect`; an effect only syncs with something outside Svelte (the DOM, the stream) and says why.
 - **Components:** typed props, snippets for content, one concern each. A component that fetches is a feature component; `packages/ui` components never fetch.
-- **Generated files are never edited:** `server.gen.ts`, the token CSS and Paraglide's output are regenerated and committed with the change that caused them, and `make check-web` fails on a diff.
 - **Accessibility:** WCAG 2.2 AA. Semantic HTML first, every control reachable and operable by keyboard, visible focus, 44 px touch targets on phones, `prefers-reduced-motion` respected, and tests that find elements by role and name.
 - **Performance budgets,** checked after the build: at most 150 KB of gzipped JavaScript for the first route, and charts loaded only on chart routes.
-- **Dependencies:** exact versions and a frozen lockfile (as today); `minimumReleaseAge` of 7 days in `pnpm-workspace.yaml`; install scripts allowed only for listed packages; and each new package justified in its change, with its license checked.
-- **Comments** explain why, as in Rust: an invariant, a browser quirk, a feeding-safety rule.
 
 ## Tests by layer
 
@@ -212,7 +206,7 @@ Visual screenshot tests are left out of v1: fonts and rendering differ across ma
 
 ## Build order
 
-1. **Foundations:** the token pipeline and contrast test, `@wellfed/ui` on bits-ui, the bench moved to the new tokens, ESLint and Prettier in `make check-web`.
+1. **Foundations (done, FP20):** the token pipeline and contrast test, `@wellfed/ui` on bits-ui, the bench moved to the new tokens, ESLint and Prettier in `make check-web`.
 2. **Skeleton:** the SvelteKit app, client, errors, stream with leader election, auth and first-owner setup, Paraglide, the shell and navigation, and the Playwright harness against the server and simulator.
 3. **Feed, status and schedules:** home, feeder, plans and settings, with the feeding-safety tests.
 4. **History and charts.**

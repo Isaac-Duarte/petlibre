@@ -27,7 +27,7 @@ export interface LiveRun {
  */
 export function liveRun(snapshot: Snapshot | null, catalog: CatalogEntry[], now: number): LiveRun | null {
   const current = snapshot?.current;
-  if (!current || current.command !== "itest" || current.outcome !== "running") return null;
+  if (current?.command !== "itest" || current.outcome !== "running") return null;
 
   const scenarios = current.steps.map((step) => ({
     name: step.label,

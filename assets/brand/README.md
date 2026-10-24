@@ -12,7 +12,7 @@ Direction **Midnight** with mark **1a (slim band)**, chosen Oct 23, 2026. Licens
 | `wordmark.svg` | "WELLFED" alone, outlined |
 | `app-icon.svg`, `favicon.svg` | The mark on a navy tile; PNGs in `png/` |
 | `android/` | The adaptive launcher icon (foreground, monochrome for themed icons, navy background) |
-| `tokens.json` | Colors, type and radii shared by the app and the web UI |
+| `tokens.json` | The palette, light and dark theme roles (the dark theme is neutral graphite), the contrast pairs every theme must meet, and type, spacing, radii, focus, elevation and motion, shared by the app and the web UI. `pnpm generate` in `src/web/` writes the CSS and refuses a pair under its minimum |
 
 ## Rules
 

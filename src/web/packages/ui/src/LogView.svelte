@@ -1,9 +1,6 @@
-<script lang="ts" module>
-  /** A line class the log colours by; empty for plain output. */
-  export type LineKind = "" | "bad" | "warn" | "ok" | "cmd" | "mark";
-</script>
-
 <script lang="ts">
+  import type { LineKind } from "./log";
+
   // Only the visible window of lines is in the DOM: a long install or an
   // integration run writes tens of thousands of lines, and the page keeps
   // all of them for filtering and copying.
@@ -38,7 +35,8 @@
 
   // New lines while following: jump to the end once they render.
   $effect(() => {
-    void lines.length;
+    // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- read so the effect re-runs on new lines
+    lines.length;
     if (follow && viewport) {
       const element = viewport;
       queueMicrotask(() => {
@@ -83,10 +81,10 @@
 <style>
   .log {
     overflow: auto;
-    background: var(--sunken);
-    border-radius: var(--radius);
-    font: 400 var(--t-xs) / 19px var(--mono);
-    color: var(--ink-2);
+    background: var(--color-sunken);
+    border-radius: var(--radius-control);
+    font: 400 var(--text-xs) / 19px var(--mono);
+    color: var(--color-text);
     overscroll-behavior: contain;
   }
   .space {
@@ -97,36 +95,36 @@
     position: absolute;
     inset: 0 auto auto 0;
     min-width: 100%;
-    padding: 0 var(--s-3);
+    padding: 0 var(--space-3);
   }
   .line {
     height: 19px;
     white-space: pre;
   }
   .bad {
-    color: var(--fail);
+    color: var(--color-fault);
     font-weight: 600;
   }
   .warn {
-    color: var(--warn);
+    color: var(--color-warning);
   }
   .ok {
-    color: var(--pass);
+    color: var(--color-ok);
   }
   .cmd {
-    color: var(--accent);
+    color: var(--color-accent);
   }
   /* A scenario or phase boundary, so a long run reads in sections. */
   .mark {
-    color: var(--ink);
+    color: var(--color-text);
     font-weight: 600;
-    border-top: 1px solid var(--line-strong);
+    border-top: 1px solid var(--color-line-strong);
   }
   .empty {
     margin: 0;
-    padding: var(--s-4);
-    color: var(--muted);
+    padding: var(--space-4);
+    color: var(--color-text-muted);
     font-family: var(--font);
-    font-size: var(--t-sm);
+    font-size: var(--text-sm);
   }
 </style>

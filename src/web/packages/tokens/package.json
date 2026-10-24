@@ -1,0 +1,19 @@
+{
+  "name": "@wellfed/tokens",
+  "private": true,
+  "type": "module",
+  "description": "CSS custom properties generated from assets/brand/tokens.json, with the contrast check",
+  "exports": {
+    "./tokens.css": "./src/tokens.gen.css"
+  },
+  "scripts": {
+    "generate": "node src/generate.ts",
+    "check": "tsc -p .",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "typescript": "6.0.3",
+    "vitest": "5.0.5"
+  }
+}

@@ -33,12 +33,12 @@
   .row {
     display: flex;
     justify-content: space-between;
-    gap: var(--s-3);
-    font-size: var(--t-sm);
+    gap: var(--space-3);
+    font-size: var(--text-sm);
     margin-bottom: 6px;
   }
   .label {
-    color: var(--muted);
+    color: var(--color-text-muted);
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -49,19 +49,19 @@
   }
   .track {
     height: 4px;
-    background: var(--line);
-    border-radius: var(--pill);
+    background: var(--color-line);
+    border-radius: var(--radius-pill);
     overflow: hidden;
   }
   .fill {
     height: 100%;
-    background: var(--accent);
+    background: var(--color-accent);
     transition: width 0.4s ease;
   }
   .fill.pass {
-    background: var(--pass);
+    background: var(--color-ok);
   }
   .fill.fail {
-    background: var(--fail);
+    background: var(--color-fault);
   }
 </style>

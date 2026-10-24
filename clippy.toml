@@ -1,0 +1,13 @@
+# Clippy configuration for every crate. The lint levels themselves live in
+# Cargo.toml's [workspace.lints] and the Makefile's PRODUCTION_LINTS; this file
+# only tunes them. See docs/development/rust.md.
+
+# Tests may unwrap, expect and dbg!: a panic there is a failed test, never a
+# crash on input. The production pass in `make check-rust` excludes test code
+# anyway; these keep `--all-targets` runs consistent with it.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-dbg-in-tests = true
+
+# Nothing is published, so lints may suggest changing a `pub` signature.
+avoid-breaking-exported-api = false

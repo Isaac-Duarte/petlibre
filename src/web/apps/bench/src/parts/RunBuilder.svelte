@@ -22,10 +22,12 @@
   const full = $derived({ ...options, name: name.trim() || suggested });
   const command = $derived(itestCommand(full));
   const skipped = $derived(
-    catalog.filter((entry) => includes(entry, full)).flatMap((entry) => {
-      const missing = missingFlags(entry, full);
-      return missing.length ? [{ name: entry.name, missing }] : [];
-    }),
+    catalog
+      .filter((entry) => includes(entry, full))
+      .flatMap((entry) => {
+        const missing = missingFlags(entry, full);
+        return missing.length ? [{ name: entry.name, missing }] : [];
+      }),
   );
 
   const TIERS: { tier: Tier; label: string }[] = [
@@ -35,7 +37,9 @@
   ];
 
   function toggle(scenario: string) {
-    options.only = options.only.includes(scenario) ? options.only.filter((s) => s !== scenario) : [...options.only, scenario];
+    options.only = options.only.includes(scenario)
+      ? options.only.filter((s) => s !== scenario)
+      : [...options.only, scenario];
   }
 
   // --destructive requires --power, as the CLI does.
@@ -74,9 +78,13 @@
 
     <fieldset class="flags">
       <legend>Allow</legend>
-      <label><input type="checkbox" bind:checked={options.build} /> <code>--build</code> variants from this checkout</label>
+      <label
+        ><input type="checkbox" bind:checked={options.build} /> <code>--build</code> variants from this checkout</label
+      >
       <label><input type="checkbox" bind:checked={options.power} /> <code>--power</code> cold boots</label>
-      <label><input type="checkbox" bind:checked={options.destructive} /> <code>--destructive</code> power cuts mid-update</label>
+      <label
+        ><input type="checkbox" bind:checked={options.destructive} /> <code>--destructive</code> power cuts mid-update</label
+      >
       <label><input type="checkbox" bind:checked={options.keepGoing} /> <code>--keep-going</code> past a failure</label>
     </fieldset>
   </div>
@@ -93,9 +101,13 @@
               type="checkbox"
               checked={entry.baseline || options.only.includes(entry.name)}
               disabled={entry.baseline}
-              onchange={() => toggle(entry.name)}
+              onchange={() => {
+                toggle(entry.name);
+              }}
               aria-label="Only {entry.name}"
-              title={entry.baseline ? "Installs the build under test; every run starts with it" : `Run only the checked scenarios`}
+              title={entry.baseline
+                ? "Installs the build under test; every run starts with it"
+                : `Run only the checked scenarios`}
             />
           </td>
           <td>
@@ -120,32 +132,32 @@
     </p>
   {/if}
 
-  <Command command={command} />
+  <Command {command} />
 </Panel>
 
 <style>
   .controls {
     display: grid;
     grid-template-columns: minmax(180px, 260px) auto minmax(0, 1fr);
-    gap: var(--s-4) var(--s-5);
+    gap: var(--space-4) var(--space-5);
     align-items: start;
-    margin-bottom: var(--s-4);
+    margin-bottom: var(--space-4);
   }
   .field {
     display: flex;
     flex-direction: column;
     gap: 6px;
-    font-size: var(--t-sm);
-    color: var(--muted);
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
   }
   input[type="text"] {
     height: 34px;
-    padding: 0 var(--s-3);
-    border: 1px solid var(--line-strong);
-    border-radius: var(--pill);
-    background: var(--surface);
-    color: var(--ink);
-    font: var(--t-sm) var(--mono);
+    padding: 0 var(--space-3);
+    border: 1px solid var(--color-line-strong);
+    border-radius: var(--radius-pill);
+    background: var(--color-surface);
+    color: var(--color-text);
+    font: var(--text-sm) var(--mono);
   }
   input[type="text"]:focus {
     outline: none;
@@ -156,45 +168,45 @@
     align-items: center;
     gap: 2px;
     padding: 3px;
-    background: var(--sunken);
-    border-radius: var(--pill);
+    background: var(--color-sunken);
+    border-radius: var(--radius-pill);
     width: max-content;
   }
   .segmented button {
     height: 28px;
     padding: 0 14px;
     border: 0;
-    border-radius: var(--pill);
+    border-radius: var(--radius-pill);
     background: none;
-    color: var(--muted);
+    color: var(--color-text-muted);
     cursor: pointer;
-    font-size: var(--t-sm);
+    font-size: var(--text-sm);
     font-weight: 500;
   }
   .segmented button.on {
-    background: var(--surface);
-    color: var(--ink);
-    box-shadow: 0 0 0 1px var(--line);
+    background: var(--color-surface);
+    color: var(--color-text);
+    box-shadow: 0 0 0 1px var(--color-line);
   }
   .only {
     padding: 0 10px;
-    color: var(--accent);
-    font-size: var(--t-xs);
+    color: var(--color-accent);
+    font-size: var(--text-xs);
     font-weight: 600;
   }
   .flags {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
-    gap: 6px var(--s-4);
+    gap: 6px var(--space-4);
     margin: 0;
     padding: 0;
     border: 0;
-    font-size: var(--t-sm);
+    font-size: var(--text-sm);
   }
   .flags legend {
     padding: 0;
     margin-bottom: 6px;
-    color: var(--muted);
+    color: var(--color-text-muted);
   }
   .flags label {
     display: flex;
@@ -203,24 +215,24 @@
     white-space: nowrap;
   }
   input[type="checkbox"] {
-    accent-color: var(--ink);
+    accent-color: var(--color-text);
   }
   .catalog {
     width: 100%;
     border-collapse: collapse;
-    font-size: var(--t-sm);
-    margin-bottom: var(--s-4);
+    font-size: var(--text-sm);
+    margin-bottom: var(--space-4);
   }
   .catalog th {
     text-align: left;
     font-weight: 500;
-    font-size: var(--t-xs);
-    color: var(--muted);
-    padding: 0 var(--s-2) 6px;
+    font-size: var(--text-xs);
+    color: var(--color-text-muted);
+    padding: 0 var(--space-2) 6px;
   }
   .catalog td {
-    padding: 8px var(--s-2);
-    border-top: 1px solid var(--line);
+    padding: 8px var(--space-2);
+    border-top: 1px solid var(--color-line);
     vertical-align: top;
   }
   .catalog tr:not(.included) td:not(:first-child) {
@@ -229,30 +241,30 @@
   .name {
     display: block;
     font-family: var(--mono);
-    font-size: var(--t-xs);
+    font-size: var(--text-xs);
     font-weight: 600;
   }
   .about {
-    color: var(--muted);
+    color: var(--color-text-muted);
   }
   .needs {
     white-space: nowrap;
   }
   .needs code {
     margin-right: 6px;
-    font-size: var(--t-xs);
+    font-size: var(--text-xs);
   }
   .needs code.missing {
-    color: var(--warn);
+    color: var(--color-warning);
     font-weight: 600;
   }
   .warning {
-    margin: 0 0 var(--s-3);
-    padding: var(--s-2) var(--s-3);
-    background: var(--warn-soft);
-    color: var(--warn);
-    border-radius: var(--radius);
-    font-size: var(--t-sm);
+    margin: 0 0 var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    background: var(--color-warning-soft);
+    color: var(--color-warning);
+    border-radius: var(--radius-control);
+    font-size: var(--text-sm);
   }
   .sr {
     position: absolute;

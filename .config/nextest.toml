@@ -1,0 +1,10 @@
+# cargo-nextest, the test runner `make check-rust` uses. Each test runs in its
+# own process, so a test that hangs on a loopback socket or the simulator
+# worker is named and killed instead of stalling the whole suite.
+
+[profile.default]
+# Reported after 60 s and killed after 180 s. Every host test is synthetic and
+# finishes in seconds; one that needs longer says why in a per-test override.
+slow-timeout = { period = "60s", terminate-after = 3 }
+# Report every failure in one run rather than stopping at the first.
+fail-fast = false

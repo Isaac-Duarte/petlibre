@@ -1,3 +1,22 @@
 packages:
   - packages/*
   - apps/*
+
+# Dependency policy (docs/development/typescript.md#dependencies).
+# A release must be a week old before it can be installed, so a compromised
+# version is usually yanked before it reaches the lockfile.
+minimumReleaseAge: 10080
+# Exact versions that were already in the lockfile when the policy arrived
+# (Oct 24, 2026). All are a week old by Oct 29; drop the list then.
+minimumReleaseAgeExclude:
+  - vite@8.3.5
+  - rolldown@1.2.15
+  # Rolldown's native bindings, one per platform, released with rolldown.
+  - "@rolldown/binding-*"
+  - "@oxc-project/types@0.155.0"
+  - postcss@8.5.31
+# Added packages are pinned exactly; the lockfile is frozen in every check.
+savePrefix: ""
+# No dependency runs an install script unless it is listed here.
+strictDepBuilds: true
+allowBuilds: {}

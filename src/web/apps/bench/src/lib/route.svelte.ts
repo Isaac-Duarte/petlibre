@@ -18,7 +18,9 @@ class Route {
   constructor() {
     if (typeof window === "undefined") return;
     this.#read();
-    window.addEventListener("hashchange", () => this.#read());
+    window.addEventListener("hashchange", () => {
+      this.#read();
+    });
   }
 
   #read() {

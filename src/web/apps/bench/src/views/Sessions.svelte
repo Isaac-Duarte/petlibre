@@ -10,9 +10,12 @@
   const selected = $derived(route.tab === "sessions" ? route.detail : null);
 
   let detail = $state<SessionView | null>(null);
+  // The detail only once it is the selected session's, not the last one's.
+  const shown = $derived(detail?.name === selected ? detail : null);
   $effect(() => {
     const name = selected;
-    void app.sessions; // re-read with the list
+    // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- read so the effect re-runs with the list
+    app.sessions;
     if (!name) {
       detail = null;
       return;
@@ -22,23 +25,29 @@
       .then((view) => {
         if (name === selected) detail = view;
       })
-      .catch(() => {});
+      .catch(() => {
+        // Keep the last detail shown; the list's own refresh reports a dead server.
+      });
   });
 
   function facts(part: SessionView["parts"][number]): [string, unknown][] {
-    if ("plan" in part) return Object.entries((part.plan as Record<string, unknown> | null) ?? {});
-    const report = (part.report as Record<string, unknown> | null) ?? {};
-    const { result, ...rest } = report;
-    const entries = Object.entries(rest).filter(([key]) => key !== "status");
-    if (result && typeof result === "object") entries.push(...Object.entries(result));
+    if ("plan" in part) return fields(part.plan);
+    const report = fields(part.report);
+    const entries = report.filter(([key]) => key !== "status" && key !== "result");
+    entries.push(...fields(report.find(([key]) => key === "result")?.[1]));
     if (part.serial) entries.push(["serial sent", bytes(part.serial.tx)], ["serial received", bytes(part.serial.rx)]);
     return entries;
   }
 
+  /** A JSON object's fields; nothing for anything else. */
+  function fields(value: unknown): [string, unknown][] {
+    return value !== null && typeof value === "object" && !Array.isArray(value) ? Object.entries(value) : [];
+  }
+
   function stateOf(part: SessionView["parts"][number]): string {
     if ("plan" in part) return "prepared";
-    const report = part.report as { status?: string } | null;
-    return report?.status ?? "no report";
+    const status = fields(part.report).find(([key]) => key === "status")?.[1];
+    return typeof status === "string" ? status : "no report";
   }
 </script>
 
@@ -56,7 +65,11 @@
           {#each sessions as s (s.name)}
             <tr class:sel={s.name === selected}>
               <td class="name"><a href={route.href("sessions", s.name === selected ? null : s.name)}>{s.name}</a></td>
-              <td class="wide"><span class="parts">{#each s.parts as p (p)}<span class="part">{p}</span>{/each}</span></td>
+              <td class="wide"
+                ><span class="parts"
+                  >{#each s.parts as p (p)}<span class="part">{p}</span>{/each}</span
+                ></td
+              >
               <td class="state"><LiveDot tone={toneOf(s.outcome)} /> {s.outcome}</td>
               <td class="r muted" title={fullTime(s.modified)}>{ago(s.modified, app.now)}</td>
             </tr>
@@ -71,10 +84,10 @@
       {#snippet actions()}
         <a class="close" href={route.href("sessions")}>Close</a>
       {/snippet}
-      {#if !detail || detail.name !== selected}
+      {#if !shown}
         <Empty title="Reading the session" />
       {:else}
-        {#each detail.parts as part (part.kind)}
+        {#each shown.parts as part (part.kind)}
           <section class="part-detail">
             <header>
               <h3>{part.kind}</h3>
@@ -84,7 +97,7 @@
             <Kv entries={facts(part)} />
           </section>
         {/each}
-        {#if detail.next}<Command caption="Execute after review" command={detail.next} />{/if}
+        {#if shown.next}<Command caption="Execute after review" command={shown.next} />{/if}
       {/if}
     </Panel>
   {/if}
@@ -94,7 +107,7 @@
   .layout {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
-    gap: var(--s-5);
+    gap: var(--space-5);
     align-items: start;
   }
   .layout.open {
@@ -103,38 +116,38 @@
   table {
     width: 100%;
     border-collapse: collapse;
-    font-size: var(--t-sm);
+    font-size: var(--text-sm);
   }
   th {
     text-align: left;
     font-weight: 500;
-    font-size: var(--t-xs);
-    color: var(--muted);
-    padding: 0 var(--s-2) 6px;
+    font-size: var(--text-xs);
+    color: var(--color-text-muted);
+    padding: 0 var(--space-2) 6px;
   }
   td {
-    padding: 8px var(--s-2);
-    border-top: 1px solid var(--line);
+    padding: 8px var(--space-2);
+    border-top: 1px solid var(--color-line);
     white-space: nowrap;
   }
   th:first-child,
   td:first-child {
-    padding-left: var(--s-5);
+    padding-left: var(--space-5);
   }
   th:last-child,
   td:last-child {
-    padding-right: var(--s-5);
+    padding-right: var(--space-5);
   }
   tr.sel td {
-    background: var(--sunken);
+    background: var(--color-sunken);
   }
   tr.sel td:first-child {
-    box-shadow: inset 3px 0 0 var(--ink);
+    box-shadow: inset 3px 0 0 var(--color-text);
   }
   .name a {
     font-family: var(--mono);
-    font-size: var(--t-xs);
-    color: var(--ink);
+    font-size: var(--text-xs);
+    color: var(--color-text);
     text-decoration: none;
   }
   .name a:hover {
@@ -146,43 +159,43 @@
   }
   .part {
     padding: 1px 8px;
-    border-radius: var(--pill);
-    background: var(--sunken);
-    color: var(--muted);
-    font-size: var(--t-xs);
+    border-radius: var(--radius-pill);
+    background: var(--color-sunken);
+    color: var(--color-text-muted);
+    font-size: var(--text-xs);
   }
   .state {
     display: flex;
     align-items: center;
-    gap: var(--s-2);
+    gap: var(--space-2);
   }
   .r {
     text-align: right;
   }
   .muted {
-    color: var(--muted);
+    color: var(--color-text-muted);
   }
   .close {
-    font-size: var(--t-sm);
+    font-size: var(--text-sm);
   }
   .part-detail {
-    padding-bottom: var(--s-4);
-    margin-bottom: var(--s-4);
-    border-bottom: 1px solid var(--line);
+    padding-bottom: var(--space-4);
+    margin-bottom: var(--space-4);
+    border-bottom: 1px solid var(--color-line);
   }
   .part-detail header {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: var(--s-2) var(--s-3);
-    margin-bottom: var(--s-3);
+    gap: var(--space-2) var(--space-3);
+    margin-bottom: var(--space-3);
   }
   .part-detail h3 {
     text-transform: capitalize;
   }
   .path {
-    color: var(--muted);
-    font-size: var(--t-xs);
+    color: var(--color-text-muted);
+    font-size: var(--text-xs);
     overflow-wrap: anywhere;
     margin-right: auto;
   }

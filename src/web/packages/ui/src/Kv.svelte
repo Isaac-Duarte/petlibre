@@ -10,7 +10,9 @@
 
   function show(value: unknown): string {
     if (value === null || value === undefined) return "–";
-    return typeof value === "object" ? JSON.stringify(value) : String(value);
+    if (typeof value === "string") return value;
+    if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") return value.toString();
+    return JSON.stringify(value);
   }
 </script>
 
@@ -25,12 +27,12 @@
   dl {
     display: grid;
     grid-template-columns: max-content minmax(0, 1fr);
-    gap: 4px var(--s-4);
+    gap: 4px var(--space-4);
     margin: 0;
-    font-size: var(--t-sm);
+    font-size: var(--text-sm);
   }
   dt {
-    color: var(--muted);
+    color: var(--color-text-muted);
   }
   dd {
     margin: 0;
@@ -38,7 +40,7 @@
   }
   .mono dd {
     font-family: var(--mono);
-    font-size: var(--t-xs);
+    font-size: var(--text-xs);
     line-height: 1.7;
   }
 </style>

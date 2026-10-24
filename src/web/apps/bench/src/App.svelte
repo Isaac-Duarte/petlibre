@@ -25,8 +25,13 @@
   // on the overview.
   let pending = false;
   function onkeydown(event: KeyboardEvent) {
-    const target = event.target as HTMLElement | null;
-    if (target?.closest("input, textarea, select, [contenteditable]") || event.metaKey || event.ctrlKey || event.altKey) {
+    const target = event.target instanceof Element ? event.target : null;
+    if (
+      target?.closest("input, textarea, select, [contenteditable]") ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.altKey
+    ) {
       return;
     }
     if (pending) {
@@ -70,13 +75,29 @@
         {app.connected ? (live ? "Live" : "Connected") : "Reconnecting"}
       </span>
       <time class="clock" title="Bench host time">{clockTime(app.now)}</time>
-      <button type="button" class="theme" onclick={() => theme.cycle()} title="Theme: {theme.value}" aria-label="Theme: {theme.value}">
+      <button
+        type="button"
+        class="theme"
+        onclick={() => {
+          theme.cycle();
+        }}
+        title="Theme: {theme.value}"
+        aria-label="Theme: {theme.value}"
+      >
         {#if theme.value === "dark"}
-          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13 9.5A5.5 5.5 0 0 1 6.5 3a5.5 5.5 0 1 0 6.5 6.5Z" /></svg>
+          <svg viewBox="0 0 16 16" aria-hidden="true"
+            ><path d="M13 9.5A5.5 5.5 0 0 1 6.5 3a5.5 5.5 0 1 0 6.5 6.5Z" /></svg
+          >
         {:else if theme.value === "light"}
-          <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="3" /><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3 3l1.4 1.4M11.6 11.6 13 13M3 13l1.4-1.4M11.6 4.4 13 3" /></svg>
+          <svg viewBox="0 0 16 16" aria-hidden="true"
+            ><circle cx="8" cy="8" r="3" /><path
+              d="M8 1v2M8 13v2M1 8h2M13 8h2M3 3l1.4 1.4M11.6 11.6 13 13M3 13l1.4-1.4M11.6 4.4 13 3"
+            /></svg
+          >
         {:else}
-          <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5" /><path d="M8 2.5v11a5.5 5.5 0 0 0 0-11Z" class="fill" /></svg>
+          <svg viewBox="0 0 16 16" aria-hidden="true"
+            ><circle cx="8" cy="8" r="5.5" /><path d="M8 2.5v11a5.5 5.5 0 0 0 0-11Z" class="fill" /></svg
+          >
         {/if}
       </button>
     </div>
@@ -99,12 +120,12 @@
   .shell {
     max-width: 1480px;
     margin: 0 auto;
-    padding: 0 var(--s-5) var(--s-7);
+    padding: 0 var(--space-5) var(--space-7);
   }
   .top {
     display: flex;
     align-items: center;
-    gap: var(--s-5);
+    gap: var(--space-5);
     min-height: 64px;
     flex-wrap: wrap;
   }
@@ -112,26 +133,26 @@
     display: flex;
     align-items: baseline;
     gap: 6px;
-    color: var(--ink);
+    color: var(--color-text);
     text-decoration: none;
   }
   .word {
-    font-size: var(--t-lg);
+    font-size: var(--text-lg);
     font-weight: 700;
     letter-spacing: -0.03em;
   }
   .tool {
-    font-size: var(--t-lg);
+    font-size: var(--text-lg);
     font-weight: 300;
-    color: var(--muted);
+    color: var(--color-text-muted);
     letter-spacing: -0.02em;
   }
   nav {
     display: flex;
     gap: 2px;
     padding: 3px;
-    background: var(--sunken);
-    border-radius: var(--pill);
+    background: var(--color-sunken);
+    border-radius: var(--radius-pill);
   }
   nav a {
     display: inline-flex;
@@ -139,25 +160,25 @@
     gap: 8px;
     height: 32px;
     padding: 0 16px;
-    border-radius: var(--pill);
-    color: var(--muted);
+    border-radius: var(--radius-pill);
+    color: var(--color-text-muted);
     text-decoration: none;
     font-weight: 500;
   }
   nav a:hover {
-    color: var(--ink);
+    color: var(--color-text);
   }
   nav a.on {
-    background: var(--ink);
-    color: var(--paper);
+    background: var(--color-text);
+    color: var(--color-background);
   }
   .status {
     margin-left: auto;
     display: flex;
     align-items: center;
-    gap: var(--s-4);
-    font-size: var(--t-sm);
-    color: var(--muted);
+    gap: var(--space-4);
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
   }
   .link {
     display: inline-flex;
@@ -165,7 +186,7 @@
     gap: 8px;
   }
   .clock {
-    color: var(--ink-2);
+    color: var(--color-text);
     font-variant-numeric: tabular-nums;
   }
   .theme {
@@ -174,12 +195,12 @@
     width: 32px;
     height: 32px;
     border-radius: 50%;
-    border: 1px solid var(--line);
-    background: var(--surface);
+    border: 1px solid var(--color-line);
+    background: var(--color-surface);
     cursor: pointer;
   }
   .theme:hover {
-    border-color: var(--ink);
+    border-color: var(--color-text);
   }
   .theme svg {
     width: 16px;
@@ -194,15 +215,15 @@
     stroke: none;
   }
   main {
-    margin-top: var(--s-5);
+    margin-top: var(--space-5);
   }
   @media (max-width: 760px) {
     .shell {
-      padding: 0 var(--s-4) var(--s-6);
+      padding: 0 var(--space-4) var(--space-6);
     }
     .top {
-      gap: var(--s-3);
-      padding-top: var(--s-3);
+      gap: var(--space-3);
+      padding-top: var(--space-3);
     }
     nav {
       order: 3;

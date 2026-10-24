@@ -21,20 +21,27 @@
     <label class="follow"><input type="checkbox" bind:checked={follow} /> Follow</label>
     <CopyButton text={shown.join("\n")} />
   {/snippet}
-  <LogView lines={shown} {classify} bind:follow height="60vh" label="Live log" empty="Waiting for output from a bench command" />
+  <LogView
+    lines={shown}
+    {classify}
+    bind:follow
+    height="60vh"
+    label="Live log"
+    empty="Waiting for output from a bench command"
+  />
 </Panel>
 
 <style>
   input[type="search"] {
     height: 30px;
     width: 12em;
-    padding: 0 var(--s-3);
-    border: 1px solid var(--line-strong);
-    border-radius: var(--pill);
-    background: var(--surface);
-    color: var(--ink);
+    padding: 0 var(--space-3);
+    border: 1px solid var(--color-line-strong);
+    border-radius: var(--radius-pill);
+    background: var(--color-surface);
+    color: var(--color-text);
     font: inherit;
-    font-size: var(--t-sm);
+    font-size: var(--text-sm);
   }
   input[type="search"]:focus {
     outline: none;
@@ -44,10 +51,10 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    font-size: var(--t-sm);
-    color: var(--muted);
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
   }
   input[type="checkbox"] {
-    accent-color: var(--ink);
+    accent-color: var(--color-text);
   }
 </style>

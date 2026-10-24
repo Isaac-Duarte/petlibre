@@ -32,14 +32,14 @@
   .grid {
     display: grid;
     grid-template-columns: minmax(0, 1.7fr) minmax(320px, 1fr);
-    gap: var(--s-5);
+    gap: var(--space-5);
     align-items: start;
   }
   .main,
   .side {
     display: flex;
     flex-direction: column;
-    gap: var(--s-5);
+    gap: var(--space-5);
     min-width: 0;
   }
   @media (max-width: 980px) {

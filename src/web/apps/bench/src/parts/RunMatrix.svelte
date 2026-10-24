@@ -17,7 +17,13 @@
   function liveCell(scenario: string): Cell {
     const step = live?.scenarios.find((s) => s.name === scenario)?.step;
     if (!step) return null;
-    return step.state === "done" ? "pass" : step.state === "failed" ? "fail" : step.state === "skipped" ? "skip" : step.state;
+    return step.state === "done"
+      ? "pass"
+      : step.state === "failed"
+        ? "fail"
+        : step.state === "skipped"
+          ? "skip"
+          : step.state;
   }
 
   function cellTitle(run: string, scenario: string, index: number): string {
@@ -31,7 +37,9 @@
 
 <Panel title="Run history" flush>
   {#snippet meta()}
-    {tests.runs.length} recorded {tests.runs.length === 1 ? "run" : "runs"}{tests.runs.length > COLUMNS ? `, newest ${COLUMNS} shown` : ""}
+    {tests.runs.length} recorded {tests.runs.length === 1 ? "run" : "runs"}{tests.runs.length > COLUMNS
+      ? `, newest ${COLUMNS} shown`
+      : ""}
   {/snippet}
   {#snippet actions()}
     <ul class="legend" aria-label="Legend">
@@ -56,7 +64,11 @@
             {/if}
             {#each runs as run (run.name)}
               <th class="run" class:silent={run.silent}>
-                <a href={route.href("tests", run.name)} title="{run.name}, {fullTime(run.modified)}{run.silent ? `\nStopped: ${run.silent}` : ''}">{runLabel(run.name)}</a>
+                <a
+                  href={route.href("tests", run.name)}
+                  title="{run.name}, {fullTime(run.modified)}{run.silent ? `\nStopped: ${run.silent}` : ''}"
+                  >{runLabel(run.name)}</a
+                >
               </th>
             {/each}
             <th class="stat">Passed</th>
@@ -71,11 +83,21 @@
             <tr>
               <th class="scenario" scope="row" title={entry?.about ?? "No longer in the suite"}>
                 <span class="name" class:retired={!entry}>{stats.scenario}</span>
-                {#if stats.flips >= 2}<Badge tone="warn" label="flaky" title="{stats.flips} pass/fail changes in the last {COLUMNS} runs" />{/if}
+                {#if stats.flips >= 2}<Badge
+                    tone="warn"
+                    label="flaky"
+                    title="{stats.flips} pass/fail changes in the last {COLUMNS} runs"
+                  />{/if}
               </th>
               {#if live}
                 {@const cell = liveCell(stats.scenario)}
-                <td class="cell now"><Verdict verdict={cell} live={cell === "running"} title="{live.name}: {stats.scenario} {cell ?? 'not in this run'}" /></td>
+                <td class="cell now"
+                  ><Verdict
+                    verdict={cell}
+                    live={cell === "running"}
+                    title="{live.name}: {stats.scenario} {cell ?? 'not in this run'}"
+                  /></td
+                >
               {/if}
               {#each runs as run, i (run.name)}
                 <td class="cell">
@@ -111,12 +133,12 @@
 <style>
   .legend {
     display: flex;
-    gap: var(--s-3);
+    gap: var(--space-3);
     margin: 0;
     padding: 0;
     list-style: none;
-    font-size: var(--t-xs);
-    color: var(--muted);
+    font-size: var(--text-xs);
+    color: var(--color-text-muted);
   }
   .legend li {
     display: inline-flex;
@@ -130,23 +152,23 @@
     border-collapse: separate;
     border-spacing: 0;
     width: 100%;
-    font-size: var(--t-sm);
+    font-size: var(--text-sm);
   }
   thead th {
     font-weight: 500;
-    font-size: var(--t-xs);
-    color: var(--muted);
+    font-size: var(--text-xs);
+    color: var(--color-text-muted);
     text-align: left;
-    padding: 0 0 var(--s-2);
+    padding: 0 0 var(--space-2);
     white-space: nowrap;
   }
   th.scenario {
     position: sticky;
     left: 0;
     z-index: 1;
-    background: var(--surface);
-    padding-left: var(--s-5);
-    padding-right: var(--s-4);
+    background: var(--color-surface);
+    padding-left: var(--space-5);
+    padding-right: var(--space-4);
     text-align: left;
     font-weight: 400;
     white-space: nowrap;
@@ -154,43 +176,43 @@
   tbody th.scenario {
     display: flex;
     align-items: center;
-    gap: var(--s-2);
+    gap: var(--space-2);
     height: 34px;
   }
   .name {
     font-family: var(--mono);
-    font-size: var(--t-xs);
+    font-size: var(--text-xs);
   }
   .retired {
-    color: var(--muted);
+    color: var(--color-text-muted);
     text-decoration: line-through;
   }
   th.run {
     width: 26px;
     text-align: center;
     font-variant-numeric: tabular-nums;
-    padding: 0 2px var(--s-2);
+    padding: 0 2px var(--space-2);
   }
   th.run a {
-    color: var(--muted);
+    color: var(--color-text-muted);
     text-decoration: none;
   }
   th.run a:hover {
-    color: var(--ink);
+    color: var(--color-text);
   }
   th.run.silent a {
-    color: var(--fail);
+    color: var(--color-fault);
   }
   th.now {
-    color: var(--accent);
+    color: var(--color-accent);
     font-weight: 600;
   }
   td {
-    border-top: 1px solid var(--line);
+    border-top: 1px solid var(--color-line);
     height: 34px;
   }
   tbody th {
-    border-top: 1px solid var(--line);
+    border-top: 1px solid var(--color-line);
   }
   td.cell {
     text-align: center;
@@ -202,38 +224,38 @@
     border-radius: 3px;
   }
   td.cell a:hover {
-    background: var(--sunken);
+    background: var(--color-sunken);
   }
   td.now {
-    background: var(--accent-soft);
+    background: var(--color-accent-soft);
   }
   .stat {
     text-align: right;
     white-space: nowrap;
-    padding: 0 var(--s-3);
+    padding: 0 var(--space-3);
   }
   .rate {
     font-weight: 600;
-    color: color-mix(in srgb, var(--pass) calc(var(--rate) * 100%), var(--fail));
+    color: color-mix(in srgb, var(--color-ok) calc(var(--rate) * 100%), var(--color-fault));
   }
   .why {
-    padding-right: var(--s-5);
+    padding-right: var(--space-5);
     max-width: 22em;
     min-width: 10em;
   }
   td.why a {
     display: block;
-    color: var(--ink-2);
-    font-size: var(--t-xs);
+    color: var(--color-text);
+    font-size: var(--text-xs);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     text-decoration: none;
   }
   td.why a:hover {
-    color: var(--fail);
+    color: var(--color-fault);
   }
   .muted {
-    color: var(--muted);
+    color: var(--color-text-muted);
   }
 </style>

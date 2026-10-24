@@ -31,8 +31,9 @@ const PROBE_STACK_WORDS: u16 = 2048;
 static OPTICS: Slot<optics::Probe> = Slot::new();
 
 unsafe extern "C" fn optics_task(_: *mut c_void) -> u32 {
-    // SAFETY: only this task touches the slot; the probe stays in place.
-    let probe = unsafe { OPTICS.get_or_init(optics::Probe::default) };
+    let Some(mut probe) = OPTICS.enter_or_init(optics::Probe::default) else {
+        return 0;
+    };
     let step = probe.step::<Hardware>();
     if let Some(record) = step.record {
         petlibre_probes::log(format_args!("PLOPT1 {record}\r\n"));

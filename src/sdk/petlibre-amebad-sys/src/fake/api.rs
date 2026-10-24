@@ -656,6 +656,18 @@ pub fn unscheduled<R>(f: impl FnOnce() -> R) -> R {
     f()
 }
 
+/// Each host thread stands for one task: the test harness runs tests on
+/// separate threads, and a static claimed by one must refuse another.
+pub fn current_task() -> usize {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static NEXT: AtomicUsize = AtomicUsize::new(1);
+    std::thread_local! {
+        static TASK: usize = NEXT.fetch_add(1, Ordering::Relaxed);
+    }
+    TASK.with(|task| *task)
+}
+
 /// Fixed synthetic broker settings.
 pub fn transport_config() -> Option<TransportConfig> {
     Some(FAKE_TRANSPORT)

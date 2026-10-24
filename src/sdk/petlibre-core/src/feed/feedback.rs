@@ -10,10 +10,39 @@ use crate::feed::controller::{FeedController, FeedReason, FeedSample, FeedState,
 
 pub const CAPACITY: usize = 32;
 
-c_enum!(FeedbackFault { OK = 0, OVERFLOW = 1, CLOCK = 2, STALE = 3, ARGUMENT = 4 });
-c_enum!(FeedbackTakeResult { EMPTY = 0, EVENT = 1, FAILED = 2 });
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u32)]
+pub enum FeedbackFault {
+    #[default]
+    Ok = 0,
+    Overflow = 1,
+    Clock = 2,
+    Stale = 3,
+    Argument = 4,
+}
 
-#[repr(C)]
+impl FeedbackFault {
+    /// The variant's number, as records and reports print it.
+    pub const fn code(self) -> u32 {
+        self as u32
+    }
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u32)]
+pub enum FeedbackTakeResult {
+    #[default]
+    Empty = 0,
+    Event = 1,
+    Failed = 2,
+}
+
+impl FeedbackTakeResult {
+    /// The variant's number, as records and reports print it.
+    pub const fn code(self) -> u32 {
+        self as u32
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct FeedbackEvent {
     pub captured_at: u32,
@@ -21,7 +50,6 @@ pub struct FeedbackEvent {
 }
 
 /// A coherent motor-gate snapshot copied under the board's critical section.
-#[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct FeedbackDrive {
     pub healthy: bool,
@@ -31,7 +59,6 @@ pub struct FeedbackDrive {
 }
 
 /// Serialize EVERY call across ISR/task contexts. No internal locks/atomics.
-#[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct FeedbackEvents {
     pub events: [FeedbackEvent; CAPACITY],
@@ -59,14 +86,14 @@ impl FeedbackEvents {
     }
 
     pub fn fail(&mut self, fault: FeedbackFault) -> bool {
-        if self.fault == FeedbackFault::OK {
+        if self.fault == FeedbackFault::Ok {
             self.fault = fault;
         }
         false
     }
 
     fn observe(&mut self, now: u32) -> bool {
-        if self.fault != FeedbackFault::OK {
+        if self.fault != FeedbackFault::Ok {
             return false;
         }
         if self.capacity == 0
@@ -76,11 +103,11 @@ impl FeedbackEvents {
             || self.max_age_ms == 0
             || self.max_age_ms >= HALF_RANGE
         {
-            return self.fail(FeedbackFault::ARGUMENT);
+            return self.fail(FeedbackFault::Argument);
         }
 
         if now.wrapping_sub(self.observed_at) >= HALF_RANGE {
-            return self.fail(FeedbackFault::CLOCK);
+            return self.fail(FeedbackFault::Clock);
         }
         self.observed_at = now;
         true
@@ -93,7 +120,7 @@ impl FeedbackEvents {
             return false;
         }
         if self.count == self.capacity {
-            return self.fail(FeedbackFault::OVERFLOW);
+            return self.fail(FeedbackFault::Overflow);
         }
 
         let index = (usize::from(self.head) + usize::from(self.count)) % usize::from(self.capacity);
@@ -108,22 +135,22 @@ impl FeedbackEvents {
     /// Each event is returned once; EMPTY/FAILED carry no event.
     pub fn take(&mut self, now_ms: u32) -> (FeedbackTakeResult, Option<FeedbackEvent>) {
         if !self.observe(now_ms) {
-            return (FeedbackTakeResult::FAILED, None);
+            return (FeedbackTakeResult::Failed, None);
         }
         if self.count == 0 {
-            return (FeedbackTakeResult::EMPTY, None);
+            return (FeedbackTakeResult::Empty, None);
         }
 
         let front = self.events[usize::from(self.head)];
         if now_ms.wrapping_sub(front.captured_at) > self.max_age_ms {
-            self.fail(FeedbackFault::STALE);
-            return (FeedbackTakeResult::FAILED, None);
+            self.fail(FeedbackFault::Stale);
+            return (FeedbackTakeResult::Failed, None);
         }
 
         // `head < capacity <= u8::MAX`, so the increment cannot overflow.
         self.head = (self.head + 1) % self.capacity;
         self.count -= 1;
-        (FeedbackTakeResult::EVENT, Some(front))
+        (FeedbackTakeResult::Event, Some(front))
     }
 
     /// Bounded owner-side drain. Validates the ENTIRE batch before crediting
@@ -143,8 +170,8 @@ impl FeedbackEvents {
         drive: FeedbackDrive,
     ) -> bool {
         if self.max_age_ms >= controller.limits.feedback_inhibit_ms {
-            self.fail(FeedbackFault::ARGUMENT);
-            controller.trip(FeedReason::FEEDBACK_STREAM);
+            self.fail(FeedbackFault::Argument);
+            controller.trip(FeedReason::FeedbackStream);
             return false;
         }
 
@@ -157,9 +184,9 @@ impl FeedbackEvents {
                     batch[count] = event;
                     count += 1;
                 }
-                (FeedbackTakeResult::EMPTY, None) => break,
+                (FeedbackTakeResult::Empty, None) => break,
                 _ => {
-                    controller.trip(FeedReason::FEEDBACK_STREAM);
+                    controller.trip(FeedReason::FeedbackStream);
                     return false;
                 }
             }
@@ -171,31 +198,31 @@ impl FeedbackEvents {
         current.feedback_edge = false;
         controller.update(now_ms, Some(&current));
 
-        let valid_drive = drive.healthy && drive.applied_known && drive.applied.valid();
+        let valid_drive = drive.healthy && drive.applied_known;
         if !valid_drive
-            || (previous == FeedState::RUNNING
-                && drive.applied != MotorCommand::STOP
+            || (previous == FeedState::Running
+                && drive.applied != MotorCommand::Stop
                 && drive.applied != command)
         {
-            controller.trip(FeedReason::OUTPUT);
+            controller.trip(FeedReason::Output);
             return false;
         }
 
         // Credit edges only while the gate applies exactly the commanded drive.
-        if previous != FeedState::RUNNING
+        if previous != FeedState::Running
             || drive.applied != command
-            || drive.applied == MotorCommand::STOP
+            || drive.applied == MotorCommand::Stop
         {
             return true;
         }
 
         if now_ms.wrapping_sub(drive.applied_at) >= HALF_RANGE {
-            controller.trip(FeedReason::CLOCK);
+            controller.trip(FeedReason::Clock);
             return false;
         }
 
         for event in &batch[..count] {
-            if controller.state != FeedState::RUNNING || controller.motor != command {
+            if controller.state != FeedState::Running || controller.motor != command {
                 break;
             }
             // An edge captured before this drive was applied belongs to an earlier output.

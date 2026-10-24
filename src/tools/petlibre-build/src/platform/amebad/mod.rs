@@ -148,30 +148,11 @@ pub(crate) struct Amebad {
     pub(crate) bluetooth: Option<PathBuf>,
 }
 
-/// C ABI symbols every core archive must define. The core ABI is a C
-/// interface for tests and later C consumers, retained in the archive, not
-/// the image.
+/// C symbols every core archive must define: the KM4 entry the SDK calls,
+/// then the RAM park and the flash-lock interposer both cores link.
 fn archive_symbols(core: Core) -> Vec<&'static str> {
     let mut symbols = match core {
-        Core::Hp => vec![
-            "petlibre_app_start",
-            "petlibre_diagnostic_run",
-            "petlibre_feed_controller_update",
-            "petlibre_sensor_inputs_update",
-            "petlibre_adc_scale_16",
-            "petlibre_motor_gate_request",
-            "petlibre_feedback_events_process",
-            "petlibre_tick_clock_read",
-            "petlibre_flash_coord_init",
-            "petlibre_flash_coord_request",
-            "petlibre_flash_coord_parked",
-            "petlibre_flash_coord_released",
-            "petlibre_flash_coord_outputs_blocked",
-            "petlibre_feed_journal_open",
-            "petlibre_feed_journal_create",
-            "petlibre_feed_journal_read",
-            "petlibre_feed_journal_storage",
-        ],
+        Core::Hp => vec!["petlibre_app_start"],
         Core::Lp => Vec::new(),
     };
     let mut park = park::SYMBOLS.to_vec();

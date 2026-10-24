@@ -9,7 +9,6 @@ use crate::adc_scale::{AdcCalibration, SAMPLES};
 use crate::feed::controller::FeedSample;
 use crate::{HALF_RANGE, interval_valid};
 
-#[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SensorLimits {
     pub optical_settle_ms: u32,
@@ -22,7 +21,6 @@ pub struct SensorLimits {
 }
 
 /// One coherent acquisition; no cached data relabeled with a new timestamp.
-#[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SensorReading {
     pub gpio_valid: bool,
@@ -36,7 +34,6 @@ pub struct SensorReading {
     pub battery: [u16; SAMPLES],
 }
 
-#[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SensorFilter {
     pub known: bool,
@@ -65,7 +62,6 @@ impl SensorFilter {
 }
 
 /// Serialized owner; fields are available for diagnostics, not caller mutation.
-#[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SensorInputs {
     pub limits: SensorLimits,

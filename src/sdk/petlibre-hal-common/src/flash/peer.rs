@@ -12,8 +12,6 @@
 //! backup marker reads `WITHHOLD_MARKER`, lease `INJECT_LEASE` is ignored
 //! without ACK, once, so the authority's begin must time out.
 
-use petlibre_core::c_enum;
-
 use crate::flash::park::{self, Mmio};
 
 /// SDK SYSTIMER rate, as measured in FW05.
@@ -47,8 +45,37 @@ pub struct Peer {
     pub last_lease: u64,
 }
 
-c_enum!(PeerEvent { NONE = 0, ANSWERED = 1, INJECTED = 2 });
-c_enum!(ParkEvent { IGNORED = 0, RELEASED = 1, WITHHELD = 2, REFUSED = 3 });
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u32)]
+pub enum PeerEvent {
+    #[default]
+    None = 0,
+    Answered = 1,
+    Injected = 2,
+}
+
+impl PeerEvent {
+    /// The variant's number, as records and reports print it.
+    pub const fn code(self) -> u32 {
+        self as u32
+    }
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u32)]
+pub enum ParkEvent {
+    #[default]
+    Ignored = 0,
+    Released = 1,
+    Withheld = 2,
+    Refused = 3,
+}
+
+impl ParkEvent {
+    /// The variant's number, as records and reports print it.
+    pub const fn code(self) -> u32 {
+        self as u32
+    }
+}
 
 fn backup<M: Mmio>(index: u32) -> u32 {
     M::load(BACKUP_BASE + index * 4)
@@ -67,7 +94,7 @@ impl Peer {
 
         if park::answer::<M>(self.session, &mut self.answered) != 0 {
             self.answered_at = ticks;
-            return PeerEvent::ANSWERED;
+            return PeerEvent::Answered;
         }
 
         if let Some(ms) = INJECT_PEER_LOSS_MS
@@ -79,9 +106,9 @@ impl Peer {
             self.injected = true;
             self.session = park::session(self.boot_count.wrapping_add(1), ticks, true);
             park::reannounce::<M>(self.session, self.answered);
-            return PeerEvent::INJECTED;
+            return PeerEvent::Injected;
         }
-        PeerEvent::NONE
+        PeerEvent::None
     }
 }
 
@@ -91,26 +118,26 @@ impl Peer {
     /// boot's sessions and a lease newer than the last one parks the core.
     pub fn on_request<M: Mmio>(&mut self) -> ParkEvent {
         if self.answered == 0 {
-            return ParkEvent::IGNORED;
+            return ParkEvent::Ignored;
         }
         let Some(token) = park::requested::<M>(self.answered, self.session) else {
-            return ParkEvent::IGNORED;
+            return ParkEvent::Ignored;
         };
         let lease = u64::from(token.lease_lo) | (u64::from(token.lease_hi) << 32);
         if lease <= self.last_lease {
-            return ParkEvent::IGNORED;
+            return ParkEvent::Ignored;
         }
 
         if lease == INJECT_LEASE && backup::<M>(MARKER_REGISTER) == WITHHOLD_MARKER {
             self.last_lease = lease;
-            return ParkEvent::WITHHELD;
+            return ParkEvent::Withheld;
         }
         // SAFETY: `token` is a live local.
         if unsafe { park::ram_wait::<M>(&token, PARK_TICK_LIMIT, PARK_POLL_LIMIT) } {
             self.last_lease = lease;
-            ParkEvent::RELEASED
+            ParkEvent::Released
         } else {
-            ParkEvent::REFUSED
+            ParkEvent::Refused
         }
     }
 }
@@ -141,7 +168,7 @@ mod exported {
             // SAFETY: serialized with the IPC handler by the critical section.
             let peer = unsafe { &mut *PEER.get() };
             let event: PeerEvent = peer.step::<Hardware>(boot_count, ticks);
-            event.0
+            event.code()
         })
     }
 
@@ -173,7 +200,7 @@ mod exported {
             unsafe {
                 core::ptr::write_volatile(
                     diag,
-                    (count << 16) | ((channel & 0xff) << 8) | (event.0 + 1),
+                    (count << 16) | ((channel & 0xff) << 8) | (event.code() + 1),
                 )
             };
         })

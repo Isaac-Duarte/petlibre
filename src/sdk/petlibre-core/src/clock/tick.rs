@@ -6,8 +6,7 @@
 
 use crate::HALF_RANGE;
 
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TickClock {
     pub ticks_per_second: u32,
     pub raw_at: u32,
@@ -16,7 +15,22 @@ pub struct TickClock {
     pub valid: bool,
 }
 
+impl Default for TickClock {
+    fn default() -> Self {
+        Self::UNSET
+    }
+}
+
 impl TickClock {
+    /// No frequency: every read fails until [`Self::new`] replaces it.
+    pub const UNSET: Self = Self {
+        ticks_per_second: 0,
+        raw_at: 0,
+        millis: 0,
+        fraction: 0,
+        valid: false,
+    };
+
     /// Frequency is a caller-established hardware property, not a device default.
     pub fn new(ticks_per_second: u32, raw: u32, initial_ms: u32) -> Option<Self> {
         (ticks_per_second != 0).then_some(Self {

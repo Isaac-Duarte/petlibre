@@ -5,7 +5,6 @@ const SAMPLES_U32: u32 = 16;
 const _: () = assert!(SAMPLES_U32 as usize == SAMPLES);
 pub const MAX_RAW: u16 = 4095;
 
-#[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct AdcCalibration {
     pub offset: u16,

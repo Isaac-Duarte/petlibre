@@ -9,17 +9,17 @@ use petlibre_core::feed::progress::{BowlMode, Direction, FeedProgress, ProgressR
 
 #[test]
 fn single_bowl_request() {
-    let mut progress = FeedProgress::new(BowlMode::SINGLE, Direction::D0, 3, true).unwrap();
-    assert_eq!(progress.accept(), ProgressResult::PORTION);
+    let mut progress = FeedProgress::new(BowlMode::Single, Direction::D0, 3, true).unwrap();
+    assert_eq!(progress.accept(), ProgressResult::Portion);
     assert_eq!(progress.completed, 1);
-    assert_eq!(progress.accept(), ProgressResult::PORTION);
+    assert_eq!(progress.accept(), ProgressResult::Portion);
     assert_eq!(progress.completed, 2);
-    assert_eq!(progress.accept(), ProgressResult::FINISHED);
+    assert_eq!(progress.accept(), ProgressResult::Finished);
     assert_eq!(progress.completed, 3);
     assert_eq!(progress.direction, Direction::D0);
 
     for _ in 0..100 {
-        assert_eq!(progress.accept(), ProgressResult::FINISHED);
+        assert_eq!(progress.accept(), ProgressResult::Finished);
     }
     assert_eq!(progress.completed, 3);
 }
@@ -36,14 +36,14 @@ fn double_bowl_trace() {
         Direction::D0,
     ];
     let results = [
-        ProgressResult::PORTION,
-        ProgressResult::WAIT,
-        ProgressResult::PORTION,
-        ProgressResult::WAIT,
-        ProgressResult::FINISHED,
+        ProgressResult::Portion,
+        ProgressResult::Wait,
+        ProgressResult::Portion,
+        ProgressResult::Wait,
+        ProgressResult::Finished,
     ];
 
-    let mut progress = FeedProgress::new(BowlMode::DOUBLE, Direction::D0, 3, true).unwrap();
+    let mut progress = FeedProgress::new(BowlMode::Double, Direction::D0, 3, true).unwrap();
     for i in 0..completed.len() {
         assert_eq!(progress.accept(), results[i]);
         assert_eq!(progress.completed, completed[i]);
@@ -51,27 +51,27 @@ fn double_bowl_trace() {
     }
 
     assert!(progress.credit_next_event);
-    assert_eq!(progress.accept(), ProgressResult::FINISHED);
+    assert_eq!(progress.accept(), ProgressResult::Finished);
     assert_eq!(progress.completed, 3);
     assert_eq!(progress.direction, Direction::D0);
 }
 
 #[test]
 fn double_bowl_without_initial_credit() {
-    let mut progress = FeedProgress::new(BowlMode::DOUBLE, Direction::D1, 1, false).unwrap();
-    assert_eq!(progress.accept(), ProgressResult::WAIT);
+    let mut progress = FeedProgress::new(BowlMode::Double, Direction::D1, 1, false).unwrap();
+    assert_eq!(progress.accept(), ProgressResult::Wait);
     assert_eq!(progress.completed, 0);
-    assert_eq!(progress.accept(), ProgressResult::FINISHED);
+    assert_eq!(progress.accept(), ProgressResult::Finished);
     assert_eq!(progress.completed, 1);
     assert_eq!(progress.direction, Direction::D1);
 }
 
 #[test]
 fn consecutive_requests() {
-    let mut progress = FeedProgress::new(BowlMode::DOUBLE, Direction::D1, 2, true).unwrap();
-    assert_eq!(progress.accept(), ProgressResult::PORTION);
-    assert_eq!(progress.accept(), ProgressResult::WAIT);
-    assert_eq!(progress.accept(), ProgressResult::FINISHED);
+    let mut progress = FeedProgress::new(BowlMode::Double, Direction::D1, 2, true).unwrap();
+    assert_eq!(progress.accept(), ProgressResult::Portion);
+    assert_eq!(progress.accept(), ProgressResult::Wait);
+    assert_eq!(progress.accept(), ProgressResult::Finished);
     assert_eq!(progress.direction, Direction::D0);
 
     progress = FeedProgress::new(
@@ -82,14 +82,14 @@ fn consecutive_requests() {
     )
     .unwrap();
 
-    assert_eq!(progress.accept(), ProgressResult::FINISHED);
+    assert_eq!(progress.accept(), ProgressResult::Finished);
     assert_eq!(progress.completed, 1);
     assert_eq!(progress.direction, Direction::D0);
 }
 
 #[test]
 fn maximum_request_does_not_wrap() {
-    let mut progress = FeedProgress::new(BowlMode::DOUBLE, Direction::D0, u16::MAX, true).unwrap();
+    let mut progress = FeedProgress::new(BowlMode::Double, Direction::D0, u16::MAX, true).unwrap();
     let mut events = 0u32;
 
     while !progress.finished {
@@ -100,13 +100,11 @@ fn maximum_request_does_not_wrap() {
 
     assert_eq!(events, 131_069);
     assert_eq!(progress.completed, u16::MAX);
-    assert_eq!(progress.accept(), ProgressResult::FINISHED);
+    assert_eq!(progress.accept(), ProgressResult::Finished);
     assert_eq!(progress.completed, u16::MAX);
 }
 
 #[test]
 fn invalid_requests_are_rejected() {
-    assert!(FeedProgress::new(BowlMode::SINGLE, Direction::D0, 0, true).is_none());
-    assert!(FeedProgress::new(BowlMode(2), Direction::D0, 1, true).is_none());
-    assert!(FeedProgress::new(BowlMode::SINGLE, Direction(2), 1, true).is_none());
+    assert!(FeedProgress::new(BowlMode::Single, Direction::D0, 0, true).is_none());
 }

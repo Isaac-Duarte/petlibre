@@ -402,7 +402,7 @@ fn last_reported(boot: &Boot) -> u64 {
 #[test]
 fn stress_saves_survive_power_loss_and_reopen_consistently() {
     let first = platform_boot([0; 8], blank(), false, EXPECTED_ID);
-    assert_eq!(opened(&first), (SettingsStatus::EMPTY, 0, true));
+    assert_eq!(opened(&first), (SettingsStatus::Empty, 0, true));
     let Some(Record::End {
         saves,
         generation,
@@ -416,7 +416,7 @@ fn stress_saves_survive_power_loss_and_reopen_consistently() {
     };
 
     assert_eq!((saves, generation), (STRESS_SAVES, u64::from(STRESS_SAVES)));
-    assert!(leases > 0 && leases == frozen && phase == FlashPhase::IDLE && fault == FlashFault::OK);
+    assert!(leases > 0 && leases == frozen && phase == FlashPhase::Idle && fault == FlashFault::Ok);
     // Every park request KM0 saw is one recorded lease.
     assert_eq!(u64::from(first.rings), leases);
     assert!(!first.reset && first.backup[MARKER_REGISTER as usize] == 0);
@@ -429,7 +429,7 @@ fn stress_saves_survive_power_loss_and_reopen_consistently() {
     let second = platform_boot([0; 8], first.storage, false, EXPECTED_ID);
     assert_eq!(
         opened(&second),
-        (SettingsStatus::LOADED, u64::from(STRESS_SAVES), true)
+        (SettingsStatus::Loaded, u64::from(STRESS_SAVES), true)
     );
 
     assert_eq!(last_reported(&second), u64::from(2 * STRESS_SAVES));
@@ -455,7 +455,7 @@ fn every_cut_point_reopens_at_the_last_or_the_interrupted_save() {
 
         // A cut inside a save that did not complete shows in the other slot.
         if cut % 3 != 0 && generation == completed {
-            assert_ne!(other, SlotState::VALID, "cut {cut}");
+            assert_ne!(other, SlotState::Valid, "cut {cut}");
         }
 
         assert!(
@@ -465,7 +465,7 @@ fn every_cut_point_reopens_at_the_last_or_the_interrupted_save() {
         assert!(
             matches!(
                 status,
-                SettingsStatus::LOADED | SettingsStatus::RECOVERED | SettingsStatus::EMPTY
+                SettingsStatus::Loaded | SettingsStatus::Recovered | SettingsStatus::Empty
             ),
             "cut {cut}: {status:?}"
         );
@@ -481,7 +481,7 @@ fn unknown_data_in_the_settings_sectors_is_never_written_over() {
     storage[2 * 4096 + 9] = 0x12;
     let boot = platform_boot([0; 8], storage.clone(), false, EXPECTED_ID);
 
-    assert_eq!(opened(&boot).0, SettingsStatus::CORRUPT);
+    assert_eq!(opened(&boot).0, SettingsStatus::Corrupt);
     assert!(boot.erases == 0 && boot.storage == storage && !boot.reset);
     assert_eq!(boot.backup[MARKER_REGISTER as usize], 0);
 }
@@ -500,7 +500,7 @@ fn silent_peer_faults_the_hook_then_the_next_boot_skips() {
 
     assert_eq!(
         first.provider.failure,
-        Some((LeaseStage::BEGIN, FlashReply::FAILED))
+        Some((LeaseStage::Begin, FlashReply::Failed))
     );
     assert_eq!(first.backup[MARKER_REGISTER as usize], ATTEMPT_BIT);
 
@@ -526,6 +526,6 @@ fn stale_ticket_is_refused() {
     assert!(!provider.release::<Core<false>>(&ticket));
     assert_eq!(
         provider.failure,
-        Some((LeaseStage::TICKET, FlashReply::STALE))
+        Some((LeaseStage::Ticket, FlashReply::Stale))
     );
 }

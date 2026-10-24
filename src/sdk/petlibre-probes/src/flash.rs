@@ -56,7 +56,7 @@ pub fn stress_settings(generation: u64) -> Settings {
         return Settings::default();
     }
     Settings {
-        bowl_mode: BowlMode::SINGLE,
+        bowl_mode: BowlMode::Single,
         lights: generation % 2 == 1,
         sound: true,
         volume: (generation % 100) as u8,
@@ -240,7 +240,7 @@ impl Probe {
                         let p = unsafe { &mut *provider };
                         *p = Provider::bound(coord, self.clock, self.authority);
 
-                        if reply != FlashReply::ACCEPTED {
+                        if reply != FlashReply::Accepted {
                             return self.end(record);
                         }
                         self.stage = Stage::Arm;
@@ -323,7 +323,7 @@ impl Probe {
 
             let usable = matches!(
                 status,
-                SettingsStatus::LOADED | SettingsStatus::EMPTY | SettingsStatus::RECOVERED
+                SettingsStatus::Loaded | SettingsStatus::Empty | SettingsStatus::Recovered
             );
 
             if id != EXPECTED_ID || !usable || s != stress_settings(generation) {

@@ -13,42 +13,92 @@
 
 use crate::{HALF_RANGE, interval_valid};
 
-c_enum!(FlashParty { LOCAL = 0, PEER = 1, FENCE = 2 });
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u32)]
+pub enum FlashParty {
+    #[default]
+    Local = 0,
+    Peer = 1,
+    Fence = 2,
+}
 
-c_enum!(FlashPhase {
-    BOOT = 0,
-    IDLE = 1,
-    QUIESCING = 2,
-    PARKING = 3,
-    ACTIVE = 4,
-    RELEASING = 5,
-    CLOSING = 6,
-    CLOSED = 7,
-    FAULT = 8,
-});
+impl FlashParty {
+    /// The variant's number, as records and reports print it.
+    pub const fn code(self) -> u32 {
+        self as u32
+    }
+}
 
-c_enum!(FlashFault {
-    OK = 0,
-    CLOCK = 1,
-    TIMEOUT = 2,
-    OUTPUT = 3,
-    ORDER = 4,
-    EXHAUSTED = 5,
-    TRANSPORT = 6,
-    PEER_LOST = 7,
-});
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u32)]
+pub enum FlashPhase {
+    #[default]
+    Boot = 0,
+    Idle = 1,
+    Quiescing = 2,
+    Parking = 3,
+    Active = 4,
+    Releasing = 5,
+    Closing = 6,
+    Closed = 7,
+    Fault = 8,
+}
 
-c_enum!(FlashReply { ACCEPTED = 0, DUPLICATE = 1, STALE = 2, BUSY = 3, INVALID = 4, FAILED = 5 });
+impl FlashPhase {
+    /// The variant's number, as records and reports print it.
+    pub const fn code(self) -> u32 {
+        self as u32
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u32)]
+pub enum FlashFault {
+    #[default]
+    Ok = 0,
+    Clock = 1,
+    Timeout = 2,
+    Output = 3,
+    Order = 4,
+    Exhausted = 5,
+    Transport = 6,
+    PeerLost = 7,
+}
+
+impl FlashFault {
+    /// The variant's number, as records and reports print it.
+    pub const fn code(self) -> u32 {
+        self as u32
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u32)]
+pub enum FlashReply {
+    #[default]
+    Accepted = 0,
+    Duplicate = 1,
+    Stale = 2,
+    Busy = 3,
+    Invalid = 4,
+    Failed = 5,
+}
+
+impl FlashReply {
+    /// The variant's number, as records and reports print it.
+    pub const fn code(self) -> u32 {
+        self as u32
+    }
+}
 
 impl FlashParty {
     /// A requesting or acknowledging core, as opposed to the closing fence.
     pub fn is_core(self) -> bool {
-        self == Self::LOCAL || self == Self::PEER
+        self == Self::Local || self == Self::Peer
     }
 }
 
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FlashLimits {
     pub quiesce_ms: u32,
     pub park_ms: u32,
@@ -57,8 +107,24 @@ pub struct FlashLimits {
     pub total_ms: u32,
 }
 
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+impl FlashLimits {
+    /// No limits: refused by [`FlashCoord::new`].
+    pub const UNSET: Self = Self {
+        quiesce_ms: 0,
+        park_ms: 0,
+        active_ms: 0,
+        release_ms: 0,
+        total_ms: 0,
+    };
+}
+
+impl Default for FlashLimits {
+    fn default() -> Self {
+        Self::UNSET
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FlashToken {
     pub authority_session: u64,
     pub peer_session: u64,
@@ -66,8 +132,23 @@ pub struct FlashToken {
     pub owner: FlashParty,
 }
 
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+impl FlashToken {
+    /// No session and no lease.
+    pub const UNSET: Self = Self {
+        authority_session: 0,
+        peer_session: 0,
+        lease: 0,
+        owner: FlashParty::Local,
+    };
+}
+
+impl Default for FlashToken {
+    fn default() -> Self {
+        Self::UNSET
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FlashCoord {
     pub limits: FlashLimits,
     pub token: FlashToken,
@@ -82,7 +163,27 @@ pub struct FlashCoord {
     pub initialized: bool,
 }
 
+impl Default for FlashCoord {
+    fn default() -> Self {
+        Self::UNSET
+    }
+}
+
 impl FlashCoord {
+    /// Not initialized: every request is refused until [`Self::new`]
+    /// replaces it. A static coordinator starts here.
+    pub const UNSET: Self = Self {
+        limits: FlashLimits::UNSET,
+        token: FlashToken::UNSET,
+        last_request: [0; 2],
+        observed_at: 0,
+        phase_at: 0,
+        requested_at: 0,
+        phase: FlashPhase::Boot,
+        fault: FlashFault::Ok,
+        initialized: false,
+    };
+
     /// Fresh, stopped boot/recovery only: never reinitialize a live/faulted
     /// authority to clear its interlock. Peer/transport teardown must be
     /// established first.
@@ -107,25 +208,21 @@ impl FlashCoord {
             observed_at: now,
             phase_at: now,
             requested_at: now,
-            phase: FlashPhase::BOOT,
+            phase: FlashPhase::Boot,
             initialized: true,
             ..Self::default()
         })
     }
 
     pub fn trip(&mut self, reason: FlashFault) {
-        if !self.initialized
-            || self.phase == FlashPhase::CLOSED
-            || reason == FlashFault::OK
-            || reason.0 > FlashFault::PEER_LOST.0
-        {
+        if !self.initialized || self.phase == FlashPhase::Closed || reason == FlashFault::Ok {
             return;
         }
 
-        if self.fault == FlashFault::OK {
+        if self.fault == FlashFault::Ok {
             self.fault = reason;
         }
-        self.phase = FlashPhase::FAULT;
+        self.phase = FlashPhase::Fault;
     }
 
     fn set_phase(&mut self, next: FlashPhase, now: u32) {
@@ -134,33 +231,33 @@ impl FlashCoord {
     }
 
     pub fn poll(&mut self, now: u32) -> bool {
-        if !self.initialized || self.fault != FlashFault::OK || self.phase == FlashPhase::CLOSED {
+        if !self.initialized || self.fault != FlashFault::Ok || self.phase == FlashPhase::Closed {
             return false;
         }
 
         if now.wrapping_sub(self.observed_at) >= HALF_RANGE {
-            self.trip(FlashFault::CLOCK);
+            self.trip(FlashFault::Clock);
             return false;
         }
         self.observed_at = now;
 
         let limit = match self.phase {
-            FlashPhase::BOOT | FlashPhase::PARKING => self.limits.park_ms,
-            FlashPhase::QUIESCING => self.limits.quiesce_ms,
-            FlashPhase::ACTIVE => self.limits.active_ms,
-            FlashPhase::RELEASING | FlashPhase::CLOSING => self.limits.release_ms,
-            FlashPhase::IDLE => return true,
+            FlashPhase::Boot | FlashPhase::Parking => self.limits.park_ms,
+            FlashPhase::Quiescing => self.limits.quiesce_ms,
+            FlashPhase::Active => self.limits.active_ms,
+            FlashPhase::Releasing | FlashPhase::Closing => self.limits.release_ms,
+            FlashPhase::Idle => return true,
             _ => {
-                self.trip(FlashFault::ORDER);
+                self.trip(FlashFault::Order);
                 return false;
             }
         };
 
         if now.wrapping_sub(self.phase_at) >= limit
-            || (self.phase != FlashPhase::BOOT
+            || (self.phase != FlashPhase::Boot
                 && now.wrapping_sub(self.requested_at) >= self.limits.total_ms)
         {
-            self.trip(FlashFault::TIMEOUT);
+            self.trip(FlashFault::Timeout);
             return false;
         }
         true
@@ -168,25 +265,25 @@ impl FlashCoord {
 
     fn message(&mut self, t: &FlashToken, now: u32) -> FlashReply {
         if !self.initialized {
-            return FlashReply::INVALID;
+            return FlashReply::Invalid;
         }
         if !self.poll(now) {
-            return FlashReply::FAILED;
+            return FlashReply::Failed;
         }
         if t.lease == 0 || *t != self.token {
-            return FlashReply::STALE;
+            return FlashReply::Stale;
         }
-        FlashReply::ACCEPTED
+        FlashReply::Accepted
     }
 
     fn order(&mut self) -> FlashReply {
-        self.trip(FlashFault::ORDER);
-        FlashReply::FAILED
+        self.trip(FlashFault::Order);
+        FlashReply::Failed
     }
 
     fn output(&mut self) -> FlashReply {
-        self.trip(FlashFault::OUTPUT);
-        FlashReply::FAILED
+        self.trip(FlashFault::Output);
+        FlashReply::Failed
     }
 
     /// Must echo the fresh authority challenge and establish the current peer
@@ -194,21 +291,21 @@ impl FlashCoord {
     /// infrared off.
     pub fn ready(&mut self, session: u64, peer: u64, inactive: bool, now: u32) -> FlashReply {
         if !self.initialized || session == 0 || peer == 0 {
-            return FlashReply::INVALID;
+            return FlashReply::Invalid;
         }
         if !self.poll(now) {
-            return FlashReply::FAILED;
+            return FlashReply::Failed;
         }
         if session != self.token.authority_session {
-            return FlashReply::STALE;
+            return FlashReply::Stale;
         }
 
-        if self.phase != FlashPhase::BOOT {
+        if self.phase != FlashPhase::Boot {
             if peer == self.token.peer_session {
-                return FlashReply::DUPLICATE;
+                return FlashReply::Duplicate;
             }
-            self.trip(FlashFault::PEER_LOST);
-            return FlashReply::FAILED;
+            self.trip(FlashFault::PeerLost);
+            return FlashReply::Failed;
         }
 
         if !inactive {
@@ -216,13 +313,13 @@ impl FlashCoord {
         }
 
         self.token.peer_session = peer;
-        self.set_phase(FlashPhase::IDLE, now);
-        FlashReply::ACCEPTED
+        self.set_phase(FlashPhase::Idle, now);
+        FlashReply::Accepted
     }
 
     fn next_token(&mut self) -> bool {
         if self.token.lease == u64::MAX {
-            self.trip(FlashFault::EXHAUSTED);
+            self.trip(FlashFault::Exhausted);
             return false;
         }
         self.token.lease += 1;
@@ -237,46 +334,46 @@ impl FlashCoord {
         now: u32,
     ) -> FlashReply {
         if !self.initialized || !requester.is_core() || id == 0 {
-            return FlashReply::INVALID;
+            return FlashReply::Invalid;
         }
         if !self.poll(now) {
-            return FlashReply::FAILED;
+            return FlashReply::Failed;
         }
 
-        let expected = if requester == FlashParty::LOCAL {
+        let expected = if requester == FlashParty::Local {
             self.token.authority_session
         } else {
             self.token.peer_session
         };
         if session != expected || session == 0 {
-            return FlashReply::STALE;
+            return FlashReply::Stale;
         }
 
-        let last = &self.last_request[requester.0 as usize];
+        let last = &self.last_request[requester.code() as usize];
         if id == *last && self.token.owner == requester {
-            return FlashReply::DUPLICATE;
+            return FlashReply::Duplicate;
         }
         if id <= *last {
-            return FlashReply::STALE;
+            return FlashReply::Stale;
         }
 
-        if self.phase != FlashPhase::IDLE {
-            return FlashReply::BUSY;
+        if self.phase != FlashPhase::Idle {
+            return FlashReply::Busy;
         }
         if !self.next_token() {
-            return FlashReply::FAILED;
+            return FlashReply::Failed;
         }
 
         self.token.owner = requester;
-        self.last_request[requester.0 as usize] = id;
+        self.last_request[requester.code() as usize] = id;
         self.requested_at = now;
-        self.set_phase(FlashPhase::QUIESCING, now);
-        FlashReply::ACCEPTED
+        self.set_phase(FlashPhase::Quiescing, now);
+        FlashReply::Accepted
     }
 
     pub fn quiesced(&mut self, t: &FlashToken, inactive: bool, now: u32) -> FlashReply {
         let r = self.message(t, now);
-        if r != FlashReply::ACCEPTED {
+        if r != FlashReply::Accepted {
             return r;
         }
         if !inactive {
@@ -284,12 +381,12 @@ impl FlashCoord {
         }
 
         match self.phase {
-            FlashPhase::QUIESCING => {
-                self.set_phase(FlashPhase::PARKING, now);
-                FlashReply::ACCEPTED
+            FlashPhase::Quiescing => {
+                self.set_phase(FlashPhase::Parking, now);
+                FlashReply::Accepted
             }
-            FlashPhase::PARKING | FlashPhase::ACTIVE | FlashPhase::RELEASING => {
-                FlashReply::DUPLICATE
+            FlashPhase::Parking | FlashPhase::Active | FlashPhase::Releasing => {
+                FlashReply::Duplicate
             }
             _ => self.order(),
         }
@@ -299,7 +396,7 @@ impl FlashCoord {
     /// RAM with no path to flash until this lease completes. A sleep bit is not ACK.
     pub fn parked(&mut self, t: &FlashToken, who: FlashParty, now: u32) -> FlashReply {
         let r = self.message(t, now);
-        if r != FlashReply::ACCEPTED {
+        if r != FlashReply::Accepted {
             return r;
         }
         if !who.is_core() || who == self.token.owner {
@@ -307,30 +404,30 @@ impl FlashCoord {
         }
 
         match self.phase {
-            FlashPhase::PARKING => {
-                self.set_phase(FlashPhase::ACTIVE, now);
-                FlashReply::ACCEPTED
+            FlashPhase::Parking => {
+                self.set_phase(FlashPhase::Active, now);
+                FlashReply::Accepted
             }
-            FlashPhase::ACTIVE | FlashPhase::RELEASING | FlashPhase::IDLE => FlashReply::DUPLICATE,
+            FlashPhase::Active | FlashPhase::Releasing | FlashPhase::Idle => FlashReply::Duplicate,
             _ => self.order(),
         }
     }
 
     pub fn complete(&mut self, t: &FlashToken, who: FlashParty, now: u32) -> FlashReply {
         let r = self.message(t, now);
-        if r != FlashReply::ACCEPTED {
+        if r != FlashReply::Accepted {
             return r;
         }
-        if who != self.token.owner || who == FlashParty::FENCE {
+        if who != self.token.owner || who == FlashParty::Fence {
             return self.order();
         }
 
         match self.phase {
-            FlashPhase::ACTIVE => {
-                self.set_phase(FlashPhase::RELEASING, now);
-                FlashReply::ACCEPTED
+            FlashPhase::Active => {
+                self.set_phase(FlashPhase::Releasing, now);
+                FlashReply::Accepted
             }
-            FlashPhase::RELEASING | FlashPhase::IDLE => FlashReply::DUPLICATE,
+            FlashPhase::Releasing | FlashPhase::Idle => FlashReply::Duplicate,
             _ => self.order(),
         }
     }
@@ -345,32 +442,32 @@ impl FlashCoord {
         now: u32,
     ) -> FlashReply {
         let r = self.message(t, now);
-        if r != FlashReply::ACCEPTED {
+        if r != FlashReply::Accepted {
             return r;
         }
 
         if !who.is_core() || who == self.token.owner {
             return self.order();
         }
-        if self.phase == FlashPhase::IDLE {
-            return FlashReply::DUPLICATE;
+        if self.phase == FlashPhase::Idle {
+            return FlashReply::Duplicate;
         }
-        if self.phase != FlashPhase::RELEASING {
+        if self.phase != FlashPhase::Releasing {
             return self.order();
         }
         if !inactive {
             return self.output();
         }
 
-        self.set_phase(FlashPhase::IDLE, now);
-        FlashReply::ACCEPTED
+        self.set_phase(FlashPhase::Idle, now);
+        FlashReply::Accepted
     }
 
     pub fn may_access(&mut self, t: &FlashToken, who: FlashParty, now: u32) -> bool {
         self.poll(now)
-            && self.phase == FlashPhase::ACTIVE
+            && self.phase == FlashPhase::Active
             && who == self.token.owner
-            && who != FlashParty::FENCE
+            && who != FlashParty::Fence
             && *t == self.token
     }
 
@@ -383,27 +480,27 @@ impl FlashCoord {
     /// serialization. It does not read a clock or grant/extend a lease.
     /// Non-IDLE always blocks.
     pub fn outputs_blocked(&self) -> bool {
-        !self.initialized || self.fault != FlashFault::OK || self.phase != FlashPhase::IDLE
+        !self.initialized || self.fault != FlashFault::Ok || self.phase != FlashPhase::Idle
     }
 
     pub fn close(&mut self, now: u32) -> FlashReply {
         if !self.poll(now) {
-            return FlashReply::FAILED;
+            return FlashReply::Failed;
         }
-        if self.phase == FlashPhase::CLOSING {
-            return FlashReply::DUPLICATE;
+        if self.phase == FlashPhase::Closing {
+            return FlashReply::Duplicate;
         }
-        if self.phase != FlashPhase::IDLE {
-            return FlashReply::BUSY;
+        if self.phase != FlashPhase::Idle {
+            return FlashReply::Busy;
         }
         if !self.next_token() {
-            return FlashReply::FAILED;
+            return FlashReply::Failed;
         }
 
-        self.token.owner = FlashParty::FENCE;
+        self.token.owner = FlashParty::Fence;
         self.requested_at = now;
-        self.set_phase(FlashPhase::CLOSING, now);
-        FlashReply::ACCEPTED
+        self.set_phase(FlashPhase::Closing, now);
+        FlashReply::Accepted
     }
 
     pub fn closed(
@@ -414,21 +511,21 @@ impl FlashCoord {
         now: u32,
     ) -> FlashReply {
         let r = self.message(t, now);
-        if r != FlashReply::ACCEPTED {
+        if r != FlashReply::Accepted {
             return r;
         }
 
-        if self.phase != FlashPhase::CLOSING || self.token.owner != FlashParty::FENCE {
+        if self.phase != FlashPhase::Closing || self.token.owner != FlashParty::Fence {
             return self.order();
         }
         if !peer_disabled {
-            return FlashReply::BUSY;
+            return FlashReply::Busy;
         }
         if !inactive {
             return self.output();
         }
 
-        self.set_phase(FlashPhase::CLOSED, now);
-        FlashReply::ACCEPTED
+        self.set_phase(FlashPhase::Closed, now);
+        FlashReply::Accepted
     }
 }

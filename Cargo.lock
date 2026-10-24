@@ -2263,9 +2263,7 @@ name = "petlibre-sdk-c"
 version = "0.1.0"
 dependencies = [
  "petlibre-amebad-sys",
- "petlibre-core",
  "petlibre-hal-common",
- "petlibre-testkit",
 ]
 
 [[package]]

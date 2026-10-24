@@ -8,7 +8,6 @@
 //! rather than retrying, and [`Provider::failure`] keeps the first step that
 //! failed for the report.
 
-use petlibre_core::c_enum;
 use petlibre_core::clock::tick::TickClock;
 use petlibre_core::flash_coord::{
     FlashCoord, FlashFault, FlashParty, FlashPhase, FlashReply, FlashToken,
@@ -33,16 +32,26 @@ pub const ATTEMPT_BIT: u32 = 0x100;
 pub const EXCHANGE_TICKS: u32 = 40 * SYSTIMER_HZ / 1000;
 pub const EXCHANGE_POLLS: u32 = 10_000_000;
 
-c_enum!(LeaseStage {
-    REQUEST = 0,
-    QUIESCE = 1,
-    BEGIN = 2,
-    PARKED = 3,
-    COMPLETE = 4,
-    END = 5,
-    RELEASED = 6,
-    TICKET = 7
-});
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u32)]
+pub enum LeaseStage {
+    #[default]
+    Request = 0,
+    Quiesce = 1,
+    Begin = 2,
+    Parked = 3,
+    Complete = 4,
+    End = 5,
+    Released = 6,
+    Ticket = 7,
+}
+
+impl LeaseStage {
+    /// The variant's number, as records and reports print it.
+    pub const fn code(self) -> u32 {
+        self as u32
+    }
+}
 
 fn park_token(t: &FlashToken) -> ParkToken {
     ParkToken::new(t.authority_session, t.peer_session, t.lease)
@@ -54,7 +63,7 @@ fn beat() -> u32 {
 
 /// The KM4 side of the SDK flash-lock hooks. Keep at a fixed address for the
 /// armed lifetime; callbacks reach it only through the hook context pointer.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Provider {
     pub coord: FlashCoord,
     clock: TickClock,
@@ -73,7 +82,28 @@ pub struct Provider {
     pub failure: Option<(LeaseStage, FlashReply)>,
 }
 
+impl Default for Provider {
+    fn default() -> Self {
+        Self::UNBOUND
+    }
+}
+
 impl Provider {
+    /// Not yet bound: `ready` is false until arming replaces it with
+    /// [`Self::bound`]. The runtime's static provider starts here.
+    pub const UNBOUND: Self = Self {
+        coord: FlashCoord::UNSET,
+        clock: TickClock::UNSET,
+        authority: 0,
+        saved_systick: 0,
+        parked_beat: 0,
+        leases: 0,
+        park_max: 0,
+        release_max: 0,
+        frozen: 0,
+        failure: None,
+    };
+
     /// A provider for `coord`, already bound to the KM0 peer.
     pub fn bound(coord: FlashCoord, clock: TickClock, authority: u64) -> Self {
         Self {
@@ -97,7 +127,7 @@ impl Provider {
 
     /// Hook `ready`: a bound, idle, unfaulted coordinator.
     pub fn ready(&self) -> bool {
-        self.coord.phase == FlashPhase::IDLE && self.coord.fault == FlashFault::OK
+        self.coord.phase == FlashPhase::Idle && self.coord.fault == FlashFault::Ok
     }
 
     /// Hook `acquire`, task context with IRQs enabled: reserve the lease,
@@ -109,17 +139,17 @@ impl Provider {
         let id = self.coord.token.lease + 1;
         let reply = self
             .coord
-            .request(FlashParty::LOCAL, self.authority, id, now);
-        if reply != FlashReply::ACCEPTED {
-            return self.fail(LeaseStage::REQUEST, reply);
+            .request(FlashParty::Local, self.authority, id, now);
+        if reply != FlashReply::Accepted {
+            return self.fail(LeaseStage::Request, reply);
         }
 
         let token = self.coord.token;
         let reply = self
             .coord
             .quiesced(&token, stopped::observe().verified(), now);
-        if reply != FlashReply::ACCEPTED {
-            return self.fail(LeaseStage::QUIESCE, reply);
+        if reply != FlashReply::Accepted {
+            return self.fail(LeaseStage::Quiesce, reply);
         }
 
         sdk::disable_irq();
@@ -133,13 +163,13 @@ impl Provider {
         };
         let acked_at = sdk::systimer_ticks();
         if !acked {
-            return self.fail(LeaseStage::BEGIN, FlashReply::FAILED);
+            return self.fail(LeaseStage::Begin, FlashReply::Failed);
         }
 
         let now = self.now();
-        let reply = self.coord.parked(&token, FlashParty::PEER, now);
-        if reply != FlashReply::ACCEPTED {
-            return self.fail(LeaseStage::PARKED, reply);
+        let reply = self.coord.parked(&token, FlashParty::Peer, now);
+        if reply != FlashReply::Accepted {
+            return self.fail(LeaseStage::Parked, reply);
         }
 
         self.parked_beat = beat();
@@ -158,17 +188,17 @@ impl Provider {
     /// lease and verify stopped outputs. Returns with IRQs still masked.
     pub fn release<M: Mmio>(&mut self, ticket: &HookTicket) -> bool {
         let token = self.coord.token;
-        if ticket.id != token.lease || self.coord.phase != FlashPhase::ACTIVE {
-            return self.fail(LeaseStage::TICKET, FlashReply::STALE);
+        if ticket.id != token.lease || self.coord.phase != FlashPhase::Active {
+            return self.fail(LeaseStage::Ticket, FlashReply::Stale);
         }
 
         // A parked KM0 runs nothing, so its heartbeat should not have moved
         // since the park; count the leases where it held still.
         self.frozen += u64::from(beat() == self.parked_beat);
         let now = self.now();
-        let reply = self.coord.complete(&token, FlashParty::LOCAL, now);
-        if reply != FlashReply::ACCEPTED {
-            return self.fail(LeaseStage::COMPLETE, reply);
+        let reply = self.coord.complete(&token, FlashParty::Local, now);
+        if reply != FlashReply::Accepted {
+            return self.fail(LeaseStage::Complete, reply);
         }
 
         let ram_token = park_token(&token);
@@ -179,15 +209,15 @@ impl Provider {
         };
         let released_at = sdk::systimer_ticks();
         if !ended {
-            return self.fail(LeaseStage::END, FlashReply::FAILED);
+            return self.fail(LeaseStage::End, FlashReply::Failed);
         }
 
         let now = self.now();
         let reply =
             self.coord
-                .released(&token, FlashParty::PEER, stopped::observe().verified(), now);
-        if reply != FlashReply::ACCEPTED {
-            return self.fail(LeaseStage::RELEASED, reply);
+                .released(&token, FlashParty::Peer, stopped::observe().verified(), now);
+        if reply != FlashReply::Accepted {
+            return self.fail(LeaseStage::Released, reply);
         }
 
         self.release_max = self.release_max.max(released_at.wrapping_sub(end_at));

@@ -31,7 +31,6 @@ pub use crate::transport::MAX_VOLUME;
 pub const MIN_UTC_OFFSET: i16 = -12 * 60;
 pub const MAX_UTC_OFFSET: i16 = 14 * 60;
 
-#[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Settings {
     pub bowl_mode: BowlMode,
@@ -44,7 +43,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            bowl_mode: BowlMode::SINGLE,
+            bowl_mode: BowlMode::Single,
             lights: true,
             sound: true,
             volume: 50,
@@ -55,40 +54,59 @@ impl Default for Settings {
 
 impl Settings {
     pub fn valid(&self) -> bool {
-        self.bowl_mode.valid()
-            && self.volume <= MAX_VOLUME
+        self.volume <= MAX_VOLUME
             && (MIN_UTC_OFFSET..=MAX_UTC_OFFSET).contains(&self.utc_offset_minutes)
     }
 }
 
-c_enum!(SettingsStatus {
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u32)]
+pub enum SettingsStatus {
     /// A valid record; the other slot is erased or holds the older one.
-    LOADED = 0,
+    #[default]
+    Loaded = 0,
     /// Both slots erased: defaults, writable.
-    EMPTY = 1,
+    Empty = 1,
     /// A valid record, with the other slot torn or invalid.
-    RECOVERED = 2,
+    Recovered = 2,
     /// No valid record: defaults, read-only until reset.
-    CORRUPT = 3,
+    Corrupt = 3,
     /// A newer schema version is present: defaults, read-only until reset.
-    FUTURE = 4,
-    IO = 5,
+    Future = 4,
+    Io = 5,
     /// The wear limit is reached: saves are refused.
-    WORN = 6,
-    UNOPENED = 7,
-});
+    Worn = 6,
+    Unopened = 7,
+}
 
-c_enum!(SlotState {
+impl SettingsStatus {
+    /// The variant's number, as records and reports print it.
+    pub const fn code(self) -> u32 {
+        self as u32
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u32)]
+pub enum SlotState {
     /// Not read by the last open.
-    UNREAD = 0,
-    ERASED = 1,
-    VALID = 2,
-    FUTURE = 3,
+    #[default]
+    Unread = 0,
+    Erased = 1,
+    Valid = 2,
+    Future = 3,
     /// A prefix of our own record without its commit: a save cut short.
-    DIRTY = 4,
+    Dirty = 4,
     /// Anything else, including a unit whose erase was cut short.
-    INVALID = 5,
-});
+    Invalid = 5,
+}
+
+impl SlotState {
+    /// The variant's number, as records and reports print it.
+    pub const fn code(self) -> u32 {
+        self as u32
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Scan {
@@ -102,11 +120,11 @@ enum Scan {
 impl Scan {
     fn state(self) -> SlotState {
         match self {
-            Scan::Erased => SlotState::ERASED,
-            Scan::Valid(..) => SlotState::VALID,
-            Scan::Future => SlotState::FUTURE,
-            Scan::Dirty => SlotState::DIRTY,
-            Scan::Invalid => SlotState::INVALID,
+            Scan::Erased => SlotState::Erased,
+            Scan::Valid(..) => SlotState::Valid,
+            Scan::Future => SlotState::Future,
+            Scan::Dirty => SlotState::Dirty,
+            Scan::Invalid => SlotState::Invalid,
         }
     }
 }
@@ -130,10 +148,10 @@ impl Default for SettingsStore {
             io: JournalIo::default(),
             binding: 0,
             settings: Settings::default(),
-            status: SettingsStatus::UNOPENED,
+            status: SettingsStatus::Unopened,
             generation: 0,
             slot: 0,
-            slots: [SlotState::UNREAD; 2],
+            slots: [SlotState::Unread; 2],
             writable: false,
         }
     }
@@ -156,7 +174,7 @@ impl SettingsStore {
         put_u64(&mut p[12..], generation);
         put_u64(&mut p[20..], self.binding);
 
-        p[28] = s.bowl_mode.low_byte();
+        p[28] = s.bowl_mode.byte();
         p[29] = u8::from(s.lights) | (u8::from(s.sound) << 1);
         p[30] = s.volume;
         put_u16(&mut p[32..], s.utc_offset_minutes as u16);
@@ -184,8 +202,11 @@ impl SettingsStore {
             return Scan::Invalid;
         }
 
+        let Some(bowl_mode) = BowlMode::from_byte(p[28]) else {
+            return Scan::Invalid;
+        };
         let s = Settings {
-            bowl_mode: BowlMode(u32::from(p[28])),
+            bowl_mode,
             lights: p[29] & 1 != 0,
             sound: p[29] & 2 != 0,
             volume: p[30],
@@ -257,7 +278,7 @@ impl SettingsStore {
         }
 
         let (Some(a), Some(b)) = (self.scan(0), self.scan(1)) else {
-            self.status = SettingsStatus::IO;
+            self.status = SettingsStatus::Io;
             return self.status;
         };
         self.slots = [a.state(), b.state()];
@@ -273,22 +294,22 @@ impl SettingsStore {
         let future = a == Scan::Future || b == Scan::Future;
         self.status = match pick {
             // A newer schema anywhere means this firmware must not write.
-            _ if future => SettingsStatus::FUTURE,
+            _ if future => SettingsStatus::Future,
             Some(_) if matches!(a, Scan::Valid(..)) && matches!(b, Scan::Valid(..)) => {
-                SettingsStatus::LOADED
+                SettingsStatus::Loaded
             }
-            Some(_) if a == Scan::Erased || b == Scan::Erased => SettingsStatus::LOADED,
-            Some(_) => SettingsStatus::RECOVERED,
-            None if a == Scan::Erased && b == Scan::Erased => SettingsStatus::EMPTY,
+            Some(_) if a == Scan::Erased || b == Scan::Erased => SettingsStatus::Loaded,
+            Some(_) => SettingsStatus::Recovered,
+            None if a == Scan::Erased && b == Scan::Erased => SettingsStatus::Empty,
             // A torn first save never committed anything: still empty.
             None if matches!(
                 (a, b),
                 (Scan::Dirty, Scan::Erased) | (Scan::Erased, Scan::Dirty)
             ) =>
             {
-                SettingsStatus::EMPTY
+                SettingsStatus::Empty
             }
-            None => SettingsStatus::CORRUPT,
+            None => SettingsStatus::Corrupt,
         };
 
         if let Some((slot, generation, settings)) = pick.filter(|_| !future) {
@@ -298,7 +319,7 @@ impl SettingsStore {
         }
         self.writable = matches!(
             self.status,
-            SettingsStatus::LOADED | SettingsStatus::EMPTY | SettingsStatus::RECOVERED
+            SettingsStatus::Loaded | SettingsStatus::Empty | SettingsStatus::Recovered
         );
 
         self.status
@@ -313,7 +334,7 @@ impl SettingsStore {
         }
 
         if self.generation >= WEAR_LIMIT {
-            self.status = SettingsStatus::WORN;
+            self.status = SettingsStatus::Worn;
             return false;
         }
 
@@ -337,14 +358,14 @@ impl SettingsStore {
             && bytes == checked;
 
         if !ok {
-            self.status = SettingsStatus::IO;
+            self.status = SettingsStatus::Io;
             return false;
         }
 
         self.slot = slot;
         self.generation = generation;
         self.settings = *settings;
-        self.status = SettingsStatus::LOADED;
+        self.status = SettingsStatus::Loaded;
         true
     }
 
@@ -366,9 +387,9 @@ impl SettingsStore {
         self.slot = 0;
         self.writable = ok;
         self.status = if ok {
-            SettingsStatus::EMPTY
+            SettingsStatus::Empty
         } else {
-            SettingsStatus::IO
+            SettingsStatus::Io
         };
         ok
     }

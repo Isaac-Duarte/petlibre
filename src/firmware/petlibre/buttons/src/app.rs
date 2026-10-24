@@ -29,8 +29,9 @@ fn start() {
 static BUTTONS: Slot<buttons::Probe> = Slot::new();
 
 unsafe extern "C" fn button_task(_: *mut c_void) -> u32 {
-    // SAFETY: only this task touches the slot.
-    let probe = unsafe { BUTTONS.get_or_init(Default::default) };
+    let Some(mut probe) = BUTTONS.enter_or_init(Default::default) else {
+        return 0;
+    };
     let step = probe.step();
     if let Some(record) = step.record {
         petlibre_probes::log(format_args!("PLBTN1 {record}\r\n"));

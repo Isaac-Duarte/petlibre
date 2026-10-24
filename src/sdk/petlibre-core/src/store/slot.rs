@@ -54,7 +54,6 @@ pub type EraseFn = unsafe extern "C" fn(context: *mut c_void, slot: c_uint) -> b
 /// must be bounded. False may mean partial OR completed I/O; never retry
 /// blindly. The backend must independently enforce output inactivity and SDK
 /// flash/IRQ synchronization.
-#[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct JournalIo {
     pub context: *mut c_void,

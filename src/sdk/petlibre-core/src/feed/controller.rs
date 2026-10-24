@@ -10,63 +10,125 @@
 use crate::feed::progress::{BowlMode, Direction, FeedProgress, ProgressResult};
 use crate::{HALF_RANGE, interval_valid};
 
-c_enum!(MotorCommand { STOP = 0, DRIVE_0 = 1, DRIVE_1 = 2 });
-
-c_enum!(FeedState {
-    IDLE = 0,
-    RUNNING = 1,
-    DIRECTION_PAUSE = 2,
-    REVERSING = 3,
-    COMPLETE = 4,
-    FAULT = 5,
-    CANCELLED = 6,
-});
-
-c_enum!(
-    /// Persistent journal v1 encodes these values; never renumber without migration.
-    FeedReason {
-        NONE = 0,
-        DONE = 1,
-        CANCELLED = 2,
-        CLOCK = 3,
-        OBSERVATION_GAP = 4,
-        TOTAL_TIMEOUT = 5,
-        FEEDBACK_TIMEOUT = 6,
-        POWER = 7,
-        SENSOR = 8,
-        OUTLET = 9,
-        OVERCURRENT = 10,
-        FEEDBACK_STREAM = 11,
-        OUTPUT = 12,
-    }
-);
-
-c_enum!(FeedStartResult {
-    ACCEPTED = 0,
-    REJECT_BUSY = 1,
-    REJECT_RESET_REQUIRED = 2,
-    REJECT_ID = 3,
-    REJECT_REQUEST = 4,
-    REJECT_INPUT = 5,
-});
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u32)]
+pub enum MotorCommand {
+    #[default]
+    Stop = 0,
+    Drive0 = 1,
+    Drive1 = 2,
+}
 
 impl MotorCommand {
-    pub fn valid(self) -> bool {
-        self.0 <= Self::DRIVE_1.0
+    /// The variant's number, as records and reports print it.
+    pub const fn code(self) -> u32 {
+        self as u32
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u32)]
+pub enum FeedState {
+    #[default]
+    Idle = 0,
+    Running = 1,
+    DirectionPause = 2,
+    Reversing = 3,
+    Complete = 4,
+    Fault = 5,
+    Cancelled = 6,
+}
+
+impl FeedState {
+    /// The variant's number, as records and reports print it.
+    pub const fn code(self) -> u32 {
+        self as u32
+    }
+}
+
+/// Persistent journal v1 encodes these values; never renumber without migration.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u32)]
+pub enum FeedReason {
+    #[default]
+    None = 0,
+    Done = 1,
+    Cancelled = 2,
+    Clock = 3,
+    ObservationGap = 4,
+    TotalTimeout = 5,
+    FeedbackTimeout = 6,
+    Power = 7,
+    Sensor = 8,
+    Outlet = 9,
+    Overcurrent = 10,
+    FeedbackStream = 11,
+    Output = 12,
+}
+
+impl FeedReason {
+    /// The variant's number, as records and reports print it.
+    pub const fn code(self) -> u32 {
+        self as u32
     }
 
+    /// The one-byte field a flash record stores.
+    pub const fn byte(self) -> u8 {
+        self as u8
+    }
+
+    /// The variant a record's byte names; `None` for any other byte.
+    pub const fn from_byte(byte: u8) -> Option<Self> {
+        match byte {
+            0 => Some(Self::None),
+            1 => Some(Self::Done),
+            2 => Some(Self::Cancelled),
+            3 => Some(Self::Clock),
+            4 => Some(Self::ObservationGap),
+            5 => Some(Self::TotalTimeout),
+            6 => Some(Self::FeedbackTimeout),
+            7 => Some(Self::Power),
+            8 => Some(Self::Sensor),
+            9 => Some(Self::Outlet),
+            10 => Some(Self::Overcurrent),
+            11 => Some(Self::FeedbackStream),
+            12 => Some(Self::Output),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u32)]
+pub enum FeedStartResult {
+    #[default]
+    Accepted = 0,
+    RejectBusy = 1,
+    RejectResetRequired = 2,
+    RejectId = 3,
+    RejectRequest = 4,
+    RejectInput = 5,
+}
+
+impl FeedStartResult {
+    /// The variant's number, as records and reports print it.
+    pub const fn code(self) -> u32 {
+        self as u32
+    }
+}
+
+impl MotorCommand {
     pub fn drive(direction: Direction) -> Self {
         if direction == Direction::D0 {
-            Self::DRIVE_0
+            Self::Drive0
         } else {
-            Self::DRIVE_1
+            Self::Drive1
         }
     }
 }
 
 /// All intervals are monotonic milliseconds, nonzero and below 2^31. No
 /// physical defaults are supplied: board validation must establish limits.
-#[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct FeedLimits {
     pub feedback_inhibit_ms: u32,
@@ -112,7 +174,6 @@ pub struct FeedRequest {
     pub phase_known: bool,
 }
 
-#[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct FeedSample {
     pub power_healthy: bool,
@@ -129,19 +190,18 @@ pub struct FeedSample {
 impl FeedSample {
     fn input_fault(&self) -> FeedReason {
         if !self.power_healthy {
-            FeedReason::POWER
+            FeedReason::Power
         } else if !self.current_valid || !self.optical_valid {
-            FeedReason::SENSOR
+            FeedReason::Sensor
         } else if !self.outlet_clear {
-            FeedReason::OUTLET
+            FeedReason::Outlet
         } else {
-            FeedReason::NONE
+            FeedReason::None
         }
     }
 }
 
 /// Single serialized owner; inspect fields for reporting, mutate only via methods.
-#[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct FeedController {
     pub limits: FeedLimits,
@@ -166,20 +226,20 @@ impl FeedController {
         limits.valid().then(|| Self {
             limits: *limits,
             last_request_id,
-            state: FeedState::IDLE,
-            motor: MotorCommand::STOP,
+            state: FeedState::Idle,
+            motor: MotorCommand::Stop,
             ..Self::default()
         })
     }
 
     pub fn active(&self) -> bool {
-        self.state == FeedState::RUNNING
-            || self.state == FeedState::DIRECTION_PAUSE
-            || self.state == FeedState::REVERSING
+        self.state == FeedState::Running
+            || self.state == FeedState::DirectionPause
+            || self.state == FeedState::Reversing
     }
 
     fn stop(&mut self, state: FeedState, reason: FeedReason) {
-        self.motor = MotorCommand::STOP;
+        self.motor = MotorCommand::Stop;
         self.state = state;
         self.reason = reason;
     }
@@ -192,18 +252,18 @@ impl FeedController {
         sample: &FeedSample,
     ) -> FeedStartResult {
         if self.active() {
-            return FeedStartResult::REJECT_BUSY;
+            return FeedStartResult::RejectBusy;
         }
-        if self.state == FeedState::FAULT || self.state == FeedState::CANCELLED {
-            return FeedStartResult::REJECT_RESET_REQUIRED;
+        if self.state == FeedState::Fault || self.state == FeedState::Cancelled {
+            return FeedStartResult::RejectResetRequired;
         }
         if request.id == 0 || request.id <= self.last_request_id {
-            return FeedStartResult::REJECT_ID;
+            return FeedStartResult::RejectId;
         }
 
         let progress = if request.portions > self.limits.max_portions
-            || (request.mode == BowlMode::SINGLE && request.direction != Direction::D0)
-            || (request.mode == BowlMode::DOUBLE && !request.phase_known)
+            || (request.mode == BowlMode::Single && request.direction != Direction::D0)
+            || (request.mode == BowlMode::Double && !request.phase_known)
         {
             None
         } else {
@@ -215,13 +275,13 @@ impl FeedController {
             )
         };
         let Some(progress) = progress else {
-            return FeedStartResult::REJECT_REQUEST;
+            return FeedStartResult::RejectRequest;
         };
 
-        if sample.input_fault() != FeedReason::NONE
+        if sample.input_fault() != FeedReason::None
             || sample.current_ma > self.limits.current_limit_ma
         {
-            return FeedStartResult::REJECT_INPUT;
+            return FeedStartResult::RejectInput;
         }
 
         self.progress = progress;
@@ -232,11 +292,11 @@ impl FeedController {
         self.inhibit_at = now_ms;
         self.state_at = now_ms;
         self.reverse_attempts = 0;
-        self.state = FeedState::RUNNING;
-        self.reason = FeedReason::NONE;
+        self.state = FeedState::Running;
+        self.reason = FeedReason::None;
         self.motor = MotorCommand::drive(progress.direction);
 
-        FeedStartResult::ACCEPTED
+        FeedStartResult::Accepted
     }
 
     /// Process fresh samples in timestamp order, including polls without edges.
@@ -268,56 +328,56 @@ impl FeedController {
         let gap = now_ms.wrapping_sub(self.last_update_at);
         self.last_update_at = now_ms;
         let mut reason = if gap >= HALF_RANGE {
-            FeedReason::CLOCK
+            FeedReason::Clock
         } else if gap > self.limits.max_observation_gap_ms {
-            FeedReason::OBSERVATION_GAP
+            FeedReason::ObservationGap
         } else if now_ms.wrapping_sub(self.started_at) >= self.limits.max_duration_ms {
-            FeedReason::TOTAL_TIMEOUT
+            FeedReason::TotalTimeout
         } else {
             match sample {
-                None => FeedReason::SENSOR,
+                None => FeedReason::Sensor,
                 Some(sample) => sample.input_fault(),
             }
         };
 
-        if reason == FeedReason::NONE
+        if reason == FeedReason::None
             && sample.is_some_and(|s| s.feedback_edge)
             && now_ms.wrapping_sub(captured_at_ms) >= HALF_RANGE
         {
-            reason = FeedReason::CLOCK;
+            reason = FeedReason::Clock;
         }
-        if reason == FeedReason::NONE
+        if reason == FeedReason::None
             && now_ms.wrapping_sub(self.last_feedback_at) >= self.limits.feedback_timeout_ms
         {
-            reason = FeedReason::FEEDBACK_TIMEOUT;
+            reason = FeedReason::FeedbackTimeout;
         }
 
-        let Some(sample) = sample.filter(|_| reason == FeedReason::NONE) else {
-            self.stop(FeedState::FAULT, reason);
+        let Some(sample) = sample.filter(|_| reason == FeedReason::None) else {
+            self.stop(FeedState::Fault, reason);
             return;
         };
 
         let overcurrent = sample.current_ma > self.limits.current_limit_ma;
-        if self.state == FeedState::REVERSING {
+        if self.state == FeedState::Reversing {
             if now_ms.wrapping_sub(self.state_at) >= self.limits.reverse_ms {
                 if overcurrent {
-                    self.stop(FeedState::FAULT, FeedReason::OVERCURRENT);
+                    self.stop(FeedState::Fault, FeedReason::Overcurrent);
                     return;
                 }
-                self.state = FeedState::RUNNING;
+                self.state = FeedState::Running;
                 self.motor = MotorCommand::drive(self.progress.direction);
                 self.inhibit_at = now_ms;
             }
             return;
         }
 
-        if self.state == FeedState::DIRECTION_PAUSE {
+        if self.state == FeedState::DirectionPause {
             if overcurrent {
-                self.stop(FeedState::FAULT, FeedReason::OVERCURRENT);
+                self.stop(FeedState::Fault, FeedReason::Overcurrent);
                 return;
             }
             if now_ms.wrapping_sub(self.state_at) >= self.limits.direction_pause_ms {
-                self.state = FeedState::RUNNING;
+                self.state = FeedState::Running;
                 self.motor = MotorCommand::drive(self.progress.direction);
                 // Edges captured while stopped or coasting must not count.
                 self.inhibit_at = now_ms;
@@ -327,10 +387,10 @@ impl FeedController {
 
         if overcurrent {
             if self.reverse_attempts >= self.limits.max_reverse_attempts {
-                self.stop(FeedState::FAULT, FeedReason::OVERCURRENT);
+                self.stop(FeedState::Fault, FeedReason::Overcurrent);
             } else {
                 self.reverse_attempts = self.reverse_attempts.wrapping_add(1);
-                self.state = FeedState::REVERSING;
+                self.state = FeedState::Reversing;
                 self.state_at = now_ms;
                 self.motor = MotorCommand::drive(self.progress.direction.toggled());
             }
@@ -346,7 +406,7 @@ impl FeedController {
         }
 
         let expected_high =
-            self.progress.mode == BowlMode::SINGLE || self.progress.direction == Direction::D0;
+            self.progress.mode == BowlMode::Single || self.progress.direction == Direction::D0;
         if sample.feedback_high != expected_high {
             return;
         }
@@ -354,26 +414,31 @@ impl FeedController {
         self.last_feedback_at = captured_at_ms;
         self.inhibit_at = captured_at_ms;
         let result = self.progress.accept();
-        if result == ProgressResult::FINISHED {
-            self.stop(FeedState::COMPLETE, FeedReason::DONE);
-        } else if result == ProgressResult::PORTION && self.progress.mode == BowlMode::DOUBLE {
+        if result == ProgressResult::Finished {
+            self.stop(FeedState::Complete, FeedReason::Done);
+        } else if result == ProgressResult::Portion && self.progress.mode == BowlMode::Double {
             if self.progress.direction == Direction::D0 {
-                self.state = FeedState::DIRECTION_PAUSE;
+                self.state = FeedState::DirectionPause;
                 self.state_at = now_ms;
-                self.motor = MotorCommand::STOP;
+                self.motor = MotorCommand::Stop;
             } else {
-                self.motor = MotorCommand::DRIVE_1;
+                self.motor = MotorCommand::Drive1;
             }
         }
     }
 
     /// External input/output failures latch a fault only for an active request.
-    /// Rejects NONE, DONE, CANCELLED and invalid reason values. Does not apply GPIO.
+    /// Rejects the non-fault reasons (none, done, cancelled). Does not apply GPIO.
     pub fn trip(&mut self, reason: FeedReason) -> bool {
-        if !self.active() || reason.0 < FeedReason::CLOCK.0 || reason.0 > FeedReason::OUTPUT.0 {
+        if !self.active()
+            || matches!(
+                reason,
+                FeedReason::None | FeedReason::Done | FeedReason::Cancelled
+            )
+        {
             return false;
         }
-        self.stop(FeedState::FAULT, reason);
+        self.stop(FeedState::Fault, reason);
         true
     }
 
@@ -382,7 +447,7 @@ impl FeedController {
         if !self.active() || id != self.last_request_id {
             return false;
         }
-        self.stop(FeedState::CANCELLED, FeedReason::CANCELLED);
+        self.stop(FeedState::Cancelled, FeedReason::Cancelled);
         true
     }
 
@@ -391,7 +456,7 @@ impl FeedController {
         if self.active() {
             return false;
         }
-        self.stop(FeedState::IDLE, FeedReason::NONE);
+        self.stop(FeedState::Idle, FeedReason::None);
         true
     }
 }

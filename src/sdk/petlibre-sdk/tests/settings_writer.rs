@@ -130,7 +130,7 @@ fn changes_are_saved_once_each_inside_a_marked_attempt() {
     else {
         panic!("open first")
     };
-    assert_eq!((status, generation), (SettingsStatus::EMPTY, 0));
+    assert_eq!((status, generation), (SettingsStatus::Empty, 0));
     assert_eq!(current(), (true, true, 50, 0, true));
     assert!(matches!(
         step(&mut writer, &mut provider),
@@ -223,7 +223,7 @@ fn an_unwritable_store_reads_but_refuses_changes() {
     let Some(Record::Open { status, .. }) = step(&mut writer, &mut provider) else {
         panic!("open")
     };
-    assert_eq!(status, SettingsStatus::CORRUPT);
+    assert_eq!(status, SettingsStatus::Corrupt);
     assert!(!current().4);
     assert_eq!(
         settings::request(SettingsFields {
@@ -284,14 +284,14 @@ fn error_records_format_as_before() {
     writer::describe(
         Record::Error {
             stage: ErrorStage::Save,
-            status: SettingsStatus::CORRUPT,
+            status: SettingsStatus::Corrupt,
         },
         &mut text,
     )
     .unwrap();
     assert_eq!(
         text,
-        format!("error stage=save status={}", SettingsStatus::CORRUPT.0)
+        format!("error stage=save status={}", SettingsStatus::Corrupt.code())
     );
 
     text.clear();

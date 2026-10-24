@@ -8,7 +8,6 @@
 use core::ffi::c_void;
 use core::ptr;
 
-use petlibre_core::c_enum;
 use petlibre_core::clock::tick::TickClock;
 use petlibre_core::feed::controller::{
     FeedController, FeedReason, FeedRequest, FeedSample, FeedStartResult, MotorCommand,
@@ -26,19 +25,28 @@ const FEEDBACK_PIN: u32 = sdk::board::FEEDBACK;
 const FEEDBACK_MASK: u32 = sdk::board::bit(FEEDBACK_PIN);
 const PRIORITY: u32 = 4;
 
-c_enum!(EventsFault {
-    OK = 0,
-    CLOCK = 1,
-    FEEDBACK = 2,
-    OUTPUT = 3,
-    TIMER = 4,
-    RESOURCE = 5,
-    SETUP = 6,
-    OWNER = 7,
-    OPTICS = 8,
-});
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u32)]
+pub enum EventsFault {
+    #[default]
+    Ok = 0,
+    Clock = 1,
+    Feedback = 2,
+    Output = 3,
+    Timer = 4,
+    Resource = 5,
+    Setup = 6,
+    Owner = 7,
+    Optics = 8,
+}
 
-#[repr(C)]
+impl EventsFault {
+    /// The variant's number, as records and reports print it.
+    pub const fn code(self) -> u32 {
+        self as u32
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct EventsConfig {
     pub ticks_per_second: u32,
@@ -48,7 +56,6 @@ pub struct EventsConfig {
 }
 
 /// Fixed-address object; all public methods serialize with both ISR paths.
-#[repr(C)]
 #[derive(Debug)]
 pub struct Events {
     pub board: *mut Board,
@@ -90,7 +97,7 @@ impl Default for Events {
             owner_at: 0,
             optics_at: 0,
             optics_max_ms: 0,
-            fault: EventsFault::OK,
+            fault: EventsFault::Ok,
             opened: false,
             capture_enabled: false,
             timer_seen: false,
@@ -102,7 +109,6 @@ impl Default for Events {
     }
 }
 
-#[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct EventsSnapshot {
     pub now_ms: u32,
@@ -134,7 +140,7 @@ impl Events {
     // All helpers below run with KM4 interrupts disabled. No RTOS calls in ISRs.
 
     fn fail(&mut self, fault: EventsFault) -> bool {
-        if self.fault == EventsFault::OK {
+        if self.fault == EventsFault::Ok {
             self.fault = fault;
         }
         self.capture_enabled = false;
@@ -149,7 +155,7 @@ impl Events {
     fn now(&mut self) -> Option<u32> {
         let value = self.clock.read(sdk::systimer_ticks());
         if value.is_none() {
-            self.fail(EventsFault::CLOCK);
+            self.fail(EventsFault::Clock);
         }
         value
     }
@@ -173,8 +179,8 @@ impl Events {
         // SAFETY: as for `board`.
         let gate = unsafe { &(*self.board).motor };
         gate.applied_known
-            && gate.applied == MotorCommand::STOP
-            && gate.desired == MotorCommand::STOP
+            && gate.applied == MotorCommand::Stop
+            && gate.desired == MotorCommand::Stop
     }
 
     /// Requires an opened, stopped board. Refuses enabled GPIOA interrupts or
@@ -192,10 +198,10 @@ impl Events {
         if !b.opened
             || b.faulted
             || b.optics_enabled
-            || b.motor.fault != MotorGateFault::OK
+            || b.motor.fault != MotorGateFault::Ok
             || !b.motor.applied_known
-            || b.motor.applied != MotorCommand::STOP
-            || b.motor.desired != MotorCommand::STOP
+            || b.motor.applied != MotorCommand::Stop
+            || b.motor.desired != MotorCommand::Stop
             || config.ticks_per_second < 1000
             || config.ticks_per_second > 1_000_000
             || config.timer_period_ms == 0
@@ -255,7 +261,7 @@ impl Events {
             sdk::tim2_int_config(false);
             sdk::tim2_cmd(false);
             sdk::gpio_int_mode(FEEDBACK_PIN, false);
-            self.fault = EventsFault::SETUP;
+            self.fault = EventsFault::Setup;
             return false;
         }
 
@@ -293,9 +299,9 @@ impl Events {
             now_ms: value,
             fault: self.fault,
             healthy: read.is_some()
-                && self.fault == EventsFault::OK
+                && self.fault == EventsFault::Ok
                 && !b.faulted
-                && b.motor.fault == MotorGateFault::OK,
+                && b.motor.fault == MotorGateFault::Ok,
             timer_ready: self.timer_ready(value),
             owner_ready: self.owner_ready(value),
             stopped: self.stopped(),
@@ -328,7 +334,7 @@ impl Events {
         };
 
         if enabled
-            && (self.fault != EventsFault::OK
+            && (self.fault != EventsFault::Ok
                 || !self.timer_ready(value)
                 || !self.owner_ready(value))
         {
@@ -339,7 +345,7 @@ impl Events {
             return board::optics_are(a, b);
         }
         if !self.board().optics_select(a, b) {
-            return self.fail(EventsFault::OUTPUT);
+            return self.fail(EventsFault::Output);
         }
 
         self.optics_armed = enabled;
@@ -362,11 +368,11 @@ impl Events {
             sdk::gpio_int_config(FEEDBACK_PIN, false);
             self.capture_enabled = false;
             if !stopped {
-                return self.fail(EventsFault::FEEDBACK);
+                return self.fail(EventsFault::Feedback);
             }
             if let Some(value) = read
-                && self.fault == EventsFault::OK
-                && self.feedback.fault == FeedbackFault::OK
+                && self.fault == EventsFault::Ok
+                && self.feedback.fault == FeedbackFault::Ok
             {
                 // Discard completed/cancelled-request edges only while stopped.
                 // Never erase a latched fault to prepare a later request.
@@ -376,7 +382,7 @@ impl Events {
         }
 
         let Some(value) = read else { return false };
-        if !stopped || self.fault != EventsFault::OK || !self.timer_ready(value) {
+        if !stopped || self.fault != EventsFault::Ok || !self.timer_ready(value) {
             return false;
         }
 
@@ -386,7 +392,7 @@ impl Events {
         self.capture_enabled = sdk::gpioa_int_en() & FEEDBACK_MASK != 0
             && sdk::gpioa_int_mask() & FEEDBACK_MASK == 0
             && sdk::gpioa_int_bothedge() & FEEDBACK_MASK != 0;
-        self.capture_enabled || self.fail(EventsFault::SETUP)
+        self.capture_enabled || self.fail(EventsFault::Setup)
     }
 
     fn reset_feedback(&mut self, value: u32) {
@@ -407,20 +413,20 @@ impl Events {
             return false;
         }
         let _guard = IrqGuard::lock();
-        let read = self.now().filter(|_| self.fault == EventsFault::OK);
+        let read = self.now().filter(|_| self.fault == EventsFault::Ok);
         let mut result = read.is_some();
         if let Some(value) = read
             && self.board().optics_enabled
             && !self.owner_ready(value)
         {
-            result = self.fail(EventsFault::OWNER);
+            result = self.fail(EventsFault::Owner);
         }
 
         let Some(value) = read.filter(|_| result) else {
-            controller.trip(if self.fault == EventsFault::FEEDBACK {
-                FeedReason::FEEDBACK_STREAM
+            controller.trip(if self.fault == EventsFault::Feedback {
+                FeedReason::FeedbackStream
             } else {
-                FeedReason::OUTPUT
+                FeedReason::Output
             });
             return false;
         };
@@ -428,7 +434,7 @@ impl Events {
         let composed = inputs.map(|inputs| inputs.sample(value, false, false));
         let b = self.board();
         let drive = FeedbackDrive {
-            healthy: !b.faulted && b.motor.fault == MotorGateFault::OK,
+            healthy: !b.faulted && b.motor.fault == MotorGateFault::Ok,
             applied_known: b.motor.applied_known,
             applied: b.motor.applied,
             applied_at: b.motor.applied_at,
@@ -438,17 +444,17 @@ impl Events {
             Some(sample) => self.feedback.process(controller, value, sample, drive),
             None => {
                 // A missing sample fails the stream exactly like the C ABI.
-                self.feedback.fail(FeedbackFault::ARGUMENT);
-                controller.trip(FeedReason::FEEDBACK_STREAM);
+                self.feedback.fail(FeedbackFault::Argument);
+                controller.trip(FeedReason::FeedbackStream);
                 false
             }
         };
 
         if !ok {
-            self.fail(if self.feedback.fault == FeedbackFault::OK {
-                EventsFault::OUTPUT
+            self.fail(if self.feedback.fault == FeedbackFault::Ok {
+                EventsFault::Output
             } else {
-                EventsFault::FEEDBACK
+                EventsFault::Feedback
             });
         } else {
             self.owner_at = value;
@@ -483,32 +489,32 @@ impl Events {
         latest_start_ms: u32,
     ) -> FeedStartResult {
         if !self.opened {
-            return FeedStartResult::REJECT_REQUEST;
+            return FeedStartResult::RejectRequest;
         }
         let _guard = IrqGuard::lock();
         let Some(value) = self.now() else {
-            return FeedStartResult::REJECT_INPUT;
+            return FeedStartResult::RejectInput;
         };
 
         let remaining = latest_start_ms.wrapping_sub(value);
-        if self.fault != EventsFault::OK
+        if self.fault != EventsFault::Ok
             || !self.timer_ready(value)
             || !self.owner_ready(value)
             || !interval_valid(remaining)
             || self.feedback.max_age_ms >= controller.limits.feedback_inhibit_ms
         {
-            return FeedStartResult::REJECT_INPUT;
+            return FeedStartResult::RejectInput;
         }
 
         let sample = inputs.sample(value, false, false);
         let result = controller.start(request, value, &sample);
-        if result == FeedStartResult::ACCEPTED {
+        if result == FeedStartResult::Accepted {
             let motor = controller.motor;
             let ready = self.capture(true) && self.board().motor(motor, value);
             if !ready {
-                self.fail(EventsFault::OUTPUT);
-                controller.trip(FeedReason::OUTPUT);
-                return FeedStartResult::REJECT_INPUT;
+                self.fail(EventsFault::Output);
+                controller.trip(FeedReason::Output);
+                return FeedStartResult::RejectInput;
             }
         }
         result
@@ -525,16 +531,16 @@ impl Events {
             return false;
         };
 
-        if command != MotorCommand::STOP {
-            if self.fault != EventsFault::OK || !self.capture_enabled || !self.timer_ready(value) {
-                return self.fail(EventsFault::TIMER);
+        if command != MotorCommand::Stop {
+            if self.fault != EventsFault::Ok || !self.capture_enabled || !self.timer_ready(value) {
+                return self.fail(EventsFault::Timer);
             }
             if !self.owner_ready(value) {
-                return self.fail(EventsFault::OWNER);
+                return self.fail(EventsFault::Owner);
             }
         }
 
-        self.board().motor(command, value) || self.fail(EventsFault::OUTPUT)
+        self.board().motor(command, value) || self.fail(EventsFault::Output)
     }
 
     /// If STOP or infrared OFF cannot be verified, returns false and retains
@@ -545,14 +551,14 @@ impl Events {
         }
         let _guard = IrqGuard::lock();
         let millis = self.clock.millis;
-        self.board().motor(MotorCommand::STOP, millis);
+        self.board().motor(MotorCommand::Stop, millis);
         sdk::gpio_int_config(FEEDBACK_PIN, false);
         self.capture_enabled = false;
         let optics_off = self.board().optics(false) && board::optics_off();
         self.optics_armed = false;
 
         if !self.stopped_applied() || !optics_off {
-            self.fail(EventsFault::OUTPUT);
+            self.fail(EventsFault::Output);
             return false;
         }
 
@@ -571,7 +577,7 @@ impl Events {
     fn stopped_applied(&self) -> bool {
         // SAFETY: as for `board`.
         let gate = unsafe { &(*self.board).motor };
-        gate.applied_known && gate.applied == MotorCommand::STOP
+        gate.applied_known && gate.applied == MotorCommand::Stop
     }
 }
 
@@ -591,14 +597,14 @@ unsafe extern "C" fn timer_interrupt(_: *mut c_void) -> u32 {
             events.timer_raw_repeat = true;
             return 0;
         }
-        events.fail(EventsFault::CLOCK);
+        events.fail(EventsFault::Clock);
         return 0;
     }
 
     events.timer_raw_repeat = false;
     let value = events.clock.read(raw);
     let Some(value) = value else {
-        events.fail(EventsFault::CLOCK);
+        events.fail(EventsFault::Clock);
         return 0;
     };
     events.timer_raw_at = raw;
@@ -606,17 +612,17 @@ unsafe extern "C" fn timer_interrupt(_: *mut c_void) -> u32 {
     events.timer_at = value;
     events.timer_seen = true;
 
-    if events.fault != EventsFault::OK {
+    if events.fault != EventsFault::Ok {
         let fault = events.fault;
         events.fail(fault); // Retry unverified GPIO stops.
     } else if !events.board().motor_tick(value) {
-        events.fail(EventsFault::OUTPUT);
+        events.fail(EventsFault::Output);
     } else if events.board().optics_enabled && !events.owner_ready(value) {
-        events.fail(EventsFault::OWNER);
+        events.fail(EventsFault::Owner);
     } else if events.board().optics_enabled
         && (!events.optics_armed || value.wrapping_sub(events.optics_at) >= events.optics_max_ms)
     {
-        events.fail(EventsFault::OPTICS);
+        events.fail(EventsFault::Optics);
     }
     0
 }
@@ -631,7 +637,7 @@ unsafe extern "C" fn feedback_interrupt(_: *mut c_void) -> u32 {
     };
 
     if pending & !FEEDBACK_MASK != 0 {
-        events.fail(EventsFault::RESOURCE);
+        events.fail(EventsFault::Resource);
         sdk::irq_disable(Irq::GpioA);
     } else if pending & FEEDBACK_MASK != 0
         && events.capture_enabled
@@ -639,7 +645,7 @@ unsafe extern "C" fn feedback_interrupt(_: *mut c_void) -> u32 {
     {
         let high = sdk::gpioa_ext_port() & FEEDBACK_MASK != 0;
         if !events.feedback.push(value, high) {
-            events.fail(EventsFault::FEEDBACK);
+            events.fail(EventsFault::Feedback);
         }
     }
     0

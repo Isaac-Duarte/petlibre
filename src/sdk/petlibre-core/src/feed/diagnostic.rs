@@ -101,12 +101,12 @@ fn run_pipeline() -> Option<()> {
     let request = FeedRequest {
         id: 1,
         portions: 1,
-        mode: BowlMode::SINGLE,
+        mode: BowlMode::Single,
         direction: Direction::D0,
         ..FeedRequest::default()
     };
 
-    if controller.start(&request, 2, &sample) != FeedStartResult::ACCEPTED {
+    if controller.start(&request, 2, &sample) != FeedStartResult::Accepted {
         return None;
     }
 
@@ -120,7 +120,7 @@ fn run_pipeline() -> Option<()> {
         }
 
         let drive = FeedbackDrive {
-            healthy: gate.fault == MotorGateFault::OK,
+            healthy: gate.fault == MotorGateFault::Ok,
             applied_known: gate.applied_known,
             applied: gate.applied,
             applied_at: gate.applied_at,
@@ -133,14 +133,14 @@ fn run_pipeline() -> Option<()> {
         }
     }
 
-    (controller.state == FeedState::COMPLETE
+    (controller.state == FeedState::Complete
         && controller.progress.completed == 1
         && gate.applied_known
-        && gate.applied == MotorCommand::STOP
+        && gate.applied == MotorCommand::Stop
         && motor.a
         && motor.b
         && events.count == 0
-        && events.fault == FeedbackFault::OK)
+        && events.fault == FeedbackFault::Ok)
         .then_some(())
 }
 

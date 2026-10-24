@@ -19,7 +19,7 @@ Stock 1.1.15 can install the replacement over its own updater, with no UART writ
 | `petlibre-fw-optics`, `-buttons`, `-adc`, `-speaker`, `-motor`, `-trial` | One bring-up area each ([table](../../src/firmware/petlibre/README.md)); `motor` drives the motor only in its `fw16-pulse` variant |
 | `petlibre-fw-blink` (`src/firmware/petlibre/blink`) | The minimal firmware: one task blinks the connection indicator. The [firmware guide](../../src/firmware/petlibre/README.md) covers writing one |
 | `petlibre-amebad-sys` | Bindgen-backed KM4 calls into the pinned AmebaD SDK, and the deterministic host fake SDK used by tests and the simulator |
-| `petlibre-sdk-c` | The core C ABI, the KM0 archive, and the panic handler every firmware archive links |
+| `petlibre-sdk-c` | The KM0 archive, and the panic handler every firmware archive links |
 | `petlibre-testkit`, `petlibre-sim` | Fake NOR journal storage and deterministic host worker |
 
 Minimal C hooks call the Rust entrypoint. The SDK still supplies startup, FreeRTOS, radio code, linker scripts, and image packaging. KM0 and KM4 are built separately. Header-derived bindings are generated for SDK-backed KM4 builds; host tests use fake bindings.

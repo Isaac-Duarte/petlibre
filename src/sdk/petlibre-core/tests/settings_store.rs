@@ -26,7 +26,7 @@ fn open(f: &mut FakeJournalFlash) -> SettingsStore {
 
 fn custom(volume: u8) -> Settings {
     Settings {
-        bowl_mode: BowlMode::DOUBLE,
+        bowl_mode: BowlMode::Double,
         lights: false,
         sound: true,
         volume,
@@ -41,7 +41,7 @@ fn empty_saves_alternate_and_reload() {
         let mut s = open(&mut f);
         assert_eq!(
             (s.status, s.settings),
-            (SettingsStatus::EMPTY, Settings::default())
+            (SettingsStatus::Empty, Settings::default())
         );
 
         for (i, volume) in [10u8, 20, 30].into_iter().enumerate() {
@@ -51,7 +51,7 @@ fn empty_saves_alternate_and_reload() {
             let r = open(&mut f);
             assert_eq!(
                 (r.status, r.settings, r.generation),
-                (SettingsStatus::LOADED, custom(volume), i as u64 + 1)
+                (SettingsStatus::Loaded, custom(volume), i as u64 + 1)
             );
         }
     }
@@ -69,10 +69,6 @@ fn invalid_values_are_refused_without_writing() {
         },
         Settings {
             utc_offset_minutes: 15 * 60,
-            ..Settings::default()
-        },
-        Settings {
-            bowl_mode: BowlMode(9),
             ..Settings::default()
         },
     ] {
@@ -124,7 +120,7 @@ fn power_cut_at_every_byte_keeps_old_or_new() {
                 assert!(
                     matches!(
                         r.status,
-                        SettingsStatus::LOADED | SettingsStatus::RECOVERED | SettingsStatus::EMPTY
+                        SettingsStatus::Loaded | SettingsStatus::Recovered | SettingsStatus::Empty
                     ),
                     "unit {unit} history {history} cut {cut}: {:?}",
                     r.status
@@ -135,7 +131,7 @@ fn power_cut_at_every_byte_keeps_old_or_new() {
                 if cut > 0 && history > 0 && r.settings == old {
                     assert_ne!(
                         r.slots[1 - r.slot as usize],
-                        SlotState::VALID,
+                        SlotState::Valid,
                         "unit {unit} history {history} cut {cut}"
                     );
                 }
@@ -165,14 +161,14 @@ fn newer_schema_is_read_only_until_reset() {
     let mut s = open(&mut f);
     assert_eq!(
         (s.status, s.settings),
-        (SettingsStatus::FUTURE, Settings::default())
+        (SettingsStatus::Future, Settings::default())
     );
 
     let before = f.mutations;
     assert!(!s.save(&custom(6)));
     assert_eq!(f.mutations, before);
 
-    assert!(s.reset() && s.status == SettingsStatus::EMPTY);
+    assert!(s.reset() && s.status == SettingsStatus::Empty);
     assert!(s.save(&custom(6)));
     assert_eq!(open(&mut f).settings, custom(6));
 }
@@ -186,13 +182,13 @@ fn foreign_binding_or_garbage_is_corrupt_and_read_only() {
     assert!(s.save(&custom(1)));
 
     let mut s = open(&mut f);
-    assert_eq!(s.status, SettingsStatus::CORRUPT);
+    assert_eq!(s.status, SettingsStatus::Corrupt);
     assert!(!s.save(&custom(2)));
 
     let mut f = FakeJournalFlash::default();
     f.bytes[1][7] = 0x12;
     let s = open(&mut f);
-    assert_eq!(s.status, SettingsStatus::CORRUPT);
+    assert_eq!(s.status, SettingsStatus::Corrupt);
 }
 
 #[test]
@@ -206,22 +202,22 @@ fn torn_newer_slot_falls_back_and_reports_recovered() {
     let r = open(&mut f);
     assert_eq!(
         (r.status, r.settings, r.generation),
-        (SettingsStatus::RECOVERED, custom(1), 1)
+        (SettingsStatus::Recovered, custom(1), 1)
     );
-    assert_eq!(r.slots, [SlotState::VALID, SlotState::DIRTY]);
+    assert_eq!(r.slots, [SlotState::Valid, SlotState::Dirty]);
 
     // An erase cut short leaves old bits behind the record: invalid.
     f.bytes[1].fill(u8::MAX);
     f.bytes[1][200] = 0;
-    assert_eq!(open(&mut f).slots, [SlotState::VALID, SlotState::INVALID]);
+    assert_eq!(open(&mut f).slots, [SlotState::Valid, SlotState::Invalid]);
 
     f.bytes[1].fill(u8::MAX);
     let r = open(&mut f);
     assert_eq!(
         (r.status, r.slots),
         (
-            SettingsStatus::LOADED,
-            [SlotState::VALID, SlotState::ERASED]
+            SettingsStatus::Loaded,
+            [SlotState::Valid, SlotState::Erased]
         )
     );
 }
@@ -234,5 +230,5 @@ fn wear_limit_refuses_saves() {
     s.generation = WEAR_LIMIT;
     let before = f.mutations;
     assert!(!s.save(&custom(2)));
-    assert_eq!((s.status, f.mutations), (SettingsStatus::WORN, before));
+    assert_eq!((s.status, f.mutations), (SettingsStatus::Worn, before));
 }

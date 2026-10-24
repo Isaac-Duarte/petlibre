@@ -5,7 +5,6 @@
 
 use core::ptr;
 
-use petlibre_core::c_enum;
 use petlibre_core::clock::tick::TickClock;
 use petlibre_core::feed::controller::MotorCommand;
 use petlibre_core::flash_coord::FlashCoord;
@@ -19,7 +18,6 @@ use crate::supervision::active::active_pointer;
 /// (bits 25..28), enable and reset mode.
 const CONTROL_MASK: u32 = 0x1e00_ffff | sdk::WDG_BIT_ENABLE | sdk::WDG_BIT_RST_MODE;
 
-#[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct WatchdogConfig {
     pub systimer_hz: u32,
@@ -33,9 +31,25 @@ pub struct WatchdogConfig {
     pub count_id: u8,
 }
 
-c_enum!(WatchdogFault { OK = 0, SETUP = 1, CONTEXT = 2, CLOCK = 3, PROGRESS = 4, REGISTER = 5 });
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u32)]
+pub enum WatchdogFault {
+    #[default]
+    Ok = 0,
+    Setup = 1,
+    Context = 2,
+    Clock = 3,
+    Progress = 4,
+    Register = 5,
+}
 
-#[repr(C)]
+impl WatchdogFault {
+    /// The variant's number, as records and reports print it.
+    pub const fn code(self) -> u32 {
+        self as u32
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Watchdog {
     pub clock: TickClock,
@@ -87,7 +101,7 @@ fn context() -> bool {
 
 impl Watchdog {
     fn fail(&mut self, reason: WatchdogFault) -> bool {
-        if self.fault == WatchdogFault::OK {
+        if self.fault == WatchdogFault::Ok {
             self.fault = reason;
         }
         false
@@ -164,7 +178,7 @@ impl Watchdog {
 
         self.armed = sdk::wdg_vendor() & sdk::WDG_BIT_ENABLE != 0;
         if !ok {
-            self.fail(WatchdogFault::SETUP);
+            self.fail(WatchdogFault::Setup);
             self.release(); // Retain ownership if disable/restore cannot be verified.
         }
 
@@ -177,23 +191,23 @@ impl Watchdog {
         if active() != ptr::from_mut(self)
             || !self.claimed
             || !self.armed
-            || self.fault != WatchdogFault::OK
+            || self.fault != WatchdogFault::Ok
         {
             return None;
         }
 
         if !self.registers() {
-            self.fail(WatchdogFault::REGISTER);
+            self.fail(WatchdogFault::Register);
             return None;
         }
 
         let Some(now) = self.clock.read(sdk::systimer_ticks()) else {
-            self.fail(WatchdogFault::CLOCK);
+            self.fail(WatchdogFault::Clock);
             return None;
         };
 
         if now.wrapping_sub(self.progress_at) >= self.config.max_progress_gap_ms {
-            self.fail(WatchdogFault::PROGRESS);
+            self.fail(WatchdogFault::Progress);
             return None;
         }
 
@@ -206,7 +220,7 @@ impl Watchdog {
         if task {
             self.check_locked()
         } else {
-            self.fail(WatchdogFault::CONTEXT);
+            self.fail(WatchdogFault::Context);
             None
         }
     }
@@ -222,13 +236,13 @@ impl Watchdog {
         let now = if task {
             self.check_locked()
         } else {
-            self.fail(WatchdogFault::CONTEXT);
+            self.fail(WatchdogFault::Context);
             None
         };
         let Some(now) = now else { return false };
 
         if progress == 0 || progress <= self.progress {
-            return self.fail(WatchdogFault::PROGRESS);
+            return self.fail(WatchdogFault::Progress);
         }
 
         if flash.is_none_or(|flash| !board::outputs_blocked(flash)) {
@@ -238,7 +252,7 @@ impl Watchdog {
                 sdk::wdg_refresh();
                 self.refresh_at = now;
                 if !self.registers() {
-                    return self.fail(WatchdogFault::REGISTER);
+                    return self.fail(WatchdogFault::Register);
                 }
             }
         }
@@ -275,8 +289,8 @@ impl Watchdog {
         let inactive = board.is_some_and(|b| {
             b.optics_initialized
                 && b.motor.applied_known
-                && b.motor.applied == MotorCommand::STOP
-                && b.motor.desired == MotorCommand::STOP
+                && b.motor.applied == MotorCommand::Stop
+                && b.motor.desired == MotorCommand::Stop
                 && sdk::gpio_port_read(GPIO_PORT_A, MOTOR_MASK) == MOTOR_MASK
                 && board::optics_off()
         });
@@ -284,7 +298,7 @@ impl Watchdog {
         if active() == me && self.claimed && inactive {
             ok = self.release();
             if !ok {
-                self.fail(WatchdogFault::REGISTER);
+                self.fail(WatchdogFault::Register);
             }
         }
 

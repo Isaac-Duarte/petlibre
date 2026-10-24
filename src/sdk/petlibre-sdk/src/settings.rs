@@ -146,11 +146,16 @@ pub fn describe(record: Record, f: &mut impl fmt::Write) -> fmt::Result {
             generation,
             settings,
         } => {
-            write!(f, "open status={} generation={generation} ", status.0)?;
+            write!(f, "open status={} generation={generation} ", status.code())?;
             values(f, &settings)
         }
         Record::Arming(arming::Event::Ready { reply, inactive }) => {
-            write!(f, "ready reply={} inactive={}", reply.0, u8::from(inactive))
+            write!(
+                f,
+                "ready reply={} inactive={}",
+                reply.code(),
+                u8::from(inactive)
+            )
         }
         Record::Arming(arming::Event::Armed {
             watchdog,
@@ -171,7 +176,9 @@ pub fn describe(record: Record, f: &mut impl fmt::Write) -> fmt::Result {
             write!(f, "saved generation={generation} ")?;
             values(f, &settings)
         }
-        Record::Error { stage, status } => write!(f, "error stage={stage} status={}", status.0),
+        Record::Error { stage, status } => {
+            write!(f, "error stage={stage} status={}", status.code())
+        }
         // Never the SSID or passphrase.
         Record::NetOpen {
             status,
@@ -421,7 +428,7 @@ impl Writer {
         let writable = self.armed
             && matches!(
                 self.store.status,
-                SettingsStatus::LOADED | SettingsStatus::EMPTY | SettingsStatus::RECOVERED
+                SettingsStatus::Loaded | SettingsStatus::Empty | SettingsStatus::Recovered
             );
         settings::publish(SettingsView {
             lights: self.store.settings.lights,

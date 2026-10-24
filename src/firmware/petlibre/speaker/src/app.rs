@@ -21,8 +21,9 @@ static SPEAKER: Slot<audio::Speaker> = Slot::new();
 
 /// The startup chime, then tunes the transport queues.
 unsafe extern "C" fn audio_task(_: *mut c_void) -> u32 {
-    // SAFETY: only this task touches the slot.
-    let speaker = unsafe { SPEAKER.get_or_init(Default::default) };
+    let Some(mut speaker) = SPEAKER.enter_or_init(Default::default) else {
+        return 0;
+    };
     let step = speaker.step();
     if let Some(record) = step.record {
         petlibre_probes::log(format_args!("PLAUD1 {}\r\n", Audio(record)));
@@ -46,8 +47,9 @@ static STREAMER: Slot<stream::Streamer> = Slot::new();
 
 /// Plays signed network audio streams.
 unsafe extern "C" fn stream_task(_: *mut c_void) -> u32 {
-    // SAFETY: only this task touches the slot.
-    let streamer = unsafe { STREAMER.get_or_init(Default::default) };
+    let Some(mut streamer) = STREAMER.enter_or_init(Default::default) else {
+        return 0;
+    };
     let step = streamer.step();
     if let Some(record) = step.record {
         petlibre_probes::log(format_args!("PLSPK1 {}\r\n", Stream(record)));

@@ -21,7 +21,7 @@ const UNITS: [usize; 4] = [UNIT, 4096, 4116, 148];
 
 const CONFIG: JournalConfig = JournalConfig {
     binding: 0x91a5_7320_ae11_c008,
-    mode: BowlMode::SINGLE,
+    mode: BowlMode::Single,
     max_portions: 3,
 };
 
@@ -48,18 +48,18 @@ fn finish(j: &mut FeedJournal, done: bool, motion: bool) -> bool {
     let mut result = j.view.result;
     result.completed = if done { result.requested } else { 0 };
     result.outcome = if done {
-        OwnerOutcome::DONE
+        OwnerOutcome::Done
     } else {
-        OwnerOutcome::CANCELLED
+        OwnerOutcome::Cancelled
     };
     result.reason = if done {
-        FeedReason::DONE
+        FeedReason::Done
     } else {
-        FeedReason::CANCELLED
+        FeedReason::Cancelled
     };
     result.motion_possible = motion;
 
-    if j.config.mode == BowlMode::DOUBLE {
+    if j.config.mode == BowlMode::Double {
         if done {
             if result.requested & 1 == 0 {
                 phase.direction = phase.direction.toggled();
@@ -82,9 +82,9 @@ fn create_unit(f: &mut FakeJournalFlash, dual: bool, unit: usize) -> FeedJournal
 
     let config = JournalConfig {
         mode: if dual {
-            BowlMode::DOUBLE
+            BowlMode::Double
         } else {
-            BowlMode::SINGLE
+            BowlMode::Single
         },
         ..CONFIG
     };
@@ -94,7 +94,7 @@ fn create_unit(f: &mut FakeJournalFlash, dual: bool, unit: usize) -> FeedJournal
     assert_eq!(
         // SAFETY: the fixture's callbacks are sound for its context, which outlives the call.
         unsafe { j.create(f.io(), config, Direction::D0, true, true) },
-        JournalError::OK
+        JournalError::Ok
     );
 
     j
@@ -116,7 +116,7 @@ fn bind(j: &mut FeedJournal, f: &mut FakeJournalFlash) {
 fn lifecycle() {
     let mut f = FakeJournalFlash::default();
     let mut j = FeedJournal::default();
-    assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::EMPTY);
+    assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::Empty);
     assert_eq!(f.mutations, 0);
 
     let mut j = create(&mut f, false);
@@ -127,20 +127,20 @@ fn lifecycle() {
     assert!(!reserve(&mut j, 0x1_0000_0002));
     assert!(finish(&mut j, true, true));
 
-    assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::OK);
+    assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::Ok);
     let v = j.read().unwrap();
     assert!(v.has_result && !v.recovery.pending_request);
     assert!(v.result.id == 0x1_0000_0001 && v.result.completed == 2);
     assert!(!reserve(&mut j, v.result.id) && !reserve(&mut j, 1));
     assert!(reserve(&mut j, 0x1_0000_0010) && finish(&mut j, false, false));
-    assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::OK);
-    assert!(j.view.sequence == 5 && j.view.result.outcome == OwnerOutcome::CANCELLED);
+    assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::Ok);
+    assert!(j.view.sequence == 5 && j.view.result.outcome == OwnerOutcome::Cancelled);
 
     let writes = f.mutations;
     assert_eq!(
         // SAFETY: the fixture's callbacks are sound for its context, which outlives the call.
         unsafe { j.create(f.io(), CONFIG, Direction::D0, true, true) },
-        JournalError::STATE
+        JournalError::State
     );
     assert_eq!(f.mutations, writes);
 }
@@ -153,7 +153,7 @@ fn phase_and_recovery() {
     assert!(reserve(&mut j, 10));
 
     let mut rebooted = FeedJournal::default();
-    assert_eq!(reopen(&mut f, &mut rebooted, &c), JournalError::OK);
+    assert_eq!(reopen(&mut f, &mut rebooted, &c), JournalError::Ok);
     let storage = rebooted.storage();
     // SAFETY: `rebooted` stays in place while its storage callbacks run.
     let phase = unsafe { storage.recover() }.unwrap();
@@ -165,7 +165,7 @@ fn phase_and_recovery() {
     assert!(finish(&mut j, true, true));
     assert!(j.view.recovery.direction == Direction::D1 && j.view.recovery.credit_next_event);
     assert!(reserve(&mut j, 11) && finish(&mut j, false, true));
-    assert_eq!(reopen(&mut f, &mut j, &c), JournalError::OK);
+    assert_eq!(reopen(&mut f, &mut j, &c), JournalError::Ok);
     assert!(!j.view.recovery.phase_known && !reserve(&mut j, 12));
 
     let mut j = create(&mut f, true);
@@ -185,9 +185,9 @@ fn invalid_arguments() {
     r.portions = 4;
     assert!(!j.reserve(&r));
     r.portions = 2;
-    r.mode = BowlMode::DOUBLE;
+    r.mode = BowlMode::Double;
     assert!(!j.reserve(&r));
-    r.mode = BowlMode::SINGLE;
+    r.mode = BowlMode::Single;
     r.direction = Direction::D1;
     assert!(!j.reserve(&r));
     assert!(f.mutations == writes && reserve(&mut j, 7));
@@ -198,8 +198,8 @@ fn invalid_arguments() {
         id: 7,
         requested: 2,
         completed: 2,
-        outcome: OwnerOutcome::DONE,
-        reason: FeedReason::DONE,
+        outcome: OwnerOutcome::Done,
+        reason: FeedReason::Done,
         motion_possible: true,
     };
 
@@ -220,7 +220,7 @@ fn invalid_arguments() {
     let mut io = f.io();
     io.unit_bytes = 127;
     // SAFETY: the fixture's callbacks are sound for its context, which outlives the call.
-    assert_eq!(unsafe { j.open(io, CONFIG) }, JournalError::ARGUMENT);
+    assert_eq!(unsafe { j.open(io, CONFIG) }, JournalError::Argument);
     assert!(j.read().is_none());
 }
 
@@ -236,12 +236,12 @@ fn corruption_and_binding() {
                 let mut f = original.clone();
                 f.bytes[slot][byte] ^= 1 << bit;
                 let e = reopen(&mut f, &mut j, &CONFIG);
-                if e == JournalError::OK {
+                if e == JournalError::Ok {
                     // Only safe fallback is an unresolved intent, never idle.
                     assert!(j.view.recovery.pending_request && j.view.recovery.high_water_id == 41);
                     assert!(!reserve(&mut j, 42) && !finish(&mut j, true, true));
                 } else {
-                    assert_eq!(e, JournalError::CORRUPT);
+                    assert_eq!(e, JournalError::Corrupt);
                 }
             }
         }
@@ -249,7 +249,7 @@ fn corruption_and_binding() {
 
     let mut f = original.clone();
     f.bytes[0][200] = 0;
-    assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::CORRUPT);
+    assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::Corrupt);
 
     // Every blank-tail chunk is checked, including a short final chunk.
     for unit in UNITS {
@@ -261,11 +261,11 @@ fn corruption_and_binding() {
             for slot in 0..2 {
                 let mut f = original.clone();
                 f.bytes[slot][byte] = 0xfe;
-                assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::CORRUPT);
+                assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::Corrupt);
             }
         }
         let mut f = original.clone();
-        assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::OK);
+        assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::Ok);
         assert_eq!(j.view.recovery.high_water_id, 41);
     }
 
@@ -273,19 +273,19 @@ fn corruption_and_binding() {
         binding: CONFIG.binding + 1,
         ..CONFIG
     };
-    assert_eq!(reopen(&mut original, &mut j, &c), JournalError::CORRUPT);
+    assert_eq!(reopen(&mut original, &mut j, &c), JournalError::Corrupt);
 
     let c = JournalConfig {
-        mode: BowlMode::DOUBLE,
+        mode: BowlMode::Double,
         ..CONFIG
     };
-    assert_eq!(reopen(&mut original, &mut j, &c), JournalError::CORRUPT);
+    assert_eq!(reopen(&mut original, &mut j, &c), JournalError::Corrupt);
 
     let c = JournalConfig {
         max_portions: CONFIG.max_portions + 1,
         ..CONFIG
     };
-    assert_eq!(reopen(&mut original, &mut j, &c), JournalError::CORRUPT);
+    assert_eq!(reopen(&mut original, &mut j, &c), JournalError::Corrupt);
 }
 
 fn byte_cuts(completing: bool, reused: bool, unit: usize) {
@@ -324,7 +324,7 @@ fn byte_cuts(completing: bool, reused: bool, unit: usize) {
         }
 
         let e = reopen(&mut f, &mut j, &CONFIG);
-        if e == JournalError::OK {
+        if e == JournalError::Ok {
             assert!(
                 j.view.recovery.high_water_id == 42
                     || (!completing && j.view.recovery.high_water_id == if reused { 9 } else { 0 })
@@ -332,7 +332,7 @@ fn byte_cuts(completing: bool, reused: bool, unit: usize) {
             if completing {
                 assert!(
                     j.view.recovery.pending_request
-                        || (j.view.has_result && j.view.result.outcome == OwnerOutcome::DONE)
+                        || (j.view.has_result && j.view.result.outcome == OwnerOutcome::Done)
                 );
             }
             if succeeded {
@@ -342,7 +342,7 @@ fn byte_cuts(completing: bool, reused: bool, unit: usize) {
                 );
             }
         } else {
-            assert!(!succeeded && e == JournalError::CORRUPT);
+            assert!(!succeeded && e == JournalError::Corrupt);
         }
     }
 }
@@ -372,12 +372,12 @@ fn create_cuts() {
         let before = unsafe { j.create(f.io(), CONFIG, Direction::D0, true, true) };
         let after = reopen(&mut f, &mut j, &CONFIG);
 
-        if after == JournalError::OK {
+        if after == JournalError::Ok {
             assert!(j.view.sequence == 1 && j.view.recovery.high_water_id == 0);
         } else {
             assert!(
-                before != JournalError::OK
-                    && (after == JournalError::EMPTY || after == JournalError::CORRUPT)
+                before != JournalError::Ok
+                    && (after == JournalError::Empty || after == JournalError::Corrupt)
             );
         }
     }
@@ -430,9 +430,9 @@ fn io_failures_at(unit: usize) {
 
             let e = reopen(&mut f, &mut j, &CONFIG);
             if ok {
-                assert!(e == JournalError::OK && j.view.recovery.high_water_id == 42);
+                assert!(e == JournalError::Ok && j.view.recovery.high_water_id == 42);
             }
-            if completing && e == JournalError::OK {
+            if completing && e == JournalError::Ok {
                 assert_eq!(j.view.recovery.high_water_id, 42);
             }
         }
@@ -444,7 +444,7 @@ fn io_failures_at(unit: usize) {
     bind(&mut j, &mut f);
     assert!(!reserve(&mut j, 42) && !j.opened);
     f.silent_program = false;
-    assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::OK);
+    assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::Ok);
     assert!(reserve(&mut j, 42));
 
     f.silent_erase = true; // Inactive slot still holds the genesis record.
@@ -493,17 +493,17 @@ fn wire_format_and_invalid_transitions() {
         let mut f = original.clone();
         f.bytes[0][field] ^= 0x80;
         repair_crc(&mut f.bytes[0]);
-        assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::CORRUPT);
+        assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::Corrupt);
     }
 
     let mut f = original.clone();
     f.bytes[0][16] = 5; // Valid odd result generation, but skips generation 3.
     repair_crc(&mut f.bytes[0]);
-    assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::CORRUPT);
+    assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::Corrupt);
 
     let mut f = original.clone();
     f.bytes[1] = f.bytes[0].clone();
-    assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::CORRUPT);
+    assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::Corrupt);
 }
 
 #[test]
@@ -511,7 +511,7 @@ fn id_and_sequence_exhaustion() {
     let mut f = FakeJournalFlash::default();
     let mut j = create(&mut f, false);
     assert!(reserve(&mut j, u64::MAX) && finish(&mut j, true, true));
-    assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::OK);
+    assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::Ok);
     assert!(j.view.recovery.high_water_id == u64::MAX && !reserve(&mut j, 1));
 
     // Synthesize the last adjacent generations, preserving valid checksums.
@@ -522,7 +522,7 @@ fn id_and_sequence_exhaustion() {
         }
         repair_crc(&mut f.bytes[slot]);
     }
-    assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::OK);
+    assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::Ok);
     assert_eq!(j.view.sequence, u64::MAX);
 
     // Restore an ordinary high-water to distinguish sequence from ID limit.
@@ -531,9 +531,9 @@ fn id_and_sequence_exhaustion() {
         f.bytes[slot][32] = 1;
         repair_crc(&mut f.bytes[slot]);
     }
-    assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::OK);
+    assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::Ok);
     let writes = f.mutations;
-    assert!(!reserve(&mut j, 2) && j.error == JournalError::EXHAUSTED && f.mutations == writes);
+    assert!(!reserve(&mut j, 2) && j.error == JournalError::Exhausted && f.mutations == writes);
 }
 
 #[test]
@@ -546,7 +546,7 @@ fn wear_limit_refuses_new_reservations_but_never_strands_a_pending_one() {
     assert_eq!(
         // SAFETY: the fixture's callbacks are sound for its context, which outlives the call.
         unsafe { j.create(f.io(), CONFIG, Direction::D0, false, true) },
-        JournalError::OK
+        JournalError::Ok
     );
 
     assert!(reserve(&mut j, 1));
@@ -559,7 +559,7 @@ fn wear_limit_refuses_new_reservations_but_never_strands_a_pending_one() {
     assert!(!reserve(&mut j, 2));
     assert_eq!(
         (j.error, j.opened, f.mutations),
-        (JournalError::WORN, true, writes)
+        (JournalError::Worn, true, writes)
     );
     assert!(j.read().is_some());
 }

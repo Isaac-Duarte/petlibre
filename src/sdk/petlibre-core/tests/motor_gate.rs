@@ -67,17 +67,17 @@ fn startup_and_reversal_wait_for_stop() {
         assert!(init(gate, p, 3, 10, 0));
         assert!(pins(p).a && pins(p).b);
 
-        assert!(gate.request(MotorCommand::DRIVE_0, 0));
+        assert!(gate.request(MotorCommand::Drive0, 0));
         assert!(gate.tick(2));
         assert!(pins(p).a && pins(p).b);
         assert!(gate.tick(3));
         assert!(pins(p).a && !pins(p).b);
         assert_eq!(gate.applied_at, 3);
 
-        assert!(gate.request(MotorCommand::DRIVE_0, 4));
+        assert!(gate.request(MotorCommand::Drive0, 4));
         assert_eq!(gate.applied_at, 3); // Renewal is not a new drive transition.
 
-        assert!(gate.request(MotorCommand::DRIVE_1, 4));
+        assert!(gate.request(MotorCommand::Drive1, 4));
         assert!(pins(p).a && pins(p).b);
         assert_eq!(gate.applied_at, 4);
         assert!(gate.tick(6));
@@ -93,13 +93,13 @@ fn startup_and_reversal_wait_for_stop() {
 fn independent_tick_expires_a_stalled_owner() {
     with_gate(|gate, p| {
         assert!(init(gate, p, 3, 10, 0));
-        assert!(gate.request(MotorCommand::DRIVE_0, 0));
+        assert!(gate.request(MotorCommand::Drive0, 0));
         assert!(gate.tick(3));
         assert!(gate.tick(9));
         assert!(!gate.tick(10));
         assert!(pins(p).a && pins(p).b && gate.applied_known);
-        assert_eq!(gate.fault, MotorGateFault::EXPIRED);
-        assert!(!gate.request(MotorCommand::DRIVE_1, 11));
+        assert_eq!(gate.fault, MotorGateFault::Expired);
+        assert!(!gate.request(MotorCommand::Drive1, 11));
         assert!(pins(p).a && pins(p).b);
     });
 }
@@ -108,11 +108,11 @@ fn independent_tick_expires_a_stalled_owner() {
 fn renewals_and_late_renewals() {
     with_gate(|gate, p| {
         assert!(init(gate, p, 3, 10, 0));
-        assert!(gate.request(MotorCommand::DRIVE_0, 3));
-        assert!(gate.request(MotorCommand::DRIVE_0, 12));
+        assert!(gate.request(MotorCommand::Drive0, 3));
+        assert!(gate.request(MotorCommand::Drive0, 12));
         assert!(gate.tick(21));
-        assert!(!gate.request(MotorCommand::DRIVE_0, 22));
-        assert_eq!(gate.fault, MotorGateFault::EXPIRED);
+        assert!(!gate.request(MotorCommand::Drive0, 22));
+        assert_eq!(gate.fault, MotorGateFault::Expired);
         assert!(pins(p).a && pins(p).b);
     });
 }
@@ -121,8 +121,8 @@ fn renewals_and_late_renewals() {
 fn cancelling_pending_drive_does_not_restart() {
     with_gate(|gate, p| {
         assert!(init(gate, p, 3, 10, 0));
-        assert!(gate.request(MotorCommand::DRIVE_0, 0));
-        assert!(gate.request(MotorCommand::STOP, 1));
+        assert!(gate.request(MotorCommand::Drive0, 0));
+        assert!(gate.request(MotorCommand::Stop, 1));
         assert!(gate.tick(1000));
         assert!(pins(p).a && pins(p).b);
         assert_eq!(pins(p).writes, 1);
@@ -134,23 +134,23 @@ fn io_failure_stops_and_does_not_claim_verification() {
     with_gate(|gate, p| {
         assert!(init(gate, p, 3, 10, 0));
         pins(p).fail_drive = true;
-        assert!(!gate.request(MotorCommand::DRIVE_0, 3));
-        assert_eq!(gate.fault, MotorGateFault::IO);
+        assert!(!gate.request(MotorCommand::Drive0, 3));
+        assert_eq!(gate.fault, MotorGateFault::Io);
         assert!(pins(p).a && pins(p).b && gate.applied_known);
 
         *pins(p) = Output::default();
         assert!(init(gate, p, 3, 10, 0));
-        assert!(gate.request(MotorCommand::DRIVE_0, 3));
+        assert!(gate.request(MotorCommand::Drive0, 3));
 
         pins(p).fail_stop = true;
-        assert!(!gate.request(MotorCommand::STOP, 4));
-        assert_eq!(gate.fault, MotorGateFault::IO);
+        assert!(!gate.request(MotorCommand::Stop, 4));
+        assert_eq!(gate.fault, MotorGateFault::Io);
         assert!(!gate.applied_known);
 
         pins(p).fail_stop = false;
         assert!(!gate.tick(5));
         assert!(gate.applied_known && pins(p).a && pins(p).b);
-        assert_eq!(gate.fault, MotorGateFault::IO);
+        assert_eq!(gate.fault, MotorGateFault::Io);
     });
 }
 
@@ -158,16 +158,11 @@ fn io_failure_stops_and_does_not_claim_verification() {
 fn invalid_command_and_clock_wrap() {
     with_gate(|gate, p| {
         assert!(init(gate, p, 3, 10, u32::MAX - 1));
-        assert!(gate.request(MotorCommand::DRIVE_1, u32::MAX - 1));
+        assert!(gate.request(MotorCommand::Drive1, u32::MAX - 1));
         assert!(gate.tick(1));
         assert!(!pins(p).a && pins(p).b);
         assert!(!gate.tick(u32::MAX));
-        assert_eq!(gate.fault, MotorGateFault::CLOCK);
-        assert!(pins(p).a && pins(p).b);
-
-        assert!(init(gate, p, 3, 10, 0));
-        assert!(!gate.request(MotorCommand(99), 0));
-        assert_eq!(gate.fault, MotorGateFault::COMMAND);
+        assert_eq!(gate.fault, MotorGateFault::Clock);
         assert!(pins(p).a && pins(p).b);
 
         assert!(!init(gate, p, 10, 10, 0));

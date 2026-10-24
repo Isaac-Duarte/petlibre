@@ -478,7 +478,7 @@ impl Probe {
     /// Emitters off and the supervisor closed (or, if it cannot verify
     /// that, left retrying from its timer); then the error record.
     fn fail(&mut self, kind: ErrorKind) -> Step {
-        let fault = self.events.fault.0;
+        let fault = self.events.fault.code();
         let stall_ms = self
             .events
             .now_ms()
@@ -563,7 +563,7 @@ impl Probe {
         // Bind only with verified STOP and infrared OFF readback.
         let inactive = stopped::observe().verified();
         let ready = FlashCoord::new(&FLASH_LIMITS, self.authority, ms).and_then(|mut coord| {
-            (coord.ready(self.authority, peer, inactive, ms) == FlashReply::ACCEPTED)
+            (coord.ready(self.authority, peer, inactive, ms) == FlashReply::Accepted)
                 .then_some(coord)
         });
 
@@ -643,7 +643,7 @@ impl Probe {
 
     /// Sample once, renew the owner lease, and return the clock and inputs.
     fn sample(&mut self) -> Result<(u32, u32), ErrorKind> {
-        if self.events.fault != EventsFault::OK {
+        if self.events.fault != EventsFault::Ok {
             return Err(ErrorKind::Supervisor);
         }
 
@@ -829,7 +829,7 @@ impl Probe {
         let cut_ms = cut.map(ticks_ms);
         let record = Record::Stall {
             cut_ms,
-            fault: snapshot.fault.0,
+            fault: snapshot.fault.code(),
             off: board::optics_off(),
             stopped: snapshot.stopped && sdk::gpio_port_read(GPIO_PORT_A, MOTOR_MASK) == MOTOR_MASK,
             closed,

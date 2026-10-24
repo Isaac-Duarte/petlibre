@@ -40,8 +40,9 @@ impl core::fmt::Display for Line {
 }
 
 unsafe extern "C" fn blink_task(_: *mut c_void) -> u32 {
-    // SAFETY: only this task touches the slot.
-    let blinker = unsafe { BLINKER.get_or_init(Blinker::default) };
+    let Some(mut blinker) = BLINKER.enter_or_init(Blinker::default) else {
+        return 0;
+    };
     let step = blinker.step();
     if let Some(record) = step.record {
         let mut report = startup::Report::new();

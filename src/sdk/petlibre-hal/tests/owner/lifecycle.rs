@@ -13,18 +13,18 @@ use petlibre_hal::sdk::{self, fake};
 #[test]
 fn serialized_lifecycle_and_durable_success() {
     let mut f = boot();
-    assert_eq!(f.owner.submit(0, 1), SubmitResult::REJECT_ID);
-    assert_eq!(f.owner.submit(1, 0), SubmitResult::REJECT_REQUEST);
+    assert_eq!(f.owner.submit(0, 1), SubmitResult::RejectId);
+    assert_eq!(f.owner.submit(1, 0), SubmitResult::RejectRequest);
 
     f.start_feed();
-    assert_eq!(f.owner.submit(2, 1), SubmitResult::REJECT_BUSY);
+    assert_eq!(f.owner.submit(2, 1), SubmitResult::RejectBusy);
     assert!(!f.owner.cancel(99));
 
     f.complete();
     let s = f.status();
-    assert!(s.state == OwnerState::TERMINAL && s.result_durable && s.stopped && s.optics_off);
+    assert!(s.state == OwnerState::Terminal && s.result_durable && s.stopped && s.optics_off);
     assert!(
-        s.result.outcome == OwnerOutcome::DONE
+        s.result.outcome == OwnerOutcome::Done
             && s.result.completed == 1
             && s.result.motion_possible
     );
@@ -33,20 +33,20 @@ fn serialized_lifecycle_and_durable_success() {
     assert!(f.owner.acknowledge(1));
     f.advance(1);
 
-    assert_eq!(f.owner.submit(1, 1), SubmitResult::REJECT_ID);
-    assert_eq!(f.owner.submit(2, 1), SubmitResult::ENQUEUED);
+    assert_eq!(f.owner.submit(1, 1), SubmitResult::RejectId);
+    assert_eq!(f.owner.submit(2, 1), SubmitResult::Enqueued);
     assert!(f.owner.cancel(2));
     fake::run_task();
 
     assert!(
-        f.status().result.outcome == OwnerOutcome::CANCELLED && !f.status().result.motion_possible
+        f.status().result.outcome == OwnerOutcome::Cancelled && !f.status().result.motion_possible
     );
     assert!(f.finish_calls == 2 && f.disk.high_water_id == 2);
     assert!(!f.owner.acknowledge(1));
     assert!(f.owner.acknowledge(2));
 
     f.advance(1);
-    assert_eq!(f.status().state, OwnerState::IDLE);
+    assert_eq!(f.status().state, OwnerState::Idle);
     f.stop();
 }
 
@@ -55,9 +55,9 @@ fn reservation_failure_cannot_move_outputs_or_retry() {
     let mut f = boot();
     f.reserve_fail = true;
 
-    assert_eq!(f.owner.submit(1, 1), SubmitResult::ENQUEUED);
+    assert_eq!(f.owner.submit(1, 1), SubmitResult::Enqueued);
     fake::run_task();
-    assert!(f.status().state == OwnerState::FAULT && f.status().fault == OwnerFault::STORAGE);
+    assert!(f.status().state == OwnerState::Fault && f.status().fault == OwnerFault::Storage);
     assert!(!f.status().result.motion_possible && !f.status().result_durable);
     assert!(f.reserve_calls == 1 && f.finish_calls == 0);
 
@@ -72,20 +72,20 @@ fn slow_reservation_expires_and_cancellation_during_callback_wins() {
     let mut f = boot();
     f.reserve_delay_ticks = 25 * 32;
 
-    assert_eq!(f.owner.submit(1, 1), SubmitResult::ENQUEUED);
+    assert_eq!(f.owner.submit(1, 1), SubmitResult::Enqueued);
     fake::run_task();
-    assert!(f.status().state == OwnerState::TERMINAL && f.status().result_durable);
+    assert!(f.status().state == OwnerState::Terminal && f.status().result_durable);
     assert!(
-        f.status().result.outcome == OwnerOutcome::EXPIRED && !f.status().result.motion_possible
+        f.status().result.outcome == OwnerOutcome::Expired && !f.status().result.motion_possible
     );
     f.stop();
 
     let mut f = boot();
     f.cancel_in_reserve = true;
 
-    assert_eq!(f.owner.submit(1, 1), SubmitResult::ENQUEUED);
+    assert_eq!(f.owner.submit(1, 1), SubmitResult::Enqueued);
     fake::run_task();
-    assert!(f.status().result.outcome == OwnerOutcome::CANCELLED && f.status().result_durable);
+    assert!(f.status().result.outcome == OwnerOutcome::Cancelled && f.status().result_durable);
     assert!(!f.status().result.motion_possible);
     f.stop();
 }
@@ -102,8 +102,8 @@ fn interrupted_recovery_blocks_every_new_request() {
     f.create();
     fake::run_task();
 
-    assert!(f.status().state == OwnerState::FAULT && f.status().fault == OwnerFault::RECOVERY);
-    assert_eq!(f.owner.submit(8, 1), SubmitResult::REJECT_STOPPED);
+    assert!(f.status().state == OwnerState::Fault && f.status().fault == OwnerFault::Recovery);
+    assert_eq!(f.owner.submit(8, 1), SubmitResult::RejectStopped);
     assert!(
         f.reserve_calls == 0 && f.finish_calls == 0 && f.status().stopped && f.status().optics_off
     );
@@ -117,7 +117,7 @@ fn finish_failure_is_not_reported_as_durable_success() {
     f.finish_fail = true;
     f.complete();
 
-    assert!(f.status().state == OwnerState::FAULT && !f.status().result_durable);
+    assert!(f.status().state == OwnerState::Fault && !f.status().result_durable);
     assert!(
         f.disk.pending_request
             && f.finish_calls == 1
@@ -151,14 +151,14 @@ fn cancellation_during_acquisition_precedes_feedback() {
     });
 
     fake::run_task();
-    assert!(f.status().state == OwnerState::TERMINAL && f.status().result_durable);
+    assert!(f.status().state == OwnerState::Terminal && f.status().result_durable);
     assert!(
-        f.status().result.outcome == OwnerOutcome::CANCELLED && f.status().result.completed == 0
+        f.status().result.outcome == OwnerOutcome::Cancelled && f.status().result.completed == 0
     );
 
     assert!(f.owner.acknowledge(1));
     f.advance(100); // Healthy owner continues servicing the watchdog.
-    assert_eq!(f.status().state, OwnerState::IDLE); // Cancelled edges cannot poison a later epoch.
+    assert_eq!(f.status().state, OwnerState::Idle); // Cancelled edges cannot poison a later epoch.
     f.stop();
 }
 
@@ -169,12 +169,12 @@ fn slow_adc_and_stalled_owner_stop_through_the_supervisor() {
     hw(|h| h.adc_delay_ticks = 12 * 32);
 
     fake::run_task();
-    assert!(f.status().state == OwnerState::FAULT && f.status().stopped && f.status().optics_off);
-    assert!(f.status().result.outcome == OwnerOutcome::FAILED && f.status().result_durable);
+    assert!(f.status().state == OwnerState::Fault && f.status().stopped && f.status().optics_off);
+    assert!(f.status().result.outcome == OwnerOutcome::Failed && f.status().result_durable);
     f.stop();
 
     let mut f = boot();
-    assert_eq!(f.owner.submit(1, 1), SubmitResult::ENQUEUED);
+    assert_eq!(f.owner.submit(1, 1), SubmitResult::Enqueued);
     fake::run_task();
     f.advance(2); // IR on, still preparing.
 
@@ -182,7 +182,7 @@ fn slow_adc_and_stalled_owner_stop_through_the_supervisor() {
     fake::advance(12 * 32, true);
     assert!(optics_off());
     fake::run_task();
-    assert!(f.status().state == OwnerState::FAULT && f.status().stopped);
+    assert!(f.status().state == OwnerState::Fault && f.status().stopped);
     f.stop();
 }
 
@@ -195,12 +195,12 @@ fn stop_waits_for_verified_outputs_and_retains_context() {
     f.owner.stop();
     fake::run_task();
     assert!(hw(|h| h.task_live) && sdk::tim2_en() != 0 && hw(|h| h.wake_locks) != 0);
-    assert!(f.status().state == OwnerState::REPORTING && f.finish_calls == 0);
+    assert!(f.status().state == OwnerState::Reporting && f.finish_calls == 0);
 
     hw(|h| h.blocked_motor_write = false);
     fake::advance(64, true);
     fake::run_task();
-    assert!(f.status().state == OwnerState::STOPPED && f.status().stopped);
+    assert!(f.status().state == OwnerState::Stopped && f.status().stopped);
     assert!(!hw(|h| h.task_live) && hw(|h| h.wake_locks) == 0 && f.finish_calls == 1);
 }
 
@@ -208,18 +208,18 @@ fn stop_waits_for_verified_outputs_and_retains_context() {
 fn ambiguous_double_phase_is_never_assumed_after_cancel() {
     fake::reset_hardware();
     let mut f = Box::new(Fixture::new(PHASE_KNOWN));
-    f.config.bowl_mode = BowlMode::DOUBLE;
+    f.config.bowl_mode = BowlMode::Double;
     f.create();
     fake::run_task();
 
     f.start_feed();
     assert!(f.owner.cancel(1));
     fake::run_task();
-    assert!(f.status().state == OwnerState::TERMINAL && !f.status().phase_known);
+    assert!(f.status().state == OwnerState::Terminal && !f.status().phase_known);
 
     assert!(f.owner.acknowledge(1));
     f.advance(1);
-    assert_eq!(f.owner.submit(2, 1), SubmitResult::REJECT_PHASE);
+    assert_eq!(f.owner.submit(2, 1), SubmitResult::RejectPhase);
     f.stop();
 }
 
@@ -249,7 +249,7 @@ fn failed_startup_and_invalid_configuration_do_not_claim_live_resources() {
     });
     f.create();
     fake::run_task();
-    assert!(f.status().state == OwnerState::FAULT && f.recover_calls == 0);
+    assert!(f.status().state == OwnerState::Fault && f.recover_calls == 0);
     f.stop();
 
     fake::reset_hardware();
@@ -257,7 +257,7 @@ fn failed_startup_and_invalid_configuration_do_not_claim_live_resources() {
     f.create();
     f.owner.stop(); // Cancel before the task ever opens hardware.
     fake::run_task();
-    assert!(f.status().state == OwnerState::STOPPED && !hw(|h| h.task_live));
+    assert!(f.status().state == OwnerState::Stopped && !hw(|h| h.task_live));
     assert!(f.recover_calls == 0 && hw(|h| h.output[0]) == 0 && hw(|h| h.wake_locks) == 0);
 
     fake::reset_hardware();
@@ -266,7 +266,7 @@ fn failed_startup_and_invalid_configuration_do_not_claim_live_resources() {
 
     f.create();
     fake::run_task();
-    assert!(f.status().state == OwnerState::FAULT && !f.status().stopped);
+    assert!(f.status().state == OwnerState::Fault && !f.status().stopped);
 
     f.owner.stop();
     fake::run_task();
@@ -274,7 +274,7 @@ fn failed_startup_and_invalid_configuration_do_not_claim_live_resources() {
 
     hw(|h| h.blocked_motor_write = false);
     fake::run_task();
-    assert!(f.status().state == OwnerState::STOPPED && f.status().stopped && f.status().optics_off);
+    assert!(f.status().state == OwnerState::Stopped && f.status().stopped && f.status().optics_off);
     assert!(!hw(|h| h.task_live) && hw(|h| h.wake_locks) == 0);
 }
 
@@ -287,7 +287,7 @@ fn optical_cleanup_and_failed_completion_cannot_publish_success() {
     f.owner.stop();
     fake::run_task();
     assert!(
-        f.status().state == OwnerState::REPORTING && f.status().stopped && !f.status().optics_off
+        f.status().state == OwnerState::Reporting && f.status().stopped && !f.status().optics_off
     );
     assert!(f.finish_calls == 0 && hw(|h| h.task_live) && hw(|h| h.wake_locks) != 0);
 
@@ -295,7 +295,7 @@ fn optical_cleanup_and_failed_completion_cannot_publish_success() {
     fake::advance(64, true);
     fake::run_task();
     assert!(
-        f.status().state == OwnerState::STOPPED && f.status().optics_off && f.finish_calls == 1
+        f.status().state == OwnerState::Stopped && f.status().optics_off && f.finish_calls == 1
     );
 
     let mut f = boot();
@@ -304,22 +304,22 @@ fn optical_cleanup_and_failed_completion_cannot_publish_success() {
 
     f.complete();
     assert!(
-        f.status().state == OwnerState::REPORTING
+        f.status().state == OwnerState::Reporting
             && !f.status().result_durable
             && f.finish_calls == 0
     );
     hw(|h| h.blocked_motor_write = false);
     fake::advance(64, true);
     fake::run_task();
-    assert!(f.status().state == OwnerState::FAULT && f.status().result_durable);
-    assert!(f.status().result.completed == 1 && f.status().result.outcome == OwnerOutcome::FAILED);
+    assert!(f.status().state == OwnerState::Fault && f.status().result_durable);
+    assert!(f.status().result.completed == 1 && f.status().result.outcome == OwnerOutcome::Failed);
     f.stop();
 }
 
 #[test]
 fn stop_during_result_write_and_singleton_ownership() {
     let mut f = boot();
-    let mut second = Box::<Owner>::default();
+    let second = Box::<Owner>::default();
     let storage = f.storage();
     // SAFETY: the fixture keeps the owner and its storage in place while it runs.
     assert!(!unsafe { second.start(&f.config, &storage) });
@@ -327,6 +327,6 @@ fn stop_during_result_write_and_singleton_ownership() {
     f.start_feed();
     f.stop_in_finish = true;
     f.complete();
-    assert!(f.status().state == OwnerState::STOPPED && f.status().result_durable);
+    assert!(f.status().state == OwnerState::Stopped && f.status().result_durable);
     assert!(!hw(|h| h.task_live) && hw(|h| h.wake_locks) == 0);
 }

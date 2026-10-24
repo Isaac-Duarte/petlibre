@@ -14,9 +14,18 @@ use crate::sdk::{self, IrqGuard};
 use crate::supervision::events::EventsSnapshot;
 use crate::supervision::watchdog::WatchdogFault;
 
-use super::{Owner, OwnerFault, OwnerState, OwnerStatus};
+use super::{OwnerFault, OwnerState, OwnerStatus, OwnerTask, Shared};
 
-impl Owner {
+impl OwnerTask {
+    /// The shared half, inside `IrqGuard`; the borrow ends with `f`, which
+    /// must not call back in.
+    fn shared<R>(&self, f: impl FnOnce(&mut Shared) -> R) -> R {
+        let _guard = IrqGuard::lock();
+        // SAFETY: `start` pointed this at the owner's shared half, which lives
+        // as long as the owner; inside the guard this is its only borrow.
+        f(unsafe { &mut *self.shared })
+    }
+
     fn flash(&self) -> &FlashCoord {
         // SAFETY: `start` requires a live authority retained beyond STOPPED.
         unsafe { &*self.config.flash }
@@ -30,7 +39,7 @@ impl Owner {
         }
         s.stopped = self.board.motor.write_pair.is_some()
             && self.board.motor.applied_known
-            && self.board.motor.applied == MotorCommand::STOP;
+            && self.board.motor.applied == MotorCommand::Stop;
         s.optics_off = self.board.optics_initialized && board::optics_off();
         false
     }
@@ -59,29 +68,31 @@ impl Owner {
         let _guard = IrqGuard::lock();
         value.flash_phase = self.flash().phase;
         value.flash_fault = self.flash().fault;
-        self.published = value;
+        self.shared(|shared| shared.published = value);
     }
 
     fn fail(&mut self, reason: OwnerFault) {
-        if self.fault == OwnerFault::OK {
+        if self.fault == OwnerFault::Ok {
             self.fault = reason;
         }
     }
 
     fn stop_requested(&self) -> bool {
-        let _guard = IrqGuard::lock();
-        self.mailbox.stop
+        self.shared(|shared| shared.mailbox.stop)
     }
 
     fn cancelled(&self) -> bool {
-        let _guard = IrqGuard::lock();
-        self.mailbox.stop || (self.mailbox.cancel && self.mailbox.cancel_id == self.request.id)
+        let id = self.request.id;
+        self.shared(|shared| {
+            let m = &shared.mailbox;
+            m.stop || (m.cancel && m.cancel_id == id)
+        })
     }
 
     fn quiet(&mut self) -> bool {
         if self.events.opened {
             // Best effort: the outputs are verified stopped below.
-            let _ = self.events.motor(MotorCommand::STOP);
+            let _ = self.events.motor(MotorCommand::Stop);
             self.events.optics(false, 0);
         } else if self.board.motor.write_pair.is_some() {
             let observed = self.board.motor.observed_at;
@@ -109,23 +120,23 @@ impl Owner {
             0
         };
         if self.result.motion_possible
-            && outcome != OwnerOutcome::DONE
-            && self.config.bowl_mode == BowlMode::DOUBLE
+            && outcome != OwnerOutcome::Done
+            && self.config.bowl_mode == BowlMode::Double
         {
             self.recovery.phase_known = false;
         }
-        self.state = OwnerState::REPORTING;
+        self.state = OwnerState::Reporting;
     }
 
     /// Fail an active reservation as an output failure, or fault the owner.
     fn abort(&mut self) {
         if self.reserved
-            && (self.state == OwnerState::PREPARING || self.state == OwnerState::FEEDING)
+            && (self.state == OwnerState::Preparing || self.state == OwnerState::Feeding)
         {
-            self.controller.trip(FeedReason::OUTPUT);
-            self.reporting(OwnerOutcome::FAILED, FeedReason::OUTPUT);
-        } else if self.state != OwnerState::REPORTING {
-            self.state = OwnerState::FAULT;
+            self.controller.trip(FeedReason::Output);
+            self.reporting(OwnerOutcome::Failed, FeedReason::Output);
+        } else if self.state != OwnerState::Reporting {
+            self.state = OwnerState::Fault;
         }
     }
 
@@ -133,7 +144,7 @@ impl Owner {
         if self.watchdog.check() {
             return true;
         }
-        self.fail(OwnerFault::WATCHDOG);
+        self.fail(OwnerFault::Watchdog);
         self.abort();
         self.quiet();
         false
@@ -146,23 +157,23 @@ impl Owner {
         let c = self.flash();
         let blocked = c.outputs_blocked();
         let mut broken = !c.initialized
-            || c.fault != FlashFault::OK
-            || c.phase == FlashPhase::BOOT
-            || c.phase == FlashPhase::CLOSING
-            || c.phase == FlashPhase::CLOSED;
+            || c.fault != FlashFault::Ok
+            || c.phase == FlashPhase::Boot
+            || c.phase == FlashPhase::Closing
+            || c.phase == FlashPhase::Closed;
         let interrupted = blocked
-            && (self.state == OwnerState::FEEDING
-                || (self.state == OwnerState::PREPARING && self.optics_started)
+            && (self.state == OwnerState::Feeding
+                || (self.state == OwnerState::Preparing && self.optics_started)
                 || self.board.optics_enabled
-                || self.board.motor.desired != MotorCommand::STOP);
+                || self.board.motor.desired != MotorCommand::Stop);
 
         if blocked && self.board_attempted && !self.board.flash_quiesce() {
             // SAFETY: as for `flash`; serialized by the guard.
-            unsafe { (*self.config.flash).trip(FlashFault::OUTPUT) };
+            unsafe { (*self.config.flash).trip(FlashFault::Output) };
             broken = true;
         }
         if broken || interrupted {
-            self.fail(OwnerFault::FLASH);
+            self.fail(OwnerFault::Flash);
             self.abort();
         }
         !blocked
@@ -170,25 +181,25 @@ impl Owner {
 
     fn finish_result(&mut self) {
         if !self.quiet() {
-            self.fail(OwnerFault::HARDWARE);
+            self.fail(OwnerFault::Hardware);
             return; // Keep the supervisor and caller-owned context alive for retries.
         }
 
         let mut s = EventsSnapshot::default();
         if !self.snapshot(&mut s) {
-            self.fail(OwnerFault::HARDWARE);
+            self.fail(OwnerFault::Hardware);
         }
-        if self.fault != OwnerFault::OK && self.result.outcome == OwnerOutcome::DONE {
-            self.reporting(OwnerOutcome::FAILED, FeedReason::OUTPUT);
+        if self.fault != OwnerFault::Ok && self.result.outcome == OwnerOutcome::Done {
+            self.reporting(OwnerOutcome::Failed, FeedReason::Output);
         }
         if !self.reserved || self.finish_attempted {
-            self.state = OwnerState::FAULT;
+            self.state = OwnerState::Fault;
             return;
         }
 
         let mut next = self.recovery;
         next.pending_request = false;
-        if self.result.outcome == OwnerOutcome::DONE {
+        if self.result.outcome == OwnerOutcome::Done {
             next.direction = self.controller.progress.direction;
             next.credit_next_event = self.controller.progress.credit_next_event;
         }
@@ -199,14 +210,14 @@ impl Owner {
         if unsafe { self.storage.finish(&self.result, &next) } {
             self.recovery = next;
             self.result_durable = true;
-            self.state = if self.fault == OwnerFault::OK {
-                OwnerState::TERMINAL
+            self.state = if self.fault == OwnerFault::Ok {
+                OwnerState::Terminal
             } else {
-                OwnerState::FAULT
+                OwnerState::Fault
             };
         } else {
-            self.fail(OwnerFault::STORAGE);
-            self.state = OwnerState::FAULT;
+            self.fail(OwnerFault::Storage);
+            self.state = OwnerState::Fault;
         }
     }
 
@@ -218,7 +229,7 @@ impl Owner {
         // Covers blocked board initialization/recovery, before any later refresh.
         let watchdog_config = self.config.watchdog;
         if !self.watchdog.open(&watchdog_config) {
-            self.fail(OwnerFault::SETUP);
+            self.fail(OwnerFault::Setup);
             return false;
         }
 
@@ -232,7 +243,7 @@ impl Owner {
             && unsafe { self.board.attach_flash(c.flash) }
             && unsafe { self.events.open(board, &c.events) };
         if !opened {
-            self.fail(OwnerFault::SETUP);
+            self.fail(OwnerFault::Setup);
             self.init_failed = true;
             return false;
         }
@@ -241,11 +252,10 @@ impl Owner {
         let recovered = unsafe { self.storage.recover_into(&mut self.recovery) };
         let r = self.recovery;
         if !recovered
-            || !r.direction.valid()
-            || (c.bowl_mode == BowlMode::SINGLE && r.direction != Direction::D0)
+            || (c.bowl_mode == BowlMode::Single && r.direction != Direction::D0)
             || r.pending_request
         {
-            self.fail(OwnerFault::RECOVERY);
+            self.fail(OwnerFault::Recovery);
             self.recovery.phase_known = false;
             self.init_failed = true;
             return false;
@@ -254,38 +264,45 @@ impl Owner {
         let controller = FeedController::new(&c.feed, self.recovery.high_water_id);
         let sensors = SensorInputs::new(&c.sensors, &self.board.calibration);
         let (Some(controller), Some(sensors)) = (controller, sensors) else {
-            self.fail(OwnerFault::SETUP);
+            self.fail(OwnerFault::Setup);
             self.init_failed = true;
             return false;
         };
         self.controller = controller;
         self.sensors = sensors;
-        if c.bowl_mode == BowlMode::SINGLE {
+        if c.bowl_mode == BowlMode::Single {
             self.recovery.phase_known = true;
         }
 
-        self.last_submitted_id = self.recovery.high_water_id;
-        self.state = OwnerState::IDLE;
+        let high_water = self.recovery.high_water_id;
+        self.shared(|shared| shared.last_submitted_id = high_water);
+        self.state = OwnerState::Idle;
         true
     }
 
     fn take_request(&mut self) {
         {
             let _guard = IrqGuard::lock();
-            if self.state != OwnerState::IDLE || !self.mailbox.has_request {
+            if self.state != OwnerState::Idle {
                 return;
             }
+            let Some(mailbox) = self.shared(|shared| {
+                let mailbox = shared.mailbox;
+                shared.mailbox.has_request = false;
+                mailbox.has_request.then_some(mailbox)
+            }) else {
+                return;
+            };
 
             self.request = FeedRequest {
-                id: self.mailbox.id,
-                portions: self.mailbox.portions,
+                id: mailbox.id,
+                portions: mailbox.portions,
                 mode: self.config.bowl_mode,
                 direction: self.recovery.direction,
                 credit_next_event: self.recovery.credit_next_event,
                 phase_known: self.recovery.phase_known,
             };
-            self.queued_at = self.mailbox.queued_at;
-            self.mailbox.has_request = false;
+            self.queued_at = mailbox.queued_at;
 
             self.reserved = false;
             self.finish_attempted = false;
@@ -296,23 +313,26 @@ impl Owner {
                 requested: self.request.portions,
                 ..OwnerResult::default()
             };
-            self.state = OwnerState::PREPARING;
-            self.published.state = self.state;
-            self.published.result = self.result;
-            self.published.result_durable = false;
-            self.published.intent_reserved = false;
+            self.state = OwnerState::Preparing;
+            let (state, result) = (self.state, self.result);
+            self.shared(|shared| {
+                shared.published.state = state;
+                shared.published.result = result;
+                shared.published.result_durable = false;
+                shared.published.intent_reserved = false;
+            });
         }
 
         self.publish();
 
         // Reserve even a queued cancellation/expiry: it becomes a durable outcome.
         if !self.quiet() {
-            self.fail(OwnerFault::HARDWARE);
-            self.state = OwnerState::FAULT;
+            self.fail(OwnerFault::Hardware);
+            self.state = OwnerState::Fault;
         // SAFETY: as for `finish_result`.
         } else if !unsafe { self.storage.reserve(&self.request) } {
-            self.fail(OwnerFault::STORAGE);
-            self.state = OwnerState::FAULT;
+            self.fail(OwnerFault::Storage);
+            self.state = OwnerState::Fault;
         } else {
             self.reserved = true;
             self.recovery.high_water_id = self.request.id;
@@ -329,11 +349,11 @@ impl Owner {
         self.sensors.update(started, valid.then_some(&raw));
 
         // Cancellation has priority over feedback captured during acquisition.
-        if (self.state == OwnerState::FEEDING || self.state == OwnerState::PREPARING)
+        if (self.state == OwnerState::Feeding || self.state == OwnerState::Preparing)
             && self.cancelled()
         {
             self.controller.cancel(self.request.id);
-            self.reporting(OwnerOutcome::CANCELLED, FeedReason::CANCELLED);
+            self.reporting(OwnerOutcome::Cancelled, FeedReason::Cancelled);
             return valid;
         }
         valid && self.events.observe(&mut self.controller, &self.sensors)
@@ -341,19 +361,19 @@ impl Owner {
 
     fn prepare(&mut self) {
         if self.cancelled() {
-            self.reporting(OwnerOutcome::CANCELLED, FeedReason::CANCELLED);
+            self.reporting(OwnerOutcome::Cancelled, FeedReason::Cancelled);
             return;
         }
 
         let mut s = EventsSnapshot::default();
         if !self.snapshot(&mut s) {
-            self.fail(OwnerFault::HARDWARE);
-            self.reporting(OwnerOutcome::FAILED, FeedReason::OUTPUT);
+            self.fail(OwnerFault::Hardware);
+            self.reporting(OwnerOutcome::Failed, FeedReason::Output);
             return;
         }
 
         if s.now_ms.wrapping_sub(self.queued_at) >= self.config.prepare_timeout_ms {
-            self.reporting(OwnerOutcome::EXPIRED, FeedReason::TOTAL_TIMEOUT);
+            self.reporting(OwnerOutcome::Expired, FeedReason::TotalTimeout);
             return;
         }
 
@@ -363,8 +383,8 @@ impl Owner {
 
         if !self.optics_started {
             if !self.events.optics(true, self.config.optics_max_on_ms) {
-                self.fail(OwnerFault::HARDWARE);
-                self.reporting(OwnerOutcome::FAILED, FeedReason::OUTPUT);
+                self.fail(OwnerFault::Hardware);
+                self.reporting(OwnerOutcome::Failed, FeedReason::Output);
             } else {
                 self.optics_started = true;
             }
@@ -373,19 +393,19 @@ impl Owner {
 
         let _guard = IrqGuard::lock();
         if self.cancelled() {
-            self.reporting(OwnerOutcome::CANCELLED, FeedReason::CANCELLED);
+            self.reporting(OwnerOutcome::Cancelled, FeedReason::Cancelled);
         } else if self.flash_ready() {
             let latest = self.queued_at.wrapping_add(self.config.prepare_timeout_ms);
             let result =
                 self.events
                     .start(&mut self.controller, &self.sensors, &self.request, latest);
             self.result.motion_possible = self.controller.last_request_id == self.request.id;
-            if result == FeedStartResult::ACCEPTED {
-                self.state = OwnerState::FEEDING;
+            if result == FeedStartResult::Accepted {
+                self.state = OwnerState::Feeding;
             } else if self.result.motion_possible {
-                self.fail(OwnerFault::HARDWARE);
+                self.fail(OwnerFault::Hardware);
                 let reason = self.controller.reason;
-                self.reporting(OwnerOutcome::FAILED, reason);
+                self.reporting(OwnerOutcome::Failed, reason);
             }
         }
     }
@@ -402,8 +422,8 @@ impl Owner {
         }
 
         if !self.watchdog.close(Some(&self.board)) {
-            self.fail(OwnerFault::WATCHDOG);
-            self.state = OwnerState::FAULT;
+            self.fail(OwnerFault::Watchdog);
+            self.state = OwnerState::Fault;
             return false;
         }
 
@@ -411,7 +431,7 @@ impl Owner {
             sdk::wakelock_release(self.config.wake_lock_id);
             self.wake_owned = false;
         }
-        self.state = OwnerState::STOPPED;
+        self.state = OwnerState::Stopped;
         true
     }
 
@@ -426,7 +446,7 @@ impl Owner {
         if !s.stopped
             || !s.optics_off
             || !self.board.inactive()
-            || self.watchdog.fault != WatchdogFault::OK
+            || self.watchdog.fault != WatchdogFault::Ok
         {
             return;
         }
@@ -446,7 +466,7 @@ impl Owner {
     }
 
     fn active_phase(&self) -> bool {
-        self.state == OwnerState::PREPARING || self.state == OwnerState::FEEDING
+        self.state == OwnerState::Preparing || self.state == OwnerState::Feeding
     }
 
     /// One owner iteration; true once the owner has stopped.
@@ -462,101 +482,98 @@ impl Owner {
         // borrows the owner afresh through `this`.
         unsafe {
             if !(*this).initialized && (*this).stop_requested() {
-                (*this).state = OwnerState::STOPPED;
+                (*this).state = OwnerState::Stopped;
                 (*this).publish(); // No hardware or wake lock has been claimed.
                 return true;
             }
 
             if !(*this).initialized && !(*this).initialize() {
-                (*this).state = OwnerState::FAULT;
+                (*this).state = OwnerState::Fault;
             }
 
-            if (*this).fault == OwnerFault::OK {
+            if (*this).fault == OwnerFault::Ok {
                 (*this).check_watchdog();
             }
-            if (*this).fault == OwnerFault::OK {
+            if (*this).fault == OwnerFault::Ok {
                 (*this).flash_ready();
             }
 
-            let ack = {
-                let _guard = IrqGuard::lock();
-                core::mem::take(&mut (*this).mailbox.acknowledge)
-            };
-            if ack && (*this).state == OwnerState::TERMINAL && (*this).result_durable {
+            let ack = (*this).shared(|shared| core::mem::take(&mut shared.mailbox.acknowledge));
+            if ack && (*this).state == OwnerState::Terminal && (*this).result_durable {
                 (*this).controller.reset();
-                (*this).state = OwnerState::IDLE;
+                (*this).state = OwnerState::Idle;
             }
 
             (*this).take_request();
-            if (*this).fault == OwnerFault::OK {
+            if (*this).fault == OwnerFault::Ok {
                 (*this).check_watchdog(); // A reservation can block.
             }
-            if (*this).fault == OwnerFault::OK {
+            if (*this).fault == OwnerFault::Ok {
                 (*this).flash_ready();
             }
 
             if (*this).active_phase() && (*this).cancelled() {
                 (*this).controller.cancel((*this).request.id);
-                (*this).reporting(OwnerOutcome::CANCELLED, FeedReason::CANCELLED);
+                (*this).reporting(OwnerOutcome::Cancelled, FeedReason::Cancelled);
             }
 
             let mut acquired = false;
             if !(*this).flash().outputs_blocked()
-                && ((*this).state == OwnerState::IDLE || (*this).active_phase())
+                && ((*this).state == OwnerState::Idle || (*this).active_phase())
             {
                 acquired = (*this).acquire();
                 if !acquired {
-                    (*this).fail(OwnerFault::HARDWARE);
+                    (*this).fail(OwnerFault::Hardware);
                     if (*this).reserved
-                        && ((*this).active_phase() || (*this).state == OwnerState::REPORTING)
+                        && ((*this).active_phase() || (*this).state == OwnerState::Reporting)
                     {
-                        (*this).controller.trip(FeedReason::OUTPUT);
+                        (*this).controller.trip(FeedReason::Output);
                         let reason = (*this).controller.reason;
-                        (*this).reporting(OwnerOutcome::FAILED, reason);
+                        (*this).reporting(OwnerOutcome::Failed, reason);
                     } else {
-                        (*this).state = OwnerState::FAULT;
+                        (*this).state = OwnerState::Fault;
                     }
                 }
             }
 
-            if (*this).fault == OwnerFault::OK {
+            if (*this).fault == OwnerFault::Ok {
                 (*this).check_watchdog(); // Before optical/motor enable.
             }
-            if (*this).fault == OwnerFault::OK {
+            if (*this).fault == OwnerFault::Ok {
                 (*this).flash_ready();
             }
-            if (*this).state == OwnerState::PREPARING {
+            if (*this).state == OwnerState::Preparing {
                 (*this).prepare();
             }
 
-            if (*this).state == OwnerState::FEEDING {
+            if (*this).state == OwnerState::Feeding {
                 if !(*this).events.motor((*this).controller.motor) {
-                    (*this).fail(OwnerFault::HARDWARE);
-                    (*this).controller.trip(FeedReason::OUTPUT);
+                    (*this).fail(OwnerFault::Hardware);
+                    (*this).controller.trip(FeedReason::Output);
                 }
                 let reason = (*this).controller.reason;
                 match (*this).controller.state {
-                    FeedState::COMPLETE => (*this).reporting(OwnerOutcome::DONE, reason),
-                    FeedState::CANCELLED => (*this).reporting(OwnerOutcome::CANCELLED, reason),
-                    FeedState::FAULT => (*this).reporting(OwnerOutcome::FAILED, reason),
+                    FeedState::Complete => (*this).reporting(OwnerOutcome::Done, reason),
+                    FeedState::Cancelled => (*this).reporting(OwnerOutcome::Cancelled, reason),
+                    FeedState::Fault => (*this).reporting(OwnerOutcome::Failed, reason),
                     _ => {}
                 }
             }
 
-            if (*this).state == OwnerState::REPORTING {
+            if (*this).state == OwnerState::Reporting {
                 (*this).finish_result();
             }
 
-            if (*this).fault == OwnerFault::OK
+            if (*this).fault == OwnerFault::Ok
                 && !(*this).flash().outputs_blocked()
-                && ((*this).state == OwnerState::IDLE
+                && ((*this).state == OwnerState::Idle
                     || (*this).active_phase()
-                    || (*this).state == OwnerState::TERMINAL)
+                    || (*this).state == OwnerState::Terminal)
             {
                 let mut s = EventsSnapshot::default();
                 if (*this).snapshot(&mut s)
                     && s.timer_ready
-                    && (((*this).state == OwnerState::TERMINAL && s.stopped && s.optics_off)
+                    && (((*this).state == OwnerState::Terminal && s.stopped && s.optics_off)
                         || (acquired && s.owner_ready))
                 {
                     let progress = if (*this).watchdog_progress == u64::MAX {
@@ -575,7 +592,7 @@ impl Owner {
                 }
             }
 
-            if (*this).state == OwnerState::FAULT {
+            if (*this).state == OwnerState::Fault {
                 let quiet = (*this).quiet();
                 if quiet && (*this).init_failed {
                     (*this).hold_init_fault();
@@ -583,7 +600,7 @@ impl Owner {
             }
 
             let ended = (*this).stop_requested()
-                && (*this).state != OwnerState::REPORTING
+                && (*this).state != OwnerState::Reporting
                 && !(*this).active_phase()
                 && (*this).shutdown();
             (*this).publish();

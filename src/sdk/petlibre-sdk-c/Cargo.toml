@@ -4,7 +4,7 @@ name = "petlibre-sdk-c"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
-description = "The PetLibre SDK's C ABI, the KM0 archive and the firmware panic handler"
+description = "The KM0 archive and the firmware panic handler"
 publish.workspace = true
 
 [lib]
@@ -19,12 +19,8 @@ km0 = ["dep:petlibre-hal-common", "petlibre-hal-common/km0"]
 km4 = ["dep:petlibre-amebad-sys", "petlibre-amebad-sys/km4"]
 
 [dependencies]
-petlibre-core.workspace = true
 petlibre-amebad-sys = { workspace = true, optional = true }
 petlibre-hal-common = { workspace = true, optional = true }
-
-[dev-dependencies]
-petlibre-testkit.workspace = true
 
 [lints]
 workspace = true

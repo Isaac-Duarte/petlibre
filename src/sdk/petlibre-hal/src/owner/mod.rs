@@ -4,11 +4,27 @@
 //! Starting it creates a task that WILL open GPIO/ADC/IRQs when run. The
 //! normal diagnostic does not call it. Requires a verified board/recovery,
 //! exclusive peripherals/ADC and an unused PMU customer slot (not SDIO 17).
+//!
+//! [`Owner`] is the handle the commanding tasks share: `submit`, `cancel`,
+//! `acknowledge`, `stop` and `status` take `&self` and exchange only the
+//! mailbox and the published status, inside `IrqGuard`. The rest is
+//! [`OwnerTask`], which only the `feed-owner` task borrows, so a command
+//! never aliases the feeding state. Known limit: the supervision and board
+//! state inside it are also reached, inside `IrqGuard`, by the timer and
+//! feedback interrupts (and `submit` reads the event clock the same way)
+//! while the owner task may hold a borrow across an interrupt-enabled window.
+//!
+//! The product firmware will not give the owner a task of its own: the
+//! [product architecture] steps it from the loop task, under the two-task
+//! firmware budget, and the loop commands it through this same handle.
+//! Making it steppable without `feed-owner` is the feeding card's work.
+//!
+//! [product architecture]: ../../../../../docs/firmware/product-architecture.md
 
+use core::cell::UnsafeCell;
 use core::ffi::c_void;
 use core::ptr;
 
-use petlibre_core::c_enum;
 use petlibre_core::feed::controller::{FeedController, FeedRequest};
 use petlibre_core::feed::progress::BowlMode;
 use petlibre_core::feed::sensor_inputs::SensorInputs;
@@ -26,28 +42,65 @@ mod state;
 
 pub use config::OwnerConfig;
 
-c_enum!(OwnerState {
-    STARTING = 0,
-    IDLE = 1,
-    QUEUED = 2,
-    PREPARING = 3,
-    FEEDING = 4,
-    REPORTING = 5,
-    TERMINAL = 6,
-    FAULT = 7,
-    STOPPED = 8,
-});
-c_enum!(OwnerFault { OK = 0, SETUP = 1, RECOVERY = 2, STORAGE = 3, HARDWARE = 4, WATCHDOG = 5, FLASH = 6 });
-c_enum!(SubmitResult {
-    ENQUEUED = 0,
-    REJECT_BUSY = 1,
-    REJECT_ID = 2,
-    REJECT_REQUEST = 3,
-    REJECT_PHASE = 4,
-    REJECT_STOPPED = 5,
-});
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u32)]
+pub enum OwnerState {
+    #[default]
+    Starting = 0,
+    Idle = 1,
+    Queued = 2,
+    Preparing = 3,
+    Feeding = 4,
+    Reporting = 5,
+    Terminal = 6,
+    Fault = 7,
+    Stopped = 8,
+}
 
-#[repr(C)]
+impl OwnerState {
+    /// The variant's number, as records and reports print it.
+    pub const fn code(self) -> u32 {
+        self as u32
+    }
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u32)]
+pub enum OwnerFault {
+    #[default]
+    Ok = 0,
+    Setup = 1,
+    Recovery = 2,
+    Storage = 3,
+    Hardware = 4,
+    Watchdog = 5,
+    Flash = 6,
+}
+
+impl OwnerFault {
+    /// The variant's number, as records and reports print it.
+    pub const fn code(self) -> u32 {
+        self as u32
+    }
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u32)]
+pub enum SubmitResult {
+    #[default]
+    Enqueued = 0,
+    RejectBusy = 1,
+    RejectId = 2,
+    RejectRequest = 3,
+    RejectPhase = 4,
+    RejectStopped = 5,
+}
+
+impl SubmitResult {
+    /// The variant's number, as records and reports print it.
+    pub const fn code(self) -> u32 {
+        self as u32
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct OwnerStatus {
     pub state: OwnerState,
@@ -67,7 +120,6 @@ pub struct OwnerStatus {
     pub watchdog_armed: bool,
 }
 
-#[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct OwnerMailbox {
     pub id: u64,
@@ -80,11 +132,36 @@ pub struct OwnerMailbox {
     pub stop: bool,
 }
 
-/// Caller-owned fixed-address storage; members private to the implementation.
-/// Use status/command methods instead of reading/mutating fields concurrently.
-#[repr(C)]
+/// What the commanding tasks and the owner task exchange. Reached only
+/// inside `IrqGuard` and never borrowed past it, by `Owner`'s commands and by
+/// `OwnerTask::shared`.
+#[derive(Debug, Default)]
+struct Shared {
+    mailbox: OwnerMailbox,
+    published: OwnerStatus,
+    last_submitted_id: u64,
+    /// Copied from the configuration at start: what `submit` checks.
+    max_portions: u16,
+    bowl_mode: BowlMode,
+}
+
+/// The feeding owner: fixed-address storage the caller keeps in place from
+/// `start` until STOPPED, and the handle every commanding task shares.
 #[derive(Debug, Default)]
 pub struct Owner {
+    shared: UnsafeCell<Shared>,
+    task: UnsafeCell<OwnerTask>,
+}
+
+// SAFETY: the commands touch only `shared`, inside `IrqGuard`, which on the
+// single KM4 core excludes every other task and interrupt; only the owner
+// task borrows `task` (see the module's known limit).
+unsafe impl Sync for Owner {}
+
+/// The owner task's state: the board, supervision, controller and journal
+/// progress. Only the `feed-owner` task borrows it.
+#[derive(Debug)]
+pub struct OwnerTask {
     pub config: OwnerConfig,
     pub storage: OwnerStorage,
     pub board: Board,
@@ -96,12 +173,9 @@ pub struct Owner {
     pub recovery: OwnerRecovery,
     pub request: FeedRequest,
     pub result: OwnerResult,
-    pub published: OwnerStatus,
-    pub mailbox: OwnerMailbox,
 
     pub state: OwnerState,
     pub fault: OwnerFault,
-    pub last_submitted_id: u64,
     pub watchdog_progress: u64,
     pub queued_at: u32,
 
@@ -118,6 +192,39 @@ pub struct Owner {
     /// iteration re-verifies STOP and infrared OFF, so a determined failure
     /// does not reset-loop while a hang or output loss still resets.
     pub init_failed: bool,
+
+    /// The owner's shared half, set by `start`.
+    shared: *mut Shared,
+}
+
+impl Default for OwnerTask {
+    fn default() -> Self {
+        Self {
+            config: OwnerConfig::default(),
+            storage: OwnerStorage::default(),
+            board: Board::default(),
+            events: Events::default(),
+            watchdog: Watchdog::default(),
+            sensors: SensorInputs::default(),
+            controller: FeedController::default(),
+            recovery: OwnerRecovery::default(),
+            request: FeedRequest::default(),
+            result: OwnerResult::default(),
+            state: OwnerState::default(),
+            fault: OwnerFault::default(),
+            watchdog_progress: 0,
+            queued_at: 0,
+            initialized: false,
+            board_attempted: false,
+            wake_owned: false,
+            reserved: false,
+            finish_attempted: false,
+            optics_started: false,
+            result_durable: false,
+            init_failed: false,
+            shared: ptr::null_mut(),
+        }
+    }
 }
 
 active_pointer!(Owner);
@@ -130,7 +237,7 @@ impl Owner {
     /// `config.flash` must be a live authority, and `storage` callbacks sound
     /// for their context, for as long as the owner runs and beyond STOPPED
     /// until global transport teardown. `self` must not move until STOPPED.
-    pub unsafe fn start(&mut self, config: &OwnerConfig, storage: &OwnerStorage) -> bool {
+    pub unsafe fn start(&self, config: &OwnerConfig, storage: &OwnerStorage) -> bool {
         if !config.valid() || !storage.complete() {
             return false;
         }
@@ -143,17 +250,28 @@ impl Owner {
             if !active().is_null() || board::outputs_blocked(config.flash) || !fits {
                 return false;
             }
-            *self = Self {
-                config: *config,
-                storage: *storage,
-                state: OwnerState::STARTING,
-                published: OwnerStatus {
-                    state: OwnerState::STARTING,
-                    ..OwnerStatus::default()
-                },
-                ..Self::default()
-            };
-            set_active(self);
+
+            // SAFETY: no owner task runs (`active` is null), so nothing
+            // borrows either half; the guard excludes the commands.
+            unsafe {
+                *self.task.get() = OwnerTask {
+                    config: *config,
+                    storage: *storage,
+                    state: OwnerState::Starting,
+                    shared: self.shared.get(),
+                    ..OwnerTask::default()
+                };
+                *self.shared.get() = Shared {
+                    published: OwnerStatus {
+                        state: OwnerState::Starting,
+                        ..OwnerStatus::default()
+                    },
+                    max_portions: config.feed.max_portions,
+                    bowl_mode: config.bowl_mode,
+                    ..Shared::default()
+                };
+            }
+            set_active(ptr::from_ref(self).cast_mut());
         }
 
         // SAFETY: `owner_step` takes this owner, which the caller's contract
@@ -164,14 +282,18 @@ impl Owner {
                 2048,
                 3,
                 owner_step,
-                ptr::from_mut(self).cast(),
+                ptr::from_ref(self).cast_mut().cast(),
             )
         } {
             let _guard = IrqGuard::lock();
             set_active(ptr::null_mut());
-            self.state = OwnerState::STOPPED;
-            self.published.state = OwnerState::STOPPED;
-            self.published.fault = OwnerFault::SETUP;
+            // SAFETY: no owner task was created; the guard excludes the commands.
+            unsafe {
+                (*self.task.get()).state = OwnerState::Stopped;
+                let shared = &mut *self.shared.get();
+                shared.published.state = OwnerState::Stopped;
+                shared.published.fault = OwnerFault::Setup;
+            }
             return false;
         }
 
@@ -183,84 +305,98 @@ impl Owner {
     }
 
     /// ENQUEUED is transport acceptance, not durable acceptance or dispensing.
-    pub fn submit(&mut self, id: u64, portions: u16) -> SubmitResult {
+    pub fn submit(&self, id: u64, portions: u16) -> SubmitResult {
         let _guard = IrqGuard::lock();
-        if !self.running() || self.mailbox.stop || self.published.state == OwnerState::FAULT {
-            return SubmitResult::REJECT_STOPPED;
+        let running = self.running();
+        // SAFETY: inside the guard, the only borrow of the shared half.
+        let shared = unsafe { &mut *self.shared.get() };
+        if !running || shared.mailbox.stop || shared.published.state == OwnerState::Fault {
+            return SubmitResult::RejectStopped;
         }
-        if self.published.state != OwnerState::IDLE || self.mailbox.has_request {
-            return SubmitResult::REJECT_BUSY;
+        if shared.published.state != OwnerState::Idle || shared.mailbox.has_request {
+            return SubmitResult::RejectBusy;
         }
-        if id == 0 || id <= self.last_submitted_id {
-            return SubmitResult::REJECT_ID;
+        if id == 0 || id <= shared.last_submitted_id {
+            return SubmitResult::RejectId;
         }
-        if portions == 0 || portions > self.config.feed.max_portions {
-            return SubmitResult::REJECT_REQUEST;
+        if portions == 0 || portions > shared.max_portions {
+            return SubmitResult::RejectRequest;
         }
-        if self.config.bowl_mode == BowlMode::DOUBLE && !self.published.phase_known {
-            return SubmitResult::REJECT_PHASE;
+        if shared.bowl_mode == BowlMode::Double && !shared.published.phase_known {
+            return SubmitResult::RejectPhase;
         }
 
-        let Some(value) = self.events.now_ms() else {
-            return SubmitResult::REJECT_STOPPED;
+        // SAFETY: the event clock, read inside the guard as the timer and
+        // feedback interrupts read it (the module's known limit).
+        let Some(value) = (unsafe { (*self.task.get()).events.now_ms() }) else {
+            return SubmitResult::RejectStopped;
         };
 
-        self.mailbox.id = id;
-        self.mailbox.portions = portions;
-        self.mailbox.queued_at = value;
-        self.mailbox.has_request = true;
-        self.mailbox.cancel = false;
-        self.last_submitted_id = id;
-        SubmitResult::ENQUEUED
+        shared.mailbox.id = id;
+        shared.mailbox.portions = portions;
+        shared.mailbox.queued_at = value;
+        shared.mailbox.has_request = true;
+        shared.mailbox.cancel = false;
+        shared.last_submitted_id = id;
+        SubmitResult::Enqueued
     }
 
-    pub fn cancel(&mut self, id: u64) -> bool {
+    pub fn cancel(&self, id: u64) -> bool {
         if id == 0 {
             return false;
         }
         let _guard = IrqGuard::lock();
-        let result = self.running()
-            && ((self.mailbox.has_request && self.mailbox.id == id)
-                || ((self.published.state == OwnerState::PREPARING
-                    || self.published.state == OwnerState::FEEDING)
-                    && self.published.result.id == id));
+        let running = self.running();
+        // SAFETY: as for `submit`.
+        let shared = unsafe { &mut *self.shared.get() };
+        let result = running
+            && ((shared.mailbox.has_request && shared.mailbox.id == id)
+                || ((shared.published.state == OwnerState::Preparing
+                    || shared.published.state == OwnerState::Feeding)
+                    && shared.published.result.id == id));
         if result {
-            self.mailbox.cancel = true;
-            self.mailbox.cancel_id = id;
+            shared.mailbox.cancel = true;
+            shared.mailbox.cancel_id = id;
         }
         result
     }
 
-    pub fn acknowledge(&mut self, id: u64) -> bool {
+    pub fn acknowledge(&self, id: u64) -> bool {
         if id == 0 {
             return false;
         }
         let _guard = IrqGuard::lock();
-        let result = self.running()
-            && self.published.state == OwnerState::TERMINAL
-            && self.published.result.id == id
-            && self.published.result_durable;
+        let running = self.running();
+        // SAFETY: as for `submit`.
+        let shared = unsafe { &mut *self.shared.get() };
+        let result = running
+            && shared.published.state == OwnerState::Terminal
+            && shared.published.result.id == id
+            && shared.published.result_durable;
         if result {
-            self.mailbox.acknowledge = true;
+            shared.mailbox.acknowledge = true;
         }
         result
     }
 
-    pub fn stop(&mut self) {
+    pub fn stop(&self) {
         let _guard = IrqGuard::lock();
         if self.running() {
-            self.mailbox.stop = true;
+            // SAFETY: as for `submit`.
+            unsafe { (*self.shared.get()).mailbox.stop = true };
         }
     }
 
     pub fn status(&self) -> OwnerStatus {
         let _guard = IrqGuard::lock();
-        let mut status = self.published;
-        if self.mailbox.has_request && status.state == OwnerState::IDLE {
-            status.state = OwnerState::QUEUED;
+        // SAFETY: as for `submit`.
+        let shared = unsafe { &*self.shared.get() };
+        let mut status = shared.published;
+        if shared.mailbox.has_request && status.state == OwnerState::Idle {
+            status.state = OwnerState::Queued;
             status.result = OwnerResult {
-                id: self.mailbox.id,
-                requested: self.mailbox.portions,
+                id: shared.mailbox.id,
+                requested: shared.mailbox.portions,
                 ..OwnerResult::default()
             };
             status.intent_reserved = false;
@@ -268,15 +404,25 @@ impl Owner {
         }
         status
     }
+
+    /// The owner task's half, for the host tests and the virtual feeder,
+    /// which stand in for the hardware and the flash peer between task
+    /// iterations. Never dereference it while the owner task runs.
+    #[doc(hidden)]
+    pub fn task_state(&self) -> *mut OwnerTask {
+        self.task.get()
+    }
 }
 
 unsafe extern "C" fn owner_step(argument: *mut c_void) -> u32 {
     // `start` registered this fixed-address owner as the task context.
-    let owner = argument.cast::<Owner>();
-    // SAFETY: the started owner, polled only by this task.
-    if !unsafe { Owner::poll(owner) } {
+    let owner = argument.cast_const().cast::<Owner>();
+    // SAFETY: the started owner; only this task borrows its task half.
+    let task = unsafe { (*owner).task.get() };
+    // SAFETY: as above.
+    if !unsafe { OwnerTask::poll(task) } {
         // SAFETY: as above; `poll` holds no borrow once it returns.
-        return unsafe { (*owner).config.sample_period_ms };
+        return unsafe { (*task).config.sample_period_ms };
     }
 
     let _guard = IrqGuard::lock();

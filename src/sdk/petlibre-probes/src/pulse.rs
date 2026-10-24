@@ -52,7 +52,7 @@ pub const EVENTS: EventsConfig = EventsConfig {
 };
 
 pub const DELAY_MS: u32 = 60_000;
-pub const DIRECTION: MotorCommand = MotorCommand::DRIVE_0;
+pub const DIRECTION: MotorCommand = MotorCommand::Drive0;
 pub const PULSE_MS: u32 = 100;
 pub const AFTER_MS: u32 = 1000;
 /// Current is sampled at most this often (16 conversions take about 5 ms).
@@ -293,9 +293,9 @@ impl Probe {
 
     /// STOP and close the supervisor (or leave its timer retrying STOP).
     fn fail(&mut self, stage: &'static str) -> Step {
-        let fault = self.events.fault.0;
+        let fault = self.events.fault.code();
         if self.events.opened {
-            let _ = self.events.motor(MotorCommand::STOP);
+            let _ = self.events.motor(MotorCommand::Stop);
             self.events.close();
         } else {
             self.board.close();
@@ -366,7 +366,7 @@ impl Probe {
 
     /// Renew the owner lease; true while the supervisor is healthy.
     fn renew(&mut self) -> bool {
-        self.events.fault == EventsFault::OK
+        self.events.fault == EventsFault::Ok
             && self.events.process(&mut self.controller, Some(&IDLE))
     }
 
@@ -383,7 +383,7 @@ impl Probe {
 
         let inactive = stopped::observe().verified();
         self.flash = FlashCoord::new(&FLASH_LIMITS, self.authority, ms).and_then(|mut coord| {
-            (coord.ready(self.authority, peer, inactive, ms) == FlashReply::ACCEPTED)
+            (coord.ready(self.authority, peer, inactive, ms) == FlashReply::Accepted)
                 .then_some(coord)
         });
 
@@ -519,13 +519,13 @@ impl Probe {
             return next(POLL_MS, None);
         }
 
-        if !self.events.motor(MotorCommand::STOP) || !motor_pins_stopped() {
+        if !self.events.motor(MotorCommand::Stop) || !motor_pins_stopped() {
             return self.fail("stop");
         }
 
         self.stopped_at = self.board.motor.applied_at;
         let record = Record::Pulse {
-            direction: DIRECTION.0,
+            direction: DIRECTION.code(),
             applied_ms: applied.wrapping_sub(self.requested_at),
             on_ms: self.stopped_at.wrapping_sub(applied),
             edges: self.edges,
@@ -554,7 +554,7 @@ impl Probe {
         }
 
         let stopped = motor_pins_stopped()
-            && self.board.motor.applied == MotorCommand::STOP
+            && self.board.motor.applied == MotorCommand::Stop
             && self.events.close()
             && stopped::observe().verified();
 

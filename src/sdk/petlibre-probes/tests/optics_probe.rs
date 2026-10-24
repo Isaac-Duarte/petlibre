@@ -282,7 +282,7 @@ fn full_run_pairs_emitters_measures_settling_and_cuts_a_stalled_owner() {
     let (cut, fault, off, stopped_, closed) = stall;
     let cut = cut.unwrap();
     assert!((LEASE_MS..=LEASE_MS + 12).contains(&cut), "{cut}");
-    assert_eq!(fault, EventsFault::OWNER.0);
+    assert_eq!(fault, EventsFault::Owner.code());
     assert!(off && stopped_ && closed);
 
     assert_eq!(b.records.last(), Some(&Record::Done { windows: WINDOWS }));
@@ -440,7 +440,7 @@ fn a_lost_owner_lease_mid_window_ends_the_probe_stopped() {
     }
     assert!(fake::with(|h| h.output[0] & 1 << 15 == 0));
 
-    assert_eq!(b.probe.events.fault, EventsFault::OWNER);
+    assert_eq!(b.probe.events.fault, EventsFault::Owner);
     assert_eq!(b.step(&mut during), 0);
 
     let Some(Record::Error {
@@ -455,7 +455,7 @@ fn a_lost_owner_lease_mid_window_ends_the_probe_stopped() {
 
     assert_eq!(
         (kind, n, fault),
-        (optics::ErrorKind::Supervisor, 1, EventsFault::OWNER.0)
+        (optics::ErrorKind::Supervisor, 1, EventsFault::Owner.code())
     );
     // The record says how long the task was away: past the lease.
     assert!(stall_ms.is_some_and(|ms| ms >= LEASE_MS), "{stall_ms:?}");

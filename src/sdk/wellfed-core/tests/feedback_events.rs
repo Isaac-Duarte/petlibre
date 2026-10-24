@@ -56,7 +56,7 @@ fn begin_mode(mode: BowlMode, now: u32) -> Fixture {
         drive: FeedbackDrive {
             healthy: true,
             applied_known: true,
-            applied: MotorCommand::DRIVE_0,
+            applied: MotorCommand::Drive0,
             applied_at: now,
         },
         now,
@@ -72,13 +72,13 @@ fn begin_mode(mode: BowlMode, now: u32) -> Fixture {
     };
     assert_eq!(
         f.controller.start(&request, now, &f.sample),
-        FeedStartResult::ACCEPTED
+        FeedStartResult::Accepted
     );
     f
 }
 
 fn begin() -> Fixture {
-    begin_mode(BowlMode::SINGLE, 0)
+    begin_mode(BowlMode::Single, 0)
 }
 
 impl Fixture {
@@ -95,20 +95,20 @@ impl Fixture {
     }
 
     fn fault(&self, reason: FeedReason) {
-        assert_eq!(self.controller.state, FeedState::FAULT);
+        assert_eq!(self.controller.state, FeedState::Fault);
         assert_eq!(self.controller.reason, reason);
-        assert_eq!(self.controller.motor, MotorCommand::STOP);
+        assert_eq!(self.controller.motor, MotorCommand::Stop);
     }
 }
 
 fn event(captured_at: u32, high: bool) -> (FeedbackTakeResult, Option<FeedbackEvent>) {
     (
-        FeedbackTakeResult::EVENT,
+        FeedbackTakeResult::Event,
         Some(FeedbackEvent { captured_at, high }),
     )
 }
 
-const EMPTY: (FeedbackTakeResult, Option<FeedbackEvent>) = (FeedbackTakeResult::EMPTY, None);
+const EMPTY: (FeedbackTakeResult, Option<FeedbackEvent>) = (FeedbackTakeResult::Empty, None);
 
 #[test]
 fn fifo_wrap_and_exactly_once() {
@@ -159,8 +159,8 @@ fn inhibition_retains_capture_time() {
     f.advance(2);
     assert!(f.events.push(10, true));
     assert!(f.process(11));
-    assert!(f.controller.state == FeedState::COMPLETE && f.controller.progress.completed == 2);
-    assert!(f.controller.last_feedback_at == 10 && f.controller.motor == MotorCommand::STOP);
+    assert!(f.controller.state == FeedState::Complete && f.controller.progress.completed == 2);
+    assert!(f.controller.last_feedback_at == 10 && f.controller.motor == MotorCommand::Stop);
 }
 
 #[test]
@@ -185,20 +185,20 @@ fn overflow_and_stale_batches_credit_nothing() {
 
     assert!(!f.events.push(5, true));
     assert!(!f.process(5));
-    assert!(f.events.fault == FeedbackFault::OVERFLOW && f.controller.progress.completed == 0);
-    f.fault(FeedReason::FEEDBACK_STREAM);
+    assert!(f.events.fault == FeedbackFault::Overflow && f.controller.progress.completed == 0);
+    f.fault(FeedReason::FeedbackStream);
 
     assert!(!f.events.push(6, true));
     assert!(f.controller.reset());
-    assert!(!f.process(6) && f.events.fault == FeedbackFault::OVERFLOW);
+    assert!(!f.process(6) && f.events.fault == FeedbackFault::Overflow);
 
     let mut f = begin();
     f.advance(3);
     assert!(f.events.push(4, true));
     assert!(f.events.push(5, true));
     assert!(!f.process(7)); // Newer valid edge cannot rescue an invalid batch.
-    assert!(f.events.fault == FeedbackFault::STALE && f.controller.progress.completed == 0);
-    f.fault(FeedReason::FEEDBACK_STREAM);
+    assert!(f.events.fault == FeedbackFault::Stale && f.controller.progress.completed == 0);
+    f.fault(FeedReason::FeedbackStream);
 }
 
 #[test]
@@ -208,14 +208,14 @@ fn current_faults_and_deadlines_precede_old_feedback() {
     assert!(f.events.push(5, true));
     f.sample.power_healthy = false;
     assert!(f.process(5));
-    f.fault(FeedReason::POWER);
+    f.fault(FeedReason::Power);
     assert_eq!(f.controller.progress.completed, 0);
 
     let mut f = begin();
     f.advance(29);
     assert!(f.events.push(29, true));
     assert!(f.process(30));
-    f.fault(FeedReason::FEEDBACK_TIMEOUT);
+    f.fault(FeedReason::FeedbackTimeout);
     assert_eq!(f.controller.progress.completed, 0);
 }
 
@@ -227,13 +227,13 @@ fn clock_errors_wrap_and_future_capture() {
     assert_eq!(q.take(1), event(u32::MAX - 1, true));
     assert_eq!(q.take(1), event(0, false));
     assert!(!q.push(u32::MAX, true));
-    assert_eq!(q.fault, FeedbackFault::CLOCK);
+    assert_eq!(q.fault, FeedbackFault::Clock);
 
     let mut f = begin();
     f.advance(4);
     assert!(f.events.push(6, true));
     assert!(!f.process(5));
-    f.fault(FeedReason::FEEDBACK_STREAM);
+    f.fault(FeedReason::FeedbackStream);
 
     let mut f = begin();
     let edge = FeedSample {
@@ -242,9 +242,9 @@ fn clock_errors_wrap_and_future_capture() {
         ..f.sample
     };
     f.controller.update_captured(1, Some(&edge), 2);
-    f.fault(FeedReason::CLOCK);
+    f.fault(FeedReason::Clock);
 
-    let mut f = begin_mode(BowlMode::SINGLE, u32::MAX - 3);
+    let mut f = begin_mode(BowlMode::Single, u32::MAX - 3);
     f.advance(4);
     assert!(f.events.push(1, true));
     assert!(f.process(2));
@@ -260,22 +260,22 @@ fn drive_must_be_known_healthy_and_continuous() {
         match mode {
             0 => f.drive.healthy = false,
             1 => f.drive.applied_known = false,
-            _ => f.drive.applied = MotorCommand::DRIVE_1,
+            _ => f.drive.applied = MotorCommand::Drive1,
         }
         assert!(!f.process(5));
-        f.fault(FeedReason::OUTPUT);
+        f.fault(FeedReason::Output);
         assert_eq!(f.controller.progress.completed, 0);
     }
 
     let mut f = begin();
     f.advance(4);
-    f.drive.applied = MotorCommand::STOP;
+    f.drive.applied = MotorCommand::Stop;
     assert!(f.events.push(5, true));
     assert!(f.process(5));
     assert_eq!(f.controller.progress.completed, 0);
 
     assert!(f.events.push(6, true));
-    f.drive.applied = MotorCommand::DRIVE_0;
+    f.drive.applied = MotorCommand::Drive0;
     f.drive.applied_at = 7;
     assert!(f.process(7));
     assert_eq!(f.controller.progress.completed, 0);
@@ -287,16 +287,16 @@ fn drive_must_be_known_healthy_and_continuous() {
 
 #[test]
 fn direction_handoff_discards_pre_drive_edges() {
-    let mut f = begin_mode(BowlMode::DOUBLE, 0);
+    let mut f = begin_mode(BowlMode::Double, 0);
     f.advance(4);
     assert!(f.events.push(5, true));
     assert!(f.process(5));
-    assert!(f.controller.motor == MotorCommand::DRIVE_1 && f.controller.progress.completed == 1);
+    assert!(f.controller.motor == MotorCommand::Drive1 && f.controller.progress.completed == 1);
 
-    f.drive.applied = MotorCommand::STOP;
+    f.drive.applied = MotorCommand::Stop;
     f.advance(4);
     assert!(f.events.push(10, false));
-    f.drive.applied = MotorCommand::DRIVE_1;
+    f.drive.applied = MotorCommand::Drive1;
     f.drive.applied_at = 11;
     assert!(f.process(11));
     assert_eq!(f.controller.progress.pending_events, 0);
@@ -313,16 +313,16 @@ fn reverse_completion_cannot_consume_old_edges() {
 
     f.sample.current_ma = 301;
     assert!(f.process(4));
-    assert_eq!(f.controller.state, FeedState::REVERSING);
+    assert_eq!(f.controller.state, FeedState::Reversing);
 
     f.sample.current_ma = 100;
-    f.drive.applied = MotorCommand::DRIVE_1;
+    f.drive.applied = MotorCommand::Drive1;
     f.drive.applied_at = 5;
     f.advance(2);
 
     assert!(f.events.push(7, true));
     assert!(f.process(7));
-    assert!(f.controller.state == FeedState::RUNNING && f.controller.progress.completed == 0);
+    assert!(f.controller.state == FeedState::Running && f.controller.progress.completed == 0);
     assert!(f.controller.inhibit_at == 7 && f.events.count == 0);
 }
 
@@ -335,21 +335,20 @@ fn invalid_configuration_and_external_trips() {
 
     let mut q = FeedbackEvents::default();
     assert!(!q.push(0, true));
-    assert_eq!(q.fault, FeedbackFault::ARGUMENT);
+    assert_eq!(q.fault, FeedbackFault::Argument);
 
     let mut f = begin();
     f.events = FeedbackEvents::new(2, 5, 0).unwrap();
     assert!(!f.process(0));
-    f.fault(FeedReason::FEEDBACK_STREAM);
+    f.fault(FeedReason::FeedbackStream);
 
     let mut f = begin();
-    assert!(!f.controller.trip(FeedReason::DONE));
-    assert!(!f.controller.trip(FeedReason::NONE));
-    assert!(!f.controller.trip(FeedReason::CANCELLED));
-    assert!(!f.controller.trip(FeedReason(99)));
-    assert!(f.controller.trip(FeedReason::OUTPUT));
-    assert!(!f.controller.trip(FeedReason::SENSOR));
-    f.fault(FeedReason::OUTPUT);
+    assert!(!f.controller.trip(FeedReason::Done));
+    assert!(!f.controller.trip(FeedReason::None));
+    assert!(!f.controller.trip(FeedReason::Cancelled));
+    assert!(f.controller.trip(FeedReason::Output));
+    assert!(!f.controller.trip(FeedReason::Sensor));
+    f.fault(FeedReason::Output);
 }
 
 #[derive(Default)]
@@ -381,7 +380,7 @@ fn pipeline_applies_gate_output_and_stops() {
         }
 
         f.drive = FeedbackDrive {
-            healthy: gate.fault == MotorGateFault::OK,
+            healthy: gate.fault == MotorGateFault::Ok,
             applied_known: gate.applied_known,
             applied: gate.applied,
             applied_at: gate.applied_at,
@@ -405,5 +404,5 @@ fn pipeline_applies_gate_output_and_stops() {
     // SAFETY: the box leaked when the fixture was built, freed once here.
     let pins = unsafe { Box::from_raw(pins) };
     assert!(pins.a && pins.b && gate.applied_known);
-    f.fault(FeedReason::FEEDBACK_STREAM);
+    f.fault(FeedReason::FeedbackStream);
 }

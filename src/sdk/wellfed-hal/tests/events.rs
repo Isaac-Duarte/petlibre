@@ -81,7 +81,7 @@ impl Fixture {
     fn drive(&mut self) {
         self.arm();
         assert!(self.events.optics(true, 120));
-        assert!(self.events.motor(MotorCommand::DRIVE_0));
+        assert!(self.events.motor(MotorCommand::Drive0));
         assert_eq!(motor_pins(), 1 << 13);
     }
 
@@ -110,11 +110,11 @@ fn timer_stops_an_owner_that_never_runs() {
     f.drive();
     fake::advance(12 * 32, true); // Only the independently registered ISR runs.
 
-    assert!(f.events.fault == EventsFault::OUTPUT && f.board.faulted);
-    assert_eq!(f.board.motor.fault, MotorGateFault::EXPIRED);
+    assert!(f.events.fault == EventsFault::Output && f.board.faulted);
+    assert_eq!(f.board.motor.fault, MotorGateFault::Expired);
     assert!(motor_pins() == MOTOR_MASK && f.board.motor.applied_known);
     assert!(optics_off());
-    assert!(!f.events.motor(MotorCommand::DRIVE_1));
+    assert!(!f.events.motor(MotorCommand::Drive1));
     f.finish();
 }
 
@@ -130,8 +130,8 @@ fn interrupt_overflow_stops_without_owner_processing() {
     assert_eq!(f.events.feedback.count, 3);
 
     fake::edge(false);
-    assert_eq!(f.events.fault, EventsFault::FEEDBACK);
-    assert_eq!(f.events.feedback.fault, FeedbackFault::OVERFLOW);
+    assert_eq!(f.events.fault, EventsFault::Feedback);
+    assert_eq!(f.events.feedback.fault, FeedbackFault::Overflow);
     assert!(!f.events.capture_enabled && motor_pins() == MOTOR_MASK);
     assert!(optics_off());
     f.finish();
@@ -142,8 +142,8 @@ fn missed_timer_heartbeat_blocks_renewal() {
     let mut f = begin();
     f.drive();
     fake::advance(6 * 32, false);
-    assert!(!f.events.motor(MotorCommand::DRIVE_0));
-    assert!(f.events.fault == EventsFault::TIMER && motor_pins() == MOTOR_MASK);
+    assert!(!f.events.motor(MotorCommand::Drive0));
+    assert!(f.events.fault == EventsFault::Timer && motor_pins() == MOTOR_MASK);
     f.finish();
 }
 
@@ -156,12 +156,12 @@ fn clock_failures_stop_in_irq_or_task_context() {
     // One interrupt without SYSTIMER advance is a coalesced pending update:
     // skipped without advancing, while the drive stays supervised.
     fake::irq(TIMER2_IRQ);
-    assert!(f.events.fault == EventsFault::OK && f.events.timer_at == timer_at);
+    assert!(f.events.fault == EventsFault::Ok && f.events.timer_at == timer_at);
     assert_eq!(motor_pins(), 1 << 13);
 
     // A second consecutive one is a frozen reference clock.
     fake::irq(TIMER2_IRQ);
-    assert!(f.events.fault == EventsFault::CLOCK && motor_pins() == MOTOR_MASK);
+    assert!(f.events.fault == EventsFault::Clock && motor_pins() == MOTOR_MASK);
     f.finish();
 
     // An advancing reading between two repeats resets the tolerance.
@@ -171,15 +171,15 @@ fn clock_failures_stop_in_irq_or_task_context() {
         fake::irq(TIMER2_IRQ);
         fake::advance(32, true);
     }
-    assert!(f.events.fault == EventsFault::OK && motor_pins() == 1 << 13);
-    assert!(f.events.motor(MotorCommand::DRIVE_0));
+    assert!(f.events.fault == EventsFault::Ok && motor_pins() == 1 << 13);
+    assert!(f.events.motor(MotorCommand::Drive0));
     f.finish();
 
     let mut f = begin();
     f.drive();
     hw(|h| h.raw_ticks -= 1);
     assert_eq!(f.events.now_ms(), None);
-    assert_eq!(f.events.fault, EventsFault::CLOCK);
+    assert_eq!(f.events.fault, EventsFault::Clock);
     assert_eq!(motor_pins(), MOTOR_MASK);
     f.finish();
 }
@@ -212,7 +212,7 @@ fn claims_and_failed_registration_leave_no_live_resources() {
             h.fail_gpio_register = which == 1;
         });
         assert!(!f.open_events(&CONFIG));
-        assert!(f.events.fault == EventsFault::SETUP && !f.events.opened);
+        assert!(f.events.fault == EventsFault::Setup && !f.events.opened);
         assert!(sdk::tim2_en() == 0 && sdk::tim2_dier() == 0 && sdk::gpioa_int_en() == 0);
         assert!(hw(
             |h| h.irq[TIMER2_IRQ].is_none() && h.irq[GPIOA_IRQ].is_none()
@@ -232,7 +232,7 @@ fn single_request() -> FeedRequest {
     FeedRequest {
         id: 1,
         portions: 1,
-        mode: BowlMode::SINGLE,
+        mode: BowlMode::Single,
         direction: Direction::D0,
         ..FeedRequest::default()
     }
@@ -245,7 +245,7 @@ fn owner_consumes_captured_feedback_and_applies_stop() {
     let mut controller = FeedController::new(&LIMITS, 0).unwrap();
     assert_eq!(
         controller.start(&single_request(), 2, &HEALTHY),
-        FeedStartResult::ACCEPTED
+        FeedStartResult::Accepted
     );
     assert!(f.events.motor(controller.motor));
 
@@ -258,7 +258,7 @@ fn owner_consumes_captured_feedback_and_applies_stop() {
         assert!(f.events.motor(controller.motor));
     }
 
-    assert!(controller.state == FeedState::COMPLETE && controller.progress.completed == 1);
+    assert!(controller.state == FeedState::Complete && controller.progress.completed == 1);
     assert!(controller.last_feedback_at == 7 && f.events.feedback.count == 0);
     assert_eq!(motor_pins(), MOTOR_MASK);
     assert!(f.events.capture(false));
@@ -272,7 +272,7 @@ fn stale_feedback_fails_the_real_port_before_credit() {
     let mut controller = FeedController::new(&LIMITS, 0).unwrap();
     assert_eq!(
         controller.start(&single_request(), 2, &HEALTHY),
-        FeedStartResult::ACCEPTED
+        FeedStartResult::Accepted
     );
     assert!(f.events.motor(controller.motor));
 
@@ -281,8 +281,8 @@ fn stale_feedback_fails_the_real_port_before_credit() {
     fake::advance(3 * 32, true);
 
     assert!(!f.events.process(&mut controller, Some(&HEALTHY)));
-    assert!(controller.state == FeedState::FAULT && controller.progress.completed == 0);
-    assert_eq!(controller.reason, FeedReason::FEEDBACK_STREAM);
+    assert!(controller.state == FeedState::Fault && controller.progress.completed == 0);
+    assert_eq!(controller.reason, FeedReason::FeedbackStream);
     assert_eq!(motor_pins(), MOTOR_MASK);
     f.finish();
 }
@@ -310,7 +310,7 @@ fn ownership_and_timer_configuration_changes_trip() {
 
     hw(|h| h.gpio.int_status = 1 << 4);
     fake::irq(GPIOA_IRQ);
-    assert!(f.events.fault == EventsFault::RESOURCE && !hw(|h| h.irq_enabled[GPIOA_IRQ]));
+    assert!(f.events.fault == EventsFault::Resource && !hw(|h| h.irq_enabled[GPIOA_IRQ]));
     assert_eq!(motor_pins(), MOTOR_MASK);
     f.finish();
 
@@ -323,8 +323,8 @@ fn ownership_and_timer_configuration_changes_trip() {
             _ => h.timer.dier = 0,
         });
 
-        assert!(!f.events.motor(MotorCommand::DRIVE_0));
-        assert!(f.events.fault == EventsFault::TIMER && motor_pins() == MOTOR_MASK);
+        assert!(!f.events.motor(MotorCommand::Drive0));
+        assert!(f.events.fault == EventsFault::Timer && motor_pins() == MOTOR_MASK);
         f.finish();
     }
 }
@@ -332,8 +332,8 @@ fn ownership_and_timer_configuration_changes_trip() {
 #[test]
 fn first_timer_is_required_and_raw_wrap_is_supported() {
     let mut f = begin();
-    assert!(!f.events.motor(MotorCommand::DRIVE_0));
-    assert!(f.events.fault == EventsFault::TIMER && motor_pins() == MOTOR_MASK);
+    assert!(!f.events.motor(MotorCommand::Drive0));
+    assert!(f.events.fault == EventsFault::Timer && motor_pins() == MOTOR_MASK);
     f.finish();
 
     fake::reset_hardware();
@@ -344,7 +344,7 @@ fn first_timer_is_required_and_raw_wrap_is_supported() {
 
     f.arm();
     assert_eq!(hw(|h| h.raw_ticks), 0);
-    assert!(f.events.motor(MotorCommand::DRIVE_0));
+    assert!(f.events.motor(MotorCommand::Drive0));
     f.finish();
 }
 
@@ -355,7 +355,7 @@ fn stopped_warmup_cannot_outlive_its_owner() {
     assert!(f.events.optics(true, 120));
 
     fake::advance(12 * 32, true);
-    assert_eq!(f.events.fault, EventsFault::OWNER);
+    assert_eq!(f.events.fault, EventsFault::Owner);
     assert!(optics_off());
     assert_eq!(motor_pins(), MOTOR_MASK);
     f.finish();
@@ -367,7 +367,7 @@ fn stopped_warmup_cannot_outlive_its_owner() {
 
     let mut idle = FeedController::new(&LIMITS, 0).unwrap();
     assert!(!f.events.process(&mut idle, Some(&HEALTHY)));
-    assert!(f.events.fault == EventsFault::OWNER && !f.board.optics_enabled);
+    assert!(f.events.fault == EventsFault::Owner && !f.board.optics_enabled);
     f.finish();
 }
 
@@ -385,7 +385,7 @@ fn infrared_budget_cannot_be_extended_by_renewal() {
     }
 
     fake::advance(32, true);
-    assert!(f.events.fault == EventsFault::OPTICS && !f.board.optics_enabled);
+    assert!(f.events.fault == EventsFault::Optics && !f.board.optics_enabled);
     f.finish();
 }
 
@@ -406,7 +406,7 @@ fn close_turns_infrared_off_before_removing_supervision() {
 
     hw(|h| h.blocked_optics_off = true);
     assert!(!f.events.close());
-    assert!(f.events.opened && f.events.fault == EventsFault::OUTPUT);
+    assert!(f.events.opened && f.events.fault == EventsFault::Output);
     assert!(sdk::tim2_en() != 0 && hw(|h| h.irq[TIMER2_IRQ].is_some()));
 
     hw(|h| h.blocked_optics_off = false);
@@ -430,7 +430,7 @@ fn masked_interrupts_stay_pending_until_unmasked() {
     sdk::set_primask(0);
     assert_eq!(hw(|h| h.timer_irqs), timer_irqs + 1);
     assert!(hw(|h| h.gpio_irqs) == 1 && f.events.feedback.count == 1);
-    assert!(f.events.timer_at > timer_at && f.events.fault == EventsFault::OK);
+    assert!(f.events.timer_at > timer_at && f.events.fault == EventsFault::Ok);
 
     // A line disabled while pending runs once it is re-enabled.
     sdk::irq_disable(Irq::Timer2);
@@ -483,10 +483,10 @@ fn single_emitter_windows_keep_one_budget_and_selection() {
     let mut idle = FeedController::new(&LIMITS, 0).unwrap();
     for _ in 0..12 {
         fake::advance(64, true);
-        assert!(f.events.process(&mut idle, Some(&HEALTHY)) || f.events.fault != EventsFault::OK);
+        assert!(f.events.process(&mut idle, Some(&HEALTHY)) || f.events.fault != EventsFault::Ok);
     }
 
-    assert_eq!(f.events.fault, EventsFault::OPTICS);
+    assert_eq!(f.events.fault, EventsFault::Optics);
     assert!(optics_off() && f.board.faulted);
     f.finish();
 }

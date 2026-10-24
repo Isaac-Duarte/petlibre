@@ -40,7 +40,6 @@ pub struct SensorsOpen {
 }
 
 /// Keep this object at a fixed address while opened; its gate refers back to it.
-#[repr(C)]
 #[derive(Debug)]
 pub struct Board {
     pub motor: MotorGate,
@@ -225,10 +224,10 @@ impl Board {
     pub fn trip(&mut self, now_ms: u32) {
         let _guard = IrqGuard::lock();
         self.faulted = true;
-        if self.motor.fault == MotorGateFault::OK {
+        if self.motor.fault == MotorGateFault::Ok {
             self.motor.trip(now_ms);
         } else {
-            self.motor.request(MotorCommand::STOP, now_ms);
+            self.motor.request(MotorCommand::Stop, now_ms);
         }
     }
 
@@ -239,8 +238,8 @@ impl Board {
     pub(crate) fn inactive(&self) -> bool {
         self.optics_initialized
             && self.motor.applied_known
-            && self.motor.applied == MotorCommand::STOP
-            && self.motor.desired == MotorCommand::STOP
+            && self.motor.applied == MotorCommand::Stop
+            && self.motor.desired == MotorCommand::Stop
             && sdk::gpio_port_read(GPIO_PORT_A, MOTOR_MASK) == MOTOR_MASK
             && optics_off()
     }
@@ -276,7 +275,7 @@ impl Board {
             self.trip_now(); // Never auto-resume interrupted feeding.
         } else {
             self.motor
-                .request(MotorCommand::STOP, self.motor.observed_at);
+                .request(MotorCommand::Stop, self.motor.observed_at);
         }
         self.optics(false);
         self.inactive()
@@ -292,11 +291,11 @@ impl Board {
 
     /// Critical sections serialize gate calls between task and timer ISR.
     pub fn motor(&mut self, command: MotorCommand, now_ms: u32) -> bool {
-        if !self.opened || (self.faulted && command != MotorCommand::STOP) {
+        if !self.opened || (self.faulted && command != MotorCommand::Stop) {
             return false;
         }
         let _guard = IrqGuard::lock();
-        if command != MotorCommand::STOP && self.flash_hold() {
+        if command != MotorCommand::Stop && self.flash_hold() {
             return false;
         }
         self.motor.request(command, now_ms)
@@ -307,7 +306,7 @@ impl Board {
             return false;
         }
         let _guard = IrqGuard::lock();
-        if (self.motor.desired != MotorCommand::STOP || self.optics_enabled) && self.flash_hold() {
+        if (self.motor.desired != MotorCommand::Stop || self.optics_enabled) && self.flash_hold() {
             return false;
         }
         self.motor.tick(now_ms)

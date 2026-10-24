@@ -116,7 +116,7 @@ impl Arming {
                         unsafe { *provider = Provider::bound(coord, self.clock, self.authority) };
 
                         let event = Event::Ready { reply, inactive };
-                        if reply != FlashReply::ACCEPTED {
+                        if reply != FlashReply::Accepted {
                             return self.fail(event);
                         }
                         self.stage = Stage::Arm;

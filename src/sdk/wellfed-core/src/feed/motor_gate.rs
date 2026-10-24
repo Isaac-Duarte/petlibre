@@ -17,9 +17,24 @@ use crate::feed::controller::MotorCommand;
 pub type MotorWritePair =
     unsafe extern "C" fn(context: *mut c_void, pa13_high: bool, pa14_high: bool) -> bool;
 
-c_enum!(MotorGateFault { OK = 0, IO = 1, CLOCK = 2, EXPIRED = 3, COMMAND = 4 });
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u32)]
+pub enum MotorGateFault {
+    #[default]
+    Ok = 0,
+    Io = 1,
+    Clock = 2,
+    Expired = 3,
+    Command = 4,
+}
 
-#[repr(C)]
+impl MotorGateFault {
+    /// The variant's number, as records and reports print it.
+    pub const fn code(self) -> u32 {
+        self as u32
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct MotorGate {
     pub write_pair: Option<MotorWritePair>,
@@ -51,9 +66,9 @@ impl Default for MotorGate {
             renewed_at: 0,
             observed_at: 0,
             applied_at: 0,
-            desired: MotorCommand::STOP,
-            applied: MotorCommand::STOP,
-            fault: MotorGateFault::OK,
+            desired: MotorCommand::Stop,
+            applied: MotorCommand::Stop,
+            fault: MotorGateFault::Ok,
             applied_known: false,
         }
     }
@@ -96,7 +111,7 @@ impl MotorGate {
         };
 
         if !self.stop_output(now_ms) {
-            self.fault = MotorGateFault::IO;
+            self.fault = MotorGateFault::Io;
             return false;
         }
         true
@@ -115,7 +130,7 @@ impl MotorGate {
         let result = self.write(true, true);
         self.applied_known = result;
         if result {
-            self.applied = MotorCommand::STOP;
+            self.applied = MotorCommand::Stop;
             self.stopped_at = now;
             self.applied_at = now;
         }
@@ -123,28 +138,28 @@ impl MotorGate {
     }
 
     fn fail(&mut self, fault: MotorGateFault, now: u32) -> bool {
-        self.desired = MotorCommand::STOP;
+        self.desired = MotorCommand::Stop;
         self.fault = fault;
         if !self.stop_output(now) {
-            self.fault = MotorGateFault::IO;
+            self.fault = MotorGateFault::Io;
         }
         false
     }
 
     fn observe(&mut self, now: u32) -> bool {
-        if self.fault != MotorGateFault::OK {
+        if self.fault != MotorGateFault::Ok {
             return false;
         }
 
         let gap = now.wrapping_sub(self.observed_at);
         self.observed_at = now;
 
-        if self.desired != MotorCommand::STOP {
+        if self.desired != MotorCommand::Stop {
             if gap >= HALF_RANGE {
-                return self.fail(MotorGateFault::CLOCK, now);
+                return self.fail(MotorGateFault::Clock, now);
             }
             if now.wrapping_sub(self.renewed_at) >= self.lease_ms {
-                return self.fail(MotorGateFault::EXPIRED, now);
+                return self.fail(MotorGateFault::Expired, now);
             }
         } else if gap >= HALF_RANGE {
             // No active motor: rebase an ambiguous idle clock, then wait deadtime.
@@ -155,7 +170,7 @@ impl MotorGate {
 
     /// Latch an external peripheral failure and attempt STOP immediately.
     pub fn trip(&mut self, now_ms: u32) {
-        self.fail(MotorGateFault::IO, now_ms);
+        self.fail(MotorGateFault::Io, now_ms);
     }
 
     /// Tick from an independent timer to expire commands while the owner is
@@ -163,7 +178,7 @@ impl MotorGate {
     /// verification failed. This cannot enforce a stop if the timer/CPU path
     /// also stops running.
     pub fn tick(&mut self, now_ms: u32) -> bool {
-        if self.fault != MotorGateFault::OK {
+        if self.fault != MotorGateFault::Ok {
             if !self.applied_known {
                 self.stop_output(now_ms);
             }
@@ -173,19 +188,19 @@ impl MotorGate {
         if !self.observe(now_ms) {
             return false;
         }
-        if self.desired == MotorCommand::STOP {
+        if self.desired == MotorCommand::Stop {
             return true;
         }
         if !self.applied_known {
-            return self.fail(MotorGateFault::IO, now_ms);
+            return self.fail(MotorGateFault::Io, now_ms);
         }
 
-        if self.applied == MotorCommand::STOP
+        if self.applied == MotorCommand::Stop
             && now_ms.wrapping_sub(self.stopped_at) >= self.deadtime_ms
         {
-            let a = self.desired == MotorCommand::DRIVE_0;
+            let a = self.desired == MotorCommand::Drive0;
             if !self.write(a, !a) {
-                return self.fail(MotorGateFault::IO, now_ms);
+                return self.fail(MotorGateFault::Io, now_ms);
             }
             self.applied = self.desired;
             self.applied_known = true;
@@ -196,13 +211,10 @@ impl MotorGate {
 
     /// Renew a command; an already expired command cannot be revived by renewal.
     pub fn request(&mut self, command: MotorCommand, now_ms: u32) -> bool {
-        if !command.valid() {
-            return self.fail(MotorGateFault::COMMAND, now_ms);
-        }
         if !self.observe(now_ms) {
             // A STOP is always attempted, even when an earlier fault is latched.
-            if command == MotorCommand::STOP && !self.stop_output(now_ms) {
-                self.fault = MotorGateFault::IO;
+            if command == MotorCommand::Stop && !self.stop_output(now_ms) {
+                self.fault = MotorGateFault::Io;
             }
             return false;
         }
@@ -210,12 +222,12 @@ impl MotorGate {
         self.desired = command;
         self.renewed_at = now_ms;
         // Stopping or reversing goes through STOP first, unless STOP is already verified.
-        if (command == MotorCommand::STOP
-            || (self.applied != MotorCommand::STOP && self.applied != command))
-            && (!self.applied_known || self.applied != MotorCommand::STOP)
+        if (command == MotorCommand::Stop
+            || (self.applied != MotorCommand::Stop && self.applied != command))
+            && (!self.applied_known || self.applied != MotorCommand::Stop)
             && !self.stop_output(now_ms)
         {
-            return self.fail(MotorGateFault::IO, now_ms);
+            return self.fail(MotorGateFault::Io, now_ms);
         }
 
         self.tick(now_ms)

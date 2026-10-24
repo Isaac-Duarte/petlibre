@@ -39,8 +39,9 @@ mod pulse {
     static PULSE: Slot<pulse::Probe> = Slot::new();
 
     unsafe extern "C" fn pulse_task(_: *mut c_void) -> u32 {
-        // SAFETY: only this task touches the slot; the probe stays in place.
-        let probe = unsafe { PULSE.get_or_init(Default::default) };
+        let Some(mut probe) = PULSE.enter_or_init(Default::default) else {
+            return 0;
+        };
         let step = probe.step::<Hardware>();
         if let Some(record) = step.record {
             wellfed_probes::log(format_args!("PLMOT1 {record}\r\n"));

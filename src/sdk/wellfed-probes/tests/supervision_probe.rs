@@ -132,7 +132,7 @@ fn cold_boot_measures_stalls_and_resets_through_the_watchdog() {
     for r in &stalled {
         assert!(matches!(
             r,
-            Record::Stalled { fault, enabled: true, .. } if *fault == WatchdogFault::PROGRESS.0
+            Record::Stalled { fault, enabled: true, .. } if *fault == WatchdogFault::Progress.code()
         ));
     }
 

@@ -14,7 +14,6 @@ use crate::sdk;
 use crate::supervision::events::{self, EventsConfig};
 use crate::supervision::watchdog::WatchdogConfig;
 
-#[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct OwnerConfig {
     pub feed: FeedLimits,
@@ -89,7 +88,6 @@ impl OwnerConfig {
             || c.wake_lock_id < sdk::PMU_USER_BASE
             || c.wake_lock_id > sdk::PMU_MAX
             || c.wake_lock_id == 17
-            || !c.bowl_mode.valid()
         {
             return false;
         }

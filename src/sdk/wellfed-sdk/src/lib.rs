@@ -36,13 +36,13 @@ pub mod wifi;
 
 #[cfg(target_os = "none")]
 pub use runtime::{claim_adc, request_reset, spawn, startup_done, watchdog_open};
-pub use slot::Slot;
+pub use slot::{Slot, SlotGuard};
 pub use tasks::FIRMWARE_TASKS;
 
 /// The ports a firmware drives (indicators, audio, inputs). Startup,
 /// supervision, flash and updates stay the runtime's.
 pub use wellfed_hal as hal;
-// Every firmware archive carries the core C ABI and the panic handler.
+// Every firmware archive carries the panic handler.
 use wellfed_sdk_c as _;
 
 /// Defines the firmware's start hook. The runtime calls `$start` once, in

@@ -4,7 +4,7 @@ name = "wellfed-sdk-c"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
-description = "The Wellfed SDK's C ABI, the KM0 archive and the firmware panic handler"
+description = "The KM0 archive and the firmware panic handler"
 publish.workspace = true
 
 [lib]
@@ -19,12 +19,8 @@ km0 = ["dep:wellfed-hal-common", "wellfed-hal-common/km0"]
 km4 = ["dep:wellfed-amebad-sys", "wellfed-amebad-sys/km4"]
 
 [dependencies]
-wellfed-core.workspace = true
 wellfed-amebad-sys = { workspace = true, optional = true }
 wellfed-hal-common = { workspace = true, optional = true }
-
-[dev-dependencies]
-wellfed-testkit.workspace = true
 
 [lints]
 workspace = true

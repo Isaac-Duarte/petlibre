@@ -1,18 +1,14 @@
-//! C ABI exports with `wellfed_*` names and the original signatures.
+//! The KM0 archive and the firmware panic handler.
 //!
-//! Each function accepts the nullable pointers the C headers allowed and
-//! reproduces the original null handling. Callers keep the C contracts:
-//! pointers are either null or valid, aligned and exclusively accessible for
-//! the call, and callback/context pairs stay valid while installed.
-// Host builds keep std so the library links into host C programs.
+//! Built with `km0`, this crate is the KM0 image's archive. Built with `km4`,
+//! it supplies the panic handler every KM4 firmware links through
+//! `wellfed-sdk`. The C ports call the HAL's `wellfed_*` exports, not this
+//! crate's.
 #![cfg_attr(target_os = "none", no_std)]
-#![allow(clippy::missing_safety_doc)]
-
-pub mod core_abi;
 
 // The KM0 archive's C symbols (RAM park, SDK hooks, trial step) come from
 // the common crate. A KM4 archive is the firmware crate, which links this
-// one through wellfed-sdk for the core ABI and the panic handler.
+// one through wellfed-sdk for the panic handler.
 #[cfg(feature = "km0")]
 pub use wellfed_hal_common;
 

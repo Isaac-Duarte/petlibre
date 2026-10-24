@@ -2263,9 +2263,7 @@ name = "wellfed-sdk-c"
 version = "0.1.0"
 dependencies = [
  "wellfed-amebad-sys",
- "wellfed-core",
  "wellfed-hal-common",
- "wellfed-testkit",
 ]
 
 [[package]]

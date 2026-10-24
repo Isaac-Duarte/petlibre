@@ -7,6 +7,14 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
+**October 24, later: SDK cleanup (static analysis, host tests and image builds; nothing run on the bench; uncommitted in the main checkout).**
+- **Core C ABI removed:** `wellfed-sdk-c/src/core_abi` had no C caller. The crate is now the KM0 archive and the panic handler, and the build's archive check requires only `wellfed_app_start` plus the park and hook symbols. AGENTS.md says which C interface stays.
+- **Enums:** every `c_enum!` (27 types) is a Rust enum, `#[repr(u32)]` so the layouts and the RAM hook code keep their shape. Records print `code()`, and the journal and settings decode bytes through `from_byte`; `record_codes.rs` pins the persisted bytes. `repr(C)` stays only where C or an `extern "C"` callback reads the type.
+- **`Slot`:** access is safe. The first task to enter owns a slot, any other task or a second entry gets `None`, and `release` hands one over (the button service, the watchdog). The flash-lock provider is a const `TaskCell` reached only by raw pointer, so no task borrows it while the armed hooks use it; arming was already sequenced.
+- **Feeding owner:** `Owner`'s commands take `&self` and touch only the mailbox and published status under `IrqGuard`; the task state is `OwnerTask`. The owner still starts its own `feed-owner` task. The product architecture steps it from the loop instead, which is FW16/FW17's work.
+- **Checks:** `cargo fmt`, both Clippy passes, 913 tests, the virtual-feeder reports byte-identical, every firmware's `device` image and `firstboot` built with their audits, `make check-fixtures` passed.
+- **Flash and bench:** unchanged from the entry below.
+
 **October 24, about 11:20 MDT: FW47 applied to the main checkout (uncommitted); LAN recovery on hardware (physical, owner pressing; no motion).**
 - **Applied:** the `fw47` worktree's diff is in the main checkout, uncommitted. Since then on master only: the loop stack is 8 KiB (bound 4,552), and `PLAPI1 listen` logs `heap_free` after each socket opens.
 - **mDNS:** the owner allowed UDP 5353 on the hotspot interface, and discovery from the bench host now works.
@@ -382,7 +390,7 @@ image, bench state, next task, or acceptance evidence changes.
 - **Checks:** `make check`; fresh `plaf103` and `plaf103-firstboot` builds with every audit passing; `make check-fixtures` with no skips. Stack bounds unchanged except audio 1040 to 728 and optics 4352 to 4380 (of 8192), both from cross-crate inlining.
 - **Not yet physical:** the split images have not run on the feeder.
 - **Firmware selection (later the same night):**
-  - `wellfed-build --firmware <name>` (default `reference`; `make -C src/firmware/vendor … FIRMWARE=<name>`). The KM4 archive is the firmware crate; KM0's is `wellfed-sdk-c`, which every firmware also links through `wellfed-sdk` for the core C ABI and the panic handler.
+  - `wellfed-build --firmware <name>` (default `reference`; `make -C src/firmware/vendor … FIRMWARE=<name>`). The KM4 archive is the firmware crate; KM0's is `wellfed-sdk-c`, which every firmware also links through `wellfed-sdk` for the panic handler.
   - The firmware name joins the identity and the manifest (`firmware`). Only the chosen firmware's sources are inputs. `audit` and the Python review read it from the manifest, and image variants are refused for any firmware but `reference`.
   - New `src/firmware/wellfed/blink`: one task blinks the connection indicator, verifying each level. A `play` request on blink fills the audio mailbox and later ones answer `busy`.
   - Checks: `make check`; `plaf103` and `plaf103-firstboot` for `reference` (stack bounds as above), and `plaf103-firstboot` for `blink` (blink task 748 of 4096); `make check-fixtures` with no skips against each. `private/firmware-build/plaf103-firstboot` holds the reference build again.

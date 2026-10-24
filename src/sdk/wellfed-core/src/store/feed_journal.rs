@@ -23,7 +23,6 @@ const RESULT: u8 = 2;
 
 const MAGIC: [u8; 8] = *b"PLFJNL01";
 
-#[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct JournalConfig {
     /// Nonzero installation/configuration binding, NOT an authentication key.
@@ -34,7 +33,26 @@ pub struct JournalConfig {
     pub max_portions: u16,
 }
 
-c_enum!(JournalError { OK = 0, ARGUMENT = 1, EMPTY = 2, IO = 3, CORRUPT = 4, STATE = 5, EXHAUSTED = 6, WORN = 7 });
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u32)]
+pub enum JournalError {
+    #[default]
+    Ok = 0,
+    Argument = 1,
+    Empty = 2,
+    Io = 3,
+    Corrupt = 4,
+    State = 5,
+    Exhausted = 6,
+    Worn = 7,
+}
+
+impl JournalError {
+    /// The variant's number, as records and reports print it.
+    pub const fn code(self) -> u32 {
+        self as u32
+    }
+}
 
 /// Records written before new reservations are refused: one unit erase per
 /// record, alternating, so about 50 000 erases per unit, half a typical NOR
@@ -42,7 +60,6 @@ c_enum!(JournalError { OK = 0, ARGUMENT = 1, EMPTY = 2, IO = 3, CORRUPT = 4, STA
 /// allowed, so a request is never stranded pending.
 pub const WEAR_LIMIT: u64 = 100_000;
 
-#[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct JournalView {
     pub recovery: OwnerRecovery,
@@ -52,7 +69,6 @@ pub struct JournalView {
 }
 
 /// Implementation-owned members. No concurrent access or native-struct dumps.
-#[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct FeedJournal {
     pub io: JournalIo,
@@ -77,8 +93,7 @@ fn all(p: &[u8], value: u8) -> bool {
 }
 
 fn phase_valid(c: &JournalConfig, p: &OwnerRecovery) -> bool {
-    p.direction.valid()
-        && (c.mode != BowlMode::SINGLE || (p.direction == Direction::D0 && p.phase_known))
+    c.mode != BowlMode::Single || (p.direction == Direction::D0 && p.phase_known)
 }
 
 fn same_phase(a: &OwnerRecovery, b: &OwnerRecovery) -> bool {
@@ -89,32 +104,30 @@ fn same_phase(a: &OwnerRecovery, b: &OwnerRecovery) -> bool {
 
 fn result_valid(c: &JournalConfig, v: &JournalView) -> bool {
     let r = &v.result;
-    if r.outcome.0 < OwnerOutcome::DONE.0
-        || r.outcome.0 > OwnerOutcome::FAILED.0
-        || r.reason.0 > FeedReason::OUTPUT.0
+    if r.outcome == OwnerOutcome::Pending
         || r.completed > r.requested
         || (!r.motion_possible && r.completed != 0)
     {
         return false;
     }
 
-    if r.outcome == OwnerOutcome::DONE {
+    if r.outcome == OwnerOutcome::Done {
         return r.completed == r.requested
             && r.motion_possible
-            && r.reason == FeedReason::DONE
+            && r.reason == FeedReason::Done
             && v.recovery.phase_known;
     }
 
-    if c.mode == BowlMode::DOUBLE && r.motion_possible && v.recovery.phase_known {
+    if c.mode == BowlMode::Double && r.motion_possible && v.recovery.phase_known {
         return false;
     }
-    if r.outcome == OwnerOutcome::CANCELLED {
-        return r.reason == FeedReason::CANCELLED;
+    if r.outcome == OwnerOutcome::Cancelled {
+        return r.reason == FeedReason::Cancelled;
     }
-    if r.outcome == OwnerOutcome::EXPIRED {
-        return !r.motion_possible && r.reason == FeedReason::TOTAL_TIMEOUT;
+    if r.outcome == OwnerOutcome::Expired {
+        return !r.motion_possible && r.reason == FeedReason::TotalTimeout;
     }
-    r.reason != FeedReason::DONE && r.reason != FeedReason::CANCELLED
+    r.reason != FeedReason::Done && r.reason != FeedReason::Cancelled
 }
 
 fn transition(c: &JournalConfig, old: &JournalView, next: &JournalView) -> bool {
@@ -127,7 +140,7 @@ fn transition(c: &JournalConfig, old: &JournalView, next: &JournalView) -> bool 
             && !next.has_result
             && next.recovery.high_water_id > old.recovery.high_water_id
             && same_phase(&old.recovery, &next.recovery)
-            && (c.mode != BowlMode::DOUBLE || next.recovery.phase_known);
+            && (c.mode != BowlMode::Double || next.recovery.phase_known);
     }
 
     if next.recovery.pending_request
@@ -140,12 +153,12 @@ fn transition(c: &JournalConfig, old: &JournalView, next: &JournalView) -> bool 
     }
 
     let mut expected = old.recovery;
-    if next.result.outcome == OwnerOutcome::DONE && c.mode == BowlMode::DOUBLE {
+    if next.result.outcome == OwnerOutcome::Done && c.mode == BowlMode::Double {
         if next.result.requested & 1 == 0 {
             expected.direction = expected.direction.toggled();
         }
         expected.credit_next_event = true;
-    } else if next.result.motion_possible && c.mode == BowlMode::DOUBLE {
+    } else if next.result.motion_possible && c.mode == BowlMode::Double {
         expected.phase_known = false;
     }
 
@@ -166,8 +179,8 @@ impl FeedJournal {
         } else {
             GENESIS
         };
-        p[13] = self.config.mode.low_byte();
-        p[14] = v.recovery.direction.low_byte();
+        p[13] = self.config.mode.byte();
+        p[14] = v.recovery.direction.byte();
         p[15] = u8::from(v.recovery.credit_next_event)
             | (u8::from(v.recovery.phase_known) << 1)
             | (u8::from(v.result.motion_possible) << 2);
@@ -178,8 +191,8 @@ impl FeedJournal {
 
         put_u16(&mut p[40..], v.result.requested);
         put_u16(&mut p[42..], v.result.completed);
-        p[44] = v.result.outcome.low_byte();
-        p[45] = v.result.reason.low_byte();
+        p[44] = v.result.outcome.byte();
+        p[45] = v.result.reason.byte();
         put_u16(&mut p[46..], self.config.max_portions);
 
         let checksum = crc32(&p[..CRC_AT]);
@@ -194,8 +207,7 @@ impl FeedJournal {
             || get_u16(&p[VERSION_AT..]) != 1
             || usize::from(get_u16(&p[LENGTH_AT..])) != RECORD_BYTES
             || p[12] > RESULT
-            || p[13] != self.config.mode.low_byte()
-            || p[14] > 1
+            || p[13] != self.config.mode.byte()
             || p[15] > 7
             || get_u64(&p[24..]) != self.config.binding
             || get_u16(&p[46..]) != self.config.max_portions
@@ -210,7 +222,7 @@ impl FeedJournal {
             has_result: p[12] == RESULT,
             recovery: OwnerRecovery {
                 high_water_id: get_u64(&p[32..]),
-                direction: Direction(p[14].into()),
+                direction: Direction::from_byte(p[14])?,
                 credit_next_event: p[15] & 1 != 0,
                 phase_known: p[15] & 2 != 0,
                 pending_request: p[12] == INTENT,
@@ -219,8 +231,8 @@ impl FeedJournal {
                 id: get_u64(&p[32..]),
                 requested: get_u16(&p[40..]),
                 completed: get_u16(&p[42..]),
-                outcome: OwnerOutcome(p[44].into()),
-                reason: FeedReason(p[45].into()),
+                outcome: OwnerOutcome::from_byte(p[44])?,
+                reason: FeedReason::from_byte(p[45])?,
                 motion_possible: p[15] & 4 != 0,
             },
         };
@@ -234,8 +246,8 @@ impl FeedJournal {
                 && v.recovery.high_water_id == 0
                 && v.result.requested == 0
                 && v.result.completed == 0
-                && v.result.outcome == OwnerOutcome::PENDING
-                && v.result.reason == FeedReason::NONE
+                && v.result.outcome == OwnerOutcome::Pending
+                && v.result.reason == FeedReason::None
                 && !v.result.motion_possible
         } else if v.sequence == 1
             || v.recovery.high_water_id == 0
@@ -246,10 +258,10 @@ impl FeedJournal {
         } else if p[12] == INTENT {
             v.sequence & 1 == 0
                 && v.result.completed == 0
-                && v.result.outcome == OwnerOutcome::PENDING
-                && v.result.reason == FeedReason::NONE
+                && v.result.outcome == OwnerOutcome::Pending
+                && v.result.reason == FeedReason::None
                 && !v.result.motion_possible
-                && (self.config.mode != BowlMode::DOUBLE || v.recovery.phase_known)
+                && (self.config.mode != BowlMode::Double || v.recovery.phase_known)
         } else {
             v.sequence & 1 != 0 && result_valid(&self.config, &v)
         };
@@ -260,7 +272,7 @@ impl FeedJournal {
     /// Reset to an argument error, then adopt `io`/`config` if they are usable.
     fn setup(&mut self, io: JournalIo, config: JournalConfig) -> bool {
         *self = Self {
-            error: JournalError::ARGUMENT,
+            error: JournalError::Argument,
             ..Self::default()
         };
 
@@ -272,7 +284,6 @@ impl FeedJournal {
             || !io.unit_bytes.is_multiple_of(4)
             || config.binding == 0
             || config.max_portions == 0
-            || !config.mode.valid()
         {
             return false;
         }
@@ -332,20 +343,20 @@ impl FeedJournal {
     #[allow(unsafe_code)]
     pub unsafe fn open(&mut self, io: JournalIo, config: JournalConfig) -> JournalError {
         if !self.setup(io, config) {
-            return JournalError::ARGUMENT;
+            return JournalError::Argument;
         }
 
         let (Some(a), Some(b)) = (self.scan(0), self.scan(1)) else {
-            return self.fail(JournalError::IO);
+            return self.fail(JournalError::Io);
         };
         let views = [a.1.unwrap_or_default(), b.1.unwrap_or_default()];
         let (a, b) = (a.0, b.0);
 
         if a == Scan::Erased && b == Scan::Erased {
-            return self.fail(JournalError::EMPTY);
+            return self.fail(JournalError::Empty);
         }
         if a == Scan::Invalid || b == Scan::Invalid || (a != Scan::Valid && b != Scan::Valid) {
-            return self.fail(JournalError::CORRUPT);
+            return self.fail(JournalError::Corrupt);
         }
 
         let mut slot = if a == Scan::Valid { 0 } else { 1 };
@@ -356,17 +367,17 @@ impl FeedJournal {
                 1
             };
             if !transition(&config, &views[1 - slot], &views[slot]) {
-                return self.fail(JournalError::CORRUPT);
+                return self.fail(JournalError::Corrupt);
             }
         } else if (a == Scan::Dirty || b == Scan::Dirty) && !views[slot].recovery.pending_request {
             // Falling back to idle could forget a newer, ambiguous reservation.
-            return self.fail(JournalError::CORRUPT);
+            return self.fail(JournalError::Corrupt);
         }
 
         self.slot = c_uint::from(slot == 1);
         self.view = views[slot];
         self.opened = true;
-        self.error = JournalError::OK;
+        self.error = JournalError::Ok;
         self.error
     }
 
@@ -386,14 +397,14 @@ impl FeedJournal {
             && bytes == checked;
 
         if !ok {
-            self.fail(JournalError::IO);
+            self.fail(JournalError::Io);
             return false;
         }
 
         self.view = *next;
         self.slot = slot;
         self.opened = true;
-        self.error = JournalError::OK;
+        self.error = JournalError::Ok;
         true
     }
 
@@ -413,7 +424,7 @@ impl FeedJournal {
         phase_known: bool,
     ) -> JournalError {
         if !self.setup(io, config) {
-            return JournalError::ARGUMENT;
+            return JournalError::Argument;
         }
 
         let next = JournalView {
@@ -432,10 +443,10 @@ impl FeedJournal {
         }
 
         let (Some(a), Some(b)) = (self.scan(0), self.scan(1)) else {
-            return self.fail(JournalError::IO);
+            return self.fail(JournalError::Io);
         };
         if a.0 != Scan::Erased || b.0 != Scan::Erased {
-            return self.fail(JournalError::STATE);
+            return self.fail(JournalError::State);
         }
 
         self.write_record(0, &next, false);
@@ -448,7 +459,7 @@ impl FeedJournal {
         }
         let mut view = self.view;
         // Interrupted double-bowl motion does not establish a physical phase.
-        if view.recovery.pending_request && self.config.mode == BowlMode::DOUBLE {
+        if view.recovery.pending_request && self.config.mode == BowlMode::Double {
             view.recovery.phase_known = false;
         }
         Some(view)
@@ -466,18 +477,18 @@ impl FeedJournal {
             || request.direction != v.recovery.direction
             || request.credit_next_event != v.recovery.credit_next_event
             || request.phase_known != v.recovery.phase_known
-            || (self.config.mode == BowlMode::DOUBLE && !request.phase_known)
+            || (self.config.mode == BowlMode::Double && !request.phase_known)
         {
             return false;
         }
 
         if v.sequence == u64::MAX {
-            self.fail(JournalError::EXHAUSTED);
+            self.fail(JournalError::Exhausted);
             return false;
         }
         if v.sequence >= WEAR_LIMIT {
             // Refuse without closing: the recovery state stays readable.
-            self.error = JournalError::WORN;
+            self.error = JournalError::Worn;
             return false;
         }
 
@@ -514,7 +525,7 @@ impl FeedJournal {
         }
 
         if self.view.sequence == u64::MAX {
-            self.fail(JournalError::EXHAUSTED);
+            self.fail(JournalError::Exhausted);
             return false;
         }
 

@@ -316,7 +316,7 @@ impl Probe {
                     FEED_PERIOD_MS,
                     Record::Stalled {
                         ms,
-                        fault: self.watchdog.fault.0,
+                        fault: self.watchdog.fault.code(),
                         enabled: sdk::wdg_vendor() & sdk::WDG_BIT_ENABLE != 0,
                     },
                 )

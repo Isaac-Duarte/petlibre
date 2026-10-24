@@ -19,8 +19,8 @@ fn watchdog_requires_owner_progress_and_checks_before_motion() {
     fake::advance(51 * 32, true); // Timer IRQ executes, owner does not.
     assert_eq!(hw(|h| h.watchdog_refreshes), refreshes);
     fake::run_task();
-    assert!(f.status().state == OwnerState::FAULT && f.status().fault == OwnerFault::WATCHDOG);
-    assert!(f.status().watchdog_fault == WatchdogFault::PROGRESS && f.status().stopped);
+    assert!(f.status().state == OwnerState::Fault && f.status().fault == OwnerFault::Watchdog);
+    assert!(f.status().watchdog_fault == WatchdogFault::Progress && f.status().stopped);
     assert_eq!(hw(|h| h.watchdog_refreshes), refreshes);
 
     f.stop();
@@ -28,20 +28,20 @@ fn watchdog_requires_owner_progress_and_checks_before_motion() {
 
     let mut f = boot();
     f.reserve_delay_ticks = 51 * 32;
-    assert_eq!(f.owner.submit(1, 1), SubmitResult::ENQUEUED);
+    assert_eq!(f.owner.submit(1, 1), SubmitResult::Enqueued);
     fake::run_task();
 
-    assert!(f.status().state == OwnerState::FAULT && f.status().fault == OwnerFault::WATCHDOG);
+    assert!(f.status().state == OwnerState::Fault && f.status().fault == OwnerFault::Watchdog);
     assert!(
         f.status().result_durable && !f.status().result.motion_possible && f.status().optics_off
     );
-    assert!(f.status().result.outcome == OwnerOutcome::FAILED && hw(|h| h.watchdog_refreshes) == 0);
+    assert!(f.status().result.outcome == OwnerOutcome::Failed && hw(|h| h.watchdog_refreshes) == 0);
     f.stop();
 
     let mut f = boot();
-    f.owner.watchdog_progress = u64::MAX;
+    f.task().watchdog_progress = u64::MAX;
     f.advance(2);
-    assert!(f.status().fault == OwnerFault::WATCHDOG && f.status().stopped);
+    assert!(f.status().fault == OwnerFault::Watchdog && f.status().stopped);
     f.stop();
 
     fake::reset_hardware();
@@ -51,7 +51,7 @@ fn watchdog_requires_owner_progress_and_checks_before_motion() {
     fake::run_task();
     assert!(hw(|h| h.watchdog_init_calls) == 1 && hw(|h| h.watchdog_refreshes) == 0);
     assert!(
-        f.status().fault == OwnerFault::WATCHDOG && f.status().stopped && f.status().optics_off
+        f.status().fault == OwnerFault::Watchdog && f.status().stopped && f.status().optics_off
     );
     f.stop();
 }
@@ -62,11 +62,11 @@ fn watchdog_masks_stalls_and_late_result_never_reenable() {
     // Masked for longer than the fixture's 126 ms maximum expiry.
     f.reserve_delay_ticks = 130 * 32;
     f.reserve_mask_irqs = true;
-    assert_eq!(f.owner.submit(1, 1), SubmitResult::ENQUEUED);
+    assert_eq!(f.owner.submit(1, 1), SubmitResult::Enqueued);
     fake::run_task();
 
     assert!(hw(|h| h.watchdog_reset_requests) == 1 && hw(|h| h.watchdog_refreshes) == 0);
-    assert!(f.status().state == OwnerState::FAULT && !f.status().result.motion_possible);
+    assert!(f.status().state == OwnerState::Fault && !f.status().result.motion_possible);
     assert!(f.status().stopped && f.status().optics_off);
     f.stop(); // Model records the reset request; a real reset would end execution.
 
@@ -75,11 +75,11 @@ fn watchdog_masks_stalls_and_late_result_never_reenable() {
     f.finish_delay_ticks = 51 * 32;
     f.complete();
 
-    assert!(f.status().state == OwnerState::FAULT && f.status().fault == OwnerFault::WATCHDOG);
+    assert!(f.status().state == OwnerState::Fault && f.status().fault == OwnerFault::Watchdog);
     assert!(f.status().stopped && f.status().optics_off && f.status().result_durable);
-    assert_eq!(f.status().result.outcome, OwnerOutcome::DONE); // Durable physical result remains valid.
+    assert_eq!(f.status().result.outcome, OwnerOutcome::Done); // Durable physical result remains valid.
     assert_eq!(hw(|h| h.watchdog_refreshes), f.finish_refreshes);
-    assert_ne!(f.owner.submit(2, 1), SubmitResult::ENQUEUED);
+    assert_ne!(f.owner.submit(2, 1), SubmitResult::Enqueued);
     f.stop();
 }
 
@@ -91,25 +91,25 @@ fn watchdog_changes_stop_motion_and_failed_close_retains_context() {
     hw(|h| h.hs_control &= !sdk::HS_WDTRST_OPT);
     fake::run_task();
 
-    assert!(f.status().state == OwnerState::FAULT && f.status().fault == OwnerFault::WATCHDOG);
-    assert!(f.status().watchdog_fault == WatchdogFault::REGISTER && f.status().stopped);
+    assert!(f.status().state == OwnerState::Fault && f.status().fault == OwnerFault::Watchdog);
+    assert!(f.status().watchdog_fault == WatchdogFault::Register && f.status().stopped);
     assert!(
-        f.status().result.outcome == OwnerOutcome::FAILED
+        f.status().result.outcome == OwnerOutcome::Failed
             && hw(|h| h.watchdog_refreshes) == refreshes
     );
     f.stop();
 
-    let mut f = boot();
+    let f = boot();
     hw(|h| h.watchdog_disable_blocked = true);
     f.owner.stop();
     fake::run_task();
 
     let s = f.status();
-    assert!(s.state == OwnerState::FAULT && s.watchdog_claimed && s.watchdog_armed);
+    assert!(s.state == OwnerState::Fault && s.watchdog_claimed && s.watchdog_armed);
     assert!(s.stopped && s.optics_off && hw(|h| h.task_live) && hw(|h| h.wake_locks) != 0);
     hw(|h| h.watchdog_disable_blocked = false);
     fake::run_task();
-    assert!(f.status().state == OwnerState::STOPPED && !f.status().watchdog_claimed);
+    assert!(f.status().state == OwnerState::Stopped && !f.status().watchdog_claimed);
     assert!(!hw(|h| h.task_live) && hw(|h| h.wake_locks) == 0);
 }
 
@@ -133,20 +133,20 @@ fn determined_initialization_failure_holds_stopped_without_reset_loop() {
         f.create();
         fake::run_task();
         let fault = if case == 0 {
-            OwnerFault::RECOVERY
+            OwnerFault::Recovery
         } else {
-            OwnerFault::SETUP
+            OwnerFault::Setup
         };
 
-        assert!(f.status().state == OwnerState::FAULT && f.status().fault == fault);
+        assert!(f.status().state == OwnerState::Fault && f.status().fault == fault);
         f.advance(400); // Several hardware watchdog periods.
         let s = f.status();
-        assert!(s.state == OwnerState::FAULT && s.fault == fault && s.stopped && s.optics_off);
-        assert!(s.watchdog_armed && s.watchdog_claimed && s.watchdog_fault == WatchdogFault::OK);
+        assert!(s.state == OwnerState::Fault && s.fault == fault && s.stopped && s.optics_off);
+        assert!(s.watchdog_armed && s.watchdog_claimed && s.watchdog_fault == WatchdogFault::Ok);
         assert!(hw(|h| h.watchdog_refreshes) > 0 && hw(|h| h.watchdog_reset_requests) == 0);
 
         // Latched: no request is taken and the pending feed is never retried.
-        assert_eq!(f.owner.submit(8, 1), SubmitResult::REJECT_STOPPED);
+        assert_eq!(f.owner.submit(8, 1), SubmitResult::RejectStopped);
         assert!(f.reserve_calls == 0 && f.finish_calls == 0);
         assert_eq!(f.recover_calls, u32::from(case == 0));
 
@@ -175,8 +175,8 @@ fn determined_initialization_failure_holds_stopped_without_reset_loop() {
     fake::run_task();
 
     f.advance(200);
-    assert!(f.status().fault == OwnerFault::RECOVERY && f.status().stopped);
-    assert!(f.status().watchdog_fault == WatchdogFault::PROGRESS);
+    assert!(f.status().fault == OwnerFault::Recovery && f.status().stopped);
+    assert!(f.status().watchdog_fault == WatchdogFault::Progress);
     assert!(hw(|h| h.watchdog_refreshes) == 0 && hw(|h| h.watchdog_reset_requests) == 1);
     f.stop();
 }

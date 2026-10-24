@@ -41,14 +41,13 @@ fn start() {
 /// owner joins it next.
 const LOOP_STACK_WORDS: u16 = 2048;
 
-/// Touched only by the loop task; see `loop_task`.
-/// Built at compile time: it holds setup mode's state, which the loop's
-/// stack cannot afford to move.
+/// The loop task's; see `loop_task`. Built at compile time: it holds setup
+/// mode's state, which the loop's stack cannot afford to move.
 static OWNER: Slot<Owner> = Slot::filled(Owner::new());
-/// Touched only by the loop task.
+/// The loop task's.
 static IDENTITY: Slot<Identity> = Slot::new();
 /// The device API's session table is larger than the loop's stack, so it is
-/// built at compile time. Touched only by the loop task.
+/// built at compile time. The loop task's.
 static API: Slot<Api> = Slot::filled(Api::new());
 #[cfg(feature = "entropy")]
 static CAPTURE: Slot<crate::entropy::Capture> = Slot::filled(crate::entropy::Capture::new());
@@ -86,13 +85,14 @@ impl core::fmt::Display for ApiRecord {
 }
 
 unsafe extern "C" fn loop_task(_: *mut c_void) -> u32 {
-    // SAFETY: only this task touches the slots.
-    let (Some(owner), Some(api)) = (unsafe { OWNER.get() }, unsafe { API.get() }) else {
+    let (Some(mut owner), Some(mut api), Some(mut identity)) = (
+        OWNER.enter(),
+        API.enter(),
+        IDENTITY.enter_or_init(Identity::default),
+    ) else {
         return 0;
     };
 
-    // SAFETY: only this task touches the slot.
-    let identity = unsafe { IDENTITY.get_or_init(Identity::default) };
     if let Some(record) = identity.step() {
         log(format_args!("PLID1 {}\r\n", Key(record)));
     }
@@ -155,8 +155,7 @@ unsafe extern "C" fn loop_task(_: *mut c_void) -> u32 {
     delay_ms = delay_ms.min(api_delay);
 
     #[cfg(feature = "entropy")]
-    // SAFETY: only this task touches the slot.
-    if let Some(capture) = unsafe { CAPTURE.get() }
+    if let Some(mut capture) = CAPTURE.enter()
         && let Some(delay) = capture.step(|record| {
             log(format_args!("PLRNG1 {}\r\n", Rng(record)));
         })

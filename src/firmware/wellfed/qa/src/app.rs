@@ -33,16 +33,18 @@ static POWER: Slot<adc::Probe> = Slot::new();
 static BUTTONS: Slot<buttons::Probe> = Slot::new();
 
 unsafe extern "C" fn qa_task(_: *mut c_void) -> u32 {
-    // SAFETY: only this task touches the slots; the probes stay in place.
-    let (qa, mut probes) = unsafe {
-        (
-            QA.get_or_init(Qa::default),
-            Probes {
-                optics: OPTICS.get_or_init(optics::Probe::default),
-                power: POWER.get_or_init(adc::Probe::default),
-                buttons: BUTTONS.get_or_init(buttons::Probe::default),
-            },
-        )
+    let (Some(mut qa), Some(mut optics), Some(mut power), Some(mut buttons)) = (
+        QA.enter_or_init(Qa::default),
+        OPTICS.enter_or_init(optics::Probe::default),
+        POWER.enter_or_init(adc::Probe::default),
+        BUTTONS.enter_or_init(buttons::Probe::default),
+    ) else {
+        return 0;
+    };
+    let mut probes = Probes {
+        optics: &mut optics,
+        power: &mut power,
+        buttons: &mut buttons,
     };
     let step = qa.step::<Hardware>(&mut probes);
     match step.line {
@@ -76,8 +78,9 @@ static SPEAKER: Slot<audio::Speaker> = Slot::new();
 
 /// FW24: the startup chime, then the tunes QA queues.
 unsafe extern "C" fn audio_task(_: *mut c_void) -> u32 {
-    // SAFETY: only this task touches the slot.
-    let speaker = unsafe { SPEAKER.get_or_init(Default::default) };
+    let Some(mut speaker) = SPEAKER.enter_or_init(Default::default) else {
+        return 0;
+    };
     let step = speaker.step();
     if let Some(record) = step.record {
         wellfed_probes::log(format_args!("PLAUD1 {}\r\n", Audio(record)));

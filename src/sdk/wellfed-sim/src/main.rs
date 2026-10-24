@@ -76,7 +76,7 @@ fn config() -> OwnerConfig {
             divisor: 63,
         },
 
-        bowl_mode: BowlMode::SINGLE,
+        bowl_mode: BowlMode::Single,
         sample_period_ms: 1,
         prepare_timeout_ms: 20,
         optics_max_on_ms: 140,
@@ -388,14 +388,14 @@ fn status(response: u64) {
         Status {
             device_ms: (*world).device_ms,
             response,
-            state: code::<State>(s.state.0),
-            fault: code::<Fault>(s.fault.0),
-            supervisor_fault: s.supervisor_fault.0,
-            watchdog_fault: s.watchdog_fault.0,
+            state: code::<State>(s.state.code()),
+            fault: code::<Fault>(s.fault.code()),
+            supervisor_fault: s.supervisor_fault.code(),
+            watchdog_fault: s.watchdog_fault.code(),
             id: s.result.id,
             completed: s.result.completed,
-            outcome: code::<Outcome>(s.result.outcome.0),
-            reason: code::<Reason>(s.result.reason.0),
+            outcome: code::<Outcome>(s.result.outcome.code()),
+            reason: code::<Reason>(s.result.reason.code()),
             durable: s.result_durable,
             stopped: s.stopped,
             optics_off: s.optics_off,
@@ -406,7 +406,7 @@ fn status(response: u64) {
                 0
             },
             pending: opened && view.recovery.pending_request,
-            journal_error: (*world).journal.error.0,
+            journal_error: (*world).journal.error.code(),
             motor: motor(),
             optics: optics(),
             watchdog_resets: fake::with(|h| h.watchdog_reset_requests),
@@ -470,8 +470,8 @@ fn main() {
     let args = WorkerArgs::parse();
     let provision = args.start == Journal::Provision;
     let mode = match args.profile {
-        Profile::Single => BowlMode::SINGLE,
-        Profile::Double => BowlMode::DOUBLE,
+        Profile::Single => BowlMode::Single,
+        Profile::Double => BowlMode::Double,
     };
     let mut disk = open_disk(&args.journal, provision);
 
@@ -522,7 +522,7 @@ fn main() {
         };
 
         if provision {
-            if (*world).journal.create(io, jc, Direction::D0, true, true) != JournalError::OK {
+            if (*world).journal.create(io, jc, Direction::D0, true, true) != JournalError::Ok {
                 fail("Cannot provision synthetic journal");
             }
             save();
@@ -535,7 +535,7 @@ fn main() {
             erase: Some(erase_io),
             ..io
         };
-        (*world).opened = (*world).journal.open(wrapped, jc) == JournalError::OK;
+        (*world).opened = (*world).journal.open(wrapped, jc) == JournalError::Ok;
 
         fake::reset_hardware();
         fake::with(|h| h.output_hook = Some(outputs));
@@ -552,7 +552,7 @@ fn main() {
             FlashCoord::new(&limits, 17, 0).expect("the simulated limits are valid");
         assert_eq!(
             (*world).authority.ready(17, 29, true, 0),
-            FlashReply::ACCEPTED
+            FlashReply::Accepted
         );
 
         let c = OwnerConfig {
@@ -611,7 +611,7 @@ unsafe fn execute(world: *mut World, command: Command) -> u64 {
         match command {
             Command::Submit {
                 args: (id, portions),
-            } => return (*world).owner.submit(id, portions).0.into(),
+            } => return (*world).owner.submit(id, portions).code().into(),
             Command::Cancel { args: [id] } => return (*world).owner.cancel(id).into(),
             Command::Ack { args: [id] } => return (*world).owner.acknowledge(id).into(),
 

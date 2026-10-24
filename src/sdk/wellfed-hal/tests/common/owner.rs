@@ -12,7 +12,7 @@ use wellfed_core::feed::storage::{OwnerRecovery, OwnerResult, OwnerStorage};
 use wellfed_core::flash_coord::{FlashCoord, FlashParty, FlashReply};
 use wellfed_core::store::feed_journal::{FeedJournal, JournalConfig, JournalError};
 use wellfed_hal::board::MOTOR_MASK;
-use wellfed_hal::owner::{Owner, OwnerConfig, OwnerState, OwnerStatus, SubmitResult};
+use wellfed_hal::owner::{Owner, OwnerConfig, OwnerState, OwnerStatus, OwnerTask, SubmitResult};
 use wellfed_hal::sdk::{self, fake};
 use wellfed_hal::supervision::events::EventsConfig;
 use wellfed_hal::supervision::watchdog::WatchdogConfig;
@@ -55,7 +55,7 @@ pub const CONFIG: OwnerConfig = OwnerConfig {
         count_id: 5,
         divisor: 63,
     },
-    bowl_mode: BowlMode::SINGLE,
+    bowl_mode: BowlMode::Single,
     sample_period_ms: 1,
     prepare_timeout_ms: 20,
     optics_max_on_ms: 140,
@@ -137,6 +137,13 @@ impl Fixture {
         self.owner.status()
     }
 
+    /// The owner task's state, between task iterations.
+    pub fn task(&mut self) -> &mut OwnerTask {
+        // SAFETY: the fake runs the owner task only inside `run_task`, on this
+        // thread, so no other borrow is live here.
+        unsafe { &mut *self.owner.task_state() }
+    }
+
     pub fn storage(&mut self) -> OwnerStorage {
         OwnerStorage {
             context: ptr::from_mut(self).cast(),
@@ -176,16 +183,16 @@ impl Fixture {
         self.owner.stop();
         fake::run_task();
         let s = self.status();
-        assert!(s.state == OwnerState::STOPPED && s.stopped && s.optics_off);
+        assert!(s.state == OwnerState::Stopped && s.stopped && s.optics_off);
         assert!(!hw(|h| h.task_live) && hw(|h| h.wake_locks) == 0 && sdk::tim2_en() == 0);
     }
 
     pub fn start_feed(&mut self) {
-        assert_eq!(self.owner.submit(1, 1), SubmitResult::ENQUEUED);
-        assert!(self.status().state == OwnerState::QUEUED && !self.status().intent_reserved);
+        assert_eq!(self.owner.submit(1, 1), SubmitResult::Enqueued);
+        assert!(self.status().state == OwnerState::Queued && !self.status().intent_reserved);
         fake::run_task();
         self.advance(5);
-        assert!(self.status().state == OwnerState::FEEDING && self.status().intent_reserved);
+        assert!(self.status().state == OwnerState::Feeding && self.status().intent_reserved);
         assert_eq!(motor_pins(), 1 << 13);
     }
 
@@ -198,21 +205,21 @@ impl Fixture {
 
     pub fn hold(&mut self) {
         assert_eq!(
-            self.authority.request(FlashParty::PEER, 29, 1, 0),
-            FlashReply::ACCEPTED
+            self.authority.request(FlashParty::Peer, 29, 1, 0),
+            FlashReply::Accepted
         );
     }
 
     pub fn release_hold(&mut self) {
         let t = self.authority.token;
-        let inactive = self.owner.board.flash_quiesce();
+        let inactive = self.task().board.flash_quiesce();
         let c = &mut self.authority;
-        assert_eq!(c.quiesced(&t, inactive, 1), FlashReply::ACCEPTED);
-        assert_eq!(c.parked(&t, FlashParty::LOCAL, 2), FlashReply::ACCEPTED);
-        assert_eq!(c.complete(&t, FlashParty::PEER, 3), FlashReply::ACCEPTED);
+        assert_eq!(c.quiesced(&t, inactive, 1), FlashReply::Accepted);
+        assert_eq!(c.parked(&t, FlashParty::Local, 2), FlashReply::Accepted);
+        assert_eq!(c.complete(&t, FlashParty::Peer, 3), FlashReply::Accepted);
         assert_eq!(
-            c.released(&t, FlashParty::LOCAL, true, 4),
-            FlashReply::ACCEPTED
+            c.released(&t, FlashParty::Local, true, 4),
+            FlashReply::Accepted
         );
     }
 }
@@ -320,11 +327,11 @@ pub fn boot() -> Box<Fixture> {
     fake::reset_hardware();
     let mut f = Box::new(Fixture::new(PHASE_KNOWN));
     f.create();
-    assert_eq!(f.status().state, OwnerState::STARTING);
+    assert_eq!(f.status().state, OwnerState::Starting);
 
     fake::run_task();
     let s = f.status();
-    assert!(s.state == OwnerState::IDLE && s.stopped && s.optics_off);
+    assert!(s.state == OwnerState::Idle && s.stopped && s.optics_off);
     assert_eq!(hw(|h| h.wake_locks), 1 << 16);
     f
 }
@@ -334,7 +341,7 @@ pub fn boot_with_journal(dual: bool) -> Box<Fixture> {
     let mut f = Box::new(Fixture::new(OwnerRecovery::default()));
     f.use_journal = true;
     if dual {
-        f.config.bowl_mode = BowlMode::DOUBLE;
+        f.config.bowl_mode = BowlMode::Double;
     }
 
     let io = f.flash.io();
@@ -347,12 +354,12 @@ pub fn boot_with_journal(dual: bool) -> Box<Fixture> {
     assert_eq!(
         // SAFETY: the fixture's callbacks are sound for its context, which outlives the call.
         unsafe { f.journal.create(io, c, Direction::D0, true, true) },
-        JournalError::OK
+        JournalError::Ok
     );
 
     f.create();
     fake::run_task();
-    assert_eq!(f.status().state, OwnerState::IDLE);
+    assert_eq!(f.status().state, OwnerState::Idle);
     f
 }
 
@@ -362,7 +369,7 @@ pub fn restart_with_journal(f: &mut Fixture) {
     f.flash.budget = -1;
     let (io, config) = (f.journal.io, f.journal.config);
     // SAFETY: as for `boot_with_journal`.
-    assert_eq!(unsafe { f.journal.open(io, config) }, JournalError::OK);
+    assert_eq!(unsafe { f.journal.open(io, config) }, JournalError::Ok);
     f.create();
     fake::run_task();
 }

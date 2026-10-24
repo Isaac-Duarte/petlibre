@@ -21,7 +21,40 @@ pub struct OwnerRecovery {
     pub pending_request: bool,
 }
 
-c_enum!(OwnerOutcome { PENDING = 0, DONE = 1, CANCELLED = 2, EXPIRED = 3, FAILED = 4 });
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u32)]
+pub enum OwnerOutcome {
+    #[default]
+    Pending = 0,
+    Done = 1,
+    Cancelled = 2,
+    Expired = 3,
+    Failed = 4,
+}
+
+impl OwnerOutcome {
+    /// The variant's number, as records and reports print it.
+    pub const fn code(self) -> u32 {
+        self as u32
+    }
+
+    /// The one-byte field a flash record stores.
+    pub const fn byte(self) -> u8 {
+        self as u8
+    }
+
+    /// The variant a record's byte names; `None` for any other byte.
+    pub const fn from_byte(byte: u8) -> Option<Self> {
+        match byte {
+            0 => Some(Self::Pending),
+            1 => Some(Self::Done),
+            2 => Some(Self::Cancelled),
+            3 => Some(Self::Expired),
+            4 => Some(Self::Failed),
+            _ => None,
+        }
+    }
+}
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -47,7 +80,6 @@ pub type FinishFn = unsafe extern "C" fn(
 /// Mandatory durable boundary, called with interrupts enabled and outputs off.
 /// A true return means the transaction survives reset. No automatic retries.
 /// Payloads are API values, never a native-struct on-flash format.
-#[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct OwnerStorage {
     pub context: *mut c_void,

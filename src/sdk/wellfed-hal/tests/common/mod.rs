@@ -22,7 +22,7 @@ pub const FLASH_LIMITS: FlashLimits = FlashLimits {
 pub fn flash_ready() -> Box<FlashCoord> {
     let limits = FLASH_LIMITS;
     let mut c = Box::new(FlashCoord::new(&limits, 17, 0).unwrap());
-    assert_eq!(c.ready(17, 29, true, 0), FlashReply::ACCEPTED);
+    assert_eq!(c.ready(17, 29, true, 0), FlashReply::Accepted);
     c
 }
 

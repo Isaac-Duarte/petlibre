@@ -24,7 +24,7 @@ These stay where they are and are listed here instead. A second model would revi
 
 **Board, in code that is not the port layer:**
 - **Panel layout:** `wellfed_core::buttons::Buttons::from_port_b` maps PB4–PB7 to reset, mic, dispense and lock, active LOW. Core is hardware-independent and cannot depend on the SDK bindings; `board::BUTTONS` is the same order.
-- **Motor gate:** `wellfed_core::feed::motor_gate::MotorWritePair` names its fields `pa13_high` and `pa14_high`. It is part of the C ABI, so renaming them is an ABI change.
+- **Motor gate:** `wellfed_core::feed::motor_gate::MotorWritePair` names its fields `pa13_high` and `pa14_high`. No C code reads it since the core C ABI was removed, so a board-neutral rename is a Rust-only change.
 - **Motor driver:** the TC118AH's truth table (both inputs HIGH is brake, both LOW is refused) is in `wellfed_hal::board::motor_pair`. Which drive direction dispenses is still open (FW16).
 - **Beams:** `wellfed_core::feed::sensor_inputs` holds their polarity and which is food and which is outlet.
 - **Stopped outputs:** `wellfed_hal::stopped` defines stopped as motor HIGH, emitters LOW and SWD released. The raw-register copies in `target.rs` (`panic_outputs_safe`, `ram_outputs_safe`) use the derived masks, and the RAM-park audit checks the latter as leaf code.
@@ -54,4 +54,4 @@ A new feeder needs:
 4. **Description:** a `device.json` naming its ports.
 5. **Firmware:** a thin firmware crate ([product architecture](product-architecture.md)).
 
-Everything in the known limits above then needs a decision. The panel mapping and the motor gate's names are the first two, since core and the C ABI carry them.
+Everything in the known limits above then needs a decision. The panel mapping and the motor gate's names are the first two, since core carries them.

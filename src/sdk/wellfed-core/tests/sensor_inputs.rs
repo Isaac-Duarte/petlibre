@@ -297,13 +297,13 @@ fn start_feed(f: &Fixture) -> FeedController {
     let request = FeedRequest {
         id: 1,
         portions: 1,
-        mode: BowlMode::SINGLE,
+        mode: BowlMode::Single,
         direction: Direction::D0,
         ..FeedRequest::default()
     };
     assert_eq!(
         controller.start(&request, f.now, &f.snapshot()),
-        FeedStartResult::ACCEPTED
+        FeedStartResult::Accepted
     );
     controller
 }
@@ -322,8 +322,8 @@ fn normalized_passage_can_complete_a_feed() {
         controller.update(f.now, Some(&sample));
     }
 
-    assert!(controller.state == FeedState::COMPLETE && controller.progress.completed == 1);
-    assert_eq!(controller.motor, MotorCommand::STOP);
+    assert!(controller.state == FeedState::Complete && controller.progress.completed == 1);
+    assert_eq!(controller.motor, MotorCommand::Stop);
 }
 
 #[test]
@@ -340,13 +340,13 @@ fn optical_loss_and_power_change_stop_an_active_feed() {
 
         f.advance(1);
         controller.update(f.now, Some(&f.snapshot()));
-        assert!(controller.state == FeedState::FAULT && controller.motor == MotorCommand::STOP);
+        assert!(controller.state == FeedState::Fault && controller.motor == MotorCommand::Stop);
         assert_eq!(
             controller.reason,
             if fault == 0 {
-                FeedReason::SENSOR
+                FeedReason::Sensor
             } else {
-                FeedReason::POWER
+                FeedReason::Power
             }
         );
     }

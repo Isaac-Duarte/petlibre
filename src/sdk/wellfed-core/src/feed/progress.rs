@@ -5,31 +5,86 @@
 //! the logical direction toggles with each portion. SINGLE_BOWL credits every
 //! event.
 
-c_enum!(BowlMode { SINGLE = 0, DOUBLE = 1 });
-c_enum!(ProgressResult { WAIT = 0, PORTION = 1, FINISHED = 2 });
-c_enum!(
-    /// Logical direction only; no physical bowl/clockwise assignment is implied.
-    Direction { D0 = 0, D1 = 1 }
-);
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u32)]
+pub enum BowlMode {
+    #[default]
+    Single = 0,
+    Double = 1,
+}
 
 impl BowlMode {
-    pub fn valid(self) -> bool {
-        self == Self::SINGLE || self == Self::DOUBLE
+    /// The variant's number, as records and reports print it.
+    pub const fn code(self) -> u32 {
+        self as u32
+    }
+
+    /// The one-byte field a flash record stores.
+    pub const fn byte(self) -> u8 {
+        self as u8
+    }
+
+    /// The variant a record's byte names; `None` for any other byte.
+    pub const fn from_byte(byte: u8) -> Option<Self> {
+        match byte {
+            0 => Some(Self::Single),
+            1 => Some(Self::Double),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u32)]
+pub enum ProgressResult {
+    #[default]
+    Wait = 0,
+    Portion = 1,
+    Finished = 2,
+}
+
+impl ProgressResult {
+    /// The variant's number, as records and reports print it.
+    pub const fn code(self) -> u32 {
+        self as u32
+    }
+}
+/// Logical direction only; no physical bowl/clockwise assignment is implied.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u32)]
+pub enum Direction {
+    #[default]
+    D0 = 0,
+    D1 = 1,
+}
+
+impl Direction {
+    /// The variant's number, as records and reports print it.
+    pub const fn code(self) -> u32 {
+        self as u32
+    }
+
+    /// The one-byte field a flash record stores.
+    pub const fn byte(self) -> u8 {
+        self as u8
+    }
+
+    /// The variant a record's byte names; `None` for any other byte.
+    pub const fn from_byte(byte: u8) -> Option<Self> {
+        match byte {
+            0 => Some(Self::D0),
+            1 => Some(Self::D1),
+            _ => None,
+        }
     }
 }
 
 impl Direction {
-    pub fn valid(self) -> bool {
-        self == Self::D0 || self == Self::D1
-    }
-
     pub fn toggled(self) -> Self {
         if self == Self::D0 { Self::D1 } else { Self::D0 }
     }
 }
 
 /// Own one instance per request; modify it only through these methods.
-#[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct FeedProgress {
     pub requested: u16,
@@ -56,7 +111,7 @@ impl FeedProgress {
         portions: u16,
         credit_next_event: bool,
     ) -> Option<Self> {
-        if portions == 0 || !mode.valid() || !direction.valid() {
+        if portions == 0 {
             return None;
         }
         Some(Self {
@@ -74,12 +129,12 @@ impl FeedProgress {
     /// drive command. Later calls remain FINISHED without crediting portions.
     pub fn accept(&mut self) -> ProgressResult {
         if self.finished {
-            return ProgressResult::FINISHED;
+            return ProgressResult::Finished;
         }
-        if self.mode == BowlMode::DOUBLE {
+        if self.mode == BowlMode::Double {
             self.pending_events = self.pending_events.wrapping_add(1);
             if !self.credit_next_event && self.pending_events < 2 {
-                return ProgressResult::WAIT;
+                return ProgressResult::Wait;
             }
             self.pending_events = 0;
             self.credit_next_event = false;
@@ -89,12 +144,12 @@ impl FeedProgress {
         self.completed = self.completed.wrapping_add(1);
         if self.completed == self.requested {
             self.finished = true;
-            if self.mode == BowlMode::DOUBLE {
+            if self.mode == BowlMode::Double {
                 self.credit_next_event = true;
                 self.direction = self.direction.toggled();
             }
-            return ProgressResult::FINISHED;
+            return ProgressResult::Finished;
         }
-        ProgressResult::PORTION
+        ProgressResult::Portion
     }
 }

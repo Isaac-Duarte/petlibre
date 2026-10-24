@@ -26,8 +26,7 @@ pub use wellfed_core::buttons::{Button, Buttons, Config, Gesture};
 pub use wellfed_hal::buttons::next;
 
 static STARTED: AtomicBool = AtomicBool::new(false);
-/// Filled by `start` before the task exists, then touched only by the
-/// key task; see `key_task`.
+/// Filled by `start` in the start hook's task, then handed to the key task.
 static SERVICE: Slot<Service> = Slot::new();
 
 struct Line(Record);
@@ -51,10 +50,10 @@ pub fn start(config: Config) -> bool {
         return false;
     }
 
-    // SAFETY: the swap above lets only one caller here, and the task that
-    // owns the slot does not exist yet; creating it orders this write
-    // before the task's first read.
-    unsafe { SERVICE.get_or_init(|| Service::new(config)) };
+    // Built here, before the task exists, then handed over: the key task's
+    // first entry claims it.
+    drop(SERVICE.enter_or_init(|| Service::new(config)));
+    SERVICE.release();
     // SAFETY: the step takes no context and keeps its state in the slot.
     let created = unsafe { sdk::task_create(c"wellfed-key", 512, 3, key_task, ptr::null_mut()) };
     if !created {
@@ -69,8 +68,7 @@ pub fn start(config: Config) -> bool {
 }
 
 unsafe extern "C" fn key_task(_: *mut c_void) -> u32 {
-    // SAFETY: only this task touches the slot once it runs.
-    let Some(service) = (unsafe { SERVICE.get_or_try_init(|| None) }) else {
+    let Some(mut service) = SERVICE.enter() else {
         return 0;
     };
 

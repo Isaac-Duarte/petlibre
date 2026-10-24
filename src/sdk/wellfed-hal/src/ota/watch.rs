@@ -105,7 +105,12 @@ pub fn describe(record: Record, f: &mut impl fmt::Write) -> fmt::Result {
             u8::from(installed)
         ),
         Record::Arming(arming::Event::Ready { reply, inactive }) => {
-            write!(f, "ready reply={} inactive={}", reply.0, u8::from(inactive))
+            write!(
+                f,
+                "ready reply={} inactive={}",
+                reply.code(),
+                u8::from(inactive)
+            )
         }
         Record::Arming(arming::Event::Skip { marker }) => write!(f, "skip marker={marker:#x}"),
         Record::Arming(arming::Event::Timeout) => f.write_str("error stage=timeout"),

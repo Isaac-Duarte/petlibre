@@ -45,7 +45,7 @@ struct Model {
 
     now: u32,
     next_id: u64,
-    last_fault: HookFault,
+    last_fault: Option<HookFault>,
 }
 
 #[derive(Default)]
@@ -197,14 +197,14 @@ unsafe extern "C-unwind" fn provider_acquire(
 
     let lease = authority(|a| {
         assert_eq!(
-            a.request(FlashParty::LOCAL, 17, id, now),
-            FlashReply::ACCEPTED
+            a.request(FlashParty::Local, 17, id, now),
+            FlashReply::Accepted
         );
         let t = a.token;
-        assert_eq!(a.quiesced(&t, true, now + 1), FlashReply::ACCEPTED);
+        assert_eq!(a.quiesced(&t, true, now + 1), FlashReply::Accepted);
         assert_eq!(
-            a.parked(&t, FlashParty::PEER, now + 2),
-            FlashReply::ACCEPTED
+            a.parked(&t, FlashParty::Peer, now + 2),
+            FlashReply::Accepted
         );
         t.lease
     });
@@ -261,10 +261,10 @@ unsafe extern "C-unwind" fn provider_release(
 
     authority(|a| {
         let t = a.token;
-        assert_eq!(a.complete(&t, FlashParty::LOCAL, now), FlashReply::ACCEPTED);
+        assert_eq!(a.complete(&t, FlashParty::Local, now), FlashReply::Accepted);
         assert_eq!(
-            a.released(&t, FlashParty::PEER, true, now + 1),
-            FlashReply::ACCEPTED
+            a.released(&t, FlashParty::Peer, true, now + 1),
+            FlashReply::Accepted
         );
     });
 
@@ -290,11 +290,11 @@ unsafe extern "C-unwind" fn provider_fault(context: *mut c_void, reason: HookFau
     let recursive = m(|m| {
         assert!(m.irq_mask == 1 && m.systick == 0);
         m.fault_calls += 1;
-        m.last_fault = reason;
+        m.last_fault = Some(reason);
         m.recursive_fault
     });
 
-    authority(|a| a.trip(FlashFault::TRANSPORT));
+    authority(|a| a.trip(FlashFault::Transport));
 
     if recursive {
         write_lock::<Fake>();
@@ -340,7 +340,7 @@ fn reset() {
 
     authority(|a| {
         *a = FlashCoord::new(&limits, 17, 0).unwrap();
-        assert_eq!(a.ready(17, 29, true, 0), FlashReply::ACCEPTED);
+        assert_eq!(a.ready(17, 29, true, 0), FlashReply::Accepted);
     });
 }
 
@@ -428,7 +428,7 @@ fn active_lease_and_tick_restore() {
             && m.legacy_locks == 0));
         assert!(
             m(|m| m.irq_mask == 1 && m.systick == 0)
-                && authority(|a| a.phase) == FlashPhase::ACTIVE
+                && authority(|a| a.phase) == FlashPhase::Active
         );
 
         write_unlock::<Fake>();
@@ -436,7 +436,7 @@ fn active_lease_and_tick_restore() {
             && m.legacy_unlocks == 0
             && m.irq_mask == 0
             && m.systick == initial));
-        assert_eq!(authority(|a| a.phase), FlashPhase::IDLE);
+        assert_eq!(authority(|a| a.phase), FlashPhase::Idle);
     }
 
     reset();
@@ -476,7 +476,7 @@ fn acquire_denial_never_returns_to_sdk_operation() {
         }
 
         halts(write_lock::<Fake>);
-        assert!(m(|m| m.last_fault == HookFault::ACQUIRE
+        assert!(m(|m| m.last_fault == Some(HookFault::Acquire)
             && m.fault_calls == 1
             && m.irq_mask == 1
             && m.systick == 0));
@@ -490,7 +490,7 @@ fn acquire_denial_never_returns_to_sdk_operation() {
         });
         assert!(!install_provider(&provider()) && m(|m| m.ready_calls) == checked);
         halts(write_lock::<Fake>); // A fault cannot fall back to legacy.
-        assert!(m(|m| m.last_fault == HookFault::ACQUIRE
+        assert!(m(|m| m.last_fault == Some(HookFault::Acquire)
             && m.fault_calls == 1
             && m.acquire_calls == acquired
             && m.legacy_locks == 0));
@@ -504,7 +504,7 @@ fn acquire_denial_never_returns_to_sdk_operation() {
     assert!(install_provider(&provider()));
     halts(write_lock::<Fake>);
     assert!(m(|m| m.fault_calls == 1
-        && m.last_fault == HookFault::ACQUIRE
+        && m.last_fault == Some(HookFault::Acquire)
         && m.irq_mask == 1
         && m.systick == 0));
 }
@@ -517,7 +517,7 @@ fn release_failure_never_reenables_irqs_or_falls_back() {
         assert!(install_provider(&provider()));
         write_lock::<Fake>();
         halts(write_unlock::<Fake>);
-        assert!(m(|m| m.last_fault == HookFault::RELEASE
+        assert!(m(|m| m.last_fault == Some(HookFault::Release)
             && m.irq_mask == 1
             && m.systick == 0
             && m.legacy_unlocks == 0));
@@ -546,12 +546,12 @@ fn bad_context_order_and_peer_failure_halt() {
         });
 
         let expected = match change {
-            0 | 1 => HookFault::CONTEXT,
-            4 => HookFault::PEER,
-            _ => HookFault::ORDER,
+            0 | 1 => HookFault::Context,
+            4 => HookFault::Peer,
+            _ => HookFault::Order,
         };
 
-        assert!(m(|m| m.last_fault == expected
+        assert!(m(|m| m.last_fault == Some(expected)
             && m.irq_mask == 1
             && m.systick == 0));
         assert!(m(|m| m.legacy_locks == 0 && m.legacy_irqs == 0));
@@ -574,7 +574,7 @@ fn countflag_left_by_a_disabled_systick_is_not_a_context_fault() {
     m(|m| m.countflag = true);
     write_lock::<Fake>();
     assert!(
-        m(|m| m.irq_mask == 1 && m.systick == 0) && authority(|a| a.phase) == FlashPhase::ACTIVE
+        m(|m| m.irq_mask == 1 && m.systick == 0) && authority(|a| a.phase) == FlashPhase::Active
     );
 
     m(|m| m.countflag = true);
@@ -582,7 +582,7 @@ fn countflag_left_by_a_disabled_systick_is_not_a_context_fault() {
     assert!(m(|m| m.release_calls == 1
         && m.irq_mask == 0
         && m.systick == 7));
-    assert_eq!(authority(|a| a.phase), FlashPhase::IDLE);
+    assert_eq!(authority(|a| a.phase), FlashPhase::Idle);
 
     // An enabled SysTick after acquire still halts.
     reset();

@@ -31,8 +31,9 @@ const PROBE_STACK_WORDS: u16 = 2048;
 static ADC: Slot<adc::Probe> = Slot::new();
 
 unsafe extern "C" fn adc_task(_: *mut c_void) -> u32 {
-    // SAFETY: only this task touches the slot; the probe stays in place.
-    let probe = unsafe { ADC.get_or_init(Default::default) };
+    let Some(mut probe) = ADC.enter_or_init(Default::default) else {
+        return 0;
+    };
     let step = probe.step();
     if let Some(record) = step.record {
         adc::log(record);

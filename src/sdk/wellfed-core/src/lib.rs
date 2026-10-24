@@ -1,42 +1,13 @@
 //! Hardware-independent replacement-firmware logic.
 //!
-//! Every type keeps the C header's field order and `#[repr(C)]` layout so the
-//! SDK-facing C ABI can expose it unchanged. Enumerations are transparent
-//! integers: values read from flash or supplied over the ABI may be invalid,
-//! and each operation validates them exactly where the original design did.
-//! Time values are wrapping `u32` milliseconds; a forward distance of 2^31 or
-//! more is ambiguous and treated as a clock failure.
+//! States, faults and reasons are Rust enums with fixed discriminants: a
+//! record or report carries a variant's number (`code`, or `byte` for a
+//! one-byte flash field), and a record's byte becomes a variant only through
+//! `from_byte`, where an unknown value is the store's corruption error. Time
+//! values are wrapping `u32` milliseconds; a forward distance of 2^31 or more
+//! is ambiguous and treated as a clock failure.
 #![no_std]
 #![deny(unsafe_code)]
-
-/// Declare a C-compatible enumeration that tolerates out-of-range values.
-///
-/// In the C ABI each such type is a 32-bit unsigned integer: C declarations
-/// must use `uint32_t`, not an `enum` type, because the AmebaD GCC may lay out
-/// a C `enum` in one byte (no `-fno-short-enums`).
-///
-/// Exported for the AmebaD port crates, so every C-facing enumeration in the
-/// firmware has the same representation and derives.
-#[macro_export]
-macro_rules! c_enum {
-    ($(#[$meta:meta])* $name:ident { $($(#[$vmeta:meta])* $variant:ident = $value:expr),+ $(,)? }) => {
-        $(#[$meta])*
-        #[repr(transparent)]
-        #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-        pub struct $name(pub u32);
-
-        impl $name {
-            $($(#[$vmeta])* pub const $variant: Self = Self($value);)+
-
-            /// The low byte, as the one-byte fields of the NOR records store
-            /// the value. Every declared variant fits.
-            #[allow(clippy::cast_possible_truncation, reason = "record fields are one byte wide")]
-            pub const fn low_byte(self) -> u8 {
-                self.0 as u8
-            }
-        }
-    };
-}
 
 /// Declare a fieldless enumeration whose variants print as fixed words.
 ///

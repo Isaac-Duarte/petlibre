@@ -209,7 +209,7 @@ fn a_stalled_task_mid_pulse_is_stopped_by_the_timer_within_the_lease() {
     }
 
     assert!(ms >= LEASE_MS - 4, "stopped early at {ms} ms");
-    assert_ne!(b.probe.events.fault, EventsFault::OK);
+    assert_ne!(b.probe.events.fault, EventsFault::Ok);
 
     // The probe then ends with an error and the motor stopped.
     assert_eq!(b.step(&mut during), 0);

@@ -10,9 +10,22 @@
 use core::ffi::c_void;
 use core::ptr;
 
-use wellfed_core::c_enum;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum HookFault {
+    Context = 1,
+    Acquire = 2,
+    Release = 3,
+    Peer = 4,
+    Order = 5,
+}
 
-c_enum!(HookFault { CONTEXT = 1, ACQUIRE = 2, RELEASE = 3, PEER = 4, ORDER = 5 });
+impl HookFault {
+    /// The variant's number, as records and reports print it.
+    pub const fn code(self) -> u32 {
+        self as u32
+    }
+}
 
 /// SysTick CTRL ENABLE and TICKINT, as in `park`: CLKSOURCE is
 /// read-only 1 on the KM4 Cortex-M33 and says nothing about whether SysTick
@@ -297,10 +310,10 @@ pub fn write_lock<C: HookCpu>() {
     }
 
     if s.faulted.get() || s.lease_held.get() {
-        C::fail(HookFault::ORDER);
+        C::fail(HookFault::Order);
     }
     if saved != 0 || C::ipsr() != 0 {
-        C::fail(HookFault::CONTEXT);
+        C::fail(HookFault::Context);
     }
 
     C::restore(saved);
@@ -317,7 +330,7 @@ pub fn write_lock<C: HookCpu>() {
     let returned_mask = C::mask();
     C::disable();
     if !ok {
-        C::fail(HookFault::ACQUIRE);
+        C::fail(HookFault::Acquire);
     }
 
     // Check the provider's actual exit context, not our own disable above.
@@ -329,7 +342,7 @@ pub fn write_lock<C: HookCpu>() {
         || C::tick_read() & SYSTICK_CONTROL_BITS != 0
         || s.lease_held.get()
     {
-        C::fail(HookFault::ACQUIRE);
+        C::fail(HookFault::Acquire);
     }
 
     s.ticket.set(ticket);
@@ -349,10 +362,10 @@ pub fn write_unlock<C: HookCpu>() {
     }
 
     if s.faulted.get() || !s.lease_held.get() {
-        C::fail(HookFault::ORDER);
+        C::fail(HookFault::Order);
     }
     if saved != 1 || C::ipsr() != 0 || C::tick_read() & SYSTICK_CONTROL_BITS != 0 {
-        C::fail(HookFault::CONTEXT);
+        C::fail(HookFault::Context);
     }
 
     let t = s.transport.load();
@@ -363,7 +376,7 @@ pub fn write_unlock<C: HookCpu>() {
     let returned_mask = C::mask();
     C::disable();
     if !ok || returned_mask != 1 || C::ipsr() != 0 || C::tick_read() & SYSTICK_CONTROL_BITS != 0 {
-        C::fail(HookFault::RELEASE);
+        C::fail(HookFault::Release);
     }
 
     let systick = s.ticket.get().saved_systick;
@@ -386,7 +399,7 @@ pub fn write_ipc<C: HookCpu>(data: *mut c_void, status: u32, channel: u32) {
     }
 
     if s.faulted.get() || s.lease_held.get() {
-        C::fail(HookFault::ORDER);
+        C::fail(HookFault::Order);
     }
     let systick = C::tick_read() & SYSTICK_CONTROL_BITS;
     C::restore(saved);
@@ -401,7 +414,7 @@ pub fn write_ipc<C: HookCpu>(data: *mut c_void, status: u32, channel: u32) {
     let returned_tick = C::tick_read() & SYSTICK_CONTROL_BITS;
     C::disable();
     if !ok || returned_mask != saved || returned_tick != systick || C::ipsr() != entered_ipsr {
-        C::fail(HookFault::PEER);
+        C::fail(HookFault::Peer);
     }
     C::restore(saved);
 }

@@ -111,20 +111,20 @@ fn requested(lease: u64) -> Peer {
 #[test]
 fn request_parks_until_the_exact_release() {
     let mut peer = requested(1);
-    assert_eq!(peer.on_request::<Km0>(), ParkEvent::RELEASED);
+    assert_eq!(peer.on_request::<Km0>(), ParkEvent::Released);
     assert_eq!(with(|m| m.regs[0][10]), RELEASED);
     assert_eq!(peer.last_lease, 1);
     // The same lease again is ignored.
     with(|m| m.regs[1][10] = REQUEST);
-    assert_eq!(peer.on_request::<Km0>(), ParkEvent::IGNORED);
+    assert_eq!(peer.on_request::<Km0>(), ParkEvent::Ignored);
 }
 
 #[test]
 fn foreign_or_unanswered_requests_are_ignored() {
     let mut peer = requested(1);
     with(|m| m.regs[1][4] ^= 1);
-    assert_eq!(peer.on_request::<Km0>(), ParkEvent::IGNORED);
-    assert_eq!(Peer::default().on_request::<Km0>(), ParkEvent::IGNORED);
+    assert_eq!(peer.on_request::<Km0>(), ParkEvent::Ignored);
+    assert_eq!(Peer::default().on_request::<Km0>(), ParkEvent::Ignored);
     assert_ne!(with(|m| m.regs[0][10]), ACK);
 }
 
@@ -132,24 +132,24 @@ fn foreign_or_unanswered_requests_are_ignored() {
 fn marker_withholds_only_the_injection_lease() {
     let mut peer = requested(INJECT_LEASE);
     with(|m| m.backup[MARKER_REGISTER as usize] = 1);
-    assert_eq!(peer.on_request::<Km0>(), ParkEvent::WITHHELD);
+    assert_eq!(peer.on_request::<Km0>(), ParkEvent::Withheld);
     assert_ne!(with(|m| m.regs[0][10]), ACK);
 
     let mut peer = requested(INJECT_LEASE);
     with(|m| m.backup[MARKER_REGISTER as usize] = 2);
-    assert_eq!(peer.on_request::<Km0>(), ParkEvent::RELEASED);
+    assert_eq!(peer.on_request::<Km0>(), ParkEvent::Released);
 }
 
 #[test]
 fn unmasked_context_is_refused_without_ack() {
     let mut peer = requested(1);
     with(|m| m.mask = 0);
-    assert_eq!(peer.on_request::<Km0>(), ParkEvent::REFUSED);
+    assert_eq!(peer.on_request::<Km0>(), ParkEvent::Refused);
 
     with(|m| {
         m.mask = 1;
         m.systick = 1;
     });
-    assert_eq!(peer.on_request::<Km0>(), ParkEvent::REFUSED);
+    assert_eq!(peer.on_request::<Km0>(), ParkEvent::Refused);
     assert_ne!(with(|m| m.regs[0][10]), ACK);
 }

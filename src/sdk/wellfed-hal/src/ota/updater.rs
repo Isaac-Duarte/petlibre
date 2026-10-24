@@ -214,7 +214,12 @@ pub fn describe(record: Record, f: &mut impl fmt::Write) -> fmt::Result {
     match record {
         Record::Start { key } => write!(f, "start role=recovery key={}", u8::from(key)),
         Record::Ready { reply, inactive } => {
-            write!(f, "ready reply={} inactive={}", reply.0, u8::from(inactive))
+            write!(
+                f,
+                "ready reply={} inactive={}",
+                reply.code(),
+                u8::from(inactive)
+            )
         }
         Record::Timeout => f.write_str("timeout"),
         Record::Skip { marker } => write!(f, "skip marker={marker:#x}"),

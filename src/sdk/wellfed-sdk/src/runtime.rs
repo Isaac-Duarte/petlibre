@@ -29,7 +29,7 @@ use wellfed_hal::supervision::config;
 use wellfed_hal::supervision::supervise::{self, LIVENESS_MS, Startup};
 use wellfed_hal::supervision::watchdog::Watchdog;
 use wellfed_hal::transport::{self, Link};
-use wellfed_hal::{leds, net_status, power, rng, sdk, startup, stopped, trial};
+use wellfed_hal::{cell::TaskCell, leds, net_status, power, rng, sdk, startup, stopped, trial};
 
 use crate::slot::Slot;
 use crate::wifi::{Probe, Record};
@@ -117,8 +117,9 @@ unsafe extern "C" fn power_task(_: *mut c_void) -> u32 {
         return POWER_WAIT_MS;
     }
 
-    // SAFETY: only this task touches the slot.
-    let monitor = unsafe { POWER.get_or_init(Default::default) };
+    let Some(mut monitor) = POWER.enter_or_init(Default::default) else {
+        return 0;
+    };
     let step = monitor.step();
     if let Some(record) = step.record {
         let mut report = startup::Report::new();
@@ -164,18 +165,15 @@ fn log_transport(record: transport::Record) {
 }
 
 unsafe extern "C" fn net_task(_: *mut c_void) -> u32 {
-    // SAFETY: only this task touches the slot.
-    let link = unsafe {
-        NET.get_or_try_init(|| {
-            let link = sdk::transport_config()
-                .map(|config| Link::new(config, Boot::read(startup::snapshot())));
-            if link.is_none() {
-                sdk::log(c"PLMQT1 error config\r\n");
-            }
-            link
-        })
-    };
-    let Some(link) = link else {
+    let link = NET.enter_or_try_init(|| {
+        let link = sdk::transport_config()
+            .map(|config| Link::new(config, Boot::read(startup::snapshot())));
+        if link.is_none() {
+            sdk::log(c"PLMQT1 error config\r\n");
+        }
+        link
+    });
+    let Some(mut link) = link else {
         return 0;
     };
 
@@ -211,11 +209,16 @@ fn start_transport() {
     });
 }
 
-/// Touched only by the updater task, except that the armed hooks reach the
-/// provider through its context pointer.
+/// Touched only by the updater task.
 static UPDATER: Slot<Updater> = Slot::new();
-static PROVIDER: Slot<Provider> = Slot::new();
-/// Opened by the updater task, then touched only by the feeder task.
+/// The lease provider the SDK flash-lock hooks call. Never borrowed: every
+/// task passes its raw pointer, because the armed hooks dereference it from
+/// whichever task holds the SDK flash lock. Arming writes it in sequence
+/// (the updater or the confirmation task, then the settings writer, then
+/// the offer check only if the hooks are still unarmed), never two at once.
+static PROVIDER: TaskCell<Provider> = TaskCell::new(Provider::UNBOUND);
+/// Opened by whichever task arms first (the feeder task at startup), then
+/// handed to the feeder task, which feeds it.
 static WATCHDOG: Slot<Watchdog> = Slot::new();
 static WATCHDOG_OPEN: AtomicBool = AtomicBool::new(false);
 
@@ -293,9 +296,11 @@ impl Hooks for SdkHooks {
             return true; // The normal role opened it at startup.
         }
 
-        // SAFETY: the feeder touches the slot only once WATCHDOG_OPEN is set.
-        let watchdog = unsafe { WATCHDOG.get_or_init(Watchdog::default) };
-        let opened = watchdog.open(&config::WATCHDOG);
+        let opened = WATCHDOG
+            .enter_or_init(Watchdog::default)
+            .is_some_and(|mut watchdog| watchdog.open(&config::WATCHDOG));
+        // The feeder task feeds what this task opened.
+        WATCHDOG.release();
         WATCHDOG_OPEN.store(opened, Ordering::Release);
         opened
     }
@@ -328,33 +333,27 @@ impl core::fmt::Display for UpdateLine {
 
 unsafe extern "C" fn updater_task(_: *mut c_void) -> u32 {
     HEARTBEAT.store(sdk::uptime_ms(), Ordering::Release);
-    // SAFETY: only this task creates references into the slots; the provider
-    // is reached by raw pointer so hook callbacks never alias a live borrow.
-    let updater = unsafe {
-        UPDATER.get_or_try_init(|| {
-            let updater = sdk::transport_config().map(|config| {
-                Updater::new(
-                    config,
-                    updater::public_key(),
-                    Boot::read(startup::snapshot()),
-                )
-            });
-            if updater.is_none() {
-                sdk::log(c"PLOTA1 error stage=config\r\n");
-                UPDATER_DONE.store(true, Ordering::Release);
-            }
-            updater
-        })
-    };
-    let Some(updater) = updater else {
+    let updater = UPDATER.enter_or_try_init(|| {
+        let updater = sdk::transport_config().map(|config| {
+            Updater::new(
+                config,
+                updater::public_key(),
+                Boot::read(startup::snapshot()),
+            )
+        });
+        if updater.is_none() {
+            sdk::log(c"PLOTA1 error stage=config\r\n");
+            UPDATER_DONE.store(true, Ordering::Release);
+        }
+        updater
+    });
+    let Some(mut updater) = updater else {
         return 0;
     };
 
-    // SAFETY: only the owning task reaches the provider slot, and the
-    // borrow ends here: the hooks use the raw pointer.
-    let provider = unsafe { PROVIDER.get_or_init(Provider::default) } as *mut Provider;
+    let provider = PROVIDER.get();
     let mut flash = Hooked::<SdkHooks>::new();
-    // SAFETY: the provider slot is fixed for the program's lifetime.
+    // SAFETY: the provider is a static, never borrowed (see `PROVIDER`).
     let step = unsafe { updater.step::<Hardware, SdkHooks>(provider, &mut flash) };
 
     if let Some(record) = step.record {
@@ -442,8 +441,7 @@ unsafe extern "C" fn feeder_task(_: *mut c_void) -> u32 {
         return FEED_MS;
     }
     {
-        // SAFETY: the updater task no longer touches the slot once open.
-        if let Some(watchdog) = unsafe { &mut *WATCHDOG.0.get() }.as_mut() {
+        if let Some(mut watchdog) = WATCHDOG.enter() {
             let progress = PROGRESS.fetch_add(1, Ordering::Relaxed) + 1;
             let _ = watchdog.checkpoint(u64::from(progress));
         }
@@ -467,12 +465,10 @@ impl core::fmt::Display for ConfirmLine {
 unsafe extern "C" fn confirm_task(_: *mut c_void) -> u32 {
     let now = sdk::uptime_ms();
     HEARTBEAT.store(now, Ordering::Release);
-    // SAFETY: only this task creates references into the slots; the provider
-    // is reached by raw pointer so hook callbacks never alias a live borrow.
-    let confirm = unsafe { CONFIRM.get_or_init(Confirm::default) };
-    // SAFETY: only the owning task reaches the provider slot, and the
-    // borrow ends here: the hooks use the raw pointer.
-    let provider = unsafe { PROVIDER.get_or_init(Provider::default) } as *mut Provider;
+    let Some(mut confirm) = CONFIRM.enter_or_init(Confirm::default) else {
+        return 0;
+    };
+    let provider = PROVIDER.get();
     // The network path FW07 checks (DHCP, then a DNS lookup) stands in for
     // the broker session the normal role no longer opens (FW47).
     let healthy = net_status::read().dns_ok
@@ -480,7 +476,7 @@ unsafe extern "C" fn confirm_task(_: *mut c_void) -> u32 {
         && stopped::observe().verified();
 
     let mut storage = HookedStorage::<SdkHooks>::new();
-    // SAFETY: the provider slot is fixed for the program's lifetime.
+    // SAFETY: the provider is a static, never borrowed (see `PROVIDER`).
     let step = unsafe { confirm.step::<Hardware, SdkHooks>(provider, &mut storage, healthy, now) };
 
     if let Some(record) = step.record {
@@ -524,27 +520,20 @@ impl core::fmt::Display for WatchLine {
 unsafe extern "C" fn watch_task(_: *mut c_void) -> u32 {
     let now = sdk::uptime_ms();
     WATCH_BEAT.store(now, Ordering::Release);
-    // SAFETY: only this task creates references into the slot; the provider
-    // is reached by raw pointer (the confirmation task has ended).
-    let watch = unsafe {
-        WATCH.get_or_try_init(|| {
-            let watch =
-                sdk::transport_config().map(|config| Watch::new(config, updater::public_key()));
-            if watch.is_none() {
-                WATCH_RUNNING.store(false, Ordering::Release);
-            }
-            watch
-        })
-    };
-    let Some(watch) = watch else {
+    let watch = WATCH.enter_or_try_init(|| {
+        let watch = sdk::transport_config().map(|config| Watch::new(config, updater::public_key()));
+        if watch.is_none() {
+            WATCH_RUNNING.store(false, Ordering::Release);
+        }
+        watch
+    });
+    let Some(mut watch) = watch else {
         return 0;
     };
 
-    // SAFETY: only the owning task reaches the provider slot, and the
-    // borrow ends here: the hooks use the raw pointer.
-    let provider = unsafe { PROVIDER.get_or_init(Provider::default) } as *mut Provider;
+    let provider = PROVIDER.get();
     let mut bank = SdkGiveWay::<SdkHooks>::new();
-    // SAFETY: the provider slot is fixed for the program's lifetime.
+    // SAFETY: the provider is a static, never borrowed (see `PROVIDER`).
     let step = unsafe { watch.step::<Hardware, SdkHooks>(provider, &mut bank, now) };
 
     if let Some(record) = step.record {
@@ -607,13 +596,11 @@ impl core::fmt::Display for SettingsLine {
 /// FW25: load the device settings, arm the hooks, then save signed changes.
 unsafe extern "C" fn settings_task(_: *mut c_void) -> u32 {
     SETTINGS_BEAT.store(sdk::uptime_ms(), Ordering::Release);
-    // SAFETY: only this task creates references into the slot; the provider
-    // is reached by raw pointer so hook callbacks never alias a live borrow.
-    let writer = unsafe { SETTINGS.get_or_init(Default::default) };
-    // SAFETY: only the owning task reaches the provider slot, and the
-    // borrow ends here: the hooks use the raw pointer.
-    let provider = unsafe { PROVIDER.get_or_init(Provider::default) } as *mut Provider;
-    // SAFETY: the provider slot is fixed for the program's lifetime.
+    let Some(mut writer) = SETTINGS.enter_or_init(Default::default) else {
+        return 0;
+    };
+    let provider = PROVIDER.get();
+    // SAFETY: the provider is a static, never borrowed (see `PROVIDER`).
     let step = unsafe { writer.step::<Hardware, SdkHooks, SdkStorage>(provider) };
 
     if let Some(record) = step.record {
@@ -773,8 +760,9 @@ fn log_probe(record: Record) {
 const WIFI_HOLD_MAX_MS: u32 = 180_000;
 
 fn probe_step() -> u32 {
-    // SAFETY: only this task touches the slot.
-    let probe = unsafe { PROBE.get_or_init(Probe::default) };
+    let Some(mut probe) = PROBE.enter_or_init(Probe::default) else {
+        return 0;
+    };
     // The startup probe's windows run first; the recovery role has none and
     // needs the network at once.
     let ready = startup::snapshot().bank() == Some(0)

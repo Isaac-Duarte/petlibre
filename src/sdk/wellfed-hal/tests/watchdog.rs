@@ -140,7 +140,7 @@ fn progress_deadline_and_replay_latch() {
     assert!(w.check() && hw(|h| h.watchdog_refreshes) == 0);
     fake::advance(32, false);
     assert!(!w.checkpoint(1));
-    assert!(w.fault == WatchdogFault::PROGRESS && w.armed);
+    assert!(w.fault == WatchdogFault::Progress && w.armed);
     assert!(!w.checkpoint(2) && hw(|h| h.watchdog_refreshes) == 0);
     close_port(&mut w);
 
@@ -148,7 +148,7 @@ fn progress_deadline_and_replay_latch() {
     fake::advance(64, false);
     assert!(w.checkpoint(u64::MAX));
     assert!(!w.checkpoint(u64::MAX));
-    assert_eq!(w.fault, WatchdogFault::PROGRESS);
+    assert_eq!(w.fault, WatchdogFault::Progress);
     close_port(&mut w);
 }
 
@@ -169,7 +169,7 @@ fn independent_expiry_with_frozen_clock_and_masked_irqs() {
         && h.watchdog_reset_requests == 1
         && h.timer_irqs == 0));
     hw(|h| h.interrupts = 0);
-    assert!(!w.check() && w.fault == WatchdogFault::REGISTER);
+    assert!(!w.check() && w.fault == WatchdogFault::Register);
     close_port(&mut w); // Model reports a reset request; it does not reboot the host.
 }
 
@@ -195,9 +195,9 @@ fn context_and_register_changes() {
         assert_eq!(
             w.fault,
             if change < 2 {
-                WatchdogFault::CONTEXT
+                WatchdogFault::Context
             } else {
-                WatchdogFault::REGISTER
+                WatchdogFault::Register
             }
         );
 
@@ -214,7 +214,7 @@ fn setup_rollback_and_retained_cleanup() {
     let mut w = fresh();
     hw(|h| h.watchdog_scope_blocked = true);
     assert!(!w.open(&CONFIG));
-    assert!(!w.claimed && !w.armed && w.fault == WatchdogFault::SETUP);
+    assert!(!w.claimed && !w.armed && w.fault == WatchdogFault::Setup);
 
     hw(|h| {
         h.watchdog_scope_blocked = false;
@@ -260,7 +260,7 @@ fn hardware_counter_wrap_and_clock_fault() {
     assert!(w.checkpoint(1) && hw(|h| h.watchdog_refreshes) == 1);
 
     hw(|h| h.raw_ticks -= 1);
-    assert!(!w.check() && w.fault == WatchdogFault::CLOCK);
+    assert!(!w.check() && w.fault == WatchdogFault::Clock);
     close_port(&mut w);
 }
 
@@ -277,7 +277,7 @@ fn flash_hold_cannot_refresh_or_extend_progress() {
     assert!(unsafe { w.checkpoint_if_ready(1, &*c) });
     assert!(hw(|h| h.watchdog_refreshes) == 1 && w.progress_at == 2);
 
-    assert_eq!(c.request(FlashParty::PEER, 29, 1, 0), FlashReply::ACCEPTED);
+    assert_eq!(c.request(FlashParty::Peer, 29, 1, 0), FlashReply::Accepted);
     for n in 2..51 {
         fake::advance(32, false);
         // SAFETY: null or a live coordinator.
@@ -288,7 +288,7 @@ fn flash_hold_cannot_refresh_or_extend_progress() {
     fake::advance(32, false);
     // SAFETY: null or a live coordinator.
     assert!(!unsafe { w.checkpoint_if_ready(51, &*c) });
-    assert!(w.fault == WatchdogFault::PROGRESS && hw(|h| h.watchdog_refreshes) == 1);
+    assert!(w.fault == WatchdogFault::Progress && hw(|h| h.watchdog_refreshes) == 1);
     close_port(&mut w);
 }
 

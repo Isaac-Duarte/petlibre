@@ -1199,6 +1199,20 @@ pub fn uptime_ms() -> u32 {
     unsafe { raw::xTaskGetTickCount() }
 }
 
+/// The running task's identity, nonzero and stable for the task's life; zero
+/// from an interrupt or before the scheduler starts. A task created after
+/// another ended may reuse its handle.
+pub fn current_task() -> usize {
+    if ipsr() != 0
+        // SAFETY: the pinned SDK routine, with plain-value arguments.
+        || unsafe { raw::xTaskGetSchedulerState() } != k::WELLFED_SCHEDULER_RUNNING as _
+    {
+        return 0;
+    }
+    // SAFETY: the pinned SDK routine; it reads the current TCB pointer.
+    unsafe { raw::xTaskGetCurrentTaskHandle() as usize }
+}
+
 /// One line, not split by another task's print: from a task, the scheduler
 /// is paused for the print (interrupts keep running). Before the scheduler
 /// starts, or from an interrupt, it prints directly.

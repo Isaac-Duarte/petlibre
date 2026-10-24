@@ -7,6 +7,19 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
+**October 24, late evening: bank-0 Wi-Fi fault investigation, parked (physical, no motion; committed, not pushed).**
+- **Experiments:**
+  - Back power: stopped after one run, because a fault followed a warm give-way, with no power-off.
+  - A fresh `feeder` build with lease timings (`5755c4f`, `262a9f37…`) went into bank 0 over UART (`bank0-diag-01`; the plan touched only `0x6000`–`0xEC000`; 229 sectors verified). It replaced the stock-installed `qa`.
+  - Warm installs: 4 passed, then install 5 crashed in `rtw_recv`, 11 s after boot and before its download.
+- **Findings:** the leases held IRQs masked for 41–44 ms at most. A capture-wide count puts the fault at about 1 in 40 bank-0 boots, against none in 199 bank-1 boots. Static analysis found nothing obvious ([device API](docs/firmware/device-api.md#left)), so it is parked for later.
+- **Flash now:**
+  - **Bank 1:** `feeder` `5eeea634…` (v153, confirmed).
+  - **Bank 0:** `feeder` `262a9f37…`.
+  - **Next manifest version:** 154.
+- **Bench state:** UART relays 3 and 4 in use; hotspot down; no server.
+- **Next:** motor bring-up with the logic analyzer.
+
 **October 24, evening: full QA of `cd3c8ce`…`ccf3e2d` (physical, no owner action, no motion; fixes committed and pushed).**
 - **Host:** `make check`, every firmware's `firstboot` build with its audits, `device` `feeder`, `make check-fixtures` and `make check-web` passed.
 - **Review** (three independent static reviews), fixed with tests:

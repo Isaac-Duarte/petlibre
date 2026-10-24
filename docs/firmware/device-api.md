@@ -80,9 +80,17 @@ Each install below used a bounded `serve` for the FW10 offer.
 
 ## Left
 
-- **Bank-0 anomalies after short power cuts.** Twice, bank 0's recovery role (`qa` `ef76b85e…`, from before FW47) failed within about 50 s of a cold boot that followed the bench's default 2 s power-off. Each time the next boot found the attempt marker set and skipped, as the no-retry rule requires.
-  - `fw47-itest-05`: a hard fault 6 s into the clean download, an undefined instruction in the Wi-Fi driver's `cmd_thread` (`PLFLT1 cfsr=10000`). Static: the faulting PC holds a valid instruction (a `b.n` in the driver's rate-string `sprintf`), so the fetch from flash returned the wrong bytes. No KM4 task runs during a flash lease, and the SDK's RAM erase and program routines wait and flush the cache before unlocking, so no gap in the write path is known.
-  - `qa-20261024-02`: a silent KM4 watchdog reset (`reset=00100000`, no `PLSUP1 stop`) just after Wi-Fi associated, before the range round's download.
-  - Clean: `fw47-itest-06` (2 s off), and `qa-20261024-03` and `-04` with `--off-seconds 10`: `ota-recovery` and `ota-power-cuts` passed with no fault. The Secure faults the captures show at the cuts themselves are the CPU running as the supply decays.
-  - Not explained. Leading guess (unproven): 2 s does not always give a clean power-on reset. Next: `ota-recovery` repeated at 2 s and at 10 s, to put a rate on each.
+- **Bank-0 Wi-Fi faults (open, parked).** Bank 0's recovery role sometimes crashes in a Wi-Fi driver thread and then skips the update until a power cycle, as the no-retry rule requires.
+  - **Rate** (physical, every capture to October 24): 3 crashes and 1 silent watchdog hang in 157 bank-0 boots that started Wi-Fi; none in 199 bank-1 boots, including the same build.
+  - **The crashes:** `cmd_thread` (`fw47-itest-05`), and `rtw_recv` twice (a backpower run, then `warm-20261024-05`). The last, symbolized with its ELF, was in the SDK's `report_survey_event` under `OnProbeRsp`, 11 s after boot, before any download.
+  - **Static:** two of the faulting PCs hold valid instructions, so the CPU fetched wrong bytes from flash; a bad jump would fault differently.
+  - **Not the cause:** a power cut (one followed a warm give-way); UART back power (relays 3 and 4 isolate it now); the old `qa` image (a fresh build in bank 0 failed too); or our flash leases. Those held IRQs masked for 41–44 ms at most (`masked_max_ms`), none past 100 ms, and the last crash came before any write. The Wi-Fi driver takes no leases (17 per written sector, exactly); both cores hold `PMU_OS`, so nothing sleeps.
+  - **Left to test:**
+    - the recovery role arms the hooks and binds KM0 before Wi-Fi starts, while the normal role arms later;
+    - it starts Wi-Fi at once, without `startup_done`;
+    - its traffic is a receive-heavy download;
+    - it runs from bank 0's region.
+
+    Each needs a long warm-install loop (about one failure in 40 boots).
+  - **Bank 0 now:** `feeder` `262a9f37…` (commit `5755c4f`, with the lease timings), written over UART (`bank0-diag-01`, 229 sectors verified), replacing the stock-installed `qa` `ef76b85e…`.
 - **The bring-up firmwares** (`qa`, `optics` and the rest) serve no API and open no MQTT session, so after their install the bench has only the UART confirmation (`wellfed-bench ota` says so).

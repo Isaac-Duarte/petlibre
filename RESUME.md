@@ -1,11 +1,19 @@
 # Resume firmware development
 
-Handoff checkpoint: **October 24, 2026 (evening), Mountain time**. Read this, then
+Handoff checkpoint: **October 24, 2026 (night), Mountain time**. Read this, then
 [AGENTS.md](AGENTS.md), the [development guide](docs/development/README.md),
 and [FIRMWARE_BOARD.md](FIRMWARE_BOARD.md) (stock parity: [FEATURE_BOARD.md](FEATURE_BOARD.md)). Update this handoff when the installed
 image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
+
+**October 24, night: FW45 BLE setup mode (host and image builds; nothing run on the bench).**
+- **Owner decisions:** a Lock and Mic hold (5 s, unlocked panel) starts setup mode; no automatic setup after a Wi-Fi loss; the `ble` firmware, the feeder's `setup` variant and the HMAC BLE exchange are retired.
+- **Code:** `wellfed-proto` (setup messages, postcard), `wellfed-feeder::setup::Responder` (Noise XX under the identity), `wellfed-client` (the client session and BLE framing), the owner CLI `wellfed setup` (BlueZ through `bluer`, key file `private/wellfed-owner.json`), `wellfed-hal::ble` as a plain framed link, the keys mailbox reporting results (`ticket`/`outcome`), `network::save`, and the loop's setup controller (`feeder/src/setup.rs`). `wellfed-formats::private` now holds the 0600 JSON writer and the random source that `wellfed-local` used.
+- **Why not at boot:** every free KM0 backup register is taken, so the gesture starts the stack on the running feeder and a reboot still ends it ([Bluetooth](docs/firmware/bluetooth.md)).
+- **Checks:** `make check` (904 tests, cargo-deny with `bluer` and `postcard`), all 13 firmware images and variants with their audits (loop stack bound 4,076 of 6,144 B), fresh `qa` builds and `make check-fixtures`.
+- **Flash and bench state:** unchanged from the evening entry (`feeder` v107 on bank 1). **Next manifest version:** 108.
+- **Next (owner pressing):** OTA `feeder` v108; hold Lock then Mic on an unlocked panel; `wellfed setup --ssid <lab hotspot>`; press Dispense; expect `Done`, `PLCFG1 keys change=enroll result=done enrolled=1`, a reboot without BLE and a join with `source: stored`; then a 60 s no-press refusal and a locked-panel refusal. Clear the Wi-Fi store afterwards.
 
 **October 24, evening: board close-out; FW21, FW25 and FW34 done (FW25 physical, no owner action).**
 - **Board:** FW21 closed at sync and jump scope (the long-uptime restart goes to FW46). FW34 closed at revised scope (boot-gated BLE and mains-only advertising go to FW45). FW25 closed at Wi-Fi and options scope (broker credentials go to FW45).

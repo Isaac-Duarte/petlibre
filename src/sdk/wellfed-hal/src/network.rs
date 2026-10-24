@@ -1,14 +1,14 @@
 //! FW25: Wi-Fi credentials without a rebuild.
 //!
-//! - **Transport half:** a signed `wifi` request is checked by the store's own
-//!   rules and queued for the settings writer, which saves it to NOR (storage
-//!   sectors 5 and 6).
+//! - **Transport half:** a signed `wifi` request, or credentials from BLE
+//!   setup (FW45, [`save`]), is checked by the store's own rules and queued
+//!   for the settings writer, which saves it to NOR (storage sectors 5 and 6).
 //! - **Join half:** before each join attempt the C shim asks for credentials
 //!   (`wellfed_wifi_select`) and then reports the outcome
 //!   (`wellfed_wifi_outcome`). Stored credentials are used until
 //!   [`FALLBACK_AFTER`] attempts in a row fail without one success this boot;
 //!   then the build's credentials take over, so a bad save cannot strand the
-//!   feeder. A save during the boot (FW25 `wifi` over MQTT, or FW34 BLE setup)
+//!   feeder. A save during the boot (FW25 `wifi` over MQTT, or FW45 BLE setup)
 //!   takes effect at the next join: the new credentials are read again and
 //!   get their own run of attempts before the build's take over.
 //!
@@ -115,7 +115,26 @@ pub fn request(fields: WifiFields) -> WifiResult {
         }
         _ => None,
     };
+    queue(credentials)
+}
 
+/// BLE setup's half: queue checked credentials for the writer.
+pub fn save(credentials: Credentials) -> WifiResult {
+    if !LOADED.load(Ordering::Acquire) {
+        return WifiResult::Busy;
+    }
+    if !WRITABLE.load(Ordering::Acquire) {
+        return WifiResult::ReadOnly;
+    }
+    queue(Some(credentials))
+}
+
+/// Whether a queued change still waits for the writer.
+pub fn saving() -> bool {
+    STATE.load(Ordering::Acquire) != Hand::Empty as u8
+}
+
+fn queue(credentials: Option<Credentials>) -> WifiResult {
     if STATE
         .compare_exchange(
             Hand::Empty as u8,

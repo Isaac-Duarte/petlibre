@@ -17,7 +17,6 @@ Stock 1.1.15 can install the replacement over its own updater, with no UART writ
 | `wellfed-fw-feeder` (`src/firmware/wellfed/feeder`) | The product firmware: the button service and one loop task that owns the panel, with the FW44 Noise session table; the feeding owner and device API join that loop ([resource budget](resource-budget.md)) |
 | `wellfed-fw-qa` (`src/firmware/wellfed/qa`) | The default firmware: a [guided self-test](qa.md) of optics, power, buttons, indicators and speaker |
 | `wellfed-fw-optics`, `-buttons`, `-adc`, `-speaker`, `-motor`, `-trial` | One bring-up area each ([table](../../src/firmware/wellfed/README.md)); `motor` drives the motor only in its `fw16-pulse` variant |
-| `wellfed-fw-ble` (`src/firmware/wellfed/ble`) | Bluetooth LE bring-up and Wi-Fi setup over BLE ([Bluetooth](bluetooth.md)) |
 | `wellfed-fw-blink` (`src/firmware/wellfed/blink`) | The minimal firmware: one task blinks the connection indicator. The [firmware guide](../../src/firmware/wellfed/README.md) covers writing one |
 | `wellfed-amebad-sys` | Bindgen-backed KM4 calls into the pinned AmebaD SDK, and the deterministic host fake SDK used by tests and the simulator |
 | `wellfed-sdk-c` | The core C ABI, the KM0 archive, and the panic handler every firmware archive links |

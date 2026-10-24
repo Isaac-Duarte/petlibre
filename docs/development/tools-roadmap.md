@@ -66,7 +66,7 @@ Every hardware test runs through `wellfed-local` today, so it shrinks in step wi
 | 1 | Nothing | Delete stock control, the C-probe and modified-stock trials, `speak` and `ble-wifi`. The ledger keeps only install trials |
 | 2 | Nothing | Split the bench into `wellfed-relay`, `wellfed-bench`, `wellfed-itest` and `wellfed-dashboard`, with their shared files in `wellfed-formats` |
 | 3 | FW42 | The setup frame provisions stock: the broker trusts a new feeder on first use during an install, and `init` and `network` are deleted |
-| 4 | FW45, FW47 | `wellfed-client` and the `wellfed` CLI; the bench and suite talk to the feeder over the device API; the MQTT firmware role and its credentials are deleted |
+| 4 | FW45, FW47 | `wellfed-client` and the `wellfed` CLI (begun Oct 24 with FW45: the BLE setup session and `wellfed setup`); the bench and suite talk to the feeder over the device API; the MQTT firmware role and its credentials are deleted |
 | 5 | FW48 | Offers over the device API; signing moves to `wellfed-build`; the fault server is rebuilt on `wellfed-client` |
 | 6 | FW43 | What is left of the stock path moves into `wellfed-stock` and `wellfed-client`'s installer steps; `wellfed-local` is deleted |
 

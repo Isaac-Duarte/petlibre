@@ -1,62 +1,27 @@
 //! Durable private state files: configuration, ledger, leases and credentials.
 //!
 //! Every file is created mode 0600 on Unix. `write_json` replaces a file
-//! atomically (temporary file, fsync, rename, directory fsync), so a crash
-//! leaves the old or the new contents, never a torn ledger. `write_new_json`
+//! atomically (`wellfed_formats::private`), so a crash leaves the old or
+//! the new contents, never a torn ledger. `write_new_json`
 //! refuses to replace anything, and `lock` gives one server process exclusive
 //! ownership of a ledger.
 
-use std::{
-    fs,
-    io::{Read, Write},
-    path::Path,
-};
+use std::{fs, io::Write, path::Path};
 
 use anyhow::{Context, Result};
 use serde::Serialize;
-use uuid::Uuid;
 
-/// The operating system's CSPRNG, which the kernel seeds before userspace
-/// can run this tool.
-pub(crate) const SYSTEM_RANDOM: &str = "/dev/urandom";
+pub(crate) use wellfed_formats::private::SYSTEM_RANDOM;
 
 /// `N` bytes from `source` (normally [`SYSTEM_RANDOM`]), for new secrets.
 pub(crate) fn random<const N: usize>(source: &Path) -> Result<[u8; N]> {
-    let mut bytes = [0u8; N];
-    fs::File::open(source)
-        .and_then(|mut file| file.read_exact(&mut bytes))
-        .context("read the system random source")?;
-    Ok(bytes)
+    wellfed_formats::private::random(source).context("read the system random source")
 }
 
-/// Atomically replace a private state file, syncing data before committing it.
+/// Atomically replace a private state file (`wellfed_formats::private`).
 pub fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
-    let parent = path.parent().context("state path needs a parent")?;
-    fs::create_dir_all(parent)?;
-    let temp = parent.join(format!(".{}.tmp", Uuid::new_v4()));
-
-    let result = (|| {
-        let mut options = fs::OpenOptions::new();
-        options.create_new(true).write(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-
-        let mut file = options.open(&temp)?;
-        serde_json::to_writer_pretty(&mut file, value)?;
-        file.write_all(b"\n")?;
-        file.sync_all()?;
-        fs::rename(&temp, path)?;
-        fs::File::open(parent)?.sync_all()?;
-        Ok(())
-    })();
-
-    if result.is_err() {
-        let _ = fs::remove_file(temp);
-    }
-    result
+    wellfed_formats::private::write_json(path, value)
+        .with_context(|| format!("write {}", path.display()))
 }
 
 /// Write a new private file; refuses to replace an existing one.

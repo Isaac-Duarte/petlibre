@@ -2,9 +2,11 @@
 members = [
     "src/sdk/*",
     "src/product/*",
+    "src/client/*",
+    "src/tools/wellfed",
     "src/tools/wellfed-*",
     "src/tools/xtask",
-    "src/firmware/wellfed/*",
+    "src/firmware/wellfed/*", "src/client/wellfed-client",
 ]
 resolver = "3"
 
@@ -19,12 +21,13 @@ wellfed-hal = { path = "src/sdk/wellfed-hal" }
 wellfed-hal-common = { path = "src/sdk/wellfed-hal-common" }
 wellfed-amebad-sys = { path = "src/sdk/wellfed-amebad-sys" }
 wellfed-core = { path = "src/sdk/wellfed-core" }
+wellfed-proto = { path = "src/sdk/wellfed-proto" }
 wellfed-probes = { path = "src/sdk/wellfed-probes" }
 wellfed-sdk = { path = "src/sdk/wellfed-sdk" }
 wellfed-sdk-c = { path = "src/sdk/wellfed-sdk-c" }
 wellfed-feeder = { path = "src/product/wellfed-feeder" }
+wellfed-client = { path = "src/client/wellfed-client" }
 wellfed-fw-blink = { path = "src/firmware/wellfed/blink" }
-wellfed-fw-ble = { path = "src/firmware/wellfed/ble" }
 wellfed-formats = { path = "src/tools/wellfed-formats" }
 wellfed-emu = { path = "src/tools/wellfed-emu" }
 wellfed-testkit = { path = "src/sdk/wellfed-testkit" }

@@ -1,79 +1,64 @@
-//! FW34 BLE setup against the fake peripheral: the feeder advertises only
-//! after two minutes offline, answers one signed `wifi` request per hello
-//! with the transport's own reply, and queues the credentials for the
-//! settings writer; anything unsigned, replayed or not `wifi` changes nothing.
+//! FW45 setup mode's BLE link against the fake peripheral: it advertises
+//! only while asked and nobody is connected, reassembles a host's framed
+//! writes into one held message, frames what the firmware sends, and drops
+//! a host that overruns the frame limit or outstays the session.
 
-use std::sync::{Mutex, MutexGuard};
-
-use wellfed_core::ble_setup::{OFFLINE_MS, PREFIX, parse_prefix, prefix};
-use wellfed_core::request_auth::hmac_sha256;
-use wellfed_core::store::net::NetStore;
-use wellfed_core::store::slot::JournalIo;
-use wellfed_hal::ble::{BleSetup, DropReason, FailStage, Record, RequestKind, SETUP};
-use wellfed_hal::sdk::fake::api::FAKE_REQUEST_KEY;
+use wellfed_core::ble_setup::{MAX_MESSAGE, PREFIX, parse_prefix, prefix};
+use wellfed_hal::ble::{BleSetup, DropReason, FailStage, Link, Record, SESSION_MS, SETUP, Step};
 use wellfed_hal::sdk::fake::{self, ble_record};
-use wellfed_hal::sdk::{Advertising, BleEvent, WifiEvent};
-use wellfed_hal::{net_status, network};
+use wellfed_hal::sdk::{Advertising, BleEvent};
 
-/// The network queue and status are process-wide; the fake hardware is per thread.
-static SERIAL: Mutex<()> = Mutex::new(());
-
-/// A started, ready setup task with an empty, writable credential store.
-fn start() -> (MutexGuard<'static, ()>, BleSetup) {
-    let guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+/// A started, ready link task.
+fn start() -> BleSetup {
     fake::reset_hardware();
-    network::reset();
-    net_status::reset();
-    open_store();
-
     let mut setup = BleSetup::default();
-    assert_eq!(setup.step().record, None);
+    assert_eq!(setup.step(false).record, None);
     assert_eq!(fake::with(|h| h.ble_started), Some(SETUP));
     ble_record(BleEvent::READY, 0, 0);
-    assert!(matches!(setup.step().record, Some(Record::Ready { .. })));
-    (guard, setup)
+    assert!(matches!(
+        setup.step(false).record,
+        Some(Record::Ready { .. })
+    ));
+    setup
 }
 
-fn open_store() {
-    use std::ffi::{c_uint, c_void};
-    unsafe extern "C" fn read(
-        _: *mut c_void,
-        slot: c_uint,
-        offset: u32,
-        bytes: *mut c_void,
-        size: usize,
-    ) -> bool {
-        // SAFETY: the store passes a live buffer of `size` bytes.
-        let out = unsafe { std::slice::from_raw_parts_mut(bytes.cast::<u8>(), size) };
-        wellfed_hal::sdk::storage_read(network::NET_BASE + slot, offset, out)
+/// Step once, advancing the fake clock by the step's delay.
+fn step(setup: &mut BleSetup, advertise: bool) -> Step {
+    let step = setup.step(advertise);
+    fake::with(|h| h.uptime_ms += step.delay_ms);
+    step
+}
+
+/// Step until the link reports something.
+fn link(setup: &mut BleSetup) -> Link {
+    for _ in 0..20 {
+        if let Some(link) = step(setup, false).link {
+            return link;
+        }
     }
-    let io = JournalIo {
-        context: std::ptr::null_mut(),
-        unit_bytes: wellfed_hal::sdk::SECTOR_BYTES,
-        read: Some(read),
-        program: None,
-        erase: None,
-    };
-    let mut store = NetStore::default();
-    // SAFETY: a static callback over the fake storage.
-    unsafe { store.open(io) };
-    network::publish(&store, true);
+    panic!("no link event")
 }
 
-fn wait(setup: &mut BleSetup, ms: u32) {
-    let end = fake::with(|h| h.uptime_ms) + ms;
-    while fake::with(|h| h.uptime_ms) < end {
-        let step = setup.step();
-        fake::with(|h| h.uptime_ms += step.delay_ms);
+fn connect(setup: &mut BleSetup) {
+    ble_record(BleEvent::CONNECT, 0, 12);
+    assert_eq!(
+        setup.step(false).record,
+        Some(Record::Connect { interval: 12 })
+    );
+    ble_record(BleEvent::NOTIFY, 0, 1);
+    assert_eq!(link(setup), Link::Opened);
+}
+
+fn write(message: &[u8]) {
+    let framed: Vec<u8> = prefix(message.len())
+        .unwrap()
+        .into_iter()
+        .chain(message.iter().copied())
+        .collect();
+    // In pieces, as a host writes them to a 23-byte MTU.
+    for piece in framed.chunks(20) {
+        fake::with(|h| h.ble_control.extend(piece));
     }
-}
-
-fn online() {
-    net_status::observe(&WifiEvent {
-        kind: WifiEvent::DNS,
-        value: 0x0a2a_6701,
-        ..WifiEvent::default()
-    });
 }
 
 /// Every message notified since the last call, unframed.
@@ -90,197 +75,104 @@ fn notified() -> Vec<Vec<u8>> {
     out
 }
 
-/// Connect, enable notifications and return the hello's nonce.
-fn connect(setup: &mut BleSetup) -> String {
-    ble_record(BleEvent::CONNECT, 0, 12);
-    assert_eq!(setup.step().record, Some(Record::Connect { interval: 12 }));
-    ble_record(BleEvent::NOTIFY, 0, 1);
-    assert_eq!(setup.step().record, None);
-
-    let hello = String::from_utf8(notified().remove(0)).unwrap();
-    let nonce = hello
-        .strip_prefix(r#"{"op":"hello","nonce":""#)
-        .and_then(|rest| rest.strip_suffix(r#""}"#))
-        .unwrap();
-    nonce.to_string()
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-
-/// A request as the server signs it, `fields` between the op and the nonce.
-fn signed(key: &[u8; 32], op: &str, fields: &str, nonce: &str, seq: u32) -> Vec<u8> {
-    let prefix = format!(
-        r#"{{"id":"0f8fad5b-d9cb-469f-a165-70867728950e","op":"{op}"{fields},"nonce":"{nonce}","seq":{seq}"#
-    );
-    let mac = hmac_sha256(key, &[prefix.as_bytes()]);
-    format!(r#"{prefix},"mac":"{}"}}"#, hex(&mac)).into_bytes()
-}
-
-fn write(message: &[u8]) {
-    let framed: Vec<u8> = prefix(message.len())
-        .unwrap()
-        .into_iter()
-        .chain(message.iter().copied())
-        .collect();
-    // In pieces, as a host writes them to a 23-byte MTU.
-    for piece in framed.chunks(20) {
-        fake::with(|h| h.ble_control.extend(piece));
-    }
-}
-
-/// Step until a record arrives.
-fn record(setup: &mut BleSetup) -> Record {
-    for _ in 0..20 {
-        let step = setup.step();
-        fake::with(|h| h.uptime_ms += step.delay_ms);
-        if let Some(record) = step.record {
-            return record;
-        }
-    }
-    panic!("no record");
-}
-
-const CREDENTIALS: &str = r#","ssid":"6e6574","psk":"70617373776f7264""#;
-
 #[test]
-fn advertising_waits_for_two_minutes_offline_and_stops_online() {
-    let (_guard, mut setup) = start();
-    wait(&mut setup, OFFLINE_MS - 1_000);
+fn it_advertises_only_while_asked_and_unconnected() {
+    let mut setup = start();
+    step(&mut setup, false);
     assert_eq!(fake::with(|h| h.ble_advertising), Advertising::Off);
-
-    wait(&mut setup, 2_000);
+    step(&mut setup, true);
     assert_eq!(fake::with(|h| h.ble_advertising), Advertising::On);
 
-    online();
-    wait(&mut setup, 1_000);
-    assert_eq!(fake::with(|h| h.ble_advertising), Advertising::Off);
-}
-
-#[test]
-fn a_signed_wifi_request_queues_the_credentials() {
-    let (_guard, mut setup) = start();
-    let nonce = connect(&mut setup);
-    write(&signed(&FAKE_REQUEST_KEY, "wifi", CREDENTIALS, &nonce, 1));
-
-    assert_eq!(
-        record(&mut setup),
-        Record::Request {
-            kind: RequestKind::Wifi,
-            ok: true
-        }
-    );
-    let reply = String::from_utf8(notified().remove(0)).unwrap();
-    assert!(
-        reply.contains(r#""id":"0f8fad5b-d9cb-469f-a165-70867728950e""#)
-            && reply.contains(r#""pending":true"#),
-        "{reply}"
-    );
-    assert!(
-        !reply.contains("70617373"),
-        "the passphrase is never echoed"
-    );
-    let queued = network::pending().unwrap().unwrap();
-    assert_eq!(
-        (queued.ssid(), queued.psk()),
-        (&b"net"[..], &b"password"[..])
-    );
-}
-
-#[test]
-fn wrong_keys_replays_and_other_ops_change_nothing() {
-    let (_guard, mut setup) = start();
-
-    let nonce = connect(&mut setup);
-    write(&signed(&[1; 32], "wifi", CREDENTIALS, &nonce, 1));
-    assert_eq!(
-        record(&mut setup),
-        Record::Request {
-            kind: RequestKind::Unauthenticated,
-            ok: false
-        }
-    );
-    assert!(
-        String::from_utf8(notified().remove(0))
-            .unwrap()
-            .contains(r#""error":"auth""#)
-    );
-
-    // A good request from an earlier hello is refused under the new nonce.
-    let stale = signed(&FAKE_REQUEST_KEY, "wifi", CREDENTIALS, &nonce, 1);
-    ble_record(BleEvent::NOTIFY, 0, 1);
-    setup.step();
-    notified();
-    write(&stale);
-    assert_eq!(
-        record(&mut setup),
-        Record::Request {
-            kind: RequestKind::Unauthenticated,
-            ok: false
-        }
-    );
-    notified();
-
-    ble_record(BleEvent::NOTIFY, 0, 1);
-    setup.step();
-    let fresh = String::from_utf8(notified().remove(0)).unwrap();
-    let nonce = &fresh[23..39];
-    write(&signed(
-        &FAKE_REQUEST_KEY,
-        "settings",
-        r#","lights":0"#,
-        nonce,
-        1,
-    ));
-    assert_eq!(
-        record(&mut setup),
-        Record::Request {
-            kind: RequestKind::Unsupported,
-            ok: false
-        }
-    );
-    assert_eq!(network::pending(), None);
-}
-
-#[test]
-fn unsigned_or_oversized_messages_drop_the_link() {
-    let (_guard, mut setup) = start();
     connect(&mut setup);
-    write(br#"{"id":"r1","op":"wifi","clear":1}"#);
+    step(&mut setup, true);
+    assert_eq!(fake::with(|h| h.ble_advertising), Advertising::Off);
+
+    ble_record(BleEvent::DISCONNECT, 0x13, 0);
+    assert_eq!(link(&mut setup), Link::Closed);
+    step(&mut setup, true);
+    assert_eq!(fake::with(|h| h.ble_advertising), Advertising::On);
+}
+
+#[test]
+fn a_message_in_pieces_is_held_until_consumed() {
+    let mut setup = start();
+    connect(&mut setup);
+
+    let first = [7u8; 32];
+    write(&first);
+    write(b"next");
+    assert_eq!(link(&mut setup), Link::Message);
+    assert_eq!(setup.message(), Some(&first[..]));
+    assert_eq!(step(&mut setup, false).link, None, "held, not reread");
+
+    setup.consume();
+    assert_eq!(setup.message(), None);
+    assert_eq!(link(&mut setup), Link::Message);
+    assert_eq!(setup.message(), Some(&b"next"[..]));
+}
+
+#[test]
+fn replies_go_out_framed_and_only_to_an_open_link() {
+    let mut setup = start();
+    assert_eq!(setup.send(b"early"), Err(DropReason::Notify));
+
+    connect(&mut setup);
+    assert_eq!(setup.send(&[1; 96]), Ok(()));
+    assert_eq!(notified(), vec![vec![1; 96]]);
+    assert_eq!(setup.send(&[0; MAX_MESSAGE + 1]), Err(DropReason::TooLong));
+}
+
+#[test]
+fn an_oversized_frame_or_a_long_session_drops_the_host() {
+    let mut setup = start();
+    connect(&mut setup);
+    fake::with(|h| h.ble_control.extend([0xff, 0xff]));
+    let drops = |setup: &mut BleSetup| (0..20).find_map(|_| step(setup, false).record).unwrap();
     assert_eq!(
-        record(&mut setup),
+        drops(&mut setup),
         Record::Drop {
-            reason: DropReason::Malformed
+            reason: DropReason::TooLong
         }
     );
     assert_eq!(fake::with(|h| h.ble_disconnects), 1);
 
     ble_record(BleEvent::DISCONNECT, 0x13, 0);
-    setup.step();
+    assert_eq!(link(&mut setup), Link::Closed);
     connect(&mut setup);
-    fake::with(|h| h.ble_control.extend([0xff, 0xff]));
+    fake::with(|h| h.uptime_ms += SESSION_MS);
     assert_eq!(
-        record(&mut setup),
+        drops(&mut setup),
         Record::Drop {
-            reason: DropReason::TooLong
+            reason: DropReason::Timeout
         }
     );
 }
 
 #[test]
-fn a_radio_that_never_comes_up_is_reported_once() {
-    let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+fn a_stack_that_never_comes_up_fails() {
     fake::reset_hardware();
     let mut setup = BleSetup::default();
-    setup.step();
-    ble_record(BleEvent::READY, BleEvent::READY_WIFI, 0);
+    setup.step(false);
+    let failed = (0..400)
+        .find_map(|_| step(&mut setup, false).record)
+        .unwrap();
     assert_eq!(
-        setup.step().record,
-        Some(Record::Failed {
-            stage: FailStage::Radio
-        })
+        failed,
+        Record::Failed {
+            stage: FailStage::Timeout
+        }
     );
-    let step = setup.step();
-    assert_eq!((step.record, step.delay_ms > 1_000), (None, true));
+}
+
+#[test]
+fn records_format() {
+    let mut text = String::new();
+    wellfed_hal::ble::describe(
+        Record::Drop {
+            reason: DropReason::Protocol,
+        },
+        &mut text,
+    )
+    .unwrap();
+    assert_eq!(text, "drop reason=protocol");
 }

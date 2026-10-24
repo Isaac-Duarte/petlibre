@@ -1,0 +1,19 @@
+[package]
+license.workspace = true
+name = "wellfed-client"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "Sans-IO client of the feeder's protocols, shared by the app and the owner's CLI: bytes in, bytes out"
+publish.workspace = true
+
+[dependencies]
+wellfed-core.workspace = true
+wellfed-proto.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+wellfed-feeder.workspace = true
+
+[lints]
+workspace = true

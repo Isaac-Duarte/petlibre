@@ -8,3 +8,4 @@
 
 pub mod pairing;
 pub mod panel;
+pub mod setup;

@@ -230,35 +230,23 @@ fn stage_and_reason_words_are_unchanged() {
     );
     assert_eq!(
         displayed(ble::DropReason::ALL, ble::DropReason::as_str),
-        ["no_key", "notify", "too_long", "malformed", "timeout"]
+        ["notify", "too_long", "timeout", "protocol", "done"]
     );
 }
 
 #[test]
 fn ble_records_carry_what_a_bench_run_reads() {
-    let wifi = line(tag::BLE, |f| {
+    let dropped = line(tag::BLE, |f| {
         ble::describe(
-            ble::Record::Request {
-                kind: ble::RequestKind::Wifi,
-                ok: true,
+            ble::Record::Drop {
+                reason: ble::DropReason::Protocol,
             },
             f,
         )
     });
-    let record = read(&wifi);
-    assert_eq!(record.first, "request");
-    assert!(record.is(tag::BLE, &[("op", "wifi"), ("ok", "1")]));
-
-    let refused = line(tag::BLE, |f| {
-        ble::describe(
-            ble::Record::Request {
-                kind: ble::RequestKind::Unauthenticated,
-                ok: false,
-            },
-            f,
-        )
-    });
-    assert!(read(&refused).is(tag::BLE, &[("op", "unauthenticated"), ("ok", "0")]));
+    let record = read(&dropped);
+    assert_eq!(record.first, "drop");
+    assert!(record.is(tag::BLE, &[("reason", "protocol")]));
 
     let advertising = line(tag::BLE, |f| {
         ble::describe(ble::Record::Advertising { on: true }, f)

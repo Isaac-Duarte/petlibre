@@ -4,7 +4,7 @@
 use std::sync::{Mutex, MutexGuard};
 
 use wellfed_core::store::clients::{Label, Role};
-use wellfed_hal::keys::{self, Change, Requested};
+use wellfed_hal::keys::{self, Change, KeyResult, Requested};
 
 /// The module's state is process-wide.
 static SERIAL: Mutex<()> = Mutex::new(());
@@ -34,7 +34,10 @@ fn one_change_waits_for_the_writer() {
     assert_eq!(keys::pending(), Some(Change::Reset));
     assert_eq!(keys::pending(), Some(Change::Reset), "held until finish");
 
-    keys::finish();
+    let ticket = keys::ticket();
+    assert_eq!(keys::outcome(ticket), None, "not finished yet");
+    keys::finish(KeyResult::Done);
+    assert_eq!(keys::outcome(ticket), Some(KeyResult::Done));
     assert_eq!(keys::pending(), None);
     assert_eq!(keys::request(enroll), Requested::Queued);
     assert_eq!(keys::pending(), Some(enroll));

@@ -1,11 +1,26 @@
 # Resume firmware development
 
-Handoff checkpoint: **October 23, 2026, Mountain time**. Read this, then
+Handoff checkpoint: **October 24, 2026, Mountain time**. Read this, then
 [AGENTS.md](AGENTS.md), the [development guide](docs/development/README.md),
 and [FIRMWARE_BOARD.md](FIRMWARE_BOARD.md) (stock parity: [FEATURE_BOARD.md](FEATURE_BOARD.md)). Update this handoff when the installed
 image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
+
+**October 24, early morning: FW45 groundwork (host), FP01 done (static), builds 6× faster; bench restored to `feeder`.**
+- **Runs (physical, no owner readings):**
+  - After the dock restart (relays and hotspot dropped), the hotspot was brought up again, and `boot fw30-restore-01` confirmed `optics` v99 (`d1184f87…`). `ota fw30-optics-02`/`03` had failed earlier on a serial-adapter I/O error (EPIPE); v99 had already confirmed.
+  - `boot fw30-pin2-02` and `fw30-pin2-03` ran the optics windows for CON2 pin 2, but **no readings were recorded: pin 2 is still open**, then pins 3 and 4.
+  - Restore: `ota fw30-restore-02` stopped before the offer (no server running), `boot fw30-restore-03` powered the feeder on, and `ota fw30-restore-04 --build --firmware feeder` installed `feeder` `def51900…` (v101, confirmed in 3 min, health clean), with a bounded `serve`, stopped afterwards. The operator script was removed.
+- **Code (host and build):**
+  - **Builder:** overlays are written only when their bytes change. An unchanged rebuild went from 313 C compiles (35 s) to 7 (about 6 s), with identical images. The write audit no longer reads a literal-pool word as a branch (a `CmdLogBuf` string address had decoded as `bvs.n <cmd_efuse_protect>`).
+  - **FW45:** no hardware RNG in the SDK (static), so `wellfed-core::rng` (90B health tests, SHA-256 conditioning, HMAC-DRBG), the seed store (sectors 7–8), the client store (9–10), `wellfed-feeder::pairing` and Noise XXpsk3. None of it is wired into the firmware yet ([pairing](docs/firmware/pairing.md#left-for-fw45)).
+  - **Storage:** every sector is named in `wellfed_amebad_sys::storage`.
+  - **FP01:** stock's limits and defaults for every feature card ([stock behavior](docs/devices/plaf103/stock/README.md#feature-limits-and-defaults-fp01)).
+  - **Checks:** `make check`, `make check-fixtures` and all 13 firmware images pass.
+- **Flash now:** **Bank 1:** `feeder` `def51900…` (v101, confirmed). **Bank 0:** `qa` `ef76b85e…`. **Next manifest version:** 102.
+- **Bench state:** feeder on, hotspot up, no server.
+- **Next:** FW45's entropy sampler and a bench capture of raw samples; FW30 pins 2–4 with the owner at the meter.
 
 **October 23, latest: FW44 done, the product resource budget (physical, no owner action; [resource budget](docs/firmware/resource-budget.md)).**
 - **Runs:** bounded `serve` throughout, stopped afterwards.
@@ -605,9 +620,9 @@ Bench lessons from stage C:
 
 Per the latest checkpoint at the top of this file (reconfirm before relying on it):
 
-- **Bank 1 (boots):** the `feeder` firmware `3edf8bce…`, OTA v97, confirmed (`fw44-budget-04`). It carries the runtime (supervision, clock, signed requests, settings writer, offer check), the button service and the FP11 child lock, and the FW44 Noise session table. It drives no motor.
+- **Bank 1 (boots):** the `feeder` firmware `def51900…`, OTA v101, confirmed (`fw30-restore-04`). It carries the runtime (supervision, clock, signed requests, settings writer, offer check), the button service and the FP11 child lock, and the FW44 Noise session table. It drives no motor.
 - **Bank 0 (recovery):** `qa` `ef76b85e…`, written by stock 1.1.15's updater in `fw40-stock-ota-07`. Only its runtime's recovery role runs from bank 0.
-- **Next manifest version:** 98.
+- **Next manifest version:** 102.
 
 Wi-Fi and broker credentials come from private files; images stay under `private/`.
 

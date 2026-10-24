@@ -420,6 +420,11 @@ fn promote(ctx: &mut Ctx, staged: &Staged) -> Result<()> {
         Outcome::Failed { stage } => {
             return Err(Error::Bench(format!("The promotion failed at {stage}")));
         }
+        Outcome::Skipped => {
+            return Err(Error::Bench(
+                "The promotion's attempt reset; bank 0 will not retry until a cold boot".into(),
+            ));
+        }
     }
     ctx.confirm(build)
 }

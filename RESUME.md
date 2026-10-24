@@ -12,15 +12,16 @@ image, bench state, next task, or acceptance evidence changes.
 - **mDNS:** the owner allowed UDP 5353 on the hotspot interface, and discovery from the bench host now works.
 - **Recovery** ([device API](docs/firmware/device-api.md#recovery-with-the-owner-at-the-panel-october-24)): `fw47-recover-05` enrolled a scratch owner key through the window and the code; the bench key then revoked it. `fw47-recover-04` was refused `unconfirmed` because one press never registered. Two fixes followed: code presses now hold off the panel's relock, and they are logged under their path (`pair recovery keyed=N`). Both are host-tested and in a fresh build (`make check` passed; the first-boot audits passed), not yet installed.
 - **`fw47-itest-05`** (`itest --build --power --destructive`, from master): `ota-update` passed. `ota-recovery` failed: bank 0's `qa` recovery role (`ef76b85e…`) hard-faulted at sector 48 of 230 of the restore download (`PLFLT1 cfsr=10000`, undefined instruction, `cmd_thread`), then booted on with `PLOTA1 skip marker=0x100`. `ota-power-cuts` was skipped. The cleanup restored the good build.
+- **`fw47-itest-06`** (`itest --build --power --only ota-recovery`, from master after the FW47 commit `3a4cc60`): `ota-update` and `ota-recovery` passed; no fault in any capture. The bank-0 fault is not reproduced ([device API](docs/firmware/device-api.md#left)). The bench now stops at `PLOTA1 skip` (uncommitted).
 - **Flash now:**
-  - **Bank 1:** `feeder` `2fdfd294…` (`fw47-itest-05`'s good build; its cleanup offer was v124).
+  - **Bank 1:** `feeder` `897ed06b…` (`fw47-itest-06`'s build of `3a4cc60`, with the relock and label fixes; installed as v125, restored as v127, confirmed).
   - **Bank 0:** `qa` `ef76b85e…`.
-  - **Next manifest version:** 125.
+  - **Next manifest version:** 128.
   - The client store holds one owner (the bench CLI's key).
 - **Bench state:** feeder on, hotspot up, no server, no capture running.
 - **Next:**
-  - Find the bank-0 fault: which SDK task runs from flash while the recovery role writes. Then rerun `itest --build --power --destructive --only ota-recovery,ota-power-cuts` from master.
-  - Review and commit FW47.
+  - `itest --build --power --destructive --only ota-power-cuts`.
+  - Decide whether to soak cold-boot bank-0 downloads to put a rate on the fault.
 
 **October 24, night: FW47 device API on hardware (physical, no owner action; uncommitted in the `fw47` worktree, branch `fw47`).**
 - **Code:**

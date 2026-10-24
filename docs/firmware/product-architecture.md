@@ -56,7 +56,7 @@ In code:
 - **`wellfed-feeder` (`src/product/wellfed-feeder`):** a `no_std` library with the product policy. Schedules, child lock, alerts, the history policy, and the request and entity model the API exposes. It is host-tested, and the server's simulator can reuse it.
 - **Firmware (`src/firmware/wellfed/feeder`):** the PLAF103's glue between the two. Another model gets its own thin firmware. It exists since FP11 with the panel's owner as its one loop task; the other owners join that loop.
 - **`wellfed-client`:** a sans-IO Rust core. It turns bytes in into bytes out (the Noise handshake, pairing, invites, requests, event-cursor sync and the installer's steps) and never opens a socket or a radio. The server drives it with tokio, the Android app with Dart IO, and WASM can run it later.
-- **`wellfed-server`:** the owner's server. Shared pieces (the Noise client, the request types, the release and signing code) come out of `wellfed-local` and `wellfed-bench` into libraries. `wellfed-local` stays the bench and stock-protocol tool, and gets simpler as those pieces leave.
+- **`wellfed-server`:** the owner's server. Shared pieces (the Noise client, the request types, the stock install path) come out of `wellfed-local` and `wellfed-bench` into single-purpose libraries, signing moves to `wellfed-build`, and `wellfed-local` is then deleted ([tools roadmap](../development/tools-roadmap.md)).
 
 ## Frontends
 

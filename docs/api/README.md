@@ -53,7 +53,7 @@ wellfed-server ─► wellfed-service ─► wellfed-store ─► wellfed-api*
 - **`wellfed-client`** holds no sockets, timers or radios. Its callers feed it bytes and the current time and send what it returns. The server drives it with tokio, the app with Dart IO, the CLI and bench with tokio, and the host simulator directly in tests.
 - **`wellfed-api`** builds for every target, including the app's Android library, so it carries no server dependencies.
 - **`wellfed-service`** never sees an HTTP type, and **`wellfed-server`** never sees SQL. A handler parses, authorizes, calls one service method and maps the result.
-- **`wellfed-local`** stays the bench and stock-protocol tool. Its replacement-firmware path moves to `wellfed-client`, and its MQTT replacement transport is removed once FW47 lands.
+- **`wellfed-local`** is retired in stages ([tools roadmap](../development/tools-roadmap.md)): its stock install path moves to a `wellfed-stock` library and `wellfed-client`'s installer steps, its replacement path to `wellfed-client` and the owner's `wellfed` CLI, and its MQTT replacement transport is removed once FW47 lands.
 - **Workspace members** gain `src/client/*` and `src/server/*`. Shared versions stay in `[workspace.dependencies]`.
 
 ## Device protocol

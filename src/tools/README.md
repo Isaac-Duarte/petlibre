@@ -2,6 +2,8 @@
 
 Every host tool is a Rust crate in the workspace. Build them with `cargo build --locked --release` and run the binaries from `target/release/` at the repository root (or pass `--root` where a tool takes one). `make check` runs their tests; the evidence tests that need ignored private inputs run under `make check-fixtures` ([fixtures](../../docs/development/fixtures.md)).
 
+Where each tool is going (`wellfed-local` split up and retired, the bench split into single-purpose crates) is in the [tools roadmap](../../docs/development/tools-roadmap.md).
+
 **Device** marks the tools that open a serial port or switch relays. Everything else works offline. Physical operations need an explicit task and a reviewed procedure (see [AGENTS.md](../../AGENTS.md)); a tool being here does not authorize running it against the feeder.
 
 | Crate | Device | Purpose |

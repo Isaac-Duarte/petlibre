@@ -9,6 +9,7 @@ This board covers what the SDK and hardware can do safely: peripherals, supervis
 - **Done:** FW01–FW15, FW20, FW24, FW31–FW33, FW35–FW41, FW44, FW50, several of them with recorded scope limits (see carried items).
 - **In progress:** FW30: the motor driver (TC118AH) reads standby in the ROM loader and brake at firmware STOP; emitter OFF levels, transients and the GPIO-to-input mapping remain. FW21: first sync, jump classification and drift bound pass; restart across a long uptime remains. FW25: device options and Wi-Fi credentials pass; broker credentials and a second network remain. FW27: the integration suite runs smoke, standard and soak tiers; stall, sensor, jam, low-power and feeding-phase scenarios remain. FW34: BLE runs beside Wi-Fi on the feeder (link and smoke tier with an earlier speaker build); the `ble` firmware gives an offline feeder its Wi-Fi credentials over BLE, which it then joins (physical, Oct 23). The stock round trip is UART-free on hardware (FW40, FW41: `fw41-roundtrip-01`). FW42 (consumer installer) and FW43 (rollback) are ready.
 - **Product platform (Oct 23):** one `feeder` firmware with an optional server: a Noise-encrypted feeder-hosted API, boot-gated BLE pairing and offline time ([product architecture](docs/firmware/product-architecture.md)). FW44 measured the product image ([resource budget](docs/firmware/resource-budget.md)): it fits, with the storage region extended to 32 sectors; FW50 put the board's pins in one place ([device layer](docs/firmware/device-layer.md)); FW45–FW48 build on FW44. Home Assistant (FW49) is paused. The API runs in one loop task under the two-task firmware limit. The `feeder` firmware exists since FP11 (the panel's owner in its loop task), and FW44 measures and grows that image. The `fw44-simon-*` captures in `private/` are another session's: they found the task-slot limit (`d6c57b9`) and belong to none of these cards.
+- **Host tools (Oct 24):** `wellfed-local` is being split up and retired, and the bench split into single-purpose crates ([tools roadmap](docs/development/tools-roadmap.md)): FW51 and FW52 are ready, FW53 follows the device API.
 - **Critical path to feeding:** FW30 → FW16 → FW17, which also leads stock parity ([FEATURE_BOARD.md](FEATURE_BOARD.md)).
 
 ### Carried items
@@ -128,6 +129,16 @@ One `feeder` firmware for every owner, with or without a server: the feeder owns
 | **FW49 ESPHome native API** | Planned (paused by owner, Oct 23) | — | FW44, FW45, FW46, FW47 | Home Assistant is paused ([options](docs/firmware/product-architecture.md#home-assistant)). If resumed: prove adoption with a host stub against a real HA instance first, then serve it on the feeder with a pinned `api.proto`, feeds through the feeding owner and no replay on reconnect. |
 | **FW50 Device layer for other models** | **Done** | **Static (Oct 23):** every pin and ADC channel the ports use now comes from one `wellfed_amebad_sys::board` module (they were repeated in up to six places); the flash layout stays data-driven in `layout.json`; everything else board-, unit- or stock-specific is listed with its reason in [device layer](docs/firmware/device-layer.md). No second model supported. Every firmware rebuilds with its audits; `make check` passes | FW37 | Audit the HAL, the runtime and `device.json` for PLAF103 assumptions (pins, layout, optics, motor, power inputs). Move each into the device description or record it as a known limit, without supporting a second model yet. |
 
+## Host tools
+
+Single-purpose crates in place of `wellfed-local` and a monolithic bench ([tools roadmap](docs/development/tools-roadmap.md)).
+
+| Card | Status | Evidence | Prerequisites | Finish line |
+| --- | --- | --- | --- | --- |
+| **FW51 Research paths out of `wellfed-local`** | Ready | — | — | Stock control (`feed`, `resolve`, `new-request-id`, `/api/feed`, feed records), the C-probe and modified-stock trials (`probe-query`, the `1.1.16` and C-probe images), `speak` and `ble-wifi` are deleted with their tests and docs. The install trial keeps its ledger, no-resend rule, image binding and evidence gates unchanged. Done when `make check` passes and `wellfed-bench`'s host tests for `ota`, `itest` and `stock-ota` pass unchanged. |
+| **FW52 The bench as single-purpose crates** | Ready | — | — | `wellfed-relay`, `wellfed-bench`, `wellfed-itest` and `wellfed-dashboard`, with the progress document, run record and bench config typed in `wellfed-formats`. `wellfed-dashboard` links neither the relay nor the flash client, and `wellfed-flash` stays a child process. Done when `make check` and `make check-web` pass with the page's Playwright suite unchanged, and the binary's commands and flags are unchanged. |
+| **FW53 Retire `wellfed-local`** | Planned | — | FW42, FW43, FW47, FW48, FW51 | Stages 3–6 of the roadmap: the stock path in `wellfed-stock` and `wellfed-client`'s installer steps, the owner's `wellfed` CLI over the device API, signing in `wellfed-build`, and the bench and suite on the device API. Done when the crate is deleted, `stock-roundtrip` and the standard tier pass on the research unit through the new crates, and no doc names `wellfed-local` outside history. |
+
 ## Status at a glance
 
 ✅ Done · 🚧 In progress · 🧪 Bench check · 🟢 Ready · ⬜ Planned. The cards above are authoritative.
@@ -182,3 +193,6 @@ One `feeder` firmware for every owner, with or without a server: the feeder owns
 | FW48 Updates over the device API | ⬜ Planned |
 | FW49 ESPHome native API | ⬜ Planned (paused) |
 | FW50 Device layer for other models | ✅ Done |
+| FW51 Research paths out of `wellfed-local` | 🟢 Ready |
+| FW52 The bench as single-purpose crates | 🟢 Ready |
+| FW53 Retire `wellfed-local` | ⬜ Planned |

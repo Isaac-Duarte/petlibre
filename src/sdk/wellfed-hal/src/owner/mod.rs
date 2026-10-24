@@ -147,23 +147,34 @@ struct Shared {
 
 /// The feeding owner: fixed-address storage the caller keeps in place from
 /// `start` until STOPPED, and the handle every commanding task shares.
-#[derive(Debug, Default)]
-pub struct Owner {
+#[derive(Debug)]
+pub struct Owner<S> {
     shared: UnsafeCell<Shared>,
-    task: UnsafeCell<OwnerTask>,
+    task: UnsafeCell<OwnerTask<S>>,
 }
 
 // SAFETY: the commands touch only `shared`, inside `IrqGuard`, which on the
 // single KM4 core excludes every other task and interrupt; only the owner
-// task borrows `task` (see the module's known limit).
-unsafe impl Sync for Owner {}
+// task borrows `task` (see the module's known limit), and the storage that
+// `start` moves into it must be able to cross to that task.
+unsafe impl<S: Send> Sync for Owner<S> {}
+
+impl<S> Default for Owner<S> {
+    fn default() -> Self {
+        Self {
+            shared: UnsafeCell::default(),
+            task: UnsafeCell::default(),
+        }
+    }
+}
 
 /// The owner task's state: the board, supervision, controller and journal
 /// progress. Only the `feed-owner` task borrows it.
 #[derive(Debug)]
-pub struct OwnerTask {
+pub struct OwnerTask<S> {
     pub config: OwnerConfig,
-    pub storage: OwnerStorage,
+    /// The durable journal, moved in by `start`.
+    pub storage: Option<S>,
     pub board: Board,
     pub events: Events,
     pub watchdog: Watchdog,
@@ -197,11 +208,11 @@ pub struct OwnerTask {
     shared: *mut Shared,
 }
 
-impl Default for OwnerTask {
+impl<S> Default for OwnerTask<S> {
     fn default() -> Self {
         Self {
             config: OwnerConfig::default(),
-            storage: OwnerStorage::default(),
+            storage: None,
             board: Board::default(),
             events: Events::default(),
             watchdog: Watchdog::default(),
@@ -227,18 +238,20 @@ impl Default for OwnerTask {
     }
 }
 
-active_pointer!(Owner);
+// The running owner, type-erased: the pointer only admits one owner at a
+// time and tells an owner whether it is the one running.
+active_pointer!(());
 
-impl Owner {
+impl<S: OwnerStorage> Owner<S> {
     /// Starts the experimental owner task. Retain this object until status
     /// STOPPED; stop is cooperative, never forced.
     ///
     /// # Safety
-    /// `config.flash` must be a live authority, and `storage` callbacks sound
-    /// for their context, for as long as the owner runs and beyond STOPPED
-    /// until global transport teardown. `self` must not move until STOPPED.
-    pub unsafe fn start(&self, config: &OwnerConfig, storage: &OwnerStorage) -> bool {
-        if !config.valid() || !storage.complete() {
+    /// `config.flash` must be a live authority for as long as the owner runs
+    /// and beyond STOPPED until global transport teardown. `self` must not
+    /// move until STOPPED.
+    pub unsafe fn start(&self, config: &OwnerConfig, storage: S) -> bool {
+        if !config.valid() {
             return false;
         }
 
@@ -256,7 +269,7 @@ impl Owner {
             unsafe {
                 *self.task.get() = OwnerTask {
                     config: *config,
-                    storage: *storage,
+                    storage: Some(storage),
                     state: OwnerState::Starting,
                     shared: self.shared.get(),
                     ..OwnerTask::default()
@@ -271,7 +284,7 @@ impl Owner {
                     ..Shared::default()
                 };
             }
-            set_active(ptr::from_ref(self).cast_mut());
+            set_active(ptr::from_ref(self).cast_mut().cast());
         }
 
         // SAFETY: `owner_step` takes this owner, which the caller's contract
@@ -281,7 +294,7 @@ impl Owner {
                 c"feed-owner",
                 2048,
                 3,
-                owner_step,
+                owner_step::<S>,
                 ptr::from_ref(self).cast_mut().cast(),
             )
         } {
@@ -299,9 +312,11 @@ impl Owner {
 
         true
     }
+}
 
+impl<S> Owner<S> {
     fn running(&self) -> bool {
-        active().cast_const() == ptr::from_ref(self)
+        active().cast_const() == ptr::from_ref(self).cast()
     }
 
     /// ENQUEUED is transport acceptance, not durable acceptance or dispensing.
@@ -409,14 +424,14 @@ impl Owner {
     /// which stand in for the hardware and the flash peer between task
     /// iterations. Never dereference it while the owner task runs.
     #[doc(hidden)]
-    pub fn task_state(&self) -> *mut OwnerTask {
+    pub fn task_state(&self) -> *mut OwnerTask<S> {
         self.task.get()
     }
 }
 
-unsafe extern "C" fn owner_step(argument: *mut c_void) -> u32 {
+unsafe extern "C" fn owner_step<S: OwnerStorage>(argument: *mut c_void) -> u32 {
     // `start` registered this fixed-address owner as the task context.
-    let owner = argument.cast_const().cast::<Owner>();
+    let owner = argument.cast_const().cast::<Owner<S>>();
     // SAFETY: the started owner; only this task borrows its task half.
     let task = unsafe { (*owner).task.get() };
     // SAFETY: as above.

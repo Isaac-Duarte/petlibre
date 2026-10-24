@@ -4,9 +4,9 @@
 
 use wellfed_core::store::seed::{self, SeedStatus, SeedStore};
 use wellfed_core::store::slot::{RECORD_BYTES, crc32};
-use wellfed_testkit::journal_flash::{FakeJournalFlash, UNIT};
+use wellfed_testkit::journal_flash::{FakeJournalFlash, FlashIo, UNIT};
 
-fn open(f: &mut FakeJournalFlash) -> SeedStore {
+fn open(f: &mut FakeJournalFlash) -> SeedStore<FlashIo> {
     let mut s = SeedStore::default();
     // SAFETY: the fake flash outlives the store in every test.
     unsafe { s.open(f.io()) };

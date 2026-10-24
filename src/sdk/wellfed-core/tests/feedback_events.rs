@@ -15,7 +15,7 @@ use wellfed_core::feed::controller::{
 use wellfed_core::feed::feedback::{
     CAPACITY, FeedbackDrive, FeedbackEvent, FeedbackEvents, FeedbackFault, FeedbackTakeResult,
 };
-use wellfed_core::feed::motor_gate::{MotorGate, MotorGateFault};
+use wellfed_core::feed::motor_gate::{MotorGate, MotorGateFault, MotorPins};
 use wellfed_core::feed::progress::{BowlMode, Direction};
 
 /// Compressed intervals; none is a deployment default.
@@ -366,13 +366,22 @@ unsafe extern "C" fn write_pair(context: *mut c_void, a: bool, b: bool) -> bool 
     true
 }
 
+/// The fixture's pins, read through the pointer between gate calls.
+struct Pins(*mut Output);
+
+impl MotorPins for Pins {
+    fn write_pair(&mut self, a: bool, b: bool) -> bool {
+        // SAFETY: every test keeps the pins alive for the gate's lifetime.
+        unsafe { write_pair(self.0.cast(), a, b) }
+    }
+}
+
 #[test]
 fn pipeline_applies_gate_output_and_stops() {
     let mut f = begin();
     let pins: *mut Output = Box::into_raw(Box::default());
     let mut gate = MotorGate::default();
-    // SAFETY: `pins` outlives every gate call below.
-    assert!(unsafe { gate.init(Some(write_pair), pins.cast(), 2, 4, 0) });
+    assert!(gate.init(Pins(pins), 2, 4, 0));
 
     for now in 0..=6 {
         if now == 5 {

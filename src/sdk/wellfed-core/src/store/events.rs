@@ -28,7 +28,7 @@
 
 use core::ffi::c_uint;
 
-use crate::store::slot::{JournalIo, crc32, get_u32, get_u64, put_u32, put_u64};
+use crate::store::slot::{SlotIo, crc32, get_u32, get_u64, put_u32, put_u64};
 
 pub const RECORD_BYTES: usize = 32;
 /// [`RECORD_BYTES`] as the I/O offsets count.
@@ -82,8 +82,8 @@ struct Unit {
 }
 
 #[derive(Debug)]
-pub struct EventLog {
-    io: Option<JournalIo>,
+pub struct EventLog<I> {
+    io: Option<I>,
     units: usize,
     per_unit: u32,
     table: [Unit; MAX_UNITS],
@@ -92,13 +92,13 @@ pub struct EventLog {
     next_seq: u64,
 }
 
-impl Default for EventLog {
+impl<I> Default for EventLog<I> {
     fn default() -> Self {
         Self::closed()
     }
 }
 
-impl EventLog {
+impl<I> EventLog<I> {
     pub const fn closed() -> Self {
         Self {
             io: None,
@@ -112,16 +112,14 @@ impl EventLog {
             next_seq: 1,
         }
     }
+}
 
-    /// Scan `units` erase units of `io` (2 to [`MAX_UNITS`]).
-    ///
-    /// # Safety
-    /// `io`'s callbacks must be sound for its context for as long as the log
-    /// is used, and its units must belong to the log alone.
-    #[allow(unsafe_code)]
-    pub unsafe fn open(&mut self, io: JournalIo, units: usize) {
+impl<I: SlotIo> EventLog<I> {
+    /// Scan `units` erase units of `io` (2 to [`MAX_UNITS`]), which belong to
+    /// the log alone.
+    pub fn open(&mut self, io: I, units: usize) {
         *self = Self::closed();
-        let per_unit = io.unit_bytes / RECORD_U32;
+        let per_unit = io.unit_bytes() / RECORD_U32;
         if !(2..=MAX_UNITS).contains(&units) || per_unit == 0 {
             return;
         }
@@ -192,7 +190,7 @@ impl EventLog {
 
     /// Append one record; its sequence number.
     pub fn append(&mut self, at: Option<u32>, body: &[u8; BODY_BYTES]) -> Result<u64, EventError> {
-        let io = self.io.ok_or(EventError::Closed)?;
+        let io = self.io.as_ref().ok_or(EventError::Closed)?;
         if self.table[self.head].free >= self.per_unit {
             // The newest unit is full: the oldest becomes the newest.
             // Its records are forgotten before the erase starts, and the

@@ -297,7 +297,7 @@ fn platform_boot_cut(
         CUT.with(|c| c.set(cut));
         POWER_LOST.with(|p| p.set(false));
 
-        let mut probe = Box::<Probe>::default();
+        let mut probe = Box::<Probe<Hooks>>::default();
         let mut provider = Box::<Provider>::default();
         let mut peer = Peer::default();
         let mut records = Vec::new();
@@ -311,7 +311,7 @@ fn platform_boot_cut(
             let raw: *mut Provider = &mut *provider;
             // SAFETY: the probe's pointers are the fixture's live locals.
             let step = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
-                probe.step::<Core<false>, Hooks>(raw)
+                probe.step::<Core<false>>(raw)
             }));
             let Ok(step) = step else {
                 faulted = true;

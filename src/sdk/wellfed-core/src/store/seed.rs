@@ -19,7 +19,7 @@ use core::ffi::c_uint;
 
 use crate::rng::{Drbg, Error};
 use crate::store::slot::{
-    COMMIT, COMMIT_AT, COMMIT_OFFSET, CRC_AT, JournalIo, LENGTH_AT, RECORD_BYTES, RECORD_LEN,
+    Bound, COMMIT, COMMIT_AT, COMMIT_OFFSET, CRC_AT, LENGTH_AT, RECORD_BYTES, RECORD_LEN, SlotIo,
     VERSION_AT, crc32, get_u16, get_u32, get_u64, put_u16, put_u32, put_u64,
 };
 
@@ -50,15 +50,15 @@ enum Scan {
 }
 
 #[derive(Clone, Copy)]
-pub struct SeedStore {
-    io: JournalIo,
+pub struct SeedStore<I> {
+    io: Bound<I>,
     pub status: SeedStatus,
     pub generation: u64,
     pub slot: c_uint,
     seed: Option<[u8; 32]>,
 }
 
-impl core::fmt::Debug for SeedStore {
+impl<I> core::fmt::Debug for SeedStore<I> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("SeedStore")
             .field("status", &self.status)
@@ -68,10 +68,10 @@ impl core::fmt::Debug for SeedStore {
     }
 }
 
-impl Default for SeedStore {
+impl<I> Default for SeedStore<I> {
     fn default() -> Self {
         Self {
-            io: JournalIo::default(),
+            io: Bound::NONE,
             status: SeedStatus::Unopened,
             generation: 0,
             slot: 0,
@@ -117,23 +117,20 @@ fn decode(p: &[u8; RECORD_BYTES]) -> Scan {
     Scan::Valid(generation, seed)
 }
 
-impl SeedStore {
+impl<I: SlotIo> SeedStore<I> {
     fn scan(&self, slot: c_uint) -> Option<Scan> {
         let mut record = [0u8; RECORD_BYTES];
         self.io.read(slot, 0, &mut record).then(|| decode(&record))
     }
 
     /// Bind to two exclusive erase units and load the newest valid seed.
-    ///
-    /// # Safety
-    /// The I/O callbacks must be sound for `io.context` while the store is used.
-    #[allow(unsafe_code)]
-    pub unsafe fn open(&mut self, io: JournalIo) -> SeedStatus {
+    pub fn open(&mut self, io: I) -> SeedStatus {
+        let unit = io.unit_bytes();
         *self = Self {
-            io,
+            io: Bound::new(io),
             ..Self::default()
         };
-        if io.read.is_none() || (io.unit_bytes as usize) < RECORD_BYTES {
+        if (unit as usize) < RECORD_BYTES {
             self.status = SeedStatus::Io;
             return self.status;
         }
@@ -174,7 +171,7 @@ impl SeedStore {
     /// Store `seed` to the other slot: erase, program, verify, commit,
     /// verify. A failure keeps the previous seed in memory.
     pub fn save(&mut self, seed: &[u8; 32]) -> bool {
-        if !self.writable() || self.io.program.is_none() || self.io.erase.is_none() {
+        if !self.writable() || !self.io.writable() {
             return false;
         }
         let generation = self.generation + 1;
@@ -209,7 +206,7 @@ impl SeedStore {
 ///
 /// A failed save still returns the generator, since `fresh` is health-tested
 /// input of full claimed entropy; the store's status reports the failure.
-pub fn start(store: &mut SeedStore, fresh: &[u8; 32]) -> Result<Drbg, Error> {
+pub fn start<I: SlotIo>(store: &mut SeedStore<I>, fresh: &[u8; 32]) -> Result<Drbg, Error> {
     let stored = store.seed.unwrap_or([0; 32]);
     let mut drbg = Drbg::new(fresh, &stored, PERSONALIZATION);
     let next = drbg.bytes()?;

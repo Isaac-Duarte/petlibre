@@ -37,7 +37,7 @@ use wellfed_hal::stopped;
 use wellfed_hal::supervision::config::{FLASH_LIMITS, SYSTIMER_HZ, WATCHDOG};
 use wellfed_hal::supervision::watchdog::Watchdog;
 
-pub use wellfed_sdk::storage::{FlashOps, SETTINGS_BASE, SETTINGS_BINDING, slot_io};
+pub use wellfed_sdk::storage::{FlashOps, SETTINGS_BASE, SETTINGS_BINDING, Slots};
 
 pub const POLL_MS: u32 = 10;
 pub const OP_GAP_MS: u32 = 10;
@@ -148,10 +148,11 @@ enum Stage {
 }
 
 /// Keep at a fixed address once started: the watchdog registers itself.
-#[derive(Debug, Default)]
-pub struct Probe {
+/// Writes through `F`.
+#[derive(Debug)]
+pub struct Probe<F> {
     pub watchdog: Watchdog,
-    pub settings: SettingsStore,
+    pub settings: SettingsStore<Slots<F, SETTINGS_BASE>>,
     clock: TickClock,
     stage: Stage,
     authority: u64,
@@ -166,7 +167,24 @@ fn next(delay_ms: u32, record: Option<Record>) -> Step {
     Step { delay_ms, record }
 }
 
-impl Probe {
+impl<F> Default for Probe<F> {
+    fn default() -> Self {
+        Self {
+            watchdog: Watchdog::default(),
+            settings: SettingsStore::default(),
+            clock: TickClock::default(),
+            stage: Stage::default(),
+            authority: 0,
+            progress: 0,
+            foreign_seen: false,
+            opened: false,
+            saves: 0,
+            ticks_max: 0,
+        }
+    }
+}
+
+impl<F: FlashOps> Probe<F> {
     fn end(&mut self, record: Record) -> Step {
         self.stage = Stage::Done;
         next(0, Some(record))
@@ -193,7 +211,7 @@ impl Probe {
     ///
     /// # Safety
     /// `provider` is valid for the probe's lifetime and not otherwise borrowed.
-    pub unsafe fn step<M: Mmio, F: FlashOps>(&mut self, provider: *mut Provider) -> Step {
+    pub unsafe fn step<M: Mmio>(&mut self, provider: *mut Provider) -> Step {
         match self.stage {
             Stage::Start => {
                 let count = sdk::backup_read(BOOT_COUNT_REGISTER).wrapping_add(1);
@@ -283,7 +301,7 @@ impl Probe {
                 next(OP_GAP_MS, Some(record))
             }
 
-            Stage::Run => self.run::<F>(provider),
+            Stage::Run => self.run(provider),
             Stage::Idle => {
                 // Feed only while every iteration re-verifies stopped outputs,
                 // and, once the hooks are armed, an idle unfaulted coordinator.
@@ -298,16 +316,12 @@ impl Probe {
         }
     }
 
-    fn run<F: FlashOps>(&mut self, provider: *mut Provider) -> Step {
+    fn run(&mut self, provider: *mut Provider) -> Step {
         if !self.opened {
             self.opened = true;
             let id = F::read_id();
             self.feed();
-            // SAFETY: `slot_io` callbacks are sound for any context.
-            let status = unsafe {
-                self.settings
-                    .open(slot_io::<F, SETTINGS_BASE>(), SETTINGS_BINDING)
-            };
+            let status = self.settings.open(Slots::new(), SETTINGS_BINDING);
             self.feed();
             let s = self.settings.settings;
             let generation = self.settings.generation;

@@ -38,8 +38,8 @@ use wellfed_hal::network::{self, NET_BASE};
 use wellfed_hal::{events, rng, settings};
 
 use crate::storage::{
-    CLIENTS_BASE, EVENTS_BASE, EVENTS_UNITS, FlashOps, SEED_BASE, SETTINGS_BASE, SETTINGS_BINDING,
-    ring_io, slot_io,
+    CLIENTS_BASE, EVENTS_BASE, EVENTS_UNITS, FlashOps, Region, SEED_BASE, SETTINGS_BASE,
+    SETTINGS_BINDING, Slots,
 };
 
 pub const POLL_MS: u32 = 200;
@@ -277,20 +277,38 @@ enum Stage {
     Serve,
 }
 
-#[derive(Default)]
-pub struct Writer {
+/// Writes through `F`, the storage region's mediated flash.
+pub struct Writer<F> {
     stage: Stage,
     arming: Arming,
-    store: SettingsStore,
-    net: NetStore,
+    store: SettingsStore<Slots<F, SETTINGS_BASE>>,
+    net: NetStore<Slots<F, NET_BASE>>,
     /// The credential store's open record, logged on the next step.
     net_opened: bool,
     armed: bool,
-    seed: SeedStore,
-    clients: ClientStore,
+    seed: SeedStore<Slots<F, SEED_BASE>>,
+    clients: ClientStore<Slots<F, CLIENTS_BASE>>,
     keys_opened: bool,
-    events: EventLog,
+    events: EventLog<Region<F, EVENTS_BASE, EVENTS_UNITS>>,
     events_opened: bool,
+}
+
+impl<F> Default for Writer<F> {
+    fn default() -> Self {
+        Self {
+            stage: Stage::default(),
+            arming: Arming::default(),
+            store: SettingsStore::default(),
+            net: NetStore::default(),
+            net_opened: false,
+            armed: false,
+            seed: SeedStore::default(),
+            clients: ClientStore::default(),
+            keys_opened: false,
+            events: EventLog::default(),
+            events_opened: false,
+        }
+    }
 }
 
 fn changed(current: Settings, fields: SettingsFields) -> Settings {
@@ -302,17 +320,13 @@ fn changed(current: Settings, fields: SettingsFields) -> Settings {
     }
 }
 
-impl Writer {
+impl<F: FlashOps> Writer<F> {
     /// The keys: mix the stored seed in and store the next, then open
     /// the client store and create the identity if it has none. Writes only
     /// when `writable` (armed, normal stage), each under its own attempt
     /// marker.
-    ///
-    /// # Safety
-    /// `F`'s operations are sound for the storage region.
-    unsafe fn keys<F: FlashOps>(&mut self, writable: bool) -> Record {
-        // SAFETY: the slot I/O callbacks are static functions.
-        unsafe { self.seed.open(slot_io::<F, SEED_BASE>()) };
+    fn keys(&mut self, writable: bool) -> Record {
+        self.seed.open(Slots::new());
         let mixed = self.seed.seed().is_some_and(|seed| rng::mix(seed));
         let saved = writable
             && rng::bytes().is_some_and(|next| {
@@ -322,8 +336,7 @@ impl Writer {
                 saved
             });
 
-        // SAFETY: as above.
-        unsafe { self.clients.open(slot_io::<F, CLIENTS_BASE>()) };
+        self.clients.open(Slots::new());
         let identity = if self.clients.identity().is_some() {
             Identity::Loaded
         } else if let Some(secret) = rng::bytes().filter(|_| writable && self.clients.writable()) {
@@ -391,7 +404,7 @@ impl Writer {
 
     fn apply(
         &mut self,
-        write: impl FnOnce(&mut ClientStore) -> Result<(), ClientError>,
+        write: impl FnOnce(&mut ClientStore<Slots<F, CLIENTS_BASE>>) -> Result<(), ClientError>,
     ) -> KeyResult {
         arming::set_attempt();
         let result = write(&mut self.clients);
@@ -446,16 +459,11 @@ impl Writer {
     /// # Safety
     /// `provider` is valid for the program's lifetime, stays at a fixed
     /// address and is not otherwise borrowed.
-    pub unsafe fn step<M: Mmio, H: Hooks, F: FlashOps>(&mut self, provider: *mut Provider) -> Step {
+    pub unsafe fn step<M: Mmio, H: Hooks>(&mut self, provider: *mut Provider) -> Step {
         match self.stage {
             Stage::Open => {
-                // SAFETY: the slot I/O callbacks are static functions.
-                let status = unsafe {
-                    self.store
-                        .open(slot_io::<F, SETTINGS_BASE>(), SETTINGS_BINDING)
-                };
-                // SAFETY: as above.
-                unsafe { self.net.open(slot_io::<F, NET_BASE>()) };
+                let status = self.store.open(Slots::new(), SETTINGS_BINDING);
+                self.net.open(Slots::new());
                 self.armed = H::armed();
                 self.stage = if self.armed { Stage::Idle } else { Stage::Arm };
                 self.publish();
@@ -512,19 +520,12 @@ impl Writer {
                 if !self.keys_opened {
                     self.keys_opened = true;
                     let writable = self.stage == Stage::Idle && H::armed();
-                    // SAFETY: the slot I/O callbacks are static functions.
-                    let record = unsafe { self.keys::<F>(writable) };
+                    let record = self.keys(writable);
                     return next(POLL_MS, Some(record));
                 }
                 if !self.events_opened {
                     self.events_opened = true;
-                    // SAFETY: the ring I/O callbacks are static functions.
-                    unsafe {
-                        self.events.open(
-                            ring_io::<F, EVENTS_BASE, EVENTS_UNITS>(),
-                            EVENTS_UNITS as usize,
-                        );
-                    }
+                    self.events.open(Region::new(), EVENTS_UNITS as usize);
                     events::publish_last(self.events.last_seq());
                     let record = Record::Events {
                         open: self.events.is_open(),

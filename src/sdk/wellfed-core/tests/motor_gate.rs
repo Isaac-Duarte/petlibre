@@ -8,7 +8,7 @@
 use core::ffi::c_void;
 
 use wellfed_core::feed::controller::MotorCommand;
-use wellfed_core::feed::motor_gate::{MotorGate, MotorGateFault};
+use wellfed_core::feed::motor_gate::{MotorGate, MotorGateFault, MotorPins};
 
 #[derive(Default)]
 struct Output {
@@ -41,15 +41,30 @@ unsafe extern "C" fn write_pair(context: *mut c_void, a: bool, b: bool) -> bool 
     true
 }
 
-fn init(gate: &mut MotorGate, pins: *mut Output, deadtime: u32, lease: u32, now: u32) -> bool {
-    // SAFETY: every test keeps `pins` alive for the gate's lifetime.
-    unsafe { gate.init(Some(write_pair), pins.cast(), deadtime, lease, now) }
+/// The fixture's pins, read through the pointer between gate calls.
+struct Pins(*mut Output);
+
+impl MotorPins for Pins {
+    fn write_pair(&mut self, a: bool, b: bool) -> bool {
+        // SAFETY: every test keeps the pins alive for the gate's lifetime.
+        unsafe { write_pair(self.0.cast(), a, b) }
+    }
+}
+
+fn init(
+    gate: &mut MotorGate<Pins>,
+    pins: *mut Output,
+    deadtime: u32,
+    lease: u32,
+    now: u32,
+) -> bool {
+    gate.init(Pins(pins), deadtime, lease, now)
 }
 
 /// Run `body` with a gate wired to fresh pins; pins are read through the pointer.
-fn with_gate(body: impl FnOnce(&mut MotorGate, *mut Output)) {
+fn with_gate(body: impl FnOnce(&mut MotorGate<Pins>, *mut Output)) {
     let pins = Box::into_raw(Box::new(Output::default()));
-    let mut gate = MotorGate::default();
+    let mut gate = MotorGate::<Pins>::default();
     body(&mut gate, pins);
     // SAFETY: the box leaked when the fixture was built, freed once here.
     drop(unsafe { Box::from_raw(pins) });

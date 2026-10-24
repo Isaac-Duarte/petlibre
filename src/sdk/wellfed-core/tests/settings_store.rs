@@ -12,12 +12,12 @@ use wellfed_core::store::settings::{
     Settings, SettingsStatus, SettingsStore, SlotState, WEAR_LIMIT,
 };
 use wellfed_core::store::slot::{RECORD_BYTES, crc32};
-use wellfed_testkit::journal_flash::{FakeJournalFlash, UNIT};
+use wellfed_testkit::journal_flash::{FakeJournalFlash, FlashIo, UNIT};
 
 const BINDING: u64 = 0x5046_5731_3502_0001;
 const UNITS: [usize; 3] = [UNIT, 4096, 148];
 
-fn open(f: &mut FakeJournalFlash) -> SettingsStore {
+fn open(f: &mut FakeJournalFlash) -> SettingsStore<FlashIo> {
     let mut s = SettingsStore::default();
     // SAFETY: the fake flash outlives the store in every test.
     unsafe { s.open(f.io(), BINDING) };

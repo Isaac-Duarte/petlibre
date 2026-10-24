@@ -3,13 +3,13 @@
 //! mutation of an append and of the erase that makes room.
 
 use wellfed_core::store::events::{BODY_BYTES, EventError, EventLog, RECORD_BYTES, Read};
-use wellfed_testkit::journal_flash::FakeJournalFlash;
+use wellfed_testkit::journal_flash::{FakeJournalFlash, FlashIo};
 
 /// Small units keep the wrap tests fast: 4 records each.
 const UNIT: usize = 4 * RECORD_BYTES;
 const UNITS: usize = 4;
 
-fn open(f: &mut FakeJournalFlash) -> EventLog {
+fn open(f: &mut FakeJournalFlash) -> EventLog<FlashIo> {
     let mut log = EventLog::closed();
     // SAFETY: the fake flash outlives the log in every test.
     unsafe { log.open(f.io(), UNITS) };
@@ -22,7 +22,7 @@ fn body(n: u8) -> [u8; BODY_BYTES] {
 
 /// Every record after `after`, in order, as (seq, first body byte), with a
 /// gap as (from, to + 1000).
-fn read_all(log: &EventLog, mut after: Option<u64>) -> Vec<(u64, u64)> {
+fn read_all(log: &EventLog<FlashIo>, mut after: Option<u64>) -> Vec<(u64, u64)> {
     let mut out = Vec::new();
     loop {
         match log.read_after(after) {
@@ -148,6 +148,6 @@ fn a_failed_erase_is_retried_and_a_closed_log_refuses() {
     let mut log = open(&mut f);
     assert_eq!(log.append(None, &body(17)), Ok(17));
 
-    let mut closed = EventLog::closed();
+    let mut closed = EventLog::<FlashIo>::closed();
     assert_eq!(closed.append(None, &body(1)), Err(EventError::Closed));
 }

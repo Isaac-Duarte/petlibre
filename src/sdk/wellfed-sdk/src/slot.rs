@@ -16,8 +16,8 @@ use wellfed_hal::sdk;
 
 /// Fixed-address state owned by one task.
 ///
-/// Not a `cell::TaskCell`: several probes keep raw C context pointers (the
-/// board, the flash coordinator, `JournalIo`), so they are not `Send`. A
+/// Not a `cell::TaskCell`: several probes keep raw pointers (the board's
+/// motor pins, the flash coordinator), so they are not `Send`. A
 /// slot needs no `Send` because its value never leaves the task that
 /// claimed it, except through [`Slot::release`], which requires it.
 pub struct Slot<T> {

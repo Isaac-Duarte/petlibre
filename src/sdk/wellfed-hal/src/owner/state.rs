@@ -6,7 +6,7 @@ use wellfed_core::feed::controller::{
 };
 use wellfed_core::feed::progress::{BowlMode, Direction};
 use wellfed_core::feed::sensor_inputs::{SensorInputs, SensorReading};
-use wellfed_core::feed::storage::{OwnerOutcome, OwnerResult};
+use wellfed_core::feed::storage::{OwnerOutcome, OwnerResult, OwnerStorage};
 use wellfed_core::flash_coord::{FlashCoord, FlashFault, FlashPhase};
 
 use crate::board;
@@ -16,7 +16,7 @@ use crate::supervision::watchdog::WatchdogFault;
 
 use super::{OwnerFault, OwnerState, OwnerStatus, OwnerTask, Shared};
 
-impl OwnerTask {
+impl<S: OwnerStorage> OwnerTask<S> {
     /// The shared half, inside `IrqGuard`; the borrow ends with `f`, which
     /// must not call back in.
     fn shared<R>(&self, f: impl FnOnce(&mut Shared) -> R) -> R {
@@ -37,7 +37,7 @@ impl OwnerTask {
             self.events.snapshot(s);
             return s.healthy;
         }
-        s.stopped = self.board.motor.write_pair.is_some()
+        s.stopped = self.board.motor.pins.is_some()
             && self.board.motor.applied_known
             && self.board.motor.applied == MotorCommand::Stop;
         s.optics_off = self.board.optics_initialized && board::optics_off();
@@ -94,7 +94,7 @@ impl OwnerTask {
             // Best effort: the outputs are verified stopped below.
             let _ = self.events.motor(MotorCommand::Stop);
             self.events.optics(false, 0);
-        } else if self.board.motor.write_pair.is_some() {
+        } else if self.board.motor.pins.is_some() {
             let observed = self.board.motor.observed_at;
             self.board.trip(observed);
             self.board.optics(false);
@@ -206,8 +206,12 @@ impl OwnerTask {
 
         self.finish_attempted = true;
         self.publish(); // REPORTING is visible before a potentially slow journal write.
-        // SAFETY: `start` validated the storage callbacks for their context.
-        if unsafe { self.storage.finish(&self.result, &next) } {
+        let result = self.result;
+        if self
+            .storage
+            .as_mut()
+            .is_some_and(|storage| storage.finish(&result, &next))
+        {
             self.recovery = next;
             self.result_durable = true;
             self.state = if self.fault == OwnerFault::Ok {
@@ -248,8 +252,10 @@ impl OwnerTask {
             return false;
         }
 
-        // SAFETY: as for `finish_result`.
-        let recovered = unsafe { self.storage.recover_into(&mut self.recovery) };
+        let recovered = match self.storage.as_mut() {
+            Some(storage) => storage.recover(&mut self.recovery),
+            None => false,
+        };
         let r = self.recovery;
         if !recovered
             || (c.bowl_mode == BowlMode::Single && r.direction != Direction::D0)
@@ -329,8 +335,11 @@ impl OwnerTask {
         if !self.quiet() {
             self.fail(OwnerFault::Hardware);
             self.state = OwnerState::Fault;
-        // SAFETY: as for `finish_result`.
-        } else if !unsafe { self.storage.reserve(&self.request) } {
+        } else if !self
+            .storage
+            .as_mut()
+            .is_some_and(|storage| storage.reserve(&self.request))
+        {
             self.fail(OwnerFault::Storage);
             self.state = OwnerState::Fault;
         } else {

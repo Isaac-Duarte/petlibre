@@ -5,9 +5,9 @@
 //! indexes into the owner-approved storage region (`sdk::STORAGE_OFFSET`),
 //! never absolute addresses.
 
-use core::ffi::{c_uint, c_void};
+use core::marker::PhantomData;
 
-use wellfed_core::store::slot::JournalIo;
+use wellfed_core::store::slot::SlotIo;
 use wellfed_hal::flash_lock::provider::Provider;
 use wellfed_hal::sdk;
 
@@ -34,61 +34,58 @@ pub trait FlashOps {
     fn read(sector: u32, offset: u32, bytes: &mut [u8]) -> bool;
 }
 
-/// Unit `slot` of the `COUNT` starting at region sector `BASE`.
-fn slot_sector<const BASE: u32, const COUNT: u32>(slot: c_uint) -> Option<u32> {
-    (slot < COUNT).then_some(BASE + slot)
-}
-
-// Slot I/O callbacks: the context is unused; slots map to fixed sectors.
-unsafe extern "C" fn io_read<F: FlashOps, const BASE: u32, const COUNT: u32>(
-    _context: *mut c_void,
-    slot: c_uint,
-    offset: u32,
-    bytes: *mut c_void,
-    size: usize,
-) -> bool {
-    let Some(sector) = slot_sector::<BASE, COUNT>(slot) else {
-        return false;
-    };
-    // SAFETY: the store passes a live buffer of `size` bytes.
-    let bytes = unsafe { core::slice::from_raw_parts_mut(bytes.cast::<u8>(), size) };
-    F::read(sector, offset, bytes)
-}
-
-unsafe extern "C" fn io_program<F: FlashOps, const BASE: u32, const COUNT: u32>(
-    _context: *mut c_void,
-    slot: c_uint,
-    offset: u32,
-    bytes: *const c_void,
-    size: usize,
-) -> bool {
-    let Some(sector) = slot_sector::<BASE, COUNT>(slot) else {
-        return false;
-    };
-    // SAFETY: as for `io_read`.
-    let bytes = unsafe { core::slice::from_raw_parts(bytes.cast::<u8>(), size) };
-    F::program(sector, offset, bytes)
-}
-
-unsafe extern "C" fn io_erase<F: FlashOps, const BASE: u32, const COUNT: u32>(
-    _context: *mut c_void,
-    slot: c_uint,
-) -> bool {
-    slot_sector::<BASE, COUNT>(slot).is_some_and(F::erase)
-}
+/// The `COUNT` sectors starting at region sector `BASE`, one erase unit
+/// each, through `F`.
+pub struct Region<F, const BASE: u32, const COUNT: u32>(PhantomData<fn() -> F>);
 
 /// Two-unit slot I/O for the sector pair starting at `BASE`.
-pub fn slot_io<F: FlashOps, const BASE: u32>() -> JournalIo {
-    ring_io::<F, BASE, 2>()
+pub type Slots<F, const BASE: u32> = Region<F, BASE, 2>;
+
+impl<F, const BASE: u32, const COUNT: u32> Region<F, BASE, COUNT> {
+    pub const fn new() -> Self {
+        Self(PhantomData)
+    }
+
+    /// The sector holding unit `slot`.
+    fn sector(slot: u32) -> Option<u32> {
+        (slot < COUNT).then_some(BASE + slot)
+    }
 }
 
-/// I/O for the `COUNT` sectors starting at `BASE`, one unit each.
-pub fn ring_io<F: FlashOps, const BASE: u32, const COUNT: u32>() -> JournalIo {
-    JournalIo {
-        context: core::ptr::null_mut(),
-        unit_bytes: sdk::SECTOR_BYTES,
-        read: Some(io_read::<F, BASE, COUNT>),
-        program: Some(io_program::<F, BASE, COUNT>),
-        erase: Some(io_erase::<F, BASE, COUNT>),
+impl<F, const BASE: u32, const COUNT: u32> Clone for Region<F, BASE, COUNT> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<F, const BASE: u32, const COUNT: u32> Copy for Region<F, BASE, COUNT> {}
+
+impl<F, const BASE: u32, const COUNT: u32> core::fmt::Debug for Region<F, BASE, COUNT> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "Region({BASE}, {COUNT})")
+    }
+}
+
+impl<F, const BASE: u32, const COUNT: u32> Default for Region<F, BASE, COUNT> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<F: FlashOps, const BASE: u32, const COUNT: u32> SlotIo for Region<F, BASE, COUNT> {
+    fn unit_bytes(&self) -> u32 {
+        sdk::SECTOR_BYTES
+    }
+
+    fn read(&self, slot: u32, offset: u32, bytes: &mut [u8]) -> bool {
+        Self::sector(slot).is_some_and(|sector| F::read(sector, offset, bytes))
+    }
+
+    fn program(&self, slot: u32, offset: u32, bytes: &[u8]) -> bool {
+        Self::sector(slot).is_some_and(|sector| F::program(sector, offset, bytes))
+    }
+
+    fn erase(&self, slot: u32) -> bool {
+        Self::sector(slot).is_some_and(F::erase)
     }
 }

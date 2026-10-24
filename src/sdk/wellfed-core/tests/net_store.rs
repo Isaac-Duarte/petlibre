@@ -3,9 +3,9 @@
 
 use wellfed_core::store::net::{Credentials, NetStatus, NetStore};
 use wellfed_core::store::slot::{RECORD_BYTES, crc32};
-use wellfed_testkit::journal_flash::{FakeJournalFlash, UNIT};
+use wellfed_testkit::journal_flash::{FakeJournalFlash, FlashIo, UNIT};
 
-fn open(f: &mut FakeJournalFlash) -> NetStore {
+fn open(f: &mut FakeJournalFlash) -> NetStore<FlashIo> {
     let mut s = NetStore::default();
     // SAFETY: the fake flash outlives the store in every test.
     unsafe { s.open(f.io()) };

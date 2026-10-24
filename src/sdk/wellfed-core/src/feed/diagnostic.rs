@@ -7,15 +7,13 @@
 //! shows the core logic is linked and consistent; it says nothing about
 //! hardware.
 
-use core::ffi::c_void;
-
 use crate::adc_scale::{AdcCalibration, SAMPLES};
 use crate::clock::tick::TickClock;
 use crate::feed::controller::{
     FeedController, FeedLimits, FeedRequest, FeedStartResult, FeedState, MotorCommand,
 };
 use crate::feed::feedback::{FeedbackDrive, FeedbackEvents, FeedbackFault};
-use crate::feed::motor_gate::{MotorGate, MotorGateFault};
+use crate::feed::motor_gate::{MotorGate, MotorGateFault, MotorPins};
 use crate::feed::progress::{BowlMode, Direction};
 use crate::feed::sensor_inputs::{SensorInputs, SensorLimits, SensorReading};
 
@@ -25,16 +23,15 @@ struct SimulatedMotor {
     b: bool,
 }
 
-#[allow(unsafe_code)]
-unsafe extern "C" fn simulated_write(context: *mut c_void, a: bool, b: bool) -> bool {
-    if !a && !b {
-        return false;
+impl MotorPins for SimulatedMotor {
+    fn write_pair(&mut self, a: bool, b: bool) -> bool {
+        if !a && !b {
+            return false;
+        }
+        self.a = a;
+        self.b = b;
+        true
     }
-    // SAFETY: `run` installs a pointer to its own live `SimulatedMotor`.
-    let motor = unsafe { &mut *context.cast::<SimulatedMotor>() };
-    motor.a = a;
-    motor.b = b;
-    true
 }
 
 pub fn run() -> bool {
@@ -67,16 +64,13 @@ fn run_pipeline() -> Option<()> {
         max_reverse_attempts: 0,
     };
 
-    let mut motor = SimulatedMotor::default();
     let mut inputs = SensorInputs::new(&sensor_limits, &calibration)?;
     let mut controller = FeedController::new(&feed_limits, 0)?;
     let mut events = FeedbackEvents::new(8, 2, 0)?;
     let mut clock = TickClock::new(32_000, 0, 0)?;
     let mut gate = MotorGate::default();
 
-    // SAFETY: `motor` outlives `gate`, which never escapes this function.
-    #[allow(unsafe_code)]
-    if !unsafe { gate.init(Some(simulated_write), (&raw mut motor).cast(), 1, 3, 0) } {
+    if !gate.init(SimulatedMotor::default(), 1, 3, 0) {
         return None;
     }
 
@@ -137,8 +131,7 @@ fn run_pipeline() -> Option<()> {
         && controller.progress.completed == 1
         && gate.applied_known
         && gate.applied == MotorCommand::Stop
-        && motor.a
-        && motor.b
+        && gate.pins.as_ref().is_some_and(|motor| motor.a && motor.b)
         && events.count == 0
         && events.fault == FeedbackFault::Ok)
         .then_some(())

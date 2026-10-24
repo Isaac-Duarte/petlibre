@@ -5,9 +5,6 @@
 //! mark and the mechanical phase. [`crate::store::feed_journal::FeedJournal`]
 //! provides the implementation.
 
-use core::ffi::c_void;
-use core::ptr;
-
 use crate::feed::controller::{FeedReason, FeedRequest};
 use crate::feed::progress::Direction;
 
@@ -67,79 +64,16 @@ pub struct OwnerResult {
     pub motion_possible: bool,
 }
 
-pub type RecoverFn =
-    unsafe extern "C" fn(context: *mut c_void, recovery: *mut OwnerRecovery) -> bool;
-pub type ReserveFn =
-    unsafe extern "C" fn(context: *mut c_void, request: *const FeedRequest) -> bool;
-pub type FinishFn = unsafe extern "C" fn(
-    context: *mut c_void,
-    result: *const OwnerResult,
-    phase: *const OwnerRecovery,
-) -> bool;
-
 /// Mandatory durable boundary, called with interrupts enabled and outputs off.
 /// A true return means the transaction survives reset. No automatic retries.
 /// Payloads are API values, never a native-struct on-flash format.
-#[derive(Clone, Copy, Debug)]
-pub struct OwnerStorage {
-    pub context: *mut c_void,
-    pub recover: Option<RecoverFn>,
-    pub reserve: Option<ReserveFn>,
-    pub finish: Option<FinishFn>,
-}
-
-impl Default for OwnerStorage {
-    fn default() -> Self {
-        Self {
-            context: ptr::null_mut(),
-            recover: None,
-            reserve: None,
-            finish: None,
-        }
-    }
-}
-
-#[allow(unsafe_code)]
-impl OwnerStorage {
-    pub fn complete(&self) -> bool {
-        self.recover.is_some() && self.reserve.is_some() && self.finish.is_some()
-    }
-
-    /// # Safety
-    /// The callbacks must be sound to call with `context`.
-    pub unsafe fn recover(&self) -> Option<OwnerRecovery> {
-        let mut recovery = OwnerRecovery::default();
-        // SAFETY: the caller upholds the callback contract; the pointer is live.
-        let ok = self
-            .recover
-            .is_some_and(|f| unsafe { f(self.context, &mut recovery) });
-        ok.then_some(recovery)
-    }
-
-    /// Raw C-style recovery: the callback may write `recovery` even when it
-    /// reports failure, and that value is kept.
-    ///
-    /// # Safety
-    /// The callbacks must be sound to call with `context`.
-    pub unsafe fn recover_into(&self, recovery: &mut OwnerRecovery) -> bool {
-        // SAFETY: the caller upholds the callback contract; the pointer is live.
-        self.recover
-            .is_some_and(|f| unsafe { f(self.context, recovery) })
-    }
-
-    /// # Safety
-    /// The callbacks must be sound to call with `context`.
-    pub unsafe fn reserve(&self, request: &FeedRequest) -> bool {
-        // SAFETY: the caller upholds the callback contract; the pointer is live.
-        self.reserve
-            .is_some_and(|f| unsafe { f(self.context, request) })
-    }
-
-    /// # Safety
-    /// The callbacks must be sound to call with `context`.
-    pub unsafe fn finish(&self, result: &OwnerResult, phase: &OwnerRecovery) -> bool {
-        // SAFETY: the caller upholds the callback contract; the pointers are live.
-        self.finish
-            .is_some_and(|f| unsafe { f(self.context, result, phase) })
-    }
+pub trait OwnerStorage {
+    /// The ID high-water mark and mechanical phase at boot. It may write
+    /// `recovery` even when it reports failure, and the owner keeps that
+    /// value.
+    fn recover(&mut self, recovery: &mut OwnerRecovery) -> bool;
+    /// Make `request` durable before any output is applied.
+    fn reserve(&mut self, request: &FeedRequest) -> bool;
+    /// Record the reserved request's result and the phase after it.
+    fn finish(&mut self, result: &OwnerResult, phase: &OwnerRecovery) -> bool;
 }

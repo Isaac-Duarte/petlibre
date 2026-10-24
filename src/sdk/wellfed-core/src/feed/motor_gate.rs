@@ -6,16 +6,15 @@
 //! `lease_ms`, which an independent timer tick enforces while the owner
 //! stalls. Any fault latches STOP.
 
-use core::ffi::c_void;
-use core::ptr;
-
 use crate::HALF_RANGE;
 use crate::feed::controller::MotorCommand;
 
-/// Update both pins coherently and report whether the result verified.
-/// HIGH/HIGH is STOP.
-pub type MotorWritePair =
-    unsafe extern "C" fn(context: *mut c_void, pa13_high: bool, pa14_high: bool) -> bool;
+/// The motor pin pair.
+pub trait MotorPins {
+    /// Update both pins coherently and report whether the result verified.
+    /// HIGH/HIGH is STOP.
+    fn write_pair(&mut self, pa13_high: bool, pa14_high: bool) -> bool;
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[repr(u32)]
@@ -36,9 +35,9 @@ impl MotorGateFault {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct MotorGate {
-    pub write_pair: Option<MotorWritePair>,
-    pub context: *mut c_void,
+pub struct MotorGate<P> {
+    /// `None` until `init`: every write is refused.
+    pub pins: Option<P>,
 
     pub deadtime_ms: u32,
     pub lease_ms: u32,
@@ -55,11 +54,10 @@ pub struct MotorGate {
     pub applied_known: bool,
 }
 
-impl Default for MotorGate {
+impl<P> Default for MotorGate<P> {
     fn default() -> Self {
         Self {
-            write_pair: None,
-            context: ptr::null_mut(),
+            pins: None,
             deadtime_ms: 0,
             lease_ms: 0,
             stopped_at: 0,
@@ -74,35 +72,18 @@ impl Default for MotorGate {
     }
 }
 
-impl MotorGate {
+impl<P: MotorPins> MotorGate<P> {
     /// Hardware must already have an inactive startup arrangement. A valid init
     /// writes/checks HIGH/HIGH once; invalid arguments do not touch outputs or
     /// `self`. All calls, including an independent timer tick, require
     /// serialized access.
-    ///
-    /// # Safety
-    /// `write_pair` must be sound to call with `context` for as long as this
-    /// gate (or any copy of it) is used.
-    #[allow(unsafe_code)]
-    pub unsafe fn init(
-        &mut self,
-        write_pair: Option<MotorWritePair>,
-        context: *mut c_void,
-        deadtime_ms: u32,
-        lease_ms: u32,
-        now_ms: u32,
-    ) -> bool {
-        if write_pair.is_none()
-            || deadtime_ms == 0
-            || lease_ms >= HALF_RANGE
-            || lease_ms <= deadtime_ms
-        {
+    pub fn init(&mut self, pins: P, deadtime_ms: u32, lease_ms: u32, now_ms: u32) -> bool {
+        if deadtime_ms == 0 || lease_ms >= HALF_RANGE || lease_ms <= deadtime_ms {
             return false;
         }
 
         *self = Self {
-            write_pair,
-            context,
+            pins: Some(pins),
             deadtime_ms,
             lease_ms,
             observed_at: now_ms,
@@ -117,13 +98,10 @@ impl MotorGate {
         true
     }
 
-    #[allow(unsafe_code)]
-    fn write(&self, pa13_high: bool, pa14_high: bool) -> bool {
-        match self.write_pair {
-            // SAFETY: `init`'s contract makes the callback valid for `context`.
-            Some(write_pair) => unsafe { write_pair(self.context, pa13_high, pa14_high) },
-            None => false,
-        }
+    fn write(&mut self, pa13_high: bool, pa14_high: bool) -> bool {
+        self.pins
+            .as_mut()
+            .is_some_and(|pins| pins.write_pair(pa13_high, pa14_high))
     }
 
     fn stop_output(&mut self, now: u32) -> bool {

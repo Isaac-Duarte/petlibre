@@ -16,7 +16,7 @@ use core::ffi::c_uint;
 
 use crate::feed::progress::BowlMode;
 use crate::store::slot::{
-    COMMIT, COMMIT_AT, COMMIT_OFFSET, CRC_AT, JournalIo, LENGTH_AT, RECORD_BYTES, RECORD_LEN,
+    Bound, COMMIT, COMMIT_AT, COMMIT_OFFSET, CRC_AT, LENGTH_AT, RECORD_BYTES, RECORD_LEN, SlotIo,
     TAIL_CHUNK, VERSION_AT, crc32, get_u16, get_u32, get_u64, put_u16, put_u32, put_u64,
 };
 
@@ -130,8 +130,8 @@ impl Scan {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct SettingsStore {
-    io: JournalIo,
+pub struct SettingsStore<I> {
+    io: Bound<I>,
     binding: u64,
     pub settings: Settings,
     pub status: SettingsStatus,
@@ -142,10 +142,10 @@ pub struct SettingsStore {
     writable: bool,
 }
 
-impl Default for SettingsStore {
+impl<I> Default for SettingsStore<I> {
     fn default() -> Self {
         Self {
-            io: JournalIo::default(),
+            io: Bound::NONE,
             binding: 0,
             settings: Settings::default(),
             status: SettingsStatus::Unopened,
@@ -165,7 +165,7 @@ fn ours_torn(record: &[u8; RECORD_BYTES]) -> bool {
     matched == MAGIC.len() || record[matched..].iter().all(|&b| b == u8::MAX)
 }
 
-impl SettingsStore {
+impl<I: SlotIo> SettingsStore<I> {
     fn encode(&self, generation: u64, s: &Settings) -> [u8; RECORD_BYTES] {
         let mut p = [0u8; RECORD_BYTES];
         p[..8].copy_from_slice(&MAGIC);
@@ -235,8 +235,8 @@ impl SettingsStore {
         let mut tail = [0u8; 64];
         let mut offset = u32::from(RECORD_LEN);
         let mut tail_erased = true;
-        while offset < self.io.unit_bytes {
-            let chunk = (self.io.unit_bytes - offset).min(TAIL_CHUNK);
+        while offset < self.io.unit_bytes() {
+            let chunk = (self.io.unit_bytes() - offset).min(TAIL_CHUNK);
             let size = chunk as usize;
             if !self.io.read(slot, offset, &mut tail[..size]) {
                 return None;
@@ -256,24 +256,15 @@ impl SettingsStore {
     }
 
     /// Bind to two exclusive erase units and load the newest valid record.
-    ///
-    /// # Safety
-    /// The I/O callbacks must be sound for `io.context` while the store is used.
-    #[allow(unsafe_code)]
-    pub unsafe fn open(&mut self, io: JournalIo, binding: u64) -> SettingsStatus {
+    pub fn open(&mut self, io: I, binding: u64) -> SettingsStatus {
+        let unit = io.unit_bytes();
         *self = Self {
-            io,
+            io: Bound::new(io),
             binding,
             ..Self::default()
         };
 
-        if io.read.is_none()
-            || io.program.is_none()
-            || io.erase.is_none()
-            || (io.unit_bytes as usize) < RECORD_BYTES
-            || !io.unit_bytes.is_multiple_of(4)
-            || binding == 0
-        {
+        if (unit as usize) < RECORD_BYTES || !unit.is_multiple_of(4) || binding == 0 {
             return self.status;
         }
 

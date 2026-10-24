@@ -38,6 +38,12 @@ use crate::flash_lock::provider::Provider;
 use crate::health::{self, Boot, Link};
 use crate::net_status;
 use crate::sdk::{self, TcpRecv, TransportConfig};
+use crate::supervision::config::SYSTIMER_HZ;
+
+/// SysTimer ticks as whole milliseconds, saturating.
+fn ticks_ms(ticks: u32) -> u32 {
+    u32::try_from(u64::from(ticks) * 1000 / u64::from(SYSTIMER_HZ)).unwrap_or(u32::MAX)
+}
 
 // The SDK crate cannot depend on wellfed-core, so it keeps its own copies
 // of the bank layout the updater writes; they must agree.
@@ -178,6 +184,10 @@ pub enum Record {
         sectors: u32,
         total: u32,
         leases: u64,
+        /// The longest lease's IRQ-masked time so far, in milliseconds.
+        masked_max_ms: u32,
+        /// Leases that held IRQs masked past 100 ms.
+        masked_long: u64,
     },
     Activated {
         version: u32,
@@ -244,7 +254,12 @@ pub fn describe(record: Record, f: &mut impl fmt::Write) -> fmt::Result {
             sectors,
             total,
             leases,
-        } => write!(f, "progress sectors={sectors}/{total} leases={leases}"),
+            masked_max_ms,
+            masked_long,
+        } => write!(
+            f,
+            "progress sectors={sectors}/{total} leases={leases} masked_max_ms={masked_max_ms} masked_long={masked_long}"
+        ),
         Record::Activated {
             version,
             bytes,
@@ -333,6 +348,10 @@ pub struct Updater {
     writer: Option<Writer>,
     sectors: u32,
     leases: u64,
+    /// The provider's longest masked lease (SysTimer ticks) and count of
+    /// long ones, copied after each step for the progress record.
+    masked_max: u32,
+    masked_long: u64,
     no_offer_at: Option<u32>,
     /// The last health this session published while waiting.
     health_at: Option<u32>,
@@ -355,6 +374,8 @@ impl Updater {
             writer: None,
             sectors: 0,
             leases: 0,
+            masked_max: 0,
+            masked_long: 0,
             no_offer_at: None,
             health_at: None,
             link: Link::default(),
@@ -426,7 +447,10 @@ impl Updater {
             Stage::Net => {
                 let step = self.net(flash);
                 // SAFETY: the caller's contract; no hook call is in progress.
-                self.leases = unsafe { (*provider).leases };
+                let provider = unsafe { &*provider };
+                self.leases = provider.leases;
+                self.masked_max = provider.masked_max;
+                self.masked_long = provider.masked_long;
                 step
             }
 
@@ -769,6 +793,8 @@ impl Updater {
                 sectors: self.sectors,
                 total: manifest.image_len.div_ceil(SECTOR_BYTES),
                 leases: self.leases,
+                masked_max_ms: ticks_ms(self.masked_max),
+                masked_long: self.masked_long,
             };
             next(POLL_MS, Some(record))
         })

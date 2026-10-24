@@ -157,6 +157,12 @@ static BRANCH: LazyLock<Regex> = LazyLock::new(|| {
     )
     .expect("literal pattern")
 });
+/// A PC-relative word load, with the literal's address from objdump's
+/// comment: `ldr r1, [pc, #32] ; (e002f7c <CmdLogBuf+0x28>)`.
+static LITERAL_LOAD: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\tldr(?:\.w)?\t\w+, \[pc(?:, #-?\d+)?\]\s*; \(([0-9a-f]+) <")
+        .expect("literal pattern")
+});
 /// A disassembled line with its encoding: address, bytes, mnemonic.
 static INSTRUCTION: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^\s*([0-9a-f]+):\t((?:[0-9a-f]{2,8} ?)+)\s*\t(\S+)").expect("literal pattern")
@@ -322,6 +328,7 @@ fn references(
         }
     }
 
+    let literals = literal_bytes(&listing)?;
     let mut current: Option<String> = None;
     let mut veneers: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for line in listing.lines() {
@@ -332,6 +339,11 @@ fn references(
         let (Some(branch), Some(caller)) = (BRANCH.captures(line), current.as_ref()) else {
             continue;
         };
+        if let Some(at) = INSTRUCTION.captures(line)
+            && literals.contains(&parse_hex(&at[1])?)
+        {
+            continue;
+        }
         let target = &branch[2];
         if let Some(veneered) = target
             .strip_prefix("__")
@@ -357,6 +369,22 @@ fn references(
         callers.retain(|n| n != target && !(n.starts_with("__") && n.ends_with("_veneer")));
     }
     Ok(found)
+}
+
+/// Every byte of a word some code loads PC-relative. Without mapping
+/// symbols the disassembler decodes literal pools as code, and a literal's
+/// half can read as a branch (observed: a string address in CmdLogBuf's pool
+/// spelled `bvs.n <cmd_efuse_protect>`). Code never loads its own
+/// instructions, so a branch decoded there is data.
+fn literal_bytes(listing: &str) -> Result<BTreeSet<u64>> {
+    let mut bytes = BTreeSet::new();
+    for line in listing.lines() {
+        if let Some(m) = LITERAL_LOAD.captures(line) {
+            let at = parse_hex(&m[1])?;
+            bytes.extend(at..at + 4);
+        }
+    }
+    Ok(bytes)
 }
 
 /// Each byte of a decoded instruction, mapped to that instruction's address.
@@ -539,6 +567,26 @@ mod tests {
             assert!(["FLASH_EraseXIP", "__FLASH_EraseXIP_veneer"].contains(&&m[2]));
         }
         assert!(BRANCH.captures(" 1000:\t4770 \tbx\tlr").is_none());
+    }
+
+    #[test]
+    fn a_branch_decoded_from_a_literal_pool_is_data() {
+        let listing = concat!(
+            " e002f6e:\t4807      \tldr\tr0, [pc, #28]\t; (e002f8c <CmdLogBuf+0x38>)\n",
+            " e002f8c:\td62a      \tbvs.n\te002fe4 <cmd_efuse_protect>\n",
+        );
+        let literals = literal_bytes(listing).unwrap();
+        assert_eq!(literals, (0xe002f8c..0xe002f90).collect());
+        let wide = " e002f70:\tf8df 0010 \tldr.w\tr0, [pc, #16]\t; (e002f84 <x+0x4>)";
+        assert_eq!(
+            literal_bytes(wide).unwrap(),
+            (0xe002f84..0xe002f88).collect()
+        );
+        assert!(
+            literal_bytes(" 1000:\t6818      \tldr\tr0, [r3, #0]")
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]

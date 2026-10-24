@@ -1,6 +1,7 @@
 //! The FW08 replacement-firmware role end to end with a generic MQTT client:
-//! health reaches the API, only allowlisted requests are sent, and each role
-//! stays inside its own topics.
+//! health reaches the API and each role stays inside its own topics. Since
+//! FW47 the server sends the firmware no requests: they go over the device
+//! API, and the retired request route is gone.
 
 mod common;
 
@@ -68,23 +69,6 @@ async fn wait_for(
     panic!("replacement status never matched");
 }
 
-async fn request(
-    config: &petlibre_local::config::Config,
-    http: &reqwest::Client,
-    body: &str,
-) -> reqwest::Response {
-    http.post(format!(
-        "http://{}/api/replacement/request",
-        config.http_listen
-    ))
-    .bearer_auth(&config.api_token)
-    .header("content-type", "application/json")
-    .body(body.to_owned())
-    .send()
-    .await
-    .unwrap()
-}
-
 fn health(seq: u64, online: bool) -> Vec<u8> {
     serde_json::to_vec(
         &json!({"schema":"petlibre.health","v":1,"online":online,"seq":seq,
@@ -94,7 +78,7 @@ fn health(seq: u64, online: bool) -> Vec<u8> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn firmware_role_reports_health_answers_requests_and_stays_in_its_namespace() {
+async fn firmware_role_reports_health_and_stays_in_its_namespace() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("server.json");
     let mut config = common::config();
@@ -129,12 +113,6 @@ async fn firmware_role_reports_health_answers_requests_and_stays_in_its_namespac
     assert!(
         refused.is_err(),
         "broker accepted a wrong firmware password"
-    );
-
-    // Before any health, a request is refused rather than lost.
-    assert_eq!(
-        request(&config, &http, r#"{"op":"ping"}"#).await.status(),
-        reqwest::StatusCode::SERVICE_UNAVAILABLE
     );
 
     let mut options = firmware_options(&config, &password);
@@ -177,7 +155,8 @@ async fn firmware_role_reports_health_answers_requests_and_stays_in_its_namespac
         );
     }
 
-    let (incoming_send, mut incoming) = tokio::sync::mpsc::channel::<(String, Vec<u8>)>(8);
+    // The pump keeps the firmware's session polled; nothing is expected on it.
+    let (incoming_send, _incoming) = tokio::sync::mpsc::channel::<(String, Vec<u8>)>(8);
     let pump = tokio::spawn(async move {
         loop {
             match events.poll().await {
@@ -219,46 +198,6 @@ async fn firmware_role_reports_health_answers_requests_and_stays_in_its_namespac
         .unwrap();
     let after = wait_for(&config, &http, |r| r["rejected"] == 1).await;
     assert_eq!(after["health"]["seq"], 1);
-
-    // Only allowlisted operations are accepted.
-    for body in [r#"{"op":"reboot"}"#, r#"{"op":"ping","x":1}"#, "not json"] {
-        assert_eq!(
-            request(&config, &http, body).await.status(),
-            reqwest::StatusCode::BAD_REQUEST,
-            "{body}"
-        );
-    }
-
-    let response = request(&config, &http, r#"{"op":"ping"}"#).await;
-    assert_eq!(response.status(), reqwest::StatusCode::OK);
-    let sent: Value = response.json().await.unwrap();
-    let id = sent["id"].as_str().unwrap().to_owned();
-    assert_eq!(sent["op"], "ping");
-
-    let (topic, payload) = tokio::time::timeout(Duration::from_secs(5), incoming.recv())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(topic, config.firmware_topic("request"));
-    let received: Value = serde_json::from_slice(&payload).unwrap();
-    assert_eq!(received, json!({"id": id, "op": "ping"}));
-
-    firmware
-        .publish(
-            config.firmware_topic("reply"),
-            QoS::AtMostOnce,
-            false,
-            serde_json::to_vec(&json!({"id": id, "op": "ping", "ok": true, "uptime_ms": 2000}))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    let replied = wait_for(&config, &http, |r| {
-        r["replies"].as_array().is_some_and(|v| !v.is_empty())
-    })
-    .await;
-    assert_eq!(replied["replies"][0]["message"]["id"], id.as_str());
 
     // The stock device role cannot subscribe to or publish into the namespace.
     let mut device_options = MqttOptions::new(
@@ -317,14 +256,10 @@ async fn firmware_role_reports_health_answers_requests_and_stays_in_its_namespac
     drop(firmware);
     let offline = wait_for(&config, &http, |r| r["health"]["seq"] == 0).await;
     assert_eq!(offline["online"], false);
-    assert_eq!(
-        request(&config, &http, r#"{"op":"health"}"#).await.status(),
-        reqwest::StatusCode::SERVICE_UNAVAILABLE
-    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn without_a_firmware_role_status_has_none_and_requests_are_not_found() {
+async fn without_a_firmware_role_status_has_none_and_the_request_route_is_gone() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("server.json");
     let mut config = common::config();
@@ -341,8 +276,16 @@ async fn without_a_firmware_role_status_has_none_and_requests_are_not_found() {
     ready(&config, &http).await;
 
     assert_eq!(status(&config, &http).await["replacement"], Value::Null);
-    assert_eq!(
-        request(&config, &http, r#"{"op":"ping"}"#).await.status(),
-        reqwest::StatusCode::NOT_FOUND
-    );
+    let retired = http
+        .post(format!(
+            "http://{}/api/replacement/request",
+            config.http_listen
+        ))
+        .bearer_auth(&config.api_token)
+        .header("content-type", "application/json")
+        .body(r#"{"op":"ping"}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(retired.status(), reqwest::StatusCode::NOT_FOUND);
 }

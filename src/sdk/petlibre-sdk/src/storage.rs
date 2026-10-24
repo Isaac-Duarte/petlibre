@@ -16,6 +16,9 @@ pub const SETTINGS_BASE: u32 = sdk::storage::SETTINGS.first;
 /// FW45: the generator's seed across boots, and the identity and clients.
 pub const SEED_BASE: u32 = sdk::storage::SEED.first;
 pub const CLIENTS_BASE: u32 = sdk::storage::CLIENTS.first;
+/// FW47: the event ring.
+pub const EVENTS_BASE: u32 = sdk::storage::EVENTS.first;
+pub const EVENTS_UNITS: u32 = sdk::storage::EVENTS.count;
 /// Installation binding for the research unit's settings.
 pub const SETTINGS_BINDING: u64 = 0x5046_5731_3502_0001;
 
@@ -31,20 +34,20 @@ pub trait FlashOps {
     fn read(sector: u32, offset: u32, bytes: &mut [u8]) -> bool;
 }
 
-/// Slot `slot` of the pair starting at region sector `BASE`.
-fn slot_sector<const BASE: u32>(slot: c_uint) -> Option<u32> {
-    (slot < 2).then_some(BASE + slot)
+/// Unit `slot` of the `COUNT` starting at region sector `BASE`.
+fn slot_sector<const BASE: u32, const COUNT: u32>(slot: c_uint) -> Option<u32> {
+    (slot < COUNT).then_some(BASE + slot)
 }
 
 // Slot I/O callbacks: the context is unused; slots map to fixed sectors.
-unsafe extern "C" fn io_read<F: FlashOps, const BASE: u32>(
+unsafe extern "C" fn io_read<F: FlashOps, const BASE: u32, const COUNT: u32>(
     _context: *mut c_void,
     slot: c_uint,
     offset: u32,
     bytes: *mut c_void,
     size: usize,
 ) -> bool {
-    let Some(sector) = slot_sector::<BASE>(slot) else {
+    let Some(sector) = slot_sector::<BASE, COUNT>(slot) else {
         return false;
     };
     // SAFETY: the store passes a live buffer of `size` bytes.
@@ -52,14 +55,14 @@ unsafe extern "C" fn io_read<F: FlashOps, const BASE: u32>(
     F::read(sector, offset, bytes)
 }
 
-unsafe extern "C" fn io_program<F: FlashOps, const BASE: u32>(
+unsafe extern "C" fn io_program<F: FlashOps, const BASE: u32, const COUNT: u32>(
     _context: *mut c_void,
     slot: c_uint,
     offset: u32,
     bytes: *const c_void,
     size: usize,
 ) -> bool {
-    let Some(sector) = slot_sector::<BASE>(slot) else {
+    let Some(sector) = slot_sector::<BASE, COUNT>(slot) else {
         return false;
     };
     // SAFETY: as for `io_read`.
@@ -67,20 +70,25 @@ unsafe extern "C" fn io_program<F: FlashOps, const BASE: u32>(
     F::program(sector, offset, bytes)
 }
 
-unsafe extern "C" fn io_erase<F: FlashOps, const BASE: u32>(
+unsafe extern "C" fn io_erase<F: FlashOps, const BASE: u32, const COUNT: u32>(
     _context: *mut c_void,
     slot: c_uint,
 ) -> bool {
-    slot_sector::<BASE>(slot).is_some_and(F::erase)
+    slot_sector::<BASE, COUNT>(slot).is_some_and(F::erase)
 }
 
 /// Two-unit slot I/O for the sector pair starting at `BASE`.
 pub fn slot_io<F: FlashOps, const BASE: u32>() -> JournalIo {
+    ring_io::<F, BASE, 2>()
+}
+
+/// I/O for the `COUNT` sectors starting at `BASE`, one unit each.
+pub fn ring_io<F: FlashOps, const BASE: u32, const COUNT: u32>() -> JournalIo {
     JournalIo {
         context: core::ptr::null_mut(),
         unit_bytes: sdk::SECTOR_BYTES,
-        read: Some(io_read::<F, BASE>),
-        program: Some(io_program::<F, BASE>),
-        erase: Some(io_erase::<F, BASE>),
+        read: Some(io_read::<F, BASE, COUNT>),
+        program: Some(io_program::<F, BASE, COUNT>),
+        erase: Some(io_erase::<F, BASE, COUNT>),
     }
 }

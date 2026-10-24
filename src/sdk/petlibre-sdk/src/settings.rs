@@ -12,12 +12,19 @@
 //! publishes the identity for the loop task and applies the client changes
 //! the loop queues (`petlibre_hal::keys`): enrollments, revocations and the
 //! FP15 reset, which forgets every client and draws a new identity.
+//!
+//! FW47: it also keeps the event history (sectors 13-24,
+//! `petlibre_core::store::events`). It appends the records the loop queues
+//! and answers the device API's reads (`petlibre_hal::events`), polling
+//! faster while either waits, so a reconnecting client catches up in
+//! seconds.
 
 use core::fmt;
 
 use petlibre_core::named_enum;
 
 use petlibre_core::store::clients::{ClientError, ClientStatus, ClientStore};
+use petlibre_core::store::events::EventLog;
 use petlibre_core::store::net::{NetStatus, NetStore};
 use petlibre_core::store::seed::{SeedStatus, SeedStore};
 use petlibre_core::store::settings::{Settings, SettingsStatus, SettingsStore};
@@ -28,11 +35,16 @@ use petlibre_hal::flash_lock::provider::Provider;
 pub use petlibre_hal::keys::KeyResult;
 use petlibre_hal::keys::{self, Change};
 use petlibre_hal::network::{self, NET_BASE};
-use petlibre_hal::{rng, settings};
+use petlibre_hal::{events, rng, settings};
 
-use crate::storage::{CLIENTS_BASE, FlashOps, SEED_BASE, SETTINGS_BASE, SETTINGS_BINDING, slot_io};
+use crate::storage::{
+    CLIENTS_BASE, EVENTS_BASE, EVENTS_UNITS, FlashOps, SEED_BASE, SETTINGS_BASE, SETTINGS_BINDING,
+    ring_io, slot_io,
+};
 
 pub const POLL_MS: u32 = 200;
+/// While events wait to be written or read.
+pub const EVENTS_POLL_MS: u32 = 5;
 
 named_enum! {
     /// Why a settings or Wi-Fi save did not happen (`error stage=`).
@@ -107,6 +119,14 @@ pub enum Record {
         result: KeyResult,
         enrolled: usize,
     },
+    /// FW47: the event ring as opened.
+    Events {
+        open: bool,
+        last: Option<u64>,
+        oldest: Option<u64>,
+    },
+    /// An append failed; the record is dropped.
+    EventError,
 }
 
 /// The body of a `PLCFG1` line.
@@ -192,6 +212,14 @@ pub fn describe(record: Record, f: &mut impl fmt::Write) -> fmt::Result {
             f,
             "keys change={change} result={result} enrolled={enrolled}"
         ),
+        Record::Events { open, last, oldest } => write!(
+            f,
+            "events open={} last={} oldest={}",
+            u8::from(open),
+            last.unwrap_or(0),
+            oldest.unwrap_or(0)
+        ),
+        Record::EventError => f.write_str("events error stage=append"),
     }
 }
 
@@ -254,6 +282,8 @@ pub struct Writer {
     seed: SeedStore,
     clients: ClientStore,
     keys_opened: bool,
+    events: EventLog,
+    events_opened: bool,
 }
 
 fn changed(current: Settings, fields: SettingsFields) -> Settings {
@@ -304,6 +334,7 @@ impl Writer {
         if let Some(secret) = self.clients.identity() {
             keys::publish_identity(secret);
         }
+        keys::publish_clients(self.clients.clients().copied());
 
         Record::Keys {
             seed: self.seed.status,
@@ -342,6 +373,7 @@ impl Writer {
         {
             keys::publish_identity(secret);
         }
+        keys::publish_clients(self.clients.clients().copied());
         keys::finish(result);
         Record::KeysChanged {
             change: kind,
@@ -358,6 +390,31 @@ impl Writer {
         let result = write(&mut self.clients);
         arming::clear_attempt();
         result.map_or_else(KeyResult::from, |()| KeyResult::Done)
+    }
+
+    /// Append one queued event, or answer one read; the faster poll while
+    /// either has more waiting.
+    fn events_step(&mut self, writable: bool) -> Step {
+        let mut record = None;
+        if let Some(queued) = events::pending() {
+            if writable {
+                arming::set_attempt();
+                let appended = self.events.append(queued.at, &queued.body);
+                arming::clear_attempt();
+                if appended.is_err() {
+                    record = Some(Record::EventError);
+                }
+            }
+            events::finish_pending(self.events.last_seq());
+        }
+        // A reader catching up asks again as soon as it has the answer.
+        let read = events::read_request();
+        if let Some(after) = read {
+            events::finish_read(after, self.events.read_after(after));
+        }
+
+        let more = events::pending().is_some() || read.is_some();
+        next(if more { EVENTS_POLL_MS } else { POLL_MS }, record)
     }
 
     fn publish(&self) {
@@ -452,6 +509,23 @@ impl Writer {
                     let record = unsafe { self.keys::<F>(writable) };
                     return next(POLL_MS, Some(record));
                 }
+                if !self.events_opened {
+                    self.events_opened = true;
+                    // SAFETY: the ring I/O callbacks are static functions.
+                    unsafe {
+                        self.events.open(
+                            ring_io::<F, EVENTS_BASE, EVENTS_UNITS>(),
+                            EVENTS_UNITS as usize,
+                        );
+                    }
+                    events::publish_last(self.events.last_seq());
+                    let record = Record::Events {
+                        open: self.events.is_open(),
+                        last: self.events.last_seq(),
+                        oldest: self.events.oldest_seq(),
+                    };
+                    return next(POLL_MS, Some(record));
+                }
                 if let Some(change) = keys::pending() {
                     let writable = self.stage == Stage::Idle && H::armed();
                     let record = self.change(change, writable);
@@ -482,7 +556,8 @@ impl Writer {
                     return next(POLL_MS, Some(record));
                 }
                 let Some(fields) = settings::pending() else {
-                    return next(POLL_MS, None);
+                    let writable = self.stage == Stage::Idle && H::armed();
+                    return self.events_step(writable);
                 };
                 let target = changed(self.store.settings, fields);
                 let record = if self.stage == Stage::Serve || !H::armed() {

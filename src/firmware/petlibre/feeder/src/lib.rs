@@ -8,8 +8,9 @@
 //! lock changes from the network. The loop also holds the feeder's identity
 //! key pair and the pairing policy: a Reset hold clears the keys, and a Lock
 //! and Mic hold starts BLE setup mode, where a new owner's phone gives the
-//! feeder Wi-Fi and its key (FW45). The loop also measures the device API's
-//! fixed costs (FW44, `budget`); the `entropy` variant streams raw noise
+//! feeder Wi-Fi and its key (FW45). The loop also serves the device API
+//! (FW47, `api`): Noise sessions over TCP, advertised over mDNS, with the
+//! event history and live samples. The `entropy` variant streams raw noise
 //! samples for FW45. It never touches the motor or the infrared emitters.
 //!
 //! [product architecture]: ../../../../docs/firmware/product-architecture.md
@@ -18,9 +19,9 @@
 #[cfg(all(target_os = "none", not(feature = "km4")))]
 compile_error!("petlibre-fw-feeder target builds are KM4-only");
 
+pub mod api;
 #[cfg(target_os = "none")]
 mod app;
-pub mod budget;
 pub mod entropy;
 pub mod keys;
 pub mod owner;

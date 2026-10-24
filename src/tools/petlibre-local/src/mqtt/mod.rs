@@ -1,8 +1,10 @@
 //! The server's MQTT client, a single actor that owns the `Controller`.
 //!
 //! It answers the stock device on its namespace, carries the
-//! replacement-firmware health, reply and update topics when a firmware role
-//! is configured, and serves API requests arriving over a channel. Commands
+//! replacement-firmware health and update topics when a firmware role is
+//! configured, and serves API requests arriving over a channel. Since FW47 it
+//! sends the replacement firmware no requests: those go over the Noise device
+//! API, and only bank 0's recovery role still publishes health here. Commands
 //! go out on QoS 0 without retain, and every reconnect builds a new client, so
 //! nothing is replayed into a later session; while disconnected, requests are
 //! still answered but no command is queued.
@@ -26,14 +28,10 @@ use crate::{
     controller::{Controller, Rejection, Status},
     ota,
     protocol::{self, Reply},
-    replacement::{
-        self, RequestError,
-        request_auth::{self, RequestKey},
-    },
+    replacement,
 };
 
 pub type TrialResult = std::result::Result<ota::trial::Record, Rejection>;
-pub type ReplacementResult = std::result::Result<uuid::Uuid, RequestError>;
 
 pub enum Request {
     OtaTrial(
@@ -42,7 +40,6 @@ pub enum Request {
         oneshot::Sender<TrialResult>,
     ),
     ResolveTrial(ota::trial::ResolveInput, oneshot::Sender<TrialResult>),
-    Replacement(replacement::Input, oneshot::Sender<ReplacementResult>),
     /// Load (or with `None`, clear) the update the server answers `ota/get` from.
     OtaOffer(Option<ota::firmware::Offer>, oneshot::Sender<bool>),
 }
@@ -66,8 +63,6 @@ struct Actor {
     status: watch::Sender<Status>,
     /// Survives reconnects: health ages out rather than vanishing.
     tracker: replacement::Tracker,
-    /// Validated on load; never logged or reported.
-    key: Option<RequestKey>,
     /// Owner-loaded only; never persisted, never offered unasked.
     offer: Option<ota::firmware::Offer>,
 }
@@ -90,7 +85,7 @@ impl Actor {
             QoS::AtLeastOnce,
         )];
         if config.firmware.is_some() {
-            for topic in ["health", "reply", "ota/get", "ota/check"] {
+            for topic in ["health", "ota/get", "ota/check"] {
                 filters.push(SubscribeFilter::new(
                     config.firmware_topic(topic),
                     QoS::AtMostOnce,
@@ -133,7 +128,7 @@ impl Actor {
         if self.config.firmware.is_some() {
             let topic = |suffix| self.config.firmware_topic(suffix);
             if publish.topic == topic("health") {
-                self.firmware_health(client, &publish.payload);
+                self.firmware_health(&publish.payload);
                 return Ok(());
             }
             if publish.topic == topic("ota/get") {
@@ -152,18 +147,12 @@ impl Actor {
                 );
                 return Ok(());
             }
-            if publish.topic == topic("reply") {
-                if !self.tracker.observe_reply(&publish.payload, Utc::now()) {
-                    warn!("ignored invalid replacement reply");
-                }
-                return Ok(());
-            }
         }
 
         self.device_message(client, publish)
     }
 
-    fn firmware_health(&mut self, client: &AsyncClient, payload: &[u8]) {
+    fn firmware_health(&mut self, payload: &[u8]) {
         let now = Utc::now();
         if !self.tracker.observe_health(payload, now) {
             warn!("ignored invalid replacement health");
@@ -171,28 +160,6 @@ impl Actor {
             && let Err(error) = self.controller.replacement_healthy(now)
         {
             warn!(%error, "replacement install not recorded as healthy");
-        }
-
-        // FW21: the firmware's wall clock comes only from here.
-        if !self.tracker.time_due(now) {
-            return;
-        }
-        let request = replacement::time_request(uuid::Uuid::new_v4(), now, self.config.timezone);
-        match self.tracker.finish(request, self.key.as_ref()) {
-            Ok(payload) => {
-                let signed = payload.contains(request_auth::MAC_FIELD);
-                let sent = client.try_publish(
-                    self.config.firmware_topic("request"),
-                    QoS::AtMostOnce,
-                    false,
-                    payload,
-                );
-                if sent.is_ok() {
-                    self.tracker.time_sent(now);
-                    info!(signed, "replacement clock sync sent");
-                }
-            }
-            Err(error) => warn!(%error, "replacement clock sync not sent"),
         }
     }
 
@@ -259,34 +226,6 @@ impl Actor {
         Ok(Ok(record))
     }
 
-    /// Send one allowlisted request on QoS 0 only to fresh, online firmware;
-    /// never queued for a later connection. Signed when the server has a
-    /// request key and the firmware's health reports a nonce.
-    fn replacement_request(
-        &mut self,
-        client: &AsyncClient,
-        input: &replacement::Input,
-    ) -> ReplacementResult {
-        if self.config.firmware.is_none() {
-            return Err(RequestError::Unconfigured);
-        }
-        if !self.tracker.snapshot(Utc::now()).online {
-            return Err(RequestError::Offline);
-        }
-
-        let id = uuid::Uuid::new_v4();
-        let payload = self.tracker.finish(input.wire(id), self.key.as_ref())?;
-        client
-            .try_publish(
-                self.config.firmware_topic("request"),
-                QoS::AtMostOnce,
-                false,
-                payload,
-            )
-            .map_err(|_| RequestError::Offline)?;
-        Ok(id)
-    }
-
     fn set_offer(&mut self, next: Option<ota::firmware::Offer>) -> bool {
         match &next {
             Some(offer) => info!(
@@ -310,9 +249,6 @@ impl Actor {
                 let _ = response.send(result);
             }
 
-            Request::Replacement(input, response) => {
-                let _ = response.send(self.replacement_request(client, &input));
-            }
             Request::ResolveTrial(input, response) => {
                 let result = self.controller.resolve_trial(input, now);
                 // The evidence includes a version report from the last five
@@ -344,14 +280,6 @@ impl Actor {
                     .ota_trial(input, lease.as_ref(), now)
                     .map(|(record, _)| record);
                 let _ = response.send(result);
-            }
-            Request::Replacement(_, response) => {
-                let error = if self.config.firmware.is_some() {
-                    RequestError::Offline
-                } else {
-                    RequestError::Unconfigured
-                };
-                let _ = response.send(Err(error));
             }
 
             Request::ResolveTrial(input, response) => {
@@ -434,16 +362,11 @@ pub async fn run(
     mut requests: mpsc::Receiver<Request>,
     status: watch::Sender<Status>,
 ) -> Result<()> {
-    let key = config
-        .firmware
-        .as_ref()
-        .and_then(|firmware| firmware.request_key());
     let mut actor = Actor {
         config,
         controller,
         status,
         tracker: replacement::Tracker::default(),
-        key,
         offer: None,
     };
 

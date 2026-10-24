@@ -360,6 +360,34 @@ pub enum TcpRecv {
     Closed,
 }
 
+/// FW47: what a non-blocking device API receive found.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ApiRecv {
+    Data(usize),
+    /// Nothing waiting now.
+    Empty,
+    /// The peer closed the connection, or the socket failed.
+    Closed,
+}
+
+/// FW47: what a non-blocking accept found.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Accepted {
+    Socket(i32),
+    /// No connection waits.
+    None,
+    /// The listener failed; open a new one.
+    Error,
+}
+
+/// FW47: one mDNS datagram, if one waits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Datagram {
+    Got { len: usize, ip: u32, port: u16 },
+    None,
+    Error,
+}
+
 /// The core's SysTick, which counts down at the CPU clock from `reload` to
 /// zero and FreeRTOS reloads for its tick (FW45 reads it as a noise source).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

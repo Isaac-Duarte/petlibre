@@ -1,5 +1,6 @@
 //! The live [`Rig`]: the bench's real hotspot, `petlibre-local` children,
-//! UART captures and, with `--power`, the feeder supply relay.
+//! UART captures, device API sessions as the owner's key and, with
+//! `--power`, the feeder supply relay.
 //!
 //! The owner's standing authorization (AGENTS.md) covers bringing the
 //! hotspot up and running `serve` as a bounded foreground process, provided
@@ -12,7 +13,7 @@
 //! observe` segments of [`SEGMENT_SECONDS`]. The capture writer flushes each
 //! received chunk, so the growing `serial-rx.bin` is read while the segment
 //! runs. The chain runs on its own thread ([`Capture`]), so the port stays
-//! held while the suite blocks on a build or the forger.
+//! held while the suite blocks on a build.
 
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
@@ -28,9 +29,10 @@ use super::{Fault, ItestArgs, Rig, Server};
 use crate::commands::Bench;
 use crate::commands::ota::{OtaArgs, Staged, Timing};
 use crate::config::{CAPTURES, VERIFICATION};
+use crate::device::{Answer, Ask, Device, Intruder, Rebuffed};
 use crate::local_api::{Auth, LocalApi, ServerConfig};
 use crate::relay::{POWER, STRAP};
-use crate::server::{ForgedCase, LocalStatus, Request, TrialRequest, TrialResolve};
+use crate::server::{LocalStatus, TrialRequest, TrialResolve};
 use crate::status::StepState;
 use crate::tools::Capture;
 use crate::{Error, Result, require};
@@ -40,8 +42,6 @@ const SEGMENT_SECONDS: f64 = 180.0;
 const START_SECONDS: f64 = 20.0;
 const STOP_SECONDS: f64 = 10.0;
 const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
-/// The forger waits up to 90 s for health, then 10 s per case.
-const FORGE_SECONDS: u64 = 90;
 
 /// `private/hotspot.json` (`--hotspot`).
 #[derive(Deserialize)]
@@ -57,12 +57,6 @@ struct Offer<'a> {
     manifest: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     image: Option<&'a str>,
-}
-
-/// The server's answer to a request it sent on.
-#[derive(Deserialize)]
-struct Sent {
-    id: String,
 }
 
 /// `petlibre-local ota-images` writes this beside the config; only its token
@@ -91,6 +85,7 @@ pub(super) struct LiveRig<'b> {
     started: Instant,
     config_arg: String,
     api: LocalApi,
+    device: Device,
     mqtt: SocketAddr,
     connection: String,
     /// The hotspot's state before the run; `None` until recorded.
@@ -127,6 +122,7 @@ impl<'b> LiveRig<'b> {
             started: Instant::now(),
             config_arg: args.config.display().to_string(),
             api: LocalApi::new(&config, HTTP_TIMEOUT),
+            device: Device::open(&root, &args.keys, &args.config)?,
             mqtt: config.mqtt_listen,
             connection: hotspot.connection,
             hotspot_was_up: None,
@@ -154,16 +150,14 @@ impl<'b> LiveRig<'b> {
                 rig.local_bin().display()
             ),
         )?;
-        for example in ["ota_fault_server", "request_forger"] {
-            let path = rig.example(example);
-            require(
-                path.is_file(),
-                format!(
-                    "{} not found; cargo build --release -p petlibre-local --examples",
-                    path.display()
-                ),
-            )?;
-        }
+        let fault_server = rig.example("ota_fault_server");
+        require(
+            fault_server.is_file(),
+            format!(
+                "{} not found; cargo build --release -p petlibre-local --examples",
+                fault_server.display()
+            ),
+        )?;
         rig.bench.fresh(&rig.server_log)?;
         rig.bench.fresh(&rig.segment_path(1))?;
         require(
@@ -405,7 +399,6 @@ impl Rig for LiveRig<'_> {
         let label = match &server {
             Server::Serve => "petlibre-local serve".to_string(),
             Server::StockTrial => "petlibre-local serve --enable-ota-trial".to_string(),
-            Server::Broker => "petlibre-local broker alone".to_string(),
             Server::Faulty { fault, staged } => format!(
                 "broker + ota_fault_server ({}, version {})",
                 fault.arg(),
@@ -417,34 +410,11 @@ impl Rig for LiveRig<'_> {
         match server {
             Server::Serve => self.start_serve(false),
             Server::StockTrial => self.start_serve(true),
-            Server::Broker => self.start_broker(),
             Server::Faulty { fault, staged } => {
                 self.start_broker()?;
                 self.start_fault(fault, &staged)
             }
         }
-    }
-
-    fn forge(&mut self) -> Result<Vec<ForgedCase>> {
-        require(
-            self.children.serve.is_none(),
-            "request_forger runs beside the bare broker only",
-        )?;
-        let seconds = FORGE_SECONDS.to_string();
-        let output = Command::new(self.example("request_forger"))
-            .current_dir(&self.bench.root)
-            .args(["--config", &self.config_arg, "--seconds", &seconds])
-            .stdin(Stdio::null())
-            .stderr(Stdio::inherit())
-            .output()?;
-        require(
-            output.status.success(),
-            format!("request_forger exited {}", output.status),
-        )?;
-        String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .map(|line| Ok(serde_json::from_str(line)?))
-            .collect()
     }
 
     fn offer(&mut self, staged: Option<&Staged>) -> Result<()> {
@@ -457,9 +427,18 @@ impl Rig for LiveRig<'_> {
             .map(|_| ())
     }
 
-    fn request(&mut self, request: &Request) -> Result<String> {
-        let sent: Sent = self.api.post("/api/replacement/request", request)?;
-        Ok(sent.id)
+    fn device(&mut self, ask: &Ask) -> Result<Answer> {
+        Ok(self.device.ask(ask)?)
+    }
+
+    fn intrude(&mut self, intruder: Intruder) -> Result<Rebuffed> {
+        Ok(self.device.intrude(intruder)?)
+    }
+
+    fn unix_ms(&self) -> i64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
     }
 
     fn status(&mut self) -> Result<LocalStatus> {

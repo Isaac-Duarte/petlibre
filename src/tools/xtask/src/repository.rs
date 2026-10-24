@@ -20,12 +20,7 @@ use regex::Regex;
 const TRANSPORT_ISOLATION: [(&str, &[&str]); 2] = [
     (
         "src/sdk/petlibre-core/src/transport.rs",
-        &[
-            r"core::(fmt|str)(::\w+)*",
-            r"fmt::\w+",
-            // FW24: a `play` request names one built-in tune.
-            r"crate::tone::Tune",
-        ],
+        &[r"core::(fmt|str)(::\w+)*", r"fmt::\w+"],
     ),
     (
         "src/sdk/petlibre-hal/src/transport.rs",
@@ -39,28 +34,10 @@ const TRANSPORT_ISOLATION: [(&str, &[&str]); 2] = [
             r"health::(snapshot|Link|Boot)(::default)?",
             r"crate::net_status",
             r"net_status::read",
-            // FW21: a `time` request sets the wall clock, and nothing else.
-            r"crate::clock",
-            r"clock::sync",
-            // FW25: queue a settings change for the writer; no flash access.
-            r"crate::settings",
-            r"settings::request",
-            r"crate::network",
-            r"network::request",
-            // FW24: queue a built-in tune for the speaker; no other output.
-            r"crate::audio",
-            r"audio::request",
-            // FP11: queue a panel-lock change for the panel's owner.
-            r"crate::panel",
-            r"panel::request",
-            // FW45: random bytes for the session nonce; nothing else.
-            r"crate::rng",
-            r"rng::fill",
-            // Signed requests: verification only (request_auth.rs).
-            r"petlibre_core::request_auth",
-            r"request_auth::(split|Session)(::(new|nonce_hex))?",
+            // Since FW47 the transport carries health only: requests go over
+            // the device API, so it reaches no mailbox at all.
             r"crate::sdk(::(TcpRecv|TransportConfig|self))?",
-            r"sdk::(tcp_connect|tcp_send|tcp_recv|tcp_close|uptime_ms|entropy|TcpRecv|TransportConfig)",
+            r"sdk::(tcp_connect|tcp_send|tcp_recv|tcp_close|uptime_ms|TcpRecv|TransportConfig)",
         ],
     ),
 ];

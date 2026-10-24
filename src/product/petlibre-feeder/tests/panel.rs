@@ -169,6 +169,22 @@ fn activity_restarts_the_relock_and_a_held_button_holds_it_off() {
 }
 
 #[test]
+fn presses_pairing_took_hold_off_the_relock() {
+    let mut panel = Panel::new(Config::STOCK, 0);
+    hold_lock(&mut panel, 0);
+
+    // A code keyed in from 20 s: its presses act on nothing, but count.
+    panel.noted(20_000, down(Button::Reset));
+    assert_eq!(panel.tick(40_000), None, "held");
+    panel.noted(40_000, up(Button::Reset, 0));
+    assert_eq!(panel.tick(40_000 + RELOCK - 1), None);
+    assert_eq!(
+        panel.tick(40_000 + RELOCK),
+        changed(Lock::Locked, Source::Idle)
+    );
+}
+
+#[test]
 fn a_remote_unlock_relocks_on_the_same_timer() {
     let mut panel = Panel::new(Config::STOCK, 0);
     assert_eq!(panel.remote(1_000, Lock::Locked), None, "already locked");

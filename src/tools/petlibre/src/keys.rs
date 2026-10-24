@@ -70,6 +70,25 @@ impl OwnerKey {
         &self.file.label
     }
 
+    /// The feeder to talk to: the one whose identity starts with `prefix`,
+    /// or the only one this key knows.
+    pub(crate) fn feeder(&self, prefix: Option<&str>) -> Result<[u8; 32]> {
+        let matching: Vec<&EnrolledFeeder> = self
+            .file
+            .feeders
+            .iter()
+            .filter(|f| prefix.is_none_or(|p| f.identity.starts_with(p)))
+            .collect();
+        let [feeder] = matching.as_slice() else {
+            anyhow::bail!(
+                "{}: {} feeders match; pass --feeder with a prefix of one",
+                self.path.display(),
+                matching.len()
+            );
+        };
+        hex::decode::<32>(&feeder.identity).context("a feeder identity in the key file")
+    }
+
     /// Note a feeder that enrolled this key.
     pub(crate) fn remember(&mut self, identity: &[u8; 32]) -> Result<()> {
         let identity = hex::encode(identity);

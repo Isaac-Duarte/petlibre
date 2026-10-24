@@ -7,7 +7,8 @@
 //! from `ota-images`, checks only its byte-sum, writes it to bank 0 (the bank
 //! it is not running from) and invalidates bank 1 ([stock OTA requirements]).
 //! The factory loader then boots the build from bank 0, where its recovery
-//! role reports health while it waits for an update.
+//! role reports health over MQTT while it waits for an update; the promoted
+//! build on bank 1 is confirmed over the device API (FW47).
 //!
 //! The request goes out once and is never resent: a rejected stock precheck
 //! can erase the stock OTA status sector, and an uncertain one may still be
@@ -28,8 +29,8 @@ use serde::Deserialize;
 
 use super::log::Record;
 use super::{
-    Ctx, HEALTH_SECONDS, INSTALL_SECONDS, ItestArgs, Report, STATUS_POLL_SECONDS, Server, Silent,
-    Tier, Verdict, live,
+    Ctx, HEALTH_SECONDS, INSTALL_SECONDS, ItestArgs, Report, STATUS_POLL_SECONDS, STATUS_SECONDS,
+    Server, Silent, Tier, Verdict, live,
 };
 use crate::commands::ota::{
     Firmware, Outcome, Staged, Target, Timing, Variant, parse_firmware, parse_variant,
@@ -85,6 +86,10 @@ pub struct StockOtaArgs {
     /// Hotspot description: its NetworkManager `connection` (root-relative).
     #[arg(long, default_value = "private/hotspot.json")]
     pub hotspot: PathBuf,
+    /// The owner key file that confirms the promoted build over the device
+    /// API (root-relative).
+    #[arg(long, default_value = crate::device::OWNER_KEYS)]
+    pub keys: PathBuf,
 }
 
 impl StockOtaArgs {
@@ -108,6 +113,7 @@ impl StockOtaArgs {
             firmware: self.firmware,
             variant: self.variant,
             config: self.config.clone(),
+            keys: self.keys.clone(),
             version: None,
             minutes: INSTALL_SECONDS / 60.0,
             attended_motion: false,
@@ -131,6 +137,7 @@ impl StockOtaArgs {
             rebuild: false,
             config: self.config.clone(),
             hotspot: self.hotspot.clone(),
+            keys: self.keys.clone(),
         }
     }
 }
@@ -194,7 +201,7 @@ pub(super) fn roundtrip(ctx: &mut Ctx) -> Result<()> {
     ctx.rig.offer(None)?;
 
     ctx.rig.server(Server::Serve)?;
-    ctx.health(HEALTH_SECONDS).map(|_| ())
+    ctx.reachable(STATUS_SECONDS).map(|_| ())
 }
 
 /// A trial's phase as the server's ledger writes it.

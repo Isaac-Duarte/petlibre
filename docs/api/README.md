@@ -1,6 +1,6 @@
 # API design
 
-The contracts between the feeder, the owner's server, the Android app and the web UI, and the crates that implement them. This is a design (Oct 23, 2026). The first pieces exist since FW45 (Oct 24): `petlibre-proto`'s setup messages, `petlibre-client`'s setup session, and the owner's `petlibre setup` over BLE ([Bluetooth](../firmware/bluetooth.md#setup-exchange)). The product decisions it serves are in [product architecture](../firmware/product-architecture.md).
+The contracts between the feeder, the owner's server, the Android app and the web UI, and the crates that implement them. This is a design (Oct 23, 2026), and the device protocol is now built: FW45 (Oct 24) added `petlibre-proto`'s setup messages, `petlibre-client`'s setup session and the owner's `petlibre setup` over BLE ([Bluetooth](../firmware/bluetooth.md#setup-exchange)). FW47 (Oct 24) added the device API itself, which the feeder serves ([device API](../firmware/device-api.md)), with the `petlibre` CLI's commands on it. The product decisions it serves are in [product architecture](../firmware/product-architecture.md).
 
 There are three contracts, and each changes at a different cost:
 
@@ -53,18 +53,19 @@ petlibre-server ─► petlibre-service ─► petlibre-store ─► petlibre-ap
 - **`petlibre-client`** holds no sockets, timers or radios. Its callers feed it bytes and the current time and send what it returns. The server drives it with tokio, the app with Dart IO, the CLI and bench with tokio, and the host simulator directly in tests.
 - **`petlibre-api`** builds for every target, including the app's Android library, so it carries no server dependencies.
 - **`petlibre-service`** never sees an HTTP type, and **`petlibre-server`** never sees SQL. A handler parses, authorizes, calls one service method and maps the result.
-- **`petlibre-local`** is retired in stages ([tools roadmap](../development/tools-roadmap.md)): its stock install path moves to a `petlibre-stock` library and `petlibre-client`'s installer steps, its replacement path to `petlibre-client` and the owner's `petlibre` CLI, and its MQTT replacement transport is removed once FW47 lands.
+- **`petlibre-local`** is retired in stages ([tools roadmap](../development/tools-roadmap.md)): its stock install path moves to a `petlibre-stock` library and `petlibre-client`'s installer steps, its replacement path to `petlibre-client` and the owner's `petlibre` CLI. Its MQTT request path went with FW47; the broker stays for the FW10 offers and bank 0's health until FW48.
 - **Workspace members** gain `src/client/*` and `src/server/*`. Shared versions stay in `[workspace.dependencies]`.
 
 ## Device protocol
 
 ### Session
 
-- **Transport.** TCP to the port advertised over mDNS (`_petlibre._tcp`), with Noise inside. Each Noise transport message carries one postcard-encoded message, behind a 2-byte length prefix. Frames are capped at a size FW44 sets.
-- **Handshake.** After pairing, both sides know each other's static key, so sessions use **Noise KK**: one round trip, mutual authentication, and no identity sent in clear. Pairing itself runs over the BLE setup channel, or over the LAN during an invite or button-hold window, using a pattern that exchanges static keys (XX with a pairing secret as PSK). FW45 confirms the patterns and the `no_std` Noise implementation; one implementation on both sides is preferred, so interop never depends on two.
-- **Hello.** The first messages carry `protocol_major`, a capability set, the build identity, and the client's last event cursor. A major the feeder doesn't accept ends the session with a typed reason, so the app can say "update the app" or "update the feeder".
-- **Feeder side.** The firmware has two tasks and the button service holds one ([task slots](../../src/firmware/petlibre/README.md#what-the-sdk-runtime-guarantees)), so every session runs in one loop task over non-blocking sockets, with the same sans-IO shape as `petlibre-client`: bytes in, bytes out, no allocation. Per-client buffers and the client limit are fixed at build time (FW44). A handshake is one loop step, and the feeding owner is stepped in the same loop ([device API](../firmware/product-architecture.md#device-api)).
-- **Keys.** A client's identity is its static X25519 key. The HMAC request keys of FW08 become the session's transport security, and the per-request signature goes away.
+- **Transport.** TCP port 4747, advertised over mDNS as `_petlibre._tcp` with TXT `v=1` and `id=` the identity key in hex, so a client matches the feeder it paired with. Discovery carries no trust; the handshake does. Every frame is a 2-byte little-endian length and its bytes, at most 1 KiB (FW44). After the handshake a frame is one Noise transport message sealing one postcard-encoded message.
+- **Opening.** A connection's first frame is a clear `Open`: `Session`, `Invite { id }` or `Recovery`. It only chooses the handshake; tampering with it makes the handshake fail.
+- **Handshake.** An enrolled client's session is **Noise IK**. The client knows the feeder's key, and sends its own encrypted in the first message, so the feeder learns which client is connecting without trying each enrolled key (KK would need up to 8 DH operations per message 1, over FW44's 80 ms loop budget). It is one round trip, mutually authenticated, with no identity in clear. An invite is redeemed with **XXpsk3** and the invite's secret. The recovery window runs FW45's setup exchange (XX and the code proof) over the stream. Both sides run `petlibre-core::noise`, checked byte for byte against `snow`.
+- **Hello.** IK's first payload is a `Hello` (`protocol_major`, capabilities); the second is a `Welcome` (major, capabilities, build identity, the client's role) or a typed refusal: unknown key, unsupported version, or no free slot. So the app can say "update the app" or "update the feeder". The event cursor travels in `Subscribe`, not the hello.
+- **Feeder side.** The firmware has two tasks and the button service holds one ([task slots](../../src/firmware/petlibre/README.md#what-the-sdk-runtime-guarantees)), so every session runs in one loop task over non-blocking sockets. `petlibre-feeder::api::Server` is sans-IO, like `petlibre-client`: bytes in, bytes out, no allocation. It has four slots with 1 KiB buffers each way. It does at most one handshake operation per pass and none during a feed, and reads at most one frame per slot per pass ([device API](../firmware/device-api.md)).
+- **Keys.** A client's identity is its static X25519 key. The HMAC request keys of FW08 are gone; the session is the security.
 
 ### Messages
 
@@ -73,24 +74,23 @@ All messages are serde enums in `petlibre-proto`.
 ```text
 Client → feeder                       Feeder → client
 Request { id, op }                    Response { id, result }
-Ack { cursor }                        Event { seq, at, body }
-Subscribe { samples }                 Sample { at, metric, value }
+Subscribe { after, samples }          Event { seq, at, body }
                                       Gap { from, to }   // events lost to the ring
+                                      Sample { at_ms, metric }
 ```
 
-- **`id`** is a client-generated 128-bit request ID. The feeder keeps a fixed ring of recent IDs per client (FW44 sizes it), so a retried request returns the first answer rather than running again. An ID that has left the ring is no longer recognized, which is safe for everything but feeds. A feed's ID also goes into its journal reservation (FW17), so even a retry after a reboot cannot feed twice.
-- **Ops (first set):**
-  - `Feed { portions }`
+- **`id`** is a client-generated 128-bit request ID. The feeder remembers the last 32 write IDs per client key, across reconnects, with their compact outcomes, so a retried request returns the first answer rather than running again. Reads are not remembered; they simply run again. An ID that has left the ring is no longer recognized, which is safe for everything but feeds. A feed's ID also goes into its journal reservation (FW17), so even a retry after a reboot cannot feed twice.
+- **Ops (major version 1, FW47):**
   - `Status`
-  - `GetPlans` and `PutPlans { base_generation, plans }`
-  - `GetSettings` and `PutSettings { base_generation, changes }`
-  - `ReadEvents { after, max }`
-  - `TimeSync`
-  - `CreateInvite`, `ListClients` and `RevokeClient`
-  - `OtaOffer`
+  - `GetSettings` and `PutSettings { base, changes }`
+  - `PutWifi { base, wifi }` (`None` clears)
+  - `SetLock`, `Play`, `TimeSync`
+  - `CreateInvite { role }`, `ListClients` and `RevokeClient { key }`
+  - `Feed { portions }`, refused `Unavailable` until the feeding owner lands (FW16/FW17)
   - `Reboot`
 
-  A `Put` against a stale generation is refused with the current generation.
+  A `Put` against a stale generation is refused `Stale { current }`. Plans (FP03) and `OtaOffer` (FW48) join behind capability bits.
+- **Subscribe** asks for every event after a cursor (`None`: the oldest kept), then each new one, and the live samples if asked.
 - **Results** are typed enums of outcomes and refusals. There is no free-text error.
 - **Events** are the durable records described in [data](../firmware/product-architecture.md#data). `seq` is monotonic across reboots.
 - **Samples** go only to subscribers and are never stored on the feeder.
@@ -212,8 +212,6 @@ The repository's [Rust conventions](../../AGENTS.md#rust-conventions) apply in f
 
 ## Open questions
 
-- Which `no_std` Noise implementation, and its RAM cost (FW44, FW45).
-- The frame size cap, the client limit and the request-ID ring size (FW44), all bounded by one loop task's fixed buffers.
-- The KK and XX handshake time on the KM4, and the per-client work cap per loop pass, which together set the loop's worst-case latency (FW44).
+- Answered: the Noise implementation is our own `no_std` one, checked against `snow` (FW44, FW45); frames are 1 KiB, four clients, 32 remembered write IDs per client (FW44); one handshake operation per loop pass and one frame per client per pass (FW47).
 - Whether the web UI's live view needs per-metric sample throttling.
 - Backups: a scheduled SQLite backup inside the server, or left to the host.

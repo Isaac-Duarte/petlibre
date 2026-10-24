@@ -2,8 +2,9 @@
 //!
 //! Startup: stopped outputs, the synthetic core diagnostic and the indicator
 //! check, then the FW07 network join (the Wi-Fi probe, stepped by the
-//! diagnostic task) and the FW08 transport, which reports health to the
-//! local server's broker.
+//! diagnostic task). The FW08 transport, which reports health to the local
+//! server's broker, runs only in the recovery role since FW47: the normal
+//! role's firmware serves the device API.
 //!
 //! Booted from bank 0 (the recovery role), the FW10 updater runs and the
 //! firmware never starts, so a broken firmware can always be replaced. In
@@ -28,7 +29,7 @@ use petlibre_hal::supervision::config;
 use petlibre_hal::supervision::supervise::{self, LIVENESS_MS, Startup};
 use petlibre_hal::supervision::watchdog::Watchdog;
 use petlibre_hal::transport::{self, Link};
-use petlibre_hal::{leds, power, rng, sdk, startup, stopped, trial};
+use petlibre_hal::{leds, net_status, power, rng, sdk, startup, stopped, trial};
 
 use crate::slot::Slot;
 use crate::wifi::{Probe, Record};
@@ -180,7 +181,6 @@ unsafe extern "C" fn net_task(_: *mut c_void) -> u32 {
 
     NET_RUNNING.store(true, Ordering::Release);
     let delay = link.step(&mut log_transport);
-    NET_READY.store(link.ready(), Ordering::Release);
     NET_BEAT.store(sdk::uptime_ms(), Ordering::Release);
 
     if delay == 0 {
@@ -230,7 +230,6 @@ static RESTART: AtomicBool = AtomicBool::new(false);
 /// The transport task's last step and state, for the feeder and FW11.
 static NET_BEAT: AtomicU32 = AtomicU32::new(0);
 static NET_RUNNING: AtomicBool = AtomicBool::new(false);
-static NET_READY: AtomicBool = AtomicBool::new(false);
 /// The offer-check task's last step, while it runs.
 static WATCH_BEAT: AtomicU32 = AtomicU32::new(0);
 static WATCH_RUNNING: AtomicBool = AtomicBool::new(false);
@@ -474,7 +473,9 @@ unsafe extern "C" fn confirm_task(_: *mut c_void) -> u32 {
     // SAFETY: only the owning task reaches the provider slot, and the
     // borrow ends here: the hooks use the raw pointer.
     let provider = unsafe { PROVIDER.get_or_init(Provider::default) } as *mut Provider;
-    let healthy = NET_READY.load(Ordering::Acquire)
+    // The network path FW07 checks (DHCP, then a DNS lookup) stands in for
+    // the broker session the normal role no longer opens (FW47).
+    let healthy = net_status::read().dns_ok
         && PROBE_DONE.load(Ordering::Acquire)
         && stopped::observe().verified();
 
@@ -792,8 +793,7 @@ fn probe_step() -> u32 {
 fn log_rng(started: rng::Started) {
     let first = petlibre_core::hex::Lower(&started.first);
     let check = rng::bytes().map(|block| {
-        let digest =
-            petlibre_core::request_auth::hmac_sha256(&[0; 32], &[b"petlibre-rng-check", &block]);
+        let digest = petlibre_core::mac::hmac_sha256(&[0; 32], &[b"petlibre-rng-check", &block]);
         u32::from_be_bytes([digest[0], digest[1], digest[2], digest[3]])
     });
 
@@ -897,7 +897,8 @@ unsafe extern "C" fn diagnostic_task(_: *mut c_void) -> u32 {
     } else {
         // FW45: before any other task can use the ADC or want a secret.
         log_rng(rng::start());
-        start_transport();
+        // FW47: no MQTT session in the normal role; requests and health
+        // go over the firmware's device API.
         // SAFETY: every firmware defines the hook with `firmware!`; it runs
         // once, here, in this task.
         unsafe { petlibre_firmware_start() };

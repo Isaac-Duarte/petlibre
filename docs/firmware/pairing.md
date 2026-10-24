@@ -124,7 +124,7 @@ All storage-region sectors are now named in one table, `petlibre_amebad_sys::sto
 | 7–8 | RNG seed (FW45) |
 | 9–10 | Identity and clients (FW45) |
 | 11–12 | Plans (FP03, reserved) |
-| 13–24 | 7-day event ring (FW47, reserved) |
+| 13–24 | 7-day event ring (FW47) |
 | 25–31 | Free |
 
 ## Clients
@@ -150,9 +150,9 @@ All storage-region sectors are now named in one table, `petlibre_amebad_sys::sto
 | Setup | The app over BLE in setup mode, which a Lock and Mic hold on an unlocked panel starts | The app's one-time code keyed in on the buttons within 60 s, then proven by the app ([why](bluetooth.md#why-a-code)) | Owner |
 | Signer | An owner over the API | A Dispense press within 60 s | Update signer |
 | Invite | A paired client: an owner invites any role but a signer, a member invites members | The invite's secret as the PSK of a Noise XXpsk3 handshake, within 10 min, once | As invited |
-| Recovery | Lock and Dispense held together for 5 s on an unlocked panel | A plain XX handshake within 2 min; the window then closes | Owner |
+| Recovery | Lock and Dispense held together for 5 s on an unlocked panel | Within 2 min, a client offers its key over the device API and proves the code the owner keys in (FW47); the first offer closes the window | Owner |
 
-- **Dispense press and code:** a pending signer confirmation takes the next Dispense press, and a pending setup code every gesture until it is complete, even on a locked panel, since those presses answer a pairing someone at the feeder started; they feed nothing. Records count the presses (`pair setup keyed=N`) and never name them.
+- **Dispense press and code:** a pending signer confirmation takes the next Dispense press, and a pending setup code every gesture until it is complete, even on a locked panel, since those presses answer a pairing someone at the feeder started; they feed nothing. Records count the presses (`pair setup keyed=N`, or `pair recovery keyed=N`) and never name them.
 - **Recovery and the lock:** a locked panel cannot open recovery.
 - **Invite lifetime:** at most two invites are outstanding, and they live in RAM, so a reboot cancels them.
 - **Invite id:** the invite's id travels in the first handshake message's payload. That payload is not secret, and the responder needs it to choose the PSK before the third message.
@@ -176,4 +176,4 @@ The exchange and its refusals are in [Bluetooth](bluetooth.md#setup-exchange). T
 - **The loop (`feeder/src/setup.rs`):** starts the stack on the gesture, offers the key to pairing (`Pairing::setup`), which collects the code from the buttons, runs the proof, and once the client has proven it queues the enrollment in the keys mailbox, waits for its result (`keys::ticket` and `keys::outcome`), then queues the Wi-Fi (`network::save`) and waits for the writer. A client that leaves before the proof cancels its offer (`Pairing::cancel`), so the next press feeds again.
 - **Not at boot:** the product architecture first chose setup mode at boot, but every free KM0 backup register is taken, so a "setup next boot" flag has nowhere to live. The gesture starts the stack on the running feeder instead, and a reboot still ends it.
 
-The LAN handshakes for invites and the recovery window run over FW47's Noise stream and land with it. The policy and the window are already in the firmware.
+The LAN handshakes for invites and the recovery window run over FW47's Noise stream ([device API](device-api.md)). An invite's redemption and a revocation ran on hardware on October 24. Recovery changed with it: the window no longer admits a plain XX handshake, but runs this same setup exchange, code proof included, over the stream (`Pairing::recovery`). So a LAN neighbour cannot slip in while it is open. That is host-tested; the hardware run needs the owner at the panel.

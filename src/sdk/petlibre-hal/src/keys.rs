@@ -14,12 +14,14 @@
 //! The other way, the writer publishes the identity secret it holds with
 //! [`publish_identity`], each time with a new generation, and the loop
 //! copies it with [`identity_since`] to derive the public key. The secret
-//! stays in RAM: no log, request or record carries it.
+//! stays in RAM: no log, request or record carries it. The writer also
+//! publishes the enrolled clients ([`publish_clients`]), which the device
+//! API reads to admit a session (FW47).
 
 use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 
 use petlibre_core::named_enum;
-use petlibre_core::store::clients::{ClientError, Label, Role};
+use petlibre_core::store::clients::{CLIENTS as STORE_CLIENTS, Client, ClientError, Label, Role};
 
 use crate::cell::TaskCell;
 use crate::sdk;
@@ -181,6 +183,46 @@ pub fn identity_since(seen: u32) -> Option<(u32, [u8; 32])> {
     })
 }
 
+/// The enrolled clients as the writer last published them: written by the
+/// writer and read by the loop, each with the scheduler paused, so a reader
+/// never sees half a table. `CLIENTS_GENERATION` is 0 until the first.
+static CLIENTS: TaskCell<[Option<Client>; STORE_CLIENTS]> = TaskCell::new([None; STORE_CLIENTS]);
+static CLIENTS_GENERATION: AtomicU32 = AtomicU32::new(0);
+
+/// The writer's half: the clients the store now holds, after it loads and
+/// after every change.
+pub fn publish_clients(clients: impl Iterator<Item = Client>) {
+    let mut table = [None; STORE_CLIENTS];
+    for (slot, client) in table.iter_mut().zip(clients) {
+        *slot = Some(client);
+    }
+    sdk::unscheduled(|| {
+        // SAFETY: as in `publish_identity`.
+        unsafe { *CLIENTS.get() = table };
+        let next = CLIENTS_GENERATION
+            .load(Ordering::Acquire)
+            .wrapping_add(1)
+            .max(1);
+        CLIENTS_GENERATION.store(next, Ordering::Release);
+    });
+}
+
+/// The loop's half: copy the clients into `table` if published since `seen`
+/// (0 before the first), returning their generation. The device API checks
+/// every session's key against its copy; copying in place keeps the half
+/// kilobyte off the loop's stack.
+pub fn clients_since(seen: u32, table: &mut [Option<Client>; STORE_CLIENTS]) -> Option<u32> {
+    sdk::unscheduled(|| {
+        let generation = CLIENTS_GENERATION.load(Ordering::Acquire);
+        if generation == 0 || generation == seen {
+            return None;
+        }
+        // SAFETY: as in `publish_identity`.
+        *table = unsafe { *CLIENTS.get() };
+        Some(generation)
+    })
+}
+
 /// Forget everything (host tests).
 #[cfg(not(target_os = "none"))]
 pub fn reset() {
@@ -190,4 +232,7 @@ pub fn reset() {
     GENERATION.store(0, Ordering::Release);
     // SAFETY: host tests serialize on this module's state.
     unsafe { *IDENTITY.get() = [0; 32] };
+    CLIENTS_GENERATION.store(0, Ordering::Release);
+    // SAFETY: as above.
+    unsafe { *CLIENTS.get() = [None; STORE_CLIENTS] };
 }

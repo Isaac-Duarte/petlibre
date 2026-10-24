@@ -1,29 +1,23 @@
 //! FW08 transport driver on KM4: one outbound MQTT connection to the local
-//! server's broker, carrying health and the read-only request allowlist.
+//! server's broker, carrying health only. Since FW47 every request goes over
+//! the device API, so a request published here is ignored and never
+//! answered; the bank-0 recovery role still reports health this way while
+//! the broker serves the FW10 offers (until FW48).
 //!
-//! Network-facing: this file reaches only the core transport, the socket and
-//! clock wrappers, the Wi-Fi status reader and the health snapshot (a
-//! repository check enforces the list), plus the one-slot mailboxes that
-//! queue settings, credentials, a tune or a panel-lock change for the task
-//! that owns them. Nothing here can touch feeding, outputs, flash or
-//! updates.
+//! Network-facing: this file reaches only the core transport, the socket
+//! and clock wrappers, the Wi-Fi status reader and the health snapshot (a
+//! repository check enforces the list). Nothing here can touch feeding,
+//! outputs, settings, flash or updates.
 
 use core::fmt::Write;
 
-use petlibre_core::request_auth;
 use petlibre_core::transport::{
-    self as mqtt, Buffer, Event, Fault, Op, Packet, Role, Session, State, Tick,
+    self as mqtt, Buffer, Event, Fault, Packet, Role, Session, State, Tick,
 };
 
-use crate::audio;
-use crate::clock;
 use crate::health::{self, Boot};
 use crate::net_status;
-use crate::network;
-use crate::panel;
-use crate::rng;
 use crate::sdk::{self, TcpRecv, TransportConfig};
-use crate::settings;
 
 pub const CONNECT_TIMEOUT_MS: u32 = 3000;
 /// Each receive waits at most this long, so ticks and publishes stay timely.
@@ -39,23 +33,6 @@ pub enum Trigger {
     Connect,
     Period,
     Change,
-    Request,
-}
-
-/// Request outcome for the log; the request ID is not logged.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RequestKind {
-    Health,
-    Ping,
-    Time,
-    Settings,
-    Wifi,
-    Play,
-    Lock,
-    /// Refused: a bad signature, or a state change that came unsigned.
-    Unauthenticated,
-    Unsupported,
-    Malformed,
 }
 
 /// What happened, for the UART log. No record carries a credential.
@@ -74,10 +51,8 @@ pub enum Record {
         bytes: usize,
         trigger: Trigger,
     },
-    Request {
-        kind: RequestKind,
-        ok: bool,
-    },
+    /// A request arrived on the request topic and was not answered.
+    Ignored,
     Closed {
         reason: CloseReason,
     },
@@ -161,8 +136,6 @@ struct Open {
     session: Session,
     since: u32,
     generation: u32,
-    /// Verifies signed requests; `None` without a request key.
-    auth: Option<request_auth::Session>,
 }
 
 /// The connection and its counters; one per boot.
@@ -329,20 +302,6 @@ impl Link {
             ms: sdk::uptime_ms().wrapping_sub(now),
         });
 
-        // A fresh nonce for every session, so no earlier request replays:
-        // from the generator (FW45), or the timer mix if it never started.
-        let auth = self.config.request_key.map(|key| {
-            let mut entropy = [0u8; 52];
-            let (timers, generated) = entropy.split_at_mut(20);
-            let words = sdk::entropy();
-            for (i, word) in words.iter().chain(&[n]).enumerate() {
-                timers[4 * i..4 * i + 4].copy_from_slice(&word.to_le_bytes());
-            }
-            rng::fill(generated);
-            request_auth::Session::new(key, &entropy)
-        });
-        self.counters.nonce = auth.as_ref().map(request_auth::Session::nonce_hex);
-
         let sent = self.send_connect(socket);
         let now = sdk::uptime_ms();
         self.open = Some(Open {
@@ -350,7 +309,6 @@ impl Link {
             session: Session::connecting(now),
             since: now,
             generation: wifi.generation,
-            auth,
         });
 
         self.rx_len = 0;
@@ -459,7 +417,10 @@ impl Link {
             }
 
             Event::Pong => true,
-            Event::Request(payload) => self.answer(payload, log),
+            Event::Request(_) => {
+                log(Record::Ignored);
+                true
+            }
 
             // This driver never subscribes a data topic (only the recovery
             // role's updater does), so these cannot arrive here.
@@ -472,128 +433,6 @@ impl Link {
                 false
             }
         }
-    }
-
-    fn answer(&mut self, payload: &[u8], log: &mut impl FnMut(Record)) -> bool {
-        // A signed request is parsed without its MAC; the MAC, nonce and
-        // sequence are then checked together (request_auth.rs).
-        let signed = request_auth::split(payload);
-        let mut unsigned = [0; mqtt::MAX_REQUEST];
-        let text = match signed {
-            Some(signed) if signed.prefix.len() < unsigned.len() => {
-                let len = signed.prefix.len();
-                unsigned[..len].copy_from_slice(signed.prefix);
-                unsigned[len] = b'}';
-                &unsigned[..=len]
-            }
-            Some(_) => &[][..],
-            None => payload,
-        };
-
-        let request = match mqtt::parse_request(text) {
-            Ok(request) => request,
-            Err(_) => {
-                // Nothing to correlate a reply with; refuse and keep going.
-                log(Record::Request {
-                    kind: RequestKind::Malformed,
-                    ok: false,
-                });
-                return true;
-            }
-        };
-
-        let authentic = match (
-            signed,
-            request.auth,
-            self.open.as_mut().and_then(|o| o.auth.as_mut()),
-        ) {
-            (Some(signed), Some((nonce, seq)), Some(auth)) => auth.verify(&signed, nonce, seq),
-            _ => false,
-        };
-        // A bad signature is refused whatever it asks; a state change needs a
-        // good one, and an image without a request key refuses every change.
-        let changes = matches!(request.op, Ok(Op::Time | Op::Play))
-            || request.settings.is_some_and(|fields| fields.changes())
-            || request.wifi.is_some_and(|fields| fields.changes())
-            || request.lock.is_some_and(|fields| fields.changes());
-        let refused = (signed.is_some() || changes) && !authentic;
-
-        let kind = match request.op {
-            _ if refused => RequestKind::Unauthenticated,
-            Ok(Op::Health) => RequestKind::Health,
-            Ok(Op::Ping) => RequestKind::Ping,
-            Ok(Op::Time) => RequestKind::Time,
-            Ok(Op::Settings) => RequestKind::Settings,
-            Ok(Op::Wifi) => RequestKind::Wifi,
-            Ok(Op::Play) => RequestKind::Play,
-            Ok(Op::Lock) => RequestKind::Lock,
-            Err(_) => RequestKind::Unsupported,
-        };
-
-        let mut body = [0; mqtt::MAX_REQUEST];
-        let mut writer = Buffer::new(&mut body);
-        // FW21: the clock is the one thing a request may change (see clock.rs).
-        let (written, ok) = match request.time {
-            _ if refused => (mqtt::write_auth_refusal(&mut writer, &request), false),
-            // FW25: queue credentials for the writer, or read; never echoes the passphrase.
-            _ if request.wifi.is_some() => {
-                let result = network::request(request.wifi.unwrap_or_default());
-                (
-                    mqtt::write_wifi_reply(&mut writer, &request, result),
-                    matches!(result, mqtt::WifiResult::Current { .. }),
-                )
-            }
-            // FW25: queue a change for the settings writer, or read.
-            _ if request.settings.is_some() => {
-                let result = settings::request(request.settings.unwrap_or_default());
-                (
-                    mqtt::write_settings_reply(&mut writer, &request, result),
-                    matches!(result, mqtt::SettingsResult::Current { .. }),
-                )
-            }
-            // FP11: read the panel lock, or queue a change for its owner.
-            _ if request.lock.is_some() => {
-                let result = panel::request(request.lock.unwrap_or_default());
-                (
-                    mqtt::write_lock_reply(&mut writer, &request, result),
-                    matches!(result, mqtt::LockResult::Current { .. }),
-                )
-            }
-            // FW24: queue a tune for the speaker.
-            _ if request.tune.is_some() => {
-                let result = request.tune.map_or(mqtt::PlayResult::Busy, audio::request);
-                (
-                    mqtt::write_play_reply(&mut writer, &request, result),
-                    result == mqtt::PlayResult::Started,
-                )
-            }
-            Some(fields) => {
-                let result = clock::sync(fields);
-                (
-                    mqtt::write_time_reply(&mut writer, &request, result),
-                    matches!(result, mqtt::TimeResult::Synced { .. }),
-                )
-            }
-            None => (
-                mqtt::write_reply(&mut writer, &request, sdk::uptime_ms()),
-                request.op.is_ok(),
-            ),
-        };
-        if written.is_err() {
-            return true;
-        }
-
-        let len = writer.len();
-        if !self.send_publish("reply", &body[..len]) {
-            self.close(CloseReason::Send, log);
-            return false;
-        }
-
-        log(Record::Request { kind, ok });
-        if kind == RequestKind::Health {
-            return self.publish(Trigger::Request, log);
-        }
-        true
     }
 
     fn publish(&mut self, trigger: Trigger, log: &mut impl FnMut(Record)) -> bool {
@@ -677,26 +516,11 @@ pub fn describe(record: Record, out: &mut impl Write) -> core::fmt::Result {
                 Trigger::Connect => "connect",
                 Trigger::Period => "period",
                 Trigger::Change => "change",
-                Trigger::Request => "request",
             };
             write!(out, "publish seq={seq} bytes={bytes} trigger={trigger}")
         }
 
-        Record::Request { kind, ok } => {
-            let kind = match kind {
-                RequestKind::Health => "health",
-                RequestKind::Ping => "ping",
-                RequestKind::Time => "time",
-                RequestKind::Settings => "settings",
-                RequestKind::Wifi => "wifi",
-                RequestKind::Play => "play",
-                RequestKind::Lock => "lock",
-                RequestKind::Unauthenticated => "unauthenticated",
-                RequestKind::Unsupported => "unsupported",
-                RequestKind::Malformed => "malformed",
-            };
-            write!(out, "request op={kind} ok={}", u8::from(ok))
-        }
+        Record::Ignored => out.write_str("request ignored=1"),
         Record::Closed { reason } => write!(out, "closed reason={}", reason.as_str()),
     }
 }

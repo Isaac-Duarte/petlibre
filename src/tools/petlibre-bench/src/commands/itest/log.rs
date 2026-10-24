@@ -1,6 +1,7 @@
 //! The feeder's UART as a searchable log. Every scenario asserts on the
-//! firmware's `PLxxxN` records (`PLMQT1 request op=ping ok=1`), which can sit
-//! after SDK noise on the same line; anything else is kept for reading back.
+//! firmware's `PLxxxN` records (`PLAPI1 request slot=0 op=status`), which
+//! can sit after SDK noise on the same line; anything else is kept for
+//! reading back.
 //! Times come from the rig's clock when the bytes were read, so they are as
 //! late as the polling interval.
 

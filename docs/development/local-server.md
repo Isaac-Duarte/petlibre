@@ -58,18 +58,9 @@ The server accepts health of schema `petlibre.health` version 1 with a boolean `
 
 The firmware channel is plaintext MQTT on the isolated hotspot. Anyone with the Wi-Fi password could read it or impersonate either end, which is accepted only because the channel carries read-only health. Feeding or update commands must not use it until it is authenticated or encrypted.
 
-### Request signing
+### Request signing (retired)
 
-Requests from the server to the firmware can be authenticated with a shared key ([wire format](../firmware/local-transport.md#authenticated-requests)). With the service stopped, after `firmware-credential`:
-
-```sh
-./target/debug/petlibre-local firmware-request-key --config private/server.json --credential private/fw-mqtt.json
-```
-
-- **What it does:** generates 32 random bytes from the operating system's CSPRNG (`/dev/urandom`) and adds them as `request_key` (64 lowercase hex characters) to the configuration's `firmware` section and to the credential file. It prints only that the key was added, never the key.
-- **Refusals:** a configuration without a firmware role, a configuration or credential file that already has a key (a key never rotates silently), and a credential file whose fields don't match the role (version, broker, port, device ID, client ID, username, password, namespace) or that has unknown fields.
-- **Order:** the credential file is rewritten first (atomically, mode 0600), then the configuration. If the configuration update fails, remove `request_key` from the credential file and rerun.
-- **Then:** rebuild the firmware so it embeds the key, and restart `serve`.
+The firmware takes no requests over MQTT since FW47; they go over its [device API](../firmware/device-api.md). `firmware-request-key` is deleted. A `request_key` already in the configuration or the credential file still parses and is unused, and goes with the broker credentials in FW48.
 
 With a key configured, the server signs every request it sends to the firmware: API `health` and `ping` requests and the FW21 `time` sync. It signs under the `nonce` of the latest health, with a `seq` that starts at 1 for each new nonce and rises by one per request; it refuses (503) rather than wrap once `seq` would pass 4294967295. Firmware whose health has no `nonce` (built without a key) gets unsigned requests, as before. Without a configured key the server never signs. A refused request comes back as a reply with `"error":"auth"`, which the status shows like any other reply. The key is validated on load and never appears in the API, status or logs; the nonce is not secret and shows in the health.
 
@@ -109,10 +100,9 @@ Write bodies are bounded to 4096 bytes. Use bearer authentication from the priva
 | Route | Interface |
 | --- | --- |
 | `GET /health` | Public process/build identity |
-| `GET /api/status` | Authenticated telemetry, build identity, install trials and OTA reports, and `replacement` (latest firmware health, `age_ms`, `online`, `stale`, rejected count and recent replies; null without a firmware role) |
+| `GET /api/status` | Authenticated telemetry, build identity, install trials and OTA reports, and `replacement` (the latest firmware health, which since FW47 only bank 0's recovery role sends: `age_ms`, `online`, `stale` and the rejected count; null without a firmware role) |
 | `POST /api/ota/trial` | `{ "request_id": "UUID", "server_token": "UUID" }`: the stock-to-replacement install; explicit trial mode and a live image lease required |
 | `POST /api/ota/trial/resolve` | Explicit uncertain-trial reconciliation; sends no command |
-| `POST /api/replacement/request` | `{ "op": "health" }`, `{ "op": "ping" }` or `{ "op": "settings" }` (optionally with `lights`, `sound` booleans and `volume` 0–100 to change them; FW25) to the replacement firmware, signed when a request key is configured and the health has a nonce; returns the generated request ID. Other bodies get 400, no firmware role 404, and stale or offline health or an exhausted `seq` 503 |
 
 Normal `serve` mode keeps trial dispatch disabled. `ota-images` is a separate HTTP transfer service for one reviewed build; it does not command an update. Trial dispatch requires a clean identifiable source commit. Test-only bypasses are not a deployment procedure; see [fixtures](fixtures.md) and [recovery limits](../devices/plaf103/recovery.md).
 

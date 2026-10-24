@@ -8,7 +8,7 @@
 //! byte; after `Ok` the rest of the connection is raw 16-bit little-endian
 //! mono PCM at that rate, ending when the client closes.
 
-use crate::request_auth::{KEY_LEN, hmac_sha256};
+use crate::mac::{KEY_LEN, hmac_sha256};
 
 pub const PORT: u16 = 7700;
 pub const MAGIC: [u8; 8] = *b"PLSPK1\0\0";

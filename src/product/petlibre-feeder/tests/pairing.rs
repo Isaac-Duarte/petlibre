@@ -32,7 +32,10 @@ fn code() -> Code {
 }
 
 fn keyed(entered: u8) -> Option<Event> {
-    Some(Event::Keyed { entered })
+    Some(Event::Keyed {
+        path: Path::Setup,
+        entered,
+    })
 }
 
 fn refused(path: Path, refusal: Refusal) -> Event {
@@ -82,17 +85,23 @@ fn setup_takes_its_code_from_the_buttons_even_when_locked() {
     let chord = Buttons::of(Button::Lock).with(Button::Mic);
     assert_eq!(
         p.gesture(200, Gesture::Down { chord }, Lock::Locked),
-        Some(Event::Swallowed)
+        Some(Event::Swallowed { path: Path::Setup })
     );
     let hold = Gesture::Hold {
         chord: Buttons::of(Button::Reset),
         level: 1,
     };
-    assert_eq!(p.gesture(200, hold, Lock::Unlocked), Some(Event::Swallowed));
+    assert_eq!(
+        p.gesture(200, hold, Lock::Unlocked),
+        Some(Event::Swallowed { path: Path::Setup })
+    );
 
     assert_eq!(
         p.gesture(CONFIRM - 1, press(*last), Lock::Locked),
-        Some(Event::Entered { code })
+        Some(Event::Entered {
+            path: Path::Setup,
+            code
+        })
     );
     assert_eq!(
         p.gesture(CONFIRM, press(Button::Dispense), Lock::Locked),
@@ -204,9 +213,9 @@ fn invites_expire_and_are_limited() {
 }
 
 #[test]
-fn recovery_needs_an_unlocked_panel_and_admits_one_owner() {
+fn recovery_needs_an_unlocked_panel_and_takes_one_offer_and_its_code() {
     let mut p = Pairing::new(Config::DEFAULT);
-    assert_eq!(p.recover(0), refused(Path::Recovery, Refusal::Closed));
+    assert_eq!(p.recovery(0), refused(Path::Recovery, Refusal::Closed));
     assert_eq!(
         p.gesture(0, recovery_hold(), Lock::Locked),
         Some(refused(Path::Recovery, Refusal::Locked))
@@ -217,12 +226,49 @@ fn recovery_needs_an_unlocked_panel_and_admits_one_owner() {
         p.gesture(0, recovery_hold(), Lock::Unlocked),
         Some(Event::RecoveryOpened)
     );
-    assert_eq!(p.recover(RECOVERY - 1), admit(Path::Recovery, Role::Owner));
     assert_eq!(
-        p.recover(RECOVERY - 1),
-        refused(Path::Recovery, Refusal::Closed)
+        p.recovery(RECOVERY - 1),
+        Event::Confirming {
+            path: Path::Recovery
+        }
     );
-    assert_eq!(p.tick(RECOVERY), None, "already closed by the admission");
+    assert_eq!(
+        p.recovery(RECOVERY - 1),
+        refused(Path::Recovery, Refusal::Closed),
+        "the offer closed the window"
+    );
+    assert_eq!(p.tick(RECOVERY), None, "already closed by the offer");
+
+    // The owner keys the client's code in, even on a locked panel.
+    let code = code();
+    let (last, first) = code.presses().split_last().unwrap();
+    for &button in first {
+        assert!(matches!(
+            p.gesture(RECOVERY, press(button), Lock::Locked),
+            Some(Event::Keyed {
+                path: Path::Recovery,
+                ..
+            })
+        ));
+    }
+    assert_eq!(
+        p.gesture(RECOVERY, press(*last), Lock::Locked),
+        Some(Event::Entered {
+            path: Path::Recovery,
+            code
+        })
+    );
+}
+
+#[test]
+fn a_recovery_code_never_keyed_in_is_unconfirmed() {
+    let mut p = Pairing::new(Config::DEFAULT);
+    p.gesture(0, recovery_hold(), Lock::Unlocked);
+    p.recovery(10);
+    assert_eq!(
+        p.tick(10 + CONFIRM),
+        Some(refused(Path::Recovery, Refusal::Unconfirmed))
+    );
 }
 
 #[test]
@@ -232,7 +278,7 @@ fn an_unused_recovery_window_closes() {
     assert_eq!(p.tick(RECOVERY - 1), None);
     assert_eq!(p.tick(RECOVERY), Some(Event::RecoveryClosed));
     assert_eq!(
-        p.recover(RECOVERY + 1),
+        p.recovery(RECOVERY + 1),
         refused(Path::Recovery, Refusal::Closed)
     );
 }

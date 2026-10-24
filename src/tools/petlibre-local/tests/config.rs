@@ -1,4 +1,4 @@
-//! `init`, `firmware-credential` and `firmware-request-key` run as the real
+//! `init` and `firmware-credential` run as the real
 //! binary on the synthetic example inputs: they write private (0600) files
 //! and refuse to replace any secret.
 
@@ -272,155 +272,21 @@ fn with_firmware_role(dir: &TempDir) -> (std::path::PathBuf, std::path::PathBuf)
     (config, credential)
 }
 
-fn request_key(config: &std::path::Path, credential: &std::path::Path) -> std::process::Output {
-    init(&[
-        "firmware-request-key".into(),
-        "--config".into(),
-        config.display().to_string(),
-        "--credential".into(),
-        credential.display().to_string(),
-    ])
-}
-
+/// FW47 retired request signing, but configurations written with the FW25
+/// key still load (the format denies unknown fields) until FW48 drops it.
 #[test]
-fn firmware_request_key_adds_one_key_to_both_files_and_never_prints_it() {
-    let dir = TempDir::new().unwrap();
-    let (config_path, credential_path) = with_firmware_role(&dir);
-    let before: serde_json::Value =
-        serde_json::from_slice(&fs::read(&credential_path).unwrap()).unwrap();
-
-    let result = request_key(&config_path, &credential_path);
-    assert!(result.status.success(), "{:?}", result.stderr);
-
-    let config = Config::load(&config_path).unwrap();
-    let firmware = config.firmware.as_ref().unwrap();
-    let key = firmware.request_key.clone().unwrap();
-    assert!(petlibre_local::replacement::request_auth::valid_key_hex(
-        &key
-    ));
-    assert!(firmware.request_key().is_some());
-
-    // The credential file keeps every field and gains the same key.
-    let mut credential: serde_json::Value =
-        serde_json::from_slice(&fs::read(&credential_path).unwrap()).unwrap();
-    assert_eq!(credential["request_key"], key.as_str());
-    credential.as_object_mut().unwrap().remove("request_key");
-    assert_eq!(credential, before);
-
-    let output = String::from_utf8_lossy(&result.stdout) + String::from_utf8_lossy(&result.stderr);
-    assert!(!output.contains(&key), "the key was printed");
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        for path in [&config_path, &credential_path] {
-            assert_eq!(
-                fs::metadata(path).unwrap().permissions().mode() & 0o777,
-                0o600
-            );
-        }
-    }
-
-    // A second run refuses and changes nothing.
-    let saved = (
-        fs::read(&config_path).unwrap(),
-        fs::read(&credential_path).unwrap(),
-    );
-    assert!(!request_key(&config_path, &credential_path).status.success());
-    assert_eq!(
-        (
-            fs::read(&config_path).unwrap(),
-            fs::read(&credential_path).unwrap()
-        ),
-        saved
-    );
-}
-
-#[test]
-fn firmware_request_key_refuses_without_a_role_or_with_a_mismatched_or_keyed_file() {
-    // No firmware role.
-    let dir = TempDir::new().unwrap();
-    assert!(init(&inputs(&dir)).status.success());
-    let config_path = dir.path().join("server.json");
-    let credential_path = dir.path().join("fw-mqtt.json");
-    fs::write(&credential_path, "{}").unwrap();
-    let saved = fs::read(&config_path).unwrap();
-    assert!(!request_key(&config_path, &credential_path).status.success());
-    assert_eq!(fs::read(&config_path).unwrap(), saved);
-    assert_eq!(fs::read(&credential_path).unwrap(), b"{}");
-
-    // A credential file that does not match the role, already has a key,
-    // carries unknown fields or is missing.
-    let edits: [(&str, serde_json::Value); 4] = [
-        ("password", serde_json::json!("f".repeat(64))),
-        ("port", serde_json::json!(1)),
-        ("request_key", serde_json::json!("5a".repeat(32))),
-        ("extra", serde_json::json!(true)),
-    ];
-    for (field, value) in edits {
-        let dir = TempDir::new().unwrap();
-        let (config_path, credential_path) = with_firmware_role(&dir);
-        let mut credential: serde_json::Value =
-            serde_json::from_slice(&fs::read(&credential_path).unwrap()).unwrap();
-        credential[field] = value;
-        fs::write(&credential_path, credential.to_string()).unwrap();
-
-        let saved = (
-            fs::read(&config_path).unwrap(),
-            fs::read(&credential_path).unwrap(),
-        );
-        assert!(
-            !request_key(&config_path, &credential_path).status.success(),
-            "{field}"
-        );
-        assert_eq!(
-            (
-                fs::read(&config_path).unwrap(),
-                fs::read(&credential_path).unwrap()
-            ),
-            saved
-        );
-    }
-
-    let dir = TempDir::new().unwrap();
-    let (config_path, _) = with_firmware_role(&dir);
-    assert!(
-        !request_key(&config_path, &dir.path().join("missing.json"))
-            .status
-            .success()
-    );
-
-    // A configuration that already has a key refuses even a clean credential file.
+fn a_configuration_with_the_retired_request_key_still_loads() {
     let dir = TempDir::new().unwrap();
     let (config_path, credential_path) = with_firmware_role(&dir);
     let mut config = Config::load(&config_path).unwrap();
     config.firmware.as_mut().unwrap().request_key = Some("5a".repeat(32));
     petlibre_local::storage::write_json(&config_path, &config).unwrap();
-    let saved = fs::read(&credential_path).unwrap();
-    assert!(!request_key(&config_path, &credential_path).status.success());
-    assert_eq!(fs::read(&credential_path).unwrap(), saved);
-}
 
-#[test]
-fn a_request_key_must_be_64_lowercase_hex_characters() {
-    let dir = TempDir::new().unwrap();
-    let (config_path, _) = with_firmware_role(&dir);
-    let mut config = Config::load(&config_path).unwrap();
-    for (key, ok) in [
-        (None, true),
-        (Some("0123456789abcdef".repeat(4)), true),
-        (Some("0123456789ABCDEF".repeat(4)), false),
-        (Some("0".repeat(63)), false),
-        (Some("0".repeat(65)), false),
-        (Some(String::new()), false),
-    ] {
-        config.firmware.as_mut().unwrap().request_key = key.clone();
-        assert_eq!(config.validate().is_ok(), ok, "{key:?}");
-    }
-
-    // Load refuses an invalid key too.
-    config.firmware.as_mut().unwrap().request_key = Some("xyz".into());
-    let raw = serde_json::to_vec(&config).unwrap();
-    fs::write(&config_path, raw).unwrap();
-    assert!(Config::load(&config_path).is_err());
+    let loaded = Config::load(&config_path).unwrap();
+    assert_eq!(loaded.firmware.unwrap().request_key, Some("5a".repeat(32)));
+    let mut credential: serde_json::Value =
+        serde_json::from_slice(&fs::read(&credential_path).unwrap()).unwrap();
+    credential["request_key"] = serde_json::json!("5a".repeat(32));
+    serde_json::from_value::<petlibre_formats::credentials::FirmwareCredential>(credential)
+        .unwrap();
 }

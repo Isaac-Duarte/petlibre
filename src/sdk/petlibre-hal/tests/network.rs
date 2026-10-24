@@ -1,10 +1,10 @@
-//! FW25 stored Wi-Fi credentials: the transport's queue, and the join
+//! FW25 stored Wi-Fi credentials: the request queue, and the join
 //! half's choice between stored and build credentials with fallback.
 
 use std::sync::Mutex;
 
 use petlibre_core::store::net::{Credentials, NetStore};
-use petlibre_core::transport::{WifiFields, WifiResult, WifiSource};
+use petlibre_core::transport::{WifiResult, WifiSource};
 use petlibre_hal::network::*;
 use petlibre_hal::sdk::fake;
 
@@ -148,32 +148,29 @@ fn a_save_mid_boot_is_joined_with_a_fresh_count() {
 }
 
 #[test]
-fn requests_queue_valid_credentials_or_a_clear() {
+fn changes_queue_checked_credentials_or_a_clear() {
     let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     fake::reset_hardware();
     reset();
-    assert_eq!(
-        request(WifiFields::default()),
-        WifiResult::Busy,
-        "store not opened"
-    );
+    assert_eq!(current(), WifiResult::Busy, "store not opened");
+    assert_eq!(change(None), WifiResult::Busy);
     store(None);
 
-    let read = request(WifiFields::default());
+    let read = current();
     assert!(
         matches!(read, WifiResult::Current { pending: false, view } if view.stored_ssid_crc.is_none() && view.writable)
     );
 
-    let set = WifiFields {
-        ssid: Some("6e6574"),
-        psk: Some("70617373776f7264"),
-        clear: false,
-    };
+    let set = Credentials::new(b"net", b"password").unwrap();
     assert!(matches!(
-        request(set),
+        change(Some(set)),
         WifiResult::Current { pending: true, .. }
     ));
-    assert_eq!(request(set), WifiResult::Busy);
+    assert_eq!(change(Some(set)), WifiResult::Busy);
+    assert!(matches!(
+        current(),
+        WifiResult::Current { pending: true, .. }
+    ));
     let queued = pending().unwrap().unwrap();
     assert_eq!(
         (queued.ssid(), queued.psk()),
@@ -181,21 +178,8 @@ fn requests_queue_valid_credentials_or_a_clear() {
     );
     finish();
 
-    // A passphrase with a control character fails the store's own check.
-    let bad = WifiFields {
-        ssid: Some("6e6574"),
-        psk: Some("7061737377006f72"),
-        clear: false,
-    };
-    assert_eq!(request(bad), WifiResult::Invalid);
-    assert_eq!(pending(), None);
-
-    let clear = WifiFields {
-        clear: true,
-        ..WifiFields::default()
-    };
     assert!(matches!(
-        request(clear),
+        change(None),
         WifiResult::Current { pending: true, .. }
     ));
     assert_eq!(pending(), Some(None));

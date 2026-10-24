@@ -1,6 +1,7 @@
 //! The child processes the bench chains: `petlibre-flash`, `petlibre-local`
-//! (signing, offering and checking an over-the-air update), `petlibre-build`
-//! (the build and review for `ota --build`), and `sigrok-cli`.
+//! (signing and offering an over-the-air update), `petlibre-build` (the
+//! build and review for `ota --build`), and `sigrok-cli`; and the device API
+//! session (FW47) that checks an update's result.
 //!
 //! `petlibre-flash` runs as its own process, never linked in. Its plans bind
 //! the SHA-256 of the running executable, and that has to stay the flash
@@ -17,6 +18,7 @@ use std::time::{Duration, Instant};
 use petlibre_formats::canonical::sha256;
 use serde::Deserialize;
 
+use crate::device::{Answer, Ask, Device, DeviceStatus};
 use crate::status::{FlashTool, Status, relative};
 use crate::{Error, Result, interrupted, require};
 
@@ -32,9 +34,10 @@ pub trait Tools {
     /// Run one `petlibre-local` command the same way; it never starts the
     /// server, which must already be running for an offer.
     fn local(&mut self, args: &[String], status: &mut Status) -> Result<i32>;
-    /// Run one `petlibre-local` query (`status`) and keep its output instead
-    /// of showing it: its stdout is a JSON document to parse.
-    fn local_query(&mut self, args: &[String]) -> Result<Captured>;
+    /// The feeder's status over the device API, as the owner key file at
+    /// `keys` (root-relative); `config` is the server config whose hotspot
+    /// fields find the feeder when mDNS does not.
+    fn device_status(&mut self, keys: &Path, config: &Path) -> Result<DeviceStatus>;
     /// Run one `petlibre-build` command (a firmware build or review) from the
     /// checkout root, streaming both of its outputs as they come; returns its
     /// exit status.
@@ -130,6 +133,20 @@ pub struct Processes {
     pub flash_bin: PathBuf,
     pub local_bin: PathBuf,
     pub build_bin: PathBuf,
+    /// Opened at the first status check and kept, with its session.
+    device: Option<Device>,
+}
+
+impl Processes {
+    pub fn new(root: PathBuf, flash_bin: PathBuf, local_bin: PathBuf, build_bin: PathBuf) -> Self {
+        Self {
+            root,
+            flash_bin,
+            local_bin,
+            build_bin,
+            device: None,
+        }
+    }
 }
 
 fn beside_this(name: &str) -> PathBuf {
@@ -345,17 +362,15 @@ impl Tools for Processes {
         stream(command, status)
     }
 
-    fn local_query(&mut self, args: &[String]) -> Result<Captured> {
-        let output = self
-            .local_command()?
-            .args(args)
-            .stdin(Stdio::null())
-            .output()?;
-        Ok(Captured {
-            code: exit_code(output.status),
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-        })
+    fn device_status(&mut self, keys: &Path, config: &Path) -> Result<DeviceStatus> {
+        let device = match &mut self.device {
+            Some(device) => device,
+            None => self.device.insert(Device::open(&self.root, keys, config)?),
+        };
+        match device.ask(&Ask::Status)? {
+            Answer::Status(status) => Ok(status),
+            other => Err(Error::Bench(format!("Status answered {other:?}"))),
+        }
     }
 
     fn build(&mut self, args: &[String], status: &mut Status) -> Result<i32> {
@@ -630,6 +645,7 @@ mod tests {
             flash_bin,
             local_bin: tmp.path().join("absent"),
             build_bin: tmp.path().join("absent"),
+            device: None,
         };
         let mut status = Status::new(tmp.path(), tmp.path().join("status"));
         status.begin("dump", Some("unit"), &[]).unwrap();
@@ -659,6 +675,7 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
             flash_bin,
             local_bin: tmp.path().join("absent"),
             build_bin: tmp.path().join("absent"),
+            device: None,
         };
         let output = tmp.path().join("capture");
 
@@ -676,6 +693,7 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
             flash_bin,
             local_bin: tmp.path().join("absent"),
             build_bin: tmp.path().join("absent"),
+            device: None,
         };
 
         let error = tools
@@ -697,6 +715,7 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
             flash_bin: tmp.path().join("absent"),
             local_bin: "/bin/sh".into(),
             build_bin: tmp.path().join("absent"),
+            device: None,
         };
         let mut status = Status::new(tmp.path(), tmp.path().join("status"));
         status.begin("ota", Some("unit"), &[]).unwrap();
@@ -728,6 +747,7 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
             flash_bin: fake_flash(tmp, &script),
             local_bin: "/bin/sh".into(),
             build_bin: tmp.join("absent"),
+            device: None,
         };
         let root = tmp.to_path_buf();
         tools
@@ -797,32 +817,6 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
     }
 
     #[test]
-    fn local_query_keeps_stdout_and_stderr_apart() {
-        let _serial = serial();
-        let tmp = tempfile::tempdir().unwrap();
-        let script = tmp.path().join("fake-local");
-        fs::write(
-            &script,
-            "echo '{\"replacement\":null}'; echo warn >&2; exit 2\n",
-        )
-        .unwrap();
-        let mut tools = Processes {
-            root: tmp.path().into(),
-            flash_bin: tmp.path().join("absent"),
-            local_bin: "/bin/sh".into(),
-            build_bin: tmp.path().join("absent"),
-        };
-
-        let output = tools
-            .local_query(&[script.display().to_string(), "status".into()])
-            .unwrap();
-
-        assert_eq!(output.code, 2);
-        assert_eq!(output.stdout.trim(), r#"{"replacement":null}"#);
-        assert_eq!(output.stderr.trim(), "warn");
-    }
-
-    #[test]
     fn the_builder_streams_both_outputs_from_the_root_and_must_exist() {
         let _serial = serial();
         let tmp = tempfile::tempdir().unwrap();
@@ -842,6 +836,7 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
             flash_bin: tmp.path().join("absent"),
             local_bin: tmp.path().join("absent"),
             build_bin: builder,
+            device: None,
         };
         let mut status = Status::new(tmp.path(), tmp.path().join("status"));
         status.begin("ota", Some("unit"), &[]).unwrap();
@@ -875,6 +870,7 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
             flash_bin: tmp.path().join("absent"),
             local_bin: tmp.path().join("absent"),
             build_bin: tmp.path().join("absent"),
+            device: None,
         };
         let mut status = Status::disabled();
 

@@ -6,6 +6,7 @@
 //! shape, interrupt state), so a port that drifts fails its host tests.
 
 use super::*;
+use crate::{Accepted, ApiRecv, Datagram};
 
 fn lp_clock_state(bit: u32) -> LpClock {
     with(|h| LpClock {
@@ -874,4 +875,74 @@ pub fn ble_disconnect() -> bool {
 
 pub fn ble_stats() -> BleStats {
     with(|h| h.ble_stats)
+}
+
+pub fn api_listen(_port: u16) -> Option<i32> {
+    with(|h| (!h.tcp_listen_fails).then_some(200))
+}
+
+/// Takes the next waiting connection.
+pub fn api_accept(_listener: i32) -> Accepted {
+    with(|h| {
+        h.api_waiting
+            .pop_front()
+            .map_or(Accepted::None, Accepted::Socket)
+    })
+}
+
+pub fn api_recv(socket: i32, buffer: &mut [u8]) -> ApiRecv {
+    with(|h| {
+        let waiting = h.api_rx.entry(socket).or_default();
+        if waiting.is_empty() {
+            return if h.api_hung_up.contains(&socket) {
+                ApiRecv::Closed
+            } else {
+                ApiRecv::Empty
+            };
+        }
+        let n = waiting.len().min(buffer.len());
+        for (out, byte) in buffer.iter_mut().zip(waiting.drain(..n)) {
+            *out = byte;
+        }
+        ApiRecv::Data(n)
+    })
+}
+
+pub fn api_send(socket: i32, data: &[u8]) -> Option<usize> {
+    with(|h| {
+        if h.tcp_send_fails || h.api_hung_up.contains(&socket) {
+            return None;
+        }
+        let n = data.len().min(h.api_send_room);
+        h.api_tx
+            .entry(socket)
+            .or_default()
+            .extend_from_slice(&data[..n]);
+        Some(n)
+    })
+}
+
+pub fn mdns_open() -> Option<i32> {
+    with(|h| (!h.tcp_listen_fails).then_some(300))
+}
+
+pub fn mdns_recv(_socket: i32, buffer: &mut [u8]) -> Datagram {
+    with(|h| match h.mdns_rx.pop_front() {
+        None => Datagram::None,
+        Some((data, ip, port)) => {
+            let len = data.len().min(buffer.len());
+            buffer[..len].copy_from_slice(&data[..len]);
+            Datagram::Got { len, ip, port }
+        }
+    })
+}
+
+#[must_use]
+pub fn mdns_send(_socket: i32, data: &[u8], ip: u32, port: u16) -> bool {
+    with(|h| h.mdns_tx.push((data.to_vec(), ip, port)));
+    true
+}
+
+pub fn ipv4() -> Option<u32> {
+    with(|h| (h.ipv4 != 0).then_some(h.ipv4))
 }

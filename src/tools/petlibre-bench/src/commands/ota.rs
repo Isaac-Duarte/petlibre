@@ -1,20 +1,21 @@
 //! FW12 over-the-air iteration: optionally build and freeze a review with
 //! `petlibre-build`, sign it with `petlibre-local`, offer it to the server
 //! that is already running, watch receive-only UART captures until the new
-//! build confirms, falls back, or time runs out, then check that the server's
-//! health shows the new build. Each phase is timed for the FW12 record.
+//! build confirms, falls back, or time runs out, then check that the device
+//! API (FW47) reports the new build on bank 1. Each phase is timed for the
+//! FW12 record.
 //!
 //! A review of the original stock image (`image_kind: stock`) installs the
 //! same way, through the replacement's own signed update: its payload hash
 //! stands in for a build ID, success is stock's `app_main:version:` banner
-//! after activation, and there is no health to check, since stock does not
-//! report to this server. Stock has no trial, so a stock image that failed to
+//! after activation, and there is no status to check, since stock serves no
+//! device API. Stock has no trial, so a stock image that failed to
 //! boot would need the UART recovery.
 //!
 //! The bench never starts the server or the hotspot, never switches a relay
 //! here, and never writes to the feeder. [`Watch`] classifies the feeder's
-//! `PL…` lines without I/O, so it is tested on real lines; the server's
-//! health is read with [`LocalStatus::health_matches`].
+//! `PL…` lines without I/O, so it is tested on real lines; the feeder's
+//! status is read with [`DeviceStatus::matches`].
 
 use std::fmt;
 use std::fs;
@@ -29,7 +30,7 @@ use petlibre_formats::review::{ImageKind, ImageReview};
 
 use super::Bench;
 use crate::config::{CAPTURES, VERIFICATION};
-use crate::server::LocalStatus;
+use crate::device::DeviceStatus;
 use crate::{Error, Result, require};
 
 /// Each capture segment; the classifier reads it once it ends.
@@ -45,12 +46,12 @@ const MANIFEST_LEN: usize = 148;
 pub(crate) const STAGES: [&str; 4] = ["give way", "download", "new build boot", "confirm"];
 /// Status steps of `--build`, before signing.
 const BUILD_STEPS: [&str; 2] = ["firmware build", "review image"];
-/// The last status step: the server's view of the new build.
+/// The last status step: the device API's view of the new build.
 pub(crate) const HEALTH_STEP: &str = "health";
 
 /// The build's output, which the review freezes (root-relative).
 const BUILD_OUTPUT: &str = "private/firmware-build/plaf103/firstboot";
-/// The firmware publishes health every 30 s; allow three periods.
+/// The confirmed build serves the device API at once; allow for a slow join.
 const HEALTH_SECONDS: f64 = 90.0;
 const HEALTH_POLL_SECONDS: f64 = 5.0;
 
@@ -255,9 +256,13 @@ pub struct OtaArgs {
     /// --firmware feeder.
     #[arg(long, value_parser = parse_variant)]
     pub variant: Option<Variant>,
-    /// petlibre-local config for the health check's `status` (root-relative).
+    /// petlibre-local config (root-relative): its hotspot interface and
+    /// feeder MAC find the feeder for the final status check when mDNS does not.
     #[arg(long, default_value = "private/server.json")]
     pub config: PathBuf,
+    /// The owner key file the final status check opens its session with.
+    #[arg(long, default_value = crate::device::OWNER_KEYS)]
+    pub keys: PathBuf,
     /// Manifest version (default: one more than the highest signed in private/verification).
     #[arg(long)]
     pub version: Option<u32>,
@@ -903,7 +908,22 @@ impl Bench {
         );
         self.ota_watch(args, &staged, timing)?;
         if staged.target == Target::Stock {
-            say!("Stock does not report to this server; no health to check");
+            say!("Stock serves no device API; no status to check");
+            return Ok(0);
+        }
+        // Since FW47 only the product firmware reports anything after its
+        // trial: the bring-up firmwares open no MQTT session and serve no
+        // API, so their UART confirmation is the whole check.
+        let described = self.root.join(&staged.review).join("build-manifest.json");
+        let manifest: petlibre_formats::manifest::BuildManifest =
+            petlibre_formats::load(&described).map_err(|error| {
+                Error::Bench(format!("{} is unreadable: {error}", self.rel(&described)))
+            })?;
+        if manifest.firmware.as_deref() != Some(Firmware::Feeder.name()) {
+            self.note(&format!(
+                "{} serves no device API; the UART confirmation is the check",
+                manifest.firmware.as_deref().unwrap_or("this firmware")
+            ));
             return Ok(0);
         }
 
@@ -1228,38 +1248,25 @@ impl Bench {
         )))
     }
 
-    /// Poll `petlibre-local status` until its health shows the new build on
-    /// bank 1, online and fresh, for up to [`HEALTH_SECONDS`].
+    /// Poll the feeder's device API status until it shows the new build on
+    /// bank 1, for up to [`HEALTH_SECONDS`].
     fn ota_health(&mut self, args: &OtaArgs, build: &str) -> Result<()> {
         self.status.step(HEALTH_STEP);
-        let query = [
-            "status".to_string(),
-            "--config".into(),
-            args.config.display().to_string(),
-        ];
         say!(
-            "+ petlibre-local {} (every {HEALTH_POLL_SECONDS} s, up to {HEALTH_SECONDS} s)",
-            query.join(" ")
+            "+ device API status as {} (every {HEALTH_POLL_SECONDS} s, up to {HEALTH_SECONDS} s)",
+            args.keys.display()
         );
 
         let mut waited = 0.0;
         let mut last = String::new();
         loop {
-            let output = self.tools.local_query(&query)?;
+            let verdict = self
+                .tools
+                .device_status(&args.keys, &args.config)
+                .and_then(|status: DeviceStatus| Ok(status.matches(build)?));
             if crate::interrupted() {
                 return Err(Error::Interrupted);
             }
-            let verdict = if output.code == 0 {
-                serde_json::from_str::<LocalStatus>(&output.stdout)
-                    .map_err(|error| Error::Bench(format!("unreadable status: {error}")))
-                    .and_then(|status| Ok(status.health_matches(build)?))
-            } else {
-                Err(Error::Bench(format!(
-                    "petlibre-local status exited {}: {}",
-                    output.code,
-                    output.stderr.trim().lines().last().unwrap_or("")
-                )))
-            };
 
             match verdict {
                 Ok(report) => {
@@ -1270,7 +1277,7 @@ impl Bench {
                 Err(reason) => {
                     let reason = reason.to_string();
                     if reason != last {
-                        self.note(&format!("Waiting for health: {reason}"));
+                        self.note(&format!("Waiting for status: {reason}"));
                         last = reason;
                     }
                 }
@@ -1278,7 +1285,7 @@ impl Bench {
 
             if waited >= HEALTH_SECONDS {
                 return Err(Error::Bench(format!(
-                    "Confirmed on UART but health did not report the build within {HEALTH_SECONDS} s ({last})"
+                    "Confirmed on UART but the device API did not report the build within {HEALTH_SECONDS} s ({last})"
                 )));
             }
             (self.sleep)(HEALTH_POLL_SECONDS)?;

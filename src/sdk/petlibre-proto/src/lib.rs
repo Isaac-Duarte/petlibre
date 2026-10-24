@@ -4,12 +4,13 @@
 //! Messages are postcard-encoded serde types, so the feeder (no allocation),
 //! the host client and the app's generated bindings read one definition.
 //! Nothing here does IO or cryptography: the caller seals and opens the bytes.
-//! FW45's BLE setup exchange is the first protocol here; FW47's device API
-//! grows it.
+//! FW45's BLE setup exchange ([`setup`]) and FW47's device API ([`api`])
+//! share `petlibre_core::frame`'s length-prefixed frames.
 //!
 //! [API design]: ../../../../docs/api/README.md
 #![no_std]
 
+pub mod api;
 pub mod setup;
 
 use serde::{Deserialize, Serialize};
@@ -37,5 +38,14 @@ pub fn decode<'a, T: Deserialize<'a>>(bytes: &'a [u8]) -> Result<T, Error> {
     match postcard::take_from_bytes(bytes) {
         Ok((value, [])) => Ok(value),
         _ => Err(Error::Malformed),
+    }
+}
+
+/// Decode one message from the start of `bytes`, whose rest must be zeros:
+/// a fixed-size record field (the event ring's 16-byte body).
+pub fn decode_padded<'a, T: Deserialize<'a>>(bytes: &'a [u8]) -> Option<T> {
+    match postcard::take_from_bytes(bytes) {
+        Ok((value, rest)) if rest.iter().all(|&b| b == 0) => Some(value),
+        _ => None,
     }
 }

@@ -1,26 +1,26 @@
 //! FW25: Wi-Fi credentials without a rebuild.
 //!
-//! - **Transport half:** a signed `wifi` request, or credentials from BLE
-//!   setup (FW45, [`save`]), is checked by the store's own rules and queued
-//!   for the settings writer, which saves it to NOR (storage sectors 5 and 6).
+//! - **Request half:** credentials from the device API (FW47, [`change`]) or
+//!   from BLE setup (FW45, [`save`]), checked by the store's own rules, are
+//!   queued for the settings writer, which saves them to NOR (storage
+//!   sectors 5 and 6).
 //! - **Join half:** before each join attempt the C shim asks for credentials
 //!   (`petlibre_wifi_select`) and then reports the outcome
 //!   (`petlibre_wifi_outcome`). Stored credentials are used until
 //!   [`FALLBACK_AFTER`] attempts in a row fail without one success this boot;
 //!   then the build's credentials take over, so a bad save cannot strand the
-//!   feeder. A save during the boot (FW25 `wifi` over MQTT, or FW45 BLE setup)
+//!   feeder. A save during the boot (a device API write, or FW45 BLE setup)
 //!   takes effect at the next join: the new credentials are read again and
 //!   get their own run of attempts before the build's take over.
 //!
-//! Nothing here writes flash; the transport may call [`request`].
+//! Nothing here writes flash.
 
 use core::ffi::{c_uint, c_void};
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
-use petlibre_core::hex;
 use petlibre_core::store::net::{Credentials, NetStore};
 use petlibre_core::store::slot::JournalIo;
-use petlibre_core::transport::{WifiFields, WifiResult, WifiSource, WifiView};
+use petlibre_core::transport::{WifiResult, WifiSource, WifiView};
 
 use crate::cell::TaskCell;
 use crate::sdk;
@@ -83,50 +83,32 @@ fn view() -> WifiView {
     }
 }
 
-/// The transport's half: read, or queue a store or clear for the writer.
-pub fn request(fields: WifiFields) -> WifiResult {
+/// The store as the writer last published it, and whether a change waits.
+pub fn current() -> WifiResult {
     if !LOADED.load(Ordering::Acquire) {
         return WifiResult::Busy;
     }
-    if !fields.changes() {
-        let pending = STATE.load(Ordering::Acquire) != Hand::Empty as u8;
-        return WifiResult::Current {
-            view: view(),
-            pending,
-        };
+    WifiResult::Current {
+        view: view(),
+        pending: STATE.load(Ordering::Acquire) != Hand::Empty as u8,
     }
-    if !WRITABLE.load(Ordering::Acquire) {
-        return WifiResult::ReadOnly;
-    }
-
-    let credentials = match (fields.ssid, fields.psk) {
-        (Some(ssid), Some(psk)) => {
-            let (mut s, mut p) = ([0u8; 32], [0u8; 63]);
-            let (Some(sn), Some(pn)) = (
-                hex::decode(ssid.as_bytes(), &mut s),
-                hex::decode(psk.as_bytes(), &mut p),
-            ) else {
-                return WifiResult::Invalid;
-            };
-            match Credentials::new(&s[..sn], &p[..pn]) {
-                Some(c) => Some(c),
-                None => return WifiResult::Invalid,
-            }
-        }
-        _ => None,
-    };
-    queue(credentials)
 }
 
 /// BLE setup's half: queue checked credentials for the writer.
 pub fn save(credentials: Credentials) -> WifiResult {
+    change(Some(credentials))
+}
+
+/// The device API's half: queue checked credentials, or a clear with
+/// `None`, for the writer.
+pub fn change(credentials: Option<Credentials>) -> WifiResult {
     if !LOADED.load(Ordering::Acquire) {
         return WifiResult::Busy;
     }
     if !WRITABLE.load(Ordering::Acquire) {
         return WifiResult::ReadOnly;
     }
-    queue(Some(credentials))
+    queue(credentials)
 }
 
 /// Whether a queued change still waits for the writer.

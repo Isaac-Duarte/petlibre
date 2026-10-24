@@ -22,7 +22,7 @@ Where each host tool is going as the product platform lands, decided October 24,
 | C-probe and modified-stock research | `probe-query`, the `1.1.16` and C-probe trial images | **Deleted** (stage 1). The research closed on October 22 |
 | Direct-to-feeder bring-up | `speak`, `ble-wifi` | **Deleted** (stage 1). Their firmwares are bring-up only, and FW45 replaces BLE setup |
 | Stock installer (FW40–FW43) | `ota-images`, `ota-trial`, `ota-trial-resolve`, `setup-send`, the stock broker; `init` and `network` (captured credentials, sudo redirect) | **`petlibre-stock`** (the protocol) and **`petlibre-client`** (the installer's steps). `init` and `network` go once the FW42 setup frame works |
-| Replacement MQTT transport (FW08) | `firmware-credential`, `firmware-request-key`, the firmware broker role, `/api/replacement/request` | **Deleted** once the device API (FW47) carries every request |
+| Replacement MQTT transport (FW08) | `firmware-credential`, `firmware-request-key`, the firmware broker role, `/api/replacement/request` | Requests **deleted** with FW47 (`firmware-request-key`, `/api/replacement/request`); `firmware-credential` and the broker role go with the offers in FW48 |
 | Replacement OTA (FW10) | `ota-keygen`, `ota-sign`, `ota-offer`, the fault-server example | Signing to **`petlibre-build`**; offers to the device API (FW48), with the fault server rebuilt on `petlibre-client` |
 
 The bench drives `petlibre-local` as a child process today (`serve`, `ota-sign`, `ota-offer`, `ota-images`, `status`, and four HTTP routes). Linking libraries replaces that.
@@ -66,7 +66,7 @@ Every hardware test runs through `petlibre-local` today, so it shrinks in step w
 | 1 | Nothing | Delete stock control, the C-probe and modified-stock trials, `speak` and `ble-wifi`. The ledger keeps only install trials |
 | 2 | Nothing | Split the bench into `petlibre-relay`, `petlibre-bench`, `petlibre-itest` and `petlibre-dashboard`, with their shared files in `petlibre-formats` |
 | 3 | FW42 | The setup frame provisions stock: the broker trusts a new feeder on first use during an install, and `init` and `network` are deleted |
-| 4 | FW45, FW47 | `petlibre-client` and the `petlibre` CLI (begun Oct 24 with FW45: the BLE setup session and `petlibre setup`); the bench and suite talk to the feeder over the device API; the MQTT firmware role and its credentials are deleted |
+| 4 | FW45, FW47 | `petlibre-client` and the `petlibre` CLI (FW45: the BLE setup session and `petlibre setup`; FW47, Oct 24: the device API session, invites, recovery and the commands on it); the bench and suite talk to the feeder over the device API; the firmware's MQTT request path is deleted. The broker credentials go with the offers in stage 5 |
 | 5 | FW48 | Offers over the device API; signing moves to `petlibre-build`; the fault server is rebuilt on `petlibre-client` |
 | 6 | FW43 | What is left of the stock path moves into `petlibre-stock` and `petlibre-client`'s installer steps; `petlibre-local` is deleted |
 

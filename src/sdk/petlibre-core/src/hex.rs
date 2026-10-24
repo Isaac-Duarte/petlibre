@@ -48,3 +48,17 @@ impl core::fmt::Display for Lower<'_> {
         self.0.iter().try_for_each(|byte| write!(f, "{byte:02x}"))
     }
 }
+
+/// Bytes as lowercase hex into the start of `out`; `None` when it is
+/// shorter than `2 * bytes.len()`.
+pub fn encode<'a>(bytes: &[u8], out: &'a mut [u8]) -> Option<&'a [u8]> {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let out = out.get_mut(..2 * bytes.len())?;
+    for (pair, byte) in out.as_chunks_mut::<2>().0.iter_mut().zip(bytes) {
+        *pair = [
+            DIGITS[usize::from(byte >> 4)],
+            DIGITS[usize::from(byte & 0xf)],
+        ];
+    }
+    Some(out)
+}

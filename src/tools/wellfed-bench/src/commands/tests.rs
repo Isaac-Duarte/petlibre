@@ -1456,14 +1456,25 @@ fn the_motor_firmware_and_its_variant_are_refused() {
 }
 
 #[test]
-fn a_variant_needs_the_trial_firmware() {
-    let mut rig = rig();
-    let mut args = build_args();
-    args.firmware = Some(Firmware::Speaker);
+fn a_variant_needs_the_firmware_that_declares_it() {
+    for (firmware, variant) in [
+        (Firmware::Speaker, None),
+        (Firmware::Trial, Some(Variant::Setup)),
+        (Firmware::Feeder, Some(Variant::Fw11Fail)),
+    ] {
+        let mut rig = rig();
+        let mut args = build_args();
+        args.firmware = Some(firmware);
+        if let Some(variant) = variant {
+            args.variant = Some(variant);
+        }
 
-    let error = rig.bench.ota(&args).unwrap_err().to_string();
-    assert!(error.contains("--firmware trial only"), "{error}");
-    assert!(rig.tools.0.borrow().ran.is_empty());
+        let error = rig.bench.ota(&args).unwrap_err().to_string();
+        assert!(error.contains("the firmware that declares it"), "{error}");
+        assert!(rig.tools.0.borrow().ran.is_empty());
+    }
+    assert_eq!(ota::parse_variant("setup"), Ok(Variant::Setup));
+    assert_eq!(Variant::Setup.firmware(), Firmware::Feeder);
 }
 
 #[test]

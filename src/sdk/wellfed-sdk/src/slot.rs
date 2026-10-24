@@ -24,6 +24,23 @@ impl<T> Slot<T> {
         Self(UnsafeCell::new(None))
     }
 
+    /// A slot built at compile time, for a value too large to build on a
+    /// task's stack even once: it starts in static RAM and is never moved.
+    /// Read it with [`Self::get`], which links no constructor.
+    pub const fn filled(value: T) -> Self {
+        Self(UnsafeCell::new(Some(value)))
+    }
+
+    /// The value as it stands; `None` only for a slot never filled.
+    ///
+    /// # Safety
+    /// As for `get_or_try_init`.
+    #[allow(clippy::mut_from_ref)]
+    pub unsafe fn get(&self) -> Option<&mut T> {
+        // SAFETY: the caller is the slot's only user.
+        unsafe { &mut *self.0.get() }.as_mut()
+    }
+
     /// The value, built on first use by `make` in a frame of its own. Built
     /// inline, a large value's temporary stays reserved in the task's frame
     /// beneath every later step: after the crate split, LTO inlined the

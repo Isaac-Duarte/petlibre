@@ -60,6 +60,8 @@ mod sdk {
         "xTaskResumeAll",
         "xTaskGetSchedulerState",
         "xTaskGetTickCount",
+        "xPortGetFreeHeapSize",
+        "xPortGetMinimumEverFreeHeapSize",
         "BOOT_Reason",
         "BKUP_Read",
         "FLASH_RxCmdXIP",

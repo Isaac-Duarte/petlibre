@@ -113,6 +113,9 @@ pub struct Hardware {
     pub blocked_optics_write: bool,
 
     pub raw_ticks: u32,
+    /// The FreeRTOS heap: free now, and the least it has been.
+    pub heap_free: u32,
+    pub heap_min_free: u32,
     pub timer_phase: u32,
     pub timer_irqs: u32,
     pub gpio_irqs: u32,
@@ -250,6 +253,8 @@ impl Default for Hardware {
             blocked_motor_write: false,
             blocked_optics_write: false,
             raw_ticks: 0,
+            heap_free: 200 * 1024,
+            heap_min_free: 180 * 1024,
             timer_phase: 0,
             timer_irqs: 0,
             gpio_irqs: 0,

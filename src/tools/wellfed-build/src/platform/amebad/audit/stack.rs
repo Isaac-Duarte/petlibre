@@ -103,7 +103,9 @@ static PUSH: LazyLock<Regex> = LazyLock::new(|| {
 static VPUSH: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^vpush\s*\{d(\d+)-d(\d+)\}").expect("stack audit pattern"));
 static SUB: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^sub(?:\.w)?\s+sp,\s*(?:sp,\s*)?#(\d+)").expect("stack audit pattern")
+    // `subw` is Thumb-2's 12-bit-immediate form, which LLVM picks for frames
+    // up to 4 KiB; missing it hid curve25519's 1948-byte frame (FW44).
+    Regex::new(r"^sub(?:w|\.w)?\s+sp,\s*(?:sp,\s*)?#(\d+)").expect("stack audit pattern")
 });
 
 /// {entry function name: (task name, stack bytes)} from the task sources.
@@ -415,6 +417,10 @@ mod tests {
 00003000 <shallow>:
     3000:\tb510      \tpush\t{r4, lr}
     3002:\tbd10      \tpop\t{r4, pc}
+
+00004000 <wide>:
+    4000:\tb580      \tpush\t{r7, lr}
+    4002:\tf2ad 7d9c \tsubw\tsp, sp, #1948\t; 0x79c
 ";
 
     #[test]
@@ -444,6 +450,7 @@ mod tests {
         assert_eq!(functions["task"].frame, 20 + 3280);
         assert!(functions["task"].indirect);
         assert_eq!(functions["deep"].frame, 36 + 16 + 836);
+        assert_eq!(functions["wide"].frame, 8 + 1948, "subw counts");
 
         let (depth, path, indirect, cut) = worst(&functions, "task");
         assert_eq!(depth, 3300 + 888 + 8);

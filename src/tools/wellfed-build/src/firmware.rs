@@ -350,7 +350,7 @@ quiet = { summary = "No probes" }
             assert!(firmware.is_some(), "{name}");
             assert_eq!(
                 firmware.is_some_and(Firmware::bluetooth),
-                name == "ble",
+                matches!(name, "ble" | "feeder"),
                 "{name}"
             );
         }

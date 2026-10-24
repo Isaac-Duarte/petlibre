@@ -151,14 +151,16 @@ pub(crate) fn parse_firmware(text: &str) -> std::result::Result<Firmware, String
         })
 }
 
-/// A variant of the trial firmware; no other firmware the bench builds has
-/// one.
+/// A variant the bench may build: the trial firmware's and the feeder's.
+/// Motion variants are never among them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Variant {
     /// FW11: never confirms; the watchdog resets it, so KM0 falls back.
     Fw11Reset,
     /// FW11: fails its startup diagnostic on purpose.
     Fw11Fail,
+    /// FW44: the feeder with BLE setup mode from boot.
+    Setup,
 }
 
 impl Variant {
@@ -167,6 +169,15 @@ impl Variant {
         match self {
             Self::Fw11Reset => "fw11-reset",
             Self::Fw11Fail => "fw11-fail",
+            Self::Setup => "setup",
+        }
+    }
+
+    /// The firmware that declares it.
+    pub(crate) fn firmware(self) -> Firmware {
+        match self {
+            Self::Fw11Reset | Self::Fw11Fail => Firmware::Trial,
+            Self::Setup => Firmware::Feeder,
         }
     }
 }
@@ -176,9 +187,10 @@ pub(crate) fn parse_variant(text: &str) -> std::result::Result<Variant, String> 
     match text {
         "fw11-reset" => Ok(Variant::Fw11Reset),
         "fw11-fail" => Ok(Variant::Fw11Fail),
+        "setup" => Ok(Variant::Setup),
         "fw16-pulse" => Err(format!("fw16-pulse {MOTION_MANUAL}")),
         other => Err(format!(
-            "unknown variant {other:?}; the trial firmware has fw11-reset and fw11-fail"
+            "unknown variant {other:?}; the trial firmware has fw11-reset and fw11-fail, the feeder setup"
         )),
     }
 }
@@ -239,11 +251,12 @@ pub struct OtaArgs {
     /// With --build: build even when a review of the same sources exists.
     #[arg(long, requires = "build")]
     pub rebuild: bool,
-    /// No-motion firmware for --build: qa (the default), optics, buttons, adc, speaker, blink, ble
-    /// or trial.
+    /// No-motion firmware for --build: qa (the default), optics, buttons, adc, speaker, blink, ble,
+    /// trial or feeder.
     #[arg(long, value_parser = parse_firmware)]
     pub firmware: Option<Firmware>,
-    /// Trial variant for --build --firmware trial: fw11-reset or fw11-fail.
+    /// Variant for --build: fw11-reset or fw11-fail with --firmware trial, setup with
+    /// --firmware feeder.
     #[arg(long, value_parser = parse_variant)]
     pub variant: Option<Variant>,
     /// wellfed-local config for the health check's `status` (root-relative).
@@ -977,8 +990,9 @@ impl Bench {
             "--firmware and --variant apply to --build only",
         )?;
         require(
-            args.variant.is_none() || args.firmware == Some(Firmware::Trial),
-            "--variant applies to --firmware trial only",
+            args.variant
+                .is_none_or(|variant| args.firmware == Some(variant.firmware())),
+            "--variant needs the firmware that declares it (trial or feeder)",
         )?;
         let mut review = match (&args.review, args.build) {
             (_, true) => PathBuf::from(VERIFICATION).join(format!("{}-review", args.name)),

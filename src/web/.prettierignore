@@ -1,0 +1,8 @@
+# Generated files are rewritten by their generators, never formatted by hand.
+*.gen.ts
+*.gen.css
+pnpm-lock.yaml
+dist/
+test-results/
+playwright-report/
+.vite/

@@ -76,7 +76,9 @@ test("both themes render without horizontal page scroll", async ({ page }) => {
     await page.emulateMedia({ colorScheme });
     for (const view of ["overview", "tests", "sessions"]) {
       await page.goto(`/#/${view}`);
-      await page.waitForLoadState("networkidle").catch(() => {});
+      await page.waitForLoadState("networkidle").catch(() => {
+        // The event stream never goes idle; the overflow check below is what matters.
+      });
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       expect(overflow, `${view} in ${colorScheme}`).toBeLessThanOrEqual(0);
     }

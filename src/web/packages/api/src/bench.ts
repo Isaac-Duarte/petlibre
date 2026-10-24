@@ -37,14 +37,29 @@ export interface StreamHandlers {
 /** Follow `api/events`; returns the function that closes it. */
 export function stream(handlers: StreamHandlers): () => void {
   const source = new EventSource("api/events");
-  const json = <T>(event: MessageEvent<string>) => JSON.parse(event.data) as T;
+  // Named events arrive as MessageEvent, but addEventListener types them as Event.
+  const data = (event: Event) => (event instanceof MessageEvent && typeof event.data === "string" ? event.data : "");
 
-  source.addEventListener("open", () => handlers.connected(true));
-  source.addEventListener("error", () => handlers.connected(false));
-  source.addEventListener("status", (e) => handlers.status(json<Snapshot>(e as MessageEvent<string>)));
-  source.addEventListener("log-reset", () => handlers.logReset());
-  source.addEventListener("log", (e) => handlers.log((e as MessageEvent<string>).data));
-  source.addEventListener("feeder", (e) => handlers.feeder(json<FeederView>(e as MessageEvent<string>)));
+  source.addEventListener("open", () => {
+    handlers.connected(true);
+  });
+  source.addEventListener("error", () => {
+    handlers.connected(false);
+  });
+  source.addEventListener("status", (e) => {
+    handlers.status(JSON.parse(data(e)) as Snapshot);
+  });
+  source.addEventListener("log-reset", () => {
+    handlers.logReset();
+  });
+  source.addEventListener("log", (e) => {
+    handlers.log(data(e));
+  });
+  source.addEventListener("feeder", (e) => {
+    handlers.feeder(JSON.parse(data(e)) as FeederView);
+  });
 
-  return () => source.close();
+  return () => {
+    source.close();
+  };
 }

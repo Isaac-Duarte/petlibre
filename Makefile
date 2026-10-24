@@ -1,14 +1,14 @@
-.PHONY: help check check-rust check-cross check-virtual-feeder check-docs check-fixtures ui check-web
+.PHONY: help check check-rust check-deps check-cross check-virtual-feeder check-docs check-fixtures ui check-web
 
 help:
 	@echo "check: formatting, Clippy, Rust tests, cross-builds, simulator, repository checks"
-	@echo "check-rust / check-cross / check-virtual-feeder / check-docs: individual checks"
+	@echo "check-rust / check-deps / check-cross / check-virtual-feeder / check-docs: individual checks"
 	@echo "check-fixtures: optional reference-binary/SDK evidence; fails if unavailable"
 	@echo "ui: build the web page (pnpm in src/web/) that petlibre-bench embeds with --features ui"
 	@echo "check-web: web types, unit tests, build, then the page end to end against petlibre-bench"
 	@echo "Checks do not open serial ports, change routing, or send device commands."
 
-check: check-rust check-cross check-virtual-feeder check-docs
+check: check-rust check-deps check-cross check-virtual-feeder check-docs
 
 # Library and binary code only: input never panics on `unwrap`, a narrowing
 # `as` never wraps silently, and nothing is `pub` that no caller can reach.
@@ -20,7 +20,13 @@ check-rust:
 	cargo fmt --all -- --check
 	cargo clippy --locked --workspace --all-targets -- -D warnings
 	cargo clippy --locked --workspace --lib --bins -- -D warnings $(PRODUCTION_LINTS)
-	cargo test --locked --workspace --all-targets
+	cargo nextest run --locked --workspace --all-targets
+	cargo test --locked --workspace --doc
+
+# Licenses, advisories, duplicate versions and sources (deny.toml). Advisories
+# need the RustSec database, which the first run fetches.
+check-deps:
+	cargo deny --locked check
 
 check-cross:
 	cargo build --locked -p petlibre-sdk-c --release --target thumbv8m.main-none-eabihf

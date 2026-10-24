@@ -1,6 +1,6 @@
 # Development setup and checks
 
-Linux is the initial development platform. Ordinary checks require Rust **1.99.1** through rustup, GNU Make, CMake and a C compiler (the `unicorn-engine` crate builds the Unicorn emulator library; on Linux it also links libatomic), and loopback socket access. [rust-toolchain.toml](../../rust-toolchain.toml) pins rustfmt, Clippy, and the three ARM targets. SDK-backed builds have [additional prerequisites](firmware-builds.md).
+Linux is the initial development platform. Ordinary checks require Rust **1.99.1** through rustup, `cargo-nextest` and `cargo-deny` (`cargo install cargo-nextest cargo-deny`), GNU Make, CMake and a C compiler (the `unicorn-engine` crate builds the Unicorn emulator library; on Linux it also links libatomic), and loopback socket access. [rust-toolchain.toml](../../rust-toolchain.toml) pins rustfmt, Clippy, and the three ARM targets. SDK-backed builds have [additional prerequisites](firmware-builds.md).
 
 ## Fresh checkout
 
@@ -19,7 +19,8 @@ Rustup and Cargo download dependencies on initial setup. Check targets do not in
 
 | Target | Coverage |
 | --- | --- |
-| `check-rust` | Formatting, Clippy with warnings denied, workspace host tests |
+| `check-rust` | Formatting, Clippy with warnings denied, workspace host tests under cargo-nextest, doctests |
+| `check-deps` | cargo-deny: licenses, advisories, duplicate versions and sources ([deny.toml](../../deny.toml)) |
 | `check-cross` | SDK-independent KM0/KM4 FFI static libraries |
 | `check-virtual-feeder` | The `petlibre-sim` worker and harness: deterministic feeding, faults, journal cuts, and restart scenarios (also part of `check-rust`) |
 | `check-docs` | Local Markdown links, repository portability checks, no Python under `src/`, and the FW08 transport isolation rule |
@@ -43,4 +44,4 @@ The simulator connects the real Rust owner/controller/ports to fake SDK inputs a
 
 The repository is self-contained: SDK/toolchain copies and fixtures resolve locally. Original research documents/tools/history are retained in ignored `private/research-archive/`; see [provenance](provenance.md). Historical evidence paths are records, not instructions to access another checkout.
 
-See [local server](local-server.md), [SDK builds](firmware-builds.md), [optional fixtures](fixtures.md), and [contribution guidance](../../CONTRIBUTING.md).
+The rules the code follows are in the [Rust standard](rust.md) and the [TypeScript standard](typescript.md). See [local server](local-server.md), [SDK builds](firmware-builds.md), [optional fixtures](fixtures.md), and [contribution guidance](../../CONTRIBUTING.md).

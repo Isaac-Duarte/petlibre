@@ -16,9 +16,8 @@ function classifyJson(line: string): LineKind | null {
     return null;
   }
   if (!value || typeof value !== "object") return null;
-  const record = value as { error?: unknown; status?: unknown };
-  const status = typeof record.status === "string" ? record.status : "";
-  if (record.error) return "bad";
+  const status = "status" in value && typeof value.status === "string" ? value.status : "";
+  if ("error" in value && value.error) return "bad";
   if (/^(stopped|failed|refused|interrupted)/.test(status)) return "bad";
   if (/^(complete|verified|prepared)/.test(status)) return "ok";
   return "";

@@ -1,15 +1,36 @@
 {
   "name": "petlibre-web",
   "private": true,
+  "type": "module",
   "description": "Optional web frontends for the petlibre tools, embedded into their binaries at build time",
   "packageManager": "pnpm@11.28.5",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.18"
   },
   "scripts": {
-    "build": "pnpm -r --filter ./apps/* build",
-    "check": "pnpm -r check",
+    "generate": "pnpm -r --filter @petlibre/tokens generate",
+    "build": "pnpm generate && pnpm -r --filter ./apps/* build",
+    "check": "pnpm run lint && pnpm run format:check && pnpm run licenses && tsc -p . && pnpm -r check",
+    "lint": "eslint . --max-warnings 0",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "licenses": "node scripts/licenses.ts",
     "test": "pnpm -r test",
     "e2e": "pnpm -r e2e"
+  },
+  "devDependencies": {
+    "@eslint-community/eslint-plugin-eslint-comments": "4.8.1",
+    "@eslint/js": "10.0.1",
+    "@types/node": "24.19.2",
+    "eslint": "10.13.0",
+    "eslint-config-prettier": "10.1.8",
+    "eslint-plugin-svelte": "3.23.1",
+    "globals": "17.13.0",
+    "prettier": "3.9.10",
+    "prettier-plugin-svelte": "4.1.1",
+    "svelte": "5.57.2",
+    "svelte-eslint-parser": "1.9.0",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.71.2"
   }
 }

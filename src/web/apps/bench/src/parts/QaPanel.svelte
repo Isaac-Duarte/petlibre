@@ -13,7 +13,9 @@
 
   const says = $derived(guidance(qa));
   const waited = $derived(qa.prompt?.asked != null ? Math.max(0, now - qa.prompt.asked) : null);
-  const promptKey = $derived(qa.prompt ? `${qa.capture}:${qa.prompt.ask}:${qa.prompt.target}:${qa.prompt.asked}` : null);
+  const promptKey = $derived(
+    qa.prompt ? `${qa.capture}:${qa.prompt.ask}:${qa.prompt.target}:${qa.prompt.asked}` : null,
+  );
 
   function tone(freq: number, length: number) {
     if (!audio) return;
@@ -72,7 +74,9 @@
   </ol>
 
   {#if qa.unreadable > 0}
-    <p class="detail">{qa.unreadable} unreadable QA record{qa.unreadable === 1 ? "" : "s"}: the audit will refuse this run.</p>
+    <p class="detail">
+      {qa.unreadable} unreadable QA record{qa.unreadable === 1 ? "" : "s"}: the audit will refuse this run.
+    </p>
   {/if}
 
   <div class="controls">
@@ -82,95 +86,95 @@
 
 <style>
   .qa {
-    background: var(--surface);
-    color: var(--ink);
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
-    padding: var(--s-5) var(--s-6);
-    margin-bottom: var(--s-5);
+    background: var(--color-surface);
+    color: var(--color-text);
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-control);
+    padding: var(--space-5) var(--space-6);
+    margin-bottom: var(--space-5);
   }
   .top {
     display: flex;
     justify-content: space-between;
-    gap: var(--s-3);
+    gap: var(--space-3);
     flex-wrap: wrap;
-    color: var(--muted);
+    color: var(--color-text-muted);
   }
   h2 {
     font-weight: 500;
-    font-size: var(--t-base);
+    font-size: var(--text-base);
   }
   .top code {
-    font-size: var(--t-xs);
+    font-size: var(--text-xs);
     overflow-wrap: anywhere;
   }
   .big {
-    margin: var(--s-3) 0 var(--s-2);
-    font-size: var(--t-2xl);
+    margin: var(--space-3) 0 var(--space-2);
+    font-size: var(--text-xxl);
     font-weight: 600;
     letter-spacing: -0.03em;
     line-height: 1.1;
   }
   .detail {
-    margin: 0 0 var(--s-1);
-    color: var(--muted);
+    margin: 0 0 var(--space-1);
+    color: var(--color-text-muted);
   }
   .checks {
     list-style: none;
-    margin: var(--s-4) 0 0;
+    margin: var(--space-4) 0 0;
     padding: 0;
-    font-size: var(--t-sm);
+    font-size: var(--text-sm);
   }
   .checks li {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: var(--s-2);
+    gap: var(--space-2);
     padding: 4px 0;
-    color: var(--muted);
+    color: var(--color-text-muted);
   }
   .checks li.cur {
-    color: var(--ink);
+    color: var(--color-text);
     font-weight: 600;
   }
   .name {
     width: 6.5em;
   }
   .item {
-    font-size: var(--t-xs);
+    font-size: var(--text-xs);
     padding: 1px 8px;
-    border-radius: var(--pill);
-    background: var(--sunken);
-    color: var(--ink);
+    border-radius: var(--radius-pill);
+    background: var(--color-sunken);
+    color: var(--color-text);
   }
   .item.bad {
-    background: var(--fail-soft);
-    color: var(--fail);
+    background: var(--color-fault-soft);
+    color: var(--color-fault);
     text-decoration: underline wavy;
   }
   .controls {
     display: flex;
-    gap: var(--s-4);
+    gap: var(--space-4);
     align-items: center;
-    margin-top: var(--s-4);
-    font-size: var(--t-sm);
+    margin-top: var(--space-4);
+    font-size: var(--text-sm);
   }
   .controls button {
     height: 30px;
     padding: 0 14px;
-    border-radius: var(--pill);
+    border-radius: var(--radius-pill);
     border: 0;
-    background: var(--accent);
-    color: var(--accent-ink);
+    background: var(--color-accent);
+    color: var(--color-accent-text);
     font-weight: 600;
     cursor: pointer;
   }
   @media (max-width: 600px) {
     .qa {
-      padding: var(--s-4);
+      padding: var(--space-4);
     }
     .big {
-      font-size: var(--t-xl);
+      font-size: var(--text-xl);
     }
   }
 </style>

@@ -18,10 +18,19 @@
     const out: Item[] = [];
 
     if ("error" in health.ports) {
-      out.push({ label: "Config", value: "unreadable", tone: "fail", title: `${health.config}: ${health.ports.error}` });
+      out.push({
+        label: "Config",
+        value: "unreadable",
+        tone: "fail",
+        title: `${health.config}: ${health.ports.error}`,
+      });
     } else {
       const found = (yes: boolean) => (yes ? "found" : "missing");
-      out.push({ label: "Relay board", value: found(health.ports.relay_port), tone: health.ports.relay_port ? "pass" : "fail" });
+      out.push({
+        label: "Relay board",
+        value: found(health.ports.relay_port),
+        tone: health.ports.relay_port ? "pass" : "fail",
+      });
       out.push({ label: "UART", value: found(health.ports.uart_port), tone: health.ports.uart_port ? "pass" : "fail" });
     }
 
@@ -74,13 +83,13 @@
   .strip {
     display: flex;
     flex-wrap: wrap;
-    gap: 6px var(--s-5);
+    gap: 6px var(--space-5);
     margin: 0;
-    padding: var(--s-3) 0;
+    padding: var(--space-3) 0;
     list-style: none;
-    border-top: 1px solid var(--line);
-    border-bottom: 1px solid var(--line);
-    font-size: var(--t-sm);
+    border-top: 1px solid var(--color-line);
+    border-bottom: 1px solid var(--color-line);
+    font-size: var(--text-sm);
   }
   li {
     display: inline-flex;
@@ -89,10 +98,10 @@
     white-space: nowrap;
   }
   .label {
-    color: var(--muted);
+    color: var(--color-text-muted);
   }
   .mono {
     font-family: var(--mono);
-    font-size: var(--t-xs);
+    font-size: var(--text-xs);
   }
 </style>

@@ -26,20 +26,20 @@
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: var(--skip);
+    background: var(--color-text-muted);
     flex: none;
   }
   .live {
-    background: var(--accent);
+    background: var(--color-accent);
   }
   .pass {
-    background: var(--pass);
+    background: var(--color-ok);
   }
   .fail {
-    background: var(--fail);
+    background: var(--color-fault);
   }
   .warn {
-    background: var(--warn);
+    background: var(--color-warning);
   }
   /* The one ambient motion on the page: something is happening right now. */
   .pulse::after {
@@ -54,10 +54,10 @@
     animation: ring 1.8s ease-out infinite;
   }
   .live.pulse::after {
-    color: var(--accent);
+    color: var(--color-accent);
   }
   .pass.pulse::after {
-    color: var(--pass);
+    color: var(--color-ok);
   }
   @keyframes ring {
     0% {

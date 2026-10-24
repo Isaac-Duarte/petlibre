@@ -12,7 +12,9 @@
 <Panel title="Recent commands" flush>
   {#snippet actions()}
     {#if history.length > SHORT}
-      <button type="button" class="toggle" onclick={() => (all = !all)}>{all ? "Show fewer" : `Show all ${history.length}`}</button>
+      <button type="button" class="toggle" onclick={() => (all = !all)}
+        >{all ? "Show fewer" : `Show all ${history.length}`}</button
+      >
     {/if}
   {/snippet}
 
@@ -45,42 +47,42 @@
   .toggle {
     border: 0;
     background: none;
-    color: var(--accent);
-    font-size: var(--t-sm);
+    color: var(--color-accent);
+    font-size: var(--text-sm);
     cursor: pointer;
     padding: 0;
   }
   table {
     width: 100%;
     border-collapse: collapse;
-    font-size: var(--t-sm);
+    font-size: var(--text-sm);
   }
   th {
     text-align: left;
     font-weight: 500;
-    color: var(--muted);
-    font-size: var(--t-xs);
-    padding: 0 var(--s-2) 6px;
+    color: var(--color-text-muted);
+    font-size: var(--text-xs);
+    padding: 0 var(--space-2) 6px;
   }
   td {
-    padding: 8px var(--s-2);
-    border-top: 1px solid var(--line);
+    padding: 8px var(--space-2);
+    border-top: 1px solid var(--color-line);
     vertical-align: top;
   }
   th:first-child,
   td:first-child {
-    padding-left: var(--s-5);
+    padding-left: var(--space-5);
   }
   th:last-child,
   td:last-child {
-    padding-right: var(--s-5);
+    padding-right: var(--space-5);
   }
   .r {
     text-align: right;
     white-space: nowrap;
   }
   .muted {
-    color: var(--muted);
+    color: var(--color-text-muted);
   }
   table {
     table-layout: fixed;
@@ -94,8 +96,8 @@
   .sub {
     display: block;
     font-family: var(--mono);
-    font-size: var(--t-xs);
-    color: var(--muted);
+    font-size: var(--text-xs);
+    color: var(--color-text-muted);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -103,7 +105,7 @@
   .outcome {
     display: flex;
     align-items: baseline;
-    gap: var(--s-2);
+    gap: var(--space-2);
     min-width: 0;
   }
   .outcome span {
@@ -117,11 +119,11 @@
     }
     th:first-child,
     td:first-child {
-      padding-left: var(--s-4);
+      padding-left: var(--space-4);
     }
     th:last-child,
     td:last-child {
-      padding-right: var(--s-4);
+      padding-right: var(--space-4);
     }
   }
   .outcome :global(.dot) {

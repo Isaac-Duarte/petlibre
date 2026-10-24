@@ -1,0 +1,58 @@
+# cargo-deny policy, run by `make check-deps`. The reasons behind each section
+# are in docs/development/rust.md#dependencies.
+
+[graph]
+all-features = true
+
+[advisories]
+# Vulnerable, unmaintained and yanked crates all fail. An ignored advisory
+# names its ID and why it cannot reach a feeder or a host tool's input.
+unmaintained = "all"
+yanked = "deny"
+ignore = [
+    # bare-metal is archived, and cortex-m 0.7 depends on it with no release
+    # that drops it. Firmware touches it only through the token
+    # `cortex_m::interrupt::free` passes (the flash peer), which carries no data.
+    { id = "RUSTSEC-2026-0110", reason = "archived, pulled in by cortex-m 0.7 with no upgrade" },
+]
+
+[licenses]
+# Permissive licenses only, so every binary built from this MIT repository
+# can ship. MPL-2.0 is file-level copyleft, which that allows.
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+confidence-threshold = 0.9
+exceptions = [
+    # The Unicorn emulator runs the vendor's factory loader on the host
+    # (petlibre-emu). It is never linked into firmware or a shipped tool.
+    { crate = "unicorn-engine", allow = ["GPL-2.0"] },
+    { crate = "unicorn-engine-sys", allow = ["GPL-2.0"] },
+]
+
+[licenses.private]
+# First-party crates are `publish = false` and MIT through the workspace.
+ignore = true
+
+[bans]
+# Duplicates are reported, not refused: most come from crates partway through
+# an upgrade (digest 0.10/0.11, rand_core 0.6/0.10, syn 2/3). A change that
+# adds one says why.
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

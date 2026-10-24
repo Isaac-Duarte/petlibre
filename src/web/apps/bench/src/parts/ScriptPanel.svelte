@@ -32,7 +32,7 @@
       tone(520, 0.15, 0);
       tone(520, 0.15, 0.25);
     } else tone(880, 0.18, 0);
-    if (speak && window.speechSynthesis) {
+    if (speak && "speechSynthesis" in window) {
       speechSynthesis.cancel();
       speechSynthesis.speak(new SpeechSynthesisUtterance(text.replace(/[():]/g, " ")));
     }
@@ -63,13 +63,19 @@
 
   {#if !position}
     <p class="big">Get ready</p>
-    <p class="next">{script.capture_exists ? "Waiting for the feeder to start the test (LEDs blinking)" : "Waiting for the capture to start"}</p>
+    <p class="next">
+      {script.capture_exists
+        ? "Waiting for the feeder to start the test (LEDs blinking)"
+        : "Waiting for the capture to start"}
+    </p>
   {:else}
     <p class="big">{position.current?.text ?? "Get ready"}</p>
     {#if position.next}
       {@const from = position.current?.at ?? 0}
       <p class="next">Next in {countdown(position.next.at - position.clock)}: {position.next.text}</p>
-      <div class="track"><div style:width="{Math.min(100, (100 * (position.clock - from)) / (position.next.at - from))}%"></div></div>
+      <div class="track">
+        <div style:width="{Math.min(100, (100 * (position.clock - from)) / (position.next.at - from))}%"></div>
+      </div>
     {/if}
     <ol class="steps">
       {#each script.steps as step, i (i)}
@@ -88,21 +94,21 @@
 
 <style>
   .script {
-    background: var(--ink);
-    color: var(--paper);
-    border-radius: var(--radius);
-    padding: var(--s-5) var(--s-6);
-    margin-bottom: var(--s-5);
+    background: var(--color-text);
+    color: var(--color-background);
+    border-radius: var(--radius-control);
+    padding: var(--space-5) var(--space-6);
+    margin-bottom: var(--space-5);
   }
   .top {
     display: flex;
     justify-content: space-between;
-    gap: var(--s-3);
+    gap: var(--space-3);
     flex-wrap: wrap;
   }
   h2 {
     font-weight: 500;
-    font-size: var(--t-base);
+    font-size: var(--text-base);
     opacity: 0.75;
   }
   .clock {
@@ -110,8 +116,8 @@
     opacity: 0.75;
   }
   .big {
-    margin: var(--s-3) 0 var(--s-2);
-    font-size: var(--t-2xl);
+    margin: var(--space-3) 0 var(--space-2);
+    font-size: var(--text-xxl);
     font-weight: 600;
     letter-spacing: -0.03em;
     line-height: 1.1;
@@ -122,20 +128,20 @@
   }
   .track {
     height: 4px;
-    margin-top: var(--s-3);
-    background: color-mix(in srgb, var(--paper) 20%, transparent);
-    border-radius: var(--pill);
+    margin-top: var(--space-3);
+    background: color-mix(in srgb, var(--color-background) 20%, transparent);
+    border-radius: var(--radius-pill);
     overflow: hidden;
   }
   .track div {
     height: 100%;
-    background: var(--paper);
+    background: var(--color-background);
   }
   .steps {
     list-style: none;
-    margin: var(--s-4) 0 0;
+    margin: var(--space-4) 0 0;
     padding: 0;
-    font-size: var(--t-sm);
+    font-size: var(--text-sm);
     opacity: 0.8;
   }
   .steps li {
@@ -156,27 +162,27 @@
   }
   .controls {
     display: flex;
-    gap: var(--s-4);
+    gap: var(--space-4);
     align-items: center;
-    margin-top: var(--s-4);
-    font-size: var(--t-sm);
+    margin-top: var(--space-4);
+    font-size: var(--text-sm);
   }
   .controls button {
     height: 30px;
     padding: 0 14px;
-    border-radius: var(--pill);
+    border-radius: var(--radius-pill);
     border: 0;
-    background: var(--paper);
-    color: var(--ink);
+    background: var(--color-background);
+    color: var(--color-text);
     font-weight: 600;
     cursor: pointer;
   }
   @media (max-width: 600px) {
     .script {
-      padding: var(--s-4);
+      padding: var(--space-4);
     }
     .big {
-      font-size: var(--t-xl);
+      font-size: var(--text-xl);
     }
   }
 </style>

@@ -7,7 +7,7 @@ export type Tone = "pass" | "fail" | "live" | "warn" | "muted";
  * not exact values.
  */
 export function toneOf(word: string | null | undefined): Tone {
-  const w = String(word ?? "").toLowerCase();
+  const w = (word ?? "").toLowerCase();
   if (/^(running|started|live)/.test(w)) return "live";
   if (/stopped|fail|refused|interrupted|fault|silent/.test(w)) return "fail";
   if (/verified|complete|^pass|^done|^ok|^up$/.test(w)) return "pass";

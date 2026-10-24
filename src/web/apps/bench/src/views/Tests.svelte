@@ -30,6 +30,6 @@
   .stack {
     display: flex;
     flex-direction: column;
-    gap: var(--s-5);
+    gap: var(--space-5);
   }
 </style>

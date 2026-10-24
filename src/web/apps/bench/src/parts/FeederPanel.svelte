@@ -30,10 +30,15 @@
       <LiveDot tone="muted" />
       <span class="headline">Server not running</span>
     </div>
-    <p class="hint">Nothing answers on <code>{feeder.address}</code>. An integration run starts its own server; to watch the feeder outside one:</p>
+    <p class="hint">
+      Nothing answers on <code>{feeder.address}</code>. An integration run starts its own server; to watch the feeder
+      outside one:
+    </p>
     <Command command="petlibre-local serve --config private/server.json" />
   {:else if !feeder.replacement}
-    <Empty title="Server up, no replacement-firmware role">This server does not track the replacement firmware's health.</Empty>
+    <Empty title="Server up, no replacement-firmware role"
+      >This server does not track the replacement firmware's health.</Empty
+    >
   {:else}
     {@const r = feeder.replacement}
     {@const h = r.health}
@@ -64,7 +69,14 @@
           ["Faults", h.faults.length ? h.faults.length : "none"],
           ["Wi-Fi credentials", h.wifi.source],
           ["Transport connects", h.transport.connects],
-          ["Clock", h.clock ? (h.clock.unix_ms ? `${clockTime(h.clock.unix_ms / 1000)}, ${h.clock.syncs} syncs` : "not set") : "not reported"],
+          [
+            "Clock",
+            h.clock
+              ? h.clock.unix_ms
+                ? `${clockTime(h.clock.unix_ms / 1000)}, ${h.clock.syncs} syncs`
+                : "not set"
+              : "not reported",
+          ],
           ["Broker", feeder.broker_connected ? "connected" : "not connected"],
         ]}
       />
@@ -89,37 +101,37 @@
   .state {
     display: flex;
     align-items: center;
-    gap: var(--s-2);
+    gap: var(--space-2);
   }
   .headline {
-    font-size: var(--t-md);
+    font-size: var(--text-md);
     font-weight: 600;
   }
   .age {
     margin-left: auto;
-    color: var(--muted);
-    font-size: var(--t-sm);
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
   }
   .hint {
-    color: var(--muted);
-    font-size: var(--t-sm);
-    margin: var(--s-2) 0 var(--s-3);
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
+    margin: var(--space-2) 0 var(--space-3);
   }
   .build {
     display: flex;
     align-items: center;
-    gap: var(--s-3);
-    margin: var(--s-4) 0;
-    padding: var(--s-3) var(--s-3) var(--s-3) var(--s-4);
-    background: var(--sunken);
-    border-radius: var(--radius);
+    gap: var(--space-3);
+    margin: var(--space-4) 0;
+    padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
+    background: var(--color-sunken);
+    border-radius: var(--radius-control);
   }
   .build .label {
-    color: var(--muted);
-    font-size: var(--t-sm);
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
   }
   .hash {
-    font-size: var(--t-md);
+    font-size: var(--text-md);
     letter-spacing: 0.02em;
     margin-right: auto;
   }
@@ -127,33 +139,33 @@
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
-    margin: 0 0 var(--s-3);
+    margin: 0 0 var(--space-3);
     padding: 0;
     list-style: none;
   }
   .replies-title {
-    margin-top: var(--s-4);
-    font-size: var(--t-sm);
-    color: var(--muted);
+    margin-top: var(--space-4);
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
     font-weight: 500;
   }
   .replies {
-    margin: var(--s-2) 0 0;
+    margin: var(--space-2) 0 0;
     padding: 0;
     list-style: none;
-    font-size: var(--t-sm);
+    font-size: var(--text-sm);
   }
   .replies li {
     display: flex;
     align-items: center;
-    gap: var(--s-2);
+    gap: var(--space-2);
     padding: 3px 0;
   }
   .op {
     font-family: var(--mono);
-    font-size: var(--t-xs);
+    font-size: var(--text-xs);
   }
   .err {
-    color: var(--fail);
+    color: var(--color-fault);
   }
 </style>

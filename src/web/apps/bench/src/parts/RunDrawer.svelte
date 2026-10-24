@@ -1,15 +1,14 @@
 <script lang="ts">
   // One run's record and the evidence beside it. Opened from the matrix by
-  // its route, so a run's link can be shared.
+  // its route, so a run's link can be shared; closing it goes back.
   import { bench, type RunView } from "@petlibre/api";
-  import { Badge, Command, Empty, bytes, duration, fullTime } from "@petlibre/ui";
+  import { Badge, Command, Dialog, Empty, bytes, duration, fullTime } from "@petlibre/ui";
   import { route } from "../lib/route.svelte";
   import Verdict from "./Verdict.svelte";
 
   let { name }: { name: string } = $props();
 
   let run = $state<RunView | null | undefined>(undefined);
-  let close: HTMLButtonElement | undefined = $state();
 
   $effect(() => {
     const wanted = name;
@@ -21,33 +20,18 @@
       })
       .catch(() => (run = null));
   });
-
-  $effect(() => {
-    close?.focus();
-  });
-
-  function dismiss() {
-    route.go("tests");
-  }
-
-  function onkeydown(event: KeyboardEvent) {
-    if (event.key === "Escape") dismiss();
-  }
 </script>
 
-<svelte:window {onkeydown} />
-
-<div class="backdrop" onclick={dismiss} role="presentation"></div>
-<div class="drawer" role="dialog" aria-modal="true" aria-label="Run {name}">
-  <header>
-    <div>
-      <h2>{name}</h2>
-      {#if run}<p class="meta">Finished {run.modified ? fullTime(run.modified) : "at an unknown time"}</p>{/if}
-    </div>
-    <button type="button" class="close" bind:this={close} onclick={dismiss} aria-label="Close">
-      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" /></svg>
-    </button>
-  </header>
+<Dialog
+  side
+  onclose={() => {
+    route.go("tests");
+  }}
+>
+  {#snippet title()}<span class="visually-hidden">Run </span><span class="run-name">{name}</span>{/snippet}
+  {#snippet meta()}
+    {#if run}Finished {run.modified ? fullTime(run.modified) : "at an unknown time"}{/if}
+  {/snippet}
 
   {#if run === undefined}
     <Empty title="Reading the run" />
@@ -67,7 +51,9 @@
           <strong>The feeder went silent: {run.silent}.</strong>
           <p>The suite stopped and acted on nothing. Recover over UART with the reviewed tools:</p>
           <Command command="petlibre-bench flash-prepare {name}-recover --target <the last confirmed review>" />
-          <p>Then review the plan and run <code>flash-execute</code> with the <code>--expected-plan-sha256</code> it printed.</p>
+          <p>
+            Then review the plan and run <code>flash-execute</code> with the <code>--expected-plan-sha256</code> it printed.
+          </p>
         </div>
       {/if}
 
@@ -98,106 +84,47 @@
       {/if}
     </div>
   {/if}
-</div>
+</Dialog>
 
 <style>
-  .backdrop {
-    position: fixed;
-    inset: 0;
-    background: color-mix(in srgb, var(--ink) 25%, transparent);
-    z-index: 10;
-  }
-  .drawer {
-    position: fixed;
-    top: 0;
-    right: 0;
-    bottom: 0;
-    width: min(640px, 100vw);
-    z-index: 11;
-    background: var(--surface);
-    border-left: 1px solid var(--line);
-    overflow-y: auto;
-    animation: slide 0.18s ease-out;
-  }
-  @keyframes slide {
-    from {
-      transform: translateX(24px);
-      opacity: 0;
-    }
-  }
-  header {
-    position: sticky;
-    top: 0;
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: var(--s-3);
-    padding: var(--s-5) var(--s-5) var(--s-3);
-    background: var(--surface);
-    border-bottom: 1px solid var(--line);
-  }
-  h2 {
+  .run-name {
     font-family: var(--mono);
-    font-size: var(--t-md);
-    overflow-wrap: anywhere;
-  }
-  .meta {
-    margin: 4px 0 0;
-    color: var(--muted);
-    font-size: var(--t-sm);
-  }
-  .close {
-    display: grid;
-    place-items: center;
-    width: 32px;
-    height: 32px;
-    border-radius: 50%;
-    border: 1px solid var(--line);
-    background: var(--surface);
-    cursor: pointer;
-    flex: none;
-  }
-  .close svg {
-    width: 14px;
-    stroke: currentColor;
-    stroke-width: 1.6;
-    stroke-linecap: round;
   }
   .body {
-    padding: var(--s-4) var(--s-5) var(--s-6);
+    padding: var(--space-4) var(--space-5) var(--space-6);
   }
   .evidence {
     display: flex;
     align-items: center;
-    gap: var(--s-3);
-    margin: 0 0 var(--s-4);
-    color: var(--muted);
-    font-size: var(--t-sm);
+    gap: var(--space-3);
+    margin: 0 0 var(--space-4);
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
   }
   .silent {
-    padding: var(--s-4);
-    margin-bottom: var(--s-4);
-    background: var(--fail-soft);
-    border-radius: var(--radius);
-    font-size: var(--t-sm);
+    padding: var(--space-4);
+    margin-bottom: var(--space-4);
+    background: var(--color-fault-soft);
+    border-radius: var(--radius-control);
+    font-size: var(--text-sm);
   }
   .silent strong {
-    color: var(--fail);
+    color: var(--color-fault);
   }
   .silent p {
-    margin: var(--s-2) 0;
+    margin: var(--space-2) 0;
   }
   .verdicts {
     list-style: none;
-    margin: 0 0 var(--s-5);
+    margin: 0 0 var(--space-5);
     padding: 0;
   }
   .verdicts li {
     display: flex;
     align-items: flex-start;
-    gap: var(--s-3);
+    gap: var(--space-3);
     padding: 8px 0;
-    border-top: 1px solid var(--line);
+    border-top: 1px solid var(--color-line);
   }
   .verdicts :global(.cell) {
     margin-top: 3px;
@@ -210,41 +137,41 @@
   }
   .name {
     font-family: var(--mono);
-    font-size: var(--t-xs);
+    font-size: var(--text-xs);
     font-weight: 600;
   }
   .reason {
-    font-size: var(--t-sm);
-    color: var(--muted);
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
     overflow-wrap: anywhere;
   }
   .reason.fail {
-    color: var(--fail);
+    color: var(--color-fault);
   }
   .time {
     margin-left: auto;
-    color: var(--muted);
-    font-size: var(--t-xs);
+    color: var(--color-text-muted);
+    font-size: var(--text-xs);
     white-space: nowrap;
   }
   details {
-    border-top: 1px solid var(--line);
-    padding: var(--s-2) 0;
+    border-top: 1px solid var(--color-line);
+    padding: var(--space-2) 0;
   }
   summary {
     cursor: pointer;
-    font-size: var(--t-sm);
+    font-size: var(--text-sm);
     padding: 4px 0;
   }
   .muted {
-    color: var(--muted);
+    color: var(--color-text-muted);
   }
   pre {
-    margin: var(--s-2) 0 0;
-    padding: var(--s-3);
-    background: var(--sunken);
-    border-radius: var(--radius);
-    font-size: var(--t-xs);
+    margin: var(--space-2) 0 0;
+    padding: var(--space-3);
+    background: var(--color-sunken);
+    border-radius: var(--radius-control);
+    font-size: var(--text-xs);
     line-height: 1.6;
     max-height: 360px;
     overflow: auto;

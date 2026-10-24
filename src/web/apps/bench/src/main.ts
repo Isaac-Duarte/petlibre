@@ -1,4 +1,4 @@
-import "@petlibre/ui/tokens.css";
+import "@petlibre/ui/base.css";
 import { mount } from "svelte";
 import App from "./App.svelte";
 

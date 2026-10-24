@@ -48,7 +48,8 @@ write(
 );
 write(
   "private/bench-status/history.jsonl",
-  JSON.stringify({ command: "on", name: null, started: now - 400, finished: now - 399, outcome: "pass", error: null }) + "\n",
+  JSON.stringify({ command: "on", name: null, started: now - 400, finished: now - 399, outcome: "pass", error: null }) +
+    "\n",
 );
 
 const verdict = (scenario, v, seconds, reason = null) => ({ scenario, verdict: v, reason, seconds });
@@ -60,7 +61,11 @@ const run = (name, scenarios, silent = null) =>
     silent,
     captures: [`private/captures/${name}-uart-01`],
   });
-run("itest-e2e-01", [verdict("ota-update", "pass", 240), verdict("requests", "pass", 9), verdict("request-auth", "pass", 60)]);
+run("itest-e2e-01", [
+  verdict("ota-update", "pass", 240),
+  verdict("requests", "pass", 9),
+  verdict("request-auth", "pass", 60),
+]);
 run("itest-e2e-02", [
   verdict("ota-update", "pass", 250),
   verdict("requests", "fail", 21, "No reply to ping within 20 s"),

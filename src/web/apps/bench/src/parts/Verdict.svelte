@@ -9,10 +9,22 @@
     title,
     size = 18,
     live = false,
-  }: { verdict: ScenarioVerdict | "running" | "pending" | null; title?: string; size?: number; live?: boolean } = $props();
+  }: {
+    verdict: ScenarioVerdict | "running" | "pending" | null;
+    title?: string;
+    size?: number;
+    live?: boolean;
+  } = $props();
 </script>
 
-<span class="cell {verdict ?? 'none'}" class:live style:--size="{size}px" {title} aria-label={title ?? verdict ?? "not run"} role="img">
+<span
+  class="cell {verdict ?? 'none'}"
+  class:live
+  style:--size="{size}px"
+  {title}
+  aria-label={title ?? verdict ?? "not run"}
+  role="img"
+>
   {#if verdict === "fail"}
     <svg viewBox="0 0 10 10" aria-hidden="true"><path d="M3 3l4 4M7 3l-4 4" /></svg>
   {/if}
@@ -28,33 +40,33 @@
     flex: none;
   }
   .pass {
-    background: var(--pass);
+    background: var(--color-ok);
   }
   .fail {
-    background: var(--fail);
+    background: var(--color-fault);
   }
   .fail svg {
     width: 70%;
     height: 70%;
-    stroke: var(--surface);
+    stroke: var(--color-surface);
     stroke-width: 1.6;
     stroke-linecap: round;
   }
   .skip {
-    box-shadow: inset 0 0 0 1.5px var(--skip);
+    box-shadow: inset 0 0 0 1.5px var(--color-text-muted);
   }
   .none::after {
     content: "";
     width: 3px;
     height: 3px;
     border-radius: 50%;
-    background: var(--line-strong);
+    background: var(--color-line-strong);
   }
   .pending {
-    box-shadow: inset 0 0 0 1.5px var(--line-strong);
+    box-shadow: inset 0 0 0 1.5px var(--color-line-strong);
   }
   .running {
-    background: var(--accent);
+    background: var(--color-accent);
   }
   .live {
     animation: breathe 1.6s ease-in-out infinite;

@@ -15,9 +15,9 @@
 
 <style>
   .path {
-    margin: 0 0 var(--s-2);
-    color: var(--muted);
-    font-size: var(--t-xs);
+    margin: 0 0 var(--space-2);
+    color: var(--color-text-muted);
+    font-size: var(--text-xs);
     overflow-wrap: anywhere;
   }
 </style>

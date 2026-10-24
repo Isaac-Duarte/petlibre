@@ -21,7 +21,7 @@
 </script>
 
 <section class="panel" class:flush {id} aria-label={title}>
-  {#if title || actions}
+  {#if Boolean(title) || actions}
     <header>
       <h2>{title}</h2>
       {#if meta}<span class="meta">{@render meta()}</span>{/if}
@@ -33,40 +33,40 @@
 
 <style>
   .panel {
-    background: var(--surface);
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
+    background: var(--color-surface);
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-card);
     min-width: 0;
   }
   header {
     display: flex;
     flex-wrap: wrap;
     align-items: baseline;
-    gap: 4px var(--s-3);
-    padding: var(--s-4) var(--s-5) 0;
+    gap: 4px var(--space-3);
+    padding: var(--space-4) var(--space-5) 0;
   }
   .meta {
-    color: var(--muted);
-    font-size: var(--t-sm);
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
   }
   .actions {
     margin-left: auto;
     display: flex;
     align-items: center;
-    gap: var(--s-2);
+    gap: var(--space-2);
   }
   .body {
-    padding: var(--s-4) var(--s-5) var(--s-5);
+    padding: var(--space-4) var(--space-5) var(--space-5);
   }
   .flush .body {
-    padding: var(--s-3) 0 0;
+    padding: var(--space-3) 0 0;
   }
   @media (max-width: 600px) {
     header {
-      padding: var(--s-3) var(--s-4) 0;
+      padding: var(--space-3) var(--space-4) 0;
     }
     .body {
-      padding: var(--s-3) var(--s-4) var(--s-4);
+      padding: var(--space-3) var(--space-4) var(--space-4);
     }
   }
 </style>

@@ -22,7 +22,14 @@
   <div class="layout">
     <ol class="list">
       {#each live.scenarios as s (s.name)}
-        {@const v = s.step.state === "done" ? "pass" : s.step.state === "failed" ? "fail" : s.step.state === "skipped" ? "skip" : s.step.state}
+        {@const v =
+          s.step.state === "done"
+            ? "pass"
+            : s.step.state === "failed"
+              ? "fail"
+              : s.step.state === "skipped"
+                ? "skip"
+                : s.step.state}
         <li class={s.step.state}>
           <Verdict verdict={v} live={v === "running"} size={14} />
           <div class="text">
@@ -54,7 +61,7 @@
   .layout {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
-    gap: var(--s-5);
+    gap: var(--space-5);
   }
   .list {
     list-style: none;
@@ -64,9 +71,9 @@
   .list li {
     display: flex;
     align-items: flex-start;
-    gap: var(--s-3);
+    gap: var(--space-3);
     padding: 7px 0;
-    border-top: 1px solid var(--line);
+    border-top: 1px solid var(--color-line);
   }
   .list li:first-child {
     border-top: 0;
@@ -81,47 +88,47 @@
   }
   .name {
     font-family: var(--mono);
-    font-size: var(--t-xs);
+    font-size: var(--text-xs);
     font-weight: 600;
   }
   .about {
-    color: var(--muted);
-    font-size: var(--t-sm);
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
   }
   .pending .name,
   .skipped .name {
-    color: var(--muted);
+    color: var(--color-text-muted);
     font-weight: 400;
   }
   .running .name {
-    color: var(--accent);
+    color: var(--color-accent);
   }
   .time {
     margin-left: auto;
-    color: var(--muted);
-    font-size: var(--t-xs);
+    color: var(--color-text-muted);
+    font-size: var(--text-xs);
     white-space: nowrap;
     font-variant-numeric: tabular-nums;
   }
   .focus h3 {
     font-family: var(--mono);
-    font-size: var(--t-sm);
-    color: var(--accent);
+    font-size: var(--text-sm);
+    color: var(--color-accent);
   }
   .wait {
-    margin: var(--s-2) 0;
-    padding: var(--s-2) var(--s-3);
-    background: var(--warn-soft);
-    color: var(--warn);
-    border-radius: var(--radius);
-    font-size: var(--t-sm);
+    margin: var(--space-2) 0;
+    padding: var(--space-2) var(--space-3);
+    background: var(--color-warning-soft);
+    color: var(--color-warning);
+    border-radius: var(--radius-control);
+    font-size: var(--text-sm);
   }
   .notes {
-    margin: var(--s-2) 0 0;
-    padding: var(--s-3);
-    background: var(--sunken);
-    border-radius: var(--radius);
-    font-size: var(--t-xs);
+    margin: var(--space-2) 0 0;
+    padding: var(--space-3);
+    background: var(--color-sunken);
+    border-radius: var(--radius-control);
+    font-size: var(--text-xs);
     line-height: 1.6;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
@@ -129,8 +136,8 @@
     overflow: auto;
   }
   .quiet {
-    color: var(--muted);
-    font-size: var(--t-sm);
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
   }
   @media (max-width: 860px) {
     .layout {

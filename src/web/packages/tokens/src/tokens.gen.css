@@ -1,0 +1,111 @@
+/* Generated from assets/brand/tokens.json by @petlibre/tokens. Do not edit: run `pnpm generate`. */
+
+:root {
+  color-scheme: light;
+  --color-background: #F4F6FA;
+  --color-surface: #FFFFFF;
+  --color-sunken: #E9EDF4;
+  --color-text: #0B1424;
+  --color-text-muted: #5A6780;
+  --color-line: #DCE2EC;
+  --color-line-strong: #8390A6;
+  --color-accent: #2563EB;
+  --color-accent-text: #FFFFFF;
+  --color-accent-soft: #EDF2FF;
+  --color-focus: #2563EB;
+  --color-ok: #15803D;
+  --color-ok-soft: #E7F7EC;
+  --color-warning: #9A5B00;
+  --color-warning-soft: #FCF0D6;
+  --color-fault: #B91C1C;
+  --color-fault-soft: #FDE4E4;
+  --color-info: #2563EB;
+  --color-info-soft: #EDF2FF;
+  --color-food: #E0A13A;
+  --color-scrim: #0B1424;
+  --font: "Inter Variable", "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, Menlo, monospace;
+  --weight-body: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-display: 800;
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 14px;
+  --text-md: 16px;
+  --text-lg: 20px;
+  --text-xl: 28px;
+  --text-xxl: 40px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --radius-control: 12px;
+  --radius-card: 20px;
+  --radius-icon: 14px;
+  --radius-pill: 999px;
+  --focus-width: 2px;
+  --focus-offset: 2px;
+  --focus: 0 0 0 var(--focus-offset) var(--color-surface),
+    0 0 0 calc(var(--focus-offset) + var(--focus-width)) var(--color-focus);
+  --shadow-raised: 0 1px 2px rgba(11, 20, 36, 0.08), 0 1px 3px rgba(11, 20, 36, 0.06);
+  --shadow-overlay: 0 12px 32px rgba(11, 20, 36, 0.24);
+  --motion-fast: 120ms;
+  --motion-base: 200ms;
+}
+
+/* Dark follows the system unless the page sets data-theme; both blocks define the same names. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --color-background: #121417;
+    --color-surface: #1C1F24;
+    --color-sunken: #17191D;
+    --color-text: #ECEEF1;
+    --color-text-muted: #A6ACB5;
+    --color-line: #2E3238;
+    --color-line-strong: #676E79;
+    --color-accent: #5A96F7;
+    --color-accent-text: #121417;
+    --color-accent-soft: #1D2A40;
+    --color-focus: #5A96F7;
+    --color-ok: #4ADE80;
+    --color-ok-soft: #18301F;
+    --color-warning: #FBBF24;
+    --color-warning-soft: #352C17;
+    --color-fault: #F87171;
+    --color-fault-soft: #3A2022;
+    --color-info: #7FB0FF;
+    --color-info-soft: #1D2A40;
+    --color-food: #E0A13A;
+    --color-scrim: #0B1424;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --color-background: #121417;
+  --color-surface: #1C1F24;
+  --color-sunken: #17191D;
+  --color-text: #ECEEF1;
+  --color-text-muted: #A6ACB5;
+  --color-line: #2E3238;
+  --color-line-strong: #676E79;
+  --color-accent: #5A96F7;
+  --color-accent-text: #121417;
+  --color-accent-soft: #1D2A40;
+  --color-focus: #5A96F7;
+  --color-ok: #4ADE80;
+  --color-ok-soft: #18301F;
+  --color-warning: #FBBF24;
+  --color-warning-soft: #352C17;
+  --color-fault: #F87171;
+  --color-fault-soft: #3A2022;
+  --color-info: #7FB0FF;
+  --color-info-soft: #1D2A40;
+  --color-food: #E0A13A;
+  --color-scrim: #0B1424;
+}

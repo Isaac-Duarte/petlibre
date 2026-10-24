@@ -13,7 +13,7 @@ Run it from the repository root, or pass `--root`. A plan binds the SHA-256 of t
 
 ## Wiring
 
-A DSD TECH SH-UR04A USB relay board (CP2102 serial, 9600 8N1) adds two switches to the [UART wiring](uart.md):
+A DSD TECH SH-UR04A USB relay board (CP2102 serial, 9600 8N1) adds four switches to the [UART wiring](uart.md) ([diagram](../../../src/tools/wellfed-bench/wiring.svg), with reference designators and net names for a bench PCB):
 
 | Relay | Contacts | Connection | Role |
 | --- | --- | --- | --- |

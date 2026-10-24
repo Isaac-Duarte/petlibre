@@ -98,7 +98,7 @@ For a consumer it must also accept a device whose credentials it has never seen.
 6. **First boot:** the build boots from bank 0, and its recovery role reports health (`"role":"recovery"`) while it waits for an update.
 7. **Backup:** the build uploads bank 1, which still holds stock (see rollback below).
 8. **Promote:** the installer offers the same build signed. The recovery role installs it into bank 1, and its trial boot confirms; about 3.5 min on the bench.
-9. **Hand-off:** the firmware is pointed at the user's self-hosted server, and the installer's keys go with it.
+9. **Hand-off:** the confirmed replacement enters the pairing flow (FW45): the owner's app pairs as its first client, and a server joins later by invite if the owner runs one.
 
 Steps 1–3 replace the bench's firewall redirect and captured credentials. Steps 5, 6 and 8 are what ran physically.
 
@@ -126,12 +126,10 @@ What a rollback keeps and leaves behind:
 - **Stock's OTA status sector** (`0x3ef000`) may differ from the original after the install.
 - **No automatic fallback:** if stock fails to boot from bank 1, recovery is UART only (`petlibre-bench stock-prepare` / `stock-execute`).
 
-## Product architecture (design)
+## Where the installer lives (design)
 
-- **Self-hosted server:** `petlibre-local` grown into the feeder's permanent home: the broker, the device protocols (stock and replacement), the API, and the Svelte web UI the bench already uses. It ships as one binary or container.
-- **Installer library:** a Rust crate shared by the CLI, desktop and mobile apps. It covers the setup frame, the image server, the single stock request, the progress tracking and the backup receiver: the code the bench now proves.
-- **Apps:** Tauri, desktop and mobile, on the same Svelte UI.
-  - **BLE:** Tauri has no official BLE plugin. Desktop can use `btleplug`; mobile needs a plugin or thin native code.
-  - **Setup network:** joining the feeder's access point needs platform Wi-Fi APIs.
-  - **Install-time server:** the app is the server only during an install, about 3 minutes in the foreground, since iOS suspends background apps.
-  - **Afterwards:** the app pairs over BLE and talks to the feeder directly on the LAN; the self-hosted server is optional ([product architecture](product-architecture.md)).
+The decisions are in [product architecture](product-architecture.md); for the installer they mean:
+- **Installer steps:** the setup frame, the single stock request, the progress tracking and the backup receiver live in the sans-IO `petlibre-client` crate, so the Android app, `petlibre-server` and the CLI run the same steps the bench now proves. Each caller supplies the IO: the image server, the broker and the sockets.
+- **Android app (Flutter):** it joins the feeder's access point through platform Wi-Fi APIs and serves the image itself, in the foreground for about 3 minutes.
+- **Server and CLI:** `petlibre-server` or the CLI can run the same install for owners who self-host. `petlibre-local` stays the bench and stock-protocol tool.
+- **Afterwards:** the feeder is handed to the pairing flow (FW45), not to a server. The app talks to it directly on the LAN, and a server is optional.

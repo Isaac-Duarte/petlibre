@@ -1,6 +1,8 @@
 # Startup, stopped outputs, and indicator diagnostics
 
-The current diagnostic initializes limited physical GPIO, then runs the synthetic feeding-core test and a bounded indicator experiment. It leaves the full `Board` backend, feeding owner, ADC/sensors, and networking unopened. An unopened backend does **not** mean that startup has no electrical side effects.
+Every boot runs the same startup before any firmware code: stopped outputs with readback, the synthetic feeding-core diagnostic, and every indicator verified LOW. The runtime then starts Wi-Fi, the transport and the firmware's tasks; probes open the board's sensors and ADC only in the firmwares that run them, and nothing opens the feeding owner. An unopened feeding backend does **not** mean that startup has no electrical side effects.
+
+Much of this page is the bring-up record of FW02–FW15: each probe's records, startup policy and bench result, kept because `petlibre-audit startup` still checks those policies.
 
 ## Build-bound startup reports
 

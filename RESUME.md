@@ -605,9 +605,9 @@ Bench lessons from stage C:
 
 Per the latest checkpoint at the top of this file (reconfirm before relying on it):
 
-- **Bank 1 (boots):** the Rust-built normal image `0f8b3ad851fc…`, OTA v45, confirmed. It carries FW11 supervision, the FW21 clock, signed requests, the FW25 settings writer and the FW24 built-in tunes. It drives no motor.
-- **Bank 0 (recovery):** `final-review-20261022-01` (`36c9a086…`), installed by UART. It lacks the Wi-Fi credential store and the low-only LEDs, but its recovery role is fine.
-- **Next manifest version:** 46.
+- **Bank 1 (boots):** the `feeder` firmware `3edf8bce…`, OTA v97, confirmed (`fw44-budget-04`). It carries the runtime (supervision, clock, signed requests, settings writer, offer check), the button service and the FP11 child lock, and the FW44 Noise session table. It drives no motor.
+- **Bank 0 (recovery):** `qa` `ef76b85e…`, written by stock 1.1.15's updater in `fw40-stock-ota-07`. Only its runtime's recovery role runs from bank 0.
+- **Next manifest version:** 98.
 
 Wi-Fi and broker credentials come from private files; images stay under `private/`.
 

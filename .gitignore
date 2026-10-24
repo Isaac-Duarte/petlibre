@@ -22,3 +22,5 @@ node_modules/
 
 # Agent worktrees: scratch checkouts, not sources
 /.claude/worktrees/
+/src/web/**/.svelte-kit/
+/src/web/apps/site/build/

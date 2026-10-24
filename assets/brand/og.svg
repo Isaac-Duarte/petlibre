@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1200" height="630" viewBox="0 0 1200 630">
+<rect width="1200" height="630" fill="#F4F6FA"/>
+<image x="80" y="72" width="215" height="50" xlink:href="lockup-on-light.svg"/>
+<g font-family="Inter" fill="#0B1424">
+<text x="80" y="300" font-size="92" font-weight="800" letter-spacing="-4">Open firmware for</text>
+<text x="80" y="398" font-size="92" font-weight="800" letter-spacing="-4">your pet feeder.</text>
+<text x="80" y="470" font-size="30" font-weight="400" fill="#5A6780">No vendor cloud. No account. Runs on your Wi-Fi.</text>
+<text x="80" y="562" font-size="26" font-weight="600" fill="#2563EB">well-fed.dev</text>
+</g>
+</svg>

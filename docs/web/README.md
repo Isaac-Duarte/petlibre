@@ -47,6 +47,7 @@ src/web/
   apps/
     bench/                 the bench page (its own stack, on the shared tokens and components)
     server/                the server UI: SvelteKit, embedded by wellfed-server
+    site/                  well-fed.dev, the prerendered landing page (site.md)
   packages/
     tokens/                generated CSS from assets/brand/tokens.json, plus the contrast test
     ui/                    styled components over bits-ui, format helpers, shared by both apps
@@ -195,7 +196,7 @@ The [TypeScript standard](../development/typescript.md) is the full rule set for
 
 | Layer | Tool | Covers |
 | --- | --- | --- |
-| Tokens | Vitest | Generation is stable, and every named pair meets AA contrast in both themes |
+| Tokens | Vitest | Generation is stable, and every named pair meets AA contrast in every theme |
 | Logic | Vitest | Formatting with household units and zones, the feed state machine, error mapping, leader election against a fake channel, stream-to-cache mapping |
 | Components | Vitest browser mode | `packages/ui` and feature components in real Chromium, both themes, keyboard paths |
 | Contract | `make check-web` | `server.gen.ts` regenerated from `openapi.json` with no diff |

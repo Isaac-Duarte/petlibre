@@ -25,7 +25,16 @@ const widgets = {
 
 export default ts.config(
   {
-    ignores: ["**/dist/", "**/test-results/", "**/playwright-report/", "**/.vite/", "**/*.gen.css", "**/*.gen.ts"],
+    ignores: [
+      "**/dist/",
+      "**/build/",
+      "**/.svelte-kit/",
+      "**/test-results/",
+      "**/playwright-report/",
+      "**/.vite/",
+      "**/*.gen.css",
+      "**/*.gen.ts",
+    ],
   },
 
   js.configs.recommended,

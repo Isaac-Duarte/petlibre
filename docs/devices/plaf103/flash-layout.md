@@ -10,7 +10,9 @@ The inspected unit uses dual-core AmebaD startup with factory loader/configurati
 | `0x006000` | First application-bank start |
 | `0x186000` | Second application-bank start; stock recovery target |
 | `0x186000–0x2d6000` | Reviewed stock second-bank footprint |
+| `0x340000–0x360000` | Replacement storage region, 32 sectors (`STORAGE_OFFSET`/`STORAGE_SECTORS`): journal, settings, confirmation record, Wi-Fi credentials; sectors 7–31 free. Extended from 16 sectors by the owner on October 23, 2026, after a static pass found no stock access in `0x306000–0x3e8000` and all 15 full dumps blank there ([resource budget](../../firmware/resource-budget.md#event-history-7-days)) |
 | `0x3e8000–0x3f0000` | Observed settings sectors |
+| `0x3f0000–0x400000` | Stock clock-checkpoint block: stock block-erases it on its clock save (static); preserved (`clock_checkpoint_block`) |
 | `0x400000–0x401000` | Observed audio-start sector |
 | `0x7cb000–0x7cc000` | Observed log sector |
 | `0x7d0000–0x7d7000` | Observed plan-record sectors |
@@ -24,4 +26,4 @@ The pinned stock OTA is 1,376,288 bytes including a 32-byte container header, SH
 
 The existing layout flags remain conservative profile assertions: incomplete map, no general verified-capacity guarantee, and no general boot-acceptance guarantee. Later observed read coverage and diagnostic boot apply to the research unit and exact image, rather than every image that satisfies the JSON layout.
 
-SDK `plaf103` profiles overlay stock-derived application-bank addresses and startup pin pulls. They do not replace or validate the SDK's separate generated bootloader. Generated loader files are unsupported replacement outputs. See [build profiles](../../development/firmware-builds.md) and [guarded recovery](recovery.md).
+The SDK `device` and `firstboot` profiles overlay stock-derived application-bank addresses and startup pin pulls. They do not replace or validate the SDK's separate generated bootloader. Generated loader files are unsupported replacement outputs. See [build profiles](../../development/firmware-builds.md) and [guarded recovery](recovery.md).

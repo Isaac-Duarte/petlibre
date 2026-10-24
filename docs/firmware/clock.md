@@ -23,7 +23,7 @@ The request parser accepts integers only for `op:"time"`, and only exactly the f
 - **Refused syncs** leave the clock unchanged: a time before 2026 or after 2099, an offset outside −12 h to +14 h, or a next change that is not in the future.
 - **Jumps:** a sync within 2 s of the running estimate is a step; anything else is a jump, logged with its signed size.
 
-Health reports `"clock":{"syncs":N,"unix_ms":…,"offset_s":…,"uncertainty_ms":…}` while valid and `"clock":{"syncs":N}` otherwise. The health payload limit went from 512 to 576 bytes on both sides to fit it.
+Health reports `"clock":{"syncs":N,"unix_ms":…,"offset_s":…,"uncertainty_ms":…}` while valid and `"clock":{"syncs":N}` otherwise. The health payload limit went from 512 to 576 bytes on both sides to fit it (now 704 with the request nonce and FW14's `power`; see [health message](local-transport.md#health-message)).
 
 ## Missed-meal rule (for FP03)
 

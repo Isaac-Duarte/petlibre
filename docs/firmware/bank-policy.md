@@ -25,13 +25,13 @@ A bank counts as valid when its image starts with the 8-byte marker `81958711` (
 | 0 | `0x006000` | `0x186000` (bank 1 start) | 1.5 MiB |
 | 1 | `0x186000` | `0x2d6000` (stock footprint, the development updater's bound) | 1.3125 MiB |
 
-Bank 1 may extend further: the next known use is the replacement storage at `0x340000`. Unknown gaps are not free space, though, so the reviewed bound stands. The current replacement image is 593 920 bytes (`0x91000`), about 44 % of the smaller bank. The factory mapper sizes its windows from the image headers, rounded up to 4 KiB. KM4 maps at `0x0e000000` and KM0 at `0x0c000000` in either bank.
+Bank 1 may extend further: the next known use is the replacement storage at `0x340000`. Unknown gaps are not free space, though, so the reviewed bound stands. Replacement images are 684,032 bytes (`blink`) to 868,352 bytes (`feeder` with BLE reachable), 50–63 % of the smaller bank ([resource budget](resource-budget.md#flash)). The factory mapper sizes its windows from the image headers, rounded up to 4 KiB. KM4 maps at `0x0e000000` and KM0 at `0x0c000000` in either bank.
 
 ## Compatibility
 
 Both banks map to the same virtual addresses: the mapper translates each bank's physical start to `0x0c000000` (KM0) and `0x0e000000` (KM4). One image therefore runs from either bank without relinking. The emulated mapping is identical for stock and for the probe image in both banks, and stock's updater writes the same container to either one.
 
-Physically, the replacement firmware has only run from bank 1. The `plaf103` build profile's OTA-address header matters only to the SDK's own OTA writer, which the replacement does not use.
+Physically, the same replacement image has run from both banks ([hardware result](#hardware-result)), and every OTA since FW10 boots the recovery role from bank 0. The `device` build profile's OTA-address header matters only to the SDK's own OTA writer, which the replacement does not use.
 
 ## Activation rules for the replacement
 

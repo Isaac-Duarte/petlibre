@@ -53,6 +53,55 @@ The server responds with the captured authoritative plan snapshot; it does not e
 
 Replacement schedules still need durable occurrence identities, timezone/DST policy, restart reconciliation, and explicit handling of interrupted meals. A successful manual feed does not establish scheduled or unattended reliability.
 
+## Feature limits and defaults (FP01)
+
+Static pass over the 1.1.15 image and the vendor app (October 24, 2026), with the earlier unicorn emulations of the plan, manual-feed, panel, audio and Wi-Fi handlers. Labels: **static** (static analysis), **emulation** (instruction-level emulation of stock code, no hardware), **observed** (values the vendor app logged for the research unit; observed on one unit, not proven factory defaults). Durations counted in loop visits or timer ticks are nominal. Firmware defaults are what stock writes when its settings sector is blank or invalid.
+
+| Card | Fact | Value | Evidence |
+| --- | --- | --- | --- |
+| FP02 | Stock control surface | No local control API; settings and actions arrive as MQTT attribute and service messages from the cloud | static |
+| FP03 | Stored plans | At most 10; an 11th is dropped. Each stored entry is 44 bytes | emulation |
+| FP03 | App plan limit | The app's copy says 10 schedules per day | static (app) |
+| FP03 | Field validation | None: hour, minute, portions, `audioTimes` and weekday bytes store unchecked (256 wraps to 0, -1 to 255; "99:99" stores as given) | emulation |
+| FP03 | Due check | Only second 0 of the plan's minute, on a listed weekday; a meal whose minute passes while the feeder is off is not caught up | emulation |
+| FP03 | Busy and restart | A plan due during a feed waits and runs afterwards; a waiting plan survives restart and runs late with no age limit | emulation |
+| FP03 | Time zone | The offset is stored as whole hours (5.5 becomes 5), so half-hour zones shift meals by 30 min | emulation |
+| FP04 | Stored plan layout | Count at flash 0x7d0000, entries at 0x7d1000; non-repeating plans are deleted after they run | emulation, static |
+| FP05 | Remote portions (`grainNum`) | One unchecked byte, 0–255; 256 wraps to 0; a request without `grainNum` gets ack 2000 | emulation |
+| FP05 | Dispense button | One portion per press. A press during a feed starts nothing and is logged (record code 2022, or 2023 when the outlet reads blocked) | static, emulation |
+| FP05 | Feed source in `GRAIN_OUTPUT_EVENT` | 1 schedule, 2 remote, 3 button | static, emulation (remote) |
+| FP05 | App portion cap | Taken from a per-device cloud field, falling back to 24 when absent; the cloud sent `maxFeedingCup` 48 | static (app); observed |
+| FP05 | Portion size | Unknown: no mass per portion is recorded. Settle by weighing a counted run of portions | — |
+| FP06 | On-device records | Two flash rings (feeds, errors) of 51 slots each, 50 usable, 78-byte records. A feed record is deleted once the cloud acks its `GRAIN_END` with code 0, so the device keeps an upload queue, not a history | static |
+| FP07 | `surplusGrain` | Boolean from the food beam: set as soon as the input reads low, cleared after 20 consecutive high readings. Physical polarity not verified | static |
+| FP07 | Empty hopper | No food check in the schedule or button feed paths; the panel shows a food warning LED | static, emulation |
+| FP08 | Motor jam | Motor current over 300 (ADC counts) reverses the motor; after the third reversal the feed ends with record code 2031 and counts as done (no retry) | static |
+| FP08 | Outlet blocked (`grainOutletState` false) | The feed pauses; it resumes if the outlet clears within 600 one-second ticks (about 10 min), else it ends with record code 2008 | static |
+| FP08 | Other record codes | 2003 a plan came due while busy; 2022 and 2023 Dispense pressed while busy | static |
+| FP08 | `barnDoorError` | Not a firmware field; the cloud supplies it | static |
+| FP09 | Desiccant | No firmware support; the cloud keeps the period and the count, and resets it through a cloud endpoint. `changeDesiccantFrequency` 14, `remainingDesiccantDays` 14 and -52 (keeps counting below zero). App text recommends 14 days | static; observed |
+| FP09 | Period range | Unknown: the app's cycle picker bounds were not recovered | — |
+| FP10 | Meal reminder | No firmware support; `feedingPlanAdvanceNoticeTime` 5 or null. Its unit and allowed values are unknown | static; observed |
+| FP11 | Child lock | 5 s Lock hold toggles, 30 s idle relock (see [panel](#panel-buttons-and-child-lock)) | static, emulation |
+| FP12 | Defaults | `volume` 50, `lightSwitch` and `soundSwitch` on, both aging types 1 (always on), windows 00:00–00:00, `disableHardwareButton` off; the app logged the same values | static; observed |
+| FP12 | `volume` | One unchecked byte; 0 silences every sound. App slider 0–100. The mapping to codec gain is unknown | static; static (app) |
+| FP12 | Quiet windows | Aging type 1 is always on, type 2 only inside start–end inclusive (a window may wrap midnight), any other value off. Compared with the device's local clock, although the fields are named `…Utc`; whether the app sends local or UTC times is unknown. `lightingTimes` and `soundTimes` are stored but not read by the window checks | static |
+| FP12 | Lights off | Every indicator LOW | emulation |
+| FP13 | Meal call clip | None until the app sets `enableAudio`: a URL naming the built-in call selects it, any other URL up to 256 bytes is downloaded (at most 321,024 bytes) | static |
+| FP13 | When it plays | Before a scheduled feed only if the plan enables audio, a clip is set and sound is allowed (switch, window, volume above 0); it repeats `audioTimes` times, then the motor runs. A non-scheduled feed plays it twice under the same conditions. With sound blocked the feed starts at once | static, emulation |
+| FP14 | `powerType` | 1 mains with the battery reading 0 % (or absent), 3 mains with battery charge, 2 battery only. The research unit reported 1 with `electricQuantity` 0 | static; observed |
+| FP14 | Battery curve | ADC 1650 → 0 %, then 10 % per 60 counts up to 2250 → 100 %; a reading reports the first step whose threshold is at or above it | static |
+| FP14 | Low battery | Warning LED at 20 % or less whenever a battery reads (on battery or on mains); none on mains with no battery reading. Below ADC 1650 on battery, stock stops motors, emitters and LEDs and polls for mains every second, restarting when it returns | emulation; static |
+| FP14 | Battery mode radios | A configured feeder shuts Wi-Fi and MQTT 5 s after switching to battery; an unconfigured one closes its AP and BLE. With no clock sync on battery it gives up joining after 60 s; with sync it does not retry | static, emulation |
+| FP14 | Battery mode schedules | The meal dispatch has no power-type check, so meals run on battery from the running clock. Beam emitters are duty-cycled (60 visits on, 200 off) | static |
+| FP14 | OTA | Refused on battery only (code 1110) and during a feed (1120) | static |
+| FP14 | `enableBatteryPercent`, `autoChangeMode`, `autoThreshold` | The first is cloud-only (`false` observed). The others are firmware settings (defaults 1 and 20) whose effect is unknown | static; observed |
+| FP15 | Reset holds | One hold: Reset about 5 s on an unlocked panel starts the factory restore. No Wi-Fi-only hold exists in the panel handler | static, emulation |
+| FP15 | What the restore clears | Unknown: its consumer task was not decompiled. Settle by decompiling it and listing the flash sectors it erases | — |
+| FP16–FP19 | Stock counterpart | None on the device: no Home Assistant, history and remote control live in the cloud, and the vendor app is the client | static |
+
+**App and cloud, not firmware:** the desiccant reminder, the meal reminder, the low-battery and other notifications (`enableLowBatteryNotice` and siblings), `enableBatteryPercent`, `barnDoorError`, feed history (the device only queues unsent records), the per-model portion cap and the plan editor's limits. The firmware has no strings or fields for any of these.
+
 ## Reliability limits
 
 A stock-only server-restart experiment reproduced repeated startups and a KM4 watchdog reset indication. The exact stall trigger is unresolved. WAN isolation, sustained reconnect, cold boot, time recovery, battery behavior, and portion weight require independent physical acceptance. Home Assistant integration remains deferred.

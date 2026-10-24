@@ -562,8 +562,6 @@ impl Rig for LiveRig<'_> {
             &self.config_arg,
             "--directory",
             &review,
-            "--profile",
-            "replacement",
         ];
         let mut child = self.spawn(&self.local_bin(), &args)?;
         let listener = SocketAddr::new(self.mqtt.ip(), IMAGE_PORT);

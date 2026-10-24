@@ -23,8 +23,8 @@ use tracing::{info, warn};
 
 use crate::{
     config::Config,
-    controller::{Controller, FeedInput, FeedRecord, Rejection, ResolveInput, Status},
-    ota, probe,
+    controller::{Controller, Rejection, Status},
+    ota,
     protocol::{self, Reply},
     replacement::{
         self, RequestError,
@@ -32,21 +32,16 @@ use crate::{
     },
 };
 
-pub type OperationResult = std::result::Result<FeedRecord, Rejection>;
 pub type TrialResult = std::result::Result<ota::trial::Record, Rejection>;
-pub type ProbeResult = std::result::Result<probe::Record, Rejection>;
 pub type ReplacementResult = std::result::Result<uuid::Uuid, RequestError>;
 
 pub enum Request {
-    Feed(FeedInput, oneshot::Sender<OperationResult>),
-    Resolve(ResolveInput, oneshot::Sender<OperationResult>),
     OtaTrial(
         ota::trial::Input,
         Option<ota::image::Lease>,
         oneshot::Sender<TrialResult>,
     ),
     ResolveTrial(ota::trial::ResolveInput, oneshot::Sender<TrialResult>),
-    ProbeQuery(probe::Input, oneshot::Sender<ProbeResult>),
     Replacement(replacement::Input, oneshot::Sender<ReplacementResult>),
     /// Load (or with `None`, clear) the update the server answers `ota/get` from.
     OtaOffer(Option<ota::firmware::Offer>, oneshot::Sender<bool>),
@@ -309,16 +304,6 @@ impl Actor {
     fn request(&mut self, client: &AsyncClient, request: Request) -> Result<()> {
         let now = Utc::now();
         match request {
-            Request::Feed(input, response) => {
-                let outcome = self.controller.feed(&input, now);
-                let result = self.dispatch(client, outcome)?;
-                let _ = response.send(result);
-            }
-            Request::ProbeQuery(input, response) => {
-                let outcome = self.controller.probe_query(&input, now);
-                let result = self.dispatch(client, outcome)?;
-                let _ = response.send(result);
-            }
             Request::OtaTrial(input, lease, response) => {
                 let outcome = self.controller.ota_trial(input, lease.as_ref(), now);
                 let result = self.dispatch(client, outcome)?;
@@ -353,17 +338,6 @@ impl Actor {
     fn request_without_device(&mut self, request: Request) {
         let now = Utc::now();
         match request {
-            Request::Feed(input, response) => {
-                let result = self.controller.feed(&input, now).map(|(record, _)| record);
-                let _ = response.send(result);
-            }
-            Request::ProbeQuery(input, response) => {
-                let result = self
-                    .controller
-                    .probe_query(&input, now)
-                    .map(|(record, _)| record);
-                let _ = response.send(result);
-            }
             Request::OtaTrial(input, lease, response) => {
                 let result = self
                     .controller
@@ -380,9 +354,6 @@ impl Actor {
                 let _ = response.send(Err(error));
             }
 
-            Request::Resolve(input, response) => {
-                let _ = response.send(self.controller.resolve(input, now));
-            }
             Request::ResolveTrial(input, response) => {
                 let _ = response.send(self.controller.resolve_trial(input, now));
             }
@@ -434,7 +405,7 @@ impl Actor {
     }
 
     /// Serve API requests between connections without accumulating commands
-    /// for a future session; the controller rejects new feeds while offline.
+    /// for a future session; the controller refuses a new trial while offline.
     async fn between_sessions(&mut self, requests: &mut mpsc::Receiver<Request>) -> Session {
         let delay = tokio::time::sleep(Duration::from_secs(2));
         tokio::pin!(delay);

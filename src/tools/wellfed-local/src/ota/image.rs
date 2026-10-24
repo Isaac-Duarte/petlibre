@@ -1,13 +1,12 @@
-//! Serve one pinned experiment/original pair, or one reviewed replacement
-//! build; never publishes a device command.
+//! Serve one reviewed replacement build for stock to install; never
+//! publishes a device command.
 //!
 //! `ota-images` runs this HTTP server on the fixed trial port for a single
-//! peer and a 15-minute accept window. Every image is hash-bound and held in
-//! memory once loaded, so changing the files afterwards cannot change what is
-//! served: the stock pair by pinned digests, a replacement build by its frozen
-//! review's `ota_sha256`. A private lease beside the config records the
-//! random URL token and the served digest; trial dispatch requires that lease
-//! and a live listener.
+//! peer and a 15-minute accept window. The build is bound to its frozen
+//! review's `ota_sha256` and held in memory once loaded, so changing the files
+//! afterwards cannot change what is served. A private lease beside the config
+//! records the random URL token and the served digest; trial dispatch
+//! requires that lease and a live listener.
 use std::{
     convert::Infallible, future::Future, io::Read, net::Ipv4Addr, path::Path, sync::Arc,
     time::Duration,
@@ -32,11 +31,7 @@ use uuid::Uuid;
 
 use crate::{config::Config, ota::firmware, storage};
 
-pub const ORIGINAL_SHA256: &str =
-    "05147476fc70c91cc77ad7da6d6772376b2081d460ac7b1912e2d73868a09498";
-pub const TEST_SHA256: &str = "3cd8d0454f3eee84b6fc81fdf30999b1527e7ed2aad9e8ec3fadbd906da86503";
-pub const C_PROBE_SHA256: &str = "9af0ce801c538f7ff4b6edbe84f4d250791c5dedefbf01f0b18958b7123df6e7";
-
+/// Stock's own image size, the most it accepts.
 const IMAGE_BYTES: usize = 1_376_288;
 
 /// Trial URLs are built with this port; the server cannot be moved elsewhere.
@@ -44,37 +39,8 @@ pub const PORT: u16 = 8088;
 pub const ACCEPT_WINDOW_SECONDS: i64 = 15 * 60;
 const LEASE_FILE: &str = "ota-image-server.json";
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize, clap::ValueEnum)]
-#[serde(rename_all = "snake_case")]
-pub enum Profile {
-    #[default]
-    StockVersion,
-    CExecution,
-    /// A replacement-firmware build for stock to install (the stock-to-
-    /// replacement POC). `--directory` is its frozen review. There is no
-    /// original beside it: the way back to stock is the UART recovery.
-    Replacement,
-}
-
-impl Profile {
-    /// The pinned experiment's file name and digest; `None` for a
-    /// replacement build, whose digest comes from its review.
-    fn pinned(self) -> Option<(&'static str, &'static str)> {
-        match self {
-            Self::StockVersion => Some(("version-test-1.1.16.bin", TEST_SHA256)),
-            Self::CExecution => Some(("c-probe-1.1.17.bin", C_PROBE_SHA256)),
-            Self::Replacement => None,
-        }
-    }
-
-    pub fn route(self) -> &'static str {
-        match self {
-            Self::StockVersion => "test.bin",
-            Self::CExecution => "probe.bin",
-            Self::Replacement => "replacement.bin",
-        }
-    }
-}
+/// The one file the server holds, under its token.
+pub const ROUTE: &str = "replacement.bin";
 
 /// Private record of the running image server, written beside the config.
 /// Dispatch requires its token, an unexpired accept window and a live listener.
@@ -84,12 +50,8 @@ pub struct Lease {
     pub token: Uuid,
     pub peer: Ipv4Addr,
     pub expires_at: DateTime<Utc>,
-    #[serde(default)]
-    pub profile: Profile,
-    /// The served experiment's SHA-256. Required for a replacement build,
-    /// whose digest is not a constant; absent from older leases.
-    #[serde(default)]
-    pub sha256: Option<String>,
+    /// The served build's SHA-256, which the install command announces.
+    pub sha256: String,
 }
 
 impl Lease {
@@ -113,27 +75,18 @@ impl Lease {
     }
 }
 
-pub struct Images {
-    /// `None` for a replacement build, which has no return image here.
-    original: Option<Bytes>,
-    experiment: Bytes,
-    profile: Profile,
-    /// The experiment's SHA-256, recorded in the lease.
+/// A replacement build, loaded once from its frozen review.
+pub struct Build {
+    image: Bytes,
+    /// Recorded in the lease.
     sha256: String,
 }
 
-/// Read at most `IMAGE_BYTES`; a pinned image must be exactly that long.
-fn read_image(path: &Path, exact: bool) -> Result<Vec<u8>> {
-    let file = std::fs::File::open(path).context("open prepared OTA image")?;
+/// Read at most `IMAGE_BYTES`.
+fn read_image(path: &Path) -> Result<Vec<u8>> {
+    let file = std::fs::File::open(path).context("open the review's image.bin")?;
     let size = file.metadata()?.len();
-    ensure!(
-        if exact {
-            size == IMAGE_BYTES as u64
-        } else {
-            size <= IMAGE_BYTES as u64
-        },
-        "unexpected OTA file size"
-    );
+    ensure!(size <= IMAGE_BYTES as u64, "unexpected OTA file size");
 
     let mut data = Vec::with_capacity(IMAGE_BYTES);
     file.take((IMAGE_BYTES + 1) as u64).read_to_end(&mut data)?;
@@ -141,33 +94,12 @@ fn read_image(path: &Path, exact: bool) -> Result<Vec<u8>> {
     Ok(data)
 }
 
-impl Images {
-    pub fn load(directory: &Path, profile: Profile) -> Result<Self> {
-        fn pinned(directory: &Path, filename: &str, expected: &str) -> Result<Bytes> {
-            let data = read_image(&directory.join(filename), true)?;
-            ensure!(
-                canonical::sha256(&data) == expected,
-                "OTA image hash mismatch"
-            );
-            Ok(Bytes::from(data))
-        }
-
-        let Some((filename, digest)) = profile.pinned() else {
-            return Self::replacement(directory);
-        };
-        Ok(Self {
-            original: Some(pinned(directory, "original-1.1.15.bin", ORIGINAL_SHA256)?),
-            experiment: pinned(directory, filename, digest)?,
-            profile,
-            sha256: digest.to_owned(),
-        })
-    }
-
+impl Build {
     /// A frozen review's `image.bin`, bound to the review's `ota_sha256`.
     /// The review's layout audit is what establishes the container header,
     /// byte-sum and inner images stock checks; the digest binds these bytes
     /// to it. The loader-marker check repeats `ota-sign`'s.
-    fn replacement(review: &Path) -> Result<Self> {
+    pub fn load(review: &Path) -> Result<Self> {
         let frozen: ImageReview =
             wellfed_formats::load(&review.join("review.json")).context("read review.json")?;
         ensure!(
@@ -175,7 +107,7 @@ impl Images {
             "review is not of a replacement build"
         );
 
-        let data = read_image(&review.join("image.bin"), false)?;
+        let data = read_image(&review.join("image.bin"))?;
         let sha256 = canonical::sha256(&data);
         ensure!(
             sha256 == frozen.ota_sha256,
@@ -184,16 +116,14 @@ impl Images {
         firmware::payload(&data)?;
 
         Ok(Self {
-            original: None,
-            experiment: Bytes::from(data),
-            profile: Profile::Replacement,
+            image: Bytes::from(data),
             sha256,
         })
     }
 }
 
 struct ImageState {
-    images: Images,
+    build: Build,
     peer: Ipv4Addr,
     token: Uuid,
 }
@@ -202,7 +132,6 @@ fn response(
     state: &ImageState,
     address: std::net::SocketAddr,
     headers: &HeaderMap,
-    original: bool,
     head: bool,
 ) -> Response {
     if address.ip() != state.peer {
@@ -218,17 +147,8 @@ fn response(
         return StatusCode::BAD_REQUEST.into_response();
     }
 
-    let (data, kind) = match (original, &state.images.original) {
-        (true, Some(data)) => (data.clone(), "original"),
-        (true, None) => return StatusCode::NOT_FOUND.into_response(),
-        (false, _) => (
-            state.images.experiment.clone(),
-            state.images.profile.route(),
-        ),
-    };
-
+    let data = state.build.image.clone();
     tracing::info!(
-        image = kind,
         bytes = data.len(),
         "OTA image requested; receipt unconfirmed"
     );
@@ -255,19 +175,11 @@ fn dispatch(
     if !matches!(*request.method(), Method::GET | Method::HEAD) {
         return StatusCode::METHOD_NOT_ALLOWED.into_response();
     }
-    if request.uri().query().is_some() {
+    if request.uri().query().is_some()
+        || request.uri().path() != format!("/ota/{}/{ROUTE}", state.token)
+    {
         return StatusCode::NOT_FOUND.into_response();
     }
-
-    let original = if request.uri().path()
-        == format!("/ota/{}/{}", state.token, state.images.profile.route())
-    {
-        false
-    } else if request.uri().path() == format!("/ota/{}/original.bin", state.token) {
-        true
-    } else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
 
     if request.headers().contains_key(header::TRANSFER_ENCODING)
         || request
@@ -282,23 +194,18 @@ fn dispatch(
         state,
         peer,
         request.headers(),
-        original,
         request.method() == Method::HEAD,
     )
 }
 
 async fn run(
     listener: TcpListener,
-    images: Images,
+    build: Build,
     peer: Ipv4Addr,
     token: Uuid,
     stop: impl Future<Output = ()>,
 ) -> Result<()> {
-    let state = Arc::new(ImageState {
-        images,
-        peer,
-        token,
-    });
+    let state = Arc::new(ImageState { build, peer, token });
     let mut connections = JoinSet::new();
     tokio::pin!(stop);
 
@@ -344,9 +251,8 @@ async fn run(
 pub async fn serve(
     config: Config,
     config_path: &Path,
-    directory: &Path,
+    review: &Path,
     peer: Ipv4Addr,
-    profile: Profile,
     stop: impl Future<Output = ()>,
 ) -> Result<()> {
     let std::net::IpAddr::V4(host) = config.mqtt_listen.ip() else {
@@ -357,7 +263,7 @@ pub async fn serve(
         "OTA image server requires distinct private IPv4 host/peer addresses"
     );
 
-    let images = Images::load(directory, profile)?;
+    let build = Build::load(review)?;
     let listener = TcpListener::bind((host, PORT))
         .await
         .context("bind OTA image server")?;
@@ -366,8 +272,7 @@ pub async fn serve(
         token: Uuid::new_v4(),
         peer,
         expires_at: Utc::now() + chrono::Duration::seconds(ACCEPT_WINDOW_SECONDS),
-        profile,
-        sha256: Some(images.sha256.clone()),
+        sha256: build.sha256.clone(),
     };
 
     let lease_path = Lease::path(config_path);
@@ -382,20 +287,10 @@ pub async fn serve(
             lease.expires_at
         );
         println!("Server token: {}", lease.token);
-        println!(
-            "Experiment: http://{host}:{PORT}/ota/{}/{}",
-            lease.token,
-            profile.route()
-        );
-        if images.original.is_some() {
-            println!(
-                "Original: http://{host}:{PORT}/ota/{}/original.bin",
-                lease.token
-            );
-        }
+        println!("Build: http://{host}:{PORT}/ota/{}/{ROUTE}", lease.token);
     }
 
-    let result = run(listener, images, peer, lease.token, async {
+    let result = run(listener, build, peer, lease.token, async {
         tokio::select! {
             _ = stop => {},
             _ = tokio::time::sleep(Duration::from_secs(ACCEPT_WINDOW_SECONDS as u64)) => {},
@@ -426,25 +321,15 @@ mod tests {
     };
 
     async fn start(peer: Ipv4Addr) -> (SocketAddr, Uuid, JoinHandle<Result<()>>) {
-        start_profile(peer, Profile::StockVersion).await
-    }
-
-    async fn start_profile(
-        peer: Ipv4Addr,
-        profile: Profile,
-    ) -> (SocketAddr, Uuid, JoinHandle<Result<()>>) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let token = Uuid::new_v4();
-        let images = Images {
-            original: (profile != Profile::Replacement)
-                .then(|| Bytes::from_static(b"original-image")),
-            experiment: Bytes::from_static(b"test-image"),
-            profile,
+        let build = Build {
+            image: Bytes::from_static(b"test-image"),
             sha256: String::new(),
         };
 
-        let worker = tokio::spawn(run(listener, images, peer, token, std::future::pending()));
+        let worker = tokio::spawn(run(listener, build, peer, token, std::future::pending()));
         (address, token, worker)
     }
 
@@ -469,54 +354,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn c_profile_serves_only_probe_and_original_routes() {
-        let (address, token, worker) =
-            start_profile(Ipv4Addr::LOCALHOST, Profile::CExecution).await;
-
-        for (file, status, body) in [
-            ("probe.bin", 200, b"test-image".as_slice()),
-            ("original.bin", 200, b"original-image".as_slice()),
-            ("test.bin", 404, b"".as_slice()),
-        ] {
-            let reply = exchange(
-                address,
-                &format!("GET /ota/{token}/{file} HTTP/1.1\r\nHost: lab\r\n\r\n"),
-            )
-            .await;
-            assert!(split(&reply).0.starts_with(&format!("HTTP/1.1 {status} ")));
-            assert_eq!(split(&reply).1, body);
-        }
-
-        worker.abort();
-    }
-
-    #[tokio::test]
     async fn raw_http_uses_stock_compatible_header_case_and_exact_complete_objects() {
         let (address, token, worker) = start(Ipv4Addr::LOCALHOST).await;
 
-        for (file, expected) in [
-            ("test.bin", &b"test-image"[..]),
-            ("original.bin", &b"original-image"[..]),
-        ] {
-            let reply = exchange(
-                address,
-                &format!("GET /ota/{token}/{file} HTTP/1.1\r\nHost: lab\r\n\r\n"),
-            )
-            .await;
-            let (headers, body) = split(&reply);
-            assert!(headers.starts_with("HTTP/1.1 200 OK\r\n"));
-            assert!(headers.contains(&format!("\r\nContent-Length: {}\r\n", expected.len())));
-            assert!(headers.contains("\r\nConnection: close\r\n"));
-            assert!(
-                !headers.contains("content-length:") && !headers.contains("Transfer-Encoding:")
-            );
-            assert!(!headers.contains("Content-Encoding:"));
-            assert_eq!(body, expected);
-        }
+        let reply = exchange(
+            address,
+            &format!("GET /ota/{token}/{ROUTE} HTTP/1.1\r\nHost: lab\r\n\r\n"),
+        )
+        .await;
+        let (headers, body) = split(&reply);
+        assert!(headers.starts_with("HTTP/1.1 200 OK\r\n"));
+        assert!(headers.contains("\r\nContent-Length: 10\r\n"));
+        assert!(headers.contains("\r\nConnection: close\r\n"));
+        assert!(!headers.contains("content-length:") && !headers.contains("Transfer-Encoding:"));
+        assert!(!headers.contains("Content-Encoding:"));
+        assert_eq!(body, b"test-image");
 
         let reply = exchange(
             address,
-            &format!("HEAD /ota/{token}/test.bin HTTP/1.1\r\nHost: lab\r\n\r\n"),
+            &format!("HEAD /ota/{token}/{ROUTE} HTTP/1.1\r\nHost: lab\r\n\r\n"),
         )
         .await;
         let (headers, body) = split(&reply);
@@ -532,21 +388,23 @@ mod tests {
 
         for (method, path, extra, status) in [
             ("GET", "/private/server.json".to_owned(), "", 404),
-            ("GET", format!("/ota/{}/test.bin", Uuid::nil()), "", 404),
-            ("POST", format!("/ota/{token}/test.bin"), "", 405),
+            ("GET", format!("/ota/{}/{ROUTE}", Uuid::nil()), "", 404),
+            ("GET", format!("/ota/{token}/original.bin"), "", 404),
+            ("GET", format!("/ota/{token}/test.bin"), "", 404),
+            ("POST", format!("/ota/{token}/{ROUTE}"), "", 405),
             (
                 "GET",
-                format!("/ota/{token}/test.bin"),
+                format!("/ota/{token}/{ROUTE}"),
                 "Range: bytes=0-9\r\n",
                 400,
             ),
             (
                 "GET",
-                format!("/ota/{token}/test.bin"),
+                format!("/ota/{token}/{ROUTE}"),
                 "If-None-Match: x\r\n",
                 400,
             ),
-            ("GET", format!("/ota/{token}/test.bin?x=1"), "", 404),
+            ("GET", format!("/ota/{token}/{ROUTE}?x=1"), "", 404),
         ] {
             let reply = exchange(
                 address,
@@ -561,7 +419,7 @@ mod tests {
         let (address, token, worker) = start(Ipv4Addr::new(127, 0, 0, 2)).await;
         let reply = exchange(
             address,
-            &format!("GET /ota/{token}/test.bin HTTP/1.1\r\nHost: lab\r\n\r\n"),
+            &format!("GET /ota/{token}/{ROUTE} HTTP/1.1\r\nHost: lab\r\n\r\n"),
         )
         .await;
         assert!(split(&reply).0.starts_with("HTTP/1.1 404 "));
@@ -581,8 +439,7 @@ mod tests {
             token: Uuid::new_v4(),
             peer: Ipv4Addr::new(10, 0, 0, 2),
             expires_at: Utc::now(),
-            profile: Profile::StockVersion,
-            sha256: None,
+            sha256: canonical::sha256(b"build"),
         };
 
         storage::write_json(&Lease::path(&config), &lease).unwrap();
@@ -595,38 +452,6 @@ mod tests {
         assert!(Lease::current(&config, host).await.is_none());
 
         drop(listener);
-    }
-
-    #[test]
-    fn legacy_image_lease_defaults_to_the_version_experiment() {
-        let lease: Lease = serde_json::from_value(serde_json::json!({
-            "token":Uuid::new_v4(), "peer":"10.0.0.2", "expires_at":Utc::now()
-        }))
-        .unwrap();
-        assert_eq!(lease.profile, Profile::StockVersion);
-    }
-
-    #[tokio::test]
-    async fn replacement_profile_serves_only_its_build() {
-        let (address, token, worker) =
-            start_profile(Ipv4Addr::LOCALHOST, Profile::Replacement).await;
-
-        for (file, status, body) in [
-            ("replacement.bin", 200, b"test-image".as_slice()),
-            ("original.bin", 404, b"".as_slice()),
-            ("test.bin", 404, b"".as_slice()),
-        ] {
-            let reply = exchange(
-                address,
-                &format!("GET /ota/{token}/{file} HTTP/1.1\r\nHost: lab\r\n\r\n"),
-            )
-            .await;
-            let (headers, received) = split(&reply);
-            assert!(headers.starts_with(&format!("HTTP/1.1 {status} ")));
-            assert_eq!(received, body);
-        }
-
-        worker.abort();
     }
 
     /// A review directory holding `image` and a review naming `digest`.
@@ -650,93 +475,28 @@ mod tests {
     }
 
     #[test]
-    fn a_replacement_build_loads_only_when_its_review_binds_it() {
+    fn a_build_loads_only_when_its_review_binds_it() {
         let mut image = vec![0xff; 32];
         image.extend_from_slice(b"81958711");
         image.extend_from_slice(&[0x5a; 64]);
         let digest = canonical::sha256(&image);
 
-        let good = review(&image, &digest, "build");
-        let images = Images::load(good.path(), Profile::Replacement).unwrap();
-        assert!(images.original.is_none());
-        assert_eq!(images.experiment.as_ref(), image.as_slice());
-        assert_eq!(images.sha256, digest);
+        let build = Build::load(review(&image, &digest, "build").path()).unwrap();
+        assert_eq!(build.image.as_ref(), image.as_slice());
+        assert_eq!(build.sha256, digest);
 
         let other = canonical::sha256(b"other");
-        assert!(
-            Images::load(review(&image, &other, "build").path(), Profile::Replacement).is_err()
-        );
-        assert!(
-            Images::load(
-                review(&image, &digest, "stock").path(),
-                Profile::Replacement
-            )
-            .is_err()
-        );
+        assert!(Build::load(review(&image, &other, "build").path()).is_err());
+        assert!(Build::load(review(&image, &digest, "stock").path()).is_err());
 
         let mut unmarked = image.clone();
         unmarked[32] = 0;
         let unmarked_digest = canonical::sha256(&unmarked);
-        assert!(
-            Images::load(
-                review(&unmarked, &unmarked_digest, "build").path(),
-                Profile::Replacement
-            )
-            .is_err()
-        );
+        assert!(Build::load(review(&unmarked, &unmarked_digest, "build").path()).is_err());
 
         let mut oversized = image.clone();
         oversized.resize(IMAGE_BYTES + 1, 0xff);
         let oversized_digest = canonical::sha256(&oversized);
-        assert!(
-            Images::load(
-                review(&oversized, &oversized_digest, "build").path(),
-                Profile::Replacement
-            )
-            .is_err()
-        );
-    }
-
-    #[test]
-    #[ignore = "requires the private prepared stock-version experiment; run explicitly"]
-    fn pinned_real_images_are_immutable_after_load_and_mutated_files_are_refused() {
-        let root = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.."));
-        for (profile, name) in [
-            (Profile::StockVersion, "stock-version-1.1.16"),
-            (Profile::CExecution, "rust-probe-1.1.17"),
-        ] {
-            let source = root.join("private/firmware/experiments").join(name);
-            let directory = tempfile::tempdir().unwrap();
-            let (filename, _) = profile.pinned().unwrap();
-            for name in ["original-1.1.15.bin", filename] {
-                std::fs::copy(source.join(name), directory.path().join(name)).unwrap();
-            }
-
-            let images = Images::load(directory.path(), profile).unwrap();
-            assert_eq!(images.original.as_ref().map(Bytes::len), Some(IMAGE_BYTES));
-            assert_eq!(images.experiment.len(), IMAGE_BYTES);
-
-            let path = directory.path().join("original-1.1.15.bin");
-            let mut data = std::fs::read(&path).unwrap();
-            data[0x17040] ^= 1;
-            std::fs::write(path, &data).unwrap();
-            assert_ne!(
-                images.original.as_ref().map(|o| o[0x17040]),
-                Some(data[0x17040])
-            );
-            assert!(Images::load(directory.path(), profile).is_err());
-
-            std::fs::copy(
-                source.join("original-1.1.15.bin"),
-                directory.path().join("original-1.1.15.bin"),
-            )
-            .unwrap();
-
-            let path = directory.path().join(filename);
-            let mut data = std::fs::read(&path).unwrap();
-            data[0x17040] ^= 1;
-            std::fs::write(path, &data).unwrap();
-            assert!(Images::load(directory.path(), profile).is_err());
-        }
+        assert!(Build::load(review(&oversized, &oversized_digest, "build").path()).is_err());
     }
 }

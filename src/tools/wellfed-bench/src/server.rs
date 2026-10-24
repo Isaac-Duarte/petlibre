@@ -48,8 +48,6 @@ pub(crate) struct LocalStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct TrialRequest {
     pub request_id: String,
-    /// Always `replacement`; the stock experiments are not the bench's.
-    pub image: &'static str,
     /// The image server's lease token.
     pub server_token: String,
 }

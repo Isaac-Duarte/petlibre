@@ -26,9 +26,9 @@ use uuid::Uuid;
 
 use crate::{
     build_info::BUILD,
-    controller::{FeedInput, FeedRecord, Rejection, ResolveInput, Status},
+    controller::{Rejection, Status},
     mqtt::Request,
-    ota, probe,
+    ota,
     replacement::{self, Op, RequestError},
 };
 
@@ -76,14 +76,12 @@ impl From<Rejection> for ApiError {
     fn from(error: Rejection) -> Self {
         let status = match error {
             Rejection::Offline => StatusCode::SERVICE_UNAVAILABLE,
-            Rejection::InvalidPortions => StatusCode::UNPROCESSABLE_ENTITY,
-            Rejection::InvalidOta | Rejection::ResolutionEvidence | Rejection::InvalidProbe => {
+            Rejection::InvalidOta | Rejection::ResolutionEvidence => {
                 StatusCode::UNPROCESSABLE_ENTITY
             }
             Rejection::ImageServer => StatusCode::PRECONDITION_FAILED,
             Rejection::OtaDisabled => StatusCode::FORBIDDEN,
             Rejection::Storage => StatusCode::INTERNAL_SERVER_ERROR,
-            Rejection::Cooldown => StatusCode::TOO_MANY_REQUESTS,
             _ => StatusCode::CONFLICT,
         };
         Self::new(status, error.to_string())
@@ -148,24 +146,6 @@ async fn status(
     Ok(Json(state.status.borrow().clone()))
 }
 
-async fn feed(
-    State(state): State<ApiState>,
-    headers: HeaderMap,
-    Json(input): Json<FeedInput>,
-) -> Result<Json<FeedRecord>, ApiError> {
-    authenticate(&headers, &state)?;
-    operation(state, |response| Request::Feed(input, response)).await
-}
-
-async fn resolve(
-    State(state): State<ApiState>,
-    headers: HeaderMap,
-    Json(input): Json<ResolveInput>,
-) -> Result<Json<FeedRecord>, ApiError> {
-    authenticate(&headers, &state)?;
-    operation(state, |response| Request::Resolve(input, response)).await
-}
-
 async fn ota_trial_request(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -207,11 +187,8 @@ pub fn router(state: ApiState) -> Router {
     Router::new()
         .route("/health", get(service_info))
         .route("/api/status", get(status))
-        .route("/api/feed", post(feed))
-        .route("/api/feed/resolve", post(resolve))
         .route("/api/ota/trial", post(ota_trial_request))
         .route("/api/ota/trial/resolve", post(ota_trial_resolve))
-        .route("/api/probe/query", post(probe_query))
         .route("/api/replacement/request", post(replacement_request))
         .route("/api/replacement/ota/offer", post(replacement_ota_offer))
         .layer(DefaultBodyLimit::max(4096))
@@ -351,15 +328,6 @@ async fn replacement_ota_offer(
     }
 
     Ok(Json(Offered { offer: summary }))
-}
-
-async fn probe_query(
-    State(state): State<ApiState>,
-    headers: HeaderMap,
-    Json(input): Json<probe::Input>,
-) -> Result<Json<probe::Record>, ApiError> {
-    authenticate(&headers, &state)?;
-    operation(state, |response| Request::ProbeQuery(input, response)).await
 }
 
 #[cfg(test)]

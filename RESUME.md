@@ -7,6 +7,11 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
+**October 24: FW51 done, the research paths out of `wellfed-local` (host only, nothing run on the bench; [tools roadmap](docs/development/tools-roadmap.md)).**
+- **Removed:** stock control (`feed`, `resolve`, `new-request-id`, `/api/feed`), the C-probe and modified-stock trials (`probe-query`, the `1.1.16`/C-probe images, `ota-images --profile`), `speak` and `ble-wifi`. The install trial's guards and no-resend rule are unchanged.
+- **Before the next `serve` (owner, once):** `wellfed-local serve` now refuses to start beside `private/feed-ledger.json`. Check that no trial in it is submitted, uncertain or failed, then rename it (for example to `feed-ledger.json.before-fw51`); the new ledger is `private/stock-ledger.json`. Also delete the `max_portions` line from `private/server.json`, which the config now refuses as an unknown field.
+- **Flash and bench state:** unchanged from the FW45 entry below (`feeder` v104 in bank 1).
+
 **October 24, night: FW45 noise sources measured (physical, no owner action).**
 - **Runs:** bounded `serve`, stopped afterwards.
   - `ota fw45-rng-01 --variant entropy` (v102) lost its raw lines: they overflowed the 192-byte record buffer; now 112 samples a line, with a test of the longest line.

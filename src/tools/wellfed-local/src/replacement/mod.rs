@@ -5,13 +5,9 @@
 //! relies on and keeps the latest health in memory; none of it commands the
 //! feeder.
 //!
-//! The submodules reach the replacement firmware itself: `request_auth` signs
-//! the requests sent over MQTT, `wifi_ble` sends Wi-Fi credentials over
-//! Bluetooth LE, and `speak` streams audio to the speaker variant.
+//! `request_auth` signs the requests sent over MQTT.
 
 pub mod request_auth;
-pub mod speak;
-pub mod wifi_ble;
 
 use std::collections::VecDeque;
 

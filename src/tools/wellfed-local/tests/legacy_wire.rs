@@ -147,7 +147,11 @@ async fn captured_legacy_connect_and_both_subscriptions_reach_local_clock_servic
 
     let status = common::status(&config, &http).await;
     assert_eq!(status["device_online"], true);
-    assert_eq!(status["feeds"], json!([]), "handshake initiated a feed");
+    assert_eq!(
+        status["ota_trials"],
+        json!([]),
+        "handshake initiated a trial"
+    );
     drop(device);
 
     // Although the legacy peer requested persistence, the normalized connection

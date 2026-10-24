@@ -330,7 +330,6 @@ impl Rig for StockFeeder {
                 .is_none_or(|(_, phase, _)| *phase == "not_installed"),
             "asked while an earlier request was still open"
         );
-        assert_eq!(trial.image, "replacement");
         assert_eq!(trial.server_token, TOKEN);
         require_none(&self.trial);
         self.trial = Some((trial.request_id.clone(), "submitted"));

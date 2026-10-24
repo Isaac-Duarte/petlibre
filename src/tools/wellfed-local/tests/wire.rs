@@ -7,15 +7,14 @@ mod common;
 
 use chrono::{TimeZone, Utc};
 use wellfed_local::{
-    controller::{Controller, FeedInput},
-    ota::{self, trial::Image},
-    probe,
+    ota,
     protocol::{self, Reply},
 };
 use serde_json::{Value, json};
 use uuid::Uuid;
 
 const ID: &str = "6c8e4f8a-0d43-4c4b-9d5e-1f2a3b4c5d6e";
+const DIGEST: &str = "9af0ce801c538f7ff4b6edbe84f4d250791c5dedefbf01f0b18958b7123df6e7";
 
 fn bytes(reply: &Reply) -> String {
     let mut payload = reply.payload.clone();
@@ -128,18 +127,10 @@ fn commands() {
         format!(r#"{{"cmd":"ATTR_GET_SERVICE","msgId":"{ID}","ts":1792271861000}}"#)
     );
 
-    let probe = probe::command(&config, id, now);
-    assert_eq!(probe.topic, config.topic("config/sub"));
-    assert_eq!(
-        bytes(&probe),
-        format!(r#"{{"cmd":"GET_CONFIG","msgId":"{ID}","ts":1792271861000}}"#)
-    );
-
     let trial = ota::trial::Record {
         sequence: 1,
         input: ota::trial::Input {
             request_id: id,
-            image: Image::CProbe,
             server_token: Uuid::nil(),
         },
         created_at: now,
@@ -147,46 +138,14 @@ fn commands() {
         phase: ota::trial::Phase::Submitted,
         download_reported: false,
         resolution_note: None,
-        image_sha256: wellfed_local::ota::image::C_PROBE_SHA256.into(),
+        image_sha256: DIGEST.into(),
     };
     let upgrade = trial.command(&config);
     assert_eq!(upgrade.topic, config.topic("service/sub"));
     assert_eq!(
         bytes(&upgrade),
         format!(
-            r#"{{"cmd":"OTA_UPGRADE","msgId":"{ID}","sha256":"{}","targetPid":"PLAF103","targetSoftwareVersion":"1.1.17","ts":1792271861000,"upgradeType":1,"url":"http://127.0.0.1:8088/ota/00000000-0000-0000-0000-000000000000/probe.bin"}}"#,
-            wellfed_local::ota::image::C_PROBE_SHA256
-        )
-    );
-}
-
-#[test]
-fn feed_command() {
-    let dir = tempfile::tempdir().unwrap();
-    let mut controller =
-        Controller::load(common::config(), dir.path().join("ledger.json")).unwrap();
-    let now = Utc::now();
-    controller.status.broker_connected = true;
-    controller.status.last_seen = Some(now);
-
-    let id = Uuid::parse_str(ID).unwrap();
-    let (_, command) = controller
-        .feed(
-            &FeedInput {
-                request_id: id,
-                portions: 1,
-            },
-            now,
-        )
-        .unwrap();
-    let command = command.unwrap();
-
-    assert_eq!(command.topic, controller.config.topic("service/sub"));
-    assert_eq!(
-        bytes(&command),
-        format!(
-            r#"{{"cmd":"MANUAL_FEEDING_SERVICE","grainNum":1,"msgId":"{ID}","ts":{}}}"#,
-            now.timestamp_millis()
+            r#"{{"cmd":"OTA_UPGRADE","msgId":"{ID}","sha256":"{DIGEST}","targetPid":"PLAF103","targetSoftwareVersion":"2.0.0","ts":1792271861000,"upgradeType":1,"url":"http://127.0.0.1:8088/ota/00000000-0000-0000-0000-000000000000/replacement.bin"}}"#
         )
     );
 }

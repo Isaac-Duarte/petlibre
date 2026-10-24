@@ -1,30 +1,30 @@
-//! OTA trial rules in the controller, without a broker: dispatch guards,
-//! journal-before-publish with no replay, the persistent feeding hold, and
-//! evidence-based resolution of uncertain trials.
+//! Install-trial rules in the controller, without a broker: dispatch guards,
+//! journal-before-publish with no replay, closing on replacement health, and
+//! evidence-based resolution of uncertain or failed trials.
 
 mod common;
 
 use chrono::{DateTime, Duration, Utc};
 use wellfed_local::protocol::Channel;
 use wellfed_local::{
-    controller::{Controller, FeedInput, Rejection},
+    controller::{Controller, Rejection},
     ota::{
         self,
         image::Lease,
-        trial::{Image, Phase, ResolveInput},
+        trial::{Phase, ResolveInput},
     },
     protocol::{Message, Reply},
 };
 use serde_json::json;
 use uuid::Uuid;
 
+/// A live image-server lease for `token`, serving a build with digest `sha256`.
 fn lease(token: Uuid, now: DateTime<Utc>) -> Lease {
     Lease {
         token,
         peer: "10.0.0.2".parse().unwrap(),
         expires_at: now + Duration::minutes(15),
-        profile: wellfed_local::ota::image::Profile::StockVersion,
-        sha256: None,
+        sha256: "ab".repeat(32),
     }
 }
 
@@ -72,42 +72,49 @@ fn ready(c: &mut Controller, version: &str) {
     .unwrap();
 }
 
-fn input(image: Image) -> ota::trial::Input {
+fn input() -> ota::trial::Input {
     ota::trial::Input {
         request_id: Uuid::new_v4(),
-        image,
         server_token: Uuid::new_v4(),
     }
 }
 
+/// A controller with trials enabled and a freshly reported, powered stock.
+fn enabled(dir: &tempfile::TempDir) -> Controller {
+    let mut c = Controller::load(common::config(), dir.path().join("ledger.json")).unwrap();
+    ready(&mut c, "1.1.15");
+    c.enable_ota_trial();
+    c
+}
+
 #[test]
-fn default_disabled_and_guarded_versions_power_plans_and_active_feeds() {
+fn default_disabled_and_guarded_by_version_power_and_plans() {
     let dir = tempfile::tempdir().unwrap();
     let mut c = Controller::load(common::config(), dir.path().join("ledger.json")).unwrap();
     ready(&mut c, "1.1.15");
 
     assert!(matches!(
-        submit(&mut c, input(Image::Test), Utc::now()),
+        submit(&mut c, input(), Utc::now()),
         Err(Rejection::OtaDisabled)
     ));
 
     c.enable_ota_trial();
     c.status.version_reported_at = None;
     assert!(matches!(
-        submit(&mut c, input(Image::Test), Utc::now()),
+        submit(&mut c, input(), Utc::now()),
         Err(Rejection::InvalidOta)
     ));
 
     c.status.version_reported_at = Some(Utc::now() - Duration::seconds(301));
     assert!(matches!(
-        submit(&mut c, input(Image::Test), Utc::now()),
+        submit(&mut c, input(), Utc::now()),
         Err(Rejection::InvalidOta)
     ));
 
-    for version in ["1.1.14", "1.1.16", "unverified"] {
+    for version in ["1.1.14", "1.1.16", "2.0.0", "unverified"] {
         ready(&mut c, version);
         assert!(matches!(
-            submit(&mut c, input(Image::Test), Utc::now()),
+            submit(&mut c, input(), Utc::now()),
             Err(Rejection::InvalidOta)
         ));
     }
@@ -115,29 +122,15 @@ fn default_disabled_and_guarded_versions_power_plans_and_active_feeds() {
     ready(&mut c, "1.1.15");
     c.status.attributes.insert("powerType".to_owned(), json!(2));
     assert!(matches!(
-        submit(&mut c, input(Image::Test), Utc::now()),
+        submit(&mut c, input(), Utc::now()),
         Err(Rejection::InvalidOta)
     ));
 
     c.status.attributes.insert("powerType".to_owned(), json!(1));
     c.config.plans.push(json!({"id":"plan"}));
     assert!(matches!(
-        submit(&mut c, input(Image::Test), Utc::now()),
+        submit(&mut c, input(), Utc::now()),
         Err(Rejection::InvalidOta)
-    ));
-
-    c.config.plans.clear();
-    c.feed(
-        &FeedInput {
-            request_id: Uuid::new_v4(),
-            portions: 1,
-        },
-        Utc::now(),
-    )
-    .unwrap();
-    assert!(matches!(
-        submit(&mut c, input(Image::Test), Utc::now()),
-        Err(Rejection::Busy)
     ));
 
     assert!(c.status.ota_trials.is_empty());
@@ -147,39 +140,18 @@ fn default_disabled_and_guarded_versions_power_plans_and_active_feeds() {
 fn journal_before_publish_duplicate_conflict_restart_and_timeout_never_replay() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("ledger.json");
-    let mut c = Controller::load(common::config(), path.clone()).unwrap();
-    ready(&mut c, "1.1.15");
-    c.enable_ota_trial();
+    let mut c = enabled(&dir);
 
-    let request = input(Image::Test);
+    let request = input();
     let now = Utc::now();
     let (record, command) = submit(&mut c, request.clone(), now).unwrap();
-    let command = command.unwrap();
+    assert!(command.is_some());
 
     let on_disk: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     assert_eq!(
         on_disk["ota_trials"][request.request_id.to_string()]["phase"],
         "submitted"
-    );
-
-    assert_eq!(command.payload["targetSoftwareVersion"], "1.1.16");
-    assert_eq!(command.payload["upgradeType"], 1);
-    assert_eq!(
-        command.payload["sha256"],
-        wellfed_local::ota::image::TEST_SHA256
-    );
-    assert!(
-        command.payload["url"]
-            .as_str()
-            .unwrap()
-            .ends_with("/test.bin")
-    );
-    assert!(
-        !command
-            .payload
-            .to_string()
-            .contains("MANUAL_FEEDING_SERVICE")
     );
 
     assert_eq!(record.phase, Phase::Submitted);
@@ -197,105 +169,88 @@ fn journal_before_publish_duplicate_conflict_restart_and_timeout_never_replay() 
 
     drop(c);
     let mut c = Controller::load(common::config(), path).unwrap();
-    assert!(c.status.ota_hold);
     assert!(!c.status.ota_trial_enabled);
     assert!(submit(&mut c, request, now).unwrap().1.is_none());
+
+    // With fresh evidence, the uncertain trial alone refuses a new one.
+    ready(&mut c, "1.1.15");
+    c.enable_ota_trial();
     assert!(matches!(
-        c.feed(
-            &FeedInput {
-                request_id: Uuid::new_v4(),
-                portions: 1
-            },
-            now
-        ),
+        submit(&mut c, input(), Utc::now()),
         Err(Rejection::OtaActive)
     ));
 }
 
 #[test]
-fn progress_and_stale_startup_cannot_confirm_trial_and_only_original_version_clears_hold() {
+fn a_replacement_install_announces_the_served_digest_and_needs_stock() {
     let dir = tempfile::tempdir().unwrap();
-    let mut c = Controller::load(common::config(), dir.path().join("ledger.json")).unwrap();
-    ready(&mut c, "1.1.15");
-    c.enable_ota_trial();
+    let mut c = enabled(&dir);
+    let digest = "cd".repeat(32);
 
-    let request = input(Image::Test);
+    let now = Utc::now();
+    let request = input();
+    let images = Lease {
+        sha256: digest.clone(),
+        ..lease(request.server_token, now)
+    };
+
+    let (record, command) = c.ota_trial(request.clone(), Some(&images), now).unwrap();
+    let command = command.unwrap();
+    assert_eq!(record.image_sha256, digest);
+    assert_eq!(command.payload["sha256"], digest.as_str());
+    assert_eq!(command.payload["targetSoftwareVersion"], "2.0.0");
+    assert_eq!(command.payload["targetPid"], "PLAF103");
+    assert_eq!(command.payload["upgradeType"], 1);
+
+    // The stock URL parser copies into 128 bytes.
+    let url = command.payload["url"].as_str().unwrap();
+    assert!(url.starts_with("http://") && url.ends_with("/replacement.bin"));
+    assert!(url.len() < 128, "{url}");
+
+    // The same ID returns the record without a second command.
+    let (_, again) = c.ota_trial(request, Some(&images), now).unwrap();
+    assert!(again.is_none());
+}
+
+#[test]
+fn progress_and_stale_startup_cannot_close_a_trial() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = enabled(&dir);
+
+    let request = input();
     let now = Utc::now();
     submit(&mut c, request.clone(), now).unwrap();
 
     for value in [
         json!({"cmd":"OTA_PROGRESS","msgId":request.request_id,"progress":100}),
-        json!({"cmd":"DEVICE_START_EVENT","ts":now.timestamp_millis()-1,"softwareVersion":"1.1.16"}),
+        json!({"cmd":"DEVICE_START_EVENT","ts":now.timestamp_millis()-1,"softwareVersion":"2.0.0"}),
     ] {
         let message: Message = serde_json::from_value(value).unwrap();
         c.observe(Channel::Event, &message, now).unwrap();
     }
 
     assert_eq!(c.status.ota_trials[0].phase, Phase::Submitted);
+    assert!(c.status.ota_trials[0].download_reported);
     c.disconnected(now).unwrap();
     assert_eq!(c.status.ota_trials[0].phase, Phase::Uncertain);
-
-    let boot: Message = serde_json::from_value(json!({"cmd":"DEVICE_START_EVENT",
-        "ts":(now+Duration::seconds(20)).timestamp_millis(),"softwareVersion":"1.1.16"}))
-    .unwrap();
-    c.status.broker_connected = true;
-    c.observe(Channel::Event, &boot, now + Duration::seconds(20))
-        .unwrap();
-    assert_eq!(c.status.ota_trials[0].phase, Phase::VersionReported);
-    assert!(c.status.ota_hold);
-
-    // A host clock correction must not make the earlier request the latest one.
-    c.status.version_reported_at = Some(now - Duration::seconds(2));
-    c.status.power_reported_at = Some(now - Duration::seconds(2));
-    c.status.last_seen = Some(now - Duration::seconds(2));
-    let restore = input(Image::Original);
-    let (record, command) = submit(&mut c, restore.clone(), now - Duration::seconds(1)).unwrap();
-    let command = command.unwrap();
-
-    assert_eq!(command.payload["targetSoftwareVersion"], "1.1.15");
-    assert_eq!(
-        command.payload["sha256"],
-        wellfed_local::ota::image::ORIGINAL_SHA256
-    );
-    assert!(
-        command.payload["url"]
-            .as_str()
-            .unwrap()
-            .ends_with("/original.bin")
-    );
-
-    let boot: Message = serde_json::from_value(json!({"cmd":"DEVICE_START_EVENT",
-        "ts":(now+Duration::seconds(40)).timestamp_millis(),"softwareVersion":"1.1.15"}))
-    .unwrap();
-    c.observe(Channel::Event, &boot, now + Duration::seconds(40))
-        .unwrap();
-
-    assert!(!c.status.ota_hold);
-    assert_eq!(
-        c.status.ota_trials[0].input.request_id,
-        record.input.request_id
-    );
-    assert_eq!(c.status.ota_trials[0].phase, Phase::VersionReported);
 }
 
 #[test]
 fn precheck_rejection_storage_failure_and_wrong_request_errors_do_not_resend() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("ledger.json");
-    let mut c = Controller::load(common::config(), path.clone()).unwrap();
-    ready(&mut c, "1.1.15");
-    c.enable_ota_trial();
+    let mut c = enabled(&dir);
 
-    let request = input(Image::Test);
+    let request = input();
     let now = Utc::now();
     submit(&mut c, request.clone(), now).unwrap();
 
     for id in [Uuid::new_v4(), request.request_id] {
-        let message: Message = serde_json::from_value(
+        observe(
+            &mut c,
+            "service",
             json!({"cmd":"OTA_UPGRADE","msgId":id,"phase":"precheck","errCode":1101}),
-        )
-        .unwrap();
-        c.observe(Channel::Service, &message, now).unwrap();
+            now,
+        );
         assert_eq!(
             c.status.ota_trials[0].phase,
             if id == request.request_id {
@@ -304,12 +259,11 @@ fn precheck_rejection_storage_failure_and_wrong_request_errors_do_not_resend() {
                 Phase::Submitted
             }
         );
-        assert_eq!(c.status.ota_hold, id != request.request_id);
     }
 
     assert!(submit(&mut c, request, now).unwrap().1.is_none());
     assert!(matches!(
-        submit(&mut c, input(Image::Test), now),
+        submit(&mut c, input(), now),
         Err(Rejection::OtaActive)
     ));
 
@@ -324,24 +278,22 @@ fn precheck_rejection_storage_failure_and_wrong_request_errors_do_not_resend() {
     std::fs::create_dir(&path).unwrap();
 
     assert!(matches!(
-        submit(&mut c, input(Image::Test), now),
+        submit(&mut c, input(), now),
         Err(Rejection::Storage)
     ));
     assert!(matches!(
-        submit(&mut c, input(Image::Test), now),
+        submit(&mut c, input(), now),
         Err(Rejection::Storage)
     ));
 }
 
 #[test]
-fn an_error_after_progress_cannot_clear_the_persistent_feeding_hold() {
+fn an_error_after_progress_stays_failed_across_a_restart() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("ledger.json");
-    let mut c = Controller::load(common::config(), path.clone()).unwrap();
-    ready(&mut c, "1.1.15");
-    c.enable_ota_trial();
+    let mut c = enabled(&dir);
 
-    let request = input(Image::Test);
+    let request = input();
     let now = Utc::now();
     submit(&mut c, request.clone(), now).unwrap();
 
@@ -357,15 +309,9 @@ fn an_error_after_progress_cannot_clear_the_persistent_feeding_hold() {
         .unwrap();
     }
 
-    assert!(c.status.ota_hold);
     assert!(c.status.ota_trials[0].download_reported);
     assert_eq!(c.status.ota_trials[0].phase, Phase::ReportedError);
-
     assert!(submit(&mut c, request, now).unwrap().1.is_none());
-    assert!(matches!(
-        submit(&mut c, input(Image::Test), now),
-        Err(Rejection::OtaActive)
-    ));
     assert_eq!(c.status.ota_trials.len(), 1);
 
     drop(c);
@@ -373,21 +319,18 @@ fn an_error_after_progress_cannot_clear_the_persistent_feeding_hold() {
     ready(&mut c, "1.1.15");
     c.enable_ota_trial();
     assert!(matches!(
-        submit(&mut c, input(Image::Test), Utc::now()),
+        submit(&mut c, input(), Utc::now()),
         Err(Rejection::OtaActive)
     ));
-    assert!(c.status.ota_hold);
 }
 
 #[test]
 fn dispatch_requires_a_matching_unexpired_image_server_lease_and_fresh_power() {
     let dir = tempfile::tempdir().unwrap();
-    let mut c = Controller::load(common::config(), dir.path().join("ledger.json")).unwrap();
-    ready(&mut c, "1.1.15");
-    c.enable_ota_trial();
+    let mut c = enabled(&dir);
 
     let now = Utc::now();
-    let request = input(Image::Test);
+    let request = input();
     let mut expiring = lease(request.server_token, now);
     expiring.expires_at = now + Duration::minutes(4);
 
@@ -397,9 +340,7 @@ fn dispatch_requires_a_matching_unexpired_image_server_lease_and_fresh_power() {
             Err(Rejection::ImageServer)
         ));
     }
-
     assert!(c.status.ota_trials.is_empty());
-    assert!(!c.status.ota_hold);
 
     c.status.power_reported_at = Some(now - Duration::seconds(301));
     assert!(matches!(
@@ -412,37 +353,55 @@ fn dispatch_requires_a_matching_unexpired_image_server_lease_and_fresh_power() {
 }
 
 #[test]
-fn already_active_precheck_rejection_keeps_the_feeding_hold() {
+fn replacement_health_closes_only_an_open_install() {
     let dir = tempfile::tempdir().unwrap();
-    let mut c = Controller::load(common::config(), dir.path().join("ledger.json")).unwrap();
-    ready(&mut c, "1.1.15");
-    c.enable_ota_trial();
-
-    let request = input(Image::Test);
+    let path = dir.path().join("ledger.json");
+    let mut c = enabled(&dir);
     let now = Utc::now();
-    submit(&mut c, request.clone(), now).unwrap();
 
-    observe(
-        &mut c,
-        "service",
-        json!({"cmd":"OTA_UPGRADE","msgId":request.request_id,"phase":"precheck","errCode":0x464}),
-        now,
-    );
+    // Health with no trial changes nothing.
+    c.replacement_healthy(now).unwrap();
+    assert!(c.status.ota_trials.is_empty());
 
-    assert_eq!(c.status.ota_trials[0].phase, Phase::ReportedError);
-    assert!(c.status.ota_hold);
+    submit(&mut c, input(), now).unwrap();
+
+    // Health stamped at the submission itself proves nothing.
+    c.replacement_healthy(now).unwrap();
+    assert_eq!(c.status.ota_trials[0].phase, Phase::Submitted);
+
+    let later = now + Duration::seconds(200);
+    c.replacement_healthy(later).unwrap();
+    assert_eq!(c.status.ota_trials[0].phase, Phase::ReplacementHealthy);
+
+    // Persisted, and a restart does not reopen it.
+    drop(c);
+    let c = Controller::load(common::config(), path).unwrap();
+    assert_eq!(c.status.ota_trials[0].phase, Phase::ReplacementHealthy);
 }
 
 #[test]
-fn uncertain_test_resolves_only_after_quiet_period_with_fresh_version_evidence() {
+fn an_uncertain_install_still_closes_on_health() {
     let dir = tempfile::tempdir().unwrap();
-    let mut c = Controller::load(common::config(), dir.path().join("ledger.json")).unwrap();
-    ready(&mut c, "1.1.15");
-    c.enable_ota_trial();
+    let mut c = enabled(&dir);
+    let now = Utc::now();
+    submit(&mut c, input(), now).unwrap();
+
+    // Stock's own session ends when it reboots into the new bank.
+    c.disconnected(now + Duration::seconds(100)).unwrap();
+    assert_eq!(c.status.ota_trials[0].phase, Phase::Uncertain);
+
+    c.replacement_healthy(now + Duration::seconds(200)).unwrap();
+    assert_eq!(c.status.ota_trials[0].phase, Phase::ReplacementHealthy);
+}
+
+#[test]
+fn an_uncertain_install_resolves_only_after_a_quiet_period_with_fresh_version_evidence() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = enabled(&dir);
 
     let t0 = Utc::now();
     c.connected(t0);
-    let request = input(Image::Test);
+    let request = input();
     submit(&mut c, request.clone(), t0).unwrap();
 
     assert!(matches!(
@@ -500,138 +459,13 @@ fn uncertain_test_resolves_only_after_quiet_period_with_fresh_version_evidence()
     let record = c.resolve_trial(resolve(request.request_id), at).unwrap();
     assert_eq!(record.phase, Phase::NotInstalled);
     assert!(record.resolution_note.is_some());
-    assert!(!c.status.ota_hold);
 
     // Resolution is not repeatable and permits a fresh explicit request.
     assert!(matches!(
         c.resolve_trial(resolve(request.request_id), at),
         Err(Rejection::Conflict)
     ));
-    assert!(submit(&mut c, input(Image::Test), at).unwrap().1.is_some());
-}
-
-#[test]
-fn resolved_test_that_later_boots_restores_the_hold() {
-    let dir = tempfile::tempdir().unwrap();
-    let mut c = Controller::load(common::config(), dir.path().join("ledger.json")).unwrap();
-    ready(&mut c, "1.1.15");
-    c.enable_ota_trial();
-
-    let t0 = Utc::now();
-    c.connected(t0);
-    let request = input(Image::Test);
-    submit(&mut c, request.clone(), t0).unwrap();
-
-    keep_connected(&mut c, t0 + Duration::seconds(600));
-    c.expire(t0 + Duration::seconds(600)).unwrap();
-
-    let at = t0 + Duration::minutes(25);
-    keep_connected(&mut c, at);
-    observe(
-        &mut c,
-        "system",
-        json!({"cmd":"GET_CONFIG","softwareVersion":"1.1.15"}),
-        at,
-    );
-
-    c.resolve_trial(resolve(request.request_id), at).unwrap();
-    assert!(!c.status.ota_hold);
-
-    observe(
-        &mut c,
-        "event",
-        json!({"cmd":"DEVICE_START_EVENT","ts":at.timestamp_millis(),"softwareVersion":"1.1.16"}),
-        at,
-    );
-    assert_eq!(c.status.ota_trials[0].phase, Phase::VersionReported);
-    assert!(c.status.ota_hold);
-}
-
-#[test]
-fn uncertain_restore_resolves_by_reported_version_and_hold_follows_the_original() {
-    let dir = tempfile::tempdir().unwrap();
-    let mut c = Controller::load(common::config(), dir.path().join("ledger.json")).unwrap();
-    ready(&mut c, "1.1.15");
-    c.enable_ota_trial();
-
-    let t0 = Utc::now();
-    c.connected(t0);
-    let test = input(Image::Test);
-    submit(&mut c, test, t0).unwrap();
-
-    let t1 = t0 + Duration::minutes(3);
-    keep_connected(&mut c, t1);
-    observe(
-        &mut c,
-        "event",
-        json!({"cmd":"DEVICE_START_EVENT","ts":t1.timestamp_millis(),
-            "softwareVersion":"1.1.16","powerType":1}),
-        t1,
-    );
-
-    let restore = input(Image::Original);
-    submit(&mut c, restore.clone(), t1).unwrap();
-    keep_connected(&mut c, t1 + Duration::seconds(600));
-    c.expire(t1 + Duration::seconds(600)).unwrap();
-
-    let busy = t1 + Duration::minutes(11);
-    keep_connected(&mut c, busy);
-    observe(
-        &mut c,
-        "system",
-        json!({"cmd":"GET_CONFIG","softwareVersion":"1.1.16","powerType":1}),
-        busy,
-    );
-
-    assert!(matches!(
-        submit(&mut c, input(Image::Original), busy),
-        Err(Rejection::OtaActive)
-    ));
-
-    // Still on the test image: closed as not installed, hold kept, retry allowed.
-    let at = t1 + Duration::minutes(25);
-    keep_connected(&mut c, at);
-    observe(
-        &mut c,
-        "system",
-        json!({"cmd":"GET_CONFIG","softwareVersion":"1.1.16","powerType":1}),
-        at,
-    );
-
-    assert_eq!(
-        c.resolve_trial(resolve(restore.request_id), at)
-            .unwrap()
-            .phase,
-        Phase::NotInstalled
-    );
-    assert!(c.status.ota_hold);
-
-    let retry = input(Image::Original);
-    submit(&mut c, retry.clone(), at).unwrap();
-    keep_connected(&mut c, at + Duration::seconds(600));
-    c.expire(at + Duration::seconds(600)).unwrap();
-
-    let later = at + Duration::minutes(25);
-    keep_connected(&mut c, later);
-    observe(
-        &mut c,
-        "system",
-        json!({"cmd":"GET_CONFIG","softwareVersion":"1.1.15","powerType":1}),
-        later,
-    );
-
-    // The earlier resolved record is neither latest nor unresolved.
-    assert!(matches!(
-        c.resolve_trial(resolve(restore.request_id), later),
-        Err(Rejection::Conflict)
-    ));
-    assert_eq!(
-        c.resolve_trial(resolve(retry.request_id), later)
-            .unwrap()
-            .phase,
-        Phase::VersionReported
-    );
-    assert!(!c.status.ota_hold);
+    assert!(submit(&mut c, input(), at).unwrap().1.is_some());
 }
 
 #[test]
@@ -639,13 +473,11 @@ fn feeder_telemetry_gaps_restart_resolution_quiet_time_with_or_without_expiry_ti
     for run_expiry_tick in [false, true] {
         for gap_seconds in [90, 900] {
             let dir = tempfile::tempdir().unwrap();
-            let mut c = Controller::load(common::config(), dir.path().join("ledger.json")).unwrap();
-            ready(&mut c, "1.1.15");
-            c.enable_ota_trial();
+            let mut c = enabled(&dir);
 
             let t0 = Utc::now();
             c.connected(t0);
-            let request = input(Image::Test);
+            let request = input();
             submit(&mut c, request.clone(), t0).unwrap();
 
             keep_connected(&mut c, t0 + Duration::minutes(10));
@@ -668,7 +500,6 @@ fn feeder_telemetry_gaps_restart_resolution_quiet_time_with_or_without_expiry_ti
                 c.resolve_trial(resolve(request.request_id), returning),
                 Err(Rejection::ResolutionEvidence)
             ));
-            assert!(c.status.ota_hold);
 
             let almost = returning + Duration::seconds(599);
             keep_connected(&mut c, almost);
@@ -689,7 +520,6 @@ fn feeder_telemetry_gaps_restart_resolution_quiet_time_with_or_without_expiry_ti
                 Phase::NotInstalled
             );
             assert_eq!(c.status.ota_trials.len(), 1);
-            assert!(!c.status.ota_hold);
         }
     }
 }
@@ -697,13 +527,11 @@ fn feeder_telemetry_gaps_restart_resolution_quiet_time_with_or_without_expiry_ti
 #[test]
 fn backwards_host_clock_restarts_the_resolution_observation_interval() {
     let dir = tempfile::tempdir().unwrap();
-    let mut c = Controller::load(common::config(), dir.path().join("ledger.json")).unwrap();
-    ready(&mut c, "1.1.15");
-    c.enable_ota_trial();
+    let mut c = enabled(&dir);
 
     let t0 = Utc::now();
     c.connected(t0);
-    let request = input(Image::Test);
+    let request = input();
     submit(&mut c, request.clone(), t0).unwrap();
 
     keep_connected(&mut c, t0 + Duration::minutes(25));
@@ -728,144 +556,14 @@ fn backwards_host_clock_restarts_the_resolution_observation_interval() {
     );
 }
 
-/// A live image-server lease for a replacement build with `sha256`.
-fn replacement_lease(token: Uuid, sha256: Option<&str>, now: DateTime<Utc>) -> Lease {
-    Lease {
-        profile: wellfed_local::ota::image::Profile::Replacement,
-        sha256: sha256.map(str::to_owned),
-        ..lease(token, now)
-    }
-}
-
-#[test]
-fn a_replacement_install_announces_the_served_digest_and_needs_stock() {
-    let dir = tempfile::tempdir().unwrap();
-    let mut c = Controller::load(common::config(), dir.path().join("ledger.json")).unwrap();
-    c.enable_ota_trial();
-    let digest = "ab".repeat(32);
-
-    // Only a reported, externally powered stock 1.1.15 may be asked.
-    ready(&mut c, "1.1.16");
-    let now = Utc::now();
-    let request = input(Image::Replacement);
-    let images = replacement_lease(request.server_token, Some(&digest), now);
-    assert!(matches!(
-        c.ota_trial(request.clone(), Some(&images), now),
-        Err(Rejection::InvalidOta)
-    ));
-
-    // The lease must serve a replacement build and name its digest.
-    ready(&mut c, "1.1.15");
-    let now = Utc::now();
-    let pinned = lease(request.server_token, now);
-    assert!(matches!(
-        c.ota_trial(request.clone(), Some(&pinned), now),
-        Err(Rejection::ImageServer)
-    ));
-    let unnamed = replacement_lease(request.server_token, None, now);
-    assert!(matches!(
-        c.ota_trial(request.clone(), Some(&unnamed), now),
-        Err(Rejection::ImageServer)
-    ));
-
-    let (record, command) = c.ota_trial(request.clone(), Some(&images), now).unwrap();
-    let command = command.unwrap();
-    assert_eq!(record.image_sha256, digest);
-    assert_eq!(command.payload["sha256"], digest.as_str());
-    assert_eq!(command.payload["targetSoftwareVersion"], "2.0.0");
-    assert_eq!(command.payload["targetPid"], "PLAF103");
-    assert_eq!(command.payload["upgradeType"], 1);
-
-    // The stock URL parser copies into 128 bytes.
-    let url = command.payload["url"].as_str().unwrap();
-    assert!(url.starts_with("http://") && url.ends_with("/replacement.bin"));
-    assert!(url.len() < 128, "{url}");
-
-    // The same ID returns the record without a second command.
-    let (_, again) = c.ota_trial(request, Some(&images), now).unwrap();
-    assert!(again.is_none());
-}
-
-#[test]
-fn replacement_health_closes_only_an_open_replacement_install() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("ledger.json");
-    let mut c = Controller::load(common::config(), path.clone()).unwrap();
-    c.enable_ota_trial();
-    ready(&mut c, "1.1.15");
-    let digest = "cd".repeat(32);
-    let now = Utc::now();
-
-    // Health with no replacement trial changes nothing.
-    c.replacement_healthy(now).unwrap();
-    assert!(c.status.ota_trials.is_empty());
-
-    let request = input(Image::Replacement);
-    let images = replacement_lease(request.server_token, Some(&digest), now);
-    c.ota_trial(request.clone(), Some(&images), now).unwrap();
-    assert!(c.status.ota_hold);
-
-    // Health stamped at the submission itself proves nothing.
-    c.replacement_healthy(now).unwrap();
-    assert_eq!(c.status.ota_trials[0].phase, Phase::Submitted);
-
-    let later = now + Duration::seconds(200);
-    c.replacement_healthy(later).unwrap();
-    assert_eq!(c.status.ota_trials[0].phase, Phase::ReplacementHealthy);
-    assert!(
-        c.status.ota_hold,
-        "feeding stays held under the replacement"
-    );
-
-    // Persisted, and a restart does not reopen it.
-    drop(c);
-    let mut c = Controller::load(common::config(), path).unwrap();
-    assert_eq!(c.status.ota_trials[0].phase, Phase::ReplacementHealthy);
-
-    // Stock back (over UART) and starting releases feeding.
-    let back = later + Duration::minutes(30);
-    observe(
-        &mut c,
-        "event",
-        json!({"cmd":"DEVICE_START_EVENT","softwareVersion":"1.1.15",
-        "ts":back.timestamp_millis()}),
-        back,
-    );
-    assert!(!c.status.ota_hold);
-}
-
-#[test]
-fn an_uncertain_replacement_install_still_closes_on_health() {
-    let dir = tempfile::tempdir().unwrap();
-    let mut c = Controller::load(common::config(), dir.path().join("ledger.json")).unwrap();
-    c.enable_ota_trial();
-    ready(&mut c, "1.1.15");
-    let now = Utc::now();
-
-    let request = input(Image::Replacement);
-    let digest = "ef".repeat(32);
-    let images = replacement_lease(request.server_token, Some(&digest), now);
-    c.ota_trial(request, Some(&images), now).unwrap();
-
-    // Stock's own session ends when it reboots into the new bank.
-    c.disconnected(now + Duration::seconds(100)).unwrap();
-    assert_eq!(c.status.ota_trials[0].phase, Phase::Uncertain);
-
-    c.replacement_healthy(now + Duration::seconds(200)).unwrap();
-    assert_eq!(c.status.ota_trials[0].phase, Phase::ReplacementHealthy);
-}
-
 #[test]
 fn stock_s_61_second_heartbeat_keeps_the_quiet_interval_running() {
     let dir = tempfile::tempdir().unwrap();
-    let mut c = Controller::load(common::config(), dir.path().join("ledger.json")).unwrap();
-    c.enable_ota_trial();
-    ready(&mut c, "1.1.15");
+    let mut c = enabled(&dir);
     let now = Utc::now();
 
-    let request = input(Image::Replacement);
-    let images = replacement_lease(request.server_token, Some(&"ab".repeat(32)), now);
-    c.ota_trial(request.clone(), Some(&images), now).unwrap();
+    let request = input();
+    submit(&mut c, request.clone(), now).unwrap();
     observe(
         &mut c,
         "service",

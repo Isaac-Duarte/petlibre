@@ -57,7 +57,7 @@ Refusals:
 
 Nothing over BLE can feed, play or change any other setting.
 
-Host: `wellfed-local ble-wifi --ssid NAME` reads the passphrase from stdin. `--clear` returns to the build's credentials, and with neither flag it reads which are in use. It goes through BlueZ (`bluer`) and finds the feeder by its service UUID among devices currently advertising, or by `--address`.
+Host (removed October 24, 2026 with FW51; FW45's setup in `wellfed-client` replaces it): `wellfed-local ble-wifi --ssid NAME` read the passphrase from stdin. `--clear` returned to the build's credentials, and with neither flag it read which were in use. It went through BlueZ (`bluer`) and found the feeder by its service UUID among devices then advertising, or by `--address`.
 
 ## Evidence
 

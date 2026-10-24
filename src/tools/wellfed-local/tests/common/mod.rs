@@ -16,7 +16,6 @@ pub fn config() -> Config {
         mqtt_listen: "127.0.0.1:18883".parse().unwrap(),
         http_listen: "127.0.0.1:18765".parse().unwrap(),
         timezone: chrono_tz::America::Denver,
-        max_portions: 1,
         plans: vec![],
         binding_response: None,
         hotspot_interface: "wlan1".to_owned(),

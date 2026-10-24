@@ -50,7 +50,6 @@ fn imports_explicit_settings_with_utc_default_and_private_permissions() {
     assert_eq!(config.timezone, chrono_tz::UTC);
     assert_eq!(config.mqtt_listen.to_string(), "127.0.0.1:18883");
     assert_eq!(config.hotspot_interface, "test_wifi");
-    assert_eq!(config.max_portions, 1);
     assert!(config.plans.is_empty());
     assert_eq!(config.device_id, "SYNTHETIC_FEEDER");
     assert_ne!(config.api_token, config.server_password);

@@ -21,7 +21,9 @@ use wellfed_hal::sdk;
 /// slot needs no `Send` because its value never leaves the task that
 /// claimed it, except through [`Slot::release`], which requires it.
 pub struct Slot<T> {
-    /// The owning task's identity; zero while unclaimed.
+    /// The owning task's identity; zero while unclaimed. Identities are never
+    /// reused, so a slot whose task ended stays locked rather than passing to
+    /// whichever task inherits the handle.
     owner: AtomicUsize,
     /// A guard is live.
     entered: AtomicBool,

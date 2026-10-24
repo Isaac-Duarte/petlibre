@@ -1,4 +1,4 @@
-# Firmware feature board
+**Physical (Oct 23, later):** `qa-20261023-02-guided` (v92) passed every check and item in one run, graded `pass` by `petlibre-audit qa`. # Firmware feature board
 
 This board tracks replacement-firmware integration, dependencies, and acceptance criteria. Status records evidence from the research unit only; it is not a compatibility guarantee for another unit. For the installed artifact, bench state, evidence index and next task, start with [RESUME.md](RESUME.md).
 

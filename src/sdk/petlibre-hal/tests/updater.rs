@@ -715,11 +715,16 @@ fn records_describe_without_credentials() {
             sectors: 16,
             total: 145,
             leases: 272,
+            masked_max_ms: 48,
+            masked_long: 1,
         },
         &mut line,
     )
     .unwrap();
-    assert_eq!(line, "progress sectors=16/145 leases=272");
+    assert_eq!(
+        line,
+        "progress sectors=16/145 leases=272 masked_max_ms=48 masked_long=1"
+    );
 
     let mut line = String::new();
     describe(Record::Start { key: true }, &mut line).unwrap();

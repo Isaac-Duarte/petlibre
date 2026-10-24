@@ -31,6 +31,10 @@ pub const ATTEMPT_BIT: u32 = 0x100;
 /// Begin and end waits, inside the coordinator's 50 ms park/release limits.
 pub const EXCHANGE_TICKS: u32 = 40 * SYSTIMER_HZ / 1000;
 pub const EXCHANGE_POLLS: u32 = 10_000_000;
+/// A lease that holds IRQs masked longer than this (100 ms) is counted: the
+/// Wi-Fi driver misses its interrupts for that long, and the recovery role's
+/// download runs beside it.
+pub const LONG_LEASE_TICKS: u32 = 100 * SYSTIMER_HZ / 1000;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[repr(u32)]
@@ -70,6 +74,8 @@ pub struct Provider {
     authority: u64,
     saved_systick: u32,
     parked_beat: u32,
+    /// When the current lease masked IRQs, in SysTimer ticks.
+    masked_at: u32,
 
     // Report counters: leases completed, the slowest park and release
     // exchanges in SysTimer ticks, and leases during which KM0's heartbeat
@@ -78,6 +84,11 @@ pub struct Provider {
     pub park_max: u32,
     pub release_max: u32,
     pub frozen: u64,
+    /// The longest any lease held IRQs masked, from masking to KM0's
+    /// release, in SysTimer ticks; and how many held them past
+    /// [`LONG_LEASE_TICKS`].
+    pub masked_max: u32,
+    pub masked_long: u64,
     /// The first failed step, for the report after reset or halt.
     pub failure: Option<(LeaseStage, FlashReply)>,
 }
@@ -97,10 +108,13 @@ impl Provider {
         authority: 0,
         saved_systick: 0,
         parked_beat: 0,
+        masked_at: 0,
         leases: 0,
         park_max: 0,
         release_max: 0,
         frozen: 0,
+        masked_max: 0,
+        masked_long: 0,
         failure: None,
     };
 
@@ -156,6 +170,7 @@ impl Provider {
         let systick = sdk::systick_ctrl();
         sdk::set_systick_ctrl(systick & !park::SYSTICK_CONTROL_BITS);
         let begin_at = sdk::systimer_ticks();
+        self.masked_at = begin_at;
         let ram_token = park_token(&token);
         // SAFETY: `ram_token` is a live local.
         let acked = unsafe {
@@ -221,6 +236,9 @@ impl Provider {
         }
 
         self.release_max = self.release_max.max(released_at.wrapping_sub(end_at));
+        let masked = released_at.wrapping_sub(self.masked_at);
+        self.masked_max = self.masked_max.max(masked);
+        self.masked_long += u64::from(masked > LONG_LEASE_TICKS);
         self.leases += 1;
         true
     }

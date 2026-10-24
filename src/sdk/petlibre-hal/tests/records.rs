@@ -70,6 +70,8 @@ fn updater_records_carry_what_the_ota_watch_reads() {
                 sectors: 48,
                 total: 170,
                 leases: 816,
+                masked_max_ms: 61,
+                masked_long: 0,
             },
             f,
         )
@@ -77,6 +79,7 @@ fn updater_records_carry_what_the_ota_watch_reads() {
     let progress = read(&progress);
     assert_eq!(progress.first, "progress");
     assert_eq!(progress.field("sectors"), Some("48/170"));
+    assert_eq!(progress.number::<u32>("masked_max_ms"), Some(61));
 
     let activated = line(tag::UPDATE, |f| {
         updater::describe(

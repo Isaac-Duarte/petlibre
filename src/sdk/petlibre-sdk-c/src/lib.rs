@@ -14,12 +14,19 @@ pub use petlibre_hal_common;
 
 #[cfg(target_os = "none")]
 #[panic_handler]
-fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
+fn panic(info: &core::panic::PanicInfo<'_>) -> ! {
     // KM4 owns the motor and infrared GPIO: mask interrupts and request motor
-    // STOP and infrared OFF with raw register writes before halting. KM0
-    // drives neither, so it only halts.
+    // STOP and infrared OFF with raw register writes before halting, then
+    // say where. KM0 drives neither and has no print here, so it only halts.
     #[cfg(feature = "km4")]
-    petlibre_amebad_sys::panic_outputs_safe();
+    {
+        petlibre_amebad_sys::panic_outputs_safe();
+        if let Some(at) = info.location() {
+            petlibre_amebad_sys::panic_record(at.file(), at.line(), at.column());
+        }
+    }
+    #[cfg(not(feature = "km4"))]
+    let _ = info;
 
     // Halt here. Only a watchdog that was already armed resets the core (the
     // diagnostic build arms none); otherwise recovery needs an external reset.

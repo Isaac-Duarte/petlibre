@@ -49,3 +49,18 @@ fn a_field_matches_its_whole_key() {
     assert_eq!(record.field("healthy"), None);
     assert_eq!(record.field("ms"), None);
 }
+
+#[test]
+fn a_panic_record_names_its_location() {
+    let record =
+        Record::parse("PLPNC1 panic file=src/sdk/petlibre-hal/src/owner/state.rs line=212 col=9")
+            .unwrap();
+
+    assert_eq!((record.tag, record.first), (tag::PANIC, "panic"));
+    assert_eq!(
+        record.field("file"),
+        Some("src/sdk/petlibre-hal/src/owner/state.rs")
+    );
+    assert_eq!(record.number::<u32>("line"), Some(212));
+    assert_eq!(record.number::<u32>("col"), Some(9));
+}

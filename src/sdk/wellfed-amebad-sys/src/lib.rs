@@ -161,6 +161,66 @@ pub const STORAGE_SECTORS: u32 = 32;
 /// One NOR erase sector.
 pub const SECTOR_BYTES: u32 = 0x1000;
 
+/// FW45: who owns each sector of the storage region, in one place. Each
+/// store keeps its sectors to itself, so a torn record is always its own.
+pub mod storage {
+    use super::STORAGE_SECTORS;
+
+    /// `count` sectors from region sector `first`.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct Sectors {
+        pub first: u32,
+        pub count: u32,
+    }
+
+    impl Sectors {
+        const fn end(self) -> u32 {
+            self.first + self.count
+        }
+    }
+
+    /// The feed journal's slot pair (FW15).
+    pub const JOURNAL: Sectors = Sectors { first: 0, count: 2 };
+    /// Device settings (FW15).
+    pub const SETTINGS: Sectors = Sectors { first: 2, count: 2 };
+    /// The boot confirmation record (FW11).
+    pub const CONFIRM: Sectors = Sectors { first: 4, count: 1 };
+    /// Wi-Fi credentials (FW25).
+    pub const NET: Sectors = Sectors { first: 5, count: 2 };
+    /// The random generator's seed carried across boots (FW45).
+    pub const SEED: Sectors = Sectors { first: 7, count: 2 };
+    /// The feeder's identity key and enrolled clients (FW45).
+    pub const CLIENTS: Sectors = Sectors { first: 9, count: 2 };
+    /// Reserved for feeding plans (FP03).
+    pub const PLANS: Sectors = Sectors {
+        first: 11,
+        count: 2,
+    };
+    /// Reserved for the 7-day event ring: 11 sectors of records and one
+    /// being erased (FW47, sized by FW44).
+    pub const EVENTS: Sectors = Sectors {
+        first: 13,
+        count: 12,
+    };
+
+    /// Every allocation, in region order; sectors 25-31 are free.
+    pub const ALL: [Sectors; 8] = [
+        JOURNAL, SETTINGS, CONFIRM, NET, SEED, CLIENTS, PLANS, EVENTS,
+    ];
+
+    const fn disjoint_and_inside() -> bool {
+        let mut i = 1;
+        while i < ALL.len() {
+            if ALL[i - 1].end() > ALL[i].first || ALL[i].count == 0 {
+                return false;
+            }
+            i += 1;
+        }
+        ALL[ALL.len() - 1].end() <= STORAGE_SECTORS
+    }
+    const _: () = assert!(disjoint_and_inside());
+}
+
 /// FW24: samples in one codec DMA page (16 ms at 16 kHz, 16-bit mono),
 /// `WELLFED_AUDIO_PAGE` in `example_entry.c`.
 pub const AUDIO_PAGE_SAMPLES: usize = 256;

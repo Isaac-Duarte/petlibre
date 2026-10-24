@@ -13,6 +13,8 @@ const INITIATOR_STATIC: [u8; 32] = [0x11; 32];
 const RESPONDER_STATIC: [u8; 32] = [0x22; 32];
 const INITIATOR_EPHEMERAL: [u8; 32] = [0x33; 32];
 const RESPONDER_EPHEMERAL: [u8; 32] = [0x44; 32];
+/// An invite's secret, for XXpsk3.
+const PSK: [u8; 32] = [0x66; 32];
 
 fn name(pattern: Pattern) -> &'static str {
     std::str::from_utf8(pattern.protocol_name()).unwrap()
@@ -24,7 +26,7 @@ fn ours(pattern: Pattern, role: Role) -> Handshake {
         Role::Responder => (RESPONDER_STATIC, INITIATOR_STATIC, RESPONDER_EPHEMERAL),
     };
     let remote = Keypair::from_secret(remote).public().to_owned();
-    Handshake::new(
+    let mut handshake = Handshake::new(
         pattern,
         role,
         PROLOGUE,
@@ -32,7 +34,11 @@ fn ours(pattern: Pattern, role: Role) -> Handshake {
         (pattern == Pattern::Kk).then_some(remote),
         ephemeral,
     )
-    .unwrap()
+    .unwrap();
+    if pattern == Pattern::XxPsk3 {
+        handshake.set_psk(PSK);
+    }
+    handshake
 }
 
 fn snow(pattern: Pattern, role: Role) -> snow::HandshakeState {
@@ -49,6 +55,9 @@ fn snow(pattern: Pattern, role: Role) -> snow::HandshakeState {
         .fixed_ephemeral_key_for_testing_only(&ephemeral);
     if pattern == Pattern::Kk {
         builder = builder.remote_public_key(&remote).unwrap();
+    }
+    if pattern == Pattern::XxPsk3 {
+        builder = builder.psk(3, &PSK).unwrap();
     }
     match role {
         Role::Initiator => builder.build_initiator().unwrap(),
@@ -130,8 +139,8 @@ fn exchange(ours: &mut Transport, theirs: &mut snow::TransportState) {
 }
 
 #[test]
-fn xx_and_kk_agree_with_snow_in_both_roles() {
-    for pattern in [Pattern::Xx, Pattern::Kk] {
+fn every_pattern_agrees_with_snow_in_both_roles() {
+    for pattern in [Pattern::Xx, Pattern::Kk, Pattern::XxPsk3] {
         for role in [Role::Initiator, Role::Responder] {
             let (mut ours, mut theirs) = run(pattern, role);
             exchange(&mut ours, &mut theirs);
@@ -141,7 +150,7 @@ fn xx_and_kk_agree_with_snow_in_both_roles() {
 
 #[test]
 fn kk_is_one_round_trip_and_xx_is_three_messages() {
-    for (pattern, messages) in [(Pattern::Xx, 3), (Pattern::Kk, 2)] {
+    for (pattern, messages) in [(Pattern::Xx, 3), (Pattern::Kk, 2), (Pattern::XxPsk3, 3)] {
         let mut initiator = ours(pattern, Role::Initiator);
         let mut responder = ours(pattern, Role::Responder);
         let (mut message, mut payload) = ([0; 256], [0; 256]);
@@ -257,5 +266,59 @@ fn misuse_is_refused() {
     assert_eq!(
         initiator.read_message(&forged, &mut payload),
         Err(Error::WeakKey)
+    );
+}
+
+#[test]
+fn xxpsk3_needs_the_same_invite_secret() {
+    let (mut message, mut payload) = ([0; 256], [0; 256]);
+    let mut initiator = ours(Pattern::XxPsk3, Role::Initiator);
+    let mut responder = ours(Pattern::XxPsk3, Role::Responder);
+    responder.set_psk([0x67; 32]);
+
+    // The first two messages carry no PSK: the responder reads the invite's
+    // id from the first payload before choosing the key.
+    let len = initiator.write_message(b"invite 7", &mut message).unwrap();
+    let read = responder
+        .read_message(&message[..len], &mut payload)
+        .unwrap();
+    assert_eq!(&payload[..read], b"invite 7");
+    let len = responder.write_message(&[], &mut message).unwrap();
+    initiator
+        .read_message(&message[..len], &mut payload)
+        .unwrap();
+
+    let len = initiator.write_message(&[], &mut message).unwrap();
+    assert_eq!(
+        responder.read_message(&message[..len], &mut payload),
+        Err(Error::Decrypt)
+    );
+}
+
+#[test]
+fn xxpsk3_without_a_psk_is_refused() {
+    let mut initiator = Handshake::new(
+        Pattern::XxPsk3,
+        Role::Initiator,
+        PROLOGUE,
+        &Keypair::from_secret(INITIATOR_STATIC),
+        None,
+        INITIATOR_EPHEMERAL,
+    )
+    .unwrap();
+    let mut responder = ours(Pattern::XxPsk3, Role::Responder);
+    let (mut message, mut payload) = ([0; 256], [0; 256]);
+    for _ in 0..2 {
+        let (writer, reader) = if initiator.is_my_turn() {
+            (&mut initiator, &mut responder)
+        } else {
+            (&mut responder, &mut initiator)
+        };
+        let len = writer.write_message(&[], &mut message).unwrap();
+        reader.read_message(&message[..len], &mut payload).unwrap();
+    }
+    assert_eq!(
+        initiator.write_message(&[], &mut message),
+        Err(Error::MissingPsk)
     );
 }

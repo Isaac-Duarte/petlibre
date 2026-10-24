@@ -12,7 +12,7 @@ use wellfed_hal::flash_lock::provider::Provider;
 use wellfed_hal::sdk;
 
 /// Settings slots within the storage region: sectors 2 and 3 (0x342000).
-pub const SETTINGS_BASE: u32 = 2;
+pub const SETTINGS_BASE: u32 = sdk::storage::SETTINGS.first;
 /// Installation binding for the research unit's settings.
 pub const SETTINGS_BINDING: u64 = 0x5046_5731_3502_0001;
 

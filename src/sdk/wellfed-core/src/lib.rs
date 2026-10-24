@@ -82,6 +82,7 @@ pub mod noise;
 pub mod ota;
 pub mod record;
 pub mod request_auth;
+pub mod rng;
 pub mod speaker_stream;
 pub mod store;
 pub mod tone;

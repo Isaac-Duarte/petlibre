@@ -360,6 +360,14 @@ pub enum TcpRecv {
     Closed,
 }
 
+/// The core's SysTick, which counts down at the CPU clock from `reload` to
+/// zero and FreeRTOS reloads for its tick (FW45 reads it as a noise source).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Systick {
+    pub value: u32,
+    pub reload: u32,
+}
+
 /// Interrupt lines claimed by the ports.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Irq {

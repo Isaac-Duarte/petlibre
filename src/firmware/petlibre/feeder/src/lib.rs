@@ -7,7 +7,8 @@
 //! the child lock (FP11), shows it on the lock indicator, and takes signed
 //! lock changes from the network. The loop also measures the device API's
 //! fixed costs (FW44, `budget`), and the `setup` variant runs BLE setup mode
-//! beside it. It never touches the motor or the infrared emitters.
+//! beside it; the `entropy` variant streams raw noise samples for FW45. It
+//! never touches the motor or the infrared emitters.
 //!
 //! [product architecture]: ../../../../docs/firmware/product-architecture.md
 #![cfg_attr(target_os = "none", no_std)]
@@ -18,4 +19,5 @@ compile_error!("petlibre-fw-feeder target builds are KM4-only");
 #[cfg(target_os = "none")]
 mod app;
 pub mod budget;
+pub mod entropy;
 pub mod owner;

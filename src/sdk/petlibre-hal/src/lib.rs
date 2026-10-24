@@ -27,6 +27,7 @@ pub mod ble;
 pub mod board;
 pub mod buttons;
 pub mod clock;
+pub mod entropy;
 pub mod network;
 pub mod panel;
 pub mod settings;

@@ -13,6 +13,10 @@ use crate::owner::{self, Inputs, Owner};
 petlibre_sdk::firmware!(start);
 
 fn start() {
+    // The measurement samples the ADC, so the power monitor stays off it.
+    #[cfg(feature = "entropy")]
+    petlibre_sdk::claim_adc();
+
     // Nothing here holds the KM0 flash handshake, so the runtime may confirm
     // once it is otherwise healthy.
     petlibre_sdk::startup_done(true);
@@ -37,6 +41,8 @@ static OWNER: Slot<Owner> = Slot::new();
 /// The session table is larger than the loop's stack, so it is built at
 /// compile time. Touched only by the loop task.
 static BUDGET: Slot<Budget> = Slot::filled(Budget::new());
+#[cfg(feature = "entropy")]
+static CAPTURE: Slot<crate::entropy::Capture> = Slot::filled(crate::entropy::Capture::new());
 #[cfg(feature = "setup")]
 static SETUP: Slot<petlibre_sdk::hal::ble::BleSetup> = Slot::new();
 
@@ -95,6 +101,16 @@ unsafe extern "C" fn loop_task(_: *mut c_void) -> u32 {
         delay_ms = 1;
     }
 
+    #[cfg(feature = "entropy")]
+    // SAFETY: only this task touches the slot.
+    if let Some(capture) = unsafe { CAPTURE.get() }
+        && let Some(delay) = capture.step(|record| {
+            log(format_args!("PLRNG1 {}\r\n", Rng(record)));
+        })
+    {
+        delay_ms = delay_ms.min(delay);
+    }
+
     #[cfg(feature = "setup")]
     {
         // SAFETY: only this task touches the slot.
@@ -107,6 +123,16 @@ unsafe extern "C" fn loop_task(_: *mut c_void) -> u32 {
     }
 
     delay_ms
+}
+
+#[cfg(feature = "entropy")]
+struct Rng(crate::entropy::Record);
+
+#[cfg(feature = "entropy")]
+impl core::fmt::Display for Rng {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        crate::entropy::describe(self.0, f)
+    }
 }
 
 #[cfg(feature = "setup")]

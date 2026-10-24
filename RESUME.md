@@ -7,6 +7,16 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
+**October 24, night: FW45 noise sources measured (physical, no owner action).**
+- **Runs:** bounded `serve`, stopped afterwards.
+  - `ota fw45-rng-01 --variant entropy` (v102) lost its raw lines: they overflowed the 192-byte record buffer; now 112 samples a line, with a test of the longest line.
+  - `ota fw45-rng-04` (v103), then `boot fw45-rng-05` and captures `fw45-rng-06`–`11`. Each observe segment ends at the flash tool's 512 KiB limit, so the bench caps a single run at about 110 s of this stream.
+  - `ota fw45-rng-restore-01` put `feeder` back as `76c9013e…` (v104, confirmed, health clean).
+- **Result:** NIST `ea_non_iid` (built in the session scratchpad, not tracked) gives the ADC supply channel's low byte 1.44 bits a sample and SysTick-vs-32 kHz jitter 0.19 (control: `/dev/urandom` 6.92). The on-device health tests passed on both at 1 bit. Claim: 1 bit per ADC sample ([pairing](docs/firmware/pairing.md#measured-noise-physical-october-24)).
+- **Flash now:** **Bank 1:** `feeder` `76c9013e…` (v104, confirmed). **Bank 0:** `qa` `ef76b85e…`. **Next manifest version:** 105.
+- **Bench state:** feeder on, hotspot up, no server.
+- **Next:** FW45 wiring: share the ADC with the power monitor, run the restart test, start the generator at boot, then the client store and identity.
+
 **October 24, early morning: FW45 groundwork (host), FP01 done (static), builds 6× faster; bench restored to `feeder`.**
 - **Runs (physical, no owner readings):**
   - After the dock restart (relays and hotspot dropped), the hotspot was brought up again, and `boot fw30-restore-01` confirmed `optics` v99 (`d1184f87…`). `ota fw30-optics-02`/`03` had failed earlier on a serial-adapter I/O error (EPIPE); v99 had already confirmed.
@@ -620,9 +630,9 @@ Bench lessons from stage C:
 
 Per the latest checkpoint at the top of this file (reconfirm before relying on it):
 
-- **Bank 1 (boots):** the `feeder` firmware `def51900…`, OTA v101, confirmed (`fw30-restore-04`). It carries the runtime (supervision, clock, signed requests, settings writer, offer check), the button service and the FP11 child lock, and the FW44 Noise session table. It drives no motor.
+- **Bank 1 (boots):** the `feeder` firmware `76c9013e…`, OTA v104, confirmed (`fw45-rng-restore-01`). It carries the runtime (supervision, clock, signed requests, settings writer, offer check), the button service and the FP11 child lock, and the FW44 Noise session table. It drives no motor.
 - **Bank 0 (recovery):** `qa` `ef76b85e…`, written by stock 1.1.15's updater in `fw40-stock-ota-07`. Only its runtime's recovery role runs from bank 0.
-- **Next manifest version:** 102.
+- **Next manifest version:** 105.
 
 Wi-Fi and broker credentials come from private files; images stay under `private/`.
 

@@ -2,7 +2,7 @@
 
 Status (October 24, 2026):
 - **Physical:** the generator runs in every firmware from boot. The feeder keeps its identity and seed across cold boots.
-- **Host-tested only:** pairing itself, and BLE setup mode end to end (October 24): `wellfed setup` and the app's client against the feeder's loop. This page records the design the code implements, and what is left before the [FW45 card](../../FIRMWARE_BOARD.md) can close.
+- **Physical (October 24):** BLE setup mode end to end: `wellfed setup` enrolled the CLI's key as an owner after a Dispense press, and the feeder rejoined with the saved Wi-Fi. **Host-tested only:** the invite, signer and recovery paths. This page records the design the code implements, and what is left before the [FW45 card](../../FIRMWARE_BOARD.md) can close.
 
 ## No hardware RNG
 
@@ -162,7 +162,7 @@ The timeouts are ours: stock pairs through the vendor cloud and has no equivalen
 
 ## Left for FW45
 
-1. **BLE setup on hardware:** the code is in (below); the bench run is left: the Lock and Mic hold, `wellfed setup`, the press, and the feeder rejoining after its reboot.
+1. **BLE setup on hardware:** done (physical, October 24, [evidence](bluetooth.md#evidence)): the Lock and Mic hold, `wellfed setup`, the press, the enrollment surviving the reboot and the rejoin with the saved Wi-Fi; the locked and no-press refusals. Advertising only on mains is host-tested only.
 2. **Broker credentials:** stop treating them as a build input.
 3. **Optional confidence:** the full ~1,000-boot restart test, and the noise measurement on battery and when warm.
 

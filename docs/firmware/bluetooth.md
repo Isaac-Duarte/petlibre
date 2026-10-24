@@ -64,6 +64,14 @@ Host: `wellfed setup --ssid NAME` (the owner's CLI) reads the passphrase from st
 
 ## Evidence
 
+- **Physical (Oct 24), FW45 setup mode** (owner pressing; no motion):
+  - `ota fw45-setup-01` installed `feeder` v108 (`46255eec`), confirmed.
+  - `capture fw45-setup-02`: the owner unlocked and held Lock and Mic: `pair setup state=opened`, `PLSET1 start`, `PLBLE1 ready heap_free=104416` (Wi-Fi already up, so lower than FW44's boot-time figure), advertising, then a link at MTU 247. `wellfed setup` found the feeder and finished the handshake (`asked wifi=1`, `reply confirming seconds=60`). After the Dispense press: `pair admit path=setup role=owner`, `PLCFG1 keys change=enroll result=done enrolled=1`, `net saved generation=19 stored=1`, `reply done enrolled=new wifi=saved`, `reboot ended=done`. The feeder rebooted with no BLE record, kept `enrolled=1`, and its `PLID1` fingerprint `8019237d8eba8b9d` matched the CLI's. The server saw it online with `source: stored` 23 s into the new boot.
+  - `capture fw45-setup-03`: on a locked panel the chord was refused (`refusal=locked`). With no press, the feeder refused after 60 s (`reply refused reason=unconfirmed`), but it dropped the link right after the reply and the CLI never reported it; the CLI then stalled in BlueZ's disconnect.
+  - Fixed in v109 (`fw45-setup-04`): the feeder waits 2 s for the client to hang up before dropping the link, and the CLI bounds its disconnect. `capture fw45-setup-05`: the CLI reported "nobody pressed Dispense in time", and setup mode stayed on, advertising again.
+  - Afterwards a signed clear emptied the Wi-Fi store (generation 20). The enrolled CLI key stays.
+  - With no further session, setup mode rebooted on its own after its 15-minute idle limit (uptime 1,073 s back to 23 s) and the feeder came back online with `source: build`.
+
 - **Physical (Oct 23), the retired FW34 `ble` firmware** (`fw34-setup-01`–`03`, OTA v70; its HMAC-signed exchange is gone):
   - With the hotspot down the feeder advertised about 124 s after boot (`ready heap_free=131072`).
   - `wellfed-local ble-wifi` sent the hotspot's credentials. The reply was `ok:true, pending:true`, and the UART showed `request op=wifi ok=1`, then `PLCFG1 net saved generation=16 stored=1`; the link stayed up through the NOR write.

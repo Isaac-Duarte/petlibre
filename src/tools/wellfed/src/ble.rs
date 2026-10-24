@@ -20,6 +20,7 @@ use tokio::time::timeout;
 
 const FIND_TIMEOUT: Duration = Duration::from_secs(30);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+const CLOSE_TIMEOUT: Duration = Duration::from_secs(3);
 /// Control writes fit the smallest ATT payload, so they never depend on the
 /// MTU exchange having happened.
 const CONTROL_CHUNK: usize = 20;
@@ -105,8 +106,10 @@ impl Link {
         .context("no answer from the feeder in time")?
     }
 
+    /// Hang up, bounded: BlueZ can stall disconnecting a device the feeder
+    /// already dropped.
     pub(crate) async fn close(self) {
-        let _ = self.device.disconnect().await;
+        let _ = timeout(CLOSE_TIMEOUT, self.device.disconnect()).await;
     }
 }
 

@@ -266,6 +266,13 @@ fn an_unanswered_ask_is_refused_and_enrolls_nothing() {
         ClientStep::Reply(Reply::Refused(Refusal::Unconfirmed))
     );
     assert_eq!(keys::pending(), None);
+    assert_eq!(
+        fake::with(|h| h.ble_disconnects),
+        0,
+        "the client may hang up first"
+    );
+    fake::with(|h| h.uptime_ms += wellfed_fw_feeder::setup::LINGER_MS);
+    bench.step(None);
     assert_eq!(fake::with(|h| h.ble_disconnects), 1);
     assert!(!bench.setup.reboot_due(bench.now()), "setup mode stays");
 }

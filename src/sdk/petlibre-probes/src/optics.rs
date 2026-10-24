@@ -106,7 +106,7 @@ pub const STALL_BUDGET_MS: u32 = 4000;
 
 /// Inputs in record order.
 pub const INPUTS: [&str; 3] = ["food", "outlet", "feedback"];
-const INPUT_PINS: [u32; 3] = [17, 16, 18];
+const INPUT_PINS: [u32; 3] = [sdk::board::FOOD, sdk::board::OUTLET, sdk::board::FEEDBACK];
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Emitters {

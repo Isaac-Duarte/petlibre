@@ -99,7 +99,8 @@ pub fn initialize() -> Snapshot {
     sdk::swd_off();
     sdk::gpio_port_write(0, PA_MASK, MOTOR_MASK);
     sdk::gpio_port_write(1, PB_MASK, 0);
-    for pin in [13, 14, 15, 35] {
+    use sdk::board::{IR_PA, IR_PB, MOTOR_A, MOTOR_B};
+    for pin in [MOTOR_A, MOTOR_B, IR_PA, IR_PB] {
         sdk::gpio_init(pin, true);
     }
     Snapshot { clock, ..observe() }

@@ -121,7 +121,7 @@ The vendor's firmware cannot be shipped with the app. Each feeder already holds 
 
 What a rollback keeps and leaves behind:
 - **Stock's settings stay:** `0x3e8000`–`0x3f0000` are never written by our firmware, so stock comes back still provisioned. It points at the installer's broker if steps 1–3 were used; re-pairing with the vendor app returns it to the cloud.
-- **Our storage stays:** `0x340000`–`0x350000` holds the journal, network credentials and the confirm record. Stock does not read it.
+- **Our storage stays:** `0x340000`–`0x360000` holds the journal, network credentials and the confirm record. Stock does not read it.
 - **Bank 0 keeps our build** as a fallback, which the loader never chooses while stock in bank 1 is valid.
 - **Stock's OTA status sector** (`0x3ef000`) may differ from the original after the install.
 - **No automatic fallback:** if stock fails to boot from bank 1, recovery is UART only (`petlibre-bench stock-prepare` / `stock-execute`).

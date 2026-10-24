@@ -13,6 +13,7 @@
   "known_preserve_ranges": [
     {"name": "pre_application", "start": "0x00000000", "end_exclusive": "0x00006000"},
     {"name": "observed_settings_sectors", "start": "0x003e8000", "end_exclusive": "0x003f0000"},
+    {"name": "clock_checkpoint_block", "start": "0x003f0000", "end_exclusive": "0x00400000"},
     {"name": "observed_audio_start_sector", "start": "0x00400000", "end_exclusive": "0x00401000"},
     {"name": "observed_log_sector", "start": "0x007cb000", "end_exclusive": "0x007cc000"},
     {"name": "observed_plan_record_sectors", "start": "0x007d0000", "end_exclusive": "0x007d7000"},

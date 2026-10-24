@@ -104,16 +104,14 @@ Transport messages are cheap: about 0.9 ms to seal or open a kilobyte.
 - **Size:** 7 days at 200 a day is 1,400 records, 44.8 KB. That is 11 sectors, plus one being erased: **12 sectors**.
 - **Wear:** each sector is erased about every 8 days, about 50 times a year, far inside NOR endurance.
 
-**It does not fit today.** The storage region holds 16 sectors (0x340000–0x350000):
+**It did not fit the original region,** 16 sectors (0x340000–0x350000):
 - **In use:** the journal (0–1), settings (2–3), confirmation (4) and Wi-Fi (5–6).
 - **Free:** 9 sectors, 36 KB.
 - **Wanted from the free sectors:** client keys (FW45) and plans (FP03) also need a few.
 
-**Options, the owner's decision:**
-1. **Extend the region.** A static pass over stock 1.1.15 (October 23) found no fixed or bounded computed flash access in 0x306000–0x3e8000. All 15 full dumps of the research unit are blank there, nine of them from before the replacement ran. The area is headroom left by PetLibro's shifted SDK layout. Only an oversized OTA image (over about 1.79 MB) or the UART console's `FLASH` command could reach it. Extending to 0x340000–0x360000 (32 sectors) fits the ring, keys and plans with room to spare.
-2. **Keep 16 sectors** and shorten history to about 3 days (6 sectors), leaving 3 for keys and plans.
+**The owner chose to extend the region (October 23)** to 32 sectors, 0x340000–0x360000. A static pass over stock 1.1.15 found no fixed or bounded computed flash access in 0x306000–0x3e8000, and all 15 full dumps of the research unit are blank there, nine of them from before the replacement ran. The area is headroom left by PetLibro's shifted SDK layout; only an oversized OTA image (over about 1.79 MB) or the UART console's `FLASH` command could reach it. Sectors 7–31 (25) are free for client keys (FW45), plans (FP03) and the 12-sector ring (FW47). The alternative was 16 sectors and about 3 days of history.
 
-The same pass found that stock's clock checkpoint save block-erases **0x3f0000–0x400000** (64 KiB at a time) at minute 30 and on save. That range is not in `layout.json`'s preserve ranges yet; nothing of ours is near it.
+The same pass found that stock's clock checkpoint save block-erases **0x3f0000–0x400000** (64 KiB at a time) at minute 30 and on save. It is now in `layout.json`'s preserve ranges (`clock_checkpoint_block`); nothing of ours is near it.
 
 ## mDNS
 
@@ -125,4 +123,4 @@ The vendor responder is 33.5 KB of code and 2.3 KB of BSS, and it creates its ow
 - **Heap:** about 120 KB in BLE setup mode, the tightest case.
 - **Tasks:** none spare by design; everything new joins the loop.
 - **Latency:** the loop's two rules above.
-- **Storage:** blocked on the region decision above, before FW45 stores client keys.
+- **Storage:** 25 free sectors in the extended region.

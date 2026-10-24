@@ -22,8 +22,8 @@ pub const DIVIDER_PER_MILLE: u32 = 2_063;
 /// Below this at the pin no pack is fitted: with none, the channel read
 /// 16 mV, and three D cells read 2306–2357 mV.
 pub const NO_PACK_PIN_MV: u32 = 500;
-const BATTERY_CHANNEL: u32 = 5;
-const ADAPTER_PIN: u32 = 19;
+const BATTERY_CHANNEL: u32 = sdk::board::ADC_BATTERY;
+const ADAPTER_PIN: u32 = sdk::board::ADAPTER;
 /// Polls per conversion; a conversion takes well under 1 ms.
 const ADC_POLLS: u32 = 10_000;
 

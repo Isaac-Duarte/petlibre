@@ -22,8 +22,8 @@ use crate::board::{self, Board};
 use crate::sdk::{self, Irq, IrqGuard};
 use crate::supervision::active::active_pointer;
 
-const FEEDBACK_PIN: u32 = 18;
-const FEEDBACK_MASK: u32 = 1 << FEEDBACK_PIN;
+const FEEDBACK_PIN: u32 = sdk::board::FEEDBACK;
+const FEEDBACK_MASK: u32 = sdk::board::bit(FEEDBACK_PIN);
 const PRIORITY: u32 = 4;
 
 c_enum!(EventsFault {

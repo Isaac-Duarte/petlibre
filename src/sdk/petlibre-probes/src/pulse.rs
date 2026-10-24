@@ -61,7 +61,7 @@ pub const CURRENT_PERIOD_MS: u32 = 10;
 /// Written to the user backup register before driving. It survives a
 /// watchdog reset but not power loss, so the pulse runs once per cold boot.
 pub const MARKER: u32 = 0x5046_5716;
-const FEEDBACK: u32 = 1 << 18;
+const FEEDBACK: u32 = sdk::board::bit(sdk::board::FEEDBACK);
 
 /// The idle controller's view; only owner-lease renewal reads it.
 const IDLE: FeedSample = FeedSample {
@@ -477,7 +477,10 @@ impl Probe {
             .is_none_or(|at| now.wrapping_sub(at) >= CURRENT_PERIOD_MS)
         {
             let mut samples = [0u16; SAMPLES];
-            if !self.board.sample_channel(4, &mut samples) {
+            if !self
+                .board
+                .sample_channel(sdk::board::ADC_CURRENT, &mut samples)
+            {
                 return false;
             }
             if let Some(value) = self.board.calibration.scale_16(&samples) {

@@ -79,7 +79,7 @@ const EXPECTED_HP: Pins = &[
     ("FLASH_TxData256B", &["FLASH_TxData256BXIP"]),
     // FW10: the recovery updater's bank-1 wrappers, which refuse unless the
     // image runs from bank 0 and stay inside bank 1 (amebad-sdk target.rs).
-    // FW11: the storage-region wrappers (0x340000-0x350000), which the
+    // FW11: the storage-region wrappers (0x340000-0x360000), which the
     // normal role's confirmation write uses.
     (
         "FLASH_EraseXIP",

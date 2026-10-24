@@ -26,7 +26,7 @@ use crate::sdk;
 use crate::settings;
 
 /// The amplifier enable (stock writes it HIGH around playback).
-pub const AMP_PIN: u32 = 32 + 23;
+pub const AMP_PIN: u32 = sdk::board::AMP;
 pub const POLL_MS: u32 = 20;
 /// Zero pages the amplifier gets to settle before the first note.
 const WARM_MS: u32 = 60;

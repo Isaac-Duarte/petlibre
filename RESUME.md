@@ -15,7 +15,9 @@ image, bench state, next task, or acceptance evidence changes.
 - **Static (subagent, Oct 23):** stock 1.1.15 has no fixed or bounded flash access in 0x306000–0x3e8000; it block-erases 0x3f0000–0x400000 on its clock save. Scripts in the session scratchpad, not tracked.
 - **Flash now:** **Bank 1:** `feeder` `3edf8bce…` (v97, confirmed). **Bank 0:** `qa` `ef76b85e…`. **Next manifest version:** 98.
 - **Bench state:** feeder on, hotspot up, no server.
-- **Next:** FW50; the owner's storage-region decision before FW45.
+- **Owner decision:** extend the storage region to 32 sectors (0x340000–0x360000); stock's clock-save block 0x3f0000–0x400000 added to `layout.json`'s preserve ranges.
+- **FW50 (static):** board pins and ADC channels in `petlibre_amebad_sys::board`; [device layer](docs/firmware/device-layer.md) lists the rest.
+- **Next:** FW45 on the extended region.
 
 **October 23, late night: FP11 child lock done on hardware (physical, owner pressing and watching PA4).**
 - **Runs:** `ota fp11-panel-01 --build --firmware feeder` installed `feeder` `055f9afa…` (v93, confirmed in 3 min 40 s), with a bounded `serve`, stopped afterwards. Boot: `PLPANEL1 start lock=locked`, both firmware tasks created (`petlibre-loop`, `petlibre-key`). `capture fp11-panel-03` (180 s; `fp11-panel-02` caught no presses): Dispense and Mic refused while locked, a 5.5 s Lock hold unlocked, the panel relocked on its own after 30 s idle, then two signed `lock` unlock/lock pairs through the API, each logged `source=remote`. The owner saw PA4 on while locked and off while unlocked at every step.

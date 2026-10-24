@@ -19,10 +19,10 @@ impl Led {
 
     pub const fn pin(self) -> u32 {
         match self {
-            Self::Connection => 0,
-            Self::Food => 2,
-            Self::Lock => 4,
-            Self::Fault => 54,
+            Self::Connection => sdk::board::LED_CONNECTION,
+            Self::Food => sdk::board::LED_FOOD,
+            Self::Lock => sdk::board::LED_LOCK,
+            Self::Fault => sdk::board::LED_FAULT,
         }
     }
 

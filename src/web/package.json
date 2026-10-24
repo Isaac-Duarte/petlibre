@@ -2,14 +2,14 @@
   "name": "petlibre-web",
   "private": true,
   "type": "module",
-  "description": "Optional web frontends for the petlibre tools, embedded into their binaries at build time",
+  "description": "The petlibre web frontends: pages embedded in the tools' binaries, and the petlibre.dev site",
   "packageManager": "pnpm@11.28.5",
   "engines": {
     "node": ">=22.18"
   },
   "scripts": {
     "generate": "pnpm -r --filter @petlibre/tokens generate",
-    "build": "pnpm generate && pnpm -r --filter ./apps/* build",
+    "build": "pnpm generate && pnpm -r --filter './apps/*' build",
     "check": "pnpm run lint && pnpm run format:check && pnpm run licenses && tsc -p . && pnpm -r check",
     "lint": "eslint . --max-warnings 0",
     "format": "prettier --write .",

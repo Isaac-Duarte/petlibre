@@ -1,0 +1,92 @@
+/*
+ * The site's frame on top of @petlibre/ui's base. One left-aligned column,
+ * sections divided by a hairline and whitespace, and type doing the work a
+ * card or a badge would: no fills, shadows or gradients. Colors come only from
+ * the token roles, so the page follows the system's light or dark.
+ */
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: var(--space-5);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
+
+body {
+  font-size: 17px;
+  line-height: 1.6;
+}
+
+.wrap {
+  width: 100%;
+  max-width: 1080px;
+  margin-inline: auto;
+  padding-inline: var(--space-4);
+}
+
+@media (min-width: 760px) {
+  .wrap {
+    padding-inline: var(--space-6);
+  }
+}
+
+.section {
+  padding-block: 112px;
+  border-top: 1px solid var(--color-line);
+}
+
+@media (max-width: 760px) {
+  .section {
+    padding-block: 72px;
+  }
+}
+
+.section h2 {
+  max-width: 18ch;
+  font-size: clamp(30px, 4.2vw, 44px);
+  font-weight: var(--weight-display);
+  letter-spacing: -0.03em;
+  line-height: 1.08;
+  text-wrap: balance;
+}
+
+.lede {
+  margin: var(--space-4) 0 0;
+  max-width: 60ch;
+  color: var(--color-text-muted);
+  font-size: var(--text-lg);
+  line-height: 1.5;
+  text-wrap: pretty;
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 48px;
+  padding: 0 var(--space-5);
+  border-radius: var(--radius-control);
+  background: var(--color-text);
+  color: var(--color-background);
+  font-weight: var(--weight-semibold);
+  text-decoration: none;
+}
+
+.button:hover {
+  background: color-mix(in srgb, var(--color-text) 85%, var(--color-background));
+}
+
+.quiet-link {
+  color: var(--color-text);
+  font-weight: var(--weight-semibold);
+  text-decoration: underline;
+  text-decoration-color: var(--color-line-strong);
+  text-underline-offset: 4px;
+}
+
+.quiet-link:hover {
+  text-decoration-color: currentColor;
+}

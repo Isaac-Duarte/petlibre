@@ -46,7 +46,7 @@ Initial setup downloads dependencies. Checks use host models and loopback networ
 | `src/product/` | Product policy shared by the firmware and the server: `petlibre-feeder` (`no_std`; the child lock today, schedules and alerts later) |
 | `src/firmware/petlibre/` | One crate per firmware built on the SDK ([guide](src/firmware/petlibre/README.md)): `feeder` (the product firmware: the panel's owner in its loop task), `qa` (the default: a guided self-test of every bring-up check), one firmware per bring-up area (`optics`, `buttons`, `adc`, `speaker`, `motor`, `trial`), `ble` (Wi-Fi setup over Bluetooth LE), and `blink` (the minimal template) |
 | `src/firmware/vendor/` | The vendor SDK side: C entry hooks and ports, the pinned SDK and toolchain locks, the stock layout, simulator scenarios, and the image build (`make -C src/firmware/vendor`) |
-| `src/web/` | Optional web frontends (pnpm workspace): the bench page, shared design tokens and components, and API types generated from Rust. `make ui` builds them |
+| `src/web/` | Web frontends (pnpm workspace): the bench page, the [petlibre.dev](docs/web/site.md) landing page, shared design tokens and components, and API types generated from Rust. `make ui` builds them |
 | `src/scripts/` | Developer scripts: `dev-dashboard` serves the bench page for this checkout |
 | `docs/` | Hardware findings, firmware contracts, and contributor workflows |
 | `private/` | Ignored contributor-owned secrets, evidence, dependencies, and artifacts |

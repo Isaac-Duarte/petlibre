@@ -55,7 +55,7 @@ The transport reaches only `audio::request` (`cargo xtask check-repository` pins
   - The stream ends when the client closes, or after 3 s without data. The ring drains, then the amplifier and codec close.
 - **Shared output and settings:** tunes and streams share one output slot, so either one gets `busy` while the other plays. `sound` off refuses streams, and `volume` scales them on the tunes' decibel curve.
 - **Cost:** about 4 KiB of flash over the normal image, and 64 KiB of static RAM plus a 4 KiB stack.
-- **Host:** `petlibre-local speak FILE [--host IP] [--rate 32000]` decodes any format `ffmpeg` reads (or `-` for stdin) to mono PCM and streams it. It finds the feeder by its MAC on the hotspot when `--host` is omitted.
+- **Host (removed October 24, 2026 with FW51; in Git history):** `petlibre-local speak FILE [--host IP] [--rate 32000]` decoded any format `ffmpeg` reads (or `-` for stdin) to mono PCM and streamed it. It found the feeder by its MAC on the hotspot when `--host` was omitted.
 - **Records:** `PLSPK1 start created=`, `listen port= ok=`, `open rate= volume=`, `refused status=`, `done bytes= ms= underruns= reason=closed|stall` and `error stage=open`.
 - **Physical (October 22, OTA v22):**
   - A 2 s tone and a 15 s file streamed from mp3; the 15 s file was 960,000 bytes, played in 15.1 s.

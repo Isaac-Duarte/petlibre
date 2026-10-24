@@ -70,14 +70,6 @@ impl fmt::Display for Channel {
     }
 }
 
-/// `GRAIN_OUTPUT_EVENT`'s two reports of one feed.
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum ExecStep {
-    GrainStart,
-    GrainEnd,
-}
-
 /// A field read as `T`, or `None` when it is of another type: one odd field
 /// must not drop a whole stock message (or capture record).
 pub(crate) fn lenient<'de, D, T>(deserializer: D) -> std::result::Result<Option<T>, D::Error>
@@ -101,20 +93,6 @@ pub struct Report {
     pub code: Option<i64>,
     #[serde(default, deserialize_with = "lenient")]
     pub err_code: Option<u64>,
-    /// `GRAIN_OUTPUT_EVENT`'s trigger; 2 is a manual (server) feed.
-    #[serde(default, rename = "type", deserialize_with = "lenient")]
-    pub kind: Option<u64>,
-    #[serde(default, deserialize_with = "lenient")]
-    pub exec_step: Option<ExecStep>,
-    #[serde(default, deserialize_with = "lenient")]
-    pub expect_grain_num: Option<u64>,
-    #[serde(default, deserialize_with = "lenient")]
-    pub actual_grain_num: Option<u64>,
-    #[serde(default, deserialize_with = "lenient")]
-    pub finished: Option<bool>,
-    /// The C probe's proof value in its `GET_CONFIG` reply.
-    #[serde(default, deserialize_with = "lenient")]
-    pub local_re_probe: Option<String>,
     #[serde(default, deserialize_with = "lenient")]
     pub phase: Option<String>,
     #[serde(default, deserialize_with = "lenient")]
@@ -440,18 +418,18 @@ mod tests {
     #[test]
     fn odd_fields_are_skipped_without_dropping_the_message() {
         let message: Message = serde_json::from_value(serde_json::json!({
-            "cmd": "GRAIN_OUTPUT_EVENT",
+            "cmd": "OTA_PROGRESS",
             "softwareVersion": 7,
-            "execStep": "GRAIN_MIDDLE",
-            "expectGrainNum": 1,
+            "progress": "half",
+            "powerType": 1,
             "state": 300,
         }))
         .unwrap();
 
         assert_eq!(message.report.software_version, None);
-        assert_eq!(message.report.exec_step, None);
+        assert_eq!(message.report.progress, None);
         assert_eq!(message.report.state, None);
-        assert_eq!(message.report.expect_grain_num, Some(1));
+        assert_eq!(message.report.power_type, Some(1));
         assert_eq!(message.fields["softwareVersion"], 7);
     }
 }

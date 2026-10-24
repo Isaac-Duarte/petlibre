@@ -32,20 +32,21 @@ async fn a_refused_resolution_asks_stock_for_its_attributes_and_nothing_else() {
     let sent = Utc::now() - Age::minutes(30);
     let ledger = json!({
         "device_id": config.device_id,
-        "feeds": {},
-        "ota_hold": true,
         "ota_trials": {
             request_id.to_string(): {
                 "sequence": 1,
-                "input": {"request_id": request_id, "image": "replacement",
-                          "server_token": Uuid::new_v4()},
+                "input": {"request_id": request_id, "server_token": Uuid::new_v4()},
                 "created_at": sent, "updated_at": sent,
                 "phase": "reported_error", "download_reported": true,
                 "resolution_note": null, "image_sha256": "ab".repeat(32),
             }
         },
     });
-    petlibre_local::storage::write_json(&dir.path().join("feed-ledger.json"), &ledger).unwrap();
+    petlibre_local::storage::write_json(
+        &dir.path().join(petlibre_local::controller::LEDGER_FILE),
+        &ledger,
+    )
+    .unwrap();
 
     let _service = common::start_mode(&path, true);
     let http = reqwest::Client::builder()

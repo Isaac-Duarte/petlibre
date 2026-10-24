@@ -1,6 +1,8 @@
-# Stock-firmware local server
+# Local server
 
-The `petlibre-local` executable provides an embedded authenticated broker, stock protocol handling, durable feed-request tracking, and a bearer-authenticated loopback API. It is separate from replacement firmware. Stock 1.1.15 local dispensing was demonstrated on the research unit; unattended reliability and measured portions remain unvalidated.
+The `petlibre-local` executable is the bench's local server: an embedded authenticated broker, the stock 1.1.15 protocol as far as installing the replacement needs it, the replacement firmware's MQTT transport, and a bearer-authenticated loopback API. It is being split up and retired ([tools roadmap](tools-roadmap.md)).
+
+Its stock control (manual feeds, the feed ledger, `resolve`) and the C-probe and modified-stock trials were removed on October 24, 2026 (FW51): the product uses stock only to install from and roll back to. Local dispensing on stock 1.1.15 was demonstrated on the research unit before that, and the code is in Git history.
 
 ## Build and try synthetic initialization
 
@@ -24,7 +26,7 @@ Store the device's single MQTT CONNECT credential record as a JSON array in the 
 
 A typical decoded packet export is `tshark -r private/capture.pcap -Y mqtt -T json > private/mqtt.json`. Inspect the export locally against the documented shape: captures with a different dissector nesting require normalization. Credentials and raw exports must stay private.
 
-Run `init` with your own credential/capture paths, a specific IPv4 broker address reachable from the feeder, your gateway interface, and your timezone. Wildcard and IPv6 broker binds are rejected. `private/server.json` is the default output. The HTTP default is loopback `127.0.0.1:8765`; `max_portions` starts at 1. The configuration format remains version 1. Edit configuration while the service is stopped and retain the ledger beside it.
+Run `init` with your own credential/capture paths, a specific IPv4 broker address reachable from the feeder, your gateway interface, and your timezone. Wildcard and IPv6 broker binds are rejected. `private/server.json` is the default output. The HTTP default is loopback `127.0.0.1:8765`. The configuration format remains version 1; a configuration from before FW51 still carries `max_portions`, which is refused as an unknown field, so delete that line. Edit configuration while the service is stopped and retain the ledger beside it.
 
 ```sh
 ./target/debug/petlibre-local serve --config private/server.json
@@ -94,11 +96,11 @@ Offer a signed update to the running server, or clear it:
 
 The offer lives only in the server's memory. Each offer is served to completion once. After its last chunk has gone out, a new manifest request means the candidate fell back to bank 0, so the server drops the offer and answers that it has none. Offer it again to retry. Re-asks of chunks, such as a lost last answer, are still served. The server answers the firmware's `ota/get` requests on `ota/data` with the manifest or a chunk of at most 512 bytes, and never pushes anything. On load it checks that the image matches the manifest's length and hash; authenticity is the firmware's signature check. Paths must be relative and under `private/`. The broker lets the firmware role publish only `ota/get` and subscribe only `ota/data`, and the server role the reverse. A confirmed normal image checks for an offer as `<client_id>-ota`, with the same credentials. That identity may only publish `ota/check` and subscribe `ota/offered`. The server answers with the manifest or no offer, and a check never counts as a delivery.
 
-## Manual requests and uncertainty
+## The install ledger
 
-The `feed` command requires a caller-generated UUID and portion count. `new-request-id` prints a UUID without contacting a device. Reuse the same request ID after a lost response; never create a new ID merely to retry. Offline/stale devices are refused, commands are not retained, and the controller does not replay a persisted request.
+Install trials are recorded in `stock-ledger.json` beside the configuration, under an exclusive lock. Each trial is persisted before its one `OTA_UPGRADE` goes out and is never resent: a repeated request ID returns the stored record, and a trial in flight when the server stops or loses the broker becomes uncertain. An uncertain or failed trial blocks the next until `ota-trial-resolve` closes it from fresh evidence, which sends no command.
 
-When telemetry cannot establish the outcome, inspect the physical result before `resolve --request-id UUID --note "observed outcome"`. Resolution changes the ledger without sending a command. Device-reported completion does not establish measured food weight. Configuration, feed ledger, and exclusive lock are stored together.
+The ledger before FW51, `feed-ledger.json`, also held feeds and probe queries. `serve` refuses to start while it is present: check that no trial in it is submitted, uncertain or failed, then rename it.
 
 ## HTTP API
 
@@ -107,16 +109,13 @@ Write bodies are bounded to 4096 bytes. Use bearer authentication from the priva
 | Route | Interface |
 | --- | --- |
 | `GET /health` | Public process/build identity |
-| `GET /api/status` | Authenticated telemetry, build identity, request history, trial/probe observations, and `replacement` (latest firmware health, `age_ms`, `online`, `stale`, rejected count and recent replies; null without a firmware role) |
-| `POST /api/feed` | `{ "request_id": "UUID", "portions": 1 }` |
-| `POST /api/feed/resolve` | `{ "request_id": "UUID", "note": "physical observation" }` |
-| `POST /api/ota/trial` | Experimental fixed-image install/restore; explicit trial mode and image lease required |
+| `GET /api/status` | Authenticated telemetry, build identity, install trials and OTA reports, and `replacement` (latest firmware health, `age_ms`, `online`, `stale`, rejected count and recent replies; null without a firmware role) |
+| `POST /api/ota/trial` | `{ "request_id": "UUID", "server_token": "UUID" }`: the stock-to-replacement install; explicit trial mode and a live image lease required |
 | `POST /api/ota/trial/resolve` | Explicit uncertain-trial reconciliation; sends no command |
-| `POST /api/probe/query` | Explicit diagnostic request for a confirmed pinned probe installation |
 | `POST /api/replacement/request` | `{ "op": "health" }`, `{ "op": "ping" }` or `{ "op": "settings" }` (optionally with `lights`, `sound` booleans and `volume` 0–100 to change them; FW25) to the replacement firmware, signed when a request key is configured and the health has a nonce; returns the generated request ID. Other bodies get 400, no firmware role 404, and stale or offline health or an exhausted `seq` 503 |
 
-Normal `serve` mode keeps OTA trial/probe dispatch disabled. `ota-images` is a separate fixed-image HTTP transfer service; it does not command an update. Production trial dispatch requires a clean identifiable source commit. Test-only bypasses are not a deployment procedure. Retained OTA/probe helpers accept only their reviewed inputs; see [fixtures](fixtures.md) and [recovery limits](../devices/plaf103/recovery.md).
+Normal `serve` mode keeps trial dispatch disabled. `ota-images` is a separate HTTP transfer service for one reviewed build; it does not command an update. Trial dispatch requires a clean identifiable source commit. Test-only bypasses are not a deployment procedure; see [fixtures](fixtures.md) and [recovery limits](../devices/plaf103/recovery.md).
 
-**Replacement install (stock-to-replacement POC).** `ota-images --profile replacement --directory private/verification/<review>` serves that frozen review's `image.bin` as `/ota/<token>/replacement.bin`. It refuses an image that is not a build's, is larger than the stock footprint (1,376,288 bytes), lacks the loader marker, or does not match the review's `ota_sha256`. The review's layout audit is what establishes the container header and byte-sum stock checks. There is no `original.bin` beside it: the way back is the UART stock recovery. `--peer` defaults to the feeder found by its MAC on the hotspot interface, and the lease also records the served digest. A trial of image `replacement` needs that lease, and announces target version `2.0.0` with the lease's digest. Stock never reports after installing it, so the trial closes as `replacement_healthy` when firmware-role health first arrives after the submission. Feeding stays held until stock reports a fresh startup again. `petlibre-bench stock-ota` drives the whole sequence ([bench](../devices/plaf103/bench.md#stock-to-a-replacement-stock-ota)).
+**Replacement install (stock-to-replacement).** `ota-images --directory private/verification/<review>` serves that frozen review's `image.bin` as `/ota/<token>/replacement.bin`. It refuses an image that is not a build's, is larger than the stock footprint (1,376,288 bytes), lacks the loader marker, or does not match the review's `ota_sha256`. The review's layout audit is what establishes the container header and byte-sum stock checks. There is no `original.bin` beside it: the way back is the UART stock recovery. `--peer` defaults to the feeder found by its MAC on the hotspot interface, and the lease also records the served digest. A trial needs that lease, and announces target version `2.0.0` with the lease's digest. Stock never reports after installing it, so the trial closes as `replacement_healthy` when firmware-role health first arrives after the submission. `petlibre-bench stock-ota` drives the whole sequence ([bench](../devices/plaf103/bench.md#stock-to-a-replacement-stock-ota)).
 
-The server answers schedule queries from the imported snapshot and does not edit schedules. Nonempty-plan operation and stock time-recovery behavior remain unvalidated; see [stock behavior](../devices/plaf103/stock/README.md). Restore prior routing before shutting down the service if the feeder depends on that route.
+The server answers stock's schedule queries from the imported snapshot, and a trial needs that snapshot empty. Nonempty-plan operation and stock time-recovery behavior remain unvalidated; see [stock behavior](../devices/plaf103/stock/README.md). Restore prior routing before shutting down the service if the feeder depends on that route.

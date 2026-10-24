@@ -287,7 +287,6 @@ fn request(ctx: &mut Ctx, staged: &Staged, request_id: &str) -> Result<()> {
 
     let trial = TrialRequest {
         request_id: request_id.to_string(),
-        image: "replacement",
         server_token: token,
     };
     ctx.note(&format!(

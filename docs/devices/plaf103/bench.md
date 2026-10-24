@@ -239,7 +239,7 @@ sudo target/release/petlibre-local network remove                               
    - **The server's evidence:** 20 minutes since that request, 10 quiet connected minutes, and a fresh 1.1.15 version report.
    - **Version report:** idle stock reports its version only around a connect, so a refused resolve makes the server send stock a read-only `ATTR_GET_SERVICE`.
    - **Heartbeat:** stock heartbeats about every 61 s, which the server's 90 s telemetry bound tolerates (`fw40-stock-ota-03`/`-04`).
-4. **`stock-request`:** `petlibre-local ota-images --profile replacement` serves the review's `image.bin`, bound to its `ota_sha256`, to the feeder found by its MAC. Then one `POST /api/ota/trial`. The server persists the request, then sends stock one `OTA_UPGRADE` with:
+4. **`stock-request`:** `petlibre-local ota-images` serves the review's `image.bin`, bound to its `ota_sha256`, to the feeder found by its MAC. Then one `POST /api/ota/trial`. The server persists the request, then sends stock one `OTA_UPGRADE` with:
    - target version `2.0.0`;
    - the image's SHA-256;
    - a URL of about 80 characters, under stock's 128-byte parser buffer.
@@ -252,7 +252,6 @@ sudo target/release/petlibre-local network remove                               
 **After it:**
 - The run restores the hotspot and the supply as it found them.
 - It writes `private/verification/NAME-itest.json` with the stage verdicts, so the page's run history shows it. Server output goes to `NAME-servers.log`.
-- Feeding through the server stays held (`ota_hold`) until stock is back and reports a fresh startup.
 - If anything failed after the request was sent, the run prints the UART recovery pointer: bank 1 may be invalid.
 
 **Status:**

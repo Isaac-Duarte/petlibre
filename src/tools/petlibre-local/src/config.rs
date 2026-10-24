@@ -40,7 +40,6 @@ pub struct Config {
     pub http_listen: SocketAddr,
 
     pub timezone: Tz,
-    pub max_portions: u8,
     pub plans: Vec<Value>,
     /// The captured cloud `BINDING` reply, replayed verbatim.
     pub binding_response: Option<Map<String, Value>>,
@@ -94,11 +93,6 @@ impl Config {
                     .bytes()
                     .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'),
             "invalid device identifier"
-        );
-
-        ensure!(
-            self.max_portions > 0 && self.max_portions <= 10,
-            "max_portions must be 1..10"
         );
 
         ensure!(
@@ -430,7 +424,6 @@ pub fn import(
         mqtt_listen: options.mqtt_listen,
         http_listen: "127.0.0.1:8765".parse()?,
         timezone: options.timezone,
-        max_portions: 1,
         plans: plans.context("capture has no authoritative feeding-plan snapshot")?,
         binding_response,
         hotspot_interface: options.hotspot_interface,

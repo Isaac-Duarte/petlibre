@@ -1,7 +1,8 @@
 //! `petlibre-local` command line.
 //!
-//! `serve` runs the stock-firmware stack: the MQTT broker as a child process
-//! of this binary, the device protocol worker and the loopback HTTP API. Most
+//! `serve` runs the server: the MQTT broker as a child process of this
+//! binary, the stock install path and the replacement firmware's transport,
+//! and the loopback HTTP API. Most
 //! other subcommands are clients of that API and read the bearer token from
 //! the private configuration, so the token never appears in shell arguments.
 //! Starting the service redirects no traffic; `network apply` is the separate,
@@ -18,9 +19,9 @@ use petlibre_local::{
     api::{self, ApiState},
     build_info::{self, BUILD},
     config::{self, Config},
-    controller::{Controller, FeedInput, ResolveInput},
+    controller::{self, Controller},
     mqtt::{self, broker},
-    network, ota, probe,
+    neighbour, network, ota,
 };
 use reqwest::Method;
 use serde::Serialize;
@@ -29,10 +30,12 @@ use tokio::{
     sync::{mpsc, watch},
 };
 use tracing::info;
-use uuid::Uuid;
 
 #[derive(Parser)]
-#[command(version, about = "Local stock-firmware PLAF103 server")]
+#[command(
+    version,
+    about = "The bench's local PLAF103 server: stock installs and the replacement transport"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Action,
@@ -63,7 +66,7 @@ enum Action {
     Serve {
         #[arg(long, default_value = "private/server.json")]
         config: PathBuf,
-        /// Allow only the fixed modified-stock/original experiment; disabled by default.
+        /// Allow the stock-to-replacement install trial; disabled by default.
         #[arg(long)]
         enable_ota_trial: bool,
     },
@@ -80,64 +83,28 @@ enum Action {
         config: PathBuf,
     },
 
-    /// Request a supervised feed. Reuse the same request ID for any retry.
-    Feed {
-        #[arg(long, default_value = "private/server.json")]
-        config: PathBuf,
-        #[arg(long)]
-        request_id: Uuid,
-        #[arg(long, default_value_t = 1)]
-        portions: u8,
-    },
-
-    /// Resolve an uncertain operation after physically checking the feeder.
-    Resolve {
-        #[arg(long, default_value = "private/server.json")]
-        config: PathBuf,
-        #[arg(long)]
-        request_id: Uuid,
-        #[arg(long)]
-        note: String,
-    },
-
-    /// Print an operation identifier without sending a command.
-    NewRequestId,
-
-    /// Serve a pinned experiment/original pair, or a reviewed replacement
-    /// build, on the fixed trial port; never sends an OTA command. Writes a
-    /// private token lease beside the config.
+    /// Serve a reviewed replacement build on the fixed trial port for stock
+    /// to install; never sends an OTA command. Writes a private token lease
+    /// beside the config.
     OtaImages {
         #[arg(long, default_value = "private/server.json")]
         config: PathBuf,
-        /// The prepared experiment directory, or for `--profile replacement`
-        /// the frozen review (its `review.json` and `image.bin`).
+        /// The build's frozen review (its `review.json` and `image.bin`).
         #[arg(long)]
         directory: PathBuf,
         /// The feeder's address; found by its MAC on the hotspot otherwise.
         #[arg(long)]
         peer: Option<std::net::Ipv4Addr>,
-        #[arg(long, value_enum, default_value_t = ota::image::Profile::StockVersion)]
-        profile: ota::image::Profile,
     },
 
-    /// Explicitly run GET_CONFIG once on a confirmed C-probe installation.
-    ProbeQuery {
-        #[arg(long, default_value = "private/server.json")]
-        config: PathBuf,
-        #[arg(long)]
-        request_id: Uuid,
-    },
-
-    /// Explicitly submit one fixed OTA trial or restore; never retries automatically.
+    /// Ask stock once to install the build `ota-images` serves; never retries.
     OtaTrial {
         #[arg(long, default_value = "private/server.json")]
         config: PathBuf,
         #[arg(long)]
-        request_id: Uuid,
+        request_id: uuid::Uuid,
         #[arg(long)]
-        image: ota::trial::Image,
-        #[arg(long)]
-        server_token: Uuid,
+        server_token: uuid::Uuid,
     },
 
     /// Close the latest uncertain/failed trial from fresh version evidence after
@@ -146,7 +113,7 @@ enum Action {
         #[arg(long, default_value = "private/server.json")]
         config: PathBuf,
         #[arg(long)]
-        request_id: Uuid,
+        request_id: uuid::Uuid,
         #[arg(long)]
         note: String,
     },
@@ -205,37 +172,6 @@ enum Action {
         image: Option<String>,
         #[arg(long)]
         clear: bool,
-    },
-
-    /// Play an audio file (any format ffmpeg reads, or - for stdin) on a
-    /// feeder running the speaker variant. Talks to the feeder directly.
-    Speak {
-        #[arg(long, default_value = "private/server.json")]
-        config: PathBuf,
-        file: PathBuf,
-        /// The feeder's address; found by its MAC on the hotspot otherwise.
-        #[arg(long)]
-        host: Option<std::net::IpAddr>,
-        /// Sample rate: 8000, 16000, 32000 or 48000.
-        #[arg(long, default_value_t = 32_000)]
-        rate: u32,
-    },
-
-    /// FW34: give an offline feeder (ble firmware) Wi-Fi credentials over
-    /// Bluetooth LE. The passphrase is read from stdin, never the command
-    /// line. With neither --ssid nor --clear, reads which are in use.
-    BleWifi {
-        #[arg(long, default_value = "private/server.json")]
-        config: PathBuf,
-        /// The network to join; its passphrase comes from stdin.
-        #[arg(long, conflicts_with = "clear")]
-        ssid: Option<String>,
-        /// Return to the build's credentials.
-        #[arg(long)]
-        clear: bool,
-        /// The feeder's Bluetooth address; found by its setup service otherwise.
-        #[arg(long)]
-        address: Option<bluer::Address>,
     },
 
     /// FW42 test: point a stock feeder in setup mode at a network and this
@@ -322,27 +258,6 @@ async fn main() -> Result<()> {
         Action::Status { config } => {
             api_request(config, Method::GET, "/api/status", None::<&()>).await?
         }
-        Action::BleWifi {
-            config,
-            ssid,
-            clear,
-            address,
-        } => {
-            use petlibre_local::replacement::wifi_ble::{Change, send};
-            let config = Config::load(&config)?;
-            let change = match (ssid, clear) {
-                (Some(ssid), _) => {
-                    println!("Passphrase for {ssid} (read from stdin):");
-                    let mut psk = String::new();
-                    std::io::stdin().read_line(&mut psk)?;
-                    let psk = psk.trim_end_matches(['\r', '\n']).to_owned();
-                    Change::Store { ssid, psk }
-                }
-                (None, true) => Change::Clear,
-                (None, false) => Change::Read,
-            };
-            println!("{}", send(&config, address, change).await?);
-        }
         Action::SetupSend {
             config,
             ssid,
@@ -371,77 +286,16 @@ async fn main() -> Result<()> {
                 None => println!("Sent once to {to}; no answer within 5 s (not resent)"),
             }
         }
-        Action::Speak {
-            config,
-            file,
-            host,
-            rate,
-        } => {
-            let config = Config::load(&config)?;
-            let host = match host {
-                Some(host) => host,
-                None => petlibre_local::replacement::speak::discover(&config)?,
-            };
-            tokio::task::spawn_blocking(move || {
-                petlibre_local::replacement::speak::play(&config, &file, host, rate)
-            })
-            .await??;
-        }
-
-        Action::Feed {
-            config,
-            request_id,
-            portions,
-        } => {
-            api_request(
-                config,
-                Method::POST,
-                "/api/feed",
-                Some(&FeedInput {
-                    request_id,
-                    portions,
-                }),
-            )
-            .await?
-        }
-
-        Action::Resolve {
-            config,
-            request_id,
-            note,
-        } => {
-            api_request(
-                config,
-                Method::POST,
-                "/api/feed/resolve",
-                Some(&ResolveInput { request_id, note }),
-            )
-            .await?
-        }
-
-        Action::NewRequestId => println!("{}", Uuid::new_v4()),
-
-        Action::ProbeQuery { config, request_id } => {
-            api_request(
-                config,
-                Method::POST,
-                "/api/probe/query",
-                Some(&probe::Input { request_id }),
-            )
-            .await?
-        }
-
         Action::OtaImages {
             config,
             directory,
             peer,
-            profile,
         } => {
             let path = config.canonicalize()?;
             let config = Config::load(&path)?;
             let peer = match peer {
                 Some(peer) => peer,
-                None => match petlibre_local::replacement::speak::discover(&config)? {
+                None => match neighbour::discover(&config)? {
                     std::net::IpAddr::V4(peer) => peer,
                     std::net::IpAddr::V6(_) => {
                         anyhow::bail!("the feeder has no IPv4 neighbour entry")
@@ -455,7 +309,7 @@ async fn main() -> Result<()> {
                     _ = terminated() => {},
                 }
             };
-            ota::image::serve(config, &path, &directory, peer, profile, stop).await?;
+            ota::image::serve(config, &path, &directory, peer, stop).await?;
         }
 
         Action::OtaTrialResolve {
@@ -475,7 +329,6 @@ async fn main() -> Result<()> {
         Action::OtaTrial {
             config,
             request_id,
-            image,
             server_token,
         } => {
             api_request(
@@ -484,7 +337,6 @@ async fn main() -> Result<()> {
                 "/api/ota/trial",
                 Some(&ota::trial::Input {
                     request_id,
-                    image,
                     server_token,
                 }),
             )
@@ -611,7 +463,7 @@ async fn serve(path: PathBuf, enable_ota_trial: bool) -> Result<()> {
         (*config).clone(),
         path.parent()
             .context("config directory missing")?
-            .join("feed-ledger.json"),
+            .join(controller::LEDGER_FILE),
     )?;
     if enable_ota_trial {
         controller.enable_ota_trial();

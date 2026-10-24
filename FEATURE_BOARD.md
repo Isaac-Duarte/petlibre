@@ -4,10 +4,10 @@ This board tracks the owner-visible behavior the replacement firmware needs to m
 
 ## Current status
 
-- **Done:** FP11 (child lock).
+- **Done:** FP01 (stock feature inventory), FP11 (child lock).
 - **In progress:** none.
 - **Critical path to parity:** FW30 → FW16 → FW17 → FW18 → FP03. Nothing a pet depends on works before FW17 can feed.
-- **Startable without motion:** FP01, FP02, FP04 (host-tested against the snapshot format), FP09, and the reporting halves of FP12 and FP14.
+- **Startable without motion:** FP02, FP04 (host-tested against the snapshot format), FP09, and the reporting halves of FP12 and FP14.
 
 ## Using the board
 
@@ -25,36 +25,36 @@ A feature card sequences behavior through the SDK; it never relaxes a FIRMWARE_B
 
 | Card | Status | Evidence | Stock behavior | Prerequisites | Finish line |
 | --- | --- | --- | --- | --- | --- |
-| **FP01 Stock feature inventory** | Planned | — | — | — | A static pass over 1.1.15 and the vendor app pins, for every FP card, the stock limits (plans, portions per feed, portion size), defaults (desiccant period, lock timeouts, volume), button holds and battery-mode behavior. Each item is a recorded finding or an explicit unknown; nothing is guessed. Results go in [stock behavior](docs/devices/plaf103/stock/README.md). |
+| **FP01 Stock feature inventory** | **Done** | **Static (Oct 24):** a pass over 1.1.15 (settings defaults, feed, jam, outlet, record ring, sound and light windows, meal call, power, battery and OTA gates) and the vendor app (portion cap, plan count, desiccant, volume slider), combined with the earlier plan, manual-feed, panel, audio and Wi-Fi emulations and values the app logged for one unit. Every card from FP02 to FP19 has a finding or an explicit unknown: portion mass, the desiccant period range, the meal reminder's unit, volume-to-gain mapping, the quiet-window time base the app sends, `autoChangeMode`/`autoThreshold`, and what the factory restore clears ([table](docs/devices/plaf103/stock/README.md#feature-limits-and-defaults-fp01)). | Stock keeps desiccant, meal reminders, notifications and history in the app and cloud | — | A static pass over 1.1.15 and the vendor app pins, for every FP card, the stock limits (plans, portions per feed, portion size), defaults (desiccant period, lock timeouts, volume), button holds and battery-mode behavior. Each item is a recorded finding or an explicit unknown; nothing is guessed. Results go in [stock behavior](docs/devices/plaf103/stock/README.md). |
 | **FP02 Owner control CLI** | Planned | — | The vendor app | FW08, FW25 | `wellfed-local` subcommands cover every FP setting and action through signed requests: feed, schedules, settings, history and status. This stands in for the app (FP19) until it exists. |
 
 ## Feeding
 
 | Card | Status | Evidence | Stock behavior | Prerequisites | Finish line |
 | --- | --- | --- | --- | --- | --- |
-| **FP03 Feeding schedules** | Planned | — | `FEEDING_PLAN_SERVICE`: several plans, each with a time, portions, repeat days, an enable flag and a meal call | FW15, FW17, FW18, FW21, FP02 | Create, edit, enable, disable and delete plans from the CLI, within stock's limits. Plans persist and each occurrence runs exactly once through the feeding owner, with no server needed once the clock is valid. Cover DST, clock jumps, overlapping plans, restart and interrupted-meal reconciliation. After a cold boot nothing runs until a time source syncs the clock, and missed occurrences follow FW21's rule. |
+| **FP03 Feeding schedules** | Planned | — | `FEEDING_PLAN_SERVICE`: at most 10 plans, each with a time, portions, repeat days, an enable flag and a meal call; fields unchecked, no catch-up after power-off, whole-hour time zones ([FP01](docs/devices/plaf103/stock/README.md#feature-limits-and-defaults-fp01)) | FW15, FW17, FW18, FW21, FP02 | Create, edit, enable, disable and delete plans from the CLI, within stock's limits. Plans persist and each occurrence runs exactly once through the feeding owner, with no server needed once the clock is valid. Cover DST, clock jumps, overlapping plans, restart and interrupted-meal reconciliation. After a cold boot nothing runs until a time source syncs the clock, and missed occurrences follow FW21's rule. |
 | **FP04 Import the stock schedule** | Planned | — | The server already holds the captured plan snapshot | FP03 | Moving from stock to the replacement keeps the owner's meals: the captured snapshot converts to replacement plans, and a plan that cannot convert is refused by name, never silently dropped. |
-| **FP05 Manual feed** | Planned | — | The Dispense button and a remote feed of N portions; `GRAIN_OUTPUT_EVENT` start and end with expected and actual counts | FW17, FW20 | A button press and a remote request go through the same owner with stock's portion rules, and cannot double-feed. Each feed reports requested and delivered portions (outlet beam). |
-| **FP06 Feeding history** | Planned | — | Feed and error records (`GRAIN_OUTPUT_EVENT`, `ERROR_EVENT`) | FW15, FW17 | A bounded on-device log of each feed (source, time, requested, delivered, result) that survives reboots and reads from the CLI. An uncertain feed reads as uncertain. |
+| **FP05 Manual feed** | Planned | — | Dispense gives one portion; a remote feed takes `grainNum` as one unchecked byte (0–255); the app caps portions from a cloud field (48 observed); `GRAIN_OUTPUT_EVENT` start and end with expected and actual counts ([FP01](docs/devices/plaf103/stock/README.md#feature-limits-and-defaults-fp01)) | FW17, FW20 | A button press and a remote request go through the same owner with stock's portion rules, and cannot double-feed. Each feed reports requested and delivered portions (outlet beam). |
+| **FP06 Feeding history** | Planned | — | An upload queue, not a history: two 50-record flash rings (feeds, errors), each record deleted once the cloud acks it ([FP01](docs/devices/plaf103/stock/README.md#feature-limits-and-defaults-fp01)) | FW15, FW17 | A bounded on-device log of each feed (source, time, requested, delivered, result) that survives reboots and reads from the CLI. An uncertain feed reads as uncertain. |
 
 ## Sensors and alerts
 
 | Card | Status | Evidence | Stock behavior | Prerequisites | Finish line |
 | --- | --- | --- | --- | --- | --- |
-| **FP07 Food level** | Planned | — | `surplusGrain` (low or empty) | FW13, FW18 | Food level from the food beam, with stock's states. An empty hopper shows in status, and a feed attempted while empty ends with an explicit result. |
-| **FP08 Jam and outlet faults** | Planned | — | `barnDoorError`, `ERROR_EVENT` | FW19 | Jams, a blocked outlet and sensor faults reach status and history as specific faults, with stock's follow-up (retry count, skipping the meal) or a documented difference. |
-| **FP09 Desiccant reminder** | Planned | — | `changeDesiccantFrequency`, `remainingDesiccantDays`, a reset | FW15, FW21 | A settable period, a remaining-days count that survives reboots, a reset from the CLI and a due state in status. Record whether it lives in firmware or on the server. |
-| **FP10 Meal reminder** | Planned | — | `feedingPlanAdvanceNoticeTime` | FP03 | An advance event before each scheduled meal, sent to the server (and FP16) instead of a phone notification. |
+| **FP07 Food level** | Planned | — | `surplusGrain`, a boolean from the food beam (20-reading clear debounce); feeds are not refused when empty ([FP01](docs/devices/plaf103/stock/README.md#feature-limits-and-defaults-fp01)) | FW13, FW18 | Food level from the food beam, with stock's states. An empty hopper shows in status, and a feed attempted while empty ends with an explicit result. |
+| **FP08 Jam and outlet faults** | Planned | — | Motor jam: three reversals, then the feed ends (code 2031, no retry). Outlet blocked: pause, resume within about 10 min or end (code 2008). `barnDoorError` is cloud-side ([FP01](docs/devices/plaf103/stock/README.md#feature-limits-and-defaults-fp01)) | FW19 | Jams, a blocked outlet and sensor faults reach status and history as specific faults, with stock's follow-up (retry count, skipping the meal) or a documented difference. |
+| **FP09 Desiccant reminder** | Planned | — | Cloud only, not in firmware: `changeDesiccantFrequency` 14 and `remainingDesiccantDays` (goes negative) observed, reset through a cloud endpoint ([FP01](docs/devices/plaf103/stock/README.md#feature-limits-and-defaults-fp01)) | FW15, FW21 | A settable period, a remaining-days count that survives reboots, a reset from the CLI and a due state in status. Record whether it lives in firmware or on the server. |
+| **FP10 Meal reminder** | Planned | — | Cloud only: `feedingPlanAdvanceNoticeTime` 5 or null observed; unit unknown ([FP01](docs/devices/plaf103/stock/README.md#feature-limits-and-defaults-fp01)) | FP03 | An advance event before each scheduled meal, sent to the server (and FP16) instead of a phone notification. |
 
 ## Panel, sound and power
 
 | Card | Status | Evidence | Stock behavior | Prerequisites | Finish line |
 | --- | --- | --- | --- | --- | --- |
 | **FP11 Child lock** | **Done** | **Physical (Oct 23, owner pressing and watching PA4):** `feeder` v93 (`fp11-panel-01`) booted locked; in `fp11-panel-03` Dispense and Mic were refused, a 5.5 s Lock hold unlocked, the panel relocked after 30 s idle, and signed `lock` requests unlocked and relocked it (`source=remote`), with PA4 following each change. **Host and build (Oct 23):** `wellfed-feeder`'s `panel` keeps stock's rules (Lock held 5 s toggles, 30 s idle relock, locked panel refuses Dispense, Mic and the Reset hold) and starts locked; the `feeder` firmware shows it on PA4 and takes a signed `lock` request (`wellfed-local` API). Policy, owner, mailbox, parser and API host-tested; the image builds with its link, RAM-park and stack audits (loop task 960 B). Stock's rules are static analysis and emulation ([stock behavior](docs/devices/plaf103/stock/README.md#panel-buttons-and-child-lock)). `disableHardwareButton` is not implemented (FP15). | The PLAF103 has no `childLock*` fields; stock locks the panel with a 5 s Lock hold and relocks after 30 s idle. `disableHardwareButton` is separate | FW20 | Lock and unlock by button hold and from the CLI, relocking after stock's timeout. A locked panel refuses feeds and setting changes but keeps recovery access. |
-| **FP12 Lights and sound settings** | Planned | — | `lightSwitch`, `soundSwitch`, `volume` | FW23, FW24, FW25 | Each setting persists and behaves as stock: which indicator states show when lights are off, mute, volume steps and quiet windows. |
-| **FP13 Meal call** | Planned | — | `enableAudio`, `audioUrl`; the Mic button records on stock | FW24, FP03 | The owner uploads a clip from the CLI, and it plays before each scheduled meal whose plan enables it, through FW24's playback. Audio never delays or blocks a feed (FW17 guarantee). Recording through the on-board microphone is out of scope. |
-| **FP14 Battery and power** | Planned | — | `powerType`, `electricQuantity`, `enableBatteryPercent` | FW14, FW26 | Adapter or battery and a battery percentage on stock's curve. Battery-mode behavior matches stock (which radios stay up, whether schedules run), and low battery has a defined result. |
-| **FP15 Reset button** | Planned | — | Reset button holds: Wi-Fi and/or factory reset | FW20, FW25 | Each hold does what stock does and clears exactly what stock clears; recovery access survives. |
+| **FP12 Lights and sound settings** | Planned | — | `lightSwitch`, `soundSwitch` on and `volume` 50 by default; volume 0 mutes; an aging type selects always on or an inclusive start–end window ([FP01](docs/devices/plaf103/stock/README.md#feature-limits-and-defaults-fp01)) | FW23, FW24, FW25 | Each setting persists and behaves as stock: which indicator states show when lights are off, mute, volume steps and quiet windows. |
+| **FP13 Meal call** | Planned | — | `enableAudio`, `audioUrl`; plays `audioTimes` times before a plan's feed when sound is allowed, never blocking it; the Mic button records on stock ([FP01](docs/devices/plaf103/stock/README.md#feature-limits-and-defaults-fp01)) | FW24, FP03 | The owner uploads a clip from the CLI, and it plays before each scheduled meal whose plan enables it, through FW24's playback. Audio never delays or blocks a feed (FW17 guarantee). Recording through the on-board microphone is out of scope. |
+| **FP14 Battery and power** | Planned | — | `powerType` 1/2/3, `electricQuantity` on a 1650–2250 ADC curve. On battery stock drops Wi-Fi after 5 s, still runs meals, refuses OTA, and suspends below 0 % ([FP01](docs/devices/plaf103/stock/README.md#feature-limits-and-defaults-fp01)) | FW14, FW26 | Adapter or battery and a battery percentage on stock's curve. Battery-mode behavior matches stock (which radios stay up, whether schedules run), and low battery has a defined result. |
+| **FP15 Reset button** | Planned | — | One Reset hold (about 5 s) starts the factory restore; no Wi-Fi-only hold. What it clears is unknown ([FP01](docs/devices/plaf103/stock/README.md#feature-limits-and-defaults-fp01)) | FW20, FW25 | Each hold does what stock does and clears exactly what stock clears; recovery access survives. |
 
 ## Integration and acceptance
 
@@ -71,7 +71,7 @@ A feature card sequences behavior through the SDK; it never relaxes a FIRMWARE_B
 
 | Card | Status |
 | --- | --- |
-| FP01 Stock feature inventory | ⬜ Planned |
+| FP01 Stock feature inventory | ✅ Done |
 | FP02 Owner control CLI | ⬜ Planned |
 | FP03 Feeding schedules | ⬜ Planned |
 | FP04 Import the stock schedule | ⬜ Planned |

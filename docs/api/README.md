@@ -63,6 +63,7 @@ wellfed-server ─► wellfed-service ─► wellfed-store ─► wellfed-api*
 - **Transport.** TCP to the port advertised over mDNS (`_wellfed._tcp`), with Noise inside. Each Noise transport message carries one postcard-encoded message, behind a 2-byte length prefix. Frames are capped at a size FW44 sets.
 - **Handshake.** After pairing, both sides know each other's static key, so sessions use **Noise KK**: one round trip, mutual authentication, and no identity sent in clear. Pairing itself runs over the BLE setup channel, or over the LAN during an invite or button-hold window, using a pattern that exchanges static keys (XX with a pairing secret as PSK). FW45 confirms the patterns and the `no_std` Noise implementation; one implementation on both sides is preferred, so interop never depends on two.
 - **Hello.** The first messages carry `protocol_major`, a capability set, the build identity, and the client's last event cursor. A major the feeder doesn't accept ends the session with a typed reason, so the app can say "update the app" or "update the feeder".
+- **Feeder side.** The firmware has two tasks and the button service holds one ([task slots](../../src/firmware/wellfed/README.md#what-the-sdk-runtime-guarantees)), so every session runs in one loop task over non-blocking sockets, with the same sans-IO shape as `wellfed-client`: bytes in, bytes out, no allocation. Per-client buffers and the client limit are fixed at build time (FW44). A handshake is one loop step, and the feeding owner is stepped in the same loop ([device API](../firmware/product-architecture.md#device-api)).
 - **Keys.** A client's identity is its static X25519 key. The HMAC request keys of FW08 become the session's transport security, and the per-request signature goes away.
 
 ### Messages
@@ -77,7 +78,7 @@ Subscribe { samples }                 Sample { at, metric, value }
                                       Gap { from, to }   // events lost to the ring
 ```
 
-- **`id`** is a client-generated 128-bit request ID. The feeder remembers recent IDs per client, so a retried request returns the first answer rather than running again. A feed's ID also goes into its journal reservation (FW17), so even a retry after a reboot cannot feed twice.
+- **`id`** is a client-generated 128-bit request ID. The feeder keeps a fixed ring of recent IDs per client (FW44 sizes it), so a retried request returns the first answer rather than running again. An ID that has left the ring is no longer recognized, which is safe for everything but feeds. A feed's ID also goes into its journal reservation (FW17), so even a retry after a reboot cannot feed twice.
 - **Ops (first set):**
   - `Feed { portions }`
   - `Status`
@@ -205,6 +206,7 @@ The repository's [Rust conventions](../../AGENTS.md#rust-conventions) apply in f
 ## Open questions
 
 - Which `no_std` Noise implementation, and its RAM cost (FW44, FW45).
-- The frame size cap and the client limit (FW44).
+- The frame size cap, the client limit and the request-ID ring size (FW44), all bounded by one loop task's fixed buffers.
+- The KK and XX handshake time on the KM4, and the per-client work cap per loop pass, which together set the loop's worst-case latency (FW44).
 - Whether the web UI's live view needs per-metric sample throttling.
 - Backups: a scheduled SQLite backup inside the server, or left to the host.

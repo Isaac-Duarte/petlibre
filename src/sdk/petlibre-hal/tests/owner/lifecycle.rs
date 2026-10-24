@@ -319,10 +319,10 @@ fn optical_cleanup_and_failed_completion_cannot_publish_success() {
 #[test]
 fn stop_during_result_write_and_singleton_ownership() {
     let mut f = boot();
-    let second = Box::<Owner>::default();
+    let second = Box::<Owner<FixtureStorage>>::default();
     let storage = f.storage();
     // SAFETY: the fixture keeps the owner and its storage in place while it runs.
-    assert!(!unsafe { second.start(&f.config, &storage) });
+    assert!(!unsafe { second.start(&f.config, storage) });
 
     f.start_feed();
     f.stop_in_finish = true;

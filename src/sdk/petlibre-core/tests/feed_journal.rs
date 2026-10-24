@@ -9,10 +9,10 @@
 
 use petlibre_core::feed::controller::{FeedReason, FeedRequest};
 use petlibre_core::feed::progress::{BowlMode, Direction};
-use petlibre_core::feed::storage::{OwnerOutcome, OwnerResult};
+use petlibre_core::feed::storage::{OwnerOutcome, OwnerRecovery, OwnerResult, OwnerStorage};
 use petlibre_core::store::feed_journal::{FeedJournal, JournalConfig, JournalError};
-use petlibre_core::store::slot::RECORD_BYTES;
-use petlibre_testkit::journal_flash::{FakeJournalFlash, UNIT};
+use petlibre_core::store::slot::{RECORD_BYTES, SlotIo};
+use petlibre_testkit::journal_flash::{FakeJournalFlash, FlashIo, UNIT};
 
 /// Unit sizes for torn-write/restart coverage: the virtual feeder's 256, a
 /// 4 KiB sector, and units whose blank tail ends in a chunk shorter than the
@@ -25,7 +25,7 @@ const CONFIG: JournalConfig = JournalConfig {
     max_portions: 3,
 };
 
-fn request(j: &FeedJournal, id: u64) -> FeedRequest {
+fn request(j: &FeedJournal<FlashIo>, id: u64) -> FeedRequest {
     FeedRequest {
         id,
         portions: 2,
@@ -36,12 +36,12 @@ fn request(j: &FeedJournal, id: u64) -> FeedRequest {
     }
 }
 
-fn reserve(j: &mut FeedJournal, id: u64) -> bool {
+fn reserve(j: &mut FeedJournal<FlashIo>, id: u64) -> bool {
     let r = request(j, id);
     j.reserve(&r)
 }
 
-fn finish(j: &mut FeedJournal, done: bool, motion: bool) -> bool {
+fn finish(j: &mut FeedJournal<FlashIo>, done: bool, motion: bool) -> bool {
     let mut phase = j.view.recovery;
     phase.pending_request = false;
 
@@ -73,11 +73,11 @@ fn finish(j: &mut FeedJournal, done: bool, motion: bool) -> bool {
     j.finish(&result, &phase)
 }
 
-fn create(f: &mut FakeJournalFlash, dual: bool) -> FeedJournal {
+fn create(f: &mut FakeJournalFlash, dual: bool) -> FeedJournal<FlashIo> {
     create_unit(f, dual, UNIT)
 }
 
-fn create_unit(f: &mut FakeJournalFlash, dual: bool, unit: usize) -> FeedJournal {
+fn create_unit(f: &mut FakeJournalFlash, dual: bool, unit: usize) -> FeedJournal<FlashIo> {
     *f = FakeJournalFlash::with_unit(unit);
 
     let config = JournalConfig {
@@ -100,7 +100,11 @@ fn create_unit(f: &mut FakeJournalFlash, dual: bool, unit: usize) -> FeedJournal
     j
 }
 
-fn reopen(f: &mut FakeJournalFlash, j: &mut FeedJournal, config: &JournalConfig) -> JournalError {
+fn reopen(
+    f: &mut FakeJournalFlash,
+    j: &mut FeedJournal<FlashIo>,
+    config: &JournalConfig,
+) -> JournalError {
     f.budget = -1;
     f.fail_call = 0;
     // SAFETY: as for `create`.
@@ -108,8 +112,27 @@ fn reopen(f: &mut FakeJournalFlash, j: &mut FeedJournal, config: &JournalConfig)
 }
 
 /// Point a copied journal at a copied flash.
-fn bind(j: &mut FeedJournal, f: &mut FakeJournalFlash) {
-    j.io = f.io();
+fn bind(j: &mut FeedJournal<FlashIo>, f: &mut FakeJournalFlash) {
+    // SAFETY: the test's flash stays in place while the journal uses it.
+    j.rebind(unsafe { f.io() });
+}
+
+/// A unit size no record layout fits.
+struct OddUnit(FlashIo);
+
+impl SlotIo for OddUnit {
+    fn unit_bytes(&self) -> u32 {
+        127
+    }
+    fn read(&self, slot: u32, offset: u32, bytes: &mut [u8]) -> bool {
+        self.0.read(slot, offset, bytes)
+    }
+    fn program(&self, slot: u32, offset: u32, bytes: &[u8]) -> bool {
+        self.0.program(slot, offset, bytes)
+    }
+    fn erase(&self, slot: u32) -> bool {
+        self.0.erase(slot)
+    }
 }
 
 #[test]
@@ -154,9 +177,8 @@ fn phase_and_recovery() {
 
     let mut rebooted = FeedJournal::default();
     assert_eq!(reopen(&mut f, &mut rebooted, &c), JournalError::Ok);
-    let storage = rebooted.storage();
-    // SAFETY: `rebooted` stays in place while its storage callbacks run.
-    let phase = unsafe { storage.recover() }.unwrap();
+    let mut phase = OwnerRecovery::default();
+    assert!(OwnerStorage::recover(&mut rebooted, &mut phase));
     assert!(phase.pending_request && !phase.phase_known);
     assert_eq!(phase.high_water_id, 10);
     assert!(!reserve(&mut rebooted, 11) && !finish(&mut rebooted, true, true));
@@ -217,10 +239,18 @@ fn invalid_arguments() {
     phase.phase_known = true;
     assert!(j.finish(&result, &phase));
 
-    let mut io = f.io();
-    io.unit_bytes = 127;
-    // SAFETY: the fixture's callbacks are sound for its context, which outlives the call.
-    assert_eq!(unsafe { j.open(io, CONFIG) }, JournalError::Argument);
+    // SAFETY: the test's flash stays in place while the journal uses it.
+    let io = OddUnit(unsafe { f.io() });
+    let mut odd = FeedJournal::default();
+    assert_eq!(odd.open(io, CONFIG), JournalError::Argument);
+    assert!(odd.read().is_none());
+    // SAFETY: as above.
+    let io = unsafe { f.io() };
+    let unbound = JournalConfig {
+        binding: 0,
+        ..CONFIG
+    };
+    assert_eq!(j.open(io, unbound), JournalError::Argument);
     assert!(j.read().is_none());
 }
 

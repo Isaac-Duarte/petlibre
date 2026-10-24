@@ -6,14 +6,13 @@
 //! max portions, a zero span, CRC-32/ISO-HDLC of bytes 0..120 at 120 and
 //! the `CMIT` commit marker at 124.
 
-use core::ffi::{c_uint, c_void};
-use core::ptr;
+use core::ffi::c_uint;
 
 use crate::feed::controller::{FeedReason, FeedRequest};
 use crate::feed::progress::{BowlMode, Direction};
 use crate::feed::storage::{OwnerOutcome, OwnerRecovery, OwnerResult, OwnerStorage};
 use crate::store::slot::{
-    COMMIT, COMMIT_AT, COMMIT_OFFSET, CRC_AT, JournalIo, LENGTH_AT, RECORD_BYTES, RECORD_LEN,
+    Bound, COMMIT, COMMIT_AT, COMMIT_OFFSET, CRC_AT, LENGTH_AT, RECORD_BYTES, RECORD_LEN, SlotIo,
     TAIL_CHUNK, VERSION_AT, crc32, get_u16, get_u32, get_u64, put_u16, put_u32, put_u64,
 };
 
@@ -69,15 +68,29 @@ pub struct JournalView {
 }
 
 /// Implementation-owned members. No concurrent access or native-struct dumps.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct FeedJournal {
-    pub io: JournalIo,
+#[derive(Clone, Copy, Debug)]
+pub struct FeedJournal<I> {
+    io: Bound<I>,
     pub config: JournalConfig,
     pub view: JournalView,
     pub error: JournalError,
     pub slot: c_uint,
     pub opened: bool,
     pub reserved_here: bool,
+}
+
+impl<I> Default for FeedJournal<I> {
+    fn default() -> Self {
+        Self {
+            io: Bound::NONE,
+            config: JournalConfig::default(),
+            view: JournalView::default(),
+            error: JournalError::default(),
+            slot: 0,
+            opened: false,
+            reserved_here: false,
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -165,7 +178,7 @@ fn transition(c: &JournalConfig, old: &JournalView, next: &JournalView) -> bool 
     same_phase(&expected, &next.recovery)
 }
 
-impl FeedJournal {
+impl<I: SlotIo> FeedJournal<I> {
     fn encode(&self, v: &JournalView) -> [u8; RECORD_BYTES] {
         let mut p = [0u8; RECORD_BYTES];
         p[..8].copy_from_slice(&MAGIC);
@@ -270,25 +283,23 @@ impl FeedJournal {
     }
 
     /// Reset to an argument error, then adopt `io`/`config` if they are usable.
-    fn setup(&mut self, io: JournalIo, config: JournalConfig) -> bool {
+    fn setup(&mut self, io: I, config: JournalConfig) -> bool {
         *self = Self {
             error: JournalError::Argument,
             ..Self::default()
         };
 
-        if io.read.is_none()
-            || io.program.is_none()
-            || io.erase.is_none()
-            || (io.unit_bytes as usize) < RECORD_BYTES
-            || io.unit_bytes > 65536
-            || !io.unit_bytes.is_multiple_of(4)
+        let unit = io.unit_bytes();
+        if (unit as usize) < RECORD_BYTES
+            || unit > 65536
+            || !unit.is_multiple_of(4)
             || config.binding == 0
             || config.max_portions == 0
         {
             return false;
         }
 
-        self.io = io;
+        self.io = Bound::new(io);
         self.config = config;
         true
     }
@@ -309,8 +320,8 @@ impl FeedJournal {
         }
 
         let mut offset = u32::from(RECORD_LEN);
-        while offset < self.io.unit_bytes {
-            let chunk = (self.io.unit_bytes - offset).min(TAIL_CHUNK);
+        while offset < self.io.unit_bytes() {
+            let chunk = (self.io.unit_bytes() - offset).min(TAIL_CHUNK);
             let size = chunk as usize;
             if !self.io.read(slot, offset, &mut tail[..size]) {
                 return None;
@@ -336,12 +347,7 @@ impl FeedJournal {
 
     /// Empty/corrupt storage is never automatically initialized. Pending
     /// recovery is readable but cannot be reserved, finished or resumed here.
-    ///
-    /// # Safety
-    /// `io`'s callbacks must be sound to call with its context for as long as
-    /// this journal, or storage derived from it, is used.
-    #[allow(unsafe_code)]
-    pub unsafe fn open(&mut self, io: JournalIo, config: JournalConfig) -> JournalError {
+    pub fn open(&mut self, io: I, config: JournalConfig) -> JournalError {
         if !self.setup(io, config) {
             return JournalError::Argument;
         }
@@ -411,13 +417,9 @@ impl FeedJournal {
     /// Explicit first provisioning only: both units must already be entirely
     /// erased. Does not erase existing data or accept a nonzero/reset ID
     /// history. Mechanical phase must come from verified board evidence.
-    ///
-    /// # Safety
-    /// As for [`FeedJournal::open`].
-    #[allow(unsafe_code)]
-    pub unsafe fn create(
+    pub fn create(
         &mut self,
-        io: JournalIo,
+        io: I,
         config: JournalConfig,
         direction: Direction,
         credit_next_event: bool,
@@ -544,64 +546,33 @@ impl FeedJournal {
         self.reserved_here = false;
         true
     }
+}
 
-    /// Owner-storage callbacks bound to this journal. The journal must not move
-    /// or be accessed elsewhere while the returned storage is in use.
-    pub fn storage(&mut self) -> OwnerStorage {
-        OwnerStorage {
-            context: ptr::from_mut(self).cast(),
-            recover: Some(storage_recover),
-            reserve: Some(storage_reserve),
-            finish: Some(storage_finish),
+impl<I> FeedJournal<I> {
+    /// Point a copy of this journal at a copy of its flash, keeping the
+    /// journal's state: for tests that branch one history.
+    #[doc(hidden)]
+    pub fn rebind(&mut self, io: I) {
+        self.io = Bound::new(io);
+    }
+}
+
+impl<I: SlotIo> OwnerStorage for FeedJournal<I> {
+    fn recover(&mut self, recovery: &mut OwnerRecovery) -> bool {
+        match self.read() {
+            Some(view) => {
+                *recovery = view.recovery;
+                true
+            }
+            None => false,
         }
     }
-}
 
-// In all three, `context` is the journal pointer installed by
-// `FeedJournal::storage`, or null; the owner serializes all access.
-#[allow(unsafe_code)]
-unsafe extern "C" fn storage_recover(context: *mut c_void, recovery: *mut OwnerRecovery) -> bool {
-    // SAFETY: the storage contract: null or valid pointers, the journal
-    // installed by `FeedJournal::storage`.
-    let (Some(journal), Some(recovery)) =
-        (unsafe { (context.cast::<FeedJournal>().as_ref(), recovery.as_mut()) })
-    else {
-        return false;
-    };
-
-    match journal.read() {
-        Some(view) => {
-            *recovery = view.recovery;
-            true
-        }
-        None => false,
+    fn reserve(&mut self, request: &FeedRequest) -> bool {
+        FeedJournal::reserve(self, request)
     }
-}
 
-#[allow(unsafe_code)]
-unsafe extern "C" fn storage_reserve(context: *mut c_void, request: *const FeedRequest) -> bool {
-    // SAFETY: as for `storage_recover`.
-    match unsafe { (context.cast::<FeedJournal>().as_mut(), request.as_ref()) } {
-        (Some(journal), Some(request)) => journal.reserve(request),
-        _ => false,
-    }
-}
-
-#[allow(unsafe_code)]
-unsafe extern "C" fn storage_finish(
-    context: *mut c_void,
-    result: *const OwnerResult,
-    phase: *const OwnerRecovery,
-) -> bool {
-    // SAFETY: as for `storage_recover`.
-    match unsafe {
-        (
-            context.cast::<FeedJournal>().as_mut(),
-            result.as_ref(),
-            phase.as_ref(),
-        )
-    } {
-        (Some(journal), Some(result), Some(phase)) => journal.finish(result, phase),
-        _ => false,
+    fn finish(&mut self, result: &OwnerResult, phase: &OwnerRecovery) -> bool {
+        FeedJournal::finish(self, result, phase)
     }
 }

@@ -14,7 +14,7 @@
 use core::ffi::c_uint;
 
 use crate::store::slot::{
-    COMMIT, COMMIT_AT, COMMIT_OFFSET, CRC_AT, JournalIo, LENGTH_AT, RECORD_BYTES, RECORD_LEN,
+    Bound, COMMIT, COMMIT_AT, COMMIT_OFFSET, CRC_AT, LENGTH_AT, RECORD_BYTES, RECORD_LEN, SlotIo,
     VERSION_AT, crc32, get_u16, get_u32, get_u64, put_u16, put_u32, put_u64,
 };
 
@@ -84,8 +84,8 @@ enum Scan {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct NetStore {
-    io: JournalIo,
+pub struct NetStore<I> {
+    io: Bound<I>,
     pub status: NetStatus,
     pub generation: u64,
     pub slot: c_uint,
@@ -93,10 +93,10 @@ pub struct NetStore {
     pub credentials: Option<Credentials>,
 }
 
-impl Default for NetStore {
+impl<I> Default for NetStore<I> {
     fn default() -> Self {
         Self {
-            io: JournalIo::default(),
+            io: Bound::NONE,
             status: NetStatus::Unopened,
             generation: 0,
             slot: 0,
@@ -164,23 +164,20 @@ fn decode(p: &[u8; RECORD_BYTES]) -> Scan {
     }
 }
 
-impl NetStore {
+impl<I: SlotIo> NetStore<I> {
     fn scan(&self, slot: c_uint) -> Option<Scan> {
         let mut record = [0u8; RECORD_BYTES];
         self.io.read(slot, 0, &mut record).then(|| decode(&record))
     }
 
     /// Bind to two exclusive erase units and load the newest valid record.
-    ///
-    /// # Safety
-    /// The I/O callbacks must be sound for `io.context` while the store is used.
-    #[allow(unsafe_code)]
-    pub unsafe fn open(&mut self, io: JournalIo) -> NetStatus {
+    pub fn open(&mut self, io: I) -> NetStatus {
+        let unit = io.unit_bytes();
         *self = Self {
-            io,
+            io: Bound::new(io),
             ..Self::default()
         };
-        if io.read.is_none() || (io.unit_bytes as usize) < RECORD_BYTES {
+        if (unit as usize) < RECORD_BYTES {
             self.status = NetStatus::Io;
             return self.status;
         }
@@ -220,7 +217,7 @@ impl NetStore {
     /// slot with erase, program, verify, commit, verify. A failure keeps the
     /// previous credentials in memory.
     pub fn save(&mut self, credentials: Option<&Credentials>) -> bool {
-        if !self.writable() || self.io.program.is_none() || self.io.erase.is_none() {
+        if !self.writable() || !self.io.writable() {
             return false;
         }
         let generation = self.generation + 1;

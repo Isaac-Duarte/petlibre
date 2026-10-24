@@ -8,10 +8,10 @@
 //! programmed or weakly erased cells that read back inconsistently.
 
 use core::cell::RefCell;
-use core::ffi::{c_uint, c_void};
+use core::ffi::c_void;
 use std::rc::Rc;
 
-use petlibre_core::store::slot::JournalIo;
+use petlibre_core::store::slot::SlotIo;
 
 /// Default unit size, as used by the virtual feeder image.
 pub const UNIT: usize = 256;
@@ -72,11 +72,14 @@ impl FakeJournalFlash {
         self.bytes[0].len()
     }
 
-    /// I/O bound to this flash. The flash must not move while the I/O is used,
-    /// and writing its fields directly invalidates the I/O: bind a new one.
-    pub fn io(&mut self) -> JournalIo {
-        // SAFETY: `self` is a live, exclusive flash.
-        unsafe { Self::io_at(self) }
+    /// I/O bound to this flash.
+    ///
+    /// # Safety
+    /// The flash must stay in place while the I/O is used, and writing its
+    /// fields directly in between leaves the I/O reading stale state only
+    /// where a reference is live: bind a new one.
+    pub unsafe fn io(&mut self) -> FlashIo {
+        FlashIo(self)
     }
 
     /// I/O whose context is exactly `flash`, without an intermediate
@@ -85,16 +88,9 @@ impl FakeJournalFlash {
     ///
     /// # Safety
     /// `flash` must point to a live flash that stays in place, and no
-    /// reference to it may be live while the returned callbacks run.
-    pub unsafe fn io_at(flash: *mut Self) -> JournalIo {
-        JournalIo {
-            context: flash.cast(),
-            // SAFETY: the caller guarantees a live flash; this is a read only.
-            unit_bytes: u32::try_from(unsafe { (*flash).unit() }).expect("a unit below 4 GiB"),
-            read: Some(read_bytes),
-            program: Some(program),
-            erase: Some(erase),
-        }
+    /// reference to it may be live while the I/O runs.
+    pub unsafe fn io_at(flash: *mut Self) -> FlashIo {
+        FlashIo(flash)
     }
 
     fn call(&mut self) -> bool {
@@ -102,7 +98,7 @@ impl FakeJournalFlash {
         self.fail_call == 0 || self.calls != self.fail_call
     }
 
-    fn bounds(&self, slot: c_uint, offset: u32, size: usize) -> (usize, usize) {
+    fn bounds(&self, slot: u32, offset: u32, size: usize) -> (usize, usize) {
         let (slot, offset) = (slot as usize, offset as usize);
         let unit = self.unit();
         assert!(slot < self.bytes.len() && offset <= unit && size <= unit - offset);
@@ -113,7 +109,7 @@ impl FakeJournalFlash {
 /// Apply one mutation, then run the hook with no reference to the flash live.
 ///
 /// # Safety
-/// `flash` is a callback context created by [`FakeJournalFlash::io_at`].
+/// `flash` is the pointer of a [`FlashIo`].
 unsafe fn mutate(flash: *mut FakeJournalFlash, apply: impl FnOnce(&mut FakeJournalFlash)) -> bool {
     let (hook, context) = {
         // SAFETY: the context is live; this reference ends before the hook.
@@ -178,98 +174,93 @@ fn shuffled_bits(slot: usize, unit: usize) -> Vec<u32> {
     order
 }
 
-unsafe extern "C" fn read_bytes(
-    context: *mut c_void,
-    slot: c_uint,
-    offset: u32,
-    bytes: *mut c_void,
-    size: usize,
-) -> bool {
-    // SAFETY: the context was created by `io_at`; no other reference is live.
-    let f = unsafe { &mut *context.cast::<FakeJournalFlash>() };
-    let (slot, offset) = f.bounds(slot, offset, size);
-    if !f.call() {
-        return false;
+/// Slot I/O over a [`FakeJournalFlash`], from [`FakeJournalFlash::io`] or
+/// [`FakeJournalFlash::io_at`], whose contracts keep the pointer valid.
+#[derive(Clone, Copy, Debug)]
+pub struct FlashIo(*mut FakeJournalFlash);
+
+impl SlotIo for FlashIo {
+    fn unit_bytes(&self) -> u32 {
+        // SAFETY: the constructor's contract; a read only.
+        u32::try_from(unsafe { (*self.0).unit() }).expect("a unit below 4 GiB")
     }
 
-    // SAFETY: the journal passes a writable buffer of `size` bytes, distinct
-    // from the flash.
-    let out = unsafe { core::slice::from_raw_parts_mut(bytes.cast::<u8>(), size) };
-    out.copy_from_slice(&f.bytes[slot][offset..offset + size]);
-    true
-}
-
-unsafe extern "C" fn program(
-    context: *mut c_void,
-    slot: c_uint,
-    offset: u32,
-    bytes: *const c_void,
-    size: usize,
-) -> bool {
-    let flash = context.cast::<FakeJournalFlash>();
-    let (slot, offset) = {
-        // SAFETY: the context was created by `io_at`; ends before any hook.
-        let f = unsafe { &mut *flash };
-        let (slot, offset) = f.bounds(slot, offset, size);
-        assert!(offset.is_multiple_of(4) && size.is_multiple_of(4));
+    fn read(&self, slot: u32, offset: u32, bytes: &mut [u8]) -> bool {
+        // SAFETY: the constructor's contract; no other reference is live.
+        let f = unsafe { &mut *self.0 };
+        let (slot, offset) = f.bounds(slot, offset, bytes.len());
         if !f.call() {
             return false;
         }
-        if f.silent_program {
-            return true;
-        }
-        (slot, offset)
-    };
 
-    // SAFETY: the journal passes `size` readable bytes, distinct from the flash.
-    let input = unsafe { core::slice::from_raw_parts(bytes.cast::<u8>(), size) };
-    for (i, &value) in input.iter().enumerate() {
-        let index = offset + i;
-        // SAFETY: no reference into the flash is live across this call.
-        let more = unsafe {
-            mutate(flash, |f| {
-                assert_eq!(
-                    f.bytes[slot][index] & value,
-                    value,
-                    "NOR programming only clears bits"
-                );
-                f.bytes[slot][index] = value;
-            })
-        };
-        if !more {
-            return false;
-        }
+        bytes.copy_from_slice(&f.bytes[slot][offset..offset + bytes.len()]);
+        true
     }
 
-    true
-}
-
-unsafe extern "C" fn erase(context: *mut c_void, slot: c_uint) -> bool {
-    let flash = context.cast::<FakeJournalFlash>();
-    let slot = slot as usize;
-
-    let unit = {
-        // SAFETY: the context was created by `io_at`; ends before any hook.
-        let f = unsafe { &mut *flash };
-        assert!(slot < f.bytes.len());
-        if !f.call() {
-            return false;
-        }
-        if f.silent_erase {
-            return true;
-        }
-        f.unit()
-    };
-
-    let order = erase_order(slot, unit);
-    // SAFETY: no reference into the flash is live across these calls.
-    order.chunks(8).all(|bits| unsafe {
-        mutate(flash, |f| {
-            for &bit in bits {
-                f.bytes[slot][bit as usize / 8] |= 1 << (bit % 8);
+    fn program(&self, slot: u32, offset: u32, bytes: &[u8]) -> bool {
+        let flash = self.0;
+        let (slot, offset) = {
+            // SAFETY: the constructor's contract; ends before any hook.
+            let f = unsafe { &mut *flash };
+            let (slot, offset) = f.bounds(slot, offset, bytes.len());
+            assert!(offset.is_multiple_of(4) && bytes.len().is_multiple_of(4));
+            if !f.call() {
+                return false;
             }
+            if f.silent_program {
+                return true;
+            }
+            (slot, offset)
+        };
+
+        for (i, &value) in bytes.iter().enumerate() {
+            let index = offset + i;
+            // SAFETY: no reference into the flash is live across this call.
+            let more = unsafe {
+                mutate(flash, |f| {
+                    assert_eq!(
+                        f.bytes[slot][index] & value,
+                        value,
+                        "NOR programming only clears bits"
+                    );
+                    f.bytes[slot][index] = value;
+                })
+            };
+            if !more {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    fn erase(&self, slot: u32) -> bool {
+        let flash = self.0;
+        let slot = slot as usize;
+
+        let unit = {
+            // SAFETY: the constructor's contract; ends before any hook.
+            let f = unsafe { &mut *flash };
+            assert!(slot < f.bytes.len());
+            if !f.call() {
+                return false;
+            }
+            if f.silent_erase {
+                return true;
+            }
+            f.unit()
+        };
+
+        let order = erase_order(slot, unit);
+        // SAFETY: no reference into the flash is live across these calls.
+        order.chunks(8).all(|bits| unsafe {
+            mutate(flash, |f| {
+                for &bit in bits {
+                    f.bytes[slot][bit as usize / 8] |= 1 << (bit % 8);
+                }
+            })
         })
-    })
+    }
 }
 
 #[cfg(test)]
@@ -280,9 +271,8 @@ mod tests {
         let mut f = FakeJournalFlash::with_unit(unit);
         f.bytes[0].fill(0);
         f.budget = budget;
-        let io = f.io();
         // SAFETY: `f` stays in place and is not otherwise used during the call.
-        let ok = unsafe { io.erase.unwrap()(io.context, 0) };
+        let ok = unsafe { f.io() }.erase(0);
 
         (f, ok)
     }
@@ -294,13 +284,13 @@ mod tests {
         assert_eq!(f.mutations, 4096);
 
         let mut f = FakeJournalFlash::default();
-        let io = f.io();
         let data = [0x0fu8, 0xf0, 0x00, 0xff];
-        // SAFETY: the context is this test's live flash and `data` is 4 bytes.
-        assert!(unsafe { io.program.unwrap()(io.context, 1, 4, data.as_ptr().cast(), 4) });
+        // SAFETY: the flash is this test's, in place for the call.
+        assert!(unsafe { f.io() }.program(1, 4, &data));
 
         assert_eq!(f.bytes[1][4..8], data);
-        assert_eq!(f.io().unit_bytes, u32::try_from(UNIT).unwrap());
+        // SAFETY: as above.
+        assert_eq!(unsafe { f.io() }.unit_bytes(), u32::try_from(UNIT).unwrap());
     }
 
     #[test]
@@ -345,22 +335,10 @@ mod tests {
 
             let io = FakeJournalFlash::io_at(raw);
             let data = [0x0fu8, 0x0f, 0x0f, 0x0f];
-            assert!(!io.program.unwrap()(
-                io.context,
-                0,
-                0,
-                data.as_ptr().cast(),
-                4
-            ));
+            assert!(!io.program(0, 0, &data));
 
             assert_eq!((&(*raw).bytes)[0][..4], [0x0f, 0x0f, 0xff, 0xff]);
-            assert!(!io.program.unwrap()(
-                io.context,
-                0,
-                4,
-                data.as_ptr().cast(),
-                4
-            ));
+            assert!(!io.program(0, 4, &data));
 
             assert_eq!((*raw).mutations, 2);
         }

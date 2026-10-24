@@ -563,7 +563,7 @@ impl crate::storage::FlashOps for SdkStorage {
 }
 
 /// The service task's settings stage; see `settings_step`.
-static SETTINGS: Slot<crate::settings::Writer> = Slot::new();
+static SETTINGS: Slot<crate::settings::Writer<SdkStorage>> = Slot::new();
 static SETTINGS_RUNNING: AtomicBool = AtomicBool::new(false);
 
 struct SettingsLine(crate::settings::Record);
@@ -581,7 +581,7 @@ fn settings_step() -> u32 {
     };
     let provider = PROVIDER.get();
     // SAFETY: the provider is a static, never borrowed (see `PROVIDER`).
-    let step = unsafe { writer.step::<Hardware, SdkHooks, SdkStorage>(provider) };
+    let step = unsafe { writer.step::<Hardware, SdkHooks>(provider) };
 
     if let Some(record) = step.record {
         let mut report = startup::Report::new();

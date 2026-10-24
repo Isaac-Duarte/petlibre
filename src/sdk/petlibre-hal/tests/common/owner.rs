@@ -1,7 +1,6 @@
 //! Owner fixture: a booted owner over fake hardware, with scripted storage
 //! callbacks and an external flash authority.
 
-use core::ffi::c_void;
 use core::ptr;
 
 use super::*;
@@ -16,7 +15,7 @@ use petlibre_hal::owner::{Owner, OwnerConfig, OwnerState, OwnerStatus, OwnerTask
 use petlibre_hal::sdk::{self, fake};
 use petlibre_hal::supervision::events::EventsConfig;
 use petlibre_hal::supervision::watchdog::WatchdogConfig;
-use petlibre_testkit::journal_flash::FakeJournalFlash;
+use petlibre_testkit::journal_flash::{FakeJournalFlash, FlashIo};
 
 pub const CONFIG: OwnerConfig = OwnerConfig {
     feed: FeedLimits {
@@ -75,7 +74,7 @@ pub const PHASE_KNOWN: OwnerRecovery = OwnerRecovery {
 };
 
 pub struct Fixture {
-    pub owner: Owner,
+    pub owner: Owner<FixtureStorage>,
     pub config: OwnerConfig,
     pub authority: FlashCoord,
     pub disk: OwnerRecovery,
@@ -98,7 +97,7 @@ pub struct Fixture {
     pub reserve_mask_irqs: bool,
 
     pub flash: FakeJournalFlash,
-    pub journal: FeedJournal,
+    pub journal: FeedJournal<FlashIo>,
     pub use_journal: bool,
 }
 
@@ -138,19 +137,14 @@ impl Fixture {
     }
 
     /// The owner task's state, between task iterations.
-    pub fn task(&mut self) -> &mut OwnerTask {
+    pub fn task(&mut self) -> &mut OwnerTask<FixtureStorage> {
         // SAFETY: the fake runs the owner task only inside `run_task`, on this
         // thread, so no other borrow is live here.
         unsafe { &mut *self.owner.task_state() }
     }
 
-    pub fn storage(&mut self) -> OwnerStorage {
-        OwnerStorage {
-            context: ptr::from_mut(self).cast(),
-            recover: Some(recover),
-            reserve: Some(reserve),
-            finish: Some(finish_record),
-        }
+    pub fn storage(&mut self) -> FixtureStorage {
+        FixtureStorage(ptr::from_mut(self))
     }
 
     pub fn bind_authority(&mut self) {
@@ -161,7 +155,7 @@ impl Fixture {
     pub fn try_start(&mut self, config: &OwnerConfig) -> bool {
         let storage = self.storage();
         // SAFETY: the boxed fixture holds the owner, authority and storage context in place.
-        unsafe { self.owner.start(config, &storage) }
+        unsafe { self.owner.start(config, storage) }
     }
 
     pub fn create(&mut self) {
@@ -232,8 +226,29 @@ pub fn inactive_outputs() {
     assert!(optics_off());
 }
 
-pub unsafe extern "C" fn recover(context: *mut c_void, value: *mut OwnerRecovery) -> bool {
-    let f = context.cast::<Fixture>();
+/// The fixture's scripted storage, reached through the boxed fixture, which
+/// keeps the owner and its storage in place while the owner runs.
+#[derive(Debug)]
+pub struct FixtureStorage(*mut Fixture);
+
+impl OwnerStorage for FixtureStorage {
+    fn recover(&mut self, recovery: &mut OwnerRecovery) -> bool {
+        // SAFETY: as the type says.
+        unsafe { recover(self.0, recovery) }
+    }
+
+    fn reserve(&mut self, request: &FeedRequest) -> bool {
+        // SAFETY: as the type says.
+        unsafe { reserve(self.0, request) }
+    }
+
+    fn finish(&mut self, result: &OwnerResult, phase: &OwnerRecovery) -> bool {
+        // SAFETY: as the type says.
+        unsafe { finish_record(self.0, result, phase) }
+    }
+}
+
+unsafe fn recover(f: *mut Fixture, value: &mut OwnerRecovery) -> bool {
     inactive_outputs();
     // SAFETY: the fixture keeps the owner and its storage in place while it runs.
     unsafe {
@@ -256,12 +271,10 @@ pub unsafe extern "C" fn recover(context: *mut c_void, value: *mut OwnerRecovery
     }
 }
 
-pub unsafe extern "C" fn reserve(context: *mut c_void, request: *const FeedRequest) -> bool {
-    let f = context.cast::<Fixture>();
+unsafe fn reserve(f: *mut Fixture, request: &FeedRequest) -> bool {
     inactive_outputs();
     // SAFETY: the fixture keeps the owner and its storage in place while it runs.
     unsafe {
-        let request = &*request;
         (*f).reserve_calls += 1;
         assert!(!(*f).disk.pending_request && request.id > (*f).disk.high_water_id);
 
@@ -289,16 +302,10 @@ pub unsafe extern "C" fn reserve(context: *mut c_void, request: *const FeedReque
     }
 }
 
-pub unsafe extern "C" fn finish_record(
-    context: *mut c_void,
-    result: *const OwnerResult,
-    phase: *const OwnerRecovery,
-) -> bool {
-    let f = context.cast::<Fixture>();
+unsafe fn finish_record(f: *mut Fixture, result: &OwnerResult, phase: &OwnerRecovery) -> bool {
     inactive_outputs();
     // SAFETY: the fixture keeps the owner and its storage in place while it runs.
     unsafe {
-        let (result, phase) = (&*result, &*phase);
         (*f).finish_calls += 1;
         (*f).finish_refreshes = hw(|h| h.watchdog_refreshes);
         if (*f).finish_delay_ticks != 0 {
@@ -344,16 +351,15 @@ pub fn boot_with_journal(dual: bool) -> Box<Fixture> {
         f.config.bowl_mode = BowlMode::Double;
     }
 
-    let io = f.flash.io();
+    // SAFETY: the boxed fixture keeps the fake flash in place.
+    let io = unsafe { f.flash.io() };
     let c = JournalConfig {
         binding: 42,
         mode: f.config.bowl_mode,
         max_portions: CONFIG.feed.max_portions,
     };
-    // SAFETY: the boxed fixture keeps the fake flash in place.
     assert_eq!(
-        // SAFETY: the fixture's callbacks are sound for its context, which outlives the call.
-        unsafe { f.journal.create(io, c, Direction::D0, true, true) },
+        f.journal.create(io, c, Direction::D0, true, true),
         JournalError::Ok
     );
 
@@ -367,9 +373,10 @@ pub fn restart_with_journal(f: &mut Fixture) {
     assert!(!hw(|h| h.task_live));
     fake::reset_hardware();
     f.flash.budget = -1;
-    let (io, config) = (f.journal.io, f.journal.config);
     // SAFETY: as for `boot_with_journal`.
-    assert_eq!(unsafe { f.journal.open(io, config) }, JournalError::Ok);
+    let io = unsafe { f.flash.io() };
+    let config = f.journal.config;
+    assert_eq!(f.journal.open(io, config), JournalError::Ok);
     f.create();
     fake::run_task();
 }

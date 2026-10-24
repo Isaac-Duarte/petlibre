@@ -15,11 +15,10 @@
 //!
 //! Nothing here writes flash.
 
-use core::ffi::{c_uint, c_void};
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
 use petlibre_core::store::net::{Credentials, NetStore};
-use petlibre_core::store::slot::JournalIo;
+use petlibre_core::store::slot::SlotIo;
 use petlibre_core::transport::{WifiResult, WifiSource, WifiView};
 
 use crate::cell::TaskCell;
@@ -148,7 +147,7 @@ pub fn finish() {
 }
 
 /// The writer publishes what NOR holds; writable only once it is `armed`.
-pub fn publish(store: &NetStore, armed: bool) {
+pub fn publish<I: SlotIo>(store: &NetStore<I>, armed: bool) {
     STORED_CRC.store(
         store
             .credentials
@@ -199,35 +198,38 @@ static JOIN: TaskCell<Join> = TaskCell::new(Join {
     joined_once: false,
 });
 
-unsafe extern "C" fn read_only(
-    _context: *mut c_void,
-    slot: c_uint,
-    offset: u32,
-    bytes: *mut c_void,
-    size: usize,
-) -> bool {
-    if slot > 1 {
-        return false;
+/// The credential sectors through the flash map: reads need no lease, and
+/// the join half never writes.
+struct MappedNet;
+
+impl SlotIo for MappedNet {
+    fn unit_bytes(&self) -> u32 {
+        sdk::SECTOR_BYTES
     }
-    // SAFETY: the store passes a live buffer of `size` bytes.
-    let bytes = unsafe { core::slice::from_raw_parts_mut(bytes.cast::<u8>(), size) };
-    sdk::storage_read(NET_BASE + slot, offset, bytes)
+
+    fn read(&self, slot: u32, offset: u32, bytes: &mut [u8]) -> bool {
+        slot <= 1 && sdk::storage_read(NET_BASE + slot, offset, bytes)
+    }
+
+    fn program(&self, _slot: u32, _offset: u32, _bytes: &[u8]) -> bool {
+        false
+    }
+
+    fn erase(&self, _slot: u32) -> bool {
+        false
+    }
+
+    fn writable(&self) -> bool {
+        false
+    }
 }
 
 /// The stored credentials, read once through the flash map (no lease).
 fn stored(join: &mut Join) -> Option<Credentials> {
     if !join.opened {
         join.opened = true;
-        let io = JournalIo {
-            context: core::ptr::null_mut(),
-            unit_bytes: sdk::SECTOR_BYTES,
-            read: Some(read_only),
-            program: None,
-            erase: None,
-        };
         let mut store = NetStore::default();
-        // SAFETY: `read_only` is a static function over mapped reads.
-        unsafe { store.open(io) };
+        store.open(MappedNet);
         join.stored = store.credentials;
     }
     join.stored

@@ -4,9 +4,6 @@
 //! checked by CRC-32/ISO-HDLC of bytes 0..120 at 120 and committed by the
 //! `CMIT` marker at 124.
 
-use core::ffi::{c_uint, c_void};
-use core::ptr;
-
 pub const RECORD_BYTES: usize = 128;
 /// [`RECORD_BYTES`] as the header's length field stores it.
 pub(crate) const RECORD_LEN: u16 = 128;
@@ -28,86 +25,69 @@ pub(crate) const TAIL_CHUNK: u32 = 64;
 const _: () = assert!(COMMIT_AT == CRC_AT + 4 && RECORD_BYTES == COMMIT_AT + COMMIT.len());
 const _: () = assert!(RECORD_LEN as usize == RECORD_BYTES && COMMIT_OFFSET as usize == COMMIT_AT);
 
-pub type ReadFn = unsafe extern "C" fn(
-    context: *mut c_void,
-    slot: c_uint,
-    offset: u32,
-    bytes: *mut c_void,
-    size: usize,
-) -> bool;
+/// Two or more EXCLUSIVE, nonoverlapping erase units, assigned only after a
+/// complete physical flash map/backup. This interface contains no physical
+/// addresses. Reads must bypass/invalidate stale caches; writes return only
+/// after durable completion. Program permits aligned 4-byte granules, only
+/// 1->0, splitting physical pages as needed. Erase affects exactly one whole
+/// unit. All methods must be bounded. False may mean partial OR completed
+/// I/O; never retry blindly. The backend must independently enforce output
+/// inactivity and SDK flash/IRQ synchronization.
+pub trait SlotIo {
+    /// The size of one erase unit, in bytes.
+    fn unit_bytes(&self) -> u32;
+    fn read(&self, slot: u32, offset: u32, bytes: &mut [u8]) -> bool;
+    fn program(&self, slot: u32, offset: u32, bytes: &[u8]) -> bool;
+    fn erase(&self, slot: u32) -> bool;
 
-pub type ProgramFn = unsafe extern "C" fn(
-    context: *mut c_void,
-    slot: c_uint,
-    offset: u32,
-    bytes: *const c_void,
-    size: usize,
-) -> bool;
+    /// False for I/O that only reads (mapped flash with no lease): a store
+    /// refuses its writes up front rather than failing part-way.
+    fn writable(&self) -> bool {
+        true
+    }
+}
 
-pub type EraseFn = unsafe extern "C" fn(context: *mut c_void, slot: c_uint) -> bool;
-
-/// Two EXCLUSIVE, nonoverlapping erase units, assigned only after a complete
-/// physical flash map/backup. This interface contains no physical addresses.
-/// Reads must bypass/invalidate stale caches; writes return only after durable
-/// completion. Program permits aligned 4-byte granules, only 1->0, splitting
-/// physical pages as needed. Erase affects exactly one whole unit. All methods
-/// must be bounded. False may mean partial OR completed I/O; never retry
-/// blindly. The backend must independently enforce output inactivity and SDK
-/// flash/IRQ synchronization.
+/// A store's I/O once opened; before that, every call is refused.
 #[derive(Clone, Copy, Debug)]
-pub struct JournalIo {
-    pub context: *mut c_void,
-    pub unit_bytes: u32,
-    pub read: Option<ReadFn>,
-    pub program: Option<ProgramFn>,
-    pub erase: Option<EraseFn>,
+pub(crate) struct Bound<I>(Option<I>);
+
+impl<I> Bound<I> {
+    pub(crate) const NONE: Self = Self(None);
+
+    pub(crate) fn new(io: I) -> Self {
+        Self(Some(io))
+    }
 }
 
-impl Default for JournalIo {
+impl<I> Default for Bound<I> {
     fn default() -> Self {
-        Self {
-            context: ptr::null_mut(),
-            unit_bytes: 0,
-            read: None,
-            program: None,
-            erase: None,
-        }
+        Self::NONE
     }
 }
 
-#[allow(unsafe_code)]
-impl JournalIo {
-    // In all three, `FeedJournal::open`/`create` require the callbacks to
-    // be sound for `context`; the buffers are live Rust slices.
-    pub(crate) fn read(&self, slot: c_uint, offset: u32, bytes: &mut [u8]) -> bool {
-        // SAFETY: the callback contract above.
-        self.read.is_some_and(|f| unsafe {
-            f(
-                self.context,
-                slot,
-                offset,
-                bytes.as_mut_ptr().cast(),
-                bytes.len(),
-            )
-        })
+impl<I: SlotIo> Bound<I> {
+    pub(crate) fn unit_bytes(&self) -> u32 {
+        self.0.as_ref().map_or(0, SlotIo::unit_bytes)
     }
 
-    pub(crate) fn program(&self, slot: c_uint, offset: u32, bytes: &[u8]) -> bool {
-        // SAFETY: the callback contract above.
-        self.program.is_some_and(|f| unsafe {
-            f(
-                self.context,
-                slot,
-                offset,
-                bytes.as_ptr().cast(),
-                bytes.len(),
-            )
-        })
+    pub(crate) fn read(&self, slot: u32, offset: u32, bytes: &mut [u8]) -> bool {
+        self.0
+            .as_ref()
+            .is_some_and(|io| io.read(slot, offset, bytes))
     }
 
-    pub(crate) fn erase(&self, slot: c_uint) -> bool {
-        // SAFETY: the callback contract above.
-        self.erase.is_some_and(|f| unsafe { f(self.context, slot) })
+    pub(crate) fn program(&self, slot: u32, offset: u32, bytes: &[u8]) -> bool {
+        self.0
+            .as_ref()
+            .is_some_and(|io| io.program(slot, offset, bytes))
+    }
+
+    pub(crate) fn erase(&self, slot: u32) -> bool {
+        self.0.as_ref().is_some_and(|io| io.erase(slot))
+    }
+
+    pub(crate) fn writable(&self) -> bool {
+        self.0.as_ref().is_some_and(SlotIo::writable)
     }
 }
 

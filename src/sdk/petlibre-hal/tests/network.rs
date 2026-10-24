@@ -33,43 +33,27 @@ fn select() -> (Vec<u8>, Vec<u8>, u32) {
 
 /// Write a credential record into the fake storage, as the writer would.
 fn store(credentials: Option<Credentials>) {
-    use petlibre_core::store::slot::JournalIo;
-    use std::ffi::{c_uint, c_void};
-    unsafe extern "C" fn read(
-        _: *mut c_void,
-        slot: c_uint,
-        offset: u32,
-        bytes: *mut c_void,
-        size: usize,
-    ) -> bool {
-        // SAFETY: the store passes a live buffer of `size` bytes.
-        let out = unsafe { std::slice::from_raw_parts_mut(bytes.cast::<u8>(), size) };
-        petlibre_hal::sdk::storage_read(NET_BASE + slot, offset, out)
+    use petlibre_core::store::slot::SlotIo;
+
+    struct FakeNet;
+
+    impl SlotIo for FakeNet {
+        fn unit_bytes(&self) -> u32 {
+            petlibre_hal::sdk::SECTOR_BYTES
+        }
+        fn read(&self, slot: u32, offset: u32, bytes: &mut [u8]) -> bool {
+            petlibre_hal::sdk::storage_read(NET_BASE + slot, offset, bytes)
+        }
+        fn program(&self, slot: u32, offset: u32, bytes: &[u8]) -> bool {
+            petlibre_hal::sdk::storage_program(NET_BASE + slot, offset, bytes)
+        }
+        fn erase(&self, slot: u32) -> bool {
+            petlibre_hal::sdk::storage_erase(NET_BASE + slot)
+        }
     }
-    unsafe extern "C" fn program(
-        _: *mut c_void,
-        slot: c_uint,
-        offset: u32,
-        bytes: *const c_void,
-        size: usize,
-    ) -> bool {
-        // SAFETY: the store passes a live buffer of `size` bytes.
-        let data = unsafe { std::slice::from_raw_parts(bytes.cast::<u8>(), size) };
-        petlibre_hal::sdk::storage_program(NET_BASE + slot, offset, data)
-    }
-    unsafe extern "C" fn erase(_: *mut c_void, slot: c_uint) -> bool {
-        petlibre_hal::sdk::storage_erase(NET_BASE + slot)
-    }
-    let io = JournalIo {
-        context: std::ptr::null_mut(),
-        unit_bytes: petlibre_hal::sdk::SECTOR_BYTES,
-        read: Some(read),
-        program: Some(program),
-        erase: Some(erase),
-    };
+
     let mut s = NetStore::default();
-    // SAFETY: static callbacks over the fake storage.
-    unsafe { s.open(io) };
+    s.open(FakeNet);
     assert!(s.save(credentials.as_ref()));
     publish(&s, true);
 }

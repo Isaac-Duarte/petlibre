@@ -24,7 +24,8 @@ These stay where they are and are listed here instead. A second model would revi
 
 **Board, in code that is not the port layer:**
 - **Panel layout:** `petlibre_core::buttons::Buttons::from_port_b` maps PB4–PB7 to reset, mic, dispense and lock, active LOW. Core is hardware-independent and cannot depend on the SDK bindings; `board::BUTTONS` is the same order.
-- **Motor gate:** `petlibre_core::feed::motor_gate::MotorWritePair` names its fields `pa13_high` and `pa14_high`. No C code reads it since the core C ABI was removed, so a board-neutral rename is a Rust-only change.
+- **Motor gate:** the `petlibre_core::feed::motor_gate::MotorPins` trait names its arguments `pa13_high` and `pa14_high`. It is a Rust trait, so a board-neutral rename is a Rust-only change.
+- **Rust interfaces between Rust crates.** The motor pins (`MotorPins`), a store's flash (`store::slot::SlotIo`) and the owner's journal (`feed::storage::OwnerStorage`) are traits the caller's types implement, so each call is direct: the build's stack audit follows it, and no context pointer crosses it. Only what C or the SDK calls stays `extern "C"`: the flash-lock hook provider the RAM interposer installs, the interrupt handlers, and the `petlibre_*` exports.
 - **Motor driver:** the TC118AH's truth table (both inputs HIGH is brake, both LOW is refused) is in `petlibre_hal::board::motor_pair`. Which drive direction dispenses is still open (FW16).
 - **Beams:** `petlibre_core::feed::sensor_inputs` holds their polarity and which is food and which is outlet.
 - **Stopped outputs:** `petlibre_hal::stopped` defines stopped as motor HIGH, emitters LOW and SWD released. The raw-register copies in `target.rs` (`panic_outputs_safe`, `ram_outputs_safe`) use the derived masks, and the RAM-park audit checks the latter as leaf code.

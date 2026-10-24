@@ -16,7 +16,6 @@ use petlibre_core::noise::Keypair;
 use petlibre_core::setup_code::{Code, PRESSES};
 use petlibre_core::store::clients::Role;
 use petlibre_core::store::net::NetStore;
-use petlibre_core::store::slot::JournalIo;
 use petlibre_core::tone::Tune;
 use petlibre_core::transport::SettingsView;
 use petlibre_feeder::pairing::{Config, Event, Pairing, Path, Refusal as PairRefusal};
@@ -216,28 +215,32 @@ impl Bench {
 
 /// What the settings writer would publish after opening or saving.
 fn publish(generation: u64, credentials: Option<petlibre_core::store::net::Credentials>) {
-    use std::ffi::{c_uint, c_void};
-    unsafe extern "C" fn read(
-        _: *mut c_void,
-        slot: c_uint,
-        offset: u32,
-        bytes: *mut c_void,
-        size: usize,
-    ) -> bool {
-        // SAFETY: the store passes a live buffer of `size` bytes.
-        let out = unsafe { std::slice::from_raw_parts_mut(bytes.cast::<u8>(), size) };
-        petlibre_sdk::hal::sdk::storage_read(network::NET_BASE + slot, offset, out)
+    use petlibre_core::store::slot::SlotIo;
+
+    /// The credential sectors of the fake storage, read-only as the join
+    /// half reads them.
+    struct FakeNet;
+
+    impl SlotIo for FakeNet {
+        fn unit_bytes(&self) -> u32 {
+            petlibre_sdk::hal::sdk::SECTOR_BYTES
+        }
+        fn read(&self, slot: u32, offset: u32, bytes: &mut [u8]) -> bool {
+            petlibre_sdk::hal::sdk::storage_read(network::NET_BASE + slot, offset, bytes)
+        }
+        fn program(&self, _: u32, _: u32, _: &[u8]) -> bool {
+            false
+        }
+        fn erase(&self, _: u32) -> bool {
+            false
+        }
+        fn writable(&self) -> bool {
+            false
+        }
     }
-    let io = JournalIo {
-        context: std::ptr::null_mut(),
-        unit_bytes: petlibre_sdk::hal::sdk::SECTOR_BYTES,
-        read: Some(read),
-        program: None,
-        erase: None,
-    };
+
     let mut store = NetStore::default();
-    // SAFETY: a static callback over the fake storage.
-    unsafe { store.open(io) };
+    store.open(FakeNet);
     store.generation = generation;
     store.credentials = credentials;
     network::publish(&store, true);

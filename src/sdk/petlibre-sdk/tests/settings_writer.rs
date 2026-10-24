@@ -86,7 +86,7 @@ impl FlashOps for Armed {
 /// The settings and network views are process-wide; the fake hardware is per thread.
 static SERIAL: Mutex<()> = Mutex::new(());
 
-fn start() -> (MutexGuard<'static, ()>, Writer, Provider) {
+fn start() -> (MutexGuard<'static, ()>, Writer<Armed>, Provider) {
     let guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     fake::reset_hardware();
     settings::reset();
@@ -97,9 +97,9 @@ fn start() -> (MutexGuard<'static, ()>, Writer, Provider) {
     (guard, Writer::default(), Provider::default())
 }
 
-fn step(writer: &mut Writer, provider: &mut Provider) -> Option<Record> {
+fn step(writer: &mut Writer<Armed>, provider: &mut Provider) -> Option<Record> {
     // SAFETY: the provider outlives the run.
-    unsafe { writer.step::<NoMmio, Armed, Armed>(provider) }.record
+    unsafe { writer.step::<NoMmio, Armed>(provider) }.record
 }
 
 fn current() -> (bool, bool, u8, u32, bool) {
@@ -361,7 +361,7 @@ fn keys_carry_the_seed_and_create_the_identity_once() {
 }
 
 /// One queued key change, applied on the writer's next step.
-fn change(writer: &mut Writer, provider: &mut Provider, change: Change) -> Record {
+fn change(writer: &mut Writer<Armed>, provider: &mut Provider, change: Change) -> Record {
     assert_eq!(keys::request(change), Requested::Queued);
     let record = step(writer, provider).expect("the change record");
     assert_eq!(keys::pending(), None, "the slot is free again");

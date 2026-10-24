@@ -29,8 +29,8 @@
 use core::ffi::c_uint;
 
 use crate::store::slot::{
-    COMMIT, JournalIo, LENGTH_AT, VERSION_AT, crc32, get_u16, get_u32, get_u64, put_u16, put_u32,
-    put_u64,
+    Bound, COMMIT, LENGTH_AT, SlotIo, VERSION_AT, crc32, get_u16, get_u32, get_u64, put_u16,
+    put_u32, put_u64,
 };
 
 pub const VERSION: u16 = 1;
@@ -176,15 +176,15 @@ enum Scan {
 }
 
 #[derive(Clone, Copy)]
-pub struct ClientStore {
-    io: JournalIo,
+pub struct ClientStore<I> {
+    io: Bound<I>,
     pub status: ClientStatus,
     pub generation: u64,
     pub slot: c_uint,
     table: Table,
 }
 
-impl core::fmt::Debug for ClientStore {
+impl<I: SlotIo> core::fmt::Debug for ClientStore<I> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("ClientStore")
             .field("status", &self.status)
@@ -195,10 +195,10 @@ impl core::fmt::Debug for ClientStore {
     }
 }
 
-impl Default for ClientStore {
+impl<I> Default for ClientStore<I> {
     fn default() -> Self {
         Self {
-            io: JournalIo::default(),
+            io: Bound::NONE,
             status: ClientStatus::Unopened,
             generation: 0,
             slot: 0,
@@ -309,7 +309,7 @@ fn decode(p: &[u8; RECORD_BYTES], table: &mut Table) -> Scan {
     Scan::Valid(generation)
 }
 
-impl ClientStore {
+impl<I: SlotIo> ClientStore<I> {
     /// Scan `slot` into the store's own table, so open never holds two
     /// decoded tables on the stack.
     fn scan(&mut self, slot: c_uint) -> Option<Scan> {
@@ -320,16 +320,13 @@ impl ClientStore {
     }
 
     /// Bind to two exclusive erase units and load the newest valid table.
-    ///
-    /// # Safety
-    /// The I/O callbacks must be sound for `io.context` while the store is used.
-    #[allow(unsafe_code)]
-    pub unsafe fn open(&mut self, io: JournalIo) -> ClientStatus {
+    pub fn open(&mut self, io: I) -> ClientStatus {
+        let unit = io.unit_bytes();
         *self = Self {
-            io,
+            io: Bound::new(io),
             ..Self::default()
         };
-        if io.read.is_none() || (io.unit_bytes as usize) < RECORD_BYTES {
+        if (unit as usize) < RECORD_BYTES {
             self.status = ClientStatus::Io;
             return self.status;
         }
@@ -433,7 +430,7 @@ impl ClientStore {
     /// Write `table` to the other unit: erase, program, verify, commit,
     /// verify. A failure keeps the previous table in memory.
     fn save(&mut self, table: &Table) -> Result<(), ClientError> {
-        if !self.writable() || self.io.program.is_none() || self.io.erase.is_none() {
+        if !self.writable() || !self.io.writable() {
             return Err(ClientError::NotWritable);
         }
         let generation = self.generation + 1;

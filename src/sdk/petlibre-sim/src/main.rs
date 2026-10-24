@@ -22,7 +22,7 @@ use petlibre_core::feed::sensor_inputs::SensorLimits;
 use petlibre_core::feed::storage::{OwnerRecovery, OwnerResult, OwnerStorage};
 use petlibre_core::flash_coord::{FlashCoord, FlashLimits, FlashReply};
 use petlibre_core::store::feed_journal::{FeedJournal, JournalConfig, JournalError};
-use petlibre_core::store::slot::JournalIo;
+use petlibre_core::store::slot::SlotIo;
 use petlibre_hal::owner::{Owner, OwnerConfig};
 use petlibre_hal::sdk::fake;
 use petlibre_hal::supervision::events::EventsConfig;
@@ -31,7 +31,7 @@ use petlibre_sim::protocol::{
     Code, Command, Event, Fault, IoOperation, IoStage, Journal, Outcome, Profile, Reason, State,
     Status, StoragePhase, WorkerArgs,
 };
-use petlibre_testkit::journal_flash::{FakeJournalFlash, UNIT};
+use petlibre_testkit::journal_flash::{FakeJournalFlash, FlashIo, UNIT};
 
 /// Synthetic profile copied from the owner tests; not hardware calibration.
 fn config() -> OwnerConfig {
@@ -90,10 +90,10 @@ fn config() -> OwnerConfig {
 
 /// Process-wide simulation state, reached from SDK/journal callbacks.
 struct World {
-    owner: Owner,
-    journal: FeedJournal,
+    owner: Owner<SimStorage>,
+    journal: FeedJournal<SimIo>,
     flash: FakeJournalFlash,
-    base_io: JournalIo,
+    base_io: Option<FlashIo>,
     authority: FlashCoord,
     disk: File,
 
@@ -256,56 +256,74 @@ fn io_event(
     });
 }
 
-unsafe extern "C" fn read_io(
-    context: *mut c_void,
-    slot: c_uint,
-    offset: u32,
-    bytes: *mut c_void,
-    size: usize,
-) -> bool {
-    // SAFETY: the worker's world outlives every journal callback.
-    let read = unsafe { (*w()).base_io.read }.expect("the base flash reads");
-    // SAFETY: forwards the journal's own arguments to the base flash.
-    let ok = unsafe { read(context, slot, offset, bytes, size) };
-    io_event(IoOperation::Read, IoStage::End, slot, offset, size, ok);
-    ok
+/// The base flash, bound once the world is in place and before any journal
+/// I/O.
+fn base() -> FlashIo {
+    // SAFETY: see `w`.
+    unsafe { (*w()).base_io }.expect("the base flash is bound")
 }
 
-unsafe extern "C" fn program_io(
-    context: *mut c_void,
-    slot: c_uint,
-    offset: u32,
-    bytes: *const c_void,
-    size: usize,
-) -> bool {
-    // Journal writes must only happen with the motor and optics off; the worker
-    // fails loudly if the owner ever programs or erases flash while either is on.
-    assert!(motor() == 0 && optics() == 0);
-    io_event(
-        IoOperation::Program,
-        IoStage::Begin,
-        slot,
-        offset,
-        size,
-        false,
-    );
-    // SAFETY: the worker's world outlives every journal callback.
-    let program = unsafe { (*w()).base_io.program }.expect("the base flash programs");
-    // SAFETY: forwards the journal's own arguments to the base flash.
-    let ok = unsafe { program(context, slot, offset, bytes, size) };
-    io_event(IoOperation::Program, IoStage::End, slot, offset, size, ok);
-    ok
+/// The journal's flash: the fake NOR, reported as `JournalIo` events once
+/// provisioning is done.
+#[derive(Clone, Copy)]
+struct SimIo {
+    traced: bool,
 }
 
-unsafe extern "C" fn erase_io(context: *mut c_void, slot: c_uint) -> bool {
-    assert!(motor() == 0 && optics() == 0);
-    io_event(IoOperation::Erase, IoStage::Begin, slot, 0, UNIT, false);
-    // SAFETY: the worker's world outlives every journal callback.
-    let erase = unsafe { (*w()).base_io.erase }.expect("the base flash erases");
-    // SAFETY: forwards the journal's own arguments to the base flash.
-    let ok = unsafe { erase(context, slot) };
-    io_event(IoOperation::Erase, IoStage::End, slot, 0, UNIT, ok);
-    ok
+impl SlotIo for SimIo {
+    fn unit_bytes(&self) -> u32 {
+        base().unit_bytes()
+    }
+
+    fn read(&self, slot: u32, offset: u32, bytes: &mut [u8]) -> bool {
+        let ok = base().read(slot, offset, bytes);
+        if self.traced {
+            io_event(
+                IoOperation::Read,
+                IoStage::End,
+                slot,
+                offset,
+                bytes.len(),
+                ok,
+            );
+        }
+        ok
+    }
+
+    fn program(&self, slot: u32, offset: u32, bytes: &[u8]) -> bool {
+        if !self.traced {
+            return base().program(slot, offset, bytes);
+        }
+
+        // Journal writes must only happen with the motor and optics off; the
+        // worker fails loudly if the owner ever programs or erases flash
+        // while either is on.
+        assert!(motor() == 0 && optics() == 0);
+        let size = bytes.len();
+        io_event(
+            IoOperation::Program,
+            IoStage::Begin,
+            slot,
+            offset,
+            size,
+            false,
+        );
+        let ok = base().program(slot, offset, bytes);
+        io_event(IoOperation::Program, IoStage::End, slot, offset, size, ok);
+        ok
+    }
+
+    fn erase(&self, slot: u32) -> bool {
+        if !self.traced {
+            return base().erase(slot);
+        }
+
+        assert!(motor() == 0 && optics() == 0);
+        io_event(IoOperation::Erase, IoStage::Begin, slot, 0, UNIT, false);
+        let ok = base().erase(slot);
+        io_event(IoOperation::Erase, IoStage::End, slot, 0, UNIT, ok);
+        ok
+    }
 }
 
 /// The `cut` command can only target reserve or finish.
@@ -340,41 +358,33 @@ fn storage_end(ok: bool) {
     }
 }
 
-fn journal_storage() -> OwnerStorage {
-    // SAFETY: see `w`; the journal lives in the leaked world.
-    unsafe { (*w()).journal.storage() }
-}
+/// The owner's storage: the journal, each call reported as a storage phase.
+struct SimStorage;
 
-unsafe extern "C" fn recover(_: *mut c_void, value: *mut OwnerRecovery) -> bool {
-    storage_begin(StoragePhase::Recover);
-    let s = journal_storage();
-    // SAFETY: the journal storage callbacks with a live output pointer.
-    let ok =
-        unsafe { (*w()).opened && s.recover.expect("journal storage recovers")(s.context, value) };
-    storage_end(ok);
-    ok
-}
+impl OwnerStorage for SimStorage {
+    fn recover(&mut self, recovery: &mut OwnerRecovery) -> bool {
+        storage_begin(StoragePhase::Recover);
+        // SAFETY: see `w`; the journal lives in the leaked world.
+        let ok = unsafe { (*w()).opened && OwnerStorage::recover(&mut (*w()).journal, recovery) };
+        storage_end(ok);
+        ok
+    }
 
-unsafe extern "C" fn reserve(_: *mut c_void, request: *const FeedRequest) -> bool {
-    storage_begin(StoragePhase::Reserve);
-    let s = journal_storage();
-    // SAFETY: as for `recover`.
-    let ok = unsafe { s.reserve.expect("journal storage reserves")(s.context, request) };
-    storage_end(ok);
-    ok
-}
+    fn reserve(&mut self, request: &FeedRequest) -> bool {
+        storage_begin(StoragePhase::Reserve);
+        // SAFETY: as for `recover`.
+        let ok = unsafe { OwnerStorage::reserve(&mut (*w()).journal, request) };
+        storage_end(ok);
+        ok
+    }
 
-unsafe extern "C" fn finish(
-    _: *mut c_void,
-    result: *const OwnerResult,
-    phase: *const OwnerRecovery,
-) -> bool {
-    storage_begin(StoragePhase::Finish);
-    let s = journal_storage();
-    // SAFETY: as for `recover`.
-    let ok = unsafe { s.finish.expect("journal storage finishes")(s.context, result, phase) };
-    storage_end(ok);
-    ok
+    fn finish(&mut self, result: &OwnerResult, phase: &OwnerRecovery) -> bool {
+        storage_begin(StoragePhase::Finish);
+        // SAFETY: as for `recover`.
+        let ok = unsafe { OwnerStorage::finish(&mut (*w()).journal, result, phase) };
+        storage_end(ok);
+        ok
+    }
 }
 
 fn status(response: u64) {
@@ -491,7 +501,7 @@ fn main() {
         owner: Owner::default(),
         journal: FeedJournal::default(),
         flash,
-        base_io: JournalIo::default(),
+        base_io: None,
         authority: FlashCoord::default(),
         disk,
         device_ms: 0,
@@ -514,7 +524,7 @@ fn main() {
     // SAFETY: the world is leaked for the process lifetime; single-threaded.
     unsafe {
         WORLD = world;
-        let io = FakeJournalFlash::io_at(flash_ptr());
+        (*world).base_io = Some(FakeJournalFlash::io_at(flash_ptr()));
         let jc = JournalConfig {
             binding: 17,
             mode,
@@ -522,20 +532,14 @@ fn main() {
         };
 
         if provision {
+            let io = SimIo { traced: false };
             if (*world).journal.create(io, jc, Direction::D0, true, true) != JournalError::Ok {
                 fail("Cannot provision synthetic journal");
             }
             save();
         }
 
-        (*world).base_io = io;
-        let wrapped = JournalIo {
-            read: Some(read_io),
-            program: Some(program_io),
-            erase: Some(erase_io),
-            ..io
-        };
-        (*world).opened = (*world).journal.open(wrapped, jc) == JournalError::Ok;
+        (*world).opened = (*world).journal.open(SimIo { traced: true }, jc) == JournalError::Ok;
 
         fake::reset_hardware();
         fake::with(|h| h.output_hook = Some(outputs));
@@ -561,14 +565,7 @@ fn main() {
             ..config()
         };
 
-        let storage = OwnerStorage {
-            context: ptr::null_mut(),
-            recover: Some(recover),
-            reserve: Some(reserve),
-            finish: Some(finish),
-        };
-
-        if !(*world).owner.start(&c, &storage) {
+        if !(*world).owner.start(&c, SimStorage) {
             fail("Owner start failed");
         }
     }

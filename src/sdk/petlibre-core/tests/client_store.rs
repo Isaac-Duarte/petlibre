@@ -6,11 +6,11 @@ use petlibre_core::store::clients::{
     CLIENTS, ClientError, ClientStatus, ClientStore, Label, RECORD_BYTES, Role,
 };
 use petlibre_core::store::slot::crc32;
-use petlibre_testkit::journal_flash::FakeJournalFlash;
+use petlibre_testkit::journal_flash::{FakeJournalFlash, FlashIo};
 
 const UNIT: usize = 1024;
 
-fn open(f: &mut FakeJournalFlash) -> ClientStore {
+fn open(f: &mut FakeJournalFlash) -> ClientStore<FlashIo> {
     let mut s = ClientStore::default();
     // SAFETY: the fake flash outlives the store in every test.
     unsafe { s.open(f.io()) };

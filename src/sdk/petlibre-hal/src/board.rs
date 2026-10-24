@@ -5,13 +5,12 @@
 //! These functions TOUCH GPIO/ADC when executed. The diagnostic never calls
 //! them. Verify the board, startup/output behavior and recovery first.
 
-use core::ffi::c_void;
 use core::ptr::{self, addr_of};
 
 use petlibre_core::HALF_RANGE;
 use petlibre_core::adc_scale::{AdcCalibration, SAMPLES};
 use petlibre_core::feed::controller::MotorCommand;
-use petlibre_core::feed::motor_gate::{MotorGate, MotorGateFault};
+use petlibre_core::feed::motor_gate::{MotorGate, MotorGateFault, MotorPins};
 use petlibre_core::feed::sensor_inputs::SensorReading;
 use petlibre_core::flash_coord::FlashCoord;
 
@@ -42,7 +41,7 @@ pub struct SensorsOpen {
 /// Keep this object at a fixed address while opened; its gate refers back to it.
 #[derive(Debug)]
 pub struct Board {
-    pub motor: MotorGate,
+    pub motor: MotorGate<BoardPins>,
     pub calibration: AdcCalibration,
     pub adc_poll_limit: u32,
     pub opened: bool,
@@ -94,35 +93,41 @@ pub fn optics_are(a: bool, b: bool) -> bool {
     optic_is(OPTICS[0], a) && optic_is(OPTICS[1], b)
 }
 
-/// Motor pins callback. Reads board fields through the raw context pointer so
-/// it never aliases the gate borrow that invokes it.
-unsafe extern "C" fn motor_pair(context: *mut c_void, a: bool, b: bool) -> bool {
-    let board = context.cast::<Board>().cast_const();
-    let stopped = a && b;
-    let guard = IrqGuard::lock();
+/// The board's motor pins, for its own gate. Reads board fields through the
+/// raw pointer so it never aliases the gate borrow that invokes it.
+#[derive(Clone, Copy, Debug)]
+pub struct BoardPins(*mut Board);
 
-    // SAFETY: `context` is the opened board, serialized by the guard.
-    let (opened, faulted, flash) = unsafe {
-        (
-            addr_of!((*board).opened).read(),
-            addr_of!((*board).faulted).read(),
-            addr_of!((*board).flash).read(),
-        )
-    };
-    if (!a && !b) || (!stopped && (!opened || faulted || outputs_blocked(flash))) {
-        return false;
+impl MotorPins for BoardPins {
+    fn write_pair(&mut self, a: bool, b: bool) -> bool {
+        let board = self.0.cast_const();
+        let stopped = a && b;
+        let guard = IrqGuard::lock();
+
+        // SAFETY: the pointer is the opened board, which stays in place while
+        // opened (`open_outputs`), serialized by the guard.
+        let (opened, faulted, flash) = unsafe {
+            (
+                addr_of!((*board).opened).read(),
+                addr_of!((*board).faulted).read(),
+                addr_of!((*board).flash).read(),
+            )
+        };
+        if (!a && !b) || (!stopped && (!opened || faulted || outputs_blocked(flash))) {
+            return false;
+        }
+
+        let value = if a { sdk::MOTOR_A_BIT } else { 0 } | if b { sdk::MOTOR_B_BIT } else { 0 };
+        sdk::gpio_port_write(GPIO_PORT_A, MOTOR_MASK, value);
+        let verified = sdk::gpio_port_read(GPIO_PORT_A, MOTOR_MASK) & MOTOR_MASK == value;
+        drop(guard);
+
+        if !verified {
+            // SAFETY: as above; a single bool store.
+            unsafe { ptr::addr_of_mut!((*self.0).faulted).write(true) };
+        }
+        verified
     }
-
-    let value = if a { sdk::MOTOR_A_BIT } else { 0 } | if b { sdk::MOTOR_B_BIT } else { 0 };
-    sdk::gpio_port_write(GPIO_PORT_A, MOTOR_MASK, value);
-    let verified = sdk::gpio_port_read(GPIO_PORT_A, MOTOR_MASK) & MOTOR_MASK == value;
-    drop(guard);
-
-    if !verified {
-        // SAFETY: as above; a single bool store.
-        unsafe { ptr::addr_of_mut!((*context.cast::<Board>()).faulted).write(true) };
-    }
-    verified
 }
 
 impl Board {
@@ -193,12 +198,9 @@ impl Board {
         sdk::gpio_port_write(GPIO_PORT_A, MOTOR_MASK, MOTOR_MASK);
         sdk::gpio_init(MOTOR_A, true);
         sdk::gpio_init(MOTOR_B, true);
-        let context = ptr::from_mut(self).cast();
-        // SAFETY: the callback reads this fixed-address board while opened.
-        let motor_ok = unsafe {
-            self.motor
-                .init(Some(motor_pair), context, deadtime_ms, lease_ms, now_ms)
-        };
+        // The pins read this fixed-address board while it is opened.
+        let pins = BoardPins(ptr::from_mut(self));
+        let motor_ok = self.motor.init(pins, deadtime_ms, lease_ms, now_ms);
 
         // PB3 is SWD_CLK: release it first, as stock does, or the latch
         // never reaches the pad.
@@ -267,7 +269,7 @@ impl Board {
     /// Stops/inhibits motion for a flash lease. Interrupted output latches the
     /// board fault; success establishes GPIO logic only, not motor mechanics.
     pub fn flash_quiesce(&mut self) -> bool {
-        if !self.optics_initialized || self.motor.write_pair.is_none() {
+        if !self.optics_initialized || self.motor.pins.is_none() {
             return false;
         }
         let _guard = IrqGuard::lock();

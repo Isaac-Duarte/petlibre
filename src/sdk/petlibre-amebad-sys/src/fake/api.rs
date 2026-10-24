@@ -378,6 +378,14 @@ pub fn systimer_ticks() -> u32 {
     with(|h| h.raw_ticks)
 }
 
+pub fn heap_free() -> u32 {
+    with(|h| h.heap_free)
+}
+
+pub fn heap_min_free() -> u32 {
+    with(|h| h.heap_min_free)
+}
+
 pub fn gtimer_clock_enable() {}
 
 pub fn gpio_int_config(pin: u32, enabled: bool) {

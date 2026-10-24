@@ -78,6 +78,7 @@ pub mod clock;
 pub mod feed;
 pub mod flash_coord;
 pub mod hex;
+pub mod noise;
 pub mod ota;
 pub mod record;
 pub mod request_auth;

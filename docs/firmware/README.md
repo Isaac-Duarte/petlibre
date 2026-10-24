@@ -4,7 +4,7 @@
 
 The local server talks to **stock 1.1.15** over its existing MQTT protocol. It does not run inside the feeder. The replacement firmware uses Rust application components on the Realtek AmebaD SDK. Its current physical milestones include build-bound diagnostic startup, stopped-output GPIO startup, and bounded visible indicator control; functional feeding remains unimplemented on hardware.
 
-Stock 1.1.15 can install the replacement over its own updater, with no UART write (physical, FW40). [Consumer installation](consumer-installation.md) covers stock's setup protocol, the install flow an app would run, the way back to stock, and the server and app architecture. [Stock OTA requirements](stock-ota-requirements.md) has the image contract. [Product architecture](product-architecture.md) has the target the SDK is built toward: one firmware, an optional server, a feeder-hosted API and native Home Assistant.
+Stock 1.1.15 can install the replacement over its own updater, with no UART write (physical, FW40). [Consumer installation](consumer-installation.md) covers stock's setup protocol, the install flow an app would run, the way back to stock, and the server and app architecture. [Stock OTA requirements](stock-ota-requirements.md) has the image contract. [Product architecture](product-architecture.md) has the target the SDK is built toward: one firmware, an optional server, a feeder-hosted API and native Home Assistant. [Resource budget](resource-budget.md) measures whether that product fits the PLAF103 (FW44).
 
 | Crate | Responsibility |
 | --- | --- |

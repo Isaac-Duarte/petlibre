@@ -7,6 +7,7 @@ use petlibre_feeder::panel::BUTTONS;
 use petlibre_sdk::Slot;
 use petlibre_sdk::hal::{panel, sdk, settings, startup};
 
+use crate::budget::{self, Budget};
 use crate::owner::{self, Inputs, Owner};
 
 petlibre_sdk::firmware!(start);
@@ -26,41 +27,94 @@ fn start() {
     petlibre_sdk::buttons::start(BUTTONS);
 }
 
-/// The step and one formatted record; the build's stack audit checks the
-/// bound.
-const LOOP_STACK_WORDS: u16 = 1024;
+/// The step, a Noise operation and one formatted record; the build's stack
+/// audit checks the bound. A handshake operation's X25519 is the deepest
+/// path (FW44: 3820 bytes), so 4 KiB would not keep the audit's margin.
+const LOOP_STACK_WORDS: u16 = 1536;
 
 /// Touched only by the loop task; see `loop_task`.
 static OWNER: Slot<Owner> = Slot::new();
+/// The session table is larger than the loop's stack, so it is built at
+/// compile time. Touched only by the loop task.
+static BUDGET: Slot<Budget> = Slot::filled(Budget::new());
+#[cfg(feature = "setup")]
+static SETUP: Slot<petlibre_sdk::hal::ble::BleSetup> = Slot::new();
 
-struct Line(owner::Record);
+/// Writes one `PL…1` record line.
+fn log(args: core::fmt::Arguments<'_>) {
+    let mut report = startup::Report::new();
+    if let Ok(line) = report.record(args) {
+        sdk::log(line);
+    }
+}
 
-impl core::fmt::Display for Line {
+struct Panel(owner::Record);
+
+impl core::fmt::Display for Panel {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         owner::describe(self.0, f)
     }
 }
 
-unsafe extern "C" fn loop_task(_: *mut c_void) -> u32 {
-    // SAFETY: only this task touches the slot.
-    let owner = unsafe { OWNER.get_or_init(Owner::default) };
+struct Api(budget::Record);
 
+impl core::fmt::Display for Api {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        budget::describe(self.0, f)
+    }
+}
+
+unsafe extern "C" fn loop_task(_: *mut c_void) -> u32 {
+    // SAFETY: only this task touches the slots.
+    let (owner, Some(budget)) = (unsafe { OWNER.get_or_init(Owner::default) }, unsafe {
+        BUDGET.get()
+    }) else {
+        return 0;
+    };
+
+    let now_ms = sdk::uptime_ms();
     let inputs = Inputs {
-        now_ms: sdk::uptime_ms(),
+        now_ms,
         gestures: core::iter::from_fn(petlibre_sdk::buttons::next),
         remote: panel::take(),
         lights: settings::current().is_none_or(|view| view.lights),
     };
-    let delay_ms = owner.step(inputs, |record| {
-        let mut report = startup::Report::new();
-        if let Ok(line) = report.record(format_args!("PLPANEL1 {}\r\n", Line(record))) {
-            sdk::log(line);
-        }
+    let mut delay_ms = owner.step(inputs, |record| {
+        log(format_args!("PLPANEL1 {}\r\n", Panel(record)))
     });
 
     // Requests read what the owner holds after this step.
     if let Some(lock) = owner.lock() {
         panel::publish(lock.locked());
     }
+
+    // A timed operation ran: come straight back for the next one.
+    if budget.step(now_ms, |record| {
+        log(format_args!("PLAPI1 {}\r\n", Api(record)))
+    }) {
+        delay_ms = 1;
+    }
+
+    #[cfg(feature = "setup")]
+    {
+        // SAFETY: only this task touches the slot.
+        let setup = unsafe { SETUP.get_or_init(Default::default) };
+        let step = setup.step();
+        if let Some(record) = step.record {
+            log(format_args!("PLBLE1 {}\r\n", Ble(record)));
+        }
+        delay_ms = delay_ms.min(step.delay_ms.max(1));
+    }
+
     delay_ms
+}
+
+#[cfg(feature = "setup")]
+struct Ble(petlibre_sdk::hal::ble::Record);
+
+#[cfg(feature = "setup")]
+impl core::fmt::Display for Ble {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        petlibre_sdk::hal::ble::describe(self.0, f)
+    }
 }

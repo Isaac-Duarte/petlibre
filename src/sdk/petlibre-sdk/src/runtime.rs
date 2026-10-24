@@ -189,9 +189,21 @@ unsafe extern "C" fn net_task(_: *mut c_void) -> u32 {
     delay
 }
 
+/// A signed request's HMAC and reply is the deepest path: 5488 bytes once the
+/// stack audit counted `subw` frames (FW44), past 6 KiB's margin.
+const NET_STACK_WORDS: u16 = 2048;
+
 fn start_transport() {
     // SAFETY: the step takes no context and keeps its state in statics.
-    let created = unsafe { sdk::task_create(c"petlibre-net", 1536, 2, net_task, ptr::null_mut()) };
+    let created = unsafe {
+        sdk::task_create(
+            c"petlibre-net",
+            NET_STACK_WORDS,
+            2,
+            net_task,
+            ptr::null_mut(),
+        )
+    };
     sdk::log(if created {
         c"PLMQT1 start created=1\r\n"
     } else {

@@ -335,6 +335,20 @@ pub fn systimer_ticks() -> u32 {
     unsafe { raw::SYSTIMER_TickGet() }
 }
 
+/// The FreeRTOS heap's free bytes now.
+pub fn heap_free() -> u32 {
+    // SAFETY: the pinned SDK routine, with no arguments.
+    let free = unsafe { raw::xPortGetFreeHeapSize() };
+    u32::try_from(free).unwrap_or(u32::MAX)
+}
+
+/// The least the FreeRTOS heap has had free since boot.
+pub fn heap_min_free() -> u32 {
+    // SAFETY: the pinned SDK routine, with no arguments.
+    let free = unsafe { raw::xPortGetMinimumEverFreeHeapSize() };
+    u32::try_from(free).unwrap_or(u32::MAX)
+}
+
 pub fn gtimer_clock_enable() {
     // SAFETY: the pinned SDK routine, with plain-value arguments.
     unsafe {

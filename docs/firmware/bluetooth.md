@@ -70,6 +70,7 @@ Host: `petlibre setup --ssid NAME` (the owner's CLI) reads the passphrase from s
   - `capture fw45-setup-03`: on a locked panel the chord was refused (`refusal=locked`). With no press, the feeder refused after 60 s (`reply refused reason=unconfirmed`), but it dropped the link right after the reply and the CLI never reported it; the CLI then stalled in BlueZ's disconnect.
   - Fixed in v109 (`fw45-setup-04`): the feeder waits 2 s for the client to hang up before dropping the link, and the CLI bounds its disconnect. `capture fw45-setup-05`: the CLI reported "nobody pressed Dispense in time", and setup mode stayed on, advertising again.
   - Afterwards a signed clear emptied the Wi-Fi store (generation 20). The enrolled CLI key stays.
+  - **Mains only** (`fw45-battery-01`–`03`, three D cells): in setup mode, cutting the bench's adapter relay gave `PLBAT1 sample adapter=0` then `advertising on=0` with the feeder still running; restoring it gave `adapter=1` then `advertising on=1`.
   - With no further session, setup mode rebooted on its own after its 15-minute idle limit (uptime 1,073 s back to 23 s) and the feeder came back online with `source: build`.
 
 - **Physical (Oct 23), the retired FW34 `ble` firmware** (`fw34-setup-01`–`03`, OTA v70; its HMAC-signed exchange is gone):

@@ -162,7 +162,7 @@ The timeouts are ours: stock pairs through the vendor cloud and has no equivalen
 
 ## Left for FW45
 
-1. **BLE setup on hardware:** done (physical, October 24, [evidence](bluetooth.md#evidence)): the Lock and Mic hold, `petlibre setup`, the press, the enrollment surviving the reboot and the rejoin with the saved Wi-Fi; the locked and no-press refusals. Advertising only on mains is host-tested only.
+1. **BLE setup on hardware:** done (physical, October 24, [evidence](bluetooth.md#evidence)): the Lock and Mic hold, `petlibre setup`, the press, the enrollment surviving the reboot and the rejoin with the saved Wi-Fi; the locked and no-press refusals. Advertising only on mains held on batteries too.
 2. **Broker credentials:** stop treating them as a build input.
 3. **Optional confidence:** the full ~1,000-boot restart test, and the noise measurement on battery and when warm.
 

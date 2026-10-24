@@ -1,0 +1,110 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 650" width="960" height="650" font-family="Helvetica, Arial, sans-serif" font-size="13">
+  <title>PLAF103 bench wiring: relays and UART</title>
+  <rect width="960" height="650" fill="#ffffff"/>
+  <style>
+    .box { fill: #f6f7f9; stroke: #333; stroke-width: 1.5; }
+    .relay { fill: #fff; stroke: #555; stroke-width: 1.2; }
+    .title { font-weight: bold; font-size: 15px; }
+    .small { font-size: 11px; fill: #555; }
+    .tx { stroke: #d1495b; stroke-width: 2.5; fill: none; }
+    .rx { stroke: #2e86ab; stroke-width: 2.5; fill: none; }
+    .gnd { stroke: #222; stroke-width: 2.5; fill: none; }
+    .pwr { stroke: #e08e0b; stroke-width: 2.5; fill: none; }
+    .strap { stroke: #6a4c93; stroke-width: 2; fill: none; stroke-dasharray: 6 3; }
+    .net { font-size: 11px; font-weight: bold; fill: #333; font-family: monospace; }
+    .pin { fill: #333; }
+  </style>
+
+  <text x="480" y="30" text-anchor="middle" class="title">Bench wiring: relays K1–K4 and the UART (GND never switched)</text>
+
+  <!-- UART adapter -->
+  <rect x="30" y="90" width="160" height="250" rx="6" class="box"/>
+  <text x="110" y="115" text-anchor="middle" class="title">J1 UART adapter</text>
+  <text x="110" y="132" text-anchor="middle" class="small">FT232R, 3.3 V</text>
+  <text x="110" y="147" text-anchor="middle" class="small">power pin unused</text>
+  <circle cx="190" cy="170" r="4" class="pin"/><text x="180" y="174" text-anchor="end">TXD</text>
+  <circle cx="190" cy="250" r="4" class="pin"/><text x="180" y="254" text-anchor="end">RXD</text>
+  <circle cx="190" cy="320" r="4" class="pin"/><text x="180" y="324" text-anchor="end">GND</text>
+
+  <!-- Feeder header -->
+  <rect x="770" y="90" width="160" height="250" rx="6" class="box"/>
+  <text x="850" y="115" text-anchor="middle" class="title">J2 Feeder CON5</text>
+  <text x="850" y="132" text-anchor="middle" class="small">RX, TX, GND header</text>
+  <circle cx="770" cy="170" r="4" class="pin"/><text x="780" y="174">RX</text>
+  <circle cx="770" cy="250" r="4" class="pin"/><text x="780" y="254">TX</text>
+  <circle cx="770" cy="320" r="4" class="pin"/><text x="780" y="324">GND</text>
+
+  <!-- Relay board -->
+  <rect x="330" y="60" width="300" height="470" rx="8" fill="none" stroke="#999" stroke-width="1" stroke-dasharray="4 3"/>
+  <text x="480" y="80" text-anchor="middle" class="small">SH-UR04A relay board (CP2102), normally open</text>
+
+  <!-- Relay 3 -->
+  <rect x="400" y="145" width="160" height="50" rx="4" class="relay"/>
+  <text x="480" y="166" text-anchor="middle" font-weight="bold">K3 (relay 3)</text>
+  <text x="480" y="183" text-anchor="middle" class="small">UART into the feeder</text>
+  <circle cx="400" cy="170" r="4" class="pin"/><text x="404" y="140" class="small">COM3</text>
+  <circle cx="560" cy="170" r="4" class="pin"/><text x="532" y="140" class="small">NO3</text>
+
+  <!-- Relay 4 -->
+  <rect x="400" y="225" width="160" height="50" rx="4" class="relay"/>
+  <text x="480" y="246" text-anchor="middle" font-weight="bold">K4 (relay 4)</text>
+  <text x="480" y="263" text-anchor="middle" class="small">UART out of the feeder</text>
+  <circle cx="400" cy="250" r="4" class="pin"/><text x="404" y="220" class="small">COM4</text>
+  <circle cx="560" cy="250" r="4" class="pin"/><text x="532" y="220" class="small">NO4</text>
+
+  <!-- Relay 2 -->
+  <rect x="400" y="370" width="160" height="50" rx="4" class="relay"/>
+  <text x="480" y="391" text-anchor="middle" font-weight="bold">K2 (relay 2)</text>
+  <text x="480" y="408" text-anchor="middle" class="small">loader strap</text>
+  <circle cx="560" cy="395" r="4" class="pin"/><text x="532" y="365" class="small">COM2</text>
+  <circle cx="400" cy="395" r="4" class="pin"/><text x="404" y="365" class="small">NO2</text>
+
+  <!-- Relay 1 -->
+  <rect x="400" y="455" width="160" height="50" rx="4" class="relay"/>
+  <text x="480" y="476" text-anchor="middle" font-weight="bold">K1 (relay 1)</text>
+  <text x="480" y="493" text-anchor="middle" class="small">feeder power</text>
+  <circle cx="400" cy="480" r="4" class="pin"/><text x="404" y="450" class="small">COM1</text>
+  <circle cx="560" cy="480" r="4" class="pin"/><text x="532" y="450" class="small">NO1</text>
+
+  <!-- ADP_TXD -> K3 -> FDR_RX -->
+  <path d="M190 170 H400" class="tx"/>
+  <path d="M560 170 H770" class="tx"/>
+
+  <!-- ADP_RXD -> K4 -> FDR_TX -->
+  <path d="M190 250 H400" class="rx"/>
+  <path d="M560 250 H770" class="rx"/>
+
+  <text x="295" y="162" text-anchor="middle" class="net">ADP_TXD</text>
+  <text x="665" y="162" text-anchor="middle" class="net">FDR_RX</text>
+  <text x="295" y="242" text-anchor="middle" class="net">ADP_RXD</text>
+  <text x="620" y="242" text-anchor="start" class="net">FDR_TX</text>
+  <text x="300" y="552" text-anchor="middle" class="net">GND</text>
+  <text x="315" y="502" text-anchor="middle" class="net">VBUS_IN</text>
+  <text x="640" y="502" text-anchor="middle" class="net">VBUS_FDR</text>
+  <text x="352" y="430" text-anchor="end" class="net">STRAP_GND</text>
+  <!-- Strap: FDR_TX -> 4.7k -> COM2 ; NO2 -> GND -->
+  <path d="M665 250 V330 M665 360 V395 H560" class="strap"/>
+  <circle cx="665" cy="250" r="4" class="pin"/>
+  <rect x="652" y="330" width="26" height="30" fill="#fff" stroke="#6a4c93" stroke-width="2"/>
+  <text x="690" y="345" class="small" fill="#6a4c93">R1</text>
+  <text x="690" y="359" class="small" fill="#6a4c93">4.7 kΩ</text>
+  <path d="M400 395 H360 V560" class="strap"/>
+
+  <!-- GND: adapter GND straight to feeder GND, and the strap's GND -->
+  <path d="M190 320 H250 V560 H745 V320 H770" class="gnd"/>
+  <circle cx="360" cy="560" r="4" class="pin"/>
+  <text x="480" y="577" text-anchor="middle" class="small">GND: J1, J2, J3/J4 and the strap, always common (never through a relay)</text>
+
+  <!-- Power: host USB 5V -> COM1 -> NO1 -> feeder USB 5V -->
+  <path d="M290 480 H400" class="pwr"/>
+  <path d="M560 480 H725" class="pwr"/>
+  <text x="290" y="472" class="small">J3 host USB 5V</text>
+  <text x="600" y="472" class="small">J4 feeder USB 5V</text>
+  <text x="480" y="525" text-anchor="middle" class="small">GND, D+ and D− pass straight from J3 to J4</text>
+
+  <!-- Legend and rules -->
+  <g transform="translate(30,605)">
+    <text x="0" y="0" class="small">Red: adapter TXD → feeder RX (relay 3). Blue: feeder TX → adapter RXD (relay 4). Purple dashed: the loader strap (relay 2). Orange: feeder power (relay 1).</text>
+    <text x="0" y="18" class="small">The bench opens relays 3 and 4 after every power cut and closes them just before power-on; --uart-when-off connected leaves them closed.</text>
+  </g>
+</svg>

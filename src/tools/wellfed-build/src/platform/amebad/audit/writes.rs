@@ -248,7 +248,7 @@ fn table(elf: &Path, objdump: &Path) -> Result<BTreeMap<String, (u64, String)>> 
 }
 
 /// (address, bytes) of every section with file contents that loads.
-fn loaded(elf: &Path, objdump: &Path) -> Result<Vec<(u64, Vec<u8>)>> {
+pub(crate) fn loaded(elf: &Path, objdump: &Path) -> Result<Vec<(u64, Vec<u8>)>> {
     let data = fs::read(elf)?;
     let listing = tool(objdump, &["-h"], elf)?;
     let lines: Vec<&str> = listing.lines().collect();

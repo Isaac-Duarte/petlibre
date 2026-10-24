@@ -279,8 +279,19 @@ pub(crate) type Overrides = BTreeMap<String, String>;
 /// Write an overlay and record its digest.
 fn overlay(sdk: &Path, relative: &str, text: &str, overrides: &mut Overrides) -> Result<()> {
     let path = sdk.join(relative);
-    fs::write(&path, text)?;
+    write_if_changed(&path, text.as_bytes())?;
     overrides.insert(relative.to_string(), digest(&path)?);
+    Ok(())
+}
+
+/// Write a staged file only when its bytes differ. The vendor makefiles
+/// rebuild every object whose dependency file names a touched file, and
+/// nearly all of them include the OTA header and `platform_opts.h`, so
+/// rewriting an unchanged overlay recompiled most of the SDK on every build.
+fn write_if_changed(path: &Path, bytes: &[u8]) -> Result<()> {
+    if fs::read(path).ok().as_deref() != Some(bytes) {
+        fs::write(path, bytes)?;
+    }
     Ok(())
 }
 
@@ -378,7 +389,7 @@ fn rust_overlays(
     }
 
     let destination = example.join("example_entry.c");
-    fs::copy(&board.entry, &destination)?;
+    write_if_changed(&destination, &fs::read(&board.entry)?)?;
     staged(&board.entry, &destination, "Source changed while staging")?;
 
     // Earlier C builds modified these SDK makefiles; restore the pinned copies.
@@ -449,12 +460,15 @@ fn rust_overlays(
     }
 
     let wifi = repo.path(WIFI_CREDENTIALS);
-    fs::write(sdk.join(WIFI_HEADER), wifi_header(&fs::read(&wifi)?)?)?;
+    write_if_changed(
+        &sdk.join(WIFI_HEADER),
+        wifi_header(&fs::read(&wifi)?)?.as_bytes(),
+    )?;
     staged(&wifi, &wifi, "Wi-Fi credentials changed while staging")?;
     let transport = repo.path(TRANSPORT_CREDENTIALS);
-    fs::write(
-        sdk.join(TRANSPORT_HEADER),
-        transport_header(&fs::read(&transport)?)?,
+    write_if_changed(
+        &sdk.join(TRANSPORT_HEADER),
+        transport_header(&fs::read(&transport)?)?.as_bytes(),
     )?;
     staged(
         &transport,
@@ -516,7 +530,7 @@ fn bluetooth_overlays(
         return remove_file(&destination);
     };
 
-    fs::copy(source, &destination)?;
+    write_if_changed(&destination, &fs::read(source)?)?;
     staged(source, &destination, "Source changed while staging")?;
     // rust_overlays restored this makefile from the pinned revision.
     let makefile = project(UTILITIES_MAKEFILE);
@@ -621,7 +635,7 @@ fn firstboot_overlays(
             "project/realtek_amebaD_va0_example/src/src_{}/main.c",
             core.dir()
         );
-        fs::copy(source, sdk.join(&relative))?;
+        write_if_changed(&sdk.join(&relative), &fs::read(source)?)?;
         staged(
             source,
             &sdk.join(&relative),

@@ -2,7 +2,7 @@
   import { LiveDot, clockTime } from "@petlibre/ui";
   import { onMount } from "svelte";
   import { app } from "./lib/bench.svelte";
-  import { favicon } from "./lib/brand";
+  import { favicon, lockup, lockupOnLight } from "./lib/brand";
   import { route, TABS, type Tab } from "./lib/route.svelte";
   import { theme } from "./lib/theme.svelte";
   import BenchStrip from "./parts/BenchStrip.svelte";
@@ -59,8 +59,8 @@
 <div class="shell">
   <header class="top">
     <a class="mark" href={route.href("overview")}>
-      <img src={favicon} alt="" width="28" height="28" />
-      <span class="word">petlibre</span>
+      <img class="on-light" src={lockupOnLight} alt="Petlibre" width="152" height="35" />
+      <img class="on-dark" src={lockup} alt="Petlibre" width="152" height="35" />
       <span class="tool">bench</span>
     </a>
 
@@ -137,19 +137,33 @@
   }
   .mark {
     display: flex;
-    align-items: baseline;
-    gap: 6px;
+    align-items: center;
+    gap: 10px;
     color: var(--color-text);
     text-decoration: none;
   }
   .mark img {
-    align-self: center;
-    margin-right: 4px;
+    height: 26px;
+    width: auto;
   }
-  .word {
-    font-size: var(--text-lg);
-    font-weight: 700;
-    letter-spacing: -0.03em;
+  /* The lockup as on petlibre.dev, picked by the same rule as the theme tokens
+     so the header follows the theme button, not only the system setting. */
+  .on-dark {
+    display: none;
+  }
+  :global(:root[data-theme="dark"]) .on-light {
+    display: none;
+  }
+  :global(:root[data-theme="dark"]) .on-dark {
+    display: block;
+  }
+  @media (prefers-color-scheme: dark) {
+    :global(:root:not([data-theme="light"])) .on-light {
+      display: none;
+    }
+    :global(:root:not([data-theme="light"])) .on-dark {
+      display: block;
+    }
   }
   .tool {
     font-size: var(--text-lg);

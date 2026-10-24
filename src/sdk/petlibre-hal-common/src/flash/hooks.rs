@@ -168,6 +168,27 @@ impl RamCell<HookProvider> {
     }
 }
 
+/// A private RAM static of the interposer: the storage a [`RamCell`]
+/// points at. Its symbol name and layout are those of the plain value, which
+/// the firmware audit pins.
+#[repr(transparent)]
+pub struct RamStatic<T>(core::cell::UnsafeCell<T>);
+
+// SAFETY: only the interposer reaches the value, through `RamCell`, with
+// interrupts masked or from the single installing task.
+unsafe impl<T> Sync for RamStatic<T> {}
+
+impl<T> RamStatic<T> {
+    pub const fn new(value: T) -> Self {
+        Self(core::cell::UnsafeCell::new(value))
+    }
+
+    #[inline(always)]
+    pub const fn as_ptr(&self) -> *mut T {
+        self.0.get()
+    }
+}
+
 /// The interposer's private RAM state.
 #[derive(Clone, Copy)]
 pub struct HookCells {

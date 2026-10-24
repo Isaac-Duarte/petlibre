@@ -11,31 +11,31 @@ const SYSTICK_CTRL: *mut u32 = crate::sdk::SYSTICK_CTRL as usize as *mut u32;
 
 // Private RAM state; names are fixed by the firmware audit.
 #[unsafe(no_mangle)]
-static mut hook_transport: HookProvider = HookProvider {
+static hook_transport: RamStatic<HookProvider> = RamStatic::new(HookProvider {
     context: ptr::null_mut(),
     ready: None,
     acquire: None,
     release: None,
     peer: None,
     fault: None,
-};
+});
 
 #[unsafe(no_mangle)]
-static mut hook_ticket: HookTicket = HookTicket {
+static hook_ticket: RamStatic<HookTicket> = RamStatic::new(HookTicket {
     id: 0,
     saved_systick: 0,
-};
+});
 
 #[unsafe(no_mangle)]
-static mut hook_last_id: u64 = 0;
+static hook_last_id: RamStatic<u64> = RamStatic::new(0);
 #[unsafe(no_mangle)]
-static mut hook_armed: bool = false;
+static hook_armed: RamStatic<bool> = RamStatic::new(false);
 #[unsafe(no_mangle)]
-static mut hook_faulted: bool = false;
+static hook_faulted: RamStatic<bool> = RamStatic::new(false);
 #[unsafe(no_mangle)]
-static mut hook_legacy_locked: bool = false;
+static hook_legacy_locked: RamStatic<bool> = RamStatic::new(false);
 #[unsafe(no_mangle)]
-static mut hook_lease_held: bool = false;
+static hook_lease_held: RamStatic<bool> = RamStatic::new(false);
 
 unsafe extern "C" {
     fn petlibre_sdk_flash_legacy_lock();
@@ -52,13 +52,13 @@ impl HookCpu for Hardware {
         // interposer names.
         unsafe {
             HookCells {
-                transport: RamCell::new(&raw mut hook_transport),
-                ticket: RamCell::new(&raw mut hook_ticket),
-                last_id: RamCell::new(&raw mut hook_last_id),
-                armed: RamCell::new(&raw mut hook_armed),
-                faulted: RamCell::new(&raw mut hook_faulted),
-                legacy_locked: RamCell::new(&raw mut hook_legacy_locked),
-                lease_held: RamCell::new(&raw mut hook_lease_held),
+                transport: RamCell::new(hook_transport.as_ptr()),
+                ticket: RamCell::new(hook_ticket.as_ptr()),
+                last_id: RamCell::new(hook_last_id.as_ptr()),
+                armed: RamCell::new(hook_armed.as_ptr()),
+                faulted: RamCell::new(hook_faulted.as_ptr()),
+                legacy_locked: RamCell::new(hook_legacy_locked.as_ptr()),
+                lease_held: RamCell::new(hook_lease_held.as_ptr()),
             }
         }
     }

@@ -31,11 +31,13 @@ mod runtime;
 pub mod settings;
 mod slot;
 pub mod storage;
+mod tasks;
 pub mod wifi;
 
 #[cfg(target_os = "none")]
 pub use runtime::{claim_adc, request_reset, spawn, startup_done, watchdog_open};
 pub use slot::Slot;
+pub use tasks::FIRMWARE_TASKS;
 
 /// The ports a firmware drives (indicators, audio, inputs). Startup,
 /// supervision, flash and updates stay the runtime's.

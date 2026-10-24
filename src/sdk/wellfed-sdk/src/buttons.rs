@@ -39,9 +39,15 @@ impl core::fmt::Display for Line {
 }
 
 /// Starts the button task once; later calls return false. Call from the
-/// start hook. An invalid `config` is logged and the task ends at once.
+/// start hook. The task is one of the firmware's
+/// [`FIRMWARE_TASKS`](crate::FIRMWARE_TASKS). An invalid `config` is logged
+/// and the task ends at once.
 pub fn start(config: Config) -> bool {
     if STARTED.swap(true, Ordering::AcqRel) {
+        return false;
+    }
+    if !crate::tasks::reserve() {
+        sdk::log(c"PLKEY1 start created=0 firmware_tasks=full\r\n");
         return false;
     }
 
@@ -51,6 +57,9 @@ pub fn start(config: Config) -> bool {
     unsafe { SERVICE.get_or_init(|| Service::new(config)) };
     // SAFETY: the step takes no context and keeps its state in the slot.
     let created = unsafe { sdk::task_create(c"wellfed-key", 512, 3, key_task, ptr::null_mut()) };
+    if !created {
+        crate::tasks::release();
+    }
     sdk::log(if created {
         c"PLKEY1 start created=1\r\n"
     } else {

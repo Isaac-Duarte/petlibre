@@ -26,32 +26,43 @@ use super::writes::demangle;
 use super::{HEADING, refuse, tool};
 use crate::{Firmware, Repo, Result};
 
-/// The SDK files that create tasks: the runtime's table, and the services a
-/// firmware may start (FW20's button task). The firmware's own tasks are
-/// found in its `src/`.
-pub(crate) const SDK_TASK_SOURCES: [&str; 2] = [
-    "src/sdk/wellfed-sdk/src/runtime.rs",
-    "src/sdk/wellfed-sdk/src/buttons.rs",
-];
+/// The SDK runtime's task table.
+pub(crate) const RUNTIME_SOURCE: &str = "src/sdk/wellfed-sdk/src/runtime.rs";
+/// SDK services a firmware may start, whose tasks count as the firmware's
+/// (FW20's button task).
+pub(crate) const SERVICE_SOURCES: [&str; 1] = ["src/sdk/wellfed-sdk/src/buttons.rs"];
+/// The firmware's share of the SDK's eight task slots: the runtime holds six
+/// at its peak in the normal role. `wellfed_sdk::FIRMWARE_TASKS` enforces the
+/// same budget at run time, and a test keeps the two equal.
+const FIRMWARE_TASKS: usize = 2;
 
-/// The task sources' text, which the audit reads its task table from: the
-/// SDK's task files, then every Rust file of the firmware's `src/`, in path
-/// order.
-pub(crate) fn task_sources(repo: &Repo, firmware: &Firmware) -> Result<String> {
-    let mut paths = Vec::new();
-    rust_files(&repo.path(&format!("{}/src", firmware.dir())), &mut paths)?;
-    paths.sort();
+/// The text the audit reads its task table from.
+pub(crate) struct TaskSources {
+    runtime: String,
+    /// The SDK services, then every Rust file of the firmware's `src/`, in
+    /// path order.
+    firmware: String,
+}
+
+pub(crate) fn task_sources(repo: &Repo, firmware: &Firmware) -> Result<TaskSources> {
+    let mut paths: Vec<std::path::PathBuf> = SERVICE_SOURCES
+        .iter()
+        .map(|source| repo.path(source))
+        .collect();
+    let mut own = Vec::new();
+    rust_files(&repo.path(&format!("{}/src", firmware.dir())), &mut own)?;
+    own.sort();
+    paths.extend(own);
 
     let mut text = String::new();
-    for source in SDK_TASK_SOURCES {
-        text.push_str(&std::fs::read_to_string(repo.path(source))?);
-        text.push('\n');
-    }
     for path in paths {
-        text.push('\n');
         text.push_str(&std::fs::read_to_string(path)?);
+        text.push('\n');
     }
-    Ok(text)
+    Ok(TaskSources {
+        runtime: std::fs::read_to_string(repo.path(RUNTIME_SOURCE))?,
+        firmware: text,
+    })
 }
 
 fn rust_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) -> Result<()> {
@@ -230,13 +241,17 @@ pub(crate) struct TaskBound {
 pub(crate) struct StackAudit {
     /// Keyed by task name.
     tasks: BTreeMap<String, TaskBound>,
+    /// The linked tasks the firmware starts, its SDK services' included.
+    firmware_tasks: Vec<String>,
+    firmware_task_limit: usize,
     overhead: u64,
     margin: f64,
     scope: &'static str,
 }
 
-/// Per-task bounds; refuses if a task's bound leaves less than MARGIN free.
-pub(crate) fn audit(elf: &Path, objdump: &Path, source: &str) -> Result<StackAudit> {
+/// Per-task bounds; refuses if a task's bound leaves less than MARGIN free,
+/// or if the firmware starts more tasks than its share of the slots.
+pub(crate) fn audit(elf: &Path, objdump: &Path, sources: &TaskSources) -> Result<StackAudit> {
     // A repeated heading starts that function over, as a later definition.
     let functions: HashMap<String, Function> =
         frames(&tool(objdump, &["-d"], elf)?).into_iter().collect();
@@ -250,8 +265,11 @@ pub(crate) fn audit(elf: &Path, objdump: &Path, source: &str) -> Result<StackAud
         by_short.entry(short).or_default().push(name.clone());
     }
 
+    let firmware_tasks = firmware_tasks(sources, |entry| by_short.contains_key(entry))?;
+
     let mut rows = BTreeMap::new();
-    for (entry, (task, stack)) in tasks(source) {
+    let source = format!("{}\n{}", sources.runtime, sources.firmware);
+    for (entry, (task, stack)) in tasks(&source) {
         let symbols = by_short.get(&entry).cloned().unwrap_or_default();
         let symbol = match &symbols[..] {
             // Not linked in this variant.
@@ -289,11 +307,32 @@ pub(crate) fn audit(elf: &Path, objdump: &Path, source: &str) -> Result<StackAud
     }
     Ok(StackAudit {
         tasks: rows,
+        firmware_tasks,
+        firmware_task_limit: FIRMWARE_TASKS,
         overhead: OVERHEAD,
         margin: MARGIN,
         scope: "Direct calls and prologue frames only; indirect calls are covered by the margin, \
                 not bounded",
     })
+}
+
+/// The firmware's tasks that `linked` finds in the image, refused past its
+/// share: a firmware that takes a runtime task's slot leaves the build unable
+/// to save settings or see an update offer.
+fn firmware_tasks(sources: &TaskSources, linked: impl Fn(&str) -> bool) -> Result<Vec<String>> {
+    let found: Vec<String> = tasks(&sources.firmware)
+        .into_iter()
+        .filter(|(entry, _)| linked(entry))
+        .map(|(_, (task, _))| task)
+        .collect();
+    if found.len() > FIRMWARE_TASKS {
+        return refuse(format!(
+            "The firmware starts {} tasks ({found:?}); the runtime leaves it {FIRMWARE_TASKS} of the \
+             SDK's eight slots",
+            found.len()
+        ));
+    }
+    Ok(found)
 }
 
 #[cfg(test)]
@@ -315,9 +354,47 @@ mod tests {
                 .to_string_lossy()
                 .into_owned();
             if TASK.is_match(&text) {
-                assert!(SDK_TASK_SOURCES.contains(&relative.as_str()), "{relative}");
+                assert!(
+                    relative == RUNTIME_SOURCE || SERVICE_SOURCES.contains(&relative.as_str()),
+                    "{relative}"
+                );
             }
         }
+    }
+
+    #[test]
+    fn the_firmware_share_matches_the_sdk_budget() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let tasks =
+            std::fs::read_to_string(root.join("src/sdk/wellfed-sdk/src/tasks.rs")).unwrap();
+
+        assert!(
+            tasks.contains(&format!("pub const FIRMWARE_TASKS: u8 = {FIRMWARE_TASKS};")),
+            "wellfed-sdk's FIRMWARE_TASKS differs from the audit's"
+        );
+    }
+
+    #[test]
+    fn only_linked_firmware_tasks_count_and_a_third_is_refused() {
+        let sources = |firmware: &str| TaskSources {
+            runtime: "sdk::task_create(c\"wellfed-net\", 1536, 2, net_task, ptr::null_mut());"
+                .into(),
+            firmware: firmware.into(),
+        };
+        let two = "spawn(c\"fw-a\", 512, 2, a_task); spawn(c\"fw-b\", 512, 2, b_task); \
+                   sdk::task_create(c\"wellfed-key\", 512, 3, key_task, ptr::null_mut());";
+
+        let linked = |entry: &str| entry != "key_task";
+        assert_eq!(
+            firmware_tasks(&sources(two), linked).unwrap(),
+            ["fw-a", "fw-b"],
+            "an unused service links no task"
+        );
+
+        let refused = firmware_tasks(&sources(two), |_| true)
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("starts 3 tasks"), "{refused}");
     }
 
     const LISTING: &str = "\

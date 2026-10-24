@@ -28,6 +28,7 @@ A firmware adds tasks; it does not own the device. The runtime always runs first
 - **Recovery.** Booted from bank 0, only the runtime's updater runs, never firmware code, so a broken firmware can always be replaced.
 - **Supervision and rollback.** The watchdog feeder stops feeding when a runtime task hangs, outputs drift from stopped, or a trial image fails or never confirms. KM0 counts the reset and rolls a trial back to the previous build.
 - **Confirmation, settings and updates.** The runtime confirms a healthy build, runs the settings writer, and checks for update offers, so every firmware stays updatable over the air.
+- **Task slots.** The SDK has eight task slots, and the runtime holds six at its peak, so a firmware gets **two tasks**, counting the SDK services it starts (the button service is one). `spawn` refuses a third (`PLFW1 error firmware_tasks=full`), and the build's stack audit refuses an image that links more. A firmware that took a runtime slot could no longer save settings or see an update offer (`fw44-simon-01`).
 - **Panics.** Interrupts are masked and outputs forced stopped before halting.
 
 Not yet guaranteed: the feeder does not watch firmware tasks' liveness, so a hung firmware task does not reset the device by itself.
@@ -72,6 +73,6 @@ fn start() {
 - Log records as `PL<NAME>1 …` lines, through `wellfed_probes::log` or `hal::startup::Report` as `blink` does.
 - To run a bench probe, depend on `wellfed-probes` and step its `Probe` from your own task, as `optics` does.
 
-The build's stack audit finds every `spawn(c"name", WORDS, priority, entry)` call in the firmware's `src/`, so keep that call shape, with the stack size as a literal or a `const NAME: u16`, and keep the call in the firmware crate rather than a shared library. Each task's static bound must leave a quarter of its stack free.
+The build's stack audit finds every `spawn(c"name", WORDS, priority, entry)` call in the firmware's `src/`, so keep that call shape, with the stack size as a literal or a `const NAME: u16`, and keep the call in the firmware crate rather than a shared library. Each task's static bound must leave a quarter of its stack free. A firmware gets two tasks in all, its SDK services included (see the runtime guarantees above).
 
 Host tests run the firmware's logic against the SDK fake (`wellfed_sdk::hal::sdk::fake`); see `blink/tests/` and `qa/tests/`.

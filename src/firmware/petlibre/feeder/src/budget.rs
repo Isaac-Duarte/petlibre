@@ -132,6 +132,7 @@ pub fn describe(record: Record, f: &mut impl fmt::Write) -> fmt::Result {
     let pattern = |pattern: Pattern| match pattern {
         Pattern::Xx => "xx",
         Pattern::Kk => "kk",
+        Pattern::XxPsk3 => "xxpsk3",
     };
     match record {
         Record::Heap { stage, free, min } => {
@@ -383,7 +384,8 @@ impl Budget {
         self.cost = Cost::default();
         match pattern {
             Pattern::Xx => self.start(Pattern::Kk, 0, record),
-            Pattern::Kk => self.finish(),
+            // The budget times XX and KK; XXpsk3 costs the same curve operations.
+            Pattern::Kk | Pattern::XxPsk3 => self.finish(),
         }
     }
 

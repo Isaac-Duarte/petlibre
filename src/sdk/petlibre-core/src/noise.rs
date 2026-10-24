@@ -5,6 +5,10 @@
 //!   encrypted, and each side learns the other's.
 //! - **KK** reconnects a paired client: both sides already hold the other's
 //!   static key, so the handshake is one round trip with no key on the wire.
+//! - **XXpsk3** is XX bound to an invite's secret (FW45): the third message
+//!   fails unless both sides hold the same pre-shared key. The responder
+//!   learns which invite from the first message's payload, so it sets the
+//!   key after the handshake starts.
 //!
 //! This is sans-IO and allocates nothing: the caller passes message buffers
 //! in and gets lengths back, so the feeder's loop task and the host client
@@ -32,23 +36,31 @@ pub const MAX_MESSAGE: usize = 65_535;
 pub enum Pattern {
     Xx,
     Kk,
+    XxPsk3,
 }
 
 impl Pattern {
     /// The full protocol name, which seeds the handshake hash.
-    pub const fn protocol_name(self) -> &'static [u8; 32] {
+    pub const fn protocol_name(self) -> &'static [u8] {
         match self {
             Self::Xx => b"Noise_XX_25519_ChaChaPoly_SHA256",
             Self::Kk => b"Noise_KK_25519_ChaChaPoly_SHA256",
+            Self::XxPsk3 => b"Noise_XXpsk3_25519_ChaChaPoly_SHA256",
         }
     }
 
     const fn messages(self) -> &'static [&'static [Token]] {
-        use Token::{E, Ee, Es, S, Se, Ss};
+        use Token::{E, Ee, Es, Psk, S, Se, Ss};
         match self {
             Self::Xx => &[&[E], &[E, Ee, S, Es], &[S, Se]],
             Self::Kk => &[&[E, Es, Ss], &[E, Ee, Se]],
+            Self::XxPsk3 => &[&[E], &[E, Ee, S, Es], &[S, Se, Psk]],
         }
+    }
+
+    /// A PSK pattern also mixes each ephemeral key into the cipher key.
+    const fn has_psk(self) -> bool {
+        matches!(self, Self::XxPsk3)
     }
 }
 
@@ -66,6 +78,7 @@ enum Token {
     Es,
     Se,
     Ss,
+    Psk,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -81,6 +94,8 @@ pub enum Error {
     WeakKey,
     /// KK needs the remote static key before it starts.
     MissingRemoteKey,
+    /// A PSK pattern reached its `psk` token with no key set.
+    MissingPsk,
     /// Called out of turn, or after the handshake finished.
     WrongTurn,
     /// The handshake has not finished, so there are no transport keys.
@@ -174,8 +189,15 @@ struct SymmetricState {
 
 impl SymmetricState {
     fn new(pattern: Pattern) -> Self {
-        // Both names are exactly 32 bytes, so the name is the hash.
-        let h = *pattern.protocol_name();
+        // A name of up to 32 bytes is the hash, zero-padded; a longer one
+        // is hashed.
+        let name = pattern.protocol_name();
+        let mut h = [0; 32];
+        if let Some(prefix) = h.get_mut(..name.len()) {
+            prefix.copy_from_slice(name);
+        } else {
+            h = Sha256::digest(name).into();
+        }
         Self {
             ck: h,
             h,
@@ -193,6 +215,17 @@ impl SymmetricState {
     fn mix_key(&mut self, input: &[u8; 32]) {
         let (ck, key) = hkdf(&self.ck, input);
         self.ck = ck;
+        self.cipher = CipherState::keyed(key);
+    }
+
+    /// Noise's `MixKeyAndHash`, for the `psk` token.
+    fn mix_key_and_hash(&mut self, input: &[u8; 32]) {
+        let temp = hmac_sha256(&self.ck, &[input]);
+        let ck = hmac_sha256(&temp, &[&[1]]);
+        let hash = hmac_sha256(&temp, &[&ck, &[2]]);
+        let key = hmac_sha256(&temp, &[&hash, &[3]]);
+        self.ck = ck;
+        self.mix_hash(&hash);
         self.cipher = CipherState::keyed(key);
     }
 
@@ -278,6 +311,7 @@ pub struct Handshake {
     e: Keypair,
     rs: Option<[u8; KEY_LEN]>,
     re: Option<[u8; KEY_LEN]>,
+    psk: Option<[u8; KEY_LEN]>,
     /// The next message of the pattern.
     step: usize,
 }
@@ -298,7 +332,7 @@ impl Handshake {
         state.mix_hash(prologue);
 
         let rs = match pattern {
-            Pattern::Xx => None,
+            Pattern::Xx | Pattern::XxPsk3 => None,
             Pattern::Kk => {
                 // KK's pre-messages: the initiator's static, then the
                 // responder's, the same order on both sides.
@@ -321,8 +355,14 @@ impl Handshake {
             e: Keypair::from_secret(ephemeral),
             rs,
             re: None,
+            psk: None,
             step: 0,
         })
+    }
+
+    /// The pre-shared key of a PSK pattern; any time before its token.
+    pub fn set_psk(&mut self, psk: [u8; KEY_LEN]) {
+        self.psk = Some(psk);
     }
 
     /// Whether the next call is ours to write (false once finished).
@@ -360,8 +400,12 @@ impl Handshake {
                     rest.get_mut(..KEY_LEN)
                         .ok_or(Error::BufferTooSmall)?
                         .copy_from_slice(&public);
-                    self.state.mix_hash(&public);
+                    self.mix_ephemeral(&public);
                     KEY_LEN
+                }
+                Token::Psk => {
+                    self.mix_psk()?;
+                    0
                 }
                 Token::S => {
                     let public = *self.s.public();
@@ -399,10 +443,11 @@ impl Handshake {
             match token {
                 Token::E => {
                     let public = take_key(message, at)?;
-                    self.state.mix_hash(&public);
+                    self.mix_ephemeral(&public);
                     self.re = Some(public);
                     at += KEY_LEN;
                 }
+                Token::Psk => self.mix_psk()?,
                 Token::S => {
                     let len = self.state.sealed_len(KEY_LEN);
                     let sealed = message.get(at..at + len).ok_or(Error::BadLength)?;
@@ -442,6 +487,19 @@ impl Handshake {
         })
     }
 
+    fn mix_ephemeral(&mut self, public: &[u8; KEY_LEN]) {
+        self.state.mix_hash(public);
+        if self.pattern.has_psk() {
+            self.state.mix_key(public);
+        }
+    }
+
+    fn mix_psk(&mut self) -> Result<(), Error> {
+        let psk = self.psk.ok_or(Error::MissingPsk)?;
+        self.state.mix_key_and_hash(&psk);
+        Ok(())
+    }
+
     fn dh(&self, token: Token) -> Result<[u8; 32], Error> {
         let missing = Error::WrongTurn;
         let initiator = self.role == Role::Initiator;
@@ -454,7 +512,7 @@ impl Handshake {
             Token::Es => self.s.dh(re?),
             Token::Se if initiator => self.s.dh(re?),
             Token::Se => self.e.dh(rs?),
-            Token::E | Token::S => Err(missing),
+            Token::E | Token::S | Token::Psk => Err(missing),
         }
     }
 }

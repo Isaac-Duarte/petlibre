@@ -6,4 +6,5 @@
 #![no_std]
 #![deny(unsafe_code)]
 
+pub mod pairing;
 pub mod panel;

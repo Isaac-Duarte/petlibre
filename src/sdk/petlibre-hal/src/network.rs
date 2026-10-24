@@ -26,7 +26,7 @@ use crate::cell::TaskCell;
 use crate::sdk;
 
 /// The credential slots within the storage region (`0x345000`).
-pub const NET_BASE: u32 = 5;
+pub const NET_BASE: u32 = sdk::storage::NET.first;
 /// Consecutive failed joins before the build's credentials take over.
 pub const FALLBACK_AFTER: u32 = 5;
 

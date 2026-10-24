@@ -22,7 +22,7 @@ use petlibre_core::ota::{self, MARKER, Trial};
 pub const LIMIT: u32 = 3;
 /// Storage sector holding the confirmation record (`0x344000`), the first
 /// of the reserved sectors after the journal and settings pairs.
-pub const CONFIRM_SECTOR: u32 = 4;
+pub const CONFIRM_SECTOR: u32 = crate::sdk::storage::CONFIRM.first;
 pub const BOOT_MASK: u32 = 0xffff;
 const COUNT_SHIFT: u32 = 16;
 const TAG_SHIFT: u32 = 24;

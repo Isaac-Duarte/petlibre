@@ -158,6 +158,7 @@ Server-to-firmware requests can carry an HMAC so that a party with only the Wi-F
   - **Wrong passphrase:** stored attempts 1 to 5 failed, the build's credentials took over from attempt 6, and the feeder came online on attempt 7 (`source: fallback`).
   - **Recovery:** a signed clear then returned to the build's credentials.
   - **No leak:** neither passphrase appeared in any capture.
+- **Physical (October 24), live change to a different network:** with a second hotspot (its own SSID and passphrase) on the bench host, a stored change took effect at the next join after the lab hotspot went away (`source: stored`, 15 s), and a clear followed by the lab hotspot's return rejoined with the build's credentials (`source: build`, 20 s), all without a reboot.
 
 ## Device settings (FW25)
 

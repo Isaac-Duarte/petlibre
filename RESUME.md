@@ -1,11 +1,19 @@
 # Resume firmware development
 
-Handoff checkpoint: **October 24, 2026 (afternoon), Mountain time**. Read this, then
+Handoff checkpoint: **October 24, 2026 (evening), Mountain time**. Read this, then
 [AGENTS.md](AGENTS.md), the [development guide](docs/development/README.md),
 and [FIRMWARE_BOARD.md](FIRMWARE_BOARD.md) (stock parity: [FEATURE_BOARD.md](FEATURE_BOARD.md)). Update this handoff when the installed
 image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
+
+**October 24, evening: board close-out; FW21, FW25 and FW34 done (FW25 physical, no owner action).**
+- **Board:** FW21 closed at sync and jump scope (the long-uptime restart goes to FW46). FW34 closed at revised scope (boot-gated BLE and mains-only advertising go to FW45). FW25 closed at Wi-Fi and options scope (broker credentials go to FW45).
+- **Run `fw25-switch-02`:** a bounded `serve` plus a temporary second hotspot profile `Petlibro-Lab-B` on `wlan1` (own SSID and random passphrase, same 10.42.103.1/24, so the firewall rules held and `wlan0` was untouched). A signed `wifi` request stored B, the hotspots were swapped, and the feeder joined B with `source: stored` in 15 s. A signed clear on B, then swapping back, rejoined the lab hotspot with `source: build` in 20 s, with no reboot. The profile was deleted and `serve` stopped. (`fw25-switch-01` stopped before any request: its script expected `source: build`, but FW34's setup run had left the lab hotspot's own credentials stored.)
+- **State change:** the Wi-Fi store is now empty (generation 18), where before it held the lab hotspot's credentials from `fw34-setup`. The feeder joins the same hotspot with the build's credentials.
+- **Flash now:** unchanged (`feeder` v107 on bank 1, `qa` `ef76b85e…` on bank 0). **Next manifest version:** 108.
+- **Bench state:** feeder on, hotspot up, no server.
+- **Next:** FW45 BLE setup, or FW30 pins with the meter.
 
 **October 24, afternoon: FW45 keys on the panel, FP15 key reset (physical, owner pressing; no motion).**
 - **Code:** `petlibre-hal::keys` (the loop-to-writer key mailbox and the identity handoff), the writer's `keys change=` path, the loop's `PLID1` identity fingerprint, and pairing ahead of the panel in the feeder's owner. Stack bounds: `petlibre-cfg` 2,948/4,096, loop 3,912/6,144.

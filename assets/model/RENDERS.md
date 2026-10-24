@@ -90,3 +90,12 @@ For `panel`, `front` and `card`, write `<view>.json` beside the image: each name
 - `card-dark` and `hero` read clearly on #0B1424. No transparent image has halos or a gray fringe on navy or white.
 - Hotspot circles drawn over `panel.png` land on the right icons. Commit that overlay check as a scratch image, not under `renders/`.
 - The report lists anything the model lacked, any icon-to-part mapping that remains uncertain, and the render time per image.
+
+## Status
+
+Priority 1 is rendered (October 23, 2026; simulation: renders of the model, not photographs). Open items for the owner:
+- **Model gaps.** There is no power jack (the back is plain, and `PCB_USBC` sits inside the front of the band with no opening) and no battery door (the underside is a flat disc), so `back` and `bottom` can't yet show either. `HopperFill` has no material; `render.py` gives it `PL_Kibble`.
+- **Lit icons.** The model lights `Icon_Lock` and `Icon_WiFi` blue. Since that color isn't recorded, `render.py` gives them the other icons' print material.
+- **Icon order.** The hardware notes list the buttons as Reset, Mic, Dispense, Lock from left to right (PB4–PB7). On the model's ring, seen from the front, the icons run Battery, Portion, Bowl, Lock, Wi-Fi, Warn, Mic, Reset, which matches that order in neither direction. Either the notes give pin order rather than position, or the model's icons are misplaced.
+- **Uncertain mapping.** `led_food` is `Icon_Bowl` by elimination. `Icon_Battery` matches no recorded indicator and is left out of the JSON.
+- **Panel legibility.** The icons span 0.17 m of ring, so even at the tightest square frame each is about 10 px wide at 390 px.

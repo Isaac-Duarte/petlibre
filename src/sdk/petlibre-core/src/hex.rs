@@ -38,3 +38,13 @@ pub fn decode_array<const N: usize>(hex: &[u8]) -> Option<[u8; N]> {
     let mut out = [0u8; N];
     (hex.len() == 2 * N && decode(hex, &mut out).is_some()).then_some(out)
 }
+
+/// Bytes as lowercase hex when formatted, for record fields.
+#[derive(Clone, Copy, Debug)]
+pub struct Lower<'a>(pub &'a [u8]);
+
+impl core::fmt::Display for Lower<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.0.iter().try_for_each(|byte| write!(f, "{byte:02x}"))
+    }
+}

@@ -28,7 +28,7 @@ use petlibre_hal::supervision::config;
 use petlibre_hal::supervision::supervise::{self, LIVENESS_MS, Startup};
 use petlibre_hal::supervision::watchdog::Watchdog;
 use petlibre_hal::transport::{self, Link};
-use petlibre_hal::{leds, power, sdk, startup, stopped, trial};
+use petlibre_hal::{leds, power, rng, sdk, startup, stopped, trial};
 
 use crate::slot::Slot;
 use crate::wifi::{Probe, Record};
@@ -786,6 +786,34 @@ fn probe_step() -> u32 {
     step.delay_ms
 }
 
+/// The boot's generator start. `first` (raw samples, before conditioning)
+/// and `check` (a hash of one discarded output block) let the bench compare
+/// boots without revealing a secret.
+fn log_rng(started: rng::Started) {
+    let first = petlibre_core::hex::Lower(&started.first);
+    let check = rng::bytes().map(|block| {
+        let digest =
+            petlibre_core::request_auth::hmac_sha256(&[0; 32], &[b"petlibre-rng-check", &block]);
+        u32::from_be_bytes([digest[0], digest[1], digest[2], digest[3]])
+    });
+
+    let mut report = startup::Report::new();
+    let line = match (started.result, check) {
+        (Ok(()), Some(check)) => report.record(format_args!(
+            "PLRNG1 boot result=ready samples={} first={first} check={check:08x}\r\n",
+            started.samples
+        )),
+        (Ok(()), None) => report.record(format_args!("PLRNG1 boot result=unavailable\r\n")),
+        (Err(failure), _) => report.record(format_args!(
+            "PLRNG1 boot result={failure} samples={} first={first}\r\n",
+            started.samples
+        )),
+    };
+    if let Ok(line) = line {
+        sdk::log(line);
+    }
+}
+
 fn log_gpio_routing(stage: &str) {
     let value = sdk::gpio_routing();
     let mut report = startup::Report::new();
@@ -867,6 +895,8 @@ unsafe extern "C" fn diagnostic_task(_: *mut c_void) -> u32 {
     if startup::snapshot().bank() == Some(0) {
         start_updater();
     } else {
+        // FW45: before any other task can use the ADC or want a secret.
+        log_rng(rng::start());
         start_transport();
         // SAFETY: every firmware defines the hook with `firmware!`; it runs
         // once, here, in this task.

@@ -53,6 +53,9 @@ const TRANSPORT_ISOLATION: [(&str, &[&str]); 2] = [
             // FP11: queue a panel-lock change for the panel's owner.
             r"crate::panel",
             r"panel::request",
+            // FW45: random bytes for the session nonce; nothing else.
+            r"crate::rng",
+            r"rng::fill",
             // Signed requests: verification only (request_auth.rs).
             r"petlibre_core::request_auth",
             r"request_auth::(split|Session)(::(new|nonce_hex))?",

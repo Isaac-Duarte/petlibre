@@ -43,3 +43,12 @@ fn is_lower_accepts_only_lowercase_digits() {
     assert!(!is_lower(b"0123456789ABCDEF"));
     assert!(!is_lower(b"12 4"));
 }
+
+#[test]
+fn lower_formats_bytes_as_lowercase_hex() {
+    assert_eq!(
+        petlibre_core::hex::Lower(&[0x00, 0xab, 0x7f]).to_string(),
+        "00ab7f"
+    );
+    assert_eq!(petlibre_core::hex::Lower(&[]).to_string(), "");
+}

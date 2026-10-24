@@ -4,15 +4,18 @@
 use std::cell::Cell;
 use std::sync::{Mutex, MutexGuard};
 
+use petlibre_core::store::clients::ClientStatus;
+use petlibre_core::store::seed::SeedStatus;
 use petlibre_core::store::settings::SettingsStatus;
 use petlibre_core::transport::{SettingsFields, SettingsResult};
 use petlibre_hal::flash::park::Mmio;
 use petlibre_hal::flash::peer::MARKER_REGISTER;
 use petlibre_hal::flash_lock::arming::Hooks;
 use petlibre_hal::flash_lock::provider::Provider;
+use petlibre_hal::rng;
 use petlibre_hal::sdk::{self, fake};
 use petlibre_hal::{network, settings};
-use petlibre_sdk::settings::{self as writer, ErrorStage, Record, Writer};
+use petlibre_sdk::settings::{self as writer, ErrorStage, Identity, Record, Writer};
 use petlibre_sdk::storage::{FlashOps, SETTINGS_BASE};
 
 thread_local! {
@@ -127,6 +130,10 @@ fn changes_are_saved_once_each_inside_a_marked_attempt() {
         step(&mut writer, &mut provider),
         Some(Record::NetOpen { stored: false, .. })
     ));
+    assert!(matches!(
+        step(&mut writer, &mut provider),
+        Some(Record::Keys { .. })
+    ));
     assert_eq!(
         step(&mut writer, &mut provider),
         None,
@@ -219,6 +226,7 @@ fn wifi_credentials_are_saved_inside_a_marked_attempt_and_cleared() {
     let (_guard, mut writer, mut provider) = start();
     step(&mut writer, &mut provider); // open
     step(&mut writer, &mut provider); // net open
+    step(&mut writer, &mut provider); // keys
 
     let set = WifiFields {
         ssid: Some("6e6574"),
@@ -286,4 +294,59 @@ fn error_records_format_as_before() {
     )
     .unwrap();
     assert_eq!(text, "net error stage=unarmed");
+}
+
+/// The writer's first three records on one boot: open, net open, then keys.
+fn boot_keys() -> Record {
+    let (mut writer, mut provider) = (Writer::default(), Provider::default());
+    step(&mut writer, &mut provider);
+    step(&mut writer, &mut provider);
+    step(&mut writer, &mut provider).expect("the keys record")
+}
+
+#[test]
+fn keys_carry_the_seed_and_create_the_identity_once() {
+    let (_guard, _, _) = start();
+    rng::reset();
+    assert_eq!(
+        boot_keys(),
+        Record::Keys {
+            seed: SeedStatus::Empty,
+            mixed: false,
+            saved: false,
+            clients: ClientStatus::Empty,
+            enrolled: 0,
+            identity: Identity::Missing,
+        },
+        "no generator: nothing written"
+    );
+
+    fake::with(|h| h.adc_noise = 0x2468_ace1);
+    assert_eq!(rng::start().result, Ok(()));
+    let first = boot_keys();
+    assert!(matches!(
+        first,
+        Record::Keys {
+            seed: SeedStatus::Empty,
+            mixed: false,
+            saved: true,
+            identity: Identity::Created,
+            ..
+        }
+    ));
+    assert!(ATTEMPT_SEEN.with(Cell::get));
+    assert_eq!(sdk::backup_read(MARKER_REGISTER), 0);
+
+    // The next boot finds both, and stores another seed.
+    assert!(matches!(
+        boot_keys(),
+        Record::Keys {
+            seed: SeedStatus::Loaded,
+            mixed: true,
+            saved: true,
+            clients: ClientStatus::Loaded,
+            identity: Identity::Loaded,
+            ..
+        }
+    ));
 }

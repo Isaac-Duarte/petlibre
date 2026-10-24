@@ -27,6 +27,7 @@ use petlibre_core::transport::{self as mqtt, Buffer, Op};
 
 use crate::net_status;
 use crate::network;
+use crate::rng;
 use crate::sdk::{self, Advertising, BleEvent, BlePoll, BleService};
 pub use crate::transport::RequestKind;
 
@@ -311,11 +312,13 @@ impl BleSetup {
                     return drop_link(DropReason::NoKey);
                 };
 
-                let mut entropy = [0u8; 20];
+                // The generator (FW45), or the timer mix if it never started.
+                let mut entropy = [0u8; 52];
                 for (chunk, word) in entropy.chunks_mut(4).zip(sdk::entropy()) {
                     chunk.copy_from_slice(&word.to_le_bytes());
                 }
-                entropy[16..].copy_from_slice(&now.to_le_bytes());
+                entropy[16..20].copy_from_slice(&now.to_le_bytes());
+                rng::fill(&mut entropy[20..]);
                 let session = Session::new(key, &entropy);
                 link.received = 0;
                 let hello = hello(&session.nonce_hex());

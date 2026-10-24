@@ -21,6 +21,7 @@ use crate::health::{self, Boot};
 use crate::net_status;
 use crate::network;
 use crate::panel;
+use crate::rng;
 use crate::sdk::{self, TcpRecv, TransportConfig};
 use crate::settings;
 
@@ -328,13 +329,16 @@ impl Link {
             ms: sdk::uptime_ms().wrapping_sub(now),
         });
 
-        // A fresh nonce for every session, so no earlier request replays.
+        // A fresh nonce for every session, so no earlier request replays:
+        // from the generator (FW45), or the timer mix if it never started.
         let auth = self.config.request_key.map(|key| {
-            let mut entropy = [0u8; 20];
+            let mut entropy = [0u8; 52];
+            let (timers, generated) = entropy.split_at_mut(20);
             let words = sdk::entropy();
             for (i, word) in words.iter().chain(&[n]).enumerate() {
-                entropy[4 * i..4 * i + 4].copy_from_slice(&word.to_le_bytes());
+                timers[4 * i..4 * i + 4].copy_from_slice(&word.to_le_bytes());
             }
+            rng::fill(generated);
             request_auth::Session::new(key, &entropy)
         });
         self.counters.nonce = auth.as_ref().map(request_auth::Session::nonce_hex);

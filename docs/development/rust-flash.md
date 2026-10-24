@@ -30,7 +30,7 @@ Build with `cargo build --locked -p petlibre-flash`; the binary is `target/debug
 
 Frozen image reviews come from `petlibre-build review` ([development updates](uart-development.md)), which re-runs the build's linked-code audits and the factory-loader emulation. This client only checks that a frozen review is complete and still matches its image; `petlibre-formats` types the review file for both.
 
-Not ported, and removed with the Python on October 23, 2026: the finished stock write-back acceptance tests (`uart-stock-recovery.py prepare-activation-test` and `bank-writeback-test`, with `marker-activation-test.py` and `stock-bank-wire-policy.py`). The standalone diagnostic installer was removed earlier. The relay bench, [`petlibre-bench`](../hardware/bench.md), chains this client as a separate process, so plans stay bound to the `petlibre-flash` binary itself.
+Not ported, and removed with the Python on October 23, 2026: the finished stock write-back acceptance tests (`uart-stock-recovery.py prepare-activation-test` and `bank-writeback-test`, with `marker-activation-test.py` and `stock-bank-wire-policy.py`). The standalone diagnostic installer was removed earlier. The relay bench, [`petlibre-bench`](../devices/plaf103/bench.md), chains this client as a separate process, so plans stay bound to the `petlibre-flash` binary itself.
 
 ## Output for scripts and agents
 

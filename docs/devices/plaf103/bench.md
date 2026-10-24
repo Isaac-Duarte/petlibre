@@ -1,6 +1,6 @@
 # Relay bench control
 
-`petlibre-bench` ([src/tools/petlibre-bench](../../src/tools/petlibre-bench)) powers the feeder, enters the ROM loader and chains the [Rust UART flash client](../development/rust-flash.md). It adds power and strap control only. Serial reads, inspections, plans and writes run as separate `petlibre-flash` processes, so their pinned checks, plan hashes and no-retry stops apply unchanged. Running it is a physical bench operation; build and check targets never call it.
+`petlibre-bench` ([src/tools/petlibre-bench](../../../src/tools/petlibre-bench)) powers the feeder, enters the ROM loader and chains the [Rust UART flash client](../../development/rust-flash.md). It adds power and strap control only. Serial reads, inspections, plans and writes run as separate `petlibre-flash` processes, so their pinned checks, plan hashes and no-retry stops apply unchanged. Running it is a physical bench operation; build and check targets never call it.
 
 Build both binaries together; the bench runs the `petlibre-flash` beside itself unless `--flash-bin` names another:
 
@@ -56,7 +56,7 @@ The relay board also enumerates as a USB serial port and can take the name the U
 
 Session evidence goes to new directories under `private/captures/`, `private/flash-backups/` and `private/verification/`, named after `NAME`, which must be a single plain name. Existing paths are refused before any relay changes.
 
-`flash-prepare` and `flash-execute` are separate on purpose: review the plan between them. A failed step stops without retry and leaves the feeder powered for inspection. A stopped update is never followed by a boot; finish it with a fresh `flash-prepare … --interrupted` session as the [development updater](../development/uart-development.md) describes. Relay state shows that the supply was not switched off between the two commands. It does not rule out a brownout.
+`flash-prepare` and `flash-execute` are separate on purpose: review the plan between them. A failed step stops without retry and leaves the feeder powered for inspection. A stopped update is never followed by a boot; finish it with a fresh `flash-prepare … --interrupted` session as the [development updater](../../development/uart-development.md) describes. Relay state shows that the supply was not switched off between the two commands. It does not rule out a brownout.
 
 Ctrl+C stops the running sequence: the `petlibre-flash` child stops itself terminally and records it, and the bench runs the same cleanup as for any stop (the loader and transient sequences power off, and the demo turns the spares off).
 
@@ -64,7 +64,7 @@ Stock recovery keeps its own commands. Use `loader` to enter the ROM, then run `
 
 ## Over-the-air iteration (FW12)
 
-`ota` runs one [over-the-air update](../firmware/ota-design.md) of the feeder that is already running: build → checks → upload → reboot → build identity and health. The server and the hotspot must already be up: the bench never starts `petlibre-local serve` or the hotspot, and a failed offer stops before any capture. A bank-0 change still needs the UART updater.
+`ota` runs one [over-the-air update](../../firmware/ota-design.md) of the feeder that is already running: build → checks → upload → reboot → build identity and health. The server and the hotspot must already be up: the bench never starts `petlibre-local serve` or the hotspot, and a failed offer stops before any capture. A bank-0 change still needs the UART updater.
 
 ```sh
 target/release/petlibre-bench ota fw12-unit-01 --build                     # build, review, offer, verify
@@ -179,7 +179,7 @@ Three bench routes cover stock 1.1.15:
 - to stock over UART (FW38, as `stock-prepare` and `stock-execute`);
 - from stock to a replacement over stock's own updater (FW40, `stock-ota`).
 
-`itest`'s `stock-roundtrip` scenario chains the over-the-air ones. The design for doing all of this without a bench is in [consumer installation](../firmware/consumer-installation.md).
+`itest`'s `stock-roundtrip` scenario chains the over-the-air ones. The design for doing all of this without a bench is in [consumer installation](../../firmware/consumer-installation.md).
 
 ### To stock over the air
 
@@ -219,7 +219,7 @@ The boot capture holds the unit's serial and cloud keys, so keep it private. The
 
 ### Stock to a replacement (`stock-ota`)
 
-`stock-ota` has a feeder running stock 1.1.15 install a replacement build through stock's own MQTT-triggered HTTP updater, with no UART write ([stock OTA requirements](../firmware/stock-ota-requirements.md)). It assumes stock is installed, and proves it first: the server must see stock report 1.1.15 on its adapter, which is also the server's own gate for the request.
+`stock-ota` has a feeder running stock 1.1.15 install a replacement build through stock's own MQTT-triggered HTTP updater, with no UART write ([stock OTA requirements](stock/ota-requirements.md)). It assumes stock is installed, and proves it first: the server must see stock report 1.1.15 on its adapter, which is also the server's own gate for the request.
 
 ```sh
 cargo build --release --bins --examples          # from a clean commit: --enable-ota-trial refuses a dirty build
@@ -306,7 +306,7 @@ A binary built without the feature refuses `--ui` before any bench command runs.
 The page has four views (keys `g o`, `g t`, `g s`, `g l`; `/` filters the log):
 - **Strip** (every view): relay and UART port presence, the last recorded relay states (not queried), the `petlibre-flash` hash, the build and bank from the newest replacement-firmware start banner in a capture, and the running command.
 - **Overview:**
-  - **Guided QA** (when the latest capture holds `PLQA1` records): coaches the newest [QA](../firmware/qa.md) run from its records. It shows what to do now in plain words ("Look at the Wi-Fi light. Lit: press Dispense. Dark: press Lock."), the time left on a button prompt, each check's state with the answers recorded so far, and the result. **Enable sound** beeps at each new prompt. It follows the records only; `petlibre-audit qa` still grades the run. The records are parsed by `petlibre_formats::qa`, which the audit shares.
+  - **Guided QA** (when the latest capture holds `PLQA1` records): coaches the newest [QA](../../firmware/qa.md) run from its records. It shows what to do now in plain words ("Look at the Wi-Fi light. Lit: press Dispense. Dark: press Lock."), the time left on a button prompt, each check's state with the answers recorded so far, and the result. **Enable sound** beeps at each new prompt. It follows the records only; `petlibre-audit qa` still grades the run. The records are parsed by `petlibre_formats::qa`, which the audit shares.
   - **Now:** the command, its outcome and elapsed time. Steps show their own durations. While the command runs, bars show straight-line ETAs for the tool's own counts, an update's estimated transfer and the active capture. The next command to run after review is shown with a copy button. The tab title carries the state.
   - **Feeder:** online, stale or offline; health age, build, bank, faults, Wi-Fi credential source, clock and transport reconnects; recent request replies.
   - **Latest integration run:** each scenario's verdict, or the live run's progress.

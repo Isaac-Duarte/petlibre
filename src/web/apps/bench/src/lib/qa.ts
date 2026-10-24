@@ -3,7 +3,7 @@
 
 import type { QaAsk, QaCheckView, QaView } from "@petlibre/api";
 
-/** The front-panel indicators by the pin QA drives (docs/hardware). */
+/** The front-panel indicators by the pin QA drives (docs/devices/plaf103/board.md). */
 const INDICATORS: Record<string, string> = {
   PA0: "Wi-Fi",
   PA2: "low food",

@@ -20,7 +20,7 @@
 //! What an allowed action does (a feed, a tune, a reset) belongs to its own
 //! owner; this module only decides whether the panel may ask.
 //!
-//! [stock behavior]: ../../../../docs/firmware/stock-behavior.md#panel-buttons-and-child-lock
+//! [stock behavior]: ../../../../docs/devices/plaf103/stock/README.md#panel-buttons-and-child-lock
 
 use petlibre_core::buttons::{Button, Buttons, Config as ButtonsConfig, Gesture};
 use petlibre_core::{deadline_passed, interval_valid, named_enum};

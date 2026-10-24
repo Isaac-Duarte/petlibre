@@ -1,6 +1,6 @@
 # Stock OTA image requirements
 
-Verified offline on October 23, 2026, against **PLAF103 stock 1.1.15**. This describes the stock MQTT-triggered HTTP updater. The replacement firmware has a different [OTA protocol and trial policy](ota-design.md).
+Verified offline on October 23, 2026, against **PLAF103 stock 1.1.15**. This describes the stock MQTT-triggered HTTP updater. The replacement firmware has a different [OTA protocol and trial policy](../../../firmware/ota-design.md).
 
 **Static analysis:** stock can fetch a locally hosted image, but that image must fit the Realtek OTA format and the device's boot layout. The application checks an additive byte-sum before activation. Its mandatory MQTT `sha256` field does not establish cryptographic verification: no comparison against that digest was found in the traced HTTP download and activation path. Activation invalidates the previous bank's marker, so stock provides no automatic recovery from a new image that fails to boot.
 
@@ -15,7 +15,7 @@ The practical image contract is:
 | A reachable plain HTTP endpoint serving the complete file | Direct `200`, explicit `Content-Length`, short URL, no compression or chunked body. U03, U04 |
 | An acceptable MQTT request and device state | Model, version, connectivity, idle/power conditions, time and memory checks occur before download. U02 |
 
-`petlibre-bench stock-ota` ([bench](../hardware/bench.md#stock-to-a-replacement-stock-ota)) applies this contract to a replacement build (FW40). **Physical (October 23, 2026):** in `fw40-stock-ota-05` stock 1.1.15 accepted a `qa` build through this updater, downloaded it in about 40 s, and the build booted from bank 0. The runs also showed that the image port must be reachable (`OTA_INFORM` error 2003 otherwise). See [consumer installation](consumer-installation.md).
+`petlibre-bench stock-ota` ([bench](../bench.md#stock-to-a-replacement-stock-ota)) applies this contract to a replacement build (FW40). **Physical (October 23, 2026):** in `fw40-stock-ota-05` stock 1.1.15 accepted a `qa` build through this updater, downloaded it in about 40 s, and the build booted from bank 0. The runs also showed that the image port must be reachable (`OTA_INFORM` error 2003 otherwise). See [consumer installation](../../../firmware/consumer-installation.md).
 
 ## Evidence identity and verification
 
@@ -27,7 +27,7 @@ The optional ignored evidence register is `private/research/stock-updater/eviden
 
 ## MQTT request requirements
 
-**Static analysis, U02:** precheck function `0x0e018e30` reads these fields from the command object it receives. The enclosing service-command format is constructed in [the stock OTA trial controller](../../src/tools/petlibre-local/src/ota/trial.rs).
+**Static analysis, U02:** precheck function `0x0e018e30` reads these fields from the command object it receives. The enclosing service-command format is constructed in [the stock OTA trial controller](../../../../src/tools/petlibre-local/src/ota/trial.rs).
 
 | Field | Check recovered from stock 1.1.15 |
 | --- | --- |
@@ -81,7 +81,7 @@ The payload follows at byte 32. The checksum includes image headers and padding,
 
 The stock descriptor parser `0x0e02a2b0` checks the first **three** identifier bytes against `OTA`, copies each 24-byte descriptor and replaces its destination with the selected bank's address. It does not provide the same exact-format guarantees as our parser. In particular, the recovered descriptor loop does not establish a safe general maximum count. Keep the reviewed single-entry profile; do not infer support for arbitrary multi-image packages, sizes or flash destinations.
 
-**Static analysis, U06:** [our OTA parser](../../src/tools/petlibre-flash/src/ota.rs) deliberately admits a narrower format. It requires the entire eight-word profile above, exact payload length through EOF and the correct byte-sum. Its inner-image profile is:
+**Static analysis, U06:** [our OTA parser](../../../../src/tools/petlibre-flash/src/ota.rs) deliberately admits a narrower format. It requires the entire eight-word profile above, exact payload length through EOF and the correct byte-sum. Its inner-image profile is:
 
 | Order | Region | Runtime body address |
 | --- | --- | --- |
@@ -93,7 +93,7 @@ The stock descriptor parser `0x0e02a2b0` checks the first **three** identifier b
 
 Each inner header is 32 bytes: eight-byte ASCII marker **`81958711`**, body length, load address, then four `0xffffffff` words. The KM4 group begins at a 4 KiB boundary; inter-core and final padding must be erased `0xff` bytes. Inner body lengths depend on the build; the original KM4 header position `0x17000` is not a universal fixed requirement for all candidates. The marker is a validity tag, not a cryptographic signature. The reserved words in this admitted profile do not establish security-fuse state on every unit.
 
-The [layout auditor](../../src/tools/petlibre-build/src/platform/amebad/audit/layout.rs) additionally checks 4 KiB payload alignment, placement in both banks, and non-overlap with known preserved ranges. It caps the payload at the stock footprint, **`0x150000` bytes / 1.3125 MiB**, giving a complete OTA file of at most **1,376,288 bytes**. Although the bank starts are 1.5 MiB apart, the unknown partition gaps are not established free space. These conservative checks are installer requirements in our current profile; they are not all checks performed by stock itself. See [boot and flash](boot-and-flash.md) and the [layout data](../../src/firmware/devices/plaf103/layout.json).
+The [layout auditor](../../../../src/tools/petlibre-build/src/platform/amebad/audit/layout.rs) additionally checks 4 KiB payload alignment, placement in both banks, and non-overlap with known preserved ranges. It caps the payload at the stock footprint, **`0x150000` bytes / 1.3125 MiB**, giving a complete OTA file of at most **1,376,288 bytes**. Although the bank starts are 1.5 MiB apart, the unknown partition gaps are not established free space. These conservative checks are installer requirements in our current profile; they are not all checks performed by stock itself. See [boot and flash](../flash-layout.md) and the [layout data](../../../../src/firmware/devices/plaf103/layout.json).
 
 ## Validation, activation and return to stock
 
@@ -101,9 +101,9 @@ The [layout auditor](../../src/tools/petlibre-build/src/platform/amebad/audit/la
 
 That activation writes the new bank's eight-byte marker, then programs over the old bank's marker with a first byte of zero. The old application's remaining bytes may still exist, but the loader will not select it by its invalidated marker. A reported download progress of 100 is therefore insufficient evidence of activation or successful boot.
 
-**Simulation and physical observations, previously recorded, U05:** [bank policy](bank-policy.md) documents the factory loader's fixed preference for valid bank 1 and the tested give-way mechanism. Failure after selecting an apparently valid bank does not trigger a general other-bank retry. Loader acceptance of known headers is separate from the candidate actually running its network and recovery paths. This review did not rerun the emulator or the bench sequence.
+**Simulation and physical observations, previously recorded, U05:** [bank policy](../../../firmware/bank-policy.md) documents the factory loader's fixed preference for valid bank 1 and the tested give-way mechanism. Failure after selecting an apparently valid bank does not trigger a general other-bank retry. Loader acceptance of known headers is separate from the candidate actually running its network and recovery paths. This review did not rerun the emulator or the bench sequence.
 
-**Physical observations, previously recorded, U07:** the research record reports local HTTP/MQTT installation of a minimally modified stock version marker and return to original stock 1.1.15, followed by a separate small added-code stock probe and return. Those experiments establish narrow modified-stock OTA execution, not a general consumer installation matrix for wholly replacement firmware. The later [stock recovery result](../hardware/recovery.md) used UART, and the reference replacement went back over UART; it is not additional evidence of stock-to-replacement MQTT installation.
+**Physical observations, previously recorded, U07:** the research record reports local HTTP/MQTT installation of a minimally modified stock version marker and return to original stock 1.1.15, followed by a separate small added-code stock probe and return. Those experiments establish narrow modified-stock OTA execution, not a general consumer installation matrix for wholly replacement firmware. The later [stock recovery result](../recovery.md) used UART, and the reference replacement went back over UART; it is not additional evidence of stock-to-replacement MQTT installation.
 
 An OTA package contains application-bank material, not a complete device backup. Factory configuration, settings and external-flash identity data require a separate preservation/backup route; OTP/eFuse data is outside an ordinary external-flash image. The original application package can be a return image only while a working firmware still accepts a compatible update. Recovery from a failed first boot needs a separately demonstrated route. Patching stock to expose backup/recovery remains a proposed installation design, not something these format checks make reliable by themselves.
 
@@ -115,7 +115,7 @@ An OTA package contains application-bank material, not a complete device backup.
 | U02 | Static analysis | Stock precheck `0x0e018e30`, matching instruction listing |
 | U03 | Static analysis | URL parser `0x0e01b274`, directly disassembled splitter `0x0e01afa4`, TCP connect `0x0e02ad84`, HTTP response parser `0x0e02aa8c` |
 | U04 | Static analysis | HTTP orchestrator `0x0e02b1f4`, header receiver `0x0e02ae34`, descriptor parser `0x0e02a2b0`, writer `0x0e02af04`, byte-sum checker `0x0e02a580`; OTA task `0x0e0277d0` |
-| U05 | Static analysis; earlier simulation and physical observations separately scoped | Activation `0x0e02a648`, active-bank selection `0x0e02a1d4`, [factory tests](../../src/tools/petlibre-emu/tests/factory.rs), [bank policy](bank-policy.md) |
-| U06 | Static analysis of our tooling | [Container/inner-image parser](../../src/tools/petlibre-flash/src/ota.rs), [layout audit](../../src/tools/petlibre-build/src/platform/amebad/audit/layout.rs), [layout profile](../../src/firmware/devices/plaf103/layout.json) |
-| U07 | Earlier physical observations; not repeated | Private stock OTA trial/probe records and manifests, [UART recovery scope](../hardware/recovery.md) |
+| U05 | Static analysis; earlier simulation and physical observations separately scoped | Activation `0x0e02a648`, active-bank selection `0x0e02a1d4`, [factory tests](../../../../src/tools/petlibre-emu/tests/factory.rs), [bank policy](../../../firmware/bank-policy.md) |
+| U06 | Static analysis of our tooling | [Container/inner-image parser](../../../../src/tools/petlibre-flash/src/ota.rs), [layout audit](../../../../src/tools/petlibre-build/src/platform/amebad/audit/layout.rs), [layout profile](../../../../src/firmware/devices/plaf103/layout.json) |
+| U07 | Earlier physical observations; not repeated | Private stock OTA trial/probe records and manifests, [UART recovery scope](../recovery.md) |
 | U08 | Static analysis | Request handler `0x0e016ba0`, rejection `0x0e0193a0`, cleanup `0x0e018b48`, sector erase `0x0e0113d0` |

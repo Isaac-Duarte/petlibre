@@ -4,7 +4,7 @@
 
 The local server talks to **stock 1.1.15** over its existing MQTT protocol. It does not run inside the feeder. The replacement firmware uses Rust application components on the Realtek AmebaD SDK. Its current physical milestones include build-bound diagnostic startup, stopped-output GPIO startup, and bounded visible indicator control; functional feeding remains unimplemented on hardware.
 
-Stock 1.1.15 can install the replacement over its own updater, with no UART write (physical, FW40). [Consumer installation](consumer-installation.md) covers stock's setup protocol, the install flow an app would run, the way back to stock, and the server and app architecture. [Stock OTA requirements](stock-ota-requirements.md) has the image contract. [Product architecture](product-architecture.md) has the target the SDK is built toward: one firmware, an optional server, a feeder-hosted API and native Home Assistant. [Resource budget](resource-budget.md) measures whether that product fits the PLAF103 (FW44). [Device layer](device-layer.md) lists what is specific to the PLAF103 and where it lives (FW50).
+Stock 1.1.15 can install the replacement over its own updater, with no UART write (physical, FW40). [Consumer installation](consumer-installation.md) covers stock's setup protocol, the install flow an app would run, the way back to stock, and the server and app architecture. [Stock OTA requirements](../devices/plaf103/stock/ota-requirements.md) has the image contract. [Product architecture](product-architecture.md) has the target the SDK is built toward: one firmware, an optional server, a feeder-hosted API and native Home Assistant. [Resource budget](resource-budget.md) measures whether that product fits the PLAF103 (FW44). [Device layer](device-layer.md) lists what is specific to the PLAF103 and where it lives (FW50).
 
 | Crate | Responsibility |
 | --- | --- |
@@ -45,6 +45,6 @@ The core diagnostic uses synthetic inputs and memory-only motor outputs. Separat
 
 Rust ports retain caller-owned objects shared with ISRs through critical sections; a fully interrupt-safe ownership model remains future work. SDK build success and model coverage do not establish electrical safety or physical reliability.
 
-Continue with [boot and flash](boot-and-flash.md), [audio](audio.md), [buttons](buttons.md), [Bluetooth](bluetooth.md), [stock behavior](stock-behavior.md), [SDK builds](../development/firmware-builds.md), or [host simulation](../development/README.md).
+Continue with [boot and flash](../devices/plaf103/flash-layout.md), [audio](audio.md), [buttons](buttons.md), [Bluetooth](bluetooth.md), [stock behavior](../devices/plaf103/stock/README.md), [SDK builds](../development/firmware-builds.md), or [host simulation](../development/README.md).
 
 Use the [firmware feature board](../../FIRMWARE_BOARD.md) for FW01–FW29 prerequisites, current acceptance scope, and remaining work.

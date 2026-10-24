@@ -7,7 +7,7 @@ Every host tool is a Rust crate in the workspace. Build them with `cargo build -
 | Crate | Device | Purpose |
 | --- | --- | --- |
 | [petlibre-flash](petlibre-flash) | yes | The UART flash client: restricted reads, region-scoped development updates, give-ways and original-stock recovery, each inspect → prepare → execute ([guide](../../docs/development/rust-flash.md)) |
-| [petlibre-bench](petlibre-bench) | yes | The relay bench: power and loader strap, chained `petlibre-flash` sessions, the over-the-air loop, and the read-only progress page with `--features ui` ([guide](../../docs/hardware/bench.md)) |
+| [petlibre-bench](petlibre-bench) | yes | The relay bench: power and loader strap, chained `petlibre-flash` sessions, the over-the-air loop, and the read-only progress page with `--features ui` ([guide](../../docs/devices/plaf103/bench.md)) |
 | [petlibre-local](petlibre-local) | no (network) | The local server for stock and replacement firmware: MQTT broker, signed OTA offers and status |
 | [petlibre-build](petlibre-build) | no | SDK firmware builds, their linked-image audits, and `review`, which freezes a reviewed build or the stock OTA for `petlibre-flash` ([firmware builds](../../docs/development/firmware-builds.md), [development updates](../../docs/development/uart-development.md)) |
 | [petlibre-audit](petlibre-audit) | no | Offline audits of finalized receive-only captures (startup, FW14 ADC, FW30 driver transients) and full-flash backup comparison |

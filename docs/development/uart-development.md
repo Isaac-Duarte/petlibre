@@ -47,4 +47,4 @@ Physical changed-build updates and their subsequent boots were demonstrated. One
 
 The conservative full-image stock restoration and subsequent stock 1.1.15 boot were completed separately. Stock return through this newer updater remains untested; do not infer it from emulator success or the conservative restoration. Power-cut and failed-boot acceptance remain open. Neither a feature-board card nor a copied historical plan authorizes a new physical operation.
 
-See [startup diagnostics](../firmware/startup-diagnostics.md), [UART and loader](../hardware/uart.md), [recovery limits](../hardware/recovery.md), and [optional fixtures](fixtures.md).
+See [startup diagnostics](../firmware/startup-diagnostics.md), [UART and loader](../devices/plaf103/uart.md), [recovery limits](../devices/plaf103/recovery.md), and [optional fixtures](fixtures.md).

@@ -1,10 +1,13 @@
 # Documentation
 
+The docs follow the code's split. Facts about a **chip** hold for every board built on it. Facts about a **device** hold for one feeder model and its stock firmware. The **firmware** docs describe Petlibre's own replacement, which isn't tied to one device. Adding a model adds a folder under `devices/` and reuses the rest. Every finding carries an [evidence level](evidence.md), and outside sources are listed in [references](references.md).
+
 | Area | Guides |
 | --- | --- |
-| Hardware | [Identification and signal map](hardware/README.md), [UART](hardware/uart.md), [experimental recovery](hardware/recovery.md) |
-| Firmware | [Architecture and status](firmware/README.md), [boot and flash layout](firmware/boot-and-flash.md), [stock behavior and protocol](firmware/stock-behavior.md), [startup/indicator diagnostics](firmware/startup-diagnostics.md), [QA firmware](firmware/qa.md), [feature board](../FIRMWARE_BOARD.md) |
+| Devices | [Supported devices](devices/README.md); [PLAF103](devices/plaf103/README.md): [board and signal map](devices/plaf103/board.md), [feature support](devices/plaf103/feature-support.md), [motor driver](devices/plaf103/motor-driver.md), [UART](devices/plaf103/uart.md), [flash layout](devices/plaf103/flash-layout.md), [experimental recovery](devices/plaf103/recovery.md), [relay bench](devices/plaf103/bench.md), [stock behavior and protocol](devices/plaf103/stock/README.md), [stock OTA requirements](devices/plaf103/stock/ota-requirements.md) |
+| Chips | [RTL8721DM (AmebaD)](chips/rtl8721dm/README.md), [pins](chips/rtl8721dm/pins.md) |
+| Replacement firmware | [Architecture and status](firmware/README.md), [bank policy](firmware/bank-policy.md), [startup/indicator diagnostics](firmware/startup-diagnostics.md), [QA firmware](firmware/qa.md), [OTA design](firmware/ota-design.md), [local transport](firmware/local-transport.md), [consumer installation](firmware/consumer-installation.md), [feature board](../FIRMWARE_BOARD.md); components: [optical inputs](firmware/optical-inputs.md), [buttons](firmware/buttons.md), [motor pulse](firmware/motor-pulse.md), [audio](firmware/audio.md), [clock](firmware/clock.md), [Bluetooth](firmware/bluetooth.md) |
 | Product | [Product architecture](firmware/product-architecture.md), [API design](api/README.md) (device protocol, server HTTP API, storage, crates) |
 | Development | [Setup/checks](development/README.md), [local server](development/local-server.md), [SDK builds](development/firmware-builds.md), [UART development updater](development/uart-development.md), [optional fixtures](development/fixtures.md), [provenance](development/provenance.md) |
 
-These guides describe the supported development workflow and findings carried into Petlibre. Historical bench diaries and raw evidence are outside this repository. A documented finding is not a request to repeat an experiment.
+These guides describe the supported development workflow and the findings carried into Petlibre. Historical bench diaries and raw evidence live outside this repository. A documented finding is not a request to repeat an experiment.

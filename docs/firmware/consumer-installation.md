@@ -11,7 +11,7 @@ Each finding is labeled **physical** (observed on the research unit), **static**
 - **`fw40-stock-ota-06-promote`:** the build's bank-0 recovery role installed the same build, signed, into bank 1, where it confirmed.
 - **`fw40-stock-ota-07`:** the whole sequence in one command, with a fresh build: install, recovery-role health from bank 0, and promotion to bank 1.
 - **`fw41-roundtrip-01`:** to stock over our updater and back over stock's, with no UART write and nobody at the bench.
-- **Tool:** `petlibre-bench stock-ota` runs this whole sequence ([bench](../hardware/bench.md#stock-to-a-replacement-stock-ota)). The image contract is in [stock OTA requirements](stock-ota-requirements.md).
+- **Tool:** `petlibre-bench stock-ota` runs this whole sequence ([bench](../devices/plaf103/bench.md#stock-to-a-replacement-stock-ota)). The image contract is in [stock OTA requirements](../devices/plaf103/stock/ota-requirements.md).
 
 What made those runs work on the bench, and must stay in any installer:
 
@@ -22,7 +22,7 @@ What made those runs work on the bench, and must stay in any installer:
 | The image port reachable from the feeder | `fw40-stock-ota-02`: with only TCP 1883 allowed, stock connected for about 25 s, then reported `OTA_INFORM` error 2003 |
 | Tolerate stock's ~61 s heartbeat | `fw40-stock-ota-03`: a 60 s telemetry bound restarted the quiet interval at every heartbeat |
 | Ask stock for its attributes when its version report is stale | Idle stock reports its version only around a connect (`fw40-stock-ota-04`) |
-| A URL under 128 bytes, `Content-Length` title-cased, a direct `200` | Stock's parser limits ([requirements](stock-ota-requirements.md#http-server-and-url-requirements)) |
+| A URL under 128 bytes, `Content-Length` title-cased, a direct `200` | Stock's parser limits ([requirements](../devices/plaf103/stock/ota-requirements.md#http-server-and-url-requirements)) |
 | Mains power, idle, model and version checked first | Stock's own precheck; the server's trial gate checks the same reports |
 
 What the bench still uses and a consumer must not need:
@@ -68,7 +68,7 @@ The vendor app provisions a PLAF103 through the feeder's **setup access point**,
 
 **Re-provisioning guard.** While the `0x3e9000` record is non-blank and the device state is bound, types 1–3 are acknowledged but not applied. A feeder must be reset or unbound first.
 
-**Credentials.** The MQTT client ID, username and password the feeder presents are its own: they are loaded from flash at boot, not issued at bind. `BINDING` is an application-level association, which `petlibre-local` already answers by replaying the captured cloud reply. The commands stock dispatches over MQTT are `OTA_UPGRADE`, `GET_CONFIG`, `BINDING`, `UNBIND`, `DEVICE_REBOOT`, `WIFI_RECONNECT_SERVICE`, `WIFI_CHANGE_SERVICE`, `ATTR_SET_SERVICE` and `ATTR_GET_SERVICE` ([stock behavior](stock-behavior.md)).
+**Credentials.** The MQTT client ID, username and password the feeder presents are its own: they are loaded from flash at boot, not issued at bind. `BINDING` is an application-level association, which `petlibre-local` already answers by replaying the captured cloud reply. The commands stock dispatches over MQTT are `OTA_UPGRADE`, `GET_CONFIG`, `BINDING`, `UNBIND`, `DEVICE_REBOOT`, `WIFI_RECONNECT_SERVICE`, `WIFI_CHANGE_SERVICE`, `ATTR_SET_SERVICE` and `ATTR_GET_SERVICE` ([stock behavior](../devices/plaf103/stock/README.md)).
 
 **Open questions (to settle physically):**
 - Is type 3 really what goes on the wire? Reading the decompiled app depends on its integer encoding, so a capture should confirm it.
@@ -110,7 +110,7 @@ The vendor's firmware cannot be shipped with the app. Each feeder already holds 
 - **Where it is:** after stock installs the build into bank 0, bank 1 still holds the stock application, with only the first byte of its 8-byte marker zeroed. Stock's activation does exactly that and nothing more.
 - **Who reads it:** the bank-0 recovery role can read bank 1 (`sdk::bank1_read`, used today for write readback).
 - **Upload:** before the installer offers the promotion, the recovery role streams bank 1 to it on a new `backup/put` topic. That topic needs its own broker rule, and is chunked like `ota/data`.
-- **Rebuild:** the installer is the server during an install, so the backup lands in the app. It restores the marker byte and rebuilds the OTA container: 32-byte header, payload length and byte-sum, as in [the container format](stock-ota-requirements.md#the-image-container).
+- **Rebuild:** the installer is the server during an install, so the backup lands in the app. It restores the marker byte and rebuilds the OTA container: 32-byte header, payload length and byte-sum, as in [the container format](../devices/plaf103/stock/ota-requirements.md#the-image-container).
 - **Checks:** the rebuilt image must match the stock image profile. For 1.1.15 it must match the pinned payload hash exactly, so a mismatch shows a damaged read before anything relies on it.
 - **Storage:** per device, in the app and, if the user wants, on their server.
 - **Why this route:** these are the user's own bytes from their own device, so there is no redistribution question.

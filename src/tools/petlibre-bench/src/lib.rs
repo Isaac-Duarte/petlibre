@@ -5,7 +5,7 @@
 //! `petlibre-flash` binary, so its pinned checks, plan hashes and no-retry
 //! rules apply. This crate never writes to the feeder UART itself, never
 //! retries, and never boots after a stopped update. Ports and evidence paths
-//! come from the ignored `private/bench.json`; see docs/hardware/bench.md.
+//! come from the ignored `private/bench.json`; see docs/devices/plaf103/bench.md.
 
 #![forbid(unsafe_code)]
 

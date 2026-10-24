@@ -19,7 +19,7 @@
 //! host firewall change the operator makes and removes by hand; the run never
 //! touches routing. The way back to stock is the UART stock recovery.
 //!
-//! [stock OTA requirements]: ../../../../../../docs/firmware/stock-ota-requirements.md
+//! [stock OTA requirements]: ../../../../../../docs/devices/plaf103/stock/ota-requirements.md
 
 use std::path::PathBuf;
 
@@ -554,7 +554,7 @@ fn recovery(reports: &[Report]) -> Option<&'static str> {
         .any(|r| matches!(r.verdict, Verdict::Fail(_)));
     (asked && failed).then_some(
         "Stock was asked to install. If the feeder does not answer, recover it over UART with \
-         the reviewed tools (docs/hardware/recovery.md); bank 1 may be invalid.",
+         the reviewed tools (docs/devices/plaf103/recovery.md); bank 1 may be invalid.",
     )
 }
 

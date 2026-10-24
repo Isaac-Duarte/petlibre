@@ -1,23 +1,10 @@
-# PLAF103 hardware
+# PLAF103 board and signal map
 
-## Identification and evidence
-
-The inspected research feeder is a PETLIBRO Granary **PLAF103**, 5 L, with FCC ID **2A3DEPLAF103S**. Board photographs identify **RTL8721DM** and **GD25Q64ESIG**. UART reports flash ID `C8 40 17`, consistent with the identified GD25Q64E's nominal 64 Mbit (**8 MiB**) capacity. Two separately acquired matching 8 MiB reads establish external-flash read coverage on that unit.
-
-The [FCC internal-photo exhibit](https://fccid.io/2A3DEPLAF103S/Internal-Photos/Internal-Photos-6465982.pdf) is a comparison reference and shows a board marked `PLAF103 MB V1.0`; the actual research unit's PCB revision has not been established. The [GD25Q64E datasheet](https://download.gigadevice.com/Datasheet/DS-00484-GD25Q64E-Rev1.6.pdf) is the external-flash reference. These links identify research sources; compare markings on your own unit.
-
-Evidence levels used here:
-
-- **Observed:** labels/parts, UART output, or a recorded physical operation on the research unit.
-- **Recovered:** behavior traced in stock 1.1.15 instructions, not electrically verified pin wiring.
-- **Modeled:** host tests or execution with supplied register/ROM/NOR models.
-- **Unknown:** unresolved board, electrical, timing, or mechanical behavior.
-
-Do not assume PLAF108 compatibility. No schematic, complete connector pinout, measured motor driver behavior, or complete physical GPIO mapping is established.
+What the PLAF103 main board connects to each [RTL8721DM](../../chips/rtl8721dm/README.md) pin, and what is known about each connection. Identification, chips and support status are on the [device page](README.md). Labels follow the [evidence levels](../../evidence.md).
 
 ## Recovered signal assignments
 
-The table records stock 1.1.15 software roles. The SDK pin encoding is `(port << 5) | pin`. Electrical polarity, physical traces, and calibration still require board measurements.
+The table records stock 1.1.15 software roles. The SDK pin encoding is `(port << 5) | pin` ([chip](../../chips/rtl8721dm/README.md#pins)). Electrical polarity, physical traces, and calibration still require board measurements.
 
 | Signal | Stock role and initialization | Important unknown |
 | --- | --- | --- |
@@ -48,10 +35,10 @@ Useful stock instruction anchors: motor initialization `0x0e0091ac`, drive helpe
 
 Stock writes are sequential, and startup passes through input configuration. This table does not establish electrically safe transitions or clockwise/counterclockwise direction. Replacement hardware output support remains experimental.
 
-See [UART wiring](uart.md), [relay bench control](bench.md), [boot/flash layout](../firmware/boot-and-flash.md), and [replacement architecture](../firmware/README.md).
+See [UART wiring](uart.md), [relay bench control](bench.md), [boot/flash layout](flash-layout.md), and [replacement architecture](../../firmware/README.md).
 
 ## Later physical observations
 
-After restoring the stock shared-pad supply prerequisite, a bounded diagnostic confirmed **PA0 Wi-Fi, PA2 low food, PA4 locked, PB22 warning**, HIGH-on/LOW-off on the tested unit. Each blinked twice and ended dark. PA0/PA2/PA4 input reads still disagree with visible HIGH output, and interleaved UART reports remain unresolved; these are not passing electrical-readback results. See [startup diagnostics](../firmware/startup-diagnostics.md).
+After restoring the stock shared-pad supply prerequisite, a bounded diagnostic confirmed **PA0 Wi-Fi, PA2 low food, PA4 locked, PB22 warning**, HIGH-on/LOW-off on the tested unit. Each blinked twice and ended dark. PA0/PA2/PA4 input reads still disagree with visible HIGH output, and interleaved UART reports remain unresolved; these are not passing electrical-readback results. See [startup diagnostics](../../firmware/startup-diagnostics.md).
 
 CON3 carries board power and the motor leads. The motor is the blue/white pair (a can motor with a suppression capacitor), driven by a TC118AH H-bridge beside CON3; the yellow pair is a 3.3 V logic line, most likely feedback. See [motor driver](motor-driver.md). Unplugging CON3 removed board boot/loader response, so it does not isolate the motor while preserving that power connection. The GPIO-to-driver routes remain untraced. Stopped-startup observations were made with the harness connected under supervision.

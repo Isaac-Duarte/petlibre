@@ -1,6 +1,6 @@
 # Product resource budget (FW44)
 
-Status: physical (October 23, 2026), nothing run by the owner. The `feeder` firmware was installed over the air as `fw44-budget-02` (v95, normal) and `fw44-setup-01` (v96, BLE setup mode from boot), each confirmed, with the normal build restored afterwards (`fw44-budget-04`, v97). Sizes are from the builds' manifests and ELF sections; heap and handshake times are from the feeder's own `PLAPI1` records. This answers whether the product ([product architecture](product-architecture.md)) fits on the PLAF103, and what gives way where it does not.
+Status: physical (October 23, 2026), nothing run by the owner. **FW47's actual figures** (the API, mDNS and the event ring linked, October 24) are in [device API](device-api.md#resources): payload 942,080, loop stack bound 4,552 of 6,144 B, about 125 KB of heap free. The `feeder` firmware was installed over the air as `fw44-budget-02` (v95, normal) and `fw44-setup-01` (v96, BLE setup mode from boot), each confirmed, with the normal build restored afterwards (`fw44-budget-04`, v97). Sizes are from the builds' manifests and ELF sections; heap and handshake times are from the feeder's own `PLAPI1` records. This answers whether the product ([product architecture](product-architecture.md)) fits on the PLAF103, and what gives way where it does not.
 
 ## What was linked
 

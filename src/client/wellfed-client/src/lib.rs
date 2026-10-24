@@ -3,10 +3,12 @@
 //! say. The Android app (through generated bindings) and the owner's
 //! `wellfed` CLI share it, so the two cannot disagree about the wire.
 //!
-//! So far it holds FW45's BLE setup session ([`setup`]); FW47's device API
-//! sessions, invites and event sync follow.
+//! It holds FW45's BLE setup session ([`setup`]) and FW47's device API
+//! sessions and invite redemption ([`api`]).
 //!
 //! [API design]: ../../../../docs/api/README.md
 #![forbid(unsafe_code)]
 
+pub mod api;
 pub mod setup;
+pub mod time;

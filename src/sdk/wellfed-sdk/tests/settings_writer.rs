@@ -5,6 +5,7 @@ use std::cell::Cell;
 use std::sync::{Mutex, MutexGuard};
 
 use wellfed_core::store::clients::{ClientStatus, Label, Role};
+use wellfed_core::store::events::Read;
 use wellfed_core::store::seed::SeedStatus;
 use wellfed_core::store::settings::SettingsStatus;
 use wellfed_core::transport::{SettingsFields, SettingsResult};
@@ -15,7 +16,7 @@ use wellfed_hal::flash_lock::provider::Provider;
 use wellfed_hal::keys::{self, Change, Requested};
 use wellfed_hal::rng;
 use wellfed_hal::sdk::{self, fake};
-use wellfed_hal::{network, settings};
+use wellfed_hal::{events, network, settings};
 use wellfed_sdk::settings::{
     self as writer, ErrorStage, Identity, KeyChange, KeyResult, Record, Writer,
 };
@@ -91,6 +92,7 @@ fn start() -> (MutexGuard<'static, ()>, Writer, Provider) {
     settings::reset();
     network::reset();
     keys::reset();
+    events::reset();
     ARMED.with(|a| a.set(true));
     (guard, Writer::default(), Provider::default())
 }
@@ -138,6 +140,15 @@ fn changes_are_saved_once_each_inside_a_marked_attempt() {
         step(&mut writer, &mut provider),
         Some(Record::Keys { .. })
     ));
+    assert_eq!(
+        step(&mut writer, &mut provider),
+        Some(Record::Events {
+            open: true,
+            last: None,
+            oldest: None
+        }),
+        "the event ring opens empty"
+    );
     assert_eq!(
         step(&mut writer, &mut provider),
         None,
@@ -226,19 +237,17 @@ fn an_unwritable_store_reads_but_refuses_changes() {
 
 #[test]
 fn wifi_credentials_are_saved_inside_a_marked_attempt_and_cleared() {
-    use wellfed_core::transport::{WifiFields, WifiResult};
+    use wellfed_core::store::net::Credentials;
+    use wellfed_core::transport::WifiResult;
     let (_guard, mut writer, mut provider) = start();
     step(&mut writer, &mut provider); // open
     step(&mut writer, &mut provider); // net open
     step(&mut writer, &mut provider); // keys
+    step(&mut writer, &mut provider); // events
 
-    let set = WifiFields {
-        ssid: Some("6e6574"),
-        psk: Some("70617373776f7264"),
-        clear: false,
-    };
+    let set = Credentials::new(b"net", b"password").unwrap();
     assert!(matches!(
-        network::request(set),
+        network::change(Some(set)),
         WifiResult::Current { pending: true, .. }
     ));
     assert_eq!(
@@ -251,15 +260,11 @@ fn wifi_credentials_are_saved_inside_a_marked_attempt_and_cleared() {
     assert!(ATTEMPT_SEEN.with(Cell::get));
     assert_eq!(sdk::backup_read(MARKER_REGISTER), 0);
     assert!(matches!(
-        network::request(WifiFields::default()),
+        network::current(),
         WifiResult::Current { view, pending: false } if view.stored_ssid_crc.is_some()
     ));
 
-    let clear = WifiFields {
-        clear: true,
-        ..WifiFields::default()
-    };
-    network::request(clear);
+    network::change(None);
     assert_eq!(
         step(&mut writer, &mut provider),
         Some(Record::NetSaved {
@@ -376,8 +381,8 @@ fn key_changes_apply_and_a_reset_publishes_a_new_identity() {
     let (_guard, mut writer, mut provider) = start();
     fake::with(|h| h.adc_noise = 0x1357_9bdf);
     assert_eq!(rng::start().result, Ok(()));
-    for _ in 0..3 {
-        step(&mut writer, &mut provider); // open, net open, keys
+    for _ in 0..4 {
+        step(&mut writer, &mut provider); // open, net open, keys, events
     }
     let (first, identity) = keys::identity_since(0).expect("the identity is published");
 
@@ -438,7 +443,7 @@ fn a_reset_needs_the_generator_and_an_armed_writer() {
     let (_guard, mut writer, mut provider) = start();
     fake::with(|h| h.adc_noise = 0x0bad_cafe);
     assert_eq!(rng::start().result, Ok(()));
-    for _ in 0..3 {
+    for _ in 0..4 {
         step(&mut writer, &mut provider);
     }
     let (first, _) = keys::identity_since(0).unwrap();
@@ -467,4 +472,61 @@ fn key_change_records_format() {
     )
     .unwrap();
     assert_eq!(text, "keys change=reset result=no-generator enrolled=0");
+}
+
+/// FW47: the loop's queued events reach the ring, survive a reboot, and
+/// come back through the read mailbox in order.
+#[test]
+fn queued_events_are_appended_and_read_back_after_a_reboot() {
+    let (_guard, mut writer, mut provider) = start();
+    for _ in 0..4 {
+        step(&mut writer, &mut provider); // open, net open, keys, events
+    }
+    assert!(events::record(Some(1_700_000_000), [1; 16]));
+    assert!(events::record(None, [2; 16]));
+    step(&mut writer, &mut provider);
+    step(&mut writer, &mut provider);
+    assert_eq!(events::last_seq(), Some(2));
+
+    // The next boot finds both; a reader asks, the writer answers.
+    events::reset();
+    let mut writer = Writer::default();
+    for _ in 0..3 {
+        step(&mut writer, &mut provider);
+    }
+    assert_eq!(
+        step(&mut writer, &mut provider),
+        Some(Record::Events {
+            open: true,
+            last: Some(2),
+            oldest: Some(1)
+        })
+    );
+    assert_eq!(events::read_result(None), None, "asked");
+    step(&mut writer, &mut provider);
+    let Some(Read::Record(first)) = events::read_result(None) else {
+        panic!("the first event");
+    };
+    assert_eq!(
+        (first.seq, first.at, first.body),
+        (1, Some(1_700_000_000), [1; 16])
+    );
+    assert_eq!(events::read_result(Some(1)), None);
+    step(&mut writer, &mut provider);
+    assert!(matches!(
+        events::read_result(Some(1)),
+        Some(Read::Record(r)) if r.seq == 2
+    ));
+
+    // The end of the ring is current only until the next append.
+    assert_eq!(events::read_result(Some(2)), None);
+    step(&mut writer, &mut provider);
+    assert_eq!(events::read_result(Some(2)), Some(Read::End));
+    assert!(events::record(None, [3; 16]));
+    step(&mut writer, &mut provider);
+    assert_eq!(
+        events::read_result(Some(2)),
+        None,
+        "stale once a record lands"
+    );
 }

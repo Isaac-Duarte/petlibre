@@ -119,7 +119,7 @@ enum Command {
     StockExecute(StockExecuteArgs),
     /// Sign and offer a review (or `--build` one first) to the running local
     /// server, watch the UART until it confirms or falls back, then check the
-    /// server's health; never touches power.
+    /// feeder's status over the device API; never touches power.
     Ota(OtaArgs),
     /// Real-device integration scenarios: runs its own hotspot, server and
     /// UART capture, installs over the air, restores the bench afterwards.
@@ -205,12 +205,12 @@ fn run(cli: Cli) -> wellfed_bench::Result<u8> {
         .root
         .canonicalize()
         .map_err(|error| Error::Bench(format!("--root {}: {error}", cli.root.display())))?;
-    let tools = Processes {
-        root: root.clone(),
-        flash_bin: cli.flash_bin.unwrap_or_else(default_flash_bin),
-        local_bin: cli.local_bin.unwrap_or_else(default_local_bin),
-        build_bin: cli.build_bin.unwrap_or_else(default_build_bin),
-    };
+    let tools = Processes::new(
+        root.clone(),
+        cli.flash_bin.unwrap_or_else(default_flash_bin),
+        cli.local_bin.unwrap_or_else(default_local_bin),
+        cli.build_bin.unwrap_or_else(default_build_bin),
+    );
 
     let page = if cli.ui {
         Some(start_page(

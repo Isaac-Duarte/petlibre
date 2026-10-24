@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 
 use super::*;
 use crate::commands::ota::Source;
+use crate::device::DeviceStatus;
 use crate::relay::FakeBoard;
 use crate::status::{FlashTool, StepState};
 use crate::tools::{Capture, Captured};
@@ -120,11 +121,12 @@ struct Calls {
     /// What `wellfed-build source-id --image` prints; none fails the query.
     source_id: Option<String>,
     build_queries: Vec<Vec<String>>,
-    /// `wellfed-local status` queries and their answers; then the default.
-    queries: Vec<Vec<String>>,
-    statuses: VecDeque<Captured>,
-    status_default: String,
-    /// Every child in order: `build <args>`, `local <args>`, `query <args>`.
+    /// Device API status checks (key file, server config) and their
+    /// answers (an error's text); then the default.
+    queries: Vec<(PathBuf, PathBuf)>,
+    statuses: VecDeque<Result<DeviceStatus, String>>,
+    status_default: Option<DeviceStatus>,
+    /// Every child in order: `build <args>`, `local <args>`, `status <keys>`.
     ran: Vec<String>,
     /// Whether a full read's bank 1 starts with the loader marker.
     bank1_valid: bool,
@@ -228,16 +230,19 @@ impl Tools for FakeTools {
         Ok(calls.local_codes.pop_front().unwrap_or(0))
     }
 
-    fn local_query(&mut self, args: &[String]) -> Result<Captured> {
+    fn device_status(&mut self, keys: &Path, config: &Path) -> Result<DeviceStatus> {
         let mut calls = self.0.borrow_mut();
-        calls.queries.push(args.to_vec());
-        calls.ran.push(format!("query {}", args.join(" ")));
-        let default = Captured {
-            code: 0,
-            stdout: calls.status_default.clone(),
-            stderr: String::new(),
-        };
-        Ok(calls.statuses.pop_front().unwrap_or(default))
+        calls
+            .queries
+            .push((keys.to_path_buf(), config.to_path_buf()));
+        calls.ran.push(format!("status {}", keys.display()));
+        match calls.statuses.pop_front() {
+            Some(answer) => answer.map_err(Error::Bench),
+            None => calls
+                .status_default
+                .clone()
+                .ok_or_else(|| Error::Bench("the feeder did not answer".into())),
+        }
     }
 
     fn build(&mut self, args: &[String], _: &mut Status) -> Result<i32> {
@@ -251,7 +256,7 @@ impl Tools for FakeTools {
             fs::create_dir_all(&review)?;
             fs::write(review.join("image.bin"), [0u8; 16])?;
             let manifest = json!({"startup_identity": BUILD, "startup_motion_policy": null,
-                                  "variant": "fw11-reset"});
+                                  "firmware": "feeder", "variant": "fw11-reset"});
             fs::write(review.join("build-manifest.json"), manifest.to_string())?;
         }
         Ok(code)
@@ -312,7 +317,7 @@ fn rig() -> Rig {
         let mut calls = tools.0.borrow_mut();
         calls.sigrok = true;
         calls.root = tmp.path().to_path_buf();
-        calls.status_default = server_status(BUILD, 1, true, false);
+        calls.status_default = Some(device_status(BUILD, 1));
     }
 
     let bench = Bench {
@@ -904,6 +909,11 @@ fn ota_review(rig: &Rig, manifest: Value) -> OtaArgs {
     let review = rig.bench.root.join(VERIFICATION).join("review");
     fs::create_dir_all(&review).unwrap();
     fs::write(review.join("image.bin"), [0u8; 16]).unwrap();
+    // The product firmware, the one the status check applies to, unless named.
+    let mut manifest = manifest;
+    if let Some(fields) = manifest.as_object_mut() {
+        fields.entry("firmware").or_insert_with(|| json!("feeder"));
+    }
     fs::write(review.join("build-manifest.json"), manifest.to_string()).unwrap();
     OtaArgs {
         name: "unit".into(),
@@ -913,6 +923,7 @@ fn ota_review(rig: &Rig, manifest: Value) -> OtaArgs {
         firmware: None,
         variant: None,
         config: "private/server.json".into(),
+        keys: "private/wellfed-owner.json".into(),
         version: None,
         minutes: 20.0,
         attended_motion: false,
@@ -1016,7 +1027,7 @@ fn ota_installs_a_stock_review_by_its_payload_hash_without_health() {
     };
     assert_eq!(flag(sign, "--build-id"), "1".repeat(64));
     assert_eq!(offer[0], "ota-offer");
-    assert!(calls.queries.is_empty(), "stock has no health to poll");
+    assert!(calls.queries.is_empty(), "stock has no status to poll");
 }
 
 #[test]
@@ -1165,22 +1176,18 @@ fn ota_stops_when_time_runs_out() {
 
 const OTHER: &str = "5b8433a4f795cb2178c7a38a45087a6727e7a2621fc557d146cff607556f991e";
 
-/// `wellfed-local status` output with one replacement health message.
-fn server_status(build: &str, bank: u8, online: bool, stale: bool) -> String {
-    json!({"broker_connected": true, "replacement": {
-        "health": {"schema": "wellfed.health", "v": 1, "online": true, "seq": 7,
-                   "build": build, "bank": bank, "outputs": "stopped", "faults": [],
-                   "clock": {"syncs": 1, "unix_ms": 1_792_674_000_000_u64}},
-        "age_ms": if stale { 80_000 } else { 1_000 }, "online": online, "stale": stale,
-        "rejected": 0, "replies": []}})
-    .to_string()
-}
-
-fn answer(stdout: String) -> Captured {
-    Captured {
-        code: 0,
-        stdout,
-        stderr: String::new(),
+/// The device API's status of `build` running on `bank`.
+fn device_status(build: &str, bank: u8) -> DeviceStatus {
+    DeviceStatus {
+        build: build.into(),
+        bank,
+        uptime_ms: 61_000,
+        boot_count: 4,
+        wifi: wellfed_proto::api::WifiSource::Build,
+        losses: 0,
+        clock_ms: Some(1_792_674_000_000),
+        settings_generation: 2,
+        wifi_generation: 1,
     }
 }
 
@@ -1194,6 +1201,7 @@ fn build_args() -> OtaArgs {
         firmware: Some(Firmware::Trial),
         variant: Some(Variant::Fw11Reset),
         config: "private/server.json".into(),
+        keys: "private/wellfed-owner.json".into(),
         version: None,
         minutes: 20.0,
         attended_motion: false,
@@ -1253,7 +1261,7 @@ fn ota_build_builds_reviews_offers_and_checks_health_in_order() {
             "build review build --build private/firmware-build/plaf103/firstboot --output private/verification/unit-review",
             "local ota-sign --image private/verification/unit-review/image.bin --version 1 --build-id 8a13e59efa15e56b5f5e32825909dc45e381a2027abc65d8de6658c40b302447 --output private/verification/unit-v1.manifest",
             "local ota-offer --manifest private/verification/unit-v1.manifest --image private/verification/unit-review/image.bin",
-            "query status --config private/server.json",
+            "status private/wellfed-owner.json",
         ]
     );
     drop(calls);
@@ -1262,9 +1270,7 @@ fn ota_build_builds_reviews_offers_and_checks_health_in_order() {
     let has = |text: &str| lines.iter().any(|l| l.contains(text));
     assert!(has("Build took ") && has("Review took "), "{lines:?}");
     assert!(
-        has(
-            "Health: build 8a13e59efa15 on bank 1, seq 7, outputs stopped, faults none, clock valid (syncs 1)"
-        ),
+        has("Status: build 8a13e59efa15 on bank 1, up 61 s, boot 4, Wi-Fi Build, clock valid"),
         "{lines:?}"
     );
     let at = lines.iter().position(|l| l == "Timing:").unwrap();
@@ -1292,7 +1298,8 @@ fn old_review(rig: &Rig, name: &str, identity: &str, complete: bool) {
     let review = rig.bench.root.join(VERIFICATION).join(name);
     fs::create_dir_all(&review).unwrap();
     fs::write(review.join("image.bin"), [0u8; 16]).unwrap();
-    let manifest = json!({"startup_identity": identity, "startup_motion_policy": null});
+    let manifest = json!({"startup_identity": identity, "startup_motion_policy": null,
+                          "firmware": "feeder"});
     fs::write(review.join("build-manifest.json"), manifest.to_string()).unwrap();
     if complete {
         fs::write(review.join("review.json"), build_review().to_string()).unwrap();
@@ -1479,17 +1486,17 @@ fn a_variant_needs_the_firmware_that_declares_it() {
 }
 
 #[test]
-fn health_that_never_shows_the_build_fails_after_confirmation() {
+fn a_status_that_never_shows_the_build_fails_after_confirmation() {
     let mut rig = rig();
     with_status(&mut rig, Source::Review);
     let args = plain_review(&rig);
     timed_pass(&rig);
-    rig.tools.0.borrow_mut().status_default = server_status(OTHER, 0, true, false);
+    rig.tools.0.borrow_mut().status_default = Some(device_status(OTHER, 0));
 
     let error = rig.bench.ota(&args).unwrap_err().to_string();
     assert!(
-        error.contains("Confirmed on UART but health did not report the build")
-            && error.contains("health reports build 5b8433a4f795"),
+        error.contains("Confirmed on UART but the device API did not report the build")
+            && error.contains("the feeder reports build 5b8433a4f795"),
         "{error}"
     );
 
@@ -1498,7 +1505,7 @@ fn health_that_never_shows_the_build_fails_after_confirmation() {
     let lines = recorded(&rig);
     let waits = lines
         .iter()
-        .filter(|l| l.starts_with("Waiting for health"))
+        .filter(|l| l.starts_with("Waiting for status"))
         .count();
     assert_eq!(waits, 1);
     let health = lines
@@ -1508,20 +1515,38 @@ fn health_that_never_shows_the_build_fails_after_confirmation() {
     assert!(!health.ends_with('-'), "{health}");
 }
 
+/// A bring-up firmware serves no device API (FW47): its UART confirmation
+/// is the whole check, and no status is asked for.
 #[test]
-fn stale_or_failed_health_is_waited_out_until_it_matches() {
+fn a_firmware_without_the_device_api_passes_on_its_confirmation() {
+    let mut rig = rig();
+    with_status(&mut rig, Source::Review);
+    let args = ota_review(
+        &rig,
+        json!({"startup_identity": BUILD, "startup_motion_policy": null, "firmware": "qa"}),
+    );
+    timed_pass(&rig);
+    rig.tools.0.borrow_mut().status_default = Some(device_status(OTHER, 0));
+
+    assert_eq!(rig.bench.ota(&args).unwrap(), 0);
+    assert!(rig.tools.0.borrow().queries.is_empty());
+    assert!(
+        recorded(&rig)
+            .iter()
+            .any(|l| l.contains("qa serves no device API"))
+    );
+}
+
+#[test]
+fn a_missing_or_wrong_status_is_waited_out_until_it_matches() {
     let mut rig = rig();
     with_status(&mut rig, Source::Review);
     let args = plain_review(&rig);
     timed_pass(&rig);
     rig.tools.0.borrow_mut().statuses.extend([
-        Captured {
-            code: 1,
-            stdout: String::new(),
-            stderr: "Error: local API returned 503\n".into(),
-        },
-        answer(server_status(BUILD, 1, false, true)),
-        answer(server_status(BUILD, 1, true, false)),
+        Err("the feeder did not answer within 10 s".into()),
+        Ok(device_status(BUILD, 0)),
+        Ok(device_status(BUILD, 1)),
     ]);
 
     assert_eq!(rig.bench.ota(&args).unwrap(), 0);
@@ -1529,8 +1554,8 @@ fn stale_or_failed_health_is_waited_out_until_it_matches() {
     assert_eq!(rig.tools.0.borrow().queries.len(), 3);
     let lines = recorded(&rig);
     let has = |text: &str| lines.iter().any(|l| l.contains(text));
-    assert!(has("exited 1: Error: local API returned 503"), "{lines:?}");
-    assert!(has("health reports the firmware offline"), "{lines:?}");
+    assert!(has("the feeder did not answer within 10 s"), "{lines:?}");
+    assert!(has("the feeder runs from bank 0"), "{lines:?}");
     // A review run has nothing to report for the build.
     assert!(has("skipped (--review)"), "{lines:?}");
 }

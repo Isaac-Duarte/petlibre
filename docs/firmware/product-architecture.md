@@ -83,6 +83,8 @@ In code:
 
 ## Device API
 
+Built in FW47 (October 24, [device API](device-api.md)): sessions are Noise IK rather than KK, and the MQTT request path is gone.
+
 - **Transport.** A Noise session over TCP, advertised over mDNS. Each client authenticates with its own key. There is no plaintext mode.
 - **One message stream per client:**
   - typed requests and responses

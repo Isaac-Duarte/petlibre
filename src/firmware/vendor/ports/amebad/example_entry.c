@@ -23,6 +23,7 @@
 #include "wifi_constants.h"
 #include "lwip_netconf.h"
 #include "lwip/dns.h"
+#include "lwip/dhcp.h"
 #include "lwip/sockets.h"
 #include <platform/platform_stdlib.h>
 #include "wellfed_wifi_credentials.h"
@@ -542,6 +543,152 @@ int wellfed_tcp_accept(int listener, unsigned int timeout_ms)
     int send_timeout = 3000;
     lwip_setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, &send_timeout, sizeof(send_timeout));
     return s;
+}
+
+/* FW47: the device API's sockets. The loop task serves every client and
+ * steps the feeding owner between them, so nothing here ever waits: each
+ * call takes what is ready now and returns (wellfed-hal api.rs). */
+static void wellfed_nonblocking(int s)
+{
+    int flags = lwip_fcntl(s, F_GETFL, 0);
+    lwip_fcntl(s, F_SETFL, flags | O_NONBLOCK);
+}
+
+/* A listener on `port` for every local address, or -1. */
+int wellfed_api_listen(unsigned int port)
+{
+    int s = lwip_socket(AF_INET, SOCK_STREAM, 0);
+    if (s < 0) {
+        return -1;
+    }
+    int reuse = 1;
+    lwip_setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+    struct sockaddr_in at;
+    memset(&at, 0, sizeof(at));
+    at.sin_family = AF_INET;
+    at.sin_port = lwip_htons((u16_t)port);
+    at.sin_addr.s_addr = lwip_htonl(INADDR_ANY);
+    if (lwip_bind(s, (struct sockaddr *)&at, sizeof(at)) != 0 || lwip_listen(s, 2) != 0) {
+        lwip_close(s);
+        return -1;
+    }
+    wellfed_nonblocking(s);
+    return s;
+}
+
+/* A waiting connection: a socket, -1 when none waits, -2 on an error. */
+int wellfed_api_accept(int listener)
+{
+    int s = lwip_accept(listener, NULL, NULL);
+    if (s < 0) {
+        int error = wellfed_socket_error(listener);
+        return (error == 0 || error == EAGAIN || error == EWOULDBLOCK) ? -1 : -2;
+    }
+    wellfed_nonblocking(s);
+    int on = 1;
+    lwip_setsockopt(s, IPPROTO_TCP, TCP_NODELAY, &on, sizeof(on));
+    return s;
+}
+
+/* Bytes received now; 0 when none are waiting, -1 once closed or failed. */
+int wellfed_api_recv(int s, void *buffer, unsigned int length)
+{
+    int got = lwip_recv(s, buffer, length, MSG_DONTWAIT);
+    if (got > 0) {
+        return got;
+    }
+    if (got < 0) {
+        int error = wellfed_socket_error(s);
+        if (error == 0 || error == EAGAIN || error == EWOULDBLOCK) {
+            return 0;
+        }
+    }
+    return -1;
+}
+
+/* Bytes the stack took now (0 while its send buffer is full), -1 on error. */
+int wellfed_api_send(int s, const void *data, unsigned int length)
+{
+    int sent = lwip_send(s, data, length, MSG_DONTWAIT);
+    if (sent >= 0) {
+        return sent;
+    }
+    int error = wellfed_socket_error(s);
+    return (error == 0 || error == EAGAIN || error == EWOULDBLOCK) ? 0 : -1;
+}
+
+/* The mDNS socket: UDP 5353, a member of 224.0.0.251, or -1. Opened only
+ * once DHCP gave an address: a socket opened on the static fallback never
+ * saw a multicast query (physical, fw47-api-02). */
+int wellfed_mdns_open(void)
+{
+    int s = lwip_socket(AF_INET, SOCK_DGRAM, 0);
+    if (s < 0) {
+        return -1;
+    }
+    int reuse = 1;
+    lwip_setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+    struct sockaddr_in at;
+    memset(&at, 0, sizeof(at));
+    at.sin_family = AF_INET;
+    at.sin_port = lwip_htons(5353);
+    at.sin_addr.s_addr = lwip_htonl(INADDR_ANY);
+    struct ip_mreq join;
+    memset(&join, 0, sizeof(join));
+    join.imr_multiaddr.s_addr = lwip_htonl(0xe00000fbu);
+    join.imr_interface.s_addr = lwip_htonl(INADDR_ANY);
+    u8_t ttl = 255;
+    if (lwip_bind(s, (struct sockaddr *)&at, sizeof(at)) != 0
+        || lwip_setsockopt(s, IPPROTO_IP, IP_ADD_MEMBERSHIP, &join, sizeof(join)) != 0) {
+        lwip_close(s);
+        return -1;
+    }
+    lwip_setsockopt(s, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, sizeof(ttl));
+    wellfed_nonblocking(s);
+    return s;
+}
+
+/* One datagram received now, with its sender; 0 when none, -1 on error. */
+int wellfed_mdns_recv(int s, void *buffer, unsigned int length, unsigned int *ip, unsigned int *port)
+{
+    struct sockaddr_in from;
+    socklen_t size = sizeof(from);
+    int got = lwip_recvfrom(s, buffer, length, MSG_DONTWAIT, (struct sockaddr *)&from, &size);
+    if (got > 0) {
+        *ip = lwip_ntohl(from.sin_addr.s_addr);
+        *port = lwip_ntohs(from.sin_port);
+        return got;
+    }
+    if (got < 0) {
+        int error = wellfed_socket_error(s);
+        if (error == 0 || error == EAGAIN || error == EWOULDBLOCK) {
+            return 0;
+        }
+    }
+    return -1;
+}
+
+/* Send one datagram to `ip`:`port`: 0, or -1. */
+int wellfed_mdns_send(int s, const void *data, unsigned int length, unsigned int ip, unsigned int port)
+{
+    struct sockaddr_in to;
+    memset(&to, 0, sizeof(to));
+    to.sin_family = AF_INET;
+    to.sin_port = lwip_htons((u16_t)port);
+    to.sin_addr.s_addr = lwip_htonl(ip);
+    int sent = lwip_sendto(s, data, length, MSG_DONTWAIT, (struct sockaddr *)&to, sizeof(to));
+    return sent == (int)length ? 0 : -1;
+}
+
+/* The station's IPv4 address, host order, or 0 until DHCP gave one: before
+ * that the SDK reports its static fallback (192.168.1.80). */
+unsigned int wellfed_ipv4(void)
+{
+    if (!dhcp_supplied_address(&xnetif[0])) {
+        return 0;
+    }
+    uint8_t *a = LwIP_GetIP(&xnetif[0]);
+    return ((unsigned int)a[0] << 24) | ((unsigned int)a[1] << 16) | ((unsigned int)a[2] << 8) | a[3];
 }
 
 /* FW24: the speaker. Stock 1.1.15 plays through the codec's line output

@@ -8,6 +8,7 @@ description = "Sans-IO client of the feeder's protocols, shared by the app and t
 publish.workspace = true
 
 [dependencies]
+jiff = "0.2.38"
 wellfed-core.workspace = true
 wellfed-proto.workspace = true
 thiserror.workspace = true

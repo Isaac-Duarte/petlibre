@@ -7,6 +7,53 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
+**October 24, about 11:20 MDT: FW47 applied to the main checkout (uncommitted); LAN recovery on hardware (physical, owner pressing; no motion).**
+- **Applied:** the `fw47` worktree's diff is in the main checkout, uncommitted. Since then on master only: the loop stack is 8 KiB (bound 4,552), and `PLAPI1 listen` logs `heap_free` after each socket opens.
+- **mDNS:** the owner allowed UDP 5353 on the hotspot interface, and discovery from the bench host now works.
+- **Recovery** ([device API](docs/firmware/device-api.md#recovery-with-the-owner-at-the-panel-october-24)): `fw47-recover-05` enrolled a scratch owner key through the window and the code; the bench key then revoked it. `fw47-recover-04` was refused `unconfirmed` because one press never registered. Two fixes followed: code presses now hold off the panel's relock, and they are logged under their path (`pair recovery keyed=N`). Both are host-tested and in a fresh build (`make check` passed; the first-boot audits passed), not yet installed.
+- **`fw47-itest-05`** (`itest --build --power --destructive`, from master): `ota-update` passed. `ota-recovery` failed: bank 0's `qa` recovery role (`ef76b85e…`) hard-faulted at sector 48 of 230 of the restore download (`PLFLT1 cfsr=10000`, undefined instruction, `cmd_thread`), then booted on with `PLOTA1 skip marker=0x100`. `ota-power-cuts` was skipped. The cleanup restored the good build.
+- **Flash now:**
+  - **Bank 1:** `feeder` `2fdfd294…` (`fw47-itest-05`'s good build; its cleanup offer was v124).
+  - **Bank 0:** `qa` `ef76b85e…`.
+  - **Next manifest version:** 125.
+  - The client store holds one owner (the bench CLI's key).
+- **Bench state:** feeder on, hotspot up, no server, no capture running.
+- **Next:**
+  - Find the bank-0 fault: which SDK task runs from flash while the recovery role writes. Then rerun `itest --build --power --destructive --only ota-recovery,ota-power-cuts` from master.
+  - Review and commit FW47.
+
+**October 24, night: FW47 device API on hardware (physical, no owner action; uncommitted in the `fw47` worktree, branch `fw47`).**
+- **Code:**
+  - `wellfed-proto::api`, with byte fixtures.
+  - Noise IK in `wellfed-core::noise`.
+  - The event ring (`store::events`, sectors 13–24) and its HAL mailbox (`hal::events`), written and read by the settings writer.
+  - `core::mdns`.
+  - The sans-IO server `wellfed-feeder::api`, including LAN recovery with the setup code.
+  - `wellfed-client::api` and `::time`.
+  - The firmware's `api` module: non-blocking socket shims in `example_entry.c`, and the published client table `keys::publish_clients`.
+  - CLI commands: `status`, `settings`, `lock`, `wifi`, `time`, `events`, `invite`, `join`, `clients`, `revoke`, `reboot`, `recover`.
+- **Owner decisions applied:** the MQTT request and health session is deleted from the normal role. The OTA watch, bank 0's health and the broker credentials (including the now unused request key) stay until FW48. The bench's request scenarios run on the device API.
+- **Confirmation changed:** FW11 now confirms a trial on FW07's DHCP and DNS check instead of the broker session ([device API](docs/firmware/device-api.md#what-went-away)).
+- **Runs** (bounded `serve`, stopped afterwards; then `itest`, which runs its own):
+  - `ota fw47-api-02` (v114) through `fw47-api-07` (v119) all confirmed.
+  - The CLI exercised sessions, settings, lock, time, events, an invite and join, and a revoke with the member's session open.
+  - Five sessions: the fifth was closed at accept.
+  - `fw47-flood-01`: 112 garbage connections; no stop, the heap flat.
+  - `boot fw47-mdns-01`: the history survived the cold boot.
+  - `fw47-itest-01` (smoke tier) passed. `fw47-itest-02` (standard tier, v120) failed `network-bounce`; `dns_losses` was then added to `Status`, and `fw47-itest-03` (v121) passed it.
+- **Found:** the bench host's firewall drops inbound UDP 5353, so mDNS discovery from it fails, although the feeder answers every query. The bench falls back to the neighbour table and the CLI takes `--address`; opening it is the owner's call.
+- **Disk:** the root filesystem filled mid-session. Deleted the Cargo `target/debug/incremental` caches in the main checkout, `fw51`, `setup-code`, `standards-fp20` and `fw47` (now about 52 GB free).
+- **Flash now:**
+  - **Bank 1:** `feeder` v121 (`04a9790c…`, confirmed).
+  - **Bank 0:** `qa` `ef76b85e…`.
+  - **Next manifest version:** 122.
+  - The client store holds one owner (the bench CLI's key); the scratch member was revoked. Settings generation 3039 (lights, sound and volume as before).
+- **Bench state:** feeder on, hotspot up, no server.
+- **Next:**
+  - Owner at the panel: `wellfed recover --address 10.42.103.172 --keys <scratch file>`, after a Lock then Dispense hold on an unlocked panel; key the code in; then revoke the scratch key.
+  - Review and land the `fw47` branch; then run `itest --build` from master for `ota-recovery` and `ota-power-cuts`.
+  - Decide on UDP 5353 for the hotspot interface.
+
 **October 24, about 06:00 MDT: FW45 setup code (physical, owner pressing; no motion).**
 - **Why:** with a Dispense press as the only check, a relay in BLE range could enroll itself and read the Wi-Fi passphrase (XX trusts whichever device answers). The CLI now shows a one-time 6-press code; the owner keys it in and `wellfed-core::setup_code` proves it both ways press by press, bound to the handshake hash (prologue `wellfed-setup-v2`). Wi-Fi is sent and the feeder's key trusted only after the feeder's proof. The speaker ticks per press (`key`), then `coin` or `alert`; the loop steps the speaker itself in setup mode, and setup mode's state now lives in the owner's static (loop stack bound 4,396 of 6,144 B).
 - **Runs:** bounded `serve`, stopped afterwards.

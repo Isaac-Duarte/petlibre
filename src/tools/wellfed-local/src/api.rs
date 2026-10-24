@@ -22,14 +22,12 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 use tokio::sync::{mpsc, oneshot, watch};
-use uuid::Uuid;
 
 use crate::{
     build_info::BUILD,
     controller::{Rejection, Status},
     mqtt::Request,
     ota,
-    replacement::{self, Op, RequestError},
 };
 
 #[derive(Clone)]
@@ -83,16 +81,6 @@ impl From<Rejection> for ApiError {
             Rejection::OtaDisabled => StatusCode::FORBIDDEN,
             Rejection::Storage => StatusCode::INTERNAL_SERVER_ERROR,
             _ => StatusCode::CONFLICT,
-        };
-        Self::new(status, error.to_string())
-    }
-}
-
-impl From<RequestError> for ApiError {
-    fn from(error: RequestError) -> Self {
-        let status = match error {
-            RequestError::Unconfigured => StatusCode::NOT_FOUND,
-            RequestError::Offline | RequestError::Exhausted => StatusCode::SERVICE_UNAVAILABLE,
         };
         Self::new(status, error.to_string())
     }
@@ -189,54 +177,9 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/status", get(status))
         .route("/api/ota/trial", post(ota_trial_request))
         .route("/api/ota/trial/resolve", post(ota_trial_resolve))
-        .route("/api/replacement/request", post(replacement_request))
         .route("/api/replacement/ota/offer", post(replacement_ota_offer))
         .layer(DefaultBodyLimit::max(4096))
         .with_state(state)
-}
-
-/// What a client may send `/api/replacement/request`.
-fn request_usage() -> String {
-    let ops = Op::ALL.map(|op| format!("\"{}\"", op.name())).join("|");
-    format!(
-        "expected {{\"op\":{ops}}}; settings may set lights, sound (booleans) and volume (0-100); wifi may set ssid (1-32 bytes) with psk (8-63 printable ASCII), or clear: true; play needs tune: {}; lock may set locked (boolean)",
-        replacement::tune_names()
-    )
-}
-
-/// The request ID a replacement request went out under.
-#[derive(Debug, PartialEq, Serialize)]
-struct Sent {
-    id: Uuid,
-    op: Op,
-}
-
-/// One read-only diagnostic request to the replacement firmware. The body is
-/// parsed here so any unsupported operation is a plain 400.
-async fn replacement_request(
-    State(state): State<ApiState>,
-    headers: HeaderMap,
-    body: axum::body::Bytes,
-) -> Result<Json<Sent>, ApiError> {
-    authenticate(&headers, &state)?;
-
-    let input: replacement::Input = serde_json::from_slice(&body)
-        .ok()
-        .filter(replacement::Input::valid)
-        .ok_or_else(|| ApiError::new(StatusCode::BAD_REQUEST, request_usage()))?;
-
-    let (send, receive) = oneshot::channel();
-    let op = input.op;
-    state
-        .requests
-        .try_send(Request::Replacement(input, send))
-        .map_err(|_| RequestError::Offline)?;
-    let id = tokio::time::timeout(Duration::from_secs(5), receive)
-        .await
-        .map_err(|_| RequestError::Offline)?
-        .map_err(|_| RequestError::Offline)??;
-
-    Ok(Json(Sent { id, op }))
 }
 
 /// `/api/replacement/ota/offer`'s body.
@@ -351,13 +294,6 @@ mod tests {
             r#"{"build_clean":true,"build_commit":"abc","service":"wellfed-local","version":"0.1.0"}"#
         );
         assert_eq!(
-            body(&Sent {
-                id: Uuid::nil(),
-                op: Op::Play,
-            }),
-            r#"{"id":"00000000-0000-0000-0000-000000000000","op":"play"}"#
-        );
-        assert_eq!(
             body(&Offered {
                 offer: Some(OfferSummary {
                     bytes: 4096,
@@ -368,13 +304,5 @@ mod tests {
         );
         assert_eq!(body(&Offered { offer: None }), r#"{"offer":null}"#);
         assert_eq!(body(&ErrorBody { error: "x" }), r#"{"error":"x"}"#);
-    }
-
-    #[test]
-    fn the_usage_names_every_operation_and_tune() {
-        assert_eq!(
-            request_usage(),
-            "expected {\"op\":\"health\"|\"ping\"|\"settings\"|\"wifi\"|\"play\"|\"lock\"}; settings may set lights, sound (booleans) and volume (0-100); wifi may set ssid (1-32 bytes) with psk (8-63 printable ASCII), or clear: true; play needs tune: chime, meal, coin, alert, test, twinkle or key; lock may set locked (boolean)"
-        );
     }
 }

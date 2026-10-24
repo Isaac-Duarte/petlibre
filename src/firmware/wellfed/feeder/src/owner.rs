@@ -87,9 +87,9 @@ fn pair(event: pairing::Event, f: &mut impl fmt::Write) -> fmt::Result {
     match event {
         E::Confirming { path } => write!(f, "pair confirming path={path}"),
         // How many presses, never which: the record must not carry the code.
-        E::Keyed { entered } => write!(f, "pair setup keyed={entered}"),
-        E::Swallowed => f.write_str("pair setup swallowed"),
-        E::Entered { .. } => f.write_str("pair setup state=entered"),
+        E::Keyed { path, entered } => write!(f, "pair {path} keyed={entered}"),
+        E::Swallowed { path } => write!(f, "pair {path} swallowed"),
+        E::Entered { path, .. } => write!(f, "pair {path} state=entered"),
         E::Admit { path, role } => write!(f, "pair admit path={path} role={role}"),
         E::Invited { id } => write!(f, "pair invited id={id}"),
         E::RecoveryOpened => f.write_str("pair recovery state=opened"),
@@ -133,6 +133,8 @@ pub struct Owner {
     /// BLE setup mode, from the gesture that starts it until the reboot
     /// that ends it.
     setup: Setup,
+    /// The recovery offer's decision, until the device API takes it.
+    recovery: Option<pairing::Event>,
 }
 
 impl fmt::Debug for Owner {
@@ -161,12 +163,24 @@ impl Owner {
             // The runtime starts every indicator LOW.
             indicator: Indicator::Shown(false),
             setup: Setup::off(),
+            recovery: None,
         }
     }
 
     /// Setup mode has ended and asks for the reboot that drops BLE.
     pub fn reboot_due(&self, now_ms: u32) -> bool {
         self.setup.reboot_due(now_ms)
+    }
+
+    /// The LAN recovery offer's decision this step (its code keyed in, or
+    /// its timeout), for the device API's recovery session.
+    pub fn take_recovery(&mut self) -> Option<pairing::Event> {
+        self.recovery.take()
+    }
+
+    /// The pairing policy, which the device API also steps (invites).
+    pub fn pairing(&mut self) -> &mut Pairing {
+        &mut self.pairing
     }
 
     /// The lock now, once the first step has run.
@@ -191,6 +205,7 @@ impl Owner {
         let mut decided = None;
         for gesture in inputs.gestures {
             if let Some(event) = self.pairing.gesture(now, gesture, panel.lock()) {
+                panel.noted(now, gesture);
                 record(Record::Pairing(event));
                 if matches!(
                     event,
@@ -204,6 +219,7 @@ impl Owner {
                     record(Record::Setup(setup::Record::Start));
                 }
                 decided = decided.or(setup_decision(event));
+                self.recovery = self.recovery.or(recovery_decision(event));
                 continue;
             }
             let Some(event) = panel.gesture(now, gesture) else {
@@ -229,6 +245,7 @@ impl Owner {
         while let Some(event) = self.pairing.tick(now) {
             record(Record::Pairing(event));
             decided = decided.or(setup_decision(event));
+            self.recovery = self.recovery.or(recovery_decision(event));
         }
 
         let want = panel.lock().locked() && inputs.lights;
@@ -288,12 +305,21 @@ impl Owner {
 /// Pairing's answer to setup mode's pending offer: the code keyed in, or
 /// its timeout. A locked panel refusing the setup gesture is not one.
 fn setup_decision(event: pairing::Event) -> Option<pairing::Event> {
+    decision(event, Path::Setup)
+}
+
+/// The same for the LAN recovery session the device API runs.
+pub fn recovery_decision(event: pairing::Event) -> Option<pairing::Event> {
+    decision(event, Path::Recovery)
+}
+
+fn decision(event: pairing::Event, path: Path) -> Option<pairing::Event> {
     match event {
-        pairing::Event::Entered { .. }
-        | pairing::Event::Refused {
-            path: Path::Setup,
+        pairing::Event::Entered { path: p, .. } if p == path => Some(event),
+        pairing::Event::Refused {
+            path: p,
             refusal: Refusal::Unconfirmed,
-        } => Some(event),
+        } if p == path => Some(event),
         _ => None,
     }
 }

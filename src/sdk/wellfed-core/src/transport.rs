@@ -1,5 +1,8 @@
 //! FW08 local health transport: an MQTT 3.1.1 client subset, its session
-//! state machine, the request parser and the health/reply encoders.
+//! state machine and the health encoder. Since FW47 it carries only health
+//! and the FW10 offer check and download; requests go over the device API,
+//! and the mailbox types the API fills (settings, Wi-Fi, lock, tune, clock)
+//! still live here until FW48 retires the broker.
 //!
 //! Sans-IO: the caller owns the socket, feeds received bytes in and writes the
 //! returned bytes out. Nothing here allocates. This module reaches no other
@@ -9,16 +12,13 @@
 
 use core::fmt::{self, Write};
 
-use crate::tone::Tune;
-
 /// Largest packet either side may send; bigger input closes the session.
 pub const MAX_PACKET: usize = 832;
 /// Health payload limit (512 bytes in FW08, 640 with the clock and nonce,
 /// 704 with the FW14 power inputs).
 pub const MAX_HEALTH: usize = 704;
-/// Request payload limit (256 bytes in FW08; 448 since signed Wi-Fi requests).
-pub const MAX_REQUEST: usize = 448;
-
+/// Largest payload on the session's subscribed topic (an FW10 offer).
+pub const MAX_PAYLOAD: usize = 448;
 pub const KEEPALIVE_S: u16 = 30;
 /// Send PINGREQ after this long without sending anything.
 pub const PING_AFTER_MS: u32 = 15_000;
@@ -321,7 +321,7 @@ pub enum Event<'a> {
     /// SUBACK accepted: the session is ready; publish health now.
     Ready,
     Pong,
-    /// A request payload on the request topic, not yet parsed.
+    /// A payload on the subscribed topic (an offer, for the FW10 check).
     Request(&'a [u8]),
     /// SUBACK for [`Session::subscribe_data`]: data publishes may now arrive.
     DataReady,
@@ -528,7 +528,7 @@ impl Session {
                 if topic != request_topic {
                     return Event::Closed(self.close(Fault::ForeignTopic));
                 }
-                if payload.len() > MAX_REQUEST {
+                if payload.len() > MAX_PAYLOAD {
                     return Event::Closed(self.close(Fault::Protocol(Error::TooLong)));
                 }
                 Event::Request(payload)
@@ -542,51 +542,6 @@ impl Session {
     pub fn on_error(&mut self, error: Error) -> Fault {
         self.close(Fault::Protocol(error))
     }
-}
-
-/// An allowlisted operation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Op {
-    Health,
-    Ping,
-    /// FW21: set the wall clock from the server.
-    Time,
-    /// FW25: read, or with fields change, the device settings.
-    Settings,
-    /// FW25: read, store or clear the Wi-Fi credentials used from next boot.
-    Wifi,
-    /// FW24: play one built-in tune.
-    Play,
-    /// FP11: read, or with `locked`, set the panel's child lock.
-    Lock,
-}
-
-/// The fields of a `wifi` request: hex `ssid` and `psk` together, or
-/// `"clear":1`, or nothing to read.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct WifiFields<'a> {
-    /// Lowercase hex of 1-32 bytes.
-    pub ssid: Option<&'a str>,
-    /// Lowercase hex of 8-63 bytes (checked as printable by the store).
-    pub psk: Option<&'a str>,
-    pub clear: bool,
-}
-
-impl WifiFields<'_> {
-    pub fn changes(&self) -> bool {
-        self.ssid.is_some() || self.clear
-    }
-}
-
-/// Lowercase hex digits only, the one spelling the protocol accepts. Kept
-/// here rather than shared with `crate::hex`: the FW08 isolation check lets
-/// this module name nothing else in the crate.
-fn lower_hex(text: &str) -> bool {
-    text.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
-}
-
-fn hex_of(text: &str, min: usize, max: usize) -> bool {
-    text.len().is_multiple_of(2) && (2 * min..=2 * max).contains(&text.len()) && lower_hex(text)
 }
 
 /// The fields of a `settings` request; none present reads the settings.
@@ -627,267 +582,6 @@ pub struct TimeFields {
     pub offset_s: i32,
     pub next_change_s: u64,
     pub next_offset_s: i32,
-}
-
-/// A request: `{"id":"<uuid>","op":"<name>"}`, nothing else, except that
-/// `time` also carries exactly the four integer fields of [`TimeFields`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Request<'a> {
-    pub id: &'a str,
-    /// `Err(name)` for an operation outside the allowlist.
-    pub op: Result<Op, &'a str>,
-    /// Present exactly when `op` is `time`.
-    pub time: Option<TimeFields>,
-    /// Present exactly when `op` is `settings`.
-    pub settings: Option<SettingsFields>,
-    /// Present exactly when `op` is `wifi`.
-    pub wifi: Option<WifiFields<'a>>,
-    /// Present exactly when `op` is `play`: a known tune's name.
-    pub tune: Option<Tune>,
-    /// Present exactly when `op` is `lock`.
-    pub lock: Option<LockFields>,
-    /// The session nonce and sequence number of a signed request
-    /// ([`crate::request_auth`] checks them with the MAC).
-    pub auth: Option<(&'a str, u32)>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RequestError {
-    TooLong,
-    Malformed,
-    BadId,
-}
-
-fn is_uuid(id: &str) -> bool {
-    id.len() == 36
-        && id.bytes().enumerate().all(|(i, b)| match i {
-            8 | 13 | 18 | 23 => b == b'-',
-            _ => b.is_ascii_hexdigit(),
-        })
-}
-
-/// A JSON string with no inner quote, surrounding whitespace removed.
-fn unquote(s: &str) -> Option<&str> {
-    let s = s.trim().strip_prefix('"')?.strip_suffix('"')?;
-    (!s.contains('"')).then_some(s)
-}
-
-/// A JSON integer of at most 15 digits, so it fits every field exactly.
-fn integer(s: &str) -> Option<i64> {
-    let s = s.trim();
-    let digits = s.strip_prefix('-').unwrap_or(s);
-    if digits.is_empty() || digits.len() > 15 || !digits.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
-    }
-    s.parse().ok()
-}
-
-/// Parse a flat JSON object of string fields `id` and `op`, in any order,
-/// plus the integer time fields when `op` is `time`. Escapes, nesting and
-/// any other field are refused.
-pub fn parse_request(payload: &[u8]) -> Result<Request<'_>, RequestError> {
-    if payload.len() > MAX_REQUEST {
-        return Err(RequestError::TooLong);
-    }
-
-    let text = core::str::from_utf8(payload).map_err(|_| RequestError::Malformed)?;
-    let inner = text
-        .trim()
-        .strip_prefix('{')
-        .and_then(|t| t.strip_suffix('}'))
-        .ok_or(RequestError::Malformed)?;
-    if inner.contains('\\') {
-        return Err(RequestError::Malformed);
-    }
-
-    let (mut id, mut op, mut nonce) = (None, None, None);
-    let (mut ssid, mut psk, mut clear, mut tune) = (None, None, None, None);
-    let mut numbers: [Option<i64>; 4] = [None; 4];
-    let mut seq = None;
-    let mut options: [Option<i64>; 3] = [None; 3];
-    let mut locked = None;
-    for pair in inner.split(',') {
-        let (key, value) = pair.split_once(':').ok_or(RequestError::Malformed)?;
-        let key = unquote(key).ok_or(RequestError::Malformed)?;
-
-        let number = match key {
-            "unix_ms" => Some(0),
-            "offset_s" => Some(1),
-            "next_change_s" => Some(2),
-            "next_offset_s" => Some(3),
-            _ => None,
-        };
-        let option = match key {
-            "lights" => Some(0),
-            "sound" => Some(1),
-            "volume" => Some(2),
-            _ => None,
-        };
-        if let Some(index) = option {
-            let value = integer(value).ok_or(RequestError::Malformed)?;
-            if options[index].replace(value).is_some() {
-                return Err(RequestError::Malformed);
-            }
-            continue;
-        }
-        if key == "locked" {
-            let value = integer(value).ok_or(RequestError::Malformed)?;
-            if locked.replace(value).is_some() {
-                return Err(RequestError::Malformed);
-            }
-            continue;
-        }
-        if key == "clear" {
-            let value = integer(value).ok_or(RequestError::Malformed)?;
-            if clear.replace(value).is_some() {
-                return Err(RequestError::Malformed);
-            }
-            continue;
-        }
-        if key == "seq" {
-            let value = integer(value).ok_or(RequestError::Malformed)?;
-            if seq.replace(value).is_some() {
-                return Err(RequestError::Malformed);
-            }
-            continue;
-        }
-        if let Some(index) = number {
-            let value = integer(value).ok_or(RequestError::Malformed)?;
-            if numbers[index].replace(value).is_some() {
-                return Err(RequestError::Malformed);
-            }
-            continue;
-        }
-
-        let value = unquote(value).ok_or(RequestError::Malformed)?;
-        let slot = match key {
-            "id" => &mut id,
-            "op" => &mut op,
-            "nonce" => &mut nonce,
-            "ssid" => &mut ssid,
-            "psk" => &mut psk,
-            "tune" => &mut tune,
-            _ => return Err(RequestError::Malformed),
-        };
-        if slot.replace(value).is_some() {
-            return Err(RequestError::Malformed);
-        }
-    }
-
-    let (id, op) = (
-        id.ok_or(RequestError::Malformed)?,
-        op.ok_or(RequestError::Malformed)?,
-    );
-    if !is_uuid(id) {
-        return Err(RequestError::BadId);
-    }
-
-    let op = match op {
-        "health" => Ok(Op::Health),
-        "ping" => Ok(Op::Ping),
-        "time" => Ok(Op::Time),
-        "settings" => Ok(Op::Settings),
-        "wifi" => Ok(Op::Wifi),
-        "play" => Ok(Op::Play),
-        "lock" => Ok(Op::Lock),
-        other => Err(other),
-    };
-
-    let tune = match (op, tune) {
-        (Ok(Op::Play), Some(name)) => Some(Tune::from_name(name).ok_or(RequestError::Malformed)?),
-        (_, None) if op != Ok(Op::Play) => None,
-        _ => return Err(RequestError::Malformed),
-    };
-
-    let wifi = match (op, ssid, psk, clear) {
-        (Ok(Op::Wifi), None, None, None) => Some(WifiFields::default()),
-        (Ok(Op::Wifi), None, None, Some(1)) => Some(WifiFields {
-            clear: true,
-            ..WifiFields::default()
-        }),
-        (Ok(Op::Wifi), Some(ssid), Some(psk), None)
-            if hex_of(ssid, 1, 32) && hex_of(psk, 8, 63) =>
-        {
-            Some(WifiFields {
-                ssid: Some(ssid),
-                psk: Some(psk),
-                clear: false,
-            })
-        }
-        (_, None, None, None) => None,
-        _ => return Err(RequestError::Malformed),
-    };
-
-    let flag = |value: Option<i64>| match value {
-        None => Ok(None),
-        Some(0) => Ok(Some(false)),
-        Some(1) => Ok(Some(true)),
-        Some(_) => Err(RequestError::Malformed),
-    };
-    let settings = match op {
-        Ok(Op::Settings) => Some(SettingsFields {
-            lights: flag(options[0])?,
-            sound: flag(options[1])?,
-            volume: match options[2] {
-                None => None,
-                Some(v) => match u8::try_from(v) {
-                    Ok(v) if v <= MAX_VOLUME => Some(v),
-                    _ => return Err(RequestError::Malformed),
-                },
-            },
-        }),
-        _ if options.iter().any(Option::is_some) => return Err(RequestError::Malformed),
-        _ => None,
-    };
-
-    let lock = match op {
-        Ok(Op::Lock) => Some(LockFields {
-            locked: flag(locked)?,
-        }),
-        _ if locked.is_some() => return Err(RequestError::Malformed),
-        _ => None,
-    };
-
-    let time = match (op, numbers) {
-        (
-            Ok(Op::Time),
-            [
-                Some(unix_ms),
-                Some(offset_s),
-                Some(next_change_s),
-                Some(next_offset_s),
-            ],
-        ) => Some(TimeFields {
-            unix_ms: u64::try_from(unix_ms).map_err(|_| RequestError::Malformed)?,
-            offset_s: i32::try_from(offset_s).map_err(|_| RequestError::Malformed)?,
-            next_change_s: u64::try_from(next_change_s).map_err(|_| RequestError::Malformed)?,
-            next_offset_s: i32::try_from(next_offset_s).map_err(|_| RequestError::Malformed)?,
-        }),
-        (_, [None, None, None, None]) if op != Ok(Op::Time) => None,
-        _ => return Err(RequestError::Malformed),
-    };
-
-    let auth = match (nonce, seq) {
-        (None, None) => None,
-        (Some(nonce), Some(seq)) if nonce.len() == 16 && lower_hex(nonce) => {
-            match u32::try_from(seq) {
-                Ok(seq) if seq > 0 => Some((nonce, seq)),
-                _ => return Err(RequestError::Malformed),
-            }
-        }
-        _ => return Err(RequestError::Malformed),
-    };
-
-    Ok(Request {
-        id,
-        op,
-        time,
-        settings,
-        wifi,
-        tune,
-        lock,
-        auth,
-    })
 }
 
 /// `fmt::Write` into a fixed buffer; overflow is an error, not truncation.
@@ -988,9 +682,6 @@ pub struct Health {
     /// FW21: the wall clock, `None` while invalid.
     pub clock: Option<ClockHealth>,
     pub clock_syncs: u32,
-    /// This session's request nonce, 16 lowercase hex characters, when the
-    /// image has a request key.
-    pub nonce: Option<[u8; 16]>,
     /// FW14: the power inputs, `None` without a fresh sample.
     pub power: Option<PowerHealth>,
     pub role: Role,
@@ -1078,14 +769,6 @@ impl Health {
             None => out.write_str("null}")?,
         }
 
-        if let Some(nonce) = self.nonce {
-            let text = core::str::from_utf8(&nonce).map_err(|_| fmt::Error)?;
-            if !lower_hex(text) {
-                return Err(fmt::Error);
-            }
-            write!(out, ",\"nonce\":\"{text}\"")?;
-        }
-
         if self.role == Role::Recovery {
             out.write_str(",\"role\":\"recovery\"")?;
         }
@@ -1125,16 +808,6 @@ pub enum TimeResult {
     Refused(&'static str),
 }
 
-/// The reply to a request whose MAC, nonce or sequence failed, or to a
-/// state-changing request that came unsigned.
-pub fn write_auth_refusal(out: &mut impl Write, request: &Request) -> fmt::Result {
-    write!(
-        out,
-        "{{\"id\":\"{}\",\"ok\":false,\"error\":\"auth\"}}",
-        request.id
-    )
-}
-
 /// The settings as a `settings` reply reports them.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SettingsView {
@@ -1158,36 +831,6 @@ pub enum SettingsResult {
     ReadOnly,
 }
 
-/// The reply to a `settings` request.
-pub fn write_settings_reply(
-    out: &mut impl Write,
-    request: &Request,
-    result: SettingsResult,
-) -> fmt::Result {
-    match result {
-        SettingsResult::Current { view, pending } => write!(
-            out,
-            "{{\"id\":\"{}\",\"op\":\"settings\",\"ok\":true,\"pending\":{pending},\"lights\":{},\"sound\":{},\"volume\":{},\"generation\":{},\"writable\":{}}}",
-            request.id,
-            u8::from(view.lights),
-            u8::from(view.sound),
-            view.volume,
-            view.generation,
-            view.writable,
-        ),
-        SettingsResult::Busy => write!(
-            out,
-            "{{\"id\":\"{}\",\"op\":\"settings\",\"ok\":false,\"error\":\"busy\"}}",
-            request.id
-        ),
-        SettingsResult::ReadOnly => write!(
-            out,
-            "{{\"id\":\"{}\",\"op\":\"settings\",\"ok\":false,\"error\":\"read_only\"}}",
-            request.id
-        ),
-    }
-}
-
 /// How a `play` request ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PlayResult {
@@ -1197,32 +840,6 @@ pub enum PlayResult {
     Muted,
     /// Settings not loaded yet, or a tune is playing.
     Busy,
-}
-
-/// The reply to a `play` request.
-pub fn write_play_reply(
-    out: &mut impl Write,
-    request: &Request,
-    result: PlayResult,
-) -> fmt::Result {
-    let tune = request.tune.map_or("", Tune::name);
-    match result {
-        PlayResult::Started => write!(
-            out,
-            "{{\"id\":\"{}\",\"op\":\"play\",\"ok\":true,\"tune\":\"{tune}\"}}",
-            request.id
-        ),
-        PlayResult::Muted | PlayResult::Busy => write!(
-            out,
-            "{{\"id\":\"{}\",\"op\":\"play\",\"ok\":false,\"error\":\"{}\"}}",
-            request.id,
-            if result == PlayResult::Muted {
-                "muted"
-            } else {
-                "busy"
-            }
-        ),
-    }
 }
 
 /// How a `lock` request ended.
@@ -1235,32 +852,6 @@ pub enum LockResult {
     Busy,
     /// This firmware runs no panel owner, so there is no lock to set.
     Unserved,
-}
-
-/// The reply to a `lock` request.
-pub fn write_lock_reply(
-    out: &mut impl Write,
-    request: &Request,
-    result: LockResult,
-) -> fmt::Result {
-    match result {
-        LockResult::Current { locked, pending } => write!(
-            out,
-            "{{\"id\":\"{}\",\"op\":\"lock\",\"ok\":true,\"pending\":{pending},\"locked\":{}}}",
-            request.id,
-            u8::from(locked),
-        ),
-        LockResult::Busy | LockResult::Unserved => write!(
-            out,
-            "{{\"id\":\"{}\",\"op\":\"lock\",\"ok\":false,\"error\":\"{}\"}}",
-            request.id,
-            if result == LockResult::Busy {
-                "busy"
-            } else {
-                "unserved"
-            }
-        ),
-    }
 }
 
 /// Which credentials the Wi-Fi join uses this boot.
@@ -1323,110 +914,6 @@ pub enum WifiResult {
     ReadOnly,
     /// The SSID or passphrase failed the store's checks.
     Invalid,
-}
-
-/// The reply to a `wifi` request.
-pub fn write_wifi_reply(
-    out: &mut impl Write,
-    request: &Request,
-    result: WifiResult,
-) -> fmt::Result {
-    let id = request.id;
-    match result {
-        WifiResult::Current { view, pending } => {
-            write!(
-                out,
-                "{{\"id\":\"{id}\",\"op\":\"wifi\",\"ok\":true,\"pending\":{pending},\"stored\":"
-            )?;
-            match view.stored_ssid_crc {
-                Some(crc) => write!(out, "\"{crc:08x}\"")?,
-                None => out.write_str("null")?,
-            }
-            write!(
-                out,
-                ",\"generation\":{},\"writable\":{},\"source\":\"{}\"}}",
-                view.generation,
-                view.writable,
-                view.source.name()
-            )
-        }
-        WifiResult::Busy => write!(
-            out,
-            "{{\"id\":\"{id}\",\"op\":\"wifi\",\"ok\":false,\"error\":\"busy\"}}"
-        ),
-        WifiResult::ReadOnly => write!(
-            out,
-            "{{\"id\":\"{id}\",\"op\":\"wifi\",\"ok\":false,\"error\":\"read_only\"}}"
-        ),
-        WifiResult::Invalid => write!(
-            out,
-            "{{\"id\":\"{id}\",\"op\":\"wifi\",\"ok\":false,\"error\":\"invalid\"}}"
-        ),
-    }
-}
-
-/// The reply to a `time` request.
-pub fn write_time_reply(
-    out: &mut impl Write,
-    request: &Request,
-    result: TimeResult,
-) -> fmt::Result {
-    match result {
-        TimeResult::Synced {
-            jump_ms: Some(jump),
-        } => write!(
-            out,
-            "{{\"id\":\"{}\",\"op\":\"time\",\"ok\":true,\"jump_ms\":{jump}}}",
-            request.id
-        ),
-        TimeResult::Synced { jump_ms: None } => write!(
-            out,
-            "{{\"id\":\"{}\",\"op\":\"time\",\"ok\":true,\"jump_ms\":null}}",
-            request.id
-        ),
-        TimeResult::Refused(reason)
-            if reason.bytes().all(|b| b.is_ascii_lowercase() || b == b'_') =>
-        {
-            write!(
-                out,
-                "{{\"id\":\"{}\",\"op\":\"time\",\"ok\":false,\"error\":\"{reason}\"}}",
-                request.id
-            )
-        }
-        TimeResult::Refused(_) => Err(fmt::Error),
-    }
-}
-
-/// The reply to a request; `uptime_ms` is included for `ping`.
-pub fn write_reply(out: &mut impl Write, request: &Request, uptime_ms: u32) -> fmt::Result {
-    match request.op {
-        Ok(op) => {
-            let name = match op {
-                Op::Health => "health",
-                Op::Ping => "ping",
-                Op::Time => "time",
-                Op::Settings => "settings",
-                Op::Wifi => "wifi",
-                Op::Play => "play",
-                Op::Lock => "lock",
-            };
-            write!(
-                out,
-                "{{\"id\":\"{}\",\"op\":\"{name}\",\"ok\":true",
-                request.id
-            )?;
-            if op == Op::Ping {
-                write!(out, ",\"uptime_ms\":{uptime_ms}")?;
-            }
-            out.write_str("}")
-        }
-        // The unsupported name is not echoed: it came from the network.
-        Err(_) => write!(
-            out,
-            "{{\"id\":\"{}\",\"ok\":false,\"error\":\"unsupported\"}}",
-            request.id
-        ),
-    }
 }
 
 /// The topic `<namespace><suffix>` into `buf`.

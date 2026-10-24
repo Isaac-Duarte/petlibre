@@ -1,4 +1,4 @@
-//! Two-unit NOR model enforcing aligned 1->0 programming, with power-cut and
+//! NOR model of equal erase units (two by default) enforcing aligned 1->0 programming, with power-cut and
 //! call-failure injection.
 //!
 //! Programming is byte-ordered: a cut leaves a durable prefix of the bytes.
@@ -18,8 +18,8 @@ pub const UNIT: usize = 256;
 
 #[derive(Clone)]
 pub struct FakeJournalFlash {
-    /// Two equal-sized units; see [`FakeJournalFlash::with_unit`].
-    pub bytes: [Vec<u8>; 2],
+    /// Equal-sized units; see [`FakeJournalFlash::with_units`].
+    pub bytes: Vec<Vec<u8>>,
     /// Remaining mutations before power is cut; negative is unlimited. A
     /// programmed byte is one mutation; erase is `unit` mutations of eight
     /// raised bits each.
@@ -47,11 +47,16 @@ impl Default for FakeJournalFlash {
 }
 
 impl FakeJournalFlash {
-    /// Fully erased units of `unit` bytes with no fault injection.
+    /// Two fully erased units of `unit` bytes with no fault injection.
     pub fn with_unit(unit: usize) -> Self {
+        Self::with_units(unit, 2)
+    }
+
+    /// `count` fully erased units of `unit` bytes, for a ring of sectors.
+    pub fn with_units(unit: usize, count: usize) -> Self {
         assert!(unit >= 4 && unit.is_multiple_of(4) && u32::try_from(unit).is_ok());
         Self {
-            bytes: [vec![u8::MAX; unit], vec![u8::MAX; unit]],
+            bytes: vec![vec![u8::MAX; unit]; count],
             budget: -1,
             calls: 0,
             fail_call: 0,
@@ -100,7 +105,7 @@ impl FakeJournalFlash {
     fn bounds(&self, slot: c_uint, offset: u32, size: usize) -> (usize, usize) {
         let (slot, offset) = (slot as usize, offset as usize);
         let unit = self.unit();
-        assert!(slot < 2 && offset <= unit && size <= unit - offset);
+        assert!(slot < self.bytes.len() && offset <= unit && size <= unit - offset);
         (slot, offset)
     }
 }
@@ -241,12 +246,12 @@ unsafe extern "C" fn program(
 
 unsafe extern "C" fn erase(context: *mut c_void, slot: c_uint) -> bool {
     let flash = context.cast::<FakeJournalFlash>();
-    assert!(slot < 2);
     let slot = slot as usize;
 
     let unit = {
         // SAFETY: the context was created by `io_at`; ends before any hook.
         let f = unsafe { &mut *flash };
+        assert!(slot < f.bytes.len());
         if !f.call() {
             return false;
         }

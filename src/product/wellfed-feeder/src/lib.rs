@@ -6,6 +6,7 @@
 #![no_std]
 #![deny(unsafe_code)]
 
+pub mod api;
 pub mod pairing;
 pub mod panel;
 pub mod setup;

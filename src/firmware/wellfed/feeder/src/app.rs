@@ -3,11 +3,12 @@
 
 use core::ffi::c_void;
 
-use wellfed_feeder::panel::BUTTONS;
+use wellfed_feeder::panel::{BUTTONS, Event, Source};
+use wellfed_proto::api::{EventBody, Source as EventSource};
 use wellfed_sdk::Slot;
 use wellfed_sdk::hal::{panel, sdk, settings, startup};
 
-use crate::budget::{self, Budget};
+use crate::api::{self, Api};
 use crate::keys::{self, Identity};
 use crate::owner::{self, Inputs, Owner};
 use crate::setup;
@@ -35,8 +36,10 @@ fn start() {
 
 /// The step, a Noise operation and one formatted record; the build's stack
 /// audit checks the bound. A handshake operation's X25519 is the deepest
-/// path (FW44: 3820 bytes), so 4 KiB would not keep the audit's margin.
-const LOOP_STACK_WORDS: u16 = 1536;
+/// path (FW44: 3820 bytes). The device API took the bound to 4,552 bytes,
+/// just inside 6 KiB's margin (FW47), so the loop has 8 KiB: the feeding
+/// owner joins it next.
+const LOOP_STACK_WORDS: u16 = 2048;
 
 /// Touched only by the loop task; see `loop_task`.
 /// Built at compile time: it holds setup mode's state, which the loop's
@@ -44,9 +47,9 @@ const LOOP_STACK_WORDS: u16 = 1536;
 static OWNER: Slot<Owner> = Slot::filled(Owner::new());
 /// Touched only by the loop task.
 static IDENTITY: Slot<Identity> = Slot::new();
-/// The session table is larger than the loop's stack, so it is built at
-/// compile time. Touched only by the loop task.
-static BUDGET: Slot<Budget> = Slot::filled(Budget::new());
+/// The device API's session table is larger than the loop's stack, so it is
+/// built at compile time. Touched only by the loop task.
+static API: Slot<Api> = Slot::filled(Api::new());
 #[cfg(feature = "entropy")]
 static CAPTURE: Slot<crate::entropy::Capture> = Slot::filled(crate::entropy::Capture::new());
 
@@ -74,17 +77,17 @@ impl core::fmt::Display for Key {
     }
 }
 
-struct Api(budget::Record);
+struct ApiRecord(api::Record);
 
-impl core::fmt::Display for Api {
+impl core::fmt::Display for ApiRecord {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        budget::describe(self.0, f)
+        api::describe(self.0, f)
     }
 }
 
 unsafe extern "C" fn loop_task(_: *mut c_void) -> u32 {
     // SAFETY: only this task touches the slots.
-    let (Some(owner), Some(budget)) = (unsafe { OWNER.get() }, unsafe { BUDGET.get() }) else {
+    let (Some(owner), Some(api)) = (unsafe { OWNER.get() }, unsafe { API.get() }) else {
         return 0;
     };
 
@@ -110,6 +113,20 @@ unsafe extern "C" fn loop_task(_: *mut c_void) -> u32 {
             log(format_args!("PLAUD1 {}\r\n", Panel(record)));
         }
         owner::Record::Setup(_) => log(format_args!("PLSET1 {}\r\n", Panel(record))),
+        owner::Record::Panel(Event::Changed { lock, source }) => {
+            // A client's change is recorded by the device API, with who made it.
+            if source != Source::Remote {
+                let by = match source {
+                    Source::Button => EventSource::Panel,
+                    _ => EventSource::Feeder,
+                };
+                api::record_event(EventBody::Lock {
+                    locked: lock.locked(),
+                    by,
+                });
+            }
+            log(format_args!("PLPANEL1 {}\r\n", Panel(record)));
+        }
         _ => log(format_args!("PLPANEL1 {}\r\n", Panel(record))),
     });
 
@@ -122,12 +139,20 @@ unsafe extern "C" fn loop_task(_: *mut c_void) -> u32 {
         panel::publish(lock.locked());
     }
 
-    // A timed operation ran: come straight back for the next one.
-    if budget.step(now_ms, |record| {
-        log(format_args!("PLAPI1 {}\r\n", Api(record)))
-    }) {
-        delay_ms = 1;
-    }
+    let locked = owner.lock().map(wellfed_feeder::panel::Lock::locked);
+    let identity = identity.keypair();
+    let recovery = owner.take_recovery();
+    let api_delay = api.step(
+        now_ms,
+        owner.pairing(),
+        identity,
+        locked,
+        recovery,
+        |record| {
+            log(format_args!("PLAPI1 {}\r\n", ApiRecord(record)));
+        },
+    );
+    delay_ms = delay_ms.min(api_delay);
 
     #[cfg(feature = "entropy")]
     // SAFETY: only this task touches the slot.

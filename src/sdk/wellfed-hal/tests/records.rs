@@ -27,27 +27,10 @@ fn read(line: &str) -> Record<'_> {
 
 #[test]
 fn transport_records_carry_what_the_suite_asserts() {
-    let refused = line(tag::TRANSPORT, |f| {
-        transport::describe(
-            transport::Record::Request {
-                kind: transport::RequestKind::Unauthenticated,
-                ok: false,
-            },
-            f,
-        )
+    let ignored = line(tag::TRANSPORT, |f| {
+        transport::describe(transport::Record::Ignored, f)
     });
-    assert!(read(&refused).is(tag::TRANSPORT, &[("op", "unauthenticated"), ("ok", "0")]));
-
-    let ping = line(tag::TRANSPORT, |f| {
-        transport::describe(
-            transport::Record::Request {
-                kind: transport::RequestKind::Ping,
-                ok: true,
-            },
-            f,
-        )
-    });
-    assert!(read(&ping).is(tag::TRANSPORT, &[("op", "ping"), ("ok", "1")]));
+    assert!(read(&ignored).is(tag::TRANSPORT, &[("ignored", "1")]));
 
     let ready = line(tag::TRANSPORT, |f| {
         transport::describe(transport::Record::Ready { ms: 3 }, f)

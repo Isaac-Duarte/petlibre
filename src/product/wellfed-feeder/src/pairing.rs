@@ -17,9 +17,12 @@
 //!   more than its issuer holds, and invites live in RAM only, so a reboot
 //!   cancels them.
 //! - **Recovery:** with the panel unlocked, holding Lock and Dispense
-//!   together opens a LAN window that admits exactly one owner over a plain
-//!   XX handshake, then closes. This is the way back in when every client
-//!   is lost; a locked panel cannot open it.
+//!   together opens a LAN window. A client that connects in it runs the same
+//!   exchange as BLE setup over the device API (FW47): its offer closes the
+//!   window ([`Pairing::recovery`]) and the owner keys its code in, so a
+//!   neighbour on the LAN cannot slip in while the window is open. This is
+//!   the way back in when every client is lost; a locked panel cannot open
+//!   it.
 //!
 //! A pending confirmation takes the next Dispense press, and a pending code
 //! every gesture until it is complete, whatever the lock says: the presses
@@ -109,15 +112,21 @@ pub enum Event {
     Confirming {
         path: Path,
     },
-    /// A press counted towards setup's code, which now has `entered`.
+    /// A press counted towards the code of the offer behind `path` (setup
+    /// or recovery), which now has `entered`.
     Keyed {
+        path: Path,
         entered: u8,
     },
-    /// A chord or a hold went to setup's code and counted for nothing.
-    Swallowed,
-    /// The owner keyed in setup's code: the session must now prove it.
-    /// The firmware records this without the code.
+    /// A chord or a hold went to that code and counted for nothing.
+    Swallowed {
+        path: Path,
+    },
+    /// The owner keyed in the code of the offer behind `path` (setup or
+    /// recovery): its session must now prove it. The firmware records this
+    /// without the code.
     Entered {
+        path: Path,
         code: Code,
     },
     /// Enroll the client behind `path` with `role`.
@@ -274,37 +283,38 @@ impl Pairing {
         }
     }
 
-    /// One gesture while setup's code is being keyed in. A press of one
+    /// One gesture while a code (setup's or recovery's) is being keyed in. A press of one
     /// button is one press of the code. A chord or a hold is swallowed and
     /// counts for nothing, so no lock toggle or key reset fires mid-code; a
     /// release goes on to the panel, which only notes it.
     fn code(&mut self, now_ms: u32, gesture: Gesture) -> Option<Event> {
         let pending = self.pending.as_mut()?;
+        let path = pending.path;
         if deadline_passed(now_ms, pending.deadline_ms) {
             self.pending = None;
-            return Some(refused(Path::Setup, Refusal::Unconfirmed));
+            return Some(refused(path, Refusal::Unconfirmed));
         }
         let Confirm::Code { presses, entered } = &mut pending.confirm else {
             return None;
         };
         let chord = match gesture {
             Gesture::Down { chord } => chord,
-            Gesture::Hold { .. } => return Some(Event::Swallowed),
+            Gesture::Hold { .. } => return Some(Event::Swallowed { path }),
             Gesture::Up { .. } => return None,
         };
         let pressed = Button::ALL.iter().find(|&&b| chord == Buttons::of(b));
         let (Some(&button), Some(slot)) = (pressed, presses.get_mut(*entered)) else {
-            return Some(Event::Swallowed);
+            return Some(Event::Swallowed { path });
         };
 
         *slot = button;
         *entered += 1;
         if *entered < PRESSES {
-            return Some(keyed(*entered));
+            return Some(keyed(path, *entered));
         }
         let code = Code::new(*presses);
         self.pending = None;
-        Some(Event::Entered { code })
+        Some(Event::Entered { path, code })
     }
 
     /// A client with role `by` asks for an invite granting `role`, with a
@@ -360,14 +370,22 @@ impl Pairing {
         }
     }
 
-    /// A plain XX handshake finished during the recovery window: admit it
-    /// as an owner and close the window.
-    pub fn recover(&mut self, now_ms: u32) -> Event {
-        match self.recovery_until.take() {
-            Some(until) if !deadline_passed(now_ms, until) => Event::Admit {
-                path: Path::Recovery,
-                role: Role::Owner,
-            },
+    /// A client in the recovery window offered its key: close the window
+    /// and wait for its code, as setup does. Only the one client that
+    /// proves the code becomes an owner; a second has nothing to offer to.
+    pub fn recovery(&mut self, now_ms: u32) -> Event {
+        match self.recovery_until {
+            Some(until) if !deadline_passed(now_ms, until) => {
+                if self.pending.is_some() {
+                    return refused(Path::Recovery, Refusal::Busy);
+                }
+                self.recovery_until = None;
+                let confirm = Confirm::Code {
+                    presses: [Button::Reset; PRESSES],
+                    entered: 0,
+                };
+                self.offer(now_ms, Path::Recovery, Role::Owner, confirm)
+            }
             _ => refused(Path::Recovery, Refusal::Closed),
         }
     }
@@ -404,8 +422,9 @@ impl Pairing {
     }
 }
 
-fn keyed(entered: usize) -> Event {
+fn keyed(path: Path, entered: usize) -> Event {
     Event::Keyed {
+        path,
         entered: u8::try_from(entered).unwrap_or(u8::MAX),
     }
 }

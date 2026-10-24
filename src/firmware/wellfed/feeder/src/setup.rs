@@ -34,7 +34,7 @@ use wellfed_core::setup_code::Code;
 use wellfed_core::store::clients::Role;
 use wellfed_core::store::net::Credentials;
 use wellfed_core::tone::Tune;
-use wellfed_core::transport::{PlayResult, WifiFields, WifiResult};
+use wellfed_core::transport::{PlayResult, WifiResult};
 use wellfed_feeder::pairing::{self, Pairing, Path};
 use wellfed_feeder::setup::{self as session, MAX_MESSAGE, Offer, Received, Responder};
 use wellfed_proto::setup::{Enrolled, Refusal, Reply, WifiSaved};
@@ -465,7 +465,10 @@ impl Setup {
             return;
         }
         match event {
-            pairing::Event::Entered { code } => self.prove(code, record),
+            pairing::Event::Entered {
+                path: Path::Setup,
+                code,
+            } => self.prove(code, record),
             pairing::Event::Refused {
                 path: Path::Setup, ..
             } => self.finish(Reply::Refused(Refusal::Unconfirmed), record),
@@ -612,7 +615,7 @@ impl Setup {
 
 /// The Wi-Fi store's generation, once the writer has loaded it.
 fn generation() -> Option<u32> {
-    match network::request(WifiFields::default()) {
+    match network::current() {
         WifiResult::Current { view, .. } => Some(view.generation),
         _ => None,
     }

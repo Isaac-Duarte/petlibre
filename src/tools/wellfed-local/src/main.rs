@@ -127,15 +127,6 @@ enum Action {
         output: PathBuf,
     },
 
-    /// Add a request-signing key to a stopped server's firmware role and the
-    /// firmware build's credential file; never rotates one or prints it.
-    FirmwareRequestKey {
-        #[arg(long, default_value = "private/server.json")]
-        config: PathBuf,
-        #[arg(long, default_value = "private/fw-mqtt.json")]
-        credential: PathBuf,
-    },
-
     /// Create the replacement firmware's update-signing key (FW10); never
     /// replaces one. Prints the public key the firmware build embeds.
     OtaKeygen {
@@ -349,15 +340,6 @@ async fn main() -> Result<()> {
                 "Added the replacement-firmware role to {} and wrote {}. Restart serve to use it.",
                 config.display(),
                 output.display()
-            );
-        }
-
-        Action::FirmwareRequestKey { config, credential } => {
-            config::add_request_key(&config, &credential)?;
-            println!(
-                "Added a request key to {} and {}. Rebuild the firmware and restart serve to use it.",
-                credential.display(),
-                config.display()
             );
         }
 

@@ -12,11 +12,15 @@ anyhow.workspace = true
 bluer = { version = "0.17.4", features = ["bluetoothd"] }
 clap.workspace = true
 futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
+jiff = "0.2.38"
+mdns-sd = "0.21.6"
 wellfed-client.workspace = true
 wellfed-core.workspace = true
 wellfed-formats.workspace = true
 wellfed-proto.workspace = true
-tokio = { workspace = true, features = ["macros", "rt", "time"] }
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "time"] }
 
 [dev-dependencies]
 tempfile.workspace = true

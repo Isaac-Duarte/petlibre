@@ -1,5 +1,5 @@
 //! The device API's Noise handshakes against `snow`, an independent
-//! implementation: XX and KK in both roles, then transport messages each
+//! implementation: XX, IK and KK in both roles, then transport messages each
 //! way. With the same keys the two write the same bytes, so a mismatch in
 //! any token, hash or key schedule fails here. Tampering, misordering and a
 //! wrong static key must all fail closed.
@@ -16,6 +16,11 @@ const RESPONDER_EPHEMERAL: [u8; 32] = [0x44; 32];
 /// An invite's secret, for XXpsk3.
 const PSK: [u8; 32] = [0x66; 32];
 
+/// KK always starts with the peer's static key; IK only on the initiator.
+fn needs_remote(pattern: Pattern, role: Role) -> bool {
+    pattern == Pattern::Kk || (pattern == Pattern::Ik && role == Role::Initiator)
+}
+
 fn name(pattern: Pattern) -> &'static str {
     std::str::from_utf8(pattern.protocol_name()).unwrap()
 }
@@ -31,7 +36,7 @@ fn ours(pattern: Pattern, role: Role) -> Handshake {
         role,
         PROLOGUE,
         &Keypair::from_secret(local),
-        (pattern == Pattern::Kk).then_some(remote),
+        needs_remote(pattern, role).then_some(remote),
         ephemeral,
     )
     .unwrap();
@@ -53,7 +58,7 @@ fn snow(pattern: Pattern, role: Role) -> snow::HandshakeState {
         .local_private_key(&local)
         .unwrap()
         .fixed_ephemeral_key_for_testing_only(&ephemeral);
-    if pattern == Pattern::Kk {
+    if needs_remote(pattern, role) {
         builder = builder.remote_public_key(&remote).unwrap();
     }
     if pattern == Pattern::XxPsk3 {
@@ -140,7 +145,7 @@ fn exchange(ours: &mut Transport, theirs: &mut snow::TransportState) {
 
 #[test]
 fn every_pattern_agrees_with_snow_in_both_roles() {
-    for pattern in [Pattern::Xx, Pattern::Kk, Pattern::XxPsk3] {
+    for pattern in [Pattern::Xx, Pattern::Ik, Pattern::Kk, Pattern::XxPsk3] {
         for role in [Role::Initiator, Role::Responder] {
             let (mut ours, mut theirs) = run(pattern, role);
             exchange(&mut ours, &mut theirs);
@@ -149,8 +154,13 @@ fn every_pattern_agrees_with_snow_in_both_roles() {
 }
 
 #[test]
-fn kk_is_one_round_trip_and_xx_is_three_messages() {
-    for (pattern, messages) in [(Pattern::Xx, 3), (Pattern::Kk, 2), (Pattern::XxPsk3, 3)] {
+fn ik_and_kk_are_one_round_trip_and_xx_is_three_messages() {
+    for (pattern, messages) in [
+        (Pattern::Xx, 3),
+        (Pattern::Ik, 2),
+        (Pattern::Kk, 2),
+        (Pattern::XxPsk3, 3),
+    ] {
         let mut initiator = ours(pattern, Role::Initiator);
         let mut responder = ours(pattern, Role::Responder);
         let (mut message, mut payload) = ([0; 256], [0; 256]);
@@ -320,5 +330,49 @@ fn xxpsk3_without_a_psk_is_refused() {
     assert_eq!(
         initiator.write_message(&[], &mut message),
         Err(Error::MissingPsk)
+    );
+}
+
+/// The feeder (IK's responder) learns the client's key from the first
+/// message, before it answers, so it can refuse a key it never enrolled.
+#[test]
+fn ik_shows_the_responder_the_clients_key_after_the_first_message() {
+    let mut initiator = ours(Pattern::Ik, Role::Initiator);
+    let mut responder = ours(Pattern::Ik, Role::Responder);
+    let (mut message, mut payload) = ([0; 256], [0; 256]);
+    assert_eq!(responder.remote_static(), None);
+
+    let len = initiator.write_message(b"hello", &mut message).unwrap();
+    let read = responder
+        .read_message(&message[..len], &mut payload)
+        .unwrap();
+    assert_eq!(&payload[..read], b"hello");
+    assert_eq!(
+        responder.remote_static(),
+        Some(Keypair::from_secret(INITIATOR_STATIC).public())
+    );
+}
+
+/// A client holding the wrong feeder key cannot open a session: the feeder
+/// cannot read its first message.
+#[test]
+fn ik_to_the_wrong_feeder_fails() {
+    let stranger = *Keypair::from_secret([0x55; 32]).public();
+    let mut initiator = Handshake::new(
+        Pattern::Ik,
+        Role::Initiator,
+        PROLOGUE,
+        &Keypair::from_secret(INITIATOR_STATIC),
+        Some(stranger),
+        INITIATOR_EPHEMERAL,
+    )
+    .unwrap();
+    let mut responder = ours(Pattern::Ik, Role::Responder);
+    let (mut message, mut payload) = ([0; 256], [0; 256]);
+
+    let len = initiator.write_message(&[], &mut message).unwrap();
+    assert_eq!(
+        responder.read_message(&message[..len], &mut payload),
+        Err(Error::Decrypt)
     );
 }

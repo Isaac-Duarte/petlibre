@@ -93,6 +93,18 @@ pub struct Hardware {
     pub tcp_listen_fails: bool,
     /// Connections `tcp_accept` hands out, in order.
     pub tcp_accepts: VecDeque<i32>,
+    /// FW47 device API sockets: connections waiting to be accepted, the
+    /// bytes each has for the feeder, what the feeder sent on each, the
+    /// peers that closed, and how much one send may take.
+    pub api_waiting: VecDeque<i32>,
+    pub api_rx: std::collections::BTreeMap<i32, VecDeque<u8>>,
+    pub api_tx: std::collections::BTreeMap<i32, Vec<u8>>,
+    pub api_hung_up: Vec<i32>,
+    pub api_send_room: usize,
+    /// FW47 mDNS: datagrams waiting, what was sent, and the station address.
+    pub mdns_rx: VecDeque<(Vec<u8>, u32, u16)>,
+    pub mdns_tx: Vec<(Vec<u8>, u32, u16)>,
+    pub ipv4: u32,
     /// Milliseconds; a timed-out receive advances it by its timeout.
     pub uptime_ms: u32,
 
@@ -183,7 +195,7 @@ pub struct Hardware {
     pub running_bank: Option<u8>,
     /// Bank 0's first 8 bytes, for the give-way guard.
     pub bank0_marker: [u8; 8],
-    pub storage_erases: [u32; 16],
+    pub storage_erases: [u32; crate::STORAGE_SECTORS as usize],
 
     /// FW24: the codec ring. Filled pages wait in `audio_queue` until
     /// [`play_audio`] moves them to `audio_played`.
@@ -242,6 +254,14 @@ impl Default for Hardware {
             tcp_send_fails: false,
             tcp_listen_fails: false,
             tcp_accepts: VecDeque::new(),
+            api_waiting: VecDeque::new(),
+            api_rx: std::collections::BTreeMap::new(),
+            api_tx: std::collections::BTreeMap::new(),
+            api_hung_up: Vec::new(),
+            api_send_room: usize::MAX,
+            mdns_rx: VecDeque::new(),
+            mdns_tx: Vec::new(),
+            ipv4: 0,
             uptime_ms: 0,
 
             wifi_started: false,
@@ -317,11 +337,11 @@ impl Default for Hardware {
             spins: 0,
             systick: 7,
 
-            storage: vec![u8::MAX; 16 * 4096],
+            storage: vec![u8::MAX; (crate::STORAGE_SECTORS * crate::SECTOR_BYTES) as usize],
             bank1: vec![u8::MAX; 0x15_0000],
             running_bank: Some(1),
             bank0_marker: crate::MARKER,
-            storage_erases: [0; 16],
+            storage_erases: [0; crate::STORAGE_SECTORS as usize],
 
             audio_open: false,
             audio_open_fails: false,

@@ -13,7 +13,11 @@ axum = { workspace = true, optional = true }
 chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 clap.workspace = true
 ctrlc.workspace = true
+jiff = "0.2.38"
+mdns-sd = "0.21.6"
+wellfed-client.workspace = true
 wellfed-core.workspace = true
+wellfed-proto.workspace = true
 futures-util = { version = "0.3", default-features = false, optional = true }
 rust-embed = { version = "8.13.0", features = ["debug-embed"], optional = true }
 rustix = { version = "1", features = ["fs", "process"] }

@@ -17,11 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use uuid::Uuid;
 
-use crate::{
-    protocol::lenient,
-    replacement::request_auth::{self, RequestKey},
-    storage,
-};
+use crate::{protocol::lenient, storage};
 
 // Intentionally no Debug: this structure contains working device credentials.
 #[derive(Clone, Deserialize, Serialize)]
@@ -59,16 +55,12 @@ pub struct FirmwareConfig {
     pub client_id: String,
     pub username: String,
     pub password: String,
-    /// Request-signing key (64 lowercase hex); absent: requests go unsigned.
+    /// The FW25 request-signing key. Unused since FW47, when requests moved
+    /// from MQTT to the Noise device API; kept only so existing
+    /// configurations still parse (`deny_unknown_fields`), and removed with
+    /// the broker credentials in FW48.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request_key: Option<String>,
-}
-
-impl FirmwareConfig {
-    /// The parsed request key; `None` without one (validated on load).
-    pub fn request_key(&self) -> Option<RequestKey> {
-        RequestKey::parse(self.request_key.as_deref()?)
-    }
 }
 
 pub const FIRMWARE_USERNAME: &str = "wellfed-fw";
@@ -140,13 +132,6 @@ impl Config {
                     && firmware.password.bytes().all(|b| b.is_ascii_hexdigit()),
                 "replacement-firmware password must be 64 hex characters"
             );
-            ensure!(
-                firmware
-                    .request_key
-                    .as_deref()
-                    .is_none_or(request_auth::valid_key_hex),
-                "replacement-firmware request key must be 64 lowercase hex characters"
-            );
         }
 
         Ok(())
@@ -217,54 +202,6 @@ pub fn add_firmware_credential(config_path: &Path, output: &Path) -> Result<()> 
     config.firmware = Some(firmware);
     config.validate()?;
     storage::write_new_json(output, &credential)?;
-    storage::write_json(config_path, &config)
-}
-
-/// Add a request-signing key to a stopped server's firmware role and to the
-/// firmware build's credential file. Refuses a configuration without the role
-/// or with a key, and a credential file that already has a key or does not
-/// match the role, so a key never rotates silently. The credential file is
-/// written first: if the configuration update then fails, remove its
-/// `request_key` and rerun.
-pub fn add_request_key(config_path: &Path, credential_path: &Path) -> Result<()> {
-    let mut config = Config::load(config_path)?;
-    let namespace = config.firmware_namespace();
-    let Some(firmware) = config.firmware.as_mut() else {
-        bail!("configuration has no replacement-firmware role; run firmware-credential first");
-    };
-    ensure!(
-        firmware.request_key.is_none(),
-        "configuration already has a request key; refusing to rotate it"
-    );
-
-    let mut credential: FirmwareCredential =
-        serde_json::from_slice(&fs::read(credential_path).context("read credential file")?)
-            .context("invalid replacement-firmware credential file")?;
-    ensure!(
-        credential.request_key.is_none(),
-        "credential file already has a request key; refusing to rotate it"
-    );
-
-    let std::net::IpAddr::V4(broker) = config.mqtt_listen.ip() else {
-        bail!("MQTT must bind to a specific IPv4 address");
-    };
-    ensure!(
-        credential.version == 1
-            && credential.broker == broker
-            && credential.port == config.mqtt_listen.port()
-            && credential.device_id == config.device_id
-            && credential.client_id == firmware.client_id
-            && credential.username == firmware.username
-            && credential.password == firmware.password
-            && credential.namespace == namespace,
-        "credential file does not match this configuration's replacement-firmware role"
-    );
-
-    let key = RequestKey::generate()?.to_hex();
-    firmware.request_key = Some(key.clone());
-    credential.request_key = Some(key);
-    config.validate()?;
-    storage::write_json(credential_path, &credential)?;
     storage::write_json(config_path, &config)
 }
 

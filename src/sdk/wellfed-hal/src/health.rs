@@ -34,8 +34,6 @@ pub struct Link {
     pub seq: u32,
     pub connects: u32,
     pub last_error: Option<&'static str>,
-    /// The open session's request nonce, when the image has a request key.
-    pub nonce: Option<[u8; 16]>,
 }
 
 /// The will (`online` false) is built at connect, so it carries no clock or
@@ -80,7 +78,6 @@ pub fn snapshot(boot: Boot, link: Link, online: bool, role: Role) -> Health {
         last_error: link.last_error,
         clock,
         clock_syncs,
-        nonce: if online { link.nonce } else { None },
         power: if online {
             power::health(sdk::uptime_ms())
         } else {

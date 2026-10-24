@@ -25,7 +25,7 @@
 //! the other's commitment to it has arrived.
 
 use crate::buttons::Button;
-use crate::request_auth::{hmac_sha256, same};
+use crate::mac::{hmac_sha256, same};
 
 /// Presses in a code: two bits each, from the four panel buttons.
 pub const PRESSES: usize = 6;

@@ -10,6 +10,7 @@ publish.workspace = true
 [dependencies]
 wellfed-core.workspace = true
 wellfed-proto.workspace = true
+serde = { version = "1.0.229", default-features = false }
 
 [lints]
 workspace = true

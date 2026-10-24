@@ -22,7 +22,7 @@
 
 use sha2::{Digest, Sha256};
 
-use crate::request_auth::hmac_sha256;
+use crate::mac::hmac_sha256;
 
 /// Raw samples tested before the first output (SP 800-90B 4.3).
 pub const STARTUP_SAMPLES: u32 = 1024;

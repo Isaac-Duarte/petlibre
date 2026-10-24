@@ -28,6 +28,7 @@ pub mod board;
 pub mod buttons;
 pub mod clock;
 pub mod entropy;
+pub mod events;
 pub mod keys;
 pub mod network;
 pub mod panel;

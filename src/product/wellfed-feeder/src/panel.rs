@@ -10,8 +10,10 @@
 //! button service's first hold threshold ([`BUTTONS`]), so it works whether
 //! the panel is locked or not: the lock never locks the owner out of
 //! unlocking. A gesture in progress holds off the relock, which then counts
-//! from the release. A signed request may lock or unlock from the network;
-//! an unlock from there relocks on the same timer, as a button unlock does.
+//! from the release. Presses that pairing takes for a code count too, so the
+//! panel does not relock under the owner's hands. A client may lock or unlock
+//! over the device API; an unlock from there relocks on the same timer, as a
+//! button unlock does.
 //!
 //! The panel starts locked at every boot. Stock's boot state is not
 //! recovered, and starting locked means an unattended reboot never leaves
@@ -132,8 +134,7 @@ impl Panel {
 
     /// One gesture from the button service.
     pub fn gesture(&mut self, now_ms: u32, gesture: Gesture) -> Option<Event> {
-        self.active_ms = now_ms;
-        self.pressed = !matches!(gesture, Gesture::Up { .. });
+        self.noted(now_ms, gesture);
 
         let held = |level: u8| level == self.config.hold_level;
         let action = match gesture {
@@ -153,6 +154,13 @@ impl Panel {
             action,
             allowed: !self.lock.locked(),
         })
+    }
+
+    /// A gesture pairing took (a code being keyed in) is still someone at
+    /// the panel: it holds off the relock without acting.
+    pub const fn noted(&mut self, now_ms: u32, gesture: Gesture) {
+        self.active_ms = now_ms;
+        self.pressed = !matches!(gesture, Gesture::Up { .. });
     }
 
     /// A signed lock or unlock from the network; `None` if already so.

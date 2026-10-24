@@ -9,7 +9,8 @@ use serde_json::{Value, json};
 use super::*;
 use crate::commands::itest::Rig;
 use crate::commands::ota::OtaArgs;
-use crate::server::{ForgedCase, LocalStatus, Request};
+use crate::device::{Answer, Ask, DeviceStatus, Intruder, Rebuffed};
+use crate::server::LocalStatus;
 
 const BUILD: &str = "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90";
 const OTHER: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -49,8 +50,11 @@ struct StockFeeder {
     /// A request from an earlier run: its ID, phase, and when the server's
     /// evidence lets it be resolved.
     earlier: Option<(String, &'static str, f64)>,
-    /// The replacement's health: build and bank.
+    /// The replacement's MQTT health (bank 0, or a build from before the
+    /// device API): build, bank, and whether it is the recovery role.
     health: Option<(String, u64, bool)>,
+    /// The normal role on bank 1 answers the device API instead: its build.
+    api: Option<String>,
     offered: bool,
     served: Option<PathBuf>,
     /// Stock runs (and reports once routed); false while a replacement does.
@@ -87,6 +91,7 @@ impl StockFeeder {
             trial: None,
             earlier: None,
             health: None,
+            api: None,
             offered: false,
             served: None,
             on_stock: true,
@@ -135,9 +140,16 @@ impl StockFeeder {
                 Change::OnStock => {
                     self.on_stock = true;
                     self.health = None;
+                    self.api = None;
+                }
+                // Since FW47 the normal role reports over the device API only.
+                Change::Health(build, 1, false) => {
+                    self.health = None;
+                    self.api = Some(build);
                 }
                 Change::Health(build, bank, recovery) => {
-                    self.health = Some((build, bank, recovery))
+                    self.health = Some((build, bank, recovery));
+                    self.api = None;
                 }
                 Change::Phase(phase) => {
                     if let Some((_, current)) = &mut self.trial {
@@ -178,10 +190,6 @@ impl Rig for StockFeeder {
         Ok(())
     }
 
-    fn forge(&mut self) -> Result<Vec<ForgedCase>> {
-        unreachable!()
-    }
-
     /// The bank-0 recovery role finds the offer at its next 10 s ask and
     /// installs it into bank 1, whose trial boot confirms.
     fn offer(&mut self, staged: Option<&Staged>) -> Result<()> {
@@ -201,14 +209,14 @@ impl Rig for StockFeeder {
         }
 
         self.offered = true;
-        self.actions.push(format!(
-            "offer on {}",
-            self.health.as_ref().map_or("nothing".into(), |h| format!(
-                "bank {}{}",
-                h.1,
-                if h.2 { " recovery" } else { "" }
-            ))
-        ));
+        let on = match (&self.health, &self.api) {
+            (Some((_, bank, recovery)), _) => {
+                format!("bank {bank}{}", if *recovery { " recovery" } else { "" })
+            }
+            (None, Some(_)) => "bank 1".into(),
+            (None, None) => "nothing".into(),
+        };
+        self.actions.push(format!("offer on {on}"));
 
         let build = BUILD;
         self.line(10.0, "PLOTA1 manifest version=72 bytes=663552");
@@ -224,7 +232,30 @@ impl Rig for StockFeeder {
         Ok(())
     }
 
-    fn request(&mut self, _request: &Request) -> Result<String> {
+    fn device(&mut self, ask: &Ask) -> Result<Answer> {
+        self.release();
+        let Some(build) = self.api.clone() else {
+            return Err(Error::Bench("the feeder did not answer".into()));
+        };
+        assert_eq!(*ask, Ask::Status, "the round trip only reads status");
+        Ok(Answer::Status(DeviceStatus {
+            build,
+            bank: 1,
+            uptime_ms: 40_000,
+            boot_count: 3,
+            wifi: wellfed_proto::api::WifiSource::Build,
+            losses: 0,
+            clock_ms: None,
+            settings_generation: 1,
+            wifi_generation: 1,
+        }))
+    }
+
+    fn intrude(&mut self, _intruder: Intruder) -> Result<Rebuffed> {
+        unreachable!()
+    }
+
+    fn unix_ms(&self) -> i64 {
         unreachable!()
     }
 
@@ -648,7 +679,7 @@ fn an_earlier_request_the_server_never_resolves_stops_the_run() {
 fn on_baseline(script: Script) -> (StockFeeder, ItestArgs) {
     let mut feeder = StockFeeder::new(script);
     feeder.on_stock = false;
-    feeder.health = Some((BUILD.into(), 1, false));
+    feeder.api = Some(BUILD.into());
     let mut rig_args = args(true).rig_args();
     rig_args.power = true;
     rig_args.stock = Some(PathBuf::from(STOCK_REVIEW));
@@ -686,7 +717,7 @@ fn the_round_trip_goes_to_stock_and_back_to_the_confirmed_baseline() {
         feeder.served.as_deref(),
         Some(Path::new("private/verification/poc1-review"))
     );
-    assert_eq!(feeder.health, Some((BUILD.into(), 1, false)));
+    assert_eq!(feeder.api.as_deref(), Some(BUILD));
     assert!(
         feeder
             .notes

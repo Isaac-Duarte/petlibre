@@ -21,6 +21,7 @@ macro_rules! say {
 
 pub mod commands;
 pub mod config;
+pub mod device;
 mod local_api;
 pub mod relay;
 mod server;
@@ -57,10 +58,9 @@ pub enum Error {
     /// The server does not yet see stock ready to be asked for an install.
     #[error(transparent)]
     StockNotReady(#[from] server::StockNotReady),
-    /// The firmware did not answer a request. Requests go out at QoS 0, so
-    /// one sent while the transport reconnects is lost.
-    #[error("No reply to {op} within {seconds:.0} s")]
-    NoReply { op: &'static str, seconds: f64 },
+    /// A device API session (FW47) could not be opened or did not answer.
+    #[error(transparent)]
+    Device(#[from] device::DeviceError),
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]

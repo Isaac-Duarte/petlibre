@@ -8,10 +8,12 @@
 //! prints the reviewed UART recovery commands instead of acting on its own.
 //!
 //! Every physical action goes through [`Rig`]: the live rig owns the
-//! hotspot, the `wellfed-local` children, the UART captures and (only with
-//! `--power`) the feeder supply relay, and restores what it changed when the
-//! run ends. Scenarios see only the trait, so they are tested on scripted
-//! feeders without hardware.
+//! hotspot, the `wellfed-local` children, the UART captures, the device
+//! API sessions (FW47: every request, and the normal role's status) and
+//! (only with `--power`) the feeder supply relay, and restores what it
+//! changed when the run ends. `serve` still offers updates and hears bank
+//! 0's recovery role over MQTT. Scenarios see only the trait, so they are
+//! tested on scripted feeders without hardware.
 
 use std::path::{Path, PathBuf};
 
@@ -20,7 +22,8 @@ use serde::Serialize;
 
 use super::ota::{Outcome, Staged, Target, Watch};
 use crate::config::VERIFICATION;
-use crate::server::{ForgedCase, Health, LocalStatus, Reply, Request, TrialRequest};
+use crate::device::{Answer, Ask, DeviceStatus, Intruder, Rebuffed};
+use crate::server::{LocalStatus, TrialRequest};
 use crate::status::StepState;
 use crate::{Error, Result, require};
 
@@ -42,11 +45,12 @@ use scenarios::{DeviceState, SCENARIOS, Scenario};
 /// How often waits look at the UART and the server again.
 const POLL_SECONDS: f64 = 1.0;
 const STATUS_POLL_SECONDS: f64 = 5.0;
-/// A reply normally arrives within a second; a busy settings writer is slower.
-const REPLY_SECONDS: f64 = 20.0;
-/// The firmware publishes health every 30 s and the server calls it stale
-/// after 75 s; three periods covers a reconnect.
+/// The recovery role publishes health every 30 s and the server calls it
+/// stale after 75 s; three periods covers a reconnect.
 const HEALTH_SECONDS: f64 = 120.0;
+/// A booted feeder joins the hotspot and serves the device API well within
+/// this; so does one whose session was dropped by a bounce.
+const STATUS_SECONDS: f64 = 120.0;
 /// Download, activation, trial boot and the 30 s confirmation take about
 /// four minutes; the slowest seen was under six.
 const INSTALL_SECONDS: f64 = 15.0 * 60.0;
@@ -149,12 +153,17 @@ pub struct ItestArgs {
     /// With --build: build even when a review of the same sources exists.
     #[arg(long, requires = "build")]
     pub rebuild: bool,
-    /// wellfed-local config the suite serves with (root-relative).
+    /// wellfed-local config the suite serves with (root-relative); its
+    /// hotspot interface and feeder MAC also find the feeder when mDNS does not.
     #[arg(long, default_value = crate::local_api::SERVER_CONFIG)]
     pub config: PathBuf,
     /// Hotspot description: its NetworkManager `connection` (root-relative).
     #[arg(long, default_value = "private/hotspot.json")]
     pub hotspot: PathBuf,
+    /// The owner key file the device API sessions use (root-relative); it
+    /// must name exactly one feeder.
+    #[arg(long, default_value = crate::device::OWNER_KEYS)]
+    pub keys: PathBuf,
 }
 
 impl ItestArgs {
@@ -195,12 +204,10 @@ impl Fault {
 /// What answers the feeder on the hotspot's broker address.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Server {
-    /// `wellfed-local serve`: broker, API, health and signed requests.
+    /// `wellfed-local serve`: broker, API, offers and recovery health.
     Serve,
     /// `serve --enable-ota-trial`, so it may ask stock to install an image.
     StockTrial,
-    /// `wellfed-local broker` alone, for `request_forger`.
-    Broker,
     /// The bare broker plus `ota_fault_server` offering `staged`.
     Faulty { fault: Fault, staged: Staged },
 }
@@ -214,13 +221,15 @@ trait Rig {
     fn review_build(&mut self, review: &Path) -> Result<String>;
     /// Replace whatever answers the feeder now.
     fn server(&mut self, server: Server) -> Result<()>;
-    /// Run `request_forger` beside the bare broker; its per-case lines.
-    fn forge(&mut self) -> Result<Vec<ForgedCase>>;
     /// Load an offer into `serve`, or clear it.
     fn offer(&mut self, staged: Option<&Staged>) -> Result<()>;
-    /// `POST /api/replacement/request`; the request ID.
-    fn request(&mut self, request: &Request) -> Result<String>;
-    /// `GET /api/status`.
+    /// One device API request as the owner's key.
+    fn device(&mut self, ask: &Ask) -> Result<Answer>;
+    /// A connection the feeder must not let in, and how it met it.
+    fn intrude(&mut self, intruder: Intruder) -> Result<Rebuffed>;
+    /// The host's wall clock, Unix milliseconds: what a clock sync sends.
+    fn unix_ms(&self) -> i64;
+    /// `GET /api/status`: stock's reports and the recovery role's health.
     fn status(&mut self) -> Result<LocalStatus>;
     fn hotspot(&mut self, up: bool) -> Result<()>;
     /// Cut the feeder's supply, wait, restore it: a cold boot.
@@ -334,28 +343,6 @@ impl<'r> Ctx<'r> {
         }
     }
 
-    /// Wait up to `seconds` for `n` records at or after `since` that
-    /// `matches`; how many there were. The firmware logs a request after
-    /// publishing its reply, so its record can trail the reply by a chunk.
-    fn expect_count(
-        &mut self,
-        since: usize,
-        n: usize,
-        seconds: f64,
-        matches: impl Fn(&Record) -> bool,
-    ) -> Result<usize> {
-        let deadline = self.rig.clock() + seconds;
-        loop {
-            self.pull()?;
-            let found = self.log.count(since, &matches);
-            if found >= n || self.rig.clock() >= deadline {
-                return Ok(found);
-            }
-            self.alive()?;
-            self.rig.wait(POLL_SECONDS)?;
-        }
-    }
-
     /// Poll the server's status until `check` passes; its report.
     fn until_status(
         &mut self,
@@ -390,49 +377,68 @@ impl<'r> Ctx<'r> {
         }
     }
 
-    /// Fresh online health from the feeder.
-    fn health(&mut self, seconds: f64) -> Result<Health> {
-        self.until_status("fresh health", seconds, |status| {
-            status.fresh_health()?;
-            Ok(String::new())
-        })?;
-
-        let status = self.rig.status()?;
-        Ok(status.fresh_health()?.clone())
+    /// One device API request, with the UART drained first.
+    fn ask(&mut self, ask: &Ask) -> Result<Answer> {
+        self.pull()?;
+        self.rig.device(ask)
     }
 
-    /// Send one request through the server and wait for the feeder's reply.
-    /// Requests go out at QoS 0, so one sent as the transport reconnects is
-    /// lost; with no reply it is sent once more. Every request the suite
-    /// makes reads, or sets a value again, so a repeat is harmless.
-    fn ask(&mut self, request: &Request) -> Result<Reply> {
-        match self.ask_once(request) {
-            Err(lost @ Error::NoReply { .. }) => {
-                self.note(&format!("  {lost}; asking again"));
-                self.ask_once(request)
-            }
-            other => other,
+    /// The feeder's status over the device API, now.
+    fn device_status(&mut self) -> Result<DeviceStatus> {
+        match self.ask(&Ask::Status)? {
+            Answer::Status(status) => Ok(status),
+            other => Err(Error::Bench(format!("Status answered {}", compact(&other)))),
         }
     }
 
-    fn ask_once(&mut self, request: &Request) -> Result<Reply> {
-        let id = self.rig.request(request)?;
-        let deadline = self.rig.clock() + REPLY_SECONDS;
+    /// Poll the device API's status until `check` passes; its report.
+    fn until_device(
+        &mut self,
+        what: &str,
+        seconds: f64,
+        check: impl Fn(&DeviceStatus) -> Result<String>,
+    ) -> Result<String> {
+        let deadline = self.rig.clock() + seconds;
+        let mut last = String::new();
         loop {
-            self.pull()?;
-            let status = self.rig.status()?;
-            if let Some(reply) = status.reply(&id) {
-                return Ok(reply.clone());
+            let verdict = self.device_status().and_then(|status| check(&status));
+            match verdict {
+                Ok(report) => return Ok(report),
+                Err(Error::Interrupted) => return Err(Error::Interrupted),
+                Err(reason) => {
+                    let reason = reason.to_string();
+                    if reason != last {
+                        self.note(&format!("  Waiting for {what}: {reason}"));
+                        last = reason;
+                    }
+                }
             }
 
             if self.rig.clock() >= deadline {
-                return Err(Error::NoReply {
-                    op: request.op(),
-                    seconds: REPLY_SECONDS,
-                });
+                return Err(Error::Bench(format!(
+                    "No {what} within {seconds:.0} s ({last})"
+                )));
             }
             self.alive()?;
-            self.rig.wait(POLL_SECONDS)?;
+            self.rig.wait(STATUS_POLL_SECONDS)?;
+        }
+    }
+
+    /// The feeder answering the device API, within `seconds`.
+    fn reachable(&mut self, seconds: f64) -> Result<DeviceStatus> {
+        self.until_device("the device API", seconds, |_| Ok(String::new()))?;
+        self.device_status()
+    }
+
+    /// Set the feeder's clock from the host's: nothing else does since the
+    /// server stopped sending FW21's sync (FW47).
+    fn sync_clock(&mut self) -> Result<()> {
+        match self.ask(&Ask::SyncClock)? {
+            Answer::Done { .. } => Ok(()),
+            other => Err(Error::Bench(format!(
+                "The clock sync answered {}",
+                compact(&other)
+            ))),
         }
     }
 
@@ -482,8 +488,8 @@ impl<'r> Ctx<'r> {
                 next += 1;
                 for event in watch.feed(text.as_bytes()) {
                     self.note(&format!("  {event}"));
-                    // The confirmed build already is the offered one: the
-                    // server's health then says so.
+                    // The confirmed build already is the offered one: its
+                    // status then says so.
                     if let super::ota::Event::Offer { same: true, .. } = event {
                         return Ok(Outcome::Passed);
                     }
@@ -504,20 +510,21 @@ impl<'r> Ctx<'r> {
         }
     }
 
-    /// The server sees `build` on bank 1, online and fresh.
+    /// The device API reports `build` on bank 1.
     fn confirm(&mut self, build: &str) -> Result<()> {
-        let report = self.until_status("health from the new build", HEALTH_SECONDS, |status| {
-            Ok(status.health_matches(build)?)
+        let report = self.until_device("status from the new build", STATUS_SECONDS, |status| {
+            Ok(status.matches(build)?)
         })?;
         self.note(&format!("  {report}"));
         Ok(())
     }
 
-    /// Whether health already shows `build` running, without waiting.
+    /// Whether the device API already reports `build` running, without
+    /// waiting.
     fn running(&mut self, build: &str) -> bool {
-        self.rig
-            .status()
-            .is_ok_and(|status| status.health_matches(build).is_ok())
+        self.rig.device(&Ask::Status).is_ok_and(
+            |answer| matches!(answer, Answer::Status(status) if status.matches(build).is_ok()),
+        )
     }
 
     fn baseline(&self) -> Result<&Baseline> {
@@ -573,9 +580,12 @@ impl<'r> Ctx<'r> {
             review,
             build,
             rebuild: build && self.args.rebuild,
-            firmware: None,
+            // The suite talks to the device API (FW47), which only the
+            // product firmware serves.
+            firmware: build.then_some(super::Firmware::Feeder),
             variant: None,
             config: self.args.config.clone(),
+            keys: self.args.keys.clone(),
             version: None,
             minutes: INSTALL_SECONDS / 60.0,
             attended_motion: false,
@@ -621,8 +631,8 @@ impl<'r> Ctx<'r> {
         result
     }
 
-    /// The feeder looks hung or bricked: no record for [`SILENT_SECONDS`]
-    /// and no fresh health.
+    /// The feeder looks hung or bricked: no record for [`SILENT_SECONDS`],
+    /// no device API answer and no fresh recovery-role health.
     fn silent(&mut self) -> Option<Silent> {
         if let Some(found) = self.went_silent.take() {
             return Some(found);
@@ -634,21 +644,17 @@ impl<'r> Ctx<'r> {
         if now - last.max(self.heard) < SILENT_SECONDS {
             return None;
         }
-        let healthy = self
-            .rig
-            .status()
-            .is_ok_and(|status| status.fresh_health().is_ok());
-        (!healthy).then(|| {
+        let answers = self.rig.device(&Ask::Status).is_ok()
+            || self
+                .rig
+                .status()
+                .is_ok_and(|status| status.fresh_health().is_ok());
+        (!answers).then(|| {
             Silent(format!(
-                "no UART record or fresh health for {SILENT_SECONDS:.0} s"
+                "no UART record, device API answer or fresh health for {SILENT_SECONDS:.0} s"
             ))
         })
     }
-}
-
-/// A reply's `ok`, or why not.
-fn reply_ok(reply: &Reply) -> Result<()> {
-    require(reply.ok, format!("Reply refused: {}", compact(reply)))
 }
 
 /// One line of JSON, for a failure message.

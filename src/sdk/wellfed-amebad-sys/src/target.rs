@@ -16,6 +16,7 @@ use super::{
     MOTOR_MASK, SECTOR_BYTES, STORAGE_OFFSET, STORAGE_SECTORS, SYSTICK_CTRL, Systick, TaskStep,
     TcpRecv, TransportConfig, WifiEvent, WifiPoll,
 };
+use super::{Accepted, ApiRecv, Datagram};
 #[cfg(feature = "bluetooth")]
 use super::{Advertising, BleEvent, BlePoll, BleService, BleStats};
 
@@ -1100,6 +1101,96 @@ pub fn tcp_accept(listener: i32, timeout_ms: u32) -> Option<i32> {
     // SAFETY: the C shim in `example_entry.c`; any buffer is live for the call.
     let socket = unsafe { wellfed_tcp_accept(listener, timeout_ms) };
     (socket >= 0).then_some(socket)
+}
+
+unsafe extern "C" {
+    fn wellfed_api_listen(port: u32) -> i32;
+    fn wellfed_api_accept(listener: i32) -> i32;
+    fn wellfed_api_recv(socket: i32, buffer: *mut u8, length: u32) -> i32;
+    fn wellfed_api_send(socket: i32, data: *const u8, length: u32) -> i32;
+    fn wellfed_mdns_open() -> i32;
+    fn wellfed_mdns_recv(
+        socket: i32,
+        buffer: *mut u8,
+        length: u32,
+        ip: *mut u32,
+        port: *mut u32,
+    ) -> i32;
+    fn wellfed_mdns_send(socket: i32, data: *const u8, length: u32, ip: u32, port: u32) -> i32;
+    fn wellfed_ipv4() -> u32;
+}
+
+/// FW47: the device API's non-blocking listener on `port`, or `None`.
+pub fn api_listen(port: u16) -> Option<i32> {
+    // SAFETY: the C shim in `example_entry.c`; any buffer is live for the call.
+    let socket = unsafe { wellfed_api_listen(u32::from(port)) };
+    (socket >= 0).then_some(socket)
+}
+
+/// A waiting connection, never blocking; close it with [`tcp_close`].
+pub fn api_accept(listener: i32) -> Accepted {
+    // SAFETY: the C shim in `example_entry.c`; any buffer is live for the call.
+    match unsafe { wellfed_api_accept(listener) } {
+        -1 => Accepted::None,
+        socket if socket >= 0 => Accepted::Socket(socket),
+        _ => Accepted::Error,
+    }
+}
+
+/// What is waiting on `socket` now, never blocking.
+pub fn api_recv(socket: i32, buffer: &mut [u8]) -> ApiRecv {
+    let length = u32::try_from(buffer.len()).unwrap_or(u32::MAX);
+    // SAFETY: the C shim in `example_entry.c`; any buffer is live for the call.
+    match unsafe { wellfed_api_recv(socket, buffer.as_mut_ptr(), length) } {
+        0 => ApiRecv::Empty,
+        n if n > 0 => ApiRecv::Data(n as usize),
+        _ => ApiRecv::Closed,
+    }
+}
+
+/// How much of `data` the stack took now (0 while it is full); `None` on
+/// an error.
+pub fn api_send(socket: i32, data: &[u8]) -> Option<usize> {
+    let length = u32::try_from(data.len()).unwrap_or(u32::MAX);
+    // SAFETY: the C shim in `example_entry.c`; any buffer is live for the call.
+    let sent = unsafe { wellfed_api_send(socket, data.as_ptr(), length) };
+    usize::try_from(sent).ok()
+}
+
+/// FW47: the mDNS socket (UDP 5353, joined to 224.0.0.251), or `None`.
+pub fn mdns_open() -> Option<i32> {
+    // SAFETY: the C shim in `example_entry.c`; any buffer is live for the call.
+    let socket = unsafe { wellfed_mdns_open() };
+    (socket >= 0).then_some(socket)
+}
+
+pub fn mdns_recv(socket: i32, buffer: &mut [u8]) -> Datagram {
+    let length = u32::try_from(buffer.len()).unwrap_or(u32::MAX);
+    let (mut ip, mut port) = (0, 0);
+    // SAFETY: the C shim in `example_entry.c`; any buffer is live for the call.
+    match unsafe { wellfed_mdns_recv(socket, buffer.as_mut_ptr(), length, &mut ip, &mut port) } {
+        0 => Datagram::None,
+        n if n > 0 => Datagram::Got {
+            len: n as usize,
+            ip,
+            port: u16::try_from(port).unwrap_or(0),
+        },
+        _ => Datagram::Error,
+    }
+}
+
+#[must_use]
+pub fn mdns_send(socket: i32, data: &[u8], ip: u32, port: u16) -> bool {
+    let length = u32::try_from(data.len()).unwrap_or(u32::MAX);
+    // SAFETY: the C shim in `example_entry.c`; any buffer is live for the call.
+    unsafe { wellfed_mdns_send(socket, data.as_ptr(), length, ip, u32::from(port)) == 0 }
+}
+
+/// The station's IPv4 address (host order), once DHCP gave one.
+pub fn ipv4() -> Option<u32> {
+    // SAFETY: the C shim in `example_entry.c`; any buffer is live for the call.
+    let ip = unsafe { wellfed_ipv4() };
+    (ip != 0).then_some(ip)
 }
 
 /// Milliseconds since the scheduler started (configTICK_RATE_HZ is 1000).

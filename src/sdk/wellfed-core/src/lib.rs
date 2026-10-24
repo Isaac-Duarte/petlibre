@@ -78,3 +78,15 @@ pub const fn interval_valid(value: u32) -> bool {
 pub const fn deadline_passed(now: u32, deadline: u32) -> bool {
     now.wrapping_sub(deadline) < HALF_RANGE
 }
+
+/// Milliseconds from `now` until `deadline`: 0 once it has passed. A plain
+/// wrapping difference turns a deadline just behind `now` into a wait of
+/// nearly the whole range.
+#[inline]
+pub const fn until(now: u32, deadline: u32) -> u32 {
+    if deadline_passed(now, deadline) {
+        0
+    } else {
+        deadline.wrapping_sub(now)
+    }
+}

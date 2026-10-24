@@ -60,12 +60,21 @@ impl<T> Slot<T> {
     }
 
     /// The value, for the owning task; `None` for another task, a second
-    /// entry, or a slot never filled.
+    /// entry, or a slot never filled. Finding the slot empty gives back an
+    /// ownership this call took, so a consumer that runs before its producer
+    /// has filled the slot does not lock the producer out for the boot.
     pub fn enter(&self) -> Option<SlotGuard<'_, T>> {
-        let guard = self.claim()?;
+        let (guard, claimed) = self.claim()?;
         // SAFETY: the guard is the only access to the value while it lives.
-        unsafe { &*self.value.get() }.as_ref()?;
-        Some(guard)
+        if unsafe { &*self.value.get() }.is_some() {
+            return Some(guard);
+        }
+
+        drop(guard);
+        if claimed {
+            self.owner.store(0, Ordering::Release);
+        }
+        None
     }
 
     /// As [`Self::enter`], building the value on first use by `make` in a
@@ -75,7 +84,7 @@ impl<T> Slot<T> {
     /// task overflowed its 4 KiB stack. A `make` that returns `None` leaves
     /// the slot empty, to be tried again on a later entry.
     pub fn enter_or_try_init(&self, make: impl FnOnce() -> Option<T>) -> Option<SlotGuard<'_, T>> {
-        let guard = self.claim()?;
+        let (guard, _) = self.claim()?;
         // SAFETY: the guard is the only access to the value while it lives.
         let value = unsafe { &mut *self.value.get() };
         if value.is_none() {
@@ -90,26 +99,31 @@ impl<T> Slot<T> {
         self.enter_or_try_init(|| Some(make()))
     }
 
-    fn claim(&self) -> Option<SlotGuard<'_, T>> {
+    /// A guard for the calling task, and whether this call took ownership.
+    fn claim(&self) -> Option<(SlotGuard<'_, T>, bool)> {
         let task = sdk::current_task();
         if task == 0 {
             return None;
         }
-        match self
-            .owner
-            .compare_exchange(0, task, Ordering::Acquire, Ordering::Acquire)
-        {
-            Ok(_) => {}
-            Err(owner) if owner == task => {}
-            Err(_) => return None,
-        }
+        let claimed =
+            match self
+                .owner
+                .compare_exchange(0, task, Ordering::Acquire, Ordering::Acquire)
+            {
+                Ok(_) => true,
+                Err(owner) if owner == task => false,
+                Err(_) => return None,
+            };
         if self.entered.swap(true, Ordering::Acquire) {
             return None;
         }
-        Some(SlotGuard {
-            slot: self,
-            _task: PhantomData,
-        })
+        Some((
+            SlotGuard {
+                slot: self,
+                _task: PhantomData,
+            },
+            claimed,
+        ))
     }
 }
 

@@ -119,7 +119,7 @@ const PROVIDER_CALLBACKS: [&str; 5] = [
 ];
 
 static TASK: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?s)(?:task_create|spawn)\(\s*c"([\w-]+)",\s*(\w+),\s*\d+,\s*(\w+)\s*[,)]"#)
+    Regex::new(r#"(?s)(?:task_create|spawn)\(\s*c"([\w-]+)",\s*(\w+),\s*\d+,\s*(\w+)(?:::<[^>]*>)?\s*[,)]"#)
         .expect("stack audit pattern")
 });
 static CONSTANT: LazyLock<Regex> =
@@ -367,14 +367,17 @@ impl<'a> Graph<'a> {
     }
 
     /// What `entry`'s formatting calls are charged: its deepest formatting
-    /// method, nested [`FMT_NESTING`] deep.
-    fn fmt_charge(&self, entry: &'a str, hook: u64) -> u64 {
+    /// method, nested [`FMT_NESTING`] deep; and the unbounded indirect calls
+    /// those methods reach, which the task's own walk never sees.
+    fn fmt_charge(&self, entry: &'a str, hook: u64) -> (u64, BTreeSet<String>) {
         let targets = self.fmt_targets(entry);
-        let mut charges = Charges { fmt: 0, hook };
+        let (mut charges, mut unbounded) = (Charges { fmt: 0, hook }, BTreeSet::new());
         for _ in 0..FMT_NESTING {
-            charges.fmt = self.deepest(targets.iter().copied(), charges);
+            let (depth, nested) = self.deepest(targets.iter().copied(), charges);
+            charges.fmt = depth;
+            unbounded.extend(nested);
         }
-        charges.fmt
+        (charges.fmt, unbounded)
     }
 
     /// The deepest path from `entry` under `charges`, and the functions where
@@ -430,45 +433,71 @@ impl<'a> Graph<'a> {
         result
     }
 
-    /// The deepest of `targets` under `charges`.
-    fn deepest<'n>(&self, targets: impl Iterator<Item = &'n str>, charges: Charges) -> u64 {
-        targets
-            .map(|target| self.worst(target, charges).0.0)
-            .max()
-            .unwrap_or(0)
+    /// The deepest of `targets` under `charges`, and the unbounded indirect
+    /// calls any of them reaches.
+    fn deepest<'n>(
+        &self,
+        targets: impl Iterator<Item = &'n str>,
+        charges: Charges,
+    ) -> (u64, BTreeSet<String>) {
+        let (mut best, mut unbounded) = (0, BTreeSet::new());
+        for target in targets {
+            let ((depth, _, nested), _) = self.worst(target, charges);
+            best = best.max(depth);
+            unbounded.extend(nested);
+        }
+        (best, unbounded)
     }
 
     /// What a call into the flash hooks is charged: the deepest provider
     /// callback, with its own formatting charged as for a task.
+    /// A callback that reaches an unclassified Rust indirect call is refused,
+    /// as a task would be: nothing else walks the callbacks.
     fn hook_charge(&self) -> Result<u64> {
-        if !self.classes.values().any(|class| *class == Indirect::Hook) {
-            return Ok(0);
-        }
+        let hooks = self.classes.values().any(|class| *class == Indirect::Hook);
         let callbacks: Vec<&str> = self
             .functions
             .keys()
             .filter(|name| PROVIDER_CALLBACKS.iter().any(|end| name.ends_with(end)))
             .map(String::as_str)
             .collect();
-        if callbacks.is_empty() {
-            return refuse("The flash hooks link, but no provider callback the runtime installs");
+        match (hooks, callbacks.is_empty()) {
+            (false, true) => return Ok(0),
+            (true, true) => {
+                return refuse(
+                    "The flash hooks link, but no provider callback the runtime installs",
+                );
+            }
+            (false, false) => {
+                return refuse(
+                    "Provider callbacks link, but no flash-hook site calls them: update HOOK_SITES",
+                );
+            }
+            (true, false) => {}
         }
-        Ok(callbacks
-            .into_iter()
-            .map(|callback| {
-                let fmt = self.fmt_charge(callback, 0);
-                self.worst(callback, Charges { fmt, hook: 0 }).0.0
-            })
-            .max()
-            .unwrap_or(0))
+
+        let mut best = 0;
+        for callback in callbacks {
+            let (fmt, mut unbounded) = self.fmt_charge(callback, 0);
+            let ((depth, _, nested), _) = self.worst(callback, Charges { fmt, hook: 0 });
+            unbounded.extend(nested);
+            if let Some(rust) = unbounded.iter().find(|name| name.starts_with("_R")) {
+                return refuse(format!(
+                    "The flash-hook callback {} reaches an unbounded indirect call in {}",
+                    demangle(callback),
+                    demangle(rust)
+                ));
+            }
+            best = best.max(depth);
+        }
+        Ok(best)
     }
 
-    /// The charges for `entry`'s task.
-    fn charges(&self, entry: &'a str, hook: u64) -> Charges {
-        Charges {
-            fmt: self.fmt_charge(entry, hook),
-            hook,
-        }
+    /// The charges for `entry`'s task, and the unbounded indirect calls its
+    /// formatting methods reach.
+    fn charges(&self, entry: &'a str, hook: u64) -> (Charges, BTreeSet<String>) {
+        let (fmt, unbounded) = self.fmt_charge(entry, hook);
+        (Charges { fmt, hook }, unbounded)
     }
 }
 
@@ -553,8 +582,9 @@ pub(crate) fn audit(elf: &Path, objdump: &Path, sources: &TaskSources) -> Result
             _ => return refuse(format!("Ambiguous task entry {entry}: {symbols:?}")),
         };
 
-        let charges = graph.charges(symbol, hook);
-        let ((depth, path, unbounded), cut) = graph.worst(symbol, charges);
+        let (charges, mut unbounded) = graph.charges(symbol, hook);
+        let ((depth, path, direct), cut) = graph.worst(symbol, charges);
+        unbounded.extend(direct);
         if let Some(rust) = unbounded.iter().find(|name| name.starts_with("_R")) {
             return refuse(format!(
                 "Task {task} reaches an unbounded indirect call in {}: give it a class in the \
@@ -714,7 +744,8 @@ mod tests {
         let source = "const PROBE_STACK_WORDS: u16 = 2048;\n\
                       sdk::task_create(\n    c\"wellfed-optics\",\n    PROBE_STACK_WORDS,\n    3,\n    optics_task,\n\
                       let ok = sdk::task_create(c\"wellfed-wdg\", 512, 3, feeder_task, ptr::null_mut());\n\
-                      unsafe { wellfed_sdk::spawn(c\"wellfed-aud\", 1024, 2, audio_task) };";
+                      unsafe { wellfed_sdk::spawn(c\"wellfed-aud\", 1024, 2, audio_task) };\n\
+                      sdk::task_create(c\"feed-owner\", 2048, 3, owner_step::<S>, owner);";
         let expected: BTreeMap<String, (String, u64)> = [
             (
                 "optics_task".to_string(),
@@ -725,6 +756,7 @@ mod tests {
                 ("wellfed-wdg".to_string(), 2048),
             ),
             ("audio_task".to_string(), ("wellfed-aud".to_string(), 4096)),
+            ("owner_step".to_string(), ("feed-owner".to_string(), 8192)),
         ]
         .into();
         assert_eq!(tasks(source), expected);
@@ -802,7 +834,8 @@ mod tests {
             "the task's Display, and the Write it references"
         );
         assert!(graph.fmt_targets("_RNvNtCs1_3app6callee").is_empty());
-        let charges = graph.charges(task, graph.hook_charge().unwrap());
+        let (charges, through_fmt) = graph.charges(task, graph.hook_charge().unwrap());
+        assert!(through_fmt.is_empty());
 
         // `write` (84) under each nesting level: Display (40) + write again,
         // four levels deep, the innermost charged nothing.
@@ -830,6 +863,43 @@ mod tests {
         assert_eq!(unbounded, ["_RNvNtCs1_3app6callee".to_string()].into());
         assert!(FMT_METHOD.is_match("_RNvXNtCs1_3app4LineNtNtCs2_4core3fmt7Display3fmt"));
         assert!(!FMT_METHOD.is_match("_RNvNtCs2_4core3fmt5write"));
+    }
+
+    #[test]
+    fn an_unbounded_call_reached_only_through_formatting_is_reported() {
+        let listing = CLASSES.replace(
+            "    3008:\t00004001",
+            "    3006:\tf000 f800 \tbl\t8000 <_RNvNtCs1_3app6callee>\n    3008:\t00004001",
+        );
+        let functions = link(frames(&listing).into_iter().collect());
+        let graph = Graph::new(&functions, &[]);
+
+        let task = "_RNvNtCs1_3app4task";
+        let (charges, through_fmt) = graph.charges(task, graph.hook_charge().unwrap());
+        let ((_, _, direct), _) = graph.worst(task, charges);
+        assert!(direct.is_empty(), "the task's own walk never meets it");
+        assert_eq!(through_fmt, ["_RNvNtCs1_3app6callee".to_string()].into());
+    }
+
+    #[test]
+    fn a_hook_callback_reaching_an_unbounded_rust_call_is_refused() {
+        let listing = CLASSES.replace(
+            "    7002:\tb0c0      \tsub\tsp, #256\n",
+            "    7002:\tb0c0      \tsub\tsp, #256\n    7004:\tf000 f800 \tbl\t8000 <_RNvNtCs1_3app6callee>\n",
+        );
+        assert_ne!(listing, CLASSES);
+        let functions = link(frames(&listing).into_iter().collect());
+        assert!(Graph::new(&functions, &[]).hook_charge().is_err());
+    }
+
+    #[test]
+    fn provider_callbacks_without_a_hook_site_are_refused() {
+        let listing = "\
+00007000 <_RNvNtCs3_12wellfed_sdk7runtime12hook_acquire>:
+    7000:\tb5f0      \tpush\t{r4, r5, r6, r7, lr}
+";
+        let functions = link(frames(listing).into_iter().collect());
+        assert!(Graph::new(&functions, &[]).hook_charge().is_err());
     }
 
     #[test]

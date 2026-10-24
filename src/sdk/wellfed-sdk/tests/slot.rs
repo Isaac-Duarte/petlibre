@@ -39,6 +39,16 @@ fn an_empty_slot_stays_empty_until_a_constructor_fills_it() {
 }
 
 #[test]
+fn entering_an_empty_slot_leaves_it_to_the_task_that_fills_it() {
+    static SLOT: Slot<u32> = Slot::new();
+
+    // The consumer runs first and finds nothing; the producer still fills.
+    let early = thread::spawn(|| SLOT.enter().is_none());
+    assert!(early.join().unwrap());
+    assert_eq!(*SLOT.enter_or_init(|| 8).unwrap(), 8);
+}
+
+#[test]
 fn release_hands_the_slot_to_the_next_task_only() {
     static SLOT: Slot<u32> = Slot::new();
 

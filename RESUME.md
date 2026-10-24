@@ -7,6 +7,33 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
+**October 24, evening: full QA of `cd3c8ce`…`ccf3e2d` (physical, no owner action, no motion; fixes committed and pushed).**
+- **Host:** `make check`, every firmware's `firstboot` build with its audits, `device` `feeder`, `make check-fixtures` and `make check-web` passed.
+- **Review** (three independent static reviews), fixed with tests:
+  - The service task could sleep for about 24.8 days. A stage that fell due mid-pass got a wrapped wait; it now waits 0 (`wellfed_core::until`).
+  - The stack audit dropped unbounded calls found through formatting methods and provider callbacks. It now counts them, refuses a callback that reaches a Rust one, refuses callbacks with no hook site, and reads a turbofish task entry.
+  - `Slot::enter` on an empty slot kept ownership and could lock the producer out.
+  - `Status.boot_count` reported KM0's whole register 4.
+  - The README and `buttons.md` task counts were stale.
+- **Left as noted:**
+  - `T: Send` bounds on `Slot` and `RamStatic` break the firmware build (raw pointers); host-only impact.
+  - `feed-owner` sits outside the task budget; only the simulator starts it.
+  - The offer check blocks the service task for up to about 6 s a minute.
+- **Bench:** `ota-power-cuts` takes `speaker`'s UART confirmation, since it serves no API.
+- **Runs:**
+  - `qa-20261024-01`, from `ccf3e2d`: six scenarios passed. `ota-recovery` failed building its variant from my uncommitted `RamStatic` bound (since reverted).
+  - `qa-20261024-02`, from `ccf3e2d`: `ota-recovery` failed. A silent bank-0 watchdog reset after a 2 s cut, then the designed skip.
+  - `qa-20261024-03` (fixes built in, `--off-seconds 10`): `ota-update` and `ota-recovery` passed; `ota-power-cuts` passed every cut, then failed only the status call to `speaker`.
+  - `qa-20261024-04`: `ota-power-cuts` passed.
+- **Flash now:**
+  - **Bank 1:** `feeder` `97d0f076…` (built in `qa-20261024-03` from `ccf3e2d` plus the firmware fixes; the boot-count mask came later). Restored as v139, confirmed.
+  - **Bank 0:** `qa` `ef76b85e…`.
+  - **Next manifest version:** 140.
+- **Bench state:** feeder on, hotspot as before, no server.
+- **Next:**
+  - Test UART back power as the cause of the bank-0 anomaly. The adapter holds its lines high while the feeder is off. Owner: put the adapter's TXD and RXD lines on spare relays 3 and 4, with GND left connected. Then the bench opens them for each power-off, and `ota-recovery` runs repeatedly at 2 s off with the UART switched out and left in ([device API](docs/firmware/device-api.md#left)).
+  - `stock-roundtrip` with the owner present (`--stock`).
+
 **October 24, latest: firmware cleanups (static analysis, host tests and image builds; nothing run on the bench; committed on master, not pushed).**
 - **Card ids out of code:** comments and messages under `src/` state the constraint, not the card, and `cargo xtask check-repository` refuses card ids there. The variants are renamed: trial `stall` and `fail`, motor `pulse`, and the SDK feature `trial-fail`; pinned policy names (`fw16-pulse-v1`, `fw11-reset-v1`, …) are unchanged.
 - **RAM hooks:** the interposer's seven `static mut`s are `RamStatic` cells with the same symbols in `.ram_image2.bss`.

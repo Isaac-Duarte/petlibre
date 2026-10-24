@@ -1953,8 +1953,8 @@ dependencies = [
  "clap",
  "futures-util",
  "jiff",
- "mdns-sd",
  "wellfed-client",
+ "wellfed-connect",
  "wellfed-core",
  "wellfed-formats",
  "wellfed-proto",
@@ -2048,6 +2048,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "wellfed-connect"
+version = "0.1.0"
+dependencies = [
+ "mdns-sd",
+ "wellfed-client",
+ "wellfed-core",
+ "wellfed-proto",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "wellfed-core"
 version = "0.1.0"
 dependencies = [
@@ -2076,6 +2088,25 @@ dependencies = [
  "wellfed-core",
  "wellfed-proto",
  "serde",
+]
+
+[[package]]
+name = "wellfed-feeder-sim"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "wellfed-amebad-sys",
+ "wellfed-client",
+ "wellfed-connect",
+ "wellfed-core",
+ "wellfed-feeder",
+ "wellfed-formats",
+ "wellfed-proto",
+ "socket2",
+ "tempfile",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]

@@ -1,0 +1,89 @@
+//! The operator's console: one line of text becomes what the hands on the
+//! feeder would do.
+//!
+//! - `press <button>…` presses each button once, in turn: how a setup or
+//!   recovery code is keyed in. A button is its name (`lock`, `dispense`,
+//!   `mic`, `reset`) or its position from the left (1-4), as `wellfed`
+//!   prints a code.
+//! - `hold <button>[+<button>…]` holds the chord past the panel's hold
+//!   (5 s): `hold lock` toggles the lock, `hold lock+dispense` opens the
+//!   recovery window on an unlocked panel, `hold reset` resets the keys.
+//! - `reboot` restarts the feeder; `quit` stops the simulator.
+
+use wellfed_client::setup::panel_position;
+use wellfed_core::buttons::{Button, Buttons, Gesture};
+
+use crate::serve::Control;
+
+/// A short press's length, as the button service would report it.
+const PRESS_MS: u32 = 120;
+/// Past the panel's 5 s hold.
+const HOLD_MS: u32 = 5_200;
+
+pub const HELP: &str = "commands: press <button>... | hold <button>[+<button>...] | reboot | quit\n\
+     buttons: lock dispense mic reset, or their positions 1-4";
+
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+pub enum ConsoleError {
+    #[error("{0}: not a button (lock, dispense, mic, reset or 1-4)")]
+    Button(String),
+    #[error("name at least one button")]
+    NoButtons,
+    #[error("{0}: not a command")]
+    Command(String),
+}
+
+/// What one line asks for, in order.
+pub fn parse(line: &str) -> Result<Vec<Control>, ConsoleError> {
+    let mut words = line.split_whitespace();
+    let Some(command) = words.next() else {
+        return Ok(Vec::new());
+    };
+    match command {
+        "press" => {
+            let mut controls = Vec::new();
+            for word in words {
+                let chord = Buttons::of(button(word)?);
+                controls.push(Control::Gesture(Gesture::Down { chord }));
+                controls.push(Control::Gesture(Gesture::Up {
+                    chord,
+                    level: 0,
+                    held_ms: PRESS_MS,
+                }));
+            }
+            if controls.is_empty() {
+                return Err(ConsoleError::NoButtons);
+            }
+            Ok(controls)
+        }
+        "hold" => {
+            let mut controls = Vec::new();
+            let mut chord: Option<Buttons> = None;
+            for word in words.flat_map(|w| w.split('+')).filter(|w| !w.is_empty()) {
+                let button = button(word)?;
+                let next = chord.map_or(Buttons::of(button), |c| c.with(button));
+                chord = Some(next);
+                controls.push(Control::Gesture(Gesture::Down { chord: next }));
+            }
+            let chord = chord.ok_or(ConsoleError::NoButtons)?;
+            controls.push(Control::Gesture(Gesture::Hold { chord, level: 1 }));
+            controls.push(Control::Gesture(Gesture::Up {
+                chord,
+                level: 1,
+                held_ms: HOLD_MS,
+            }));
+            Ok(controls)
+        }
+        "reboot" => Ok(vec![Control::Reboot]),
+        "quit" | "exit" => Ok(vec![Control::Quit]),
+        other => Err(ConsoleError::Command(other.to_owned())),
+    }
+}
+
+fn button(word: &str) -> Result<Button, ConsoleError> {
+    Button::ALL
+        .iter()
+        .copied()
+        .find(|&b| word == b.as_str() || word == panel_position(b).to_string())
+        .ok_or_else(|| ConsoleError::Button(word.to_owned()))
+}

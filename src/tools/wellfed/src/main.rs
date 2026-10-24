@@ -25,7 +25,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use wellfed_client::api::{Invite, Join, JoinStep};
+use wellfed_client::api::Invite;
 use wellfed_client::setup::{Ask, Credentials, Session, Step, panel_position};
 use wellfed_core::setup_code::Code;
 use wellfed_formats::{hex, private};
@@ -362,8 +362,8 @@ async fn connect(target: &Target) -> Result<(OwnerKey, [u8; 32], Connection)> {
     eprintln!(
         "Session with feeder {} at {address} ({:?}, build {}).",
         fingerprint(&identity),
-        connection.role,
-        connection.build
+        connection.role(),
+        connection.build()
     );
     Ok((key, identity, connection))
 }
@@ -376,7 +376,7 @@ fn print_json(value: &impl serde::Serialize) -> Result<()> {
 async fn ask_and_print(target: &Target, op: Op<'_>) -> Result<()> {
     let (_, _, mut connection) = connect(target).await?;
     let bytes = connection.ask(op).await?;
-    let outcome = device::outcome(&bytes)?;
+    let outcome = bytes.outcome();
     print_json(&outcome)?;
     if let Outcome::Refused(refusal) = outcome {
         bail!("refused: {refusal:?}");
@@ -395,7 +395,7 @@ async fn settings_command(args: SettingsArgs) -> Result<()> {
     }
     let (_, _, mut connection) = connect(&args.target).await?;
     let current = connection.ask(Op::GetSettings).await?;
-    let Outcome::Settings(settings) = device::outcome(&current)? else {
+    let Outcome::Settings(settings) = current.outcome() else {
         bail!("the feeder did not return its settings");
     };
     let bytes = connection
@@ -404,7 +404,7 @@ async fn settings_command(args: SettingsArgs) -> Result<()> {
             changes,
         })
         .await?;
-    let outcome = device::outcome(&bytes)?;
+    let outcome = bytes.outcome();
     print_json(&outcome)?;
     if let Outcome::Refused(refusal) = outcome {
         bail!("refused: {refusal:?}");
@@ -420,7 +420,7 @@ async fn wifi_command(args: WifiArgs) -> Result<()> {
     };
     let (_, _, mut connection) = connect(&args.target).await?;
     let status = connection.ask(Op::Status).await?;
-    let Outcome::Status(status) = device::outcome(&status)? else {
+    let Outcome::Status(status) = status.outcome() else {
         bail!("the feeder did not return its status");
     };
     let wifi = match (&args.ssid, &passphrase) {
@@ -436,7 +436,7 @@ async fn wifi_command(args: WifiArgs) -> Result<()> {
             wifi,
         })
         .await?;
-    let outcome = device::outcome(&bytes)?;
+    let outcome = bytes.outcome();
     print_json(&outcome)?;
     if let Outcome::Refused(refusal) = outcome {
         bail!("refused: {refusal:?}");
@@ -462,12 +462,14 @@ async fn events_command(args: EventsArgs) -> Result<()> {
         Duration::from_secs(2)
     };
     loop {
-        let bytes = match connection.next(wait).await {
-            Ok(bytes) => bytes,
-            Err(_) if !args.follow => return Ok(()),
+        // The session keeps itself alive, so a quiet hour is no failure.
+        let message = match connection.next(wait).await {
+            Ok(Some(message)) => message,
+            Ok(None) if args.follow => continue,
+            Ok(None) => return Ok(()),
             Err(error) => return Err(error),
         };
-        let message: FeederMessage<'_> = wellfed_proto::decode(&bytes)?;
+        let message = message.get();
         match message {
             FeederMessage::Event(_) | FeederMessage::Gap { .. } | FeederMessage::Sample(_) => {
                 println!("{}", serde_json::to_string(&message)?);
@@ -485,7 +487,7 @@ async fn invite_command(args: InviteArgs) -> Result<()> {
     };
     let (_, identity, mut connection) = connect(&args.target).await?;
     let bytes = connection.ask(Op::CreateInvite { role }).await?;
-    match device::outcome(&bytes)? {
+    match bytes.outcome() {
         Outcome::Invite(invite) => {
             println!(
                 "{INVITE_PREFIX}{}:{}:{}",
@@ -525,39 +527,34 @@ async fn join_command(args: JoinArgs) -> Result<()> {
     let invite = parse_invite(&args.invite)?;
     let mut key = OwnerKey::open(&args.keys, args.label.as_deref(), OwnerKey::system())?;
     let address = device::locate(&invite.feeder, args.address.as_deref())?;
-    let ephemeral: [u8; 32] =
-        private::random(OwnerKey::system()).context("read the system random source")?;
-    let (mut join, hello) = Join::connect(key.keypair(), invite, key.label(), ephemeral)?;
-
-    let mut stream = tokio::net::TcpStream::connect(address)
-        .await
-        .with_context(|| format!("connect to {address}"))?;
-    stream.write_all(&hello).await?;
-    let mut buffer = [0u8; 2048];
-    loop {
-        let n = tokio::time::timeout(device::ANSWER, stream.read(&mut buffer))
-            .await
-            .context("the feeder did not answer in time")??;
-        if n == 0 {
-            bail!("the feeder closed the connection (an unknown or expired invite)");
+    let joined = wellfed_connect::join(
+        key.keypair(),
+        invite,
+        key.label(),
+        address,
+        device::random()?,
+    )
+    .await
+    .map_err(|error| match error {
+        wellfed_connect::Error::Closed => {
+            anyhow::anyhow!("the feeder closed the connection (an unknown or expired invite)")
         }
-        match join.receive(&buffer[..n])? {
-            None => {}
-            Some(JoinStep::Send(bytes)) => stream.write_all(&bytes).await?,
-            Some(JoinStep::Done(Joined::Enrolled { role })) => {
-                key.remember(&invite.feeder)?;
-                println!("Joined feeder {} as {role:?}.", fingerprint(&invite.feeder));
-                return Ok(());
-            }
-            Some(JoinStep::Done(Joined::Refused(refusal))) => bail!("refused: {refusal:?}"),
+        other => other.into(),
+    })?;
+    match joined {
+        Joined::Enrolled { role } => {
+            key.remember(&invite.feeder)?;
+            println!("Joined feeder {} as {role:?}.", fingerprint(&invite.feeder));
+            Ok(())
         }
+        Joined::Refused(refusal) => bail!("refused: {refusal:?}"),
     }
 }
 
 async fn clients_command(target: Target) -> Result<()> {
     let (_, _, mut connection) = connect(&target).await?;
     let bytes = connection.ask(Op::ListClients).await?;
-    let Outcome::Clients(clients) = device::outcome(&bytes)? else {
+    let Outcome::Clients(clients) = bytes.outcome() else {
         bail!("the feeder did not list its clients");
     };
     for client in clients.clients.iter().flatten() {
@@ -578,7 +575,7 @@ async fn revoke_command(args: RevokeArgs) -> Result<()> {
     }
     let (_, _, mut connection) = connect(&args.target).await?;
     let bytes = connection.ask(Op::ListClients).await?;
-    let Outcome::Clients(clients) = device::outcome(&bytes)? else {
+    let Outcome::Clients(clients) = bytes.outcome() else {
         bail!("the feeder did not list its clients");
     };
     let matches: Vec<[u8; 32]> = clients
@@ -592,7 +589,7 @@ async fn revoke_command(args: RevokeArgs) -> Result<()> {
         bail!("{} clients match {}", matches.len(), args.client);
     };
     let bytes = connection.ask(Op::RevokeClient { key: *key }).await?;
-    let outcome = device::outcome(&bytes)?;
+    let outcome = bytes.outcome();
     print_json(&outcome)?;
     if let Outcome::Refused(refusal) = outcome {
         bail!("refused: {refusal:?}");

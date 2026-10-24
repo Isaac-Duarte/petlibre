@@ -3,10 +3,10 @@
 //! it to `private/wellfed-owner.json`), carrying the requests the suite and
 //! the `ota` command make.
 //!
-//! Blocking, like the rest of the bench. It mirrors the `wellfed` CLI's
-//! tokio `device.rs` (find the feeder, open a session, ask): both only move
-//! bytes for `wellfed_client::api::Session`, and should share one crate
-//! once there is one for it.
+//! Blocking, like the rest of the bench. It mirrors `wellfed-connect`, the
+//! tokio driver the `wellfed` CLI uses (find the feeder, open a session,
+//! ask): both only move bytes for `wellfed_client::api::Session`, and the
+//! bench can move onto that crate once it runs on tokio.
 //!
 //! The feeder is found by its identity over mDNS (`_wellfed._tcp`, TXT
 //! `id=`), and otherwise by its MAC in the hotspot's neighbour table: the

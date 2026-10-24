@@ -27,6 +27,7 @@ wellfed-sdk = { path = "src/sdk/wellfed-sdk" }
 wellfed-sdk-c = { path = "src/sdk/wellfed-sdk-c" }
 wellfed-feeder = { path = "src/product/wellfed-feeder" }
 wellfed-client = { path = "src/client/wellfed-client" }
+wellfed-connect = { path = "src/client/wellfed-connect" }
 wellfed-formats = { path = "src/tools/wellfed-formats" }
 wellfed-emu = { path = "src/tools/wellfed-emu" }
 wellfed-testkit = { path = "src/sdk/wellfed-testkit" }

@@ -1,0 +1,19 @@
+[package]
+license.workspace = true
+name = "wellfed-connect"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "Tokio driver for wellfed-client's device API sessions: locate a feeder, open a session, ask, follow and redeem invites"
+publish.workspace = true
+
+[dependencies]
+mdns-sd = "0.21.6"
+wellfed-client.workspace = true
+wellfed-core.workspace = true
+wellfed-proto.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["io-util", "net", "time"] }
+
+[lints]
+workspace = true

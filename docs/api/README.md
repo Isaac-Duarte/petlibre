@@ -32,6 +32,8 @@ There are three contracts, and each changes at a different cost:
 ```text
 src/sdk/wellfed-proto        no_std, no alloc. Device-protocol messages, framing, versions and capabilities
 src/client/wellfed-client    sans-IO. Noise sessions, pairing, invites, request tracking, event-cursor sync
+src/client/wellfed-connect   tokio driver for wellfed-client: locate, open, ask, follow with keepalive, join
+src/tools/wellfed-feeder-sim the host-simulated feeder: wellfed-feeder's API server and stores over real TCP
 src/server/wellfed-api       HTTP request and response types, error codes, OpenAPI schemas. No axum
 src/server/wellfed-store     sqlx, migrations, typed queries. The only crate that contains SQL
 src/server/wellfed-service   domain logic: feeder connections, sync, users, releases. No axum, no SQL
@@ -50,7 +52,9 @@ wellfed-server ─► wellfed-service ─► wellfed-store ─► wellfed-api*
 ```
 
 - **`wellfed-proto`** is used by the firmware (`wellfed-sdk`, `wellfed-feeder`) and by every host. It holds only data types, framing and version rules: no IO, no crypto.
-- **`wellfed-client`** holds no sockets, timers or radios. Its callers feed it bytes and the current time and send what it returns. The server drives it with tokio, the app with Dart IO, the CLI and bench with tokio, and the host simulator directly in tests.
+- **`wellfed-client`** holds no sockets, timers or radios. Its callers feed it bytes and the current time and send what it returns. The server and the CLI drive it with tokio through `wellfed-connect`, the app with Dart IO, and the bench with blocking sockets.
+- **`wellfed-connect`** takes its randomness from the caller (request ids and ephemeral keys are arguments), so the server can inject its generator and tests can fix it. It keeps a quiet session alive under the feeder's 90 s idle limit with a `Status` every 45 s, and queues the events and samples that arrive while a request waits for its answer.
+- **`wellfed-feeder-sim`** runs `wellfed-feeder`'s own API server, panel and pairing policy, and `wellfed-core`'s stores on a flash image laid out like the feeder's storage region, so service, end-to-end and web tests meet the feeder's behavior rather than a mock of it. Its standard input stands in for the panel's buttons; a feed is refused until the feeding owner lands.
 - **`wellfed-api`** builds for every target, including the app's Android library, so it carries no server dependencies.
 - **`wellfed-service`** never sees an HTTP type, and **`wellfed-server`** never sees SQL. A handler parses, authorizes, calls one service method and maps the result.
 - **`wellfed-local`** is retired in stages ([tools roadmap](../development/tools-roadmap.md)): its stock install path moves to a `wellfed-stock` library and `wellfed-client`'s installer steps, its replacement path to `wellfed-client` and the owner's `wellfed` CLI. Its MQTT request path went with FW47; the broker stays for the FW10 offers and bank 0's health until FW48.

@@ -1,6 +1,6 @@
 # FW34 Bluetooth LE and Wi-Fi setup
 
-Stock 1.1.15 uses Bluetooth LE to give an offline feeder its Wi-Fi and MQTT settings from the vendor app ([stock behavior](stock-behavior.md#bluetooth-le)). The `ble` firmware keeps that role:
+Stock 1.1.15 uses Bluetooth LE to give an offline feeder its Wi-Fi and MQTT settings from the vendor app ([stock behavior](../devices/plaf103/stock/README.md#bluetooth-le)). The `ble` firmware keeps that role:
 - **When:** after about two minutes without a network, it advertises a private setup service.
 - **What:** a host sends it Wi-Fi credentials as the same signed FW25 `wifi` request the server sends over MQTT.
 - **Then:** the feeder joins the new network at its next attempt, without a restart.

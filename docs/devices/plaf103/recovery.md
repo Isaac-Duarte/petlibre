@@ -25,8 +25,8 @@ Preserve current bytes outside the allowed application region, including unclass
 
 ## Using the reference
 
-Read tool help without a device attached. Inspect [fixture requirements](../development/fixtures.md) and the source restrictions before preparing any plan. Historical plans and captures cannot authorize a new bench session. Changing the profile requires a separately reviewed compatibility/recovery design and hardware acceptance, rather than editing a hash until the writer accepts an input.
+Read tool help without a device attached. Inspect [fixture requirements](../../development/fixtures.md) and the source restrictions before preparing any plan. Historical plans and captures cannot authorize a new bench session. Changing the profile requires a separately reviewed compatibility/recovery design and hardware acceptance, rather than editing a hash until the writer accepts an input.
 
 No contributor check performs serial operations. No SDK build automatically flashes an image or starts the feeding owner.
 
-A separate [UART development updater](../development/uart-development.md) now accepts frozen reviewed source/target images within the tested bank layout. It verifies application regions and guard ranges rather than scanning all flash, and does not relax these conservative writers. Stock return through that newer updater remains untested.
+A separate [UART development updater](../../development/uart-development.md) now accepts frozen reviewed source/target images within the tested bank layout. It verifies application regions and guard ranges rather than scanning all flash, and does not relax these conservative writers. Stock return through that newer updater remains untested.

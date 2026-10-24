@@ -7,7 +7,7 @@ Every host tool is a Rust crate in the workspace. Build them with `cargo build -
 | Crate | Device | Purpose |
 | --- | --- | --- |
 | [wellfed-flash](wellfed-flash) | yes | The UART flash client: restricted reads, region-scoped development updates, give-ways and original-stock recovery, each inspect → prepare → execute ([guide](../../docs/development/rust-flash.md)) |
-| [wellfed-bench](wellfed-bench) | yes | The relay bench: power and loader strap, chained `wellfed-flash` sessions, the over-the-air loop, and the read-only progress page with `--features ui` ([guide](../../docs/hardware/bench.md)) |
+| [wellfed-bench](wellfed-bench) | yes | The relay bench: power and loader strap, chained `wellfed-flash` sessions, the over-the-air loop, and the read-only progress page with `--features ui` ([guide](../../docs/devices/plaf103/bench.md)) |
 | [wellfed-local](wellfed-local) | no (network) | The local server for stock and replacement firmware: MQTT broker, signed OTA offers and status |
 | [wellfed-build](wellfed-build) | no | SDK firmware builds, their linked-image audits, and `review`, which freezes a reviewed build or the stock OTA for `wellfed-flash` ([firmware builds](../../docs/development/firmware-builds.md), [development updates](../../docs/development/uart-development.md)) |
 | [wellfed-audit](wellfed-audit) | no | Offline audits of finalized receive-only captures (startup, FW14 ADC, FW30 driver transients) and full-flash backup comparison |

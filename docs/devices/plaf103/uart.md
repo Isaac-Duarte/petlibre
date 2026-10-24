@@ -13,7 +13,7 @@ The research unit's idle TX was measured at approximately **3.29 V**. Readable n
 | RX | Disconnected | Adapter TXD |
 | Power | No adapter connection | No adapter connection |
 
-The [Rust flash client](../development/rust-flash.md) owns the serial port:
+The [Rust flash client](../../development/rust-flash.md) owns the serial port:
 
 ```sh
 cargo build --locked --release -p wellfed-flash

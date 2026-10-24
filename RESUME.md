@@ -371,7 +371,7 @@ image, bench state, next task, or acceptance evidence changes.
 - **Next (superseded above):** port `build.py` and the review tool to Rust, a run-history page, and more scenarios: transport faults through a proxy, settings power cuts, boot loops.
 
 **October 22, late evening: FW27 integration suite (physical over the air, autonomous).**
-- **Built:** `wellfed-bench itest NAME` runs eight real-device scenarios. It installs over the air and asserts on receive-only UART, and it owns the hotspot, `serve` and, with `--power`, the supply relay, restoring all three afterwards ([bench](docs/hardware/bench.md#integration-suite)). Merged from the `bench-itest` worktree.
+- **Built:** `wellfed-bench itest NAME` runs eight real-device scenarios. It installs over the air and asserts on receive-only UART, and it owns the hotspot, `serve` and, with `--power`, the supply relay, restoring all three afterwards ([bench](docs/devices/plaf103/bench.md#integration-suite)). Merged from the `bench-itest` worktree.
 - **Result:** `itest-20261022-06 --build --power` passed all eight in 26 minutes. Runs 01–05 found and fixed harness bugs, plus one firmware build bug: the `fw11-fail` variant's constant failure let LTO drop the image's flash writers, so it failed the pinned link audit. The forced failure is now opaque (`black_box`), and the audit pins are unchanged.
 - **Bench before the run:** the speaker session's `serve` (2-hour timeout) was still running, and I stopped it with SIGTERM. That session then put its own state back: hotspot down, feeder off.
 - **Flash now:**
@@ -446,7 +446,7 @@ image, bench state, next task, or acceptance evidence changes.
 - **Kept in Python on purpose:** stock recovery, the unicorn emulations, the image review and the build helpers.
 - **Rebuild before relying on the private builds:** the firmware build inputs changed (`Cargo.lock`, the probe crate removed). The fixture suite skips 14 stale-build checks until the builds are refreshed; frozen reviews stay valid.
 
-**October 22, latest (offline, nothing run on the bench).** FW33: the relay bench is now the Rust `wellfed-bench` (crate `src/tools/wellfed-bench`). It chains `wellfed-flash` as a child process and serves the read-only page with `--ui`. `bench.py`, `bench-dashboard.py`, `relay-demo.py`, `uart-give-way.py` and seven finished one-off Python analyses are removed (list in [src/tools/README.md](src/tools/README.md)). It is host-tested only. **Next:** with the owner, build both binaries (`cargo build --locked --release -p wellfed-bench -p wellfed-flash`), then run `status`, `on`/`off`, `loader` and a no-op `flash-prepare`/`flash-execute` with `--ui` ([bench](docs/hardware/bench.md)).
+**October 22, latest (offline, nothing run on the bench).** FW33: the relay bench is now the Rust `wellfed-bench` (crate `src/tools/wellfed-bench`). It chains `wellfed-flash` as a child process and serves the read-only page with `--ui`. `bench.py`, `bench-dashboard.py`, `relay-demo.py`, `uart-give-way.py` and seven finished one-off Python analyses are removed (list in [src/tools/README.md](src/tools/README.md)). It is host-tested only. **Next:** with the owner, build both binaries (`cargo build --locked --release -p wellfed-bench -p wellfed-flash`), then run `status`, `on`/`off`, `loader` and a no-op `flash-prepare`/`flash-execute` with `--ui` ([bench](docs/devices/plaf103/bench.md)).
 
 **October 22, later (physical).** The **first live OTA** and a **hands-off OTA** both succeeded (FW10). The second was started by the running normal image, with no UART. FW11 trial, fallback and confirmation work on hardware (see the board).
 - **Flash now:** bank 1 holds OTA-installed `fw10-watch-review-20261022-01` (`4d37c21a…`, v6, confirmed, offer watcher running). Bank 0 holds the same build, installed by the Rust client (FW32). Bank 0 holds `fw10-recovery-review-20261022-02` (`635476bd…`), the fixed updater.
@@ -623,7 +623,7 @@ Reconfirm it with the operator before any bench operation.
 - Feeder TX (breadboard row 1) goes to adapter RXD and, through the 4.7 kΩ
   resistor (row 5), to COM2; NO2 is on the GND rail. Relay 2 replaces the button,
   which is removed. Feeder RX (row 2) goes to adapter TXD. Relays 3 and 4 are spare.
-- `wellfed-bench` drives the relays and chains `wellfed-flash` ([bench control](docs/hardware/bench.md));
+- `wellfed-bench` drives the relays and chains `wellfed-flash` ([bench control](docs/devices/plaf103/bench.md));
   ports are `/dev/serial/by-id/` paths in ignored `private/bench.json`. The relay
   board can take `/dev/ttyUSB0`.
 - Physical, October 21, 2026: relay-1 boots reached the Rust bring-up banner and
@@ -635,7 +635,7 @@ Reconfirm it with the operator before any bench operation.
   The front indicator PCB is difficult to access; no disassembly or wire cutting
   was needed for the successful LED test.
 
-Consult the [UART procedure](docs/hardware/uart.md) before changing wiring.
+Consult the [UART procedure](docs/devices/plaf103/uart.md) before changing wiring.
 The old loader/helper session is finished; historical receipts are not resumable.
 
 ## Evidence available in this local checkout

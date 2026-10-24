@@ -1,12 +1,12 @@
 # Stock behavior and local protocol
 
-Findings apply to the inspected PLAF103 stock **1.1.15** image and research unit. Other models/releases may differ. Instruction-level behavior is distinguished from physical acceptance in the [hardware guide](../hardware/README.md).
+Findings apply to the inspected PLAF103 stock **1.1.15** image and research unit. Other models/releases may differ. Instruction-level behavior is distinguished from physical acceptance in the [hardware guide](../board.md).
 
 ## Network protocol
 
 The observed feeder uses plaintext MQTT on TCP 1883 with device-specific credentials. Its initial CONNECT uses legacy MQTT 3.1 (`MQIsdp`); the server normalizes that CONNECT for an MQTT 3.1.1 broker and forces a clean session. It preserves the credentials, client identifier, keepalive, and later packets. Topic access stays within the configured device namespace.
 
-Topics have the form `dl/PLAF103/<device-id>/<group>/<event>/post` or `/sub`. The local server handles startup, attributes, heartbeat, clock, binding, captured plan replies, and manual feeding. Consult the Rust protocol tests for complete synthetic wire examples. The API is described in [local-server setup](../development/local-server.md).
+Topics have the form `dl/PLAF103/<device-id>/<group>/<event>/post` or `/sub`. The local server handles startup, attributes, heartbeat, clock, binding, captured plan replies, and manual feeding. Consult the Rust protocol tests for complete synthetic wire examples. The API is described in [local-server setup](../../../development/local-server.md).
 
 The broker is authenticated, has no upstream bridge, and uses nonpersistent sessions. Manual feed commands have durable caller UUIDs, QoS 0, and no retained messages. Replies must correlate to the request ID. An uncertain operation is not automatically republished. Stock firmware's limited raw-payload/result caching is not a substitute for durable no-replay handling.
 
@@ -36,7 +36,7 @@ Static analysis and offline emulation of the stock 1.1.15 panel handlers (Octobe
 **Replacement (FP11, physical on October 23 with the owner pressing; host-tested):** `wellfed-feeder`'s `panel` keeps these rules over the SDK button service's gestures, with one 5 s hold threshold, and the `feeder` firmware shows the lock on PA4. Choices where stock is unknown or differs:
 - The panel starts locked at every boot, so an unattended reboot never leaves Dispense live.
 - Any gesture, Lock included, restarts the relock, and a button still held holds it off until its release. Stock counts only Mic, Reset and Dispense.
-- A signed `lock` request locks or unlocks from the network ([local transport](local-transport.md#child-lock-fp11)). A remote unlock relocks on the same 30 s timer.
+- A signed `lock` request locks or unlocks from the network ([local transport](../../../firmware/local-transport.md#child-lock-fp11)). A remote unlock relocks on the same 30 s timer.
 - `disableHardwareButton` and its recovery sequence are not implemented; FP15 owns resets.
 
 ## Bluetooth LE
@@ -45,7 +45,7 @@ Static analysis of the 1.1.15 KM4 image and the vendor app shows that stock link
 - **Setup:** the app writes Wi-Fi and MQTT settings and binds the device, then reads the result. It uses a 16-bit service `ffee` with characteristics `ffe1`–`ffe4`.
 - **Offline diagnostics:** after about two minutes offline the feeder advertises and sends a compact report by notification, then stops advertising once it is back online.
 
-Advertising runs only on mains power. Nothing found ties BLE to feeding, schedules or settings commands, which go over MQTT. Pairing appears only as SDK plumbing; the setup flow seems to rely on plain GATT with app-side encryption. Bond storage uses the SDK's FTL flash layer, whose sector was not located. The replacement's own BLE design is in [Bluetooth](bluetooth.md).
+Advertising runs only on mains power. Nothing found ties BLE to feeding, schedules or settings commands, which go over MQTT. Pairing appears only as SDK plumbing; the setup flow seems to rely on plain GATT with app-side encryption. Bond storage uses the SDK's FTL flash layer, whose sector was not located. The replacement's own BLE design is in [Bluetooth](../../../firmware/bluetooth.md).
 
 ## Clock and schedules
 

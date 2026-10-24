@@ -34,7 +34,7 @@ use wellfed_bench::{Error, INTERRUPTED};
         Serial work is delegated unchanged to wellfed-flash, so its pinned checks, plan hashes and \
         no-retry rules apply. A failed step stops without retry; a stopped update is never followed \
         by a boot. Ports and evidence paths come from the ignored private/bench.json; see \
-        docs/hardware/bench.md. Running a command is a physical bench operation.",
+        docs/devices/plaf103/bench.md. Running a command is a physical bench operation.",
     arg_required_else_help = true
 )]
 struct Cli {

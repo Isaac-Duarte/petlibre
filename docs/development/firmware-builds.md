@@ -60,7 +60,7 @@ For the PLAF103, those two profiles require a contributor-supplied exact stock r
 
 Author changes in tracked source, not generated SDK worktrees. Profiles stage tracked files and apply audited overlays. Vendor timestamps mean output is not guaranteed byte-for-byte reproducible. A rebuilt UART diagnostic will generally differ from the exact artifact accepted by the retained writer; do not update its hash to bypass review.
 
-Builds package application images and audit symbols/layout/pin pulls/flash hooks where applicable. They do not flash, actuate a motor, validate a physical board, or authorize replacing the factory loader. Upstream example startup can still touch hardware before the diagnostic. See [architecture](../firmware/README.md), [third-party notices](../../THIRD_PARTY.md), and [recovery restrictions](../hardware/recovery.md).
+Builds package application images and audit symbols/layout/pin pulls/flash hooks where applicable. They do not flash, actuate a motor, validate a physical board, or authorize replacing the factory loader. Upstream example startup can still touch hardware before the diagnostic. See [architecture](../firmware/README.md), [third-party notices](../../THIRD_PARTY.md), and [recovery restrictions](../devices/plaf103/recovery.md).
 
 ## Source identity and physical startup behavior
 

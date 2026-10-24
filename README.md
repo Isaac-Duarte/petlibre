@@ -12,13 +12,13 @@ Wellfed contains a Rust local server for stock firmware, a Rust replacement-firm
 | Replacement firmware | Feeding, sensor, watchdog, journal, and flash-coordination components tested on host models; Rust diagnostic booted on one PLAF103; build-bound reports, stopped GPIO startup, and bounded LED control added | Functional physical feeding, networking, schedules, panel/audio behavior, real flash persistence, and hardware acceptance |
 | UART and recovery | UART access, matching full 8 MiB backups, independent loader entry, bounded write-back, stock restoration/boot, diagnostic installation, and faster development updates demonstrated on the research unit | General device compatibility and power-cut/full-bank recovery acceptance |
 
-The replacement is experimental. A diagnostic PASS does not establish working physical feeding. See [firmware status and architecture](docs/firmware/README.md) and [recovery limits](docs/hardware/recovery.md).
+The replacement is experimental. A diagnostic PASS does not establish working physical feeding. See [firmware status and architecture](docs/firmware/README.md) and [recovery limits](docs/devices/plaf103/recovery.md).
 
 ## Start here
 
 - [Resume the current firmware work](RESUME.md): installed image, last bench state, evidence, and next task
-- [Hardware identification and signal map](docs/hardware/README.md)
-- [UART wiring and loader entry](docs/hardware/uart.md)
+- [Supported devices](docs/devices/README.md) and the [PLAF103 device page](docs/devices/plaf103/README.md): identification, signal map, flash layout and stock firmware
+- [UART wiring and loader entry](docs/devices/plaf103/uart.md)
 - [Stock firmware and replacement architecture](docs/firmware/README.md)
 - [Development setup and checks](docs/development/README.md)
 - [Local server setup and API](docs/development/local-server.md)

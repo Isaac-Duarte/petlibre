@@ -1,28 +1,33 @@
 //! FW45 setup mode in the loop, against the fake BLE peripheral and the real
 //! client session (`petlibre-client`), with the settings writer played by the
-//! test: a confirmed ask enrolls the client's key and saves its Wi-Fi before
-//! `Done` and the reboot; an unanswered or abandoned ask enrolls nothing.
+//! test: an ask whose code the owner keys in and the client proves enrolls
+//! the client's key and saves its Wi-Fi before `Done` and the reboot; an
+//! unanswered, abandoned or wrongly keyed ask enrolls nothing. The speaker
+//! ticks for each press and plays the outcome, unless `sound` is off.
 
 use std::sync::{Mutex, MutexGuard};
 
 use petlibre_client::setup::{
-    Ask, Credentials as ClientCredentials, Session, Step as ClientStep, frame,
+    Ask, Credentials as ClientCredentials, Error as ClientError, Session, Step as ClientStep, frame,
 };
 use petlibre_core::ble_setup::{PREFIX, parse_prefix};
 use petlibre_core::buttons::{Button, Buttons, Gesture};
 use petlibre_core::noise::Keypair;
+use petlibre_core::setup_code::{Code, PRESSES};
 use petlibre_core::store::clients::Role;
 use petlibre_core::store::net::NetStore;
 use petlibre_core::store::slot::JournalIo;
+use petlibre_core::tone::Tune;
+use petlibre_core::transport::SettingsView;
 use petlibre_feeder::pairing::{Config, Event, Pairing, Path, Refusal as PairRefusal};
 use petlibre_feeder::panel::Lock;
-use petlibre_fw_feeder::setup::{Ended, Record, Setup};
+use petlibre_fw_feeder::setup::{Ended, PROVE_MS, Record, Setup};
 use petlibre_proto::setup::{Enrolled, Refusal, Reply, WifiSaved};
 use petlibre_sdk::hal::keys::{self, Change, KeyResult};
 use petlibre_sdk::hal::power::{self, Monitor};
 use petlibre_sdk::hal::sdk::fake::{self, ble_record};
 use petlibre_sdk::hal::sdk::{Advertising, BleEvent};
-use petlibre_sdk::hal::{ble, network};
+use petlibre_sdk::hal::{audio, ble, network, settings};
 
 /// The mailboxes are process-wide; the fake hardware is per thread.
 static SERIAL: Mutex<()> = Mutex::new(());
@@ -44,6 +49,8 @@ impl Bench {
         keys::reset();
         network::reset();
         power::reset();
+        settings::reset();
+        audio::reset();
         fake::with(|h| h.input[0] |= 1 << 19);
         petlibre_sdk::hal::rng::reset();
         fake::with(|h| h.adc_noise = 0x1357_9bdf);
@@ -85,6 +92,30 @@ impl Bench {
             &mut |r| records.push(r),
         );
         fake::with(|h| h.uptime_ms += delay.min(100));
+        fake::play_audio(2);
+    }
+
+    /// Settings loaded, with `sound` as given.
+    fn sound(&mut self, sound: bool) {
+        settings::publish(SettingsView {
+            lights: true,
+            sound,
+            volume: 40,
+            generation: 1,
+            writable: true,
+        });
+    }
+
+    /// The tunes the speaker starts over `n` steps.
+    fn listen(&mut self, n: usize) -> Vec<Tune> {
+        self.steps(n);
+        self.records
+            .iter()
+            .filter_map(|r| match r {
+                Record::Audio(audio::Record::Play { tune, .. }) => Some(*tune),
+                _ => None,
+            })
+            .collect()
     }
 
     fn steps(&mut self, n: usize) {
@@ -101,13 +132,14 @@ impl Bench {
         assert!(self.records.contains(&Record::Session));
     }
 
-    /// Run the client up to its `Confirming`.
+    /// Run the client up to its `EnterCode`.
     fn ask(&mut self, client: &Keypair) -> Session {
         let ask = Ask {
             label: "phone".into(),
             wifi: Some(ClientCredentials::new(b"Lab-B".to_vec(), "pass word!".into()).unwrap()),
         };
-        let mut session = Session::new(client, [3; 32], ask).unwrap();
+        let code = Code::from_bits(0b01_11_00_10_10_00_11_01);
+        let mut session = Session::new(client, [3; 32], ask, code, [5; 32]).unwrap();
         self.connect();
         write(&session.start().unwrap());
         self.steps(3);
@@ -115,17 +147,62 @@ impl Bench {
         let ClientStep::Send(third) = session.receive(&second).unwrap() else {
             panic!("the client answers")
         };
-        assert_eq!(session.feeder_key(), Some(*self.identity.public()));
-
         write(&third);
         self.steps(3);
-        assert!(self.records.contains(&Record::Asked { wifi: true }));
-        let [confirming] = notified().try_into().unwrap();
+        assert!(self.records.contains(&Record::Asked));
+        let [entering] = notified().try_into().unwrap();
         assert_eq!(
-            session.receive(&confirming).unwrap(),
-            ClientStep::Reply(Reply::Confirming { seconds: 60 })
+            session.receive(&entering).unwrap(),
+            ClientStep::Reply(Reply::EnterCode { seconds: 60 })
         );
         session
+    }
+
+    /// The owner keys `code` in; pairing's event for the last press.
+    fn key_in(&mut self, code: Code) -> Option<Event> {
+        let now = self.now();
+        let mut last = None;
+        for &button in code.presses() {
+            let press = Gesture::Down {
+                chord: Buttons::of(button),
+            };
+            last = self.pairing.gesture(now, press, Lock::Locked);
+            self.setup.pressed();
+        }
+        last
+    }
+
+    /// Hand the loop the keyed-in code, then carry the proof between it and
+    /// the client until either side stops; the client's error, if any.
+    fn prove(&mut self, session: &mut Session, entered: Option<Event>) -> Option<ClientError> {
+        assert!(matches!(entered, Some(Event::Entered { .. })));
+        self.step(entered);
+        assert!(self.records.contains(&Record::Proving));
+        loop {
+            let [step] = notified().try_into().unwrap();
+            let answer = match session.receive(&step) {
+                Ok(ClientStep::Send(answer)) => answer,
+                Ok(ClientStep::Reply(reply)) => panic!("no verdict mid-proof: {reply:?}"),
+                Err(error) => return Some(error),
+            };
+            write(&answer);
+            self.steps(3);
+            if self
+                .records
+                .iter()
+                .any(|r| matches!(r, Record::Proven { .. }))
+            {
+                return None;
+            }
+        }
+    }
+
+    /// The client's own code, keyed in and proven.
+    fn confirm(&mut self, session: &mut Session) {
+        let entered = self.key_in(session.code());
+        assert!(self.prove(session, entered).is_none());
+        assert!(self.records.contains(&Record::Proven { wifi: true }));
+        assert_eq!(session.feeder_key(), Some(*self.identity.public()));
     }
 
     fn press(&mut self) -> Option<Event> {
@@ -185,22 +262,14 @@ fn notified() -> Vec<Vec<u8>> {
 }
 
 #[test]
-fn a_confirmed_ask_enrolls_saves_the_wifi_and_reboots() {
+fn a_proven_ask_enrolls_saves_the_wifi_and_reboots() {
     let mut bench = Bench::start();
     bench.step(None);
     assert_eq!(fake::with(|h| h.ble_advertising), Advertising::On);
 
     let client = Keypair::from_secret([2; 32]);
     let mut session = bench.ask(&client);
-    let admit = bench.press();
-    assert_eq!(
-        admit,
-        Some(Event::Admit {
-            path: Path::Setup,
-            role: Role::Owner
-        })
-    );
-    bench.step(admit);
+    bench.confirm(&mut session);
 
     // The settings writer enrolls the key.
     let Some(Change::Enroll { key, label, role }) = keys::pending() else {
@@ -278,6 +347,36 @@ fn an_unanswered_ask_is_refused_and_enrolls_nothing() {
 }
 
 #[test]
+fn a_wrong_code_enrolls_nothing_and_shares_no_wifi() {
+    let mut bench = Bench::start();
+    let mut session = bench.ask(&Keypair::from_secret([2; 32]));
+    let mut presses = *session.code().presses();
+    presses[5] = if presses[5] == Button::Lock {
+        Button::Reset
+    } else {
+        Button::Lock
+    };
+    let entered = bench.key_in(Code::new(presses));
+
+    // The client stops at the feeder's first opening, before its Wi-Fi.
+    assert!(matches!(
+        bench.prove(&mut session, entered),
+        Some(ClientError::WrongCode)
+    ));
+    assert_eq!(session.feeder_key(), None);
+
+    // The feeder gives up on the stalled proof and stays in setup mode.
+    fake::with(|h| h.uptime_ms += PROVE_MS);
+    bench.step(None);
+    assert!(bench.records.contains(&Record::Replied {
+        reply: Reply::Refused(Refusal::Unconfirmed)
+    }));
+    assert_eq!(keys::pending(), None);
+    assert_eq!(network::pending(), None);
+    assert!(!bench.setup.reboot_due(bench.now()));
+}
+
+#[test]
 fn a_client_that_leaves_cancels_its_ask() {
     let mut bench = Bench::start();
     bench.ask(&Keypair::from_secret([2; 32]));
@@ -315,11 +414,10 @@ fn it_advertises_only_on_mains_and_reboots_when_idle() {
 }
 
 #[test]
-fn a_pressed_ask_completes_even_if_the_client_leaves_and_returns() {
+fn a_proven_ask_completes_even_if_the_client_leaves_and_returns() {
     let mut bench = Bench::start();
-    bench.ask(&Keypair::from_secret([2; 32]));
-    let admit = bench.press();
-    bench.step(admit);
+    let mut session = bench.ask(&Keypair::from_secret([2; 32]));
+    bench.confirm(&mut session);
     assert!(matches!(keys::pending(), Some(Change::Enroll { .. })));
 
     // The client leaves and a new one connects while the writer works.
@@ -347,4 +445,58 @@ fn a_pressed_ask_completes_even_if_the_client_leaves_and_returns() {
             .records
             .contains(&Record::Reboot { ended: Ended::Done })
     );
+}
+
+#[test]
+fn the_owner_hears_each_press_then_the_outcome() {
+    let mut bench = Bench::start();
+    bench.sound(true);
+    let mut session = bench.ask(&Keypair::from_secret([2; 32]));
+    bench.confirm(&mut session);
+    keys::finish(KeyResult::Done);
+    bench.step(None);
+    let Some(Some(credentials)) = network::pending() else {
+        panic!("the credentials are queued")
+    };
+    network::finish();
+    publish(1, Some(credentials));
+
+    let mut expected = vec![Tune::Key; PRESSES];
+    expected.push(Tune::Coin);
+    assert_eq!(bench.listen(200), expected);
+    assert!(!fake::with(|h| h.audio_open), "the codec closes after");
+}
+
+#[test]
+fn a_wrong_code_sounds_the_alert_and_sound_off_mutes_it() {
+    for sound in [true, false] {
+        let mut bench = Bench::start();
+        bench.sound(sound);
+        let mut session = bench.ask(&Keypair::from_secret([2; 32]));
+        let mut presses = *session.code().presses();
+        presses[2] = if presses[2] == Button::Mic {
+            Button::Dispense
+        } else {
+            Button::Mic
+        };
+        let entered = bench.key_in(Code::new(presses));
+        assert!(bench.prove(&mut session, entered).is_some());
+        fake::with(|h| h.uptime_ms += PROVE_MS);
+
+        let mut expected = vec![Tune::Key; PRESSES];
+        expected.push(Tune::Alert);
+        let heard = bench.listen(200);
+        assert_eq!(heard, if sound { expected } else { Vec::new() });
+    }
+}
+
+#[test]
+fn a_new_client_replaces_an_ask_whose_link_vanished() {
+    let mut bench = Bench::start();
+    bench.ask(&Keypair::from_secret([2; 32]));
+
+    // The next client connects with no disconnect seen for the first.
+    bench.records.clear();
+    let mut session = bench.ask(&Keypair::from_secret([3; 32]));
+    bench.confirm(&mut session);
 }

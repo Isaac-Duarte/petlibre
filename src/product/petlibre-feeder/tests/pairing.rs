@@ -1,9 +1,11 @@
-//! FW45's admission rules against synthetic gestures and requests: a press
-//! confirms setup and signer offers in time, invites are single-use, expire
+//! FW45's admission rules against synthetic gestures and requests: setup
+//! takes its code from the buttons in time, a press confirms a signer offer,
+//! invites are single-use, expire
 //! and never grant more than their issuer holds, and the recovery window
 //! needs an unlocked panel and admits one owner.
 
 use petlibre_core::buttons::{Button, Buttons, Gesture};
+use petlibre_core::setup_code::Code;
 use petlibre_core::store::clients::Role;
 use petlibre_feeder::pairing::{Config, Event, INVITES, Pairing, Path, Refusal};
 use petlibre_feeder::panel::Lock;
@@ -23,6 +25,14 @@ fn recovery_hold() -> Gesture {
         chord: Buttons::of(Button::Lock).with(Button::Dispense),
         level: 1,
     }
+}
+
+fn code() -> Code {
+    Code::from_bits(0b00_01_10_11_11_10_01_00)
+}
+
+fn keyed(entered: u8) -> Option<Event> {
+    Some(Event::Keyed { entered })
 }
 
 fn refused(path: Path, refusal: Refusal) -> Event {
@@ -46,20 +56,60 @@ fn the_configuration_is_valid() {
 }
 
 #[test]
-fn a_dispense_press_confirms_setup_even_when_locked() {
+fn setup_takes_its_code_from_the_buttons_even_when_locked() {
     let mut p = Pairing::new(Config::DEFAULT);
     assert_eq!(p.setup(0), Event::Confirming { path: Path::Setup });
     assert_eq!(p.setup(10), refused(Path::Setup, Refusal::Busy));
-    assert_eq!(p.gesture(100, press(Button::Mic), Lock::Locked), None);
+
+    let code = code();
+    let (last, first) = code.presses().split_last().unwrap();
+    for (i, &button) in first.iter().enumerate() {
+        let entered = u8::try_from(i + 1).unwrap();
+        assert_eq!(p.gesture(100, press(button), Lock::Locked), keyed(entered));
+        let up = Gesture::Up {
+            chord: Buttons::of(button),
+            level: 0,
+            held_ms: 100,
+        };
+        assert_eq!(
+            p.gesture(100, up, Lock::Locked),
+            None,
+            "a release is the panel's"
+        );
+    }
+
+    // Chords and holds count for nothing, and never reach the panel.
+    let chord = Buttons::of(Button::Lock).with(Button::Mic);
     assert_eq!(
-        p.gesture(CONFIRM - 1, press(Button::Dispense), Lock::Locked),
-        Some(admit(Path::Setup, Role::Owner))
+        p.gesture(200, Gesture::Down { chord }, Lock::Locked),
+        Some(Event::Swallowed)
+    );
+    let hold = Gesture::Hold {
+        chord: Buttons::of(Button::Reset),
+        level: 1,
+    };
+    assert_eq!(p.gesture(200, hold, Lock::Unlocked), Some(Event::Swallowed));
+
+    assert_eq!(
+        p.gesture(CONFIRM - 1, press(*last), Lock::Locked),
+        Some(Event::Entered { code })
     );
     assert_eq!(
         p.gesture(CONFIRM, press(Button::Dispense), Lock::Locked),
         None,
         "nothing pending: the press goes to the panel"
     );
+}
+
+#[test]
+fn a_lone_dispense_press_does_not_admit_setup() {
+    let mut p = Pairing::new(Config::DEFAULT);
+    p.setup(0);
+    assert_eq!(
+        p.gesture(100, press(Button::Dispense), Lock::Unlocked),
+        keyed(1)
+    );
+    assert_eq!(p.tick(200), None);
 }
 
 #[test]
@@ -75,6 +125,10 @@ fn an_unanswered_offer_expires() {
 
     // A press arriving after the deadline but before the tick still fails.
     p.setup(1_000);
+    assert_eq!(
+        p.gesture(1_000, press(Button::Mic), Lock::Unlocked),
+        keyed(1)
+    );
     assert_eq!(
         p.gesture(1_000 + CONFIRM, press(Button::Dispense), Lock::Unlocked),
         Some(refused(Path::Setup, Refusal::Unconfirmed))
@@ -224,4 +278,7 @@ fn a_cancelled_setup_leaves_the_next_press_to_the_panel() {
     p.cancel(Path::Setup);
     assert_eq!(p.gesture(10, press(Button::Dispense), Lock::Unlocked), None);
     assert_eq!(p.setup(20), Event::Confirming { path: Path::Setup });
+    p.gesture(30, press(Button::Mic), Lock::Unlocked);
+    p.cancel(Path::Setup);
+    assert_eq!(p.gesture(40, press(Button::Dispense), Lock::Unlocked), None);
 }

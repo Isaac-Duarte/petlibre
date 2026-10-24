@@ -62,6 +62,7 @@ const MEAL: [Note; 7] = [
 const COIN: [Note; 2] = [n(B5, 80), n(E6, 420)];
 const ALERT: [Note; 5] = [n(A4, 160), n(0, 90), n(A4, 160), n(0, 90), n(A4, 160)];
 const TEST: [Note; 1] = [n(1000, 1000)];
+const KEY: [Note; 1] = [n(E6, 80)];
 const TWINKLE: [Note; 14] = [
     n(C5, 280),
     n(C5, 280),
@@ -91,16 +92,19 @@ pub enum Tune {
     /// One second at 1 kHz, for checking the output path.
     Test,
     Twinkle,
+    /// One short tick: a press counted, as setup's code is keyed in.
+    Key,
 }
 
 impl Tune {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Chime,
         Self::Meal,
         Self::Coin,
         Self::Alert,
         Self::Test,
         Self::Twinkle,
+        Self::Key,
     ];
 
     pub fn name(self) -> &'static str {
@@ -111,6 +115,7 @@ impl Tune {
             Self::Alert => "alert",
             Self::Test => "test",
             Self::Twinkle => "twinkle",
+            Self::Key => "key",
         }
     }
 
@@ -134,6 +139,7 @@ impl Tune {
             Self::Alert => &ALERT,
             Self::Test => &TEST,
             Self::Twinkle => &TWINKLE,
+            Self::Key => &KEY,
         }
     }
 
@@ -278,8 +284,10 @@ mod tests {
 
     #[test]
     fn every_tune_is_short() {
+        // The `key` tick is the shortest: long enough to hear past the
+        // attack and release, short enough not to hold up the next press.
         for tune in Tune::ALL {
-            assert!((100..=6_000).contains(&tune.duration_ms()), "{tune:?}");
+            assert!((80..=6_000).contains(&tune.duration_ms()), "{tune:?}");
         }
     }
 

@@ -3,9 +3,12 @@
 //! Four ways in ([product architecture]), each needing either someone at
 //! the feeder or a client already trusted:
 //! - **Setup:** holding Lock and Mic together on an unlocked panel starts
-//!   BLE setup mode ([`Event::SetupOpened`]). There the app sends Wi-Fi and
-//!   its key; it is admitted as an owner only after a Dispense press within
-//!   the confirmation window.
+//!   BLE setup mode ([`Event::SetupOpened`]). There the app offers its key
+//!   and shows a one-time code, which the owner keys in on the buttons
+//!   within the confirmation window ([`Event::Entered`]). The firmware's
+//!   setup session then admits the app as an owner only if it proves the
+//!   same code (`petlibre_core::setup_code`); a press alone is not enough,
+//!   since it cannot tell the owner's phone from a relay in radio range.
 //! - **Signer:** an owner offers an Ed25519 update-signing key (FW48); a
 //!   Dispense press confirms it the same way.
 //! - **Invite:** a paired client mints a single-use invite that expires
@@ -18,9 +21,10 @@
 //!   XX handshake, then closes. This is the way back in when every client
 //!   is lost; a locked panel cannot open it.
 //!
-//! A pending confirmation takes the next Dispense press whatever the lock
-//! says: the press is someone at the feeder answering a pairing they
-//! started, and it feeds nothing. [`Pairing::gesture`] returns an event for
+//! A pending confirmation takes the next Dispense press, and a pending code
+//! every gesture until it is complete, whatever the lock says: the presses
+//! are someone at the feeder answering a pairing they started, and they
+//! feed nothing. [`Pairing::gesture`] returns an event for
 //! every gesture it consumes, and the firmware gives the panel only the
 //! rest.
 //!
@@ -31,6 +35,7 @@
 //! [product architecture]: ../../../../docs/firmware/product-architecture.md#setup-and-pairing
 
 use petlibre_core::buttons::{Button, Buttons, Gesture};
+use petlibre_core::setup_code::{Code, PRESSES};
 use petlibre_core::store::clients::Role;
 use petlibre_core::{deadline_passed, interval_valid, named_enum};
 
@@ -41,7 +46,8 @@ pub const INVITES: usize = 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Config {
-    /// How long a setup or signer offer waits for its press.
+    /// How long a setup offer waits for its code, or a signer offer for
+    /// its press.
     pub confirm_ms: u32,
     /// An invite's lifetime.
     pub invite_ms: u32,
@@ -80,7 +86,7 @@ named_enum! {
 
 named_enum! {
     pub enum Refusal {
-        /// Another offer is already waiting for its press.
+        /// Another offer is already waiting for its press or code.
         Busy = "busy",
         /// The issuer may not grant that role.
         NotAllowed = "not-allowed",
@@ -92,16 +98,27 @@ named_enum! {
         Closed = "closed",
         /// The panel is locked.
         Locked = "locked",
-        /// Nobody pressed Dispense in time.
+        /// Nobody pressed Dispense or keyed the code in in time.
         Unconfirmed = "unconfirmed",
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Event {
-    /// An offer waits for a Dispense press.
+    /// An offer waits for a Dispense press, or setup's for its code.
     Confirming {
         path: Path,
+    },
+    /// A press counted towards setup's code, which now has `entered`.
+    Keyed {
+        entered: u8,
+    },
+    /// A chord or a hold went to setup's code and counted for nothing.
+    Swallowed,
+    /// The owner keyed in setup's code: the session must now prove it.
+    /// The firmware records this without the code.
+    Entered {
+        code: Code,
     },
     /// Enroll the client behind `path` with `role`.
     Admit {
@@ -127,6 +144,17 @@ struct Pending {
     path: Path,
     role: Role,
     deadline_ms: u32,
+    confirm: Confirm,
+}
+
+/// What an offer waits for.
+#[derive(Clone, Copy, Debug)]
+enum Confirm {
+    Press,
+    Code {
+        presses: [Button; PRESSES],
+        entered: usize,
+    },
 }
 
 #[derive(Clone, Copy)]
@@ -166,9 +194,14 @@ impl Pairing {
         }
     }
 
-    /// The app in BLE setup mode offers its key.
+    /// The app in BLE setup mode offers its key; the next presses are its
+    /// code.
     pub fn setup(&mut self, now_ms: u32) -> Event {
-        self.offer(now_ms, Path::Setup, Role::Owner)
+        let confirm = Confirm::Code {
+            presses: [Button::Reset; PRESSES],
+            entered: 0,
+        };
+        self.offer(now_ms, Path::Setup, Role::Owner, confirm)
     }
 
     /// A client with role `by` offers an update-signing key.
@@ -176,7 +209,7 @@ impl Pairing {
         if by != Role::Owner {
             return refused(Path::Signer, Refusal::NotAllowed);
         }
-        self.offer(now_ms, Path::Signer, Role::UpdateSigner)
+        self.offer(now_ms, Path::Signer, Role::UpdateSigner, Confirm::Press)
     }
 
     /// The client behind a pending `path` offer went away: forget it, so the
@@ -187,7 +220,7 @@ impl Pairing {
         }
     }
 
-    fn offer(&mut self, now_ms: u32, path: Path, role: Role) -> Event {
+    fn offer(&mut self, now_ms: u32, path: Path, role: Role, confirm: Confirm) -> Event {
         if self.pending.is_some() {
             return refused(path, Refusal::Busy);
         }
@@ -195,6 +228,7 @@ impl Pairing {
             path,
             role,
             deadline_ms: now_ms.wrapping_add(self.config.confirm_ms),
+            confirm,
         });
         Event::Confirming { path }
     }
@@ -203,6 +237,13 @@ impl Pairing {
     pub fn gesture(&mut self, now_ms: u32, gesture: Gesture, lock: Lock) -> Option<Event> {
         let recovery = Buttons::of(Button::Lock).with(Button::Dispense);
         let setup = Buttons::of(Button::Lock).with(Button::Mic);
+        if let Some(Pending {
+            confirm: Confirm::Code { .. },
+            ..
+        }) = self.pending
+        {
+            return self.code(now_ms, gesture);
+        }
         match gesture {
             Gesture::Down { chord } if chord == Buttons::of(Button::Dispense) => {
                 let pending = self.pending.take()?;
@@ -231,6 +272,39 @@ impl Pairing {
             }
             _ => None,
         }
+    }
+
+    /// One gesture while setup's code is being keyed in. A press of one
+    /// button is one press of the code. A chord or a hold is swallowed and
+    /// counts for nothing, so no lock toggle or key reset fires mid-code; a
+    /// release goes on to the panel, which only notes it.
+    fn code(&mut self, now_ms: u32, gesture: Gesture) -> Option<Event> {
+        let pending = self.pending.as_mut()?;
+        if deadline_passed(now_ms, pending.deadline_ms) {
+            self.pending = None;
+            return Some(refused(Path::Setup, Refusal::Unconfirmed));
+        }
+        let Confirm::Code { presses, entered } = &mut pending.confirm else {
+            return None;
+        };
+        let chord = match gesture {
+            Gesture::Down { chord } => chord,
+            Gesture::Hold { .. } => return Some(Event::Swallowed),
+            Gesture::Up { .. } => return None,
+        };
+        let pressed = Button::ALL.iter().find(|&&b| chord == Buttons::of(b));
+        let (Some(&button), Some(slot)) = (pressed, presses.get_mut(*entered)) else {
+            return Some(Event::Swallowed);
+        };
+
+        *slot = button;
+        *entered += 1;
+        if *entered < PRESSES {
+            return Some(keyed(*entered));
+        }
+        let code = Code::new(*presses);
+        self.pending = None;
+        Some(Event::Entered { code })
     }
 
     /// A client with role `by` asks for an invite granting `role`, with a
@@ -327,6 +401,12 @@ impl Pairing {
                 *slot = None;
             }
         }
+    }
+}
+
+fn keyed(entered: usize) -> Event {
+    Event::Keyed {
+        entered: u8::try_from(entered).unwrap_or(u8::MAX),
     }
 }
 

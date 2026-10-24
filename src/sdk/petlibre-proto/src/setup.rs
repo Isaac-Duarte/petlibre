@@ -5,16 +5,24 @@
 //! [`PROLOGUE`]. XX gives each side the other's static key, so the client
 //! learns the feeder's identity and the feeder learns the key it will
 //! enroll. The third handshake message carries the client's [`Request`],
-//! encrypted, so the Wi-Fi passphrase never crosses the air in the clear.
-//! The feeder answers with transport messages: [`Reply::Confirming`] while
-//! it waits for a Dispense press, then [`Reply::Done`] or
-//! [`Reply::Refused`].
+//! encrypted.
+//!
+//! XX alone trusts whichever feeder answers, so the owner then carries a
+//! one-time code from the client's screen to the feeder's buttons
+//! (`petlibre_core::setup_code`):
+//! 1. The feeder replies [`Reply::EnterCode`] and waits for the presses.
+//! 2. Both sides prove the code to each other, one press at a time, bound
+//!    to the handshake: [`Reply::Round`] from the feeder, [`Answer::Round`]
+//!    from the client.
+//! 3. Only once the feeder has proven the code does the client send its
+//!    Wi-Fi, in [`Answer::Last`], so a relay never sees the passphrase.
+//! 4. The feeder answers [`Reply::Done`] or [`Reply::Refused`].
 
 use serde::{Deserialize, Serialize};
 
 /// Bound into the handshake hash, so a session meant for another protocol
 /// or version fails at its first encrypted message.
-pub const PROLOGUE: &[u8] = b"petlibre-setup-v1";
+pub const PROLOGUE: &[u8] = b"petlibre-setup-v2";
 
 /// The client's label as the feeder stores it: 1-16 bytes, no NUL.
 pub const LABEL_MAX: usize = 16;
@@ -24,9 +32,23 @@ pub const LABEL_MAX: usize = 16;
 pub struct Request<'a> {
     /// A name for the client, shown when the owner lists clients.
     pub label: &'a str,
-    /// Credentials for the feeder's next join; `None` keeps what it has.
-    #[serde(borrow)]
-    pub wifi: Option<Wifi<'a>>,
+}
+
+/// The client's messages after the handshake.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Answer<'a> {
+    /// One step of the code proof (`petlibre_core::setup_code::Round`).
+    Round {
+        open: Option<[u8; 32]>,
+        commit: Option<[u8; 32]>,
+    },
+    /// The proof's last step, sent once the feeder has proven the code.
+    Last {
+        open: [u8; 32],
+        /// Credentials for the feeder's next join; `None` keeps what it has.
+        #[serde(borrow)]
+        wifi: Option<Wifi<'a>>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -37,11 +59,19 @@ pub struct Wifi<'a> {
     pub psk: &'a str,
 }
 
+/// The longest [`Reply`] encoded: a round with both fields.
+pub const REPLY_MAX: usize = 1 + 2 * 33;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Reply {
-    /// Press Dispense on the feeder within `seconds` to confirm.
-    Confirming {
+    /// Key the client's code in on the feeder within `seconds`.
+    EnterCode {
         seconds: u16,
+    },
+    /// One step of the code proof, once the code is in.
+    Round {
+        open: Option<[u8; 32]>,
+        commit: Option<[u8; 32]>,
     },
     /// The client is an owner, and the Wi-Fi is saved for the next join.
     /// The feeder reboots without BLE shortly after.
@@ -68,10 +98,13 @@ pub enum WifiSaved {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Refusal {
-    /// Another setup is waiting for its press.
+    /// Another setup is waiting for its code.
     Busy,
-    /// Nobody pressed Dispense in time.
+    /// Nobody keyed the code in in time, or the proof stalled.
     Unconfirmed,
+    /// The code keyed in on the feeder is not the client's, or someone is
+    /// relaying the session.
+    WrongCode,
     /// Every client slot is taken; an owner must revoke one first.
     Full,
     /// The feeder's store cannot be written now.
@@ -87,29 +120,37 @@ mod tests {
 
     #[test]
     fn requests_round_trip_and_borrow_their_bytes() {
-        let request = Request {
-            label: "phone",
+        let request = Request { label: "phone" };
+        let mut out = [0; 64];
+        let len = encode(&request, &mut out).unwrap();
+        assert_eq!(decode::<Request<'_>>(&out[..len]), Ok(request));
+
+        let last = Answer::Last {
+            open: [5; 32],
             wifi: Some(Wifi {
                 ssid: b"Lab \xff",
                 psk: "pass word!",
             }),
         };
-        let mut out = [0; 64];
-        let len = encode(&request, &mut out).unwrap();
-        assert_eq!(decode::<Request<'_>>(&out[..len]), Ok(request));
+        let len = encode(&last, &mut out).unwrap();
+        assert_eq!(decode::<Answer<'_>>(&out[..len]), Ok(last));
     }
 
     #[test]
     fn replies_round_trip() {
         for reply in [
-            Reply::Confirming { seconds: 60 },
+            Reply::EnterCode { seconds: 60 },
+            Reply::Round {
+                open: Some([1; 32]),
+                commit: None,
+            },
             Reply::Done {
                 enrolled: Enrolled::New,
                 wifi: WifiSaved::Saved,
             },
             Reply::Refused(Refusal::Unconfirmed),
         ] {
-            let mut out = [0; 8];
+            let mut out = [0; REPLY_MAX];
             let len = encode(&reply, &mut out).unwrap();
             assert_eq!(decode::<Reply>(&out[..len]), Ok(reply));
         }
@@ -122,10 +163,7 @@ mod tests {
         assert_eq!(decode::<Reply>(&out[..=len]), Err(Error::Malformed));
         assert_eq!(decode::<Reply>(&[]), Err(Error::Malformed));
 
-        let request = Request {
-            label: "a label",
-            wifi: None,
-        };
+        let request = Request { label: "a label" };
         assert_eq!(encode(&request, &mut [0; 3]), Err(Error::BufferTooSmall));
     }
 }

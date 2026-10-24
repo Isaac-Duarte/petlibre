@@ -28,8 +28,10 @@ use crate::settings;
 /// The amplifier enable (stock writes it HIGH around playback).
 pub const AMP_PIN: u32 = sdk::board::AMP;
 pub const POLL_MS: u32 = 20;
-/// Zero pages the amplifier gets to settle before the first note.
-const WARM_MS: u32 = 60;
+/// Zero pages the amplifier gets to settle before the first note. 60 ms
+/// swallowed the 50 ms `key` tick whole while the 160 ms `alert` beeps were
+/// heard (physical, Oct 24, `fw45-code-06`), so the amplifier needs longer.
+const WARM_MS: u32 = 150;
 /// Longer than the ring (8 pages of 16 ms) takes to play out.
 const DRAIN_MS: u32 = 400;
 /// Beyond the tune's own length: a DMA that stops taking pages still ends
@@ -190,6 +192,21 @@ fn amp(on: bool) {
 }
 
 impl Speaker {
+    /// A speaker that skips the startup chime, for a firmware that steps it
+    /// in its own loop for a while rather than in a task from boot.
+    pub const fn quiet() -> Self {
+        Self {
+            stage: Stage::Idle,
+            started: 0,
+            underruns: 0,
+        }
+    }
+
+    /// Nothing queued or playing: stepping can wait.
+    pub fn is_idle(&self) -> bool {
+        matches!(self.stage, Stage::Idle) && SLOT.load(Ordering::Acquire) == EMPTY
+    }
+
     fn finish(&mut self, tune: Tune, drained: bool) -> Record {
         close_output();
         SLOT.store(EMPTY, Ordering::Release);

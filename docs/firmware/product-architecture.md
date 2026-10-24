@@ -73,7 +73,7 @@ In code:
   - This never tears the stack down live. AmebaD's BT deinit is unverified on the bench and could leak heap.
   - **Consumer first boot:** a consumer image with no stored and no build credentials should start in setup mode. That waits for build credentials becoming optional (FW42); every development image has them.
   - A running feeder pays only BLE's flash cost: the linked stack and an 11.5 KB controller patch ([Bluetooth](bluetooth.md)). Heap, the C tasks (outside our stack audit) and shared radio time are spent only in setup mode.
-- **First client.** In one BLE session (Noise XX) the app sends Wi-Fi credentials and its own client key, and learns the feeder's identity key. A Dispense press on the feeder confirms, and the key becomes an owner key.
+- **First client.** In one BLE session (Noise XX) the app sends its own client key and learns the feeder's identity key. The app shows a one-time code of button presses, which the owner keys in on the feeder; both sides prove the code, bound to the handshake, so a relay in radio range cannot pose as either. Then the app sends the Wi-Fi credentials and its key becomes an owner key ([why a code](bluetooth.md#why-a-code)).
 - **More clients:**
   - **Invite:** a paired client creates a short-lived invite (QR or link), which the new client redeems over the LAN. This is how the server and the CLI join.
   - **Button-hold window:** for a short time the feeder accepts one new client over the LAN. This is also recovery when every paired client is lost.

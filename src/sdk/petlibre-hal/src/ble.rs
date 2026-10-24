@@ -26,7 +26,7 @@ use crate::sdk::{self, Advertising, BleEvent, BlePoll, BleService};
 pub const READY_MS: u32 = 90_000;
 /// A host that has not finished in this long is dropped, so one idle
 /// connection cannot hold the only link. Setup waits up to a minute for the
-/// owner's Dispense press after the handshake.
+/// owner to key the code in after the handshake, then for the proof.
 pub const SESSION_MS: u32 = 150_000;
 const CONNECTED_MS: u32 = 20;
 const IDLE_MS: u32 = 500;
@@ -165,6 +165,13 @@ pub struct BleSetup {
 
 impl Default for BleSetup {
     fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl BleSetup {
+    /// Const, so a firmware can keep it in a static rather than move it.
+    pub const fn new() -> Self {
         Self {
             stage: Stage::Start,
             seq: 1,

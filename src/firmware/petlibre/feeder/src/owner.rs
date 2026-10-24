@@ -4,7 +4,8 @@
 //! change, steps the pairing and lock policies (`petlibre_feeder::pairing`
 //! and `panel`) and shows the lock on its indicator. Pairing sees each
 //! gesture first and the panel gets only those it leaves, so a Dispense
-//! press that confirms a pairing feeds nothing. An allowed Reset hold queues
+//! press that confirms a pairing, or that is part of setup's code, feeds
+//! nothing. An allowed Reset hold queues
 //! FP15's key reset for the settings writer (`petlibre_hal::keys`). An
 //! allowed Lock and Mic hold starts BLE setup mode (`setup`), which runs in
 //! this loop until it reboots. The product's other owners (feeding, the
@@ -85,6 +86,10 @@ fn pair(event: pairing::Event, f: &mut impl fmt::Write) -> fmt::Result {
     use pairing::Event as E;
     match event {
         E::Confirming { path } => write!(f, "pair confirming path={path}"),
+        // How many presses, never which: the record must not carry the code.
+        E::Keyed { entered } => write!(f, "pair setup keyed={entered}"),
+        E::Swallowed => f.write_str("pair setup swallowed"),
+        E::Entered { .. } => f.write_str("pair setup state=entered"),
         E::Admit { path, role } => write!(f, "pair admit path={path} role={role}"),
         E::Invited { id } => write!(f, "pair invited id={id}"),
         E::RecoveryOpened => f.write_str("pair recovery state=opened"),
@@ -127,7 +132,7 @@ pub struct Owner {
     indicator: Indicator,
     /// BLE setup mode, from the gesture that starts it until the reboot
     /// that ends it.
-    setup: Option<Setup>,
+    setup: Setup,
 }
 
 impl fmt::Debug for Owner {
@@ -135,29 +140,33 @@ impl fmt::Debug for Owner {
         f.debug_struct("Owner")
             .field("panel", &self.panel)
             .field("pairing", &self.pairing)
-            .field("setup", &self.setup.is_some())
+            .field("setup", &self.setup.is_on())
             .finish_non_exhaustive()
     }
 }
 
 impl Default for Owner {
     fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Owner {
+    /// Const, so the firmware builds it in its static: setup mode's state
+    /// would not fit the loop's stack twice over.
+    pub const fn new() -> Self {
         Self {
             panel: None,
             pairing: Pairing::new(pairing::Config::DEFAULT),
             // The runtime starts every indicator LOW.
             indicator: Indicator::Shown(false),
-            setup: None,
+            setup: Setup::off(),
         }
     }
-}
 
-impl Owner {
     /// Setup mode has ended and asks for the reboot that drops BLE.
     pub fn reboot_due(&self, now_ms: u32) -> bool {
-        self.setup
-            .as_ref()
-            .is_some_and(|setup| setup.reboot_due(now_ms))
+        self.setup.reboot_due(now_ms)
     }
 
     /// The lock now, once the first step has run.
@@ -183,8 +192,15 @@ impl Owner {
         for gesture in inputs.gestures {
             if let Some(event) = self.pairing.gesture(now, gesture, panel.lock()) {
                 record(Record::Pairing(event));
-                if event == pairing::Event::SetupOpened && self.setup.is_none() {
-                    self.setup = Some(Setup::new(now));
+                if matches!(
+                    event,
+                    pairing::Event::Keyed { .. } | pairing::Event::Entered { .. }
+                ) && self.setup.is_on()
+                {
+                    self.setup.pressed();
+                }
+                if event == pairing::Event::SetupOpened && !self.setup.is_on() {
+                    self.setup.start(now);
                     record(Record::Setup(setup::Record::Start));
                 }
                 decided = decided.or(setup_decision(event));
@@ -217,11 +233,11 @@ impl Owner {
 
         let want = panel.lock().locked() && inputs.lights;
         let delay = self.show(now, want, &mut record);
-        let Some(setup) = self.setup.as_mut() else {
+        if !self.setup.is_on() {
             return delay;
-        };
+        }
         let mut setup_record = |r| record(Record::Setup(r));
-        let setup_delay = setup.step(
+        let setup_delay = self.setup.step(
             now,
             &mut self.pairing,
             decided,
@@ -269,13 +285,11 @@ impl Owner {
     }
 }
 
-/// Pairing's answer to setup mode's pending offer: the press that admits
-/// it, or its timeout. A locked panel refusing the setup gesture is not one.
+/// Pairing's answer to setup mode's pending offer: the code keyed in, or
+/// its timeout. A locked panel refusing the setup gesture is not one.
 fn setup_decision(event: pairing::Event) -> Option<pairing::Event> {
     match event {
-        pairing::Event::Admit {
-            path: Path::Setup, ..
-        }
+        pairing::Event::Entered { .. }
         | pairing::Event::Refused {
             path: Path::Setup,
             refusal: Refusal::Unconfirmed,

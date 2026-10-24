@@ -7,6 +7,18 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
+**October 24, about 06:00 MDT: FW45 setup code (physical, owner pressing; no motion).**
+- **Why:** with a Dispense press as the only check, a relay in BLE range could enroll itself and read the Wi-Fi passphrase (XX trusts whichever device answers). The CLI now shows a one-time 6-press code; the owner keys it in and `petlibre-core::setup_code` proves it both ways press by press, bound to the handshake hash (prologue `petlibre-setup-v2`). Wi-Fi is sent and the feeder's key trusted only after the feeder's proof. The speaker ticks per press (`key`), then `coin` or `alert`; the loop steps the speaker itself in setup mode, and setup mode's state now lives in the owner's static (loop stack bound 4,396 of 6,144 B).
+- **Runs:** bounded `serve`, stopped afterwards.
+  - `ota fw45-code-02` (v111, `e5650894`) confirmed. (The v110 offer was superseded: the watch stopped because `petlibre-flash` was not built in the worktree.)
+  - `capture fw45-code-05`: code keyed in and proven, `enroll result=duplicate`, Wi-Fi saved (generation 21), `Done`, `coin`, reboot, rejoin with `source: stored`.
+  - `capture fw45-code-06`: ticks logged but not heard; amplifier settle 60 → 150 ms, tick 50 → 80 ms; `ota fw45-code-07` (v112, `bc5561ae`) confirmed, and the owner then heard the ticks.
+  - `capture fw45-code-09`: a second client while a code was pending got `busy` and orphaned the code; fixed on the host only.
+  - A signed clear emptied the Wi-Fi store again (generation 22).
+- **Flash now:** **Bank 1:** `feeder` v112 (`bc5561ae`, confirmed; without the stale-offer fix). **Bank 0:** `qa` `ef76b85e…`. **Next manifest version:** 113. The client store still holds the bench CLI's owner key.
+- **Bench state:** feeder on, hotspot up, no server.
+- **Open:** the mistyped-code run on hardware; the stale-offer fix on hardware; `petlibre setup`'s search missing an advertising feeder (connect with `--address` after `bluetoothctl scan le` meanwhile).
+
 **October 24, late night: FW45 BLE setup on hardware (physical, owner pressing; no motion).**
 - **Runs:** bounded `serve`, stopped afterwards.
   - `ota fw45-setup-01` (v108, `46255eec`) confirmed.

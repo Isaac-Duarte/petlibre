@@ -2,7 +2,7 @@
   "name": "@wellfed/site",
   "private": true,
   "type": "module",
-  "description": "well-fed.dev: the project's landing page, prerendered to static files for Cloudflare Pages",
+  "description": "well-fed.dev: the project's landing page, prerendered to static files for a Cloudflare Worker",
   "imports": {
     "#lib": "./src/lib",
     "#lib/*": "./src/lib/*"

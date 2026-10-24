@@ -1,4 +1,4 @@
-# Cloudflare Pages response headers (docs/web/site.md). The page ships no
+# Cloudflare static-asset response headers (docs/web/site.md). The page ships no
 # script and loads nothing from another origin, so the policy allows only
 # its own styles, fonts and images.
 /*

@@ -18,8 +18,8 @@ The table records stock 1.1.15 software roles. The SDK pin encoding is `(port <<
 | PB2 | ADC battery/power measurement (channel 5) | Measured Oct 23: tracks the pack through a divider of about 2.06; battery percentage and low-voltage thresholds remain |
 | PA25 | Buzzer output; initially low | Real buzzer characteristics; FW24 plays through the speaker instead |
 | PB23 | Audio amplifier enable: stock holds it HIGH while the codec plays; FW24 does the same and the speaker plays (physical) | Electrical level and the amplifier part |
-| PB4 / PB5 / PB6 / PB7 | Buttons, left to right: Reset, Mic, Dispense 1 portion, Lock. Active LOW with board pull-ups (high with the pad pulls off); no bounce seen at a 2 ms poll (FW20, physical) | Edge timing finer than 2 ms, and long-hold and simultaneous-press behavior |
-| PA2 / PA0 / PA4 / PB22 | Food warning / connection-OTA / lock / fault indicators | Only PB22 warning red is recorded; remaining colors unknown |
+| PB4 / PB5 / PB6 / PB7 | Buttons Reset, Mic, Dispense 1 portion, Lock. Seen from the front they run Lock, Dispense, Mic, Reset from left to right (owner, Oct 24); FW20's "left to right" press order was the reverse view. Active LOW with board pull-ups (high with the pad pulls off); no bounce seen at a 2 ms poll (FW20, physical) | Edge timing finer than 2 ms, and long-hold and simultaneous-press behavior |
+| PA2 / PA0 / PA4 / PB22 | Food warning / connection-OTA / lock / fault indicators. Seen from the front the icons run low food, lock, Wi-Fi, error/warning from left to right (owner, Oct 24) | Only PB22 warning red is recorded; remaining colors unknown |
 
 Useful stock instruction anchors: motor initialization `0x0e0091ac`, drive helpers `0x0e00960c` and `0x0e009634`, stop `0x0e01d868`, feedback ISR `0x0e01a55c`, sensor worker `0x0e011b58`, power worker `0x0e011f10`, and indicator worker `0x0e011738`.
 

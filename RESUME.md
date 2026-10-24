@@ -7,6 +7,16 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
+**October 23, night: a complete passing QA run (physical, owner answering).** `ota qa-20261023-01 --build` installed `qa` `645c1cd4…` (v92, with the task budget), with a bounded `serve` that was stopped afterwards. `boot qa-20261023-02-guided`: every check and item passed, and `wellfed-audit qa` graded it `pass`. **Flash now:** **Bank 1:** `qa` `645c1cd4…` (v92, confirmed). **Bank 0:** `qa` `ef76b85e…`. **Next manifest version:** 93. **Bench state:** feeder on, hotspot up, no server.
+
+**October 23, late evening: FW30 meter work paused; the two-task firmware budget is enforced (`d6c57b9`).**
+- **Runs (physical, owner probing):** `ota fw30-optics-01 --build --firmware optics` (v91, confirmed, with a bounded `serve`, stopped afterwards). Then cold boots with an operator script on the bench page (`private/bench-status/script.json`, removed afterwards): `fw30-pin1-01`, where **CON2 pin 1 read 0 V in every emitter state (ground)**, and `fw30-pin2-01`, captured but with the owner's six readings not yet recorded. The `fw30-pb3-01`–`07` captures were aborted restarts.
+- **Learned:** the optics run starts within about a second of the first boot output; `boot --off-seconds 15` gives the operator a lead. Its windows are fixed at 5 s by `fw13-optics-v2`, so one cycle (30 s) covers every state for one pin.
+- **Code:** `wellfed_sdk::FIRMWARE_TASKS` = 2 budgets `spawn` and `buttons::start`, and the stack audit refuses an image that links more than two firmware tasks.
+- **Flash now:** **Bank 1:** `optics` (v91, confirmed). **Bank 0:** `qa` `ef76b85e…`. **Next manifest version:** 92.
+- **Bench state:** feeder off (relay 1 off), hotspot up, no server; the owner's `network apply` rules as before.
+- **Next (FW30):** pin 2's readings from the owner, then pins 3 and 4 (one 30 s cycle each), then the transients when the logic analyzer arrives (Saturday). Polarity: carry to FW16's first pulse, or trace it, which is the owner's call.
+
 **October 23, afternoon: FW20 done, the SDK button service on hardware (physical, owner pressing).**
 - **Runs:**
   - `fw20-keys-01` (`ota --build --firmware buttons`, with a bounded `wellfed-local serve`): v87 confirmed; `PLKEY1 open inputs=1 pressed=none`.

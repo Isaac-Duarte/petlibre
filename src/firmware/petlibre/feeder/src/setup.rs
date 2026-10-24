@@ -33,6 +33,9 @@ use petlibre_sdk::hal::{network, power, rng};
 pub const REBOOT_MS: u32 = 3_000;
 /// Setup mode with no session this long ends with a reboot.
 pub const IDLE_MS: u32 = 15 * 60_000;
+/// After a final refusal the client may hang up first, so the reply is not
+/// lost to a disconnect that overtakes it on the air; then the feeder does.
+pub const LINGER_MS: u32 = 2_000;
 
 named_enum! {
     pub enum Ended {
@@ -158,6 +161,10 @@ pub struct Setup {
     /// The last time a session started or setup mode began.
     active_ms: u32,
     reboot_at: Option<u32>,
+    /// When to drop a link whose session ended with a refusal.
+    close_at: Option<u32>,
+    /// This step's time.
+    now: u32,
     /// The next message to send.
     out: [u8; MAX_MESSAGE],
 }
@@ -171,6 +178,8 @@ impl Setup {
             offer: None,
             active_ms: now_ms,
             reboot_at: None,
+            close_at: None,
+            now: now_ms,
             out: [0; MAX_MESSAGE],
         }
     }
@@ -195,6 +204,13 @@ impl Setup {
         identity: Option<&Keypair>,
         record: &mut impl FnMut(Record),
     ) -> u32 {
+        self.now = now;
+        if let Some(at) = self.close_at
+            && petlibre_core::deadline_passed(now, at)
+        {
+            self.close_at = None;
+            record(Record::Ble(self.ble.close(DropReason::Done)));
+        }
         let mains = power::health(now).is_some_and(|power| power.adapter);
         let step = self.ble.step(mains && self.reboot_at.is_none());
         if let Some(r) = step.record {
@@ -292,6 +308,7 @@ impl Setup {
     /// The client left. An admitted offer still completes: the owner
     /// pressed Dispense, and the client can find the feeder on Wi-Fi.
     fn closed(&mut self, pairing: &mut Pairing) {
+        self.close_at = None;
         match self.stage {
             Stage::Handshake => self.end(),
             Stage::Asked => {
@@ -393,10 +410,11 @@ impl Setup {
         self.reboot_at = Some(now.wrapping_add(REBOOT_MS));
     }
 
-    /// A last reply, then the link closes; setup mode stays for another try.
+    /// A last reply, then the link closes after [`LINGER_MS`]; setup mode
+    /// stays for another try.
     fn finish(&mut self, reply: Reply, record: &mut impl FnMut(Record)) {
         self.reply(reply, record);
-        record(Record::Ble(self.ble.close(DropReason::Done)));
+        self.close_at = Some(self.now.wrapping_add(LINGER_MS));
         self.end();
     }
 

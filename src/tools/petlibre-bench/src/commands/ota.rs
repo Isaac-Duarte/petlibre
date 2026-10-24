@@ -155,8 +155,6 @@ pub enum Variant {
     Fw11Reset,
     /// FW11: fails its startup diagnostic on purpose.
     Fw11Fail,
-    /// FW44: the feeder with BLE setup mode from boot.
-    Setup,
     /// FW45: the feeder streaming raw noise samples.
     Entropy,
 }
@@ -167,7 +165,6 @@ impl Variant {
         match self {
             Self::Fw11Reset => "fw11-reset",
             Self::Fw11Fail => "fw11-fail",
-            Self::Setup => "setup",
             Self::Entropy => "entropy",
         }
     }
@@ -176,7 +173,7 @@ impl Variant {
     pub(crate) fn firmware(self) -> Firmware {
         match self {
             Self::Fw11Reset | Self::Fw11Fail => Firmware::Trial,
-            Self::Setup | Self::Entropy => Firmware::Feeder,
+            Self::Entropy => Firmware::Feeder,
         }
     }
 }
@@ -186,11 +183,10 @@ pub(crate) fn parse_variant(text: &str) -> std::result::Result<Variant, String> 
     match text {
         "fw11-reset" => Ok(Variant::Fw11Reset),
         "fw11-fail" => Ok(Variant::Fw11Fail),
-        "setup" => Ok(Variant::Setup),
         "entropy" => Ok(Variant::Entropy),
         "fw16-pulse" => Err(format!("fw16-pulse {MOTION_MANUAL}")),
         other => Err(format!(
-            "unknown variant {other:?}; the trial firmware has fw11-reset and fw11-fail, the feeder setup and entropy"
+            "unknown variant {other:?}; the trial firmware has fw11-reset and fw11-fail, the feeder entropy"
         )),
     }
 }
@@ -251,11 +247,11 @@ pub struct OtaArgs {
     /// With --build: build even when a review of the same sources exists.
     #[arg(long, requires = "build")]
     pub rebuild: bool,
-    /// No-motion firmware for --build: qa (the default), optics, buttons, adc, speaker, blink, ble,
+    /// No-motion firmware for --build: qa (the default), optics, buttons, adc, speaker, blink,
     /// trial or feeder.
     #[arg(long, value_parser = parse_firmware)]
     pub firmware: Option<Firmware>,
-    /// Variant for --build: fw11-reset or fw11-fail with --firmware trial, setup with
+    /// Variant for --build: fw11-reset or fw11-fail with --firmware trial, entropy with
     /// --firmware feeder.
     #[arg(long, value_parser = parse_variant)]
     pub variant: Option<Variant>,

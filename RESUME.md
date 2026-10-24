@@ -1,11 +1,22 @@
 # Resume firmware development
 
-Handoff checkpoint: **October 24, 2026 (night), Mountain time**. Read this, then
+Handoff checkpoint: **October 24, 2026 (late night), Mountain time**. Read this, then
 [AGENTS.md](AGENTS.md), the [development guide](docs/development/README.md),
 and [FIRMWARE_BOARD.md](FIRMWARE_BOARD.md) (stock parity: [FEATURE_BOARD.md](FEATURE_BOARD.md)). Update this handoff when the installed
 image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
+
+**October 24, late night: FW45 BLE setup on hardware (physical, owner pressing; no motion).**
+- **Runs:** bounded `serve`, stopped afterwards.
+  - `ota fw45-setup-01` (v108, `46255eec`) confirmed.
+  - `capture fw45-setup-02`: Lock and Mic held, `petlibre setup`, Dispense pressed: enrolled (`enrolled=1`), Wi-Fi saved, `Done`, reboot without BLE, rejoin with `source: stored`; `PLID1 8019237d8eba8b9d` matches the CLI.
+  - `capture fw45-setup-03`: locked chord refused; the no-press refusal was sent but the link dropped before the client read it, and the CLI stalled in BlueZ's disconnect.
+  - `ota fw45-setup-04` (v109) fixed both (2 s linger, bounded hang-up); `capture fw45-setup-05`: the CLI reported the `unconfirmed` refusal.
+  - A signed clear emptied the Wi-Fi store (generation 20); then setup mode's 15-minute idle reboot ran and the feeder came back with `source: build`.
+- **Flash now:** **Bank 1:** `feeder` v109 (confirmed). **Bank 0:** `qa` `ef76b85e…`. **Next manifest version:** 110. The client store holds one owner: the bench CLI's key in `private/petlibre-owner.json`.
+- **Bench state:** feeder on, hotspot up, no server.
+- **Next:** FW45 broker credentials, or FW30 pins with the meter. Mains-only advertising is host-tested only (check on batteries).
 
 **October 24, night: FW45 BLE setup mode (host and image builds; nothing run on the bench).**
 - **Owner decisions:** a Lock and Mic hold (5 s, unlocked panel) starts setup mode; no automatic setup after a Wi-Fi loss; the `ble` firmware, the feeder's `setup` variant and the HMAC BLE exchange are retired.

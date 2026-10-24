@@ -1459,7 +1459,7 @@ fn the_motor_firmware_and_its_variant_are_refused() {
 fn a_variant_needs_the_firmware_that_declares_it() {
     for (firmware, variant) in [
         (Firmware::Speaker, None),
-        (Firmware::Trial, Some(Variant::Setup)),
+        (Firmware::Trial, Some(Variant::Entropy)),
         (Firmware::Feeder, Some(Variant::Fw11Fail)),
     ] {
         let mut rig = rig();
@@ -1473,8 +1473,7 @@ fn a_variant_needs_the_firmware_that_declares_it() {
         assert!(error.contains("the firmware that declares it"), "{error}");
         assert!(rig.tools.0.borrow().ran.is_empty());
     }
-    assert_eq!(ota::parse_variant("setup"), Ok(Variant::Setup));
-    assert_eq!(Variant::Setup.firmware(), Firmware::Feeder);
+    assert!(ota::parse_variant("setup").is_err(), "retired with FW45");
     assert_eq!(ota::parse_variant("entropy"), Ok(Variant::Entropy));
     assert_eq!(Variant::Entropy.firmware(), Firmware::Feeder);
 }

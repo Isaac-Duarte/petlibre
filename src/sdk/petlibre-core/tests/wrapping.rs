@@ -1,7 +1,7 @@
 //! The wrapping-clock helpers the ports use in place of literal half-range
 //! checks: each must agree with the expression it replaced for every input.
 
-use petlibre_core::{HALF_RANGE, deadline_passed, interval_valid};
+use petlibre_core::{HALF_RANGE, deadline_passed, interval_valid, until};
 
 const EDGES: [u32; 12] = [
     0,
@@ -54,4 +54,24 @@ fn a_deadline_ahead_is_pending_until_reached() {
     assert!(!deadline_passed(deadline - 1, deadline));
     assert!(deadline_passed(deadline, deadline));
     assert!(deadline_passed(deadline.wrapping_add(10), deadline));
+}
+
+#[test]
+fn until_is_zero_once_a_deadline_passes_and_never_wraps() {
+    for now in EDGES {
+        for ahead in [1, 5, 1000, HALF_RANGE - 1] {
+            assert_eq!(
+                until(now, now.wrapping_add(ahead)),
+                ahead,
+                "{now:#x} +{ahead}"
+            );
+        }
+        for behind in [0, 1, 5, 1000, HALF_RANGE - 1] {
+            assert_eq!(
+                until(now, now.wrapping_sub(behind)),
+                0,
+                "{now:#x} -{behind}"
+            );
+        }
+    }
 }

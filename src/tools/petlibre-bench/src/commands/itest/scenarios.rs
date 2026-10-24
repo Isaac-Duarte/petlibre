@@ -688,8 +688,10 @@ fn power_cuts(ctx: &mut Ctx, staged: &super::Staged) -> Result<()> {
         boot.as_deref() == Some("1"),
         format!("After a cut in the trial KM0 counted boot {boot:?}, not 1 again"),
     )?;
+    // The speaker firmware serves no device API, so its UART confirmation is
+    // the evidence; the baseline's restore is checked over the API.
     ctx.expect("PLCNF1 confirmed=1", since, STATUS_SECONDS, confirmed)?;
-    ctx.confirm(&staged.build)
+    Ok(())
 }
 
 /// One status request per period.

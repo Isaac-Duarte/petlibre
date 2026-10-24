@@ -35,7 +35,7 @@ petlibre_sdk::buttons::start(Config::BENCH);
 while let Some(gesture) = petlibre_sdk::buttons::next() { /* … */ }
 ```
 
-- **Task:** `start` creates `petlibre-key`, which polls every 5 ms (stack bound 728 of 2048 B). A firmware that never calls it links none of it. It is one of the firmware's two tasks ([task slots](../../src/firmware/petlibre/README.md#what-the-sdk-runtime-guarantees)).
+- **Task:** `start` creates `petlibre-key`, which polls every 5 ms (stack bound 728 of 2048 B). A firmware that never calls it links none of it. It is one of the firmware's four tasks ([task slots](../../src/firmware/petlibre/README.md#what-the-sdk-runtime-guarantees)).
 - **Queue:** gestures go to an eight-entry queue with one reader. A full queue drops new gestures and counts them, never overwriting unread ones.
 - **UART:** each gesture is also a `PLKEY1` record: `open inputs=1 pressed=none`, `down chord=dispense+lock`, `hold chord=reset level=2`, `up chord=reset level=2 held_ms=6671`, each with `dropped=N`.
 - **Ownership:** the reader is the task that owns what a gesture does. Once feeding exists (FW17), a Dispense press is submitted to the feeding owner by that task, the same way a network feed request will be, so the two cannot double-feed.

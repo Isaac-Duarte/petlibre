@@ -167,13 +167,15 @@ impl Feeder {
                 &format!("PLFW1 start build={build} bank=1 reset=0x0 mmu=1"),
             );
             self.line(delay + 106.0, "PLCNF1 confirmed=1 already=1");
-            self.at(delay + 107.0, Event::Running(build.into()));
+            self.at(delay + 106.0, Event::Running(build.into()));
             return;
         }
         self.line(
             delay + 105.0,
             &format!("PLFW1 start build={build} bank=1 reset=0x0 mmu=1"),
         );
+        // The build runs from the moment it logs its confirmation, as on the
+        // bench, where a firmware without the device API has only that line.
         self.line(delay + 106.0, "PLTRL1 confirmed=0 boot=1 limit=3");
         if build == FAILING {
             self.line(delay + 140.0, "PLTRL1 confirmed=0 boot=3 limit=3");
@@ -185,7 +187,7 @@ impl Feeder {
             self.fallback_at = Some(self.now + delay + 175.0);
         } else {
             self.line(delay + 140.0, "PLCNF1 confirmed=1 healthy_ms=30000");
-            self.at(delay + 141.0, Event::Running(build.into()));
+            self.at(delay + 140.0, Event::Running(build.into()));
         }
     }
 
@@ -484,7 +486,7 @@ impl Rig for Feeder {
                 );
                 self.line(4.0, "PLTRL1 confirmed=0 boot=1 limit=3");
                 self.line(39.0, "PLCNF1 confirmed=1 healthy_ms=30000");
-                self.at(40.0, Event::Running(build));
+                self.at(39.0, Event::Running(build));
             }
             _ => self.boot(),
         }

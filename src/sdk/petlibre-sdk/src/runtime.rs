@@ -18,6 +18,7 @@ use core::ffi::{CStr, c_void};
 use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
+use petlibre_core::{deadline_passed, until};
 use petlibre_hal::flash::hooks::{self, HookProvider, HookTicket};
 use petlibre_hal::flash::park::Hardware;
 use petlibre_hal::flash_lock::provider::Provider;
@@ -653,7 +654,7 @@ fn stage(
     if !running.load(Ordering::Acquire) {
         return None;
     }
-    if due.is_none_or(|at| now.wrapping_sub(at) < u32::MAX / 2) {
+    if due.is_none_or(|at| deadline_passed(now, at)) {
         let delay = step();
         SERVICE_BEAT.store(sdk::uptime_ms(), Ordering::Release);
         if delay == 0 {
@@ -662,7 +663,9 @@ fn stage(
         }
         *due = Some(sdk::uptime_ms().wrapping_add(delay));
     }
-    due.map(|at| at.wrapping_sub(sdk::uptime_ms()).min(u32::MAX / 2))
+    // A stage that fell due while earlier ones ran waits 0, not a wrapped
+    // difference: that read as weeks and stalled the task until the watchdog.
+    due.map(|at| until(sdk::uptime_ms(), at))
 }
 
 /// The normal role's runtime work in one cooperative task: the power monitor,

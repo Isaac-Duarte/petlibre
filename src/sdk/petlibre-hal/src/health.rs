@@ -6,8 +6,10 @@ use petlibre_core::transport::{Health, Loss, Outputs, Role};
 
 use crate::{clock, net_status, network, power, sdk, startup, stopped};
 
-/// KM0 user backup register 4: the peer's boot count.
+/// KM0 user backup register 4: the peer's boot count in bits 0-15; bits
+/// 16-31 are the trial's state, which a raw read reported as the count.
 const BOOT_COUNT_REGISTER: u32 = 4;
+const BOOT_COUNT_MASK: u32 = 0xFFFF;
 const FAULT_STOPPED_READBACK: u32 = 1 << 2;
 
 /// Startup facts read once, when the transport task starts.
@@ -23,7 +25,7 @@ impl Boot {
         Self {
             bank: snapshot.bank().unwrap_or(u8::MAX),
             reset_flags: snapshot.reset,
-            boot_count: sdk::backup_read(BOOT_COUNT_REGISTER),
+            boot_count: sdk::backup_read(BOOT_COUNT_REGISTER) & BOOT_COUNT_MASK,
         }
     }
 }

@@ -73,6 +73,6 @@ fn start() {
 - Log records as `PL<NAME>1 …` lines, through `petlibre_probes::log` or `hal::startup::Report` as `blink` does.
 - To run a bench probe, depend on `petlibre-probes` and step its `Probe` from your own task, as `optics` does.
 
-The build's stack audit finds every `spawn(c"name", WORDS, priority, entry)` call in the firmware's `src/`, so keep that call shape, with the stack size as a literal or a `const NAME: u16`, and keep the call in the firmware crate rather than a shared library. Each task's static bound must leave a quarter of its stack free. A firmware gets two tasks in all, its SDK services included (see the runtime guarantees above).
+The build's stack audit finds every `spawn(c"name", WORDS, priority, entry)` call in the firmware's `src/`, so keep that call shape, with the stack size as a literal or a `const NAME: u16`, and keep the call in the firmware crate rather than a shared library. Each task's static bound must leave a quarter of its stack free. A firmware gets four tasks in all (`petlibre_sdk::FIRMWARE_TASKS`), its SDK services included; the runtime holds three of the eight slots and one stays spare (see the runtime guarantees above).
 
 Host tests run the firmware's logic against the SDK fake (`petlibre_sdk::hal::sdk::fake`); see `blink/tests/` and `qa/tests/`.

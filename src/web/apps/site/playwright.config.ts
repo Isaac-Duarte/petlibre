@@ -1,6 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 
-// The built site, served by `vite preview` exactly as Cloudflare Pages will
+// The built site, served by `vite preview` exactly as the Cloudflare Worker will
 // serve build/: static files, no server code. `make check-web` builds first.
 const PORT = Number(process.env.E2E_PORT ?? 8798);
 

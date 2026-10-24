@@ -2,7 +2,7 @@
   "name": "@petlibre/site",
   "private": true,
   "type": "module",
-  "description": "petlibre.dev: the project's landing page, prerendered to static files for Cloudflare Pages",
+  "description": "petlibre.dev: the project's landing page, prerendered to static files for a Cloudflare Worker",
   "imports": {
     "#lib": "./src/lib",
     "#lib/*": "./src/lib/*"

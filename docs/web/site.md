@@ -1,6 +1,6 @@
 # petlibre.dev
 
-The project's landing page: one prerendered page in `src/web/apps/site`, served as static files by Cloudflare Pages. It speaks to two readers, owners who want cloud-free feeding later and tinkerers who can help now, and it is as honest as the [README](../../README.md) about what works.
+The project's landing page: one prerendered page in `src/web/apps/site`, served as static files by a Cloudflare Worker. It speaks to two readers, owners who want cloud-free feeding later and tinkerers who can help now, and it is as honest as the [README](../../README.md) about what works.
 
 ## What it is
 
@@ -43,13 +43,15 @@ pnpm -C src/web --filter @petlibre/site e2e
 
 ## Deploy
 
-Cloudflare Pages builds from the repository with its Git integration; nothing in the repository holds a Cloudflare credential. The project settings:
+Cloudflare Workers Builds builds from the repository with its Git integration; nothing in the repository holds a Cloudflare credential. The Worker has no script: [`wrangler.jsonc`](../../src/web/apps/site/wrangler.jsonc) serves the prerendered build as static assets, and `static/_headers` sets the response headers. The project settings:
 
 | Setting | Value |
 | --- | --- |
+| Worker name | `petlibre` (must match `name` in `wrangler.jsonc`) |
 | Production branch | `master` |
 | Build command | `corepack enable && pnpm -C src/web install --frozen-lockfile && pnpm -C src/web generate && pnpm -C src/web --filter @petlibre/site build` |
-| Build output directory | `src/web/apps/site/build` |
+| Deploy command | `npx wrangler@4.152.0 deploy --config src/web/apps/site/wrangler.jsonc` |
+| Non-production branch deploy command | `npx wrangler@4.152.0 versions upload --config src/web/apps/site/wrangler.jsonc` |
 | Environment | `NODE_VERSION=22.18.0` |
 | Custom domain | `petlibre.dev` |
 

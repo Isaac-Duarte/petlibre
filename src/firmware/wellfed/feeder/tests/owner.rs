@@ -2,10 +2,14 @@
 //! the lock indicator on, follows Lock holds, remote changes and the idle
 //! relock, keeps the indicator off while the lights are off, and stops
 //! driving the indicator for good when outputs stop reading back stopped.
+//! Pairing sees gestures first: the recovery chord opens its window only on
+//! an unlocked panel, and an unlocked Reset hold queues the key reset.
 
+use wellfed_feeder::pairing;
 use wellfed_feeder::panel::{Action, Event, Lock, Source};
 use wellfed_fw_feeder::owner::{Inputs, Owner, POLL_MS, Record};
 use wellfed_sdk::buttons::{Button, Buttons, Gesture};
+use wellfed_sdk::hal::keys::{self, Change, Requested};
 use wellfed_sdk::hal::leds::{self, Led};
 use wellfed_sdk::hal::sdk::{self, fake};
 use wellfed_sdk::hal::stopped;
@@ -220,7 +224,148 @@ fn records_read_as_uart_lines() {
         "ask action=reset result=refused"
     );
     assert_eq!(
+        line(Record::Pairing(pairing::Event::Refused {
+            path: pairing::Path::Recovery,
+            refusal: pairing::Refusal::Locked,
+        })),
+        "pair refused path=recovery refusal=locked"
+    );
+    assert_eq!(
+        line(Record::Pairing(pairing::Event::RecoveryOpened)),
+        "pair recovery state=opened"
+    );
+    assert_eq!(
+        line(Record::Reset {
+            requested: Requested::Queued
+        }),
+        "reset keys=queued"
+    );
+    assert_eq!(
         line(Record::Indicator { decision: None }),
         "indicator led=PA4 stop=refused"
     );
+}
+
+/// Pairing and the key reset reach process-wide mailboxes.
+static KEYS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn down(buttons: &[Button]) -> Gesture {
+    Gesture::Down {
+        chord: chord(buttons),
+    }
+}
+
+fn hold(buttons: &[Button]) -> Gesture {
+    Gesture::Hold {
+        chord: chord(buttons),
+        level: 1,
+    }
+}
+
+fn chord(buttons: &[Button]) -> Buttons {
+    buttons
+        .iter()
+        .fold(Buttons::from_bits(0), |chord, &button| chord.with(button))
+}
+
+/// An owner stepped once, then unlocked by a Lock hold.
+fn unlocked() -> (Owner, u32) {
+    let mut owner = ready();
+    let now = settle(&mut owner, 0, true);
+    step(&mut owner, now, &[lock_hold()], None, true);
+    assert_eq!(owner.lock(), Some(Lock::Unlocked));
+    (owner, now)
+}
+
+#[test]
+fn lock_then_dispense_held_opens_recovery_without_a_feed() {
+    let _guard = KEYS.lock().unwrap_or_else(|e| e.into_inner());
+    let (mut owner, now) = unlocked();
+
+    let gestures = [
+        down(&[Button::Lock]),
+        down(&[Button::Lock, Button::Dispense]),
+        hold(&[Button::Lock, Button::Dispense]),
+    ];
+    let (_, records) = step(&mut owner, now + 100, &gestures, None, true);
+    assert_eq!(
+        records,
+        [Record::Pairing(pairing::Event::RecoveryOpened)],
+        "no feed asked and no lock change"
+    );
+    assert_eq!(owner.lock(), Some(Lock::Unlocked));
+
+    let closes = now + 100 + pairing::Config::DEFAULT.recovery_ms;
+    let (_, records) = step(&mut owner, closes, &[], None, true);
+    assert!(
+        records.contains(&Record::Pairing(pairing::Event::RecoveryClosed)),
+        "{records:?}"
+    );
+}
+
+#[test]
+fn a_locked_panel_refuses_recovery() {
+    let _guard = KEYS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut owner = ready();
+    let now = settle(&mut owner, 0, true);
+
+    let (_, records) = step(
+        &mut owner,
+        now,
+        &[hold(&[Button::Lock, Button::Dispense])],
+        None,
+        true,
+    );
+    assert_eq!(
+        records,
+        [Record::Pairing(pairing::Event::Refused {
+            path: pairing::Path::Recovery,
+            refusal: pairing::Refusal::Locked,
+        })]
+    );
+}
+
+#[test]
+fn an_unlocked_reset_hold_queues_the_key_reset() {
+    let _guard = KEYS.lock().unwrap_or_else(|e| e.into_inner());
+    keys::reset();
+    let mut owner = ready();
+    let now = settle(&mut owner, 0, true);
+
+    let (_, records) = step(&mut owner, now, &[hold(&[Button::Reset])], None, true);
+    assert_eq!(
+        records,
+        [Record::Panel(Event::Asked {
+            action: Action::Reset,
+            allowed: false,
+        })],
+        "a locked panel keeps the keys"
+    );
+    assert_eq!(keys::pending(), None);
+
+    step(&mut owner, now, &[lock_hold()], None, true);
+    let (_, records) = step(&mut owner, now, &[hold(&[Button::Reset])], None, true);
+    assert_eq!(
+        records,
+        [
+            Record::Panel(Event::Asked {
+                action: Action::Reset,
+                allowed: true,
+            }),
+            Record::Reset {
+                requested: Requested::Queued
+            },
+        ]
+    );
+    assert_eq!(keys::pending(), Some(Change::Reset));
+
+    let (_, records) = step(&mut owner, now, &[hold(&[Button::Reset])], None, true);
+    assert_eq!(
+        records[1],
+        Record::Reset {
+            requested: Requested::Busy
+        },
+        "one reset waits for the writer at a time"
+    );
+    keys::finish();
 }

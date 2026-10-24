@@ -1,11 +1,24 @@
 # Resume firmware development
 
-Handoff checkpoint: **October 24, 2026, Mountain time**. Read this, then
+Handoff checkpoint: **October 24, 2026 (afternoon), Mountain time**. Read this, then
 [AGENTS.md](AGENTS.md), the [development guide](docs/development/README.md),
 and [FIRMWARE_BOARD.md](FIRMWARE_BOARD.md) (stock parity: [FEATURE_BOARD.md](FEATURE_BOARD.md)). Update this handoff when the installed
 image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
+
+**October 24, afternoon: FW45 keys on the panel, FP15 key reset (physical, owner pressing; no motion).**
+- **Code:** `wellfed-hal::keys` (the loop-to-writer key mailbox and the identity handoff), the writer's `keys change=` path, the loop's `PLID1` identity fingerprint, and pairing ahead of the panel in the feeder's owner. Stack bounds: `wellfed-cfg` 2,948/4,096, loop 3,912/6,144.
+- **Runs:** bounded `serve`, stopped afterwards.
+  - `ota fw45-pair-01` (v107) confirmed, with the identity loaded.
+  - `boot fw45-pair-02`: the same fingerprint.
+  - `capture fw45-pair-03`: the recovery chord was refused while locked and opened the window once unlocked. The owner's Reset steps landed on Lock, because our notes had the button order reversed.
+  - `capture fw45-pair-04`: a locked Reset hold was refused. Unlocked, the keys reset and a new fingerprint appeared.
+  - `boot fw45-pair-05`: the new fingerprint persisted.
+- **Owner, panel order seen from the front:** the buttons run Lock, Dispense, Mic, Reset from left to right, and the indicators low food, lock, Wi-Fi, error/warning. Recorded in the board notes.
+- **Flash now:** **Bank 1:** `feeder` v107 (`e1215de0…`, confirmed). **Bank 0:** `qa` `ef76b85e…`. **Next manifest version:** 108. The client store holds a new identity, with no clients.
+- **Bench state:** feeder on, hotspot up, no server.
+- **Next:** FW45 BLE setup (`wellfed-proto`/`wellfed-client` and a BlueZ host command). Alternatively, FW30 pins with the meter and the analyzer.
 
 **October 24, morning: FW45 generator and keys in the firmware (physical, no owner action).**
 - **Owner-approved migration (FW51):** `private/feed-ledger.json` renamed to `feed-ledger.json.before-fw51` (every trial finished; `ota_hold` was true). `max_portions` removed from `private/server.json`, with a backup in `server.json.before-fw51`.
@@ -645,7 +658,7 @@ Bench lessons from stage C:
 
 Per the latest checkpoint at the top of this file (reconfirm before relying on it):
 
-- **Bank 1 (boots):** the `feeder` firmware `a675ccc5…`, OTA v106, confirmed (`fw45-keys-02`), with the FW45 generator and identity. It carries the runtime (supervision, clock, signed requests, settings writer, offer check), the button service and the FP11 child lock, and the FW44 Noise session table. It drives no motor.
+- **Bank 1 (boots):** the `feeder` firmware `e1215de0…`, OTA v107, confirmed (`fw45-pair-01`), with the FW45 generator, identity, key mailbox and pairing gestures, and the FP15 key reset on an unlocked Reset hold. It carries the runtime (supervision, clock, signed requests, settings writer, offer check), the button service and the FP11 child lock, and the FW44 Noise session table. It drives no motor.
 - **Bank 0 (recovery):** `qa` `ef76b85e…`, written by stock 1.1.15's updater in `fw40-stock-ota-07`. Only its runtime's recovery role runs from bank 0.
 - **Next manifest version:** 107.
 

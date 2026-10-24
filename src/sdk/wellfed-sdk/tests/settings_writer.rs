@@ -4,7 +4,7 @@
 use std::cell::Cell;
 use std::sync::{Mutex, MutexGuard};
 
-use wellfed_core::store::clients::ClientStatus;
+use wellfed_core::store::clients::{ClientStatus, Label, Role};
 use wellfed_core::store::seed::SeedStatus;
 use wellfed_core::store::settings::SettingsStatus;
 use wellfed_core::transport::{SettingsFields, SettingsResult};
@@ -12,10 +12,13 @@ use wellfed_hal::flash::park::Mmio;
 use wellfed_hal::flash::peer::MARKER_REGISTER;
 use wellfed_hal::flash_lock::arming::Hooks;
 use wellfed_hal::flash_lock::provider::Provider;
+use wellfed_hal::keys::{self, Change, Requested};
 use wellfed_hal::rng;
 use wellfed_hal::sdk::{self, fake};
 use wellfed_hal::{network, settings};
-use wellfed_sdk::settings::{self as writer, ErrorStage, Identity, Record, Writer};
+use wellfed_sdk::settings::{
+    self as writer, ErrorStage, Identity, KeyChange, KeyResult, Record, Writer,
+};
 use wellfed_sdk::storage::{FlashOps, SETTINGS_BASE};
 
 thread_local! {
@@ -87,6 +90,7 @@ fn start() -> (MutexGuard<'static, ()>, Writer, Provider) {
     fake::reset_hardware();
     settings::reset();
     network::reset();
+    keys::reset();
     ARMED.with(|a| a.set(true));
     (guard, Writer::default(), Provider::default())
 }
@@ -349,4 +353,113 @@ fn keys_carry_the_seed_and_create_the_identity_once() {
             ..
         }
     ));
+}
+
+/// One queued key change, applied on the writer's next step.
+fn change(writer: &mut Writer, provider: &mut Provider, change: Change) -> Record {
+    assert_eq!(keys::request(change), Requested::Queued);
+    let record = step(writer, provider).expect("the change record");
+    assert_eq!(keys::pending(), None, "the slot is free again");
+    record
+}
+
+fn changed(change: KeyChange, result: KeyResult, enrolled: usize) -> Record {
+    Record::KeysChanged {
+        change,
+        result,
+        enrolled,
+    }
+}
+
+#[test]
+fn key_changes_apply_and_a_reset_publishes_a_new_identity() {
+    let (_guard, mut writer, mut provider) = start();
+    fake::with(|h| h.adc_noise = 0x1357_9bdf);
+    assert_eq!(rng::start().result, Ok(()));
+    for _ in 0..3 {
+        step(&mut writer, &mut provider); // open, net open, keys
+    }
+    let (first, identity) = keys::identity_since(0).expect("the identity is published");
+
+    let phone = Change::Enroll {
+        key: [7; 32],
+        label: Label::new(b"phone").unwrap(),
+        role: Role::Owner,
+    };
+    assert_eq!(
+        change(&mut writer, &mut provider, phone),
+        changed(KeyChange::Enroll, KeyResult::Done, 1)
+    );
+    assert!(ATTEMPT_SEEN.with(Cell::get));
+    assert_eq!(sdk::backup_read(MARKER_REGISTER), 0);
+    assert_eq!(
+        change(&mut writer, &mut provider, phone),
+        changed(KeyChange::Enroll, KeyResult::Duplicate, 1)
+    );
+    assert_eq!(
+        keys::identity_since(first),
+        None,
+        "an enrollment keeps the identity"
+    );
+
+    let revoke = Change::Revoke { key: [8; 32] };
+    assert_eq!(
+        change(&mut writer, &mut provider, revoke),
+        changed(KeyChange::Revoke, KeyResult::NotFound, 1)
+    );
+
+    assert_eq!(
+        change(&mut writer, &mut provider, Change::Reset),
+        changed(KeyChange::Reset, KeyResult::Done, 0)
+    );
+    let (_, new) = keys::identity_since(first).expect("the new identity");
+    assert_ne!(new, identity);
+
+    // The next boot loads the reset table.
+    keys::reset();
+    assert!(matches!(
+        boot_keys(),
+        Record::Keys {
+            enrolled: 0,
+            identity: Identity::Loaded,
+            ..
+        }
+    ));
+    assert_eq!(keys::identity_since(0).map(|(_, secret)| secret), Some(new));
+}
+
+#[test]
+fn a_reset_needs_the_generator_and_an_armed_writer() {
+    let (_guard, mut writer, mut provider) = start();
+    fake::with(|h| h.adc_noise = 0x0bad_cafe);
+    assert_eq!(rng::start().result, Ok(()));
+    for _ in 0..3 {
+        step(&mut writer, &mut provider);
+    }
+    let (first, _) = keys::identity_since(0).unwrap();
+
+    rng::reset();
+    assert_eq!(
+        change(&mut writer, &mut provider, Change::Reset),
+        changed(KeyChange::Reset, KeyResult::NoGenerator, 0)
+    );
+
+    assert_eq!(rng::start().result, Ok(()));
+    ARMED.with(|a| a.set(false));
+    assert_eq!(
+        change(&mut writer, &mut provider, Change::Reset),
+        changed(KeyChange::Reset, KeyResult::Unarmed, 0)
+    );
+    assert_eq!(keys::identity_since(first), None, "the identity stands");
+}
+
+#[test]
+fn key_change_records_format() {
+    let mut text = String::new();
+    writer::describe(
+        changed(KeyChange::Reset, KeyResult::NoGenerator, 0),
+        &mut text,
+    )
+    .unwrap();
+    assert_eq!(text, "keys change=reset result=no-generator enrolled=0");
 }

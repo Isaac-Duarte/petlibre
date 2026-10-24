@@ -72,7 +72,7 @@ Status (October 24, 2026):
 **Settings writer:**
 - Once armed, the writer mixes the stored seed into the generator and stores the next one.
 - It opens the client store and creates the identity secret on the first boot that has a generator. It logs `PLCFG1 keys seed=… mixed=… saved=… clients=… enrolled=… identity=…`.
-- The settings task's stack bound is 2,808 of 4,096 bytes: the client store decodes only the winning slot's table.
+- The settings task's stack bound is 2,948 of 4,096 bytes (2,808 before the key changes below): the client store decodes only the winning slot's table and saves a table by reference.
 
 **Runs:**
 - **First boot:** `ota fw45-keys-02` (v106) started the generator and logged `seed=empty saved=1 identity=created`.
@@ -86,6 +86,30 @@ Status (October 24, 2026):
 - **One unit, one condition:** battery power and temperature were not tested.
 - **Restart test:** 90B's restart test (samples across many cold boots) has not been run.
 - **ADC sharing after boot:** the power monitor owns the ADC after boot, so the generator never reseeds from it. HMAC-DRBG's reseed interval (65,536 requests) is far beyond a boot's needs, and every boot starts fresh.
+
+## Keys and the panel (physical, October 24)
+
+**Carrying keys between tasks (`wellfed-hal::keys`):**
+- The settings writer alone writes the client store, and the loop task alone reads the panel and will run the handshakes.
+- The loop queues one change at a time (enroll, revoke or reset) in a one-slot mailbox; a second before the writer takes the first is `busy`.
+- The writer logs each result as `PLCFG1 keys change=… result=… enrolled=…`.
+- A reset draws its new identity from the generator or does not happen (`result=no-generator`). Nothing weaker is ever written.
+
+**The identity in the loop:**
+- The writer publishes the identity secret in RAM with a per-boot generation. The loop derives the public key (one X25519 on the Montgomery ladder) and keeps the key pair for the coming handshakes.
+- It logs `PLID1 identity generation=N fingerprint=<the public key's first 8 bytes>`. The fingerprint tells identities apart; no record carries the secret.
+- The loop's stack bound is 3,912 of 6,144 bytes.
+
+**Gestures:**
+- Pairing sees each gesture before the panel, which gets only the gestures pairing leaves.
+- **Recovery:** press Lock first, then add Dispense, and hold both. Dispense pressed alone first would be a feed request; Lock alone does nothing until its own 5 s hold, and the hold only toggles the lock when Lock is alone.
+- **Reset:** a Reset hold on an unlocked panel queues the key reset (FP15). A locked panel refuses it, so the keys stay.
+
+**Runs** (`feeder` v107, owner pressing; no motion):
+- `ota fw45-pair-01` confirmed, and the identity loaded. `boot fw45-pair-02`: the same fingerprint after a cold boot.
+- `capture fw45-pair-03`: on a locked panel the recovery chord was refused (`refusal=locked`). Once unlocked it opened the window, with no feed request and no lock change.
+- `capture fw45-pair-04`: the window closed after 2 min. A locked Reset hold was refused. Once unlocked, a Reset hold queued the reset, which logged `result=done enrolled=0`, then a new fingerprint.
+- `boot fw45-pair-05`: the new fingerprint after a cold boot.
 
 ## Storage sectors
 
@@ -138,8 +162,8 @@ The timeouts are ours: stock pairs through the vendor cloud and has no equivalen
 
 ## Left for FW45
 
-1. **Optional confidence:** the full ~1,000-boot restart test, and the noise measurement on battery and when warm.
-2. **Pairing:** apply `Admit` events to the client store, and derive the identity's public key in the loop task (the settings task's stack cannot hold an X25519 multiplication).
-4. **BLE setup:** the BLE setup exchange (Wi-Fi in, the app's key in, the feeder's key out), with BLE only in a boot-chosen setup mode.
-5. **Broker credentials:** stop treating them as a build input.
-6. **FP15 reset:** clears the keys (on hardware).
+1. **BLE setup:** the BLE setup exchange (Wi-Fi in, the app's key in, the feeder's key out), with BLE only in a boot-chosen setup mode. This needs the host side in `wellfed-client` and a BlueZ command.
+2. **Broker credentials:** stop treating them as a build input.
+3. **Optional confidence:** the full ~1,000-boot restart test, and the noise measurement on battery and when warm.
+
+The LAN handshakes for invites and the recovery window run over FW47's Noise stream and land with it. The policy and the window are already in the firmware.

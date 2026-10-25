@@ -116,8 +116,8 @@ fn status(code: ErrorCode) -> StatusCode {
         ErrorCode::FeederOffline => StatusCode::SERVICE_UNAVAILABLE,
         ErrorCode::OutcomeUnknown => StatusCode::GATEWAY_TIMEOUT,
         // Every refusal is final for its key, `busy` included: the feeder
-        // remembers a refused write under its id and answers a retry with the
-        // same refusal. A later attempt is a new request under a new key.
+        // replays a refused write's answer while it remembers the id, so a
+        // later attempt is a new request under a new key.
         ErrorCode::FeederRefused => StatusCode::CONFLICT,
         ErrorCode::Internal => StatusCode::INTERNAL_SERVER_ERROR,
     }

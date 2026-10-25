@@ -6,6 +6,11 @@
 //! defaults its missing fields so the manifests and reviews of older builders
 //! (which recorded fewer fields, or none of an audit) still read; a check
 //! that needs a field then finds its default, not the whole file refused.
+//!
+//! So a recorded audit is evidence to compare, never a result to trust: the
+//! review accepts it only when it equals the audit rerun on the build, and
+//! no reader takes a count or flag from it on its own, since a missing field
+//! reads as zero or `false`.
 
 use std::collections::{BTreeMap, BTreeSet};
 

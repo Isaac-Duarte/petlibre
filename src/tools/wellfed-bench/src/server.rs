@@ -3,8 +3,11 @@
 //! server relays no requests (they go over the device API, `crate::device`)
 //! and only bank 0's recovery role reports health over MQTT.
 //!
-//! The document's type is `wellfed-local`'s own (`wellfed_formats::local`).
-//! Health inside it is the firmware's own JSON (`wellfed-core`'s transport
+//! The document's type is `wellfed-local`'s own (`wellfed_formats::local`),
+//! and strict where the server is: a trial record with a field or phase the
+//! bench does not know fails the whole read, which stops the wait that
+//! needed it rather than guessing. Both are built from this repository, so
+//! a mismatch means rebuild one. Health inside it is the firmware's own JSON (`wellfed-core`'s transport
 //! writes it), relayed by the server unchanged. Only the fields the bench
 //! checks are typed here; each defaults when absent, so a firmware that adds
 //! fields still reads, and a missing one fails the check that needs it rather

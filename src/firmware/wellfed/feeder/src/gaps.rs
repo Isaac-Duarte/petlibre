@@ -12,8 +12,9 @@
 //! Wi-Fi counters that mark a rejoin.
 //!
 //! A [`Probe`] is all atomics: its task records into it, and the loop takes
-//! its window from another task. A sample that lands while the loop takes
-//! the window may count toward either window, never both.
+//! its window from another task. Each of a sample's counts lands in exactly
+//! one window, but a sample that lands while the loop takes the window may
+//! split: its bucket in one window, its wake and maximum in the next.
 
 use core::fmt::{self, Write};
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};

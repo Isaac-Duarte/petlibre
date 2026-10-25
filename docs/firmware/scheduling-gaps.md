@@ -60,11 +60,13 @@ The bench must be powered and on the replacement firmware, with the hotspot and 
 2. **Capture** in back-to-back 180 s segments: `target/release/wellfed-bench capture NAME-01 --seconds 180`, then `-02`, and so on. Each segment holds about two rejoin cycles.
 3. **Force N rejoins** (N = 10 is enough to see the spread) from another shell, with the hotspot connection named in `private/hotspot.json`:
    ```
+   HOTSPOT=$(jq -r .connection private/hotspot.json)
+   trap 'nmcli connection up "$HOTSPOT"' EXIT   # an interrupted loop leaves the hotspot up
    for i in $(seq 10); do sleep 60; nmcli connection down "$HOTSPOT"; sleep 15; nmcli connection up "$HOTSPOT"; done
    ```
    After a loss the shim backs off from 1 s, doubling up to 30 s between attempts, and a scan waits up to 10 s, so a rejoin lands 15–45 s after the hotspot returns. A 60 s quiet time leaves at least one quiet window between rejoins.
 4. **Cold boots** add first-join samples: `wellfed-bench boot NAME-boot-01 --seconds 180` with the hotspot up.
 5. **Read:** for each `PLGAP1 net … rejoin=1` window, the `p4` and `loop` lines before it, and the `worst` values at the end. Count the rejoins from `gen` (a loss and a join each bump it).
-6. **Restore:** reinstall the normal image (`wellfed-bench ota NAME-restore --build --firmware feeder`, with `serve` up again), take the hotspot down and stop `serve` as found, and record what ran.
+6. **Restore:** check the hotspot is up (`nmcli connection show --active`), then reinstall the build that was on bank 1 before: its frozen review (`wellfed-bench ota NAME-restore --review private/verification/<prior review>`), or `--build --firmware feeder` from the same `master` commit, so the restored identity is the recorded one. Put the hotspot and `serve` back as found, and record what ran and the restored build id in RESUME.
 
 Pass for the measurement: at least N rejoins captured (`gen` rose by about 2N), and every rejoin window has both lines.

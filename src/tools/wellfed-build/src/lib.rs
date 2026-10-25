@@ -173,11 +173,26 @@ pub(crate) fn text(command: &mut Command) -> Result<String> {
         .map_err(|_| Error::Refused("Tool output is not UTF-8".into()))
 }
 
+/// `git -C directory`, with every `GIT_*` variable of this process
+/// removed. Run under `git rebase --exec` or a hook, git exports
+/// `GIT_DIR` and friends, and a git call that inherits them acts on that
+/// repository instead of `directory`: a test's `git init` once rewrote the
+/// checkout's own config that way. Every git call in this crate goes
+/// through here.
+pub(crate) fn git_command(directory: &Path) -> Command {
+    let mut command = Command::new("git");
+    for (name, _) in std::env::vars_os() {
+        if name.to_string_lossy().starts_with("GIT_") {
+            command.env_remove(name);
+        }
+    }
+    command.arg("-C").arg(directory);
+    command
+}
+
 /// `git` in `directory`, stdout trimmed.
 pub(crate) fn git(directory: &Path, args: &[&str]) -> Result<String> {
-    Ok(text(Command::new("git").args(args).current_dir(directory))?
-        .trim()
-        .to_string())
+    Ok(text(git_command(directory).args(args))?.trim().to_string())
 }
 
 /// The checked-out commit of a Git worktree.

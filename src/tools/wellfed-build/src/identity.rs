@@ -9,7 +9,6 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::process::Command;
 
 use wellfed_formats::credentials::OtaKeyFile;
 use wellfed_formats::hex::is_lower_hex;
@@ -41,7 +40,7 @@ const BUILDER_SHARED: [&str; 3] = [
 /// identity; `target` is excluded only as a directory below the checkout, so
 /// the checkout's own location never matters.
 fn rust_sources(repo: &Repo, dirs: &[&str]) -> Result<Vec<PathBuf>> {
-    let listing = Command::new("git")
+    let listing = crate::git_command(&repo.root)
         .args([
             "ls-files",
             "-z",
@@ -51,7 +50,6 @@ fn rust_sources(repo: &Repo, dirs: &[&str]) -> Result<Vec<PathBuf>> {
             "--",
         ])
         .args(dirs)
-        .current_dir(&repo.root)
         .output()
         .ok()
         .filter(|output| output.status.success())

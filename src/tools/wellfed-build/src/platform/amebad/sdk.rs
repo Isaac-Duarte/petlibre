@@ -11,7 +11,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use wellfed_formats::layout::Layout;
 use wellfed_formats::lock::SdkLock;
@@ -128,15 +127,13 @@ fn managed_sdk_paths(profile: Profile) -> BTreeSet<String> {
 /// outputs, as `<code> <path>`, sorted. Ignored files are governed by the
 /// pinned SDK's own ignore rules and are not listed.
 fn unexpected_sdk_changes(sdk: &Path, profile: Profile) -> Result<Vec<String>> {
-    let status = run(Command::new("git")
-        .args([
-            "status",
-            "--porcelain=v1",
-            "-z",
-            "--untracked-files=all",
-            "--no-renames",
-        ])
-        .current_dir(sdk))?
+    let status = run(crate::git_command(sdk).args([
+        "status",
+        "--porcelain=v1",
+        "-z",
+        "--untracked-files=all",
+        "--no-renames",
+    ]))?
     .stdout;
     let managed = managed_sdk_paths(profile);
     let (mode_only, rebuilt, untracked) =
@@ -210,9 +207,7 @@ pub(crate) fn rust_archive(sdk: &Path, core: Core) -> PathBuf {
 
 /// The pinned revision's copy of an SDK file.
 fn pinned(sdk: &Path, relative: &str) -> Result<String> {
-    let output = run(Command::new("git")
-        .args(["show", &format!("HEAD:{relative}")])
-        .current_dir(sdk))?;
+    let output = run(crate::git_command(sdk).args(["show", &format!("HEAD:{relative}")]))?;
     String::from_utf8(output.stdout)
         .map_err(|_| Error::Refused(format!("Pinned SDK file is not UTF-8: {relative}")))
 }
@@ -339,11 +334,10 @@ fn worktree(repo: &Repo, output: &Path, profile: Profile, lock: &SdkLock) -> Res
     let sdk = output.join("sdk");
     if !sdk.exists() {
         fs::create_dir_all(output)?;
-        run(Command::new("git")
+        run(crate::git_command(&source(repo))
             .args(["worktree", "add", "--detach"])
             .arg(&sdk)
-            .arg(&lock.sdk.revision)
-            .current_dir(source(repo)))?;
+            .arg(&lock.sdk.revision))?;
     }
     require(
         revision(&sdk)? == lock.sdk.revision,
@@ -661,12 +655,16 @@ mod tests {
         "commit.gpgsign=false",
     ];
 
-    fn git_in(directory: &Path, args: &[&str]) {
-        run(Command::new("git")
+    /// Git on a scratch repository only: no system or global config, and
+    /// the process's `GIT_*` variables gone (see `crate::git_command`).
+    fn git_in(directory: &Path, args: &[&str]) -> String {
+        let output = run(crate::git_command(directory)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .args(GIT)
-            .args(args)
-            .current_dir(directory))
+            .args(args))
         .unwrap();
+        String::from_utf8(output.stdout).unwrap().trim().to_string()
     }
 
     struct Sdk {
@@ -688,6 +686,13 @@ mod tests {
             fs::write(&file, format!("pinned {name}")).unwrap();
         }
         git_in(&path, &["init", "-q"]);
+        // Nothing is added or committed unless the repository is this one.
+        let git_dir = PathBuf::from(git_in(&path, &["rev-parse", "--absolute-git-dir"]));
+        assert!(
+            git_dir.starts_with(temporary.path().canonicalize().unwrap()),
+            "git init made {} outside the scratch directory",
+            git_dir.display()
+        );
         git_in(&path, &["add", "."]);
         git_in(&path, &["commit", "-q", "-m", "pinned"]);
         Sdk {

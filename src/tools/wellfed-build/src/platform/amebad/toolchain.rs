@@ -160,7 +160,8 @@ pub(crate) fn bootstrap(repo: &Repo) -> Result<PathBuf> {
     let source = source(repo);
     if !source.exists() {
         fs::create_dir_all(source.parent().unwrap_or(&repo.root))?;
-        run(Command::new("git").arg("init").arg(&source))?;
+        let parent = source.parent().unwrap_or(&repo.root);
+        run(crate::git_command(parent).arg("init").arg(&source))?;
         git(&source, &["remote", "add", "origin", &lock.sdk.url])?;
         git(
             &source,

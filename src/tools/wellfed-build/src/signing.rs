@@ -51,7 +51,7 @@ use crate::{Error, Result, require};
 pub const KEY_PATH: &str = "private/ota-key.json";
 
 /// The OTA container's header precedes the bank contents.
-const CONTAINER_HEADER: usize = 32;
+pub const CONTAINER_HEADER: usize = 32;
 
 /// Create a new bench signing key at `output`; refuses to replace one.
 /// Returns the public key (hex), which firmware builds embed.

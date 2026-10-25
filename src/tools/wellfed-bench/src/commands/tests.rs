@@ -9,8 +9,8 @@ use serde_json::{Value, json};
 
 use super::*;
 use crate::commands::ota::Source;
-use crate::device::DeviceStatus;
-use crate::tools::{Capture, Captured};
+use crate::device::{Answer, DeviceStatus};
+use crate::tools::{Capture, Captured, InstallJob, Installing};
 use wellfed_formats::bench::VERIFICATION;
 use wellfed_formats::bench::progress::{FlashTool, StepState};
 use wellfed_relay::FakeBoard;
@@ -131,6 +131,26 @@ struct Calls {
     ran: Vec<String>,
     /// Whether a full read's bank 1 starts with the loader marker.
     bank1_valid: bool,
+    /// Updates pushed over the device API, and how each push ends (`Ok` by
+    /// default); a refusal to start fails the push before it runs.
+    installs: Vec<InstallJob>,
+    install_results: VecDeque<Result<(), String>>,
+    install_refused: bool,
+    /// What a cancel over the device API answers.
+    cancel_answer: Option<Answer>,
+}
+
+/// A push that ends at once, as scripted.
+struct FakeInstalling(Option<Result<(), String>>);
+
+impl Installing for FakeInstalling {
+    fn finished(&mut self) -> Option<Result<(), String>> {
+        self.0.clone()
+    }
+    fn notes(&mut self) -> Vec<String> {
+        Vec::new()
+    }
+    fn stop(&mut self) {}
 }
 
 #[derive(Clone, Default)]
@@ -224,11 +244,32 @@ impl Tools for FakeTools {
         Ok(code)
     }
 
+    fn install(&mut self, job: &InstallJob) -> Result<Box<dyn Installing>> {
+        let mut calls = self.0.borrow_mut();
+        calls.ran.push(format!(
+            "install {} {}",
+            job.manifest.display(),
+            job.image.display()
+        ));
+        calls.installs.push(job.clone());
+        if calls.install_refused {
+            return Err(Error::Bench("the feeder did not answer".into()));
+        }
+        let result = calls.install_results.pop_front();
+        Ok(Box::new(FakeInstalling(result)))
+    }
+
     fn local(&mut self, args: &[String], _: &mut Status) -> Result<i32> {
         let mut calls = self.0.borrow_mut();
         calls.local.push(args.to_vec());
         calls.ran.push(format!("local {}", args.join(" ")));
         Ok(calls.local_codes.pop_front().unwrap_or(0))
+    }
+
+    fn cancel_update(&mut self, keys: &Path, _config: &Path) -> Result<Answer> {
+        let mut calls = self.0.borrow_mut();
+        calls.ran.push(format!("cancel {}", keys.display()));
+        Ok(calls.cancel_answer.clone().unwrap_or(Answer::Unexpected))
     }
 
     fn device_status(&mut self, keys: &Path, config: &Path) -> Result<DeviceStatus> {
@@ -958,12 +999,26 @@ fn freeze(root: &Path, review: &Path, manifest: &Value) {
 }
 
 /// The signed manifest a run wrote, as the firmware reads it.
+/// A version 2 manifest the bench key signed, through the firmware's check.
 fn signed_by_bench(rig: &Rig, file: &str) -> wellfed_core::ota::Manifest {
+    use wellfed_core::ota::offer::{Context, KeyRing, admit_offer};
     let key =
         wellfed_build::signing::Key::load(&rig.bench.root.join(wellfed_build::signing::KEY_PATH))
             .unwrap();
     let bytes = fs::read(rig.bench.root.join(VERIFICATION).join(file)).unwrap();
-    wellfed_core::ota::parse_manifest(&bytes, &key.public(), 0).unwrap()
+    let built_in = [key.public()];
+    let context = Context {
+        ring: KeyRing {
+            built_in: &built_in,
+            added: None,
+            enrolled: &[],
+            revoked: &[],
+        },
+        floor: 0,
+        device: [0; 32],
+        running: [0; 32],
+    };
+    admit_offer(&bytes, None, &context).unwrap().signed.manifest
 }
 
 /// A frozen review under private/verification, and `ota` arguments for it.
@@ -987,6 +1042,10 @@ fn ota_review(rig: &Rig, manifest: Value) -> OtaArgs {
         version: None,
         minutes: 20.0,
         attended_motion: false,
+        mqtt: false,
+        downgrade: false,
+        fault: None,
+        cancel: false,
     }
 }
 
@@ -1043,18 +1102,20 @@ fn ota_signs_one_above_the_highest_signed_version_then_offers() {
     assert_eq!(wellfed_formats::hex::encode(&signed.build_id), BUILD);
 
     let calls = rig.tools.0.borrow();
-    let [offer] = &calls.local[..] else {
-        panic!("{:?}", calls.local)
+    let [job] = &calls.installs[..] else {
+        panic!("{:?}", calls.installs)
     };
-    assert_eq!(offer[0], "ota-offer");
     assert_eq!(
-        flag(offer, "--manifest"),
-        "private/verification/unit-v13.manifest"
+        job.manifest,
+        Path::new("private/verification/unit-v13.manifest")
     );
     assert_eq!(
-        flag(offer, "--image"),
-        "private/verification/review/image.bin"
+        job.image,
+        Path::new("private/verification/review/image.bin")
     );
+    assert_eq!(job.downgrade, None);
+    assert_eq!(job.keys, Path::new("private/wellfed-owner.json"));
+    assert!(calls.local.is_empty(), "no MQTT offer");
     drop(calls);
     assert!(rig.board.log().is_empty(), "no relay change");
 }
@@ -1097,11 +1158,50 @@ fn ota_installs_the_pinned_stock_review_by_its_payload_hash_without_health() {
         reviewed.payload_sha256
     );
     let calls = rig.tools.0.borrow();
-    let [offer] = &calls.local[..] else {
-        panic!("{:?}", calls.local)
+    let [job] = &calls.installs[..] else {
+        panic!("{:?}", calls.installs)
     };
-    assert_eq!(offer[0], "ota-offer");
+    // Stock always needs the owner's downgrade statement.
+    assert_eq!(
+        job.downgrade.as_deref(),
+        Some(Path::new(wellfed_build::signing::KEY_PATH))
+    );
     assert!(calls.queries.is_empty(), "stock has no status to poll");
+}
+
+#[test]
+fn ota_cancel_sends_one_cancel_and_nothing_else() {
+    let mut rig = rig();
+    let args = OtaArgs {
+        review: None,
+        cancel: true,
+        ..ota_review(&rig, json!({"startup_identity": BUILD}))
+    };
+    let view = wellfed_model::UpdateView {
+        phase: wellfed_model::UpdatePhase::Idle,
+        bank: 0,
+        min_version: 4,
+        digest: None,
+        version: 0,
+        image_len: 0,
+        written: 0,
+        wanted: Vec::new(),
+        stopped: None,
+    };
+    rig.tools.0.borrow_mut().cancel_answer = Some(Answer::Update(view));
+    assert_eq!(rig.bench.ota(&args).unwrap(), 0);
+
+    let calls = rig.tools.0.borrow();
+    assert_eq!(calls.ran, [format!("cancel {}", args.keys.display())]);
+    assert!(calls.installs.is_empty() && calls.local.is_empty());
+    drop(calls);
+
+    rig.tools.0.borrow_mut().cancel_answer = Some(Answer::Unexpected);
+    assert_eq!(
+        rig.bench.ota(&args).unwrap(),
+        1,
+        "no update state: not cancelled"
+    );
 }
 
 /// Only the pinned stock image may be reviewed as stock: relabelling a
@@ -1124,7 +1224,7 @@ fn ota_refuses_a_stock_review_of_another_image() {
 
     let error = rig.bench.ota(&args).unwrap_err().to_string();
     assert!(error.contains("Only original stock"), "{error}");
-    assert!(rig.tools.0.borrow().local.is_empty());
+    assert!(rig.tools.0.borrow().installs.is_empty());
 }
 
 #[test]
@@ -1132,7 +1232,7 @@ fn ota_takes_a_given_version() {
     let mut rig = rig();
     let mut args = plain_review(&rig);
     args.version = Some(40);
-    rig.tools.0.borrow_mut().local_codes.extend([1]);
+    rig.tools.0.borrow_mut().install_refused = true;
 
     assert_eq!(rig.bench.ota(&args).unwrap(), 1);
     assert_eq!(signed_by_bench(&rig, "unit-v40.manifest").version, 40);
@@ -1149,10 +1249,10 @@ fn ota_refuses_a_motion_review_without_the_attended_flag() {
 
     let error = rig.bench.ota(&args).unwrap_err();
     assert!(error.to_string().contains("attended-motion"));
-    assert!(rig.tools.0.borrow().local.is_empty());
+    assert!(rig.tools.0.borrow().installs.is_empty());
 
     args.attended_motion = true;
-    rig.tools.0.borrow_mut().local_codes.extend([1]);
+    rig.tools.0.borrow_mut().install_refused = true;
     assert_eq!(rig.bench.ota(&args).unwrap(), 1);
 }
 
@@ -1163,7 +1263,7 @@ fn ota_refuses_a_review_without_a_build_id() {
 
     let error = rig.bench.ota(&args).unwrap_err();
     assert!(error.to_string().contains("build ID"), "{error}");
-    assert!(rig.tools.0.borrow().local.is_empty());
+    assert!(rig.tools.0.borrow().installs.is_empty());
 }
 
 #[test]
@@ -1186,7 +1286,7 @@ fn ota_refuses_a_directory_that_is_not_a_frozen_review() {
     let error = rig.bench.ota(&args).unwrap_err().to_string();
     assert!(error.contains("Frozen image/review mismatch"), "{error}");
 
-    assert!(rig.tools.0.borrow().local.is_empty());
+    assert!(rig.tools.0.borrow().installs.is_empty());
     assert!(
         !rig.bench
             .root
@@ -1204,18 +1304,60 @@ fn ota_refuses_used_capture_names_before_signing() {
 
     let error = rig.bench.ota(&args).unwrap_err();
     assert!(error.to_string().contains("unit-03"));
-    assert!(rig.tools.0.borrow().local.is_empty());
+    assert!(rig.tools.0.borrow().installs.is_empty());
 }
 
 #[test]
 fn a_failed_offer_stops_without_capturing() {
     let mut rig = rig();
     let args = plain_review(&rig);
+    rig.tools.0.borrow_mut().install_refused = true;
+
+    assert_eq!(rig.bench.ota(&args).unwrap(), 1);
+    assert_eq!(rig.tools.0.borrow().installs.len(), 1);
+    assert!(captured(&rig).is_empty());
+}
+
+#[test]
+fn a_refused_offer_ends_the_run_before_any_activation() {
+    let mut rig = rig();
+    let args = plain_review(&rig);
+    {
+        let mut calls = rig.tools.0.borrow_mut();
+        calls.install_results.push_back(Err(
+            "the feeder refused the update: Update(Downgrade)".into()
+        ));
+        calls.rx.push_back(
+            b"PLOTA1 refused reason=downgrade
+"
+            .to_vec(),
+        );
+    }
+
+    let error = rig.bench.ota(&args).unwrap_err().to_string();
+    assert!(
+        error.contains("Downgrade") && error.contains("not activated"),
+        "{error}"
+    );
+    assert_eq!(captured(&rig), ["unit-01"]);
+}
+
+#[test]
+fn the_mqtt_path_signs_version_1_and_offers_through_wellfed_local() {
+    let mut rig = rig();
+    let mut args = plain_review(&rig);
+    args.mqtt = true;
     rig.tools.0.borrow_mut().local_codes.extend([1]);
 
     assert_eq!(rig.bench.ota(&args).unwrap(), 1);
-    assert_eq!(rig.tools.0.borrow().local.len(), 1);
-    assert!(captured(&rig).is_empty());
+    let calls = rig.tools.0.borrow();
+    let [offer] = &calls.local[..] else {
+        panic!("{:?}", calls.local)
+    };
+    assert_eq!(offer[0], "ota-offer");
+    assert!(calls.installs.is_empty());
+    let bytes = fs::read(rig.bench.root.join(VERIFICATION).join("unit-v1.manifest")).unwrap();
+    assert_eq!(&bytes[..8], wellfed_core::ota::MAGIC);
 }
 
 #[test]
@@ -1249,7 +1391,7 @@ fn ota_passes_across_segments_and_records_steps() {
         steps,
         [
             ("sign", StepState::Done),
-            ("wellfed-local ota-offer", StepState::Done),
+            ("offer", StepState::Done),
             ("give way", StepState::Done),
             ("download", StepState::Done),
             ("new build boot", StepState::Done),
@@ -1333,6 +1475,10 @@ fn build_args() -> OtaArgs {
         version: None,
         minutes: 20.0,
         attended_motion: false,
+        mqtt: false,
+        downgrade: false,
+        fault: None,
+        cancel: false,
     }
 }
 
@@ -1344,7 +1490,7 @@ fn with_status(rig: &mut Rig, source: Source) {
     rig.bench.status = Status::new(&rig.bench.root, rig.bench.root.join("status"));
     rig.bench
         .status
-        .begin("ota", Some("unit"), &ota::steps(source))
+        .begin("ota", Some("unit"), &ota::steps(source, false))
         .unwrap();
 }
 
@@ -1387,7 +1533,7 @@ fn ota_build_builds_reviews_offers_and_checks_health_in_order() {
         [
             "build build --profile firstboot --firmware trial --variant stall",
             "build review build --build private/firmware-build/plaf103/firstboot --output private/verification/unit-review",
-            "local ota-offer --manifest private/verification/unit-v1.manifest --image private/verification/unit-review/image.bin",
+            "install private/verification/unit-v1.manifest private/verification/unit-review/image.bin",
             "status private/wellfed-owner.json",
         ]
     );
@@ -1457,7 +1603,7 @@ fn ota_build_reuses_a_review_of_the_same_sources() {
     assert!(calls.builds.is_empty(), "nothing built or reviewed");
     assert!(
         calls.ran[0].starts_with(
-            "local ota-offer --manifest private/verification/unit-v1.manifest --image private/verification/earlier-review/image.bin"
+            "install private/verification/unit-v1.manifest private/verification/earlier-review/image.bin"
         ),
         "{:?}",
         calls.ran

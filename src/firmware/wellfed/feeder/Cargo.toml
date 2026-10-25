@@ -21,6 +21,9 @@ entropy = []
 owner-stall = []
 # Measure the loop's and a priority-4 task's scheduling gaps; feeds refused.
 gap-probe = []
+# Nothing but another build identity: installed after the feeder, it goes
+# through a trial and still serves the device API.
+twin = []
 
 [dependencies]
 wellfed-core.workspace = true
@@ -36,9 +39,10 @@ wellfed-model.workspace = true
 [lints]
 workspace = true
 
-# What wellfed-build reads: no startup policies (nothing here moves the
-# motor or runs the emitters: the feeding owner holds them stopped, and no
-# feed is ever submitted), and the BLE stack linked.
+# What wellfed-build reads: no startup policies (nothing moves the motor or
+# runs the emitters at startup: the feeding owner holds them stopped until an
+# authenticated feed request, which the bench never sends), and the BLE stack
+# linked.
 [package.metadata.wellfed]
 devices = ["plaf103"]
 bluetooth = true
@@ -51,3 +55,6 @@ summary = "Stalls the loop 3 s at 2 minutes and 12 s at 3 minutes; at rest the f
 
 [package.metadata.wellfed.variants.gap-probe]
 summary = "Logs the scheduling gaps of the loop and of a priority-4 probe task every 10 s, with the Wi-Fi counters, for comparing them across rejoins; feeds are refused"
+
+[package.metadata.wellfed.variants.twin]
+summary = "The feeder unchanged under another build identity, so the bench's drills can install a build that goes through a trial and still serves the device API"

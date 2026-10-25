@@ -11,11 +11,11 @@
 //!
 //! Every physical action goes through [`Rig`]: the live rig owns the
 //! hotspot, the `wellfed-local` children, the UART captures, the device
-//! API sessions (every request, and the normal role's status) and
-//! (only with `--power`) the feeder supply relay, and restores what it
-//! changed when the run ends. `serve` still offers updates and hears bank
-//! 0's recovery role over MQTT. Scenarios see only the trait, so they are
-//! tested on scripted feeders without hardware.
+//! API sessions (every request, the status, and the updates it pushes on a
+//! thread of its own, faults included) and (only with `--power`) the
+//! feeder supply relay, and restores what it changed when the run ends.
+//! `serve` stays for stock's broker and its updater's trial. Scenarios see
+//! only the trait, so they are tested on scripted feeders without hardware.
 
 use std::path::{Path, PathBuf};
 
@@ -68,44 +68,46 @@ fn met(need: Need, args: &ItestArgs) -> bool {
     }
 }
 
-/// Which `ota_fault_server` fault answers the recovery role's `ota/get`,
-/// with the stream offsets the drills used.
+/// Which fault the bench puts into its own transfer, at the image offsets
+/// the drills have always used, and the stage bank 0 stops it at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Fault {
     None,
     Corrupt,
-    Range,
+    Unwanted,
     Stall,
 }
 
 impl Fault {
-    fn arg(self) -> &'static str {
+    /// The bench's own fault, as [`crate::device::Device::install`] takes it.
+    fn device(self) -> wellfed_bench::device::Fault {
+        use wellfed_bench::device::Fault as D;
         match self {
-            Self::None => "none",
-            Self::Corrupt => "corrupt",
-            Self::Range => "range",
-            Self::Stall => "stall",
+            Self::None => D::None,
+            Self::Corrupt => D::Corrupt { at: 8192 },
+            Self::Unwanted => D::Unwanted { at: 200_000 },
+            Self::Stall => D::Stall { at: 300_000 },
         }
     }
 
-    fn at(self) -> u32 {
+    /// The `PLOTA1 error stage=` the feeder logs for it.
+    fn stage(self) -> Option<&'static str> {
         match self {
-            Self::None | Self::Corrupt => 8192,
-            Self::Range => 200_000,
-            Self::Stall => 300_000,
+            Self::None => None,
+            Self::Corrupt => Some("hash"),
+            Self::Unwanted => Some("order"),
+            Self::Stall => Some("timeout"),
         }
     }
 }
 
-/// What answers the feeder on the hotspot's broker address.
+/// What answers stock on the hotspot's broker address.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Server {
-    /// `wellfed-local serve`: broker, API, offers and recovery health.
+    /// `wellfed-local serve`: broker and API.
     Serve,
     /// `serve --enable-ota-trial`, so it may ask stock to install an image.
     StockTrial,
-    /// The bare broker plus `ota_fault_server` offering `staged`.
-    Faulty { fault: Fault, staged: Staged },
 }
 
 /// Every effect the suite has on the bench. The live rig talks to the real
@@ -117,8 +119,11 @@ trait Rig {
     fn review_build(&mut self, review: &Path) -> Result<String>;
     /// Replace whatever answers the feeder now.
     fn server(&mut self, server: Server) -> Result<()>;
-    /// Load an offer into `serve`, or clear it.
-    fn offer(&mut self, staged: Option<&Staged>) -> Result<()>;
+    /// Push `staged` over the device API with `fault` in the transfer, on a
+    /// thread of its own, replacing any push still running; `None` stops it.
+    fn offer(&mut self, staged: Option<&Staged>, fault: Fault) -> Result<()>;
+    /// How the push ended, once it has; `Ok` once bank 1 is activated.
+    fn offered(&mut self) -> Option<std::result::Result<(), String>>;
     /// One device API request as the owner's key.
     fn device(&mut self, ask: &Ask) -> Result<Answer>;
     /// Open a second owner session now and hold it: the feeder admits no
@@ -361,8 +366,8 @@ impl<'r> Ctx<'r> {
         }
     }
 
-    /// Offer `staged` through `serve` and classify the UART until the update
-    /// passes, falls back or fails; the server's health must then agree.
+    /// Push `staged` over the device API and classify the UART until the
+    /// update passes, falls back or fails; the device API must then agree.
     fn install(&mut self, staged: &Staged) -> Result<Outcome> {
         // The suite's scenarios need health and a trial, which stock has not.
         require(
@@ -370,7 +375,7 @@ impl<'r> Ctx<'r> {
             "The integration suite installs replacement builds only; offer stock with `wellfed-bench ota`",
         )?;
         let since = self.mark()?;
-        self.rig.offer(Some(staged))?;
+        self.rig.offer(Some(staged), Fault::None)?;
         self.note(&format!(
             "  Offered version {} ({})",
             staged.version,
@@ -416,6 +421,13 @@ impl<'r> Ctx<'r> {
                 if let Some(outcome) = watch.outcome() {
                     return Ok(outcome.clone());
                 }
+            }
+            // A push that ended before any UART outcome: the feeder refused
+            // the offer, or reported a stop over the API.
+            if let Some(Err(error)) = self.rig.offered() {
+                return Ok(Outcome::Failed {
+                    stage: format!("device API: {error}"),
+                });
             }
             if self.rig.clock() >= deadline {
                 return Err(Error::Bench(format!(
@@ -508,6 +520,10 @@ impl<'r> Ctx<'r> {
             version: None,
             minutes: INSTALL_SECONDS / 60.0,
             attended_motion: false,
+            mqtt: false,
+            downgrade: false,
+            fault: None,
+            cancel: false,
         }
     }
 

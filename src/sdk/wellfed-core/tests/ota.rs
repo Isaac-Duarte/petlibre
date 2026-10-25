@@ -142,6 +142,13 @@ fn a_header_claims_its_version_without_a_signature() {
     assert_eq!(claimed_version(&bytes[..100]), None);
     bytes[0] = b'X';
     assert_eq!(claimed_version(&bytes), None);
+
+    // A version 2 manifest keeps its version in the same place.
+    let mut v2 = vec![0; wellfed_core::ota::offer::MANIFEST_LEN];
+    v2[..8].copy_from_slice(&wellfed_core::ota::offer::MAGIC);
+    v2[8..12].copy_from_slice(&14u32.to_le_bytes());
+    assert_eq!(claimed_version(&v2), Some(14));
+    assert_eq!(claimed_version(&v2[..100]), None);
 }
 
 /// Drive a writer to completion; `flash` models bank 1 (offset 0 = BANK1_OFFSET).

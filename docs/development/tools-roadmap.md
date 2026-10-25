@@ -24,7 +24,7 @@ Where each host tool is going as the product platform lands, decided October 24,
 | Direct-to-feeder bring-up | `speak`, `ble-wifi` | **Deleted** (stage 1). Their firmwares are bring-up only, and FW45 replaces BLE setup |
 | Stock installer (FW40–FW43) | `ota-images`, `ota-trial`, `ota-trial-resolve`, `setup-send`, the stock broker; `init` and `network` (captured credentials, sudo redirect) | **`wellfed-stock`** (the protocol; **moved** Oct 25, the commands still in `wellfed-local`) and **`wellfed-client`** (the installer's steps). `init` and `network` go once the FW42 setup frame works |
 | Replacement MQTT transport (FW08) | `firmware-credential`, `firmware-request-key`, the firmware broker role, `/api/replacement/request` | Requests **deleted** with FW47 (`firmware-request-key`, `/api/replacement/request`); `firmware-credential` and the broker role go with the offers in FW48 |
-| Replacement OTA (FW10) | `ota-offer`, the fault-server example | Signing **moved** to `wellfed-build keygen` and `sign`, behind a frozen review (Oct 25); offers to the device API (FW48), with the fault server rebuilt on `wellfed-client` |
+| Replacement OTA (FW10) | `ota-offer`, the fault-server example | Signing **moved** to `wellfed-build keygen` and `sign` (version 2 manifests, `downgrade`, `revoke`, `add-key`), behind a frozen review (Oct 25). Offers **moved** to the device API: `wellfed_client::update`, which the bench drives with its own faults; `ota-offer` and the fault server stay only for builds still on MQTT |
 
 The bench drives `wellfed-local` as a child process today (`serve`, `ota-offer`, `ota-images`, `status`, and four HTTP routes); it already signs by linking `wellfed-build`. Linking libraries replaces the rest.
 

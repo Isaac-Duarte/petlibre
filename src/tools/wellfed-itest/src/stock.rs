@@ -6,15 +6,17 @@
 //! also the server's own gate for the request. Stock then fetches the build
 //! from `ota-images`, checks only its byte-sum, writes it to bank 0 (the bank
 //! it is not running from) and invalidates bank 1 ([stock OTA requirements]).
-//! The factory loader then boots the build from bank 0, where its recovery
-//! role reports health over MQTT while it waits for an update; the promoted
-//! build on bank 1 is confirmed over the device API.
+//! The factory loader then boots the build from bank 0, which answers the
+//! device API (and feeds) while it waits for an update; the promoted build
+//! on bank 1 is confirmed over the device API. The server's ledger hears no
+//! health from it (the build opens no MQTT session), so it closes the
+//! request by its own window rather than on that health.
 //!
 //! The request goes out once and is never resent: a rejected stock precheck
 //! can erase the stock OTA status sector, and an uncertain one may still be
-//! downloading. Then the same build is offered as a signed update, so its
-//! bank-0 recovery role installs it into bank 1 and the feeder ends in the
-//! normal two-bank state (`--no-promote` stops at bank 0).
+//! downloading. Then the same build is pushed as a signed update, so bank 0
+//! installs it into bank 1 and the feeder ends in the normal two-bank state
+//! (`--no-promote` stops at bank 0).
 //!
 //! Stock reaches this server only through `wellfed-local network apply`, a
 //! host firewall change the operator makes and removes by hand; the run never
@@ -37,15 +39,13 @@ use wellfed_formats::local::{OtaReport, TrialPhase};
 
 use super::log::Record;
 use super::{
-    Ctx, HEALTH_SECONDS, INSTALL_SECONDS, Report, STATUS_POLL_SECONDS, STATUS_SECONDS, Server,
-    Silent, Verdict, live,
+    Ctx, Fault, HEALTH_SECONDS, INSTALL_SECONDS, Report, STATUS_POLL_SECONDS, STATUS_SECONDS,
+    Server, Silent, Verdict, live,
 };
 
 /// Stock joins the hotspot, connects and reports its attributes within a
 /// minute or two of power; allow a slow join.
 const STOCK_SECONDS: f64 = 5.0 * 60.0;
-/// The server records the install's health as soon as it arrives.
-const CLOSE_SECONDS: f64 = 30.0;
 /// The server's resolution window (20 min after the request, 10 quiet
 /// connected minutes) plus margin.
 const SETTLE_SECONDS: f64 = 25.0 * 60.0;
@@ -83,6 +83,10 @@ fn ota_args(args: &StockOtaArgs) -> OtaArgs {
         version: None,
         minutes: INSTALL_SECONDS / 60.0,
         attended_motion: false,
+        mqtt: false,
+        downgrade: false,
+        fault: None,
+        cancel: false,
     }
 }
 
@@ -135,14 +139,14 @@ pub(super) fn roundtrip(ctx: &mut Ctx) -> Result<()> {
         )));
     }
     let since = ctx.mark()?;
-    ctx.rig.offer(Some(&stock))?;
-    ctx.note("  Offered stock; the running build installs it into bank 1");
+    ctx.rig.offer(Some(&stock), Fault::None)?;
+    ctx.note("  Offered stock with a downgrade statement; bank 0 installs it into bank 1");
     let outcome =
         ctx.offline(|ctx| ctx.watch_as(&stock.build, Target::Stock, since, INSTALL_SECONDS))?;
     if outcome != Outcome::Passed {
         return Err(Error::Bench(format!("Stock did not start: {outcome:?}")));
     }
-    ctx.rig.offer(None)?;
+    ctx.rig.offer(None, Fault::None)?;
 
     // On stock: it reports to a trial-enabled server, routed by the operator.
     ctx.rig.server(Server::StockTrial)?;
@@ -162,9 +166,9 @@ pub(super) fn roundtrip(ctx: &mut Ctx) -> Result<()> {
     let request_id = uuid::Uuid::new_v4().to_string();
     request(ctx, &staged, &request_id)?;
     install(ctx, &staged.build, &request_id)?;
-    bank0(ctx, &staged.build, &request_id)?;
+    bank0(ctx, &staged.build)?;
     promote(ctx, &staged)?;
-    ctx.rig.offer(None)?;
+    ctx.rig.offer(None, Fault::None)?;
 
     ctx.rig.server(Server::Serve)?;
     ctx.reachable(STATUS_SECONDS).map(|_| ())
@@ -194,7 +198,7 @@ fn run(ctx: &mut Ctx, args: &StockOtaArgs, staged: &Staged) -> (Vec<Report>, Opt
             SETTLE => settle(ctx),
             REQUEST => request(ctx, staged, &request_id),
             DOWNLOAD => install(ctx, &staged.build, &request_id),
-            BANK0 => bank0(ctx, &staged.build, &request_id),
+            BANK0 => bank0(ctx, &staged.build),
             _ => promote(ctx, staged),
         };
         let seconds = ctx.rig.clock() - begun;
@@ -337,23 +341,35 @@ fn started(line: &str, build: &str) -> Result<()> {
     Ok(())
 }
 
-/// The build's recovery role reports from bank 0 while it waits for an
-/// update, and that health closes the server's install record.
-fn bank0(ctx: &mut Ctx, build: &str, request_id: &str) -> Result<()> {
-    let report = ctx.until_status(
-        "recovery-role health from the build on bank 0",
+/// The build answers the device API from bank 0 while it waits for an
+/// update. The server's install record stays open until its window closes
+/// it: the build sends it no health.
+fn bank0(ctx: &mut Ctx, build: &str) -> Result<()> {
+    let report = ctx.until_device(
+        "status from the build on bank 0",
         HEALTH_SECONDS,
-        |status| Ok(status.recovery_health(build)?),
+        |status| {
+            if status.build != build {
+                return Err(Error::Bench(format!("build {}", status.build)));
+            }
+            if status.bank != 0 {
+                return Err(Error::Bench(format!("bank {}", status.bank)));
+            }
+            Ok(format!(
+                "Status: build {} on bank 0",
+                &build[..build.len().min(12)]
+            ))
+        },
     )?;
     ctx.note(&format!("  {report}"));
-    closed(ctx, request_id)
+    Ok(())
 }
 
-/// Offer the same build signed: the bank-0 recovery role asks every 10 s,
-/// installs it into bank 1, and the trial boot confirms.
+/// Push the same build signed: bank 0 installs it into bank 1, and the trial
+/// boot confirms.
 fn promote(ctx: &mut Ctx, staged: &Staged) -> Result<()> {
     let since = ctx.mark()?;
-    ctx.rig.offer(Some(staged))?;
+    ctx.rig.offer(Some(staged), Fault::None)?;
     ctx.note(&format!(
         "  Offered version {} for the promotion",
         staged.version
@@ -428,19 +444,6 @@ fn settle(ctx: &mut Ctx) -> Result<()> {
             ctx.rig.wait(SETTLE_POLL_SECONDS)?;
         }
     })
-}
-
-/// The server records the install as healthy.
-fn closed(ctx: &mut Ctx, request_id: &str) -> Result<()> {
-    ctx.until_status(
-        "the server closing the install",
-        CLOSE_SECONDS,
-        |status| match status.trial(request_id).map(|trial| trial.phase) {
-            Some(TrialPhase::ReplacementHealthy) => Ok(String::new()),
-            phase => Err(Error::Bench(format!("trial phase {phase:?}"))),
-        },
-    )
-    .map(|_| ())
 }
 
 /// Build the payload, bring the bench up with a trial-enabled server,

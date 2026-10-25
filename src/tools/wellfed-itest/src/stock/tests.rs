@@ -10,7 +10,7 @@ use super::*;
 use wellfed_bench::device::{Answer, Ask, DeviceStatus, Intruder, Rebuffed};
 use wellfed_bench::server::LocalStatus;
 
-use crate::Rig;
+use crate::{Fault, Rig};
 
 const BUILD: &str = "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90";
 const OTHER: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -22,7 +22,8 @@ const STOCK_REVIEW: &str = "private/verification/stock-review";
 /// How the scripted install goes.
 #[derive(Clone, Copy, PartialEq)]
 enum Script {
-    /// Stock installs; the build boots from bank 0 and reports health.
+    /// Stock installs; the build boots from bank 0 and answers the device
+    /// API there.
     Installs,
     /// Stock's precheck refuses (an OTA already active).
     Refused,
@@ -32,7 +33,7 @@ enum Script {
     OtherVersion,
     /// Something other than the build starts after activation.
     WrongBuild,
-    /// A build from before recovery-role health: silent on bank 0.
+    /// A build that serves no device API: silent on bank 0.
     OldBuild,
     /// Nothing reports after the bank-0 start.
     Silent,
@@ -61,11 +62,8 @@ struct StockFeeder {
     /// A request from an earlier run: its ID, phase, and when the server's
     /// evidence lets it be resolved.
     earlier: Option<(String, &'static str, f64)>,
-    /// The replacement's MQTT health (bank 0, or a build from before the
-    /// device API): build, bank, and whether it is the recovery role.
-    health: Option<(String, u64, bool)>,
-    /// The normal role on bank 1 answers the device API instead: its build.
-    api: Option<String>,
+    /// The replacement answering the device API: its build and bank.
+    api: Option<(String, u8)>,
     offered: bool,
     served: Option<PathBuf>,
     /// Stock runs (and reports once routed); false while a replacement does.
@@ -80,8 +78,8 @@ enum Change {
     StockOffline,
     /// Stock took over bank 1: the replacement is gone.
     OnStock,
-    /// Build, bank and whether it is the recovery role.
-    Health(String, u64, bool),
+    /// The replacement answers the device API: build and bank.
+    Api(String, u8),
     Phase(&'static str),
 }
 
@@ -101,7 +99,6 @@ impl StockFeeder {
             reports: Vec::new(),
             trial: None,
             earlier: None,
-            health: None,
             api: None,
             offered: false,
             served: None,
@@ -150,18 +147,9 @@ impl StockFeeder {
                 Change::StockOffline => self.stock_online = false,
                 Change::OnStock => {
                     self.on_stock = true;
-                    self.health = None;
                     self.api = None;
                 }
-                // The normal role reports over the device API only.
-                Change::Health(build, 1, false) => {
-                    self.health = None;
-                    self.api = Some(build);
-                }
-                Change::Health(build, bank, recovery) => {
-                    self.health = Some((build, bank, recovery));
-                    self.api = None;
-                }
+                Change::Api(build, bank) => self.api = Some((build, bank)),
                 Change::Phase(phase) => {
                     if let Some((_, current)) = &mut self.trial {
                         *current = phase;
@@ -201,9 +189,10 @@ impl Rig for StockFeeder {
         Ok(())
     }
 
-    /// The bank-0 recovery role finds the offer at its next 10 s ask and
-    /// installs it into bank 1, whose trial boot confirms.
-    fn offer(&mut self, staged: Option<&Staged>) -> Result<()> {
+    /// Bank 0 takes the pushed offer and installs it into bank 1, whose
+    /// trial boot confirms.
+    fn offer(&mut self, staged: Option<&Staged>, fault: Fault) -> Result<()> {
+        assert_eq!(fault, Fault::None, "the round trip pushes no faults");
         let Some(staged) = staged else {
             self.actions.push("clear".into());
             return Ok(());
@@ -220,12 +209,9 @@ impl Rig for StockFeeder {
         }
 
         self.offered = true;
-        let on = match (&self.health, &self.api) {
-            (Some((_, bank, recovery)), _) => {
-                format!("bank {bank}{}", if *recovery { " recovery" } else { "" })
-            }
-            (None, Some(_)) => "bank 1".into(),
-            (None, None) => "nothing".into(),
+        let on = match &self.api {
+            Some((_, bank)) => format!("bank {bank}"),
+            None => "nothing".into(),
         };
         self.actions.push(format!("offer on {on}"));
 
@@ -239,19 +225,23 @@ impl Rig for StockFeeder {
         );
         self.line(56.0, "PLTRL1 confirmed=0 boot=1 limit=3");
         self.line(90.0, "PLCNF1 confirmed=1 healthy_ms=30000");
-        self.at(92.0, Change::Health(build.into(), 1, false));
+        self.at(92.0, Change::Api(build.into(), 1));
         Ok(())
+    }
+
+    fn offered(&mut self) -> Option<std::result::Result<(), String>> {
+        None
     }
 
     fn device(&mut self, ask: &Ask) -> Result<Answer> {
         self.release();
-        let Some(build) = self.api.clone() else {
+        let Some((build, bank)) = self.api.clone() else {
             return Err(Error::Bench("the feeder did not answer".into()));
         };
         assert_eq!(*ask, Ask::Status, "the round trip only reads status");
         Ok(Answer::Status(DeviceStatus {
             build,
-            bank: 1,
+            bank,
             uptime_ms: 40_000,
             boot_count: 3,
             wifi: wellfed_model::WifiSource::Build,
@@ -285,17 +275,8 @@ impl Rig for StockFeeder {
             .chain(earlier)
             .map(|(id, phase)| record(&id, phase, !self.reports.is_empty()))
             .collect();
-        let replacement = match &self.health {
-            Some((build, bank, recovery)) => {
-                let mut health = json!({"build": build, "bank": bank, "seq": 1,
-                                        "outputs": "stopped", "faults": []});
-                if *recovery {
-                    health["role"] = json!("recovery");
-                }
-                json!({"health": health, "online": true, "stale": false, "age_ms": 500})
-            }
-            None => json!({"online": false, "stale": true}),
-        };
+        // No replacement build sends the server health any more.
+        let replacement = json!({"online": false, "stale": true});
         Ok(serde_json::from_value(json!({
             "device_online": self.stock_online,
             "attributes": {"softwareVersion": self.version, "powerType": 1},
@@ -392,12 +373,10 @@ impl Rig for StockFeeder {
                     70.0,
                     &format!("PLFW1 start build={build} bank=0 reset=0x0 mmu=0"),
                 );
-                // The recovery role reports while it waits for an offer;
-                // a build from before that reports nothing from bank 0.
-                if self.script != Script::Silent {
-                    let recovery = self.script != Script::OldBuild;
-                    self.at(100.0, Change::Health(build.into(), 0, recovery));
-                    self.at(100.0, Change::Phase("replacement_healthy"));
+                // Bank 0 answers the device API while it waits for an
+                // offer; a build that serves none stays silent.
+                if !matches!(self.script, Script::Silent | Script::OldBuild) {
+                    self.at(100.0, Change::Api(build.into(), 0));
                 }
             }
             Script::Unrouted | Script::OtherVersion => unreachable!("never asked"),
@@ -508,16 +487,16 @@ fn promote_lets_the_bank_0_build_install_itself_into_bank_1() {
             (PROMOTE, "pass")
         ]
     );
-    // Offered once the recovery role reported from bank 0.
-    assert_eq!(feeder.actions, ["offer on bank 0 recovery"]);
+    // Pushed once the build answered from bank 0.
+    assert_eq!(feeder.actions, ["offer on bank 0"]);
     assert!(feeder.offered);
 }
 
 #[test]
-fn a_bank_0_build_without_recovery_health_fails_before_any_offer() {
+fn a_bank_0_build_that_does_not_answer_fails_before_any_offer() {
     for (script, why) in [
-        (Script::OldBuild, "not the recovery role"),
-        (Script::Silent, "No recovery-role health"),
+        (Script::OldBuild, "No status from the build on bank 0"),
+        (Script::Silent, "No status from the build on bank 0"),
     ] {
         let mut feeder = StockFeeder::new(script);
         let reports = session(&mut feeder, true);
@@ -681,7 +660,7 @@ fn an_earlier_request_the_server_never_resolves_stops_the_run() {
 fn on_baseline(script: Script) -> (StockFeeder, ItestArgs) {
     let mut feeder = StockFeeder::new(script);
     feeder.on_stock = false;
-    feeder.api = Some(BUILD.into());
+    feeder.api = Some((BUILD.into(), 1));
     let mut rig_args = rig_args(&args(true));
     rig_args.power = true;
     rig_args.stock = Some(PathBuf::from(STOCK_REVIEW));
@@ -709,7 +688,7 @@ fn the_round_trip_goes_to_stock_and_back_to_the_confirmed_baseline() {
             "offer stock",
             "clear",
             "server StockTrial",
-            "offer on bank 0 recovery",
+            "offer on bank 0",
             "clear",
             "server Serve"
         ]
@@ -719,7 +698,7 @@ fn the_round_trip_goes_to_stock_and_back_to_the_confirmed_baseline() {
         feeder.served.as_deref(),
         Some(Path::new("private/verification/poc1-review"))
     );
-    assert_eq!(feeder.api.as_deref(), Some(BUILD));
+    assert_eq!(feeder.api, Some((BUILD.to_string(), 1)));
     assert!(
         feeder
             .notes

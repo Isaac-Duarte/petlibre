@@ -469,7 +469,8 @@ fn record_start(
     let label = command.label();
     let steps: Vec<&str> = match command {
         Command::Capture { .. } => vec!["capture"],
-        Command::Ota(args) => commands::ota::steps(args.source()),
+        Command::Ota(args) if args.cancel => vec![commands::ota::CANCEL_STEP],
+        Command::Ota(args) => commands::ota::steps(args.source(), args.mqtt),
         Command::Itest(args) => suite_of(suite)?.itest_steps(args)?,
         Command::StockOta(args) => suite_of(suite)?.stock_ota_steps(args),
         Command::StockPrepare(args) if args.fallback.is_some() => {

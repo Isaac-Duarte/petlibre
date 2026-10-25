@@ -121,14 +121,14 @@ pub const SCENARIOS: [Scenario; 11] = [
     },
     Scenario {
         name: "ota-recovery",
-        about: "a failed trial gives way to bank 0, which stops corrupt, truncated and stalled downloads, then restores the baseline",
+        about: "a failed trial gives way to bank 0, which stops corrupt, out-of-order and stalled transfers, then restores the baseline",
         tier: Tier::Standard,
         needs: &[Need::Power, Need::Build],
         baseline: false,
     },
     Scenario {
         name: "ota-power-cuts",
-        about: "power cut mid-download (bank 0 downloads again) and early in a trial (the count restarts)",
+        about: "power cut mid-download (bank 0 takes the offer again from the start) and early in a trial (the count restarts)",
         tier: Tier::Standard,
         needs: &[Need::Power, Need::Build, Need::Destructive],
         baseline: false,

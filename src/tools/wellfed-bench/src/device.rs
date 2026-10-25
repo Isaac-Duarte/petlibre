@@ -18,20 +18,29 @@
 //! A second, held session ([`Device::hold`]) is never reopened: the feeder
 //! admits no handshake while a feed holds its outputs, so only a session
 //! opened before the feed can reach it during one.
+//!
+//! [`Device::install`] pushes an update the way every client does
+//! (`wellfed_client::update`): the offer, the give-way restart, the offer
+//! again to bank 0, the chunks, and a resume after any drop. It can spoil
+//! its own transfer ([`Fault`]) for the suite's failure drills; an offer is
+//! never resent behind the caller's back.
 
 use std::fmt;
 use std::io::{ErrorKind, Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use wellfed_client::api::{Incoming, Session};
+use wellfed_client::update::{Image, InstallError, Installer, Next, Sent};
 use wellfed_formats::hex;
 use wellfed_formats::owner::OwnerKeyFile;
 use wellfed_formats::private::{self, SYSTEM_RANDOM};
 use wellfed_model::{
-    Generation, Op, OpenRefusal, Refusal, Settings, SettingsPatch, Status, Wifi, WifiSource,
+    Generation, Op, OpenRefusal, Refusal, Settings, SettingsPatch, Status, UpdateView, Wifi,
+    WifiSource,
 };
 use wellfed_proto::api::{PORT, RequestId};
 use wellfed_session::noise::Keypair;
@@ -89,6 +98,12 @@ pub enum DeviceError {
     #[error(transparent)]
     Session(#[from] wellfed_client::api::Error),
     #[error(transparent)]
+    Install(#[from] InstallError),
+    #[error("the install was stopped")]
+    Stopped,
+    #[error("the feeder did not answer again within {} s", .0.as_secs())]
+    Gone(Duration),
+    #[error(transparent)]
     Io(#[from] std::io::Error),
 }
 
@@ -121,6 +136,10 @@ pub enum Ask {
     CancelFeed {
         feed: u32,
     },
+    UpdateState,
+    /// Stop any install and forget the recorded candidate, so bank 0 takes
+    /// another manifest.
+    CancelUpdate,
 }
 
 impl Ask {
@@ -134,15 +153,21 @@ impl Ask {
             Self::SetLock { .. } => "set-lock",
             Self::Feed { .. } => "feed",
             Self::CancelFeed { .. } => "cancel-feed",
+            Self::UpdateState => "update-state",
+            Self::CancelUpdate => "cancel-update",
         }
     }
 
     /// Whether a send that failed may go again on a fresh session. The
     /// feeder remembers a write id's outcome only once its answer resolves,
     /// so a feed resent after a lost answer can start a second feed; a feed
-    /// or a cancel is sent once, and a failure leaves it uncertain.
+    /// or a cancel (of a feed or an update) is sent once, and a failure
+    /// leaves it uncertain.
     pub fn resendable(&self) -> bool {
-        !matches!(self, Self::Feed { .. } | Self::CancelFeed { .. })
+        !matches!(
+            self,
+            Self::Feed { .. } | Self::CancelFeed { .. } | Self::CancelUpdate
+        )
     }
 }
 
@@ -173,6 +198,7 @@ pub enum Answer {
     Feeding {
         feed: u32,
     },
+    Update(UpdateView),
     /// An answer no [`Ask`] expects (clients, an invite).
     Unexpected,
 }
@@ -188,7 +214,8 @@ impl Answer {
             Model::Settings(settings) => Self::Settings(settings),
             Model::Refused(refusal) => Self::Refused(refusal),
             Model::Feeding { feed } => Self::Feeding { feed },
-            Model::Clients(_) | Model::Invite(_) | Model::Update(_) => Self::Unexpected,
+            Model::Update(view) => Self::Update(view),
+            Model::Clients(_) | Model::Invite(_) => Self::Unexpected,
         }
     }
 }
@@ -255,6 +282,42 @@ impl DeviceStatus {
     }
 }
 
+/// A fault the bench puts into its own transfer, to see the feeder stop it
+/// before activation. Offsets are image bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Fault {
+    None,
+    /// Flip one bit of the image byte here: the whole-image hash fails.
+    Corrupt {
+        at: u32,
+    },
+    /// Once the chunk here is sent, send the next sector's first chunk
+    /// before it is wanted: the install stops in order.
+    Unwanted {
+        at: u32,
+    },
+    /// Send nothing from here on for longer than the install waits.
+    Stall {
+        at: u32,
+    },
+    /// Drop the connection once the chunk here is answered: the install
+    /// resumes on a new session.
+    Drop {
+        at: u32,
+    },
+    /// End once bank 1 has given way, leaving bank 0 waiting for the offer:
+    /// another manifest offered to it then is refused.
+    GiveWayOnly,
+}
+
+/// How long [`Device::install`] waits for the feeder to answer again after
+/// a restart, a power cut or a drop.
+pub(crate) const REACH: Duration = Duration::from_secs(10 * 60);
+/// How long a stalled transfer stays quiet: past the install's own minute.
+const STALL: Duration = Duration::from_secs(75);
+/// Between polls of the connection while chunks are out.
+const POLL: Duration = Duration::from_millis(100);
+
 /// A connection the feeder must not let in, for `request-auth`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Intruder {
@@ -315,6 +378,8 @@ pub struct Device {
     hotspot: Hotspot,
     zone: jiff::tz::TimeZone,
     address: Option<SocketAddr>,
+    /// The address was given, not found: it is never looked up again.
+    pinned: bool,
     connection: Option<Connection>,
     /// [`Self::hold`]'s session, apart from `connection`.
     held: Option<Connection>,
@@ -354,9 +419,30 @@ impl Device {
             hotspot,
             zone,
             address: None,
+            pinned: false,
             connection: None,
             held: None,
         })
+    }
+
+    /// The owner with `secret` reaching the feeder `identity` at `address`
+    /// alone (host tests, against the simulator).
+    #[cfg(test)]
+    pub(crate) fn at(secret: [u8; 32], identity: [u8; 32], address: SocketAddr) -> Self {
+        Self {
+            keys: Keypair::from_secret(secret),
+            identity,
+            hotspot: Hotspot {
+                hotspot_interface: String::new(),
+                target_mac: String::new(),
+                timezone: utc(),
+            },
+            zone: jiff::tz::TimeZone::UTC,
+            address: Some(address),
+            pinned: true,
+            connection: None,
+            held: None,
+        }
     }
 
     /// One request and its answer; see [`Ask::resendable`] for which a
@@ -432,6 +518,8 @@ impl Device {
                 portions: *portions,
             },
             Ask::CancelFeed { feed } => Op::CancelFeed { feed: *feed },
+            Ask::UpdateState => Op::UpdateState,
+            Ask::CancelUpdate => Op::CancelUpdate,
         };
         let bytes = connection.session.request(id, &op)?;
         connection.stream.write_all(&bytes)?;
@@ -458,7 +546,9 @@ impl Device {
             None => self.locate()?,
         };
         match self.handshake(address) {
-            Err(DeviceError::Connect(..) | DeviceError::Timeout(_)) if known.is_some() => {
+            Err(DeviceError::Connect(..) | DeviceError::Timeout(_))
+                if known.is_some() && !self.pinned =>
+            {
                 self.address = None;
                 let address = self.locate()?;
                 self.handshake(address)
@@ -487,6 +577,218 @@ impl Device {
                 Incoming::Refused(refusal) => Err(DeviceError::Refused(refusal)),
                 Incoming::Answer { .. } | Incoming::Pushed(_) => Err(DeviceError::Unwelcome),
             };
+        }
+    }
+
+    /// The feeder's identity key, which a downgrade statement names.
+    pub(crate) fn identity(&self) -> [u8; 32] {
+        self.identity
+    }
+
+    /// A session as soon as the feeder answers, retrying for up to `wait`.
+    fn reach(&mut self, wait: Duration, stop: &AtomicBool) -> Result<Connection, DeviceError> {
+        let deadline = Instant::now() + wait;
+        loop {
+            if stop.load(Ordering::Acquire) {
+                return Err(DeviceError::Stopped);
+            }
+            match self.connect() {
+                Ok(connection) => return Ok(connection),
+                Err(error @ (DeviceError::Refused(_) | DeviceError::Keys { .. })) => {
+                    return Err(error);
+                }
+                Err(_) if Instant::now() < deadline => std::thread::sleep(Duration::from_secs(2)),
+                Err(_) => return Err(DeviceError::Gone(wait)),
+            }
+        }
+    }
+
+    /// The bank a fresh session answers from.
+    fn bank(&self, connection: &mut Connection) -> Result<u8, DeviceError> {
+        match self.send(connection, random()?, &Ask::Status)? {
+            Answer::Status(status) => Ok(status.bank),
+            _ => Err(DeviceError::Unwelcome),
+        }
+    }
+
+    /// Install `image` over the device API, with `fault` spoiling the
+    /// transfer, until bank 1 is activated (the feeder then restarts into
+    /// it; its trial is the caller's to watch) or the install stops. `note`
+    /// hears each step. Setting `stop` cancels the install on the feeder
+    /// (so no recorded candidate holds bank 0 to it) and ends the push.
+    pub(crate) fn install(
+        &mut self,
+        image: Image<'_>,
+        mut fault: Fault,
+        stop: &AtomicBool,
+        note: &mut dyn FnMut(String),
+    ) -> Result<(), DeviceError> {
+        let mut installer = Installer::new(image);
+        // One session for the push: a kept one would hold a slot it never uses.
+        self.connection = None;
+        let mut connection = self.reach(REACH, stop)?;
+        let bank = self.bank(&mut connection)?;
+        note(format!("Session open on bank {bank}"));
+        installer.opened(bank);
+        let mut out: Vec<(RequestId, Sent, Instant)> = Vec::new();
+        let mut written = 0;
+        // The unwanted chunk, sent until the stage takes it (a full mailbox
+        // answers Busy), and the request it went under.
+        let mut unwanted: Option<(u32, Option<RequestId>)> = None;
+        let mut cancelling: Option<Instant> = None;
+
+        loop {
+            if stop.load(Ordering::Acquire) && cancelling.is_none() {
+                note("Stopping: cancelling the install on the feeder".into());
+                installer.cancel();
+                cancelling = Some(Instant::now());
+            }
+            if cancelling.is_some_and(|since| since.elapsed() > ANSWER) {
+                return Err(DeviceError::Stopped);
+            }
+            let mut lost = false;
+            if let Some((ahead, None)) = unwanted {
+                let data = image.payload.get(ahead as usize..ahead as usize + 512);
+                let id = random()?;
+                let bytes = connection.session.request(
+                    id,
+                    &Op::UpdateChunk {
+                        offset: ahead,
+                        data: data.unwrap_or(&[0; 512]).to_vec(),
+                    },
+                )?;
+                if connection.stream.write_all(&bytes).is_err() {
+                    lost = true;
+                }
+                unwanted = Some((ahead, Some(id)));
+            }
+            while !lost {
+                let next = installer.poll();
+                let (sent, op) = match next {
+                    Next::Send(sent, op) => (sent, op),
+                    Next::Wait => break,
+                    Next::Reconnect if fault == Fault::GiveWayOnly => {
+                        note("Bank 1 gave way; stopping before bank 0's offer".into());
+                        return Ok(());
+                    }
+                    Next::Reconnect => {
+                        note("The feeder restarts; waiting for it on bank 0".into());
+                        lost = true;
+                        break;
+                    }
+                    Next::Activated => {
+                        note("Activated: the feeder restarts into the new build".into());
+                        return Ok(());
+                    }
+                    Next::Failed(error) => return Err(error.into()),
+                    Next::Cancelled => {
+                        note("Cancelled: bank 0 holds no candidate".into());
+                        return Err(DeviceError::Stopped);
+                    }
+                };
+
+                let op = match (sent, op, fault) {
+                    (Sent::Chunk(offset), _, Fault::Stall { at }) if offset >= at => {
+                        note(format!(
+                            "Stalling at byte {offset} for {} s",
+                            STALL.as_secs()
+                        ));
+                        fault = Fault::None;
+                        wait(STALL, stop)?;
+                        installer.lost();
+                        lost = true;
+                        break;
+                    }
+                    // Every send of the chunk is spoiled, a resend after a
+                    // Busy included, so the hash check always sees it.
+                    (
+                        Sent::Chunk(offset),
+                        Op::UpdateChunk { mut data, .. },
+                        Fault::Corrupt { at },
+                    ) if (offset..offset + wellfed_core::ota::MAX_CHUNK).contains(&at) => {
+                        note(format!("Corrupting byte {at}"));
+                        data[(at - offset) as usize] ^= 0x10;
+                        Op::UpdateChunk { offset, data }
+                    }
+                    (_, op, _) => op,
+                };
+                let id = random()?;
+                let bytes = connection.session.request(id, &op)?;
+                if connection.stream.write_all(&bytes).is_err() {
+                    lost = true;
+                    break;
+                }
+                out.push((id, sent, Instant::now()));
+
+                if let (Sent::Chunk(offset), Fault::Unwanted { at }) = (sent, fault)
+                    && offset >= at
+                {
+                    let ahead = (offset / 4096 + 1) * 4096;
+                    note(format!("Sending byte {ahead} before it is wanted"));
+                    fault = Fault::None;
+                    unwanted = Some((ahead, None));
+                    break;
+                }
+            }
+
+            if !lost {
+                match read_for(&mut connection, POLL) {
+                    Ok(()) => {}
+                    Err(DeviceError::Timeout(_)) => {}
+                    Err(_) => lost = true,
+                }
+                while let Some(incoming) = connection.session.next_incoming()? {
+                    let Incoming::Answer { id, answer } = incoming else {
+                        continue;
+                    };
+                    if let Some((ahead, Some(sent))) = unwanted
+                        && sent == id
+                    {
+                        if answer == wellfed_model::Answer::Refused(Refusal::Busy) {
+                            unwanted = Some((ahead, None));
+                        } else {
+                            unwanted = None;
+                            installer.answer(Sent::Chunk(ahead), &answer)?;
+                        }
+                        continue;
+                    }
+                    let Some(index) = out.iter().position(|(sent, ..)| *sent == id) else {
+                        continue;
+                    };
+                    let (_, sent, _) = out.swap_remove(index);
+                    installer.answer(sent, &answer)?;
+                    if let Sent::Chunk(offset) = sent {
+                        if let Some(view) = installer.view()
+                            && view.written >= written + 64 * 1024
+                        {
+                            written = view.written;
+                            note(format!("Written {written} of {} bytes", view.image_len));
+                        }
+                        if let Fault::Drop { at } = fault
+                            && offset >= at
+                        {
+                            note(format!("Dropping the connection at byte {offset}"));
+                            fault = Fault::None;
+                            lost = true;
+                        }
+                    }
+                }
+                lost |= out.iter().any(|(.., at)| at.elapsed() > ANSWER);
+            }
+
+            if lost {
+                out.clear();
+                if let Some((ahead, Some(_))) = unwanted {
+                    unwanted = Some((ahead, None));
+                }
+                installer.lost();
+                self.connection = None;
+                std::thread::sleep(Duration::from_secs(2));
+                connection = self.reach(REACH, stop)?;
+                let bank = self.bank(&mut connection)?;
+                note(format!("Session open again on bank {bank}"));
+                installer.opened(bank);
+            }
         }
     }
 
@@ -622,6 +924,23 @@ fn dial(address: SocketAddr) -> Result<TcpStream, DeviceError> {
     Ok(stream)
 }
 
+/// An interruptible sleep.
+fn wait(time: Duration, stop: &AtomicBool) -> Result<(), DeviceError> {
+    let deadline = Instant::now() + time;
+    while Instant::now() < deadline {
+        if stop.load(Ordering::Acquire) {
+            return Err(DeviceError::Stopped);
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    Ok(())
+}
+
+/// Read what arrives within `time` into the session.
+fn read_for(connection: &mut Connection, time: Duration) -> Result<(), DeviceError> {
+    read(connection, Instant::now() + time)
+}
+
 /// Read what arrives before `deadline` into the session.
 fn read(connection: &mut Connection, deadline: Instant) -> Result<(), DeviceError> {
     let left = deadline.saturating_duration_since(Instant::now());
@@ -643,6 +962,9 @@ fn read(connection: &mut Connection, deadline: Instant) -> Result<(), DeviceErro
     connection.session.receive(&buffer[..n])?;
     Ok(())
 }
+
+#[cfg(test)]
+mod install_tests;
 
 #[cfg(test)]
 mod tests {

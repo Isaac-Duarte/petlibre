@@ -1,6 +1,7 @@
 //! The live [`Rig`]: the bench's real hotspot, `wellfed-local` children,
-//! UART captures, device API sessions as the owner's key and, with
-//! `--power`, the feeder supply relay.
+//! UART captures, device API sessions as the owner's key (requests, and the
+//! updates it pushes on a thread of its own) and, with `--power`, the
+//! feeder supply relay.
 //!
 //! The owner's standing authorization (AGENTS.md) covers bringing the
 //! hotspot up and running `serve` as a bounded foreground process, provided
@@ -18,19 +19,20 @@
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::net::{SocketAddr, TcpStream};
+
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+use serde::Deserialize;
 use serde::de::IgnoredAny;
-use serde::{Deserialize, Serialize};
 
 use wellfed_bench::commands::Bench;
-use wellfed_bench::commands::ota::{self, OtaArgs, Staged, Timing};
+use wellfed_bench::commands::ota::{self, OtaArgs, Staged, Target, Timing};
 use wellfed_bench::device::{Answer, Ask, Device, Intruder, Rebuffed};
 use wellfed_bench::server::{LocalStatus, TrialRequest, TrialResolve};
 use wellfed_bench::suite::ItestArgs;
-use wellfed_bench::tools::Capture;
+use wellfed_bench::tools::{Capture, InstallJob, Installing};
 use wellfed_bench::{Error, Result, require, say};
 use wellfed_formats::bench::progress::StepState;
 use wellfed_formats::bench::{CAPTURES, VERIFICATION};
@@ -53,15 +55,6 @@ struct Hotspot {
     connection: String,
 }
 
-/// `POST /api/replacement/ota/offer`; no fields clears the offer.
-#[derive(Serialize)]
-struct Offer<'a> {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    manifest: Option<&'a str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    image: Option<&'a str>,
-}
-
 /// `wellfed-local ota-images` writes this beside the config; only its token
 /// goes into the trial request.
 #[derive(Deserialize, PartialEq)]
@@ -77,8 +70,6 @@ const IMAGE_PORT: u16 = 8088;
 #[derive(Default)]
 struct Children {
     serve: Option<Child>,
-    broker: Option<Child>,
-    fault: Option<Child>,
     images: Option<Child>,
 }
 
@@ -89,6 +80,12 @@ pub(super) struct LiveRig<'b> {
     config_arg: String,
     api: LocalApi,
     device: Device,
+    /// The owner key file and server config every push uses.
+    keys: PathBuf,
+    config: PathBuf,
+    /// The update being pushed, if any.
+    pushing: Option<Box<dyn Installing>>,
+    /// The server's MQTT listener, whose host also serves stock's images.
     mqtt: SocketAddr,
     connection: String,
     /// The hotspot's state before the run; `None` until recorded.
@@ -126,6 +123,9 @@ impl<'b> LiveRig<'b> {
             config_arg: args.config.display().to_string(),
             api: LocalApi::new(&config, HTTP_TIMEOUT),
             device: Device::open(&root, &args.keys, &args.config)?,
+            keys: args.keys.clone(),
+            config: args.config.clone(),
+            pushing: None,
             mqtt: config.mqtt_listen,
             connection: hotspot.connection,
             hotspot_was_up: None,
@@ -149,16 +149,8 @@ impl<'b> LiveRig<'b> {
         require(
             rig.local_bin().is_file(),
             format!(
-                "{} not found; cargo build --release -p wellfed-local --examples",
+                "{} not found; cargo build --release -p wellfed-local",
                 rig.local_bin().display()
-            ),
-        )?;
-        let fault_server = rig.example("ota_fault_server");
-        require(
-            fault_server.is_file(),
-            format!(
-                "{} not found; cargo build --release -p wellfed-local --examples",
-                fault_server.display()
             ),
         )?;
         rig.bench.fresh(&rig.server_log)?;
@@ -211,15 +203,6 @@ impl<'b> LiveRig<'b> {
 
     fn local_bin(&self) -> PathBuf {
         self.local_bin.clone()
-    }
-
-    /// `cargo build --examples` puts them in `examples/` beside the binary.
-    fn example(&self, name: &str) -> PathBuf {
-        let bin = self.local_bin();
-        bin.parent()
-            .unwrap_or(Path::new("."))
-            .join("examples")
-            .join(name)
     }
 
     fn segment_path(&self, n: u32) -> PathBuf {
@@ -302,35 +285,6 @@ impl<'b> LiveRig<'b> {
         ready
     }
 
-    fn start_broker(&mut self) -> Result<()> {
-        let mut child = self.spawn(&self.local_bin(), &["broker", "--config", &self.config_arg])?;
-        let mqtt = self.mqtt;
-        let ready = self.until_ready(&mut child, "wellfed-local broker", || {
-            TcpStream::connect_timeout(&mqtt, Duration::from_millis(500)).is_ok()
-        });
-        self.children.broker = Some(child);
-        ready
-    }
-
-    fn start_fault(&mut self, fault: Fault, staged: &Staged) -> Result<()> {
-        let at = fault.at().to_string();
-        let args = [
-            "--config",
-            &self.config_arg,
-            "--manifest",
-            &staged.manifest,
-            "--image",
-            &staged.image,
-            "--fault",
-            fault.arg(),
-            "--at",
-            &at,
-        ];
-        let child = self.spawn(&self.example("ota_fault_server"), &args)?;
-        self.children.fault = Some(child);
-        Ok(())
-    }
-
     /// SIGTERM, which `serve` handles by stopping its broker child too; a
     /// kill if it is still running after [`STOP_SECONDS`].
     fn stop(child: Option<Child>) {
@@ -351,9 +305,17 @@ impl<'b> LiveRig<'b> {
 
     fn stop_servers(&mut self) {
         Self::stop(self.children.images.take());
-        Self::stop(self.children.fault.take());
         Self::stop(self.children.serve.take());
-        Self::stop(self.children.broker.take());
+    }
+
+    /// End the push still running, if any, and log what it said.
+    fn stop_push(&mut self) {
+        if let Some(mut pushing) = self.pushing.take() {
+            pushing.stop();
+            for note in pushing.notes() {
+                self.note(&format!("  push: {note}"));
+            }
+        }
     }
 
     /// Put the bench back as [`Self::start`] found it. Safe to repeat.
@@ -363,6 +325,7 @@ impl<'b> LiveRig<'b> {
         }
         self.restored = true;
 
+        self.stop_push();
         self.stop_servers();
         if let Some(mut capture) = self.capture.take() {
             capture.stop();
@@ -401,35 +364,49 @@ impl Rig for LiveRig<'_> {
     fn server(&mut self, server: Server) -> Result<()> {
         self.stop_servers();
         let label = match &server {
-            Server::Serve => "wellfed-local serve".to_string(),
-            Server::StockTrial => "wellfed-local serve --enable-ota-trial".to_string(),
-            Server::Faulty { fault, staged } => format!(
-                "broker + ota_fault_server ({}, version {})",
-                fault.arg(),
-                staged.version
-            ),
+            Server::Serve => "wellfed-local serve",
+            Server::StockTrial => "wellfed-local serve --enable-ota-trial",
         };
         self.note(&format!("  Server: {label}"));
 
         match server {
             Server::Serve => self.start_serve(false),
             Server::StockTrial => self.start_serve(true),
-            Server::Faulty { fault, staged } => {
-                self.start_broker()?;
-                self.start_fault(fault, &staged)
-            }
         }
     }
 
-    fn offer(&mut self, staged: Option<&Staged>) -> Result<()> {
-        let body = Offer {
-            manifest: staged.map(|s| s.manifest.as_str()),
-            image: staged.map(|s| s.image.as_str()),
+    fn offer(&mut self, staged: Option<&Staged>, fault: Fault) -> Result<()> {
+        self.stop_push();
+        let Some(staged) = staged else {
+            return Ok(());
         };
-        self.api
-            .post::<IgnoredAny>("/api/replacement/ota/offer", &body)
-            .map(|_| ())
-            .map_err(Error::from)
+        let job = InstallJob {
+            keys: self.keys.clone(),
+            config: self.config.clone(),
+            manifest: staged.manifest.clone().into(),
+            image: staged.image.clone().into(),
+            // Stock has no trial to come back from: the owner's statement.
+            downgrade: (staged.target == Target::Stock).then(|| ota::KEY_PATH.into()),
+            fault: fault.device(),
+        };
+        if let Some(stage) = fault.stage() {
+            self.note(&format!(
+                "  Pushing version {} with a fault bank 0 must stop at {stage}",
+                staged.version
+            ));
+        }
+        self.pushing = Some(self.bench.tools.install(&job)?);
+        Ok(())
+    }
+
+    fn offered(&mut self) -> Option<std::result::Result<(), String>> {
+        let pushing = self.pushing.as_mut()?;
+        let notes = pushing.notes();
+        let finished = pushing.finished();
+        for note in notes {
+            self.note(&format!("  push: {note}"));
+        }
+        finished
     }
 
     fn device(&mut self, ask: &Ask) -> Result<Answer> {

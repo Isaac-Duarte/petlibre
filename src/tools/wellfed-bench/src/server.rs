@@ -16,7 +16,7 @@
 use std::fmt::Display;
 use std::ops::Deref;
 
-use wellfed_formats::bench::health::{Health, HealthRole};
+use wellfed_formats::bench::health::Health;
 use wellfed_formats::local::{Replacement, TrialRecord};
 use wellfed_model::WifiSource;
 use serde::{Deserialize, Serialize};
@@ -69,9 +69,6 @@ pub enum NotReady {
     Build(String),
     #[error("health reports bank {}", shown(.0))]
     Bank(Option<u64>),
-    /// Bank 0 is the recovery role, which must say so.
-    #[error("health from bank 0 is not the recovery role's")]
-    NotRecovery,
     /// The first 12 digits of the build the device API reports.
     #[error("the feeder reports build {0}")]
     Running(String),
@@ -159,53 +156,6 @@ impl LocalStatus {
         }
         Ok(health)
     }
-
-    /// The bank-0 recovery role's health from `build`, while it waits for an
-    /// update: what a build stock just installed reports.
-    pub fn recovery_health(&self, build: &str) -> Result<String, NotReady> {
-        let report = self.health_on(build, 0)?;
-        match self.fresh_health()?.role {
-            Some(HealthRole::Recovery) => Ok(report + ", recovery role"),
-            None => Err(NotReady::NotRecovery),
-        }
-    }
-
-    /// Whether fresh health shows `build` (lowercase) running on `bank`: a
-    /// one-line report of it. Bank 0 after stock installed the build, since
-    /// stock writes the bank it is not running from.
-    pub(crate) fn health_on(&self, build: &str, bank: u64) -> Result<String, NotReady> {
-        let health = self.fresh_health()?;
-
-        let reported = health.build.to_ascii_lowercase();
-        if reported != build {
-            let short = reported.get(..12).filter(|s| !s.is_empty());
-            return Err(NotReady::Build(short.unwrap_or("none").into()));
-        }
-        if health.bank != Some(bank) {
-            return Err(NotReady::Bank(health.bank));
-        }
-
-        let faults = if health.faults.is_empty() {
-            "none".into()
-        } else {
-            health.faults.join(", ")
-        };
-        let mut report = format!(
-            "Health: build {} on bank {bank}, seq {}, outputs {}, faults {faults}",
-            &build[..build.len().min(12)],
-            shown(&health.seq),
-            health.outputs.as_deref().unwrap_or("?"),
-        );
-        if let Some(clock) = &health.clock {
-            let valid = if clock.unix_ms.is_some() {
-                "valid"
-            } else {
-                "not set"
-            };
-            report += &format!(", clock {valid} (syncs {})", clock.syncs);
-        }
-        Ok(report)
-    }
 }
 
 #[cfg(test)]
@@ -214,45 +164,12 @@ mod tests {
     use serde_json::json;
 
     const NEW: &str = "8a13e59efa15e56b5f5e32825909dc45e381a2027abc65d8de6658c40b302447";
-    const OLD: &str = "5b8433a4f795cb2178c7a38a45087a6727e7a2621fc557d146cff607556f991e";
-
-    fn status(health: Value, online: bool, stale: bool) -> LocalStatus {
-        serde_json::from_value(json!({"replacement": {
-            "health": health, "online": online, "stale": stale, "age_ms": 5}}))
-        .unwrap()
-    }
-
     #[test]
-    fn health_must_show_the_build_on_bank_1_online_and_fresh() {
-        let good = json!({"build": NEW.to_uppercase(), "bank": 1, "seq": 3, "outputs": "sensing",
-                          "faults": ["watchdog", "flash_hook"], "clock": {"syncs": 0}});
-        assert_eq!(
-            status(good.clone(), true, false).health_on(NEW, 1).unwrap(),
-            "Health: build 8a13e59efa15 on bank 1, seq 3, outputs sensing, faults watchdog, flash_hook, clock not set (syncs 0)"
-        );
-
-        let mut bank0 = good.clone();
-        bank0["bank"] = json!(0);
-        let mut old = good.clone();
-        old["build"] = json!(OLD);
-        let unconfigured: LocalStatus =
-            serde_json::from_value(json!({"replacement": null})).unwrap();
-        for (status, reason) in [
-            (unconfigured, NotReady::NoRole),
-            (status(Value::Null, false, true), NotReady::NoHealth),
-            (
-                status(old, true, false),
-                NotReady::Build("5b8433a4f795".into()),
-            ),
-            (status(bank0, true, false), NotReady::Bank(Some(0))),
-            (status(good.clone(), false, false), NotReady::Offline),
-            (status(good, true, true), NotReady::Stale(Some(5))),
-        ] {
-            assert_eq!(status.health_on(NEW, 1).unwrap_err(), reason);
-        }
-        assert_eq!(
-            NotReady::Stale(Some(5)).to_string(),
-            "health is stale (age 5 ms)"
-        );
+    fn a_document_without_freshness_is_stale() {
+        let status: LocalStatus = serde_json::from_value(
+            json!({"replacement": {"health": {"build": NEW}, "online": true}}),
+        )
+        .unwrap();
+        assert_eq!(status.fresh_health().unwrap_err(), NotReady::Stale(None));
     }
 }

@@ -1,7 +1,7 @@
 //! The child processes the bench chains: `wellfed-flash`, `wellfed-local`
-//! (signing and offering an over-the-air update), `wellfed-build` (the
+//! (offering an update to a build still on MQTT), `wellfed-build` (the
 //! build and review for `ota --build`), and `sigrok-cli`; and the device API
-//! session that checks an update's result.
+//! sessions that push an update ([`Tools::install`]) and check its result.
 //!
 //! `wellfed-flash` runs as its own process, never linked in. Its plans bind
 //! the SHA-256 of the running executable, and that has to stay the flash
@@ -18,8 +18,9 @@ use std::time::{Duration, Instant};
 use wellfed_formats::canonical::sha256;
 use serde::Deserialize;
 
-use crate::device::{Answer, Ask, Device, DeviceStatus};
+use crate::device::{Answer, Ask, Device, DeviceStatus, Fault};
 use crate::{Error, Result, interrupted, require};
+use wellfed_build::signing::CONTAINER_HEADER;
 use wellfed_formats::bench::progress::{FlashTool, Status};
 use wellfed_formats::bench::relative;
 
@@ -39,6 +40,9 @@ pub trait Tools {
     /// `keys` (root-relative); `config` is the server config whose hotspot
     /// fields find the feeder when mDNS does not.
     fn device_status(&mut self, keys: &Path, config: &Path) -> Result<DeviceStatus>;
+    /// Cancel any update and forget its recorded candidate over the device
+    /// API, as [`Self::device_status`] reaches the feeder; the answer.
+    fn cancel_update(&mut self, keys: &Path, config: &Path) -> Result<Answer>;
     /// Run one `wellfed-build` command (a firmware build or review) from the
     /// checkout root, streaming both of its outputs as they come; returns its
     /// exit status.
@@ -62,6 +66,131 @@ pub trait Tools {
     ) -> Result<Box<dyn Analyzer>>;
     fn sigrok_available(&self) -> bool;
     fn flash_tool(&self) -> Option<FlashTool>;
+    /// Push the update `job` names over the device API on a thread of its
+    /// own, until bank 1 is activated or the install stops.
+    fn install(&mut self, job: &InstallJob) -> Result<Box<dyn Installing>>;
+}
+
+/// An update to push: root-relative paths under `private/`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstallJob {
+    /// The owner key file the sessions open with, and the server config
+    /// whose hotspot fields find the feeder.
+    pub keys: PathBuf,
+    pub config: PathBuf,
+    /// The signed version 2 manifest, and the review's `image.bin` (an OTA
+    /// container; its bank contents are what the manifest names).
+    pub manifest: PathBuf,
+    pub image: PathBuf,
+    /// Sign a downgrade statement with this key, bound to the feeder and its
+    /// floor as the feeder reports them: stock always needs one.
+    pub downgrade: Option<PathBuf>,
+    pub fault: Fault,
+}
+
+/// An update being pushed.
+pub trait Installing {
+    /// How it ended, once it has: `Ok` once bank 1 is activated.
+    fn finished(&mut self) -> Option<std::result::Result<(), String>>;
+    /// Its steps since the last call.
+    fn notes(&mut self) -> Vec<String>;
+    /// End it at its next poll and wait for that.
+    fn stop(&mut self);
+}
+
+/// [`Tools::install`] on a thread with its own device session.
+struct Pushing {
+    stop: Arc<AtomicBool>,
+    notes: mpsc::Receiver<String>,
+    done: Option<std::thread::JoinHandle<std::result::Result<(), String>>>,
+    result: Option<std::result::Result<(), String>>,
+}
+
+impl Pushing {
+    fn start(root: &Path, job: &InstallJob) -> Result<Self> {
+        let manifest = fs::read(root.join(&job.manifest))?;
+        let container = fs::read(root.join(&job.image))?;
+        require(
+            container.len() > CONTAINER_HEADER,
+            format!("{} is too short", job.image.display()),
+        )?;
+        let mut device = Device::open(root, &job.keys, &job.config)?;
+        let downgrade = match &job.downgrade {
+            Some(key) => Some(
+                wellfed_build::signing::Key::load(&root.join(key))
+                    .map_err(|source| Error::Bench(format!("{}: {source}", key.display())))?,
+            ),
+            None => None,
+        };
+        let fault = job.fault;
+        let stop = Arc::new(AtomicBool::new(false));
+        let (send, notes) = mpsc::channel();
+        let stopping = Arc::clone(&stop);
+        let done = std::thread::spawn(move || {
+            let mut note = |text: String| {
+                let _ = send.send(text);
+            };
+            let statement = match &downgrade {
+                Some(key) => {
+                    let floor = match device.ask(&Ask::UpdateState) {
+                        Ok(Answer::Update(view)) => view.min_version,
+                        other => return Err(format!("the feeder's floor: {other:?}")),
+                    };
+                    note(format!("Signing a downgrade at floor {floor}"));
+                    let identity = device.identity();
+                    Some(
+                        key.downgrade(&manifest, &identity, floor)
+                            .map_err(|error| error.to_string())?,
+                    )
+                }
+                None => None,
+            };
+            let image = wellfed_client::update::Image {
+                manifest: &manifest,
+                downgrade: statement.as_deref(),
+                payload: &container[CONTAINER_HEADER..],
+            };
+            device
+                .install(image, fault, &stopping, &mut note)
+                .map_err(|error| error.to_string())
+        });
+        Ok(Self {
+            stop,
+            notes,
+            done: Some(done),
+            result: None,
+        })
+    }
+}
+
+impl Installing for Pushing {
+    fn finished(&mut self) -> Option<std::result::Result<(), String>> {
+        if self.result.is_none() && self.done.as_ref().is_some_and(|d| d.is_finished()) {
+            let joined = self.done.take().map(std::thread::JoinHandle::join);
+            self.result = Some(match joined {
+                Some(Ok(result)) => result,
+                _ => Err("the install thread panicked".into()),
+            });
+        }
+        self.result.clone()
+    }
+
+    fn notes(&mut self) -> Vec<String> {
+        self.notes.try_iter().collect()
+    }
+
+    fn stop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        if let Some(done) = self.done.take() {
+            self.result = Some(done.join().unwrap_or_else(|_| Err("panicked".into())));
+        }
+    }
+}
+
+impl Drop for Pushing {
+    fn drop(&mut self) {
+        self.stop();
+    }
 }
 
 /// A finished child's exit status and output.
@@ -368,6 +497,10 @@ impl Tools for Processes {
         stream(command, status)
     }
 
+    fn install(&mut self, job: &InstallJob) -> Result<Box<dyn Installing>> {
+        Ok(Box::new(Pushing::start(&self.root, job)?))
+    }
+
     fn device_status(&mut self, keys: &Path, config: &Path) -> Result<DeviceStatus> {
         let device = match &mut self.device {
             Some(device) => device,
@@ -377,6 +510,14 @@ impl Tools for Processes {
             Answer::Status(status) => Ok(status),
             other => Err(Error::Bench(format!("Status answered {other:?}"))),
         }
+    }
+
+    fn cancel_update(&mut self, keys: &Path, config: &Path) -> Result<Answer> {
+        let device = match &mut self.device {
+            Some(device) => device,
+            None => self.device.insert(Device::open(&self.root, keys, config)?),
+        };
+        Ok(device.ask(&Ask::CancelUpdate)?)
     }
 
     fn build(&mut self, args: &[String], status: &mut Status) -> Result<i32> {

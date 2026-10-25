@@ -3,6 +3,9 @@
 //! settings and the Wi-Fi source as before. One that changes device state
 //! restores it on failure too, as far as the feeder still answers.
 //!
+//! Updates are pushed over the device API; the failure drills spoil the
+//! bench's own transfer and watch bank 0 stop it before activation.
+//!
 //! Every request goes over the device API as the owner's key; a write
 //! names the store generation it read, so the feeder refuses it as stale if
 //! anything changed in between.
@@ -18,7 +21,7 @@ use wellfed_bench::{Error, Result, require};
 use wellfed_formats::bench::catalog;
 
 use super::log::Record;
-use super::{Baseline, Ctx, Fault, INSTALL_SECONDS, STATUS_SECONDS, Server, compact};
+use super::{Baseline, Ctx, Fault, INSTALL_SECONDS, STATUS_SECONDS, compact};
 
 /// One catalog entry and the code that runs it; the entry's fields read
 /// through, as `scenario.name`.
@@ -95,7 +98,7 @@ const SAVE_SECONDS: f64 = 30.0;
 const BOOT_SECONDS: f64 = 60.0;
 /// Five failed joins of the stored network, then the build's join.
 const FALLBACK_SECONDS: f64 = 8.0 * 60.0;
-/// The confirmed build checks for an offer once a minute.
+/// From the offer to bank 1's give-way: its checks, then the answer's way out.
 const OFFER_CHECK_SECONDS: f64 = 150.0;
 /// How long a record may trail the answer it logs.
 pub(super) const RECORD_SECONDS: f64 = 10.0;
@@ -153,7 +156,7 @@ fn ota_update(ctx: &mut Ctx) -> Result<()> {
             outcome == Outcome::Passed,
             format!("The baseline did not confirm: {outcome:?}"),
         )?;
-        ctx.rig.offer(None)?;
+        ctx.rig.offer(None, Fault::None)?;
     }
 
     ctx.baseline = Some(Baseline {
@@ -290,11 +293,6 @@ fn request_auth(ctx: &mut Ctx) -> Result<()> {
     let build = ctx.baseline()?.build.clone();
     let status = ctx.device_status()?;
     status.matches(&build).map(|_| ()).map_err(Into::into)
-}
-
-fn restore_serve(ctx: &mut Ctx) -> Result<()> {
-    ctx.rig.server(Server::Serve)?;
-    ctx.reachable(STATUS_SECONDS).map(|_| ())
 }
 
 /// Cut and restore the supply, then see the baseline start on bank 1 and
@@ -485,66 +483,45 @@ fn network_bounce(ctx: &mut Ctx) -> Result<()> {
     )
 }
 
-/// One failing trial, then the fault drills from the recovery role it falls
-/// back to, so the fallback needs no restore install of its own: the clean
-/// download at the end is the restore.
+/// One failing trial, then the fault drills on bank 0, which it falls back
+/// to, so the fallback needs no restore install of its own: the clean
+/// download at the end is the restore. Bank 0 keeps answering after each
+/// stop, so the drills need no cold boot between them.
 fn ota_recovery(ctx: &mut Ctx) -> Result<()> {
     let failing = ctx.failing("fail")?;
-    // Signed after the variant, so bank 0 accepts it as newer.
+    // Signed after the variant, so it is above the floor.
     let staged = ctx.resign("restore")?;
 
     let result = recovery(ctx, &failing, &staged);
     if result.is_err() {
-        ctx.note(
-            "  The feeder may be left on bank 0's recovery role; serving the baseline and cold-booting it",
-        );
-        let _ = ctx.rig.server(Server::Faulty {
-            fault: Fault::None,
-            staged: staged.clone(),
-        });
-        let _ = ctx.rig.power_cycle();
+        ctx.note("  The feeder may be left on bank 0; pushing the baseline to it");
         let since = ctx.log.len();
+        let _ = ctx.rig.offer(Some(&staged), Fault::None);
         let _ = ctx.watch(&staged.build, since, INSTALL_SECONDS);
     }
-    restore_serve(ctx)?;
-    // A restarted serve holds no offer; clearing says so in the record.
-    ctx.rig.offer(None)?;
+    ctx.rig.offer(None, Fault::None)?;
     ctx.confirm(&staged.build)?;
     result
 }
 
 fn recovery(ctx: &mut Ctx, failing: &super::Staged, staged: &super::Staged) -> Result<()> {
     let since = ctx.mark()?;
-    ctx.rig.offer(Some(failing))?;
+    ctx.rig.offer(Some(failing), Fault::None)?;
     ctx.expect("PLOTA1 activated", since, INSTALL_SECONDS, |r| {
         r.tag == "PLOTA1" && r.first == "activated"
     })?;
+    let outcome = ctx.watch(&failing.build, since, INSTALL_SECONDS)?;
+    require(
+        matches!(outcome, Outcome::FellBack { .. }),
+        format!("The failing build was not rejected: {outcome:?}"),
+    )?;
 
-    // The fault server takes over while the variant fails its trial, so
-    // bank 0's recovery role meets it on its first boot. Each later case
-    // needs a cold boot: a stopped update hands over to the transport until
-    // the next one.
-    let cases = [
-        (Fault::Corrupt, "hash"),
-        (Fault::Range, "range"),
-        (Fault::Stall, "timeout"),
-    ];
-    for (i, (fault, stage)) in cases.into_iter().enumerate() {
+    // Bank 0 runs now. Each drill pushes the restore with one fault, and
+    // bank 0 must stop it before the marker.
+    for fault in [Fault::Corrupt, Fault::Unwanted, Fault::Stall] {
+        let Some(stage) = fault.stage() else { continue };
         let start = ctx.mark()?;
-        ctx.rig.server(Server::Faulty {
-            fault,
-            staged: staged.clone(),
-        })?;
-        if i == 0 {
-            let outcome = ctx.watch(&failing.build, since, INSTALL_SECONDS)?;
-            require(
-                matches!(outcome, Outcome::FellBack { .. }),
-                format!("The failing build was not rejected: {outcome:?}"),
-            )?;
-        } else {
-            ctx.rig.power_cycle()?;
-        }
-
+        ctx.rig.offer(Some(staged), fault)?;
         let what = format!("PLOTA1 error stage={stage}");
         ctx.expect(&what, start, FAULT_SECONDS, |r| {
             r.tag == "PLOTA1" && r.first == "error" && r.field("stage") == Some(stage)
@@ -559,11 +536,7 @@ fn recovery(ctx: &mut Ctx, failing: &super::Staged, staged: &super::Staged) -> R
     }
 
     let since = ctx.mark()?;
-    ctx.rig.server(Server::Faulty {
-        fault: Fault::None,
-        staged: staged.clone(),
-    })?;
-    ctx.rig.power_cycle()?;
+    ctx.rig.offer(Some(staged), Fault::None)?;
     let outcome = ctx.watch(&staged.build, since, INSTALL_SECONDS)?;
     require(
         outcome == Outcome::Passed,
@@ -585,24 +558,34 @@ fn record_before(ctx: &Ctx, mark: usize, field: &str) -> Option<String> {
 fn ota_power_cuts(ctx: &mut Ctx) -> Result<()> {
     let build = ctx.baseline()?.build.clone();
     // The feeder skips the trial for a build it has confirmed before, so the
-    // cuts happen while it installs the speaker firmware (no motion), which
-    // it has not; the baseline goes back on afterwards.
-    let speaker = ctx.image(
-        "cut-speaker",
-        wellfed_bench::commands::Image::of(wellfed_bench::commands::Firmware::Speaker),
+    // cuts happen while it installs the feeder's twin (the same firmware
+    // under another identity, which still serves the device API), which it
+    // has not; the baseline goes back on afterwards, pushed to the twin.
+    let twin = ctx.image(
+        "cut-twin",
+        wellfed_bench::commands::Image {
+            firmware: wellfed_bench::commands::Firmware::Feeder,
+            variant: Some(wellfed_bench::commands::Variant::Twin),
+        },
     )?;
     let restore = ctx.resign("cut-restore")?;
 
-    let result = power_cuts(ctx, &speaker);
+    let result = power_cuts(ctx, &twin);
     let since = ctx.mark()?;
-    ctx.rig.offer(Some(&restore))?;
     if result.is_err() {
-        // A stopped update hands over to the transport until a cold boot.
-        ctx.note("  Offering the baseline and cold-booting, whatever stage it stopped in");
+        ctx.note("  Cold-booting, whatever stage it stopped in, then pushing the baseline");
         ctx.rig.power_cycle()?;
+        // A twin left recorded as pending would make bank 0 refuse the
+        // baseline: forget it first. Best effort: a feeder still in the
+        // twin's trial answers Busy, and its fallback clears nothing.
+        let cancelled = ctx
+            .reachable(BOOT_SECONDS)
+            .and_then(|_| ctx.ask(&Ask::CancelUpdate));
+        ctx.note(&format!("  Cancel before the restore: {cancelled:?}"));
     }
+    ctx.rig.offer(Some(&restore), Fault::None)?;
     let outcome = ctx.watch(&build, since, INSTALL_SECONDS)?;
-    ctx.rig.offer(None)?;
+    ctx.rig.offer(None, Fault::None)?;
     ctx.confirm(&build)?;
     result?;
     require(
@@ -613,13 +596,14 @@ fn ota_power_cuts(ctx: &mut Ctx) -> Result<()> {
 
 fn power_cuts(ctx: &mut Ctx, staged: &super::Staged) -> Result<()> {
     let since = ctx.mark()?;
-    ctx.rig.offer(Some(staged))?;
+    ctx.rig.offer(Some(staged), Fault::None)?;
     let since = ctx.expect("PLWCH1 give_way=1", since, OFFER_CHECK_SECONDS, |r| {
         r.is("PLWCH1", &[("give_way", "1")])
     })?;
 
     // A cut mid-download: bank 1's marker is still clear, so the loader
-    // must boot bank 0, which downloads again from the start.
+    // must boot bank 0, which takes the offer again from the push (still
+    // running) and downloads from the start.
     let since = ctx.expect("a download under way", since, INSTALL_SECONDS, |r| {
         r.tag == "PLOTA1" && r.first == "progress" && sectors(r).is_some_and(|n| n >= CUT_SECTORS)
     })?;
@@ -661,10 +645,8 @@ fn power_cuts(ctx: &mut Ctx, staged: &super::Staged) -> Result<()> {
         boot.as_deref() == Some("1"),
         format!("After a cut in the trial KM0 counted boot {boot:?}, not 1 again"),
     )?;
-    // The speaker firmware serves no device API, so its UART confirmation is
-    // the evidence; the baseline's restore is checked over the API.
     ctx.expect("PLCNF1 confirmed=1", since, STATUS_SECONDS, confirmed)?;
-    Ok(())
+    ctx.confirm(&staged.build)
 }
 
 /// One status request per period.

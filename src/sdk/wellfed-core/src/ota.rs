@@ -112,10 +112,14 @@ pub fn parse_manifest(
 }
 
 /// The version a manifest's header claims, unverified: `None` unless it has
-/// a manifest's length and magic. For a signer picking the next version
-/// above the ones it already signed; a feeder only trusts `parse_manifest`.
+/// a version 1 or version 2 manifest's length and magic (both keep the
+/// version at byte 8). For a signer picking the next version above the ones
+/// it already signed; a feeder only trusts `parse_manifest` or
+/// `offer::admit_offer`.
 pub fn claimed_version(bytes: &[u8]) -> Option<u32> {
-    (bytes.len() == MANIFEST_LEN && bytes[..8] == MAGIC).then(|| u32_at(bytes, 8))
+    let v1 = bytes.len() == MANIFEST_LEN && bytes[..8] == MAGIC;
+    let v2 = bytes.len() == offer::MANIFEST_LEN && bytes[..8] == offer::MAGIC;
+    (v1 || v2).then(|| u32_at(bytes, 8))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

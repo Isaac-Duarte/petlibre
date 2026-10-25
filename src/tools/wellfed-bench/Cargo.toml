@@ -38,7 +38,12 @@ uuid = { workspace = true, features = ["v4"] }
 wellfed-formats.workspace = true
 
 [dev-dependencies]
+ed25519-dalek = "2"
+# Device::install's push, faults included, against the simulator over TCP.
+wellfed-feeder-sim = { path = "../wellfed-feeder-sim", features = ["harness"] }
 wellfed-flash = { path = "../wellfed-flash", features = ["fixtures"] }
+sha2 = "0.10"
+tokio = { workspace = true, features = ["rt", "net", "time"] }
 wellfed-relay = { path = "../wellfed-relay", features = ["fake"] }
 tempfile.workspace = true
 

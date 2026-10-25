@@ -1,22 +1,29 @@
 //! Over-the-air iteration: optionally build and freeze a review with
 //! `wellfed-build`, sign it with `wellfed-build`'s library (the bench
-//! key, and only a frozen review), offer it with `wellfed-local` to the server
-//! that is already running, watch receive-only UART captures until the new
-//! build confirms, falls back, or time runs out, then check that the device
-//! API reports the new build on bank 1. Each phase is timed for the
-//! timing record.
+//! key, and only a frozen review), push it over the feeder's device API as
+//! the owner's key (the offer, the give-way, the offer again to bank 0 and
+//! the chunks: [`crate::device::Device::install`]), watch receive-only UART
+//! captures until the new build confirms, falls back, or time runs out,
+//! then check that the device API reports the new build on bank 1. Each
+//! phase is timed for the timing record.
+//!
+//! `--mqtt` keeps the old path for a build still on the unit that fetches
+//! updates over MQTT: a version 1 manifest offered with `wellfed-local` to
+//! the server that is already running.
 //!
 //! A review of the original stock image (`image_kind: stock`) installs the
-//! same way, through the replacement's own signed update: its payload hash
-//! stands in for a build ID, success is stock's `app_main:version:` banner
-//! after activation, and there is no status to check, since stock serves no
-//! device API. Stock has no trial, so a stock image that failed to
-//! boot would need the UART recovery.
+//! same way, through the replacement's own signed update, with a downgrade
+//! statement the bench signs for the feeder's identity and floor: its
+//! payload hash stands in for a build ID, success is stock's
+//! `app_main:version:` banner after activation, and there is no status to
+//! check, since stock serves no device API. Stock has no trial, so a stock
+//! image that failed to boot would need the UART recovery.
 //!
-//! The bench never starts the server or the hotspot, never switches a relay
-//! here, and never writes to the feeder. [`Watch`] classifies the feeder's
-//! `PL…` lines without I/O, so it is tested on real lines; the feeder's
-//! status is read with [`DeviceStatus::matches`].
+//! The bench never starts the server or the hotspot and never switches a
+//! relay here; the feeder writes only what its own update stage checked.
+//! [`Watch`] classifies the feeder's `PL…` lines without I/O, so it is
+//! tested on real lines; the feeder's status is read with
+//! [`DeviceStatus::matches`].
 
 use std::fmt;
 use std::fs;
@@ -24,7 +31,10 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use clap::Args;
-use wellfed_build::signing::{Frozen, KEY_PATH, Key, Motion};
+/// The bench's signing key file, which also signs stock's downgrade
+/// statements; re-exported so the suite need not link the builder.
+pub use wellfed_build::signing::KEY_PATH;
+use wellfed_build::signing::{Frozen, Key, Motion};
 use wellfed_core::ota;
 use wellfed_core::record::{Record, tag};
 use wellfed_flash::evidence::write_new;
@@ -33,7 +43,8 @@ use wellfed_formats::manifest::BuildManifest;
 use wellfed_formats::review::ImageKind;
 
 use super::Bench;
-use crate::device::DeviceStatus;
+use crate::device::{DeviceStatus, Fault};
+use crate::tools::{InstallJob, Installing};
 use crate::{Error, Result, require};
 use wellfed_formats::bench::{CAPTURES, VERIFICATION};
 
@@ -42,7 +53,11 @@ const SEGMENT_SECONDS: f64 = 60.0;
 
 /// The in-process signing step's status label.
 pub(crate) const SIGN_STEP: &str = "sign";
-/// Status steps after signing and the `wellfed-local` offer, in order.
+/// The offer's status label: over the device API, or `wellfed-local`'s
+/// for `--mqtt`.
+pub(crate) const OFFER_STEP: &str = "offer";
+pub(crate) const MQTT_OFFER_STEP: &str = "wellfed-local ota-offer";
+/// Status steps after signing and the offer, in order.
 pub(crate) const STAGES: [&str; 4] = ["give way", "download", "new build boot", "confirm"];
 /// Status steps of `--build`, before signing.
 const BUILD_STEPS: [&str; 2] = ["firmware build", "review image"];
@@ -65,14 +80,18 @@ pub enum Source {
 }
 
 /// Status steps for one `ota` run.
-pub fn steps(source: Source) -> Vec<&'static str> {
+/// `ota --cancel`'s one step.
+pub const CANCEL_STEP: &str = "cancel";
+
+pub fn steps(source: Source, mqtt: bool) -> Vec<&'static str> {
     let built: &[&str] = match source {
         Source::Build => &BUILD_STEPS,
         Source::Review => &[],
     };
+    let offer = if mqtt { MQTT_OFFER_STEP } else { OFFER_STEP };
     built
         .iter()
-        .chain(&[SIGN_STEP, "wellfed-local ota-offer"])
+        .chain(&[SIGN_STEP, offer])
         .chain(&STAGES)
         .chain(&[HEALTH_STEP])
         .copied()
@@ -166,6 +185,10 @@ pub enum Variant {
     /// The feeder logging the loop's and a priority-4 task's scheduling
     /// gaps, with feeds refused; no motion.
     GapProbe,
+    /// The feeder unchanged under another build identity, so installing it
+    /// after the baseline goes through a trial and still serves the device
+    /// API.
+    Twin,
 }
 
 impl Variant {
@@ -177,6 +200,7 @@ impl Variant {
             Self::Entropy => "entropy",
             Self::OwnerStall => "owner-stall",
             Self::GapProbe => "gap-probe",
+            Self::Twin => "twin",
         }
     }
 
@@ -184,7 +208,7 @@ impl Variant {
     pub(crate) fn firmware(self) -> Firmware {
         match self {
             Self::Stall | Self::Fail => Firmware::Trial,
-            Self::Entropy | Self::OwnerStall | Self::GapProbe => Firmware::Feeder,
+            Self::Entropy | Self::OwnerStall | Self::GapProbe | Self::Twin => Firmware::Feeder,
         }
     }
 }
@@ -197,10 +221,11 @@ pub(crate) fn parse_variant(text: &str) -> std::result::Result<Variant, String> 
         "entropy" => Ok(Variant::Entropy),
         "owner-stall" => Ok(Variant::OwnerStall),
         "gap-probe" => Ok(Variant::GapProbe),
+        "twin" => Ok(Variant::Twin),
         "pulse" => Err(format!("pulse {MOTION_MANUAL}")),
         other => Err(format!(
             "unknown variant {other:?}; the trial firmware has stall and fail, the feeder entropy, \
-             owner-stall and gap-probe"
+             owner-stall, gap-probe and twin"
         )),
     }
 }
@@ -252,7 +277,7 @@ pub struct OtaArgs {
     /// Session name: private/verification/NAME-vN.manifest, private/captures/NAME-01, -02, …
     pub name: String,
     /// Frozen review to offer (its image.bin and build-manifest.json).
-    #[arg(long, required_unless_present = "build", conflicts_with = "build")]
+    #[arg(long, required_unless_present_any = ["build", "cancel"], conflicts_with = "build")]
     pub review: Option<PathBuf>,
     /// Build the PLAF103 firstboot profile and freeze it as private/verification/NAME-review
     /// first, unless a review built from the same sources is already there.
@@ -285,6 +310,49 @@ pub struct OtaArgs {
     /// Allow a review whose manifest names a motion policy (owner present).
     #[arg(long)]
     pub attended_motion: bool,
+    /// Offer a version 1 manifest through `wellfed-local` to a build still
+    /// on the unit that fetches updates over MQTT, instead of pushing it
+    /// over the device API.
+    #[arg(long)]
+    pub mqtt: bool,
+    /// Sign a downgrade statement for the feeder's identity and floor with
+    /// the bench key, so a version at or below the floor installs. Stock
+    /// always gets one.
+    #[arg(long, conflicts_with = "mqtt")]
+    pub downgrade: bool,
+    /// Spoil the bench's own transfer, to see the feeder stop it before
+    /// activation: corrupt@N (flip byte N), unwanted@N (a chunk ahead of the
+    /// wanted ones after byte N), stall@N (nothing from byte N for 75 s),
+    /// drop@N (the connection drops after byte N; the install resumes), or
+    /// give-way-only (stop once bank 1 gave way, to offer bank 0 another
+    /// manifest next).
+    #[arg(long, value_parser = parse_fault, conflicts_with = "mqtt")]
+    pub fault: Option<Fault>,
+    /// Only cancel: stop any install and forget the candidate bank 0 holds
+    /// (a give-way's pending offer, or a stopped install's), so it takes
+    /// another manifest. Bank 1 is left as it is, or invalid.
+    #[arg(long, conflicts_with_all = ["review", "build", "mqtt", "fault", "downgrade"])]
+    pub cancel: bool,
+}
+
+/// `--fault`'s parser.
+pub(crate) fn parse_fault(text: &str) -> std::result::Result<Fault, String> {
+    if text == "give-way-only" {
+        return Ok(Fault::GiveWayOnly);
+    }
+    let (kind, at) = text.split_once('@').unwrap_or((text, "8192"));
+    let at: u32 = at
+        .parse()
+        .map_err(|_| format!("{at:?} is not a byte offset"))?;
+    match kind {
+        "corrupt" => Ok(Fault::Corrupt { at }),
+        "unwanted" => Ok(Fault::Unwanted { at }),
+        "stall" => Ok(Fault::Stall { at }),
+        "drop" => Ok(Fault::Drop { at }),
+        other => Err(format!(
+            "unknown fault {other:?}; use corrupt, unwanted, stall or drop, with @OFFSET, or give-way-only"
+        )),
+    }
 }
 
 impl OtaArgs {
@@ -877,6 +945,26 @@ impl Bench {
     /// Optionally build and review, sign and offer, watch the UART for the
     /// outcome, then check the server's health; a timing summary follows
     /// whatever ran.
+    /// `ota --cancel`: one cancel over the device API, and what came of it.
+    fn ota_cancel(&mut self, args: &OtaArgs) -> Result<u8> {
+        self.status.step(CANCEL_STEP);
+        let answer = self.tools.cancel_update(&args.keys, &args.config)?;
+        match answer {
+            crate::device::Answer::Update(view) => {
+                say!(
+                    "Cancelled on bank {}: no candidate is recorded (floor {})",
+                    view.bank,
+                    view.min_version
+                );
+                Ok(0)
+            }
+            other => {
+                say!("The feeder did not cancel: {other:?}");
+                Ok(1)
+            }
+        }
+    }
+
     pub fn ota(&mut self, args: &OtaArgs) -> Result<u8> {
         let started = Instant::now();
         let mut timing = Timing::default();
@@ -892,10 +980,77 @@ impl Bench {
     }
 
     fn ota_run(&mut self, args: &OtaArgs, timing: &mut Timing) -> Result<u8> {
+        if args.cancel {
+            return self.ota_cancel(args);
+        }
         let Some(staged) = self.ota_stage(args, timing)? else {
             return Ok(1);
         };
+        if args.mqtt {
+            return self.ota_mqtt(args, &staged, timing);
+        }
 
+        let job = InstallJob {
+            keys: args.keys.clone(),
+            config: args.config.clone(),
+            manifest: staged.manifest.clone().into(),
+            image: staged.image.clone().into(),
+            downgrade: (args.downgrade || staged.target == Target::Stock).then(|| KEY_PATH.into()),
+            fault: args.fault.unwrap_or(Fault::None),
+        };
+        say!(
+            "Pushing version {} over the device API as {}; watching the UART for up to {} min",
+            staged.version,
+            args.keys.display(),
+            args.minutes
+        );
+        self.status.step(OFFER_STEP);
+        let mut installing = match self.tools.install(&job) {
+            Ok(installing) => installing,
+            Err(error) => {
+                say!("The update could not start over the device API: {error}; nothing captured.");
+                return Ok(1);
+            }
+        };
+        if job.fault == Fault::GiveWayOnly {
+            return self.ota_give_way_only(installing.as_mut());
+        }
+        let watched = self.ota_watch(args, &staged, timing, Some(installing.as_mut()));
+        installing.stop();
+        for note in installing.notes() {
+            self.note(&format!("  {note}"));
+        }
+        watched?;
+        self.ota_after(args, &staged, timing)
+    }
+
+    /// `--fault give-way-only`: the push's end is the whole run.
+    fn ota_give_way_only(&mut self, installing: &mut dyn Installing) -> Result<u8> {
+        loop {
+            for note in installing.notes() {
+                self.note(&format!("  {note}"));
+            }
+            match installing.finished() {
+                Some(Ok(())) => {
+                    say!("Bank 1 gave way; bank 0 waits for its offer");
+                    return Ok(0);
+                }
+                Some(Err(error)) => {
+                    return Err(Error::Bench(format!(
+                        "The give-way did not happen: {error}"
+                    )));
+                }
+                None if crate::interrupted() => {
+                    installing.stop();
+                    return Err(Error::Interrupted);
+                }
+                None => std::thread::sleep(std::time::Duration::from_millis(500)),
+            }
+        }
+    }
+
+    /// The old path: a version 1 manifest offered through `wellfed-local`.
+    fn ota_mqtt(&mut self, args: &OtaArgs, staged: &Staged, timing: &mut Timing) -> Result<u8> {
         let offering = Instant::now();
         let offer = [
             "ota-offer",
@@ -919,7 +1074,12 @@ impl Bench {
             staged.version,
             args.minutes
         );
-        self.ota_watch(args, &staged, timing)?;
+        self.ota_watch(args, staged, timing, None)?;
+        self.ota_after(args, staged, timing)
+    }
+
+    /// After a confirmed outcome: the device API's view of the new build.
+    fn ota_after(&mut self, args: &OtaArgs, staged: &Staged, timing: &mut Timing) -> Result<u8> {
         if staged.target == Target::Stock {
             say!("Stock serves no device API; no status to check");
             return Ok(0);
@@ -991,7 +1151,7 @@ impl Bench {
             }
         };
 
-        self.ota_sign(plan, &frozen, motion, target, timing)
+        self.ota_sign(plan, &frozen, motion, target, args.mqtt, timing)
             .map(Some)
     }
 
@@ -1056,6 +1216,7 @@ impl Bench {
         frozen: &Frozen,
         motion: Motion,
         target: Target,
+        mqtt: bool,
         timing: &mut Timing,
     ) -> Result<Staged> {
         let image_arg = self.private_arg(&self.root.join(&plan.review).join("image.bin"))?;
@@ -1071,7 +1232,13 @@ impl Bench {
             source,
         };
         let key = Key::load(&self.root.join(KEY_PATH)).map_err(refused)?;
-        let manifest = frozen.sign(&key, plan.version, motion).map_err(refused)?;
+        // Version 1 only for a build still fetching over MQTT.
+        let manifest = if mqtt {
+            frozen.sign(&key, plan.version, motion).map(|m| m.to_vec())
+        } else {
+            frozen.offer(&key, plan.version, motion).map(|m| m.to_vec())
+        }
+        .map_err(refused)?;
         write_new(&plan.signed, &manifest).map_err(|source| Error::Signing {
             review: plan.review.clone(),
             source: source.into(),
@@ -1159,7 +1326,13 @@ impl Bench {
 
     /// Receive-only capture segments, classified as each one ends; Ok once
     /// the new build confirmed.
-    fn ota_watch(&mut self, args: &OtaArgs, staged: &Staged, timing: &mut Timing) -> Result<()> {
+    fn ota_watch(
+        &mut self,
+        args: &OtaArgs,
+        staged: &Staged,
+        timing: &mut Timing,
+        mut installing: Option<&mut dyn Installing>,
+    ) -> Result<()> {
         let (build, version) = (staged.build.as_str(), staged.version);
         let mut watch = Watch::of(build, staged.target);
         let total = args.minutes * 60.0;
@@ -1206,6 +1379,22 @@ impl Bench {
                 self.ota_event(&event, &mut stage);
             }
             base += rx.len() as u64;
+
+            // The push's own steps, and an end before any UART outcome: a
+            // refused offer, or a stop the feeder reported over the API.
+            if let Some(installing) = installing.as_deref_mut() {
+                for note in installing.notes() {
+                    self.note(&format!("  {note}"));
+                }
+                if watch.outcome().is_none()
+                    && let Some(Err(error)) = installing.finished()
+                {
+                    return Err(Error::Bench(format!(
+                        "The update over the device API ended: {error}; bank 1 was not activated. Captures {}-01…{n:02}",
+                        args.name
+                    )));
+                }
+            }
 
             match watch.outcome() {
                 None => {}
@@ -1557,5 +1746,16 @@ mod tests {
         assert!(lines[4].ends_with("1 min 00 s (to segment ends, up to 60 s off)"));
         assert!(lines[5].ends_with(" -") && lines[6].ends_with(" -"));
         assert!(lines[7].ends_with("3 min 20 s"));
+    }
+
+    #[test]
+    fn faults_parse_with_their_offsets() {
+        assert_eq!(parse_fault("corrupt@8192"), Ok(Fault::Corrupt { at: 8192 }));
+        assert_eq!(parse_fault("stall"), Ok(Fault::Stall { at: 8192 }));
+        assert_eq!(parse_fault("drop@4096"), Ok(Fault::Drop { at: 4096 }));
+        assert_eq!(parse_fault("unwanted@1"), Ok(Fault::Unwanted { at: 1 }));
+        assert_eq!(parse_fault("give-way-only"), Ok(Fault::GiveWayOnly));
+        assert!(parse_fault("range@1").is_err());
+        assert!(parse_fault("corrupt@x").is_err());
     }
 }

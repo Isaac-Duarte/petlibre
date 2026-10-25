@@ -8,11 +8,11 @@ use serde_json::json;
 
 use super::log::{Log, Record};
 use super::*;
-use wellfed_bench::commands::ota::{Firmware, Variant};
+use wellfed_bench::commands::ota::Variant;
 
 const GOOD: &str = "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90";
 const FAILING: &str = "f00df00df00df00df00df00df00df00df00df00df00df00df00df00df00df00d";
-const SPEAKER: &str = "5eaa5eaa5eaa5eaa5eaa5eaa5eaa5eaa5eaa5eaa5eaa5eaa5eaa5eaa5eaa5eaa";
+const TWIN: &str = "7e157e157e157e157e157e157e157e157e157e157e157e157e157e157e157e15";
 const OLD: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
 enum Event {
@@ -24,8 +24,7 @@ enum Event {
     Source(WifiSource),
     /// The Wi-Fi link drops and comes back on its own.
     LinkLoss,
-    /// Bank 0's recovery role asks for the offer: it installs it only if
-    /// `serve` (not a fault server) answers then.
+    /// Bank 1 gave way: bank 0 takes the push that is still running.
     Recovery,
 }
 
@@ -64,7 +63,10 @@ struct Feeder {
     wifi_generation: u32,
     source: WifiSource,
     version: u32,
-    offered: Option<Staged>,
+    /// The push running now, with its fault.
+    offered: Option<(Staged, Fault)>,
+    /// Bank 0 runs and answers (after a failed trial or a stopped install).
+    bank0: bool,
     /// When a failing trial gives way; a later offer installs after it.
     fallback_at: Option<f64>,
     /// The last install's start and build, so a power cut can land in it.
@@ -122,6 +124,7 @@ impl Feeder {
             source: WifiSource::Build,
             version: 19,
             offered: None,
+            bank0: false,
             fallback_at: None,
             installing: None,
             server: "serve".into(),
@@ -176,17 +179,34 @@ impl Feeder {
                 Event::Online(online) => self.online = online,
                 Event::LinkLoss => self.losses += 1,
                 Event::Recovery => {
-                    if let Some(offer) = self.offered.clone().filter(|_| self.server == "serve") {
-                        self.install(self.now, offer.version, &offer.build);
+                    if let Some((offer, fault)) = self.offered.clone() {
+                        self.push(self.now, &offer, fault);
                     }
                 }
             }
         }
     }
 
+    /// Bank 0 takes the push at `start`: a fault stops it before the marker
+    /// and bank 0 keeps answering; otherwise it installs.
+    fn push(&mut self, start: f64, offer: &Staged, fault: Fault) {
+        match fault.stage() {
+            Some(stage) => {
+                self.bank0 = true;
+                self.line(
+                    start - self.now + 90.0,
+                    &format!("PLOTA1 error stage={stage}"),
+                );
+            }
+            None => self.install(start, offer.version, &offer.build.clone()),
+        }
+    }
+
     /// Download from `start`, activate, trial-boot `build` on bank 1, then
     /// confirm (or, for the failing build, give way three boots later).
     fn install(&mut self, start: f64, version: u32, build: &str) {
+        // Activated into bank 1; a failing build gives way back later.
+        self.bank0 = false;
         let delay = start - self.now;
         self.installing = Some((start, build.to_string()));
         self.line(
@@ -439,6 +459,7 @@ impl Feeder {
                 }
                 _ => Answer::Refused(Refusal::NotFound),
             },
+            Ask::UpdateState | Ask::CancelUpdate => Answer::Unexpected,
         })
     }
 
@@ -482,11 +503,10 @@ impl Rig for Feeder {
         // A re-signed review keeps its build.
         let failing = args.variant == Some(Variant::Fail)
             || review.to_string_lossy().ends_with("-fail-review");
-        let speaker = args.firmware == Some(Firmware::Speaker)
-            || review.to_string_lossy().contains("speaker");
-        let build = match (failing, speaker) {
+        let twin = args.variant == Some(Variant::Twin) || review.to_string_lossy().contains("twin");
+        let build = match (failing, twin) {
             (true, _) => FAILING,
-            (_, true) => SPEAKER,
+            (_, true) => TWIN,
             _ => GOOD,
         };
         self.actions
@@ -511,33 +531,7 @@ impl Rig for Feeder {
     fn server(&mut self, server: Server) -> Result<()> {
         self.actions
             .push(format!("server {server:?}").chars().take(40).collect());
-        // Offers live in serve's memory only.
-        self.offered = None;
-        self.server = match &server {
-            Server::Serve | Server::StockTrial => "serve".into(),
-            Server::Faulty { fault, staged } => {
-                let stage = match fault {
-                    Fault::Corrupt => Some("hash"),
-                    Fault::Range => Some("range"),
-                    Fault::Stall => Some("timeout"),
-                    Fault::None => None,
-                };
-                // A failing trial still under way gives way first; bank 0's
-                // recovery role then meets this server.
-                let start = self.fallback_at.take().unwrap_or(self.now);
-                match stage {
-                    Some(stage) => self.line(
-                        start - self.now + 90.0,
-                        &format!("PLOTA1 error stage={stage}"),
-                    ),
-                    None => {
-                        let (version, build) = (staged.version, staged.build.clone());
-                        self.install(start + 10.0, version, &build);
-                    }
-                }
-                format!("fault {}", fault.arg())
-            }
-        };
+        self.server = "serve".into();
         Ok(())
     }
 
@@ -556,21 +550,22 @@ impl Rig for Feeder {
         })
     }
 
-    fn offer(&mut self, staged: Option<&Staged>) -> Result<()> {
-        self.actions.push(match staged {
-            Some(s) => format!("offer v{}", s.version),
-            None => "offer clear".into(),
+    fn offer(&mut self, staged: Option<&Staged>, fault: Fault) -> Result<()> {
+        self.actions.push(match (staged, fault) {
+            (Some(s), Fault::None) => format!("offer v{}", s.version),
+            (Some(s), fault) => format!("offer v{} {fault:?}", s.version),
+            (None, _) => "offer clear".into(),
         });
-        self.offered = staged.cloned();
+        self.offered = staged.cloned().map(|staged| (staged, fault));
         let Some(staged) = staged else { return Ok(()) };
         if let Some(fallback) = self.fallback_at.take() {
-            // Bank 0's recovery role installs whatever is offered then.
-            self.install(fallback, staged.version, &staged.build.clone());
+            // Bank 0 answers once the failing trial has given way to it.
+            self.push(fallback, &staged.clone(), fault);
+        } else if self.bank0 {
+            self.push(self.now + 10.0, &staged.clone(), fault);
         } else if staged.build == self.running {
-            self.line(
-                30.0,
-                &format!("PLWCH1 offer=1 same=1 version={}", staged.version),
-            );
+            // Refused as the running build; the suite never offers it.
+            self.line(1.0, "PLWCH1 refused reason=same");
         } else {
             self.line(
                 30.0,
@@ -579,6 +574,10 @@ impl Rig for Feeder {
             self.at(38.0, Event::Recovery);
         }
         Ok(())
+    }
+
+    fn offered(&mut self) -> Option<std::result::Result<(), String>> {
+        None
     }
 
     fn device(&mut self, ask: &Ask) -> Result<Answer> {
@@ -666,8 +665,9 @@ impl Rig for Feeder {
                     3.0,
                     &format!("PLFW1 start build={OLD} bank=0 reset=0x0 mmu=0"),
                 );
-                if let Some(offer) = self.offered.clone() {
-                    self.install(self.now + 10.0, offer.version, &offer.build);
+                // The push reconnects to bank 0 and offers again.
+                if let Some((offer, fault)) = self.offered.clone() {
+                    self.push(self.now + 10.0, &offer, fault);
                 }
             }
             // Early in a good build's trial: the count restarts at boot 1.

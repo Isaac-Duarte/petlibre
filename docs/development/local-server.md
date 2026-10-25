@@ -2,6 +2,8 @@
 
 The `wellfed-local` executable is the bench's local server: an embedded authenticated broker, the stock 1.1.15 protocol as far as installing the replacement needs it, the replacement firmware's MQTT transport, and a bearer-authenticated loopback API. It is being split up and retired ([tools roadmap](tools-roadmap.md)).
 
+Since October 25, 2026 it is a binary over the [`wellfed-stock`](../../src/tools/wellfed-stock) library, which holds everything stock 1.1.15 speaks: its MQTT protocol, the broker with stock's two identities (the stock device and the server) and the CONNECT normalization in front of it, the server's MQTT session with stock, the setup frame, the image server stock installs from, and the install-trial ledger. `wellfed-local` itself keeps the command line, the loopback API, the `network` redirect, and the replacement firmware's side of the broker and the session (its role, health and offers), which plug into the library's broker roles and session companion and are deleted with the transport.
+
 Its stock control (manual feeds, the feed ledger, `resolve`) and the C-probe and modified-stock trials were removed on October 24, 2026 (FW51): the product uses stock only to install from and roll back to. Local dispensing on stock 1.1.15 was demonstrated on the research unit before that, and the code is in Git history.
 
 ## Build and try synthetic initialization

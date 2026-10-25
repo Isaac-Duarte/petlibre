@@ -5,9 +5,10 @@
 mod common;
 
 use chrono::{DateTime, Duration, Utc};
-use wellfed_local::protocol::Channel;
-use wellfed_local::{
-    controller::{Controller, Rejection},
+use common::Controller;
+use wellfed_stock::protocol::Channel;
+use wellfed_stock::{
+    controller::Rejection,
     ota::{
         self,
         image::Lease,
@@ -81,7 +82,7 @@ fn input() -> ota::trial::Input {
 
 /// A controller with trials enabled and a freshly reported, powered stock.
 fn enabled(dir: &tempfile::TempDir) -> Controller {
-    let mut c = Controller::load(common::config(), dir.path().join("ledger.json")).unwrap();
+    let mut c = common::load(dir.path().join("ledger.json")).unwrap();
     ready(&mut c, "1.1.15");
     c.enable_ota_trial();
     c
@@ -90,7 +91,7 @@ fn enabled(dir: &tempfile::TempDir) -> Controller {
 #[test]
 fn default_disabled_and_guarded_by_version_power_and_plans() {
     let dir = tempfile::tempdir().unwrap();
-    let mut c = Controller::load(common::config(), dir.path().join("ledger.json")).unwrap();
+    let mut c = common::load(dir.path().join("ledger.json")).unwrap();
     ready(&mut c, "1.1.15");
 
     assert!(matches!(
@@ -168,7 +169,7 @@ fn journal_before_publish_duplicate_conflict_restart_and_timeout_never_replay() 
     assert_eq!(c.status.ota_trials[0].phase, Phase::Uncertain);
 
     drop(c);
-    let mut c = Controller::load(common::config(), path).unwrap();
+    let mut c = common::load(path).unwrap();
     assert!(!c.status.ota_trial_enabled);
     assert!(submit(&mut c, request, now).unwrap().1.is_none());
 
@@ -270,7 +271,7 @@ fn precheck_rejection_storage_failure_and_wrong_request_errors_do_not_resend() {
     // Exercise storage failure independently of the unresolved rejection.
     drop(c);
     let path = dir.path().join("storage-ledger.json");
-    let mut c = Controller::load(common::config(), path.clone()).unwrap();
+    let mut c = common::load(path.clone()).unwrap();
     ready(&mut c, "1.1.15");
     c.enable_ota_trial();
     let now = Utc::now();
@@ -315,7 +316,7 @@ fn an_error_after_progress_stays_failed_across_a_restart() {
     assert_eq!(c.status.ota_trials.len(), 1);
 
     drop(c);
-    let mut c = Controller::load(common::config(), path).unwrap();
+    let mut c = common::load(path).unwrap();
     ready(&mut c, "1.1.15");
     c.enable_ota_trial();
     assert!(matches!(
@@ -375,7 +376,7 @@ fn replacement_health_closes_only_an_open_install() {
 
     // Persisted, and a restart does not reopen it.
     drop(c);
-    let c = Controller::load(common::config(), path).unwrap();
+    let c = common::load(path).unwrap();
     assert_eq!(c.status.ota_trials[0].phase, Phase::ReplacementHealthy);
 }
 

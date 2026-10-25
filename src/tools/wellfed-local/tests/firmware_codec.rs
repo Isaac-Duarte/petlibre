@@ -11,7 +11,8 @@ use common::{address, ready, start, status};
 use wellfed_core::transport::{
     self as mqtt, Buffer, Event, Health, Loss, PowerHealth, Session, State,
 };
-use wellfed_local::{config::FirmwareConfig, storage};
+use wellfed_local::config::FirmwareConfig;
+use wellfed_stock::storage;
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;

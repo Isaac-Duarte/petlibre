@@ -5,9 +5,10 @@
 mod common;
 
 use chrono::{Duration, Utc};
-use wellfed_local::protocol::Channel;
-use wellfed_local::{
-    controller::{Controller, LEDGER_FILE, RETIRED_LEDGER_FILE},
+use common::Controller;
+use wellfed_stock::protocol::Channel;
+use wellfed_stock::{
+    controller::{LEDGER_FILE, RETIRED_LEDGER_FILE},
     protocol::Message,
 };
 use serde_json::json;
@@ -31,7 +32,7 @@ fn ready(controller: &mut Controller) {
 #[test]
 fn ota_reports_keep_distinct_phases_with_shared_ids_and_bound_history() {
     let dir = tempfile::tempdir().unwrap();
-    let mut c = Controller::load(common::config(), dir.path().join("ledger.json")).unwrap();
+    let mut c = common::load(dir.path().join("ledger.json")).unwrap();
 
     for progress in 0..=20 {
         observe(
@@ -64,7 +65,7 @@ fn ota_reports_keep_distinct_phases_with_shared_ids_and_bound_history() {
 
     // Observations cannot manufacture an outgoing command or imply a boot.
     assert!(
-        wellfed_local::protocol::reply(
+        wellfed_stock::protocol::reply(
             &c.config,
             Channel::System,
             &serde_json::from_value(json!({"cmd":"OTA_INFORM","state":5})).unwrap(),
@@ -77,7 +78,7 @@ fn ota_reports_keep_distinct_phases_with_shared_ids_and_bound_history() {
 #[test]
 fn ota_status_drops_unbounded_or_private_fields_and_survives_disconnect_as_history() {
     let dir = tempfile::tempdir().unwrap();
-    let mut c = Controller::load(common::config(), dir.path().join("ledger.json")).unwrap();
+    let mut c = common::load(dir.path().join("ledger.json")).unwrap();
 
     observe(
         &mut c,
@@ -104,7 +105,7 @@ fn ota_status_drops_unbounded_or_private_fields_and_survives_disconnect_as_histo
 #[test]
 fn stale_telemetry_goes_offline_and_private_attributes_are_not_exposed() {
     let dir = tempfile::tempdir().unwrap();
-    let mut c = Controller::load(common::config(), dir.path().join("ledger.json")).unwrap();
+    let mut c = common::load(dir.path().join("ledger.json")).unwrap();
     ready(&mut c);
 
     observe(
@@ -125,10 +126,10 @@ fn stale_telemetry_goes_offline_and_private_attributes_are_not_exposed() {
 fn concurrent_controllers_cannot_share_a_ledger() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("ledger.json");
-    let first = Controller::load(common::config(), path.clone()).unwrap();
-    assert!(Controller::load(common::config(), path.clone()).is_err());
+    let first = common::load(path.clone()).unwrap();
+    assert!(common::load(path.clone()).is_err());
     drop(first);
-    assert!(Controller::load(common::config(), path).is_ok());
+    assert!(common::load(path).is_ok());
 }
 
 #[test]
@@ -138,14 +139,12 @@ fn a_ledger_from_before_fw51_is_never_read_or_overwritten() {
     let old = br#"{"device_id":"test-device","feeds":{},"ota_trials":{},"ota_hold":true,"probe_queries":{}}"#;
     std::fs::write(&retired, old).unwrap();
 
-    let refused = Controller::load(common::config(), dir.path().join(LEDGER_FILE))
-        .err()
-        .unwrap();
+    let refused = common::load(dir.path().join(LEDGER_FILE)).err().unwrap();
     assert!(refused.to_string().contains("archive it"));
     assert_eq!(std::fs::read(&retired).unwrap(), old);
     assert!(!dir.path().join(LEDGER_FILE).exists());
 
     // The same records under the new name are refused, not silently dropped.
     std::fs::rename(&retired, dir.path().join(LEDGER_FILE)).unwrap();
-    assert!(Controller::load(common::config(), dir.path().join(LEDGER_FILE)).is_err());
+    assert!(common::load(dir.path().join(LEDGER_FILE)).is_err());
 }

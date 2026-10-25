@@ -23,11 +23,14 @@ use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 use tokio::sync::{mpsc, oneshot, watch};
 
+use wellfed_stock::{controller::Rejection, ota};
+
 use crate::{
     build_info::BUILD,
-    controller::{Rejection, Status},
-    mqtt::Request,
-    ota,
+    replacement::{
+        Status,
+        session::{Request, SetOffer},
+    },
 };
 
 #[derive(Clone)]
@@ -255,7 +258,7 @@ async fn replacement_ota_offer(
 
     state
         .requests
-        .try_send(Request::OtaOffer(offer, send))
+        .try_send(Request::Companion(SetOffer(offer, send)))
         .map_err(|_| unavailable())?;
 
     let configured = tokio::time::timeout(Duration::from_secs(5), receive)

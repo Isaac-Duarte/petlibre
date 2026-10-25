@@ -19,9 +19,13 @@ use wellfed_local::{
     api::{self, ApiState},
     build_info::{self, BUILD},
     config::{self, Config},
+    neighbour, network,
+    replacement::{self, session},
+};
+use wellfed_stock::{
     controller::{self, Controller},
     mqtt::{self, broker},
-    neighbour, network, ota,
+    ota,
 };
 use reqwest::Method;
 use serde::Serialize;
@@ -157,7 +161,7 @@ enum Action {
         /// The broker; this server's MQTT address otherwise.
         #[arg(long)]
         broker: Option<std::net::SocketAddr>,
-        #[arg(long, default_value = wellfed_local::stock_setup::SETUP_ADDRESS)]
+        #[arg(long, default_value = wellfed_stock::setup::SETUP_ADDRESS)]
         to: std::net::SocketAddr,
     },
 
@@ -187,7 +191,7 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "wellfed_local=info,mqtt5=warn".into()),
+                .unwrap_or_else(|_| "wellfed_local=info,wellfed_stock=info,mqtt5=warn".into()),
         )
         .with_writer(std::io::stderr)
         .init();
@@ -217,7 +221,10 @@ async fn main() -> Result<()> {
             );
         }
 
-        Action::Broker { config } => broker::run(Config::load(&config)?).await?,
+        Action::Broker { config } => {
+            let config = Config::load(&config)?;
+            broker::run(config.stock.clone(), replacement::broker::Firmware(config)).await?
+        }
         Action::Serve {
             config,
             enable_ota_trial,
@@ -232,7 +239,7 @@ async fn main() -> Result<()> {
             broker,
             to,
         } => {
-            use wellfed_local::stock_setup::{Setup, send};
+            use wellfed_stock::setup::{Setup, send};
             let broker = broker.unwrap_or(Config::load(&config)?.mqtt_listen);
             println!("Passphrase for {ssid} (read from stdin):");
             let mut password = String::new();
@@ -276,7 +283,7 @@ async fn main() -> Result<()> {
                     _ = terminated() => {},
                 }
             };
-            ota::image::serve(config, &path, &directory, peer, stop).await?;
+            ota::image::serve(config.stock, &path, &directory, peer, stop).await?;
         }
 
         Action::OtaTrialResolve {
@@ -340,7 +347,7 @@ async fn main() -> Result<()> {
 
         Action::Network { action } => match action {
             NetworkAction::Apply { config } => {
-                network::apply(&Config::load(&config)?)?;
+                network::apply(&Config::load(&config)?.stock)?;
                 println!(
                     "Test-feeder MQTT redirected locally; its forwarded WAN traffic is blocked."
                 );
@@ -350,7 +357,7 @@ async fn main() -> Result<()> {
                 println!("Local broker routing removed; prior hotspot forwarding remains.");
             }
             NetworkAction::Preview { config } => {
-                println!("{}", network::rules(&Config::load(&config)?)?)
+                println!("{}", network::rules(&Config::load(&config)?.stock)?)
             }
         },
     }
@@ -392,10 +399,11 @@ async fn serve(path: PathBuf, enable_ota_trial: bool) -> Result<()> {
         .context("bind loopback HTTP API")?;
 
     let mut controller = Controller::load(
-        (*config).clone(),
+        config.stock.clone(),
         path.parent()
             .context("config directory missing")?
             .join(controller::LEDGER_FILE),
+        BUILD,
     )?;
     if enable_ota_trial {
         controller.enable_ota_trial();
@@ -413,7 +421,13 @@ async fn serve(path: PathBuf, enable_ota_trial: bool) -> Result<()> {
     let (requests, receiver) = mpsc::channel(16);
     let (status, status_rx) = watch::channel(controller.status.clone());
     let (shutdown, mut shutdown_rx) = watch::channel(false);
-    let mut worker = tokio::spawn(mqtt::run(config.clone(), controller, receiver, status));
+    let mut worker = tokio::spawn(mqtt::run(
+        Arc::new(config.stock.clone()),
+        controller,
+        receiver,
+        status,
+        session::Firmware::new(config.clone()),
+    ));
 
     let app = api::router(ApiState {
         token: Arc::from(config.api_token.as_str()),
@@ -470,7 +484,7 @@ async fn api_request(
 
     let mut request = client
         .request(method, format!("http://{}{route}", config.http_listen))
-        .bearer_auth(config.api_token);
+        .bearer_auth(&config.api_token);
     if let Some(body) = body {
         request = request.json(body);
     }

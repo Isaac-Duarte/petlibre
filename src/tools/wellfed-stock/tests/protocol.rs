@@ -5,8 +5,8 @@
 mod common;
 
 use chrono::Utc;
-use wellfed_local::protocol;
-use wellfed_local::protocol::Channel;
+use wellfed_stock::protocol;
+use wellfed_stock::protocol::Channel;
 use serde_json::json;
 
 #[test]

@@ -13,7 +13,7 @@ use std::process::Command;
 use anyhow::{Context, Result, ensure};
 use serde::Deserialize;
 
-use crate::config::Config;
+use wellfed_stock::config::Config;
 
 const TABLE: &str = "wellfed_local";
 const COMMENT: &str = "wellfed-local-broker";
@@ -106,7 +106,7 @@ pub fn rules(config: &Config) -> Result<String> {
 insert rule inet computer_security input iifname "{interface}" ether saddr {mac} ip daddr {ip} tcp dport {port} counter accept comment "{COMMENT}"
 insert rule inet computer_security input iifname "{interface}" ether saddr {mac} ip daddr {ip} tcp dport {images} counter accept comment "{COMMENT}"
 "#,
-        images = crate::ota::image::PORT,
+        images = wellfed_stock::ota::image::PORT,
     ))
 }
 

@@ -4,26 +4,28 @@
 #![allow(dead_code)]
 use ed25519_dalek::{Signer, SigningKey};
 use wellfed_core::ota::{self, MANIFEST_LEN};
-use wellfed_local::config::Config;
+use wellfed_local::config::{Config, StockConfig};
 use wellfed_local::ota::firmware::{self, CONTAINER_HEADER};
 use sha2::{Digest, Sha256};
 
 pub fn config() -> Config {
     Config {
-        version: 1,
-        device_id: "AF_TEST_ONLY".to_owned(),
-        device_client_id: "AF_TEST_ONLY".to_owned(),
-        device_username: "test-device".to_owned(),
-        device_password: "test-password".to_owned(),
-        server_password: "test-server-password-32-characters".to_owned(),
-        api_token: "test-api-token-at-least-32-characters".to_owned(),
-        mqtt_listen: "127.0.0.1:18883".parse().unwrap(),
-        http_listen: "127.0.0.1:18765".parse().unwrap(),
-        timezone: chrono_tz::America::Denver,
-        plans: vec![],
-        binding_response: None,
-        hotspot_interface: "wlan1".to_owned(),
-        target_mac: "02:00:00:00:00:42".to_owned(),
+        stock: StockConfig {
+            version: 1,
+            device_id: "AF_TEST_ONLY".to_owned(),
+            device_client_id: "AF_TEST_ONLY".to_owned(),
+            device_username: "test-device".to_owned(),
+            device_password: "test-password".to_owned(),
+            server_password: "test-server-password-32-characters".to_owned(),
+            api_token: "test-api-token-at-least-32-characters".to_owned(),
+            mqtt_listen: "127.0.0.1:18883".parse().unwrap(),
+            http_listen: "127.0.0.1:18765".parse().unwrap(),
+            timezone: chrono_tz::America::Denver,
+            plans: vec![],
+            binding_response: None,
+            hotspot_interface: "wlan1".to_owned(),
+            target_mac: "02:00:00:00:00:42".to_owned(),
+        },
         firmware: None,
     }
 }

@@ -1,10 +1,14 @@
 //! Record the source commit so a running service can prove what it executes.
+//! The stock protocol and its trial ledger are compiled in from
+//! `wellfed-stock`, so its sources count as this binary's inputs too.
 use std::process::Command;
 
-const BUILD_INPUTS: [&str; 5] = [
+const BUILD_INPUTS: [&str; 7] = [
     "src",
     "build.rs",
     "Cargo.toml",
+    "../wellfed-stock/src",
+    "../wellfed-stock/Cargo.toml",
     "Cargo.lock",
     "rust-toolchain.toml",
 ];

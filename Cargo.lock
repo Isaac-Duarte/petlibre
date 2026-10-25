@@ -2549,11 +2549,9 @@ dependencies = [
  "chrono-tz",
  "clap",
  "ed25519-dalek",
- "hyper",
- "hyper-util",
- "mqtt5",
  "wellfed-core",
  "wellfed-formats",
+ "wellfed-stock",
  "reqwest",
  "rumqttc",
  "serde",
@@ -2561,7 +2559,6 @@ dependencies = [
  "sha2 0.11.1",
  "subtle",
  "tempfile",
- "thiserror",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -2703,6 +2700,30 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror",
+]
+
+[[package]]
+name = "wellfed-stock"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "chrono",
+ "chrono-tz",
+ "hyper",
+ "hyper-util",
+ "mqtt5",
+ "wellfed-core",
+ "wellfed-formats",
+ "rumqttc",
+ "serde",
+ "serde_json",
+ "subtle",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

@@ -25,7 +25,7 @@ async fn a_refused_resolution_asks_stock_for_its_attributes_and_nothing_else() {
     let mut config = common::config();
     config.mqtt_listen = common::address();
     config.http_listen = common::address();
-    wellfed_local::storage::write_json(&path, &config).unwrap();
+    wellfed_stock::storage::write_json(&path, &config).unwrap();
 
     // An earlier request that stock reported failing, long enough ago.
     let request_id = Uuid::new_v4();
@@ -42,8 +42,8 @@ async fn a_refused_resolution_asks_stock_for_its_attributes_and_nothing_else() {
             }
         },
     });
-    wellfed_local::storage::write_json(
-        &dir.path().join(wellfed_local::controller::LEDGER_FILE),
+    wellfed_stock::storage::write_json(
+        &dir.path().join(wellfed_stock::controller::LEDGER_FILE),
         &ledger,
     )
     .unwrap();

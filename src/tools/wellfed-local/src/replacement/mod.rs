@@ -6,6 +6,9 @@
 //! sends it nothing but OTA offer answers. The code here validates only what
 //! the server relies on and keeps the latest health in memory.
 
+pub mod broker;
+pub mod session;
+
 use chrono::{DateTime, Utc};
 use wellfed_formats::local::Replacement;
 use serde::{Deserialize, Serialize};
@@ -33,6 +36,10 @@ pub struct Health {
 
 /// The server's view of the latest health.
 pub type Snapshot = Replacement<Health>;
+
+/// The status document `GET /api/status` serves, with the replacement
+/// firmware's health kept as sent.
+pub type Status = wellfed_stock::controller::Status<Health>;
 
 #[derive(Default)]
 pub struct Tracker {

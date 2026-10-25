@@ -19,7 +19,7 @@ use uuid::Uuid;
 use wellfed_formats::local::LocalStatus;
 
 use crate::{
-    build_info::BUILD,
+    build_info::Build,
     config::Config,
     ota::{
         self,
@@ -27,7 +27,6 @@ use crate::{
         trial::{ORIGINAL_VERSION, Phase as TrialPhase, REPLACEMENT_VERSION},
     },
     protocol::{Channel, Message, Reply},
-    replacement::Health,
     storage,
 };
 
@@ -67,18 +66,18 @@ pub const LEDGER_FILE: &str = "stock-ledger.json";
 /// never read: an operator archives it after checking no trial in it is open.
 pub const RETIRED_LEDGER_FILE: &str = "feed-ledger.json";
 
-/// The status document `GET /api/status` serves, with the replacement
-/// firmware's health kept as sent.
-pub type Status = LocalStatus<Health>;
+/// The status document `GET /api/status` serves. `H` is the replacement
+/// firmware's health, which the session's companion fills in.
+pub type Status<H> = LocalStatus<H>;
 
-fn reported_version(status: &Status) -> Option<&str> {
+fn reported_version<H>(status: &Status<H>) -> Option<&str> {
     status
         .attributes
         .get("softwareVersion")
         .and_then(Value::as_str)
 }
 
-fn power_type(status: &Status) -> Option<u64> {
+fn power_type<H>(status: &Status<H>) -> Option<u64> {
     status.attributes.get("powerType").and_then(Value::as_u64)
 }
 
@@ -111,9 +110,9 @@ pub enum Rejection {
     ResolutionEvidence,
 }
 
-pub struct Controller {
+pub struct Controller<H> {
     pub config: Config,
-    pub status: Status,
+    pub status: Status<H>,
     path: PathBuf,
     ledger: Ledger,
     storage_failed: bool,
@@ -122,8 +121,8 @@ pub struct Controller {
     _lease: fs::File,
 }
 
-impl Controller {
-    pub fn load(config: Config, path: PathBuf) -> Result<Self> {
+impl<H> Controller<H> {
+    pub fn load(config: Config, path: PathBuf, build: Build) -> Result<Self> {
         let retired = path.with_file_name(RETIRED_LEDGER_FILE);
         ensure!(
             !retired.exists(),
@@ -161,8 +160,8 @@ impl Controller {
             path,
             ledger,
             status: Status {
-                build_commit: BUILD.commit.into(),
-                build_clean: BUILD.clean,
+                build_commit: build.commit.into(),
+                build_clean: build.clean,
                 ..Status::default()
             },
             storage_failed: false,

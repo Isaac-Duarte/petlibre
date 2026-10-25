@@ -281,7 +281,7 @@ fn a_configuration_with_the_retired_request_key_still_loads() {
     let (config_path, credential_path) = with_firmware_role(&dir);
     let mut config = Config::load(&config_path).unwrap();
     config.firmware.as_mut().unwrap().request_key = Some("5a".repeat(32));
-    wellfed_local::storage::write_json(&config_path, &config).unwrap();
+    wellfed_stock::storage::write_json(&config_path, &config).unwrap();
 
     let loaded = Config::load(&config_path).unwrap();
     assert_eq!(loaded.firmware.unwrap().request_key, Some("5a".repeat(32)));

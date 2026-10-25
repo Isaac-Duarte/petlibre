@@ -4,7 +4,7 @@ name = "wellfed-local"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
-description = "The bench's local PLAF103 server: stock installs and the replacement firmware's MQTT transport"
+description = "The bench's local PLAF103 server: a binary over wellfed-stock, plus the replacement firmware's MQTT transport"
 publish.workspace = true
 
 [dependencies]
@@ -14,14 +14,10 @@ chrono = { version = "0.4.45", features = ["serde"] }
 chrono-tz = { version = "0.10.4", features = ["serde"] }
 clap.workspace = true
 rumqttc = { version = "0.25.1", default-features = false }
-mqtt5 = { version = "0.48.1", default-features = false, features = ["broker"] }
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.11.0"
-hyper = { version = "1.12.0", features = ["http1", "server"] }
-hyper-util = { version = "0.1.21", features = ["tokio"] }
 subtle.workspace = true
-thiserror.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "signal", "sync", "time", "process", "io-util"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
@@ -29,6 +25,7 @@ uuid = { workspace = true, features = ["v4", "serde"] }
 reqwest = { version = "0.13.5", default-features = false, features = ["json"] }
 wellfed-core.workspace = true
 wellfed-formats.workspace = true
+wellfed-stock.workspace = true
 
 [dev-dependencies]
 ed25519-dalek = "2"

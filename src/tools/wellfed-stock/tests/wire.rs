@@ -6,7 +6,7 @@
 mod common;
 
 use chrono::{TimeZone, Utc};
-use wellfed_local::{
+use wellfed_stock::{
     ota,
     protocol::{self, Reply},
 };
@@ -24,7 +24,7 @@ fn bytes(reply: &Reply) -> String {
     serde_json::to_string(&payload).unwrap()
 }
 
-fn answer(config: &wellfed_local::config::Config, channel: &str, message: Value) -> String {
+fn answer(config: &wellfed_stock::config::Config, channel: &str, message: Value) -> String {
     let (channel, message) = protocol::parse(
         config,
         &config.topic(&format!("{channel}/post")),

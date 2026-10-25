@@ -29,7 +29,9 @@ use serde::{Deserialize, Serialize};
 use tokio::{net::TcpListener, task::JoinSet};
 use uuid::Uuid;
 
-use crate::{config::Config, ota::firmware, storage};
+use wellfed_core::ota::MARKER;
+
+use crate::{config::Config, storage};
 
 /// Stock's own image size, the most it accepts.
 const IMAGE_BYTES: usize = 1_376_288;
@@ -41,6 +43,24 @@ const LEASE_FILE: &str = "ota-image-server.json";
 
 /// The one file the server holds, under its token.
 pub const ROUTE: &str = "replacement.bin";
+
+/// The OTA container's header precedes the bank contents.
+pub const CONTAINER_HEADER: usize = 32;
+
+/// The bank contents of an OTA container: everything after its header,
+/// which must start with the loader's marker.
+pub fn payload(container: &[u8]) -> Result<&[u8]> {
+    ensure!(
+        container.len() > CONTAINER_HEADER + MARKER.len(),
+        "image too short"
+    );
+    let payload = &container[CONTAINER_HEADER..];
+    ensure!(
+        payload[..MARKER.len()] == MARKER,
+        "image payload lacks the loader marker"
+    );
+    Ok(payload)
+}
 
 /// Private record of the running image server, written beside the config.
 /// Dispatch requires its token, an unexpired accept window and a live listener.
@@ -113,7 +133,7 @@ impl Build {
             sha256 == frozen.ota_sha256,
             "image.bin does not match its review"
         );
-        firmware::payload(&data)?;
+        payload(&data)?;
 
         Ok(Self {
             image: Bytes::from(data),

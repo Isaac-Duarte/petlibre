@@ -10,7 +10,8 @@ Where each host tool is going as the product platform lands, decided October 24,
 | `wellfed-build` | 7.3k | Stays, and gains `keygen` and `sign` for update signing |
 | `wellfed-audit`, `wellfed-emu`, `wellfed-formats`, `xtask` | 10.8k | Stay |
 | `wellfed-bench` | 15k | Splits into single-purpose crates; stays dev-only |
-| `wellfed-local` | 7.3k | Splits up and is deleted |
+| `wellfed-local` | 4.1k | Splits up and is deleted: a binary over `wellfed-stock` since October 25 |
+| `wellfed-stock` | 4.0k | Stays: the stock 1.1.15 protocol, its broker, the setup frame and the install-trial ledger, moved out of `wellfed-local` unchanged |
 
 ## Why `wellfed-local` goes
 
@@ -21,7 +22,7 @@ Where each host tool is going as the product platform lands, decided October 24,
 | Stock control (research era) | `feed`, `resolve`, `new-request-id`, `/api/feed`, the feed records in the ledger | **Deleted** (stage 1). The product uses stock only to install and roll back ([product architecture](../firmware/product-architecture.md)) |
 | C-probe and modified-stock research | `probe-query`, the `1.1.16` and C-probe trial images | **Deleted** (stage 1). The research closed on October 22 |
 | Direct-to-feeder bring-up | `speak`, `ble-wifi` | **Deleted** (stage 1). Their firmwares are bring-up only, and FW45 replaces BLE setup |
-| Stock installer (FW40–FW43) | `ota-images`, `ota-trial`, `ota-trial-resolve`, `setup-send`, the stock broker; `init` and `network` (captured credentials, sudo redirect) | **`wellfed-stock`** (the protocol) and **`wellfed-client`** (the installer's steps). `init` and `network` go once the FW42 setup frame works |
+| Stock installer (FW40–FW43) | `ota-images`, `ota-trial`, `ota-trial-resolve`, `setup-send`, the stock broker; `init` and `network` (captured credentials, sudo redirect) | **`wellfed-stock`** (the protocol; **moved** Oct 25, the commands still in `wellfed-local`) and **`wellfed-client`** (the installer's steps). `init` and `network` go once the FW42 setup frame works |
 | Replacement MQTT transport (FW08) | `firmware-credential`, `firmware-request-key`, the firmware broker role, `/api/replacement/request` | Requests **deleted** with FW47 (`firmware-request-key`, `/api/replacement/request`); `firmware-credential` and the broker role go with the offers in FW48 |
 | Replacement OTA (FW10) | `ota-offer`, the fault-server example | Signing **moved** to `wellfed-build keygen` and `sign`, behind a frozen review (Oct 25); offers to the device API (FW48), with the fault server rebuilt on `wellfed-client` |
 

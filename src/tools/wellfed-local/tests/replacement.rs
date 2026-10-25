@@ -8,7 +8,8 @@ mod common;
 use std::time::Duration;
 
 use common::{address, ready, start, status};
-use wellfed_local::{config::FirmwareConfig, storage};
+use wellfed_local::config::FirmwareConfig;
+use wellfed_stock::storage;
 use rumqttc::{
     AsyncClient, Event, EventLoop, LastWill, MqttOptions, Packet, QoS, SubscribeReasonCode,
 };

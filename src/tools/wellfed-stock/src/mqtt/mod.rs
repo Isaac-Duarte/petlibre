@@ -1,13 +1,15 @@
 //! The server's MQTT client, a single actor that owns the `Controller`.
 //!
-//! It answers the stock device on its namespace, carries the
-//! replacement-firmware health and update topics when a firmware role is
-//! configured, and serves API requests arriving over a channel. It
-//! sends the replacement firmware no requests: those go over the Noise device
-//! API, and only bank 0's recovery role still publishes health here. Commands
-//! go out on QoS 0 without retain, and every reconnect builds a new client, so
-//! nothing is replayed into a later session; while disconnected, requests are
-//! still answered but no command is queued.
+//! It answers the stock device on its namespace and serves API requests
+//! arriving over a channel. Commands go out on QoS 0 without retain, and
+//! every reconnect builds a new client, so nothing is replayed into a later
+//! session; while disconnected, requests are still answered but no command
+//! is queued.
+//!
+//! The replacement firmware's transport shares this one session until it is
+//! deleted: a [`Companion`] adds its topics to the subscription, takes the
+//! publishes on them and fills its part of the status, without this module
+//! knowing its topics.
 //!
 //! The broker this client and the feeder connect to is `broker`, with
 //! `compat` normalizing the stock firmware's CONNECT in front of it.
@@ -28,20 +30,46 @@ use crate::{
     controller::{Controller, Rejection, Status},
     ota,
     protocol::{self, Reply},
-    replacement,
 };
 
 pub type TrialResult = std::result::Result<ota::trial::Record, Rejection>;
 
-pub enum Request {
+/// An API request; `X` is the companion's own.
+pub enum Request<X> {
     OtaTrial(
         ota::trial::Input,
         Option<ota::image::Lease>,
         oneshot::Sender<TrialResult>,
     ),
     ResolveTrial(ota::trial::ResolveInput, oneshot::Sender<TrialResult>),
-    /// Load (or with `None`, clear) the update the server answers `ota/get` from.
-    OtaOffer(Option<ota::firmware::Offer>, oneshot::Sender<bool>),
+    Companion(X),
+}
+
+/// What shares the session beside stock: its own topics, outside stock's
+/// namespace, and its own requests, which never send stock a command.
+pub trait Companion: Send + 'static {
+    /// The health it reports in the status document.
+    type Health: Clone + Send + Sync + 'static;
+    type Request: Send + 'static;
+
+    /// Its topics, subscribed in the session's one SUBSCRIBE beside stock's.
+    fn filters(&self) -> Vec<SubscribeFilter>;
+
+    /// Take a publish on its own topics, answering on `client`; false leaves
+    /// the publish to stock. It reaches the controller only through the
+    /// ledger's own evidence rules.
+    fn incoming(
+        &mut self,
+        client: &AsyncClient,
+        publish: &Publish,
+        controller: &mut Controller<Self::Health>,
+    ) -> bool;
+
+    /// Fill its part of the status the API serves.
+    fn status(&self, status: &mut Status<Self::Health>);
+
+    /// Answer one of its requests. Called with or without a broker session.
+    fn request(&mut self, request: Self::Request);
 }
 
 /// QoS 0, no retain, no offline session, and a new client on reconnect: a
@@ -57,41 +85,29 @@ fn publish(client: &AsyncClient, reply: Reply) -> Result<()> {
 }
 
 /// The actor's state that outlives one broker connection.
-struct Actor {
+struct Actor<C: Companion> {
     config: Arc<Config>,
-    controller: Controller,
-    status: watch::Sender<Status>,
-    /// Survives reconnects: health ages out rather than vanishing.
-    tracker: replacement::Tracker,
-    /// Owner-loaded only; never persisted, never offered unasked.
-    offer: Option<ota::firmware::Offer>,
+    controller: Controller<C::Health>,
+    status: watch::Sender<Status<C::Health>>,
+    /// Survives reconnects with the actor.
+    companion: C,
 }
 
-impl Actor {
-    /// The controller's status plus the replacement-firmware snapshot at `now`.
+impl<C: Companion> Actor<C> {
+    /// The controller's status plus the companion's part.
     fn publish_status(&self) {
         let mut value = self.controller.status.clone();
-        if self.config.firmware.is_some() {
-            value.replacement = Some(self.tracker.snapshot(Utc::now()));
-        }
+        self.companion.status(&mut value);
         self.status.send_replace(value);
     }
 
     /// One SUBSCRIBE, so one SUBACK starts the session.
     async fn subscribe(&self, client: &AsyncClient) -> Result<()> {
-        let config = &self.config;
         let mut filters = vec![SubscribeFilter::new(
-            config.topic("+/post"),
+            self.config.topic("+/post"),
             QoS::AtLeastOnce,
         )];
-        if config.firmware.is_some() {
-            for topic in ["health", "ota/get", "ota/check"] {
-                filters.push(SubscribeFilter::new(
-                    config.firmware_topic(topic),
-                    QoS::AtMostOnce,
-                ));
-            }
-        }
+        filters.extend(self.companion.filters());
 
         client.subscribe_many(filters).await?;
         info!("local MQTT server connected");
@@ -125,63 +141,14 @@ impl Actor {
             return Ok(());
         }
 
-        if self.config.firmware.is_some() {
-            let topic = |suffix| self.config.firmware_topic(suffix);
-            if publish.topic == topic("health") {
-                self.firmware_health(&publish.payload);
-                return Ok(());
-            }
-            if publish.topic == topic("ota/get") {
-                self.firmware_update_request(client, &publish.payload);
-                return Ok(());
-            }
-            if publish.topic == topic("ota/check") {
-                // The normal role's offer check: the manifest only, and never
-                // counted as a delivery.
-                let offered = ota::firmware::Offer::check(self.offer.as_ref());
-                let _ = client.try_publish(
-                    self.config.firmware_topic("ota/offered"),
-                    QoS::AtMostOnce,
-                    false,
-                    offered,
-                );
-                return Ok(());
-            }
+        if self
+            .companion
+            .incoming(client, publish, &mut self.controller)
+        {
+            return Ok(());
         }
 
         self.device_message(client, publish)
-    }
-
-    fn firmware_health(&mut self, payload: &[u8]) {
-        let now = Utc::now();
-        if !self.tracker.observe_health(payload, now) {
-            warn!("ignored invalid replacement health");
-        } else if self.tracker.snapshot(now).online
-            && let Err(error) = self.controller.replacement_healthy(now)
-        {
-            warn!(%error, "replacement install not recorded as healthy");
-        }
-    }
-
-    fn firmware_update_request(&mut self, client: &AsyncClient, payload: &[u8]) {
-        let (answer, dropped) = ota::firmware::Offer::serve(&mut self.offer, payload);
-        if dropped {
-            warn!(
-                "replacement update offer dropped: delivered once, then asked for again after a fallback; offer again to retry"
-            );
-        }
-
-        match answer {
-            Some(answer) => {
-                let _ = client.try_publish(
-                    self.config.firmware_topic("ota/data"),
-                    QoS::AtMostOnce,
-                    false,
-                    answer,
-                );
-            }
-            None => warn!("ignored malformed replacement update request"),
-        }
     }
 
     fn device_message(&mut self, client: &AsyncClient, incoming: &Publish) -> Result<()> {
@@ -226,21 +193,7 @@ impl Actor {
         Ok(Ok(record))
     }
 
-    fn set_offer(&mut self, next: Option<ota::firmware::Offer>) -> bool {
-        match &next {
-            Some(offer) => info!(
-                version = offer.version,
-                bytes = offer.payload.len(),
-                "replacement update offered"
-            ),
-            None => info!("replacement update offer cleared"),
-        }
-        // An offer is server state, not a device command: kept across reconnects.
-        self.offer = next;
-        self.config.firmware.is_some()
-    }
-
-    fn request(&mut self, client: &AsyncClient, request: Request) -> Result<()> {
+    fn request(&mut self, client: &AsyncClient, request: Request<C::Request>) -> Result<()> {
         let now = Utc::now();
         match request {
             Request::OtaTrial(input, lease, response) => {
@@ -271,7 +224,7 @@ impl Actor {
 
     /// Requests that send nothing, or (while disconnected) are refused or
     /// recorded without a command: nothing accumulates for a later session.
-    fn request_without_device(&mut self, request: Request) {
+    fn request_without_device(&mut self, request: Request<C::Request>) {
         let now = Utc::now();
         match request {
             Request::OtaTrial(input, lease, response) => {
@@ -285,14 +238,15 @@ impl Actor {
             Request::ResolveTrial(input, response) => {
                 let _ = response.send(self.controller.resolve_trial(input, now));
             }
-            Request::OtaOffer(next, response) => {
-                let _ = response.send(self.set_offer(next));
-            }
+            Request::Companion(request) => self.companion.request(request),
         }
     }
 
     /// One broker connection, until it drops or the request channel closes.
-    async fn session(&mut self, requests: &mut mpsc::Receiver<Request>) -> Result<Session> {
+    async fn session(
+        &mut self,
+        requests: &mut mpsc::Receiver<Request<C::Request>>,
+    ) -> Result<Session> {
         let config = &self.config;
         let mut options = MqttOptions::new(
             config.server_client_id(),
@@ -334,7 +288,10 @@ impl Actor {
 
     /// Serve API requests between connections without accumulating commands
     /// for a future session; the controller refuses a new trial while offline.
-    async fn between_sessions(&mut self, requests: &mut mpsc::Receiver<Request>) -> Session {
+    async fn between_sessions(
+        &mut self,
+        requests: &mut mpsc::Receiver<Request<C::Request>>,
+    ) -> Session {
         let delay = tokio::time::sleep(Duration::from_secs(2));
         tokio::pin!(delay);
         loop {
@@ -356,18 +313,18 @@ enum Session {
     Closed,
 }
 
-pub async fn run(
+pub async fn run<C: Companion>(
     config: Arc<Config>,
-    controller: Controller,
-    mut requests: mpsc::Receiver<Request>,
-    status: watch::Sender<Status>,
+    controller: Controller<C::Health>,
+    mut requests: mpsc::Receiver<Request<C::Request>>,
+    status: watch::Sender<Status<C::Health>>,
+    companion: C,
 ) -> Result<()> {
     let mut actor = Actor {
         config,
         controller,
         status,
-        tracker: replacement::Tracker::default(),
-        offer: None,
+        companion,
     };
 
     loop {

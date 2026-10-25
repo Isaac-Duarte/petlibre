@@ -3,7 +3,8 @@ mod common;
 
 use std::time::Duration;
 
-use wellfed_local::{config::Config, storage};
+use wellfed_local::config::Config;
+use wellfed_stock::storage;
 use serde_json::{Value, json};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},

@@ -8,7 +8,8 @@ use std::time::Duration;
 use common::{address, ready};
 use wellfed_core::ota::{self, Part, SECTOR, Status};
 use wellfed_core::transport as mqtt;
-use wellfed_local::{config::FirmwareConfig, ota::firmware, storage};
+use wellfed_local::{config::FirmwareConfig, ota::firmware};
+use wellfed_stock::storage;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 

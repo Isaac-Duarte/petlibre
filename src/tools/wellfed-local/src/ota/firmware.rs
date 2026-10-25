@@ -6,26 +6,11 @@
 //! back, so the offer is dropped until the owner offers it again. Signing is
 //! `wellfed-build sign`, which signs only a frozen review.
 use anyhow::{Result, ensure};
-use wellfed_core::ota::{self, MANIFEST_LEN, MARKER};
+use wellfed_core::ota::{self, MANIFEST_LEN};
 use sha2::{Digest, Sha256};
 
-/// The OTA container's header precedes the bank contents.
-pub const CONTAINER_HEADER: usize = 32;
-
-/// The bank contents of an OTA container: everything after its header,
-/// which must start with the loader's marker.
-pub fn payload(container: &[u8]) -> Result<&[u8]> {
-    ensure!(
-        container.len() > CONTAINER_HEADER + MARKER.len(),
-        "image too short"
-    );
-    let payload = &container[CONTAINER_HEADER..];
-    ensure!(
-        payload[..MARKER.len()] == MARKER,
-        "image payload lacks the loader marker"
-    );
-    Ok(payload)
-}
+/// The container stock installs is the one offered here.
+pub use wellfed_stock::ota::image::{CONTAINER_HEADER, payload};
 
 /// One owner-loaded update the server answers `ota/get` from. Checked
 /// against its own manifest; authenticity is the firmware's signature check.

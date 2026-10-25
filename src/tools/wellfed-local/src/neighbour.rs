@@ -8,7 +8,7 @@ use std::process::Command;
 use anyhow::{Context, Result, ensure};
 use serde::Deserialize;
 
-use crate::config::Config;
+use wellfed_stock::config::Config;
 
 /// One `ip -j neigh` entry; incomplete entries have no `lladdr`.
 #[derive(Deserialize)]

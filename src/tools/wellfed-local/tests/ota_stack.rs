@@ -6,7 +6,7 @@
 mod common;
 
 use chrono::Utc;
-use wellfed_local::{ota, storage};
+use wellfed_stock::{ota, storage};
 use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS};
 use serde_json::{Value, json};
 use std::net::Ipv4Addr;

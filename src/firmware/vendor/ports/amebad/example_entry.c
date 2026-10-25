@@ -434,6 +434,24 @@ static int wellfed_socket_error(int s)
     return error;
 }
 
+/* Whether `s` is ready now: readable (data, a waiting connection, or a
+ * closed or failed socket), or with `write`, room to send. A zero-timeout
+ * select scans the socket under lwIP's lock and posts nothing, where
+ * `getsockopt` waits on a round trip to the stack's thread; every idle
+ * poll of the loop used to pay one. A failed select reports ready, so the
+ * call that follows meets the error. */
+static int wellfed_ready(int s, int write)
+{
+    fd_set ready;
+    fd_set failed;
+    FD_ZERO(&ready);
+    FD_ZERO(&failed);
+    FD_SET(s, &ready);
+    FD_SET(s, &failed);
+    struct timeval now = {0, 0};
+    return lwip_select(s + 1, write ? NULL : &ready, write ? &ready : NULL, &failed, &now) != 0;
+}
+
 /* Connect within `timeout_ms`: a socket, or -1. */
 int wellfed_tcp_connect(unsigned int ip, unsigned int port, unsigned int timeout_ms)
 {
@@ -579,6 +597,9 @@ int wellfed_api_listen(unsigned int port)
 /* A waiting connection: a socket, -1 when none waits, -2 on an error. */
 int wellfed_api_accept(int listener)
 {
+    if (!wellfed_ready(listener, 0)) {
+        return -1;
+    }
     int s = lwip_accept(listener, NULL, NULL);
     if (s < 0) {
         int error = wellfed_socket_error(listener);
@@ -593,6 +614,9 @@ int wellfed_api_accept(int listener)
 /* Bytes received now; 0 when none are waiting, -1 once closed or failed. */
 int wellfed_api_recv(int s, void *buffer, unsigned int length)
 {
+    if (!wellfed_ready(s, 0)) {
+        return 0;
+    }
     int got = lwip_recv(s, buffer, length, MSG_DONTWAIT);
     if (got > 0) {
         return got;
@@ -609,6 +633,9 @@ int wellfed_api_recv(int s, void *buffer, unsigned int length)
 /* Bytes the stack took now (0 while its send buffer is full), -1 on error. */
 int wellfed_api_send(int s, const void *data, unsigned int length)
 {
+    if (!wellfed_ready(s, 1)) {
+        return 0;
+    }
     int sent = lwip_send(s, data, length, MSG_DONTWAIT);
     if (sent >= 0) {
         return sent;
@@ -651,6 +678,9 @@ int wellfed_mdns_open(void)
 /* One datagram received now, with its sender; 0 when none, -1 on error. */
 int wellfed_mdns_recv(int s, void *buffer, unsigned int length, unsigned int *ip, unsigned int *port)
 {
+    if (!wellfed_ready(s, 0)) {
+        return 0;
+    }
     struct sockaddr_in from;
     socklen_t size = sizeof(from);
     int got = lwip_recvfrom(s, buffer, length, MSG_DONTWAIT, (struct sockaddr *)&from, &size);

@@ -529,7 +529,11 @@ impl Board {
 
 #[cfg(test)]
 mod tests {
+    use wellfed_core::flash_coord::FlashReply;
+
     use super::*;
+    use crate::sdk::fake;
+    use crate::supervision::config::FLASH_LIMITS;
 
     #[test]
     fn a_nested_call_is_refused_and_the_board_stays_usable() {
@@ -540,5 +544,36 @@ mod tests {
         assert!(board.with(|_| board.view()).is_ok_and(|view| view.faulted));
 
         assert_eq!(board.with(|state| state.faulted), Ok(false));
+    }
+
+    #[test]
+    fn nested_outputs_are_refused_and_change_nothing() {
+        fake::reset_hardware();
+        let board = Board::default();
+        assert!(board.open(3, 10, 8, 0));
+        let mut flash = FlashCoord::new(&FLASH_LIMITS, 17, 0).expect("valid limits");
+        assert_eq!(flash.ready(17, 29, true, 0), FlashReply::Accepted);
+        // SAFETY: `flash` outlives the board's use of it and stays in place.
+        assert!(unsafe { board.attach_flash(&mut flash) });
+        let before = board.view();
+
+        let nested = board.with(|_| {
+            (
+                board.motor(MotorCommand::Drive0, 1),
+                board.optics_select(true, true),
+                board.motor_tick(2),
+            )
+        });
+
+        assert_eq!(nested, Ok((false, false, false)));
+        let after = board.view();
+        assert_eq!(after.motor.desired, before.motor.desired);
+        assert_eq!(after.motor.applied, before.motor.applied);
+        assert!(!after.faulted && !after.optics_enabled && after.opened);
+        assert_eq!(sdk::gpio_port_read(GPIO_PORT_A, MOTOR_MASK), MOTOR_MASK);
+        assert!(optics_off());
+
+        assert!(board.motor(MotorCommand::Drive0, 3), "usable once unnested");
+        board.close();
     }
 }

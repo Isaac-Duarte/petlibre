@@ -53,6 +53,13 @@ const EVIDENCE: [&str; 5] = ["bin", "pcap", "pcapng", "img", "apk"];
 const TEXT: [&str; 10] = [
     "md", "rs", "py", "toml", "json", "yml", "txt", "c", "h", "ts",
 ];
+/// Product code, which reaches the motor pins, the watchdog and flash only
+/// through the HAL's owners: it may name neither the raw writers nor the
+/// `bringup` module that re-exports them.
+const PRODUCT: [&str; 2] = ["src/firmware/wellfed/feeder/src/", "src/product/"];
+/// Bring-up code, which may take the raw writers, but only as `bringup::…`,
+/// so the one door stays visible at every call.
+const BRINGUP: [&str; 2] = ["src/firmware/wellfed/", "src/sdk/wellfed-probes/src/"];
 /// Sources under `src/` that must not cite a board card.
 const CARD_FREE: [&str; 6] = ["rs", "c", "h", "toml", "md", "ts"];
 
@@ -76,6 +83,14 @@ regex!(DATED, r#"private/[^\s"']*202610\d{2}"#);
 // A board card's id: the firmware or feature board's prefix and a number.
 // Pinned policy names are lowercase and stay.
 regex!(CARD, r"\b(?:FW|FP)\d{1,3}[a-z]?\b");
+
+// The raw output writers `wellfed-amebad-sys` marks `unsafe`; reads such
+// as `wdg_vendor` and `bank1_read` are not among them.
+regex!(
+    RAW_WRITER,
+    r"(\bbringup::)?\b(gpio_init|gpio_port_write|gpio_write_bit|wdg_init|wdg_cmd|wdg_refresh|storage_erase|storage_program|bank1_erase|bank1_program|bank1_give_way)\b"
+);
+regex!(BRINGUP_NAME, r"\bbringup\b");
 
 regex!(LINK, r"\]\(([^)]+)\)");
 regex!(SCHEME, r"^[A-Za-z][A-Za-z0-9+.-]*:");
@@ -182,6 +197,10 @@ fn check_file(root: &Path, name: &str, summary: &mut Summary) {
         ));
     }
 
+    if extension == "rs" {
+        raw_outputs(name, &content, &mut summary.errors);
+    }
+
     if extension == "md" {
         // Inline links only; external references are provenance links, not fetched.
         for capture in LINK.captures_iter(&content) {
@@ -246,6 +265,37 @@ fn normalize(path: &Path) -> PathBuf {
         }
     }
     out
+}
+
+/// Product code names no raw writer and no `bringup`; bring-up code names a
+/// raw writer only through `bringup::`. Comments are not code.
+fn raw_outputs(name: &str, source: &str, errors: &mut Vec<String>) {
+    let product = PRODUCT.iter().any(|root| name.starts_with(root));
+    let bringup = !product && BRINGUP.iter().any(|root| name.starts_with(root));
+    if !product && !bringup {
+        return;
+    }
+
+    for line in source.lines() {
+        let code = line.split("//").next().unwrap_or("");
+        if product && BRINGUP_NAME.is_match(code) {
+            errors.push(format!(
+                "{name}: product code may not use the bringup module"
+            ));
+        }
+        for capture in RAW_WRITER.captures_iter(code) {
+            let writer = &capture[2];
+            if product {
+                errors.push(format!(
+                    "{name}: product code may not call {writer}; use the HAL's owner"
+                ));
+            } else if capture.get(1).is_none() {
+                errors.push(format!(
+                    "{name}: bring-up code calls {writer} only as bringup::{writer}"
+                ));
+            }
+        }
+    }
 }
 
 pub(crate) fn transport_isolation(root: &Path, errors: &mut Vec<String>) {
@@ -360,6 +410,43 @@ mod tests {
             &mut errors,
         );
         assert_eq!(errors.len(), 2);
+    }
+
+    #[test]
+    fn raw_outputs_rules() {
+        let mut errors = Vec::new();
+        let feeder = "src/firmware/wellfed/feeder/src/app.rs";
+        raw_outputs(
+            feeder,
+            "// gpio_port_write is the board's\nlet v = sdk::wdg_vendor();\nlet e = h.storage_erases;\n",
+            &mut errors,
+        );
+        assert!(errors.is_empty(), "{errors:?}");
+
+        raw_outputs(
+            feeder,
+            "unsafe { wellfed_sdk::hal::sdk::gpio_port_write(0, MASK, 0) };\nuse wellfed_sdk::hal::bringup;\n",
+            &mut errors,
+        );
+        raw_outputs(
+            "src/sdk/wellfed-probes/src/buttons.rs",
+            "unsafe { bringup::gpio_init(pin, false) };\nunsafe { sdk::wdg_refresh() };\n",
+            &mut errors,
+        );
+        raw_outputs(
+            "src/sdk/wellfed-hal/src/board.rs",
+            "unsafe { sdk::gpio_port_write(0, 0, 0) };\n",
+            &mut errors,
+        );
+
+        assert_eq!(
+            errors,
+            [
+                "src/firmware/wellfed/feeder/src/app.rs: product code may not call gpio_port_write; use the HAL's owner",
+                "src/firmware/wellfed/feeder/src/app.rs: product code may not use the bringup module",
+                "src/sdk/wellfed-probes/src/buttons.rs: bring-up code calls wdg_refresh only as bringup::wdg_refresh",
+            ]
+        );
     }
 
     #[test]

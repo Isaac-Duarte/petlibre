@@ -446,19 +446,24 @@ pub use guard::IrqGuard;
 #[cfg(any(not(target_os = "none"), feature = "km4"))]
 mod audio {
     use super::{AUDIO_PAGE_SAMPLES, backend};
+    use core::marker::PhantomData;
 
     /// The codec's DMA ring, as one handle. A [`Page`] borrows it mutably, so
     /// one page is out at a time and none outlives the handle; [`Audio::take`]
     /// hands out at most one handle, so two callers never fill the same page.
     #[derive(Debug)]
     pub struct Audio {
-        _owned: (),
+        /// Not `Send`: the fake keeps the take flag and the page per thread,
+        /// and the ring belongs to the task that took it.
+        _owned: PhantomData<*const ()>,
     }
 
     impl Audio {
         /// The ring's one handle, or `None` while another is out.
         pub fn take() -> Option<Self> {
-            backend::audio_take().then_some(Self { _owned: () })
+            backend::audio_take().then_some(Self {
+                _owned: PhantomData,
+            })
         }
 
         /// The next free ring page, while the codec is open and the DMA does

@@ -12,6 +12,11 @@
 //!   feeder. A save during the boot (a device API write, or BLE setup)
 //!   takes effect at the next join: the new credentials are read again and
 //!   get their own run of attempts before the build's take over.
+//! - **Turn:** the select takes the join's turn in the [`interlock`], waiting
+//!   while a feed holds the outputs, and the outcome ends it, so no feed
+//!   starts while the attempt scans, associates or waits for DHCP.
+//!
+//! [`interlock`]: crate::interlock
 //!
 //! Nothing here writes flash.
 
@@ -22,6 +27,7 @@ use wellfed_core::store::slot::SlotIo;
 use wellfed_core::transport::{WifiResult, WifiSource, WifiView};
 
 use crate::cell::TaskCell;
+use crate::interlock::INTERLOCK;
 use crate::sdk;
 
 /// The credential slots within the storage region (`0x345000`).
@@ -181,6 +187,8 @@ pub unsafe fn reset() {
     STATE.store(Hand::Empty as u8, Ordering::Release);
     // SAFETY: the caller's contract: no Wi-Fi task holds `JOIN`.
     unsafe { *JOIN.get() = Join::default() };
+    #[cfg(not(target_os = "none"))]
+    INTERLOCK.reset();
 }
 
 // ---- The join half, called by the C Wi-Fi task only.
@@ -249,13 +257,16 @@ pub struct JoinCredentials {
     pub source: u32,
 }
 
-/// Before each join attempt: replace the build's credentials with stored
+/// Before each join attempt: take the join's turn (waiting while a feed
+/// holds the outputs), then replace the build's credentials with stored
 /// ones unless the fallback has taken over.
 ///
 /// # Safety
-/// `out` is valid; called only from the Wi-Fi task.
+/// `out` is valid; called only from the Wi-Fi task, which may block here.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn wellfed_wifi_select(out: *mut JoinCredentials) {
+    INTERLOCK.begin_join(sdk::uptime_ms, sdk::delay_ms);
+
     // SAFETY: only the Wi-Fi task calls this.
     let join = unsafe { &mut *JOIN.get() };
     if RELOAD.swap(false, Ordering::AcqRel) {
@@ -283,6 +294,8 @@ pub unsafe extern "C" fn wellfed_wifi_select(out: *mut JoinCredentials) {
 /// `wellfed_wifi_select` call is running.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn wellfed_wifi_outcome(joined: i32) {
+    INTERLOCK.end_join();
+
     // SAFETY: the caller's contract makes this the only reference to `JOIN`.
     let join = unsafe { &mut *JOIN.get() };
     if source() != WifiSource::Stored {

@@ -1288,6 +1288,14 @@ pub fn uptime_ms() -> u32 {
     unsafe { raw::xTaskGetTickCount() }
 }
 
+/// Block the calling task for `ms` (configTICK_RATE_HZ is 1000, so ticks are
+/// milliseconds). Only from a task, with the scheduler running: never from
+/// an interrupt or inside [`unscheduled`].
+pub fn delay_ms(ms: u32) {
+    // SAFETY: the pinned SDK routine, with plain-value arguments.
+    unsafe { raw::vTaskDelay(ms) }
+}
+
 /// The running task's identity, nonzero and stable for the task's life; zero
 /// from an interrupt or before the scheduler starts. A task from
 /// [`task_create`] gets an identity no later task reuses, even one that

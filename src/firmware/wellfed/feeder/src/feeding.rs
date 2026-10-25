@@ -19,11 +19,19 @@
 //! stock's 100 ms sensor settling); the feed ones (duration, reverse,
 //! current) are placeholders until measured feeds replace them. With no
 //! confirmed feedback edge a drive stops after `feedback_timeout_ms`.
+//!
+//! Feeds and Wi-Fi joins take turns (`wellfed_hal::interlock`): an
+//! association holds every task for up to 0.72 s, longer than the beat
+//! allows while outputs may move, and no task priority avoids it. So a feed
+//! is refused `Busy` while a join runs or waits, and a join requested during
+//! a feed waits until the owner is at rest with its outputs stopped.
 
 use wellfed_core::feed::controller::FeedLimits;
 use wellfed_core::feed::progress::BowlMode;
 use wellfed_core::feed::sensor_inputs::SensorLimits;
 use wellfed_core::store::feed_journal::JournalConfig;
+use wellfed_proto::api::Refusal;
+use wellfed_sdk::hal::interlock::{Held, Interlock};
 use wellfed_sdk::hal::owner::OwnerConfig;
 use wellfed_sdk::hal::sdk;
 use wellfed_sdk::hal::supervision::config::{SYSTIMER_HZ, WATCHDOG};
@@ -90,6 +98,25 @@ pub const CONFIG: OwnerConfig = OwnerConfig {
     flash: core::ptr::null_mut(),
 };
 
+/// The longest one feed can keep the outputs from rest, and so the longest
+/// a Wi-Fi join waits for them: the owner keeps the emitters on for at most
+/// `optics_max_on_ms` from the request, and its configuration check holds
+/// the prepare timeout and the longest drive inside that, then it stops (or
+/// faults, which stops too). The margin covers the stop and the pass that
+/// sees it. About 9 min 40 s for the largest request.
+pub const FEED_BOUND_MS: u32 = CONFIG.optics_max_on_ms + 2000;
+
+/// Claims the outputs in `interlock` for one feed, before it is submitted.
+/// A join running or waiting refuses the feed `Busy`, final for that write
+/// id (clients never retry a feed on their own); `held` hears why, for the
+/// log.
+pub fn claim_outputs(interlock: &Interlock, held: impl FnOnce(Held)) -> Result<(), Refusal> {
+    interlock.claim_feed(FEED_BOUND_MS).map_err(|why| {
+        held(why);
+        Refusal::Busy
+    })
+}
+
 pub const JOURNAL: JournalConfig = JournalConfig {
     binding: wellfed_sdk::storage::JOURNAL_BINDING,
     mode: BOWL,
@@ -106,6 +133,7 @@ mod target {
     use wellfed_core::store::feed_journal::{FeedJournal, JournalError};
     use wellfed_feeder::feed::{self, Durability};
     use wellfed_proto::api::{Refusal, Source};
+    use wellfed_sdk::hal::interlock::{self, Held, INTERLOCK};
     use wellfed_sdk::hal::owner::{
         FeedTrace, Owner, OwnerConfig, OwnerFault, OwnerState, OwnerStatus, Step, SubmitResult,
     };
@@ -156,6 +184,11 @@ mod target {
         Pins { feed: u64, pins: PinWatch },
         /// When each feedback edge came, from the drive's start.
         Edges { feed: u64, trace: FeedTrace },
+        /// A feed was refused before the owner saw it: a Wi-Fi join runs or
+        /// waits.
+        Held { portions: u8, held: Held },
+        /// Joins waited for the outputs, or went ahead past a feed's bound.
+        Joins(interlock::Status),
     }
 
     /// The most pads a `pins` record lists, so the line fits a record.
@@ -245,6 +278,14 @@ mod target {
                 }
                 Ok(())
             }
+            Record::Held { portions, held } => {
+                write!(f, "feed portions={portions} held={}", held.code())
+            }
+            Record::Joins(status) => write!(
+                f,
+                "interlock refused={} deferred={} forced={} waited_max_ms={}",
+                status.refused, status.deferred, status.forced, status.waited_max_ms
+            ),
             Record::Pins { feed, pins } => {
                 let [start_a, start_b] = pins.start.unwrap_or_default();
                 let [changed_a, changed_b] = pins.changed;
@@ -305,6 +346,8 @@ mod target {
         /// Why the last feed ended before its reservation, for the API's
         /// poll: its id and the refusal.
         unreserved: Option<(u64, Refusal)>,
+        /// The interlock's counters as last logged.
+        joins: interlock::Status,
     }
 
     impl Feeding {
@@ -356,7 +399,33 @@ mod target {
             }
 
             self.follow(&owner, &status, &mut record);
+            self.release(&status, &mut record);
             delay
+        }
+
+        /// Hands the outputs' turn back once no feed is in flight and the
+        /// owner is at rest with its outputs stopped; a failed stop keeps
+        /// it, and a waiting join then goes ahead only past the bound.
+        fn release(&mut self, status: &OwnerStatus, record: &mut impl FnMut(Record)) {
+            let at_rest = !matches!(status.state, OwnerState::Preparing | OwnerState::Feeding)
+                && status.stopped
+                && status.optics_off;
+            if self.current.is_none() && at_rest {
+                INTERLOCK.release_feed();
+            }
+
+            // Logged when a join starts waiting and again when it goes.
+            let joins = INTERLOCK.status();
+            if (joins.deferred, joins.forced, joins.waited_max_ms)
+                != (
+                    self.joins.deferred,
+                    self.joins.forced,
+                    self.joins.waited_max_ms,
+                )
+            {
+                self.joins = joins;
+                record(Record::Joins(joins));
+            }
         }
 
         /// The feed in flight against the owner's status: note its
@@ -432,6 +501,9 @@ mod target {
             if self.current.is_some() {
                 return Err(Refusal::Busy);
             }
+            super::claim_outputs(&INTERLOCK, |held| {
+                record(Record::Held { portions, held });
+            })?;
             let status = owner.status();
             let feed = status.high_water_id.wrapping_add(1);
             let number = u32::try_from(feed).map_err(|_| Refusal::NotWritable)?;

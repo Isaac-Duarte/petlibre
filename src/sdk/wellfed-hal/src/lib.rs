@@ -39,6 +39,7 @@ pub mod stream;
 
 pub mod flash_lock;
 pub mod health;
+pub mod interlock;
 pub mod net_status;
 pub mod ota;
 pub mod owner;

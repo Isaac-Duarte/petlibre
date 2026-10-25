@@ -80,3 +80,14 @@ Pass for the measurement: at least N rejoins captured (`gen` rose by about 2N), 
 - **A hard fault in the loop, once.** In `cap-04`, after the status-53 rejection and its 720 ms stall, the 8 KiB `wellfed-loop` faulted with UNDEFINSTR (`cfsr=10000`) at `0x0e010ffe`, a valid `mrs r0, IPSR` in `unscheduled` (from `keys::identity_since`), executing from XIP flash; the board reset and came back on bank 1. A valid instruction faulting as undefined points to a bad fetch from flash rather than a code bug, but one capture cannot establish the cause. It is the same class as bank 0's occasional fault in the vendor Wi-Fi threads.
 
 Bank 1 was then restored to the reviewed `e43324be…` (v171, `ar9-restore-20261025-01`).
+
+## The interlock (static analysis and host tests)
+
+`wellfed_hal::interlock` holds whose turn it is, in one atomic the loop and the C Wi-Fi task share, with no change to the C shim. The loop claims the outputs before it submits a feed and releases them once no feed is in flight and the owner is at rest with motor STOP and the emitters off. The shim calls `wellfed_wifi_select` before each attempt and `wellfed_wifi_outcome` after it, so the select takes the join's turn and the outcome ends it: the turn covers the scan, the association and DHCP.
+
+- **A feed during a join** is refused `Busy` (`PLOWN1 feed portions=… held=1`), which clients treat as final for that write id.
+- **A join during a feed** waits in the Wi-Fi task, looking again every 50 ms, and marks itself waiting: a second feed is refused (`held=2`) and the release hands the turn straight to the join, so feeds back to back cannot starve it. Joins cannot starve feeds either: an attempt ends within the shim's 10 s scan wait plus one association and one DHCP run, and attempts back off at least 1 s.
+- **No deadlock.** A join waits at most the claim's bound, `FEED_BOUND_MS`: the owner's `optics_max_on_ms` (its configuration check holds the prepare timeout and the longest drive inside it) plus 2 s, 580 s for 48 portions. Past it the join goes ahead and is counted as forced (`PLOWN1 interlock … forced=`); a loop that stops stepping during a feed resets through the beat long before then.
+- **The cost.** Feeds are refused for a whole attempt, scan and DHCP included, though only the association stalls. While the network is away that is the scan (up to 10 s) every backoff (1–30 s); narrowing the turn to the association alone would need a shim call between scan and connect.
+
+Not yet run on hardware: a feed with the hotspot cycling, to show no association overlaps a feed.

@@ -98,7 +98,7 @@ Built in FW47 (October 24, [device API](device-api.md)): sessions are Noise IK r
   - each pass does a bounded amount of work per client, then steps the feeding owner, so a flood or a malformed client costs only its turn and cannot stall feeding or the watchdog;
   - a Noise handshake is one step, and its time on the KM4 bounds the loop's latency (FW44 measures it);
   - the client limit and per-client buffers are fixed at build time (FW44); a client past the limit is refused.
-- **One feeding owner.** The FW16/FW17 feeding owner lives only in the loop task. The button task only queues gestures ([buttons](buttons.md)), and the loop reads them, so a press and two clients reach the same owner in the same task and cannot double-feed.
+- **One feeding owner.** The FW16/FW17 feeding owner lives only in the loop task. The button task only queues gestures ([buttons](buttons.md)), and the loop reads them, so a press and two clients reach the same owner in the same task and cannot double-feed. It stays in the loop rather than its own higher-priority task because a Wi-Fi association holds every task, a priority-4 one included, for 0.45–0.72 s (physical, [scheduling gaps](scheduling-gaps.md#result-october-25-2026-physical)): the stall is in the vendor driver, below the scheduler, so a priority does not keep a feed's 1 s beat. Instead feeds and joins take turns (`wellfed_hal::interlock`): no feed starts while a join attempt runs or waits (refused `Busy`), and a join waits in the Wi-Fi task until the owner is at rest with its outputs stopped, bounded by the longest feed.
 - **The event cursor** is described under [data](#data).
 
 ## Time

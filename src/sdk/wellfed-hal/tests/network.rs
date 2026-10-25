@@ -183,3 +183,31 @@ fn changes_queue_checked_credentials_or_a_clear() {
     assert_eq!(pending(), Some(None));
     finish();
 }
+
+#[test]
+fn an_attempt_holds_the_join_turn_from_select_to_outcome() {
+    use wellfed_hal::interlock::{Held, INTERLOCK, Turn};
+
+    let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    fake::reset_hardware();
+    forget();
+
+    select();
+    assert_eq!(INTERLOCK.turn(), Turn::Joining);
+    assert_eq!(INTERLOCK.claim_feed(1000), Err(Held::Joining));
+    outcome(0);
+    assert_eq!(INTERLOCK.turn(), Turn::Free);
+
+    // A feed holding the outputs keeps the next attempt waiting in the Wi-Fi
+    // task (here on the fake clock, where nothing releases it) until the
+    // claim's bound.
+    INTERLOCK.claim_feed(1000).unwrap();
+    let before = wellfed_hal::sdk::uptime_ms();
+    select();
+    assert_eq!(wellfed_hal::sdk::uptime_ms() - before, 1000);
+    assert_eq!(INTERLOCK.turn(), Turn::Joining);
+    assert_eq!(INTERLOCK.status().forced, 1);
+    outcome(0);
+    assert_eq!(INTERLOCK.turn(), Turn::Free);
+    forget();
+}

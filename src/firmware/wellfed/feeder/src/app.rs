@@ -236,10 +236,11 @@ impl core::fmt::Display for Rng {
 }
 
 /// The `owner-stall` variant: the loop stops stepping for a while, once each, so
-/// the bench can watch what a hung loop does to the owner's beat. Two
-/// stalls: one past the motor lease but inside the beat's gap, which must
-/// change nothing, and one well past the gap, which must end in a watchdog
-/// reset. Both wait for the armed hooks, which come only after the build
+/// the bench can watch what a hung loop does to the owner's beat. The owner
+/// is at rest, where its beat allows 10 s (`LIVENESS_MS`; 1 s only while
+/// outputs may move). Two stalls: one past the moving gap but inside the
+/// rest gap, which must change nothing, and one past the rest gap, which
+/// must end in a watchdog reset. Both wait for the armed hooks, which come only after the build
 /// confirmed itself: a reset during a trial would count against it. Every
 /// boot repeats them, so the image goes back out after the run.
 #[cfg(feature = "owner-stall")]
@@ -249,7 +250,7 @@ mod stall {
     use wellfed_sdk::hal::sdk;
 
     /// Uptime of each stall, and how long it spins.
-    const STALLS: [(u32, u32); 2] = [(120_000, 600), (180_000, 3000)];
+    const STALLS: [(u32, u32); 2] = [(120_000, 3000), (180_000, 12_000)];
 
     static DONE: AtomicU8 = AtomicU8::new(0);
 

@@ -850,6 +850,11 @@ pub fn uptime_ms() -> u32 {
     with(|h| h.uptime_ms)
 }
 
+/// The task's wait passes on the fake clock.
+pub fn delay_ms(ms: u32) {
+    with(|h| h.uptime_ms = h.uptime_ms.wrapping_add(ms));
+}
+
 /// Starts once; tests push `Hardware::wifi_events` as the shim would.
 pub fn wifi_start() -> bool {
     with(|h| {

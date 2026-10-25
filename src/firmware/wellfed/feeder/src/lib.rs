@@ -12,7 +12,9 @@
 //! (`api`): Noise sessions over TCP, advertised over mDNS, with the
 //! event history and live samples. The loop also steps the feeding owner
 //! (`feeding`), which holds the motor and emitters stopped and supervised
-//! and runs the feeds the device API submits. The `entropy` variant streams raw noise
+//! and runs the feeds the device API submits, taking turns with the Wi-Fi
+//! task's joins (an association stalls every task, so neither starts while
+//! the other runs). The `entropy` variant streams raw noise
 //! samples for the host's entropy estimate, the `owner-stall` variant stalls
 //! the loop on purpose, for the bench to watch the owner's beat lapse, and
 //! the `gap-probe` variant measures how long the loop and a priority-4 task

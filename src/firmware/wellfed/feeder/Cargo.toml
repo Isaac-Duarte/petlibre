@@ -47,7 +47,7 @@ bluetooth = true
 summary = "Raw clock-jitter and ADC samples over UART, for the host's entropy estimate"
 
 [package.metadata.wellfed.variants.owner-stall]
-summary = "Stalls the loop 600 ms at 2 minutes and 3 s at 3 minutes, to show the feeding owner's beat lapsing into a watchdog reset"
+summary = "Stalls the loop 3 s at 2 minutes and 12 s at 3 minutes; at rest the feeding owner's beat allows 10 s, so the first changes nothing and the second lapses into a watchdog reset"
 
 [package.metadata.wellfed.variants.gap-probe]
 summary = "Logs the scheduling gaps of the loop and of a priority-4 probe task every 10 s, with the Wi-Fi counters, for comparing them across rejoins; feeds are refused"

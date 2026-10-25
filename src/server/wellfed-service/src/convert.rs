@@ -52,8 +52,9 @@ pub(crate) fn settings(settings: proto::Settings) -> api::Settings {
     }
 }
 
-pub(crate) fn event(event: &proto::Event, received: Timestamp) -> api::FeederEvent {
+pub(crate) fn event(epoch: u32, event: &proto::Event, received: Timestamp) -> api::FeederEvent {
     api::FeederEvent {
+        epoch,
         seq: event.seq,
         at: event.at.map(seconds),
         received,

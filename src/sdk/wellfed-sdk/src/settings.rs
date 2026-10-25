@@ -311,6 +311,19 @@ impl<F> Default for Writer<F> {
     }
 }
 
+/// The epoch a new event ring takes, drawn after the seed is mixed in. A
+/// boot without a generator holds no session either (every handshake
+/// needs one), so its fallback only has to differ from a ring written
+/// before epochs (0); a later ring re-created with a generator draws again.
+fn fresh_epoch() -> u32 {
+    let mut bytes = [0; 4];
+    if rng::fill(&mut bytes) {
+        u32::from_le_bytes(bytes)
+    } else {
+        1
+    }
+}
+
 fn changed(current: Settings, fields: SettingsFields) -> Settings {
     Settings {
         lights: fields.lights.unwrap_or(current.lights),
@@ -525,8 +538,9 @@ impl<F: FlashOps> Writer<F> {
                 }
                 if !self.events_opened {
                     self.events_opened = true;
-                    self.events.open(Region::new(), EVENTS_UNITS as usize);
-                    events::publish_last(self.events.last_seq());
+                    self.events
+                        .open(Region::new(), EVENTS_UNITS as usize, fresh_epoch());
+                    events::publish_open(self.events.epoch(), self.events.last_seq());
                     let record = Record::Events {
                         open: self.events.is_open(),
                         last: self.events.last_seq(),

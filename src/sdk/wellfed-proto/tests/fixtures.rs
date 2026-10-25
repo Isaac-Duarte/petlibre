@@ -4,9 +4,11 @@
 //! home. A new variant or op appended at the end adds a fixture and leaves
 //! the others alone.
 //!
-//! `WELLFED_BLESS=1 cargo nextest run -p wellfed-proto` rewrites
-//! `fixtures/v1.txt` from the current encoding; only do that for an
-//! addition, never to make a changed byte pass.
+//! `WELLFED_BLESS=1 cargo nextest run -p wellfed-proto` appends the
+//! fixtures of new variants to `fixtures/v1.txt`. It refuses to rewrite a
+//! line already there: v1 is frozen, so a struct that gained a field, or a
+//! variant that moved, fails here even when blessed. The rules are in the
+//! [device API](../../../../docs/firmware/device-api.md#evolution).
 
 use std::fmt::Write as _;
 
@@ -97,6 +99,7 @@ fn messages() -> Vec<Fixture> {
                 capabilities: Capabilities::V1,
                 build: "b",
                 role: Role::Member,
+                epoch: 0x1234_5678,
             }),
             |b| decode::<Welcome<'_>>(b).is_ok(),
         ),
@@ -281,6 +284,14 @@ fn messages() -> Vec<Fixture> {
     ]
 }
 
+/// Every handshake binds the prologue, so changing it would split the
+/// protocol without the typed refusal a major version gets.
+#[test]
+fn the_prologue_never_changes() {
+    assert_eq!(PROLOGUE, b"wellfed-api-v1");
+    assert_eq!(PROTOCOL_MAJOR, 1);
+}
+
 #[test]
 fn every_v1_message_keeps_its_bytes() {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v1.txt");
@@ -289,6 +300,11 @@ fn every_v1_message_keeps_its_bytes() {
         .map(|(name, bytes, _)| format!("{name} {}\n", hex(bytes)))
         .collect();
     if std::env::var_os("WELLFED_BLESS").is_some() {
+        let fixed = std::fs::read_to_string(path).unwrap_or_default();
+        assert!(
+            current.starts_with(&fixed),
+            "a pinned v1 message changed bytes: that breaks every deployed peer, so it is never blessed"
+        );
         std::fs::write(path, &current).unwrap();
     }
 

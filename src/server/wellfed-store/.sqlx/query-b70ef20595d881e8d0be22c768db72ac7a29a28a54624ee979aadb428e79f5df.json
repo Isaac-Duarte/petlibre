@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT from_seq, to_seq, received_ms FROM gaps\n             WHERE feeder_id = ? AND to_seq > ? AND to_seq <= ? ORDER BY from_seq",
+  "query": "SELECT from_seq, to_seq, received_ms FROM gaps\n             WHERE feeder_id = ? AND epoch = ? AND to_seq > ? AND to_seq <= ? ORDER BY from_seq",
   "describe": {
     "columns": [
       {
@@ -38,7 +38,7 @@
       }
     ],
     "parameters": {
-      "Right": 3
+      "Right": 4
     },
     "nullable": [
       false,
@@ -46,5 +46,5 @@
       false
     ]
   },
-  "hash": "193f0fc74d7ef8d594a3f834039abc32eb7d0f69afe6b484b0f4140c6ef0053d"
+  "hash": "b70ef20595d881e8d0be22c768db72ac7a29a28a54624ee979aadb428e79f5df"
 }

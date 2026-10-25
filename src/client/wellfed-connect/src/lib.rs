@@ -1,31 +1,25 @@
-//! The device API over tokio: [`wellfed_client::api`]'s sans-IO sessions
-//! driven over a real TCP connection.
+//! The device API over tokio: [`wellfed_client::connection`]'s sans-IO
+//! session driven over a real TCP connection. Every session rule
+//! (keepalive, silence, answers, the event cursor) is the client crate's;
+//! this crate only moves bytes and keeps the clock.
 //!
 //! - [`locate`] finds a feeder by its identity over mDNS, or takes the
 //!   address it is given.
 //! - [`Connection`] is an open session. [`Connection::ask`] sends one
 //!   request and waits for its answer; events, gaps and samples that arrive
 //!   meanwhile stay queued for [`Connection::next`] rather than being lost.
-//! - [`join`] redeems an invite.
-//!
-//! The feeder drops a session that sends nothing for its idle limit (90 s),
-//! so [`Connection::next`] sends a `Status` as a keepalive when the
-//! connection has been quiet on this side for [`KEEPALIVE`]; its answer is
-//! swallowed. A live feeder answers every keepalive, so a connection that
-//! hears nothing for [`SILENCE`] fails with [`Error::Silent`]: a feeder
-//! that lost power sends no reset, and the kernel would otherwise keep the
-//! socket open for many minutes.
+//! - [`join`] redeems an invite, and [`Recovery`] runs the recovery window.
 //!
 //! Every method is cancel-safe, so a caller can `select!` on
 //! [`Connection::next`] beside its own work: reads keep nothing in flight,
 //! and a write cut short stays queued and finishes before the next one. A
-//! cancelled [`Connection::ask`] may still have sent its request; the
-//! answer then arrives through [`Connection::next`].
+//! cancelled [`Connection::ask`] may still have sent its request; its
+//! answer is then dropped.
 //!
 //! Randomness is the caller's: request ids and ephemeral keys come in as
 //! arguments, so a server can draw them from its own generator and tests
-//! can fix them. Timeouts are this crate's; a request that times out may
-//! still have run, so the caller retries a write with the same id.
+//! can fix them. A request that times out may still have run, so the
+//! caller retries a write with the same id.
 
 #![forbid(unsafe_code)]
 
@@ -33,13 +27,13 @@ use std::collections::VecDeque;
 use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
-use wellfed_client::api::{Incoming, Invite, Join, JoinStep, Session};
+use wellfed_client::api::{Invite, Join, JoinStep};
+use wellfed_client::connection::{self, Event, Opened, Recovery as Window, Timing};
+pub use wellfed_client::connection::{Answer, Cursor, KEEPALIVE_ID, Message, Resume};
 use wellfed_core::hex::Lower;
 use wellfed_core::noise::Keypair;
-use wellfed_proto::api::{
-    FRAME_MAX, FeederMessage, Joined, Op, OpenRefusal, Outcome, PORT, RequestId, Role, SERVICE,
-    Welcome,
-};
+use wellfed_proto::api::{Joined, Op, OpenRefusal, PORT, RequestId, Role, SERVICE};
+use wellfed_proto::setup::Reply;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::{Instant, timeout, timeout_at};
@@ -48,17 +42,9 @@ use tokio::time::{Instant, timeout, timeout_at};
 pub const DISCOVERY: Duration = Duration::from_secs(6);
 pub const CONNECT: Duration = Duration::from_secs(5);
 /// A request is answered at once, or after its store write.
-pub const ANSWER: Duration = Duration::from_secs(10);
-/// Well inside the feeder's 90 s idle limit, with room for a lost segment.
-pub const KEEPALIVE: Duration = Duration::from_secs(45);
-/// Room for a keepalive (sent 45 s after this side last wrote) and its
-/// answer, with margin: hearing nothing for this long, the feeder is gone.
-pub const SILENCE: Duration = Duration::from_secs(90);
-
-/// The id of the keepalive's `Status`. A read is never remembered by the
-/// feeder, so reusing one id is safe; its answer is dropped here, so a
-/// caller may not use it.
-pub const KEEPALIVE_ID: RequestId = *b"wellfed-alive\0\0";
+pub const ANSWER: Duration = Timing::DEFAULT.answer;
+/// Hearing nothing for this long, the feeder is gone.
+pub const SILENCE: Duration = Timing::DEFAULT.silence;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -84,15 +70,9 @@ pub enum Error {
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
-    Session(#[from] wellfed_client::api::Error),
-    #[error("the feeder's message does not decode")]
-    Malformed,
+    Session(wellfed_client::api::Error),
     #[error("a message does not fit one frame")]
     Encode,
-    #[error("the feeder spoke before its welcome")]
-    NoWelcome,
-    #[error("the feeder sent a second welcome")]
-    Unexpected,
     #[error("that request id is the keepalive's")]
     ReservedId,
     #[error("the feeder does not know this key (not enrolled, or revoked)")]
@@ -103,7 +83,33 @@ pub enum Error {
     Full,
 }
 
+impl From<wellfed_client::api::Error> for Error {
+    fn from(error: wellfed_client::api::Error) -> Self {
+        use wellfed_client::api::Error as Session;
+        match error {
+            Session::Refused(OpenRefusal::Unknown) => Self::UnknownKey,
+            Session::Refused(OpenRefusal::Version { supported }) => Self::Version(supported),
+            Session::Refused(OpenRefusal::Full) => Self::Full,
+            Session::Timeout => Self::Timeout,
+            Session::Silent => Self::Silent,
+            Session::ReservedId => Self::ReservedId,
+            Session::TooLarge => Self::Encode,
+            other => Self::Session(other),
+        }
+    }
+}
+
 pub type Result<T, E = Error> = std::result::Result<T, E>;
+
+/// An address as an owner types it: an IP takes the API's port.
+pub fn parse_address(address: &str) -> Result<SocketAddr> {
+    if let Ok(ip) = address.parse::<IpAddr>() {
+        return Ok(SocketAddr::new(ip, PORT));
+    }
+    address
+        .parse()
+        .map_err(|_| Error::Address(address.to_owned()))
+}
 
 /// The feeder's address: `address` when given (an IP takes the API's port),
 /// otherwise the feeder with `identity` found over mDNS within `wait`.
@@ -111,12 +117,7 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 /// mDNS browsing blocks the calling thread for up to `wait`.
 pub fn locate(identity: &[u8; 32], address: Option<&str>, wait: Duration) -> Result<SocketAddr> {
     if let Some(address) = address {
-        if let Ok(ip) = address.parse::<IpAddr>() {
-            return Ok(SocketAddr::new(ip, PORT));
-        }
-        return address
-            .parse()
-            .map_err(|_| Error::Address(address.to_owned()));
+        return parse_address(address);
     }
 
     let daemon = mdns_sd::ServiceDaemon::new()?;
@@ -147,64 +148,58 @@ pub fn locate(identity: &[u8; 32], address: Option<&str>, wait: Duration) -> Res
     found.ok_or_else(|| Error::NotFound(want[..16].to_owned()))
 }
 
-/// One message from the feeder, owned: the session's own buffer is reused
-/// by the next read.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Message(Vec<u8>);
-
-impl Message {
-    fn encode(message: &FeederMessage<'_>) -> Result<Self> {
-        let mut out = vec![0; FRAME_MAX];
-        let len = wellfed_proto::encode(message, &mut out).map_err(|_| Error::Encode)?;
-        out.truncate(len);
-        Ok(Self(out))
-    }
-
-    pub fn get(&self) -> FeederMessage<'_> {
-        wellfed_proto::decode(&self.0).expect("encoded from a decoded message")
-    }
+/// The clock the sans-IO session reads: tokio's, so a paused test clock
+/// drives it too.
+fn now() -> std::time::Instant {
+    Instant::now().into_std()
 }
 
-/// One request's answer, owned.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Answer(Vec<u8>);
+async fn dial(address: SocketAddr) -> Result<TcpStream> {
+    let stream = timeout(CONNECT, TcpStream::connect(address))
+        .await
+        .map_err(|_| Error::ConnectTimeout(address))?
+        .map_err(|source| Error::Connect { address, source })?;
+    stream.set_nodelay(true)?;
+    Ok(stream)
+}
 
-impl Answer {
-    fn encode(outcome: &Outcome<'_>) -> Result<Self> {
-        let mut out = vec![0; FRAME_MAX];
-        let len = wellfed_proto::encode(outcome, &mut out).map_err(|_| Error::Encode)?;
-        out.truncate(len);
-        Ok(Self(out))
-    }
+/// Bytes the socket has not yet taken. A write whose future was dropped
+/// leaves its rest here, and it goes out before anything else, so frames
+/// never interleave.
+#[derive(Debug, Default)]
+struct Outbox(Vec<u8>);
 
-    pub fn outcome(&self) -> Outcome<'_> {
-        wellfed_proto::decode(&self.0).expect("encoded from a decoded outcome")
+impl Outbox {
+    /// Send what the outbox holds. Each `write` either takes bytes or
+    /// leaves them, and they leave the outbox in the same poll, so a
+    /// dropped future loses or repeats nothing.
+    async fn flush(&mut self, stream: &mut TcpStream) -> Result<()> {
+        while !self.0.is_empty() {
+            let n = stream.write(&self.0).await?;
+            if n == 0 {
+                return Err(Error::Closed);
+            }
+            self.0.drain(..n);
+        }
+        Ok(())
     }
 }
 
 /// An open session.
 pub struct Connection {
     stream: TcpStream,
-    session: Session,
-    build: String,
-    role: Role,
-    /// Messages that arrived while [`Self::ask`] waited for its answer.
+    session: connection::Connection,
+    outbox: Outbox,
+    /// Pushed messages not yet taken by [`Self::next`].
     queued: VecDeque<Message>,
-    /// Bytes the socket has not yet taken. A write whose future was
-    /// dropped leaves its rest here, and it goes out before anything else,
-    /// so frames never interleave.
-    outbox: Vec<u8>,
-    /// When this side last wrote, for the keepalive.
-    sent_at: Instant,
-    /// When the feeder was last heard, for [`SILENCE`].
-    received_at: Instant,
+    /// Answers, or their absence, not yet taken by [`Self::ask`].
+    answers: VecDeque<(RequestId, Option<Answer>)>,
 }
 
 impl std::fmt::Debug for Connection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Connection")
-            .field("build", &self.build)
-            .field("role", &self.role)
+            .field("opened", &self.session.opened())
             .finish_non_exhaustive()
     }
 }
@@ -218,56 +213,44 @@ impl Connection {
         address: SocketAddr,
         ephemeral: [u8; 32],
     ) -> Result<Self> {
-        let (session, hello) = Session::connect(keys, identity, ephemeral)?;
-        let mut stream = timeout(CONNECT, TcpStream::connect(address))
-            .await
-            .map_err(|_| Error::ConnectTimeout(address))?
-            .map_err(|source| Error::Connect { address, source })?;
-        stream.set_nodelay(true)?;
-        stream.write_all(&hello).await?;
-
+        let session = connection::Connection::new(keys, identity, ephemeral, now())?;
         let mut connection = Self {
-            stream,
+            stream: dial(address).await?,
             session,
-            build: String::new(),
-            role: Role::Member,
+            outbox: Outbox::default(),
             queued: VecDeque::new(),
-            outbox: Vec::new(),
-            sent_at: Instant::now(),
-            received_at: Instant::now(),
+            answers: VecDeque::new(),
         };
-        let deadline = Instant::now() + ANSWER;
-        loop {
-            connection.read(deadline).await?;
-            let Some(incoming) = connection.session.next_incoming()? else {
-                continue;
-            };
-            let Incoming::Welcome(welcome) = incoming else {
-                return Err(Error::NoWelcome);
-            };
-            return match welcome {
-                Welcome::Open { build, role, .. } => {
-                    connection.build = build.to_owned();
-                    connection.role = role;
-                    Ok(connection)
-                }
-                Welcome::Refused(OpenRefusal::Unknown) => Err(Error::UnknownKey),
-                Welcome::Refused(OpenRefusal::Version { supported }) => {
-                    Err(Error::Version(supported))
-                }
-                Welcome::Refused(OpenRefusal::Full) => Err(Error::Full),
-            };
+        while connection.session.opened().is_none() {
+            connection.turn(None).await?;
         }
+        Ok(connection)
+    }
+
+    fn opened(&self) -> &Opened {
+        self.session
+            .opened()
+            .expect("a Connection exists only once welcomed")
     }
 
     /// The feeder's build, from its welcome.
     pub fn build(&self) -> &str {
-        &self.build
+        &self.opened().build
     }
 
     /// The role the feeder gave this key.
     pub fn role(&self) -> Role {
-        self.role
+        self.opened().role
+    }
+
+    /// The epoch the feeder's event numbers count in.
+    pub fn epoch(&self) -> u32 {
+        self.opened().epoch
+    }
+
+    /// The newest event or gap end received since [`Self::subscribe`].
+    pub fn cursor(&self) -> Option<Cursor> {
+        self.session.cursor()
     }
 
     /// Messages that arrived while [`Self::ask`] waited, not yet taken by
@@ -276,122 +259,152 @@ impl Connection {
         self.queued.len()
     }
 
-    /// Read what arrives before `deadline` into the session.
-    async fn read(&mut self, deadline: Instant) -> Result<()> {
+    /// One turn of the loop: write what the session has, then read or
+    /// wake for its clock, until `until` at the latest. Cancel-safe.
+    async fn turn(&mut self, until: Option<Instant>) -> Result<()> {
+        while let Some(bytes) = self.session.poll_transmit() {
+            self.outbox.0.extend(bytes);
+        }
+        self.outbox.flush(&mut self.stream).await?;
+
+        let due = self.session.poll_timeout().map(Instant::from_std);
+        let wake = match (due, until) {
+            (Some(due), Some(until)) => due.min(until),
+            (due, until) => due.or(until).unwrap_or_else(|| Instant::now() + SILENCE),
+        };
+        // A clock already due acts before any read: a session silent past
+        // its limit is gone even when a close is waiting to be read.
         let mut buffer = [0u8; 2048];
-        let n = timeout_at(deadline, self.stream.read(&mut buffer))
-            .await
-            .map_err(|_| Error::Timeout)??;
-        if n == 0 {
-            return Err(Error::Closed);
-        }
-        self.received_at = Instant::now();
-        self.session.receive(&buffer[..n])?;
-        Ok(())
-    }
-
-    async fn write(&mut self, bytes: &[u8]) -> Result<()> {
-        self.outbox.extend_from_slice(bytes);
-        self.flush().await
-    }
-
-    /// Send what the outbox holds. Each `write` either takes bytes or
-    /// leaves them, and they leave the outbox in the same poll, so a
-    /// dropped future loses or repeats nothing.
-    async fn flush(&mut self) -> Result<()> {
-        if self.outbox.is_empty() {
-            return Ok(());
-        }
-        while !self.outbox.is_empty() {
-            let n = self.stream.write(&self.outbox).await?;
-            if n == 0 {
-                return Err(Error::Closed);
+        let read = if wake <= Instant::now() {
+            Err(())
+        } else {
+            timeout_at(wake, self.stream.read(&mut buffer))
+                .await
+                .map_err(drop)
+        };
+        match read {
+            Ok(read) => {
+                let n = read?;
+                if n == 0 {
+                    return Err(Error::Closed);
+                }
+                self.session.handle_input(now(), &buffer[..n])?;
             }
-            self.outbox.drain(..n);
+            Err(_) => self.session.handle_timeout(now())?,
         }
-        self.sent_at = Instant::now();
+
+        while let Some(event) = self.session.poll_event() {
+            match event {
+                Event::Pushed(message) => self.queued.push_back(message),
+                Event::Answer { id, answer } => self.answers.push_back((id, Some(answer))),
+                Event::Unanswered { id } => self.answers.push_back((id, None)),
+            }
+        }
         Ok(())
     }
 
-    /// Send one request under `id`; its answer comes through [`Self::next`].
-    /// `id` may not be [`KEEPALIVE_ID`].
-    pub async fn request(&mut self, id: RequestId, op: Op<'_>) -> Result<()> {
-        if id == KEEPALIVE_ID {
-            return Err(Error::ReservedId);
+    /// Ask for the history after `from`, the newest event the caller holds
+    /// (`None`: the oldest kept), then each new one, and the live samples
+    /// if `samples`. A cursor from an epoch the feeder no longer has starts
+    /// from the oldest kept: [`Resume::Restarted`].
+    pub async fn subscribe(&mut self, from: Option<Cursor>, samples: bool) -> Result<Resume> {
+        let resume = self.session.subscribe(now(), from, samples)?;
+        while let Some(bytes) = self.session.poll_transmit() {
+            self.outbox.0.extend(bytes);
         }
-        self.send_request(id, op).await
+        self.outbox.flush(&mut self.stream).await?;
+        Ok(resume)
     }
 
-    async fn send_request(&mut self, id: RequestId, op: Op<'_>) -> Result<()> {
-        let bytes = self.session.request(id, op)?;
-        self.write(&bytes).await
-    }
-
-    /// Ask for every event after `after` (`None`: the oldest kept), then
-    /// each new one, and the live samples if `samples`.
-    pub async fn subscribe(&mut self, after: Option<u64>, samples: bool) -> Result<()> {
-        let bytes = self.session.subscribe(after, samples)?;
-        self.write(&bytes).await
-    }
-
-    /// The next message within `wait`, keeping the session alive meanwhile.
+    /// The next pushed message within `wait`, keeping the session alive
+    /// meanwhile.
     pub async fn next(&mut self, wait: Duration) -> Result<Message> {
-        if let Some(message) = self.queued.pop_front() {
-            return Ok(message);
-        }
         let deadline = Instant::now() + wait;
-        self.flush().await?;
         loop {
-            if let Some(message) = self.decoded()? {
+            if let Some(message) = self.queued.pop_front() {
                 return Ok(message);
             }
-            let now = Instant::now();
-            let silent = self.received_at + SILENCE;
-            if silent <= now {
-                return Err(Error::Silent);
+            // Only `ask` waits for answers; one it gave up on is dropped.
+            self.answers.clear();
+            if deadline <= Instant::now() {
+                return Err(Error::Timeout);
             }
-            let keepalive = self.sent_at + KEEPALIVE;
-            if keepalive <= now {
-                self.send_request(KEEPALIVE_ID, Op::Status).await?;
-                continue;
-            }
-            match self.read(deadline.min(keepalive).min(silent)).await {
-                Err(Error::Timeout) if Instant::now() < deadline => {}
-                result => result?,
-            }
+            self.turn(Some(deadline)).await?;
         }
-    }
-
-    /// The next message already opened, other than a keepalive's answer.
-    fn decoded(&mut self) -> Result<Option<Message>> {
-        while let Some(incoming) = self.session.next_incoming()? {
-            let Incoming::Message(message) = incoming else {
-                return Err(Error::Unexpected);
-            };
-            if matches!(message, FeederMessage::Response { id, .. } if id == KEEPALIVE_ID) {
-                continue;
-            }
-            return Ok(Some(Message::encode(&message)?));
-        }
-        Ok(None)
     }
 
     /// One request under `id` and its answer. Other messages that arrive
-    /// meanwhile stay queued for [`Self::next`].
+    /// meanwhile stay queued for [`Self::next`]. `id` may not be
+    /// [`KEEPALIVE_ID`].
     pub async fn ask(&mut self, id: RequestId, op: Op<'_>) -> Result<Answer> {
-        self.request(id, op).await?;
-        let deadline = Instant::now() + ANSWER;
+        self.session.request(now(), id, op)?;
         loop {
-            while let Some(message) = self.decoded()? {
-                if let FeederMessage::Response { id: got, result } = message.get()
-                    && got == id
-                {
-                    return Answer::encode(&result);
+            while let Some((answered, answer)) = self.answers.pop_front() {
+                if answered == id {
+                    return answer.ok_or(Error::Timeout);
                 }
-                self.queued.push_back(message);
             }
-            self.read(deadline).await?;
+            self.turn(None).await?;
         }
+    }
+}
+
+/// The feeder's recovery window over the device API, as an owner key that
+/// proves the setup code.
+pub struct Recovery {
+    stream: TcpStream,
+    window: Window,
+    outbox: Outbox,
+}
+
+impl std::fmt::Debug for Recovery {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Recovery").finish_non_exhaustive()
+    }
+}
+
+impl Recovery {
+    /// Open the recovery session at `address` with `session`'s setup
+    /// exchange.
+    pub async fn open(
+        address: SocketAddr,
+        session: wellfed_client::setup::Session,
+    ) -> Result<Self> {
+        Ok(Self {
+            stream: dial(address).await?,
+            window: Window::new(session)?,
+            outbox: Outbox::default(),
+        })
+    }
+
+    /// The feeder's next reply within `wait`; the session answers the
+    /// proof's steps itself meanwhile. A closed connection means the
+    /// window is not open.
+    pub async fn reply(&mut self, wait: Duration) -> Result<Reply> {
+        let deadline = Instant::now() + wait;
+        loop {
+            while let Some(bytes) = self.window.poll_transmit() {
+                self.outbox.0.extend(bytes);
+            }
+            self.outbox.flush(&mut self.stream).await?;
+            if let Some(reply) = self.window.poll_reply() {
+                return Ok(reply);
+            }
+
+            let mut buffer = [0u8; 1024];
+            let n = timeout_at(deadline, self.stream.read(&mut buffer))
+                .await
+                .map_err(|_| Error::Timeout)??;
+            if n == 0 {
+                return Err(Error::Closed);
+            }
+            self.window.handle_input(&buffer[..n])?;
+        }
+    }
+
+    /// The setup session: its code, and the feeder's key once proven.
+    pub fn session(&self) -> &wellfed_client::setup::Session {
+        self.window.session()
     }
 }
 
@@ -405,10 +418,7 @@ pub async fn join(
     ephemeral: [u8; 32],
 ) -> Result<Joined> {
     let (mut join, hello) = Join::connect(keys, invite, label, ephemeral)?;
-    let mut stream = timeout(CONNECT, TcpStream::connect(address))
-        .await
-        .map_err(|_| Error::ConnectTimeout(address))?
-        .map_err(|source| Error::Connect { address, source })?;
+    let mut stream = dial(address).await?;
     stream.write_all(&hello).await?;
 
     let mut buffer = [0u8; 2048];

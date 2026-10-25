@@ -19,10 +19,19 @@
 //! is one Noise transport message sealing one [`ClientMessage`] or
 //! [`FeederMessage`].
 //!
-//! Evolution: within a major version, variants and ops are appended at the
-//! end and gated behind a [`Capabilities`] bit; nothing is reordered,
-//! removed or retyped, since postcard is positional. The byte fixtures in
-//! `tests/fixtures/v1` fail CI on a breaking change.
+//! Evolution ([device API](../../../../docs/firmware/device-api.md#evolution)):
+//! - [`PROLOGUE`] never changes. A new major is negotiated in
+//!   [`Hello::major`], and a feeder refuses one it does not serve with
+//!   [`OpenRefusal::Version`].
+//! - Within a major, a new op, event body, outcome or refusal is a variant
+//!   appended at the end, gated by a [`Capabilities`] bit both sides claim
+//!   ([`Op::capability`], [`EventBody::capability`]).
+//! - An existing struct or variant never gains, loses, reorders or retypes
+//!   a field: postcard is positional, so an old peer would misread every
+//!   byte after it. New data is a new variant behind a bit.
+//!
+//! The byte fixtures in `tests/fixtures/v1.txt` pin every v1 message, and
+//! their test refuses to re-bless a line that changed.
 
 use serde::{Deserialize, Serialize};
 
@@ -69,6 +78,10 @@ impl Capabilities {
     /// [`Outcome::Feeding`] and [`EventBody::Fed`] are in use. A feeder
     /// pushes `Fed` events only to a session whose hello carries this bit.
     pub const FEED: Self = Self(1);
+    /// Every bit this crate defines: what a current client claims. A
+    /// session then runs on the bits both sides claim, so a client adapts
+    /// to whatever feeder it meets, however old.
+    pub const KNOWN: Self = Self(Self::FEED.0);
 
     pub const fn contains(self, other: Self) -> bool {
         self.0 & other.0 == other.0
@@ -92,6 +105,11 @@ pub enum Welcome<'a> {
         build: &'a str,
         /// The role this key holds.
         role: Role,
+        /// The event history's epoch: drawn at random when the ring is
+        /// created and kept with it. Event numbers count within one epoch,
+        /// so a cursor from another epoch means nothing here: the client
+        /// starts again from the oldest event kept.
+        epoch: u32,
     },
     Refused(OpenRefusal),
 }
@@ -195,6 +213,25 @@ impl Op<'_> {
     /// Whether the op changes something, so its id is remembered.
     pub const fn writes(&self) -> bool {
         !matches!(self, Self::Status | Self::GetSettings | Self::ListClients)
+    }
+
+    /// The bit both sides must claim before the op is served. The match
+    /// has no wildcard, so a new op cannot land without its decision.
+    pub const fn capability(&self) -> Capabilities {
+        match self {
+            Self::Feed { .. } | Self::CancelFeed { .. } => Capabilities::FEED,
+            Self::Status
+            | Self::GetSettings
+            | Self::PutSettings { .. }
+            | Self::PutWifi { .. }
+            | Self::SetLock { .. }
+            | Self::Play { .. }
+            | Self::TimeSync(_)
+            | Self::CreateInvite { .. }
+            | Self::ListClients
+            | Self::RevokeClient { .. }
+            | Self::Reboot => Capabilities::V1,
+        }
     }
 }
 
@@ -427,6 +464,25 @@ pub enum EventBody {
         reason: FeedReason,
         by: Source,
     },
+}
+
+impl EventBody {
+    /// The bit a session's hello must carry for the feeder to push this
+    /// body; a session without it never sees the event (its cursor moves
+    /// past it). No wildcard, as for [`Op::capability`].
+    pub const fn capability(&self) -> Capabilities {
+        match self {
+            Self::Fed { .. } => Capabilities::FEED,
+            Self::Boot { .. }
+            | Self::Lock { .. }
+            | Self::Settings { .. }
+            | Self::Wifi { .. }
+            | Self::Enrolled { .. }
+            | Self::Revoked { .. }
+            | Self::ClockSync { .. }
+            | Self::Lost { .. } => Capabilities::V1,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

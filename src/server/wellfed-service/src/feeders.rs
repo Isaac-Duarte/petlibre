@@ -232,12 +232,20 @@ impl Service {
         if query.after.is_some_and(|after| after > NEWEST) {
             return Err(Invalid::Cursor.into());
         }
-        self.row(id).await?;
+        let row = self.row(id).await?;
+        let Some(epoch) = query.epoch.or(row.synced.map(|synced| synced.epoch)) else {
+            return Ok(EventPage {
+                epoch: None,
+                events: Vec::new(),
+                gaps: Vec::new(),
+                next: None,
+            });
+        };
 
         let rows = self
             .shared
             .store
-            .events(id, query.after, limit, query.kind)
+            .events(id, epoch, query.after, limit, query.kind)
             .await?;
         let full = u32::try_from(rows.len()).is_ok_and(|len| len == limit);
         let events = rows
@@ -246,6 +254,7 @@ impl Service {
                 let body: EventBody =
                     wellfed_proto::decode(&row.body).map_err(|_| Error::Undecodable(row.seq))?;
                 Ok(FeederEvent {
+                    epoch,
                     seq: row.seq,
                     at: row.at,
                     received: row.received,
@@ -258,9 +267,14 @@ impl Service {
         let gaps = self
             .shared
             .store
-            .gaps(id, query.after, next.unwrap_or(NEWEST))
+            .gaps(id, epoch, query.after, next.unwrap_or(NEWEST))
             .await?;
-        Ok(EventPage { events, gaps, next })
+        Ok(EventPage {
+            epoch: Some(epoch),
+            events,
+            gaps,
+            next,
+        })
     }
 
     /// The device request id for a write. The feeder remembers writes by id
@@ -352,7 +366,8 @@ impl Service {
             role: row.role,
             address: row.address,
             connection,
-            synced: row.synced,
+            synced: row.synced.map(|synced| synced.seq),
+            epoch: row.synced.map(|synced| synced.epoch),
         }
     }
 

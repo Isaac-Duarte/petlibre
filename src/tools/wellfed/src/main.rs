@@ -34,8 +34,6 @@ use wellfed_proto::api::{
 };
 use wellfed_proto::setup::{Enrolled, Refusal, Reply, WifiSaved};
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
 use crate::ble::Link;
 use crate::device::Connection;
 use crate::keys::{OwnerKey, fingerprint};
@@ -316,7 +314,8 @@ struct WifiArgs {
 struct EventsArgs {
     #[command(flatten)]
     target: Target,
-    /// Start after this sequence number (default: the oldest kept).
+    /// Start after this sequence number, in the feeder's current epoch
+    /// (default: the oldest kept).
     #[arg(long)]
     after: Option<u64>,
     /// Keep the session open and print new events (and samples) as they
@@ -664,13 +663,8 @@ struct RecoverArgs {
 /// held on an unlocked panel), run the setup exchange over the device API
 /// and become an owner once the code is keyed in.
 async fn recover_command(args: RecoverArgs) -> Result<()> {
-    use wellfed_client::setup::{Deframer, frame};
-
     let mut key = OwnerKey::open(&args.keys, args.label.as_deref(), OwnerKey::system())?;
-    let address: std::net::SocketAddr = match args.address.parse::<std::net::IpAddr>() {
-        Ok(ip) => std::net::SocketAddr::new(ip, wellfed_proto::api::PORT),
-        Err(_) => args.address.parse().context("--address")?,
-    };
+    let address = wellfed_connect::parse_address(&args.address).context("--address")?;
     let random = OwnerKey::system();
     let ephemeral: [u8; 32] = private::random(random).context("read the system random source")?;
     let seed: [u8; 32] = private::random(random).context("read the system random source")?;
@@ -679,7 +673,7 @@ async fn recover_command(args: RecoverArgs) -> Result<()> {
         label: key.label().to_string(),
         wifi: None,
     };
-    let mut session = Session::new(
+    let session = Session::new(
         key.keypair(),
         ephemeral,
         ask,
@@ -687,45 +681,29 @@ async fn recover_command(args: RecoverArgs) -> Result<()> {
         seed,
     )?;
 
-    let mut stream = tokio::net::TcpStream::connect(address)
+    let mut recovery = wellfed_connect::Recovery::open(address, session)
         .await
         .with_context(|| format!("connect to {address}"))?;
-    // The clear opening frame names the recovery session.
-    let mut hello = vec![1, 0, 2];
-    hello.extend(frame(&session.start()?)?);
-    stream.write_all(&hello).await?;
-
-    let mut deframer = Deframer::default();
     let mut wait = HANDSHAKE_WAIT;
-    let mut buffer = [0u8; 1024];
     let text = loop {
-        let n = tokio::time::timeout(wait, stream.read(&mut buffer))
-            .await
-            .context("the feeder did not answer in time")??;
-        if n == 0 {
-            bail!("the feeder closed the connection: is its recovery window open?");
-        }
-        deframer.push(&buffer[..n]);
-        let mut done = None;
-        while let Some(message) = deframer.next_message()? {
-            match session.receive(&message)? {
-                Step::Send(bytes) => stream.write_all(&frame(&bytes)?).await?,
-                Step::Reply(reply) => match outcome(reply) {
-                    SetupOutcome::EnterCode(seconds) => {
-                        eprintln!("{}", instructions(session.code(), seconds));
-                        wait = Duration::from_secs(seconds.into()) + CONFIRM_SLACK;
-                    }
-                    SetupOutcome::Done(text) => done = Some(text),
-                    SetupOutcome::Refused(text) => bail!("the feeder refused: {text}"),
-                },
+        let reply = match recovery.reply(wait).await {
+            Err(wellfed_connect::Error::Closed) => {
+                bail!("the feeder closed the connection: is its recovery window open?")
             }
-        }
-        if let Some(text) = done {
-            break text;
+            Err(wellfed_connect::Error::Timeout) => bail!("the feeder did not answer in time"),
+            other => other?,
+        };
+        match outcome(reply) {
+            SetupOutcome::EnterCode(seconds) => {
+                eprintln!("{}", instructions(recovery.session().code(), seconds));
+                wait = Duration::from_secs(seconds.into()) + CONFIRM_SLACK;
+            }
+            SetupOutcome::Done(text) => break text,
+            SetupOutcome::Refused(text) => bail!("the feeder refused: {text}"),
         }
     };
 
-    let Some(identity) = session.feeder_key() else {
+    let Some(identity) = recovery.session().feeder_key() else {
         bail!("the feeder never proved the code");
     };
     key.remember(&identity)?;

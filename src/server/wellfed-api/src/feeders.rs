@@ -57,6 +57,8 @@ pub struct Feeder {
     pub connection: Connection,
     /// The newest event the server holds, `None` before the first.
     pub synced: Option<u64>,
+    /// The feeder's history epoch `synced` counts in.
+    pub epoch: Option<u32>,
 }
 
 /// One feeder and its latest status.

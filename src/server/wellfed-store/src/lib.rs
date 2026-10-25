@@ -104,7 +104,14 @@ pub struct FeederRow {
     pub address: Option<String>,
     pub key: SealedKey,
     /// The newest event held.
-    pub synced: Option<u64>,
+    pub synced: Option<Synced>,
+}
+
+/// The newest event (or gap end) held, in the epoch it counts in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Synced {
+    pub epoch: u32,
+    pub seq: u64,
 }
 
 /// The last status and settings read, and when.
@@ -115,6 +122,8 @@ pub struct FeederState {
 }
 
 pub struct NewEvent<'a> {
+    /// The feeder's ring epoch the number counts in.
+    pub epoch: u32,
     pub seq: u64,
     pub at: Option<Timestamp>,
     pub received: Timestamp,
@@ -326,7 +335,7 @@ impl Store {
 
     pub async fn feeders(&self) -> Result<Vec<FeederRow>> {
         let rows = sqlx::query!(
-            r#"SELECT id AS "id: Uuid", identity, name, role, address, key_nonce, key_sealed, synced
+            r#"SELECT id AS "id: Uuid", identity, name, role, address, key_nonce, key_sealed, synced, epoch
                FROM feeders ORDER BY created_ms, id"#
         )
         .fetch_all(&self.reader)
@@ -342,6 +351,7 @@ impl Store {
                     &row.key_nonce,
                     row.key_sealed,
                     row.synced,
+                    row.epoch,
                 )
             })
             .collect()
@@ -349,7 +359,7 @@ impl Store {
 
     pub async fn feeder(&self, id: FeederId) -> Result<Option<FeederRow>> {
         let row = sqlx::query!(
-            r#"SELECT id AS "id: Uuid", identity, name, role, address, key_nonce, key_sealed, synced
+            r#"SELECT id AS "id: Uuid", identity, name, role, address, key_nonce, key_sealed, synced, epoch
                FROM feeders WHERE id = ?"#,
             id.0
         )
@@ -365,6 +375,7 @@ impl Store {
                 &row.key_nonce,
                 row.key_sealed,
                 row.synced,
+                row.epoch,
             )
         })
         .transpose()
@@ -448,8 +459,10 @@ impl Store {
     // History.
 
     /// Record one event and move the feeder's cursor past it, together.
-    /// An event already held changes nothing; whether it was new.
+    /// An event already held changes nothing; whether it was new. An event
+    /// of another epoch than the cursor's moves the cursor to it.
     pub async fn record_event(&self, id: FeederId, event: NewEvent<'_>) -> Result<bool> {
+        let epoch = event.epoch;
         let seq = to_i64(event.seq, "event sequence")?;
         let at = event.at.map(|at| at.as_second());
         let received = millis(event.received);
@@ -457,9 +470,10 @@ impl Store {
 
         let mut tx = self.writer.begin().await?;
         let done = sqlx::query!(
-            "INSERT INTO events (feeder_id, seq, at_s, received_ms, kind, body)
-             VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
+            "INSERT INTO events (feeder_id, epoch, seq, at_s, received_ms, kind, body)
+             VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
             id.0,
+            epoch,
             seq,
             at,
             received,
@@ -468,7 +482,7 @@ impl Store {
         )
         .execute(&mut *tx)
         .await?;
-        advance(&mut tx, id, seq).await?;
+        advance(&mut tx, id, epoch, seq).await?;
         tx.commit().await?;
         Ok(done.rows_affected() == 1)
     }
@@ -477,6 +491,7 @@ impl Store {
     pub async fn record_gap(
         &self,
         id: FeederId,
+        epoch: u32,
         from: u64,
         to: u64,
         received: Timestamp,
@@ -487,25 +502,27 @@ impl Store {
 
         let mut tx = self.writer.begin().await?;
         sqlx::query!(
-            "INSERT INTO gaps (feeder_id, from_seq, to_seq, received_ms) VALUES (?, ?, ?, ?)
+            "INSERT INTO gaps (feeder_id, epoch, from_seq, to_seq, received_ms) VALUES (?, ?, ?, ?, ?)
              ON CONFLICT DO NOTHING",
             id.0,
+            epoch,
             from,
             to,
             received,
         )
         .execute(&mut *tx)
         .await?;
-        advance(&mut tx, id, to).await?;
+        advance(&mut tx, id, epoch, to).await?;
         tx.commit().await?;
         Ok(())
     }
 
-    /// Up to `limit` events after `after` (from the oldest when `None`),
-    /// oldest first, of `kind` only when given.
+    /// Up to `limit` events of `epoch` after `after` (from the oldest when
+    /// `None`), oldest first, of `kind` only when given.
     pub async fn events(
         &self,
         id: FeederId,
+        epoch: u32,
         after: Option<u64>,
         limit: u32,
         kind: Option<EventKind>,
@@ -514,9 +531,10 @@ impl Store {
         let kind = kind.map(EventKind::code);
         let rows = sqlx::query!(
             r#"SELECT seq, at_s, received_ms, kind, body FROM events
-               WHERE feeder_id = ?1 AND seq > ?2 AND (?3 IS NULL OR kind = ?3)
-               ORDER BY seq LIMIT ?4"#,
+               WHERE feeder_id = ?1 AND epoch = ?2 AND seq > ?3 AND (?4 IS NULL OR kind = ?4)
+               ORDER BY seq LIMIT ?5"#,
             id.0,
+            epoch,
             after,
             kind,
             limit,
@@ -541,14 +559,22 @@ impl Store {
             .collect()
     }
 
-    /// The gaps that end after `after` and at or before `through`.
-    pub async fn gaps(&self, id: FeederId, after: Option<u64>, through: u64) -> Result<Vec<Gap>> {
+    /// The gaps of `epoch` that end after `after` and at or before
+    /// `through`.
+    pub async fn gaps(
+        &self,
+        id: FeederId,
+        epoch: u32,
+        after: Option<u64>,
+        through: u64,
+    ) -> Result<Vec<Gap>> {
         let after = after.map_or(Ok(-1), |after| to_i64(after, "cursor"))?;
         let through = to_i64(through, "cursor")?;
         let rows = sqlx::query!(
             "SELECT from_seq, to_seq, received_ms FROM gaps
-             WHERE feeder_id = ? AND to_seq > ? AND to_seq <= ? ORDER BY from_seq",
+             WHERE feeder_id = ? AND epoch = ? AND to_seq > ? AND to_seq <= ? ORDER BY from_seq",
             id.0,
+            epoch,
             after,
             through,
         )
@@ -557,6 +583,7 @@ impl Store {
         rows.into_iter()
             .map(|row| {
                 Ok(Gap {
+                    epoch,
                     from: from_i64(row.from_seq, "gap start")?,
                     to: from_i64(row.to_seq, "gap end")?,
                     received: timestamp(row.received_ms)?,
@@ -651,14 +678,20 @@ fn backup_path(path: &Path, version: i64) -> PathBuf {
     path.with_file_name(name)
 }
 
-/// Move the cursor up to `seq`, never back.
+/// Move the cursor up to `seq`, never back within one epoch; a new epoch
+/// starts the cursor again.
 async fn advance(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     id: FeederId,
+    epoch: u32,
     seq: i64,
 ) -> Result<()> {
     sqlx::query!(
-        "UPDATE feeders SET synced = MAX(COALESCE(synced, -1), ?) WHERE id = ?",
+        "UPDATE feeders
+         SET synced = CASE WHEN epoch IS ?1 THEN MAX(COALESCE(synced, -1), ?2) ELSE ?2 END,
+             epoch = ?1
+         WHERE id = ?3",
+        epoch,
         seq,
         id.0
     )
@@ -680,6 +713,7 @@ fn feeder_row(
     nonce: &[u8],
     sealed: Vec<u8>,
     synced: Option<i64>,
+    epoch: Option<i64>,
 ) -> Result<FeederRow> {
     Ok(FeederRow {
         id: FeederId(id),
@@ -693,7 +727,14 @@ fn feeder_row(
             nonce: nonce.try_into().map_err(|_| Error::Corrupt("key nonce"))?,
             sealed,
         },
-        synced: synced.map(|seq| from_i64(seq, "cursor")).transpose()?,
+        synced: match (synced, epoch) {
+            (Some(seq), Some(epoch)) => Some(Synced {
+                epoch: u32::try_from(epoch).map_err(|_| Error::Corrupt("epoch"))?,
+                seq: from_i64(seq, "cursor")?,
+            }),
+            (None, _) => None,
+            (Some(_), None) => return Err(Error::Corrupt("cursor without its epoch")),
+        },
     })
 }
 

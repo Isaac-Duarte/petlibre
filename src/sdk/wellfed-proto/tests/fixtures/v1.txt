@@ -2,7 +2,7 @@ open-session 00
 open-invite 0107
 open-recovery 02
 hello 0100
-welcome-open 000100016201
+welcome-open 000100016201f8acd19101
 welcome-refused 010101
 join 0570686f6e65
 joined 0002

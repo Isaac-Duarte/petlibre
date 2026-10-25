@@ -5,7 +5,9 @@ use wellfed_api::{
     ClientRole, EventKind, FeederId, FeederStatus, Generation, MetricKind, Role, Settings, UserId,
     WifiSource,
 };
-use wellfed_store::{Error, FeederRow, NewEvent, NewFeeder, NewSample, NewUser, SealedKey, Store};
+use wellfed_store::{
+    Error, FeederRow, NewEvent, NewFeeder, NewSample, NewUser, SealedKey, Store, Synced,
+};
 use tempfile::TempDir;
 use uuid::Uuid;
 
@@ -49,8 +51,12 @@ async fn adopt(store: &Store, identity: u8) -> FeederId {
     id
 }
 
+/// The feeder's ring epoch in most tests.
+const EPOCH: u32 = 7;
+
 fn event(seq: u64, kind: EventKind) -> NewEvent<'static> {
     NewEvent {
+        epoch: EPOCH,
         seq,
         at: Some(at(1_700_000_000_000)),
         received: at(1_700_000_000_500),
@@ -183,11 +189,12 @@ async fn events_are_idempotent_and_the_cursor_only_moves_forward() {
             .await
             .unwrap()
     );
-    assert_eq!(store.feeder(id).await.unwrap().unwrap().synced, Some(5));
+    let synced = |seq| Some(Synced { epoch: EPOCH, seq });
+    assert_eq!(store.feeder(id).await.unwrap().unwrap().synced, synced(5));
 
-    store.record_gap(id, 6, 9, at(10)).await.unwrap();
-    store.record_gap(id, 6, 9, at(11)).await.unwrap();
-    assert_eq!(store.feeder(id).await.unwrap().unwrap().synced, Some(9));
+    store.record_gap(id, EPOCH, 6, 9, at(10)).await.unwrap();
+    store.record_gap(id, EPOCH, 6, 9, at(11)).await.unwrap();
+    assert_eq!(store.feeder(id).await.unwrap().unwrap().synced, synced(9));
     assert!(
         store
             .record_event(id, event(10, EventKind::Lock))
@@ -195,7 +202,7 @@ async fn events_are_idempotent_and_the_cursor_only_moves_forward() {
             .unwrap()
     );
 
-    let all = store.events(id, None, 100, None).await.unwrap();
+    let all = store.events(id, EPOCH, None, 100, None).await.unwrap();
     let seqs: Vec<u64> = all.iter().map(|e| e.seq).collect();
     assert_eq!(seqs, [3, 5, 10]);
     assert_eq!(all[0].body, [0, 1, 2]);
@@ -203,17 +210,93 @@ async fn events_are_idempotent_and_the_cursor_only_moves_forward() {
     assert_eq!(all[0].received, at(1_700_000_000_500));
 
     let locks = store
-        .events(id, Some(3), 100, Some(EventKind::Lock))
+        .events(id, EPOCH, Some(3), 100, Some(EventKind::Lock))
         .await
         .unwrap();
     assert_eq!(locks.iter().map(|e| e.seq).collect::<Vec<_>>(), [10]);
-    let page = store.events(id, None, 2, None).await.unwrap();
+    let page = store.events(id, EPOCH, None, 2, None).await.unwrap();
     assert_eq!(page.iter().map(|e| e.seq).collect::<Vec<_>>(), [3, 5]);
 
-    let gaps = store.gaps(id, Some(5), 10).await.unwrap();
+    let gaps = store.gaps(id, EPOCH, Some(5), 10).await.unwrap();
     assert_eq!((gaps.len(), gaps[0].from, gaps[0].to), (1, 6, 9));
     assert_eq!(gaps[0].received, at(10));
-    assert!(store.gaps(id, Some(9), 10).await.unwrap().is_empty());
+    assert!(store.gaps(id, EPOCH, Some(9), 10).await.unwrap().is_empty());
+}
+
+/// A ring re-created on the feeder counts from 1 again under a new epoch:
+/// its events are new ones, the cursor follows them, and the old history
+/// stays readable under its own epoch.
+#[tokio::test]
+async fn a_new_epoch_keeps_its_own_history_and_restarts_the_cursor() {
+    let (_dir, store) = fresh().await;
+    let id = adopt(&store, 1).await;
+    for seq in 1..=3 {
+        store
+            .record_event(id, event(seq, EventKind::Boot))
+            .await
+            .unwrap();
+    }
+
+    let mut again = event(1, EventKind::Lock);
+    again.epoch = EPOCH + 1;
+    assert!(store.record_event(id, again).await.unwrap(), "a new event");
+    let synced = store.feeder(id).await.unwrap().unwrap().synced;
+    assert_eq!(
+        synced,
+        Some(Synced {
+            epoch: EPOCH + 1,
+            seq: 1
+        })
+    );
+
+    let old = store.events(id, EPOCH, None, 100, None).await.unwrap();
+    let new = store.events(id, EPOCH + 1, None, 100, None).await.unwrap();
+    assert_eq!((old.len(), new.len()), (3, 1));
+    assert_eq!(new[0].kind, EventKind::Lock);
+}
+
+/// A database the first schema wrote: its events came from rings written
+/// before epochs, and read back under epoch 0 with the cursor kept.
+#[tokio::test]
+async fn the_epoch_migration_keeps_the_history_under_epoch_zero() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("server.db");
+    let url = format!("sqlite://{}?mode=rwc", path.display());
+    let pool = sqlx::SqlitePool::connect(&url).await.unwrap();
+    let mut first = sqlx::migrate!("./migrations");
+    first.migrations = std::borrow::Cow::Owned(first.migrations[..1].to_vec());
+    first.run(&pool).await.unwrap();
+    sqlx::query(
+        "INSERT INTO feeders (id, identity, name, role, key_nonce, key_sealed, synced, created_ms)
+         VALUES (x'01', zeroblob(32), 'kitchen', 'server', zeroblob(12), x'00', 4, 0)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO events (feeder_id, seq, at_s, received_ms, kind, body)
+         VALUES (x'01', 4, NULL, 0, 'boot', x'00')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    pool.close().await;
+
+    let store = Store::open(&path).await.unwrap();
+    let pool = sqlx::SqlitePool::connect(&url).await.unwrap();
+    let (epoch, synced): (Option<i64>, Option<i64>) =
+        sqlx::query_as("SELECT epoch, synced FROM feeders")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!((epoch, synced), (Some(0), Some(4)));
+    let (epoch, seq): (i64, i64) = sqlx::query_as("SELECT epoch, seq FROM events")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!((epoch, seq), (0, 4));
+    pool.close().await;
+    store.close().await;
 }
 
 #[tokio::test]

@@ -1,9 +1,15 @@
 //! The device API end to end on the host: `wellfed-client`'s sessions
-//! against the feeder's `Server` (`wellfed-feeder::api`), with a fake
-//! device standing in for the mailboxes and the settings writer. Each test
-//! moves bytes between the two by hand, so it controls every pass.
+//! and connections against the feeder's `Server` (`wellfed-feeder::api`),
+//! with a fake device standing in for the mailboxes and the settings
+//! writer. Each test moves bytes between the two by hand, so it controls
+//! every pass and, for a connection, the client's clock.
 
-use wellfed_client::api::{Incoming, Invite, Join, JoinStep, Session};
+use std::time::{Duration, Instant};
+
+use wellfed_client::api::{Error, Incoming, Invite, Join, JoinStep, Session};
+use wellfed_client::connection::{
+    Connection, Cursor, Event, KEEPALIVE_ID, Recovery, Resume, Timing,
+};
 use wellfed_core::buttons::{Button, Buttons, Gesture};
 use wellfed_core::frame;
 use wellfed_core::noise::Keypair;
@@ -21,7 +27,7 @@ use wellfed_feeder::api::{
 use wellfed_feeder::pairing::{Config, Event as PairingEvent, Pairing};
 use wellfed_feeder::panel::Lock;
 use wellfed_proto::api::{
-    self as proto, Capabilities, EventBody, FeederMessage, Joined, Op, OpenRefusal, Outcome,
+    self as proto, Capabilities, EventBody, FeederMessage, Hello, Joined, Op, OpenRefusal, Outcome,
     Refusal, SettingsChanges, Status, Welcome,
 };
 
@@ -29,6 +35,8 @@ const FEEDER: [u8; 32] = [0x10; 32];
 const OWNER: [u8; 32] = [0x20; 32];
 const MEMBER: [u8; 32] = [0x30; 32];
 const STRANGER: [u8; 32] = [0x40; 32];
+/// The fake ring's epoch.
+const EPOCH: u32 = 0x0e90_c401;
 
 fn public(secret: [u8; 32]) -> [u8; 32] {
     *Keypair::from_secret(secret).public()
@@ -50,6 +58,8 @@ struct Fake {
     events: Vec<proto::Event>,
     /// Events before this sequence number left the ring.
     oldest: u64,
+    /// `None` until the writer has opened the ring.
+    epoch: Option<u32>,
     rebooted: bool,
     syncs: usize,
     /// Feeds queued, in order: feed `n` is `feeds[n - 1]`.
@@ -72,6 +82,7 @@ impl Fake {
             wifi_generation: 3,
             locked: Some(false),
             oldest: 1,
+            epoch: Some(EPOCH),
             ..Self::default()
         };
         fake.enroll(public(OWNER), Role::Owner);
@@ -280,6 +291,10 @@ impl Device for Fake {
             .map_or(EventRead::None, |e| EventRead::Event(*e))
     }
 
+    fn epoch(&self) -> Option<u32> {
+        self.epoch
+    }
+
     fn reboot(&mut self) {
         self.rebooted = true;
     }
@@ -408,11 +423,12 @@ fn connect(rig: &mut Rig, secret: [u8; 32]) -> (Client_, Option<Welcome<'static>
     run(rig, &mut client, |session| {
         if let Some(Incoming::Welcome(w)) = session.next_incoming().unwrap() {
             welcome = Some(match w {
-                Welcome::Open { role, .. } => Welcome::Open {
+                Welcome::Open { role, epoch, .. } => Welcome::Open {
                     major: 1,
                     capabilities: proto::Capabilities::V1,
                     build: "",
                     role,
+                    epoch,
                 },
                 Welcome::Refused(r) => Welcome::Refused(r),
             });
@@ -668,8 +684,12 @@ fn a_client_without_the_feed_capability_neither_feeds_nor_sees_feeds() {
 
     let slot = rig.accept().unwrap();
     let keys = Keypair::from_secret(OWNER);
+    let hello = Hello {
+        major: 1,
+        capabilities: Capabilities::V1,
+    };
     let (session, outbox) =
-        Session::connect_with(&keys, public(FEEDER), [0x77; 32], Capabilities::V1).unwrap();
+        Session::connect_with(&keys, public(FEEDER), [0x77; 32], hello).unwrap();
     let mut old = Client_ {
         slot,
         session,
@@ -971,7 +991,7 @@ fn recover(
     code: Code,
     keyed: Code,
 ) -> Option<wellfed_proto::setup::Reply> {
-    use wellfed_client::setup::{Ask, Deframer, Session as Setup, Step, frame};
+    use wellfed_client::setup::{Ask, Session as Setup};
     use wellfed_proto::setup::Reply;
 
     let slot = rig.accept().unwrap();
@@ -980,41 +1000,39 @@ fn recover(
         wifi: None,
     };
     let keys = Keypair::from_secret(secret);
-    let mut setup = Setup::new(&keys, [0x61; 32], ask, code, [0x62; 32]).unwrap();
-    // The clear opening frame, then the setup characteristic's framing.
-    let mut outbox = vec![1, 0, 2];
-    outbox.extend(frame(&setup.start().unwrap()).unwrap());
-    let mut deframer = Deframer::default();
+    let setup = Setup::new(&keys, [0x61; 32], ask, code, [0x62; 32]).unwrap();
+    let mut recovery = Recovery::new(setup).unwrap();
+    let mut outbox = Vec::new();
 
     for _ in 0..400 {
+        while let Some(bytes) = recovery.poll_transmit() {
+            outbox.extend(bytes);
+        }
         rig.deliver(slot, &mut outbox);
         rig.pass();
-        deframer.push(&rig.collect(slot));
+        let received = rig.collect(slot);
         rig.device.write();
-        while let Some(message) = deframer.next_message().unwrap() {
-            let step = match setup.receive(&message) {
-                Ok(step) => step,
-                // A mismatched code fails at whichever side opens a press
-                // first; with the feeder writing first that is the client.
-                Err(wellfed_client::setup::Error::WrongCode) => {
-                    return Some(Reply::Refused(wellfed_proto::setup::Refusal::WrongCode));
-                }
-                Err(error) => panic!("{error}"),
+        match recovery.handle_input(&received) {
+            Ok(()) => {}
+            // A mismatched code fails at whichever side opens a press
+            // first; with the feeder writing first that is the client.
+            Err(Error::Setup(wellfed_client::setup::Error::WrongCode)) => {
+                return Some(Reply::Refused(wellfed_proto::setup::Refusal::WrongCode));
+            }
+            Err(error) => panic!("{error}"),
+        }
+        while let Some(reply) = recovery.poll_reply() {
+            let Reply::EnterCode { .. } = reply else {
+                return Some(reply);
             };
-            match step {
-                Step::Send(bytes) => outbox.extend(frame(&bytes).unwrap()),
-                Step::Reply(Reply::EnterCode { .. }) => {
-                    for &button in keyed.presses() {
-                        let down = Gesture::Down {
-                            chord: Buttons::of(button),
-                        };
-                        let event = rig.pairing.gesture(rig.now, down, Lock::Unlocked);
-                        if matches!(event, Some(PairingEvent::Entered { .. })) {
-                            rig.recovery = event;
-                        }
-                    }
+            for &button in keyed.presses() {
+                let down = Gesture::Down {
+                    chord: Buttons::of(button),
+                };
+                let event = rig.pairing.gesture(rig.now, down, Lock::Unlocked);
+                if matches!(event, Some(PairingEvent::Entered { .. })) {
+                    rig.recovery = event;
                 }
-                Step::Reply(reply) => return Some(reply),
             }
         }
         if rig.server.closing(slot) && rig.server.tx(slot).is_empty() {
@@ -1096,4 +1114,353 @@ fn a_wrong_code_is_refused_and_enrolls_nobody() {
     );
     assert_eq!(reply, Some(Reply::Refused(SetupRefusal::WrongCode)));
     assert!(!rig.device.clients.iter().any(|c| c.key == public(STRANGER)));
+}
+
+/// One sans-IO connection on one slot, with the client's clock tied to the
+/// rig's passes.
+struct Live {
+    slot: usize,
+    connection: Connection,
+    base: Instant,
+    outbox: Vec<u8>,
+    events: Vec<Event>,
+}
+
+impl Live {
+    fn now(&self, rig: &Rig) -> Instant {
+        self.base + Duration::from_millis(u64::from(rig.now))
+    }
+}
+
+fn live_with(rig: &mut Rig, secret: [u8; 32], hello: Hello) -> Live {
+    let slot = rig.accept().unwrap();
+    let base = Instant::now();
+    let now = base + Duration::from_millis(u64::from(rig.now));
+    let keys = Keypair::from_secret(secret);
+    let connection = Connection::with(
+        &keys,
+        public(FEEDER),
+        [0x77; 32],
+        hello,
+        Timing::DEFAULT,
+        now,
+    )
+    .unwrap();
+    Live {
+        slot,
+        connection,
+        base,
+        outbox: Vec::new(),
+        events: Vec::new(),
+    }
+}
+
+/// Passes, moving bytes both ways and collecting events, until `done` or
+/// the connection fails.
+fn drive(rig: &mut Rig, live: &mut Live, mut done: impl FnMut(&Live) -> bool) -> Result<(), Error> {
+    for _ in 0..200 {
+        while let Some(bytes) = live.connection.poll_transmit() {
+            live.outbox.extend(bytes);
+        }
+        rig.deliver(live.slot, &mut live.outbox);
+        rig.pass();
+        let bytes = rig.collect(live.slot);
+        rig.device.write();
+        if !bytes.is_empty() {
+            let now = live.now(rig);
+            live.connection.handle_input(now, &bytes)?;
+        }
+        while let Some(event) = live.connection.poll_event() {
+            live.events.push(event);
+        }
+        if done(live) {
+            return Ok(());
+        }
+    }
+    panic!("no progress");
+}
+
+fn live(rig: &mut Rig, secret: [u8; 32]) -> Live {
+    let hello = Hello {
+        major: 1,
+        capabilities: Capabilities::KNOWN,
+    };
+    let mut live = live_with(rig, secret, hello);
+    drive(rig, &mut live, |live| live.connection.opened().is_some()).unwrap();
+    live
+}
+
+fn pushed(live: &Live) -> Vec<proto::Event> {
+    live.events
+        .iter()
+        .filter_map(|event| match event {
+            Event::Pushed(message) => match message.get() {
+                FeederMessage::Event(event) => Some(event),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_connection_names_the_epoch_and_answers_each_request_once() {
+    let mut rig = Rig::new();
+    let mut owner = live(&mut rig, OWNER);
+    let opened = owner.connection.opened().unwrap().clone();
+    assert_eq!(
+        (opened.role, opened.capabilities, opened.epoch),
+        (proto::Role::Owner, Capabilities::FEED, EPOCH)
+    );
+
+    let now = owner.now(&rig);
+    owner.connection.request(now, [1; 16], Op::Status).unwrap();
+    owner
+        .connection
+        .request(now, [2; 16], Op::GetSettings)
+        .unwrap();
+    drive(&mut rig, &mut owner, |live| live.events.len() == 2).unwrap();
+    let answered: Vec<_> = owner
+        .events
+        .iter()
+        .map(|event| match event {
+            Event::Answer { id, answer } => (id[0], matches!(answer.outcome(), Outcome::Status(_))),
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(answered, [(1, true), (2, false)]);
+    assert!(matches!(
+        owner.connection.request(now, KEEPALIVE_ID, Op::Status),
+        Err(Error::ReservedId)
+    ));
+}
+
+#[test]
+fn an_unanswered_request_is_reported_once_and_its_late_answer_dropped() {
+    let mut rig = Rig::new();
+    let mut owner = live(&mut rig, OWNER);
+    let sent = owner.now(&rig);
+    owner.connection.request(sent, [3; 16], Op::Status).unwrap();
+
+    // The answer time passes before the bytes reach the feeder.
+    let overdue = sent + Timing::DEFAULT.answer;
+    assert!(owner.connection.poll_timeout().unwrap() <= overdue);
+    owner.connection.handle_timeout(overdue).unwrap();
+    assert_eq!(
+        owner.connection.poll_event(),
+        Some(Event::Unanswered { id: [3; 16] })
+    );
+
+    let mut passes = 0;
+    drive(&mut rig, &mut owner, |_| {
+        passes += 1;
+        passes == 20
+    })
+    .unwrap();
+    assert!(owner.events.is_empty(), "{:?}", owner.events);
+}
+
+#[test]
+fn the_keepalive_goes_out_when_quiet_and_silence_ends_the_session() {
+    let mut rig = Rig::new();
+    let mut owner = live(&mut rig, OWNER);
+    while owner.connection.poll_transmit().is_some() {}
+    let heard = owner.now(&rig);
+
+    let due = owner.connection.poll_timeout().unwrap();
+    assert!(due <= heard + Timing::DEFAULT.keepalive, "{due:?}");
+    owner.connection.handle_timeout(due).unwrap();
+    let keepalive = owner.connection.poll_transmit().expect("a keepalive");
+    owner.outbox.extend(keepalive);
+    let mut passes = 0;
+    drive(&mut rig, &mut owner, |_| {
+        passes += 1;
+        passes == 20
+    })
+    .unwrap();
+    assert!(
+        owner.events.is_empty(),
+        "the keepalive's answer is swallowed"
+    );
+
+    // Nothing heard for the silence limit: the feeder is gone.
+    let silent = owner.now(&rig) + Timing::DEFAULT.silence;
+    assert!(matches!(
+        owner.connection.handle_timeout(silent),
+        Err(Error::Silent)
+    ));
+    assert!(matches!(
+        owner.connection.request(silent, [4; 16], Op::Status),
+        Err(Error::Silent)
+    ));
+    assert_eq!(owner.connection.poll_timeout(), None);
+}
+
+#[test]
+fn a_major_2_hello_gets_the_typed_version_refusal() {
+    let mut rig = Rig::new();
+    let hello = Hello {
+        major: 2,
+        capabilities: Capabilities::KNOWN,
+    };
+    let mut client = live_with(&mut rig, OWNER, hello);
+    let ended = drive(&mut rig, &mut client, |_| false);
+    assert!(
+        matches!(
+            ended,
+            Err(Error::Refused(OpenRefusal::Version { supported: 1 }))
+        ),
+        "{ended:?}"
+    );
+}
+
+#[test]
+fn a_welcome_waits_for_the_event_ring() {
+    let mut rig = Rig::new();
+    rig.device.epoch = None;
+    let hello = Hello {
+        major: 1,
+        capabilities: Capabilities::KNOWN,
+    };
+    let mut owner = live_with(&mut rig, OWNER, hello);
+    let mut passes = 0;
+    drive(&mut rig, &mut owner, |_| {
+        passes += 1;
+        passes == 20
+    })
+    .unwrap();
+    assert!(owner.connection.opened().is_none());
+
+    rig.device.epoch = Some(EPOCH);
+    drive(&mut rig, &mut owner, |live| {
+        live.connection.opened().is_some()
+    })
+    .unwrap();
+}
+
+#[test]
+fn a_cursor_resumes_in_its_epoch_and_restarts_from_another() {
+    let mut rig = Rig::new();
+    for generation in 1..=3 {
+        let by = proto::Source::Panel;
+        rig.device.record(0, EventBody::Settings { generation, by });
+    }
+
+    let mut owner = live(&mut rig, OWNER);
+    let same = Cursor {
+        epoch: EPOCH,
+        seq: 2,
+    };
+    let now = owner.now(&rig);
+    let resume = owner.connection.subscribe(now, Some(same), false).unwrap();
+    assert_eq!(resume, Resume::Continued);
+    drive(&mut rig, &mut owner, |live| pushed(live).len() == 1).unwrap();
+    assert_eq!(pushed(&owner)[0].seq, 3);
+    let newest = Cursor {
+        epoch: EPOCH,
+        seq: 3,
+    };
+    assert_eq!(owner.connection.cursor(), Some(newest));
+
+    // A mirror of a ring since re-created: its numbers mean nothing here.
+    let mut mirror = live(&mut rig, MEMBER);
+    let stale = Cursor {
+        epoch: EPOCH ^ 1,
+        seq: 2,
+    };
+    let now = mirror.now(&rig);
+    let resume = mirror
+        .connection
+        .subscribe(now, Some(stale), false)
+        .unwrap();
+    assert_eq!(resume, Resume::Restarted);
+    drive(&mut rig, &mut mirror, |live| pushed(live).len() == 3).unwrap();
+    let seqs: Vec<u64> = pushed(&mirror).iter().map(|e| e.seq).collect();
+    assert_eq!(seqs, [1, 2, 3]);
+    assert_eq!(mirror.connection.cursor(), Some(newest));
+}
+
+/// Every event body, one of each. `variant` has no wildcard, so a new
+/// body fails to compile here until it joins the list.
+fn every_body() -> Vec<EventBody> {
+    fn variant(body: &EventBody) -> usize {
+        match body {
+            EventBody::Boot { .. } => 0,
+            EventBody::Lock { .. } => 1,
+            EventBody::Settings { .. } => 2,
+            EventBody::Wifi { .. } => 3,
+            EventBody::Enrolled { .. } => 4,
+            EventBody::Revoked { .. } => 5,
+            EventBody::ClockSync { .. } => 6,
+            EventBody::Lost { .. } => 7,
+            EventBody::Fed { .. } => 8,
+        }
+    }
+    let by = proto::Source::Panel;
+    let bodies = vec![
+        EventBody::Boot {
+            bank: 1,
+            reset_flags: 0,
+        },
+        EventBody::Lock { locked: true, by },
+        EventBody::Settings { generation: 1, by },
+        EventBody::Wifi { generation: 1, by },
+        EventBody::Enrolled {
+            client: [1; 4],
+            role: proto::Role::Member,
+            path: proto::Path::Invite,
+        },
+        EventBody::Revoked { client: [1; 4], by },
+        EventBody::ClockSync { by, jump_ms: None },
+        EventBody::Lost { count: 1 },
+        EventBody::Fed {
+            feed: 1,
+            requested: 1,
+            completed: 1,
+            outcome: proto::FeedOutcome::Done,
+            reason: proto::FeedReason::Done,
+            by,
+        },
+    ];
+    let mut seen: Vec<usize> = bodies.iter().map(variant).collect();
+    seen.dedup();
+    assert_eq!(seen, (0..bodies.len()).collect::<Vec<_>>());
+    bodies
+}
+
+#[test]
+fn a_v1_only_session_never_receives_a_body_outside_v1() {
+    let mut rig = Rig::new();
+    let bodies = every_body();
+    for body in &bodies {
+        rig.device.record(0, *body);
+    }
+    // A last V1 event, so the session knows it has seen everything.
+    rig.device.record(0, EventBody::Lost { count: 9 });
+    let v1: Vec<EventBody> = bodies
+        .iter()
+        .copied()
+        .filter(|body| body.capability() == Capabilities::V1)
+        .chain([EventBody::Lost { count: 9 }])
+        .collect();
+
+    let hello = Hello {
+        major: 1,
+        capabilities: Capabilities::V1,
+    };
+    let mut old = live_with(&mut rig, OWNER, hello);
+    drive(&mut rig, &mut old, |live| {
+        live.connection.opened().is_some()
+    })
+    .unwrap();
+    let now = old.now(&rig);
+    old.connection.subscribe(now, None, false).unwrap();
+    drive(&mut rig, &mut old, |live| {
+        pushed(live).last().map(|e| e.body) == Some(EventBody::Lost { count: 9 })
+    })
+    .unwrap();
+
+    let received: Vec<EventBody> = pushed(&old).iter().map(|e| e.body).collect();
+    assert_eq!(received, v1);
+    assert!(v1.len() < bodies.len() + 1, "some body is outside V1");
 }

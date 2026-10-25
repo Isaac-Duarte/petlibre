@@ -1,18 +1,27 @@
 //! The event ring: order and numbering across reopens, wrapping the
-//! ring, gaps for cursors older than the ring, and a power cut at every
-//! mutation of an append and of the erase that makes room.
+//! ring, gaps for cursors older than the ring, the epoch a new ring draws
+//! and keeps, and a power cut at every mutation of an append and of the
+//! erase that makes room.
 
 use wellfed_core::store::events::{BODY_BYTES, EventError, EventLog, RECORD_BYTES, Read};
+use wellfed_core::store::slot::crc32;
 use wellfed_testkit::journal_flash::{FakeJournalFlash, FlashIo};
 
 /// Small units keep the wrap tests fast: 4 records each.
 const UNIT: usize = 4 * RECORD_BYTES;
 const UNITS: usize = 4;
 
+const EPOCH: u32 = 0x5eed_0001;
+
 fn open(f: &mut FakeJournalFlash) -> EventLog<FlashIo> {
+    open_fresh(f, EPOCH)
+}
+
+/// Open with `fresh` as the epoch a new ring would draw.
+fn open_fresh(f: &mut FakeJournalFlash, fresh: u32) -> EventLog<FlashIo> {
     let mut log = EventLog::closed();
     // SAFETY: the fake flash outlives the log in every test.
-    unsafe { log.open(f.io(), UNITS) };
+    unsafe { log.open(f.io(), UNITS, fresh) };
     log
 }
 
@@ -150,4 +159,58 @@ fn a_failed_erase_is_retried_and_a_closed_log_refuses() {
 
     let mut closed = EventLog::<FlashIo>::closed();
     assert_eq!(closed.append(None, &body(1)), Err(EventError::Closed));
+}
+
+#[test]
+fn a_new_ring_takes_its_fresh_epoch_and_keeps_it_across_reopens_and_wraps() {
+    let mut f = FakeJournalFlash::with_units(UNIT, UNITS);
+    let mut log = open_fresh(&mut f, 7);
+    assert_eq!(log.epoch(), 7);
+    for n in 1..=20 {
+        log.append(None, &body(n)).unwrap();
+    }
+
+    // A reopen draws another epoch, but a ring with records keeps its own,
+    // through the erase of every unit it started in.
+    let mut log = open_fresh(&mut f, 8);
+    assert_eq!(log.epoch(), 7);
+    for n in 21..=40 {
+        log.append(None, &body(n)).unwrap();
+    }
+    let log = open_fresh(&mut f, 9);
+    assert_eq!((log.epoch(), log.last_seq()), (7, Some(40)));
+}
+
+#[test]
+fn a_re_created_ring_counts_from_one_under_a_new_epoch() {
+    let mut f = FakeJournalFlash::with_units(UNIT, UNITS);
+    let mut log = open_fresh(&mut f, 7);
+    for n in 1..=6 {
+        log.append(None, &body(n)).unwrap();
+    }
+
+    // A storage wipe: the next open finds nothing and starts again.
+    let mut f = FakeJournalFlash::with_units(UNIT, UNITS);
+    let mut log = open_fresh(&mut f, 8);
+    assert_eq!((log.epoch(), log.last_seq()), (8, None));
+    assert_eq!(log.append(None, &body(1)), Ok(1));
+}
+
+#[test]
+fn a_ring_from_before_epochs_reads_as_epoch_zero() {
+    // A record as the ring wrote it with a 64-bit sequence number.
+    let mut legacy = [0u8; RECORD_BYTES];
+    legacy[..8].copy_from_slice(&1u64.to_le_bytes());
+    legacy[12..28].copy_from_slice(&body(1));
+    let crc = crc32(&legacy[..28]);
+    legacy[28..].copy_from_slice(&crc.to_le_bytes());
+    let mut f = FakeJournalFlash::with_units(UNIT, UNITS);
+    f.bytes[0][..RECORD_BYTES].copy_from_slice(&legacy);
+
+    let mut log = open_fresh(&mut f, 3);
+    assert_eq!((log.epoch(), log.last_seq()), (0, Some(1)));
+    assert_eq!(log.append(None, &body(2)), Ok(2));
+    let log = open_fresh(&mut f, 4);
+    assert_eq!(read_all(&log, None), [(1, 1), (2, 2)]);
+    assert_eq!(log.epoch(), 0);
 }

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE feeders\n         SET synced = CASE WHEN epoch IS ?1 THEN MAX(COALESCE(synced, -1), ?2) ELSE ?2 END,\n             epoch = ?1\n         WHERE id = ?3",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "6779f41f06dd08c0a290905221a86d6426ea33fc6050b710ad38e059a737f845"
+}

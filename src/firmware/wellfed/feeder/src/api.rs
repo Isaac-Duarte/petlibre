@@ -599,6 +599,10 @@ impl<F: Feeds> Device for Feeder<'_, F> {
         }
     }
 
+    fn epoch(&self) -> Option<u32> {
+        events::epoch()
+    }
+
     fn reboot(&mut self) {
         #[cfg(target_os = "none")]
         wellfed_sdk::request_reset();

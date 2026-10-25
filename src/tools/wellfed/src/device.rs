@@ -4,7 +4,7 @@
 use std::net::SocketAddr;
 
 use anyhow::{Context, Result};
-use wellfed_connect::{Answer, DISCOVERY, Message};
+use wellfed_connect::{Answer, Cursor, DISCOVERY, Message};
 use wellfed_formats::private;
 use wellfed_proto::api::{Op, RequestId, Role};
 
@@ -44,8 +44,12 @@ impl Connection {
         self.0.role()
     }
 
+    /// Events after `after`, counted in the feeder's current epoch.
     pub(crate) async fn subscribe(&mut self, after: Option<u64>, samples: bool) -> Result<()> {
-        Ok(self.0.subscribe(after, samples).await?)
+        let epoch = self.0.epoch();
+        let from = after.map(|seq| Cursor { epoch, seq });
+        self.0.subscribe(from, samples).await?;
+        Ok(())
     }
 
     /// The next message within `wait`; `None` when none came in time.

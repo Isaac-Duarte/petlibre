@@ -120,10 +120,15 @@ impl SimDevice {
                 .set_identity(&secret)
                 .map_err(|_| DeviceError::Clients(clients.status))?;
         }
+        // A new ring's epoch, drawn as the writer draws it.
+        let fresh = random()
+            .and_then(|bytes| bytes.first_chunk().copied())
+            .map_or(1, u32::from_le_bytes);
         let mut events = EventLog::default();
         events.open(
             Region::new(flash, storage::EVENTS),
             storage::EVENTS.count as usize,
+            fresh,
         );
 
         Ok(Self {
@@ -467,6 +472,10 @@ impl Device for SimDevice {
                 }
             }
         }
+    }
+
+    fn epoch(&self) -> Option<u32> {
+        Some(self.events.epoch())
     }
 
     fn reboot(&mut self) {

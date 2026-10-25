@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id AS \"id: Uuid\", identity, name, role, address, key_nonce, key_sealed, synced\n               FROM feeders ORDER BY created_ms, id",
+  "query": "SELECT id AS \"id: Uuid\", identity, name, role, address, key_nonce, key_sealed, synced, epoch\n               FROM feeders WHERE id = ?",
   "describe": {
     "columns": [
       {
@@ -90,10 +90,21 @@
             "name": "synced"
           }
         }
+      },
+      {
+        "name": "epoch",
+        "ordinal": 8,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "feeders",
+            "name": "epoch"
+          }
+        }
       }
     ],
     "parameters": {
-      "Right": 0
+      "Right": 1
     },
     "nullable": [
       false,
@@ -103,8 +114,9 @@
       true,
       false,
       false,
+      true,
       true
     ]
   },
-  "hash": "c96edb0c93cb7070befc4f88efd82a51d7db539d297c89b0b97f8263deb265ae"
+  "hash": "f4c6f819b645438991875931d5bc9f41fea83ec949c08b39ab58f192bcd36e06"
 }

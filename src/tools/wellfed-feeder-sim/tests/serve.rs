@@ -561,9 +561,7 @@ fn events_that_arrive_while_a_request_waits_are_kept_for_next() {
             "{message:?}"
         );
         assert!(matches!(
-            owner
-                .request(wellfed_connect::KEEPALIVE_ID, Op::Status)
-                .await,
+            owner.ask(wellfed_connect::KEEPALIVE_ID, Op::Status).await,
             Err(ConnectError::ReservedId)
         ));
         sim.stop().await;

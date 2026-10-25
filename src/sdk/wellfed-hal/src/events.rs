@@ -12,6 +12,10 @@
 //!   and an answer stays until the next request, so several subscribers at
 //!   the same cursor share it.
 //!
+//! - **Epoch:** the writer publishes the ring's epoch once it has opened
+//!   it ([`publish_open`]); the device API welcomes no session before then,
+//!   since a welcome names the epoch its event numbers count in.
+//!
 //! Every access copies a few dozen bytes with the scheduler paused; both
 //! sides are tasks, never interrupt handlers.
 
@@ -48,6 +52,7 @@ struct Shared {
     len: usize,
     lost: u32,
     last: Option<u64>,
+    epoch: Option<u32>,
     read: ReadSlot,
 }
 
@@ -57,6 +62,7 @@ static SHARED: TaskCell<Shared> = TaskCell::new(Shared {
     len: 0,
     lost: 0,
     last: None,
+    epoch: None,
     read: ReadSlot::Idle,
 });
 
@@ -110,9 +116,17 @@ pub fn finish_pending(last: Option<u64>) {
     });
 }
 
-/// The writer's half: the ring's newest record, after opening it.
-pub fn publish_last(last: Option<u64>) {
-    with(|shared| shared.last = last);
+/// The writer's half: the ring's epoch and newest record, after opening it.
+pub fn publish_open(epoch: u32, last: Option<u64>) {
+    with(|shared| {
+        shared.epoch = Some(epoch);
+        shared.last = last;
+    });
+}
+
+/// The ring's epoch, once the writer has opened it.
+pub fn epoch() -> Option<u32> {
+    with(|shared| shared.epoch)
 }
 
 /// The ring's newest record, as the writer last published it.
@@ -166,6 +180,7 @@ pub fn reset() {
         shared.len = 0;
         shared.lost = 0;
         shared.last = None;
+        shared.epoch = None;
         shared.read = ReadSlot::Idle;
     });
 }

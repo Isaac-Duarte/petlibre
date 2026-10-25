@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT seq, at_s, received_ms, kind, body FROM events\n               WHERE feeder_id = ?1 AND seq > ?2 AND (?3 IS NULL OR kind = ?3)\n               ORDER BY seq LIMIT ?4",
+  "query": "SELECT seq, at_s, received_ms, kind, body FROM events\n               WHERE feeder_id = ?1 AND epoch = ?2 AND seq > ?3 AND (?4 IS NULL OR kind = ?4)\n               ORDER BY seq LIMIT ?5",
   "describe": {
     "columns": [
       {
@@ -60,7 +60,7 @@
       }
     ],
     "parameters": {
-      "Right": 4
+      "Right": 5
     },
     "nullable": [
       false,
@@ -70,5 +70,5 @@
       false
     ]
   },
-  "hash": "5a8d34a3e45bbceccaf3912bae6354689f4a8c00f9c0468e9465b6a1caee3c49"
+  "hash": "1dfdf3d731b32c7807bf7543dc038d645b3a3e442ab14acf7cbef304e2406a21"
 }

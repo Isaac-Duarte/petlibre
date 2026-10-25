@@ -12,13 +12,17 @@
 //!   reconnect too), so the feeder answers it once.
 //! - [`Join::connect`] redeems an invite (Noise XXpsk3), checking that the
 //!   feeder that answers holds the identity the invite named.
+//!
+//! [`crate::connection::Connection`] runs a whole session over a
+//! [`Session`]: the clients use it, and the bench and tests use
+//! [`Session`] directly to send what a well-behaved client never would.
 
 use wellfed_core::frame::{self, PREFIX};
 use wellfed_core::hex::{self, Lower};
 use wellfed_core::noise::{self, Handshake, Keypair, Pattern, Role, Transport};
 use wellfed_proto::api::{
     Capabilities, ClientMessage, FRAME_MAX, FeederMessage, Hello, Join as JoinRequest, Joined, Op,
-    Open, PROLOGUE, PROTOCOL_MAJOR, RequestId, Welcome,
+    Open, OpenRefusal, PROLOGUE, PROTOCOL_MAJOR, RequestId, Welcome,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -37,6 +41,18 @@ pub enum Error {
     WrongFeeder,
     #[error("the label must be 1-16 bytes with no NUL")]
     Label,
+    #[error("the feeder refused the session: {0:?}")]
+    Refused(OpenRefusal),
+    #[error("the feeder did not answer in time")]
+    Timeout,
+    #[error("the feeder stopped answering")]
+    Silent,
+    #[error("that request id is the keepalive's")]
+    ReservedId,
+    #[error("the session is not open yet")]
+    NotOpen,
+    #[error(transparent)]
+    Setup(#[from] crate::setup::Error),
 }
 
 impl From<noise::Error> for Error {
@@ -79,7 +95,8 @@ impl Deframer {
     }
 }
 
-fn open_frame(open: Open) -> Result<Vec<u8>, Error> {
+/// The clear frame that opens a connection.
+pub(crate) fn open_frame(open: Open) -> Result<Vec<u8>, Error> {
     let mut out = [0; 16];
     let len = wellfed_proto::encode(&open, &mut out).map_err(|_| Error::TooLarge)?;
     frame(&out[..len])
@@ -129,16 +146,21 @@ impl Session {
         feeder: [u8; 32],
         ephemeral: [u8; 32],
     ) -> Result<(Self, Vec<u8>), Error> {
-        Self::connect_with(keys, feeder, ephemeral, Capabilities::FEED)
+        let hello = Hello {
+            major: PROTOCOL_MAJOR,
+            capabilities: Capabilities::KNOWN,
+        };
+        Self::connect_with(keys, feeder, ephemeral, hello)
     }
 
-    /// As [`Self::connect`], claiming only `capabilities`: what a client
-    /// built before them looks like to the feeder.
+    /// As [`Self::connect`] with another hello: what a client built before
+    /// some capability, or for another major version, looks like to the
+    /// feeder.
     pub fn connect_with(
         keys: &Keypair,
         feeder: [u8; 32],
         ephemeral: [u8; 32],
-        capabilities: Capabilities,
+        hello: Hello,
     ) -> Result<(Self, Vec<u8>), Error> {
         let mut handshake = Handshake::new(
             Pattern::Ik,
@@ -148,10 +170,6 @@ impl Session {
             Some(feeder),
             ephemeral,
         )?;
-        let hello = Hello {
-            major: PROTOCOL_MAJOR,
-            capabilities,
-        };
         let mut payload = [0; 16];
         let len = wellfed_proto::encode(&hello, &mut payload).map_err(|_| Error::TooLarge)?;
         let mut message = [0; FRAME_MAX];

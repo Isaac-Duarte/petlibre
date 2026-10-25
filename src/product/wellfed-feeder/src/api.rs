@@ -101,6 +101,9 @@ pub trait Device {
     fn record(&mut self, now_ms: u32, body: EventBody);
     /// The first durable event after `after` (`None`: from the oldest).
     fn event_after(&mut self, after: Option<u64>) -> EventRead;
+    /// The event ring's epoch, `None` until the ring is open. A session is
+    /// welcomed only once it is known.
+    fn epoch(&self) -> Option<u32>;
     /// Restart the feeder.
     fn reboot(&mut self);
 }
@@ -665,8 +668,18 @@ impl Server {
                                 .remote_static()
                                 .and_then(|key| find(&self.clients, key))
                                 .map(|client| client.role);
-                            let welcome =
-                                welcome(refusal, role, device.capabilities(), device.build());
+                            // The ring opens early in boot; until then the
+                            // handshake waits, within its own deadline.
+                            let Some(epoch) = device.epoch() else {
+                                return Ok(false);
+                            };
+                            let welcome = welcome(
+                                refusal,
+                                role,
+                                device.capabilities(),
+                                device.build(),
+                                epoch,
+                            );
                             let len = proto_encode(&welcome, &mut self.plain)?;
                             &self.plain[..len]
                         }
@@ -1248,7 +1261,7 @@ impl Server {
         // it says into an owned action first.
         let message: ClientMessage<'_> =
             wellfed_proto::decode(&self.plain[..len]).map_err(|_| Reason::Malformed)?;
-        let (id, action) = match message {
+        let (id, needs, action) = match message {
             ClientMessage::Subscribe { after, samples } => {
                 if let Phase::Open {
                     events, samples: s, ..
@@ -1259,10 +1272,10 @@ impl Server {
                 }
                 return Ok(());
             }
-            ClientMessage::Request { id, op } => (id, Action::from(op)),
+            ClientMessage::Request { id, op } => (id, op.capability(), Action::from(op)),
         };
 
-        match self.request(index, id, action, now_ms, device, pairing, record) {
+        match self.request(index, id, needs, action, now_ms, device, pairing, record) {
             Some(reply) => self.answer(index, id, action.name(), reply, now_ms, device, record),
             None => Ok(()),
         }
@@ -1275,6 +1288,7 @@ impl Server {
         &mut self,
         index: usize,
         id: RequestId,
+        needs: Capabilities,
         action: Action,
         now_ms: u32,
         device: &mut D,
@@ -1311,6 +1325,13 @@ impl Server {
         }
         if !allowed(role, action) {
             let outcome = Reply::Refused(Refusal::Forbidden);
+            return Some(self.remember(memory, id, action, outcome));
+        }
+        // An op outside the bits both sides claim is one this pair cannot
+        // share: the feeder does not serve it, or the client could not
+        // read what it leads to.
+        if !capabilities.contains(needs) || !device.capabilities().contains(needs) {
+            let outcome = Reply::Refused(Refusal::Unavailable);
             return Some(self.remember(memory, id, action, outcome));
         }
 
@@ -1390,12 +1411,6 @@ impl Server {
                 }
             }
             Action::Invalid => Reply::Refused(Refusal::Invalid),
-            Action::Feed { .. } | Action::CancelFeed { .. }
-                if !capabilities.contains(Capabilities::FEED)
-                    || !device.capabilities().contains(Capabilities::FEED) =>
-            {
-                Reply::Refused(Refusal::Unavailable)
-            }
             Action::Feed { portions } => match device.feed(portions, by) {
                 Ok(feed) => return self.wait(index, id, action, Waiting::Feed { feed }),
                 Err(refusal) => Reply::Refused(refusal),
@@ -1606,9 +1621,9 @@ impl Server {
             let message = match device.event_after(after) {
                 EventRead::Event(event) => {
                     *events = Some(Some(event.seq));
-                    let known = !matches!(event.body, EventBody::Fed { .. })
-                        || capabilities.contains(Capabilities::FEED);
-                    if !known {
+                    // A body the session's hello did not claim would not
+                    // decode there: skip it, as an old client would want.
+                    if !capabilities.contains(event.body.capability()) {
                         return Ok(true);
                     }
                     Some(FeederMessage::Event(event))
@@ -1728,6 +1743,7 @@ fn welcome(
     role: Option<Role>,
     capabilities: Capabilities,
     build: &str,
+    epoch: u32,
 ) -> Welcome<'_> {
     match (refusal, role) {
         (None, Some(role)) => Welcome::Open {
@@ -1735,6 +1751,7 @@ fn welcome(
             capabilities,
             build,
             role: proto_role(role),
+            epoch,
         },
         (Some(refusal), _) => Welcome::Refused(refusal),
         (None, None) => Welcome::Refused(OpenRefusal::Unknown),

@@ -3,7 +3,9 @@
 //!
 //! Each connect runs in this order:
 //! 1. subscribe after the newest event the store holds, so everything the
-//!    feeder recorded while the server was away arrives first;
+//!    feeder recorded while the server was away arrives first (the session
+//!    starts from the oldest event kept when the feeder's ring is a new
+//!    one, under a new epoch);
 //! 2. set the feeder's clock;
 //! 3. read its status and settings into the store's cache.
 //!
@@ -19,7 +21,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use wellfed_api::{Connection as Link, FeederId, StreamEvent};
-use wellfed_connect::{Answer, Connection, Message};
+use wellfed_connect::{Answer, Connection, Cursor, Message, Resume};
 use wellfed_core::noise::Keypair;
 use wellfed_proto::api::{FeederMessage, Op, Outcome};
 use wellfed_store::{FeederRow, NewEvent, NewSample};
@@ -200,7 +202,7 @@ impl Task {
                     self.sync_time(&mut connection).await
                 }
                 message = connection.next(QUIET) => match message {
-                    Ok(message) => self.apply(&message).await,
+                    Ok(message) => self.apply(connection.epoch(), &message).await,
                     Err(wellfed_connect::Error::Timeout) => Ok(()),
                     Err(error) => Err(End::Lost(error)),
                 },
@@ -218,10 +220,18 @@ impl Task {
         let Some(row) = row else {
             return Err(End::Cancelled);
         };
-        connection
-            .subscribe(row.synced, true)
-            .await
-            .map_err(End::Lost)?;
+        let from = row.synced.map(|synced| Cursor {
+            epoch: synced.epoch,
+            seq: synced.seq,
+        });
+        let resume = connection.subscribe(from, true).await.map_err(End::Lost)?;
+        if resume == Resume::Restarted {
+            warn!(
+                feeder = %self.id,
+                epoch = connection.epoch(),
+                "the feeder's history is a new one; mirroring it from its oldest event"
+            );
+        }
         self.sync_time(connection).await?;
 
         let answer = self.ask(connection, Op::Status).await?;
@@ -267,7 +277,7 @@ impl Task {
     }
 
     /// Store what the feeder pushed, then publish it.
-    async fn apply(&self, message: &Message) -> Result<(), End> {
+    async fn apply(&self, epoch: u32, message: &Message) -> Result<(), End> {
         let store = &self.shared.store;
         let received = self.shared.clock.now();
         let mut raw = [0u8; RAW];
@@ -275,11 +285,12 @@ impl Task {
             FeederMessage::Event(event) => {
                 let len = wellfed_proto::encode(&event.body, &mut raw)
                     .map_err(|_| End::Failed(Error::Unexpected))?;
-                let event = convert::event(&event, received);
+                let event = convert::event(epoch, &event, received);
                 let new = store
                     .record_event(
                         self.id,
                         NewEvent {
+                            epoch,
                             seq: event.seq,
                             at: event.at,
                             received,
@@ -299,12 +310,17 @@ impl Task {
             FeederMessage::Gap { from, to } => {
                 warn!(feeder = %self.id, from, to, "events lost before the server read them");
                 store
-                    .record_gap(self.id, from, to, received)
+                    .record_gap(self.id, epoch, from, to, received)
                     .await
                     .map_err(fail)?;
                 self.shared.hub.publish(StreamEvent::Gap {
                     feeder: self.id,
-                    gap: wellfed_api::Gap { from, to, received },
+                    gap: wellfed_api::Gap {
+                        epoch,
+                        from,
+                        to,
+                        received,
+                    },
                 });
             }
             FeederMessage::Sample(sample) => {
@@ -328,7 +344,7 @@ impl Task {
                     sample,
                 });
             }
-            // The late answer to a command that already timed out.
+            // Answers go to `ask`; `next` yields only what the feeder pushed.
             FeederMessage::Response { .. } => {}
         }
         Ok(())

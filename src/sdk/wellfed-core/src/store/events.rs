@@ -5,11 +5,19 @@
 //!
 //! | Bytes | Field |
 //! | --- | --- |
-//! | 0..8 | sequence number, little-endian, from 1 |
+//! | 0..4 | sequence number, little-endian, from 1 |
+//! | 4..8 | the ring's epoch, little-endian |
 //! | 8..12 | Unix seconds, 0 when the clock was invalid |
 //! | 12..28 | the body (`wellfed_proto::api::EventBody`, postcard, zero-padded) |
 //! | 28..32 | CRC-32 of bytes 0..28 |
 //!
+//! - **Epoch:** a ring is created (opened with no valid record) under a
+//!   fresh random epoch, which every record it holds repeats. A client's
+//!   cursor names the epoch it counts in, so a ring re-created by a storage
+//!   wipe is told apart from the one the cursor came from, whose numbers
+//!   it reuses. Bytes 4..8 were the high half of a 64-bit sequence number
+//!   that no ring reaches by counting, so a ring written before epochs
+//!   existed reads as epoch 0 and keeps it.
 //! - **Order:** sequence numbers rise by one per record across reboots: on
 //!   open the ring finds its newest valid record, and the next append takes
 //!   the number after it. A torn record fails its CRC and is skipped; its
@@ -28,7 +36,7 @@
 
 use core::ffi::c_uint;
 
-use crate::store::slot::{SlotIo, crc32, get_u32, get_u64, put_u32, put_u64};
+use crate::store::slot::{SlotIo, crc32, get_u32, put_u32};
 
 pub const RECORD_BYTES: usize = 32;
 /// [`RECORD_BYTES`] as the I/O offsets count.
@@ -36,6 +44,7 @@ const RECORD_U32: u32 = 32;
 const _: () = assert!(RECORD_U32 as usize == RECORD_BYTES);
 /// The body's room in a record.
 pub const BODY_BYTES: usize = 16;
+const EPOCH_AT: usize = 4;
 const AT_AT: usize = 8;
 const BODY_AT: usize = 12;
 const CRC_AT: usize = 28;
@@ -70,6 +79,9 @@ pub enum EventError {
     /// A program or erase failed; the record may be torn, and the next
     /// append moves past it.
     Io,
+    /// The epoch has used every sequence number (2^32 - 2 records, millions
+    /// of years at the feeder's rate).
+    Exhausted,
 }
 
 /// One unit's records as the scan found them.
@@ -79,6 +91,9 @@ struct Unit {
     span: Option<(u64, u64)>,
     /// The first slot never programmed.
     free: u32,
+    /// The epoch of the unit's first valid record; records of another
+    /// epoch in the same unit are not the ring's.
+    epoch: u32,
 }
 
 #[derive(Debug)]
@@ -90,6 +105,7 @@ pub struct EventLog<I> {
     /// The unit appends go to.
     head: usize,
     next_seq: u64,
+    epoch: u32,
 }
 
 impl<I> Default for EventLog<I> {
@@ -107,18 +123,22 @@ impl<I> EventLog<I> {
             table: [Unit {
                 span: None,
                 free: 0,
+                epoch: 0,
             }; MAX_UNITS],
             head: 0,
             next_seq: 1,
+            epoch: 0,
         }
     }
 }
 
 impl<I: SlotIo> EventLog<I> {
     /// Scan `units` erase units of `io` (2 to [`MAX_UNITS`]), which belong to
-    /// the log alone.
-    pub fn open(&mut self, io: I, units: usize) {
+    /// the log alone. A ring with no valid record is new and takes `fresh`,
+    /// drawn at random, as its epoch.
+    pub fn open(&mut self, io: I, units: usize, fresh: u32) {
         *self = Self::closed();
+        self.epoch = fresh;
         let per_unit = io.unit_bytes() / RECORD_U32;
         if !(2..=MAX_UNITS).contains(&units) || per_unit == 0 {
             return;
@@ -136,7 +156,20 @@ impl<I: SlotIo> EventLog<I> {
         if let Some((index, last)) = newest {
             self.head = index;
             self.next_seq = last + 1;
+            self.epoch = self.table[index].epoch;
         }
+        // A unit of another epoch holds no history of this ring; it keeps
+        // its slots until the ring wraps onto it and erases it.
+        for unit in &mut self.table[..units] {
+            if unit.epoch != self.epoch {
+                unit.span = None;
+            }
+        }
+    }
+
+    /// The epoch the ring's records count in.
+    pub const fn epoch(&self) -> u32 {
+        self.epoch
     }
 
     pub const fn is_open(&self) -> bool {
@@ -171,7 +204,12 @@ impl<I: SlotIo> EventLog<I> {
                 break;
             }
             unit.free = slot + 1;
-            if let Some(record) = decode(&bytes) {
+            if let Some((epoch, record)) = decode(&bytes) {
+                if unit.span.is_none() {
+                    unit.epoch = epoch;
+                } else if epoch != unit.epoch {
+                    continue;
+                }
                 unit.span = Some(match unit.span {
                     None => (record.seq, record.seq),
                     Some((first, last)) => (first.min(record.seq), last.max(record.seq)),
@@ -200,6 +238,7 @@ impl<I: SlotIo> EventLog<I> {
             self.table[next] = Unit {
                 span: None,
                 free: self.per_unit,
+                epoch: self.epoch,
             };
             if !io.erase(unit_id(next)) {
                 return Err(EventError::Io);
@@ -209,11 +248,17 @@ impl<I: SlotIo> EventLog<I> {
         }
 
         let seq = self.next_seq;
-        let record = encode(&Record {
-            seq,
-            at,
-            body: *body,
-        });
+        if seq >= u64::from(u32::MAX) {
+            return Err(EventError::Exhausted);
+        }
+        let record = encode(
+            self.epoch,
+            &Record {
+                seq,
+                at,
+                body: *body,
+            },
+        );
         let unit = &mut self.table[self.head];
         let slot = unit.free;
         unit.free += 1;
@@ -221,6 +266,7 @@ impl<I: SlotIo> EventLog<I> {
             return Err(EventError::Io);
         }
         unit.span = Some(unit.span.map_or((seq, seq), |(first, _)| (first, seq)));
+        unit.epoch = self.epoch;
         self.next_seq = seq + 1;
         Ok(seq)
     }
@@ -251,7 +297,12 @@ impl<I: SlotIo> EventLog<I> {
             }
             let mut best: Option<Record> = None;
             for slot in 0..self.table[index].free {
-                let Some(record) = self.read_slot(index, slot).and_then(|b| decode(&b)) else {
+                let Some(record) = self
+                    .read_slot(index, slot)
+                    .and_then(|b| decode(&b))
+                    .filter(|&(epoch, _)| epoch == self.epoch)
+                    .map(|(_, record)| record)
+                else {
                     continue;
                 };
                 if record.seq == want {
@@ -273,9 +324,11 @@ fn unit_id(index: usize) -> c_uint {
     c_uint::try_from(index).unwrap_or(c_uint::MAX)
 }
 
-fn encode(record: &Record) -> [u8; RECORD_BYTES] {
+fn encode(epoch: u32, record: &Record) -> [u8; RECORD_BYTES] {
     let mut bytes = [0; RECORD_BYTES];
-    put_u64(&mut bytes, record.seq);
+    // `append` refuses a number past u32, so this never saturates.
+    put_u32(&mut bytes, u32::try_from(record.seq).unwrap_or(u32::MAX));
+    put_u32(&mut bytes[EPOCH_AT..], epoch);
     put_u32(&mut bytes[AT_AT..], record.at.unwrap_or(0));
     bytes[BODY_AT..CRC_AT].copy_from_slice(&record.body);
     let crc = crc32(&bytes[..CRC_AT]);
@@ -283,20 +336,24 @@ fn encode(record: &Record) -> [u8; RECORD_BYTES] {
     bytes
 }
 
-fn decode(bytes: &[u8; RECORD_BYTES]) -> Option<Record> {
+/// A record and the epoch it was written in.
+fn decode(bytes: &[u8; RECORD_BYTES]) -> Option<(u32, Record)> {
     if get_u32(&bytes[CRC_AT..]) != crc32(&bytes[..CRC_AT]) {
         return None;
     }
-    let seq = get_u64(bytes);
-    if seq == 0 || seq == u64::MAX {
+    let seq = get_u32(bytes);
+    if seq == 0 || seq == u32::MAX {
         return None;
     }
     let mut body = [0; BODY_BYTES];
     body.copy_from_slice(&bytes[BODY_AT..CRC_AT]);
     let at = get_u32(&bytes[AT_AT..]);
-    Some(Record {
-        seq,
-        at: (at != 0).then_some(at),
-        body,
-    })
+    Some((
+        get_u32(&bytes[EPOCH_AT..]),
+        Record {
+            seq: u64::from(seq),
+            at: (at != 0).then_some(at),
+            body,
+        },
+    ))
 }

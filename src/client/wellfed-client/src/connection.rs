@@ -20,8 +20,8 @@
 //!   feeder that lost power sends no reset, and the kernel would keep the
 //!   socket open for many minutes.
 //! - **Request–answer matching.** Each [`Connection::request`] ends in
-//!   exactly one [`Event::Answer`] or, after [`Timing::answer`],
-//!   [`Event::Unanswered`]. An unanswered request may have run: a write is
+//!   exactly one [`Event::Answer`] or, after [`Timing::answer`] or when the
+//!   session ends first, [`Event::Unanswered`]. An unanswered request may have run: a write is
 //!   retried only under the same id, which the feeder answers from memory
 //!   without running it twice, and a feed is never retried automatically.
 //! - **The event cursor.** [`Connection::subscribe`] takes the newest
@@ -149,8 +149,8 @@ impl Answer {
 pub enum Event {
     /// The feeder's answer to the request under `id`.
     Answer { id: RequestId, answer: Answer },
-    /// No answer within [`Timing::answer`]: the request may have run. Its
-    /// late answer, if any, is dropped.
+    /// No answer within [`Timing::answer`], or the session ended first:
+    /// the request may have run. Its late answer, if any, is dropped.
     Unanswered { id: RequestId },
     /// An event, gap or sample the feeder pushed.
     Pushed(Message),
@@ -257,9 +257,14 @@ impl Connection {
         self.ended.map_or(Ok(()), |ended| Err(ended.error()))
     }
 
+    /// End the session. Every request still waiting is reported
+    /// unanswered, so each request still ends in exactly one event.
     fn end(&mut self, ended: Ended) -> Error {
         self.ended = Some(ended);
         self.transmit.clear();
+        for (id, _) in self.pending.drain(..) {
+            self.events.push_back(Event::Unanswered { id });
+        }
         ended.error()
     }
 

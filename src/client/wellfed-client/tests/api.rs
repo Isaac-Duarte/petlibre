@@ -1464,3 +1464,23 @@ fn a_v1_only_session_never_receives_a_body_outside_v1() {
     assert_eq!(received, v1);
     assert!(v1.len() < bodies.len() + 1, "some body is outside V1");
 }
+
+#[test]
+fn a_request_pending_when_the_session_ends_is_reported_unanswered() {
+    let mut rig = Rig::new();
+    let mut owner = live(&mut rig, OWNER);
+    let sent = owner.now(&rig);
+    owner.connection.request(sent, [5; 16], Op::Status).unwrap();
+
+    // The feeder goes silent before the bytes reach it.
+    let silent = sent + Timing::DEFAULT.silence;
+    assert!(matches!(
+        owner.connection.handle_timeout(silent),
+        Err(Error::Silent)
+    ));
+    assert_eq!(
+        owner.connection.poll_event(),
+        Some(Event::Unanswered { id: [5; 16] })
+    );
+    assert_eq!(owner.connection.poll_event(), None);
+}

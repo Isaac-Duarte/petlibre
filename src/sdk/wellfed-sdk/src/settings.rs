@@ -124,6 +124,7 @@ pub enum Record {
         open: bool,
         last: Option<u64>,
         oldest: Option<u64>,
+        epoch: u32,
     },
     /// An append failed; the record is dropped.
     EventError,
@@ -219,9 +220,14 @@ pub fn describe(record: Record, f: &mut impl fmt::Write) -> fmt::Result {
             f,
             "keys change={change} result={result} enrolled={enrolled}"
         ),
-        Record::Events { open, last, oldest } => write!(
+        Record::Events {
+            open,
+            last,
+            oldest,
+            epoch,
+        } => write!(
             f,
-            "events open={} last={} oldest={}",
+            "events open={} last={} oldest={} epoch={epoch:08x}",
             u8::from(open),
             last.unwrap_or(0),
             oldest.unwrap_or(0)
@@ -311,17 +317,19 @@ impl<F> Default for Writer<F> {
     }
 }
 
-/// The epoch a new event ring takes, drawn after the seed is mixed in. A
-/// boot without a generator holds no session either (every handshake
-/// needs one), so its fallback only has to differ from a ring written
-/// before epochs (0); a later ring re-created with a generator draws again.
+/// The epoch a new event ring takes, drawn after the seed is mixed in and
+/// never 0, which a ring written before epochs reads as. A boot without a
+/// generator holds no session either (every handshake needs one), so its
+/// fallback only has to differ from 0; a later ring re-created with a
+/// generator draws again.
 fn fresh_epoch() -> u32 {
     let mut bytes = [0; 4];
-    if rng::fill(&mut bytes) {
+    let drawn = if rng::fill(&mut bytes) {
         u32::from_le_bytes(bytes)
     } else {
-        1
-    }
+        0
+    };
+    drawn.max(1)
 }
 
 fn changed(current: Settings, fields: SettingsFields) -> Settings {
@@ -545,6 +553,7 @@ impl<F: FlashOps> Writer<F> {
                         open: self.events.is_open(),
                         last: self.events.last_seq(),
                         oldest: self.events.oldest_seq(),
+                        epoch: self.events.epoch(),
                     };
                     return next(POLL_MS, Some(record));
                 }

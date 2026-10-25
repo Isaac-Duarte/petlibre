@@ -145,7 +145,8 @@ fn changes_are_saved_once_each_inside_a_marked_attempt() {
         Some(Record::Events {
             open: true,
             last: None,
-            oldest: None
+            oldest: None,
+            epoch: events::epoch().unwrap(),
         }),
         "the event ring opens empty"
     );
@@ -499,7 +500,8 @@ fn queued_events_are_appended_and_read_back_after_a_reboot() {
         Some(Record::Events {
             open: true,
             last: Some(2),
-            oldest: Some(1)
+            oldest: Some(1),
+            epoch: events::epoch().unwrap(),
         })
     );
     assert_eq!(events::read_result(None), None, "asked");

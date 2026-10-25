@@ -38,6 +38,17 @@ enum Script {
     Silent,
 }
 
+/// A request from an earlier run.
+const EARLIER: &str = "f5ef47b8-3c1d-4e2a-9b7f-0a6c5d4e3f21";
+
+/// A trial as the server's ledger writes it.
+fn record(request_id: &str, phase: &str, download_reported: bool) -> Value {
+    json!({"sequence": 1, "input": {"request_id": request_id, "server_token": uuid::Uuid::nil()},
+           "created_at": "2026-10-23T12:00:00Z", "updated_at": "2026-10-23T12:00:00Z",
+           "phase": phase, "download_reported": download_reported, "resolution_note": null,
+           "image_sha256": "0".repeat(64)})
+}
+
 struct StockFeeder {
     script: Script,
     now: f64,
@@ -271,10 +282,7 @@ impl Rig for StockFeeder {
             .clone()
             .into_iter()
             .chain(earlier)
-            .map(|(id, phase)| {
-                json!({"input": {"request_id": id}, "phase": phase,
-                                     "download_reported": !self.reports.is_empty()})
-            })
+            .map(|(id, phase)| record(&id, phase, !self.reports.is_empty()))
             .collect();
         let replacement = match &self.health {
             Some((build, bank, recovery)) => {
@@ -594,21 +602,14 @@ fn a_start_record_from_bank_1_is_refused() {
 #[test]
 fn trial_phases_read_from_the_server_s_ledger() {
     let status: LocalStatus = serde_json::from_value(json!({
-        "ota_trials": [
-            {"input": {"request_id": "a"}, "phase": "replacement_healthy"},
-            {"input": {"request_id": "b"}, "phase": "something_new"},
-        ],
+        "ota_trials": [record(EARLIER, "replacement_healthy", true)],
     }))
     .unwrap();
     assert_eq!(
-        status.trial("a").map(|t| t.phase),
+        status.trial(EARLIER).map(|t| t.phase),
         Some(TrialPhase::ReplacementHealthy)
     );
-    assert_eq!(
-        status.trial("b").map(|t| t.phase),
-        Some(TrialPhase::Unknown)
-    );
-    assert!(status.trial("c").is_none());
+    assert!(status.trial(&uuid::Uuid::nil().to_string()).is_none());
 }
 
 #[test]
@@ -637,7 +638,7 @@ fn session_reports(reports: &[(&'static str, Verdict)]) -> Vec<Report> {
 #[test]
 fn an_earlier_failed_request_is_resolved_before_stock_is_asked_again() {
     let mut feeder = StockFeeder::new(Script::Installs);
-    feeder.earlier = Some(("f5ef47b8".into(), "reported_error", 600.0));
+    feeder.earlier = Some((EARLIER.into(), "reported_error", 600.0));
     let reports = session(&mut feeder, false);
 
     assert_eq!(
@@ -665,7 +666,7 @@ fn an_earlier_failed_request_is_resolved_before_stock_is_asked_again() {
 #[test]
 fn an_earlier_request_the_server_never_resolves_stops_the_run() {
     let mut feeder = StockFeeder::new(Script::Installs);
-    feeder.earlier = Some(("f5ef47b8".into(), "uncertain", f64::INFINITY));
+    feeder.earlier = Some((EARLIER.into(), "uncertain", f64::INFINITY));
     let reports = session(&mut feeder, false);
 
     assert_eq!(

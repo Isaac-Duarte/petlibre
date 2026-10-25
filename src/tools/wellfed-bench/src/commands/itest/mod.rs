@@ -36,7 +36,6 @@ mod stock;
 mod tests;
 
 pub use stock::StockOtaArgs;
-pub(crate) use stock::TrialPhase;
 
 use log::{Log, Record};
 use record::{Evidence, RunRecord, ScenarioRecord, ScenarioVerdict};

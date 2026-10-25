@@ -13,18 +13,21 @@ use std::{collections::BTreeMap, fs, path::PathBuf};
 use anyhow::{Context, Result, ensure};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
+use serde_json::Value;
 use uuid::Uuid;
+
+use wellfed_formats::local::LocalStatus;
 
 use crate::{
     build_info::BUILD,
     config::Config,
     ota::{
         self,
-        report::{OtaReport, REPORT_LIMIT},
+        report::{self, REPORT_LIMIT},
         trial::{ORIGINAL_VERSION, Phase as TrialPhase, REPLACEMENT_VERSION},
     },
     protocol::{Channel, Message, Reply},
+    replacement::Health,
     storage,
 };
 
@@ -64,34 +67,19 @@ pub const LEDGER_FILE: &str = "stock-ledger.json";
 /// never read: an operator archives it after checking no trial in it is open.
 pub const RETIRED_LEDGER_FILE: &str = "feed-ledger.json";
 
-#[derive(Clone, Debug, Default, Serialize)]
-pub struct Status {
-    pub broker_connected: bool,
-    pub device_online: bool,
-    pub last_seen: Option<DateTime<Utc>>,
-    pub clock_offset_seconds: Option<i64>,
-    pub attributes: Map<String, Value>,
-    pub version_reported_at: Option<DateTime<Utc>>,
-    pub power_reported_at: Option<DateTime<Utc>>,
-    pub build_commit: &'static str,
-    pub build_clean: bool,
-    pub ota_reports: Vec<OtaReport>,
-    pub ota_trial_enabled: bool,
-    pub ota_trials: Vec<ota::trial::Record>,
-    /// Replacement-firmware health; null without a firmware role.
-    pub replacement: Option<crate::replacement::Snapshot>,
+/// The status document `GET /api/status` serves, with the replacement
+/// firmware's health kept as sent.
+pub type Status = LocalStatus<Health>;
+
+fn reported_version(status: &Status) -> Option<&str> {
+    status
+        .attributes
+        .get("softwareVersion")
+        .and_then(Value::as_str)
 }
 
-impl Status {
-    fn reported_version(&self) -> Option<&str> {
-        self.attributes
-            .get("softwareVersion")
-            .and_then(Value::as_str)
-    }
-
-    fn power_type(&self) -> Option<u64> {
-        self.attributes.get("powerType").and_then(Value::as_u64)
-    }
+fn power_type(status: &Status) -> Option<u64> {
+    status.attributes.get("powerType").and_then(Value::as_u64)
 }
 
 /// Why an operation was refused; the API returns the message as its error.
@@ -173,7 +161,7 @@ impl Controller {
             path,
             ledger,
             status: Status {
-                build_commit: BUILD.commit,
+                build_commit: BUILD.commit.into(),
                 build_clean: BUILD.clean,
                 ..Status::default()
             },
@@ -306,8 +294,8 @@ impl Controller {
             || !self.config.plans.is_empty()
             || !Self::fresh(self.status.version_reported_at, now)
             || !Self::fresh(self.status.power_reported_at, now)
-            || self.status.reported_version() != Some(ORIGINAL_VERSION)
-            || self.status.power_type() != Some(1)
+            || reported_version(&self.status) != Some(ORIGINAL_VERSION)
+            || power_type(&self.status) != Some(1)
         {
             return Err(Rejection::InvalidOta);
         }
@@ -354,7 +342,10 @@ impl Controller {
         }
 
         self.refresh(now);
-        Ok((record.clone(), Some(record.command(&self.config))))
+        Ok((
+            record.clone(),
+            Some(ota::trial::command(&record, &self.config)),
+        ))
     }
 
     /// The replacement firmware published online health. If the latest trial
@@ -428,7 +419,7 @@ impl Controller {
             && (now - record.created_at).num_seconds() >= RESOLVE_AFTER_SECONDS
             && quiet;
 
-        let phase = match status.reported_version() {
+        let phase = match reported_version(status) {
             _ if !evidence => return Err(Rejection::ResolutionEvidence),
             Some(REPLACEMENT_VERSION) => TrialPhase::VersionReported,
             Some(ORIGINAL_VERSION) => TrialPhase::NotInstalled,
@@ -475,7 +466,7 @@ impl Controller {
             self.status.power_reported_at = Some(now);
         }
 
-        if let Some(report) = OtaReport::from_message(message, now) {
+        if let Some(report) = report::from_message(message, now) {
             self.ota_quiet_since = now;
             if self.status.ota_reports.len() == REPORT_LIMIT {
                 self.status.ota_reports.remove(0);

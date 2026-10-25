@@ -8,10 +8,12 @@ description = "File formats the host tools share: canonical JSON, build manifest
 publish.workspace = true
 
 [dependencies]
+chrono = { version = "0.4.45", default-features = false, features = ["std", "serde"] }
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.11"
 thiserror.workspace = true
+uuid = { workspace = true, features = ["serde"] }
 
 [dev-dependencies]
 tempfile.workspace = true

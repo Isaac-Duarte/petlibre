@@ -9,6 +9,7 @@
 use std::path::Path;
 use std::time::Duration;
 
+use chrono::SecondsFormat;
 use serde::Serialize;
 
 use crate::local_api::{Auth, LocalApi, SERVER_CONFIG, ServerConfig};
@@ -16,8 +17,6 @@ use crate::server::{Health, LocalStatus};
 
 /// The page polls; a slow server must not hold a worker for long.
 const TIMEOUT: Duration = Duration::from_secs(2);
-/// The newest replies shown.
-const REPLIES_SHOWN: usize = 8;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -45,17 +44,6 @@ pub(crate) struct ReplacementView {
     /// RFC 3339; a new value means a new transport session.
     received_at: Option<String>,
     health: Option<Health>,
-    /// Newest first.
-    replies: Vec<ReplyView>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
-struct ReplyView {
-    id: Option<String>,
-    op: Option<String>,
-    ok: bool,
-    error: Option<String>,
 }
 
 pub(crate) fn feeder(root: &Path) -> FeederView {
@@ -81,25 +69,17 @@ pub(crate) fn feeder(root: &Path) -> FeederView {
 }
 
 fn view(address: String, status: LocalStatus) -> FeederView {
+    let status = status.0;
     let replacement = status.replacement.map(|r| {
         Box::new(ReplacementView {
             online: r.online,
             stale: r.stale,
             age_ms: r.age_ms,
-            received_at: r.received_at,
+            // As the server wrote it.
+            received_at: r
+                .received_at
+                .map(|at| at.to_rfc3339_opts(SecondsFormat::AutoSi, true)),
             health: r.health,
-            replies: r
-                .replies
-                .into_iter()
-                .rev()
-                .take(REPLIES_SHOWN)
-                .map(|relayed| ReplyView {
-                    id: relayed.message.id,
-                    op: relayed.message.op,
-                    ok: relayed.message.ok,
-                    error: relayed.message.error,
-                })
-                .collect(),
         })
     });
 
@@ -114,11 +94,7 @@ fn view(address: String, status: LocalStatus) -> FeederView {
 #[cfg(test)]
 pub(super) fn bindings(cfg: &ts_rs::Config) -> Vec<String> {
     use super::bindings::decl;
-    vec![
-        decl::<ReplyView>(cfg),
-        decl::<ReplacementView>(cfg),
-        decl::<FeederView>(cfg),
-    ]
+    vec![decl::<ReplacementView>(cfg), decl::<FeederView>(cfg)]
 }
 
 #[cfg(test)]
@@ -160,7 +136,7 @@ mod tests {
     }
 
     #[test]
-    fn status_shows_health_and_newest_replies_first() {
+    fn status_shows_health() {
         let status: LocalStatus = serde_json::from_value(json!({
             "broker_connected": true,
             "replacement": {
@@ -172,11 +148,7 @@ mod tests {
                     "build": "4d37c21a00", "bank": 1, "seq": 7, "faults": [],
                     "clock": { "syncs": 2, "unix_ms": 1792000000000i64 },
                     "wifi": { "source": "build" }, "transport": { "connects": 1 }
-                },
-                "replies": [
-                    { "message": { "id": "a", "op": "ping", "ok": true } },
-                    { "message": { "id": "b", "op": "settings", "ok": false, "error": "busy" } }
-                ]
+                }
             }
         }))
         .unwrap();
@@ -188,7 +160,6 @@ mod tests {
         let replacement = &view["replacement"];
         assert_eq!(replacement["health"]["bank"], 1);
         assert_eq!(replacement["health"]["wifi"]["source"], "build");
-        assert_eq!(replacement["replies"][0]["id"], "b");
-        assert_eq!(replacement["replies"][0]["error"], "busy");
+        assert_eq!(replacement["received_at"], "2026-10-22T10:00:00Z");
     }
 }

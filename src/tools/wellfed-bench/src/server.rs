@@ -3,45 +3,33 @@
 //! server relays no requests (they go over the device API, `crate::device`)
 //! and only bank 0's recovery role reports health over MQTT.
 //!
-//! Health is the firmware's own JSON (`wellfed-core`'s transport writes
-//! it), relayed by the server unchanged. Only the fields
-//! the bench checks are typed; each defaults when absent, so a newer server
-//! or firmware that adds fields still reads, and a missing one fails the
-//! check that needs it rather than the whole document.
+//! The document's type is `wellfed-local`'s own (`wellfed_formats::local`).
+//! Health inside it is the firmware's own JSON (`wellfed-core`'s transport
+//! writes it), relayed by the server unchanged. Only the fields the bench
+//! checks are typed here; each defaults when absent, so a firmware that adds
+//! fields still reads, and a missing one fails the check that needs it rather
+//! than the whole document.
 
 use std::fmt::Display;
+use std::ops::Deref;
 
+use wellfed_formats::local::{Replacement, TrialRecord};
 use wellfed_proto::api::WifiSource;
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
+use serde_json::Value;
 
-/// A `wellfed-local` status document.
+/// A `wellfed-local` status document, with the replacement's health read
+/// as far as the bench checks it.
 #[derive(Debug, Clone, Default, Deserialize)]
-pub(crate) struct LocalStatus {
-    /// The feeder's MQTT session reaches the server's broker. Only the page reads it.
-    #[cfg_attr(not(any(feature = "ui", test)), allow(dead_code))]
-    #[serde(default)]
-    pub broker_connected: bool,
-    /// `None` when the server has no replacement-firmware role.
-    #[serde(default)]
-    pub replacement: Option<Replacement>,
-    /// Stock telemetry is current (the stock-to-replacement install).
-    #[serde(default)]
-    pub device_online: bool,
-    /// Stock's reported attributes: `softwareVersion`, `powerType`, ….
-    #[serde(default)]
-    pub attributes: Map<String, Value>,
-    /// RFC 3339; when stock last reported its version.
-    #[serde(default)]
-    pub version_reported_at: Option<String>,
-    #[serde(default)]
-    pub ota_trial_enabled: bool,
-    /// Newest first.
-    #[serde(default)]
-    pub ota_trials: Vec<Trial>,
-    /// Stock's own OTA reports, oldest first.
-    #[serde(default)]
-    pub ota_reports: Vec<OtaReport>,
+#[serde(transparent)]
+pub(crate) struct LocalStatus(pub wellfed_formats::local::LocalStatus<Health>);
+
+impl Deref for LocalStatus {
+    type Target = wellfed_formats::local::LocalStatus<Health>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 /// `POST /api/ota/trial` for the replacement image: the server sends stock
@@ -59,79 +47,6 @@ pub(crate) struct TrialRequest {
 pub(crate) struct TrialResolve<'a> {
     pub request_id: &'a str,
     pub note: &'a str,
-}
-
-/// One OTA trial in the server's ledger.
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default)]
-pub(crate) struct Trial {
-    pub input: TrialInput,
-    pub phase: crate::commands::itest::TrialPhase,
-    pub download_reported: bool,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default)]
-pub(crate) struct TrialInput {
-    pub request_id: String,
-}
-
-/// A stock `OTA_UPGRADE`, `OTA_PROGRESS` or `OTA_INFORM` report.
-#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
-#[serde(default)]
-pub(crate) struct OtaReport {
-    /// RFC 3339; tells repeated reports apart.
-    pub received_at: String,
-    pub command: String,
-    pub message_id: Option<String>,
-    pub phase: Option<String>,
-    pub progress: Option<u8>,
-    pub error_code: Option<u32>,
-}
-
-impl std::fmt::Display for OtaReport {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "stock {}", self.command)?;
-        if let Some(phase) = &self.phase {
-            write!(f, " phase {phase}")?;
-        }
-        if let Some(progress) = self.progress {
-            write!(f, " {progress}%")?;
-        }
-        match self.error_code {
-            Some(code) if code != 0 => write!(f, " error 0x{code:x}"),
-            _ => Ok(()),
-        }
-    }
-}
-
-/// The server's view of the replacement firmware.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
-pub(crate) struct Replacement {
-    pub health: Option<Health>,
-    /// RFC 3339; each transport session's first health gives a new one.
-    pub received_at: Option<String>,
-    pub age_ms: Option<i64>,
-    pub online: bool,
-    pub stale: bool,
-    /// Empty since the server stopped relaying requests; the
-    /// page still lists them until its types drop the field.
-    pub replies: Vec<Relayed>,
-}
-
-/// A document without `stale` is not taken as fresh.
-impl Default for Replacement {
-    fn default() -> Self {
-        Self {
-            health: None,
-            received_at: None,
-            age_ms: None,
-            online: false,
-            stale: true,
-            replies: Vec::new(),
-        }
-    }
 }
 
 /// The firmware's health message.
@@ -185,22 +100,6 @@ pub(crate) struct Wifi {
 #[serde(default)]
 pub(crate) struct Transport {
     pub connects: u64,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default)]
-pub(crate) struct Relayed {
-    pub message: Reply,
-}
-
-/// A firmware reply to a request, as the page lists it.
-#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
-#[serde(default)]
-pub(crate) struct Reply {
-    pub id: Option<String>,
-    pub op: Option<String>,
-    pub ok: bool,
-    pub error: Option<String>,
 }
 
 /// Why a status document does not show what a wait is for, yet.
@@ -260,7 +159,7 @@ fn shown<T: Display>(value: &Option<T>) -> String {
 }
 
 impl LocalStatus {
-    pub(crate) fn replacement(&self) -> Result<&Replacement, NotReady> {
+    pub(crate) fn replacement(&self) -> Result<&Replacement<Health>, NotReady> {
         self.replacement.as_ref().ok_or(NotReady::NoRole)
     }
 
@@ -291,10 +190,10 @@ impl LocalStatus {
     }
 
     /// The trial with `request_id`.
-    pub(crate) fn trial(&self, request_id: &str) -> Option<&Trial> {
+    pub(crate) fn trial(&self, request_id: &str) -> Option<&TrialRecord> {
         self.ota_trials
             .iter()
-            .find(|trial| trial.input.request_id == request_id)
+            .find(|trial| trial.input.request_id.to_string() == request_id)
     }
 
     /// The health the server holds, when it is online and fresh.
@@ -404,14 +303,5 @@ mod tests {
             NotReady::Stale(Some(5)).to_string(),
             "health is stale (age 5 ms)"
         );
-    }
-
-    #[test]
-    fn a_document_without_freshness_is_stale() {
-        let status: LocalStatus = serde_json::from_value(
-            json!({"replacement": {"health": {"build": NEW}, "online": true}}),
-        )
-        .unwrap();
-        assert_eq!(status.fresh_health().unwrap_err(), NotReady::Stale(None));
     }
 }

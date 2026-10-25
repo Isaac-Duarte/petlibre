@@ -7,6 +7,7 @@
 //! the server relies on and keeps the latest health in memory.
 
 use chrono::{DateTime, Utc};
+use wellfed_formats::local::Replacement;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -30,15 +31,8 @@ pub struct Health {
     pub extra: Map<String, Value>,
 }
 
-#[derive(Clone, Debug, Default, Serialize, PartialEq)]
-pub struct Snapshot {
-    pub health: Option<Health>,
-    pub received_at: Option<DateTime<Utc>>,
-    pub age_ms: Option<i64>,
-    pub online: bool,
-    pub stale: bool,
-    pub rejected: u64,
-}
+/// The server's view of the latest health.
+pub type Snapshot = Replacement<Health>;
 
 #[derive(Default)]
 pub struct Tracker {

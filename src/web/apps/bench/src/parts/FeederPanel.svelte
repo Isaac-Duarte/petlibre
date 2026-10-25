@@ -1,6 +1,6 @@
 <script lang="ts">
   // The feeder as the local server last heard it. The page never asks the
-  // feeder itself; this is the server's health record and recent replies.
+  // feeder itself; this is the server's health record.
   import { Badge, Command, Empty, Kv, LiveDot, Panel, clockTime, shortHash, CopyButton } from "@wellfed/ui";
   import { app } from "../lib/bench.svelte";
 
@@ -81,19 +81,6 @@
         ]}
       />
     {/if}
-
-    {#if r.replies.length}
-      <h3 class="replies-title">Recent replies</h3>
-      <ul class="replies">
-        {#each r.replies as reply, i (reply.id ?? i)}
-          <li>
-            <LiveDot tone={reply.ok ? "pass" : "fail"} />
-            <span class="op">{reply.op ?? "reply"}</span>
-            {#if reply.error}<span class="err">{reply.error}</span>{/if}
-          </li>
-        {/each}
-      </ul>
-    {/if}
   {/if}
 </Panel>
 
@@ -142,30 +129,5 @@
     margin: 0 0 var(--space-3);
     padding: 0;
     list-style: none;
-  }
-  .replies-title {
-    margin-top: var(--space-4);
-    font-size: var(--text-sm);
-    color: var(--color-text-muted);
-    font-weight: 500;
-  }
-  .replies {
-    margin: var(--space-2) 0 0;
-    padding: 0;
-    list-style: none;
-    font-size: var(--text-sm);
-  }
-  .replies li {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    padding: 3px 0;
-  }
-  .op {
-    font-family: var(--mono);
-    font-size: var(--text-xs);
-  }
-  .err {
-    color: var(--color-fault);
   }
 </style>

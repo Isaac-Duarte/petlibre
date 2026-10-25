@@ -367,8 +367,6 @@ silent: string | null,
  */
 captures: Array<string>, };
 
-export type ReplyView = { id: string | null, op: string | null, ok: boolean, error: string | null, };
-
 export type ReplacementView = { online: boolean, stale: boolean, 
 /**
  * The health message's age when the server answered.
@@ -377,11 +375,7 @@ age_ms: number | null,
 /**
  * RFC 3339; a new value means a new transport session.
  */
-received_at: string | null, health: Health | null, 
-/**
- * Newest first.
- */
-replies: Array<ReplyView>, };
+received_at: string | null, health: Health | null, };
 
 export type FeederView = { "server": "unconfigured", config: string, error: string, } | { "server": "down", address: string, error: string, } | { "server": "up", address: string, broker_connected: boolean, 
 /**

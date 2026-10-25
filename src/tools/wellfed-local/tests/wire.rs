@@ -140,7 +140,7 @@ fn commands() {
         resolution_note: None,
         image_sha256: DIGEST.into(),
     };
-    let upgrade = trial.command(&config);
+    let upgrade = ota::trial::command(&trial, &config);
     assert_eq!(upgrade.topic, config.topic("service/sub"));
     assert_eq!(
         bytes(&upgrade),

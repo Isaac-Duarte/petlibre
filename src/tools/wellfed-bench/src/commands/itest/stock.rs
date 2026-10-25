@@ -25,7 +25,6 @@
 use std::path::PathBuf;
 
 use clap::Args;
-use serde::Deserialize;
 
 use super::log::Record;
 use super::{
@@ -36,7 +35,10 @@ use crate::commands::ota::{
     Firmware, Outcome, Staged, Target, Timing, Variant, parse_firmware, parse_variant,
 };
 use crate::config::VERIFICATION;
-use crate::server::{OtaReport, STOCK_VERSION, TrialRequest};
+use wellfed_formats::local::OtaReport;
+use wellfed_formats::local::TrialPhase;
+
+use crate::server::{STOCK_VERSION, TrialRequest};
 use crate::status::StepState;
 use crate::{Error, Result};
 use wellfed_core::record::tag;
@@ -202,22 +204,6 @@ pub(super) fn roundtrip(ctx: &mut Ctx) -> Result<()> {
 
     ctx.rig.server(Server::Serve)?;
     ctx.reachable(STATUS_SECONDS).map(|_| ())
-}
-
-/// A trial's phase as the server's ledger writes it.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum TrialPhase {
-    Submitted,
-    VersionReported,
-    ReportedError,
-    Uncertain,
-    NotInstalled,
-    ReplacementHealthy,
-    /// A phase this bench does not know, or none.
-    #[default]
-    #[serde(other)]
-    Unknown,
 }
 
 /// Run the stages in order; the first failure skips the rest.
@@ -444,7 +430,7 @@ fn settle(ctx: &mut Ctx) -> Result<()> {
     }) else {
         return Ok(());
     };
-    let id = open.input.request_id.clone();
+    let id = open.input.request_id.to_string();
     ctx.note(&format!(
         "  Earlier request {id} is {:?}; waiting for the server to resolve it",
         open.phase

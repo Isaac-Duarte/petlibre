@@ -21,6 +21,7 @@ pub mod device;
 pub mod flash_plan;
 pub mod hex;
 pub mod layout;
+pub mod local;
 pub mod lock;
 pub mod manifest;
 pub mod owner;

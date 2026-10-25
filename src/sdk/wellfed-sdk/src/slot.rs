@@ -9,6 +9,7 @@
 
 use core::cell::UnsafeCell;
 use core::marker::PhantomData;
+use core::mem::MaybeUninit;
 use core::ops::{Deref, DerefMut};
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -27,7 +28,12 @@ pub struct Slot<T> {
     owner: AtomicUsize,
     /// A guard is live.
     entered: AtomicBool,
-    value: UnsafeCell<Option<T>>,
+    /// `value` holds a `T`. Kept apart from the value rather than as an
+    /// `Option`: a `None` whose niche is a non-zero byte puts the whole
+    /// static in `.data`, stored in the image and copied at boot, where an
+    /// empty slot's zero flag and uninitialized value go to `.bss`.
+    filled: AtomicBool,
+    value: UnsafeCell<MaybeUninit<T>>,
 }
 
 // SAFETY: only the owning task reaches the value, and only through a guard,
@@ -44,7 +50,8 @@ impl<T> Slot<T> {
         Self {
             owner: AtomicUsize::new(0),
             entered: AtomicBool::new(false),
-            value: UnsafeCell::new(None),
+            filled: AtomicBool::new(false),
+            value: UnsafeCell::new(MaybeUninit::uninit()),
         }
     }
 
@@ -55,7 +62,8 @@ impl<T> Slot<T> {
         Self {
             owner: AtomicUsize::new(0),
             entered: AtomicBool::new(false),
-            value: UnsafeCell::new(Some(value)),
+            filled: AtomicBool::new(true),
+            value: UnsafeCell::new(MaybeUninit::new(value)),
         }
     }
 
@@ -65,8 +73,7 @@ impl<T> Slot<T> {
     /// has filled the slot does not lock the producer out for the boot.
     pub fn enter(&self) -> Option<SlotGuard<'_, T>> {
         let (guard, claimed) = self.claim()?;
-        // SAFETY: the guard is the only access to the value while it lives.
-        if unsafe { &*self.value.get() }.is_some() {
+        if self.filled.load(Ordering::Relaxed) {
             return Some(guard);
         }
 
@@ -85,12 +92,15 @@ impl<T> Slot<T> {
     /// the slot empty, to be tried again on a later entry.
     pub fn enter_or_try_init(&self, make: impl FnOnce() -> Option<T>) -> Option<SlotGuard<'_, T>> {
         let (guard, _) = self.claim()?;
-        // SAFETY: the guard is the only access to the value while it lives.
-        let value = unsafe { &mut *self.value.get() };
-        if value.is_none() {
-            fill(value, make);
+        if !self.filled.load(Ordering::Relaxed) {
+            // SAFETY: the guard is the only access to the value while it
+            // lives, and the slot is empty, so nothing is overwritten.
+            let value = unsafe { &mut *self.value.get() };
+            if !fill(value, make) {
+                return None;
+            }
+            self.filled.store(true, Ordering::Relaxed);
         }
-        value.as_ref()?;
         Some(guard)
     }
 
@@ -160,14 +170,14 @@ impl<T> Deref for SlotGuard<'_, T> {
     fn deref(&self) -> &T {
         // SAFETY: entry checked the value is present and nothing empties a
         // slot; the guard is the only access while it lives.
-        unsafe { (*self.slot.value.get()).as_ref().unwrap_unchecked() }
+        unsafe { (*self.slot.value.get()).assume_init_ref() }
     }
 }
 
 impl<T> DerefMut for SlotGuard<'_, T> {
     fn deref_mut(&mut self) -> &mut T {
         // SAFETY: as for `deref`, and `&mut self` makes this borrow unique.
-        unsafe { (*self.slot.value.get()).as_mut().unwrap_unchecked() }
+        unsafe { (*self.slot.value.get()).assume_init_mut() }
     }
 }
 
@@ -177,8 +187,22 @@ impl<T> Drop for SlotGuard<'_, T> {
     }
 }
 
+impl<T> Drop for Slot<T> {
+    fn drop(&mut self) {
+        if *self.filled.get_mut() {
+            // SAFETY: the flag says the value is initialized, and `&mut self`
+            // means no guard lives.
+            unsafe { self.value.get_mut().assume_init_drop() };
+        }
+    }
+}
+
 #[inline(never)]
 #[cold]
-fn fill<T>(slot: &mut Option<T>, make: impl FnOnce() -> Option<T>) {
-    *slot = make();
+fn fill<T>(slot: &mut MaybeUninit<T>, make: impl FnOnce() -> Option<T>) -> bool {
+    let Some(value) = make() else {
+        return false;
+    };
+    slot.write(value);
+    true
 }

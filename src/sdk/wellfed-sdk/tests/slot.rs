@@ -65,3 +65,18 @@ fn release_hands_the_slot_to_the_next_task_only() {
     assert_eq!(next.join().unwrap(), 6);
     assert!(SLOT.enter().is_none());
 }
+
+#[test]
+fn a_refused_constructor_is_tried_again_and_a_local_slot_drops_its_value() {
+    use std::rc::Rc;
+
+    let slot: Slot<Rc<()>> = Slot::new();
+    let value = Rc::new(());
+    assert!(slot.enter_or_try_init(|| None).is_none());
+    assert!(slot.enter().is_none());
+    drop(slot.enter_or_try_init(|| Some(Rc::clone(&value))).unwrap());
+    assert_eq!(Rc::strong_count(&value), 2);
+
+    drop(slot);
+    assert_eq!(Rc::strong_count(&value), 1);
+}

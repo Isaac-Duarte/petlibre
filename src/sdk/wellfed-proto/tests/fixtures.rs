@@ -277,6 +277,73 @@ fn messages() -> Vec<Fixture> {
             }),
             |b| decode::<Hello>(b).is_ok(),
         ),
+        (
+            "hello-update",
+            entry(&Hello {
+                major: 1,
+                capabilities: Capabilities::KNOWN,
+            }),
+            |b| decode::<Hello>(b).is_ok(),
+        ),
+        (
+            "op-offer-update",
+            entry(&request(Op::OfferUpdate {
+                manifest: &[0x51; 4],
+                downgrade: Some(&[0x52; 3]),
+            })),
+            client,
+        ),
+        (
+            "op-update-chunk",
+            entry(&request(Op::UpdateChunk {
+                offset: 4096,
+                data: &[0x53; 5],
+            })),
+            client,
+        ),
+        ("op-update-state", entry(&request(Op::UpdateState)), client),
+        (
+            "op-cancel-update",
+            entry(&request(Op::CancelUpdate)),
+            client,
+        ),
+        (
+            "op-enroll-update-key",
+            entry(&request(Op::EnrollUpdateKey {
+                key: [0x54; 32],
+                label: "laptop",
+            })),
+            client,
+        ),
+        (
+            "op-update-key-statement",
+            entry(&request(Op::UpdateKeyStatement {
+                statement: &[0x55; 6],
+            })),
+            client,
+        ),
+        (
+            "outcome-update",
+            entry(&response(Outcome::Update(UpdateView {
+                phase: UpdatePhase::Receiving,
+                bank: 0,
+                min_version: 168,
+                digest: Some([0x56; 32]),
+                version: 170,
+                image_len: 942_080,
+                written: 8192,
+                wanted: [Some(8192), Some(8704), None, None, None, None, None, None],
+                stopped: Some(UpdateStop::Timeout),
+            }))),
+            feeder,
+        ),
+        (
+            "outcome-update-refused",
+            entry(&response(Outcome::Refused(Refusal::Update(
+                UpdateRefusal::Downgrade,
+            )))),
+            feeder,
+        ),
     ]
 }
 

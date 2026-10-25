@@ -80,6 +80,18 @@ fn op() -> impl Strategy<Value = Op<'static>> {
         any::<u8>().prop_map(|portions| Op::Feed { portions }),
         Just(Op::Reboot),
         any::<u32>().prop_map(|feed| Op::CancelFeed { feed }),
+        (bytes(200), proptest::option::of(bytes(200))).prop_map(|(manifest, downgrade)| {
+            Op::OfferUpdate {
+                manifest,
+                downgrade,
+            }
+        }),
+        (any::<u32>(), bytes(UPDATE_CHUNK_MAX + 1))
+            .prop_map(|(offset, data)| Op::UpdateChunk { offset, data }),
+        Just(Op::UpdateState),
+        Just(Op::CancelUpdate),
+        (any::<[u8; 32]>(), text(24)).prop_map(|(key, label)| Op::EnrollUpdateKey { key, label }),
+        bytes(200).prop_map(|statement| Op::UpdateKeyStatement { statement }),
     ]
 }
 

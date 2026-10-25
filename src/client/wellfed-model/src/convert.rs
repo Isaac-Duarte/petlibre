@@ -12,7 +12,8 @@ use wellfed_proto::setup as proto_setup;
 use crate::{
     Answer, Capabilities, Client, ClientRole, EnrollPath, Event, EventBody, FeedOutcome,
     FeedReason, Generation, Hello, Hex, Invite, Joined, Op, OpenRefusal, Power, Refusal, Sample,
-    SampleValue, Settings, SettingsPatch, Source, Status, TimeSync, Tune, WifiSource, setup,
+    SampleValue, Settings, SettingsPatch, Source, Status, TimeSync, Tune, UpdatePhase,
+    UpdateRefusal, UpdateStop, UpdateView, WifiSource, setup,
 };
 
 /// One event of the history `epoch` counts.
@@ -426,6 +427,84 @@ impl From<proto::Outcome<'_>> for Answer {
             }),
             proto::Outcome::Refused(refusal) => Self::Refused(refusal.into()),
             proto::Outcome::Feeding { feed } => Self::Feeding { feed },
+            proto::Outcome::Update(view) => Self::Update(view.into()),
+        }
+    }
+}
+
+impl From<proto::UpdateView> for UpdateView {
+    fn from(view: proto::UpdateView) -> Self {
+        let proto::UpdateView {
+            phase,
+            bank,
+            min_version,
+            digest,
+            version,
+            image_len,
+            written,
+            wanted,
+            stopped,
+        } = view;
+        Self {
+            phase: phase.into(),
+            bank,
+            min_version,
+            digest: digest.map(Hex),
+            version,
+            image_len,
+            written,
+            wanted: wanted.into_iter().flatten().collect(),
+            stopped: stopped.map(UpdateStop::from),
+        }
+    }
+}
+
+impl From<proto::UpdatePhase> for UpdatePhase {
+    fn from(phase: proto::UpdatePhase) -> Self {
+        match phase {
+            proto::UpdatePhase::Idle => Self::Idle,
+            proto::UpdatePhase::Checking => Self::Checking,
+            proto::UpdatePhase::GivingWay => Self::GivingWay,
+            proto::UpdatePhase::Receiving => Self::Receiving,
+            proto::UpdatePhase::Activated => Self::Activated,
+        }
+    }
+}
+
+impl From<proto::UpdateStop> for UpdateStop {
+    fn from(stop: proto::UpdateStop) -> Self {
+        match stop {
+            proto::UpdateStop::Timeout => Self::Timeout,
+            proto::UpdateStop::Cancelled => Self::Cancelled,
+            proto::UpdateStop::Order => Self::Order,
+            proto::UpdateStop::Marker => Self::Marker,
+            proto::UpdateStop::Write => Self::Write,
+            proto::UpdateStop::Hash => Self::Hash,
+            proto::UpdateStop::Activate => Self::Activate,
+            proto::UpdateStop::Store => Self::Store,
+        }
+    }
+}
+
+impl From<proto::UpdateRefusal> for UpdateRefusal {
+    fn from(refusal: proto::UpdateRefusal) -> Self {
+        match refusal {
+            proto::UpdateRefusal::Manifest => Self::Manifest,
+            proto::UpdateRefusal::Key => Self::Key,
+            proto::UpdateRefusal::Revoked => Self::Revoked,
+            proto::UpdateRefusal::Signature => Self::Signature,
+            proto::UpdateRefusal::Target => Self::Target,
+            proto::UpdateRefusal::Same => Self::Same,
+            proto::UpdateRefusal::Downgrade => Self::Downgrade,
+            proto::UpdateRefusal::Statement => Self::Statement,
+            proto::UpdateRefusal::Pending => Self::Pending,
+            proto::UpdateRefusal::Failed => Self::Failed,
+            proto::UpdateRefusal::Fallback => Self::Fallback,
+            proto::UpdateRefusal::Attempt => Self::Attempt,
+            proto::UpdateRefusal::Installing => Self::Installing,
+            proto::UpdateRefusal::NotInstalling => Self::NotInstalling,
+            proto::UpdateRefusal::Store => Self::Store,
+            proto::UpdateRefusal::Unconfirmed => Self::Unconfirmed,
         }
     }
 }
@@ -446,6 +525,7 @@ impl From<proto::Refusal> for Refusal {
             proto::Refusal::Muted => Self::Muted,
             proto::Refusal::Time => Self::Time,
             proto::Refusal::Fault => Self::Fault,
+            proto::Refusal::Update(refusal) => Self::Update(refusal.into()),
         }
     }
 }
@@ -482,6 +562,21 @@ impl Op {
             },
             Self::Reboot => proto::Op::Reboot,
             Self::CancelFeed { feed } => proto::Op::CancelFeed { feed: *feed },
+            Self::OfferUpdate {
+                manifest,
+                downgrade,
+            } => proto::Op::OfferUpdate {
+                manifest,
+                downgrade: downgrade.as_deref(),
+            },
+            Self::UpdateChunk { offset, data } => proto::Op::UpdateChunk {
+                offset: *offset,
+                data,
+            },
+            Self::UpdateState => proto::Op::UpdateState,
+            Self::CancelUpdate => proto::Op::CancelUpdate,
+            Self::EnrollUpdateKey { key, label } => proto::Op::EnrollUpdateKey { key: *key, label },
+            Self::UpdateKeyStatement { statement } => proto::Op::UpdateKeyStatement { statement },
         }
     }
 }
@@ -535,16 +630,20 @@ impl From<proto::Capabilities> for Capabilities {
     fn from(bits: proto::Capabilities) -> Self {
         Self {
             feed: bits.contains(proto::Capabilities::FEED),
+            update: bits.contains(proto::Capabilities::UPDATE),
         }
     }
 }
 
 impl From<Capabilities> for proto::Capabilities {
     fn from(capabilities: Capabilities) -> Self {
-        let Capabilities { feed } = capabilities;
+        let Capabilities { feed, update } = capabilities;
         let mut bits = proto::Capabilities::V1.0;
         if feed {
             bits |= proto::Capabilities::FEED.0;
+        }
+        if update {
+            bits |= proto::Capabilities::UPDATE.0;
         }
         Self(bits)
     }
@@ -736,6 +835,32 @@ mod tests {
         };
         let labels: Vec<_> = listed.iter().map(|c| (c.label.as_str(), c.you)).collect();
         assert_eq!(labels, [("phone", true), ("server", false)]);
+    }
+
+    #[test]
+    fn an_update_view_keeps_the_wanted_offsets_in_order_and_reads_as_hex() {
+        let mut wanted = [None; proto::WANTED_MAX];
+        wanted[0] = Some(4096);
+        wanted[1] = Some(4608);
+        let view = proto::UpdateView {
+            phase: proto::UpdatePhase::Receiving,
+            bank: 0,
+            min_version: 3,
+            digest: Some([0xab; 32]),
+            version: 4,
+            image_len: 8192,
+            written: 4096,
+            wanted,
+            stopped: None,
+        };
+
+        let Answer::Update(view) = Answer::from(proto::Outcome::Update(view)) else {
+            panic!("an update view");
+        };
+        assert_eq!(view.wanted, [4096, 4608]);
+        let json = serde_json::to_value(&view).unwrap();
+        assert_eq!(json["phase"], "receiving");
+        assert_eq!(json["digest"], "ab".repeat(32));
     }
 
     #[test]

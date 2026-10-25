@@ -82,6 +82,10 @@ impl From<Refusal> for FeederRefusal {
             Refusal::Muted => Self::Muted,
             Refusal::Time => Self::Time,
             Refusal::Fault => Self::Fault,
+            // Update ops are an owner's, never the server's: a server
+            // session is refused them as `Forbidden` before this could
+            // arrive.
+            Refusal::Update(_) => Self::Forbidden,
         }
     }
 }

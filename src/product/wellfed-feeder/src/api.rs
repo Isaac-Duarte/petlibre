@@ -1411,6 +1411,7 @@ impl Server {
                 }
             }
             Action::Invalid => Reply::Refused(Refusal::Invalid),
+            Action::Unserved => Reply::Refused(Refusal::Unavailable),
             Action::Feed { portions } => match device.feed(portions, by) {
                 Ok(feed) => return self.wait(index, id, action, Waiting::Feed { feed }),
                 Err(refusal) => Reply::Refused(refusal),
@@ -1859,6 +1860,8 @@ enum Action {
     },
     /// A field failed the stores' checks before anything ran.
     Invalid,
+    /// An op this server does not serve.
+    Unserved,
 }
 
 impl From<Op<'_>> for Action {
@@ -1910,6 +1913,14 @@ impl From<Op<'_>> for Action {
             Op::Feed { portions } => Self::Feed { portions },
             Op::Reboot => Self::Reboot,
             Op::CancelFeed { feed } => Self::CancelFeed { feed },
+            // Behind `Capabilities::UPDATE`, which this server does not
+            // claim yet: refused `Unavailable` before they would run.
+            Op::OfferUpdate { .. }
+            | Op::UpdateChunk { .. }
+            | Op::UpdateState
+            | Op::CancelUpdate
+            | Op::EnrollUpdateKey { .. }
+            | Op::UpdateKeyStatement { .. } => Self::Unserved,
         }
     }
 }
@@ -1919,7 +1930,7 @@ impl Action {
     const fn writes(self) -> bool {
         !matches!(
             self,
-            Self::Status | Self::GetSettings | Self::ListClients | Self::Invalid
+            Self::Status | Self::GetSettings | Self::ListClients | Self::Invalid | Self::Unserved
         )
     }
 
@@ -1939,6 +1950,7 @@ impl Action {
             Self::Reboot => "reboot",
             Self::CancelFeed { .. } => "cancel-feed",
             Self::Invalid => "invalid",
+            Self::Unserved => "unserved",
         }
     }
 }
@@ -1986,6 +1998,7 @@ impl Name for Reply {
                 Refusal::Muted => "muted",
                 Refusal::Time => "time",
                 Refusal::Fault => "fault",
+                Refusal::Update(_) => "update",
             },
         }
     }

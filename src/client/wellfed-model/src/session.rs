@@ -14,19 +14,28 @@ pub struct Capabilities {
     /// Feeding: the `Feed` and `CancelFeed` ops, the `Feeding` answer and
     /// `Fed` events.
     pub feed: bool,
+    /// Updates: the update ops, the `Update` answer and refusals.
+    pub update: bool,
 }
 
 impl Capabilities {
     /// Version 1 as first defined: none of the later features.
-    pub const V1: Self = Self { feed: false };
+    pub const V1: Self = Self {
+        feed: false,
+        update: false,
+    };
     /// Every feature this crate knows: what a current client claims.
-    pub const KNOWN: Self = Self { feed: true };
+    pub const KNOWN: Self = Self {
+        feed: true,
+        update: true,
+    };
 
     /// The features both `self` and `other` claim.
     #[must_use]
     pub const fn both(self, other: Self) -> Self {
         Self {
             feed: self.feed && other.feed,
+            update: self.update && other.update,
         }
     }
 }

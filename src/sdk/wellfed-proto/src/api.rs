@@ -78,10 +78,19 @@ impl Capabilities {
     /// [`Outcome::Feeding`] and [`EventBody::Fed`] are in use. A feeder
     /// pushes `Fed` events only to a session whose hello carries this bit.
     pub const FEED: Self = Self(1);
+    /// Updates over the device API: [`Op::OfferUpdate`], the chunks and
+    /// the update's state, cancelling it, and the update keys
+    /// ([`Op::EnrollUpdateKey`], [`Op::UpdateKeyStatement`]), with
+    /// [`Outcome::Update`] and [`Refusal::Update`]. Owner sessions only.
+    pub const UPDATE: Self = Self(2);
     /// Every bit this crate defines: what a current client claims. A
     /// session then runs on the bits both sides claim, so a client adapts
     /// to whatever feeder it meets, however old.
-    pub const KNOWN: Self = Self(Self::FEED.0);
+    pub const KNOWN: Self = Self(Self::FEED.0 | Self::UPDATE.0);
+
+    pub const fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
 
     pub const fn contains(self, other: Self) -> bool {
         self.0 & other.0 == other.0
@@ -207,12 +216,67 @@ pub enum Op<'a> {
     CancelFeed {
         feed: u32,
     },
+    /// Offer a signed version 2 manifest, with the downgrade statement it
+    /// needs when its version is not above the floor (always, for stock).
+    /// Bank 1 checks it, records it and gives way to bank 0
+    /// ([`UpdatePhase::GivingWay`]): the client reconnects and offers it
+    /// again, and bank 0, which installs only that manifest, starts
+    /// receiving. Refused `Busy` while a feed runs.
+    OfferUpdate {
+        #[serde(borrow)]
+        manifest: &'a [u8],
+        #[serde(borrow)]
+        downgrade: Option<&'a [u8]>,
+    },
+    /// Image bytes at `offset`, one of the offsets [`UpdateView::wanted`]
+    /// names, at most [`UPDATE_CHUNK_MAX`] bytes. Idempotent by offset: a
+    /// chunk already written is answered with the state and changes
+    /// nothing, so a retry needs no remembered id.
+    UpdateChunk {
+        offset: u32,
+        #[serde(borrow)]
+        data: &'a [u8],
+    },
+    /// The update's state, for a client that reconnected.
+    UpdateState,
+    /// Stop the install with bank 1 left invalid, and forget the
+    /// candidate.
+    CancelUpdate,
+    /// Enroll an owner's Ed25519 update-signing key. Answered once a
+    /// Dispense press at the feeder confirms it, or refused
+    /// `Update(Unconfirmed)` when nobody presses within the window.
+    EnrollUpdateKey {
+        key: [u8; 32],
+        #[serde(borrow)]
+        label: &'a str,
+    },
+    /// A key statement a built-in or the release key signed: fill the
+    /// release slot, or retire a key id for good.
+    UpdateKeyStatement {
+        #[serde(borrow)]
+        statement: &'a [u8],
+    },
 }
 
+/// The largest [`Op::UpdateChunk`]: an eighth of a flash sector, which
+/// a sealed request carries with room to spare.
+pub const UPDATE_CHUNK_MAX: usize = 512;
+/// The chunk offsets one [`UpdateView`] names: a sector's worth.
+pub const WANTED_MAX: usize = 8;
+
 impl Op<'_> {
-    /// Whether the op changes something, so its id is remembered.
+    /// Whether the op changes something, so its id is remembered. A chunk
+    /// is idempotent by its offset instead, so a whole image does not push
+    /// every other write out of the feeder's memory.
     pub const fn writes(&self) -> bool {
-        !matches!(self, Self::Status | Self::GetSettings | Self::ListClients)
+        !matches!(
+            self,
+            Self::Status
+                | Self::GetSettings
+                | Self::ListClients
+                | Self::UpdateState
+                | Self::UpdateChunk { .. }
+        )
     }
 
     /// The bit both sides must claim before the op is served. The match
@@ -220,6 +284,12 @@ impl Op<'_> {
     pub const fn capability(&self) -> Capabilities {
         match self {
             Self::Feed { .. } | Self::CancelFeed { .. } => Capabilities::FEED,
+            Self::OfferUpdate { .. }
+            | Self::UpdateChunk { .. }
+            | Self::UpdateState
+            | Self::CancelUpdate
+            | Self::EnrollUpdateKey { .. }
+            | Self::UpdateKeyStatement { .. } => Capabilities::UPDATE,
             Self::Status
             | Self::GetSettings
             | Self::PutSettings { .. }
@@ -305,6 +375,8 @@ pub enum Outcome<'a> {
     Feeding {
         feed: u32,
     },
+    /// Where the update stands, after an update op.
+    Update(UpdateView),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -333,6 +405,113 @@ pub enum Refusal {
     /// The feeding owner stopped on a fault and serves no feed until the
     /// feeder restarts.
     Fault,
+    /// An update op was refused: why.
+    Update(UpdateRefusal),
+}
+
+/// Where an update stands. The install itself does not depend on the
+/// session: a client that lost its connection reconnects, reads
+/// [`Op::UpdateState`] and sends what [`Self::wanted`] names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpdateView {
+    pub phase: UpdatePhase,
+    /// The bank this answer comes from.
+    pub bank: u8,
+    /// The highest confirmed version: an offer at or below it needs a
+    /// downgrade statement.
+    pub min_version: u32,
+    /// The manifest being checked, installed or given way for, if any.
+    pub digest: Option<[u8; 32]>,
+    pub version: u32,
+    pub image_len: u32,
+    /// Bytes written and read back so far.
+    pub written: u32,
+    /// The chunk offsets wanted now, each [`UPDATE_CHUNK_MAX`] bytes (the
+    /// last may be shorter); all `None` between sectors or outside an
+    /// install.
+    pub wanted: [Option<u32>; WANTED_MAX],
+    /// Why the last install stopped before activation, if it did.
+    pub stopped: Option<UpdateStop>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UpdatePhase {
+    /// No update in progress.
+    Idle,
+    /// The offer is being checked; ask [`Op::UpdateState`] again.
+    Checking,
+    /// Bank 1 recorded the offer and restarts into bank 0 once this
+    /// answer is out: reconnect and offer the same manifest again.
+    GivingWay,
+    /// Bank 0 is writing bank 1: send the chunks [`UpdateView::wanted`]
+    /// names.
+    Receiving,
+    /// Every byte verified and the marker written: the feeder restarts
+    /// into the new build, which confirms itself once it is healthy.
+    Activated,
+}
+
+/// Why an install stopped. Bank 1's marker was never written, so the
+/// feeder keeps running bank 0.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UpdateStop {
+    /// No chunk came for a minute.
+    Timeout,
+    Cancelled,
+    /// A chunk at an offset that was not wanted, or of the wrong length.
+    Order,
+    /// The image's first bytes are not the loader's marker.
+    Marker,
+    /// A sector did not read back as written.
+    Write,
+    /// The whole image's SHA-256 differs from the manifest's.
+    Hash,
+    /// The marker did not read back.
+    Activate,
+    /// The update store could not be written.
+    Store,
+}
+
+/// Why an update op was refused.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UpdateRefusal {
+    /// Not a version 2 manifest (a version 1 one, wrong length or magic),
+    /// or an unknown image kind.
+    Manifest,
+    /// No trusted key has the manifest's (or a statement's) key id.
+    Key,
+    /// That key was retired.
+    Revoked,
+    Signature,
+    /// Not for bank 1, or outside the reviewed size.
+    Target,
+    /// That build is already running.
+    Same,
+    /// The version is not above the floor (or the image is stock): a
+    /// downgrade statement must come with it.
+    Downgrade,
+    /// The downgrade or key statement does not check out (another feeder,
+    /// another manifest, an old floor, a key that may not sign it).
+    Statement,
+    /// Bank 0 installs only the manifest bank 1 gave way for; cancel
+    /// that update first.
+    Pending,
+    /// This manifest was activated and failed its trial: sign another.
+    Failed,
+    /// Bank 0 does not hold a build that can install it, so bank 1 does
+    /// not give way.
+    Fallback,
+    /// An install reset the feeder this power cycle: no new install until
+    /// the next power cycle.
+    Attempt,
+    /// Another update is in progress.
+    Installing,
+    /// No install is receiving chunks.
+    NotInstalling,
+    /// The update store cannot be read or written.
+    Store,
+    /// Nobody pressed Dispense in time to confirm the key.
+    Unconfirmed,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -589,6 +768,45 @@ mod tests {
         };
         let len = encode(&wifi, &mut out).unwrap();
         assert_eq!(decode::<ClientMessage<'_>>(&out[..len]), Ok(wifi));
+
+        // The largest offer: a version 2 manifest and a downgrade statement,
+        // each well past the size the feeder accepts.
+        let offer = ClientMessage::Request {
+            id: [0xff; 16],
+            op: Op::OfferUpdate {
+                manifest: &[0xff; 200],
+                downgrade: Some(&[0xff; 200]),
+            },
+        };
+        let len = encode(&offer, &mut out).unwrap();
+        assert_eq!(decode::<ClientMessage<'_>>(&out[..len]), Ok(offer));
+
+        let chunk = ClientMessage::Request {
+            id: [0xff; 16],
+            op: Op::UpdateChunk {
+                offset: u32::MAX,
+                data: &[0xff; UPDATE_CHUNK_MAX],
+            },
+        };
+        let len = encode(&chunk, &mut out).unwrap();
+        assert_eq!(decode::<ClientMessage<'_>>(&out[..len]), Ok(chunk));
+
+        let view = FeederMessage::Response {
+            id: [0xff; 16],
+            result: Outcome::Update(UpdateView {
+                phase: UpdatePhase::Receiving,
+                bank: 0,
+                min_version: u32::MAX,
+                digest: Some([0xff; 32]),
+                version: u32::MAX,
+                image_len: u32::MAX,
+                written: u32::MAX,
+                wanted: [Some(u32::MAX); WANTED_MAX],
+                stopped: Some(UpdateStop::Store),
+            }),
+        };
+        let len = encode(&view, &mut out).unwrap();
+        assert_eq!(decode::<FeederMessage<'_>>(&out[..len]), Ok(view));
     }
 
     /// The event ring stores a body in 16 bytes.

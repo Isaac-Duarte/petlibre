@@ -21,6 +21,7 @@ mod request;
 mod session;
 pub mod setup;
 mod status;
+mod update;
 
 use std::fmt;
 
@@ -34,6 +35,7 @@ pub use event::{
 pub use request::{Answer, Client, Invite, Op, Refusal, TimeSync, Tune, Wifi};
 pub use session::{Capabilities, Hello, Joined, OpenRefusal};
 pub use status::{Power, Settings, SettingsPatch, Status, WifiSource};
+pub use update::{UpdatePhase, UpdateRefusal, UpdateStop, UpdateView};
 
 /// A feeder store's generation: a write names the one it read, and the
 /// feeder refuses it once the store has moved on.

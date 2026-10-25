@@ -188,7 +188,7 @@ impl Answer {
             Model::Settings(settings) => Self::Settings(settings),
             Model::Refused(refusal) => Self::Refused(refusal),
             Model::Feeding { feed } => Self::Feeding { feed },
-            Model::Clients(_) | Model::Invite(_) => Self::Unexpected,
+            Model::Clients(_) | Model::Invite(_) | Model::Update(_) => Self::Unexpected,
         }
     }
 }

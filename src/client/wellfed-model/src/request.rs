@@ -4,7 +4,9 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{ClientRole, Generation, Hex, Settings, SettingsPatch, Status};
+use crate::{
+    ClientRole, Generation, Hex, Settings, SettingsPatch, Status, UpdateRefusal, UpdateView,
+};
 
 /// One operation. Reads may be repeated freely; a write's request id makes
 /// a retry return the first answer instead of running again.
@@ -48,6 +50,32 @@ pub enum Op {
     /// Stop the feed [`Answer::Feeding`] named, if it is still running.
     CancelFeed {
         feed: u32,
+    },
+    /// Offer a signed version 2 manifest, with the downgrade statement it
+    /// needs when its version is not above the floor (always, for stock).
+    /// Bank 1 gives way to bank 0, where the same offer starts the install.
+    OfferUpdate {
+        manifest: Vec<u8>,
+        downgrade: Option<Vec<u8>>,
+    },
+    /// Image bytes at one of the offsets [`UpdateView::wanted`] names.
+    /// Idempotent by offset.
+    UpdateChunk {
+        offset: u32,
+        data: Vec<u8>,
+    },
+    UpdateState,
+    /// Stop the install with bank 1 left invalid.
+    CancelUpdate,
+    /// Enroll an owner's Ed25519 update-signing key, once a Dispense press
+    /// at the feeder confirms it.
+    EnrollUpdateKey {
+        key: [u8; 32],
+        label: String,
+    },
+    /// A key statement a built-in or the release key signed.
+    UpdateKeyStatement {
+        statement: Vec<u8>,
     },
 }
 
@@ -110,6 +138,7 @@ pub enum Answer {
     Feeding {
         feed: u32,
     },
+    Update(UpdateView),
 }
 
 /// Why the feeder refused a request.
@@ -140,6 +169,7 @@ pub enum Refusal {
     /// The feeding owner stopped on a fault and serves no feed until the
     /// feeder restarts.
     Fault,
+    Update(UpdateRefusal),
 }
 
 /// One enrolled client.

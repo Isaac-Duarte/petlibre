@@ -1208,7 +1208,10 @@ fn a_connection_names_the_epoch_and_answers_each_request_once() {
         (opened.role, opened.capabilities, opened.epoch),
         (
             model::ClientRole::Owner,
-            model::Capabilities { feed: true },
+            model::Capabilities {
+                feed: true,
+                update: false
+            },
             EPOCH
         )
     );

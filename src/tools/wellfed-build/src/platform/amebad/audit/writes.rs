@@ -13,8 +13,8 @@ use std::fs;
 use std::path::Path;
 use std::sync::LazyLock;
 
+use wellfed_formats::audit::{CoreWrites, WritesAudit};
 use regex::Regex;
-use serde::Serialize;
 
 use super::{Binutils, HEADING, elf, index, parse_hex, refuse, tool, word};
 use crate::platform::amebad::Core;
@@ -434,23 +434,6 @@ struct Rules {
     present: bool,
 }
 
-/// One core's linked writers and every reference to them.
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct CoreWrites {
-    elf_sha256: String,
-    absent: Vec<&'static str>,
-    write_targets: Vec<String>,
-    /// Each referenced target's enclosing symbols.
-    references: BTreeMap<String, BTreeSet<String>>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct WritesAudit {
-    hp: CoreWrites,
-    lp: CoreWrites,
-    scope: &'static str,
-}
-
 fn audit_core(elf: &Path, objdump: &Path, core: &Rules) -> Result<CoreWrites> {
     let names = table(elf, objdump)?;
     let linked: Vec<&str> = {
@@ -520,7 +503,7 @@ fn audit_core(elf: &Path, objdump: &Path, core: &Rules) -> Result<CoreWrites> {
         .collect();
     Ok(CoreWrites {
         elf_sha256: digest(elf)?,
-        absent: core.absent.clone(),
+        absent: core.absent.iter().map(|name| (*name).to_string()).collect(),
         write_targets: targets,
         references,
     })
@@ -558,7 +541,8 @@ pub(crate) fn audit(sdk: &Path, binutils: &Binutils) -> Result<WritesAudit> {
         lp: audit_core(&elf(sdk, Core::Lp), &objdump, &lp)?,
         scope: "Linked direct and stored-address references only; register-computed calls, \
                 ROM-internal paths (including the WLAN firmware's ROM half) and runtime behavior \
-                are not established.",
+                are not established."
+            .into(),
     })
 }
 

@@ -12,6 +12,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::LazyLock;
 
+use wellfed_formats::audit::{
+    ArchiveRecord, HookAudit, LayoutAudit, MainsAudit, ParkAudit, PinmapAudit, StackAudit,
+    WritesAudit,
+};
 use regex::Regex;
 use serde::Serialize;
 
@@ -123,13 +127,13 @@ pub type Archives = [(Core, PathBuf)];
 /// records them.
 #[derive(Debug, Clone, Serialize)]
 pub struct Linked {
-    pub(crate) layout_audit: layout::LayoutAudit,
-    pub(crate) km0_pinmap_audit: pinmap::PinmapAudit,
-    pub(crate) ram_park_audit: park::ParkAudit,
-    pub(crate) sdk_hook_audit: hooks::HookAudit,
-    pub(crate) firstboot_startup_audit: mains::MainsAudit,
-    pub(crate) wifi_link_audit: writes::WritesAudit,
-    pub(crate) stack_audit: stack::StackAudit,
+    pub(crate) layout_audit: LayoutAudit,
+    pub(crate) km0_pinmap_audit: PinmapAudit,
+    pub(crate) ram_park_audit: ParkAudit,
+    pub(crate) sdk_hook_audit: HookAudit,
+    pub(crate) firstboot_startup_audit: MainsAudit,
+    pub(crate) wifi_link_audit: WritesAudit,
+    pub(crate) stack_audit: StackAudit,
 }
 
 /// Run every linked-image audit of a first-boot build against `objects`,
@@ -164,25 +168,20 @@ pub(crate) fn linked(
     })
 }
 
-/// A core's archive, as the hook and park audits record it.
-#[derive(Debug, Clone, Serialize)]
-pub struct ArchiveRecord {
-    pub elf_sha256: String,
-    /// Relative to the build output.
-    pub object_path: String,
-    pub object_sha256: String,
-}
+/// A core's archive record, as the hook and park audits keep it.
+pub(crate) fn archive_record(
+    core: Core,
+    elf: &Path,
+    objects: &Archives,
+    sdk: &Path,
+) -> Result<ArchiveRecord> {
+    let Some((_, object)) = objects.iter().find(|(c, _)| *c == core) else {
+        return refuse(format!("No {} archive", core.name()));
+    };
 
-impl ArchiveRecord {
-    pub(crate) fn of(core: Core, elf: &Path, objects: &Archives, sdk: &Path) -> Result<Self> {
-        let Some((_, object)) = objects.iter().find(|(c, _)| *c == core) else {
-            return refuse(format!("No {} archive", core.name()));
-        };
-
-        Ok(Self {
-            elf_sha256: crate::digest(elf)?,
-            object_path: relative(object, sdk.parent().unwrap_or(sdk))?,
-            object_sha256: crate::digest(object)?,
-        })
-    }
+    Ok(ArchiveRecord {
+        elf_sha256: crate::digest(elf)?,
+        object_path: relative(object, sdk.parent().unwrap_or(sdk))?,
+        object_sha256: crate::digest(object)?,
+    })
 }

@@ -13,6 +13,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod audit;
 pub mod canonical;
 pub mod capture;
 pub mod credentials;

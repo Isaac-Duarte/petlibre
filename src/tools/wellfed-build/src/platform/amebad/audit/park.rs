@@ -12,12 +12,12 @@ use std::path::Path;
 use std::sync::LazyLock;
 
 use wellfed_flash::ota::{container, images};
+use wellfed_formats::audit::{Leaf, ParkAudit, ParkFunction, ParkImage};
 use regex::Regex;
-use serde::Serialize;
 
-use super::packaged::{self, PackagedText};
+use super::packaged;
 use super::{
-    ADDRESSED, ArchiveRecord, Archives, Binutils, DIRECT_BRANCH, INSTRUCTION, elf, hex, ota_image,
+    ADDRESSED, Archives, Binutils, DIRECT_BRANCH, INSTRUCTION, archive_record, elf, hex, ota_image,
     parse_hex, refuse, tool,
 };
 use crate::platform::amebad::Core;
@@ -94,17 +94,6 @@ fn unconditional(base: &str) -> &str {
 /// (a movt high half in the flash map is refused even without a movw).
 /// Bit-mask immediates are not treated as addresses, and values computed by
 /// other arithmetic are not proven.
-/// A parking function's checked instructions; every refused kind counts 0.
-#[derive(Debug, Clone, Serialize)]
-pub struct Leaf {
-    pub instructions: u32,
-    pub barriers: u32,
-    pub calls: u32,
-    pub foreign_branches: u32,
-    pub xip_literals: u32,
-    pub flash_address_constants: u32,
-}
-
 pub fn check_leaf(
     disassembly: &str,
     address: u64,
@@ -226,33 +215,6 @@ pub fn check_leaf(
     })
 }
 
-/// One retained parking function.
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct Function {
-    address: String,
-    bytes: u64,
-    #[serde(flatten)]
-    leaf: Leaf,
-}
-
-/// One core's parking functions, bound to its linked archive and package.
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct ParkImage {
-    #[serde(flatten)]
-    archive: ArchiveRecord,
-    packaged_text_verified: Vec<PackagedText>,
-    functions: BTreeMap<&'static str, Function>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct ParkAudit {
-    /// Keyed KM0/KM4.
-    images: BTreeMap<&'static str, ParkImage>,
-    activated: bool,
-    global_exclusion_proven: bool,
-    scope: &'static str,
-}
-
 /// `objects` maps KM0/KM4 to the linked Rust archive containing this code.
 pub(crate) fn audit(sdk: &Path, binutils: &Binutils, objects: &Archives) -> Result<ParkAudit> {
     let image = fs::read(ota_image(sdk))?;
@@ -306,8 +268,8 @@ pub(crate) fn audit(sdk: &Path, binutils: &Binutils, objects: &Archives) -> Resu
             };
             let leaf = check_leaf(&listing, address, size, minimum)?;
             functions.insert(
-                name,
-                Function {
+                name.to_string(),
+                ParkFunction {
                     address: hex(address),
                     bytes: size,
                     leaf,
@@ -315,9 +277,9 @@ pub(crate) fn audit(sdk: &Path, binutils: &Binutils, objects: &Archives) -> Resu
             );
         }
 
-        let archive = ArchiveRecord::of(core, &elf, objects, sdk)?;
+        let archive = archive_record(core, &elf, objects, sdk)?;
         images.insert(
-            core.name(),
+            core.name().to_string(),
             ParkImage {
                 archive,
                 packaged_text_verified: paired,
@@ -331,7 +293,8 @@ pub(crate) fn audit(sdk: &Path, binutils: &Binutils, objects: &Archives) -> Resu
         activated: false,
         global_exclusion_proven: false,
         scope: "Retained leaf code, local branches/literals and packaged RAM placement; \
-                runtime pointers, MMIO ownership, vectors, reset and SDK mediation require further evidence",
+                runtime pointers, MMIO ownership, vectors, reset and SDK mediation require further evidence"
+            .into(),
     })
 }
 

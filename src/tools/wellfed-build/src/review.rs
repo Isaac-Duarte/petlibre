@@ -26,7 +26,7 @@ use wellfed_formats::review::{
 
 use crate::identity::current_inputs;
 use crate::image::audit_build;
-use crate::platform::amebad;
+use crate::platform::{Linked, amebad};
 use crate::{Device, Error, Firmware, Profile, Repo, Result, digest, require, revision};
 
 /// Bank 1's extent; a development image must fit it sector-aligned.
@@ -69,7 +69,7 @@ pub fn freeze(repo: &Repo, kind: ImageKind, build: &Path, output: &Path) -> Resu
         ImageKind::Build => {
             require(root.is_private(&build), "Private build required")?;
             let (image, manifest, details) = review(repo, &build)?;
-            (image, Some(manifest), Details::Build(details))
+            (image, Some(manifest), Details::Build(Box::new(details)))
         }
     };
 
@@ -182,21 +182,16 @@ fn review(repo: &Repo, build: &Path) -> Result<(Vec<u8>, Vec<u8>, BuildDetails)>
     require(cores == ["KM0", "KM4"], "Both compiled cores required")?;
 
     // The linked-code audits, rerun, must be the ones the build recorded.
-    let audits = serde_json::to_value(audit_build(repo, build)?)?;
+    let Linked::Amebad(fresh) = audit_build(repo, build)?;
     let recorded = &m.audits;
     require(
-        [
-            ("firstboot_startup_audit", &recorded.firstboot_startup_audit),
-            ("ram_park_audit", &recorded.ram_park_audit),
-            ("sdk_hook_audit", &recorded.sdk_hook_audit),
-        ]
-        .iter()
-        .all(|(key, value)| value.as_ref() == Some(&audits[key])),
+        recorded.firstboot_startup_audit.as_ref() == Some(&fresh.firstboot_startup_audit)
+            && recorded.ram_park_audit.as_ref() == Some(&fresh.ram_park_audit)
+            && recorded.sdk_hook_audit.as_ref() == Some(&fresh.sdk_hook_audit),
         "Linked-code audits differ from build manifest",
     )?;
-    let pinmap = audits["km0_pinmap_audit"].clone();
     require(
-        recorded.km0_pinmap_audit.as_ref() == Some(&pinmap),
+        recorded.km0_pinmap_audit.as_ref() == Some(&fresh.km0_pinmap_audit),
         "Linked pad table differs",
     )?;
 
@@ -217,9 +212,9 @@ fn review(repo: &Repo, build: &Path) -> Result<(Vec<u8>, Vec<u8>, BuildDetails)>
     }
 
     let details = BuildDetails {
-        startup_mains: audits["firstboot_startup_audit"]["mains"].clone(),
-        layout: audits["layout_audit"].clone(),
-        pinmap,
+        startup_mains: fresh.firstboot_startup_audit.mains,
+        layout: fresh.layout_audit,
+        pinmap: fresh.km0_pinmap_audit,
         factory_mapping,
         scope: SCOPE.into(),
     };

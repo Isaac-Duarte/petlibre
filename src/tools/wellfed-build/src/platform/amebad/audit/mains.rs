@@ -10,8 +10,8 @@ use std::fs;
 use std::path::Path;
 use std::sync::LazyLock;
 
+use wellfed_formats::audit::{Main, MainCalls, MainsAudit};
 use regex::Regex;
-use serde::Serialize;
 
 use super::hooks::file_offset;
 use super::{ADDRESSED, Binutils, DIRECT_BRANCH, INSTRUCTION, elf, hex, parse_hex, refuse, tool};
@@ -56,15 +56,6 @@ static PC_LITERAL: LazyLock<Regex> =
 const VENEER: [u8; 12] = [
     0x01, 0xb4, 0x02, 0x48, 0x84, 0x46, 0x01, 0xbc, 0x60, 0x47, 0x00, 0xbf,
 ];
-
-/// A `main`'s checked call sequence.
-#[derive(Debug, Clone, Serialize)]
-pub struct MainCalls {
-    pub instructions: u32,
-    pub resolved_calls: Vec<String>,
-    /// Always 0: any unresolved call is refused.
-    pub unresolved_calls: u32,
-}
 
 /// Resolve constant ROM calls; reject unknown, missing or reordered calls.
 pub fn check_main(
@@ -213,24 +204,6 @@ pub fn listing_inputs(elf: &Path, objdump: &Path) -> Result<(Symbols, Vec<(u64, 
     Ok((symbols, mains))
 }
 
-/// One core's linked `main`.
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct Main {
-    address: String,
-    bytes: u64,
-    #[serde(flatten)]
-    calls: MainCalls,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct MainsAudit {
-    /// Keyed by the SDK's core directory names.
-    mains: BTreeMap<&'static str, Main>,
-    network_or_shell_started_by_main: bool,
-    feeder_backend_opened_by_application: bool,
-    scope: &'static str,
-}
-
 pub fn audit(sdk: &Path, binutils: &Binutils) -> Result<MainsAudit> {
     let objdump = binutils.objdump();
     let mut audited = BTreeMap::new();
@@ -275,7 +248,7 @@ pub fn audit(sdk: &Path, binutils: &Binutils) -> Result<MainsAudit> {
         )?;
         let calls = check_main(&listing, address, size, core, &symbols, &veneers)?;
         audited.insert(
-            core.dir(),
+            core.dir().to_string(),
             Main {
                 address: hex(address),
                 bytes: size,
@@ -289,6 +262,7 @@ pub fn audit(sdk: &Path, binutils: &Binutils) -> Result<MainsAudit> {
         network_or_shell_started_by_main: false,
         feeder_backend_opened_by_application: false,
         scope: "Exact linked main call sequences, constant ROM pointers and linker veneers; vendor pre-main, IRQ handlers, \
-                flash status/calibration, shared-pad supply helper and ROM effects require separate review",
+                flash status/calibration, shared-pad supply helper and ROM effects require separate review"
+            .into(),
     })
 }

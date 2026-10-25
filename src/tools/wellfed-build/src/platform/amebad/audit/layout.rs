@@ -7,45 +7,12 @@
 use std::fs;
 use std::path::Path;
 
-use wellfed_flash::ota::{Image, STOCK_SHA256, container, images};
+use wellfed_flash::ota::{STOCK_SHA256, container, images};
+use wellfed_formats::audit::{LayoutAudit, LayoutChecks, LayoutRegion, Placement};
 use wellfed_formats::layout::{Hex, Layout};
-use serde::Serialize;
 
 use super::word;
 use crate::{Result, require, sha256};
-
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct LayoutAudit {
-    schema_version: u32,
-    image: String,
-    bytes: usize,
-    sha256: String,
-    payload_bytes: usize,
-    /// The core images, as the flash client's container check reads them.
-    regions: Vec<Image>,
-    candidate_placements: Vec<Placement>,
-    checks: LayoutChecks,
-    boot_acceptance: &'static str,
-    physical_flash_capacity: &'static str,
-    scope: &'static str,
-}
-
-/// The candidate written at one bank.
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct Placement {
-    bank_index: usize,
-    flash_offset: Hex,
-    end_exclusive: Hex,
-    erase_bytes: usize,
-}
-
-/// What the audit refused otherwise; always `true` in a written audit.
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct LayoutChecks {
-    container_and_checksum: bool,
-    reference_table_matches: bool,
-    known_preserve_ranges_untouched: bool,
-}
 
 pub(crate) fn audit(image: &Path, stock: &Path, layout: &Path) -> Result<LayoutAudit> {
     let layout: Layout = wellfed_formats::load(layout)?;
@@ -128,15 +95,25 @@ pub(crate) fn audit(image: &Path, stock: &Path, layout: &Path) -> Result<LayoutA
         bytes: data.len(),
         sha256: sha256(&data),
         payload_bytes: payload.len(),
-        regions: image_regions,
+        regions: image_regions
+            .into_iter()
+            .map(|region| LayoutRegion {
+                name: region.name.into(),
+                payload_header_offset: region.payload_header_offset,
+                body_bytes: region.body_bytes,
+                runtime_address: region.runtime_address,
+            })
+            .collect(),
         candidate_placements: placements,
         checks: LayoutChecks {
             container_and_checksum: true,
             reference_table_matches: true,
             known_preserve_ranges_untouched: true,
         },
-        boot_acceptance: "unproven",
-        physical_flash_capacity: "unverified",
-        scope: "Offline structural/known-range audit; not a flash plan or full partition validation",
+        boot_acceptance: "unproven".into(),
+        physical_flash_capacity: "unverified".into(),
+        scope:
+            "Offline structural/known-range audit; not a flash plan or full partition validation"
+                .into(),
     })
 }

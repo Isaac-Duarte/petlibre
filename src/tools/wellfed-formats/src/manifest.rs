@@ -3,16 +3,17 @@
 //! `wellfed-build` writes the manifest; the startup audit, the flash review
 //! and the bench read it, and frozen reviews keep a copy as
 //! `build-manifest.json`. Every field is always written, as `null` when it
-//! does not apply, because `wellfed-build review` compares the audit
-//! sections as whole objects.
+//! does not apply.
 
 use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use crate::Result;
+use crate::audit::{
+    HookAudit, LayoutAudit, MainsAudit, ParkAudit, PinmapAudit, StackAudit, WritesAudit,
+};
 use crate::canonical::{canonical_of, sha256};
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -89,18 +90,19 @@ impl BuildManifest {
     }
 }
 
-/// The linked-image audits the builder records. Their contents belong to
-/// each audit (and are compared as objects by the review), so they stay JSON.
+/// The linked-image audits the builder records, each `None` for a profile
+/// that does not run it. The review reruns them and compares the results
+/// with these.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Audits {
-    pub layout_audit: Option<Value>,
-    pub km0_pinmap_audit: Option<Value>,
-    pub ram_park_audit: Option<Value>,
-    pub sdk_hook_audit: Option<Value>,
-    pub firstboot_startup_audit: Option<Value>,
-    pub wifi_link_audit: Option<Value>,
-    pub stack_audit: Option<Value>,
+    pub layout_audit: Option<LayoutAudit>,
+    pub km0_pinmap_audit: Option<PinmapAudit>,
+    pub ram_park_audit: Option<ParkAudit>,
+    pub sdk_hook_audit: Option<HookAudit>,
+    pub firstboot_startup_audit: Option<MainsAudit>,
+    pub wifi_link_audit: Option<WritesAudit>,
+    pub stack_audit: Option<StackAudit>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -168,7 +170,7 @@ impl IdentitySnapshot<'_> {
 mod tests {
     use super::*;
     use crate::canonical::canonical;
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     fn inputs() -> BTreeMap<String, String> {
         BTreeMap::from([("firmware/a.c".to_string(), "00".repeat(32))])

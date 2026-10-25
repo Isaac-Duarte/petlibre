@@ -7,9 +7,9 @@
 
 use std::sync::LazyLock;
 
+use wellfed_formats::audit::PinmapAudit;
 use wellfed_formats::layout::Hex;
 use regex::Regex;
-use serde::Serialize;
 
 use super::{refuse, word};
 use crate::{Result, require, sha256};
@@ -155,16 +155,6 @@ pub(crate) fn overlay(source: &str, reference: &[u8]) -> Result<String> {
     ))
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct PinmapAudit {
-    runtime_address: Hex,
-    rows: usize,
-    bytes: usize,
-    sha256: String,
-    matches_stock: bool,
-    scope: &'static str,
-}
-
 /// Check the linked table's bytes in a candidate OTA image against stock.
 pub(crate) fn audit_linked_table(
     candidate: &[u8],
@@ -203,7 +193,8 @@ pub(crate) fn audit_linked_table(
         bytes: actual.len(),
         sha256: sha256(actual),
         matches_stock: true,
-        scope: "Pad pull table only; reset levels, GPIO direction and physical behavior unverified",
+        scope: "Pad pull table only; reset levels, GPIO direction and physical behavior unverified"
+            .into(),
     })
 }
 

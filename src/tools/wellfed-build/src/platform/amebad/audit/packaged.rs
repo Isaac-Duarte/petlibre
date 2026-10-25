@@ -7,9 +7,9 @@ use std::path::Path;
 use std::sync::LazyLock;
 
 use wellfed_flash::ota::Image;
+use wellfed_formats::audit::PackagedText;
 use wellfed_formats::layout::Hex;
 use regex::Regex;
-use serde::Serialize;
 
 use super::{index, parse_hex, refuse, tool};
 use crate::platform::amebad::Core;
@@ -21,15 +21,6 @@ static TEXT_SECTION: LazyLock<Regex> = LazyLock::new(|| {
     )
     .expect("section pattern")
 });
-
-/// One text section matched byte for byte against the package.
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct PackagedText {
-    section: String,
-    address: Hex,
-    bytes: usize,
-    sha256: String,
-}
 
 /// Byte-match a core's RAM and XIP text against the packaged regions of the
 /// OTA payload.

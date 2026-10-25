@@ -384,10 +384,6 @@ const ARTIFACTS: [(Core, &str); 4] = [
 
 /// An audit as the manifest records it: the same serialization
 /// `wellfed-build audit` prints, which the frozen review compares.
-fn recorded(audit: &impl serde::Serialize) -> Result<Option<serde_json::Value>> {
-    Ok(Some(serde_json::to_value(audit)?))
-}
-
 /// One profile's build in its SDK worktree.
 struct Build<'a> {
     job: &'a Job<'a>,
@@ -594,25 +590,25 @@ impl Build<'_> {
                 &stock.layout,
             )
             .map_err(|e| Error::Layout(Box::new(e)))?;
-            audits.layout_audit = recorded(&layout)?;
-            audits.km0_pinmap_audit = recorded(&audit::pinmap::audit_linked_table(
+            audits.layout_audit = Some(layout);
+            audits.km0_pinmap_audit = Some(audit::pinmap::audit_linked_table(
                 ota,
                 audit::pmap_address(sdk, binutils)?,
                 &image,
-            )?)?;
+            )?);
         }
         if job.profile.has(Stage::Rust) {
-            audits.ram_park_audit = recorded(&park::audit(sdk, binutils, archives)?)?;
-            audits.sdk_hook_audit = recorded(&audit::hooks::audit(sdk, binutils, archives)?)?;
+            audits.ram_park_audit = Some(park::audit(sdk, binutils, archives)?);
+            audits.sdk_hook_audit = Some(audit::hooks::audit(sdk, binutils, archives)?);
         }
         if job.profile.has(Stage::Firstboot) {
-            audits.firstboot_startup_audit = recorded(&audit::mains::audit(sdk, binutils)?)?;
-            audits.wifi_link_audit = recorded(&audit::writes::audit(sdk, binutils)?)?;
-            audits.stack_audit = recorded(&audit::stack::audit(
+            audits.firstboot_startup_audit = Some(audit::mains::audit(sdk, binutils)?);
+            audits.wifi_link_audit = Some(audit::writes::audit(sdk, binutils)?);
+            audits.stack_audit = Some(audit::stack::audit(
                 &self.image_directory().join("target_img2.axf"),
                 &binutils.objdump(),
                 &audit::stack::task_sources(job.repo, job.firmware)?,
-            )?)?;
+            )?);
         }
         Ok(audits)
     }

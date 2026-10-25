@@ -6,8 +6,11 @@
 //! file bytes, so the writer emits [`crate::canonical`] form. Reviews frozen
 //! by the former Python reviewer carry the same fields and still read.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+
+use crate::audit::{LayoutAudit, Main, PinmapAudit};
 
 pub const SCHEMA_VERSION: u32 = 1;
 pub const KIND: &str = "plaf103_development_image_review";
@@ -42,19 +45,19 @@ pub enum ImageKind {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Details {
-    Build(BuildDetails),
+    Build(Box<BuildDetails>),
     Stock { stock_sha256: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BuildDetails {
     /// The build's first-boot mains audit `mains`, compared whole with the
-    /// manifest's, so it stays the manifest's JSON.
-    pub startup_mains: Value,
-    /// The OTA layout audit as the builder emits it; readers check `sha256`.
-    pub layout: Value,
+    /// manifest's.
+    pub startup_mains: BTreeMap<String, Main>,
+    /// The OTA layout audit; readers check `sha256`.
+    pub layout: LayoutAudit,
     /// The KM0 pad-table audit, compared whole with the manifest's.
-    pub pinmap: Value,
+    pub pinmap: PinmapAudit,
     /// One case per bank, bank 0 first.
     pub factory_mapping: Vec<MappingCase>,
     pub scope: String,

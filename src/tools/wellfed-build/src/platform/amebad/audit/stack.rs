@@ -32,8 +32,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 use std::sync::LazyLock;
 
+use wellfed_formats::audit::{StackAudit, TaskBound};
 use regex::Regex;
-use serde::Serialize;
 
 use super::writes::{demangle, loaded};
 use super::{HEADING, refuse, tool};
@@ -543,41 +543,6 @@ fn veneer(name: &str) -> Option<&str> {
     name.strip_prefix("__")?.strip_suffix("_veneer")
 }
 
-/// One task's static stack bound.
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct TaskBound {
-    entry: String,
-    stack: u64,
-    bound: u64,
-    /// What its formatting calls are charged: the deepest formatting method
-    /// it can reach, nested.
-    fmt_bound: u64,
-    /// Vendor C functions on any path whose indirect calls the walk does not
-    /// bound; the margin covers them.
-    unbounded: Vec<String>,
-    /// Functions where recursion was cut.
-    recursion: Vec<String>,
-    /// The deepest path's first functions.
-    path: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct StackAudit {
-    /// Keyed by task name.
-    tasks: BTreeMap<String, TaskBound>,
-    /// The linked tasks the firmware starts, its SDK services' included.
-    firmware_tasks: Vec<String>,
-    firmware_task_limit: usize,
-    overhead: u64,
-    margin: f64,
-    /// How many levels of nested formatting each task's `fmt_bound` covers.
-    fmt_nesting: usize,
-    /// What an indirect call inside the flash hooks is charged: the deepest
-    /// provider callback.
-    provider_bound: u64,
-    scope: &'static str,
-}
-
 /// Per-task bounds; refuses if a task's bound leaves less than MARGIN free,
 /// or if the firmware starts more tasks than its share of the slots.
 pub(crate) fn audit(elf: &Path, objdump: &Path, sources: &TaskSources) -> Result<StackAudit> {
@@ -656,7 +621,8 @@ pub(crate) fn audit(elf: &Path, objdump: &Path, sources: &TaskSources) -> Result
         provider_bound: hook,
         scope: "Direct calls, veneers and prologue frames; indirect calls in core::fmt and the \
                 flash hooks bounded by class; vendor C indirect calls listed and covered by the \
-                margin",
+                margin"
+            .into(),
     })
 }
 

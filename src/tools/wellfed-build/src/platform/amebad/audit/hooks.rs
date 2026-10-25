@@ -10,11 +10,11 @@ use std::fs;
 use std::path::Path;
 use std::sync::LazyLock;
 
+use wellfed_formats::audit::{HookAudit, HookImage, Route, Symbol};
 use regex::Regex;
-use serde::Serialize;
 
 use super::{
-    ArchiveRecord, Archives, Binutils, DIRECT_BRANCH, HEADING, INSTRUCTION, elf, hex, index,
+    Archives, Binutils, DIRECT_BRANCH, HEADING, INSTRUCTION, archive_record, elf, hex, index,
     parse_hex, refuse, tool, word,
 };
 use crate::platform::amebad::Core;
@@ -73,15 +73,6 @@ pub(crate) fn overlay(source: &str) -> Result<String> {
             .into_owned();
     }
     Ok(source)
-}
-
-/// A symbol table entry: address, size, kind (`F`/`O`) and section.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct Symbol {
-    pub address: u64,
-    pub bytes: u64,
-    pub kind: String,
-    pub section: String,
 }
 
 pub fn symbols(elf: &Path, objdump: &Path) -> Result<BTreeMap<String, Symbol>> {
@@ -158,13 +149,6 @@ pub fn verify_ipc_table(
     }
 }
 
-/// A direct branch into a legacy entry, from its public wrapper.
-#[derive(Debug, Clone, Serialize)]
-pub struct Route {
-    pub caller: String,
-    pub address: String,
-}
-
 /// Each legacy entry's routes.
 pub type Routes = BTreeMap<&'static str, Vec<Route>>;
 
@@ -214,25 +198,6 @@ pub fn legacy_routes(disassembly: &str) -> Result<Routes> {
     Ok(routes)
 }
 
-/// One core's hook routes, bound to its linked archive.
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct HookImage {
-    #[serde(flatten)]
-    archive: ArchiveRecord,
-    symbols: BTreeMap<String, Symbol>,
-    legacy_entry_routes: Routes,
-    ipc_channel_2_handler: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct HookAudit {
-    /// Keyed KM0/KM4.
-    images: BTreeMap<&'static str, HookImage>,
-    protocol_installed: bool,
-    global_exclusion_proven: bool,
-    scope: &'static str,
-}
-
 /// `objects` maps KM0/KM4 to the linked Rust archive containing this code.
 pub(crate) fn audit(sdk: &Path, binutils: &Binutils, objects: &Archives) -> Result<HookAudit> {
     let objdump = binutils.objdump();
@@ -264,13 +229,16 @@ pub(crate) fn audit(sdk: &Path, binutils: &Binutils, objects: &Archives) -> Resu
         )?;
         let routes = legacy_routes(&listing)?;
 
-        let archive = ArchiveRecord::of(core, &elf, objects, sdk)?;
+        let archive = archive_record(core, &elf, objects, sdk)?;
         images.insert(
-            core.name(),
+            core.name().to_string(),
             HookImage {
                 archive,
                 symbols: names,
-                legacy_entry_routes: routes,
+                legacy_entry_routes: routes
+                    .into_iter()
+                    .map(|(legacy, routes)| (legacy.to_string(), routes))
+                    .collect(),
                 ipc_channel_2_handler: hex(pointer),
             },
         );
@@ -282,7 +250,8 @@ pub(crate) fn audit(sdk: &Path, binutils: &Binutils, objects: &Archives) -> Resu
         global_exclusion_proven: false,
         scope: "Public SDK hooks and IPC table route through RAM interposer; \
                 legacy entry branches originate only in that interposer. \
-                Indirect callers, provider implementation and global exclusion are unproven.",
+                Indirect callers, provider implementation and global exclusion are unproven."
+            .into(),
     })
 }
 

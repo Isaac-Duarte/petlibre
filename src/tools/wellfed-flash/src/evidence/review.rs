@@ -7,8 +7,6 @@
 
 use std::path::Path;
 
-use serde_json::Value;
-
 use crate::error::{Result, refuse, require};
 use crate::evidence::Root;
 use crate::writers::development::{Layout, payload};
@@ -100,24 +98,19 @@ fn build(
 
     let mains = &details.startup_mains;
     // The audit's per-core mapping: exactly both cores.
-    let mut names: Vec<&str> = mains
-        .as_object()
-        .map(|cores| cores.keys().map(String::as_str).collect())
-        .unwrap_or_default();
-    names.sort();
+    let names: Vec<&str> = mains.keys().map(String::as_str).collect();
     let startup = m.audits.firstboot_startup_audit.as_ref();
     let audit = m.audits.km0_pinmap_audit.as_ref();
     require(
-        startup.and_then(|s| s.get("mains")) == Some(mains)
+        startup.map(|s| &s.mains) == Some(mains)
             && names == ["hp", "lp"]
-            && audit
-                .is_some_and(|audit| details.pinmap == *audit && audit["matches_stock"] == true),
+            && audit.is_some_and(|audit| details.pinmap == *audit && audit.matches_stock),
         "Frozen linked/startup/pad review missing",
     )?;
 
     let banks: Vec<u8> = details.factory_mapping.iter().map(|c| c.bank).collect();
     require(
-        details.layout.get("sha256").and_then(Value::as_str) == Some(&sha256(image))
+        details.layout.sha256 == sha256(image)
             && banks == [0, 1]
             && m.checks.ota_payload_matches
             && m.checks.ota_checksum_matches

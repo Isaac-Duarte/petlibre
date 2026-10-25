@@ -275,8 +275,9 @@
     tbody th.scenario {
       height: 44px;
     }
+    /* Pad each verdict (18 px, Verdict's default size) out to a 44 px target. */
     td.cell a {
-      padding: 13px;
+      padding: calc((44px - 18px) / 2);
     }
     td.why a {
       line-height: 44px;

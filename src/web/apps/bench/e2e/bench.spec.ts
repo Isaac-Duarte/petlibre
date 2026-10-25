@@ -133,6 +133,21 @@ test.describe("at phone width", () => {
     await expect(builder.locator("pre")).toContainText("requests");
   });
 
+  test("run history, the run drawer and a session's Close are thumb-sized", async ({ page }) => {
+    await page.goto("/#/tests");
+    const history = page.getByRole("region", { name: "Run history" });
+    await expectThumbSized(history.locator("th.run a").first());
+    await expectThumbSized(history.locator("td.cell a").first());
+
+    await page.goto("/#/tests/itest-e2e-03");
+    await expectThumbSized(
+      page.getByRole("dialog", { name: "Run itest-e2e-03" }).getByRole("button", { name: "Close" }),
+    );
+
+    await page.goto("/#/sessions/flash-e2e-01");
+    await expectThumbSized(page.getByRole("region", { name: "flash-e2e-01" }).getByRole("link", { name: "Close" }));
+  });
+
   test("sessions keep their evidence parts and recent commands their start time", async ({ page }) => {
     await page.goto("/#/sessions");
 

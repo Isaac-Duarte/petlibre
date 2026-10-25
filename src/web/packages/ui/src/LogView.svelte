@@ -123,11 +123,16 @@
   /* On a phone the log is most of the screen: a vertical swipe at its end
      scrolls the page on, rather than trapping the thumb inside the log, and
      the text is a step larger. Long lines still scroll sideways within the
-     log, since rows keep one fixed height for the windowing above. */
+     log, since rows keep one fixed height for the windowing above. The root
+     stops that chained swipe at the page's top, where Android would read it
+     as pull-to-refresh and reload the page. */
   @media (max-width: 760px) {
     .log {
       overscroll-behavior-y: auto;
       font-size: var(--text-sm);
+    }
+    :global(html) {
+      overscroll-behavior-y: none;
     }
   }
   .empty {

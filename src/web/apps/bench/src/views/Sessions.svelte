@@ -168,6 +168,11 @@
     color: var(--color-text-muted);
     font-size: var(--text-xs);
   }
+  /* The selected row is sunken too, so its pills need an edge to stay visible. */
+  tr.sel .part {
+    background: var(--color-surface);
+    box-shadow: inset 0 0 0 1px var(--color-line);
+  }
   .state {
     display: flex;
     align-items: center;

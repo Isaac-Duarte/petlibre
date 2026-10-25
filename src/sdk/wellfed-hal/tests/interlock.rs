@@ -252,3 +252,224 @@ fn a_waiting_join_is_watched_from_when_it_gets_the_turn() {
     assert!(!interlock.watch_join(LONG_JOIN_MS + 1));
     assert!(interlock.watch_join(2 * LONG_JOIN_MS));
 }
+
+mod writes {
+    //! Storage writes and feeds take turns: no write starts while the
+    //! outputs are claimed, no feed starts while a write runs, and neither
+    //! waits forever.
+
+    use std::cell::Cell;
+
+    use wellfed_hal::interlock::{
+        Held, Interlock, JoinStart, Turn, WRITE_POLL_MS, WRITE_WAIT_MS, WriteStart, WriteStep,
+        WriteTurn,
+    };
+
+    use super::{BOUND_MS, Clock};
+
+    /// Claims on `interlock` after writes, with `at_wait` at each wait.
+    fn claim(
+        interlock: &Interlock,
+        now: &Cell<u32>,
+        mut at_wait: impl FnMut(u32),
+    ) -> Result<(), Held> {
+        interlock.claim_feed_after_writes(
+            BOUND_MS,
+            || now.get(),
+            |ms| {
+                now.set(now.get() + ms);
+                at_wait(now.get());
+            },
+        )
+    }
+
+    #[test]
+    fn a_write_during_a_feed_waits_and_goes_before_the_next_feed() {
+        let interlock = Interlock::new();
+        let mut turn = WriteTurn::new();
+        interlock.claim_feed(BOUND_MS).unwrap();
+
+        assert_eq!(turn.begin(&interlock, 100), WriteStep::Wait);
+        assert_eq!(turn.begin(&interlock, 300), WriteStep::Wait);
+        assert!(!interlock.writing());
+
+        // The release leaves the write marked waiting, so the next claim
+        // waits for it; the write's next poll takes the turn.
+        interlock.release_feed();
+        let now = Cell::new(1000);
+        let mut taken = None;
+        let result = claim(&interlock, &now, |at| {
+            if at == 1000 + 2 * WRITE_POLL_MS {
+                taken = Some(turn.begin(&interlock, at));
+                assert_eq!(interlock.claim_feed(BOUND_MS), Err(Held::Writing));
+            }
+            if at == 1000 + 5 * WRITE_POLL_MS {
+                interlock.end_write();
+            }
+        });
+
+        assert_eq!(result, Ok(()));
+        assert_eq!(
+            taken,
+            Some(WriteStep::Go(WriteStart::Waited {
+                ms: 1000 + 2 * WRITE_POLL_MS - 100
+            }))
+        );
+        assert_eq!(interlock.turn(), Turn::Feeding);
+        let status = interlock.status();
+        assert_eq!((status.writes_deferred, status.writes_forced), (1, 0));
+        assert_eq!(status.feeds_delayed, 1);
+    }
+
+    #[test]
+    fn a_write_still_running_past_the_wait_refuses_the_feed() {
+        let interlock = Interlock::new();
+        let mut turn = WriteTurn::new();
+        assert_eq!(turn.begin(&interlock, 0), WriteStep::Go(WriteStart::Free));
+
+        let now = Cell::new(0);
+        let waits = Cell::new(0);
+        let result = claim(&interlock, &now, |_| waits.set(waits.get() + 1));
+
+        assert_eq!(result, Err(Held::Writing));
+        assert_eq!(now.get(), WRITE_WAIT_MS);
+        assert_eq!(waits.get(), WRITE_WAIT_MS / WRITE_POLL_MS);
+        assert_eq!(interlock.turn(), Turn::Free);
+        assert_eq!(interlock.status().refused, 1);
+
+        interlock.end_write();
+        assert_eq!(claim(&interlock, &now, |_| {}), Ok(()));
+    }
+
+    #[test]
+    fn a_waiting_write_that_never_asks_again_is_passed() {
+        let interlock = Interlock::new();
+        let mut turn = WriteTurn::new();
+        interlock.claim_feed(BOUND_MS).unwrap();
+        assert_eq!(turn.begin(&interlock, 0), WriteStep::Wait);
+        interlock.release_feed();
+
+        let now = Cell::new(0);
+        assert_eq!(claim(&interlock, &now, |_| {}), Ok(()));
+        assert_eq!(now.get(), WRITE_WAIT_MS);
+
+        // It finds the new claim when it does ask, and waits again.
+        assert_eq!(turn.begin(&interlock, WRITE_WAIT_MS), WriteStep::Wait);
+        interlock.release_feed();
+        assert!(matches!(
+            turn.begin(&interlock, WRITE_WAIT_MS + 1),
+            WriteStep::Go(WriteStart::Waited { .. })
+        ));
+    }
+
+    #[test]
+    fn a_claim_never_released_holds_a_write_only_for_its_bound() {
+        let interlock = Interlock::new();
+        let mut turn = WriteTurn::new();
+        interlock.claim_feed(BOUND_MS).unwrap();
+
+        assert_eq!(turn.begin(&interlock, 0), WriteStep::Wait);
+        assert_eq!(turn.begin(&interlock, BOUND_MS - 1), WriteStep::Wait);
+        assert_eq!(
+            turn.begin(&interlock, BOUND_MS),
+            WriteStep::Go(WriteStart::Forced { ms: BOUND_MS })
+        );
+        assert!(interlock.writing());
+        assert_eq!(interlock.status().writes_forced, 1);
+
+        // The claim's release and the write's end each free their own part.
+        interlock.release_feed();
+        assert!(interlock.writing());
+        interlock.end_write();
+        assert_eq!(interlock.claim_feed(BOUND_MS), Ok(()));
+    }
+
+    #[test]
+    fn one_write_at_a_time() {
+        let interlock = Interlock::new();
+        let (mut first, mut second) = (WriteTurn::new(), WriteTurn::new());
+
+        assert_eq!(first.begin(&interlock, 0), WriteStep::Go(WriteStart::Free));
+        assert_eq!(second.begin(&interlock, 0), WriteStep::Wait);
+        interlock.end_write();
+        assert!(matches!(
+            second.begin(&interlock, 10),
+            WriteStep::Go(WriteStart::Waited { ms: 10 })
+        ));
+    }
+
+    #[test]
+    fn writes_and_joins_do_not_wait_for_each_other() {
+        let interlock = Interlock::new();
+        let mut turn = WriteTurn::new();
+        let clock = Clock::new();
+
+        assert_eq!(clock.join(&interlock, |_| {}), JoinStart::Free);
+        assert_eq!(turn.begin(&interlock, 0), WriteStep::Go(WriteStart::Free));
+        interlock.end_join();
+        assert_eq!(clock.join(&interlock, |_| {}), JoinStart::Free);
+        interlock.end_join();
+        interlock.end_write();
+
+        // A join still refuses a feed at once, without the write wait.
+        clock.join(&interlock, |_| {});
+        assert_eq!(turn.begin(&interlock, 0), WriteStep::Go(WriteStart::Free));
+        let now = Cell::new(0);
+        assert_eq!(claim(&interlock, &now, |_| {}), Err(Held::Joining));
+        assert_eq!(now.get(), 0);
+    }
+
+    /// Writes and feeds from two threads, as the service task and the loop:
+    /// a write never overlaps a claim, and both sides make progress.
+    #[test]
+    fn two_tasks_never_overlap_and_neither_starves() {
+        use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+        use std::thread;
+
+        static INTERLOCK: Interlock = Interlock::new();
+        static WRITING: AtomicBool = AtomicBool::new(false);
+        static FEEDING: AtomicBool = AtomicBool::new(false);
+        static OVERLAPS: AtomicU32 = AtomicU32::new(0);
+        const ROUNDS: u32 = 2000;
+
+        let writes = thread::spawn(|| {
+            let mut turn = WriteTurn::new();
+            let mut written = 0;
+            while written < ROUNDS {
+                let WriteStep::Go(start) = turn.begin(&INTERLOCK, 0) else {
+                    thread::yield_now();
+                    continue;
+                };
+                assert!(!matches!(start, WriteStart::Forced { .. }));
+                WRITING.store(true, Ordering::SeqCst);
+                if FEEDING.load(Ordering::SeqCst) {
+                    OVERLAPS.fetch_add(1, Ordering::SeqCst);
+                }
+                WRITING.store(false, Ordering::SeqCst);
+                INTERLOCK.end_write();
+                written += 1;
+            }
+            written
+        });
+
+        let mut fed = 0;
+        while !writes.is_finished() || fed == 0 {
+            let claimed =
+                INTERLOCK.claim_feed_after_writes(u32::MAX, || 0, |_| thread::yield_now());
+            if claimed.is_ok() {
+                FEEDING.store(true, Ordering::SeqCst);
+                if WRITING.load(Ordering::SeqCst) {
+                    OVERLAPS.fetch_add(1, Ordering::SeqCst);
+                }
+                FEEDING.store(false, Ordering::SeqCst);
+                INTERLOCK.release_feed();
+                fed += 1;
+            }
+            thread::yield_now();
+        }
+
+        assert_eq!(writes.join().unwrap(), ROUNDS);
+        assert!(fed > 0);
+        assert_eq!(OVERLAPS.load(Ordering::SeqCst), 0);
+    }
+}

@@ -32,6 +32,7 @@ use wellfed_proto::api::{
     self as proto, Capabilities, EventBody, Metric, PORT, Refusal, Sample, Source, Status,
 };
 use wellfed_sdk::hal::health::Boot;
+use wellfed_sdk::hal::interlock::{INTERLOCK, Interlock};
 use wellfed_sdk::hal::keys::{self, Change, KeyResult, Requested};
 use wellfed_sdk::hal::sdk::{self, Accepted, ApiRecv, Datagram};
 use wellfed_sdk::hal::{clock, events, net_status, network, panel, power, rng, settings, startup};
@@ -458,6 +459,44 @@ pub fn record_event(body: EventBody) {
     }
 }
 
+// A store write waits while a feed holds the outputs (a flash lease then
+// would reset the board), longer than a client waits for its answer. So a
+// client's write during a feed is refused `Busy`, which changed nothing,
+// rather than left unanswered and applied after the feed.
+
+/// A settings read, or a change queued for the settings writer: `Busy`
+/// while `interlock` has the outputs claimed.
+pub fn settings_request(interlock: &Interlock, change: SettingsFields) -> SettingsResult {
+    if change.changes() && interlock.outputs_claimed() {
+        return SettingsResult::Busy;
+    }
+    settings::request(change)
+}
+
+/// The Wi-Fi store, or a change queued for the writer: `Busy` while
+/// `interlock` has the outputs claimed.
+pub fn wifi_request(interlock: &Interlock, change: Option<Option<Credentials>>) -> WifiResult {
+    match change {
+        None => network::current(),
+        Some(_) if interlock.outputs_claimed() => WifiResult::Busy,
+        Some(credentials) => network::change(credentials),
+    }
+}
+
+/// A client store change queued for the writer, and its ticket. `None`
+/// while `interlock` has the outputs claimed, as when the slot is taken: a
+/// revocation is refused `Busy`, and an enrollment asks again.
+pub fn keys_request(interlock: &Interlock, change: KeyChange) -> Option<u32> {
+    if interlock.outputs_claimed() {
+        return None;
+    }
+    let change = match change {
+        KeyChange::Enroll { key, label, role } => Change::Enroll { key, label, role },
+        KeyChange::Revoke { key } => Change::Revoke { key },
+    };
+    (keys::request(change) == Requested::Queued).then(|| keys::ticket().max(1))
+}
+
 /// The rest of the firmware, as the server sees it.
 struct Feeder<'a, F> {
     boot: Boot,
@@ -510,14 +549,11 @@ impl<F: Feeds> Device for Feeder<'_, F> {
     }
 
     fn settings(&mut self, change: SettingsFields) -> SettingsResult {
-        settings::request(change)
+        settings_request(&INTERLOCK, change)
     }
 
     fn wifi(&mut self, change: Option<Option<Credentials>>) -> WifiResult {
-        match change {
-            None => network::current(),
-            Some(credentials) => network::change(credentials),
-        }
+        wifi_request(&INTERLOCK, change)
     }
 
     fn lock(&mut self, locked: bool) -> LockResult {
@@ -536,11 +572,7 @@ impl<F: Feeds> Device for Feeder<'_, F> {
     }
 
     fn keys(&mut self, change: KeyChange) -> Option<u32> {
-        let change = match change {
-            KeyChange::Enroll { key, label, role } => Change::Enroll { key, label, role },
-            KeyChange::Revoke { key } => Change::Revoke { key },
-        };
-        (keys::request(change) == Requested::Queued).then(|| keys::ticket().max(1))
+        keys_request(&INTERLOCK, change)
     }
 
     fn keys_outcome(&mut self, ticket: u32) -> Option<KeyOutcome> {

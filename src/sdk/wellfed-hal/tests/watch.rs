@@ -111,6 +111,7 @@ fn start() -> MutexGuard<'static, ()> {
     let guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     fake::reset_hardware();
     net_status::reset();
+    wellfed_hal::interlock::INTERLOCK.reset();
     REGS.with(|r| *r.borrow_mut() = [[0; 12]; 2]);
     ARMED.with(|a| a.set(false));
 
@@ -267,6 +268,29 @@ fn a_signed_offer_for_another_build_gives_way_and_asks_for_a_restart() {
         broker.client_ids,
         [format!("{}-ota", FAKE_TRANSPORT.client_id)]
     );
+}
+
+#[test]
+fn the_give_way_waits_for_a_feed_and_keeps_the_turn_until_the_restart() {
+    use wellfed_hal::interlock::{Held, INTERLOCK};
+
+    let _guard = start();
+    INTERLOCK.claim_feed(u32::MAX).unwrap();
+    let mut broker = broker(Some(manifest(&SigningKey::from_bytes(&SEED), [9; 32])));
+    let mut watch = Watch::new(FAKE_TRANSPORT, Some(key()));
+
+    let (records, restart) = run(&mut watch, &mut broker, 200);
+    assert!(!restart, "{records:?}");
+    assert!(records.contains(&Record::Offer { version: 5 }));
+    assert_eq!(fake::with(|h| h.bank1[..8].to_vec()), MARKER.to_vec());
+
+    INTERLOCK.release_feed();
+    let (records, restart) = run(&mut watch, &mut broker, 10);
+    assert!(restart, "{records:?}");
+    assert_eq!(records.last(), Some(&Record::GaveWay { version: 5 }));
+    // No feed starts between the give-way and the restart.
+    assert!(INTERLOCK.writing());
+    assert_eq!(INTERLOCK.claim_feed(u32::MAX), Err(Held::Writing));
 }
 
 #[test]

@@ -1,4 +1,4 @@
-//! Feeding and Wi-Fi joins never overlap.
+//! Feeding never overlaps a Wi-Fi join or a storage write.
 //!
 //! A Wi-Fi association holds every task for 0.45–0.72 s, a priority-4 task
 //! included (physical, [scheduling gaps]): the stall is in the vendor
@@ -25,14 +25,40 @@
 //! repository); attempts back off at least 1 s, so feeds get their turn
 //! between them. Since nothing here can bound those two calls, the loop
 //! counts a join that holds its turn past [`LONG_JOIN_MS`]
-//! ([`Interlock::watch_join`]), so a stuck vendor call shows in the log. A join waits at most the bound
-//! the claimant published with its claim, which the firmware derives from its
-//! feed limits; past it the join goes ahead and is counted as forced, so a
+//! ([`Interlock::watch_join`]), so a stuck vendor call shows in the log. A
+//! join waits at most the bound the claimant published with its claim, which
+//! the firmware derives from its feed limits; past it the join goes ahead and is counted as forced, so a
 //! claim that is never released cannot keep the feeder offline.
+//!
+//! **Storage writes.** Every flash lease checks that the outputs are
+//! stopped and fails closed when they are not: the lease provider's hook
+//! halts and the watchdog resets the board, and a lease the owner sees while
+//! it drives faults the feed. So a writer outside the feed journal (the
+//! settings writer's stores, the confirmation, the offer check's give-way)
+//! takes the write turn first ([`WriteTurn::begin`]) and holds it for
+//! one store write, within one step of its task:
+//!
+//! - While the outputs are claimed the write waits: the writer leaves its
+//!   work queued and asks again on its next poll. It marks itself waiting,
+//!   so the next claim lets it go first, and it waits at most the claim's
+//!   bound, past which it goes ahead and is counted as forced (the lease's
+//!   own check then still refuses moving outputs). Each writer times its own
+//!   wait ([`WriteTurn`]).
+//! - A claim that finds a write running waits for it in the loop
+//!   ([`Interlock::claim_feed_after_writes`]), in [`WRITE_POLL_MS`] steps, for
+//!   at most [`WRITE_WAIT_MS`]; a write still running then refuses the feed.
+//!   A write only marked waiting is passed after that wait: it cannot have
+//!   started, and it finds the claim when it asks again.
+//!
+//! The feed journal writes under the loop's own claim, from the owner's rest
+//! boundaries (the outputs already stopped), so it takes no write turn.
+//! Writes and joins do not exclude each other.
 //!
 //! [scheduling gaps]: ../../../../docs/firmware/scheduling-gaps.md#result-october-25-2026-physical
 
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
+
+use crate::supervision::config::FLASH_LIMITS;
 
 /// How often a waiting join looks again; the shim polls its scan as often.
 pub const JOIN_POLL_MS: u32 = 50;
@@ -40,6 +66,25 @@ pub const JOIN_POLL_MS: u32 = 50;
 /// A join holding its turn this long is counted: the shim's scan wait is
 /// 10 s, and associations and DHCP have finished within seconds on the bench.
 pub const LONG_JOIN_MS: u32 = 60_000;
+
+/// How often a claim waiting for a storage write looks again.
+pub const WRITE_POLL_MS: u32 = 10;
+
+/// The longest a claim waits for storage writes: one store record (an
+/// erase and two programs, the stores' commit protocol), each lease at its
+/// whole budget, after the settings writer's 200 ms poll. Leases take tens
+/// of milliseconds in practice; a write still running past this refuses the
+/// feed, which moved nothing.
+pub const WRITE_WAIT_MS: u32 = 3_000;
+
+const _: () = assert!(WRITE_WAIT_MS >= 3 * FLASH_LIMITS.total_ms + 200);
+
+/// The turn byte's flags above the [`Turn`] code.
+const TURN_BITS: u8 = 0x0f;
+/// A storage write holds the flash.
+const WRITING: u8 = 0x10;
+/// A storage write waits for the outputs' release, and goes first.
+const WRITE_WAITS: u8 = 0x20;
 
 /// Whose turn it is, as the interlock's byte holds it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -63,6 +108,10 @@ pub enum Held {
     Joining = 1,
     /// A join waits for the outputs, and goes first.
     JoinWaiting = 2,
+    /// A storage write holds the flash.
+    Writing = 3,
+    /// A storage write waits to go first.
+    WriteWaiting = 4,
 }
 
 impl Held {
@@ -144,6 +193,94 @@ impl Turn {
     }
 }
 
+/// What a storage write finds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WriteStep {
+    /// The write's turn: it may take its flash leases, then
+    /// [`Interlock::end_write`].
+    Go(WriteStart),
+    /// The outputs are claimed (or another write runs): keep the work queued
+    /// and ask again.
+    Wait,
+}
+
+/// How a write's turn began.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WriteStart {
+    /// At once.
+    Free,
+    /// After waiting `ms` for the outputs' release.
+    Waited { ms: u32 },
+    /// Past the claim's bound, with the outputs still claimed.
+    Forced { ms: u32 },
+}
+
+/// The turn byte: the feed and join [`Turn`], and the write flags.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct State {
+    turn: Turn,
+    writing: bool,
+    write_waits: bool,
+}
+
+impl State {
+    const fn from_byte(byte: u8) -> Self {
+        Self {
+            turn: Turn::from_byte(byte & TURN_BITS),
+            writing: byte & WRITING != 0,
+            write_waits: byte & WRITE_WAITS != 0,
+        }
+    }
+
+    const fn code(self) -> u8 {
+        self.turn.code()
+            | if self.writing { WRITING } else { 0 }
+            | if self.write_waits { WRITE_WAITS } else { 0 }
+    }
+
+    /// A claim: refused by a write as well as a join, except that the loop's
+    /// own claim stays its own.
+    const fn claim_feed(self) -> Result<Self, Held> {
+        let turn = match self.turn.claim_feed() {
+            Ok(turn) => turn,
+            Err(held) => return Err(held),
+        };
+        if matches!(self.turn, Turn::Free) {
+            if self.writing {
+                return Err(Held::Writing);
+            }
+            if self.write_waits {
+                return Err(Held::WriteWaiting);
+            }
+        }
+        Ok(Self { turn, ..self })
+    }
+
+    const fn outputs_claimed(self) -> bool {
+        matches!(self.turn, Turn::Feeding | Turn::FeedingJoinWaits)
+    }
+
+    /// A writer asks for the flash.
+    const fn request_write(self) -> (Self, bool) {
+        if self.outputs_claimed() {
+            let next = Self {
+                write_waits: true,
+                ..self
+            };
+            return (next, false);
+        }
+        if self.writing {
+            return (self, false);
+        }
+        let next = Self {
+            writing: true,
+            write_waits: false,
+            ..self
+        };
+        (next, true)
+    }
+}
+
 /// What the interlock has done this boot, for the loop's log.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Status {
@@ -157,6 +294,14 @@ pub struct Status {
     pub waited_max_ms: u32,
     /// Joins that held their turn past `LONG_JOIN_MS`.
     pub long_joins: u32,
+    /// Storage writes that waited for the outputs.
+    pub writes_deferred: u32,
+    /// Storage writes that went ahead past the claim's bound.
+    pub writes_forced: u32,
+    /// The longest a storage write waited, in ms.
+    pub write_waited_max_ms: u32,
+    /// Feeds whose claim waited for a storage write.
+    pub feeds_delayed: u32,
 }
 
 /// The turn between the loop (feeds) and the C Wi-Fi task (joins), as
@@ -175,6 +320,10 @@ pub struct Interlock {
     /// The current join was already counted as long.
     join_counted: AtomicBool,
     long_joins: AtomicU32,
+    writes_deferred: AtomicU32,
+    writes_forced: AtomicU32,
+    write_waited_max_ms: AtomicU32,
+    feeds_delayed: AtomicU32,
 }
 
 impl Default for Interlock {
@@ -195,11 +344,29 @@ impl Interlock {
             join_began_ms: AtomicU32::new(0),
             join_counted: AtomicBool::new(false),
             long_joins: AtomicU32::new(0),
+            writes_deferred: AtomicU32::new(0),
+            writes_forced: AtomicU32::new(0),
+            write_waited_max_ms: AtomicU32::new(0),
+            feeds_delayed: AtomicU32::new(0),
         }
     }
 
+    fn state(&self) -> State {
+        State::from_byte(self.turn.load(Ordering::Acquire))
+    }
+
     pub fn turn(&self) -> Turn {
-        Turn::from_byte(self.turn.load(Ordering::Acquire))
+        self.state().turn
+    }
+
+    /// The loop holds the outputs: a feed may be preparing or moving them.
+    pub fn outputs_claimed(&self) -> bool {
+        self.state().outputs_claimed()
+    }
+
+    /// A storage write holds the flash.
+    pub fn writing(&self) -> bool {
+        self.state().writing
     }
 
     pub fn status(&self) -> Status {
@@ -209,14 +376,26 @@ impl Interlock {
             forced: self.forced.load(Ordering::Relaxed),
             waited_max_ms: self.waited_max_ms.load(Ordering::Relaxed),
             long_joins: self.long_joins.load(Ordering::Relaxed),
+            writes_deferred: self.writes_deferred.load(Ordering::Relaxed),
+            writes_forced: self.writes_forced.load(Ordering::Relaxed),
+            write_waited_max_ms: self.write_waited_max_ms.load(Ordering::Relaxed),
+            feeds_delayed: self.feeds_delayed.load(Ordering::Relaxed),
         }
     }
 
-    /// One atomic step of the turn.
+    /// One atomic step of the feed and join turn; the write flags stay.
     fn transition<T>(&self, step: impl Fn(Turn) -> (Turn, T)) -> T {
+        self.update(|state| {
+            let (turn, out) = step(state.turn);
+            (State { turn, ..state }, out)
+        })
+    }
+
+    /// One atomic step of the whole byte.
+    fn update<T>(&self, step: impl Fn(State) -> (State, T)) -> T {
         let mut current = self.turn.load(Ordering::Acquire);
         loop {
-            let (next, out) = step(Turn::from_byte(current));
+            let (next, out) = step(State::from_byte(current));
             match self.turn.compare_exchange_weak(
                 current,
                 next.code(),
@@ -230,19 +409,104 @@ impl Interlock {
     }
 
     /// The loop, before it submits a feed: claim the outputs for at most
-    /// `bound_ms`, the longest the feed can keep them from rest.
+    /// `bound_ms`, the longest the feed can keep them from rest. One attempt,
+    /// refused by a running or waiting join or storage write.
     pub fn claim_feed(&self, bound_ms: u32) -> Result<(), Held> {
-        // Published before the claim, so a join that sees the claim sees
-        // its bound; one firmware always passes the same bound.
-        self.bound_ms.store(bound_ms, Ordering::Release);
-        let result = self.transition(|turn| match turn.claim_feed() {
-            Ok(next) => (next, Ok(())),
-            Err(held) => (turn, Err(held)),
-        });
+        let result = self.try_claim(bound_ms);
         if result.is_err() {
             self.refused.fetch_add(1, Ordering::Relaxed);
         }
         result
+    }
+
+    fn try_claim(&self, bound_ms: u32) -> Result<(), Held> {
+        // Published before the claim, so a join or write that sees the
+        // claim sees its bound; one firmware always passes the same bound.
+        self.bound_ms.store(bound_ms, Ordering::Release);
+        self.update(|state| match state.claim_feed() {
+            Ok(next) => (next, Ok(())),
+            Err(held) => (state, Err(held)),
+        })
+    }
+
+    /// As [`Self::claim_feed`], but a storage write first gets up to
+    /// [`WRITE_WAIT_MS`] to finish, waiting in `delay` steps: past it, a
+    /// write still running refuses the claim, and one only waiting is
+    /// passed. A join still refuses at once.
+    pub fn claim_feed_after_writes(
+        &self,
+        bound_ms: u32,
+        mut now_ms: impl FnMut() -> u32,
+        mut delay: impl FnMut(u32),
+    ) -> Result<(), Held> {
+        let begun = now_ms();
+        let mut waited = false;
+        loop {
+            let held = match self.try_claim(bound_ms) {
+                Ok(()) => return Ok(()),
+                Err(held @ (Held::Writing | Held::WriteWaiting)) => held,
+                Err(held) => {
+                    self.refused.fetch_add(1, Ordering::Relaxed);
+                    return Err(held);
+                }
+            };
+
+            if !waited {
+                waited = true;
+                self.feeds_delayed.fetch_add(1, Ordering::Relaxed);
+            }
+            if now_ms().wrapping_sub(begun) >= WRITE_WAIT_MS {
+                if held == Held::Writing {
+                    self.refused.fetch_add(1, Ordering::Relaxed);
+                    return Err(held);
+                }
+                // The waiting writer has not started: it finds the claim
+                // when it asks again, and waits for the release.
+                self.update(|state| {
+                    let next = State {
+                        write_waits: false,
+                        ..state
+                    };
+                    (next, ())
+                });
+                continue;
+            }
+            delay(WRITE_POLL_MS);
+        }
+    }
+
+    /// Ask for the write turn: true when it is taken. While the outputs are
+    /// claimed this marks the write waiting, so the next claim lets it go
+    /// first.
+    fn request_write(&self) -> bool {
+        self.update(State::request_write)
+    }
+
+    /// Take the write turn with the outputs still claimed; false while
+    /// another write holds it.
+    fn force_write(&self) -> bool {
+        self.update(|state| {
+            if state.writing {
+                return (state, false);
+            }
+            let next = State {
+                writing: true,
+                write_waits: false,
+                ..state
+            };
+            (next, true)
+        })
+    }
+
+    /// The storage write has taken its last lease (or failed).
+    pub fn end_write(&self) {
+        self.update(|state| {
+            let next = State {
+                writing: false,
+                ..state
+            };
+            (next, ())
+        });
     }
 
     /// The loop, once the owner is at rest with its outputs stopped and no
@@ -323,6 +587,10 @@ impl Interlock {
             &self.waited_max_ms,
             &self.join_began_ms,
             &self.long_joins,
+            &self.writes_deferred,
+            &self.writes_forced,
+            &self.write_waited_max_ms,
+            &self.feeds_delayed,
         ] {
             value.store(0, Ordering::Release);
         }
@@ -330,5 +598,58 @@ impl Interlock {
     }
 }
 
-/// The firmware's one interlock: the loop's feeds and the C Wi-Fi task's joins.
+/// One writer's wait for the write turn, kept by the writer between its
+/// polls, so each writer times its own wait.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WriteTurn {
+    /// When this writer first found the turn taken, in uptime ms.
+    since: Option<u32>,
+}
+
+impl WriteTurn {
+    pub const fn new() -> Self {
+        Self { since: None }
+    }
+
+    /// Before one store write, from task context: the write's turn, or
+    /// [`WriteStep::Wait`] while the outputs are claimed (or another write
+    /// runs). Past the claim's bound the write goes ahead, counted. A
+    /// [`WriteStep::Go`] must be followed by [`Interlock::end_write`].
+    pub fn begin(&mut self, interlock: &Interlock, now_ms: u32) -> WriteStep {
+        if interlock.request_write() {
+            let start = match self.since.take() {
+                None => WriteStart::Free,
+                Some(since) => {
+                    let ms = now_ms.wrapping_sub(since);
+                    interlock.writes_deferred.fetch_add(1, Ordering::Relaxed);
+                    interlock
+                        .write_waited_max_ms
+                        .fetch_max(ms, Ordering::Relaxed);
+                    WriteStart::Waited { ms }
+                }
+            };
+            return WriteStep::Go(start);
+        }
+
+        let ms = now_ms.wrapping_sub(*self.since.get_or_insert(now_ms));
+        if !interlock.outputs_claimed()
+            || ms < interlock.bound_ms.load(Ordering::Acquire)
+            || !interlock.force_write()
+        {
+            return WriteStep::Wait;
+        }
+        // The claim outlived every feed's bound: write anyway. The lease
+        // still checks the outputs, and fails closed if they move.
+        self.since = None;
+        interlock.writes_deferred.fetch_add(1, Ordering::Relaxed);
+        interlock.writes_forced.fetch_add(1, Ordering::Relaxed);
+        interlock
+            .write_waited_max_ms
+            .fetch_max(ms, Ordering::Relaxed);
+        WriteStep::Go(WriteStart::Forced { ms })
+    }
+}
+
+/// The firmware's one interlock: the loop's feeds, the C Wi-Fi task's joins
+/// and the runtime's storage writes.
 pub static INTERLOCK: Interlock = Interlock::new();

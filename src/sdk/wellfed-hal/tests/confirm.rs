@@ -2,12 +2,14 @@
 //! KM0 peer answering HELLO through the real `park::answer`.
 
 use std::cell::{Cell, RefCell};
+use std::sync::{Mutex, MutexGuard};
 
 use wellfed_core::ota::{CONFIRM_LEN, confirm_record, confirmed};
 use wellfed_hal::flash::park::{self, Mmio};
 use wellfed_hal::flash::peer::MARKER_REGISTER;
 use wellfed_hal::flash_lock::arming::{self, Hooks};
 use wellfed_hal::flash_lock::provider::{ATTEMPT_BIT, Provider};
+use wellfed_hal::interlock::INTERLOCK;
 use wellfed_hal::ota::confirm::*;
 use wellfed_hal::sdk::fake;
 use wellfed_hal::stopped;
@@ -66,12 +68,18 @@ impl Hooks for FakeHooks {
     }
 }
 
-fn start() {
+/// The interlock is one static: tests that claim it run one at a time.
+static SERIAL: Mutex<()> = Mutex::new(());
+
+fn start() -> MutexGuard<'static, ()> {
+    let guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    INTERLOCK.reset();
     fake::reset_hardware();
     REGS.with(|r| *r.borrow_mut() = [[0; 12]; 2]);
     ARMED.with(|a| a.set(false));
     fake::with(|h| h.interrupts = 1);
     assert!(stopped::initialize().verified());
+    guard
 }
 
 fn record() -> Vec<u8> {
@@ -106,7 +114,7 @@ fn run(confirm: &mut Confirm, healthy: impl Fn(u32) -> bool, steps: usize) -> Ve
 
 #[test]
 fn confirms_after_continuous_health_with_the_attempt_marker_cleared() {
-    start();
+    let _guard = start();
     let mut confirm = Confirm::default();
     let records = run(&mut confirm, |_| true, 200);
 
@@ -125,7 +133,7 @@ fn confirms_after_continuous_health_with_the_attempt_marker_cleared() {
 
 #[test]
 fn health_must_hold_for_the_whole_window() {
-    start();
+    let _guard = start();
     let mut confirm = Confirm::default();
     // Health drops every 20 s: never 30 s in a row.
     let records = run(&mut confirm, |ms| ms % 20_000 >= 1_000, 400);
@@ -137,7 +145,7 @@ fn health_must_hold_for_the_whole_window() {
 
 #[test]
 fn an_existing_record_for_this_build_writes_nothing() {
-    start();
+    let _guard = start();
     let at = CONFIRM_SECTOR as usize * 4096;
     let existing = confirm_record(&identity(), 0);
     fake::with(|h| h.storage[at..at + CONFIRM_LEN].copy_from_slice(&existing));
@@ -150,7 +158,7 @@ fn an_existing_record_for_this_build_writes_nothing() {
 
 #[test]
 fn another_builds_record_is_replaced() {
-    start();
+    let _guard = start();
     let at = CONFIRM_SECTOR as usize * 4096;
     let other = confirm_record(&[1; 32], 0);
     fake::with(|h| h.storage[at..at + CONFIRM_LEN].copy_from_slice(&other));
@@ -163,7 +171,7 @@ fn another_builds_record_is_replaced() {
 
 #[test]
 fn a_set_attempt_marker_skips() {
-    start();
+    let _guard = start();
     fake::with(|h| h.backup[MARKER_REGISTER as usize] = ATTEMPT_BIT);
     let mut confirm = Confirm::default();
     let records = run(&mut confirm, |_| true, 200);
@@ -175,4 +183,28 @@ fn a_set_attempt_marker_skips() {
         }))
     );
     assert_eq!(fake::with(|h| h.storage_erases[CONFIRM_SECTOR as usize]), 0);
+}
+
+#[test]
+fn the_write_waits_for_a_feed_to_release_the_outputs() {
+    let _guard = start();
+    INTERLOCK.claim_feed(u32::MAX).unwrap();
+    let mut confirm = Confirm::default();
+
+    // Healthy and armed, but a feed holds the outputs: nothing is written.
+    let records = run(&mut confirm, |_| true, 200);
+    assert!(
+        !records
+            .iter()
+            .any(|r| matches!(r, Record::Confirmed { .. })),
+        "{records:?}"
+    );
+    assert_eq!(fake::with(|h| h.storage_erases[CONFIRM_SECTOR as usize]), 0);
+
+    INTERLOCK.release_feed();
+    let records = run(&mut confirm, |_| true, 10);
+    assert!(matches!(records.last(), Some(Record::Confirmed { .. })));
+    assert_eq!(confirmed(&record(), &identity()), Some(0));
+    assert!(!INTERLOCK.writing(), "the turn is given back");
+    assert_eq!(INTERLOCK.status().writes_deferred, 1);
 }

@@ -24,6 +24,7 @@ use wellfed_core::transport::{self as mqtt, Event, Session, Tick};
 use crate::flash::park::Mmio;
 use crate::flash_lock::arming::{self, Arming, Hooks, Poll};
 use crate::flash_lock::provider::Provider;
+use crate::interlock::{INTERLOCK, WriteStep, WriteTurn};
 use crate::net_status;
 use crate::ota::updater::Topic;
 use crate::sdk::{self, TcpRecv, TransportConfig};
@@ -164,6 +165,8 @@ pub struct Watch {
     found: Option<Found>,
     version: u32,
     arming: Arming,
+    /// The give-way's wait for the write turn.
+    turn: WriteTurn,
     rx: [u8; 2 * mqtt::MAX_PACKET],
     rx_len: usize,
 }
@@ -179,6 +182,7 @@ impl Watch {
             found: None,
             version: 0,
             arming: Arming::default(),
+            turn: WriteTurn::new(),
             rx: [0; 2 * mqtt::MAX_PACKET],
             rx_len: 0,
         }
@@ -261,10 +265,16 @@ impl Watch {
             }
 
             Stage::GiveWay => {
+                // Not while a feed may move the outputs. Given way, the turn
+                // is kept until the restart, so no feed starts before it.
+                if self.turn.begin(&INTERLOCK, now) == WriteStep::Wait {
+                    return next(POLL_MS, None);
+                }
                 let ok = bank.give_way();
                 // The recovery boot must not find the attempt marker set.
                 arming::clear_attempt();
                 if !ok {
+                    INTERLOCK.end_write();
                     return self.end(Record::Error {
                         stage: ErrorStage::GiveWay,
                     });

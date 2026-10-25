@@ -27,6 +27,13 @@
 //! allows while outputs may move, and no task priority avoids it. So a feed
 //! is refused `Busy` while a join runs or waits, and a join requested during
 //! a feed waits until the owner is at rest with its outputs stopped.
+//!
+//! Storage writes take the same turn: a flash lease while the outputs may
+//! move fails its stopped-outputs check and resets the board. A store write
+//! that comes during a feed waits until the outputs are released (at most
+//! `FEED_BOUND_MS`), and a feed that finds a write running waits for it in
+//! the loop, at most `WRITE_WAIT_MS`. The journal writes under the loop's
+//! own claim, at the owner's rest boundaries.
 
 use wellfed_core::feed::controller::FeedLimits;
 use wellfed_core::feed::progress::BowlMode;
@@ -101,22 +108,31 @@ pub const CONFIG: OwnerConfig = OwnerConfig {
 };
 
 /// The longest one feed can keep the outputs from rest, and so the longest
-/// a Wi-Fi join waits for them: the owner keeps the emitters on for at most
+/// a Wi-Fi join or a storage write waits for them: the owner keeps the emitters on for at most
 /// `optics_max_on_ms` from the request, and its configuration check holds
 /// the prepare timeout and the longest drive inside that, then it stops (or
 /// faults, which stops too). The margin covers the stop and the pass that
 /// sees it. About 9 min 40 s for the largest request.
 pub const FEED_BOUND_MS: u32 = CONFIG.optics_max_on_ms + 2000;
 
-/// Claims the outputs in `interlock` for one feed, before it is submitted.
-/// A join running or waiting refuses the feed `Busy`, final for that write
-/// id (clients never retry a feed on their own); `held` hears why, for the
-/// log.
-pub fn claim_outputs(interlock: &Interlock, held: impl FnOnce(Held)) -> Result<(), Refusal> {
-    interlock.claim_feed(FEED_BOUND_MS).map_err(|why| {
-        held(why);
-        Refusal::Busy
-    })
+/// Claims the outputs in `interlock` for one feed, before it is submitted,
+/// on the clock `now_ms` that `delay` advances. A storage write running or
+/// waiting gets its turn first (the loop waits for it, at most
+/// `WRITE_WAIT_MS`). A join running or waiting, or a write still running
+/// past that wait, refuses the feed `Busy`, final for that write id (clients
+/// never retry a feed on their own); `held` hears why, for the log.
+pub fn claim_outputs(
+    interlock: &Interlock,
+    now_ms: impl FnMut() -> u32,
+    delay: impl FnMut(u32),
+    held: impl FnOnce(Held),
+) -> Result<(), Refusal> {
+    interlock
+        .claim_feed_after_writes(FEED_BOUND_MS, now_ms, delay)
+        .map_err(|why| {
+            held(why);
+            Refusal::Busy
+        })
 }
 
 /// Whether the loop has a feed between its submission and its recorded
@@ -211,7 +227,7 @@ mod target {
         /// When each feedback edge came, from the drive's start.
         Edges { feed: u64, trace: FeedTrace },
         /// A feed was refused before the owner saw it: a Wi-Fi join runs or
-        /// waits.
+        /// waits, or a storage write ran past the claim's wait.
         Held { portions: u8, held: Held },
         /// Joins waited for the outputs, or went ahead past a feed's bound.
         Joins(interlock::Status),
@@ -309,12 +325,17 @@ mod target {
             }
             Record::Joins(status) => write!(
                 f,
-                "interlock refused={} deferred={} forced={} waited_max_ms={} long_joins={}",
+                "interlock refused={} deferred={} forced={} waited_max_ms={} long_joins={} \
+                 writes_deferred={} writes_forced={} write_waited_max_ms={} feeds_delayed={}",
                 status.refused,
                 status.deferred,
                 status.forced,
                 status.waited_max_ms,
-                status.long_joins
+                status.long_joins,
+                status.writes_deferred,
+                status.writes_forced,
+                status.write_waited_max_ms,
+                status.feeds_delayed
             ),
             Record::Pins { feed, pins } => {
                 let [start_a, start_b] = pins.start.unwrap_or_default();
@@ -567,7 +588,9 @@ mod target {
             if self.current.is_some() {
                 return Err(Refusal::Busy);
             }
-            super::claim_outputs(&INTERLOCK, |held| {
+            let clock = wellfed_sdk::hal::sdk::uptime_ms;
+            let delay = wellfed_sdk::hal::sdk::delay_ms;
+            super::claim_outputs(&INTERLOCK, clock, delay, |held| {
                 record(Record::Held { portions, held });
             })?;
             let status = owner.status();

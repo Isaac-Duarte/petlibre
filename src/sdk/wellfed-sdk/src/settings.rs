@@ -18,6 +18,14 @@
 //! and answers the device API's reads (`wellfed_hal::events`), polling
 //! faster while either waits, so a reconnecting client catches up in
 //! seconds.
+//!
+//! No write starts while a feed may move the outputs: a flash lease then
+//! fails its stopped-outputs check and resets the board. So each store write
+//! first takes the write turn in `wellfed_hal::interlock`. While a feed
+//! holds the outputs the work stays queued (a client change, a Wi-Fi save,
+//! the event queue in order) and the writer asks again each poll, so it runs
+//! once the owner is at rest with its outputs stopped, before the next feed.
+//! Reads of the event ring are answered meanwhile: they take no lease.
 
 use core::fmt;
 
@@ -32,10 +40,11 @@ use wellfed_core::transport::{SettingsFields, SettingsView};
 use wellfed_hal::flash::park::Mmio;
 use wellfed_hal::flash_lock::arming::{self, Arming, Hooks, Poll};
 use wellfed_hal::flash_lock::provider::Provider;
+use wellfed_hal::interlock::{INTERLOCK, WriteStep, WriteTurn};
 pub use wellfed_hal::keys::KeyResult;
 use wellfed_hal::keys::{self, Change};
 use wellfed_hal::network::{self, NET_BASE};
-use wellfed_hal::{events, rng, settings};
+use wellfed_hal::{events, rng, sdk, settings};
 
 use crate::storage::{
     CLIENTS_BASE, EVENTS_BASE, EVENTS_UNITS, FlashOps, Region, SEED_BASE, SETTINGS_BASE,
@@ -45,6 +54,17 @@ use crate::storage::{
 pub const POLL_MS: u32 = 200;
 /// While events wait to be written or read.
 pub const EVENTS_POLL_MS: u32 = 5;
+/// While a write waits for a feed to end.
+pub const WRITE_WAIT_POLL_MS: u32 = POLL_MS;
+
+/// The write turn for one store write, given back when dropped.
+struct WriteHeld;
+
+impl Drop for WriteHeld {
+    fn drop(&mut self) {
+        INTERLOCK.end_write();
+    }
+}
 
 named_enum! {
     /// Why a settings or Wi-Fi save did not happen (`error stage=`).
@@ -297,6 +317,8 @@ pub struct Writer<F> {
     keys_opened: bool,
     events: EventLog<Region<F, EVENTS_BASE, EVENTS_UNITS>>,
     events_opened: bool,
+    /// This writer's wait for the write turn.
+    turn: WriteTurn,
 }
 
 impl<F> Default for Writer<F> {
@@ -313,6 +335,7 @@ impl<F> Default for Writer<F> {
             keys_opened: false,
             events: EventLog::default(),
             events_opened: false,
+            turn: WriteTurn::new(),
         }
     }
 }
@@ -342,6 +365,35 @@ fn changed(current: Settings, fields: SettingsFields) -> Settings {
 }
 
 impl<F: FlashOps> Writer<F> {
+    /// The write turn for one store write, or `None` while a feed holds the
+    /// outputs: the caller then leaves its work queued.
+    fn take_turn(&mut self) -> Option<WriteHeld> {
+        match self.turn.begin(&INTERLOCK, sdk::uptime_ms()) {
+            WriteStep::Go(_) => Some(WriteHeld),
+            WriteStep::Wait => None,
+        }
+    }
+
+    /// The step while a write waits for its turn: the event ring's readers
+    /// are still answered, since a read takes no lease.
+    fn waiting(&self) -> Step {
+        let delay = if self.answer_read() {
+            EVENTS_POLL_MS
+        } else {
+            WRITE_WAIT_POLL_MS
+        };
+        next(delay, None)
+    }
+
+    /// Answer the read the device API asked for, if any.
+    fn answer_read(&self) -> bool {
+        let Some(after) = events::read_request() else {
+            return false;
+        };
+        events::finish_read(after, self.events.read_after(after));
+        true
+    }
+
     /// The keys: mix the stored seed in and store the next, then open
     /// the client store and create the identity if it has none. Writes only
     /// when `writable` (armed, normal stage), each under its own attempt
@@ -437,24 +489,27 @@ impl<F: FlashOps> Writer<F> {
     /// either has more waiting.
     fn events_step(&mut self, writable: bool) -> Step {
         let mut record = None;
+        let mut deferred = false;
         if let Some(queued) = events::pending() {
-            if writable {
+            if !writable {
+                events::finish_pending(self.events.last_seq());
+            } else if let Some(_turn) = self.take_turn() {
                 arming::set_attempt();
                 let appended = self.events.append(queued.at, &queued.body);
                 arming::clear_attempt();
                 if appended.is_err() {
                     record = Some(Record::EventError);
                 }
+                events::finish_pending(self.events.last_seq());
+            } else {
+                // Stays at the queue's head, so the records keep their order.
+                deferred = true;
             }
-            events::finish_pending(self.events.last_seq());
         }
         // A reader catching up asks again as soon as it has the answer.
-        let read = events::read_request();
-        if let Some(after) = read {
-            events::finish_read(after, self.events.read_after(after));
-        }
+        let read = self.answer_read();
 
-        let more = events::pending().is_some() || read.is_some();
+        let more = (events::pending().is_some() && !deferred) || read;
         next(if more { EVENTS_POLL_MS } else { POLL_MS }, record)
     }
 
@@ -539,9 +594,19 @@ impl<F: FlashOps> Writer<F> {
                     );
                 }
                 if !self.keys_opened {
-                    self.keys_opened = true;
                     let writable = self.stage == Stage::Idle && H::armed();
+                    // The seed and, on a first boot, the identity: one turn.
+                    let turn = if writable {
+                        let Some(turn) = self.take_turn() else {
+                            return self.waiting();
+                        };
+                        Some(turn)
+                    } else {
+                        None
+                    };
+                    self.keys_opened = true;
                     let record = self.keys(writable);
+                    drop(turn);
                     return next(POLL_MS, Some(record));
                 }
                 if !self.events_opened {
@@ -559,7 +624,16 @@ impl<F: FlashOps> Writer<F> {
                 }
                 if let Some(change) = keys::pending() {
                     let writable = self.stage == Stage::Idle && H::armed();
+                    let turn = if writable {
+                        let Some(turn) = self.take_turn() else {
+                            return self.waiting();
+                        };
+                        Some(turn)
+                    } else {
+                        None
+                    };
                     let record = self.change(change, writable);
+                    drop(turn);
                     return next(POLL_MS, Some(record));
                 }
                 if let Some(credentials) = network::pending() {
@@ -568,6 +642,9 @@ impl<F: FlashOps> Writer<F> {
                             stage: ErrorStage::Unarmed,
                         }
                     } else {
+                        let Some(_turn) = self.take_turn() else {
+                            return self.waiting();
+                        };
                         arming::set_attempt();
                         let saved = self.net.save(credentials.as_ref());
                         arming::clear_attempt();
@@ -602,6 +679,9 @@ impl<F: FlashOps> Writer<F> {
                         settings: target,
                     }
                 } else {
+                    let Some(_turn) = self.take_turn() else {
+                        return self.waiting();
+                    };
                     arming::set_attempt();
                     let saved = self.store.save(&target);
                     arming::clear_attempt();

@@ -5,8 +5,9 @@
 //! image has stayed healthy for `HEALTHY_MS` (the glue's test: transport
 //! ready, outputs verified stopped, startup probes finished), this arms the
 //! flash-lock hooks like the updater (`arming.rs`), erases the sector,
-//! programs the record and reads it back. An image already confirmed does
-//! nothing. A torn or failed write leaves the image unconfirmed, which only
+//! programs the record and reads it back, in the write turn
+//! (`interlock`), so never while a feed may move the outputs. An image
+//! already confirmed does nothing. A torn or failed write leaves the image unconfirmed, which only
 //! keeps KM0 counting.
 
 use core::fmt;
@@ -18,6 +19,7 @@ use wellfed_core::ota::{self, CONFIRM_LEN};
 use crate::flash::park::Mmio;
 use crate::flash_lock::arming::{self, Arming, Hooks, Poll};
 use crate::flash_lock::provider::Provider;
+use crate::interlock::{INTERLOCK, WriteStep, WriteTurn};
 use crate::sdk;
 use crate::trial::{self, CONFIRM_SECTOR};
 
@@ -138,6 +140,8 @@ pub struct Confirm {
     arming: Arming,
     healthy_since: Option<u32>,
     healthy_ms: u32,
+    /// The write's wait for the write turn.
+    turn: WriteTurn,
 }
 
 impl Confirm {
@@ -199,12 +203,17 @@ impl Confirm {
             },
 
             Stage::Write => {
+                // Not while a feed may move the outputs; still healthy after.
+                if self.turn.begin(&INTERLOCK, now) == WriteStep::Wait {
+                    return next(POLL_MS, None);
+                }
                 let record = ota::confirm_record(&trial::identity(), 0);
                 let mut readback = [0u8; CONFIRM_LEN];
                 let ok = flash.erase(CONFIRM_SECTOR)
                     && flash.program(CONFIRM_SECTOR, 0, &record)
                     && flash.read(CONFIRM_SECTOR, 0, &mut readback)
                     && readback == record;
+                INTERLOCK.end_write();
 
                 // The attempt ended in order either way, so a later boot must not skip.
                 arming::clear_attempt();

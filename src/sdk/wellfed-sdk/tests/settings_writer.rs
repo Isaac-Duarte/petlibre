@@ -13,6 +13,7 @@ use wellfed_hal::flash::park::Mmio;
 use wellfed_hal::flash::peer::MARKER_REGISTER;
 use wellfed_hal::flash_lock::arming::Hooks;
 use wellfed_hal::flash_lock::provider::Provider;
+use wellfed_hal::interlock::INTERLOCK;
 use wellfed_hal::keys::{self, Change, Requested};
 use wellfed_hal::rng;
 use wellfed_hal::sdk::{self, fake};
@@ -96,6 +97,7 @@ fn start() -> (MutexGuard<'static, ()>, Writer<Armed>, Provider) {
     unsafe { network::reset() };
     keys::reset();
     events::reset();
+    INTERLOCK.reset();
     ARMED.with(|a| a.set(true));
     (guard, Writer::default(), Provider::default())
 }
@@ -534,4 +536,107 @@ fn queued_events_are_appended_and_read_back_after_a_reboot() {
         None,
         "stale once a record lands"
     );
+}
+
+/// Every store the writer keeps defers its write while a feed holds the
+/// outputs, and completes it after the release, in order, with nothing lost.
+#[test]
+fn every_store_write_waits_for_a_feed_and_completes_after_it() {
+    use wellfed_core::store::net::Credentials;
+    use wellfed_core::transport::WifiResult;
+
+    let (_guard, mut writer, mut provider) = start();
+    fake::with(|h| h.adc_noise = 0x5a5a_1234);
+    assert_eq!(rng::start().result, Ok(()));
+    step(&mut writer, &mut provider); // open
+    step(&mut writer, &mut provider); // net open
+    let storage = || fake::with(|h| h.storage.clone());
+
+    // A feed holds the outputs before the first boot's seed and identity.
+    INTERLOCK.claim_feed(u32::MAX).unwrap();
+    let before = storage();
+    for _ in 0..5 {
+        assert_eq!(step(&mut writer, &mut provider), None);
+    }
+    assert_eq!(storage(), before, "no write while the outputs are claimed");
+    assert_eq!(keys::identity_since(0), None);
+    INTERLOCK.release_feed();
+    assert!(matches!(
+        step(&mut writer, &mut provider),
+        Some(Record::Keys {
+            saved: true,
+            identity: Identity::Created,
+            ..
+        })
+    ));
+    step(&mut writer, &mut provider); // events
+
+    // A feed, and during it every kind of write queued.
+    INTERLOCK.claim_feed(u32::MAX).unwrap();
+    for body in [[1; 16], [2; 16], [3; 16]] {
+        assert!(events::record(None, body));
+    }
+    assert!(matches!(
+        settings::request(SettingsFields {
+            volume: Some(7),
+            ..SettingsFields::default()
+        }),
+        SettingsResult::Current { pending: true, .. }
+    ));
+    let set = Credentials::new(b"net", b"password").unwrap();
+    assert!(matches!(
+        network::change(Some(set)),
+        WifiResult::Current { pending: true, .. }
+    ));
+    let phone = Change::Enroll {
+        key: [7; 32],
+        label: Label::new(b"phone").unwrap(),
+        role: Role::Owner,
+    };
+    assert_eq!(keys::request(phone), Requested::Queued);
+
+    let before = storage();
+    for _ in 0..20 {
+        assert_eq!(step(&mut writer, &mut provider), None);
+    }
+    assert_eq!(storage(), before, "no write while the outputs are claimed");
+    assert_eq!(events::last_seq(), None);
+    // Reads take no lease: answered during the feed.
+    assert_eq!(events::read_result(None), None, "asked");
+    step(&mut writer, &mut provider);
+    assert_eq!(events::read_result(None), Some(Read::End));
+
+    // At rest: each write in turn, the first right after the release.
+    INTERLOCK.release_feed();
+    assert_eq!(
+        step(&mut writer, &mut provider),
+        Some(changed(KeyChange::Enroll, KeyResult::Done, 1))
+    );
+    assert!(matches!(
+        step(&mut writer, &mut provider),
+        Some(Record::NetSaved { stored: true, .. })
+    ));
+    assert!(matches!(
+        step(&mut writer, &mut provider),
+        Some(Record::Saved { settings, .. }) if settings.volume == 7
+    ));
+    for _ in 0..3 {
+        step(&mut writer, &mut provider);
+    }
+    assert_eq!(events::last_seq(), Some(3));
+    assert_eq!(events::pending(), None);
+    assert!(!INTERLOCK.writing(), "every turn given back");
+    assert_eq!(INTERLOCK.status().writes_deferred, 2);
+
+    // The appends kept their order.
+    let mut after = None;
+    for body in [[1; 16], [2; 16], [3; 16]] {
+        events::read_result(after);
+        step(&mut writer, &mut provider);
+        let Some(Read::Record(record)) = events::read_result(after) else {
+            panic!("event after {after:?}");
+        };
+        assert_eq!(record.body, body);
+        after = Some(record.seq);
+    }
 }

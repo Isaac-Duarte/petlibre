@@ -30,13 +30,16 @@ fn a_feed_during_a_wifi_join_is_refused_busy() {
 
     let mut held = None;
     assert_eq!(
-        claim_outputs(&interlock, |why| held = Some(why)),
+        claim_outputs(&interlock, || 0, |_| {}, |why| held = Some(why)),
         Err(Refusal::Busy)
     );
     assert_eq!(held, Some(Held::Joining));
 
     interlock.end_join();
-    assert_eq!(claim_outputs(&interlock, |_| unreachable!()), Ok(()));
+    assert_eq!(
+        claim_outputs(&interlock, || 0, |_| {}, |_| unreachable!()),
+        Ok(())
+    );
 }
 
 #[test]
@@ -51,10 +54,72 @@ fn a_join_waits_out_the_longest_feed_and_no_longer() {
     assert!(longest <= CONFIG.optics_max_on_ms);
 
     let interlock = Interlock::new();
-    claim_outputs(&interlock, |_| unreachable!()).unwrap();
+    claim_outputs(&interlock, || 0, |_| {}, |_| unreachable!()).unwrap();
     let now = Cell::new(0_u32);
     let start = interlock.begin_join(|| now.get(), |ms| now.set(now.get() + ms));
     assert_eq!(start, JoinStart::Forced { ms: FEED_BOUND_MS });
+}
+
+#[test]
+fn a_store_write_waits_out_the_longest_feed_and_no_longer() {
+    use wellfed_fw_feeder::feeding::{FEED_BOUND_MS, claim_outputs};
+    use wellfed_sdk::hal::interlock::{Interlock, WriteStart, WriteStep, WriteTurn};
+
+    let interlock = Interlock::new();
+    claim_outputs(&interlock, || 0, |_| {}, |_| unreachable!()).unwrap();
+    let mut turn = WriteTurn::new();
+
+    assert_eq!(turn.begin(&interlock, 0), WriteStep::Wait);
+    assert_eq!(turn.begin(&interlock, FEED_BOUND_MS - 1), WriteStep::Wait);
+    assert_eq!(
+        turn.begin(&interlock, FEED_BOUND_MS),
+        WriteStep::Go(WriteStart::Forced { ms: FEED_BOUND_MS })
+    );
+}
+
+#[test]
+fn a_feed_waits_for_a_running_store_write_and_is_refused_past_the_wait() {
+    use wellfed_fw_feeder::feeding::claim_outputs;
+    use wellfed_proto::api::Refusal;
+    use wellfed_sdk::hal::interlock::{
+        Held, Interlock, WRITE_WAIT_MS, WriteStart, WriteStep, WriteTurn,
+    };
+    use std::cell::Cell;
+
+    let interlock = Interlock::new();
+    let mut turn = WriteTurn::new();
+    assert_eq!(turn.begin(&interlock, 0), WriteStep::Go(WriteStart::Free));
+
+    // The write ends while the feed waits: the feed goes ahead.
+    let now = Cell::new(0_u32);
+    let claimed = claim_outputs(
+        &interlock,
+        || now.get(),
+        |ms| {
+            now.set(now.get() + ms);
+            if now.get() >= 100 {
+                interlock.end_write();
+            }
+        },
+        |_| unreachable!(),
+    );
+    assert_eq!(claimed, Ok(()));
+    assert!(now.get() < WRITE_WAIT_MS);
+    interlock.release_feed();
+
+    // A write that never ends refuses the feed once the wait is over.
+    assert_eq!(turn.begin(&interlock, 0), WriteStep::Go(WriteStart::Free));
+    let now = Cell::new(0_u32);
+    let mut held = None;
+    let claimed = claim_outputs(
+        &interlock,
+        || now.get(),
+        |ms| now.set(now.get() + ms),
+        |why| held = Some(why),
+    );
+    assert_eq!(claimed, Err(Refusal::Busy));
+    assert_eq!(held, Some(Held::Writing));
+    assert_eq!(now.get(), WRITE_WAIT_MS);
 }
 
 #[test]

@@ -7,6 +7,21 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
+**October 24, 11 pm: full QA of `ccf3e2d`…`51b5311` (physical, no owner action, no motion; uncommitted).**
+- **Host:** `make check` (988 tests), the firstboot build and audits of every firmware and variant (14), `qa` `device` and `firstboot`, `make check-web`, and `make check-fixtures` all passed. The first `check-fixtures` failed `wellfed-emu`'s `every_ota_step_and_marker_cut_keeps_a_bootable_bank` with `Loader did not reach a reviewed boundary` while three review agents were compiling. It passed alone 3 of 3 and the whole target then passed. `factory.rs:134` gives `emu_start` a 1 s wall-clock timeout next to its 4,000-instruction budget, so load can trip it.
+- **Bench (`qa-20261024-05`, `itest --build --power --destructive --off-seconds 10 --keep-going`):** all eight functional scenarios passed (`stock-roundtrip` skipped, no `--stock`). `ota-recovery` stopped `stage=hash`, `range` and `timeout`. `ota-power-cuts` restarted the download at 16/163 after a cut at 48/163, and counted trial boot 1 again after the trial cut. No `PLFLT` in any capture; the 12 `reset=00100000` boots are the design's watchdog restarts (give-way, activation, the failing trial).
+- **Performance batch on hardware:** with Wi-Fi up, `e613c1bf…` keeps about 143,900–144,500 B of heap free (least ever about 142,600), against 136,032 (134,432) for the fw16 owner builds: the 16 KiB service stack's 8 KiB. Its offer checks, a give-way and the confirmations all ran on that stack.
+- **Static reviews** (three, independent; not fixed):
+  - **Firmware:** an Idle `acquire()` failure faults the owner with `init_failed` false (`hal/src/owner/state.rs` `poll`), so it never beats again and the watchdog resets; a persistent sensor fault would reset-loop a confirmed image.
+  - **Firmware variants:** the `entropy` variant's `adc::close()` runs under the owner's open board. The `owner-stall` variant's 3 s stall is now inside the 10 s idle gap, so its summary is stale.
+  - **Server:** a `Busy` refusal is answered 503 "retry with the same key", but the feeder remembers refusals per write id (`wellfed-feeder/src/api.rs` `remember`), so such a retry replays Busy.
+  - **Tools:** the stack audit's `TASK` accepts a generic entry it cannot resolve, so it would be left unaudited, and `INDIRECT` misses `blx ip/fp/sl/sb` and `bx rN`. There is no undercount today.
+- **Flash now:**
+  - **Bank 1:** `feeder` v163, build `e613c1bf…`, image `4bd94f7e…` (`qa-20261024-05-good-review`), confirmed.
+  - **Bank 0:** `feeder` `262a9f37…`, unchanged.
+  - **Next manifest version:** 164.
+- **Bench state:** as found: feeder on (relay 1), UART relays 3 and 4 closed, hotspot down, no server. The analyzer is still clipped at the motor.
+
 **October 25, morning: FW16 owner stall run and an idle gap (physical, no motion; uncommitted).**
 - **`owner-stall` (`fw16-stall-01`, v157):** after a long idle boot (`fw16-stall-04`), the 600 ms stall at 2 min changed nothing; the 3 s stall at 3 min made the runtime stop feeding at `owner_age=1033` (`owner_gap=1000`) mid-stall, the owner latched `fault=5` (progress) once the loop resumed, and the watchdog reset the board.
 - **Found:** boots right after a watchdog reset (`fw16-stall-03`) faulted about 10 s in with no stall: the build was already confirmed, so the owner opened within about 5 s, and the Wi-Fi driver's WPA3 SAE handshake (the hotspot rejects the first association, status 30) held the priority-2 loop off past the 1 s gap. Every boot repeated it, a reset about every 15 s.

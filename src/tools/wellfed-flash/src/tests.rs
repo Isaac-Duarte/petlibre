@@ -17,9 +17,9 @@ use serde_json::{Value, json};
 use crate::evidence::Root;
 use crate::evidence::journal::Receipt;
 use crate::evidence::session::{Context, Pin};
+use crate::fixtures::{synthetic_payload, wrap};
 use crate::link::protocol::{self, ACK, CAPACITY, EOT, NAK, Port, SECTOR, STX};
 use crate::link::sector::{self, Baseline, START};
-use crate::ota::tests::{synthetic_payload, wrap};
 use crate::writers::development::{self, Acquired, BANK0, BANK1, Layout, MARKER, Update};
 use wellfed_formats::canonical::sha256;
 

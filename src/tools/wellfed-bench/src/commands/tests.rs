@@ -254,7 +254,11 @@ impl Tools for FakeTools {
         if code == 0 && args[0] == "review" {
             let manifest = json!({"startup_identity": BUILD, "startup_motion_policy": null,
                                   "firmware": "feeder", "variant": "stall"});
-            freeze(&calls.root.join(flag(args, "--output")), Some(&manifest));
+            freeze(
+                &calls.root,
+                &calls.root.join(flag(args, "--output")),
+                &manifest,
+            );
         }
         Ok(code)
     }
@@ -941,43 +945,15 @@ fn update_traffic_matches_observed_installs() {
 
 const BUILD: &str = "8a13e59efa15e56b5f5e32825909dc45e381a2027abc65d8de6658c40b302447";
 
-/// Freeze a review in `review` as `wellfed-build review` would: a
-/// signable image carrying the build's identity, the build manifest, and a
-/// review.json binding both by hash. No manifest freezes stock.
-fn freeze(review: &Path, manifest: Option<&Value>) {
-    use wellfed_formats::canonical::sha256;
-
-    fs::create_dir_all(review).unwrap();
-    let mut image = vec![0u8; 32];
-    image.extend(b"81958711");
-    image.extend(format!("PLFW1 start build={BUILD} bank=").as_bytes());
-    image.resize(32 + 4096, 0x5a);
-    fs::write(review.join("image.bin"), &image).unwrap();
-
-    let ota_sha256 = sha256(&image);
-    let (image_kind, manifest_sha256, details) = match manifest {
-        Some(manifest) => {
-            let text = manifest.to_string();
-            fs::write(review.join("build-manifest.json"), &text).unwrap();
-            let details = json!({"startup_mains": null, "layout": null, "pinmap": null,
-                                 "factory_mapping": [], "scope": "test"});
-            ("build", json!(sha256(text.as_bytes())), details)
-        }
-        None => ("stock", Value::Null, json!({"stock_sha256": ota_sha256})),
-    };
-    let frozen = json!({
-        "schema_version": 1,
-        "kind": "plaf103_development_image_review",
-        "image_kind": image_kind,
-        "ota_sha256": ota_sha256,
-        "payload_sha256": sha256(&image[32..]),
-        "payload_bytes": 4096,
-        "manifest_sha256": manifest_sha256,
-        "review": details,
-        "reviewer_sha256": "3".repeat(64),
-        "application_boot_verified": false
-    });
-    fs::write(review.join("review.json"), frozen.to_string()).unwrap();
+/// Freeze a build review in `review` under `root` as `wellfed-build
+/// review` would, verifiable as `wellfed-flash` verifies one: a synthetic
+/// image carrying the build's identity, the build manifest with `manifest`'s
+/// fields, and a review.json binding both.
+fn freeze(root: &Path, review: &Path, manifest: &Value) {
+    let image = wellfed_flash::fixtures::image_carrying(
+        format!("PLFW1 start build={BUILD} bank=").as_bytes(),
+    );
+    wellfed_flash::fixtures::freeze_build(root, review, &image, manifest).unwrap();
 }
 
 /// The signed manifest a run wrote, as the firmware reads it.
@@ -997,7 +973,7 @@ fn ota_review(rig: &Rig, manifest: Value) -> OtaArgs {
     if let Some(fields) = manifest.as_object_mut() {
         fields.entry("firmware").or_insert_with(|| json!("feeder"));
     }
-    freeze(&review, Some(&manifest));
+    freeze(&rig.bench.root, &review, &manifest);
     OtaArgs {
         name: "unit".into(),
         review: Some("private/verification/review".into()),
@@ -1082,34 +1058,27 @@ fn ota_signs_one_above_the_highest_signed_version_then_offers() {
     assert!(rig.board.log().is_empty(), "no relay change");
 }
 
+/// Only the pinned stock image may be reviewed as stock: relabelling a
+/// build would skip the motion gate and the health check.
 #[test]
-fn ota_installs_a_stock_review_by_its_payload_hash_without_health() {
+fn ota_refuses_a_stock_review_of_another_image() {
     let mut rig = rig();
-    let mut args = plain_review(&rig);
-    let review = rig.bench.root.join(VERIFICATION).join("stock-review");
-    freeze(&review, None);
-    args.review = Some("private/verification/stock-review".into());
-    rig.tools.0.borrow_mut().rx.push_back(
-        b"PLWCH1 give_way=1 version=1 restart=1\r\nPLOTA1 activated version=1\r\n\
-          [0]app_main:version:1.1.15 DATE:Jul 16 2026\r\n"
-            .to_vec(),
+    let args = ota_review(
+        &rig,
+        json!({"startup_identity": BUILD, "startup_motion_policy": "fw16-pulse-v1"}),
     );
+    let review = rig.bench.root.join(VERIFICATION).join("review");
+    fs::remove_file(review.join("build-manifest.json")).unwrap();
+    let mut frozen: Value =
+        serde_json::from_slice(&fs::read(review.join("review.json")).unwrap()).unwrap();
+    frozen["image_kind"] = json!("stock");
+    frozen["manifest_sha256"] = Value::Null;
+    frozen["review"] = json!({"stock_sha256": frozen["ota_sha256"]});
+    fs::write(review.join("review.json"), frozen.to_string()).unwrap();
 
-    assert_eq!(rig.bench.ota(&args).unwrap(), 0);
-
-    let payload = fs::read(review.join("image.bin")).unwrap();
-    let signed = signed_by_bench(&rig, "unit-v1.manifest");
-    assert_eq!(
-        wellfed_formats::hex::encode(&signed.build_id),
-        wellfed_formats::canonical::sha256(&payload[32..])
-    );
-
-    let calls = rig.tools.0.borrow();
-    let [offer] = &calls.local[..] else {
-        panic!("{:?}", calls.local)
-    };
-    assert_eq!(offer[0], "ota-offer");
-    assert!(calls.queries.is_empty(), "stock has no status to poll");
+    let error = rig.bench.ota(&args).unwrap_err().to_string();
+    assert!(error.contains("Only original stock"), "{error}");
+    assert!(rig.tools.0.borrow().local.is_empty());
 }
 
 #[test]
@@ -1164,11 +1133,12 @@ fn ota_refuses_a_directory_that_is_not_a_frozen_review() {
 
     // An image swapped after the freeze.
     fs::write(review.join("review.json"), described).unwrap();
-    let mut image = fs::read(review.join("image.bin")).unwrap();
-    image[100] ^= 1;
-    fs::write(review.join("image.bin"), image).unwrap();
+    let other = wellfed_flash::fixtures::image_carrying(
+        format!("PLFW1 start build={BUILD} bank=1").as_bytes(),
+    );
+    fs::write(review.join("image.bin"), other).unwrap();
     let error = rig.bench.ota(&args).unwrap_err().to_string();
-    assert!(error.contains("image.bin differs"), "{error}");
+    assert!(error.contains("Frozen image/review mismatch"), "{error}");
 
     assert!(rig.tools.0.borrow().local.is_empty());
     assert!(
@@ -1408,7 +1378,7 @@ fn old_review(rig: &Rig, name: &str, identity: &str, complete: bool) {
     let review = rig.bench.root.join(VERIFICATION).join(name);
     let manifest = json!({"startup_identity": identity, "startup_motion_policy": null,
                           "firmware": "feeder"});
-    freeze(&review, Some(&manifest));
+    freeze(&rig.bench.root, &review, &manifest);
     if !complete {
         fs::remove_file(review.join("review.json")).unwrap();
     }

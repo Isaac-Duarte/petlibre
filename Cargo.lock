@@ -2288,6 +2288,7 @@ dependencies = [
  "wellfed-build",
  "wellfed-client",
  "wellfed-core",
+ "wellfed-flash",
  "wellfed-formats",
  "wellfed-proto",
  "rust-embed",

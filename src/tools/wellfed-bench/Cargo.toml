@@ -17,6 +17,7 @@ jiff = "0.2.38"
 mdns-sd = "0.21.6"
 wellfed-build = { path = "../wellfed-build" }
 wellfed-client.workspace = true
+wellfed-flash = { path = "../wellfed-flash" }
 wellfed-core.workspace = true
 wellfed-proto.workspace = true
 futures-util = { version = "0.3", default-features = false, optional = true }
@@ -31,6 +32,7 @@ tokio = { workspace = true, features = ["rt-multi-thread", "net", "time", "macro
 uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
+wellfed-flash = { path = "../wellfed-flash", features = ["fixtures"] }
 tempfile.workspace = true
 tower = { version = "0.5", features = ["util"] }
 ts-rs = { version = "12", features = ["serde-json-impl"] }

@@ -21,6 +21,9 @@ pub struct Frozen {
     pub image: Vec<u8>,
     /// SHA-256 of the exact `review.json` bytes, which plans bind.
     pub review_sha256: String,
+    pub review: ImageReview,
+    /// The verified build manifest; `None` only for the original stock image.
+    pub manifest: Option<BuildManifest>,
 }
 
 pub fn frozen(root: &Root, directory: &Path, layout: &Layout) -> Result<Frozen> {
@@ -40,20 +43,25 @@ pub fn frozen(root: &Root, directory: &Path, layout: &Layout) -> Result<Frozen> 
         "Frozen image/review mismatch",
     )?;
 
-    match (review.image_kind, &review.review) {
-        (ImageKind::Stock, Details::Stock { .. }) => require(
-            sha256(&image) == crate::ota::STOCK_SHA256 && review.manifest_sha256.is_none(),
-            "Only original stock may omit a build manifest",
-        )?,
+    let manifest = match (review.image_kind, &review.review) {
+        (ImageKind::Stock, Details::Stock { .. }) => {
+            require(
+                sha256(&image) == crate::ota::STOCK_SHA256 && review.manifest_sha256.is_none(),
+                "Only original stock may omit a build manifest",
+            )?;
+            None
+        }
         (ImageKind::Build, Details::Build(details)) => {
-            build(root, directory, &review, details, &image)?;
+            Some(build(root, directory, &review, details, &image)?)
         }
         _ => return refuse("Review details do not match the reviewed image kind"),
-    }
+    };
 
     Ok(Frozen {
         image,
         review_sha256: sha256(&raw),
+        review,
+        manifest,
     })
 }
 
@@ -63,7 +71,7 @@ fn build(
     review: &ImageReview,
     details: &BuildDetails,
     image: &[u8],
-) -> Result<()> {
+) -> Result<BuildManifest> {
     let manifest_raw = root.private_file(&directory.join("build-manifest.json"))?;
     require(
         review.manifest_sha256.as_deref() == Some(&sha256(&manifest_raw)),
@@ -116,5 +124,6 @@ fn build(
             && m.checks.source_snapshot_unchanged
             && m.checks.staged_sources_without_diagnostics,
         "Incomplete build/mapping review",
-    )
+    )?;
+    Ok(m)
 }

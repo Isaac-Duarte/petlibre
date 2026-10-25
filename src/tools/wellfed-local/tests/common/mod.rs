@@ -134,7 +134,10 @@ pub fn container(len: usize, fill: impl Fn(usize) -> u8) -> Vec<u8> {
 }
 
 /// A manifest for `container` signed with `key`, as `wellfed-build sign`
-/// writes one from a frozen review.
+/// writes one from a frozen review. A restatement of `wellfed-core::ota`'s
+/// format rather than the real signer: that one signs only a verified
+/// review, which these delivery fixtures are not, and this file goes with
+/// the crate when its MQTT offers move to the device API.
 pub fn signed(key: &SigningKey, container: &[u8], version: u32, build_id: [u8; 32]) -> Vec<u8> {
     let payload = firmware::payload(container).unwrap();
     let body = ota::manifest_body(&ota::Manifest {

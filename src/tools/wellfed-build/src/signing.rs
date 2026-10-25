@@ -3,13 +3,16 @@
 //!
 //! The firmware accepts any image whose manifest the embedded key signed,
 //! so the signer is the last place a reviewed build can be swapped for an
-//! unreviewed one. [`Frozen::open`] therefore re-checks a review directory
-//! as `wellfed-build review` left it: `image.bin` must hash to the review's
-//! `ota_sha256`, a build's `build-manifest.json` must hash to its
-//! `manifest_sha256`, and the image must carry the startup identity that
-//! manifest records. The build ID and the motion policy come from that
-//! frozen manifest, never from the caller, and [`Frozen::sign`] refuses a
-//! motion image unless the caller names the exact policy it is attending.
+//! unreviewed one. [`Frozen::open`] therefore verifies a review directory
+//! exactly as `wellfed-flash` does before it installs one
+//! (`wellfed_flash::evidence::review::frozen`): the image, payload and
+//! manifest hashes, the pinned stock hash for a stock review, the first-boot
+//! profile against the SDK lock, the manifest's `OTA_All.bin`, and the
+//! recorded audits. It also requires the image to carry the manifest's
+//! startup identity as text. The build ID and the motion policy come from
+//! that verified manifest, never from the caller, and [`Frozen::sign`]
+//! refuses a motion image unless the caller names the exact policy it is
+//! attending.
 //!
 //! The key is the bench key in `private/ota-key.json` ([`KeyScope::Bench`]).
 //! A public release needs an offline release key that never sits in a
@@ -18,18 +21,18 @@
 //! The manifest bytes are `wellfed-core::ota`'s format, which the firmware
 //! verifies: a test pins them byte for byte.
 
-use std::fs;
 use std::path::Path;
 
 use ed25519_dalek::{Signer, SigningKey};
 use wellfed_core::ota::{self, MANIFEST_LEN, MARKER, Manifest};
-use wellfed_flash::evidence::write_new;
-use wellfed_formats::canonical::sha256;
+use wellfed_flash::evidence::review::frozen;
+use wellfed_flash::evidence::{Root, write_new};
+use wellfed_flash::writers::development::BANK1;
 use wellfed_formats::credentials::{KeyScope, OtaKeyFile};
 use wellfed_formats::hex;
 use wellfed_formats::manifest::BuildManifest;
 use wellfed_formats::private::{SYSTEM_RANDOM, random};
-use wellfed_formats::review::{self, Details, ImageKind, ImageReview};
+use wellfed_formats::review::ImageKind;
 use sha2::{Digest, Sha256};
 
 use crate::{Error, Result, require};
@@ -67,6 +70,11 @@ impl Key {
     pub fn load(path: &Path) -> Result<Self> {
         let file: OtaKeyFile = wellfed_formats::load(path)?;
         require(file.version == 1, "Unsupported key file version")?;
+        // Every scope a key file can name must be decided here: a release
+        // key is never one this signer loads from a checkout.
+        match file.scope {
+            KeyScope::Bench => {}
+        }
         let seed = hex::decode::<32>(&file.seed)
             .ok_or_else(|| Error::Refused("Key file seed is not 32 hex bytes".into()))?;
 
@@ -93,7 +101,7 @@ pub enum Motion<'a> {
     Attended(&'a str),
 }
 
-/// A review directory, re-checked against its own `review.json`.
+/// A review directory, verified as `wellfed-flash` verifies one.
 #[derive(Debug)]
 pub struct Frozen {
     image: Vec<u8>,
@@ -103,73 +111,47 @@ pub struct Frozen {
 }
 
 impl Frozen {
-    /// Open `review`, refusing a directory without `review.json` and an
-    /// `image.bin` or `build-manifest.json` that differs from it.
-    pub fn open(review: &Path) -> Result<Self> {
-        let described = review.join("review.json");
+    /// Open `review`, a directory under `root`'s `private/`, refusing one
+    /// without `review.json` or that differs from what was frozen.
+    pub fn open(root: &Path, review: &Path) -> Result<Self> {
         require(
-            described.is_file(),
+            review.join("review.json").is_file(),
             format!("{} has no review.json", review.display()),
         )?;
-        let frozen: ImageReview = wellfed_formats::load(&described)?;
-        require(
-            frozen.schema_version == review::SCHEMA_VERSION && frozen.kind == review::KIND,
-            "Unsupported review.json",
-        )?;
+        let verified = frozen(&Root::new(root)?, review, &BANK1)?;
+        let payload = verified.image.get(CONTAINER_HEADER..).unwrap_or_default();
 
-        let image = fs::read(review.join("image.bin"))?;
-        require(
-            sha256(&image) == frozen.ota_sha256,
-            "image.bin differs from its frozen review",
-        )?;
-        let payload = image.get(CONTAINER_HEADER..).unwrap_or_default();
-        require(
-            sha256(payload) == frozen.payload_sha256,
-            "image.bin's payload differs from its frozen review",
-        )?;
-
-        let (build_id, manifest) = match (frozen.image_kind, &frozen.review) {
-            // Stock has no startup identity: its payload hash names it, and
-            // can never equal a replacement build's identity.
-            (ImageKind::Stock, Details::Stock { stock_sha256 }) => {
-                require(
-                    *stock_sha256 == frozen.ota_sha256,
-                    "Stock review's image hash differs from its stock hash",
-                )?;
-                (id_bytes(&frozen.payload_sha256)?, None)
-            }
-            (ImageKind::Build, Details::Build(_)) => {
-                let raw = fs::read(review.join("build-manifest.json"))?;
-                require(
-                    frozen.manifest_sha256.as_deref() == Some(sha256(&raw).as_str()),
-                    "build-manifest.json differs from its frozen review",
-                )?;
-                let manifest: BuildManifest = serde_json::from_slice(&raw)?;
+        let kind = verified.review.image_kind;
+        let build_id = match (kind, &verified.manifest) {
+            // Stock (the pinned image only) has no startup identity: its
+            // payload hash names it, and can never equal a build's identity.
+            (ImageKind::Stock, None) => id_bytes(&verified.review.payload_sha256)?,
+            (ImageKind::Build, Some(manifest)) => {
                 let identity = manifest.startup_identity.as_deref().unwrap_or_default();
                 let build_id = id_bytes(identity)?;
-                // Every Rust-linked image prints its identity at startup, so
-                // the reviewed identity is in the image as text.
+                // Every Rust-linked image prints its identity at startup.
                 require(
                     contains(payload, identity.as_bytes()),
                     "image.bin does not carry the reviewed build's identity",
                 )?;
-                (build_id, Some(manifest))
+                build_id
             }
             _ => {
                 return Err(Error::Refused(
-                    "review.json's details do not match its image kind".into(),
+                    "Frozen review's kind and manifest disagree".into(),
                 ));
             }
         };
 
         Ok(Self {
-            image,
-            kind: frozen.image_kind,
+            image: verified.image,
+            kind,
             build_id,
-            manifest,
+            manifest: verified.manifest,
         })
     }
 
+    /// Stock or a build, as the verified review records it.
     pub fn kind(&self) -> ImageKind {
         self.kind
     }
@@ -257,6 +239,8 @@ fn contains(haystack: &[u8], needle: &[u8]) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use wellfed_core::ota::{ManifestError, SECTOR};
     use serde_json::json;
 
@@ -286,37 +270,21 @@ mod tests {
         assert_eq!(hex::encode(&signed), GOLDEN);
     }
 
-    /// A frozen build review of `image` in a new directory under `parent`.
-    fn freeze(parent: &Path, image: &[u8], motion: Option<&str>) -> std::path::PathBuf {
-        let review = parent.join("review");
-        fs::create_dir(&review).unwrap();
-        let manifest = json!({"startup_identity": BUILD, "startup_motion_policy": motion,
-                              "firmware": "feeder"})
-        .to_string();
-        fs::write(review.join("image.bin"), image).unwrap();
-        fs::write(review.join("build-manifest.json"), &manifest).unwrap();
-        let frozen = json!({
-            "schema_version": 1,
-            "kind": review::KIND,
-            "image_kind": "build",
-            "ota_sha256": sha256(image),
-            "payload_sha256": sha256(&image[CONTAINER_HEADER..]),
-            "payload_bytes": image.len() - CONTAINER_HEADER,
-            "manifest_sha256": sha256(manifest.as_bytes()),
-            "review": {"startup_mains": null, "layout": null, "pinmap": null,
-                       "factory_mapping": [], "scope": "test"},
-            "reviewer_sha256": "3".repeat(64),
-            "application_boot_verified": false
-        });
-        fs::write(review.join("review.json"), frozen.to_string()).unwrap();
-        review
+    /// A checkout with `private/`, and a frozen build review of `image`
+    /// in it.
+    fn freeze(image: &[u8], motion: Option<&str>) -> (tempfile::TempDir, std::path::PathBuf) {
+        let checkout = tempfile::tempdir().unwrap();
+        let review = checkout.path().join("private/review");
+        let fields = json!({"startup_identity": BUILD, "startup_motion_policy": motion,
+                            "firmware": "feeder"});
+        wellfed_flash::fixtures::freeze_build(checkout.path(), &review, image, &fields).unwrap();
+        (checkout, review)
     }
 
     fn build_image() -> Vec<u8> {
-        let mut image = container(SECTOR + 700, |i| (i % 253) as u8);
-        let text = format!("PLFW1 start build={BUILD} bank=");
-        image[100..100 + text.len()].copy_from_slice(text.as_bytes());
-        image
+        wellfed_flash::fixtures::image_carrying(
+            format!("PLFW1 start build={BUILD} bank=").as_bytes(),
+        )
     }
 
     #[test]
@@ -331,18 +299,22 @@ mod tests {
         assert_eq!(hex::encode(&key.public()), public);
 
         let image = build_image();
-        let frozen = Frozen::open(&freeze(dir.path(), &image, None)).unwrap();
-        assert_eq!(frozen.build_id(), BUILD);
+        let (checkout, review) = freeze(&image, None);
+        let frozen = Frozen::open(checkout.path(), &review).unwrap();
+        assert_eq!(
+            (frozen.kind(), frozen.build_id()),
+            (ImageKind::Build, BUILD.into())
+        );
         let signed = frozen.sign(&key, 9, Motion::Refused).unwrap();
 
         let parsed = ota::parse_manifest(&signed, &key.public(), 8).unwrap();
         assert_eq!(
             (
                 parsed.version,
-                parsed.image_len,
+                parsed.image_len as usize,
                 hex::encode(&parsed.build_id)
             ),
-            (9, (SECTOR + 700) as u32, BUILD.to_string())
+            (9, image.len() - CONTAINER_HEADER, BUILD.to_string())
         );
         assert_eq!(
             ota::parse_manifest(&signed, &key.public(), 9),
@@ -388,27 +360,31 @@ mod tests {
         assert!(manifest(&key, &large, 1, [0; 32]).is_err());
     }
 
-    fn refusal(review: &Path) -> String {
-        Frozen::open(review).unwrap_err().to_string()
+    fn refusal(checkout: &Path, review: &Path) -> String {
+        Frozen::open(checkout, review).unwrap_err().to_string()
     }
 
     #[test]
     fn an_image_that_differs_from_its_review_is_refused() {
-        let dir = tempfile::tempdir().unwrap();
         let image = build_image();
-        let review = freeze(dir.path(), &image, None);
+        let (checkout, review) = freeze(&image, None);
+        let refused = |text: &str| {
+            let error = refusal(checkout.path(), &review);
+            assert!(error.contains(text), "{error}");
+        };
 
         // No review.json: nothing says what was reviewed.
         let described = fs::read(review.join("review.json")).unwrap();
         fs::remove_file(review.join("review.json")).unwrap();
-        assert!(refusal(&review).contains("no review.json"));
+        refused("no review.json");
         fs::write(review.join("review.json"), &described).unwrap();
 
-        // A swapped image.
-        let mut other = image.clone();
-        other[CONTAINER_HEADER + 9] ^= 1;
+        // A swapped image: a valid container with the same identity.
+        let other = wellfed_flash::fixtures::image_carrying(
+            format!("PLFW1 start build={BUILD} bank=1").as_bytes(),
+        );
         fs::write(review.join("image.bin"), &other).unwrap();
-        assert!(refusal(&review).contains("image.bin differs"));
+        refused("Frozen image/review mismatch");
         fs::write(review.join("image.bin"), &image).unwrap();
 
         // An edited build ID or motion policy in the manifest.
@@ -418,24 +394,22 @@ mod tests {
             manifest.replace("null", "\"fw16-pulse-v1\""),
         ] {
             fs::write(review.join("build-manifest.json"), edited).unwrap();
-            assert!(refusal(&review).contains("build-manifest.json differs"));
+            refused("Frozen manifest mismatch");
         }
     }
 
     #[test]
     fn a_review_of_an_image_without_its_identity_is_refused() {
-        let dir = tempfile::tempdir().unwrap();
-        let image = container(SECTOR, |_| 0);
-        let review = freeze(dir.path(), &image, None);
-        assert!(refusal(&review).contains("identity"));
+        let image = wellfed_flash::fixtures::image_carrying(b"no identity here");
+        let (checkout, review) = freeze(&image, None);
+        assert!(refusal(checkout.path(), &review).contains("identity"));
     }
 
     #[test]
     fn a_motion_image_needs_its_exact_policy_attended() {
-        let dir = tempfile::tempdir().unwrap();
         let key = Key(SigningKey::from_bytes(&[2; 32]));
-        let review = freeze(dir.path(), &build_image(), Some("fw16-pulse-v1"));
-        let frozen = Frozen::open(&review).unwrap();
+        let (checkout, review) = freeze(&build_image(), Some("fw16-pulse-v1"));
+        let frozen = Frozen::open(checkout.path(), &review).unwrap();
         assert_eq!(frozen.motion_policy(), Some("fw16-pulse-v1"));
 
         for motion in [Motion::Refused, Motion::Attended("fw16-other-v1")] {
@@ -449,27 +423,42 @@ mod tests {
         );
     }
 
+    /// A review that calls an image stock signs only the pinned stock
+    /// image: otherwise any build, a motion build included, could be
+    /// relabelled to skip the motion and health checks.
     #[test]
-    fn a_stock_review_is_named_by_its_payload_hash() {
-        let dir = tempfile::tempdir().unwrap();
-        let review = dir.path().join("stock");
-        fs::create_dir(&review).unwrap();
-        let image = container(SECTOR, |i| (i % 7) as u8);
-        fs::write(review.join("image.bin"), &image).unwrap();
-        let payload = sha256(&image[CONTAINER_HEADER..]);
-        let frozen = json!({
-            "schema_version": 1, "kind": review::KIND, "image_kind": "stock",
-            "ota_sha256": sha256(&image), "payload_sha256": payload,
-            "payload_bytes": SECTOR, "manifest_sha256": null,
-            "review": {"stock_sha256": sha256(&image)},
-            "reviewer_sha256": "3".repeat(64), "application_boot_verified": false
-        });
+    fn a_stock_review_of_another_image_is_refused() {
+        let image = build_image();
+        let (checkout, review) = freeze(&image, Some("fw16-pulse-v1"));
+        fs::remove_file(review.join("build-manifest.json")).unwrap();
+        let mut frozen: serde_json::Value =
+            serde_json::from_slice(&fs::read(review.join("review.json")).unwrap()).unwrap();
+        frozen["image_kind"] = json!("stock");
+        frozen["manifest_sha256"] = serde_json::Value::Null;
+        frozen["review"] = json!({"stock_sha256": frozen["ota_sha256"]});
         fs::write(review.join("review.json"), frozen.to_string()).unwrap();
 
-        let frozen = Frozen::open(&review).unwrap();
+        let error = refusal(checkout.path(), &review);
+        assert!(error.contains("Only original stock"), "{error}");
+    }
+
+    /// The pinned stock image, frozen by `wellfed-build review stock`, is
+    /// named by its payload hash. Needs the private stock image.
+    #[test]
+    #[ignore = "needs the pinned stock image under private/"]
+    fn the_pinned_stock_review_is_named_by_its_payload_hash() {
+        let repo = crate::Repo::here().unwrap();
+        let scratch = tempfile::tempdir_in(repo.private()).unwrap();
+        let output = scratch.path().join("stock");
+        let frozen_review =
+            crate::review::freeze(&repo, ImageKind::Stock, Path::new("unused"), &output).unwrap();
+
+        let frozen = Frozen::open(&repo.root, &output).unwrap();
         assert_eq!(
             (frozen.kind(), frozen.build_id()),
-            (ImageKind::Stock, payload)
+            (ImageKind::Stock, frozen_review.payload_sha256)
         );
+        let key = Key(SigningKey::from_bytes(&[4; 32]));
+        assert!(frozen.sign(&key, 1, Motion::Refused).is_ok());
     }
 }

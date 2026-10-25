@@ -13,7 +13,7 @@ use crate::error::{Result, require};
 /// without a build manifest.
 pub const STOCK_SHA256: &str = "05147476fc70c91cc77ad7da6d6772376b2081d460ac7b1912e2d73868a09498";
 /// Each image header's first two words: ASCII `81958711`, the loader marker.
-const IMAGE_MAGIC: [u32; 2] = [0x35393138, 0x31313738];
+pub(crate) const IMAGE_MAGIC: [u32; 2] = [0x35393138, 0x31313738];
 
 fn words(data: &[u8], at: usize) -> [u32; 8] {
     std::array::from_fn(|i| {
@@ -130,50 +130,9 @@ pub fn images(payload: &[u8]) -> Result<Vec<Image>> {
 }
 
 #[cfg(test)]
-pub mod tests {
+mod tests {
     use super::*;
-
-    /// A structurally valid synthetic payload: never a boot candidate.
-    pub fn synthetic_payload(km0: usize, km4: usize, seed: u8) -> Vec<u8> {
-        fn image(out: &mut Vec<u8>, address: u32, body: usize, seed: u8) {
-            for word in [IMAGE_MAGIC[0], IMAGE_MAGIC[1], body as u32, address] {
-                out.extend_from_slice(&word.to_le_bytes());
-            }
-            out.extend_from_slice(&[0xff; 16]);
-            out.extend((0..body).map(|i| (i as u8).wrapping_mul(31).wrapping_add(seed)));
-        }
-
-        let mut out = Vec::new();
-        image(&mut out, 0x0C00_0020, km0, seed);
-        image(&mut out, 0x0008_3000, 64, seed);
-        out.resize((out.len() + 4095) & !4095, 0xff);
-        image(&mut out, 0x0E00_0020, km4, seed ^ 0x55);
-        image(&mut out, 0x1000_5000, 64, seed);
-        image(&mut out, 0x0200_0020, 0, seed);
-        out.resize((out.len() + 4095) & !4095, 0xff);
-        out
-    }
-
-    pub fn wrap(payload: &[u8]) -> Vec<u8> {
-        let sum = payload
-            .iter()
-            .fold(0u32, |sum, byte| sum.wrapping_add(*byte as u32));
-        let mut out = Vec::new();
-        for word in [
-            0xffff_ffff,
-            1,
-            u32::from_le_bytes(*b"OTA1"),
-            24,
-            sum,
-            payload.len() as u32,
-            32,
-            0xffff_ffff,
-        ] {
-            out.extend_from_slice(&word.to_le_bytes());
-        }
-        out.extend_from_slice(payload);
-        out
-    }
+    use crate::fixtures::{synthetic_payload, wrap};
 
     #[test]
     fn synthetic_images_pass_and_damage_is_refused() {

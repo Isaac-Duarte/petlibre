@@ -24,5 +24,8 @@ tempfile.workspace = true
 thiserror.workspace = true
 toml = { version = "1", default-features = false, features = ["parse", "serde", "std"] }
 
+[dev-dependencies]
+wellfed-flash = { version = "0.1.0", path = "../wellfed-flash", features = ["fixtures"] }
+
 [lints]
 workspace = true

@@ -20,16 +20,16 @@
 
 use std::fmt;
 use std::fs;
-use std::io::Write;
-use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use clap::Args;
 use wellfed_build::signing::{Frozen, KEY_PATH, Key, Motion};
 use wellfed_core::record::{Record, tag};
+use wellfed_flash::evidence::write_new;
 use wellfed_formats::capture::SerialEvent;
 use wellfed_formats::manifest::BuildManifest;
+use wellfed_formats::review::ImageKind;
 
 use super::Bench;
 use crate::config::{CAPTURES, VERIFICATION};
@@ -977,17 +977,23 @@ impl Bench {
         // Only a frozen review signs: its review.json binds the image, and
         // for a build the manifest that names its identity and motion.
         let review = self.root.join(&plan.review);
-        let frozen = Frozen::open(&review).map_err(|source| Error::Signing {
+        let frozen = Frozen::open(&self.root, &review).map_err(|source| Error::Signing {
             review: self.rel(&review).into(),
             source,
         })?;
         let build = frozen.build_id();
-        let (target, motion) = match frozen.manifest() {
-            None => {
+        let (target, motion) = match (frozen.kind(), frozen.manifest()) {
+            (ImageKind::Stock, _) => {
                 say!("Stock image, payload {}", &build[..12]);
                 (Target::Stock, Motion::Refused)
             }
-            Some(manifest) => {
+            (ImageKind::Build, None) => {
+                return Err(Error::Bench(format!(
+                    "{} is a build review without a manifest",
+                    self.rel(&review)
+                )));
+            }
+            (ImageKind::Build, Some(manifest)) => {
                 self.attended_motion(manifest, args.attended_motion)?;
                 if let Some(variant) = &manifest.variant {
                     say!("Variant {variant}");
@@ -1082,12 +1088,10 @@ impl Bench {
         };
         let key = Key::load(&self.root.join(KEY_PATH)).map_err(refused)?;
         let manifest = frozen.sign(&key, plan.version, motion).map_err(refused)?;
-        fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&plan.signed)?
-            .write_all(&manifest)?;
+        write_new(&plan.signed, &manifest).map_err(|source| Error::Signing {
+            review: plan.review.clone(),
+            source: source.into(),
+        })?;
         timing.sign_offer = Some(signing.elapsed().as_secs_f64());
 
         Ok(Staged {

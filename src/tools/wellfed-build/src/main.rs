@@ -222,7 +222,7 @@ fn run(command: Command) -> Result<()> {
             let motion = attended_motion
                 .as_deref()
                 .map_or(Motion::Refused, Motion::Attended);
-            let frozen = Frozen::open(&review)?;
+            let frozen = Frozen::open(&repo.root, &repo.root.join(review))?;
             let manifest = frozen.sign(&Key::load(&key)?, version, motion)?;
             wellfed_flash::evidence::write_new(&output, &manifest)?;
             println!(

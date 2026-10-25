@@ -19,6 +19,10 @@ sha2 = "0.11"
 thiserror.workspace = true
 uuid = { workspace = true, features = ["v4"] }
 
+[features]
+# Synthetic images and frozen reviews for other crates' host tests.
+fixtures = []
+
 [dev-dependencies]
 wellfed-emu.workspace = true
 tempfile.workspace = true

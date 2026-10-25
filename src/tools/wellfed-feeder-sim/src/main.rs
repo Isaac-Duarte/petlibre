@@ -42,6 +42,11 @@ struct Cli {
     /// Advertise over mDNS with this address, as the feeder does.
     #[arg(long)]
     mdns: Option<Ipv4Addr>,
+    /// The update-signing public key (64 hex characters) the simulated
+    /// firmware trusts, as a build embeds the bench key's; without one it
+    /// refuses every offer.
+    #[arg(long)]
+    update_key: Option<String>,
 }
 
 fn main() -> Result<()> {
@@ -99,8 +104,17 @@ async fn run(cli: Cli, flash: Rc<Flash>, owner: Option<([u8; 32], Label)>) -> Re
     let (control, commands) = mpsc::unbounded_channel();
     tokio::spawn(read_console(control));
 
+    let update_key = match cli.update_key.as_deref() {
+        Some(text) => Some(
+            wellfed_session::hex::decode_array(text.as_bytes())
+                .context("--update-key is not 64 hex characters")?,
+        ),
+        None => None,
+    };
     let feeder = Feeder {
         flash,
+        banks: wellfed_feeder_sim::banks::Banks::new(),
+        update_key,
         random: Box::new(system_random),
         prepare: Box::new(move |sim| match owner {
             Some((key, label)) => sim.device().enroll(key, label, Role::Owner),

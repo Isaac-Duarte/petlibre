@@ -4,24 +4,43 @@
 //! One pass does what the loop task does (`src/firmware/wellfed/feeder`):
 //! the boot event once, the panel's queued remote lock and its idle relock,
 //! the pairing timers, the client table if the writer changed it, one
-//! server step, then the writer's turn and the live samples. Button presses
+//! server step, then the writer's turn, the update stage's (the service
+//! task's) and the live samples.
+//!
+//! A boot first runs the loader's choice and KM0's trial ([`Banks::boot`]);
+//! a new build in trial confirms itself at once, raising the floor as the
+//! firmware's confirmation does, unless the banks say it never will, in
+//! which case it resets after [`TRIAL_MS`] as the supervisor's deadline
+//! makes it. Button presses
 //! come from the caller ([`Sim::gesture`]) and go to pairing first, then to
 //! the panel, as the button service's gestures do.
 //!
 //! Nothing here reads a clock: every call takes the time, so tests can run
 //! virtual time and the driver can run real time through the same code.
 
+use std::cell::RefCell;
 use std::rc::Rc;
 
+use wellfed_amebad_sys::storage;
 use wellfed_core::buttons::Gesture;
+use wellfed_core::ota::{self, CONFIRM_LEN};
+use wellfed_core::store::slot::SlotIo;
+use wellfed_core::store::update::{State, UpdateStore};
 use wellfed_feeder::api::{self as server, Pass, Server};
 use wellfed_feeder::pairing::{self, Pairing, Path, Refusal};
 use wellfed_feeder::panel::{self, Action, Config, Lock, Panel, Source};
+use wellfed_hal::ota::mailbox;
+use wellfed_hal::ota::update::{self as update, Floor, Update};
 use wellfed_proto::api::{EventBody, Metric, Sample, Source as EventSource};
 use wellfed_session::noise::Keypair;
 
+use crate::banks::{Banks, Bus, Trial};
 use crate::device::{self, DeviceError, Random, SimDevice};
-use crate::flash::Flash;
+use crate::flash::{Flash, Region};
+
+/// A build that never confirms resets this long into each trial boot: the
+/// firmware's supervisor waits ten minutes; the simulator does not.
+pub const TRIAL_MS: u32 = 2_000;
 
 /// The feeder samples its supply this often.
 const POWER_MS: u32 = 5_000;
@@ -36,6 +55,14 @@ pub enum Record {
     Pairing(pairing::Event),
     /// A Reset hold on an unlocked panel.
     Reset(Reset),
+    /// The boot: the bank the loader chose, and whether its build is in
+    /// trial and confirmed itself.
+    Boot {
+        bank: u8,
+        trial: bool,
+        confirmed: Option<Floor>,
+    },
+    Update(update::Record),
 }
 
 /// How a Reset hold ended.
@@ -59,6 +86,13 @@ pub struct Sim {
     booted: bool,
     next_power: u32,
     next_rssi: u32,
+    banks: Rc<RefCell<Banks>>,
+    bank: u8,
+    stage: Box<Update<Region>>,
+    /// When a build that never confirms resets.
+    trial_reset: Option<u32>,
+    /// What the boot did, for the first pass's log.
+    boot: Record,
 }
 
 impl std::fmt::Debug for Sim {
@@ -75,11 +109,24 @@ impl Sim {
     /// `boot_count`th time: the panel locked, the clock invalid, no sessions.
     pub fn open(
         flash: &Rc<Flash>,
+        banks: &Rc<RefCell<Banks>>,
+        update_key: Option<[u8; 32]>,
         random: Random,
         now_ms: u32,
         boot_count: u32,
     ) -> Result<Self, DeviceError> {
-        let device = SimDevice::open(flash, random, boot_count)?;
+        let (bank, trial, build) = boot(flash, &mut banks.borrow_mut(), update_key);
+        // The mailbox and the interlock are RAM: a restart forgets every
+        // request and chunk, and the write turn a give-way kept.
+        mailbox::reset();
+        wellfed_hal::interlock::INTERLOCK.reset();
+        let store = Region::new(flash, storage::UPDATE);
+        let mut stage = Box::new(Update::new(bank, build, update_key, store));
+        let confirmed = (trial && banks.borrow().trial == Trial::Confirms)
+            .then(|| confirm(flash, &mut stage, &build));
+        let trial_reset = (trial && confirmed.is_none()).then(|| now_ms.wrapping_add(TRIAL_MS));
+
+        let device = SimDevice::open(flash, random, boot_count, bank, build)?;
         let identity = keypair(&device)?;
         Ok(Self {
             server: Box::new(Server::new()),
@@ -92,6 +139,15 @@ impl Sim {
             booted: false,
             next_power: now_ms,
             next_rssi: now_ms,
+            banks: Rc::clone(banks),
+            bank,
+            stage,
+            trial_reset,
+            boot: Record::Boot {
+                bank,
+                trial,
+                confirmed,
+            },
         })
     }
 
@@ -179,8 +235,9 @@ impl Sim {
         self.device.set_now(now_ms);
         if !self.booted {
             self.booted = true;
+            record(self.boot);
             let body = EventBody::Boot {
-                bank: 1,
+                bank: self.bank,
                 reset_flags: 0,
             };
             self.device.record_event(now_ms, body);
@@ -215,8 +272,33 @@ impl Sim {
             |r| record(Record::Server(r)),
         );
         self.device.write();
+        let updating = self.update(now_ms, &mut record);
         self.samples(now_ms);
-        busy
+        busy || updating
+    }
+
+    /// The update stage's turn, as the service task gives it; whether it
+    /// has work waiting.
+    fn update(&mut self, now_ms: u32, record: &mut impl FnMut(Record)) -> bool {
+        if self
+            .trial_reset
+            .is_some_and(|at| wellfed_core::deadline_passed(now_ms, at))
+        {
+            self.device.request_reboot();
+        }
+        let mut banks = self.banks.borrow_mut();
+        let mut bus = Bus {
+            banks: &mut banks,
+            bank: self.bank,
+        };
+        let step = self.stage.step(&mut bus, now_ms);
+        if let Some(event) = step.record {
+            record(Record::Update(event));
+        }
+        if step.restart {
+            self.device.request_reboot();
+        }
+        step.delay_ms <= update::BUSY_MS
     }
 
     /// Copy the writer's client table into the server when it changed, so a
@@ -230,6 +312,9 @@ impl Sim {
         *self.server.clients_table().0 = table;
         self.server
             .clients_changed(generation, |r| record(Record::Server(r)));
+        // The update stage reads the owners' update keys where the
+        // firmware's settings writer publishes them.
+        wellfed_hal::keys::publish_clients(table.into_iter().flatten());
     }
 
     fn samples(&mut self, now_ms: u32) {
@@ -248,6 +333,48 @@ impl Sim {
             });
         }
     }
+}
+
+/// The loader's choice and KM0's trial for this boot: the bank, whether its
+/// build is in trial, and the build. A build bank 0 activated in bank 1 is
+/// the one the update store names.
+fn boot(flash: &Rc<Flash>, banks: &mut Banks, key: Option<[u8; 32]>) -> (u8, bool, [u8; 32]) {
+    let mut store = UpdateStore::default();
+    store.open(Region::new(flash, storage::UPDATE));
+    if store.record().bank0.is_none()
+        && let Some(bank0) = banks.bank0_record(key)
+    {
+        // As if bank 0 had booted once: bank 1 gives way only to it.
+        let _ = store.set_bank0(bank0);
+    }
+    if banks.bank1_valid()
+        && let State::Activated(candidate) = store.record().state
+    {
+        banks.bank1_build = candidate.build_id;
+    }
+
+    let mut record = [0u8; CONFIRM_LEN];
+    let confirmed = Region::new(flash, storage::CONFIRM).read(0, 0, &mut record)
+        && ota::confirmed(&record, &banks.bank1_build).is_some();
+    let (bank, trial) = banks.boot(confirmed);
+    (bank, trial, banks.build(bank))
+}
+
+/// The build confirms: the floor first, then the record, as the
+/// firmware's confirmation writes them.
+fn confirm(flash: &Rc<Flash>, stage: &mut Update<Region>, build: &[u8; 32]) -> Floor {
+    let floor = stage.raise_floor();
+    let version = match floor {
+        Floor::Raised { version } => version,
+        Floor::Unchanged => 0,
+        Floor::Failed => return floor,
+    };
+    let record = ota::confirm_record(build, version);
+    let sector = Region::new(flash, storage::CONFIRM);
+    if !(sector.erase(0) && sector.program(0, 0, &record)) {
+        return Floor::Failed;
+    }
+    floor
 }
 
 fn keypair(device: &SimDevice) -> Result<Keypair, DeviceError> {

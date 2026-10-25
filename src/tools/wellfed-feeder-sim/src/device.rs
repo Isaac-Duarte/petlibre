@@ -14,6 +14,8 @@ use std::rc::Rc;
 
 use wellfed_amebad_sys::storage;
 use wellfed_core::clock::wall::{Jump, Sync, SyncError, WallClock};
+use wellfed_core::ota::install::Phase;
+use wellfed_core::ota::offer::{KeyStatement, key_id};
 use wellfed_core::store::clients::{CLIENTS, Client, ClientError, ClientStore, Label, Role};
 use wellfed_core::store::events::{BODY_BYTES, EventLog, Read};
 use wellfed_core::store::net::{Credentials, NetStore};
@@ -24,13 +26,16 @@ use wellfed_core::transport::{
     LockResult, PlayResult, SettingsFields, SettingsResult, SettingsView, TimeFields, TimeResult,
     WifiResult, WifiSource, WifiView,
 };
-use wellfed_feeder::api::{Device, EventRead, KeyChange, KeyOutcome};
-use wellfed_proto::api::{self as proto, Capabilities, EventBody, Refusal, Source, Status};
+use wellfed_feeder::api::{
+    Device, EventRead, KeyChange, KeyOutcome, UpdateAnswer, UpdateKeyChange, UpdateRequest,
+};
+use wellfed_feeder::update as wire;
+use wellfed_hal::ota::mailbox::{self, Answer, Request};
+use wellfed_proto::api::{
+    self as proto, Capabilities, EventBody, Refusal, Source, Status, UpdateRefusal, UpdateView,
+};
 
 use crate::flash::{Flash, Region};
-
-/// The build the simulator reports in its welcome and status.
-pub(crate) const BUILD: &str = concat!("feeder-sim-", env!("CARGO_PKG_VERSION"));
 
 /// This simulator's settings binding: a store written by one installation
 /// is not read as another's.
@@ -83,6 +88,9 @@ pub struct SimDevice {
     /// This process's boots so far, this one included; status reports it as
     /// the feeder reports its boot count.
     boot_count: u32,
+    /// The bank this boot runs, and its build's identity as hex.
+    bank: u8,
+    build: &'static str,
     /// The pass's time, which the clock anchors a sync to (the firmware
     /// reads its uptime there).
     now_ms: u32,
@@ -104,6 +112,8 @@ impl SimDevice {
         flash: &Rc<Flash>,
         mut random: Random,
         boot_count: u32,
+        bank: u8,
+        build: [u8; 32],
     ) -> Result<Self, DeviceError> {
         let mut settings = SettingsStore::default();
         settings.open(Region::new(flash, storage::SETTINGS), BINDING);
@@ -148,8 +158,20 @@ impl SimDevice {
             lock_pending: None,
             reboot: false,
             boot_count,
+            bank,
+            // One per boot, for the welcome's borrowed build.
+            build: Box::leak(
+                wellfed_session::hex::Lower(&build)
+                    .to_string()
+                    .into_boxed_str(),
+            ),
             now_ms: 0,
         })
+    }
+
+    /// Restart once this pass is done, as a watchdog reset would.
+    pub(crate) fn request_reboot(&mut self) {
+        self.reboot = true;
     }
 
     /// The identity secret the client store holds.
@@ -314,13 +336,13 @@ impl Device for SimDevice {
     }
 
     fn build(&self) -> &'static str {
-        BUILD
+        self.build
     }
 
     fn status(&mut self, now_ms: u32) -> Status<'static> {
         Status {
-            build: BUILD,
-            bank: 1,
+            build: self.build,
+            bank: self.bank,
             uptime_ms: now_ms,
             boot_count: self.boot_count,
             reset_flags: 0,
@@ -433,7 +455,7 @@ impl Device for SimDevice {
 
     fn capabilities(&self) -> Capabilities {
         // No motor: the server refuses feeds before they reach `feed`.
-        Capabilities::V1
+        Capabilities::UPDATE
     }
 
     fn feed(&mut self, _portions: u8, _by: Source) -> Result<u32, Refusal> {
@@ -480,5 +502,56 @@ impl Device for SimDevice {
 
     fn reboot(&mut self) {
         self.reboot = true;
+    }
+
+    // As the firmware's: the update stage behind the mailbox.
+    fn update(&mut self, request: UpdateRequest<'_>) -> Result<u32, Refusal> {
+        let request = match request {
+            UpdateRequest::Offer {
+                manifest,
+                downgrade,
+                device,
+            } => Request::offer(manifest, downgrade, device),
+            UpdateRequest::Statement { statement } => Request::statement(statement),
+            UpdateRequest::Cancel => Ok(Request::Cancel),
+        };
+        request.and_then(mailbox::request).map_err(wire::refusal)
+    }
+
+    fn update_outcome(&mut self, ticket: u32) -> Option<Result<UpdateAnswer, Refusal>> {
+        mailbox::outcome(ticket).map(|answer| match answer {
+            Ok(Answer::Progress(progress)) => Ok(UpdateAnswer::View(wire::view(&progress))),
+            Ok(Answer::Key(KeyStatement::Revoke(id))) => Ok(UpdateAnswer::Key {
+                change: UpdateKeyChange::Retired,
+                id,
+            }),
+            Ok(Answer::Key(KeyStatement::Add(key))) => Ok(UpdateAnswer::Key {
+                change: UpdateKeyChange::Added,
+                id: key_id(&key),
+            }),
+            Err(refused) => Err(wire::refusal(refused)),
+        })
+    }
+
+    fn update_chunk(&mut self, offset: u32, data: &[u8]) -> Result<UpdateView, Refusal> {
+        let progress = mailbox::progress().ok_or(Refusal::Busy)?;
+        match progress.phase {
+            Phase::Receiving => {}
+            Phase::Activated => return Ok(wire::view(&progress)),
+            Phase::Idle | Phase::Checking | Phase::GivingWay => {
+                return Err(Refusal::Update(UpdateRefusal::NotInstalling));
+            }
+        }
+        mailbox::chunk(offset, data).map_err(wire::refusal)?;
+        let progress = mailbox::progress().ok_or(Refusal::Busy)?;
+        Ok(wire::view(&progress))
+    }
+
+    fn update_view(&mut self) -> Option<UpdateView> {
+        mailbox::progress().map(|progress| wire::view(&progress))
+    }
+
+    fn installing(&self) -> bool {
+        mailbox::installing()
     }
 }

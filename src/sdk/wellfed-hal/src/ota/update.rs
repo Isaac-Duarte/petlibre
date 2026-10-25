@@ -441,7 +441,7 @@ pub struct Update<I> {
     sectors: u32,
 }
 
-impl<I: SlotIo + Copy> Update<I> {
+impl<I: SlotIo + Clone> Update<I> {
     /// The stage for the build `identity` running from `bank`, trusting the
     /// built-in `key`.
     pub fn new(bank: u8, identity: [u8; 32], key: Option<[u8; 32]>, io: I) -> Self {
@@ -465,7 +465,7 @@ impl<I: SlotIo + Copy> Update<I> {
     }
 
     fn open(&mut self) -> Record {
-        self.store.open(self.io);
+        self.store.open(self.io.clone());
         self.opened = true;
         self.attempt = self.bank == 0 && arming::update_attempted();
         self.publish();
@@ -564,7 +564,7 @@ impl<I: SlotIo + Copy> Update<I> {
         }
 
         let step = match self.work {
-            Work::Checking { .. } => self.check_step(flash),
+            Work::Checking { .. } => self.check_step(flash, now),
             Work::Leaving { since, give_way } => self.leave(flash, since, give_way, now),
             Work::Restarting { .. } => Step {
                 delay_ms: 0,
@@ -743,7 +743,7 @@ impl<I: SlotIo + Copy> Update<I> {
         next(BUSY_MS, Some(Record::Offer { version }))
     }
 
-    fn check_step(&mut self, flash: &mut impl Flash) -> Step {
+    fn check_step(&mut self, flash: &mut impl Flash, now: u32) -> Step {
         let Work::Checking { admitted, scan } = &mut self.work else {
             return next(IDLE_MS, None);
         };
@@ -775,7 +775,7 @@ impl<I: SlotIo + Copy> Update<I> {
         }
 
         self.work = Work::Leaving {
-            since: sdk::uptime_ms(),
+            since: now,
             give_way: true,
         };
         mailbox::finish(Ok(Answer::Progress(self.progress())));

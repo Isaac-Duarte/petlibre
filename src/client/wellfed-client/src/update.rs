@@ -39,6 +39,7 @@ pub enum Sent {
     Offer,
     Chunk(u32),
     State,
+    Cancel,
 }
 
 /// What the caller does next.
@@ -48,11 +49,18 @@ pub enum Next {
     Send(Sent, Op),
     /// Wait for the answers in flight.
     Wait,
-    /// The feeder restarts: connect again, then call [`Installer::opened`].
+    /// The feeder restarts: once this session has ended, connect again and
+    /// call [`Installer::opened`]. A session that still opens on bank 1 has
+    /// not restarted yet, and this comes again; the caller bounds the wait.
     Reconnect,
     /// The image is installed and bank 1 activated; the feeder restarts
     /// into it, and its trial decides the rest.
     Activated,
+    /// The install ended early, for good: nothing more is sent.
+    Failed(InstallError),
+    /// [`Installer::cancel`] went through: no candidate is left recorded and
+    /// bank 1 is left as the install found it or invalid.
+    Cancelled,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
@@ -79,6 +87,13 @@ enum Stage {
     Resume,
     /// Pushing chunks.
     Receiving,
+    /// Bank 0 is installing something already: read what, and resume it if
+    /// it is this offer.
+    Adopt,
+    /// A cancel is to go, then is out.
+    Cancel,
+    Cancelling,
+    Cancelled,
     Activated,
     Failed(InstallError),
 }
@@ -95,8 +110,15 @@ pub struct Installer<'a> {
     in_flight: Vec<u32>,
     /// A state read is out: no chunk goes before its answer.
     reading: bool,
+    /// The last state read wanted nothing (a sector being written): wait
+    /// once before reading again.
+    settling: bool,
     /// The bank the session answers from.
     bank: Option<u8>,
+    /// The offered manifest's digest, as the feeder's state names it.
+    digest: [u8; 32],
+    /// The state read out is to tell whether bank 0 installs this offer.
+    adopting: bool,
 }
 
 impl<'a> Installer<'a> {
@@ -107,7 +129,25 @@ impl<'a> Installer<'a> {
             view: None,
             in_flight: Vec::new(),
             reading: false,
+            settling: false,
             bank: None,
+            digest: wellfed_core::ota::offer::manifest_digest(image.manifest),
+            adopting: false,
+        }
+    }
+
+    /// Stop the install and forget its candidate: the next poll sends the
+    /// cancel, whatever is in flight. A recorded candidate that stays would
+    /// make bank 0 refuse every other manifest.
+    ///
+    /// Once bank 1 is activated there is nothing left to cancel (the new
+    /// build's trial decides), so this does nothing then.
+    pub fn cancel(&mut self) {
+        if !matches!(
+            self.stage,
+            Stage::Cancelling | Stage::Cancelled | Stage::Activated
+        ) {
+            self.stage = Stage::Cancel;
         }
     }
 
@@ -130,7 +170,13 @@ impl<'a> Installer<'a> {
         self.bank = Some(bank);
         self.in_flight.clear();
         self.reading = false;
+        self.adopting = false;
         self.stage = match self.stage {
+            // A cancel goes to whichever bank answers.
+            Stage::Cancel | Stage::Cancelling => Stage::Cancel,
+            Stage::Cancelled => Stage::Cancelled,
+            // Bank 1 has not restarted yet: wait for the session to end.
+            Stage::GivingWay if bank == 1 => Stage::GivingWay,
             Stage::Receiving | Stage::Resume if bank == 0 => Stage::Resume,
             Stage::Failed(error) => Stage::Failed(error),
             Stage::Activated => Stage::Activated,
@@ -143,8 +189,11 @@ impl<'a> Installer<'a> {
     pub fn lost(&mut self) {
         self.in_flight.clear();
         self.reading = false;
-        if self.stage == Stage::Offered {
-            self.stage = Stage::Offer;
+        self.adopting = false;
+        match self.stage {
+            Stage::Offered | Stage::Adopt => self.stage = Stage::Offer,
+            Stage::Cancelling => self.stage = Stage::Cancel,
+            _ => {}
         }
     }
 
@@ -166,10 +215,22 @@ impl<'a> Installer<'a> {
                 self.reading = true;
                 Next::Send(Sent::State, Op::UpdateState)
             }
+            Stage::Adopt => {
+                self.stage = Stage::Receiving;
+                self.reading = true;
+                self.adopting = true;
+                Next::Send(Sent::State, Op::UpdateState)
+            }
+            Stage::Cancel => {
+                self.stage = Stage::Cancelling;
+                Next::Send(Sent::Cancel, Op::CancelUpdate)
+            }
+            Stage::Cancelling => Next::Wait,
+            Stage::Cancelled => Next::Cancelled,
             Stage::Offered => Next::Wait,
             Stage::GivingWay => Next::Reconnect,
             Stage::Activated => Next::Activated,
-            Stage::Failed(_) => Next::Wait,
+            Stage::Failed(error) => Next::Failed(error),
             Stage::Receiving => self.next_chunk(),
         }
     }
@@ -183,7 +244,13 @@ impl<'a> Installer<'a> {
             .iter()
             .find(|offset| !self.in_flight.contains(offset))
         else {
-            return Next::Wait;
+            // Every chunk the last answer named is in: the stage is writing
+            // the sector, so ask again what it wants once nothing is out.
+            if !self.in_flight.is_empty() || core::mem::take(&mut self.settling) {
+                return Next::Wait;
+            }
+            self.reading = true;
+            return Next::Send(Sent::State, Op::UpdateState);
         };
         let Some(data) = self.chunk(offset) else {
             self.stage = Stage::Failed(InstallError::Lost);
@@ -216,22 +283,64 @@ impl<'a> Installer<'a> {
         match sent {
             Sent::Chunk(offset) => self.in_flight.retain(|&o| o != offset),
             Sent::State => self.reading = false,
-            Sent::Offer => {}
+            Sent::Offer | Sent::Cancel => {}
+        }
+        if sent == Sent::Cancel {
+            return match answer {
+                Answer::Update(view) => {
+                    self.view = Some(view.clone());
+                    self.stage = Stage::Cancelled;
+                    Ok(())
+                }
+                Answer::Refused(refusal) => Err(self.fail(InstallError::Refused(*refusal))),
+                _ => Err(self.fail(InstallError::Unexpected)),
+            };
+        }
+        // Whatever comes for the install after a cancel is moot.
+        if matches!(
+            self.stage,
+            Stage::Cancel | Stage::Cancelling | Stage::Cancelled
+        ) {
+            return Ok(());
         }
 
         let view = match answer {
             Answer::Update(view) => view,
             // A full mailbox: the chunk goes again when it is still wanted.
             Answer::Refused(Refusal::Busy) if matches!(sent, Sent::Chunk(_)) => return Ok(()),
+            // The install ended under the chunk: the state says why.
             Answer::Refused(Refusal::Update(UpdateRefusal::NotInstalling))
-                if matches!(sent, Sent::Chunk(_) | Sent::State) =>
+                if matches!(sent, Sent::Chunk(_)) =>
+            {
+                if !self.reading {
+                    self.stage = Stage::Resume;
+                }
+                return Ok(());
+            }
+            Answer::Refused(Refusal::Update(UpdateRefusal::NotInstalling))
+                if sent == Sent::State =>
             {
                 return Err(self.fail(InstallError::Lost));
+            }
+            // A re-offer after a lost answer finds its own install running.
+            Answer::Refused(Refusal::Update(UpdateRefusal::Installing))
+                if sent == Sent::Offer && self.bank == Some(0) =>
+            {
+                self.stage = Stage::Adopt;
+                return Ok(());
             }
             Answer::Refused(refusal) => return Err(self.fail(InstallError::Refused(*refusal))),
             _ => return Err(self.fail(InstallError::Unexpected)),
         };
+        if sent == Sent::State && core::mem::take(&mut self.adopting) {
+            let ours = view.digest.map(|digest| digest.0) == Some(self.digest);
+            if !(ours && view.phase == UpdatePhase::Receiving) {
+                let installing = Refusal::Update(UpdateRefusal::Installing);
+                return Err(self.fail(InstallError::Refused(installing)));
+            }
+        }
         let (phase, stopped) = (view.phase, view.stopped);
+        self.settling = sent == Sent::State && view.wanted.is_empty();
         self.view = Some(view.clone());
 
         match phase {

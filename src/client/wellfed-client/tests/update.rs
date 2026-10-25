@@ -266,6 +266,10 @@ impl Feeder {
             return Ok(UpdateAnswer::View(wire::view(&progress)));
         }
 
+        // As the mailbox: no second offer while an install holds the lease.
+        if self.install.as_ref().is_some_and(Install::receiving) {
+            return Err(refuse(Refused::Installing));
+        }
         if self.attempt {
             return Err(refuse(Refused::Attempt));
         }
@@ -676,6 +680,11 @@ struct Script {
     crash_after: Option<u32>,
     /// Stop sending chunks from this offset on (a stalled client).
     stall_at: Option<u32>,
+    /// Lose bank 0's answer to the offer once: the connection drops after
+    /// the feeder took it.
+    lose_offer_answer: bool,
+    /// After this chunk is sent, cancel the install once.
+    cancel_after: Option<u32>,
 }
 
 /// Run the installer against the rig until it activates or fails.
@@ -706,7 +715,24 @@ fn install(rig: &mut Rig, image: Image<'_>, script: &mut Script) -> Result<(), I
                 }
                 Next::Send(sent, op) => {
                     rig.request(sent, op);
+                    if sent == Sent::Offer
+                        && rig.feeder.bank == 0
+                        && core::mem::take(&mut script.lose_offer_answer)
+                    {
+                        for _ in 0..20 {
+                            let _ = rig.pass();
+                        }
+                        assert!(rig.feeder.installing(), "the feeder took the offer");
+                        rig.disconnect();
+                        installer.lost();
+                        rig.connect();
+                        installer.opened(rig.feeder.bank);
+                        break;
+                    }
                     if let Sent::Chunk(offset) = sent {
+                        if script.cancel_after.take_if(|at| *at == offset).is_some() {
+                            installer.cancel();
+                        }
                         if script
                             .disconnect_after
                             .take_if(|at| *at == offset)
@@ -743,6 +769,8 @@ fn install(rig: &mut Rig, image: Image<'_>, script: &mut Script) -> Result<(), I
                     rig.connect();
                     installer.opened(rig.feeder.bank);
                 }
+                Next::Failed(error) => return Err(error),
+                Next::Cancelled => return Ok(()),
                 Next::Activated => {
                     // The feeder restarts into the new build.
                     rig.settle_restart(&mut installer);
@@ -836,6 +864,96 @@ fn a_dropped_connection_resumes_from_the_state() {
     install(&mut rig, offer.image(), &mut script).unwrap();
     assert!(script.disconnect_after.is_none(), "the drop happened");
     assert_running(&rig, 0x22, 2);
+}
+
+#[test]
+fn a_lost_offer_answer_resumes_the_install_it_started() {
+    let mut rig = Rig::new();
+    rig.feeder.bank = 0;
+    let offer = Offer::new(2, 0x22, 2 * SECTOR);
+    let mut script = Script {
+        lose_offer_answer: true,
+        ..Script::default()
+    };
+    install(&mut rig, offer.image(), &mut script).unwrap();
+    assert!(!script.lose_offer_answer, "the answer was lost");
+    assert_running(&rig, 0x22, 2);
+}
+
+#[test]
+fn a_running_install_of_another_manifest_is_not_adopted() {
+    let mut rig = Rig::new();
+    rig.feeder.bank = 0;
+    let first = Offer::new(2, 0x22, 2 * SECTOR);
+    let mut script = Script {
+        stall_at: Some(SECTOR as u32),
+        ..Script::default()
+    };
+    // Start an install and leave it receiving.
+    let mut installer = Installer::new(first.image());
+    rig.connect();
+    installer.opened(0);
+    let Next::Send(sent, op) = installer.poll() else {
+        panic!("an offer first");
+    };
+    rig.request(sent, op);
+    for _ in 0..20 {
+        let _ = rig.pass();
+    }
+    assert!(rig.feeder.installing());
+    script.stall_at = None;
+
+    let second = Offer::new(3, 0x33, 2 * SECTOR);
+    assert_eq!(
+        install(&mut rig, second.image(), &mut script),
+        Err(InstallError::Refused(model::Refusal::Update(
+            model::UpdateRefusal::Installing
+        )))
+    );
+}
+
+#[test]
+fn a_cancel_forgets_the_candidate_and_leaves_bank_1_invalid() {
+    let mut rig = Rig::new();
+    let offer = Offer::new(2, 0x22, 3 * SECTOR);
+    let mut script = Script {
+        cancel_after: Some(SECTOR as u32),
+        ..Script::default()
+    };
+    install(&mut rig, offer.image(), &mut script).unwrap();
+    assert!(script.cancel_after.is_none(), "the cancel went");
+    assert_eq!(rig.feeder.store.record().state, State::None);
+    assert_still_on_bank_0(&mut rig);
+
+    // Nothing pending blocks another manifest.
+    let other = Offer::new(3, 0x33, 2 * SECTOR);
+    install(&mut rig, other.image(), &mut Script::default()).unwrap();
+    assert_running(&rig, 0x33, 3);
+}
+
+#[test]
+fn nothing_is_cancelled_once_bank_1_is_activated() {
+    let offer = Offer::new(2, 0x22, SECTOR);
+    let mut installer = Installer::new(offer.image());
+    installer.opened(0);
+    let _ = installer.poll();
+    let activated = model::UpdateView {
+        phase: model::UpdatePhase::Activated,
+        bank: 0,
+        min_version: 0,
+        digest: None,
+        version: 2,
+        image_len: u32::try_from(SECTOR).unwrap(),
+        written: u32::try_from(SECTOR).unwrap(),
+        wanted: Vec::new(),
+        stopped: None,
+    };
+    installer
+        .answer(Sent::Offer, &Answer::Update(activated))
+        .unwrap();
+
+    installer.cancel();
+    assert_eq!(installer.poll(), Next::Activated);
 }
 
 #[test]

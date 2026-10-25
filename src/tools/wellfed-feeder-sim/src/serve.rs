@@ -10,6 +10,7 @@
 //! from its flash: sessions, the panel, pairing and the clock start over,
 //! and the stores carry on, as after a reset.
 
+use std::cell::RefCell;
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::rc::Rc;
@@ -22,6 +23,7 @@ use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::sync::mpsc;
 use tokio::time::{Instant, sleep};
 
+use crate::banks::Banks;
 use crate::device::{DeviceError, Random};
 use crate::flash::Flash;
 use crate::sim::{Record, Sim};
@@ -50,7 +52,8 @@ pub enum ServeError {
 pub enum Control {
     /// A gesture from the buttons.
     Gesture(Gesture),
-    /// Restart, as a power cycle.
+    /// Restart, as a power cycle: KM0's trial count and the update-attempt
+    /// bit are lost with the backup registers.
     Reboot,
     /// Stop serving.
     Quit,
@@ -83,6 +86,10 @@ pub type Prepare = Box<dyn Fn(&mut Sim) -> Result<(), DeviceError>>;
 /// How to build the feeder each time it boots.
 pub struct Feeder {
     pub flash: Rc<Flash>,
+    /// The two banks, kept across restarts.
+    pub banks: Rc<RefCell<Banks>>,
+    /// The update-signing key built into the simulated firmware.
+    pub update_key: Option<[u8; 32]>,
     /// A fresh generator for each boot.
     pub random: Box<dyn Fn() -> Random>,
     /// Applied to each boot's device before the first pass: the operator's
@@ -123,7 +130,11 @@ pub async fn serve(
                     let now = booted.now();
                     booted.sim.gesture(now, gesture, |r| log(Event::Sim(r)));
                 }
-                Some(Control::Reboot) => reboot = true,
+                Some(Control::Reboot) => {
+                    feeder.banks.borrow_mut().power_cut();
+                    wellfed_amebad_sys::fake::reset_hardware();
+                    reboot = true;
+                }
                 Some(Control::Quit) => return Ok(()),
                 None => control = None,
             },
@@ -184,7 +195,14 @@ impl Booted {
         port: u16,
         log: &mut impl FnMut(Event),
     ) -> Result<Self, DeviceError> {
-        let mut sim = Sim::open(&feeder.flash, (feeder.random)(), 0, count)?;
+        let mut sim = Sim::open(
+            &feeder.flash,
+            &feeder.banks,
+            feeder.update_key,
+            (feeder.random)(),
+            0,
+            count,
+        )?;
         if let Err(error) = (feeder.prepare)(&mut sim) {
             log(Event::Prepare(error));
         }

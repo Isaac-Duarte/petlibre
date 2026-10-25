@@ -3,7 +3,7 @@
 //! server's service and end-to-end tests. Its randomness is a counter, so
 //! a test's identities and invite secrets repeat from run to run.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::net::{Ipv4Addr, SocketAddr};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -15,6 +15,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 
+use crate::banks::Banks;
 use crate::console::{self, ConsoleError};
 use crate::device::Random;
 use crate::flash::Flash;
@@ -42,6 +43,18 @@ impl Running {
     /// As [`Self::start`], at `address`: a restart on the port a client
     /// already knows.
     pub async fn start_at(flash: &Rc<Flash>, owner: Option<[u8; 32]>, address: SocketAddr) -> Self {
+        Self::start_with(flash, &Banks::new(), None, owner, address).await
+    }
+
+    /// As [`Self::start_at`], on `banks` (kept across starts) and trusting
+    /// `update_key` for updates.
+    pub async fn start_with(
+        flash: &Rc<Flash>,
+        banks: &Rc<RefCell<Banks>>,
+        update_key: Option<[u8; 32]>,
+        owner: Option<[u8; 32]>,
+        address: SocketAddr,
+    ) -> Self {
         let listener = TcpListener::bind(address)
             .await
             .expect("bind the simulator's port");
@@ -54,6 +67,8 @@ impl Running {
         let seed = SEED.fetch_add(1, Ordering::Relaxed);
         let feeder = Feeder {
             flash: Rc::clone(flash),
+            banks: Rc::clone(banks),
+            update_key,
             random: Box::new(counter(seed)),
             prepare: Box::new(move |sim| match owner {
                 Some(key) => {

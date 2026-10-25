@@ -5,6 +5,7 @@
 
 use wellfed_client::api::{Incoming, Invite, Join, JoinStep, Session};
 use wellfed_core::buttons::{Button, Buttons, Gesture};
+use wellfed_core::frame;
 use wellfed_core::noise::Keypair;
 use wellfed_core::setup_code::Code;
 use wellfed_core::store::clients::{CLIENTS, Client, Label, Role};
@@ -295,7 +296,8 @@ impl Rig {
             .clients_changed(self.clients_generation, |r| records.push(r));
     }
 
-    fn pass(&mut self) {
+    /// One pass; whether the server has work waiting.
+    fn pass(&mut self) -> bool {
         self.now += 20;
         let records = &mut self.records;
         self.server.step(
@@ -308,7 +310,7 @@ impl Rig {
                 recovery: self.recovery.take(),
             },
             |r| records.push(r),
-        );
+        )
     }
 
     fn accept(&mut self) -> Option<usize> {
@@ -769,6 +771,26 @@ fn one_handshake_operation_per_pass_and_none_while_feeding() {
         answered = now;
     }
     assert_eq!(answered, SESSIONS);
+}
+
+#[test]
+fn a_handshake_waiting_on_its_client_is_not_busy() {
+    let mut rig = Rig::new();
+    let slot = rig.accept().unwrap();
+    let (_, mut outbox) =
+        Session::connect(&Keypair::from_secret(OWNER), public(FEEDER), [9; 32]).unwrap();
+    let open = frame::PREFIX + frame::parse_prefix([outbox[0], outbox[1]], usize::MAX).unwrap();
+    let mut first = outbox.drain(..open).collect();
+
+    // The open frame read and the handshake built are work; then the
+    // feeder waits for the client's first message, which is not.
+    rig.deliver(slot, &mut first);
+    assert!(rig.pass(), "the open frame");
+    assert!(rig.pass(), "the handshake built");
+    assert!(!rig.pass());
+
+    rig.deliver(slot, &mut outbox);
+    assert!(rig.pass(), "the client's message is work again");
 }
 
 #[test]

@@ -915,11 +915,13 @@ impl Server {
                 self.slots[index].phase = Phase::Starting(open);
                 Ok(true)
             }
+            // Handshake operations report their own progress through
+            // `handshake_turn`; a slot waiting on its client is not work.
             Phase::Starting(_) | Phase::Handshake { .. } => {
                 if deadline_passed(now_ms, slot.since_ms.wrapping_add(HANDSHAKE_MS)) {
                     return Err(Reason::Timeout);
                 }
-                Ok(true)
+                Ok(false)
             }
             Phase::Joining { .. } => self.joining(index, now_ms, device, record),
             Phase::Open { .. } => self.open(index, now_ms, device, pairing, record),
@@ -927,7 +929,7 @@ impl Server {
                 if deadline_passed(now_ms, slot.since_ms.wrapping_add(HANDSHAKE_MS)) {
                     return Err(Reason::Timeout);
                 }
-                Ok(true)
+                Ok(false)
             }
             Phase::Recovery(_) => self.rescue_step(index, now_ms, device, pairing, record),
         }

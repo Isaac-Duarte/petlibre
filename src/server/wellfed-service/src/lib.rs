@@ -24,7 +24,6 @@
 //! [API design]: ../../../../docs/api/README.md
 #![forbid(unsafe_code)]
 
-mod convert;
 mod feeder;
 mod feeders;
 mod hub;

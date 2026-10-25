@@ -2229,6 +2229,7 @@ dependencies = [
  "wellfed-client",
  "wellfed-connect",
  "wellfed-formats",
+ "wellfed-model",
  "wellfed-proto",
  "wellfed-session",
  "serde",
@@ -2251,9 +2252,8 @@ name = "wellfed-api"
 version = "0.1.0"
 dependencies = [
  "jiff",
- "wellfed-session",
+ "wellfed-model",
  "serde",
- "serde_json",
  "utoipa",
  "uuid",
 ]
@@ -2291,6 +2291,7 @@ dependencies = [
  "wellfed-core",
  "wellfed-flash",
  "wellfed-formats",
+ "wellfed-model",
  "wellfed-proto",
  "wellfed-session",
  "rust-embed",
@@ -2334,6 +2335,7 @@ dependencies = [
  "jiff",
  "wellfed-core",
  "wellfed-feeder",
+ "wellfed-model",
  "wellfed-proto",
  "wellfed-session",
  "thiserror",
@@ -2345,6 +2347,7 @@ version = "0.1.0"
 dependencies = [
  "mdns-sd",
  "wellfed-client",
+ "wellfed-model",
  "wellfed-proto",
  "wellfed-session",
  "thiserror",
@@ -2396,6 +2399,7 @@ dependencies = [
  "wellfed-feeder",
  "wellfed-feeder-sim",
  "wellfed-formats",
+ "wellfed-model",
  "wellfed-proto",
  "wellfed-session",
  "socket2",
@@ -2466,6 +2470,7 @@ dependencies = [
  "wellfed-client",
  "wellfed-core",
  "wellfed-feeder",
+ "wellfed-model",
  "wellfed-proto",
  "wellfed-sdk",
  "wellfed-session",
@@ -2564,6 +2569,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "wellfed-model"
+version = "0.1.0"
+dependencies = [
+ "jiff",
+ "wellfed-proto",
+ "wellfed-session",
+ "serde",
+ "serde_json",
+ "utoipa",
+]
+
+[[package]]
 name = "wellfed-probes"
 version = "0.1.0"
 dependencies = [
@@ -2616,7 +2633,7 @@ dependencies = [
  "wellfed-client",
  "wellfed-connect",
  "wellfed-feeder-sim",
- "wellfed-proto",
+ "wellfed-model",
  "wellfed-service",
  "wellfed-session",
  "wellfed-store",
@@ -2648,6 +2665,7 @@ dependencies = [
  "wellfed-client",
  "wellfed-connect",
  "wellfed-feeder-sim",
+ "wellfed-model",
  "wellfed-proto",
  "wellfed-session",
  "wellfed-store",

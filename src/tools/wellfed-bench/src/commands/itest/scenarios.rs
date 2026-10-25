@@ -7,7 +7,7 @@
 //! names the store generation it read, so the feeder refuses it as stale if
 //! anything changed in between.
 
-use wellfed_proto::api::{OpenRefusal, Refusal, Settings, SettingsChanges, WifiSource};
+use wellfed_model::{OpenRefusal, Refusal, Settings, SettingsPatch, WifiSource};
 
 use super::log::Record;
 use super::{Baseline, Ctx, Fault, INSTALL_SECONDS, Need, STATUS_SECONDS, Server, Tier, compact};
@@ -205,9 +205,9 @@ fn requests(ctx: &mut Ctx) -> Result<()> {
     ctx.note(&format!("  {}", clock_synced(&status, ctx.rig.unix_ms())?));
 
     let before = read_settings(ctx)?;
-    let flipped = SettingsChanges {
+    let flipped = SettingsPatch {
         lights: Some(!before.lights),
-        ..SettingsChanges::default()
+        ..SettingsPatch::default()
     };
     set_settings(ctx, flipped)?;
     set_settings(ctx, changes_to(&before)).map(|_| ())
@@ -243,8 +243,8 @@ fn read_settings(ctx: &mut Ctx) -> Result<Settings> {
 }
 
 /// The change that sets every setting back to `settings`.
-fn changes_to(settings: &Settings) -> SettingsChanges {
-    SettingsChanges {
+fn changes_to(settings: &Settings) -> SettingsPatch {
+    SettingsPatch {
         lights: Some(settings.lights),
         sound: Some(settings.sound),
         volume: Some(settings.volume),
@@ -252,7 +252,7 @@ fn changes_to(settings: &Settings) -> SettingsChanges {
 }
 
 /// Whether `settings` hold every field `change` sets.
-fn shows(settings: &Settings, change: SettingsChanges) -> bool {
+fn shows(settings: &Settings, change: SettingsPatch) -> bool {
     change.lights.is_none_or(|on| settings.lights == on)
         && change.sound.is_none_or(|on| settings.sound == on)
         && change.volume.is_none_or(|volume| settings.volume == volume)
@@ -260,8 +260,8 @@ fn shows(settings: &Settings, change: SettingsChanges) -> bool {
 
 /// Change settings against the generation just read, see the writer save a
 /// newer one, and read the change back; the generation it was made from.
-fn set_settings(ctx: &mut Ctx, change: SettingsChanges) -> Result<u32> {
-    let base = read_settings(ctx)?.generation;
+fn set_settings(ctx: &mut Ctx, change: SettingsPatch) -> Result<u32> {
+    let base = read_settings(ctx)?.generation.0;
     let since = ctx.mark()?;
 
     let answer = ctx.ask(&Ask::PutSettings {
@@ -355,7 +355,7 @@ fn started(record: &Record, build: &str) -> bool {
 
 fn settings_persist(ctx: &mut Ctx) -> Result<()> {
     let before = read_settings(ctx)?;
-    let changed = SettingsChanges {
+    let changed = SettingsPatch {
         lights: Some(!before.lights),
         sound: Some(!before.sound),
         volume: Some(if before.volume == 35 { 36 } else { 35 }),
@@ -376,7 +376,7 @@ fn settings_persist(ctx: &mut Ctx) -> Result<()> {
 
 /// A write against `base`, a generation the store has moved past, is
 /// refused as stale and changes nothing.
-fn stale_write(ctx: &mut Ctx, base: u32, change: SettingsChanges) -> Result<()> {
+fn stale_write(ctx: &mut Ctx, base: u32, change: SettingsPatch) -> Result<()> {
     let current = read_settings(ctx)?;
     let answer = ctx.ask(&Ask::PutSettings {
         base,
@@ -738,7 +738,7 @@ fn soak(ctx: &mut Ctx) -> Result<()> {
 /// set shows only once it takes effect.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct DeviceState {
-    settings: SettingsChanges,
+    settings: SettingsPatch,
     wifi: WifiSource,
     build: String,
     bank: u8,

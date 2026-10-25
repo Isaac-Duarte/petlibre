@@ -1309,7 +1309,7 @@ fn device_status(build: &str, bank: u8) -> DeviceStatus {
         bank,
         uptime_ms: 61_000,
         boot_count: 4,
-        wifi: wellfed_proto::api::WifiSource::Build,
+        wifi: wellfed_model::WifiSource::Build,
         losses: 0,
         clock_ms: Some(1_792_674_000_000),
         settings_generation: 2,

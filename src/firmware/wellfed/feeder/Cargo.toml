@@ -31,6 +31,7 @@ wellfed-session.workspace = true
 
 [dev-dependencies]
 wellfed-client.workspace = true
+wellfed-model.workspace = true
 
 [lints]
 workspace = true

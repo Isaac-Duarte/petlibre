@@ -28,6 +28,11 @@ use wellfed_sdk::hal::{audio, ble, network, settings};
 use wellfed_session::noise::Keypair;
 use wellfed_session::setup_code::{Code, PRESSES};
 
+/// A feeder reply as the client hands it on.
+fn model(reply: Reply) -> wellfed_model::setup::Reply {
+    wellfed_model::convert::setup_reply(reply).unwrap()
+}
+
 /// The mailboxes are process-wide; the fake hardware is per thread.
 static SERIAL: Mutex<()> = Mutex::new(());
 
@@ -153,7 +158,7 @@ impl Bench {
         let [entering] = notified().try_into().unwrap();
         assert_eq!(
             session.receive(&entering).unwrap(),
-            ClientStep::Reply(Reply::EnterCode { seconds: 60 })
+            ClientStep::Reply(model(Reply::EnterCode { seconds: 60 }))
         );
         session
     }
@@ -303,7 +308,10 @@ fn a_proven_ask_enrolls_saves_the_wifi_and_reboots() {
         wifi: WifiSaved::Saved,
     };
     let [reply] = notified().try_into().unwrap();
-    assert_eq!(session.receive(&reply).unwrap(), ClientStep::Reply(done));
+    assert_eq!(
+        session.receive(&reply).unwrap(),
+        ClientStep::Reply(model(done))
+    );
     assert!(
         bench
             .records
@@ -336,7 +344,7 @@ fn an_unanswered_ask_is_refused_and_enrolls_nothing() {
     let [reply] = notified().try_into().unwrap();
     assert_eq!(
         session.receive(&reply).unwrap(),
-        ClientStep::Reply(Reply::Refused(Refusal::Unconfirmed))
+        ClientStep::Reply(model(Reply::Refused(Refusal::Unconfirmed)))
     );
     assert_eq!(keys::pending(), None);
     assert_eq!(

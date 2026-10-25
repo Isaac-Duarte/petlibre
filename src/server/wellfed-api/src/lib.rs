@@ -20,21 +20,22 @@ mod stream;
 
 use std::fmt;
 
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
 pub use auth::{Credentials, Role, SetupState, User};
 pub use error::{ErrorCode, FeederRefusal, Problem};
-pub use events::{
-    ClientRole, EnrollPath, EventBody, EventKind, EventPage, EventQuery, FeedOutcome, FeedReason,
-    FeederEvent, Gap, Source,
+pub use events::{EventPage, EventQuery, FeederEvent, Gap};
+pub use feeders::{AdoptFeeder, Connection, Feeder, FeederDetail, LockRequest, StatusSnapshot};
+// The feeder's own values are the model's, served as they are; the HTTP
+// API adds only what the server knows (when it received them, its own ids).
+pub use wellfed_model::{
+    ClientRole, EnrollPath, EventBody, EventKind, FeedOutcome, FeedReason, Generation, Hex,
+    MetricKind, Power, SampleValue, Settings, SettingsPatch, Source, Status as FeederStatus,
+    WifiSource,
 };
-pub use feeders::{
-    AdoptFeeder, Connection, Feeder, FeederDetail, FeederStatus, LockRequest, Power, Settings,
-    SettingsPatch, StatusSnapshot, WifiSource,
-};
-pub use stream::{FeederSample, MetricKind, SampleValue, StreamEvent, StreamQuery};
+pub use stream::{FeederSample, StreamEvent, StreamQuery};
 
 /// The prefix every resource lives under.
 pub const PREFIX: &str = "/api/v1";
@@ -65,71 +66,8 @@ impl fmt::Display for UserId {
     }
 }
 
-/// A feeder store's generation: a write names the one it read, and the
-/// feeder refuses it once the store has moved on.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, ToSchema)]
-#[serde(transparent)]
-#[schema(value_type = u32)]
-pub struct Generation(pub u32);
-
-impl fmt::Display for Generation {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-/// Bytes that travel as lowercase hex: a feeder's 32-byte identity key or a
-/// client's 4-byte fingerprint. Fields of this type carry
-/// `#[schema(value_type = String)]`.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Hex<const N: usize>(pub [u8; N]);
-
-impl<const N: usize> fmt::Display for Hex<N> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        wellfed_session::hex::Lower(&self.0).fmt(f)
-    }
-}
-
-impl<const N: usize> fmt::Debug for Hex<N> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(self, f)
-    }
-}
-
-impl<const N: usize> Serialize for Hex<N> {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.collect_str(self)
-    }
-}
-
-impl<'de, const N: usize> Deserialize<'de> for Hex<N> {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let text = String::deserialize(deserializer)?;
-        wellfed_session::hex::decode_array(text.as_bytes())
-            .map(Self)
-            .ok_or_else(|| serde::de::Error::custom(format!("not {N} bytes of lowercase hex")))
-    }
-}
-
 /// Liveness, without authentication.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct Health {
     pub version: String,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn hex_is_lowercase_and_exact_length() {
-        let json = serde_json::to_string(&Hex([0xab, 0x01])).unwrap();
-        assert_eq!(json, "\"ab01\"");
-        assert_eq!(
-            serde_json::from_str::<Hex<2>>(&json).unwrap(),
-            Hex([0xab, 0x01])
-        );
-        assert!(serde_json::from_str::<Hex<2>>("\"AB01\"").is_err());
-        assert!(serde_json::from_str::<Hex<2>>("\"ab\"").is_err());
-    }
 }

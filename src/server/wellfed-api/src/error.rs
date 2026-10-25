@@ -1,5 +1,6 @@
 //! Errors as RFC 9457 `application/problem+json`, each with a typed code.
 
+use wellfed_model::Refusal;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -65,6 +66,24 @@ pub enum FeederRefusal {
     Time,
     /// The feeding owner stopped on a fault; the feeder needs a restart.
     Fault,
+}
+
+impl From<Refusal> for FeederRefusal {
+    fn from(refusal: Refusal) -> Self {
+        match refusal {
+            Refusal::Forbidden => Self::Forbidden,
+            Refusal::Stale { .. } => Self::Stale,
+            Refusal::Busy => Self::Busy,
+            Refusal::Unavailable => Self::Unavailable,
+            Refusal::Invalid => Self::Invalid,
+            Refusal::NotWritable => Self::NotWritable,
+            Refusal::Full => Self::Full,
+            Refusal::NotFound => Self::NotFound,
+            Refusal::Muted => Self::Muted,
+            Refusal::Time => Self::Time,
+            Refusal::Fault => Self::Fault,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]

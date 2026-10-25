@@ -23,10 +23,9 @@ use wellfed_feeder::api::{
 };
 use wellfed_feeder::pairing::{Config, Event as PairingEvent, Pairing};
 use wellfed_feeder::panel::Lock;
-use wellfed_proto::api::{
-    self as proto, Capabilities, EventBody, FeederMessage, Hello, Joined, Op, OpenRefusal, Outcome,
-    Refusal, SettingsChanges, Status, Welcome,
-};
+use wellfed_model as model;
+use wellfed_model::{Answer, Generation, Hello, Joined, Op, OpenRefusal, SettingsPatch};
+use wellfed_proto::api::{self as proto, Capabilities, EventBody, Refusal, Status};
 use wellfed_session::frame;
 use wellfed_session::noise::Keypair;
 use wellfed_session::setup_code::Code;
@@ -410,7 +409,7 @@ fn run(rig: &mut Rig, client: &mut Client_, mut done: impl FnMut(&mut Session) -
     panic!("no progress");
 }
 
-fn connect(rig: &mut Rig, secret: [u8; 32]) -> (Client_, Option<Welcome<'static>>) {
+fn connect(rig: &mut Rig, secret: [u8; 32]) -> (Client_, Option<Incoming>) {
     let slot = rig.accept().unwrap();
     let (session, outbox) =
         Session::connect(&Keypair::from_secret(secret), public(FEEDER), [0x77; 32]).unwrap();
@@ -421,17 +420,10 @@ fn connect(rig: &mut Rig, secret: [u8; 32]) -> (Client_, Option<Welcome<'static>
     };
     let mut welcome = None;
     run(rig, &mut client, |session| {
-        if let Some(Incoming::Welcome(w)) = session.next_incoming().unwrap() {
-            welcome = Some(match w {
-                Welcome::Open { role, epoch, .. } => Welcome::Open {
-                    major: 1,
-                    capabilities: proto::Capabilities::V1,
-                    build: "",
-                    role,
-                    epoch,
-                },
-                Welcome::Refused(r) => Welcome::Refused(r),
-            });
+        if let Some(incoming @ (Incoming::Opened(_) | Incoming::Refused(_))) =
+            session.next_incoming().unwrap()
+        {
+            welcome = Some(incoming);
             return true;
         }
         false
@@ -441,35 +433,30 @@ fn connect(rig: &mut Rig, secret: [u8; 32]) -> (Client_, Option<Welcome<'static>
 
 fn open(rig: &mut Rig, secret: [u8; 32]) -> Client_ {
     let (client, welcome) = connect(rig, secret);
-    assert!(matches!(welcome, Some(Welcome::Open { .. })), "{welcome:?}");
+    assert!(matches!(welcome, Some(Incoming::Opened(_))), "{welcome:?}");
     client
 }
 
-/// Send one request and run until its answer; the answer, re-encoded so it
-/// outlives the session's borrow.
-fn ask(rig: &mut Rig, client: &mut Client_, id: u8, op: Op<'_>) -> Vec<u8> {
-    let bytes = client.session.request([id; 16], op).unwrap();
+/// Send one request and run until its answer.
+fn ask(rig: &mut Rig, client: &mut Client_, id: u8, op: Op) -> Answer {
+    let bytes = client.session.request([id; 16], &op).unwrap();
     client.outbox.extend(bytes);
     let mut answer = None;
     run(rig, client, |session| {
         while let Some(incoming) = session.next_incoming().unwrap() {
-            if let Incoming::Message(FeederMessage::Response { id: got, result }) = incoming
+            if let Incoming::Answer {
+                id: got,
+                answer: got_answer,
+            } = incoming
                 && got == [id; 16]
             {
-                let mut out = vec![0; 1024];
-                let len = wellfed_proto::encode(&result, &mut out).unwrap();
-                out.truncate(len);
-                answer = Some(out);
+                answer = Some(got_answer);
                 return true;
             }
         }
         false
     });
     answer.unwrap()
-}
-
-fn outcome(bytes: &[u8]) -> Outcome<'_> {
-    wellfed_proto::decode(bytes).unwrap()
 }
 
 #[test]
@@ -485,17 +472,17 @@ fn an_owner_opens_a_session_and_reads_status_and_settings() {
     )));
 
     let status = ask(&mut rig, &mut owner, 1, Op::Status);
-    let Outcome::Status(status) = outcome(&status) else {
+    let Answer::Status(status) = status else {
         panic!("{status:?}");
     };
-    assert_eq!(status.settings_generation, 7);
+    assert_eq!(status.settings_generation, Generation(7));
     assert_eq!(status.sessions, 1);
 
     let settings = ask(&mut rig, &mut owner, 2, Op::GetSettings);
     assert!(matches!(
-        outcome(&settings),
-        Outcome::Settings(proto::Settings {
-            generation: 7,
+        settings,
+        Answer::Settings(model::Settings {
+            generation: Generation(7),
             volume: 40,
             ..
         })
@@ -506,7 +493,7 @@ fn an_owner_opens_a_session_and_reads_status_and_settings() {
 fn an_unknown_key_and_the_wrong_feeder_are_refused() {
     let mut rig = Rig::new();
     let (_, welcome) = connect(&mut rig, STRANGER);
-    assert_eq!(welcome, Some(Welcome::Refused(OpenRefusal::Unknown)));
+    assert_eq!(welcome, Some(Incoming::Refused(OpenRefusal::Unknown)));
     assert!(rig.ended(Reason::Unknown));
 
     // A client holding another feeder's key: the feeder cannot read its
@@ -527,21 +514,24 @@ fn an_unknown_key_and_the_wrong_feeder_are_refused() {
 fn a_stale_settings_write_is_refused_and_a_current_one_applies() {
     let mut rig = Rig::new();
     let mut owner = open(&mut rig, OWNER);
-    let changes = SettingsChanges {
+    let changes = SettingsPatch {
         volume: Some(60),
-        ..SettingsChanges::default()
+        ..SettingsPatch::default()
     };
 
     let done = ask(
         &mut rig,
         &mut owner,
         1,
-        Op::PutSettings { base: 7, changes },
+        Op::PutSettings {
+            base: Generation(7),
+            changes,
+        },
     );
     assert_eq!(
-        outcome(&done),
-        Outcome::Done {
-            generation: Some(8)
+        done,
+        Answer::Done {
+            generation: Some(Generation(8))
         }
     );
     assert_eq!(rig.device.settings.volume, 60);
@@ -550,11 +540,16 @@ fn a_stale_settings_write_is_refused_and_a_current_one_applies() {
         &mut rig,
         &mut owner,
         2,
-        Op::PutSettings { base: 7, changes },
+        Op::PutSettings {
+            base: Generation(7),
+            changes,
+        },
     );
     assert_eq!(
-        outcome(&stale),
-        Outcome::Refused(Refusal::Stale { current: 8 })
+        stale,
+        Answer::Refused(model::Refusal::Stale {
+            current: Generation(8)
+        })
     );
     assert!(
         rig.device
@@ -568,20 +563,23 @@ fn a_stale_settings_write_is_refused_and_a_current_one_applies() {
 fn a_retried_write_gets_its_first_answer_even_after_a_reconnect() {
     let mut rig = Rig::new();
     let mut owner = open(&mut rig, OWNER);
-    let changes = SettingsChanges {
+    let changes = SettingsPatch {
         lights: Some(false),
-        ..SettingsChanges::default()
+        ..SettingsPatch::default()
     };
     let first = ask(
         &mut rig,
         &mut owner,
         9,
-        Op::PutSettings { base: 7, changes },
+        Op::PutSettings {
+            base: Generation(7),
+            changes,
+        },
     );
     assert_eq!(
-        outcome(&first),
-        Outcome::Done {
-            generation: Some(8)
+        first,
+        Answer::Done {
+            generation: Some(Generation(8))
         }
     );
 
@@ -594,7 +592,10 @@ fn a_retried_write_gets_its_first_answer_even_after_a_reconnect() {
         &mut rig,
         &mut owner,
         9,
-        Op::PutSettings { base: 7, changes },
+        Op::PutSettings {
+            base: Generation(7),
+            changes,
+        },
     );
     assert_eq!(retry, first);
     assert_eq!(rig.device.settings.generation, 8, "written once");
@@ -615,27 +616,27 @@ fn a_member_may_feed_and_change_settings_but_not_manage_clients() {
         &mut member,
         1,
         Op::PutWifi {
-            base: 3,
+            base: Generation(3),
             wifi: None,
         },
     );
-    assert_eq!(outcome(&wifi), Outcome::Refused(Refusal::Forbidden));
+    assert_eq!(wifi, Answer::Refused(model::Refusal::Forbidden));
     let revoke = ask(
         &mut rig,
         &mut member,
         2,
         Op::RevokeClient { key: public(OWNER) },
     );
-    assert_eq!(outcome(&revoke), Outcome::Refused(Refusal::Forbidden));
+    assert_eq!(revoke, Answer::Refused(model::Refusal::Forbidden));
     let reboot = ask(&mut rig, &mut member, 3, Op::Reboot);
-    assert_eq!(outcome(&reboot), Outcome::Refused(Refusal::Forbidden));
+    assert_eq!(reboot, Answer::Refused(model::Refusal::Forbidden));
 
     let lock = ask(&mut rig, &mut member, 4, Op::SetLock { locked: true });
-    assert_eq!(outcome(&lock), Outcome::Done { generation: None });
+    assert_eq!(lock, Answer::Done { generation: None });
     let feed = ask(&mut rig, &mut member, 5, Op::Feed { portions: 1 });
-    assert_eq!(outcome(&feed), Outcome::Feeding { feed: 1 });
+    assert_eq!(feed, Answer::Feeding { feed: 1 });
     let cancel = ask(&mut rig, &mut member, 6, Op::CancelFeed { feed: 1 });
-    assert_eq!(outcome(&cancel), Outcome::Done { generation: None });
+    assert_eq!(cancel, Answer::Done { generation: None });
 }
 
 #[test]
@@ -644,22 +645,22 @@ fn a_feed_answers_once_reserved_and_a_retry_never_feeds_twice() {
     let mut owner = open(&mut rig, OWNER);
 
     let zero = ask(&mut rig, &mut owner, 1, Op::Feed { portions: 0 });
-    assert_eq!(outcome(&zero), Outcome::Refused(Refusal::Invalid));
+    assert_eq!(zero, Answer::Refused(model::Refusal::Invalid));
     let feed = ask(&mut rig, &mut owner, 2, Op::Feed { portions: 3 });
-    assert_eq!(outcome(&feed), Outcome::Feeding { feed: 1 });
+    assert_eq!(feed, Answer::Feeding { feed: 1 });
     let by = proto::Source::Client(public(OWNER)[..4].try_into().unwrap());
     assert_eq!(rig.device.feeds, [(3, by)]);
 
     // The same id after a reconnect: the first answer, and no second feed.
     let mut owner = open(&mut rig, OWNER);
     let again = ask(&mut rig, &mut owner, 2, Op::Feed { portions: 3 });
-    assert_eq!(outcome(&again), Outcome::Feeding { feed: 1 });
+    assert_eq!(again, Answer::Feeding { feed: 1 });
     assert_eq!(rig.device.feeds.len(), 1);
 
     let cancel = ask(&mut rig, &mut owner, 3, Op::CancelFeed { feed: 1 });
-    assert_eq!(outcome(&cancel), Outcome::Done { generation: None });
+    assert_eq!(cancel, Answer::Done { generation: None });
     let ended = ask(&mut rig, &mut owner, 4, Op::CancelFeed { feed: 1 });
-    assert_eq!(outcome(&ended), Outcome::Refused(Refusal::NotFound));
+    assert_eq!(ended, Answer::Refused(model::Refusal::NotFound));
 }
 
 #[test]
@@ -686,7 +687,7 @@ fn a_client_without_the_feed_capability_neither_feeds_nor_sees_feeds() {
     let keys = Keypair::from_secret(OWNER);
     let hello = Hello {
         major: 1,
-        capabilities: Capabilities::V1,
+        capabilities: model::Capabilities::V1,
     };
     let (session, outbox) =
         Session::connect_with(&keys, public(FEEDER), [0x77; 32], hello).unwrap();
@@ -696,10 +697,10 @@ fn a_client_without_the_feed_capability_neither_feeds_nor_sees_feeds() {
         outbox,
     };
     run(&mut rig, &mut old, |session| {
-        matches!(session.next_incoming(), Ok(Some(Incoming::Welcome(_))))
+        matches!(session.next_incoming(), Ok(Some(Incoming::Opened(_))))
     });
     let feed = ask(&mut rig, &mut old, 1, Op::Feed { portions: 1 });
-    assert_eq!(outcome(&feed), Outcome::Refused(Refusal::Unavailable));
+    assert_eq!(feed, Answer::Refused(model::Refusal::Unavailable));
     assert!(rig.device.feeds.is_empty());
 
     let bytes = old.session.subscribe(None, false).unwrap();
@@ -707,7 +708,7 @@ fn a_client_without_the_feed_capability_neither_feeds_nor_sees_feeds() {
     let mut seen = Vec::new();
     run(&mut rig, &mut old, |session| {
         while let Some(incoming) = session.next_incoming().unwrap() {
-            if let Incoming::Message(FeederMessage::Event(event)) = incoming {
+            if let Incoming::Pushed(model::Pushed::Event(event)) = incoming {
                 seen.push(event.seq);
             }
         }
@@ -723,16 +724,14 @@ fn revoking_a_client_closes_its_open_session() {
     let member = open(&mut rig, MEMBER);
 
     let listed = ask(&mut rig, &mut owner, 1, Op::ListClients);
-    let Outcome::Clients(clients) = outcome(&listed) else {
+    let Answer::Clients(clients) = listed else {
         panic!("{listed:?}");
     };
-    assert_eq!(clients.clients.iter().flatten().count(), 2);
+    assert_eq!(clients.len(), 2);
     assert!(
         clients
-            .clients
             .iter()
-            .flatten()
-            .any(|c| c.you && c.role == proto::Role::Owner)
+            .any(|c| c.you && c.role == model::ClientRole::Owner)
     );
 
     let revoke = ask(
@@ -743,7 +742,7 @@ fn revoking_a_client_closes_its_open_session() {
             key: public(MEMBER),
         },
     );
-    assert_eq!(outcome(&revoke), Outcome::Done { generation: None });
+    assert_eq!(revoke, Answer::Done { generation: None });
     rig.publish();
     assert!(rig.ended(Reason::Revoked));
     assert!(rig.server.closing(member.slot));
@@ -758,23 +757,23 @@ fn an_invite_enrolls_a_new_client_once() {
         &mut owner,
         1,
         Op::CreateInvite {
-            role: proto::Role::Member,
+            role: model::ClientRole::Member,
         },
     );
-    let Outcome::Invite(invite) = outcome(&invite) else {
+    let Answer::Invite(invite) = invite else {
         panic!("{invite:?}");
     };
     let invite = Invite {
         feeder: public(FEEDER),
         id: invite.id,
-        secret: invite.secret,
+        secret: invite.secret.0,
     };
 
     let joined = redeem(&mut rig, invite, STRANGER);
     assert_eq!(
         joined,
         Some(Joined::Enrolled {
-            role: proto::Role::Member
+            role: model::ClientRole::Member
         })
     );
     rig.publish();
@@ -832,8 +831,8 @@ fn a_subscriber_reads_every_event_after_its_cursor_and_learns_of_a_gap() {
     run(&mut rig, &mut owner, |session| {
         while let Some(incoming) = session.next_incoming().unwrap() {
             match incoming {
-                Incoming::Message(FeederMessage::Gap { from, to }) => seen.push((from, to)),
-                Incoming::Message(FeederMessage::Event(event)) => seen.push((event.seq, 0)),
+                Incoming::Pushed(model::Pushed::Gap(gap)) => seen.push((gap.from, gap.to)),
+                Incoming::Pushed(model::Pushed::Event(event)) => seen.push((event.seq, 0)),
                 _ => {}
             }
         }
@@ -845,7 +844,7 @@ fn a_subscriber_reads_every_event_after_its_cursor_and_learns_of_a_gap() {
     rig.device.record(0, EventBody::Lost { count: 1 });
     let mut live = None;
     run(&mut rig, &mut owner, |session| {
-        if let Some(Incoming::Message(FeederMessage::Event(event))) =
+        if let Some(Incoming::Pushed(model::Pushed::Event(event))) =
             session.next_incoming().unwrap()
         {
             live = Some(event.seq);
@@ -935,7 +934,7 @@ fn malformed_bytes_and_floods_cost_only_their_own_session() {
     let flood = open(&mut rig, MEMBER);
     let mut flood = flood;
     for id in 0..50u8 {
-        let bytes = flood.session.request([id; 16], Op::Status).unwrap();
+        let bytes = flood.session.request([id; 16], &Op::Status).unwrap();
         flood.outbox.extend(bytes);
     }
     for _ in 0..3 {
@@ -944,7 +943,7 @@ fn malformed_bytes_and_floods_cost_only_their_own_session() {
         let _ = rig.collect(flood.slot);
     }
     let status = ask(&mut rig, &mut owner, 1, Op::Status);
-    assert!(matches!(outcome(&status), Outcome::Status(_)));
+    assert!(matches!(status, Answer::Status(_)));
 }
 
 #[test]
@@ -965,18 +964,18 @@ fn an_idle_session_and_a_stalled_handshake_time_out() {
 fn reboot_and_time_sync_reach_the_device() {
     let mut rig = Rig::new();
     let mut owner = open(&mut rig, OWNER);
-    let sync = proto::TimeSync {
+    let sync = model::TimeSync {
         unix_ms: 1_700_000_000_000,
         offset_s: 0,
         next_change_s: 0,
         next_offset_s: 0,
     };
     let synced = ask(&mut rig, &mut owner, 1, Op::TimeSync(sync));
-    assert_eq!(outcome(&synced), Outcome::Done { generation: None });
+    assert_eq!(synced, Answer::Done { generation: None });
     assert_eq!(rig.device.syncs, 1);
 
     let reboot = ask(&mut rig, &mut owner, 2, Op::Reboot);
-    assert_eq!(outcome(&reboot), Outcome::Done { generation: None });
+    assert_eq!(reboot, Answer::Done { generation: None });
     rig.now += wellfed_feeder::api::REBOOT_MS;
     rig.pass();
     assert!(rig.device.rebooted);
@@ -990,9 +989,9 @@ fn recover(
     secret: [u8; 32],
     code: Code,
     keyed: Code,
-) -> Option<wellfed_proto::setup::Reply> {
+) -> Option<wellfed_model::setup::Reply> {
     use wellfed_client::setup::{Ask, Session as Setup};
-    use wellfed_proto::setup::Reply;
+    use wellfed_model::setup::Reply;
 
     let slot = rig.accept().unwrap();
     let ask = Ask {
@@ -1017,7 +1016,7 @@ fn recover(
             // A mismatched code fails at whichever side opens a press
             // first; with the feeder writing first that is the client.
             Err(Error::Setup(wellfed_client::setup::Error::WrongCode)) => {
-                return Some(Reply::Refused(wellfed_proto::setup::Refusal::WrongCode));
+                return Some(Reply::Refused(wellfed_model::setup::Refusal::WrongCode));
             }
             Err(error) => panic!("{error}"),
         }
@@ -1057,7 +1056,7 @@ fn open_recovery(rig: &mut Rig) {
 
 #[test]
 fn the_recovery_window_admits_one_owner_who_proves_the_code() {
-    use wellfed_proto::setup::{Enrolled, Reply, WifiSaved};
+    use wellfed_model::setup::{Enrolled, Reply, WifiSaved};
 
     let mut rig = Rig::new();
     // Closed until a Lock and Dispense hold opens it.
@@ -1102,7 +1101,7 @@ fn the_recovery_window_admits_one_owner_who_proves_the_code() {
 
 #[test]
 fn a_wrong_code_is_refused_and_enrolls_nobody() {
-    use wellfed_proto::setup::{Refusal as SetupRefusal, Reply};
+    use wellfed_model::setup::{Refusal as SetupRefusal, Reply};
 
     let mut rig = Rig::new();
     open_recovery(&mut rig);
@@ -1183,21 +1182,18 @@ fn drive(rig: &mut Rig, live: &mut Live, mut done: impl FnMut(&Live) -> bool) ->
 fn live(rig: &mut Rig, secret: [u8; 32]) -> Live {
     let hello = Hello {
         major: 1,
-        capabilities: Capabilities::KNOWN,
+        capabilities: model::Capabilities::KNOWN,
     };
     let mut live = live_with(rig, secret, hello);
     drive(rig, &mut live, |live| live.connection.opened().is_some()).unwrap();
     live
 }
 
-fn pushed(live: &Live) -> Vec<proto::Event> {
+fn pushed(live: &Live) -> Vec<model::Event> {
     live.events
         .iter()
         .filter_map(|event| match event {
-            Event::Pushed(message) => match message.get() {
-                FeederMessage::Event(event) => Some(event),
-                _ => None,
-            },
+            Event::Pushed(model::Pushed::Event(event)) => Some(*event),
             _ => None,
         })
         .collect()
@@ -1210,27 +1206,36 @@ fn a_connection_names_the_epoch_and_answers_each_request_once() {
     let opened = owner.connection.opened().unwrap().clone();
     assert_eq!(
         (opened.role, opened.capabilities, opened.epoch),
-        (proto::Role::Owner, Capabilities::FEED, EPOCH)
+        (
+            model::ClientRole::Owner,
+            model::Capabilities { feed: true },
+            EPOCH
+        )
     );
 
     let now = owner.now(&rig);
-    owner.connection.request(now, [1; 16], Op::Status).unwrap();
     owner
         .connection
-        .request(now, [2; 16], Op::GetSettings)
+        .request(now, [1; 16], &model::Op::Status)
+        .unwrap();
+    owner
+        .connection
+        .request(now, [2; 16], &model::Op::GetSettings)
         .unwrap();
     drive(&mut rig, &mut owner, |live| live.events.len() == 2).unwrap();
     let answered: Vec<_> = owner
         .events
         .iter()
         .map(|event| match event {
-            Event::Answer { id, answer } => (id[0], matches!(answer.outcome(), Outcome::Status(_))),
+            Event::Answer { id, answer } => (id[0], matches!(answer, model::Answer::Status(_))),
             other => panic!("{other:?}"),
         })
         .collect();
     assert_eq!(answered, [(1, true), (2, false)]);
     assert!(matches!(
-        owner.connection.request(now, KEEPALIVE_ID, Op::Status),
+        owner
+            .connection
+            .request(now, KEEPALIVE_ID, &model::Op::Status),
         Err(Error::ReservedId)
     ));
 }
@@ -1240,7 +1245,10 @@ fn an_unanswered_request_is_reported_once_and_its_late_answer_dropped() {
     let mut rig = Rig::new();
     let mut owner = live(&mut rig, OWNER);
     let sent = owner.now(&rig);
-    owner.connection.request(sent, [3; 16], Op::Status).unwrap();
+    owner
+        .connection
+        .request(sent, [3; 16], &model::Op::Status)
+        .unwrap();
 
     // The answer time passes before the bytes reach the feeder.
     let overdue = sent + Timing::DEFAULT.answer;
@@ -1290,7 +1298,9 @@ fn the_keepalive_goes_out_when_quiet_and_silence_ends_the_session() {
         Err(Error::Silent)
     ));
     assert!(matches!(
-        owner.connection.request(silent, [4; 16], Op::Status),
+        owner
+            .connection
+            .request(silent, [4; 16], &model::Op::Status),
         Err(Error::Silent)
     ));
     assert_eq!(owner.connection.poll_timeout(), None);
@@ -1301,7 +1311,7 @@ fn a_major_2_hello_gets_the_typed_version_refusal() {
     let mut rig = Rig::new();
     let hello = Hello {
         major: 2,
-        capabilities: Capabilities::KNOWN,
+        capabilities: model::Capabilities::KNOWN,
     };
     let mut client = live_with(&mut rig, OWNER, hello);
     let ended = drive(&mut rig, &mut client, |_| false);
@@ -1320,7 +1330,7 @@ fn a_welcome_waits_for_the_event_ring() {
     rig.device.epoch = None;
     let hello = Hello {
         major: 1,
-        capabilities: Capabilities::KNOWN,
+        capabilities: model::Capabilities::KNOWN,
     };
     let mut owner = live_with(&mut rig, OWNER, hello);
     let mut passes = 0;
@@ -1446,7 +1456,7 @@ fn a_v1_only_session_never_receives_a_body_outside_v1() {
 
     let hello = Hello {
         major: 1,
-        capabilities: Capabilities::V1,
+        capabilities: model::Capabilities::V1,
     };
     let mut old = live_with(&mut rig, OWNER, hello);
     drive(&mut rig, &mut old, |live| {
@@ -1456,11 +1466,11 @@ fn a_v1_only_session_never_receives_a_body_outside_v1() {
     let now = old.now(&rig);
     old.connection.subscribe(now, None, false).unwrap();
     drive(&mut rig, &mut old, |live| {
-        pushed(live).last().map(|e| e.body) == Some(EventBody::Lost { count: 9 })
+        pushed(live).last().map(|e| EventBody::from(e.body)) == Some(EventBody::Lost { count: 9 })
     })
     .unwrap();
 
-    let received: Vec<EventBody> = pushed(&old).iter().map(|e| e.body).collect();
+    let received: Vec<EventBody> = pushed(&old).iter().map(|e| e.body.into()).collect();
     assert_eq!(received, v1);
     assert!(v1.len() < bodies.len() + 1, "some body is outside V1");
 }
@@ -1470,7 +1480,10 @@ fn a_request_pending_when_the_session_ends_is_reported_unanswered() {
     let mut rig = Rig::new();
     let mut owner = live(&mut rig, OWNER);
     let sent = owner.now(&rig);
-    owner.connection.request(sent, [5; 16], Op::Status).unwrap();
+    owner
+        .connection
+        .request(sent, [5; 16], &model::Op::Status)
+        .unwrap();
 
     // The feeder goes silent before the bytes reach it.
     let silent = sent + Timing::DEFAULT.silence;

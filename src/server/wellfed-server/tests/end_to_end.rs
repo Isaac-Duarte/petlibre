@@ -14,7 +14,7 @@ use wellfed_api::{
 use wellfed_client::api::Invite;
 use wellfed_feeder_sim::flash::Flash;
 use wellfed_feeder_sim::harness::Running;
-use wellfed_proto::api::{Op, Outcome, Role};
+use wellfed_model::{Answer, ClientRole, Op};
 use wellfed_service::{Config, Discovery, Service, SystemClock, SystemRandom, Timing};
 use wellfed_session::noise::Keypair;
 use wellfed_store::Store;
@@ -87,16 +87,21 @@ async fn server_invite(sim: &Running) -> String {
             .await
             .unwrap();
     let answer = connection
-        .ask([0x44; 16], Op::CreateInvite { role: Role::Server })
+        .ask(
+            [0x44; 16],
+            &Op::CreateInvite {
+                role: ClientRole::Server,
+            },
+        )
         .await
         .unwrap();
-    let Outcome::Invite(invite) = answer.outcome() else {
+    let Answer::Invite(invite) = answer else {
         panic!("{answer:?}");
     };
     Invite {
         feeder: sim.identity,
         id: invite.id,
-        secret: invite.secret,
+        secret: invite.secret.0,
     }
     .text()
 }

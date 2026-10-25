@@ -130,7 +130,7 @@ pub enum Step {
     /// Send these bytes (unframed) to the feeder.
     Send(Vec<u8>),
     /// The feeder replied; `Done` and `Refused` end the session.
-    Reply(Reply),
+    Reply(wellfed_model::setup::Reply),
 }
 
 enum State {
@@ -225,19 +225,19 @@ impl Session {
                 match reply {
                     Reply::EnterCode { .. } => {
                         self.state = State::Proving(transport, exchange);
-                        Ok(Step::Reply(reply))
+                        reply_step(reply)
                     }
                     Reply::Round { open, commit } => {
                         exchange.read(Round { open, commit })?;
                         self.answer(transport, exchange)
                     }
-                    Reply::Refused(_) => Ok(Step::Reply(reply)),
-                    _ => Err(Error::Unexpected),
+                    Reply::Refused(_) => reply_step(reply),
+                    Reply::Done { .. } => Err(Error::Unexpected),
                 }
             }
             State::Proven(mut transport) => match open(&mut transport, message)? {
-                reply @ (Reply::Done { .. } | Reply::Refused(_)) => Ok(Step::Reply(reply)),
-                _ => Err(Error::Unexpected),
+                reply @ (Reply::Done { .. } | Reply::Refused(_)) => reply_step(reply),
+                Reply::EnterCode { .. } | Reply::Round { .. } => Err(Error::Unexpected),
             },
             State::Ended => Err(Error::Unexpected),
         }
@@ -298,6 +298,13 @@ impl Session {
         }
         Ok(Step::Send(out[..sealed].to_vec()))
     }
+}
+
+/// A reply the caller acts on, as the model's.
+fn reply_step(reply: Reply) -> Result<Step, Error> {
+    wellfed_model::convert::setup_reply(reply)
+        .map(Step::Reply)
+        .ok_or(Error::Unexpected)
 }
 
 fn open(transport: &mut Transport, message: &[u8]) -> Result<Reply, Error> {

@@ -36,13 +36,12 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use wellfed_proto::api::{
-    Capabilities, FRAME_MAX, FeederMessage, Hello, Op, Open, Outcome, PROTOCOL_MAJOR, RequestId,
-    Role, Welcome,
-};
-use wellfed_proto::setup::Reply;
+use wellfed_model::setup::Reply;
+use wellfed_model::{Answer, Hello, Op, OpenRefusal, Pushed};
+use wellfed_proto::api::{Open, RequestId};
 use wellfed_session::noise::Keypair;
 
+pub use crate::api::Opened;
 use crate::api::{Error, Incoming, Session, open_frame};
 use crate::setup;
 
@@ -97,53 +96,6 @@ pub enum Resume {
     Restarted,
 }
 
-/// The feeder's welcome, owned.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Opened {
-    /// The running image's build identity.
-    pub build: String,
-    /// The role the feeder gave this key.
-    pub role: Role,
-    /// What both sides claimed: the session runs on these bits only.
-    pub capabilities: Capabilities,
-    /// The epoch the feeder's event numbers count in.
-    pub epoch: u32,
-}
-
-/// One message from the feeder, owned: an event, a gap or a sample.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Message(Vec<u8>);
-
-impl Message {
-    fn encode(message: &FeederMessage<'_>) -> Result<Self, Error> {
-        let mut out = vec![0; FRAME_MAX];
-        let len = wellfed_proto::encode(message, &mut out).map_err(|_| Error::TooLarge)?;
-        out.truncate(len);
-        Ok(Self(out))
-    }
-
-    pub fn get(&self) -> FeederMessage<'_> {
-        wellfed_proto::decode(&self.0).expect("encoded from a decoded message")
-    }
-}
-
-/// One request's answer, owned.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Answer(Vec<u8>);
-
-impl Answer {
-    fn encode(outcome: &Outcome<'_>) -> Result<Self, Error> {
-        let mut out = vec![0; FRAME_MAX];
-        let len = wellfed_proto::encode(outcome, &mut out).map_err(|_| Error::TooLarge)?;
-        out.truncate(len);
-        Ok(Self(out))
-    }
-
-    pub fn outcome(&self) -> Outcome<'_> {
-        wellfed_proto::decode(&self.0).expect("encoded from a decoded outcome")
-    }
-}
-
 /// What [`Connection::poll_event`] yields.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
@@ -153,7 +105,7 @@ pub enum Event {
     /// the request may have run. Its late answer, if any, is dropped.
     Unanswered { id: RequestId },
     /// An event, gap or sample the feeder pushed.
-    Pushed(Message),
+    Pushed(Pushed),
 }
 
 /// An enrolled client's session over one connection.
@@ -161,7 +113,6 @@ pub enum Event {
 pub struct Connection {
     session: Session,
     timing: Timing,
-    claimed: Capabilities,
     opened: Option<Opened>,
     /// Until the welcome: when it is overdue.
     welcome_by: Instant,
@@ -181,7 +132,7 @@ pub struct Connection {
 /// Why the session ended, kept so later calls repeat it.
 #[derive(Clone, Copy, Debug)]
 enum Ended {
-    Refused(wellfed_proto::api::OpenRefusal),
+    Refused(OpenRefusal),
     Timeout,
     Silent,
     Failed,
@@ -209,11 +160,14 @@ impl Connection {
         ephemeral: [u8; 32],
         now: Instant,
     ) -> Result<Self, Error> {
-        let hello = Hello {
-            major: PROTOCOL_MAJOR,
-            capabilities: Capabilities::KNOWN,
-        };
-        Self::with(keys, feeder, ephemeral, hello, Timing::DEFAULT, now)
+        Self::with(
+            keys,
+            feeder,
+            ephemeral,
+            Hello::CURRENT,
+            Timing::DEFAULT,
+            now,
+        )
     }
 
     /// As [`Self::new`], with another hello or other clocks.
@@ -229,7 +183,6 @@ impl Connection {
         Ok(Self {
             session,
             timing,
-            claimed: hello.capabilities,
             opened: None,
             welcome_by: now + timing.answer,
             transmit: VecDeque::from([bytes]),
@@ -295,55 +248,34 @@ impl Connection {
         let Some(incoming) = self.session.next_incoming().map_err(Taken::Failed)? else {
             return Ok(false);
         };
-        let message = match incoming {
-            Incoming::Welcome(Welcome::Open {
-                capabilities,
-                build,
-                role,
-                epoch,
-                ..
-            }) => {
-                self.opened = Some(Opened {
-                    build: build.to_owned(),
-                    role,
-                    capabilities: Capabilities(capabilities.0 & self.claimed.0),
-                    epoch,
-                });
-                return Ok(true);
-            }
-            Incoming::Welcome(Welcome::Refused(refusal)) => return Err(Taken::Refused(refusal)),
-            Incoming::Message(message) => message,
-        };
-        let Some(epoch) = self.opened.as_ref().map(|opened| opened.epoch) else {
-            return Err(Taken::Failed(Error::Unexpected));
-        };
-
-        match message {
-            FeederMessage::Response { id, .. } if id == KEEPALIVE_ID => {}
-            FeederMessage::Response { id, result } => {
+        match incoming {
+            Incoming::Opened(opened) => self.opened = Some(opened),
+            Incoming::Refused(refusal) => return Err(Taken::Refused(refusal)),
+            Incoming::Answer { id, .. } if id == KEEPALIVE_ID => {}
+            Incoming::Answer { id, answer } => {
                 // A request already reported unanswered keeps that outcome.
                 if let Some(index) = self.pending.iter().position(|(sent, _)| *sent == id) {
                     self.pending.swap_remove(index);
-                    let answer = Answer::encode(&result).map_err(Taken::Failed)?;
                     self.events.push_back(Event::Answer { id, answer });
                 }
             }
-            FeederMessage::Event(event) => {
-                self.cursor = Some(Cursor {
-                    epoch,
-                    seq: event.seq,
-                });
-                let message = Message::encode(&message).map_err(Taken::Failed)?;
-                self.events.push_back(Event::Pushed(message));
-            }
-            FeederMessage::Gap { to, .. } => {
-                self.cursor = Some(Cursor { epoch, seq: to });
-                let message = Message::encode(&message).map_err(Taken::Failed)?;
-                self.events.push_back(Event::Pushed(message));
-            }
-            FeederMessage::Sample(_) => {
-                let message = Message::encode(&message).map_err(Taken::Failed)?;
-                self.events.push_back(Event::Pushed(message));
+            Incoming::Pushed(pushed) => {
+                match pushed {
+                    Pushed::Event(event) => {
+                        self.cursor = Some(Cursor {
+                            epoch: event.epoch,
+                            seq: event.seq,
+                        });
+                    }
+                    Pushed::Gap(gap) => {
+                        self.cursor = Some(Cursor {
+                            epoch: gap.epoch,
+                            seq: gap.to,
+                        });
+                    }
+                    Pushed::Sample(_) => {}
+                }
+                self.events.push_back(Event::Pushed(pushed));
             }
         }
         Ok(true)
@@ -398,14 +330,14 @@ impl Connection {
             }
         }
         if self.sent_at + self.timing.keepalive <= now {
-            self.send_request(now, KEEPALIVE_ID, Op::Status)?;
+            self.send_request(now, KEEPALIVE_ID, &Op::Status)?;
         }
         Ok(())
     }
 
     /// Send one request under `id`; its answer, or its absence, comes from
     /// [`Self::poll_event`]. `id` may not be [`KEEPALIVE_ID`].
-    pub fn request(&mut self, now: Instant, id: RequestId, op: Op<'_>) -> Result<(), Error> {
+    pub fn request(&mut self, now: Instant, id: RequestId, op: &Op) -> Result<(), Error> {
         if id == KEEPALIVE_ID {
             return Err(Error::ReservedId);
         }
@@ -416,7 +348,7 @@ impl Connection {
         Ok(())
     }
 
-    fn send_request(&mut self, now: Instant, id: RequestId, op: Op<'_>) -> Result<(), Error> {
+    fn send_request(&mut self, now: Instant, id: RequestId, op: &Op) -> Result<(), Error> {
         self.live()?;
         if self.opened.is_none() {
             return Err(Error::NotOpen);
@@ -459,7 +391,7 @@ impl Connection {
 }
 
 enum Taken {
-    Refused(wellfed_proto::api::OpenRefusal),
+    Refused(OpenRefusal),
     Failed(Error),
 }
 

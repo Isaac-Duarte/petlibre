@@ -16,6 +16,7 @@ jiff = "0.2.38"
 wellfed-client.workspace = true
 wellfed-connect.workspace = true
 wellfed-formats.workspace = true
+wellfed-model.workspace = true
 wellfed-proto.workspace = true
 wellfed-session.workspace = true
 serde.workspace = true

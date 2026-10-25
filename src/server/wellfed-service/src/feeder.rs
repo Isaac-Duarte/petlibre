@@ -20,9 +20,10 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use wellfed_api::{Connection as Link, FeederId, StreamEvent};
-use wellfed_connect::{Answer, Connection, Cursor, Message, Resume};
-use wellfed_proto::api::{FeederMessage, Op, Outcome};
+use wellfed_api::{Connection as Link, FeederEvent, FeederId, FeederSample, StreamEvent};
+use wellfed_connect::{Connection, Cursor, Resume};
+use wellfed_model::{Answer, Op, Pushed};
+use wellfed_proto::api as proto;
 use wellfed_session::noise::Keypair;
 use wellfed_store::{FeederRow, NewEvent, NewSample};
 use tokio::sync::{mpsc, oneshot, watch};
@@ -31,7 +32,7 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tracing::{debug, info, warn};
 
-use crate::{Discovery, Error, RequestId, Result, Shared, convert, keys};
+use crate::{Discovery, Error, RequestId, Result, Shared, keys};
 
 /// Commands waiting for the task; more wait in `send`.
 const COMMANDS: usize = 16;
@@ -56,7 +57,7 @@ impl Handle {
 /// One request for the feeder, and where its answer goes.
 pub(crate) struct Command {
     pub(crate) id: RequestId,
-    pub(crate) op: Op<'static>,
+    pub(crate) op: Op,
     pub(crate) reply: oneshot::Sender<Result<Answer>>,
 }
 
@@ -202,7 +203,7 @@ impl Task {
                     self.sync_time(&mut connection).await
                 }
                 message = connection.next(QUIET) => match message {
-                    Ok(message) => self.apply(connection.epoch(), &message).await,
+                    Ok(pushed) => self.apply(pushed).await,
                     Err(wellfed_connect::Error::Timeout) => Ok(()),
                     Err(error) => Err(End::Lost(error)),
                 },
@@ -234,9 +235,7 @@ impl Task {
         }
         self.sync_time(connection).await?;
 
-        let answer = self.ask(connection, Op::Status).await?;
-        if let Outcome::Status(status) = answer.outcome() {
-            let status = convert::status(&status);
+        if let Answer::Status(status) = self.ask(connection, &Op::Status).await? {
             let now = self.shared.clock.now();
             self.shared
                 .store
@@ -244,12 +243,11 @@ impl Task {
                 .await
                 .map_err(fail)?;
         }
-        let answer = self.ask(connection, Op::GetSettings).await?;
-        if let Outcome::Settings(settings) = answer.outcome() {
+        if let Answer::Settings(settings) = self.ask(connection, &Op::GetSettings).await? {
             let now = self.shared.clock.now();
             self.shared
                 .store
-                .record_settings(self.id, &convert::settings(settings), now)
+                .record_settings(self.id, &settings, now)
                 .await
                 .map_err(fail)?;
         }
@@ -260,9 +258,9 @@ impl Task {
     async fn sync_time(&self, connection: &mut Connection) -> Result<(), End> {
         let now = self.shared.clock.now();
         let sync = wellfed_client::time::sync(now, &self.shared.config.zone);
-        match self.ask(connection, Op::TimeSync(sync)).await?.outcome() {
-            Outcome::Done { .. } => debug!(feeder = %self.id, "clock set"),
-            Outcome::Refused(refusal) => {
+        match self.ask(connection, &Op::TimeSync(sync)).await? {
+            Answer::Done { .. } => debug!(feeder = %self.id, "clock set"),
+            Answer::Refused(refusal) => {
                 warn!(feeder = %self.id, "the feeder refused the clock: {refusal:?}");
             }
             other => warn!(feeder = %self.id, "unexpected answer to the clock: {other:?}"),
@@ -271,26 +269,25 @@ impl Task {
     }
 
     /// One request of the task's own.
-    async fn ask(&self, connection: &mut Connection, op: Op<'_>) -> Result<Answer, End> {
+    async fn ask(&self, connection: &mut Connection, op: &Op) -> Result<Answer, End> {
         let id = self.shared.random().map_err(End::Failed)?;
         connection.ask(id, op).await.map_err(End::Lost)
     }
 
     /// Store what the feeder pushed, then publish it.
-    async fn apply(&self, epoch: u32, message: &Message) -> Result<(), End> {
+    async fn apply(&self, pushed: Pushed) -> Result<(), End> {
         let store = &self.shared.store;
         let received = self.shared.clock.now();
         let mut raw = [0u8; RAW];
-        match message.get() {
-            FeederMessage::Event(event) => {
-                let len = wellfed_proto::encode(&event.body, &mut raw)
+        match pushed {
+            Pushed::Event(event) => {
+                let len = wellfed_proto::encode(&proto::EventBody::from(event.body), &mut raw)
                     .map_err(|_| End::Failed(Error::Unexpected))?;
-                let event = convert::event(epoch, &event, received);
                 let new = store
                     .record_event(
                         self.id,
                         NewEvent {
-                            epoch,
+                            epoch: event.epoch,
                             seq: event.seq,
                             at: event.at,
                             received,
@@ -303,11 +300,12 @@ impl Task {
                 if new {
                     self.shared.hub.publish(StreamEvent::Event {
                         feeder: self.id,
-                        event,
+                        event: FeederEvent::new(event, received),
                     });
                 }
             }
-            FeederMessage::Gap { from, to } => {
+            Pushed::Gap(gap) => {
+                let (epoch, from, to) = (gap.epoch, gap.from, gap.to);
                 warn!(feeder = %self.id, from, to, "events lost before the server read them");
                 store
                     .record_gap(self.id, epoch, from, to, received)
@@ -323,10 +321,9 @@ impl Task {
                     },
                 });
             }
-            FeederMessage::Sample(sample) => {
-                let len = wellfed_proto::encode(&sample.metric, &mut raw)
+            Pushed::Sample(sample) => {
+                let len = wellfed_proto::encode(&proto::Metric::from(sample.value), &mut raw)
                     .map_err(|_| End::Failed(Error::Unexpected))?;
-                let sample = convert::sample(sample, received);
                 store
                     .record_sample(
                         self.id,
@@ -341,11 +338,9 @@ impl Task {
                     .map_err(fail)?;
                 self.shared.hub.publish(StreamEvent::Sample {
                     feeder: self.id,
-                    sample,
+                    sample: FeederSample::new(sample, received),
                 });
             }
-            // Answers go to `ask`; `next` yields only what the feeder pushed.
-            FeederMessage::Response { .. } => {}
         }
         Ok(())
     }
@@ -403,7 +398,7 @@ async fn run(connection: &mut Connection, command: Command) -> Result<(), End> {
     if command.reply.is_closed() {
         return Ok(());
     }
-    match connection.ask(command.id, command.op).await {
+    match connection.ask(command.id, &command.op).await {
         Ok(answer) => {
             let _ = command.reply.send(Ok(answer));
             Ok(())

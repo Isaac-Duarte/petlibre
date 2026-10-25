@@ -10,6 +10,7 @@ publish.workspace = true
 [dependencies]
 mdns-sd = "0.21.6"
 wellfed-client.workspace = true
+wellfed-model.workspace = true
 wellfed-proto.workspace = true
 wellfed-session.workspace = true
 thiserror.workspace = true

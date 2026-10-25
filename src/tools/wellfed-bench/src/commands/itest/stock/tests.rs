@@ -254,7 +254,7 @@ impl Rig for StockFeeder {
             bank: 1,
             uptime_ms: 40_000,
             boot_count: 3,
-            wifi: wellfed_proto::api::WifiSource::Build,
+            wifi: wellfed_model::WifiSource::Build,
             losses: 0,
             clock_ms: None,
             settings_generation: 1,

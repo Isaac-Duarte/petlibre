@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use wellfed_proto::api::{OpenRefusal, Refusal, Settings, WifiSource};
+use wellfed_model::{Generation, OpenRefusal, Refusal, Settings, WifiSource};
 use serde_json::json;
 
 use super::log::{Log, Record};
@@ -193,7 +193,7 @@ impl Feeder {
 
     fn settings(&self) -> Settings {
         Settings {
-            generation: self.generation,
+            generation: Generation(self.generation),
             lights: self.lights,
             sound: self.sound,
             volume: self.volume,
@@ -375,12 +375,12 @@ impl Rig for Feeder {
             Ask::GetSettings => Answer::Settings(self.settings()),
             Ask::PutSettings { base, .. } if *base != self.generation => {
                 Answer::Refused(Refusal::Stale {
-                    current: self.generation,
+                    current: Generation(self.generation),
                 })
             }
             Ask::PutWifi { base, .. } if *base != self.wifi_generation => {
                 Answer::Refused(Refusal::Stale {
-                    current: self.wifi_generation,
+                    current: Generation(self.wifi_generation),
                 })
             }
             Ask::PutSettings { changes, .. } => {

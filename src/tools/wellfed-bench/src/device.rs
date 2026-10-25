@@ -26,10 +26,10 @@ use wellfed_client::api::{Incoming, Session};
 use wellfed_formats::hex;
 use wellfed_formats::owner::OwnerKeyFile;
 use wellfed_formats::private::{self, SYSTEM_RANDOM};
-use wellfed_proto::api::{
-    FeederMessage, Op, OpenRefusal, Outcome, PORT, Refusal, RequestId, Settings, SettingsChanges,
-    Status, Welcome, Wifi, WifiSource,
+use wellfed_model::{
+    Generation, Op, OpenRefusal, Refusal, Settings, SettingsPatch, Status, Wifi, WifiSource,
 };
+use wellfed_proto::api::{PORT, RequestId};
 use wellfed_session::noise::Keypair;
 use serde::{Deserialize, Serialize};
 
@@ -93,7 +93,7 @@ pub(crate) enum Ask {
     GetSettings,
     PutSettings {
         base: u32,
-        changes: SettingsChanges,
+        changes: SettingsPatch,
     },
     /// Credentials for the next join, or `None` to clear them.
     PutWifi {
@@ -145,13 +145,16 @@ pub(crate) enum Answer {
 }
 
 impl Answer {
-    fn of(outcome: Outcome<'_>) -> Self {
-        match outcome {
-            Outcome::Done { generation } => Self::Done { generation },
-            Outcome::Status(status) => Self::Status(DeviceStatus::of(&status)),
-            Outcome::Settings(settings) => Self::Settings(settings),
-            Outcome::Refused(refusal) => Self::Refused(refusal),
-            Outcome::Clients(_) | Outcome::Invite(_) | Outcome::Feeding { .. } => Self::Unexpected,
+    fn of(answer: wellfed_model::Answer) -> Self {
+        use wellfed_model::Answer as Model;
+        match answer {
+            Model::Done { generation } => Self::Done {
+                generation: generation.map(|generation| generation.0),
+            },
+            Model::Status(status) => Self::Status(DeviceStatus::of(&status)),
+            Model::Settings(settings) => Self::Settings(settings),
+            Model::Refused(refusal) => Self::Refused(refusal),
+            Model::Clients(_) | Model::Invite(_) | Model::Feeding { .. } => Self::Unexpected,
         }
     }
 }
@@ -175,7 +178,7 @@ pub struct DeviceStatus {
 }
 
 impl DeviceStatus {
-    fn of(status: &Status<'_>) -> Self {
+    fn of(status: &Status) -> Self {
         Self {
             build: status.build.to_ascii_lowercase(),
             bank: status.bank,
@@ -183,9 +186,11 @@ impl DeviceStatus {
             boot_count: status.boot_count,
             wifi: status.wifi,
             losses: status.link_losses.saturating_add(status.dns_losses),
-            clock_ms: status.clock_ms,
-            settings_generation: status.settings_generation,
-            wifi_generation: status.wifi_generation,
+            clock_ms: status
+                .clock
+                .and_then(|clock| u64::try_from(clock.as_millisecond()).ok()),
+            settings_generation: status.settings_generation.0,
+            wifi_generation: status.wifi_generation.0,
         }
     }
 
@@ -345,14 +350,14 @@ impl Device {
             Ask::Status => Op::Status,
             Ask::GetSettings => Op::GetSettings,
             Ask::PutSettings { base, changes } => Op::PutSettings {
-                base: *base,
+                base: Generation(*base),
                 changes: *changes,
             },
             Ask::PutWifi { base, wifi } => Op::PutWifi {
-                base: *base,
+                base: Generation(*base),
                 wifi: wifi.as_ref().map(|wifi| Wifi {
-                    ssid: wifi.ssid.as_bytes(),
-                    psk: &wifi.psk,
+                    ssid: wifi.ssid.as_bytes().to_vec(),
+                    psk: wifi.psk.clone(),
                 }),
             },
             Ask::SyncClock => Op::TimeSync(wellfed_client::time::sync(
@@ -360,16 +365,16 @@ impl Device {
                 &self.zone,
             )),
         };
-        let bytes = connection.session.request(id, op)?;
+        let bytes = connection.session.request(id, &op)?;
         connection.stream.write_all(&bytes)?;
 
         let deadline = Instant::now() + ANSWER;
         loop {
             while let Some(incoming) = connection.session.next_incoming()? {
-                if let Incoming::Message(FeederMessage::Response { id: got, result }) = incoming
+                if let Incoming::Answer { id: got, answer } = incoming
                     && got == id
                 {
-                    return Ok(Answer::of(result));
+                    return Ok(Answer::of(answer));
                 }
             }
             read(connection, deadline)?;
@@ -410,9 +415,9 @@ impl Device {
                 continue;
             };
             return match incoming {
-                Incoming::Welcome(Welcome::Open { .. }) => Ok(connection),
-                Incoming::Welcome(Welcome::Refused(refusal)) => Err(DeviceError::Refused(refusal)),
-                Incoming::Message(_) => Err(DeviceError::Unwelcome),
+                Incoming::Opened(_) => Ok(connection),
+                Incoming::Refused(refusal) => Err(DeviceError::Refused(refusal)),
+                Incoming::Answer { .. } | Incoming::Pushed(_) => Err(DeviceError::Unwelcome),
             };
         }
     }
@@ -461,11 +466,11 @@ impl Device {
             };
             match next {
                 None => {}
-                Some(Incoming::Welcome(Welcome::Refused(refusal))) => {
-                    return Ok(Rebuffed::Refused(refusal));
+                Some(Incoming::Refused(refusal)) => return Ok(Rebuffed::Refused(refusal)),
+                Some(Incoming::Opened(_)) => return Ok(Rebuffed::Opened),
+                Some(Incoming::Answer { .. } | Incoming::Pushed(_)) => {
+                    return Ok(Rebuffed::Answered);
                 }
-                Some(Incoming::Welcome(Welcome::Open { .. })) => return Ok(Rebuffed::Opened),
-                Some(Incoming::Message(_)) => return Ok(Rebuffed::Answered),
             }
         }
     }

@@ -4,9 +4,10 @@
 use std::net::SocketAddr;
 
 use anyhow::{Context, Result};
-use wellfed_connect::{Answer, Cursor, DISCOVERY, Message};
+use wellfed_connect::{Cursor, DISCOVERY};
 use wellfed_formats::private;
-use wellfed_proto::api::{Op, RequestId, Role};
+use wellfed_model::{Answer, ClientRole, Op, Pushed};
+use wellfed_proto::api::RequestId;
 
 use crate::keys::OwnerKey;
 
@@ -40,7 +41,7 @@ impl Connection {
         self.0.build()
     }
 
-    pub(crate) fn role(&self) -> Role {
+    pub(crate) fn role(&self) -> ClientRole {
         self.0.role()
     }
 
@@ -53,7 +54,7 @@ impl Connection {
     }
 
     /// The next message within `wait`; `None` when none came in time.
-    pub(crate) async fn next(&mut self, wait: std::time::Duration) -> Result<Option<Message>> {
+    pub(crate) async fn next(&mut self, wait: std::time::Duration) -> Result<Option<Pushed>> {
         match self.0.next(wait).await {
             Ok(message) => Ok(Some(message)),
             Err(wellfed_connect::Error::Timeout) => Ok(None),
@@ -62,7 +63,7 @@ impl Connection {
     }
 
     /// One request under a fresh id, and its answer.
-    pub(crate) async fn ask(&mut self, op: Op<'_>) -> Result<Answer> {
+    pub(crate) async fn ask(&mut self, op: &Op) -> Result<Answer> {
         let id: RequestId = random()?;
         Ok(self.0.ask(id, op).await?)
     }

@@ -4,7 +4,7 @@
 
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
-use wellfed_proto::api::TimeSync;
+use wellfed_model::TimeSync;
 
 /// The sync for `zone` at `now`. A zone with no change ahead (UTC, or one
 /// without DST) sends a next change of 0 with the current offset.

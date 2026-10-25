@@ -5,8 +5,9 @@
 //! - [`Session::connect`] opens an enrolled client's session (Noise IK
 //!   against the feeder's known identity). Write its bytes, then feed what
 //!   arrives to [`Session::receive`] and drain [`Session::next_incoming`]: the first
-//!   message is the feeder's [`Welcome`], then responses, events and
-//!   samples.
+//!   message is the feeder's welcome ([`Incoming::Opened`] or
+//!   [`Incoming::Refused`]), then answers, events, gaps and samples, each
+//!   already `wellfed-model`'s owned value.
 //! - [`Session::request`] seals one request under the caller's id. A write
 //!   whose answer never arrived is retried with the same id (after a
 //!   reconnect too), so the feeder answers it once.
@@ -17,9 +18,12 @@
 //! [`Session`]: the clients use it, and the bench and tests use
 //! [`Session`] directly to send what a well-behaved client never would.
 
+use wellfed_model::{
+    Answer, Capabilities, ClientRole, Gap, Hello, Joined, Op, OpenRefusal, Pushed, convert,
+};
 use wellfed_proto::api::{
-    Capabilities, ClientMessage, FRAME_MAX, FeederMessage, Hello, Join as JoinRequest, Joined, Op,
-    Open, OpenRefusal, PROLOGUE, PROTOCOL_MAJOR, RequestId, Welcome,
+    ClientMessage, FRAME_MAX, FeederMessage, Join as JoinRequest, Open, PROLOGUE, RequestId,
+    Welcome,
 };
 use wellfed_session::frame::{self, PREFIX};
 use wellfed_session::hex::{self, Lower};
@@ -108,15 +112,30 @@ enum State {
     Ended,
 }
 
+/// The feeder's welcome, owned.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Opened {
+    /// The running image's build identity.
+    pub build: String,
+    /// The role the feeder gave this key.
+    pub role: ClientRole,
+    /// What both sides claimed: the session runs on these features only.
+    pub capabilities: Capabilities,
+    /// The epoch the feeder's event numbers count in.
+    pub epoch: u32,
+}
+
 /// What [`Session::next_incoming`] yields.
-#[derive(Debug, PartialEq, Eq)]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "borrowed from the session, never stored"
-)]
-pub enum Incoming<'a> {
-    Welcome(Welcome<'a>),
-    Message(FeederMessage<'a>),
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Incoming {
+    /// The feeder opened the session.
+    Opened(Opened),
+    /// The feeder refused the session, which has ended.
+    Refused(OpenRefusal),
+    /// The feeder's answer to the request under `id`.
+    Answer { id: RequestId, answer: Answer },
+    /// An event, gap or sample the feeder pushed.
+    Pushed(Pushed),
 }
 
 /// An enrolled client's session.
@@ -125,9 +144,10 @@ pub struct Session {
     deframer: Deframer,
     /// Opened messages waiting for [`Self::next_incoming`], oldest first.
     inbox: std::collections::VecDeque<Vec<u8>>,
-    /// The last message [`Self::next_incoming`] returned; its borrow lives here.
-    current: Vec<u8>,
-    welcomed: bool,
+    claimed: Capabilities,
+    /// The welcome's epoch, once it has arrived: what pushed events count
+    /// in.
+    epoch: Option<u32>,
 }
 
 impl std::fmt::Debug for Session {
@@ -146,11 +166,7 @@ impl Session {
         feeder: [u8; 32],
         ephemeral: [u8; 32],
     ) -> Result<(Self, Vec<u8>), Error> {
-        let hello = Hello {
-            major: PROTOCOL_MAJOR,
-            capabilities: Capabilities::KNOWN,
-        };
-        Self::connect_with(keys, feeder, ephemeral, hello)
+        Self::connect_with(keys, feeder, ephemeral, Hello::CURRENT)
     }
 
     /// As [`Self::connect`] with another hello: what a client built before
@@ -171,7 +187,8 @@ impl Session {
             ephemeral,
         )?;
         let mut payload = [0; 16];
-        let len = wellfed_proto::encode(&hello, &mut payload).map_err(|_| Error::TooLarge)?;
+        let wire = wellfed_proto::api::Hello::from(hello);
+        let len = wellfed_proto::encode(&wire, &mut payload).map_err(|_| Error::TooLarge)?;
         let mut message = [0; FRAME_MAX];
         let written = handshake.write_message(&payload[..len], &mut message)?;
 
@@ -181,8 +198,8 @@ impl Session {
             state: State::Handshake(Box::new(handshake)),
             deframer: Deframer::default(),
             inbox: std::collections::VecDeque::new(),
-            current: Vec::new(),
-            welcomed: false,
+            claimed: hello.capabilities,
+            epoch: None,
         };
         Ok((session, out))
     }
@@ -224,29 +241,67 @@ impl Session {
         Ok(())
     }
 
-    /// The next message, decoded; it borrows the session until the next
-    /// call.
-    pub fn next_incoming(&mut self) -> Result<Option<Incoming<'_>>, Error> {
+    /// The next message, decoded into owned values.
+    pub fn next_incoming(&mut self) -> Result<Option<Incoming>, Error> {
+        // A refused session is over: whatever else arrived with the
+        // refusal is never read, so it cannot pass for a second welcome.
+        if matches!(self.state, State::Ended) {
+            self.inbox.clear();
+            return Ok(None);
+        }
         let Some(plain) = self.inbox.pop_front() else {
             return Ok(None);
         };
-        self.current = plain;
-        if !self.welcomed {
-            self.welcomed = true;
+        let Some(epoch) = self.epoch else {
             let welcome: Welcome<'_> =
-                wellfed_proto::decode(&self.current).map_err(|_| Error::Malformed)?;
-            if matches!(welcome, Welcome::Refused(_)) {
-                self.state = State::Ended;
+                wellfed_proto::decode(&plain).map_err(|_| Error::Malformed)?;
+            return Ok(Some(match welcome {
+                Welcome::Open {
+                    major: _,
+                    capabilities,
+                    build,
+                    role,
+                    epoch,
+                } => {
+                    self.epoch = Some(epoch);
+                    Incoming::Opened(Opened {
+                        build: build.to_owned(),
+                        role: role.into(),
+                        capabilities: self.claimed.both(capabilities.into()),
+                        epoch,
+                    })
+                }
+                Welcome::Refused(refusal) => {
+                    self.state = State::Ended;
+                    self.inbox.clear();
+                    Incoming::Refused(refusal.into())
+                }
+            }));
+        };
+
+        let message: FeederMessage<'_> =
+            wellfed_proto::decode(&plain).map_err(|_| Error::Malformed)?;
+        Ok(Some(match message {
+            FeederMessage::Response { id, result } => Incoming::Answer {
+                id,
+                answer: result.into(),
+            },
+            FeederMessage::Event(event) => {
+                Incoming::Pushed(Pushed::Event(convert::event(epoch, event)))
             }
-            return Ok(Some(Incoming::Welcome(welcome)));
-        }
-        let message = wellfed_proto::decode(&self.current).map_err(|_| Error::Malformed)?;
-        Ok(Some(Incoming::Message(message)))
+            FeederMessage::Gap { from, to } => {
+                Incoming::Pushed(Pushed::Gap(Gap { epoch, from, to }))
+            }
+            FeederMessage::Sample(sample) => Incoming::Pushed(Pushed::Sample(sample.into())),
+        }))
     }
 
     /// One request under `id`, sealed and framed.
-    pub fn request(&mut self, id: RequestId, op: Op<'_>) -> Result<Vec<u8>, Error> {
-        self.send(&ClientMessage::Request { id, op })
+    pub fn request(&mut self, id: RequestId, op: &Op) -> Result<Vec<u8>, Error> {
+        self.send(&ClientMessage::Request {
+            id,
+            op: op.to_proto(),
+        })
     }
 
     /// Ask for every event after `after` and then each new one, and the live
@@ -418,14 +473,78 @@ impl Join {
 
         let transport = self.transport.as_mut().ok_or(Error::Unexpected)?;
         let len = transport.open(&message, &mut plain)?;
-        let joined = wellfed_proto::decode(&plain[..len]).map_err(|_| Error::Malformed)?;
-        Ok(Some(JoinStep::Done(joined)))
+        let joined: wellfed_proto::api::Joined =
+            wellfed_proto::decode(&plain[..len]).map_err(|_| Error::Malformed)?;
+        Ok(Some(JoinStep::Done(joined.into())))
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use wellfed_proto::api::{Capabilities as Bits, OpenRefusal as WireRefusal, Role as WireRole};
+
     use super::*;
+
+    /// The feeder's side of an IK session: answer the client's first
+    /// message with `welcome`, then seal each of `after` as a transport
+    /// message, all in one buffer.
+    fn feeder_says(hello: &[u8], welcome: &Welcome<'_>, after: &[Welcome<'_>]) -> Vec<u8> {
+        let feeder = Keypair::from_secret([0x10; 32]);
+        let mut handshake = Handshake::new(
+            Pattern::Ik,
+            Role::Responder,
+            PROLOGUE,
+            &feeder,
+            None,
+            [0x22; 32],
+        )
+        .unwrap();
+        let open = PREFIX + frame::parse_prefix([hello[0], hello[1]], FRAME_MAX).unwrap();
+        let mut deframer = Deframer::default();
+        deframer.push(&hello[open..]);
+        let first = deframer.next_frame().unwrap().unwrap();
+        let mut payload = [0; FRAME_MAX];
+        handshake.read_message(&first, &mut payload).unwrap();
+
+        let mut plain = [0; FRAME_MAX];
+        let mut message = [0; FRAME_MAX];
+        let len = wellfed_proto::encode(welcome, &mut plain).unwrap();
+        let written = handshake
+            .write_message(&plain[..len], &mut message)
+            .unwrap();
+        let mut out = frame(&message[..written]).unwrap();
+        let mut transport = handshake.into_transport().unwrap();
+        for next in after {
+            let len = wellfed_proto::encode(next, &mut plain).unwrap();
+            let sealed = transport.seal(&plain[..len], &mut message).unwrap();
+            out.extend(frame(&message[..sealed]).unwrap());
+        }
+        out
+    }
+
+    #[test]
+    fn nothing_after_a_refusal_reads_as_a_welcome() {
+        let client = Keypair::from_secret([0x20; 32]);
+        let feeder = *Keypair::from_secret([0x10; 32]).public();
+        let (mut session, hello) = Session::connect(&client, feeder, [0x33; 32]).unwrap();
+        let open = Welcome::Open {
+            major: 1,
+            capabilities: Bits::KNOWN,
+            build: "b",
+            role: WireRole::Owner,
+            epoch: 1,
+        };
+        let bytes = feeder_says(&hello, &Welcome::Refused(WireRefusal::Unknown), &[open]);
+
+        // A second welcome arrives in the same read as the refusal.
+        session.receive(&bytes).unwrap();
+        assert_eq!(
+            session.next_incoming().unwrap(),
+            Some(Incoming::Refused(OpenRefusal::Unknown))
+        );
+        assert_eq!(session.next_incoming().unwrap(), None);
+        assert!(!session.is_open());
+    }
 
     #[test]
     fn an_invite_survives_its_text_form() {

@@ -15,6 +15,7 @@ jiff.workspace = true
 wellfed-api.workspace = true
 wellfed-client.workspace = true
 wellfed-connect.workspace = true
+wellfed-model.workspace = true
 wellfed-proto.workspace = true
 wellfed-session.workspace = true
 wellfed-store.workspace = true

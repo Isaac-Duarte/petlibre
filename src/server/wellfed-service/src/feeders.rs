@@ -9,8 +9,8 @@ use wellfed_api::{
     FeederId, Generation, Hex, Settings, SettingsPatch, StatusSnapshot, User,
 };
 use wellfed_client::api::Invite;
-use wellfed_connect::Answer;
-use wellfed_proto::api::{EventBody, Joined, Op, Outcome, Refusal, SettingsChanges};
+use wellfed_model::{Answer, Event, EventBody, Joined, Op, Refusal};
+use wellfed_proto::api as proto;
 use wellfed_session::hex::Lower;
 use wellfed_session::noise::Keypair;
 use wellfed_store::{FeederRow, NewFeeder};
@@ -21,7 +21,7 @@ use tracing::warn;
 use uuid::Uuid;
 
 use crate::feeder::{self, Command, Handle};
-use crate::{Discovery, Error, IdempotencyKey, Invalid, RequestId, Result, Service, convert, keys};
+use crate::{Discovery, Error, IdempotencyKey, Invalid, RequestId, Result, Service, keys};
 
 const PAGE: u32 = 100;
 const PAGE_MAX: u32 = 500;
@@ -68,8 +68,8 @@ impl Service {
                 other => Error::Unreachable(other),
             })?;
         let role = match joined {
-            Joined::Enrolled { role } => convert::client_role(role),
-            Joined::Refused(refusal) => return Err(Error::Refused(convert::refusal(refusal))),
+            Joined::Enrolled { role } => role,
+            Joined::Refused(refusal) => return Err(Error::Refused(refusal.into())),
         };
 
         let id = FeederId(Uuid::now_v7());
@@ -118,9 +118,9 @@ impl Service {
     pub async fn feeder(&self, id: FeederId) -> Result<FeederDetail> {
         let row = self.row(id).await?;
         let live = match self.ask(id, self.request_id()?, Op::Status).await {
-            Ok(answer) => match answer.outcome() {
-                Outcome::Status(status) => Some(convert::status(&status)),
-                other => return Err(refused(other)),
+            Ok(answer) => match answer {
+                Answer::Status(status) => Some(status),
+                other => return Err(refused(&other)),
             },
             Err(Error::Offline | Error::Unknown) => None,
             Err(error) => return Err(error),
@@ -179,28 +179,23 @@ impl Service {
         }
         self.row(id).await?;
 
-        let changes = SettingsChanges {
-            lights: patch.lights,
-            sound: patch.sound,
-            volume: patch.volume,
-        };
         let op = Op::PutSettings {
-            base: base.0,
-            changes,
+            base,
+            changes: patch,
         };
         let request = self.write_id(user, id, Write::Settings, key)?;
-        match self.ask(id, request, op).await?.outcome() {
+        match self.ask(id, request, op).await? {
             // The change is made; if the read-back fails, saying offline
             // would claim it was not, so the outcome is unknown: a retry
             // under the same key is answered without changing anything.
-            Outcome::Done { .. } => self.read_settings(id).await.map_err(|error| match error {
+            Answer::Done { .. } => self.read_settings(id).await.map_err(|error| match error {
                 Error::Offline => Error::Unknown,
                 other => other,
             }),
-            Outcome::Refused(Refusal::Stale { .. }) => {
+            Answer::Refused(Refusal::Stale { .. }) => {
                 Err(Error::Stale(self.read_settings(id).await?))
             }
-            other => Err(refused(other)),
+            other => Err(refused(&other)),
         }
     }
 
@@ -213,13 +208,9 @@ impl Service {
     ) -> Result<()> {
         self.row(id).await?;
         let request = self.write_id(user, id, Write::Lock, key)?;
-        match self
-            .ask(id, request, Op::SetLock { locked })
-            .await?
-            .outcome()
-        {
-            Outcome::Done { .. } => Ok(()),
-            other => Err(refused(other)),
+        match self.ask(id, request, Op::SetLock { locked }).await? {
+            Answer::Done { .. } => Ok(()),
+            other => Err(refused(&other)),
         }
     }
 
@@ -251,15 +242,15 @@ impl Service {
         let events = rows
             .into_iter()
             .map(|row| {
-                let body: EventBody =
+                let body: proto::EventBody =
                     wellfed_proto::decode(&row.body).map_err(|_| Error::Undecodable(row.seq))?;
-                Ok(FeederEvent {
+                let event = Event {
                     epoch,
                     seq: row.seq,
                     at: row.at,
-                    received: row.received,
-                    body: convert::body(body),
-                })
+                    body: EventBody::from(body),
+                };
+                Ok(FeederEvent::new(event, row.received))
             })
             .collect::<Result<Vec<_>>>()?;
 
@@ -306,11 +297,10 @@ impl Service {
     }
 
     async fn read_settings(&self, id: FeederId) -> Result<Settings> {
-        let answer = self.ask(id, self.request_id()?, Op::GetSettings).await?;
-        let Outcome::Settings(settings) = answer.outcome() else {
-            return Err(refused(answer.outcome()));
+        let settings = match self.ask(id, self.request_id()?, Op::GetSettings).await? {
+            Answer::Settings(settings) => settings,
+            other => return Err(refused(&other)),
         };
-        let settings = convert::settings(settings);
         let now = self.shared.clock.now();
         self.shared
             .store
@@ -322,7 +312,7 @@ impl Service {
     /// Hand `op` to the feeder's task and wait for its answer. Turned away
     /// at once while the feeder is offline; [`Error::Unknown`] when the
     /// answer does not come in time.
-    async fn ask(&self, id: FeederId, request: RequestId, op: Op<'static>) -> Result<Answer> {
+    async fn ask(&self, id: FeederId, request: RequestId, op: Op) -> Result<Answer> {
         let (commands, link) = {
             let handles = self.handles();
             let handle = handles.get(&id).ok_or(Error::NotFound)?;
@@ -418,9 +408,9 @@ fn feeder_name(name: &str) -> Result<&str> {
 }
 
 /// The error for an answer that is not the one asked for.
-fn refused(outcome: Outcome<'_>) -> Error {
-    match outcome {
-        Outcome::Refused(refusal) => Error::Refused(convert::refusal(refusal)),
+fn refused(answer: &Answer) -> Error {
+    match answer {
+        Answer::Refused(refusal) => Error::Refused((*refusal).into()),
         _ => Error::Unexpected,
     }
 }

@@ -32,6 +32,7 @@ There are three contracts, and each changes at a different cost:
 ```text
 src/sdk/wellfed-session      no_std, no alloc. Noise, HMAC, the setup code, length-prefixed frames, hex and base64
 src/sdk/wellfed-proto        no_std, no alloc. Device-protocol messages, framing, versions and capabilities
+src/client/wellfed-model     owned device API values (status, settings, events, requests, answers) and their conversion from the wire
 src/client/wellfed-client    sans-IO. Noise sessions, pairing, invites, the Connection: keepalive, answers, event cursor, recovery
 src/client/wellfed-connect   tokio loop over wellfed-client's Connection: locate, open, ask, follow, join, recover
 src/tools/wellfed-feeder-sim the host-simulated feeder: wellfed-feeder's API server and stores over real TCP
@@ -39,22 +40,23 @@ src/server/wellfed-api       HTTP request and response types, error codes, OpenA
 src/server/wellfed-store     sqlx, migrations, typed queries. The only crate that contains SQL
 src/server/wellfed-service   domain logic: feeder connections, sync, users, releases. No axum, no SQL
 src/server/wellfed-server    the binary: config, axum routers, auth middleware, SSE, the embedded web UI
-src/app/                      Flutter app, plus a thin flutter_rust_bridge crate over wellfed-client and wellfed-api
+src/app/                      Flutter app, plus a thin flutter_rust_bridge crate over wellfed-client, wellfed-model and wellfed-api
 ```
 
 Allowed dependencies (each arrow means "may depend on"):
 
 ```text
-wellfed-server ─► wellfed-service ─► wellfed-store ─► wellfed-api*
+wellfed-server ─► wellfed-service ─► wellfed-store ─► wellfed-api* ─► wellfed-model ─► wellfed-proto, wellfed-session (hex)
        │                   │
-       │                   └─► wellfed-client ─► wellfed-proto
-       └─► wellfed-api ─► wellfed-session
+       │                   └─► wellfed-client ─► wellfed-model, wellfed-proto, wellfed-session
+       └─► wellfed-api
 * the store uses only the api crate's ID and enum types
 ```
 
 - **`wellfed-session`** is the session layer the feeder and every client run: the Noise handshakes and transport, the setup code's proof and the frames that carry them, with the strict hex and base64 text forms. It knows nothing of the feeder's hardware or storage, so the server's crates and the app take it without the firmware's SDK (`wellfed-core`).
 - **`wellfed-proto`** is used by the firmware (`wellfed-sdk`, `wellfed-feeder`) and by every host. It holds only data types, framing and version rules: no IO, no crypto.
-- **`wellfed-client`** holds no sockets, timers or radios. Its callers feed it bytes and the current time and send what it returns. Its `Connection` (`handle_input`, `poll_transmit`, `poll_timeout`/`handle_timeout`, `request`, `subscribe`, `poll_event`) owns every session rule: a `Status` keepalive after 45 s quiet, under the feeder's 90 s idle limit; the end of a session heard from not at all for 90 s; one answer or `Unanswered` per request; and the event cursor with its epoch. `Recovery` runs the recovery window. The server and the CLI drive it with tokio through `wellfed-connect`, the app with Dart IO, and the bench with blocking sockets over the lower-level `Session`.
+- **`wellfed-model`** is what a host means by the device API's values: owned, with no lifetimes or wire buffers, so they cross into Dart through flutter_rust_bridge and into the server's store and HTTP API unchanged. `wellfed-proto`'s borrowed, positional types stay the wire; `wellfed_model::convert` is the one place the two meet (and the way back, for an op sent or a body the server stores in the feeder's own encoding). `wellfed-api` serves the model's status, settings and event bodies as they are, adding only what the server knows (when it received them, its own ids), so their JSON and OpenAPI schemas are the model's derives.
+- **`wellfed-client`** holds no sockets, timers or radios. Its callers feed it bytes and the current time and send what it returns. Its `Connection` (`handle_input`, `poll_transmit`, `poll_timeout`/`handle_timeout`, `request`, `subscribe`, `poll_event`) takes a model `Op` and yields model `Answer`s and pushed `Event`s, `Gap`s and `Sample`s (as does the lower-level `Session` under it: nothing borrowed from a frame crosses the crate's surface), and owns every session rule: a `Status` keepalive after 45 s quiet, under the feeder's 90 s idle limit; the end of a session heard from not at all for 90 s; one answer or `Unanswered` per request; and the event cursor with its epoch. `Recovery` runs the recovery window. The server and the CLI drive it with tokio through `wellfed-connect`, the app with Dart IO, and the bench with blocking sockets over the lower-level `Session`.
 - **`wellfed-connect`** is a thin tokio loop over that `Connection`: it moves bytes, keeps the clock and queues the events and samples that arrive while a request waits for its answer. It takes its randomness from the caller (request ids and ephemeral keys are arguments), so the server can inject its generator and tests can fix it.
 - **`wellfed-feeder-sim`** runs `wellfed-feeder`'s own API server, panel and pairing policy, and `wellfed-core`'s stores on a flash image laid out like the feeder's storage region, so service, end-to-end and web tests meet the feeder's behavior rather than a mock of it. Its standard input stands in for the panel's buttons; a feed is refused until the feeding owner lands.
 - **`wellfed-api`** builds for every target, including the app's Android library, so it carries no server dependencies.

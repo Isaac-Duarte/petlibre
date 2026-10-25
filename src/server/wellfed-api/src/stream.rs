@@ -6,6 +6,7 @@
 //! (or has restarted), after which it refetches.
 
 use jiff::Timestamp;
+use wellfed_model::{Sample, SampleValue};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
@@ -47,47 +48,14 @@ pub struct FeederSample {
     pub value: SampleValue,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(tag = "metric", rename_all = "snake_case")]
-pub enum SampleValue {
-    Power {
-        adapter: bool,
-        battery_mv: Option<u32>,
-    },
-    Rssi {
-        dbm: i32,
-    },
-}
-
-impl SampleValue {
-    pub const fn metric(&self) -> MetricKind {
-        match self {
-            Self::Power { .. } => MetricKind::Power,
-            Self::Rssi { .. } => MetricKind::Rssi,
+impl FeederSample {
+    /// The feeder's `sample`, as the server received it at `received`.
+    pub const fn new(sample: Sample, received: Timestamp) -> Self {
+        Self {
+            received,
+            uptime_ms: sample.uptime_ms,
+            value: sample.value,
         }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum MetricKind {
-    Power,
-    Rssi,
-}
-
-impl MetricKind {
-    /// The stored and query spelling, the same as the JSON one.
-    pub const fn code(self) -> &'static str {
-        match self {
-            Self::Power => "power",
-            Self::Rssi => "rssi",
-        }
-    }
-
-    pub fn from_code(code: &str) -> Option<Self> {
-        [Self::Power, Self::Rssi]
-            .into_iter()
-            .find(|metric| metric.code() == code)
     }
 }
 

@@ -31,6 +31,7 @@ The bench drives `wellfed-local` as a child process today (`serve`, `ota-offer`,
 
 ```text
 wellfed-client   lib, sans-IO   device API sessions and pairing; the installer's steps
+wellfed-model    lib            the device API's values, owned, as the CLI, the app and the server share them
 wellfed-stock    lib            the stock 1.1.15 protocol, only what install and rollback need:
                                  the legacy MQTT 3.1 broker, OTA_UPGRADE and its trial ledger,
                                  the setup frame, reading stock's plan records for FP04

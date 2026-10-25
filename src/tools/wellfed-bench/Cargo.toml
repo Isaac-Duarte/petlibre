@@ -19,6 +19,7 @@ wellfed-build = { path = "../wellfed-build" }
 wellfed-client.workspace = true
 wellfed-flash = { path = "../wellfed-flash" }
 wellfed-core.workspace = true
+wellfed-model.workspace = true
 wellfed-proto.workspace = true
 wellfed-session.workspace = true
 futures-util = { version = "0.3", default-features = false, optional = true }

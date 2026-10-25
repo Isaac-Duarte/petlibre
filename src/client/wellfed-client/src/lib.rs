@@ -8,6 +8,13 @@
 //! runs over them ([`connection`]: keepalive, answers, the event cursor and
 //! LAN recovery).
 //!
+//! Every public type is `wellfed-model`'s owned values or plain bytes (an
+//! `Op` in; answers, pushed events, gaps and samples, welcomes, refusals and
+//! setup replies out), from the lower-level [`api::Session`] the bench
+//! drives up to [`connection::Connection`], so what crosses into the app's
+//! bindings or the server has no lifetime tied to a frame buffer. The
+//! wire's borrowed types stay inside the crate.
+//!
 //! [API design]: ../../../../docs/api/README.md
 #![forbid(unsafe_code)]
 

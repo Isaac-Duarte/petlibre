@@ -29,9 +29,10 @@ use std::time::Duration;
 
 use wellfed_client::api::{Invite, Join, JoinStep};
 use wellfed_client::connection::{self, Event, Opened, Recovery as Window, Timing};
-pub use wellfed_client::connection::{Answer, Cursor, KEEPALIVE_ID, Message, Resume};
-use wellfed_proto::api::{Joined, Op, OpenRefusal, PORT, RequestId, Role, SERVICE};
-use wellfed_proto::setup::Reply;
+pub use wellfed_client::connection::{Cursor, KEEPALIVE_ID, Resume};
+use wellfed_model::setup::Reply;
+use wellfed_model::{Answer, ClientRole, Joined, Op, OpenRefusal, Pushed};
+use wellfed_proto::api::{PORT, RequestId, SERVICE};
 use wellfed_session::hex::Lower;
 use wellfed_session::noise::Keypair;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -191,7 +192,7 @@ pub struct Connection {
     session: connection::Connection,
     outbox: Outbox,
     /// Pushed messages not yet taken by [`Self::next`].
-    queued: VecDeque<Message>,
+    queued: VecDeque<Pushed>,
     /// Answers, or their absence, not yet taken by [`Self::ask`].
     answers: VecDeque<(RequestId, Option<Answer>)>,
 }
@@ -239,7 +240,7 @@ impl Connection {
     }
 
     /// The role the feeder gave this key.
-    pub fn role(&self) -> Role {
+    pub fn role(&self) -> ClientRole {
         self.opened().role
     }
 
@@ -318,7 +319,7 @@ impl Connection {
 
     /// The next pushed message within `wait`, keeping the session alive
     /// meanwhile.
-    pub async fn next(&mut self, wait: Duration) -> Result<Message> {
+    pub async fn next(&mut self, wait: Duration) -> Result<Pushed> {
         let deadline = Instant::now() + wait;
         loop {
             if let Some(message) = self.queued.pop_front() {
@@ -336,7 +337,7 @@ impl Connection {
     /// One request under `id` and its answer. Other messages that arrive
     /// meanwhile stay queued for [`Self::next`]. `id` may not be
     /// [`KEEPALIVE_ID`].
-    pub async fn ask(&mut self, id: RequestId, op: Op<'_>) -> Result<Answer> {
+    pub async fn ask(&mut self, id: RequestId, op: &Op) -> Result<Answer> {
         self.session.request(now(), id, op)?;
         loop {
             while let Some((answered, answer)) = self.answers.pop_front() {

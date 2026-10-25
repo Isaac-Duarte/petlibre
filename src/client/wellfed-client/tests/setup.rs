@@ -10,6 +10,11 @@ use wellfed_proto::setup::{Enrolled, Refusal, Reply, WifiSaved};
 use wellfed_session::noise::{self, Keypair};
 use wellfed_session::setup_code::{Button, Code};
 
+/// The reply as the client hands it on.
+fn model(reply: Reply) -> wellfed_model::setup::Reply {
+    wellfed_model::convert::setup_reply(reply).unwrap()
+}
+
 const CODE: u16 = 0b10_01_11_00_01_10_00_11;
 
 fn keypair(byte: u8) -> Keypair {
@@ -101,7 +106,7 @@ fn the_owners_code_proves_both_sides_and_then_carries_the_wifi() {
     let entering = Reply::EnterCode { seconds: 60 };
     assert_eq!(
         reply(&mut responder, &mut session, entering).unwrap(),
-        Step::Reply(entering)
+        Step::Reply(model(entering))
     );
     let code = session.code();
     let Ok(Received::Proven { wifi }) = prove(&mut responder, &mut session, code) else {
@@ -117,7 +122,7 @@ fn the_owners_code_proves_both_sides_and_then_carries_the_wifi() {
     };
     assert_eq!(
         reply(&mut responder, &mut session, done).unwrap(),
-        Step::Reply(done)
+        Step::Reply(model(done))
     );
     assert!(matches!(session.receive(&[0; 40]), Err(Error::Unexpected)));
 }
@@ -163,7 +168,7 @@ fn a_refusal_ends_the_session() {
     let refused = Reply::Refused(Refusal::Unconfirmed);
     assert_eq!(
         reply(&mut responder, &mut session, refused).unwrap(),
-        Step::Reply(refused)
+        Step::Reply(model(refused))
     );
     assert!(matches!(session.receive(&[0; 40]), Err(Error::Unexpected)));
 }

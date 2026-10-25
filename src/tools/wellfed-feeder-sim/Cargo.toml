@@ -29,6 +29,7 @@ harness = []
 [dev-dependencies]
 wellfed-feeder-sim = { path = ".", features = ["harness"] }
 wellfed-connect.workspace = true
+wellfed-model.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 

@@ -19,7 +19,7 @@ use std::fmt::Display;
 use std::ops::Deref;
 
 use wellfed_formats::local::{Replacement, TrialRecord};
-use wellfed_proto::api::WifiSource;
+use wellfed_model::WifiSource;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

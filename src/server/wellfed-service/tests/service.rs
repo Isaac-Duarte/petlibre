@@ -17,7 +17,7 @@ use wellfed_client::api::Invite;
 use wellfed_connect::Connection;
 use wellfed_feeder_sim::flash::Flash;
 use wellfed_feeder_sim::harness::{Relay, Running};
-use wellfed_proto::api::{Op, Outcome, Role as DeviceRole};
+use wellfed_model::{Answer, Op};
 use wellfed_service::{
     Clock, Config, Discovery, Error, IdempotencyKey, Invalid, Resume, Service, SystemRandom, Timing,
 };
@@ -122,18 +122,21 @@ async fn open_owner(sim: &Running) -> Connection {
 
 /// The feeder answers a repeated write id from memory, so each invite
 /// takes a new one.
-async fn invite(sim: &Running, role: DeviceRole) -> String {
+async fn invite(sim: &Running, role: ClientRole) -> String {
     static IDS: AtomicU8 = AtomicU8::new(0x80);
     let id = [IDS.fetch_add(1, Ordering::Relaxed); 16];
     let mut connection = open_owner(sim).await;
-    let answer = connection.ask(id, Op::CreateInvite { role }).await.unwrap();
-    let Outcome::Invite(invite) = answer.outcome() else {
+    let answer = connection
+        .ask(id, &Op::CreateInvite { role })
+        .await
+        .unwrap();
+    let Answer::Invite(invite) = answer else {
         panic!("{answer:?}");
     };
     Invite {
         feeder: sim.identity,
         id: invite.id,
-        secret: invite.secret,
+        secret: invite.secret.0,
     }
     .text()
 }
@@ -142,7 +145,7 @@ async fn adopt(server: &Server, sim: &Running) -> FeederId {
     let feeder = server
         .service
         .adopt(AdoptFeeder {
-            invite: invite(sim, DeviceRole::Server).await,
+            invite: invite(sim, ClientRole::Server).await,
             name: "kitchen".into(),
             address: Some(sim.address.to_string()),
         })
@@ -282,7 +285,7 @@ fn an_adopted_feeder_connects_syncs_its_clock_and_mirrors_its_history() {
         );
 
         let again = server.service.adopt(AdoptFeeder {
-            invite: invite(&sim, DeviceRole::Server).await,
+            invite: invite(&sim, ClientRole::Server).await,
             name: "again".into(),
             address: Some(sim.address.to_string()),
         });
@@ -434,11 +437,11 @@ fn history_recorded_while_the_server_was_down_arrives_on_restart() {
         // The owner changes the lock twice while the server is away.
         let mut owner = open_owner(&sim).await;
         for (n, locked) in [(1u8, false), (2, true)] {
-            let answer = owner.ask([n; 16], Op::SetLock { locked }).await.unwrap();
-            assert_eq!(answer.outcome(), Outcome::Done { generation: None });
+            let answer = owner.ask([n; 16], &Op::SetLock { locked }).await.unwrap();
+            assert_eq!(answer, Answer::Done { generation: None });
         }
-        let answer = owner.ask([3; 16], Op::Status).await.unwrap();
-        let Outcome::Status(status) = answer.outcome() else {
+        let answer = owner.ask([3; 16], &Op::Status).await.unwrap();
+        let Answer::Status(status) = answer else {
             panic!("{answer:?}");
         };
         let newest = status.last_event.unwrap();
@@ -529,19 +532,18 @@ fn a_revoked_server_key_is_refused() {
         link(&server.service, id, Link::Online).await;
 
         let mut owner = open_owner(&sim).await;
-        let answer = owner.ask([1; 16], Op::ListClients).await.unwrap();
-        let Outcome::Clients(clients) = answer.outcome() else {
+        let answer = owner.ask([1; 16], &Op::ListClients).await.unwrap();
+        let Answer::Clients(clients) = answer else {
             panic!("{answer:?}");
         };
         let key = clients
-            .clients
             .iter()
-            .flatten()
-            .find(|client| client.role == DeviceRole::Server)
+            .find(|client| client.role == ClientRole::Server)
             .unwrap()
-            .key;
-        let answer = owner.ask([2; 16], Op::RevokeClient { key }).await.unwrap();
-        assert_eq!(answer.outcome(), Outcome::Done { generation: None });
+            .key
+            .0;
+        let answer = owner.ask([2; 16], &Op::RevokeClient { key }).await.unwrap();
+        assert_eq!(answer, Answer::Done { generation: None });
 
         link(&server.service, id, Link::Refused).await;
         assert!(matches!(
@@ -565,7 +567,7 @@ fn an_invite_for_a_member_is_adopted_with_that_role_and_bad_input_is_refused() {
 
         let member = service
             .adopt(AdoptFeeder {
-                invite: invite(&sim, DeviceRole::Member).await,
+                invite: invite(&sim, ClientRole::Member).await,
                 name: "hall".into(),
                 address: Some(sim.address.to_string()),
             })
@@ -573,7 +575,7 @@ fn an_invite_for_a_member_is_adopted_with_that_role_and_bad_input_is_refused() {
             .unwrap();
         assert_eq!(member.role, ClientRole::Member);
 
-        let used = invite(&sim, DeviceRole::Server).await;
+        let used = invite(&sim, ClientRole::Server).await;
         let request = |invite: &str, address: Option<&str>| AdoptFeeder {
             invite: invite.into(),
             name: "x".into(),
@@ -588,7 +590,7 @@ fn an_invite_for_a_member_is_adopted_with_that_role_and_bad_input_is_refused() {
             Err(Error::AlreadyAdopted)
         ));
         let other = Running::start(&Flash::memory(), Some(*owner().public())).await;
-        let fresh = invite(&other, DeviceRole::Server).await;
+        let fresh = invite(&other, ClientRole::Server).await;
         assert!(matches!(
             service.adopt(request(&fresh, None)).await,
             Err(Error::Invalid(Invalid::AddressRequired))
@@ -679,7 +681,7 @@ fn an_unanswered_write_is_unknown_and_its_retry_applies_once() {
             .unwrap();
         let id = service
             .adopt(AdoptFeeder {
-                invite: invite(&sim, DeviceRole::Server).await,
+                invite: invite(&sim, ClientRole::Server).await,
                 name: "kitchen".into(),
                 address: Some(relay.address.to_string()),
             })

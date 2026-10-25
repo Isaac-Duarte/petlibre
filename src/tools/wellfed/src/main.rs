@@ -27,11 +27,9 @@ use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use wellfed_client::api::Invite;
 use wellfed_client::setup::{Ask, Credentials, Session, Step, panel_position};
-use wellfed_formats::{hex, private};
-use wellfed_proto::api::{
-    EventBody, FeederMessage, Joined, Op, Outcome, Role, SettingsChanges, Wifi,
-};
-use wellfed_proto::setup::{Enrolled, Refusal, Reply, WifiSaved};
+use wellfed_formats::private;
+use wellfed_model::setup::{Enrolled, Refusal, Reply, WifiSaved};
+use wellfed_model::{Answer, ClientRole, EventBody, Joined, Op, Pushed, SettingsPatch, Wifi};
 use wellfed_session::setup_code::Code;
 
 use crate::ble::Link;
@@ -108,11 +106,11 @@ fn main() -> Result<()> {
         .build()?;
     match cli.command {
         Command::Setup(args) => runtime.block_on(setup(args)),
-        Command::Status(target) => runtime.block_on(ask_and_print(&target, Op::Status)),
+        Command::Status(target) => runtime.block_on(ask_and_print(&target, &Op::Status)),
         Command::Settings(args) => runtime.block_on(settings_command(args)),
         Command::Lock(args) => runtime.block_on(ask_and_print(
             &args.target,
-            Op::SetLock {
+            &Op::SetLock {
                 locked: args.state.on(),
             },
         )),
@@ -126,9 +124,9 @@ fn main() -> Result<()> {
         Command::Feed(args) => runtime.block_on(feed_command(args)),
         Command::CancelFeed(args) => runtime.block_on(ask_and_print(
             &args.target,
-            Op::CancelFeed { feed: args.feed },
+            &Op::CancelFeed { feed: args.feed },
         )),
-        Command::Reboot(target) => runtime.block_on(ask_and_print(&target, Op::Reboot)),
+        Command::Reboot(target) => runtime.block_on(ask_and_print(&target, &Op::Reboot)),
         Command::Recover(args) => runtime.block_on(recover_command(args)),
     }
 }
@@ -225,8 +223,6 @@ enum SetupOutcome {
 fn outcome(reply: Reply) -> SetupOutcome {
     match reply {
         Reply::EnterCode { seconds } => SetupOutcome::EnterCode(seconds),
-        // The session answers the proof's steps itself.
-        Reply::Round { .. } => SetupOutcome::Refused("it sent a proof step out of turn"),
         Reply::Done { enrolled, wifi } => SetupOutcome::Done(format!(
             "{}, {}",
             match enrolled {
@@ -397,43 +393,41 @@ fn print_json(value: &impl serde::Serialize) -> Result<()> {
     Ok(())
 }
 
-async fn ask_and_print(target: &Target, op: Op<'_>) -> Result<()> {
+async fn ask_and_print(target: &Target, op: &Op) -> Result<()> {
     let (_, _, mut connection) = connect(target).await?;
-    let bytes = connection.ask(op).await?;
-    let outcome = bytes.outcome();
-    print_json(&outcome)?;
-    if let Outcome::Refused(refusal) = outcome {
+    let answer = connection.ask(op).await?;
+    print_answer(&answer)
+}
+
+/// The answer as JSON; a refusal is also the command's failure.
+fn print_answer(answer: &Answer) -> Result<()> {
+    print_json(answer)?;
+    if let Answer::Refused(refusal) = answer {
         bail!("refused: {refusal:?}");
     }
     Ok(())
 }
 
 async fn settings_command(args: SettingsArgs) -> Result<()> {
-    let changes = SettingsChanges {
+    let changes = SettingsPatch {
         lights: args.lights.map(Toggle::on),
         sound: args.sound.map(Toggle::on),
         volume: args.volume,
     };
-    if changes == SettingsChanges::default() {
-        return ask_and_print(&args.target, Op::GetSettings).await;
+    if changes == SettingsPatch::default() {
+        return ask_and_print(&args.target, &Op::GetSettings).await;
     }
     let (_, _, mut connection) = connect(&args.target).await?;
-    let current = connection.ask(Op::GetSettings).await?;
-    let Outcome::Settings(settings) = current.outcome() else {
+    let Answer::Settings(settings) = connection.ask(&Op::GetSettings).await? else {
         bail!("the feeder did not return its settings");
     };
-    let bytes = connection
-        .ask(Op::PutSettings {
+    let answer = connection
+        .ask(&Op::PutSettings {
             base: settings.generation,
             changes,
         })
         .await?;
-    let outcome = bytes.outcome();
-    print_json(&outcome)?;
-    if let Outcome::Refused(refusal) = outcome {
-        bail!("refused: {refusal:?}");
-    }
-    Ok(())
+    print_answer(&answer)
 }
 
 async fn wifi_command(args: WifiArgs) -> Result<()> {
@@ -443,35 +437,29 @@ async fn wifi_command(args: WifiArgs) -> Result<()> {
         None => bail!("pass --ssid or --clear"),
     };
     let (_, _, mut connection) = connect(&args.target).await?;
-    let status = connection.ask(Op::Status).await?;
-    let Outcome::Status(status) = status.outcome() else {
+    let Answer::Status(status) = connection.ask(&Op::Status).await? else {
         bail!("the feeder did not return its status");
     };
-    let wifi = match (&args.ssid, &passphrase) {
+    let wifi = match (args.ssid, passphrase) {
         (Some(ssid), Some(psk)) => Some(Wifi {
-            ssid: ssid.as_bytes(),
+            ssid: ssid.into_bytes(),
             psk,
         }),
         _ => None,
     };
-    let bytes = connection
-        .ask(Op::PutWifi {
+    let answer = connection
+        .ask(&Op::PutWifi {
             base: status.wifi_generation,
             wifi,
         })
         .await?;
-    let outcome = bytes.outcome();
-    print_json(&outcome)?;
-    if let Outcome::Refused(refusal) = outcome {
-        bail!("refused: {refusal:?}");
-    }
-    Ok(())
+    print_answer(&answer)
 }
 
 async fn time_command(target: Target) -> Result<()> {
     let zone = jiff::tz::TimeZone::system();
     let sync = wellfed_client::time::sync(jiff::Timestamp::now(), &zone);
-    ask_and_print(&target, Op::TimeSync(sync)).await
+    ask_and_print(&target, &Op::TimeSync(sync)).await
 }
 
 async fn events_command(args: EventsArgs) -> Result<()> {
@@ -487,19 +475,13 @@ async fn events_command(args: EventsArgs) -> Result<()> {
     };
     loop {
         // The session keeps itself alive, so a quiet hour is no failure.
-        let message = match connection.next(wait).await {
-            Ok(Some(message)) => message,
+        let pushed = match connection.next(wait).await {
+            Ok(Some(pushed)) => pushed,
             Ok(None) if args.follow => continue,
             Ok(None) => return Ok(()),
             Err(error) => return Err(error),
         };
-        let message = message.get();
-        match message {
-            FeederMessage::Event(_) | FeederMessage::Gap { .. } | FeederMessage::Sample(_) => {
-                println!("{}", serde_json::to_string(&message)?);
-            }
-            FeederMessage::Response { .. } => {}
-        }
+        println!("{}", serde_json::to_string(&pushed)?);
     }
 }
 
@@ -510,22 +492,20 @@ const FEED_WAIT: Duration = Duration::from_secs(120);
 /// may have run. Prints the answer, then the feed's `Fed` event.
 async fn feed_command(args: FeedArgs) -> Result<()> {
     let (_, _, mut connection) = connect(&args.target).await?;
-    let status = connection.ask(Op::Status).await?;
-    let Outcome::Status(status) = status.outcome() else {
+    let Answer::Status(status) = connection.ask(&Op::Status).await? else {
         bail!("the feeder did not answer with its status");
     };
     // Only events after this one can be the feed's.
     connection.subscribe(status.last_event, false).await?;
 
     let answer = connection
-        .ask(Op::Feed {
+        .ask(&Op::Feed {
             portions: args.portions,
         })
         .await?;
-    let outcome = answer.outcome();
-    print_json(&outcome)?;
-    let Outcome::Feeding { feed } = outcome else {
-        bail!("the feeder did not start the feed: {outcome:?}");
+    print_json(&answer)?;
+    let Answer::Feeding { feed } = answer else {
+        bail!("the feeder did not start the feed: {answer:?}");
     };
 
     loop {
@@ -535,8 +515,7 @@ async fn feed_command(args: FeedArgs) -> Result<()> {
                 FEED_WAIT.as_secs()
             );
         };
-        let message = message.get();
-        if let FeederMessage::Event(event) = message
+        if let Pushed::Event(event) = message
             && matches!(event.body, EventBody::Fed { feed: ended, .. } if ended == feed)
         {
             return print_json(&event);
@@ -546,18 +525,17 @@ async fn feed_command(args: FeedArgs) -> Result<()> {
 
 async fn invite_command(args: InviteArgs) -> Result<()> {
     let role = match args.role {
-        InviteRole::Owner => Role::Owner,
-        InviteRole::Member => Role::Member,
-        InviteRole::Server => Role::Server,
+        InviteRole::Owner => ClientRole::Owner,
+        InviteRole::Member => ClientRole::Member,
+        InviteRole::Server => ClientRole::Server,
     };
     let (_, identity, mut connection) = connect(&args.target).await?;
-    let bytes = connection.ask(Op::CreateInvite { role }).await?;
-    match bytes.outcome() {
-        Outcome::Invite(invite) => {
+    match connection.ask(&Op::CreateInvite { role }).await? {
+        Answer::Invite(invite) => {
             let text = Invite {
                 feeder: identity,
                 id: invite.id,
-                secret: invite.secret,
+                secret: invite.secret.0,
             }
             .text();
             println!("{text}");
@@ -567,7 +545,7 @@ async fn invite_command(args: InviteArgs) -> Result<()> {
             );
             Ok(())
         }
-        Outcome::Refused(refusal) => bail!("refused: {refusal:?}"),
+        Answer::Refused(refusal) => bail!("refused: {refusal:?}"),
         other => bail!("unexpected answer {other:?}"),
     }
 }
@@ -602,14 +580,13 @@ async fn join_command(args: JoinArgs) -> Result<()> {
 
 async fn clients_command(target: Target) -> Result<()> {
     let (_, _, mut connection) = connect(&target).await?;
-    let bytes = connection.ask(Op::ListClients).await?;
-    let Outcome::Clients(clients) = bytes.outcome() else {
+    let Answer::Clients(clients) = connection.ask(&Op::ListClients).await? else {
         bail!("the feeder did not list its clients");
     };
-    for client in clients.clients.iter().flatten() {
+    for client in &clients {
         println!(
             "{}  {:<6?}  {}{}",
-            hex::encode(&client.key),
+            client.key,
             client.role,
             client.label,
             if client.you { "  (this key)" } else { "" }
@@ -623,27 +600,19 @@ async fn revoke_command(args: RevokeArgs) -> Result<()> {
         bail!("give at least 8 hex digits of the client's key");
     }
     let (_, _, mut connection) = connect(&args.target).await?;
-    let bytes = connection.ask(Op::ListClients).await?;
-    let Outcome::Clients(clients) = bytes.outcome() else {
+    let Answer::Clients(clients) = connection.ask(&Op::ListClients).await? else {
         bail!("the feeder did not list its clients");
     };
     let matches: Vec<[u8; 32]> = clients
-        .clients
         .iter()
-        .flatten()
-        .filter(|c| hex::encode(&c.key).starts_with(&args.client))
-        .map(|c| c.key)
+        .filter(|c| c.key.to_string().starts_with(&args.client))
+        .map(|c| c.key.0)
         .collect();
     let [key] = matches.as_slice() else {
         bail!("{} clients match {}", matches.len(), args.client);
     };
-    let bytes = connection.ask(Op::RevokeClient { key: *key }).await?;
-    let outcome = bytes.outcome();
-    print_json(&outcome)?;
-    if let Outcome::Refused(refusal) = outcome {
-        bail!("refused: {refusal:?}");
-    }
-    Ok(())
+    let answer = connection.ask(&Op::RevokeClient { key: *key }).await?;
+    print_answer(&answer)
 }
 
 #[derive(Args)]

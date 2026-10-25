@@ -22,12 +22,21 @@ use crate::deadline_passed;
 pub const MAX_HOLDS: usize = 3;
 
 // The setup code is keyed in on these buttons, so the session crate, which
-// a client takes without the SDK, owns the enumeration.
+// a client takes without the SDK, owns the enumeration; its order is the
+// code's wire encoding, and `bit` below maps each button to its pin.
 pub use wellfed_session::setup_code::Button;
 
-/// `button`'s bit in a [`Buttons`] set.
+/// `button`'s bit in a [`Buttons`] set, which is its pin: bit `n` is
+/// PB(4 + n) (physical). Spelled out rather than taken from the
+/// discriminant, which is the setup code's wire value and must not follow
+/// the board's wiring.
 const fn bit(button: Button) -> u8 {
-    1 << button as u8
+    match button {
+        Button::Reset => 1 << 0,
+        Button::Mic => 1 << 1,
+        Button::Dispense => 1 << 2,
+        Button::Lock => 1 << 3,
+    }
 }
 
 /// A set of buttons: bit `n` is the button on PB(4 + n).

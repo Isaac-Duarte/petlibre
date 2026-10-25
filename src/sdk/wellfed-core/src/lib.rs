@@ -9,8 +9,10 @@
 #![no_std]
 #![deny(unsafe_code)]
 
-// The SDK's crates declare their record words with the session crate's
-// macro, so a word prints the same whichever crate names it.
+// The SDK's crates declare their UART record words (`stage=`, `reason=`,
+// fields the host tools parse) with the session crate's macro: the printed
+// text is exactly the declared word, so a record's bytes do not depend on
+// how the firmware names the variant.
 pub use wellfed_session::named_enum;
 
 pub mod adc_scale;

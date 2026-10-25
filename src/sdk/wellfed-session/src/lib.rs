@@ -7,14 +7,16 @@
 //! client or the owner's server takes it without the firmware's SDK. It is
 //! `no_std`, allocates nothing and draws no randomness: the caller passes
 //! buffers and secrets in.
+//!
+//! What crosses the wire is fixed here: frame prefixes, handshake bytes and
+//! the setup code's press values ([`setup_code::Button`]'s discriminants),
+//! independent of how a board wires its buttons.
 #![no_std]
 #![deny(unsafe_code)]
 
-/// Declare a fieldless enumeration whose variants print as fixed words.
-///
-/// For the UART record fields (`stage=`, `reason=`) the host tools parse:
-/// `as_str` and `Display` give exactly the declared text, so a record's
-/// bytes do not depend on how the firmware names the variant.
+/// Declare a fieldless enumeration whose variants print as fixed words:
+/// `as_str` and `Display` give exactly the declared text, and `ALL` lists the
+/// variants in declaration order.
 #[macro_export]
 macro_rules! named_enum {
     ($(#[$meta:meta])* $vis:vis enum $name:ident { $($(#[$vmeta:meta])* $variant:ident = $text:literal),+ $(,)? }) => {

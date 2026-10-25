@@ -5,11 +5,10 @@
 //! relay in the middle gets neither an enrollment nor the passphrase.
 
 use wellfed_client::setup::{Ask, Credentials, Deframer, Error, Session, Step, frame};
-use wellfed_core::buttons::Button;
 use wellfed_feeder::setup::{self as feeder, MAX_MESSAGE, Offer, Received, Responder};
 use wellfed_proto::setup::{Enrolled, Refusal, Reply, WifiSaved};
 use wellfed_session::noise::{self, Keypair};
-use wellfed_session::setup_code::Code;
+use wellfed_session::setup_code::{Button, Code};
 
 const CODE: u16 = 0b10_01_11_00_01_10_00_11;
 

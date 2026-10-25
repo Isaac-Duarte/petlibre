@@ -27,8 +27,11 @@
 use crate::mac::{hmac_sha256, same};
 
 crate::named_enum! {
-    /// The panel buttons, in pin order PB4..PB7 (physical). A press's
-    /// discriminant is its two bits in a code and its byte in a commitment.
+    /// The four panel buttons a code is keyed in on. The declaration order
+    /// is the setup code's wire encoding: a press's discriminant is its two
+    /// bits in a code and its byte in a commitment, so reordering the
+    /// variants breaks every client in the field. Which pin each button sits
+    /// on is the SDK's (`wellfed_core::buttons`), not this order.
     pub enum Button {
         Reset = "reset",
         Mic = "mic",

@@ -20,10 +20,9 @@
 //! characteristic ([`frame`], [`Deframer`]); notifications may split a frame.
 
 use wellfed_core::ble_setup::{self, PREFIX};
-use wellfed_core::buttons::Button;
 use wellfed_proto::setup::{Answer, LABEL_MAX, PROLOGUE, Reply, Request, Wifi};
 use wellfed_session::noise::{self, Handshake, Keypair, Pattern, Role, Transport};
-use wellfed_session::setup_code::{self, Code, Exchange, Round, Side};
+use wellfed_session::setup_code::{self, Button, Code, Exchange, Round, Side};
 
 pub use wellfed_core::ble_setup::{CONTROL, MAX_MESSAGE, SERVICE};
 

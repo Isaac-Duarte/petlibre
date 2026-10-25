@@ -443,7 +443,7 @@ impl Watch {
         self.verify(data.bytes)
     }
 
-    /// Kept out of line: Ed25519 needs about 12 KiB of stack.
+    /// Kept out of line: Ed25519 verification needs about 8 KiB of stack.
     #[inline(never)]
     fn verify(&mut self, bytes: &[u8]) -> Step {
         let Some(key) = self.key else {

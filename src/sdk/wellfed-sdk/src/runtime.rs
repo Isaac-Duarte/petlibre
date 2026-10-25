@@ -747,8 +747,10 @@ unsafe extern "C" fn service_task(_: *mut c_void) -> u32 {
     }
 }
 
-/// 24 KiB, as the updater: the offer check's manifest verifies Ed25519.
-const SERVICE_STACK_WORDS: u16 = 6144;
+/// 16 KiB: the offer check's Ed25519 manifest verification is the deepest
+/// path, which the stack audit bounds at about 11 KB; 16 KiB keeps the
+/// audit's 25% margin. The task's stack comes out of the heap.
+const SERVICE_STACK_WORDS: u16 = 4096;
 
 /// The normal role's service task, with the power monitor and confirmation
 /// as its first stages.

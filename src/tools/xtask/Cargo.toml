@@ -4,7 +4,7 @@ name = "xtask"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
-description = "Repository maintenance tasks: documentation links, tool dependencies, portability and transport isolation"
+description = "Repository maintenance tasks: documentation links, tool dependencies, portability, transport isolation and bounded fuzz runs"
 publish.workspace = true
 
 [dependencies]

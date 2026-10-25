@@ -1,0 +1,5 @@
+# cargo-fuzz output: builds, the corpora it grows, and crash artifacts.
+/target/
+/corpus/
+/artifacts/
+/coverage/

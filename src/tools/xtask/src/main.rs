@@ -1,5 +1,7 @@
 //! Repository maintenance tasks, run as `cargo xtask <task>`.
 //!
+//! `fuzz` runs one cargo-fuzz target for a bounded time.
+//!
 //! `check-repository` checks local documentation links, portable repository
 //! inputs, that no Python returns under `src/`, and the transport
 //! isolation rule. It is a maintenance check, not a secret
@@ -7,6 +9,7 @@
 
 #![forbid(unsafe_code)]
 
+mod fuzz;
 mod repository;
 
 use std::path::PathBuf;
@@ -28,6 +31,14 @@ struct Cli {
 enum Task {
     /// Documentation links, tool dependencies, portable inputs, transport isolation.
     CheckRepository,
+    /// One bounded libFuzzer run of a network-parser target (needs cargo-fuzz).
+    Fuzz {
+        #[arg(value_enum)]
+        target: fuzz::Target,
+        /// How long to fuzz.
+        #[arg(long, default_value_t = 60)]
+        seconds: u32,
+    },
 }
 
 fn main() -> ExitCode {
@@ -48,6 +59,19 @@ fn main() -> ExitCode {
             }
             Err(error) => {
                 eprintln!("check-repository: {error}");
+                ExitCode::from(2)
+            }
+        },
+        Task::Fuzz { target, seconds } => match fuzz::run(&cli.root, target, seconds) {
+            Ok(status) if status.success() => ExitCode::SUCCESS,
+            Ok(status) => {
+                eprintln!(
+                    "fuzz: the run ended with {status}; any crash input is under fuzz/artifacts/"
+                );
+                ExitCode::from(1)
+            }
+            Err(error) => {
+                eprintln!("fuzz: {error}");
                 ExitCode::from(2)
             }
         },

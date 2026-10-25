@@ -33,6 +33,26 @@ The server's committed contracts are checked inside `check-rust`: a test fails w
 
 Generated Rust artifacts live in `target/`; the simulator worker and temporary verification outputs can create ignored `private/` subdirectories. No existing backups or evidence are required. Use [.gitignore](../../.gitignore) as the storage boundary, and keep secrets out of the tracked examples.
 
+## Fuzzing
+
+The network parsers also have [cargo-fuzz](https://rust-fuzz.github.io/book/cargo-fuzz.html) targets in [fuzz/](../../fuzz/Cargo.toml), a crate outside the workspace with its own lockfile, so `make check` never builds it. Install the runner once with `cargo install cargo-fuzz` (it also needs a C++ compiler for libFuzzer), then run one target for a bounded time:
+
+```sh
+cargo xtask fuzz api-connection --seconds 60
+```
+
+| Target | Input |
+| --- | --- |
+| `api-connection` | Any bytes on a new device API connection: the clear opening frame, the IK, invite and recovery handshakes, and a full session table |
+| `api-session` | Requests sealed inside the owner's open session, each answer opened and decoded |
+| `proto-decode` | Every device protocol and setup message type, decoded and re-encoded |
+| `noise-responder` | The first handshake message of each Noise pattern, into any payload buffer |
+| `setup` | BLE setup messages to the feeder's responder, and a genuine client's request, code proof and Wi-Fi |
+| `ota-manifest` | The update manifest, the `ota/get` and `ota/data` messages, and chunks to the bank-1 writer |
+| `mqtt` | A broker's byte stream into the MQTT codec and its session |
+
+`--seconds` defaults to 60. The command runs the pinned toolchain with `RUSTC_BOOTSTRAP=1` for libFuzzer's unstable compiler flags, so no nightly toolchain is needed. Builds, grown corpora and crash inputs stay in ignored `fuzz/target/`, `fuzz/corpus/` and `fuzz/artifacts/`. A crash is a bug in the parser: reproduce it with `RUSTC_BOOTSTRAP=1 cargo fuzz run --fuzz-dir fuzz <target> fuzz/artifacts/<target>/<file>`, fix it, and add the input as a regression test beside the property that should have caught it. The device API and setup targets share their drivers with the property tests ([support](../../src/product/wellfed-feeder/tests/support/mod.rs)).
+
 ## Work on a component
 
 ```sh

@@ -376,3 +376,169 @@ fn ik_to_the_wrong_feeder_fails() {
         Err(Error::Decrypt)
     );
 }
+
+/// Bounded properties: the responder survives any bytes, every pattern
+/// carries any payload under any keys, and a flipped bit never reads.
+mod properties {
+    use super::*;
+    use proptest::prelude::*;
+
+    const PATTERNS: [Pattern; 4] = [Pattern::Xx, Pattern::Ik, Pattern::Kk, Pattern::XxPsk3];
+
+    #[derive(Clone, Copy, Debug)]
+    struct Keys {
+        initiator: [u8; 32],
+        responder: [u8; 32],
+        initiator_ephemeral: [u8; 32],
+        responder_ephemeral: [u8; 32],
+        psk: [u8; 32],
+    }
+
+    fn keys() -> impl Strategy<Value = Keys> {
+        any::<[[u8; 32]; 5]>().prop_map(|[a, b, c, d, e]| Keys {
+            initiator: a,
+            responder: b,
+            initiator_ephemeral: c,
+            responder_ephemeral: d,
+            psk: e,
+        })
+    }
+
+    fn pattern() -> impl Strategy<Value = Pattern> {
+        proptest::sample::select(PATTERNS.to_vec())
+    }
+
+    fn pair(pattern: Pattern, keys: &Keys) -> (Handshake, Handshake) {
+        let initiator_static = Keypair::from_secret(keys.initiator);
+        let responder_static = Keypair::from_secret(keys.responder);
+        let mut initiator = Handshake::new(
+            pattern,
+            Role::Initiator,
+            PROLOGUE,
+            &initiator_static,
+            needs_remote(pattern, Role::Initiator).then_some(*responder_static.public()),
+            keys.initiator_ephemeral,
+        )
+        .unwrap();
+        let mut responder = Handshake::new(
+            pattern,
+            Role::Responder,
+            PROLOGUE,
+            &responder_static,
+            needs_remote(pattern, Role::Responder).then_some(*initiator_static.public()),
+            keys.responder_ephemeral,
+        )
+        .unwrap();
+        if pattern == Pattern::XxPsk3 {
+            initiator.set_psk(keys.psk);
+            responder.set_psk(keys.psk);
+        }
+        (initiator, responder)
+    }
+
+    proptest! {
+        /// What the feeder reads first from an unauthenticated peer: any
+        /// bytes, into any payload buffer, fail cleanly or read.
+        #[test]
+        fn a_responder_survives_any_first_message(
+            pattern in pattern(),
+            message in proptest::collection::vec(any::<u8>(), 0..160),
+            room in 0usize..96,
+        ) {
+            let keys = Keys {
+                initiator: INITIATOR_STATIC,
+                responder: RESPONDER_STATIC,
+                initiator_ephemeral: INITIATOR_EPHEMERAL,
+                responder_ephemeral: RESPONDER_EPHEMERAL,
+                psk: PSK,
+            };
+            let (_, mut responder) = pair(pattern, &keys);
+            let mut payload = vec![0; room];
+            if let Ok(read) = responder.read_message(&message, &mut payload) {
+                prop_assert!(read <= room);
+                // Only a pattern whose first message is unauthenticated reads
+                // bytes nobody keyed.
+                prop_assert_eq!(pattern, Pattern::Xx);
+            }
+        }
+
+        /// Every pattern, any keys, any payloads: each side reads what the
+        /// other wrote, both end on the same hash, and the transports carry
+        /// a message each way.
+        #[test]
+        fn every_handshake_round_trips_any_payloads(
+            pattern in pattern(),
+            keys in keys(),
+            payloads in proptest::collection::vec(
+                proptest::collection::vec(any::<u8>(), 0..64), 3),
+            sealed in proptest::collection::vec(any::<u8>(), 0..128),
+        ) {
+            let (mut initiator, mut responder) = pair(pattern, &keys);
+            let (mut message, mut payload) = ([0; 512], [0; 512]);
+            let mut turn = 0;
+            while !initiator.is_finished() {
+                let (writer, reader) = if initiator.is_my_turn() {
+                    (&mut initiator, &mut responder)
+                } else {
+                    (&mut responder, &mut initiator)
+                };
+                let sent = &payloads[turn];
+                let len = writer.write_message(sent, &mut message).unwrap();
+                let read = reader.read_message(&message[..len], &mut payload).unwrap();
+                prop_assert_eq!(&payload[..read], sent.as_slice());
+                turn += 1;
+            }
+
+            prop_assert!(responder.is_finished());
+            prop_assert_eq!(initiator.handshake_hash(), responder.handshake_hash());
+            let client = *Keypair::from_secret(keys.initiator).public();
+            prop_assert_eq!(responder.remote_static(), Some(&client));
+            let mut a = initiator.into_transport().unwrap();
+            let mut b = responder.into_transport().unwrap();
+            for flip in [false, true] {
+                let (from, to) = if flip { (&mut b, &mut a) } else { (&mut a, &mut b) };
+                let len = from.seal(&sealed, &mut message).unwrap();
+                let read = to.open(&message[..len], &mut payload).unwrap();
+                prop_assert_eq!(&payload[..read], sealed.as_slice());
+            }
+        }
+
+        /// Any one flipped bit in a handshake or transport message fails the
+        /// read, except in XX's first message, which no key protects yet.
+        #[test]
+        fn a_flipped_bit_never_reads(
+            pattern in pattern(),
+            keys in keys(),
+            target in 0usize..4,
+            bit in any::<proptest::sample::Index>(),
+            body in proptest::collection::vec(any::<u8>(), 0..32),
+        ) {
+            let (mut initiator, mut responder) = pair(pattern, &keys);
+            let (mut message, mut payload) = ([0; 512], [0; 512]);
+            let mut turn = 0;
+            while !initiator.is_finished() {
+                let (writer, reader) = if initiator.is_my_turn() {
+                    (&mut initiator, &mut responder)
+                } else {
+                    (&mut responder, &mut initiator)
+                };
+                let len = writer.write_message(&body, &mut message).unwrap();
+                if turn == target && !(pattern == Pattern::Xx && turn == 0) {
+                    let at = bit.index(len * 8);
+                    message[at / 8] ^= 1 << (at % 8);
+                    prop_assert!(reader.read_message(&message[..len], &mut payload).is_err());
+                    return Ok(());
+                }
+                reader.read_message(&message[..len], &mut payload).unwrap();
+                turn += 1;
+            }
+
+            let mut a = initiator.into_transport().unwrap();
+            let mut b = responder.into_transport().unwrap();
+            let len = a.seal(&body, &mut message).unwrap();
+            let at = bit.index(len * 8);
+            message[at / 8] ^= 1 << (at % 8);
+            prop_assert_eq!(b.open(&message[..len], &mut payload), Err(Error::Decrypt));
+        }
+    }
+}

@@ -1,0 +1,70 @@
+# cargo-fuzz targets for the feeder's network parsers, run through
+# `cargo xtask fuzz <target>` (docs/development/README.md#fuzzing). Outside
+# the main workspace: libFuzzer's sanitizer flags need nightly features, and
+# its lockfile and target directory stay out of `make check`.
+[package]
+name = "wellfed-fuzz"
+version = "0.0.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4.13"
+wellfed-core = { path = "../src/sdk/wellfed-core" }
+wellfed-feeder = { path = "../src/product/wellfed-feeder" }
+wellfed-proto = { path = "../src/sdk/wellfed-proto" }
+
+[[bin]]
+name = "api_connection"
+path = "fuzz_targets/api_connection.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "api_session"
+path = "fuzz_targets/api_session.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "proto_decode"
+path = "fuzz_targets/proto_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "noise_responder"
+path = "fuzz_targets/noise_responder.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "setup"
+path = "fuzz_targets/setup.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ota_manifest"
+path = "fuzz_targets/ota_manifest.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mqtt"
+path = "fuzz_targets/mqtt.rs"
+test = false
+doc = false
+bench = false

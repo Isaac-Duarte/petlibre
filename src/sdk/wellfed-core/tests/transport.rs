@@ -617,3 +617,110 @@ fn wifi_source_codes_round_trip() {
     }
     assert_eq!(WifiSource::from_code(3), WifiSource::Build);
 }
+
+/// Bounded properties of the MQTT codec against whatever a broker, or a
+/// host on the LAN posing as one, sends.
+mod properties {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// Bytes that start like a packet this client takes, so the cases reach
+    /// past the header checks.
+    fn stream() -> impl Strategy<Value = Vec<u8>> {
+        let header = proptest::sample::select(vec![0x20u8, 0x90, 0xd0, 0x30, 0x31, 0x32, 0x00]);
+        (header, proptest::collection::vec(any::<u8>(), 0..96)).prop_map(|(header, mut rest)| {
+            rest.insert(0, header);
+            rest
+        })
+    }
+
+    proptest! {
+        /// Any bytes decode to a packet, ask for more, or fail; a packet
+        /// never claims more bytes than it was given, and every shorter
+        /// prefix of it asks for more rather than failing.
+        #[test]
+        fn decode_survives_any_bytes_and_is_prefix_stable(
+            data in prop_oneof![stream(), proptest::collection::vec(any::<u8>(), 0..96)],
+        ) {
+            if let Ok(Some((packet, used))) = decode(&data) {
+                prop_assert!(used <= data.len());
+                prop_assert_eq!(decode(&data[..used]), Ok(Some((packet, used))));
+                for cut in 0..used {
+                    prop_assert_eq!(decode(&data[..cut]), Ok(None), "cut at {}", cut);
+                }
+            }
+        }
+
+        /// A QoS 0 publish decodes back to its topic, payload and retain
+        /// flag, using exactly the bytes encoded.
+        #[test]
+        fn publishes_round_trip(
+            topic in "\\PC{0,48}",
+            payload in proptest::collection::vec(any::<u8>(), 0..MAX_PACKET),
+            retain in any::<bool>(),
+            trailing in proptest::collection::vec(any::<u8>(), 0..8),
+        ) {
+            let mut buf = [0; MAX_PACKET + 8];
+            let Ok(n) = encode_publish(&mut buf, &topic, &payload, retain) else {
+                prop_assert!(2 + topic.len() + payload.len() >= MAX_PACKET);
+                return Ok(());
+            };
+            let mut bytes = buf[..n].to_vec();
+            bytes.extend_from_slice(&trailing);
+            let expected = Packet::Publish { topic: &topic, payload: &payload, retain };
+            prop_assert_eq!(decode(&bytes), Ok(Some((expected, n))));
+        }
+
+        /// The encoders fit their buffer or say so, whatever the fields.
+        #[test]
+        fn encoders_never_overrun(
+            client_id in "\\PC{0,64}",
+            password in proptest::collection::vec(any::<u8>(), 0..900),
+            topic in "\\PC{0,64}",
+            room in 0usize..=MAX_PACKET,
+        ) {
+            let mut buf = vec![0; room];
+            let connect = Connect {
+                client_id: &client_id,
+                username: "wellfed-fw",
+                password: &password,
+                will: Some(Will { topic: &topic, payload: &password }),
+            };
+            if let Ok(n) = encode_connect(&mut buf, &connect) {
+                prop_assert!(n <= room);
+            }
+            if let Ok(n) = encode_subscribe(&mut buf, 7, &topic) {
+                prop_assert!(n <= room);
+            }
+        }
+
+        /// A session fed any packet sequence never panics, and once closed
+        /// it stays closed.
+        #[test]
+        fn the_session_survives_any_packet_sequence(
+            stream in proptest::collection::vec(stream(), 0..8),
+        ) {
+            let mut session = Session::connecting(0);
+            let mut closed = None;
+            for (at, bytes) in stream.iter().enumerate() {
+                let now = u32::try_from(at).unwrap() * 100;
+                let event = match decode(bytes) {
+                    Ok(Some((packet, _))) => {
+                        session.on_packet_with(now, packet, REQUEST, Some("wellfed/1/dev1/ota/data"))
+                    }
+                    Ok(None) => continue,
+                    // The caller drops the connection on a codec error, so a
+                    // closed session never hears of a second one.
+                    Err(_) if closed.is_some() => continue,
+                    Err(error) => Event::Closed(session.on_error(error)),
+                };
+                if let Some(fault) = closed {
+                    prop_assert_eq!(event, Event::Closed(fault));
+                }
+                if let Event::Closed(fault) = event {
+                    closed.get_or_insert(fault);
+                }
+            }
+        }
+    }
+}

@@ -32,6 +32,7 @@ The workspace is `src/sdk/` (the SDK every firmware builds on), `src/product/` (
 - Tests may `unwrap`, `expect` and `dbg!` ([clippy.toml](../../clippy.toml)); a panic there is a failed test.
 - Hardware and fixture evidence tests are `#[ignore]`d and run only from `make check-fixtures`, which stays on `cargo test` for its `--ignored --exact` selection. An ignored or skipped test is never a pass.
 - Network tests bind loopback sockets with synthetic identities.
+- The network parsers (the device API server and codec, the Noise handshake reader, BLE setup, the update manifest and writer, the MQTT codec) carry bounded [proptest](https://proptest-rs.github.io/proptest/) properties: no panic on any input, and encode-then-decode round trips. They run in the ordinary suite, so `make check` covers them; a failure writes its seed to a `*.proptest-regressions` file beside the test, which is committed with the fix. The same drivers back the cargo-fuzz targets ([fuzzing](README.md#fuzzing)).
 
 ## Dependencies
 
@@ -48,4 +49,4 @@ A new dependency is justified in the change that adds it (what it replaces or wh
 
 ## Tooling
 
-Rust 1.99.1 through rustup ([rust-toolchain.toml](../../rust-toolchain.toml)), plus `cargo install cargo-nextest cargo-deny`. Run `cargo fmt --all` after any edit, then `make check`.
+Rust 1.99.1 through rustup ([rust-toolchain.toml](../../rust-toolchain.toml)), plus `cargo install cargo-nextest cargo-deny` (and `cargo-fuzz` for the optional [fuzz targets](README.md#fuzzing)). Run `cargo fmt --all` after any edit, then `make check`.

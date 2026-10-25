@@ -314,3 +314,215 @@ fn delivery_messages_round_trip_and_reject_malformed() {
     assert_eq!(decode_data(&refused_with_body), None);
     assert_eq!(decode_data(&[0; 3]), None);
 }
+
+/// Bounded properties of what an update server, or anyone posing as one,
+/// can send: manifests, delivery messages and chunks.
+mod properties {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn signed(signing: &SigningKey, manifest: &Manifest) -> Vec<u8> {
+        let mut bytes = manifest_body(manifest).to_vec();
+        bytes.extend_from_slice(&signing.sign(&bytes).to_bytes());
+        bytes
+    }
+
+    fn manifest() -> impl Strategy<Value = Manifest> {
+        (
+            any::<u32>(),
+            prop_oneof![any::<u32>(), SECTOR_BYTES - 1..=BANK1_BYTES + 1],
+            prop_oneof![Just(1u32), any::<u32>()],
+            any::<[u8; 32]>(),
+            any::<[u8; 32]>(),
+        )
+            .prop_map(
+                |(version, image_len, target_bank, image_sha256, build_id)| Manifest {
+                    version,
+                    image_len,
+                    target_bank,
+                    image_sha256,
+                    build_id,
+                },
+            )
+    }
+
+    fn part() -> impl Strategy<Value = Part> {
+        prop_oneof![Just(Part::Manifest), Just(Part::Chunk)]
+    }
+
+    fn status() -> impl Strategy<Value = Status> {
+        prop_oneof![Just(Status::Ok), Just(Status::NoOffer), Just(Status::Range)]
+    }
+
+    proptest! {
+        /// Unsigned bytes, magic or not, never parse.
+        #[test]
+        fn unsigned_manifests_never_parse(
+            magic in any::<bool>(),
+            mut bytes in prop_oneof![
+                proptest::collection::vec(any::<u8>(), 0..2 * MANIFEST_LEN),
+                proptest::collection::vec(any::<u8>(), MANIFEST_LEN),
+            ],
+            installed in any::<u32>(),
+        ) {
+            if magic && bytes.len() >= MAGIC.len() {
+                bytes[..MAGIC.len()].copy_from_slice(&MAGIC);
+            }
+            let (_, public) = key();
+            prop_assert!(parse_manifest(&bytes, &public, installed).is_err());
+        }
+
+        /// A signed manifest parses back to itself exactly when it targets
+        /// bank 1, fits it and is newer; otherwise it names why not.
+        #[test]
+        fn signed_manifests_round_trip_or_name_the_refusal(
+            manifest in manifest(),
+            installed in any::<u32>(),
+        ) {
+            let (signing, public) = key();
+            let expected = if manifest.target_bank != 1 {
+                Err(ManifestError::Bank)
+            } else if !(SECTOR_BYTES..=BANK1_BYTES).contains(&manifest.image_len) {
+                Err(ManifestError::Size)
+            } else if manifest.version <= installed {
+                Err(ManifestError::Downgrade)
+            } else {
+                Ok(manifest)
+            };
+            prop_assert_eq!(parse_manifest(&signed(&signing, &manifest), &public, installed), expected);
+        }
+
+        /// One flipped bit anywhere in a signed manifest is refused.
+        #[test]
+        fn a_flipped_manifest_bit_is_refused(
+            manifest in manifest(),
+            bit in 0..MANIFEST_LEN * 8,
+        ) {
+            let (signing, public) = key();
+            let mut bytes = signed(&signing, &manifest);
+            bytes[bit / 8] ^= 1 << (bit % 8);
+            let refusal = parse_manifest(&bytes, &public, 0);
+            prop_assert!(
+                matches!(refusal, Err(ManifestError::Magic | ManifestError::Signature)),
+                "{refusal:?}"
+            );
+        }
+
+        #[test]
+        fn delivery_messages_round_trip(
+            part in part(),
+            status in status(),
+            offset in any::<u32>(),
+            len in any::<u32>(),
+            body in proptest::collection::vec(any::<u8>(), 0..=MAX_CHUNK as usize),
+        ) {
+            prop_assert_eq!(decode_get(&encode_get(part, offset, len)), Some((part, offset, len)));
+
+            let body = if status == Status::Ok { body } else { Vec::new() };
+            let mut bytes = encode_data_header(part, status, offset, u32::try_from(body.len()).unwrap()).to_vec();
+            bytes.extend_from_slice(&body);
+            prop_assert_eq!(
+                decode_data(&bytes),
+                Some(Data { part, status, offset, bytes: &body })
+            );
+        }
+
+        /// Arbitrary delivery bytes decode only when their declared length
+        /// is exactly what follows the header.
+        #[test]
+        fn delivery_decoders_survive_any_bytes(
+            bytes in proptest::collection::vec(any::<u8>(), 0..64),
+        ) {
+            if let Some((part, offset, len)) = decode_get(&bytes) {
+                let encoded = encode_get(part, offset, len);
+                prop_assert_eq!(encoded.as_slice(), bytes.as_slice());
+            }
+            if let Some(data) = decode_data(&bytes) {
+                prop_assert_eq!(data.bytes.len(), bytes.len() - DATA_HEADER);
+                prop_assert!(data.status == Status::Ok || data.bytes.is_empty());
+            }
+        }
+
+        /// Any image, chunked any way the bitmap tracks, its chunks arriving
+        /// in any order within a sector, lands intact with the marker
+        /// withheld until commit.
+        #[test]
+        fn any_image_in_any_chunk_order_lands_intact(
+            len in SECTOR..3 * SECTOR,
+            fill in any::<u8>(),
+            chunk in proptest::sample::select(vec![128usize, 256, 512, 1024, 2048, SECTOR]),
+            seed in any::<u64>(),
+        ) {
+            let mut payload: Vec<u8> =
+                (0..len).map(|i| fill.wrapping_add((i * 131 % 251) as u8)).collect();
+            payload[..MARKER.len()].copy_from_slice(&MARKER);
+            let manifest = Manifest {
+                version: 2,
+                image_len: u32::try_from(len).unwrap(),
+                target_bank: 1,
+                image_sha256: Sha256::digest(&payload).into(),
+                build_id: [0; 32],
+            };
+            let mut w = Writer::new(manifest, chunk).unwrap();
+            let mut flash = vec![0xff; len];
+            let mut state = seed | 1;
+
+            loop {
+                let mut wanted: Vec<_> = w.missing().collect();
+                if wanted.is_empty() {
+                    break;
+                }
+                // A seeded shuffle, so a failure replays.
+                for i in (1..wanted.len()).rev() {
+                    state ^= state << 13;
+                    state ^= state >> 7;
+                    state ^= state << 17;
+                    wanted.swap(i, usize::try_from(state % (i as u64 + 1)).unwrap());
+                }
+                for (offset, len) in wanted {
+                    let data = &payload[offset as usize..(offset + len) as usize];
+                    if let Some(program) = w.accept(offset, data).unwrap() {
+                        let at = (program.offset - BANK1_OFFSET) as usize;
+                        flash[at..at + program.data.len()].copy_from_slice(program.data);
+                        w.programmed(true).unwrap();
+                    }
+                }
+            }
+
+            prop_assert_eq!(&flash[..MARKER.len()], &[0xff; 8]);
+            prop_assert_eq!(&flash[MARKER.len()..], &payload[MARKER.len()..]);
+            prop_assert_eq!(w.commit(), Ok((BANK1_OFFSET, MARKER)));
+        }
+
+        /// Whatever chunks arrive, in whatever order, the writer never
+        /// panics and never commits an image whose hash it did not see.
+        #[test]
+        fn the_writer_survives_any_chunks(
+            image_len in SECTOR_BYTES..=BANK1_BYTES,
+            calls in proptest::collection::vec(
+                (any::<u32>(), 0usize..SECTOR + 2, any::<u8>(), any::<bool>()),
+                0..24,
+            ),
+        ) {
+            let manifest = Manifest {
+                version: 2,
+                image_len,
+                target_bank: 1,
+                image_sha256: [0; 32],
+                build_id: [0; 32],
+            };
+            let mut w = Writer::new(manifest, 512).unwrap();
+            for (offset, len, byte, readback) in calls {
+                // Bias half the offsets onto the chunk grid, where the
+                // writer's arithmetic happens.
+                let offset = if byte & 1 == 0 { offset % (2 * SECTOR_BYTES) / 512 * 512 } else { offset };
+                let data = vec![byte; len];
+                if let Ok(Some(_)) = w.accept(offset, &data) {
+                    let _ = w.programmed(readback);
+                }
+                let _ = w.next_request();
+            }
+            prop_assert!(w.commit().is_err());
+        }
+    }
+}

@@ -17,7 +17,7 @@ Where each tool is going (`wellfed-local` split up and retired, the bench split 
 | [wellfed-audit](wellfed-audit) | no | Offline audits of finalized receive-only captures (startup, ADC samples, driver transients) and full-flash backup comparison |
 | [wellfed-emu](wellfed-emu) | no | The vendor factory loader (mapping and bank selection) and UART flash helper, executed under Unicorn on supplied state: the review's mapping check, the OTA marker fixtures, and `wellfed-flash`'s emulated sessions |
 | [wellfed-formats](wellfed-formats) | no | The files these tools pass to each other (build manifest, frozen review, stock layout, locks, captures, credentials and keys, flash plans), typed once, and the private-file writer |
-| [xtask](xtask) | no | `cargo xtask check-repository`: documentation links, portability, no Python under `src/`, transport isolation |
+| [xtask](xtask) | no | `cargo xtask check-repository`: documentation links, portability, no Python under `src/`, transport isolation; `cargo xtask fuzz <target>`: one bounded cargo-fuzz run ([fuzzing](../../docs/development/README.md#fuzzing)) |
 
 ## Removed Python tools
 

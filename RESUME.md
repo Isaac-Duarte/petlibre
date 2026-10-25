@@ -56,10 +56,6 @@ Findings and loose ends no card has closed yet. Each line says where it came fro
 - Installs sometimes stop on a loader `0x15` (an idle NAK read as a reply): `fw16-loop-04`…`09` after 10–49 sectors, earlier `fw10-pipeline-bank0` sessions. Nothing was retried and `--interrupted` finished each; the cause is open.
 
 **Host and tools**
-- Server: a `Busy` refusal is answered 503 "retry with the same key", but the feeder remembers refusals per write id, so the retry replays `Busy`.
-- Stack audit: `TASK` accepts a generic entry it cannot resolve (it would be left unaudited); `INDIRECT` misses `blx ip/fp/sl/sb` and `bx rN`. No undercount today.
-- `wellfed-emu`'s `emu_start` has a 1 s wall-clock timeout beside its instruction budget (`factory.rs:134`), so `make check-fixtures` can fail under load; it passes alone.
-- `wellfed_formats::manifest` still carries some audits as `serde_json::Value`; the bench's `LocalStatus` mirrors `wellfed-local`'s status instead of sharing a type.
 
 **Setup and pairing (FW45)**
 - Not yet on hardware: a mistyped-code run, and the stale-offer fix.

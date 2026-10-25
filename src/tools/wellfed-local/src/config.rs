@@ -77,9 +77,10 @@ impl Config {
     }
 
     /// The role's field off the top, then the rest as stock's, which still
-    /// refuses any field it does not know.
+    /// refuses any field it does not know. A repeated key is refused, as a
+    /// struct parse of the whole file would.
     pub(crate) fn parse(bytes: &[u8]) -> serde_json::Result<Self> {
-        let mut fields: Map<String, Value> = serde_json::from_slice(bytes)?;
+        let UniqueKeys(mut fields) = serde_json::from_slice(bytes)?;
         let firmware = fields
             .remove("firmware")
             .map(serde_json::from_value::<Option<FirmwareConfig>>)
@@ -166,4 +167,69 @@ pub fn add_firmware_credential(config_path: &Path, output: &Path) -> Result<()> 
     config.validate()?;
     storage::write_new_json(output, &credential)?;
     storage::write_json(config_path, &config)
+}
+
+/// A JSON object whose keys each appear once.
+struct UniqueKeys(Map<String, Value>);
+
+impl<'de> Deserialize<'de> for UniqueKeys {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = UniqueKeys;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("a JSON object")
+            }
+
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut access: A,
+            ) -> Result<UniqueKeys, A::Error> {
+                let mut fields = Map::new();
+                while let Some((key, value)) = access.next_entry::<String, Value>()? {
+                    if fields.contains_key(&key) {
+                        return Err(serde::de::Error::custom(format!("duplicate field `{key}`")));
+                    }
+                    fields.insert(key, value);
+                }
+                Ok(UniqueKeys(fields))
+            }
+        }
+
+        deserializer.deserialize_map(Visitor)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const STOCK: &str = r#""version":1,"device_id":"AF_TEST","device_client_id":"AF_TEST",
+        "device_username":"dev","device_password":"pw",
+        "server_password":"ssssssssssssssssssssssssssssssss",
+        "api_token":"tttttttttttttttttttttttttttttttt",
+        "mqtt_listen":"127.0.0.1:1883","http_listen":"127.0.0.1:8765",
+        "timezone":"UTC","plans":[],"binding_response":null,
+        "hotspot_interface":"wlan1","target_mac":"02:00:00:00:00:01""#;
+
+    const FIRMWARE: &str = r#""firmware":{"client_id":"wellfed-fw-AF_TEST",
+        "username":"wellfed-fw",
+        "password":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}"#;
+
+    #[test]
+    fn a_repeated_key_is_refused_as_the_struct_parse_did() {
+        let once = format!("{{{STOCK},{FIRMWARE}}}");
+        let config = Config::parse(once.as_bytes()).unwrap();
+        assert!(config.firmware.is_some() && config.validate().is_ok());
+
+        let firmware_twice = format!("{{{STOCK},{FIRMWARE},{FIRMWARE}}}");
+        let error = Config::parse(firmware_twice.as_bytes()).err().unwrap();
+        assert!(error.to_string().contains("duplicate field `firmware`"));
+
+        let version_twice = format!("{{{STOCK},\"version\":1}}");
+        let error = Config::parse(version_twice.as_bytes()).err().unwrap();
+        assert!(error.to_string().contains("duplicate field `version`"));
+    }
 }

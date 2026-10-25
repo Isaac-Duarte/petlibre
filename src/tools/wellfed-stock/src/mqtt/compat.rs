@@ -14,7 +14,7 @@ use tokio::{
 
 const MAX_CONNECT_BYTES: usize = 65_530;
 
-pub async fn run(listener: TcpListener, broker: SocketAddr) -> Result<()> {
+pub(crate) async fn run(listener: TcpListener, broker: SocketAddr) -> Result<()> {
     let permits = Arc::new(Semaphore::new(8));
     let mut tasks = JoinSet::new();
     loop {

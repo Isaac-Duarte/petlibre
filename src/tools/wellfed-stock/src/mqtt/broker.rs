@@ -31,7 +31,8 @@ use crate::{config::Config, mqtt::compat};
 /// `()` adds none.
 pub trait Roles: Send + Sync + 'static {
     /// The user a login is admitted as, when it is one of these roles. Asked
-    /// only after the login matched neither stock identity.
+    /// only after the login matched neither stock identity, and a role named
+    /// as one (`device` or `server`) is refused: it would gain stock's grants.
     fn authenticate(
         &self,
         client_id: &str,
@@ -61,6 +62,32 @@ struct DeviceAuth<R> {
     roles: R,
 }
 
+/// The users stock's allowlists grant, which only stock's own logins carry.
+const STOCK_USERS: [&str; 2] = ["device", "server"];
+
+impl<R: Roles> DeviceAuth<R> {
+    /// The user a login is admitted as: a stock identity first, then a role.
+    fn login(&self, client_id: &str, username: &str, password: &[u8]) -> Option<&'static str> {
+        let config = &self.config;
+        let device = client_id == config.device_client_id
+            && username == config.device_username
+            && bool::from(password.ct_eq(config.device_password.as_bytes()));
+        let server = client_id == config.server_client_id()
+            && username == "local-server"
+            && bool::from(password.ct_eq(config.server_password.as_bytes()));
+
+        if device {
+            Some("device")
+        } else if server {
+            Some("server")
+        } else {
+            self.roles
+                .authenticate(client_id, username, password)
+                .filter(|user| !STOCK_USERS.contains(user))
+        }
+    }
+}
+
 type AuthFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 impl<R: Roles> AuthProvider for DeviceAuth<R> {
@@ -69,29 +96,12 @@ impl<R: Roles> AuthProvider for DeviceAuth<R> {
         connect: &'a ConnectPacket,
         _addr: SocketAddr,
     ) -> AuthFuture<'a, mqtt5::error::Result<AuthResult>> {
-        let config = &self.config;
         let username = connect.username.as_deref().unwrap_or("");
         let password = connect.password.as_deref().unwrap_or(&[]);
 
-        let device = connect.client_id == config.device_client_id
-            && username == config.device_username
-            && bool::from(password.ct_eq(config.device_password.as_bytes()));
-        let server = connect.client_id == config.server_client_id()
-            && username == "local-server"
-            && bool::from(password.ct_eq(config.server_password.as_bytes()));
-        let role = || {
-            self.roles
-                .authenticate(&connect.client_id, username, password)
-        };
-
-        let result = if device {
-            AuthResult::success_with_user("device")
-        } else if server {
-            AuthResult::success_with_user("server")
-        } else if let Some(user) = role() {
-            AuthResult::success_with_user(user)
-        } else {
-            AuthResult::fail(ReasonCode::NotAuthorized)
+        let result = match self.login(&connect.client_id, username, password) {
+            Some(user) => AuthResult::success_with_user(user),
+            None => AuthResult::fail(ReasonCode::NotAuthorized),
         };
         Box::pin(async move { Ok(result) })
     }
@@ -265,5 +275,44 @@ mod tests {
             "dl/PLAF103/OTHER/device/event/post"
         ));
         assert!(!subscribe_allowed(&c, server, "#"));
+    }
+
+    /// A role that admits every login under a fixed name.
+    struct Named(&'static str);
+
+    impl Roles for Named {
+        fn authenticate(&self, _: &str, _: &str, _: &[u8]) -> Option<&'static str> {
+            Some(self.0)
+        }
+
+        fn publish_allowed(&self, _: Option<&str>, _: &str) -> bool {
+            false
+        }
+
+        fn subscribe_allowed(&self, _: Option<&str>, _: &str) -> bool {
+            false
+        }
+    }
+
+    #[test]
+    fn a_role_can_never_log_in_as_a_stock_identity() {
+        let login = |name| {
+            let auth = DeviceAuth {
+                config: config(),
+                roles: Named(name),
+            };
+            auth.login("intruder", "intruder", b"anything")
+        };
+
+        assert_eq!(login("device"), None);
+        assert_eq!(login("server"), None);
+        assert_eq!(login("firmware"), Some("firmware"));
+
+        let stock = DeviceAuth {
+            config: config(),
+            roles: (),
+        };
+        assert_eq!(stock.login("AF_TEST", "dev", b"pw"), Some("device"));
+        assert_eq!(stock.login("AF_TEST", "dev", b"wrong"), None);
     }
 }

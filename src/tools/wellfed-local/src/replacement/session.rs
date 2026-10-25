@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use chrono::Utc;
-use wellfed_stock::{controller::Controller, mqtt::Companion};
+use wellfed_stock::mqtt::{Companion, Evidence};
 use rumqttc::{AsyncClient, Publish, QoS, SubscribeFilter};
 use tokio::sync::oneshot;
 use tracing::{info, warn};
@@ -41,12 +41,12 @@ impl Firmware {
         }
     }
 
-    fn health(&mut self, payload: &[u8], controller: &mut Controller<Health>) {
+    fn health(&mut self, payload: &[u8], evidence: Evidence<'_, Health>) {
         let now = Utc::now();
         if !self.tracker.observe_health(payload, now) {
             warn!("ignored invalid replacement health");
         } else if self.tracker.snapshot(now).online
-            && let Err(error) = controller.replacement_healthy(now)
+            && let Err(error) = evidence.replacement_healthy(now)
         {
             warn!(%error, "replacement install not recorded as healthy");
         }
@@ -92,7 +92,7 @@ impl Companion for Firmware {
         &mut self,
         client: &AsyncClient,
         publish: &Publish,
-        controller: &mut Controller<Health>,
+        evidence: Evidence<'_, Health>,
     ) -> bool {
         if self.config.firmware.is_none() {
             return false;
@@ -100,7 +100,7 @@ impl Companion for Firmware {
 
         let topic = |suffix| self.config.firmware_topic(suffix);
         if publish.topic == topic("health") {
-            self.health(&publish.payload, controller);
+            self.health(&publish.payload, evidence);
             return true;
         }
         if publish.topic == topic("ota/get") {

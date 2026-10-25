@@ -1,16 +1,26 @@
 //! Record the source commit so a running service can prove what it executes.
-//! The stock protocol and its trial ledger are compiled in from
-//! `wellfed-stock`, so its sources count as this binary's inputs too.
+//! Paths are relative to this package. The inputs are its own sources, the
+//! first-party crates it links (`wellfed-stock` holds the stock protocol
+//! and the trial ledger, `wellfed-formats` the status types,
+//! `wellfed-core` and `wellfed-session` the update format and hex), and the
+//! workspace's manifest, lockfile and toolchain.
 use std::process::Command;
 
-const BUILD_INPUTS: [&str; 7] = [
+const BUILD_INPUTS: [&str; 14] = [
     "src",
     "build.rs",
     "Cargo.toml",
     "../wellfed-stock/src",
     "../wellfed-stock/Cargo.toml",
-    "Cargo.lock",
-    "rust-toolchain.toml",
+    "../wellfed-formats/src",
+    "../wellfed-formats/Cargo.toml",
+    "../../sdk/wellfed-core/src",
+    "../../sdk/wellfed-core/Cargo.toml",
+    "../../sdk/wellfed-session/src",
+    "../../sdk/wellfed-session/Cargo.toml",
+    "../../../Cargo.toml",
+    "../../../Cargo.lock",
+    "../../../rust-toolchain.toml",
 ];
 
 fn git(args: &[&str]) -> Option<String> {

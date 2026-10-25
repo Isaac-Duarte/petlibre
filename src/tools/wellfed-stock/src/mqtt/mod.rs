@@ -15,7 +15,7 @@
 //! `compat` normalizing the stock firmware's CONNECT in front of it.
 
 pub mod broker;
-pub mod compat;
+pub(crate) mod compat;
 
 use std::{sync::Arc, time::Duration};
 
@@ -56,13 +56,12 @@ pub trait Companion: Send + 'static {
     fn filters(&self) -> Vec<SubscribeFilter>;
 
     /// Take a publish on its own topics, answering on `client`; false leaves
-    /// the publish to stock. It reaches the controller only through the
-    /// ledger's own evidence rules.
+    /// the publish to stock. It reaches the ledger only through `evidence`.
     fn incoming(
         &mut self,
         client: &AsyncClient,
         publish: &Publish,
-        controller: &mut Controller<Self::Health>,
+        evidence: Evidence<'_, Self::Health>,
     ) -> bool;
 
     /// Fill its part of the status the API serves.
@@ -70,6 +69,17 @@ pub trait Companion: Send + 'static {
 
     /// Answer one of its requests. Called with or without a broker session.
     fn request(&mut self, request: Self::Request);
+}
+
+/// What a companion may tell the ledger: only the evidence rules that take
+/// its word, never a command or a trial of its own.
+pub struct Evidence<'a, H>(&'a mut Controller<H>);
+
+impl<H> Evidence<'_, H> {
+    /// The replacement published online health ([`Controller::replacement_healthy`]).
+    pub fn replacement_healthy(self, now: chrono::DateTime<Utc>) -> Result<()> {
+        self.0.replacement_healthy(now)
+    }
 }
 
 /// QoS 0, no retain, no offline session, and a new client on reconnect: a
@@ -143,7 +153,7 @@ impl<C: Companion> Actor<C> {
 
         if self
             .companion
-            .incoming(client, publish, &mut self.controller)
+            .incoming(client, publish, Evidence(&mut self.controller))
         {
             return Ok(());
         }

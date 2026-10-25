@@ -1166,7 +1166,7 @@ pub fn steps(command: &str) -> &'static [&'static str] {
         ],
         "stock-execute" => &["wellfed-flash stock-recovery execute", "boot capture"],
         "ota" => &[
-            "wellfed-local ota-sign",
+            ota::SIGN_STEP,
             "wellfed-local ota-offer",
             ota::STAGES[0],
             ota::STAGES[1],

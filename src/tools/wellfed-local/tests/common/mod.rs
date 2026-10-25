@@ -2,7 +2,11 @@
 //! that run the real `wellfed-local serve` binary on loopback ports.
 
 #![allow(dead_code)]
+use ed25519_dalek::{Signer, SigningKey};
+use wellfed_core::ota::{self, MANIFEST_LEN};
 use wellfed_local::config::Config;
+use wellfed_local::ota::firmware::{self, CONTAINER_HEADER};
+use sha2::{Digest, Sha256};
 
 pub fn config() -> Config {
     Config {
@@ -118,4 +122,30 @@ pub async fn status(config: &Config, client: &reqwest::Client) -> Value {
         .json()
         .await
         .unwrap()
+}
+
+/// An OTA container of `len` payload bytes, `fill` after the loader marker.
+pub fn container(len: usize, fill: impl Fn(usize) -> u8) -> Vec<u8> {
+    let mut out = vec![0u8; CONTAINER_HEADER];
+    let mut payload: Vec<u8> = (0..len).map(fill).collect();
+    payload[..8].copy_from_slice(&ota::MARKER);
+    out.extend(payload);
+    out
+}
+
+/// A manifest for `container` signed with `key`, as `wellfed-build sign`
+/// writes one from a frozen review.
+pub fn signed(key: &SigningKey, container: &[u8], version: u32, build_id: [u8; 32]) -> Vec<u8> {
+    let payload = firmware::payload(container).unwrap();
+    let body = ota::manifest_body(&ota::Manifest {
+        version,
+        image_len: payload.len() as u32,
+        target_bank: 1,
+        image_sha256: Sha256::digest(payload).into(),
+        build_id,
+    });
+    let mut out = body.to_vec();
+    out.extend(key.sign(&body).to_bytes());
+    assert_eq!(out.len(), MANIFEST_LEN);
+    out
 }

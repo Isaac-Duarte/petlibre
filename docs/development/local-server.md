@@ -64,19 +64,9 @@ The firmware takes no requests over MQTT since FW47; they go over its [device AP
 
 With a key configured, the server signs every request it sends to the firmware: API `health` and `ping` requests and the FW21 `time` sync. It signs under the `nonce` of the latest health, with a `seq` that starts at 1 for each new nonce and rises by one per request; it refuses (503) rather than wrap once `seq` would pass 4294967295. Firmware whose health has no `nonce` (built without a key) gets unsigned requests, as before. Without a configured key the server never signs. A refused request comes back as a reply with `"error":"auth"`, which the status shows like any other reply. The key is validated on load and never appears in the API, status or logs; the nonce is not secret and shows in the health.
 
-## Replacement-firmware update signing (FW10)
+## Replacement-firmware updates (FW10)
 
-The replacement firmware will accept only updates signed by an owner-held key ([design](../firmware/ota-design.md)). These commands run offline and never contact a device:
-
-```sh
-./target/debug/wellfed-local ota-keygen --output private/ota-key.json
-./target/debug/wellfed-local ota-sign --key private/ota-key.json \
-  --image private/verification/<review>/image.bin --version 2 \
-  --build-id <startup identity, 64 hex> --output private/<name>.manifest
-```
-
-- **`ota-keygen`:** writes the Ed25519 seed (mode 600) and prints the public key that firmware builds embed. It refuses to replace an existing key.
-- **`ota-sign`:** checks that the image's bank contents start with the loader marker and fit the reviewed bank-1 bound, then writes the manifest in the exact format `wellfed-core::ota` verifies.
+The replacement firmware accepts only updates signed by the key its build embeds ([design](../firmware/ota-design.md)). Signing is `wellfed-build keygen` and `wellfed-build sign`, offline, and `sign` takes only a frozen review ([firmware builds](firmware-builds.md#update-signing)).
 
 Offer a signed update to the running server, or clear it:
 

@@ -127,30 +127,6 @@ enum Action {
         output: PathBuf,
     },
 
-    /// Create the replacement firmware's update-signing key; never
-    /// replaces one. Prints the public key the firmware build embeds.
-    OtaKeygen {
-        #[arg(long, default_value = "private/ota-key.json")]
-        output: PathBuf,
-    },
-
-    /// Sign a reviewed replacement image's update manifest.
-    OtaSign {
-        #[arg(long, default_value = "private/ota-key.json")]
-        key: PathBuf,
-        /// The reviewed OTA container (a frozen review's image.bin).
-        #[arg(long)]
-        image: PathBuf,
-        /// Must exceed the installed image's version.
-        #[arg(long)]
-        version: u32,
-        /// The image's startup build ID (64 hex characters).
-        #[arg(long)]
-        build_id: String,
-        #[arg(long)]
-        output: PathBuf,
-    },
-
     /// Offer a signed replacement update to the running server, or
     /// clear the offer. Paths are relative and under private/; nothing is
     /// sent to the firmware until it asks.
@@ -339,32 +315,6 @@ async fn main() -> Result<()> {
             println!(
                 "Added the replacement-firmware role to {} and wrote {}. Restart serve to use it.",
                 config.display(),
-                output.display()
-            );
-        }
-
-        Action::OtaKeygen { output } => {
-            let public = ota::firmware::keygen(&output)?;
-            println!("Wrote {}; public key {public}", output.display());
-        }
-
-        Action::OtaSign {
-            key,
-            image,
-            version,
-            build_id,
-            output,
-        } => {
-            let manifest = ota::firmware::sign(
-                &ota::firmware::load_key(&key)?,
-                &std::fs::read(&image)?,
-                version,
-                ota::firmware::parse_build_id(&build_id)?,
-            )?;
-            anyhow::ensure!(!output.exists(), "refusing to replace {}", output.display());
-            std::fs::write(&output, manifest)?;
-            println!(
-                "Signed manifest for version {version} in {}",
                 output.display()
             );
         }

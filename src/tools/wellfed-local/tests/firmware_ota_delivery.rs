@@ -87,8 +87,7 @@ async fn firmware_pulls_a_signed_update_through_the_real_broker() {
     storage::write_json(&path, &config).unwrap();
 
     // Owner side: key, a two-and-a-bit-sector image, a signed manifest.
-    firmware::keygen(&private.join("ota-key.json")).unwrap();
-    let key = firmware::load_key(&private.join("ota-key.json")).unwrap();
+    let key = ed25519_dalek::SigningKey::from_bytes(&[5; 32]);
     let public = key.verifying_key().to_bytes();
     let mut container = vec![0u8; firmware::CONTAINER_HEADER];
     let mut payload: Vec<u8> = (0..2 * SECTOR + 300).map(|i| (i * 7 % 255) as u8).collect();
@@ -97,7 +96,7 @@ async fn firmware_pulls_a_signed_update_through_the_real_broker() {
     std::fs::write(private.join("image.bin"), &container).unwrap();
     std::fs::write(
         private.join("update.manifest"),
-        firmware::sign(&key, &container, 2, [9; 32]).unwrap(),
+        common::signed(&key, &container, 2, [9; 32]),
     )
     .unwrap();
 

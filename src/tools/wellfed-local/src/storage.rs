@@ -11,13 +11,6 @@ use std::{fs, io::Write, path::Path};
 use anyhow::{Context, Result};
 use serde::Serialize;
 
-pub(crate) use wellfed_formats::private::SYSTEM_RANDOM;
-
-/// `N` bytes from `source` (normally [`SYSTEM_RANDOM`]), for new secrets.
-pub(crate) fn random<const N: usize>(source: &Path) -> Result<[u8; N]> {
-    wellfed_formats::private::random(source).context("read the system random source")
-}
-
 /// Atomically replace a private state file (`wellfed_formats::private`).
 pub fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
     wellfed_formats::private::write_json(path, value)

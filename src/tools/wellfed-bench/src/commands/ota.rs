@@ -1,5 +1,6 @@
 //! Over-the-air iteration: optionally build and freeze a review with
-//! `wellfed-build`, sign it with `wellfed-local`, offer it to the server
+//! `wellfed-build`, sign it with `wellfed-build`'s library (the bench
+//! key, and only a frozen review), offer it with `wellfed-local` to the server
 //! that is already running, watch receive-only UART captures until the new
 //! build confirms, falls back, or time runs out, then check that the device
 //! API reports the new build on bank 1. Each phase is timed for the
@@ -19,14 +20,16 @@
 
 use std::fmt;
 use std::fs;
+use std::io::Write;
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use clap::Args;
+use wellfed_build::signing::{Frozen, KEY_PATH, Key, Motion};
 use wellfed_core::record::{Record, tag};
 use wellfed_formats::capture::SerialEvent;
 use wellfed_formats::manifest::BuildManifest;
-use wellfed_formats::review::{ImageKind, ImageReview};
 
 use super::Bench;
 use crate::config::{CAPTURES, VERIFICATION};
@@ -42,7 +45,9 @@ const SEGMENT_SECONDS: f64 = 60.0;
 const MANIFEST_MAGIC: &[u8; 8] = b"PLOTA1\0\0";
 const MANIFEST_LEN: usize = 148;
 
-/// Status steps after the two `wellfed-local` runs, in order.
+/// The in-process signing step's status label.
+pub(crate) const SIGN_STEP: &str = "sign";
+/// Status steps after signing and the `wellfed-local` offer, in order.
 pub(crate) const STAGES: [&str; 4] = ["give way", "download", "new build boot", "confirm"];
 /// Status steps of `--build`, before signing.
 const BUILD_STEPS: [&str; 2] = ["firmware build", "review image"];
@@ -72,7 +77,7 @@ pub fn steps(source: Source) -> Vec<&'static str> {
     };
     built
         .iter()
-        .chain(&["wellfed-local ota-sign", "wellfed-local ota-offer"])
+        .chain(&[SIGN_STEP, "wellfed-local ota-offer"])
         .chain(&STAGES)
         .chain(&[HEALTH_STEP])
         .copied()
@@ -955,8 +960,9 @@ impl Bench {
     }
 
     /// Everything before the offer: refusals, the optional build and review,
-    /// then signing the next version. `None` when a child failed (it said why);
-    /// the integration suite offers the result through its own server.
+    /// then signing the next version. `None` when the build or review child
+    /// failed (it said why); a review the signer refuses is an error. The
+    /// integration suite offers the result through its own server.
     pub(crate) fn ota_stage(
         &mut self,
         args: &OtaArgs,
@@ -968,52 +974,35 @@ impl Bench {
             return Ok(None);
         }
 
+        // Only a frozen review signs: its review.json binds the image, and
+        // for a build the manifest that names its identity and motion.
         let review = self.root.join(&plan.review);
-        let image = review.join("image.bin");
-        require(
-            image.is_file(),
-            format!("{} has no image.bin", self.rel(&review)),
-        )?;
-        // Without a review.json the review can only be a build: a stock
-        // review is recognized by it, and a build still needs its manifest below.
-        let described = review.join("review.json");
-        let frozen: Option<ImageReview> = if described.is_file() {
-            Some(wellfed_formats::load(&described).map_err(|error| {
-                Error::Bench(format!(
-                    "{} has an unreadable review.json: {error}",
-                    self.rel(&review)
-                ))
-            })?)
-        } else {
-            None
-        };
-        if let Some(frozen) = frozen.filter(|f| f.image_kind == ImageKind::Stock) {
-            // Stock has no startup identity; its payload hash names it and can
-            // never equal a replacement build's identity.
-            let build = frozen.payload_sha256.to_ascii_lowercase();
-            require(
-                is_build_id(&build),
-                "Stock review has no 64-hex payload_sha256",
-            )?;
-            say!("Stock image, payload {}", &build[..12]);
-            return self.ota_sign(plan, build, Target::Stock, &image, timing);
-        }
-
-        let manifest: BuildManifest = wellfed_formats::load(&review.join("build-manifest.json"))
-            .map_err(|error| {
-            Error::Bench(format!(
-                "{} has no readable build-manifest.json: {error}",
-                self.rel(&review)
-            ))
+        let frozen = Frozen::open(&review).map_err(|source| Error::Signing {
+            review: self.rel(&review).into(),
+            source,
         })?;
-        let build = build_id(&manifest)?;
-        self.attended_motion(&manifest, args.attended_motion)?;
-        if let Some(variant) = &manifest.variant {
-            say!("Variant {variant}");
-        }
-        say!("Build {build}");
+        let build = frozen.build_id();
+        let (target, motion) = match frozen.manifest() {
+            None => {
+                say!("Stock image, payload {}", &build[..12]);
+                (Target::Stock, Motion::Refused)
+            }
+            Some(manifest) => {
+                self.attended_motion(manifest, args.attended_motion)?;
+                if let Some(variant) = &manifest.variant {
+                    say!("Variant {variant}");
+                }
+                say!("Build {build}");
+                let motion = match frozen.motion_policy() {
+                    Some(policy) if args.attended_motion => Motion::Attended(policy),
+                    _ => Motion::Refused,
+                };
+                (Target::Replacement, motion)
+            }
+        };
 
-        self.ota_sign(plan, build, Target::Replacement, &image, timing)
+        self.ota_sign(plan, &frozen, motion, target, timing)
+            .map(Some)
     }
 
     /// Every refusal `ota_stage` can make, before anything is built: the
@@ -1070,47 +1059,45 @@ impl Bench {
         })
     }
 
-    /// Sign `image` as `plan`'s version of `build`; `None` if signing failed.
+    /// Sign `frozen` as `plan`'s version with the bench key, in process.
     fn ota_sign(
         &mut self,
         plan: OtaPlan,
-        build: String,
+        frozen: &Frozen,
+        motion: Motion,
         target: Target,
-        image: &Path,
         timing: &mut Timing,
-    ) -> Result<Option<Staged>> {
-        let image_arg = self.private_arg(image)?;
+    ) -> Result<Staged> {
+        let image_arg = self.private_arg(&self.root.join(&plan.review).join("image.bin"))?;
         let signed_arg = self.private_arg(&plan.signed)?;
         fs::create_dir_all(self.root.join(VERIFICATION))?;
 
-        let sign = [
-            "ota-sign",
-            "--image",
-            &image_arg,
-            "--version",
-            &plan.version.to_string(),
-            "--build-id",
-            &build,
-            "--output",
-            &signed_arg,
-        ];
+        say!("Signing version {} with {KEY_PATH}", plan.version);
+        self.status.step(SIGN_STEP);
         timing.ran = true;
         let signing = Instant::now();
-        let code = self.local(&sign.map(String::from))?;
+        let refused = |source| Error::Signing {
+            review: plan.review.clone(),
+            source,
+        };
+        let key = Key::load(&self.root.join(KEY_PATH)).map_err(refused)?;
+        let manifest = frozen.sign(&key, plan.version, motion).map_err(refused)?;
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&plan.signed)?
+            .write_all(&manifest)?;
         timing.sign_offer = Some(signing.elapsed().as_secs_f64());
-        if code != 0 {
-            say!("Signing failed; nothing was offered.");
-            return Ok(None);
-        }
 
-        Ok(Some(Staged {
-            build,
+        Ok(Staged {
+            build: frozen.build_id(),
             target,
             version: plan.version,
             review: plan.review,
             manifest: signed_arg,
             image: image_arg,
-        }))
+        })
     }
 
     /// The newest complete review in private/verification whose identity is

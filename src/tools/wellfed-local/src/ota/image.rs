@@ -98,7 +98,7 @@ impl Build {
     /// A frozen review's `image.bin`, bound to the review's `ota_sha256`.
     /// The review's layout audit is what establishes the container header,
     /// byte-sum and inner images stock checks; the digest binds these bytes
-    /// to it. The loader-marker check repeats `ota-sign`'s.
+    /// to it. The loader-marker check repeats `wellfed-build sign`'s.
     pub fn load(review: &Path) -> Result<Self> {
         let frozen: ImageReview =
             wellfed_formats::load(&review.join("review.json")).context("read review.json")?;

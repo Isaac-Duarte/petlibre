@@ -52,6 +52,14 @@ pub enum Error {
         #[source]
         source: wellfed_formats::Error,
     },
+    /// Signing refused the review (it differs from what was frozen, or it
+    /// moves without attendance) or the key; `review` root-relative.
+    #[error("{}: {source}", review.display())]
+    Signing {
+        review: PathBuf,
+        #[source]
+        source: wellfed_build::Error,
+    },
     /// The server's status does not show what a wait is for, yet.
     #[error(transparent)]
     NotReady(#[from] server::NotReady),

@@ -2285,6 +2285,7 @@ dependencies = [
  "futures-util",
  "jiff",
  "mdns-sd",
+ "wellfed-build",
  "wellfed-client",
  "wellfed-core",
  "wellfed-formats",

@@ -23,9 +23,9 @@ Where each host tool is going as the product platform lands, decided October 24,
 | Direct-to-feeder bring-up | `speak`, `ble-wifi` | **Deleted** (stage 1). Their firmwares are bring-up only, and FW45 replaces BLE setup |
 | Stock installer (FW40–FW43) | `ota-images`, `ota-trial`, `ota-trial-resolve`, `setup-send`, the stock broker; `init` and `network` (captured credentials, sudo redirect) | **`wellfed-stock`** (the protocol) and **`wellfed-client`** (the installer's steps). `init` and `network` go once the FW42 setup frame works |
 | Replacement MQTT transport (FW08) | `firmware-credential`, `firmware-request-key`, the firmware broker role, `/api/replacement/request` | Requests **deleted** with FW47 (`firmware-request-key`, `/api/replacement/request`); `firmware-credential` and the broker role go with the offers in FW48 |
-| Replacement OTA (FW10) | `ota-keygen`, `ota-sign`, `ota-offer`, the fault-server example | Signing to **`wellfed-build`**; offers to the device API (FW48), with the fault server rebuilt on `wellfed-client` |
+| Replacement OTA (FW10) | `ota-offer`, the fault-server example | Signing **moved** to `wellfed-build keygen` and `sign`, behind a frozen review (Oct 25); offers to the device API (FW48), with the fault server rebuilt on `wellfed-client` |
 
-The bench drives `wellfed-local` as a child process today (`serve`, `ota-sign`, `ota-offer`, `ota-images`, `status`, and four HTTP routes). Linking libraries replaces that.
+The bench drives `wellfed-local` as a child process today (`serve`, `ota-offer`, `ota-images`, `status`, and four HTTP routes); it already signs by linking `wellfed-build`. Linking libraries replaces the rest.
 
 ## Where it ends up
 
@@ -37,7 +37,7 @@ wellfed-stock    lib            the stock 1.1.15 protocol, only what install and
 wellfed          CLI            the owner's command line: pair, feed, plans, settings, history,
                                  offer an update, install from stock, roll back (FP02)
 wellfed-server   binary         the owner's server, its web UI, and installs
-wellfed-build    CLI            builds, reviews, and now update signing (keygen, sign)
+wellfed-build    CLI            builds, reviews, and update signing (keygen, sign)
 wellfed-flash    CLI            unchanged; every bench write still goes through it as a process
 ```
 
@@ -67,7 +67,7 @@ Every hardware test runs through `wellfed-local` today, so it shrinks in step wi
 | 2 | Nothing | Split the bench into `wellfed-relay`, `wellfed-bench`, `wellfed-itest` and `wellfed-dashboard`, with their shared files in `wellfed-formats` |
 | 3 | FW42 | The setup frame provisions stock: the broker trusts a new feeder on first use during an install, and `init` and `network` are deleted |
 | 4 | FW45, FW47 | `wellfed-client` and the `wellfed` CLI (FW45: the BLE setup session and `wellfed setup`; FW47, Oct 24: the device API session, invites, recovery and the commands on it); the bench and suite talk to the feeder over the device API; the firmware's MQTT request path is deleted. The broker credentials go with the offers in stage 5 |
-| 5 | FW48 | Offers over the device API; signing moves to `wellfed-build`; the fault server is rebuilt on `wellfed-client` |
+| 5 | FW48 | Offers over the device API (signing already moved to `wellfed-build`); the fault server is rebuilt on `wellfed-client` |
 | 6 | FW43 | What is left of the stock path moves into `wellfed-stock` and `wellfed-client`'s installer steps; `wellfed-local` is deleted |
 
 The cards are FW51 (stage 1), FW52 (stage 2) and FW53 (stages 3–6) on the [firmware board](../../FIRMWARE_BOARD.md). FP02 retargets to the `wellfed` CLI, and FP04 reads stock's own plan records.

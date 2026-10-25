@@ -82,10 +82,14 @@ pub enum Error {
     Relay(#[from] wellfed_relay::Error),
     /// `wellfed-local`'s loopback API refused or did not answer.
     #[error(transparent)]
-    Api(#[from] wellfed_formats::local_api::ApiError),
+    Api(#[from] wellfed_local_api::ApiError),
     /// A progress or evidence file could not be written or read.
     #[error(transparent)]
     Formats(#[from] wellfed_formats::Error),
+    /// The command line went to the wrong binary, or the suite's is missing
+    /// or stale.
+    #[error(transparent)]
+    Route(#[from] cli::Refusal),
     /// The page could not take its address.
     #[cfg(feature = "ui")]
     #[error(transparent)]
@@ -130,3 +134,7 @@ pub fn sleep(seconds: f64) -> Result<()> {
 }
 
 pub(crate) use wellfed_formats::bench::now;
+
+/// One hash over the sources both bench binaries are built from (`build.rs`):
+/// `wellfed-itest` runs a hand-off only from a bench with the same one.
+pub(crate) const BUILD_FINGERPRINT: &str = env!("WELLFED_BENCH_FINGERPRINT");

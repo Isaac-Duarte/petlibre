@@ -1,18 +1,22 @@
 //! `wellfed-local serve`'s loopback HTTP API as the bench tools speak it:
 //! the integration suite drives it, and the bench page reads its status.
 //!
-//! The server config (`private/server.json`) is the file the server and its
-//! local clients share, so its type lives here, and the one exchange both
-//! clients need lives beside it rather than in each. One plain HTTP/1.1
+//! Both clients make the same exchange, so it lives here once; the server
+//! config it reads (`private/server.json`) is a shared file, typed in
+//! `wellfed-formats`. The crate links nothing that can switch a relay or
+//! write flash, so the read-only page can use it. One plain HTTP/1.1
 //! exchange per call over a fresh connection; the server answers JSON and
 //! closes, so no client library is needed.
+
+#![forbid(unsafe_code)]
 
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::time::Duration;
 
+use wellfed_formats::local::ServerConfig;
+use serde::Serialize;
 use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// Why an exchange with the server failed.
@@ -38,18 +42,7 @@ pub enum ApiError {
 
 type Result<T> = std::result::Result<T, ApiError>;
 
-/// The server config the suite serves with and the page reads, root-relative.
-pub const SERVER_CONFIG: &str = "private/server.json";
-
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
-
-/// The parts of `wellfed-local`'s config the bench uses.
-#[derive(Debug, Clone, Deserialize)]
-pub struct ServerConfig {
-    pub api_token: String,
-    pub http_listen: SocketAddr,
-    pub mqtt_listen: SocketAddr,
-}
 
 /// Whether an API call carries the server's bearer token.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

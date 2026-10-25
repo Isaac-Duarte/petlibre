@@ -825,14 +825,14 @@ fn the_log_joins_split_lines_and_counts_from_a_mark() {
 fn http_responses_parse_with_and_without_chunking() {
     let plain = b"HTTP/1.1 200 OK\r\ncontent-length: 11\r\n\r\n{\"ok\":true}";
     assert_eq!(
-        wellfed_formats::local_api::parse_response(plain).unwrap(),
+        wellfed_local_api::parse_response(plain).unwrap(),
         (200, json!({"ok": true}))
     );
 
     let chunked =
         b"HTTP/1.1 503 Service Unavailable\r\ntransfer-encoding: chunked\r\n\r\n6\r\n{\"a\":1\r\n1\r\n}\r\n0\r\n\r\n";
     assert_eq!(
-        wellfed_formats::local_api::parse_response(chunked).unwrap(),
+        wellfed_local_api::parse_response(chunked).unwrap(),
         (503, json!({"a": 1}))
     );
 }

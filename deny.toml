@@ -52,6 +52,16 @@ ignore = true
 multiple-versions = "warn"
 wildcards = "deny"
 allow-wildcard-paths = true
+# The bench's hardware edge is linked only where it belongs, so the read-only
+# page (wellfed-dashboard) cannot switch a relay or write flash: the relay
+# driver only from the bench and its suite, the flash client only from the
+# crates that verify its plans or reviews, and the builder (which links the
+# flash client) only from the bench.
+deny = [
+    { crate = "wellfed-relay", wrappers = ["wellfed-bench", "wellfed-itest"], reason = "the relay board is driven only by the bench and its suite" },
+    { crate = "wellfed-flash", wrappers = ["wellfed-audit", "wellfed-bench", "wellfed-build"], reason = "flash writes run only as a wellfed-flash process; these link it to verify plans and reviews" },
+    { crate = "wellfed-build", wrappers = ["wellfed-bench"], reason = "it links wellfed-flash" },
+]
 
 [sources]
 unknown-registry = "deny"

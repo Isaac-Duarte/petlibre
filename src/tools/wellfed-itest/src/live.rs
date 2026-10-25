@@ -34,7 +34,8 @@ use wellfed_bench::tools::Capture;
 use wellfed_bench::{Error, Result, require, say};
 use wellfed_formats::bench::progress::StepState;
 use wellfed_formats::bench::{CAPTURES, VERIFICATION};
-use wellfed_formats::local_api::{Auth, LocalApi, ServerConfig};
+use wellfed_formats::local::ServerConfig;
+use wellfed_local_api::{Auth, LocalApi};
 use wellfed_relay::{POWER, STRAP};
 
 use super::{Fault, Rig, Server};

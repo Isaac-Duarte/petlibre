@@ -229,31 +229,33 @@ fn run(cli: Cli, suite: Option<&dyn Suite>) -> crate::Result<u8> {
         cli.build_bin.unwrap_or_else(default_build_bin),
     );
 
-    // `--list` needs no bench, so either binary answers it.
-    if let Some(Command::Itest(args)) = &cli.command
-        && args.list
-    {
-        for line in catalog::listing() {
-            crate::say!("{line}");
+    let itest_bin = default_itest_bin();
+    let handed = std::env::var(FINGERPRINT_VAR).ok();
+    let binary = if suite.is_some() {
+        Binary::Itest {
+            handed: handed.as_deref(),
         }
-        return Ok(0);
-    }
-    match (suite, &cli.command) {
-        (None, Some(command)) if command.suite() => {
-            return Err(hand_to_suite(&default_itest_bin()));
+    } else {
+        Binary::Bench {
+            itest_bin: &itest_bin,
+            itest_built: itest_bin.is_file(),
         }
-        (Some(_), command) if !command.as_ref().is_some_and(Command::suite) => {
-            return Err(Error::Bench(
-                "wellfed-itest runs only itest and stock-ota; the bench's other commands \
-                 and the page alone are wellfed-bench's"
-                    .into(),
-            ));
+    };
+    match route(binary, cli.command.as_ref(), crate::BUILD_FINGERPRINT) {
+        Route::List => {
+            for line in catalog::listing() {
+                crate::say!("{line}");
+            }
+            return Ok(0);
         }
-        _ => {}
+        Route::HandOff => return Err(hand_to_suite(&itest_bin)),
+        Route::Refuse(refusal) => return Err(refusal.into()),
+        Route::Run => {}
     }
 
     let page = if cli.ui {
         Some(start_page(
+            suite.is_some(),
             &root,
             &tools.flash_bin,
             &cli.listen,
@@ -292,17 +294,85 @@ fn run(cli: Cli, suite: Option<&dyn Suite>) -> crate::Result<u8> {
     result
 }
 
-/// Replace this process with `wellfed-itest`, given the same arguments, so
-/// the suite's run, its interrupt and its exit status are the command's own.
-/// Returns only if that fails.
-fn hand_to_suite(itest_bin: &Path) -> Error {
-    if !itest_bin.is_file() {
-        return Error::Bench(format!(
-            "{} not found; build it with cargo build -p wellfed-itest (with --features ui \
-             for --ui)",
-            itest_bin.display()
-        ));
+/// The variable the bench sets at a hand-off to its [`crate::BUILD_FINGERPRINT`].
+const FINGERPRINT_VAR: &str = "WELLFED_BENCH_FINGERPRINT";
+
+/// Both binaries' builds, as a refusal tells the operator to make them.
+const REBUILD: &str = "cargo build --locked --release -p wellfed-bench -p wellfed-itest \
+     (with --features ui for --ui)";
+
+/// Which binary parsed the command line, and what it knows of the other.
+#[derive(Debug, Clone, Copy)]
+enum Binary<'a> {
+    /// `wellfed-bench`, and the `wellfed-itest` it would hand the suite to.
+    Bench {
+        itest_bin: &'a Path,
+        itest_built: bool,
+    },
+    /// `wellfed-itest`, with the fingerprint a handing bench passed, if any.
+    Itest { handed: Option<&'a str> },
+}
+
+/// What a binary does with its command line.
+#[derive(Debug, PartialEq, Eq)]
+enum Route {
+    /// `itest --list`, which needs no bench.
+    List,
+    /// Replace this process with `wellfed-itest`.
+    HandOff,
+    Refuse(Refusal),
+    Run,
+}
+
+/// Why a binary will not run a command line.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum Refusal {
+    #[error("{0} not found; build both binaries with {REBUILD}")]
+    ItestMissing(PathBuf),
+    #[error(
+        "wellfed-itest runs only itest and stock-ota; the bench's other commands and the page \
+         alone are wellfed-bench's"
+    )]
+    NotSuite,
+    /// The handing bench was built from other sources: this suite would run
+    /// another version of the relay and cleanup code than the bench's.
+    #[error(
+        "wellfed-itest was built from other sources than the wellfed-bench that handed it \
+         this command; rebuild both with {REBUILD}"
+    )]
+    Stale,
+}
+
+/// Decide, from the parsed command line alone, whether this binary runs it,
+/// hands it to `wellfed-itest`, or refuses it. `own` is this build's
+/// fingerprint.
+fn route(binary: Binary<'_>, command: Option<&Command>, own: &str) -> Route {
+    if let Some(Command::Itest(args)) = command
+        && args.list
+    {
+        return Route::List;
     }
+    let suite = command.is_some_and(Command::suite);
+
+    match binary {
+        Binary::Bench { .. } if !suite => Route::Run,
+        Binary::Bench {
+            itest_bin,
+            itest_built: false,
+        } => Route::Refuse(Refusal::ItestMissing(itest_bin.to_path_buf())),
+        Binary::Bench { .. } => Route::HandOff,
+        Binary::Itest { .. } if !suite => Route::Refuse(Refusal::NotSuite),
+        Binary::Itest {
+            handed: Some(handed),
+        } if handed != own => Route::Refuse(Refusal::Stale),
+        Binary::Itest { .. } => Route::Run,
+    }
+}
+
+/// Replace this process with `wellfed-itest`, given the same arguments and
+/// this build's fingerprint, so the suite's run, its interrupt and its exit
+/// status are the command's own. Returns only if that fails.
+fn hand_to_suite(itest_bin: &Path) -> Error {
     let mut args = std::env::args_os();
     let name = args
         .next()
@@ -310,6 +380,7 @@ fn hand_to_suite(itest_bin: &Path) -> Error {
     let error = std::process::Command::new(itest_bin)
         .arg0(name)
         .args(args)
+        .env(FINGERPRINT_VAR, crate::BUILD_FINGERPRINT)
         .exec();
     Error::Bench(format!("{}: {error}", itest_bin.display()))
 }
@@ -317,6 +388,7 @@ fn hand_to_suite(itest_bin: &Path) -> Error {
 /// Bind the progress page, so a busy port refuses before any bench command.
 #[cfg(feature = "ui")]
 fn start_page(
+    _suite: bool,
     root: &Path,
     flash_bin: &Path,
     listen: &str,
@@ -334,18 +406,25 @@ fn start_page(
 }
 
 /// Without the web app built in, `--ui` refuses before any bench command.
+/// `suite`: this is `wellfed-itest`, which a bench built with the page may
+/// have handed `--ui`, so the refusal names it.
 #[cfg(not(feature = "ui"))]
 fn start_page(
+    suite: bool,
     _root: &Path,
     _flash_bin: &Path,
     _listen: &str,
     _port: u16,
 ) -> crate::Result<std::thread::JoinHandle<()>> {
-    Err(Error::Bench(
-        "This binary was built without the web page; run `make ui`, then build with \
-         `--features ui`"
-            .into(),
-    ))
+    let binary = if suite {
+        "wellfed-itest"
+    } else {
+        "wellfed-bench"
+    };
+    Err(Error::Bench(format!(
+        "{binary} was built without the web page; run `make ui`, then build it with \
+         `--features ui`: {REBUILD}"
+    )))
 }
 
 /// The bench a command runs on: its config, the relay board when the

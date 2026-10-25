@@ -14,7 +14,8 @@ use serde::Serialize;
 
 use wellfed_formats::bench::health::Health;
 use wellfed_formats::local::LocalStatus;
-use wellfed_formats::local_api::{Auth, LocalApi, SERVER_CONFIG, ServerConfig};
+use wellfed_formats::local::{SERVER_CONFIG, ServerConfig};
+use wellfed_local_api::{Auth, LocalApi};
 
 /// The page polls; a slow server must not hold a worker for long.
 const TIMEOUT: Duration = Duration::from_secs(2);

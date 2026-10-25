@@ -11,7 +11,7 @@ use std::path::PathBuf;
 
 use clap::Args;
 use wellfed_formats::bench::catalog::Tier;
-use wellfed_formats::local_api::SERVER_CONFIG;
+use wellfed_formats::local::SERVER_CONFIG;
 
 use crate::Result;
 use crate::commands::Bench;

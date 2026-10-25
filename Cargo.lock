@@ -2290,6 +2290,7 @@ dependencies = [
  "wellfed-dashboard",
  "wellfed-flash",
  "wellfed-formats",
+ "wellfed-local-api",
  "wellfed-model",
  "wellfed-proto",
  "wellfed-relay",
@@ -2373,6 +2374,7 @@ dependencies = [
  "ctrlc",
  "futures-util",
  "wellfed-formats",
+ "wellfed-local-api",
  "rust-embed",
  "rustix",
  "serde",
@@ -2567,6 +2569,7 @@ dependencies = [
  "wellfed-bench",
  "wellfed-core",
  "wellfed-formats",
+ "wellfed-local-api",
  "wellfed-model",
  "wellfed-relay",
  "rustix",
@@ -2600,6 +2603,16 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "wellfed-local-api"
+version = "0.1.0"
+dependencies = [
+ "wellfed-formats",
+ "serde",
+ "serde_json",
+ "thiserror",
 ]
 
 [[package]]

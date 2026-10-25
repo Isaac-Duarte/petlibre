@@ -112,7 +112,7 @@ The server serves each offer to completion once, so after a fallback, retry with
 
 `itest` runs named real-device scenarios against the feeder on the bench. It is a bench command, not a test target: `cargo test` and `make check` never reach it. Builds go in over the air. The UART stays attached, receive-only, for the whole run. It is what the scenarios assert on, it is the evidence, and it is the way back when the feeder stops answering.
 
-The suite is the `wellfed-itest` crate. `wellfed-bench itest` and `stock-ota` parse their arguments as the bench always did, then hand them unchanged to the `wellfed-itest` binary beside it, which runs the scenarios on the bench's rig; `--list` answers without it. The scenario catalog the page and `--list` show is typed in `wellfed-formats`.
+The suite is the `wellfed-itest` crate. `wellfed-bench itest` and `stock-ota` parse their arguments as the bench always did, then hand them unchanged to the `wellfed-itest` binary beside it, which runs the scenarios on the bench's rig; `--list` answers without it. The two must come from the same build: both carry a fingerprint of the sources they link, and `wellfed-itest` refuses a hand-off from a bench with another, naming the command that rebuilds both. A missing `wellfed-itest`, or one built without `--features ui` when `--ui` was asked for, is refused the same way, before anything opens. The scenario catalog the page and `--list` show is typed in `wellfed-formats`.
 
 ```sh
 cargo build --release --bins --examples

@@ -110,7 +110,7 @@ fn shown<T: Display>(value: &Option<T>) -> String {
 }
 
 impl LocalStatus {
-    pub fn replacement(&self) -> Result<&Replacement<Health>, NotReady> {
+    pub(crate) fn replacement(&self) -> Result<&Replacement<Health>, NotReady> {
         self.replacement.as_ref().ok_or(NotReady::NoRole)
     }
 
@@ -173,7 +173,7 @@ impl LocalStatus {
     /// Whether fresh health shows `build` (lowercase) running on `bank`: a
     /// one-line report of it. Bank 0 after stock installed the build, since
     /// stock writes the bank it is not running from.
-    pub fn health_on(&self, build: &str, bank: u64) -> Result<String, NotReady> {
+    pub(crate) fn health_on(&self, build: &str, bank: u64) -> Result<String, NotReady> {
         let health = self.fresh_health()?;
 
         let reported = health.build.to_ascii_lowercase();

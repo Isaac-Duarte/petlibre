@@ -18,6 +18,7 @@ clap = { workspace = true, optional = true }
 ctrlc = { workspace = true, optional = true }
 futures-util = { version = "0.3", default-features = false, optional = true }
 wellfed-formats.workspace = true
+wellfed-local-api = { path = "../wellfed-local-api" }
 rust-embed = { version = "8.13.0", features = ["debug-embed"], optional = true }
 rustix = { version = "1", features = ["fs", "process"] }
 serde.workspace = true

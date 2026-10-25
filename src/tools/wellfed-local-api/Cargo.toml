@@ -1,0 +1,17 @@
+[package]
+license.workspace = true
+name = "wellfed-local-api"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "Blocking loopback client of wellfed-local serve's HTTP API, shared by the integration suite and the bench page"
+publish.workspace = true
+
+[dependencies]
+wellfed-formats.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

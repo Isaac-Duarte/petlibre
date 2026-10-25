@@ -188,3 +188,15 @@ mod tests {
         assert!(serde_json::from_value::<TrialRecord>(extra).is_err());
     }
 }
+
+/// `wellfed-local`'s config, root-relative: the suite serves with it and the
+/// page reads the server's address and token from it.
+pub const SERVER_CONFIG: &str = "private/server.json";
+
+/// The parts of `wellfed-local`'s config the bench tools use.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ServerConfig {
+    pub api_token: String,
+    pub http_listen: std::net::SocketAddr,
+    pub mqtt_listen: std::net::SocketAddr,
+}

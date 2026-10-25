@@ -1,7 +1,7 @@
 //! Bench sequences. Each one either completes, or stops without retry and
 //! says what state it left the feeder in.
 //!
-//! `main` dispatches each subcommand to a [`Bench`] method. Bench only
+//! [`crate::cli`] dispatches each subcommand to a [`Bench`] method. Bench only
 //! switches relays and orders steps; serial reads, inspections, plans and
 //! writes go through [`Tools`] as separate `wellfed-flash` runs (and the
 //! over-the-air loop's build and review as `wellfed-build` runs, its
@@ -11,7 +11,7 @@
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use clap::{Args, ValueEnum};
@@ -21,15 +21,13 @@ use wellfed_formats::manifest::BuildManifest;
 use wellfed_formats::transients::{self, TransientCycle, TransientsManifest};
 use serde::Deserialize;
 
-use crate::config::{CAPTURES, Config, FLASH_BACKUPS, VERIFICATION};
-use crate::relay::{POWER, Relay, STRAP, UART};
-use crate::status::{Status, relative};
 use crate::tools::{Analyzer, Observation, Observer, Tools};
 use crate::{Error, Result, now, require};
+use wellfed_formats::bench::progress::Status;
+use wellfed_formats::bench::{CAPTURES, Config, Paths, plain_name, relative};
+use wellfed_relay::{POWER, Relay, STRAP, UART};
 
-pub mod itest;
 pub mod ota;
-pub use itest::{ItestArgs, StockOtaArgs};
 pub use ota::{Firmware, Image, OtaArgs, Variant};
 
 const STRAP_SECONDS: f64 = 2.0;
@@ -162,38 +160,10 @@ pub struct TransientArgs {
     pub samplerate: u64,
 }
 
-/// Evidence locations for one session name.
-pub(crate) struct Paths {
-    pub loader: PathBuf,
-    pub bounded: PathBuf,
-    pub full: PathBuf,
-    pub inspect: PathBuf,
-    pub plan: PathBuf,
-    pub execute: PathBuf,
-    pub boot: PathBuf,
-}
-
-impl Paths {
-    pub(crate) fn new(root: &Path, name: &str) -> Self {
-        Self {
-            loader: root.join(CAPTURES).join(format!("{name}-loader")),
-            bounded: root.join(FLASH_BACKUPS).join(format!("{name}-bounded")),
-            full: root.join(FLASH_BACKUPS).join(format!("{name}-full")),
-            inspect: root.join(VERIFICATION).join(format!("{name}-inspect")),
-            plan: root.join(VERIFICATION).join(format!("{name}-plan.json")),
-            execute: root.join(VERIFICATION).join(format!("{name}-execute")),
-            boot: root.join(CAPTURES).join(format!("{name}-boot")),
-        }
-    }
-}
-
 /// A session name is one plain path component.
 pub fn check_name(name: &str) -> Result<()> {
-    let mut components = Path::new(name).components();
     require(
-        matches!(components.next(), Some(Component::Normal(_)))
-            && components.next().is_none()
-            && !name.contains(['/', '\\']),
+        plain_name(name),
         format!("Session name {name:?} must be a single plain name"),
     )
 }
@@ -229,17 +199,17 @@ pub struct Bench {
 }
 
 impl Bench {
-    fn rel(&self, path: &Path) -> String {
+    pub fn rel(&self, path: &Path) -> String {
         relative(&self.root, path)
     }
 
-    pub(crate) fn set(&mut self, channel: u8, on: bool) -> Result<()> {
+    pub fn set(&mut self, channel: u8, on: bool) -> Result<()> {
         self.relay.set(channel, on)?;
         self.status.relay(channel, on);
         Ok(())
     }
 
-    pub(crate) fn get(&mut self, channel: u8) -> Result<bool> {
+    pub fn get(&mut self, channel: u8) -> Result<bool> {
         let on = self.relay.get(channel)?;
         self.status.relay(channel, on);
         Ok(on)
@@ -247,7 +217,7 @@ impl Bench {
 
     /// Release the strap and cut power, then isolate the UART, with no wait:
     /// safe in cleanup paths.
-    pub(crate) fn cut_power(&mut self) -> Result<()> {
+    pub fn cut_power(&mut self) -> Result<()> {
         self.set(STRAP, false)?;
         self.set(POWER, false)?;
         if self.uart_when_off == UartWhenOff::Isolated {
@@ -260,7 +230,7 @@ impl Bench {
 
     /// Connect the UART, then power the feeder. The lines go live a relay's
     /// switching time before the supply, so the ROM's first bytes are kept.
-    pub(crate) fn power_on(&mut self) -> Result<()> {
+    pub fn power_on(&mut self) -> Result<()> {
         self.connect_uart()?;
         self.set(POWER, true)
     }
@@ -278,7 +248,7 @@ impl Bench {
     }
 
     /// Captures never reuse a directory; refuse before any relay change.
-    fn fresh(&self, output: &Path) -> Result<()> {
+    pub fn fresh(&self, output: &Path) -> Result<()> {
         require(
             !output.exists(),
             format!("Refusing to reuse {}", self.rel(output)),

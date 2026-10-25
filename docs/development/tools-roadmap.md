@@ -9,7 +9,7 @@ Where each host tool is going as the product platform lands, decided October 24,
 | `wellfed-flash` | 8.2k | Stays: the audited UART writer, always run as its own process |
 | `wellfed-build` | 7.3k | Stays, and gains `keygen` and `sign` for update signing |
 | `wellfed-audit`, `wellfed-emu`, `wellfed-formats`, `xtask` | 10.8k | Stay |
-| `wellfed-bench` | 15k | Splits into single-purpose crates; stays dev-only |
+| `wellfed-bench` | 15k | Split into single-purpose crates (`wellfed-relay`, `wellfed-bench`, `wellfed-itest`, `wellfed-dashboard`, Oct 25); stays dev-only |
 | `wellfed-local` | 4.1k | Splits up and is deleted: a binary over `wellfed-stock` since October 25 |
 | `wellfed-stock` | 4.0k | Stays: the stock 1.1.15 protocol, its broker, the setup frame and the install-trial ledger, moved out of `wellfed-local` unchanged |
 
@@ -45,19 +45,19 @@ wellfed-flash    CLI            unchanged; every bench write still goes through 
 
 ## The bench, split
 
-The bench's modules already fall into separate jobs with one-way dependencies. Each becomes its own crate:
+The bench's modules fell into separate jobs with one-way dependencies, and each is now its own crate (October 25, 2026):
 
 | Crate | Holds | Depends on |
 | --- | --- | --- |
-| `wellfed-relay` | The SH-UR04A relay board driver (`relay.rs`): power and the loader strap | Nothing first-party |
-| `wellfed-bench` | The binary and the operator sequences: power, loader, boot, capture, dump, the UART update and recovery chains, transients, the OTA loop | `wellfed-relay`, `wellfed-formats`, `wellfed-client`, `wellfed-build` (library), `wellfed-flash` (as a process) |
-| `wellfed-itest` | The integration suite: scenarios, the scripted test rig, run records, `stock-ota` | `wellfed-bench`'s rig, `wellfed-stock`, `wellfed-client` |
-| `wellfed-dashboard` | The read-only progress page and its embedded web app | `wellfed-formats` only |
+| `wellfed-relay` | The SH-UR04A relay board driver: power, the loader strap and the UART lines | Nothing first-party |
+| `wellfed-bench` | The binary and the operator sequences: power, loader, boot, capture, dump, the UART update and recovery chains, transients, the OTA loop; the command line, including the suite's arguments | `wellfed-relay`, `wellfed-formats`, `wellfed-client`, `wellfed-build` (library), `wellfed-flash` (as a process for every read and write; as a library for the review verification signing does), `wellfed-dashboard` (with `ui`) |
+| `wellfed-itest` | The integration suite: scenarios, the live and scripted rigs, `stock-ota`; its binary runs the suite's commands | `wellfed-bench`'s rig, `wellfed-relay`, `wellfed-formats` |
+| `wellfed-dashboard` | The read-only progress page and its embedded web app; its binary serves the page alone | `wellfed-formats` only |
 
-- **Shared files move to `wellfed-formats`:** the progress document (`current.json`), the run record (`NAME-itest.json`) and the bench config, since one crate writes each and another reads it ([conventions](../../AGENTS.md#rust-conventions)).
-- **The page's read-only rule becomes structural:** `wellfed-dashboard` cannot link the relay, the flash client or the server.
-- **`wellfed-flash` stays a child process.** It is the audited writer with its own journals, reports and no-retry stops, and a fault in the bench must never take a write down with it.
-- The `wellfed-bench` binary still offers `itest` and `--ui` by linking the other two crates.
+- **Shared files live in `wellfed-formats`** (`bench`): the progress document (`current.json`) and its writer, the run record (`NAME-itest.json`), the bench config, the session evidence layout, the suite's scenario catalog and the firmware health subset both check, since one crate writes each and another reads it ([conventions](../../AGENTS.md#rust-conventions)). So does `wellfed-local`'s server config and the one loopback exchange the suite and the page both make (`local_api`).
+- **The page's read-only rule is structural:** `wellfed-dashboard` links neither the relay driver, the flash client nor the server; it reports the flash client by hashing its file.
+- **`wellfed-flash` stays a child process** for every read and write. It is the audited writer with its own journals, reports and no-retry stops, and a fault in the bench must never take a write down with it.
+- **The `wellfed-bench` binary keeps its commands and flags.** `--ui` links the dashboard. `itest` and `stock-ota` are parsed by the bench, then handed with the same arguments to the `wellfed-itest` binary (an `exec`, so the run, its interrupt and its exit status are the command's own): the suite links the bench's library, so the bench's binary cannot link the suite without a dependency cycle.
 
 ## Stages
 
@@ -66,7 +66,7 @@ Every hardware test runs through `wellfed-local` today, so it shrinks in step wi
 | Stage | Waits on | Change |
 | --- | --- | --- |
 | 1 | Nothing | Delete stock control, the C-probe and modified-stock trials, `speak` and `ble-wifi`. The ledger keeps only install trials |
-| 2 | Nothing | Split the bench into `wellfed-relay`, `wellfed-bench`, `wellfed-itest` and `wellfed-dashboard`, with their shared files in `wellfed-formats` |
+| 2 | Nothing | Split the bench into `wellfed-relay`, `wellfed-bench`, `wellfed-itest` and `wellfed-dashboard`, with their shared files in `wellfed-formats` (done October 25, 2026) |
 | 3 | FW42 | The setup frame provisions stock: the broker trusts a new feeder on first use during an install, and `init` and `network` are deleted |
 | 4 | FW45, FW47 | `wellfed-client` and the `wellfed` CLI (FW45: the BLE setup session and `wellfed setup`; FW47, Oct 24: the device API session, invites, recovery and the commands on it); the bench and suite talk to the feeder over the device API; the firmware's MQTT request path is deleted. The broker credentials go with the offers in stage 5 |
 | 5 | FW48 | Offers over the device API (signing already moved to `wellfed-build`); the fault server is rebuilt on `wellfed-client` |

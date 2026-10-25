@@ -10,9 +10,10 @@ use serde_json::{Value, json};
 use super::*;
 use crate::commands::ota::Source;
 use crate::device::DeviceStatus;
-use crate::relay::FakeBoard;
-use crate::status::{FlashTool, StepState};
 use crate::tools::{Capture, Captured};
+use wellfed_formats::bench::VERIFICATION;
+use wellfed_formats::bench::progress::{FlashTool, StepState};
+use wellfed_relay::FakeBoard;
 
 fn sector() -> PlannedSector {
     PlannedSector {
@@ -590,7 +591,7 @@ fn prepare_records_the_matching_execute_line() {
 
     let sha = sha256(plan("update").as_bytes());
     assert_eq!(
-        rig.bench.status.state.as_ref().unwrap().next.as_deref(),
+        rig.bench.status.state().unwrap().next.as_deref(),
         Some(format!(
             "wellfed-bench flash-execute unit --bank 1 --source s --target t --expected-plan-sha256 {sha}"
         ).as_str())
@@ -1238,7 +1239,7 @@ fn ota_passes_across_segments_and_records_steps() {
     assert_eq!(rig.bench.ota(&args).unwrap(), 0);
 
     assert_eq!(captured(&rig), ["unit-01", "unit-02", "unit-03"]);
-    let state = rig.bench.status.state.as_ref().unwrap();
+    let state = rig.bench.status.state().unwrap();
     let steps: Vec<_> = state
         .steps
         .iter()
@@ -1335,7 +1336,7 @@ fn build_args() -> OtaArgs {
 }
 
 fn recorded(rig: &Rig) -> Vec<String> {
-    rig.bench.status.state.as_ref().unwrap().lines.clone()
+    rig.bench.status.state().unwrap().lines.clone()
 }
 
 fn with_status(rig: &mut Rig, source: Source) {

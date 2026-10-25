@@ -4,8 +4,8 @@ help:
 	@echo "check: formatting, Clippy, Rust tests, cross-builds, simulator, repository checks"
 	@echo "check-rust / check-deps / check-cross / check-virtual-feeder / check-docs: individual checks"
 	@echo "check-fixtures: optional reference-binary/SDK evidence; fails if unavailable"
-	@echo "ui: build the web page (pnpm in src/web/) that wellfed-bench embeds with --features ui"
-	@echo "check-web: web types, unit tests, build, then the page end to end against wellfed-bench"
+	@echo "ui: build the web page (pnpm in src/web/) that wellfed-dashboard embeds with --features ui"
+	@echo "check-web: web types, unit tests, build, then the page end to end against wellfed-bench --ui"
 	@echo "sqlx-prepare: regenerate the server store's query metadata (.sqlx/) after changing a query or migration"
 	@echo "Checks do not open serial ports, change routing, or send device commands."
 
@@ -54,12 +54,16 @@ ui:
 
 # The end-to-end tests serve a synthetic private/ tree from a temporary
 # directory; they never read this checkout's evidence or open a port to hardware.
+# The page's crate and the two binaries that serve it with `--ui` are linted
+# and tested with it built in, the production lints included.
+PAGE_CRATES = -p wellfed-dashboard -p wellfed-bench -p wellfed-itest
 check-web: ui
 	pnpm -C src/web check
 	pnpm -C src/web test
-	cargo clippy --locked -p wellfed-bench --all-targets --features ui -- -D warnings
-	cargo test --locked -p wellfed-bench --features ui
-	cargo build --locked -p wellfed-bench --features ui
+	cargo clippy --locked $(PAGE_CRATES) --all-targets --features ui -- -D warnings
+	cargo clippy --locked $(PAGE_CRATES) --lib --bins --features ui -- -D warnings $(PRODUCTION_LINTS)
+	cargo test --locked $(PAGE_CRATES) --features ui
+	cargo build --locked $(PAGE_CRATES) --features ui
 	pnpm -C src/web e2e
 
 # The server store's queries are checked at build time against committed

@@ -1,11 +1,17 @@
-//! Relay bench for the PLAF103 research unit.
+//! Relay bench for the PLAF103 research unit: the `wellfed-bench` binary
+//! and its operator sequences.
 //!
 //! Relay 1 switches the feeder's USB 5V and relay 2 holds feeder TX to GND
-//! through the 4.7 kΩ strap. Serial work is delegated unchanged to the
-//! `wellfed-flash` binary, so its pinned checks, plan hashes and no-retry
-//! rules apply. This crate never writes to the feeder UART itself, never
-//! retries, and never boots after a stopped update. Ports and evidence paths
-//! come from the ignored `private/bench.json`; see docs/devices/plaf103/bench.md.
+//! through the 4.7 kΩ strap (`wellfed-relay`). Serial work is delegated
+//! unchanged to the `wellfed-flash` binary, so its pinned checks, plan
+//! hashes and no-retry rules apply. This crate never writes to the feeder
+//! UART itself, never retries, and never boots after a stopped update. Ports
+//! and evidence paths come from the ignored `private/bench.json`; see
+//! docs/devices/plaf103/bench.md.
+//!
+//! The integration suite (`wellfed-itest`) runs on this crate's rig; the
+//! read-only page (`wellfed-dashboard`) reads the progress this crate
+//! records, and `--ui` serves it.
 
 #![forbid(unsafe_code)]
 
@@ -19,15 +25,12 @@ macro_rules! say {
     }};
 }
 
+pub mod cli;
 pub mod commands;
-pub mod config;
 pub mod device;
-mod local_api;
-pub mod relay;
-mod server;
-pub mod status;
+pub mod server;
+pub mod suite;
 pub mod tools;
-pub mod ui;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -75,11 +78,23 @@ pub enum Error {
     Json(#[from] serde_json::Error),
     #[error("Serial port: {0}")]
     Serial(#[from] serialport::Error),
+    #[error(transparent)]
+    Relay(#[from] wellfed_relay::Error),
+    /// `wellfed-local`'s loopback API refused or did not answer.
+    #[error(transparent)]
+    Api(#[from] wellfed_formats::local_api::ApiError),
+    /// A progress or evidence file could not be written or read.
+    #[error(transparent)]
+    Formats(#[from] wellfed_formats::Error),
+    /// The page could not take its address.
+    #[cfg(feature = "ui")]
+    #[error(transparent)]
+    Page(#[from] wellfed_dashboard::Error),
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
-pub(crate) fn require(condition: bool, message: impl Into<String>) -> Result<()> {
+pub fn require(condition: bool, message: impl Into<String>) -> Result<()> {
     if condition {
         Ok(())
     } else {
@@ -88,14 +103,14 @@ pub(crate) fn require(condition: bool, message: impl Into<String>) -> Result<()>
 }
 
 /// Read the JSON file at `relative` under `root` into its type.
-pub(crate) fn load<T: serde::de::DeserializeOwned>(root: &Path, relative: &Path) -> Result<T> {
+pub fn load<T: serde::de::DeserializeOwned>(root: &Path, relative: &Path) -> Result<T> {
     wellfed_formats::load(&root.join(relative)).map_err(|source| Error::Load {
         path: relative.to_path_buf(),
         source,
     })
 }
 
-pub(crate) fn interrupted() -> bool {
+pub fn interrupted() -> bool {
     INTERRUPTED.load(Ordering::SeqCst)
 }
 
@@ -114,9 +129,4 @@ pub fn sleep(seconds: f64) -> Result<()> {
     }
 }
 
-/// Seconds since the Unix epoch, as the status files record times.
-pub(crate) fn now() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0.0, |d| d.as_secs_f64())
-}
+pub(crate) use wellfed_formats::bench::now;

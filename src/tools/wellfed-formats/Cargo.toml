@@ -4,17 +4,25 @@ name = "wellfed-formats"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
-description = "File formats the host tools share: canonical JSON, build manifests and identities, the stock layout, locks, captures, credentials and keys, and the private-file writer"
+description = "File formats the host tools share: canonical JSON, build manifests and identities, the stock layout, locks, captures, credentials and keys, the bench's progress and run records, and the private-file writer"
 publish.workspace = true
 
 [dependencies]
+clap = { workspace = true, optional = true }
 chrono = { version = "0.4.45", default-features = false, features = ["std", "serde"] }
 wellfed-session.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.11"
 thiserror.workspace = true
+ts-rs = { version = "12", features = ["serde-json-impl"], optional = true }
 uuid = { workspace = true, features = ["serde"] }
+
+[features]
+# The suite's tier as a command-line option (the bench's `--tier`).
+clap = ["dep:clap"]
+# TypeScript declarations of the types the bench page reads.
+ts = ["dep:ts-rs"]
 
 [dev-dependencies]
 tempfile.workspace = true

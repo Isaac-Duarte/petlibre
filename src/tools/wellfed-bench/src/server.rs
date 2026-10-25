@@ -9,15 +9,14 @@
 //! needed it rather than guessing. Both are built from this repository, so
 //! a mismatch means rebuild one.
 //!
-//! Health inside it is the firmware's own JSON (`wellfed-core`'s transport
-//! writes it), relayed by the server unchanged. Only the fields the bench
-//! checks are typed here; each defaults when absent, so a firmware that adds
-//! fields still reads, and a missing one fails the check that needs it rather
-//! than the whole document.
+//! Health inside it is the firmware's own JSON, relayed by the server
+//! unchanged and typed as far as the bench checks it
+//! ([`wellfed_formats::bench::health`], which the page shares).
 
 use std::fmt::Display;
 use std::ops::Deref;
 
+use wellfed_formats::bench::health::{Health, HealthRole};
 use wellfed_formats::local::{Replacement, TrialRecord};
 use wellfed_model::WifiSource;
 use serde::{Deserialize, Serialize};
@@ -27,7 +26,7 @@ use serde_json::Value;
 /// as far as the bench checks it.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(transparent)]
-pub(crate) struct LocalStatus(pub wellfed_formats::local::LocalStatus<Health>);
+pub struct LocalStatus(pub wellfed_formats::local::LocalStatus<Health>);
 
 impl Deref for LocalStatus {
     type Target = wellfed_formats::local::LocalStatus<Health>;
@@ -40,7 +39,7 @@ impl Deref for LocalStatus {
 /// `POST /api/ota/trial` for the replacement image: the server sends stock
 /// one `OTA_UPGRADE` for it and never resends.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub(crate) struct TrialRequest {
+pub struct TrialRequest {
     pub request_id: String,
     /// The image server's lease token.
     pub server_token: String,
@@ -49,62 +48,9 @@ pub(crate) struct TrialRequest {
 /// `POST /api/ota/trial/resolve`: close a failed or uncertain trial from the
 /// server's own evidence; sends the device nothing.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub(crate) struct TrialResolve<'a> {
+pub struct TrialResolve<'a> {
     pub request_id: &'a str,
     pub note: &'a str,
-}
-
-/// The firmware's health message.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
-#[serde(default)]
-pub(crate) struct Health {
-    /// The startup identity, hex in either case.
-    pub build: String,
-    pub bank: Option<u64>,
-    pub seq: Option<u64>,
-    pub outputs: Option<String>,
-    pub faults: Vec<String>,
-    /// Absent from builds without the wall clock.
-    pub clock: Option<Clock>,
-    pub wifi: Wifi,
-    pub transport: Transport,
-    /// Only the bank-0 recovery role reports one, while it waits for an
-    /// update.
-    pub role: Option<HealthRole>,
-}
-
-/// Who reports health, when it is not the normal role.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
-#[serde(rename_all = "lowercase")]
-pub(crate) enum HealthRole {
-    Recovery,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
-#[serde(default)]
-pub(crate) struct Clock {
-    pub syncs: u64,
-    /// Absent until the clock is set.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub unix_ms: Option<i64>,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
-#[serde(default)]
-pub(crate) struct Wifi {
-    /// Which credentials joined this boot: `build`, `stored` or `fallback`.
-    pub source: Option<String>,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
-#[serde(default)]
-pub(crate) struct Transport {
-    pub connects: u64,
 }
 
 /// Why a status document does not show what a wait is for, yet.
@@ -140,7 +86,7 @@ pub enum NotReady {
 }
 
 /// The only stock release a replacement install starts from.
-pub(crate) const STOCK_VERSION: &str = "1.1.15";
+pub const STOCK_VERSION: &str = "1.1.15";
 
 /// Why the server's stock view does not allow an install yet.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -164,13 +110,13 @@ fn shown<T: Display>(value: &Option<T>) -> String {
 }
 
 impl LocalStatus {
-    pub(crate) fn replacement(&self) -> Result<&Replacement<Health>, NotReady> {
+    pub fn replacement(&self) -> Result<&Replacement<Health>, NotReady> {
         self.replacement.as_ref().ok_or(NotReady::NoRole)
     }
 
     /// Stock 1.1.15 is online, freshly reported and on its adapter: what the
     /// server's trial gate also requires before asking it to install.
-    pub(crate) fn stock_ready(&self) -> Result<String, StockNotReady> {
+    pub fn stock_ready(&self) -> Result<String, StockNotReady> {
         if !self.device_online {
             return Err(StockNotReady::Offline);
         }
@@ -195,14 +141,14 @@ impl LocalStatus {
     }
 
     /// The trial with `request_id`.
-    pub(crate) fn trial(&self, request_id: &str) -> Option<&TrialRecord> {
+    pub fn trial(&self, request_id: &str) -> Option<&TrialRecord> {
         self.ota_trials
             .iter()
             .find(|trial| trial.input.request_id.to_string() == request_id)
     }
 
     /// The health the server holds, when it is online and fresh.
-    pub(crate) fn fresh_health(&self) -> Result<&Health, NotReady> {
+    pub fn fresh_health(&self) -> Result<&Health, NotReady> {
         let replacement = self.replacement()?;
         let health = replacement.health.as_ref().ok_or(NotReady::NoHealth)?;
         if !replacement.online {
@@ -216,7 +162,7 @@ impl LocalStatus {
 
     /// The bank-0 recovery role's health from `build`, while it waits for an
     /// update: what a build stock just installed reports.
-    pub(crate) fn recovery_health(&self, build: &str) -> Result<String, NotReady> {
+    pub fn recovery_health(&self, build: &str) -> Result<String, NotReady> {
         let report = self.health_on(build, 0)?;
         match self.fresh_health()?.role {
             Some(HealthRole::Recovery) => Ok(report + ", recovery role"),
@@ -227,7 +173,7 @@ impl LocalStatus {
     /// Whether fresh health shows `build` (lowercase) running on `bank`: a
     /// one-line report of it. Bank 0 after stock installed the build, since
     /// stock writes the bank it is not running from.
-    pub(crate) fn health_on(&self, build: &str, bank: u64) -> Result<String, NotReady> {
+    pub fn health_on(&self, build: &str, bank: u64) -> Result<String, NotReady> {
         let health = self.fresh_health()?;
 
         let reported = health.build.to_ascii_lowercase();

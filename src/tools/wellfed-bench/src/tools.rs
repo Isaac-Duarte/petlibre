@@ -19,8 +19,9 @@ use wellfed_formats::canonical::sha256;
 use serde::Deserialize;
 
 use crate::device::{Answer, Ask, Device, DeviceStatus};
-use crate::status::{FlashTool, Status, relative};
 use crate::{Error, Result, interrupted, require};
+use wellfed_formats::bench::progress::{FlashTool, Status};
+use wellfed_formats::bench::relative;
 
 /// How long a receive-only capture may take to hold the UART port.
 const OBSERVER_START: Duration = Duration::from_secs(10);
@@ -166,12 +167,17 @@ pub fn default_local_bin() -> PathBuf {
     beside_this("wellfed-local")
 }
 
+/// `wellfed-itest` beside this executable: the suite's commands run there.
+pub(crate) fn default_itest_bin() -> PathBuf {
+    beside_this("wellfed-itest")
+}
+
 /// `wellfed-build` beside this executable.
 pub fn default_build_bin() -> PathBuf {
     beside_this("wellfed-build")
 }
 
-pub(crate) fn flash_tool(root: &Path, path: &Path) -> Option<FlashTool> {
+fn flash_tool(root: &Path, path: &Path) -> Option<FlashTool> {
     let data = fs::read(path).ok()?;
     Some(FlashTool {
         path: relative(root, path),
@@ -655,8 +661,8 @@ mod tests {
             .unwrap();
 
         assert_eq!(code, 1);
-        let state = status.state.unwrap();
-        assert_eq!(state.progress.unwrap().done, 4096);
+        let state = status.state().unwrap();
+        assert_eq!(state.progress.as_ref().unwrap().done, 4096);
         assert_eq!(state.lines.last().unwrap(), r#"{"status":"failed"}"#);
     }
 
@@ -726,7 +732,7 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
         assert_eq!(code, 3);
         let root = tmp.path().canonicalize().unwrap();
         assert_eq!(
-            status.state.unwrap().lines.last().unwrap(),
+            status.state().unwrap().lines.last().unwrap(),
             &format!("ota-offer in {}", root.display())
         );
         tools.local_bin = tmp.path().join("absent");
@@ -848,7 +854,7 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
             3
         );
         let root = tmp.path().canonicalize().unwrap();
-        let lines = status.state.unwrap().lines;
+        let lines = &status.state().unwrap().lines;
         assert!(lines.contains(&format!("build in {}", root.display())));
         assert!(lines.contains(&"bad \u{fffd}".to_string()), "{lines:?}");
         let answer = tools.build_query(&["source-id".into()]).unwrap();

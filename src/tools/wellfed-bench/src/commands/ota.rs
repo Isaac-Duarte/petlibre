@@ -28,14 +28,14 @@ use wellfed_build::signing::{Frozen, KEY_PATH, Key, Motion};
 use wellfed_core::ota;
 use wellfed_core::record::{Record, tag};
 use wellfed_flash::evidence::write_new;
-use wellfed_formats::capture::SerialEvent;
+use wellfed_formats::capture::arrival;
 use wellfed_formats::manifest::BuildManifest;
 use wellfed_formats::review::ImageKind;
 
 use super::Bench;
-use crate::config::{CAPTURES, VERIFICATION};
 use crate::device::DeviceStatus;
 use crate::{Error, Result, require};
+use wellfed_formats::bench::{CAPTURES, VERIFICATION};
 
 /// Each capture segment; the classifier reads it once it ends.
 const SEGMENT_SECONDS: f64 = 60.0;
@@ -212,14 +212,14 @@ pub struct Image {
 }
 
 impl Image {
-    pub(crate) const fn of(firmware: Firmware) -> Self {
+    pub const fn of(firmware: Firmware) -> Self {
         Self {
             firmware,
             variant: None,
         }
     }
 
-    pub(crate) const fn trial(variant: Variant) -> Self {
+    pub const fn trial(variant: Variant) -> Self {
         Self {
             firmware: Firmware::Trial,
             variant: Some(variant),
@@ -318,7 +318,7 @@ fn highest_signed(directory: &Path) -> Option<(u32, PathBuf)> {
 
 /// One thing the feeder reported, in the order it came.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Event {
+pub enum Event {
     /// The running build saw an offer; `same` when it is its own build.
     Offer {
         version: Option<u32>,
@@ -434,7 +434,7 @@ impl fmt::Display for Event {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Outcome {
+pub enum Outcome {
     /// The offered build started on bank 1, then confirmed itself.
     Passed,
     /// KM0 rejected the trial; `boot` is the last trial count seen.
@@ -448,7 +448,7 @@ pub(crate) enum Outcome {
 
 /// What an offered image is, from its review's `image_kind`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Target {
+pub enum Target {
     /// A replacement build: it must start on bank 1 and confirm.
     Replacement,
     /// The original stock image: it must print its banner after activation.
@@ -460,7 +460,7 @@ const STOCK_BANNER: &str = "app_main:version:";
 
 /// Classifies UART text, fed in pieces, against one offered build.
 #[derive(Debug)]
-pub(crate) struct Watch {
+pub struct Watch {
     build: String,
     target: Target,
     pending: Vec<u8>,
@@ -484,7 +484,7 @@ const TAGS: [&str; 5] = [
 const MAX_LINE: usize = 4096;
 
 impl Watch {
-    pub(crate) fn of(build: &str, target: Target) -> Self {
+    pub fn of(build: &str, target: Target) -> Self {
         Self {
             build: build.to_ascii_lowercase(),
             target,
@@ -497,13 +497,13 @@ impl Watch {
         }
     }
 
-    pub(crate) fn outcome(&self) -> Option<&Outcome> {
+    pub fn outcome(&self) -> Option<&Outcome> {
         self.outcome.as_ref()
     }
 
     /// Take more UART bytes; the events in the complete lines among them. A
     /// partial last line waits for the next piece. Nothing counts after an outcome.
-    pub(crate) fn feed(&mut self, bytes: &[u8]) -> Vec<Event> {
+    pub fn feed(&mut self, bytes: &[u8]) -> Vec<Event> {
         self.feed_at(bytes)
             .into_iter()
             .map(|(_, event)| event)
@@ -636,25 +636,17 @@ impl Watch {
     }
 }
 
-/// When the receive byte at `offset` arrived, in Unix seconds, from a
-/// capture's `serial-events.jsonl` (one timed record per received chunk).
-pub(crate) fn arrival(events: &str, offset: u64) -> Option<f64> {
-    let event = SerialEvent::parse_lines(events).find(|event| event.received(offset))?;
-    let utc = chrono::DateTime::parse_from_rfc3339(&event.utc).ok()?;
-    Some(utc.timestamp_micros() as f64 / 1e6)
-}
-
 /// When a feeder event was seen. `exact` when the capture's chunk timing gave
 /// it; otherwise it is the end of the segment it arrived in (up to 60 s late).
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct Stamp {
+pub struct Stamp {
     pub at: f64,
     pub exact: bool,
 }
 
 /// The `ota` timing record: how long each phase of one run took, in seconds.
 #[derive(Debug, Default, Clone, PartialEq)]
-pub(crate) struct Timing {
+pub struct Timing {
     /// Some child ran, so there is something to report.
     pub ran: bool,
     /// `--build` found a review of the same sources and skipped the build.
@@ -675,7 +667,7 @@ fn between(from: Option<Stamp>, to: Option<Stamp>) -> Option<(f64, bool)> {
 }
 
 /// Seconds as `8.2 s` or `4 min 07 s`.
-pub(crate) fn duration(seconds: f64) -> String {
+pub fn duration(seconds: f64) -> String {
     if seconds < 60.0 {
         return format!("{seconds:.1} s");
     }
@@ -743,7 +735,7 @@ impl Timing {
 /// A signed update ready to offer: root-relative paths under private/, as
 /// the server's offer takes them.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Staged {
+pub struct Staged {
     pub build: String,
     pub target: Target,
     pub version: u32,
@@ -764,7 +756,7 @@ struct OtaPlan {
 }
 
 /// A frozen review's startup identity, or a refusal.
-pub(crate) fn build_id(manifest: &BuildManifest) -> Result<String> {
+pub fn build_id(manifest: &BuildManifest) -> Result<String> {
     let id = manifest.startup_identity.as_deref().unwrap_or_default();
     require(
         is_build_id(id),
@@ -958,11 +950,7 @@ impl Bench {
     /// then signing the next version. `None` when the build or review child
     /// failed (it said why); a review the signer refuses is an error. The
     /// integration suite offers the result through its own server.
-    pub(crate) fn ota_stage(
-        &mut self,
-        args: &OtaArgs,
-        timing: &mut Timing,
-    ) -> Result<Option<Staged>> {
+    pub fn ota_stage(&mut self, args: &OtaArgs, timing: &mut Timing) -> Result<Option<Staged>> {
         let plan = self.ota_plan(args, timing)?;
 
         if plan.build && !self.ota_build(args, &plan.review, timing)? {
@@ -1542,22 +1530,6 @@ mod tests {
 
         let second = watch.feed_at(b"ivated version=2\n");
         assert_eq!(second, [(60, Event::Activated { version: Some(2) })]);
-    }
-
-    #[test]
-    fn arrival_reads_the_chunk_holding_an_offset() {
-        let chunks = concat!(
-            r#"{"utc":"2026-10-22T12:00:00+00:00","direction":"rx","offset":0,"bytes":10}"#,
-            "\n",
-            r#"{"utc":"2026-10-22T12:00:01.5+00:00","direction":"tx","offset":0,"bytes":99}"#,
-            "\n",
-            r#"{"utc":"2026-10-22T12:00:02.250000+00:00","direction":"rx","offset":10,"bytes":5}"#,
-        );
-        let noon = arrival(chunks, 0).unwrap();
-        assert_eq!(arrival(chunks, 9), Some(noon));
-        assert_eq!(arrival(chunks, 14), Some(noon + 2.25));
-        assert_eq!(arrival(chunks, 15), None);
-        assert_eq!(arrival("", 0), None);
     }
 
     #[test]

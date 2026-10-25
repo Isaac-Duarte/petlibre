@@ -4,8 +4,9 @@
 //! captures, the credential and key files, the flash client's reviewed plans and the
 //! QA firmware's UART records each cross crate boundaries (the builder writes
 //! what the audit, flash review and bench read; the bench summarizes the flash
-//! plans and follows a QA run), so their shape lives here rather than as
-//! `Value` lookups in every reader.
+//! plans and follows a QA run; the bench and its suite write the progress
+//! document and run records its page reads), so their shape lives here rather
+//! than as `Value` lookups in every reader.
 //!
 //! Whatever is hashed goes through [`canonical`], which fixes the bytes
 //! independently of field order; other files are written in declaration
@@ -14,6 +15,7 @@
 #![forbid(unsafe_code)]
 
 pub mod audit;
+pub mod bench;
 pub mod canonical;
 pub mod capture;
 pub mod credentials;
@@ -22,6 +24,7 @@ pub mod flash_plan;
 pub mod hex;
 pub mod layout;
 pub mod local;
+pub mod local_api;
 pub mod lock;
 pub mod manifest;
 pub mod owner;

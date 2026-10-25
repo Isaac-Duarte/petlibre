@@ -2279,31 +2279,27 @@ name = "wellfed-bench"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "axum",
  "chrono",
  "clap",
  "ctrlc",
- "futures-util",
  "jiff",
  "mdns-sd",
  "wellfed-build",
  "wellfed-client",
  "wellfed-core",
+ "wellfed-dashboard",
  "wellfed-flash",
  "wellfed-formats",
  "wellfed-model",
  "wellfed-proto",
+ "wellfed-relay",
  "wellfed-session",
- "rust-embed",
  "rustix",
  "serde",
  "serde_json",
  "serialport",
  "tempfile",
  "thiserror",
- "tokio",
- "tower",
- "ts-rs",
  "uuid",
 ]
 
@@ -2364,6 +2360,28 @@ dependencies = [
  "proptest",
  "sha2 0.10.9",
  "simple-dns",
+]
+
+[[package]]
+name = "wellfed-dashboard"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "chrono",
+ "clap",
+ "ctrlc",
+ "futures-util",
+ "wellfed-formats",
+ "rust-embed",
+ "rustix",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tower",
+ "ts-rs",
 ]
 
 [[package]]
@@ -2431,12 +2449,14 @@ name = "wellfed-formats"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "clap",
  "wellfed-session",
  "serde",
  "serde_json",
  "sha2 0.11.1",
  "tempfile",
  "thiserror",
+ "ts-rs",
  "uuid",
 ]
 
@@ -2540,6 +2560,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "wellfed-itest"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "wellfed-bench",
+ "wellfed-core",
+ "wellfed-formats",
+ "wellfed-model",
+ "wellfed-relay",
+ "rustix",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "uuid",
+]
+
+[[package]]
 name = "wellfed-local"
 version = "0.1.0"
 dependencies = [
@@ -2594,6 +2631,14 @@ dependencies = [
  "postcard",
  "proptest",
  "serde",
+ "thiserror",
+]
+
+[[package]]
+name = "wellfed-relay"
+version = "0.1.0"
+dependencies = [
+ "serialport",
  "thiserror",
 ]
 

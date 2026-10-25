@@ -2,14 +2,17 @@
 
 Every host tool is a Rust crate in the workspace. Build them with `cargo build --locked --release` and run the binaries from `target/release/` at the repository root (or pass `--root` where a tool takes one). `make check` runs their tests; the evidence tests that need ignored private inputs run under `make check-fixtures` ([fixtures](../../docs/development/fixtures.md)).
 
-Where each tool is going (`wellfed-local` split up and retired, the bench split into single-purpose crates) is in the [tools roadmap](../../docs/development/tools-roadmap.md).
+Where each tool is going (`wellfed-local` split up and retired) is in the [tools roadmap](../../docs/development/tools-roadmap.md).
 
 **Device** marks the tools that open a serial port or switch relays. Everything else works offline. Physical operations need an explicit task and a reviewed procedure (see [AGENTS.md](../../AGENTS.md)); a tool being here does not authorize running it against the feeder.
 
 | Crate | Device | Purpose |
 | --- | --- | --- |
 | [wellfed-flash](wellfed-flash) | yes | The UART flash client: restricted reads, region-scoped development updates, give-ways and original-stock recovery, each inspect → prepare → execute ([guide](../../docs/development/rust-flash.md)) |
-| [wellfed-bench](wellfed-bench) | yes | The relay bench: power and loader strap, chained `wellfed-flash` sessions, the over-the-air loop, and the read-only progress page with `--features ui` ([guide](../../docs/devices/plaf103/bench.md)) |
+| [wellfed-bench](wellfed-bench) | yes | The relay bench: power and loader strap, chained `wellfed-flash` sessions, the over-the-air loop, and the read-only progress page beside a command with `--features ui` ([guide](../../docs/devices/plaf103/bench.md)); hands `itest` and `stock-ota` to `wellfed-itest` |
+| [wellfed-itest](wellfed-itest) | yes | The real-device integration suite (`wellfed-bench itest`) and the stock-to-replacement install (`stock-ota`), run on the bench's rig ([integration suite](../../docs/devices/plaf103/bench.md#integration-suite)) |
+| [wellfed-relay](wellfed-relay) | yes | The SH-UR04A relay board driver: feeder power, the loader strap and the UART lines |
+| [wellfed-dashboard](wellfed-dashboard) | no | The bench's read-only progress page, alone (`src/scripts/bench-dashboard`) or under `wellfed-bench --ui`; links no relay or flash code |
 | [wellfed](wellfed) | yes (Bluetooth) | The owner's command line: `wellfed setup` pairs this computer with a feeder in BLE setup mode and gives it Wi-Fi ([Bluetooth](../../docs/firmware/bluetooth.md#setup-exchange)); `status`, `settings`, `lock`, `wifi`, `time`, `events`, `invite`, `join`, `clients`, `revoke`, `reboot` and `recover` run on the [device API](../../docs/firmware/device-api.md), all through `wellfed-client` and `wellfed-connect` |
 | [wellfed-feeder-sim](wellfed-feeder-sim) | no (network) | A simulated feeder serving the real [device API](../../docs/firmware/device-api.md) over TCP, on the feeder's own API server, panel, pairing and stores, with the panel's buttons on standard input: what the server, the app and the CLI run against without hardware |
 | [wellfed-local](wellfed-local) | no (network) | The bench's local server, a binary over `wellfed-stock`: the stock-to-replacement install, the replacement firmware's MQTT transport, OTA offers and status ([guide](../../docs/development/local-server.md)); being retired |
@@ -17,7 +20,7 @@ Where each tool is going (`wellfed-local` split up and retired, the bench split 
 | [wellfed-build](wellfed-build) | no | SDK firmware builds, their linked-image audits, `review`, which freezes a reviewed build or the stock OTA for `wellfed-flash`, and `keygen`/`sign`, which sign a frozen review as an update ([firmware builds](../../docs/development/firmware-builds.md), [development updates](../../docs/development/uart-development.md)) |
 | [wellfed-audit](wellfed-audit) | no | Offline audits of finalized receive-only captures (startup, ADC samples, driver transients) and full-flash backup comparison |
 | [wellfed-emu](wellfed-emu) | no | The vendor factory loader (mapping and bank selection) and UART flash helper, executed under Unicorn on supplied state: the review's mapping check, the OTA marker fixtures, and `wellfed-flash`'s emulated sessions |
-| [wellfed-formats](wellfed-formats) | no | The files these tools pass to each other (build manifest, frozen review, stock layout, locks, captures, credentials and keys, flash plans), typed once, and the private-file writer |
+| [wellfed-formats](wellfed-formats) | no | The files these tools pass to each other (build manifest, frozen review, stock layout, locks, captures, credentials and keys, flash plans, the bench's config, progress document, run records and suite catalog), typed once, and the private-file writer |
 | [xtask](xtask) | no | `cargo xtask check-repository`: documentation links, portability, no Python under `src/`, transport isolation; `cargo xtask fuzz <target>`: one bounded cargo-fuzz run ([fuzzing](../../docs/development/README.md#fuzzing)) |
 
 ## Removed Python tools

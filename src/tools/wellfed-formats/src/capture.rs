@@ -37,6 +37,14 @@ impl SerialEvent {
     }
 }
 
+/// When the receive byte at `offset` arrived, in Unix seconds, from a
+/// capture's `serial-events.jsonl` (one timed record per received chunk).
+pub fn arrival(events: &str, offset: u64) -> Option<f64> {
+    let event = SerialEvent::parse_lines(events).find(|event| event.received(offset))?;
+    let utc = chrono::DateTime::parse_from_rfc3339(&event.utc).ok()?;
+    Some(utc.timestamp_micros() as f64 / 1e6)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -52,5 +60,21 @@ mod tests {
         assert!(!event.received(3));
         assert!(event.received(5));
         assert!(!event.received(6));
+    }
+
+    #[test]
+    fn arrival_reads_the_chunk_holding_an_offset() {
+        let chunks = concat!(
+            r#"{"utc":"2026-10-22T12:00:00+00:00","direction":"rx","offset":0,"bytes":10}"#,
+            "\n",
+            r#"{"utc":"2026-10-22T12:00:01.5+00:00","direction":"tx","offset":0,"bytes":99}"#,
+            "\n",
+            r#"{"utc":"2026-10-22T12:00:02.250000+00:00","direction":"rx","offset":10,"bytes":5}"#,
+        );
+        let noon = arrival(chunks, 0).unwrap();
+        assert_eq!(arrival(chunks, 9), Some(noon));
+        assert_eq!(arrival(chunks, 14), Some(noon + 2.25));
+        assert_eq!(arrival(chunks, 15), None);
+        assert_eq!(arrival("", 0), None);
     }
 }

@@ -6,7 +6,7 @@ The rules for the web frontends in `src/web/` (TypeScript and Svelte), why each 
 
 ```text
 src/web/
-  apps/bench/          the wellfed-bench page (Svelte 5, embedded with --features ui)
+  apps/bench/          the bench page (Svelte 5, embedded in wellfed-dashboard with --features ui)
   packages/tokens/     CSS generated from assets/brand/tokens.json, and the contrast check
   packages/ui/         the page base and components over the tokens and bits-ui
   packages/api/        typed clients; types generated from Rust
@@ -52,4 +52,4 @@ From `src/web/`, with Node 22.18 or later (it runs the TypeScript scripts direct
 | `pnpm check` | ESLint, Prettier, licenses, `tsc` for the scripts, then each package's `svelte-check` or `tsc` |
 | `pnpm test` | Vitest in each package (the contrast and drift tests included) |
 | `pnpm format` | Rewrite formatting |
-| `make check-web` (repository root) | All of the above, the bench build, and Playwright against the real `wellfed-bench --features ui` |
+| `make check-web` (repository root) | All of the above, the bench build, and Playwright against the real `wellfed-bench --ui` (built with `--features ui`) |

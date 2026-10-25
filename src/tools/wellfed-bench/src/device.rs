@@ -88,7 +88,7 @@ pub enum DeviceError {
 
 /// What the suite asks the feeder; borrowed into an [`Op`] when sent.
 #[derive(Clone, PartialEq, Eq)]
-pub(crate) enum Ask {
+pub enum Ask {
     Status,
     GetSettings,
     PutSettings {
@@ -106,7 +106,7 @@ pub(crate) enum Ask {
 }
 
 impl Ask {
-    pub(crate) fn name(&self) -> &'static str {
+    pub fn name(&self) -> &'static str {
         match self {
             Self::Status => "status",
             Self::GetSettings => "get-settings",
@@ -126,14 +126,14 @@ impl fmt::Debug for Ask {
 /// Wi-Fi credentials for [`Ask::PutWifi`]. The suite stores only invented
 /// ones, but they stay out of every log all the same.
 #[derive(Clone, PartialEq, Eq)]
-pub(crate) struct Credentials {
+pub struct Credentials {
     pub ssid: String,
     pub psk: String,
 }
 
 /// The feeder's answer, owned so it outlives the session's buffer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub(crate) enum Answer {
+pub enum Answer {
     Done {
         generation: Option<u32>,
     },
@@ -220,7 +220,7 @@ impl DeviceStatus {
 
 /// A connection the feeder must not let in, for `request-auth`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Intruder {
+pub enum Intruder {
     /// A well-formed session from a key the feeder never enrolled.
     UnenrolledKey,
     /// The owner's own first handshake message with one byte flipped.
@@ -229,7 +229,7 @@ pub(crate) enum Intruder {
 
 /// How the feeder met an [`Intruder`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub(crate) enum Rebuffed {
+pub enum Rebuffed {
     /// It answered the handshake with a refusal.
     Refused(OpenRefusal),
     /// It closed the connection without a session.
@@ -272,7 +272,7 @@ struct Connection {
 }
 
 /// The owner's sessions with the one feeder its key file names.
-pub(crate) struct Device {
+pub struct Device {
     keys: Keypair,
     identity: [u8; 32],
     hotspot: Hotspot,
@@ -288,7 +288,7 @@ fn random<const N: usize>() -> Result<[u8; N], DeviceError> {
 impl Device {
     /// The key file at `keys` and the hotspot fields of the server config
     /// at `config`, both under `root`.
-    pub(crate) fn open(root: &Path, keys: &Path, config: &Path) -> crate::Result<Self> {
+    pub fn open(root: &Path, keys: &Path, config: &Path) -> crate::Result<Self> {
         let file: OwnerKeyFile =
             wellfed_formats::load(&root.join(keys)).map_err(|source| DeviceError::Keys {
                 path: keys.to_path_buf(),
@@ -320,7 +320,7 @@ impl Device {
     }
 
     /// One request and its answer.
-    pub(crate) fn ask(&mut self, ask: &Ask) -> Result<Answer, DeviceError> {
+    pub fn ask(&mut self, ask: &Ask) -> Result<Answer, DeviceError> {
         let id: RequestId = random()?;
         let reused = self.connection.is_some();
         match self.exchange(id, ask) {
@@ -423,7 +423,7 @@ impl Device {
     }
 
     /// Connect as `intruder` and report how the feeder met it.
-    pub(crate) fn intrude(&mut self, intruder: Intruder) -> Result<Rebuffed, DeviceError> {
+    pub fn intrude(&mut self, intruder: Intruder) -> Result<Rebuffed, DeviceError> {
         let address = match self.address {
             Some(address) => address,
             None => self.locate()?,

@@ -1,0 +1,30 @@
+[package]
+license.workspace = true
+name = "wellfed-itest"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "Real-device integration suite for the PLAF103 bench: named scenarios over the air and the device API, and the stock-to-replacement install"
+publish.workspace = true
+
+[dependencies]
+clap.workspace = true
+wellfed-bench = { path = "../wellfed-bench" }
+wellfed-core.workspace = true
+wellfed-formats.workspace = true
+wellfed-model.workspace = true
+wellfed-relay = { path = "../wellfed-relay" }
+rustix = { version = "1", features = ["fs", "process"] }
+serde.workspace = true
+serde_json.workspace = true
+uuid = { workspace = true, features = ["v4"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[features]
+# `--ui` beside a run, as `wellfed-bench --ui` offers it.
+ui = ["wellfed-bench/ui"]
+
+[lints]
+workspace = true

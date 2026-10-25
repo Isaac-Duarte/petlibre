@@ -7,9 +7,11 @@
 #   src/scripts/bench-dashboard --ui-port 8781
 #   src/scripts/bench-dashboard --listen 100.x.y.z  # a Tailscale address, for a phone
 #   src/scripts/bench-dashboard --listen 0.0.0.0    # every interface
+#   src/scripts/bench-dashboard --listen ::         # every interface, IPv6 too
 #
-# Extra arguments go to wellfed-bench. It never touches relays, the UART or
-# flash; Ctrl+C stops it.
+# Extra arguments go to wellfed-dashboard (--root, --listen, --ui-port,
+# --flash-bin). It links no relay or flash code, so it never touches relays,
+# the UART or flash; Ctrl+C stops it.
 set -euo pipefail
 
 # The checkout root, two levels above this script.
@@ -23,6 +25,6 @@ if [[ ! -f "$dist" ]] || [[ -n "$(find src/web -path '*/node_modules' -prune -o 
 fi
 
 # Cargo skips the build when nothing changed.
-cargo build --locked --release -p wellfed-bench --features ui
+cargo build --locked --release -p wellfed-dashboard --features ui
 
-exec ./target/release/wellfed-bench --root "$root" --ui "$@"
+exec ./target/release/wellfed-dashboard --root "$root" "$@"

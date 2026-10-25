@@ -1,0 +1,19 @@
+[package]
+license.workspace = true
+name = "wellfed-relay"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "Driver for the bench's DSD TECH SH-UR04A relay board: feeder power, the loader strap and the UART lines"
+publish.workspace = true
+
+[dependencies]
+serialport.workspace = true
+thiserror.workspace = true
+
+[features]
+# `FakeBoard`, a scripted board for other crates' tests.
+fake = []
+
+[lints]
+workspace = true

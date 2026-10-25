@@ -4,12 +4,11 @@ name = "wellfed-bench"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
-description = "Relay bench for the PLAF103 research unit: feeder power, loader strap, chained wellfed-flash sessions and a read-only progress page"
+description = "Relay bench for the PLAF103 research unit: feeder power, the loader strap, chained wellfed-flash sessions and the over-the-air loop"
 publish.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-axum = { workspace = true, optional = true }
 chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 clap.workspace = true
 ctrlc.workspace = true
@@ -17,32 +16,32 @@ jiff = "0.2.38"
 mdns-sd = "0.21.6"
 wellfed-build = { path = "../wellfed-build" }
 wellfed-client.workspace = true
-wellfed-flash = { path = "../wellfed-flash" }
 wellfed-core.workspace = true
+wellfed-dashboard = { path = "../wellfed-dashboard", optional = true }
+# Linked for the review verification signing does; every flash write still
+# goes through the wellfed-flash binary as a child process.
+wellfed-flash = { path = "../wellfed-flash" }
+wellfed-formats = { workspace = true, features = ["clap"] }
 wellfed-model.workspace = true
 wellfed-proto.workspace = true
+wellfed-relay = { path = "../wellfed-relay" }
 wellfed-session.workspace = true
-futures-util = { version = "0.3", default-features = false, optional = true }
-rust-embed = { version = "8.13.0", features = ["debug-embed"], optional = true }
 rustix = { version = "1", features = ["fs", "process"] }
-wellfed-formats.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serialport.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread", "net", "time", "macros"], optional = true }
 uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
 wellfed-flash = { path = "../wellfed-flash", features = ["fixtures"] }
+wellfed-relay = { path = "../wellfed-relay", features = ["fake"] }
 tempfile.workspace = true
-tower = { version = "0.5", features = ["util"] }
-ts-rs = { version = "12", features = ["serde-json-impl"] }
 
 [features]
-# The web page (`--ui`). Build src/web/apps/bench/dist first (`make ui`); the
-# server embeds it at compile time.
-ui = ["dep:axum", "dep:futures-util", "dep:rust-embed", "dep:tokio"]
+# The read-only page (`--ui`), served by wellfed-dashboard. Build
+# src/web/apps/bench/dist first (`make ui`); the page embeds it.
+ui = ["dep:wellfed-dashboard", "wellfed-dashboard/ui"]
 
 [lints]
 workspace = true

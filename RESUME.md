@@ -15,6 +15,7 @@ Reconfirm with the owner before any bench operation; this is the last recorded s
 - **Client store:** one owner, the bench CLI's key (`private/wellfed-owner.json`).
 - **Bench:** feeder on (relay 1), UART relays 3 and 4 closed, hotspot down, no server, no capture. Hopper empty. The logic analyzer may still be clipped at the motor.
 - **Next (FW16):** cancellation during motion, the motor lease under a stalled loop during a feed, and a failed stop; then FW17 ([procedure](docs/firmware/motor-pulse.md#feeds-through-the-owner)).
+- **Host clients from `master` no longer talk to v168:** since AR13 (October 25) `Welcome::Open` carries an epoch, so `wellfed`, the server and the bench's device client refuse v168's welcome as malformed until bank 1 runs a build from `master`. MQTT offers and LAN recovery still work, so the unit can be updated.
 - **Do not cut power during a feed.** An interrupted feed leaves its journal reservation pending, and the owner then faults at every boot (`OwnerFault::Recovery`) with no resolution path yet.
 
 ## Today (October 25): FW16 feeding through the owner

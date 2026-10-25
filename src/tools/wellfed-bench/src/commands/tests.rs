@@ -998,8 +998,9 @@ fn freeze(root: &Path, review: &Path, manifest: &Value) {
     wellfed_flash::fixtures::freeze_build(root, review, &image, manifest).unwrap();
 }
 
-/// The signed manifest a run wrote, as the firmware reads it.
-/// A version 2 manifest the bench key signed, through the firmware's check.
+/// A version 2 manifest the bench key signed, through the firmware's
+/// check (with the bench's own downgrade statement, which a stock image
+/// always needs).
 fn signed_by_bench(rig: &Rig, file: &str) -> wellfed_core::ota::Manifest {
     use wellfed_core::ota::offer::{Context, KeyRing, admit_offer};
     let key =
@@ -1016,9 +1017,13 @@ fn signed_by_bench(rig: &Rig, file: &str) -> wellfed_core::ota::Manifest {
         },
         floor: 0,
         device: [0; 32],
-        running: [0; 32],
+        running: None,
     };
-    admit_offer(&bytes, None, &context).unwrap().signed.manifest
+    let downgrade = key.downgrade(&bytes, &context.device, 0).unwrap();
+    admit_offer(&bytes, Some(&downgrade), &context)
+        .unwrap()
+        .signed
+        .manifest
 }
 
 /// A frozen review under private/verification, and `ota` arguments for it.

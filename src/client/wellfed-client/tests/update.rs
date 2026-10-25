@@ -242,7 +242,7 @@ impl Feeder {
             },
             floor: record.min_version,
             device,
-            running: self.running(),
+            running: (self.bank == 1).then(|| self.running()),
         };
         let refuse = |refused| wire::refusal(refused);
         let admitted = admit_offer(manifest, downgrade, &context)

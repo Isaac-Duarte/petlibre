@@ -87,7 +87,7 @@ fn context<'a>(
         },
         floor,
         device: DEVICE,
-        running: RUNNING,
+        running: Some(RUNNING),
     }
 }
 
@@ -244,6 +244,13 @@ fn version_one_bank_size_kind_and_the_running_build_are_refused() {
         admit_offer(&manifest(&k.bench, &fields), None, &ctx),
         Err(OfferError::Same)
     );
+
+    // Bank 0 installs any build into bank 1, its own included.
+    let bank0 = Context {
+        running: None,
+        ..ctx
+    };
+    assert!(admit_offer(&manifest(&k.bench, &fields), None, &bank0).is_ok());
 }
 
 #[test]

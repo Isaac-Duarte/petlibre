@@ -285,8 +285,11 @@ pub struct Context<'a> {
     /// This feeder's identity key (X25519 public), which a downgrade
     /// statement must name.
     pub device: [u8; 32],
-    /// The running build's identity.
-    pub running: [u8; 32],
+    /// The build in bank 1 when that is the running bank: an offer of it
+    /// would rewrite the bank with what it holds. Bank 0 passes `None`,
+    /// since installing its own build into bank 1 is how a feeder returns
+    /// to the build bank 0 holds.
+    pub running: Option<[u8; 32]>,
 }
 
 fn u32_at(bytes: &[u8], at: usize) -> u32 {
@@ -366,7 +369,7 @@ pub fn admit_offer(
     if m.image_len < SECTOR_BYTES || m.image_len > BANK1_BYTES {
         return Err(OfferError::Size);
     }
-    if m.build_id == context.running {
+    if context.running == Some(m.build_id) {
         return Err(OfferError::Same);
     }
 

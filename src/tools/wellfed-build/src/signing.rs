@@ -441,7 +441,7 @@ mod tests {
             },
             floor,
             device,
-            running: [0; 32],
+            running: None,
         };
         let admitted = admit_offer(&signed, None, &context(8)).unwrap();
         assert_eq!(admitted.trust, Trust::BuiltIn);

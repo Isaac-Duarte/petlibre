@@ -699,7 +699,7 @@ impl<I: SlotIo + Clone> Update<I> {
             ring: self.ring(built_in, &keys[..*count]),
             floor: self.min(),
             device,
-            running: self.identity,
+            running: (self.bank == 1).then_some(self.identity),
         };
         let admitted = match admit_offer(manifest, downgrade.map(|d| &d[..]), &context) {
             Ok(admitted) => admitted,

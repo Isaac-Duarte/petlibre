@@ -812,6 +812,28 @@ fn an_owner_s_enrolled_key_signs_an_offer() {
 }
 
 #[test]
+fn bank_0_installs_its_own_build_but_bank_1_refuses_to_rewrite_itself() {
+    // Returning a feeder to bank 0's build means bank 0 installing that
+    // build into bank 1; bank 1 offered its own build has nothing to do.
+    let payload = image(LEN);
+    let own = manifest_for(&bench(), 3, &payload, RUNNING[0], ImageKind::Replacement);
+
+    {
+        let _guard = start(1);
+        let mut rig = Rig::bench(1);
+        assert_eq!(
+            rig.offer(&own, None).map(|_| ()),
+            Err(Refused::Offer(OfferError::Same))
+        );
+    }
+
+    let _guard = start(0);
+    let mut rig = Rig::bench(0);
+    assert_eq!(progress(rig.offer(&own, None)).phase, Phase::Receiving);
+    assert_eq!(rig.push(&payload, None).phase, Phase::Activated);
+}
+
+#[test]
 fn running_from_bank_1_never_writes_bank_1() {
     let _guard = start(1);
     let mut flash = SdkFlash::<FakeHooks>::new();

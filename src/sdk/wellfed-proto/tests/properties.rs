@@ -186,6 +186,7 @@ proptest! {
         label in text(24),
         role in role(),
         build in text(40),
+        epoch in any::<u32>(),
     ) {
         round_trip!(Open, open);
         round_trip!(Hello, Hello { major, capabilities: Capabilities(capabilities) });
@@ -193,7 +194,7 @@ proptest! {
         round_trip!(Joined, Joined::Enrolled { role });
         round_trip!(
             Welcome<'_>,
-            Welcome::Open { major, capabilities: Capabilities(capabilities), build, role }
+            Welcome::Open { major, capabilities: Capabilities(capabilities), build, role, epoch }
         );
     }
 

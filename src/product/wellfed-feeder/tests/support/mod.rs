@@ -164,6 +164,10 @@ impl Device for Fake {
             .map_or(EventRead::None, |e| EventRead::Event(*e))
     }
 
+    fn epoch(&self) -> Option<u32> {
+        Some(1)
+    }
+
     fn reboot(&mut self) {}
 }
 

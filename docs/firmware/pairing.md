@@ -137,7 +137,7 @@ All storage-region sectors are now named in one table, `wellfed_amebad_sys::stor
   - **Owner:** everything, including managing clients.
   - **Member:** feeding and settings.
   - **Server:** the optional server.
-  - **Update signer:** an owner's Ed25519 key for FW48.
+  - **Update signer:** an owner's Ed25519 update-signing key, enrolled with `EnrollUpdateKey` once someone presses Dispense ([OTA design](ota-design.md#keys-and-anti-rollback)); it never opens a session.
 - **Reset:** FP15's reset forgets every client and takes a new identity.
 
 **Known limit:** the identity secret and the RNG seed sit in plain flash. The board has no secure element, so anyone who reads the flash chip can impersonate the feeder until the next reset. The seed is less sensitive, since every boot mixes fresh input in.

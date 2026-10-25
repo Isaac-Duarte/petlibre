@@ -61,7 +61,7 @@ wellfed-server ─► wellfed-service ─► wellfed-store ─► wellfed-api* �
 - **`wellfed-feeder-sim`** runs `wellfed-feeder`'s own API server, panel and pairing policy, and `wellfed-core`'s stores on a flash image laid out like the feeder's storage region, so service, end-to-end and web tests meet the feeder's behavior rather than a mock of it. Its standard input stands in for the panel's buttons; a feed is refused until the feeding owner lands.
 - **`wellfed-api`** builds for every target, including the app's Android library, so it carries no server dependencies.
 - **`wellfed-service`** never sees an HTTP type, and **`wellfed-server`** never sees SQL. A handler parses, authorizes, calls one service method and maps the result.
-- **`wellfed-local`** is retired in stages ([tools roadmap](../development/tools-roadmap.md)): its stock protocol moved to the `wellfed-stock` library on October 25, and its installer steps go to `wellfed-client`; its replacement path to `wellfed-client` and the owner's `wellfed` CLI. Its MQTT request path went with FW47; the broker stays for the FW10 offers and bank 0's health until FW48.
+- **`wellfed-local`** is retired in stages ([tools roadmap](../development/tools-roadmap.md)): its stock protocol moved to the `wellfed-stock` library on October 25, and its installer steps go to `wellfed-client`; its replacement path to `wellfed-client` and the owner's `wellfed` CLI. Its MQTT request path went with FW47 and its offers with the device API's updates (October 25); the broker stays for stock, and for a build still on MQTT until AR6.
 - **Workspace members** gain `src/client/*` and `src/server/*`. Shared versions stay in `[workspace.dependencies]`.
 
 ## Device protocol
@@ -100,7 +100,7 @@ Subscribe { after, samples }          Event { seq, at, body }
 
   The feed ops, the `Feeding` answer, the `Fed` event and the `Fault` refusal are behind `Capabilities::FEED`. A feeder that serves feeds says so in its welcome; it answers a client whose hello lacks the bit `Unavailable`, and never pushes it a `Fed` event. `Fed` carries the feed's number, the portions asked for and confirmed, an outcome (`Done`, `Cancelled`, `Expired`, `Failed`, or `Uncertain` when the owner stopped without a durable result, or a reset interrupted the feed and the next boot resolved it) and a reason. The request id makes a retry return the same `Feeding` answer instead of feeding twice; across a reboot that is still FW17's work.
 
-  A `Put` against a stale generation is refused `Stale { current }`. Plans (FP03) and `OtaOffer` (FW48) join behind capability bits.
+  A `Put` against a stale generation is refused `Stale { current }`. Plans (FP03) join behind a capability bit, as updates did (`Capabilities::UPDATE`: `OfferUpdate`, `UpdateChunk`, `UpdateState`, `CancelUpdate`, `EnrollUpdateKey`, `UpdateKeyStatement`; [OTA design](../firmware/ota-design.md#updates-over-the-device-api)).
 - **Subscribe** asks for every event after a cursor (`None`: the oldest kept), then each new one, and the live samples if asked.
 - **Results** are typed enums of outcomes and refusals. There is no free-text error.
 - **Events** are the durable records described in [data](../firmware/product-architecture.md#data). `seq` is monotonic across reboots within the ring's epoch; a ring re-created by a storage wipe draws a new epoch and counts from 1 again.

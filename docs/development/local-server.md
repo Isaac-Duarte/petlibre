@@ -68,6 +68,8 @@ With a key configured, the server signs every request it sends to the firmware: 
 
 ## Replacement-firmware updates (FW10)
 
+Since October 25 builds take updates over the [device API](../firmware/ota-design.md#updates-over-the-device-api), which `wellfed-bench ota` pushes; nothing here reaches them. What follows serves only a build still on the unit that fetches updates over MQTT, with a version 1 manifest (`wellfed-build sign --format mqtt`, or `wellfed-bench ota --mqtt`), until AR6 deletes it.
+
 The replacement firmware accepts only updates signed by the key its build embeds ([design](../firmware/ota-design.md)). Signing is `wellfed-build keygen` and `wellfed-build sign`, offline, and `sign` takes only a frozen review ([firmware builds](firmware-builds.md#update-signing)).
 
 Offer a signed update to the running server, or clear it:

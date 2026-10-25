@@ -112,7 +112,7 @@ Built in FW47 (October 24, [device API](device-api.md)): sessions are Noise IK r
 
 - The app or server fetches signed releases and shows them. The owner approves each install, which reaches the feeder as an offer over the API.
 - The feeder never downloads from the internet, so it needs no TLS client.
-- The FW10 download, the FW11 trial and confirmation, and the bank-0 recovery role are unchanged. Images are signed by the project key or the owner's enrolled key.
+- The FW11 trial and confirmation are unchanged. Updates ride the device API ([OTA design](ota-design.md#updates-over-the-device-api)): bank 1 gives way, bank 0 (the feeder build, which also feeds) installs into bank 1. Images are signed by the project key or the owner's enrolled key, and a downgrade needs a statement bound to the feeder.
 
 ## Data
 

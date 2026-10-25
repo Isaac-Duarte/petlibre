@@ -37,10 +37,11 @@ Physically, the same replacement image has run from both banks ([hardware result
 
 From the selection logic:
 
-1. **The candidate goes into bank 1, with its marker written last** after the rest of the image is verified. This is what the development updater does today.
-2. **A known-good image in bank 0 is a fallback,** not a peer. It boots only when bank 1's marker or signatures fail.
+1. **The candidate goes into bank 1, with its marker written last** after the rest of the image is verified. This is what the development updater and bank 0's update stage do.
+2. **A known-good image in bank 0 is a fallback,** not a peer. It boots only when bank 1's marker or signatures fail. Since October 25 it is the `feeder` build: it serves the device API and feeds, so a failed update lands on a feeder that still works, and it is the only bank that writes bank 1 ([OTA design](ota-design.md#updates-over-the-device-api)).
 3. **Never leave both banks invalid.** The loader then waits forever, and only the UART loader recovers. Any marker write must keep at least one valid bank.
 4. **Clearing bank 1's marker is how to give way to bank 0.** Bank 0 cannot win while bank 1 is valid.
+5. **Bank 1 gives way only to the bank 0 it knows.** Bank 0 records its build, its image's length (from the bank's own headers) and its SHA-256 in the update store at boot; bank 1 hashes bank 0 again before a give-way and refuses one when bank 0 changed or never recorded itself, so a give-way never lands on a build that cannot take the offer.
 
 ## Failed-first-boot recovery
 

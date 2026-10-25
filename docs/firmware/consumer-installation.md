@@ -95,9 +95,9 @@ For a consumer it must also accept a device whose credentials it has never seen.
 3. **Connect:** stock joins the home network and connects to the installer's broker with its own credentials, which the installer records.
 4. **Pre-flight:** model PLAF103, version 1.1.15 on an allow-list, mains power, idle. These are stock's own precheck conditions; the bench's `stock-ready` stage checks them.
 5. **Install:** the installer serves the image and sends one `OTA_UPGRADE`. Stock's progress reports drive a progress bar, about 40 s.
-6. **First boot:** the build boots from bank 0, and its recovery role reports health (`"role":"recovery"`) while it waits for an update.
+6. **First boot:** the build boots from bank 0 and answers the device API while it waits for an update (until October 25 its recovery role reported MQTT health instead).
 7. **Backup:** the build streams bank 1, which still holds stock, to the installer, which verifies it (see rollback below).
-8. **Promote:** only once a verified backup is stored, the installer offers the same build signed. The recovery role installs it into bank 1, and its trial boot confirms; about 3.5 min on the bench.
+8. **Promote:** only once a verified backup is stored, the installer offers the same build signed over the device API. Bank 0 installs it into bank 1, and its trial boot confirms; about 3.5 min on the bench with the MQTT updater.
 9. **Hand-off:** the confirmed replacement enters the pairing flow (FW45): the owner's app pairs as its first client, and a server joins later by invite if the owner runs one.
 
 Steps 1–3 replace the bench's firewall redirect and captured credentials. Steps 5, 6 and 8 are what ran physically.
@@ -108,8 +108,8 @@ The vendor's firmware cannot be shipped with the app. Each feeder already holds 
 
 **Primary: the installer saves the feeder's own stock (design).**
 - **Where it is:** after stock installs the build into bank 0, bank 1 still holds the stock application, with only the first byte of its 8-byte marker zeroed. Stock's activation does exactly that and nothing more.
-- **Who reads it:** the bank-0 recovery role can read bank 1 (`sdk::bank1_read`, used today for write readback).
-- **Upload:** before the installer offers the promotion, the recovery role streams bank 1 to it as a chunked response on the device API (FW47), the same Noise stream the app uses for everything else, not over MQTT. The transport carries no trust: the hash check below is what shows the copy is intact.
+- **Who reads it:** the build on bank 0 can read bank 1 (`sdk::bank1_read`, used today for write readback).
+- **Upload:** before the installer offers the promotion, bank 0 streams bank 1 to it as a chunked response on the device API (FW47), the same Noise stream the app uses for everything else, not over MQTT. The transport carries no trust: the hash check below is what shows the copy is intact.
 - **Promotion waits for it:** promotion overwrites bank 1, the feeder's only copy of stock, so the installer refuses to promote until a verified backup is stored. An owner cannot lose stock without holding a copy of it.
 - **Rebuild:** the installer is the server during an install, so the backup lands in the app. It restores the marker byte and rebuilds the OTA container: 32-byte header, payload length and byte-sum, as in [the container format](../devices/plaf103/stock/ota-requirements.md#the-image-container).
 - **Checks:** the rebuilt image must match the stock image profile. For 1.1.15 it must match the pinned payload hash exactly, so a mismatch shows a damaged read before anything relies on it.

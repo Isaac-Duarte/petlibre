@@ -2,7 +2,7 @@
 
 Status: Done. Stages A (offline), B and C (bench) passed; the carried items are on the board. Choices marked **decision** are this design's; changes made while building are noted where they apply.
 
-**Since FW47 (October 24): health only, and only in the recovery role.** Every request (settings, Wi-Fi, lock, play, time) goes over the [device API](device-api.md). The request parser, the reply writers and request signing below are deleted, and the normal role opens no session. Bank 0 still reports health here while the broker serves the FW10 offers, and a request published to it is ignored. The sections on requests, signing and the nonce are history; FW48 retires what is left with the broker credentials.
+**Since October 25: no build opens a session.** Every request (settings, Wi-Fi, lock, play, time) went to the [device API](device-api.md) with FW47, and updates followed ([OTA design](ota-design.md#updates-over-the-device-api)): bank 0 runs the feeder and reports nothing here. The transport's code and the broker credentials remain in the build until AR6 deletes them; the broker serves stock. This page is history.
 
 ## Goal and non-goals
 

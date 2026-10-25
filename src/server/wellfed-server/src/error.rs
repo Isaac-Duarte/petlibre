@@ -47,7 +47,7 @@ impl IntoResponse for ApiError {
             Self::Service(Error::Stale(settings)) => return stale(settings),
             Self::Service(error) => service(&error),
         };
-        let status = status(code, refusal);
+        let status = status(code);
         let problem = Problem {
             kind: "about:blank".into(),
             title: status.canonical_reason().unwrap_or("Error").into(),
@@ -102,7 +102,7 @@ fn service(error: &Error) -> (ErrorCode, Option<String>, Option<FeederRefusal>) 
     }
 }
 
-fn status(code: ErrorCode, refusal: Option<FeederRefusal>) -> StatusCode {
+fn status(code: ErrorCode) -> StatusCode {
     match code {
         ErrorCode::SetupClosed | ErrorCode::AlreadyAdopted => StatusCode::CONFLICT,
         ErrorCode::Unauthenticated | ErrorCode::BadCredentials => StatusCode::UNAUTHORIZED,
@@ -115,11 +115,24 @@ fn status(code: ErrorCode, refusal: Option<FeederRefusal>) -> StatusCode {
         ErrorCode::Unreachable => StatusCode::BAD_GATEWAY,
         ErrorCode::FeederOffline => StatusCode::SERVICE_UNAVAILABLE,
         ErrorCode::OutcomeUnknown => StatusCode::GATEWAY_TIMEOUT,
-        // A busy feeder is worth retrying; any other refusal is final.
-        ErrorCode::FeederRefused if refusal == Some(FeederRefusal::Busy) => {
-            StatusCode::SERVICE_UNAVAILABLE
-        }
+        // Every refusal is final for its key, `busy` included: the feeder
+        // remembers a refused write under its id and answers a retry with the
+        // same refusal. A later attempt is a new request under a new key.
         ErrorCode::FeederRefused => StatusCode::CONFLICT,
         ErrorCode::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A retry with the same key replays the refusal, so a busy feeder is
+    /// not "try again" (503) but a refusal like any other.
+    #[test]
+    fn a_busy_refusal_is_final_for_its_key() {
+        let response = ApiError::Service(Error::Refused(FeederRefusal::Busy)).into_response();
+
+        assert_eq!(response.status(), StatusCode::CONFLICT);
     }
 }

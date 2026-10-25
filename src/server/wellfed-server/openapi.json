@@ -279,6 +279,16 @@
         },
         "responses": {
           "204": {},
+          "409": {
+            "description": "feeder_refused: final for this key; a later attempt needs a new key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
           "503": {
             "description": "feeder_offline",
             "content": {
@@ -332,6 +342,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Settings"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "feeder_refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             }
@@ -408,6 +428,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Settings"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "feeder_refused: final for this key; a later attempt needs a new key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             }

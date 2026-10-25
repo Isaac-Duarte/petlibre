@@ -32,7 +32,9 @@ pub enum ErrorCode {
     Unreachable,
     /// The server has no session with the feeder right now.
     FeederOffline,
-    /// The feeder refused the request; `refusal` says why.
+    /// The feeder refused the request; `refusal` says why. A refusal is final
+    /// for its `Idempotency-Key`: the feeder remembers it, and a retry with
+    /// the same key gets it again.
     FeederRefused,
     /// No answer arrived in time. The feeder may have run the request:
     /// retry with the same `Idempotency-Key`, which it answers once.
@@ -46,7 +48,8 @@ pub enum ErrorCode {
 pub enum FeederRefusal {
     /// The server's key lacks the role.
     Forbidden,
-    /// Another change is being written, or the stores are loading.
+    /// Another change or feed is in progress, or the stores are loading.
+    /// Nothing ran. Trying again later is a new request with a new key.
     Busy,
     /// The store moved past the generation the request named.
     Stale,

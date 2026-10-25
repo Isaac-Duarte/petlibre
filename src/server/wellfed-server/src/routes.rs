@@ -170,6 +170,7 @@ pub(crate) async fn feeder(
     params(("id" = FeederId, Path)),
     responses(
         (status = 200, body = Settings, headers(("ETag" = String))),
+        (status = 409, body = Problem, description = "feeder_refused"),
         (status = 503, body = Problem, description = "feeder_offline"),
     ),
 )]
@@ -197,6 +198,7 @@ pub(crate) async fn settings(
         (status = 200, body = Settings, headers(("ETag" = String))),
         (status = 412, body = Settings, description = "Stale: the current settings"),
         (status = 428, body = Problem, description = "precondition_required"),
+        (status = 409, body = Problem, description = "feeder_refused: final for this key; a later attempt needs a new key"),
         (status = 503, body = Problem, description = "feeder_offline"),
         (status = 504, body = Problem, description = "outcome_unknown: retry with the same key"),
     ),
@@ -229,6 +231,7 @@ pub(crate) async fn put_settings(
     request_body = LockRequest,
     responses(
         (status = 204),
+        (status = 409, body = Problem, description = "feeder_refused: final for this key; a later attempt needs a new key"),
         (status = 503, body = Problem, description = "feeder_offline"),
         (status = 504, body = Problem, description = "outcome_unknown: retry with the same key"),
     ),

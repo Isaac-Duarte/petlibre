@@ -203,9 +203,18 @@ pub mod storage {
         count: 12,
     };
 
-    /// Every allocation, in region order; sectors 25-31 are free.
-    pub const ALL: [Sectors; 8] = [
-        JOURNAL, SETTINGS, CONFIRM, NET, SEED, CLIENTS, PLANS, EVENTS,
+    /// The update store: the anti-rollback floor, the give-way's
+    /// candidate, the added and retired update keys, and bank 0's image.
+    /// Not the confirmation sector, which is erased before each write, so
+    /// a cut there would lose a floor kept in it.
+    pub const UPDATE: Sectors = Sectors {
+        first: 25,
+        count: 2,
+    };
+
+    /// Every allocation, in region order; sectors 27-31 are free.
+    pub const ALL: [Sectors; 9] = [
+        JOURNAL, SETTINGS, CONFIRM, NET, SEED, CLIENTS, PLANS, EVENTS, UPDATE,
     ];
 
     const fn disjoint_and_inside() -> bool {

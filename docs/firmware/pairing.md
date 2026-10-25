@@ -125,7 +125,8 @@ All storage-region sectors are now named in one table, `wellfed_amebad_sys::stor
 | 9–10 | Identity and clients (FW45) |
 | 11–12 | Plans (FP03, reserved) |
 | 13–24 | 7-day event ring (FW47) |
-| 25–31 | Free |
+| 25–26 | Update store: the anti-rollback floor, the give-way's candidate, update keys, bank 0's image |
+| 27–31 | Free |
 
 ## Clients
 

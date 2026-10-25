@@ -8,14 +8,14 @@ This file is the handoff, not the history. Keep it to the current state, today's
 
 Reconfirm with the owner before any bench operation; this is the last recorded state, not a live observation.
 
-- **Bank 1:** `feeder` `e43324be…` (v169 `ar-smoke-20261025-01`, reinstalled as v171 by `ar9-restore-20261025-01` after the AR9 gap-probe run, confirmed, October 25): `master` at `545d18c` (AR1, AR2+AR13, AR15, AR19). Five cold boots (`ar-boot-20261025-01`…`05`) came up on bank 1 with the owner idle and unfaulted; the pre-epoch event ring kept epoch 0.
+- **Bank 1:** `feeder` v172 `b9fac969…` (`ar24-install-20261025-01`, confirmed, October 25): `master` at `d739934` (adds AR3, AR4, AR5, AR9's interlock, AR22, AR24). Before it, `e43324be…` (v169/v171): `master` at `545d18c` (AR1, AR2+AR13, AR15, AR19). Five cold boots (`ar-boot-20261025-01`…`05`) came up on bank 1 with the owner idle and unfaulted; the pre-epoch event ring kept epoch 0.
 - **Bank 0:** `feeder` `262a9f37…` (UART, `bank0-diag-01`, October 24): its recovery role only; it never feeds.
-- **Next manifest version:** 172. **Feed journal:** high water 9.
+- **Next manifest version:** 173. **Feed journal:** high water 15 (feed 14 was interrupted on purpose and resolved uncertain).
 
 - **Client store:** one owner, the bench CLI's key (`private/wellfed-owner.json`).
 - **Bench:** feeder on (relay 1), UART relays 3 and 4 closed, hotspot up (found up on October 25 afternoon and left so), no server, no capture. Hopper empty. The logic analyzer may still be clipped at the motor.
 - **Next (FW16):** cancellation during motion, the motor lease under a stalled loop during a feed, and a failed stop; then FW17 ([procedure](docs/firmware/motor-pulse.md#feeds-through-the-owner)).
-- **Do not cut power during a feed.** An interrupted feed leaves its journal reservation pending, and the owner then faults at every boot (`OwnerFault::Recovery`) with no resolution path yet.
+- **A power cut during a feed is safe since v172 (AR24):** the next boot resolves the feed as uncertain and the owner opens; the feed is never re-run.
 
 ## Today (October 25): FW16 feeding through the owner
 
@@ -38,7 +38,6 @@ Findings and loose ends no card has closed yet. Each line says where it came fro
 
 **Firmware**
 - **Loop hard fault after a rejected association** (physical, October 25, `ar9-gap-20261025-cap-04`): UNDEFINSTR on a valid XIP instruction in `wellfed-loop` right after a status-53 association reject and a 720 ms stall; reset, back on bank 1. One in about 14 forced rejoins. Same class as bank 0's vendor Wi-Fi faults. A fault during a feed would interrupt it (see the latch below). [Result](docs/firmware/scheduling-gaps.md#result-october-25-2026-physical).
-- **Interrupted feed latches the owner faulted forever** (static, October 25 review): `pending_request` makes every boot fail with `OwnerFault::Recovery`; nothing clears it. AR24 (October 25).
 - **Idle `acquire()` failure reset-loops a confirmed image** (static, October 24): it faults with `init_failed` false, so it never beats again. Holding the fault would strand a transient glitch. FW19's call.
 - **Flash writes during a feed** (static, October 25 review): the event ring, settings or keys can take a lease while the motor is on; the quiesce check fails and the board resets. Must be interlocked before scheduled feeds: AR25 (October 25).
 - **Bank-0 recovery role Wi-Fi fault**, parked: about 1 in 40 bank-0 boots hard-fault in the vendor Wi-Fi threads (`cmd_thread`, `rtw_recv`), none in 199 bank-1 boots; plus one silent watchdog reset after a 2 s power cut (`qa-20261024-02`). [Device API](docs/firmware/device-api.md#left).
@@ -76,6 +75,7 @@ Scope is the **research PLAF103 only**; the household feeder is excluded. Reconf
 - **Batteries:** three D cells exist; whether they're fitted is the owner's to confirm.
 
 **Before and after bench work**
+- `wellfed-bench off` refuses ("Serial port: Device or resource busy") while a `capture` holds the UART; `boot` cuts power itself, so cut mid-feed with `boot`, or after the capture ends (October 25).
 - After any interrupted or cancelled bench command, run `wellfed-bench status` before telling the owner the feeder is off: a cancelled `transients` run once left relay 1 on (October 24).
 - A UART capture is capped at 180 s, and one observe segment at the flash tool's 512 KiB.
 - `boot --off-seconds 15` gives an operator time to get ready before startup probes begin.

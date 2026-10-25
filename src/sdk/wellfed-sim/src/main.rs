@@ -84,6 +84,7 @@ fn config() -> OwnerConfig {
         },
 
         max_progress_gap_ms: 50,
+        idle_gap_ms: 50,
 
         bowl_mode: BowlMode::Single,
         sample_period_ms: 1,

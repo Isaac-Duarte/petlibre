@@ -15,7 +15,7 @@ make -C src/firmware/vendor firstboot FIRMWARE=buttons   # default: qa
 | [`speaker`](speaker) | The startup chime, requested tunes and the signed network audio stream |
 | [`motor`](motor) | The first supervised motor pulse, in its `pulse` variant only; the normal image adds nothing |
 | [`trial`](trial) | Trial images KM0 must roll back: `stall` and `fail` |
-| [`feeder`](feeder) | The product firmware, growing owner by owner: so far the panel, whose child lock follows stock (5 s Lock hold, 30 s idle relock), shows on PA4 and takes a signed `lock` request, and BLE setup mode (a Lock and Mic hold, then a phone's key and Wi-Fi, confirmed by Dispense); its loop task and the button service are its two tasks. Links the device's BLE stack (`bluetooth = true`) and starts it only in setup mode |
+| [`feeder`](feeder) | The product firmware, growing owner by owner: so far the panel, whose child lock follows stock (5 s Lock hold, 30 s idle relock), shows on PA4 and takes a signed `lock` request, BLE setup mode (a Lock and Mic hold, then a phone's key and Wi-Fi, confirmed by Dispense), the device API, and the feeding owner, which holds the motor and emitters stopped and supervised (no feed is submitted yet); its loop task and the button service are its two tasks. Claims the ADC for the owner, which publishes power health in the runtime monitor's place. Links the device's BLE stack (`bluetooth = true`) and starts it only in setup mode |
 | [`blink`](blink) | One task that blinks the connection indicator; the smallest firmware and the template for new ones |
 
 The probes these firmwares run live once, in `src/sdk/wellfed-probes`, so a single-purpose firmware and QA step the same code. Each firmware owns the tasks that step them.

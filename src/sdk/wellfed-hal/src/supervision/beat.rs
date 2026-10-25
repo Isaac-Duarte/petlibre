@@ -12,7 +12,8 @@
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Beat {
     pub at_ms: u32,
-    /// The owner's longest promised gap between beats.
+    /// The owner's longest promised gap until its next beat: short while
+    /// outputs may move, longer at rest.
     pub gap_ms: u32,
     /// The owner held its supervisor open and healthy over an active feed
     /// phase at this beat.
@@ -65,10 +66,11 @@ pub(crate) fn open(now_ms: u32, gap_ms: u32) {
     });
 }
 
-pub(crate) fn beat(now_ms: u32, supervised: bool) {
+pub(crate) fn beat(now_ms: u32, gap_ms: u32, supervised: bool) {
     with(|beat| {
         if let Some(beat) = beat {
             beat.at_ms = now_ms;
+            beat.gap_ms = gap_ms;
             beat.supervised = supervised;
             beat.count = beat.count.wrapping_add(1);
         }

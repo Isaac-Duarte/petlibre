@@ -19,9 +19,15 @@ pub struct OwnerConfig {
     pub feed: FeedLimits,
     pub sensors: SensorLimits,
     pub events: EventsConfig,
-    /// The longest the owner may go without a beat; at most the runtime
-    /// watchdog's own progress gap, whose expiry bounds were checked for it.
+    /// The longest the owner may go without a beat while outputs may move
+    /// (preparing, feeding, reporting); at most the runtime watchdog's own
+    /// progress gap, whose expiry bounds were checked for it.
     pub max_progress_gap_ms: u32,
+    /// The same, at rest: the outputs are stopped and the runtime checks
+    /// that itself, so the beat only shows the stepping task is alive, and
+    /// higher-priority tasks (the Wi-Fi driver's handshake) may hold it off
+    /// for longer than the active gap.
+    pub idle_gap_ms: u32,
     pub bowl_mode: BowlMode,
 
     pub sample_period_ms: u32,
@@ -44,6 +50,7 @@ impl Default for OwnerConfig {
             sensors: SensorLimits::default(),
             events: EventsConfig::default(),
             max_progress_gap_ms: 0,
+            idle_gap_ms: 0,
             bowl_mode: BowlMode::default(),
             sample_period_ms: 0,
             prepare_timeout_ms: 0,
@@ -63,6 +70,8 @@ impl OwnerConfig {
         if !interval_valid(c.max_progress_gap_ms)
             || c.max_progress_gap_ms > WATCHDOG.max_progress_gap_ms
             || c.max_progress_gap_ms <= c.sample_period_ms
+            || c.idle_gap_ms < c.max_progress_gap_ms
+            || !interval_valid(c.idle_gap_ms)
             || !interval_valid(c.sample_period_ms)
             || !interval_valid(c.prepare_timeout_ms)
             || !interval_valid(c.optics_max_on_ms)

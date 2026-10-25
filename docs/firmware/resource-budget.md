@@ -59,8 +59,8 @@ FreeRTOS heap, free bytes, from `PLAPI1 heap` (task stacks come from this heap):
 
 ## Tasks
 
-- **Firmware tasks:** the product uses two of its four `FIRMWARE_TASKS`: the button service (`wellfed-key`, bound 1,272 B of 2 KiB) and the loop (`wellfed-loop`, bound 4,668 B of 8 KiB). Both bounds include the formatting the task can reach, which the audit charges since it bounds indirect calls by class.
-- **Loop stack:** 2,048 words. A handshake operation's X25519 is the deepest path, and the device API took the bound past 6 KiB's margin.
+- **Firmware tasks:** the product uses two of its four `FIRMWARE_TASKS`: the button service (`wellfed-key`, bound 1,272 B of 2 KiB) and the loop (`wellfed-loop`, bound 4,700 B of 8 KiB with the feeding owner stepped in it, October 25). Both bounds include the formatting the task can reach, which the audit charges since it bounds indirect calls by class.
+- **Loop stack:** 2,048 words. A handshake operation's X25519 is the deepest path; the device API took the bound past 6 KiB's 25 % margin, and the feeding owner's step stays below it.
 - **Not on the budget:** the BLE stack's own C tasks and, if used, the vendor mDNS task are C tasks outside the stack audit. They cost heap, which the setup-mode figure above includes for BLE.
 
 **Stack audit fix:** the first FW44 build (`fw44-budget-01`, v94) overflowed the loop's 4 KiB stack (`cfsr=100000`, STKOF) on every trial boot, and KM0 rolled it back. The audit had passed it because its frame pattern skipped Thumb-2 `subw sp, sp, #imm`, which LLVM uses for frames up to 4 KiB. The pattern now counts it. The corrected audit also needed:

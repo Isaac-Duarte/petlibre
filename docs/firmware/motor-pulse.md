@@ -64,4 +64,4 @@ Open: the direction of rotation by eye, and a longer pulse to find the feedback 
 
 ## Not covered
 
-Lease expiry with a stalled owner was host-tested and FW05-measured, but not under real motion; this session gives the first real-motion data. Cancellation, failed stop, the journal-reserved feed, portions and reverse recovery belong to the full FW16 owner path and FW19.
+Lease expiry with a stalled owner was host-tested and FW05-measured, but not under real motion; this session gives the first real-motion data. Cancellation, failed stop, the journal-reserved feed, portions and reverse recovery belong to the full FW16 owner path and FW19. Since October 25 that owner runs inside `feeder`'s loop (idle at STOP, no submit path), so later motor tests can go through it over the air rather than this UART-only probe.

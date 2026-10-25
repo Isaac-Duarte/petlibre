@@ -7,6 +7,18 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
+**October 25, morning: FW16 owner stall run and an idle gap (physical, no motion; uncommitted).**
+- **`owner-stall` (`fw16-stall-01`, v157):** after a long idle boot (`fw16-stall-04`), the 600 ms stall at 2 min changed nothing; the 3 s stall at 3 min made the runtime stop feeding at `owner_age=1033` (`owner_gap=1000`) mid-stall, the owner latched `fault=5` (progress) once the loop resumed, and the watchdog reset the board.
+- **Found:** boots right after a watchdog reset (`fw16-stall-03`) faulted about 10 s in with no stall: the build was already confirmed, so the owner opened within about 5 s, and the Wi-Fi driver's WPA3 SAE handshake (the hotspot rejects the first association, status 30) held the priority-2 loop off past the 1 s gap. Every boot repeated it, a reset about every 15 s.
+- **Fix:** the beat promises two gaps: 1 s while outputs may move, 10 s (`LIVENESS_MS`) at rest; a request beats at rest before the tight gap applies. Host-tested; `make check` passed (986 tests).
+- **Installed:** `ota fw16-loop-13` (v158 `c5b2148d…`, confirmed). `fw16-boot-06`…`10`: five cold boots, each with two SAE association rejects, the owner Idle every boot, no stop or fault.
+- **Flash now:**
+  - **Bank 1:** `feeder` v158 `c5b2148d…` (confirmed).
+  - **Bank 0:** `feeder` `262a9f37…`.
+  - **Next manifest version:** 159.
+- **Bench state:** feeder on, hotspot down, no server.
+- **Next:** the owner's lease under a stall with outputs on (needs a feed request; attended).
+
 **October 25, early morning: FW16 feeding owner inside `feeder` (physical, no motion; committed).**
 - **Code:**
   - The owner is stepped from the loop (`Owner::open`/`step`; the first stepping task claims it) instead of spawning `feed-owner`.

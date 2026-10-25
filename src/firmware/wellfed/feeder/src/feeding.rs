@@ -21,6 +21,7 @@ use wellfed_sdk::hal::owner::OwnerConfig;
 use wellfed_sdk::hal::sdk;
 use wellfed_sdk::hal::supervision::config::{SYSTIMER_HZ, WATCHDOG};
 use wellfed_sdk::hal::supervision::events::EventsConfig;
+use wellfed_sdk::hal::supervision::supervise::LIVENESS_MS;
 
 /// The vendor app's cap on one feed, from the stock inventory. The journal
 /// pins it: a journal written with another reads as corrupt.
@@ -59,6 +60,9 @@ pub const CONFIG: OwnerConfig = OwnerConfig {
         feedback_capacity: 8,
     },
     max_progress_gap_ms: WATCHDOG.max_progress_gap_ms,
+    // At rest the loop may be held off by the Wi-Fi driver's handshake for
+    // over a second (observed); the runtime's liveness limit for its tasks.
+    idle_gap_ms: LIVENESS_MS,
     bowl_mode: BOWL,
     // The loop's own pass; a whole flash lease fits between two beats.
     sample_period_ms: 20,

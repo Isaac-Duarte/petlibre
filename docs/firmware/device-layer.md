@@ -32,6 +32,11 @@ These stay where they are and are listed here instead. A second model would revi
 - **Shared audio pads:** `firstboot_km0.c` powers the audio-shared pads so PA0–PA7 work as GPIO, and the stock pad table is checked by `audit/pinmap.rs`.
 - **Limits:** the probes' and simulator's feed and sensor limits (300 mA, battery 1650 scaled, settle times) are bench values for this board.
 
+**Supervision, after the October 25 split:**
+- **Shared handles:** `Board` and `Events` are `&self` handles over interior cells, borrowed only inside `IrqGuard` for one call, so the TIM2 and feedback interrupts never alias a task's borrow. The owner keeps them beside its task state, never inside it. The probes still hold them inside the state their task borrows `&mut` through its `Slot`; they are bench tools, but moving them out the same way is still open.
+- **Flash leases during a feed:** the lease provider checks stopped outputs (`stopped::observe`) when it quiesces, and a lease during a feed trips it. Nothing can feed yet; before FW17, journal and settings writes must be sequenced around feeds, and the provider's request and quiesce run under the same serialization as the board.
+- **One watchdog owner:** the runtime feeds the hardware watchdog; the feeding owner only publishes a beat (`supervision::beat`). A fault outside initialization stops the beat, so it resets the board, as the owner's own watchdog did before. The beat promises two gaps: 1 s while outputs may move, and the runtime's 10 s liveness limit at rest, because the Wi-Fi driver's WPA3 handshake held the loop off for over a second on hardware (October 25) and an idle owner then reset the board for nothing.
+
 **Unit or stock:**
 - **Battery divider:** `DIVIDER_PER_MILLE` (2063) was measured on the research unit.
 - **Indicator readback:** PA0–PA7 read back LOW on the tested unit, so only PB22 has input readback.

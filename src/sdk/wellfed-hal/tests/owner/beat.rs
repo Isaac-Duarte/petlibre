@@ -37,7 +37,8 @@ fn the_beat_requires_owner_progress_and_is_checked_before_motion() {
     assert!(
         f.status().result_durable && !f.status().result.motion_possible && f.status().optics_off
     );
-    assert!(f.status().result.outcome == OwnerOutcome::Failed && beats() == 0);
+    // The one beat is the request's, taken at rest before the reservation blocked.
+    assert!(f.status().result.outcome == OwnerOutcome::Failed && beats() == 1);
     f.stop();
 
     fake::reset_hardware();
@@ -149,5 +150,36 @@ fn determined_initialization_failure_holds_stopped_without_reset_loop() {
     f.advance(200);
     assert!(f.status().fault == OwnerFault::Recovery && f.status().stopped);
     assert!(beats() == 0 && f.task().beat_lost);
+    f.stop();
+}
+
+#[test]
+fn at_rest_the_loop_may_be_held_off_longer_but_a_feed_gets_the_tight_gap() {
+    fake::reset_hardware();
+    let mut f = Box::new(Fixture::new(PHASE_KNOWN));
+    f.config.idle_gap_ms = 200;
+    f.create();
+    f.step();
+    f.advance(3);
+    assert_eq!(beat::read().unwrap().gap_ms, 200);
+
+    // Held off past the active gap, within the idle one: no fault.
+    fake::advance(120 * 32, true);
+    f.step();
+    assert!(f.status().state == OwnerState::Idle && f.status().fault == OwnerFault::Ok);
+
+    // Held off again just before a request: the request beats fresh and the
+    // feed runs under the 50 ms gap.
+    fake::advance(120 * 32, true);
+    f.step(); // The loop's pass steps the owner before the API submits.
+    f.start_feed();
+    assert_eq!(beat::read().unwrap().gap_ms, 50);
+    assert_eq!(f.status().fault, OwnerFault::Ok);
+
+    // Held off past the active gap mid-feed: it faults.
+    fake::advance(51 * 32, true);
+    f.step();
+    assert_eq!(f.status().fault, OwnerFault::Progress);
+    assert!(f.status().stopped);
     f.stop();
 }

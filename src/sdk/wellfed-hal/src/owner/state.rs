@@ -160,12 +160,21 @@ impl<S: OwnerStorage> OwnerTask<S> {
         }
     }
 
-    /// Whether the owner's own last beat (or its open) is at least its gap
-    /// old, the same edge as `Beat::fresh`.
+    /// The gap that applies now: the active one while outputs may move.
+    fn gap_ms(&self) -> u32 {
+        if self.active_phase() || self.state == OwnerState::Reporting {
+            self.config.max_progress_gap_ms
+        } else {
+            self.config.idle_gap_ms
+        }
+    }
+
+    /// Whether the owner's own last beat (or its open) is at least the
+    /// current gap old, the same edge as `Beat::fresh`.
     fn overdue(&self) -> bool {
         let ticks = sdk::systimer_ticks().wrapping_sub(self.beat_raw);
         let tps = u64::from(self.config.events.ticks_per_second);
-        u64::from(ticks) * 1000 >= u64::from(self.config.max_progress_gap_ms) * tps
+        u64::from(ticks) * 1000 >= u64::from(self.gap_ms()) * tps
     }
 
     /// A step that blocked past the gap faults the owner: by then the
@@ -195,7 +204,7 @@ impl<S: OwnerStorage> OwnerTask<S> {
             return false;
         }
         if !self.flash().outputs_blocked() {
-            beat::beat(sdk::uptime_ms(), supervised);
+            beat::beat(sdk::uptime_ms(), self.gap_ms(), supervised);
             self.beat_raw = sdk::systimer_ticks();
         }
         true
@@ -363,6 +372,9 @@ impl<S: OwnerStorage> OwnerTask<S> {
                 requested: self.request.portions,
                 ..OwnerResult::default()
             };
+            // A fresh beat at rest before the active gap applies, so a loop
+            // held off just before the request does not fault the feed.
+            let _ = self.beat(false);
             self.state = OwnerState::Preparing;
             let (state, result) = (self.state, self.result);
             self.shared(|shared| {

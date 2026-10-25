@@ -310,7 +310,7 @@ impl<S: OwnerStorage> Owner<S> {
                 ..Shared::default()
             };
         }
-        beat::open(sdk::uptime_ms(), config.max_progress_gap_ms);
+        beat::open(sdk::uptime_ms(), config.idle_gap_ms);
         set_active(ptr::from_ref(self).cast_mut().cast());
         true
     }

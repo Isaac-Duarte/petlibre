@@ -46,6 +46,7 @@ pub const CONFIG: OwnerConfig = OwnerConfig {
         feedback_capacity: 8,
     },
     max_progress_gap_ms: 50,
+    idle_gap_ms: 50,
     bowl_mode: BowlMode::Single,
     sample_period_ms: 1,
     prepare_timeout_ms: 20,

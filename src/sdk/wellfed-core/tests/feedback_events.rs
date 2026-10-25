@@ -25,6 +25,7 @@ const LIMITS: FeedLimits = FeedLimits {
     direction_pause_ms: 3,
     reverse_ms: 3,
     max_duration_ms: 120,
+    portion_ms: 120,
     max_observation_gap_ms: 4,
     current_limit_ma: 300,
     max_portions: 5,
@@ -309,9 +310,11 @@ fn direction_handoff_discards_pre_drive_edges() {
 #[test]
 fn reverse_completion_cannot_consume_old_edges() {
     let mut f = begin();
-    f.advance(3);
+    f.advance(2);
 
+    // Two polls over the limit: one is a start-up surge.
     f.sample.current_ma = 301;
+    assert!(f.process(3) && f.controller.state == FeedState::Running);
     assert!(f.process(4));
     assert_eq!(f.controller.state, FeedState::Reversing);
 

@@ -39,11 +39,19 @@ pub const BOWL: BowlMode = BowlMode::Single;
 
 pub const CONFIG: OwnerConfig = OwnerConfig {
     feed: FeedLimits {
-        feedback_inhibit_ms: 200,
-        feedback_timeout_ms: 3000,
+        // A portion is one compartment: PA18 reads LOW for 1.2-1.4 s at each
+        // mark and a portion is credited on its rise, about 9.1 s of drive
+        // apart empty and 9.9 s with food (bench). Like stock, an edge within
+        // 5 s of the drive's start or the last portion does not count.
+        feedback_inhibit_ms: 5000,
+        // Half again a portion with food; stock waits about 30 s.
+        feedback_timeout_ms: 15_000,
         direction_pause_ms: 500,
         reverse_ms: 500,
-        max_duration_ms: 10_000,
+        // A feed's average must stay within 12 s a portion, and every gap
+        // within the feedback timeout; the cap covers the largest request.
+        max_duration_ms: 12_000 * MAX_PORTIONS as u32,
+        portion_ms: 12_000,
         max_observation_gap_ms: 100,
         current_limit_ma: 300,
         max_portions: MAX_PORTIONS,
@@ -74,7 +82,7 @@ pub const CONFIG: OwnerConfig = OwnerConfig {
     // The loop's own pass; a whole flash lease fits between two beats.
     sample_period_ms: 20,
     prepare_timeout_ms: 2000,
-    optics_max_on_ms: 12_000,
+    optics_max_on_ms: 12_000 * MAX_PORTIONS as u32 + 2000,
     motor_deadtime_ms: 50,
     motor_lease_ms: 200,
     adc_poll_limit: 10_000,
@@ -101,7 +109,7 @@ mod target {
     use wellfed_sdk::hal::owner::{
         FeedTrace, Owner, OwnerConfig, OwnerFault, OwnerState, OwnerStatus, Step, SubmitResult,
     };
-    use wellfed_sdk::hal::supervision::events::EventsFault;
+    use wellfed_sdk::hal::supervision::events::{EventsFault, PinWatch};
     use wellfed_sdk::{JournalSlots, Slot};
 
     use super::{CONFIG, JOURNAL};
@@ -144,7 +152,14 @@ mod target {
             durability: Durability,
             trace: FeedTrace,
         },
+        /// Which pads changed during that feed, to find the feedback input.
+        Pins { feed: u64, pins: PinWatch },
+        /// When each feedback edge came, from the drive's start.
+        Edges { feed: u64, trace: FeedTrace },
     }
+
+    /// The most pads a `pins` record lists, so the line fits a record.
+    const PINS_LISTED: usize = 10;
 
     pub fn describe(record: Record, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match record {
@@ -215,6 +230,53 @@ mod target {
                     None => f.write_str("none")?,
                 }
                 write!(f, " samples={}", trace.current_samples)
+            }
+            Record::Edges { feed, trace } => {
+                write!(f, "edges id={feed} at=")?;
+                let mut logged = trace.edge_ms.iter().flatten().peekable();
+                if logged.peek().is_none() {
+                    return f.write_str("none");
+                }
+                for (index, &(ms, high)) in logged.enumerate() {
+                    if index != 0 {
+                        f.write_str(",")?;
+                    }
+                    write!(f, "{ms}{}", if high { 'H' } else { 'L' })?;
+                }
+                Ok(())
+            }
+            Record::Pins { feed, pins } => {
+                let [start_a, start_b] = pins.start.unwrap_or_default();
+                let [changed_a, changed_b] = pins.changed;
+                write!(
+                    f,
+                    "pins id={feed} start={start_a:08x},{start_b:08x} changed={changed_a:08x},{changed_b:08x} toggles="
+                )?;
+                let toggles = pins
+                    .toggles
+                    .iter()
+                    .zip(['A', 'B'])
+                    .flat_map(|(port, name)| {
+                        (0..32).filter_map(move |pin| {
+                            let count = port[pin];
+                            (count != 0).then_some((name, pin, count))
+                        })
+                    });
+                let mut listed = 0;
+                for (name, pin, count) in toggles {
+                    if listed == PINS_LISTED {
+                        return f.write_str(",+");
+                    }
+                    if listed != 0 {
+                        f.write_str(",")?;
+                    }
+                    write!(f, "{name}{pin}:{count}")?;
+                    listed += 1;
+                }
+                if listed == 0 {
+                    f.write_str("none")?;
+                }
+                Ok(())
             }
         }
     }
@@ -340,6 +402,16 @@ mod target {
                 durability,
                 trace: status.trace,
             });
+            record(Record::Edges {
+                feed: result.id,
+                trace: status.trace,
+            });
+            if status.trace.pins.start.is_some() {
+                record(Record::Pins {
+                    feed: result.id,
+                    pins: status.trace.pins,
+                });
+            }
             // The feed id fits the event: `submit` refused any that does not.
             let feed = u32::try_from(current.feed).unwrap_or(u32::MAX);
             crate::api::record_event(feed::fed(feed, &result, durability, current.by));

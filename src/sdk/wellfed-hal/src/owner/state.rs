@@ -140,11 +140,16 @@ impl<S: OwnerStorage> OwnerTask<S> {
             self.trace.drive_ms = now.wrapping_sub(at);
             self.trace.rising = edges.rising;
             self.trace.falling = edges.falling;
+            self.trace.pins = edges.pins;
             // Capture opens just before the drive, so an edge can predate it.
-            self.trace.first_edge_ms = edges.first_at.map(|edge| {
+            let since = |edge: u32| {
                 let since = edge.wrapping_sub(at);
                 if since < HALF_RANGE { since } else { 0 }
-            });
+            };
+            self.trace.first_edge_ms = edges.first_at.map(since);
+            for (logged, edge) in self.trace.edge_ms.iter_mut().zip(edges.log) {
+                *logged = edge.map(|(edge, high)| (since(edge), high));
+            }
         }
         self.result.outcome = outcome;
         self.result.reason = reason;

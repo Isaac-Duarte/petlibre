@@ -75,6 +75,7 @@ pub const FEED: FeedLimits = FeedLimits {
     direction_pause_ms: 500,
     reverse_ms: 500,
     max_duration_ms: 10_000,
+    portion_ms: 10_000,
     max_observation_gap_ms: 100,
     current_limit_ma: 300,
     max_portions: 1,

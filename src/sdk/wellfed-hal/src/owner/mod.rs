@@ -36,7 +36,7 @@ use crate::board::{self, Board};
 use crate::sdk::{self, IrqGuard};
 use crate::supervision::active::active_pointer;
 use crate::supervision::beat;
-use crate::supervision::events::{Events, EventsFault};
+use crate::supervision::events::{EDGE_LOG, Events, EventsFault, PinWatch};
 
 mod config;
 mod state;
@@ -130,6 +130,11 @@ pub struct FeedTrace {
     pub current_max: u32,
     pub current_sum: u32,
     pub current_samples: u16,
+    /// Each logged edge, from the drive's start (0 if it predates it), and
+    /// the level after it.
+    pub edge_ms: [Option<(u32, bool)>; EDGE_LOG],
+    /// Every pad that changed while capture was on.
+    pub pins: PinWatch,
 }
 
 impl FeedTrace {

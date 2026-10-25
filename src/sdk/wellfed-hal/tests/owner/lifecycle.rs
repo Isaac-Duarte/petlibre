@@ -350,6 +350,15 @@ fn a_feed_traces_its_drive_edges_and_current() {
     let t = s.trace;
     assert!((t.rising, t.falling) == (1, 1) && t.first_edge_ms.is_some_and(|ms| ms >= 2));
     assert!(t.drive_ms >= t.first_edge_ms.unwrap_or(0) && t.current_samples != 0);
+    let logged = [
+        t.edge_ms[0].map(|(_, high)| high),
+        t.edge_ms[1].map(|(_, high)| high),
+    ];
+    assert!(logged == [Some(false), Some(true)] && t.edge_ms[2].is_none());
+    assert_eq!(t.edge_ms[0].map(|(ms, _)| ms), t.first_edge_ms);
+    // The pad watch starts once capture is on, with the drive already applied.
+    let start = t.pins.start.unwrap_or_default();
+    assert!(start[0] & (1 << 13 | 1 << 14) == 1 << 13 && t.pins.changed == [0, 0]);
     assert!(f.owner.acknowledge(1));
     f.advance(1);
 

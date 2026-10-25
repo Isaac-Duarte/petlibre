@@ -60,6 +60,7 @@ fn config() -> OwnerConfig {
             direction_pause_ms: 3,
             reverse_ms: 3,
             max_duration_ms: 120,
+            portion_ms: 120,
             max_observation_gap_ms: 4,
             current_limit_ma: 300,
             max_portions: 3,

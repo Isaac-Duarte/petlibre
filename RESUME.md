@@ -7,6 +7,36 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
+**October 25, about 1 pm: FW16 portions on hardware: one, three, and with food (physical, owner present, hopper empty; uncommitted).**
+- **Build:** v167 `b9f265ce…` (`fw16-measure-01`): a measuring run's limits (feedback timeout 15 s, feed cap 20 s, optics 22 s) and `PLOWN1 edges id= at=` with each PA18 edge's time from the drive's start.
+- **Feed 5 (`fw16-measure-02`):** `completed=1 outcome=1 reason=1 durable=1 drive_ms=9072`, `edges at=7888L,9054H`, `current_max=164 current_mean=60`, only PA18 changed; the motor stopped 18 ms after the rise. Feed 4 had ended just past a mark, so one portion is about 9.05 s of drive, the mark about 1.17 s LOW. The owner saw about 1/8 turn in 3 s (about 24 s a turn, so about three compartments).
+- **Food (feeds 6–8, `fw16-food-01`, `-02`):** each `Done` at 9.79–9.86 s, mark LOW 1.38 s, mean current 82–87, max 176–328 (one surge poll ridden through). PA17 read LOW (food present). PA16 changed 0, 4 and 8 times as food began to fall; the owner saw food come out, a little less than stock.
+- **Mechanism (owner photos):** a three-compartment rotor over one drop hole; a portion is one compartment, as stock's single-bowl mode credits each accepted event.
+- **Stock (static, `plaf103-hardware-followup-2-ghidra/0e01a55c.c`):** single-bowl accepts PA18 only when it reads HIGH (the rise), then disarms it for 5 s, also from the drive's start.
+- **Limits (installed as v168 `0c955e25…`, `fw16-limits-01`, confirmed):** inhibit 5 s, feedback timeout 15 s, a deadline of 12 s a portion (`portion_ms`, new) capped at 48 portions, optics up to 578 s. `make check` 994 tests; loop stack 4,816.
+- **Flash now:** bank 1 `feeder` v167 `b9f265ce…` (confirmed; the measuring limits); bank 0 unchanged. Next manifest version 168. Journal high water 5.
+- **Bench state:** feeder on (relay 1), relays 3 and 4 closed, hotspot down, no server or capture; hopper empty again.
+- **Feed 9, 3 portions (v168, `fw16-turn-01`):** `completed=3 outcome=1 drive_ms=27241`, edges `7840L,9037H,16970L,18156H,26047L,27221H` (9.1 s a portion, mark about 1.2 s), stop 20 ms after the third rise; only PA18 changed. The owner's tape mark came back to its start: three marks a turn, a portion is one compartment.
+- **Flash now:** bank 1 `feeder` v168 `0c955e25…` (confirmed); bank 0 unchanged. Next manifest version 169. Journal high water 9.
+- **Left for FW16:** cancellation during motion, the motor lease under a stalled loop during a feed, and a failed stop; then FW17.
+
+**October 25, about 11:45 am: FW16 pin watch and start-up surge (physical, owner present, hopper empty; uncommitted).**
+- **Pin watch (v165, `fw16-pins-01`):** while capture is on, the supervision tick samples both GPIO ports; each feed logs `PLOWN1 pins id= start= changed= toggles=`.
+- **Feed 2 (`fw16-pins-02`):** stopped `Overcurrent` 17 ms in on its only current poll (333 > 300): the motor's start-up surge. The controller now needs `OVERCURRENT_POLLS` (2) consecutive polls over the limit; an edge reuses its poll's sample and does not count. Host-tested.
+- **Feed 3 (v166 `87bf9c19…`, `fw16-surge-01`, capture `fw16-pins-03`):** ran 3,025 ms and stopped `NoFeedback`; `current_max=325 current_mean=67 samples=102` (one surge poll over the limit, ridden through). The owner confirmed it ran. `pins … changed=00000000,00000000 toggles=none`: no GPIO-readable pad changed in 3 s of drive.
+- **Feed 4 (`fw16-pins-04`):** `drive_ms=3005 rising=1 falling=1 first_edge_ms=1798`, `toggles=A18:2`, no other pad. PA18 rests HIGH and drops LOW at a mark, about 7.8 s of cumulative drive after feed 1 began; the rise came at or after the 3 s timeout, so nothing was credited. The 3 s feedback timeout (and likely the 10 s cap) is too short for one portion.
+- **Earlier reading (feeds 1–3):** no pad changed within 3 s. Either it is slower than 3 s per mark, on a pad not muxed to GPIO, or needs something enabled.
+- **Flash now:** bank 1 `feeder` v166 `87bf9c19…` (confirmed); bank 0 unchanged. Next manifest version 167. Journal high water 3.
+- **Bench state:** feeder on (relay 1), relays 3 and 4 closed, hotspot down, no server.
+
+**October 25, morning: FW16 first feed through the owner (physical, owner present, hopper empty; committed code `b151a2e`).**
+- **Run:** hotspot up, receive-only capture `fw16-feed-02`, `wellfed feed --portions 1 --address 10.42.103.172`. The owner drove 3,018 ms and stopped on the no-feedback limit: `fed id=1 completed=0 outcome=4 reason=6 durable=1 rising=0 falling=0 current_max=166 current_mean=64`, `stopped=1`, back to Idle, no `PLFLT`; the CLI got the `Fed` event.
+- **Observed:** the rotor turned clockwise and stopped by itself.
+- **Found:** PA18 had no edge in 3 s of drive; it is likely not the rotation sensor.
+- **Flash now:** unchanged (bank 1 `feeder` v164 `469935b4…`); the feed journal's high water is 1, acknowledged.
+- **Bench state:** as found: feeder on (relay 1), relays 3 and 4 closed, hotspot down, no server; the analyzer is still clipped at the motor.
+- **Next:** the same 1-portion feed with the logic analyzer on the candidate feedback inputs, to find the rotation sensor.
+
 **October 24, about 11:50 pm: FW16 feeds through the owner from the device API (physical install, no motion; uncommitted).**
 - **Code:**
   - `Feed` goes to the feeding owner under the next journal id and is answered `Feeding { feed }` once reserved; the loop records the result as a `Fed` event and acknowledges it. `CancelFeed { feed }` stops it.

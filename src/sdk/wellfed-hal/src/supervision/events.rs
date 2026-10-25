@@ -96,6 +96,47 @@ pub struct FeedbackEdges {
     pub falling: u16,
     /// The supervisor's clock at the first one.
     pub first_at: Option<u32>,
+    /// The first `EDGE_LOG` edges: the supervisor's clock and the level after.
+    pub log: [Option<(u32, bool)>; EDGE_LOG],
+    pub pins: PinWatch,
+}
+
+/// How many feedback edges a feed keeps the time of.
+pub const EDGE_LOG: usize = 8;
+
+/// Both GPIO ports' pad inputs, sampled every supervision tick while capture
+/// is on, so a run shows which pad a sensor really reaches. Only pads muxed
+/// to GPIO read back; a pulse shorter than the tick can be missed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PinWatch {
+    /// Ports A and B at the first sample.
+    pub start: Option<[u32; 2]>,
+    last: [u32; 2],
+    /// Every pad that read differently from the sample before.
+    pub changed: [u32; 2],
+    /// Changes per pad, by port, saturating.
+    pub toggles: [[u8; 32]; 2],
+}
+
+impl PinWatch {
+    fn sample(&mut self, ports: [u32; 2]) {
+        if self.start.is_none() {
+            self.start = Some(ports);
+            self.last = ports;
+            return;
+        }
+
+        for (port, &value) in ports.iter().enumerate() {
+            let diff = value ^ self.last[port];
+            self.changed[port] |= diff;
+            for (pin, count) in self.toggles[port].iter_mut().enumerate() {
+                if diff & (1 << pin) != 0 {
+                    *count = count.saturating_add(1);
+                }
+            }
+        }
+        self.last = ports;
+    }
 }
 
 impl Default for EventsState {
@@ -600,6 +641,12 @@ impl EventsState {
             self.fail(EventsFault::Output);
             return;
         }
+        if self.capture_enabled {
+            self.edges.pins.sample([
+                sdk::gpio_port_read(0, u32::MAX),
+                sdk::gpio_port_read(1, u32::MAX),
+            ]);
+        }
 
         // Read after the tick, which a flash hold can use to turn them off.
         if !self.board().view().optics_enabled {
@@ -632,6 +679,9 @@ impl EventsState {
                 edges.falling = edges.falling.saturating_add(1);
             }
             edges.first_at.get_or_insert(value);
+            if let Some(slot) = edges.log.iter_mut().find(|slot| slot.is_none()) {
+                *slot = Some((value, high));
+            }
             if !self.feedback.push(value, high) {
                 self.fail(EventsFault::Feedback);
             }

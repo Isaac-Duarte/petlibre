@@ -60,7 +60,7 @@ PLMOT1 done
 - **Feedback:** no PA18 edge in the pulse or the second after it. Either 100 ms turns too little to pass a mark, or PA18 is not the rotation sensor.
 - **Afterwards:** `feeder` v154 went back into bank 1 over UART (`fw16-restore-01`, region `d2357eb1…`) and booted at STOP.
 
-Open: the direction of rotation by eye, and a longer pulse to find the feedback input.
+Open: the feedback input. The direction was seen in the first owner feed: [clockwise](#first-feed-october-25).
 
 ## Not covered
 
@@ -71,8 +71,8 @@ Lease expiry with a stalled owner was host-tested and FW05-measured, but not und
 Since v164 (`469935b4…`, October 25) `wellfed feed --portions N` runs a feed through `feeder`'s feeding owner: the journal reservation, the supervisor's 200 ms motor lease, the feed limits in `feeding.rs`, the result in the journal, and a `Fed` event. Nothing else moves the motor: the image has no startup motion, the bench never sends a feed, and the Dispense button is not wired to it yet (FW20).
 
 What bounds a drive (provisional limits, `feeding.rs`):
-- **No confirmed feedback edge:** the controller stops after `feedback_timeout_ms` (3 s) and the feed fails `NoFeedback`. In single-bowl mode a portion is one rising PA18 edge at least 200 ms (`feedback_inhibit_ms`) after the drive starts or after the last portion.
-- **Whole feed:** 10 s. **Current:** a scaled reading above 300 (stock's unit) stops it with no reverse attempt. **Outlet** blocked or the beam unreadable: the feed expires before the motor starts.
+- **No confirmed feedback edge:** the controller stops after `feedback_timeout_ms` (15 s) and the feed fails `NoFeedback`. In single-bowl mode a portion is one rising PA18 edge, the end of a compartment's mark, at least 5 s (`feedback_inhibit_ms`) after the drive starts or after the last portion. Stock does the same: its PA18 interrupt (`0x0e01a55c`) accepts only a HIGH read in single-bowl mode, then disarms PA18 for 5 s, as it does when the drive starts.
+- **Whole feed:** 12 s a portion (`portion_ms`), capped at 48 portions' worth. **Current:** two consecutive scaled polls above 300 (stock's unit) stop it, with no reverse attempt. **Outlet** blocked or the beam unreadable: the feed expires before the motor starts.
 - **Loop stalls:** the supervisor stops the motor 200 ms after the owner's last renewal; an owner beat older than 1 s while driving ends in a watchdog reset.
 
 Each feed logs, in order: `PLOWN1 feed id= portions= submit=0`, the state changes (`state=3` preparing, `4` feeding, `5` reporting, `6` terminal, `1` idle), then
@@ -88,4 +88,60 @@ which counts every PA18 edge while capture was on, qualified or not. Outcomes: 1
 3. `wellfed feed --portions 1 --address <feeder>`; watch the mechanism and note which way it turns and whether it stops by itself.
 4. Afterwards, `wellfed events` shows the `Fed` event; hotspot down.
 
+These limits are from v168; v164–v167 had shorter or measuring ones (below).
+
 Pass for FW16: the drive stops by itself (a portion or `NoFeedback`) with `stopped=1` and no `PLFLT`. The record gives the first drive time, edge counts and current; the direction comes from observation.
+
+### First feed (October 25)
+
+Physical, owner present, hopper empty, outlet clear. v164 over the hotspot, with a receive-only UART capture (`fw16-feed-02`). `wellfed feed --portions 1` answered `Feeding { feed: 1 }` and then received the `Fed` event (failed, `NoFeedback`). The UART recorded:
+
+```
+PLOWN1 feed id=1 portions=1 submit=0
+PLOWN1 state=3 fault=0 supervisor=0 stopped=1 optics_off=0
+PLOWN1 state=4 fault=0 supervisor=0 stopped=0 optics_off=0
+PLOWN1 state=6 fault=0 supervisor=0 stopped=1 optics_off=1
+PLOWN1 fed id=1 requested=1 completed=0 outcome=4 reason=6 durable=1 drive_ms=3018 rising=0 falling=0 first_edge_ms=none current_max=166 current_mean=64 samples=100
+PLOWN1 state=1 fault=0 supervisor=0 stopped=1 optics_off=1
+```
+
+- **Pass:** the drive stopped by itself on the 3 s feedback timeout, `stopped=1`, no `PLFLT`; the result is durable and the journal acknowledged it.
+- **Direction:** the owner saw the rotor turn clockwise (`Drive0`, PA13 high).
+- **Feedback:** no PA18 edge, rising or falling, in 3 s of drive. PA18 is likely not the rotation sensor; next, the same feed with the logic analyzer on the candidate inputs.
+- **Current (scaled):** max 166, mean 64 over 100 samples, empty.
+
+### First portion (October 25)
+
+Physical, owner present, hopper empty. Three more feeds narrowed it down:
+- **Pin watch (v165):** the supervision tick samples both GPIO ports while capture is on, and each feed logs `PLOWN1 pins … changed= toggles=`. Feed 3 changed no pad in 3 s; feed 4 saw PA18 go LOW at 1,798 ms and back, and nothing else.
+- **Start-up surge (v166):** feed 2 read 333 on its only current poll and stopped `Overcurrent` 17 ms in. Overcurrent now needs two consecutive polls over the limit (`OVERCURRENT_POLLS`); a feedback edge reuses its poll's sample and does not count.
+- **Measuring limits (v167):** feedback timeout 15 s, feed cap 20 s, optics 22 s, and `PLOWN1 edges id= at=` with each edge's time.
+
+```
+PLOWN1 fed id=5 requested=1 completed=1 outcome=1 reason=1 durable=1 drive_ms=9072 rising=1 falling=1 first_edge_ms=7888 current_max=164 current_mean=60 samples=300
+PLOWN1 edges id=5 at=7888L,9054H
+```
+
+- **Feedback:** PA18 rests HIGH and reads LOW for about 1.17 s at a mark; the portion is credited on the rise and the motor stopped 18 ms later. Feed 4 had ended just past a mark, so a portion is about 9.05 s of drive empty.
+- **Mechanism:** the owner saw about an eighth of a turn in 3 s, about 24 s a turn, so likely three compartments per turn.
+- **Current (scaled):** max 164, mean 60 over 9 s, empty.
+- **Limits:** the 3 s timeout and 10 s cap were far too short. Proposed: a feedback timeout of about 12 s and a cap that scales with portions, once a run with food confirms the timing.
+
+### Food and a full turn (October 25)
+
+Physical, owner present.
+- **With food (v167, `fw16-food-01`, `-02`):** three 1-portion feeds ended `Done` at 9,787–9,857 ms, mark LOW about 1.38 s, mean current 82–87. PA17 read LOW (food present). The outlet beam (PA16) changed 0, 4 and 8 times as the compartments filled; the owner saw food come out, a little less than stock's portion at first.
+- **Mechanism (owner photos):** a three-compartment rotor over one drop hole in the base. Each compartment fills from the hopper and empties by gravity over the hole, so a portion is one compartment, a third of a turn.
+- **Stock (static, PA18 interrupt `0x0e01a55c`):** single-bowl mode accepts PA18 only when it reads HIGH, the end of a mark, then disarms it for 5 s; the drive's start also arms that 5 s timer. Its missing-feedback protection is about 30 s.
+- **Limits (v168 `0c955e25…`):** inhibit 5 s, feedback timeout 15 s, a deadline of 12 s a portion (`portion_ms`) capped at 48 portions, optics up to 578 s. The emitters' safe on-time is FW30's.
+- **Three portions (`fw16-turn-01`, empty):**
+
+```
+PLOWN1 fed id=9 requested=3 completed=3 outcome=1 reason=1 durable=1 drive_ms=27241 rising=3 falling=3 first_edge_ms=7840 current_max=168 current_mean=59 samples=903
+PLOWN1 edges id=9 at=7840L,9037H,16970L,18156H,26047L,27221H
+```
+
+  9.1 s a portion, the stop 20 ms after the third rise, and the owner's tape mark on the rotor back at its start: three marks a turn.
+
+Left for FW16: cancellation during motion, the motor lease under a stalled loop during a feed, and a failed stop.
+

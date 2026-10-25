@@ -8,7 +8,7 @@
 
 use wellfed_core::feed::controller::{
     FeedController, FeedLimits, FeedReason, FeedRequest, FeedSample, FeedStartResult, FeedState,
-    MotorCommand,
+    MotorCommand, OVERCURRENT_POLLS,
 };
 use wellfed_core::feed::progress::{BowlMode, Direction};
 
@@ -19,6 +19,7 @@ const LIMITS: FeedLimits = FeedLimits {
     direction_pause_ms: 3,
     reverse_ms: 3,
     max_duration_ms: 120,
+    portion_ms: 120,
     max_observation_gap_ms: 2,
     current_limit_ma: 300,
     max_portions: 50,
@@ -203,10 +204,50 @@ fn missing_feedback_latches_stop() {
 }
 
 #[test]
+fn a_request_gets_its_portions_share_of_the_deadline() {
+    let settings = FeedLimits {
+        feedback_timeout_ms: 20,
+        portion_ms: 12,
+        ..LIMITS
+    };
+
+    // Two portions at 10 ms each fit 24 ms; a third at 10 ms would too, but
+    // the request asked for two, so it ends Done before its deadline.
+    let mut f = begin_with(&settings, BowlMode::Single, Direction::D0, 2, 0);
+    for _ in 0..2 {
+        f.advance(10);
+        f.edge(true);
+    }
+    assert!(f.controller.state == FeedState::Complete && f.controller.deadline_ms == 24);
+
+    // Every gap within the feedback timeout, but 15 ms a portion on average
+    // overruns 3 x 12 ms.
+    let mut f = begin_with(&settings, BowlMode::Single, Direction::D0, 3, 0);
+    for _ in 0..2 {
+        f.advance(15);
+        f.edge(true);
+    }
+    f.advance(6);
+    f.expect_fault(FeedReason::TotalTimeout);
+    assert_eq!(f.controller.progress.completed, 2);
+
+    // The cap bounds the share of a large request.
+    let f = begin_with(
+        &settings,
+        BowlMode::Single,
+        Direction::D0,
+        LIMITS.max_portions,
+        0,
+    );
+    assert_eq!(f.controller.deadline_ms, LIMITS.max_duration_ms);
+}
+
+#[test]
 fn total_deadline_wins_over_feedback() {
     let settings = FeedLimits {
         feedback_timeout_ms: 20,
         max_duration_ms: 30,
+        portion_ms: 30,
         ..LIMITS
     };
     let mut f = begin_with(&settings, BowlMode::Single, Direction::D0, 20, 0);
@@ -228,7 +269,7 @@ fn reverse_attempts_are_bounded() {
     let mut f = begin(BowlMode::Single, Direction::D0, 3);
 
     f.sample.current_ma = 301;
-    f.advance(1);
+    f.advance(OVERCURRENT_POLLS.into());
     assert_eq!(f.controller.state, FeedState::Reversing);
     assert_eq!(f.controller.motor, MotorCommand::Drive1);
     f.edge(true);
@@ -246,22 +287,40 @@ fn reverse_attempts_are_bounded() {
     assert_eq!(f.controller.progress.completed, 1);
 
     f.sample.current_ma = 301;
-    f.advance(1);
+    f.advance(OVERCURRENT_POLLS.into());
     assert_eq!(f.controller.reverse_attempts, 2);
     f.sample.current_ma = 100;
     f.advance(3);
 
     f.sample.current_ma = 301;
-    f.advance(1);
+    f.advance(OVERCURRENT_POLLS.into());
     f.expect_fault(FeedReason::Overcurrent);
     assert_eq!(f.controller.reverse_attempts, 2);
+}
+
+#[test]
+fn one_poll_over_the_limit_is_a_surge_not_a_jam() {
+    let mut f = begin(BowlMode::Single, Direction::D0, 3);
+    f.sample.current_ma = 301;
+    f.advance(1);
+    f.sample.current_ma = 100;
+    f.advance(1);
+    assert!(f.controller.state == FeedState::Running && f.controller.reverse_attempts == 0);
+
+    // An edge reuses its poll's sample, so it cannot make a second poll.
+    f.sample.current_ma = 301;
+    f.advance(1);
+    f.edge(false);
+    assert!(f.controller.state == FeedState::Running && f.controller.over_limit == 1);
+    f.advance(1);
+    assert_eq!(f.controller.state, FeedState::Reversing);
 }
 
 #[test]
 fn persistent_overcurrent_does_not_resume_forward() {
     let mut f = begin(BowlMode::Single, Direction::D0, 3);
     f.sample.current_ma = 301;
-    f.advance(1);
+    f.advance(OVERCURRENT_POLLS.into());
     f.advance(3);
     f.expect_fault(FeedReason::Overcurrent);
     assert_eq!(f.controller.reverse_attempts, 1);
@@ -278,7 +337,7 @@ fn input_faults_in_every_motion_state() {
                 assert_eq!(f.controller.state, FeedState::DirectionPause);
             } else if state == 2 {
                 f.sample.current_ma = 301;
-                f.advance(1);
+                f.advance(OVERCURRENT_POLLS.into());
                 f.sample.current_ma = 100;
                 assert_eq!(f.controller.state, FeedState::Reversing);
             }
@@ -468,11 +527,11 @@ fn pause_completion_cannot_consume_old_edges() {
 fn reversals_do_not_extend_feedback_deadline() {
     let mut f = begin(BowlMode::Single, Direction::D0, 2);
     f.sample.current_ma = 301;
-    f.advance(1);
+    f.advance(OVERCURRENT_POLLS.into());
     f.sample.current_ma = 100;
     f.advance(3);
     f.sample.current_ma = 301;
-    f.advance(1);
+    f.advance(OVERCURRENT_POLLS.into());
     f.sample.current_ma = 100;
     f.advance(25);
 
@@ -486,7 +545,7 @@ fn stopped_outputs_do_not_resume_on_bad_current() {
     f.edge(false);
     assert_eq!(f.controller.motor, MotorCommand::Stop);
     f.sample.current_ma = 301;
-    f.advance(1);
+    f.advance(OVERCURRENT_POLLS.into());
     f.expect_fault(FeedReason::Overcurrent);
 
     let settings = FeedLimits {
@@ -495,7 +554,7 @@ fn stopped_outputs_do_not_resume_on_bad_current() {
     };
     let mut f = begin_with(&settings, BowlMode::Single, Direction::D0, 3, 0);
     f.sample.current_ma = 301;
-    f.advance(1);
+    f.advance(OVERCURRENT_POLLS.into());
     f.expect_fault(FeedReason::Overcurrent);
     assert_eq!(f.controller.reverse_attempts, 0);
 

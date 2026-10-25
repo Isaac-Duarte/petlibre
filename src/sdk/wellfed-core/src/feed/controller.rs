@@ -135,7 +135,11 @@ pub struct FeedLimits {
     pub feedback_timeout_ms: u32,
     pub direction_pause_ms: u32,
     pub reverse_ms: u32,
+    /// The longest any request may run, whatever its portions.
     pub max_duration_ms: u32,
+    /// Each portion's share of a request's deadline: a request of `n`
+    /// portions stops at `n` times this, or at `max_duration_ms` if sooner.
+    pub portion_ms: u32,
     pub max_observation_gap_ms: u32,
 
     pub current_limit_ma: u32,
@@ -150,11 +154,13 @@ impl FeedLimits {
             && interval_valid(self.direction_pause_ms)
             && interval_valid(self.reverse_ms)
             && interval_valid(self.max_duration_ms)
+            && interval_valid(self.portion_ms)
             && interval_valid(self.max_observation_gap_ms)
             && self.feedback_timeout_ms > self.feedback_inhibit_ms
             && self.feedback_timeout_ms > self.direction_pause_ms
             && self.feedback_timeout_ms > self.reverse_ms
             && self.max_duration_ms >= self.feedback_timeout_ms
+            && self.max_duration_ms >= self.portion_ms
             && self.max_observation_gap_ms <= self.feedback_timeout_ms
             && self.current_limit_ma != 0
             && self.max_portions != 0
@@ -201,6 +207,11 @@ impl FeedSample {
     }
 }
 
+/// Consecutive polls over `current_limit_ma` that count as overcurrent: a
+/// motor's start-up surge can read over the limit for one poll (seen once at
+/// 17 ms into a drive), while a jam stays over it.
+pub const OVERCURRENT_POLLS: u8 = 2;
+
 /// Single serialized owner; inspect fields for reporting, mutate only via methods.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct FeedController {
@@ -209,12 +220,17 @@ pub struct FeedController {
     pub last_request_id: u64,
 
     pub started_at: u32,
+    /// From `started_at`: this request's deadline.
+    pub deadline_ms: u32,
     pub last_update_at: u32,
     pub last_feedback_at: u32,
     pub inhibit_at: u32,
     pub state_at: u32,
 
     pub reverse_attempts: u8,
+    /// Consecutive polls over the current limit; a feedback edge reuses its
+    /// poll's sample and leaves this unchanged.
+    pub over_limit: u8,
     pub state: FeedState,
     pub reason: FeedReason,
     pub motor: MotorCommand,
@@ -287,11 +303,15 @@ impl FeedController {
         self.progress = progress;
         self.last_request_id = request.id;
         self.started_at = now_ms;
+        self.deadline_ms = u32::from(request.portions)
+            .saturating_mul(self.limits.portion_ms)
+            .min(self.limits.max_duration_ms);
         self.last_update_at = now_ms;
         self.last_feedback_at = now_ms;
         self.inhibit_at = now_ms;
         self.state_at = now_ms;
         self.reverse_attempts = 0;
+        self.over_limit = 0;
         self.state = FeedState::Running;
         self.reason = FeedReason::None;
         self.motor = MotorCommand::drive(progress.direction);
@@ -331,7 +351,7 @@ impl FeedController {
             FeedReason::Clock
         } else if gap > self.limits.max_observation_gap_ms {
             FeedReason::ObservationGap
-        } else if now_ms.wrapping_sub(self.started_at) >= self.limits.max_duration_ms {
+        } else if now_ms.wrapping_sub(self.started_at) >= self.deadline_ms {
             FeedReason::TotalTimeout
         } else {
             match sample {
@@ -357,7 +377,14 @@ impl FeedController {
             return;
         };
 
-        let overcurrent = sample.current_ma > self.limits.current_limit_ma;
+        if !sample.feedback_edge {
+            self.over_limit = if sample.current_ma > self.limits.current_limit_ma {
+                self.over_limit.saturating_add(1)
+            } else {
+                0
+            };
+        }
+        let overcurrent = self.over_limit >= OVERCURRENT_POLLS;
         if self.state == FeedState::Reversing {
             if now_ms.wrapping_sub(self.state_at) >= self.limits.reverse_ms {
                 if overcurrent {

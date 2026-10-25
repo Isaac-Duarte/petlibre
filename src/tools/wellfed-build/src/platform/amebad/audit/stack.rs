@@ -14,7 +14,7 @@
 //! (`__name_veneer`, the long branch into RAM or ROM) leads to its target.
 //! Recursion is cut at the cycle.
 //!
-//! An indirect call (`blx rN`) is bounded by what it can reach:
+//! An indirect call (`blx rN`, or a tail call `bx rN`) is bounded by what it can reach:
 //! - inside `core::fmt`, by the deepest formatting method in the image
 //!   (`Display::fmt`, `Write::write_str` and the rest), nested up to
 //!   [`FMT_NESTING`] levels;
@@ -118,9 +118,13 @@ const PROVIDER_CALLBACKS: [&str; 5] = [
     "wellfed_amebad_flash_provider_fault",
 ];
 
+/// A task creation: name, stack words, entry, and the entry's turbofish if it
+/// names a generic instance.
 static TASK: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?s)(?:task_create|spawn)\(\s*c"([\w-]+)",\s*(\w+),\s*\d+,\s*(\w+)(?:::<[^>]*>)?\s*[,)]"#)
-        .expect("stack audit pattern")
+    Regex::new(
+        r#"(?s)(?:task_create|spawn)\(\s*c"([\w-]+)",\s*(\w+),\s*\d+,\s*(\w+)(::<[^>]*>)?\s*[,)]"#,
+    )
+    .expect("stack audit pattern")
 });
 static CONSTANT: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"const (\w+): u16 = (\d+);").expect("stack audit pattern"));
@@ -128,8 +132,12 @@ static CALL: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\t(?:bl|blx|b\.w|b)(?:\.[nw])?\t[0-9a-f]+ <([^>+]+)>")
         .expect("stack audit pattern")
 });
-static INDIRECT: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\tblx\tr\d+\b").expect("stack audit pattern"));
+/// A call or tail call through a register. objdump names r9 to r12 `sb`, `sl`,
+/// `fp` and `ip`, and LLVM tail-calls a pointer with `bx rN`. `bx lr` is a
+/// return, not a call.
+static INDIRECT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\t(?:blx\t(?:r\d+|sb|sl|fp|ip)|bx\tr\d+)\b").expect("stack audit pattern")
+});
 /// Half of an address built in a register: `movw r0, #51187` (low) then
 /// `movt r0, #3585` (high).
 static MOVE: LazyLock<Regex> =
@@ -161,20 +169,39 @@ static SUB: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 /// {entry function name: (task name, stack bytes)} from the task sources.
-fn tasks(source: &str) -> BTreeMap<String, (String, u64)> {
+///
+/// A task the audit cannot resolve is refused rather than skipped, since a
+/// skipped task links unaudited. A generic entry (`step::<S>`) is one: its
+/// monomorphized symbol carries the type arguments, so no linked function
+/// matches the source's name, and the walk would take it for a variant that
+/// does not link the task. So is a stack size that is neither a literal nor a
+/// `const NAME: u16` in the same sources.
+fn tasks(source: &str) -> Result<BTreeMap<String, (String, u64)>> {
     let constants: HashMap<&str, u64> = CONSTANT
         .captures_iter(source)
         .filter_map(|c| Some((c.get(1)?.as_str(), c[2].parse().ok()?)))
         .collect();
-    TASK.captures_iter(source)
-        .filter_map(|c| {
-            let words = constants
-                .get(&c[2])
-                .copied()
-                .or_else(|| c[2].parse().ok())?;
-            Some((c[3].to_string(), (c[1].to_string(), words * 4)))
-        })
-        .collect()
+
+    let mut found = BTreeMap::new();
+    for c in TASK.captures_iter(source) {
+        let (task, entry) = (&c[1], &c[3]);
+        if let Some(generic) = c.get(4) {
+            return refuse(format!(
+                "Task {task} starts the generic {entry}{}: the stack audit cannot find its \
+                 symbol, so start it through a non-generic entry function",
+                generic.as_str()
+            ));
+        }
+        let Some(words) = constants.get(&c[2]).copied().or_else(|| c[2].parse().ok()) else {
+            return refuse(format!(
+                "Task {task}'s stack size {} is neither a literal nor a `const NAME: u16` the \
+                 stack audit can read",
+                &c[2]
+            ));
+        };
+        found.insert(entry.to_string(), (task.to_string(), words * 4));
+    }
+    Ok(found)
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -573,7 +600,7 @@ pub(crate) fn audit(elf: &Path, objdump: &Path, sources: &TaskSources) -> Result
 
     let mut rows = BTreeMap::new();
     let source = format!("{}\n{}", sources.runtime, sources.firmware);
-    for (entry, (task, stack)) in tasks(&source) {
+    for (entry, (task, stack)) in tasks(&source)? {
         let symbols = by_short.get(&entry).cloned().unwrap_or_default();
         let symbol = match &symbols[..] {
             // Not linked in this variant.
@@ -637,7 +664,7 @@ pub(crate) fn audit(elf: &Path, objdump: &Path, sources: &TaskSources) -> Result
 /// share: a firmware that takes a runtime task's slot leaves the build unable
 /// to save settings or see an update offer.
 fn firmware_tasks(sources: &TaskSources, linked: impl Fn(&str) -> bool) -> Result<Vec<String>> {
-    let found: Vec<String> = tasks(&sources.firmware)
+    let found: Vec<String> = tasks(&sources.firmware)?
         .into_iter()
         .filter(|(entry, _)| linked(entry))
         .map(|(_, (task, _))| task)
@@ -744,8 +771,7 @@ mod tests {
         let source = "const PROBE_STACK_WORDS: u16 = 2048;\n\
                       sdk::task_create(\n    c\"wellfed-optics\",\n    PROBE_STACK_WORDS,\n    3,\n    optics_task,\n\
                       let ok = sdk::task_create(c\"wellfed-wdg\", 512, 3, feeder_task, ptr::null_mut());\n\
-                      unsafe { wellfed_sdk::spawn(c\"wellfed-aud\", 1024, 2, audio_task) };\n\
-                      sdk::task_create(c\"wellfed-gen\", 2048, 3, generic_step::<S>, state);";
+                      unsafe { wellfed_sdk::spawn(c\"wellfed-aud\", 1024, 2, audio_task) };";
         let expected: BTreeMap<String, (String, u64)> = [
             (
                 "optics_task".to_string(),
@@ -756,13 +782,38 @@ mod tests {
                 ("wellfed-wdg".to_string(), 2048),
             ),
             ("audio_task".to_string(), ("wellfed-aud".to_string(), 4096)),
-            (
-                "generic_step".to_string(),
-                ("wellfed-gen".to_string(), 8192),
-            ),
         ]
         .into();
-        assert_eq!(tasks(source), expected);
+        assert_eq!(tasks(source).unwrap(), expected);
+    }
+
+    #[test]
+    fn a_task_the_audit_cannot_resolve_is_refused() {
+        let generic = "sdk::task_create(c\"wellfed-gen\", 2048, 3, generic_step::<S>, state);";
+        let refused = tasks(generic).unwrap_err().to_string();
+        assert!(refused.contains("generic generic_step::<S>"), "{refused}");
+
+        let unknown = "wellfed_sdk::spawn(c\"wellfed-x\", ELSEWHERE_WORDS, 2, x_task);";
+        let refused = tasks(unknown).unwrap_err().to_string();
+        assert!(refused.contains("ELSEWHERE_WORDS"), "{refused}");
+    }
+
+    #[test]
+    fn register_calls_and_tail_calls_are_indirect() {
+        for call in [
+            "blx\tr3", "blx\tip", "blx\tfp", "blx\tsl", "blx\tsb", "bx\tr2", "bx\tr12",
+        ] {
+            assert!(
+                INDIRECT.is_match(&format!("    1000:\t4798      \t{call}")),
+                "{call}"
+            );
+        }
+        for other in ["bx\tlr", "blx\t2000 <callee>", "bl\t2000 <callee>"] {
+            assert!(
+                !INDIRECT.is_match(&format!("    1000:\t4798      \t{other}")),
+                "{other}"
+            );
+        }
     }
 
     #[test]

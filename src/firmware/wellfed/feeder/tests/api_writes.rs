@@ -9,6 +9,7 @@ use wellfed_core::store::slot::SlotIo;
 use wellfed_core::transport::{SettingsFields, SettingsResult, SettingsView, WifiResult};
 use wellfed_feeder::api::KeyChange;
 use wellfed_fw_feeder::api::{keys_request, settings_request, wifi_request};
+use wellfed_fw_feeder::feeding::{claim_outputs, writes_queued};
 use wellfed_sdk::hal::interlock::Interlock;
 use wellfed_sdk::hal::sdk::fake;
 use wellfed_sdk::hal::{keys, network, settings};
@@ -112,4 +113,57 @@ fn writes_during_a_feed_are_refused_busy_and_reads_still_answer() {
         role: Role::Member,
     };
     assert!(keys_request(&interlock, enroll).is_some());
+}
+
+/// A client's change queued just before a feed is written before the feed
+/// starts, so its answer comes before the feed rather than after it.
+#[test]
+fn a_change_queued_just_before_a_feed_goes_first() {
+    use std::cell::Cell;
+
+    use wellfed_sdk::hal::interlock::WRITE_WAIT_MS;
+
+    fn queue_settings(interlock: &Interlock) {
+        assert!(matches!(
+            settings_request(interlock, volume(7)),
+            SettingsResult::Current { pending: true, .. }
+        ));
+    }
+    fn queue_wifi(interlock: &Interlock) {
+        let credentials = Credentials::new(b"net", b"password").unwrap();
+        assert!(matches!(
+            wifi_request(interlock, Some(Some(credentials))),
+            WifiResult::Current { pending: true, .. }
+        ));
+    }
+    fn queue_revoke(interlock: &Interlock) {
+        assert!(keys_request(interlock, KeyChange::Revoke { key: [7; 32] }).is_some());
+    }
+
+    for queue in [queue_settings, queue_wifi, queue_revoke] {
+        let _guard = start();
+        let interlock = Interlock::new();
+        queue(&interlock);
+        assert!(writes_queued());
+
+        // The settings writer takes it on its next poll and finishes it.
+        let now = Cell::new(0_u32);
+        let claimed = claim_outputs(
+            &interlock,
+            writes_queued,
+            || now.get(),
+            |ms| {
+                now.set(now.get() + ms);
+                if now.get() == 200 {
+                    settings::finish();
+                    network::finish();
+                    keys::finish(keys::KeyResult::Done);
+                }
+            },
+            |_| unreachable!(),
+        );
+        assert_eq!(claimed, Ok(()));
+        assert_eq!(now.get(), 200, "claimed once the change was written");
+        assert!(now.get() < WRITE_WAIT_MS);
+    }
 }

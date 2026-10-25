@@ -40,7 +40,7 @@ use wellfed_core::transport::{SettingsFields, SettingsView};
 use wellfed_hal::flash::park::Mmio;
 use wellfed_hal::flash_lock::arming::{self, Arming, Hooks, Poll};
 use wellfed_hal::flash_lock::provider::Provider;
-use wellfed_hal::interlock::{INTERLOCK, WriteStep, WriteTurn};
+use wellfed_hal::interlock::{INTERLOCK, WRITER_POLL_MS, WriteStep, WriteTurn};
 pub use wellfed_hal::keys::KeyResult;
 use wellfed_hal::keys::{self, Change};
 use wellfed_hal::network::{self, NET_BASE};
@@ -54,8 +54,10 @@ use crate::storage::{
 pub const POLL_MS: u32 = 200;
 /// While events wait to be written or read.
 pub const EVENTS_POLL_MS: u32 = 5;
-/// While a write waits for a feed to end.
+/// While a write waits for a feed to end: within the poll a claim allows a
+/// waiting writer before passing it.
 pub const WRITE_WAIT_POLL_MS: u32 = POLL_MS;
+const _: () = assert!(WRITE_WAIT_POLL_MS <= WRITER_POLL_MS);
 
 /// The write turn for one store write, given back when dropped.
 struct WriteHeld;
@@ -368,7 +370,8 @@ impl<F: FlashOps> Writer<F> {
     /// The write turn for one store write, or `None` while a feed holds the
     /// outputs: the caller then leaves its work queued.
     fn take_turn(&mut self) -> Option<WriteHeld> {
-        match self.turn.begin(&INTERLOCK, sdk::uptime_ms()) {
+        let stopped = || wellfed_hal::stopped::observe().verified();
+        match self.turn.begin(&INTERLOCK, sdk::uptime_ms(), stopped) {
             WriteStep::Go(_) => Some(WriteHeld),
             WriteStep::Wait => None,
         }

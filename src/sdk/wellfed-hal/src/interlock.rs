@@ -39,16 +39,17 @@
 //! one store write, within one step of its task:
 //!
 //! - While the outputs are claimed the write waits: the writer leaves its
-//!   work queued and asks again on its next poll. It marks itself waiting,
-//!   so the next claim lets it go first, and it waits at most the claim's
-//!   bound, past which it goes ahead and is counted as forced (the lease's
-//!   own check then still refuses moving outputs). Each writer times its own
-//!   wait ([`WriteTurn`]).
-//! - A claim that finds a write running waits for it in the loop
-//!   ([`Interlock::claim_feed_after_writes`]), in [`WRITE_POLL_MS`] steps, for
-//!   at most [`WRITE_WAIT_MS`]; a write still running then refuses the feed.
-//!   A write only marked waiting is passed after that wait: it cannot have
-//!   started, and it finds the claim when it asks again.
+//!   work queued and asks again on its next poll. It counts among the
+//!   waiters, so the next claim lets it go first. Only a claim that outlives
+//!   its bound, timed per claim, lets a write go ahead with the outputs
+//!   claimed, counted as forced, and only while they read stopped: a write
+//!   never starts into moving outputs. Each writer times its own wait
+//!   ([`WriteTurn`]).
+//! - A claim waits in the loop ([`Interlock::claim_feed_after_writes`]), in
+//!   [`WRITE_POLL_MS`] steps for at most [`WRITE_WAIT_MS`], for a write
+//!   running, a writer waiting, or a client's change queued for a writer
+//!   that has not asked yet. A write still running then refuses the feed;
+//!   the rest are passed: they have not started, and wait for the release.
 //!
 //! The feed journal writes under the loop's own claim, from the owner's rest
 //! boundaries (the outputs already stopped), so it takes no write turn.
@@ -70,21 +71,29 @@ pub const LONG_JOIN_MS: u32 = 60_000;
 /// How often a claim waiting for a storage write looks again.
 pub const WRITE_POLL_MS: u32 = 10;
 
+/// The slowest a waiting writer may poll for its turn. Every writer runs
+/// in the runtime's service task (the confirmation, the settings writer,
+/// the offer check), whose stages each ask again after their own poll; each
+/// asserts its poll against this.
+pub const WRITER_POLL_MS: u32 = 500;
+
 /// The longest a claim waits for storage writes: one store record (an
 /// erase and two programs, the stores' commit protocol), each lease at its
-/// whole budget, after the settings writer's 200 ms poll. Leases take tens
-/// of milliseconds in practice; a write still running past this refuses the
+/// whole budget, after a waiting writer's poll. Leases take tens of
+/// milliseconds in practice; a write still running past this refuses the
 /// feed, which moved nothing.
 pub const WRITE_WAIT_MS: u32 = 3_000;
 
-const _: () = assert!(WRITE_WAIT_MS >= 3 * FLASH_LIMITS.total_ms + 200);
+const _: () = assert!(WRITE_WAIT_MS >= 3 * FLASH_LIMITS.total_ms + WRITER_POLL_MS);
 
 /// The turn byte's flags above the [`Turn`] code.
 const TURN_BITS: u8 = 0x0f;
 /// A storage write holds the flash.
 const WRITING: u8 = 0x10;
-/// A storage write waits for the outputs' release, and goes first.
-const WRITE_WAITS: u8 = 0x20;
+/// How many writers wait for their turn, in the top three bits: while any
+/// does, a new claim lets them go first.
+const WAITERS_SHIFT: u8 = 5;
+const WAITERS_MAX: u8 = 7;
 
 /// Whose turn it is, as the interlock's byte holds it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -220,7 +229,16 @@ pub enum WriteStart {
 struct State {
     turn: Turn,
     writing: bool,
-    write_waits: bool,
+    /// Writers waiting for their turn; saturates rather than wraps.
+    waiters: u8,
+}
+
+/// Whether a claim lets waiting writers go first.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Waiters {
+    GoFirst,
+    /// The claim has waited its whole `WRITE_WAIT_MS` for them.
+    Passed,
 }
 
 impl State {
@@ -228,19 +246,17 @@ impl State {
         Self {
             turn: Turn::from_byte(byte & TURN_BITS),
             writing: byte & WRITING != 0,
-            write_waits: byte & WRITE_WAITS != 0,
+            waiters: byte >> WAITERS_SHIFT,
         }
     }
 
     const fn code(self) -> u8 {
-        self.turn.code()
-            | if self.writing { WRITING } else { 0 }
-            | if self.write_waits { WRITE_WAITS } else { 0 }
+        self.turn.code() | if self.writing { WRITING } else { 0 } | (self.waiters << WAITERS_SHIFT)
     }
 
     /// A claim: refused by a write as well as a join, except that the loop's
     /// own claim stays its own.
-    const fn claim_feed(self) -> Result<Self, Held> {
+    const fn claim_feed(self, waiters: Waiters) -> Result<Self, Held> {
         let turn = match self.turn.claim_feed() {
             Ok(turn) => turn,
             Err(held) => return Err(held),
@@ -249,7 +265,7 @@ impl State {
             if self.writing {
                 return Err(Held::Writing);
             }
-            if self.write_waits {
+            if self.waiters > 0 && matches!(waiters, Waiters::GoFirst) {
                 return Err(Held::WriteWaiting);
             }
         }
@@ -260,24 +276,33 @@ impl State {
         matches!(self.turn, Turn::Feeding | Turn::FeedingJoinWaits)
     }
 
-    /// A writer asks for the flash.
-    const fn request_write(self) -> (Self, bool) {
-        if self.outputs_claimed() {
-            let next = Self {
-                write_waits: true,
-                ..self
+    /// A writer asks for the flash; `counted` when it already counts among
+    /// the waiters. A writer that must wait counts itself; one that gets the
+    /// turn leaves the count, so another's wait stays marked.
+    const fn request_write(self, counted: bool) -> (Self, bool) {
+        if self.outputs_claimed() || self.writing {
+            let waiters = if counted || self.waiters == WAITERS_MAX {
+                self.waiters
+            } else {
+                self.waiters + 1
             };
-            return (next, false);
+            return (Self { waiters, ..self }, false);
         }
-        if self.writing {
-            return (self, false);
-        }
-        let next = Self {
-            writing: true,
-            write_waits: false,
-            ..self
+        (self.take_write(counted), true)
+    }
+
+    /// The write turn, leaving the waiters' count if `counted`.
+    const fn take_write(self, counted: bool) -> Self {
+        let waiters = if counted {
+            self.waiters.saturating_sub(1)
+        } else {
+            self.waiters
         };
-        (next, true)
+        Self {
+            writing: true,
+            waiters,
+            ..self
+        }
     }
 }
 
@@ -324,6 +349,9 @@ pub struct Interlock {
     writes_forced: AtomicU32,
     write_waited_max_ms: AtomicU32,
     feeds_delayed: AtomicU32,
+    /// Claims taken from no claim, so a writer can tell one feed from the
+    /// next.
+    claims: AtomicU32,
 }
 
 impl Default for Interlock {
@@ -348,6 +376,7 @@ impl Interlock {
             writes_forced: AtomicU32::new(0),
             write_waited_max_ms: AtomicU32::new(0),
             feeds_delayed: AtomicU32::new(0),
+            claims: AtomicU32::new(0),
         }
     }
 
@@ -412,89 +441,86 @@ impl Interlock {
     /// `bound_ms`, the longest the feed can keep them from rest. One attempt,
     /// refused by a running or waiting join or storage write.
     pub fn claim_feed(&self, bound_ms: u32) -> Result<(), Held> {
-        let result = self.try_claim(bound_ms);
+        let result = self.try_claim(bound_ms, Waiters::GoFirst);
         if result.is_err() {
             self.refused.fetch_add(1, Ordering::Relaxed);
         }
         result
     }
 
-    fn try_claim(&self, bound_ms: u32) -> Result<(), Held> {
+    fn try_claim(&self, bound_ms: u32, waiters: Waiters) -> Result<(), Held> {
         // Published before the claim, so a join or write that sees the
         // claim sees its bound; one firmware always passes the same bound.
         self.bound_ms.store(bound_ms, Ordering::Release);
-        self.update(|state| match state.claim_feed() {
-            Ok(next) => (next, Ok(())),
-            Err(held) => (state, Err(held)),
-        })
+        let (result, fresh) = self.update(|state| match state.claim_feed(waiters) {
+            Ok(next) => (next, (Ok(()), state.turn == Turn::Free)),
+            Err(held) => (state, (Err(held), false)),
+        });
+        if fresh {
+            self.claims.fetch_add(1, Ordering::AcqRel);
+        }
+        result
     }
 
-    /// As [`Self::claim_feed`], but a storage write first gets up to
-    /// [`WRITE_WAIT_MS`] to finish, waiting in `delay` steps: past it, a
-    /// write still running refuses the claim, and one only waiting is
-    /// passed. A join still refuses at once.
+    /// As [`Self::claim_feed`], but storage writes first get up to
+    /// [`WRITE_WAIT_MS`], waiting in `delay` steps: a write running, a
+    /// writer waiting for its turn, or work `queued` for a writer that has
+    /// not asked for its turn yet (a client's change in a mailbox). Past the
+    /// wait a write still running refuses the claim, and the rest are
+    /// passed: they have not started, and wait for the release. A join
+    /// still refuses at once.
     pub fn claim_feed_after_writes(
         &self,
         bound_ms: u32,
+        mut queued: impl FnMut() -> bool,
         mut now_ms: impl FnMut() -> u32,
         mut delay: impl FnMut(u32),
     ) -> Result<(), Held> {
         let begun = now_ms();
         let mut waited = false;
         loop {
-            let held = match self.try_claim(bound_ms) {
+            let passed = now_ms().wrapping_sub(begun) >= WRITE_WAIT_MS;
+            let waiters = if passed {
+                Waiters::Passed
+            } else {
+                Waiters::GoFirst
+            };
+            let result = if !passed && queued() {
+                Err(Held::WriteWaiting)
+            } else {
+                self.try_claim(bound_ms, waiters)
+            };
+            match result {
                 Ok(()) => return Ok(()),
-                Err(held @ (Held::Writing | Held::WriteWaiting)) => held,
+                Err(Held::Writing | Held::WriteWaiting) if !passed => {}
                 Err(held) => {
                     self.refused.fetch_add(1, Ordering::Relaxed);
                     return Err(held);
                 }
-            };
+            }
 
             if !waited {
                 waited = true;
                 self.feeds_delayed.fetch_add(1, Ordering::Relaxed);
             }
-            if now_ms().wrapping_sub(begun) >= WRITE_WAIT_MS {
-                if held == Held::Writing {
-                    self.refused.fetch_add(1, Ordering::Relaxed);
-                    return Err(held);
-                }
-                // The waiting writer has not started: it finds the claim
-                // when it asks again, and waits for the release.
-                self.update(|state| {
-                    let next = State {
-                        write_waits: false,
-                        ..state
-                    };
-                    (next, ())
-                });
-                continue;
-            }
             delay(WRITE_POLL_MS);
         }
     }
 
-    /// Ask for the write turn: true when it is taken. While the outputs are
-    /// claimed this marks the write waiting, so the next claim lets it go
-    /// first.
-    fn request_write(&self) -> bool {
-        self.update(State::request_write)
+    /// Ask for the write turn: true when it is taken. While it is not, the
+    /// writer counts among the waiters, so the next claim lets it go first.
+    fn request_write(&self, counted: bool) -> bool {
+        self.update(|state| state.request_write(counted))
     }
 
-    /// Take the write turn with the outputs still claimed; false while
-    /// another write holds it.
+    /// Take the write turn with the outputs still claimed, leaving the
+    /// waiters' count; false while another write holds it.
     fn force_write(&self) -> bool {
         self.update(|state| {
             if state.writing {
                 return (state, false);
             }
-            let next = State {
-                writing: true,
-                write_waits: false,
-                ..state
-            };
-            (next, true)
+            (state.take_write(true), true)
         })
     }
 
@@ -591,6 +617,7 @@ impl Interlock {
             &self.writes_forced,
             &self.write_waited_max_ms,
             &self.feeds_delayed,
+            &self.claims,
         ] {
             value.store(0, Ordering::Release);
         }
@@ -602,21 +629,42 @@ impl Interlock {
 /// polls, so each writer times its own wait.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct WriteTurn {
-    /// When this writer first found the turn taken, in uptime ms.
+    /// When this writer first found the turn taken, in uptime ms; while it
+    /// is set, the writer counts among the waiters.
     since: Option<u32>,
+    /// The claim (`Interlock::claims`) its forced bound is timed against.
+    claim: u32,
+    /// When this writer first saw that claim.
+    claim_seen: u32,
 }
 
 impl WriteTurn {
     pub const fn new() -> Self {
-        Self { since: None }
+        Self {
+            since: None,
+            claim: 0,
+            claim_seen: 0,
+        }
     }
 
     /// Before one store write, from task context: the write's turn, or
     /// [`WriteStep::Wait`] while the outputs are claimed (or another write
-    /// runs). Past the claim's bound the write goes ahead, counted. A
-    /// [`WriteStep::Go`] must be followed by [`Interlock::end_write`].
-    pub fn begin(&mut self, interlock: &Interlock, now_ms: u32) -> WriteStep {
-        if interlock.request_write() {
+    /// runs). A [`WriteStep::Go`] must be followed by
+    /// [`Interlock::end_write`].
+    ///
+    /// Only a claim that outlives its bound, timed from when this writer
+    /// first saw that same claim (a writer that misses the gap between two
+    /// feeds starts again on the second), lets the write go ahead with the
+    /// outputs claimed, and only while `stopped` reads them stopped: a write
+    /// never starts into moving outputs, whose lease would reset the board.
+    pub fn begin(
+        &mut self,
+        interlock: &Interlock,
+        now_ms: u32,
+        stopped: impl FnOnce() -> bool,
+    ) -> WriteStep {
+        let counted = self.since.is_some();
+        if interlock.request_write(counted) {
             let start = match self.since.take() {
                 None => WriteStart::Free,
                 Some(since) => {
@@ -631,21 +679,29 @@ impl WriteTurn {
             return WriteStep::Go(start);
         }
 
-        let ms = now_ms.wrapping_sub(*self.since.get_or_insert(now_ms));
-        if !interlock.outputs_claimed()
-            || ms < interlock.bound_ms.load(Ordering::Acquire)
-            || !interlock.force_write()
+        let since = *self.since.get_or_insert(now_ms);
+        if !interlock.outputs_claimed() {
+            return WriteStep::Wait; // Another write runs.
+        }
+        let claim = interlock.claims.load(Ordering::Acquire);
+        if !counted || claim != self.claim {
+            self.claim = claim;
+            self.claim_seen = now_ms;
+        }
+        let ms = now_ms.wrapping_sub(self.claim_seen);
+        if ms < interlock.bound_ms.load(Ordering::Acquire) || !stopped() || !interlock.force_write()
         {
             return WriteStep::Wait;
         }
-        // The claim outlived every feed's bound: write anyway. The lease
-        // still checks the outputs, and fails closed if they move.
+        // The claim outlived every feed's bound with the outputs stopped:
+        // write anyway, and the lease checks the outputs again.
         self.since = None;
+        let waited = now_ms.wrapping_sub(since);
         interlock.writes_deferred.fetch_add(1, Ordering::Relaxed);
         interlock.writes_forced.fetch_add(1, Ordering::Relaxed);
         interlock
             .write_waited_max_ms
-            .fetch_max(ms, Ordering::Relaxed);
+            .fetch_max(waited, Ordering::Relaxed);
         WriteStep::Go(WriteStart::Forced { ms })
     }
 }

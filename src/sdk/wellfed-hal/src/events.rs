@@ -6,6 +6,9 @@
 //!   writer drains the queue with [`pending`] and [`finish_pending`]. A full
 //!   queue drops the record and counts it ([`take_lost`]), so a burst can
 //!   never stall the loop; the loop records the count as an event of its own.
+//!   The last slot is kept for a feed's outcome ([`record_outcome`]): appends
+//!   wait while a feed holds the outputs, so the events of a long feed pile
+//!   up here, and the feed's own result must not be the one lost.
 //! - **Reads:** the device API asks for the record after a cursor with
 //!   [`request_read`]; the writer answers with [`finish_read`], and the loop
 //!   collects it with [`read_result`]. One read is outstanding at a time,
@@ -74,10 +77,25 @@ fn with<R>(f: impl FnOnce(&mut Shared) -> R) -> R {
     })
 }
 
-/// The loop's half: queue one record; false (and counted) when full.
+/// Slots only [`record_outcome`] may fill.
+pub const RESERVED: usize = 1;
+
+/// The loop's half: queue one record; false (and counted) when only the
+/// reserved slots are left.
 pub fn record(at: Option<u32>, body: [u8; BODY_BYTES]) -> bool {
+    push(at, body, QUEUE - RESERVED)
+}
+
+/// As [`record`] for a feed's outcome, which may take a reserved slot. One
+/// feed runs at a time and its outcome is recorded once, before the writes
+/// it held off resume, so one slot is enough.
+pub fn record_outcome(at: Option<u32>, body: [u8; BODY_BYTES]) -> bool {
+    push(at, body, QUEUE)
+}
+
+fn push(at: Option<u32>, body: [u8; BODY_BYTES], limit: usize) -> bool {
     with(|shared| {
-        if shared.len == QUEUE {
+        if shared.len >= limit {
             shared.lost = shared.lost.saturating_add(1);
             return false;
         }

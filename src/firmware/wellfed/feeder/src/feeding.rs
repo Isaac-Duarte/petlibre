@@ -117,22 +117,31 @@ pub const FEED_BOUND_MS: u32 = CONFIG.optics_max_on_ms + 2000;
 
 /// Claims the outputs in `interlock` for one feed, before it is submitted,
 /// on the clock `now_ms` that `delay` advances. A storage write running or
-/// waiting gets its turn first (the loop waits for it, at most
+/// waiting, or a change `queued` in a mailbox, gets its turn first (the loop waits for it, at most
 /// `WRITE_WAIT_MS`). A join running or waiting, or a write still running
 /// past that wait, refuses the feed `Busy`, final for that write id (clients
 /// never retry a feed on their own); `held` hears why, for the log.
 pub fn claim_outputs(
     interlock: &Interlock,
+    queued: impl FnMut() -> bool,
     now_ms: impl FnMut() -> u32,
     delay: impl FnMut(u32),
     held: impl FnOnce(Held),
 ) -> Result<(), Refusal> {
     interlock
-        .claim_feed_after_writes(FEED_BOUND_MS, now_ms, delay)
+        .claim_feed_after_writes(FEED_BOUND_MS, queued, now_ms, delay)
         .map_err(|why| {
             held(why);
             Refusal::Busy
         })
+}
+
+/// Whether a client's change waits in a mailbox for the settings writer,
+/// which takes its write turn only on its next poll: a claim lets it go
+/// first, so the client hears its answer before the feed rather than after.
+pub fn writes_queued() -> bool {
+    use wellfed_sdk::hal::{keys, network, settings};
+    settings::pending().is_some() || network::saving() || keys::queued()
 }
 
 /// Whether the loop has a feed between its submission and its recorded
@@ -536,7 +545,7 @@ mod target {
             }
             // The feed id fits the event: `submit` refused any that does not.
             let feed = u32::try_from(current.feed).unwrap_or(u32::MAX);
-            crate::api::record_event(feed::fed(feed, &result, durability, current.by));
+            crate::api::record_outcome(feed::fed(feed, &result, durability, current.by));
             if status.state == OwnerState::Terminal {
                 owner.acknowledge(current.feed);
             }
@@ -573,7 +582,7 @@ mod target {
             // The journal holds the id under the high water `submit` checks.
             let number = u32::try_from(feed).unwrap_or(u32::MAX);
             let body = feed::fed(number, &status.result, Durability::Durable, Source::Feeder);
-            crate::api::record_event(body);
+            crate::api::record_outcome(body);
         }
 
         /// Hand one feed to the owner on `by`'s behalf: the number its
@@ -590,7 +599,7 @@ mod target {
             }
             let clock = wellfed_sdk::hal::sdk::uptime_ms;
             let delay = wellfed_sdk::hal::sdk::delay_ms;
-            super::claim_outputs(&INTERLOCK, clock, delay, |held| {
+            super::claim_outputs(&INTERLOCK, super::writes_queued, clock, delay, |held| {
                 record(Record::Held { portions, held });
             })?;
             let status = owner.status();

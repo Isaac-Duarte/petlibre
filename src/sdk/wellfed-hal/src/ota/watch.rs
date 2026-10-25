@@ -24,7 +24,7 @@ use wellfed_core::transport::{self as mqtt, Event, Session, Tick};
 use crate::flash::park::Mmio;
 use crate::flash_lock::arming::{self, Arming, Hooks, Poll};
 use crate::flash_lock::provider::Provider;
-use crate::interlock::{INTERLOCK, WriteStep, WriteTurn};
+use crate::interlock::{INTERLOCK, WRITER_POLL_MS, WriteStep, WriteTurn};
 use crate::net_status;
 use crate::ota::updater::Topic;
 use crate::sdk::{self, TcpRecv, TransportConfig};
@@ -33,6 +33,7 @@ use crate::trial;
 pub const CHECK_MS: u32 = 60_000;
 pub const ANSWER_MS: u32 = 5_000;
 pub const POLL_MS: u32 = 100;
+const _: () = assert!(POLL_MS <= WRITER_POLL_MS);
 pub const CONNECT_TIMEOUT_MS: u32 = 3000;
 
 /// Clearing bank 1's own marker; the target uses `sdk::bank1_give_way`.
@@ -167,6 +168,9 @@ pub struct Watch {
     arming: Arming,
     /// The give-way's wait for the write turn.
     turn: WriteTurn,
+    /// The write turn is held: from before arming, through the give-way,
+    /// until the restart.
+    holding: bool,
     rx: [u8; 2 * mqtt::MAX_PACKET],
     rx_len: usize,
 }
@@ -183,8 +187,25 @@ impl Watch {
             version: 0,
             arming: Arming::default(),
             turn: WriteTurn::new(),
+            holding: false,
             rx: [0; 2 * mqtt::MAX_PACKET],
             rx_len: 0,
+        }
+    }
+
+    /// The write turn, unless already held; false while a feed holds the
+    /// outputs.
+    fn take_turn(&mut self, now: u32) -> bool {
+        if !self.holding {
+            let stopped = || crate::stopped::observe().verified();
+            self.holding = self.turn.begin(&INTERLOCK, now, stopped) != WriteStep::Wait;
+        }
+        self.holding
+    }
+
+    fn give_turn(&mut self) {
+        if core::mem::take(&mut self.holding) {
+            INTERLOCK.end_write();
         }
     }
 
@@ -253,6 +274,11 @@ impl Watch {
                     return next(POLL_MS, None);
                 }
 
+                // The turn before arming: arming sets the attempt marker,
+                // which must not stay set through a wait for a feed.
+                if !self.take_turn(now) {
+                    return next(POLL_MS, None);
+                }
                 // SAFETY: the caller's contract.
                 match unsafe { self.arming.step::<M, H>(provider) } {
                     Poll::Pending(event) => next(arming::POLL_MS, event.map(Record::Arming)),
@@ -260,21 +286,24 @@ impl Watch {
                         self.stage = Stage::GiveWay;
                         next(arming::POLL_MS, Some(Record::Arming(event)))
                     }
-                    Poll::Failed(event) => self.end(Record::Arming(event)),
+                    Poll::Failed(event) => {
+                        self.give_turn();
+                        self.end(Record::Arming(event))
+                    }
                 }
             }
 
             Stage::GiveWay => {
                 // Not while a feed may move the outputs. Given way, the turn
                 // is kept until the restart, so no feed starts before it.
-                if self.turn.begin(&INTERLOCK, now) == WriteStep::Wait {
+                if !self.take_turn(now) {
                     return next(POLL_MS, None);
                 }
                 let ok = bank.give_way();
                 // The recovery boot must not find the attempt marker set.
                 arming::clear_attempt();
                 if !ok {
-                    INTERLOCK.end_write();
+                    self.give_turn();
                     return self.end(Record::Error {
                         stage: ErrorStage::GiveWay,
                     });

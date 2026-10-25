@@ -124,6 +124,11 @@ pub fn request(change: Change) -> Requested {
     Requested::Queued
 }
 
+/// Whether a change waits for the writer (queued or being written).
+pub fn queued() -> bool {
+    STATE.load(Ordering::Acquire) != Hand::Empty as u8
+}
+
 /// The ticket of the change `request` last queued.
 pub fn ticket() -> u32 {
     TICKET.load(Ordering::Acquire)

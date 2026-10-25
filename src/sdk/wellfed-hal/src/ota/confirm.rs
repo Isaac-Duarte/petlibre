@@ -5,9 +5,16 @@
 //! image has stayed healthy for `HEALTHY_MS` (the glue's test: transport
 //! ready, outputs verified stopped, startup probes finished), this arms the
 //! flash-lock hooks like the updater (`arming.rs`), erases the sector,
-//! programs the record and reads it back, in the write turn
-//! (`interlock`), so never while a feed may move the outputs. An image
-//! already confirmed does nothing. A torn or failed write leaves the image unconfirmed, which only
+//! programs the record and reads it back. It holds the write turn
+//! (`interlock`) from before arming to the write's end, so neither runs
+//! while a feed may move the outputs. An image already confirmed does
+//! nothing.
+//!
+//! On a trial boot no feed can be claimed before this write: the feeding
+//! owner opens only once the hooks are armed, this is the first arming of
+//! a trial boot (the settings writer starts only after the confirmation),
+//! and this holds the write turn across it. So a feed never delays the
+//! confirmation towards the trial deadline. A torn or failed write leaves the image unconfirmed, which only
 //! keeps KM0 counting.
 
 use core::fmt;
@@ -19,11 +26,12 @@ use wellfed_core::ota::{self, CONFIRM_LEN};
 use crate::flash::park::Mmio;
 use crate::flash_lock::arming::{self, Arming, Hooks, Poll};
 use crate::flash_lock::provider::Provider;
-use crate::interlock::{INTERLOCK, WriteStep, WriteTurn};
+use crate::interlock::{INTERLOCK, WRITER_POLL_MS, WriteStep, WriteTurn};
 use crate::sdk;
 use crate::trial::{self, CONFIRM_SECTOR};
 
 pub const POLL_MS: u32 = 500;
+const _: () = assert!(POLL_MS <= WRITER_POLL_MS);
 /// Continuous health before confirming.
 pub const HEALTHY_MS: u32 = 30_000;
 
@@ -142,9 +150,27 @@ pub struct Confirm {
     healthy_ms: u32,
     /// The write's wait for the write turn.
     turn: WriteTurn,
+    /// The write turn is held, from before arming to the write's end.
+    holding: bool,
 }
 
 impl Confirm {
+    /// The write turn, unless already held; false while a feed holds the
+    /// outputs.
+    fn take_turn(&mut self, now: u32) -> bool {
+        if !self.holding {
+            let stopped = || crate::stopped::observe().verified();
+            self.holding = self.turn.begin(&INTERLOCK, now, stopped) != WriteStep::Wait;
+        }
+        self.holding
+    }
+
+    fn give_turn(&mut self) {
+        if core::mem::take(&mut self.holding) {
+            INTERLOCK.end_write();
+        }
+    }
+
     fn end(&mut self, record: Record) -> Step {
         self.stage = Stage::Done;
         next(0, Some(record))
@@ -192,19 +218,28 @@ impl Confirm {
                 next(POLL_MS, None)
             }
 
-            // SAFETY: the caller's contract.
-            Stage::Arm => match unsafe { self.arming.step::<M, H>(provider) } {
-                Poll::Pending(event) => next(arming::POLL_MS, event.map(Record::Arming)),
-                Poll::Armed(event) => {
-                    self.stage = Stage::Write;
-                    next(arming::POLL_MS, Some(Record::Arming(event)))
+            Stage::Arm => {
+                // The turn before arming: arming sets the attempt marker,
+                // which must not stay set through a wait for a feed.
+                if !self.take_turn(now) {
+                    return next(POLL_MS, None);
                 }
-                Poll::Failed(event) => self.end(Record::Arming(event)),
-            },
+                // SAFETY: the caller's contract.
+                match unsafe { self.arming.step::<M, H>(provider) } {
+                    Poll::Pending(event) => next(arming::POLL_MS, event.map(Record::Arming)),
+                    Poll::Armed(event) => {
+                        self.stage = Stage::Write;
+                        next(arming::POLL_MS, Some(Record::Arming(event)))
+                    }
+                    Poll::Failed(event) => {
+                        self.give_turn();
+                        self.end(Record::Arming(event))
+                    }
+                }
+            }
 
             Stage::Write => {
-                // Not while a feed may move the outputs; still healthy after.
-                if self.turn.begin(&INTERLOCK, now) == WriteStep::Wait {
+                if !self.take_turn(now) {
                     return next(POLL_MS, None);
                 }
                 let record = ota::confirm_record(&trial::identity(), 0);
@@ -213,7 +248,7 @@ impl Confirm {
                     && flash.program(CONFIRM_SECTOR, 0, &record)
                     && flash.read(CONFIRM_SECTOR, 0, &mut readback)
                     && readback == record;
-                INTERLOCK.end_write();
+                self.give_turn();
 
                 // The attempt ended in order either way, so a later boot must not skip.
                 arming::clear_attempt();

@@ -242,7 +242,11 @@ impl Api {
         self.accept(now_ms, &mut record);
         self.receive(&mut record);
 
-        let feeding = feeds.feeding();
+        // No handshake while the outputs are claimed, not only while they
+        // move: an invite's join or a recovery enrolls a key, a store write
+        // that would wait out the feed, so the invite is redeemed (and the
+        // recovery code taken) only once it can be written.
+        let feeding = feeds.feeding() || INTERLOCK.outputs_claimed();
         let mut device = Feeder {
             boot,
             locked,
@@ -449,13 +453,24 @@ impl Default for Api {
 /// clock when it is valid: the server's, and those from elsewhere in the
 /// loop (the panel's lock, a feed's end).
 pub fn record_event(body: EventBody) {
+    queue_event(body, events::record);
+}
+
+/// As [`record_event`] for a feed's `Fed` event, which may take the queue's
+/// reserved slot.
+pub fn record_outcome(body: EventBody) {
+    queue_event(body, events::record_outcome);
+}
+
+// Generic, so each push is a direct call the stack audit follows.
+fn queue_event(body: EventBody, push: impl FnOnce(Option<u32>, [u8; BODY_BYTES]) -> bool) {
     let at = clock::health()
         .0
         .and_then(|clock| u32::try_from(clock.unix_ms / 1000).ok());
     let mut bytes = [0u8; BODY_BYTES];
     if wellfed_proto::encode(&body, &mut bytes).is_ok() {
         // A full queue is counted and recorded as lost.
-        let _ = events::record(at, bytes);
+        let _ = push(at, bytes);
     }
 }
 

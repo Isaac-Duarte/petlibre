@@ -271,7 +271,7 @@ fn a_signed_offer_for_another_build_gives_way_and_asks_for_a_restart() {
 }
 
 #[test]
-fn the_give_way_waits_for_a_feed_and_keeps_the_turn_until_the_restart() {
+fn arming_and_the_give_way_wait_for_a_feed_and_the_turn_is_kept_until_the_restart() {
     use wellfed_hal::interlock::{Held, INTERLOCK};
 
     let _guard = start();
@@ -282,6 +282,9 @@ fn the_give_way_waits_for_a_feed_and_keeps_the_turn_until_the_restart() {
     let (records, restart) = run(&mut watch, &mut broker, 200);
     assert!(!restart, "{records:?}");
     assert!(records.contains(&Record::Offer { version: 5 }));
+    // Arming waits too, so the attempt marker is not set through the feed.
+    assert!(!records.iter().any(|r| matches!(r, Record::Arming(_))));
+    assert_eq!(fake::with(|h| h.backup[MARKER_REGISTER as usize]), 0);
     assert_eq!(fake::with(|h| h.bank1[..8].to_vec()), MARKER.to_vec());
 
     INTERLOCK.release_feed();

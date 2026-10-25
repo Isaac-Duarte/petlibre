@@ -275,6 +275,7 @@ mod writes {
     ) -> Result<(), Held> {
         interlock.claim_feed_after_writes(
             BOUND_MS,
+            || false,
             || now.get(),
             |ms| {
                 now.set(now.get() + ms);
@@ -289,8 +290,8 @@ mod writes {
         let mut turn = WriteTurn::new();
         interlock.claim_feed(BOUND_MS).unwrap();
 
-        assert_eq!(turn.begin(&interlock, 100), WriteStep::Wait);
-        assert_eq!(turn.begin(&interlock, 300), WriteStep::Wait);
+        assert_eq!(turn.begin(&interlock, 100, || true), WriteStep::Wait);
+        assert_eq!(turn.begin(&interlock, 300, || true), WriteStep::Wait);
         assert!(!interlock.writing());
 
         // The release leaves the write marked waiting, so the next claim
@@ -300,7 +301,7 @@ mod writes {
         let mut taken = None;
         let result = claim(&interlock, &now, |at| {
             if at == 1000 + 2 * WRITE_POLL_MS {
-                taken = Some(turn.begin(&interlock, at));
+                taken = Some(turn.begin(&interlock, at, || true));
                 assert_eq!(interlock.claim_feed(BOUND_MS), Err(Held::Writing));
             }
             if at == 1000 + 5 * WRITE_POLL_MS {
@@ -325,7 +326,10 @@ mod writes {
     fn a_write_still_running_past_the_wait_refuses_the_feed() {
         let interlock = Interlock::new();
         let mut turn = WriteTurn::new();
-        assert_eq!(turn.begin(&interlock, 0), WriteStep::Go(WriteStart::Free));
+        assert_eq!(
+            turn.begin(&interlock, 0, || true),
+            WriteStep::Go(WriteStart::Free)
+        );
 
         let now = Cell::new(0);
         let waits = Cell::new(0);
@@ -346,7 +350,7 @@ mod writes {
         let interlock = Interlock::new();
         let mut turn = WriteTurn::new();
         interlock.claim_feed(BOUND_MS).unwrap();
-        assert_eq!(turn.begin(&interlock, 0), WriteStep::Wait);
+        assert_eq!(turn.begin(&interlock, 0, || true), WriteStep::Wait);
         interlock.release_feed();
 
         let now = Cell::new(0);
@@ -354,10 +358,13 @@ mod writes {
         assert_eq!(now.get(), WRITE_WAIT_MS);
 
         // It finds the new claim when it does ask, and waits again.
-        assert_eq!(turn.begin(&interlock, WRITE_WAIT_MS), WriteStep::Wait);
+        assert_eq!(
+            turn.begin(&interlock, WRITE_WAIT_MS, || true),
+            WriteStep::Wait
+        );
         interlock.release_feed();
         assert!(matches!(
-            turn.begin(&interlock, WRITE_WAIT_MS + 1),
+            turn.begin(&interlock, WRITE_WAIT_MS + 1, || true),
             WriteStep::Go(WriteStart::Waited { .. })
         ));
     }
@@ -368,10 +375,13 @@ mod writes {
         let mut turn = WriteTurn::new();
         interlock.claim_feed(BOUND_MS).unwrap();
 
-        assert_eq!(turn.begin(&interlock, 0), WriteStep::Wait);
-        assert_eq!(turn.begin(&interlock, BOUND_MS - 1), WriteStep::Wait);
+        assert_eq!(turn.begin(&interlock, 0, || true), WriteStep::Wait);
         assert_eq!(
-            turn.begin(&interlock, BOUND_MS),
+            turn.begin(&interlock, BOUND_MS - 1, || true),
+            WriteStep::Wait
+        );
+        assert_eq!(
+            turn.begin(&interlock, BOUND_MS, || true),
             WriteStep::Go(WriteStart::Forced { ms: BOUND_MS })
         );
         assert!(interlock.writing());
@@ -389,11 +399,14 @@ mod writes {
         let interlock = Interlock::new();
         let (mut first, mut second) = (WriteTurn::new(), WriteTurn::new());
 
-        assert_eq!(first.begin(&interlock, 0), WriteStep::Go(WriteStart::Free));
-        assert_eq!(second.begin(&interlock, 0), WriteStep::Wait);
+        assert_eq!(
+            first.begin(&interlock, 0, || true),
+            WriteStep::Go(WriteStart::Free)
+        );
+        assert_eq!(second.begin(&interlock, 0, || true), WriteStep::Wait);
         interlock.end_write();
         assert!(matches!(
-            second.begin(&interlock, 10),
+            second.begin(&interlock, 10, || true),
             WriteStep::Go(WriteStart::Waited { ms: 10 })
         ));
     }
@@ -405,7 +418,10 @@ mod writes {
         let clock = Clock::new();
 
         assert_eq!(clock.join(&interlock, |_| {}), JoinStart::Free);
-        assert_eq!(turn.begin(&interlock, 0), WriteStep::Go(WriteStart::Free));
+        assert_eq!(
+            turn.begin(&interlock, 0, || true),
+            WriteStep::Go(WriteStart::Free)
+        );
         interlock.end_join();
         assert_eq!(clock.join(&interlock, |_| {}), JoinStart::Free);
         interlock.end_join();
@@ -413,10 +429,128 @@ mod writes {
 
         // A join still refuses a feed at once, without the write wait.
         clock.join(&interlock, |_| {});
-        assert_eq!(turn.begin(&interlock, 0), WriteStep::Go(WriteStart::Free));
+        assert_eq!(
+            turn.begin(&interlock, 0, || true),
+            WriteStep::Go(WriteStart::Free)
+        );
         let now = Cell::new(0);
         assert_eq!(claim(&interlock, &now, |_| {}), Err(Held::Joining));
         assert_eq!(now.get(), 0);
+    }
+
+    #[test]
+    fn a_writer_that_misses_the_gap_is_timed_again_on_the_next_feed() {
+        let interlock = Interlock::new();
+        let mut turn = WriteTurn::new();
+        interlock.claim_feed(BOUND_MS).unwrap();
+        assert_eq!(turn.begin(&interlock, 0, || true), WriteStep::Wait);
+        assert_eq!(
+            turn.begin(&interlock, BOUND_MS - 10, || true),
+            WriteStep::Wait
+        );
+
+        // Feed A ends and feed B is claimed before the writer asks again
+        // (B passed the writer after its wait).
+        interlock.release_feed();
+        let now = Cell::new(BOUND_MS - 5);
+        let claimed = interlock.claim_feed_after_writes(
+            BOUND_MS,
+            || false,
+            || now.get(),
+            |ms| now.set(now.get() + ms),
+        );
+        assert_eq!(claimed, Ok(()));
+
+        // Past A's bound counted from the writer's first wait, but B's own
+        // claim is young: the writer waits, timed from when it saw B.
+        let at = BOUND_MS + WRITE_WAIT_MS;
+        assert_eq!(turn.begin(&interlock, at, || true), WriteStep::Wait);
+        assert_eq!(
+            turn.begin(&interlock, at + BOUND_MS - 1, || true),
+            WriteStep::Wait
+        );
+        assert!(matches!(
+            turn.begin(&interlock, at + BOUND_MS, || true),
+            WriteStep::Go(WriteStart::Forced { ms: BOUND_MS })
+        ));
+    }
+
+    #[test]
+    fn a_write_is_never_forced_into_moving_outputs() {
+        let interlock = Interlock::new();
+        let mut turn = WriteTurn::new();
+        interlock.claim_feed(BOUND_MS).unwrap();
+
+        assert_eq!(turn.begin(&interlock, 0, || false), WriteStep::Wait);
+        assert_eq!(
+            turn.begin(&interlock, 10 * BOUND_MS, || false),
+            WriteStep::Wait
+        );
+        assert!(!interlock.writing());
+        assert_eq!(interlock.status().writes_forced, 0);
+        assert!(matches!(
+            turn.begin(&interlock, 10 * BOUND_MS + 1, || true),
+            WriteStep::Go(WriteStart::Forced { .. })
+        ));
+    }
+
+    #[test]
+    fn work_queued_for_a_writer_delays_the_claim_until_it_is_written() {
+        let interlock = Interlock::new();
+        let queued = Cell::new(true);
+        let now = Cell::new(0);
+
+        // The writer takes the queued change, writes it and finishes it.
+        let claimed = interlock.claim_feed_after_writes(
+            BOUND_MS,
+            || queued.get(),
+            || now.get(),
+            |ms| {
+                now.set(now.get() + ms);
+                if now.get() == 200 {
+                    queued.set(false);
+                }
+            },
+        );
+        assert_eq!(claimed, Ok(()));
+        assert_eq!(now.get(), 200);
+        interlock.release_feed();
+
+        // Work that never moves is passed after the wait.
+        queued.set(true);
+        now.set(0);
+        let claimed = interlock.claim_feed_after_writes(
+            BOUND_MS,
+            || true,
+            || now.get(),
+            |ms| now.set(now.get() + ms),
+        );
+        assert_eq!(claimed, Ok(()));
+        assert_eq!(now.get(), WRITE_WAIT_MS);
+    }
+
+    #[test]
+    fn one_writers_turn_keeps_anothers_wait_marked() {
+        let interlock = Interlock::new();
+        let (mut first, mut second) = (WriteTurn::new(), WriteTurn::new());
+        interlock.claim_feed(BOUND_MS).unwrap();
+        assert_eq!(first.begin(&interlock, 0, || true), WriteStep::Wait);
+        assert_eq!(second.begin(&interlock, 0, || true), WriteStep::Wait);
+        interlock.release_feed();
+
+        assert!(matches!(
+            first.begin(&interlock, 5, || true),
+            WriteStep::Go(_)
+        ));
+        interlock.end_write();
+        // The second still waits: a new claim lets it go first.
+        assert_eq!(interlock.claim_feed(BOUND_MS), Err(Held::WriteWaiting));
+        assert!(matches!(
+            second.begin(&interlock, 6, || true),
+            WriteStep::Go(_)
+        ));
+        interlock.end_write();
+        assert_eq!(interlock.claim_feed(BOUND_MS), Ok(()));
     }
 
     /// Writes and feeds from two threads, as the service task and the loop:
@@ -436,7 +570,7 @@ mod writes {
             let mut turn = WriteTurn::new();
             let mut written = 0;
             while written < ROUNDS {
-                let WriteStep::Go(start) = turn.begin(&INTERLOCK, 0) else {
+                let WriteStep::Go(start) = turn.begin(&INTERLOCK, 0, || true) else {
                     thread::yield_now();
                     continue;
                 };
@@ -454,8 +588,12 @@ mod writes {
 
         let mut fed = 0;
         while !writes.is_finished() || fed == 0 {
-            let claimed =
-                INTERLOCK.claim_feed_after_writes(u32::MAX, || 0, |_| thread::yield_now());
+            let claimed = INTERLOCK.claim_feed_after_writes(
+                u32::MAX,
+                || false,
+                || 0,
+                |_| thread::yield_now(),
+            );
             if claimed.is_ok() {
                 FEEDING.store(true, Ordering::SeqCst);
                 if WRITING.load(Ordering::SeqCst) {

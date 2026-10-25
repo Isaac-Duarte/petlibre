@@ -640,3 +640,40 @@ fn every_store_write_waits_for_a_feed_and_completes_after_it() {
         after = Some(record.seq);
     }
 }
+
+/// Events pile up while a feed holds the outputs; the last slot is kept for
+/// the feed's own outcome, which is appended after the release with the rest.
+#[test]
+fn a_feeds_outcome_has_a_slot_however_many_events_pile_up() {
+    let (_guard, mut writer, mut provider) = start();
+    for _ in 0..4 {
+        step(&mut writer, &mut provider); // open, net open, keys, events
+    }
+    INTERLOCK.claim_feed(u32::MAX).unwrap();
+
+    let mut queued = 0_u8;
+    while events::record(None, [queued; 16]) {
+        queued += 1;
+    }
+    assert_eq!(usize::from(queued), events::QUEUE - events::RESERVED);
+    assert_eq!(events::take_lost(), 1);
+    assert!(
+        events::record_outcome(None, [0xfe; 16]),
+        "the outcome's slot"
+    );
+    assert!(!events::record_outcome(None, [0xff; 16]), "one slot");
+    step(&mut writer, &mut provider);
+    assert_eq!(events::last_seq(), None, "held off by the feed");
+
+    INTERLOCK.release_feed();
+    for _ in 0..events::QUEUE {
+        step(&mut writer, &mut provider);
+    }
+    assert_eq!(events::last_seq(), Some(u64::from(queued) + 1));
+    assert_eq!(events::read_result(Some(u64::from(queued))), None, "asked");
+    step(&mut writer, &mut provider);
+    let Some(Read::Record(last)) = events::read_result(Some(u64::from(queued))) else {
+        panic!("the outcome");
+    };
+    assert_eq!(last.body, [0xfe; 16]);
+}

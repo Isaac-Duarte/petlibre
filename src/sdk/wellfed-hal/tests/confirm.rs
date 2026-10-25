@@ -186,24 +186,23 @@ fn a_set_attempt_marker_skips() {
 }
 
 #[test]
-fn the_write_waits_for_a_feed_to_release_the_outputs() {
+fn arming_and_the_write_wait_for_a_feed_to_release_the_outputs() {
     let _guard = start();
     INTERLOCK.claim_feed(u32::MAX).unwrap();
     let mut confirm = Confirm::default();
 
-    // Healthy and armed, but a feed holds the outputs: nothing is written.
+    // Healthy, but a feed holds the outputs: not even arming starts, so the
+    // attempt marker is never left set through the wait.
     let records = run(&mut confirm, |_| true, 200);
-    assert!(
-        !records
-            .iter()
-            .any(|r| matches!(r, Record::Confirmed { .. })),
-        "{records:?}"
-    );
+    assert!(records.is_empty(), "{records:?}");
+    assert!(!FakeHooks::armed());
+    assert_eq!(fake::with(|h| h.backup[MARKER_REGISTER as usize]), 0);
     assert_eq!(fake::with(|h| h.storage_erases[CONFIRM_SECTOR as usize]), 0);
 
     INTERLOCK.release_feed();
     let records = run(&mut confirm, |_| true, 10);
     assert!(matches!(records.last(), Some(Record::Confirmed { .. })));
+    assert_eq!(fake::with(|h| h.backup[MARKER_REGISTER as usize]), 0);
     assert_eq!(confirmed(&record(), &identity()), Some(0));
     assert!(!INTERLOCK.writing(), "the turn is given back");
     assert_eq!(INTERLOCK.status().writes_deferred, 1);

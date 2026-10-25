@@ -338,12 +338,25 @@ impl Connection {
     /// Send one request under `id`; its answer, or its absence, comes from
     /// [`Self::poll_event`]. `id` may not be [`KEEPALIVE_ID`].
     pub fn request(&mut self, now: Instant, id: RequestId, op: &Op) -> Result<(), Error> {
+        self.request_within(now, id, op, self.timing.answer)
+    }
+
+    /// As [`Self::request`], for a request whose answer waits on someone
+    /// at the feeder (an update key's Dispense press): unanswered only
+    /// after `answer`.
+    pub fn request_within(
+        &mut self,
+        now: Instant,
+        id: RequestId,
+        op: &Op,
+        answer: Duration,
+    ) -> Result<(), Error> {
         if id == KEEPALIVE_ID {
             return Err(Error::ReservedId);
         }
         self.send_request(now, id, op)?;
         if !self.pending.iter().any(|(sent, _)| *sent == id) {
-            self.pending.push((id, now + self.timing.answer));
+            self.pending.push((id, now + answer));
         }
         Ok(())
     }

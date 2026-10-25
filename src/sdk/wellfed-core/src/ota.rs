@@ -9,6 +9,7 @@
 //! what to write and whether the result may be activated.
 
 pub mod image;
+pub mod install;
 pub mod offer;
 
 use ed25519_dalek::{Signature, VerifyingKey};
@@ -227,6 +228,26 @@ impl Writer {
                 let at = i * self.chunk;
                 (self.sector_offset + at, (len - at).min(self.chunk))
             })
+    }
+
+    /// Image bytes before the staged sector: written and read back.
+    pub fn written(&self) -> u32 {
+        self.sector_offset
+    }
+
+    /// Whether the chunk at `offset` is already in: in a sector written
+    /// before, or received into the staged one. A port that takes chunks
+    /// idempotently answers such a chunk without passing it on.
+    pub fn has(&self, offset: u32) -> bool {
+        if offset < self.sector_offset {
+            return true;
+        }
+        let at = offset - self.sector_offset;
+        let staged = matches!(self.phase, Phase::Receiving | Phase::Programming);
+        staged
+            && at < SECTOR_BYTES
+            && at.is_multiple_of(self.chunk)
+            && (self.phase == Phase::Programming || self.have & (1 << (at / self.chunk)) != 0)
     }
 
     /// The first chunk still to fetch, for a port that fetches one at a time.

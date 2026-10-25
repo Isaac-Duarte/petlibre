@@ -1,5 +1,6 @@
 //! Update signing, only ever of a frozen review: `wellfed-build keygen`
-//! and `wellfed-build sign`.
+//! and `wellfed-build sign`, and the statements the device API's update
+//! path takes (`downgrade`, `revoke`, `add-key`).
 //!
 //! The firmware accepts any image whose manifest the embedded key signed,
 //! so the signer is the last place a reviewed build can be swapped for an
@@ -18,12 +19,21 @@
 //! A public release needs an offline release key that never sits in a
 //! checkout; this tool does not create or hold one.
 //!
-//! The manifest bytes are `wellfed-core::ota`'s format, which the firmware
-//! verifies: a test pins them byte for byte.
+//! The manifest bytes are `wellfed-core::ota`'s formats, which the firmware
+//! verifies: tests pin them byte for byte. Version 2
+//! (`wellfed_core::ota::offer`) is what the device API takes: it names its
+//! key and its image kind. Version 1 stays only for builds that still fetch
+//! updates over MQTT, until that path is deleted.
+//!
+//! A statement binds what it allows: a downgrade names the feeder's identity
+//! key, the exact manifest and the floor it was made at; a key statement
+//! names the key it retires or adds. Only a key built into the firmware may
+//! sign a key statement, and the bench key is the only one built in.
 
 use std::path::Path;
 
 use ed25519_dalek::{Signer, SigningKey};
+use wellfed_core::ota::offer::{self, ImageKind as OfferKind, KeyId, Signed};
 use wellfed_core::ota::{self, MANIFEST_LEN, MARKER, Manifest};
 use wellfed_flash::evidence::review::frozen;
 use wellfed_flash::evidence::{Root, write_new};
@@ -89,6 +99,36 @@ impl Key {
     /// The public half, as the firmware embeds it.
     pub fn public(&self) -> [u8; 32] {
         self.0.verifying_key().to_bytes()
+    }
+
+    /// The id a version 2 manifest names this key by.
+    pub fn id(&self) -> KeyId {
+        offer::key_id(&self.public())
+    }
+
+    fn signed<const N: usize>(&self, body: &[u8; N]) -> Vec<u8> {
+        let mut out = body.to_vec();
+        out.extend_from_slice(&self.0.sign(body).to_bytes());
+        out
+    }
+
+    /// A downgrade statement: the feeder whose identity key is `device` may
+    /// install `manifest` while its floor is `floor`.
+    pub fn downgrade(&self, manifest: &[u8], device: &[u8; 32], floor: u32) -> Result<Vec<u8>> {
+        offer::parse_manifest(manifest)
+            .map_err(|error| Error::Refused(format!("Not a version 2 manifest: {error:?}")))?;
+        let digest = offer::manifest_digest(manifest);
+        Ok(self.signed(&offer::downgrade_body(&self.id(), device, &digest, floor)))
+    }
+
+    /// A key statement retiring `id` for good.
+    pub fn revoke(&self, id: &KeyId) -> Vec<u8> {
+        self.signed(&offer::revoke_body(&self.id(), id))
+    }
+
+    /// A key statement filling the release slot with `public`.
+    pub fn add_key(&self, public: &[u8; 32]) -> Vec<u8> {
+        self.signed(&offer::key_add_body(&self.id(), public))
     }
 }
 
@@ -174,26 +214,75 @@ impl Frozen {
             .filter(|p| !p.is_empty())
     }
 
-    /// Sign this image as `version`; the result is exactly what the
-    /// firmware parses.
+    /// Sign this image as `version` in the version 1 format that builds
+    /// still on MQTT fetch; the result is exactly what they parse.
     pub fn sign(&self, key: &Key, version: u32, motion: Motion) -> Result<[u8; MANIFEST_LEN]> {
+        self.attended(motion)?;
+        manifest(&key.0, &self.image, version, self.build_id)
+    }
+
+    /// Sign this image as `version` for the device API: a version 2
+    /// manifest naming `key` and the image's kind.
+    pub fn offer(
+        &self,
+        key: &Key,
+        version: u32,
+        motion: Motion,
+    ) -> Result<[u8; offer::MANIFEST_LEN]> {
+        self.attended(motion)?;
+        let kind = match self.kind {
+            ImageKind::Build => OfferKind::Replacement,
+            ImageKind::Stock => OfferKind::Stock,
+        };
+        let manifest = bank_manifest(&self.image, version, self.build_id)?;
+        let signed = Signed {
+            manifest,
+            kind,
+            key_id: key.id(),
+        };
+        let body = offer::manifest_body(&signed);
+        let mut out = [0u8; offer::MANIFEST_LEN];
+        out[..body.len()].copy_from_slice(&body);
+        out[body.len()..].copy_from_slice(&key.0.sign(&body).to_bytes());
+        Ok(out)
+    }
+
+    /// The bank contents a manifest names: the image without its OTA
+    /// container's header.
+    pub fn payload(&self) -> &[u8] {
+        self.image.get(CONTAINER_HEADER..).unwrap_or_default()
+    }
+
+    fn attended(&self, motion: Motion) -> Result<()> {
         if let Some(policy) = self.motion_policy() {
             require(
                 motion == Motion::Attended(policy),
                 format!("Image drives the motor ({policy}); sign it only attending that policy"),
             )?;
         }
-        manifest(&key.0, &self.image, version, self.build_id)
+        Ok(())
     }
 }
 
-/// Sign `container`'s bank contents in `wellfed-core::ota`'s format.
+/// Sign `container`'s bank contents in `wellfed-core::ota`'s version 1
+/// format.
 fn manifest(
     key: &SigningKey,
     container: &[u8],
     version: u32,
     build_id: [u8; 32],
 ) -> Result<[u8; MANIFEST_LEN]> {
+    let manifest = bank_manifest(container, version, build_id)?;
+    let body = ota::manifest_body(&manifest);
+    let mut out = [0u8; MANIFEST_LEN];
+    out[..body.len()].copy_from_slice(&body);
+    out[body.len()..].copy_from_slice(&key.sign(&body).to_bytes());
+    Ok(out)
+}
+
+/// The manifest fields of `container`'s bank contents, refusing what the
+/// firmware would refuse.
+fn bank_manifest(container: &[u8], version: u32, build_id: [u8; 32]) -> Result<Manifest> {
     require(
         container.len() > CONTAINER_HEADER + MARKER.len(),
         "Image too short",
@@ -210,17 +299,13 @@ fn manifest(
         "Image outside the reviewed bank-1 size bound",
     )?;
 
-    let body = ota::manifest_body(&Manifest {
+    Ok(Manifest {
         version,
         image_len,
         target_bank: 1,
         image_sha256: Sha256::digest(payload).into(),
         build_id,
-    });
-    let mut out = [0u8; MANIFEST_LEN];
-    out[..body.len()].copy_from_slice(&body);
-    out[body.len()..].copy_from_slice(&key.sign(&body).to_bytes());
-    Ok(out)
+    })
 }
 
 fn id_bytes(text: &str) -> Result<[u8; 32]> {
@@ -325,6 +410,60 @@ mod tests {
         assert_eq!(
             fs::metadata(&path).unwrap().permissions().mode() & 0o777,
             0o600
+        );
+    }
+
+    /// The device API's manifest and statements, through the firmware's
+    /// own checks.
+    #[test]
+    fn a_version_2_offer_and_its_statements_pass_the_firmware_s_checks() {
+        use wellfed_core::ota::offer::{
+            Context, KeyRing, KeyStatement, OfferError, Trust, admit_offer, admit_statement,
+        };
+
+        let key = Key(SigningKey::from_bytes(&[5; 32]));
+        let (checkout, review) = freeze(&build_image(), None);
+        let frozen = Frozen::open(checkout.path(), &review).unwrap();
+        let signed = frozen.offer(&key, 9, Motion::Refused).unwrap();
+        assert_eq!(
+            frozen.payload().len(),
+            build_image().len() - CONTAINER_HEADER
+        );
+
+        let built_in = [key.public()];
+        let device = [0x42; 32];
+        let context = |floor| Context {
+            ring: KeyRing {
+                built_in: &built_in,
+                added: None,
+                enrolled: &[],
+                revoked: &[],
+            },
+            floor,
+            device,
+            running: [0; 32],
+        };
+        let admitted = admit_offer(&signed, None, &context(8)).unwrap();
+        assert_eq!(admitted.trust, Trust::BuiltIn);
+        assert_eq!(admitted.signed.kind, OfferKind::Replacement);
+        assert_eq!(hex::encode(&admitted.signed.manifest.build_id), BUILD);
+
+        assert_eq!(
+            admit_offer(&signed, None, &context(9)),
+            Err(OfferError::Downgrade)
+        );
+        let statement = key.downgrade(&signed, &device, 9).unwrap();
+        assert!(admit_offer(&signed, Some(&statement), &context(9)).is_ok());
+        assert!(key.downgrade(&[0; 10], &device, 9).is_err());
+
+        let ring = context(0).ring;
+        assert_eq!(
+            admit_statement(&key.revoke(&[7; 8]), &ring),
+            Ok(KeyStatement::Revoke([7; 8]))
+        );
+        assert_eq!(
+            admit_statement(&key.add_key(&[8; 32]), &ring),
+            Ok(KeyStatement::Add([8; 32]))
         );
     }
 

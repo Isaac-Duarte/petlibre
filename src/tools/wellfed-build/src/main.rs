@@ -85,7 +85,8 @@ enum Command {
         output: PathBuf,
     },
     /// Sign a frozen review's image as an update manifest, refusing an
-    /// image that differs from its review.
+    /// image that differs from its review: version 2 for the device API,
+    /// or version 1 for builds that still fetch updates over MQTT.
     Sign {
         #[arg(long, default_value = signing::KEY_PATH)]
         key: PathBuf,
@@ -103,7 +104,56 @@ enum Command {
         /// New file for the signed manifest.
         #[arg(long)]
         output: PathBuf,
+        /// The manifest format.
+        #[arg(long, value_enum, default_value_t = Format::Device)]
+        format: Format,
     },
+    /// Sign a downgrade statement: the feeder with this identity key may
+    /// install this version 2 manifest while its floor is `floor`. Stock
+    /// always needs one, as does any version at or below the floor.
+    Downgrade {
+        #[arg(long, default_value = signing::KEY_PATH)]
+        key: PathBuf,
+        #[arg(long)]
+        manifest: PathBuf,
+        /// The feeder's identity key, 64 hex characters (mDNS TXT `id=`).
+        #[arg(long)]
+        device: String,
+        /// The feeder's `min_version` now (`wellfed-bench ota` reads it).
+        #[arg(long)]
+        floor: u32,
+        #[arg(long)]
+        output: PathBuf,
+    },
+    /// Sign a key statement retiring an update key id for good.
+    Revoke {
+        #[arg(long, default_value = signing::KEY_PATH)]
+        key: PathBuf,
+        /// The key id to retire, 16 hex characters.
+        #[arg(long)]
+        key_id: String,
+        #[arg(long)]
+        output: PathBuf,
+    },
+    /// Sign a key statement filling the firmware's release slot with a key.
+    AddKey {
+        #[arg(long, default_value = signing::KEY_PATH)]
+        key: PathBuf,
+        /// The Ed25519 public key to add, 64 hex characters.
+        #[arg(long)]
+        public: String,
+        #[arg(long)]
+        output: PathBuf,
+    },
+}
+
+/// Which manifest `sign` writes.
+#[derive(Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum Format {
+    /// Version 2, which the device API takes.
+    Device,
+    /// Version 1, for builds still fetching updates over MQTT.
+    Mqtt,
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -213,7 +263,12 @@ fn run(command: Command) -> Result<()> {
             // default key lands where builds read it from any directory.
             let output = repo.root.join(output);
             let public = signing::keygen(&output)?;
-            println!("Wrote bench key {}; public key {public}", output.display());
+            let id = Key::load(&output)?.id();
+            println!(
+                "Wrote bench key {}; public key {public}, key id {}",
+                output.display(),
+                wellfed_formats::hex::encode(&id)
+            );
         }
         Command::Sign {
             key,
@@ -221,17 +276,72 @@ fn run(command: Command) -> Result<()> {
             version,
             attended_motion,
             output,
+            format,
         } => {
             let motion = attended_motion
                 .as_deref()
                 .map_or(Motion::Refused, Motion::Attended);
             let (key, output) = (repo.root.join(key), repo.root.join(output));
             let frozen = Frozen::open(&repo.root, &repo.root.join(review))?;
-            let manifest = frozen.sign(&Key::load(&key)?, version, motion)?;
+            let key = Key::load(&key)?;
+            let manifest = match format {
+                Format::Device => frozen.offer(&key, version, motion)?.to_vec(),
+                Format::Mqtt => frozen.sign(&key, version, motion)?.to_vec(),
+            };
             wellfed_flash::evidence::write_new(&output, &manifest)?;
             println!(
                 "Signed version {version} of build {} in {}",
                 frozen.build_id(),
+                output.display()
+            );
+        }
+        Command::Downgrade {
+            key,
+            manifest,
+            device,
+            floor,
+            output,
+        } => {
+            let device = wellfed_formats::hex::decode::<32>(&device).ok_or_else(|| {
+                wellfed_build::Error::Refused("--device is not 64 hex characters".into())
+            })?;
+            let manifest = std::fs::read(repo.root.join(manifest))?;
+            let key = Key::load(&repo.root.join(key))?;
+            let statement = key.downgrade(&manifest, &device, floor)?;
+            let output = repo.root.join(output);
+            wellfed_flash::evidence::write_new(&output, &statement)?;
+            println!(
+                "Signed a downgrade at floor {floor} in {}",
+                output.display()
+            );
+        }
+        Command::Revoke {
+            key,
+            key_id,
+            output,
+        } => {
+            let id = wellfed_formats::hex::decode::<8>(&key_id).ok_or_else(|| {
+                wellfed_build::Error::Refused("--key-id is not 16 hex characters".into())
+            })?;
+            let statement = Key::load(&repo.root.join(key))?.revoke(&id);
+            let output = repo.root.join(output);
+            wellfed_flash::evidence::write_new(&output, &statement)?;
+            println!("Signed the retirement of {key_id} in {}", output.display());
+        }
+        Command::AddKey {
+            key,
+            public,
+            output,
+        } => {
+            let added = wellfed_formats::hex::decode::<32>(&public).ok_or_else(|| {
+                wellfed_build::Error::Refused("--public is not 64 hex characters".into())
+            })?;
+            let statement = Key::load(&repo.root.join(key))?.add_key(&added);
+            let output = repo.root.join(output);
+            wellfed_flash::evidence::write_new(&output, &statement)?;
+            println!(
+                "Signed adding key id {} in {}",
+                wellfed_formats::hex::encode(&wellfed_core::ota::offer::key_id(&added)),
                 output.display()
             );
         }

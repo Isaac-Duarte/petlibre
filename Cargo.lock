@@ -2329,12 +2329,15 @@ dependencies = [
 name = "wellfed-client"
 version = "0.1.0"
 dependencies = [
+ "ed25519-dalek",
  "jiff",
  "wellfed-core",
  "wellfed-feeder",
  "wellfed-model",
  "wellfed-proto",
  "wellfed-session",
+ "wellfed-testkit",
+ "sha2 0.10.9",
  "thiserror",
 ]
 

@@ -16,8 +16,7 @@ use wellfed_core::flash_coord::FlashCoord;
 
 use crate::adc;
 use crate::sdk::board::{
-    ADAPTER, ADC_BATTERY, ADC_CURRENT, ADC_SUPPLY, FEEDBACK, FOOD, IR_PA, IR_PB, MOTOR_A, MOTOR_B,
-    OUTLET, bit,
+    ADAPTER, ADC_BATTERY, ADC_CURRENT, ADC_SUPPLY, FEEDBACK, FOOD, IR_PA, IR_PB, OUTLET, bit,
 };
 use crate::sdk::{self, GPIO_PORT_A, IrqGuard};
 
@@ -194,10 +193,7 @@ impl Board {
             return false;
         }
 
-        // Preload before output enable; actual reset/ROM-init behavior needs measurement.
-        sdk::gpio_port_write(GPIO_PORT_A, MOTOR_MASK, MOTOR_MASK);
-        sdk::gpio_init(MOTOR_A, true);
-        sdk::gpio_init(MOTOR_B, true);
+        crate::stopped::enable_motor_stopped();
         // The pins read this fixed-address board while it is opened.
         let pins = BoardPins(ptr::from_mut(self));
         let motor_ok = self.motor.init(pins, deadtime_ms, lease_ms, now_ms);

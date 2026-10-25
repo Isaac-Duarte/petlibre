@@ -1,6 +1,6 @@
 # Motor driver and FW30 electrical checks
 
-Status: FW30 in progress. The ROM-loader and firmware STOP states are measured. The emitter OFF levels, transients and repeated resets remain.
+Status: FW30 in progress. The ROM-loader and firmware STOP states are measured, and a startup drive pulse was found at the motor and fixed. The emitter OFF levels, the power-on flicker with the inputs probed, and resets remain.
 
 ## Driver
 
@@ -47,6 +47,22 @@ In the ROM loader the driver is in **standby**: both inputs are held low by its 
 
 Under the replacement firmware's STOP, both inputs are driven HIGH and both outputs are held at 0 V, which is the driver's **brake**. This is the first electrical confirmation that stopped-output startup reaches the driver, and that its STOP is brake, not drive. Both inputs are equal in this state, so it does not show which GPIO drives INA and which INB.
 
+### Startup transients at the motor (October 24)
+
+Logic analyzer at 2 MHz, `--probes outputs`: D2 and D3 on the legs of the motor's suppression capacitor (which join its two terminals), GND on the bench ground rail. Captures and reports are in the ignored `private/captures/fw30-outputs-*` and `private/reports/`.
+
+| Session | Build | Cycles | After power-on |
+| --- | --- | --- | --- |
+| `check-01`, `check-02` | `feeder` before the fix | 4 boots | About 100 ms both HIGH (standby, outputs undriven), then **104.5–105 µs with D3 HIGH and D2 LOW** in every cycle, then both LOW (brake) |
+| `check-03`, `boot-50` | `feeder` v154 (`e5b5c1dd…`) | 51 boots | 98–111 ms standby, then straight to brake. No differing read after the first millisecond in any cycle |
+| `loader-50` | ROM loader | 50 entries | Standby (both HIGH) throughout |
+
+**The 105 µs pulse was a real drive at every boot (physical; cause by static analysis).** Stopped startup preloaded both latches HIGH, then enabled the two pins as outputs one `gpio_init` call at a time, so PA13 drove HIGH while PA14 still read LOW through the driver's pull-down. The motor's winding joins the two leads, so one cannot sit at 5 V while the other is at 0 V unless the driver holds it there. Startup now enables both pins LOW (standby) and writes STOP to both in one port write (`stopped::enable_motor_stopped`); a host test fails on the old order. The pulse is absent from all 51 boots since.
+
+**Power-on flicker (physical; not attributable to our code).** Within the first ~0.3 ms after the relay closes, the two outputs read differently for 0.5–11.5 µs in 39 of 50 boots, and for up to 110 µs in the loader, where no application code runs and the inputs read 0 V on a meter. The supply and the relay contacts are still settling then.
+
+**Limit of outputs-only captures.** Before power-on, with the board unpowered and still discharging after the previous loader cycle (2 s off), the two leads read differently for up to 39 ms. They are joined by the winding and nothing powers the driver, so this is the analyzer's two channels resolving one common level near their threshold differently. A differing read is therefore proof of drive only when the levels are firm. The power-on flicker happens during that kind of ramp, so the outputs alone cannot call it drive or noise; the inputs, which are always driven or pulled down, can.
+
 ## Emitter test points
 
 CON1 (silkscreen 余粮红外, "remaining-food infrared") carries the food-level sensor, with TP20 and TP21 beside it near Q5. CON2 carries the outlet sensor, with TP22 beside it. The `fw13-optics-v2` image (5 s windows) holds each emitter state long enough to read a meter.
@@ -64,13 +80,15 @@ The food emitter's OFF state is therefore confirmed electrically: TP20 at 3.3 V,
 ## Remaining for FW30
 
 1. **Outlet emitter OFF level (PB3):** find a node that follows PB3 (the outlet sensor's connector pins or its own test points). Emitter current for both emitters (the FNB58 would give it from supply current).
-2. **Transients:** across relay power-ons, resets and loader entries, between power-up and our stopped startup. A meter cannot catch these. Tooling is ready for the owner's 24 MHz fx2lafw analyzer:
-   1. Install `sigrok-cli`.
+2. **Transients:** the boot pulse is fixed and the outputs are clean after the first millisecond ([above](#startup-transients-at-the-motor-october-24)). Left: the power-on flicker, with all four lines probed (micro IC hooks on pins 2, 3, 8 and 5), and resets. Use `--off-seconds 10` for loader sessions so the board has discharged before each capture starts. The procedure:
+   1. Install `sigrok-cli` and the `fx2lafw` firmware (Arch: `sigrok-firmware-fx2lafw`); without it the clone enumerates but cannot open.
    2. Wire D0 to INA (pin 2), D1 to INB (pin 3), D2 to OUTA (pin 8), D3 to OUTB (pin 5), and analyzer GND to board GND. Check the analyzer's input rating before connecting the 5 V outputs.
    3. Run `wellfed-bench transients NAME --cycles 50` and `--mode loader`.
    4. Audit with `wellfed-audit transients --capture private/captures/NAME --output NEW-REPORT`.
 
    A pass needs, on every cycle: an unpowered start, no sample with INA ≠ INB or OUTA ≠ OUTB, and the brake reached and held after boot, or standby held throughout a loader entry.
+
+   **Outputs only:** the driver's pins are 1.27 mm apart, too close for ordinary hooks. `--probes outputs` records only D2 and D3 at the motor (on its terminals, or on the suppression capacitor's legs where glue covers the tabs: the curved leg on the blue-lead side to D2, the straight leg to D3; which of them is OUTA is not traced, and the check does not depend on it), with analyzer GND on the bench ground rail. The motor turns only while those two differ, but near the analyzer's threshold one common level can read differently on the two channels ([above](#startup-transients-at-the-motor-october-24)), so a differing read during a supply ramp needs the inputs to settle. In standby the outputs are undriven and read at the analyzer's floating level (HIGH on the owner's clone, whose unconnected channels also read HIGH), so the audit does not claim the brake reached, or the power-on edge. The report records `probed: outputs` and what was not seen, and the polarity item stays open.
 3. **Polarity:** confirm the stock-derived polarity electrically, by tracing PA13/PA14 to INA/INB.
 
 Probe pins 2–4 at the tip of each foot. Pin 3 (INB) is next to pin 4 (VDD), and bridging them drives INB high, which with INA low is reverse drive.

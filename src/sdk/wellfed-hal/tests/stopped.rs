@@ -11,10 +11,41 @@ fn check_preloaded() {
     fake::with(|h| {
         assert_ne!(h.lp_function & wellfed_hal::sdk::GPIO_ENABLE_BIT, 0);
         assert_ne!(h.lp_clock & wellfed_hal::sdk::GPIO_ENABLE_BIT, 0);
-        assert_eq!(h.output[0] & PA_MASK, MOTOR_MASK);
+        assert_eq!(h.output[0] & sdk::IR_PA_BIT, 0);
         assert_eq!(h.output[1] & PB_MASK, 0);
         assert_eq!(h.interrupts, 1);
     });
+    check_never_driven();
+}
+
+/// What the driver sees on each motor input: the latch while the pin is an
+/// output, otherwise LOW through the driver's pull-down. Equal is standby or
+/// brake; unequal is drive.
+fn check_never_driven() {
+    fake::with(|h| {
+        let seen = h.output[0] & h.direction[0] & MOTOR_MASK;
+        assert!(seen == 0 || seen == MOTOR_MASK, "motor driven: {seen:#x}");
+    });
+}
+
+#[test]
+fn startup_reaches_stop_through_standby_only() {
+    for (latch, direction) in [
+        (0, 0),
+        (MOTOR_MASK, 0),
+        (MOTOR_MASK, MOTOR_MASK),
+        (0, MOTOR_MASK),
+    ] {
+        fake::reset_hardware();
+        fake::with(|h| {
+            h.output[0] = latch;
+            h.direction[0] = direction;
+            h.gpio_init_hook = Some(check_never_driven);
+            h.output_hook = Some(check_never_driven);
+        });
+
+        assert!(stopped::initialize().verified());
+    }
 }
 
 #[test]

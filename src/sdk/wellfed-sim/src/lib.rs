@@ -93,8 +93,12 @@ pub struct Simulation<'a> {
 
     // `armed`: a `cut` or `power_cut` was sent, so a worker power cut is expected.
     // `reserved`: a reservation write ended ok and no finish write has ended since.
+    // `stopped`: this boot has requested STOP. Startup clears the motor latches
+    // while the pins are still inputs, so LOW/LOW before the first STOP is the
+    // driver's standby, not an invalid request.
     armed: bool,
     reserved: bool,
+    stopped: bool,
     phase: StoragePhase,
 }
 
@@ -119,6 +123,7 @@ impl<'a> Simulation<'a> {
             assertions: Vec::new(),
             armed: false,
             reserved: false,
+            stopped: false,
             phase: StoragePhase::None,
         })
     }
@@ -176,7 +181,8 @@ impl<'a> Simulation<'a> {
                     if matches!(motor, 1 | 2) {
                         self.invariant("reservation_before_drive", self.reserved);
                     }
-                    self.invariant("valid_motor_pair", motor != 3);
+                    self.stopped |= motor == 0;
+                    self.invariant("valid_motor_pair", motor != 3 || !self.stopped);
                 }
 
                 Event::Status(status) => {
@@ -236,6 +242,7 @@ impl<'a> Simulation<'a> {
         }
         self.armed = false;
         self.reserved = false;
+        self.stopped = false;
         self.phase = StoragePhase::None;
     }
 

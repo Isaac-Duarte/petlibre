@@ -7,6 +7,19 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
+**October 24, night: FW30 motor-output transients with the logic analyzer (physical, no intended motion; uncommitted).**
+- **Analyzer:** a 24 MHz fx2lafw clone (labelled CH0–CH7), which needed `sigrok-firmware-fx2lafw`. The driver's 1.27 mm pins took no ordinary hook, so it is clipped at the motor: CH2 on the suppression capacitor's curved leg (blue-lead side), CH3 on its straight leg, GND on the bench ground rail. New: `wellfed-bench transients --probes outputs`, and an outputs-only mode in `wellfed-audit transients` (`probed: outputs`, with what it cannot see).
+- **Found and fixed:** a 104.5–105 µs drive pulse across the motor about 100 ms into every boot (4 of 4 cycles). Stopped startup enabled PA13 and PA14 as outputs one call at a time with both latches HIGH. `stopped::enable_motor_stopped` (also used by `Board::open_outputs`) now enables both LOW and writes STOP in one port write; a HAL test fails on the old order. The simulator allows LOW/LOW before a boot's first STOP. `make check` passed (927 tests).
+- **Installed:** `ota fw30-brake-01 --build --firmware feeder`, v154 `e5b5c1dd…`, confirmed on bank 1 (bounded `serve` and hotspot, both stopped afterwards).
+- **Runs:** `fw30-outputs-boot-50` on v154: no differing read after the first millisecond in any of 50 boots; a power-on flicker of 0.5–11.5 µs in 39. `fw30-outputs-loader-50`: the same flicker at power-on (up to 110 µs) with no application code, and up to 39 ms of differing reads while the board was unpowered and discharging. The two channels resolve one level near threshold differently, so outputs-only captures cannot classify the flicker; both audits report `transients_fail` on it ([motor driver](docs/devices/plaf103/motor-driver.md#startup-transients-at-the-motor-october-24)).
+- **Bench mistake:** a cancelled `transients` run had already started and left relay 1 on, while I told the owner the feeder was off. Check `wellfed-bench status` after any interruption.
+- **Flash now:**
+  - **Bank 1:** `feeder` v154 `e5b5c1dd…` (confirmed).
+  - **Bank 0:** `feeder` `262a9f37…`.
+  - **Next manifest version:** 155.
+- **Bench state:** feeder off, analyzer clipped at the motor, hotspot down, no server.
+- **Next:** micro IC hooks (SDK08) arrive Wednesday: probe INA, INB, OUTA and OUTB at U7 and rerun 50 boots and 50 loader entries with `--off-seconds 10`. Meanwhile, the PB3 outlet-emitter OFF level with the meter.
+
 **October 24, late evening: bank-0 Wi-Fi fault investigation, parked (physical, no motion; committed, not pushed).**
 - **Experiments:**
   - Back power: stopped after one run, because a fault followed a warm give-way, with no power-off.

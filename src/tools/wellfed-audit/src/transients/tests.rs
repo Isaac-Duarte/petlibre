@@ -5,7 +5,14 @@ use serde_json::{Value, json};
 use super::*;
 use TransientMode::{Boot, Loader};
 
-const CH: [u8; 4] = [0, 1, 2, 3];
+const DRIVER: Probes = Probes {
+    inputs: Some([0, 1]),
+    outputs: [2, 3],
+};
+const OUTPUTS: Probes = Probes {
+    inputs: None,
+    outputs: [2, 3],
+};
 const OFF: u8 = 0b0000;
 const BRAKE: u8 = 0b0011;
 const FWD: u8 = 0b0001;
@@ -22,7 +29,7 @@ fn capture(segments: &[(u8, usize)]) -> Vec<u8> {
 }
 
 fn check(data: &[u8], mode: TransientMode) -> Value {
-    serde_json::to_value(check_cycle(data, &CH, mode, RATE)).unwrap()
+    serde_json::to_value(check_cycle(data, &DRIVER, mode, RATE)).unwrap()
 }
 
 fn verify(capture: &Path) -> Result<Value> {
@@ -132,11 +139,71 @@ fn session_summary_and_integrity() {
         verify(d)
             .unwrap_err()
             .to_string()
-            .contains("four distinct channels")
+            .contains("distinct channels")
     );
 
     manifest["cycles"][0]["file"] = json!("../outside.bin");
     manifest["channels"] = json!({"ina": 0, "inb": 1, "outa": 2, "outb": 3});
     fs::write(d.join("manifest.json"), manifest.to_string()).unwrap();
     assert!(verify(d).is_err());
+}
+
+#[test]
+fn outputs_alone_check_only_the_drive() {
+    let outputs =
+        |data: &[u8], mode| serde_json::to_value(check_cycle(data, &OUTPUTS, mode, RATE)).unwrap();
+
+    // The input bits are not probed, so their noise is ignored, and no brake
+    // time can be read from the outputs.
+    let r = outputs(
+        &capture(&[(OFF, 100), (BRAKE, 100), (FWD, 3), (OFF, 100)]),
+        Boot,
+    );
+    assert_eq!(
+        (&r["outcome"], &r["brake_at_s"]),
+        (&json!("pass"), &Value::Null)
+    );
+    assert_eq!(r["input_drive"], json!([]));
+
+    let r = outputs(&capture(&[(OFF, 10), (0b1000, 4), (OFF, 10)]), Loader);
+    assert_eq!(
+        (&r["outcome"], &r["output_drive"][0]["high"]),
+        (&json!("transients_output_drive"), &json!("outb"))
+    );
+}
+
+#[test]
+fn an_outputs_only_session_says_what_it_did_not_see() {
+    let tmp = tempfile::tempdir().unwrap();
+    let d = tmp.path();
+    let data = capture(&[(OFF, 3000)]);
+    fs::write(d.join("cycle-001.bin"), &data).unwrap();
+
+    let mut manifest = json!({"schema_version": 1, "mode": "boot", "samplerate": 1_000_000, "seconds": 8,
+        "arming_seconds": 3.0, "channels": {"outa": 2, "outb": 3},
+        "cycles": [{"file": "cycle-001.bin", "bytes": data.len(), "power_on_after_launch_s": 3.2}]});
+    fs::write(d.join("manifest.json"), manifest.to_string()).unwrap();
+
+    let report = verify(d).unwrap();
+    assert_eq!(
+        (&report["outcome"], &report["probed"]),
+        (&json!("pass"), &json!("outputs"))
+    );
+    assert!(
+        report["not_probed"]
+            .as_str()
+            .unwrap()
+            .contains("not probed")
+    );
+
+    // One input without the other, or an unknown line, is refused.
+    for channels in [
+        json!({"ina": 0, "outa": 2, "outb": 3}),
+        json!({"outa": 2, "outb": 2}),
+        json!({"outa": 2, "outb": 3, "power": 4}),
+    ] {
+        manifest["channels"] = channels;
+        fs::write(d.join("manifest.json"), manifest.to_string()).unwrap();
+        assert!(verify(d).is_err());
+    }
 }

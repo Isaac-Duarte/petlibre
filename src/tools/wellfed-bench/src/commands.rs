@@ -43,8 +43,9 @@ const FRAME_TX_BYTES: u64 = 1056;
 /// before power-on so the unpowered state is recorded first; the first open
 /// also uploads the analyzer's firmware, which takes about a second.
 const ANALYZER_ARMING_SECONDS: f64 = 3.0;
-const ANALYZER_DEFAULT_CHANNELS: [(&str, u8); 4] =
+const ANALYZER_DRIVER_CHANNELS: [(&str, u8); 4] =
     [("ina", 0), ("inb", 1), ("outa", 2), ("outb", 3)];
+const ANALYZER_OUTPUT_CHANNELS: [(&str, u8); 2] = [("outa", 2), ("outb", 3)];
 
 const STOPPED_POWERED: &str =
     "Stopped without retry; the feeder stays powered. Inspect the evidence.";
@@ -134,6 +135,16 @@ pub enum TransientMode {
     Loader,
 }
 
+/// Which driver lines the analyzer is clipped to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum Probes {
+    /// INA, INB, OUTA and OUTB on D0-D3, at the driver's pins.
+    Driver,
+    /// OUTA and OUTB only, on D2 and D3: the motor's own terminals take
+    /// ordinary hooks where the driver's 1.27 mm pins do not.
+    Outputs,
+}
+
 #[derive(Debug, Clone, Args)]
 pub struct TransientArgs {
     /// Session name under private/captures/.
@@ -142,6 +153,8 @@ pub struct TransientArgs {
     pub cycles: u32,
     #[arg(long, value_enum, default_value = "boot")]
     pub mode: TransientMode,
+    #[arg(long, value_enum, default_value = "driver")]
+    pub probes: Probes,
     /// Capture length per cycle, arming included.
     #[arg(long, default_value_t = 8.0)]
     pub seconds: f64,
@@ -448,7 +461,11 @@ impl Bench {
 
         let channels: BTreeMap<String, u8> =
             self.config.analyzer_channels.clone().unwrap_or_else(|| {
-                ANALYZER_DEFAULT_CHANNELS
+                let defaults: &[(&str, u8)] = match args.probes {
+                    Probes::Driver => &ANALYZER_DRIVER_CHANNELS,
+                    Probes::Outputs => &ANALYZER_OUTPUT_CHANNELS,
+                };
+                defaults
                     .iter()
                     .map(|(name, channel)| ((*name).to_string(), *channel))
                     .collect()

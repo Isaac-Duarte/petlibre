@@ -87,8 +87,27 @@ pub fn observe() -> Snapshot {
     }
 }
 
-/// Preload all four output latches before enabling any output direction.
-/// Only HIGH/HIGH motor and LOW/LOW infrared requests exist in this path.
+/// Enable both motor pins as outputs and request STOP, without the driver
+/// ever seeing its inputs differ.
+///
+/// `gpio_init` enables one pin per call, and an undriven input reads LOW
+/// through the driver's pull-down. With the latches preloaded HIGH, the first
+/// enabled pin drove HIGH against the other's LOW: forward drive for one call,
+/// measured as a 105 µs pulse across the motor at every boot. Enabling both
+/// LOW (standby, which the pull-downs already hold) and then writing STOP to
+/// both in one port write goes from standby straight to brake. From brake,
+/// the LOW write is a coast, still with equal inputs.
+pub(crate) fn enable_motor_stopped() {
+    use sdk::board::{MOTOR_A, MOTOR_B};
+
+    sdk::gpio_port_write(0, MOTOR_MASK, 0);
+    sdk::gpio_init(MOTOR_A, true);
+    sdk::gpio_init(MOTOR_B, true);
+    sdk::gpio_port_write(0, MOTOR_MASK, MOTOR_MASK);
+}
+
+/// Preload the infrared latches LOW before enabling their outputs, and bring
+/// the motor pair to STOP through standby only.
 pub fn initialize() -> Snapshot {
     let _guard = IrqGuard::lock();
     let clock = sdk::gpio_clock_enable();
@@ -97,10 +116,11 @@ pub fn initialize() -> Snapshot {
     }
 
     sdk::swd_off();
-    sdk::gpio_port_write(0, PA_MASK, MOTOR_MASK);
+    sdk::gpio_port_write(0, sdk::IR_PA_BIT, 0);
     sdk::gpio_port_write(1, PB_MASK, 0);
-    use sdk::board::{IR_PA, IR_PB, MOTOR_A, MOTOR_B};
-    for pin in [MOTOR_A, MOTOR_B, IR_PA, IR_PB] {
+    enable_motor_stopped();
+    use sdk::board::{IR_PA, IR_PB};
+    for pin in [IR_PA, IR_PB] {
         sdk::gpio_init(pin, true);
     }
     Snapshot { clock, ..observe() }

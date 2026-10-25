@@ -811,6 +811,7 @@ fn transients(mode: TransientMode) -> TransientArgs {
         name: "unit".into(),
         cycles: 2,
         mode,
+        probes: Probes::Driver,
         seconds: 8.0,
         samplerate: 1000,
     }
@@ -858,6 +859,21 @@ fn boot_cycles_power_on_after_arming_and_end_off() {
         manifest["channels"],
         json!({"ina": 0, "inb": 1, "outa": 2, "outb": 3})
     );
+}
+
+#[test]
+fn output_probes_record_only_the_output_channels() {
+    let mut rig = rig();
+    let args = TransientArgs {
+        probes: Probes::Outputs,
+        ..transients(TransientMode::Boot)
+    };
+    rig.bench.transients(&args).unwrap();
+
+    let out = rig.bench.root.join(CAPTURES).join("unit");
+    let manifest: Value =
+        serde_json::from_str(&fs::read_to_string(out.join("manifest.json")).unwrap()).unwrap();
+    assert_eq!(manifest["channels"], json!({"outa": 2, "outb": 3}));
 }
 
 #[test]

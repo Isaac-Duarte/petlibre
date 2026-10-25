@@ -23,7 +23,7 @@ AR1 goes first: it is the smallest card and closes a live gap (any container can
 
 | Card | Status | Depends on | Done when |
 | --- | --- | --- | --- |
-| **AR1 Signing in `wellfed-build`, behind a frozen review** | Ready | — | `wellfed-build keygen` and `sign` exist; `sign` takes a review directory and refuses an `image.bin` whose hash, build id or motion policy differs from its frozen review. The bench links the library instead of running `wellfed-local ota-sign`. `ota-keygen`/`ota-sign` are removed from `wellfed-local`. The bench's OTA staging refuses a directory with no `review.json`. `make check` passes. |
+| **AR1 Signing in `wellfed-build`, behind a frozen review** | **Done (host, Oct 25)**: `sign` goes through `wellfed-flash`'s frozen-review check, stock only as the pinned image; byte-identical to the historical `fw40-stock-ota-07` v84 manifest; `make check` 1032 tests and `make check-fixtures` green; reviewed in two rounds | — | `wellfed-build keygen` and `sign` exist; `sign` takes a review directory and refuses an `image.bin` whose hash, build id or motion policy differs from its frozen review. The bench links the library instead of running `wellfed-local ota-sign`. `ota-keygen`/`ota-sign` are removed from `wellfed-local`. The bench's OTA staging refuses a directory with no `review.json`. `make check` passes. |
 | **AR2 A sans-IO `Connection` in `wellfed-client`** | Ready | — | `wellfed-client` has a `Connection` (`handle_input`, `poll_transmit`, `poll_timeout`/`handle_timeout`, `request`, `poll_event`) that owns keepalive, silence detection, request–answer matching, the event cursor and LAN recovery. `wellfed-connect` is a thin tokio loop over it; `wellfed-service` and the CLI keep no session logic (the CLI's hand-built recovery frame is gone). Wire bytes unchanged: the v1 protocol fixtures pass untouched. |
 | **AR3 `wellfed-model`: owned types shared by client and server** | Ready | AR2 | A new `wellfed-model` crate holds owned `Status`, `Settings`, `Event` and friends plus the proto→model conversion (moved from `wellfed-service/src/convert.rs`). `wellfed-client`'s `Connection` emits model types; `wellfed-api` uses them. No borrowed type crosses the client's public surface. `openapi.json` regenerated with no unintended diff. |
 | **AR4 `wellfed-stock` library** | Ready | — | The stock 1.1.15 protocol, its broker, the setup frame and the install-trial ledger live in a `wellfed-stock` library, moved unchanged with their tests (no-resend rule, image binding, evidence gates). `wellfed-local` is a thin binary over it with identical commands and flags. `wellfed-bench` host tests for `ota`, `itest` and `stock-ota` pass unchanged. |
@@ -51,7 +51,7 @@ AR1 goes first: it is the smallest card and closes a live gap (any container can
 
 | Card | Status |
 | --- | --- |
-| AR1 Signing behind a frozen review | 🟢 Ready |
+| AR1 Signing behind a frozen review | ✅ Done |
 | AR2 Sans-IO `Connection` | 🟢 Ready |
 | AR3 `wellfed-model` | 🟢 Ready after AR2 |
 | AR4 `wellfed-stock` | 🟢 Ready |

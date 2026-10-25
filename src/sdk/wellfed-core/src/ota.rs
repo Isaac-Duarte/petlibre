@@ -1,9 +1,15 @@
 //! Update logic (design: docs/firmware/ota-design.md): the signed
-//! manifest, the bank-1 sector writer and the boot-trial decision.
+//! manifest, the bank-1 sector writer and the boot-trial decision. Offers
+//! over the device API use [`offer`]'s version 2 manifest; the version 1
+//! format and its MQTT delivery below stay only for builds that still
+//! fetch updates over the broker.
 //!
 //! Sans-IO. The board port fetches chunks, runs each erase/program/readback
 //! inside a flash lease and writes the marker last; this module only decides
 //! what to write and whether the result may be activated.
+
+pub mod image;
+pub mod offer;
 
 use ed25519_dalek::{Signature, VerifyingKey};
 use sha2::{Digest, Sha256};

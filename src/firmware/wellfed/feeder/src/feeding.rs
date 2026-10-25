@@ -32,7 +32,7 @@ use wellfed_core::feed::sensor_inputs::SensorLimits;
 use wellfed_core::store::feed_journal::JournalConfig;
 use wellfed_proto::api::Refusal;
 use wellfed_sdk::hal::interlock::{Held, Interlock};
-use wellfed_sdk::hal::owner::OwnerConfig;
+use wellfed_sdk::hal::owner::{OwnerConfig, OwnerState, OwnerStatus};
 use wellfed_sdk::hal::sdk;
 use wellfed_sdk::hal::supervision::config::{SYSTIMER_HZ, WATCHDOG};
 use wellfed_sdk::hal::supervision::events::EventsConfig;
@@ -115,6 +115,30 @@ pub fn claim_outputs(interlock: &Interlock, held: impl FnOnce(Held)) -> Result<(
         held(why);
         Refusal::Busy
     })
+}
+
+/// Whether the loop has a feed between its submission and its recorded
+/// result.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InFlight {
+    Nothing,
+    Feed,
+}
+
+/// Whether the loop may hand the outputs' turn back to Wi-Fi joins: no feed
+/// in flight, the owner in a state that never drives (a queued request is
+/// about to), and motor STOP and the emitters off read back. A failed stop
+/// keeps the turn, and a waiting join then goes ahead only past the bound.
+pub fn may_release(in_flight: InFlight, status: &OwnerStatus) -> bool {
+    let resting = matches!(
+        status.state,
+        OwnerState::Starting
+            | OwnerState::Idle
+            | OwnerState::Terminal
+            | OwnerState::Fault
+            | OwnerState::Stopped
+    );
+    in_flight == InFlight::Nothing && resting && status.stopped && status.optics_off
 }
 
 pub const JOURNAL: JournalConfig = JournalConfig {
@@ -283,8 +307,12 @@ mod target {
             }
             Record::Joins(status) => write!(
                 f,
-                "interlock refused={} deferred={} forced={} waited_max_ms={}",
-                status.refused, status.deferred, status.forced, status.waited_max_ms
+                "interlock refused={} deferred={} forced={} waited_max_ms={} long_joins={}",
+                status.refused,
+                status.deferred,
+                status.forced,
+                status.waited_max_ms,
+                status.long_joins
             ),
             Record::Pins { feed, pins } => {
                 let [start_a, start_b] = pins.start.unwrap_or_default();
@@ -403,26 +431,24 @@ mod target {
             delay
         }
 
-        /// Hands the outputs' turn back once no feed is in flight and the
-        /// owner is at rest with its outputs stopped; a failed stop keeps
-        /// it, and a waiting join then goes ahead only past the bound.
+        /// Hands the outputs' turn back by `may_release`, and watches for a
+        /// join that holds its turn too long.
         fn release(&mut self, status: &OwnerStatus, record: &mut impl FnMut(Record)) {
-            let at_rest = !matches!(status.state, OwnerState::Preparing | OwnerState::Feeding)
-                && status.stopped
-                && status.optics_off;
-            if self.current.is_none() && at_rest {
+            let in_flight = if self.current.is_some() {
+                super::InFlight::Feed
+            } else {
+                super::InFlight::Nothing
+            };
+            if super::may_release(in_flight, status) {
                 INTERLOCK.release_feed();
             }
+            INTERLOCK.watch_join(wellfed_sdk::hal::sdk::uptime_ms());
 
-            // Logged when a join starts waiting and again when it goes.
+            // Logged whenever a counter moves: a refused feed, a join that
+            // starts waiting, waits longer than any before, is forced, or
+            // holds its turn past the long-join limit.
             let joins = INTERLOCK.status();
-            if (joins.deferred, joins.forced, joins.waited_max_ms)
-                != (
-                    self.joins.deferred,
-                    self.joins.forced,
-                    self.joins.waited_max_ms,
-                )
-            {
+            if joins != self.joins {
                 self.joins = joins;
                 record(Record::Joins(joins));
             }

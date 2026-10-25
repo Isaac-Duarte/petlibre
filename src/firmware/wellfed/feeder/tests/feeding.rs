@@ -56,3 +56,48 @@ fn a_join_waits_out_the_longest_feed_and_no_longer() {
     let start = interlock.begin_join(|| now.get(), |ms| now.set(now.get() + ms));
     assert_eq!(start, JoinStart::Forced { ms: FEED_BOUND_MS });
 }
+
+#[test]
+fn the_outputs_turn_is_released_only_at_rest() {
+    use wellfed_fw_feeder::feeding::{InFlight, may_release};
+    use wellfed_sdk::hal::owner::{OwnerState, OwnerStatus};
+
+    let at = |state| OwnerStatus {
+        state,
+        stopped: true,
+        optics_off: true,
+        ..OwnerStatus::default()
+    };
+
+    for state in [
+        OwnerState::Queued,
+        OwnerState::Preparing,
+        OwnerState::Feeding,
+        OwnerState::Reporting,
+    ] {
+        assert!(!may_release(InFlight::Nothing, &at(state)), "{state:?}");
+        assert!(!may_release(InFlight::Feed, &at(state)), "{state:?}");
+    }
+    for state in [
+        OwnerState::Starting,
+        OwnerState::Idle,
+        OwnerState::Terminal,
+        OwnerState::Fault,
+        OwnerState::Stopped,
+    ] {
+        assert!(may_release(InFlight::Nothing, &at(state)), "{state:?}");
+        // A feed not yet recorded keeps the turn.
+        assert!(!may_release(InFlight::Feed, &at(state)), "{state:?}");
+        // So does a failed stop of either output.
+        let moving = OwnerStatus {
+            stopped: false,
+            ..at(state)
+        };
+        assert!(!may_release(InFlight::Nothing, &moving), "{state:?}");
+        let lit = OwnerStatus {
+            optics_off: false,
+            ..at(state)
+        };
+        assert!(!may_release(InFlight::Nothing, &lit), "{state:?}");
+    }
+}

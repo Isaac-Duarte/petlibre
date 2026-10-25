@@ -202,3 +202,53 @@ fn two_tasks_never_overlap_and_neither_starves() {
     assert!(fed > 0);
     assert_eq!(OVERLAPS.load(Ordering::SeqCst), 0);
 }
+
+#[test]
+fn a_join_holding_its_turn_too_long_is_counted_once() {
+    use wellfed_hal::interlock::LONG_JOIN_MS;
+
+    let interlock = Interlock::new();
+    let clock = Clock::new();
+    clock.now.set(1000);
+    clock.join(&interlock, |_| {});
+
+    assert!(!interlock.watch_join(1000 + LONG_JOIN_MS - 1));
+    assert!(interlock.watch_join(1000 + LONG_JOIN_MS));
+    assert!(
+        !interlock.watch_join(1000 + 2 * LONG_JOIN_MS),
+        "once per join"
+    );
+    assert_eq!(interlock.status().long_joins, 1);
+
+    // The next join is watched afresh, from its own turn.
+    interlock.end_join();
+    assert!(!interlock.watch_join(1000 + 3 * LONG_JOIN_MS));
+    clock.now.set(500_000);
+    clock.join(&interlock, |_| {});
+    assert!(!interlock.watch_join(500_000 + 1));
+    assert!(interlock.watch_join(500_000 + LONG_JOIN_MS));
+    assert_eq!(interlock.status().long_joins, 2);
+}
+
+#[test]
+fn a_waiting_join_is_watched_from_when_it_gets_the_turn() {
+    use wellfed_hal::interlock::LONG_JOIN_MS;
+
+    let interlock = Interlock::new();
+    let clock = Clock::new();
+    interlock.claim_feed(u32::MAX).unwrap();
+
+    // Waits LONG_JOIN_MS for the feed, then gets the turn.
+    let waits = LONG_JOIN_MS / JOIN_POLL_MS;
+    clock.join(&interlock, |wait| {
+        assert!(
+            !interlock.watch_join(clock.now.get()),
+            "waiting, not joining"
+        );
+        if wait == waits {
+            interlock.release_feed();
+        }
+    });
+    assert!(!interlock.watch_join(LONG_JOIN_MS + 1));
+    assert!(interlock.watch_join(2 * LONG_JOIN_MS));
+}

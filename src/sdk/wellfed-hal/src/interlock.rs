@@ -19,19 +19,27 @@
 //!
 //! **Neither starves.** A join that finds a feed running marks itself
 //! waiting: no new feed is admitted, and the release hands the turn straight
-//! to the join. A join is bounded by the shim (a 10 s scan wait, then one
-//! association and one DHCP run) and backs off at least 1 s between attempts,
-//! so feeds get their turn between attempts. A join waits at most the bound
+//! to the join. A join is bounded by the shim's 10 s scan wait, then one
+//! association and one DHCP run, whose own bounds are the vendor SDK's
+//! internal timeouts in `wifi_connect` and `LwIP_DHCP` (prebuilt, not in this
+//! repository); attempts back off at least 1 s, so feeds get their turn
+//! between them. Since nothing here can bound those two calls, the loop
+//! counts a join that holds its turn past [`LONG_JOIN_MS`]
+//! ([`Interlock::watch_join`]), so a stuck vendor call shows in the log. A join waits at most the bound
 //! the claimant published with its claim, which the firmware derives from its
 //! feed limits; past it the join goes ahead and is counted as forced, so a
 //! claim that is never released cannot keep the feeder offline.
 //!
 //! [scheduling gaps]: ../../../../docs/firmware/scheduling-gaps.md#result-october-25-2026-physical
 
-use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
 /// How often a waiting join looks again; the shim polls its scan as often.
 pub const JOIN_POLL_MS: u32 = 50;
+
+/// A join holding its turn this long is counted: the shim's scan wait is
+/// 10 s, and associations and DHCP have finished within seconds on the bench.
+pub const LONG_JOIN_MS: u32 = 60_000;
 
 /// Whose turn it is, as the interlock's byte holds it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -147,6 +155,8 @@ pub struct Status {
     pub forced: u32,
     /// The longest a join waited, in ms.
     pub waited_max_ms: u32,
+    /// Joins that held their turn past `LONG_JOIN_MS`.
+    pub long_joins: u32,
 }
 
 /// The turn between the loop (feeds) and the C Wi-Fi task (joins), as
@@ -160,6 +170,11 @@ pub struct Interlock {
     deferred: AtomicU32,
     forced: AtomicU32,
     waited_max_ms: AtomicU32,
+    /// When the current join's turn began; meaningful while `Joining`.
+    join_began_ms: AtomicU32,
+    /// The current join was already counted as long.
+    join_counted: AtomicBool,
+    long_joins: AtomicU32,
 }
 
 impl Default for Interlock {
@@ -177,6 +192,9 @@ impl Interlock {
             deferred: AtomicU32::new(0),
             forced: AtomicU32::new(0),
             waited_max_ms: AtomicU32::new(0),
+            join_began_ms: AtomicU32::new(0),
+            join_counted: AtomicBool::new(false),
+            long_joins: AtomicU32::new(0),
         }
     }
 
@@ -190,6 +208,7 @@ impl Interlock {
             deferred: self.deferred.load(Ordering::Relaxed),
             forced: self.forced.load(Ordering::Relaxed),
             waited_max_ms: self.waited_max_ms.load(Ordering::Relaxed),
+            long_joins: self.long_joins.load(Ordering::Relaxed),
         }
     }
 
@@ -243,8 +262,13 @@ impl Interlock {
         let begun = now_ms();
         let mut waited = false;
         loop {
+            // Stamped before the turn is taken, so the loop's watch never
+            // reads a join's turn with the previous join's start.
+            let now = now_ms();
+            self.join_began_ms.store(now, Ordering::Release);
+            self.join_counted.store(false, Ordering::Release);
             let step = self.transition(Turn::request_join);
-            let ms = now_ms().wrapping_sub(begun);
+            let ms = now.wrapping_sub(begun);
             if step == JoinStep::Go {
                 if !waited {
                     return JoinStart::Free;
@@ -274,6 +298,19 @@ impl Interlock {
         self.transition(|turn| (turn.end_join(), ()));
     }
 
+    /// The loop, each pass: count a join that has held its turn past
+    /// `LONG_JOIN_MS`, once per join. True when this call counted it.
+    pub fn watch_join(&self, now_ms: u32) -> bool {
+        if self.turn() != Turn::Joining
+            || now_ms.wrapping_sub(self.join_began_ms.load(Ordering::Acquire)) < LONG_JOIN_MS
+            || self.join_counted.swap(true, Ordering::AcqRel)
+        {
+            return false;
+        }
+        self.long_joins.fetch_add(1, Ordering::Relaxed);
+        true
+    }
+
     /// Host tests only: back to the boot state.
     #[cfg(not(target_os = "none"))]
     pub fn reset(&self) {
@@ -284,9 +321,12 @@ impl Interlock {
             &self.deferred,
             &self.forced,
             &self.waited_max_ms,
+            &self.join_began_ms,
+            &self.long_joins,
         ] {
             value.store(0, Ordering::Release);
         }
+        self.join_counted.store(false, Ordering::Release);
     }
 }
 

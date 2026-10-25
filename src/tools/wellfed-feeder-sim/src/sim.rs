@@ -210,6 +210,7 @@ impl Sim {
                 // No feeding owner yet.
                 feeding: false,
                 recovery: self.recovery.take(),
+                signer: None,
             },
             |r| record(Record::Server(r)),
         );

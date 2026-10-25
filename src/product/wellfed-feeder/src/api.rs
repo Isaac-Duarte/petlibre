@@ -19,6 +19,14 @@
 //! - **A feed is answered once it is durably reserved,** with the number
 //!   the journal holds it under; its result is a `Fed` event, which only
 //!   sessions whose hello carries [`Capabilities::FEED`] are sent.
+//! - **Updates are an owner's** ([`Capabilities::UPDATE`]). The device
+//!   checks an offer outside the loop (its signatures need more stack than
+//!   the loop has) and answers on a later pass. An update request waits
+//!   for no feed: an offer, a cancel or a key statement is refused `Busy`
+//!   while a feed is queued or runs, and a feed is refused `Busy` while a
+//!   request or an install holds the flash. Chunks are
+//!   idempotent by offset, so they are not remembered writes. An update
+//!   key is enrolled only once someone at the feeder presses Dispense.
 //!
 //! Sessions authenticate with Noise IK under the feeder's identity, against
 //! the enrolled clients the settings writer publishes. A revoked key's
@@ -28,6 +36,7 @@
 //! The firmware reaches the rest of the feeder through [`Device`], and the
 //! host tests through a fake of it.
 
+use wellfed_core::ota::offer::{KeyId, key_id};
 use wellfed_core::store::clients::{CLIENTS, Client, Label, Role};
 use wellfed_core::store::net::Credentials;
 use wellfed_core::tone::Tune as CoreTune;
@@ -37,8 +46,9 @@ use wellfed_core::transport::{
 use wellfed_core::{deadline_passed, named_enum};
 use wellfed_proto::api::{
     self as proto, Capabilities, ClientMessage, Clients, EventBody, FRAME_MAX, FeederMessage,
-    Fingerprint, Hello, Joined, Op, Open, OpenRefusal, Outcome, PROLOGUE, PROTOCOL_MAJOR,
-    PROTOCOL_MAJOR_MIN, Refusal, RequestId, Sample, Source, Status, Tune, Welcome,
+    Fingerprint, Hello, Joined, MESSAGE_MAX, Op, Open, OpenRefusal, Outcome, PROLOGUE,
+    PROTOCOL_MAJOR, PROTOCOL_MAJOR_MIN, Refusal, RequestId, Sample, Source, Status, Tune,
+    UPDATE_CHUNK_MAX, UpdateRefusal, UpdateView, Welcome,
 };
 use wellfed_session::frame;
 use wellfed_session::noise::{Handshake, Keypair, Pattern, Role as NoiseRole, Transport};
@@ -63,6 +73,10 @@ pub const IDLE_MS: u32 = 90_000;
 pub const REBOOT_MS: u32 = 1_000;
 
 const BUFFER: usize = frame::PREFIX + FRAME_MAX;
+
+// A whole chunk request seals into one frame: the request id, the op's tag,
+// its offset and the data's length prefix, with room to spare.
+const _: () = assert!(UPDATE_CHUNK_MAX + 16 + 16 <= MESSAGE_MAX);
 
 /// The rest of the feeder, as the server needs it. Every call returns at
 /// once: a write is queued for its owner, and the server polls for the
@@ -106,6 +120,73 @@ pub trait Device {
     fn epoch(&self) -> Option<u32>;
     /// Restart the feeder.
     fn reboot(&mut self);
+
+    /// Queue an update request for the installer: its ticket, or why it
+    /// cannot be queued now. A device without [`Capabilities::UPDATE`]
+    /// serves none.
+    fn update(&mut self, _request: UpdateRequest<'_>) -> Result<u32, Refusal> {
+        Err(Refusal::Unavailable)
+    }
+    /// The result of the update request with `ticket`, once done.
+    fn update_outcome(&mut self, _ticket: u32) -> Option<Result<UpdateAnswer, Refusal>> {
+        None
+    }
+    /// Hand one chunk to the install: the state once it is taken (or was
+    /// not wanted), `Busy` while the last ones are still being written.
+    fn update_chunk(&mut self, _offset: u32, _data: &[u8]) -> Result<UpdateView, Refusal> {
+        Err(Refusal::Unavailable)
+    }
+    /// The update's state now.
+    fn update_view(&mut self) -> Option<UpdateView> {
+        None
+    }
+    /// An install holds the flash (or is about to restart): no feed starts.
+    fn installing(&self) -> bool {
+        false
+    }
+    /// A feed is queued or runs: no install starts.
+    fn feed_active(&self) -> bool {
+        false
+    }
+}
+
+/// An update op, as the device's installer takes it. The bytes are copied
+/// into its mailbox before `Device::update` returns.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UpdateRequest<'a> {
+    Offer {
+        manifest: &'a [u8],
+        downgrade: Option<&'a [u8]>,
+        /// The feeder's identity key, which a downgrade statement names.
+        device: [u8; 32],
+    },
+    Statement {
+        statement: &'a [u8],
+    },
+    Cancel,
+}
+
+named_enum! {
+    /// What became of an update key.
+    pub enum UpdateKeyChange {
+        /// An owner enrolled it, confirmed by a Dispense press.
+        Enrolled = "enrolled",
+        /// A key statement filled the release slot with it.
+        Added = "added",
+        /// A key statement retired it for good.
+        Retired = "retired",
+    }
+}
+
+/// What an update request came to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UpdateAnswer {
+    View(UpdateView),
+    /// A key statement took effect on the key with this id.
+    Key {
+        change: UpdateKeyChange,
+        id: KeyId,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -193,6 +274,12 @@ pub enum Record {
         reason: Reason,
     },
     Pairing(pairing::Event),
+    /// An update key changed; `key` is its key id (a hash, not the key).
+    UpdateKey {
+        slot: u8,
+        change: UpdateKeyChange,
+        key: KeyId,
+    },
 }
 
 /// One pass's inputs from the loop.
@@ -206,14 +293,23 @@ pub struct Pass<'a, D> {
     /// Pairing's decision on a LAN recovery offer this pass: its code keyed
     /// in, or its timeout.
     pub recovery: Option<pairing::Event>,
+    /// Pairing's decision on an update-key offer this pass: a Dispense press
+    /// admitted it, or nobody pressed in time.
+    pub signer: Option<pairing::Event>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Remembered {
     Done(Option<u32>),
     Refused(Refusal),
-    Invite { id: u32 },
-    Feeding { feed: u32 },
+    Invite {
+        id: u32,
+    },
+    Feeding {
+        feed: u32,
+    },
+    /// An update op: a retry gets the update's state now.
+    Update,
 }
 
 /// The write ids one client's sessions have answered.
@@ -253,8 +349,26 @@ impl Memory {
 enum Waiting {
     Settings,
     Wifi,
-    Keys { ticket: u32, revoked: [u8; 32] },
-    Feed { feed: u32 },
+    Keys {
+        ticket: u32,
+        revoked: [u8; 32],
+    },
+    Feed {
+        feed: u32,
+    },
+    Update {
+        ticket: u32,
+    },
+    /// An update key waits for its Dispense press.
+    Signer {
+        key: [u8; 32],
+        label: Label,
+    },
+    /// The pressed key's enrollment is queued.
+    SignerKeys {
+        ticket: u32,
+        key: [u8; 32],
+    },
 }
 
 #[derive(Clone, Copy)]
@@ -392,6 +506,17 @@ pub struct Server {
     decision: Option<pairing::Event>,
     /// A recovery client left with its offer pending: cancel it next pass.
     cancel_rescue: bool,
+    /// Pairing's decision on an update-key offer, until its session takes it.
+    signer: Option<pairing::Event>,
+    /// A session waiting for an update key's press ended: cancel the offer.
+    cancel_signer: bool,
+    /// A feed is prepared or driven this pass.
+    feeding: bool,
+    /// The feeder's identity key, for an offer's downgrade statement.
+    identity_public: Option<[u8; 32]>,
+    /// The length of the request in `plain`, which update ops read again
+    /// for their bytes rather than copy them.
+    plain_len: usize,
     /// A message's plaintext, and the next one's encoding: here rather than
     /// on the loop's stack.
     plain: [u8; FRAME_MAX],
@@ -421,6 +546,11 @@ impl Server {
             rescue: Responder::idle(),
             decision: None,
             cancel_rescue: false,
+            signer: None,
+            cancel_signer: false,
+            feeding: false,
+            identity_public: None,
+            plain_len: 0,
             plain: [0; FRAME_MAX],
             out: [0; FRAME_MAX],
         }
@@ -524,6 +654,22 @@ impl Server {
         }
     }
 
+    /// A session that waits for an update key's press ended: the next
+    /// pass cancels the offer, so the next Dispense press feeds again.
+    fn forget_signer(&mut self, index: usize) {
+        if let Phase::Open {
+            pending:
+                Some(Pending {
+                    waiting: Waiting::Signer { .. },
+                    ..
+                }),
+            ..
+        } = self.slots[index].phase
+        {
+            self.cancel_signer = true;
+        }
+    }
+
     /// A live sample for subscribers; one that is not sent before the next
     /// replaces it.
     pub fn sample(&mut self, sample: Sample) {
@@ -549,11 +695,19 @@ impl Server {
             identity,
             feeding,
             recovery,
+            signer,
         } = pass;
         self.pass = self.pass.wrapping_add(1);
         self.decision = recovery;
+        self.signer = self.signer.or(signer);
+        self.feeding = feeding;
+        self.identity_public = identity.map(|keys| *keys.public());
         if core::mem::take(&mut self.cancel_rescue) {
             pairing.cancel(Path::Recovery);
+        }
+        if core::mem::take(&mut self.cancel_signer) {
+            pairing.cancel(Path::Signer);
+            self.signer = None;
         }
 
         if let Some(at) = self.reboot_at
@@ -1214,7 +1368,7 @@ impl Server {
         if !self.slots[index].wire.tx_idle() {
             return Ok(true);
         }
-        if let Some((id, op, reply)) = self.poll_pending(index, now_ms, device)? {
+        if let Some((id, op, reply)) = self.poll_pending(index, now_ms, device, record)? {
             return self
                 .answer(index, id, op, reply, now_ms, device, record)
                 .map(|()| true);
@@ -1259,6 +1413,7 @@ impl Server {
     ) -> Result<(), Reason> {
         // The message borrows `plain`, which the answer reuses: take what
         // it says into an owned action first.
+        self.plain_len = len;
         let message: ClientMessage<'_> =
             wellfed_proto::decode(&self.plain[..len]).map_err(|_| Reason::Malformed)?;
         let (id, needs, action) = match message {
@@ -1321,6 +1476,9 @@ impl Server {
                         Reply::Invite(invite(id, secret))
                     }),
                 Remembered::Feeding { feed } => Reply::Feeding(feed),
+                Remembered::Update => device
+                    .update_view()
+                    .map_or(Reply::Refused(Refusal::Unavailable), Reply::Update),
             });
         }
         if !allowed(role, action) {
@@ -1411,7 +1569,47 @@ impl Server {
                 }
             }
             Action::Invalid => Reply::Refused(Refusal::Invalid),
-            Action::Unserved => Reply::Refused(Refusal::Unavailable),
+            // Each of these may write the update store; none goes in while
+            // a feed is queued or driven. A cancel during an install is not
+            // held off: no feed runs then.
+            Action::OfferUpdate | Action::CancelUpdate | Action::UpdateKeyStatement
+                if self.feeding || device.feed_active() =>
+            {
+                Reply::Refused(Refusal::Busy)
+            }
+            Action::OfferUpdate | Action::CancelUpdate | Action::UpdateKeyStatement => {
+                match self.update_request(action, device) {
+                    Ok(ticket) => return self.wait(index, id, action, Waiting::Update { ticket }),
+                    Err(refusal) => Reply::Refused(refusal),
+                }
+            }
+            Action::UpdateChunk { offset } => match self.update_chunk(offset, device) {
+                Ok(view) => Reply::Update(view),
+                Err(refusal) => Reply::Refused(refusal),
+            },
+            Action::UpdateState => match device.update_view() {
+                Some(view) => Reply::Update(view),
+                None => Reply::Refused(Refusal::Unavailable),
+            },
+            Action::EnrollUpdateKey { key, label } => {
+                let event = pairing.signer(now_ms, role);
+                record(Record::Pairing(event));
+                match event {
+                    pairing::Event::Confirming { .. } => {
+                        // Only this offer's press counts: a decision left
+                        // over from an earlier one must not admit it.
+                        self.signer = None;
+                        let waiting = Waiting::Signer { key, label };
+                        return self.wait(index, id, action, waiting);
+                    }
+                    pairing::Event::Refused {
+                        refusal: pairing::Refusal::Busy,
+                        ..
+                    } => Reply::Refused(Refusal::Busy),
+                    _ => Reply::Refused(Refusal::Forbidden),
+                }
+            }
+            Action::Feed { .. } if device.installing() => Reply::Refused(Refusal::Busy),
             Action::Feed { portions } => match device.feed(portions, by) {
                 Ok(feed) => return self.wait(index, id, action, Waiting::Feed { feed }),
                 Err(refusal) => Reply::Refused(refusal),
@@ -1429,6 +1627,50 @@ impl Server {
             }
         };
         Some(self.remember(memory, id, action, outcome))
+    }
+
+    /// The update op in `plain`, read again for its bytes, queued with the
+    /// device. Out of line: the decoded message is a frame of its own.
+    #[inline(never)]
+    fn update_request<D: Device>(&self, action: Action, device: &mut D) -> Result<u32, Refusal> {
+        let message: ClientMessage<'_> =
+            wellfed_proto::decode(&self.plain[..self.plain_len]).map_err(|_| Refusal::Invalid)?;
+        let ClientMessage::Request { op, .. } = message else {
+            return Err(Refusal::Invalid);
+        };
+        let request = match (action, op) {
+            (
+                Action::OfferUpdate,
+                Op::OfferUpdate {
+                    manifest,
+                    downgrade,
+                },
+            ) => UpdateRequest::Offer {
+                manifest,
+                downgrade,
+                device: self.identity_public.ok_or(Refusal::Busy)?,
+            },
+            (Action::UpdateKeyStatement, Op::UpdateKeyStatement { statement }) => {
+                UpdateRequest::Statement { statement }
+            }
+            (Action::CancelUpdate, Op::CancelUpdate) => UpdateRequest::Cancel,
+            _ => return Err(Refusal::Invalid),
+        };
+        device.update(request)
+    }
+
+    /// The chunk in `plain`, handed to the device.
+    #[inline(never)]
+    fn update_chunk<D: Device>(&self, offset: u32, device: &mut D) -> Result<UpdateView, Refusal> {
+        let message: ClientMessage<'_> =
+            wellfed_proto::decode(&self.plain[..self.plain_len]).map_err(|_| Refusal::Invalid)?;
+        match message {
+            ClientMessage::Request {
+                op: Op::UpdateChunk { offset: at, data },
+                ..
+            } if at == offset => device.update_chunk(offset, data),
+            _ => Err(Refusal::Invalid),
+        }
     }
 
     fn put_settings<D: Device>(
@@ -1479,6 +1721,7 @@ impl Server {
         index: usize,
         now_ms: u32,
         device: &mut D,
+        record: &mut impl FnMut(Record),
     ) -> Result<Option<(RequestId, &'static str, Reply)>, Reason> {
         let Phase::Open {
             pending: Some(pending),
@@ -1533,6 +1776,65 @@ impl Server {
                 Some(Ok(())) => Reply::Feeding(feed),
                 Some(Err(refusal)) => Reply::Refused(refusal),
             },
+            Waiting::Update { ticket } => match device.update_outcome(ticket) {
+                None => return Ok(None),
+                Some(Ok(UpdateAnswer::View(view))) => Reply::Update(view),
+                Some(Ok(UpdateAnswer::Key { change, id })) => {
+                    record(Record::UpdateKey {
+                        slot: slot_id(index),
+                        change,
+                        key: id,
+                    });
+                    Reply::Done(None)
+                }
+                Some(Err(refusal)) => Reply::Refused(refusal),
+            },
+            Waiting::Signer { key, label } => match self.signer {
+                Some(pairing::Event::Admit {
+                    path: Path::Signer, ..
+                }) => {
+                    let change = KeyChange::Enroll {
+                        key,
+                        label,
+                        role: Role::UpdateSigner,
+                    };
+                    // The mailbox may be busy; the press is kept until it is not.
+                    if let Some(ticket) = device.keys(change) {
+                        self.signer = None;
+                        self.waiting(index, Waiting::SignerKeys { ticket, key });
+                    }
+                    return Ok(None);
+                }
+                Some(pairing::Event::Refused {
+                    path: Path::Signer, ..
+                }) => {
+                    self.signer = None;
+                    Reply::Refused(Refusal::Update(UpdateRefusal::Unconfirmed))
+                }
+                _ => return Ok(None),
+            },
+            Waiting::SignerKeys { ticket, key } => match device.keys_outcome(ticket) {
+                None => return Ok(None),
+                // Already enrolled under another role: the key is a session
+                // key, never an update signer, and stays what it was.
+                Some(KeyOutcome::Duplicate)
+                    if find(&self.clients, &key).is_some_and(|c| c.role != Role::UpdateSigner) =>
+                {
+                    Reply::Refused(Refusal::Invalid)
+                }
+                Some(KeyOutcome::Done | KeyOutcome::Duplicate) => {
+                    record(Record::UpdateKey {
+                        slot: slot_id(index),
+                        change: UpdateKeyChange::Enrolled,
+                        key: key_id(&key),
+                    });
+                    Reply::Done(None)
+                }
+                Some(KeyOutcome::Full) => Reply::Refused(Refusal::Full),
+                Some(KeyOutcome::NotFound | KeyOutcome::NotWritable) => {
+                    Reply::Refused(Refusal::NotWritable)
+                }
+            },
         };
 
         if let Phase::Open { pending, .. } = &mut self.slots[index].phase {
@@ -1540,6 +1842,17 @@ impl Server {
         }
         self.memories[memory].remember(pending.id, remembered(outcome));
         Ok(Some((pending.id, pending.op, outcome)))
+    }
+
+    /// Move a pending request on to its next wait.
+    fn waiting(&mut self, index: usize, next: Waiting) {
+        if let Phase::Open {
+            pending: Some(pending),
+            ..
+        } = &mut self.slots[index].phase
+        {
+            pending.waiting = next;
+        }
     }
 
     /// Remember a write's outcome under its id.
@@ -1564,11 +1877,15 @@ impl Server {
         device: &mut D,
         record: &mut impl FnMut(Record),
     ) -> Result<(), Reason> {
-        record(Record::Request {
-            slot: slot_id(index),
-            op,
-            result: reply.name(),
-        });
+        // A chunk that went in is not worth a line each: an image is about
+        // two thousand of them, and the log would cost the loop seconds.
+        if !(op == Action::CHUNK && matches!(reply, Reply::Update(_))) {
+            record(Record::Request {
+                slot: slot_id(index),
+                op,
+                result: reply.name(),
+            });
+        }
         let result = match reply {
             Reply::Clients => return self.list_clients(index, id),
             Reply::Done(generation) => Outcome::Done { generation },
@@ -1576,6 +1893,7 @@ impl Server {
             Reply::Settings(settings) => Outcome::Settings(settings),
             Reply::Invite(invite) => Outcome::Invite(invite),
             Reply::Feeding(feed) => Outcome::Feeding { feed },
+            Reply::Update(view) => Outcome::Update(view),
             Reply::Status => {
                 let mut status = device.status(now_ms);
                 status.sessions = u8::try_from(self.sessions()).unwrap_or(u8::MAX);
@@ -1668,6 +1986,7 @@ impl Server {
     /// End `index` with `reason`: anything queued still goes out, then the
     /// driver closes it.
     fn end(&mut self, index: usize, reason: Reason, record: &mut impl FnMut(Record)) {
+        self.forget_signer(index);
         let slot = &mut self.slots[index];
         if matches!(slot.phase, Phase::Free | Phase::Closing) {
             return;
@@ -1715,7 +2034,15 @@ const fn allowed(role: Role, action: Action) -> bool {
         Role::Owner => true,
         Role::Member | Role::Server => !matches!(
             action,
-            Action::PutWifi { .. } | Action::RevokeClient { .. } | Action::Reboot
+            Action::PutWifi { .. }
+                | Action::RevokeClient { .. }
+                | Action::Reboot
+                | Action::OfferUpdate
+                | Action::UpdateChunk { .. }
+                | Action::UpdateState
+                | Action::CancelUpdate
+                | Action::EnrollUpdateKey { .. }
+                | Action::UpdateKeyStatement
         ),
         Role::UpdateSigner => false,
     }
@@ -1778,6 +2105,7 @@ fn remembered(reply: Reply) -> Remembered {
         Reply::Done(generation) => Remembered::Done(generation),
         Reply::Invite(invite) => Remembered::Invite { id: invite.id },
         Reply::Feeding(feed) => Remembered::Feeding { feed },
+        Reply::Update(_) => Remembered::Update,
         Reply::Status | Reply::Settings(_) | Reply::Clients => Remembered::Done(None),
     }
 }
@@ -1858,10 +2186,19 @@ enum Action {
     CancelFeed {
         feed: u32,
     },
+    OfferUpdate,
+    UpdateChunk {
+        offset: u32,
+    },
+    UpdateState,
+    CancelUpdate,
+    EnrollUpdateKey {
+        key: [u8; 32],
+        label: Label,
+    },
+    UpdateKeyStatement,
     /// A field failed the stores' checks before anything ran.
     Invalid,
-    /// An op this server does not serve.
-    Unserved,
 }
 
 impl From<Op<'_>> for Action {
@@ -1913,24 +2250,40 @@ impl From<Op<'_>> for Action {
             Op::Feed { portions } => Self::Feed { portions },
             Op::Reboot => Self::Reboot,
             Op::CancelFeed { feed } => Self::CancelFeed { feed },
-            // Behind `Capabilities::UPDATE`, which this server does not
-            // claim yet: refused `Unavailable` before they would run.
-            Op::OfferUpdate { .. }
-            | Op::UpdateChunk { .. }
-            | Op::UpdateState
-            | Op::CancelUpdate
-            | Op::EnrollUpdateKey { .. }
-            | Op::UpdateKeyStatement { .. } => Self::Unserved,
+            // The bytes stay in the plaintext buffer, read again when the
+            // op runs, so the action stays small.
+            Op::OfferUpdate { .. } => Self::OfferUpdate,
+            Op::UpdateChunk { offset, data } => {
+                if data.is_empty() || data.len() > UPDATE_CHUNK_MAX {
+                    return Self::Invalid;
+                }
+                Self::UpdateChunk { offset }
+            }
+            Op::UpdateState => Self::UpdateState,
+            Op::CancelUpdate => Self::CancelUpdate,
+            Op::EnrollUpdateKey { key, label } => match Label::new(label.as_bytes()) {
+                Some(label) => Self::EnrollUpdateKey { key, label },
+                None => Self::Invalid,
+            },
+            Op::UpdateKeyStatement { .. } => Self::UpdateKeyStatement,
         }
     }
 }
 
 impl Action {
+    /// The chunk op's name, which the answer's record leaves out.
+    const CHUNK: &'static str = "update-chunk";
+
     /// Whether the request changes something, so its id is remembered.
     const fn writes(self) -> bool {
         !matches!(
             self,
-            Self::Status | Self::GetSettings | Self::ListClients | Self::Invalid | Self::Unserved
+            Self::Status
+                | Self::GetSettings
+                | Self::ListClients
+                | Self::Invalid
+                | Self::UpdateState
+                | Self::UpdateChunk { .. }
         )
     }
 
@@ -1949,8 +2302,13 @@ impl Action {
             Self::Feed { .. } => "feed",
             Self::Reboot => "reboot",
             Self::CancelFeed { .. } => "cancel-feed",
+            Self::OfferUpdate => "offer-update",
+            Self::UpdateChunk { .. } => Self::CHUNK,
+            Self::UpdateState => "update-state",
+            Self::CancelUpdate => "cancel-update",
+            Self::EnrollUpdateKey { .. } => "enroll-update-key",
+            Self::UpdateKeyStatement => "update-key-statement",
             Self::Invalid => "invalid",
-            Self::Unserved => "unserved",
         }
     }
 }
@@ -1966,6 +2324,7 @@ enum Reply {
     Invite(proto::Invite),
     Clients,
     Feeding(u32),
+    Update(UpdateView),
 }
 
 fn saturate(jump_ms: i64) -> i32 {
@@ -1986,6 +2345,7 @@ impl Name for Reply {
             Self::Clients => "clients",
             Self::Invite(_) => "invite",
             Self::Feeding(_) => "feeding",
+            Self::Update(_) => "update",
             Self::Refused(refusal) => match refusal {
                 Refusal::Forbidden => "forbidden",
                 Refusal::Stale { .. } => "stale",
@@ -1998,9 +2358,30 @@ impl Name for Reply {
                 Refusal::Muted => "muted",
                 Refusal::Time => "time",
                 Refusal::Fault => "fault",
-                Refusal::Update(_) => "update",
+                Refusal::Update(refusal) => update_refusal(*refusal),
             },
         }
+    }
+}
+
+fn update_refusal(refusal: UpdateRefusal) -> &'static str {
+    match refusal {
+        UpdateRefusal::Manifest => "update-manifest",
+        UpdateRefusal::Key => "update-key",
+        UpdateRefusal::Revoked => "update-revoked",
+        UpdateRefusal::Signature => "update-signature",
+        UpdateRefusal::Target => "update-target",
+        UpdateRefusal::Same => "update-same",
+        UpdateRefusal::Downgrade => "update-downgrade",
+        UpdateRefusal::Statement => "update-statement",
+        UpdateRefusal::Pending => "update-pending",
+        UpdateRefusal::Failed => "update-failed",
+        UpdateRefusal::Fallback => "update-fallback",
+        UpdateRefusal::Attempt => "update-attempt",
+        UpdateRefusal::Installing => "update-installing",
+        UpdateRefusal::NotInstalling => "update-not-installing",
+        UpdateRefusal::Store => "update-store",
+        UpdateRefusal::Unconfirmed => "update-unconfirmed",
     }
 }
 

@@ -228,6 +228,7 @@ impl Rig {
                 identity: Some(&self.identity),
                 feeding: false,
                 recovery: None,
+                signer: None,
             },
             |r| records.push(r),
         );

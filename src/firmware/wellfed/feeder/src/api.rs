@@ -112,6 +112,11 @@ fn server_record(record: server::Record, f: &mut impl fmt::Write) -> fmt::Result
         R::Retried { slot } => write!(f, "request slot={slot} retried=1"),
         R::Ended { slot, reason } => write!(f, "session slot={slot} state=ended reason={reason}"),
         R::Pairing(event) => crate::owner::describe(crate::owner::Record::Pairing(event), f),
+        R::UpdateKey { slot, change, key } => write!(
+            f,
+            "update-key slot={slot} change={change} id={}",
+            wellfed_session::hex::Lower(&key)
+        ),
     }
 }
 
@@ -261,6 +266,7 @@ impl Api {
                 identity,
                 feeding,
                 recovery,
+                signer: None,
             },
             |r| record(Record::Server(r)),
         );

@@ -19,13 +19,17 @@ use wellfed_core::transport::{
     WifiResult, WifiSource, WifiView,
 };
 use wellfed_feeder::api::{
-    Device, EventRead, KeyChange, KeyOutcome, Pass, Reason, Record, SESSIONS, Server,
+    Device, EventRead, KeyChange, KeyOutcome, Pass, Reason, Record, SESSIONS, Server, UpdateAnswer,
+    UpdateKeyChange, UpdateRequest,
 };
 use wellfed_feeder::pairing::{Config, Event as PairingEvent, Pairing};
 use wellfed_feeder::panel::Lock;
 use wellfed_model as model;
 use wellfed_model::{Answer, Generation, Hello, Joined, Op, OpenRefusal, SettingsPatch};
-use wellfed_proto::api::{self as proto, Capabilities, EventBody, Refusal, Status};
+use wellfed_proto::api::{
+    self as proto, Capabilities, EventBody, Refusal, Status, UpdatePhase, UpdateRefusal,
+    UpdateView, WANTED_MAX,
+};
 use wellfed_session::frame;
 use wellfed_session::noise::Keypair;
 use wellfed_session::setup_code::Code;
@@ -66,6 +70,33 @@ struct Fake {
     /// Feeds up to this number are reserved (the owner's turn, by hand).
     reserved: u32,
     cancelled: Vec<u32>,
+    /// Serves `Capabilities::UPDATE`.
+    update: bool,
+    /// An install holds the flash.
+    installing: bool,
+    /// Update requests queued, in order, and the next one's answer.
+    updates: Vec<String>,
+    update_done: Option<(u32, Result<UpdateAnswer, Refusal>)>,
+    /// Keep the next request queued (its lease held) until `answer_held`.
+    hold: bool,
+    held: Option<(u32, Result<UpdateAnswer, Refusal>)>,
+    /// Chunk offsets handed over.
+    chunks: Vec<u32>,
+}
+
+/// An install receiving its first sector.
+fn receiving() -> UpdateView {
+    UpdateView {
+        phase: UpdatePhase::Receiving,
+        bank: 0,
+        min_version: 4,
+        digest: Some([9; 32]),
+        version: 5,
+        image_len: 8192,
+        written: 0,
+        wanted: [Some(0); WANTED_MAX],
+        stopped: None,
+    }
 }
 
 impl Fake {
@@ -96,6 +127,11 @@ impl Fake {
             role,
             enrolled: 1,
         });
+    }
+
+    /// The update stage answers the request it held.
+    fn answer_held(&mut self) {
+        self.update_done = self.held.take();
     }
 
     /// The settings writer's turn: apply what is queued.
@@ -244,7 +280,67 @@ impl Device for Fake {
     }
 
     fn capabilities(&self) -> Capabilities {
-        Capabilities::FEED
+        if self.update {
+            Capabilities::KNOWN
+        } else {
+            Capabilities::FEED
+        }
+    }
+
+    fn update(&mut self, request: UpdateRequest<'_>) -> Result<u32, Refusal> {
+        self.ticket += 1;
+        let answer = match request {
+            UpdateRequest::Offer { device, .. } => {
+                assert_eq!(device, public(FEEDER), "an offer names this feeder");
+                self.installing = true;
+                Ok(UpdateAnswer::View(receiving()))
+            }
+            UpdateRequest::Statement { statement } => Ok(UpdateAnswer::Key {
+                change: UpdateKeyChange::Retired,
+                id: statement[..8].try_into().unwrap(),
+            }),
+            UpdateRequest::Cancel => {
+                self.installing = false;
+                Ok(UpdateAnswer::View(UpdateView {
+                    phase: UpdatePhase::Idle,
+                    ..receiving()
+                }))
+            }
+        };
+        self.updates.push(format!("{request:?}"));
+        if self.hold {
+            self.held = Some((self.ticket, answer));
+        } else {
+            self.update_done = Some((self.ticket, answer));
+        }
+        Ok(self.ticket)
+    }
+
+    fn update_outcome(&mut self, ticket: u32) -> Option<Result<UpdateAnswer, Refusal>> {
+        self.update_done
+            .filter(|&(done, _)| done == ticket)
+            .map(|(_, answer)| answer)
+    }
+
+    fn update_chunk(&mut self, offset: u32, _data: &[u8]) -> Result<UpdateView, Refusal> {
+        if !self.installing {
+            return Err(Refusal::Update(UpdateRefusal::NotInstalling));
+        }
+        self.chunks.push(offset);
+        Ok(receiving())
+    }
+
+    fn update_view(&mut self) -> Option<UpdateView> {
+        self.update.then(receiving)
+    }
+
+    fn installing(&self) -> bool {
+        // A queued request holds the lease too.
+        self.installing || self.held.is_some()
+    }
+
+    fn feed_active(&self) -> bool {
+        self.reserved < u32::try_from(self.feeds.len()).unwrap()
     }
 
     fn feed(&mut self, portions: u8, by: proto::Source) -> Result<u32, Refusal> {
@@ -309,6 +405,8 @@ struct Rig {
     feeding: bool,
     /// Pairing's decision on a recovery offer, for the next pass.
     recovery: Option<wellfed_feeder::pairing::Event>,
+    /// Pairing's decision on an update-key offer, for the next pass.
+    signer: Option<wellfed_feeder::pairing::Event>,
     records: Vec<Record>,
     clients_generation: u32,
 }
@@ -323,6 +421,7 @@ impl Rig {
             now: 1_000,
             feeding: false,
             recovery: None,
+            signer: None,
             records: Vec::new(),
             clients_generation: 0,
         };
@@ -352,6 +451,7 @@ impl Rig {
                 identity: Some(&self.identity),
                 feeding: self.feeding,
                 recovery: self.recovery.take(),
+                signer: self.signer.take(),
             },
             |r| records.push(r),
         )
@@ -1499,4 +1599,405 @@ fn a_request_pending_when_the_session_ends_is_reported_unanswered() {
         Some(Event::Unanswered { id: [5; 16] })
     );
     assert_eq!(owner.connection.poll_event(), None);
+}
+
+/// A rig whose feeder serves updates, with a server key enrolled too.
+fn update_rig() -> Rig {
+    let mut rig = Rig::new();
+    rig.device.update = true;
+    rig.device.enroll(public(STRANGER), Role::Server);
+    rig.publish();
+    rig
+}
+
+const MANIFEST: [u8; 160] = [0xa5; 160];
+
+fn offer() -> Op {
+    Op::OfferUpdate {
+        manifest: MANIFEST.to_vec(),
+        downgrade: None,
+    }
+}
+
+/// The feeder's view as a client reads it.
+fn view(view: UpdateView) -> Answer {
+    Answer::Update(view.into())
+}
+
+fn enroll_laptop() -> Op {
+    Op::EnrollUpdateKey {
+        key: [0x5e; 32],
+        label: "laptop".into(),
+    }
+}
+
+#[test]
+fn only_an_owner_s_session_with_the_update_bit_may_update() {
+    let mut rig = update_rig();
+    let ops = [
+        offer(),
+        Op::UpdateChunk {
+            offset: 0,
+            data: vec![1; 512],
+        },
+        Op::UpdateState,
+        Op::CancelUpdate,
+        Op::EnrollUpdateKey {
+            key: [3; 32],
+            label: "laptop".into(),
+        },
+        Op::UpdateKeyStatement {
+            statement: vec![4; 88],
+        },
+    ];
+    for secret in [MEMBER, STRANGER] {
+        let mut client = open(&mut rig, secret);
+        for (n, op) in ops.iter().enumerate() {
+            let answer = ask(
+                &mut rig,
+                &mut client,
+                u8::try_from(n).unwrap() + 1,
+                op.clone(),
+            );
+            assert_eq!(answer, Answer::Refused(model::Refusal::Forbidden), "{op:?}");
+        }
+    }
+    assert!(rig.device.updates.is_empty() && rig.device.chunks.is_empty());
+
+    // An owner whose hello lacks the bit, or a feeder that does not serve it.
+    let mut rig = update_rig();
+    let hello = Hello {
+        major: 1,
+        capabilities: model::Capabilities {
+            feed: true,
+            update: false,
+        },
+    };
+    let slot = rig.accept().unwrap();
+    let (session, outbox) =
+        Session::connect_with(&Keypair::from_secret(OWNER), public(FEEDER), [7; 32], hello)
+            .unwrap();
+    let mut old = Client_ {
+        slot,
+        session,
+        outbox,
+    };
+    run(&mut rig, &mut old, |session| {
+        matches!(session.next_incoming(), Ok(Some(Incoming::Opened(_))))
+    });
+    let mut plain = Rig::new();
+    let mut owner = open(&mut plain, OWNER);
+    for (n, op) in ops.iter().enumerate() {
+        let id = u8::try_from(n).unwrap() + 1;
+        let unavailable = Answer::Refused(model::Refusal::Unavailable);
+        assert_eq!(ask(&mut rig, &mut old, id, op.clone()), unavailable);
+        assert_eq!(ask(&mut plain, &mut owner, id, op.clone()), unavailable);
+    }
+    assert!(rig.device.updates.is_empty());
+}
+
+#[test]
+fn an_offer_waits_for_no_feed_and_a_feed_waits_for_the_install() {
+    let mut rig = update_rig();
+    let mut owner = open(&mut rig, OWNER);
+    let busy_refusal = Answer::Refused(model::Refusal::Busy);
+
+    // A feed is prepared or driven: the offer is refused, not queued.
+    rig.feeding = true;
+    assert_eq!(ask(&mut rig, &mut owner, 1, offer()), busy_refusal);
+    rig.feeding = false;
+
+    // A feed queued but not yet reserved holds the offer off too.
+    rig.device.feeds.push((1, proto::Source::Panel));
+    assert_eq!(ask(&mut rig, &mut owner, 2, offer()), busy_refusal);
+    rig.device.reserved = 1;
+    assert!(rig.device.updates.is_empty());
+
+    assert_eq!(ask(&mut rig, &mut owner, 3, offer()), view(receiving()));
+    assert_eq!(rig.device.updates.len(), 1);
+    assert!(rig.device.installing);
+
+    let feed = ask(&mut rig, &mut owner, 4, Op::Feed { portions: 1 });
+    assert_eq!(feed, busy_refusal);
+    assert_eq!(rig.device.feeds.len(), 1, "no feed during the install");
+
+    // The same offer id again: the state now, not a second offer.
+    assert_eq!(ask(&mut rig, &mut owner, 3, offer()), view(receiving()));
+    assert_eq!(rig.device.updates.len(), 1);
+
+    let cancel = ask(&mut rig, &mut owner, 5, Op::CancelUpdate);
+    assert!(matches!(
+        cancel,
+        Answer::Update(model::UpdateView {
+            phase: model::UpdatePhase::Idle,
+            ..
+        })
+    ));
+    let feed = ask(&mut rig, &mut owner, 6, Op::Feed { portions: 1 });
+    assert_eq!(feed, Answer::Feeding { feed: 2 });
+}
+
+#[test]
+fn a_statement_or_a_cancel_waits_for_no_feed_and_a_feed_waits_for_either() {
+    let mut rig = update_rig();
+    let mut owner = open(&mut rig, OWNER);
+    let mut other = open(&mut rig, OWNER);
+    let busy = Answer::Refused(model::Refusal::Busy);
+    let statement = Op::UpdateKeyStatement {
+        statement: vec![4; 88],
+    };
+
+    // Both may write the update store: never while a feed is driven or
+    // queued.
+    rig.feeding = true;
+    assert_eq!(ask(&mut rig, &mut owner, 1, statement.clone()), busy);
+    assert_eq!(ask(&mut rig, &mut owner, 2, Op::CancelUpdate), busy);
+    rig.feeding = false;
+    rig.device.feeds.push((1, proto::Source::Panel));
+    assert_eq!(ask(&mut rig, &mut owner, 3, statement.clone()), busy);
+    rig.device.feeds.push((1, proto::Source::Panel));
+    assert_eq!(ask(&mut rig, &mut owner, 4, Op::CancelUpdate), busy);
+    assert!(rig.device.updates.is_empty());
+
+    // A statement waiting for the update stage holds the flash: no feed
+    // until it is answered.
+    rig.device.hold = true;
+    assert_eq!(ask_within(&mut rig, &mut owner, 5, statement, 5), None);
+    let feed = ask(&mut rig, &mut other, 6, Op::Feed { portions: 1 });
+    assert_eq!(feed, busy);
+    assert_eq!(rig.device.feeds.len(), 2, "no feed while it waits");
+
+    rig.device.hold = false;
+    rig.device.answer_held();
+    let done = poll_answer(&mut rig, &mut owner, 5, 50).unwrap();
+    assert_eq!(done, Answer::Done { generation: None });
+    let feed = ask(&mut rig, &mut other, 7, Op::Feed { portions: 1 });
+    assert_eq!(feed, Answer::Feeding { feed: 3 });
+}
+
+#[test]
+fn a_session_key_is_never_enrolled_as_an_update_signer() {
+    let mut rig = update_rig();
+    let mut owner = open(&mut rig, OWNER);
+    let enroll = Op::EnrollUpdateKey {
+        key: public(MEMBER),
+        label: "phone".into(),
+    };
+    assert_eq!(ask_within(&mut rig, &mut owner, 1, enroll, 50), None);
+
+    rig.signer = press_dispense(&mut rig);
+    let refused = poll_answer(&mut rig, &mut owner, 1, 50).unwrap();
+    assert_eq!(refused, Answer::Refused(model::Refusal::Invalid));
+    let member = rig.device.clients.iter().find(|c| c.key == public(MEMBER));
+    assert_eq!(member.map(|c| c.role), Some(Role::Member));
+}
+
+#[test]
+fn chunks_are_answered_with_the_state_and_never_push_out_a_remembered_write() {
+    let mut rig = update_rig();
+    let mut owner = open(&mut rig, OWNER);
+    let put = Op::PutSettings {
+        base: Generation(7),
+        changes: SettingsPatch {
+            volume: Some(50),
+            ..SettingsPatch::default()
+        },
+    };
+    let first = ask(&mut rig, &mut owner, 200, put.clone());
+    assert_eq!(
+        first,
+        Answer::Done {
+            generation: Some(Generation(8))
+        }
+    );
+
+    let not_yet = ask(
+        &mut rig,
+        &mut owner,
+        1,
+        Op::UpdateChunk {
+            offset: 0,
+            data: vec![1; 512],
+        },
+    );
+    assert_eq!(
+        not_yet,
+        Answer::Refused(model::Refusal::Update(model::UpdateRefusal::NotInstalling))
+    );
+    ask(&mut rig, &mut owner, 2, offer());
+
+    // More chunks than the server remembers writes.
+    for n in 0..40u8 {
+        let offset = u32::from(n) * 512;
+        let answer = ask(
+            &mut rig,
+            &mut owner,
+            n + 10,
+            Op::UpdateChunk {
+                offset,
+                data: vec![n; 512],
+            },
+        );
+        assert_eq!(answer, view(receiving()));
+    }
+    assert_eq!(rig.device.chunks.len(), 40);
+    let oversized = ask(
+        &mut rig,
+        &mut owner,
+        60,
+        Op::UpdateChunk {
+            offset: 0,
+            data: vec![0; 513],
+        },
+    );
+    assert_eq!(oversized, Answer::Refused(model::Refusal::Invalid));
+
+    let retry = ask(&mut rig, &mut owner, 200, put);
+    assert_eq!(retry, first, "the settings write is still remembered");
+    assert_eq!(rig.device.settings.generation, 8);
+    let logged = rig
+        .records
+        .iter()
+        .filter(|r| {
+            matches!(
+                r,
+                Record::Request {
+                    op: "update-chunk",
+                    ..
+                }
+            )
+        })
+        .count();
+    assert_eq!(
+        logged, 1,
+        "only the refused chunk is logged, not every one taken"
+    );
+}
+
+#[test]
+fn a_key_statement_is_answered_done_and_logged_by_its_key_id() {
+    let mut rig = update_rig();
+    let mut owner = open(&mut rig, OWNER);
+    let mut statement = [0u8; 88];
+    statement[..8].copy_from_slice(&[0xc1; 8]);
+    let done = ask(
+        &mut rig,
+        &mut owner,
+        1,
+        Op::UpdateKeyStatement {
+            statement: statement.to_vec(),
+        },
+    );
+    assert_eq!(done, Answer::Done { generation: None });
+    assert!(rig.records.iter().any(|r| matches!(
+        r,
+        Record::UpdateKey {
+            change: UpdateKeyChange::Retired,
+            key,
+            ..
+        } if *key == [0xc1; 8]
+    )));
+}
+
+/// Send a request and run `passes` passes; its answer, if one came.
+fn ask_within(
+    rig: &mut Rig,
+    client: &mut Client_,
+    id: u8,
+    op: Op,
+    passes: usize,
+) -> Option<Answer> {
+    let bytes = client.session.request([id; 16], &op).unwrap();
+    client.outbox.extend(bytes);
+    poll_answer(rig, client, id, passes)
+}
+
+fn poll_answer(rig: &mut Rig, client: &mut Client_, id: u8, passes: usize) -> Option<Answer> {
+    for _ in 0..passes {
+        rig.deliver(client.slot, &mut client.outbox);
+        rig.pass();
+        let bytes = rig.collect(client.slot);
+        if !bytes.is_empty() {
+            client.session.receive(&bytes).unwrap();
+        }
+        rig.device.write();
+        while let Some(incoming) = client.session.next_incoming().unwrap() {
+            if let Incoming::Answer { id: got, answer } = incoming
+                && got == [id; 16]
+            {
+                return Some(answer);
+            }
+        }
+    }
+    None
+}
+
+fn press_dispense(rig: &mut Rig) -> Option<PairingEvent> {
+    let press = Gesture::Down {
+        chord: Buttons::of(Button::Dispense),
+    };
+    rig.pairing.gesture(rig.now, press, Lock::Unlocked)
+}
+
+#[test]
+fn an_update_key_enrolls_only_once_dispense_is_pressed() {
+    let mut rig = update_rig();
+    let mut owner = open(&mut rig, OWNER);
+    assert_eq!(
+        ask_within(&mut rig, &mut owner, 1, enroll_laptop(), 50),
+        None
+    );
+    assert!(!rig.device.clients.iter().any(|c| c.key == [0x5e; 32]));
+
+    // A second offer while the first waits for its press.
+    let mut other = open(&mut rig, OWNER);
+    let busy = ask(&mut rig, &mut other, 2, enroll_laptop());
+    assert_eq!(busy, Answer::Refused(model::Refusal::Busy));
+
+    rig.signer = press_dispense(&mut rig);
+    assert!(matches!(rig.signer, Some(PairingEvent::Admit { .. })));
+    let done = poll_answer(&mut rig, &mut owner, 1, 50).unwrap();
+    assert_eq!(done, Answer::Done { generation: None });
+    let enrolled = rig.device.clients.iter().find(|c| c.key == [0x5e; 32]);
+    assert_eq!(enrolled.map(|c| c.role), Some(Role::UpdateSigner));
+    assert!(rig.records.iter().any(|r| matches!(
+        r,
+        Record::UpdateKey {
+            change: UpdateKeyChange::Enrolled,
+            ..
+        }
+    )));
+}
+
+#[test]
+fn an_unpressed_update_key_is_refused_and_a_closed_session_cancels_its_offer() {
+    let mut rig = update_rig();
+    let mut owner = open(&mut rig, OWNER);
+    assert_eq!(
+        ask_within(&mut rig, &mut owner, 1, enroll_laptop(), 5),
+        None
+    );
+    rig.now += Config::DEFAULT.confirm_ms;
+    rig.signer = rig.pairing.tick(rig.now);
+    let refused = poll_answer(&mut rig, &mut owner, 1, 50).unwrap();
+    assert_eq!(
+        refused,
+        Answer::Refused(model::Refusal::Update(model::UpdateRefusal::Unconfirmed))
+    );
+
+    // The client leaves while its offer waits: the next press feeds again,
+    // and a leftover decision never admits a later offer.
+    assert_eq!(
+        ask_within(&mut rig, &mut owner, 2, enroll_laptop(), 5),
+        None
+    );
+    let records = &mut rig.records;
+    rig.server.closed(owner.slot, |r| records.push(r));
+    rig.pass();
+    assert_eq!(
+        press_dispense(&mut rig),
+        None,
+        "no offer is pending any more"
+    );
+    assert!(!rig.device.clients.iter().any(|c| c.key == [0x5e; 32]));
 }

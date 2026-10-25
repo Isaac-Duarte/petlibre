@@ -135,6 +135,9 @@ pub struct Owner {
     setup: Setup,
     /// The recovery offer's decision, until the device API takes it.
     recovery: Option<pairing::Event>,
+    /// An update key's decision (its Dispense press, or the timeout), until
+    /// the device API takes it.
+    signer: Option<pairing::Event>,
 }
 
 impl fmt::Debug for Owner {
@@ -164,6 +167,7 @@ impl Owner {
             indicator: Indicator::Shown(false),
             setup: Setup::off(),
             recovery: None,
+            signer: None,
         }
     }
 
@@ -176,6 +180,12 @@ impl Owner {
     /// its timeout), for the device API's recovery session.
     pub fn take_recovery(&mut self) -> Option<pairing::Event> {
         self.recovery.take()
+    }
+
+    /// The update-key offer's decision this step, for the device API's
+    /// session that waits for it.
+    pub fn take_signer(&mut self) -> Option<pairing::Event> {
+        self.signer.take()
     }
 
     /// The pairing policy, which the device API also steps (invites).
@@ -220,6 +230,7 @@ impl Owner {
                 }
                 decided = decided.or(setup_decision(event));
                 self.recovery = self.recovery.or(recovery_decision(event));
+                self.signer = self.signer.or(signer_decision(event));
                 continue;
             }
             let Some(event) = panel.gesture(now, gesture) else {
@@ -246,6 +257,7 @@ impl Owner {
             record(Record::Pairing(event));
             decided = decided.or(setup_decision(event));
             self.recovery = self.recovery.or(recovery_decision(event));
+            self.signer = self.signer.or(signer_decision(event));
         }
 
         let want = panel.lock().locked() && inputs.lights;
@@ -311,6 +323,17 @@ fn setup_decision(event: pairing::Event) -> Option<pairing::Event> {
 /// The same for the LAN recovery session the device API runs.
 pub fn recovery_decision(event: pairing::Event) -> Option<pairing::Event> {
     decision(event, Path::Recovery)
+}
+
+/// An update key's Dispense press, or its timeout, for the session that
+/// offered it.
+pub fn signer_decision(event: pairing::Event) -> Option<pairing::Event> {
+    match event {
+        pairing::Event::Admit {
+            path: Path::Signer, ..
+        } => Some(event),
+        _ => decision(event, Path::Signer),
+    }
 }
 
 fn decision(event: pairing::Event, path: Path) -> Option<pairing::Event> {

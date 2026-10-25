@@ -105,6 +105,10 @@ impl api::Feeds for Feeding {
         Feeding::feeding(self)
     }
 
+    fn busy(&self) -> bool {
+        Feeding::busy(self)
+    }
+
     #[cfg(not(feature = "gap-probe"))]
     fn submit(&mut self, portions: u8, by: EventSource) -> Result<u32, Refusal> {
         Feeding::submit(self, portions, by, |record| {
@@ -195,12 +199,14 @@ unsafe extern "C" fn loop_task(_: *mut c_void) -> u32 {
     let locked = owner.lock().map(wellfed_feeder::panel::Lock::locked);
     let identity = identity.keypair();
     let recovery = owner.take_recovery();
+    let signer = owner.take_signer();
     let inputs = api::Inputs {
         now_ms,
         pairing: owner.pairing(),
         identity,
         locked,
         recovery,
+        signer,
         feeds: &mut *feeding,
     };
     let api_delay = api.step(inputs, |record| {

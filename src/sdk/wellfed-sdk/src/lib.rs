@@ -2,10 +2,10 @@
 //! inside, and the API it builds on.
 //!
 //! The runtime (target builds only) owns the KM4 entry, startup, the
-//! watchdog feeder, network and health transport, the confirmation,
-//! the settings writer and the updater and offer check. None of those
-//! can be skipped by a firmware: bank 0 never runs firmware code, and a
-//! firmware that hangs or fails its trial is rolled back by KM0.
+//! watchdog feeder, the network join, the confirmation, the settings writer
+//! and the update stage. None of those can be skipped by a firmware: the
+//! update stage runs beside the firmware on both banks, and a firmware that
+//! hangs or fails its trial is rolled back by KM0 to bank 0's.
 //!
 //! A firmware is a crate that defines its start hook:
 //!

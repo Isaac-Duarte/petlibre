@@ -400,7 +400,12 @@ impl<S> Owner<S> {
         if !running || shared.mailbox.stop || shared.published.state == OwnerState::Fault {
             return SubmitResult::RejectStopped;
         }
-        if shared.published.state != OwnerState::Idle || shared.mailbox.has_request {
+        // An install holds the flash (or the feeder is about to restart into
+        // bank 0 or the new bank 1): no feed starts until it lets go.
+        if shared.published.state != OwnerState::Idle
+            || shared.mailbox.has_request
+            || crate::ota::mailbox::installing()
+        {
             return SubmitResult::RejectBusy;
         }
         if id == 0 || id <= shared.last_submitted_id {

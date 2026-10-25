@@ -34,9 +34,10 @@
 //! stopped and fails closed when they are not: the lease provider's hook
 //! halts and the watchdog resets the board, and a lease the owner sees while
 //! it drives faults the feed. So a writer outside the feed journal (the
-//! settings writer's stores, the confirmation, the offer check's give-way)
-//! takes the write turn first ([`WriteTurn::begin`]) and holds it for
-//! one store write, within one step of its task:
+//! settings writer's stores, the confirmation, the update stage) takes the
+//! write turn first ([`WriteTurn::begin`]) and holds it for one store
+//! write, within one step of its task (an install holds it from its first
+//! write until it stops, a give-way or an activation until the restart):
 //!
 //! - While the outputs are claimed the write waits: the writer leaves its
 //!   work queued and asks again on its next poll. It counts among the
@@ -74,8 +75,8 @@ pub const WRITE_POLL_MS: u32 = 10;
 
 /// The slowest a waiting writer may poll for its turn. Every writer runs
 /// in the runtime's service task (the confirmation, the settings writer,
-/// the offer check), whose stages each ask again after their own poll; each
-/// asserts its poll against this.
+/// the update stage), whose stages each ask again after their own poll;
+/// each asserts its poll against this.
 pub const WRITER_POLL_MS: u32 = 500;
 
 /// The longest a claim waits for storage writes: one store record (an

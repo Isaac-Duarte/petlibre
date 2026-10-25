@@ -17,6 +17,8 @@
 use core::fmt;
 
 use wellfed_core::mdns::{self, Destination, Responder};
+use wellfed_core::ota::install::Phase;
+use wellfed_core::ota::offer::{KeyStatement, key_id};
 use wellfed_core::store::events::{BODY_BYTES, Read};
 use wellfed_core::store::net::Credentials;
 use wellfed_core::tone::Tune;
@@ -25,15 +27,19 @@ use wellfed_core::transport::{
     WifiResult, WifiSource,
 };
 use wellfed_feeder::api::{
-    self as server, Device, EventRead, KeyChange, KeyOutcome, Pass, SESSIONS, Server,
+    self as server, Device, EventRead, KeyChange, KeyOutcome, Pass, SESSIONS, Server, UpdateAnswer,
+    UpdateKeyChange, UpdateRequest,
 };
 use wellfed_feeder::pairing::{self, Pairing};
+use wellfed_feeder::update as wire;
 use wellfed_proto::api::{
     self as proto, Capabilities, EventBody, Metric, PORT, Refusal, Sample, Source, Status,
+    UpdateRefusal, UpdateView,
 };
 use wellfed_sdk::hal::health::Boot;
 use wellfed_sdk::hal::interlock::{INTERLOCK, Interlock};
 use wellfed_sdk::hal::keys::{self, Change, KeyResult, Requested};
+use wellfed_sdk::hal::ota::mailbox::{self, Answer, Request};
 use wellfed_sdk::hal::sdk::{self, Accepted, ApiRecv, Datagram};
 use wellfed_sdk::hal::{clock, events, net_status, network, panel, power, rng, settings, startup};
 use wellfed_session::noise::Keypair;
@@ -126,6 +132,8 @@ fn server_record(record: server::Record, f: &mut impl fmt::Write) -> fmt::Result
 pub trait Feeds {
     /// A feed is being prepared or driven: handshakes wait.
     fn feeding(&self) -> bool;
+    /// A feed is queued or runs: no install starts.
+    fn busy(&self) -> bool;
     /// Hand one feed to the owner; the number its journal holds it under.
     fn submit(&mut self, portions: u8, by: Source) -> Result<u32, Refusal>;
     /// Whether the feed `feed` is reserved yet: `None` while it waits.
@@ -142,6 +150,8 @@ pub struct Inputs<'a, F> {
     /// The panel lock, once the owner has read it.
     pub locked: Option<bool>,
     pub recovery: Option<pairing::Event>,
+    /// Pairing's decision on an update key's offer, this step.
+    pub signer: Option<pairing::Event>,
     pub feeds: &'a mut F,
 }
 
@@ -201,6 +211,7 @@ impl Api {
             identity,
             locked,
             recovery,
+            signer,
             feeds,
         } = inputs;
         let boot = *self.boot.get_or_insert_with(|| {
@@ -266,7 +277,7 @@ impl Api {
                 identity,
                 feeding,
                 recovery,
-                signer: None,
+                signer,
             },
             |r| record(Record::Server(r)),
         );
@@ -611,7 +622,7 @@ impl<F: Feeds> Device for Feeder<'_, F> {
     }
 
     fn capabilities(&self) -> Capabilities {
-        Capabilities::FEED
+        Capabilities::FEED.union(Capabilities::UPDATE)
     }
 
     fn feed(&mut self, portions: u8, by: Source) -> Result<u32, Refusal> {
@@ -660,6 +671,61 @@ impl<F: Feeds> Device for Feeder<'_, F> {
     fn reboot(&mut self) {
         #[cfg(target_os = "none")]
         wellfed_sdk::request_reset();
+    }
+
+    fn update(&mut self, request: UpdateRequest<'_>) -> Result<u32, Refusal> {
+        let request = match request {
+            UpdateRequest::Offer {
+                manifest,
+                downgrade,
+                device,
+            } => Request::offer(manifest, downgrade, device),
+            UpdateRequest::Statement { statement } => Request::statement(statement),
+            UpdateRequest::Cancel => Ok(Request::Cancel),
+        };
+        request.and_then(mailbox::request).map_err(wire::refusal)
+    }
+
+    fn update_outcome(&mut self, ticket: u32) -> Option<Result<UpdateAnswer, Refusal>> {
+        mailbox::outcome(ticket).map(|answer| match answer {
+            Ok(Answer::Progress(progress)) => Ok(UpdateAnswer::View(wire::view(&progress))),
+            Ok(Answer::Key(KeyStatement::Revoke(id))) => Ok(UpdateAnswer::Key {
+                change: UpdateKeyChange::Retired,
+                id,
+            }),
+            Ok(Answer::Key(KeyStatement::Add(key))) => Ok(UpdateAnswer::Key {
+                change: UpdateKeyChange::Added,
+                id: key_id(&key),
+            }),
+            Err(refused) => Err(wire::refusal(refused)),
+        })
+    }
+
+    fn update_chunk(&mut self, offset: u32, data: &[u8]) -> Result<UpdateView, Refusal> {
+        let progress = mailbox::progress().ok_or(Refusal::Busy)?;
+        match progress.phase {
+            Phase::Receiving => {}
+            // The last chunk's answer may have been lost: the state says so.
+            Phase::Activated => return Ok(wire::view(&progress)),
+            Phase::Idle | Phase::Checking | Phase::GivingWay => {
+                return Err(Refusal::Update(UpdateRefusal::NotInstalling));
+            }
+        }
+        mailbox::chunk(offset, data).map_err(wire::refusal)?;
+        let progress = mailbox::progress().ok_or(Refusal::Busy)?;
+        Ok(wire::view(&progress))
+    }
+
+    fn update_view(&mut self) -> Option<UpdateView> {
+        mailbox::progress().map(|progress| wire::view(&progress))
+    }
+
+    fn installing(&self) -> bool {
+        mailbox::installing()
+    }
+
+    fn feed_active(&self) -> bool {
+        self.feeds.busy()
     }
 }
 

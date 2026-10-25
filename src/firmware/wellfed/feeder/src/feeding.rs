@@ -595,7 +595,8 @@ mod target {
             mut record: impl FnMut(Record),
         ) -> Result<u32, Refusal> {
             let owner = OWNER.enter().ok_or(Refusal::Busy)?;
-            if self.current.is_some() {
+            // An install holds the flash; the owner refuses it as well.
+            if self.current.is_some() || wellfed_sdk::hal::ota::mailbox::installing() {
                 return Err(Refusal::Busy);
             }
             let clock = wellfed_sdk::hal::sdk::uptime_ms;
@@ -651,6 +652,11 @@ mod target {
             let feed = u64::from(feed);
             self.current.is_some_and(|current| current.feed == feed)
                 && OWNER.enter().is_some_and(|owner| owner.cancel(feed))
+        }
+
+        /// A feed is queued or runs: no install starts.
+        pub fn busy(&self) -> bool {
+            self.current.is_some() || self.feeding()
         }
 
         /// A feed is being prepared or driven: the loop defers handshakes.

@@ -5,8 +5,9 @@
 
 use std::fmt;
 
+use wellfed_core::ota::install::Stop;
 use wellfed_core::record::{Record, tag};
-use wellfed_hal::ota::{confirm, updater, watch};
+use wellfed_hal::ota::{confirm, update};
 use wellfed_hal::{audio, ble, stream, transport};
 
 struct Body<F>(F);
@@ -48,78 +49,70 @@ fn transport_records_carry_what_the_suite_asserts() {
     assert!(read(&closed).is(tag::TRANSPORT, &[("reason", "reply_timeout")]));
 }
 
+/// An update record's line, under the tag the stage gives it.
+fn update_line(record: update::Record) -> String {
+    let tag = record.tag();
+    line(tag, |f| update::describe(record, f))
+}
+
 #[test]
-fn updater_records_carry_what_the_ota_watch_reads() {
-    let manifest = line(tag::UPDATE, |f| {
-        updater::describe(
-            updater::Record::Manifest {
-                version: 33,
-                bytes: 696_320,
-            },
-            f,
-        )
+fn update_records_carry_what_the_ota_watch_reads() {
+    let manifest = update_line(update::Record::Manifest {
+        version: 33,
+        bytes: 696_320,
     });
     let manifest = read(&manifest);
+    assert!(manifest.is(tag::UPDATE, &[]));
     assert_eq!(manifest.first, "manifest");
     assert_eq!(manifest.number::<u32>("version"), Some(33));
     assert_eq!(manifest.number::<u32>("bytes"), Some(696_320));
 
-    let progress = line(tag::UPDATE, |f| {
-        updater::describe(
-            updater::Record::Progress {
-                sectors: 48,
-                total: 170,
-                leases: 816,
-                masked_max_ms: 61,
-                masked_long: 0,
-            },
-            f,
-        )
+    let progress = update_line(update::Record::Progress {
+        sectors: 48,
+        total: 170,
     });
     let progress = read(&progress);
     assert_eq!(progress.first, "progress");
     assert_eq!(progress.field("sectors"), Some("48/170"));
-    assert_eq!(progress.number::<u32>("masked_max_ms"), Some(61));
 
-    let activated = line(tag::UPDATE, |f| {
-        updater::describe(
-            updater::Record::Activated {
-                version: 33,
-                bytes: 696_320,
-                sectors: 170,
-            },
-            f,
-        )
+    let activated = update_line(update::Record::Activated {
+        version: 33,
+        bytes: 696_320,
+        sectors: 170,
     });
     let activated = read(&activated);
     assert_eq!(activated.first, "activated");
     assert_eq!(activated.number::<u32>("version"), Some(33));
 
-    for &stage in updater::ErrorStage::ALL {
-        let error = line(tag::UPDATE, |f| {
-            updater::describe(updater::Record::Error { stage }, f)
-        });
+    for stop in [
+        Stop::Timeout,
+        Stop::Cancelled,
+        Stop::Order,
+        Stop::Marker,
+        Stop::Write,
+        Stop::Hash,
+        Stop::Activate,
+        Stop::Store,
+    ] {
+        let error = update_line(update::Record::Stopped { stop });
         let error = read(&error);
-        assert_eq!(
-            (error.first, error.field("stage")),
-            ("error", Some(stage.as_str()))
-        );
+        assert!(error.is(tag::UPDATE, &[]));
+        assert_eq!(error.first, "error");
+        assert!(error.field("stage").is_some());
     }
 }
 
 #[test]
-fn watch_and_confirmation_records_carry_what_the_ota_watch_reads() {
-    let gave_way = line(tag::WATCH, |f| {
-        watch::describe(watch::Record::GaveWay { version: 34 }, f)
-    });
+fn give_way_and_confirmation_records_carry_what_the_ota_watch_reads() {
+    let gave_way = update_line(update::Record::GaveWay { version: 34 });
     let gave_way = read(&gave_way);
     assert!(gave_way.is(tag::WATCH, &[("give_way", "1")]));
     assert_eq!(gave_way.number::<u32>("version"), Some(34));
 
-    let same = line(tag::WATCH, |f| {
-        watch::describe(watch::Record::Found(watch::Found::Same), f)
-    });
-    assert!(read(&same).is(tag::WATCH, &[("offer", "1"), ("same", "1")]));
+    let offer = update_line(update::Record::Offer { version: 34 });
+    let offer = read(&offer);
+    assert!(offer.is(tag::WATCH, &[("offer", "1")]));
+    assert_eq!(offer.number::<u32>("version"), Some(34));
 
     let confirmed = line(tag::CONFIRM, |f| {
         confirm::describe(
@@ -169,17 +162,6 @@ fn displayed<T: fmt::Display + Copy>(
 #[test]
 fn stage_and_reason_words_are_unchanged() {
     assert_eq!(
-        displayed(updater::ErrorStage::ALL, updater::ErrorStage::as_str),
-        [
-            "clock", "timeout", "topic", "range", "order", "hash", "write", "state", "key",
-            "manifest", "marker"
-        ]
-    );
-    assert_eq!(
-        displayed(updater::CloseReason::ALL, updater::CloseReason::as_str),
-        ["wifi", "closed", "protocol", "send", "timeout"]
-    );
-    assert_eq!(
         words(transport::CloseReason::ALL, transport::CloseReason::as_str),
         [
             "wifi",
@@ -196,10 +178,6 @@ fn stage_and_reason_words_are_unchanged() {
             "foreign_topic",
             "health_format"
         ]
-    );
-    assert_eq!(
-        displayed(watch::ErrorStage::ALL, watch::ErrorStage::as_str),
-        ["key", "give_way", "client_id", "topic"]
     );
     assert_eq!(
         displayed(confirm::ErrorStage::ALL, confirm::ErrorStage::as_str),
@@ -257,9 +235,9 @@ fn stage_and_reason_records_format_as_before() {
     let cases = [
         (
             text(|f| {
-                updater::describe(
-                    updater::Record::Error {
-                        stage: updater::ErrorStage::Marker,
+                update::describe(
+                    update::Record::Stopped {
+                        stop: Stop::Activate,
                     },
                     f,
                 )
@@ -267,15 +245,8 @@ fn stage_and_reason_records_format_as_before() {
             "error stage=marker",
         ),
         (
-            text(|f| {
-                updater::describe(
-                    updater::Record::Closed {
-                        reason: updater::CloseReason::Protocol,
-                    },
-                    f,
-                )
-            }),
-            "closed reason=protocol",
+            text(|f| update::describe(update::Record::Stopped { stop: Stop::Hash }, f)),
+            "error stage=hash",
         ),
         (
             text(|f| {
@@ -289,15 +260,8 @@ fn stage_and_reason_records_format_as_before() {
             "closed reason=subscribe_refused",
         ),
         (
-            text(|f| {
-                watch::describe(
-                    watch::Record::Error {
-                        stage: watch::ErrorStage::ClientId,
-                    },
-                    f,
-                )
-            }),
-            "error stage=client_id",
+            text(|f| update::describe(update::Record::GiveWayRefused, f)),
+            "error stage=give_way",
         ),
         (
             text(|f| {

@@ -401,3 +401,27 @@ fn a_feed_traces_its_drive_edges_and_current() {
     assert!(s.result.outcome == OwnerOutcome::Cancelled && s.trace == Default::default());
     f.stop();
 }
+
+/// An install holds the flash from its offer to its end: the owner takes
+/// no feed meanwhile, so no journal write or motor drive meets an install.
+#[test]
+fn no_feed_starts_while_an_install_holds_the_lease() {
+    use wellfed_hal::ota::mailbox::{self, Request};
+
+    let mut f = boot();
+    mailbox::reset();
+    let offer = Request::offer(&[0; 160], None, [0; 32]).unwrap();
+    mailbox::request(offer).unwrap();
+    assert!(mailbox::installing());
+
+    assert_eq!(f.owner.submit(1, 1), SubmitResult::RejectBusy);
+    f.advance(50);
+    assert_eq!(motor_pins(), wellfed_hal::board::MOTOR_MASK, "motor STOP");
+    assert_eq!(f.reserve_calls, 0, "nothing reserved in the journal");
+
+    // The stage refuses the offer and lets go: feeding is back.
+    mailbox::finish(Err(wellfed_core::ota::install::Refused::Busy));
+    assert!(!mailbox::installing());
+    assert_eq!(f.owner.submit(1, 1), SubmitResult::Enqueued);
+    mailbox::reset();
+}

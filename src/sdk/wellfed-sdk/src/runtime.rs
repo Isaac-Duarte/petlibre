@@ -2,17 +2,15 @@
 //!
 //! Startup: stopped outputs, the synthetic core diagnostic and the indicator
 //! check, then the network join (the Wi-Fi probe, stepped by the
-//! diagnostic task). The transport, which reports health to the local
-//! server's broker, runs only in the recovery role: the normal
-//! role's firmware serves the device API.
-//!
-//! Booted from bank 0 (the recovery role), the updater runs and the
-//! firmware never starts, so a broken firmware can always be replaced. In
-//! the normal role the firmware's own tasks start (`firmware!`), then the
-//! service task: it samples power, confirms a healthy build with the
-//! feeder, and only then opens the settings writer and the offer check. A
-//! hung runtime task stops the feeding, so a hang becomes a watchdog reset that
-//! KM0 counts.
+//! diagnostic task). The firmware's own tasks start (`firmware!`) from
+//! either bank, then the service task: it samples power, confirms a healthy
+//! build with the feeder (bank 1 only), opens the settings writer, and runs
+//! the update stage (`ota::update`), which takes offers over the firmware's
+//! device API. Booted from bank 0, the build is the fallback a failed update
+//! lands on: it never confirms, opens the settings writer at once, so it
+//! saves and feeds, and installs offers into bank 1. Nothing opens an MQTT
+//! session. A hung runtime task stops the feeding, so a hang becomes a
+//! watchdog reset that KM0 counts.
 
 use core::ffi::{CStr, c_void};
 use core::ptr;
@@ -22,17 +20,14 @@ use wellfed_core::flash_coord::FlashCoord;
 use wellfed_core::{deadline_passed, until};
 use wellfed_hal::flash::hooks::{self, HookProvider, HookTicket};
 use wellfed_hal::flash::park::Hardware;
+use wellfed_hal::flash_lock::arming::Hooks;
 use wellfed_hal::flash_lock::provider::Provider;
-use wellfed_hal::health::Boot;
 use wellfed_hal::ota::confirm::{self, Confirm, HookedStorage};
-use wellfed_hal::ota::update::{self as update, Floor, StoreSlots, Update};
-use wellfed_hal::ota::updater::{self, Hooked, Hooks, Updater};
-use wellfed_hal::ota::watch::{self, SdkGiveWay, Watch};
+use wellfed_hal::ota::update::{self as update, Floor, SdkFlash, StoreSlots, Update};
 use wellfed_hal::supervision::beat;
 use wellfed_hal::supervision::config;
 use wellfed_hal::supervision::supervise::{self, LIVENESS_MS, Startup};
 use wellfed_hal::supervision::watchdog::Watchdog;
-use wellfed_hal::transport::{self, Link};
 use wellfed_hal::{cell::TaskCell, leds, net_status, power, rng, sdk, startup, stopped, trial};
 
 use crate::slot::Slot;
@@ -145,95 +140,27 @@ const POWER_WAIT_MS: u32 = 1_000;
 
 static PROBING: AtomicBool = AtomicBool::new(false);
 static PROBE: Slot<Probe> = Slot::new();
-/// Touched only by the transport task; see `net_task`.
-static NET: Slot<Link> = Slot::new();
 
-/// A transport record as the body of a `PLMQT1` line.
-struct Line(transport::Record);
-
-impl core::fmt::Display for Line {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        transport::describe(self.0, f)
-    }
-}
-
-fn log_transport(record: transport::Record) {
-    let mut report = startup::Report::new();
-    if let Ok(line) = report.record(format_args!("PLMQT1 {}\r\n", Line(record))) {
-        sdk::log(line);
-    }
-}
-
-unsafe extern "C" fn net_task(_: *mut c_void) -> u32 {
-    let link = NET.enter_or_try_init(|| {
-        let link = sdk::transport_config()
-            .map(|config| Link::new(config, Boot::read(startup::snapshot())));
-        if link.is_none() {
-            sdk::log(c"PLMQT1 error config\r\n");
-        }
-        link
-    });
-    let Some(mut link) = link else {
-        return 0;
-    };
-
-    NET_RUNNING.store(true, Ordering::Release);
-    let delay = link.step(&mut log_transport);
-    NET_BEAT.store(sdk::uptime_ms(), Ordering::Release);
-
-    if delay == 0 {
-        NET_RUNNING.store(false, Ordering::Release);
-    }
-    delay
-}
-
-/// A signed request's HMAC and reply is the deepest path: 5488 bytes once the
-/// stack audit counted `subw` frames, past 6 KiB's margin.
-const NET_STACK_WORDS: u16 = 2048;
-
-fn start_transport() {
-    // SAFETY: the step takes no context and keeps its state in statics.
-    let created = unsafe {
-        sdk::task_create(
-            c"wellfed-net",
-            NET_STACK_WORDS,
-            2,
-            net_task,
-            ptr::null_mut(),
-        )
-    };
-    sdk::log(if created {
-        c"PLMQT1 start created=1\r\n"
-    } else {
-        c"PLMQT1 start created=0\r\n"
-    });
-}
-
-/// Touched only by the updater task.
-static UPDATER: Slot<Updater> = Slot::new();
 /// The lease provider the SDK flash-lock hooks call. Never borrowed: every
 /// task passes its raw pointer, because the armed hooks dereference it from
 /// whichever task holds the SDK flash lock. Arming writes it from one task, in
-/// sequence: the updater, or the service task's confirmation, settings and
-/// offer-check stages (the last only if the hooks are still unarmed).
+/// sequence: the service task's confirmation, then its settings writer if
+/// the hooks are still unarmed (bank 0 never confirms).
 static PROVIDER: TaskCell<Provider> = TaskCell::new(Provider::UNBOUND);
 /// Opened by whichever task arms first (the feeder task at startup), then
 /// handed to the feeder task, which feeds it.
 static WATCHDOG: Slot<Watchdog> = Slot::new();
 static WATCHDOG_OPEN: AtomicBool = AtomicBool::new(false);
 
-/// The flash writer's (updater or confirmation) last step, in uptime
-/// milliseconds.
+/// The confirmation's last step, in uptime milliseconds.
 static HEARTBEAT: AtomicU32 = AtomicU32::new(0);
-/// The writer ended without activating: feed while outputs stay stopped.
-static UPDATER_DONE: AtomicBool = AtomicBool::new(false);
-/// Bank 1 is activated: stop feeding so the watchdog resets the platform.
+/// The confirmation ended, or never runs (bank 0): feed while outputs stay
+/// stopped.
+static CONFIRM_DONE: AtomicBool = AtomicBool::new(false);
+/// Bank 1 gave way or was activated: stop feeding so the watchdog resets
+/// the platform.
 static RESTART: AtomicBool = AtomicBool::new(false);
-
-/// The transport task's last step and state, for the feeder and confirmation.
-static NET_BEAT: AtomicU32 = AtomicU32::new(0);
-static NET_RUNNING: AtomicBool = AtomicBool::new(false);
-static WATCH_RUNNING: AtomicBool = AtomicBool::new(false);
+static UPDATE_RUNNING: AtomicBool = AtomicBool::new(false);
 /// The startup optics (or pulse) probe has ended and released the KM0
 /// handshake, so another writer may bind it.
 static PROBE_DONE: AtomicBool = AtomicBool::new(false);
@@ -264,10 +191,6 @@ fn on_trial() -> bool {
         && sdk::storage_read(trial::CONFIRM_SECTOR, 0, &mut record)
         && wellfed_core::ota::confirmed(&record, &trial::identity()).is_none()
 }
-/// 24 KiB: Ed25519 verification under the manifest step needs about 12 KiB,
-/// and 10 KiB overflowed on hardware.
-const UPDATER_STACK_WORDS: u16 = 6144;
-
 unsafe extern "C" fn hook_ready(context: *mut c_void) -> bool {
     // SAFETY: the context is the fixed provider; called with no lease held.
     unsafe { (*context.cast::<Provider>()).ready() }
@@ -323,60 +246,6 @@ impl Hooks for SdkHooks {
     }
 }
 
-struct UpdateLine(updater::Record);
-
-impl core::fmt::Display for UpdateLine {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        updater::describe(self.0, f)
-    }
-}
-
-unsafe extern "C" fn updater_task(_: *mut c_void) -> u32 {
-    HEARTBEAT.store(sdk::uptime_ms(), Ordering::Release);
-    let updater = UPDATER.enter_or_try_init(|| {
-        let updater = sdk::transport_config().map(|config| {
-            Updater::new(
-                config,
-                updater::public_key(),
-                Boot::read(startup::snapshot()),
-            )
-        });
-        if updater.is_none() {
-            sdk::log(c"PLOTA1 error stage=config\r\n");
-            UPDATER_DONE.store(true, Ordering::Release);
-        }
-        updater
-    });
-    let Some(mut updater) = updater else {
-        return 0;
-    };
-
-    let provider = PROVIDER.get();
-    let mut flash = Hooked::<SdkHooks>::new();
-    // SAFETY: the provider is a static, never borrowed (see `PROVIDER`).
-    let step = unsafe { updater.step::<Hardware, SdkHooks>(provider, &mut flash) };
-
-    if let Some(record) = step.record {
-        let mut report = startup::Report::new();
-        if let Ok(line) = report.record(format_args!("PLOTA1 {}\r\n", UpdateLine(record))) {
-            sdk::log(line);
-        }
-    }
-
-    HEARTBEAT.store(sdk::uptime_ms(), Ordering::Release);
-    if step.delay_ms == 0 {
-        if step.restart {
-            RESTART.store(true, Ordering::Release);
-            sdk::log(c"PLOTA1 restart watchdog=1\r\n");
-        } else {
-            // No update this boot: report health as the normal role would.
-            UPDATER_DONE.store(true, Ordering::Release);
-            start_transport();
-        }
-    }
-    step.delay_ms
-}
-
 /// Opens the watchdog on its first step, before the startup diagnostic and
 /// probes run, then feeds it as `supervise::feed` decides: while startup and
 /// then the role's tasks keep stepping and outputs stay stopped. A hang, a
@@ -409,9 +278,8 @@ unsafe extern "C" fn feeder_task(_: *mut c_void) -> u32 {
 
     let now = sdk::uptime_ms();
     let fresh = |beat: &AtomicU32| now.wrapping_sub(beat.load(Ordering::Acquire)) < LIVENESS_MS;
-    let alive = (!NET_RUNNING.load(Ordering::Acquire) || fresh(&NET_BEAT))
-        && (!SERVICE_RUNNING.load(Ordering::Acquire) || fresh(&SERVICE_BEAT))
-        && (UPDATER_DONE.load(Ordering::Acquire) || fresh(&HEARTBEAT));
+    let alive = (!SERVICE_RUNNING.load(Ordering::Acquire) || fresh(&SERVICE_BEAT))
+        && (CONFIRM_DONE.load(Ordering::Acquire) || fresh(&HEARTBEAT));
 
     // Stopped, or motor STOP with exactly the supervised emitters lit (the
     // optics probe): the feeder must not trip on a sensing window (observed).
@@ -527,7 +395,7 @@ fn confirm_step() -> u32 {
 
     HEARTBEAT.store(sdk::uptime_ms(), Ordering::Release);
     if step.delay_ms == 0 {
-        UPDATER_DONE.store(true, Ordering::Release);
+        CONFIRM_DONE.store(true, Ordering::Release);
         if matches!(step.record, Some(confirm::Record::Confirmed { .. })) {
             CONFIRMED.store(true, Ordering::Release);
         }
@@ -535,57 +403,42 @@ fn confirm_step() -> u32 {
             step.record,
             Some(confirm::Record::Already | confirm::Record::Confirmed { .. })
         ) {
-            // The settings writer arms the hooks first; the offer check
-            // starts once that settles, so the two never arm at once.
             start_settings();
         }
     }
     step.delay_ms
 }
 
-/// The service task's offer-check stage; see `watch_step`.
-static WATCH: Slot<Watch> = Slot::new();
+struct UpdateLine(update::Record);
 
-struct WatchLine(watch::Record);
-
-impl core::fmt::Display for WatchLine {
+impl core::fmt::Display for UpdateLine {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        watch::describe(self.0, f)
+        f.write_str(self.0.tag())?;
+        f.write_str(" ")?;
+        update::describe(self.0, f)
     }
 }
 
-/// Once confirmed, check for an offer and give way to bank 0's
-/// updater when one names another build.
-fn watch_step() -> u32 {
+/// Take the device API's update requests: check offers, give way on bank
+/// 1, install into bank 1 on bank 0.
+fn update_step() -> u32 {
     let now = sdk::uptime_ms();
-    let watch = WATCH.enter_or_try_init(|| {
-        let watch = sdk::transport_config().map(|config| Watch::new(config, updater::public_key()));
-        if watch.is_none() {
-            WATCH_RUNNING.store(false, Ordering::Release);
-        }
-        watch
-    });
-    let Some(mut watch) = watch else {
+    let Some(mut stage) = UPDATE.enter_or_init(new_update) else {
         return 0;
     };
-
-    let provider = PROVIDER.get();
-    let mut bank = SdkGiveWay::<SdkHooks>::new();
-    // SAFETY: the provider is a static, never borrowed (see `PROVIDER`).
-    let step = unsafe { watch.step::<Hardware, SdkHooks>(provider, &mut bank, now) };
+    let mut flash = SdkFlash::<SdkHooks>::new();
+    let step = stage.step(&mut flash, now);
 
     if let Some(record) = step.record {
         let mut report = startup::Report::new();
-        if let Ok(line) = report.record(format_args!("PLWCH1 {}\r\n", WatchLine(record))) {
+        if let Ok(line) = report.record(format_args!("{}\r\n", UpdateLine(record))) {
             sdk::log(line);
         }
     }
-
-    if step.delay_ms == 0 {
-        if step.restart {
-            RESTART.store(true, Ordering::Release);
-        }
-        WATCH_RUNNING.store(false, Ordering::Release);
+    if step.restart {
+        RESTART.store(true, Ordering::Release);
+        sdk::log(c"PLOTA1 restart watchdog=1\r\n");
+        return 0;
     }
     step.delay_ms
 }
@@ -664,9 +517,6 @@ fn settings_step() -> u32 {
             sdk::log(line);
         }
     }
-    if step.settled {
-        start_watch();
-    }
     if step.delay_ms == 0 {
         SETTINGS_RUNNING.store(false, Ordering::Release);
     }
@@ -678,11 +528,6 @@ fn settings_step() -> u32 {
 fn start_settings() {
     SETTINGS_RUNNING.store(true, Ordering::Release);
     sdk::log(c"PLCFG1 start created=1\r\n");
-}
-
-fn start_watch() {
-    WATCH_RUNNING.store(true, Ordering::Release);
-    sdk::log(c"PLWCH1 start created=1\r\n");
 }
 
 /// The normal role's confirmation stage. The feeder, started with the
@@ -710,7 +555,7 @@ struct Due {
     power: Option<u32>,
     confirm: Option<u32>,
     settings: Option<u32>,
-    watch: Option<u32>,
+    update: Option<u32>,
 }
 
 /// The service task's own.
@@ -742,14 +587,14 @@ fn stage(
     due.map(|at| until(sdk::uptime_ms(), at))
 }
 
-/// The normal role's runtime work in one cooperative task: the power monitor,
-/// then the chain that confirms the build, opens the settings writer (which
-/// arms the hooks) and, once that settles, the offer check. One task instead
-/// of four leaves the firmware its share of the eight task slots; the chain
-/// already ran its stages one after another, so none arms beside another.
-/// The longest step is the offer check's broker connect (3 s), well inside
-/// the feeder's liveness window, so a stage waiting on it delays a settings
-/// save or a power sample but never trips supervision.
+/// The runtime's work in one cooperative task: the power monitor, the
+/// chain that confirms the build (bank 1) and opens the settings writer
+/// (which arms the hooks if the confirmation did not), and the update
+/// stage. One task instead of four leaves the firmware its share of the
+/// eight task slots, and runs every storage and bank-1 write one after
+/// another: no two of them arm or write at once. The longest step is an
+/// offer's signature checks or one sector's erase and program, well inside
+/// the feeder's liveness window.
 unsafe extern "C" fn service_task(_: *mut c_void) -> u32 {
     let Some(mut due) = DUE.enter_or_init(Due::default) else {
         SERVICE_RUNNING.store(false, Ordering::Release);
@@ -762,7 +607,7 @@ unsafe extern "C" fn service_task(_: *mut c_void) -> u32 {
         stage(&POWER_RUNNING, &mut due.power, now, power_step),
         stage(&CONFIRM_RUNNING, &mut due.confirm, now, confirm_step),
         stage(&SETTINGS_RUNNING, &mut due.settings, now, settings_step),
-        stage(&WATCH_RUNNING, &mut due.watch, now, watch_step),
+        stage(&UPDATE_RUNNING, &mut due.update, now, update_step),
     ];
 
     match waits.into_iter().flatten().min() {
@@ -774,17 +619,19 @@ unsafe extern "C" fn service_task(_: *mut c_void) -> u32 {
     }
 }
 
-/// 16 KiB: the offer check's Ed25519 manifest verification is the deepest
-/// path, which the stack audit bounds at about 11 KB; 16 KiB keeps the
-/// audit's 25% margin. The task's stack comes out of the heap.
+/// 16 KiB: an offer's Ed25519 checks are the deepest path, which the stack
+/// audit bounds; 16 KiB keeps the audit's 25% margin. The task's stack comes
+/// out of the heap.
 const SERVICE_STACK_WORDS: u16 = 4096;
 
-/// The normal role's service task, with the power monitor and confirmation
-/// as its first stages.
-fn start_service() {
+/// The service task, with the power monitor, the update stage and, on bank
+/// 1, the confirmation as its first stages. Bank 0 never confirms: it opens
+/// the settings writer at once.
+fn start_service(bank: Option<u8>) {
     SERVICE_BEAT.store(sdk::uptime_ms(), Ordering::Release);
     SERVICE_RUNNING.store(true, Ordering::Release);
     POWER_RUNNING.store(true, Ordering::Release);
+    UPDATE_RUNNING.store(true, Ordering::Release);
     // SAFETY: the step takes no context and keeps its state in statics.
     let created = unsafe {
         sdk::task_create(
@@ -798,6 +645,7 @@ fn start_service() {
     if !created {
         SERVICE_RUNNING.store(false, Ordering::Release);
         POWER_RUNNING.store(false, Ordering::Release);
+        UPDATE_RUNNING.store(false, Ordering::Release);
     }
 
     sdk::log(if created {
@@ -805,28 +653,14 @@ fn start_service() {
     } else {
         c"PLBAT1 start created=0\r\n"
     });
-    start_confirm(created);
-}
-
-/// The recovery role: the updater, below the feeder so a long network wait
-/// cannot starve the watchdog.
-fn start_updater() {
-    HEARTBEAT.store(sdk::uptime_ms(), Ordering::Release);
-    // SAFETY: the step takes no context and keeps its state in statics.
-    let created = unsafe {
-        sdk::task_create(
-            c"wellfed-ota",
-            UPDATER_STACK_WORDS,
-            2,
-            updater_task,
-            ptr::null_mut(),
-        )
-    };
-    sdk::log(if created {
-        c"PLOTA1 tasks created=1\r\n"
+    if bank == Some(0) {
+        CONFIRM_DONE.store(true, Ordering::Release);
+        if created {
+            start_settings();
+        }
     } else {
-        c"PLOTA1 tasks created=0\r\n"
-    });
+        start_confirm(created);
+    }
 }
 
 fn bit(value: bool) -> u8 {
@@ -885,11 +719,8 @@ fn probe_step() -> u32 {
     let Some(mut probe) = PROBE.enter_or_init(Probe::default) else {
         return 0;
     };
-    // The startup probe's windows run first; the recovery role has none and
-    // needs the network at once.
-    let ready = startup::snapshot().bank() == Some(0)
-        || PROBE_DONE.load(Ordering::Acquire)
-        || sdk::uptime_ms() >= WIFI_HOLD_MAX_MS;
+    // The startup probe's windows run first, on either bank.
+    let ready = PROBE_DONE.load(Ordering::Acquire) || sdk::uptime_ms() >= WIFI_HOLD_MAX_MS;
     let step = probe.step_when(ready);
     if let Some(record) = step.record {
         log_probe(record);
@@ -1002,18 +833,14 @@ unsafe extern "C" fn diagnostic_task(_: *mut c_void) -> u32 {
     sdk::log(c"PLLED1 done low=all\r\n");
 
     PROBING.store(true, Ordering::Relaxed);
-    if startup::snapshot().bank() == Some(0) {
-        start_updater();
-    } else {
-        // Before any other task can use the ADC or want a secret.
-        log_rng(rng::start());
-        // No MQTT session in the normal role; requests and health
-        // go over the firmware's device API.
-        // SAFETY: every firmware defines the hook with `firmware!`; it runs
-        // once, here, in this task.
-        unsafe { wellfed_firmware_start() };
-        start_service();
-    }
+    // Before any other task can use the ADC or want a secret.
+    log_rng(rng::start());
+    // No MQTT session on either bank; requests, health and updates go over
+    // the firmware's device API.
+    // SAFETY: every firmware defines the hook with `firmware!`; it runs
+    // once, here, in this task.
+    unsafe { wellfed_firmware_start() };
+    start_service(startup::snapshot().bank());
     STARTUP.store(Startup::Started.code(), Ordering::Release);
     1
 }

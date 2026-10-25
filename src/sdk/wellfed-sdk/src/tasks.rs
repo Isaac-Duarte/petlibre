@@ -1,8 +1,9 @@
 //! The firmware's share of the SDK's eight task slots.
 //!
-//! In the normal role the runtime holds three slots for the whole boot: the
+//! On either bank the runtime holds three slots for the whole boot: the
 //! watchdog feeder, the startup task and the service task, whose stages are
-//! the power monitor, confirmation, the settings writer and the offer check.
+//! the power monitor, confirmation, the settings writer and the update
+//! stage.
 //! The firmware gets four, leaving one spare. When those stages were tasks
 //! of their own, a firmware that took one of their slots left the build
 //! unable to save settings or see an update offer (a physical run; see

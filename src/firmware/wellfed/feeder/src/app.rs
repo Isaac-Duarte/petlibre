@@ -34,6 +34,9 @@ fn start() {
         c"PLPANEL1 task created=0\r\n"
     });
     wellfed_sdk::buttons::start(BUTTONS);
+
+    #[cfg(feature = "gap-probe")]
+    gap_probe::start();
 }
 
 /// The step, a Noise operation and one formatted record; the build's stack
@@ -102,10 +105,18 @@ impl api::Feeds for Feeding {
         Feeding::feeding(self)
     }
 
+    #[cfg(not(feature = "gap-probe"))]
     fn submit(&mut self, portions: u8, by: EventSource) -> Result<u32, Refusal> {
         Feeding::submit(self, portions, by, |record| {
             log(format_args!("PLOWN1 {}\r\n", FeedingRecord(record)));
         })
+    }
+
+    /// The scheduling measurement runs with nobody at the motor, so its
+    /// image cannot start a feed: the owner stays at rest.
+    #[cfg(feature = "gap-probe")]
+    fn submit(&mut self, _: u8, _: EventSource) -> Result<u32, Refusal> {
+        Err(Refusal::Unavailable)
     }
 
     fn reserved(&self, feed: u32) -> Option<Result<(), Refusal>> {
@@ -127,6 +138,8 @@ unsafe extern "C" fn loop_task(_: *mut c_void) -> u32 {
         return 0;
     };
 
+    #[cfg(feature = "gap-probe")]
+    gap_probe::LOOP.wake(sdk::systimer_ticks());
     #[cfg(feature = "owner-stall")]
     stall::step();
     let feed_delay = feeding.step(|record| {
@@ -207,6 +220,8 @@ unsafe extern "C" fn loop_task(_: *mut c_void) -> u32 {
         delay_ms = delay_ms.min(delay);
     }
 
+    #[cfg(feature = "gap-probe")]
+    gap_probe::end_pass(delay_ms);
     delay_ms
 }
 
@@ -256,5 +271,71 @@ mod stall {
         }
         sdk::log(c"PLOWN1 stall end=1\r\n");
         DONE.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// The `gap-probe` variant: a priority-4 task that only measures its own
+/// wakes, beside the loop measuring its passes, for the bench to compare
+/// across Wi-Fi rejoins (`gaps`). The probe task touches nothing but its
+/// probe's atomics: not the owner, the board, flash or the watchdog.
+#[cfg(feature = "gap-probe")]
+mod gap_probe {
+    use core::ffi::c_void;
+
+    use wellfed_sdk::Slot;
+    use wellfed_sdk::hal::{net_status, sdk};
+
+    use crate::gaps::{self, PERIOD_MS, Probe, Windows};
+
+    /// The probe's step is a timer read and a few atomic updates.
+    const PROBE_STACK_WORDS: u16 = 256;
+
+    /// The loop task's passes; only the loop wakes it.
+    pub static LOOP: Probe = Probe::new(0);
+    /// The probe task's wakes; only the probe task wakes it.
+    static HIGH: Probe = Probe::new(PERIOD_MS);
+    /// The loop task's.
+    static WINDOWS: Slot<Windows> = Slot::filled(Windows::new());
+
+    struct Line(gaps::Record);
+
+    impl core::fmt::Display for Line {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            gaps::describe(self.0, f)
+        }
+    }
+
+    pub fn start() {
+        // SAFETY: the step ignores its context and keeps its state in statics.
+        let created =
+            unsafe { wellfed_sdk::spawn(c"wellfed-gap", PROBE_STACK_WORDS, 4, gap_task) };
+        sdk::log(if created {
+            c"PLGAP1 task created=1\r\n"
+        } else {
+            c"PLGAP1 task created=0\r\n"
+        });
+    }
+
+    /// The loop asked for `delay_ms` before its next pass; logs a window
+    /// once one has run.
+    pub fn end_pass(delay_ms: u32) {
+        LOOP.asked(delay_ms);
+        let Some(mut windows) = WINDOWS.enter() else {
+            return;
+        };
+        windows.step(
+            sdk::uptime_ms(),
+            &LOOP,
+            &HIGH,
+            net_status::read(),
+            |record| {
+                super::log(format_args!("PLGAP1 {}\r\n", Line(record)));
+            },
+        );
+    }
+
+    unsafe extern "C" fn gap_task(_: *mut c_void) -> u32 {
+        HIGH.wake(sdk::systimer_ticks());
+        PERIOD_MS
     }
 }

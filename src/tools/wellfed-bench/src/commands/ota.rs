@@ -167,6 +167,9 @@ pub enum Variant {
     /// The feeder stalling its loop on purpose, so the feeding owner's beat
     /// lapses into a watchdog reset; no motion.
     OwnerStall,
+    /// The feeder logging the loop's and a priority-4 task's scheduling
+    /// gaps, with feeds refused; no motion.
+    GapProbe,
 }
 
 impl Variant {
@@ -177,6 +180,7 @@ impl Variant {
             Self::Fail => "fail",
             Self::Entropy => "entropy",
             Self::OwnerStall => "owner-stall",
+            Self::GapProbe => "gap-probe",
         }
     }
 
@@ -184,7 +188,7 @@ impl Variant {
     pub(crate) fn firmware(self) -> Firmware {
         match self {
             Self::Stall | Self::Fail => Firmware::Trial,
-            Self::Entropy | Self::OwnerStall => Firmware::Feeder,
+            Self::Entropy | Self::OwnerStall | Self::GapProbe => Firmware::Feeder,
         }
     }
 }
@@ -196,10 +200,11 @@ pub(crate) fn parse_variant(text: &str) -> std::result::Result<Variant, String> 
         "fail" => Ok(Variant::Fail),
         "entropy" => Ok(Variant::Entropy),
         "owner-stall" => Ok(Variant::OwnerStall),
+        "gap-probe" => Ok(Variant::GapProbe),
         "pulse" => Err(format!("pulse {MOTION_MANUAL}")),
         other => Err(format!(
-            "unknown variant {other:?}; the trial firmware has stall and fail, the feeder entropy \
-             and owner-stall"
+            "unknown variant {other:?}; the trial firmware has stall and fail, the feeder entropy, \
+             owner-stall and gap-probe"
         )),
     }
 }
@@ -264,8 +269,8 @@ pub struct OtaArgs {
     /// speaker, blink, trial or feeder.
     #[arg(long, value_parser = parse_firmware)]
     pub firmware: Option<Firmware>,
-    /// Variant for --build: stall or fail with --firmware trial, entropy or owner-stall with
-    /// --firmware feeder.
+    /// Variant for --build: stall or fail with --firmware trial, entropy, owner-stall or
+    /// gap-probe with --firmware feeder.
     #[arg(long, value_parser = parse_variant)]
     pub variant: Option<Variant>,
     /// wellfed-local config (root-relative): its hotspot interface and

@@ -19,6 +19,8 @@ km4 = ["wellfed-sdk/km4", "wellfed-sdk/bluetooth"]
 entropy = []
 # Stall the loop twice, for the bench to watch the owner's beat lapse.
 owner-stall = []
+# Measure the loop's and a priority-4 task's scheduling gaps; feeds refused.
+gap-probe = []
 
 [dependencies]
 wellfed-core.workspace = true
@@ -44,3 +46,6 @@ summary = "Raw clock-jitter and ADC samples over UART, for the host's entropy es
 
 [package.metadata.wellfed.variants.owner-stall]
 summary = "Stalls the loop 600 ms at 2 minutes and 3 s at 3 minutes, to show the feeding owner's beat lapsing into a watchdog reset"
+
+[package.metadata.wellfed.variants.gap-probe]
+summary = "Logs the scheduling gaps of the loop and of a priority-4 probe task every 10 s, with the Wi-Fi counters, for comparing them across rejoins; feeds are refused"

@@ -13,8 +13,10 @@
 //! event history and live samples. The loop also steps the feeding owner
 //! (`feeding`), which holds the motor and emitters stopped and supervised
 //! and runs the feeds the device API submits. The `entropy` variant streams raw noise
-//! samples for the host's entropy estimate, and the `owner-stall` variant stalls
-//! the loop on purpose, for the bench to watch the owner's beat lapse.
+//! samples for the host's entropy estimate, the `owner-stall` variant stalls
+//! the loop on purpose, for the bench to watch the owner's beat lapse, and
+//! the `gap-probe` variant measures how long the loop and a priority-4 task
+//! wait across Wi-Fi rejoins (`gaps`), with feeds refused.
 //!
 //! [product architecture]: ../../../../docs/firmware/product-architecture.md
 #![cfg_attr(target_os = "none", no_std)]
@@ -27,6 +29,7 @@ pub mod api;
 mod app;
 pub mod entropy;
 pub mod feeding;
+pub mod gaps;
 pub mod keys;
 pub mod owner;
 pub mod setup;

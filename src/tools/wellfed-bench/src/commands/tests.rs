@@ -1589,6 +1589,8 @@ fn a_variant_needs_the_firmware_that_declares_it() {
     assert_eq!(Variant::Entropy.firmware(), Firmware::Feeder);
     assert_eq!(ota::parse_variant("owner-stall"), Ok(Variant::OwnerStall));
     assert_eq!(Variant::OwnerStall.firmware(), Firmware::Feeder);
+    assert_eq!(ota::parse_variant("gap-probe"), Ok(Variant::GapProbe));
+    assert_eq!(Variant::GapProbe.firmware(), Firmware::Feeder);
 }
 
 #[test]

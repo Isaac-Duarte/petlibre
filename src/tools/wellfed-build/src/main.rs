@@ -209,6 +209,9 @@ fn run(command: Command) -> Result<()> {
             println!("{summary}");
         }
         Command::Keygen { output } => {
+            // Paths are the checkout's, like every other command's, so the
+            // default key lands where builds read it from any directory.
+            let output = repo.root.join(output);
             let public = signing::keygen(&output)?;
             println!("Wrote bench key {}; public key {public}", output.display());
         }
@@ -222,6 +225,7 @@ fn run(command: Command) -> Result<()> {
             let motion = attended_motion
                 .as_deref()
                 .map_or(Motion::Refused, Motion::Attended);
+            let (key, output) = (repo.root.join(key), repo.root.join(output));
             let frozen = Frozen::open(&repo.root, &repo.root.join(review))?;
             let manifest = frozen.sign(&Key::load(&key)?, version, motion)?;
             wellfed_flash::evidence::write_new(&output, &manifest)?;

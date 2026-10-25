@@ -1058,6 +1058,51 @@ fn ota_signs_one_above_the_highest_signed_version_then_offers() {
     assert!(rig.board.log().is_empty(), "no relay change");
 }
 
+/// The pinned stock image installs by its payload hash, as stock, and
+/// stock serves no device API to poll. Needs the private stock image.
+#[test]
+#[ignore = "needs the pinned stock image under private/"]
+fn ota_installs_the_pinned_stock_review_by_its_payload_hash_without_health() {
+    let repo = wellfed_build::Repo::here().unwrap();
+    let scratch = tempfile::tempdir_in(repo.root.join("private")).unwrap();
+    let frozen = scratch.path().join("stock");
+    let reviewed = wellfed_build::review::freeze(
+        &repo,
+        wellfed_formats::review::ImageKind::Stock,
+        Path::new("unused"),
+        &frozen,
+    )
+    .unwrap();
+
+    let mut rig = rig();
+    let mut args = plain_review(&rig);
+    let review = rig.bench.root.join(VERIFICATION).join("stock-review");
+    fs::create_dir_all(&review).unwrap();
+    for file in ["image.bin", "review.json"] {
+        fs::copy(frozen.join(file), review.join(file)).unwrap();
+    }
+    args.review = Some("private/verification/stock-review".into());
+    rig.tools.0.borrow_mut().rx.push_back(
+        b"PLWCH1 give_way=1 version=1 restart=1\r\nPLOTA1 activated version=1\r\n\
+          [0]app_main:version:1.1.15 DATE:Jul 16 2026\r\n"
+            .to_vec(),
+    );
+
+    assert_eq!(rig.bench.ota(&args).unwrap(), 0);
+
+    let signed = signed_by_bench(&rig, "unit-v1.manifest");
+    assert_eq!(
+        wellfed_formats::hex::encode(&signed.build_id),
+        reviewed.payload_sha256
+    );
+    let calls = rig.tools.0.borrow();
+    let [offer] = &calls.local[..] else {
+        panic!("{:?}", calls.local)
+    };
+    assert_eq!(offer[0], "ota-offer");
+    assert!(calls.queries.is_empty(), "stock has no status to poll");
+}
+
 /// Only the pinned stock image may be reviewed as stock: relabelling a
 /// build would skip the motion gate and the health check.
 #[test]

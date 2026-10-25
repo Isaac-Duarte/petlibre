@@ -46,6 +46,7 @@ check-fixtures:
 	cargo test --locked --lib ota::image::tests::pinned_real_images_are_immutable_after_load_and_mutated_files_are_refused -- --ignored --exact
 	cargo test --locked -p wellfed-audit --lib -- --ignored
 	cargo test --locked -p wellfed-build -- --ignored
+	cargo test --locked -p wellfed-bench --lib -- --ignored
 
 # The optional web page. Node and pnpm are needed only here, never by `check`.
 ui:

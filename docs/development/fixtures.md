@@ -10,6 +10,8 @@ It fails for missing fixtures, incompatible hashes, errors, or skips. It does no
 
 The emulation, review and flash-client evidence tests (`wellfed-emu`, `wellfed-build`'s `tests/review.rs`, `wellfed-flash`'s `tests/emulated.rs`) read their inputs from the checkout they were built in. Set `WELLFED_FIXTURE_ROOT` to another checkout to use its `private/` instead, as a Git worktree (which has no evidence) must; their temporary outputs then go under that checkout's `private/` and are removed afterwards.
 
+The update-signing tests of `wellfed-build` and `wellfed-bench` freeze the pinned stock OTA (`private/firmware/PLAF103_OTA_010115.bin`) and sign it as `wellfed-bench ota` would, since only that exact image may be signed as stock.
+
 ## Generic local locations
 
 | Input/location | Purpose and availability |

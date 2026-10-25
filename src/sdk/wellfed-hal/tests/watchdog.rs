@@ -24,7 +24,7 @@ const CONFIG: WatchdogConfig = WatchdogConfig {
 };
 
 fn close_port(w: &mut Watchdog) {
-    let mut b = Box::<Board>::default();
+    let b = Box::<Board>::default();
     assert!(b.open(2, 12, 8, 0));
     assert!(w.close(Some(&b)));
     assert!(!w.claimed && !w.armed && sdk::wdg_vendor() & sdk::WDG_BIT_ENABLE == 0);
@@ -231,9 +231,9 @@ fn setup_rollback_and_retained_cleanup() {
     close_port(&mut w);
 
     assert!(w.open(&CONFIG));
-    let mut b = Box::<Board>::default();
+    let b = Box::<Board>::default();
     assert!(b.open(2, 12, 8, 0));
-    let _authority = flash_attach(&mut b);
+    let _authority = flash_attach(&b);
     assert!(b.optics(true));
     assert!(!w.close(Some(&b)) && w.claimed);
     assert!(b.optics(false));

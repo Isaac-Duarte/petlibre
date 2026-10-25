@@ -158,6 +158,6 @@ fn a_stuck_conversion_trips_and_ends() {
         "{step:?}"
     );
 
-    assert!(probe.board.faulted || !probe.board.opened);
+    assert!(probe.board.view().faulted || !probe.board.view().opened);
     fake::with(|h| assert_eq!(h.output[0] & MOTOR_MASK, MOTOR_MASK));
 }

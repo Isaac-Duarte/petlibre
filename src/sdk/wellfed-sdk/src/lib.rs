@@ -35,7 +35,10 @@ mod tasks;
 pub mod wifi;
 
 #[cfg(target_os = "none")]
-pub use runtime::{claim_adc, request_reset, spawn, startup_done, watchdog_open};
+pub use runtime::{
+    JournalSlots, SdkStorage, claim_adc, flash_authority, request_reset, spawn, startup_done,
+    storage_armed, watchdog_open,
+};
 pub use slot::{Slot, SlotGuard};
 pub use tasks::FIRMWARE_TASKS;
 

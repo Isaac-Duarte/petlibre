@@ -18,6 +18,7 @@ use core::ffi::{CStr, c_void};
 use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
+use wellfed_core::flash_coord::FlashCoord;
 use wellfed_core::{deadline_passed, until};
 use wellfed_hal::flash::hooks::{self, HookProvider, HookTicket};
 use wellfed_hal::flash::park::Hardware;
@@ -26,6 +27,7 @@ use wellfed_hal::health::Boot;
 use wellfed_hal::ota::confirm::{self, Confirm, HookedStorage};
 use wellfed_hal::ota::updater::{self, Hooked, Hooks, Updater};
 use wellfed_hal::ota::watch::{self, SdkGiveWay, Watch};
+use wellfed_hal::supervision::beat;
 use wellfed_hal::supervision::config;
 use wellfed_hal::supervision::supervise::{self, LIVENESS_MS, Startup};
 use wellfed_hal::supervision::watchdog::Watchdog;
@@ -88,9 +90,10 @@ pub fn watchdog_open() -> bool {
     WATCHDOG_OPEN.load(Ordering::Acquire)
 }
 
-/// The firmware keeps the ADC for itself (the probe), so the runtime's
-/// power monitor never opens it and health reports power as unknown. Call
-/// from the start hook.
+/// The firmware keeps the ADC for itself (a probe, or a feeding owner), so
+/// the runtime's power monitor never opens it. Health reports power as
+/// unknown unless the firmware publishes it: a feeding owner does, from its
+/// captures. Call from the start hook.
 pub fn claim_adc() {
     ADC_CLAIMED.store(true, Ordering::Release);
 }
@@ -110,9 +113,15 @@ impl core::fmt::Display for PowerLine {
 /// Samples the battery and adapter for health. It waits for the
 /// startup probe to release its board, which owns the ADC until then.
 fn power_step() -> u32 {
+    static LOGGED: AtomicBool = AtomicBool::new(false);
     if ADC_CLAIMED.load(Ordering::Acquire) {
-        sdk::log(c"PLBAT1 claimed\r\n");
-        return 0;
+        if !LOGGED.swap(true, Ordering::Relaxed) {
+            sdk::log(c"PLBAT1 claimed\r\n");
+        }
+        // Idle rather than end: the service task exits once no stage runs,
+        // and confirmation starts only after this, so ending here left
+        // confirmation unstepped until the watchdog reset the trial.
+        return power::SAMPLE_MS;
     }
     if !PROBE_DONE.load(Ordering::Acquire) {
         return POWER_WAIT_MS;
@@ -229,6 +238,8 @@ static WATCH_RUNNING: AtomicBool = AtomicBool::new(false);
 static PROBE_DONE: AtomicBool = AtomicBool::new(false);
 
 const FEED_MS: u32 = 250;
+// Every checkpoint refreshes the hardware: `fed_ms` relies on it.
+const _: () = assert!(FEED_MS > config::WATCHDOG.min_refresh_ms);
 
 /// Supervision state for the feeder (`supervise.rs`), as `Startup::code`.
 static STARTUP: AtomicU8 = AtomicU8::new(Startup::Running.code());
@@ -374,6 +385,10 @@ unsafe extern "C" fn updater_task(_: *mut c_void) -> u32 {
 unsafe extern "C" fn feeder_task(_: *mut c_void) -> u32 {
     static PROGRESS: AtomicU32 = AtomicU32::new(0);
     static STOPPED: AtomicBool = AtomicBool::new(false);
+    // Uptime of the last checkpoint. Each one refreshes the hardware (the
+    // feed period exceeds the refresh rate limit), so a reset's host
+    // timestamp, less this, times the watchdog's expiry.
+    static FED_MS: AtomicU32 = AtomicU32::new(0);
     if !WATCHDOG_OPEN.load(Ordering::Acquire) {
         let trial = on_trial();
         TRIAL.store(trial, Ordering::Release);
@@ -408,18 +423,29 @@ unsafe extern "C" fn feeder_task(_: *mut c_void) -> u32 {
         confirmed: CONFIRMED.load(Ordering::Acquire),
         tasks_alive: alive,
         outputs_ok: outputs.verified() || outputs.sensing(),
+        owner: beat::read(),
     };
     if RESTART.load(Ordering::Acquire) || !supervise::feed(&inputs) {
         if !STOPPED.swap(true, Ordering::Relaxed) {
+            // The owner's beat age, gap and supervision; zeros with no owner.
+            let (owner_age, owner_gap, supervised) = inputs.owner.map_or((0, 0, false), |b| {
+                (now.wrapping_sub(b.at_ms), b.gap_ms, b.supervised)
+            });
             let mut report = startup::Report::new();
             if let Ok(line) = report.record(format_args!(
-                "PLSUP1 stop startup={} trial={} confirmed={} alive={} outputs={} restart={} ms={}\r\n",
+                "PLSUP1 stop startup={} trial={} confirmed={} alive={} outputs={} restart={} \
+                 owner={} owner_age={} owner_gap={} supervised={} fed_ms={} ms={}\r\n",
                 STARTUP.load(Ordering::Relaxed),
                 bit(inputs.trial),
                 bit(inputs.confirmed),
                 bit(alive),
                 bit(inputs.outputs_ok),
                 bit(RESTART.load(Ordering::Relaxed)),
+                bit(inputs.owner.is_some()),
+                owner_age,
+                owner_gap,
+                bit(supervised),
+                FED_MS.load(Ordering::Relaxed),
                 now
             )) {
                 sdk::log(line);
@@ -430,7 +456,9 @@ unsafe extern "C" fn feeder_task(_: *mut c_void) -> u32 {
     {
         if let Some(mut watchdog) = WATCHDOG.enter() {
             let progress = PROGRESS.fetch_add(1, Ordering::Relaxed) + 1;
-            let _ = watchdog.checkpoint(u64::from(progress));
+            if watchdog.checkpoint(u64::from(progress)) {
+                FED_MS.store(now, Ordering::Relaxed);
+            }
         }
     }
     FEED_MS
@@ -538,9 +566,28 @@ fn watch_step() -> u32 {
     step.delay_ms
 }
 
-/// The settings writer's storage: the SDK wrappers, refused unless the
-/// hooks are armed (reads are mapped and need no lease).
-struct SdkStorage;
+/// The runtime's record storage: the SDK wrappers, refused unless the
+/// hooks are armed (reads are mapped and need no lease). The settings
+/// writer's, and the feeding owner's journal (`JournalSlots`).
+pub struct SdkStorage;
+
+/// The feed journal's two sectors, through the armed hooks.
+pub type JournalSlots = crate::storage::Slots<SdkStorage, { crate::storage::JOURNAL_BASE }>;
+
+/// Whether the flash hooks are armed, so that record writes can succeed.
+/// The settings writer arms them once the build is confirmed.
+pub fn storage_armed() -> bool {
+    SdkHooks::armed()
+}
+
+/// The lease authority the armed flash hooks use, for a feeding owner
+/// (`OwnerConfig::flash`): each lease blocks the owner's outputs while it
+/// runs. Unbound, so it blocks every output, until the hooks are armed;
+/// arming binds it once and nothing rebinds it in the normal role.
+pub fn flash_authority() -> *mut FlashCoord {
+    // SAFETY: only the address is taken; nothing is borrowed (see `PROVIDER`).
+    unsafe { &raw mut (*PROVIDER.get()).coord }
+}
 
 impl crate::storage::FlashOps for SdkStorage {
     fn install(provider: *mut Provider) -> bool {

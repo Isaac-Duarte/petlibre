@@ -5,6 +5,7 @@
 //! vector, plus stable SYSTIMER/GTIMER frequencies supplied by the caller.
 //! Every public method and both ISRs run under the interrupt mask.
 
+use core::cell::UnsafeCell;
 use core::ffi::c_void;
 use core::ptr;
 
@@ -55,10 +56,10 @@ pub struct EventsConfig {
     pub feedback_capacity: u8,
 }
 
-/// Fixed-address object; all public methods serialize with both ISR paths.
-#[derive(Debug)]
-pub struct Events {
-    pub board: *mut Board,
+/// The supervisor's state, as [`Events::view`] copies it out.
+#[derive(Clone, Copy, Debug)]
+pub struct EventsState {
+    pub board: *const Board,
     pub feedback: FeedbackEvents,
     pub clock: TickClock,
 
@@ -84,10 +85,10 @@ pub struct Events {
     pub timer_count: u32,
 }
 
-impl Default for Events {
+impl Default for EventsState {
     fn default() -> Self {
         Self {
-            board: ptr::null_mut(),
+            board: ptr::null(),
             feedback: FeedbackEvents::default(),
             clock: TickClock::default(),
             timer_period_ms: 0,
@@ -122,6 +123,15 @@ pub struct EventsSnapshot {
     pub capture_enabled: bool,
 }
 
+/// The supervisor handle. The owning task and both interrupts reach it
+/// through `&Events`; its state is borrowed only inside `IrqGuard`, for the
+/// length of one call, so no borrow of it spans an interrupt-enabled window.
+/// Keep it at a fixed address from `open` until `close` succeeds.
+#[derive(Debug, Default)]
+pub struct Events {
+    state: UnsafeCell<EventsState>,
+}
+
 active_pointer!(Events);
 
 /// Period in timer ticks, rounded up; `None` when it does not fit the counter.
@@ -131,10 +141,13 @@ pub(crate) fn period_ticks(config: &EventsConfig) -> Option<u32> {
     u32::try_from(ticks).ok().filter(|&t| t != 0)
 }
 
-impl Events {
-    fn board(&mut self) -> &mut Board {
-        // SAFETY: `open` requires the caller to retain the board until close.
-        unsafe { &mut *self.board }
+impl EventsState {
+    /// The supervised board. A shared handle, so the borrow is not tied to
+    /// this state's.
+    fn board<'b>(&self) -> &'b Board {
+        // SAFETY: `open` requires the caller to retain the board at a fixed
+        // address until close; `Board` is reached only through `&`.
+        unsafe { &*self.board }
     }
 
     // All helpers below run with KM4 interrupts disabled. No RTOS calls in ISRs.
@@ -170,28 +183,29 @@ impl Events {
     }
 
     fn owner_ready(&self, value: u32) -> bool {
-        // SAFETY: as for `board`.
-        let lease = unsafe { (*self.board).motor.lease_ms };
+        let lease = self.board().view().motor.lease_ms;
         self.owner_seen && value.wrapping_sub(self.owner_at) < lease
     }
 
     fn stopped(&self) -> bool {
-        // SAFETY: as for `board`.
-        let gate = unsafe { &(*self.board).motor };
+        let gate = self.board().view().motor;
         gate.applied_known
             && gate.applied == MotorCommand::Stop
             && gate.desired == MotorCommand::Stop
     }
 
-    /// Requires an opened, stopped board. Refuses enabled GPIOA interrupts or
-    /// a running TIM2 before claiming them.
+    /// As `Events::open`, which passes its own address as `this`.
     ///
     /// # Safety
-    /// `board` is null or a live board; the caller retains it and this object
-    /// at fixed addresses until close succeeds.
-    pub unsafe fn open(&mut self, board: *mut Board, config: &EventsConfig) -> bool {
+    /// As for `Events::open`.
+    unsafe fn open(
+        &mut self,
+        this: *const Events,
+        board: *const Board,
+        config: &EventsConfig,
+    ) -> bool {
         // SAFETY: caller supplies null or a live board.
-        let Some(b) = (unsafe { board.as_ref() }) else {
+        let Some(b) = (unsafe { board.as_ref() }).map(Board::view) else {
             return false;
         };
 
@@ -218,7 +232,6 @@ impl Events {
         };
 
         let observed_at = b.motor.observed_at;
-        let _guard = IrqGuard::lock();
         if !active().is_null()
             || sdk::gpioa_int_en() != 0
             || sdk::tim2_en() & (sdk::TIM_CR_CNT_START | sdk::TIM_CR_CNT_RUN | sdk::TIM_CR_CNT_STS)
@@ -265,7 +278,7 @@ impl Events {
             return false;
         }
 
-        set_active(self);
+        set_active(this.cast_mut());
         self.opened = true;
         sdk::tim2_int_clear();
         sdk::irq_enable(Irq::Timer2, PRIORITY);
@@ -275,26 +288,21 @@ impl Events {
         true
     }
 
-    /// Read at acquisition START; compose health using another read later.
-    pub fn now_ms(&mut self) -> Option<u32> {
+    fn now_ms(&mut self) -> Option<u32> {
         if !self.opened {
             return None;
         }
-        let _guard = IrqGuard::lock();
         self.now()
     }
 
-    /// Fill `snapshot` even when the clock read fails; returns the read result.
-    pub fn snapshot(&mut self, snapshot: &mut EventsSnapshot) -> bool {
+    fn snapshot(&mut self, snapshot: &mut EventsSnapshot) -> bool {
         if !self.opened {
             return false;
         }
-        let _guard = IrqGuard::lock();
         let read = self.now();
         let value = read.unwrap_or(self.clock.millis);
 
-        // SAFETY: as for `board`.
-        let b = unsafe { &*self.board };
+        let b = self.board().view();
         *snapshot = EventsSnapshot {
             now_ms: value,
             fault: self.fault,
@@ -313,22 +321,12 @@ impl Events {
         read.is_some()
     }
 
-    /// Arm a non-renewable maximum on-time. Repeated enables do not extend it.
-    /// Only successful owner-side sample processing renews the liveness lease.
-    pub fn optics(&mut self, enabled: bool, max_on_ms: u32) -> bool {
-        self.optics_select(enabled, enabled, max_on_ms)
-    }
-
-    /// As `optics`, with PA15 to `a` and PB3 to `b`. While on, a repeated
-    /// enable neither extends the budget nor changes the selection: it
-    /// returns whether the emitters already match it.
-    pub fn optics_select(&mut self, a: bool, b: bool, max_on_ms: u32) -> bool {
+    fn optics_select(&mut self, a: bool, b: bool, max_on_ms: u32) -> bool {
         let enabled = a || b;
         if !self.opened || (enabled && !interval_valid(max_on_ms)) {
             return false;
         }
 
-        let _guard = IrqGuard::lock();
         let Some(value) = self.now() else {
             return false;
         };
@@ -341,7 +339,7 @@ impl Events {
             return false;
         }
 
-        if enabled && self.board().optics_enabled {
+        if enabled && self.board().view().optics_enabled {
             return board::optics_are(a, b);
         }
         if !self.board().optics_select(a, b) {
@@ -354,13 +352,10 @@ impl Events {
         true
     }
 
-    /// Enable only while verified stopped and after observing a timer
-    /// interrupt. Disabling capture while driving trips STOP.
-    pub fn capture(&mut self, enabled: bool) -> bool {
+    fn capture(&mut self, enabled: bool) -> bool {
         if !self.opened {
             return false;
         }
-        let _guard = IrqGuard::lock();
         let stopped = self.stopped();
         let read = self.now();
 
@@ -403,7 +398,7 @@ impl Events {
         }
     }
 
-    fn process_with(
+    fn process(
         &mut self,
         controller: &mut FeedController,
         sample: Option<&FeedSample>,
@@ -412,11 +407,10 @@ impl Events {
         if !self.opened {
             return false;
         }
-        let _guard = IrqGuard::lock();
         let read = self.now().filter(|_| self.fault == EventsFault::Ok);
         let mut result = read.is_some();
         if let Some(value) = read
-            && self.board().optics_enabled
+            && self.board().view().optics_enabled
             && !self.owner_ready(value)
         {
             result = self.fail(EventsFault::Owner);
@@ -432,7 +426,7 @@ impl Events {
         };
 
         let composed = inputs.map(|inputs| inputs.sample(value, false, false));
-        let b = self.board();
+        let b = self.board().view();
         let drive = FeedbackDrive {
             healthy: !b.faulted && b.motor.fault == MotorGateFault::Ok,
             applied_known: b.motor.applied_known,
@@ -464,24 +458,7 @@ impl Events {
         ok
     }
 
-    /// Owner-side processing under one short lock; never acquires ADC here.
-    pub fn process(
-        &mut self,
-        controller: &mut FeedController,
-        sample: Option<&FeedSample>,
-    ) -> bool {
-        self.process_with(controller, sample, None)
-    }
-
-    /// Compose freshness at the exact processing clock read, inside serialization.
-    pub fn observe(&mut self, controller: &mut FeedController, inputs: &SensorInputs) -> bool {
-        self.process_with(controller, None, Some(inputs))
-    }
-
-    /// Reserve the request durably BEFORE calling. Freshness, capture and
-    /// initial output application are serialized. A rejected input never
-    /// drives; an output failure can leave an accepted controller faulted.
-    pub fn start(
+    fn start(
         &mut self,
         controller: &mut FeedController,
         inputs: &SensorInputs,
@@ -491,7 +468,6 @@ impl Events {
         if !self.opened {
             return FeedStartResult::RejectRequest;
         }
-        let _guard = IrqGuard::lock();
         let Some(value) = self.now() else {
             return FeedStartResult::RejectInput;
         };
@@ -520,13 +496,10 @@ impl Events {
         result
     }
 
-    /// Drive requires a recently observed timer and enabled healthy capture.
-    #[must_use]
-    pub fn motor(&mut self, command: MotorCommand) -> bool {
+    fn motor(&mut self, command: MotorCommand) -> bool {
         if !self.opened {
             return false;
         }
-        let _guard = IrqGuard::lock();
         let Some(value) = self.now() else {
             return false;
         };
@@ -543,13 +516,10 @@ impl Events {
         self.board().motor(command, value) || self.fail(EventsFault::Output)
     }
 
-    /// If STOP or infrared OFF cannot be verified, returns false and retains
-    /// the retry timer; supervision is never removed from an active output.
-    pub fn close(&mut self) -> bool {
+    fn close(&mut self) -> bool {
         if !self.opened {
             return false;
         }
-        let _guard = IrqGuard::lock();
         let millis = self.clock.millis;
         self.board().motor(MotorCommand::Stop, millis);
         sdk::gpio_int_config(FEEDBACK_PIN, false);
@@ -575,54 +545,183 @@ impl Events {
     }
 
     fn stopped_applied(&self) -> bool {
-        // SAFETY: as for `board`.
-        let gate = unsafe { &(*self.board).motor };
+        let gate = self.board().view().motor;
         gate.applied_known && gate.applied == MotorCommand::Stop
+    }
+
+    fn timer_tick(&mut self) {
+        if !self.opened {
+            return;
+        }
+
+        let raw = sdk::systimer_ticks();
+        if raw == self.timer_raw_at {
+            if !self.timer_raw_repeat {
+                // A pending update taken at unmask can coincide with the next one
+                // within a SYSTIMER tick: skip once without advancing anything.
+                self.timer_raw_repeat = true;
+                return;
+            }
+            self.fail(EventsFault::Clock);
+            return;
+        }
+
+        self.timer_raw_repeat = false;
+        let Some(value) = self.clock.read(raw) else {
+            self.fail(EventsFault::Clock);
+            return;
+        };
+        self.timer_raw_at = raw;
+        self.timer_count = self.timer_count.wrapping_add(1);
+        self.timer_at = value;
+        self.timer_seen = true;
+
+        if self.fault != EventsFault::Ok {
+            let fault = self.fault;
+            self.fail(fault); // Retry unverified GPIO stops.
+            return;
+        }
+        if !self.board().motor_tick(value) {
+            self.fail(EventsFault::Output);
+            return;
+        }
+
+        // Read after the tick, which a flash hold can use to turn them off.
+        if !self.board().view().optics_enabled {
+            return;
+        }
+        if !self.owner_ready(value) {
+            self.fail(EventsFault::Owner);
+        } else if !self.optics_armed || value.wrapping_sub(self.optics_at) >= self.optics_max_ms {
+            self.fail(EventsFault::Optics);
+        }
+    }
+
+    fn feedback_edge(&mut self, pending: u32) {
+        if !self.opened {
+            return;
+        }
+
+        if pending & !FEEDBACK_MASK != 0 {
+            self.fail(EventsFault::Resource);
+            sdk::irq_disable(Irq::GpioA);
+        } else if pending & FEEDBACK_MASK != 0
+            && self.capture_enabled
+            && let Some(value) = self.now()
+        {
+            let high = sdk::gpioa_ext_port() & FEEDBACK_MASK != 0;
+            if !self.feedback.push(value, high) {
+                self.fail(EventsFault::Feedback);
+            }
+        }
+    }
+}
+
+impl Events {
+    /// The state, inside the guard; the borrow ends with `f`. The state's
+    /// methods reach the board, never this handle, so `f` cannot re-enter.
+    fn with<R>(&self, f: impl FnOnce(&mut EventsState) -> R) -> R {
+        let _guard = IrqGuard::lock();
+        // SAFETY: inside the guard, on the single KM4 core, no task or
+        // interrupt can reach the state, and no method lets a borrow of it
+        // outlive its call.
+        f(unsafe { &mut *self.state.get() })
+    }
+
+    /// A copy of the state, for status and tests.
+    pub fn view(&self) -> EventsState {
+        self.with(|state| *state)
+    }
+
+    /// Whether `open` succeeded and `close` has not.
+    pub fn opened(&self) -> bool {
+        self.with(|state| state.opened)
+    }
+
+    /// Requires an opened, stopped board. Refuses enabled GPIOA interrupts or
+    /// a running TIM2 before claiming them.
+    ///
+    /// # Safety
+    /// `board` is null or a live board; the caller retains it and this object
+    /// at fixed addresses until close succeeds.
+    pub unsafe fn open(&self, board: *const Board, config: &EventsConfig) -> bool {
+        let this = ptr::from_ref(self);
+        // SAFETY: the caller's contract, passed on.
+        self.with(|state| unsafe { state.open(this, board, config) })
+    }
+
+    /// Read at acquisition START; compose health using another read later.
+    pub fn now_ms(&self) -> Option<u32> {
+        self.with(EventsState::now_ms)
+    }
+
+    /// Fill `snapshot` even when the clock read fails; returns the read result.
+    pub fn snapshot(&self, snapshot: &mut EventsSnapshot) -> bool {
+        self.with(|state| state.snapshot(snapshot))
+    }
+
+    /// Arm a non-renewable maximum on-time. Repeated enables do not extend it.
+    /// Only successful owner-side sample processing renews the liveness lease.
+    pub fn optics(&self, enabled: bool, max_on_ms: u32) -> bool {
+        self.optics_select(enabled, enabled, max_on_ms)
+    }
+
+    /// As `optics`, with PA15 to `a` and PB3 to `b`. While on, a repeated
+    /// enable neither extends the budget nor changes the selection: it
+    /// returns whether the emitters already match it.
+    pub fn optics_select(&self, a: bool, b: bool, max_on_ms: u32) -> bool {
+        self.with(|state| state.optics_select(a, b, max_on_ms))
+    }
+
+    /// Enable only while verified stopped and after observing a timer
+    /// interrupt. Disabling capture while driving trips STOP.
+    pub fn capture(&self, enabled: bool) -> bool {
+        self.with(|state| state.capture(enabled))
+    }
+
+    /// Owner-side processing under one short lock; never acquires ADC here.
+    pub fn process(&self, controller: &mut FeedController, sample: Option<&FeedSample>) -> bool {
+        self.with(|state| state.process(controller, sample, None))
+    }
+
+    /// Compose freshness at the exact processing clock read, inside serialization.
+    pub fn observe(&self, controller: &mut FeedController, inputs: &SensorInputs) -> bool {
+        self.with(|state| state.process(controller, None, Some(inputs)))
+    }
+
+    /// Reserve the request durably BEFORE calling. Freshness, capture and
+    /// initial output application are serialized. A rejected input never
+    /// drives; an output failure can leave an accepted controller faulted.
+    pub fn start(
+        &self,
+        controller: &mut FeedController,
+        inputs: &SensorInputs,
+        request: &FeedRequest,
+        latest_start_ms: u32,
+    ) -> FeedStartResult {
+        self.with(|state| state.start(controller, inputs, request, latest_start_ms))
+    }
+
+    /// Drive requires a recently observed timer and enabled healthy capture.
+    #[must_use]
+    pub fn motor(&self, command: MotorCommand) -> bool {
+        self.with(|state| state.motor(command))
+    }
+
+    /// If STOP or infrared OFF cannot be verified, returns false and retains
+    /// the retry timer; supervision is never removed from an active output.
+    pub fn close(&self) -> bool {
+        self.with(EventsState::close)
     }
 }
 
 unsafe extern "C" fn timer_interrupt(_: *mut c_void) -> u32 {
     let _guard = IrqGuard::lock();
     sdk::tim2_int_clear();
-    // SAFETY: `active` is the registered, opened events object.
-    let Some(events) = (unsafe { active().as_mut() }).filter(|e| e.opened) else {
-        return 0;
-    };
-
-    let raw = sdk::systimer_ticks();
-    if raw == events.timer_raw_at {
-        if !events.timer_raw_repeat {
-            // A pending update taken at unmask can coincide with the next one
-            // within a SYSTIMER tick: skip once without advancing anything.
-            events.timer_raw_repeat = true;
-            return 0;
-        }
-        events.fail(EventsFault::Clock);
-        return 0;
-    }
-
-    events.timer_raw_repeat = false;
-    let value = events.clock.read(raw);
-    let Some(value) = value else {
-        events.fail(EventsFault::Clock);
-        return 0;
-    };
-    events.timer_raw_at = raw;
-    events.timer_count = events.timer_count.wrapping_add(1);
-    events.timer_at = value;
-    events.timer_seen = true;
-
-    if events.fault != EventsFault::Ok {
-        let fault = events.fault;
-        events.fail(fault); // Retry unverified GPIO stops.
-    } else if !events.board().motor_tick(value) {
-        events.fail(EventsFault::Output);
-    } else if events.board().optics_enabled && !events.owner_ready(value) {
-        events.fail(EventsFault::Owner);
-    } else if events.board().optics_enabled
-        && (!events.optics_armed || value.wrapping_sub(events.optics_at) >= events.optics_max_ms)
-    {
-        events.fail(EventsFault::Optics);
+    // SAFETY: `active` is the registered events handle, which stays in
+    // place until `close` clears it; it is reached only through `&`.
+    if let Some(events) = unsafe { active().as_ref() } {
+        events.with(EventsState::timer_tick);
     }
     0
 }
@@ -632,21 +731,8 @@ unsafe extern "C" fn feedback_interrupt(_: *mut c_void) -> u32 {
     let pending = sdk::gpioa_int_status();
     sdk::gpioa_eoi(pending);
     // SAFETY: as for `timer_interrupt`.
-    let Some(events) = (unsafe { active().as_mut() }).filter(|e| e.opened) else {
-        return 0;
-    };
-
-    if pending & !FEEDBACK_MASK != 0 {
-        events.fail(EventsFault::Resource);
-        sdk::irq_disable(Irq::GpioA);
-    } else if pending & FEEDBACK_MASK != 0
-        && events.capture_enabled
-        && let Some(value) = events.now()
-    {
-        let high = sdk::gpioa_ext_port() & FEEDBACK_MASK != 0;
-        if !events.feedback.push(value, high) {
-            events.fail(EventsFault::Feedback);
-        }
+    if let Some(events) = unsafe { active().as_ref() } {
+        events.with(|state| state.feedback_edge(pending));
     }
     0
 }

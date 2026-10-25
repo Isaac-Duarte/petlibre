@@ -314,11 +314,12 @@ fn references(
     let listing = tool(objdump, &args, elf)?;
 
     let code = instruction_bytes(&listing)?;
+    let literals = literal_bytes(&listing)?;
     for (start, data) in loaded(elf, objdump)? {
         for at in (0..data.len().saturating_sub(3)).step_by(4) {
             let location = start + at as u64;
             if let Some(target) = word(&data, at).and_then(|value| wanted.get(&value))
-                && !one_instruction(&code, location)
+                && stored_word(&code, &literals, location)
             {
                 found
                     .entry(target.clone())
@@ -328,7 +329,6 @@ fn references(
         }
     }
 
-    let literals = literal_bytes(&listing)?;
     let mut current: Option<String> = None;
     let mut veneers: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for line in listing.lines() {
@@ -416,6 +416,15 @@ fn one_instruction(code: &HashMap<u64, u64>, location: u64) -> bool {
     start.is_some() && (1..4).all(|i| code.get(&(location + i)) == start)
 }
 
+/// Whether the word at `location` is stored data, and so a reference: a
+/// word some code loads PC-relative always is, even when it also decodes as
+/// one instruction (observed: CmdRamHelp's literal for shell_cmd_table,
+/// once a layout shift aligned it); otherwise any word that is not one
+/// decoded instruction.
+fn stored_word(code: &HashMap<u64, u64>, literals: &BTreeSet<u64>, location: u64) -> bool {
+    literals.contains(&location) || !one_instruction(code, location)
+}
+
 /// What one core's image may and must link.
 struct Rules {
     absent: Vec<&'static str>,
@@ -497,8 +506,11 @@ fn audit_core(elf: &Path, objdump: &Path, core: &Rules) -> Result<CoreWrites> {
         format!("Unreviewed flash/eFuse write reference: {unexpected:?}"),
     )?;
     for (target, callers) in &expected {
-        if names.contains_key(*target) && found.get(*target) != Some(callers) {
-            return refuse(format!("Pinned flash/eFuse reference changed: {target}"));
+        let actual = found.get(*target);
+        if names.contains_key(*target) && actual != Some(callers) {
+            return refuse(format!(
+                "Pinned flash/eFuse reference changed: {target}: found {actual:?}, pinned {callers:?}"
+            ));
         }
     }
 
@@ -621,6 +633,21 @@ mod tests {
         assert!(!one_instruction(&code, 0xe002fd4));
         assert!(!one_instruction(&code, 0xe002fd8));
         assert!(!one_instruction(&code, 0x1000));
+    }
+
+    #[test]
+    fn a_loaded_literal_that_decodes_as_one_instruction_is_a_reference() {
+        let listing = " e014a28:\tea80 0e06 \teor.w\tlr, r0, r6\n \
+                       e014a00:\t4809      \tldr\tr0, [pc, #36]\t; (e014a28 <x+0x28>)\n";
+        let code = instruction_bytes(listing).unwrap();
+        let literals = literal_bytes(listing).unwrap();
+
+        assert!(one_instruction(&code, 0xe014a28));
+        assert!(stored_word(&code, &literals, 0xe014a28), "code loads it");
+        assert!(
+            !stored_word(&code, &BTreeSet::new(), 0xe014a28),
+            "a coincidence"
+        );
     }
 
     #[test]

@@ -179,7 +179,7 @@ fn boot_with_marker_skips_and_clears_it() {
     );
 
     assert_eq!(sdk::backup_read(sdk::BACKUP_USER), 0);
-    assert!(!probe.board.opened && !probe.events.opened);
+    assert!(!probe.board.view().opened && !probe.events.opened());
     assert_eq!(
         hw(|h| (h.timer.en, h.watchdog_vendor, h.direction)),
         (0, 0, [0, 0])
@@ -197,7 +197,7 @@ fn watchdog_boot_reason_skips() {
             marker: 0
         }]
     );
-    assert!(!probe.board.opened);
+    assert!(!probe.board.view().opened);
 }
 
 #[test]

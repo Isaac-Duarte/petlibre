@@ -26,7 +26,7 @@ pub fn flash_ready() -> Box<FlashCoord> {
     c
 }
 
-pub fn flash_attach(b: &mut Board) -> Box<FlashCoord> {
+pub fn flash_attach(b: &Board) -> Box<FlashCoord> {
     assert_eq!(sdk::gpio_port_read(0, MOTOR_MASK), MOTOR_MASK);
     assert!(!sdk::gpio_read_bit(15) && !sdk::gpio_read_bit(35));
     let mut c = flash_ready();
@@ -54,7 +54,12 @@ pub fn hw<R>(f: impl FnOnce(&mut fake::Hardware) -> R) -> R {
 /// A fresh fake and an opened board (deadtime 3, lease 10, 8 ADC polls).
 pub fn open_board() -> Box<Board> {
     fake::reset_hardware();
-    let mut b = Box::<Board>::default();
+    let b = Box::<Board>::default();
     assert!(b.open(3, 10, 8, 0));
     b
+}
+
+/// Beats the owner published since it opened; zero while none runs.
+pub fn beats() -> u32 {
+    wellfed_hal::supervision::beat::read().map_or(0, |beat| beat.count)
 }

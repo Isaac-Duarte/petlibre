@@ -11,10 +11,11 @@ use wellfed_core::feed::storage::{OwnerRecovery, OwnerResult, OwnerStorage};
 use wellfed_core::flash_coord::{FlashCoord, FlashParty, FlashReply};
 use wellfed_core::store::feed_journal::{FeedJournal, JournalConfig, JournalError};
 use wellfed_hal::board::MOTOR_MASK;
-use wellfed_hal::owner::{Owner, OwnerConfig, OwnerState, OwnerStatus, OwnerTask, SubmitResult};
+use wellfed_hal::owner::{
+    Owner, OwnerConfig, OwnerState, OwnerStatus, OwnerTask, Step, SubmitResult,
+};
 use wellfed_hal::sdk::{self, fake};
 use wellfed_hal::supervision::events::EventsConfig;
-use wellfed_hal::supervision::watchdog::WatchdogConfig;
 use wellfed_testkit::journal_flash::{FakeJournalFlash, FlashIo};
 
 pub const CONFIG: OwnerConfig = OwnerConfig {
@@ -44,16 +45,7 @@ pub const CONFIG: OwnerConfig = OwnerConfig {
         max_feedback_age_ms: 2,
         feedback_capacity: 8,
     },
-    watchdog: WatchdogConfig {
-        systimer_hz: 32_000,
-        clock_min_hz: 32_000,
-        clock_max_hz: 32_000,
-        min_refresh_ms: 1,
-        max_progress_gap_ms: 50,
-        max_expiry_ms: 126,
-        count_id: 5,
-        divisor: 63,
-    },
+    max_progress_gap_ms: 50,
     bowl_mode: BowlMode::Single,
     sample_period_ms: 1,
     prepare_timeout_ms: 20,
@@ -136,11 +128,23 @@ impl Fixture {
         self.owner.status()
     }
 
-    /// The owner task's state, between task iterations.
+    /// The owner task's state, between steps.
     pub fn task(&mut self) -> &mut OwnerTask<FixtureStorage> {
-        // SAFETY: the fake runs the owner task only inside `run_task`, on this
-        // thread, so no other borrow is live here.
+        // SAFETY: the owner is stepped only inside `step`, on this thread, so
+        // no other borrow is live here.
         unsafe { &mut *self.owner.task_state() }
+    }
+
+    /// One owner step, as the stepping task's pass would run it; the step
+    /// must leave interrupts enabled.
+    pub fn step(&self) -> Step {
+        let step = self.owner.step();
+        assert_eq!(
+            hw(|h| h.interrupts),
+            0,
+            "a step returns with interrupts enabled"
+        );
+        step
     }
 
     pub fn storage(&mut self) -> FixtureStorage {
@@ -155,7 +159,7 @@ impl Fixture {
     pub fn try_start(&mut self, config: &OwnerConfig) -> bool {
         let storage = self.storage();
         // SAFETY: the boxed fixture holds the owner, authority and storage context in place.
-        unsafe { self.owner.start(config, storage) }
+        unsafe { self.owner.open(config, storage) }
     }
 
     pub fn create(&mut self) {
@@ -169,22 +173,22 @@ impl Fixture {
     pub fn advance(&mut self, ms: u32) {
         for _ in 0..ms {
             fake::advance(32, true);
-            fake::run_task();
+            self.step();
         }
     }
 
     pub fn stop(&mut self) {
         self.owner.stop();
-        fake::run_task();
+        self.step();
         let s = self.status();
         assert!(s.state == OwnerState::Stopped && s.stopped && s.optics_off);
-        assert!(!hw(|h| h.task_live) && hw(|h| h.wake_locks) == 0 && sdk::tim2_en() == 0);
+        assert!(!self.owner.running() && hw(|h| h.wake_locks) == 0 && sdk::tim2_en() == 0);
     }
 
     pub fn start_feed(&mut self) {
         assert_eq!(self.owner.submit(1, 1), SubmitResult::Enqueued);
         assert!(self.status().state == OwnerState::Queued && !self.status().intent_reserved);
-        fake::run_task();
+        self.step();
         self.advance(5);
         assert!(self.status().state == OwnerState::Feeding && self.status().intent_reserved);
         assert_eq!(motor_pins(), 1 << 13);
@@ -194,7 +198,7 @@ impl Fixture {
         self.advance(4);
         fake::advance(32, true);
         fake::edge(true);
-        fake::run_task();
+        self.step();
     }
 
     pub fn hold(&mut self) {
@@ -206,7 +210,7 @@ impl Fixture {
 
     pub fn release_hold(&mut self) {
         let t = self.authority.token;
-        let inactive = self.task().board.flash_quiesce();
+        let inactive = self.owner.board().flash_quiesce();
         let c = &mut self.authority;
         assert_eq!(c.quiesced(&t, inactive, 1), FlashReply::Accepted);
         assert_eq!(c.parked(&t, FlashParty::Local, 2), FlashReply::Accepted);
@@ -307,7 +311,7 @@ unsafe fn finish_record(f: *mut Fixture, result: &OwnerResult, phase: &OwnerReco
     // SAFETY: the fixture keeps the owner and its storage in place while it runs.
     unsafe {
         (*f).finish_calls += 1;
-        (*f).finish_refreshes = hw(|h| h.watchdog_refreshes);
+        (*f).finish_refreshes = beats();
         if (*f).finish_delay_ticks != 0 {
             fake::advance((*f).finish_delay_ticks, true);
         }
@@ -336,7 +340,7 @@ pub fn boot() -> Box<Fixture> {
     f.create();
     assert_eq!(f.status().state, OwnerState::Starting);
 
-    fake::run_task();
+    f.step();
     let s = f.status();
     assert!(s.state == OwnerState::Idle && s.stopped && s.optics_off);
     assert_eq!(hw(|h| h.wake_locks), 1 << 16);
@@ -364,13 +368,13 @@ pub fn boot_with_journal(dual: bool) -> Box<Fixture> {
     );
 
     f.create();
-    fake::run_task();
+    f.step();
     assert_eq!(f.status().state, OwnerState::Idle);
     f
 }
 
 pub fn restart_with_journal(f: &mut Fixture) {
-    assert!(!hw(|h| h.task_live));
+    assert!(!f.owner.running());
     fake::reset_hardware();
     f.flash.budget = -1;
     // SAFETY: as for `boot_with_journal`.
@@ -378,5 +382,5 @@ pub fn restart_with_journal(f: &mut Fixture) {
     let config = f.journal.config;
     assert_eq!(f.journal.open(io, config), JournalError::Ok);
     f.create();
-    fake::run_task();
+    f.step();
 }

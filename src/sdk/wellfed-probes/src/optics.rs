@@ -478,12 +478,12 @@ impl Probe {
     /// Emitters off and the supervisor closed (or, if it cannot verify
     /// that, left retrying from its timer); then the error record.
     fn fail(&mut self, kind: ErrorKind) -> Step {
-        let fault = self.events.fault.code();
+        let fault = self.events.view().fault.code();
         let stall_ms = self
             .events
             .now_ms()
             .map(|now| now.wrapping_sub(self.last_ms));
-        if self.events.opened {
+        if self.events.opened() {
             self.events.close();
         } else {
             self.board.close();
@@ -579,7 +579,7 @@ impl Probe {
         // SAFETY: the board stays at this fixed address while events is open.
         let events = attached && unsafe { self.events.open(board, &EVENTS) };
 
-        let inputs = SensorInputs::new(&SENSORS, &self.board.calibration);
+        let inputs = SensorInputs::new(&SENSORS, &self.board.view().calibration);
         let controller = FeedController::new(&FEED, 0);
         let ok = events && inputs.is_some() && controller.is_some();
         let record = self.open_record(true, self.flash.is_some(), attached, events, ok);
@@ -643,7 +643,7 @@ impl Probe {
 
     /// Sample once, renew the owner lease, and return the clock and inputs.
     fn sample(&mut self) -> Result<(u32, u32), ErrorKind> {
-        if self.events.fault != EventsFault::Ok {
+        if self.events.view().fault != EventsFault::Ok {
             return Err(ErrorKind::Supervisor);
         }
 

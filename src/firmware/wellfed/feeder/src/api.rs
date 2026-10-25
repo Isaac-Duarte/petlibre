@@ -112,6 +112,18 @@ fn server_record(record: server::Record, f: &mut impl fmt::Write) -> fmt::Result
     }
 }
 
+/// What the loop hands the device API each pass.
+pub struct Inputs<'a> {
+    pub now_ms: u32,
+    pub pairing: &'a mut Pairing,
+    pub identity: Option<&'a Keypair>,
+    /// The panel lock, once the owner has read it.
+    pub locked: Option<bool>,
+    pub recovery: Option<pairing::Event>,
+    /// A feed is being prepared or driven: handshakes wait.
+    pub feeding: bool,
+}
+
 pub struct Api {
     server: Server,
     listener: Option<i32>,
@@ -161,15 +173,15 @@ impl Api {
     }
 
     /// One pass; the delay until the next.
-    pub fn step(
-        &mut self,
-        now_ms: u32,
-        pairing: &mut Pairing,
-        identity: Option<&Keypair>,
-        locked: Option<bool>,
-        recovery: Option<pairing::Event>,
-        mut record: impl FnMut(Record),
-    ) -> u32 {
+    pub fn step(&mut self, inputs: Inputs<'_>, mut record: impl FnMut(Record)) -> u32 {
+        let Inputs {
+            now_ms,
+            pairing,
+            identity,
+            locked,
+            recovery,
+            feeding,
+        } = inputs;
         let boot = *self.boot.get_or_insert_with(|| {
             let boot = boot_facts();
             let body = EventBody::Boot {
@@ -221,8 +233,7 @@ impl Api {
                 device: &mut device,
                 pairing,
                 identity,
-                // No feeding owner yet.
-                feeding: false,
+                feeding,
                 recovery,
             },
             |r| record(Record::Server(r)),

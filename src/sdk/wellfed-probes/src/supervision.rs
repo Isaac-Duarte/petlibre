@@ -165,7 +165,7 @@ impl Probe {
             n,
             raw,
             ms: snapshot.now_ms,
-            irqs: self.events.timer_count,
+            irqs: self.events.view().timer_count,
             ready: snapshot.timer_ready,
             healthy: snapshot.healthy,
             stopped: snapshot.stopped && snapshot.optics_off && stopped::observe().verified(),
@@ -185,7 +185,7 @@ impl Probe {
 
                 let board = self.board.open_outputs(DEADTIME_MS, LEASE_MS, 0);
                 // SAFETY: the probe, and with it the board, stays at a fixed address.
-                let events = board && unsafe { self.events.open(&mut self.board, &EVENTS) };
+                let events = board && unsafe { self.events.open(&self.board, &EVENTS) };
                 if !events {
                     return self.end(Record::Open { board, events });
                 }

@@ -9,6 +9,7 @@ use wellfed_sdk::Slot;
 use wellfed_sdk::hal::{panel, sdk, settings, startup};
 
 use crate::api::{self, Api};
+use crate::feeding::{self, Feeding};
 use crate::keys::{self, Identity};
 use crate::owner::{self, Inputs, Owner};
 use crate::setup;
@@ -16,8 +17,9 @@ use crate::setup;
 wellfed_sdk::firmware!(start);
 
 fn start() {
-    // The measurement samples the ADC, so the power monitor stays off it.
-    #[cfg(feature = "entropy")]
+    // The feeding owner needs the ADC to itself (and the entropy
+    // measurement samples it too), so the power monitor stays off it; the
+    // owner publishes power health from its own captures.
     wellfed_sdk::claim_adc();
 
     // Nothing here holds the KM0 flash handshake, so the runtime may confirm
@@ -49,6 +51,9 @@ static IDENTITY: Slot<Identity> = Slot::new();
 /// The device API's session table is larger than the loop's stack, so it is
 /// built at compile time. The loop task's.
 static API: Slot<Api> = Slot::filled(Api::new());
+/// The loop task's half of the feeding owner; the owner itself is
+/// `feeding`'s.
+static FEEDING: Slot<Feeding> = Slot::new();
 #[cfg(feature = "entropy")]
 static CAPTURE: Slot<crate::entropy::Capture> = Slot::filled(crate::entropy::Capture::new());
 
@@ -76,6 +81,14 @@ impl core::fmt::Display for Key {
     }
 }
 
+struct FeedingRecord(feeding::Record);
+
+impl core::fmt::Display for FeedingRecord {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        feeding::describe(self.0, f)
+    }
+}
+
 struct ApiRecord(api::Record);
 
 impl core::fmt::Display for ApiRecord {
@@ -85,13 +98,20 @@ impl core::fmt::Display for ApiRecord {
 }
 
 unsafe extern "C" fn loop_task(_: *mut c_void) -> u32 {
-    let (Some(mut owner), Some(mut api), Some(mut identity)) = (
+    let (Some(mut owner), Some(mut api), Some(mut identity), Some(mut feeding)) = (
         OWNER.enter(),
         API.enter(),
         IDENTITY.enter_or_init(Identity::default),
+        FEEDING.enter_or_init(Feeding::default),
     ) else {
         return 0;
     };
+
+    #[cfg(feature = "owner-stall")]
+    stall::step();
+    let feed_delay = feeding.step(|record| {
+        log(format_args!("PLOWN1 {}\r\n", FeedingRecord(record)));
+    });
 
     if let Some(record) = identity.step() {
         log(format_args!("PLID1 {}\r\n", Key(record)));
@@ -142,17 +162,21 @@ unsafe extern "C" fn loop_task(_: *mut c_void) -> u32 {
     let locked = owner.lock().map(wellfed_feeder::panel::Lock::locked);
     let identity = identity.keypair();
     let recovery = owner.take_recovery();
-    let api_delay = api.step(
+    let inputs = api::Inputs {
         now_ms,
-        owner.pairing(),
+        pairing: owner.pairing(),
         identity,
         locked,
         recovery,
-        |record| {
-            log(format_args!("PLAPI1 {}\r\n", ApiRecord(record)));
-        },
-    );
+        feeding: feeding.feeding(),
+    };
+    let api_delay = api.step(inputs, |record| {
+        log(format_args!("PLAPI1 {}\r\n", ApiRecord(record)));
+    });
     delay_ms = delay_ms.min(api_delay);
+    if let Some(feed_delay) = feed_delay {
+        delay_ms = delay_ms.min(feed_delay);
+    }
 
     #[cfg(feature = "entropy")]
     if let Some(mut capture) = CAPTURE.enter()
@@ -173,5 +197,44 @@ struct Rng(crate::entropy::Record);
 impl core::fmt::Display for Rng {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         crate::entropy::describe(self.0, f)
+    }
+}
+
+/// The `owner-stall` variant: the loop stops stepping for a while, once each, so
+/// the bench can watch what a hung loop does to the owner's beat. Two
+/// stalls: one past the motor lease but inside the beat's gap, which must
+/// change nothing, and one well past the gap, which must end in a watchdog
+/// reset. Both wait for the armed hooks, which come only after the build
+/// confirmed itself: a reset during a trial would count against it. Every
+/// boot repeats them, so the image goes back out after the run.
+#[cfg(feature = "owner-stall")]
+mod stall {
+    use core::sync::atomic::{AtomicU8, Ordering};
+
+    use wellfed_sdk::hal::sdk;
+
+    /// Uptime of each stall, and how long it spins.
+    const STALLS: [(u32, u32); 2] = [(120_000, 600), (180_000, 3000)];
+
+    static DONE: AtomicU8 = AtomicU8::new(0);
+
+    /// Spins with interrupts enabled, so the supervision timer and the
+    /// watchdog feeder keep running while the loop does not.
+    pub fn step() {
+        let done = usize::from(DONE.load(Ordering::Relaxed));
+        let Some(&(at_ms, spin_ms)) = STALLS.get(done) else {
+            return;
+        };
+        let now = sdk::uptime_ms();
+        if now < at_ms || !wellfed_sdk::storage_armed() {
+            return;
+        }
+
+        sdk::log(c"PLOWN1 stall begin=1\r\n");
+        while sdk::uptime_ms().wrapping_sub(now) < spin_ms {
+            core::hint::spin_loop();
+        }
+        sdk::log(c"PLOWN1 stall end=1\r\n");
+        DONE.fetch_add(1, Ordering::Relaxed);
     }
 }

@@ -210,18 +210,22 @@ fn faults_stop_and_finish_without_success() {
 }
 
 #[test]
+/// The timer stops the motor within its lease; the world's feeder feeds the
+/// watchdog until the owner's beat is a gap (50 ms) old, and the 126 ms
+/// expiry then resets the board about 184 ms in.
 fn stalled_owner_independent_timer_and_watchdog_reset() {
     let report = passing(
         vec![
             act(1, "submit", &[1, 3]),
             act(8, "owner", &[0]),
             expect(25, json!({"motor": 0, "optics": 0})),
+            expect(150, json!({"boots": 1, "motor": 0})),
             expect(
-                150,
+                200,
                 json!({"boots": 2, "state": "fault", "fault": "recovery", "pending": true, "motor": 0}),
             ),
         ],
-        155,
+        205,
         "single",
         10,
     );

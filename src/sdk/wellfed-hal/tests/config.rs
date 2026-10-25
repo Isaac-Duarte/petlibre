@@ -8,7 +8,7 @@ use wellfed_hal::supervision::watchdog::WatchdogConfig;
 
 fn owner(sample_period_ms: u32) -> OwnerConfig {
     let mut c = OwnerConfig {
-        watchdog: WATCHDOG,
+        max_progress_gap_ms: WATCHDOG.max_progress_gap_ms,
         sample_period_ms,
         ..OwnerConfig::default()
     };

@@ -745,7 +745,7 @@ mod tests {
                       sdk::task_create(\n    c\"wellfed-optics\",\n    PROBE_STACK_WORDS,\n    3,\n    optics_task,\n\
                       let ok = sdk::task_create(c\"wellfed-wdg\", 512, 3, feeder_task, ptr::null_mut());\n\
                       unsafe { wellfed_sdk::spawn(c\"wellfed-aud\", 1024, 2, audio_task) };\n\
-                      sdk::task_create(c\"feed-owner\", 2048, 3, owner_step::<S>, owner);";
+                      sdk::task_create(c\"wellfed-gen\", 2048, 3, generic_step::<S>, state);";
         let expected: BTreeMap<String, (String, u64)> = [
             (
                 "optics_task".to_string(),
@@ -756,7 +756,10 @@ mod tests {
                 ("wellfed-wdg".to_string(), 2048),
             ),
             ("audio_task".to_string(), ("wellfed-aud".to_string(), 4096)),
-            ("owner_step".to_string(), ("feed-owner".to_string(), 8192)),
+            (
+                "generic_step".to_string(),
+                ("wellfed-gen".to_string(), 8192),
+            ),
         ]
         .into();
         assert_eq!(tasks(source), expected);

@@ -11,15 +11,17 @@ use wellfed_core::flash_coord::{FlashCoord, FlashLimits};
 use wellfed_core::interval_valid;
 
 use crate::sdk;
+use crate::supervision::config::WATCHDOG;
 use crate::supervision::events::{self, EventsConfig};
-use crate::supervision::watchdog::WatchdogConfig;
 
 #[derive(Clone, Copy, Debug)]
 pub struct OwnerConfig {
     pub feed: FeedLimits,
     pub sensors: SensorLimits,
     pub events: EventsConfig,
-    pub watchdog: WatchdogConfig,
+    /// The longest the owner may go without a beat; at most the runtime
+    /// watchdog's own progress gap, whose expiry bounds were checked for it.
+    pub max_progress_gap_ms: u32,
     pub bowl_mode: BowlMode,
 
     pub sample_period_ms: u32,
@@ -41,7 +43,7 @@ impl Default for OwnerConfig {
             feed: FeedLimits::default(),
             sensors: SensorLimits::default(),
             events: EventsConfig::default(),
-            watchdog: WatchdogConfig::default(),
+            max_progress_gap_ms: 0,
             bowl_mode: BowlMode::default(),
             sample_period_ms: 0,
             prepare_timeout_ms: 0,
@@ -58,9 +60,9 @@ impl Default for OwnerConfig {
 impl OwnerConfig {
     pub fn valid(&self) -> bool {
         let c = self;
-        if !c.watchdog.valid()
-            || c.watchdog.systimer_hz != c.events.ticks_per_second
-            || c.watchdog.max_progress_gap_ms <= c.sample_period_ms
+        if !interval_valid(c.max_progress_gap_ms)
+            || c.max_progress_gap_ms > WATCHDOG.max_progress_gap_ms
+            || c.max_progress_gap_ms <= c.sample_period_ms
             || !interval_valid(c.sample_period_ms)
             || !interval_valid(c.prepare_timeout_ms)
             || !interval_valid(c.optics_max_on_ms)
@@ -103,20 +105,19 @@ impl OwnerConfig {
             && SensorInputs::new(&c.sensors, &calibration).is_some()
     }
 
-    /// Whether a whole flash lease fits inside watchdog supervision. During a
-    /// lease the owner cannot checkpoint, so the gap between two checkpoints
-    /// spans up to one sample period before the lease, the entire lease
-    /// budget, one sample period after it, and two timer periods of
-    /// scheduling/timer granularity before the first post-lease checkpoint
-    /// (it also needs a fresh timer interrupt). That sum must stay below
-    /// `max_progress_gap_ms`. The hardware counter, whose shortest expiry
-    /// `WatchdogConfig::valid` already requires to exceed twice the progress
-    /// gap, then also covers an IRQ-masked lease plus the rate-limited refresh
-    /// offset (`min_refresh_ms`, below the gap).
+    /// Whether a whole flash lease fits between two beats. During a lease
+    /// the owner cannot beat, so the gap between two beats spans up to one
+    /// sample period before the lease, the entire lease budget, one sample
+    /// period after it, and two timer periods of scheduling/timer
+    /// granularity before the first post-lease beat (it also needs a fresh
+    /// timer interrupt). That sum must stay below `max_progress_gap_ms`. The
+    /// runtime's hardware counter, whose shortest expiry its configuration
+    /// requires to exceed twice its own gap (at least this one), then also
+    /// covers an IRQ-masked lease.
     pub fn lease_fits(&self, limits: &FlashLimits) -> bool {
         let needed = u64::from(limits.total_ms)
             + 2 * u64::from(self.sample_period_ms)
             + 2 * u64::from(self.events.timer_period_ms);
-        limits.total_ms != 0 && needed < u64::from(self.watchdog.max_progress_gap_ms)
+        limits.total_ms != 0 && needed < u64::from(self.max_progress_gap_ms)
     }
 }

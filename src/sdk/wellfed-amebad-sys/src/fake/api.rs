@@ -620,7 +620,7 @@ pub unsafe fn task_create(
     step: TaskStep,
     context: *mut c_void,
 ) -> bool {
-    assert!(name == c"feed-owner" && stack_words == 2048 && priority == 3);
+    let _ = (name, stack_words, priority);
     with(|h| {
         assert!(!h.task_live);
         if h.task_create_fail {

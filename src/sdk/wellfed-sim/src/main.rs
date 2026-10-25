@@ -1,5 +1,7 @@
 //! Virtual feeder worker: runs the real owner, board, events and watchdog
-//! ports on the fake SDK with a file-backed synthetic journal.
+//! ports on the fake SDK with a file-backed synthetic journal. The world
+//! stands in for the runtime's watchdog feeder too: it feeds the hardware
+//! watchdog by the runtime's own rule, from the owner's beat.
 //!
 //! Usage: `virtual-feeder-worker JOURNAL PROFILE provision|recover`. Reads one
 //! JSON [`Command`] per line on stdin and writes JSON-lines [`Event`]s on
@@ -25,13 +27,29 @@ use wellfed_core::store::feed_journal::{FeedJournal, JournalConfig, JournalError
 use wellfed_core::store::slot::SlotIo;
 use wellfed_hal::owner::{Owner, OwnerConfig};
 use wellfed_hal::sdk::fake;
+use wellfed_hal::stopped;
+use wellfed_hal::supervision::beat;
 use wellfed_hal::supervision::events::EventsConfig;
-use wellfed_hal::supervision::watchdog::WatchdogConfig;
+use wellfed_hal::supervision::supervise::{self, Inputs, Startup};
+use wellfed_hal::supervision::watchdog::{Watchdog, WatchdogConfig};
 use wellfed_sim::protocol::{
     Code, Command, Event, Fault, IoOperation, IoStage, Journal, Outcome, Profile, Reason, State,
     Status, StoragePhase, WorkerArgs,
 };
 use wellfed_testkit::journal_flash::{FakeJournalFlash, FlashIo, UNIT};
+
+/// The hardware watchdog the world feeds, scaled with the profile: a
+/// 126 ms expiry over the owner's 50 ms gap.
+const WATCHDOG: WatchdogConfig = WatchdogConfig {
+    systimer_hz: 32_000,
+    clock_min_hz: 32_000,
+    clock_max_hz: 32_000,
+    min_refresh_ms: 1,
+    max_progress_gap_ms: 50,
+    max_expiry_ms: 126,
+    count_id: 5,
+    divisor: 63,
+};
 
 /// Synthetic profile copied from the owner tests; not hardware calibration.
 fn config() -> OwnerConfig {
@@ -65,16 +83,7 @@ fn config() -> OwnerConfig {
             feedback_capacity: 8,
         },
 
-        watchdog: WatchdogConfig {
-            systimer_hz: 32_000,
-            clock_min_hz: 32_000,
-            clock_max_hz: 32_000,
-            min_refresh_ms: 1,
-            max_progress_gap_ms: 50,
-            max_expiry_ms: 126,
-            count_id: 5,
-            divisor: 63,
-        },
+        max_progress_gap_ms: 50,
 
         bowl_mode: BowlMode::Single,
         sample_period_ms: 1,
@@ -91,6 +100,9 @@ fn config() -> OwnerConfig {
 /// Process-wide simulation state, reached from SDK/journal callbacks.
 struct World {
     owner: Owner<SimStorage>,
+    watchdog: Watchdog,
+    /// Refreshes the world's feeder has made; the watchdog's progress.
+    feeds: u64,
     journal: FeedJournal<SimIo>,
     flash: FakeJournalFlash,
     base_io: Option<FlashIo>,
@@ -401,7 +413,7 @@ fn status(response: u64) {
             state: code::<State>(s.state.code()),
             fault: code::<Fault>(s.fault.code()),
             supervisor_fault: s.supervisor_fault.code(),
-            watchdog_fault: s.watchdog_fault.code(),
+            watchdog_fault: (*world).watchdog.fault.code(),
             id: s.result.id,
             completed: s.result.completed,
             outcome: code::<Outcome>(s.result.outcome.code()),
@@ -432,7 +444,33 @@ fn tick() {
         (*w()).device_ms += 1;
         (*w()).run_timer
     };
+    fake::with(|h| h.uptime_ms = h.uptime_ms.wrapping_add(1));
     fake::advance(32, run_timer);
+}
+
+/// The runtime's watchdog feeder, once the role has started: feed while
+/// outputs read stopped or the owner supervises them, and the owner's beat
+/// stays fresh.
+fn feed_watchdog() {
+    let outputs = stopped::observe();
+    let inputs = Inputs {
+        now_ms: fake::with(|h| h.uptime_ms),
+        startup: Startup::Started,
+        tasks_alive: true,
+        outputs_ok: outputs.verified() || outputs.sensing(),
+        owner: beat::read(),
+        ..Inputs::default()
+    };
+    if !supervise::feed(&inputs) {
+        return;
+    }
+    // SAFETY: see `w`.
+    unsafe {
+        let world = w();
+        (*world).feeds += 1;
+        let progress = (*world).feeds;
+        let _ = (*world).watchdog.checkpoint(progress);
+    }
 }
 
 fn poll() {
@@ -459,10 +497,11 @@ fn poll() {
         }
 
         (*world).previous_motor = m;
-        if (*world).run_owner && fake::with(|h| h.task_live) {
-            fake::run_task();
+        if (*world).run_owner && (*world).owner.running() {
+            (*world).owner.step();
         }
     }
+    feed_watchdog();
 }
 
 fn open_disk(path: &Path, provision: bool) -> File {
@@ -499,6 +538,8 @@ fn main() {
     flash.after_mutation = Some(mutation);
     let world = Box::into_raw(Box::new(World {
         owner: Owner::default(),
+        watchdog: Watchdog::default(),
+        feeds: 0,
         journal: FeedJournal::default(),
         flash,
         base_io: None,
@@ -565,12 +606,14 @@ fn main() {
             ..config()
         };
 
-        if !(*world).owner.start(&c, SimStorage) {
-            fail("Owner start failed");
+        if !(*world).watchdog.open(&WATCHDOG) {
+            fail("Watchdog open failed");
         }
+        if !(*world).owner.open(&c, SimStorage) {
+            fail("Owner open failed");
+        }
+        (*world).owner.step();
     }
-
-    fake::run_task();
     status(0);
 
     let stdin = std::io::stdin();
@@ -650,9 +693,7 @@ unsafe fn execute(world: *mut World, command: Command) -> u64 {
             Command::Status { .. } => {}
             Command::Stop { .. } => {
                 (*world).owner.stop();
-                if fake::with(|h| h.task_live) {
-                    fake::run_task();
-                }
+                (*world).owner.step();
             }
         }
     }

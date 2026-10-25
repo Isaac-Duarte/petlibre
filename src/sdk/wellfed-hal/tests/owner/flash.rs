@@ -11,24 +11,21 @@ use wellfed_hal::sdk::{self, fake};
 fn flash_hold_waits_before_outputs_and_release_allows_new_work() {
     let mut f = boot();
     f.advance(2);
-    let refreshes = hw(|h| h.watchdog_refreshes);
+    let refreshes = beats();
     f.hold();
 
     assert_eq!(f.owner.submit(1, 1), SubmitResult::Enqueued);
-    fake::run_task();
+    f.step();
     f.advance(3);
     assert!(f.status().state == OwnerState::Preparing && f.reserve_calls == 1);
     assert!(f.status().fault == OwnerFault::Ok && !f.task().optics_started);
-    assert!(
-        f.status().flash_phase == FlashPhase::Quiescing
-            && hw(|h| h.watchdog_refreshes) == refreshes
-    );
+    assert!(f.status().flash_phase == FlashPhase::Quiescing && beats() == refreshes);
     inactive_outputs();
 
     f.release_hold();
     f.advance(5);
     assert!(f.status().state == OwnerState::Feeding && f.reserve_calls == 1);
-    assert!(hw(|h| h.watchdog_refreshes) > refreshes);
+    assert!(beats() > refreshes);
     f.stop();
     assert_eq!(f.authority.phase, FlashPhase::Idle); // Global authority outlives the owner.
 }
@@ -42,18 +39,18 @@ fn flash_interruption_latches_failure_even_after_release() {
         } else {
             f.advance(2);
             assert_eq!(f.owner.submit(1, 1), SubmitResult::Enqueued);
-            fake::run_task();
+            f.step();
             assert!(f.task().optics_started && f.status().state == OwnerState::Preparing);
         }
 
-        let refreshes = hw(|h| h.watchdog_refreshes);
+        let refreshes = beats();
         f.hold();
         hw(|h| h.blocked_motor_write = phase == 2);
         fake::advance(64, true); // Independent ISR must remove active outputs.
         if phase != 2 {
             inactive_outputs();
         }
-        fake::run_task();
+        f.step();
 
         if phase == 2 {
             assert!(
@@ -62,7 +59,7 @@ fn flash_interruption_latches_failure_even_after_release() {
             assert!(f.authority.fault == FlashFault::Output && !f.status().stopped);
             assert!(
                 f.finish_calls == 0
-                    && hw(|h| h.task_live)
+                    && f.owner.running()
                     && sdk::tim2_en() != 0
                     && hw(|h| h.wake_locks) != 0
             );
@@ -73,7 +70,7 @@ fn flash_interruption_latches_failure_even_after_release() {
 
         assert!(f.status().fault == OwnerFault::Flash && f.status().state == OwnerState::Fault);
         assert!(f.status().result.outcome == OwnerOutcome::Failed && f.status().result_durable);
-        assert!(f.finish_calls == 1 && hw(|h| h.watchdog_refreshes) == refreshes);
+        assert!(f.finish_calls == 1 && beats() == refreshes);
 
         if phase != 2 {
             f.release_hold();
@@ -82,7 +79,7 @@ fn flash_interruption_latches_failure_even_after_release() {
         f.advance(1);
         assert_eq!(f.owner.submit(2, 1), SubmitResult::RejectStopped);
         assert!(!f.owner.acknowledge(1));
-        assert_eq!(hw(|h| h.watchdog_refreshes), refreshes);
+        assert_eq!(beats(), refreshes);
         f.stop();
     }
 }
@@ -92,14 +89,14 @@ fn flash_hold_expires_requests_and_protocol_fault_stops_owner() {
     let mut f = boot();
     f.hold();
     assert_eq!(f.owner.submit(1, 1), SubmitResult::Enqueued);
-    fake::run_task();
+    f.step();
     f.advance(20);
 
     assert!(
         f.status().state == OwnerState::Terminal
             && f.status().result.outcome == OwnerOutcome::Expired
     );
-    assert!(!f.status().result.motion_possible && hw(|h| h.watchdog_refreshes) == 0);
+    assert!(!f.status().result.motion_possible && beats() == 0);
     assert!(f.status().result_durable);
 
     f.authority.trip(FlashFault::Transport);
@@ -107,16 +104,16 @@ fn flash_hold_expires_requests_and_protocol_fault_stops_owner() {
     assert!(
         f.status().fault == OwnerFault::Flash && f.status().flash_fault == FlashFault::Transport
     );
-    assert!(f.status().state == OwnerState::Fault && hw(|h| h.watchdog_refreshes) == 0);
+    assert!(f.status().state == OwnerState::Fault && beats() == 0);
     inactive_outputs();
     f.stop();
 
     let mut f = boot();
     f.advance(2);
-    let refreshes = hw(|h| h.watchdog_refreshes);
+    let refreshes = beats();
     f.hold();
     f.advance(50); // A stalled flash protocol cannot keep the owner watchdog alive.
-    assert!(f.status().fault == OwnerFault::Watchdog && hw(|h| h.watchdog_refreshes) == refreshes);
+    assert!(f.status().fault == OwnerFault::Progress && beats() == refreshes);
     f.stop();
 }
 
@@ -136,7 +133,7 @@ fn start_requires_an_external_ready_authority() {
     f.authority.trip(FlashFault::PeerLost);
     assert!(!f.try_start(&config));
 
-    assert!(!hw(|h| h.task_live) && hw(|h| h.watchdog_init_calls) == 0 && hw(|h| h.output[0]) == 0);
+    assert!(!f.owner.running() && hw(|h| h.watchdog_init_calls) == 0 && hw(|h| h.output[0]) == 0);
 }
 
 #[test]
@@ -148,10 +145,10 @@ fn flash_lease_budget_must_fit_watchdog_supervision() {
     f.advance(FLASH_LIMITS.total_ms);
     assert!(f.status().fault == OwnerFault::Ok && f.status().state == OwnerState::Idle);
 
-    let refreshes = hw(|h| h.watchdog_refreshes);
+    let refreshes = beats();
     f.release_hold();
     f.advance(2);
-    assert!(f.status().fault == OwnerFault::Ok && hw(|h| h.watchdog_refreshes) > refreshes);
+    assert!(f.status().fault == OwnerFault::Ok && beats() > refreshes);
     assert_eq!(f.owner.submit(1, 1), SubmitResult::Enqueued);
     f.stop();
 
@@ -184,5 +181,5 @@ fn flash_lease_budget_must_fit_watchdog_supervision() {
     f.config.flash = &raw mut f.authority;
     let config = f.config;
     assert!(!f.try_start(&config));
-    assert!(!hw(|h| h.task_live) && hw(|h| h.watchdog_init_calls) == 0 && hw(|h| h.output[0]) == 0);
+    assert!(!f.owner.running() && hw(|h| h.watchdog_init_calls) == 0 && hw(|h| h.output[0]) == 0);
 }

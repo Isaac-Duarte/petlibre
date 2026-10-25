@@ -11,10 +11,15 @@
 //!   failure counts as a failed trial. A confirmed image (or bank 0) keeps
 //!   feeding and holds STOP, rather than reset-looping.
 //! - **Running:** feed while every running task keeps stepping and outputs
-//!   stay stopped or sensing.
+//!   stay stopped or sensing. While a feeding owner runs, its beat must also
+//!   stay fresh, and while it supervises a feed its supervisor stands in for
+//!   the stopped check (the timer interrupt stops the motor within a lease;
+//!   the watchdog is the backstop for that interrupt dying).
 //! - **Trial deadline:** a trial image that has not confirmed itself within
 //!   `TRIAL_DEADLINE_MS` stops feeding, so an image that runs but never gets
 //!   healthy also falls back.
+
+use crate::supervision::beat::Beat;
 
 /// A task step older than this is a hang.
 pub const LIVENESS_MS: u32 = 10_000;
@@ -71,6 +76,8 @@ pub struct Inputs {
     /// Outputs verified stopped, or motor STOP with only the supervised
     /// emitters lit.
     pub outputs_ok: bool,
+    /// The feeding owner's beat, while one runs.
+    pub owner: Option<Beat>,
 }
 
 fn fresh(now: u32, beat: u32) -> bool {
@@ -86,6 +93,12 @@ pub fn feed(i: &Inputs) -> bool {
     match i.startup {
         Startup::Running => fresh(i.now_ms, i.startup_beat_ms),
         Startup::Failed => !trial,
-        Startup::Started => i.tasks_alive && i.outputs_ok,
+        Startup::Started => {
+            let owner_alive = i.owner.is_none_or(|beat| beat.fresh(i.now_ms));
+            let supervised = i
+                .owner
+                .is_some_and(|beat| beat.supervised && beat.fresh(i.now_ms));
+            i.tasks_alive && owner_alive && (i.outputs_ok || supervised)
+        }
     }
 }

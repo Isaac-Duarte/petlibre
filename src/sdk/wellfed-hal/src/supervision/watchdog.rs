@@ -6,12 +6,11 @@
 use core::ptr;
 
 use wellfed_core::clock::tick::TickClock;
-use wellfed_core::feed::controller::MotorCommand;
 use wellfed_core::flash_coord::FlashCoord;
 use wellfed_core::{HALF_RANGE, interval_valid};
 
-use crate::board::{self, Board, MOTOR_MASK};
-use crate::sdk::{self, GPIO_PORT_A, IrqGuard};
+use crate::board::{self, Board};
+use crate::sdk::{self, IrqGuard};
 use crate::supervision::active::active_pointer;
 
 /// The vendor-register fields `open` programs: divisor (bits 0..15), count ID
@@ -286,14 +285,7 @@ impl Watchdog {
 
         let me = ptr::from_mut(self);
         let mut ok = !self.claimed && active() != me;
-        let inactive = board.is_some_and(|b| {
-            b.optics_initialized
-                && b.motor.applied_known
-                && b.motor.applied == MotorCommand::Stop
-                && b.motor.desired == MotorCommand::Stop
-                && sdk::gpio_port_read(GPIO_PORT_A, MOTOR_MASK) == MOTOR_MASK
-                && board::optics_off()
-        });
+        let inactive = board.is_some_and(Board::inactive);
 
         if active() == me && self.claimed && inactive {
             ok = self.release();

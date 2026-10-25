@@ -186,7 +186,7 @@ fn full_run_pairs_emitters_measures_settling_and_cuts_a_stalled_owner() {
         if on {
             on_for += 1;
             max_on = max_on.max(on_for);
-            assert!(probe.events.optics_armed && probe.board.optics_enabled);
+            assert!(probe.events.view().optics_armed && probe.board.view().optics_enabled);
             sensing_seen[0] |= s.sensing();
             assert!(s.sensing() || !s.verified());
         } else {
@@ -303,7 +303,7 @@ fn records_are_logged_only_after_the_settling_window() {
     for _ in 0..30_000 {
         // The age of the window under way when this iteration runs.
         let w = *b.probe.window();
-        let age = b.probe.events.clock.millis.wrapping_sub(w.start_ms);
+        let age = b.probe.events.view().clock.millis.wrapping_sub(w.start_ms);
         let before = b.records.len();
         if b.step(&mut during) == 0 {
             break;
@@ -333,7 +333,7 @@ fn a_blocked_outlet_and_a_short_pulse_are_measured_in_both_windows() {
     let both = |n: u32| 1 + 6 * n + 4;
     b.run(|optics, probe| {
         let w = probe.window();
-        let age = probe.events.clock.millis.wrapping_sub(w.start_ms);
+        let age = probe.events.view().clock.millis.wrapping_sub(w.start_ms);
         optics.block[1] = if w.n == both(0) {
             (1000..1020).contains(&age)
         } else if w.n == both(1) {
@@ -419,7 +419,7 @@ fn no_peer_times_out_with_emitters_never_on() {
     };
 
     assert!((optics::READY_TIMEOUT_MS..optics::READY_TIMEOUT_MS + 20).contains(&ms));
-    assert!(!b.probe.board.opened);
+    assert!(!b.probe.board.view().opened);
     assert!(stopped::observe().verified());
 }
 
@@ -429,7 +429,7 @@ fn a_lost_owner_lease_mid_window_ends_the_probe_stopped() {
     let mut during = |_: &mut Optics, _: &Probe| {};
 
     // Into the first PA15 window.
-    while b.probe.events.clock.millis < optics::BASELINE_MS + 500 {
+    while b.probe.events.view().clock.millis < optics::BASELINE_MS + 500 {
         assert_ne!(b.step(&mut during), 0);
     }
     assert!(fake::with(|h| h.output[0] & 1 << 15 != 0));
@@ -440,7 +440,7 @@ fn a_lost_owner_lease_mid_window_ends_the_probe_stopped() {
     }
     assert!(fake::with(|h| h.output[0] & 1 << 15 == 0));
 
-    assert_eq!(b.probe.events.fault, EventsFault::Owner);
+    assert_eq!(b.probe.events.view().fault, EventsFault::Owner);
     assert_eq!(b.step(&mut during), 0);
 
     let Some(Record::Error {

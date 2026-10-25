@@ -213,7 +213,7 @@ impl Probe {
                 outputs,
                 clock: sensors.clock,
                 efuse: sensors.efuse,
-                calibration: self.board.calibration,
+                calibration: self.board.view().calibration,
                 ok: sensors.ok,
             };
             self.done = !sensors.ok;
@@ -239,7 +239,7 @@ impl Probe {
             return next(0, Record::Error { n, ticks, stopped });
         }
 
-        let calibration = self.board.calibration;
+        let calibration = self.board.view().calibration;
         next(
             SAMPLE_MS,
             Record::Sample {

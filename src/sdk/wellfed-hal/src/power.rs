@@ -1,5 +1,6 @@
 //! Power inputs for health: the battery pack on ADC channel 5 and the
-//! adapter on PA19, sampled every `SAMPLE_MS` by the runtime's power task.
+//! adapter on PA19, sampled every `SAMPLE_MS` by the runtime's power task,
+//! or, when a feeding owner holds the ADC, by the owner's own captures.
 //!
 //! Health reports a sample only while it is fresh (`STALE_MS`), so a stalled
 //! task, a failed conversion or an ADC the monitor never opened all read as
@@ -127,7 +128,7 @@ impl Monitor {
 /// The time is the start of the conversion, so its duration counts toward
 /// the age. The sample is withdrawn while its time changes, so a reader
 /// never pairs one sample's value with another's time.
-fn publish(pin_mv: u32, adapter: bool, at_ms: u32) {
+pub(crate) fn publish(pin_mv: u32, adapter: bool, at_ms: u32) {
     let packed = HELD | if adapter { ADAPTER } else { 0 } | pin_mv.min(MV_MASK);
     SAMPLE.store(0, Ordering::Release);
     SAMPLED_AT_MS.store(at_ms, Ordering::Release);

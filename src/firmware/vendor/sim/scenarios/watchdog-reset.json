@@ -3,7 +3,7 @@
   "name": "watchdog-reset",
   "profile": "single",
   "feedback_period_ms": 10,
-  "end_ms": 155,
+  "end_ms": 205,
   "actions": [
     {
       "at_ms": 1,
@@ -30,6 +30,14 @@
     },
     {
       "at_ms": 150,
+      "op": "expect",
+      "values": {
+        "boots": 1,
+        "motor": 0
+      }
+    },
+    {
+      "at_ms": 200,
       "op": "expect",
       "values": {
         "boots": 2,

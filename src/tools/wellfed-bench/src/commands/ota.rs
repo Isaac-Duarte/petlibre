@@ -158,6 +158,9 @@ pub enum Variant {
     Fail,
     /// The feeder streaming raw noise samples.
     Entropy,
+    /// The feeder stalling its loop on purpose, so the feeding owner's beat
+    /// lapses into a watchdog reset; no motion.
+    OwnerStall,
 }
 
 impl Variant {
@@ -167,6 +170,7 @@ impl Variant {
             Self::Stall => "stall",
             Self::Fail => "fail",
             Self::Entropy => "entropy",
+            Self::OwnerStall => "owner-stall",
         }
     }
 
@@ -174,7 +178,7 @@ impl Variant {
     pub(crate) fn firmware(self) -> Firmware {
         match self {
             Self::Stall | Self::Fail => Firmware::Trial,
-            Self::Entropy => Firmware::Feeder,
+            Self::Entropy | Self::OwnerStall => Firmware::Feeder,
         }
     }
 }
@@ -185,9 +189,11 @@ pub(crate) fn parse_variant(text: &str) -> std::result::Result<Variant, String> 
         "stall" => Ok(Variant::Stall),
         "fail" => Ok(Variant::Fail),
         "entropy" => Ok(Variant::Entropy),
+        "owner-stall" => Ok(Variant::OwnerStall),
         "pulse" => Err(format!("pulse {MOTION_MANUAL}")),
         other => Err(format!(
-            "unknown variant {other:?}; the trial firmware has stall and fail, the feeder entropy"
+            "unknown variant {other:?}; the trial firmware has stall and fail, the feeder entropy \
+             and owner-stall"
         )),
     }
 }
@@ -252,7 +258,7 @@ pub struct OtaArgs {
     /// trial or feeder.
     #[arg(long, value_parser = parse_firmware)]
     pub firmware: Option<Firmware>,
-    /// Variant for --build: stall or fail with --firmware trial, entropy with
+    /// Variant for --build: stall or fail with --firmware trial, entropy or owner-stall with
     /// --firmware feeder.
     #[arg(long, value_parser = parse_variant)]
     pub variant: Option<Variant>,

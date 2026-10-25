@@ -1,11 +1,32 @@
 # Resume firmware development
 
-Handoff checkpoint: **October 24, 2026 (late night), Mountain time**. Read this, then
+Handoff checkpoint: **October 25, 2026 (early morning), Mountain time**. Read this, then
 [AGENTS.md](AGENTS.md), the [development guide](docs/development/README.md),
 and [FIRMWARE_BOARD.md](FIRMWARE_BOARD.md) (stock parity: [FEATURE_BOARD.md](FEATURE_BOARD.md)). Update this handoff when the installed
 image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
+
+**October 25, early morning: FW16 feeding owner inside `feeder` (physical, no motion; committed).**
+- **Code:**
+  - The owner is stepped from the loop (`Owner::open`/`step`; the first stepping task claims it) instead of spawning `feed-owner`.
+  - `Board` and `Events` are `&self` handles over interior cells, so the TIM2 and feedback interrupts no longer alias the owner's state; the motor pins no longer point back at the board.
+  - The runtime is the only watchdog owner: the owner publishes a beat (`supervision::beat`), and `supervise::feed` withholds the refresh once it is a gap old, trusting the owner's supervisor instead of a stopped readback while it beats supervised.
+  - `feeder` opens the owner once the hooks are armed, on the feed journal in storage sectors 0–1 (created on erased sectors only; 48 portions, single bowl, `JOURNAL_BINDING`). It claims the ADC; the owner publishes power health from its captures. No submit path yet.
+  - Variant `owner-stall` (600 ms at 2 min, 3 s at 3 min, only once armed). `PLSUP1 stop` now carries the owner's beat and `fed_ms`.
+  - Fixed on the way: the write-reference audit dropped a PC-loaded literal that decoded as one instruction; a claimed power stage ended the service task before confirmation ran (it now idles).
+- **Runs:**
+  - `fw16-loop-01` (OTA v155) confirmed, then reset about every 15 s: the owner and the power monitor shared the ADC, the owner faulted (`fault=4 supervisor=3`, outputs stopped) and its lapsed beat let the watchdog reset the board (`fw16-loop-02`).
+  - **Watchdog clock (physical):** those five resets came 3.97–4.05 s after the last refresh (host UART timestamps), 32.3–33.0 kHz for 131 040 counts: the SDM 32.768 kHz clock, not 43 kHz. A static pass found FW05's figure is likely an artifact of the probe's 1 s stall report.
+  - UART reinstall `fw16-loop-03`: killed with the session at 36/210 sectors; `--interrupted` sessions `-04`…`-09` each stopped on a loader 0x15 (idle NAK read as a reply) after 10, 49, 13 and 47 sectors, motor clips on or off; `-09` finished and booted, then failed its trial three times (the service-task bug) and gave way to bank 0. Earlier installs today never stopped this way; the cause is open.
+  - `fw16-loop-11`: OTA from bank 0's recovery role, v156 `ddc652a8…` confirmed. `PLOWN1 open created=0`, Idle, stopped, emitters off; device API power `adapter=true`.
+  - `fw16-boot-01`…`05`: five cold boots, Idle every boot, no stop or fault.
+- **Flash now:**
+  - **Bank 1:** `feeder` v156 `ddc652a8…` (confirmed).
+  - **Bank 0:** `feeder` `262a9f37…`.
+  - **Next manifest version:** 157. The feed journal exists (high water 0).
+- **Bench state:** feeder on, analyzer unclipped from the motor, hotspot down, no server.
+- **Next:** the `owner-stall` run; then the owner's lease under a stall with outputs on, which needs a feed request (attended).
 
 **October 24, late night: FW16 first supervised motor pulse (physical, owner present, attended motion; docs uncommitted).**
 - **Owner decision:** go ahead with motor bring-up before FW30's power-on flicker is classified, since it also appears in the ROM loader.

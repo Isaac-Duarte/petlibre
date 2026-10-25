@@ -1,3 +1,4 @@
+use wellfed_hal::supervision::beat::Beat;
 use wellfed_hal::supervision::supervise::{Inputs, LIVENESS_MS, Startup, TRIAL_DEADLINE_MS, feed};
 
 fn running(now_ms: u32, beat: u32) -> Inputs {
@@ -56,6 +57,58 @@ fn running_feeds_while_tasks_step_and_outputs_stay_safe() {
     assert!(!feed(&Inputs {
         outputs_ok: false,
         ..ok
+    }));
+}
+
+#[test]
+fn a_feeding_owner_must_keep_beating_and_only_its_supervisor_excuses_a_drive() {
+    let beat = Beat {
+        at_ms: 59_500,
+        gap_ms: 1_000,
+        supervised: false,
+        count: 1,
+    };
+    let idle = Inputs {
+        now_ms: 60_000,
+        startup: Startup::Started,
+        tasks_alive: true,
+        outputs_ok: true,
+        owner: Some(beat),
+        ..Inputs::default()
+    };
+    assert!(feed(&idle));
+    assert!(
+        !feed(&Inputs {
+            now_ms: 60_500,
+            ..idle
+        }),
+        "a beat as old as its gap is stale"
+    );
+
+    // Motor driving: the outputs do not read stopped.
+    let driving = Inputs {
+        outputs_ok: false,
+        ..idle
+    };
+    assert!(!feed(&driving), "an unsupervised drive resets");
+    let supervised = Inputs {
+        owner: Some(Beat {
+            supervised: true,
+            ..beat
+        }),
+        ..driving
+    };
+    assert!(feed(&supervised));
+    assert!(
+        !feed(&Inputs {
+            now_ms: 60_500,
+            ..supervised
+        }),
+        "a stalled supervisor no longer excuses the drive"
+    );
+    assert!(!feed(&Inputs {
+        tasks_alive: false,
+        ..supervised
     }));
 }
 

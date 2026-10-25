@@ -293,8 +293,8 @@ impl Probe {
 
     /// STOP and close the supervisor (or leave its timer retrying STOP).
     fn fail(&mut self, stage: &'static str) -> Step {
-        let fault = self.events.fault.code();
-        if self.events.opened {
+        let fault = self.events.view().fault.code();
+        if self.events.opened() {
             let _ = self.events.motor(MotorCommand::Stop);
             self.events.close();
         } else {
@@ -366,7 +366,7 @@ impl Probe {
 
     /// Renew the owner lease; true while the supervisor is healthy.
     fn renew(&mut self) -> bool {
-        self.events.fault == EventsFault::Ok
+        self.events.view().fault == EventsFault::Ok
             && self.events.process(&mut self.controller, Some(&IDLE))
     }
 
@@ -405,7 +405,9 @@ impl Probe {
         if events && controller.is_some() {
             let begin = sdk::systimer_ticks();
             let ticks = (3 * EVENTS.timer_period_ms * SYSTIMER_HZ).div_ceil(1000);
-            while sdk::systimer_ticks().wrapping_sub(begin) < ticks && !self.events.timer_seen {
+            while sdk::systimer_ticks().wrapping_sub(begin) < ticks
+                && !self.events.view().timer_seen
+            {
                 sdk::spin_once();
             }
             capture = self.renew() && self.events.capture(true);
@@ -483,7 +485,7 @@ impl Probe {
             {
                 return false;
             }
-            if let Some(value) = self.board.calibration.scale_16(&samples) {
+            if let Some(value) = self.board.view().calibration.scale_16(&samples) {
                 self.current.add(value);
             }
             self.last_current_at = Some(now);
@@ -500,7 +502,7 @@ impl Probe {
             return self.fail("driving");
         }
 
-        let gate = self.board.motor;
+        let gate = self.board.view().motor;
         if self.applied_at.is_none() && gate.applied == DIRECTION && gate.applied_known {
             self.applied_at = Some(gate.applied_at);
         }
@@ -523,7 +525,7 @@ impl Probe {
             return self.fail("stop");
         }
 
-        self.stopped_at = self.board.motor.applied_at;
+        self.stopped_at = self.board.view().motor.applied_at;
         let record = Record::Pulse {
             direction: DIRECTION.code(),
             applied_ms: applied.wrapping_sub(self.requested_at),
@@ -554,7 +556,7 @@ impl Probe {
         }
 
         let stopped = motor_pins_stopped()
-            && self.board.motor.applied == MotorCommand::Stop
+            && self.board.view().motor.applied == MotorCommand::Stop
             && self.events.close()
             && stopped::observe().verified();
 

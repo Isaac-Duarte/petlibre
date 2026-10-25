@@ -9,10 +9,11 @@ use wellfed_core::feed::sensor_inputs::{SensorInputs, SensorReading};
 use wellfed_core::feed::storage::{OwnerOutcome, OwnerResult, OwnerStorage};
 use wellfed_core::flash_coord::{FlashCoord, FlashFault, FlashPhase};
 
-use crate::board;
+use crate::board::{self, Board};
+use crate::power;
 use crate::sdk::{self, IrqGuard};
-use crate::supervision::events::EventsSnapshot;
-use crate::supervision::watchdog::WatchdogFault;
+use crate::supervision::beat;
+use crate::supervision::events::{Events, EventsSnapshot};
 
 use super::{OwnerFault, OwnerState, OwnerStatus, OwnerTask, Shared};
 
@@ -26,6 +27,21 @@ impl<S: OwnerStorage> OwnerTask<S> {
         f(unsafe { &mut *self.shared })
     }
 
+    /// The owner's board. A shared handle, so the borrow is not tied to the
+    /// task half's: a step can drive the board while it updates the
+    /// controller.
+    fn board<'b>(&self) -> &'b Board {
+        // SAFETY: `open` pointed this at the owner's board, which lives as
+        // long as the owner and is reached only through `&`.
+        unsafe { &*self.board }
+    }
+
+    /// The owner's supervisor, as for `board`.
+    fn events<'b>(&self) -> &'b Events {
+        // SAFETY: as for `board`.
+        unsafe { &*self.events }
+    }
+
     fn flash(&self) -> &FlashCoord {
         // SAFETY: `start` requires a live authority retained beyond STOPPED.
         unsafe { &*self.config.flash }
@@ -33,14 +49,15 @@ impl<S: OwnerStorage> OwnerTask<S> {
 
     fn snapshot(&mut self, s: &mut EventsSnapshot) -> bool {
         *s = EventsSnapshot::default();
-        if self.events.opened {
-            self.events.snapshot(s);
+        if self.events().opened() {
+            self.events().snapshot(s);
             return s.healthy;
         }
-        s.stopped = self.board.motor.pins.is_some()
-            && self.board.motor.applied_known
-            && self.board.motor.applied == MotorCommand::Stop;
-        s.optics_off = self.board.optics_initialized && board::optics_off();
+        let b = self.board().view();
+        s.stopped = b.motor.pins.is_some()
+            && b.motor.applied_known
+            && b.motor.applied == MotorCommand::Stop;
+        s.optics_off = b.optics_initialized && board::optics_off();
         false
     }
 
@@ -52,9 +69,6 @@ impl<S: OwnerStorage> OwnerTask<S> {
             state: self.state,
             fault: self.fault,
             supervisor_fault: s.fault,
-            watchdog_fault: self.watchdog.fault,
-            watchdog_claimed: self.watchdog.claimed,
-            watchdog_armed: self.watchdog.armed,
             result: self.result,
             high_water_id: self.recovery.high_water_id,
             phase_known: self.recovery.phase_known,
@@ -65,10 +79,14 @@ impl<S: OwnerStorage> OwnerTask<S> {
             ..OwnerStatus::default()
         };
 
+        let clock = self.events().now_ms();
         let _guard = IrqGuard::lock();
         value.flash_phase = self.flash().phase;
         value.flash_fault = self.flash().fault;
-        self.shared(|shared| shared.published = value);
+        self.shared(|shared| {
+            shared.published = value;
+            shared.clock_ms = clock;
+        });
     }
 
     fn fail(&mut self, reason: OwnerFault) {
@@ -90,14 +108,16 @@ impl<S: OwnerStorage> OwnerTask<S> {
     }
 
     fn quiet(&mut self) -> bool {
-        if self.events.opened {
+        if self.events().opened() {
             // Best effort: the outputs are verified stopped below.
-            let _ = self.events.motor(MotorCommand::Stop);
-            self.events.optics(false, 0);
-        } else if self.board.motor.pins.is_some() {
-            let observed = self.board.motor.observed_at;
-            self.board.trip(observed);
-            self.board.optics(false);
+            let _ = self.events().motor(MotorCommand::Stop);
+            self.events().optics(false, 0);
+        } else {
+            let gate = self.board().view().motor;
+            if gate.pins.is_some() {
+                self.board().trip(gate.observed_at);
+                self.board().optics(false);
+            }
         }
 
         let mut s = EventsSnapshot::default();
@@ -105,8 +125,8 @@ impl<S: OwnerStorage> OwnerTask<S> {
         if !s.stopped || !s.optics_off {
             return false;
         }
-        if self.events.opened {
-            self.events.capture(false);
+        if self.events().opened() {
+            self.events().capture(false);
         }
         true
     }
@@ -140,14 +160,45 @@ impl<S: OwnerStorage> OwnerTask<S> {
         }
     }
 
-    fn check_watchdog(&mut self) -> bool {
-        if self.watchdog.check() {
+    /// Whether the owner's own last beat (or its open) is at least its gap
+    /// old, the same edge as `Beat::fresh`.
+    fn overdue(&self) -> bool {
+        let ticks = sdk::systimer_ticks().wrapping_sub(self.beat_raw);
+        let tps = u64::from(self.config.events.ticks_per_second);
+        u64::from(ticks) * 1000 >= u64::from(self.config.max_progress_gap_ms) * tps
+    }
+
+    /// A step that blocked past the gap faults the owner: by then the
+    /// runtime may already be withholding the watchdog, and nothing the
+    /// owner was supervising may continue.
+    fn check_progress(&mut self) -> bool {
+        if !self.overdue() {
             return true;
         }
-        self.fail(OwnerFault::Watchdog);
+        self.beat_lost = true;
+        self.fail(OwnerFault::Progress);
         self.abort();
         self.quiet();
         false
+    }
+
+    /// Publish a beat, unless a flash lease blocks the outputs: the lease
+    /// counts against the gap (`OwnerConfig::lease_fits`).
+    /// Once the gap has passed, the owner never beats again, as a watchdog
+    /// latches a missed deadline: the runtime then resets the platform.
+    /// False once the beat is lost.
+    fn beat(&mut self, supervised: bool) -> bool {
+        if self.overdue() {
+            self.beat_lost = true;
+        }
+        if self.beat_lost {
+            return false;
+        }
+        if !self.flash().outputs_blocked() {
+            beat::beat(sdk::uptime_ms(), supervised);
+            self.beat_raw = sdk::systimer_ticks();
+        }
+        true
     }
 
     /// Authority time is owned by the global transport, not the event-clock
@@ -164,10 +215,10 @@ impl<S: OwnerStorage> OwnerTask<S> {
         let interrupted = blocked
             && (self.state == OwnerState::Feeding
                 || (self.state == OwnerState::Preparing && self.optics_started)
-                || self.board.optics_enabled
-                || self.board.motor.desired != MotorCommand::Stop);
+                || self.board().view().optics_enabled
+                || self.board().view().motor.desired != MotorCommand::Stop);
 
-        if blocked && self.board_attempted && !self.board.flash_quiesce() {
+        if blocked && self.board_attempted && !self.board().flash_quiesce() {
             // SAFETY: as for `flash`; serialized by the guard.
             unsafe { (*self.config.flash).trip(FlashFault::Output) };
             broken = true;
@@ -230,22 +281,15 @@ impl<S: OwnerStorage> OwnerTask<S> {
         sdk::wakelock_acquire(self.config.wake_lock_id);
         self.wake_owned = true;
 
-        // Covers blocked board initialization/recovery, before any later refresh.
-        let watchdog_config = self.config.watchdog;
-        if !self.watchdog.open(&watchdog_config) {
-            self.fail(OwnerFault::Setup);
-            return false;
-        }
-
+        // The beat `open` started covers a blocked board initialization or
+        // recovery: the step after it finds the owner overdue.
         self.board_attempted = true;
         let c = self.config;
-        let board = &raw mut self.board;
+        let board = self.board();
         // SAFETY: the owner, its board and the authority stay at fixed addresses.
-        let opened = self
-            .board
-            .open(c.motor_deadtime_ms, c.motor_lease_ms, c.adc_poll_limit, 0)
-            && unsafe { self.board.attach_flash(c.flash) }
-            && unsafe { self.events.open(board, &c.events) };
+        let opened = board.open(c.motor_deadtime_ms, c.motor_lease_ms, c.adc_poll_limit, 0)
+            && unsafe { board.attach_flash(c.flash) }
+            && unsafe { self.events().open(board, &c.events) };
         if !opened {
             self.fail(OwnerFault::Setup);
             self.init_failed = true;
@@ -268,7 +312,7 @@ impl<S: OwnerStorage> OwnerTask<S> {
         }
 
         let controller = FeedController::new(&c.feed, self.recovery.high_water_id);
-        let sensors = SensorInputs::new(&c.sensors, &self.board.calibration);
+        let sensors = SensorInputs::new(&c.sensors, &board.view().calibration);
         let (Some(controller), Some(sensors)) = (controller, sensors) else {
             self.fail(OwnerFault::Setup);
             self.init_failed = true;
@@ -350,12 +394,19 @@ impl<S: OwnerStorage> OwnerTask<S> {
     }
 
     fn acquire(&mut self) -> bool {
-        let Some(started) = self.events.now_ms() else {
+        let Some(started) = self.events().now_ms() else {
             return false;
         };
+        let uptime = sdk::uptime_ms();
         let mut raw = SensorReading::default();
-        let valid = self.board.capture(&mut raw);
+        let valid = self.board().capture(&mut raw);
         self.sensors.update(started, valid.then_some(&raw));
+
+        // The owner holds the ADC, so its captures stand in for the
+        // runtime's power monitor.
+        if valid && let Some(pin_mv) = self.board().view().calibration.scale_16(&raw.battery) {
+            power::publish(pin_mv, raw.dc_present, uptime);
+        }
 
         // Cancellation has priority over feedback captured during acquisition.
         if (self.state == OwnerState::Feeding || self.state == OwnerState::Preparing)
@@ -365,7 +416,7 @@ impl<S: OwnerStorage> OwnerTask<S> {
             self.reporting(OwnerOutcome::Cancelled, FeedReason::Cancelled);
             return valid;
         }
-        valid && self.events.observe(&mut self.controller, &self.sensors)
+        valid && self.events().observe(&mut self.controller, &self.sensors)
     }
 
     fn prepare(&mut self) {
@@ -391,7 +442,7 @@ impl<S: OwnerStorage> OwnerTask<S> {
         }
 
         if !self.optics_started {
-            if !self.events.optics(true, self.config.optics_max_on_ms) {
+            if !self.events().optics(true, self.config.optics_max_on_ms) {
                 self.fail(OwnerFault::Hardware);
                 self.reporting(OwnerOutcome::Failed, FeedReason::Output);
             } else {
@@ -406,7 +457,7 @@ impl<S: OwnerStorage> OwnerTask<S> {
         } else if self.flash_ready() {
             let latest = self.queued_at.wrapping_add(self.config.prepare_timeout_ms);
             let result =
-                self.events
+                self.events()
                     .start(&mut self.controller, &self.sensors, &self.request, latest);
             self.result.motion_possible = self.controller.last_request_id == self.request.id;
             if result == FeedStartResult::Accepted {
@@ -423,18 +474,10 @@ impl<S: OwnerStorage> OwnerTask<S> {
         if self.board_attempted && !self.quiet() {
             return false;
         }
-        if self.events.opened && !self.events.close() {
+        if self.events().opened() && !self.events().close() {
             return false;
         }
-        if self.board.opened {
-            self.board.close();
-        }
-
-        if !self.watchdog.close(Some(&self.board)) {
-            self.fail(OwnerFault::Watchdog);
-            self.state = OwnerState::Fault;
-            return false;
-        }
+        self.board().close();
 
         if self.wake_owned {
             sdk::wakelock_release(self.config.wake_lock_id);
@@ -445,33 +488,18 @@ impl<S: OwnerStorage> OwnerTask<S> {
     }
 
     /// Terminal stopped fault after a determined initialization failure: no
-    /// request is ever taken, and the watchdog is refreshed only after `quiet`
-    /// verified STOP and infrared OFF in this same iteration. The progress
-    /// deadline still applies, so a hang before or during this state resets.
+    /// request is ever taken, and the owner beats only after `quiet`
+    /// verified STOP and infrared OFF in this same iteration. The gap still
+    /// applies, so a hang before or during this state resets.
     fn hold_init_fault(&mut self) {
         let mut s = EventsSnapshot::default();
         self.snapshot(&mut s);
         // Gate state alone is not enough here: also read back the pins.
-        if !s.stopped
-            || !s.optics_off
-            || !self.board.inactive()
-            || self.watchdog.fault != WatchdogFault::Ok
-        {
+        if !s.stopped || !s.optics_off || !self.board().inactive() {
             return;
         }
-
-        let progress = if self.watchdog_progress == u64::MAX {
-            0
-        } else {
-            self.watchdog_progress += 1;
-            self.watchdog_progress
-        };
-
-        // SAFETY: as for `flash`; a blocked authority refreshes nothing.
-        unsafe {
-            self.watchdog
-                .checkpoint_if_ready(progress, self.config.flash)
-        };
+        // A lost beat stays lost; the latched fault already holds STOP.
+        let _ = self.beat(false);
     }
 
     fn active_phase(&self) -> bool {
@@ -501,7 +529,7 @@ impl<S: OwnerStorage> OwnerTask<S> {
             }
 
             if (*this).fault == OwnerFault::Ok {
-                (*this).check_watchdog();
+                (*this).check_progress();
             }
             if (*this).fault == OwnerFault::Ok {
                 (*this).flash_ready();
@@ -515,7 +543,7 @@ impl<S: OwnerStorage> OwnerTask<S> {
 
             (*this).take_request();
             if (*this).fault == OwnerFault::Ok {
-                (*this).check_watchdog(); // A reservation can block.
+                (*this).check_progress(); // A reservation can block.
             }
             if (*this).fault == OwnerFault::Ok {
                 (*this).flash_ready();
@@ -546,7 +574,7 @@ impl<S: OwnerStorage> OwnerTask<S> {
             }
 
             if (*this).fault == OwnerFault::Ok {
-                (*this).check_watchdog(); // Before optical/motor enable.
+                (*this).check_progress(); // Before optical/motor enable.
             }
             if (*this).fault == OwnerFault::Ok {
                 (*this).flash_ready();
@@ -556,7 +584,7 @@ impl<S: OwnerStorage> OwnerTask<S> {
             }
 
             if (*this).state == OwnerState::Feeding {
-                if !(*this).events.motor((*this).controller.motor) {
+                if !(*this).events().motor((*this).controller.motor) {
                     (*this).fail(OwnerFault::Hardware);
                     (*this).controller.trip(FeedReason::Output);
                 }
@@ -585,18 +613,11 @@ impl<S: OwnerStorage> OwnerTask<S> {
                     && (((*this).state == OwnerState::Terminal && s.stopped && s.optics_off)
                         || (acquired && s.owner_ready))
                 {
-                    let progress = if (*this).watchdog_progress == u64::MAX {
-                        0
-                    } else {
-                        (*this).watchdog_progress += 1;
-                        (*this).watchdog_progress
-                    };
-
-                    let ok = (*this)
-                        .watchdog
-                        .checkpoint_if_ready(progress, (*this).config.flash);
-                    if !ok {
-                        (*this).check_watchdog();
+                    // Supervised: the runtime trusts this supervisor, not a
+                    // stopped readback, until the beat goes stale.
+                    let supervised = (*this).active_phase();
+                    if !(*this).beat(supervised) {
+                        (*this).check_progress();
                     }
                 }
             }

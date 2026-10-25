@@ -5,7 +5,6 @@ use wellfed_core::feed::progress::Direction;
 use wellfed_core::feed::storage::OwnerOutcome;
 use wellfed_core::store::slot::RECORD_BYTES;
 use wellfed_hal::owner::{OwnerFault, OwnerState, SubmitResult};
-use wellfed_hal::sdk::fake;
 use wellfed_testkit::journal_flash::UNIT;
 
 #[test]
@@ -26,7 +25,7 @@ fn journal_success_and_reboot_preserve_ids() {
 
     assert_eq!(f.owner.submit(2, 1), SubmitResult::Enqueued);
     assert!(f.owner.cancel(2));
-    fake::run_task();
+    f.step();
     assert!(f.status().result_durable && f.journal.view.result.id == 2);
     assert!(
         f.journal.view.result.outcome == OwnerOutcome::Cancelled
@@ -48,7 +47,7 @@ fn journal_success_and_reboot_preserve_ids() {
     assert_eq!(f.status().state, OwnerState::Feeding);
 
     assert!(f.owner.cancel(2));
-    fake::run_task();
+    f.step();
     assert!(f.status().result_durable && !f.journal.view.recovery.phase_known);
     f.stop();
 
@@ -83,7 +82,7 @@ fn journal_failed_result_and_reservation_block_reboot() {
     // The final commit reaches media, but its callback reports failure.
     f.flash.budget = (UNIT + RECORD_BYTES) as i64;
     assert_eq!(f.owner.submit(1, 1), SubmitResult::Enqueued);
-    fake::run_task();
+    f.step();
     assert!(f.status().state == OwnerState::Fault && !f.status().result.motion_possible);
     assert!(f.status().stopped && f.status().optics_off && f.finish_calls == 0);
 

@@ -17,6 +17,8 @@ crate-type = ["staticlib", "rlib"]
 km4 = ["wellfed-sdk/km4", "wellfed-sdk/bluetooth"]
 # Stream raw noise samples for the host's entropy estimate.
 entropy = []
+# Stall the loop twice, for the bench to watch the owner's beat lapse.
+owner-stall = []
 
 [dependencies]
 wellfed-core.workspace = true
@@ -31,10 +33,14 @@ wellfed-client.workspace = true
 workspace = true
 
 # What wellfed-build reads: no startup policies (nothing here moves the
-# motor or runs the emitters), and the BLE stack linked.
+# motor or runs the emitters: the feeding owner holds them stopped, and no
+# feed is ever submitted), and the BLE stack linked.
 [package.metadata.wellfed]
 devices = ["plaf103"]
 bluetooth = true
 
 [package.metadata.wellfed.variants.entropy]
 summary = "Raw clock-jitter and ADC samples over UART, for the host's entropy estimate"
+
+[package.metadata.wellfed.variants.owner-stall]
+summary = "Stalls the loop 600 ms at 2 minutes and 3 s at 3 minutes, to show the feeding owner's beat lapsing into a watchdog reset"

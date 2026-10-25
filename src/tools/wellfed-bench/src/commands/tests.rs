@@ -1524,6 +1524,8 @@ fn a_variant_needs_the_firmware_that_declares_it() {
     );
     assert_eq!(ota::parse_variant("entropy"), Ok(Variant::Entropy));
     assert_eq!(Variant::Entropy.firmware(), Firmware::Feeder);
+    assert_eq!(ota::parse_variant("owner-stall"), Ok(Variant::OwnerStall));
+    assert_eq!(Variant::OwnerStall.firmware(), Firmware::Feeder);
 }
 
 #[test]

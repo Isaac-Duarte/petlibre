@@ -10,8 +10,11 @@
 //! and Mic hold starts BLE setup mode, where a new owner's phone gives the
 //! feeder Wi-Fi and its key. The loop also serves the device API
 //! (`api`): Noise sessions over TCP, advertised over mDNS, with the
-//! event history and live samples. The `entropy` variant streams raw noise
-//! samples for the host's entropy estimate. It never touches the motor or the infrared emitters.
+//! event history and live samples. The loop also steps the feeding owner
+//! (`feeding`), which holds the motor and emitters stopped and supervised;
+//! nothing submits a feed yet. The `entropy` variant streams raw noise
+//! samples for the host's entropy estimate, and the `owner-stall` variant stalls
+//! the loop on purpose, for the bench to watch the owner's beat lapse.
 //!
 //! [product architecture]: ../../../../docs/firmware/product-architecture.md
 #![cfg_attr(target_os = "none", no_std)]
@@ -23,6 +26,7 @@ pub mod api;
 #[cfg(target_os = "none")]
 mod app;
 pub mod entropy;
+pub mod feeding;
 pub mod keys;
 pub mod owner;
 pub mod setup;

@@ -11,6 +11,7 @@ use std::cell::{Cell, RefCell};
 
 use wellfed_core::flash_coord::{FlashFault, FlashPhase, FlashReply};
 use wellfed_core::store::settings::{SettingsStatus, SlotState};
+use wellfed_hal::bringup;
 use wellfed_hal::flash::hooks::HookTicket;
 use wellfed_hal::flash::park::{
     self, ACK, Mmio, RELEASE, RELEASED, REQUEST, SYSTICK_CTRL, TICKS, TIMEOUT,
@@ -229,7 +230,8 @@ impl FlashOps for Hooks {
             });
             return false;
         }
-        leased(|| sdk::storage_erase(sector))
+        // SAFETY: inside the lease; the fake's storage is this test's.
+        leased(|| unsafe { bringup::storage_erase(sector) })
     }
 
     fn program(sector: u32, offset: u32, data: &[u8]) -> bool {
@@ -240,10 +242,12 @@ impl FlashOps for Hooks {
         if cut_now() {
             // An interrupted program: the first half of the bytes landed.
             let half = data.len() / 2 / 4 * 4;
-            let _ = sdk::storage_program(sector, offset, &data[..half]);
+            // SAFETY: the fake's storage is this test's.
+            let _ = unsafe { bringup::storage_program(sector, offset, &data[..half]) };
             return false;
         }
-        leased(|| sdk::storage_program(sector, offset, data))
+        // SAFETY: inside the lease; the fake's storage is this test's.
+        leased(|| unsafe { bringup::storage_program(sector, offset, data) })
     }
 
     fn read(sector: u32, offset: u32, bytes: &mut [u8]) -> bool {

@@ -15,8 +15,8 @@
 
 use core::fmt;
 
-use wellfed_hal::sdk;
 use wellfed_hal::stopped;
+use wellfed_hal::{bringup, sdk};
 
 /// PB4..PB7 as SDK pin numbers (port B is pins 32..63).
 pub const PINS: [u32; 4] = sdk::board::BUTTONS;
@@ -169,7 +169,9 @@ impl Probe {
 
         let pads_before = PINS.map(sdk::pad_control);
         for pin in PINS {
-            sdk::gpio_init(pin, false);
+            // SAFETY: a button input, set up as the HAL's button port sets it
+            // up; nothing drives these pins.
+            unsafe { bringup::gpio_init(pin, false) };
         }
         let pads_after = PINS.map(sdk::pad_control);
 

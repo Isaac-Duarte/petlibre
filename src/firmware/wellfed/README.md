@@ -69,7 +69,7 @@ fn start() {
 - `start` runs once in the normal role, after the startup checks passed. It must create tasks and return, never block.
 - A task is a step function. It returns the milliseconds to sleep before the next step, or zero to end the task. Keep each task's state in a `wellfed_sdk::Slot` static owned by that task.
 - Call `startup_done(true)` once the firmware has finished any startup work that holds the KM0 flash handshake. The runtime does not confirm the build before then.
-- Drive hardware through `wellfed_sdk::hal`. Indicator requests are refused unless outputs read back stopped.
+- Drive hardware through `wellfed_sdk::hal`'s owners (the board, indicators, audio, buttons). Indicator requests are refused unless outputs read back stopped. The raw pin, watchdog and flash writers are `unsafe`; only a bring-up firmware takes them, from `wellfed_sdk::hal::bringup`, with a `// SAFETY:` comment saying why it owns what it writes.
 - Log records as `PL<NAME>1 …` lines, through `wellfed_probes::log` or `hal::startup::Report` as `blink` does.
 - To run a bench probe, depend on `wellfed-probes` and step its `Probe` from your own task, as `optics` does.
 

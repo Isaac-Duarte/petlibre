@@ -73,10 +73,12 @@ impl FlashOps for Armed {
     fn erase(sector: u32) -> bool {
         // Every write runs inside a marked attempt.
         ATTEMPT_SEEN.with(|s| s.set(sdk::backup_read(MARKER_REGISTER) != 0));
-        sdk::storage_erase(sector)
+        // SAFETY: the fake's storage, which this test owns.
+        unsafe { sdk::storage_erase(sector) }
     }
     fn program(sector: u32, offset: u32, data: &[u8]) -> bool {
-        sdk::storage_program(sector, offset, data)
+        // SAFETY: as in `erase`.
+        unsafe { sdk::storage_program(sector, offset, data) }
     }
     fn read(sector: u32, offset: u32, bytes: &mut [u8]) -> bool {
         sdk::storage_read(sector, offset, bytes)
@@ -90,7 +92,8 @@ fn start() -> (MutexGuard<'static, ()>, Writer<Armed>, Provider) {
     let guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     fake::reset_hardware();
     settings::reset();
-    network::reset();
+    // SAFETY: the test holds `SERIAL` and runs no Wi-Fi task.
+    unsafe { network::reset() };
     keys::reset();
     events::reset();
     ARMED.with(|a| a.set(true));

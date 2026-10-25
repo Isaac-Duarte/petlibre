@@ -222,8 +222,13 @@ impl Streamer {
     /// Hand whole pages to the DMA; at the end, a last partial page padded
     /// with silence.
     fn feed(&mut self) {
+        // The stream holds the audio slot, so it is the only filler; a
+        // handle out elsewhere reads as a full ring.
+        let Some(mut audio) = sdk::Audio::take() else {
+            return;
+        };
         while self.held >= PAGE_BYTES || (self.ended && self.held >= 2) {
-            let Some(page) = sdk::audio_page() else {
+            let Some(mut page) = audio.page() else {
                 return;
             };
             let take = self.held.min(PAGE_BYTES) & !1;
@@ -240,7 +245,7 @@ impl Streamer {
                     0
                 };
             }
-            sdk::audio_submit();
+            page.submit();
             self.head = (self.head + take) % BUFFER;
             self.held -= take;
         }

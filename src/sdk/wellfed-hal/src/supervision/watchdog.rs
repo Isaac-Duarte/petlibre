@@ -116,7 +116,9 @@ impl Watchdog {
     }
 
     fn release(&mut self) -> bool {
-        sdk::wdg_cmd(false);
+        // SAFETY: this watchdog claimed the hardware (`set_active`), and only
+        // the claimant calls `release`.
+        unsafe { sdk::wdg_cmd(false) };
         if sdk::wdg_vendor() & sdk::WDG_BIT_ENABLE != 0 {
             return false;
         }
@@ -167,10 +169,13 @@ impl Watchdog {
             TickClock::new(config.systimer_hz, sdk::systimer_ticks(), 0).unwrap_or_default();
 
         sdk::set_hs_platform_para(sdk::hs_platform_para() | sdk::HS_WDTRST_OPT);
-        sdk::wdg_init(u32::from(config.count_id), u32::from(config.divisor));
+        // SAFETY: claimed just above, with interrupts masked and no other
+        // watchdog active.
+        unsafe { sdk::wdg_init(u32::from(config.count_id), u32::from(config.divisor)) };
         let mut ok = self.registers();
         if ok {
-            sdk::wdg_cmd(true);
+            // SAFETY: as above.
+            unsafe { sdk::wdg_cmd(true) };
             self.expected_control |= sdk::WDG_BIT_ENABLE;
             ok = self.registers();
         }
@@ -248,7 +253,8 @@ impl Watchdog {
             self.progress = progress;
             self.progress_at = now;
             if now.wrapping_sub(self.refresh_at) >= self.config.min_refresh_ms {
-                sdk::wdg_refresh();
+                // SAFETY: the claimant feeds what it opened.
+                unsafe { sdk::wdg_refresh() };
                 self.refresh_at = now;
                 if !self.registers() {
                     return self.fail(WatchdogFault::Register);

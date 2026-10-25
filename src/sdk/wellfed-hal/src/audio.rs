@@ -63,7 +63,8 @@ pub fn open_output(rate_hz: u32) -> bool {
         // Configure the enable as an output, LOW, before its first use.
         amp(false);
         sdk::gpio_no_pull(AMP_PIN);
-        sdk::gpio_init(AMP_PIN, true);
+        // SAFETY: the amplifier enable, which this module owns.
+        unsafe { sdk::gpio_init(AMP_PIN, true) };
         amp(false);
     }
     if !sdk::audio_open(rate_hz) {
@@ -188,7 +189,8 @@ fn next(delay_ms: u32, record: Option<Record>) -> Step {
 }
 
 fn amp(on: bool) {
-    sdk::gpio_write_bit(AMP_PIN, on);
+    // SAFETY: the amplifier enable, which this module owns.
+    unsafe { sdk::gpio_write_bit(AMP_PIN, on) };
 }
 
 impl Speaker {
@@ -286,11 +288,15 @@ impl Speaker {
                     self.underruns = sdk::audio_underruns().wrapping_sub(self.underruns);
                     return next(POLL_MS, Some(self.finish(tune, false)));
                 }
-                while let Some(page) = sdk::audio_page() {
-                    player.fill(page);
-                    sdk::audio_submit();
-                    if player.done() {
-                        break;
+                // The slot makes this the only filler; a handle out elsewhere
+                // reads as a full ring.
+                if let Some(mut audio) = sdk::Audio::take() {
+                    while let Some(mut page) = audio.page() {
+                        player.fill(&mut page[..]);
+                        page.submit();
+                        if player.done() {
+                            break;
+                        }
                     }
                 }
                 if player.done() {

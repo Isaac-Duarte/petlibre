@@ -190,7 +190,11 @@ pub fn set_primask(mask: u32) {
     }
 }
 
-pub fn gpio_port_write(port: u32, mask: u32, value: u32) {
+/// # Safety
+/// The caller owns every pin it writes or reconfigures. The motor pins
+/// ([`MOTOR_MASK`](crate::MOTOR_MASK)) belong to the HAL's board and
+/// stopped-output owners, every other output to the port that drives it.
+pub unsafe fn gpio_port_write(port: u32, mask: u32, value: u32) {
     // SAFETY: the pinned SDK routine, with plain-value arguments.
     unsafe { raw::GPIO_PortWrite(port, mask, value) }
 }
@@ -252,7 +256,11 @@ pub fn gpio_no_pull(pin: u32) {
     unsafe { raw::PAD_PullCtrl(pin as u8, k::WELLFED_GPIO_PUPD_NOPULL as u8) }
 }
 
-pub fn gpio_init(pin: u32, output: bool) {
+/// # Safety
+/// The caller owns every pin it writes or reconfigures. The motor pins
+/// ([`MOTOR_MASK`](crate::MOTOR_MASK)) belong to the HAL's board and
+/// stopped-output owners, every other output to the port that drives it.
+pub unsafe fn gpio_init(pin: u32, output: bool) {
     let mut settings = raw::GPIO_InitTypeDef {
         GPIO_Pin: pin,
         GPIO_Mode: if output {
@@ -267,7 +275,11 @@ pub fn gpio_init(pin: u32, output: bool) {
     unsafe { raw::GPIO_Init(&mut settings) }
 }
 
-pub fn gpio_write_bit(pin: u32, high: bool) {
+/// # Safety
+/// The caller owns every pin it writes or reconfigures. The motor pins
+/// ([`MOTOR_MASK`](crate::MOTOR_MASK)) belong to the HAL's board and
+/// stopped-output owners, every other output to the port that drives it.
+pub unsafe fn gpio_write_bit(pin: u32, high: bool) {
     // SAFETY: the pinned SDK routine, with plain-value arguments.
     unsafe { raw::GPIO_WriteBit(pin, u32::from(high)) }
 }
@@ -578,7 +590,11 @@ pub fn wdg_vendor() -> u32 {
 }
 
 /// Reset-mode watchdog that also resets all HS peripherals.
-pub fn wdg_init(count_id: u32, divisor: u32) {
+///
+/// # Safety
+/// The caller is the watchdog's one owner (the HAL's supervision
+/// watchdog): another writer could disarm it or let it starve.
+pub unsafe fn wdg_init(count_id: u32, divisor: u32) {
     let mut settings = raw::WDG_InitTypeDef {
         CountProcess: count_id,
         DivFacProcess: divisor,
@@ -588,12 +604,18 @@ pub fn wdg_init(count_id: u32, divisor: u32) {
     unsafe { raw::WDG_Init(&mut settings) }
 }
 
-pub fn wdg_cmd(enabled: bool) {
+/// # Safety
+/// The caller is the watchdog's one owner (the HAL's supervision
+/// watchdog): another writer could disarm it or let it starve.
+pub unsafe fn wdg_cmd(enabled: bool) {
     // SAFETY: the pinned SDK routine, with plain-value arguments.
     unsafe { raw::WDG_Cmd(state(enabled)) }
 }
 
-pub fn wdg_refresh() {
+/// # Safety
+/// The caller is the watchdog's one owner (the HAL's supervision
+/// watchdog): another writer could disarm it or let it starve.
+pub unsafe fn wdg_refresh() {
     // SAFETY: the pinned SDK routine, with plain-value arguments.
     unsafe { raw::WDG_Refresh() }
 }
@@ -640,7 +662,11 @@ fn storage_span(sector: u32, offset: u32, len: usize) -> Option<u32> {
 
 /// Sector erase through the SDK's RAM `FLASH_EraseXIP` (hooked lock, erase,
 /// cache flush, unlock).
-pub fn storage_erase(sector: u32) -> bool {
+///
+/// # Safety
+/// The HAL's flash hooks are armed, so the SDK routine takes the KM0 lease
+/// around the write, and the caller owns what it writes.
+pub unsafe fn storage_erase(sector: u32) -> bool {
     let Some(address) = storage_span(sector, 0, SECTOR_BYTES as usize) else {
         return false;
     };
@@ -651,7 +677,11 @@ pub fn storage_erase(sector: u32) -> bool {
 
 /// Program through the SDK's RAM `FLASH_TxData256BXIP`, split at 256-byte
 /// pages. Offset and length must be 4-byte aligned and stay in the sector.
-pub fn storage_program(sector: u32, offset: u32, data: &[u8]) -> bool {
+///
+/// # Safety
+/// The HAL's flash hooks are armed, so the SDK routine takes the KM0 lease
+/// around the write, and the caller owns what it writes.
+pub unsafe fn storage_program(sector: u32, offset: u32, data: &[u8]) -> bool {
     if storage_span(sector, offset, data.len()).is_none()
         || !offset.is_multiple_of(4)
         || !data.len().is_multiple_of(4)
@@ -683,7 +713,11 @@ fn bank1_span(sector: u32, offset: u32, len: usize) -> Option<u32> {
 }
 
 /// Erase one bank-1 sector through the hooked `FLASH_EraseXIP`.
-pub fn bank1_erase(sector: u32) -> bool {
+///
+/// # Safety
+/// The HAL's flash hooks are armed, so the SDK routine takes the KM0 lease
+/// around the write, and the caller owns what it writes.
+pub unsafe fn bank1_erase(sector: u32) -> bool {
     let Some(address) = bank1_span(sector, 0, SECTOR_BYTES as usize) else {
         return false;
     };
@@ -693,7 +727,11 @@ pub fn bank1_erase(sector: u32) -> bool {
 }
 
 /// Program within one bank-1 sector, split at 256-byte pages; 4-byte aligned.
-pub fn bank1_program(sector: u32, offset: u32, data: &[u8]) -> bool {
+///
+/// # Safety
+/// The HAL's flash hooks are armed, so the SDK routine takes the KM0 lease
+/// around the write, and the caller owns what it writes.
+pub unsafe fn bank1_program(sector: u32, offset: u32, data: &[u8]) -> bool {
     let Some(base) = bank1_span(sector, offset, data.len()) else {
         return false;
     };
@@ -733,7 +771,11 @@ pub fn bank1_read(sector: u32, offset: u32, bytes: &mut [u8]) -> bool {
 /// NOR programming only clears bits), through the hooked lock. Refused
 /// unless running from bank 1 with bank 1's marker intact and bank 0's
 /// marker valid, so the loader always has a bank to boot.
-pub fn bank1_give_way() -> bool {
+///
+/// # Safety
+/// The HAL's flash hooks are armed, so the SDK routine takes the KM0 lease
+/// around the write, and the caller owns what it writes.
+pub unsafe fn bank1_give_way() -> bool {
     let read = |offset: u32| {
         let mut out = [0u8; 8];
         for (i, byte) in out.iter_mut().enumerate() {
@@ -1073,17 +1115,25 @@ pub fn audio_open(rate_hz: u32) -> bool {
     unsafe { wellfed_audio_open(rate_hz) != 0 }
 }
 
-/// The next free ring page, while the codec is open and the DMA does not
-/// own every page. Fill it, then [`audio_submit`]; one page at a time.
-pub fn audio_page() -> Option<&'static mut [i16; AUDIO_PAGE_SAMPLES]> {
-    // SAFETY: the C shim in `example_entry.c`; any buffer is live for the call.
-    let page = unsafe { wellfed_audio_page() };
-    // SAFETY: a 32-byte-aligned ring page of `AUDIO_PAGE_SAMPLES` samples the
-    // DMA does not own until `audio_submit`.
-    (!page.is_null()).then(|| unsafe { &mut *page.cast() })
+/// Whether the one `Audio` handle is out.
+static AUDIO_TAKEN: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn audio_take() -> bool {
+    !AUDIO_TAKEN.swap(true, Ordering::Acquire)
 }
 
-pub fn audio_submit() {
+pub(crate) fn audio_release() {
+    AUDIO_TAKEN.store(false, Ordering::Release);
+}
+
+/// The next free ring page, or null while the codec is closed or the DMA
+/// owns every page.
+pub(crate) fn audio_page_ptr() -> *mut [i16; AUDIO_PAGE_SAMPLES] {
+    // SAFETY: the C shim in `example_entry.c`; any buffer is live for the call.
+    unsafe { wellfed_audio_page() }.cast()
+}
+
+pub(crate) fn audio_submit() {
     // SAFETY: the C shim in `example_entry.c`; any buffer is live for the call.
     unsafe { wellfed_audio_submit() }
 }

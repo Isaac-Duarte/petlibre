@@ -600,10 +600,13 @@ impl crate::storage::FlashOps for SdkStorage {
         SdkHooks::armed()
     }
     fn erase(sector: u32) -> bool {
-        SdkHooks::armed() && sdk::storage_erase(sector)
+        // SAFETY: the hooks are armed; the settings writer owns the sectors
+        // it is given.
+        SdkHooks::armed() && unsafe { sdk::storage_erase(sector) }
     }
     fn program(sector: u32, offset: u32, data: &[u8]) -> bool {
-        SdkHooks::armed() && sdk::storage_program(sector, offset, data)
+        // SAFETY: as in `erase`.
+        SdkHooks::armed() && unsafe { sdk::storage_program(sector, offset, data) }
     }
     fn read(sector: u32, offset: u32, bytes: &mut [u8]) -> bool {
         sdk::storage_read(sector, offset, bytes)

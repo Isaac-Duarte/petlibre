@@ -100,10 +100,12 @@ impl<H> Default for Hooked<H> {
 
 impl<H: Hooks> BankFlash for Hooked<H> {
     fn erase(&mut self, sector: u32) -> bool {
-        H::armed() && sdk::bank1_erase(sector)
+        // SAFETY: the hooks are armed; the updater owns bank 1.
+        H::armed() && unsafe { sdk::bank1_erase(sector) }
     }
     fn program(&mut self, sector: u32, offset: u32, data: &[u8]) -> bool {
-        H::armed() && sdk::bank1_program(sector, offset, data)
+        // SAFETY: as in `erase`.
+        H::armed() && unsafe { sdk::bank1_program(sector, offset, data) }
     }
     fn read(&mut self, sector: u32, offset: u32, bytes: &mut [u8]) -> bool {
         sdk::bank1_read(sector, offset, bytes)

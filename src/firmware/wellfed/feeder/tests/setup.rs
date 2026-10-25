@@ -46,7 +46,8 @@ impl Bench {
         let serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         fake::reset_hardware();
         keys::reset();
-        network::reset();
+        // SAFETY: the test holds `SERIAL` and runs no Wi-Fi task.
+        unsafe { network::reset() };
         power::reset();
         settings::reset();
         audio::reset();

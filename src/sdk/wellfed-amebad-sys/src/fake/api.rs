@@ -89,7 +89,10 @@ fn storage_span(sector: u32, offset: u32, len: usize) -> Option<usize> {
         .then(|| (sector * SECTOR_BYTES + offset) as usize)
 }
 
-pub fn storage_erase(sector: u32) -> bool {
+/// # Safety
+/// The HAL's flash hooks are armed, so the SDK routine takes the KM0 lease
+/// around the write, and the caller owns what it writes.
+pub unsafe fn storage_erase(sector: u32) -> bool {
     let Some(at) = storage_span(sector, 0, SECTOR_BYTES as usize) else {
         return false;
     };
@@ -100,7 +103,10 @@ pub fn storage_erase(sector: u32) -> bool {
     true
 }
 
-pub fn storage_program(sector: u32, offset: u32, data: &[u8]) -> bool {
+/// # Safety
+/// The HAL's flash hooks are armed, so the SDK routine takes the KM0 lease
+/// around the write, and the caller owns what it writes.
+pub unsafe fn storage_program(sector: u32, offset: u32, data: &[u8]) -> bool {
     let Some(at) = storage_span(sector, offset, data.len()) else {
         return false;
     };
@@ -131,7 +137,10 @@ fn bank1_span(sector: u32, offset: u32, len: usize) -> Option<usize> {
         .map(|_| (sector * SECTOR_BYTES + offset) as usize)
 }
 
-pub fn bank1_erase(sector: u32) -> bool {
+/// # Safety
+/// The HAL's flash hooks are armed, so the SDK routine takes the KM0 lease
+/// around the write, and the caller owns what it writes.
+pub unsafe fn bank1_erase(sector: u32) -> bool {
     let Some(at) = bank1_span(sector, 0, SECTOR_BYTES as usize) else {
         return false;
     };
@@ -139,7 +148,10 @@ pub fn bank1_erase(sector: u32) -> bool {
     true
 }
 
-pub fn bank1_program(sector: u32, offset: u32, data: &[u8]) -> bool {
+/// # Safety
+/// The HAL's flash hooks are armed, so the SDK routine takes the KM0 lease
+/// around the write, and the caller owns what it writes.
+pub unsafe fn bank1_program(sector: u32, offset: u32, data: &[u8]) -> bool {
     let Some(at) = bank1_span(sector, offset, data.len()) else {
         return false;
     };
@@ -164,7 +176,11 @@ pub fn bank1_read(sector: u32, offset: u32, bytes: &mut [u8]) -> bool {
 
 /// As the target: clear bank 1's first marker byte, only from bank 1 with
 /// both markers valid.
-pub fn bank1_give_way() -> bool {
+///
+/// # Safety
+/// The HAL's flash hooks are armed, so the SDK routine takes the KM0 lease
+/// around the write, and the caller owns what it writes.
+pub unsafe fn bank1_give_way() -> bool {
     with(|h| {
         let ok = h.running_bank == Some(1)
             && h.bank1[..8] == crate::MARKER
@@ -219,7 +235,11 @@ pub fn set_primask(mask: u32) {
     deliver_pending();
 }
 
-pub fn gpio_port_write(port: u32, mask: u32, value: u32) {
+/// # Safety
+/// The caller owns every pin it writes or reconfigures. The motor pins
+/// ([`MOTOR_MASK`](crate::MOTOR_MASK)) belong to the HAL's board and
+/// stopped-output owners, every other output to the port that drives it.
+pub unsafe fn gpio_port_write(port: u32, mask: u32, value: u32) {
     let hook = with(|h| {
         assert!(port < 2);
         if port == 0 && mask == MOTOR_MASK && h.blocked_motor_write {
@@ -247,7 +267,11 @@ pub fn gpio_no_pull(pin: u32) {
     with(|h| h.pad_control[pin as usize] &= !(3 << 8));
 }
 
-pub fn gpio_init(pin: u32, output: bool) {
+/// # Safety
+/// The caller owns every pin it writes or reconfigures. The motor pins
+/// ([`MOTOR_MASK`](crate::MOTOR_MASK)) belong to the HAL's board and
+/// stopped-output owners, every other output to the port that drives it.
+pub unsafe fn gpio_init(pin: u32, output: bool) {
     let hook = with(|h| {
         assert!(pin < 64);
         let (port, mask) = ((pin >> 5) as usize, 1u32 << (pin & 31));
@@ -295,7 +319,11 @@ pub fn pad_control(pin: u32) -> u32 {
     with(|h| h.pad_control[pin as usize])
 }
 
-pub fn gpio_write_bit(pin: u32, high: bool) {
+/// # Safety
+/// The caller owns every pin it writes or reconfigures. The motor pins
+/// ([`MOTOR_MASK`](crate::MOTOR_MASK)) belong to the HAL's board and
+/// stopped-output owners, every other output to the port that drives it.
+pub unsafe fn gpio_write_bit(pin: u32, high: bool) {
     let blocked = with(|h| {
         pin == board::IR_PB && ((high && h.blocked_optics_write) || (!high && h.blocked_optics_off))
     });
@@ -303,7 +331,8 @@ pub fn gpio_write_bit(pin: u32, high: bool) {
         return;
     }
     let mask = 1u32 << (pin & 31);
-    gpio_port_write(pin >> 5, mask, if high { mask } else { 0 });
+    // SAFETY: the caller's contract, for the same one pin.
+    unsafe { gpio_port_write(pin >> 5, mask, if high { mask } else { 0 }) };
 }
 
 pub fn gpio_read_bit(pin: u32) -> bool {
@@ -544,7 +573,10 @@ pub fn wdg_vendor() -> u32 {
     with(|h| h.watchdog_vendor)
 }
 
-pub fn wdg_init(count_id: u32, divisor: u32) {
+/// # Safety
+/// The caller is the watchdog's one owner (the HAL's supervision
+/// watchdog): another writer could disarm it or let it starve.
+pub unsafe fn wdg_init(count_id: u32, divisor: u32) {
     with(|h| {
         assert!(h.interrupts == 1 && count_id <= 11 && divisor > 0 && divisor <= 65535);
         h.watchdog_init_calls += 1;
@@ -561,7 +593,10 @@ pub fn wdg_init(count_id: u32, divisor: u32) {
     set_lp_km0_ctrl(lp_km0_ctrl() | LP_WDT_RESET_HS_ALL);
 }
 
-pub fn wdg_cmd(enabled: bool) {
+/// # Safety
+/// The caller is the watchdog's one owner (the HAL's supervision
+/// watchdog): another writer could disarm it or let it starve.
+pub unsafe fn wdg_cmd(enabled: bool) {
     with(|h| {
         assert_eq!(h.interrupts, 1);
         if enabled {
@@ -576,7 +611,10 @@ pub fn wdg_cmd(enabled: bool) {
     });
 }
 
-pub fn wdg_refresh() {
+/// # Safety
+/// The caller is the watchdog's one owner (the HAL's supervision
+/// watchdog): another writer could disarm it or let it starve.
+pub unsafe fn wdg_refresh() {
     with(|h| {
         assert_eq!(h.interrupts, 1);
         h.watchdog_refreshes += 1;
@@ -705,24 +743,31 @@ pub fn audio_open(rate_hz: u32) -> bool {
     })
 }
 
-pub fn audio_page() -> Option<&'static mut [i16; AUDIO_PAGE_SAMPLES]> {
-    let page = with(|h| {
+pub(crate) fn audio_take() -> bool {
+    with(|h| !core::mem::replace(&mut h.audio_taken, true))
+}
+
+pub(crate) fn audio_release() {
+    with(|h| h.audio_taken = false);
+}
+
+pub(crate) fn audio_page_ptr() -> *mut [i16; AUDIO_PAGE_SAMPLES] {
+    with(|h| {
         if !h.audio_open || h.audio_queue.len() >= AUDIO_PAGES {
-            return None;
+            return core::ptr::null_mut();
         }
         if h.audio_scratch.is_null() {
             h.audio_scratch = Box::into_raw(Box::new([0; AUDIO_PAGE_SAMPLES]));
         }
-        Some(h.audio_scratch)
-    })?;
-    // SAFETY: leaked for the thread; the port fills one page at a time.
-    Some(unsafe { &mut *page })
+        h.audio_scratch
+    })
 }
 
-pub fn audio_submit() {
+pub(crate) fn audio_submit() {
     with(|h| {
         assert!(h.audio_open, "submit with the codec closed");
-        // SAFETY: handed out by `audio_page` on this thread.
+        // SAFETY: leaked for the thread by `audio_page_ptr`; the page that
+        // borrowed it ended with its submit.
         let page = unsafe { *h.audio_scratch };
         h.audio_queue.push_back(page);
     });

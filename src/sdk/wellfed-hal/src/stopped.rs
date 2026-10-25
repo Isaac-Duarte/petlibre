@@ -100,10 +100,14 @@ pub fn observe() -> Snapshot {
 pub(crate) fn enable_motor_stopped() {
     use sdk::board::{MOTOR_A, MOTOR_B};
 
-    sdk::gpio_port_write(0, MOTOR_MASK, 0);
-    sdk::gpio_init(MOTOR_A, true);
-    sdk::gpio_init(MOTOR_B, true);
-    sdk::gpio_port_write(0, MOTOR_MASK, MOTOR_MASK);
+    // SAFETY: the motor pins, which this module and the board own: called at
+    // startup and as the board opens, before its gate can drive them.
+    unsafe {
+        sdk::gpio_port_write(0, MOTOR_MASK, 0);
+        sdk::gpio_init(MOTOR_A, true);
+        sdk::gpio_init(MOTOR_B, true);
+        sdk::gpio_port_write(0, MOTOR_MASK, MOTOR_MASK);
+    }
 }
 
 /// Preload the infrared latches LOW before enabling their outputs, and bring
@@ -116,12 +120,16 @@ pub fn initialize() -> Snapshot {
     }
 
     sdk::swd_off();
-    sdk::gpio_port_write(0, sdk::IR_PA_BIT, 0);
-    sdk::gpio_port_write(1, PB_MASK, 0);
+    // SAFETY: the emitter latches, which this module owns until the board opens.
+    unsafe {
+        sdk::gpio_port_write(0, sdk::IR_PA_BIT, 0);
+        sdk::gpio_port_write(1, PB_MASK, 0);
+    }
     enable_motor_stopped();
     use sdk::board::{IR_PA, IR_PB};
     for pin in [IR_PA, IR_PB] {
-        sdk::gpio_init(pin, true);
+        // SAFETY: as above, with each latch already LOW.
+        unsafe { sdk::gpio_init(pin, true) };
     }
     Snapshot { clock, ..observe() }
 }

@@ -8,11 +8,12 @@
 //! [`Board`] is a shared handle: the owning task and the supervision timer
 //! interrupt both reach it through `&Board`, and its state is borrowed only
 //! inside `IrqGuard` for the length of one call, so no borrow of it ever
-//! spans a window in which an interrupt can run. The ADC conversions are the
+//! spans a window in which an interrupt can run, and a call nested inside
+//! another is refused rather than lent the state twice. The ADC conversions are the
 //! one exception to the mask: they poll with interrupts enabled and touch no
 //! board state while they do.
 
-use core::cell::UnsafeCell;
+use core::cell::{Cell, UnsafeCell};
 use core::ptr;
 
 use wellfed_core::HALF_RANGE;
@@ -81,6 +82,8 @@ impl Default for BoardState {
 #[derive(Debug, Default)]
 pub struct Board {
     state: UnsafeCell<BoardState>,
+    /// Set while a call holds the state; see `Board::with`.
+    entered: Cell<bool>,
 }
 
 /// A null or not-yet-attached authority blocks every output. Callers pass an
@@ -126,7 +129,9 @@ impl MotorPins for BoardPins {
 
         let _guard = IrqGuard::lock();
         let value = if a { sdk::MOTOR_A_BIT } else { 0 } | if b { sdk::MOTOR_B_BIT } else { 0 };
-        sdk::gpio_port_write(GPIO_PORT_A, MOTOR_MASK, value);
+        // SAFETY: the motor pins, which the board owns; the gate makes this
+        // its only writer while the board is open.
+        unsafe { sdk::gpio_port_write(GPIO_PORT_A, MOTOR_MASK, value) };
         let verified = sdk::gpio_port_read(GPIO_PORT_A, MOTOR_MASK) & MOTOR_MASK == value;
         if !verified {
             // The board faults after this call; within it, no later write drives.
@@ -175,10 +180,12 @@ impl BoardState {
         // never reaches the pad.
         let swd_released = sdk::swd_off() & sdk::SWD_PMUX_BIT == 0;
         for pin in OPTICS {
-            sdk::gpio_write_bit(pin, false);
+            // SAFETY: an emitter latch, which the board owns.
+            unsafe { sdk::gpio_write_bit(pin, false) };
         }
         for pin in OPTICS {
-            sdk::gpio_init(pin, true);
+            // SAFETY: as above, with the latch already LOW.
+            unsafe { sdk::gpio_init(pin, true) };
         }
 
         self.optics_initialized = true;
@@ -265,14 +272,16 @@ impl BoardState {
         }
 
         for (pin, level) in OPTICS.into_iter().zip([a, b]) {
-            sdk::gpio_write_bit(pin, level);
+            // SAFETY: an emitter latch, which the board owns.
+            unsafe { sdk::gpio_write_bit(pin, level) };
         }
 
         let verified = optics_are(a, b);
         self.optics_enabled = verified && enabled;
         if !verified {
             for pin in OPTICS {
-                sdk::gpio_write_bit(pin, false);
+                // SAFETY: an emitter latch, which the board owns.
+                unsafe { sdk::gpio_write_bit(pin, false) };
             }
             self.trip_now();
         }
@@ -294,20 +303,38 @@ impl BoardState {
     }
 }
 
+/// A board call made while another call on the same board held its state:
+/// refused rather than handed a second `&mut` to it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Reentered;
+
 impl Board {
-    /// The state, inside the guard; the borrow ends with `f`, which must not
-    /// call back into this board.
-    fn with<R>(&self, f: impl FnOnce(&mut BoardState) -> R) -> R {
+    /// The state, inside the guard, for the length of `f`. A call from
+    /// inside `f` (from the closure, or from code it calls) is refused with
+    /// [`Reentered`]: the state is already borrowed, so lending it again
+    /// would alias it, and waiting for it would never end on one core.
+    fn with<R>(&self, f: impl FnOnce(&mut BoardState) -> R) -> Result<R, Reentered> {
         let _guard = IrqGuard::lock();
+        if self.entered.replace(true) {
+            return Err(Reentered);
+        }
+
         // SAFETY: inside the guard, on the single KM4 core, no task or
-        // interrupt can reach the state, and no method lets a borrow of it
-        // outlive its call.
-        f(unsafe { &mut *self.state.get() })
+        // interrupt can run, and `entered` refuses any call nested in `f`,
+        // so this is the only reference to the state until `f` returns.
+        let result = f(unsafe { &mut *self.state.get() });
+
+        self.entered.set(false);
+        Ok(result)
     }
 
-    /// A copy of the state, for status and tests.
+    /// A copy of the state, for status and tests. A reentered call sees
+    /// a closed, faulted board, which permits nothing.
     pub fn view(&self) -> BoardState {
-        self.with(|state| *state)
+        self.with(|state| *state).unwrap_or(BoardState {
+            faulted: true,
+            ..BoardState::default()
+        })
     }
 
     /// Keep the board at this address until closed. Invalid arguments leave
@@ -336,12 +363,13 @@ impl Board {
             state.adc_poll_limit = adc_poll_limit;
             true
         });
-        if !started {
+        if started != Ok(true) {
             return result;
         }
 
         for pin in [OUTLET, FOOD, FEEDBACK, ADAPTER] {
-            sdk::gpio_init(pin, false);
+            // SAFETY: a sensor input, which the board owns.
+            unsafe { sdk::gpio_init(pin, false) };
         }
 
         // Unmasked: the ADC and efuse reads poll, and the board is closed
@@ -350,7 +378,9 @@ impl Board {
         result.clock = opened.clock;
         result.efuse = opened.efuse;
 
-        self.with(|state| {
+        // Nothing borrows the state between the two calls, so this one
+        // cannot be refused; were it, the board would stay closed.
+        let _ = self.with(|state| {
             let Some(calibration) = opened.calibration else {
                 state.faulted = true;
                 return;
@@ -367,15 +397,18 @@ impl Board {
     /// `capture` refuses. For supervision checks with motion disabled.
     pub fn open_outputs(&self, deadtime_ms: u32, lease_ms: u32, now_ms: u32) -> bool {
         self.with(|state| state.open_outputs(deadtime_ms, lease_ms, now_ms))
+            .unwrap_or(false)
     }
 
-    /// Bounded GPIO stop attempt, including from an independent ISR.
+    /// Bounded GPIO stop attempt, including from an independent ISR. A
+    /// reentered trip is dropped: the call holding the state is the one
+    /// writing the pins, and it latches its own failures.
     pub fn trip(&self, now_ms: u32) {
-        self.with(|state| state.trip(now_ms));
+        let _ = self.with(|state| state.trip(now_ms));
     }
 
     pub(crate) fn inactive(&self) -> bool {
-        self.with(|state| state.inactive())
+        self.with(|state| state.inactive()).unwrap_or(false)
     }
 
     /// Mandatory before any drive or emitter enable; attach only while
@@ -398,21 +431,23 @@ impl Board {
             }
             ok
         })
+        .unwrap_or(false)
     }
 
     /// Stops/inhibits motion for a flash lease. Interrupted output latches the
     /// board fault; success establishes GPIO logic only, not motor mechanics.
     pub fn flash_quiesce(&self) -> bool {
-        self.with(BoardState::flash_quiesce)
+        self.with(BoardState::flash_quiesce).unwrap_or(false)
     }
 
     /// Critical sections serialize gate calls between task and timer ISR.
     pub fn motor(&self, command: MotorCommand, now_ms: u32) -> bool {
         self.with(|state| state.motor(command, now_ms))
+            .unwrap_or(false)
     }
 
     pub fn motor_tick(&self, now_ms: u32) -> bool {
-        self.with(|state| state.motor_tick(now_ms))
+        self.with(|state| state.motor_tick(now_ms)).unwrap_or(false)
     }
 
     pub fn optics(&self, enabled: bool) -> bool {
@@ -423,6 +458,7 @@ impl Board {
     /// enabled; a failed change attempts both off and trips the motor gate.
     pub fn optics_select(&self, a: bool, b: bool) -> bool {
         self.with(|state| state.optics_select(a, b))
+            .unwrap_or(false)
     }
 
     /// 16 bounded conversions of `channel`: 4 (current), 5 (battery) or 10
@@ -432,13 +468,13 @@ impl Board {
         let limit = self.with(|state| {
             (state.opened && !state.faulted && state.sensors_ready).then_some(state.adc_poll_limit)
         });
-        let Some(limit) = limit.filter(|_| known) else {
+        let Some(limit) = limit.ok().flatten().filter(|_| known) else {
             return false;
         };
 
         let ok = adc::convert(channel, limit, samples);
         if !ok {
-            self.with(BoardState::trip_now);
+            let _ = self.with(BoardState::trip_now);
         }
         ok
     }
@@ -451,7 +487,7 @@ impl Board {
             state.capture_gpio(reading)?;
             Some(state.adc_poll_limit)
         });
-        let Some(limit) = limit else {
+        let Ok(Some(limit)) = limit else {
             return false;
         };
 
@@ -460,7 +496,7 @@ impl Board {
             reading.battery_adc_valid = adc::convert(ADC_BATTERY, limit, &mut reading.battery);
         }
         if !reading.current_adc_valid || !reading.battery_adc_valid {
-            self.with(BoardState::trip_now);
+            let _ = self.with(BoardState::trip_now);
             return false;
         }
         true
@@ -471,6 +507,8 @@ impl Board {
     /// included, read in the same port access.
     pub fn capture_gpio(&self, reading: &mut SensorReading) -> Option<u32> {
         self.with(|state| state.capture_gpio(reading))
+            .ok()
+            .flatten()
     }
 
     pub fn close(&self) {
@@ -483,8 +521,24 @@ impl Board {
             state.opened = false;
             state.sensors_ready
         });
-        if sensors {
+        if sensors == Ok(true) {
             adc::close();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_nested_call_is_refused_and_the_board_stays_usable() {
+        let board = Board::default();
+
+        let nested = board.with(|_| board.with(|state| state.opened));
+        assert_eq!(nested, Ok(Err(Reentered)));
+        assert!(board.with(|_| board.view()).is_ok_and(|view| view.faulted));
+
+        assert_eq!(board.with(|state| state.faulted), Ok(false));
     }
 }

@@ -31,6 +31,18 @@ fn select() -> (Vec<u8>, Vec<u8>, u32) {
     (ssid, psk, out.source)
 }
 
+/// The C Wi-Fi task's report after a join attempt.
+fn outcome(joined: i32) {
+    // SAFETY: the test is the only Wi-Fi task, and no select is running.
+    unsafe { wellfed_wifi_outcome(joined) };
+}
+
+/// The module's state forgotten, under `SERIAL`.
+fn forget() {
+    // SAFETY: the test is the only Wi-Fi task.
+    unsafe { reset() };
+}
+
 /// Write a credential record into the fake storage, as the writer would.
 fn store(credentials: Option<Credentials>) {
     use wellfed_core::store::slot::SlotIo;
@@ -45,10 +57,12 @@ fn store(credentials: Option<Credentials>) {
             wellfed_hal::sdk::storage_read(NET_BASE + slot, offset, bytes)
         }
         fn program(&self, slot: u32, offset: u32, bytes: &[u8]) -> bool {
-            wellfed_hal::sdk::storage_program(NET_BASE + slot, offset, bytes)
+            // SAFETY: the fake's storage, which this test owns.
+            unsafe { wellfed_hal::sdk::storage_program(NET_BASE + slot, offset, bytes) }
         }
         fn erase(&self, slot: u32) -> bool {
-            wellfed_hal::sdk::storage_erase(NET_BASE + slot)
+            // SAFETY: as in `program`.
+            unsafe { wellfed_hal::sdk::storage_erase(NET_BASE + slot) }
         }
     }
 
@@ -74,14 +88,14 @@ fn the_fallback_rule() {
 fn joins_use_stored_credentials_until_they_keep_failing() {
     let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     fake::reset_hardware();
-    reset();
+    forget();
     assert_eq!(
         select(),
         (BUILD_SSID.to_vec(), BUILD_PSK.to_vec(), 0),
         "nothing stored"
     );
 
-    reset();
+    forget();
     store(Some(
         Credentials::new(b"stored-net", b"stored-pass").unwrap(),
     ));
@@ -91,18 +105,18 @@ fn joins_use_stored_credentials_until_they_keep_failing() {
             (b"stored-net".to_vec(), b"stored-pass".to_vec(), 1),
             "attempt {attempt}"
         );
-        wellfed_wifi_outcome(0);
+        outcome(0);
     }
     assert_eq!(select(), (BUILD_SSID.to_vec(), BUILD_PSK.to_vec(), 2));
     assert_eq!(source(), WifiSource::Fallback);
 
     // Joined once this boot: later failures keep the stored network.
-    reset();
+    forget();
     select();
-    wellfed_wifi_outcome(1);
+    outcome(1);
     for _ in 0..2 * FALLBACK_AFTER {
         assert_eq!(select().2, 1);
-        wellfed_wifi_outcome(0);
+        outcome(0);
     }
 }
 
@@ -110,11 +124,11 @@ fn joins_use_stored_credentials_until_they_keep_failing() {
 fn a_save_mid_boot_is_joined_with_a_fresh_count() {
     let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     fake::reset_hardware();
-    reset();
+    forget();
     store(Some(Credentials::new(b"old-net", b"old-pass1").unwrap()));
     for _ in 0..FALLBACK_AFTER {
         select();
-        wellfed_wifi_outcome(0);
+        outcome(0);
     }
     assert_eq!(select().2, 2, "fallen back to the build's");
 
@@ -126,7 +140,7 @@ fn a_save_mid_boot_is_joined_with_a_fresh_count() {
             (b"new-net".to_vec(), b"new-pass1".to_vec(), 1),
             "attempt {attempt}"
         );
-        wellfed_wifi_outcome(0);
+        outcome(0);
     }
     assert_eq!(select().2, 2, "the new ones can still fall back");
 }
@@ -135,7 +149,7 @@ fn a_save_mid_boot_is_joined_with_a_fresh_count() {
 fn changes_queue_checked_credentials_or_a_clear() {
     let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     fake::reset_hardware();
-    reset();
+    forget();
     assert_eq!(current(), WifiResult::Busy, "store not opened");
     assert_eq!(change(None), WifiResult::Busy);
     store(None);

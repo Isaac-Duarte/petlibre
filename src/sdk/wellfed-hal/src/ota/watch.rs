@@ -55,7 +55,8 @@ impl<H> Default for SdkGiveWay<H> {
 
 impl<H: Hooks> GiveWay for SdkGiveWay<H> {
     fn give_way(&mut self) -> bool {
-        H::armed() && sdk::bank1_give_way()
+        // SAFETY: the hooks are armed; the offer watch owns the give-way.
+        H::armed() && unsafe { sdk::bank1_give_way() }
     }
 }
 

@@ -49,10 +49,12 @@ impl<H> Default for HookedStorage<H> {
 
 impl<H: Hooks> StorageFlash for HookedStorage<H> {
     fn erase(&mut self, sector: u32) -> bool {
-        H::armed() && sdk::storage_erase(sector)
+        // SAFETY: the hooks are armed; the confirmation owns its sector.
+        H::armed() && unsafe { sdk::storage_erase(sector) }
     }
     fn program(&mut self, sector: u32, offset: u32, data: &[u8]) -> bool {
-        H::armed() && sdk::storage_program(sector, offset, data)
+        // SAFETY: as in `erase`.
+        H::armed() && unsafe { sdk::storage_program(sector, offset, data) }
     }
     fn read(&mut self, sector: u32, offset: u32, bytes: &mut [u8]) -> bool {
         sdk::storage_read(sector, offset, bytes)

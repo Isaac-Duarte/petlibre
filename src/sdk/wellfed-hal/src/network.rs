@@ -169,14 +169,17 @@ pub fn publish<I: SlotIo>(store: &NetStore<I>, armed: bool) {
 }
 
 /// Forget everything (host tests).
-pub fn reset() {
+///
+/// # Safety
+/// No Wi-Fi task is running: the join state is the Wi-Fi task's own.
+pub unsafe fn reset() {
     for flag in [&LOADED, &WRITABLE, &STORED, &RELOAD] {
         flag.store(false, Ordering::Release);
     }
     GENERATION.store(0, Ordering::Release);
     SOURCE.store(WifiSource::Build.code(), Ordering::Release);
     STATE.store(Hand::Empty as u8, Ordering::Release);
-    // SAFETY: tests reset with no other accessor.
+    // SAFETY: the caller's contract: no Wi-Fi task holds `JOIN`.
     unsafe { *JOIN.get() = Join::default() };
 }
 
@@ -274,9 +277,13 @@ pub unsafe extern "C" fn wellfed_wifi_select(out: *mut JoinCredentials) {
 }
 
 /// After each join attempt: 1 when an address was assigned.
+///
+/// # Safety
+/// Called only from the Wi-Fi task, which owns `JOIN`, and never while a
+/// `wellfed_wifi_select` call is running.
 #[unsafe(no_mangle)]
-pub extern "C" fn wellfed_wifi_outcome(joined: i32) {
-    // SAFETY: only the Wi-Fi task calls this.
+pub unsafe extern "C" fn wellfed_wifi_outcome(joined: i32) {
+    // SAFETY: the caller's contract makes this the only reference to `JOIN`.
     let join = unsafe { &mut *JOIN.get() };
     if source() != WifiSource::Stored {
         return;

@@ -206,8 +206,10 @@ pub struct Hardware {
     pub audio_queue: VecDeque<[i16; AUDIO_PAGE_SAMPLES]>,
     pub audio_played: Vec<i16>,
     pub audio_underruns: u32,
-    /// The page handed out by `audio_page`, leaked once per thread.
+    /// The page `Audio::page` hands out, leaked once per thread.
     pub audio_scratch: *mut [i16; AUDIO_PAGE_SAMPLES],
+    /// Whether the thread's one `Audio` handle is out.
+    pub audio_taken: bool,
 
     /// The BLE peripheral. Tests record events with [`ble_record`]
     /// and push the bytes a host would write.
@@ -351,6 +353,7 @@ impl Default for Hardware {
             audio_played: Vec::new(),
             audio_underruns: 0,
             audio_scratch: core::ptr::null_mut(),
+            audio_taken: false,
 
             ble_started: None,
             ble_events: Vec::new(),

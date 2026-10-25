@@ -25,6 +25,7 @@ pub mod audio;
 #[cfg(any(not(target_os = "none"), feature = "bluetooth"))]
 pub mod ble;
 pub mod board;
+pub mod bringup;
 pub mod buttons;
 pub mod clock;
 pub mod entropy;

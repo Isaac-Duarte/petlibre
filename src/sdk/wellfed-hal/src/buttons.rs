@@ -104,7 +104,8 @@ impl Service {
         }
 
         for pin in PINS {
-            sdk::gpio_init(pin, false);
+            // SAFETY: a button input; the button port owns them.
+            unsafe { sdk::gpio_init(pin, false) };
         }
         self.engine = Some(Engine::new(self.config));
         Step {

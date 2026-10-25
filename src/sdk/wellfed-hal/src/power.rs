@@ -83,7 +83,8 @@ impl Monitor {
         }
 
         let Some(calibration) = self.calibration else {
-            sdk::gpio_init(ADAPTER_PIN, false);
+            // SAFETY: the adapter input, which only ever reads; nothing drives it.
+            unsafe { sdk::gpio_init(ADAPTER_PIN, false) };
             let calibration = adc::open().calibration;
             self.calibration = calibration;
             if calibration.is_none() {

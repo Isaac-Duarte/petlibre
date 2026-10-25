@@ -50,8 +50,11 @@ fn directions() -> bool {
 #[must_use]
 pub fn all_low() -> bool {
     let _guard = IrqGuard::lock();
-    sdk::gpio_port_write(0, PA_MASK, 0);
-    sdk::gpio_port_write(1, PB_MASK, 0);
+    // SAFETY: the indicator pins only; this module owns them.
+    unsafe {
+        sdk::gpio_port_write(0, PA_MASK, 0);
+        sdk::gpio_port_write(1, PB_MASK, 0);
+    }
     directions()
         && sdk::gpio_output_latch(0) & PA_MASK == 0
         && sdk::gpio_output_latch(1) & PB_MASK == 0
@@ -68,7 +71,8 @@ pub fn initialize() -> bool {
     let _ = all_low(); // Preload before output direction; verify after enabling.
     for led in Led::ALL {
         sdk::gpio_no_pull(led.pin());
-        sdk::gpio_init(led.pin(), true);
+        // SAFETY: an indicator pin; this module owns them.
+        unsafe { sdk::gpio_init(led.pin(), true) };
     }
     directions() && all_low() && Led::ALL.into_iter().all(|led| observe(led).accepted(false))
 }
@@ -84,7 +88,8 @@ pub fn request(led: Led, high: bool) -> bool {
 
     let pin = led.pin();
     let mask = 1 << (pin & 31);
-    sdk::gpio_port_write(pin >> 5, mask, if high { mask } else { 0 });
+    // SAFETY: one indicator pin; this module owns them.
+    unsafe { sdk::gpio_port_write(pin >> 5, mask, if high { mask } else { 0 }) };
     true
 }
 

@@ -413,6 +413,12 @@ pub mod fake;
 #[cfg(not(target_os = "none"))]
 pub use fake::api::*;
 
+// The calls the shared wrappers below (`Audio`) build on.
+#[cfg(not(target_os = "none"))]
+use fake::api as backend;
+#[cfg(all(target_os = "none", feature = "km4"))]
+use target as backend;
+
 #[cfg(any(not(target_os = "none"), feature = "km4"))]
 mod guard {
     /// Interrupt mask held for the guard's lifetime, restoring the entry mask.
@@ -436,3 +442,72 @@ mod guard {
 
 #[cfg(any(not(target_os = "none"), feature = "km4"))]
 pub use guard::IrqGuard;
+
+#[cfg(any(not(target_os = "none"), feature = "km4"))]
+mod audio {
+    use super::{AUDIO_PAGE_SAMPLES, backend};
+
+    /// The codec's DMA ring, as one handle. A [`Page`] borrows it mutably, so
+    /// one page is out at a time and none outlives the handle; [`Audio::take`]
+    /// hands out at most one handle, so two callers never fill the same page.
+    #[derive(Debug)]
+    pub struct Audio {
+        _owned: (),
+    }
+
+    impl Audio {
+        /// The ring's one handle, or `None` while another is out.
+        pub fn take() -> Option<Self> {
+            backend::audio_take().then_some(Self { _owned: () })
+        }
+
+        /// The next free ring page, while the codec is open and the DMA does
+        /// not own every page. Fill it, then [`Page::submit`].
+        pub fn page(&mut self) -> Option<Page<'_>> {
+            let page = backend::audio_page_ptr();
+            // SAFETY: a non-null page is an aligned ring page of
+            // `AUDIO_PAGE_SAMPLES` samples that the DMA does not own until it is
+            // submitted; borrowing `self` keeps it the only reference to it.
+            let samples = unsafe { page.as_mut() }?;
+            Some(Page { samples })
+        }
+    }
+
+    impl Drop for Audio {
+        fn drop(&mut self) {
+            backend::audio_release();
+        }
+    }
+
+    /// One free ring page, borrowed from the [`Audio`] handle. Dropping it
+    /// unsubmitted leaves the page free, so the next [`Audio::page`] returns it
+    /// again.
+    #[derive(Debug)]
+    pub struct Page<'a> {
+        samples: &'a mut [i16; AUDIO_PAGE_SAMPLES],
+    }
+
+    impl Page<'_> {
+        /// Hand the filled page to the DMA.
+        pub fn submit(self) {
+            backend::audio_submit();
+        }
+    }
+
+    impl core::ops::Deref for Page<'_> {
+        type Target = [i16; AUDIO_PAGE_SAMPLES];
+
+        fn deref(&self) -> &Self::Target {
+            self.samples
+        }
+    }
+
+    impl core::ops::DerefMut for Page<'_> {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            self.samples
+        }
+    }
+}
+
+#[cfg(any(not(target_os = "none"), feature = "km4"))]
+pub use audio::{Audio, Page};

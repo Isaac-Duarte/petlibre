@@ -3,9 +3,10 @@
 # running: a bench command or integration run in another terminal, and a
 # wellfed-local serve if one is up. Builds the page and binary when needed.
 #
-#   src/scripts/dev-dashboard                     # http://127.0.0.1:8780/
-#   src/scripts/dev-dashboard --ui-port 8781
-#   src/scripts/dev-dashboard --listen 100.x.y.z  # a Tailscale address, for a phone
+#   src/scripts/bench-dashboard                     # http://127.0.0.1:8780/
+#   src/scripts/bench-dashboard --ui-port 8781
+#   src/scripts/bench-dashboard --listen 100.x.y.z  # a Tailscale address, for a phone
+#   src/scripts/bench-dashboard --listen 0.0.0.0    # every interface
 #
 # Extra arguments go to wellfed-bench. It never touches relays, the UART or
 # flash; Ctrl+C stops it.

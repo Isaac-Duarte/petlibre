@@ -2,8 +2,9 @@
 //! embedded at compile time, and the JSON views it reads.
 //!
 //! The page shows private UART output, so it binds loopback by default.
-//! `--listen` serves one named interface instead, such as the Tailscale
-//! address; wildcard addresses are refused.
+//! `--listen` serves another address: a named interface such as the
+//! Tailscale address, or a wildcard for every interface when the owner
+//! chooses to.
 
 use std::convert::Infallible;
 use std::fs;
@@ -61,11 +62,6 @@ impl Listen {
         let ip: IpAddr = listen
             .parse()
             .map_err(|_| Error::Bench("--listen needs a literal IP address".into()))?;
-        if ip.is_unspecified() {
-            return Err(Error::Bench(
-                "Refusing a wildcard address; name the interface address to serve on".into(),
-            ));
-        }
         Ok(Self {
             address: SocketAddr::new(ip, port),
         })
@@ -391,9 +387,11 @@ mod tests {
     }
 
     #[test]
-    fn wildcard_listen_is_refused() {
-        assert!(Listen::new("0.0.0.0", 8780).is_err());
-        assert!(Listen::new("::", 8780).is_err());
+    fn listen_takes_literal_addresses() {
+        assert_eq!(
+            Listen::new("0.0.0.0", 8780).unwrap().url(),
+            "http://0.0.0.0:8780/"
+        );
         assert!(Listen::new("localhost", 8780).is_err());
         assert_eq!(
             Listen::new("100.64.0.1", 8780).unwrap().url(),

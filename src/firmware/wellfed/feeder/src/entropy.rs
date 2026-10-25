@@ -209,7 +209,7 @@ impl Capture {
         self.samples = 0;
         self.missed = 0;
         self.failed_at = None;
-        self.health = Health::new(CLAIM_EIGHTHS);
+        self.health = const { Health::new(CLAIM_EIGHTHS) };
         if self.source.is_none() {
             if self.adc == Some(true) {
                 adc::close();

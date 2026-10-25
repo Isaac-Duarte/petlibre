@@ -65,7 +65,7 @@ pub fn start() -> Started {
         return started;
     }
 
-    let mut pool = Pool::new(CLAIM_EIGHTHS);
+    let mut pool = Pool::new::<CLAIM_EIGHTHS>();
     let input = loop {
         if pool.ready() {
             break pool.take();

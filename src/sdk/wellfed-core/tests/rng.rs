@@ -135,7 +135,7 @@ fn a_healthy_source_passes_many_windows() {
 fn the_pool_waits_for_start_up_and_its_claim() {
     // Claiming 8 bits a sample, 512 bits takes 64 samples, but the start-up
     // test needs 1024 first.
-    let mut pool = Pool::new(64);
+    let mut pool = Pool::new::<64>();
     let mut state = 99;
     for _ in 0..STARTUP_SAMPLES - 1 {
         pool.add(noise(&mut state)).unwrap();
@@ -152,7 +152,7 @@ fn the_pool_waits_for_start_up_and_its_claim() {
     assert_ne!(pool.take().unwrap(), first);
 
     // A weaker claim needs proportionally more samples.
-    let mut pool = Pool::new(2);
+    let mut pool = Pool::new::<2>();
     for _ in 0..STARTUP_SAMPLES {
         pool.add(noise(&mut state)).unwrap();
     }
@@ -164,7 +164,7 @@ fn the_pool_waits_for_start_up_and_its_claim() {
 
 #[test]
 fn a_failed_pool_never_gives_output() {
-    let mut pool = Pool::new(8);
+    let mut pool = Pool::new::<8>();
     let mut state = 5;
     for _ in 0..STARTUP_SAMPLES * 4 {
         pool.add(noise(&mut state)).unwrap();

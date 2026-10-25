@@ -179,11 +179,14 @@ pub struct Pool {
 }
 
 impl Pool {
-    /// A pool over one source; see [`Health::new`] for `eighths`.
-    pub fn new(eighths: u32) -> Self {
+    /// A pool over one source claiming `EIGHTHS`; see [`Health::new`]. A
+    /// const parameter so the cutoffs' `f64` binomial runs at compile time:
+    /// run on the feeder it linked soft-float routines and looped 512 times
+    /// at boot.
+    pub fn new<const EIGHTHS: u32>() -> Self {
         Self {
-            health: Health::new(eighths),
-            eighths,
+            health: const { Health::new(EIGHTHS) },
+            eighths: EIGHTHS,
             hash: Sha256::new(),
             claimed: 0,
         }

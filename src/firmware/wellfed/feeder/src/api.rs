@@ -245,8 +245,9 @@ impl Api {
         // No handshake while the outputs are claimed, not only while they
         // move: an invite's join or a recovery enrolls a key, a store write
         // that would wait out the feed, so the invite is redeemed (and the
-        // recovery code taken) only once it can be written.
-        let feeding = feeds.feeding() || INTERLOCK.outputs_claimed();
+        // recovery code taken) only once it can be written. Held for at most
+        // the claim's bound, as joins are.
+        let feeding = feeds.feeding() || INTERLOCK.claim_in_bound(now_ms);
         let mut device = Feeder {
             boot,
             locked,

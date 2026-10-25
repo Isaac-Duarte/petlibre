@@ -48,8 +48,9 @@
 //! - A claim waits in the loop ([`Interlock::claim_feed_after_writes`]), in
 //!   [`WRITE_POLL_MS`] steps for at most [`WRITE_WAIT_MS`], for a write
 //!   running, a writer waiting, or a client's change queued for a writer
-//!   that has not asked yet. A write still running then refuses the feed;
-//!   the rest are passed: they have not started, and wait for the release.
+//!   that has not asked yet. A write still running, or a change still
+//!   queued, then refuses the feed; waiting writers are passed: they have
+//!   not started, and wait for the release.
 //!
 //! The feed journal writes under the loop's own claim, from the owner's rest
 //! boundaries (the outputs already stopped), so it takes no write turn.
@@ -352,6 +353,8 @@ pub struct Interlock {
     /// Claims taken from no claim, so a writer can tell one feed from the
     /// next.
     claims: AtomicU32,
+    /// When the loop's last claim through `claim_feed_after_writes` landed.
+    claimed_at_ms: AtomicU32,
 }
 
 impl Default for Interlock {
@@ -377,6 +380,7 @@ impl Interlock {
             write_waited_max_ms: AtomicU32::new(0),
             feeds_delayed: AtomicU32::new(0),
             claims: AtomicU32::new(0),
+            claimed_at_ms: AtomicU32::new(0),
         }
     }
 
@@ -391,6 +395,16 @@ impl Interlock {
     /// The loop holds the outputs: a feed may be preparing or moving them.
     pub fn outputs_claimed(&self) -> bool {
         self.state().outputs_claimed()
+    }
+
+    /// The outputs are claimed, for no longer than the claim's bound since
+    /// it landed: what the loop holds handshakes off for. Past the bound a
+    /// claim never released stops holding them, as it stops holding joins,
+    /// so it cannot keep new sessions out until a reset.
+    pub fn claim_in_bound(&self, now_ms: u32) -> bool {
+        self.outputs_claimed()
+            && now_ms.wrapping_sub(self.claimed_at_ms.load(Ordering::Acquire))
+                < self.bound_ms.load(Ordering::Acquire)
     }
 
     /// A storage write holds the flash.
@@ -452,23 +466,28 @@ impl Interlock {
         // Published before the claim, so a join or write that sees the
         // claim sees its bound; one firmware always passes the same bound.
         self.bound_ms.store(bound_ms, Ordering::Release);
-        let (result, fresh) = self.update(|state| match state.claim_feed(waiters) {
-            Ok(next) => (next, (Ok(()), state.turn == Turn::Free)),
-            Err(held) => (state, (Err(held), false)),
-        });
-        if fresh {
+        // Counted before the claim can land, so a writer that sees the claim
+        // never pairs it with the previous count. A claim that then fails
+        // (or a race that makes it the loop's own) counts once too many,
+        // which only restarts a waiting writer's forced bound later.
+        if self.turn() == Turn::Free {
             self.claims.fetch_add(1, Ordering::AcqRel);
         }
-        result
+        self.update(|state| match state.claim_feed(waiters) {
+            Ok(next) => (next, Ok(())),
+            Err(held) => (state, Err(held)),
+        })
     }
 
     /// As [`Self::claim_feed`], but storage writes first get up to
     /// [`WRITE_WAIT_MS`], waiting in `delay` steps: a write running, a
     /// writer waiting for its turn, or work `queued` for a writer that has
     /// not asked for its turn yet (a client's change in a mailbox). Past the
-    /// wait a write still running refuses the claim, and the rest are
-    /// passed: they have not started, and wait for the release. A join
-    /// still refuses at once.
+    /// wait a write still running refuses the claim, and waiting writers are
+    /// passed: they have not started, and wait for the release. Work still
+    /// queued in a mailbox at the deadline (a stalled writer) refuses the
+    /// claim as a running write does: the client's change would otherwise
+    /// land after the feed. A join still refuses at once.
     pub fn claim_feed_after_writes(
         &self,
         bound_ms: u32,
@@ -485,13 +504,16 @@ impl Interlock {
             } else {
                 Waiters::GoFirst
             };
-            let result = if !passed && queued() {
-                Err(Held::WriteWaiting)
-            } else {
-                self.try_claim(bound_ms, waiters)
+            let result = match (queued(), passed) {
+                (true, false) => Err(Held::WriteWaiting),
+                (true, true) => Err(Held::Writing),
+                (false, _) => self.try_claim(bound_ms, waiters),
             };
             match result {
-                Ok(()) => return Ok(()),
+                Ok(()) => {
+                    self.claimed_at_ms.store(now_ms(), Ordering::Release);
+                    return Ok(());
+                }
                 Err(Held::Writing | Held::WriteWaiting) if !passed => {}
                 Err(held) => {
                     self.refused.fetch_add(1, Ordering::Relaxed);
@@ -618,6 +640,7 @@ impl Interlock {
             &self.write_waited_max_ms,
             &self.feeds_delayed,
             &self.claims,
+            &self.claimed_at_ms,
         ] {
             value.store(0, Ordering::Release);
         }

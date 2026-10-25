@@ -516,8 +516,8 @@ mod writes {
         assert_eq!(now.get(), 200);
         interlock.release_feed();
 
-        // Work that never moves is passed after the wait.
-        queued.set(true);
+        // Work that never moves (a stalled writer) refuses the feed at the
+        // deadline: nothing moved, and the change would land after it.
         now.set(0);
         let claimed = interlock.claim_feed_after_writes(
             BOUND_MS,
@@ -525,8 +525,26 @@ mod writes {
             || now.get(),
             |ms| now.set(now.get() + ms),
         );
-        assert_eq!(claimed, Ok(()));
+        assert_eq!(claimed, Err(Held::Writing));
         assert_eq!(now.get(), WRITE_WAIT_MS);
+        assert_eq!(interlock.turn(), Turn::Free);
+    }
+
+    #[test]
+    fn a_claim_holds_handshakes_only_for_its_bound() {
+        let interlock = Interlock::new();
+        assert!(!interlock.claim_in_bound(0));
+
+        let claimed =
+            interlock.claim_feed_after_writes(BOUND_MS, || false, || 1000, |_| unreachable!());
+        assert_eq!(claimed, Ok(()));
+        assert!(interlock.claim_in_bound(1000));
+        assert!(interlock.claim_in_bound(1000 + BOUND_MS - 1));
+        // A claim never released stops holding them, as it stops holding joins.
+        assert!(!interlock.claim_in_bound(1000 + BOUND_MS));
+
+        interlock.release_feed();
+        assert!(!interlock.claim_in_bound(1001));
     }
 
     #[test]

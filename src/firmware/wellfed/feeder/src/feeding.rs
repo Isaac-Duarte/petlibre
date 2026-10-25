@@ -117,10 +117,11 @@ pub const FEED_BOUND_MS: u32 = CONFIG.optics_max_on_ms + 2000;
 
 /// Claims the outputs in `interlock` for one feed, before it is submitted,
 /// on the clock `now_ms` that `delay` advances. A storage write running or
-/// waiting, or a change `queued` in a mailbox, gets its turn first (the loop waits for it, at most
-/// `WRITE_WAIT_MS`). A join running or waiting, or a write still running
-/// past that wait, refuses the feed `Busy`, final for that write id (clients
-/// never retry a feed on their own); `held` hears why, for the log.
+/// waiting, or a change `queued` in a mailbox, goes first (the loop waits
+/// for it, at most `WRITE_WAIT_MS`). A join running or waiting, or a write
+/// still running or a change still queued past that wait, refuses the feed
+/// `Busy`, final for that write id (clients never retry a feed on their
+/// own); `held` hears why, for the log.
 pub fn claim_outputs(
     interlock: &Interlock,
     queued: impl FnMut() -> bool,

@@ -133,11 +133,14 @@ static CALL: LazyLock<Regex> = LazyLock::new(|| {
         .expect("stack audit pattern")
 });
 /// A call or tail call through a register. objdump names r9 to r12 `sb`, `sl`,
-/// `fp` and `ip`, and LLVM tail-calls a pointer with `bx rN`. `bx lr` is a
-/// return, not a call.
-static INDIRECT: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\t(?:blx\t(?:r\d+|sb|sl|fp|ip)|bx\tr\d+)\b").expect("stack audit pattern")
-});
+/// `fp` and `ip`, and a tail call through a pointer is `bx rN` (`bx ip` in
+/// vendor C and `core::fmt`). `bx lr` is a return, not a call. A linker
+/// veneer's `bx ip` is not counted: its target comes from its name.
+static INDIRECT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\tbl?x\t(?:r\d+|sb|sl|fp|ip)\b").expect("stack audit pattern"));
+/// Every task creation, whatever its shape: [`TASK`] must account for each.
+static TASK_SITE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"(?:task_create|spawn)\(\s*c""#).expect("stack audit pattern"));
 /// Half of an address built in a register: `movw r0, #51187` (low) then
 /// `movt r0, #3585` (high).
 static MOVE: LazyLock<Regex> =
@@ -181,6 +184,19 @@ fn tasks(source: &str) -> Result<BTreeMap<String, (String, u64)>> {
         .captures_iter(source)
         .filter_map(|c| Some((c.get(1)?.as_str(), c[2].parse().ok()?)))
         .collect();
+
+    let (sites, matched) = (
+        TASK_SITE.find_iter(source).count(),
+        TASK.captures_iter(source).count(),
+    );
+    if sites != matched {
+        return refuse(format!(
+            "{} task creations do not have the shape the stack audit reads \
+             (spawn(c\"name\", WORDS, priority, entry)): keep the priority a literal and \
+             the entry a plain function name",
+            sites - matched.min(sites)
+        ));
+    }
 
     let mut found = BTreeMap::new();
     for c in TASK.captures_iter(source) {
@@ -232,7 +248,7 @@ fn frames(listing: &str) -> Vec<(String, Function)> {
             low.clear();
             continue;
         }
-        let Some((_, f)) = functions.last_mut() else {
+        let Some((name, f)) = functions.last_mut() else {
             continue;
         };
         if !line.contains(":\t") {
@@ -260,7 +276,7 @@ fn frames(listing: &str) -> Vec<(String, Function)> {
         if let Some(call) = CALL.captures(line) {
             f.calls.insert(call[1].to_string());
         } else if INDIRECT.is_match(line) {
-            f.indirect = true;
+            f.indirect |= veneer(name).is_none();
         } else if let Some(m) = MOVE.captures(insn) {
             let value: u64 = m[3].parse().unwrap_or_default();
             if &m[1] == "w" {
@@ -762,12 +778,20 @@ mod tests {
         let unknown = "wellfed_sdk::spawn(c\"wellfed-x\", ELSEWHERE_WORDS, 2, x_task);";
         let refused = tasks(unknown).unwrap_err().to_string();
         assert!(refused.contains("ELSEWHERE_WORDS"), "{refused}");
+
+        for shape in [
+            "wellfed_sdk::spawn(c\"wellfed-x\", 512, PRIORITY, x_task);",
+            "wellfed_sdk::spawn(c\"wellfed-x\", 512, 2, tasks::run);",
+        ] {
+            let refused = tasks(shape).unwrap_err().to_string();
+            assert!(refused.contains("1 task creations"), "{shape}: {refused}");
+        }
     }
 
     #[test]
     fn register_calls_and_tail_calls_are_indirect() {
         for call in [
-            "blx\tr3", "blx\tip", "blx\tfp", "blx\tsl", "blx\tsb", "bx\tr2", "bx\tr12",
+            "blx\tr3", "blx\tip", "blx\tfp", "blx\tsl", "blx\tsb", "bx\tr2", "bx\tip", "bx\tsb",
         ] {
             assert!(
                 INDIRECT.is_match(&format!("    1000:\t4798      \t{call}")),

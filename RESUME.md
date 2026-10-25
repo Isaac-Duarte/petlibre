@@ -8,14 +8,13 @@ This file is the handoff, not the history. Keep it to the current state, today's
 
 Reconfirm with the owner before any bench operation; this is the last recorded state, not a live observation.
 
-- **Bank 1:** `feeder` v168 `0c955e25…` (`fw16-limits-01`, confirmed): the FW16 feed limits sized to the measured portion.
+- **Bank 1:** `feeder` v169 `e43324be…` (`ar-smoke-20261025-01`, confirmed, October 25): `master` at `545d18c` (AR1, AR2+AR13, AR15, AR19). Five cold boots (`ar-boot-20261025-01`…`05`) came up on bank 1 with the owner idle and unfaulted; the pre-epoch event ring kept epoch 0.
 - **Bank 0:** `feeder` `262a9f37…` (UART, `bank0-diag-01`, October 24): its recovery role only; it never feeds.
-- **Next manifest version:** 169. **Feed journal:** high water 9.
+- **Next manifest version:** 170. **Feed journal:** high water 9.
 
 - **Client store:** one owner, the bench CLI's key (`private/wellfed-owner.json`).
-- **Bench:** feeder on (relay 1), UART relays 3 and 4 closed, hotspot down, no server, no capture. Hopper empty. The logic analyzer may still be clipped at the motor.
+- **Bench:** feeder on (relay 1), UART relays 3 and 4 closed, hotspot up (found up on October 25 afternoon and left so), no server, no capture. Hopper empty. The logic analyzer may still be clipped at the motor.
 - **Next (FW16):** cancellation during motion, the motor lease under a stalled loop during a feed, and a failed stop; then FW17 ([procedure](docs/firmware/motor-pulse.md#feeds-through-the-owner)).
-- **Host clients from `master` no longer talk to v168:** since AR13 (October 25) `Welcome::Open` carries an epoch, so `wellfed`, the server and the bench's device client refuse v168's welcome as malformed until bank 1 runs a build from `master`. MQTT offers and LAN recovery still work, so the unit can be updated.
 - **Do not cut power during a feed.** An interrupted feed leaves its journal reservation pending, and the owner then faults at every boot (`OwnerFault::Recovery`) with no resolution path yet.
 
 ## Today (October 25): FW16 feeding through the owner

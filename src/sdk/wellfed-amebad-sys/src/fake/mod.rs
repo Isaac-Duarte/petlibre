@@ -195,6 +195,9 @@ pub struct Hardware {
     pub running_bank: Option<u8>,
     /// Bank 0's first 8 bytes, for the give-way guard.
     pub bank0_marker: [u8; 8],
+    /// Bank 0's image after them (bytes past its end read erased); its
+    /// first 8 bytes are `bank0_marker`'s.
+    pub bank0: Vec<u8>,
     pub storage_erases: [u32; crate::STORAGE_SECTORS as usize],
 
     /// The codec ring. Filled pages wait in `audio_queue` until
@@ -343,6 +346,7 @@ impl Default for Hardware {
             bank1: vec![u8::MAX; 0x15_0000],
             running_bank: Some(1),
             bank0_marker: crate::MARKER,
+            bank0: Vec::new(),
             storage_erases: [0; crate::STORAGE_SECTORS as usize],
 
             audio_open: false,

@@ -4,6 +4,16 @@
 //! the attempt marker, then open the watchdog and install the lease
 //! provider. A boot that finds the attempt marker set skips: a hook fault
 //! or hang resets at most once per power cycle.
+//!
+//! The same backup register holds the update-attempt bit ([`UPDATE_BIT`]):
+//! set while bank 0 installs an update, cleared when the install ends in
+//! order. A boot that finds it set refuses offers until power is lost, but
+//! still arms, so a reset during an install, outside any one write, never
+//! stops the feeder from saving or feeding. A hang inside one of the
+//! install's writes is the flash attempt marker's case like any writer's:
+//! the write ran with [`ATTEMPT_BIT`] set, so the boot after it skips
+//! arming (clearing the marker) and saves nothing until it resets again,
+//! the once-per-power-cycle rule every writer gets.
 
 use wellfed_core::clock::tick::TickClock;
 use wellfed_core::flash_coord::{FlashCoord, FlashReply};
@@ -16,6 +26,10 @@ use crate::stopped;
 use crate::supervision::config::{FLASH_LIMITS, SYSTIMER_HZ};
 
 pub const POLL_MS: u32 = 50;
+
+/// In the attempt register beside [`ATTEMPT_BIT`]: an install was writing
+/// bank 1. Arming leaves it alone.
+pub const UPDATE_BIT: u32 = 0x200;
 
 /// The SDK flash-lock hooks and the watchdog, as the target glue wires them.
 pub trait Hooks {
@@ -129,12 +143,12 @@ impl Arming {
 
             Stage::Arm => {
                 let marker = sdk::backup_read(MARKER_REGISTER);
-                if marker != 0 {
-                    sdk::backup_write(MARKER_REGISTER, 0);
+                if marker & !UPDATE_BIT != 0 {
+                    sdk::backup_write(MARKER_REGISTER, marker & UPDATE_BIT);
                     return self.fail(Event::Skip { marker });
                 }
 
-                sdk::backup_write(MARKER_REGISTER, ATTEMPT_BIT);
+                set_attempt();
                 let watchdog = H::watchdog();
                 let installed = watchdog && H::install(provider);
                 let event = Event::Armed {
@@ -144,7 +158,7 @@ impl Arming {
 
                 self.stage = Stage::Done;
                 if !installed {
-                    sdk::backup_write(MARKER_REGISTER, 0);
+                    clear_attempt();
                     return Poll::Failed(event);
                 }
                 Poll::Armed(event)
@@ -155,13 +169,29 @@ impl Arming {
     }
 }
 
+fn update_bit() -> u32 {
+    sdk::backup_read(MARKER_REGISTER) & UPDATE_BIT
+}
+
 /// Clear the attempt marker after an orderly stop.
 pub fn clear_attempt() {
-    sdk::backup_write(MARKER_REGISTER, 0);
+    sdk::backup_write(MARKER_REGISTER, update_bit());
 }
 
 /// Mark a write attempt on hooks armed earlier this boot, so a hang inside
 /// it is skipped after the reset, as during arming.
 pub fn set_attempt() {
-    sdk::backup_write(MARKER_REGISTER, ATTEMPT_BIT);
+    sdk::backup_write(MARKER_REGISTER, update_bit() | ATTEMPT_BIT);
+}
+
+/// Whether an install was writing bank 1 when the feeder last reset.
+pub fn update_attempted() -> bool {
+    update_bit() != 0
+}
+
+/// An install starts writing bank 1 (`true`) or ends in order (`false`).
+pub fn set_update_attempt(writing: bool) {
+    let marker = sdk::backup_read(MARKER_REGISTER) & !UPDATE_BIT;
+    let bit = if writing { UPDATE_BIT } else { 0 };
+    sdk::backup_write(MARKER_REGISTER, marker | bit);
 }

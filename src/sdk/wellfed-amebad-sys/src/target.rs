@@ -766,6 +766,26 @@ pub fn bank1_read(sector: u32, offset: u32, bytes: &mut [u8]) -> bool {
     true
 }
 
+/// Read bank 0 through the physical flash window, from either bank: the
+/// update path hashes the image there before giving way to it. Read only.
+pub fn bank0_read(offset: u32, bytes: &mut [u8]) -> bool {
+    let Some(end) = u32::try_from(bytes.len())
+        .ok()
+        .and_then(|len| offset.checked_add(len))
+    else {
+        return false;
+    };
+    if end > super::BANK1_OFFSET - super::BANK0_OFFSET {
+        return false;
+    }
+    let base = k::WELLFED_SPI_FLASH_BASE + super::BANK0_OFFSET + offset;
+    for (i, byte) in bytes.iter_mut().enumerate() {
+        // SAFETY: inside the memory-mapped flash window, within bank 0 as checked above.
+        *byte = unsafe { ptr::read_volatile((base as usize + i) as *const u8) };
+    }
+    true
+}
+
 /// Give-way from the running normal image: clear only the first byte
 /// of bank 1's marker (one page program; bytes 1-3 rewritten unchanged, as
 /// NOR programming only clears bits), through the hooked lock. Refused

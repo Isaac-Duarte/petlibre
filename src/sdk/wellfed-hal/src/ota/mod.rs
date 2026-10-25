@@ -2,5 +2,7 @@
 //! confirmation, and its offer watch.
 
 pub mod confirm;
+pub mod mailbox;
+pub mod update;
 pub mod updater;
 pub mod watch;

@@ -174,6 +174,25 @@ pub fn bank1_read(sector: u32, offset: u32, bytes: &mut [u8]) -> bool {
     true
 }
 
+/// Bank 0's bytes, its first 8 from `bank0_marker`.
+pub fn bank0_read(offset: u32, bytes: &mut [u8]) -> bool {
+    let start = offset as usize;
+    let end = start + bytes.len();
+    if end > (crate::BANK1_OFFSET - crate::BANK0_OFFSET) as usize {
+        return false;
+    }
+    with(|h| {
+        for (i, byte) in bytes.iter_mut().enumerate() {
+            let at = start + i;
+            *byte = match h.bank0_marker.get(at) {
+                Some(&marker) => marker,
+                None => h.bank0.get(at).copied().unwrap_or(u8::MAX),
+            };
+        }
+    });
+    true
+}
+
 /// As the target: clear bank 1's first marker byte, only from bank 1 with
 /// both markers valid.
 ///

@@ -1,6 +1,6 @@
 //! The bench's build fingerprint: one hash over the sources of every
 //! first-party crate `wellfed-bench` and `wellfed-itest` link, the suite
-//! itself and the lockfile.
+//! itself, the lockfile and the workspace's build configuration.
 //!
 //! `wellfed-bench` hands the suite's commands to the `wellfed-itest` beside
 //! it, which drives relays and restores the bench on its own copy of this
@@ -11,27 +11,18 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Relative to this crate. The suite is included so that a change to it
-/// alone also moves the fingerprint.
-const CRATES: &[&str] = &[
-    ".",
-    "../wellfed-itest",
-    "../wellfed-relay",
-    "../wellfed-formats",
-    "../wellfed-local-api",
-    "../wellfed-dashboard",
-    "../wellfed-build",
-    "../wellfed-flash",
-    "../wellfed-emu",
-    "../../client/wellfed-client",
-    "../../client/wellfed-model",
-    "../../sdk/wellfed-core",
-    "../../sdk/wellfed-proto",
-    "../../sdk/wellfed-session",
+include!("build/crates.rs");
+
+/// Workspace files that change how every crate builds, relative to this crate.
+const WORKSPACE: &[&str] = &[
+    "../../../Cargo.lock",
+    "../../../Cargo.toml",
+    "../../../.cargo/config.toml",
+    "../../../rust-toolchain.toml",
 ];
 
 fn main() {
-    let mut files: Vec<PathBuf> = vec![PathBuf::from("../../../Cargo.lock")];
+    let mut files: Vec<PathBuf> = WORKSPACE.iter().map(PathBuf::from).collect();
     for krate in CRATES {
         let krate = Path::new(krate);
         files.push(krate.join("Cargo.toml"));
@@ -43,7 +34,9 @@ fn main() {
             krate.join("Cargo.toml").display()
         );
     }
-    println!("cargo::rerun-if-changed=../../../Cargo.lock");
+    for file in WORKSPACE {
+        println!("cargo::rerun-if-changed={file}");
+    }
     files.sort();
 
     // Each file as its length-prefixed name and contents, so no two trees

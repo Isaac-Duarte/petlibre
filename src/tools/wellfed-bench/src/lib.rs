@@ -32,6 +32,9 @@ pub mod server;
 pub mod suite;
 pub mod tools;
 
+#[cfg(test)]
+mod fingerprint;
+
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};

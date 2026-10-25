@@ -12,11 +12,16 @@
 //! - [`device`]: the server's view of the feeder, over the stores.
 //! - [`sim`]: one feeder, stepped in the firmware loop's order.
 //! - [`serve`]: the sockets, and the loop that drives it.
+//! - `harness` (the `harness` feature, for tests only): a simulator on a
+//!   test's `LocalSet`, and a relay that can stall like a feeder that lost
+//!   power.
 
 #![forbid(unsafe_code)]
 
 pub mod console;
 pub mod device;
 pub mod flash;
+#[cfg(feature = "harness")]
+pub mod harness;
 pub mod serve;
 pub mod sim;

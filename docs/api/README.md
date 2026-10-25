@@ -1,6 +1,6 @@
 # API design
 
-The contracts between the feeder, the owner's server, the Android app and the web UI, and the crates that implement them. This is a design (Oct 23, 2026), and the device protocol is now built: FW45 (Oct 24) added `wellfed-proto`'s setup messages, `wellfed-client`'s setup session and the owner's `wellfed setup` over BLE ([Bluetooth](../firmware/bluetooth.md#setup-exchange)). FW47 (Oct 24) added the device API itself, which the feeder serves ([device API](../firmware/device-api.md)), with the `wellfed` CLI's commands on it. The product decisions it serves are in [product architecture](../firmware/product-architecture.md).
+The contracts between the feeder, the owner's server, the Android app and the web UI, and the crates that implement them. This is a design (Oct 23, 2026), and the device protocol is now built: FW45 (Oct 24) added `wellfed-proto`'s setup messages, `wellfed-client`'s setup session and the owner's `wellfed setup` over BLE ([Bluetooth](../firmware/bluetooth.md#setup-exchange)). FW47 (Oct 24) added the device API itself, which the feeder serves ([device API](../firmware/device-api.md)), with the `wellfed` CLI's commands on it. The server's first slice (FP18, Oct 24) is built too; [what it covers](#server-first-slice) lists where it stops. The product decisions it serves are in [product architecture](../firmware/product-architecture.md).
 
 There are three contracts, and each changes at a different cost:
 
@@ -158,7 +158,7 @@ GET    /health                               no auth; liveness and version
 
 - **SQLite in WAL mode.** One writer connection and a small read pool. The writer is a single task that owns all writes, so writes never contend.
 - **Migrations** are sqlx's, embedded in the binary and applied at startup after a backup copy of the database file. They are append-only: a released migration is never edited.
-- **Queries** use `sqlx::query_as!`, with the offline metadata (`.sqlx/`) committed, so builds need no database. SQL lives only in `wellfed-store`.
+- **Queries** use `sqlx::query!` and `query_as!`, with the offline metadata (`src/server/wellfed-store/.sqlx/`) committed, so builds need no database. `make sqlx-prepare` regenerates it from a scratch database the `sqlite3` command line builds from the migrations. SQL lives only in `wellfed-store`.
 - **Time** is stored as integer Unix milliseconds (UTC), with zones as IANA names. `jiff` converts at the store boundary.
 - **Tables (first cut):**
   - `household` (one row: name, units, time format), `users`, `sessions`, `tokens`
@@ -178,6 +178,25 @@ GET    /health                               no auth; liveness and version
 - **Shutdown and cancellation** go through one `CancellationToken` tree. Every task ends on it, and the store flushes before exit.
 - **Determinism.** Time, randomness and the network sit behind small injected interfaces, so service tests run on a virtual clock against the host-simulated feeder.
 
+## Server first slice
+
+Built Oct 24 (host simulation only; no server has met a real feeder yet).
+
+- **Resources:** `/health`, `/setup`, `/session` (GET for the logged-in user, POST to log in, DELETE to log out), `/feeders` (list, and adopt by invite), `/feeders/{id}` (live status, or the last copy marked `live: false`), `/feeders/{id}/settings` (GET with `ETag`, PATCH with `If-Match`), `/feeders/{id}/lock`, `/feeders/{id}/events` and `/stream`. Every other resource in [the list above](#first-resources) is still to come: household, users and tokens, feed, plans, samples, clients, food, intake, audit, releases, export and import.
+- **Feeder connections** follow [server runtime](#server-runtime): a task per feeder subscribes after the newest stored event before anything else, then sets the clock (again every 6 h), and records every event, gap and sample raw. A feeder that drops the server's key shows as `refused`. mDNS finds a feeder whose stored address fails, unless `--no-discovery`.
+- **Writes** take `Idempotency-Key` as a UUID. The feeder remembers writes by request ID alone and every user shares the server's key, so the device request ID is a hash of the user, the feeder, the kind of write and the key: one key reused for two kinds of write, or by two users, never returns another write's answer. A write without a key gets a fresh ID. A settings change re-reads the settings afterwards, so its answer carries the new generation; if that read fails, the answer is `outcome_unknown`, since the change was made.
+- **A command** is refused as offline until the connect sequence finishes, and then waits only behind an earlier command; one whose caller has stopped waiting is dropped unsent. A feeder heard from not at all for 90 s (time for a keepalive and its answer, with margin) counts as gone, so a feeder that loses power shows offline within that time rather than when the kernel gives up on the socket. The real feeder must answer a `Status` within that time even during flash writes; that is not yet checked on the bench.
+- **Settings are read from the feeder**, never served from the cache, because a change must name the current generation; an offline feeder's settings are `503 feeder_offline`.
+- **The stream's** SSE `id` is `<epoch>-<seq>`, with the epoch fixed at each start, so an id from before a restart resyncs; a `resync` carries an empty `id`. Samples are opt in with `?samples=power,rssi`. A stream rechecks its session every minute and ends once it is gone.
+- **Hosts.** Every request must name the server by an IP address, `localhost` or a name given with `--host`, so a DNS-rebinding page (whose own name appears in both `Host` and `Origin`) is refused with `421 unknown_host`.
+- **Samples** are always subscribed and kept: the simulator's rate (power every 5 s, signal every 30 s) is about 20,000 rows a day per feeder. Retention comes with the samples endpoint.
+- **The store** has one writer connection and a read pool, rather than a writer task. Before pending migrations run, `VACUUM INTO` copies the database beside itself as `server.db.before-<version>-<unix ms>`.
+- **Secrets:** the sealing key is `config.json` in the data directory, made on the first start (mode 0600). Each feeder key is sealed with ChaCha20-Poly1305, bound to the feeder's row ID and identity. Adoptions run one at a time, so two invites for one feeder cannot both enroll a key; a key the feeder enrolled but the server failed to store is logged with its fingerprint, to revoke.
+- **Logins** hash at most two passwords at once (argon2id takes about 19 MiB each), and an unknown name costs the same hash as a wrong password.
+- **Shutdown** on Ctrl-C or SIGTERM ends the streams, stops every feeder task (cancelling a connect sequence or command in flight) and closes the database.
+- **Tests** follow the layers: the store against real SQLite, the service and the end-to-end test against `wellfed-feeder-sim` over TCP (through its `harness` module), and the HTTP API in process. The service tests fix the wall clock but run timers in real time with short intervals: tokio's paused clock would jump while sqlx's SQLite worker threads are busy, and fire timeouts that never happen.
+- **Not yet:** phone tokens, `Secure` cookies behind an HTTPS proxy, login rate limiting, audit, and command results on the stream.
+
 ## Common crates
 
 Pinned in `[workspace.dependencies]`; a new dependency needs a reason in its pull request.
@@ -189,7 +208,7 @@ Pinned in `[workspace.dependencies]`; a new dependency needs a reason in its pul
 | Data | `serde` and `serde_json` (already), `postcard` (device), `uuid` v7 (already) |
 | Database | `sqlx` with SQLite, migrations and macros |
 | Time | `jiff` |
-| Crypto | a `no_std` Noise implementation (chosen in FW45), `argon2`, `rand_core` |
+| Crypto | a `no_std` Noise implementation (chosen in FW45), `argon2`, `chacha20poly1305` (the Noise cipher, reused for keys at rest), `sha2`, `getrandom` |
 | OpenAPI and types | `utoipa`, `utoipa-axum`, `flutter_rust_bridge`; `ts-rs` (already) stays for the bench's views only |
 | Discovery | `mdns-sd` |
 | Releases | `reqwest` with rustls (already in `wellfed-local`), `ed25519-dalek` (already) |

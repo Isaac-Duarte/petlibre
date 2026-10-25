@@ -20,7 +20,13 @@ socket2 = "0.6.5"
 thiserror.workspace = true
 tokio = { workspace = true, features = ["io-std", "io-util", "macros", "net", "rt", "sync", "time"] }
 
+[features]
+# The test harness other crates' tests start simulators with; never built
+# into the binary.
+harness = []
+
 [dev-dependencies]
+wellfed-feeder-sim = { path = ".", features = ["harness"] }
 wellfed-connect.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["test-util"] }

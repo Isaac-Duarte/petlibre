@@ -1,28 +1,22 @@
 //! The simulated feeder over real TCP on localhost, driven by
 //! `wellfed-connect` as the server and the CLI drive a feeder.
 
-use std::cell::Cell;
 use std::future::Future;
-use std::net::SocketAddr;
 use std::rc::Rc;
 use std::time::Duration;
 
 use wellfed_client::api::Invite;
 use wellfed_connect::{Connection, Error as ConnectError, join};
 use wellfed_core::noise::Keypair;
-use wellfed_core::store::clients::{Label, Role as StoreRole};
 use wellfed_feeder::panel::{Action, Event as PanelEvent, Lock, Source as PanelSource};
-use wellfed_feeder_sim::console;
-use wellfed_feeder_sim::device::Random;
 use wellfed_feeder_sim::flash::Flash;
-use wellfed_feeder_sim::serve::{self, Control, Event, Feeder};
+use wellfed_feeder_sim::harness;
+use wellfed_feeder_sim::serve::Event;
 use wellfed_feeder_sim::sim::{Record, Reset};
 use wellfed_proto::api::{
     EventBody, FeederMessage, Joined, Op, Outcome, Refusal, RequestId, Role, SettingsChanges,
     Source, Status, TimeSync, Wifi,
 };
-use tokio::net::TcpListener;
-use tokio::sync::mpsc;
 use tokio::task::LocalSet;
 
 const OWNER: [u8; 32] = [0x21; 32];
@@ -36,72 +30,33 @@ fn keys(secret: [u8; 32]) -> Keypair {
     Keypair::from_secret(secret)
 }
 
-/// A generator that never repeats within a test: identities, ephemerals
-/// and invite secrets all come from it. The count sits clear of the bits
-/// X25519 clamps (byte 0's low three, byte 31's top two), so every output
-/// is a distinct key.
-fn counter(seed: u8) -> impl Fn() -> Random {
-    let next = Rc::new(Cell::new(0u32));
-    move || {
-        let next = Rc::clone(&next);
-        Box::new(move || {
-            let n = next.get().wrapping_add(1);
-            next.set(n);
-            let mut out = [seed; 32];
-            out[8..12].copy_from_slice(&n.to_le_bytes());
-            Some(out)
-        })
+/// The shared harness, with this file's owner and request ids.
+struct Running {
+    sim: harness::Running,
+    ids: u8,
+}
+
+impl std::ops::Deref for Running {
+    type Target = harness::Running;
+
+    fn deref(&self) -> &harness::Running {
+        &self.sim
     }
 }
 
-/// A running simulator.
-struct Running {
-    address: SocketAddr,
-    identity: [u8; 32],
-    control: mpsc::UnboundedSender<Control>,
-    events: mpsc::UnboundedReceiver<Event>,
-    done: tokio::task::JoinHandle<()>,
-    ids: u8,
+impl std::ops::DerefMut for Running {
+    fn deref_mut(&mut self) -> &mut harness::Running {
+        &mut self.sim
+    }
 }
 
 impl Running {
     /// The simulator on `flash`, enrolling the test's owner unless
     /// `enroll` is false.
     async fn start(flash: &Rc<Flash>, enroll: bool) -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        let feeder = Feeder {
-            flash: Rc::clone(flash),
-            random: Box::new(counter(0x5a)),
-            prepare: Box::new(move |sim| {
-                if enroll {
-                    let label = Label::new(b"test-owner").unwrap();
-                    sim.device()
-                        .enroll(*keys(OWNER).public(), label, StoreRole::Owner)?;
-                }
-                Ok(())
-            }),
-        };
-        let (control, commands) = mpsc::unbounded_channel();
-        let (sink, mut events) = mpsc::unbounded_channel();
-        let done = tokio::task::spawn_local(async move {
-            serve::serve(feeder, listener, None, commands, |event| {
-                let _ = sink.send(event);
-            })
-            .await
-            .unwrap();
-        });
-        let identity = loop {
-            if let Some(Event::Started { identity }) = events.recv().await {
-                break identity;
-            }
-        };
+        let owner = enroll.then(|| *keys(OWNER).public());
         Self {
-            address,
-            identity,
-            control,
-            events,
-            done,
+            sim: harness::Running::start(flash, owner).await,
             ids: 0,
         }
     }
@@ -117,14 +72,11 @@ impl Running {
     }
 
     fn type_line(&self, line: &str) {
-        for control in console::parse(line).unwrap() {
-            self.control.send(control).unwrap();
-        }
+        self.sim.type_line(line).unwrap();
     }
 
     async fn stop(self) {
-        self.control.send(Control::Quit).unwrap();
-        self.done.await.unwrap();
+        self.sim.stop().await;
     }
 }
 
@@ -639,12 +591,80 @@ fn the_keepalive_holds_a_quiet_session_past_the_idle_limit() {
         }
         let status = follower.ask(sim.id(), Op::Status).await.unwrap();
         assert!(matches!(status.outcome(), Outcome::Status(_)));
-        // Its keepalive goes out to a closed socket, so the read finds the
-        // close or the reset.
+        // It has heard nothing for longer than the silence limit, which says
+        // it is gone before it even reads the close.
         assert!(matches!(
             quiet.next(Duration::from_secs(1)).await,
-            Err(ConnectError::Closed | ConnectError::Io(_))
+            Err(ConnectError::Silent)
         ));
+        sim.stop().await;
+    });
+}
+
+/// A caller that `select!`s on `next` beside its own work drops the future
+/// whenever the other branch wins; the keepalive still goes out and the
+/// subscription loses nothing.
+#[test]
+fn a_feeder_that_goes_silent_without_a_reset_is_noticed() {
+    paused(async {
+        let sim = Running::start(&Flash::memory(), true).await;
+        let relay = harness::Relay::start(sim.address).await;
+        let ephemeral = [OWNER[0] ^ 0x80; 32];
+        let mut owner = Connection::open(&keys(OWNER), sim.identity, relay.address, ephemeral)
+            .await
+            .unwrap();
+        owner.subscribe(None, false).await.unwrap();
+        while owner.next(Duration::from_millis(200)).await.is_ok() {}
+
+        // Power lost: nothing comes back, and no reset says so. Silence
+        // counts from the last thing heard, just before the pause.
+        relay.pause();
+        let started = tokio::time::Instant::now();
+        let ended = loop {
+            match owner.next(Duration::from_secs(30)).await {
+                Err(ConnectError::Timeout) => {}
+                other => break other,
+            }
+        };
+        assert!(matches!(ended, Err(ConnectError::Silent)), "{ended:?}");
+        let waited = started.elapsed();
+        assert!(
+            waited + Duration::from_secs(1) >= wellfed_connect::SILENCE
+                && waited < 2 * wellfed_connect::SILENCE,
+            "{waited:?}"
+        );
+        sim.stop().await;
+    });
+}
+
+#[test]
+fn a_session_polled_with_dropped_next_futures_stays_alive() {
+    paused(async {
+        let mut sim = Running::start(&Flash::memory(), true).await;
+        let mut follower = sim.open(OWNER).await.unwrap();
+        follower.subscribe(None, false).await.unwrap();
+
+        let limit = Duration::from_millis(wellfed_feeder::api::IDLE_MS.into());
+        let until = tokio::time::Instant::now() + 2 * limit;
+        let mut boots = 0;
+        while tokio::time::Instant::now() < until {
+            let tick = tokio::time::sleep(Duration::from_millis(700));
+            tokio::select! {
+                message = follower.next(limit) => {
+                    let message = message.expect("the session stays open");
+                    if let FeederMessage::Event(event) = message.get()
+                        && matches!(event.body, EventBody::Boot { .. })
+                    {
+                        boots += 1;
+                    }
+                }
+                () = tick => {}
+            }
+        }
+
+        assert_eq!(boots, 1, "the backlog arrives once");
+        let status = follower.ask(sim.id(), Op::Status).await.unwrap();
+        assert!(matches!(status.outcome(), Outcome::Status(_)));
         sim.stop().await;
     });
 }

@@ -1,0 +1,1711 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Wellfed server",
+    "description": "The owner's server: mirrors each feeder's history and serves it to the web UI and the app. Unstable until the first release.",
+    "license": {
+      "name": "MIT"
+    },
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/api/v1/feeders": {
+      "get": {
+        "tags": [
+          "feeders"
+        ],
+        "summary": "The adopted feeders, with the server's connection to each.",
+        "operationId": "feeders",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Feeder"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "feeders"
+        ],
+        "summary": "Adopt a feeder by redeeming an invite its owner made for the server.",
+        "operationId": "adopt",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdoptFeeder"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Feeder"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid: not an invite, or no address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden: owners only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "already_adopted, or feeder_refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "invite_expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "unreachable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/feeders/{id}": {
+      "get": {
+        "tags": [
+          "feeders"
+        ],
+        "summary": "One feeder and its status: live when it is online, otherwise the last\ncopy, marked.",
+        "operationId": "feeder",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/FeederId"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeederDetail"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/feeders/{id}/events": {
+      "get": {
+        "tags": [
+          "feeders"
+        ],
+        "summary": "The feeder's history as the server holds it, oldest first.",
+        "operationId": "events",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/FeederId"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "description": "Events after this sequence number; from the oldest when absent.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "At most this many (1-500, default 100).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/EventKind"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventPage"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/feeders/{id}/lock": {
+      "post": {
+        "tags": [
+          "feeders"
+        ],
+        "summary": "Lock or unlock the feeder's panel.",
+        "operationId": "lock",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/FeederId"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "A UUID; a retry with the same key is answered once",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LockRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {},
+          "503": {
+            "description": "feeder_offline",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "outcome_unknown: retry with the same key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/feeders/{id}/settings": {
+      "get": {
+        "tags": [
+          "feeders"
+        ],
+        "summary": "The feeder's settings, read from it. The `ETag` is the generation a\nchange sends back in `If-Match`.",
+        "operationId": "settings",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/FeederId"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Settings"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "feeder_offline",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "feeders"
+        ],
+        "summary": "Change settings, if they are still at the generation in `If-Match`.",
+        "operationId": "put_settings",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/FeederId"
+            }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "The generation the change is based on",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "A UUID; a retry with the same key is answered once",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SettingsPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Settings"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Stale: the current settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Settings"
+                }
+              }
+            }
+          },
+          "428": {
+            "description": "precondition_required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "feeder_offline",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "outcome_unknown: retry with the same key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/session": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "The logged-in user.",
+        "operationId": "session",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/User"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Log in.",
+        "operationId": "login",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Credentials"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The session cookie is set",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/User"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "bad_credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Log out.",
+        "operationId": "logout",
+        "responses": {
+          "204": {}
+        }
+      }
+    },
+    "/api/v1/setup": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Whether a fresh server is waiting for its first owner.",
+        "operationId": "setup_state",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetupState"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Create the first owner and log them in. Closed once any account exists.",
+        "operationId": "setup",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Credentials"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created; the session cookie is set",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/User"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "setup_closed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/stream": {
+      "get": {
+        "tags": [
+          "feeders"
+        ],
+        "summary": "Live updates for every feeder: events, gaps, connection changes, and\nthe sample metrics asked for.",
+        "operationId": "stream",
+        "parameters": [
+          {
+            "name": "samples",
+            "in": "query",
+            "description": "The sample metrics to include, comma-separated (`power,rssi`); none\nwhen absent.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Last-Event-ID",
+            "in": "header",
+            "description": "Resume after this event",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/StreamEvent"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "summary": "Liveness and version, without authentication.",
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AdoptFeeder": {
+        "type": "object",
+        "description": "Adopt a feeder by redeeming an invite its owner created for the server\n(`wellfed invite --role server`).",
+        "required": [
+          "invite",
+          "name"
+        ],
+        "properties": {
+          "address": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The feeder's `host` or `host:port`; found over mDNS when absent."
+          },
+          "invite": {
+            "type": "string",
+            "description": "The invite's text, `wellfed-invite:1:…`. It holds a secret, so it\nis never stored or logged."
+          },
+          "name": {
+            "type": "string",
+            "description": "What the household calls the feeder (1-64 characters)."
+          }
+        }
+      },
+      "ClientRole": {
+        "type": "string",
+        "description": "A role in the feeder's own client table.",
+        "enum": [
+          "owner",
+          "member",
+          "server",
+          "update_signer"
+        ]
+      },
+      "Connection": {
+        "type": "string",
+        "description": "The server's session with a feeder.",
+        "enum": [
+          "offline",
+          "connecting",
+          "online",
+          "refused"
+        ]
+      },
+      "Credentials": {
+        "type": "object",
+        "description": "A name and password: the first owner's at setup, anyone's at login.",
+        "required": [
+          "name",
+          "password"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "1-64 characters."
+          },
+          "password": {
+            "type": "string",
+            "description": "At least 8 characters."
+          }
+        }
+      },
+      "EnrollPath": {
+        "type": "string",
+        "description": "How a client enrolled.",
+        "enum": [
+          "setup",
+          "invite",
+          "recovery"
+        ]
+      },
+      "ErrorCode": {
+        "type": "string",
+        "description": "Every way a request fails. Clients branch on this, never on the title.",
+        "enum": [
+          "setup_closed",
+          "unauthenticated",
+          "bad_credentials",
+          "forbidden",
+          "cross_origin",
+          "unknown_host",
+          "not_found",
+          "invalid",
+          "precondition_required",
+          "already_adopted",
+          "invite_expired",
+          "unreachable",
+          "feeder_offline",
+          "feeder_refused",
+          "outcome_unknown",
+          "internal"
+        ]
+      },
+      "EventBody": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "bank",
+              "reset_flags",
+              "kind"
+            ],
+            "properties": {
+              "bank": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "boot"
+                ]
+              },
+              "reset_flags": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "locked",
+              "by",
+              "kind"
+            ],
+            "properties": {
+              "by": {
+                "$ref": "#/components/schemas/Source"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "lock"
+                ]
+              },
+              "locked": {
+                "type": "boolean"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "generation",
+              "by",
+              "kind"
+            ],
+            "properties": {
+              "by": {
+                "$ref": "#/components/schemas/Source"
+              },
+              "generation": {
+                "$ref": "#/components/schemas/Generation"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "settings"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "generation",
+              "by",
+              "kind"
+            ],
+            "properties": {
+              "by": {
+                "$ref": "#/components/schemas/Source"
+              },
+              "generation": {
+                "$ref": "#/components/schemas/Generation"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "wifi"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "client",
+              "role",
+              "path",
+              "kind"
+            ],
+            "properties": {
+              "client": {
+                "type": "string",
+                "description": "The new client's fingerprint (its key's first 4 bytes)."
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "enrolled"
+                ]
+              },
+              "path": {
+                "$ref": "#/components/schemas/EnrollPath"
+              },
+              "role": {
+                "$ref": "#/components/schemas/ClientRole"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "client",
+              "by",
+              "kind"
+            ],
+            "properties": {
+              "by": {
+                "$ref": "#/components/schemas/Source"
+              },
+              "client": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "revoked"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "by",
+              "kind"
+            ],
+            "properties": {
+              "by": {
+                "$ref": "#/components/schemas/Source"
+              },
+              "jump_ms": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int32",
+                "description": "How far the clock moved, when it was valid before."
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "clock_sync"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Events the feeder could not record (its queue overflowed).",
+            "required": [
+              "count",
+              "kind"
+            ],
+            "properties": {
+              "count": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "lost"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "EventPage": {
+        "type": "object",
+        "description": "A page of history, oldest first.",
+        "required": [
+          "events",
+          "gaps"
+        ],
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FeederEvent"
+            }
+          },
+          "gaps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Gap"
+            },
+            "description": "The gaps that end inside the page's span."
+          },
+          "next": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The `after` for the next page; `None` at the newest.",
+            "minimum": 0
+          }
+        }
+      },
+      "Feeder": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "identity",
+          "role",
+          "connection"
+        ],
+        "properties": {
+          "address": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where the server last reached it."
+          },
+          "connection": {
+            "$ref": "#/components/schemas/Connection"
+          },
+          "id": {
+            "$ref": "#/components/schemas/FeederId"
+          },
+          "identity": {
+            "type": "string",
+            "description": "The feeder's identity key."
+          },
+          "name": {
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/ClientRole",
+            "description": "The role the feeder enrolled the server's key with."
+          },
+          "synced": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The newest event the server holds, `None` before the first.",
+            "minimum": 0
+          }
+        }
+      },
+      "FeederDetail": {
+        "type": "object",
+        "description": "One feeder and its latest status.",
+        "required": [
+          "feeder"
+        ],
+        "properties": {
+          "feeder": {
+            "$ref": "#/components/schemas/Feeder"
+          },
+          "status": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/StatusSnapshot",
+                "description": "`None` until the server has read it once."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "FeederEvent": {
+        "type": "object",
+        "description": "One event the feeder recorded.",
+        "required": [
+          "seq",
+          "received",
+          "body"
+        ],
+        "properties": {
+          "at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "The feeder's clock when it happened; `None` while that was invalid."
+          },
+          "body": {
+            "$ref": "#/components/schemas/EventBody"
+          },
+          "received": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the server received it."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The feeder's sequence number: monotonic across its reboots.",
+            "minimum": 0
+          }
+        }
+      },
+      "FeederId": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "FeederRefusal": {
+        "type": "string",
+        "description": "Why the feeder refused, as it said.",
+        "enum": [
+          "forbidden",
+          "busy",
+          "stale",
+          "unavailable",
+          "invalid",
+          "not_writable",
+          "full",
+          "not_found",
+          "muted",
+          "time"
+        ]
+      },
+      "FeederSample": {
+        "type": "object",
+        "description": "A live measurement. The feeder sends these only while the server is\nsubscribed and never stores them; the server keeps every one.",
+        "required": [
+          "received",
+          "uptime_ms",
+          "value"
+        ],
+        "properties": {
+          "received": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "uptime_ms": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The feeder's uptime when it measured.",
+            "minimum": 0
+          },
+          "value": {
+            "$ref": "#/components/schemas/SampleValue"
+          }
+        }
+      },
+      "FeederStatus": {
+        "type": "object",
+        "description": "What the feeder reports about itself.",
+        "required": [
+          "build",
+          "bank",
+          "uptime_ms",
+          "boot_count",
+          "reset_flags",
+          "faults",
+          "rssi",
+          "wifi",
+          "link_losses",
+          "dns_losses",
+          "settings_generation",
+          "wifi_generation",
+          "sessions"
+        ],
+        "properties": {
+          "bank": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The flash bank it booted from.",
+            "minimum": 0
+          },
+          "boot_count": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "build": {
+            "type": "string"
+          },
+          "clock": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "The feeder's clock; `None` while it is invalid."
+          },
+          "dns_losses": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Losses a failed DNS check noticed rather than the link.",
+            "minimum": 0
+          },
+          "faults": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "last_event": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The newest event's sequence number on the feeder.",
+            "minimum": 0
+          },
+          "link_losses": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "locked": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "The panel's child lock; `None` before it is known."
+          },
+          "power": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Power"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reset_flags": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "rssi": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Wi-Fi signal, dBm."
+          },
+          "sessions": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Open device API sessions, the server's included.",
+            "minimum": 0
+          },
+          "settings_generation": {
+            "$ref": "#/components/schemas/Generation"
+          },
+          "uptime_ms": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "wifi": {
+            "$ref": "#/components/schemas/WifiSource"
+          },
+          "wifi_generation": {
+            "$ref": "#/components/schemas/Generation"
+          }
+        }
+      },
+      "Gap": {
+        "type": "object",
+        "description": "Events the feeder dropped from its ring before the server read them.",
+        "required": [
+          "from",
+          "to",
+          "received"
+        ],
+        "properties": {
+          "from": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "received": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "to": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "Generation": {
+        "type": "integer",
+        "format": "int32",
+        "description": "A feeder store's generation: a write names the one it read, and the\nfeeder refuses it once the store has moved on.",
+        "minimum": 0
+      },
+      "Health": {
+        "type": "object",
+        "description": "Liveness, without authentication.",
+        "required": [
+          "version"
+        ],
+        "properties": {
+          "version": {
+            "type": "string"
+          }
+        }
+      },
+      "LockRequest": {
+        "type": "object",
+        "required": [
+          "locked"
+        ],
+        "properties": {
+          "locked": {
+            "type": "boolean"
+          }
+        }
+      },
+      "Power": {
+        "type": "object",
+        "required": [
+          "adapter"
+        ],
+        "properties": {
+          "adapter": {
+            "type": "boolean"
+          },
+          "battery_mv": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "Problem": {
+        "type": "object",
+        "required": [
+          "type",
+          "title",
+          "status",
+          "code"
+        ],
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/ErrorCode"
+          },
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "refusal": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FeederRefusal"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "title": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "description": "Always `about:blank`: `code` carries the type."
+          }
+        }
+      },
+      "Role": {
+        "type": "string",
+        "description": "What a household user may do through the server. Members feed and edit\nsettings; owners also manage users, tokens, feeders and installs.",
+        "enum": [
+          "owner",
+          "member"
+        ]
+      },
+      "SampleValue": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "adapter",
+              "metric"
+            ],
+            "properties": {
+              "adapter": {
+                "type": "boolean"
+              },
+              "battery_mv": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int32",
+                "minimum": 0
+              },
+              "metric": {
+                "type": "string",
+                "enum": [
+                  "power"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "dbm",
+              "metric"
+            ],
+            "properties": {
+              "dbm": {
+                "type": "integer",
+                "format": "int32"
+              },
+              "metric": {
+                "type": "string",
+                "enum": [
+                  "rssi"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "Settings": {
+        "type": "object",
+        "description": "The feeder's settings. Its `generation` goes back in `If-Match` with a\nchange, and is the `ETag` of a read.",
+        "required": [
+          "generation",
+          "lights",
+          "sound",
+          "volume",
+          "writable"
+        ],
+        "properties": {
+          "generation": {
+            "$ref": "#/components/schemas/Generation"
+          },
+          "lights": {
+            "type": "boolean"
+          },
+          "sound": {
+            "type": "boolean"
+          },
+          "volume": {
+            "type": "integer",
+            "format": "int32",
+            "description": "0-100.",
+            "minimum": 0
+          },
+          "writable": {
+            "type": "boolean",
+            "description": "Whether the settings store can take a write now."
+          }
+        }
+      },
+      "SettingsPatch": {
+        "type": "object",
+        "description": "The settings to change; absent fields stay as they are.",
+        "properties": {
+          "lights": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "sound": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "volume": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "0-100.",
+            "minimum": 0
+          }
+        }
+      },
+      "SetupState": {
+        "type": "object",
+        "description": "Whether a fresh server is waiting for its first owner.",
+        "required": [
+          "open"
+        ],
+        "properties": {
+          "open": {
+            "type": "boolean"
+          }
+        }
+      },
+      "Source": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "panel"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "client",
+              "kind"
+            ],
+            "properties": {
+              "client": {
+                "type": "string",
+                "description": "The client's fingerprint (its key's first 4 bytes)."
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "client"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "feeder"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "Who caused an event."
+      },
+      "StatusSnapshot": {
+        "type": "object",
+        "required": [
+          "at",
+          "live",
+          "status"
+        ],
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the server read it."
+          },
+          "live": {
+            "type": "boolean",
+            "description": "Read for this request, rather than the last copy from before the\nfeeder went offline."
+          },
+          "status": {
+            "$ref": "#/components/schemas/FeederStatus"
+          }
+        }
+      },
+      "StreamEvent": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "feeder",
+              "event",
+              "type"
+            ],
+            "properties": {
+              "event": {
+                "$ref": "#/components/schemas/FeederEvent"
+              },
+              "feeder": {
+                "$ref": "#/components/schemas/FeederId"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "event"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "feeder",
+              "gap",
+              "type"
+            ],
+            "properties": {
+              "feeder": {
+                "$ref": "#/components/schemas/FeederId"
+              },
+              "gap": {
+                "$ref": "#/components/schemas/Gap"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "gap"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "feeder",
+              "sample",
+              "type"
+            ],
+            "properties": {
+              "feeder": {
+                "$ref": "#/components/schemas/FeederId"
+              },
+              "sample": {
+                "$ref": "#/components/schemas/FeederSample"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "sample"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "feeder",
+              "connection",
+              "type"
+            ],
+            "properties": {
+              "connection": {
+                "$ref": "#/components/schemas/Connection"
+              },
+              "feeder": {
+                "$ref": "#/components/schemas/FeederId"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "connection"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The stream cannot resume from the client's `Last-Event-ID`:\nrefetch what it shows.",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "resync"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "User": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "role"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/UserId"
+          },
+          "name": {
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          }
+        }
+      },
+      "UserId": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "WifiSource": {
+        "type": "string",
+        "description": "Which Wi-Fi credentials the feeder joined with.",
+        "enum": [
+          "build",
+          "stored",
+          "fallback"
+        ]
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "auth",
+      "description": "First-owner setup and login"
+    },
+    {
+      "name": "feeders",
+      "description": "Adopted feeders, their settings, lock and history"
+    }
+  ]
+}

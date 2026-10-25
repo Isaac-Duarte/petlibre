@@ -1,0 +1,74 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT seq, at_s, received_ms, kind, body FROM events\n               WHERE feeder_id = ?1 AND seq > ?2 AND (?3 IS NULL OR kind = ?3)\n               ORDER BY seq LIMIT ?4",
+  "describe": {
+    "columns": [
+      {
+        "name": "seq",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "events",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "name": "at_s",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "events",
+            "name": "at_s"
+          }
+        }
+      },
+      {
+        "name": "received_ms",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "events",
+            "name": "received_ms"
+          }
+        }
+      },
+      {
+        "name": "kind",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "events",
+            "name": "kind"
+          }
+        }
+      },
+      {
+        "name": "body",
+        "ordinal": 4,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "events",
+            "name": "body"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": [
+      false,
+      true,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "5a8d34a3e45bbceccaf3912bae6354689f4a8c00f9c0468e9465b6a1caee3c49"
+}

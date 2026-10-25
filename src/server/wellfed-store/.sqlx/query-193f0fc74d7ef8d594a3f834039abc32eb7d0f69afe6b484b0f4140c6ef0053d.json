@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT from_seq, to_seq, received_ms FROM gaps\n             WHERE feeder_id = ? AND to_seq > ? AND to_seq <= ? ORDER BY from_seq",
+  "describe": {
+    "columns": [
+      {
+        "name": "from_seq",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "gaps",
+            "name": "from_seq"
+          }
+        }
+      },
+      {
+        "name": "to_seq",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "gaps",
+            "name": "to_seq"
+          }
+        }
+      },
+      {
+        "name": "received_ms",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "gaps",
+            "name": "received_ms"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "193f0fc74d7ef8d594a3f834039abc32eb7d0f69afe6b484b0f4140c6ef0053d"
+}

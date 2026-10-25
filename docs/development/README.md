@@ -27,6 +27,8 @@ Rustup and Cargo download dependencies on initial setup. Check targets do not in
 | `check-fixtures` | Explicit optional binary/SDK evidence suite; missing inputs or skips fail |
 | `check` | All contributor checks except optional fixture validation |
 
+The server's committed contracts are checked inside `check-rust`: a test fails when `src/server/wellfed-server/openapi.json` is stale (`UPDATE_OPENAPI=1 cargo test -p wellfed-server --test openapi` rewrites it), and the store's SQL compiles only against its committed `.sqlx/` metadata. After changing a query or a migration, `make sqlx-prepare` rebuilds that metadata from a scratch database; it needs the `sqlite3` command line, and no other target does.
+
 `check-cross` checks portable compilation, not SDK-linked hardware ports. Evidence tests are explicitly ignored in the ordinary suite and selected by `check-fixtures`; an ignored test is not passing evidence.
 
 Generated Rust artifacts live in `target/`; the simulator worker and temporary verification outputs can create ignored `private/` subdirectories. No existing backups or evidence are required. Use [.gitignore](../../.gitignore) as the storage boundary, and keep secrets out of the tracked examples.

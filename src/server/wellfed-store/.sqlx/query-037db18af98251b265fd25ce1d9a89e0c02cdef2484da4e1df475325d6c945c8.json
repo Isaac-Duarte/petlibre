@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO feeder_state (feeder_id, settings, settings_ms) VALUES (?, ?, ?)\n             ON CONFLICT (feeder_id) DO UPDATE SET settings = excluded.settings, settings_ms = excluded.settings_ms",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "037db18af98251b265fd25ce1d9a89e0c02cdef2484da4e1df475325d6c945c8"
+}

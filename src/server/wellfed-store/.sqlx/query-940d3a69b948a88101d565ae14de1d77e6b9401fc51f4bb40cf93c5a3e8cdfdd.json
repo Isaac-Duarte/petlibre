@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO feeders (id, identity, name, role, address, key_nonce, key_sealed, created_ms)\n             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 8
+    },
+    "nullable": []
+  },
+  "hash": "940d3a69b948a88101d565ae14de1d77e6b9401fc51f4bb40cf93c5a3e8cdfdd"
+}

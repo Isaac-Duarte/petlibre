@@ -14,6 +14,7 @@
 //!   feeder that answers holds the identity the invite named.
 
 use wellfed_core::frame::{self, PREFIX};
+use wellfed_core::hex::{self, Lower};
 use wellfed_core::noise::{self, Handshake, Keypair, Pattern, Role, Transport};
 use wellfed_proto::api::{
     ClientMessage, FRAME_MAX, FeederMessage, Hello, Join as JoinRequest, Joined, Op, Open,
@@ -254,6 +255,57 @@ impl std::fmt::Debug for Invite {
     }
 }
 
+/// The text form's start; the digit is the form's version.
+pub const INVITE_PREFIX: &str = "wellfed-invite:1:";
+
+/// Why a text is not an invite.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum InviteText {
+    #[error("not a wellfed invite")]
+    Prefix,
+    #[error("an invite has a feeder, an id and a secret")]
+    Parts,
+    #[error("the invite's feeder key is not 32 bytes of lowercase hex")]
+    Feeder,
+    #[error("the invite's id is not a number")]
+    Id,
+    #[error("the invite's secret is not 32 bytes of lowercase hex")]
+    Secret,
+}
+
+impl Invite {
+    /// The invite as one line of text (`wellfed-invite:1:<feeder>:<id>:<secret>`),
+    /// as the issuing client shows it and a redeeming one takes it. It holds
+    /// the secret, so it is shown once and never logged.
+    pub fn text(&self) -> String {
+        format!(
+            "{INVITE_PREFIX}{}:{}:{}",
+            Lower(&self.feeder),
+            self.id,
+            Lower(&self.secret)
+        )
+    }
+
+    pub fn parse(text: &str) -> Result<Self, InviteText> {
+        let rest = text
+            .trim()
+            .strip_prefix(INVITE_PREFIX)
+            .ok_or(InviteText::Prefix)?;
+        let mut parts = rest.split(':');
+        let (Some(feeder), Some(id), Some(secret), None) =
+            (parts.next(), parts.next(), parts.next(), parts.next())
+        else {
+            return Err(InviteText::Parts);
+        };
+
+        Ok(Self {
+            feeder: hex::decode_array(feeder.as_bytes()).ok_or(InviteText::Feeder)?,
+            id: id.parse().map_err(|_| InviteText::Id)?,
+            secret: hex::decode_array(secret.as_bytes()).ok_or(InviteText::Secret)?,
+        })
+    }
+}
+
 /// What a redemption step asks of the caller.
 #[derive(Debug, PartialEq, Eq)]
 pub enum JoinStep {
@@ -339,5 +391,53 @@ impl Join {
         let len = transport.open(&message, &mut plain)?;
         let joined = wellfed_proto::decode(&plain[..len]).map_err(|_| Error::Malformed)?;
         Ok(Some(JoinStep::Done(joined)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_invite_survives_its_text_form() {
+        let invite = Invite {
+            feeder: [0xab; 32],
+            id: 7,
+            secret: [0x01; 32],
+        };
+        let text = invite.text();
+        assert!(text.starts_with("wellfed-invite:1:abab"));
+        assert_eq!(Invite::parse(&text), Ok(invite));
+        assert_eq!(Invite::parse(&format!(" {text}\n")), Ok(invite));
+    }
+
+    #[test]
+    fn a_malformed_invite_says_which_part() {
+        let feeder = "ab".repeat(32);
+        let secret = "01".repeat(32);
+        let upper = "AB".repeat(32);
+        let short = "01".repeat(31);
+        for (text, error) in [
+            (format!("invite:{feeder}:1:{secret}"), InviteText::Prefix),
+            (format!("{INVITE_PREFIX}{feeder}:1"), InviteText::Parts),
+            (
+                format!("{INVITE_PREFIX}{feeder}:1:{secret}:x"),
+                InviteText::Parts,
+            ),
+            (
+                format!("{INVITE_PREFIX}{upper}:1:{secret}"),
+                InviteText::Feeder,
+            ),
+            (
+                format!("{INVITE_PREFIX}{feeder}:x:{secret}"),
+                InviteText::Id,
+            ),
+            (
+                format!("{INVITE_PREFIX}{feeder}:1:{short}"),
+                InviteText::Secret,
+            ),
+        ] {
+            assert_eq!(Invite::parse(&text), Err(error), "{text}");
+        }
     }
 }

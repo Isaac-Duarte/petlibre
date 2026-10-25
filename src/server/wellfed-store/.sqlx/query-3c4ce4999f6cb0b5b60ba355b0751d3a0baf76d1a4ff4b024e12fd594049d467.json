@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT users.id AS \"id: Uuid\", users.name, users.role\n               FROM sessions JOIN users ON users.id = sessions.user_id\n               WHERE sessions.token_hash = ? AND sessions.expires_ms > ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "id: Uuid",
+        "ordinal": 0,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "name",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "role",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "role"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "3c4ce4999f6cb0b5b60ba355b0751d3a0baf76d1a4ff4b024e12fd594049d467"
+}

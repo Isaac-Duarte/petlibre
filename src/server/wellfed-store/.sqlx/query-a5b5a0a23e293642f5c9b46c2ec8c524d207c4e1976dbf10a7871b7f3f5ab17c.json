@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE feeders SET address = ? WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "a5b5a0a23e293642f5c9b46c2ec8c524d207c4e1976dbf10a7871b7f3f5ab17c"
+}

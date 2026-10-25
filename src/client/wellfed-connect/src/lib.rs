@@ -11,7 +11,16 @@
 //! The feeder drops a session that sends nothing for its idle limit (90 s),
 //! so [`Connection::next`] sends a `Status` as a keepalive when the
 //! connection has been quiet on this side for [`KEEPALIVE`]; its answer is
-//! swallowed.
+//! swallowed. A live feeder answers every keepalive, so a connection that
+//! hears nothing for [`SILENCE`] fails with [`Error::Silent`]: a feeder
+//! that lost power sends no reset, and the kernel would otherwise keep the
+//! socket open for many minutes.
+//!
+//! Every method is cancel-safe, so a caller can `select!` on
+//! [`Connection::next`] beside its own work: reads keep nothing in flight,
+//! and a write cut short stays queued and finishes before the next one. A
+//! cancelled [`Connection::ask`] may still have sent its request; the
+//! answer then arrives through [`Connection::next`].
 //!
 //! Randomness is the caller's: request ids and ephemeral keys come in as
 //! arguments, so a server can draw them from its own generator and tests
@@ -42,6 +51,9 @@ pub const CONNECT: Duration = Duration::from_secs(5);
 pub const ANSWER: Duration = Duration::from_secs(10);
 /// Well inside the feeder's 90 s idle limit, with room for a lost segment.
 pub const KEEPALIVE: Duration = Duration::from_secs(45);
+/// Room for a keepalive (sent 45 s after this side last wrote) and its
+/// answer, with margin: hearing nothing for this long, the feeder is gone.
+pub const SILENCE: Duration = Duration::from_secs(90);
 
 /// The id of the keepalive's `Status`. A read is never remembered by the
 /// feeder, so reusing one id is safe; its answer is dropped here, so a
@@ -67,6 +79,8 @@ pub enum Error {
     Timeout,
     #[error("the feeder closed the connection")]
     Closed,
+    #[error("the feeder stopped answering")]
+    Silent,
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
@@ -176,8 +190,14 @@ pub struct Connection {
     role: Role,
     /// Messages that arrived while [`Self::ask`] waited for its answer.
     queued: VecDeque<Message>,
+    /// Bytes the socket has not yet taken. A write whose future was
+    /// dropped leaves its rest here, and it goes out before anything else,
+    /// so frames never interleave.
+    outbox: Vec<u8>,
     /// When this side last wrote, for the keepalive.
     sent_at: Instant,
+    /// When the feeder was last heard, for [`SILENCE`].
+    received_at: Instant,
 }
 
 impl std::fmt::Debug for Connection {
@@ -212,7 +232,9 @@ impl Connection {
             build: String::new(),
             role: Role::Member,
             queued: VecDeque::new(),
+            outbox: Vec::new(),
             sent_at: Instant::now(),
+            received_at: Instant::now(),
         };
         let deadline = Instant::now() + ANSWER;
         loop {
@@ -263,12 +285,30 @@ impl Connection {
         if n == 0 {
             return Err(Error::Closed);
         }
+        self.received_at = Instant::now();
         self.session.receive(&buffer[..n])?;
         Ok(())
     }
 
     async fn write(&mut self, bytes: &[u8]) -> Result<()> {
-        self.stream.write_all(bytes).await?;
+        self.outbox.extend_from_slice(bytes);
+        self.flush().await
+    }
+
+    /// Send what the outbox holds. Each `write` either takes bytes or
+    /// leaves them, and they leave the outbox in the same poll, so a
+    /// dropped future loses or repeats nothing.
+    async fn flush(&mut self) -> Result<()> {
+        if self.outbox.is_empty() {
+            return Ok(());
+        }
+        while !self.outbox.is_empty() {
+            let n = self.stream.write(&self.outbox).await?;
+            if n == 0 {
+                return Err(Error::Closed);
+            }
+            self.outbox.drain(..n);
+        }
         self.sent_at = Instant::now();
         Ok(())
     }
@@ -300,16 +340,22 @@ impl Connection {
             return Ok(message);
         }
         let deadline = Instant::now() + wait;
+        self.flush().await?;
         loop {
             if let Some(message) = self.decoded()? {
                 return Ok(message);
             }
+            let now = Instant::now();
+            let silent = self.received_at + SILENCE;
+            if silent <= now {
+                return Err(Error::Silent);
+            }
             let keepalive = self.sent_at + KEEPALIVE;
-            if keepalive <= Instant::now() {
+            if keepalive <= now {
                 self.send_request(KEEPALIVE_ID, Op::Status).await?;
                 continue;
             }
-            match self.read(deadline.min(keepalive)).await {
+            match self.read(deadline.min(keepalive).min(silent)).await {
                 Err(Error::Timeout) if Instant::now() < deadline => {}
                 result => result?,
             }

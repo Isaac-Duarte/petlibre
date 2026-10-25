@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO events (feeder_id, seq, at_s, received_ms, kind, body)\n             VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "f79feba7cdc2ce2cb36dc004436b2ffbbe72b3b65cbc81b4846ed71f7c150b75"
+}

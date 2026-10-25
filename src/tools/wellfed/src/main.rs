@@ -352,8 +352,6 @@ struct RevokeArgs {
     client: String,
 }
 
-const INVITE_PREFIX: &str = "wellfed-invite:1:";
-
 async fn connect(target: &Target) -> Result<(OwnerKey, [u8; 32], Connection)> {
     let key = OwnerKey::open(&target.keys, None, OwnerKey::system())?;
     let identity = key.feeder(target.feeder.as_deref())?;
@@ -489,12 +487,13 @@ async fn invite_command(args: InviteArgs) -> Result<()> {
     let bytes = connection.ask(Op::CreateInvite { role }).await?;
     match bytes.outcome() {
         Outcome::Invite(invite) => {
-            println!(
-                "{INVITE_PREFIX}{}:{}:{}",
-                hex::encode(&identity),
-                invite.id,
-                hex::encode(&invite.secret)
-            );
+            let text = Invite {
+                feeder: identity,
+                id: invite.id,
+                secret: invite.secret,
+            }
+            .text();
+            println!("{text}");
             eprintln!(
                 "Single use, for the next {} s; anyone holding it joins as {role:?}.",
                 invite.seconds
@@ -506,25 +505,8 @@ async fn invite_command(args: InviteArgs) -> Result<()> {
     }
 }
 
-fn parse_invite(text: &str) -> Result<Invite> {
-    let rest = text
-        .strip_prefix(INVITE_PREFIX)
-        .context("not a wellfed invite")?;
-    let mut parts = rest.split(':');
-    let (Some(feeder), Some(id), Some(secret), None) =
-        (parts.next(), parts.next(), parts.next(), parts.next())
-    else {
-        bail!("an invite has a feeder, an id and a secret");
-    };
-    Ok(Invite {
-        feeder: hex::decode::<32>(feeder).context("the invite's feeder key")?,
-        id: id.parse().context("the invite's id")?,
-        secret: hex::decode::<32>(secret).context("the invite's secret")?,
-    })
-}
-
 async fn join_command(args: JoinArgs) -> Result<()> {
-    let invite = parse_invite(&args.invite)?;
+    let invite = Invite::parse(&args.invite)?;
     let mut key = OwnerKey::open(&args.keys, args.label.as_deref(), OwnerKey::system())?;
     let address = device::locate(&invite.feeder, args.address.as_deref())?;
     let joined = wellfed_connect::join(

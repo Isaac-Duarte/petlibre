@@ -1,4 +1,4 @@
-.PHONY: help check check-rust check-deps check-cross check-virtual-feeder check-docs check-fixtures ui check-web
+.PHONY: help check check-rust check-deps check-cross check-virtual-feeder check-docs check-fixtures ui check-web sqlx-prepare
 
 help:
 	@echo "check: formatting, Clippy, Rust tests, cross-builds, simulator, repository checks"
@@ -6,6 +6,7 @@ help:
 	@echo "check-fixtures: optional reference-binary/SDK evidence; fails if unavailable"
 	@echo "ui: build the web page (pnpm in src/web/) that wellfed-bench embeds with --features ui"
 	@echo "check-web: web types, unit tests, build, then the page end to end against wellfed-bench"
+	@echo "sqlx-prepare: regenerate the server store's query metadata (.sqlx/) after changing a query or migration"
 	@echo "Checks do not open serial ports, change routing, or send device commands."
 
 check: check-rust check-deps check-cross check-virtual-feeder check-docs
@@ -58,3 +59,17 @@ check-web: ui
 	cargo test --locked -p wellfed-bench --features ui
 	cargo build --locked -p wellfed-bench --features ui
 	pnpm -C src/web e2e
+
+# The server store's queries are checked at build time against committed
+# metadata, so no build needs a database. After changing a query or a
+# migration, this rebuilds the metadata from a scratch database that the
+# sqlite3 command line applies the migrations to.
+STORE = src/server/wellfed-store
+STORE_DB = $(CURDIR)/target/sqlx-prepare.db
+sqlx-prepare:
+	rm -rf $(STORE)/.sqlx $(STORE_DB)
+	mkdir -p $(STORE)/.sqlx $(dir $(STORE_DB))
+	cat $(STORE)/migrations/*.sql | sqlite3 $(STORE_DB)
+	touch $(STORE)/src/lib.rs
+	DATABASE_URL=sqlite://$(STORE_DB) SQLX_OFFLINE_DIR=$(CURDIR)/$(STORE)/.sqlx cargo check --locked -p wellfed-store
+	rm -f $(STORE_DB)

@@ -3,6 +3,7 @@ members = [
     "src/sdk/*",
     "src/product/*",
     "src/client/*",
+    "src/server/*",
     "src/tools/wellfed",
     "src/tools/wellfed-*",
     "src/tools/xtask",
@@ -28,6 +29,10 @@ wellfed-sdk-c = { path = "src/sdk/wellfed-sdk-c" }
 wellfed-feeder = { path = "src/product/wellfed-feeder" }
 wellfed-client = { path = "src/client/wellfed-client" }
 wellfed-connect = { path = "src/client/wellfed-connect" }
+wellfed-feeder-sim = { path = "src/tools/wellfed-feeder-sim" }
+wellfed-api = { path = "src/server/wellfed-api" }
+wellfed-store = { path = "src/server/wellfed-store" }
+wellfed-service = { path = "src/server/wellfed-service" }
 wellfed-formats = { path = "src/tools/wellfed-formats" }
 wellfed-emu = { path = "src/tools/wellfed-emu" }
 wellfed-testkit = { path = "src/sdk/wellfed-testkit" }
@@ -44,6 +49,10 @@ tempfile = "3.27.0"
 thiserror = "2.0.21"
 tokio = "1.53.3"
 uuid = "1.28.0"
+# The owner's server (src/server).
+jiff = "0.2.38"
+sqlx = { version = "0.9.0", default-features = false, features = ["sqlite", "runtime-tokio", "macros", "migrate"] }
+utoipa = "6.0.0"
 # Firmware targets.
 cortex-m = "0.7.7"
 

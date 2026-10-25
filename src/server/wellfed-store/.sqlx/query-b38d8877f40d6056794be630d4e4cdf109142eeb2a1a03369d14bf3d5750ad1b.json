@@ -1,0 +1,110 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id AS \"id: Uuid\", identity, name, role, address, key_nonce, key_sealed, synced\n               FROM feeders WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "id: Uuid",
+        "ordinal": 0,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "feeders",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "identity",
+        "ordinal": 1,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "feeders",
+            "name": "identity"
+          }
+        }
+      },
+      {
+        "name": "name",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "feeders",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "role",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "feeders",
+            "name": "role"
+          }
+        }
+      },
+      {
+        "name": "address",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "feeders",
+            "name": "address"
+          }
+        }
+      },
+      {
+        "name": "key_nonce",
+        "ordinal": 5,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "feeders",
+            "name": "key_nonce"
+          }
+        }
+      },
+      {
+        "name": "key_sealed",
+        "ordinal": 6,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "feeders",
+            "name": "key_sealed"
+          }
+        }
+      },
+      {
+        "name": "synced",
+        "ordinal": 7,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "feeders",
+            "name": "synced"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "b38d8877f40d6056794be630d4e4cdf109142eeb2a1a03369d14bf3d5750ad1b"
+}

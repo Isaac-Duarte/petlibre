@@ -1,0 +1,25 @@
+[package]
+license.workspace = true
+name = "wellfed-store"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "The owner's server database: SQLite through sqlx, its migrations and typed queries"
+publish.workspace = true
+
+[dependencies]
+jiff.workspace = true
+wellfed-api.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx = { workspace = true, features = ["uuid"] }
+thiserror.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt"] }
+uuid = { workspace = true, features = ["v7"] }
+
+[lints]
+workspace = true

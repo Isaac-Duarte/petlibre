@@ -1,0 +1,21 @@
+[package]
+license.workspace = true
+name = "wellfed-api"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "The owner's server HTTP API: request and response types, error codes and OpenAPI schemas"
+publish.workspace = true
+
+[dependencies]
+jiff = { workspace = true, features = ["serde"] }
+wellfed-core.workspace = true
+serde.workspace = true
+utoipa = { workspace = true, features = ["uuid", "jiff_0_2"] }
+uuid = { workspace = true, features = ["serde"] }
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

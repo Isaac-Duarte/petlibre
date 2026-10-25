@@ -70,3 +70,13 @@ The bench must be powered and on the replacement firmware, with the hotspot and 
 6. **Restore:** check the hotspot is up (`nmcli connection show --active`), then reinstall the build that was on bank 1 before: its frozen review (`wellfed-bench ota NAME-restore --review private/verification/<prior review>`), or `--build --firmware feeder` from the same `master` commit, so the restored identity is the recorded one. Put the hotspot and `serve` back as found, and record what ran and the restored build id in RESUME.
 
 Pass for the measurement: at least N rejoins captured (`gen` rose by about 2N), and every rejoin window has both lines.
+
+## Result (October 25, 2026, physical)
+
+`gap-probe` v170 (`2b0806ce…`) on bank 1, six 180 s captures (`ar9-gap-20261025-cap-01`…`06`) while the hotspot was cycled ten times (60 s up, 15 s down); 86 complete windows, 20 with a rejoin, across two boots (see the fault below).
+
+- **Rejoins hold every task, not just the loop.** In each window where a join's association ran, the priority-4 task was late by 444–450 ms and the loop by 443–474 ms: the same stall, within a pass's run time. Windows with only a scan or DHCP stayed at 3–17 ms (p4) and 28–29 ms (loop, its own pass). An association rejected with status 53 (stale PMKID) held both for about 720 ms (`worst` 724 and 741 ms).
+- **So a higher priority does not shorten the gap.** The stall is below the scheduler (the vendor driver masking or holding the CPU), so moving the feeding owner to its own priority-4 task would see the same 0.45–0.72 s. The design that follows is the interlock: a feed does not start while a join is in progress, and the Wi-Fi task defers a join while outputs may move.
+- **A hard fault in the loop, once.** In `cap-04`, after the status-53 rejection and its 720 ms stall, the 8 KiB `wellfed-loop` faulted with UNDEFINSTR (`cfsr=10000`) at `0x0e010ffe`, a valid `mrs r0, IPSR` in `unscheduled` (from `keys::identity_since`), executing from XIP flash; the board reset and came back on bank 1. A valid instruction faulting as undefined points to a bad fetch from flash rather than a code bug, but one capture cannot establish the cause. It is the same class as bank 0's occasional fault in the vendor Wi-Fi threads.
+
+Bank 1 was then restored to the reviewed `e43324be…` (v171, `ar9-restore-20261025-01`).

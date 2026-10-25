@@ -8,9 +8,9 @@ This file is the handoff, not the history. Keep it to the current state, today's
 
 Reconfirm with the owner before any bench operation; this is the last recorded state, not a live observation.
 
-- **Bank 1:** `feeder` v169 `e43324be…` (`ar-smoke-20261025-01`, confirmed, October 25): `master` at `545d18c` (AR1, AR2+AR13, AR15, AR19). Five cold boots (`ar-boot-20261025-01`…`05`) came up on bank 1 with the owner idle and unfaulted; the pre-epoch event ring kept epoch 0.
+- **Bank 1:** `feeder` `e43324be…` (v169 `ar-smoke-20261025-01`, reinstalled as v171 by `ar9-restore-20261025-01` after the AR9 gap-probe run, confirmed, October 25): `master` at `545d18c` (AR1, AR2+AR13, AR15, AR19). Five cold boots (`ar-boot-20261025-01`…`05`) came up on bank 1 with the owner idle and unfaulted; the pre-epoch event ring kept epoch 0.
 - **Bank 0:** `feeder` `262a9f37…` (UART, `bank0-diag-01`, October 24): its recovery role only; it never feeds.
-- **Next manifest version:** 170. **Feed journal:** high water 9.
+- **Next manifest version:** 172. **Feed journal:** high water 9.
 
 - **Client store:** one owner, the bench CLI's key (`private/wellfed-owner.json`).
 - **Bench:** feeder on (relay 1), UART relays 3 and 4 closed, hotspot up (found up on October 25 afternoon and left so), no server, no capture. Hopper empty. The logic analyzer may still be clipped at the motor.
@@ -37,6 +37,7 @@ Code for steps 4–8 is committed as `756f68f`.
 Findings and loose ends no card has closed yet. Each line says where it came from; move it to a card's notes when one takes it.
 
 **Firmware**
+- **Loop hard fault after a rejected association** (physical, October 25, `ar9-gap-20261025-cap-04`): UNDEFINSTR on a valid XIP instruction in `wellfed-loop` right after a status-53 association reject and a 720 ms stall; reset, back on bank 1. One in about 14 forced rejoins. Same class as bank 0's vendor Wi-Fi faults. A fault during a feed would interrupt it (see the latch below). [Result](docs/firmware/scheduling-gaps.md#result-october-25-2026-physical).
 - **Interrupted feed latches the owner faulted forever** (static, October 25 review): `pending_request` makes every boot fail with `OwnerFault::Recovery`; nothing clears it. FW17's call.
 - **Idle `acquire()` failure reset-loops a confirmed image** (static, October 24): it faults with `init_failed` false, so it never beats again. Holding the fault would strand a transient glitch. FW19's call.
 - **Flash writes during a feed** (static, October 25 review): the event ring, settings or keys can take a lease while the motor is on; the quiesce check fails and the board resets. Must be interlocked before scheduled feeds.

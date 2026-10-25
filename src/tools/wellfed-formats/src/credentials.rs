@@ -1,5 +1,6 @@
 //! The private credential and key files the firmware build embeds:
-//! `wellfed-local` writes them, `wellfed-build` turns them into headers.
+//! `wellfed-local` writes the credentials and `wellfed-build keygen` the
+//! update key; `wellfed-build` turns them into headers.
 
 use std::net::Ipv4Addr;
 
@@ -34,8 +35,26 @@ pub struct WifiCredential {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct OtaKeyFile {
     pub version: u32,
+    /// What the key may sign. A key file without the field predates it and
+    /// is the bench key.
+    #[serde(default)]
+    pub scope: KeyScope,
     /// Ed25519 seed, hex.
     pub seed: String,
     /// Hex; the firmware build embeds it.
     pub public_key: String,
+}
+
+/// What an update-signing key is for.
+///
+/// Only the bench key exists. It lives in a checkout's `private/`, so it
+/// signs development images for the research unit and nothing else; a
+/// public release needs an offline release key first, which never becomes
+/// a file here.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum KeyScope {
+    /// Development images on the bench's own units.
+    #[default]
+    Bench,
 }

@@ -1,5 +1,6 @@
 //! `wellfed-build`: build firmware images locally, without connecting to
-//! the feeder. Nothing here opens a serial port or writes a device.
+//! the feeder, and sign frozen reviews for updates. Nothing here opens a
+//! serial port or writes a device.
 //!
 //! Run the executable itself (`target/release/wellfed-build`), not through
 //! `cargo run`: cargo sets `RUSTUP_TOOLCHAIN`, which a firmware build refuses
@@ -15,6 +16,7 @@ use wellfed_build::catalog::Catalog;
 use wellfed_build::identity::{SourceId, current_inputs, source_id};
 use wellfed_build::image::{Request, audit_build, build};
 use wellfed_build::review::freeze;
+use wellfed_build::signing::{self, Frozen, Key, Motion};
 use wellfed_build::{Device, Firmware, Profile, Repo, Result, Variant};
 use wellfed_formats::review::ImageKind;
 
@@ -72,6 +74,33 @@ enum Command {
         #[arg(long, default_value = "private/firmware-build/plaf103/firstboot")]
         build: PathBuf,
         /// New private output directory.
+        #[arg(long)]
+        output: PathBuf,
+    },
+    /// Create the bench update-signing key; never replaces one. Prints the
+    /// public key that first-boot builds embed. A public release needs an
+    /// offline release key instead, which this tool never creates.
+    Keygen {
+        #[arg(long, default_value = signing::KEY_PATH)]
+        output: PathBuf,
+    },
+    /// Sign a frozen review's image as an update manifest, refusing an
+    /// image that differs from its review.
+    Sign {
+        #[arg(long, default_value = signing::KEY_PATH)]
+        key: PathBuf,
+        /// A directory `review` froze: image.bin, review.json and, for a
+        /// build, build-manifest.json.
+        #[arg(long)]
+        review: PathBuf,
+        /// Must exceed the installed image's version.
+        #[arg(long)]
+        version: u32,
+        /// Sign a motion image: the exact startup motion policy its review
+        /// declares, with the owner watching the feeder.
+        #[arg(long)]
+        attended_motion: Option<String>,
+        /// New file for the signed manifest.
         #[arg(long)]
         output: PathBuf,
     },
@@ -178,6 +207,29 @@ fn run(command: Command) -> Result<()> {
                 "payload_bytes": review.payload_bytes,
             });
             println!("{summary}");
+        }
+        Command::Keygen { output } => {
+            let public = signing::keygen(&output)?;
+            println!("Wrote bench key {}; public key {public}", output.display());
+        }
+        Command::Sign {
+            key,
+            review,
+            version,
+            attended_motion,
+            output,
+        } => {
+            let motion = attended_motion
+                .as_deref()
+                .map_or(Motion::Refused, Motion::Attended);
+            let frozen = Frozen::open(&review)?;
+            let manifest = frozen.sign(&Key::load(&key)?, version, motion)?;
+            wellfed_flash::evidence::write_new(&output, &manifest)?;
+            println!(
+                "Signed version {version} of build {} in {}",
+                frozen.build_id(),
+                output.display()
+            );
         }
         Command::List => {
             let catalog = Catalog {

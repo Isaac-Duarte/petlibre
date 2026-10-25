@@ -35,6 +35,7 @@ pub mod identity;
 pub mod image;
 pub mod platform;
 pub mod review;
+pub mod signing;
 
 pub use device::Device;
 pub use error::{Error, Result, require};

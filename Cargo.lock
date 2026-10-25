@@ -2308,6 +2308,8 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "clap",
+ "ed25519-dalek",
+ "wellfed-core",
  "wellfed-emu",
  "wellfed-flash",
  "wellfed-formats",

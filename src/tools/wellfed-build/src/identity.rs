@@ -34,10 +34,6 @@ const BUILDER_SHARED: [&str; 3] = [
     "src/tools/wellfed-flash/src/error.rs",
 ];
 
-/// Update-signing key from `wellfed-local ota-keygen`. Only its public
-/// half reaches the build, the identity and the manifest.
-const OTA_KEY: &str = "private/ota-key.json";
-
 /// Tracked plus untracked, non-ignored files below the root-relative
 /// directories `dirs`.
 ///
@@ -132,7 +128,8 @@ pub fn current_inputs(
 /// The update-signing public key built into recovery-role images, or None
 /// without a key file.
 pub(crate) fn ota_public_key(repo: &Repo, profile: Profile) -> Result<Option<String>> {
-    let path = repo.path(OTA_KEY);
+    // Only the key's public half reaches the build, the identity and the manifest.
+    let path = repo.path(crate::signing::KEY_PATH);
     if !profile.has(Stage::Firstboot) || !path.is_file() {
         return Ok(None);
     }

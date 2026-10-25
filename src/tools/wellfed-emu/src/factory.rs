@@ -29,6 +29,11 @@ const RSIP: u32 = 0x4800_0630;
 /// The ROM's RSIP mapping routine and its enable call.
 const MAP: u64 = 0x3624;
 const ENABLE: u64 = 0x3648;
+/// The instructions a loader entry may run before the run is refused. Each
+/// entry takes a few hundred; a runaway stops here. The budget is the only
+/// bound: a wall-clock timeout fired under a loaded host and failed a correct
+/// run, and the count is deterministic.
+const BUDGET: usize = 4000;
 
 /// Which loader entry to run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,7 +136,7 @@ pub fn execute(flash: &[u8], rom: &[u8], entry: Entry) -> Result<FactoryRun> {
             let _ = uc.emu_stop();
         }
     })?;
-    let started = uc.emu_start(begin, u64::from(EXIT) + 2, 1_000_000, 4000);
+    let started = uc.emu_start(begin, u64::from(EXIT) + 2, 0, BUDGET);
 
     if let Some(error) = uc.get_data_mut().error.take() {
         return Err(error);
@@ -276,4 +281,24 @@ fn reg<D>(uc: &Unicorn<D>, register: RegisterARM) -> Result<u32> {
 
 fn refused(what: &str) -> Error {
     Error::Refused(format!("Out-of-range {what} in factory emulation"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A loader that spins inside the reviewed range never reaches a boundary:
+    /// the instruction budget ends the run and it is refused.
+    #[test]
+    fn a_runaway_loader_is_bounded_by_the_budget() {
+        let mut flash = vec![0; FLASH_BYTES];
+        // `b .` at the bank check's entry.
+        flash[0x154..0x156].copy_from_slice(&0xE7FE_u16.to_le_bytes());
+        let rom = vec![0; 0x10000];
+
+        let Err(Error::Refused(message)) = execute(&flash, &rom, Entry::Check(0)) else {
+            panic!("a spinning loader must be refused");
+        };
+        assert_eq!(message, "Loader did not reach a reviewed boundary");
+    }
 }

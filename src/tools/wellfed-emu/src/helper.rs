@@ -173,7 +173,9 @@ impl Helper<'_> {
         self.started = true;
         self.uc.get_data_mut().empty_polls = 0;
 
-        let ran = self.uc.emu_start(pc | 1, CODE_END, 3_000_000, 500_000);
+        // The instruction count is the only bound: a wall-clock timeout is
+        // what a loaded host trips, not a runaway helper.
+        let ran = self.uc.emu_start(pc | 1, CODE_END, 0, 500_000);
         if let Some(error) = self.uc.get_data_mut().error.take() {
             return Err(error);
         }

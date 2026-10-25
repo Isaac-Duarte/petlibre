@@ -17,13 +17,13 @@
 //! [`Session`]: the clients use it, and the bench and tests use
 //! [`Session`] directly to send what a well-behaved client never would.
 
-use wellfed_core::frame::{self, PREFIX};
-use wellfed_core::hex::{self, Lower};
-use wellfed_core::noise::{self, Handshake, Keypair, Pattern, Role, Transport};
 use wellfed_proto::api::{
     Capabilities, ClientMessage, FRAME_MAX, FeederMessage, Hello, Join as JoinRequest, Joined, Op,
     Open, OpenRefusal, PROLOGUE, PROTOCOL_MAJOR, RequestId, Welcome,
 };
+use wellfed_session::frame::{self, PREFIX};
+use wellfed_session::hex::{self, Lower};
+use wellfed_session::noise::{self, Handshake, Keypair, Pattern, Role, Transport};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

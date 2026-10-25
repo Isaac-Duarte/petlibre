@@ -11,6 +11,7 @@ publish.workspace = true
 jiff = "0.2.38"
 wellfed-core.workspace = true
 wellfed-proto.workspace = true
+wellfed-session.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

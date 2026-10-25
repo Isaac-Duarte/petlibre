@@ -108,8 +108,8 @@ proptest! {
 
         let decoded = wellfed_proto::decode::<Request<'_>>(request).ok();
         let offered = decoded.is_some_and(|r| Label::new(r.label.as_bytes()).is_some());
-        let codes_match = wellfed_core::setup_code::Code::from_bits(feeder_code)
-            == wellfed_core::setup_code::Code::from_bits(client_code);
+        let codes_match = wellfed_session::setup_code::Code::from_bits(feeder_code)
+            == wellfed_session::setup_code::Code::from_bits(client_code);
         let credentials = wifi.map(|w| Credentials::new(w.ssid, w.psk.as_bytes()));
         let expected = match credentials {
             _ if !offered || !codes_match => Setup::Refused,

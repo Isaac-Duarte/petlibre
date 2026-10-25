@@ -16,6 +16,7 @@ km4 = ["wellfed-amebad-sys/km4"]
 [dependencies]
 wellfed-amebad-sys.workspace = true
 wellfed-core.workspace = true
+wellfed-session.workspace = true
 
 [target.'cfg(target_os = "none")'.dependencies]
 cortex-m.workspace = true

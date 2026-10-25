@@ -7,7 +7,6 @@ use std::time::Duration;
 
 use wellfed_client::api::Invite;
 use wellfed_connect::{Connection, Error as ConnectError, join};
-use wellfed_core::noise::Keypair;
 use wellfed_feeder::panel::{Action, Event as PanelEvent, Lock, Source as PanelSource};
 use wellfed_feeder_sim::flash::Flash;
 use wellfed_feeder_sim::harness;
@@ -17,6 +16,7 @@ use wellfed_proto::api::{
     EventBody, FeederMessage, Joined, Op, Outcome, Refusal, RequestId, Role, SettingsChanges,
     Source, Status, TimeSync, Wifi,
 };
+use wellfed_session::noise::Keypair;
 use tokio::task::LocalSet;
 
 const OWNER: [u8; 32] = [0x21; 32];
@@ -673,8 +673,8 @@ fn a_session_polled_with_dropped_next_futures_stays_alive() {
 #[test]
 fn the_recovery_window_admits_a_new_owner_who_proves_the_code() {
     use wellfed_client::setup::{Ask, Deframer, Session, Step, frame, panel_position};
-    use wellfed_core::setup_code::Code;
     use wellfed_proto::setup::Reply;
+    use wellfed_session::setup_code::Code;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     const STRANGER: [u8; 32] = [0x41; 32];

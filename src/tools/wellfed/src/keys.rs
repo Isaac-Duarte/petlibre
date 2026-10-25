@@ -4,10 +4,10 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, ensure};
-use wellfed_core::noise::Keypair;
 use wellfed_formats::hex;
 use wellfed_formats::owner::{EnrolledFeeder, OwnerKeyFile, VERSION};
 use wellfed_formats::private::{self, SYSTEM_RANDOM};
+use wellfed_session::noise::Keypair;
 
 /// The label a new key file gets unless `--label` names one.
 pub(crate) const DEFAULT_LABEL: &str = "wellfed-cli";

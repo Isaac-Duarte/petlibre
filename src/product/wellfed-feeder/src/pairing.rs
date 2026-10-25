@@ -7,7 +7,7 @@
 //!   and shows a one-time code, which the owner keys in on the buttons
 //!   within the confirmation window ([`Event::Entered`]). The firmware's
 //!   setup session then admits the app as an owner only if it proves the
-//!   same code (`wellfed_core::setup_code`); a press alone is not enough,
+//!   same code (`wellfed_session::setup_code`); a press alone is not enough,
 //!   since it cannot tell the owner's phone from a relay in radio range.
 //! - **Signer:** an owner offers an Ed25519 update-signing key; a
 //!   Dispense press confirms it the same way.
@@ -38,9 +38,9 @@
 //! [product architecture]: ../../../../docs/firmware/product-architecture.md#setup-and-pairing
 
 use wellfed_core::buttons::{Button, Buttons, Gesture};
-use wellfed_core::setup_code::{Code, PRESSES};
 use wellfed_core::store::clients::Role;
 use wellfed_core::{deadline_passed, interval_valid, named_enum};
+use wellfed_session::setup_code::{Code, PRESSES};
 
 use crate::panel::Lock;
 

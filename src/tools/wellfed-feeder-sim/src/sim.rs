@@ -14,11 +14,11 @@
 use std::rc::Rc;
 
 use wellfed_core::buttons::Gesture;
-use wellfed_core::noise::Keypair;
 use wellfed_feeder::api::{self as server, Pass, Server};
 use wellfed_feeder::pairing::{self, Pairing, Path, Refusal};
 use wellfed_feeder::panel::{self, Action, Config, Lock, Panel, Source};
 use wellfed_proto::api::{EventBody, Metric, Sample, Source as EventSource};
+use wellfed_session::noise::Keypair;
 
 use crate::device::{self, DeviceError, Random, SimDevice};
 use crate::flash::Flash;

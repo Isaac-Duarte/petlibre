@@ -27,12 +27,12 @@ use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use wellfed_client::api::Invite;
 use wellfed_client::setup::{Ask, Credentials, Session, Step, panel_position};
-use wellfed_core::setup_code::Code;
 use wellfed_formats::{hex, private};
 use wellfed_proto::api::{
     EventBody, FeederMessage, Joined, Op, Outcome, Role, SettingsChanges, Wifi,
 };
 use wellfed_proto::setup::{Enrolled, Refusal, Reply, WifiSaved};
+use wellfed_session::setup_code::Code;
 
 use crate::ble::Link;
 use crate::device::Connection;

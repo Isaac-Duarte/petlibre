@@ -9,11 +9,7 @@ const SECRET: &str = "77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51d
 const PUBLIC: &str = "8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a";
 
 fn bytes(hex: &str) -> [u8; 32] {
-    let mut out = [0; 32];
-    for (byte, pair) in out.iter_mut().zip(hex.as_bytes().chunks(2)) {
-        *byte = u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap();
-    }
-    out
+    wellfed_session::hex::decode_array(hex.as_bytes()).unwrap()
 }
 
 #[test]

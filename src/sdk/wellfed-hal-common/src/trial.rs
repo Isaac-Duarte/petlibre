@@ -88,19 +88,7 @@ pub fn decide(
 
 /// The build identity, from the reviewed build wrapper (all zeros on host).
 pub fn identity() -> [u8; 32] {
-    let text = env!("WELLFED_BUILD_ID").as_bytes();
-    let mut out = [0u8; 32];
-    if text.len() == 64 {
-        for (i, byte) in out.iter_mut().enumerate() {
-            let nibble = |c: u8| match c {
-                b'0'..=b'9' => c - b'0',
-                b'a'..=b'f' => c - b'a' + 10,
-                _ => 0,
-            };
-            *byte = (nibble(text[2 * i]) << 4) | nibble(text[2 * i + 1]);
-        }
-    }
-    out
+    wellfed_session::hex::decode_array(env!("WELLFED_BUILD_ID").as_bytes()).unwrap_or([0; 32])
 }
 
 #[cfg(all(target_os = "none", feature = "km0"))]

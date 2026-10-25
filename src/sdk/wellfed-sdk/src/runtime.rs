@@ -877,9 +877,9 @@ fn probe_step() -> u32 {
 /// and `check` (a hash of one discarded output block) let the bench compare
 /// boots without revealing a secret.
 fn log_rng(started: rng::Started) {
-    let first = wellfed_core::hex::Lower(&started.first);
+    let first = wellfed_session::hex::Lower(&started.first);
     let check = rng::bytes().map(|block| {
-        let digest = wellfed_core::mac::hmac_sha256(&[0; 32], &[b"wellfed-rng-check", &block]);
+        let digest = wellfed_session::mac::hmac_sha256(&[0; 32], &[b"wellfed-rng-check", &block]);
         u32::from_be_bytes([digest[0], digest[1], digest[2], digest[3]])
     });
 

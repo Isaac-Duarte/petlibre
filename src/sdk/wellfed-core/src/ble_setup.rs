@@ -20,7 +20,7 @@ pub const CONTROL: u128 = SERVICE + 1;
 /// credentials, well under this.
 pub const MAX_MESSAGE: usize = 448;
 /// The length prefix.
-pub const PREFIX: usize = crate::frame::PREFIX;
+pub const PREFIX: usize = wellfed_session::frame::PREFIX;
 
 pub const fn uuid_le(uuid: u128) -> [u8; 16] {
     uuid.to_le_bytes()
@@ -28,12 +28,12 @@ pub const fn uuid_le(uuid: u128) -> [u8; 16] {
 
 /// The prefix for a `len`-byte message; `None` above [`MAX_MESSAGE`].
 pub fn prefix(len: usize) -> Option<[u8; PREFIX]> {
-    crate::frame::prefix(len, MAX_MESSAGE)
+    wellfed_session::frame::prefix(len, MAX_MESSAGE)
 }
 
 /// The length a prefix announces; `None` above [`MAX_MESSAGE`].
 pub fn parse_prefix(prefix: [u8; PREFIX]) -> Option<usize> {
-    crate::frame::parse_prefix(prefix, MAX_MESSAGE)
+    wellfed_session::frame::parse_prefix(prefix, MAX_MESSAGE)
 }
 
 #[cfg(test)]

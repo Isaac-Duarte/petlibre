@@ -25,6 +25,7 @@ use std::time::Instant;
 
 use clap::Args;
 use wellfed_build::signing::{Frozen, KEY_PATH, Key, Motion};
+use wellfed_core::ota;
 use wellfed_core::record::{Record, tag};
 use wellfed_flash::evidence::write_new;
 use wellfed_formats::capture::SerialEvent;
@@ -38,12 +39,6 @@ use crate::{Error, Result, require};
 
 /// Each capture segment; the classifier reads it once it ends.
 const SEGMENT_SECONDS: f64 = 60.0;
-
-/// `wellfed-core::ota`'s signed manifest: magic, version (u32 LE at 8),
-/// image length, bank, hashes, then the 64-byte signature. Only the header is
-/// read here, to pick the next version; the firmware checks the signature.
-const MANIFEST_MAGIC: &[u8; 8] = b"PLOTA1\0\0";
-const MANIFEST_LEN: usize = 148;
 
 /// The in-process signing step's status label.
 pub(crate) const SIGN_STEP: &str = "sign";
@@ -309,20 +304,15 @@ impl OtaArgs {
     }
 }
 
-/// The version in a manifest file's header, if it has one.
-fn manifest_version(bytes: &[u8]) -> Option<u32> {
-    (bytes.len() == MANIFEST_LEN && bytes[..8] == MANIFEST_MAGIC[..])
-        .then(|| u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]))
-}
-
-/// The highest version among `*.manifest` files in `directory`, with its file.
+/// The highest version among `*.manifest` files in `directory`, with its
+/// file. Only the header is read, unverified: a feeder checks the signature.
 fn highest_signed(directory: &Path) -> Option<(u32, PathBuf)> {
     fs::read_dir(directory)
         .ok()?
         .flatten()
         .map(|entry| entry.path())
         .filter(|path| path.extension().is_some_and(|ext| ext == "manifest"))
-        .filter_map(|path| Some((manifest_version(&fs::read(&path).ok()?)?, path)))
+        .filter_map(|path| Some((ota::claimed_version(&fs::read(&path).ok()?)?, path)))
         .max_by_key(|(version, _)| *version)
 }
 
@@ -1594,17 +1584,5 @@ mod tests {
         assert!(lines[4].ends_with("1 min 00 s (to segment ends, up to 60 s off)"));
         assert!(lines[5].ends_with(" -") && lines[6].ends_with(" -"));
         assert!(lines[7].ends_with("3 min 20 s"));
-    }
-
-    #[test]
-    fn manifest_headers_give_their_version() {
-        let mut bytes = vec![0u8; MANIFEST_LEN];
-        bytes[..8].copy_from_slice(MANIFEST_MAGIC);
-        bytes[8..12].copy_from_slice(&13u32.to_le_bytes());
-        assert_eq!(manifest_version(&bytes), Some(13));
-
-        assert_eq!(manifest_version(&bytes[..100]), None);
-        bytes[0] = b'X';
-        assert_eq!(manifest_version(&bytes), None);
     }
 }

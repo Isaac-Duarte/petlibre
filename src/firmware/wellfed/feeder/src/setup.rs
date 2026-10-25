@@ -9,7 +9,7 @@
 //!    turns it into a pending offer, and the client is told to have the
 //!    owner key its code in.
 //! 2. With the code in, the responder and the client prove it to each
-//!    other (`wellfed_core::setup_code`), within [`PROVE_MS`]. A client
+//!    other (`wellfed_session::setup_code`), within [`PROVE_MS`]. A client
 //!    that proves it is the one the owner set up; one that does not, a
 //!    relay among them, is refused.
 //! 3. The proven client's last step carries its Wi-Fi. The settings writer
@@ -29,8 +29,6 @@
 use core::fmt;
 
 use wellfed_core::named_enum;
-use wellfed_core::noise::Keypair;
-use wellfed_core::setup_code::Code;
 use wellfed_core::store::clients::Role;
 use wellfed_core::store::net::Credentials;
 use wellfed_core::tone::Tune;
@@ -42,6 +40,8 @@ use wellfed_sdk::hal::audio::{self, Speaker};
 use wellfed_sdk::hal::ble::{self, BleSetup, DropReason, Link};
 use wellfed_sdk::hal::keys::{self, Change, KeyResult, Requested};
 use wellfed_sdk::hal::{network, power, rng};
+use wellfed_session::noise::Keypair;
+use wellfed_session::setup_code::Code;
 
 /// After `Done`, long enough for the reply to reach the client.
 pub const REBOOT_MS: u32 = 3_000;

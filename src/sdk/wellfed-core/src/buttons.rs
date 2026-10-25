@@ -21,20 +21,13 @@ use crate::deadline_passed;
 /// The most hold thresholds a firmware can set.
 pub const MAX_HOLDS: usize = 3;
 
-crate::named_enum! {
-    /// The panel buttons, in pin order PB4..PB7 (physical).
-    pub enum Button {
-        Reset = "reset",
-        Mic = "mic",
-        Dispense = "dispense",
-        Lock = "lock",
-    }
-}
+// The setup code is keyed in on these buttons, so the session crate, which
+// a client takes without the SDK, owns the enumeration.
+pub use wellfed_session::setup_code::Button;
 
-impl Button {
-    const fn bit(self) -> u8 {
-        1 << self as u8
-    }
+/// `button`'s bit in a [`Buttons`] set.
+const fn bit(button: Button) -> u8 {
+    1 << button as u8
 }
 
 /// A set of buttons: bit `n` is the button on PB(4 + n).
@@ -46,11 +39,11 @@ impl Buttons {
     const ALL_BITS: u8 = 0x0f;
 
     pub const fn of(button: Button) -> Self {
-        Self(button.bit())
+        Self(bit(button))
     }
 
     pub const fn with(self, button: Button) -> Self {
-        Self(self.0 | button.bit())
+        Self(self.0 | bit(button))
     }
 
     /// The pressed buttons in a port B input word. The buttons are active LOW
@@ -77,7 +70,7 @@ impl Buttons {
     }
 
     pub const fn contains(self, button: Button) -> bool {
-        self.0 & button.bit() != 0
+        self.0 & bit(button) != 0
     }
 
     const fn covers(self, other: Self) -> bool {
@@ -298,7 +291,7 @@ impl Engine {
 
             let first = *since.get_or_insert(now_ms);
             if deadline_passed(now_ms, first.wrapping_add(self.config.debounce_ms)) {
-                self.settled = Buttons(self.settled.0 ^ button.bit());
+                self.settled = Buttons(self.settled.0 ^ bit(*button));
                 *since = None;
             }
         }

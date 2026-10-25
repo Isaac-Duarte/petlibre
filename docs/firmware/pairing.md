@@ -170,7 +170,7 @@ The timeouts are ours: stock pairs through the vendor cloud and has no equivalen
 
 The exchange and its refusals are in [Bluetooth](bluetooth.md#setup-exchange). The pieces:
 - **`wellfed-proto::setup`:** the request and replies (postcard), shared by the feeder and every client.
-- **`wellfed-core::setup_code`:** the owner's code and the press-by-press proof both sides run, bound to the handshake hash.
+- **`wellfed-session::setup_code`:** the owner's code and the press-by-press proof both sides run, bound to the handshake hash.
 - **`wellfed-feeder::setup::Responder`:** the feeder's side of Noise XX under its identity, returning the client's checked offer (its key and a label the client store accepts), then running the proof and returning the Wi-Fi from the client's last step, checked against the Wi-Fi store's rules.
 - **`wellfed-client::setup::Session`:** the client's side, with the BLE framing. The owner's `wellfed setup` and the Android app share it.
 - **The loop (`feeder/src/setup.rs`):** starts the stack on the gesture, offers the key to pairing (`Pairing::setup`), which collects the code from the buttons, runs the proof, and once the client has proven it queues the enrollment in the keys mailbox, waits for its result (`keys::ticket` and `keys::outcome`), then queues the Wi-Fi (`network::save`) and waits for the writer. A client that leaves before the proof cancels its offer (`Pairing::cancel`), so the next press feeds again.

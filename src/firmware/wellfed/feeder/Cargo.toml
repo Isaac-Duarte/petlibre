@@ -27,6 +27,7 @@ wellfed-core.workspace = true
 wellfed-feeder.workspace = true
 wellfed-proto.workspace = true
 wellfed-sdk.workspace = true
+wellfed-session.workspace = true
 
 [dev-dependencies]
 wellfed-client.workspace = true

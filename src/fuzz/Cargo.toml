@@ -20,6 +20,7 @@ libfuzzer-sys = "0.4.13"
 wellfed-core = { path = "../sdk/wellfed-core" }
 wellfed-feeder = { path = "../product/wellfed-feeder" }
 wellfed-proto = { path = "../sdk/wellfed-proto" }
+wellfed-session = { path = "../sdk/wellfed-session" }
 
 [[bin]]
 name = "api_connection"

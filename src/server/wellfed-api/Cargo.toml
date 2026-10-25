@@ -9,7 +9,7 @@ publish.workspace = true
 
 [dependencies]
 jiff = { workspace = true, features = ["serde"] }
-wellfed-core.workspace = true
+wellfed-session.workspace = true
 serde.workspace = true
 utoipa = { workspace = true, features = ["uuid", "jiff_0_2"] }
 uuid = { workspace = true, features = ["serde"] }

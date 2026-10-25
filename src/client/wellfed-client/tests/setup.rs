@@ -6,10 +6,10 @@
 
 use wellfed_client::setup::{Ask, Credentials, Deframer, Error, Session, Step, frame};
 use wellfed_core::buttons::Button;
-use wellfed_core::noise::{self, Keypair};
-use wellfed_core::setup_code::Code;
 use wellfed_feeder::setup::{self as feeder, MAX_MESSAGE, Offer, Received, Responder};
 use wellfed_proto::setup::{Enrolled, Refusal, Reply, WifiSaved};
+use wellfed_session::noise::{self, Keypair};
+use wellfed_session::setup_code::Code;
 
 const CODE: u16 = 0b10_01_11_00_01_10_00_11;
 
@@ -231,7 +231,7 @@ fn a_tampered_or_foreign_handshake_fails_closed() {
 
     // A responder on another prologue cannot read the client's ask.
     let mut session = new_session(&keypair(2), ask());
-    let mut foreign = wellfed_core::noise::Handshake::new(
+    let mut foreign = wellfed_session::noise::Handshake::new(
         noise::Pattern::Xx,
         noise::Role::Responder,
         b"wellfed-setup-v0",

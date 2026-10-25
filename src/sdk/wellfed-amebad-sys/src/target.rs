@@ -1077,25 +1077,9 @@ pub fn transport_config() -> Option<TransportConfig> {
         // The build writes 64 hex characters or nothing; anything else is a defect.
         request_key: match text(raw.request_key)? {
             "" => None,
-            key => Some(hex_key(key.as_bytes())?),
+            key => Some(wellfed_session::hex::decode_array(key.as_bytes())?),
         },
     })
-}
-
-fn hex_key(hex: &[u8]) -> Option<[u8; 32]> {
-    let nibble = |c: u8| match c {
-        b'0'..=b'9' => Some(c - b'0'),
-        b'a'..=b'f' => Some(c - b'a' + 10),
-        _ => None,
-    };
-    if hex.len() != 64 {
-        return None;
-    }
-    let mut key = [0u8; 32];
-    for (i, pair) in hex.as_chunks::<2>().0.iter().enumerate() {
-        key[i] = (nibble(pair[0])? << 4) | nibble(pair[1])?;
-    }
-    Some(key)
 }
 
 unsafe extern "C" {

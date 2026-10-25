@@ -12,8 +12,6 @@ use wellfed_client::setup::{
 };
 use wellfed_core::ble_setup::{PREFIX, parse_prefix};
 use wellfed_core::buttons::{Button, Buttons, Gesture};
-use wellfed_core::noise::Keypair;
-use wellfed_core::setup_code::{Code, PRESSES};
 use wellfed_core::store::clients::Role;
 use wellfed_core::store::net::NetStore;
 use wellfed_core::tone::Tune;
@@ -27,6 +25,8 @@ use wellfed_sdk::hal::power::{self, Monitor};
 use wellfed_sdk::hal::sdk::fake::{self, ble_record};
 use wellfed_sdk::hal::sdk::{Advertising, BleEvent};
 use wellfed_sdk::hal::{audio, ble, network, settings};
+use wellfed_session::noise::Keypair;
+use wellfed_session::setup_code::{Code, PRESSES};
 
 /// The mailboxes are process-wide; the fake hardware is per thread.
 static SERIAL: Mutex<()> = Mutex::new(());

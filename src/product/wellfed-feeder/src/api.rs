@@ -28,8 +28,6 @@
 //! The firmware reaches the rest of the feeder through [`Device`], and the
 //! host tests through a fake of it.
 
-use wellfed_core::frame;
-use wellfed_core::noise::{Handshake, Keypair, Pattern, Role as NoiseRole, Transport};
 use wellfed_core::store::clients::{CLIENTS, Client, Label, Role};
 use wellfed_core::store::net::Credentials;
 use wellfed_core::tone::Tune as CoreTune;
@@ -42,6 +40,8 @@ use wellfed_proto::api::{
     Fingerprint, Hello, Joined, Op, Open, OpenRefusal, Outcome, PROLOGUE, PROTOCOL_MAJOR,
     PROTOCOL_MAJOR_MIN, Refusal, RequestId, Sample, Source, Status, Tune, Welcome,
 };
+use wellfed_session::frame;
+use wellfed_session::noise::{Handshake, Keypair, Pattern, Role as NoiseRole, Transport};
 
 use crate::pairing::{self, Pairing, Path};
 use crate::setup::{self as rescue, Offer, Received, Responder};

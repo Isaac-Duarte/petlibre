@@ -4,7 +4,7 @@
 //! any token, hash or key schedule fails here. Tampering, misordering and a
 //! wrong static key must all fail closed.
 
-use wellfed_core::noise::{Error, Handshake, Keypair, Pattern, Role, TAG_LEN, Transport};
+use wellfed_session::noise::{Error, Handshake, Keypair, Pattern, Role, TAG_LEN, Transport};
 
 const PROLOGUE: &[u8] = b"wellfed/1";
 

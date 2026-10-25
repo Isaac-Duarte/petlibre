@@ -104,6 +104,13 @@ pub fn parse_manifest(
     Ok(manifest)
 }
 
+/// The version a manifest's header claims, unverified: `None` unless it has
+/// a manifest's length and magic. For a signer picking the next version
+/// above the ones it already signed; a feeder only trusts `parse_manifest`.
+pub fn claimed_version(bytes: &[u8]) -> Option<u32> {
+    (bytes.len() == MANIFEST_LEN && bytes[..8] == MAGIC).then(|| u32_at(bytes, 8))
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WriteError {
     /// A chunk outside the staged sector, already received, or of the wrong

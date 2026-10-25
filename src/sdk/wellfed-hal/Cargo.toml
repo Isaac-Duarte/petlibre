@@ -20,6 +20,7 @@ bluetooth = ["wellfed-amebad-sys/bluetooth"]
 wellfed-hal-common.workspace = true
 wellfed-amebad-sys.workspace = true
 wellfed-core.workspace = true
+wellfed-session.workspace = true
 
 [dev-dependencies]
 ed25519-dalek = "2"

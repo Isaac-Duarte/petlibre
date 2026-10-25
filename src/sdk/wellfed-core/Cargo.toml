@@ -13,13 +13,11 @@ wellfed-testkit.workspace = true
 proptest.workspace = true
 sha2 = "0.10"
 simple-dns = "0.12.0"
-snow = "0.10"
 
 [dependencies]
-chacha20poly1305 = { version = "0.10", default-features = false }
 ed25519-dalek = { version = "2", default-features = false }
+wellfed-session.workspace = true
 sha2 = { version = "0.10", default-features = false }
-x25519-dalek = { version = "2", default-features = false, features = ["static_secrets", "zeroize"] }
 
 # On the feeder, the compact SHA-2 rounds: the unrolled SHA-512 alone was
 # 21.8 KB of a firmware image, for a hash that only checks update

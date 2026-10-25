@@ -7,7 +7,7 @@ Status: physical (October 23, 2026), nothing run by the owner. **FW47's actual f
 The `feeder` image as of FW44:
 - **Runtime:** startup checks, supervision, settings writer, MQTT transport, update offer check.
 - **Panel:** the button service and the child lock (FP11).
-- **Noise:** `wellfed-core::noise`, XX and KK over 25519, ChaChaPoly and SHA-256, checked byte for byte against `snow` on the host.
+- **Noise:** `wellfed-session::noise`, XX and KK over 25519, ChaChaPoly and SHA-256, checked byte for byte against `snow` on the host.
 - **Session table:** four clients, each with its Noise state, a 1 KiB receive and a 1 KiB send buffer, and a ring of 32 request IDs (`feeder/src/budget.rs`). The loop drives two of them through every handshake at boot.
 - **BLE setup mode:** the `setup` variant started `BleSetup` in the loop from boot. The normal image links the stack but never starts it. FW45 retired the variant (October 24): setup mode now starts on the owner's gesture, at the same cost.
 

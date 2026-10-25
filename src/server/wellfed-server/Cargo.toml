@@ -33,9 +33,9 @@ uuid.workspace = true
 http-body-util = "0.1"
 wellfed-client.workspace = true
 wellfed-connect.workspace = true
-wellfed-core.workspace = true
 wellfed-feeder-sim = { workspace = true, features = ["harness"] }
 wellfed-proto.workspace = true
+wellfed-session.workspace = true
 reqwest = { version = "0.13.5", default-features = false, features = ["cookies", "json", "stream"] }
 tempfile.workspace = true
 tower = { version = "0.5.3", features = ["util"] }

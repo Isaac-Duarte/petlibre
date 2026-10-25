@@ -131,6 +131,19 @@ fn manifest_needs_signature_bank_one_size_and_a_newer_version() {
     );
 }
 
+#[test]
+fn a_header_claims_its_version_without_a_signature() {
+    let (signing, _) = key();
+    let mut bytes = manifest_bytes(&signing, 13, &image(SECTOR), 1);
+    assert_eq!(claimed_version(&bytes), Some(13));
+
+    bytes[MANIFEST_BODY..].fill(0);
+    assert_eq!(claimed_version(&bytes), Some(13));
+    assert_eq!(claimed_version(&bytes[..100]), None);
+    bytes[0] = b'X';
+    assert_eq!(claimed_version(&bytes), None);
+}
+
 /// Drive a writer to completion; `flash` models bank 1 (offset 0 = BANK1_OFFSET).
 fn write_all(
     w: &mut Writer,

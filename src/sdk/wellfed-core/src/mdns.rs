@@ -22,7 +22,7 @@
 //! question echoed, as RFC 6762 section 6.7 asks. Every address change is
 //! announced twice, a second apart.
 
-use crate::hex;
+use wellfed_session::hex;
 
 pub const PORT: u16 = 5353;
 /// 224.0.0.251.

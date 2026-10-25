@@ -36,12 +36,12 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use wellfed_core::noise::Keypair;
 use wellfed_proto::api::{
     Capabilities, FRAME_MAX, FeederMessage, Hello, Op, Open, Outcome, PROTOCOL_MAJOR, RequestId,
     Role, Welcome,
 };
 use wellfed_proto::setup::Reply;
+use wellfed_session::noise::Keypair;
 
 use crate::api::{Error, Incoming, Session, open_frame};
 use crate::setup;

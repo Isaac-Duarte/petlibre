@@ -17,7 +17,6 @@
 use core::fmt;
 
 use wellfed_core::mdns::{self, Destination, Responder};
-use wellfed_core::noise::Keypair;
 use wellfed_core::store::events::{BODY_BYTES, Read};
 use wellfed_core::store::net::Credentials;
 use wellfed_core::tone::Tune;
@@ -36,6 +35,7 @@ use wellfed_sdk::hal::health::Boot;
 use wellfed_sdk::hal::keys::{self, Change, KeyResult, Requested};
 use wellfed_sdk::hal::sdk::{self, Accepted, ApiRecv, Datagram};
 use wellfed_sdk::hal::{clock, events, net_status, network, panel, power, rng, settings, startup};
+use wellfed_session::noise::Keypair;
 
 /// A listener or mDNS socket that failed is opened again after this.
 const RETRY_MS: u32 = 2_000;
@@ -103,7 +103,7 @@ fn server_record(record: server::Record, f: &mut impl fmt::Write) -> fmt::Result
         R::Opened { slot, role, client } => write!(
             f,
             "session slot={slot} state=open role={role} client={}",
-            wellfed_core::hex::Lower(&client)
+            wellfed_session::hex::Lower(&client)
         ),
         R::Request { slot, op, result } => {
             write!(f, "request slot={slot} op={op} result={result}")

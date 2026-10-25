@@ -9,6 +9,7 @@ publish.workspace = true
 
 [dependencies]
 chrono = { version = "0.4.45", default-features = false, features = ["std", "serde"] }
+wellfed-session.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.11"

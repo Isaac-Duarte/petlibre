@@ -1,7 +1,7 @@
 //! The shared strict decoder: lowercase only, exact lengths, no partial
 //! acceptance.
 
-use wellfed_core::hex::{decode, decode_array, is_lower, nibble};
+use wellfed_session::hex::{decode, decode_array, is_lower, nibble};
 
 #[test]
 fn nibbles_are_lowercase_digits_only() {
@@ -47,8 +47,8 @@ fn is_lower_accepts_only_lowercase_digits() {
 #[test]
 fn lower_formats_bytes_as_lowercase_hex() {
     assert_eq!(
-        wellfed_core::hex::Lower(&[0x00, 0xab, 0x7f]).to_string(),
+        wellfed_session::hex::Lower(&[0x00, 0xab, 0x7f]).to_string(),
         "00ab7f"
     );
-    assert_eq!(wellfed_core::hex::Lower(&[]).to_string(), "");
+    assert_eq!(wellfed_session::hex::Lower(&[]).to_string(), "");
 }

@@ -8,10 +8,9 @@ use wellfed_core::rng::{
 };
 
 fn hex(text: &str) -> Vec<u8> {
-    (0..text.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&text[i..i + 2], 16).unwrap())
-        .collect()
+    let mut out = vec![0; text.len() / 2];
+    wellfed_session::hex::decode(text.as_bytes(), &mut out).unwrap();
+    out
 }
 
 /// A healthy stand-in source: xorshift bytes, about 8 bits a sample.

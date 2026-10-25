@@ -2228,9 +2228,9 @@ dependencies = [
  "jiff",
  "wellfed-client",
  "wellfed-connect",
- "wellfed-core",
  "wellfed-formats",
  "wellfed-proto",
+ "wellfed-session",
  "serde",
  "serde_json",
  "tempfile",
@@ -2243,6 +2243,7 @@ version = "0.1.0"
 dependencies = [
  "bindgen 0.72.1",
  "cortex-m",
+ "wellfed-session",
 ]
 
 [[package]]
@@ -2250,7 +2251,7 @@ name = "wellfed-api"
 version = "0.1.0"
 dependencies = [
  "jiff",
- "wellfed-core",
+ "wellfed-session",
  "serde",
  "serde_json",
  "utoipa",
@@ -2291,6 +2292,7 @@ dependencies = [
  "wellfed-flash",
  "wellfed-formats",
  "wellfed-proto",
+ "wellfed-session",
  "rust-embed",
  "rustix",
  "serde",
@@ -2333,6 +2335,7 @@ dependencies = [
  "wellfed-core",
  "wellfed-feeder",
  "wellfed-proto",
+ "wellfed-session",
  "thiserror",
 ]
 
@@ -2342,8 +2345,8 @@ version = "0.1.0"
 dependencies = [
  "mdns-sd",
  "wellfed-client",
- "wellfed-core",
  "wellfed-proto",
+ "wellfed-session",
  "thiserror",
  "tokio",
 ]
@@ -2352,14 +2355,12 @@ dependencies = [
 name = "wellfed-core"
 version = "0.1.0"
 dependencies = [
- "chacha20poly1305",
  "ed25519-dalek",
+ "wellfed-session",
  "wellfed-testkit",
  "proptest",
  "sha2 0.10.9",
  "simple-dns",
- "snow",
- "x25519-dalek",
 ]
 
 [[package]]
@@ -2377,6 +2378,7 @@ version = "0.1.0"
 dependencies = [
  "wellfed-core",
  "wellfed-proto",
+ "wellfed-session",
  "proptest",
  "serde",
 ]
@@ -2395,6 +2397,7 @@ dependencies = [
  "wellfed-feeder-sim",
  "wellfed-formats",
  "wellfed-proto",
+ "wellfed-session",
  "socket2",
  "tempfile",
  "thiserror",
@@ -2424,6 +2427,7 @@ name = "wellfed-formats"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "wellfed-session",
  "serde",
  "serde_json",
  "sha2 0.11.1",
@@ -2464,6 +2468,7 @@ dependencies = [
  "wellfed-feeder",
  "wellfed-proto",
  "wellfed-sdk",
+ "wellfed-session",
 ]
 
 [[package]]
@@ -2514,6 +2519,7 @@ dependencies = [
  "wellfed-amebad-sys",
  "wellfed-core",
  "wellfed-hal-common",
+ "wellfed-session",
  "wellfed-testkit",
  "sha2 0.10.9",
 ]
@@ -2525,6 +2531,7 @@ dependencies = [
  "cortex-m",
  "wellfed-amebad-sys",
  "wellfed-core",
+ "wellfed-session",
 ]
 
 [[package]]
@@ -2569,6 +2576,7 @@ dependencies = [
 name = "wellfed-proto"
 version = "0.1.0"
 dependencies = [
+ "wellfed-session",
  "postcard",
  "proptest",
  "serde",
@@ -2582,6 +2590,7 @@ dependencies = [
  "wellfed-core",
  "wellfed-hal",
  "wellfed-sdk-c",
+ "wellfed-session",
 ]
 
 [[package]]
@@ -2606,10 +2615,10 @@ dependencies = [
  "wellfed-api",
  "wellfed-client",
  "wellfed-connect",
- "wellfed-core",
  "wellfed-feeder-sim",
  "wellfed-proto",
  "wellfed-service",
+ "wellfed-session",
  "wellfed-store",
  "reqwest",
  "serde",
@@ -2638,9 +2647,9 @@ dependencies = [
  "wellfed-api",
  "wellfed-client",
  "wellfed-connect",
- "wellfed-core",
  "wellfed-feeder-sim",
  "wellfed-proto",
+ "wellfed-session",
  "wellfed-store",
  "sha2 0.11.1",
  "tempfile",
@@ -2649,6 +2658,17 @@ dependencies = [
  "tokio-util",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "wellfed-session"
+version = "0.1.0"
+dependencies = [
+ "chacha20poly1305",
+ "proptest",
+ "sha2 0.10.9",
+ "snow",
+ "x25519-dalek",
 ]
 
 [[package]]

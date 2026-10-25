@@ -12,8 +12,6 @@ use std::rc::Rc;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use wellfed_core::hex::Lower;
-use wellfed_core::noise::Keypair;
 use wellfed_core::store::clients::{Label, Role};
 use wellfed_feeder_sim::console::{self, HELP};
 use wellfed_feeder_sim::device::Random;
@@ -23,6 +21,8 @@ use wellfed_formats::hex;
 use wellfed_formats::owner::{EnrolledFeeder, OwnerKeyFile};
 use wellfed_formats::private::{self, SYSTEM_RANDOM};
 use wellfed_proto::api::PORT;
+use wellfed_session::hex::Lower;
+use wellfed_session::noise::Keypair;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::mpsc;
 

@@ -9,7 +9,7 @@
 //!
 //! XX alone trusts whichever feeder answers, so the owner then carries a
 //! one-time code from the client's screen to the feeder's buttons
-//! (`wellfed_core::setup_code`):
+//! (`wellfed_session::setup_code`):
 //! 1. The feeder replies [`Reply::EnterCode`] and waits for the presses.
 //! 2. Both sides prove the code to each other, one press at a time, bound
 //!    to the handshake: [`Reply::Round`] from the feeder, [`Answer::Round`]
@@ -37,7 +37,7 @@ pub struct Request<'a> {
 /// The client's messages after the handshake.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Answer<'a> {
-    /// One step of the code proof (`wellfed_core::setup_code::Round`).
+    /// One step of the code proof (`wellfed_session::setup_code::Round`).
     Round {
         open: Option<[u8; 32]>,
         commit: Option<[u8; 32]>,

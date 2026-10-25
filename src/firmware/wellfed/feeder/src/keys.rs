@@ -12,9 +12,9 @@
 
 use core::fmt;
 
-use wellfed_core::hex;
-use wellfed_core::noise::Keypair;
 use wellfed_sdk::hal::keys;
+use wellfed_session::hex;
+use wellfed_session::noise::Keypair;
 
 /// Public key bytes in the record.
 pub const FINGERPRINT: usize = 8;

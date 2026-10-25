@@ -10,8 +10,8 @@ publish.workspace = true
 [dependencies]
 mdns-sd = "0.21.6"
 wellfed-client.workspace = true
-wellfed-core.workspace = true
 wellfed-proto.workspace = true
+wellfed-session.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["io-util", "net", "time"] }
 

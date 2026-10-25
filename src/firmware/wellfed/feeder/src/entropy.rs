@@ -10,11 +10,11 @@
 //! claim of one bit a sample, and the last record says whether they passed:
 //! the first physical check of the tests themselves.
 
-use wellfed_core::base64;
 use wellfed_core::named_enum;
 use wellfed_core::rng::Health;
 use wellfed_sdk::hal::entropy::{self, Jitter};
 use wellfed_sdk::hal::{adc, sdk};
+use wellfed_session::base64;
 
 /// Samples per record: the longest line, the jitter source's last record
 /// with 152 base64 characters, fills 190 of the 192-byte line buffer with

@@ -10,9 +10,6 @@
 
 #![allow(dead_code, reason = "each consumer drives a subset")]
 
-use wellfed_core::frame;
-use wellfed_core::noise::{Handshake, Keypair, Pattern, Role as NoiseRole, Transport};
-use wellfed_core::setup_code::{Code, Exchange, Round, Side};
 use wellfed_core::store::clients::{CLIENTS, Client, Label, Role};
 use wellfed_core::store::net::Credentials;
 use wellfed_core::tone::Tune;
@@ -30,6 +27,9 @@ use wellfed_proto::api::{
     PROLOGUE, PROTOCOL_MAJOR, Refusal, Status, Welcome,
 };
 use wellfed_proto::setup::{self, Answer, Reply};
+use wellfed_session::frame;
+use wellfed_session::noise::{Handshake, Keypair, Pattern, Role as NoiseRole, Transport};
+use wellfed_session::setup_code::{Code, Exchange, Round, Side};
 
 pub const FEEDER: [u8; 32] = [0x10; 32];
 pub const OWNER: [u8; 32] = [0x20; 32];

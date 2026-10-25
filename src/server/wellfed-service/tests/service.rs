@@ -15,13 +15,13 @@ use wellfed_api::{
 };
 use wellfed_client::api::Invite;
 use wellfed_connect::Connection;
-use wellfed_core::noise::Keypair;
 use wellfed_feeder_sim::flash::Flash;
 use wellfed_feeder_sim::harness::{Relay, Running};
 use wellfed_proto::api::{Op, Outcome, Role as DeviceRole};
 use wellfed_service::{
     Clock, Config, Discovery, Error, IdempotencyKey, Invalid, Resume, Service, SystemRandom, Timing,
 };
+use wellfed_session::noise::Keypair;
 use wellfed_store::Store;
 use tempfile::TempDir;
 use tokio::task::LocalSet;

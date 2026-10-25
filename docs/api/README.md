@@ -30,6 +30,7 @@ There are three contracts, and each changes at a different cost:
 ## Crates
 
 ```text
+src/sdk/wellfed-session      no_std, no alloc. Noise, HMAC, the setup code, length-prefixed frames, hex and base64
 src/sdk/wellfed-proto        no_std, no alloc. Device-protocol messages, framing, versions and capabilities
 src/client/wellfed-client    sans-IO. Noise sessions, pairing, invites, the Connection: keepalive, answers, event cursor, recovery
 src/client/wellfed-connect   tokio loop over wellfed-client's Connection: locate, open, ask, follow, join, recover
@@ -47,10 +48,11 @@ Allowed dependencies (each arrow means "may depend on"):
 wellfed-server ─► wellfed-service ─► wellfed-store ─► wellfed-api*
        │                   │
        │                   └─► wellfed-client ─► wellfed-proto
-       └─► wellfed-api
+       └─► wellfed-api ─► wellfed-session
 * the store uses only the api crate's ID and enum types
 ```
 
+- **`wellfed-session`** is the session layer the feeder and every client run: the Noise handshakes and transport, the setup code's proof and the frames that carry them, with the strict hex and base64 text forms. It knows nothing of the feeder's hardware or storage, so the server's crates and the app take it without the firmware's SDK (`wellfed-core`).
 - **`wellfed-proto`** is used by the firmware (`wellfed-sdk`, `wellfed-feeder`) and by every host. It holds only data types, framing and version rules: no IO, no crypto.
 - **`wellfed-client`** holds no sockets, timers or radios. Its callers feed it bytes and the current time and send what it returns. Its `Connection` (`handle_input`, `poll_transmit`, `poll_timeout`/`handle_timeout`, `request`, `subscribe`, `poll_event`) owns every session rule: a `Status` keepalive after 45 s quiet, under the feeder's 90 s idle limit; the end of a session heard from not at all for 90 s; one answer or `Unanswered` per request; and the event cursor with its epoch. `Recovery` runs the recovery window. The server and the CLI drive it with tokio through `wellfed-connect`, the app with Dart IO, and the bench with blocking sockets over the lower-level `Session`.
 - **`wellfed-connect`** is a thin tokio loop over that `Connection`: it moves bytes, keeps the clock and queues the events and samples that arrive while a request waits for its answer. It takes its randomness from the caller (request ids and ephemeral keys are arguments), so the server can inject its generator and tests can fix it.
@@ -66,7 +68,7 @@ wellfed-server ─► wellfed-service ─► wellfed-store ─► wellfed-api*
 
 - **Transport.** TCP port 4747, advertised over mDNS as `_wellfed._tcp` with TXT `v=1` and `id=` the identity key in hex, so a client matches the feeder it paired with. Discovery carries no trust; the handshake does. Every frame is a 2-byte little-endian length and its bytes, at most 1 KiB (FW44). After the handshake a frame is one Noise transport message sealing one postcard-encoded message.
 - **Opening.** A connection's first frame is a clear `Open`: `Session`, `Invite { id }` or `Recovery`. It only chooses the handshake; tampering with it makes the handshake fail.
-- **Handshake.** An enrolled client's session is **Noise IK**. The client knows the feeder's key, and sends its own encrypted in the first message, so the feeder learns which client is connecting without trying each enrolled key (KK would need up to 8 DH operations per message 1, over FW44's 80 ms loop budget). It is one round trip, mutually authenticated, with no identity in clear. An invite is redeemed with **XXpsk3** and the invite's secret. The recovery window runs FW45's setup exchange (XX and the code proof) over the stream. Both sides run `wellfed-core::noise`, checked byte for byte against `snow`.
+- **Handshake.** An enrolled client's session is **Noise IK**. The client knows the feeder's key, and sends its own encrypted in the first message, so the feeder learns which client is connecting without trying each enrolled key (KK would need up to 8 DH operations per message 1, over FW44's 80 ms loop budget). It is one round trip, mutually authenticated, with no identity in clear. An invite is redeemed with **XXpsk3** and the invite's secret. The recovery window runs FW45's setup exchange (XX and the code proof) over the stream. Both sides run `wellfed-session::noise`, checked byte for byte against `snow`.
 - **Hello.** IK's first payload is a `Hello` (`protocol_major`, capabilities); the second is a `Welcome` (major, capabilities, build identity, the client's role, the event history's epoch) or a typed refusal: unknown key, unsupported version, or no free slot. So the app can say "update the app" or "update the feeder". The event cursor travels in `Subscribe`, not the hello; the client sends it only when it counts in the welcome's epoch.
 - **Feeder side.** The feeder runs two of its four tasks, the button service and the loop ([task slots](../../src/firmware/wellfed/README.md#what-the-sdk-runtime-guarantees)), and every session runs in that one loop task over non-blocking sockets. `wellfed-feeder::api::Server` is sans-IO, like `wellfed-client`: bytes in, bytes out, no allocation. It has four slots with 1 KiB buffers each way. It does at most one handshake operation per pass and none during a feed, and reads at most one frame per slot per pass ([device API](../firmware/device-api.md)).
 - **Keys.** A client's identity is its static X25519 key. The HMAC request keys of FW08 are gone; the session is the security.

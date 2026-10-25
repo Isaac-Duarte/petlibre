@@ -8,7 +8,7 @@
 //! 2. Once pairing has collected the owner's code from the buttons, the
 //!    firmware starts the proof with [`Responder::prove`], and the
 //!    responder answers each of the client's steps
-//!    (`wellfed_core::setup_code`).
+//!    (`wellfed_session::setup_code`).
 //! 3. When the client's last step opens, the client holds the code under
 //!    this handshake: [`Received::Proven`] carries its Wi-Fi, checked
 //!    against the Wi-Fi store's rules.
@@ -18,11 +18,11 @@
 //! Sans-IO, with no allocation: the host client's tests drive this same code
 //! against `wellfed-client`'s initiator.
 
-use wellfed_core::noise::{self, Handshake, Keypair, Pattern, Role, Transport};
-use wellfed_core::setup_code::{self, Code, Exchange, Round, Side};
 use wellfed_core::store::clients::Label;
 use wellfed_core::store::net::Credentials;
 use wellfed_proto::setup::{Answer, PROLOGUE, REPLY_MAX, Reply, Request};
+use wellfed_session::noise::{self, Handshake, Keypair, Pattern, Role, Transport};
+use wellfed_session::setup_code::{self, Code, Exchange, Round, Side};
 
 /// The largest message either way, as the setup characteristic frames it.
 pub const MAX_MESSAGE: usize = wellfed_core::ble_setup::MAX_MESSAGE;

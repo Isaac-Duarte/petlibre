@@ -5,10 +5,10 @@
 //! needs an unlocked panel and admits one owner.
 
 use wellfed_core::buttons::{Button, Buttons, Gesture};
-use wellfed_core::setup_code::Code;
 use wellfed_core::store::clients::Role;
 use wellfed_feeder::pairing::{Config, Event, INVITES, Pairing, Path, Refusal};
 use wellfed_feeder::panel::Lock;
+use wellfed_session::setup_code::Code;
 
 const CONFIRM: u32 = Config::DEFAULT.confirm_ms;
 const INVITE: u32 = Config::DEFAULT.invite_ms;

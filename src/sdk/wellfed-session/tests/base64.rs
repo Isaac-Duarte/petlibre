@@ -1,6 +1,6 @@
 //! Base64 against RFC 4648's test vectors.
 
-use wellfed_core::base64::{encode, encoded_len};
+use wellfed_session::base64::{encode, encoded_len};
 
 #[test]
 fn rfc_4648_vectors() {

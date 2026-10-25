@@ -15,7 +15,7 @@
 //!   LAN neighbor cannot slip in while the window is open.
 //!
 //! Every frame is a u16 little-endian length and that many bytes
-//! (`wellfed_core::frame`), at most [`FRAME_MAX`]. After the handshake each frame
+//! (`wellfed_session::frame`), at most [`FRAME_MAX`]. After the handshake each frame
 //! is one Noise transport message sealing one [`ClientMessage`] or
 //! [`FeederMessage`].
 //!

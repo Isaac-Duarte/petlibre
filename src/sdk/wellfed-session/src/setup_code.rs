@@ -24,8 +24,18 @@
 //! first. [`Exchange`] keeps the turns, so neither side opens a press before
 //! the other's commitment to it has arrived.
 
-use crate::buttons::Button;
 use crate::mac::{hmac_sha256, same};
+
+crate::named_enum! {
+    /// The panel buttons, in pin order PB4..PB7 (physical). A press's
+    /// discriminant is its two bits in a code and its byte in a commitment.
+    pub enum Button {
+        Reset = "reset",
+        Mic = "mic",
+        Dispense = "dispense",
+        Lock = "lock",
+    }
+}
 
 /// Presses in a code: two bits each, from the four panel buttons.
 pub const PRESSES: usize = 6;

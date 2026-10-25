@@ -23,7 +23,6 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use wellfed_client::api::{Incoming, Session};
-use wellfed_core::noise::Keypair;
 use wellfed_formats::hex;
 use wellfed_formats::owner::OwnerKeyFile;
 use wellfed_formats::private::{self, SYSTEM_RANDOM};
@@ -31,6 +30,7 @@ use wellfed_proto::api::{
     FeederMessage, Op, OpenRefusal, Outcome, PORT, Refusal, RequestId, Settings, SettingsChanges,
     Status, Welcome, Wifi, WifiSource,
 };
+use wellfed_session::noise::Keypair;
 use serde::{Deserialize, Serialize};
 
 use crate::server::NotReady;

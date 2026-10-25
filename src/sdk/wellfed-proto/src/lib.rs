@@ -5,7 +5,7 @@
 //! the host client and the app's generated bindings read one definition.
 //! Nothing here does IO or cryptography: the caller seals and opens the bytes.
 //! The BLE setup exchange ([`setup`]) and the device API ([`api`])
-//! share `wellfed_core::frame`'s length-prefixed frames.
+//! share `wellfed_session::frame`'s length-prefixed frames.
 //!
 //! [API design]: ../../../../docs/api/README.md
 #![no_std]

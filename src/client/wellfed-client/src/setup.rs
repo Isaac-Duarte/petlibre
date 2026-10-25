@@ -7,7 +7,7 @@
 //! 3. The feeder replies `EnterCode`: show the owner [`Session::code`] to
 //!    key in on the feeder's buttons ([`panel_position`]).
 //! 4. Once the code is in, the feeder and the session prove it to each
-//!    other one press at a time (`wellfed_core::setup_code`); the session
+//!    other one press at a time (`wellfed_session::setup_code`); the session
 //!    answers each step itself.
 //! 5. Only after the feeder has proven the code does the session send the
 //!    Wi-Fi and accept `Done`, and only then is the feeder's key known
@@ -21,9 +21,9 @@
 
 use wellfed_core::ble_setup::{self, PREFIX};
 use wellfed_core::buttons::Button;
-use wellfed_core::noise::{self, Handshake, Keypair, Pattern, Role, Transport};
-use wellfed_core::setup_code::{self, Code, Exchange, Round, Side};
 use wellfed_proto::setup::{Answer, LABEL_MAX, PROLOGUE, Reply, Request, Wifi};
+use wellfed_session::noise::{self, Handshake, Keypair, Pattern, Role, Transport};
+use wellfed_session::setup_code::{self, Code, Exchange, Round, Side};
 
 pub use wellfed_core::ble_setup::{CONTROL, MAX_MESSAGE, SERVICE};
 

@@ -10,19 +10,15 @@
 //! variant that moved, fails here even when blessed. The rules are in the
 //! [device API](../../../../docs/firmware/device-api.md#evolution).
 
-use std::fmt::Write as _;
-
 use wellfed_proto::api::*;
 use wellfed_proto::{decode, encode};
+use wellfed_session::hex::Lower;
 use serde::Serialize;
 
 const ID: RequestId = [0x11; 16];
 
 fn hex(bytes: &[u8]) -> String {
-    bytes.iter().fold(String::new(), |mut out, byte| {
-        let _ = write!(out, "{byte:02x}");
-        out
-    })
+    Lower(bytes).to_string()
 }
 
 /// A fixture: its name, its bytes, and how to check they decode back.

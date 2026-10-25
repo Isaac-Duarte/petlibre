@@ -1,34 +1,31 @@
 //! Lowercase hex, the form digests, keys and identities are written in.
+//!
+//! The digits are the session crate's, the ones the feeder and its clients
+//! use; this adds the owned forms the host tools want, and a decoder that
+//! also takes uppercase, for text the tools did not write (an eFuse dump, a
+//! MAC address).
+
+use wellfed_session::hex::{self as digits, Lower};
 
 pub fn encode(data: &[u8]) -> String {
-    data.iter().map(|byte| format!("{byte:02x}")).collect()
+    Lower(data).to_string()
 }
 
 /// Exactly `N` bytes of hex, either case.
 pub fn decode<const N: usize>(text: &str) -> Option<[u8; N]> {
-    let bytes = decode_vec(text)?;
-    bytes.try_into().ok()
+    digits::decode_array(text.to_ascii_lowercase().as_bytes())
 }
 
 /// Any whole number of bytes of hex, either case.
 pub fn decode_vec(text: &str) -> Option<Vec<u8>> {
-    // `from_str_radix` alone would also take a leading `+`.
-    if !text.len().is_multiple_of(2) || !text.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return None;
-    }
-
-    (0..text.len())
-        .step_by(2)
-        .map(|at| u8::from_str_radix(&text[at..at + 2], 16).ok())
-        .collect()
+    let mut out = vec![0; text.len() / 2];
+    digits::decode(text.to_ascii_lowercase().as_bytes(), &mut out)?;
+    Some(out)
 }
 
 /// `len` lowercase hex digits: keys and identities are compared as written.
 pub fn is_lower_hex(value: &str, len: usize) -> bool {
-    value.len() == len
-        && value
-            .bytes()
-            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    value.len() == len && digits::is_lower(value.as_bytes())
 }
 
 /// Lowercase only, the form [`crate::canonical::sha256`] writes, so digests

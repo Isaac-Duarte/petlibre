@@ -12,11 +12,11 @@ use wellfed_api::{
     Connection, EventBody, EventPage, Feeder, FeederDetail, Settings, Source, StreamEvent,
 };
 use wellfed_client::api::Invite;
-use wellfed_core::noise::Keypair;
 use wellfed_feeder_sim::flash::Flash;
 use wellfed_feeder_sim::harness::Running;
 use wellfed_proto::api::{Op, Outcome, Role};
 use wellfed_service::{Config, Discovery, Service, SystemClock, SystemRandom, Timing};
+use wellfed_session::noise::Keypair;
 use wellfed_store::Store;
 use reqwest::StatusCode;
 use reqwest::header::{ETAG, HeaderMap, HeaderValue, IF_MATCH, ORIGIN};

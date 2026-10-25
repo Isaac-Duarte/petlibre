@@ -10,9 +10,9 @@ use wellfed_api::{
 };
 use wellfed_client::api::Invite;
 use wellfed_connect::Answer;
-use wellfed_core::hex::Lower;
-use wellfed_core::noise::Keypair;
 use wellfed_proto::api::{EventBody, Joined, Op, Outcome, Refusal, SettingsChanges};
+use wellfed_session::hex::Lower;
+use wellfed_session::noise::Keypair;
 use wellfed_store::{FeederRow, NewFeeder};
 use sha2::{Digest, Sha256};
 use tokio::sync::oneshot;

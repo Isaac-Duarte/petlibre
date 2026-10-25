@@ -86,7 +86,7 @@ pub struct Hex<const N: usize>(pub [u8; N]);
 
 impl<const N: usize> fmt::Display for Hex<N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        wellfed_core::hex::Lower(&self.0).fmt(f)
+        wellfed_session::hex::Lower(&self.0).fmt(f)
     }
 }
 
@@ -105,7 +105,7 @@ impl<const N: usize> Serialize for Hex<N> {
 impl<'de, const N: usize> Deserialize<'de> for Hex<N> {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let text = String::deserialize(deserializer)?;
-        wellfed_core::hex::decode_array(text.as_bytes())
+        wellfed_session::hex::decode_array(text.as_bytes())
             .map(Self)
             .ok_or_else(|| serde::de::Error::custom(format!("not {N} bytes of lowercase hex")))
     }

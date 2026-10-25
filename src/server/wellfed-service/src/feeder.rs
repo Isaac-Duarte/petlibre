@@ -22,8 +22,8 @@ use std::time::Duration;
 
 use wellfed_api::{Connection as Link, FeederId, StreamEvent};
 use wellfed_connect::{Answer, Connection, Cursor, Message, Resume};
-use wellfed_core::noise::Keypair;
 use wellfed_proto::api::{FeederMessage, Op, Outcome};
+use wellfed_session::noise::Keypair;
 use wellfed_store::{FeederRow, NewEvent, NewSample};
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::time::Instant;

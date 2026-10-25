@@ -2,8 +2,8 @@
 //! prove each side to the other; another code, another handshake or a
 //! reflected message fails at the first press it touches.
 
-use wellfed_core::buttons::Button;
-use wellfed_core::setup_code::{Code, Error, Exchange, PRESSES, Round, Side};
+use wellfed_session::setup_code::Button;
+use wellfed_session::setup_code::{Code, Error, Exchange, PRESSES, Round, Side};
 
 const HASH: [u8; 32] = [7; 32];
 

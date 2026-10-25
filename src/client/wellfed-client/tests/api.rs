@@ -11,9 +11,6 @@ use wellfed_client::connection::{
     Connection, Cursor, Event, KEEPALIVE_ID, Recovery, Resume, Timing,
 };
 use wellfed_core::buttons::{Button, Buttons, Gesture};
-use wellfed_core::frame;
-use wellfed_core::noise::Keypair;
-use wellfed_core::setup_code::Code;
 use wellfed_core::store::clients::{CLIENTS, Client, Label, Role};
 use wellfed_core::store::net::Credentials;
 use wellfed_core::tone::Tune;
@@ -30,6 +27,9 @@ use wellfed_proto::api::{
     self as proto, Capabilities, EventBody, FeederMessage, Hello, Joined, Op, OpenRefusal, Outcome,
     Refusal, SettingsChanges, Status, Welcome,
 };
+use wellfed_session::frame;
+use wellfed_session::noise::Keypair;
+use wellfed_session::setup_code::Code;
 
 const FEEDER: [u8; 32] = [0x10; 32];
 const OWNER: [u8; 32] = [0x20; 32];

@@ -16,6 +16,7 @@ wellfed-core.workspace = true
 wellfed-feeder.workspace = true
 wellfed-formats.workspace = true
 wellfed-proto.workspace = true
+wellfed-session.workspace = true
 socket2 = "0.6.5"
 thiserror.workspace = true
 tokio = { workspace = true, features = ["io-std", "io-util", "macros", "net", "rt", "sync", "time"] }

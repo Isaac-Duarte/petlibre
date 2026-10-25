@@ -119,7 +119,7 @@ pub fn public_key() -> Option<[u8; 32]> {
 }
 
 pub fn parse_key(text: &str) -> Option<[u8; 32]> {
-    wellfed_core::hex::decode_array(text.as_bytes())
+    wellfed_session::hex::decode_array(text.as_bytes())
 }
 
 named_enum! {

@@ -2,7 +2,7 @@
 //! payload buffer's size, the rest is the peer's first message.
 #![no_main]
 
-use wellfed_core::noise::{Handshake, Keypair, Pattern, Role};
+use wellfed_session::noise::{Handshake, Keypair, Pattern, Role};
 
 const PATTERNS: [Pattern; 4] = [Pattern::Xx, Pattern::Ik, Pattern::Kk, Pattern::XxPsk3];
 

@@ -21,12 +21,12 @@
 
 use core::fmt;
 
-use wellfed_core::noise::Keypair;
 use wellfed_feeder::pairing::{self, Pairing, Path, Refusal};
 use wellfed_feeder::panel::{Action, Config, Event, Lock, Panel};
 use wellfed_sdk::buttons::Gesture;
 use wellfed_sdk::hal::keys::{self, Change, Requested};
 use wellfed_sdk::hal::leds::{self, Decision, Led};
+use wellfed_session::noise::Keypair;
 
 use crate::setup::{self, Setup};
 

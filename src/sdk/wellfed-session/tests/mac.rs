@@ -1,4 +1,5 @@
-use wellfed_core::mac::{KEY_LEN, hmac_sha256};
+use wellfed_session::hex::Lower;
+use wellfed_session::mac::{KEY_LEN, hmac_sha256};
 
 fn padded(key: &[u8]) -> [u8; KEY_LEN] {
     let mut out = [0u8; KEY_LEN];
@@ -7,7 +8,7 @@ fn padded(key: &[u8]) -> [u8; KEY_LEN] {
 }
 
 fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    Lower(bytes).to_string()
 }
 
 #[test]

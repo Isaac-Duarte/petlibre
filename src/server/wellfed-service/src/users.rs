@@ -11,7 +11,7 @@ use std::sync::OnceLock;
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use wellfed_api::{Credentials, Role, User, UserId};
-use wellfed_core::hex::{self, Lower};
+use wellfed_session::hex::{self, Lower};
 use wellfed_store::NewUser;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;

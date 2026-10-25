@@ -8,6 +8,7 @@ Stock 1.1.15 can install the replacement over its own updater, with no UART writ
 
 | Crate | Responsibility |
 | --- | --- |
+| `wellfed-session` | `no_std` session layer the feeder and its clients share: Noise handshakes and transport, HMAC, the setup code, length-prefixed frames, and strict hex and base64 |
 | `wellfed-core` | `no_std` controller, portion accounting, sensor qualification, ADC scaling, motor gate, feedback queue, monotonic clock, journal, and flash authority |
 | `wellfed-hal-common` | The routines both cores link: RAM parking, SDK flash hooks, the KM0 park peer, and the OTA boot-trial step. The KM0 image contains only this crate |
 | `wellfed-hal` | KM4 ports: GPIO/ADC board port, interrupt/timer supervision, watchdog, FreeRTOS owner, flash lease provider, transport, updater, build-bound startup reports, stopped outputs, and LED diagnostics. It re-exports the common crate's `flash` and `trial` |

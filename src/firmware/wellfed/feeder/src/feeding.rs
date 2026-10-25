@@ -4,14 +4,21 @@
 //! writes go through them, and their lease authority is the one that blocks
 //! the owner's outputs during a lease. Until then, and if it never opens,
 //! the outputs stay as startup left them (motor STOP, emitters OFF) and the
-//! runtime's watchdog rule is unchanged. Nothing submits a feed yet, so the
-//! owner sits idle: it holds the board, samples the inputs, and beats.
+//! runtime's watchdog rule is unchanged. At rest the owner holds the
+//! board, samples the inputs, and beats.
+//!
+//! A feed comes from the device API: the loop submits it under the next
+//! journal id, answers once the owner has reserved it, and when the owner
+//! reports its result, logs what the drive measured, records a `Fed` event
+//! and acknowledges it, which lets the owner take the next. One feed at a
+//! time; a feed whose owner faulted without a durable result is recorded
+//! as uncertain.
 //!
 //! The limits are provisional. The timing ones come from the first pulse
 //! and the optics probe (a 200 ms motor lease, 10 ms supervision timer,
 //! stock's 100 ms sensor settling); the feed ones (duration, reverse,
-//! current) are placeholders that a measured feed replaces before any
-//! request path exists.
+//! current) are placeholders until measured feeds replace them. With no
+//! confirmed feedback edge a drive stops after `feedback_timeout_ms`.
 
 use wellfed_core::feed::controller::FeedLimits;
 use wellfed_core::feed::progress::BowlMode;
@@ -87,8 +94,13 @@ pub use target::{Feeding, Record, describe};
 #[cfg(target_os = "none")]
 mod target {
     use wellfed_core::feed::progress::Direction;
+    use wellfed_core::feed::storage::OwnerResult;
     use wellfed_core::store::feed_journal::{FeedJournal, JournalError};
-    use wellfed_sdk::hal::owner::{Owner, OwnerConfig, OwnerFault, OwnerState, OwnerStatus, Step};
+    use wellfed_feeder::feed::{self, Durability};
+    use wellfed_proto::api::{Refusal, Source};
+    use wellfed_sdk::hal::owner::{
+        FeedTrace, Owner, OwnerConfig, OwnerFault, OwnerState, OwnerStatus, Step, SubmitResult,
+    };
     use wellfed_sdk::hal::supervision::events::EventsFault;
     use wellfed_sdk::{JournalSlots, Slot};
 
@@ -119,6 +131,18 @@ mod target {
             supervisor: EventsFault,
             stopped: bool,
             optics_off: bool,
+        },
+        /// A feed was handed to the owner, or refused before it was.
+        Submitted {
+            feed: u64,
+            portions: u8,
+            result: SubmitResult,
+        },
+        /// A feed ended: its result and what its drive measured.
+        Fed {
+            result: OwnerResult,
+            durability: Durability,
+            trace: FeedTrace,
         },
     }
 
@@ -154,7 +178,54 @@ mod target {
                 u8::from(stopped),
                 u8::from(optics_off)
             ),
+            Record::Submitted {
+                feed,
+                portions,
+                result,
+            } => write!(
+                f,
+                "feed id={feed} portions={portions} submit={}",
+                result.code()
+            ),
+            Record::Fed {
+                result,
+                durability,
+                trace,
+            } => {
+                write!(
+                    f,
+                    "fed id={} requested={} completed={} outcome={} reason={} durable={} drive_ms={} rising={} falling={} first_edge_ms=",
+                    result.id,
+                    result.requested,
+                    result.completed,
+                    result.outcome.code(),
+                    result.reason.code(),
+                    u8::from(durability == Durability::Durable),
+                    trace.drive_ms,
+                    trace.rising,
+                    trace.falling,
+                )?;
+                match trace.first_edge_ms {
+                    Some(ms) => write!(f, "{ms}")?,
+                    None => f.write_str("none")?,
+                }
+                write!(f, " current_max={} current_mean=", trace.current_max)?;
+                match trace.current_mean() {
+                    Some(mean) => write!(f, "{mean}")?,
+                    None => f.write_str("none")?,
+                }
+                write!(f, " samples={}", trace.current_samples)
+            }
         }
+    }
+
+    /// The feed in flight, from its submission until its result is recorded.
+    #[derive(Clone, Copy, Debug)]
+    struct Current {
+        feed: u64,
+        by: Source,
+        /// The owner has reserved it in the journal.
+        reserved: bool,
     }
 
     /// The loop's half of the feeding owner: when to open it, and what it
@@ -168,6 +239,10 @@ mod target {
         created: bool,
         refused: bool,
         logged: Option<OwnerStatus>,
+        current: Option<Current>,
+        /// Why the last feed ended before its reservation, for the API's
+        /// poll: its id and the refusal.
+        unreserved: Option<(u64, Refusal)>,
     }
 
     impl Feeding {
@@ -217,7 +292,122 @@ mod target {
                     optics_off: status.optics_off,
                 });
             }
+
+            self.follow(&owner, &status, &mut record);
             delay
+        }
+
+        /// The feed in flight against the owner's status: note its
+        /// reservation, and record its end.
+        fn follow(
+            &mut self,
+            owner: &Owner<Journal>,
+            status: &OwnerStatus,
+            record: &mut impl FnMut(Record),
+        ) {
+            let Some(current) = self.current.as_mut() else {
+                return;
+            };
+            let ours = status.result.id == current.feed;
+            if ours && status.intent_reserved {
+                current.reserved = true;
+            }
+
+            let durability = match status.state {
+                OwnerState::Terminal if ours && status.result_durable => Durability::Durable,
+                OwnerState::Fault if ours && status.result_durable => Durability::Durable,
+                OwnerState::Fault if current.reserved => Durability::Lost,
+                OwnerState::Fault => {
+                    self.unreserved = Some((current.feed, Refusal::Fault));
+                    self.current = None;
+                    return;
+                }
+                _ => return,
+            };
+
+            let current = *current;
+            self.current = None;
+            let result = if ours {
+                status.result
+            } else {
+                OwnerResult {
+                    id: current.feed,
+                    ..OwnerResult::default()
+                }
+            };
+            record(Record::Fed {
+                result,
+                durability,
+                trace: status.trace,
+            });
+            // The feed id fits the event: `submit` refused any that does not.
+            let feed = u32::try_from(current.feed).unwrap_or(u32::MAX);
+            crate::api::record_event(feed::fed(feed, &result, durability, current.by));
+            if status.state == OwnerState::Terminal {
+                owner.acknowledge(current.feed);
+            }
+        }
+
+        /// Hand one feed to the owner on `by`'s behalf: the number its
+        /// journal will hold it under.
+        pub fn submit(
+            &mut self,
+            portions: u8,
+            by: Source,
+            mut record: impl FnMut(Record),
+        ) -> Result<u32, Refusal> {
+            let owner = OWNER.enter().ok_or(Refusal::Busy)?;
+            if self.current.is_some() {
+                return Err(Refusal::Busy);
+            }
+            let status = owner.status();
+            let feed = status.high_water_id.wrapping_add(1);
+            let number = u32::try_from(feed).map_err(|_| Refusal::NotWritable)?;
+
+            let result = owner.submit(feed, u16::from(portions));
+            record(Record::Submitted {
+                feed,
+                portions,
+                result,
+            });
+            match result {
+                SubmitResult::Enqueued => {
+                    self.current = Some(Current {
+                        feed,
+                        by,
+                        reserved: false,
+                    });
+                    self.unreserved = None;
+                    Ok(number)
+                }
+                SubmitResult::RejectRequest => Err(Refusal::Invalid),
+                SubmitResult::RejectStopped if status.state == OwnerState::Fault => {
+                    Err(Refusal::Fault)
+                }
+                // Still opening, busy, or a phase only a double bowl needs.
+                SubmitResult::RejectStopped
+                | SubmitResult::RejectBusy
+                | SubmitResult::RejectId
+                | SubmitResult::RejectPhase => Err(Refusal::Busy),
+            }
+        }
+
+        /// Whether the feed `feed` is reserved yet: `None` while it waits.
+        pub fn reserved(&self, feed: u32) -> Option<Result<(), Refusal>> {
+            let feed = u64::from(feed);
+            match (self.current, self.unreserved) {
+                (Some(current), _) if current.feed == feed => current.reserved.then_some(Ok(())),
+                (_, Some((ended, refusal))) if ended == feed => Some(Err(refusal)),
+                // Ended after its reservation, and already recorded.
+                _ => Some(Ok(())),
+            }
+        }
+
+        /// Stop the feed `feed` if it is still running.
+        pub fn cancel(&self, feed: u32) -> bool {
+            let feed = u64::from(feed);
+            self.current.is_some_and(|current| current.feed == feed)
+                && OWNER.enter().is_some_and(|owner| owner.cancel(feed))
         }
 
         /// A feed is being prepared or driven: the loop defers handshakes.

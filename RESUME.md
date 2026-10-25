@@ -7,6 +7,22 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
+**October 24, about 11:50 pm: FW16 feeds through the owner from the device API (physical install, no motion; uncommitted).**
+- **Code:**
+  - `Feed` goes to the feeding owner under the next journal id and is answered `Feeding { feed }` once reserved; the loop records the result as a `Fed` event and acknowledges it. `CancelFeed { feed }` stops it.
+  - All of it sits behind a new `Capabilities::FEED` bit: `wellfed-client` claims it, the simulator does not, and a session without it gets `Unavailable` and no `Fed` events. A new `Refusal::Fault` covers a faulted owner. The v1 fixtures only gained lines.
+  - The owner traces each drive (time, every PA18 edge rising and falling, the first edge, scaled current max and mean): `PLOWN1 fed …`.
+  - CLI: `wellfed feed --portions N` (waits for its `Fed` event) and `wellfed cancel-feed N`. The server mirrors `Fed` (`openapi.json` regenerated); it has no feed route yet.
+- **Left as found:** the Idle `acquire()` reset-loop finding (holding the fault would also strand a transient glitch; FW19's call).
+- **Host:** `make check` (992 tests), `make check-web`, and the `feeder` firstboot build with its audits (loop task bound 4,700 of 8 KiB).
+- **Installed:** `ota fw16-feed-01 --build --firmware feeder`, v164 `469935b4…`, confirmed. `PLOWN1 open created=0 high_water=0`, then Idle, stopped, emitters off. `wellfed cancel-feed 99 --address 10.42.103.172` answered `NotFound` (the FEED path, end to end). Bounded `serve` and hotspot, both stopped afterwards.
+- **Flash now:**
+  - **Bank 1:** `feeder` v164 `469935b4…` (confirmed).
+  - **Bank 0:** `feeder` `262a9f37…`, unchanged.
+  - **Next manifest version:** 165. The feed journal's high water is still 0.
+- **Bench state:** as found: feeder on (relay 1), UART relays 3 and 4 closed, hotspot down, no server; the analyzer is still clipped at the motor.
+- **Next:** the attended 1-portion feed ([procedure](docs/firmware/motor-pulse.md#feeds-through-the-owner)). A power cut mid-feed leaves the reservation pending and the owner faulted at every boot until FW17, so do not cut power during a feed.
+
 **October 24, 11 pm: full QA of `ccf3e2d`…`51b5311` (physical, no owner action, no motion; uncommitted).**
 - **Host:** `make check` (988 tests), the firstboot build and audits of every firmware and variant (14), `qa` `device` and `firstboot`, `make check-web`, and `make check-fixtures` all passed. The first `check-fixtures` failed `wellfed-emu`'s `every_ota_step_and_marker_cut_keeps_a_bootable_bank` with `Loader did not reach a reviewed boundary` while three review agents were compiling. It passed alone 3 of 3 and the whole target then passed. `factory.rs:134` gives `emu_start` a 1 s wall-clock timeout next to its 4,000-instruction budget, so load can trip it.
 - **Bench (`qa-20261024-05`, `itest --build --power --destructive --off-seconds 10 --keep-going`):** all eight functional scenarios passed (`stock-roundtrip` skipped, no `--stock`). `ota-recovery` stopped `stage=hash`, `range` and `timeout`. `ota-power-cuts` restarted the download at 16/163 after a cut at 48/163, and counted trial boot 1 again after the trial cut. No `PLFLT` in any capture; the 12 `reset=00100000` boots are the design's watchdog restarts (give-way, activation, the failing trial).

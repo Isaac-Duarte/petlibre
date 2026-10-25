@@ -25,7 +25,7 @@ use wellfed_core::transport::{
     WifiResult, WifiSource, WifiView,
 };
 use wellfed_feeder::api::{Device, EventRead, KeyChange, KeyOutcome};
-use wellfed_proto::api::{self as proto, EventBody, Status};
+use wellfed_proto::api::{self as proto, Capabilities, EventBody, Refusal, Source, Status};
 
 use crate::flash::{Flash, Region};
 
@@ -424,6 +424,23 @@ impl Device for SimDevice {
         self.keys_done
             .filter(|&(done, _)| done == ticket)
             .map(|(_, outcome)| outcome)
+    }
+
+    fn capabilities(&self) -> Capabilities {
+        // No motor: the server refuses feeds before they reach `feed`.
+        Capabilities::V1
+    }
+
+    fn feed(&mut self, _portions: u8, _by: Source) -> Result<u32, Refusal> {
+        Err(Refusal::Unavailable)
+    }
+
+    fn feed_reserved(&mut self, _feed: u32) -> Option<Result<(), Refusal>> {
+        Some(Err(Refusal::Unavailable))
+    }
+
+    fn cancel_feed(&mut self, _feed: u32) -> bool {
+        false
     }
 
     fn record(&mut self, now_ms: u32, body: EventBody) {

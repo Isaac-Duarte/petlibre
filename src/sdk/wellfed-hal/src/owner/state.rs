@@ -1,6 +1,7 @@
 //! The owner task's lifecycle state machine: initialization, request
 //! reservation, preparation, feeding, result recording and shutdown.
 
+use wellfed_core::HALF_RANGE;
 use wellfed_core::feed::controller::{
     FeedController, FeedReason, FeedRequest, FeedStartResult, FeedState, MotorCommand,
 };
@@ -15,7 +16,7 @@ use crate::sdk::{self, IrqGuard};
 use crate::supervision::beat;
 use crate::supervision::events::{Events, EventsSnapshot};
 
-use super::{OwnerFault, OwnerState, OwnerStatus, OwnerTask, Shared};
+use super::{FeedTrace, OwnerFault, OwnerState, OwnerStatus, OwnerTask, Shared};
 
 impl<S: OwnerStorage> OwnerTask<S> {
     /// The shared half, inside `IrqGuard`; the borrow ends with `f`, which
@@ -76,6 +77,7 @@ impl<S: OwnerStorage> OwnerTask<S> {
             result_durable: self.result_durable,
             stopped: s.stopped,
             optics_off: s.optics_off,
+            trace: self.trace,
             ..OwnerStatus::default()
         };
 
@@ -132,6 +134,18 @@ impl<S: OwnerStorage> OwnerTask<S> {
     }
 
     fn reporting(&mut self, outcome: OwnerOutcome, reason: FeedReason) {
+        if let Some(at) = self.drive_at.take() {
+            let now = self.events().now_ms().unwrap_or(at);
+            let edges = self.events().edges();
+            self.trace.drive_ms = now.wrapping_sub(at);
+            self.trace.rising = edges.rising;
+            self.trace.falling = edges.falling;
+            // Capture opens just before the drive, so an edge can predate it.
+            self.trace.first_edge_ms = edges.first_at.map(|edge| {
+                let since = edge.wrapping_sub(at);
+                if since < HALF_RANGE { since } else { 0 }
+            });
+        }
         self.result.outcome = outcome;
         self.result.reason = reason;
         self.result.completed = if self.controller.last_request_id == self.request.id {
@@ -367,6 +381,8 @@ impl<S: OwnerStorage> OwnerTask<S> {
             self.finish_attempted = false;
             self.result_durable = false;
             self.optics_started = false;
+            self.trace = FeedTrace::default();
+            self.drive_at = None;
             self.result = OwnerResult {
                 id: self.request.id,
                 requested: self.request.portions,
@@ -413,6 +429,13 @@ impl<S: OwnerStorage> OwnerTask<S> {
         let mut raw = SensorReading::default();
         let valid = self.board().capture(&mut raw);
         self.sensors.update(started, valid.then_some(&raw));
+        if self.drive_at.is_some() && self.sensors.current_valid {
+            let current = self.sensors.current_scaled;
+            let trace = &mut self.trace;
+            trace.current_max = trace.current_max.max(current);
+            trace.current_sum = trace.current_sum.saturating_add(current);
+            trace.current_samples = trace.current_samples.saturating_add(1);
+        }
 
         // The owner holds the ADC, so its captures stand in for the
         // runtime's power monitor.
@@ -474,6 +497,7 @@ impl<S: OwnerStorage> OwnerTask<S> {
             self.result.motion_possible = self.controller.last_request_id == self.request.id;
             if result == FeedStartResult::Accepted {
                 self.state = OwnerState::Feeding;
+                self.drive_at = self.events().now_ms();
             } else if self.result.motion_possible {
                 self.fail(OwnerFault::Hardware);
                 let reason = self.controller.reason;

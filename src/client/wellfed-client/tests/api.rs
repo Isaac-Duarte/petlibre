@@ -21,8 +21,8 @@ use wellfed_feeder::api::{
 use wellfed_feeder::pairing::{Config, Event as PairingEvent, Pairing};
 use wellfed_feeder::panel::Lock;
 use wellfed_proto::api::{
-    self as proto, EventBody, FeederMessage, Joined, Op, OpenRefusal, Outcome, Refusal,
-    SettingsChanges, Status, Welcome,
+    self as proto, Capabilities, EventBody, FeederMessage, Joined, Op, OpenRefusal, Outcome,
+    Refusal, SettingsChanges, Status, Welcome,
 };
 
 const FEEDER: [u8; 32] = [0x10; 32];
@@ -52,6 +52,11 @@ struct Fake {
     oldest: u64,
     rebooted: bool,
     syncs: usize,
+    /// Feeds queued, in order: feed `n` is `feeds[n - 1]`.
+    feeds: Vec<(u8, proto::Source)>,
+    /// Feeds up to this number are reserved (the owner's turn, by hand).
+    reserved: u32,
+    cancelled: Vec<u32>,
 }
 
 impl Fake {
@@ -116,6 +121,7 @@ impl Fake {
             };
             self.keys_done = Some((ticket, outcome));
         }
+        self.reserved = u32::try_from(self.feeds.len()).unwrap();
     }
 
     fn table(&self) -> [Option<Client>; CLIENTS] {
@@ -225,6 +231,30 @@ impl Device for Fake {
         self.keys_done
             .filter(|&(done, _)| done == ticket)
             .map(|(_, outcome)| outcome)
+    }
+
+    fn capabilities(&self) -> Capabilities {
+        Capabilities::FEED
+    }
+
+    fn feed(&mut self, portions: u8, by: proto::Source) -> Result<u32, Refusal> {
+        if self.reserved < u32::try_from(self.feeds.len()).unwrap() {
+            return Err(Refusal::Busy);
+        }
+        self.feeds.push((portions, by));
+        Ok(u32::try_from(self.feeds.len()).unwrap())
+    }
+
+    fn feed_reserved(&mut self, feed: u32) -> Option<Result<(), Refusal>> {
+        (feed <= self.reserved).then_some(Ok(()))
+    }
+
+    fn cancel_feed(&mut self, feed: u32) -> bool {
+        let running = feed != 0 && feed <= self.reserved && !self.cancelled.contains(&feed);
+        if running {
+            self.cancelled.push(feed);
+        }
+        running
     }
 
     fn record(&mut self, _now_ms: u32, body: EventBody) {
@@ -587,7 +617,83 @@ fn a_member_may_feed_and_change_settings_but_not_manage_clients() {
     let lock = ask(&mut rig, &mut member, 4, Op::SetLock { locked: true });
     assert_eq!(outcome(&lock), Outcome::Done { generation: None });
     let feed = ask(&mut rig, &mut member, 5, Op::Feed { portions: 1 });
+    assert_eq!(outcome(&feed), Outcome::Feeding { feed: 1 });
+    let cancel = ask(&mut rig, &mut member, 6, Op::CancelFeed { feed: 1 });
+    assert_eq!(outcome(&cancel), Outcome::Done { generation: None });
+}
+
+#[test]
+fn a_feed_answers_once_reserved_and_a_retry_never_feeds_twice() {
+    let mut rig = Rig::new();
+    let mut owner = open(&mut rig, OWNER);
+
+    let zero = ask(&mut rig, &mut owner, 1, Op::Feed { portions: 0 });
+    assert_eq!(outcome(&zero), Outcome::Refused(Refusal::Invalid));
+    let feed = ask(&mut rig, &mut owner, 2, Op::Feed { portions: 3 });
+    assert_eq!(outcome(&feed), Outcome::Feeding { feed: 1 });
+    let by = proto::Source::Client(public(OWNER)[..4].try_into().unwrap());
+    assert_eq!(rig.device.feeds, [(3, by)]);
+
+    // The same id after a reconnect: the first answer, and no second feed.
+    let mut owner = open(&mut rig, OWNER);
+    let again = ask(&mut rig, &mut owner, 2, Op::Feed { portions: 3 });
+    assert_eq!(outcome(&again), Outcome::Feeding { feed: 1 });
+    assert_eq!(rig.device.feeds.len(), 1);
+
+    let cancel = ask(&mut rig, &mut owner, 3, Op::CancelFeed { feed: 1 });
+    assert_eq!(outcome(&cancel), Outcome::Done { generation: None });
+    let ended = ask(&mut rig, &mut owner, 4, Op::CancelFeed { feed: 1 });
+    assert_eq!(outcome(&ended), Outcome::Refused(Refusal::NotFound));
+}
+
+#[test]
+fn a_client_without_the_feed_capability_neither_feeds_nor_sees_feeds() {
+    let mut rig = Rig::new();
+    let fed = EventBody::Fed {
+        feed: 1,
+        requested: 1,
+        completed: 1,
+        outcome: proto::FeedOutcome::Done,
+        reason: proto::FeedReason::Done,
+        by: proto::Source::Panel,
+    };
+    rig.device.record(0, fed);
+    rig.device.record(
+        0,
+        EventBody::Lock {
+            locked: true,
+            by: proto::Source::Panel,
+        },
+    );
+
+    let slot = rig.accept().unwrap();
+    let keys = Keypair::from_secret(OWNER);
+    let (session, outbox) =
+        Session::connect_with(&keys, public(FEEDER), [0x77; 32], Capabilities::V1).unwrap();
+    let mut old = Client_ {
+        slot,
+        session,
+        outbox,
+    };
+    run(&mut rig, &mut old, |session| {
+        matches!(session.next_incoming(), Ok(Some(Incoming::Welcome(_))))
+    });
+    let feed = ask(&mut rig, &mut old, 1, Op::Feed { portions: 1 });
     assert_eq!(outcome(&feed), Outcome::Refused(Refusal::Unavailable));
+    assert!(rig.device.feeds.is_empty());
+
+    let bytes = old.session.subscribe(None, false).unwrap();
+    old.outbox.extend(bytes);
+    let mut seen = Vec::new();
+    run(&mut rig, &mut old, |session| {
+        while let Some(incoming) = session.next_incoming().unwrap() {
+            if let Incoming::Message(FeederMessage::Event(event)) = incoming {
+                seen.push(event.seq);
+            }
+        }
+        !seen.is_empty()
+    });
+    assert_eq!(seen, [2]);
 }
 
 #[test]

@@ -17,8 +17,8 @@ use wellfed_core::frame::{self, PREFIX};
 use wellfed_core::hex::{self, Lower};
 use wellfed_core::noise::{self, Handshake, Keypair, Pattern, Role, Transport};
 use wellfed_proto::api::{
-    ClientMessage, FRAME_MAX, FeederMessage, Hello, Join as JoinRequest, Joined, Op, Open,
-    PROLOGUE, PROTOCOL_MAJOR, RequestId, Welcome,
+    Capabilities, ClientMessage, FRAME_MAX, FeederMessage, Hello, Join as JoinRequest, Joined, Op,
+    Open, PROLOGUE, PROTOCOL_MAJOR, RequestId, Welcome,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -129,6 +129,17 @@ impl Session {
         feeder: [u8; 32],
         ephemeral: [u8; 32],
     ) -> Result<(Self, Vec<u8>), Error> {
+        Self::connect_with(keys, feeder, ephemeral, Capabilities::FEED)
+    }
+
+    /// As [`Self::connect`], claiming only `capabilities`: what a client
+    /// built before them looks like to the feeder.
+    pub fn connect_with(
+        keys: &Keypair,
+        feeder: [u8; 32],
+        ephemeral: [u8; 32],
+        capabilities: Capabilities,
+    ) -> Result<(Self, Vec<u8>), Error> {
         let mut handshake = Handshake::new(
             Pattern::Ik,
             Role::Initiator,
@@ -139,7 +150,7 @@ impl Session {
         )?;
         let hello = Hello {
             major: PROTOCOL_MAJOR,
-            capabilities: wellfed_proto::api::Capabilities::V1,
+            capabilities,
         };
         let mut payload = [0; 16];
         let len = wellfed_proto::encode(&hello, &mut payload).map_err(|_| Error::TooLarge)?;

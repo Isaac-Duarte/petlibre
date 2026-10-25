@@ -60,6 +60,8 @@ pub enum FeederRefusal {
     Muted,
     /// The feeder's clock refused the sync.
     Time,
+    /// The feeding owner stopped on a fault; the feeder needs a restart.
+    Fault,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]

@@ -90,8 +90,11 @@ Subscribe { after, samples }          Event { seq, at, body }
   - `PutWifi { base, wifi }` (`None` clears)
   - `SetLock`, `Play`, `TimeSync`
   - `CreateInvite { role }`, `ListClients` and `RevokeClient { key }`
-  - `Feed { portions }`, refused `Unavailable` until the feeding owner lands (FW16/FW17)
+  - `Feed { portions }`, answered `Feeding { feed }` once the feeding owner has reserved it in its journal; the result is a `Fed` event (FW16)
   - `Reboot`
+  - `CancelFeed { feed }`: `Done` while that feed runs, `NotFound` once it has ended
+
+  The feed ops, the `Feeding` answer, the `Fed` event and the `Fault` refusal are behind `Capabilities::FEED`. A feeder that serves feeds says so in its welcome; it answers a client whose hello lacks the bit `Unavailable`, and never pushes it a `Fed` event. `Fed` carries the feed's number, the portions asked for and confirmed, an outcome (`Done`, `Cancelled`, `Expired`, `Failed`, or `Uncertain` when the owner stopped without a durable result) and a reason. The request id makes a retry return the same `Feeding` answer instead of feeding twice; across a reboot that is still FW17's work.
 
   A `Put` against a stale generation is refused `Stale { current }`. Plans (FP03) and `OtaOffer` (FW48) join behind capability bits.
 - **Subscribe** asks for every event after a cursor (`None`: the oldest kept), then each new one, and the live samples if asked.

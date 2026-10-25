@@ -336,3 +336,28 @@ fn idle_captures_publish_power_health_in_place_of_the_runtime_monitor() {
     assert!(health.adapter && health.battery_mv.is_some());
     f.stop();
 }
+
+#[test]
+fn a_feed_traces_its_drive_edges_and_current() {
+    let mut f = boot();
+    f.start_feed();
+    f.advance(2);
+    fake::edge(false); // Inside the inhibit window: counted, never credited.
+    f.complete();
+
+    let s = f.status();
+    assert!(s.state == OwnerState::Terminal && s.result.outcome == OwnerOutcome::Done);
+    let t = s.trace;
+    assert!((t.rising, t.falling) == (1, 1) && t.first_edge_ms.is_some_and(|ms| ms >= 2));
+    assert!(t.drive_ms >= t.first_edge_ms.unwrap_or(0) && t.current_samples != 0);
+    assert!(f.owner.acknowledge(1));
+    f.advance(1);
+
+    // A request that never drives reports no drive and none of the old edges.
+    assert_eq!(f.owner.submit(2, 1), SubmitResult::Enqueued);
+    assert!(f.owner.cancel(2));
+    f.step();
+    let s = f.status();
+    assert!(s.result.outcome == OwnerOutcome::Cancelled && s.trace == Default::default());
+    f.stop();
+}

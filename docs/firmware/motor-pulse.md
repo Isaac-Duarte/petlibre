@@ -64,4 +64,28 @@ Open: the direction of rotation by eye, and a longer pulse to find the feedback 
 
 ## Not covered
 
-Lease expiry with a stalled owner was host-tested and FW05-measured, but not under real motion; this session gives the first real-motion data. Cancellation, failed stop, the journal-reserved feed, portions and reverse recovery belong to the full FW16 owner path and FW19. Since October 25 that owner runs inside `feeder`'s loop (idle at STOP, no submit path), so later motor tests can go through it over the air rather than this UART-only probe.
+Lease expiry with a stalled owner was host-tested and FW05-measured, but not under real motion; this session gives the first real-motion data. Cancellation, failed stop, the journal-reserved feed, portions and reverse recovery belong to the full FW16 owner path and FW19. That owner runs inside `feeder`'s loop, and since v164 the device API feeds through it, so later motor tests run over the air: see [feeds through the owner](#feeds-through-the-owner).
+
+## Feeds through the owner
+
+Since v164 (`469935b4…`, October 25) `wellfed feed --portions N` runs a feed through `feeder`'s feeding owner: the journal reservation, the supervisor's 200 ms motor lease, the feed limits in `feeding.rs`, the result in the journal, and a `Fed` event. Nothing else moves the motor: the image has no startup motion, the bench never sends a feed, and the Dispense button is not wired to it yet (FW20).
+
+What bounds a drive (provisional limits, `feeding.rs`):
+- **No confirmed feedback edge:** the controller stops after `feedback_timeout_ms` (3 s) and the feed fails `NoFeedback`. In single-bowl mode a portion is one rising PA18 edge at least 200 ms (`feedback_inhibit_ms`) after the drive starts or after the last portion.
+- **Whole feed:** 10 s. **Current:** a scaled reading above 300 (stock's unit) stops it with no reverse attempt. **Outlet** blocked or the beam unreadable: the feed expires before the motor starts.
+- **Loop stalls:** the supervisor stops the motor 200 ms after the owner's last renewal; an owner beat older than 1 s while driving ends in a watchdog reset.
+
+Each feed logs, in order: `PLOWN1 feed id= portions= submit=0`, the state changes (`state=3` preparing, `4` feeding, `5` reporting, `6` terminal, `1` idle), then
+`PLOWN1 fed id= requested= completed= outcome= reason= durable= drive_ms= rising= falling= first_edge_ms= current_max= current_mean= samples=`,
+which counts every PA18 edge while capture was on, qualified or not. Outcomes: 1 done, 2 cancelled, 3 expired, 4 failed; reasons are `FeedReason` codes (6 no feedback, 5 timeout, 10 overcurrent, 9 outlet, 12 output).
+
+**A power cut or reset mid-feed** leaves the journal's reservation pending; the owner then faults at every boot (`fault=2`, recovery) and refuses feeds `Fault` until FW17 resolves an interrupted feed as uncertain. Avoid cutting power during a feed.
+
+### Procedure (owner present)
+
+1. Hopper empty, outlet clear, hands away. The owner can cut USB power at any moment, but see the mid-feed note above.
+2. Hotspot up; a receive-only UART capture running.
+3. `wellfed feed --portions 1 --address <feeder>`; watch the mechanism and note which way it turns and whether it stops by itself.
+4. Afterwards, `wellfed events` shows the `Fed` event; hotspot down.
+
+Pass for FW16: the drive stops by itself (a portion or `NoFeedback`) with `stopped=1` and no `PLFLT`. The record gives the first drive time, edge counts and current; the direction comes from observation.

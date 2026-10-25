@@ -7,6 +7,7 @@
 #![deny(unsafe_code)]
 
 pub mod api;
+pub mod feed;
 pub mod pairing;
 pub mod panel;
 pub mod setup;

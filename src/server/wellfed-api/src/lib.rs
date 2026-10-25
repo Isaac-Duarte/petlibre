@@ -27,7 +27,8 @@ use uuid::Uuid;
 pub use auth::{Credentials, Role, SetupState, User};
 pub use error::{ErrorCode, FeederRefusal, Problem};
 pub use events::{
-    ClientRole, EnrollPath, EventBody, EventKind, EventPage, EventQuery, FeederEvent, Gap, Source,
+    ClientRole, EnrollPath, EventBody, EventKind, EventPage, EventQuery, FeedOutcome, FeedReason,
+    FeederEvent, Gap, Source,
 };
 pub use feeders::{
     AdoptFeeder, Connection, Feeder, FeederDetail, FeederStatus, LockRequest, Power, Settings,

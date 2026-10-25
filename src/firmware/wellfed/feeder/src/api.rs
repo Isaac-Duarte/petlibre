@@ -29,7 +29,9 @@ use wellfed_feeder::api::{
     self as server, Device, EventRead, KeyChange, KeyOutcome, Pass, SESSIONS, Server,
 };
 use wellfed_feeder::pairing::{self, Pairing};
-use wellfed_proto::api::{self as proto, EventBody, Metric, PORT, Sample, Status};
+use wellfed_proto::api::{
+    self as proto, Capabilities, EventBody, Metric, PORT, Refusal, Sample, Source, Status,
+};
 use wellfed_sdk::hal::health::Boot;
 use wellfed_sdk::hal::keys::{self, Change, KeyResult, Requested};
 use wellfed_sdk::hal::sdk::{self, Accepted, ApiRecv, Datagram};
@@ -112,16 +114,29 @@ fn server_record(record: server::Record, f: &mut impl fmt::Write) -> fmt::Result
     }
 }
 
+/// The feeding owner, as the device API reaches it: the loop's
+/// `feeding::Feeding` on the target. Generic rather than `dyn`, so the
+/// calls stay direct for the stack audit.
+pub trait Feeds {
+    /// A feed is being prepared or driven: handshakes wait.
+    fn feeding(&self) -> bool;
+    /// Hand one feed to the owner; the number its journal holds it under.
+    fn submit(&mut self, portions: u8, by: Source) -> Result<u32, Refusal>;
+    /// Whether the feed `feed` is reserved yet: `None` while it waits.
+    fn reserved(&self, feed: u32) -> Option<Result<(), Refusal>>;
+    /// Stop the feed `feed` if it is still running.
+    fn cancel(&self, feed: u32) -> bool;
+}
+
 /// What the loop hands the device API each pass.
-pub struct Inputs<'a> {
+pub struct Inputs<'a, F> {
     pub now_ms: u32,
     pub pairing: &'a mut Pairing,
     pub identity: Option<&'a Keypair>,
     /// The panel lock, once the owner has read it.
     pub locked: Option<bool>,
     pub recovery: Option<pairing::Event>,
-    /// A feed is being prepared or driven: handshakes wait.
-    pub feeding: bool,
+    pub feeds: &'a mut F,
 }
 
 pub struct Api {
@@ -173,14 +188,14 @@ impl Api {
     }
 
     /// One pass; the delay until the next.
-    pub fn step(&mut self, inputs: Inputs<'_>, mut record: impl FnMut(Record)) -> u32 {
+    pub fn step<F: Feeds>(&mut self, inputs: Inputs<'_, F>, mut record: impl FnMut(Record)) -> u32 {
         let Inputs {
             now_ms,
             pairing,
             identity,
             locked,
             recovery,
-            feeding,
+            feeds,
         } = inputs;
         let boot = *self.boot.get_or_insert_with(|| {
             let boot = boot_facts();
@@ -188,13 +203,13 @@ impl Api {
                 bank: boot.bank,
                 reset_flags: boot.reset_flags,
             };
-            Feeder::record_event(body);
+            record_event(body);
             boot
         });
         let lost = events::take_lost();
         if lost > 0 {
             let count = u16::try_from(lost).unwrap_or(u16::MAX);
-            Feeder::record_event(EventBody::Lost { count });
+            record_event(EventBody::Lost { count });
         }
 
         let (table, seen) = self.server.clients_table();
@@ -226,7 +241,12 @@ impl Api {
         self.accept(now_ms, &mut record);
         self.receive(&mut record);
 
-        let mut device = Feeder { boot, locked };
+        let feeding = feeds.feeding();
+        let mut device = Feeder {
+            boot,
+            locked,
+            feeds,
+        };
         let busy = self.server.step(
             Pass {
                 now_ms,
@@ -424,33 +444,28 @@ impl Default for Api {
     }
 }
 
-/// Queue one durable event from elsewhere in the loop (the panel's lock).
+/// Queue one durable event for the settings writer, stamped with the wall
+/// clock when it is valid: the server's, and those from elsewhere in the
+/// loop (the panel's lock, a feed's end).
 pub fn record_event(body: EventBody) {
-    Feeder::record_event(body);
-}
-
-/// The rest of the firmware, as the server sees it.
-struct Feeder {
-    boot: Boot,
-    locked: Option<bool>,
-}
-
-impl Feeder {
-    /// Queue one durable event for the settings writer, stamped with the
-    /// wall clock when it is valid.
-    fn record_event(body: EventBody) {
-        let at = clock::health()
-            .0
-            .and_then(|clock| u32::try_from(clock.unix_ms / 1000).ok());
-        let mut bytes = [0u8; BODY_BYTES];
-        if wellfed_proto::encode(&body, &mut bytes).is_ok() {
-            // A full queue is counted and recorded as lost.
-            let _ = events::record(at, bytes);
-        }
+    let at = clock::health()
+        .0
+        .and_then(|clock| u32::try_from(clock.unix_ms / 1000).ok());
+    let mut bytes = [0u8; BODY_BYTES];
+    if wellfed_proto::encode(&body, &mut bytes).is_ok() {
+        // A full queue is counted and recorded as lost.
+        let _ = events::record(at, bytes);
     }
 }
 
-impl Device for Feeder {
+/// The rest of the firmware, as the server sees it.
+struct Feeder<'a, F> {
+    boot: Boot,
+    locked: Option<bool>,
+    feeds: &'a mut F,
+}
+
+impl<F: Feeds> Device for Feeder<'_, F> {
     fn random(&mut self, out: &mut [u8; 32]) -> bool {
         rng::fill(out)
     }
@@ -541,8 +556,24 @@ impl Device for Feeder {
         })
     }
 
+    fn capabilities(&self) -> Capabilities {
+        Capabilities::FEED
+    }
+
+    fn feed(&mut self, portions: u8, by: Source) -> Result<u32, Refusal> {
+        self.feeds.submit(portions, by)
+    }
+
+    fn feed_reserved(&mut self, feed: u32) -> Option<Result<(), Refusal>> {
+        self.feeds.reserved(feed)
+    }
+
+    fn cancel_feed(&mut self, feed: u32) -> bool {
+        self.feeds.cancel(feed)
+    }
+
     fn record(&mut self, _now_ms: u32, body: EventBody) {
-        Self::record_event(body);
+        record_event(body);
     }
 
     fn event_after(&mut self, after: Option<u64>) -> EventRead {

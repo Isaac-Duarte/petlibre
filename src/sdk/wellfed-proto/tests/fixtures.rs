@@ -239,6 +239,45 @@ fn messages() -> Vec<Fixture> {
             })),
             feeder,
         ),
+        (
+            "op-cancel-feed",
+            entry(&request(Op::CancelFeed { feed: 14 })),
+            client,
+        ),
+        (
+            "outcome-feeding",
+            entry(&response(Outcome::Feeding { feed: 14 })),
+            feeder,
+        ),
+        (
+            "event-fed",
+            entry(&FeederMessage::Event(Event {
+                seq: 15,
+                at: Some(1_792_674_000),
+                body: EventBody::Fed {
+                    feed: 14,
+                    requested: 2,
+                    completed: 1,
+                    outcome: FeedOutcome::Failed,
+                    reason: FeedReason::NoFeedback,
+                    by: Source::Panel,
+                },
+            })),
+            feeder,
+        ),
+        (
+            "outcome-fault",
+            entry(&response(Outcome::Refused(Refusal::Fault))),
+            feeder,
+        ),
+        (
+            "hello-feed",
+            entry(&Hello {
+                major: 1,
+                capabilities: Capabilities::FEED,
+            }),
+            |b| decode::<Hello>(b).is_ok(),
+        ),
     ]
 }
 

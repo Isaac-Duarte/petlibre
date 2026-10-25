@@ -140,7 +140,7 @@ pub(crate) enum Answer {
     Status(DeviceStatus),
     Settings(Settings),
     Refused(Refusal),
-    /// An answer no [`Ask`] expects (clients, an invite).
+    /// An answer no [`Ask`] expects (clients, an invite, a feed).
     Unexpected,
 }
 
@@ -151,7 +151,7 @@ impl Answer {
             Outcome::Status(status) => Self::Status(DeviceStatus::of(&status)),
             Outcome::Settings(settings) => Self::Settings(settings),
             Outcome::Refused(refusal) => Self::Refused(refusal),
-            Outcome::Clients(_) | Outcome::Invite(_) => Self::Unexpected,
+            Outcome::Clients(_) | Outcome::Invite(_) | Outcome::Feeding { .. } => Self::Unexpected,
         }
     }
 }

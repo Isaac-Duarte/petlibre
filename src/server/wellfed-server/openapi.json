@@ -945,6 +945,53 @@
                 ]
               }
             }
+          },
+          {
+            "type": "object",
+            "description": "A feed ended.",
+            "required": [
+              "feed",
+              "requested",
+              "completed",
+              "outcome",
+              "reason",
+              "by",
+              "kind"
+            ],
+            "properties": {
+              "by": {
+                "$ref": "#/components/schemas/Source"
+              },
+              "completed": {
+                "type": "integer",
+                "format": "int32",
+                "description": "The portions the feedback sensor confirmed.",
+                "minimum": 0
+              },
+              "feed": {
+                "type": "integer",
+                "format": "int32",
+                "description": "The feeder's number for the feed.",
+                "minimum": 0
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "fed"
+                ]
+              },
+              "outcome": {
+                "$ref": "#/components/schemas/FeedOutcome"
+              },
+              "reason": {
+                "$ref": "#/components/schemas/FeedReason"
+              },
+              "requested": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              }
+            }
           }
         ]
       },
@@ -979,6 +1026,34 @@
             "minimum": 0
           }
         }
+      },
+      "FeedOutcome": {
+        "type": "string",
+        "enum": [
+          "done",
+          "cancelled",
+          "expired",
+          "failed",
+          "uncertain"
+        ]
+      },
+      "FeedReason": {
+        "type": "string",
+        "description": "Why a feed ended.",
+        "enum": [
+          "done",
+          "cancelled",
+          "clock",
+          "observation_gap",
+          "timeout",
+          "no_feedback",
+          "power",
+          "sensor",
+          "outlet",
+          "overcurrent",
+          "feedback_stream",
+          "output"
+        ]
       },
       "Feeder": {
         "type": "object",
@@ -1098,7 +1173,8 @@
           "full",
           "not_found",
           "muted",
-          "time"
+          "time",
+          "fault"
         ]
       },
       "FeederSample": {

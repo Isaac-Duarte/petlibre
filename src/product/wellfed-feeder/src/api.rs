@@ -16,6 +16,9 @@
 //!   running again.
 //! - **Writes carry their base generation;** a stale one is refused with
 //!   the current generation.
+//! - **A feed is answered once it is durably reserved,** with the number
+//!   the journal holds it under; its result is a `Fed` event, which only
+//!   sessions whose hello carries [`Capabilities::FEED`] are sent.
 //!
 //! Sessions authenticate with Noise IK under the feeder's identity, against
 //! the enrolled clients the settings writer publishes. A revoked key's
@@ -35,9 +38,9 @@ use wellfed_core::transport::{
 };
 use wellfed_core::{deadline_passed, named_enum};
 use wellfed_proto::api::{
-    self as proto, ClientMessage, Clients, EventBody, FRAME_MAX, FeederMessage, Fingerprint, Hello,
-    Joined, Op, Open, OpenRefusal, Outcome, PROLOGUE, PROTOCOL_MAJOR, PROTOCOL_MAJOR_MIN, Refusal,
-    RequestId, Sample, Source, Status, Tune, Welcome,
+    self as proto, Capabilities, ClientMessage, Clients, EventBody, FRAME_MAX, FeederMessage,
+    Fingerprint, Hello, Joined, Op, Open, OpenRefusal, Outcome, PROLOGUE, PROTOCOL_MAJOR,
+    PROTOCOL_MAJOR_MIN, Refusal, RequestId, Sample, Source, Status, Tune, Welcome,
 };
 
 use crate::pairing::{self, Pairing, Path};
@@ -84,6 +87,16 @@ pub trait Device {
     fn keys(&mut self, change: KeyChange) -> Option<u32>;
     /// The result of the change with `ticket`, once written.
     fn keys_outcome(&mut self, ticket: u32) -> Option<KeyOutcome>;
+    /// What this firmware serves beyond major version 1's first ops.
+    fn capabilities(&self) -> Capabilities;
+    /// Queue one feed for the feeding owner on `by`'s behalf: the number
+    /// its journal will hold it under.
+    fn feed(&mut self, portions: u8, by: Source) -> Result<u32, Refusal>;
+    /// Whether the feed `feed` queued is durably reserved yet: `None` while
+    /// it waits, or why it ended before it was.
+    fn feed_reserved(&mut self, feed: u32) -> Option<Result<(), Refusal>>;
+    /// Stop the feed `feed` if it is still running; false once it has ended.
+    fn cancel_feed(&mut self, feed: u32) -> bool;
     /// Record one durable event.
     fn record(&mut self, now_ms: u32, body: EventBody);
     /// The first durable event after `after` (`None`: from the oldest).
@@ -197,6 +210,7 @@ enum Remembered {
     Done(Option<u32>),
     Refused(Refusal),
     Invite { id: u32 },
+    Feeding { feed: u32 },
 }
 
 /// The write ids one client's sessions have answered.
@@ -237,6 +251,7 @@ enum Waiting {
     Settings,
     Wifi,
     Keys { ticket: u32, revoked: [u8; 32] },
+    Feed { feed: u32 },
 }
 
 #[derive(Clone, Copy)]
@@ -259,11 +274,14 @@ enum Phase {
         reply: bool,
         /// The IK client's hello, once read.
         refusal: Option<OpenRefusal>,
+        capabilities: Capabilities,
     },
     Open {
         transport: Transport,
         key: [u8; 32],
         role: Role,
+        /// What the client's hello said it understands.
+        capabilities: Capabilities,
         memory: usize,
         pending: Option<Pending>,
         /// Push events after this cursor (`Some(None)`: from the oldest).
@@ -626,6 +644,7 @@ impl Server {
                     open,
                     reply: false,
                     refusal: None,
+                    capabilities: Capabilities::V1,
                 };
                 Ok(true)
             }
@@ -634,6 +653,7 @@ impl Server {
                 open,
                 reply,
                 refusal,
+                capabilities,
             } => {
                 if *reply {
                     if !slot.wire.tx_idle() {
@@ -645,7 +665,8 @@ impl Server {
                                 .remote_static()
                                 .and_then(|key| find(&self.clients, key))
                                 .map(|client| client.role);
-                            let welcome = welcome(refusal, role, device.build());
+                            let welcome =
+                                welcome(refusal, role, device.capabilities(), device.build());
                             let len = proto_encode(&welcome, &mut self.plain)?;
                             &self.plain[..len]
                         }
@@ -699,6 +720,7 @@ impl Server {
                     let hello: Hello = wellfed_proto::decode(&self.plain[..read])
                         .map_err(|_| Reason::Malformed)?;
                     *refusal = admit(hello, handshake.remote_static(), &self.clients);
+                    *capabilities = hello.capabilities;
                 }
                 *reply = true;
                 Ok(true)
@@ -803,8 +825,11 @@ impl Server {
             return Ok(());
         }
 
-        let Phase::Handshake { handshake, .. } =
-            core::mem::replace(&mut slot.phase, Phase::Closing)
+        let Phase::Handshake {
+            handshake,
+            capabilities,
+            ..
+        } = core::mem::replace(&mut slot.phase, Phase::Closing)
         else {
             return Ok(());
         };
@@ -820,6 +845,7 @@ impl Server {
             transport,
             key,
             role,
+            capabilities,
             memory,
             pending: None,
             events: None,
@@ -1256,7 +1282,11 @@ impl Server {
         record: &mut impl FnMut(Record),
     ) -> Option<Reply> {
         let Phase::Open {
-            key, role, memory, ..
+            key,
+            role,
+            capabilities,
+            memory,
+            ..
         } = self.slots[index].phase
         else {
             return None;
@@ -1276,6 +1306,7 @@ impl Server {
                     .map_or(Reply::Refused(Refusal::NotFound), |secret| {
                         Reply::Invite(invite(id, secret))
                     }),
+                Remembered::Feeding { feed } => Reply::Feeding(feed),
             });
         }
         if !allowed(role, action) {
@@ -1359,7 +1390,23 @@ impl Server {
                 }
             }
             Action::Invalid => Reply::Refused(Refusal::Invalid),
-            Action::Feed => Reply::Refused(Refusal::Unavailable),
+            Action::Feed { .. } | Action::CancelFeed { .. }
+                if !capabilities.contains(Capabilities::FEED)
+                    || !device.capabilities().contains(Capabilities::FEED) =>
+            {
+                Reply::Refused(Refusal::Unavailable)
+            }
+            Action::Feed { portions } => match device.feed(portions, by) {
+                Ok(feed) => return self.wait(index, id, action, Waiting::Feed { feed }),
+                Err(refusal) => Reply::Refused(refusal),
+            },
+            Action::CancelFeed { feed } => {
+                if device.cancel_feed(feed) {
+                    Reply::Done(None)
+                } else {
+                    Reply::Refused(Refusal::NotFound)
+                }
+            }
             Action::Reboot => {
                 self.reboot_at = Some(now_ms.wrapping_add(REBOOT_MS));
                 Reply::Done(None)
@@ -1465,6 +1512,11 @@ impl Server {
                 Some(KeyOutcome::NotFound) => Reply::Refused(Refusal::NotFound),
                 Some(_) => Reply::Refused(Refusal::NotWritable),
             },
+            Waiting::Feed { feed } => match device.feed_reserved(feed) {
+                None => return Ok(None),
+                Some(Ok(())) => Reply::Feeding(feed),
+                Some(Err(refusal)) => Reply::Refused(refusal),
+            },
         };
 
         if let Phase::Open { pending, .. } = &mut self.slots[index].phase {
@@ -1507,6 +1559,7 @@ impl Server {
             Reply::Refused(refusal) => Outcome::Refused(refusal),
             Reply::Settings(settings) => Outcome::Settings(settings),
             Reply::Invite(invite) => Outcome::Invite(invite),
+            Reply::Feeding(feed) => Outcome::Feeding { feed },
             Reply::Status => {
                 let mut status = device.status(now_ms);
                 status.sessions = u8::try_from(self.sessions()).unwrap_or(u8::MAX);
@@ -1540,13 +1593,24 @@ impl Server {
 
     /// Push the next event, or the latest sample, to a subscriber.
     fn push<D: Device>(&mut self, index: usize, device: &mut D) -> Result<bool, Reason> {
-        let Phase::Open { events, sample, .. } = &mut self.slots[index].phase else {
+        let Phase::Open {
+            events,
+            sample,
+            capabilities,
+            ..
+        } = &mut self.slots[index].phase
+        else {
             return Ok(false);
         };
         if let Some(after) = *events {
             let message = match device.event_after(after) {
                 EventRead::Event(event) => {
                     *events = Some(Some(event.seq));
+                    let known = !matches!(event.body, EventBody::Fed { .. })
+                        || capabilities.contains(Capabilities::FEED);
+                    if !known {
+                        return Ok(true);
+                    }
                     Some(FeederMessage::Event(event))
                 }
                 EventRead::Gap { from, to } => {
@@ -1659,11 +1723,16 @@ fn admit(
     session_role.is_none().then_some(OpenRefusal::Unknown)
 }
 
-fn welcome(refusal: Option<OpenRefusal>, role: Option<Role>, build: &str) -> Welcome<'_> {
+fn welcome(
+    refusal: Option<OpenRefusal>,
+    role: Option<Role>,
+    capabilities: Capabilities,
+    build: &str,
+) -> Welcome<'_> {
     match (refusal, role) {
         (None, Some(role)) => Welcome::Open {
             major: PROTOCOL_MAJOR,
-            capabilities: proto::Capabilities::V1,
+            capabilities,
             build,
             role: proto_role(role),
         },
@@ -1690,6 +1759,7 @@ fn remembered(reply: Reply) -> Remembered {
         Reply::Refused(refusal) => Remembered::Refused(refusal),
         Reply::Done(generation) => Remembered::Done(generation),
         Reply::Invite(invite) => Remembered::Invite { id: invite.id },
+        Reply::Feeding(feed) => Remembered::Feeding { feed },
         Reply::Status | Reply::Settings(_) | Reply::Clients => Remembered::Done(None),
     }
 }
@@ -1763,8 +1833,13 @@ enum Action {
     RevokeClient {
         key: [u8; 32],
     },
-    Feed,
+    Feed {
+        portions: u8,
+    },
     Reboot,
+    CancelFeed {
+        feed: u32,
+    },
     /// A field failed the stores' checks before anything ran.
     Invalid,
 }
@@ -1814,8 +1889,10 @@ impl From<Op<'_>> for Action {
             },
             Op::ListClients => Self::ListClients,
             Op::RevokeClient { key } => Self::RevokeClient { key },
-            Op::Feed { .. } => Self::Feed,
+            Op::Feed { portions: 0 } => Self::Invalid,
+            Op::Feed { portions } => Self::Feed { portions },
             Op::Reboot => Self::Reboot,
+            Op::CancelFeed { feed } => Self::CancelFeed { feed },
         }
     }
 }
@@ -1841,8 +1918,9 @@ impl Action {
             Self::CreateInvite { .. } => "create-invite",
             Self::ListClients => "list-clients",
             Self::RevokeClient { .. } => "revoke-client",
-            Self::Feed => "feed",
+            Self::Feed { .. } => "feed",
             Self::Reboot => "reboot",
+            Self::CancelFeed { .. } => "cancel-feed",
             Self::Invalid => "invalid",
         }
     }
@@ -1858,6 +1936,7 @@ enum Reply {
     Settings(proto::Settings),
     Invite(proto::Invite),
     Clients,
+    Feeding(u32),
 }
 
 fn saturate(jump_ms: i64) -> i32 {
@@ -1877,6 +1956,7 @@ impl Name for Reply {
             Self::Settings(_) => "settings",
             Self::Clients => "clients",
             Self::Invite(_) => "invite",
+            Self::Feeding(_) => "feeding",
             Self::Refused(refusal) => match refusal {
                 Refusal::Forbidden => "forbidden",
                 Refusal::Stale { .. } => "stale",
@@ -1888,6 +1968,7 @@ impl Name for Reply {
                 Refusal::NotFound => "not-found",
                 Refusal::Muted => "muted",
                 Refusal::Time => "time",
+                Refusal::Fault => "fault",
             },
         }
     }

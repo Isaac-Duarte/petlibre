@@ -82,9 +82,10 @@ pub fn steps(source: Source) -> Vec<&'static str> {
 /// Why the bench never builds the motor firmware itself.
 const MOTION_MANUAL: &str = "drives the motor; motion builds stay manual (build and review it yourself, then use --review with --attended-motion)";
 
-/// A no-motion firmware `--build` may make (`src/firmware/wellfed/<name>`).
-/// The motor firmware is refused here: motion builds stay a manual,
-/// attended step.
+/// A firmware `--build` may make (`src/firmware/wellfed/<name>`): none
+/// moves anything at startup, and `feeder` drives the motor only for an
+/// authenticated feed request, which the bench never sends. The motor
+/// firmware is refused here: motion builds stay a manual, attended step.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Firmware {
     /// The guided QA self-test; `wellfed-build`'s default.
@@ -254,8 +255,8 @@ pub struct OtaArgs {
     /// With --build: build even when a review of the same sources exists.
     #[arg(long, requires = "build")]
     pub rebuild: bool,
-    /// No-motion firmware for --build: qa (the default), optics, buttons, adc, speaker, blink,
-    /// trial or feeder.
+    /// Firmware without startup motion for --build: qa (the default), optics, buttons, adc,
+    /// speaker, blink, trial or feeder.
     #[arg(long, value_parser = parse_firmware)]
     pub firmware: Option<Firmware>,
     /// Variant for --build: stall or fail with --firmware trial, entropy or owner-stall with

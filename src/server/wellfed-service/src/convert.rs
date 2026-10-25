@@ -99,6 +99,48 @@ pub(crate) fn body(body: proto::EventBody) -> api::EventBody {
             jump_ms,
         },
         proto::EventBody::Lost { count } => api::EventBody::Lost { count },
+        proto::EventBody::Fed {
+            feed,
+            requested,
+            completed,
+            outcome,
+            reason,
+            by,
+        } => api::EventBody::Fed {
+            feed,
+            requested,
+            completed,
+            outcome: feed_outcome(outcome),
+            reason: feed_reason(reason),
+            by: source(by),
+        },
+    }
+}
+
+const fn feed_outcome(outcome: proto::FeedOutcome) -> api::FeedOutcome {
+    match outcome {
+        proto::FeedOutcome::Done => api::FeedOutcome::Done,
+        proto::FeedOutcome::Cancelled => api::FeedOutcome::Cancelled,
+        proto::FeedOutcome::Expired => api::FeedOutcome::Expired,
+        proto::FeedOutcome::Failed => api::FeedOutcome::Failed,
+        proto::FeedOutcome::Uncertain => api::FeedOutcome::Uncertain,
+    }
+}
+
+const fn feed_reason(reason: proto::FeedReason) -> api::FeedReason {
+    match reason {
+        proto::FeedReason::Done => api::FeedReason::Done,
+        proto::FeedReason::Cancelled => api::FeedReason::Cancelled,
+        proto::FeedReason::Clock => api::FeedReason::Clock,
+        proto::FeedReason::ObservationGap => api::FeedReason::ObservationGap,
+        proto::FeedReason::Timeout => api::FeedReason::Timeout,
+        proto::FeedReason::NoFeedback => api::FeedReason::NoFeedback,
+        proto::FeedReason::Power => api::FeedReason::Power,
+        proto::FeedReason::Sensor => api::FeedReason::Sensor,
+        proto::FeedReason::Outlet => api::FeedReason::Outlet,
+        proto::FeedReason::Overcurrent => api::FeedReason::Overcurrent,
+        proto::FeedReason::FeedbackStream => api::FeedReason::FeedbackStream,
+        proto::FeedReason::Output => api::FeedReason::Output,
     }
 }
 
@@ -133,6 +175,7 @@ pub(crate) fn refusal(refusal: proto::Refusal) -> api::FeederRefusal {
         proto::Refusal::NotFound => api::FeederRefusal::NotFound,
         proto::Refusal::Muted => api::FeederRefusal::Muted,
         proto::Refusal::Time => api::FeederRefusal::Time,
+        proto::Refusal::Fault => api::FeederRefusal::Fault,
     }
 }
 

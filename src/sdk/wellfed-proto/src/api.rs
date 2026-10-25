@@ -63,8 +63,16 @@ pub enum Open {
 pub struct Capabilities(pub u32);
 
 impl Capabilities {
-    /// Everything major version 1 defines.
+    /// Everything major version 1 first defined.
     pub const V1: Self = Self(0);
+    /// Feeding: [`Op::Feed`] is served, and [`Op::CancelFeed`],
+    /// [`Outcome::Feeding`] and [`EventBody::Fed`] are in use. A feeder
+    /// pushes `Fed` events only to a session whose hello carries this bit.
+    pub const FEED: Self = Self(1);
+
+    pub const fn contains(self, other: Self) -> bool {
+        self.0 & other.0 == other.0
+    }
 }
 
 /// The client's IK first-message payload.
@@ -169,11 +177,18 @@ pub enum Op<'a> {
     RevokeClient {
         key: [u8; 32],
     },
-    /// Not served until the feeding owner lands.
+    /// Answered [`Outcome::Feeding`] once the feed is durably reserved; its
+    /// result is a [`EventBody::Fed`] in the history. Refused `Unavailable`
+    /// by a feeder without [`Capabilities::FEED`].
     Feed {
         portions: u8,
     },
     Reboot,
+    /// Stop the feed [`Outcome::Feeding`] named, if it is still running.
+    /// `NotFound` once it has ended (its `Fed` event says how).
+    CancelFeed {
+        feed: u32,
+    },
 }
 
 impl Op<'_> {
@@ -248,6 +263,11 @@ pub enum Outcome<'a> {
     Clients(Clients<'a>),
     Invite(Invite),
     Refused(Refusal),
+    /// The feed is reserved in the journal under `feed` and runs now; a
+    /// retry of the request returns this again rather than feeding twice.
+    Feeding {
+        feed: u32,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -273,6 +293,9 @@ pub enum Refusal {
     Muted,
     /// The clock refused the sync.
     Time,
+    /// The feeding owner stopped on a fault and serves no feed until the
+    /// feeder restarts.
+    Fault,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -394,6 +417,52 @@ pub enum EventBody {
     Lost {
         count: u16,
     },
+    /// A feed ended. `completed` counts the portions the feedback sensor
+    /// confirmed.
+    Fed {
+        feed: u32,
+        requested: u8,
+        completed: u8,
+        outcome: FeedOutcome,
+        reason: FeedReason,
+        by: Source,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FeedOutcome {
+    Done,
+    Cancelled,
+    /// It never started: the feeder could not get ready in time.
+    Expired,
+    Failed,
+    /// The feeder stopped without recording a result: it may have
+    /// dispensed anything up to `requested`. Never retried automatically.
+    Uncertain,
+}
+
+/// Why a feed ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FeedReason {
+    Done,
+    Cancelled,
+    /// The feeder's clock jumped.
+    Clock,
+    /// The feeder could not watch the motor often enough.
+    ObservationGap,
+    /// The whole feed ran past its limit.
+    Timeout,
+    /// No portion was confirmed for too long: empty, jammed or a sensor fault.
+    NoFeedback,
+    Power,
+    Sensor,
+    /// The outlet beam read blocked.
+    Outlet,
+    Overcurrent,
+    /// The feedback sensor's edges could not be trusted.
+    FeedbackStream,
+    /// An output failed to apply or verify.
+    Output,
 }
 
 /// The first 4 bytes of a client's key: enough to tell clients apart in
@@ -501,6 +570,14 @@ mod tests {
                 jump_ms: Some(i32::MIN),
             },
             EventBody::Lost { count: u16::MAX },
+            EventBody::Fed {
+                feed: u32::MAX,
+                requested: u8::MAX,
+                completed: u8::MAX,
+                outcome: FeedOutcome::Uncertain,
+                reason: FeedReason::Output,
+                by: Source::Client(client),
+            },
         ] {
             let mut out = [0; 16];
             let len = encode(&body, &mut out).unwrap();

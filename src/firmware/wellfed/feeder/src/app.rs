@@ -4,7 +4,7 @@
 use core::ffi::c_void;
 
 use wellfed_feeder::panel::{BUTTONS, Event, Source};
-use wellfed_proto::api::{EventBody, Source as EventSource};
+use wellfed_proto::api::{EventBody, Refusal, Source as EventSource};
 use wellfed_sdk::Slot;
 use wellfed_sdk::hal::{panel, sdk, settings, startup};
 
@@ -97,6 +97,26 @@ impl core::fmt::Display for ApiRecord {
     }
 }
 
+impl api::Feeds for Feeding {
+    fn feeding(&self) -> bool {
+        Feeding::feeding(self)
+    }
+
+    fn submit(&mut self, portions: u8, by: EventSource) -> Result<u32, Refusal> {
+        Feeding::submit(self, portions, by, |record| {
+            log(format_args!("PLOWN1 {}\r\n", FeedingRecord(record)));
+        })
+    }
+
+    fn reserved(&self, feed: u32) -> Option<Result<(), Refusal>> {
+        Feeding::reserved(self, feed)
+    }
+
+    fn cancel(&self, feed: u32) -> bool {
+        Feeding::cancel(self, feed)
+    }
+}
+
 unsafe extern "C" fn loop_task(_: *mut c_void) -> u32 {
     let (Some(mut owner), Some(mut api), Some(mut identity), Some(mut feeding)) = (
         OWNER.enter(),
@@ -168,7 +188,7 @@ unsafe extern "C" fn loop_task(_: *mut c_void) -> u32 {
         identity,
         locked,
         recovery,
-        feeding: feeding.feeding(),
+        feeds: &mut *feeding,
     };
     let api_delay = api.step(inputs, |record| {
         log(format_args!("PLAPI1 {}\r\n", ApiRecord(record)));

@@ -114,6 +114,30 @@ pub enum Step {
     Refused,
 }
 
+/// What one feed's drive measured, for the bench: every feedback edge,
+/// qualified or not, and the motor current, so a run shows the mechanism's
+/// behaviour before the limits are tuned to it. Reset when a request is
+/// taken; complete once the result is reported.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FeedTrace {
+    /// How long the motor was commanded to move; 0 when it never started.
+    pub drive_ms: u32,
+    pub rising: u16,
+    pub falling: u16,
+    /// From the drive's start to the first feedback edge.
+    pub first_edge_ms: Option<u32>,
+    /// The scaled current channel (stock's unit) while driving.
+    pub current_max: u32,
+    pub current_sum: u32,
+    pub current_samples: u16,
+}
+
+impl FeedTrace {
+    pub fn current_mean(&self) -> Option<u32> {
+        (self.current_samples != 0).then(|| self.current_sum / u32::from(self.current_samples))
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct OwnerStatus {
     pub state: OwnerState,
@@ -128,6 +152,7 @@ pub struct OwnerStatus {
     pub result_durable: bool,
     pub stopped: bool,
     pub optics_off: bool,
+    pub trace: FeedTrace,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -203,6 +228,9 @@ pub struct OwnerTask<S> {
     pub recovery: OwnerRecovery,
     pub request: FeedRequest,
     pub result: OwnerResult,
+    pub trace: FeedTrace,
+    /// The supervisor's clock when the drive started, until it is reported.
+    pub drive_at: Option<u32>,
 
     pub state: OwnerState,
     pub fault: OwnerFault,
@@ -243,6 +271,8 @@ impl<S> Default for OwnerTask<S> {
             recovery: OwnerRecovery::default(),
             request: FeedRequest::default(),
             result: OwnerResult::default(),
+            trace: FeedTrace::default(),
+            drive_at: None,
             state: OwnerState::default(),
             fault: OwnerFault::default(),
             beat_raw: 0,

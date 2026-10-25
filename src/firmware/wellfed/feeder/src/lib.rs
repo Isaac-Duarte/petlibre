@@ -11,8 +11,8 @@
 //! feeder Wi-Fi and its key. The loop also serves the device API
 //! (`api`): Noise sessions over TCP, advertised over mDNS, with the
 //! event history and live samples. The loop also steps the feeding owner
-//! (`feeding`), which holds the motor and emitters stopped and supervised;
-//! nothing submits a feed yet. The `entropy` variant streams raw noise
+//! (`feeding`), which holds the motor and emitters stopped and supervised
+//! and runs the feeds the device API submits. The `entropy` variant streams raw noise
 //! samples for the host's entropy estimate, and the `owner-stall` variant stalls
 //! the loop on purpose, for the bench to watch the owner's beat lapse.
 //!

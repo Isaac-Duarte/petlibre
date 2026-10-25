@@ -29,7 +29,9 @@ use wellfed_client::api::Invite;
 use wellfed_client::setup::{Ask, Credentials, Session, Step, panel_position};
 use wellfed_core::setup_code::Code;
 use wellfed_formats::{hex, private};
-use wellfed_proto::api::{FeederMessage, Joined, Op, Outcome, Role, SettingsChanges, Wifi};
+use wellfed_proto::api::{
+    EventBody, FeederMessage, Joined, Op, Outcome, Role, SettingsChanges, Wifi,
+};
 use wellfed_proto::setup::{Enrolled, Refusal, Reply, WifiSaved};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -74,6 +76,10 @@ enum Command {
     Clients(Target),
     /// Revoke a client; its open sessions close.
     Revoke(RevokeArgs),
+    /// Dispense portions, and wait for the feed's result.
+    Feed(FeedArgs),
+    /// Stop a running feed.
+    CancelFeed(CancelFeedArgs),
     /// Restart the feeder.
     Reboot(Target),
     /// Become an owner again through the feeder's recovery window.
@@ -119,6 +125,11 @@ fn main() -> Result<()> {
         Command::Join(args) => runtime.block_on(join_command(args)),
         Command::Clients(target) => runtime.block_on(clients_command(target)),
         Command::Revoke(args) => runtime.block_on(revoke_command(args)),
+        Command::Feed(args) => runtime.block_on(feed_command(args)),
+        Command::CancelFeed(args) => runtime.block_on(ask_and_print(
+            &args.target,
+            Op::CancelFeed { feed: args.feed },
+        )),
         Command::Reboot(target) => runtime.block_on(ask_and_print(&target, Op::Reboot)),
         Command::Recover(args) => runtime.block_on(recover_command(args)),
     }
@@ -316,6 +327,22 @@ struct EventsArgs {
     samples: bool,
 }
 
+#[derive(Args)]
+struct FeedArgs {
+    #[command(flatten)]
+    target: Target,
+    #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u8).range(1..))]
+    portions: u8,
+}
+
+#[derive(Args)]
+struct CancelFeedArgs {
+    #[command(flatten)]
+    target: Target,
+    /// The feed's number, as `wellfed feed` printed it.
+    feed: u32,
+}
+
 #[derive(Clone, Copy, ValueEnum)]
 enum InviteRole {
     Owner,
@@ -473,6 +500,47 @@ async fn events_command(args: EventsArgs) -> Result<()> {
                 println!("{}", serde_json::to_string(&message)?);
             }
             FeederMessage::Response { .. } => {}
+        }
+    }
+}
+
+/// Longer than any feed the owner's limits allow.
+const FEED_WAIT: Duration = Duration::from_secs(120);
+
+/// One feed under a fresh id, never retried: a feed whose answer is lost
+/// may have run. Prints the answer, then the feed's `Fed` event.
+async fn feed_command(args: FeedArgs) -> Result<()> {
+    let (_, _, mut connection) = connect(&args.target).await?;
+    let status = connection.ask(Op::Status).await?;
+    let Outcome::Status(status) = status.outcome() else {
+        bail!("the feeder did not answer with its status");
+    };
+    // Only events after this one can be the feed's.
+    connection.subscribe(status.last_event, false).await?;
+
+    let answer = connection
+        .ask(Op::Feed {
+            portions: args.portions,
+        })
+        .await?;
+    let outcome = answer.outcome();
+    print_json(&outcome)?;
+    let Outcome::Feeding { feed } = outcome else {
+        bail!("the feeder did not start the feed: {outcome:?}");
+    };
+
+    loop {
+        let Some(message) = connection.next(FEED_WAIT).await? else {
+            bail!(
+                "no result for feed {feed} after {} s; `wellfed events` shows it once recorded",
+                FEED_WAIT.as_secs()
+            );
+        };
+        let message = message.get();
+        if let FeederMessage::Event(event) = message
+            && matches!(event.body, EventBody::Fed { feed: ended, .. } if ended == feed)
+        {
+            return print_json(&event);
         }
     }
 }

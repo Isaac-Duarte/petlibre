@@ -5,8 +5,8 @@
 //! and pairing policy, and `wellfed-core`'s stores on a flash image laid
 //! out like the feeder's storage region. What it fakes is what the board
 //! provides: the buttons (the operator's [`console`]), the supply and
-//! signal it samples, and the time. Nothing moves: a feed is refused, as
-//! on the current firmware, until the feeding owner lands.
+//! signal it samples, and the time. Nothing moves: it has no feeding
+//! owner, so it does not claim the feed capability and refuses feeds.
 //!
 //! - [`flash`]: the storage region, in memory or in a file.
 //! - [`device`]: the server's view of the feeder, over the stores.

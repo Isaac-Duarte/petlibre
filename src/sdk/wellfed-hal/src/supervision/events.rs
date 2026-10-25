@@ -83,6 +83,19 @@ pub struct EventsState {
     pub timer_raw_repeat: bool,
     /// Accepted timer interrupts (SYSTIMER advanced); wraps. Diagnostic only.
     pub timer_count: u32,
+    /// Every feedback edge since capture was last enabled. Diagnostic only.
+    pub edges: FeedbackEdges,
+}
+
+/// Every edge the feedback interrupt saw, qualified or not, counted apart
+/// from the controller's queue so a run shows what the sensor does even
+/// when the controller credits nothing.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FeedbackEdges {
+    pub rising: u16,
+    pub falling: u16,
+    /// The supervisor's clock at the first one.
+    pub first_at: Option<u32>,
 }
 
 impl Default for EventsState {
@@ -106,6 +119,7 @@ impl Default for EventsState {
             optics_armed: false,
             timer_raw_repeat: false,
             timer_count: 0,
+            edges: FeedbackEdges::default(),
         }
     }
 }
@@ -382,6 +396,7 @@ impl EventsState {
         }
 
         self.reset_feedback(value);
+        self.edges = FeedbackEdges::default();
         sdk::gpioa_eoi(FEEDBACK_MASK);
         sdk::gpio_int_config(FEEDBACK_PIN, true);
         self.capture_enabled = sdk::gpioa_int_en() & FEEDBACK_MASK != 0
@@ -610,6 +625,13 @@ impl EventsState {
             && let Some(value) = self.now()
         {
             let high = sdk::gpioa_ext_port() & FEEDBACK_MASK != 0;
+            let edges = &mut self.edges;
+            if high {
+                edges.rising = edges.rising.saturating_add(1);
+            } else {
+                edges.falling = edges.falling.saturating_add(1);
+            }
+            edges.first_at.get_or_insert(value);
             if !self.feedback.push(value, high) {
                 self.fail(EventsFault::Feedback);
             }
@@ -631,6 +653,11 @@ impl Events {
     /// A copy of the state, for status and tests.
     pub fn view(&self) -> EventsState {
         self.with(|state| *state)
+    }
+
+    /// The feedback edges since capture was last enabled.
+    pub fn edges(&self) -> FeedbackEdges {
+        self.with(|state| state.edges)
     }
 
     /// Whether `open` succeeded and `close` has not.

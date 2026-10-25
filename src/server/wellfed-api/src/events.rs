@@ -58,6 +58,55 @@ pub enum EventBody {
     Lost {
         count: u16,
     },
+    /// A feed ended.
+    Fed {
+        /// The feeder's number for the feed.
+        feed: u32,
+        requested: u8,
+        /// The portions the feedback sensor confirmed.
+        completed: u8,
+        outcome: FeedOutcome,
+        reason: FeedReason,
+        by: Source,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FeedOutcome {
+    Done,
+    Cancelled,
+    /// It never started: the feeder could not get ready in time.
+    Expired,
+    Failed,
+    /// The feeder stopped without recording a result: anything up to
+    /// `requested` may have been dispensed. Never retried automatically.
+    Uncertain,
+}
+
+/// Why a feed ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FeedReason {
+    Done,
+    Cancelled,
+    /// The feeder's clock jumped.
+    Clock,
+    /// The feeder could not watch the motor often enough.
+    ObservationGap,
+    /// The whole feed ran past its limit.
+    Timeout,
+    /// No portion was confirmed for too long: empty, jammed or a sensor fault.
+    NoFeedback,
+    Power,
+    Sensor,
+    /// The outlet beam read blocked.
+    Outlet,
+    Overcurrent,
+    /// The feedback sensor's edges could not be trusted.
+    FeedbackStream,
+    /// An output failed to apply or verify.
+    Output,
 }
 
 impl EventBody {
@@ -71,6 +120,7 @@ impl EventBody {
             Self::Revoked { .. } => EventKind::Revoked,
             Self::ClockSync { .. } => EventKind::ClockSync,
             Self::Lost { .. } => EventKind::Lost,
+            Self::Fed { .. } => EventKind::Fed,
         }
     }
 }
@@ -87,6 +137,7 @@ pub enum EventKind {
     Revoked,
     ClockSync,
     Lost,
+    Fed,
 }
 
 impl EventKind {
@@ -101,6 +152,7 @@ impl EventKind {
             Self::Revoked => "revoked",
             Self::ClockSync => "clock_sync",
             Self::Lost => "lost",
+            Self::Fed => "fed",
         }
     }
 
@@ -114,6 +166,7 @@ impl EventKind {
             Self::Revoked,
             Self::ClockSync,
             Self::Lost,
+            Self::Fed,
         ]
         .into_iter()
         .find(|kind| kind.code() == code)

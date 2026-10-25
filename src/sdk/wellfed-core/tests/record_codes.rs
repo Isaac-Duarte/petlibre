@@ -26,6 +26,7 @@ fn persisted_variants_keep_their_bytes() {
         (OwnerOutcome::Cancelled, 2),
         (OwnerOutcome::Expired, 3),
         (OwnerOutcome::Failed, 4),
+        (OwnerOutcome::Uncertain, 5),
     ];
     for (outcome, byte) in outcomes {
         assert_eq!(outcome.byte(), byte);
@@ -57,7 +58,7 @@ fn persisted_variants_keep_their_bytes() {
 fn unknown_bytes_name_no_variant() {
     assert_eq!(BowlMode::from_byte(2), None);
     assert_eq!(Direction::from_byte(2), None);
-    assert_eq!(OwnerOutcome::from_byte(5), None);
+    assert_eq!(OwnerOutcome::from_byte(6), None);
     assert_eq!(FeedReason::from_byte(13), None);
     assert_eq!(FeedReason::from_byte(u8::MAX), None);
 }

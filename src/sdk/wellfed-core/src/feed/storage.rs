@@ -2,7 +2,8 @@
 //!
 //! The owner reserves each request durably before applying output and
 //! records its result afterwards; at boot `recover` returns the ID high-water
-//! mark and the mechanical phase. [`crate::store::feed_journal::FeedJournal`]
+//! mark and the mechanical phase, and `resolve` records a reservation that
+//! a reset interrupted as uncertain. [`crate::store::feed_journal::FeedJournal`]
 //! provides the implementation.
 
 use crate::feed::controller::{FeedReason, FeedRequest};
@@ -27,6 +28,10 @@ pub enum OwnerOutcome {
     Cancelled = 2,
     Expired = 3,
     Failed = 4,
+    /// A reservation a reset interrupted, resolved at the next boot: the
+    /// feed may have dispensed anything up to what it asked for, and is
+    /// never retried.
+    Uncertain = 5,
 }
 
 impl OwnerOutcome {
@@ -48,6 +53,7 @@ impl OwnerOutcome {
             2 => Some(Self::Cancelled),
             3 => Some(Self::Expired),
             4 => Some(Self::Failed),
+            5 => Some(Self::Uncertain),
             _ => None,
         }
     }
@@ -76,4 +82,9 @@ pub trait OwnerStorage {
     fn reserve(&mut self, request: &FeedRequest) -> bool;
     /// Record the reserved request's result and the phase after it.
     fn finish(&mut self, result: &OwnerResult, phase: &OwnerRecovery) -> bool;
+    /// Record the reservation an earlier boot left pending as an
+    /// [`OwnerOutcome::Uncertain`] result, keeping its ID as the high-water
+    /// mark: the result, once durable. `recover` then reports the phase
+    /// after it. Only a reservation recovered at boot can be resolved.
+    fn resolve(&mut self) -> Option<OwnerResult>;
 }

@@ -1,11 +1,13 @@
 //! Recovery tests for the two-slot feed journal: lifecycle, phase recovery,
 //! bit-flip corruption, binding mismatch, torn writes cut at every byte,
-//! injected I/O failures, the pinned 128-byte v1 wire format, exhaustion and
-//! the wear limit.
+//! injected I/O failures, the pinned 128-byte v1 wire format, exhaustion,
+//! the wear limit, and the uncertain resolution of an interrupted
+//! reservation.
 //!
 //! The invariant under test: after any cut or failure, reopening yields the
 //! committed state, an unresolved pending intent, or `CORRUPT`, never an idle
-//! journal that has forgotten a reserved request ID.
+//! journal that has forgotten a reserved request ID. A cut result or
+//! resolution always yields the pending intent or the committed result.
 
 use wellfed_core::feed::controller::{FeedReason, FeedRequest};
 use wellfed_core::feed::progress::{BowlMode, Direction};
@@ -372,7 +374,9 @@ fn byte_cuts(completing: bool, reused: bool, unit: usize) {
                 );
             }
         } else {
-            assert!(!succeeded && e == JournalError::Corrupt);
+            // Only a torn reservation is ambiguous: a torn result leaves the
+            // reservation pending, to be resolved at the next boot.
+            assert!(!succeeded && !completing && e == JournalError::Corrupt);
         }
     }
 }
@@ -592,4 +596,185 @@ fn wear_limit_refuses_new_reservations_but_never_strands_a_pending_one() {
         (JournalError::Worn, true, writes)
     );
     assert!(j.read().is_some());
+}
+
+/// The reservation `j` holds, reopened as the next boot finds it.
+fn rebooted(f: &mut FakeJournalFlash, config: &JournalConfig) -> FeedJournal<FlashIo> {
+    let mut j = FeedJournal::default();
+    assert_eq!(reopen(f, &mut j, config), JournalError::Ok);
+    assert!(j.view.recovery.pending_request && !j.reserved_here);
+    j
+}
+
+fn assert_resolved(j: &FeedJournal<FlashIo>, sequence: u64) {
+    let v = j.read().unwrap();
+    assert!(v.has_result && !v.recovery.pending_request && v.sequence == sequence);
+    assert_eq!(
+        v.result,
+        OwnerResult {
+            id: 42,
+            requested: 2,
+            completed: 0,
+            outcome: OwnerOutcome::Uncertain,
+            reason: FeedReason::None,
+            motion_possible: true,
+        }
+    );
+    assert_eq!(v.recovery.high_water_id, 42);
+}
+
+#[test]
+fn an_interrupted_reservation_resolves_once_as_uncertain() {
+    for dual in [false, true] {
+        let mut f = FakeJournalFlash::default();
+        let mut j = create(&mut f, dual);
+        let c = j.config;
+
+        // Nothing pending, or a reservation this boot will finish: refused.
+        let writes = f.mutations;
+        assert!(j.resolve().is_none());
+        assert!(reserve(&mut j, 42) && j.resolve().is_none());
+        assert_eq!(f.mutations, writes + (UNIT + RECORD_BYTES) as u32);
+
+        let mut j = rebooted(&mut f, &c);
+        let mut result = j.view.result;
+        result.outcome = OwnerOutcome::Uncertain;
+        result.motion_possible = true;
+        let mut phase = j.view.recovery;
+        phase.pending_request = false;
+        assert!(!j.finish(&result, &phase), "only a reboot resolves");
+
+        let resolved = j.resolve().unwrap();
+        assert_resolved(&j, 3);
+        assert_eq!(resolved, j.view.result);
+        assert_eq!(j.view.recovery.phase_known, !dual);
+        assert!(j.resolve().is_none() && !reserve(&mut j, 42));
+
+        // The resolution record: a result (type 2) with outcome 5, reason
+        // none and motion possible, in the v1 layout.
+        let record = &f.bytes[0][..RECORD_BYTES];
+        assert_eq!(record[12], 2);
+        assert_eq!(record[15] & 4, 4);
+        assert_eq!(&record[40..46], &[2, 0, 0, 0, 5, 0]);
+
+        assert_eq!(reopen(&mut f, &mut j, &c), JournalError::Ok);
+        assert_resolved(&j, 3);
+        if dual {
+            assert!(!reserve(&mut j, 43), "a double bowl's phase is unknown");
+        } else {
+            assert!(reserve(&mut j, 43) && finish(&mut j, true, true));
+        }
+    }
+}
+
+fn resolve_cuts(reused: bool, unit: usize) {
+    let mut original = FakeJournalFlash::default();
+    let mut j = create_unit(&mut original, false, unit);
+    if reused {
+        assert!(reserve(&mut j, 9) && finish(&mut j, true, true));
+    }
+    assert!(reserve(&mut j, 42));
+    let booted = rebooted(&mut original, &CONFIG);
+    let pending = booted.view.sequence;
+
+    let total = {
+        let mut f = original.clone();
+        let mut j = booted;
+        bind(&mut j, &mut f);
+        let start = f.mutations;
+        assert!(j.resolve().is_some());
+        i64::from(f.mutations - start)
+    };
+
+    // Every cut near the erase boundaries and through the record, as for
+    // `byte_cuts`; large units sample the middle of the erase.
+    let edge = 2 * RECORD_BYTES as i64;
+    let unit = unit as i64;
+    let cuts = (0..=total).filter(|&cut| cut <= edge || cut >= unit - edge || cut % 61 == 0);
+    for cut in cuts {
+        let mut f = original.clone();
+        let mut j = booted;
+        f.budget = cut;
+        bind(&mut j, &mut f);
+        let resolved = j.resolve();
+
+        // The next boot finds the reservation or its resolution, never a
+        // fault; a pending one resolves then, and only once.
+        assert_eq!(
+            reopen(&mut f, &mut j, &CONFIG),
+            JournalError::Ok,
+            "cut {cut}"
+        );
+        if j.view.recovery.pending_request {
+            assert!(resolved.is_none() && j.view.sequence == pending);
+            assert!(j.resolve().is_some());
+            assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::Ok);
+        }
+        assert_resolved(&j, pending + 1);
+        assert!(j.resolve().is_none() && !reserve(&mut j, 42));
+        assert!(reserve(&mut j, 43));
+    }
+}
+
+#[test]
+fn a_cut_resolution_leaves_the_reservation_or_its_result() {
+    for unit in UNITS {
+        resolve_cuts(false, unit);
+        resolve_cuts(true, unit);
+    }
+}
+
+#[test]
+fn a_torn_record_beside_a_pending_one_resolves_but_a_foreign_one_faults() {
+    let mut original = FakeJournalFlash::default();
+    let mut j = create(&mut original, false);
+    assert!(reserve(&mut j, 9) && finish(&mut j, true, true) && reserve(&mut j, 42));
+    // Slot 0 holds the older result, slot 1 the pending reservation.
+
+    // An erase cut over the older record raises bits: it fails its checksum.
+    let mut f = original.clone();
+    f.bytes[0][40] |= 0x80;
+    let mut j = rebooted(&mut f, &CONFIG);
+    assert!(j.resolve().is_some());
+    assert_resolved(&j, 5);
+
+    // A record that checks but does not decode is never a cut's.
+    let mut f = original.clone();
+    f.bytes[0][13] ^= 1;
+    repair_crc(&mut f.bytes[0]);
+    let mut j = FeedJournal::default();
+    assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::Corrupt);
+
+    // Nor are bytes past the record.
+    let mut f = original.clone();
+    f.bytes[0][200] = 0;
+    assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::Corrupt);
+
+    // Beside an idle record, a torn one may be a newer reservation.
+    let mut original = FakeJournalFlash::default();
+    let mut j = create(&mut original, false);
+    assert!(reserve(&mut j, 9) && finish(&mut j, true, true));
+    let mut f = original.clone();
+    f.bytes[1][40] |= 0x80;
+    assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::Corrupt);
+}
+
+/// The cost of reading a checksum failure beside a pending reservation as
+/// that reservation: flash corruption of a committed result makes the next
+/// boot resolve the same feed again, as uncertain after its first result.
+/// Its ID stays consumed, so it is never fed as new.
+#[test]
+fn a_corrupted_result_beside_its_own_reservation_resolves_that_feed_again() {
+    let mut f = FakeJournalFlash::default();
+    let mut j = create(&mut f, false);
+    assert!(reserve(&mut j, 42) && finish(&mut j, true, true));
+    assert_eq!(j.view.result.outcome, OwnerOutcome::Done);
+    // Slot 0 holds the Done result, slot 1 its own reservation.
+
+    f.bytes[0][42] ^= 1;
+    let mut j = rebooted(&mut f, &CONFIG);
+    assert_eq!(j.view.recovery.high_water_id, 42);
+    assert!(j.resolve().is_some());
+    assert_resolved(&j, 3);
+    assert!(!reserve(&mut j, 42) && reserve(&mut j, 43));
 }

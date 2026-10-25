@@ -101,7 +101,9 @@ fn determined_initialization_failure_holds_stopped_without_reset_loop() {
         } else {
             PHASE_KNOWN
         }));
-        if case == 1 {
+        if case == 0 {
+            f.resolve_fail = true; // The resolution cannot be recorded.
+        } else {
             hw(|h| h.efuse_fail = true); // SETUP after the beat began.
         }
 
@@ -144,6 +146,7 @@ fn determined_initialization_failure_holds_stopped_without_reset_loop() {
         ..OwnerRecovery::default()
     }));
     f.recover_delay_ticks = 51 * 32;
+    f.resolve_fail = true;
     f.create();
     f.step();
 

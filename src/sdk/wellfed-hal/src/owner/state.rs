@@ -324,19 +324,8 @@ impl<S: OwnerStorage> OwnerTask<S> {
             return false;
         }
 
-        let recovered = match self.storage.as_mut() {
-            Some(storage) => storage.recover(&mut self.recovery),
-            None => false,
-        };
-        let r = self.recovery;
-        if !recovered
-            || (c.bowl_mode == BowlMode::Single && r.direction != Direction::D0)
-            || r.pending_request
-        {
-            self.fail(OwnerFault::Recovery);
-            self.recovery.phase_known = false;
-            self.init_failed = true;
-            return false;
+        if !self.recover() {
+            return self.recovery_failed();
         }
 
         let controller = FeedController::new(&c.feed, self.recovery.high_water_id);
@@ -348,14 +337,65 @@ impl<S: OwnerStorage> OwnerTask<S> {
         };
         self.controller = controller;
         self.sensors = sensors;
+
+        // A reservation a reset interrupted is never resumed or retried:
+        // what it dispensed is unknown, so it ends uncertain, under its ID.
+        let resolved = if self.recovery.pending_request {
+            let Some(result) = self.resolve() else {
+                return self.recovery_failed();
+            };
+            Some(result)
+        } else {
+            None
+        };
         if c.bowl_mode == BowlMode::Single {
             self.recovery.phase_known = true;
         }
 
         let high_water = self.recovery.high_water_id;
         self.shared(|shared| shared.last_submitted_id = high_water);
-        self.state = OwnerState::Idle;
+        self.state = match resolved {
+            None => OwnerState::Idle,
+            // Reported like any durable result: Idle once acknowledged.
+            Some(result) => {
+                self.result = result;
+                self.result_durable = true;
+                OwnerState::Terminal
+            }
+        };
         true
+    }
+
+    /// Read the journal's recovery state: false when it is unreadable or
+    /// holds a phase this bowl cannot have.
+    fn recover(&mut self) -> bool {
+        let readable = self
+            .storage
+            .as_mut()
+            .is_some_and(|storage| storage.recover(&mut self.recovery));
+        readable
+            && (self.config.bowl_mode != BowlMode::Single
+                || self.recovery.direction == Direction::D0)
+    }
+
+    /// Record the pending reservation as uncertain, then read the state
+    /// after it: the result, or `None` when it could not be recorded. The
+    /// reservation then stays pending, and its ID consumed, for the next
+    /// boot.
+    fn resolve(&mut self) -> Option<OwnerResult> {
+        let result = self.storage.as_mut()?.resolve()?;
+        let resolved = self.recover()
+            && !self.recovery.pending_request
+            && self.recovery.high_water_id == result.id;
+        resolved.then_some(result)
+    }
+
+    /// Latch a recovery fault: no request is ever taken this boot.
+    fn recovery_failed(&mut self) -> bool {
+        self.fail(OwnerFault::Recovery);
+        self.recovery.phase_known = false;
+        self.init_failed = true;
+        false
     }
 
     fn take_request(&mut self) {

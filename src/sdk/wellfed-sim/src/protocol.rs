@@ -72,6 +72,7 @@ codes!(Outcome {
     Cancelled,
     Expired,
     Failed,
+    Uncertain,
 });
 
 codes!(Reason {
@@ -103,12 +104,14 @@ codes!(
 );
 
 codes!(
-    /// The journal operation in progress around a storage callback.
+    /// The journal operation in progress around a storage callback; `resolve`
+    /// records an interrupted reservation as uncertain at boot.
     StoragePhase {
         None,
         Reserve,
         Finish,
         Recover,
+        Resolve,
     }
 );
 

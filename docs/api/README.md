@@ -98,7 +98,7 @@ Subscribe { after, samples }          Event { seq, at, body }
   - `Reboot`
   - `CancelFeed { feed }`: `Done` while that feed runs, `NotFound` once it has ended
 
-  The feed ops, the `Feeding` answer, the `Fed` event and the `Fault` refusal are behind `Capabilities::FEED`. A feeder that serves feeds says so in its welcome; it answers a client whose hello lacks the bit `Unavailable`, and never pushes it a `Fed` event. `Fed` carries the feed's number, the portions asked for and confirmed, an outcome (`Done`, `Cancelled`, `Expired`, `Failed`, or `Uncertain` when the owner stopped without a durable result) and a reason. The request id makes a retry return the same `Feeding` answer instead of feeding twice; across a reboot that is still FW17's work.
+  The feed ops, the `Feeding` answer, the `Fed` event and the `Fault` refusal are behind `Capabilities::FEED`. A feeder that serves feeds says so in its welcome; it answers a client whose hello lacks the bit `Unavailable`, and never pushes it a `Fed` event. `Fed` carries the feed's number, the portions asked for and confirmed, an outcome (`Done`, `Cancelled`, `Expired`, `Failed`, or `Uncertain` when the owner stopped without a durable result, or a reset interrupted the feed and the next boot resolved it) and a reason. The request id makes a retry return the same `Feeding` answer instead of feeding twice; across a reboot that is still FW17's work.
 
   A `Put` against a stale generation is refused `Stale { current }`. Plans (FP03) and `OtaOffer` (FW48) join behind capability bits.
 - **Subscribe** asks for every event after a cursor (`None`: the oldest kept), then each new one, and the live samples if asked.

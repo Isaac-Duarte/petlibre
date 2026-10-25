@@ -399,6 +399,14 @@ impl OwnerStorage for SimStorage {
         storage_end(ok);
         ok
     }
+
+    fn resolve(&mut self) -> Option<OwnerResult> {
+        storage_begin(StoragePhase::Resolve);
+        // SAFETY: as for `recover`.
+        let result = unsafe { OwnerStorage::resolve(&mut (*w()).journal) };
+        storage_end(result.is_some());
+        result
+    }
 }
 
 fn status(response: u64) {

@@ -77,13 +77,13 @@ What bounds a drive (provisional limits, `feeding.rs`):
 
 Each feed logs, in order: `PLOWN1 feed id= portions= submit=0`, the state changes (`state=3` preparing, `4` feeding, `5` reporting, `6` terminal, `1` idle), then
 `PLOWN1 fed id= requested= completed= outcome= reason= durable= drive_ms= rising= falling= first_edge_ms= current_max= current_mean= samples=`,
-which counts every PA18 edge while capture was on, qualified or not. Outcomes: 1 done, 2 cancelled, 3 expired, 4 failed; reasons are `FeedReason` codes (6 no feedback, 5 timeout, 10 overcurrent, 9 outlet, 12 output).
+which counts every PA18 edge while capture was on, qualified or not. Outcomes: 1 done, 2 cancelled, 3 expired, 4 failed, 5 uncertain (an interrupted feed, resolved at the next boot); reasons are `FeedReason` codes (0 none, 6 no feedback, 5 timeout, 10 overcurrent, 9 outlet, 12 output).
 
-**A power cut or reset mid-feed** leaves the journal's reservation pending; the owner then faults at every boot (`fault=2`, recovery) and refuses feeds `Fault` until FW17 resolves an interrupted feed as uncertain. Avoid cutting power during a feed.
+**A power cut or reset mid-feed** leaves the journal's reservation pending. The next boot resolves it: the owner writes an uncertain result for it to the journal (outcome 5, `completed=0`, the same id), sits Terminal until the loop has logged `PLOWN1 fed id=N … outcome=5 … durable=1` and recorded a `Fed` event with outcome `Uncertain` (by the feeder), then goes Idle. The feed is never retried and its id is never used again; the next feed takes the id after it. A power cut during the resolution's own journal write leaves the reservation pending, so the boot after resolves it, once. A cut while the reservation itself is being written (a few milliseconds before the motor may start) can still leave an ambiguous record, which faults the owner closed (`fault=2`, recovery), as does a journal that does not decode.
 
 ### Procedure (owner present)
 
-1. Hopper empty, outlet clear, hands away. The owner can cut USB power at any moment, but see the mid-feed note above.
+1. Hopper empty, outlet clear, hands away. The owner can cut USB power at any moment; the feed then reads as uncertain at the next boot (above).
 2. Hotspot up; a receive-only UART capture running.
 3. `wellfed feed --portions 1 --address <feeder>`; watch the mechanism and note which way it turns and whether it stops by itself.
 4. Afterwards, `wellfed events` shows the `Fed` event; hotspot down.

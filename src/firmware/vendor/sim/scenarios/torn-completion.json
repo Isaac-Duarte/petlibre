@@ -3,7 +3,7 @@
   "name": "torn-completion",
   "profile": "single",
   "feedback_period_ms": 10,
-  "end_ms": 30,
+  "end_ms": 32,
   "actions": [
     {
       "at_ms": 0,
@@ -37,9 +37,44 @@
       "at_ms": 27,
       "op": "expect",
       "values": {
-        "state": "fault",
-        "fault": "recovery",
-        "pending": true,
+        "state": "terminal",
+        "fault": "ok",
+        "pending": false,
+        "motor": 0,
+        "outcome": "uncertain",
+        "durable": true,
+        "id": 1,
+        "high_water_id": 1
+      }
+    },
+    {
+      "at_ms": 28,
+      "op": "ack",
+      "args": [
+        1
+      ]
+    },
+    {
+      "at_ms": 29,
+      "op": "expect",
+      "values": {
+        "state": "idle",
+        "high_water_id": 1
+      }
+    },
+    {
+      "at_ms": 30,
+      "op": "submit",
+      "args": [
+        1,
+        1
+      ]
+    },
+    {
+      "at_ms": 30,
+      "op": "expect",
+      "values": {
+        "submission": "reject_id",
         "motor": 0
       }
     }

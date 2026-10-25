@@ -212,7 +212,8 @@ fn faults_stop_and_finish_without_success() {
 #[test]
 /// The timer stops the motor within its lease; the world's feeder feeds the
 /// watchdog until the owner's beat is a gap (50 ms) old, and the 126 ms
-/// expiry then resets the board about 184 ms in.
+/// expiry then resets the board about 184 ms in. The next boot resolves the
+/// interrupted feed as uncertain.
 fn stalled_owner_independent_timer_and_watchdog_reset() {
     let report = passing(
         vec![
@@ -222,7 +223,8 @@ fn stalled_owner_independent_timer_and_watchdog_reset() {
             expect(150, json!({"boots": 1, "motor": 0})),
             expect(
                 200,
-                json!({"boots": 2, "state": "fault", "fault": "recovery", "pending": true, "motor": 0}),
+                json!({"boots": 2, "state": "terminal", "fault": "ok", "outcome": "uncertain",
+                       "durable": true, "pending": false, "motor": 0}),
             ),
         ],
         205,
@@ -277,7 +279,7 @@ fn power_cut_before_reservation_does_not_consume_id() {
 }
 
 #[test]
-fn power_cut_during_motion_blocks_recovery_and_new_feed() {
+fn power_cut_during_motion_resolves_as_uncertain_and_is_never_retried() {
     let report = passing(
         vec![
             act(1, "submit", &[1, 3]),
@@ -286,11 +288,16 @@ fn power_cut_during_motion_blocks_recovery_and_new_feed() {
             act(9, "boot", &[]),
             expect(
                 9,
-                json!({"state": "fault", "fault": "recovery", "pending": true, "high_water_id": 1}),
+                json!({"state": "terminal", "fault": "ok", "id": 1, "outcome": "uncertain",
+                       "completed": 0, "durable": true, "pending": false, "high_water_id": 1}),
             ),
             act(10, "submit", &[2, 1]),
-            expect(10, json!({"submission": "reject_stopped"})),
-            expect(30, json!({"motor": 0, "optics": 0, "durable": false})),
+            expect(10, json!({"submission": "reject_busy"})),
+            act(11, "ack", &[1]),
+            expect(12, json!({"state": "idle", "high_water_id": 1})),
+            act(13, "submit", &[1, 1]),
+            expect(13, json!({"submission": "reject_id"})),
+            expect(30, json!({"motor": 0, "optics": 0, "state": "idle"})),
         ],
         35,
         "single",
@@ -304,13 +311,18 @@ fn power_cut_during_motion_blocks_recovery_and_new_feed() {
 fn byte_cuts_at_erase_body_and_commit_boundaries() {
     for phase in [1, 2] {
         for byte in [0, 1, 256, 257, 270, 380, 381, 383, 384] {
-            // A committed reservation is pending; a committed completion is idle.
+            // A committed reservation, or one whose result was cut, resolves
+            // as uncertain; a committed completion is idle; a torn
+            // reservation beside the idle record is ambiguous and faults.
             let expected = if phase == 1 && byte <= 256 {
                 json!({"state": "idle", "high_water_id": 0})
+            } else if phase == 1 && byte < 384 {
+                json!({"state": "fault", "fault": "recovery"})
             } else if phase == 2 && byte == 384 {
                 json!({"state": "idle", "high_water_id": 1, "pending": false})
             } else {
-                json!({"state": "fault", "fault": "recovery"})
+                json!({"state": "terminal", "outcome": "uncertain", "durable": true,
+                       "pending": false, "high_water_id": 1})
             };
 
             let mut values = json!({"motor": 0, "optics": 0});

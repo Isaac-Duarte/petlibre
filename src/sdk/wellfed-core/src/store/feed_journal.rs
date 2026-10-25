@@ -5,6 +5,16 @@
 //! sequence, binding, high-water ID, result counts, outcome, reason,
 //! max portions, a zero span, CRC-32/ISO-HDLC of bytes 0..120 at 120 and
 //! the `CMIT` commit marker at 124.
+//!
+//! A reservation a reset interrupted is resolved at the next boot by one
+//! more result record, outcome [`OwnerOutcome::Uncertain`]: same layout,
+//! same high-water ID. Its write is the same torn-write-safe sequence as any
+//! record, and `open` reads every torn state of it as the pending
+//! reservation, which resolves again, so a power cut never faults it and
+//! never resolves it twice. Flash corruption can: a committed result that
+//! later fails its checksum beside its own reservation reads as that
+//! reservation, so the next boot resolves the feed again (an uncertain
+//! result after its first), never as a new feed.
 
 use core::ffi::c_uint;
 
@@ -97,7 +107,11 @@ impl<I> Default for FeedJournal<I> {
 enum Scan {
     Erased,
     Valid,
+    /// No commit marker: a cut program, or an erase cut over the marker.
     Dirty,
+    /// Committed, but failing its checksum: an erase cut over the record.
+    Torn,
+    /// A checked record that does not decode, or a unit with bytes past it.
     Invalid,
 }
 
@@ -139,6 +153,10 @@ fn result_valid(c: &JournalConfig, v: &JournalView) -> bool {
     }
     if r.outcome == OwnerOutcome::Expired {
         return !r.motion_possible && r.reason == FeedReason::TotalTimeout;
+    }
+    if r.outcome == OwnerOutcome::Uncertain {
+        // Nothing was observed: the drive may have run, and no portion counts.
+        return r.motion_possible && r.completed == 0 && r.reason == FeedReason::None;
     }
     r.reason != FeedReason::Done && r.reason != FeedReason::Cancelled
 }
@@ -338,6 +356,9 @@ impl<I: SlotIo> FeedJournal<I> {
         if record[COMMIT_AT..] != COMMIT {
             return Some((Scan::Dirty, None));
         }
+        if get_u32(&record[CRC_AT..]) != crc32(&record[..CRC_AT]) {
+            return Some((Scan::Torn, None));
+        }
 
         Some(match self.decode(&record) {
             Some(view) => (Scan::Valid, Some(view)),
@@ -361,7 +382,7 @@ impl<I: SlotIo> FeedJournal<I> {
         if a == Scan::Erased && b == Scan::Erased {
             return self.fail(JournalError::Empty);
         }
-        if a == Scan::Invalid || b == Scan::Invalid || (a != Scan::Valid && b != Scan::Valid) {
+        if a != Scan::Valid && b != Scan::Valid {
             return self.fail(JournalError::Corrupt);
         }
 
@@ -375,9 +396,18 @@ impl<I: SlotIo> FeedJournal<I> {
             if !transition(&config, &views[1 - slot], &views[slot]) {
                 return self.fail(JournalError::Corrupt);
             }
-        } else if (a == Scan::Dirty || b == Scan::Dirty) && !views[slot].recovery.pending_request {
+        } else {
+            let other = [a, b][1 - slot];
             // Falling back to idle could forget a newer, ambiguous reservation.
-            return self.fail(JournalError::Corrupt);
+            // Beside a pending one, the other unit holds an older record or
+            // that reservation's own result, which a cut erase or program
+            // leaves dirty or torn: the reservation stands, to be finished or
+            // resolved again. A record that checks but does not decode is
+            // never a cut's, and faults whatever it sits beside.
+            let cut = matches!(other, Scan::Dirty | Scan::Torn);
+            if other == Scan::Invalid || (cut && !views[slot].recovery.pending_request) {
+                return self.fail(JournalError::Corrupt);
+            }
         }
 
         self.slot = c_uint::from(slot == 1);
@@ -522,10 +552,50 @@ impl<I: SlotIo> FeedJournal<I> {
             || phase.high_water_id != result.id
             || result.id != self.view.recovery.high_water_id
             || !phase_valid(&self.config, phase)
+            || result.outcome == OwnerOutcome::Uncertain
         {
             return false;
         }
 
+        let next = JournalView {
+            recovery: *phase,
+            result: *result,
+            ..self.view
+        };
+        self.append(next)
+    }
+
+    /// Resolve the reservation an earlier boot left pending as uncertain,
+    /// keeping its ID as the high-water mark: the result, once durable.
+    /// Interrupted double-bowl motion leaves the phase unknown, as `read`
+    /// reports it. The reservation cannot have been made this boot: a live
+    /// one has an owner that will finish it.
+    pub fn resolve(&mut self) -> Option<OwnerResult> {
+        if !self.opened || self.reserved_here || !self.view.recovery.pending_request {
+            return None;
+        }
+
+        let mut next = JournalView {
+            result: OwnerResult {
+                id: self.view.recovery.high_water_id,
+                requested: self.view.result.requested,
+                completed: 0,
+                outcome: OwnerOutcome::Uncertain,
+                reason: FeedReason::None,
+                motion_possible: true,
+            },
+            ..self.view
+        };
+        next.recovery.pending_request = false;
+        if self.config.mode == BowlMode::Double {
+            next.recovery.phase_known = false;
+        }
+
+        self.append(next).then_some(next.result)
+    }
+
+    /// Write `next` as the result of the pending reservation.
+    fn append(&mut self, next: JournalView) -> bool {
         if self.view.sequence == u64::MAX {
             self.fail(JournalError::Exhausted);
             return false;
@@ -533,9 +603,8 @@ impl<I: SlotIo> FeedJournal<I> {
 
         let next = JournalView {
             sequence: self.view.sequence + 1,
-            recovery: *phase,
-            result: *result,
             has_result: true,
+            ..next
         };
 
         if !transition(&self.config, &self.view, &next)
@@ -574,5 +643,9 @@ impl<I: SlotIo> OwnerStorage for FeedJournal<I> {
 
     fn finish(&mut self, result: &OwnerResult, phase: &OwnerRecovery) -> bool {
         FeedJournal::finish(self, result, phase)
+    }
+
+    fn resolve(&mut self) -> Option<OwnerResult> {
+        FeedJournal::resolve(self)
     }
 }

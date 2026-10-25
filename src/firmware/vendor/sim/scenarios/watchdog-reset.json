@@ -41,9 +41,44 @@
       "op": "expect",
       "values": {
         "boots": 2,
-        "state": "fault",
-        "fault": "recovery",
-        "pending": true
+        "state": "terminal",
+        "fault": "ok",
+        "pending": false,
+        "outcome": "uncertain",
+        "durable": true,
+        "id": 1,
+        "high_water_id": 1
+      }
+    },
+    {
+      "at_ms": 201,
+      "op": "ack",
+      "args": [
+        1
+      ]
+    },
+    {
+      "at_ms": 202,
+      "op": "expect",
+      "values": {
+        "state": "idle",
+        "high_water_id": 1
+      }
+    },
+    {
+      "at_ms": 203,
+      "op": "submit",
+      "args": [
+        1,
+        1
+      ]
+    },
+    {
+      "at_ms": 203,
+      "op": "expect",
+      "values": {
+        "submission": "reject_id",
+        "motor": 0
       }
     }
   ]

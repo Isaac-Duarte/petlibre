@@ -7,7 +7,7 @@ use super::*;
 use wellfed_core::feed::controller::{FeedLimits, FeedRequest};
 use wellfed_core::feed::progress::{BowlMode, Direction};
 use wellfed_core::feed::sensor_inputs::SensorLimits;
-use wellfed_core::feed::storage::{OwnerRecovery, OwnerResult, OwnerStorage};
+use wellfed_core::feed::storage::{OwnerOutcome, OwnerRecovery, OwnerResult, OwnerStorage};
 use wellfed_core::flash_coord::{FlashCoord, FlashParty, FlashReply};
 use wellfed_core::store::feed_journal::{FeedJournal, JournalConfig, JournalError};
 use wellfed_hal::board::MOTOR_MASK;
@@ -78,10 +78,12 @@ pub struct Fixture {
     pub reserve_calls: u32,
     pub finish_calls: u32,
     pub finish_refreshes: u32,
+    pub resolve_calls: u32,
 
     pub recover_fail: bool,
     pub reserve_fail: bool,
     pub finish_fail: bool,
+    pub resolve_fail: bool,
     pub cancel_in_reserve: bool,
     pub stop_in_finish: bool,
 
@@ -108,10 +110,12 @@ impl Fixture {
             reserve_calls: 0,
             finish_calls: 0,
             finish_refreshes: 0,
+            resolve_calls: 0,
 
             recover_fail: false,
             reserve_fail: false,
             finish_fail: false,
+            resolve_fail: false,
             cancel_in_reserve: false,
             stop_in_finish: false,
 
@@ -252,6 +256,11 @@ impl OwnerStorage for FixtureStorage {
         // SAFETY: as the type says.
         unsafe { finish_record(self.0, result, phase) }
     }
+
+    fn resolve(&mut self) -> Option<OwnerResult> {
+        // SAFETY: as the type says.
+        unsafe { resolve(self.0) }
+    }
 }
 
 unsafe fn recover(f: *mut Fixture, value: &mut OwnerRecovery) -> bool {
@@ -333,6 +342,36 @@ unsafe fn finish_record(f: *mut Fixture, result: &OwnerResult, phase: &OwnerReco
         (*f).saved_result = *result;
         (*f).disk = *phase;
         true
+    }
+}
+
+unsafe fn resolve(f: *mut Fixture) -> Option<OwnerResult> {
+    inactive_outputs();
+    // SAFETY: the fixture keeps the owner and its storage in place while it runs.
+    unsafe {
+        (*f).resolve_calls += 1;
+        assert!(
+            (*f).disk.pending_request,
+            "only a pending reservation resolves"
+        );
+        if (*f).resolve_fail {
+            return None;
+        }
+
+        let result = if (*f).use_journal {
+            (*f).journal.resolve()?
+        } else {
+            OwnerResult {
+                id: (*f).disk.high_water_id,
+                requested: 1,
+                outcome: OwnerOutcome::Uncertain,
+                motion_possible: true,
+                ..OwnerResult::default()
+            }
+        };
+        (*f).disk.pending_request = false;
+        (*f).saved_result = result;
+        Some(result)
     }
 }
 

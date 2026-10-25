@@ -2,7 +2,9 @@
 //!
 //! The owner's result is durable once it reports it; one that is not (the
 //! owner faulted before its journal write) may have dispensed anything up
-//! to what was asked, so it is recorded as uncertain and never retried.
+//! to what was asked, so it is recorded as uncertain and never retried. A
+//! feed a reset interrupted is resolved at the next boot, durably, as
+//! uncertain too.
 
 use wellfed_core::feed::controller::FeedReason as CoreReason;
 use wellfed_core::feed::storage::{OwnerOutcome, OwnerResult};
@@ -18,7 +20,9 @@ pub enum Durability {
 /// The `Fed` event for the feed `feed`, which `result` ended.
 pub fn fed(feed: u32, result: &OwnerResult, durability: Durability, by: Source) -> EventBody {
     let outcome = match (durability, result.outcome) {
-        (Durability::Lost, _) | (_, OwnerOutcome::Pending) => FeedOutcome::Uncertain,
+        (Durability::Lost, _) | (_, OwnerOutcome::Pending | OwnerOutcome::Uncertain) => {
+            FeedOutcome::Uncertain
+        }
         (Durability::Durable, OwnerOutcome::Done) => FeedOutcome::Done,
         (Durability::Durable, OwnerOutcome::Cancelled) => FeedOutcome::Cancelled,
         (Durability::Durable, OwnerOutcome::Expired) => FeedOutcome::Expired,
@@ -47,8 +51,10 @@ const fn reason(reason: CoreReason) -> FeedReason {
         CoreReason::Outlet => FeedReason::Outlet,
         CoreReason::Overcurrent => FeedReason::Overcurrent,
         CoreReason::FeedbackStream => FeedReason::FeedbackStream,
-        // No reason is only ever a result still pending, which ends as an
-        // output failure if it ends at all.
+        // No reason: a result still pending, which ends as an output
+        // failure if it ends at all, or an interrupted feed resolved at
+        // boot. Both report `Output` until the wire has a reason of its own
+        // for an interrupted feed.
         CoreReason::None | CoreReason::Output => FeedReason::Output,
     }
 }
@@ -99,6 +105,26 @@ mod tests {
         assert_eq!(
             (outcome, reason),
             (FeedOutcome::Uncertain, FeedReason::Output)
+        );
+    }
+
+    #[test]
+    fn a_feed_resolved_at_boot_is_uncertain_and_counts_no_portion() {
+        let resolved = OwnerResult {
+            completed: 0,
+            motion_possible: true,
+            ..result(OwnerOutcome::Uncertain, CoreReason::None)
+        };
+        assert_eq!(
+            fed(9, &resolved, Durability::Durable, Source::Feeder),
+            EventBody::Fed {
+                feed: 9,
+                requested: 2,
+                completed: 0,
+                outcome: FeedOutcome::Uncertain,
+                reason: FeedReason::Output,
+                by: Source::Feeder,
+            }
         );
     }
 }

@@ -12,7 +12,9 @@
 //! reports its result, logs what the drive measured, records a `Fed` event
 //! and acknowledges it, which lets the owner take the next. One feed at a
 //! time; a feed whose owner faulted without a durable result is recorded
-//! as uncertain.
+//! as uncertain. So is a feed a reset interrupted: the owner resolves its
+//! reservation when it opens, and the loop records that `Fed` event, by the
+//! feeder, before the owner takes a feed.
 //!
 //! The limits are provisional. The timing ones come from the first pulse
 //! and the optics probe (a 200 ms motor lease, 10 ms supervision timer,
@@ -376,6 +378,9 @@ mod target {
         unreserved: Option<(u64, Refusal)>,
         /// The interlock's counters as last logged.
         joins: interlock::Status,
+        /// The reservation a reset interrupted, which the owner resolves as
+        /// it opens: its id, until its `Fed` event is recorded.
+        interrupted: Option<u64>,
     }
 
     impl Feeding {
@@ -463,6 +468,7 @@ mod target {
             record: &mut impl FnMut(Record),
         ) {
             let Some(current) = self.current.as_mut() else {
+                self.report_interrupted(owner, status, record);
                 return;
             };
             let ours = status.result.id == current.feed;
@@ -513,6 +519,40 @@ mod target {
             if status.state == OwnerState::Terminal {
                 owner.acknowledge(current.feed);
             }
+        }
+
+        /// The interrupted feed's uncertain result, once the owner holds it
+        /// durably: recorded once, then acknowledged. An owner that faulted
+        /// after the resolution still holds it; its event is recorded all
+        /// the same, with nothing to acknowledge.
+        fn report_interrupted(
+            &mut self,
+            owner: &Owner<Journal>,
+            status: &OwnerStatus,
+            record: &mut impl FnMut(Record),
+        ) {
+            let Some(feed) = self.interrupted else {
+                return;
+            };
+            if !status.result_durable || status.result.id != feed {
+                return;
+            }
+            match status.state {
+                OwnerState::Terminal if owner.acknowledge(feed) => {}
+                OwnerState::Fault => {}
+                _ => return,
+            }
+
+            self.interrupted = None;
+            record(Record::Fed {
+                result: status.result,
+                durability: Durability::Durable,
+                trace: status.trace,
+            });
+            // The journal holds the id under the high water `submit` checks.
+            let number = u32::try_from(feed).unwrap_or(u32::MAX);
+            let body = feed::fed(number, &status.result, Durability::Durable, Source::Feeder);
+            crate::api::record_event(body);
         }
 
         /// Hand one feed to the owner on `by`'s behalf: the number its
@@ -606,6 +646,7 @@ mod target {
                 return Some(Record::Journal { error, created });
             }
             let high_water = journal.view.recovery.high_water_id;
+            let interrupted = journal.view.recovery.pending_request.then_some(high_water);
 
             // Filled here, before the owner opens, so no interrupt reaches it yet.
             let owner = OWNER.enter_or_init(Owner::default)?;
@@ -617,6 +658,7 @@ mod target {
             // boot; the owner is a static and never moves.
             let opened = unsafe { owner.open(&config, journal) };
             Some(if opened {
+                self.interrupted = interrupted;
                 Record::Opened {
                     created,
                     high_water,

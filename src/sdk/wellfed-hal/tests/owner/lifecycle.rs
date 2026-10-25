@@ -90,19 +90,50 @@ fn slow_reservation_expires_and_cancellation_during_callback_wins() {
     f.stop();
 }
 
-#[test]
-fn interrupted_recovery_blocks_every_new_request() {
+fn interrupted(resolve_fail: bool) -> Box<Fixture> {
     fake::reset_hardware();
     let mut f = Box::new(Fixture::new(OwnerRecovery {
         high_water_id: 7,
         pending_request: true,
-        ..OwnerRecovery::default()
+        ..PHASE_KNOWN
     }));
+    f.resolve_fail = resolve_fail;
 
     f.create();
     f.step();
+    f
+}
+
+#[test]
+fn an_interrupted_reservation_resolves_as_uncertain_and_is_never_retried() {
+    let mut f = interrupted(false);
+
+    let s = f.status();
+    assert!(s.state == OwnerState::Terminal && s.fault == OwnerFault::Ok);
+    assert!(s.result_durable && !s.intent_reserved && s.stopped && s.optics_off);
+    assert!(s.result.id == 7 && s.result.outcome == OwnerOutcome::Uncertain);
+    assert!(s.result.motion_possible && s.result.completed == 0 && s.high_water_id == 7);
+    assert!(f.resolve_calls == 1 && f.reserve_calls == 0 && f.finish_calls == 0);
+    assert!(!f.disk.pending_request && f.disk.high_water_id == 7);
+
+    // Held until the result is reported, then open for new IDs only.
+    assert_eq!(f.owner.submit(8, 1), SubmitResult::RejectBusy);
+    assert!(f.owner.acknowledge(7));
+    f.step();
+    assert_eq!(f.status().state, OwnerState::Idle);
+    assert_eq!(f.owner.submit(7, 1), SubmitResult::RejectId);
+    assert_eq!(f.owner.submit(8, 1), SubmitResult::Enqueued);
+    f.step();
+    assert!(f.reserve_calls == 1 && f.resolve_calls == 1);
+    f.stop();
+}
+
+#[test]
+fn an_unrecorded_resolution_blocks_every_new_request() {
+    let mut f = interrupted(true);
 
     assert!(f.status().state == OwnerState::Fault && f.status().fault == OwnerFault::Recovery);
+    assert!(f.resolve_calls == 1 && f.disk.pending_request);
     assert_eq!(f.owner.submit(8, 1), SubmitResult::RejectStopped);
     assert!(
         f.reserve_calls == 0 && f.finish_calls == 0 && f.status().stopped && f.status().optics_off

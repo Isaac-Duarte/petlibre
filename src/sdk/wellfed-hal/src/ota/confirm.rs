@@ -4,18 +4,23 @@
 //! `trial::CONFIRM_SECTOR` names its build identity (`trial.rs`). Once the
 //! image has stayed healthy for `HEALTHY_MS` (the glue's test: transport
 //! ready, outputs verified stopped, startup probes finished), this arms the
-//! flash-lock hooks like the updater (`arming.rs`), erases the sector,
-//! programs the record and reads it back. It holds the write turn
-//! (`interlock`) from before arming to the write's end, so neither runs
-//! while a feed may move the outputs. An image already confirmed does
-//! nothing.
+//! flash-lock hooks like the updater (`arming.rs`), raises the update
+//! store's floor to its version if bank 0 activated it (`ota::update`),
+//! then erases the sector, programs the record and reads it back. It holds
+//! the write turn (`interlock`) from before arming to the write's end, so
+//! none of it runs while a feed may move the outputs; the floor's store
+//! write runs under that same turn. The floor goes first: the confirmation
+//! sector is erased before each write, and a store write that fails leaves
+//! the image unconfirmed rather than confirmed with the floor behind it. An
+//! image already confirmed does nothing.
 //!
 //! On a trial boot no feed can be claimed before this write: the feeding
 //! owner opens only once the hooks are armed, this is the first arming of
 //! a trial boot (the settings writer starts only after the confirmation),
 //! and this holds the write turn across it. So a feed never delays the
-//! confirmation towards the trial deadline. A torn or failed write leaves the image unconfirmed, which only
-//! keeps KM0 counting.
+//! confirmation towards the trial deadline. A torn or failed write leaves
+//! the image unconfirmed, which only keeps KM0 counting; the next boot
+//! finds the floor already raised and writes the record again.
 
 use core::fmt;
 
@@ -27,6 +32,7 @@ use crate::flash::park::Mmio;
 use crate::flash_lock::arming::{self, Arming, Hooks, Poll};
 use crate::flash_lock::provider::Provider;
 use crate::interlock::{INTERLOCK, WRITER_POLL_MS, WriteStep, WriteTurn};
+use crate::ota::update::Floor;
 use crate::sdk;
 use crate::trial::{self, CONFIRM_SECTOR};
 
@@ -76,6 +82,8 @@ named_enum! {
     pub enum ErrorStage {
         Read = "read",
         Write = "write",
+        /// The update store's floor could not be raised.
+        Floor = "floor",
     }
 }
 
@@ -86,6 +94,9 @@ pub enum Record {
     Arming(arming::Event),
     Confirmed {
         healthy_ms: u32,
+        /// The version bank 0 activated this build as; 0 for a build
+        /// installed another way.
+        version: u32,
     },
     Error {
         stage: ErrorStage,
@@ -116,7 +127,10 @@ pub fn describe(record: Record, f: &mut impl fmt::Write) -> fmt::Result {
             u8::from(installed)
         ),
         Record::Arming(arming::Event::Clock) => f.write_str("error stage=clock"),
-        Record::Confirmed { healthy_ms } => write!(f, "confirmed=1 healthy_ms={healthy_ms}"),
+        Record::Confirmed {
+            healthy_ms,
+            version,
+        } => write!(f, "confirmed=1 healthy_ms={healthy_ms} version={version}"),
         Record::Error { stage } => write!(f, "error stage={stage}"),
     }
 }
@@ -176,8 +190,9 @@ impl Confirm {
         next(0, Some(record))
     }
 
-    /// One task iteration. `healthy` is the glue's current health test and
-    /// `now` uptime in milliseconds.
+    /// One task iteration. `healthy` is the glue's current health test,
+    /// `now` uptime in milliseconds, and `raise` raises the update store's
+    /// floor (the update stage's `raise_floor`) just before the record.
     ///
     /// # Safety
     /// `provider` is valid for the program's lifetime, stays at a fixed
@@ -186,6 +201,7 @@ impl Confirm {
         &mut self,
         provider: *mut Provider,
         flash: &mut impl StorageFlash,
+        raise: impl FnOnce() -> Floor,
         healthy: bool,
         now: u32,
     ) -> Step {
@@ -242,7 +258,18 @@ impl Confirm {
                 if !self.take_turn(now) {
                     return next(POLL_MS, None);
                 }
-                let record = ota::confirm_record(&trial::identity(), 0);
+                let version = match raise() {
+                    Floor::Raised { version } => version,
+                    Floor::Unchanged => 0,
+                    Floor::Failed => {
+                        self.give_turn();
+                        arming::clear_attempt();
+                        return self.end(Record::Error {
+                            stage: ErrorStage::Floor,
+                        });
+                    }
+                };
+                let record = ota::confirm_record(&trial::identity(), version);
                 let mut readback = [0u8; CONFIRM_LEN];
                 let ok = flash.erase(CONFIRM_SECTOR)
                     && flash.program(CONFIRM_SECTOR, 0, &record)
@@ -259,6 +286,7 @@ impl Confirm {
                 }
                 self.end(Record::Confirmed {
                     healthy_ms: self.healthy_ms,
+                    version,
                 })
             }
 

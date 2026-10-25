@@ -489,6 +489,44 @@ fn an_install_holds_the_write_turn_until_it_stops() {
 }
 
 #[test]
+fn the_give_way_waits_for_a_feed_and_keeps_the_turn_until_the_restart() {
+    let _guard = start(1);
+    store().set_bank0(recorded_bank0()).unwrap();
+    INTERLOCK.claim_feed(u32::MAX).unwrap();
+    let mut rig = Rig::bench(1);
+    let signed = manifest(3, &image(LEN));
+
+    let ticket = mailbox::request(Request::offer(&signed, None, DEVICE).unwrap()).unwrap();
+    rig.steps(100);
+    assert_eq!(
+        mailbox::outcome(ticket),
+        None,
+        "the offer waits for the turn"
+    );
+    assert_eq!(store().record().state, State::None);
+    assert_eq!(fake::with(|h| h.bank1[0]), MARKER[0]);
+
+    INTERLOCK.release_feed();
+    for _ in 0..100 {
+        rig.step();
+        if mailbox::outcome(ticket).is_some() {
+            break;
+        }
+    }
+    assert_eq!(
+        progress(mailbox::outcome(ticket).unwrap()).phase,
+        Phase::GivingWay
+    );
+    rig.now += LEAVE_MS;
+    rig.steps(2);
+    assert!(rig.restarted);
+    assert_eq!(fake::with(|h| h.bank1[0]), 0, "given way");
+    // No feed starts between the give-way and the restart.
+    assert!(INTERLOCK.writing());
+    assert_eq!(INTERLOCK.claim_feed(u32::MAX), Err(Held::Writing));
+}
+
+#[test]
 fn a_cancel_that_cannot_forget_the_candidate_says_busy() {
     let _guard = start(0);
     let mut rig = Rig::bench(0);
@@ -807,4 +845,191 @@ fn bank_0_records_its_image_once() {
         erases,
         "no write for the same image"
     );
+}
+
+/// Bank 0's image as bank 0 records it at boot.
+fn recorded_bank0() -> Bank0 {
+    Bank0 {
+        build_id: [0x0b; 32],
+        len: u32::try_from(bank0_image().len()).unwrap(),
+        sha256: Sha256::digest(bank0_image()).into(),
+        key: Some(key_id(&bench().verifying_key().to_bytes())),
+    }
+}
+
+#[test]
+fn bank_1_records_the_offer_then_gives_way_once_the_answer_is_out() {
+    let _guard = start(1);
+    store().set_bank0(recorded_bank0()).unwrap();
+    let mut rig = Rig::bench(1);
+    let payload = image(LEN);
+    let signed = manifest(3, &payload);
+
+    let ticket = mailbox::request(Request::offer(&signed, None, DEVICE).unwrap()).unwrap();
+    let mut answer = None;
+    for _ in 0..50 {
+        rig.step();
+        let progress = mailbox::progress().unwrap();
+        if answer.is_none() && progress.phase == Phase::Checking {
+            assert_eq!(
+                fake::with(|h| h.bank1[0]),
+                MARKER[0],
+                "no give-way while checking"
+            );
+        }
+        if let Some(outcome) = mailbox::outcome(ticket) {
+            answer = Some(outcome);
+            break;
+        }
+    }
+    let answer = progress(answer.unwrap());
+    assert_eq!(answer.phase, Phase::GivingWay);
+    assert_eq!(answer.digest, Some(offer::manifest_digest(&signed)));
+    assert!(matches!(store().record().state, State::Pending(c) if c.version == 3));
+    assert!(mailbox::installing(), "no feed starts before the restart");
+    assert_eq!(fake::with(|h| h.bank1[0]), MARKER[0]);
+
+    rig.now += LEAVE_MS;
+    rig.steps(1);
+    assert!(rig.restarted);
+    assert_eq!(
+        fake::with(|h| h.bank1[0]),
+        0,
+        "bank 1's first marker byte cleared"
+    );
+    assert!(rig.records.contains(&Record::GaveWay { version: 3 }));
+    assert!(fake::with(|h| h.bank1[1..]
+        .iter()
+        .take(7)
+        .eq(MARKER[1..].iter())));
+}
+
+#[test]
+fn bank_1_never_gives_way_to_a_bank_0_that_cannot_take_the_offer() {
+    let payload = image(LEN);
+    let signed = manifest(3, &payload);
+    let cases: [(&str, fn()); 5] = [
+        ("no record", || {}),
+        ("another built-in key", || {
+            let bank0 = Bank0 {
+                key: Some([0x99; 8]),
+                ..recorded_bank0()
+            };
+            store().set_bank0(bank0).unwrap();
+        }),
+        ("no built-in key", || {
+            let bank0 = Bank0 {
+                key: None,
+                ..recorded_bank0()
+            };
+            store().set_bank0(bank0).unwrap();
+        }),
+        ("changed image", || {
+            store().set_bank0(recorded_bank0()).unwrap();
+            fake::with(|h| h.bank0[SECTOR + 100] ^= 1);
+        }),
+        ("invalid marker", || {
+            store().set_bank0(recorded_bank0()).unwrap();
+            fake::with(|h| h.bank0_marker[0] = 0);
+        }),
+    ];
+    for (name, setup) in cases {
+        let _guard = start(1);
+        setup();
+        let mut rig = Rig::bench(1);
+        assert_eq!(rig.offer(&signed, None), Err(Refused::Fallback), "{name}");
+        assert_eq!(
+            store().record().state,
+            State::None,
+            "{name}: nothing pending"
+        );
+        assert!(!mailbox::installing(), "{name}: the lease is released");
+        rig.now += LEAVE_MAX_MS;
+        rig.steps(2);
+        assert!(!rig.restarted, "{name}");
+        assert!(fake::with(|h| h.bank1[..8] == MARKER), "{name}");
+    }
+}
+
+#[test]
+fn bank_1_never_gives_way_for_a_downgrade_bank_0_could_not_check() {
+    // An owner's key signs the manifest, which bank 0 finds in the shared
+    // client table; the downgrade statement is the built-in key's, which
+    // bank 0's record does not name.
+    let _guard = start(1);
+    let owner = SigningKey::from_bytes(&[0x0e; 32]);
+    keys::publish_clients(
+        [wellfed_core::store::clients::Client {
+            key: owner.verifying_key().to_bytes(),
+            label: wellfed_core::store::clients::Label::new(b"laptop").unwrap(),
+            role: wellfed_core::store::clients::Role::UpdateSigner,
+            enrolled: 1,
+        }]
+        .into_iter(),
+    );
+    let bank0 = Bank0 {
+        key: Some([0x99; 8]),
+        ..recorded_bank0()
+    };
+    store().set_bank0(bank0).unwrap();
+    let payload = image(LEN);
+    let stock = manifest_for(&owner, 3, &payload, 0x22, ImageKind::Stock);
+    let body = offer::downgrade_body(
+        &key_id(&bench().verifying_key().to_bytes()),
+        &DEVICE,
+        &offer::manifest_digest(&stock),
+        0,
+    );
+    let mut statement = body.to_vec();
+    statement.extend_from_slice(&bench().sign(&body).to_bytes());
+
+    let mut rig = Rig::bench(1);
+    assert_eq!(rig.offer(&stock, Some(&statement)), Err(Refused::Fallback));
+    assert_eq!(store().record().state, State::None);
+    assert!(fake::with(|h| h.bank1[..8] == MARKER));
+}
+
+#[test]
+fn a_build_in_trial_or_with_an_unreadable_store_takes_no_offer() {
+    let _guard = start(1);
+    store().set_bank0(recorded_bank0()).unwrap();
+    ARMED.with(|a| a.set(false));
+    let mut rig = Rig::bench(1);
+    let signed = manifest(3, &image(LEN));
+    assert_eq!(rig.offer(&signed, None), Err(Refused::Busy));
+
+    // A store a newer schema wrote has no floor this build can trust.
+    ARMED.with(|a| a.set(true));
+    let at = 25 * SECTOR;
+    fake::with(|h| {
+        let record = &mut h.storage[at..at + 256];
+        record[8] = 2;
+        let crc = wellfed_core::store::slot::crc32(&record[..248]);
+        record[248..252].copy_from_slice(&crc.to_le_bytes());
+    });
+    let mut rig = Rig::bench(1);
+    assert_eq!(rig.offer(&signed, None), Err(Refused::Unreadable));
+    assert_eq!(fake::with(|h| h.bank1[0]), MARKER[0]);
+}
+
+#[test]
+fn confirming_raises_the_floor_only_for_the_activated_build() {
+    let _guard = start(1);
+    let candidate = |build| Candidate {
+        digest: [4; 32],
+        version: 9,
+        build_id: build,
+        kind: ImageKind::Replacement,
+    };
+    store().set_activated(candidate([0x44; 32])).unwrap();
+    let mut rig = Rig::bench(1);
+    assert_eq!(rig.stage.raise_floor(), Floor::Unchanged);
+    assert_eq!(store().record().min_version, 0);
+
+    store().set_activated(candidate(RUNNING)).unwrap();
+    let mut rig = Rig::bench(1);
+    assert_eq!(rig.stage.raise_floor(), Floor::Raised { version: 9 });
+    let record = *store().record();
+    assert_eq!((record.min_version, record.state), (9, State::None));
+    assert_eq!(rig.stage.raise_floor(), Floor::Unchanged);
 }

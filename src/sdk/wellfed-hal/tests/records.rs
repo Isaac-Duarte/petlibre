@@ -122,11 +122,18 @@ fn watch_and_confirmation_records_carry_what_the_ota_watch_reads() {
     assert!(read(&same).is(tag::WATCH, &[("offer", "1"), ("same", "1")]));
 
     let confirmed = line(tag::CONFIRM, |f| {
-        confirm::describe(confirm::Record::Confirmed { healthy_ms: 30_000 }, f)
+        confirm::describe(
+            confirm::Record::Confirmed {
+                healthy_ms: 30_000,
+                version: 12,
+            },
+            f,
+        )
     });
     let confirmed = read(&confirmed);
     assert!(confirmed.is(tag::CONFIRM, &[("confirmed", "1")]));
     assert_eq!(confirmed.number::<u32>("healthy_ms"), Some(30_000));
+    assert_eq!(confirmed.number::<u32>("version"), Some(12));
 
     let already = line(tag::CONFIRM, |f| {
         confirm::describe(confirm::Record::Already, f)
@@ -196,7 +203,7 @@ fn stage_and_reason_words_are_unchanged() {
     );
     assert_eq!(
         displayed(confirm::ErrorStage::ALL, confirm::ErrorStage::as_str),
-        ["read", "write"]
+        ["read", "write", "floor"]
     );
     assert_eq!(
         displayed(audio::ErrorStage::ALL, audio::ErrorStage::as_str),

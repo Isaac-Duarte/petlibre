@@ -25,6 +25,7 @@ use wellfed_hal::flash::park::Hardware;
 use wellfed_hal::flash_lock::provider::Provider;
 use wellfed_hal::health::Boot;
 use wellfed_hal::ota::confirm::{self, Confirm, HookedStorage};
+use wellfed_hal::ota::update::{self as update, Floor, StoreSlots, Update};
 use wellfed_hal::ota::updater::{self, Hooked, Hooks, Updater};
 use wellfed_hal::ota::watch::{self, SdkGiveWay, Watch};
 use wellfed_hal::supervision::beat;
@@ -466,6 +467,27 @@ unsafe extern "C" fn feeder_task(_: *mut c_void) -> u32 {
 
 /// The service task's confirmation stage; see `confirm_step`.
 static CONFIRM: Slot<Confirm> = Slot::new();
+/// The service task's update stage, which owns the update store: the
+/// confirmation raises its floor through it, so the store has one writer.
+static UPDATE: Slot<Update<StoreSlots<SdkHooks>>> = Slot::new();
+
+fn new_update() -> Update<StoreSlots<SdkHooks>> {
+    let bank = startup::snapshot().bank().unwrap_or(1);
+    Update::new(
+        bank,
+        trial::identity(),
+        update::public_key(),
+        StoreSlots::new(),
+    )
+}
+
+/// Raise the update store's floor for this build, as the confirmation
+/// writes its record.
+fn raise_floor() -> Floor {
+    UPDATE
+        .enter_or_init(new_update)
+        .map_or(Floor::Failed, |mut stage| stage.raise_floor())
+}
 
 struct ConfirmLine(confirm::Record);
 
@@ -492,7 +514,9 @@ fn confirm_step() -> u32 {
 
     let mut storage = HookedStorage::<SdkHooks>::new();
     // SAFETY: the provider is a static, never borrowed (see `PROVIDER`).
-    let step = unsafe { confirm.step::<Hardware, SdkHooks>(provider, &mut storage, healthy, now) };
+    let step = unsafe {
+        confirm.step::<Hardware, SdkHooks>(provider, &mut storage, raise_floor, healthy, now)
+    };
 
     if let Some(record) = step.record {
         let mut report = startup::Report::new();

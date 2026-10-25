@@ -1,6 +1,6 @@
 # FW16 first supervised motor pulse
 
-Status: prepared offline: probe, host tests, build variant and guards. Not installed, never run. It waits on FW30's transient check and FW14's current channel, and needs the owner present.
+Status: run once on hardware, October 24 (owner present; [result](#first-run-october-24)). The owner chose to go ahead before FW30's power-on flicker is classified, since it also appears in the ROM loader.
 
 ## What the image does
 
@@ -42,6 +42,25 @@ Records (`PLMOT1`):
 6. Reinstall a non-motion image before anything else.
 
 Pass: one `pulse` record with `on_ms` about 100 and `stopped=1` after it, the motor visibly moving only once, and no `error`. The `edges` and current values are the first real measurements of feedback and drive current. Direction 0's physical rotation and its INA/INB mapping are recorded from observation.
+
+## First run (October 24)
+
+Physical, owner present, hopper empty. `motor` `pulse` (review `fw16-pulse-01`, image `073940ec…`) went into bank 1 over UART with `--attended-motion` and a 10 s boot, then power was cut before the 60 s delay. The pulse boot (`fw16-pulse-01-run`) recorded:
+
+```
+PLMOT1 armed delay_ms=60000 pulse_ms=100 lease_ms=200
+PLMOT1 pulse dir=1 applied_ms=0 on_ms=106 edges=0 first_edge_ms=none current=64,447,147 samples=10
+PLMOT1 after ms=1000 edges=0 current=15,16,15 stopped=1
+PLMOT1 done
+```
+
+- **Pass:** one pulse of 106 ms (the 10 ms timer tick), `stopped=1`, no error. The owner heard the motor; the movement itself was not seen.
+- **At the motor** (logic analyzer on the two leads, 1 MHz): the only drive in 130 s was 106.07 ms with the white-lead side HIGH, 60.5 s after power-on. `dir=1` is `MotorCommand::Drive0`, PA13 HIGH and PA14 LOW. The old 105 µs boot pulse (PA13 alone) had the same polarity. Opening the board before arming showed a 212 µs coast (both inputs LOW, no drive).
+- **Motor current (ADC channel 4, raw):** 64–447, mean 147 over 10 samples while driving; 15–16 stopped. First loaded readings; scaling is FW14's and FW19's.
+- **Feedback:** no PA18 edge in the pulse or the second after it. Either 100 ms turns too little to pass a mark, or PA18 is not the rotation sensor.
+- **Afterwards:** `feeder` v154 went back into bank 1 over UART (`fw16-restore-01`, region `d2357eb1…`) and booted at STOP.
+
+Open: the direction of rotation by eye, and a longer pulse to find the feedback input.
 
 ## Not covered
 

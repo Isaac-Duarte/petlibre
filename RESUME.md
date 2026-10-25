@@ -7,6 +7,18 @@ image, bench state, next task, or acceptance evidence changes.
 
 ## Where we stopped
 
+**October 24, late night: FW16 first supervised motor pulse (physical, owner present, attended motion; docs uncommitted).**
+- **Owner decision:** go ahead with motor bring-up before FW30's power-on flicker is classified, since it also appears in the ROM loader.
+- **Install:** `motor` `pulse` (`fw16-pulse-01`, image `073940ec…`) into bank 1 over UART with `--attended-motion`, a 10 s boot, then power off before the 60 s delay. OTA cannot carry it: the motor firmware runs no Wi-Fi or updater.
+- **Pulse (`fw16-pulse-01-run`):** `pulse dir=1 on_ms=106 edges=0 current=64,447,147`, `after … stopped=1`, `done`. The owner heard it but did not see the movement. The analyzer at the motor (`fw16-pulse-01-analyzer`) saw one 106.07 ms drive with the white-lead side HIGH, and no other drive in 130 s ([run](docs/firmware/motor-pulse.md#first-run-october-24)).
+- **Restore:** `feeder` v154 back into bank 1 over UART (`fw16-restore-01`, region `d2357eb1…`); it booted at STOP on bank 1 with the same identity.
+- **Flash now:**
+  - **Bank 1:** `feeder` v154 `e5b5c1dd…` (installed over UART; was confirmed when installed over the air).
+  - **Bank 0:** `feeder` `262a9f37…`.
+  - **Next manifest version:** 155.
+- **Bench state:** feeder on (relay 1), analyzer still clipped at the motor, hotspot down, no server.
+- **Next:** the rotation direction by eye and a longer pulse to find the feedback input; then the feeding owner inside `feeder`, so motor tests no longer need UART round trips. FW30's input probes when the micro IC hooks arrive (Wednesday).
+
 **October 24, night: FW30 motor-output transients with the logic analyzer (physical, no intended motion; uncommitted).**
 - **Analyzer:** a 24 MHz fx2lafw clone (labelled CH0–CH7), which needed `sigrok-firmware-fx2lafw`. The driver's 1.27 mm pins took no ordinary hook, so it is clipped at the motor: CH2 on the suppression capacitor's curved leg (blue-lead side), CH3 on its straight leg, GND on the bench ground rail. New: `wellfed-bench transients --probes outputs`, and an outputs-only mode in `wellfed-audit transients` (`probed: outputs`, with what it cannot see).
 - **Found and fixed:** a 104.5–105 µs drive pulse across the motor about 100 ms into every boot (4 of 4 cycles). Stopped startup enabled PA13 and PA14 as outputs one call at a time with both latches HIGH. `stopped::enable_motor_stopped` (also used by `Board::open_outputs`) now enables both LOW and writes STOP in one port write; a HAL test fails on the old order. The simulator allows LOW/LOW before a boot's first STOP. `make check` passed (927 tests).

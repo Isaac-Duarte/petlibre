@@ -44,7 +44,7 @@ AR1 goes first: it is the smallest card and closes a live gap (any container can
 | **AR16 Bring-up firmwares as variants of one** | Planned | AR10 | `optics`, `buttons`, `adc`, `speaker`, `motor` and `trial` (40–79 lines each) become variants of one bring-up firmware through the existing variant mechanism; policy names, markers and record formats unchanged; the bench's `--firmware` names still resolve. |
 | **AR17 One dual-slot store with one torn-write policy** | Planned | AR8 | The journal, settings, client, seed, Wi-Fi and event stores share one slot abstraction and one documented torn-write rule, each keeping its on-flash layout byte for byte; the power-cut-at-every-mutation tests run once against the abstraction and per store. |
 | **AR18 Link liveness without internet DNS** | Planned | AR7 | The C Wi-Fi task no longer resolves a hard-coded `example.com` every 5 s and drops the link after two failures. Liveness comes from association, DHCP and the gateway, decided in host-tested Rust, and trial confirmation stops depending on internet DNS. A behavior change: needs a bench run with the hotspot's forwarding blocked. |
-| **AR19 Fuzz and property-test the network parsers** | Ready | — | Bounded `proptest` properties in `make check`, and `cargo-fuzz` targets in an out-of-workspace `fuzz/` run through `cargo xtask fuzz`, for the device API's frame and request decoding, the Noise handshake reader, the setup protocol, the OTA manifest parser and the MQTT transport codec. |
+| **AR19 Fuzz and property-test the network parsers** | **Done (host, Oct 25)**: `make check` 1025 tests; seven `cargo xtask fuzz` targets smoke-run 60 s each with no crash; reviewed in two rounds | — | Bounded `proptest` properties in `make check`, and `cargo-fuzz` targets in an out-of-workspace `fuzz/` run through `cargo xtask fuzz`, for the device API's frame and request decoding, the Noise handshake reader, the setup protocol, the OTA manifest parser and the MQTT transport codec. |
 | **AR14 Minimal CI** | Deferred (owner, Oct 25) | — | A workflow on every push runs `cargo fmt --check`, the workspace Clippy passes including the firmware target, nextest, `check-deps` and `check-web`, and the well-fed.dev deploy waits on it. Fast enough to keep (target under 15 min with caching). Until then, each refactor card runs `make check` (and `make check-web` where it applies) in its worktree before it merges. |
 
 ## Summary
@@ -68,7 +68,7 @@ AR1 goes first: it is the smallest card and closes a live gap (any container can
 | AR16 Bring-up firmwares as variants | ⬜ Planned |
 | AR17 One dual-slot store | ⬜ Planned |
 | AR18 Link liveness without internet DNS | ⬜ Planned |
-| AR19 Fuzz the network parsers | 🟢 Ready |
+| AR19 Fuzz the network parsers | ✅ Done |
 | AR20 Anti-rollback and key rotation | 🟢 Ready |
 | AR21 Updates over the device API | 🟢 Ready |
 | AR22 Bench as crates | 🟢 Ready |

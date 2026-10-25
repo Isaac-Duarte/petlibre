@@ -32,7 +32,7 @@ The workspace is `src/sdk/` (the SDK every firmware builds on), `src/product/` (
 - Tests may `unwrap`, `expect` and `dbg!` ([clippy.toml](../../clippy.toml)); a panic there is a failed test.
 - Hardware and fixture evidence tests are `#[ignore]`d and run only from `make check-fixtures`, which stays on `cargo test` for its `--ignored --exact` selection. An ignored or skipped test is never a pass.
 - Network tests bind loopback sockets with synthetic identities.
-- The network parsers (the device API server and codec, the Noise handshake reader, BLE setup, the update manifest and writer, the MQTT codec) carry bounded [proptest](https://proptest-rs.github.io/proptest/) properties: no panic on any input, and encode-then-decode round trips. They run in the ordinary suite, so `make check` covers them; a failure writes its seed to a `*.proptest-regressions` file beside the test, which is committed with the fix. The same drivers back the cargo-fuzz targets ([fuzzing](README.md#fuzzing)).
+- The network parsers (the device API server and codec, the Noise handshake reader, BLE setup, the update manifest and writer, the MQTT codec) carry bounded [proptest](https://proptest-rs.github.io/proptest/) properties: no panic on any input, and encode-then-decode round trips. They run in the ordinary suite, so `make check` covers them; a failure records its seed, which is committed with the fix: for a test under `tests/` in `<name>.proptest-regressions` beside it, for one in a crate's `src/` in `proptest-regressions/<file>.txt` at the crate root (proptest's default persistence). The same drivers back the cargo-fuzz targets ([fuzzing](README.md#fuzzing)).
 
 ## Dependencies
 
@@ -42,6 +42,8 @@ The workspace is `src/sdk/` (the SDK every firmware builds on), `src/product/` (
 - **Advisories:** vulnerable, unmaintained and yanked crates fail. An ignored advisory carries its reason; today that is only `bare-metal`, archived but still a dependency of cortex-m 0.7.
 - **Duplicates** are warned about, not refused: several come from crates partway through an upgrade (digest 0.10 and 0.11, rand_core, syn 2 and 3). A change that adds one says why.
 - **Sources:** crates.io only.
+
+It then checks the out-of-workspace fuzz crate's lockfile against [src/fuzz/deny.toml](../../src/fuzz/deny.toml), the same rules with the allow list trimmed to that graph. Its one exception is libFuzzer (NCSA, a permissive license), which `libfuzzer-sys` builds into host fuzzing binaries only.
 
 The advisory check reads the RustSec database, which the first run downloads. Offline, `cargo deny check --disable-fetch` uses the cached copy; a check that could not run is not a pass.
 

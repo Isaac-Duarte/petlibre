@@ -1,6 +1,7 @@
 //! Repository maintenance tasks, run as `cargo xtask <task>`.
 //!
-//! `fuzz` runs one cargo-fuzz target for a bounded time.
+//! `fuzz` runs one cargo-fuzz target for a bounded time, or replays one
+//! saved input.
 //!
 //! `check-repository` checks local documentation links, portable repository
 //! inputs, that no Python returns under `src/`, and the transport
@@ -36,8 +37,11 @@ enum Task {
         #[arg(value_enum)]
         target: fuzz::Target,
         /// How long to fuzz.
-        #[arg(long, default_value_t = 60)]
+        #[arg(long, default_value_t = 60, conflicts_with = "replay")]
         seconds: u32,
+        /// Run this one saved input (a crash artifact) instead of fuzzing.
+        #[arg(long)]
+        replay: Option<PathBuf>,
     },
 }
 
@@ -62,18 +66,35 @@ fn main() -> ExitCode {
                 ExitCode::from(2)
             }
         },
-        Task::Fuzz { target, seconds } => match fuzz::run(&cli.root, target, seconds) {
-            Ok(status) if status.success() => ExitCode::SUCCESS,
-            Ok(status) => {
-                eprintln!(
-                    "fuzz: the run ended with {status}; any crash input is under fuzz/artifacts/"
-                );
-                ExitCode::from(1)
+        Task::Fuzz {
+            target,
+            seconds,
+            replay,
+        } => {
+            // The run starts in `--root`, so a relative input is resolved here.
+            let replay = match replay.map(std::path::absolute).transpose() {
+                Ok(replay) => replay,
+                Err(error) => {
+                    eprintln!("fuzz: {error}");
+                    return ExitCode::from(2);
+                }
+            };
+            let run = replay
+                .as_deref()
+                .map_or(fuzz::Run::Seconds(seconds), fuzz::Run::Replay);
+            match fuzz::run(&cli.root, target, run) {
+                Ok(status) if status.success() => ExitCode::SUCCESS,
+                Ok(status) => {
+                    eprintln!(
+                        "fuzz: the run ended with {status}; any crash input is under src/fuzz/artifacts/"
+                    );
+                    ExitCode::from(1)
+                }
+                Err(error) => {
+                    eprintln!("fuzz: {error}");
+                    ExitCode::from(2)
+                }
             }
-            Err(error) => {
-                eprintln!("fuzz: {error}");
-                ExitCode::from(2)
-            }
-        },
+        }
     }
 }

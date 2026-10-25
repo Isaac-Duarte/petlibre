@@ -1,5 +1,6 @@
 //! `cargo xtask fuzz <target>`: one bounded libFuzzer run of a target in
-//! `fuzz/`, the out-of-workspace cargo-fuzz crate.
+//! `src/fuzz/`, the out-of-workspace cargo-fuzz crate, or one replay of a
+//! saved input.
 //!
 //! libFuzzer's coverage and sanitizer flags are unstable compiler options.
 //! Rather than require a nightly toolchain alongside the pinned one (whose
@@ -13,7 +14,7 @@ use std::process::{Command, ExitStatus};
 
 use clap::ValueEnum;
 
-/// The targets in `fuzz/Cargo.toml`, one per network parser.
+/// The targets in `src/fuzz/Cargo.toml`, one per network parser.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 pub(crate) enum Target {
     /// The device API from an unauthenticated peer: opening frame and handshakes.
@@ -46,9 +47,21 @@ impl Target {
     }
 }
 
-/// Run `target` for `seconds`; the fuzzer's exit status. A crash leaves its
-/// input under `fuzz/artifacts/<target>/`.
-pub(crate) fn run(root: &Path, target: Target, seconds: u32) -> io::Result<ExitStatus> {
+/// The fuzz crate, relative to the repository root.
+const FUZZ_DIR: &str = "src/fuzz";
+
+/// What one run does.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Run<'a> {
+    /// Fuzz for this many seconds.
+    Seconds(u32),
+    /// Run this one saved input (a crash artifact) and stop.
+    Replay(&'a Path),
+}
+
+/// One run of `target`; the fuzzer's exit status. A crash leaves its input
+/// under `src/fuzz/artifacts/<target>/`, where `Run::Replay` takes it.
+pub(crate) fn run(root: &Path, target: Target, run: Run<'_>) -> io::Result<ExitStatus> {
     let installed = Command::new("cargo")
         .args(["fuzz", "--version"])
         .current_dir(root)
@@ -61,10 +74,13 @@ pub(crate) fn run(root: &Path, target: Target, seconds: u32) -> io::Result<ExitS
         ));
     }
 
-    Command::new("cargo")
-        .args(["fuzz", "run", "--fuzz-dir", "fuzz", target.name()])
-        .arg("--")
-        .arg(format!("-max_total_time={seconds}"))
+    let mut command = Command::new("cargo");
+    command.args(["fuzz", "run", "--fuzz-dir", FUZZ_DIR, target.name()]);
+    match run {
+        Run::Seconds(seconds) => command.arg("--").arg(format!("-max_total_time={seconds}")),
+        Run::Replay(input) => command.arg(input),
+    };
+    command
         .env("RUSTC_BOOTSTRAP", "1")
         .current_dir(root)
         .status()
@@ -77,7 +93,7 @@ mod tests {
     /// Every target the command offers is a `[[bin]]` of the fuzz crate.
     #[test]
     fn every_target_is_in_the_fuzz_manifest() {
-        let manifest = include_str!("../../../../fuzz/Cargo.toml");
+        let manifest = include_str!("../../../fuzz/Cargo.toml");
         for target in Target::value_variants() {
             let entry = format!("name = \"{}\"", target.name());
             assert!(manifest.contains(&entry), "{entry} missing");

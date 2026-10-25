@@ -20,7 +20,7 @@ Rustup and Cargo download dependencies on initial setup. Check targets do not in
 | Target | Coverage |
 | --- | --- |
 | `check-rust` | Formatting, Clippy with warnings denied, workspace host tests under cargo-nextest, doctests |
-| `check-deps` | cargo-deny: licenses, advisories, duplicate versions and sources ([deny.toml](../../deny.toml)) |
+| `check-deps` | cargo-deny: licenses, advisories, duplicate versions and sources ([deny.toml](../../deny.toml)), then the fuzz crate's lockfile under [its own policy](../../src/fuzz/deny.toml) |
 | `check-cross` | SDK-independent KM0/KM4 FFI static libraries |
 | `check-virtual-feeder` | The `wellfed-sim` worker and harness: deterministic feeding, faults, journal cuts, and restart scenarios (also part of `check-rust`) |
 | `check-docs` | Local Markdown links, repository portability checks, no Python under `src/`, and the FW08 transport isolation rule |
@@ -35,7 +35,7 @@ Generated Rust artifacts live in `target/`; the simulator worker and temporary v
 
 ## Fuzzing
 
-The network parsers also have [cargo-fuzz](https://rust-fuzz.github.io/book/cargo-fuzz.html) targets in [fuzz/](../../fuzz/Cargo.toml), a crate outside the workspace with its own lockfile, so `make check` never builds it. Install the runner once with `cargo install cargo-fuzz` (it also needs a C++ compiler for libFuzzer), then run one target for a bounded time:
+The network parsers also have [cargo-fuzz](https://rust-fuzz.github.io/book/cargo-fuzz.html) targets in [src/fuzz/](../../src/fuzz/Cargo.toml), a crate outside the workspace with its own lockfile, so `make check` never builds it. Install the runner once with `cargo install cargo-fuzz` (it also needs a C++ compiler for libFuzzer), then run one target for a bounded time:
 
 ```sh
 cargo xtask fuzz api-connection --seconds 60
@@ -51,7 +51,7 @@ cargo xtask fuzz api-connection --seconds 60
 | `ota-manifest` | The update manifest, the `ota/get` and `ota/data` messages, and chunks to the bank-1 writer |
 | `mqtt` | A broker's byte stream into the MQTT codec and its session |
 
-`--seconds` defaults to 60. The command runs the pinned toolchain with `RUSTC_BOOTSTRAP=1` for libFuzzer's unstable compiler flags, so no nightly toolchain is needed. Builds, grown corpora and crash inputs stay in ignored `fuzz/target/`, `fuzz/corpus/` and `fuzz/artifacts/`. A crash is a bug in the parser: reproduce it with `RUSTC_BOOTSTRAP=1 cargo fuzz run --fuzz-dir fuzz <target> fuzz/artifacts/<target>/<file>`, fix it, and add the input as a regression test beside the property that should have caught it. The device API and setup targets share their drivers with the property tests ([support](../../src/product/wellfed-feeder/tests/support/mod.rs)).
+`--seconds` defaults to 60. The command runs the pinned toolchain with `RUSTC_BOOTSTRAP=1` for libFuzzer's unstable compiler flags, so no nightly toolchain is needed. Builds, grown corpora and crash inputs stay in ignored `src/fuzz/target/`, `src/fuzz/corpus/` and `src/fuzz/artifacts/`; on disk a target is named with underscores (`api_connection`), as `src/fuzz/Cargo.toml` lists it. A crash is a bug in the parser: replay it with `cargo xtask fuzz <target> --replay src/fuzz/artifacts/<target_name>/<file>`, fix it, and add the input as a regression test beside the property that should have caught it. The device API and setup targets share their drivers with the property tests ([support](../../src/product/wellfed-feeder/tests/support/mod.rs)).
 
 ## Work on a component
 

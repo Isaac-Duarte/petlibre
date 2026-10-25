@@ -1,7 +1,8 @@
 # cargo-fuzz targets for the feeder's network parsers, run through
-# `cargo xtask fuzz <target>` (docs/development/README.md#fuzzing). Outside
-# the main workspace: libFuzzer's sanitizer flags need nightly features, and
-# its lockfile and target directory stay out of `make check`.
+# `cargo xtask fuzz <target>` (../../docs/development/README.md#fuzzing). Outside
+# the main workspace: libFuzzer's sanitizer flags are unstable compiler
+# options, so `make check` never builds this crate; `make check-deps` checks
+# its lockfile against deny.toml here.
 [package]
 name = "wellfed-fuzz"
 version = "0.0.0"
@@ -16,9 +17,9 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4.13"
-wellfed-core = { path = "../src/sdk/wellfed-core" }
-wellfed-feeder = { path = "../src/product/wellfed-feeder" }
-wellfed-proto = { path = "../src/sdk/wellfed-proto" }
+wellfed-core = { path = "../sdk/wellfed-core" }
+wellfed-feeder = { path = "../product/wellfed-feeder" }
+wellfed-proto = { path = "../sdk/wellfed-proto" }
 
 [[bin]]
 name = "api_connection"

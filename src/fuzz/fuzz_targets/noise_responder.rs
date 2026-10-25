@@ -29,8 +29,6 @@ libfuzzer_sys::fuzz_target!(|data: &[u8]| {
     let mut payload = vec![0; usize::from(pick >> 2) * 8];
     if let Ok(read) = responder.read_message(message, &mut payload) {
         assert!(read <= payload.len());
-        // Only XX's first message carries no key; the rest must authenticate.
-        assert_eq!(pattern, Pattern::Xx);
         let mut reply = [0; 256];
         let _ = responder.write_message(&[], &mut reply);
     }

@@ -11,7 +11,7 @@ members = [
 ]
 # The cargo-fuzz targets build on nightly-only sanitizer flags, so they keep
 # their own workspace and lockfile (`cargo xtask fuzz`).
-exclude = ["fuzz"]
+exclude = ["src/fuzz"]
 resolver = "3"
 
 [workspace.package]

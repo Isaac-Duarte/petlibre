@@ -456,8 +456,10 @@ mod properties {
             let mut payload = vec![0; room];
             if let Ok(read) = responder.read_message(&message, &mut payload) {
                 prop_assert!(read <= room);
-                // Only a pattern whose first message is unauthenticated reads
-                // bytes nobody keyed.
+                // Not authentication: anyone holding the responder's static key
+                // can write a valid IK or XXpsk3 first message. Random bytes just
+                // carry a valid tag with odds of 2^-128, so in practice only XX,
+                // whose first message has no tag, reads them.
                 prop_assert_eq!(pattern, Pattern::Xx);
             }
         }

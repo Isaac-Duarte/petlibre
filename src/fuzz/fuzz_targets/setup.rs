@@ -3,7 +3,7 @@
 //! from the input.
 #![no_main]
 
-#[path = "../../src/product/wellfed-feeder/tests/support/mod.rs"]
+#[path = "../../product/wellfed-feeder/tests/support/mod.rs"]
 mod support;
 
 use wellfed_proto::setup::Wifi;

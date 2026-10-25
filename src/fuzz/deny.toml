@@ -1,0 +1,33 @@
+# cargo-deny policy for the fuzz crate's own lockfile, run by
+# `make check-deps` beside the workspace's ../../deny.toml. The same rules
+# (docs/development/rust.md#dependencies), with the allow list trimmed to
+# what this graph uses so neither check warns about an unused entry.
+
+[graph]
+all-features = true
+
+[advisories]
+unmaintained = "all"
+yanked = "deny"
+
+[licenses]
+allow = ["Apache-2.0", "BSD-3-Clause", "MIT", "Unicode-3.0"]
+confidence-threshold = 0.9
+exceptions = [
+    # libFuzzer itself, which libfuzzer-sys builds, is LLVM's NCSA-licensed
+    # code: permissive, and linked only into host fuzzing binaries, never
+    # into firmware or a shipped tool.
+    { crate = "libfuzzer-sys", allow = ["NCSA"] },
+]
+
+[licenses.private]
+ignore = true
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

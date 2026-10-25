@@ -141,3 +141,20 @@ fn the_session_driver_is_answered() {
     let second_len = wellfed_proto::encode(&feed, &mut second).unwrap();
     assert_eq!(support::session(&[&out[..len], &second[..second_len]]), 2);
 }
+
+/// Found by the `setup` fuzz target: a valid label, matching codes and a
+/// 255-byte SSID and passphrase overflowed the driver's own answer buffer.
+/// The feeder must refuse the oversized answer, not the driver panic.
+#[test]
+fn an_oversized_wifi_answer_is_refused() {
+    let ssid = [b'a'; 255];
+    let psk = "b".repeat(255);
+    let wifi = setup::Wifi {
+        ssid: &ssid,
+        psk: &psk,
+    };
+    assert_eq!(
+        support::setup_client(&[1, b'a'], 5, 5, Some(wifi)),
+        Setup::Refused
+    );
+}

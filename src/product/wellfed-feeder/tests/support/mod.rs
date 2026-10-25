@@ -3,7 +3,7 @@
 //! behind a fake device, and BLE setup's [`Responder`].
 //!
 //! The property tests (`tests/properties.rs`) and the cargo-fuzz targets
-//! (`fuzz/`, which includes this file by path) share these drivers, so both
+//! (`src/fuzz/`, which includes this file by path) share these drivers, so both
 //! check the same invariants: nothing panics, every frame the feeder writes
 //! fits its limit, and every message it seals decodes as the protocol says.
 //! This file therefore uses only the feeder's own dependencies.
@@ -441,7 +441,9 @@ pub enum Setup {
 
 /// A genuine client: an XX handshake whose third message carries `request`
 /// (any bytes), the owner's `code` keyed in, then the code proof with the
-/// client's own `code`, its last step carrying `wifi`.
+/// client's own `code`, its last step carrying `wifi`. The client's buffers
+/// grow with its inputs, so any request or Wi-Fi is sent and the feeder,
+/// not this driver, decides what it takes.
 pub fn setup_client(
     request: &[u8],
     feeder_code: u16,
@@ -459,7 +461,11 @@ pub fn setup_client(
         [0x66; 32],
     )
     .expect("XX needs no remote key");
-    let (mut message, mut reply, mut plain) = ([0; 512], [0; 512], [0; 512]);
+    // The handshake's static key, the answer's fixed fields and the
+    // length prefixes fit in the slack.
+    let room = 256 + request.len() + wifi.map_or(0, |w| w.ssid.len() + w.psk.len());
+    let (mut message, mut plain) = (vec![0; room], vec![0; room]);
+    let mut reply = [0; 512];
 
     let len = client
         .write_message(&[], &mut message)

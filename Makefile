@@ -24,10 +24,12 @@ check-rust:
 	cargo nextest run --locked --workspace --all-targets
 	cargo test --locked --workspace --doc
 
-# Licenses, advisories, duplicate versions and sources (deny.toml). Advisories
+# Licenses, advisories, duplicate versions and sources (deny.toml), then the
+# out-of-workspace fuzz crate's own lockfile under its own policy. Advisories
 # need the RustSec database, which the first run fetches.
 check-deps:
 	cargo deny --locked check
+	cargo deny --manifest-path src/fuzz/Cargo.toml --locked check --config src/fuzz/deny.toml
 
 check-cross:
 	cargo build --locked -p wellfed-sdk-c --release --target thumbv8m.main-none-eabihf

@@ -169,6 +169,12 @@
     font-weight: 600;
     cursor: pointer;
   }
+  @media (max-width: 760px), (pointer: coarse) {
+    .controls button {
+      height: 44px;
+      padding: 0 var(--space-4);
+    }
+  }
   @media (max-width: 600px) {
     .qa {
       padding: var(--space-4);

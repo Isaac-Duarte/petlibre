@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Locator } from "@playwright/test";
 
 test("the overview shows the live run, its log, the feeder and the bench", async ({ page }) => {
   await page.goto("/");
@@ -74,7 +74,7 @@ test("the overview log shows the run's notes, filterable", async ({ page }) => {
 test("both themes render without horizontal page scroll", async ({ page }) => {
   for (const colorScheme of ["light", "dark"] as const) {
     await page.emulateMedia({ colorScheme });
-    for (const view of ["overview", "tests", "sessions"]) {
+    for (const view of ["overview", "tests", "sessions", "tests/itest-e2e-03", "sessions/flash-e2e-01"]) {
       await page.goto(`/#/${view}`);
       await page.waitForLoadState("networkidle").catch(() => {
         // The event stream never goes idle; the overflow check below is what matters.
@@ -83,4 +83,65 @@ test("both themes render without horizontal page scroll", async ({ page }) => {
       expect(overflow, `${view} in ${colorScheme}`).toBeLessThanOrEqual(0);
     }
   }
+});
+
+test.describe("at phone width", () => {
+  test.skip(({ isMobile }) => !isMobile, "phone layout only");
+
+  /** Every matched element is at least a 44 px square, the touch target minimum. */
+  async function expectThumbSized(targets: Locator) {
+    const count = await targets.count();
+    expect(count).toBeGreaterThan(0);
+    for (let i = 0; i < count; i++) {
+      const box = await targets.nth(i).boundingBox();
+      expect(box, `target ${String(i)}`).not.toBeNull();
+      expect(box?.height ?? 0, `target ${String(i)} height`).toBeGreaterThanOrEqual(44);
+      expect(box?.width ?? 0, `target ${String(i)} width`).toBeGreaterThanOrEqual(44);
+    }
+  }
+
+  test("navigation and the log's controls are thumb-sized", async ({ page }) => {
+    await page.goto("/");
+
+    await expectThumbSized(page.getByRole("navigation", { name: "Views" }).getByRole("link"));
+    await expectThumbSized(page.getByRole("button", { name: /^Theme/ }));
+    const log = page.getByRole("region", { name: "Live log" });
+    await expectThumbSized(log.getByRole("searchbox", { name: "Filter log lines" }));
+    await expectThumbSized(log.locator("label.follow"));
+    await expectThumbSized(log.getByRole("button", { name: "Copy" }));
+  });
+
+  test("long log lines scroll inside the log, not the page", async ({ page }) => {
+    await page.goto("/");
+
+    const log = page.getByRole("log", { name: "Live log" });
+    await expect(log).toContainText("- requests: ping, health");
+    const box = await log.boundingBox();
+    expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(page.viewportSize()?.width ?? 0);
+    expect(await log.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
+  });
+
+  test("the run builder stacks each scenario with its tier and flags", async ({ page }) => {
+    await page.goto("/#/tests");
+    const builder = page.getByRole("region", { name: "Start a run" });
+
+    await expectThumbSized(builder.getByRole("radio"));
+    await expectThumbSized(builder.locator("label.hit"));
+    // The tier column is shown, not dropped, at phone width.
+    await expect(builder.getByText("standard", { exact: true }).first()).toBeVisible();
+    await builder.getByRole("checkbox", { name: "Only requests" }).click();
+    await expect(builder.locator("pre")).toContainText("requests");
+  });
+
+  test("sessions keep their evidence parts and recent commands their start time", async ({ page }) => {
+    await page.goto("/#/sessions");
+
+    const sessions = page.getByRole("region", { name: "Sessions" });
+    await expectThumbSized(sessions.getByRole("link", { name: "flash-e2e-01" }));
+    await expect(sessions.getByText("inspect", { exact: true })).toBeVisible();
+
+    await page.goto("/");
+    // The start time stacks under the command rather than being dropped.
+    await expect(page.getByRole("region", { name: "Recent commands" }).getByText(/^\d{1,2}:\d{2}/)).toBeVisible();
+  });
 });

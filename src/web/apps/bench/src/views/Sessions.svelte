@@ -155,7 +155,11 @@
   }
   .parts {
     display: flex;
+    flex-wrap: wrap;
     gap: 4px;
+  }
+  td.wide {
+    white-space: normal;
   }
   .part {
     padding: 1px 8px;
@@ -203,8 +207,67 @@
     .layout.open {
       grid-template-columns: minmax(0, 1fr);
     }
-    .wide {
-      display: none;
+  }
+  /* On a phone each session is a card: its name as a full-width tap target,
+     then its state, age and evidence parts. */
+  @media (max-width: 600px) {
+    thead {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+    }
+    tr {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      grid-template-areas: "name name" "state age" "parts parts";
+      gap: var(--space-1) var(--space-3);
+      padding: 0 var(--space-4) var(--space-3);
+      border-top: 1px solid var(--color-line);
+    }
+    td,
+    td:first-child,
+    td:last-child {
+      padding: 0;
+      border: 0;
+    }
+    tr.sel {
+      background: var(--color-sunken);
+      box-shadow: inset 3px 0 0 var(--color-text);
+    }
+    tr.sel td,
+    tr.sel td:first-child {
+      background: none;
+      box-shadow: none;
+    }
+    td.name {
+      grid-area: name;
+    }
+    td.wide {
+      grid-area: parts;
+    }
+    td.state {
+      grid-area: state;
+    }
+    td.r {
+      grid-area: age;
+    }
+    .name a {
+      display: flex;
+      align-items: center;
+      min-height: 44px;
+      font-size: var(--text-sm);
+      overflow-wrap: anywhere;
+      white-space: normal;
+    }
+  }
+  @media (max-width: 760px), (pointer: coarse) {
+    .close {
+      display: inline-flex;
+      align-items: center;
+      min-height: 44px;
+      padding: 0 var(--space-2);
     }
   }
 </style>

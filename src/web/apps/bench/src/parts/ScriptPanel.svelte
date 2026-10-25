@@ -177,6 +177,21 @@
     font-weight: 600;
     cursor: pointer;
   }
+  @media (max-width: 760px), (pointer: coarse) {
+    .controls {
+      flex-wrap: wrap;
+    }
+    .controls button {
+      height: 44px;
+      padding: 0 var(--space-4);
+    }
+    .controls label {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--space-2);
+      min-height: 44px;
+    }
+  }
   @media (max-width: 600px) {
     .script {
       padding: var(--space-4);

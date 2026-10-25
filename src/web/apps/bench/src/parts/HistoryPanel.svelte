@@ -113,17 +113,53 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  /* A phone has no room for four columns: each command becomes a two-line
+     card, with its name first and the outcome, start and duration below,
+     so nothing the desktop shows is dropped. */
   @media (max-width: 600px) {
-    .started {
-      display: none;
+    thead {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
     }
-    th:first-child,
-    td:first-child {
-      padding-left: var(--space-4);
+    tr {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      grid-template-areas: "command command command" "outcome started took";
+      gap: 2px var(--space-3);
+      padding: var(--space-2) var(--space-4);
+      border-top: 1px solid var(--color-line);
     }
-    th:last-child,
+    td,
+    td:first-child,
     td:last-child {
-      padding-right: var(--space-4);
+      padding: 0;
+      border: 0;
+    }
+    td:nth-child(1) {
+      grid-area: command;
+    }
+    td:nth-child(2) {
+      grid-area: started;
+    }
+    td:nth-child(3) {
+      grid-area: took;
+    }
+    td:nth-child(4) {
+      grid-area: outcome;
+    }
+    .sub,
+    .outcome span {
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+    .started::before {
+      content: "started ";
+    }
+    .toggle {
+      min-height: 44px;
     }
   }
   .outcome :global(.dot) {

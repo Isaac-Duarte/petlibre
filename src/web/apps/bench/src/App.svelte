@@ -257,10 +257,15 @@
     nav a {
       flex: 1;
       justify-content: center;
+      height: 44px;
       padding: 0 10px;
     }
-    .clock {
-      display: none;
+    .mark {
+      min-height: 44px;
+    }
+    .theme {
+      width: 44px;
+      height: 44px;
     }
   }
 </style>

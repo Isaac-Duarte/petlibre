@@ -258,4 +258,37 @@
   .muted {
     color: var(--color-text-muted);
   }
+  /* The matrix scrolls sideways inside its panel; on a phone each run and
+     cell is a thumb-sized link, and the narrower gutter matches the page. */
+  @media (max-width: 760px), (pointer: coarse) {
+    .scroll {
+      overscroll-behavior-x: contain;
+    }
+    th.run a {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 44px;
+      min-height: 44px;
+    }
+    td,
+    tbody th.scenario {
+      height: 44px;
+    }
+    td.cell a {
+      padding: 13px;
+    }
+    td.why a {
+      line-height: 44px;
+    }
+  }
+  @media (max-width: 600px) {
+    th.scenario {
+      padding-left: var(--space-4);
+      padding-right: var(--space-3);
+    }
+    .why {
+      padding-right: var(--space-4);
+    }
+  }
 </style>

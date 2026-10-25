@@ -42,4 +42,12 @@
   .copy:hover {
     border-color: var(--color-text);
   }
+  /* A thumb-sized target on phones; the desktop keeps the compact pill. */
+  @media (max-width: 760px), (pointer: coarse) {
+    .copy {
+      height: 44px;
+      padding: 0 var(--space-4);
+      font-size: var(--text-sm);
+    }
+  }
 </style>

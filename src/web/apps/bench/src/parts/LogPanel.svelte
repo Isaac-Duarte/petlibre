@@ -57,4 +57,20 @@
   input[type="checkbox"] {
     accent-color: var(--color-text);
   }
+  @media (max-width: 760px), (pointer: coarse) {
+    input[type="search"] {
+      flex: 1 1 8em;
+      min-width: 0;
+      height: 44px;
+      font-size: var(--text-md);
+    }
+    .follow {
+      min-height: 44px;
+      padding: 0 var(--space-2);
+    }
+    input[type="checkbox"] {
+      width: 20px;
+      height: 20px;
+    }
+  }
 </style>

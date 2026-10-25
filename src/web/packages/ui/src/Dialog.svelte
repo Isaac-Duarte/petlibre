@@ -119,7 +119,12 @@
     background: var(--color-surface);
     cursor: pointer;
   }
-  @media (pointer: coarse) {
+  @media (max-width: 600px) {
+    .pl-dialog-header {
+      padding: var(--space-4) var(--space-4) var(--space-3);
+    }
+  }
+  @media (max-width: 760px), (pointer: coarse) {
     :global(.pl-dialog-close) {
       width: 44px;
       height: 44px;

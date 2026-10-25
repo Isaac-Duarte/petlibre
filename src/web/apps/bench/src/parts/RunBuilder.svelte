@@ -96,25 +96,27 @@
         {@const included = includes(entry, full)}
         {@const missing = included ? missingFlags(entry, full) : []}
         <tr class:included class:short={missing.length > 0}>
-          <td>
-            <input
-              type="checkbox"
-              checked={entry.baseline || options.only.includes(entry.name)}
-              disabled={entry.baseline}
-              onchange={() => {
-                toggle(entry.name);
-              }}
-              aria-label="Only {entry.name}"
-              title={entry.baseline
-                ? "Installs the build under test; every run starts with it"
-                : `Run only the checked scenarios`}
-            />
+          <td class="pick">
+            <label class="hit">
+              <input
+                type="checkbox"
+                checked={entry.baseline || options.only.includes(entry.name)}
+                disabled={entry.baseline}
+                onchange={() => {
+                  toggle(entry.name);
+                }}
+                aria-label="Only {entry.name}"
+                title={entry.baseline
+                  ? "Installs the build under test; every run starts with it"
+                  : `Run only the checked scenarios`}
+              />
+            </label>
           </td>
-          <td>
+          <td class="scenario">
             <span class="name">{entry.name}</span>
             <span class="about">{entry.about}</span>
           </td>
-          <td><Badge tone="muted" label={entry.tier} /></td>
+          <td class="tier"><Badge tone="muted" label={entry.tier} /></td>
           <td class="needs">
             {#each entry.needs as need (need.flag)}
               <code class:missing={missing.includes(need.flag)} title={need.why}>{need.flag}</code>
@@ -273,13 +275,82 @@
     overflow: hidden;
     clip-path: inset(50%);
   }
+  .hit {
+    display: inline-flex;
+  }
   @media (max-width: 860px) {
     .controls {
       grid-template-columns: minmax(0, 1fr);
     }
-    .catalog th:nth-child(3),
-    .catalog td:nth-child(3) {
+    .flags {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .flags label {
+      white-space: normal;
+    }
+  }
+  /* Each scenario becomes a card: the checkbox beside its name and what it
+     checks, then its tier and flags on one line below, so the description
+     gets the width instead of being squeezed by the flags column. */
+  @media (max-width: 600px) {
+    .catalog thead {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+    }
+    .catalog tr {
+      display: grid;
+      grid-template-columns: 44px auto minmax(0, 1fr);
+      grid-template-areas: "pick scenario scenario" "pick tier needs";
+      gap: var(--space-1) var(--space-2);
+      padding: var(--space-2) 0;
+      border-top: 1px solid var(--color-line);
+    }
+    .catalog td {
+      padding: 0;
+      border: 0;
+    }
+    .catalog .pick {
+      grid-area: pick;
+    }
+    .catalog .scenario {
+      grid-area: scenario;
+    }
+    .catalog .tier {
+      grid-area: tier;
+    }
+    .catalog .needs {
+      grid-area: needs;
+      align-self: center;
+      white-space: normal;
+    }
+    .catalog .needs:empty {
       display: none;
+    }
+  }
+  @media (max-width: 760px), (pointer: coarse) {
+    .hit {
+      align-items: center;
+      justify-content: center;
+      width: 44px;
+      height: 44px;
+    }
+    .flags label {
+      min-height: 44px;
+    }
+    input[type="checkbox"] {
+      width: 20px;
+      height: 20px;
+      flex: none;
+    }
+    input[type="text"] {
+      height: 44px;
+      font-size: var(--text-md);
+    }
+    .segmented button {
+      height: 44px;
     }
   }
 </style>

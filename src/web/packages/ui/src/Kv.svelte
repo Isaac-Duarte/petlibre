@@ -26,13 +26,14 @@
 <style>
   dl {
     display: grid;
-    grid-template-columns: max-content minmax(0, 1fr);
+    grid-template-columns: fit-content(50%) minmax(0, 1fr);
     gap: 4px var(--space-4);
     margin: 0;
     font-size: var(--text-sm);
   }
   dt {
     color: var(--color-text-muted);
+    overflow-wrap: anywhere;
   }
   dd {
     margin: 0;

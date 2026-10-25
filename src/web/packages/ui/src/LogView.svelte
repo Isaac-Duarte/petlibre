@@ -120,6 +120,16 @@
     font-weight: 600;
     border-top: 1px solid var(--color-line-strong);
   }
+  /* On a phone the log is most of the screen: a vertical swipe at its end
+     scrolls the page on, rather than trapping the thumb inside the log, and
+     the text is a step larger. Long lines still scroll sideways within the
+     log, since rows keep one fixed height for the windowing above. */
+  @media (max-width: 760px) {
+    .log {
+      overscroll-behavior-y: auto;
+      font-size: var(--text-sm);
+    }
+  }
   .empty {
     margin: 0;
     padding: var(--space-4);

@@ -166,6 +166,21 @@
   .muted {
     color: var(--color-text-muted);
   }
+  @media (max-width: 600px) {
+    .body {
+      padding: var(--space-4) var(--space-4) var(--space-6);
+    }
+    summary {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0 var(--space-2);
+      min-height: 44px;
+    }
+    summary code {
+      overflow-wrap: anywhere;
+    }
+  }
   pre {
     margin: var(--space-2) 0 0;
     padding: var(--space-3);

@@ -2,7 +2,7 @@
 // names this process as its owner, so the page reads it as running for as
 // long as the server is up.
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -92,6 +92,21 @@ write(
   ].join("\r\n") + "\r\n",
 );
 write("private/verification/itest-e2e-03-servers.log", "serve: listening on 127.0.0.1:8765\n");
+
+// A flash session's evidence, so the sessions view has a row and a detail.
+write("private/captures/flash-e2e-01-loader/serial-rx.bin", "loader ready\r\n");
+// An hour old, so the integration run's capture stays the latest one.
+const hourAgo = now - 3600;
+utimesSync(join(root, "private/captures/flash-e2e-01-loader/serial-rx.bin"), hourAgo, hourAgo);
+utimesSync(join(root, "private/captures/flash-e2e-01-loader"), hourAgo, hourAgo);
+write("private/verification/flash-e2e-01-inspect/report.json", {
+  status: "complete",
+  error: null,
+  result: { bytes: 4096, partition_table_sha256: "0f".repeat(32) },
+});
+write("private/verification/flash-e2e-01-plan.json", {
+  operation_plan: { bank: 1, erase_sectors: 2, ordered_sectors: [{}, {}] },
+});
 
 const server = spawn(binary, ["--root", root, "--ui", "--ui-port", port], { stdio: "inherit" });
 const stop = () => {

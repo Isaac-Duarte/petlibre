@@ -58,12 +58,21 @@
   .body {
     padding: var(--space-4) var(--space-5) var(--space-5);
   }
+  /* The bottom inset keeps a last row's background inside the rounded corner. */
   .flush .body {
-    padding: var(--space-3) 0 0;
+    padding: var(--space-3) 0 var(--space-3);
   }
   @media (max-width: 600px) {
     header {
       padding: var(--space-3) var(--space-4) 0;
+    }
+    /* Controls take the rest of the title's line, or a line of their own,
+       so a search field can grow instead of pushing the page wider. */
+    .actions {
+      flex: 1 1 auto;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      min-width: 0;
     }
     .body {
       padding: var(--space-3) var(--space-4) var(--space-4);

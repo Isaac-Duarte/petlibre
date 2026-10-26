@@ -17,6 +17,7 @@ pub mod api;
 pub mod build_info;
 pub mod config;
 pub mod controller;
+pub mod enroll;
 pub mod mqtt;
 pub mod neighbour;
 pub mod network;

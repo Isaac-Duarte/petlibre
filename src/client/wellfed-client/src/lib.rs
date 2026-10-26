@@ -8,6 +8,9 @@
 //! runs over them ([`connection`]: keepalive, answers, the event cursor and
 //! LAN recovery), the update an owner pushes over it ([`update`]), and a
 //! feed's trace read a page at a time ([`trace`]).
+//! The consumer installer's steps from stock to a confirmed replacement,
+//! stock's setup frame and the backup gate before promotion are
+//! [`install`].
 //!
 //! Every public type is `wellfed-model`'s owned values or plain bytes (an
 //! `Op` in; answers, pushed events, gaps and samples, welcomes, refusals and
@@ -21,6 +24,7 @@
 
 pub mod api;
 pub mod connection;
+pub mod install;
 pub mod setup;
 pub mod time;
 pub mod trace;

@@ -19,8 +19,9 @@ struct Neighbour {
 
 /// The feeder's address on the hotspot interface.
 pub fn discover(config: &Config) -> Result<IpAddr> {
+    let (interface, mac) = config.hotspot()?;
     let output = Command::new("ip")
-        .args(["-j", "neigh", "show", "dev", &config.hotspot_interface])
+        .args(["-j", "neigh", "show", "dev", interface])
         .output()
         .context("run ip neigh")?;
     ensure!(output.status.success(), "ip neigh failed");
@@ -32,13 +33,13 @@ pub fn discover(config: &Config) -> Result<IpAddr> {
             entry
                 .lladdr
                 .as_deref()
-                .is_some_and(|lladdr| lladdr.eq_ignore_ascii_case(&config.target_mac))
+                .is_some_and(|lladdr| lladdr.eq_ignore_ascii_case(mac))
         })
         .find_map(|entry| entry.dst.parse::<IpAddr>().ok())
         .with_context(|| {
             format!(
                 "feeder not in {}'s neighbour table; is it joined? Pass --peer",
-                config.hotspot_interface
+                interface
             )
         })
 }

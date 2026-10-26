@@ -7,10 +7,24 @@
 //! each to only an allowlist of stock topics. Retained messages, persistent
 //! sessions and offline queues are disabled, so no command can wait for a
 //! later connection.
+//!
+//! An installer's broker starts with no device and an enrollment window
+//! ([`crate::enroll`]): the first stock-shaped CONNECT inside it is
+//! recorded and becomes the device; every other identity is refused as
+//! before. The server's own identity is derived from the device's ID, so
+//! the server logs in only once a device is known.
 
-use std::{future::Future, net::SocketAddr, pin::Pin, sync::Arc, time::Duration};
+use std::{
+    future::Future,
+    net::{IpAddr, SocketAddr},
+    path::PathBuf,
+    pin::Pin,
+    sync::{Arc, Mutex, PoisonError},
+    time::{Duration, Instant},
+};
 
 use anyhow::{Context, Result};
+use chrono::Utc;
 use mqtt5::{
     broker::{
         BrokerConfig, MqttBroker,
@@ -21,31 +35,140 @@ use mqtt5::{
     protocol::v5::reason_codes::ReasonCode,
 };
 use subtle::ConstantTimeEq;
+use tracing::{info, warn};
 
-use crate::{config::Config, mqtt::compat};
+use crate::{
+    config::{self, Config, InstallConfig},
+    enroll::Enrollment,
+    mqtt::compat::{self, Peers},
+};
 
-struct DeviceAuth {
-    config: Config,
+/// The one device the broker admits.
+struct Device {
+    id: String,
+    client_id: String,
+    username: String,
+    password: String,
+}
+
+/// Where a first-use identity is recorded, and until when one may be.
+struct Window {
+    record: PathBuf,
+    until: Instant,
+}
+
+/// Who may log in: the device (once known) and the server.
+pub struct DeviceAuth {
+    server_password: String,
+    device: Mutex<Option<Device>>,
+    window: Option<Window>,
+    /// The feeder's own address behind each relayed connection.
+    peers: Peers,
 }
 
 impl DeviceAuth {
-    /// The user a login is admitted as: one of stock's two identities.
-    fn login(&self, client_id: &str, username: &str, password: &[u8]) -> Option<&'static str> {
-        let config = &self.config;
-        let device = client_id == config.device_client_id
-            && username == config.device_username
-            && bool::from(password.ct_eq(config.device_password.as_bytes()));
-        let server = client_id == config.server_client_id()
-            && username == "local-server"
-            && bool::from(password.ct_eq(config.server_password.as_bytes()));
+    /// A broker for `config`'s device.
+    pub fn device(config: &Config) -> Self {
+        Self {
+            server_password: config.server_password.clone(),
+            device: Mutex::new(Some(Device {
+                id: config.device_id.clone(),
+                client_id: config.device_client_id.clone(),
+                username: config.device_username.clone(),
+                password: config.device_password.clone(),
+            })),
+            window: None,
+            peers: Peers::default(),
+        }
+    }
 
-        if device {
+    /// An installer's broker: no device until the first stock feeder
+    /// connects within `window`, which is then recorded at `record`.
+    pub fn enrolling(config: &InstallConfig, record: PathBuf, window: Duration) -> Self {
+        Self {
+            server_password: config.server_password.clone(),
+            device: Mutex::new(None),
+            window: Some(Window {
+                record,
+                until: Instant::now() + window,
+            }),
+            peers: Peers::default(),
+        }
+    }
+
+    /// The enrolled device's ID, once there is one.
+    fn device_id(&self) -> Option<String> {
+        let device = self.device.lock().unwrap_or_else(PoisonError::into_inner);
+        device.as_ref().map(|device| device.id.clone())
+    }
+
+    /// The user a login is admitted as: one of stock's two identities.
+    /// `peer` is where the feeder connected from, when the relay knows.
+    fn login(
+        &self,
+        client_id: &str,
+        username: &str,
+        password: &[u8],
+        peer: Option<IpAddr>,
+    ) -> Option<&'static str> {
+        let mut device = self.device.lock().unwrap_or_else(PoisonError::into_inner);
+
+        let Some(known) = device.as_ref() else {
+            let enrolled = self.enroll(client_id, username, password, peer)?;
+            *device = Some(enrolled);
+            return Some("device");
+        };
+        let is_device = client_id == known.client_id
+            && username == known.username
+            && bool::from(password.ct_eq(known.password.as_bytes()));
+        let is_server = client_id == config::server_client_id(&known.id)
+            && username == "local-server"
+            && bool::from(password.ct_eq(self.server_password.as_bytes()));
+
+        if is_device {
             Some("device")
-        } else if server {
+        } else if is_server {
             Some("server")
         } else {
             None
         }
+    }
+
+    /// Record a first-use identity, inside the window and only when the
+    /// record can be created (it never replaces one).
+    fn enroll(
+        &self,
+        client_id: &str,
+        username: &str,
+        password: &[u8],
+        peer: Option<IpAddr>,
+    ) -> Option<Device> {
+        let window = self.window.as_ref()?;
+        if Instant::now() >= window.until || !Enrollment::plausible(client_id, username, password) {
+            return None;
+        }
+        // Stock's credentials are text; anything else is not a feeder.
+        let password = std::str::from_utf8(password).ok()?;
+        let peer = peer?;
+
+        let record = Enrollment {
+            client_id: client_id.into(),
+            username: username.into(),
+            password: password.into(),
+            address: peer,
+            enrolled_at: Utc::now(),
+        };
+        if let Err(error) = record.create(&window.record) {
+            warn!(%error, "enrollment not recorded; refusing the feeder");
+            return None;
+        }
+        info!(device = client_id, %peer, "feeder enrolled on first use");
+        Some(Device {
+            id: client_id.into(),
+            client_id: client_id.into(),
+            username: username.into(),
+            password: password.into(),
+        })
     }
 }
 
@@ -55,12 +178,13 @@ impl AuthProvider for DeviceAuth {
     fn authenticate<'a>(
         &'a self,
         connect: &'a ConnectPacket,
-        _addr: SocketAddr,
+        addr: SocketAddr,
     ) -> AuthFuture<'a, mqtt5::error::Result<AuthResult>> {
         let username = connect.username.as_deref().unwrap_or("");
         let password = connect.password.as_deref().unwrap_or(&[]);
+        let peer = self.peers.feeder(addr);
 
-        let result = match self.login(&connect.client_id, username, password) {
+        let result = match self.login(&connect.client_id, username, password, peer) {
             Some(user) => AuthResult::success_with_user(user),
             None => AuthResult::fail(ReasonCode::NotAuthorized),
         };
@@ -73,7 +197,9 @@ impl AuthProvider for DeviceAuth {
         user: Option<&'a str>,
         topic: &'a str,
     ) -> AuthFuture<'a, bool> {
-        let allowed = publish_allowed(&self.config, user, topic);
+        let allowed = self
+            .device_id()
+            .is_some_and(|device| publish_allowed(&device, user, topic));
         Box::pin(async move { allowed })
     }
 
@@ -83,15 +209,22 @@ impl AuthProvider for DeviceAuth {
         user: Option<&'a str>,
         topic: &'a str,
     ) -> AuthFuture<'a, bool> {
-        let allowed = subscribe_allowed(&self.config, user, topic);
+        let allowed = self
+            .device_id()
+            .is_some_and(|device| subscribe_allowed(&device, user, topic));
         Box::pin(async move { allowed })
     }
 }
 
+/// The topic prefix of `device`'s namespace.
+fn prefix(device: &str) -> String {
+    format!("dl/PLAF103/{device}/device/")
+}
+
 /// What stock's two identities may publish: each only its side of stock's
 /// own topics.
-pub fn publish_allowed(config: &Config, user: Option<&str>, topic: &str) -> bool {
-    let prefix = config.topic("");
+pub fn publish_allowed(device: &str, user: Option<&str>, topic: &str) -> bool {
+    let prefix = prefix(device);
     let suffix = topic.strip_prefix(&prefix);
 
     match user {
@@ -118,8 +251,8 @@ pub fn publish_allowed(config: &Config, user: Option<&str>, topic: &str) -> bool
 }
 
 /// What stock's two identities may subscribe to.
-pub fn subscribe_allowed(config: &Config, user: Option<&str>, topic: &str) -> bool {
-    let prefix = config.topic("");
+pub fn subscribe_allowed(device: &str, user: Option<&str>, topic: &str) -> bool {
+    let prefix = prefix(device);
     let suffix = topic.strip_prefix(&prefix);
 
     match user {
@@ -141,8 +274,10 @@ pub fn subscribe_allowed(config: &Config, user: Option<&str>, topic: &str) -> bo
     }
 }
 
-pub async fn run(config: Config) -> Result<()> {
-    let listener = tokio::net::TcpListener::bind(config.mqtt_listen).await?;
+/// Serve stock on `listen` with `auth` until stopped.
+pub async fn run(listen: SocketAddr, auth: DeviceAuth) -> Result<()> {
+    let listener = tokio::net::TcpListener::bind(listen).await?;
+    let peers = auth.peers.clone();
 
     let settings = BrokerConfig {
         bind_addresses: vec!["127.0.0.1:0".parse()?],
@@ -171,7 +306,7 @@ pub async fn run(config: Config) -> Result<()> {
     // any clients. DeviceAuth rejects anonymous clients and scopes every topic.
     let mut broker = MqttBroker::with_config(settings)
         .await?
-        .with_auth_provider(Arc::new(DeviceAuth { config }));
+        .with_auth_provider(Arc::new(auth));
 
     let broker_address = broker
         .local_addr()
@@ -185,7 +320,7 @@ pub async fn run(config: Config) -> Result<()> {
 
     tokio::select! {
         result=broker.run()=>{result?;Ok(())},
-        result=compat::run(listener,broker_address)=>result,
+        result=compat::run(listener,broker_address,peers)=>result,
     }
 }
 
@@ -207,41 +342,124 @@ mod tests {
         config
     }
 
+    fn installer() -> InstallConfig {
+        serde_json::from_value(serde_json::json!({
+            "version":1,"server_password":"s".repeat(32),"api_token":"t".repeat(32),
+            "mqtt_listen":"127.0.0.1:1883","http_listen":"127.0.0.1:8765","timezone":"UTC"
+        }))
+        .unwrap()
+    }
+
     const STOCK: &str = "dl/PLAF103/AF_TEST/device/";
+    const PEER: Option<IpAddr> = Some(IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 4, 20)));
 
     #[test]
     fn each_stock_identity_reaches_only_its_side_of_stock_topics() {
-        let c = config();
+        let c = "AF_TEST";
         let (device, server) = (Some("device"), Some("server"));
 
-        assert!(publish_allowed(&c, device, &format!("{STOCK}event/post")));
-        assert!(!publish_allowed(&c, device, &format!("{STOCK}event/sub")));
-        assert!(subscribe_allowed(&c, device, &format!("{STOCK}+/sub")));
-        assert!(!subscribe_allowed(&c, device, &format!("{STOCK}+/post")));
+        assert!(publish_allowed(c, device, &format!("{STOCK}event/post")));
+        assert!(!publish_allowed(c, device, &format!("{STOCK}event/sub")));
+        assert!(subscribe_allowed(c, device, &format!("{STOCK}+/sub")));
+        assert!(!subscribe_allowed(c, device, &format!("{STOCK}+/post")));
 
-        assert!(publish_allowed(&c, server, &format!("{STOCK}service/sub")));
-        assert!(!publish_allowed(&c, server, &format!("{STOCK}ota/post")));
-        assert!(subscribe_allowed(&c, server, &format!("{STOCK}+/post")));
-        assert!(!subscribe_allowed(&c, server, &format!("{STOCK}#")));
+        assert!(publish_allowed(c, server, &format!("{STOCK}service/sub")));
+        assert!(!publish_allowed(c, server, &format!("{STOCK}ota/post")));
+        assert!(subscribe_allowed(c, server, &format!("{STOCK}+/post")));
+        assert!(!subscribe_allowed(c, server, &format!("{STOCK}#")));
 
         for user in [None, Some("firmware"), Some("other")] {
-            assert!(!publish_allowed(&c, user, &format!("{STOCK}event/post")));
-            assert!(!subscribe_allowed(&c, user, &format!("{STOCK}+/sub")));
+            assert!(!publish_allowed(c, user, &format!("{STOCK}event/post")));
+            assert!(!subscribe_allowed(c, user, &format!("{STOCK}+/sub")));
         }
         assert!(!publish_allowed(
-            &c,
+            c,
             device,
             "dl/PLAF103/OTHER/device/event/post"
         ));
-        assert!(!subscribe_allowed(&c, server, "#"));
+        assert!(!subscribe_allowed(c, server, "#"));
     }
 
     #[test]
     fn only_stock_identities_log_in() {
-        let auth = DeviceAuth { config: config() };
+        let auth = DeviceAuth::device(&config());
 
-        assert_eq!(auth.login("AF_TEST", "dev", b"pw"), Some("device"));
-        assert_eq!(auth.login("AF_TEST", "dev", b"wrong"), None);
-        assert_eq!(auth.login("intruder", "intruder", b"anything"), None);
+        assert_eq!(auth.login("AF_TEST", "dev", b"pw", None), Some("device"));
+        assert_eq!(auth.login("AF_TEST", "dev", b"wrong", None), None);
+        assert_eq!(auth.login("intruder", "intruder", b"anything", PEER), None);
+        let server = "s".repeat(32);
+        assert_eq!(
+            auth.login(
+                "local-server-AF_TEST",
+                "local-server",
+                server.as_bytes(),
+                None
+            ),
+            Some("server")
+        );
+    }
+
+    #[test]
+    fn the_first_stock_feeder_in_the_window_enrolls_and_is_pinned() {
+        let dir = tempfile::tempdir().unwrap();
+        let record = Enrollment::path(&dir.path().join("server.json"));
+        let auth = DeviceAuth::enrolling(&installer(), record.clone(), Duration::from_secs(60));
+        let server = "s".repeat(32);
+
+        // No server login, no topics, before a device is known.
+        assert_eq!(
+            auth.login(
+                "local-server-AF_NEW",
+                "local-server",
+                server.as_bytes(),
+                None
+            ),
+            None
+        );
+        assert!(auth.device_id().is_none());
+        // Not stock-shaped, or with no known address: nothing is recorded.
+        assert_eq!(auth.login("local-server-x", "u", b"p", PEER), None);
+        assert_eq!(auth.login("AF_NEW", "stock", b"its-own", None), None);
+        assert!(!record.exists());
+
+        assert_eq!(
+            auth.login("AF_NEW", "stock", b"its-own", PEER),
+            Some("device")
+        );
+        let enrolled = Enrollment::load(&record).unwrap().unwrap();
+        assert_eq!(enrolled.client_id, "AF_NEW");
+        assert_eq!(enrolled.password, "its-own");
+        assert_eq!(enrolled.address, PEER.unwrap());
+
+        // Pinned: the same identity again, the server for it, nobody else.
+        assert_eq!(
+            auth.login("AF_NEW", "stock", b"its-own", PEER),
+            Some("device")
+        );
+        assert_eq!(auth.login("AF_NEW", "stock", b"guess", PEER), None);
+        assert_eq!(auth.login("AF_OTHER", "stock", b"its-own", PEER), None);
+        assert_eq!(
+            auth.login(
+                "local-server-AF_NEW",
+                "local-server",
+                server.as_bytes(),
+                None
+            ),
+            Some("server")
+        );
+        assert_eq!(auth.device_id().as_deref(), Some("AF_NEW"));
+    }
+
+    #[test]
+    fn nobody_enrolls_after_the_window_or_over_an_existing_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let record = Enrollment::path(&dir.path().join("server.json"));
+        let closed = DeviceAuth::enrolling(&installer(), record.clone(), Duration::ZERO);
+        assert_eq!(closed.login("AF_NEW", "stock", b"pw", PEER), None);
+        assert!(!record.exists());
+
+        std::fs::write(&record, "{}").unwrap();
+        let open = DeviceAuth::enrolling(&installer(), record, Duration::from_secs(60));
+        assert_eq!(open.login("AF_NEW", "stock", b"pw", PEER), None);
     }
 }

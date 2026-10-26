@@ -30,7 +30,7 @@ What the bench still uses and a consumer must not need:
 - device MQTT credentials captured from traffic (`wellfed-stock init`);
 - a build carrying the owner's Wi-Fi credentials, broker credentials and update key.
 
-The setup protocol below removes the first two. Generic images remove the third.
+The setup protocol below removes the first two (host-tested in [the installer](#the-installer); not yet run on stock). Generic images remove the third.
 
 ## Stock's setup protocol (static)
 
@@ -76,7 +76,9 @@ The vendor app provisions a PLAF103 through the feeder's **setup access point**,
 - How is a feeder reset or unbound? Is there a button hold? What does `UNBIND` (`0e015fd4`, not decompiled) clear?
 - Are the credentials fixed at the factory, or derived from the serial? Either way they arrive at our broker unchanged.
 
-**Planned physical test:** with stock on the feeder and in setup mode, the bench host joins its access point. It then sends one type-3 frame with `wellfed-stock setup-send --ssid <hotspot> --id <digits>`, which reads the passphrase from stdin and names this server's broker (`10.42.103.1:1883`) unless `--broker` is given. The frame encoder is host-tested against the parser's length rule and field limits. If stock then joins the hotspot and connects to `wellfed-stock serve` with its own credentials, the redirect and the captured credentials are no longer needed.
+**Getting into setup mode (static, unverified):** stock's panel has one reset gesture: Reset (the rightmost button) held about 5 s on an unlocked panel starts the factory restore, and no Wi-Fi-only hold exists ([stock behavior](../devices/plaf103/stock/README.md#panel-buttons-and-child-lock)). The panel is unlocked by holding Lock about 5 s while the lock light is on. That the restore leaves stock in setup mode with its access point up, and clears the bound state the re-provisioning guard checks, is the first thing the physical test must show; the access point's name is not established either.
+
+**Planned physical test:** with stock on the feeder and in setup mode, the bench host joins its access point. It then sends one type-3 frame with `wellfed-stock setup-send --ssid <hotspot> --id <digits>`, which reads the passphrase from stdin and names this server's broker (`10.42.103.1:1883`) unless `--broker` is given. The frame encoder (`wellfed_client::install::frame`) is host-tested against the parser's length rule and field limits. If stock then joins the hotspot and connects to `wellfed-stock serve` with its own credentials, the redirect and the captured credentials are no longer needed.
 
 ## What a self-hosted server must answer (static, partly physical)
 
@@ -86,7 +88,7 @@ The vendor app provisions a PLAF103 through the feeder's **setup access point**,
 - replies to `NTP`, `BINDING` and `GET_FEEDING_PLAN_EVENT`;
 - acknowledgements of the startup, attribute, log and error events.
 
-For a consumer it must also accept a device whose credentials it has never seen. The plan is trust on first use during an install window: the first CONNECT carrying a PLAF103 client ID while the installer is open is recorded as that device. This replaces the captured-credential `init` (design).
+For a consumer it must also accept a device whose credentials it has never seen. **Trust on first use (host-tested, October 26):** an installer's config (`wellfed-stock init-installer`) names no device, and `serve --enroll-minutes N` admits the first stock-shaped CONNECT within the window, records its own client ID, username, password and address beside the config (`installer.json`'s record is `installer.device.json`), and pins it; nobody else logs in, then or later ([stock server](../development/stock-server.md#an-installers-server-trust-on-first-use)). Stock's client ID is its device ID (physical: the captured CONNECT's client ID equals its topics' device ID). The captured-credential `init` and the `network` redirect stay for the bench until the frame has provisioned stock on hardware.
 
 ## The install flow (design)
 
@@ -100,7 +102,37 @@ For a consumer it must also accept a device whose credentials it has never seen.
 8. **Promote:** only once a verified backup is stored, the installer offers the same build signed over the device API. Bank 0 installs it into bank 1, and its trial boot confirms; about 3.5 min on the bench with the MQTT updater.
 9. **Hand-off:** the confirmed replacement enters the pairing flow (FW45): the owner's app pairs as its first client, and a server joins later by invite if the owner runs one.
 
-Steps 1–3 replace the bench's firewall redirect and captured credentials. Steps 5, 6 and 8 are what ran physically.
+Steps 1–3 replace the bench's firewall redirect and captured credentials. Steps 5, 6 and 8 are what ran physically. Pairing comes before the backup and the promotion in practice: a replacement fresh from stock knows no client key, and both go over the device API.
+
+## The installer
+
+**Host-tested, October 26 (simulation; nothing run on the feeder).** One run, `wellfed install`, goes from stock to a confirmed replacement. Its steps are a sans-IO state machine in [`wellfed_client::install`](../../src/client/wellfed-client/src/install.rs), which the Android app and `wellfed-server` will drive the same way; the CLI supplies the IO.
+
+| Step | Decided in `wellfed-client` | IO in the CLI |
+| --- | --- | --- |
+| 1. Provision | The type-3 frame, refused before anything is sent if stock would misread a field; sent once | The owner puts stock into setup mode and joins this computer to its access point (platform Wi-Fi); one UDP datagram to 192.168.1.1:17484; the owner rejoins the home network |
+| 2. Stock ready | Online, 1.1.15 (any other version ends the run), on its adapter | `wellfed-stock serve --enable-ota-trial --enroll-minutes N` as a child: the broker trusts the first feeder (above); its status document, polled |
+| 3. Request | Exactly one `OTA_UPGRADE` per run; refused or uncertain ends the run | `ota-images` as a child, then `POST /api/ota/trial`; what the server recorded is read back, so a refused call that still recorded the request counts as uncertain |
+| 4. Install | Progress; stock's refusal ends the run; stock going quiet means it restarted | The status document's OTA reports and trial phase |
+| 5. Pair | The installer must be an owner before anything else | A key the build already knows opens a session at once; otherwise the owner holds Lock, then Dispense, on the unlocked panel and keys in the code (`wellfed recover`'s exchange). The address is where stock connected from |
+| 6. Bank 0 | Only the served build on bank 0 moves on; the stock server's record is then closed | `Status` over the device API; `POST /api/ota/trial/answered`, asked again while stock's telemetry is still current |
+| 7. Backup | **No promotion without a `VerifiedBackup`** | `--stock-backup`: read and checked before the feeder is touched |
+| 8. Promote | `update::Installer`, the same push as the bench's | Chunks over the device API until bank 1 is activated |
+| 9. Confirm | Done only when bank 1 runs the build and reports the promoted version confirmed; bank 0 means it fell back | `Status` and `UpdateState` after the restart |
+
+**The backup seam.** `VerifiedBackup::verify` is the only way to make the token the promotion waits for, and it takes a whole stock OTA image whose SHA-256 is the pinned 1.1.15 image's. Until the backup stream exists, `--stock-backup` takes a copy the owner already holds (on the bench, the stock review's `image.bin`); the stream will produce the same file and pass the same check. Without one, the run stops at the gate with the replacement on bank 0 and stock intact in bank 1, and `wellfed install --from-bank0 --stock-backup …` resumes from pairing without asking stock anything.
+
+**What the run needs:** the replacement's frozen review (stock installs its `image.bin`) and the signed manifest of the same build for the promotion; a `wellfed-stock` built from a clean commit (`--enable-ota-trial` refuses anything else); a broker address on the home network that the feeder can reach on TCP 1883 and 8088. It holds the bench lease beside the stock config for its whole length.
+
+**Not done:** the consumer image (no build Wi-Fi or update key) and its setup mode at first boot; until then the replacement joins with its build's Wi-Fi, so on the bench the home network is the hotspot. BLE setup as the pairing step (the CLI uses the LAN recovery window). The backup stream. Deleting `init` and `network` from `wellfed-stock`, which waits for the frame to work on hardware.
+
+### Physical procedure (planned, needs the owner)
+
+1. **Return the unit to stock** over the air: `wellfed-bench itest --only stock-roundtrip` runs both ways; for an install run, only its first half is wanted (`wellfed-bench ota --review <stock review>`, FW41), leaving stock 1.1.15 on bank 1 and the replacement in bank 0. The stock review's `image.bin`, if its SHA-256 is the pinned `05147476…`, is the backup the run needs.
+2. **Installer config:** `wellfed-stock init-installer --mqtt-listen 10.42.103.1:1883 --output private/installer.json` (the hotspot is the home network on the bench, since the build joins it). The redirect must be off (`network remove`, a host firewall change the owner makes), so stock reaches the broker only because the frame said so. The bench's `server.json` is untouched (the record is named for the installer's config); the trial ledger beside both is the same feeder's, so a trial a bench run left open must be resolved first. Joining stock's access point needs a Wi-Fi interface other than the one serving the hotspot.
+3. **Owner at the panel:** unlock stock (Lock about 5 s if the lock light is on), hold Reset about 5 s; note what stock does (sound, lights) and the access point's name. Join the bench host to it when `wellfed install` asks.
+4. **Run:** `wellfed install --stock-config private/installer.json --review <qa review> --manifest <its signed manifest> --stock-backup <stock review>/image.bin --ssid <hotspot>`. It sends the frame, waits for stock to enroll and report, asks it once, waits for the replacement, asks the owner for the recovery hold (Lock, then Dispense) and the code, promotes, and waits for confirmation.
+5. **Check and restore:** the replacement confirmed on bank 1; `private/installer.device.json` holds stock's own identity and nothing captured was used; then remove `private/installer.json` and its record, have the owner restore the redirect if the bench needs it, and record the run.
 
 ## Rollback
 
@@ -132,7 +164,7 @@ What a rollback keeps and leaves behind:
 ## Where the installer lives (design)
 
 The decisions are in [product architecture](product-architecture.md); for the installer they mean:
-- **Installer steps:** the setup frame, the single stock request, the progress tracking and the backup receiver live in the sans-IO `wellfed-client` crate, so the Android app, `wellfed-server` and the CLI run the same steps the bench now proves. Each caller supplies the IO: the image server, the broker and the sockets.
+- **Installer steps:** the setup frame, the single stock request, the progress tracking and the backup gate live in the sans-IO `wellfed-client` crate ([the installer](#the-installer); the backup receiver comes with the stream), so the Android app, `wellfed-server` and the CLI run the same steps the bench now proves. Each caller supplies the IO: the image server, the broker and the sockets.
 - **Android app (Flutter):** it joins the feeder's access point through platform Wi-Fi APIs and serves the image itself, in the foreground for about 3 minutes.
 - **Server and CLI:** `wellfed-server` or the CLI can run the same install for owners who self-host. `wellfed-stock` stays the bench's stock-protocol tool.
 - **Afterwards:** the feeder is handed to the pairing flow (FW45), not to a server. The app talks to it directly on the LAN, and a server is optional.

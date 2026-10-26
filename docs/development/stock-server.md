@@ -22,7 +22,7 @@ The [example inputs](../../src/tools/wellfed-stock/examples/README.md) contain o
 
 ## Configure an actual device
 
-Use your own isolated gateway/AP and capture only the device you intend to control. Initial stock pairing normally uses the vendor app; cloud-free provisioning has not been established. A laptop merely sharing Wi-Fi may not see the feeder's unicast traffic.
+Use your own isolated gateway/AP and capture only the device you intend to control. Initial stock pairing normally uses the vendor app; cloud-free provisioning through the setup frame and an installer's server (below) is host-tested only. A laptop merely sharing Wi-Fi may not see the feeder's unicast traffic.
 
 Store the device's single MQTT CONNECT credential record as a JSON array in the shape illustrated by the credential example. Export decoded MQTT packets using Wireshark/TShark JSON, with the `_source.layers.mqtt` and Ethernet source fields illustrated by the capture example. The importer requires one device namespace, its source MAC, and an authoritative captured feeding-plan response (`GET_FEEDING_PLAN_EVENT` or `FEEDING_PLAN_SERVICE` with `plans`). It optionally imports the binding response. Do not invent an empty snapshot for an existing device with schedules.
 
@@ -37,6 +37,23 @@ Run `init` with your own credential/capture paths, a specific IPv4 broker addres
 ```
 
 Starting the service does not redirect traffic or command feeding. Linux gateway `network apply` is a separate privileged operation: it validates an nft transaction, redirects the configured feeder MAC's TCP/1883 traffic on the configured interface, and blocks its forwarded WAN traffic. Inspect preview and confirm device identity before explicitly invoking it. `network remove` removes Wellfed's dedicated table and its tagged input rules; their names are unchanged since the server's rename, so rules applied before it are removed too. AP setup, host-wide firewall policy, persistent services, and reboot persistence are outside this workflow. Do not assume WAN isolation without checking counters and actual traffic.
+
+## An installer's server: trust on first use
+
+An install needs no capture: `init-installer` writes a config with fresh secrets and the broker address the setup frame names, and no device at all.
+
+```sh
+./target/debug/wellfed-stock init-installer --mqtt-listen 192.168.1.20:1883 --output private/installer.json
+./target/debug/wellfed-stock serve --config private/installer.json --enroll-minutes 15
+```
+
+- **Enrollment:** with no device known, `serve` starts the broker first and waits. Within the window, the first CONNECT that looks like stock's (a client ID stock's topics can carry, not the server's, with a username and password, from a known relayed address) is admitted and recorded beside the config, named for it (`installer.json`'s is `installer.device.json`), mode 0600: its client ID (which is its device ID), username, password and the address it connected from. Then the rest of the server starts with that device.
+- **Pinned:** the record is created, never replaced. A second feeder, a wrong password, or anyone after the window is refused as with a captured config, and a later `serve` (no window needed) answers the enrolled feeder alone. To start over, stop the server and remove the record.
+- **One or the other:** a config that names a captured device and an enrollment beside it is refused.
+- **No redirect:** an installer's config has no hotspot interface or feeder MAC, so `network` refuses it; `ota-images` admits the enrolled feeder's address unless `--peer` is given.
+- **Host-tested** (`tests/enroll_stack.rs`, simulation): the real `serve` enrolls a simulated feeder with never-seen credentials, hears its version report, refuses a second identity and a guessed password, and after a restart without the window admits only the enrolled feeder. Not yet run against stock.
+
+`wellfed install` ([consumer installation](../firmware/consumer-installation.md#the-installer)) runs this server as its child.
 
 ## The replacement firmware (deleted roles)
 

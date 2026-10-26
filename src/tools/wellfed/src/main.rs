@@ -11,12 +11,17 @@
 //! TCP to the feeder found over mDNS, as a key it enrolled. They print the
 //! feeder's answers as JSON.
 //!
+//! `wellfed install` takes a feeder from stock 1.1.15 to the replacement
+//! (the `install` module), running `wellfed-stock` beside it for stock's
+//! side.
+//!
 //! [tools roadmap]: ../../../../docs/development/tools-roadmap.md
 
 #![forbid(unsafe_code)]
 
 mod ble;
 mod device;
+mod install;
 mod keys;
 mod trace;
 
@@ -96,6 +101,10 @@ enum Command {
     Trace(TraceArgs),
     /// Become an owner again through the feeder's recovery window.
     Recover(RecoverArgs),
+    /// Install the replacement on a feeder running stock 1.1.15: point stock
+    /// at this computer, have it install the build into bank 0, pair as its
+    /// owner, and (with a verified stock backup) promote it to bank 1.
+    Install(Box<install::InstallArgs>),
 }
 
 #[derive(Args)]
@@ -147,6 +156,7 @@ fn main() -> Result<()> {
         Command::Stats(args) => runtime.block_on(stats_command(args)),
         Command::Trace(args) => runtime.block_on(trace_command(args)),
         Command::Recover(args) => runtime.block_on(recover_command(args)),
+        Command::Install(args) => runtime.block_on(install::run(*args)),
     }
 }
 
@@ -891,6 +901,15 @@ struct RecoverArgs {
 async fn recover_command(args: RecoverArgs) -> Result<()> {
     let mut key = OwnerKey::open(&args.keys, args.label.as_deref(), OwnerKey::system())?;
     let address = wellfed_connect::parse_address(&args.address).context("--address")?;
+    let (identity, text) = recover(&mut key, address).await?;
+    println!("Recovered feeder {} ({text}).", fingerprint(&identity));
+    Ok(())
+}
+
+/// Enroll `key` as an owner through the feeder's recovery window at
+/// `address`, the owner keying in the code shown; the feeder's identity,
+/// remembered in the key file, and what the feeder said.
+async fn recover(key: &mut OwnerKey, address: std::net::SocketAddr) -> Result<([u8; 32], String)> {
     let random = OwnerKey::system();
     let ephemeral: [u8; 32] = private::random(random).context("read the system random source")?;
     let seed: [u8; 32] = private::random(random).context("read the system random source")?;
@@ -933,13 +952,36 @@ async fn recover_command(args: RecoverArgs) -> Result<()> {
         bail!("the feeder never proved the code");
     };
     key.remember(&identity)?;
-    println!("Recovered feeder {} ({text}).", fingerprint(&identity));
-    Ok(())
+    Ok((identity, text))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::CommandFactory;
+
+    #[test]
+    fn the_command_line_is_well_formed() {
+        Cli::command().debug_assert();
+
+        let install = [
+            "wellfed",
+            "install",
+            "--review",
+            "private/review",
+            "--manifest",
+            "private/manifest.bin",
+            "--ssid",
+            "Home",
+        ];
+        assert!(matches!(
+            Cli::try_parse_from(install).map(|cli| cli.command),
+            Ok(Command::Install(_))
+        ));
+        // Resuming on bank 0 sends no frame.
+        let resumed = [&install[..6], &["--from-bank0", "--ssid", "Home"]].concat();
+        assert!(Cli::try_parse_from(resumed).is_err());
+    }
 
     #[test]
     fn ntp_servers_parse() {

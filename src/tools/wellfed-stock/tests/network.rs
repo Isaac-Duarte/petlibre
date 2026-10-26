@@ -24,7 +24,7 @@ fn routing_is_scoped_to_device_mac_and_hotspot_and_blocks_its_wan_only() {
     assert!(rules.contains("iifname \"wlan1\" ether saddr 02:00:00:00:00:42 counter reject"));
     assert!(!rules.contains("flush ruleset"));
 
-    config.hotspot_interface = "wlan1\"; flush ruleset; #".to_owned();
+    config.hotspot_interface = Some("wlan1\"; flush ruleset; #".to_owned());
     assert!(network::rules(&config).is_err());
 }
 
@@ -34,6 +34,6 @@ fn redirect_cannot_bind_to_loopback_or_modify_an_unvalidated_mac() {
     assert!(network::rules(&config).is_err());
 
     config.mqtt_listen = "10.42.103.1:1883".parse().unwrap();
-    config.target_mac = "not:a:mac".to_owned();
+    config.target_mac = Some("not:a:mac".to_owned());
     assert!(network::rules(&config).is_err());
 }

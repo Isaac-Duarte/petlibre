@@ -2,7 +2,17 @@
 //!
 //! Only the first CONNECT is normalized. The mature broker handles authentication
 //! and every subsequent MQTT packet; this boundary never interprets feed commands.
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+//!
+//! The broker sees every relayed connection come from loopback, so the relay
+//! notes which feeder address is behind each of its upstream sockets
+//! ([`Peers`]); enrolling a feeder on first use records where it connected
+//! from.
+use std::{
+    collections::HashMap,
+    net::{IpAddr, SocketAddr},
+    sync::{Arc, Mutex, PoisonError},
+    time::Duration,
+};
 
 use anyhow::{Result, ensure};
 use tokio::{
@@ -14,18 +24,41 @@ use tokio::{
 
 const MAX_CONNECT_BYTES: usize = 65_530;
 
-pub(crate) async fn run(listener: TcpListener, broker: SocketAddr) -> Result<()> {
+/// The feeder's address behind each upstream socket the relay holds open.
+#[derive(Clone, Default)]
+pub(crate) struct Peers(Arc<Mutex<HashMap<SocketAddr, IpAddr>>>);
+
+impl Peers {
+    /// The feeder behind the broker-side client address `upstream`.
+    pub(crate) fn feeder(&self, upstream: SocketAddr) -> Option<IpAddr> {
+        let map = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        map.get(&upstream).copied()
+    }
+
+    fn insert(&self, upstream: SocketAddr, feeder: IpAddr) {
+        let mut map = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        map.insert(upstream, feeder);
+    }
+
+    fn remove(&self, upstream: SocketAddr) {
+        let mut map = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        map.remove(&upstream);
+    }
+}
+
+pub(crate) async fn run(listener: TcpListener, broker: SocketAddr, peers: Peers) -> Result<()> {
     let permits = Arc::new(Semaphore::new(8));
     let mut tasks = JoinSet::new();
     loop {
         tokio::select! {
             incoming=listener.accept()=> {
-                let (stream,_)=incoming?;
+                let (stream,from)=incoming?;
                 let Ok(permit)=permits.clone().try_acquire_owned() else {continue};
+                let peers=peers.clone();
                 tasks.spawn(async move {
                     let _permit=permit;
                     // Do not log raw CONNECT errors or packets: credentials live here.
-                    let _=relay(stream,broker).await;
+                    let _=relay(stream,from.ip(),broker,&peers).await;
                 });
             }
             Some(_)=tasks.join_next(), if !tasks.is_empty()=>{}
@@ -33,12 +66,26 @@ pub(crate) async fn run(listener: TcpListener, broker: SocketAddr) -> Result<()>
     }
 }
 
-async fn relay(mut device: TcpStream, broker: SocketAddr) -> Result<()> {
+async fn relay(
+    mut device: TcpStream,
+    from: IpAddr,
+    broker: SocketAddr,
+    peers: &Peers,
+) -> Result<()> {
     let packet = tokio::time::timeout(Duration::from_secs(5), read_connect(&mut device)).await??;
     let mut upstream = TcpStream::connect(broker).await?;
-    upstream.write_all(&packet).await?;
-    tokio::io::copy_bidirectional(&mut device, &mut upstream).await?;
-    Ok(())
+    let local = upstream.local_addr()?;
+
+    // Noted before the CONNECT goes up, so the broker's check can find it.
+    peers.insert(local, from);
+    let result = async {
+        upstream.write_all(&packet).await?;
+        tokio::io::copy_bidirectional(&mut device, &mut upstream).await?;
+        Ok(())
+    }
+    .await;
+    peers.remove(local);
+    result
 }
 
 async fn read_connect(stream: &mut TcpStream) -> Result<Vec<u8>> {

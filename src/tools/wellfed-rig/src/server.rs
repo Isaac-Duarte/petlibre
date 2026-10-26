@@ -12,7 +12,6 @@
 use std::fmt::Display;
 use std::ops::Deref;
 
-use wellfed_formats::stock::TrialRecord;
 use wellfed_model::WifiSource;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -30,34 +29,16 @@ impl Deref for StockStatus {
     }
 }
 
-/// `POST /api/ota/trial` for the replacement image: the server sends stock
-/// one `OTA_UPGRADE` for it and never resends.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct TrialRequest {
-    pub request_id: String,
-    /// The image server's lease token.
-    pub server_token: String,
-}
+pub use wellfed_formats::stock::{TrialAnswer, TrialRequest};
 
 /// `POST /api/ota/trial/resolve`: close a failed or uncertain trial from the
 /// server's own evidence; and `POST /api/ota/trial/answered`: close it on
-/// the replacement's device-API answer, which the note describes. Neither
-/// sends the device anything.
+/// the replacement's device-API answer ([`TrialAnswer`]), which the note
+/// describes. Neither sends the device anything.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct TrialResolve<'a> {
     pub request_id: &'a str,
     pub note: &'a str,
-}
-
-/// The body of `POST /api/ota/trial/answered`: the build identity and bank
-/// the replacement's device API reported, which the server holds to the
-/// build its image server served, and a note of what answered.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct TrialAnswer {
-    pub request_id: String,
-    pub build: String,
-    pub bank: u8,
-    pub note: String,
 }
 
 /// Why the feeder's device-API status does not show what a wait is for, yet.
@@ -125,12 +106,5 @@ impl StockStatus {
             return Err(StockNotReady::TrialDisabled);
         }
         Ok(format!("Stock {STOCK_VERSION} online on external power"))
-    }
-
-    /// The trial with `request_id`.
-    pub fn trial(&self, request_id: &str) -> Option<&TrialRecord> {
-        self.ota_trials
-            .iter()
-            .find(|trial| trial.input.request_id.to_string() == request_id)
     }
 }

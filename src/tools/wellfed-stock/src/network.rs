@@ -88,8 +88,7 @@ pub fn rules(config: &Config) -> Result<String> {
         "network redirection requires a hotspot broker address"
     );
 
-    let interface = &config.hotspot_interface;
-    let mac = &config.target_mac;
+    let (interface, mac) = config.hotspot()?;
     let ip = config.mqtt_listen.ip();
     let port = config.mqtt_listen.port();
 

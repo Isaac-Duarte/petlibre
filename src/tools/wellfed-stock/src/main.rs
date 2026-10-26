@@ -14,13 +14,15 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
+use wellfed_client::install::{SETUP_ADDRESS, SetupFrame};
 use wellfed_formats::bench::lease::Lease;
 use wellfed_stock::{
     api::{self, ApiState},
     build_info::{self, BUILD},
-    config,
+    config::{self, State},
     controller::{self, Controller},
-    mqtt::{self, broker},
+    enroll::Enrollment,
+    mqtt::{self, broker, broker::DeviceAuth},
     neighbour, network, ota,
 };
 use reqwest::Method;
@@ -62,6 +64,21 @@ enum Action {
         output: PathBuf,
     },
 
+    /// Write an installer's config: fresh secrets and the broker address,
+    /// and no device. The first stock feeder that connects while `serve
+    /// --enroll-minutes` runs becomes its device. Never replaces a file.
+    InitInstaller {
+        /// Specific local IPv4 address and port the feeder reaches: the
+        /// broker the setup frame names.
+        #[arg(long)]
+        mqtt_listen: std::net::SocketAddr,
+        /// IANA timezone used for device clock replies.
+        #[arg(long, default_value = "UTC")]
+        timezone: chrono_tz::Tz,
+        #[arg(long, default_value = "private/server.json")]
+        output: PathBuf,
+    },
+
     /// Start the Rust broker, device protocol service and loopback HTTP API.
     Serve {
         #[arg(long, default_value = "private/server.json")]
@@ -69,12 +86,19 @@ enum Action {
         /// Allow the stock-to-replacement install trial; disabled by default.
         #[arg(long)]
         enable_ota_trial: bool,
+        /// With an installer's config and no feeder enrolled yet: trust the
+        /// first stock feeder that connects within this many minutes.
+        #[arg(long)]
+        enroll_minutes: Option<u64>,
     },
 
     /// Run just the authenticated Rust MQTT broker (normally managed by serve).
     Broker {
         #[arg(long, default_value = "private/server.json")]
         config: PathBuf,
+        /// As `serve --enroll-minutes`.
+        #[arg(long)]
+        enroll_minutes: Option<u64>,
     },
 
     /// Inspect authenticated local status without printing credentials.
@@ -153,7 +177,7 @@ enum Action {
         /// The broker; this server's MQTT address otherwise.
         #[arg(long)]
         broker: Option<std::net::SocketAddr>,
-        #[arg(long, default_value = wellfed_stock::setup::SETUP_ADDRESS)]
+        #[arg(long, default_value_t = std::net::SocketAddr::V4(SETUP_ADDRESS))]
         to: std::net::SocketAddr,
     },
 
@@ -216,17 +240,50 @@ async fn main() -> Result<()> {
             );
         }
 
-        Action::Broker { config } => broker::run(config::load(&config)?).await?,
+        Action::InitInstaller {
+            mqtt_listen,
+            timezone,
+            output,
+        } => {
+            config::init_installer(&output, mqtt_listen, timezone)?;
+            println!(
+                "Wrote an installer's configuration to {}; no feeder is enrolled yet.",
+                output.display()
+            );
+        }
+
+        Action::Broker {
+            config,
+            enroll_minutes,
+        } => {
+            let path = config.canonicalize()?;
+            let (listen, auth) = match (config::state(&path)?, enroll_minutes) {
+                (State::Device(config), _) => (config.mqtt_listen, DeviceAuth::device(&config)),
+                (State::Unenrolled(config), Some(minutes)) => (
+                    config.mqtt_listen,
+                    DeviceAuth::enrolling(
+                        &config,
+                        Enrollment::path(&path),
+                        Duration::from_secs(minutes * 60),
+                    ),
+                ),
+                (State::Unenrolled(_), None) => {
+                    bail!("no feeder is enrolled; pass --enroll-minutes to admit one")
+                }
+            };
+            broker::run(listen, auth).await?
+        }
         Action::Serve {
             config,
             enable_ota_trial,
+            enroll_minutes,
         } => {
             let trial = if enable_ota_trial {
                 OtaTrial::Enabled
             } else {
                 OtaTrial::Disabled
             };
-            serve(config, trial).await?
+            serve(config, trial, enroll_minutes).await?
         }
         Action::Status { config } => {
             api_request(config, Method::GET, "/api/status", None::<&()>).await?
@@ -238,13 +295,19 @@ async fn main() -> Result<()> {
             broker,
             to,
         } => {
-            use wellfed_stock::setup::{Setup, send};
+            use wellfed_stock::setup::send;
             let _lease = bench_lease(&config)?;
-            let broker = broker.unwrap_or(config::load(&config)?.mqtt_listen);
+            let broker = match broker {
+                Some(broker) => broker,
+                None => match config::state(&config)? {
+                    State::Device(config) => config.mqtt_listen,
+                    State::Unenrolled(config) => config.mqtt_listen,
+                },
+            };
             println!("Passphrase for {ssid} (read from stdin):");
             let mut password = String::new();
             std::io::stdin().read_line(&mut password)?;
-            let setup = Setup {
+            let setup = SetupFrame {
                 ssid,
                 password: password.trim_end_matches(['\r', '\n']).to_owned(),
                 host: broker.ip().to_string(),
@@ -267,9 +330,12 @@ async fn main() -> Result<()> {
         } => {
             let path = config.canonicalize()?;
             let config = config::load(&path)?;
-            let peer = match peer {
-                Some(peer) => peer,
-                None => match neighbour::discover(&config)? {
+            // Given, else where an enrolled feeder connected from, else the
+            // bench feeder's MAC on the hotspot.
+            let peer = match (peer, config.device_address) {
+                (Some(peer), _) => peer,
+                (None, Some(std::net::IpAddr::V4(enrolled))) => enrolled,
+                (None, _) => match neighbour::discover(&config)? {
                     std::net::IpAddr::V4(peer) => peer,
                     std::net::IpAddr::V6(_) => {
                         anyhow::bail!("the feeder has no IPv4 neighbour entry")
@@ -399,7 +465,46 @@ enum OtaTrial {
     Disabled,
 }
 
-async fn serve(path: PathBuf, trial: OtaTrial) -> Result<()> {
+/// How often `serve` looks for a feeder's enrollment while it waits.
+const ENROLL_POLL: Duration = Duration::from_secs(1);
+
+/// With no feeder enrolled, wait for the broker child to record one within
+/// `minutes`, then the config with that device. Stops with the broker or a
+/// signal.
+async fn enrolled(
+    path: &std::path::Path,
+    minutes: u64,
+    broker: &mut tokio::process::Child,
+) -> Result<config::Config> {
+    info!(
+        minutes,
+        "no feeder enrolled; the first stock feeder to connect is trusted"
+    );
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(minutes * 60);
+    let record = Enrollment::path(path);
+    loop {
+        if record.exists() {
+            return config::load(path);
+        }
+        if tokio::time::Instant::now() >= deadline {
+            bail!("no stock feeder connected within {minutes} min; nothing enrolled");
+        }
+        tokio::select! {
+            _ = tokio::time::sleep(ENROLL_POLL) => {}
+            result = broker.wait() => bail!("broker exited while waiting for a feeder: {result:?}"),
+            result = tokio::signal::ctrl_c() => {
+                result.context("shutdown signal failed")?;
+                bail!("stopped before a feeder enrolled");
+            }
+            result = terminated() => {
+                result.context("shutdown signal failed")?;
+                bail!("stopped before a feeder enrolled");
+            }
+        }
+    }
+}
+
+async fn serve(path: PathBuf, trial: OtaTrial, enroll_minutes: Option<u64>) -> Result<()> {
     // Trial dispatch must run a binary whose source can be reviewed: a clean
     // commit of every build input. Status and /health report the commit.
     if trial == OtaTrial::Enabled
@@ -421,7 +526,34 @@ async fn serve(path: PathBuf, trial: OtaTrial) -> Result<()> {
         OtaTrial::Disabled => None,
     };
     let path = path.canonicalize()?;
-    let config = Arc::new(config::load(&path)?);
+    let state = config::state(&path)?;
+    let enrolling = match (&state, enroll_minutes) {
+        (State::Device(_), _) => None,
+        (State::Unenrolled(_), Some(minutes)) => Some(minutes),
+        (State::Unenrolled(_), None) => bail!(
+            "no feeder is enrolled in {}; pass --enroll-minutes during an install",
+            path.display()
+        ),
+    };
+
+    // The broker runs as a child process of this same binary; kill_on_drop
+    // ties its lifetime to serve. It starts first: an installer's waits
+    // for a feeder to enroll before anything else knows the device.
+    let mut broker_command = Command::new(std::env::current_exe()?);
+    broker_command.arg("broker").arg("--config").arg(&path);
+    if let Some(minutes) = enrolling {
+        broker_command
+            .arg("--enroll-minutes")
+            .arg(minutes.to_string());
+    }
+    let mut child = broker_command.kill_on_drop(true).spawn()?;
+
+    let config = match (state, enrolling) {
+        (State::Device(config), _) => *config,
+        (State::Unenrolled(_), Some(minutes)) => enrolled(&path, minutes, &mut child).await?,
+        (State::Unenrolled(_), None) => bail!("no feeder is enrolled"),
+    };
+    let config = Arc::new(config);
     let listener = tokio::net::TcpListener::bind(config.http_listen)
         .await
         .context("bind loopback HTTP API")?;
@@ -436,15 +568,6 @@ async fn serve(path: PathBuf, trial: OtaTrial) -> Result<()> {
     if trial == OtaTrial::Enabled {
         controller.enable_ota_trial();
     }
-
-    // The broker runs as a child process of this same binary; kill_on_drop
-    // ties its lifetime to serve.
-    let mut child = Command::new(std::env::current_exe()?)
-        .arg("broker")
-        .arg("--config")
-        .arg(&path)
-        .kill_on_drop(true)
-        .spawn()?;
 
     let (requests, receiver) = mpsc::channel(16);
     let (status, status_rx) = watch::channel(controller.status.clone());

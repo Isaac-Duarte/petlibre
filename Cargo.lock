@@ -2223,6 +2223,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bluer",
+ "chrono",
  "clap",
  "futures-util",
  "jiff",
@@ -2232,10 +2233,12 @@ dependencies = [
  "wellfed-model",
  "wellfed-proto",
  "wellfed-session",
+ "wellfed-stock-api",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -2793,6 +2796,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "mqtt5",
+ "wellfed-client",
  "wellfed-core",
  "wellfed-formats",
  "reqwest",

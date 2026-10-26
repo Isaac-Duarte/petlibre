@@ -36,8 +36,9 @@ pub fn config() -> Config {
         timezone: chrono_tz::America::Denver,
         plans: vec![],
         binding_response: None,
-        hotspot_interface: "wlan1".to_owned(),
-        target_mac: "02:00:00:00:00:42".to_owned(),
+        hotspot_interface: Some("wlan1".to_owned()),
+        target_mac: Some("02:00:00:00:00:42".to_owned()),
+        device_address: None,
     }
 }
 
@@ -47,6 +48,20 @@ pub fn load(path: PathBuf) -> anyhow::Result<Controller> {
 }
 
 pub struct Service(Child);
+
+impl Service {
+    /// Run `command` (a `wellfed-stock` invocation) until dropped.
+    pub fn spawn(mut command: Command) -> Self {
+        Self(
+            command
+                .stdout(Stdio::null())
+                .stderr(Stdio::inherit())
+                .spawn()
+                .unwrap(),
+        )
+    }
+}
+
 impl Drop for Service {
     fn drop(&mut self) {
         let _ = Command::new("kill")

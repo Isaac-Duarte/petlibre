@@ -39,6 +39,15 @@ pub struct StockStatus {
     pub ota_trials: Vec<TrialRecord>,
 }
 
+impl StockStatus {
+    /// The trial with `request_id`.
+    pub fn trial(&self, request_id: &str) -> Option<&TrialRecord> {
+        self.ota_trials
+            .iter()
+            .find(|trial| trial.input.request_id.to_string() == request_id)
+    }
+}
+
 /// Which stock OTA message a report came in, by its `cmd`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OtaCommand {
@@ -148,6 +157,28 @@ pub enum TrialPhase {
     /// reports nothing once it has activated the replacement, so this, not
     /// a version report, closes the trial.
     ReplacementHealthy,
+}
+
+/// `POST /api/ota/trial` for the replacement image: the server sends stock
+/// one `OTA_UPGRADE` for it and never resends. The bench and the installer
+/// send it alike.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TrialRequest {
+    pub request_id: String,
+    /// The image server's lease token.
+    pub server_token: String,
+}
+
+/// The body of `POST /api/ota/trial/answered`: the build identity and bank
+/// the replacement's device API reported, which the server holds to the
+/// build its image server served, and a note of what answered. It closes
+/// the trial without sending the device anything.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TrialAnswer {
+    pub request_id: String,
+    pub build: String,
+    pub bank: u8,
+    pub note: String,
 }
 
 /// `wellfed-stock`'s config, root-relative: the suite serves with it and the

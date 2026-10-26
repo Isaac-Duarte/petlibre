@@ -28,7 +28,8 @@ use std::time::Instant;
 
 use clap::Args;
 use wellfed_core::ota;
-use wellfed_core::record::{Record, tag};
+use wellfed_core::ota::install::{RefusedReason, StopStage};
+use wellfed_core::record::{self, Confirm, Record, Trial, Update, Watch as Watching};
 use wellfed_formats::capture::arrival;
 use wellfed_formats::manifest::BuildManifest;
 use wellfed_formats::private::write_new;
@@ -397,23 +398,26 @@ fn highest_signed(directory: &Path) -> Option<(u32, PathBuf)> {
 /// One thing the feeder reported, in the order it came.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
-    /// The running build saw an offer; `same` when it is its own build.
+    /// The running build saw an offer.
     Offer {
         version: Option<u32>,
-        same: bool,
     },
     /// The running build cleared its marker for the offer and restarts.
     GiveWay {
         version: Option<u32>,
     },
-    NoOffer,
+    /// The feeder refused the offer: `same` when it is the running build,
+    /// `attempt` when an earlier attempt this power cycle reset.
+    Refused {
+        reason: RefusedReason,
+    },
     Manifest {
         version: Option<u32>,
-        bytes: Option<u64>,
+        bytes: Option<u32>,
     },
     Progress {
-        done: u64,
-        total: u64,
+        done: u32,
+        total: u32,
     },
     Activated {
         version: Option<u32>,
@@ -421,7 +425,7 @@ pub enum Event {
     /// A build started; `new` when it is the offered build on bank 1.
     Started {
         build: String,
-        bank: Option<u32>,
+        bank: Option<u8>,
         new: bool,
     },
     Trial {
@@ -441,23 +445,15 @@ pub enum Event {
         boot: Option<u32>,
     },
     Failed {
-        stage: String,
+        stage: StopStage,
     },
-    /// The recovery role found its attempt marker set and did not arm.
-    Skipped,
 }
 
 impl fmt::Display for Event {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let or_q = |v: &Option<u32>| v.map_or_else(|| "?".into(), |v| v.to_string());
         match self {
-            Self::Offer { same: true, .. } => {
-                write!(
-                    f,
-                    "Running build reports the offer as its own build (same=1)"
-                )
-            }
-            Self::Offer { version, .. } => {
+            Self::Offer { version } => {
                 write!(f, "Running build saw offer version {}", or_q(version))
             }
             Self::GiveWay { version } => write!(
@@ -465,12 +461,24 @@ impl fmt::Display for Event {
                 "Running build gave way for version {}; restarting into bank 0",
                 or_q(version)
             ),
-            Self::NoOffer => write!(f, "Recovery role found no offer"),
+            Self::Refused {
+                reason: RefusedReason::Same,
+            } => write!(
+                f,
+                "Running build reports the offer as its own build (reason=same)"
+            ),
+            Self::Refused {
+                reason: RefusedReason::Attempt,
+            } => write!(
+                f,
+                "Recovery role skipped the update: an earlier attempt this power cycle reset"
+            ),
+            Self::Refused { reason } => write!(f, "The feeder refused the offer ({reason})"),
             Self::Manifest { version, bytes } => write!(
                 f,
                 "Manifest version {} accepted ({} bytes); downloading",
                 or_q(version),
-                bytes.map_or_else(|| "?".into(), |b| b.to_string())
+                or_q(bytes)
             ),
             // `Written sectors: N/M` is a progress count the page draws as a bar.
             Self::Progress { done, total } => write!(f, "Written sectors: {done}/{total}"),
@@ -484,7 +492,7 @@ impl fmt::Display for Event {
                 f,
                 "Build {} started on bank {}{}",
                 build.get(..12).unwrap_or(build),
-                or_q(bank),
+                or_q(&bank.map(u32::from)),
                 if *bank == Some(0) {
                     " (recovery role)"
                 } else {
@@ -503,10 +511,6 @@ impl fmt::Display for Event {
                 or_q(boot)
             ),
             Self::Failed { stage } => write!(f, "Update error at stage {stage}"),
-            Self::Skipped => write!(
-                f,
-                "Recovery role skipped the update: an earlier attempt this power cycle reset"
-            ),
         }
     }
 }
@@ -518,7 +522,7 @@ pub enum Outcome {
     /// KM0 rejected the trial; `boot` is the last trial count seen.
     FellBack { boot: Option<u32> },
     /// The recovery role stopped the update before activation.
-    Failed { stage: String },
+    Failed { stage: StopStage },
     /// An attempt reset (a fault or hang) and left the attempt marker set,
     /// so the recovery role will not try again until a cold boot.
     Skipped,
@@ -550,14 +554,6 @@ pub struct Watch {
     outcome: Option<Outcome>,
 }
 
-/// Records the bench reads; SDK output between them is ignored.
-const TAGS: [&str; 5] = [
-    tag::WATCH,
-    tag::UPDATE,
-    tag::START,
-    tag::TRIAL,
-    tag::CONFIRM,
-];
 /// A longer run without a line break is noise, not a record.
 const MAX_LINE: usize = 4096;
 
@@ -625,61 +621,49 @@ impl Watch {
             return Some(Event::StockStarted { version });
         }
 
-        let record = Record::all(line).find(|record| TAGS.contains(&record.tag))?;
-        let first = record.first;
+        // The first record on the line the watch acts on: the API's and the
+        // owner's records share the port, and SDK output sits between them.
+        Record::all(line)
+            .filter_map(|record| record.event())
+            .find_map(|event| self.apply(event))
+    }
 
-        match record.tag {
-            tag::WATCH if record.field("give_way") == Some("1") => Some(Event::GiveWay {
-                version: record.number("version"),
-            }),
-            tag::WATCH if record.field("offer") == Some("1") => Some(Event::Offer {
-                version: record.number("version"),
-                same: record.field("same") == Some("1"),
-            }),
+    fn apply(&mut self, event: record::Event<'_>) -> Option<Event> {
+        match event {
+            record::Event::Watch(Watching::GiveWay { version }) => Some(Event::GiveWay { version }),
+            record::Event::Watch(Watching::Offer { version }) => Some(Event::Offer { version }),
 
-            tag::UPDATE => match first {
-                "manifest" => Some(Event::Manifest {
-                    version: record.number("version"),
-                    bytes: record.number("bytes"),
+            record::Event::Update(update) => match update {
+                Update::Manifest { version, bytes } => Some(Event::Manifest { version, bytes }),
+                Update::Progress { sectors, total } => Some(Event::Progress {
+                    done: sectors,
+                    total,
                 }),
-                "progress" => {
-                    let (done, total) = record.field("sectors")?.split_once('/')?;
-                    Some(Event::Progress {
-                        done: done.parse().ok()?,
-                        total: total.parse().ok()?,
-                    })
-                }
-                "activated" => {
+                Update::Activated { version } => {
                     self.activated = true;
                     self.trial_boot = None;
-                    Some(Event::Activated {
-                        version: record.number("version"),
-                    })
+                    Some(Event::Activated { version })
                 }
-                "error" => {
-                    let stage = record.field("stage").unwrap_or("?").to_string();
-                    self.outcome = Some(Outcome::Failed {
-                        stage: stage.clone(),
-                    });
+                Update::Stopped { stage } => {
+                    self.outcome = Some(Outcome::Failed { stage });
                     Some(Event::Failed { stage })
                 }
-                "no_offer" => Some(Event::NoOffer),
-                "skip" => {
-                    self.outcome = Some(Outcome::Skipped);
-                    Some(Event::Skipped)
+                Update::Refused { reason } => {
+                    if reason == RefusedReason::Attempt {
+                        self.outcome = Some(Outcome::Skipped);
+                    }
+                    Some(Event::Refused { reason })
                 }
-                _ => None,
             },
 
-            tag::START if first == "start" => {
-                let build = record.field("build")?.to_ascii_lowercase();
-                let bank = record.number("bank");
+            record::Event::Start { build, bank } => {
+                let build = build.to_ascii_lowercase();
                 let new = build == self.build && bank == Some(1);
                 self.started |= new;
                 Some(Event::Started { build, bank, new })
             }
 
-            tag::TRIAL if record.field("give_way") == Some("1") => {
+            record::Event::Trial(Trial::GiveWay) => {
                 if self.started || self.activated {
                     self.outcome = Some(Outcome::FellBack {
                         boot: self.trial_boot,
@@ -691,19 +675,15 @@ impl Watch {
                     Some(Event::EarlyGiveWay)
                 }
             }
-            tag::TRIAL if record.field("confirmed") == Some("0") => {
-                let boot = record.number("boot")?;
+            record::Event::Trial(Trial::Booting { boot, limit }) => {
                 self.trial_boot = Some(boot);
-                Some(Event::Trial {
-                    boot,
-                    limit: record.number("limit"),
-                })
+                Some(Event::Trial { boot, limit })
             }
 
             // A confirmation counts only from the offered build.
-            tag::CONFIRM if self.started && record.field("confirmed") == Some("1") => {
+            record::Event::Confirm(Confirm::Confirmed { healthy_ms }) if self.started => {
                 self.outcome = Some(Outcome::Passed);
-                let detail = match record.field("healthy_ms") {
+                let detail = match healthy_ms {
                     Some(ms) => format!("healthy_ms={ms}"),
                     None => "already confirmed".into(),
                 };
@@ -1486,7 +1466,7 @@ mod tests {
             "PLSUP1 open watchdog=1 trial=1\r\n".into(),
             start(NEW, 1),
             "PLCNF1 confirmed=1 healthy_ms=30000\r\n".into(),
-            "PLWCH1 offer=1 same=1\r\n".into(),
+            "PLOTA1 refused reason=same\r\n".into(),
         ]
         .concat()
     }
@@ -1500,10 +1480,7 @@ mod tests {
         assert_eq!(
             events,
             [
-                Event::Offer {
-                    version: Some(10),
-                    same: false
-                },
+                Event::Offer { version: Some(10) },
                 Event::GiveWay { version: Some(10) },
                 Event::Started {
                     build: OLD.into(),
@@ -1643,27 +1620,42 @@ mod tests {
     #[test]
     fn a_skipped_attempt_ends_the_watch() {
         let mut watch = Watch::of(NEW, Target::Replacement);
-        let events = watch.feed(b"PLOTA1 ready reply=0 inactive=1\r\nPLOTA1 skip marker=0x100\r\n");
+        let events = watch.feed(b"PLCNF1 skip marker=0x100\r\nPLOTA1 refused reason=attempt\r\n");
 
         assert_eq!(watch.outcome(), Some(&Outcome::Skipped));
-        assert_eq!(events, [Event::Skipped]);
+        assert_eq!(
+            events,
+            [Event::Refused {
+                reason: RefusedReason::Attempt
+            }]
+        );
+    }
+
+    #[test]
+    fn a_record_after_an_api_record_on_its_line_counts() {
+        let mut watch = Watch::of(NEW, Target::Replacement);
+        let events = watch.feed(
+            b"PLAPI1 request slot=0 op=update-chunk result=ok PLOTA1 activated version=33\r\n",
+        );
+
+        assert_eq!(events, [Event::Activated { version: Some(33) }]);
     }
 
     #[test]
     fn an_update_error_reports_its_stage() {
         let mut watch = Watch::of(NEW, Target::Replacement);
-        let events = watch.feed(b"noise PLOTA1 error stage=hash\r\nPLOTA1 no_offer\r\n");
+        let events = watch.feed(b"noise PLOTA1 error stage=hash\r\nPLOTA1 refused reason=busy\r\n");
 
         assert_eq!(
             watch.outcome(),
             Some(&Outcome::Failed {
-                stage: "hash".into()
+                stage: StopStage::Hash
             })
         );
         assert_eq!(
             events,
             [Event::Failed {
-                stage: "hash".into()
+                stage: StopStage::Hash
             }]
         );
     }

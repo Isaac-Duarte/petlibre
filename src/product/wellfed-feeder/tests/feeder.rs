@@ -107,3 +107,44 @@ fn records_carry_the_tags_of_their_lines() {
         "PLAPI1 mdns address=10.0.0.2 port=4747"
     );
 }
+
+/// The device API's records decode through the host's parser to what the
+/// bench acts on: the operation asked, and why a session ended.
+#[test]
+fn api_records_decode_for_the_bench() {
+    use wellfed_core::record::{Api, Event, Record as Line};
+    use wellfed_device_api::{Reason, Record as Server};
+
+    fn decodes(record: serve::Record, expected: Option<Event<'_>>) {
+        let line = line(Record::Serve(record));
+        let event = Line::parse(&line).and_then(|line| line.event());
+        assert_eq!(event, expected, "{line}");
+    }
+
+    decodes(
+        serve::Record::Server(Server::Request {
+            slot: 0,
+            op: "status",
+            result: "ok",
+        }),
+        Some(Event::Api(Api::Request { op: Some("status") })),
+    );
+    for reason in [Reason::Noise, Reason::Unknown] {
+        decodes(
+            serve::Record::Server(Server::Ended { slot: 1, reason }),
+            Some(Event::Api(Api::Session {
+                reason: Some(reason.as_str()),
+            })),
+        );
+    }
+    decodes(
+        serve::Record::Stats {
+            free: 1,
+            min: 1,
+            queries: 0,
+            answers: 0,
+            failed: 0,
+        },
+        None,
+    );
+}

@@ -40,7 +40,9 @@ mod stock;
 #[cfg(test)]
 mod tests;
 
-use log::{Log, Record};
+use log::Log;
+use wellfed_core::ota::install::{RefusedReason, StopStage};
+use wellfed_core::record::Event;
 use scenarios::{DeviceState, SCENARIOS, Scenario};
 
 /// How often waits look at the UART and the server again.
@@ -92,12 +94,12 @@ impl Fault {
     }
 
     /// The `PLOTA1 error stage=` the feeder logs for it.
-    fn stage(self) -> Option<&'static str> {
+    fn stage(self) -> Option<StopStage> {
         match self {
             Self::None => None,
-            Self::Corrupt => Some("hash"),
-            Self::Unwanted => Some("order"),
-            Self::Stall => Some("timeout"),
+            Self::Corrupt => Some(StopStage::Hash),
+            Self::Unwanted => Some(StopStage::Order),
+            Self::Stall => Some(StopStage::Timeout),
         }
     }
 }
@@ -249,7 +251,7 @@ impl<'r> Ctx<'r> {
         what: &str,
         since: usize,
         seconds: f64,
-        matches: impl Fn(&Record) -> bool,
+        matches: impl Fn(&Event<'_>) -> bool,
     ) -> Result<usize> {
         let deadline = self.rig.clock() + seconds;
         loop {
@@ -420,7 +422,10 @@ impl<'r> Ctx<'r> {
                     self.note(&format!("  {event}"));
                     // The confirmed build already is the offered one: its
                     // status then says so.
-                    if let ota::Event::Offer { same: true, .. } = event {
+                    if let ota::Event::Refused {
+                        reason: RefusedReason::Same,
+                    } = event
+                    {
                         return Ok(Outcome::Passed);
                     }
                 }
@@ -431,9 +436,9 @@ impl<'r> Ctx<'r> {
             // A push that ended before any UART outcome: the feeder refused
             // the offer, or reported a stop over the API.
             if let Some(Err(error)) = self.rig.offered() {
-                return Ok(Outcome::Failed {
-                    stage: format!("device API: {error}"),
-                });
+                return Err(Error::Bench(format!(
+                    "The update over the device API ended before any UART outcome: {error}"
+                )));
             }
             if self.rig.clock() >= deadline {
                 return Err(Error::Bench(format!(

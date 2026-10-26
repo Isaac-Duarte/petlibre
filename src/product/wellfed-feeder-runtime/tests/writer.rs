@@ -4,12 +4,14 @@
 use std::cell::Cell;
 use std::sync::{Mutex, MutexGuard};
 
+use wellfed_core::record::{self, Event, Record as Line, Tag};
 use wellfed_core::store::seed::SeedStatus;
 use wellfed_device_api::clients::{Label, Role};
 use wellfed_device_api::mailbox::{SettingsFields, SettingsResult};
 use wellfed_feeder::store::clients::ClientStatus;
 use wellfed_feeder::store::events::Read;
-use wellfed_feeder::store::settings::SettingsStatus;
+use wellfed_feeder::store::net::NetStatus;
+use wellfed_feeder::store::settings::{Settings, SettingsStatus};
 use wellfed_feeder_runtime::keys::{self, Change, Requested};
 use wellfed_feeder_runtime::writer::{
     self as writer, ErrorStage, Identity, KeyChange, KeyResult, Record, Writer,
@@ -677,4 +679,50 @@ fn a_feeds_outcome_has_a_slot_however_many_events_pile_up() {
         panic!("the outcome");
     };
     assert_eq!(last.body, [0xfe; 16]);
+}
+
+/// A writer record, as its `PLCFG1` line, decodes to `expected` through the
+/// host's parser.
+fn decodes(record: Record, expected: Option<Event<'_>>) {
+    let mut text = String::new();
+    writer::describe(record, &mut text).unwrap();
+    let line = format!("{} {text}", Tag::Settings);
+    let event = Line::parse(&line).and_then(|line| line.event());
+    assert_eq!(event, expected, "{line}");
+}
+
+/// The writes the bench waits on decode as such; the rest decode as
+/// nothing.
+#[test]
+fn store_writes_decode_for_the_bench() {
+    decodes(
+        Record::Saved {
+            generation: 7,
+            settings: Settings::default(),
+        },
+        Some(Event::Settings(record::Settings::Saved {
+            generation: Some(7),
+        })),
+    );
+    decodes(
+        Record::NetSaved {
+            generation: 3,
+            stored: false,
+        },
+        Some(Event::Settings(record::Settings::NetSaved {
+            stored: false,
+        })),
+    );
+    decodes(
+        changed(KeyChange::Enroll, KeyResult::Done, 1),
+        Some(Event::Settings(record::Settings::KeysChanged)),
+    );
+    decodes(
+        Record::NetOpen {
+            status: NetStatus::Loaded,
+            generation: 3,
+            stored: true,
+        },
+        None,
+    );
 }

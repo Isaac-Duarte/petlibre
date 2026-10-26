@@ -39,13 +39,17 @@
 use wellfed_core::feed::controller::FeedLimits;
 use wellfed_core::feed::progress::BowlMode;
 use wellfed_core::feed::sensor_inputs::SensorLimits;
-use wellfed_core::store::feed_journal::JournalConfig;
+use wellfed_core::feed::storage::OwnerResult;
+use wellfed_core::store::feed_journal::{JournalConfig, JournalError};
+use wellfed_feeder::feed::Durability;
 use wellfed_proto::api::Refusal;
-use wellfed_sdk::hal::interlock::{Held, Interlock};
-use wellfed_sdk::hal::owner::{OwnerConfig, OwnerState, OwnerStatus};
+use wellfed_sdk::hal::interlock::{self, Held, Interlock};
+use wellfed_sdk::hal::owner::{
+    FeedTrace, OwnerConfig, OwnerFault, OwnerState, OwnerStatus, SubmitResult,
+};
 use wellfed_sdk::hal::sdk;
 use wellfed_sdk::hal::supervision::config::{SYSTIMER_HZ, WATCHDOG};
-use wellfed_sdk::hal::supervision::events::EventsConfig;
+use wellfed_sdk::hal::supervision::events::{EventsConfig, EventsFault, PinWatch};
 use wellfed_sdk::hal::supervision::supervise::LIVENESS_MS;
 
 /// The vendor app's cap on one feed, from the stock inventory. The journal
@@ -177,8 +181,193 @@ pub const JOURNAL: JournalConfig = JournalConfig {
     max_portions: MAX_PORTIONS,
 };
 
+/// What the loop logs, for the bench.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Record {
+    /// The journal could not be opened or created; the owner never opens
+    /// this boot.
+    Journal { error: JournalError, created: bool },
+    /// The owner refused to open (a lease in progress, or the authority
+    /// not yet ready); retried each pass, logged once.
+    Refused,
+    /// Opened, on a journal created this boot or found.
+    Opened { created: bool, high_water: u64 },
+    /// The owner's published state changed.
+    Status {
+        state: OwnerState,
+        fault: OwnerFault,
+        supervisor: EventsFault,
+        stopped: bool,
+        optics_off: bool,
+    },
+    /// A feed was handed to the owner, or refused before it was.
+    Submitted {
+        feed: u64,
+        portions: u8,
+        result: SubmitResult,
+    },
+    /// A feed ended: its result and what its drive measured.
+    Fed {
+        result: OwnerResult,
+        durability: Durability,
+        trace: FeedTrace,
+    },
+    /// Which pads changed during that feed, to find the feedback input.
+    Pins { feed: u64, pins: PinWatch },
+    /// When each feedback edge came, from the drive's start.
+    Edges { feed: u64, trace: FeedTrace },
+    /// A feed was refused before the owner saw it: a Wi-Fi join runs or
+    /// waits, or a storage write ran past the claim's wait.
+    Held { portions: u8, held: Held },
+    /// Joins waited for the outputs, or went ahead past a feed's bound.
+    Joins(interlock::Status),
+}
+
+/// The most pads a `pins` record lists, so the line fits a record.
+const PINS_LISTED: usize = 10;
+
+/// The body of a `PLOWN1` line.
+impl core::fmt::Display for Record {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match *self {
+            Record::Journal { error, created } => write!(
+                f,
+                "open journal={} created={}",
+                error.code(),
+                u8::from(created)
+            ),
+            Record::Refused => f.write_str("open refused=1"),
+            Record::Opened {
+                created,
+                high_water,
+            } => write!(
+                f,
+                "open created={} high_water={high_water}",
+                u8::from(created)
+            ),
+            Record::Status {
+                state,
+                fault,
+                supervisor,
+                stopped,
+                optics_off,
+            } => write!(
+                f,
+                "state={} fault={} supervisor={} stopped={} optics_off={}",
+                state.code(),
+                fault.code(),
+                supervisor.code(),
+                u8::from(stopped),
+                u8::from(optics_off)
+            ),
+            Record::Submitted {
+                feed,
+                portions,
+                result,
+            } => write!(
+                f,
+                "feed id={feed} portions={portions} submit={}",
+                result.code()
+            ),
+            Record::Fed {
+                result,
+                durability,
+                trace,
+            } => {
+                write!(
+                    f,
+                    "fed id={} requested={} completed={} outcome={} reason={} durable={} drive_ms={} rising={} falling={} first_edge_ms=",
+                    result.id,
+                    result.requested,
+                    result.completed,
+                    result.outcome.code(),
+                    result.reason.code(),
+                    u8::from(durability == Durability::Durable),
+                    trace.drive_ms,
+                    trace.rising,
+                    trace.falling,
+                )?;
+                match trace.first_edge_ms {
+                    Some(ms) => write!(f, "{ms}")?,
+                    None => f.write_str("none")?,
+                }
+                write!(f, " current_max={} current_mean=", trace.current_max)?;
+                match trace.current_mean() {
+                    Some(mean) => write!(f, "{mean}")?,
+                    None => f.write_str("none")?,
+                }
+                write!(f, " samples={}", trace.current_samples)
+            }
+            Record::Edges { feed, trace } => {
+                write!(f, "edges id={feed} at=")?;
+                let mut logged = trace.edge_ms.iter().flatten().peekable();
+                if logged.peek().is_none() {
+                    return f.write_str("none");
+                }
+                for (index, &(ms, high)) in logged.enumerate() {
+                    if index != 0 {
+                        f.write_str(",")?;
+                    }
+                    write!(f, "{ms}{}", if high { 'H' } else { 'L' })?;
+                }
+                Ok(())
+            }
+            Record::Held { portions, held } => {
+                write!(f, "feed portions={portions} held={}", held.code())
+            }
+            Record::Joins(status) => write!(
+                f,
+                "interlock refused={} deferred={} forced={} waited_max_ms={} long_joins={} \
+             writes_deferred={} writes_forced={} write_waited_max_ms={} feeds_delayed={}",
+                status.refused,
+                status.deferred,
+                status.forced,
+                status.waited_max_ms,
+                status.long_joins,
+                status.writes_deferred,
+                status.writes_forced,
+                status.write_waited_max_ms,
+                status.feeds_delayed
+            ),
+            Record::Pins { feed, pins } => {
+                let [start_a, start_b] = pins.start.unwrap_or_default();
+                let [changed_a, changed_b] = pins.changed;
+                write!(
+                    f,
+                    "pins id={feed} start={start_a:08x},{start_b:08x} changed={changed_a:08x},{changed_b:08x} toggles="
+                )?;
+                let toggles = pins
+                    .toggles
+                    .iter()
+                    .zip(['A', 'B'])
+                    .flat_map(|(port, name)| {
+                        (0..32).filter_map(move |pin| {
+                            let count = port[pin];
+                            (count != 0).then_some((name, pin, count))
+                        })
+                    });
+                let mut listed = 0;
+                for (name, pin, count) in toggles {
+                    if listed == PINS_LISTED {
+                        return f.write_str(",+");
+                    }
+                    if listed != 0 {
+                        f.write_str(",")?;
+                    }
+                    write!(f, "{name}{pin}:{count}")?;
+                    listed += 1;
+                }
+                if listed == 0 {
+                    f.write_str("none")?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
 #[cfg(target_os = "none")]
-pub use target::{Feeding, Record};
+pub use target::Feeding;
 
 #[cfg(target_os = "none")]
 mod target {
@@ -187,14 +376,13 @@ mod target {
     use wellfed_core::store::feed_journal::{FeedJournal, JournalError};
     use wellfed_feeder::feed::{self, Durability};
     use wellfed_proto::api::{EventBody, Refusal, Source};
-    use wellfed_sdk::hal::interlock::{self, Held, INTERLOCK};
+    use wellfed_sdk::hal::interlock::{self, INTERLOCK};
     use wellfed_sdk::hal::owner::{
-        FeedTrace, Owner, OwnerConfig, OwnerFault, OwnerState, OwnerStatus, Step, SubmitResult,
+        Owner, OwnerConfig, OwnerState, OwnerStatus, Step, SubmitResult,
     };
-    use wellfed_sdk::hal::supervision::events::{EventsFault, PinWatch};
     use wellfed_sdk::{JournalSlots, Slot};
 
-    use super::{CONFIG, JOURNAL};
+    use super::{CONFIG, JOURNAL, Record};
 
     type Journal = FeedJournal<JournalSlots>;
 
@@ -202,191 +390,6 @@ mod target {
     /// its board and supervisor while the loop runs, so no `&mut` may cover
     /// it once it is open. Filled once, before it opens.
     static OWNER: Slot<Owner<Journal>> = Slot::new();
-
-    /// What the loop logs, for the bench.
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    pub enum Record {
-        /// The journal could not be opened or created; the owner never opens
-        /// this boot.
-        Journal { error: JournalError, created: bool },
-        /// The owner refused to open (a lease in progress, or the authority
-        /// not yet ready); retried each pass, logged once.
-        Refused,
-        /// Opened, on a journal created this boot or found.
-        Opened { created: bool, high_water: u64 },
-        /// The owner's published state changed.
-        Status {
-            state: OwnerState,
-            fault: OwnerFault,
-            supervisor: EventsFault,
-            stopped: bool,
-            optics_off: bool,
-        },
-        /// A feed was handed to the owner, or refused before it was.
-        Submitted {
-            feed: u64,
-            portions: u8,
-            result: SubmitResult,
-        },
-        /// A feed ended: its result and what its drive measured.
-        Fed {
-            result: OwnerResult,
-            durability: Durability,
-            trace: FeedTrace,
-        },
-        /// Which pads changed during that feed, to find the feedback input.
-        Pins { feed: u64, pins: PinWatch },
-        /// When each feedback edge came, from the drive's start.
-        Edges { feed: u64, trace: FeedTrace },
-        /// A feed was refused before the owner saw it: a Wi-Fi join runs or
-        /// waits, or a storage write ran past the claim's wait.
-        Held { portions: u8, held: Held },
-        /// Joins waited for the outputs, or went ahead past a feed's bound.
-        Joins(interlock::Status),
-    }
-
-    /// The most pads a `pins` record lists, so the line fits a record.
-    const PINS_LISTED: usize = 10;
-
-    /// The body of a `PLOWN1` line.
-    impl core::fmt::Display for Record {
-        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-            match *self {
-                Record::Journal { error, created } => write!(
-                    f,
-                    "open journal={} created={}",
-                    error.code(),
-                    u8::from(created)
-                ),
-                Record::Refused => f.write_str("open refused=1"),
-                Record::Opened {
-                    created,
-                    high_water,
-                } => write!(
-                    f,
-                    "open created={} high_water={high_water}",
-                    u8::from(created)
-                ),
-                Record::Status {
-                    state,
-                    fault,
-                    supervisor,
-                    stopped,
-                    optics_off,
-                } => write!(
-                    f,
-                    "state={} fault={} supervisor={} stopped={} optics_off={}",
-                    state.code(),
-                    fault.code(),
-                    supervisor.code(),
-                    u8::from(stopped),
-                    u8::from(optics_off)
-                ),
-                Record::Submitted {
-                    feed,
-                    portions,
-                    result,
-                } => write!(
-                    f,
-                    "feed id={feed} portions={portions} submit={}",
-                    result.code()
-                ),
-                Record::Fed {
-                    result,
-                    durability,
-                    trace,
-                } => {
-                    write!(
-                        f,
-                        "fed id={} requested={} completed={} outcome={} reason={} durable={} drive_ms={} rising={} falling={} first_edge_ms=",
-                        result.id,
-                        result.requested,
-                        result.completed,
-                        result.outcome.code(),
-                        result.reason.code(),
-                        u8::from(durability == Durability::Durable),
-                        trace.drive_ms,
-                        trace.rising,
-                        trace.falling,
-                    )?;
-                    match trace.first_edge_ms {
-                        Some(ms) => write!(f, "{ms}")?,
-                        None => f.write_str("none")?,
-                    }
-                    write!(f, " current_max={} current_mean=", trace.current_max)?;
-                    match trace.current_mean() {
-                        Some(mean) => write!(f, "{mean}")?,
-                        None => f.write_str("none")?,
-                    }
-                    write!(f, " samples={}", trace.current_samples)
-                }
-                Record::Edges { feed, trace } => {
-                    write!(f, "edges id={feed} at=")?;
-                    let mut logged = trace.edge_ms.iter().flatten().peekable();
-                    if logged.peek().is_none() {
-                        return f.write_str("none");
-                    }
-                    for (index, &(ms, high)) in logged.enumerate() {
-                        if index != 0 {
-                            f.write_str(",")?;
-                        }
-                        write!(f, "{ms}{}", if high { 'H' } else { 'L' })?;
-                    }
-                    Ok(())
-                }
-                Record::Held { portions, held } => {
-                    write!(f, "feed portions={portions} held={}", held.code())
-                }
-                Record::Joins(status) => write!(
-                    f,
-                    "interlock refused={} deferred={} forced={} waited_max_ms={} long_joins={} \
-                 writes_deferred={} writes_forced={} write_waited_max_ms={} feeds_delayed={}",
-                    status.refused,
-                    status.deferred,
-                    status.forced,
-                    status.waited_max_ms,
-                    status.long_joins,
-                    status.writes_deferred,
-                    status.writes_forced,
-                    status.write_waited_max_ms,
-                    status.feeds_delayed
-                ),
-                Record::Pins { feed, pins } => {
-                    let [start_a, start_b] = pins.start.unwrap_or_default();
-                    let [changed_a, changed_b] = pins.changed;
-                    write!(
-                        f,
-                        "pins id={feed} start={start_a:08x},{start_b:08x} changed={changed_a:08x},{changed_b:08x} toggles="
-                    )?;
-                    let toggles = pins
-                        .toggles
-                        .iter()
-                        .zip(['A', 'B'])
-                        .flat_map(|(port, name)| {
-                            (0..32).filter_map(move |pin| {
-                                let count = port[pin];
-                                (count != 0).then_some((name, pin, count))
-                            })
-                        });
-                    let mut listed = 0;
-                    for (name, pin, count) in toggles {
-                        if listed == PINS_LISTED {
-                            return f.write_str(",+");
-                        }
-                        if listed != 0 {
-                            f.write_str(",")?;
-                        }
-                        write!(f, "{name}{pin}:{count}")?;
-                        listed += 1;
-                    }
-                    if listed == 0 {
-                        f.write_str("none")?;
-                    }
-                    Ok(())
-                }
-            }
-        }
-    }
 
     /// The feed in flight, from its submission until its result is recorded.
     #[derive(Clone, Copy, Debug)]

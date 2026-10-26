@@ -189,3 +189,83 @@ fn the_outputs_turn_is_released_only_at_rest() {
         assert!(!may_release(InFlight::Nothing, &lit), "{state:?}");
     }
 }
+
+/// The owner's records, as the loop logs them, decode through the host's
+/// parser to what the bench acts on.
+#[test]
+fn owner_records_decode_for_the_bench() {
+    use wellfed_core::feed::controller::FeedReason;
+    use wellfed_core::feed::storage::{OwnerOutcome, OwnerResult};
+    use wellfed_core::record::{Event, Owner, Record as Line, Tag};
+    use wellfed_feeder::feed::Durability;
+    use wellfed_fw_feeder::feeding::Record;
+    use wellfed_sdk::hal::interlock::{self, Held};
+    use wellfed_sdk::hal::owner::{FeedTrace, OwnerFault, OwnerState, SubmitResult};
+    use wellfed_sdk::hal::supervision::events::EventsFault;
+
+    fn decodes(record: Record, expected: Option<Event<'_>>) {
+        let line = format!("{} {record}", Tag::Owner);
+        let event = Line::parse(&line).and_then(|line| line.event());
+        assert_eq!(event, expected, "{line}");
+    }
+
+    decodes(
+        Record::Status {
+            state: OwnerState::Feeding,
+            fault: OwnerFault::Ok,
+            supervisor: EventsFault::Ok,
+            stopped: true,
+            optics_off: false,
+        },
+        Some(Event::Owner(Owner::State {
+            state: OwnerState::Feeding,
+            stopped: true,
+        })),
+    );
+    decodes(
+        Record::Submitted {
+            feed: 12,
+            portions: 2,
+            result: SubmitResult::Enqueued,
+        },
+        Some(Event::Owner(Owner::Submitted { id: 12 })),
+    );
+    decodes(
+        Record::Held {
+            portions: 2,
+            held: Held::Joining,
+        },
+        Some(Event::Owner(Owner::Held)),
+    );
+    decodes(
+        Record::Fed {
+            result: OwnerResult {
+                id: 12,
+                requested: 2,
+                completed: 1,
+                outcome: OwnerOutcome::Cancelled,
+                reason: FeedReason::Cancelled,
+                motion_possible: false,
+            },
+            durability: Durability::Durable,
+            trace: FeedTrace::default(),
+        },
+        Some(Event::Owner(Owner::Fed {
+            id: 12,
+            requested: 2,
+            completed: 1,
+            outcome: Some(OwnerOutcome::Cancelled),
+            reason: Some(FeedReason::Cancelled),
+        })),
+    );
+    decodes(
+        Record::Joins(interlock::Status {
+            writes_deferred: 3,
+            ..interlock::Status::default()
+        }),
+        Some(Event::Owner(Owner::Interlock {
+            writes_deferred: Some(3),
+        })),
+    );
+    decodes(Record::Refused, None);
+}

@@ -309,6 +309,7 @@ mod tests {
     use std::fs;
 
     use wellfed_core::ota::SECTOR;
+    use wellfed_core::record::Tag;
     use serde_json::json;
 
     use super::*;
@@ -337,7 +338,7 @@ mod tests {
 
     fn build_image() -> Vec<u8> {
         wellfed_image::fixtures::image_carrying(
-            format!("PLFW1 start build={BUILD} bank=").as_bytes(),
+            format!("{} start build={BUILD} bank=", Tag::Start).as_bytes(),
         )
     }
 

@@ -14,13 +14,13 @@ use wellfed_model::{OpenRefusal, Refusal, Settings, SettingsPatch, WifiSource};
 
 use std::ops::Deref;
 
+use wellfed_core::record::{self, Api, Confirm, Event, Trial, Update, Watch};
 use wellfed_formats::bench::catalog;
 use wellfed_rig::commands::ota::Outcome;
 use wellfed_rig::device::{Answer, Ask, Credentials, DeviceStatus, Intruder, Rebuffed};
 use wellfed_rig::server::NotReady;
 use wellfed_rig::{Error, Result, require};
 
-use super::log::Record;
 use super::{Baseline, Ctx, Fault, INSTALL_SECONDS, STATUS_SECONDS, compact};
 
 /// One catalog entry and the code that runs it; the entry's fields read
@@ -121,7 +121,7 @@ const FAULT_SECONDS: f64 = 6.0 * 60.0;
 
 fn ota_update(ctx: &mut Ctx) -> Result<()> {
     // A feeder the suite just powered on is not serving yet, and an offer of
-    // its own build changes nothing (`same=1`); so hear from it first. One
+    // its own build changes nothing (`refused reason=same`); so hear from it first. One
     // that never answers is left to the install's own waits.
     let _ = ctx.reachable(STATUS_SECONDS);
 
@@ -172,8 +172,8 @@ fn requests(ctx: &mut Ctx) -> Result<()> {
     let since = ctx.mark()?;
     let status = ctx.device_status()?;
     ctx.note(&format!("  {}", status.matches(&build)?));
-    ctx.expect("PLAPI1 request op=status", since, RECORD_SECONDS, |r| {
-        r.tag == "PLAPI1" && r.first == "request" && r.field("op") == Some("status")
+    ctx.expect("PLAPI1 request op=status", since, RECORD_SECONDS, |e| {
+        *e == Event::Api(Api::Request { op: Some("status") })
     })?;
 
     ctx.sync_clock()?;
@@ -248,10 +248,8 @@ pub(super) fn set_settings(ctx: &mut Ctx, change: SettingsPatch) -> Result<u32> 
         matches!(answer, Answer::Done { .. }),
         format!("The settings change answered {}", compact(&answer)),
     )?;
-    ctx.expect("PLCFG1 saved", since, SAVE_SECONDS, |r| {
-        r.tag == "PLCFG1"
-            && r.first == "saved"
-            && r.number::<u32>("generation").is_some_and(|g| g > base)
+    ctx.expect("PLCFG1 saved", since, SAVE_SECONDS, |e| {
+        matches!(e, Event::Settings(record::Settings::Saved { generation: Some(g) }) if *g > u64::from(base))
     })?;
 
     let after = read_settings(ctx)?;
@@ -274,8 +272,8 @@ fn request_auth(ctx: &mut Ctx) -> Result<()> {
         unenrolled == Rebuffed::Refused(OpenRefusal::Unknown),
         format!("An unenrolled key was not refused as unknown: {unenrolled:?}"),
     )?;
-    ctx.expect("PLAPI1 reason=unknown-key", since, RECORD_SECONDS, |r| {
-        r.tag == "PLAPI1" && r.field("reason") == Some("unknown-key")
+    ctx.expect("PLAPI1 reason=unknown-key", since, RECORD_SECONDS, |e| {
+        ended_for(e, "unknown-key")
     })?;
 
     let since = ctx.mark()?;
@@ -285,14 +283,24 @@ fn request_auth(ctx: &mut Ctx) -> Result<()> {
         tampered == Rebuffed::Dropped,
         format!("A tampered handshake was not dropped: {tampered:?}"),
     )?;
-    ctx.expect("PLAPI1 reason=noise", since, RECORD_SECONDS, |r| {
-        r.tag == "PLAPI1" && r.field("reason") == Some("noise")
+    ctx.expect("PLAPI1 reason=noise", since, RECORD_SECONDS, |e| {
+        ended_for(e, "noise")
     })?;
 
     // Neither cost the owner its way in.
     let build = ctx.baseline()?.build.clone();
     let status = ctx.device_status()?;
     status.matches(&build).map(|_| ()).map_err(Into::into)
+}
+
+/// A session ended or refused for `reason`, a device API `Reason` word: the
+/// suite may not link the device API crate (`deny.toml` keeps it to the
+/// product and the simulator), so it names the word.
+pub(super) fn ended_for(event: &Event<'_>, reason: &str) -> bool {
+    *event
+        == Event::Api(Api::Session {
+            reason: Some(reason),
+        })
 }
 
 /// Cut and restore the supply, then see the baseline start on bank 1 and
@@ -306,7 +314,7 @@ fn cold_boot(ctx: &mut Ctx) -> Result<usize> {
         "the baseline starting on bank 1",
         since,
         BOOT_SECONDS,
-        |r| r.tag == "PLFW1" && r.first == "start" && started(r, &build),
+        |e| started(e, &build),
     )?;
     // A session opened after the start record is the new boot's: the old
     // one's sockets died with the power.
@@ -317,11 +325,9 @@ fn cold_boot(ctx: &mut Ctx) -> Result<usize> {
     Ok(since)
 }
 
-fn started(record: &Record, build: &str) -> bool {
-    record
-        .field("build")
-        .is_some_and(|b| b.eq_ignore_ascii_case(build))
-        && record.field("bank") == Some("1")
+/// `build` started on bank 1.
+fn started(event: &Event<'_>, build: &str) -> bool {
+    matches!(event, Event::Start { build: b, bank: Some(1) } if b.eq_ignore_ascii_case(build))
 }
 
 fn settings_persist(ctx: &mut Ctx) -> Result<()> {
@@ -418,8 +424,8 @@ fn wrong_credentials(ctx: &mut Ctx) -> Result<()> {
             psk: WRONG_PSK.into(),
         }),
     )?;
-    ctx.expect("PLCFG1 net saved stored=1", since, SAVE_SECONDS, |r| {
-        r.is("PLCFG1", &[("stored", "1")]) && r.body_starts("net saved")
+    ctx.expect("PLCFG1 net saved stored=1", since, SAVE_SECONDS, |e| {
+        *e == Event::Settings(record::Settings::NetSaved { stored: true })
     })?;
 
     // Only the new boot can report the fallback: the stored network applies
@@ -441,8 +447,8 @@ fn wrong_credentials(ctx: &mut Ctx) -> Result<()> {
 fn clear_credentials(ctx: &mut Ctx) -> Result<()> {
     let since = ctx.mark()?;
     put_wifi(ctx, None)?;
-    ctx.expect("PLCFG1 net saved stored=0", since, SAVE_SECONDS, |r| {
-        r.is("PLCFG1", &[("stored", "0")]) && r.body_starts("net saved")
+    ctx.expect("PLCFG1 net saved stored=0", since, SAVE_SECONDS, |e| {
+        *e == Event::Settings(record::Settings::NetSaved { stored: false })
     })?;
     cold_boot(ctx)?;
     let report = ctx.until_device("the build's credentials", STATUS_SECONDS, |s| {
@@ -507,9 +513,7 @@ fn ota_recovery(ctx: &mut Ctx) -> Result<()> {
 fn recovery(ctx: &mut Ctx, failing: &super::Staged, staged: &super::Staged) -> Result<()> {
     let since = ctx.mark()?;
     ctx.rig.offer(Some(failing), Fault::None)?;
-    ctx.expect("PLOTA1 activated", since, INSTALL_SECONDS, |r| {
-        r.tag == "PLOTA1" && r.first == "activated"
-    })?;
+    ctx.expect("PLOTA1 activated", since, INSTALL_SECONDS, activated)?;
     let outcome = ctx.watch(&failing.build, since, INSTALL_SECONDS)?;
     require(
         matches!(outcome, Outcome::FellBack { .. }),
@@ -523,14 +527,12 @@ fn recovery(ctx: &mut Ctx, failing: &super::Staged, staged: &super::Staged) -> R
         let start = ctx.mark()?;
         ctx.rig.offer(Some(staged), fault)?;
         let what = format!("PLOTA1 error stage={stage}");
-        ctx.expect(&what, start, FAULT_SECONDS, |r| {
-            r.tag == "PLOTA1" && r.first == "error" && r.field("stage") == Some(stage)
+        ctx.expect(&what, start, FAULT_SECONDS, |e| {
+            *e == Event::Update(Update::Stopped { stage })
         })?;
-        let activated = ctx
-            .log
-            .count(start, |r| r.tag == "PLOTA1" && r.first == "activated");
+        let activations = ctx.log.count(start, activated);
         require(
-            activated == 0,
+            activations == 0,
             format!("The {stage} fault still activated bank 1"),
         )?;
     }
@@ -544,15 +546,20 @@ fn recovery(ctx: &mut Ctx, failing: &super::Staged, staged: &super::Staged) -> R
     )
 }
 
-/// Sectors written so far, from `PLOTA1 progress sectors=N/TOTAL`.
-fn sectors(record: &Record) -> Option<u32> {
-    record.field("sectors")?.split('/').next()?.parse().ok()
+fn activated(event: &Event<'_>) -> bool {
+    matches!(event, Event::Update(Update::Activated { .. }))
 }
 
-/// The record a mark just passed (an [`Ctx::expect`] result).
-fn record_before(ctx: &Ctx, mark: usize, field: &str) -> Option<String> {
-    let line = &ctx.log.line(mark.checked_sub(1)?).text;
-    Record::parse(line)?.field(field).map(str::to_string)
+/// Sectors written so far, from `PLOTA1 progress sectors=N/TOTAL`.
+fn sectors(event: &Event<'_>) -> Option<u32> {
+    match *event {
+        Event::Update(Update::Progress { sectors, .. }) => Some(sectors),
+        _ => None,
+    }
+}
+
+fn is_start(event: &Event<'_>) -> bool {
+    matches!(event, Event::Start { .. })
 }
 
 fn ota_power_cuts(ctx: &mut Ctx) -> Result<()> {
@@ -597,29 +604,30 @@ fn ota_power_cuts(ctx: &mut Ctx) -> Result<()> {
 fn power_cuts(ctx: &mut Ctx, staged: &super::Staged) -> Result<()> {
     let since = ctx.mark()?;
     ctx.rig.offer(Some(staged), Fault::None)?;
-    let since = ctx.expect("PLWCH1 give_way=1", since, OFFER_CHECK_SECONDS, |r| {
-        r.is("PLWCH1", &[("give_way", "1")])
+    let since = ctx.expect("PLWCH1 give_way=1", since, OFFER_CHECK_SECONDS, |e| {
+        matches!(e, Event::Watch(Watch::GiveWay { .. }))
     })?;
 
     // A cut mid-download: bank 1's marker is still clear, so the loader
     // must boot bank 0, which takes the offer again from the push (still
     // running) and downloads from the start.
-    let since = ctx.expect("a download under way", since, INSTALL_SECONDS, |r| {
-        r.tag == "PLOTA1" && r.first == "progress" && sectors(r).is_some_and(|n| n >= CUT_SECTORS)
+    let since = ctx.expect("a download under way", since, INSTALL_SECONDS, |e| {
+        sectors(e).is_some_and(|n| n >= CUT_SECTORS)
     })?;
     ctx.rig.power_cycle()?;
-    let since = ctx.expect("a boot after the cut", since, BOOT_SECONDS, |r| {
-        r.tag == "PLFW1" && r.first == "start"
-    })?;
-    let bank = record_before(ctx, since, "bank");
+    let since = ctx.expect("a boot after the cut", since, BOOT_SECONDS, is_start)?;
+    let bank = ctx.log.before(since, |e| match e {
+        Event::Start { bank, .. } => bank,
+        _ => None,
+    });
     require(
-        bank.as_deref() == Some("0"),
+        bank == Some(0),
         format!("After a cut mid-download the loader booted bank {bank:?}, not 0"),
     )?;
-    let since = ctx.expect("the download again", since, INSTALL_SECONDS, |r| {
-        r.tag == "PLOTA1" && r.first == "progress"
+    let since = ctx.expect("the download again", since, INSTALL_SECONDS, |e| {
+        sectors(e).is_some()
     })?;
-    let first = Record::parse(&ctx.log.line(since - 1).text).and_then(|r| sectors(&r));
+    let first = ctx.log.before(since, |e| sectors(&e));
     require(
         first.is_some_and(|n| n <= PROGRESS_SECTORS),
         format!("The download resumed at {first:?} sectors instead of starting again"),
@@ -627,22 +635,25 @@ fn power_cuts(ctx: &mut Ctx, staged: &super::Staged) -> Result<()> {
 
     // A cut early in trial boot 1: backup registers clear on power loss, so
     // KM0 counts boot 1 again, and the build still confirms.
-    let since = ctx.expect("trial boot 1", since, INSTALL_SECONDS, |r| {
-        r.is("PLTRL1", &[("confirmed", "0"), ("boot", "1")])
+    let since = ctx.expect("trial boot 1", since, INSTALL_SECONDS, |e| {
+        matches!(e, Event::Trial(Trial::Booting { boot: 1, .. }))
     })?;
     ctx.idle(TRIAL_CUT_SECONDS)?;
-    let confirmed = |r: &Record| r.is("PLCNF1", &[("confirmed", "1")]);
+    let confirmed = |e: &Event<'_>| matches!(e, Event::Confirm(Confirm::Confirmed { .. }));
     require(
         ctx.log.count(since, confirmed) == 0,
         "The build confirmed before the trial cut",
     )?;
     ctx.rig.power_cycle()?;
-    let since = ctx.expect("the trial count after the cut", since, BOOT_SECONDS, |r| {
-        r.tag == "PLTRL1" && r.field("boot").is_some()
+    let since = ctx.expect("the trial count after the cut", since, BOOT_SECONDS, |e| {
+        matches!(e, Event::Trial(Trial::Booting { .. }))
     })?;
-    let boot = record_before(ctx, since, "boot");
+    let boot = ctx.log.before(since, |e| match e {
+        Event::Trial(Trial::Booting { boot, .. }) => Some(boot),
+        _ => None,
+    });
     require(
-        boot.as_deref() == Some("1"),
+        boot == Some(1),
         format!("After a cut in the trial KM0 counted boot {boot:?}, not 1 again"),
     )?;
     ctx.expect("PLCNF1 confirmed=1", since, STATUS_SECONDS, confirmed)?;
@@ -666,9 +677,7 @@ fn soak(ctx: &mut Ctx) -> Result<()> {
         ctx.idle(SOAK_PERIOD_SECONDS)?;
     }
 
-    let restarts = ctx
-        .log
-        .count(since, |r| r.tag == "PLFW1" && r.first == "start");
+    let restarts = ctx.log.count(since, is_start);
     let after = ctx.device_status()?;
     let losses = after.losses.saturating_sub(before.losses);
     ctx.note(&format!(

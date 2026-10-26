@@ -51,6 +51,17 @@ pub fn claimed_version(bytes: &[u8]) -> Option<u32> {
     (v1 || v2).then(|| u32_at(bytes, 8))
 }
 
+crate::named_enum! {
+    /// The step of a sector write that failed (`PLOTA1 error step=`).
+    pub enum SectorStep {
+        Erase = "erase",
+        Program = "program",
+        Read = "read",
+        /// A page read back different from what was programmed.
+        Readback = "readback",
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WriteError {
     /// A chunk outside the staged sector, already received, or of the wrong

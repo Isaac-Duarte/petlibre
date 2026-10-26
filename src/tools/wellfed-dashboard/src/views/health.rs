@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
+use wellfed_core::record::{Event, Record, Tag};
 use serde::Serialize;
 
 use super::{Sources, captures_by_age, modified, printable, read};
@@ -111,8 +112,8 @@ pub(crate) fn health(sources: &Sources, flash: &mut FlashCache) -> HealthView {
 
 /// The newest capture that shows a replacement-firmware start banner.
 fn installed(root: &Path) -> Option<Installed> {
-    const START: &[u8] = b"PLFW1 start build=";
-    const RECOVERY: &[u8] = b"PLOTA1 start role=recovery";
+    let start = format!("{} start build=", Tag::Start);
+    let start = start.as_bytes();
 
     for (at, dir) in captures_by_age(root).into_iter().take(BANNER_SCAN_CAPTURES) {
         let rx = dir.join("serial-rx.bin");
@@ -120,25 +121,25 @@ fn installed(root: &Path) -> Option<Installed> {
             continue;
         }
         let Ok(data) = fs::read(&rx) else { continue };
-        let Some(offset) = data.windows(START.len()).rposition(|w| w == START) else {
+        let Some(offset) = data.windows(start.len()).rposition(|w| w == start) else {
             continue;
         };
 
         let line = printable(&data[offset..]);
         let line = line.lines().next().unwrap_or("");
-        let field = |key: &str| {
-            line.split(' ')
-                .find_map(|word| word.strip_prefix(key))
-                .map(str::to_string)
+        let (build, bank) = match Record::parse(line).and_then(|record| record.event()) {
+            Some(Event::Start { build, bank }) => (Some(build.to_string()), bank),
+            _ => (None, None),
         };
-        let recovery = data.windows(RECOVERY.len()).any(|w| w == RECOVERY);
 
         return Some(Installed {
             capture: relative(root, &dir),
             at,
-            build: field("build="),
-            bank: field("bank="),
-            role: if recovery {
+            build,
+            bank: bank.map(|bank| bank.to_string()),
+            // Bank 0 runs only as the recovery role: after a failed trial,
+            // or to install an offer bank 1 gave way for.
+            role: if bank == Some(0) {
                 Role::Recovery
             } else {
                 Role::Normal
@@ -226,6 +227,14 @@ mod tests {
         assert_eq!(view["installed"]["bank"], "1");
         assert_eq!(view["installed"]["role"], "normal");
         assert_eq!(view["installed"]["capture"], "private/captures/x-boot");
+
+        fs::write(
+            dir.join("serial-rx.bin"),
+            b"PLFW1 start build=abc123 bank=0 reset=00000001 mmu=0,0,0\r\n",
+        )
+        .unwrap();
+        let view = json(health(&sources, &mut FlashCache::default()));
+        assert_eq!(view["installed"]["role"], "recovery");
         assert_eq!(view["config"], CONFIG);
         assert_eq!(view["config_ok"], false);
         assert!(view["ports"]["error"].as_str().unwrap().contains(CONFIG));

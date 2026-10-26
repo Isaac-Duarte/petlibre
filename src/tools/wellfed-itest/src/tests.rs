@@ -6,7 +6,8 @@ use std::path::Path;
 use wellfed_model::{Generation, OpenRefusal, Refusal, Settings, WifiSource};
 use serde_json::json;
 
-use super::log::{Log, Record};
+use super::log::Log;
+use super::scenarios::ended_for;
 use super::*;
 use wellfed_rig::commands::ota::Variant;
 
@@ -565,7 +566,7 @@ impl Rig for Feeder {
             self.push(self.now + 10.0, &staged.clone(), fault);
         } else if staged.build == self.running {
             // Refused as the running build; the suite never offers it.
-            self.line(1.0, "PLWCH1 refused reason=same");
+            self.line(1.0, "PLOTA1 refused reason=same");
         } else {
             self.line(
                 30.0,
@@ -1013,7 +1014,7 @@ fn the_log_joins_split_lines_and_counts_from_a_mark() {
     );
 
     assert_eq!(log.len(), 3);
-    let refused = |r: &Record| r.is("PLAPI1", &[("reason", "noise")]);
+    let refused = |e: &wellfed_core::record::Event<'_>| ended_for(e, "noise");
     assert_eq!(log.count(0, refused), 2);
     assert_eq!(log.count(1, refused), 1);
     assert_eq!(log.find(1, refused), Some(2));

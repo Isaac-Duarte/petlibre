@@ -28,7 +28,7 @@
 use std::path::PathBuf;
 
 use crate::args::{ItestArgs, StockOtaArgs};
-use wellfed_core::record::tag;
+use wellfed_core::record::Event;
 use wellfed_formats::bench::progress::StepState;
 use wellfed_formats::bench::run::SUFFIX;
 use wellfed_formats::bench::{VERIFICATION, catalog::Tier};
@@ -38,7 +38,7 @@ use wellfed_rig::commands::ota::{self, OtaArgs, Outcome, Staged, Target, Timing}
 use wellfed_rig::server::{STOCK_VERSION, TrialAnswer, TrialRequest};
 use wellfed_rig::{Error, Result, say};
 
-use super::log::Record;
+use super::log::events;
 use super::{
     Ctx, Fault, HEALTH_SECONDS, INSTALL_SECONDS, Report, STATUS_POLL_SECONDS, STATUS_SECONDS,
     Server, Silent, Verdict, live,
@@ -314,17 +314,20 @@ fn install(ctx: &mut Ctx, build: &str, request_id: &str) -> Result<()> {
     })
 }
 
-fn is_start(record: &Record) -> bool {
-    record.tag == tag::START && record.first == "start"
+fn is_start(event: &Event<'_>) -> bool {
+    matches!(event, Event::Start { .. })
 }
 
 /// The first startup after the request must be the build, from bank 0.
 fn started(line: &str, build: &str) -> Result<()> {
-    let record = Record::all(line)
-        .find(is_start)
-        .ok_or_else(|| Error::Bench("Unreadable startup record".into()))?;
-    let reported = record.field("build").unwrap_or("").to_ascii_lowercase();
-    let bank: Option<u32> = record.number("bank");
+    let Some(Event::Start {
+        build: reported,
+        bank,
+    }) = events(line).find(is_start)
+    else {
+        return Err(Error::Bench("Unreadable startup record".into()));
+    };
+    let reported = reported.to_ascii_lowercase();
 
     if reported != build {
         return Err(Error::Bench(format!(

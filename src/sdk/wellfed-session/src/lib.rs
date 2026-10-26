@@ -35,6 +35,12 @@ macro_rules! named_enum {
                     $(Self::$variant => $text),+
                 }
             }
+
+            /// The variant that prints as `text`, as a host reads a record
+            /// back.
+            pub fn parse(text: &str) -> Option<Self> {
+                Self::ALL.iter().copied().find(|value| value.as_str() == text)
+            }
         }
 
         impl ::core::fmt::Display for $name {

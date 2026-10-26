@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::LazyLock;
 
+use wellfed_core::record::Tag;
 use wellfed_formats::device::AmebadMains;
 use wellfed_formats::lock::SdkLock;
 use wellfed_formats::manifest::{Artifact, Audits, CompiledArchive};
@@ -502,7 +503,7 @@ impl Build<'_> {
             !rust
                 || contains(
                     &combined,
-                    format!("PLFW1 start build={} ", self.job.identity).as_bytes(),
+                    format!("{} start build={} ", Tag::Start, self.job.identity).as_bytes(),
                 ),
             "Linked image is missing the source-bound startup identity",
         )?;

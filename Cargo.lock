@@ -2366,6 +2366,7 @@ dependencies = [
  "clap",
  "ctrlc",
  "futures-util",
+ "wellfed-core",
  "wellfed-formats",
  "wellfed-stock-api",
  "rust-embed",

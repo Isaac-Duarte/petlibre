@@ -43,47 +43,8 @@ mod state;
 
 pub use config::OwnerConfig;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[repr(u32)]
-pub enum OwnerState {
-    #[default]
-    Starting = 0,
-    Idle = 1,
-    Queued = 2,
-    Preparing = 3,
-    Feeding = 4,
-    Reporting = 5,
-    Terminal = 6,
-    Fault = 7,
-    Stopped = 8,
-}
+pub use wellfed_core::feed::owner::{OwnerFault, OwnerState};
 
-impl OwnerState {
-    /// The variant's number, as records and reports print it.
-    pub const fn code(self) -> u32 {
-        self as u32
-    }
-}
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[repr(u32)]
-pub enum OwnerFault {
-    #[default]
-    Ok = 0,
-    Setup = 1,
-    Recovery = 2,
-    Storage = 3,
-    Hardware = 4,
-    /// The owner's own beat fell overdue: a step blocked past its gap.
-    Progress = 5,
-    Flash = 6,
-}
-
-impl OwnerFault {
-    /// The variant's number, as records and reports print it.
-    pub const fn code(self) -> u32 {
-        self as u32
-    }
-}
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[repr(u32)]
 pub enum SubmitResult {

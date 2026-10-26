@@ -5,6 +5,7 @@ pub mod controller;
 pub mod diagnostic;
 pub mod feedback;
 pub mod motor_gate;
+pub mod owner;
 pub mod progress;
 pub mod sensor_inputs;
 pub mod storage;

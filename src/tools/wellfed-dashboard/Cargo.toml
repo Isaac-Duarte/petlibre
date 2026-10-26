@@ -16,6 +16,7 @@ axum = { workspace = true, optional = true }
 clap = { workspace = true, optional = true }
 ctrlc = { workspace = true, optional = true }
 futures-util = { version = "0.3", default-features = false, optional = true }
+wellfed-core.workspace = true
 wellfed-formats.workspace = true
 wellfed-stock-api = { path = "../wellfed-stock-api" }
 rust-embed = { version = "8.13.0", features = ["debug-embed"], optional = true }

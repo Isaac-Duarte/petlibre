@@ -5,7 +5,7 @@
 //! Times come from the rig's clock when the bytes were read, so they are as
 //! late as the polling interval.
 
-pub(super) use wellfed_core::record::Record;
+use wellfed_core::record::{Event, Record};
 
 /// A longer run without a line break is noise, not a record.
 const MAX_LINE: usize = 4096;
@@ -50,15 +50,25 @@ impl Log {
 
     /// The first line at or after `since` with a record that `matches`, by
     /// line index.
-    pub(super) fn find(&self, since: usize, matches: impl Fn(&Record) -> bool) -> Option<usize> {
-        (since..self.lines.len()).find(|&i| Record::all(&self.lines[i].text).any(|r| matches(&r)))
+    pub(super) fn find(&self, since: usize, matches: impl Fn(&Event<'_>) -> bool) -> Option<usize> {
+        (since..self.lines.len()).find(|&i| events(&self.lines[i].text).any(|e| matches(&e)))
+    }
+
+    /// What `pick` finds first among the events on the line just before
+    /// `mark` (an `expect` result): other records may share the line.
+    pub(super) fn before<T>(
+        &self,
+        mark: usize,
+        pick: impl Fn(Event<'_>) -> Option<T>,
+    ) -> Option<T> {
+        events(&self.lines.get(mark.checked_sub(1)?)?.text).find_map(pick)
     }
 
     /// How many records at or after `since` match.
-    pub(super) fn count(&self, since: usize, matches: impl Fn(&Record) -> bool) -> usize {
+    pub(super) fn count(&self, since: usize, matches: impl Fn(&Event<'_>) -> bool) -> usize {
         self.lines[since.min(self.lines.len())..]
             .iter()
-            .map(|line| Record::all(&line.text).filter(|r| matches(r)).count())
+            .map(|line| events(&line.text).filter(|e| matches(e)).count())
             .sum()
     }
 
@@ -67,12 +77,12 @@ impl Log {
         &self,
         since: usize,
         until: usize,
-        matches: impl Fn(&Record) -> bool,
+        matches: impl Fn(&Event<'_>) -> bool,
     ) -> Vec<String> {
         let until = until.min(self.lines.len());
         self.lines[since.min(until)..until]
             .iter()
-            .filter(|line| Record::all(&line.text).any(|r| matches(&r)))
+            .filter(|line| events(&line.text).any(|e| matches(&e)))
             .map(|line| line.text.clone())
             .collect()
     }
@@ -85,4 +95,9 @@ impl Log {
             .find(|line| Record::parse(&line.text).is_some())
             .map(|line| line.at)
     }
+}
+
+/// The events of the records on one line, in order.
+pub(super) fn events(line: &str) -> impl Iterator<Item = Event<'_>> {
+    Record::all(line).filter_map(|record| record.event())
 }

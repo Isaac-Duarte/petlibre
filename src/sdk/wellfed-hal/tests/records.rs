@@ -1,12 +1,14 @@
 //! The UART records the bench acts on, as the firmware formats them and the
-//! host parser (`wellfed_core::record`) reads them back. Each line is built
-//! the way the first-boot app writes it, tag and all, after SDK noise, so a
-//! renamed field or a changed word fails here rather than on the bench.
+//! host parser (`wellfed_core::record`) decodes them back. Each line is
+//! built the way the first-boot app writes it, tag and all, after SDK noise,
+//! so a renamed field or a changed word fails here rather than on the bench.
 
 use std::fmt;
 
-use wellfed_core::ota::install::Stop;
-use wellfed_core::record::{Record, tag};
+use wellfed_core::ota::SectorStep;
+use wellfed_core::ota::install::{Refused, RefusedReason, Stop, StopStage};
+use wellfed_core::ota::offer::OfferError;
+use wellfed_core::record::{Confirm, Event, Record, Tag, Update, Watch};
 use wellfed_hal::ota::{confirm, update};
 use wellfed_hal::{audio, ble};
 
@@ -26,40 +28,73 @@ fn read(line: &str) -> Record<'_> {
     Record::parse(line).unwrap_or_else(|| panic!("no record in {line:?}"))
 }
 
-/// An update record's line, under the tag the stage gives it.
-fn update_line(record: update::Record) -> String {
-    let tag = record.tag();
-    line(tag, |f| update::describe(record, f))
+/// An update record, under the tag the stage gives it, decodes to
+/// `expected`.
+fn update_decodes(record: update::Record, expected: Option<Event<'_>>) {
+    let text = line(record.tag(), |f| update::describe(record, f));
+    assert_eq!(read(&text).event(), expected, "{text}");
+}
+
+fn confirm_decodes(record: confirm::Record, expected: Option<Event<'_>>) {
+    let text = line(Tag::Confirm.as_str(), |f| confirm::describe(record, f));
+    assert_eq!(read(&text).event(), expected, "{text}");
 }
 
 #[test]
-fn update_records_carry_what_the_ota_watch_reads() {
-    let manifest = update_line(update::Record::Manifest {
-        version: 33,
-        bytes: 696_320,
-    });
-    let manifest = read(&manifest);
-    assert!(manifest.is(tag::UPDATE, &[]));
-    assert_eq!(manifest.first, "manifest");
-    assert_eq!(manifest.number::<u32>("version"), Some(33));
-    assert_eq!(manifest.number::<u32>("bytes"), Some(696_320));
-
-    let progress = update_line(update::Record::Progress {
-        sectors: 48,
-        total: 170,
-    });
-    let progress = read(&progress);
-    assert_eq!(progress.first, "progress");
-    assert_eq!(progress.field("sectors"), Some("48/170"));
-
-    let activated = update_line(update::Record::Activated {
-        version: 33,
-        bytes: 696_320,
-        sectors: 170,
-    });
-    let activated = read(&activated);
-    assert_eq!(activated.first, "activated");
-    assert_eq!(activated.number::<u32>("version"), Some(33));
+fn update_records_decode_to_what_they_say() {
+    let cases = [
+        (
+            update::Record::Manifest {
+                version: 33,
+                bytes: 696_320,
+            },
+            Event::Update(Update::Manifest {
+                version: Some(33),
+                bytes: Some(696_320),
+            }),
+        ),
+        (
+            update::Record::Progress {
+                sectors: 48,
+                total: 170,
+            },
+            Event::Update(Update::Progress {
+                sectors: 48,
+                total: 170,
+            }),
+        ),
+        (
+            update::Record::Activated {
+                version: 33,
+                bytes: 696_320,
+                sectors: 170,
+            },
+            Event::Update(Update::Activated { version: Some(33) }),
+        ),
+        (
+            update::Record::Refused {
+                refused: Refused::Offer(OfferError::Same),
+            },
+            Event::Update(Update::Refused {
+                reason: Refused::Offer(OfferError::Same).reason(),
+            }),
+        ),
+        (
+            update::Record::GaveWay { version: 34 },
+            Event::Watch(Watch::GiveWay { version: Some(34) }),
+        ),
+        (
+            update::Record::Offer { version: 34 },
+            Event::Watch(Watch::Offer { version: Some(34) }),
+        ),
+        (
+            update::Record::GiveWayRefused,
+            Event::Watch(Watch::GiveWayRefused),
+        ),
+    ];
+    for (record, expected) in cases {
+        update_decodes(record, Some(expected));
+    }
 
     for stop in [
         Stop::Timeout,
@@ -71,46 +106,86 @@ fn update_records_carry_what_the_ota_watch_reads() {
         Stop::Activate,
         Stop::Store,
     ] {
-        let error = update_line(update::Record::Stopped { stop, write: None });
-        let error = read(&error);
-        assert!(error.is(tag::UPDATE, &[]));
-        assert_eq!(error.first, "error");
-        assert!(error.field("stage").is_some());
+        update_decodes(
+            update::Record::Stopped { stop, write: None },
+            Some(Event::Update(Update::Stopped {
+                stage: stop.stage(),
+            })),
+        );
     }
 }
 
 #[test]
-fn give_way_and_confirmation_records_carry_what_the_ota_watch_reads() {
-    let gave_way = update_line(update::Record::GaveWay { version: 34 });
-    let gave_way = read(&gave_way);
-    assert!(gave_way.is(tag::WATCH, &[("give_way", "1")]));
-    assert_eq!(gave_way.number::<u32>("version"), Some(34));
+fn confirmation_records_decode_to_what_they_say() {
+    confirm_decodes(
+        confirm::Record::Confirmed {
+            healthy_ms: 30_000,
+            version: 12,
+        },
+        Some(Event::Confirm(Confirm::Confirmed {
+            healthy_ms: Some(30_000),
+        })),
+    );
+    confirm_decodes(
+        confirm::Record::Already,
+        Some(Event::Confirm(Confirm::Confirmed { healthy_ms: None })),
+    );
+    confirm_decodes(
+        confirm::Record::Error {
+            stage: confirm::ErrorStage::Write,
+        },
+        Some(Event::Confirm(Confirm::Error { stage: "write" })),
+    );
+}
 
-    let offer = update_line(update::Record::Offer { version: 34 });
-    let offer = read(&offer);
-    assert!(offer.is(tag::WATCH, &[("offer", "1")]));
-    assert_eq!(offer.number::<u32>("version"), Some(34));
+/// The words the bench matches, as they were when these fields were plain
+/// strings.
+#[test]
+fn update_words_are_unchanged() {
+    assert_eq!(
+        displayed(StopStage::ALL, StopStage::as_str),
+        [
+            "timeout",
+            "cancelled",
+            "order",
+            "image",
+            "write",
+            "hash",
+            "marker",
+            "store"
+        ]
+    );
+    assert_eq!(
+        displayed(RefusedReason::ALL, RefusedReason::as_str),
+        [
+            "downgrade",
+            "same",
+            "key",
+            "signature",
+            "statement",
+            "manifest",
+            "store",
+            "busy",
+            "fallback",
+            "pending",
+            "failed",
+            "attempt",
+            "installing",
+            "not-installing"
+        ]
+    );
+    assert_eq!(
+        displayed(SectorStep::ALL, SectorStep::as_str),
+        ["erase", "program", "read", "readback"]
+    );
 
-    let confirmed = line(tag::CONFIRM, |f| {
-        confirm::describe(
-            confirm::Record::Confirmed {
-                healthy_ms: 30_000,
-                version: 12,
-            },
-            f,
-        )
-    });
-    let confirmed = read(&confirmed);
-    assert!(confirmed.is(tag::CONFIRM, &[("confirmed", "1")]));
-    assert_eq!(confirmed.number::<u32>("healthy_ms"), Some(30_000));
-    assert_eq!(confirmed.number::<u32>("version"), Some(12));
-
-    let already = line(tag::CONFIRM, |f| {
-        confirm::describe(confirm::Record::Already, f)
-    });
-    let already = read(&already);
-    assert!(already.is(tag::CONFIRM, &[("confirmed", "1")]));
-    assert_eq!(already.field("healthy_ms"), None);
+    // The bench acts on these two: the offer is the running build, and an
+    // earlier attempt reset this power cycle.
+    assert_eq!(
+        Refused::Offer(OfferError::Same).reason(),
+        RefusedReason::Same
+    );
+    assert_eq!(Refused::Attempt.reason(), RefusedReason::Attempt);
 }
 
 fn text(write: impl FnOnce(&mut String) -> fmt::Result) -> String {
@@ -158,7 +233,7 @@ fn stage_and_reason_words_are_unchanged() {
 
 #[test]
 fn ble_records_carry_what_a_bench_run_reads() {
-    let dropped = line(tag::BLE, |f| {
+    let dropped = line(Tag::Ble.as_str(), |f| {
         ble::describe(
             ble::Record::Drop {
                 reason: ble::DropReason::Protocol,
@@ -168,17 +243,18 @@ fn ble_records_carry_what_a_bench_run_reads() {
     });
     let record = read(&dropped);
     assert_eq!(record.first, "drop");
-    assert!(record.is(tag::BLE, &[("reason", "protocol")]));
+    assert_eq!(record.kind(), Some(Tag::Ble));
+    assert_eq!(record.field("reason"), Some("protocol"));
 
-    let advertising = line(tag::BLE, |f| {
+    let advertising = line(Tag::Ble.as_str(), |f| {
         ble::describe(ble::Record::Advertising { on: true }, f)
     });
-    assert!(read(&advertising).is(tag::BLE, &[("on", "1")]));
+    assert_eq!(read(&advertising).flag("on"), Some(true));
 
-    let disconnect = line(tag::BLE, |f| {
+    let disconnect = line(Tag::Ble.as_str(), |f| {
         ble::describe(ble::Record::Disconnect { cause: 0x113 }, f)
     });
-    assert!(read(&disconnect).is(tag::BLE, &[("cause", "0x113")]));
+    assert_eq!(read(&disconnect).field("cause"), Some("0x113"));
 }
 
 #[test]

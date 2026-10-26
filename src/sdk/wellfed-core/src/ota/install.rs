@@ -41,7 +41,38 @@ pub enum Stop {
     Store,
 }
 
+crate::named_enum! {
+    /// The `stage=` word of an install's stop record (`PLOTA1 error`). Not
+    /// one word per [`Stop`]: the words predate the variants, and the bench
+    /// matches the words.
+    pub enum StopStage {
+        Timeout = "timeout",
+        Cancelled = "cancelled",
+        Order = "order",
+        /// [`Stop::Marker`]: the image lacks the loader's marker.
+        Image = "image",
+        Write = "write",
+        Hash = "hash",
+        /// [`Stop::Activate`]: the marker did not read back.
+        Marker = "marker",
+        Store = "store",
+    }
+}
+
 impl Stop {
+    pub const fn stage(self) -> StopStage {
+        match self {
+            Self::Timeout => StopStage::Timeout,
+            Self::Cancelled => StopStage::Cancelled,
+            Self::Order => StopStage::Order,
+            Self::Marker => StopStage::Image,
+            Self::Write => StopStage::Write,
+            Self::Hash => StopStage::Hash,
+            Self::Activate => StopStage::Marker,
+            Self::Store => StopStage::Store,
+        }
+    }
+
     fn of(error: WriteError) -> Self {
         match error {
             WriteError::Order | WriteError::State => Self::Order,
@@ -128,6 +159,48 @@ pub enum Refused {
     /// Another update is in progress.
     Installing,
     NotInstalling,
+}
+
+crate::named_enum! {
+    /// The `reason=` word of a refusal record (`PLOTA1 refused`). Several
+    /// refusals share a word: the bench tells them apart by what it sent.
+    pub enum RefusedReason {
+        Downgrade = "downgrade",
+        Same = "same",
+        Key = "key",
+        Signature = "signature",
+        Statement = "statement",
+        Manifest = "manifest",
+        Store = "store",
+        Busy = "busy",
+        Fallback = "fallback",
+        Pending = "pending",
+        Failed = "failed",
+        Attempt = "attempt",
+        Installing = "installing",
+        NotInstalling = "not-installing",
+    }
+}
+
+impl Refused {
+    pub const fn reason(self) -> RefusedReason {
+        match self {
+            Self::Offer(OfferError::Downgrade) => RefusedReason::Downgrade,
+            Self::Offer(OfferError::Same) => RefusedReason::Same,
+            Self::Offer(OfferError::Key(_)) | Self::Statement(_) => RefusedReason::Key,
+            Self::Offer(OfferError::Signature) => RefusedReason::Signature,
+            Self::Offer(OfferError::Statement(_)) => RefusedReason::Statement,
+            Self::Offer(_) => RefusedReason::Manifest,
+            Self::Store(_) | Self::Unreadable => RefusedReason::Store,
+            Self::Busy => RefusedReason::Busy,
+            Self::Fallback => RefusedReason::Fallback,
+            Self::Pending => RefusedReason::Pending,
+            Self::Failed => RefusedReason::Failed,
+            Self::Attempt => RefusedReason::Attempt,
+            Self::Installing => RefusedReason::Installing,
+            Self::NotInstalling => RefusedReason::NotInstalling,
+        }
+    }
 }
 
 /// What an update request came to, as the update stage answers it.

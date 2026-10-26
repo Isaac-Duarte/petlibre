@@ -37,11 +37,13 @@
 use core::fmt;
 use core::marker::PhantomData;
 
+pub use wellfed_core::ota::SectorStep;
 use wellfed_core::ota::install::{Install, Phase, Progress, Refused, Stop, Taken};
 use wellfed_core::ota::offer::{
     self, Admitted, Context, KeyId, KeyRing, KeyStatement, Trust, admit_offer, admit_statement,
 };
 use wellfed_core::ota::{BANK1_OFFSET, MARKER, SECTOR, SECTOR_BYTES, image};
+use wellfed_core::record::Tag;
 use wellfed_core::store::slot::SlotIo;
 use wellfed_core::store::update::{Bank0, Candidate, State, UpdateStatus, UpdateStore};
 use sha2::{Digest, Sha256};
@@ -246,29 +248,8 @@ impl Record {
     /// The record's line tag.
     pub const fn tag(&self) -> &'static str {
         match self {
-            Self::Offer { .. } | Self::GaveWay { .. } | Self::GiveWayRefused => "PLWCH1",
-            _ => "PLOTA1",
-        }
-    }
-}
-
-/// The step of a sector write that failed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SectorStep {
-    Erase,
-    Program,
-    Read,
-    /// A page read back different from what was programmed.
-    Readback,
-}
-
-impl SectorStep {
-    const fn name(self) -> &'static str {
-        match self {
-            Self::Erase => "erase",
-            Self::Program => "program",
-            Self::Read => "read",
-            Self::Readback => "readback",
+            Self::Offer { .. } | Self::GaveWay { .. } | Self::GiveWayRefused => Tag::Watch.as_str(),
+            _ => Tag::Update.as_str(),
         }
     }
 }
@@ -298,46 +279,13 @@ impl fmt::Display for WriteFault {
             f,
             "sector={} step={} offset={} expected={:08x} read={:08x} reread={:08x} erase_ms={}",
             self.sector,
-            self.step.name(),
+            self.step,
             self.offset,
             self.expected,
             self.read,
             self.reread,
             self.erase_ms
         )
-    }
-}
-
-const fn stage(stop: Stop) -> &'static str {
-    match stop {
-        Stop::Timeout => "timeout",
-        Stop::Cancelled => "cancelled",
-        Stop::Order => "order",
-        Stop::Marker => "image",
-        Stop::Write => "write",
-        Stop::Hash => "hash",
-        Stop::Activate => "marker",
-        Stop::Store => "store",
-    }
-}
-
-const fn refused(refused: Refused) -> &'static str {
-    use wellfed_core::ota::offer::OfferError;
-    match refused {
-        Refused::Offer(OfferError::Downgrade) => "downgrade",
-        Refused::Offer(OfferError::Same) => "same",
-        Refused::Offer(OfferError::Key(_)) | Refused::Statement(_) => "key",
-        Refused::Offer(OfferError::Signature) => "signature",
-        Refused::Offer(OfferError::Statement(_)) => "statement",
-        Refused::Offer(_) => "manifest",
-        Refused::Store(_) | Refused::Unreadable => "store",
-        Refused::Busy => "busy",
-        Refused::Fallback => "fallback",
-        Refused::Pending => "pending",
-        Refused::Failed => "failed",
-        Refused::Attempt => "attempt",
-        Refused::Installing => "installing",
-        Refused::NotInstalling => "not-installing",
     }
 }
 
@@ -363,7 +311,7 @@ pub fn describe(record: Record, f: &mut impl fmt::Write) -> fmt::Result {
             write!(f, "bank0 bytes={len} recorded={}", u8::from(recorded))
         }
         Record::Bank0Unknown => f.write_str("bank0 bytes=0 recorded=0"),
-        Record::Refused { refused: why } => write!(f, "refused reason={}", refused(why)),
+        Record::Refused { refused: why } => write!(f, "refused reason={}", why.reason()),
         Record::Offer { version } => write!(f, "offer=1 version={version}"),
         Record::GaveWay { version } => write!(f, "give_way=1 version={version} restart=1"),
         Record::GiveWayRefused => f.write_str("error stage=give_way"),
@@ -380,7 +328,7 @@ pub fn describe(record: Record, f: &mut impl fmt::Write) -> fmt::Result {
             "activated version={version} bytes={bytes} sectors={sectors}"
         ),
         Record::Stopped { stop, write } => {
-            write!(f, "error stage={}", stage(stop))?;
+            write!(f, "error stage={}", stop.stage())?;
             match write {
                 Some(fault) => write!(f, " {fault}"),
                 None => Ok(()),

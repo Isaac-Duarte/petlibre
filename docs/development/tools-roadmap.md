@@ -73,7 +73,7 @@ The bench's modules fell into separate jobs with one-way dependencies, and each 
 | 5 | FW48 | Offers over the device API (signing already moved to `wellfed-build`); the bench's own faults replace the fault server. Then the replacement's MQTT transport, the broker credentials in the build and the replacement's side of the broker are deleted (done October 25, 2026) |
 | 6 | FW43 | What is left of the stock path moves into `wellfed-stock`, and `wellfed-local` is deleted (done October 26, 2026, ahead of FW42 and FW43 by the owner's decision: the commands moved unchanged into `wellfed-stock`'s binary). `wellfed-client`'s installer steps and the rollback come with FW42 and FW43 |
 
-The cards were FW51 (stage 1), FW52 (stage 2) and FW53 (stages 3–6) on the [firmware board](../../FIRMWARE_BOARD.md); FW53 became AR12 on the [architecture board](../../ARCHITECTURE_BOARD.md). FP02 retargets to the `wellfed` CLI, and FP04 reads stock's own plan records.
+The cards were FW51 (stage 1), FW52 (stage 2) and FW53 (stages 3–6) on the [firmware board](../../FIRMWARE_BOARD.md); FW53 was done as architecture card AR12 (October 26; the architecture board is retired, `git show 4af1b56:ARCHITECTURE_BOARD.md`). FP02 retargets to the `wellfed` CLI, and FP04 reads stock's own plan records.
 
 ## Rules for the new crates
 

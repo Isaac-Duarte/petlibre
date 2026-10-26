@@ -28,11 +28,12 @@ pub enum FirmwareError {
         #[source]
         source: std::io::Error,
     },
-    #[error("Firmware {name}'s Cargo.toml: {source}")]
+    // The message names the parse error, so it is not also a source: a
+    // chain printer would show it twice.
+    #[error("Firmware {name}'s Cargo.toml: {error}")]
     Manifest {
         name: String,
-        #[source]
-        source: toml::de::Error,
+        error: toml::de::Error,
     },
     #[error("Firmware {name} must be the package {package}")]
     Package { name: String, package: String },
@@ -162,11 +163,10 @@ impl Firmware {
     }
 
     fn parse(name: &str, text: &str) -> Result<Self> {
-        let manifest: Manifest =
-            toml::from_str(text).map_err(|source| FirmwareError::Manifest {
-                name: name.into(),
-                source,
-            })?;
+        let manifest: Manifest = toml::from_str(text).map_err(|error| FirmwareError::Manifest {
+            name: name.into(),
+            error,
+        })?;
         let package = format!("wellfed-fw-{name}");
         require(manifest.package.name == package, || {
             FirmwareError::Package {

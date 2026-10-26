@@ -82,7 +82,12 @@ impl Error {
             Self::Formats(wellfed_formats::Error::Io(_)) => ErrorKind::Io,
             Self::Formats(wellfed_formats::Error::Json(_)) => ErrorKind::Json,
 
-            Self::Image(_)
+            Self::Image(
+                wellfed_image::Error::Ota(_)
+                | wellfed_image::Error::Bank(_)
+                | wellfed_image::Error::Root(_)
+                | wellfed_image::Error::Review(_),
+            )
             | Self::Formats(wellfed_formats::Error::NotInteger)
             | Self::Protocol(_)
             | Self::Sector(_)

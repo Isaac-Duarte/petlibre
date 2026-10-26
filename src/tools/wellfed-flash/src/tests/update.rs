@@ -72,7 +72,15 @@ fn the_cli_refuses_an_unpinned_helper_before_any_serial_access() {
 
     // A synthetic image is not the pinned stock image.
     let error = crate::writers::update::run(&context, &args).err().unwrap();
-    assert!(matches!(error, crate::Error::Image(_)), "{error}");
+    assert!(
+        matches!(
+            error,
+            crate::Error::Image(wellfed_image::Error::Review(
+                wellfed_image::review::Error::NotOriginalStock
+            ))
+        ),
+        "{error}"
+    );
     assert_eq!(error.kind(), crate::error::ErrorKind::Refused);
     assert_eq!(*opened.borrow(), 0);
     assert!(!private("inspect").exists());

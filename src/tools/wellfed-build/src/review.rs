@@ -426,13 +426,19 @@ mod tests {
     #[test]
     fn output_outside_private_is_refused() {
         let repo = Repo::here().unwrap();
-        // A checkout without private/ is refused before the output is read.
-        fs::create_dir_all(repo.root.join("private")).unwrap();
         let outside = tempfile::tempdir().unwrap();
         let output = outside.path().join("review");
         let error = freeze(&repo, ImageKind::Stock, Path::new("unused"), &output).unwrap_err();
+        // A checkout without private/ (a fresh clone) is refused for that
+        // first, before the output is read.
         assert!(
-            matches!(error, Error::Review(ReviewError::Output)),
+            matches!(
+                error,
+                Error::Review(ReviewError::Output)
+                    | Error::Ota(wellfed_image::Error::Root(
+                        wellfed_image::root::Error::NoPrivate { .. }
+                    ))
+            ),
             "{error:?}"
         );
         assert!(!output.exists());

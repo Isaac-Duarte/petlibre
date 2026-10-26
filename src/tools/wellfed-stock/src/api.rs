@@ -32,6 +32,9 @@ use crate::{
 
 use crate::build_info::BUILD;
 
+/// The status's whole answer when the enrollment record cannot be read.
+pub const ENROLLMENT_UNREADABLE: &str = "enrollment unreadable";
+
 #[derive(Clone)]
 pub struct ApiState {
     pub token: Arc<str>,
@@ -137,12 +140,12 @@ async fn status(
     // Read beside the config at each call: the broker child writes a
     // contest while the server runs.
     // An unreadable record fails the status: a client must not read it as
-    // a captured device and skip the owner's check.
+    // a captured device and skip the owner's check. The record holds the
+    // feeder's password, and a parse error can quote a field's value, so
+    // the details stay in the server's log and the body is fixed.
     status.enrollment = Enrollment::view(&state.config_path).map_err(|error| {
-        ApiError::new(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("enrollment unreadable: {error:#}"),
-        )
+        tracing::warn!("enrollment unreadable: {error:#}");
+        ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, ENROLLMENT_UNREADABLE)
     })?;
     Ok(Json(status))
 }

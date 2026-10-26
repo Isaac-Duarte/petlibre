@@ -191,4 +191,29 @@ async fn the_first_stock_feeder_enrolls_and_is_then_the_only_one() {
     assert!(admitted(&mut again_events).await);
     let (_late, mut late_events) = stock(listen, "AF_LATE_FEEDER", "x");
     assert!(!admitted(&mut late_events).await);
+
+    // A record that no longer parses fails the status with a fixed answer:
+    // a parse error could quote the password it holds.
+    std::fs::write(
+        Enrollment::path(&path),
+        r#"{"client_id":"AF_FRESH_FEEDER","username":"stock-user","password":["its-own-password"]}"#,
+    )
+    .unwrap();
+    let response = http_client
+        .get(format!("http://{http}/api/status"))
+        .bearer_auth(&config.api_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        reqwest::StatusCode::INTERNAL_SERVER_ERROR
+    );
+    let body = response.text().await.unwrap();
+    assert!(!body.contains("its-own-password"));
+    let body: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(
+        body,
+        json!({"error": wellfed_stock::api::ENROLLMENT_UNREADABLE})
+    );
 }

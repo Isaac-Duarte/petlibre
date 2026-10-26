@@ -279,6 +279,15 @@ mod tests {
         }
     }
 
+    /// The pinmap refusal a check returned; any other result fails the test.
+    fn pinmap_error<T>(result: Result<T>) -> PinmapError {
+        match result {
+            Err(Error::Pinmap(error)) => error,
+            Err(other) => panic!("{other}"),
+            Ok(_) => panic!("accepted"),
+        }
+    }
+
     #[test]
     #[ignore = "needs the ignored stock OTA and pinned SDK checkout"]
     fn unreviewed_changes_and_damaged_references_are_rejected() {
@@ -293,13 +302,6 @@ mod tests {
             &sleep.replacen("GPIO_PuPd_KEEP", "GPIO_PuPd_DOWN", 1),
             1,
         );
-        fn pinmap_error<T>(result: Result<T>) -> PinmapError {
-            match result {
-                Err(Error::Pinmap(error)) => error,
-                Err(other) => panic!("{other}"),
-                Ok(_) => panic!("accepted"),
-            }
-        }
         assert!(matches!(
             pinmap_error(overlay(&damaged, &stock)),
             PinmapError::SleepFields { pin: 13 }

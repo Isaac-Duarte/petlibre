@@ -13,7 +13,7 @@ use wellfed_formats::require;
 /// A status read that refuses the mutation it guards; the registers are
 /// never written to clear it.
 #[derive(Debug, thiserror::Error)]
-pub enum Error {
+pub enum StatusError {
     #[error("Range must be within the 8 MiB main array")]
     RangeOutside { start: usize, end: usize },
     #[error("Flash status changed between observations; mutation refused")]
@@ -163,9 +163,8 @@ pub fn decode(sr1: u8, sr2: u8, sr3: u8) -> Decoded {
 /// Whether the software status permits writing `start..end`; physical
 /// write permission is never established here.
 pub fn assess_range(registers: [u8; 3], start: usize, end: usize) -> Result<Assessment> {
-    require(start < end && end <= CAPACITY, || Error::RangeOutside {
-        start,
-        end,
+    require(start < end && end <= CAPACITY, || {
+        StatusError::RangeOutside { start, end }
     })?;
 
     let [sr1, sr2, sr3] = registers;
@@ -235,7 +234,7 @@ pub fn check_status(
             first,
             second,
         })?;
-        return Err(Error::Unstable {
+        return Err(StatusError::Unstable {
             boundary,
             first,
             second,
@@ -250,9 +249,11 @@ pub fn check_status(
         assessment: assessed.clone(),
     })?;
 
-    require(assessed.software_preconditions_met, || Error::Blocked {
-        boundary,
-        reasons: assessed.blocking_reasons.clone(),
+    require(assessed.software_preconditions_met, || {
+        StatusError::Blocked {
+            boundary,
+            reasons: assessed.blocking_reasons.clone(),
+        }
     })?;
 
     Ok(assessed)
@@ -288,7 +289,7 @@ mod tests {
 
     #[test]
     fn a_block_lists_its_reasons_as_journals_record_them() {
-        let blocked = Error::Blocked {
+        let blocked = StatusError::Blocked {
             boundary: Boundary::BeforeErase,
             reasons: vec![Blocking::FlashBusy, Blocking::SoftwareProtectedRange],
         };
@@ -323,7 +324,7 @@ mod tests {
         );
         assert!(matches!(
             assess_range([0, 0, 0], 5, 5),
-            Err(crate::Error::Status(Error::RangeOutside {
+            Err(crate::Error::Status(StatusError::RangeOutside {
                 start: 5,
                 end: 5
             }))

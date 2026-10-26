@@ -37,7 +37,7 @@ use wellfed_image::review::{Frozen, frozen};
 /// bind, checked before serial access, or an acquisition that came back
 /// short.
 #[derive(Debug, thiserror::Error)]
-pub enum Error {
+pub enum UpdateError {
     #[error("A source review is required for bank 1")]
     SourceReviewMissing,
     #[error(
@@ -231,7 +231,7 @@ fn load(context: &Context, args: &Args) -> Result<Loaded> {
         .map(|path| frozen(root, path, &layout))
         .transpose()?;
     require(source.is_some() || layout.bank == 0, || {
-        Error::SourceReviewMissing
+        UpdateError::SourceReviewMissing
     })?;
 
     let target = frozen(root, &args.target, &layout)?;
@@ -241,14 +241,14 @@ fn load(context: &Context, args: &Args) -> Result<Loaded> {
         Some(_) => None,
         None => {
             let Some(path) = args.original_read.as_deref() else {
-                return Err(Error::OriginalReadMissing.into());
+                return Err(UpdateError::OriginalReadMissing.into());
             };
             let read = root.private_file(path)?;
-            require(read.len() == CAPACITY, || Error::OriginalReadPartial {
-                bytes: read.len(),
+            require(read.len() == CAPACITY, || {
+                UpdateError::OriginalReadPartial { bytes: read.len() }
             })?;
             require(read[..0x6000] == baseline.bytes()[..0x6000], || {
-                Error::OriginalFactoryDiffers
+                UpdateError::OriginalFactoryDiffers
             })?;
             Some(read)
         }
@@ -284,7 +284,7 @@ fn load(context: &Context, args: &Args) -> Result<Loaded> {
 }
 
 /// The one permitted status pair an inspection must have recorded.
-fn status_permitted(report: &Saved<IgnoredAny>) -> Result<(), Error> {
+fn status_permitted(report: &Saved<IgnoredAny>) -> Result<(), UpdateError> {
     let checks = report.status_checks.as_deref();
     require(
         checks.is_some_and(|c| {
@@ -296,7 +296,7 @@ fn status_permitted(report: &Saved<IgnoredAny>) -> Result<(), Error> {
                     .and_then(|a| a.software_preconditions_met)
                     == Some(true)
         }),
-        || Error::StatusPairMissing,
+        || UpdateError::StatusPairMissing,
     )
 }
 
@@ -314,7 +314,7 @@ fn inspected(
 
     let [factory, other, application] =
         session::inspected_transfers(&context.root, &path, &report, &loaded.extents()?, || {
-            Error::InspectedRegions
+            UpdateError::InspectedRegions
         })?;
 
     development::guards(&loaded.baseline, &factory, &other, &loaded.layout, None)?;
@@ -363,11 +363,11 @@ pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
                 &current,
                 Some(&other),
             )?)?,
-        || Error::OperationDiffers,
+        || UpdateError::OperationDiffers,
     )?;
     require(
         canonical_of(&reviewed.bindings)? == canonical_of(&loaded.bindings)?,
-        || Error::BindingsDiffer,
+        || UpdateError::BindingsDiffer,
     )?;
 
     let execution = Execution {
@@ -433,7 +433,7 @@ fn session_run(
 
             let count = values.len();
             let Ok([factory, other, application]) = <[Vec<u8>; 3]>::try_from(values) else {
-                return Err(Error::IncompleteRegions { count }.into());
+                return Err(UpdateError::IncompleteRegions { count }.into());
             };
             Ok(Acquired {
                 application,
@@ -609,11 +609,11 @@ pub fn give_way(context: &Context, args: &GiveWayArgs) -> Result<Outcome> {
         .map(|(_, offset, length)| (offset, length));
     let [factory, bank0, bank1] =
         session::inspected_transfers(&context.root, &path, &report, &extents, || {
-            Error::InspectedGuards
+            UpdateError::InspectedGuards
         })?;
 
     require(factory == loaded.baseline.bytes()[..0x6000], || {
-        development::Error::FactoryDiffers
+        development::DevelopmentError::FactoryDiffers
     })?;
 
     let reviewed = Reviewed {
@@ -687,7 +687,7 @@ fn give_way_session(
 
             let count = values.len();
             let Ok(values) = <[Vec<u8>; 3]>::try_from(values) else {
-                return Err(Error::IncompleteGuards { count }.into());
+                return Err(UpdateError::IncompleteGuards { count }.into());
             };
             Ok(values)
         };
@@ -696,7 +696,7 @@ fn give_way_session(
             None => {
                 let [factory, region, first] = acquire(&mut port)?;
                 require(factory == loaded.baseline.bytes()[..0x6000], || {
-                    development::Error::FactoryDiffers
+                    development::DevelopmentError::FactoryDiffers
                 })?;
                 development::give_way_plan(&loaded.fallback, &region, &first)?;
 
@@ -758,7 +758,7 @@ mod tests {
         Context {
             root: Root::new(checkout).unwrap(),
             tool_sha256: "t".repeat(64),
-            open: Box::new(|_| Err(protocol::Error::Interrupted.into())),
+            open: Box::new(|_| Err(protocol::ProtocolError::Interrupted.into())),
             pin: Pin::Research,
         }
     }
@@ -850,7 +850,7 @@ mod tests {
                 second: [1, 0, 0],
             })
         });
-        let stopped = Err(protocol::Error::Interrupted.into());
+        let stopped = Err(protocol::ProtocolError::Interrupted.into());
         let outcome = finish(&directory, report, stopped, None).unwrap();
 
         let closed = saved(&directory.join("report.json"));

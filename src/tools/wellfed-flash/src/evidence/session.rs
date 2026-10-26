@@ -22,7 +22,7 @@ use wellfed_formats::session::Mode;
 /// Saved evidence or a reviewed plan that a session refuses to continue
 /// from, always before the port opens.
 #[derive(Debug, thiserror::Error)]
-pub enum Error {
+pub enum SessionError {
     #[error("Report comes from a different transport than this session")]
     TransportMismatch {
         report: Transport,
@@ -124,9 +124,9 @@ impl Context {
 
     /// Evidence from an emulated session never continues a serial one, nor
     /// the reverse.
-    pub fn same_transport(&self, report: Transport) -> Result<(), Error> {
+    pub fn same_transport(&self, report: Transport) -> Result<(), SessionError> {
         let session = self.transport();
-        require(report == session, || Error::TransportMismatch {
+        require(report == session, || SessionError::TransportMismatch {
             report,
             session,
         })
@@ -363,8 +363,10 @@ where
 /// A successful ROM inspection that identified a pinned SDK ROM.
 pub fn validate_rom_report(context: &Context, path: &Path) -> Result<Vec<u8>> {
     let root = &context.root;
-    require(root.is_private(path), || Error::RomReportNotPrivate {
-        path: path.to_path_buf(),
+    require(root.is_private(path), || {
+        SessionError::RomReportNotPrivate {
+            path: path.to_path_buf(),
+        }
     })?;
 
     let (raw, report): (_, Saved<RomResult>) = saved(root, path)?;
@@ -373,14 +375,14 @@ pub fn validate_rom_report(context: &Context, path: &Path) -> Result<Vec<u8>> {
     require(
         report.is(Status::Complete, Mode::InspectRom)
             && result.is_some_and(|r| r.returned_to_km4 == Some(true)),
-        || Error::RomInspection,
+        || SessionError::RomInspection,
     )?;
 
     let candidates = result.and_then(|r| r.matching_candidates.as_ref());
     require(
         candidates
             .is_some_and(|c| !c.is_empty() && c.values().all(|v| ROM_SHA256.contains(&v.as_str()))),
-        || Error::RomCandidate,
+        || SessionError::RomCandidate,
     )?;
 
     let expected: Vec<Option<String>> = protocol::rom_sample_addresses()
@@ -391,9 +393,9 @@ pub fn validate_rom_report(context: &Context, path: &Path) -> Result<Vec<u8>> {
         .and_then(|r| r.sampled_words.as_ref())
         .map(|words| words.iter().map(|w| w.address.clone()).collect())
         .unwrap_or_default();
-    require(sampled == expected, || Error::RomSamples)?;
+    require(sampled == expected, || SessionError::RomSamples)?;
 
-    streams_match(root, path, &report.streams, || Error::RomStreams)?;
+    streams_match(root, path, &report.streams, || SessionError::RomStreams)?;
     Ok(raw)
 }
 
@@ -419,27 +421,31 @@ pub fn validate_status_session(
 ) -> Result<Vec<u8>> {
     let root = &context.root;
     let Some(path) = path else {
-        return Err(Error::BoundedReadMissing.into());
+        return Err(SessionError::BoundedReadMissing.into());
     };
 
-    require(root.is_private(path), || Error::BoundedReadNotPrivate {
-        path: path.to_path_buf(),
+    require(root.is_private(path), || {
+        SessionError::BoundedReadNotPrivate {
+            path: path.to_path_buf(),
+        }
     })?;
 
     let (raw, report): (_, Saved<ReadResult>) = saved(root, path)?;
     context.same_transport(report.transport)?;
     require(
         bounded_read(&report, port) && report.result.as_ref().and_then(|r| r.offset) == Some(0),
-        || Error::BoundedReadSession,
+        || SessionError::BoundedReadSession,
     )?;
 
     let data = fs::read(parent(path).join("flash-read.bin"))?;
     require(
         data.len() == 4096 && read_sha256(&report) == Some(&sha256(&data)),
-        || Error::BoundedReadImage,
+        || SessionError::BoundedReadImage,
     )?;
 
-    streams_match(root, path, &report.streams, || Error::BoundedReadStreams)?;
+    streams_match(root, path, &report.streams, || {
+        SessionError::BoundedReadStreams
+    })?;
     Ok(raw)
 }
 
@@ -455,14 +461,14 @@ pub fn validate_small_for_full(context: &Context, path: &Path, port: &str) -> Re
         root.is_private(path)
             && bounded_read(&report, port)
             && read_sha256(&report) == Some(&sha256(&image)),
-        || Error::BoundedReadEvidence,
+        || SessionError::BoundedReadEvidence,
     )?;
     Ok(raw)
 }
 
 /// Write a reviewed plan exclusively and durably; returns its SHA-256.
 pub fn write_plan(root: &Root, output: &Path, plan: &impl Serialize) -> Result<String> {
-    require(root.is_private(output), || Error::PlanNotPrivate {
+    require(root.is_private(output), || SessionError::PlanNotPrivate {
         path: output.to_path_buf(),
     })?;
     let mut raw = canonical_of(plan)?;
@@ -481,14 +487,14 @@ pub fn reviewed_plan(
     expected: &impl Serialize,
 ) -> Result<Vec<u8>> {
     let (Some(path), Some(expected_sha256)) = (path, expected_sha256) else {
-        return Err(Error::ReviewedPlanMissing.into());
+        return Err(SessionError::ReviewedPlanMissing.into());
     };
 
     let raw = root.private_file(path)?;
     let parsed: Value = serde_json::from_slice(&raw)?;
     require(
         sha256(&raw) == expected_sha256 && canonical(&parsed)? == canonical_of(expected)?,
-        || Error::ReviewedPlanDiffers,
+        || SessionError::ReviewedPlanDiffers,
     )?;
     Ok(raw)
 }
@@ -529,9 +535,11 @@ pub fn acquire_region(
     drop(file);
 
     let data = fs::read(&partial)?;
-    require(data.len() == length, || protocol::Error::IncompleteRegion {
-        received: data.len(),
-        length,
+    require(data.len() == length, || {
+        protocol::ProtocolError::IncompleteRegion {
+            received: data.len(),
+            length,
+        }
     })?;
     let name = format!("{label}-{number:02}.bin");
     fs::rename(&partial, directory.join(&name))?;
@@ -567,7 +575,7 @@ where
     let mut values = Vec::new();
     for (transfer, (offset, length)) in first.iter().zip(extents) {
         let file = transfer.file.as_deref().unwrap_or_default();
-        let differs = || Error::InspectionExtent {
+        let differs = || SessionError::InspectionExtent {
             file: file.to_string(),
         };
         require(!file.is_empty() && !file.contains('/'), differs)?;
@@ -598,7 +606,7 @@ pub(crate) fn inspection(
 ) -> Result<(PathBuf, Saved<IgnoredAny>, String)> {
     let root = &context.root;
     let Some(path) = path else {
-        return Err(Error::InspectionMissing.into());
+        return Err(SessionError::InspectionMissing.into());
     };
     let (raw, report): (_, Saved<IgnoredAny>) = saved(root, path)?;
     context.same_transport(report.transport)?;
@@ -611,10 +619,12 @@ pub(crate) fn inspection(
         report.is(Status::Complete, Mode::Inspect)
             && recorded == canonical_of(bindings)?
             && report.helper_upload_attempted == Some(false),
-        || Error::InspectionStale,
+        || SessionError::InspectionStale,
     )?;
 
-    streams_match(root, path, &report.streams, || Error::InspectionStreams)?;
+    streams_match(root, path, &report.streams, || {
+        SessionError::InspectionStreams
+    })?;
     Ok((path.to_path_buf(), report, sha256(&raw)))
 }
 

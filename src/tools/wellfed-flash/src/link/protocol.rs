@@ -20,7 +20,7 @@ use wellfed_formats::require;
 /// The loader, helper and console protocol's refusals. Each stops the
 /// session with the transport left as it is; none is retried.
 #[derive(Debug, thiserror::Error)]
-pub enum Error {
+pub enum ProtocolError {
     #[error("Interrupted by the operator; no retry")]
     Interrupted,
     #[error("Helper does not match the reviewed vendor binary")]
@@ -146,9 +146,9 @@ pub const ROM_SHA256: [&str; 2] = [
 pub static INTERRUPTED: AtomicBool = AtomicBool::new(false);
 
 pub fn interrupted() -> Result<()> {
-    Ok(require(!INTERRUPTED.load(Ordering::SeqCst), || {
-        Error::Interrupted
-    })?)
+    require(!INTERRUPTED.load(Ordering::SeqCst), || {
+        ProtocolError::Interrupted.into()
+    })
 }
 
 /// A serial-shaped byte transport. `read` returns 0 when nothing arrives
@@ -164,11 +164,11 @@ pub trait Port {
 pub fn load_helper(data: Vec<u8>) -> Result<Vec<u8>> {
     require(
         data.len() == HELPER_BYTES && sha256(&data) == HELPER_SHA256,
-        || Error::HelperMismatch { bytes: data.len() },
+        || ProtocolError::HelperMismatch { bytes: data.len() },
     )?;
     let entry = data.first_chunk().map(|word| u32::from_le_bytes(*word));
     require(entry == Some(HELPER_ADDRESS + 0x21), || {
-        Error::HelperEntry { entry }
+        ProtocolError::HelperEntry { entry }
     })?;
     Ok(data)
 }
@@ -176,15 +176,14 @@ pub fn load_helper(data: Vec<u8>) -> Result<Vec<u8>> {
 pub fn read_request(offset: usize, length: usize) -> Result<[u8; 6]> {
     require(
         length > 0 && offset.is_multiple_of(SECTOR) && length.is_multiple_of(SECTOR),
-        || Error::ReadUnaligned { offset, length },
+        || ProtocolError::ReadUnaligned { offset, length },
     )?;
-    require(offset + length <= CAPACITY, || Error::ReadBeyondCapacity {
-        offset,
-        length,
+    require(offset + length <= CAPACITY, || {
+        ProtocolError::ReadBeyondCapacity { offset, length }
     })?;
     let [low, middle, high] = address(offset)?;
     let Ok(sectors) = u16::try_from(length / SECTOR) else {
-        return Err(Error::ReadSectorCount { length }.into());
+        return Err(ProtocolError::ReadSectorCount { length }.into());
     };
 
     let [count_low, count_high] = sectors.to_le_bytes();
@@ -193,9 +192,11 @@ pub fn read_request(offset: usize, length: usize) -> Result<[u8; 6]> {
 
 /// The three address bytes requests carry; the 8 MiB array needs no more.
 fn address(offset: usize) -> Result<[u8; 3]> {
-    require(offset < CAPACITY, || Error::AddressOutside { offset })?;
+    require(offset < CAPACITY, || ProtocolError::AddressOutside {
+        offset,
+    })?;
     let Ok(word) = u32::try_from(offset) else {
-        return Err(Error::AddressOutside { offset }.into());
+        return Err(ProtocolError::AddressOutside { offset }.into());
     };
 
     let [low, middle, high, _] = word.to_le_bytes();
@@ -225,18 +226,21 @@ pub fn frame(number: u8, address: u32, payload: &[u8; 1024]) -> Vec<u8> {
 }
 
 fn pinned_helper(helper: &[u8]) -> Result<()> {
-    Ok(require(
+    require(
         helper.len() == HELPER_BYTES && sha256(helper) == HELPER_SHA256,
-        || Error::UnpinnedHelper {
-            bytes: helper.len(),
+        || {
+            ProtocolError::UnpinnedHelper {
+                bytes: helper.len(),
+            }
+            .into()
         },
-    )?)
+    )
 }
 
 pub fn upload_frame(helper: &[u8], index: usize) -> Result<Vec<u8>> {
     pinned_helper(helper)?;
     require(index < helper.len().div_ceil(1024), || {
-        Error::HelperPacket { index }
+        ProtocolError::HelperPacket { index }
     })?;
 
     let mut payload = [0xffu8; 1024];
@@ -245,7 +249,7 @@ pub fn upload_frame(helper: &[u8], index: usize) -> Result<Vec<u8>> {
 
     // The pinned helper is five packets, so both always fit.
     let (Ok(number), Ok(at)) = (u8::try_from(index + 1), u32::try_from(index * 1024)) else {
-        return Err(Error::HelperPacket { index }.into());
+        return Err(ProtocolError::HelperPacket { index }.into());
     };
     Ok(frame(number, HELPER_ADDRESS + at, &payload))
 }
@@ -259,7 +263,7 @@ pub fn exact_read(port: &mut dyn Port, count: usize, timeout: f64) -> Result<Vec
     let mut data = vec![0; count];
     let mut filled = 0;
     while filled < count {
-        require(Instant::now() < deadline, || Error::SerialDeadline)?;
+        require(Instant::now() < deadline, || ProtocolError::SerialDeadline)?;
         interrupted()?;
         filled += port.read(&mut data[filled..])?;
     }
@@ -271,7 +275,7 @@ pub fn send(port: &mut dyn Port, data: &[u8]) -> Result<()> {
     // KeyboardInterrupt lands before `send` runs.
     interrupted()?;
     let written = port.write(data)?;
-    require(written == data.len(), || Error::PartialWrite {
+    require(written == data.len(), || ProtocolError::PartialWrite {
         written,
         length: data.len(),
     })?;
@@ -280,10 +284,13 @@ pub fn send(port: &mut dyn Port, data: &[u8]) -> Result<()> {
 
 pub fn expect(port: &mut dyn Port, value: u8) -> Result<()> {
     let actual = exact_read(port, 1, 3.0)?[0];
-    Ok(require(actual == value, || Error::UnexpectedByte {
-        actual,
-        expected: value,
-    })?)
+    require(actual == value, || {
+        ProtocolError::UnexpectedByte {
+            actual,
+            expected: value,
+        }
+        .into()
+    })
 }
 
 /// Require consecutive NAKs; any preceding banner stays in the transport log.
@@ -292,7 +299,7 @@ pub fn wait_naks(port: &mut dyn Port, count: usize, timeout: f64) -> Result<()> 
     let mut seen = 0;
     let mut byte = [0u8; 1];
     while seen < count {
-        require(Instant::now() < deadline, || Error::NakDeadline)?;
+        require(Instant::now() < deadline, || ProtocolError::NakDeadline)?;
         interrupted()?;
         if port.read(&mut byte)? == 0 {
             continue;
@@ -308,7 +315,7 @@ pub fn drain_naks(port: &mut dyn Port, before: Pending) -> Result<()> {
     if pending > 0 {
         let data = exact_read(port, pending, 1.0)?;
         require(data.iter().all(|byte| *byte == NAK), || {
-            Error::UnexpectedOutput(before)
+            ProtocolError::UnexpectedOutput(before)
         })?;
     }
     Ok(())
@@ -325,11 +332,13 @@ pub fn baudcheck(port: &mut dyn Port) -> Result<()> {
     send(port, &[0x07])?;
     let deadline = Instant::now() + seconds(3.0);
     loop {
-        require(Instant::now() < deadline, || Error::BaudcheckDeadline)?;
+        require(Instant::now() < deadline, || {
+            ProtocolError::BaudcheckDeadline
+        })?;
         match exact_read(port, 1, 1.0)?[0] {
             ACK => return Ok(()),
             NAK => {}
-            byte => return Err(Error::BaudcheckResponse { byte }.into()),
+            byte => return Err(ProtocolError::BaudcheckResponse { byte }.into()),
         }
     }
 }
@@ -383,11 +392,11 @@ pub fn receive_flash(
     let deadline = Instant::now() + seconds(30.0 + length as f64 / 4000.0);
 
     loop {
-        require(Instant::now() < deadline, || Error::ReadDeadline)?;
+        require(Instant::now() < deadline, || ProtocolError::ReadDeadline)?;
         interrupted()?;
         let control = exact_read(port, 1, 5.0)?[0];
         if control == EOT {
-            require(total == length, || Error::PrematureEot {
+            require(total == length, || ProtocolError::PrematureEot {
                 received: total,
                 length,
             })?;
@@ -400,23 +409,22 @@ pub fn receive_flash(
             });
         }
 
-        require(control == STX, || Error::ReadControl { control })?;
+        require(control == STX, || ProtocolError::ReadControl { control })?;
 
         let frame = exact_read(port, 1027, 3.0)?;
         let (number, complement) = (frame[0], frame[1]);
         let payload = &frame[2..1026];
-        require(number ^ complement == 0xff, || Error::PacketComplement {
-            number,
-            complement,
+        require(number ^ complement == 0xff, || {
+            ProtocolError::PacketComplement { number, complement }
         })?;
-        require(checksum(payload) == frame[1026], || Error::PacketChecksum {
-            number,
+        require(checksum(payload) == frame[1026], || {
+            ProtocolError::PacketChecksum { number }
         })?;
 
         if previous.is_some() && number == (sequence - 1).to_le_bytes()[0] {
             require(
                 previous.as_deref() == Some(payload) && duplicates < 8,
-                || Error::ChangedDuplicate { number },
+                || ProtocolError::ChangedDuplicate { number },
             )?;
             duplicates += 1;
             send(port, &[ACK])?;
@@ -424,12 +432,12 @@ pub fn receive_flash(
         }
 
         let expected = sequence.to_le_bytes()[0];
-        require(number == expected, || Error::OutOfOrder {
+        require(number == expected, || ProtocolError::OutOfOrder {
             number,
             expected,
         })?;
-        require(total + payload.len() <= length, || Error::ReadOverrun {
-            length,
+        require(total + payload.len() <= length, || {
+            ProtocolError::ReadOverrun { length }
         })?;
 
         output.write_all(payload)?;
@@ -450,7 +458,7 @@ pub fn receive_flash(
 pub fn read_region(port: &mut dyn Port, offset: usize, length: usize) -> Result<Vec<u8>> {
     let mut output = Vec::with_capacity(length);
     receive_flash(port, offset, length, &mut output, None)?;
-    require(output.len() == length, || Error::IncompleteRegion {
+    require(output.len() == length, || ProtocolError::IncompleteRegion {
         received: output.len(),
         length,
     })?;
@@ -465,8 +473,10 @@ pub fn collect(port: &mut dyn Port, timeout: f64) -> Result<Vec<u8>> {
         interrupted()?;
         let count = port.read(&mut buffer)?;
         result.extend_from_slice(&buffer[..count]);
-        require(result.len() <= 512 * 1024, || Error::ConsoleOverflow {
-            bytes: result.len(),
+        require(result.len() <= 512 * 1024, || {
+            ProtocolError::ConsoleOverflow {
+                bytes: result.len(),
+            }
         })?;
     }
     Ok(result)
@@ -509,9 +519,9 @@ pub struct Observation {
 
 /// The bounded receive-only window, checked before the port opens and again
 /// before observing.
-pub fn observation_window(seconds: f64) -> Result<(), Error> {
+pub fn observation_window(seconds: f64) -> Result<(), ProtocolError> {
     require((1.0..=180.0).contains(&seconds), || {
-        Error::ObservationWindow { seconds }
+        ProtocolError::ObservationWindow { seconds }
     })
 }
 
@@ -550,7 +560,7 @@ fn rom_command(command: &[u8]) -> bool {
 }
 
 pub fn console_query(port: &mut dyn Port, command: &[u8], seconds: f64) -> Result<Vec<u8>> {
-    require(rom_command(command), || Error::ConsoleCommand)?;
+    require(rom_command(command), || ProtocolError::ConsoleCommand)?;
 
     send(port, command)?;
     let reply = collect(port, seconds)?;
@@ -559,7 +569,7 @@ pub fn console_query(port: &mut dyn Port, command: &[u8], seconds: f64) -> Resul
             .iter()
             .chain([&b"app_main:version:"[..]].iter())
             .any(|marker| contains(&reply, marker)),
-        || Error::ConsoleFault,
+        || ProtocolError::ConsoleFault,
     )?;
 
     Ok(reply)
@@ -657,17 +667,17 @@ pub fn inspect_rom(
 ) -> Result<RomInspection> {
     let initial = collect(port, 0.5)?;
     require(!contains(&initial, b"Hard Fault"), || {
-        Error::PreexistingFault
+        ProtocolError::PreexistingFault
     })?;
 
     if start == Core::Km4 {
         let high = console_query(port, b"?\r\n", 1.0)?;
-        require(is_km4_help(&high), || Error::Km4Table)?;
+        require(is_km4_help(&high), || ProtocolError::Km4Table)?;
         console_query(port, b">>\r\n", 0.5)?;
     }
 
     let low = console_query(port, b"?\r\n", 1.0)?;
-    require(is_km0_help(&low), || Error::Km0Table)?;
+    require(is_km0_help(&low), || ProtocolError::Km0Table)?;
 
     let mut samples = Vec::new();
     let mut surviving: Vec<&(String, Vec<u8>)> = candidates.iter().collect();
@@ -676,7 +686,7 @@ pub fn inspect_rom(
         let command = format!("DW {address:08X}\r\n");
         let response = console_query(port, command.as_bytes(), 0.25)?;
         let values = dumped_words(&response, address);
-        require(values.len() == 1, || Error::RomWordCount {
+        require(values.len() == 1, || ProtocolError::RomWordCount {
             address,
             found: values.len(),
         })?;
@@ -684,7 +694,9 @@ pub fn inspect_rom(
         let value = values[0];
         let at = address as usize;
         surviving.retain(|(_, rom)| rom.get(at..at + 4) == Some(&value.to_le_bytes()[..]));
-        require(!surviving.is_empty(), || Error::RomDiffers { address })?;
+        require(!surviving.is_empty(), || ProtocolError::RomDiffers {
+            address,
+        })?;
 
         samples.push(Sample {
             address: format!("0x{address:08x}"),
@@ -694,7 +706,7 @@ pub fn inspect_rom(
 
     console_query(port, b">>\r\n", 0.5)?;
     let high = console_query(port, b"?\r\n", 1.0)?;
-    require(is_km4_help(&high), || Error::Km4Return)?;
+    require(is_km4_help(&high), || ProtocolError::Km4Return)?;
 
     Ok(RomInspection {
         sampled_words: samples,
@@ -719,21 +731,23 @@ mod tests {
         );
         assert!(matches!(
             read_request(0x100, 4096),
-            Err(crate::Error::Protocol(Error::ReadUnaligned {
+            Err(crate::Error::Protocol(ProtocolError::ReadUnaligned {
                 offset: 0x100,
                 ..
             }))
         ));
         assert!(matches!(
             read_request(0, 0),
-            Err(crate::Error::Protocol(Error::ReadUnaligned {
+            Err(crate::Error::Protocol(ProtocolError::ReadUnaligned {
                 length: 0,
                 ..
             }))
         ));
         assert!(matches!(
             read_request(CAPACITY - 4096, 8192),
-            Err(crate::Error::Protocol(Error::ReadBeyondCapacity { .. }))
+            Err(crate::Error::Protocol(
+                ProtocolError::ReadBeyondCapacity { .. }
+            ))
         ));
         assert_eq!(
             erase_request(0x186000).unwrap(),
@@ -741,16 +755,16 @@ mod tests {
         );
         assert!(matches!(
             erase_request(CAPACITY),
-            Err(crate::Error::Protocol(Error::AddressOutside {
+            Err(crate::Error::Protocol(ProtocolError::AddressOutside {
                 offset: CAPACITY
             }))
         ));
         assert_eq!(
-            Error::UnexpectedOutput(Pending::Upload).to_string(),
+            ProtocolError::UnexpectedOutput(Pending::Upload).to_string(),
             "Unexpected pending loader output"
         );
         assert_eq!(
-            Error::UnexpectedByte {
+            ProtocolError::UnexpectedByte {
                 actual: 0x15,
                 expected: 6
             }

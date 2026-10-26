@@ -14,7 +14,7 @@ use crate::error::Result;
 
 /// A bank this layout does not have, or an image that does not fit one.
 #[derive(Debug, thiserror::Error)]
-pub enum Error {
+pub enum BankError {
     #[error("Unknown bank")]
     Unknown { bank: u8 },
     #[error("Development image exceeds aligned bank-{bank} footprint")]
@@ -52,7 +52,7 @@ pub fn layout(bank: u8) -> Result<Layout> {
     match bank {
         0 => Ok(BANK0),
         1 => Ok(BANK1),
-        _ => Err(Error::Unknown { bank }.into()),
+        _ => Err(BankError::Unknown { bank }.into()),
     }
 }
 
@@ -61,7 +61,7 @@ pub fn payload<'a>(image: &'a [u8], layout: &Layout) -> Result<&'a [u8]> {
     let data = crate::ota::container(image)?;
     require(
         !data.is_empty() && data.len() <= layout.end - layout.start && data.len() % SECTOR == 0,
-        || Error::Footprint { bank: layout.bank },
+        || BankError::Footprint { bank: layout.bank },
     )?;
     crate::ota::images(data)?;
     Ok(data)

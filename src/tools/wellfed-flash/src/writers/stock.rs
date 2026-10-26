@@ -30,7 +30,7 @@ use wellfed_formats::session::Mode;
 /// A stock recovery whose full read or reviewed plan does not bind, or a
 /// snapshot that came back short.
 #[derive(Debug, thiserror::Error)]
-pub enum Error {
+pub enum StockError {
     #[error("Complete full-read report from this helper session required")]
     FullReadReport,
     #[error("Full-read serial evidence hash mismatch")]
@@ -107,10 +107,10 @@ fn prepare_inputs(context: &Context, args: &Args) -> Result<(Baseline, Vec<u8>, 
             && result.and_then(|r| r.offset) == Some(0)
             && result.and_then(|r| r.bytes) == u64::try_from(CAPACITY).ok()
             && result.and_then(|r| r.sha256.as_deref()) == Some(&sha256(&current)),
-        || Error::FullReadReport,
+        || StockError::FullReadReport,
     )?;
     session::streams_match(root, &report_path, &report.streams, || {
-        Error::FullReadStreams
+        StockError::FullReadStreams
     })?;
 
     let reviewed = Reviewed {
@@ -136,7 +136,7 @@ fn comparable(reviewed: &Value) -> Result<Vec<u8>> {
         .and_then(Value::as_object_mut);
     let Some(plan) = plan.filter(|plan| plan.get("created_utc").is_some_and(Value::is_string))
     else {
-        return Err(Error::CreationTime.into());
+        return Err(StockError::CreationTime.into());
     };
 
     plan.remove("created_utc");
@@ -169,12 +169,12 @@ pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
     }
 
     let (Some(plan), Some(expected_sha)) = (&evidence.plan, &evidence.expected_plan_sha256) else {
-        return Err(Error::ReviewedPlanMissing.into());
+        return Err(StockError::ReviewedPlanMissing.into());
     };
 
     let raw = context.root.private_file(plan)?;
     let actual = sha256(&raw);
-    require(actual == *expected_sha, || Error::PlanHashDiffers {
+    require(actual == *expected_sha, || StockError::PlanHashDiffers {
         expected: expected_sha.clone(),
         actual: actual.clone(),
     })?;
@@ -182,7 +182,7 @@ pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
     let reviewed: Value = serde_json::from_slice(&raw)?;
     require(
         comparable(&reviewed)? == comparable(&serde_json::to_value(&expected)?)?,
-        || session::Error::ReviewedPlanDiffers,
+        || session::SessionError::ReviewedPlanDiffers,
     )?;
 
     let manifest = &reviewed["recovery_plan"];
@@ -278,7 +278,7 @@ fn execute(
             drop(file);
 
             let data = fs::read(&partial)?;
-            require(data.len() == CAPACITY, || Error::SnapshotTruncated {
+            require(data.len() == CAPACITY, || StockError::SnapshotTruncated {
                 bytes: data.len(),
             })?;
             let name = format!("snapshot-{number:02}.bin");

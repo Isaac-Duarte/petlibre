@@ -20,7 +20,7 @@ use wellfed_image::bank::BANK1;
 /// Sector transport and marker-commit refusals. Those after an erase intent
 /// leave flash possibly changed, which the journal's stop record says.
 #[derive(Debug, thiserror::Error)]
-pub enum Error {
+pub enum SectorError {
     #[error("Pinned full baseline required")]
     UnpinnedBaseline { bytes: usize },
     #[error("Packet number must be 1-4")]
@@ -98,7 +98,7 @@ impl Baseline {
     pub fn pinned(data: Vec<u8>) -> Result<Self> {
         require(
             data.len() == CAPACITY && sha256(&data) == BASELINE_SHA256,
-            || Error::UnpinnedBaseline { bytes: data.len() },
+            || SectorError::UnpinnedBaseline { bytes: data.len() },
         )?;
         Ok(Self(data.into()))
     }
@@ -128,13 +128,15 @@ pub fn bounded_frame(
     end: usize,
     bank: Bank,
 ) -> Result<Vec<u8>> {
-    require((1..=4).contains(&number), || Error::PacketNumber { number })?;
+    require((1..=4).contains(&number), || SectorError::PacketNumber {
+        number,
+    })?;
     require(
         start <= offset && offset + 1024 <= end && offset.is_multiple_of(1024),
-        || Error::PacketOutside { bank, offset },
+        || SectorError::PacketOutside { bank, offset },
     )?;
     let Ok(bytes) = <&[u8; 1024]>::try_from(payload) else {
-        return Err(Error::PartialPayload {
+        return Err(SectorError::PartialPayload {
             bytes: payload.len(),
         }
         .into());
@@ -143,7 +145,7 @@ pub fn bounded_frame(
         .ok()
         .and_then(|offset| FLASH_BASE.checked_add(offset))
     else {
-        return Err(Error::PacketOutside { bank, offset }.into());
+        return Err(SectorError::PacketOutside { bank, offset }.into());
     };
 
     Ok(protocol::frame(number, address, bytes))
@@ -203,7 +205,7 @@ pub fn sector_frames(
     payload: &[u8],
     frame: impl Fn(u8, usize, &[u8]) -> Result<Vec<u8>>,
 ) -> Result<Vec<Vec<u8>>> {
-    require(payload.len() == SECTOR, || Error::PartialSector {
+    require(payload.len() == SECTOR, || SectorError::PartialSector {
         bytes: payload.len(),
     })?;
 
@@ -237,10 +239,10 @@ pub fn restore_sector(
 ) -> Result<Restored> {
     require(
         (START..=END - SECTOR).contains(&offset) && offset.is_multiple_of(SECTOR),
-        || Error::SectorOutside { offset },
+        || SectorError::SectorOutside { offset },
     )?;
     require(wellfed_formats::hex::is_sha256(expected_before), || {
-        Error::BeforeHash
+        SectorError::BeforeHash
     })?;
 
     let payload = sector_payload(baseline, offset);
@@ -267,7 +269,7 @@ pub fn restore_sector(
     let result = (|| -> Result<Restored> {
         let before = read_sector(port, offset)?;
         require(sha256(&before) == expected_before, || {
-            Error::BeforeDiffers { offset }
+            SectorError::BeforeDiffers { offset }
         })?;
 
         if offset == START && before == payload {
@@ -277,11 +279,13 @@ pub fn restore_sector(
             return Ok(restored(0, true));
         }
 
-        require(before != payload, || Error::AlreadyBaseline { offset })?;
+        require(before != payload, || SectorError::AlreadyBaseline {
+            offset,
+        })?;
 
         if offset == START {
             require(before[..8] != baseline.bytes()[START..START + 8], || {
-                Error::MarkerStillValid
+                SectorError::MarkerStillValid
             })?;
         }
 
@@ -304,7 +308,7 @@ pub fn restore_sector(
         mutation_possible = true;
         erase_sector(port, offset)?;
         require(read_sector(port, offset)? == [0xff; SECTOR], || {
-            Error::EraseReadback { offset }
+            SectorError::EraseReadback { offset }
         })?;
         record(Event::EraseReadbackVerified {})?;
 
@@ -317,7 +321,7 @@ pub fn restore_sector(
         )?;
         program_packets(port, &frames, &mut record)?;
         require(read_sector(port, offset)? == payload, || {
-            Error::ProgramReadback { offset }
+            SectorError::ProgramReadback { offset }
         })?;
 
         record(Event::SectorVerified {
@@ -356,7 +360,7 @@ pub fn commit_marker(
     snapshot: &mut dyn FnMut(&mut dyn Port) -> Result<Vec<u8>>,
     journal: &mut Located,
 ) -> Result<MarkerCommit> {
-    require(current.len() == CAPACITY, || Error::PartialCurrent {
+    require(current.len() == CAPACITY, || SectorError::PartialCurrent {
         bytes: current.len(),
     })?;
 
@@ -378,15 +382,15 @@ pub fn commit_marker(
     let result = (|| -> Result<MarkerCommit> {
         let mut full = |port: &mut dyn Port| -> Result<Vec<u8>> {
             let data = snapshot(port)?;
-            require(data.len() == CAPACITY, || Error::SnapshotLength {
+            require(data.len() == CAPACITY, || SectorError::SnapshotLength {
                 bytes: data.len(),
             })?;
             Ok(data)
         };
 
-        require(full(port)? == staged, || Error::StagedDiffers)?;
+        require(full(port)? == staged, || SectorError::StagedDiffers)?;
         require(read_sector(port, START)? == staged_sector, || {
-            Error::MarkerSectorChanged
+            SectorError::MarkerSectorChanged
         })?;
 
         record(Event::MarkerPreconditionsVerified {
@@ -409,11 +413,11 @@ pub fn commit_marker(
         program_packets(port, &[frame], &mut record)?;
         require(
             read_sector(port, START)? == baseline.bytes()[START..START + SECTOR],
-            || Error::CommittedReadback,
+            || SectorError::CommittedReadback,
         )?;
 
         let after = full(port)?;
-        require(after == proposed, || Error::FinalDiffers)?;
+        require(after == proposed, || SectorError::FinalDiffers)?;
         record(Event::MarkerCommitVerified {
             snapshot_sha256: sha256(&after),
         })?;

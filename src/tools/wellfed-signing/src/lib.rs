@@ -286,7 +286,7 @@ fn bank_manifest(container: &[u8], version: u32, build_id: [u8; 32]) -> Result<M
 
 fn id_bytes(text: &str) -> Result<[u8; 32]> {
     require(hex::is_lower_hex(text, 64), || FrozenError::BuildId)?;
-    Ok(hex::decode(text).ok_or(FrozenError::BuildId)?)
+    hex::decode(text).ok_or_else(|| FrozenError::BuildId.into())
 }
 
 fn contains(haystack: &[u8], needle: &[u8]) -> bool {
@@ -482,7 +482,7 @@ mod tests {
 
     #[test]
     fn an_image_that_differs_from_its_review_is_refused() {
-        use wellfed_image::review::Error as Review;
+        use wellfed_image::review::ReviewError as Review;
 
         let image = build_image();
         let (checkout, review) = freeze(&image, None);
@@ -582,7 +582,7 @@ mod tests {
             matches!(
                 error,
                 Error::Review(wellfed_image::Error::Review(
-                    wellfed_image::review::Error::NotOriginalStock
+                    wellfed_image::review::ReviewError::NotOriginalStock
                 ))
             ),
             "{error:?}"

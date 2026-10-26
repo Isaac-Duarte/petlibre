@@ -13,7 +13,7 @@ use crate::error::Result;
 
 /// A checkout without its evidence directory, or a path outside it.
 #[derive(Debug, thiserror::Error)]
-pub enum Error {
+pub enum RootError {
     #[error("{} has no private/ evidence directory", root.display())]
     NoPrivate { root: PathBuf },
     #[error("Regular private input required")]
@@ -32,7 +32,9 @@ impl Root {
     pub fn new(root: &Path) -> Result<Self> {
         let root = root.canonicalize()?;
         let private = root.join("private");
-        require(private.is_dir(), || Error::NoPrivate { root: root.clone() })?;
+        require(private.is_dir(), || RootError::NoPrivate {
+            root: root.clone(),
+        })?;
         Ok(Self {
             private: private.canonicalize()?,
             root,
@@ -80,7 +82,7 @@ impl Root {
     /// A regular private input file.
     pub fn private_file(&self, path: &Path) -> Result<Vec<u8>> {
         require(self.is_private(path) && path.is_file(), || {
-            Error::NotPrivateFile {
+            RootError::NotPrivateFile {
                 path: path.to_path_buf(),
             }
         })?;
@@ -90,7 +92,7 @@ impl Root {
     /// A new private output directory.
     pub fn output_directory(&self, path: &Path) -> Result<PathBuf> {
         require(!path.is_symlink() && self.is_private(path), || {
-            Error::NotPrivateDirectory {
+            RootError::NotPrivateDirectory {
                 path: path.to_path_buf(),
             }
         })?;

@@ -24,7 +24,7 @@ use crate::{BASELINE, BASELINE_SHA256, FLASH_BYTES, ROM, ROM_SHA256, Result, wor
 /// A factory-loader run refused: a pinned input, a reviewed boundary or a
 /// mapping that disagrees with what the loader asked for.
 #[derive(Debug, thiserror::Error)]
-pub enum Error {
+pub enum FactoryError {
     #[error("Not the verified research-unit full backup")]
     UnverifiedBaseline,
     #[error("Unreviewed factory ROM input")]
@@ -107,15 +107,15 @@ pub fn inputs(root: &Path) -> Result<(Vec<u8>, Vec<u8>)> {
     let baseline = read(root, BASELINE)?;
     require(
         baseline.len() == FLASH_BYTES && sha256(&baseline) == BASELINE_SHA256,
-        || Error::UnverifiedBaseline,
+        || FactoryError::UnverifiedBaseline,
     )?;
     let rom = read(root, ROM)?;
-    require(sha256(&rom) == ROM_SHA256, || Error::UnreviewedRom)?;
+    require(sha256(&rom) == ROM_SHA256, || FactoryError::UnreviewedRom)?;
     Ok((baseline, rom))
 }
 
 fn read(root: &Path, name: &'static str) -> Result<Vec<u8>> {
-    Ok(fs::read(root.join(name)).map_err(|error| Error::Read { name, error })?)
+    Ok(fs::read(root.join(name)).map_err(|error| FactoryError::Read { name, error })?)
 }
 
 /// The selection's outcome by bank: `Some(0)`/`Some(1)`, or `None` when the
@@ -126,7 +126,7 @@ pub fn selected(flash: &[u8], rom: &[u8]) -> Result<Option<u8>> {
         (Stop::NoImage, _) => Ok(None),
         (Stop::Selected, 1) => Ok(Some(0)),
         (Stop::Selected, 2) => Ok(Some(1)),
-        (stop, result) => Err(Error::UnexpectedSelection { stop, result }.into()),
+        (stop, result) => Err(FactoryError::UnexpectedSelection { stop, result }.into()),
     }
 }
 
@@ -152,7 +152,7 @@ struct State {
 
 /// Run one loader entry on `flash` (the full 8 MiB image) with `rom`.
 pub fn execute(flash: &[u8], rom: &[u8], entry: Entry) -> Result<FactoryRun> {
-    require(flash.len() == FLASH_BYTES, || Error::FlashSize {
+    require(flash.len() == FLASH_BYTES, || FactoryError::FlashSize {
         bytes: flash.len(),
     })?;
     let mut uc = Unicorn::new_with_data(Arch::ARM, Mode::THUMB | Mode::MCLASS, State::default())?;
@@ -197,7 +197,7 @@ pub fn execute(flash: &[u8], rom: &[u8], entry: Entry) -> Result<FactoryRun> {
     started?;
     let state = uc.get_data();
     let (Some((stop, result)), None) = (state.outcome, state.pending) else {
-        return Err(Error::NoBoundary.into());
+        return Err(FactoryError::NoBoundary.into());
     };
     let mut final_registers = [[0; 4]; 2];
     for (index, group) in final_registers.iter_mut().enumerate() {
@@ -222,11 +222,11 @@ fn step(uc: &mut Unicorn<State>, flash: &[u8], pc: u64) -> Result<()> {
         let set = registers(uc, index)?;
         require(
             set[1..] == [request.start, request.end, request.offset],
-            || Error::MappingRegisters,
+            || FactoryError::MappingRegisters,
         )?;
         require(
             u64::from(set[0] & 2) == u64::from(request.minus) * 2,
-            || Error::MappingDirection,
+            || FactoryError::MappingDirection,
         )?;
 
         let offset = i64::from(request.offset);
@@ -234,7 +234,7 @@ fn step(uc: &mut Unicorn<State>, flash: &[u8], pc: u64) -> Result<()> {
         let end = i64::from(FLASH_BASE)
             + i64::try_from(FLASH_BYTES).map_err(|_| out_of_range(Quantity::Size))?;
         require((i64::from(FLASH_BASE)..end).contains(&physical), || {
-            Error::MappingEscapes
+            FactoryError::MappingEscapes
         })?;
         let length = (i64::from(request.end) - i64::from(request.start) + 1)
             .min(0x20_0000)
@@ -269,7 +269,7 @@ fn step(uc: &mut Unicorn<State>, flash: &[u8], pc: u64) -> Result<()> {
             };
             require(
                 request.index < 2 && [0x0C00_0000, 0x0E00_0000].contains(&request.start),
-                || Error::MappingRequest,
+                || FactoryError::MappingRequest,
             )?;
             let back = u64::from(reg(uc, RegisterARM::LR)? & !1);
             uc.get_data_mut().pending = Some((back, request));
@@ -284,7 +284,7 @@ fn step(uc: &mut Unicorn<State>, flash: &[u8], pc: u64) -> Result<()> {
                 uc.get_data_mut().outcome = Some((stop, result));
                 uc.emu_stop()?;
             } else if !reviewed(pc) {
-                return Err(Error::UnreviewedInstruction { pc }.into());
+                return Err(FactoryError::UnreviewedInstruction { pc }.into());
             }
         }
     }
@@ -329,7 +329,7 @@ fn reg<D>(uc: &Unicorn<D>, register: RegisterARM) -> Result<u32> {
 }
 
 fn out_of_range(quantity: Quantity) -> crate::Error {
-    Error::OutOfRange { quantity }.into()
+    FactoryError::OutOfRange { quantity }.into()
 }
 
 #[cfg(test)]
@@ -347,7 +347,7 @@ mod tests {
 
         assert!(matches!(
             execute(&flash, &rom, Entry::Check(0)),
-            Err(crate::Error::Factory(Error::NoBoundary))
+            Err(crate::Error::Factory(FactoryError::NoBoundary))
         ));
     }
 }

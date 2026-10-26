@@ -24,7 +24,7 @@ use wellfed_formats::session::Mode as ReportMode;
 /// The reader's own refusals: missing or unpinned inputs before the port
 /// opens, and unstable status or an unfinished read file after.
 #[derive(Debug, thiserror::Error)]
-pub enum Error {
+pub enum ReadError {
     #[error("Two status observations required")]
     StatusObservations { count: usize },
     #[error("Status observations differ; stop without retry")]
@@ -164,12 +164,15 @@ pub fn inspect_status(
     }
 
     let [first, second] = observations[..] else {
-        return Err(Error::StatusObservations {
+        return Err(ReadError::StatusObservations {
             count: observations.len(),
         }
         .into());
     };
-    require(first == second, || Error::StatusDiffers { first, second })?;
+    require(first == second, || ReadError::StatusDiffers {
+        first,
+        second,
+    })?;
 
     Ok(StatusInspection {
         bank1_assessment: status::assess_range(second, 0x186000, 0x2D6000)?,
@@ -192,12 +195,14 @@ pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
         Mode::Observe => protocol::observation_window(args.seconds)?,
 
         Mode::InspectRom => {
-            require(!args.candidate_rom.is_empty(), || Error::CandidateMissing)?;
+            require(!args.candidate_rom.is_empty(), || {
+                ReadError::CandidateMissing
+            })?;
             for path in &args.candidate_rom {
                 let data = fs::read(path)?;
                 require(
                     data.len() == ROM_BYTES && ROM_SHA256.contains(&sha256(&data).as_str()),
-                    || Error::CandidateUnpinned { path: path.clone() },
+                    || ReadError::CandidateUnpinned { path: path.clone() },
                 )?;
                 candidates.push((path.display().to_string(), data));
             }
@@ -206,7 +211,7 @@ pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
         Mode::Small | Mode::Full | Mode::Status => {
             helper = Some(context.helper(args.helper.as_deref())?);
             let Some(rom) = args.rom_report.as_deref() else {
-                return Err(Error::RomReportMissing.into());
+                return Err(ReadError::RomReportMissing.into());
             };
             session::validate_rom_report(context, rom)?;
 
@@ -221,7 +226,7 @@ pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
 
             if args.mode == Mode::Full {
                 let Some(small) = args.small_report.as_deref() else {
-                    return Err(Error::BoundedReadMissing.into());
+                    return Err(ReadError::BoundedReadMissing.into());
                 };
                 let raw = session::validate_small_for_full(context, small, &args.port)?;
                 continued = Some((small, raw));
@@ -304,7 +309,7 @@ pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
             Mode::Small | Mode::Full => {
                 if args.mode == Mode::Small {
                     let Some(helper) = &helper else {
-                        return Err(Error::HelperMissing.into());
+                        return Err(ReadError::HelperMissing.into());
                     };
 
                     // Require the already-observed ROM loader; never auto-enter it.
@@ -362,14 +367,14 @@ fn full_or_small(port: &mut dyn Port, directory: &Path, mode: Mode) -> Result<Fl
     drop(output);
 
     let bytes = fs::metadata(&partial)?.len();
-    require(bytes == length as u64, || Error::FinalLength {
+    require(bytes == length as u64, || ReadError::FinalLength {
         bytes,
         length: length as u64,
     })?;
 
     // Only a complete, length-checked read takes the final name.
     let finished = directory.join("flash-read.bin");
-    require(!finished.exists(), || Error::WouldOverwrite {
+    require(!finished.exists(), || ReadError::WouldOverwrite {
         path: finished.clone(),
     })?;
     fs::rename(&partial, &finished)?;

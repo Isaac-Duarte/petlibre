@@ -43,11 +43,11 @@ pub enum Error {
     /// A pinned input, reviewed boundary or mapping check of the factory
     /// loader failed.
     #[error(transparent)]
-    Factory(#[from] factory::Error),
+    Factory(#[from] factory::FactoryError),
     /// A pinned input, scope or modeled-call expectation of the UART flash
     /// helper failed.
     #[error(transparent)]
-    Helper(#[from] helper::Error),
+    Helper(#[from] helper::HelperError),
     /// The emulator itself failed (unmapped access, invalid instruction, …).
     #[error("Emulation failed: {0:?}")]
     Unicorn(unicorn_engine::uc_error),

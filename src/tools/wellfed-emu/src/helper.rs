@@ -22,7 +22,7 @@ use crate::{BANKS, FLASH_BYTES, HELPER_SHA256, Result, SECTOR};
 /// or a ROM call the model does not expect. Any of these stops the session,
 /// as a real fault would.
 #[derive(Debug, thiserror::Error)]
-pub enum Error {
+pub enum HelperError {
     #[error("Pinned helper required")]
     UnpinnedHelper,
     #[error("Synthetic snapshot must be 8 MiB")]
@@ -116,21 +116,23 @@ impl Helper<'_> {
     pub fn new(helper: &[u8], snapshot: &[u8], scope: Scope) -> Result<Self> {
         require(
             helper.len() == HELPER_BYTES && sha256(helper) == HELPER_SHA256,
-            || Error::UnpinnedHelper,
+            || HelperError::UnpinnedHelper,
         )?;
-        require(snapshot.len() == FLASH_BYTES, || Error::SnapshotSize {
-            bytes: snapshot.len(),
+        require(snapshot.len() == FLASH_BYTES, || {
+            HelperError::SnapshotSize {
+                bytes: snapshot.len(),
+            }
         })?;
         let start = *BANKS
             .get(usize::from(scope.bank))
-            .ok_or(Error::ScopeBank { bank: scope.bank })?;
+            .ok_or(HelperError::ScopeBank { bank: scope.bank })?;
         require(
             !scope.sectors.is_empty()
                 && scope
                     .sectors
                     .iter()
                     .all(|s| (start..start + BANK_BYTES).contains(s) && s % SECTOR == 0),
-            || Error::ScopeSectors,
+            || HelperError::ScopeSectors,
         )?;
 
         let state = State {
@@ -229,9 +231,9 @@ impl Helper<'_> {
             return Err(error);
         }
         ran?;
-        Ok(require(!self.uc.get_data().outgoing.is_empty(), || {
-            Error::NoResponse
-        })?)
+        require(!self.uc.get_data().outgoing.is_empty(), || {
+            HelperError::NoResponse.into()
+        })
     }
 }
 
@@ -256,13 +258,13 @@ fn call(uc: &mut Unicorn<State>, pc: u64) -> Result<()> {
             } else {
                 0
             };
-            require(state.empty_polls < 100, || Error::Waiting)?;
+            require(state.empty_polls < 100, || HelperError::Waiting)?;
             let ready = u32::from(!state.incoming.is_empty());
             ret(uc, ready)
         }
         0x6250 => {
             let byte = uc.get_data_mut().incoming.pop_front();
-            let byte = byte.ok_or(Error::NoHostInput)?;
+            let byte = byte.ok_or(HelperError::NoHostInput)?;
             ret(uc, u32::from(byte))
         }
         0x6274 => {
@@ -272,7 +274,7 @@ fn call(uc: &mut Unicorn<State>, pc: u64) -> Result<()> {
         0x628C => {
             let [pointer, length, _] = args;
             require(within(pointer, length) && length <= 1032, || {
-                Error::TransmitEscapes { pointer, length }
+                HelperError::TransmitEscapes { pointer, length }
             })?;
             let data = uc.mem_read_as_vec(u64::from(pointer), length as usize)?;
             uc.get_data_mut().outgoing.extend(data);
@@ -288,7 +290,7 @@ fn call(uc: &mut Unicorn<State>, pc: u64) -> Result<()> {
                 .zip(index)
                 .map(|(s, i)| (s[i], codes[i]));
             let Some((value, code)) = value.filter(|_| length == 1 && within(pointer, 1)) else {
-                return Err(Error::StatusRead { opcode, length }.into());
+                return Err(HelperError::StatusRead { opcode, length }.into());
             };
             uc.mem_write(u64::from(pointer), &[value])?;
             uc.get_data_mut()
@@ -297,13 +299,15 @@ fn call(uc: &mut Unicorn<State>, pc: u64) -> Result<()> {
             ret(uc, 0)
         }
         0x6238 => {
-            require(uc.get_data().status.is_some(), || Error::WritablePolling)?;
+            require(uc.get_data().status.is_some(), || {
+                HelperError::WritablePolling
+            })?;
             ret(uc, 1)
         }
         0x2146 => {
             let [mode, offset, _] = args;
             require(mode == 2 && uc.get_data().sectors.contains(&offset), || {
-                Error::EraseEscapes { offset }
+                HelperError::EraseEscapes { offset }
             })?;
             uc.mem_write(FLASH_BASE + u64::from(offset), &[0xFF; SECTOR as usize])?;
             uc.get_data_mut().calls.push(Call::Erase { offset });
@@ -315,9 +319,9 @@ fn call(uc: &mut Unicorn<State>, pc: u64) -> Result<()> {
                 length == 8
                     && uc.get_data().sectors.contains(&(offset / SECTOR * SECTOR))
                     && offset % SECTOR + length <= SECTOR,
-                || Error::ProgramEscapes { offset, length },
+                || HelperError::ProgramEscapes { offset, length },
             )?;
-            require(within(pointer, length), || Error::ProgramBuffer {
+            require(within(pointer, length), || HelperError::ProgramBuffer {
                 pointer,
                 length,
             })?;
@@ -337,7 +341,7 @@ fn call(uc: &mut Unicorn<State>, pc: u64) -> Result<()> {
             let [destination, source, length] = args;
             require(
                 length <= 4096 && within(destination, length) && within(source, length),
-                || Error::MemcpyEscapes,
+                || HelperError::MemcpyEscapes,
             )?;
             let data = uc.mem_read_as_vec(u64::from(source), length as usize)?;
             uc.mem_write(u64::from(destination), &data)?;
@@ -346,29 +350,29 @@ fn call(uc: &mut Unicorn<State>, pc: u64) -> Result<()> {
         0x66AC => {
             let [destination, value, length] = args;
             require(length <= 4096 && within(destination, length), || {
-                Error::MemsetEscapes
+                HelperError::MemsetEscapes
             })?;
             let fill = vec![value.to_le_bytes()[0]; length as usize];
             uc.mem_write(u64::from(destination), &fill)?;
             ret(uc, destination)
         }
         0x61A0 => {
-            require(args == [2, 0, 115_200], || Error::UartInitialization)?;
+            require(args == [2, 0, 115_200], || HelperError::UartInitialization)?;
             uc.mem_write(0x8_0660, &0x4000_8000u32.to_le_bytes())?;
             ret(uc, 0)
         }
         0x3594 => {
-            require(args[0] == 0, || Error::OtfSetup)?;
+            require(args[0] == 0, || HelperError::OtfSetup)?;
             uc.mem_write(0x4800_0600, &[0; 4])?;
             ret(uc, 0)
         }
         0x1434 => {
-            require(args[0] == 0, || Error::BackupRegister)?;
+            require(args[0] == 0, || HelperError::BackupRegister)?;
             ret(uc, 0)
         }
         // Diagnostic, delay, UART baud and busy models only.
         0x0474 | 0x14C2 | 0x1504 | 0x40B0 | 0x43D4 => ret(uc, 0),
-        _ => Err(Error::UnreviewedDestination { pc }.into()),
+        _ => Err(HelperError::UnreviewedDestination { pc }.into()),
     }
 }
 
@@ -387,5 +391,5 @@ fn within(pointer: u32, length: u32) -> bool {
 }
 
 fn reg(uc: &Unicorn<State>, register: RegisterARM) -> Result<u32> {
-    Ok(u32::try_from(uc.reg_read(register)?).map_err(|_| Error::RegisterRange)?)
+    Ok(u32::try_from(uc.reg_read(register)?).map_err(|_| HelperError::RegisterRange)?)
 }

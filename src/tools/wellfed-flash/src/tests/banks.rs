@@ -89,7 +89,8 @@ fn protection_or_a_changed_guard_stops_before_any_mutation() {
     )
     .unwrap_err();
 
-    let crate::Error::Status(crate::link::status::Error::Blocked { boundary, reasons }) = &error
+    let crate::Error::Status(crate::link::status::StatusError::Blocked { boundary, reasons }) =
+        &error
     else {
         panic!("not a status block: {error}");
     };
@@ -189,7 +190,7 @@ fn interrupted_mode_refuses_unknown_sector_content() {
     assert!(matches!(
         development::images(&finish, &old),
         Err(crate::Error::Development(
-            development::Error::MarkerNotStaged
+            development::DevelopmentError::MarkerNotStaged
         ))
     ));
 
@@ -215,7 +216,7 @@ fn interrupted_mode_refuses_unknown_sector_content() {
     assert!(matches!(
         development::images(&finish, &two),
         Err(crate::Error::Development(
-            development::Error::PartialSectors { count: 2 }
+            development::DevelopmentError::PartialSectors { count: 2 }
         ))
     ));
 
@@ -229,7 +230,7 @@ fn interrupted_mode_refuses_unknown_sector_content() {
     let unknown = development::images(&finish, &one).unwrap_err();
     assert!(matches!(
         unknown,
-        crate::Error::Development(development::Error::UnknownSector { offset })
+        crate::Error::Development(development::DevelopmentError::UnknownSector { offset })
             if offset == BANK1.start + changed[0]
     ));
 }
@@ -262,8 +263,10 @@ fn bank0_update_keeps_bank1_valid_and_never_frames_outside_bank0() {
 
     for offset in [0x156000, 0x5c00] {
         let error = development::frame(&BANK0, 1, offset, &[0; 1024]).unwrap_err();
-        let crate::Error::Sector(crate::link::sector::Error::PacketOutside { bank, offset: at }) =
-            &error
+        let crate::Error::Sector(crate::link::sector::SectorError::PacketOutside {
+            bank,
+            offset: at,
+        }) = &error
         else {
             panic!("not a bounded frame: {error}");
         };

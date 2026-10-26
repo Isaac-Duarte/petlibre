@@ -24,7 +24,7 @@ use wellfed_formats::require;
 /// preserving everything else, or a transaction whose snapshots or sector
 /// results leave the reviewed plan.
 #[derive(Debug, thiserror::Error)]
-pub enum Error {
+pub enum RecoveryError {
     #[error("Need two exact 8 MiB snapshots")]
     SnapshotLength { bytes: usize },
     #[error("Factory/pre-application bytes differ; stop for investigation")]
@@ -132,11 +132,13 @@ const REQUIRED_BEFORE_ANY_WRITE: [&str; 9] = [
 /// hashes and the preconditions every write must meet.
 pub fn plan(baseline: &Baseline, current: &[u8]) -> Result<Plan> {
     let baseline = baseline.bytes();
-    require(current.len() == CAPACITY, || Error::SnapshotLength {
-        bytes: current.len(),
+    require(current.len() == CAPACITY, || {
+        RecoveryError::SnapshotLength {
+            bytes: current.len(),
+        }
     })?;
     require(current[..0x6000] == baseline[..0x6000], || {
-        Error::FactoryDiffers
+        RecoveryError::FactoryDiffers
     })?;
 
     let mut sectors = Vec::new();
@@ -171,14 +173,14 @@ pub fn plan(baseline: &Baseline, current: &[u8]) -> Result<Plan> {
 
     require(
         proposed[..START] == current[..START] && proposed[END..] == current[END..],
-        || Error::EscapesBank,
+        || RecoveryError::EscapesBank,
     )?;
     require(proposed[START..END] == baseline[START..END], || {
-        Error::NotBaseline
+        RecoveryError::NotBaseline
     })?;
     require(
         sectors.is_empty() || current[START..START + 8] != baseline[START..START + 8],
-        || Error::MarkerStillValid,
+        || RecoveryError::MarkerStillValid,
     )?;
 
     // The marker sector goes last; activation is a separate no-erase pass.
@@ -243,11 +245,11 @@ pub fn validate_plan(baseline: &Baseline, current: &[u8], manifest: &Value) -> R
     let expected = plan(baseline, current)?;
     require(
         manifest.get("created_utc").is_some_and(Value::is_string),
-        || Error::ReviewedPlanMissing,
+        || RecoveryError::ReviewedPlanMissing,
     )?;
     require(
         without_time(manifest)? == without_time(&serde_json::to_value(&expected)?)?,
-        || Error::PlanDiffers,
+        || RecoveryError::PlanDiffers,
     )?;
     Ok(expected)
 }
@@ -261,7 +263,7 @@ pub fn payload_files(baseline: &Baseline, plan: &Plan) -> Result<Vec<(String, Ve
             payload[..8].fill(0xff);
         }
         require(entry.stage_sha256 == sha256(&payload), || {
-            Error::StagingHash {
+            RecoveryError::StagingHash {
                 offset: entry.offset,
             }
         })?;
@@ -316,8 +318,8 @@ pub fn run_transaction(
 
     let mut full = |port: &mut dyn Port| -> Result<Vec<u8>> {
         let value = snapshot(port)?;
-        require(value.len() == CAPACITY, || sector::Error::SnapshotLength {
-            bytes: value.len(),
+        require(value.len() == CAPACITY, || {
+            sector::SectorError::SnapshotLength { bytes: value.len() }
         })?;
         *last.borrow_mut() = Some(value.clone());
         Ok(value)
@@ -331,7 +333,7 @@ pub fn run_transaction(
             plan_sha256: sha256(&canonical(manifest)?),
         })?;
 
-        require(full(port)? == current, || Error::CurrentDiffers)?;
+        require(full(port)? == current, || RecoveryError::CurrentDiffers)?;
         journal.append(&Event::InitialSnapshotVerified {
             sha256: sha256(current),
         })?;
@@ -350,7 +352,7 @@ pub fn run_transaction(
             let packets = if entry.stage_required { 4 } else { 0 };
             require(
                 result.after_sha256 == entry.stage_sha256 && result.program_packets == packets,
-                || Error::SectorResult {
+                || RecoveryError::SectorResult {
                     offset: entry.offset,
                 },
             )?;
@@ -361,7 +363,7 @@ pub fn run_transaction(
         if let Some(last_result) = results.last() {
             require(
                 last_result.offset == START && last_result.marker_withheld,
-                || Error::MarkerNotLast {
+                || RecoveryError::MarkerNotLast {
                     offset: last_result.offset,
                 },
             )?;
@@ -378,16 +380,16 @@ pub fn run_transaction(
         // The commit's last action verified a full final snapshot, and a no-op
         // plan performs nothing after the initial one; reuse it.
         let Some(after) = last.borrow().clone() else {
-            return Err(Error::NoFinalSnapshot.into());
+            return Err(RecoveryError::NoFinalSnapshot.into());
         };
         require(
             after[..START] == current[..START] && after[END..] == current[END..],
-            || Error::PreservedDiffer,
+            || RecoveryError::PreservedDiffer,
         )?;
         require(
             after[START..END] == baseline.bytes()[START..END]
                 && sha256(&after) == expected.proposed_snapshot_sha256,
-            || Error::FinalDiffers,
+            || RecoveryError::FinalDiffers,
         )?;
 
         journal.append(&Event::RecoveryVerified {

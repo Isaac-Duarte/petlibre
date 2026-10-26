@@ -135,7 +135,7 @@ fn an_unreviewed_flash_size_is_refused_before_execution() {
     let short = &f.flash[..f.flash.len() - 1];
     assert!(matches!(
         execute(short, &f.rom, Entry::Select),
-        Err(Error::Factory(factory::Error::FlashSize { .. }))
+        Err(Error::Factory(factory::FactoryError::FlashSize { .. }))
     ));
 }
 

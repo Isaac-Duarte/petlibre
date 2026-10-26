@@ -76,7 +76,7 @@ fn the_cli_refuses_an_unpinned_helper_before_any_serial_access() {
         matches!(
             error,
             crate::Error::Image(wellfed_image::Error::Review(
-                wellfed_image::review::Error::NotOriginalStock
+                wellfed_image::review::ReviewError::NotOriginalStock
             ))
         ),
         "{error}"

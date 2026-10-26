@@ -20,7 +20,7 @@ use wellfed_formats::review::{BuildDetails, Details, ImageKind, ImageReview, Rev
 /// The signer and the rig tell these apart, so each binding is its own
 /// variant.
 #[derive(Debug, thiserror::Error)]
-pub enum Error {
+pub enum ReviewError {
     #[error("Unsupported frozen review")]
     Unsupported,
     #[error("Frozen image/review mismatch")]
@@ -57,7 +57,7 @@ pub fn frozen(root: &Root, directory: &Path, layout: &Layout) -> Result<Frozen> 
     let review: ImageReview = serde_json::from_slice(&raw)?;
     require(
         review.schema_version == 1 && review.kind == ReviewKind::Plaf103DevelopmentImage,
-        || Error::Unsupported,
+        || ReviewError::Unsupported,
     )?;
 
     let image = root.private_file(&directory.join("image.bin"))?;
@@ -66,21 +66,21 @@ pub fn frozen(root: &Root, directory: &Path, layout: &Layout) -> Result<Frozen> 
         review.ota_sha256 == sha256(&image)
             && review.payload_sha256 == sha256(data)
             && u64::try_from(data.len()).is_ok_and(|bytes| bytes == review.payload_bytes),
-        || Error::ImageMismatch,
+        || ReviewError::ImageMismatch,
     )?;
 
     let manifest = match (review.image_kind, &review.review) {
         (ImageKind::Stock, Details::Stock { .. }) => {
             require(
                 sha256(&image) == crate::ota::STOCK_SHA256 && review.manifest_sha256.is_none(),
-                || Error::NotOriginalStock,
+                || ReviewError::NotOriginalStock,
             )?;
             None
         }
         (ImageKind::Build, Details::Build(details)) => {
             Some(build(root, directory, &review, details, &image)?)
         }
-        _ => return Err(Error::DetailsKind.into()),
+        _ => return Err(ReviewError::DetailsKind.into()),
     };
 
     Ok(Frozen {
@@ -101,7 +101,7 @@ fn build(
     let manifest_raw = root.private_file(&directory.join("build-manifest.json"))?;
     require(
         review.manifest_sha256.as_deref() == Some(&sha256(&manifest_raw)),
-        || Error::ManifestMismatch,
+        || ReviewError::ManifestMismatch,
     )?;
 
     let m: BuildManifest = serde_json::from_slice(&manifest_raw)?;
@@ -119,13 +119,13 @@ fn build(
         firstboot
             && m.sdk_revision == lock.sdk.revision
             && m.toolchain_sha256 == lock.toolchain.sha256,
-        || Error::UnknownProfile,
+        || ReviewError::UnknownProfile,
     )?;
 
     let ota = m.artifact("OTA_All.bin");
     require(
         ota.is_some_and(|ota| ota.sha256 == sha256(image) && ota.bytes == image.len() as u64),
-        || Error::ManifestImage,
+        || ReviewError::ManifestImage,
     )?;
 
     let mains = &details.startup_mains;
@@ -137,7 +137,7 @@ fn build(
         startup.map(|s| &s.mains) == Some(mains)
             && names == ["hp", "lp"]
             && audit.is_some_and(|audit| details.pinmap == *audit && audit.matches_stock),
-        || Error::MissingAudits,
+        || ReviewError::MissingAudits,
     )?;
 
     let banks: Vec<u8> = details.factory_mapping.iter().map(|c| c.bank).collect();
@@ -148,7 +148,7 @@ fn build(
             && m.checks.ota_checksum_matches
             && m.checks.source_snapshot_unchanged
             && m.checks.staged_sources_without_diagnostics,
-        || Error::IncompleteMapping,
+        || ReviewError::IncompleteMapping,
     )?;
     Ok(m)
 }

@@ -32,7 +32,7 @@ pub(crate) use wellfed_image::bank::{BANK0, Layout, layout, payload};
 /// A development update or give-way that does not match its guards, its
 /// reviewed plan or its readback. Offsets are flash addresses.
 #[derive(Debug, thiserror::Error)]
-pub enum Error {
+pub enum DevelopmentError {
     #[error("Only bank 0 may be overwritten without a source review")]
     SourceReviewRequired { bank: u8 },
     #[error("Factory region differs from the pinned baseline")]
@@ -119,8 +119,8 @@ pub fn extent(source: Option<&[u8]>, target: &[u8], layout: &Layout) -> Result<u
     let new = payload(target, layout)?.len();
     match source {
         None => {
-            require(layout.bank == 0, || Error::SourceReviewRequired {
-                bank: layout.bank,
+            require(layout.bank == 0, || {
+                DevelopmentError::SourceReviewRequired { bank: layout.bank }
             })?;
             Ok(new)
         }
@@ -144,28 +144,30 @@ pub fn guards(
 ) -> Result<()> {
     require(
         factory == &baseline.bytes()[FACTORY.0..FACTORY.0 + FACTORY.1],
-        || Error::FactoryDiffers,
+        || DevelopmentError::FactoryDiffers,
     )?;
 
     let (at, length) = layout.other;
-    require(other.len() == length, || Error::OtherGuardLength {
-        bytes: other.len(),
-        length,
+    require(other.len() == length, || {
+        DevelopmentError::OtherGuardLength {
+            bytes: other.len(),
+            length,
+        }
     })?;
 
     if layout.bank == 1 {
         require(
             other == &baseline.bytes()[at..at + length] || &other[..8] == MARKER,
-            || Error::Bank0Unknown,
+            || DevelopmentError::Bank0Unknown,
         )?;
     } else {
-        require(&other[..8] == MARKER, || Error::Bank1Invalid)?;
+        require(&other[..8] == MARKER, || DevelopmentError::Bank1Invalid)?;
     }
 
-    Ok(require(
+    require(
         other_sha256.is_none_or(|expected| sha256(other) == expected),
-        || Error::OtherBankChanged,
-    )?)
+        || DevelopmentError::OtherBankChanged.into(),
+    )
 }
 
 /// What one transaction acts on.
@@ -193,20 +195,20 @@ pub fn images(update: &Update, current: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
     let new = payload(update.target, layout)?;
     let old: &[u8] = match update.source {
         None => {
-            require(layout.bank == 0, || Error::SourceReviewRequired {
-                bank: layout.bank,
+            require(layout.bank == 0, || {
+                DevelopmentError::SourceReviewRequired { bank: layout.bank }
             })?;
             let Some(original) = update.original.filter(|o| o.len() == new.len()) else {
-                return Err(Error::OriginalMissing.into());
+                return Err(DevelopmentError::OriginalMissing.into());
             };
-            require(&original[..8] != MARKER, || Error::OriginalValid)?;
+            require(&original[..8] != MARKER, || DevelopmentError::OriginalValid)?;
             original
         }
         Some(source) => payload(source, layout)?,
     };
 
     let length = old.len().max(new.len());
-    require(current.len() == length, || Error::UnionLength {
+    require(current.len() == length, || DevelopmentError::UnionLength {
         bytes: current.len(),
         length,
     })?;
@@ -219,10 +221,10 @@ pub fn images(update: &Update, current: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
 
     if update.restore {
         require(!update.interrupted && update.source.is_some(), || {
-            Error::RestoreScope
+            DevelopmentError::RestoreScope
         })?;
         require(current[0] == 0 && current[1..old.len()] == old[1..], || {
-            Error::NotGivenWay
+            DevelopmentError::NotGivenWay
         })?;
         let proposed = with_tail(current);
         let staged = staged_of(&proposed);
@@ -230,7 +232,7 @@ pub fn images(update: &Update, current: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
     }
 
     if !update.interrupted {
-        require(&current[..old.len()] == old, || Error::NotSource)?;
+        require(&current[..old.len()] == old, || DevelopmentError::NotSource)?;
         let proposed = with_tail(current);
         let staged = staged_of(&proposed);
         return Ok((proposed, staged));
@@ -242,7 +244,7 @@ pub fn images(update: &Update, current: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
     let proposed = with_tail(&union);
     let staged = staged_of(&proposed);
     require(current[..SECTOR] == staged[..SECTOR], || {
-        Error::MarkerNotStaged
+        DevelopmentError::MarkerNotStaged
     })?;
 
     let erased = [0xffu8; SECTOR];
@@ -255,13 +257,15 @@ pub fn images(update: &Update, current: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
         let frames = (FRAME..SECTOR)
             .step_by(FRAME)
             .any(|n| sector[..n] == want[..n] && sector[n..].iter().all(|b| *b == 0xff));
-        require(frames, || Error::UnknownSector {
+        require(frames, || DevelopmentError::UnknownSector {
             offset: layout.start + at,
         })?;
         partial += 1;
     }
 
-    require(partial <= 1, || Error::PartialSectors { count: partial })?;
+    require(partial <= 1, || DevelopmentError::PartialSectors {
+        count: partial,
+    })?;
     Ok((proposed, staged))
 }
 
@@ -282,7 +286,7 @@ pub fn plan(update: &Update, current: &[u8], other: Option<&[u8]>) -> Result<Dev
 
     require(
         update.interrupted || !changed || offsets.first() == Some(&0),
-        || Error::MarkerNotFirst,
+        || DevelopmentError::MarkerNotFirst,
     )?;
 
     let target = payload(update.target, layout)?;
@@ -338,7 +342,7 @@ fn wide(value: usize) -> u64 {
 /// A pinned full-flash read's bytes over the target's extent in this bank.
 pub fn original_region(full_read: &[u8], target: &[u8], layout: &Layout) -> Result<Vec<u8>> {
     require(full_read.len() == crate::link::protocol::CAPACITY, || {
-        Error::FullReadRequired {
+        DevelopmentError::FullReadRequired {
             bytes: full_read.len(),
         }
     })?;
@@ -349,7 +353,7 @@ pub fn original_region(full_read: &[u8], target: &[u8], layout: &Layout) -> Resu
 /// A program packet bounded to this layout's bank; never the factory region.
 pub fn frame(layout: &Layout, number: u8, offset: usize, data: &[u8]) -> Result<Vec<u8>> {
     let bank = sector::Bank::Development(layout.bank);
-    require(offset >= FACTORY.1, || sector::Error::PacketOutside {
+    require(offset >= FACTORY.1, || sector::SectorError::PacketOutside {
         bank,
         offset,
     })?;
@@ -415,7 +419,7 @@ pub fn run(
     let start = layout.start;
     let expected = plan(update, current, other)?;
 
-    require(same(reviewed, &expected)?, || Error::PlanDiffers)?;
+    require(same(reviewed, &expected)?, || DevelopmentError::PlanDiffers)?;
     let (proposed, staged) = images(update, current)?;
 
     // Freeze all packets before creating durable intent or touching the transport.
@@ -425,7 +429,7 @@ pub fn run(
             .ok()
             .and_then(|offset| Some((offset, offset.checked_sub(start)?)))
         else {
-            return Err(Error::SectorOutsideBank {
+            return Err(DevelopmentError::SectorOutsideBank {
                 offset: entry.offset,
             }
             .into());
@@ -457,8 +461,8 @@ pub fn run(
                 &layout,
                 expected.other_bank_sha256.as_deref(),
             )?;
-            require(acquired.application == want, || Error::RegionDiffers {
-                phase,
+            require(acquired.application == want, || {
+                DevelopmentError::RegionDiffers { phase }
             })?;
             journal.append(&Event::RegionVerified {
                 phase,
@@ -474,7 +478,7 @@ pub fn run(
             let at = offset - start;
             require(
                 sector::read_sector(port, offset)? == current[at..at + SECTOR],
-                || Error::PreimageDrift { offset },
+                || DevelopmentError::PreimageDrift { offset },
             )?;
 
             let mut record = |event: Event| {
@@ -499,7 +503,7 @@ pub fn run(
             // After the journal fsync: no stale idle-ready byte.
             sector::erase_sector(port, offset)?;
             require(sector::read_sector(port, offset)? == [0xff; SECTOR], || {
-                Error::EraseReadback { offset }
+                DevelopmentError::EraseReadback { offset }
             })?;
             record(Event::EraseVerified {})?;
 
@@ -512,7 +516,7 @@ pub fn run(
             )?;
             sector::program_packets(port, frames, &mut record)?;
             require(sector::read_sector(port, offset)? == *data, || {
-                Error::ProgramReadback { offset }
+                DevelopmentError::ProgramReadback { offset }
             })?;
             record(Event::SectorStaged {
                 sha256: sha256(data),
@@ -527,7 +531,7 @@ pub fn run(
             check(port, &mut journal, &staged, Phase::Staged)?;
             require(
                 sector::read_sector(port, start)? == staged[..SECTOR],
-                || Error::MarkerDrift,
+                || DevelopmentError::MarkerDrift,
             )?;
 
             let mut record = |event: Event| {
@@ -551,7 +555,7 @@ pub fn run(
             sector::program_packets(port, std::slice::from_ref(&commit), &mut record)?;
             require(
                 sector::read_sector(port, start)? == proposed[..SECTOR],
-                || Error::CommitReadback,
+                || DevelopmentError::CommitReadback,
             )?;
 
             check(port, &mut journal, &proposed, Phase::Final)?;
@@ -591,11 +595,11 @@ pub fn run(
 /// only clears bits, so the other 1023 bytes are rewritten unchanged.
 pub fn give_way_plan(fallback: &[u8], bank0: &[u8], bank1_sector: &[u8]) -> Result<GiveWayPlan> {
     let want = payload(fallback, &BANK0)?;
-    require(bank0 == want, || Error::FallbackDiffers)?;
-    require(&want[..8] == MARKER, || Error::FallbackUnmarked)?;
+    require(bank0 == want, || DevelopmentError::FallbackDiffers)?;
+    require(&want[..8] == MARKER, || DevelopmentError::FallbackUnmarked)?;
     require(
         bank1_sector.len() == SECTOR && &bank1_sector[..8] == MARKER,
-        || Error::NothingToGiveWay,
+        || DevelopmentError::NothingToGiveWay,
     )?;
 
     let after = given_way(bank1_sector);
@@ -647,7 +651,9 @@ pub fn run_give_way(
         reviewed,
     } = *give_way;
     let expected = give_way_plan(fallback, bank0, bank1_sector)?;
-    require(same(reviewed, &expected)?, || Error::GiveWayPlanDiffers)?;
+    require(same(reviewed, &expected)?, || {
+        DevelopmentError::GiveWayPlanDiffers
+    })?;
 
     let after = given_way(bank1_sector);
     let packet = sector::program_frame(1, sector::START, &after[..1024])?;
@@ -660,10 +666,10 @@ pub fn run_give_way(
         let mut check = |port: &mut dyn Port, journal: &mut Journal, want: &[u8], phase: Phase| {
             let [factory, region, first] = acquire(port)?;
             require(factory == baseline.bytes()[..FACTORY.1], || {
-                Error::GuardFactory { phase }
+                DevelopmentError::GuardFactory { phase }
             })?;
-            require(region == bank0, || Error::GuardBank0 { phase })?;
-            require(first == want, || Error::GuardBank1 { phase })?;
+            require(region == bank0, || DevelopmentError::GuardBank0 { phase })?;
+            require(first == want, || DevelopmentError::GuardBank1 { phase })?;
             journal.append(&Event::GuardsVerified { phase })
         };
 
@@ -683,7 +689,7 @@ pub fn run_give_way(
 
         sector::program_packets(port, std::slice::from_ref(&packet), &mut record)?;
         require(sector::read_sector(port, sector::START)? == after, || {
-            Error::GiveWayReadback
+            DevelopmentError::GiveWayReadback
         })?;
 
         check(port, &mut journal, &after, Phase::Final)?;

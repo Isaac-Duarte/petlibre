@@ -127,14 +127,14 @@ fn version<T: Copy>(
 
 /// Refuse unless the declaration and the image agree.
 fn agree(agrees: bool, declaration: Declaration) -> Result<()> {
-    Ok(require(agrees, || PolicyError::Mismatch { declaration })?)
+    require(agrees, || PolicyError::Mismatch { declaration }.into())
 }
 
 /// Refuse a probe declared without the LED probe it follows.
 fn after_led(declared: bool, led: bool, probe: Probe) -> Result<()> {
-    Ok(require(!declared || led, || PolicyError::RequiresLed {
-        probe,
-    })?)
+    require(!declared || led, || {
+        PolicyError::RequiresLed { probe }.into()
+    })
 }
 
 impl Policies {

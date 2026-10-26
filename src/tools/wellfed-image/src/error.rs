@@ -12,13 +12,13 @@ use crate::{bank, ota, review, root};
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error(transparent)]
-    Ota(#[from] ota::Error),
+    Ota(#[from] ota::OtaError),
     #[error(transparent)]
-    Bank(#[from] bank::Error),
+    Bank(#[from] bank::BankError),
     #[error(transparent)]
-    Root(#[from] root::Error),
+    Root(#[from] root::RootError),
     #[error(transparent)]
-    Review(#[from] review::Error),
+    Review(#[from] review::ReviewError),
     #[error("{0}")]
     Io(#[from] io::Error),
     #[error("{0}")]

@@ -198,10 +198,10 @@ impl Capture {
             offsets[index] = offsets[index].saturating_add(event.bytes);
         }
 
-        Ok(require(
+        require(
             offsets == [self.rx.len() as u64, self.tx.len() as u64],
-            || CaptureError::Coverage,
-        )?)
+            || CaptureError::Coverage.into(),
+        )
     }
 }
 

@@ -495,7 +495,7 @@ fn the_research_pin_refuses_other_baselines() {
     assert!(matches!(
         Baseline::pinned(vec![0xff; CAPACITY]),
         Err(crate::Error::Sector(
-            crate::link::sector::Error::UnpinnedBaseline { bytes: CAPACITY }
+            crate::link::sector::SectorError::UnpinnedBaseline { bytes: CAPACITY }
         ))
     ));
 }

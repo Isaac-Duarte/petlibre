@@ -436,7 +436,7 @@ mod tests {
                 error,
                 Error::Review(ReviewError::Output)
                     | Error::Ota(wellfed_image::Error::Root(
-                        wellfed_image::root::Error::NoPrivate { .. }
+                        wellfed_image::root::RootError::NoPrivate { .. }
                     ))
             ),
             "{error:?}"

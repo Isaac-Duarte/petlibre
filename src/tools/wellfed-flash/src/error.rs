@@ -19,25 +19,25 @@ use crate::writers::{development, read, recovery, stock, update};
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error(transparent)]
-    Protocol(#[from] protocol::Error),
+    Protocol(#[from] protocol::ProtocolError),
     #[error(transparent)]
-    Sector(#[from] sector::Error),
+    Sector(#[from] sector::SectorError),
     #[error(transparent)]
-    Status(#[from] status::Error),
+    Status(#[from] status::StatusError),
     #[error(transparent)]
-    Session(#[from] session::Error),
+    Session(#[from] session::SessionError),
     #[error(transparent)]
-    Journal(#[from] journal::Error),
+    Journal(#[from] journal::JournalError),
     #[error(transparent)]
-    Read(#[from] read::Error),
+    Read(#[from] read::ReadError),
     #[error(transparent)]
-    Update(#[from] update::Error),
+    Update(#[from] update::UpdateError),
     #[error(transparent)]
-    Development(#[from] development::Error),
+    Development(#[from] development::DevelopmentError),
     #[error(transparent)]
-    Stock(#[from] stock::Error),
+    Stock(#[from] stock::StockError),
     #[error(transparent)]
-    Recovery(#[from] recovery::Error),
+    Recovery(#[from] recovery::RecoveryError),
     /// The image, bank and review checks this client shares with the builder.
     #[error(transparent)]
     Image(#[from] wellfed_image::Error),

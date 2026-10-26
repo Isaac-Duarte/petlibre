@@ -52,7 +52,7 @@ fn frozen_reviews_bind_image_manifest_and_required_audits() {
     write(&directory.join("image.bin"), &changed);
     assert!(matches!(
         refusal(),
-        Some(crate::Error::Ota(crate::ota::Error::Checksum))
+        Some(crate::Error::Ota(crate::ota::OtaError::Checksum))
     ));
     write(&directory.join("image.bin"), &image);
 
@@ -61,7 +61,7 @@ fn frozen_reviews_bind_image_manifest_and_required_audits() {
     write(&directory.join("build-manifest.json"), b"{}");
     assert!(matches!(
         refusal(),
-        Some(crate::Error::Review(Error::ManifestMismatch))
+        Some(crate::Error::Review(ReviewError::ManifestMismatch))
     ));
     write(&directory.join("build-manifest.json"), &manifest);
 
@@ -69,16 +69,16 @@ fn frozen_reviews_bind_image_manifest_and_required_audits() {
     type Expected = fn(&crate::Error) -> bool;
     let cases: [(&str, Value, Expected); 5] = [
         ("/ota_sha256", json!("0".repeat(64)), |error| {
-            matches!(error, crate::Error::Review(Error::ImageMismatch))
+            matches!(error, crate::Error::Review(ReviewError::ImageMismatch))
         }),
         ("/payload_bytes", json!(true), |error| {
             matches!(error, crate::Error::Json(_))
         }),
         ("/review/factory_mapping", json!([]), |error| {
-            matches!(error, crate::Error::Review(Error::IncompleteMapping))
+            matches!(error, crate::Error::Review(ReviewError::IncompleteMapping))
         }),
         ("/kind", json!("other"), |error| {
-            matches!(error, crate::Error::Review(Error::Unsupported))
+            matches!(error, crate::Error::Review(ReviewError::Unsupported))
         }),
         ("/image_kind", json!("unknown"), |error| {
             matches!(error, crate::Error::Json(_))

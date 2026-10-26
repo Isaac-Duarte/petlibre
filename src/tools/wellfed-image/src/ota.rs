@@ -14,7 +14,7 @@ use crate::error::Result;
 /// A container or payload outside the one profile the factory loader is
 /// known to accept.
 #[derive(Debug, thiserror::Error)]
-pub enum Error {
+pub enum OtaError {
     #[error("OTA header is truncated")]
     Truncated,
     #[error("Unsupported OTA container profile")]
@@ -52,7 +52,7 @@ fn words(data: &[u8], at: usize) -> [u32; 8] {
 
 /// The application payload of a single-entry OTA container.
 pub fn container(data: &[u8]) -> Result<&[u8]> {
-    require(data.len() >= 32, || Error::Truncated)?;
+    require(data.len() >= 32, || OtaError::Truncated)?;
     let [
         version,
         count,
@@ -74,15 +74,17 @@ pub fn container(data: &[u8]) -> Result<&[u8]> {
                 32,
                 0xffff_ffff,
             ),
-        || Error::Profile,
+        || OtaError::Profile,
     )?;
-    require(size > 0 && size as usize == data.len() - 32, || Error::Size)?;
+    require(size > 0 && size as usize == data.len() - 32, || {
+        OtaError::Size
+    })?;
 
     let payload = &data[32..];
     let sum = payload
         .iter()
         .fold(0u32, |sum, byte| sum.wrapping_add(*byte as u32));
-    require(sum == checksum, || Error::Checksum)?;
+    require(sum == checksum, || OtaError::Checksum)?;
 
     Ok(payload)
 }
@@ -113,26 +115,26 @@ pub fn images(payload: &[u8]) -> Result<Vec<Image>> {
             let aligned = (offset + 4095) & !4095;
             require(
                 aligned <= payload.len() && payload[offset..aligned].iter().all(|b| *b == 0xff),
-                || Error::InterCorePadding,
+                || OtaError::InterCorePadding,
             )?;
             offset = aligned;
         }
 
-        require(offset + 32 <= payload.len(), || Error::MissingHeader {
+        require(offset + 32 <= payload.len(), || OtaError::MissingHeader {
             name,
         })?;
         let header = words(payload, offset);
         require(
             header[..2] == IMAGE_MAGIC && header[3] == address && header[4..] == [0xffff_ffff; 4],
-            || Error::Header { name },
+            || OtaError::Header { name },
         )?;
 
         let body = header[2] as usize;
-        require((name == "km4_psram") == (body == 0), || Error::BodySize {
-            name,
+        require((name == "km4_psram") == (body == 0), || {
+            OtaError::BodySize { name }
         })?;
-        require(offset + 32 + body <= payload.len(), || Error::BodyOverrun {
-            name,
+        require(offset + 32 + body <= payload.len(), || {
+            OtaError::BodyOverrun { name }
         })?;
 
         result.push(Image {
@@ -146,7 +148,7 @@ pub fn images(payload: &[u8]) -> Result<Vec<Image>> {
 
     require(
         payload.len() == (offset + 4095) & !4095 && payload[offset..].iter().all(|b| *b == 0xff),
-        || Error::FinalPadding,
+        || OtaError::FinalPadding,
     )?;
     Ok(result)
 }
@@ -168,7 +170,7 @@ mod tests {
         bad[40] ^= 1;
         assert!(matches!(
             container(&bad),
-            Err(crate::Error::Ota(Error::Checksum))
+            Err(crate::Error::Ota(OtaError::Checksum))
         ));
 
         let mut padding = payload.clone();
@@ -176,12 +178,12 @@ mod tests {
         padding[last] = 0;
         assert!(matches!(
             images(&padding),
-            Err(crate::Error::Ota(Error::FinalPadding))
+            Err(crate::Error::Ota(OtaError::FinalPadding))
         ));
 
         assert!(matches!(
             container(&image[..image.len() - 1]),
-            Err(crate::Error::Ota(Error::Size))
+            Err(crate::Error::Ota(OtaError::Size))
         ));
     }
 }

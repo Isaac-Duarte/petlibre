@@ -24,7 +24,7 @@ use wellfed_formats::require;
 /// A journal that cannot be created or appended to, or one that does not
 /// inspect as an unbroken hash chain. Entries are numbered from zero.
 #[derive(Debug, thiserror::Error)]
-pub enum Error {
+pub enum JournalError {
     #[error("Journal output must be a new private directory")]
     OutputNotPrivate { path: PathBuf },
     #[error("Journal parent must already exist")]
@@ -297,12 +297,12 @@ impl Journal {
     pub fn create(root: &Root, output: &Path) -> Result<Self> {
         let output = std::path::absolute(output)?;
         require(!output.is_symlink() && root.is_private(&output), || {
-            Error::OutputNotPrivate {
+            JournalError::OutputNotPrivate {
                 path: output.clone(),
             }
         })?;
         let parent = output.parent().map(Path::to_path_buf).unwrap_or_default();
-        require(parent.is_dir(), || Error::ParentMissing {
+        require(parent.is_dir(), || JournalError::ParentMissing {
             path: parent.clone(),
         })?;
 
@@ -332,13 +332,13 @@ impl Journal {
     /// Append one event: anything that serializes to an object with a string
     /// `event` name, normally an [`Event`] or an [`At`].
     pub fn append(&mut self, event: &impl Serialize) -> Result<()> {
-        require(!self.failed, || Error::Poisoned)?;
+        require(!self.failed, || JournalError::Poisoned)?;
 
         let Value::Object(body) = serde_json::to_value(event)? else {
-            return Err(Error::EventNotObject.into());
+            return Err(JournalError::EventNotObject.into());
         };
         let Some(Value::String(name)) = body.get("event") else {
-            return Err(Error::EventUnnamed.into());
+            return Err(JournalError::EventUnnamed.into());
         };
         let mutation = MUTATIONS.contains(&name.as_str());
 
@@ -433,7 +433,7 @@ pub fn inspect(data: &[u8]) -> Result<Receipt> {
         .strip_suffix(b"\n")
         .filter(|_| data.len() <= 4 * 1024 * 1024)
     else {
-        return Err(Error::Truncated { bytes: data.len() }.into());
+        return Err(JournalError::Truncated { bytes: data.len() }.into());
     };
 
     let mut head = ZERO.to_string();
@@ -444,34 +444,34 @@ pub fn inspect(data: &[u8]) -> Result<Receipt> {
         keys.sort();
         require(
             keys == ["event", "previous_sha256", "sequence", "sha256", "utc"],
-            || Error::UnexpectedFields { sequence },
+            || JournalError::UnexpectedFields { sequence },
         )?;
 
         let name = match entry["event"].get("event") {
             Some(Value::String(name)) => name.clone(),
-            _ => return Err(Error::UnexpectedEvent { sequence }.into()),
+            _ => return Err(JournalError::UnexpectedEvent { sequence }.into()),
         };
         require(
             entry["sequence"].as_u64() == u64::try_from(sequence).ok()
                 && entry["previous_sha256"] == head.as_str(),
-            || Error::BrokenLink { sequence },
+            || JournalError::BrokenLink { sequence },
         )?;
 
         let supplied = entry.remove("sha256");
         let digest = sha256(&canonical(&Value::Object(entry.clone()))?);
         let Some(Value::String(supplied)) = supplied.filter(|s| *s == digest.as_str()) else {
-            return Err(Error::HashMismatch { sequence }.into());
+            return Err(JournalError::HashMismatch { sequence }.into());
         };
 
         let Some(Value::Object(event)) = entry.remove("event") else {
-            return Err(Error::UnexpectedEvent { sequence }.into());
+            return Err(JournalError::UnexpectedEvent { sequence }.into());
         };
         head = supplied;
         events.push((name, event));
     }
 
     let (Some((first, opening)), Some((last, terminal))) = (events.first(), events.last()) else {
-        return Err(Error::Empty.into());
+        return Err(JournalError::Empty.into());
     };
 
     Ok(Receipt {
@@ -555,13 +555,13 @@ mod tests {
         };
         assert!(matches!(
             refusal(tampered.as_bytes()),
-            Error::HashMismatch { sequence: 1 }
+            JournalError::HashMismatch { sequence: 1 }
         ));
         assert!(matches!(
             refusal(&data[..data.len() - 1]),
-            Error::Truncated { .. }
+            JournalError::Truncated { .. }
         ));
-        assert!(matches!(refusal(b""), Error::Truncated { bytes: 0 }));
+        assert!(matches!(refusal(b""), JournalError::Truncated { bytes: 0 }));
     }
 
     #[test]
@@ -573,11 +573,11 @@ mod tests {
 
         assert!(matches!(
             journal.append(&json!([1])),
-            Err(crate::Error::Journal(Error::EventNotObject))
+            Err(crate::Error::Journal(JournalError::EventNotObject))
         ));
         assert!(matches!(
             journal.append(&json!({"offset": 1})),
-            Err(crate::Error::Journal(Error::EventUnnamed))
+            Err(crate::Error::Journal(JournalError::EventUnnamed))
         ));
         assert!(journal.append(&Event::ProgramEotIntent {}).is_ok());
     }
@@ -589,11 +589,11 @@ mod tests {
         let root = Root::new(checkout.path()).unwrap();
         assert!(matches!(
             Journal::create(&root, &checkout.path().join("elsewhere")),
-            Err(crate::Error::Journal(Error::OutputNotPrivate { .. }))
+            Err(crate::Error::Journal(JournalError::OutputNotPrivate { .. }))
         ));
         assert!(matches!(
             Journal::create(&root, &checkout.path().join("private/missing/t")),
-            Err(crate::Error::Journal(Error::ParentMissing { .. }))
+            Err(crate::Error::Journal(JournalError::ParentMissing { .. }))
         ));
     }
 }

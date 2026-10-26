@@ -1,6 +1,6 @@
 use wellfed_core::clock::ntp::{
-    ANSWER_MS, Bad, DENIED_MS, Exchange, Outcome, PACKET, POLL_MS, RETRY_MAX_MS, RETRY_MIN_MS,
-    answer, request, serve,
+    ANSWER_MS, Bad, DENIED_MS, Exchange, Outcome, PACKET, POLL_MS, RATE_MS, RETRY_MAX_MS,
+    RETRY_MIN_MS, answer, request, serve,
 };
 use wellfed_core::clock::wall::{Fix, Origin};
 use proptest::prelude::*;
@@ -142,6 +142,40 @@ fn a_clock_that_needs_the_time_asks_soon() {
     assert!(!exchange.due(20));
     exchange.soon(20);
     assert!(exchange.due(20));
+}
+
+/// A kiss-o'-death holds even while the clock needs the time, which asks
+/// `soon` every pass.
+#[test]
+fn a_kiss_holds_however_much_the_clock_needs_the_time() {
+    for (code, hold) in [
+        (*b"DENY", DENIED_MS),
+        (*b"RSTR", DENIED_MS),
+        (*b"RATE", RATE_MS),
+    ] {
+        let mut exchange = Exchange::new();
+        assert!(exchange.poll(0, 1).is_some());
+        let mut kiss = serve(&request(1), NOON, NOON, 2, 0).unwrap();
+        kiss[1] = 0;
+        kiss[12..16].copy_from_slice(&code);
+        assert_eq!(
+            exchange.received(10, &kiss),
+            Some(Outcome::Refused(Bad::Kiss(code)))
+        );
+        // Every pass of a loop whose clock is invalid, for the whole hold.
+        let mut now = 10u32;
+        while now < 10 + hold - 1 {
+            exchange.soon(now);
+            assert!(
+                exchange.poll(now, 2).is_none(),
+                "{code:?}: asked at {now} ms"
+            );
+            now += 997_000;
+        }
+        exchange.soon(10 + hold - 1);
+        assert!(exchange.poll(10 + hold - 1, 2).is_none());
+        assert!(exchange.poll(10 + hold, 2).is_some(), "{code:?}");
+    }
 }
 
 #[test]

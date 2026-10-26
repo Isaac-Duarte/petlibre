@@ -199,6 +199,9 @@ pub fn serve(
 enum Phase {
     /// The next request goes at `next`.
     Idle { next: u32 },
+    /// The server sent a kiss-o'-death: nothing goes before `until`,
+    /// however much the clock needs the time (RFC 4330).
+    Held { until: u32 },
     /// A request with `nonce` went at `sent`.
     Waiting { nonce: u64, sent: u32 },
 }
@@ -243,7 +246,8 @@ impl Exchange {
     }
 
     /// The clock needs the time: ask within [`RETRY_MAX_MS`] rather than
-    /// wait out a poll interval. Lost answers still back off.
+    /// wait out a poll interval. Lost answers still back off, and a
+    /// kiss-o'-death's hold is never shortened.
     pub fn soon(&mut self, now: u32) {
         if let Phase::Idle { next } = self.phase
             && next.wrapping_sub(now) > RETRY_MAX_MS
@@ -255,16 +259,16 @@ impl Exchange {
 
     /// Whether a request is due now, so a caller draws a nonce only then.
     pub fn due(&self, now: u32) -> bool {
-        matches!(self.phase, Phase::Idle { next } if crate::deadline_passed(now, next))
+        match self.phase {
+            Phase::Idle { next } | Phase::Held { until: next } => crate::deadline_passed(now, next),
+            Phase::Waiting { .. } => false,
+        }
     }
 
     /// The request to send now, if one is due, with a fresh random
     /// `nonce`. The caller sends it once.
     pub fn poll(&mut self, now: u32, nonce: u64) -> Option<[u8; PACKET]> {
-        let Phase::Idle { next } = self.phase else {
-            return None;
-        };
-        if !crate::deadline_passed(now, next) {
+        if !self.due(now) {
             return None;
         }
         self.phase = Phase::Waiting { nonce, sent: now };
@@ -297,8 +301,8 @@ impl Exchange {
                     b"DENY" | b"RSTR" => DENIED_MS,
                     _ => RATE_MS,
                 };
-                self.phase = Phase::Idle {
-                    next: now.wrapping_add(wait),
+                self.phase = Phase::Held {
+                    until: now.wrapping_add(wait),
                 };
                 Outcome::Refused(bad)
             }

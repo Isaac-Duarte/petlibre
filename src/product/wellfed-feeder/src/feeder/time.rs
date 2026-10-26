@@ -167,6 +167,7 @@ impl<S: Copy> Time<S> {
         }
         let lost = self.exchange.expire(now_ms);
         self.outcome(platform, now_ms, lost, &mut record);
+        // Never past a kiss-o'-death's hold: `soon` keeps it.
         if platform.clock_state(now_ms).reading.is_none() {
             self.exchange.soon(now_ms);
         }

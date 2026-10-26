@@ -199,3 +199,44 @@ fn the_loop_asks_the_gateway_and_an_answer_sets_the_clock() {
     assert!(reading.unix_ms.abs_diff(now) < 100, "{reading:?}");
     assert_eq!(reading.offset_s, None, "no zone, no client sync");
 }
+
+/// A server that denies the feeder is not asked again for a day, though
+/// the clock, never set, needs the time on every pass.
+#[test]
+fn a_denying_server_is_left_alone_while_the_clock_needs_the_time() {
+    use wellfed_core::clock::ntp;
+    use wellfed_feeder::feeder::NoFeeds;
+
+    let mut rig = FirmwareRig::start();
+    let gateway = u32::from_be_bytes([10, 42, 103, 1]);
+    fake::with(|h| {
+        h.ipv4 = u32::from_be_bytes([10, 42, 103, 172]);
+        h.gateway = gateway;
+        h.uptime_ms = 10_000;
+    });
+    rig.feeder.pass(10_000, &mut NoFeeds, |_| {});
+    let sent = fake::with(|h| core::mem::take(&mut h.udp_tx));
+    let [(request, _, _)] = sent.as_slice() else {
+        panic!("one request: {sent:?}");
+    };
+    let mut deny = ntp::serve(request, 1_792_674_000_000, 1_792_674_000_000, 2, 5).unwrap();
+    deny[1] = 0;
+    deny[12..16].copy_from_slice(b"DENY");
+    fake::with(|h| h.udp_rx.push_back((deny.to_vec(), gateway, 123)));
+
+    // A pass every 20 ms for 100 s, then one every minute to the day's end.
+    let mut now = 10_020u32;
+    while now < 110_000 {
+        fake::with(|h| h.uptime_ms = now);
+        rig.feeder.pass(now, &mut NoFeeds, |_| {});
+        now += 20;
+    }
+    while now < 10_000 + ntp::DENIED_MS - 60_000 {
+        fake::with(|h| h.uptime_ms = now);
+        rig.feeder.pass(now, &mut NoFeeds, |_| {});
+        now += 60_000;
+    }
+    assert!(clock::state().reading.is_none());
+    let asked = fake::with(|h| h.udp_tx.len());
+    assert_eq!(asked, 0, "asked a denying server {asked} times");
+}

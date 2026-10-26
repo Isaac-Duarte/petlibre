@@ -130,3 +130,45 @@ fn reviews_of_builds_before_device_names_still_read() {
     assert!(!freeze(Some("plaf103"), "plaf103-firstboot"));
     assert!(!freeze(None, "firstboot"));
 }
+
+#[test]
+fn a_review_outlives_an_sdk_lock_bump_after_it() {
+    let (checkout, root) = private_root();
+    let image = image(30000, 3);
+    let (directory, review, manifest) = frozen_build(checkout.path(), &image);
+    let lock = checkout.path().join("src/firmware/vendor/sdk.lock.json");
+
+    // The checkout moves to a new SDK revision and toolchain after the
+    // review froze; the image it reviewed is still the same bytes.
+    let bumped = json!({"sdk": {"url": "sdk", "revision": "b".repeat(40)},
+                        "toolchain": {"url": "toolchain", "sha256": "c".repeat(64), "directory": "asdk"}});
+    write(&lock, bumped.to_string().as_bytes());
+    assert!(frozen(&root, &directory, &BANK1).is_ok());
+
+    // Nor does reading a review need the checkout's lock at all.
+    fs::remove_file(&lock).unwrap();
+    assert!(frozen(&root, &directory, &BANK1).is_ok());
+
+    // The pins the manifest records still have to be pins, even when the
+    // review binds the manifest that carries them.
+    for (field, value) in [
+        ("sdk_revision", json!("r1")),
+        ("sdk_revision", json!("A".repeat(40))),
+        ("toolchain_sha256", json!("")),
+    ] {
+        let mut changed = manifest.clone();
+        changed[field] = value;
+        let raw = changed.to_string();
+        let mut bound = review.clone();
+        bound["manifest_sha256"] = json!(sha256(raw.as_bytes()));
+        write(&directory.join("build-manifest.json"), raw.as_bytes());
+        write(&directory.join("review.json"), bound.to_string().as_bytes());
+        assert!(
+            matches!(
+                frozen(&root, &directory, &BANK1),
+                Err(crate::Error::Review(ReviewError::BuildPins))
+            ),
+            "{field}"
+        );
+    }
+}

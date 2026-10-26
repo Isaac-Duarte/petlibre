@@ -2,8 +2,10 @@
 //!
 //! The review re-runs the build's linked-code audits under the pinned
 //! toolchain and the factory-loader emulation; this side only checks that a
-//! frozen review is complete and still matches its image. Reviews frozen by
-//! the former Python reviewer have the same shape and still read.
+//! frozen review is complete and still matches its image. It reads nothing
+//! from the checkout's sources or locks: a review stands on what it froze,
+//! so a later dependency bump never invalidates an older review. Reviews
+//! frozen by the former Python reviewer have the same shape and still read.
 
 use std::path::Path;
 
@@ -11,7 +13,7 @@ use crate::bank::{Layout, payload};
 use crate::error::Result;
 use crate::root::Root;
 use wellfed_formats::canonical::sha256;
-use wellfed_formats::lock::SdkLock;
+use wellfed_formats::hex::is_lower_hex;
 use wellfed_formats::manifest::BuildManifest;
 use wellfed_formats::require;
 use wellfed_formats::review::{BuildDetails, Details, ImageKind, ImageReview, ReviewKind};
@@ -35,6 +37,10 @@ pub enum ReviewError {
     ManifestMismatch,
     #[error("Unknown build profile")]
     UnknownProfile,
+    /// The manifest's SDK revision or toolchain digest is not one a build
+    /// could have recorded from its lock.
+    #[error("Frozen manifest lacks its SDK and toolchain pins")]
+    BuildPins,
     #[error("Manifest/image mismatch")]
     ManifestImage,
     #[error("Frozen linked/startup/pad review missing")]
@@ -105,21 +111,21 @@ fn build(
     )?;
 
     let m: BuildManifest = serde_json::from_slice(&manifest_raw)?;
-    // Read directly rather than through `wellfed_formats::load`, so a
-    // missing or malformed lock arrives as this crate's `Io` or `Json`, the
-    // kinds the flash client records apart from a refusal.
-    let lock_raw = std::fs::read(root.join("src/firmware/vendor/sdk.lock.json"))?;
-    let lock: SdkLock = serde_json::from_slice(&lock_raw)?;
     // Older builds recorded no device and named the profile
     // `plaf103-firstboot`. Bank 0's recovery image is one, and a give-way or
     // a reinstall names its review, so those still read.
     let firstboot = (m.device == "plaf103" && m.profile == "firstboot")
         || (m.device.is_empty() && m.profile == "plaf103-firstboot");
+    require(firstboot, || ReviewError::UnknownProfile)?;
+
+    // The reviewer compared these pins with the SDK lock of the checkout
+    // that froze the review, and the review binds them by the manifest's
+    // hash. The checkout's lock today says nothing about bytes already
+    // built: a later SDK or toolchain bump must not strand the recovery
+    // images the procedures name, so only the recorded pins are checked.
     require(
-        firstboot
-            && m.sdk_revision == lock.sdk.revision
-            && m.toolchain_sha256 == lock.toolchain.sha256,
-        || ReviewError::UnknownProfile,
+        is_lower_hex(&m.sdk_revision, 40) && is_lower_hex(&m.toolchain_sha256, 64),
+        || ReviewError::BuildPins,
     )?;
 
     let ota = m.artifact("OTA_All.bin");

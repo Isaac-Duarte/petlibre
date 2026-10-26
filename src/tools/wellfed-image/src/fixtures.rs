@@ -72,8 +72,8 @@ fn write(path: &Path, data: &[u8]) -> io::Result<()> {
 }
 
 /// Freeze `image` in `directory` as a first-boot build review that
-/// [`crate::review::frozen`] accepts, writing the SDK lock it
-/// checks into `checkout`. `fields` (an object) is merged into the build
+/// [`crate::review::frozen`] accepts, as a checkout whose SDK lock
+/// `checkout` gets froze it. `fields` (an object) is merged into the build
 /// manifest. Returns the review and the manifest as written.
 pub fn freeze_build(
     checkout: &Path,
@@ -81,8 +81,9 @@ pub fn freeze_build(
     image: &[u8],
     fields: &Value,
 ) -> io::Result<(Value, Value)> {
-    let lock = json!({"sdk": {"url": "sdk", "revision": "r1"},
-                      "toolchain": {"url": "toolchain", "sha256": "t".repeat(64), "directory": "asdk"}});
+    let (revision, toolchain) = ("a".repeat(40), "f".repeat(64));
+    let lock = json!({"sdk": {"url": "sdk", "revision": revision},
+                      "toolchain": {"url": "toolchain", "sha256": toolchain, "directory": "asdk"}});
     write(
         &checkout.join("src/firmware/vendor/sdk.lock.json"),
         lock.to_string().as_bytes(),
@@ -91,7 +92,7 @@ pub fn freeze_build(
     let mains = json!({"hp": {"address": "0x1"}, "lp": {"address": "0x2"}});
     let pinmap = json!({"matches_stock": true, "runtime_address": "0x3"});
     let mut manifest = json!({
-        "device": "plaf103", "profile": "firstboot", "sdk_revision": "r1", "toolchain_sha256": "t".repeat(64),
+        "device": "plaf103", "profile": "firstboot", "sdk_revision": revision, "toolchain_sha256": toolchain,
         "artifacts": [{"path": "image/OTA_All.bin", "sha256": sha256(image), "bytes": image.len()}],
         "firstboot_startup_audit": {"mains": mains}, "km0_pinmap_audit": pinmap,
         "checks": {"ota_payload_matches": true, "ota_checksum_matches": true,

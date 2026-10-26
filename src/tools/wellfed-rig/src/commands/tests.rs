@@ -205,7 +205,7 @@ impl Analyzer for FakeAnalyzer {
 }
 
 impl Tools for FakeTools {
-    fn observe(&mut self, _: &str, output: &Path, _: f64) -> Result<Box<dyn Observer>> {
+    fn observe(&mut self, _: &str, output: &Path, _: Duration) -> Result<Box<dyn Observer>> {
         let mut calls = self.0.borrow_mut();
         calls.observed.push(output.to_path_buf());
         let result = calls.results.pop_front().unwrap_or_else(loader_result);
@@ -316,13 +316,13 @@ impl Tools for FakeTools {
     fn capture(
         &mut self,
         _: &str,
-        _: f64,
+        _: Duration,
         _: Box<dyn Fn(u32) -> PathBuf + Send>,
     ) -> Result<Box<dyn Capture>> {
         Ok(Box::new(NoCapture))
     }
 
-    fn analyzer(&mut self, output: &Path, _: f64, _: u64) -> Result<Box<dyn Analyzer>> {
+    fn analyzer(&mut self, output: &Path, _: Duration, _: u64) -> Result<Box<dyn Analyzer>> {
         Ok(Box::new(FakeAnalyzer {
             output: output.to_path_buf(),
             code: self.0.borrow().analyzer_code,
@@ -369,8 +369,9 @@ fn rig() -> Rig {
         relay: Relay::new(Box::new(board.clone())),
         status: Status::disabled(),
         tools: Box::new(tools.clone()),
-        sleep: |_| Ok(()),
-        off_seconds: 2.0,
+        cancel: Cancel::new(),
+        sleep: |_, _| Ok(()),
+        off_time: Duration::from_secs(2),
         uart_when_off: UartWhenOff::Isolated,
     };
 
@@ -450,7 +451,9 @@ fn the_uart_is_isolated_while_off_unless_asked_to_stay_connected() {
 #[test]
 fn a_capture_connects_a_powered_feeders_uart_only() {
     let mut rig = rig();
-    rig.bench.capture("unpowered", 1.0).unwrap();
+    rig.bench
+        .capture("unpowered", Duration::from_secs(1))
+        .unwrap();
     assert_eq!(
         rig.board.state(),
         [false; 4],
@@ -458,7 +461,9 @@ fn a_capture_connects_a_powered_feeders_uart_only() {
     );
 
     rig.board.inner.lock().unwrap().on[1] = true;
-    rig.bench.capture("powered", 1.0).unwrap();
+    rig.bench
+        .capture("powered", Duration::from_secs(1))
+        .unwrap();
     assert_eq!(rig.board.state(), [true, false, true, true]);
 }
 
@@ -510,7 +515,10 @@ fn reused_capture_names_are_refused_before_any_relay_change() {
     let existing = rig.bench.root.join(CAPTURES).join("used");
     fs::create_dir_all(&existing).unwrap();
 
-    let error = rig.bench.boot(&existing, 10.0).unwrap_err();
+    let error = rig
+        .bench
+        .boot(&existing, Duration::from_secs(10))
+        .unwrap_err();
     assert!(
         matches!(&error, Error::Command(CommandsError::NameTaken { path }) if path == "private/captures/used"),
         "{error:?}"
@@ -522,7 +530,7 @@ fn reused_capture_names_are_refused_before_any_relay_change() {
         matches!(error, Error::Command(CommandsError::NameTaken { .. })),
         "{error:?}"
     );
-    assert!(rig.bench.capture("used", 5.0).is_err());
+    assert!(rig.bench.capture("used", Duration::from_secs(5)).is_err());
 
     assert!(rig.board.log().is_empty());
 }
@@ -532,7 +540,7 @@ fn boot_refuses_loader_output() {
     let mut rig = rig();
     let out = rig.bench.root.join("out");
 
-    let error = rig.bench.boot(&out, 10.0).unwrap_err();
+    let error = rig.bench.boot(&out, Duration::from_secs(10)).unwrap_err();
     assert!(
         matches!(error, Error::Command(CommandsError::ReachedLoader)),
         "{error:?}"
@@ -546,6 +554,46 @@ fn execute_requires_uninterrupted_power() {
 
     assert!(rig.bench.flash_execute(&execute("unit")).is_err());
     assert!(rig.tools.0.borrow().flash.is_empty());
+}
+
+#[test]
+fn lengths_a_wait_cannot_take_are_refused() {
+    assert_eq!(
+        seconds_arg("--seconds", 1.5).unwrap(),
+        Duration::from_millis(1500)
+    );
+    assert_eq!(
+        minutes_arg("--minutes", 0.5).unwrap(),
+        Duration::from_secs(30)
+    );
+    for value in [-1.0, f64::NAN, f64::INFINITY] {
+        let error = seconds_arg("--seconds", value).unwrap_err();
+        assert!(
+            matches!(
+                error,
+                Error::Command(CommandsError::BadLength {
+                    flag: "--seconds",
+                    ..
+                })
+            ),
+            "{error:?}"
+        );
+    }
+    assert_eq!(
+        seconds_arg("--off-seconds", -2.0).unwrap_err().to_string(),
+        "--off-seconds -2 must be a finite, non-negative number"
+    );
+
+    // Refused before the plan is looked at or a relay moves.
+    let mut rig = rig();
+    let mut args = execute("unit");
+    args.boot_seconds = -1.0;
+    let error = rig.bench.flash_execute(&args).unwrap_err();
+    assert!(
+        matches!(error, Error::Command(CommandsError::BadLength { .. })),
+        "{error:?}"
+    );
+    assert!(rig.board.log().is_empty());
 }
 
 #[test]

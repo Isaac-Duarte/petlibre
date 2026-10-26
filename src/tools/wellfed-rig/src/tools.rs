@@ -18,7 +18,7 @@ use wellfed_formats::canonical::sha256;
 use serde::Deserialize;
 
 use crate::device::{Answer, Ask, Device, DeviceError, DeviceStatus, Fault};
-use crate::{Error, Result, interrupted};
+use crate::{Cancel, Error, Result, Waited, wait_child};
 use wellfed_formats::bench::progress::{FlashTool, Status};
 use wellfed_formats::bench::relative;
 use wellfed_formats::require;
@@ -27,10 +27,14 @@ use wellfed_signing::CONTAINER_HEADER;
 
 /// How long a receive-only capture may take to hold the UART port.
 const OBSERVER_START: Duration = Duration::from_secs(10);
+/// How often a running child is looked at again.
+const CHILD_POLL: Duration = Duration::from_millis(50);
 
 pub trait Tools {
-    /// Start a receive-only capture and return once it holds the UART port.
-    fn observe(&mut self, port: &str, output: &Path, seconds: f64) -> Result<Box<dyn Observer>>;
+    /// Start a receive-only capture of `length` and return once it holds the
+    /// UART port.
+    fn observe(&mut self, port: &str, output: &Path, length: Duration)
+    -> Result<Box<dyn Observer>>;
     /// Run one `wellfed-flash` command to completion, echoing and recording
     /// its output; returns its exit status (0 complete, 1 stopped, 2 refused).
     fn flash(&mut self, args: &[String], status: &mut Status) -> Result<i32>;
@@ -47,19 +51,20 @@ pub trait Tools {
     fn build(&mut self, args: &[String], status: &mut Status) -> Result<i32>;
     /// Run one `wellfed-build` query (`source-id`) and keep its output.
     fn build_query(&mut self, args: &[String]) -> Result<Captured>;
-    /// Hold the UART with back-to-back receive-only captures of `seconds`
+    /// Hold the UART with back-to-back receive-only captures of `length`
     /// each, the `n`th (from 1) into `segment(n)`, until stopped.
     fn capture(
         &mut self,
         port: &str,
-        seconds: f64,
+        length: Duration,
         segment: Box<dyn Fn(u32) -> PathBuf + Send>,
     ) -> Result<Box<dyn Capture>>;
-    /// Start one bounded sigrok capture of all eight channels as raw bytes.
+    /// Start one sigrok capture of all eight channels as raw bytes, bounded
+    /// to `length`.
     fn analyzer(
         &mut self,
         output: &Path,
-        seconds: f64,
+        length: Duration,
         samplerate: u64,
     ) -> Result<Box<dyn Analyzer>>;
     fn sigrok_available(&self) -> bool;
@@ -337,17 +342,27 @@ pub struct Processes {
     pub flash_bin: PathBuf,
     pub stock_bin: PathBuf,
     pub build_bin: PathBuf,
+    /// Ends every wait on a child, which is then killed or left to its own
+    /// interrupt handling.
+    cancel: Cancel,
     /// Opened at the first status check and kept, with its session.
     device: Option<Device>,
 }
 
 impl Processes {
-    pub fn new(root: PathBuf, flash_bin: PathBuf, stock_bin: PathBuf, build_bin: PathBuf) -> Self {
+    pub fn new(
+        root: PathBuf,
+        flash_bin: PathBuf,
+        stock_bin: PathBuf,
+        build_bin: PathBuf,
+        cancel: Cancel,
+    ) -> Self {
         Self {
             root,
             flash_bin,
             stock_bin,
             build_bin,
+            cancel,
             device: None,
         }
     }
@@ -494,12 +509,17 @@ impl Processes {
 }
 
 impl Tools for Processes {
-    fn observe(&mut self, port: &str, output: &Path, seconds: f64) -> Result<Box<dyn Observer>> {
+    fn observe(
+        &mut self,
+        port: &str,
+        output: &Path,
+        length: Duration,
+    ) -> Result<Box<dyn Observer>> {
         let child = self
             .flash_command()?
             .args(["read", "observe", "--port", port, "--output"])
             .arg(output)
-            .args(["--seconds", &seconds.to_string()])
+            .args(["--seconds", &length.as_secs_f64().to_string()])
             .stdout(Stdio::null())
             .spawn()?;
         let mut observer = Observing {
@@ -507,25 +527,28 @@ impl Tools for Processes {
             output: output.to_path_buf(),
         };
 
-        let deadline = Instant::now() + OBSERVER_START;
-        while Instant::now() < deadline {
-            if interrupted() {
+        let waited = wait_child(
+            &mut observer.child,
+            &[&self.cancel],
+            Some(Instant::now() + OBSERVER_START),
+            CHILD_POLL,
+            || {
+                observe_report(output)
+                    .is_ok_and(|report| report.status == Some(SessionStatus::Running))
+            },
+        )?;
+        match waited {
+            Waited::Ready => Ok(Box::new(observer)),
+            Waited::Exited(_) => Err(ToolsError::ObserverExited.into()),
+            Waited::Cancelled => {
                 observer.kill();
-                return Err(Error::Interrupted);
+                Err(Error::Interrupted)
             }
-            if observer.child.try_wait()?.is_some() {
-                return Err(ToolsError::ObserverExited.into());
+            Waited::TimedOut => {
+                observer.kill();
+                Err(ToolsError::ObserverTimeout.into())
             }
-            let running = observe_report(output)
-                .is_ok_and(|report| report.status == Some(SessionStatus::Running));
-            if running {
-                return Ok(Box::new(observer));
-            }
-            std::thread::sleep(Duration::from_millis(50));
         }
-
-        observer.kill();
-        Err(ToolsError::ObserverTimeout.into())
     }
 
     fn flash(&mut self, args: &[String], status: &mut Status) -> Result<i32> {
@@ -579,7 +602,7 @@ impl Tools for Processes {
     fn capture(
         &mut self,
         port: &str,
-        seconds: f64,
+        length: Duration,
         segment: Box<dyn Fn(u32) -> PathBuf + Send>,
     ) -> Result<Box<dyn Capture>> {
         // Checked here, so a missing binary refuses before anything starts.
@@ -587,7 +610,12 @@ impl Tools for Processes {
         let shared = Arc::new(Chained::default());
         let chain = Arc::clone(&shared);
         let port = port.to_string();
-        let (flash, root) = (self.flash_bin.clone(), self.root.clone());
+        let seconds = length.as_secs_f64().to_string();
+        let (flash, root, cancel) = (
+            self.flash_bin.clone(),
+            self.root.clone(),
+            self.cancel.clone(),
+        );
 
         let thread = std::thread::spawn(move || {
             for n in 1.. {
@@ -600,7 +628,7 @@ impl Tools for Processes {
                 let child = command
                     .args(["read", "observe", "--port", &port, "--output"])
                     .arg(&output)
-                    .args(["--seconds", &seconds.to_string()])
+                    .args(["--seconds", &seconds])
                     .stdin(Stdio::null())
                     .stdout(Stdio::null())
                     .spawn();
@@ -610,17 +638,23 @@ impl Tools for Processes {
                 };
                 chain.started(output);
 
-                let status = loop {
-                    if chain.stopping() || interrupted() {
+                let waited = wait_child(
+                    &mut child,
+                    &[&chain.stop, &cancel],
+                    None,
+                    CHILD_POLL,
+                    || false,
+                );
+                let status = match waited {
+                    Ok(Waited::Exited(status)) => status,
+                    // With no deadline and nothing to be ready for, only a
+                    // stop or the interrupt ends the wait early.
+                    Ok(Waited::Cancelled | Waited::Ready | Waited::TimedOut) => {
                         let _ = child.kill();
                         let _ = child.wait();
                         return;
                     }
-                    match child.try_wait() {
-                        Ok(Some(status)) => break status,
-                        Ok(None) => std::thread::sleep(Duration::from_millis(50)),
-                        Err(error) => return chain.fail(CaptureFailure::Wait(error)),
-                    }
+                    Err(error) => return chain.fail(CaptureFailure::Wait(error)),
                 };
                 if !status.success() {
                     return chain.fail(CaptureFailure::Exited { n, status });
@@ -636,21 +670,16 @@ impl Tools for Processes {
     fn analyzer(
         &mut self,
         output: &Path,
-        seconds: f64,
+        length: Duration,
         samplerate: u64,
     ) -> Result<Box<dyn Analyzer>> {
         let channels: Vec<String> = (0..8).map(|i| format!("D{i}")).collect();
-        #[expect(
-            clippy::cast_possible_truncation,
-            reason = "a capture of a few minutes"
-        )]
-        let millis = (seconds * 1000.0) as u64;
         let child = Command::new("sigrok-cli")
             .current_dir(&self.root)
             .args(["--driver", "fx2lafw", "--config"])
             .arg(format!("samplerate={samplerate}"))
             .arg("--time")
-            .arg(millis.to_string())
+            .arg(length.as_millis().to_string())
             .arg("--channels")
             .arg(channels.join(","))
             .args(["--output-format", "binary", "--output-file"])
@@ -658,7 +687,10 @@ impl Tools for Processes {
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()?;
-        Ok(Box::new(Sigrok(child)))
+        Ok(Box::new(Sigrok {
+            child,
+            cancel: self.cancel.clone(),
+        }))
     }
 
     fn sigrok_available(&self) -> bool {
@@ -676,7 +708,8 @@ impl Tools for Processes {
 struct Chained {
     segments: Mutex<Vec<PathBuf>>,
     failure: Mutex<Option<Arc<CaptureFailure>>>,
-    stop: AtomicBool,
+    /// The chain's own stop, apart from the operator's interrupt.
+    stop: Cancel,
 }
 
 impl Chained {
@@ -689,10 +722,6 @@ impl Chained {
 
     fn fail(&self, reason: CaptureFailure) {
         *self.failure.lock().unwrap_or_else(|e| e.into_inner()) = Some(Arc::new(reason));
-    }
-
-    fn stopping(&self) -> bool {
-        self.stop.load(Ordering::SeqCst)
     }
 }
 
@@ -719,7 +748,7 @@ impl Capture for Chain {
     }
 
     fn stop(&mut self) {
-        self.shared.stop.store(true, Ordering::SeqCst);
+        self.shared.stop.cancel();
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
@@ -754,38 +783,48 @@ impl Observer for Observing {
     }
 }
 
-struct Sigrok(Child);
+struct Sigrok {
+    child: Child,
+    cancel: Cancel,
+}
 
 impl Analyzer for Sigrok {
     fn running(&mut self) -> bool {
-        matches!(self.0.try_wait(), Ok(None))
+        matches!(self.child.try_wait(), Ok(None))
     }
 
     fn wait(&mut self, timeout: Duration) -> Result<Option<i32>> {
         let deadline = Instant::now() + timeout;
-
-        loop {
-            if let Some(status) = self.0.try_wait()? {
-                return Ok(Some(exit_code(status)));
-            }
-            if interrupted() {
-                return Err(Error::Interrupted);
-            }
-            if Instant::now() >= deadline {
-                return Ok(None);
-            }
-            std::thread::sleep(Duration::from_millis(50));
+        let waited = wait_child(
+            &mut self.child,
+            &[&self.cancel],
+            Some(deadline),
+            CHILD_POLL,
+            || false,
+        )?;
+        if let Waited::Exited(status) = waited {
+            return Ok(Some(exit_code(status)));
         }
+
+        // A capture that ended as the interrupt or the deadline came still
+        // counts: its exit is looked at before either, as it always was.
+        if let Some(status) = self.child.try_wait()? {
+            return Ok(Some(exit_code(status)));
+        }
+        if self.cancel.is_cancelled() {
+            return Err(Error::Interrupted);
+        }
+        Ok(None)
     }
 
     fn kill(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
+        let _ = self.child.kill();
+        let _ = self.child.wait();
     }
 
     fn stderr(&mut self) -> String {
         let mut text = String::new();
-        if let Some(stderr) = &mut self.0.stderr {
+        if let Some(stderr) = &mut self.child.stderr {
             let _ = stderr.read_to_string(&mut text);
         }
         text
@@ -829,6 +868,7 @@ mod tests {
             flash_bin,
             stock_bin: tmp.path().join("absent"),
             build_bin: tmp.path().join("absent"),
+            cancel: Cancel::new(),
             device: None,
         };
         let mut status = Status::new(tmp.path(), tmp.path().join("status"));
@@ -859,11 +899,14 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
             flash_bin,
             stock_bin: tmp.path().join("absent"),
             build_bin: tmp.path().join("absent"),
+            cancel: Cancel::new(),
             device: None,
         };
         let output = tmp.path().join("capture");
 
-        let mut observer = tools.observe("uart", &output, 1.0).unwrap();
+        let mut observer = tools
+            .observe("uart", &output, Duration::from_secs(1))
+            .unwrap();
         assert_eq!(observer.finish().unwrap().bytes, 7);
     }
 
@@ -877,11 +920,12 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
             flash_bin,
             stock_bin: tmp.path().join("absent"),
             build_bin: tmp.path().join("absent"),
+            cancel: Cancel::new(),
             device: None,
         };
 
         let error = tools
-            .observe("uart", &tmp.path().join("c"), 1.0)
+            .observe("uart", &tmp.path().join("c"), Duration::from_secs(1))
             .err()
             .unwrap();
 
@@ -904,13 +948,14 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
             flash_bin: fake_flash(tmp, &script),
             stock_bin: "/bin/sh".into(),
             build_bin: tmp.join("absent"),
+            cancel: Cancel::new(),
             device: None,
         };
         let root = tmp.to_path_buf();
         tools
             .capture(
                 "/dev/null",
-                180.0,
+                Duration::from_secs(180),
                 Box::new(move |n| root.join(format!("uart-{n:02}"))),
             )
             .unwrap()
@@ -1002,6 +1047,7 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
             flash_bin: tmp.path().join("absent"),
             stock_bin: tmp.path().join("absent"),
             build_bin: builder,
+            cancel: Cancel::new(),
             device: None,
         };
         let mut status = Status::new(tmp.path(), tmp.path().join("status"));
@@ -1039,6 +1085,7 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
             flash_bin: tmp.path().join("absent"),
             stock_bin: tmp.path().join("absent"),
             build_bin: tmp.path().join("absent"),
+            cancel: Cancel::new(),
             device: None,
         };
         let mut status = Status::disabled();

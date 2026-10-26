@@ -44,6 +44,19 @@ pub const STRAP: u8 = 2;
 /// back-power a feeder that is off, so they open while it is.
 pub const UART: [u8; 2] = [3, 4];
 
+/// What a set asks of a channel's relay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Switch {
+    On,
+    Off,
+}
+
+impl Switch {
+    pub fn is_on(self) -> bool {
+        self == Self::On
+    }
+}
+
 /// One command line out, one reply line back.
 pub trait Link: Send {
     /// Discard pending input, send `line` with CRLF, and return the reply up
@@ -127,8 +140,8 @@ impl Relay {
         Ok(reply)
     }
 
-    pub fn set(&mut self, channel: u8, on: bool) -> Result<()> {
-        let value = u8::from(on);
+    pub fn set(&mut self, channel: u8, switch: Switch) -> Result<()> {
+        let value = u8::from(switch.is_on());
         let reply = self.command(&format!("AT+CH{channel}={value}"))?;
         if reply != format!("OK+CH{channel}={value}").as_bytes() {
             return Err(Error::Reply {
@@ -239,7 +252,7 @@ mod tests {
         let board = FakeBoard::default();
         let mut relay = Relay::new(Box::new(board.clone()));
 
-        relay.set(1, true).unwrap();
+        relay.set(1, Switch::On).unwrap();
 
         assert!(relay.get(1).unwrap());
         assert!(!relay.get(2).unwrap());
@@ -252,12 +265,12 @@ mod tests {
         board.inner.lock().unwrap().refuse = true;
         let mut relay = Relay::new(Box::new(board));
 
-        assert!(relay.set(1, true).is_err());
+        assert!(relay.set(1, Switch::On).is_err());
     }
 
     #[test]
     fn a_detached_relay_switches_nothing() {
-        assert!(Relay::detached().set(1, false).is_err());
+        assert!(Relay::detached().set(1, Switch::Off).is_err());
     }
 
     #[test]

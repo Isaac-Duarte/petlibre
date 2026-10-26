@@ -9,6 +9,7 @@
 //! apart, so a wait that tolerates other failures still stops on it.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use wellfed_rig::commands::Image;
 use wellfed_rig::device::{Answer, DeviceError};
@@ -19,7 +20,7 @@ use crate::feeds::FeedsError;
 use crate::live::LiveError;
 use crate::scenarios::ScenariosError;
 use crate::stock::StockError;
-use crate::{SCENARIOS, SILENT_SECONDS, compact};
+use crate::{SCENARIOS, SILENCE, compact};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -38,13 +39,13 @@ pub enum Error {
     #[error("This rig {lacks}")]
     Unsupported { lacks: &'static str },
     /// No UART record matching `what` arrived in time.
-    #[error("No {what} within {seconds:.0} s")]
-    NoRecord { what: String, seconds: f64 },
+    #[error("No {what} within {:.0} s", within.as_secs_f64())]
+    NoRecord { what: String, within: Duration },
     /// A status poll never passed; `last` is the reason it last gave.
-    #[error("No {what} within {seconds:.0} s ({last})")]
+    #[error("No {what} within {:.0} s ({last})", within.as_secs_f64())]
     Waited {
         what: String,
-        seconds: f64,
+        within: Duration,
         last: Box<Error>,
     },
     #[error("Status answered {}", compact(answer))]
@@ -59,8 +60,8 @@ pub enum Error {
     #[error("The update over the device API ended before any UART outcome: {0}")]
     PushEnded(Arc<PushError>),
     /// `build` is the offered build's first 12 digits.
-    #[error("No update outcome for {build} within {minutes:.0} min")]
-    NoOutcome { build: String, minutes: f64 },
+    #[error("No update outcome for {build} within {:.0} min", within.as_secs_f64() / 60.0)]
+    NoOutcome { build: String, within: Duration },
     #[error("No confirmed baseline build")]
     NoBaseline,
     #[error("Signing {label} failed")]
@@ -69,7 +70,7 @@ pub enum Error {
     Unbuilt { image: Image },
     /// The feeder looks hung or bricked; the run stops with the recovery
     /// commands.
-    #[error("no UART record or device API answer for {:.0} s", SILENT_SECONDS)]
+    #[error("no UART record or device API answer for {:.0} s", SILENCE.as_secs_f64())]
     Silent,
     #[error("Unknown scenario {name:?}; --list shows them ({})", scenario_names())]
     UnknownScenario { name: String },

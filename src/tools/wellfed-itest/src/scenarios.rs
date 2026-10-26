@@ -13,17 +13,19 @@
 use wellfed_model::{OpenRefusal, Refusal, Settings, SettingsPatch, WifiSource};
 
 use std::ops::Deref;
+use std::time::Duration;
 
 use wellfed_core::ota::install::StopStage;
 use wellfed_core::record::{self, Api, Confirm, Event, Trial, Update, Watch};
 use wellfed_formats::bench::catalog;
 use wellfed_formats::require;
 use wellfed_model::Generation;
+use wellfed_rig::commands::minutes_arg;
 use wellfed_rig::commands::ota::Outcome;
 use wellfed_rig::device::{Answer, Ask, Credentials, DeviceStatus, Intruder, Rebuffed};
 use wellfed_rig::server::NotReady;
 
-use super::{Baseline, Ctx, Fault, INSTALL_SECONDS, Result, STATUS_SECONDS, compact, short};
+use super::{Baseline, Ctx, Fault, Hotspot, INSTALL_WAIT, Result, STATUS_WAIT, compact, short};
 
 /// Why a scenario found the feeder other than it should be.
 #[derive(Debug, thiserror::Error)]
@@ -166,37 +168,37 @@ const ABSENT_SSID: &str = "wellfed-itest-absent";
 const WRONG_PSK: &str = "itest-not-a-passphrase";
 
 /// The NOR settings writer saves within a second or two of a change.
-const SAVE_SECONDS: f64 = 30.0;
+const SAVE_WAIT: Duration = Duration::from_secs(30);
 /// From power-on to the first startup record.
-const BOOT_SECONDS: f64 = 60.0;
+const BOOT_WAIT: Duration = Duration::from_secs(60);
 /// Five failed joins of the stored network, then the build's join.
-const FALLBACK_SECONDS: f64 = 8.0 * 60.0;
+const FALLBACK_WAIT: Duration = Duration::from_secs(8 * 60);
 /// From the offer to bank 1's give-way: its checks, then the answer's way out.
-const OFFER_CHECK_SECONDS: f64 = 150.0;
+const OFFER_CHECK_WAIT: Duration = Duration::from_secs(150);
 /// How long a record may trail the answer it logs.
-pub(super) const RECORD_SECONDS: f64 = 10.0;
+pub(super) const RECORD_WAIT: Duration = Duration::from_secs(10);
 /// The power cut lands once this many sectors are written: well inside the
 /// image, past the first progress record.
 const CUT_SECTORS: u32 = 48;
 /// The updater logs progress every 16 sectors.
 const PROGRESS_SECTORS: u32 = 16;
 /// Into trial boot 1 before the cut; confirmation needs 30 s healthy.
-const TRIAL_CUT_SECONDS: f64 = 10.0;
+const TRIAL_CUT_AFTER: Duration = Duration::from_secs(10);
 /// The Wi-Fi probe notices a lost access point within a beacon timeout or
 /// two; the outage outlasts it.
-const OUTAGE_SECONDS: f64 = 60.0;
+const OUTAGE: Duration = Duration::from_secs(60);
 /// The join retries back off to 30 s; joining takes a few more.
-const REJOIN_SECONDS: f64 = 180.0;
+const REJOIN_WAIT: Duration = Duration::from_secs(180);
 /// The host and the feeder clocks agree this closely just after a sync.
 const SKEW_MS: i64 = 5_000;
 /// A full download (about 100 s) and the hash check, or a stall's retries.
-const FAULT_SECONDS: f64 = 6.0 * 60.0;
+const FAULT_WAIT: Duration = Duration::from_secs(6 * 60);
 
 fn ota_update(ctx: &mut Ctx) -> Result<()> {
     // A feeder the suite just powered on is not serving yet, and an offer of
     // its own build changes nothing (`refused reason=same`); so hear from it first. One
     // that never answers is left to the install's own waits.
-    let _ = ctx.reachable(STATUS_SECONDS);
+    let _ = ctx.reachable(STATUS_WAIT);
 
     if let Some(review) = ctx.args.review.clone() {
         let build = ctx.rig.review_build(&review)?;
@@ -245,7 +247,7 @@ fn requests(ctx: &mut Ctx) -> Result<()> {
     let since = ctx.mark()?;
     let status = ctx.device_status()?;
     ctx.note(&format!("  {}", status.matches(&build)?));
-    ctx.expect("PLAPI1 request op=status", since, RECORD_SECONDS, |e| {
+    ctx.expect("PLAPI1 request op=status", since, RECORD_WAIT, |e| {
         *e == Event::Api(Api::Request { op: Some("status") })
     })?;
 
@@ -314,7 +316,7 @@ pub(super) fn set_settings(ctx: &mut Ctx, change: SettingsPatch) -> Result<u32> 
     require(matches!(answer, Answer::Done { .. }), || {
         ScenariosError::SettingsChange { answer }
     })?;
-    ctx.expect("PLCFG1 saved", since, SAVE_SECONDS, |e| {
+    ctx.expect("PLCFG1 saved", since, SAVE_WAIT, |e| {
         matches!(e, Event::Settings(record::Settings::Saved { generation: Some(g) }) if *g > u64::from(base))
     })?;
 
@@ -336,7 +338,7 @@ fn request_auth(ctx: &mut Ctx) -> Result<()> {
             rebuffed: unenrolled,
         },
     )?;
-    ctx.expect("PLAPI1 reason=unknown-key", since, RECORD_SECONDS, |e| {
+    ctx.expect("PLAPI1 reason=unknown-key", since, RECORD_WAIT, |e| {
         ended_for(e, "unknown-key")
     })?;
 
@@ -346,7 +348,7 @@ fn request_auth(ctx: &mut Ctx) -> Result<()> {
     require(tampered == Rebuffed::Dropped, || ScenariosError::Tampered {
         rebuffed: tampered,
     })?;
-    ctx.expect("PLAPI1 reason=noise", since, RECORD_SECONDS, |e| {
+    ctx.expect("PLAPI1 reason=noise", since, RECORD_WAIT, |e| {
         ended_for(e, "noise")
     })?;
 
@@ -373,15 +375,12 @@ fn cold_boot(ctx: &mut Ctx) -> Result<usize> {
     let since = ctx.mark()?;
     ctx.rig.power_cycle()?;
 
-    let since = ctx.expect(
-        "the baseline starting on bank 1",
-        since,
-        BOOT_SECONDS,
-        |e| started(e, &build),
-    )?;
+    let since = ctx.expect("the baseline starting on bank 1", since, BOOT_WAIT, |e| {
+        started(e, &build)
+    })?;
     // A session opened after the start record is the new boot's: the old
     // one's sockets died with the power.
-    let report = ctx.until_device("status from the new boot", STATUS_SECONDS, |status| {
+    let report = ctx.until_device("status from the new boot", STATUS_WAIT, |status| {
         Ok(status.matches(&build)?)
     })?;
     ctx.note(&format!("  {report}"));
@@ -481,7 +480,7 @@ fn wrong_credentials(ctx: &mut Ctx) -> Result<()> {
             psk: WRONG_PSK.into(),
         }),
     )?;
-    ctx.expect("PLCFG1 net saved stored=1", since, SAVE_SECONDS, |e| {
+    ctx.expect("PLCFG1 net saved stored=1", since, SAVE_WAIT, |e| {
         *e == Event::Settings(record::Settings::NetSaved { stored: true })
     })?;
 
@@ -491,7 +490,7 @@ fn wrong_credentials(ctx: &mut Ctx) -> Result<()> {
     let report = ctx.offline(|ctx| {
         ctx.until_device(
             "the build's credentials after fallback",
-            FALLBACK_SECONDS,
+            FALLBACK_WAIT,
             |s| wifi_source(s, WifiSource::Fallback),
         )
     })?;
@@ -504,11 +503,11 @@ fn wrong_credentials(ctx: &mut Ctx) -> Result<()> {
 fn clear_credentials(ctx: &mut Ctx) -> Result<()> {
     let since = ctx.mark()?;
     put_wifi(ctx, None)?;
-    ctx.expect("PLCFG1 net saved stored=0", since, SAVE_SECONDS, |e| {
+    ctx.expect("PLCFG1 net saved stored=0", since, SAVE_WAIT, |e| {
         *e == Event::Settings(record::Settings::NetSaved { stored: false })
     })?;
     cold_boot(ctx)?;
-    let report = ctx.until_device("the build's credentials", STATUS_SECONDS, |s| {
+    let report = ctx.until_device("the build's credentials", STATUS_WAIT, |s| {
         wifi_source(s, WifiSource::Build)
     })?;
     ctx.note(&format!("  {report}"));
@@ -516,16 +515,16 @@ fn clear_credentials(ctx: &mut Ctx) -> Result<()> {
 }
 
 fn network_bounce(ctx: &mut Ctx) -> Result<()> {
-    let before = ctx.reachable(STATUS_SECONDS)?;
+    let before = ctx.reachable(STATUS_WAIT)?;
 
-    ctx.rig.hotspot(false)?;
-    let outage = ctx.offline(|ctx| ctx.rig.wait(OUTAGE_SECONDS));
-    let restored = ctx.rig.hotspot(true);
+    ctx.rig.hotspot(Hotspot::Down)?;
+    let outage = ctx.offline(|ctx| ctx.rig.wait(OUTAGE));
+    let restored = ctx.rig.hotspot(Hotspot::Up);
     outage?;
     restored?;
 
     let after = ctx.offline(|ctx| {
-        ctx.until_device("the device API after the outage", REJOIN_SECONDS, |_| {
+        ctx.until_device("the device API after the outage", REJOIN_WAIT, |_| {
             Ok(String::new())
         })?;
         ctx.device_status()
@@ -559,7 +558,7 @@ fn ota_recovery(ctx: &mut Ctx) -> Result<()> {
         ctx.note("  The feeder may be left on bank 0; pushing the baseline to it");
         let since = ctx.log.len();
         let _ = ctx.rig.offer(Some(&staged), Fault::None);
-        let _ = ctx.watch(&staged.build, since, INSTALL_SECONDS);
+        let _ = ctx.watch(&staged.build, since, INSTALL_WAIT);
     }
     ctx.rig.offer(None, Fault::None)?;
     ctx.confirm(&staged.build)?;
@@ -569,8 +568,8 @@ fn ota_recovery(ctx: &mut Ctx) -> Result<()> {
 fn recovery(ctx: &mut Ctx, failing: &super::Staged, staged: &super::Staged) -> Result<()> {
     let since = ctx.mark()?;
     ctx.rig.offer(Some(failing), Fault::None)?;
-    ctx.expect("PLOTA1 activated", since, INSTALL_SECONDS, activated)?;
-    let outcome = ctx.watch(&failing.build, since, INSTALL_SECONDS)?;
+    ctx.expect("PLOTA1 activated", since, INSTALL_WAIT, activated)?;
+    let outcome = ctx.watch(&failing.build, since, INSTALL_WAIT)?;
     require(matches!(outcome, Outcome::FellBack { .. }), || {
         ScenariosError::NotRejected { outcome }
     })?;
@@ -582,7 +581,7 @@ fn recovery(ctx: &mut Ctx, failing: &super::Staged, staged: &super::Staged) -> R
         let start = ctx.mark()?;
         ctx.rig.offer(Some(staged), fault)?;
         let what = format!("PLOTA1 error stage={stage}");
-        ctx.expect(&what, start, FAULT_SECONDS, |e| {
+        ctx.expect(&what, start, FAULT_WAIT, |e| {
             *e == Event::Update(Update::Stopped { stage })
         })?;
         let activations = ctx.log.count(start, activated);
@@ -593,7 +592,7 @@ fn recovery(ctx: &mut Ctx, failing: &super::Staged, staged: &super::Staged) -> R
 
     let since = ctx.mark()?;
     ctx.rig.offer(Some(staged), Fault::None)?;
-    let outcome = ctx.watch(&staged.build, since, INSTALL_SECONDS)?;
+    let outcome = ctx.watch(&staged.build, since, INSTALL_WAIT)?;
     if outcome != Outcome::Passed {
         return Err(ScenariosError::CleanFailed { outcome }.into());
     }
@@ -640,12 +639,12 @@ fn ota_power_cuts(ctx: &mut Ctx) -> Result<()> {
         // baseline: forget it first. Best effort: a feeder still in the
         // twin's trial answers Busy, and its fallback clears nothing.
         let cancelled = ctx
-            .reachable(BOOT_SECONDS)
+            .reachable(BOOT_WAIT)
             .and_then(|_| ctx.ask(&Ask::CancelUpdate));
         ctx.note(&format!("  Cancel before the restore: {cancelled:?}"));
     }
     ctx.rig.offer(Some(&restore), Fault::None)?;
-    let outcome = ctx.watch(&build, since, INSTALL_SECONDS)?;
+    let outcome = ctx.watch(&build, since, INSTALL_WAIT)?;
     ctx.rig.offer(None, Fault::None)?;
     ctx.confirm(&build)?;
     result?;
@@ -658,24 +657,24 @@ fn ota_power_cuts(ctx: &mut Ctx) -> Result<()> {
 fn power_cuts(ctx: &mut Ctx, staged: &super::Staged) -> Result<()> {
     let since = ctx.mark()?;
     ctx.rig.offer(Some(staged), Fault::None)?;
-    let since = ctx.expect("PLWCH1 give_way=1", since, OFFER_CHECK_SECONDS, |e| {
+    let since = ctx.expect("PLWCH1 give_way=1", since, OFFER_CHECK_WAIT, |e| {
         matches!(e, Event::Watch(Watch::GiveWay { .. }))
     })?;
 
     // A cut mid-download: bank 1's marker is still clear, so the loader
     // must boot bank 0, which takes the offer again from the push (still
     // running) and downloads from the start.
-    let since = ctx.expect("a download under way", since, INSTALL_SECONDS, |e| {
+    let since = ctx.expect("a download under way", since, INSTALL_WAIT, |e| {
         sectors(e).is_some_and(|n| n >= CUT_SECTORS)
     })?;
     ctx.rig.power_cycle()?;
-    let since = ctx.expect("a boot after the cut", since, BOOT_SECONDS, is_start)?;
+    let since = ctx.expect("a boot after the cut", since, BOOT_WAIT, is_start)?;
     let bank = ctx.log.before(since, |e| match e {
         Event::Start { bank, .. } => bank,
         _ => None,
     });
     require(bank == Some(0), || ScenariosError::CutBank { bank })?;
-    let since = ctx.expect("the download again", since, INSTALL_SECONDS, |e| {
+    let since = ctx.expect("the download again", since, INSTALL_WAIT, |e| {
         sectors(e).is_some()
     })?;
     let first = ctx.log.before(since, |e| sectors(&e));
@@ -685,16 +684,16 @@ fn power_cuts(ctx: &mut Ctx, staged: &super::Staged) -> Result<()> {
 
     // A cut early in trial boot 1: backup registers clear on power loss, so
     // KM0 counts boot 1 again, and the build still confirms.
-    let since = ctx.expect("trial boot 1", since, INSTALL_SECONDS, |e| {
+    let since = ctx.expect("trial boot 1", since, INSTALL_WAIT, |e| {
         matches!(e, Event::Trial(Trial::Booting { boot: 1, .. }))
     })?;
-    ctx.idle(TRIAL_CUT_SECONDS)?;
+    ctx.idle(TRIAL_CUT_AFTER)?;
     let confirmed = |e: &Event<'_>| matches!(e, Event::Confirm(Confirm::Confirmed { .. }));
     require(ctx.log.count(since, confirmed) == 0, || {
         ScenariosError::EarlyConfirm
     })?;
     ctx.rig.power_cycle()?;
-    let since = ctx.expect("the trial count after the cut", since, BOOT_SECONDS, |e| {
+    let since = ctx.expect("the trial count after the cut", since, BOOT_WAIT, |e| {
         matches!(e, Event::Trial(Trial::Booting { .. }))
     })?;
     let boot = ctx.log.before(since, |e| match e {
@@ -702,32 +701,33 @@ fn power_cuts(ctx: &mut Ctx, staged: &super::Staged) -> Result<()> {
         _ => None,
     });
     require(boot == Some(1), || ScenariosError::TrialCount { boot })?;
-    ctx.expect("PLCNF1 confirmed=1", since, STATUS_SECONDS, confirmed)?;
+    ctx.expect("PLCNF1 confirmed=1", since, STATUS_WAIT, confirmed)?;
     ctx.confirm(&staged.build)
 }
 
 /// One status request per period.
-const SOAK_PERIOD_SECONDS: f64 = 30.0;
+const SOAK_PERIOD: Duration = Duration::from_secs(30);
 
 fn soak(ctx: &mut Ctx) -> Result<()> {
     let since = ctx.mark()?;
-    let before = ctx.reachable(STATUS_SECONDS)?;
-    let end = ctx.rig.clock() + ctx.args.soak_minutes * 60.0;
+    let before = ctx.reachable(STATUS_WAIT)?;
+    let end = ctx.rig.clock() + minutes_arg("--soak-minutes", ctx.args.soak_minutes)?;
 
-    let (mut asked, mut slowest) = (0u32, 0.0f64);
+    let (mut asked, mut slowest) = (0u32, Duration::ZERO);
     while ctx.rig.clock() < end {
         let at = ctx.rig.clock();
         ctx.device_status()?;
-        slowest = slowest.max(ctx.rig.clock() - at);
+        slowest = slowest.max(ctx.rig.clock().saturating_sub(at));
         asked += 1;
-        ctx.idle(SOAK_PERIOD_SECONDS)?;
+        ctx.idle(SOAK_PERIOD)?;
     }
 
     let restarts = ctx.log.count(since, is_start);
     let after = ctx.device_status()?;
     let losses = after.losses.saturating_sub(before.losses);
     ctx.note(&format!(
-        "  {asked} status requests, slowest answer {slowest:.1} s, {restarts} restarts, {losses} link losses"
+        "  {asked} status requests, slowest answer {:.1} s, {restarts} restarts, {losses} link losses",
+        slowest.as_secs_f64()
     ));
     require(
         restarts == 0 && after.boot_count == before.boot_count,
@@ -756,7 +756,7 @@ pub(super) struct DeviceState {
 
 pub(super) fn device_state(ctx: &mut Ctx) -> Result<DeviceState> {
     let settings = changes_to(&read_settings(ctx)?);
-    let status = ctx.reachable(STATUS_SECONDS)?;
+    let status = ctx.reachable(STATUS_WAIT)?;
 
     Ok(DeviceState {
         settings,

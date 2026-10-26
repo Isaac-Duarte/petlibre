@@ -633,10 +633,9 @@ impl Rig for Feeder {
         Ok(StockStatus::default())
     }
 
-    fn hotspot(&mut self, up: bool) -> Result<()> {
-        self.actions
-            .push(format!("hotspot {}", if up { "up" } else { "down" }));
-        if up {
+    fn hotspot(&mut self, hotspot: Hotspot) -> Result<()> {
+        self.actions.push(format!("hotspot {}", hotspot.verb()));
+        if hotspot == Hotspot::Up {
             if self.volume_drifts {
                 self.volume = 50;
             }
@@ -692,13 +691,13 @@ impl Rig for Feeder {
         Ok(std::mem::take(&mut self.uart))
     }
 
-    fn wait(&mut self, seconds: f64) -> Result<()> {
-        self.now += seconds;
+    fn wait(&mut self, span: Duration) -> Result<()> {
+        self.now += span.as_secs_f64();
         Ok(())
     }
 
-    fn clock(&self) -> f64 {
-        self.now
+    fn clock(&self) -> Duration {
+        Duration::from_secs_f64(self.now)
     }
 
     fn note(&mut self, text: &str) {
@@ -998,9 +997,9 @@ fn a_silent_feeder_stops_the_suite_with_uart_recovery() {
     // An unpowered feeder (seen on the bench) is caught by the install
     // watch itself, not after its 15-minute deadline.
     assert!(
-        reports[0].seconds < SILENT_SECONDS + 10.0,
+        reports[0].took < SILENCE + Duration::from_secs(10),
         "{}",
-        reports[0].seconds
+        reports[0].took.as_secs_f64()
     );
 
     let hint = recovery_hint("run1", None).join("\n");
@@ -1013,11 +1012,14 @@ fn a_silent_feeder_stops_the_suite_with_uart_recovery() {
 #[test]
 fn the_log_joins_split_lines_and_counts_from_a_mark() {
     let mut log = Log::default();
-    log.feed(b"PLAPI1 session slot=1 state=ended reas", 1.0);
+    log.feed(
+        b"PLAPI1 session slot=1 state=ended reas",
+        Duration::from_secs(1),
+    );
     assert_eq!(log.len(), 0);
     log.feed(
         b"on=noise\r\nboot noise\r\nPLAPI1 session slot=2 state=ended reason=noise\n",
-        2.0,
+        Duration::from_secs(2),
     );
 
     assert_eq!(log.len(), 3);
@@ -1025,7 +1027,7 @@ fn the_log_joins_split_lines_and_counts_from_a_mark() {
     assert_eq!(log.count(0, refused), 2);
     assert_eq!(log.count(1, refused), 1);
     assert_eq!(log.find(1, refused), Some(2));
-    assert_eq!(log.last_record_at(), Some(2.0));
+    assert_eq!(log.last_record_at(), Some(Duration::from_secs(2)));
 }
 
 #[test]
@@ -1050,12 +1052,12 @@ fn the_record_lists_every_verdict_as_physical_evidence() {
         Report {
             scenario: "ota-update",
             verdict: Verdict::Pass,
-            seconds: 241.04,
+            took: Duration::from_millis(241_040),
         },
         Report {
             scenario: "ota-recovery",
             verdict: Verdict::Skip("needs --power".into()),
-            seconds: 0.0,
+            took: Duration::ZERO,
         },
     ];
     let summary = serde_json::to_value(summary(

@@ -11,7 +11,7 @@ use std::fs;
 use std::io::{Read, Seek, SeekFrom};
 use std::net::{IpAddr, SocketAddr, TcpListener};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -31,8 +31,8 @@ use super::runs;
 use super::views::health::{self, FlashCache};
 use super::views::snapshot::{self, Snapshot};
 use super::views::{Sources, sessions};
-use wellfed_formats::bench::STATUS_DIR;
 use wellfed_formats::bench::progress::{self, LOG};
+use wellfed_formats::bench::{Cancel, STATUS_DIR};
 
 use crate::{Error, Result};
 
@@ -52,13 +52,14 @@ const FEEDER_SECONDS: f64 = 5.0;
 struct Ui {
     sources: Sources,
     flash: Arc<Mutex<FlashCache>>,
-    /// Set when the process is stopping: event streams end, then the server.
-    stop: &'static AtomicBool,
+    /// Cancelled when the process is stopping: event streams end, then the
+    /// server.
+    stop: Cancel,
 }
 
 impl Ui {
     fn stopping(&self) -> bool {
-        self.stop.load(Ordering::SeqCst)
+        self.stop.is_cancelled()
     }
 }
 
@@ -285,13 +286,13 @@ async fn events(
 }
 
 /// Bind now (so a busy port fails before any bench command), then serve on a
-/// background thread until `stop` is set (the operator's interrupt).
+/// background thread until `stop` is cancelled (the operator's interrupt).
 /// `flash_bin` is the flash client the page reports by hash; it is never run.
 pub fn start(
     root: PathBuf,
     flash_bin: PathBuf,
     listen: &Listen,
-    stop: &'static AtomicBool,
+    stop: Cancel,
 ) -> Result<std::thread::JoinHandle<()>> {
     let listener = TcpListener::bind(listen.address)?;
     listener.set_nonblocking(true)?;
@@ -299,7 +300,7 @@ pub fn start(
     let ui = Ui {
         sources: Sources { root, flash_bin },
         flash: Arc::default(),
-        stop,
+        stop: stop.clone(),
     };
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -313,8 +314,8 @@ pub fn start(
                 return;
             };
 
-            let shutdown = async {
-                while !stop.load(Ordering::SeqCst) {
+            let shutdown = async move {
+                while !stop.is_cancelled() {
                     tokio::time::sleep(Duration::from_millis(100)).await;
                 }
             };
@@ -334,8 +335,6 @@ mod tests {
     use axum::body::Body;
     use tower::ServiceExt;
 
-    static STOP: AtomicBool = AtomicBool::new(false);
-
     fn ui() -> (tempfile::TempDir, Router) {
         let tmp = tempfile::tempdir().unwrap();
         let ui = Ui {
@@ -344,7 +343,7 @@ mod tests {
                 flash_bin: tmp.path().join("wellfed-flash"),
             },
             flash: Arc::default(),
-            stop: &STOP,
+            stop: Cancel::new(),
         };
         (tmp, router(ui))
     }

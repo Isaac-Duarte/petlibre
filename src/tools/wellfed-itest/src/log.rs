@@ -5,6 +5,8 @@
 //! Times come from the rig's clock when the bytes were read, so they are as
 //! late as the polling interval.
 
+use std::time::Duration;
+
 use wellfed_core::record::{Event, Record};
 
 /// A longer run without a line break is noise, not a record.
@@ -12,7 +14,8 @@ const MAX_LINE: usize = 4096;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct Line {
-    pub at: f64,
+    /// On the rig's clock.
+    pub at: Duration,
     pub text: String,
 }
 
@@ -24,7 +27,7 @@ pub(super) struct Log {
 
 impl Log {
     /// Take more UART bytes, read at `at`; a partial last line waits.
-    pub(super) fn feed(&mut self, bytes: &[u8], at: f64) {
+    pub(super) fn feed(&mut self, bytes: &[u8], at: Duration) {
         self.pending.extend_from_slice(bytes);
 
         while let Some(end) = self.pending.iter().position(|b| matches!(b, b'\n' | b'\r')) {
@@ -88,7 +91,7 @@ impl Log {
     }
 
     /// When the last record of any kind arrived.
-    pub(super) fn last_record_at(&self) -> Option<f64> {
+    pub(super) fn last_record_at(&self) -> Option<Duration> {
         self.lines
             .iter()
             .rev()

@@ -19,6 +19,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 pub use args::{ItestArgs, StockOtaArgs};
 pub use error::{Error, Result};
@@ -28,7 +29,7 @@ use wellfed_formats::bench::progress::StepState;
 use wellfed_formats::bench::run::{Evidence, RunRecord, SUFFIX, ScenarioRecord, ScenarioVerdict};
 use wellfed_formats::require;
 use wellfed_rig::commands::ota::{self, Outcome, Staged, Target, Watch};
-use wellfed_rig::commands::{Bench, Image, OtaArgs};
+use wellfed_rig::commands::{Bench, Image, OtaArgs, minutes_arg};
 use wellfed_rig::device::{Answer, Ask, DeviceStatus, Intruder, Rebuffed};
 use wellfed_rig::say;
 use wellfed_rig::server::{StockStatus, TrialAnswer, TrialRequest};
@@ -51,19 +52,19 @@ use wellfed_core::record::Event;
 use scenarios::{DeviceState, SCENARIOS, Scenario};
 
 /// How often waits look at the UART and the server again.
-const POLL_SECONDS: f64 = 1.0;
-const STATUS_POLL_SECONDS: f64 = 5.0;
+const POLL: Duration = Duration::from_secs(1);
+const STATUS_POLL: Duration = Duration::from_secs(5);
 /// A build that just started on bank 0 joins the hotspot and answers the
 /// device API well within this, a reconnect included.
-const HEALTH_SECONDS: f64 = 120.0;
+const HEALTH_WAIT: Duration = Duration::from_secs(120);
 /// A booted feeder joins the hotspot and serves the device API well within
 /// this; so does one whose session was dropped by a bounce.
-const STATUS_SECONDS: f64 = 120.0;
+const STATUS_WAIT: Duration = Duration::from_secs(120);
 /// Download, activation, trial boot and the 30 s confirmation take about
 /// four minutes; the slowest seen was under six.
-const INSTALL_SECONDS: f64 = 15.0 * 60.0;
+const INSTALL_WAIT: Duration = Duration::from_secs(15 * 60);
 /// With no record for this long the feeder is presumed hung or bricked.
-const SILENT_SECONDS: f64 = 180.0;
+const SILENCE: Duration = Duration::from_secs(180);
 
 /// Whether this run's flags allow a scenario that needs `need`.
 fn met(need: Need, args: &ItestArgs) -> bool {
@@ -118,6 +119,23 @@ enum Server {
     StockTrial,
 }
 
+/// The state to put the feeder's hotspot connection in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Hotspot {
+    Up,
+    Down,
+}
+
+impl Hotspot {
+    /// The `nmcli connection` verb that brings it there.
+    fn verb(self) -> &'static str {
+        match self {
+            Self::Up => "up",
+            Self::Down => "down",
+        }
+    }
+}
+
 /// Every effect the suite has on the bench. The live rig talks to the real
 /// tools; the tests script one.
 trait Rig {
@@ -156,15 +174,15 @@ trait Rig {
     fn unix_ms(&self) -> i64;
     /// `GET /api/status`: stock's reports and the install trials.
     fn status(&mut self) -> Result<StockStatus>;
-    fn hotspot(&mut self, up: bool) -> Result<()>;
+    fn hotspot(&mut self, hotspot: Hotspot) -> Result<()>;
     /// Cut the feeder's supply, wait, restore it: a cold boot.
     fn power_cycle(&mut self) -> Result<()>;
     /// UART bytes received since the last call.
     fn uart(&mut self) -> Result<Vec<u8>>;
     /// An interruptible wait.
-    fn wait(&mut self, seconds: f64) -> Result<()>;
-    /// Seconds on a monotonic clock.
-    fn clock(&self) -> f64;
+    fn wait(&mut self, span: Duration) -> Result<()>;
+    /// Time since the rig started, on a monotonic clock.
+    fn clock(&self) -> Duration;
     /// One line for the operator and the progress page.
     fn note(&mut self, text: &str);
     /// Show a scenario's state on the bench page.
@@ -225,7 +243,7 @@ struct Ctx<'r> {
     images: Vec<(Image, PathBuf)>,
     /// Silence counts from here (the run's start, or the end of an expected
     /// offline window) until a later record.
-    heard: f64,
+    heard: Duration,
     /// Inside [`Ctx::offline`]: the feeder may be quiet on purpose.
     offline: bool,
     /// Set when a wait gave up because the feeder went silent.
@@ -268,16 +286,16 @@ impl<'r> Ctx<'r> {
         Ok(self.log.len())
     }
 
-    /// Wait up to `seconds` for a record at or after `since` that `matches`;
+    /// Wait up to `within` for a record at or after `since` that `matches`;
     /// the mark just past it.
     fn expect(
         &mut self,
         what: &str,
         since: usize,
-        seconds: f64,
+        within: Duration,
         matches: impl Fn(&Event<'_>) -> bool,
     ) -> Result<usize> {
-        let deadline = self.rig.clock() + seconds;
+        let deadline = self.rig.clock() + within;
         loop {
             self.pull()?;
             if let Some(index) = self.log.find(since, &matches) {
@@ -288,11 +306,11 @@ impl<'r> Ctx<'r> {
             if self.rig.clock() >= deadline {
                 return Err(Error::NoRecord {
                     what: what.into(),
-                    seconds,
+                    within,
                 });
             }
             self.alive()?;
-            self.rig.wait(POLL_SECONDS)?;
+            self.rig.wait(POLL)?;
         }
     }
 
@@ -300,10 +318,10 @@ impl<'r> Ctx<'r> {
     fn until_status(
         &mut self,
         what: &str,
-        seconds: f64,
+        within: Duration,
         check: impl Fn(&StockStatus) -> Result<String>,
     ) -> Result<String> {
-        let deadline = self.rig.clock() + seconds;
+        let deadline = self.rig.clock() + within;
         let mut last = String::new();
         loop {
             // The UART keeps draining, so its captures stay in step.
@@ -322,12 +340,12 @@ impl<'r> Ctx<'r> {
             if self.rig.clock() >= deadline {
                 return Err(Error::Waited {
                     what: what.into(),
-                    seconds,
+                    within,
                     last: Box::new(reason),
                 });
             }
             self.alive()?;
-            self.rig.wait(STATUS_POLL_SECONDS)?;
+            self.rig.wait(STATUS_POLL)?;
         }
     }
 
@@ -355,10 +373,10 @@ impl<'r> Ctx<'r> {
     fn until_device(
         &mut self,
         what: &str,
-        seconds: f64,
+        within: Duration,
         check: impl Fn(&DeviceStatus) -> Result<String>,
     ) -> Result<String> {
-        let deadline = self.rig.clock() + seconds;
+        let deadline = self.rig.clock() + within;
         let mut last = String::new();
         loop {
             let verdict = self.device_status().and_then(|status| check(&status));
@@ -376,18 +394,18 @@ impl<'r> Ctx<'r> {
             if self.rig.clock() >= deadline {
                 return Err(Error::Waited {
                     what: what.into(),
-                    seconds,
+                    within,
                     last: Box::new(reason),
                 });
             }
             self.alive()?;
-            self.rig.wait(STATUS_POLL_SECONDS)?;
+            self.rig.wait(STATUS_POLL)?;
         }
     }
 
-    /// The feeder answering the device API, within `seconds`.
-    fn reachable(&mut self, seconds: f64) -> Result<DeviceStatus> {
-        self.until_device("the device API", seconds, |_| Ok(String::new()))?;
+    /// The feeder answering the device API, within `within`.
+    fn reachable(&mut self, within: Duration) -> Result<DeviceStatus> {
+        self.until_device("the device API", within, |_| Ok(String::new()))?;
         self.device_status()
     }
 
@@ -412,7 +430,7 @@ impl<'r> Ctx<'r> {
             staged.version,
             short(&staged.build)
         ));
-        let outcome = self.watch(&staged.build, since, INSTALL_SECONDS)?;
+        let outcome = self.watch(&staged.build, since, INSTALL_WAIT)?;
         if outcome == Outcome::Passed {
             self.confirm(&staged.build)?;
         }
@@ -421,8 +439,8 @@ impl<'r> Ctx<'r> {
 
     /// Classify records from `since` against an offered `build` with the
     /// `ota` command's [`Watch`]; its outcome, or a timeout.
-    fn watch(&mut self, build: &str, since: usize, seconds: f64) -> Result<Outcome> {
-        self.watch_as(build, Target::Replacement, since, seconds)
+    fn watch(&mut self, build: &str, since: usize, within: Duration) -> Result<Outcome> {
+        self.watch_as(build, Target::Replacement, since, within)
     }
 
     /// As [`Self::watch`] for either target: stock passes on its banner.
@@ -431,11 +449,11 @@ impl<'r> Ctx<'r> {
         build: &str,
         target: Target,
         since: usize,
-        seconds: f64,
+        within: Duration,
     ) -> Result<Outcome> {
         let mut watch = Watch::of(build, target);
         let mut next = since;
-        let deadline = self.rig.clock() + seconds;
+        let deadline = self.rig.clock() + within;
         loop {
             self.pull()?;
             while next < self.log.len() {
@@ -464,17 +482,17 @@ impl<'r> Ctx<'r> {
             if self.rig.clock() >= deadline {
                 return Err(Error::NoOutcome {
                     build: short(build).into(),
-                    minutes: seconds / 60.0,
+                    within,
                 });
             }
             self.alive()?;
-            self.rig.wait(POLL_SECONDS)?;
+            self.rig.wait(POLL)?;
         }
     }
 
     /// The device API reports `build` on bank 1.
     fn confirm(&mut self, build: &str) -> Result<()> {
-        let report = self.until_device("status from the new build", STATUS_SECONDS, |status| {
+        let report = self.until_device("status from the new build", STATUS_WAIT, |status| {
             Ok(status.matches(build)?)
         })?;
         self.note(&format!("  {report}"));
@@ -544,7 +562,7 @@ impl<'r> Ctx<'r> {
             config: self.args.config.clone(),
             keys: self.args.keys.clone(),
             version: None,
-            minutes: INSTALL_SECONDS / 60.0,
+            minutes: INSTALL_WAIT.as_secs_f64() / 60.0,
             attended_motion: false,
             downgrade: false,
             fault: None,
@@ -552,14 +570,14 @@ impl<'r> Ctx<'r> {
         }
     }
 
-    /// Let `seconds` pass with the UART drained and the feeder watched.
-    fn idle(&mut self, seconds: f64) -> Result<()> {
-        let end = self.rig.clock() + seconds;
+    /// Let `span` pass with the UART drained and the feeder watched.
+    fn idle(&mut self, span: Duration) -> Result<()> {
+        let end = self.rig.clock() + span;
         while self.rig.clock() < end {
             self.pull()?;
             self.alive()?;
             self.rig
-                .wait(POLL_SECONDS.min(end - self.rig.clock()).max(0.0))?;
+                .wait(POLL.min(end.saturating_sub(self.rig.clock())))?;
         }
         Ok(())
     }
@@ -590,7 +608,7 @@ impl<'r> Ctx<'r> {
         result
     }
 
-    /// The feeder looks hung or bricked: no record for [`SILENT_SECONDS`]
+    /// The feeder looks hung or bricked: no record for [`SILENCE`]
     /// and no device API answer.
     fn silent(&mut self) -> Option<Silent> {
         if let Some(found) = self.went_silent.take() {
@@ -600,7 +618,7 @@ impl<'r> Ctx<'r> {
         let _ = self.pull();
         let now = self.rig.clock();
         let last = self.log.last_record_at().unwrap_or(self.heard);
-        if now - last.max(self.heard) < SILENT_SECONDS {
+        if now.saturating_sub(last.max(self.heard)) < SILENCE {
             return None;
         }
         let answers = self.rig.device(&Ask::Status).is_ok();
@@ -648,7 +666,7 @@ impl Verdict {
 struct Report {
     scenario: &'static str,
     verdict: Verdict,
-    seconds: f64,
+    took: Duration,
 }
 
 /// The names of the scenarios a run takes on: its status steps.
@@ -701,7 +719,7 @@ fn run(ctx: &mut Ctx, scenarios: &[&'static Scenario]) -> Result<(Vec<Report>, O
             reports.push(Report {
                 scenario: scenario.name,
                 verdict: Verdict::Skip(reason),
-                seconds: 0.0,
+                took: Duration::ZERO,
             });
             continue;
         }
@@ -710,7 +728,7 @@ fn run(ctx: &mut Ctx, scenarios: &[&'static Scenario]) -> Result<(Vec<Report>, O
         ctx.rig.scenario(scenario.name, StepState::Running);
         let started = ctx.rig.clock();
         let result = (scenario.run)(ctx);
-        let seconds = ctx.rig.clock() - started;
+        let took = ctx.rig.clock().saturating_sub(started);
 
         let mut verdict = match result {
             Ok(()) => Verdict::Pass,
@@ -775,7 +793,7 @@ fn run(ctx: &mut Ctx, scenarios: &[&'static Scenario]) -> Result<(Vec<Report>, O
         reports.push(Report {
             scenario: scenario.name,
             verdict,
-            seconds,
+            took,
         });
     }
     Ok((reports, silent))
@@ -794,7 +812,7 @@ fn summary(
             scenario: report.scenario.into(),
             verdict: report.verdict.kind(),
             reason: report.verdict.reason().map(str::to_string),
-            seconds: (report.seconds * 10.0).round() / 10.0,
+            seconds: (report.took.as_secs_f64() * 10.0).round() / 10.0,
         })
         .collect();
 
@@ -860,6 +878,8 @@ pub fn stock_ota(bench: &mut Bench, args: &StockOtaArgs, stock_bin: PathBuf) -> 
 /// Run the selected scenarios on the live bench, restore it, then print
 /// and record the verdicts.
 pub fn itest(bench: &mut Bench, args: &ItestArgs, stock_bin: PathBuf) -> Result<u8> {
+    // Refused here, before the bench changes, rather than when `soak` runs.
+    minutes_arg("--soak-minutes", args.soak_minutes)?;
     let scenarios = select(args)?;
     let name = args.name().to_string();
     let record = bench
@@ -893,7 +913,7 @@ pub fn itest(bench: &mut Bench, args: &ItestArgs, stock_bin: PathBuf) -> Result<
         say!(
             "  {:<18} {verdict:<5} {:>9}  {reason}",
             report.scenario,
-            ota::duration(report.seconds)
+            ota::duration(report.took)
         );
     }
     if let Some(silent) = &silent {

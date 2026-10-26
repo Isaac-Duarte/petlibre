@@ -25,7 +25,7 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant, SystemTime};
 
 use clap::Args;
 use wellfed_core::ota;
@@ -40,7 +40,7 @@ use wellfed_formats::review::ImageKind;
 pub use wellfed_signing::KEY_PATH;
 use wellfed_signing::{Frozen, Key, Motion};
 
-use super::Bench;
+use super::{Attendance, Bench};
 use crate::device::{DeviceStatus, Fault};
 use crate::tools::{InstallJob, Installing, PushError};
 use crate::{Error, Result};
@@ -48,7 +48,7 @@ use wellfed_formats::bench::{CAPTURES, VERIFICATION};
 use wellfed_formats::require;
 
 /// Each capture segment; the classifier reads it once it ends.
-const SEGMENT_SECONDS: f64 = 60.0;
+const SEGMENT: Duration = Duration::from_secs(60);
 
 /// The in-process signing step's status label.
 pub(crate) const SIGN_STEP: &str = "sign";
@@ -64,8 +64,8 @@ pub(crate) const HEALTH_STEP: &str = "health";
 /// The build's output, which the review freezes (root-relative).
 const BUILD_OUTPUT: &str = "private/firmware-build/plaf103/firstboot";
 /// The confirmed build serves the device API at once; allow for a slow join.
-const HEALTH_SECONDS: f64 = 90.0;
-const HEALTH_POLL_SECONDS: f64 = 5.0;
+const HEALTH_WAIT: Duration = Duration::from_secs(90);
+const HEALTH_POLL: Duration = Duration::from_secs(5);
 
 /// Where a run takes the image it offers from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -173,7 +173,7 @@ pub enum OtaError {
     /// The UART showed the confirmation, but the status kept giving `last`.
     #[error(
         "Confirmed on UART but the device API did not report the build within {} s ({last})",
-        HEALTH_SECONDS
+        HEALTH_WAIT.as_secs_f64()
     )]
     Unhealthy { last: Box<Error> },
 }
@@ -488,6 +488,12 @@ impl OtaArgs {
             firmware: self.firmware.unwrap_or_default(),
             variant: self.variant,
         }
+    }
+
+    /// How long to watch the UART: `--minutes`, refused unless a wait can
+    /// take it.
+    fn watch_for(&self) -> Result<Duration> {
+        super::minutes_arg("--minutes", self.minutes)
     }
 }
 
@@ -806,42 +812,40 @@ impl Watch {
 /// it; otherwise it is the end of the segment it arrived in (up to 60 s late).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Stamp {
-    pub at: f64,
+    /// Since the Unix epoch, as the capture records chunk arrivals.
+    pub at: Duration,
     pub exact: bool,
 }
 
-/// The `ota` timing record: how long each phase of one run took, in seconds.
+/// The `ota` timing record: how long each phase of one run took.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct Timing {
     /// Some child ran, so there is something to report.
     pub ran: bool,
     /// `--build` found a review of the same sources and skipped the build.
     pub reused: bool,
-    pub build: Option<f64>,
-    pub review: Option<f64>,
-    pub sign_offer: Option<f64>,
+    pub build: Option<Duration>,
+    pub review: Option<Duration>,
+    pub sign_offer: Option<Duration>,
     pub give_way: Option<Stamp>,
     pub activated: Option<Stamp>,
     pub confirmed: Option<Stamp>,
-    pub health: Option<f64>,
-    pub total: f64,
+    pub health: Option<Duration>,
+    pub total: Duration,
 }
 
-fn between(from: Option<Stamp>, to: Option<Stamp>) -> Option<(f64, bool)> {
+fn between(from: Option<Stamp>, to: Option<Stamp>) -> Option<(Duration, bool)> {
     let (from, to) = (from?, to?);
-    Some(((to.at - from.at).max(0.0), from.exact && to.exact))
+    Some((to.at.saturating_sub(from.at), from.exact && to.exact))
 }
 
-/// Seconds as `8.2 s` or `4 min 07 s`.
-pub fn duration(seconds: f64) -> String {
-    if seconds < 60.0 {
-        return format!("{seconds:.1} s");
+/// A span as `8.2 s` or `4 min 07 s`.
+pub fn duration(span: Duration) -> String {
+    if span < Duration::from_secs(60) {
+        return format!("{:.1} s", span.as_secs_f64());
     }
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "a run's length in whole seconds"
-    )]
-    let whole = seconds.round() as u64;
+    // To the nearest whole second, halves up.
+    let whole = (span + Duration::from_millis(500)).as_secs();
     format!("{} min {:02} s", whole / 60, whole % 60)
 }
 
@@ -851,12 +855,12 @@ impl Timing {
         let built = source == Source::Build;
         let skipped = || if built { "-" } else { "skipped (--review)" }.to_string();
         let reused = || "reused (same sources)".to_string();
-        let plain = |value: Option<f64>| value.map_or_else(|| "-".into(), duration);
-        let span = |value: Option<(f64, bool)>| match value {
+        let plain = |value: Option<Duration>| value.map_or_else(|| "-".into(), duration);
+        let span = |value: Option<(Duration, bool)>| match value {
             None => "-".to_string(),
-            Some((seconds, true)) => duration(seconds),
-            Some((seconds, false)) => {
-                format!("{} (to segment ends, up to 60 s off)", duration(seconds))
+            Some((took, true)) => duration(took),
+            Some((took, false)) => {
+                format!("{} (to segment ends, up to 60 s off)", duration(took))
             }
         };
 
@@ -1003,16 +1007,16 @@ impl Bench {
 
     /// Run one `wellfed-build` step from the root; its exit status and
     /// duration.
-    fn run_step(&mut self, step: &str, args: &[String]) -> Result<(i32, f64)> {
+    fn run_step(&mut self, step: &str, args: &[String]) -> Result<(i32, Duration)> {
         say!("+ wellfed-build {}", args.join(" "));
         self.status.step(step);
         let started = Instant::now();
         let code = self.tools.build(args, &mut self.status)?;
 
-        if crate::interrupted() {
+        if self.cancel.is_cancelled() {
             return Err(Error::Interrupted);
         }
-        Ok((code, started.elapsed().as_secs_f64()))
+        Ok((code, started.elapsed()))
     }
 
     /// Optionally build and review, sign and offer, watch the UART for the
@@ -1044,7 +1048,7 @@ impl Bench {
         let result = self.ota_run(args, &mut timing);
 
         if timing.ran {
-            timing.total = started.elapsed().as_secs_f64();
+            timing.total = started.elapsed();
             for line in timing.summary(args.source()) {
                 self.note(&line);
             }
@@ -1106,11 +1110,11 @@ impl Bench {
                     return Ok(0);
                 }
                 Some(Err(push)) => return Err(OtaError::GiveWay(push).into()),
-                None if crate::interrupted() => {
+                None if self.cancel.is_cancelled() => {
                     installing.stop();
                     return Err(Error::Interrupted);
                 }
-                None => std::thread::sleep(std::time::Duration::from_millis(500)),
+                None => std::thread::sleep(Duration::from_millis(500)),
             }
         }
     }
@@ -1140,7 +1144,7 @@ impl Bench {
 
         let checking = Instant::now();
         let health = self.ota_health(args, &staged.build);
-        timing.health = Some(checking.elapsed().as_secs_f64());
+        timing.health = Some(checking.elapsed());
         health?;
         Ok(0)
     }
@@ -1176,7 +1180,7 @@ impl Bench {
                 .into());
             }
             (ImageKind::Build, Some(manifest)) => {
-                self.attended_motion(manifest, args.attended_motion)?;
+                self.attended_motion(manifest, Attendance::from_flag(args.attended_motion))?;
                 if let Some(variant) = &manifest.variant {
                     say!("Variant {variant}");
                 }
@@ -1197,6 +1201,7 @@ impl Bench {
     /// review to offer and the version to sign.
     fn ota_plan(&mut self, args: &OtaArgs, timing: &mut Timing) -> Result<OtaPlan> {
         require(args.minutes > 0.0, || OtaError::MinutesNotPositive)?;
+        args.watch_for()?;
         // clap counts a flag as always present, so this pairing is checked here.
         require(
             args.build || (args.firmware.is_none() && args.variant.is_none()),
@@ -1274,7 +1279,7 @@ impl Bench {
             review: plan.review.clone(),
             error: error.into(),
         })?;
-        timing.sign_offer = Some(signing.elapsed().as_secs_f64());
+        timing.sign_offer = Some(signing.elapsed());
 
         Ok(Staged {
             build: frozen.build_id(),
@@ -1329,9 +1334,9 @@ impl Bench {
             .to_vec();
         build.extend(args.image().args());
         timing.ran = true;
-        let (code, seconds) = self.run_step(BUILD_STEPS[0], &build)?;
-        timing.build = Some(seconds);
-        self.note(&format!("Build took {}", duration(seconds)));
+        let (code, took) = self.run_step(BUILD_STEPS[0], &build)?;
+        timing.build = Some(took);
+        self.note(&format!("Build took {}", duration(took)));
         if code != 0 {
             say!("Build failed (exit {code}); nothing was reviewed or offered.");
             return Ok(false);
@@ -1345,9 +1350,9 @@ impl Bench {
             "--output".into(),
             review.display().to_string(),
         ];
-        let (code, seconds) = self.run_step(BUILD_STEPS[1], &freeze)?;
-        timing.review = Some(seconds);
-        self.note(&format!("Review took {}", duration(seconds)));
+        let (code, took) = self.run_step(BUILD_STEPS[1], &freeze)?;
+        timing.review = Some(took);
+        self.note(&format!("Review took {}", duration(took)));
         if code != 0 {
             say!("Review failed (exit {code}); nothing was offered.");
             return Ok(false);
@@ -1366,8 +1371,8 @@ impl Bench {
     ) -> Result<()> {
         let (build, version) = (staged.build.as_str(), staged.version);
         let mut watch = Watch::of(build, staged.target);
-        let total = args.minutes * 60.0;
-        let mut elapsed = 0.0;
+        let total = args.watch_for()?;
+        let mut elapsed = Duration::ZERO;
         let mut stage = 0;
         // Stream bytes before the current segment.
         let mut base = 0u64;
@@ -1377,22 +1382,27 @@ impl Bench {
         while elapsed < total {
             n += 1;
             let output = self.segment(&args.name, n);
-            let seconds = (total - elapsed).min(SEGMENT_SECONDS);
+            let length = (total - elapsed).min(SEGMENT);
             self.fresh(&output)?;
 
-            let mut observer = self.start_observer(&output, seconds)?;
+            let mut observer = self.start_observer(&output, length)?;
             let finished = self.finish_observer(observer.as_mut());
-            if crate::interrupted() {
+            if self.cancel.is_cancelled() {
                 return Err(Error::Interrupted);
             }
             finished?;
-            elapsed += seconds;
-            let ended = crate::now();
+            elapsed += length;
+            let ended = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap_or_default();
 
             let rx = fs::read(output.join("serial-rx.bin")).unwrap_or_default();
             let chunks = fs::read_to_string(output.join("serial-events.jsonl")).unwrap_or_default();
             for (offset, event) in watch.feed_at(&rx) {
-                let stamp = match arrival(&chunks, offset.saturating_sub(base)) {
+                // A chunk time no clock reading could be is not taken as exact.
+                let arrived = arrival(&chunks, offset.saturating_sub(base))
+                    .and_then(|at| Duration::try_from_secs_f64(at).ok());
+                let stamp = match arrived {
                     Some(at) => Stamp { at, exact: true },
                     None => Stamp {
                         at: ended,
@@ -1478,22 +1488,24 @@ impl Bench {
     }
 
     /// Poll the feeder's device API status until it shows the new build on
-    /// bank 1, for up to [`HEALTH_SECONDS`].
+    /// bank 1, for up to [`HEALTH_WAIT`].
     fn ota_health(&mut self, args: &OtaArgs, build: &str) -> Result<()> {
         self.status.step(HEALTH_STEP);
         say!(
-            "+ device API status as {} (every {HEALTH_POLL_SECONDS} s, up to {HEALTH_SECONDS} s)",
-            args.keys.display()
+            "+ device API status as {} (every {} s, up to {} s)",
+            args.keys.display(),
+            HEALTH_POLL.as_secs_f64(),
+            HEALTH_WAIT.as_secs_f64()
         );
 
-        let mut waited = 0.0;
+        let mut waited = Duration::ZERO;
         let mut last = String::new();
         loop {
             let verdict = self
                 .tools
                 .device_status(&args.keys, &args.config)
                 .and_then(|status: DeviceStatus| Ok(status.matches(build)?));
-            if crate::interrupted() {
+            if self.cancel.is_cancelled() {
                 return Err(Error::Interrupted);
             }
 
@@ -1509,7 +1521,7 @@ impl Bench {
                         self.note(&format!("Waiting for status: {text}"));
                         last = text;
                     }
-                    if waited >= HEALTH_SECONDS {
+                    if waited >= HEALTH_WAIT {
                         return Err(OtaError::Unhealthy {
                             last: Box::new(reason),
                         }
@@ -1518,8 +1530,8 @@ impl Bench {
                 }
             }
 
-            (self.sleep)(HEALTH_POLL_SECONDS)?;
-            waited += HEALTH_POLL_SECONDS;
+            self.pause(HEALTH_POLL)?;
+            waited += HEALTH_POLL;
         }
     }
 
@@ -1776,19 +1788,26 @@ mod tests {
 
     #[test]
     fn durations_read_in_seconds_or_minutes() {
-        assert_eq!(duration(8.24), "8.2 s");
-        assert_eq!(duration(247.0), "4 min 07 s");
+        assert_eq!(duration(Duration::from_millis(8240)), "8.2 s");
+        assert_eq!(duration(Duration::from_millis(59_940)), "59.9 s");
+        assert_eq!(duration(Duration::from_secs(247)), "4 min 07 s");
+        assert_eq!(duration(Duration::from_millis(247_500)), "4 min 08 s");
     }
 
     #[test]
     fn the_summary_marks_segment_timed_phases_and_unreached_ones() {
-        let stamp = |at, exact| Some(Stamp { at, exact });
+        let stamp = |at, exact| {
+            Some(Stamp {
+                at: Duration::from_secs(at),
+                exact,
+            })
+        };
         let timing = Timing {
             ran: true,
-            sign_offer: Some(1.0),
-            give_way: stamp(100.0, true),
-            activated: stamp(160.0, false),
-            total: 200.0,
+            sign_offer: Some(Duration::from_secs(1)),
+            give_way: stamp(100, true),
+            activated: stamp(160, false),
+            total: Duration::from_secs(200),
             ..Timing::default()
         };
 

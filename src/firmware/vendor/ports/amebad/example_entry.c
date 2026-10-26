@@ -12,6 +12,10 @@
  * the join settled. The SDK's static-address DHCP fallback counts as
  * failure and is cleared. Nothing resets or writes flash; the SDK's own
  * reconnect stays unregistered. Events go to a ring the Rust probe drains.
+ * Before an intentional restart Rust asks the task to leave for good
+ * (`wellfed_wifi_restarting`, wellfed-hal link.rs): it disconnects, so the
+ * access point drops the protected association instead of rejecting the
+ * next boot's with status 30, and never joins again.
  * The SSID and password come from a generated header built from a private
  * file; neither is ever logged here. Nothing registers fast connect or
  * calls rtw_efuse_boot_write.
@@ -53,7 +57,18 @@ enum {
     WELLFED_EV_BACKOFF = 6, /* value: ms until the next attempt */
     /* 7 was the internet DNS check; never reused. */
     WELLFED_EV_GATEWAY = 8, /* result: 0 or a WELLFED_ECHO_* failure; value: the gateway's IPv4 (host order); ms */
+    WELLFED_EV_LEAVE = 9,   /* result: wifi_disconnect; value: 1 still associated at the bound; ms */
 };
+
+/* The lost event's cause Rust answers before an intentional restart
+ * (`liveness::Cause::Restart`). */
+#define WELLFED_CAUSE_RESTART 4
+int wellfed_wifi_restarting(void);
+/* How long a leave waits for the driver to report the association gone:
+ * inside the watchdog's shortest expiry (2.9 s) with a gateway probe's
+ * second before it. */
+#define WELLFED_LEAVE_WAIT_MS 1000
+#define WELLFED_POLL_MS 50
 
 /* wellfed_wifi_watch's probe argument and answer; shared with Rust
  * (`liveness::Probe::from_code`, `liveness::Verdict::code`). */
@@ -203,7 +218,8 @@ static int wellfed_join(unsigned int attempt)
     wellfed_creds.psk_len = sizeof(WELLFED_WIFI_PASSWORD) - 1;
     wellfed_creds.source = 0;
     wellfed_wifi_select(&wellfed_creds);
-    int joined = wellfed_join_once(attempt);
+    /* A restart asked for while the turn waited: join no more. */
+    int joined = !wellfed_wifi_restarting() && wellfed_join_once(attempt);
     wellfed_wifi_outcome(joined);
     return joined;
 }
@@ -317,7 +333,37 @@ static int wellfed_watch(unsigned int attempt, unsigned int *backoff)
         if (verdict == WELLFED_WATCH_SETTLED) {
             *backoff = WELLFED_BACKOFF_MIN_MS;
         }
-        vTaskDelay(WELLFED_WATCH_MS / portTICK_PERIOD_MS);
+        /* In steps, so a restart's leave starts within one rather than at
+         * the next watch tick. */
+        for (unsigned int waited = 0; waited < WELLFED_WATCH_MS && !wellfed_wifi_restarting();
+             waited += WELLFED_POLL_MS) {
+            vTaskDelay(WELLFED_POLL_MS / portTICK_PERIOD_MS);
+        }
+    }
+}
+
+/* Leave for an intentional restart, then never join again. The
+ * disconnect sends the access point a (protected) deauthentication from the
+ * driver's command thread; wait, bounded, until the driver reports the
+ * association gone, so it has left before the reset. The watchdog feeder
+ * has already stopped: if anything here hangs, the reset comes all the same. */
+static void wellfed_leave_for_restart(unsigned int attempt)
+{
+    TickType_t begin = xTaskGetTickCount();
+    LwIP_DHCP(0, DHCP_STOP);
+    LwIP_ReleaseIP(0);
+    int result = wifi_disconnect();
+    while (wifi_is_connected_to_ap() == RTW_SUCCESS && wellfed_ms(begin) < WELLFED_LEAVE_WAIT_MS) {
+        vTaskDelay(WELLFED_POLL_MS / portTICK_PERIOD_MS);
+    }
+    wellfed_event(WELLFED_EV_LEAVE, attempt, result, wifi_is_connected_to_ap() == RTW_SUCCESS,
+                   wellfed_ms(begin));
+}
+
+static void wellfed_park(void)
+{
+    for (;;) {
+        vTaskDelay(portMAX_DELAY);
     }
 }
 
@@ -335,10 +381,19 @@ static void wellfed_wifi_task(void *unused)
     unsigned int attempt = 0;
     unsigned int backoff = WELLFED_BACKOFF_MIN_MS;
     for (;;) {
+        /* Between attempts no join holds the network: one that got no
+         * address disconnected (wellfed_join_once). */
+        if (wellfed_wifi_restarting()) {
+            wellfed_park();
+        }
         attempt++;
         if (wellfed_join(attempt)) {
             TickType_t joined = xTaskGetTickCount();
             int cause = wellfed_watch(attempt, &backoff);
+            if (cause == WELLFED_CAUSE_RESTART) {
+                wellfed_leave_for_restart(attempt);
+                wellfed_park();
+            }
             wellfed_event(WELLFED_EV_LOST, attempt, cause, wellfed_ms(joined), 0);
             LwIP_DHCP(0, DHCP_STOP);
             LwIP_ReleaseIP(0);
@@ -732,6 +787,18 @@ void wellfed_audio_close(void)
     AUDIO_SP_TdmaCmd(AUDIO_SPORT_DEV, DISABLE);
     CODEC_DeInit(APP_LINE_OUT);
     wellfed_audio_opened = 0;
+}
+
+void wellfed_tick_hook(const char *name, int suspended);
+
+/* FreeRTOS calls this from every tick interrupt (the builder sets
+ * configUSE_TICK_HOOK), with the scheduler suspended too. Rust leaves the
+ * interrupted task and the ticks since the watchdog feeder last ran in a
+ * backup register, so the boot after a silent watchdog reset can say which
+ * task spun or masked interrupts (wellfed-hal supervision/crumb.rs). */
+void vApplicationTickHook(void)
+{
+    wellfed_tick_hook(pcTaskGetName(NULL), xTaskGetSchedulerState() == taskSCHEDULER_SUSPENDED);
 }
 
 void pre_example_entry(void)

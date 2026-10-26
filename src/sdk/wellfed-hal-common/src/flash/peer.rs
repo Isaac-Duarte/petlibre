@@ -23,10 +23,6 @@ pub const INJECT_LEASE: u64 = 101;
 pub const MARKER_REGISTER: u32 = 1;
 pub const WITHHOLD_MARKER: u32 = 1;
 pub const HEARTBEAT_REGISTER: u32 = 5;
-
-/// Park handler diagnostics for KM4 to report: entries (high half), the IPC
-/// channel (bits 15:8) and the last `ParkEvent` plus one (bits 7:0).
-pub const DIAG_REGISTER: u32 = 2;
 /// The KM0 backup registers (SDK `BACKUP_REG_BASE`), readable by both cores.
 pub const BACKUP_BASE: u32 = 0x4800_03c0;
 
@@ -178,7 +174,7 @@ mod exported {
     pub unsafe extern "C" fn wellfed_amebad_flash_peer_irq(
         _data: *mut core::ffi::c_void,
         _status: u32,
-        channel: u32,
+        _channel: u32,
     ) {
         let systick = park::SYSTICK_CTRL as usize as *mut u32;
         cortex_m::interrupt::free(|_| {
@@ -189,20 +185,11 @@ mod exported {
 
             // SAFETY: serialized with the task step by the critical section.
             let peer = unsafe { &mut *PEER.get() };
-            let event = peer.on_request::<Hardware>();
+            // The event is not kept: backup register 2 is KM4's
+            // silent-reset breadcrumb (wellfed-hal `supervision::crumb`).
+            let _ = peer.on_request::<Hardware>();
             // SAFETY: as above.
             unsafe { core::ptr::write_volatile(systick, saved) };
-
-            let diag = (super::BACKUP_BASE + super::DIAG_REGISTER * 4) as usize as *mut u32;
-            // SAFETY: KM0 user backup register 2.
-            let count = (unsafe { core::ptr::read_volatile(diag) } >> 16).wrapping_add(1);
-            // SAFETY: as above.
-            unsafe {
-                core::ptr::write_volatile(
-                    diag,
-                    (count << 16) | ((channel & 0xff) << 8) | (event.code() + 1),
-                )
-            };
         })
     }
 }

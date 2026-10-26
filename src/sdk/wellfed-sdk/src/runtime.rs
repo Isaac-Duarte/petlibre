@@ -26,9 +26,12 @@ use wellfed_hal::ota::confirm::{self, Confirm, HookedStorage};
 use wellfed_hal::ota::update::{self as update, Floor, SdkFlash, StoreSlots, Update};
 use wellfed_hal::supervision::beat;
 use wellfed_hal::supervision::config;
+use wellfed_hal::supervision::crumb;
 use wellfed_hal::supervision::supervise::{self, LIVENESS_MS, Startup};
 use wellfed_hal::supervision::watchdog::Watchdog;
-use wellfed_hal::{cell::TaskCell, leds, net_status, power, rng, sdk, startup, stopped, trial};
+use wellfed_hal::{
+    cell::TaskCell, leds, link, net_status, power, rng, sdk, startup, stopped, trial,
+};
 
 use crate::slot::Slot;
 use crate::wifi::{Probe, Record};
@@ -92,9 +95,19 @@ pub fn startup_done(done: bool) {
     PROBE_DONE.store(done, Ordering::Release);
 }
 
-/// Stops feeding the watchdog, so the platform resets and KM0 counts it.
-/// For trial tests that must behave like a hung candidate.
+/// Stops feeding the watchdog, so the platform resets and KM0 counts it,
+/// after the Wi-Fi task left the network. For reboots the device API or
+/// setup asks for, and trial tests that must behave like a hung candidate.
 pub fn request_reset() {
+    restart();
+}
+
+/// Every intentional restart: stop feeding the watchdog, and have the
+/// Wi-Fi task leave the network meanwhile, so the access point drops the
+/// association rather than reject the next boot's (`link`). The feeding
+/// stops at once either way: a leave that hangs cannot hold the reset.
+fn restart() {
+    link::leave_for_restart();
     RESTART.store(true, Ordering::Release);
 }
 
@@ -277,6 +290,8 @@ unsafe extern "C" fn feeder_task(_: *mut c_void) -> u32 {
     // feed period exceeds the refresh rate limit), so a reset's host
     // timestamp, less this, times the watchdog's expiry.
     static FED_MS: AtomicU32 = AtomicU32::new(0);
+    // Every pass, fed or not: the tick hook's crumb counts from here.
+    crumb::fed();
     if !WATCHDOG_OPEN.load(Ordering::Acquire) {
         let trial = on_trial();
         TRIAL.store(trial, Ordering::Release);
@@ -313,6 +328,7 @@ unsafe extern "C" fn feeder_task(_: *mut c_void) -> u32 {
         owner: beat::read(),
     };
     if RESTART.load(Ordering::Acquire) || !supervise::feed(&inputs) {
+        crumb::stopping();
         if !STOPPED.swap(true, Ordering::Relaxed) {
             // The owner's beat age, gap and supervision; zeros with no owner.
             let (owner_age, owner_gap, supervised) = inputs.owner.map_or((0, 0, false), |b| {
@@ -347,6 +363,7 @@ unsafe extern "C" fn feeder_task(_: *mut c_void) -> u32 {
             if watchdog.checkpoint(u64::from(progress)) {
                 FED_MS.store(now, Ordering::Relaxed);
             } else if !STOPPED.swap(true, Ordering::Relaxed) {
+                crumb::stopping();
                 // A refused checkpoint latches (a gap past the progress
                 // limit, an altered register, a clock fault): the hardware
                 // is never refreshed again and resets the platform within
@@ -499,7 +516,7 @@ fn update_step() -> u32 {
         }
     }
     if step.restart {
-        RESTART.store(true, Ordering::Release);
+        restart();
         sdk::log(c"PLOTA1 restart watchdog=1\r\n");
         return 0;
     }
@@ -761,6 +778,7 @@ fn kind(kind: u32) -> &'static str {
         sdk::WifiEvent::LOST => "lost",
         sdk::WifiEvent::BACKOFF => "backoff",
         sdk::WifiEvent::GATEWAY => "gateway",
+        sdk::WifiEvent::LEAVE => "leave",
         _ => "unknown",
     }
 }
@@ -945,6 +963,16 @@ pub extern "C" fn wellfed_app_start() {
             fault.reply.code(),
             fault.elapsed_ms
         )) {
+            sdk::log(line);
+        }
+    }
+    // Before the scheduler starts the tick hook that overwrites it. Only a
+    // watchdog reset is a hang worth naming; any other reset just clears it.
+    if let Some(crumb) = crumb::take()
+        && startup::snapshot().reset & sdk::BOOT_KM4_WATCHDOG != 0
+    {
+        let mut report = startup::Report::new();
+        if let Ok(line) = report.record(format_args!("PLSUP1 hang {crumb}\r\n")) {
             sdk::log(line);
         }
     }

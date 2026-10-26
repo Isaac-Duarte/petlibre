@@ -70,7 +70,7 @@ In code:
 
 - **BLE runs only in setup mode.** A normal boot never starts the BLE stack. Holding Lock, then Mic, for 5 s on an unlocked panel starts it on the running feeder (FW45, [Bluetooth](bluetooth.md)). When setup finishes, or after 15 minutes without a session, the feeder reboots without BLE.
   - **Not automatic:** losing Wi-Fi does not start setup mode (owner, October 24, 2026). A moved feeder needs the button hold.
-  - **Not at boot:** every KM0 backup register the SDK leaves free is taken (marker, diagnostics, two boot counts, heartbeat), so there is nowhere to carry "set up on the next boot" across a reset. Starting the stack live and rebooting to end it gives the same costs.
+  - **Not at boot:** every KM0 backup register the SDK leaves free is taken (marker, the silent-reset breadcrumb, two boot counts, heartbeat), so there is nowhere to carry "set up on the next boot" across a reset. Starting the stack live and rebooting to end it gives the same costs.
   - This never tears the stack down live. AmebaD's BT deinit is unverified on the bench and could leak heap.
   - **Consumer first boot:** a consumer image with no stored and no build credentials should start in setup mode. That waits for build credentials becoming optional (FW42); every development image has them.
   - A running feeder pays only BLE's flash cost: the linked stack and an 11.5 KB controller patch ([Bluetooth](bluetooth.md)). Heap, the C tasks (outside our stack audit) and shared radio time are spent only in setup mode.

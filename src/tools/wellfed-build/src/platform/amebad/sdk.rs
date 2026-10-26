@@ -46,6 +46,9 @@ const BLE_SOURCE: &str = "component/common/example/wellfed_ble.c";
 /// registers: its backtrace alone cannot tell an imprecise bus fault
 /// from a corrupted pointer.
 const APP_START: &str = "component/soc/realtek/amebad/fwlib/ram_hp/rtl8721dhp_app_start.c";
+/// KM4's FreeRTOS options, which gain the tick hook the application entry
+/// defines: it leaves a breadcrumb that survives a silent watchdog reset.
+const FREERTOS_CONFIG: &str = "project/realtek_amebaD_va0_example/inc/inc_hp/FreeRTOSConfig.h";
 /// Object suffixes the vendor makefiles leave beside a source.
 const OBJECT_SUFFIXES: [&str; 5] = [".o", ".d", ".i", ".s", ".su"];
 
@@ -113,6 +116,7 @@ fn managed_sdk_paths(profile: Profile) -> BTreeSet<String> {
             project(FTL_MAKEFILE),
             HCI_BOARD.to_string(),
             APP_START.to_string(),
+            FREERTOS_CONFIG.to_string(),
         ]);
     }
     if profile.has(Stage::Firstboot) {
@@ -237,6 +241,17 @@ fn fault_registers(pinned: &str) -> Result<String> {
              \t\tlr_value, IsPstack);\n{anchor}"
         ),
         "Pinned hard fault handler changed",
+    )
+}
+
+/// Have FreeRTOS call `vApplicationTickHook` from every tick interrupt.
+fn tick_hook(pinned: &str) -> Result<String> {
+    let anchor = "#define configUSE_TICK_HOOK\t\t\t\t\t\t\t\t0\n";
+    replace_once(
+        pinned,
+        anchor,
+        &anchor.replace("\t0\n", "\t1\n"),
+        "Pinned tick hook option changed",
     )
 }
 
@@ -447,6 +462,8 @@ fn rust_overlays(
     overlay(sdk, hooks::SOURCE, &text, overrides)?;
     let text = fault_registers(&pinned(sdk, APP_START)?)?;
     overlay(sdk, APP_START, &text, overrides)?;
+    let text = tick_hook(&pinned(sdk, FREERTOS_CONFIG)?)?;
+    overlay(sdk, FREERTOS_CONFIG, &text, overrides)?;
 
     // SDK dependencies can retain the old public definitions otherwise.
     for core in Core::BOTH {
@@ -585,14 +602,15 @@ fn bluetooth_overlays(
 
 /// The vendor makefiles track no header dependencies, so objects compiled
 /// under other KM4 options would be linked as they are. Recompile every KM4
-/// object (all untracked build outputs) when the options or the build
-/// configuration change.
+/// object (all untracked build outputs) when the options, the FreeRTOS
+/// options or the build configuration change.
 fn recompile_on_option_change(sdk: &Path) -> Result<()> {
     let stamp = sdk.parent().unwrap_or(sdk).join("hp-options.sha256");
     let options = format!(
-        "{} {}",
+        "{} {} {}",
         digest(&sdk.join(PLATFORM_OPTS))?,
-        digest(&sdk.join(project(HP_CONFIG)))?
+        digest(&sdk.join(project(HP_CONFIG)))?,
+        digest(&sdk.join(FREERTOS_CONFIG))?
     );
     if fs::read_to_string(&stamp).ok().as_deref().map(str::trim) == Some(options.as_str()) {
         return Ok(());
@@ -787,6 +805,19 @@ mod tests {
         let mut expected = vec![format!("M {}", managed[0]), format!("D {}", managed[1])];
         expected.sort();
         assert_eq!(changes(&sdk, Profile::Firstboot), expected);
+    }
+
+    #[test]
+    fn the_tick_hook_is_switched_on_and_only_it() {
+        let pinned = "#define configUSE_IDLE_HOOK\t\t\t\t\t\t\t\t0\n\
+                      #define configUSE_TICK_HOOK\t\t\t\t\t\t\t\t0\n";
+        let text = tick_hook(pinned).unwrap();
+        assert!(text.contains("configUSE_TICK_HOOK\t\t\t\t\t\t\t\t1\n"));
+        assert!(text.contains("configUSE_IDLE_HOOK\t\t\t\t\t\t\t\t0\n"));
+
+        // A changed option line is refused, not patched elsewhere.
+        assert!(tick_hook("#define configUSE_TICK_HOOK 0\n").is_err());
+        assert!(tick_hook(&pinned.repeat(2)).is_err());
     }
 
     #[test]

@@ -82,6 +82,10 @@ pub enum Cause {
     Lease = 2,
     /// The gateway stopped answering.
     Gateway = 3,
+    /// The feeder is about to restart on purpose: leave cleanly and never
+    /// rejoin, so the access point drops the association before the next
+    /// boot asks for one. The link layer answers it, never this machine.
+    Restart = 4,
 }
 
 impl Cause {
@@ -94,6 +98,7 @@ impl Cause {
             0 => Some(Self::Link),
             2 => Some(Self::Lease),
             3 => Some(Self::Gateway),
+            4 => Some(Self::Restart),
             _ => None,
         }
     }

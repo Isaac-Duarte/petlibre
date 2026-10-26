@@ -127,7 +127,7 @@ pub struct WifiEvent {
     /// gateway probe 0 answered or a negative failure.
     pub result: i32,
     /// Scan: network found; DHCP: assigned IPv4; lost: ms connected;
-    /// backoff: ms; gateway: the gateway's IPv4.
+    /// backoff: ms; gateway: the gateway's IPv4; leave: still associated.
     pub value: u32,
     /// Scan only: the network's RSSI (dBm) and `rtw_security_t`.
     pub rssi: i32,
@@ -144,6 +144,9 @@ impl WifiEvent {
     pub const BACKOFF: u32 = 6;
     /// One ICMP echo to the lease's gateway: `result` 0 when it answered.
     pub const GATEWAY: u32 = 8;
+    /// The leave before an intentional restart: `result` is
+    /// `wifi_disconnect`'s, `value` 1 if still associated at the shim's bound.
+    pub const LEAVE: u32 = 9;
 }
 
 /// `wifi_event(seq)` outcome.

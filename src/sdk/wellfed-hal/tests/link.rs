@@ -4,7 +4,7 @@
 use std::sync::{Mutex, MutexGuard};
 
 use wellfed_core::liveness::{Cause, PROBE_PERIOD_MS, Verdict};
-use wellfed_hal::link::{self, wellfed_wifi_watch};
+use wellfed_hal::link::{self, wellfed_wifi_restarting, wellfed_wifi_watch};
 use wellfed_hal::net_status;
 use wellfed_hal::sdk::{WifiEvent, fake};
 
@@ -20,6 +20,7 @@ fn start() -> MutexGuard<'static, ()> {
     let guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     fake::reset_hardware();
     net_status::reset();
+    link::reset();
     guard
 }
 
@@ -125,4 +126,37 @@ fn losses_count_by_cause() {
     assert_eq!((status.link_losses, status.check_losses), (1, 2));
     assert_eq!(status.last_loss, 2);
     assert_eq!(status.generation, 3, "every loss is a new generation");
+}
+
+#[test]
+fn a_restart_leaves_a_live_link_for_good() {
+    let _guard = start();
+    joined();
+    assert_eq!(watch(true, true, NONE), Verdict::Probe);
+    assert_eq!(watch(true, true, ANSWERED), Verdict::Settled);
+    assert!(net_status::read().live);
+    assert_eq!(wellfed_wifi_restarting(), 0);
+
+    link::leave_for_restart();
+
+    // The shim sees it between its waits, before the next watch tick.
+    assert_eq!(wellfed_wifi_restarting(), 1);
+    // Whatever the link shows, and whatever probe was asked for, the next
+    // watch leaves it, and the link is no longer live for confirmation.
+    assert_eq!(watch(true, true, ANSWERED), Verdict::Leave(Cause::Restart));
+    assert!(!net_status::read().live);
+    assert_eq!(watch(false, false, NONE), Verdict::Leave(Cause::Restart));
+}
+
+#[test]
+fn a_restart_during_a_join_leaves_as_soon_as_it_joins() {
+    let _guard = start();
+
+    // Asked for between attempts or while one runs: the shim stops joining,
+    // and a join that still got an address leaves at its first watch.
+    link::leave_for_restart();
+    assert_eq!(wellfed_wifi_restarting(), 1);
+    joined();
+    assert_eq!(watch(true, true, NONE), Verdict::Leave(Cause::Restart));
+    assert!(!net_status::read().live);
 }

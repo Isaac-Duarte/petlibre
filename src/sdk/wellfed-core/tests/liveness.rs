@@ -69,6 +69,7 @@ fn codes_match_the_shim() {
     assert_eq!(Verdict::Leave(Cause::Link).code(), LEAVE);
     assert_eq!(Verdict::Leave(Cause::Lease).code(), LEAVE + 2);
     assert_eq!(Verdict::Leave(Cause::Gateway).code(), LEAVE + 3);
+    assert_eq!(Verdict::Leave(Cause::Restart).code(), LEAVE + 4);
 
     for verdict in [
         Verdict::Hold,
@@ -77,10 +78,11 @@ fn codes_match_the_shim() {
         Verdict::Leave(Cause::Link),
         Verdict::Leave(Cause::Lease),
         Verdict::Leave(Cause::Gateway),
+        Verdict::Leave(Cause::Restart),
     ] {
         assert_eq!(Verdict::from_code(verdict.code()), Some(verdict));
     }
-    for code in [-1, 3, LEAVE - 1, LEAVE + 1, LEAVE + 4, i32::MIN] {
+    for code in [-1, 3, LEAVE - 1, LEAVE + 1, LEAVE + 5, i32::MIN] {
         assert_eq!(Verdict::from_code(code), None, "{code}");
     }
 

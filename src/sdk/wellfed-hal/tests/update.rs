@@ -90,6 +90,9 @@ struct TestFlash {
     /// when the marker went in.
     marker_seen: Vec<[u8; 8]>,
     state_at_marker: Option<State>,
+    /// The attempt register as each bank-1 program found it: what a reset
+    /// inside that write would leave behind.
+    register_seen: Vec<u32>,
 }
 
 impl Flash for TestFlash {
@@ -105,6 +108,8 @@ impl Flash for TestFlash {
         if sector == 0 && offset == 0 && data == MARKER {
             self.state_at_marker = Some(store().record().state);
         }
+        self.register_seen
+            .push(fake::with(|h| h.backup[MARKER_REGISTER as usize]));
         let n = self.programs;
         self.programs += 1;
         if self.fail_program == Some(n) {
@@ -613,6 +618,47 @@ fn without_a_built_in_key_or_with_another_signer_nothing_installs() {
         Err(Refused::Offer(OfferError::Version))
     );
     assert!(fake::with(|h| h.bank1.iter().all(|&b| b == 0xff)));
+}
+
+#[test]
+fn an_activation_restarts_with_both_attempt_bits_clear() {
+    let _guard = start(0);
+    let mut rig = Rig::bench(0);
+    let payload = image(LEN);
+    rig.offer(&manifest(3, &payload), None).unwrap();
+    assert_eq!(rig.push(&payload, None).phase, Phase::Activated);
+    rig.now += LEAVE_MAX_MS;
+    rig.steps(2);
+    assert!(rig.restarted);
+
+    // A restart on purpose is not a crash: nothing is left for the next
+    // boot to skip on, so the build bank 1 falls back to still arms.
+    assert_eq!(fake::with(|h| h.backup[MARKER_REGISTER as usize]), 0);
+    assert!(matches!(arm(), Poll::Armed(_)));
+}
+
+#[test]
+fn a_reset_inside_a_sector_write_skips_arming_once() {
+    let _guard = start(0);
+    let mut rig = Rig::bench(0);
+    let payload = image(LEN);
+    rig.offer(&manifest(3, &payload), None).unwrap();
+    rig.push(&payload, Some(SECTOR as u32));
+
+    // Every bank-1 program ran under both bits.
+    let seen = rig.flash.register_seen.clone();
+    assert!(!seen.is_empty());
+    assert!(
+        seen.iter().all(|&r| r == UPDATE_BIT | ATTEMPT_BIT),
+        "{seen:x?}"
+    );
+
+    // A reset inside one: the next boot skips arming (and refuses
+    // offers); the boot after that arms again.
+    fake::with(|h| h.backup[MARKER_REGISTER as usize] = seen[0]);
+    assert!(matches!(arm(), Poll::Failed(Event::Skip { .. })));
+    assert!(arming::update_attempted());
+    assert!(matches!(arm(), Poll::Armed(_)));
 }
 
 #[test]

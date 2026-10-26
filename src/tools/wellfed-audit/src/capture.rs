@@ -15,9 +15,47 @@ use wellfed_formats::session::{Lifecycle, Status};
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::{Error, Result, digest, require};
+use wellfed_formats::require;
+
+use crate::{Result, digest};
 
 pub(crate) type Time = DateTime<FixedOffset>;
+
+/// A capture refused before anything is read from it: its files disagree
+/// with the finalized report, or its event log does not cover both streams
+/// contiguously and in time order.
+#[derive(Debug, thiserror::Error)]
+pub enum CaptureError {
+    #[error("Timestamp requires a timezone")]
+    NoTimezone { text: String },
+    /// Not ISO 8601 at all; the message is Python's `fromisoformat` refusal.
+    #[error("Invalid isoformat string: {text:?}")]
+    Timestamp { text: String },
+    /// A record offset no receive chunk of the event log covers.
+    #[error("No receive chunk holds offset {offset}")]
+    Uncovered { offset: usize },
+    /// The parse error stays in the message so the operator sees the line
+    /// and the reason together.
+    #[error("Invalid serial event on line {line}: {error}")]
+    Event {
+        line: usize,
+        error: serde_json::Error,
+    },
+    #[error("Capture must be complete")]
+    Incomplete,
+    #[error("Finalized capture hash missing")]
+    HashMissing { direction: Direction },
+    #[error("Capture hash mismatch")]
+    HashMismatch { direction: Direction },
+    #[error("Invalid event extent")]
+    Extent { offset: u64 },
+    #[error("Noncontiguous event offsets")]
+    Noncontiguous { expected: u64, offset: u64 },
+    #[error("Event timestamps moved backward")]
+    Backward { utc: String },
+    #[error("Event coverage mismatch")]
+    Coverage,
+}
 
 /// An ISO 8601 timestamp that carries its offset, as Python's `fromisoformat`
 /// with a required timezone.
@@ -28,9 +66,9 @@ pub(crate) fn timestamp(text: &str) -> Result<Time> {
 
     require(
         chrono::NaiveDateTime::parse_from_str(text, "%Y-%m-%dT%H:%M:%S%.f").is_err(),
-        "Timestamp requires a timezone",
+        || CaptureError::NoTimezone { text: text.into() },
     )?;
-    Err(Error::Timestamp(text.into()))
+    Err(CaptureError::Timestamp { text: text.into() }.into())
 }
 
 /// `(later - earlier).total_seconds()`, from whole microseconds as Python has them.
@@ -66,10 +104,11 @@ impl Capture {
             .enumerate()
             .map(|(index, line)| {
                 serde_json::from_str(line).map_err(|error| {
-                    Error::Refused(format!(
-                        "Invalid serial event on line {}: {error}",
-                        index + 1
-                    ))
+                    CaptureError::Event {
+                        line: index + 1,
+                        error,
+                    }
+                    .into()
                 })
             })
             .collect::<Result<_>>()?;
@@ -95,7 +134,7 @@ impl Capture {
         let event = u64::try_from(offset)
             .ok()
             .and_then(|at| self.events.iter().find(|e| e.received(at)))
-            .ok_or(Error::Uncovered(offset))?;
+            .ok_or(CaptureError::Uncovered { offset })?;
         timestamp(&event.utc)
     }
 
@@ -103,27 +142,31 @@ impl Capture {
     /// in time order.
     pub(crate) fn validate(&self) -> Result<()> {
         let metadata = &self.metadata;
-        require(
-            self.lifecycle.status == Some(Status::Complete),
-            "Capture must be complete",
-        )?;
+        require(self.lifecycle.status == Some(Status::Complete), || {
+            CaptureError::Incomplete
+        })?;
 
-        for (direction, data) in [("rx", &self.rx), ("tx", &self.tx)] {
+        for (direction, name, data) in [
+            (Direction::Rx, "rx", &self.rx),
+            (Direction::Tx, "tx", &self.tx),
+        ] {
             let hashes: Vec<&Value> = [
-                format!("{direction}_sha256"),
-                format!("serial-{direction}.bin_sha256"),
+                format!("{name}_sha256"),
+                format!("serial-{name}.bin_sha256"),
             ]
             .iter()
             .filter_map(|key| metadata.get(key))
             .collect();
-            require(!hashes.is_empty(), "Finalized capture hash missing")?;
+            require(!hashes.is_empty(), || CaptureError::HashMissing {
+                direction,
+            })?;
 
             let actual = digest(data);
             require(
                 hashes
                     .iter()
                     .all(|value| value.as_str() == Some(actual.as_str())),
-                "Capture hash mismatch",
+                || CaptureError::HashMismatch { direction },
             )?;
         }
 
@@ -134,26 +177,31 @@ impl Capture {
                 Direction::Rx => 0,
                 Direction::Tx => 1,
             };
-            require(event.bytes > 0, "Invalid event extent")?;
-            require(
-                event.offset == offsets[index],
-                "Noncontiguous event offsets",
-            )?;
+            require(event.bytes > 0, || CaptureError::Extent {
+                offset: event.offset,
+            })?;
+            require(event.offset == offsets[index], || {
+                CaptureError::Noncontiguous {
+                    expected: offsets[index],
+                    offset: event.offset,
+                }
+            })?;
 
             let when = timestamp(&event.utc)?;
-            require(
-                previous.is_none_or(|p| when >= p),
-                "Event timestamps moved backward",
-            )?;
+            require(previous.is_none_or(|p| when >= p), || {
+                CaptureError::Backward {
+                    utc: event.utc.clone(),
+                }
+            })?;
             previous = Some(when);
             // Saturating: an absurd extent then fails the coverage check.
             offsets[index] = offsets[index].saturating_add(event.bytes);
         }
 
-        require(
+        Ok(require(
             offsets == [self.rx.len() as u64, self.tx.len() as u64],
-            "Event coverage mismatch",
-        )
+            || CaptureError::Coverage,
+        )?)
     }
 }
 
@@ -204,27 +252,59 @@ pub(crate) mod tests {
     fn hash_gaps_and_time_order_are_refused() {
         let tmp = tempfile::tempdir().unwrap();
         write_capture(tmp.path(), b"hello world", 4, 1000);
-        let refusal = |capture: Capture| capture.validate().unwrap_err().to_string();
+        let refusal = |capture: Capture| match capture.validate() {
+            Err(crate::Error::Capture(error)) => error,
+            other => panic!("expected a capture refusal, got {other:?}"),
+        };
 
         let mut capture = Capture::load(tmp.path()).unwrap();
         capture.rx.push(b'!');
-        assert!(refusal(capture).contains("hash mismatch"));
+        assert!(matches!(
+            refusal(capture),
+            CaptureError::HashMismatch {
+                direction: Direction::Rx
+            }
+        ));
 
         let mut capture = Capture::load(tmp.path()).unwrap();
         capture.events[1].offset = 5;
-        assert!(refusal(capture).contains("Noncontiguous"));
+        assert!(matches!(
+            refusal(capture),
+            CaptureError::Noncontiguous {
+                expected: 4,
+                offset: 5
+            }
+        ));
 
         let mut capture = Capture::load(tmp.path()).unwrap();
         capture.events[2].utc = "2026-10-22T09:00:00+00:00".into();
-        assert!(refusal(capture).contains("backward"));
+        assert!(matches!(refusal(capture), CaptureError::Backward { .. }));
 
         let mut capture = Capture::load(tmp.path()).unwrap();
         capture.events[0].utc = "2026-10-22T09:00:00".into();
-        assert!(refusal(capture).contains("timezone"));
+        assert!(matches!(refusal(capture), CaptureError::NoTimezone { .. }));
 
         let mut capture = Capture::load(tmp.path()).unwrap();
         capture.events[0].bytes = 0;
-        assert!(refusal(capture).contains("extent"));
+        assert!(matches!(
+            refusal(capture),
+            CaptureError::Extent { offset: 0 }
+        ));
+    }
+
+    /// Operators read this line in refused audits: it names the line and the
+    /// parse error together.
+    #[test]
+    fn an_invalid_event_names_its_line() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_capture(tmp.path(), b"hello world", 11, 1000);
+        fs::write(tmp.path().join("serial-events.jsonl"), "{}\n").unwrap();
+
+        let error = Capture::load(tmp.path()).err().unwrap().to_string();
+        assert_eq!(
+            error,
+            "Invalid serial event on line 1: missing field `utc` at line 1 column 2"
+        );
     }
 
     #[test]
@@ -241,8 +321,14 @@ pub(crate) mod tests {
             write_capture(tmp.path(), b"hello world", 11, 1000);
             fs::write(tmp.path().join("serial-events.jsonl"), format!("{event}\n")).unwrap();
 
-            let error = Capture::load(tmp.path()).err().unwrap().to_string();
-            assert!(error.contains("Invalid serial event on line 1"), "{event}");
+            let error = Capture::load(tmp.path()).err().unwrap();
+            assert!(
+                matches!(
+                    error,
+                    crate::Error::Capture(CaptureError::Event { line: 1, .. })
+                ),
+                "{event}"
+            );
         }
     }
 }

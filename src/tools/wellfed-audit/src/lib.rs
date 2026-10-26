@@ -31,49 +31,60 @@ use std::io::Write;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
+use wellfed_formats::require;
 use serde::Serialize;
 
+pub use capture::CaptureError;
+
+/// Why an audit refused its input. A refusal (exit status 2) means the audit
+/// never ran, which is distinct from evidence that ran and failed. Each
+/// audit's refusals keep their own enum, and every message is the operator's
+/// one line, unchanged from the Python auditors where they had one.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    /// A refused input: the audit cannot run on it.
-    #[error("{0}")]
-    Refused(String),
-    /// A capture timestamp that is not ISO 8601 with an offset.
-    #[error("Invalid isoformat string: {0:?}")]
-    Timestamp(String),
-    /// A record offset no receive chunk of the event log covers.
-    #[error("No receive chunk holds offset {0}")]
-    Uncovered(usize),
+    #[error(transparent)]
+    Capture(#[from] CaptureError),
+    #[error(transparent)]
+    Startup(#[from] startup::StartupError),
+    #[error(transparent)]
+    Policy(#[from] startup::PolicyError),
+    /// The ADC audit runs only on a build that declares an ADC policy.
+    #[error("ADC policy required")]
+    AdcPolicyRequired { declared: Option<String> },
+    /// The QA audit runs only on the QA firmware.
+    #[error("A QA firmware build required")]
+    QaBuildRequired { firmware: Option<String> },
+    #[error(transparent)]
+    Transients(#[from] transients::TransientsError),
+    #[error(transparent)]
+    Backup(#[from] backup::BackupError),
+    #[error(transparent)]
+    Report(#[from] ReportError),
     /// The pinned stock OTA reference failed its container checks.
     #[error(transparent)]
     Reference(#[from] wellfed_image::Error),
+    /// A manifest that failed to load or bind its source identity.
+    #[error(transparent)]
+    Formats(#[from] wellfed_formats::Error),
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
 }
 
-impl From<wellfed_formats::Error> for Error {
-    fn from(error: wellfed_formats::Error) -> Self {
-        match error {
-            wellfed_formats::Error::NotInteger => Self::Refused(error.to_string()),
-            wellfed_formats::Error::Io(error) => Self::Io(error),
-            wellfed_formats::Error::Json(error) => Self::Json(error),
-        }
-    }
+/// A report path refused: reports are new private files, never an overwrite
+/// of an earlier report or of the evidence they describe.
+#[derive(Debug, thiserror::Error)]
+pub enum ReportError {
+    #[error("Report already exists; choose a new path")]
+    Exists { path: PathBuf },
+    #[error("Report must be under ignored private/")]
+    NotPrivate { path: PathBuf },
+    #[error("Report cannot overwrite an input")]
+    OverwritesInput { path: PathBuf },
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
-
-/// Refuse the input unless `condition` holds. A refusal (exit status 2) means
-/// the audit never ran, which is distinct from evidence that ran and failed.
-pub fn require(condition: bool, message: impl Into<String>) -> Result<()> {
-    if condition {
-        Ok(())
-    } else {
-        Err(Error::Refused(message.into()))
-    }
-}
 
 pub(crate) use wellfed_formats::canonical::sha256 as digest;
 
@@ -82,7 +93,8 @@ pub(crate) fn round(value: f64, digits: usize) -> f64 {
     format!("{value:.digits$}").parse().unwrap_or(value)
 }
 
-/// A closed set of report outcomes, written as the Python auditors' strings.
+/// A closed set with fixed text: report outcomes, written as the Python
+/// auditors' strings, and the names refusal messages interpolate.
 macro_rules! outcomes {
     ($(#[$meta:meta])* $vis:vis enum $name:ident { $($variant:ident => $text:literal,)* }) => {
         $(#[$meta])*
@@ -123,10 +135,9 @@ pub fn write_report(
     report: &impl Serialize,
     inputs: &[&Path],
 ) -> Result<PathBuf> {
-    require(
-        fs::symlink_metadata(path).is_err(),
-        "Report already exists; choose a new path",
-    )?;
+    require(fs::symlink_metadata(path).is_err(), || {
+        ReportError::Exists { path: path.into() }
+    })?;
 
     let parent = path
         .parent()
@@ -142,13 +153,17 @@ pub fn write_report(
         .join(path.file_name().unwrap_or_default());
     require(
         resolved.starts_with(root.join("private").canonicalize()?),
-        "Report must be under ignored private/",
+        || ReportError::NotPrivate {
+            path: resolved.clone(),
+        },
     )?;
     require(
         !inputs
             .iter()
             .any(|input| input.canonicalize().is_ok_and(|p| p == resolved)),
-        "Report cannot overwrite an input",
+        || ReportError::OverwritesInput {
+            path: resolved.clone(),
+        },
     )?;
 
     let mut file = fs::OpenOptions::new()

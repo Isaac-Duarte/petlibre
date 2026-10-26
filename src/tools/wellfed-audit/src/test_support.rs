@@ -8,8 +8,8 @@ use wellfed_formats::manifest::BuildManifest;
 use serde_json::{Value, json};
 
 use crate::capture::Time;
-use crate::startup::{find, verify};
-use crate::{Result, digest};
+use crate::startup::{Declaration, PolicyError, find, verify};
+use crate::{Error, Result, digest};
 
 pub fn t0() -> Time {
     DateTime::parse_from_rfc3339("2026-10-21T10:00:00+00:00").unwrap()
@@ -156,7 +156,19 @@ impl Fixture {
         verify(p, &p.join("manifest.json"), &p.join("image.bin"), minimum).map(report)
     }
 
-    pub fn error(&self, minimum: f64) -> String {
-        self.verify(minimum).unwrap_err().to_string()
+    pub fn error(&self, minimum: f64) -> Error {
+        self.verify(minimum).unwrap_err()
     }
+}
+
+/// The policy refusal an audit stopped on; any other outcome fails the test.
+pub fn policy_refusal<T: std::fmt::Debug>(result: Result<T>) -> PolicyError {
+    match result {
+        Err(Error::Policy(refusal)) => refusal,
+        other => panic!("expected a policy refusal, got {other:?}"),
+    }
+}
+
+pub fn mismatch(declaration: Declaration) -> PolicyError {
+    PolicyError::Mismatch { declaration }
 }

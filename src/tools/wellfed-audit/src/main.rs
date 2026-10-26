@@ -11,7 +11,7 @@ use std::process::ExitCode;
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 
-use wellfed_audit::{adc, backup, qa, require, startup, transients, write_report};
+use wellfed_audit::{adc, backup, qa, startup, transients, write_report};
 
 #[derive(Parser)]
 #[command(
@@ -126,10 +126,10 @@ fn run(cli: Cli) -> anyhow::Result<u8> {
             args,
             minimum_seconds,
         } => {
-            require(
+            anyhow::ensure!(
                 (1.0..=180.0).contains(&minimum_seconds),
-                "Observation minimum must be 1-180 seconds",
-            )?;
+                "Observation minimum must be 1-180 seconds"
+            );
 
             let report =
                 startup::verify(&args.capture, &args.manifest, &args.image, minimum_seconds)?;

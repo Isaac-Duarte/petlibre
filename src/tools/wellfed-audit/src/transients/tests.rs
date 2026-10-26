@@ -126,26 +126,25 @@ fn session_summary_and_integrity() {
     assert_eq!(report["brake_at_s"], json!({"min": 0.002, "max": 0.0025}));
 
     fs::write(d.join("cycle-002.bin"), [&files[1].1[..], b"\0"].concat()).unwrap();
-    assert!(
-        verify(d)
-            .unwrap_err()
-            .to_string()
-            .contains("changed since capture")
-    );
+    assert!(matches!(
+        verify(d),
+        Err(crate::Error::Transients(TransientsError::Changed { file })) if file == "cycle-002.bin"
+    ));
 
     manifest["channels"] = json!({"ina": 0, "inb": 0, "outa": 2, "outb": 3});
     fs::write(d.join("manifest.json"), manifest.to_string()).unwrap();
-    assert!(
-        verify(d)
-            .unwrap_err()
-            .to_string()
-            .contains("distinct channels")
-    );
+    assert!(matches!(
+        verify(d),
+        Err(crate::Error::Transients(TransientsError::Channels))
+    ));
 
     manifest["cycles"][0]["file"] = json!("../outside.bin");
     manifest["channels"] = json!({"ina": 0, "inb": 1, "outa": 2, "outb": 3});
     fs::write(d.join("manifest.json"), manifest.to_string()).unwrap();
-    assert!(verify(d).is_err());
+    assert!(matches!(
+        verify(d),
+        Err(crate::Error::Transients(TransientsError::CycleFile { .. }))
+    ));
 }
 
 #[test]

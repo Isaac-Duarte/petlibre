@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use serde_json::{Value, json};
 
 use super::*;
-use crate::write_report;
+use crate::{ReportError, write_report};
 
 /// Test fixture only, never a hardware-capacity assertion.
 const CAPACITY: u64 = 8 * 1024 * 1024;
@@ -228,25 +228,37 @@ fn alias_pattern_and_uncovered_areas_are_explicit() {
 #[test]
 fn same_file_hardlink_invalid_capacity_and_wrong_reference_are_refused() {
     let r = Reads::new();
-    let error = |result: Result<Value>| result.unwrap_err().to_string();
+    let refusal = |result: Result<Value>| match result {
+        Err(Error::Backup(refusal)) => refusal,
+        other => panic!("expected a backup refusal, got {other:?}"),
+    };
 
-    assert!(error(r.audit_with(&r.first(), &r.first(), CAPACITY, None)).contains("same file"));
+    assert!(matches!(
+        refusal(r.audit_with(&r.first(), &r.first(), CAPACITY, None)),
+        BackupError::SameFile
+    ));
 
     fs::remove_file(r.second()).unwrap();
     fs::hard_link(r.first(), r.second()).unwrap();
-    assert!(error(r.audit_with(&r.first(), &r.second(), CAPACITY, None)).contains("same file"));
+    assert!(matches!(
+        refusal(r.audit_with(&r.first(), &r.second(), CAPACITY, None)),
+        BackupError::SameFile
+    ));
 
     fs::remove_file(r.second()).unwrap();
     fs::write(r.second(), &r.data).unwrap();
 
     for capacity in [0, CAPACITY - 1, MAX_BYTES + 4096] {
-        assert!(error(r.audit_with(&r.first(), &r.second(), capacity, None)).contains("Capacity"));
+        assert!(matches!(
+            refusal(r.audit_with(&r.first(), &r.second(), capacity, None)),
+            BackupError::Capacity { capacity: refused } if refused == capacity
+        ));
     }
 
-    assert!(
-        error(r.audit_with(&r.first(), &r.second(), CAPACITY, Some(&r.first())))
-            .contains("Reference is not")
-    );
+    assert!(matches!(
+        refusal(r.audit_with(&r.first(), &r.second(), CAPACITY, Some(&r.first()))),
+        BackupError::NotStockReference { .. }
+    ));
 }
 
 #[test]
@@ -266,31 +278,25 @@ fn report_is_private_exclusive_and_cannot_replace_inputs_or_follow_symlinks() {
         0o600
     );
 
-    assert!(
-        write_report(&root, &report_path, &report, &[])
-            .unwrap_err()
-            .to_string()
-            .contains("already exists")
-    );
+    assert!(matches!(
+        write_report(&root, &report_path, &report, &[]),
+        Err(Error::Report(ReportError::Exists { .. }))
+    ));
 
     let link = directory.path().join("symlink.json");
     let target = directory.path().join("absent.json");
     std::os::unix::fs::symlink(&target, &link).unwrap();
-    assert!(
-        write_report(&root, &link, &report, &[])
-            .unwrap_err()
-            .to_string()
-            .contains("already exists")
-    );
+    assert!(matches!(
+        write_report(&root, &link, &report, &[]),
+        Err(Error::Report(ReportError::Exists { .. }))
+    ));
     assert!(!target.exists());
 
     let public = r.dir.path().join("public.json");
-    assert!(
-        write_report(&root, &public, &json!({}), &[])
-            .unwrap_err()
-            .to_string()
-            .contains("under ignored")
-    );
+    assert!(matches!(
+        write_report(&root, &public, &json!({}), &[]),
+        Err(Error::Report(ReportError::NotPrivate { .. }))
+    ));
 }
 
 #[test]

@@ -3,6 +3,7 @@
 use serde_json::json;
 
 use super::*;
+use crate::Error;
 use crate::test_support::*;
 
 /// A whole run's records with these verdicts, interleaved with other
@@ -161,10 +162,11 @@ fn only_a_qa_build_is_audited() {
     f.capture(&[(0.0, run(ALL_PASS))], 1.0);
 
     let p = f.path();
-    let error = verify(p, &p.join("manifest.json"), &p.join("image.bin"))
-        .unwrap_err()
-        .to_string();
-    assert!(error.contains("QA firmware build"), "{error}");
+    let error = verify(p, &p.join("manifest.json"), &p.join("image.bin")).unwrap_err();
+    assert!(
+        matches!(&error, Error::QaBuildRequired { firmware: Some(f) } if f == "optics"),
+        "{error:?}"
+    );
 }
 
 #[test]

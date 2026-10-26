@@ -24,14 +24,47 @@ use wellfed_formats::session::Mode;
 use regex::bytes::{Captures, Match, Regex};
 use serde::Serialize;
 
+use wellfed_formats::require;
+
 use crate::capture::{Capture, Time, seconds};
-use crate::{Error, Result, digest, outcomes, require};
+use crate::{Result, digest, outcomes};
 
 mod flash;
 mod policy;
 
 pub(crate) use flash::{FlashPolicy, FlashReport, classify_flash};
 use policy::Policies;
+pub use policy::{Declaration, Policy, PolicyError, Probe};
+
+/// A startup capture refused: the build is not the one the manifest binds,
+/// the capture is not receive-only, or a declared probe lacks what its
+/// classifier needs.
+#[derive(Debug, thiserror::Error)]
+pub enum StartupError {
+    #[error("Build identity is not source-bound")]
+    NotSourceBound,
+    #[error("Artifact/manifest mismatch")]
+    ArtifactMismatch,
+    #[error("Identity absent from artifact")]
+    IdentityAbsent,
+    #[error("Receive-only observation required")]
+    NotReceiveOnly,
+    #[error("Flash handshake requires the LED probe policy")]
+    FlashWithoutLed,
+    #[error("Flash handshake requires host receive times")]
+    NoReceiveTimes,
+    /// The transfer's clean tail is measured up to the capture's end.
+    #[error("Flash {transfer} requires the capture end time")]
+    NoEndTime { transfer: Transfer },
+}
+
+outcomes! {
+    /// A timed flash transfer the handshake probe classifies.
+    pub enum Transfer {
+        Read => "read",
+        Write => "write",
+    }
+}
 
 fn re(pattern: &str) -> Regex {
     // Byte-wise ASCII semantics, as Python's bytes patterns.
@@ -789,7 +822,7 @@ pub(crate) fn load(capture: &Path, manifest_path: &Path, image_path: &Path) -> R
     let identity = manifest.source_identity()?;
     require(
         manifest.startup_identity.as_deref() == Some(identity.as_str()),
-        "Build identity is not source-bound",
+        || StartupError::NotSourceBound,
     )?;
 
     let image = fs::read(image_path)?;
@@ -797,18 +830,18 @@ pub(crate) fn load(capture: &Path, manifest_path: &Path, image_path: &Path) -> R
         manifest
             .artifact("OTA_All.bin")
             .is_some_and(|ota| ota.sha256 == digest(&image) && ota.bytes == image.len() as u64),
-        "Artifact/manifest mismatch",
+        || StartupError::ArtifactMismatch,
     )?;
     require(
         contains(&image, format!("PLFW1 start build={identity} ").as_bytes()),
-        "Identity absent from artifact",
+        || StartupError::IdentityAbsent,
     )?;
 
     let capture = Capture::load(capture)?;
     capture.validate()?;
     require(
         capture.tx.is_empty() && capture.lifecycle.mode == Some(Mode::Observe),
-        "Receive-only observation required",
+        || StartupError::NotReceiveOnly,
     )?;
 
     Ok(Loaded {
@@ -850,21 +883,18 @@ pub(crate) fn startup(
     let flash = policies
         .flash
         .map(|policy| -> Result<_> {
-            require(
-                policies.led.is_some(),
-                "Flash handshake requires the LED probe policy",
-            )?;
-            let arrival = arrival.ok_or_else(|| {
-                Error::Refused("Flash handshake requires host receive times".into())
+            require(policies.led.is_some(), || StartupError::FlashWithoutLed)?;
+            let arrival = arrival.ok_or(StartupError::NoReceiveTimes)?;
+            require(policy != FlashPolicy::Read || end.is_some(), || {
+                StartupError::NoEndTime {
+                    transfer: Transfer::Read,
+                }
             })?;
-            require(
-                policy != FlashPolicy::Read || end.is_some(),
-                "Flash read requires the capture end time",
-            )?;
-            require(
-                policy != FlashPolicy::Write || end.is_some(),
-                "Flash write requires the capture end time",
-            )?;
+            require(policy != FlashPolicy::Write || end.is_some(), || {
+                StartupError::NoEndTime {
+                    transfer: Transfer::Write,
+                }
+            })?;
             Ok((policy, arrival))
         })
         .transpose()?;

@@ -13,13 +13,37 @@
 use std::fs::{self, File};
 use std::io::Read;
 use std::os::unix::fs::MetadataExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use wellfed_formats::layout::{Hex, Layout};
+use wellfed_formats::require;
 use wellfed_image::ota;
 use serde::Serialize;
 
-use crate::{Error, Result, digest, require};
+use crate::{Error, Result, digest};
+
+/// A backup comparison refused before any byte is compared: an input that
+/// is not one stable regular file, a capacity or label the operator must
+/// state plainly, or a reference or layout other than the pinned ones.
+#[derive(Debug, thiserror::Error)]
+pub enum BackupError {
+    #[error("Input must be a regular file")]
+    NotRegularFile { path: PathBuf },
+    #[error("Input must be a nonempty regular file no larger than 64 MiB")]
+    InputSize { path: PathBuf, bytes: u64 },
+    #[error("Input changed during the audit")]
+    InputChanged { path: PathBuf },
+    #[error("Reference is not the pinned original 1.1.15 OTA")]
+    NotStockReference { sha256: String },
+    #[error("Unsupported layout")]
+    UnsupportedLayout,
+    #[error("Capacity must be explicit, positive, sector aligned and no larger than 64 MiB")]
+    Capacity { capacity: u64 },
+    #[error("Use a short non-secret unit label, not credentials or a MAC address")]
+    UnitLabel,
+    #[error("Two paths to the same file are not separate reads")]
+    SameFile,
+}
 
 pub(crate) const LAYOUT: &str = "src/firmware/devices/plaf103/layout.json";
 const MAX_BYTES: u64 = 64 * 1024 * 1024;
@@ -73,16 +97,18 @@ pub(crate) struct FileInfo {
 /// and inode, which tell two paths to the same file apart from two reads.
 fn snapshot(path: &Path) -> Result<(Vec<u8>, FileInfo, (u64, u64))> {
     let path = path.canonicalize()?;
-    require(
-        fs::metadata(&path)?.is_file(),
-        "Input must be a regular file",
-    )?;
+    require(fs::metadata(&path)?.is_file(), || {
+        BackupError::NotRegularFile { path: path.clone() }
+    })?;
 
     let mut handle = File::open(&path)?;
     let before = handle.metadata()?;
     require(
         before.is_file() && 0 < before.len() && before.len() <= MAX_BYTES,
-        "Input must be a nonempty regular file no larger than 64 MiB",
+        || BackupError::InputSize {
+            path: path.clone(),
+            bytes: before.len(),
+        },
     )?;
 
     let mut data = Vec::new();
@@ -92,7 +118,7 @@ fn snapshot(path: &Path) -> Result<(Vec<u8>, FileInfo, (u64, u64))> {
         identity(&before) == identity(&after)
             && identity(&after) == identity(&fs::metadata(&path)?)
             && data.len() as u64 == before.len(),
-        "Input changed during the audit",
+        || BackupError::InputChanged { path: path.clone() },
     )?;
 
     let info = FileInfo {
@@ -178,10 +204,10 @@ fn suspicious_patterns(data: &[u8]) -> Vec<&'static str> {
 fn reference(path: Option<&Path>) -> Result<Option<Vec<u8>>> {
     let Some(path) = path else { return Ok(None) };
     let (data, _, _) = snapshot(path)?;
-    require(
-        digest(&data) == ota::STOCK_SHA256,
-        "Reference is not the pinned original 1.1.15 OTA",
-    )?;
+    let sha256 = digest(&data);
+    require(sha256 == ota::STOCK_SHA256, || {
+        BackupError::NotStockReference { sha256 }
+    })?;
 
     let payload = ota::container(&data)?;
     ota::images(payload)?;
@@ -190,7 +216,7 @@ fn reference(path: Option<&Path>) -> Result<Option<Vec<u8>>> {
 
 /// A layout offset as an index into a read.
 fn offset(value: Hex) -> Result<usize> {
-    usize::try_from(value.0).map_err(|_| Error::Refused("Unsupported layout".into()))
+    Ok(usize::try_from(value.0).map_err(|_| BackupError::UnsupportedLayout)?)
 }
 
 /// One application bank's footprint in a read.
@@ -423,7 +449,7 @@ pub fn audit(inputs: &Inputs) -> Result<BackupReport> {
     let capacity = inputs.capacity;
     require(
         0 < capacity && capacity <= MAX_BYTES && capacity.is_multiple_of(4096),
-        "Capacity must be explicit, positive, sector aligned and no larger than 64 MiB",
+        || BackupError::Capacity { capacity },
     )?;
 
     let label = inputs.unit_label;
@@ -432,7 +458,7 @@ pub fn audit(inputs: &Inputs) -> Result<BackupReport> {
             && label
                 .bytes()
                 .all(|b| b.is_ascii_alphanumeric() || b"_.-".contains(&b)),
-        "Use a short non-secret unit label, not credentials or a MAC address",
+        || BackupError::UnitLabel,
     )?;
 
     let layout_path = inputs.root.join(LAYOUT);
@@ -442,15 +468,12 @@ pub fn audit(inputs: &Inputs) -> Result<BackupReport> {
         layout.schema_version == 1
             && layout.sector_bytes == 4096
             && layout.stock_sha256 == ota::STOCK_SHA256,
-        "Unsupported layout",
+        || BackupError::UnsupportedLayout,
     )?;
 
     let (first, first_info, first_identity) = snapshot(inputs.first)?;
     let (second, second_info, second_identity) = snapshot(inputs.second)?;
-    require(
-        first_identity != second_identity,
-        "Two paths to the same file are not separate reads",
-    )?;
+    require(first_identity != second_identity, || BackupError::SameFile)?;
 
     let original = reference(inputs.stock)?;
     let evidence = inputs

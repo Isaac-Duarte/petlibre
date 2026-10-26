@@ -521,7 +521,11 @@ pub fn verify(capture: &Path, manifest: &Path, image: &Path) -> Result<AdcReport
     let policy = match loaded.manifest.startup_adc_policy.as_deref() {
         Some("fw14-adc-v1") => AdcPolicy::V1,
         Some("fw14-adc-v2") => AdcPolicy::V2,
-        _ => return Err(Error::Refused("ADC policy required".into())),
+        declared => {
+            return Err(Error::AdcPolicyRequired {
+                declared: declared.map(Into::into),
+            });
+        }
     };
 
     let c = &loaded.capture;

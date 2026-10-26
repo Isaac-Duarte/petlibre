@@ -15,6 +15,8 @@ pub use wellfed_formats::qa::Verdict;
 use wellfed_formats::qa::{Check, Record};
 use serde::Serialize;
 
+use wellfed_formats::require;
+
 use crate::Error;
 use crate::Result;
 use crate::startup::{self, Evidence, Outcome, StartupReport};
@@ -192,9 +194,10 @@ impl QaReport {
 /// The QA run in one capture of the QA firmware, after a passing startup.
 pub fn verify(capture: &Path, manifest: &Path, image: &Path) -> Result<QaReport> {
     let loaded = startup::load(capture, manifest, image)?;
-    if loaded.manifest.firmware.as_deref() != Some("qa") {
-        return Err(Error::Refused("A QA firmware build required".into()));
-    }
+    let firmware = loaded.manifest.firmware.as_deref();
+    require(firmware == Some("qa"), || Error::QaBuildRequired {
+        firmware: firmware.map(Into::into),
+    })?;
 
     let c = &loaded.capture;
     let arrival = |offset: usize| c.arrival(offset);

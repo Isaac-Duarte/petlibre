@@ -354,10 +354,13 @@ impl Hooks for SdkHooks {
 /// The reset-storm count, from the feeder task while it feeds: a boot that
 /// has run `STABLE_MS` gives KM0 its count back, once (a trial only once
 /// confirmed); a held boot that has run its hold opens the owner, one
-/// backoff level up.
+/// backoff level up, and gives the count back (a level down) once it has
+/// fed for the new level's hold.
 fn storm_step(feeding: bool, now: u32) {
     // The count was given back this boot.
     static SETTLED: AtomicBool = AtomicBool::new(false);
+    // Uptime of a held boot's release.
+    static RELEASED_AT: AtomicU32 = AtomicU32::new(0);
     if !feeding {
         return;
     }
@@ -367,6 +370,7 @@ fn storm_step(feeding: bool, now: u32) {
         let level = trial::level(sdk::backup_read(trial::REGISTER), &identity);
         if now >= trial::hold_ms(level) {
             update_trial_register(|register| trial::released(register, &identity));
+            RELEASED_AT.store(now, Ordering::Relaxed);
             HELD.store(false, Ordering::Release);
             let mut report = startup::Report::new();
             if let Ok(line) =
@@ -377,7 +381,16 @@ fn storm_step(feeding: bool, now: u32) {
         }
         return;
     }
-    let stable = now >= trial::STABLE_MS && !confirming() && !STARTED_HELD.load(Ordering::Acquire);
+    // A released boot counts its stable run from the release, and only
+    // once it has outlasted the new level's hold, so the level it just
+    // raised steps down only after the feeder has fed that long.
+    let stable = if STARTED_HELD.load(Ordering::Acquire) {
+        let level = trial::level(sdk::backup_read(trial::REGISTER), &identity);
+        let since = RELEASED_AT.load(Ordering::Relaxed);
+        now.wrapping_sub(since) >= trial::hold_ms(level)
+    } else {
+        now >= trial::STABLE_MS && !confirming()
+    };
     if stable && !SETTLED.swap(true, Ordering::Relaxed) {
         update_trial_register(|register| trial::settled(register, &identity));
         sdk::log(c"PLSUP1 storm settled=1\r\n");
@@ -636,6 +649,9 @@ fn update_step() -> u32 {
     }
     if step.restart {
         restart();
+        // After `restart`'s own update: an activation or a give-way hands
+        // the next boot to another build, which starts every count afresh.
+        update_trial_register(trial::fresh);
         sdk::log(c"PLOTA1 restart watchdog=1\r\n");
         return 0;
     }
@@ -1146,7 +1162,14 @@ pub extern "C" fn wellfed_app_start() {
         trial::Storm::Halted => {
             // SAFETY: the step takes no context and keeps its state in statics.
             if !unsafe { sdk::task_create(c"wellfed-halt", 512, 3, halt_task, ptr::null_mut()) } {
+                // No timer, so no hour: end the halt now rather than never,
+                // into a held boot a level longer.
                 sdk::log(c"PLSUP1 error task=create\r\n");
+                let identity = trial::identity();
+                update_trial_register(|register| trial::halt_over(register, &identity));
+                if !SdkHooks::watchdog() {
+                    sdk::log(c"PLSUP1 error watchdog=open\r\n");
+                }
             }
             return;
         }

@@ -210,9 +210,16 @@ pub fn decide(
     let state = nibble & STORM_STATE != 0;
     let level = if state { nibble & LEVEL_MASK } else { 0 };
 
-    // A trial in progress: the low nibble is its count.
-    if running_bank1 && !confirmed && !state {
-        match ota::trial(false, nibble, LIMIT) {
+    // An unconfirmed bank 1 is past its trial only while it has nothing to
+    // fall back to: storm state under its tag means either a spent trial
+    // with bank 0 invalid, or another build's count that merely shares the
+    // tag (a reinstall, or one identity byte in 256), which must never let
+    // a new build skip its trial. With bank 0 valid it is on trial, and a
+    // nibble in storm state counts as no trial boot yet.
+    let past = state && *bank0 != MARKER;
+    if running_bank1 && !confirmed && !past {
+        let counted = if state { 0 } else { nibble };
+        match ota::trial(false, counted, LIMIT) {
             Trial::Count(n) => return (Decision::Counted(n), stamp(register, identity, n, 0)),
             Trial::GiveWay if *bank0 == MARKER => {
                 return (Decision::GiveWay, register & BOOT_MASK);
@@ -221,7 +228,7 @@ pub fn decide(
             // once, so a trial that cannot pass never resets forever.
             Trial::GiveWay => {
                 let value = storm_stamp(register, identity, 0, STORM_LIMIT + 1);
-                return (Decision::NoFallback(nibble), value);
+                return (Decision::NoFallback(counted), value);
             }
             Trial::Run => {}
         }
@@ -286,6 +293,13 @@ pub fn released(register: u32, identity: &[u8; 32]) -> u32 {
 pub fn halt_over(register: u32, identity: &[u8; 32]) -> u32 {
     let level = level(register, identity) + 1;
     storm_stamp(register, identity, level, STORM_LIMIT)
+}
+
+/// The register before an activation's or a give-way's restart: the next
+/// boot runs another build, which starts with no count of any kind,
+/// whatever tag it shares with the build before it.
+pub const fn fresh(register: u32) -> u32 {
+    register & BOOT_MASK
 }
 
 /// The register before a restart someone asked for (a reboot, an

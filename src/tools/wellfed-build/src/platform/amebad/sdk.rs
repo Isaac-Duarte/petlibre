@@ -613,10 +613,16 @@ fn bluetooth_overlays(
     overlay(sdk, HCI_BOARD, &text, overrides)
 }
 
+/// The KM4 link's object list, which the vendor recipe writes beside the
+/// image.
+const HP_OBJECT_LIST: &str = "project_hp/asdk/image/obj_list.txt";
+
 /// The vendor makefiles track no header dependencies, so objects compiled
 /// under other KM4 options would be linked as they are. Recompile every KM4
-/// object (all untracked build outputs) when the options, the FreeRTOS
-/// options or the build configuration change.
+/// object when the options, the FreeRTOS options or the build configuration
+/// change: every object under the KM4 project, and every object the last
+/// KM4 link listed, since some (littlefs, fatfs, parts of the Bluetooth
+/// board code) are built beside their sources in `component/`.
 fn recompile_on_option_change(sdk: &Path) -> Result<()> {
     let stamp = sdk.parent().unwrap_or(sdk).join("hp-options.sha256");
     let options = format!(
@@ -629,16 +635,41 @@ fn recompile_on_option_change(sdk: &Path) -> Result<()> {
         return Ok(());
     }
 
-    let mut files = Vec::new();
-    walk(&sdk.join(project("project_hp/asdk")), &mut files)?;
-    for path in files
-        .iter()
-        .filter(|p| p.extension().is_some_and(|e| e == "o"))
-    {
-        fs::remove_file(path)?;
+    for path in km4_objects(sdk)? {
+        remove_file(&path)?;
     }
     fs::write(&stamp, format!("{options}\n"))?;
     Ok(())
+}
+
+/// Every KM4 object file in the worktree: those under the KM4 project, and
+/// those the last link's object list names, kept only when they resolve
+/// inside the worktree.
+fn km4_objects(sdk: &Path) -> Result<Vec<PathBuf>> {
+    let is_object = |p: &Path| p.extension().is_some_and(|e| e == "o");
+    let mut files = Vec::new();
+    walk(&sdk.join(project("project_hp/asdk")), &mut files)?;
+    files.retain(|p| is_object(p));
+
+    let root = fs::canonicalize(sdk)?;
+    if let Ok(list) = fs::read_to_string(sdk.join(project(HP_OBJECT_LIST))) {
+        for line in list.lines().map(str::trim).filter(|l| !l.is_empty()) {
+            let path = Path::new(line);
+            let path = if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                sdk.join(project("project_hp/asdk")).join(path)
+            };
+            if let Ok(resolved) = fs::canonicalize(&path)
+                && resolved.starts_with(&root)
+                && is_object(&resolved)
+                && !files.contains(&resolved)
+            {
+                files.push(resolved);
+            }
+        }
+    }
+    Ok(files)
 }
 
 fn firstboot_overlays(
@@ -834,6 +865,60 @@ mod tests {
         assert!(freertos_options("#define configUSE_TICK_HOOK 0\n").is_err());
         assert!(freertos_options(&pinned.replace("( 10 )", "( 12 )")).is_err());
         assert!(freertos_options(&pinned.repeat(2)).is_err());
+    }
+
+    #[test]
+    fn an_option_change_recompiles_the_objects_built_beside_their_sources() {
+        let temporary = tempfile::tempdir().unwrap();
+        let sdk = temporary.path().join("sdk");
+        let asdk = sdk.join(project("project_hp/asdk"));
+        let make = asdk.join("make/os");
+        let component = sdk.join("component/common/file_system/littlefs");
+        let image = asdk.join("image");
+        for directory in [&make, &component, &image] {
+            fs::create_dir_all(directory).unwrap();
+        }
+        let (tasks, lfs, source) = (
+            make.join("tasks.o"),
+            component.join("lfs.o"),
+            component.join("lfs.c"),
+        );
+        let outside = temporary.path().join("outside.o");
+        for file in [&tasks, &lfs, &source, &outside] {
+            fs::write(file, "x").unwrap();
+        }
+        // The vendor recipe lists objects as paths relative to the KM4 project.
+        fs::write(
+            image.join("obj_list.txt"),
+            format!(
+                "\n{}\n../../../../../component/common/file_system/littlefs/lfs.o\n{}\n",
+                tasks.display(),
+                outside.display()
+            ),
+        )
+        .unwrap();
+        for options in [
+            PLATFORM_OPTS.to_string(),
+            project(HP_CONFIG),
+            FREERTOS_CONFIG.to_string(),
+        ] {
+            let file = sdk.join(options);
+            fs::create_dir_all(file.parent().unwrap()).unwrap();
+            fs::write(file, "options").unwrap();
+        }
+
+        recompile_on_option_change(&sdk).unwrap();
+        assert!(!tasks.exists() && !lfs.exists());
+        assert!(source.exists(), "only objects go");
+        assert!(outside.exists(), "nothing outside the worktree goes");
+
+        // Unchanged options leave a rebuild's objects alone.
+        fs::write(&lfs, "x").unwrap();
+        recompile_on_option_change(&sdk).unwrap();
+        assert!(lfs.exists());
+        fs::write(sdk.join(FREERTOS_CONFIG), "changed").unwrap();
+        recompile_on_option_change(&sdk).unwrap();
+        assert!(!lfs.exists());
     }
 
     #[test]

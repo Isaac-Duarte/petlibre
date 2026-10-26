@@ -29,6 +29,10 @@ const PRODUCT_CRATES: &str = "src/product/";
 /// Bring-up code, which may take the raw writers, but only as `bringup::…`,
 /// so the one door stays visible at every call.
 const BRINGUP: [&str; 2] = ["src/firmware/wellfed/", "src/sdk/wellfed-probes/src/"];
+/// The stock server's crate, which runs only as its own process: the bench,
+/// its suite and the page speak its loopback API through `wellfed-stock-api`.
+/// cargo-deny cannot ban every dependent without banning the crate itself.
+const STOCK_SERVER: &str = "src/tools/wellfed-stock/Cargo.toml";
 /// Sources under `src/` that must not cite a board card.
 const CARD_FREE: [&str; 6] = ["rs", "c", "h", "toml", "md", "ts"];
 
@@ -52,6 +56,8 @@ regex!(
     r"(\bbringup::)?\b(gpio_init|gpio_port_write|gpio_write_bit|wdg_init|wdg_cmd|wdg_refresh|storage_erase|storage_program|bank1_erase|bank1_program|bank1_give_way)\b"
 );
 regex!(BRINGUP_NAME, r"\bbringup\b");
+// A manifest line depending on the stock server's crate (not its API client).
+regex!(STOCK_DEPENDENCY, r"(?m)^\s*wellfed-stock\s*[=.]");
 
 regex!(LINK, r"\]\(([^)]+)\)");
 regex!(SCHEME, r"^[A-Za-z][A-Za-z0-9+.-]*:");
@@ -159,6 +165,15 @@ fn check_file(root: &Path, name: &str, summary: &mut Summary) {
 
     if extension == "rs" {
         raw_outputs(name, &content, &mut summary.errors);
+    }
+    if first == "src"
+        && relative.file_name().is_some_and(|f| f == "Cargo.toml")
+        && name != STOCK_SERVER
+        && STOCK_DEPENDENCY.is_match(&content)
+    {
+        summary.errors.push(format!(
+            "{name}: links the stock server; run wellfed-stock and use wellfed-stock-api"
+        ));
     }
 
     if extension == "md" {
@@ -349,6 +364,18 @@ mod tests {
         let card = ["FW", "16"].concat();
         fs::write(root.join("src/tools/b.rs"), format!("// {card}\n")).unwrap();
         fs::write(root.join("src/tools/c.rs"), "// fw16-pulse-v1\n").unwrap();
+        fs::create_dir_all(root.join("src/tools/page")).unwrap();
+        fs::write(
+            root.join("src/tools/page/Cargo.toml"),
+            "[dependencies]\nwellfed-stock-api = { path = \"../wellfed-stock-api\" }\nwellfed-stock.workspace = true\n",
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("src/tools/client")).unwrap();
+        fs::write(
+            root.join("src/tools/client/Cargo.toml"),
+            "[dependencies]\nwellfed-stock-api = { path = \"../wellfed-stock-api\" }\n",
+        )
+        .unwrap();
         for name in [
             "README.md",
             "private/x.json",
@@ -356,6 +383,8 @@ mod tests {
             "src/tools/a.py",
             "src/tools/b.rs",
             "src/tools/c.rs",
+            "src/tools/page/Cargo.toml",
+            "src/tools/client/Cargo.toml",
         ] {
             check_file(&root, name, &mut summary);
         }
@@ -369,6 +398,7 @@ mod tests {
                 "dump.bin: binary/evidence files need explicit provenance review",
                 "src/tools/a.py: first-party tools are Rust; no Python sources under src/",
                 "src/tools/b.rs: cites a board card; state the constraint instead",
+                "src/tools/page/Cargo.toml: links the stock server; run wellfed-stock and use wellfed-stock-api",
             ]
         );
     }

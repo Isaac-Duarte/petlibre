@@ -3,7 +3,14 @@
 //! loopback ports.
 
 #![allow(dead_code)]
-use std::path::PathBuf;
+use std::{
+    net::TcpListener,
+    path::PathBuf,
+    process::{Child, Command, Stdio},
+    time::Duration,
+};
+
+use serde_json::Value;
 
 use wellfed_stock::{build_info::Build, config::Config};
 
@@ -38,13 +45,6 @@ pub fn config() -> Config {
 pub fn load(path: PathBuf) -> anyhow::Result<Controller> {
     Controller::load(config(), path, BUILD)
 }
-
-use serde_json::Value;
-use std::{
-    net::TcpListener,
-    process::{Child, Command, Stdio},
-    time::Duration,
-};
 
 pub struct Service(Child);
 impl Drop for Service {

@@ -244,6 +244,13 @@ impl Server {
                 }
                 None => Outcome::Refused(Refusal::Unavailable),
             },
+            Reply::Stats(section) => {
+                let message = FeederMessage::Response {
+                    id,
+                    result: Outcome::Stats(device.stats(section, now_ms)),
+                };
+                return self.seal_and_send(index, &message);
+            }
         };
         self.seal_and_send(index, &FeederMessage::Response { id, result })
     }

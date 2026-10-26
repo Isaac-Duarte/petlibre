@@ -27,7 +27,7 @@ use wellfed_device_api::{
 };
 use wellfed_proto::api::{
     self as proto, Capabilities, EventBody, FRAME_MAX, FeederMessage, Hello, MESSAGE_MAX, Open,
-    PROLOGUE, PROTOCOL_MAJOR, Refusal, Status, Welcome,
+    PROLOGUE, PROTOCOL_MAJOR, Refusal, Stats, StatsSection, Status, Welcome,
 };
 use wellfed_proto::setup::{self, Answer, Reply};
 use wellfed_session::frame;
@@ -53,6 +53,72 @@ struct Fake {
     clock: WallClock,
     /// A line every pass, so a tailing session always has more to read.
     log: LogTail<1024>,
+}
+
+/// Every section at its widest, so a frame that holds these holds any.
+fn widest(section: StatsSection) -> Stats<'static> {
+    let counts = proto::Counts {
+        uptime_s: u32::MAX,
+        feeds: u32::MAX,
+        feeds_failed: u32::MAX,
+        portions: u32::MAX,
+        presses: u32::MAX,
+        sessions: u32::MAX,
+        reconnects: u32::MAX,
+        dhcp_renewals: u32::MAX,
+        outages: u32::MAX,
+        battery_s: u32::MAX,
+    };
+    let erases = proto::Erases {
+        storage: [u32::MAX; proto::FLASH_SECTORS],
+        update: u32::MAX,
+    };
+    match section {
+        StatsSection::Counters => Stats::Counters(proto::Counters {
+            boot: counts,
+            reset: proto::ResetCause::Brownout,
+            lifetime: Some(counts),
+            resets: Some(proto::Resets {
+                power_on: u32::MAX,
+                watchdog: u32::MAX,
+                software: u32::MAX,
+                brownout: u32::MAX,
+                other: u32::MAX,
+            }),
+            handshake_max_ms: u32::MAX,
+            handshake_mean_ms: u32::MAX,
+        }),
+        StatsSection::Memory => Stats::Memory(proto::Memory {
+            heap_free: u32::MAX,
+            heap_min: u32::MAX,
+            tasks: [Some(proto::TaskStack {
+                name: "0123456789abcdef",
+                free_min: u32::MAX,
+            }); proto::TASKS_MAX],
+        }),
+        StatsSection::Flash => Stats::Flash(proto::Flash {
+            boot: erases,
+            lifetime: Some(erases),
+            events_kept: u32::MAX,
+            events_capacity: u32::MAX,
+        }),
+        StatsSection::Power => Stats::Power(proto::PowerStats {
+            adapter: Some(false),
+            adapter_changes: u32::MAX,
+            outages: u32::MAX,
+            battery_s: u32::MAX,
+            battery_min_mv: Some(u32::MAX),
+            battery_max_mv: Some(u32::MAX),
+            battery_mv: [Some(u16::MAX); proto::POWER_HISTORY],
+            period_s: u32::MAX,
+        }),
+        StatsSection::Food => Stats::Food(proto::Food {
+            present: Some(true),
+            emptied: u32::MAX,
+            refilled: u32::MAX,
+            feeds_since_refill: Some(u32::MAX),
+        }),
+    }
 }
 
 impl Device for Fake {
@@ -160,7 +226,12 @@ impl Device for Fake {
     fn capabilities(&self) -> Capabilities {
         Capabilities::FEED
             .union(Capabilities::TIME)
+            .union(Capabilities::STATS)
             .union(Capabilities::LOG)
+    }
+
+    fn stats(&mut self, section: StatsSection, _now_ms: u32) -> Stats<'_> {
+        widest(section)
     }
 
     fn feed(&mut self, _portions: u8, _by: proto::Source) -> Result<u32, Refusal> {
@@ -326,9 +397,7 @@ impl Rig {
         .expect("IK with the feeder's key");
         let hello = Hello {
             major: PROTOCOL_MAJOR,
-            capabilities: Capabilities::FEED
-                .union(Capabilities::TIME)
-                .union(Capabilities::LOG),
+            capabilities: Capabilities::KNOWN,
         };
         let mut payload = [0; 16];
         let len = wellfed_proto::encode(&hello, &mut payload).expect("a hello fits");

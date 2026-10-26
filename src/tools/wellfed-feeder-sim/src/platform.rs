@@ -41,7 +41,8 @@ use wellfed_device_api::mailbox::{
 use wellfed_device_api::wifi::Credentials;
 use wellfed_feeder::feeder::Platform;
 use wellfed_feeder::feeder::platform::{
-    Accepted, BleDrop, BleStep, Boot, Check, Datagram, DriverStep, EventSlot, Link, Received,
+    Accepted, BleDrop, BleStep, Boot, Check, Datagram, DriverStep, EventSlot, EventsFill, Link,
+    Received, TaskStack,
 };
 use wellfed_feeder::store::clients::{ClientError, ClientStore};
 use wellfed_feeder::store::events::{BODY_BYTES, EventLog, Read};
@@ -52,7 +53,7 @@ use wellfed_hal::interlock::INTERLOCK;
 use wellfed_hal::ota::mailbox::{self, Request};
 use wellfed_hal::ota::signers;
 use wellfed_hal::sdk::LOG_TAIL_BYTES;
-use wellfed_proto::api::{self as proto, Capabilities};
+use wellfed_proto::api::{self as proto, Capabilities, FLASH_SECTORS, TASKS_MAX};
 use tokio::net::{TcpStream, UdpSocket};
 
 use crate::flash::{Flash, Region};
@@ -69,6 +70,8 @@ pub(crate) const POWER: proto::Power = proto::Power {
 
 /// A signal the simulator reports, as a feeder near its access point.
 pub(crate) const RSSI: i32 = -48;
+/// The channel the simulator reports its access point on.
+pub(crate) const CHANNEL: u8 = 6;
 
 /// How often the simulator's supply "is sampled", as the feeder's monitor.
 const POWER_SAMPLE_MS: u32 = 5_000;
@@ -109,6 +112,10 @@ pub enum Socket {
 
 pub struct SimPlatform {
     random: Random,
+    flash: Rc<Flash>,
+    /// The image's erases when this boot opened it: the statistics count
+    /// this boot's.
+    erases_before: [u32; FLASH_SECTORS],
     settings: SettingsStore<Region>,
     settings_pending: Option<SettingsFields>,
     net: NetStore<Region>,
@@ -207,6 +214,8 @@ impl SimPlatform {
 
         let platform = Self {
             random,
+            flash: Rc::clone(flash),
+            erases_before: flash.erases(),
             settings,
             settings_pending: None,
             net,
@@ -440,6 +449,7 @@ impl Platform for SimPlatform {
         Capabilities::UPDATE
             .union(Capabilities::TIME)
             .union(Capabilities::LOG)
+            .union(Capabilities::STATS)
     }
 
     fn reset(&mut self) {
@@ -482,8 +492,8 @@ impl Platform for SimPlatform {
     fn link(&mut self) -> Link {
         Link {
             rssi: RSSI,
-            link_losses: 0,
-            check_losses: 0,
+            channel: Some(CHANNEL),
+            ..Link::default()
         }
     }
 
@@ -811,6 +821,27 @@ impl Platform for SimPlatform {
 
     fn heap(&self) -> (u32, u32) {
         (0, 0)
+    }
+
+    /// The simulator runs no RTOS tasks.
+    fn task_stacks(&mut self, _out: &mut [TaskStack; TASKS_MAX]) -> usize {
+        0
+    }
+
+    fn erases(&self) -> proto::Erases {
+        let now = self.flash.erases();
+        let mut storage = [0; FLASH_SECTORS];
+        for ((out, now), before) in storage.iter_mut().zip(now).zip(self.erases_before) {
+            *out = now.saturating_sub(before);
+        }
+        proto::Erases { storage, update: 0 }
+    }
+
+    fn events_fill(&self) -> EventsFill {
+        EventsFill {
+            kept: self.events.kept(),
+            capacity: self.events.capacity(),
+        }
     }
 
     fn ble_restart(&mut self) {}

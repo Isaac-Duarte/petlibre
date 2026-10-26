@@ -19,6 +19,7 @@
 
 use core::fmt;
 
+use wellfed_core::buttons::Gesture;
 use wellfed_proto::api::{EventBody, Source as EventSource};
 use wellfed_session::noise::Keypair;
 
@@ -129,6 +130,8 @@ pub struct Owner {
     /// An update key's decision (its Dispense press, or the timeout), until
     /// the device API takes it.
     signer: Option<pairing::Event>,
+    /// Gestures that ended this boot, for the statistics.
+    presses: u32,
 }
 
 impl fmt::Debug for Owner {
@@ -159,7 +162,14 @@ impl Owner {
             setup: Setup::off(),
             recovery: None,
             signer: None,
+            presses: 0,
         }
+    }
+
+    /// Gestures that ended this boot (every chord released, whatever it
+    /// did).
+    pub const fn presses(&self) -> u32 {
+        self.presses
     }
 
     /// Setup mode has ended and asks for the reboot that drops BLE.
@@ -216,6 +226,9 @@ impl Owner {
         // A setup offer's decision, for setup mode's session.
         let mut decided = None;
         while let Some(gesture) = platform.gesture() {
+            if matches!(gesture, Gesture::Up { .. }) {
+                self.presses = self.presses.saturating_add(1);
+            }
             if let Some(event) = self.pairing.gesture(now, gesture, panel.lock()) {
                 panel.noted(now, gesture);
                 record(Record::Pairing(event));

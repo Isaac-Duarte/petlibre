@@ -25,6 +25,16 @@ static LIVE: AtomicBool = AtomicBool::new(false);
 /// Bumped at every join and loss: a connection opened in an older generation
 /// rides on a link that has since gone away.
 static GENERATION: AtomicU32 = AtomicU32::new(0);
+/// For the statistics: leases renewed without a rejoin, gateway probes
+/// answered and the latest one's round trip, the joined access point's
+/// channel (0 while not joined) and BSSID tail, and how often a join
+/// landed on another access point than the one before.
+static RENEWALS: AtomicU32 = AtomicU32::new(0);
+static GATEWAY_ANSWERS: AtomicU32 = AtomicU32::new(0);
+static GATEWAY_MS: AtomicU32 = AtomicU32::new(0);
+static CHANNEL: AtomicU32 = AtomicU32::new(0);
+static ACCESS_POINT: AtomicU32 = AtomicU32::new(0);
+static AP_CHANGES: AtomicU32 = AtomicU32::new(0);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Status {
@@ -37,6 +47,12 @@ pub struct Status {
     /// has answered this join, answering still. No internet is involved.
     pub live: bool,
     pub generation: u32,
+    pub dhcp_renewals: u32,
+    pub gateway_answers: u32,
+    pub gateway_ms: u32,
+    /// The joined access point's channel, `None` while not joined.
+    pub channel: Option<u8>,
+    pub ap_changes: u32,
 }
 
 /// Fold one shim event in (Wi-Fi probe task only).
@@ -59,7 +75,26 @@ pub fn observe(event: &WifiEvent) {
 
             counter.fetch_add(1, Ordering::Relaxed);
             LAST_LOSS.store(cause, Ordering::Relaxed);
+            CHANNEL.store(0, Ordering::Relaxed);
             GENERATION.fetch_add(1, Ordering::Release);
+        }
+        WifiEvent::GATEWAY if event.result == 0 => {
+            GATEWAY_MS.store(event.ms, Ordering::Relaxed);
+            GATEWAY_ANSWERS.fetch_add(1, Ordering::Relaxed);
+        }
+        WifiEvent::AP => {
+            let channel = u32::try_from(event.result).unwrap_or(0);
+            CHANNEL.store(channel, Ordering::Relaxed);
+            // An unread BSSID (0) says nothing about which one it was.
+            if event.value != 0 {
+                let before = ACCESS_POINT.swap(event.value, Ordering::Relaxed);
+                if before != 0 && before != event.value {
+                    AP_CHANGES.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+        }
+        WifiEvent::RENEW => {
+            RENEWALS.fetch_add(1, Ordering::Relaxed);
         }
         _ => {}
     }
@@ -79,6 +114,13 @@ pub fn read() -> Status {
         link_losses: LINK_LOSSES.load(Ordering::Relaxed),
         check_losses: CHECK_LOSSES.load(Ordering::Relaxed),
         last_loss: LAST_LOSS.load(Ordering::Relaxed),
+        dhcp_renewals: RENEWALS.load(Ordering::Relaxed),
+        gateway_answers: GATEWAY_ANSWERS.load(Ordering::Relaxed),
+        gateway_ms: GATEWAY_MS.load(Ordering::Relaxed),
+        channel: u8::try_from(CHANNEL.load(Ordering::Relaxed))
+            .ok()
+            .filter(|&channel| channel != 0),
+        ap_changes: AP_CHANGES.load(Ordering::Relaxed),
     }
 }
 
@@ -91,6 +133,12 @@ pub fn reset() {
         &CHECK_LOSSES,
         &LAST_LOSS,
         &GENERATION,
+        &RENEWALS,
+        &GATEWAY_ANSWERS,
+        &GATEWAY_MS,
+        &CHANNEL,
+        &ACCESS_POINT,
+        &AP_CHANGES,
     ] {
         counter.store(0, Ordering::Relaxed);
     }

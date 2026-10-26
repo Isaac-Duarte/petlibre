@@ -15,8 +15,9 @@
 //!
 //! The rest carries work between the loop task and the writer, each a
 //! one-slot or bounded mailbox: client changes and the identity ([`keys`]),
-//! Wi-Fi saves ([`network`]), the time settings ([`time`]) and the event
-//! history ([`events`]). [`stress`]
+//! Wi-Fi saves ([`network`]), the time settings ([`time`]), the event
+//! history ([`events`]) and its fill for the statistics ([`stats`]).
+//! [`stress`]
 //! is the settings store's power-cut probe, kept for its host tests.
 //!
 //! Host builds test everything against the SDK fake.
@@ -29,6 +30,7 @@ compile_error!("wellfed-feeder-runtime target builds are KM4-only");
 pub mod events;
 pub mod keys;
 pub mod network;
+pub mod stats;
 pub mod stress;
 pub mod time;
 pub mod writer;

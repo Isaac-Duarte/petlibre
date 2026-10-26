@@ -31,7 +31,7 @@ use wellfed_client::api::{Invite, Join, JoinStep};
 use wellfed_client::connection::{self, Event, Opened, Recovery as Window, Timing};
 pub use wellfed_client::connection::{Cursor, KEEPALIVE_ID, Resume};
 use wellfed_model::setup::Reply;
-use wellfed_model::{Answer, ClientRole, Joined, Op, OpenRefusal, Pushed};
+use wellfed_model::{Answer, Capabilities, ClientRole, Joined, Op, OpenRefusal, Pushed};
 use wellfed_proto::api::{PORT, RequestId, SERVICE};
 use wellfed_session::hex::Lower;
 use wellfed_session::noise::Keypair;
@@ -242,6 +242,12 @@ impl Connection {
     /// The role the feeder gave this key.
     pub fn role(&self) -> ClientRole {
         self.opened().role
+    }
+
+    /// The features both sides claimed: the session runs on these only, and
+    /// an op outside them would end it on a feeder that predates the op.
+    pub fn capabilities(&self) -> Capabilities {
+        self.opened().capabilities
     }
 
     /// The epoch the feeder's event numbers count in.

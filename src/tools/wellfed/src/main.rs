@@ -31,7 +31,7 @@ use wellfed_formats::private;
 use wellfed_model::setup::{Enrolled, Refusal, Reply, WifiSaved};
 use wellfed_model::{
     self as model, Answer, ClientRole, EventBody, Joined, NtpServer, Op, Pushed, SettingsPatch,
-    TimeChanges, Wifi,
+    StatsSection, TimeChanges, Wifi,
 };
 use wellfed_session::setup_code::Code;
 
@@ -86,6 +86,8 @@ enum Command {
     CancelFeed(CancelFeedArgs),
     /// Restart the feeder.
     Reboot(Target),
+    /// The feeder's statistics: counters, memory, flash, power and food.
+    Stats(StatsArgs),
     /// Become an owner again through the feeder's recovery window.
     Recover(RecoverArgs),
 }
@@ -136,6 +138,7 @@ fn main() -> Result<()> {
             &Op::CancelFeed { feed: args.feed },
         )),
         Command::Reboot(target) => runtime.block_on(ask_and_print(&target, &Op::Reboot)),
+        Command::Stats(args) => runtime.block_on(stats_command(args)),
         Command::Recover(args) => runtime.block_on(recover_command(args)),
     }
 }
@@ -413,6 +416,36 @@ struct CancelFeedArgs {
     feed: u32,
 }
 
+#[derive(Args)]
+struct StatsArgs {
+    #[command(flatten)]
+    target: Target,
+    /// One section; repeat for several (default: every section).
+    #[arg(long, value_enum)]
+    section: Vec<Section>,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum Section {
+    Counters,
+    Memory,
+    Flash,
+    Power,
+    Food,
+}
+
+impl Section {
+    const fn model(self) -> StatsSection {
+        match self {
+            Self::Counters => StatsSection::Counters,
+            Self::Memory => StatsSection::Memory,
+            Self::Flash => StatsSection::Flash,
+            Self::Power => StatsSection::Power,
+            Self::Food => StatsSection::Food,
+        }
+    }
+}
+
 #[derive(Clone, Copy, ValueEnum)]
 enum InviteRole {
     Owner,
@@ -529,6 +562,26 @@ async fn wifi_command(args: WifiArgs) -> Result<()> {
         })
         .await?;
     print_answer(&answer)
+}
+
+/// Each section asked for, one answer each, as JSON.
+async fn stats_command(args: StatsArgs) -> Result<()> {
+    let (_, _, mut connection) = connect(&args.target).await?;
+    // An op the feeder predates would end the session rather than be
+    // refused, so ask only a feeder that claims the statistics.
+    if !connection.capabilities().stats {
+        bail!("this feeder's build serves no statistics; update it first");
+    }
+    let sections: Vec<StatsSection> = if args.section.is_empty() {
+        StatsSection::ALL.to_vec()
+    } else {
+        args.section.iter().map(|section| section.model()).collect()
+    };
+    for section in sections {
+        let answer = connection.ask(&Op::Stats { section }).await?;
+        print_answer(&answer)?;
+    }
+    Ok(())
 }
 
 async fn time_command(args: TimeArgs) -> Result<()> {

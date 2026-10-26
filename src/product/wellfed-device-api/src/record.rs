@@ -44,6 +44,8 @@ pub enum Record {
         slot: u8,
         role: Role,
         client: Fingerprint,
+        /// From accepting the connection to the open session.
+        handshake_ms: u32,
     },
     Request {
         slot: u8,

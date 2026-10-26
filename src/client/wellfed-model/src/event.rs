@@ -283,6 +283,29 @@ pub enum SampleValue {
     Rssi {
         dbm: i32,
     },
+    /// The heap's free bytes now, and the fewest since boot.
+    Heap {
+        free: u32,
+        min: u32,
+    },
+    /// The loop's passes since the last loop sample: how many, the longest
+    /// and the 99th percentile.
+    Loop {
+        passes: u32,
+        max_us: u32,
+        p99_us: u32,
+    },
+    /// The latest gateway round trip answered since the last gateway
+    /// sample; `None` when none was.
+    Gateway {
+        round_trip_ms: Option<u32>,
+    },
+    /// The joined access point's channel, and how often a join landed on
+    /// another one this boot.
+    Wifi {
+        channel: Option<u8>,
+        ap_changes: u32,
+    },
 }
 
 impl SampleValue {
@@ -290,6 +313,10 @@ impl SampleValue {
         match self {
             Self::Power { .. } => MetricKind::Power,
             Self::Rssi { .. } => MetricKind::Rssi,
+            Self::Heap { .. } => MetricKind::Heap,
+            Self::Loop { .. } => MetricKind::Loop,
+            Self::Gateway { .. } => MetricKind::Gateway,
+            Self::Wifi { .. } => MetricKind::Wifi,
         }
     }
 }
@@ -299,20 +326,35 @@ impl SampleValue {
 pub enum MetricKind {
     Power,
     Rssi,
+    Heap,
+    Loop,
+    Gateway,
+    Wifi,
 }
 
 impl MetricKind {
+    pub const ALL: [Self; 6] = [
+        Self::Power,
+        Self::Rssi,
+        Self::Heap,
+        Self::Loop,
+        Self::Gateway,
+        Self::Wifi,
+    ];
+
     /// The stored and query spelling, the same as the JSON one.
     pub const fn code(self) -> &'static str {
         match self {
             Self::Power => "power",
             Self::Rssi => "rssi",
+            Self::Heap => "heap",
+            Self::Loop => "loop",
+            Self::Gateway => "gateway",
+            Self::Wifi => "wifi",
         }
     }
 
     pub fn from_code(code: &str) -> Option<Self> {
-        [Self::Power, Self::Rssi]
-            .into_iter()
-            .find(|metric| metric.code() == code)
+        Self::ALL.into_iter().find(|metric| metric.code() == code)
     }
 }

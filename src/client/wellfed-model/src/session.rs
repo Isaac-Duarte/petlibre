@@ -21,6 +21,9 @@ pub struct Capabilities {
     pub time: bool,
     /// The debug log: the `TailLog` op and the log batches it starts.
     pub log: bool,
+    /// Statistics: the `Stats` op and answer, and the live samples beyond
+    /// power and signal.
+    pub stats: bool,
 }
 
 impl Capabilities {
@@ -30,6 +33,7 @@ impl Capabilities {
         update: false,
         time: false,
         log: false,
+        stats: false,
     };
     /// Every feature this crate knows: what a current client claims.
     pub const KNOWN: Self = Self {
@@ -37,6 +41,7 @@ impl Capabilities {
         update: true,
         time: true,
         log: true,
+        stats: true,
     };
 
     /// The features both `self` and `other` claim.
@@ -47,6 +52,7 @@ impl Capabilities {
             update: self.update && other.update,
             time: self.time && other.time,
             log: self.log && other.log,
+            stats: self.stats && other.stats,
         }
     }
 }

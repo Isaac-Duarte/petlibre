@@ -14,8 +14,8 @@ use crate::wifi::Credentials;
 use crate::{Device, KeyChange, REBOOT_MS, Record, UpdateRequest};
 use wellfed_core::tone::Tune as CoreTune;
 use wellfed_proto::api::{
-    self as proto, Capabilities, ClientMessage, EventBody, Op, Refusal, RequestId, Source, Tune,
-    UPDATE_CHUNK_MAX, UpdateRefusal, UpdateView,
+    self as proto, Capabilities, ClientMessage, EventBody, Op, Refusal, RequestId, Source,
+    StatsSection, Tune, UPDATE_CHUNK_MAX, UpdateRefusal, UpdateView,
 };
 
 impl Server {
@@ -225,6 +225,7 @@ impl Server {
                 }
                 Reply::Done(None)
             }
+            Action::Stats { section } => return Some(Reply::Stats(section)),
         };
         Some(self.remember(memory, id, action, outcome))
     }
@@ -472,6 +473,9 @@ pub(super) enum Action {
     TailLog {
         after: Option<u32>,
     },
+    Stats {
+        section: StatsSection,
+    },
     /// A field failed the stores' checks before anything ran.
     Invalid,
 }
@@ -565,6 +569,7 @@ impl From<Op<'_>> for Action {
                 Self::PutTime { base, zone, ntp }
             }
             Op::TailLog { after } => Self::TailLog { after },
+            Op::Stats { section } => Self::Stats { section },
         }
     }
 }
@@ -585,6 +590,7 @@ impl Action {
                 | Self::UpdateChunk { .. }
                 | Self::GetTime
                 | Self::TailLog { .. }
+                | Self::Stats { .. }
         )
     }
 
@@ -612,13 +618,14 @@ impl Action {
             Self::GetTime => "get-time",
             Self::PutTime { .. } => "put-time",
             Self::TailLog { .. } => "tail-log",
+            Self::Stats { .. } => "stats",
             Self::Invalid => "invalid",
         }
     }
 }
 
-/// A request's answer, compact: the status and the client list are read
-/// only when the answer is sealed.
+/// A request's answer, compact: the status, the client list and the
+/// statistics are read only when the answer is sealed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Reply {
     Done(Option<u32>),
@@ -631,6 +638,7 @@ pub(super) enum Reply {
     Update(UpdateView),
     /// The time view, read when the answer is sealed.
     Time,
+    Stats(StatsSection),
 }
 
 fn saturate(jump_ms: i64) -> i32 {
@@ -653,6 +661,7 @@ impl Name for Reply {
             Self::Feeding(_) => "feeding",
             Self::Update(_) => "update",
             Self::Time => "time",
+            Self::Stats(_) => "stats",
             Self::Refused(refusal) => match refusal {
                 Refusal::Forbidden => "forbidden",
                 Refusal::Stale { .. } => "stale",

@@ -7,9 +7,13 @@
 //!   address;
 //! - the client table, copied from the settings writer when it changes, so
 //!   a revoked key's sessions close;
-//! - the live samples (power each time the supply is sampled, Wi-Fi signal
-//!   every 30 s) for subscribers, and the boot's and lost records' events;
-//! - the time settings and the NTP exchange ([`super::time`]).
+//! - the time settings and the NTP exchange ([`super::time`]);
+//! - the live samples (power each time the supply is sampled; Wi-Fi
+//!   signal, and with `Capabilities::STATS` the heap, the loop's pass
+//!   times, the gateway's round trip and the access point, every 30 s) for
+//!   subscribers, and the boot's and lost records' events;
+//! - the statistics ([`Keeper`]): what the pass sees goes in, and the
+//!   `Stats` op reads it out.
 //!
 //! [`FeederDevice`] is the server's view of the rest of the feeder: the
 //! platform's mailboxes and clock, the panel's lock and the feeding owner.
@@ -23,8 +27,8 @@ use wellfed_core::ota::install::{Answer, Phase};
 use wellfed_core::ota::offer::{KeyStatement, key_id};
 use wellfed_core::tone::Tune;
 use wellfed_proto::api::{
-    self as proto, Capabilities, EventBody, Metric, PORT, Refusal, Sample, Source, Status,
-    UpdateRefusal, UpdateView,
+    self as proto, Capabilities, EventBody, Metric, PORT, Refusal, Sample, Source, Stats,
+    StatsSection, Status, TASKS_MAX, TaskStack as WireTask, UpdateRefusal, UpdateView,
 };
 use wellfed_session::noise::Keypair;
 
@@ -32,8 +36,9 @@ use super::Feeds;
 use super::events;
 use super::lock::LockBox;
 use super::owner::{self, POLL_MS};
-use super::platform::{Accepted, Boot, Datagram, Platform, Received};
+use super::platform::{Accepted, Boot, Datagram, Platform, Received, TaskStack};
 use super::time::{self, Time};
+use crate::stats::Keeper;
 use crate::store::events::Read;
 use crate::update as wire;
 use wellfed_device_api::mailbox::{
@@ -50,6 +55,8 @@ use wellfed_device_api::{
 
 /// A listener or mDNS socket that failed is opened again after this.
 const RETRY_MS: u32 = 2_000;
+/// Wi-Fi signal and, for subscribers with the statistics, the heap, the
+/// loop, the gateway and the access point.
 const RSSI_MS: u32 = 30_000;
 /// mDNS datagrams read per pass, so a storm of queries costs a bounded turn.
 const DATAGRAMS: usize = 4;
@@ -112,9 +119,14 @@ fn server_record(record: server::Record, f: &mut impl fmt::Write) -> fmt::Result
     use server::Record as R;
     match record {
         R::Accepted { slot } => write!(f, "session slot={slot} state=accepted"),
-        R::Opened { slot, role, client } => write!(
+        R::Opened {
+            slot,
+            role,
+            client,
+            handshake_ms,
+        } => write!(
             f,
-            "session slot={slot} state=open role={role} client={}",
+            "session slot={slot} state=open role={role} client={} handshake_ms={handshake_ms}",
             wellfed_session::hex::Lower(&client)
         ),
         R::Request { slot, op, result } => {
@@ -163,6 +175,9 @@ pub struct Serve<S> {
     queries: u32,
     answers: u32,
     failed: u32,
+    stats: Keeper,
+    /// The task stacks a memory answer borrows its names from.
+    tasks: [TaskStack; TASKS_MAX],
     packet: [u8; mdns::PACKET],
     reply: [u8; mdns::PACKET],
     time: Time<S>,
@@ -188,6 +203,8 @@ impl<S: Copy> Serve<S> {
             queries: 0,
             answers: 0,
             failed: 0,
+            stats: Keeper::new(),
+            tasks: [TaskStack::EMPTY; TASKS_MAX],
             packet: [0; mdns::PACKET],
             reply: [0; mdns::PACKET],
             time: Time::new(),
@@ -204,6 +221,16 @@ impl<S: Copy> Serve<S> {
         self.time.last()
     }
 
+    /// The statistics, which the rest of the loop feeds.
+    pub fn stats(&mut self) -> &mut Keeper {
+        &mut self.stats
+    }
+
+    /// The statistics and the buffer a memory answer borrows from.
+    pub(super) fn stats_parts(&mut self) -> (&mut Keeper, &mut [TaskStack; TASKS_MAX]) {
+        (&mut self.stats, &mut self.tasks)
+    }
+
     /// This boot's facts, read once.
     pub fn boot<P: Platform<Socket = S>>(&mut self, platform: &mut P, now_ms: u32) -> Boot {
         *self.boot.get_or_insert_with(|| {
@@ -213,6 +240,7 @@ impl<S: Copy> Serve<S> {
                 reset_flags: boot.reset_flags,
             };
             events::record(platform, now_ms, body);
+            self.stats.boot(boot.reset_flags);
             boot
         })
     }
@@ -240,6 +268,7 @@ impl<S: Copy> Serve<S> {
             let count = u16::try_from(lost).unwrap_or(u16::MAX);
             events::record(platform, now_ms, EventBody::Lost { count });
         }
+        self.keep_stats(platform, &*feeds, now_ms);
 
         let (table, seen) = self.server.clients_table();
         if let Some(generation) = platform.clients_since(seen.max(self.clients_seen), table) {
@@ -278,6 +307,9 @@ impl<S: Copy> Serve<S> {
         // recovery code taken) only once it can be written. Held for at most
         // the claim's bound, as joins are.
         let feeding = feeds.feeding() || platform.claim_in_bound(now_ms);
+        // The sessions this pass opened, counted once the device lets go of
+        // the statistics.
+        let mut opened = [None; SESSIONS];
         let mut device = FeederDevice {
             platform: &mut *platform,
             lock,
@@ -286,6 +318,8 @@ impl<S: Copy> Serve<S> {
             locked,
             now_ms,
             ntp_last: self.time.last(),
+            stats: &mut self.stats,
+            tasks: &mut self.tasks,
         };
         let busy = self.server.step(
             Pass {
@@ -297,8 +331,18 @@ impl<S: Copy> Serve<S> {
                 recovery,
                 signer,
             },
-            |r| record(Record::Server(r)),
+            |r| {
+                if let server::Record::Opened { handshake_ms, .. } = r
+                    && let Some(free) = opened.iter_mut().find(|o| o.is_none())
+                {
+                    *free = Some(handshake_ms);
+                }
+                record(Record::Server(r));
+            },
         );
+        for handshake_ms in opened.into_iter().flatten() {
+            self.stats.opened(handshake_ms);
+        }
         self.send(platform, &mut record);
         self.samples(platform, now_ms);
 
@@ -475,10 +519,27 @@ impl<S: Copy> Serve<S> {
         self.server.closed(slot, |r| record(Record::Server(r)));
     }
 
+    /// What the statistics take from this pass: the link, the food beam
+    /// and the battery's history.
+    fn keep_stats<P: Platform<Socket = S>, F: Feeds>(
+        &mut self,
+        platform: &mut P,
+        feeds: &F,
+        now_ms: u32,
+    ) {
+        let stats = &mut self.stats;
+        stats.link(platform.link());
+        if let Some(present) = feeds.food() {
+            stats.food(present);
+        }
+        stats.tick(now_ms);
+    }
+
     fn samples<P: Platform<Socket = S>>(&mut self, platform: &mut P, now_ms: u32) {
         if wellfed_core::deadline_passed(now_ms, self.next_power) {
             self.next_power = now_ms.wrapping_add(P::POWER_SAMPLE_MS);
             if let Some(power) = platform.power(now_ms) {
+                self.stats.power(now_ms, power);
                 self.server.sample(Sample {
                     at_ms: now_ms,
                     metric: Metric::Power(power),
@@ -491,6 +552,22 @@ impl<S: Copy> Serve<S> {
                 at_ms: now_ms,
                 metric: Metric::Rssi(platform.link().rssi),
             });
+            // Taken every window whether or not anyone subscribes, so each
+            // covers the same 30 s.
+            if platform.capabilities().contains(Capabilities::STATS) {
+                let (free, min) = platform.heap();
+                for metric in [
+                    Metric::Heap { free, min },
+                    self.stats.loop_metric(),
+                    self.stats.gateway_metric(),
+                    self.stats.wifi_metric(),
+                ] {
+                    self.server.sample(Sample {
+                        at_ms: now_ms,
+                        metric,
+                    });
+                }
+            }
         }
     }
 }
@@ -517,6 +594,8 @@ pub struct FeederDevice<'a, P, F> {
     pub(super) now_ms: u32,
     /// What the last NTP exchange came to.
     pub(super) ntp_last: Option<NtpResult>,
+    pub(super) stats: &'a mut Keeper,
+    pub(super) tasks: &'a mut [TaskStack; TASKS_MAX],
 }
 
 impl<P: Platform, F: Feeds> Device for FeederDevice<'_, P, F> {
@@ -684,6 +763,38 @@ impl<P: Platform, F: Feeds> Device for FeederDevice<'_, P, F> {
 
     fn reboot(&mut self) {
         self.platform.reset();
+    }
+
+    fn stats(&mut self, section: StatsSection, now_ms: u32) -> Stats<'_> {
+        match section {
+            StatsSection::Counters => Stats::Counters(self.stats.counters(now_ms)),
+            StatsSection::Memory => {
+                let (heap_free, heap_min) = self.platform.heap();
+                let filled = self.platform.task_stacks(self.tasks);
+                let mut tasks = [None; TASKS_MAX];
+                for (out, task) in tasks.iter_mut().zip(&self.tasks[..filled.min(TASKS_MAX)]) {
+                    *out = Some(WireTask {
+                        name: task.name(),
+                        free_min: task.free_min,
+                    });
+                }
+                Stats::Memory(proto::Memory {
+                    heap_free,
+                    heap_min,
+                    tasks,
+                })
+            }
+            StatsSection::Flash => {
+                let fill = self.platform.events_fill();
+                Stats::Flash(Keeper::flash(
+                    self.platform.erases(),
+                    fill.kept,
+                    fill.capacity,
+                ))
+            }
+            StatsSection::Power => Stats::Power(self.stats.power_stats()),
+            StatsSection::Food => Stats::Food(self.stats.food_stats()),
+        }
     }
 
     fn update(&mut self, request: UpdateRequest<'_>) -> Result<u32, Refusal> {

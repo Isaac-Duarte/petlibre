@@ -25,11 +25,11 @@ use wellfed_device_api::wifi::Credentials;
 use wellfed_feeder::feeder::Platform;
 use wellfed_feeder::feeder::platform::{
     Accepted, BleDrop, BleLink, BleStep, Boot, Check, Datagram, DriverRecord, DriverStep,
-    EventSlot, Link, Received,
+    EventSlot, EventsFill, Link, Received, TaskStack,
 };
 use wellfed_feeder::store::events::{BODY_BYTES, Read};
-use wellfed_feeder_runtime::{events, keys, network, time};
-use wellfed_proto::api::{Capabilities, Power};
+use wellfed_feeder_runtime::{events, keys, network, stats, time};
+use wellfed_proto::api::{Capabilities, Erases, FLASH_SECTORS, Power, TASKS_MAX};
 use wellfed_sdk::hal::audio::{self, Speaker};
 use wellfed_sdk::hal::ble::{self, BleSetup, DropReason};
 use wellfed_sdk::hal::interlock::INTERLOCK;
@@ -113,6 +113,7 @@ impl Platform for Plaf103 {
             .union(Capabilities::UPDATE)
             .union(Capabilities::TIME)
             .union(Capabilities::LOG)
+            .union(Capabilities::STATS)
     }
 
     fn reset(&mut self) {
@@ -163,6 +164,11 @@ impl Platform for Plaf103 {
             rssi: status.rssi,
             link_losses: status.link_losses,
             check_losses: status.check_losses,
+            dhcp_renewals: status.dhcp_renewals,
+            gateway_answers: status.gateway_answers,
+            gateway_ms: status.gateway_ms,
+            channel: status.channel,
+            ap_changes: status.ap_changes,
         }
     }
 
@@ -365,6 +371,30 @@ impl Platform for Plaf103 {
 
     fn heap(&self) -> (u32, u32) {
         (sdk::heap_free(), sdk::heap_min_free())
+    }
+
+    fn task_stacks(&mut self, out: &mut [TaskStack; TASKS_MAX]) -> usize {
+        let mut raw = [sdk::TaskStack::default(); TASKS_MAX];
+        let filled = sdk::task_stacks(&mut raw);
+        for (out, task) in out.iter_mut().zip(&raw[..filled]) {
+            *out = TaskStack::new(task.name(), task.free_min);
+        }
+        filled
+    }
+
+    fn erases(&self) -> Erases {
+        let mut storage = [0; FLASH_SECTORS];
+        for (sector, count) in (0u32..).zip(storage.iter_mut()) {
+            *count = sdk::storage_erase_count(sector);
+        }
+        Erases {
+            storage,
+            update: sdk::bank1_erase_count(),
+        }
+    }
+
+    fn events_fill(&self) -> EventsFill {
+        stats::fill()
     }
 
     fn ble_restart(&mut self) {

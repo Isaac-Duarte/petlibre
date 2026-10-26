@@ -121,6 +121,30 @@ pub unsafe fn storage_program(sector: u32, offset: u32, data: &[u8]) -> bool {
     true
 }
 
+/// Erases of storage sector `sector` since the fake was reset.
+pub fn storage_erase_count(sector: u32) -> u32 {
+    with(|h| {
+        usize::try_from(sector)
+            .ok()
+            .and_then(|sector| h.storage_erases.get(sector).copied())
+            .unwrap_or(0)
+    })
+}
+
+/// Erases of bank-1 sectors since the fake was reset.
+pub fn bank1_erase_count() -> u32 {
+    with(|h| h.bank1_erases)
+}
+
+/// The modelled tasks' stacks into `out`; how many it filled.
+pub fn task_stacks(out: &mut [crate::TaskStack]) -> usize {
+    with(|h| {
+        let n = h.task_stacks.len().min(out.len());
+        out[..n].copy_from_slice(&h.task_stacks[..n]);
+        n
+    })
+}
+
 pub fn storage_read(sector: u32, offset: u32, bytes: &mut [u8]) -> bool {
     let Some(at) = storage_span(sector, offset, bytes.len()) else {
         return false;
@@ -144,7 +168,10 @@ pub unsafe fn bank1_erase(sector: u32) -> bool {
     let Some(at) = bank1_span(sector, 0, SECTOR_BYTES as usize) else {
         return false;
     };
-    with(|h| h.bank1[at..at + SECTOR_BYTES as usize].fill(u8::MAX));
+    with(|h| {
+        h.bank1[at..at + SECTOR_BYTES as usize].fill(u8::MAX);
+        h.bank1_erases += 1;
+    });
     true
 }
 

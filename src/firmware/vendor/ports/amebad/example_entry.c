@@ -58,6 +58,8 @@ enum {
     /* 7 was the internet DNS check; never reused. */
     WELLFED_EV_GATEWAY = 8, /* result: 0 or a WELLFED_ECHO_* failure; value: the gateway's IPv4 (host order); ms */
     WELLFED_EV_LEAVE = 9,   /* result: wifi_disconnect; value: 1 still associated at the bound; ms */
+    WELLFED_EV_AP = 10,     /* after an address: result: the channel, or -1; value: the BSSID's last 4 bytes */
+    WELLFED_EV_RENEW = 11,  /* lwIP's DHCP client took a new ACK without a rejoin (renew or rebind) */
 };
 
 /* The lost event's cause Rust answers before an intentional restart
@@ -183,6 +185,8 @@ static void wellfed_leave_for_restart(unsigned int attempt)
                    wellfed_ms(begin));
 }
 
+static void wellfed_access_point(unsigned int attempt);
+
 /* One join attempt: scan, connect, DHCP. 1 when an address was assigned. */
 static int wellfed_join_once(unsigned int attempt)
 {
@@ -231,7 +235,35 @@ static int wellfed_join_once(unsigned int attempt)
         wifi_disconnect();
         return 0;
     }
+    wellfed_access_point(attempt);
     return 1;
+}
+
+/* The joined access point, for the statistics: its channel and the last
+ * four bytes of its BSSID, which tell a home's few access points apart. */
+static void wellfed_access_point(unsigned int attempt)
+{
+    int channel = -1;
+    if (wifi_get_channel(&channel) != RTW_SUCCESS) {
+        channel = -1;
+    }
+    unsigned char bssid[6] = {0};
+    unsigned int tail = 0;
+    if (wifi_get_ap_bssid(bssid) == RTW_SUCCESS) {
+        tail = ((unsigned int)bssid[2] << 24) | ((unsigned int)bssid[3] << 16) | ((unsigned int)bssid[4] << 8) |
+               bssid[5];
+    }
+    wellfed_event(WELLFED_EV_AP, attempt, channel, tail, 0);
+}
+
+/* lwIP's DHCP client restarts its lease clock at every ACK. Seeing it go
+ * back while still joined is a renewal (or a rebind): no event of lwIP's
+ * says so. A read of one u16 from another task, so at worst one renewal
+ * is seen a tick late. */
+static unsigned int wellfed_lease_used(void)
+{
+    struct dhcp *dhcp = netif_dhcp_data(&xnetif[0]);
+    return dhcp != NULL ? dhcp->lease_used : 0;
 }
 
 /* One attempt with the credentials Rust selects, reporting the outcome. */
@@ -345,7 +377,13 @@ static int wellfed_gateway(unsigned int attempt)
 static int wellfed_watch(unsigned int attempt, unsigned int *backoff)
 {
     int probe = WELLFED_PROBE_NONE;
+    unsigned int lease_used = wellfed_lease_used();
     for (;;) {
+        unsigned int used = wellfed_lease_used();
+        if (used < lease_used) {
+            wellfed_event(WELLFED_EV_RENEW, attempt, 0, used, 0);
+        }
+        lease_used = used;
         int verdict = wellfed_wifi_watch(wifi_is_connected_to_ap() == RTW_SUCCESS, wellfed_leased(), probe);
         probe = WELLFED_PROBE_NONE;
         if (verdict >= WELLFED_WATCH_LEAVE) {
@@ -413,6 +451,36 @@ static void wellfed_wifi_task(void *unused)
         vTaskDelay(backoff / portTICK_PERIOD_MS);
         backoff = backoff * 2 > WELLFED_BACKOFF_MAX_MS ? WELLFED_BACKOFF_MAX_MS : backoff * 2;
     }
+}
+
+/* One task's stack for the statistics, shared with Rust
+ * (`wellfed_amebad_sys::TaskStack`). */
+struct wellfed_task_stack {
+    char name[16];
+    unsigned int free_min;
+};
+
+#define WELLFED_TASKS 24
+
+/* Each task's name and the fewest free stack bytes it has had, into `out`
+ * (at most `max`); how many it wrote, 0 when there are more tasks than it
+ * can list. The RTOS walks each stack's untouched fill with the scheduler
+ * paused, which only an owner's statistics request asks for. */
+int wellfed_task_stacks(struct wellfed_task_stack *out, int max)
+{
+    static TaskStatus_t status[WELLFED_TASKS];
+    UBaseType_t count = uxTaskGetSystemState(status, WELLFED_TASKS, NULL);
+    int written = 0;
+    for (UBaseType_t i = 0; i < count && written < max; i++) {
+        struct wellfed_task_stack *task = &out[written++];
+        memset(task->name, 0, sizeof(task->name));
+        const char *name = status[i].pcTaskName != NULL ? status[i].pcTaskName : "";
+        for (unsigned int c = 0; c < sizeof(task->name) && name[c] != '\0'; c++) {
+            task->name[c] = name[c];
+        }
+        task->free_min = (unsigned int)status[i].usStackHighWaterMark * sizeof(StackType_t);
+    }
+    return written;
 }
 
 /* Once per boot: 1 when the task was created. */

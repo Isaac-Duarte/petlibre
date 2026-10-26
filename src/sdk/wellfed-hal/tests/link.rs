@@ -160,3 +160,49 @@ fn a_restart_during_a_join_leaves_as_soon_as_it_joins() {
     assert_eq!(watch(true, true, NONE), Verdict::Leave(Cause::Restart));
     assert!(!net_status::read().live);
 }
+
+fn event(kind: u32, result: i32, value: u32, ms: u32) {
+    net_status::observe(&WifiEvent {
+        kind,
+        result,
+        value,
+        ms,
+        ..WifiEvent::default()
+    });
+}
+
+/// The statistics' link figures: answered probes and their round trip,
+/// renewals, the access point's channel and how often it changed.
+#[test]
+fn the_link_figures_follow_the_shim_events() {
+    let _guard = start();
+
+    event(WifiEvent::GATEWAY, -4, 0x0a00_0001, 1000);
+    let status = net_status::read();
+    assert_eq!((status.gateway_answers, status.gateway_ms), (0, 0));
+    event(WifiEvent::GATEWAY, 0, 0x0a00_0001, 4);
+    let status = net_status::read();
+    assert_eq!((status.gateway_answers, status.gateway_ms), (1, 4));
+
+    event(WifiEvent::RENEW, 0, 0, 0);
+    assert_eq!(net_status::read().dhcp_renewals, 1);
+
+    event(WifiEvent::AP, 6, 0x1122_3344, 0);
+    let status = net_status::read();
+    assert_eq!((status.channel, status.ap_changes), (Some(6), 0));
+    // The same access point again, then an unread BSSID: no change.
+    event(WifiEvent::AP, 6, 0x1122_3344, 0);
+    event(WifiEvent::AP, -1, 0, 0);
+    let status = net_status::read();
+    assert_eq!((status.channel, status.ap_changes), (None, 0));
+    event(WifiEvent::AP, 11, 0x5566_7788, 0);
+    let status = net_status::read();
+    assert_eq!((status.channel, status.ap_changes), (Some(11), 1));
+
+    lost(Cause::Link);
+    assert_eq!(
+        net_status::read().channel,
+        None,
+        "no channel while not joined"
+    );
+}

@@ -16,8 +16,9 @@ use wellfed_feeder_sim::harness;
 use wellfed_feeder_sim::serve::Event;
 use wellfed_feeder_sim::sim::Record;
 use wellfed_model::{
-    Answer, ClientRole, EventBody, Generation, Joined, NtpResult, NtpServer, Op, Pushed, Refusal,
-    SettingsPatch, Source, Status, TimeChanges, TimeSource, TimeSync, Wifi,
+    Answer, ClientRole, EventBody, Generation, Joined, MetricKind, NtpResult, NtpServer, Op,
+    Pushed, Refusal, SampleValue, SettingsPatch, Source, Stats, StatsSection, Status, TimeChanges,
+    TimeSource, TimeSync, Wifi,
 };
 use wellfed_proto::api::RequestId;
 use wellfed_session::noise::Keypair;
@@ -924,6 +925,59 @@ fn an_owner_tails_the_record_lines_the_feeder_logs() {
             .await
             .unwrap();
         assert_eq!(refused, Answer::Refused(Refusal::Forbidden));
+        sim.stop().await;
+    });
+}
+
+/// The statistics end to end: each section over the session, and the
+/// statistics' metrics to a subscriber every 30 s beside the signal.
+#[test]
+fn an_owner_reads_the_statistics_and_their_live_metrics() {
+    paused(async {
+        let mut sim = Running::start(&Flash::memory(), true).await;
+        let mut owner = sim.open(OWNER).await.unwrap();
+        assert!(owner.capabilities().stats);
+
+        for section in StatsSection::ALL {
+            let answer = owner.ask(sim.id(), &Op::Stats { section }).await.unwrap();
+            let Answer::Stats(stats) = answer else {
+                panic!("{section:?}: {answer:?}");
+            };
+            match stats {
+                Stats::Counters(counters) => {
+                    assert_eq!(counters.boot.sessions, 1, "this session");
+                    assert_eq!(counters.lifetime, None);
+                }
+                Stats::Flash(flash) => {
+                    assert_eq!(flash.boot.storage.len(), 32);
+                    assert!(flash.events_kept >= 1, "the boot event");
+                }
+                Stats::Memory(_) | Stats::Power(_) | Stats::Food(_) => {}
+            }
+        }
+
+        owner.subscribe(None, true).await.unwrap();
+        let mut kinds = Vec::new();
+        while kinds.len() < 6 {
+            match owner.next(Duration::from_secs(60)).await.unwrap() {
+                Pushed::Sample(sample) => {
+                    if let SampleValue::Wifi { channel, .. } = sample.value {
+                        assert_eq!(channel, Some(6));
+                    }
+                    if let SampleValue::Gateway { round_trip_ms } = sample.value {
+                        assert_eq!(round_trip_ms, None, "the simulator probes no gateway");
+                    }
+                    let kind = sample.value.metric();
+                    if !kinds.contains(&kind) {
+                        kinds.push(kind);
+                    }
+                }
+                Pushed::Event(_) | Pushed::Gap(_) | Pushed::Log(_) => {}
+            }
+        }
+        for kind in MetricKind::ALL {
+            assert!(kinds.contains(&kind), "{kind:?} in {kinds:?}");
+        }
         sim.stop().await;
     });
 }

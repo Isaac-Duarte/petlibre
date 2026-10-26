@@ -114,8 +114,9 @@ pub const AUDIO_PAGES: usize = 8;
 
 /// One event from the KM4 Wi-Fi shim's ring (`example_entry.c`), numbered
 /// from 1. `kind` is one of the associated constants: 1 on, 2 scan,
-/// 3 connect, 4 DHCP, 5 lost, 6 backoff, 8 gateway. 7 was the internet DNS
-/// check the gateway probe replaced; it is never reused.
+/// 3 connect, 4 DHCP, 5 lost, 6 backoff, 8 gateway, 9 leave, 10 access
+/// point, 11 renewal. 7 was the internet DNS check the gateway probe
+/// replaced; it is never reused.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct WifiEvent {
@@ -127,7 +128,8 @@ pub struct WifiEvent {
     /// gateway probe 0 answered or a negative failure.
     pub result: i32,
     /// Scan: network found; DHCP: assigned IPv4; lost: ms connected;
-    /// backoff: ms; gateway: the gateway's IPv4; leave: still associated.
+    /// backoff: ms; gateway: the gateway's IPv4; leave: still associated;
+    /// access point: its BSSID's last 4 bytes.
     pub value: u32,
     /// Scan only: the network's RSSI (dBm) and `rtw_security_t`.
     pub rssi: i32,
@@ -147,6 +149,33 @@ impl WifiEvent {
     /// The leave before an intentional restart: `result` is
     /// `wifi_disconnect`'s, `value` 1 if still associated at the shim's bound.
     pub const LEAVE: u32 = 9;
+    /// The access point a join landed on, once it has an address: `result`
+    /// is its channel (-1 unread), `value` its BSSID's last 4 bytes (0
+    /// unread).
+    pub const AP: u32 = 10;
+    /// lwIP's DHCP client took a new ACK without a rejoin.
+    pub const RENEW: u32 = 11;
+}
+
+/// One task's stack, as `wellfed_task_stacks` (`example_entry.c`) reports
+/// it: the name, NUL-padded, and the fewest free bytes since it started.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TaskStack {
+    pub name: [u8; 16],
+    pub free_min: u32,
+}
+
+impl TaskStack {
+    /// The name up to its first NUL, if it is UTF-8.
+    pub fn name(&self) -> &str {
+        let len = self
+            .name
+            .iter()
+            .position(|&b| b == 0)
+            .unwrap_or(self.name.len());
+        core::str::from_utf8(&self.name[..len]).unwrap_or("")
+    }
 }
 
 /// `wifi_event(seq)` outcome.

@@ -426,7 +426,12 @@ impl Device for Feeder {
     }
 
     fn capabilities(&self) -> Capabilities {
-        Capabilities::KNOWN
+        Capabilities::FEED.union(Capabilities::UPDATE)
+    }
+
+    /// Never asked: this feeder serves no statistics.
+    fn stats(&mut self, _section: proto::StatsSection, _now_ms: u32) -> proto::Stats<'_> {
+        proto::Stats::Counters(proto::Counters::default())
     }
 
     fn feed(&mut self, _portions: u8, _by: proto::Source) -> Result<u32, Refusal> {

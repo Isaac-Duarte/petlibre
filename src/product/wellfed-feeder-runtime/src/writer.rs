@@ -23,6 +23,7 @@
 //! and answers the device API's reads ([`events`]), polling
 //! faster while either waits, so a reconnecting client catches up in
 //! seconds.
+//! It publishes the ring's fill for the statistics ([`stats`]).
 //!
 //! No write starts while a feed may move the outputs: a flash lease then
 //! fails its stopped-outputs check and resets the board. So each store write
@@ -57,7 +58,9 @@ use crate::events;
 pub use crate::keys::KeyResult;
 use crate::keys::{self, Change};
 use crate::network::{self, NET_BASE};
+use crate::stats;
 use crate::time::{self, TIME_BASE};
+use wellfed_feeder::feeder::platform::EventsFill;
 
 pub const POLL_MS: u32 = 200;
 /// While events wait to be written or read.
@@ -535,6 +538,7 @@ impl<F: FlashOps> Writer<F> {
                     record = Some(Record::EventError);
                 }
                 events::finish_pending(self.events.last_seq());
+                self.publish_fill();
             } else {
                 // Stays at the queue's head, so the records keep their order.
                 deferred = true;
@@ -545,6 +549,13 @@ impl<F: FlashOps> Writer<F> {
 
         let more = (events::pending().is_some() && !deferred) || read;
         next(if more { EVENTS_POLL_MS } else { POLL_MS }, record)
+    }
+
+    fn publish_fill(&self) {
+        stats::publish_fill(EventsFill {
+            kept: self.events.kept(),
+            capacity: self.events.capacity(),
+        });
     }
 
     fn publish(&self) {
@@ -660,6 +671,7 @@ impl<F: FlashOps> Writer<F> {
                     self.events
                         .open(Region::new(), EVENTS_UNITS as usize, fresh_epoch());
                     events::publish_open(self.events.epoch(), self.events.last_seq());
+                    self.publish_fill();
                     let record = Record::Events {
                         open: self.events.is_open(),
                         last: self.events.last_seq(),

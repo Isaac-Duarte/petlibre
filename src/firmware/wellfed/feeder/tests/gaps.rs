@@ -34,6 +34,11 @@ fn status(generation: u32) -> Status {
         last_loss: 1,
         live: true,
         generation,
+        dhcp_renewals: 0,
+        gateway_answers: 0,
+        gateway_ms: 0,
+        channel: Some(6),
+        ap_changes: 0,
     }
 }
 

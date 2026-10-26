@@ -30,8 +30,8 @@ use wellfed_device_api::{
 use wellfed_model as model;
 use wellfed_model::{Answer, Generation, Hello, Joined, Op, OpenRefusal, SettingsPatch};
 use wellfed_proto::api::{
-    self as proto, Capabilities, EventBody, Refusal, Status, UpdatePhase, UpdateRefusal,
-    UpdateView, WANTED_MAX,
+    self as proto, Capabilities, EventBody, Metric, Refusal, Sample, Stats, StatsSection, Status,
+    UpdatePhase, UpdateRefusal, UpdateView, WANTED_MAX,
 };
 use wellfed_session::frame;
 use wellfed_session::noise::Keypair;
@@ -297,7 +297,9 @@ impl Device for Fake {
     }
 
     fn capabilities(&self) -> Capabilities {
-        let mut capabilities = Capabilities::FEED.union(Capabilities::TIME);
+        let mut capabilities = Capabilities::FEED
+            .union(Capabilities::TIME)
+            .union(Capabilities::STATS);
         if self.update {
             capabilities = capabilities.union(Capabilities::UPDATE);
         }
@@ -305,6 +307,43 @@ impl Device for Fake {
             capabilities = capabilities.union(Capabilities::LOG);
         }
         capabilities
+    }
+
+    /// A small fixed answer per section, each told apart by its values.
+    fn stats(&mut self, section: StatsSection, now_ms: u32) -> Stats<'_> {
+        match section {
+            StatsSection::Counters => Stats::Counters(proto::Counters {
+                boot: proto::Counts {
+                    uptime_s: now_ms / 1000,
+                    sessions: 1,
+                    ..proto::Counts::default()
+                },
+                ..proto::Counters::default()
+            }),
+            StatsSection::Memory => {
+                let mut tasks = [None; proto::TASKS_MAX];
+                tasks[0] = Some(proto::TaskStack {
+                    name: "wellfed-loop",
+                    free_min: 2_900,
+                });
+                Stats::Memory(proto::Memory {
+                    heap_free: 125_088,
+                    heap_min: 119_000,
+                    tasks,
+                })
+            }
+            StatsSection::Flash => Stats::Flash(proto::Flash {
+                events_kept: self.events.len().try_into().unwrap(),
+                events_capacity: 1_408,
+                ..proto::Flash::default()
+            }),
+            StatsSection::Power => Stats::Power(proto::PowerStats {
+                adapter: Some(true),
+                period_s: 3_600,
+                ..proto::PowerStats::default()
+            }),
+            StatsSection::Food => Stats::Food(proto::Food::default()),
+        }
     }
 
     fn log_after(&mut self, after: Option<u32>, text: &mut [u8]) -> Option<LogBatch> {
@@ -1414,6 +1453,7 @@ fn a_connection_names_the_epoch_and_answers_each_request_once() {
                 update: false,
                 time: true,
                 log: false,
+                stats: true,
             },
             EPOCH
         )
@@ -1682,6 +1722,131 @@ fn a_v1_only_session_never_receives_a_body_outside_v1() {
 }
 
 #[test]
+fn every_statistics_section_answers_a_session_that_claims_the_bit() {
+    let mut rig = Rig::new();
+    let mut owner = open(&mut rig, OWNER);
+    for (id, section) in (1..).zip(model::StatsSection::ALL) {
+        let answer = ask(&mut rig, &mut owner, id, Op::Stats { section });
+        let Answer::Stats(stats) = answer else {
+            panic!("{section:?}: {answer:?}");
+        };
+        let answered = match stats {
+            model::Stats::Counters(_) => model::StatsSection::Counters,
+            model::Stats::Memory(memory) => {
+                assert_eq!(memory.tasks[0].name, "wellfed-loop");
+                model::StatsSection::Memory
+            }
+            model::Stats::Flash(flash) => {
+                assert_eq!(flash.boot.storage.len(), proto::FLASH_SECTORS);
+                model::StatsSection::Flash
+            }
+            model::Stats::Power(power) => {
+                assert_eq!(power.battery_mv.len(), proto::POWER_HISTORY);
+                model::StatsSection::Power
+            }
+            model::Stats::Food(_) => model::StatsSection::Food,
+        };
+        assert_eq!(answered, section);
+    }
+
+    // A member reads them too; a session whose hello lacks the bit does not.
+    let mut member = open(&mut rig, MEMBER);
+    let section = model::StatsSection::Counters;
+    let answer = ask(&mut rig, &mut member, 9, Op::Stats { section });
+    assert!(matches!(answer, Answer::Stats(_)), "{answer:?}");
+
+    let hello = Hello {
+        major: 1,
+        capabilities: model::Capabilities {
+            stats: false,
+            ..model::Capabilities::KNOWN
+        },
+    };
+    let mut old = live_with(&mut rig, OWNER, hello);
+    drive(&mut rig, &mut old, |live| {
+        live.connection.opened().is_some()
+    })
+    .unwrap();
+    let now = old.now(&rig);
+    old.connection
+        .request(now, [3; 16], &model::Op::Stats { section })
+        .unwrap();
+    drive(&mut rig, &mut old, |live| !live.events.is_empty()).unwrap();
+    assert!(
+        matches!(
+            &old.events[..],
+            [Event::Answer {
+                answer: Answer::Refused(model::Refusal::Unavailable),
+                ..
+            }]
+        ),
+        "{:?}",
+        old.events
+    );
+}
+
+/// The statistics' metrics go only to subscribers that claimed the bit,
+/// and one waiting is replaced by the next of its kind, never by another
+/// kind.
+#[test]
+fn stats_metrics_reach_only_their_subscribers_and_replace_their_own_kind() {
+    let mut rig = Rig::new();
+    let hello = |stats| Hello {
+        major: 1,
+        capabilities: model::Capabilities {
+            stats,
+            ..model::Capabilities::KNOWN
+        },
+    };
+    let mut current = live_with(&mut rig, OWNER, hello(true));
+    let mut old = live_with(&mut rig, MEMBER, hello(false));
+    for live in [&mut current, &mut old] {
+        drive(&mut rig, live, |live| live.connection.opened().is_some()).unwrap();
+        let now = live.now(&rig);
+        live.connection.subscribe(now, None, true).unwrap();
+        // A few passes, so the server holds the subscription.
+        for _ in 0..3 {
+            drive(&mut rig, live, |_| true).unwrap();
+        }
+    }
+
+    let heap = |at_ms, free| Sample {
+        at_ms,
+        metric: Metric::Heap { free, min: 100 },
+    };
+    rig.server.sample(heap(10, 1));
+    rig.server.sample(Sample {
+        at_ms: 11,
+        metric: Metric::Rssi(-60),
+    });
+    rig.server.sample(heap(12, 2));
+
+    let samples = |live: &Live| -> Vec<model::SampleValue> {
+        live.events
+            .iter()
+            .filter_map(|event| match event {
+                Event::Pushed(model::Pushed::Sample(sample)) => Some(sample.value),
+                _ => None,
+            })
+            .collect()
+    };
+    drive(&mut rig, &mut current, |live| samples(live).len() == 2).unwrap();
+    drive(&mut rig, &mut old, |live| !samples(live).is_empty()).unwrap();
+    for _ in 0..10 {
+        drive(&mut rig, &mut current, |_| true).unwrap();
+        drive(&mut rig, &mut old, |_| true).unwrap();
+    }
+    assert_eq!(
+        samples(&current),
+        [
+            model::SampleValue::Rssi { dbm: -60 },
+            model::SampleValue::Heap { free: 2, min: 100 },
+        ]
+    );
+    assert_eq!(samples(&old), [model::SampleValue::Rssi { dbm: -60 }]);
+}
+
+#[test]
 fn a_request_pending_when_the_session_ends_is_reported_unanswered() {
     let mut rig = Rig::new();
     let mut owner = live(&mut rig, OWNER);
@@ -1776,6 +1941,7 @@ fn only_an_owner_s_session_with_the_update_bit_may_update() {
             update: false,
             time: false,
             log: true,
+            stats: true,
         },
     };
     let slot = rig.accept().unwrap();

@@ -15,7 +15,7 @@ use wellfed_core::clock::zone::Rule;
 use wellfed_core::log_tail::Batch as LogBatch;
 use wellfed_core::ota::install::{Answer, Progress, Refused};
 use wellfed_core::tone::Tune;
-use wellfed_proto::api::{Capabilities, Power};
+use wellfed_proto::api::{Capabilities, Erases, Power, TASKS_MAX};
 
 use crate::store::events::{BODY_BYTES, Read};
 use wellfed_device_api::clients::{CLIENTS, Client};
@@ -33,7 +33,7 @@ pub struct Boot {
     pub boot_count: u32,
 }
 
-/// The Wi-Fi link as status reports it.
+/// The Wi-Fi link as status and the statistics report it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Link {
     pub rssi: i32,
@@ -41,6 +41,62 @@ pub struct Link {
     /// Losses the link's checks found (its gateway stopped answering, or its
     /// lease went).
     pub check_losses: u32,
+    /// Leases renewed (or rebound) without a rejoin.
+    pub dhcp_renewals: u32,
+    /// Gateway probes answered this boot, and the latest one's round trip.
+    pub gateway_answers: u32,
+    pub gateway_ms: u32,
+    /// The joined access point's channel, `None` while not joined.
+    pub channel: Option<u8>,
+    /// Joins this boot that landed on another access point than the join
+    /// before.
+    pub ap_changes: u32,
+}
+
+/// One task's stack, as the RTOS reports it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TaskStack {
+    name: [u8; Self::NAME],
+    len: u8,
+    /// The fewest free bytes since the task started.
+    pub free_min: u32,
+}
+
+impl TaskStack {
+    /// A name's longest, as the device API carries it.
+    pub const NAME: usize = 16;
+    pub const EMPTY: Self = Self {
+        name: [0; Self::NAME],
+        len: 0,
+        free_min: 0,
+    };
+
+    /// `name` cut to [`Self::NAME`] bytes, at a character boundary.
+    pub fn new(name: &str, free_min: u32) -> Self {
+        let mut end = name.len().min(Self::NAME);
+        while !name.is_char_boundary(end) {
+            end -= 1;
+        }
+        let mut stack = Self {
+            free_min,
+            ..Self::default()
+        };
+        stack.name[..end].copy_from_slice(&name.as_bytes()[..end]);
+        stack.len = u8::try_from(end).unwrap_or(0);
+        stack
+    }
+
+    pub fn name(&self) -> &str {
+        let len = usize::from(self.len).min(Self::NAME);
+        core::str::from_utf8(&self.name[..len]).unwrap_or("")
+    }
+}
+
+/// The event ring's fill, for the statistics.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct EventsFill {
+    pub kept: u32,
+    pub capacity: u32,
 }
 
 /// What a non-blocking accept found.
@@ -295,6 +351,15 @@ pub trait Platform {
     fn ntp_receive(&mut self, socket: Self::Socket, into: &mut [u8]) -> Datagram;
     /// The heap free now, and its low point.
     fn heap(&self) -> (u32, u32);
+
+    // ---- The statistics.
+
+    /// Each task's stack into `out`; how many it filled.
+    fn task_stacks(&mut self, out: &mut [TaskStack; TASKS_MAX]) -> usize;
+    /// Each storage sector's erases this boot, and bank 1's.
+    fn erases(&self) -> Erases;
+    /// The event ring's fill, as the writer last published it.
+    fn events_fill(&self) -> EventsFill;
 
     // ---- Setup mode's BLE link and speaker, which run only in setup mode.
 

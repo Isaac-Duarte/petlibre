@@ -194,6 +194,9 @@ pub struct Hardware {
     /// first 8 bytes are `bank0_marker`'s.
     pub bank0: Vec<u8>,
     pub storage_erases: [u32; STORAGE_SECTORS as usize],
+    pub bank1_erases: u32,
+    /// What `task_stacks` reports.
+    pub task_stacks: Vec<crate::TaskStack>,
 
     /// The codec ring. Filled pages wait in `audio_queue` until
     /// [`play_audio`] moves them to `audio_played`.
@@ -343,6 +346,8 @@ impl Default for Hardware {
             bank0_marker: crate::MARKER,
             bank0: Vec::new(),
             storage_erases: [0; STORAGE_SECTORS as usize],
+            bank1_erases: 0,
+            task_stacks: Vec::new(),
 
             audio_open: false,
             audio_open_fails: false,

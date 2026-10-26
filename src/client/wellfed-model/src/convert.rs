@@ -10,11 +10,12 @@ use wellfed_proto::api as proto;
 use wellfed_proto::setup as proto_setup;
 
 use crate::{
-    Answer, Capabilities, Client, ClientRole, EnrollPath, Event, EventBody, FeedOutcome,
-    FeedReason, Generation, Hello, Hex, Invite, Joined, LogLines, NtpResult, NtpServer, Op,
-    OpenRefusal, Power, Refusal, Sample, SampleValue, Settings, SettingsPatch, Source, Status,
-    TimeSource, TimeSync, TimeView, Tune, UpdatePhase, UpdateRefusal, UpdateStop, UpdateView,
-    WifiSource, setup,
+    Answer, Capabilities, Client, ClientRole, Counters, Counts, EnrollPath, Erases, Event,
+    EventBody, FeedOutcome, FeedReason, Flash, Food, Generation, Hello, Hex, Invite, Joined,
+    LogLines, Memory, NtpResult, NtpServer, Op, OpenRefusal, Power, PowerStats, Refusal,
+    ResetCause, Resets, Sample, SampleValue, Settings, SettingsPatch, Source, Stats, StatsSection,
+    Status, TaskStack, TimeSource, TimeSync, TimeView, Tune, UpdatePhase, UpdateRefusal,
+    UpdateStop, UpdateView, WifiSource, setup,
 };
 
 /// One log batch: its text is whole lines, each ending in `\n`.
@@ -379,6 +380,24 @@ impl From<proto::Metric> for SampleValue {
                 battery_mv,
             },
             proto::Metric::Rssi(dbm) => Self::Rssi { dbm },
+            proto::Metric::Heap { free, min } => Self::Heap { free, min },
+            proto::Metric::Loop {
+                passes,
+                max_us,
+                p99_us,
+            } => Self::Loop {
+                passes,
+                max_us,
+                p99_us,
+            },
+            proto::Metric::Gateway { round_trip_ms } => Self::Gateway { round_trip_ms },
+            proto::Metric::Wifi {
+                channel,
+                ap_changes,
+            } => Self::Wifi {
+                channel,
+                ap_changes,
+            },
         }
     }
 }
@@ -395,6 +414,24 @@ impl From<SampleValue> for proto::Metric {
                 battery_mv,
             }),
             SampleValue::Rssi { dbm } => Self::Rssi(dbm),
+            SampleValue::Heap { free, min } => Self::Heap { free, min },
+            SampleValue::Loop {
+                passes,
+                max_us,
+                p99_us,
+            } => Self::Loop {
+                passes,
+                max_us,
+                p99_us,
+            },
+            SampleValue::Gateway { round_trip_ms } => Self::Gateway { round_trip_ms },
+            SampleValue::Wifi {
+                channel,
+                ap_changes,
+            } => Self::Wifi {
+                channel,
+                ap_changes,
+            },
         }
     }
 }
@@ -439,6 +476,164 @@ impl From<proto::Outcome<'_>> for Answer {
             proto::Outcome::Feeding { feed } => Self::Feeding { feed },
             proto::Outcome::Update(view) => Self::Update(view.into()),
             proto::Outcome::Time(view) => Self::Time(view.into()),
+            proto::Outcome::Stats(stats) => Self::Stats(stats.into()),
+        }
+    }
+}
+
+impl From<StatsSection> for proto::StatsSection {
+    fn from(section: StatsSection) -> Self {
+        match section {
+            StatsSection::Counters => Self::Counters,
+            StatsSection::Memory => Self::Memory,
+            StatsSection::Flash => Self::Flash,
+            StatsSection::Power => Self::Power,
+            StatsSection::Food => Self::Food,
+        }
+    }
+}
+
+impl From<proto::Stats<'_>> for Stats {
+    fn from(stats: proto::Stats<'_>) -> Self {
+        match stats {
+            proto::Stats::Counters(counters) => Self::Counters(counters.into()),
+            proto::Stats::Memory(proto::Memory {
+                heap_free,
+                heap_min,
+                tasks,
+            }) => Self::Memory(Memory {
+                heap_free,
+                heap_min,
+                tasks: tasks
+                    .iter()
+                    .flatten()
+                    .map(|&proto::TaskStack { name, free_min }| TaskStack {
+                        name: name.to_owned(),
+                        free_min,
+                    })
+                    .collect(),
+            }),
+            proto::Stats::Flash(proto::Flash {
+                boot,
+                lifetime,
+                events_kept,
+                events_capacity,
+            }) => Self::Flash(Flash {
+                boot: boot.into(),
+                lifetime: lifetime.map(Erases::from),
+                events_kept,
+                events_capacity,
+            }),
+            proto::Stats::Power(proto::PowerStats {
+                adapter,
+                adapter_changes,
+                outages,
+                battery_s,
+                battery_min_mv,
+                battery_max_mv,
+                battery_mv,
+                period_s,
+            }) => Self::Power(PowerStats {
+                adapter,
+                adapter_changes,
+                outages,
+                battery_s,
+                battery_min_mv,
+                battery_max_mv,
+                battery_mv: battery_mv.to_vec(),
+                period_s,
+            }),
+            proto::Stats::Food(proto::Food {
+                present,
+                emptied,
+                refilled,
+                feeds_since_refill,
+            }) => Self::Food(Food {
+                present,
+                emptied,
+                refilled,
+                feeds_since_refill,
+            }),
+        }
+    }
+}
+
+impl From<proto::Counters> for Counters {
+    fn from(counters: proto::Counters) -> Self {
+        let proto::Counters {
+            boot,
+            reset,
+            lifetime,
+            resets,
+            handshake_max_ms,
+            handshake_mean_ms,
+        } = counters;
+        Self {
+            boot: boot.into(),
+            reset: match reset {
+                proto::ResetCause::PowerOn => ResetCause::PowerOn,
+                proto::ResetCause::Watchdog => ResetCause::Watchdog,
+                proto::ResetCause::Software => ResetCause::Software,
+                proto::ResetCause::Brownout => ResetCause::Brownout,
+                proto::ResetCause::Other => ResetCause::Other,
+            },
+            lifetime: lifetime.map(Counts::from),
+            resets: resets.map(
+                |proto::Resets {
+                     power_on,
+                     watchdog,
+                     software,
+                     brownout,
+                     other,
+                 }| Resets {
+                    power_on,
+                    watchdog,
+                    software,
+                    brownout,
+                    other,
+                },
+            ),
+            handshake_max_ms,
+            handshake_mean_ms,
+        }
+    }
+}
+
+impl From<proto::Counts> for Counts {
+    fn from(counts: proto::Counts) -> Self {
+        let proto::Counts {
+            uptime_s,
+            feeds,
+            feeds_failed,
+            portions,
+            presses,
+            sessions,
+            reconnects,
+            dhcp_renewals,
+            outages,
+            battery_s,
+        } = counts;
+        Self {
+            uptime_s,
+            feeds,
+            feeds_failed,
+            portions,
+            presses,
+            sessions,
+            reconnects,
+            dhcp_renewals,
+            outages,
+            battery_s,
+        }
+    }
+}
+
+impl From<proto::Erases> for Erases {
+    fn from(erases: proto::Erases) -> Self {
+        let proto::Erases { storage, update } = erases;
+        Self {
+            storage: storage.to_vec(),
+            update,
         }
     }
 }
@@ -669,6 +864,9 @@ impl Op {
                 },
             },
             Self::TailLog { after } => proto::Op::TailLog { after: *after },
+            Self::Stats { section } => proto::Op::Stats {
+                section: (*section).into(),
+            },
         }
     }
 }
@@ -725,6 +923,7 @@ impl From<proto::Capabilities> for Capabilities {
             update: bits.contains(proto::Capabilities::UPDATE),
             time: bits.contains(proto::Capabilities::TIME),
             log: bits.contains(proto::Capabilities::LOG),
+            stats: bits.contains(proto::Capabilities::STATS),
         }
     }
 }
@@ -736,6 +935,7 @@ impl From<Capabilities> for proto::Capabilities {
             update,
             time,
             log,
+            stats,
         } = capabilities;
         let mut bits = proto::Capabilities::V1.0;
         if feed {
@@ -749,6 +949,9 @@ impl From<Capabilities> for proto::Capabilities {
         }
         if log {
             bits |= proto::Capabilities::LOG.0;
+        }
+        if stats {
+            bits |= proto::Capabilities::STATS.0;
         }
         Self(bits)
     }
@@ -874,6 +1077,22 @@ mod tests {
                 battery_mv: Some(4100),
             }),
             proto::Metric::Rssi(-61),
+            proto::Metric::Heap {
+                free: 125_088,
+                min: 119_000,
+            },
+            proto::Metric::Loop {
+                passes: 3_000,
+                max_us: 27_400,
+                p99_us: 1_100,
+            },
+            proto::Metric::Gateway {
+                round_trip_ms: Some(4),
+            },
+            proto::Metric::Wifi {
+                channel: Some(11),
+                ap_changes: 1,
+            },
         ] {
             assert_eq!(proto::Metric::from(SampleValue::from(metric)), metric);
         }

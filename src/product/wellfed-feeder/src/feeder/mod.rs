@@ -55,6 +55,11 @@ pub trait Feeds {
     fn reserved(&self, feed: u32) -> Option<Result<(), Refusal>>;
     /// Stop the feed `feed` if it is still running.
     fn cancel(&self, feed: u32) -> bool;
+    /// The food beam's latest reading (true with food), once the owner has
+    /// taken one; it reads the beam only while its emitters are on.
+    fn food(&self) -> Option<bool> {
+        None
+    }
 }
 
 /// A feeder with no feeding owner: every feed is refused before it
@@ -200,6 +205,7 @@ impl<P: Platform> Feeder<P> {
         if let Some(lock) = lock {
             self.lock.publish(lock.locked());
         }
+        self.serve.stats().presses(self.owner.presses());
         let inputs = Inputs {
             now_ms,
             locked: lock.map(Lock::locked),
@@ -220,7 +226,14 @@ impl<P: Platform> Feeder<P> {
     /// Record a feed's `Fed` event, which may take the queue's reserved
     /// slot.
     pub fn record_outcome(&mut self, now_ms: u32, body: EventBody) {
+        self.serve.stats().fed(&body);
         events::record_outcome(&mut self.platform, now_ms, body);
+    }
+
+    /// The last loop pass (the feeding owner's step and [`Self::pass`])
+    /// took `us`, for the loop metric.
+    pub fn pass_took(&mut self, us: u32) {
+        self.serve.stats().pass_took(us);
     }
 
     /// The device API's view of the feeder at `now_ms`, with the feeding
@@ -228,6 +241,7 @@ impl<P: Platform> Feeder<P> {
     pub fn device<'a, F: Feeds>(&'a mut self, now_ms: u32, feeds: &'a mut F) -> impl Device + 'a {
         let boot = self.serve.boot(&mut self.platform, now_ms);
         let ntp_last = self.serve.ntp_last();
+        let (stats, tasks) = self.serve.stats_parts();
         FeederDevice {
             platform: &mut self.platform,
             lock: &mut self.lock,
@@ -236,6 +250,8 @@ impl<P: Platform> Feeder<P> {
             locked: self.owner.lock().map(Lock::locked),
             now_ms,
             ntp_last,
+            stats,
+            tasks,
         }
     }
 }

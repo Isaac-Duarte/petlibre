@@ -62,6 +62,33 @@ fn messages() -> Vec<Fixture> {
         last_event: Some(8),
         sessions: 1,
     };
+    let counts = Counts {
+        uptime_s: 3_600,
+        feeds: 4,
+        feeds_failed: 1,
+        portions: 7,
+        presses: 12,
+        sessions: 30,
+        reconnects: 2,
+        dhcp_renewals: 5,
+        outages: 1,
+        battery_s: 61,
+    };
+    let mut tasks = [None; TASKS_MAX];
+    tasks[0] = Some(TaskStack {
+        name: "wellfed-loop",
+        free_min: 2_900,
+    });
+    tasks[1] = Some(TaskStack {
+        name: "wellfed_wifi",
+        free_min: 1_800,
+    });
+    let mut erases = Erases::default();
+    erases.storage[2] = 3;
+    erases.storage[13] = 1;
+    let mut history = [None; POWER_HISTORY];
+    history[POWER_HISTORY - 2] = Some(4_800);
+    history[POWER_HISTORY - 1] = Some(4_790);
     let mut clients = [None; CLIENTS_MAX];
     clients[0] = Some(Client {
         key: [0x22; 32],
@@ -412,6 +439,142 @@ fn messages() -> Vec<Fixture> {
                 dropped: 2,
                 text: "PLAPI1 one\nPLAPI1 two\n",
             }),
+            feeder,
+        ),
+        (
+            "hello-stats",
+            entry(&Hello {
+                major: 1,
+                capabilities: Capabilities::FEED
+                    .union(Capabilities::UPDATE)
+                    .union(Capabilities::TIME)
+                    .union(Capabilities::STATS),
+            }),
+            |b| decode::<Hello>(b).is_ok(),
+        ),
+        (
+            "op-stats-counters",
+            entry(&request(Op::Stats {
+                section: StatsSection::Counters,
+            })),
+            client,
+        ),
+        (
+            "op-stats-food",
+            entry(&request(Op::Stats {
+                section: StatsSection::Food,
+            })),
+            client,
+        ),
+        (
+            "outcome-stats-counters",
+            entry(&response(Outcome::Stats(Stats::Counters(Counters {
+                boot: counts,
+                reset: ResetCause::Watchdog,
+                lifetime: Some(Counts {
+                    uptime_s: 900_000,
+                    ..counts
+                }),
+                resets: Some(Resets {
+                    power_on: 3,
+                    watchdog: 2,
+                    software: 9,
+                    brownout: 0,
+                    other: 1,
+                }),
+                handshake_max_ms: 140,
+                handshake_mean_ms: 60,
+            })))),
+            feeder,
+        ),
+        (
+            "outcome-stats-memory",
+            entry(&response(Outcome::Stats(Stats::Memory(Memory {
+                heap_free: 125_088,
+                heap_min: 119_000,
+                tasks,
+            })))),
+            feeder,
+        ),
+        (
+            "outcome-stats-flash",
+            entry(&response(Outcome::Stats(Stats::Flash(Flash {
+                boot: erases,
+                lifetime: Some(Erases {
+                    update: 460,
+                    ..erases
+                }),
+                events_kept: 40,
+                events_capacity: 1408,
+            })))),
+            feeder,
+        ),
+        (
+            "outcome-stats-power",
+            entry(&response(Outcome::Stats(Stats::Power(PowerStats {
+                adapter: Some(true),
+                adapter_changes: 2,
+                outages: 1,
+                battery_s: 61,
+                battery_min_mv: Some(4_610),
+                battery_max_mv: Some(4_820),
+                battery_mv: history,
+                period_s: 3_600,
+            })))),
+            feeder,
+        ),
+        (
+            "outcome-stats-food",
+            entry(&response(Outcome::Stats(Stats::Food(Food {
+                present: Some(false),
+                emptied: 1,
+                refilled: 1,
+                feeds_since_refill: Some(4),
+            })))),
+            feeder,
+        ),
+        (
+            "sample-heap",
+            entry(&FeederMessage::Sample(Sample {
+                at_ms: 16,
+                metric: Metric::Heap {
+                    free: 125_088,
+                    min: 119_000,
+                },
+            })),
+            feeder,
+        ),
+        (
+            "sample-loop",
+            entry(&FeederMessage::Sample(Sample {
+                at_ms: 17,
+                metric: Metric::Loop {
+                    passes: 3_000,
+                    max_us: 27_400,
+                    p99_us: 1_100,
+                },
+            })),
+            feeder,
+        ),
+        (
+            "sample-gateway",
+            entry(&FeederMessage::Sample(Sample {
+                at_ms: 18,
+                metric: Metric::Gateway {
+                    round_trip_ms: Some(4),
+                },
+            })),
+            feeder,
+        ),
+        (
+            "sample-wifi",
+            entry(&FeederMessage::Sample(Sample {
+                at_ms: 19,
+                metric: Metric::Wifi {
+                    channel: Some(11),
+                    ap_changes: 1,
+                },
+            })),
             feeder,
         ),
     ]

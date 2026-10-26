@@ -90,10 +90,15 @@ impl Capabilities {
     /// batches it starts. Owner sessions only. The lines are diagnostics,
     /// not a contract: their text may change with any build.
     pub const LOG: Self = Self(32);
+    /// Statistics: [`Op::Stats`] and [`Outcome::Stats`], and the live
+    /// [`Metric`]s beyond power and signal, which a feeder sends only to a
+    /// subscriber whose hello carries this bit.
+    pub const STATS: Self = Self(16);
     /// Every bit this crate defines: what a current client claims. A
     /// session then runs on the bits both sides claim, so a client adapts
     /// to whatever feeder it meets, however old.
-    pub const KNOWN: Self = Self(Self::FEED.0 | Self::UPDATE.0 | Self::TIME.0 | Self::LOG.0);
+    pub const KNOWN: Self =
+        Self(Self::FEED.0 | Self::UPDATE.0 | Self::TIME.0 | Self::STATS.0 | Self::LOG.0);
 
     pub const fn union(self, other: Self) -> Self {
         Self(self.0 | other.0)
@@ -281,6 +286,11 @@ pub enum Op<'a> {
     TailLog {
         after: Option<u32>,
     },
+    /// One section of the feeder's statistics, answered
+    /// [`Outcome::Stats`]. Each section fits one frame on its own.
+    Stats {
+        section: StatsSection,
+    },
 }
 
 /// The largest [`Op::UpdateChunk`]: an eighth of a flash sector, which
@@ -303,6 +313,7 @@ impl Op<'_> {
                 | Self::UpdateChunk { .. }
                 | Self::GetTime
                 | Self::TailLog { .. }
+                | Self::Stats { .. }
         )
     }
 
@@ -310,6 +321,7 @@ impl Op<'_> {
     /// has no wildcard, so a new op cannot land without its decision.
     pub const fn capability(&self) -> Capabilities {
         match self {
+            Self::Stats { section } => section.capability(),
             Self::Feed { .. } | Self::CancelFeed { .. } => Capabilities::FEED,
             Self::OfferUpdate { .. }
             | Self::UpdateChunk { .. }
@@ -499,6 +511,9 @@ pub enum Outcome<'a> {
     Update(UpdateView),
     #[serde(borrow)]
     Time(TimeView<'a>),
+    /// The section [`Op::Stats`] asked for.
+    #[serde(borrow)]
+    Stats(Stats<'a>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -852,10 +867,232 @@ pub struct Sample {
     pub metric: Metric,
 }
 
+/// One live value. A feeder sends each kind on its own cadence, and one
+/// not sent before the next of its kind is replaced by it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Metric {
     Power(Power),
     Rssi(i32),
+    /// The heap's free bytes now, and the fewest since boot.
+    Heap {
+        free: u32,
+        min: u32,
+    },
+    /// The loop task's passes since the last loop sample: how many, the
+    /// longest and the 99th percentile (an upper bound, within an eighth).
+    Loop {
+        passes: u32,
+        max_us: u32,
+        p99_us: u32,
+    },
+    /// The gateway probe's round trip since the last gateway sample, the
+    /// latest that was answered; `None` when none was.
+    Gateway {
+        round_trip_ms: Option<u32>,
+    },
+    /// The joined access point's channel (`None` while not joined), and how
+    /// often this boot a join landed on another access point than the join
+    /// before it.
+    Wifi {
+        channel: Option<u8>,
+        ap_changes: u32,
+    },
+}
+
+impl Metric {
+    /// The bit a session's hello must carry for the feeder to send this
+    /// metric; no wildcard, as for [`Op::capability`].
+    pub const fn capability(&self) -> Capabilities {
+        match self {
+            Self::Power(_) | Self::Rssi(_) => Capabilities::V1,
+            Self::Heap { .. } | Self::Loop { .. } | Self::Gateway { .. } | Self::Wifi { .. } => {
+                Capabilities::STATS
+            }
+        }
+    }
+}
+
+/// What [`Op::Stats`] asks for. A section added later needs a bit of its
+/// own, since a feeder that predates it cannot decode the request: its
+/// [`Self::capability`] names it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StatsSection {
+    Counters,
+    Memory,
+    Flash,
+    Power,
+    Food,
+}
+
+impl StatsSection {
+    pub const ALL: [Self; 5] = [
+        Self::Counters,
+        Self::Memory,
+        Self::Flash,
+        Self::Power,
+        Self::Food,
+    ];
+
+    /// The bit both sides must claim before this section is served.
+    pub const fn capability(self) -> Capabilities {
+        match self {
+            Self::Counters | Self::Memory | Self::Flash | Self::Power | Self::Food => {
+                Capabilities::STATS
+            }
+        }
+    }
+}
+
+/// One section of the statistics, each within a frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Stats<'a> {
+    Counters(Counters),
+    #[serde(borrow)]
+    Memory(Memory<'a>),
+    Flash(Flash),
+    Power(PowerStats),
+    Food(Food),
+}
+
+/// What the feeder counts, since this boot and over its life.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Counters {
+    pub boot: Counts,
+    /// Why this boot started.
+    pub reset: ResetCause,
+    /// Over the feeder's life, this boot's included, from a feeder that
+    /// keeps its totals in storage; `None` from one that keeps none (no
+    /// storage sectors hold them yet).
+    pub lifetime: Option<Counts>,
+    /// Boots by their reset's cause, this one included; `None` as
+    /// `lifetime`.
+    pub resets: Option<Resets>,
+    /// This boot's sessions: the longest and the mean time from accepting
+    /// the connection to the open session.
+    pub handshake_max_ms: u32,
+    pub handshake_mean_ms: u32,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Counts {
+    pub uptime_s: u32,
+    /// Feeds that ended, however they ended.
+    pub feeds: u32,
+    /// Feeds that ended other than done.
+    pub feeds_failed: u32,
+    /// Portions the feedback sensor confirmed.
+    pub portions: u32,
+    /// Button gestures the panel took.
+    pub presses: u32,
+    /// Sessions opened.
+    pub sessions: u32,
+    /// Wi-Fi links lost, each followed by a rejoin.
+    pub reconnects: u32,
+    /// DHCP leases renewed (or rebound) without a rejoin.
+    pub dhcp_renewals: u32,
+    /// Times the adapter went away.
+    pub outages: u32,
+    /// Seconds run on the batteries.
+    pub battery_s: u32,
+}
+
+/// Why a boot started, from the ROM's reset flags.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ResetCause {
+    /// No reset flag: the supply came up.
+    #[default]
+    PowerOn,
+    Watchdog,
+    /// A system reset the firmware asked for (a restart, an update).
+    Software,
+    Brownout,
+    /// A flag none of the above names.
+    Other,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Resets {
+    pub power_on: u32,
+    pub watchdog: u32,
+    /// A system reset the firmware asked for (a restart, an update).
+    pub software: u32,
+    pub brownout: u32,
+    pub other: u32,
+}
+
+/// The task stacks one [`Memory`] lists.
+pub const TASKS_MAX: usize = 16;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Memory<'a> {
+    pub heap_free: u32,
+    pub heap_min: u32,
+    /// Each task's fewest free stack bytes since it started, as the RTOS
+    /// reports them; empty where it reports none.
+    #[serde(borrow)]
+    pub tasks: [Option<TaskStack<'a>>; TASKS_MAX],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskStack<'a> {
+    /// At most 16 bytes.
+    pub name: &'a str,
+    pub free_min: u32,
+}
+
+/// The storage region's sectors, which [`Erases`] counts one by one; the
+/// board's map says which store owns each.
+pub const FLASH_SECTORS: usize = 32;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Flash {
+    pub boot: Erases,
+    /// Over the feeder's life; `None` as [`Counters::lifetime`].
+    pub lifetime: Option<Erases>,
+    /// Records the event ring holds, and the most it holds.
+    pub events_kept: u32,
+    pub events_capacity: u32,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Erases {
+    /// Each storage sector's erases, by its index in the region.
+    pub storage: [u32; FLASH_SECTORS],
+    /// Bank 1's sectors, erased by updates.
+    pub update: u32,
+}
+
+/// Points in [`PowerStats::battery_mv`].
+pub const POWER_HISTORY: usize = 24;
+
+/// The supply since this boot.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PowerStats {
+    /// `None` before the supply was first sampled.
+    pub adapter: Option<bool>,
+    pub adapter_changes: u32,
+    pub outages: u32,
+    pub battery_s: u32,
+    pub battery_min_mv: Option<u32>,
+    pub battery_max_mv: Option<u32>,
+    /// The battery's voltage at the end of each period, oldest first and
+    /// the newest last; `None` where no reading was taken.
+    pub battery_mv: [Option<u16>; POWER_HISTORY],
+    pub period_s: u32,
+}
+
+/// The food beam since this boot. It is read only while the emitters are
+/// on, during feeds.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Food {
+    /// The beam's last reading: `Some(true)` with food, `None` before one.
+    pub present: Option<bool>,
+    /// The beam went from food to none.
+    pub emptied: u32,
+    /// The beam went from none to food.
+    pub refilled: u32,
+    /// Feeds since the last refill this boot saw; `None` before one.
+    pub feeds_since_refill: Option<u32>,
 }
 
 #[cfg(test)]
@@ -942,6 +1179,111 @@ mod tests {
         };
         let len = encode(&log, &mut out).unwrap();
         assert_eq!(decode::<FeederMessage<'_>>(&out[..len]), Ok(log));
+        for stats in largest_stats() {
+            let message = FeederMessage::Response {
+                id: [0xff; 16],
+                result: Outcome::Stats(stats),
+            };
+            let len = encode(&message, &mut out).unwrap();
+            assert_eq!(decode::<FeederMessage<'_>>(&out[..len]), Ok(message));
+        }
+    }
+
+    /// Every section at its widest: each field at its largest encoding.
+    fn largest_stats() -> [Stats<'static>; 5] {
+        let counts = Counts {
+            uptime_s: u32::MAX,
+            feeds: u32::MAX,
+            feeds_failed: u32::MAX,
+            portions: u32::MAX,
+            presses: u32::MAX,
+            sessions: u32::MAX,
+            reconnects: u32::MAX,
+            dhcp_renewals: u32::MAX,
+            outages: u32::MAX,
+            battery_s: u32::MAX,
+        };
+        let resets = Resets {
+            power_on: u32::MAX,
+            watchdog: u32::MAX,
+            software: u32::MAX,
+            brownout: u32::MAX,
+            other: u32::MAX,
+        };
+        let erases = Erases {
+            storage: [u32::MAX; FLASH_SECTORS],
+            update: u32::MAX,
+        };
+        let task = TaskStack {
+            name: "0123456789abcdef",
+            free_min: u32::MAX,
+        };
+
+        [
+            Stats::Counters(Counters {
+                boot: counts,
+                reset: ResetCause::Brownout,
+                lifetime: Some(counts),
+                resets: Some(resets),
+                handshake_max_ms: u32::MAX,
+                handshake_mean_ms: u32::MAX,
+            }),
+            Stats::Memory(Memory {
+                heap_free: u32::MAX,
+                heap_min: u32::MAX,
+                tasks: [Some(task); TASKS_MAX],
+            }),
+            Stats::Flash(Flash {
+                boot: erases,
+                lifetime: Some(erases),
+                events_kept: u32::MAX,
+                events_capacity: u32::MAX,
+            }),
+            Stats::Power(PowerStats {
+                adapter: Some(true),
+                adapter_changes: u32::MAX,
+                outages: u32::MAX,
+                battery_s: u32::MAX,
+                battery_min_mv: Some(u32::MAX),
+                battery_max_mv: Some(u32::MAX),
+                battery_mv: [Some(u16::MAX); POWER_HISTORY],
+                period_s: u32::MAX,
+            }),
+            Stats::Food(Food {
+                present: Some(true),
+                emptied: u32::MAX,
+                refilled: u32::MAX,
+                feeds_since_refill: Some(u32::MAX),
+            }),
+        ]
+    }
+
+    /// A metric not sent before the next of its kind is replaced, so the
+    /// feeder holds one of each; each fits a frame many times over.
+    #[test]
+    fn every_metric_names_its_bit() {
+        let stats = [
+            Metric::Heap { free: 1, min: 1 },
+            Metric::Loop {
+                passes: 1,
+                max_us: 1,
+                p99_us: 1,
+            },
+            Metric::Gateway {
+                round_trip_ms: None,
+            },
+            Metric::Wifi {
+                channel: Some(6),
+                ap_changes: 0,
+            },
+        ];
+        for metric in stats {
+            assert_eq!(metric.capability(), Capabilities::STATS);
+        }
+        assert_eq!(Metric::Rssi(-50).capability(), Capabilities::V1);
+        for section in StatsSection::ALL {
+            assert!(Capabilities::KNOWN.contains(section.capability()));
+        }
     }
 
     /// The event ring stores a body in 16 bytes.

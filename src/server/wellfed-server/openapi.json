@@ -1557,6 +1557,118 @@
                 ]
               }
             }
+          },
+          {
+            "type": "object",
+            "description": "The heap's free bytes now, and the fewest since boot.",
+            "required": [
+              "free",
+              "min",
+              "metric"
+            ],
+            "properties": {
+              "free": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "metric": {
+                "type": "string",
+                "enum": [
+                  "heap"
+                ]
+              },
+              "min": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The loop's passes since the last loop sample: how many, the longest\nand the 99th percentile.",
+            "required": [
+              "passes",
+              "max_us",
+              "p99_us",
+              "metric"
+            ],
+            "properties": {
+              "max_us": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "metric": {
+                "type": "string",
+                "enum": [
+                  "loop"
+                ]
+              },
+              "p99_us": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "passes": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The latest gateway round trip answered since the last gateway\nsample; `None` when none was.",
+            "required": [
+              "metric"
+            ],
+            "properties": {
+              "metric": {
+                "type": "string",
+                "enum": [
+                  "gateway"
+                ]
+              },
+              "round_trip_ms": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int32",
+                "minimum": 0
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The joined access point's channel, and how often a join landed on\nanother one this boot.",
+            "required": [
+              "ap_changes",
+              "metric"
+            ],
+            "properties": {
+              "ap_changes": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "channel": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int32",
+                "minimum": 0
+              },
+              "metric": {
+                "type": "string",
+                "enum": [
+                  "wifi"
+                ]
+              }
+            }
           }
         ]
       },

@@ -5,6 +5,7 @@ use wellfed_feeder::feeder::{Feeder, Feeds};
 use wellfed_feeder::panel::BUTTONS;
 use wellfed_proto::api::{Refusal, Source};
 use wellfed_sdk::hal::sdk;
+use wellfed_sdk::hal::supervision::config::SYSTIMER_HZ;
 use wellfed_sdk::{Slot, Startup, log};
 
 use crate::feeding::Feeding;
@@ -97,6 +98,7 @@ fn loop_task() -> u32 {
     stall::step();
     #[cfg(any(feature = "feed-stall", feature = "stop-fail"))]
     inject::step(&feeding);
+    let began = sdk::systimer_ticks();
     let feed_delay = feeding.step(
         |record| log(format_args!("PLOWN1 {record}\r\n")),
         |body| feeder.record_outcome(sdk::uptime_ms(), body),
@@ -106,6 +108,7 @@ fn loop_task() -> u32 {
     let mut delay_ms = feeder.pass(now_ms, &mut *feeding, |record| {
         log(format_args!("{} {record}\r\n", record.tag()));
     });
+    feeder.pass_took(ticks_us(sdk::systimer_ticks().wrapping_sub(began)));
     if let Some(feed_delay) = feed_delay {
         delay_ms = delay_ms.min(feed_delay);
     }
@@ -122,6 +125,13 @@ fn loop_task() -> u32 {
     #[cfg(feature = "gap-probe")]
     gap_probe::end_pass(delay_ms);
     delay_ms
+}
+
+/// `ticks` of the 32 kHz system timer in microseconds (a tick is about
+/// 30.5 us, the loop metric's resolution).
+fn ticks_us(ticks: u32) -> u32 {
+    let us = u64::from(ticks) * 1_000_000 / u64::from(SYSTIMER_HZ);
+    u32::try_from(us).unwrap_or(u32::MAX)
 }
 
 /// The `owner-stall` variant: the loop stops stepping for a while, once each, so

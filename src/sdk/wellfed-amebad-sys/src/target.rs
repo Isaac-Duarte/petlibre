@@ -9,14 +9,14 @@
 
 use core::ffi::{CStr, c_void};
 use core::ptr;
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
 use wellfed_board_plaf103::pins::{IR_PA_BIT, IR_PB_BIT, MOTOR_MASK};
 use wellfed_board_plaf103::{STORAGE_OFFSET, STORAGE_SECTORS};
 
 use super::{
     AUDIO_PAGE_SAMPLES, FlashMmuEntry, GpioRouting, Irq, Isr, LpClock, SECTOR_BYTES, SYSTICK_CTRL,
-    Systick, TaskStep, WifiEvent, WifiPoll,
+    Systick, TaskStack, TaskStep, WifiEvent, WifiPoll,
 };
 use super::{Accepted, ApiRecv, Datagram};
 #[cfg(feature = "bluetooth")]
@@ -662,6 +662,25 @@ fn storage_span(sector: u32, offset: u32, len: usize) -> Option<u32> {
         .then(|| STORAGE_OFFSET + sector * SECTOR_BYTES + offset)
 }
 
+/// Erases this boot, by storage sector, and of bank 1: the statistics'
+/// wear figures. Every erase of either goes through the two routines below.
+static STORAGE_ERASES: [AtomicU32; STORAGE_SECTORS as usize] =
+    [const { AtomicU32::new(0) }; STORAGE_SECTORS as usize];
+static BANK1_ERASES: AtomicU32 = AtomicU32::new(0);
+
+/// Erases of storage sector `sector` this boot.
+pub fn storage_erase_count(sector: u32) -> u32 {
+    usize::try_from(sector)
+        .ok()
+        .and_then(|sector| STORAGE_ERASES.get(sector))
+        .map_or(0, |count| count.load(Ordering::Relaxed))
+}
+
+/// Erases of bank-1 sectors this boot.
+pub fn bank1_erase_count() -> u32 {
+    BANK1_ERASES.load(Ordering::Relaxed)
+}
+
 /// Sector erase through the SDK's RAM `FLASH_EraseXIP` (hooked lock, erase,
 /// cache flush, unlock).
 ///
@@ -674,6 +693,12 @@ pub unsafe fn storage_erase(sector: u32) -> bool {
     };
     // SAFETY: the SDK's RAM flash routine, inside the span checked above; the page buffer is live.
     unsafe { raw::FLASH_EraseXIP(k::WELLFED_ERASE_SECTOR, address) };
+    if let Some(count) = usize::try_from(sector)
+        .ok()
+        .and_then(|sector| STORAGE_ERASES.get(sector))
+    {
+        count.fetch_add(1, Ordering::Relaxed);
+    }
     true
 }
 
@@ -725,6 +750,7 @@ pub unsafe fn bank1_erase(sector: u32) -> bool {
     };
     // SAFETY: the SDK's RAM flash routine, inside the span checked above; the page buffer is live.
     unsafe { raw::FLASH_EraseXIP(k::WELLFED_ERASE_SECTOR, address) };
+    BANK1_ERASES.fetch_add(1, Ordering::Relaxed);
     true
 }
 
@@ -1076,6 +1102,20 @@ pub fn wifi_event(seq: u32) -> WifiPoll {
         0 => WifiPoll::Pending,
         _ => WifiPoll::Lost,
     }
+}
+
+unsafe extern "C" {
+    fn wellfed_task_stacks(out: *mut TaskStack, max: i32) -> i32;
+}
+
+/// Every task's stack into `out`; how many it filled (0 when the RTOS has
+/// more tasks than the shim lists).
+pub fn task_stacks(out: &mut [TaskStack]) -> usize {
+    let max = i32::try_from(out.len()).unwrap_or(i32::MAX);
+    // SAFETY: the C shim in `example_entry.c` writes at most `max` entries
+    // of the shared layout into the live buffer.
+    let written = unsafe { wellfed_task_stacks(out.as_mut_ptr(), max) };
+    usize::try_from(written).map_or(0, |n| n.min(out.len()))
 }
 
 unsafe extern "C" {

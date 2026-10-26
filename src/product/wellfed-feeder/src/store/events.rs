@@ -184,6 +184,23 @@ impl<I: SlotIo> EventLog<I> {
         }
     }
 
+    /// Records the ring keeps at least: every unit's but the one an
+    /// append erases next.
+    pub fn capacity(&self) -> u32 {
+        let units = u32::try_from(self.units.saturating_sub(1)).unwrap_or(0);
+        units.saturating_mul(self.per_unit)
+    }
+
+    /// Records from the oldest kept to the newest, torn ones included.
+    pub fn kept(&self) -> u32 {
+        match (self.oldest_seq(), self.last_seq()) {
+            (Some(oldest), Some(last)) => {
+                u32::try_from(last.saturating_sub(oldest).saturating_add(1)).unwrap_or(u32::MAX)
+            }
+            _ => 0,
+        }
+    }
+
     /// The oldest record still kept.
     pub fn oldest_seq(&self) -> Option<u64> {
         self.table[..self.units]

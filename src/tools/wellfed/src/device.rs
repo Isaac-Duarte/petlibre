@@ -6,7 +6,7 @@ use std::net::SocketAddr;
 use anyhow::{Context, Result};
 use wellfed_connect::{Cursor, DISCOVERY};
 use wellfed_formats::private;
-use wellfed_model::{Answer, ClientRole, Op, Pushed};
+use wellfed_model::{Answer, Capabilities, ClientRole, Op, Pushed};
 use wellfed_proto::api::RequestId;
 
 use crate::keys::OwnerKey;
@@ -43,6 +43,10 @@ impl Connection {
 
     pub(crate) fn role(&self) -> ClientRole {
         self.0.role()
+    }
+
+    pub(crate) fn capabilities(&self) -> Capabilities {
+        self.0.capabilities()
     }
 
     /// Events after `after`, counted in the feeder's current epoch.

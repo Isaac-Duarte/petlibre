@@ -11,11 +11,13 @@ mod memory;
 mod pending;
 mod recovery;
 pub(crate) mod request;
+mod samples;
 mod session;
 mod wire;
 
 use self::memory::Memory;
 use self::recovery::Rescue;
+use self::samples::Samples;
 use self::wire::Wire;
 use crate::clients::{CLIENTS, Client, Label, Role};
 use crate::pairing::{self, Pairing, Path};
@@ -109,7 +111,8 @@ enum Phase {
         /// Push events after this cursor (`Some(None)`: from the oldest).
         events: Option<Option<u64>>,
         samples: bool,
-        sample: Option<Sample>,
+        /// Samples waiting to go out, one of each kind.
+        sample: Samples,
         /// Push log lines after this cursor (`Some(None)`: from the
         /// oldest), once the session asked.
         log: Option<Option<u32>>,
@@ -322,17 +325,20 @@ impl Server {
         }
     }
 
-    /// A live sample for subscribers; one that is not sent before the next
-    /// replaces it.
+    /// A live sample for subscribers whose hello claimed its bit; one not
+    /// sent before the next of its kind is replaced by it.
     pub fn sample(&mut self, sample: Sample) {
+        let needs = sample.metric.capability();
         for slot in &mut self.slots {
             if let Phase::Open {
                 samples: true,
-                sample: next,
+                sample: waiting,
+                capabilities,
                 ..
             } = &mut slot.phase
+                && capabilities.contains(needs)
             {
-                *next = Some(sample);
+                waiting.put(sample);
             }
         }
     }

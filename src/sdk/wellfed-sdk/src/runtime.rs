@@ -793,6 +793,8 @@ fn kind(kind: u32) -> &'static str {
         sdk::WifiEvent::BACKOFF => "backoff",
         sdk::WifiEvent::GATEWAY => "gateway",
         sdk::WifiEvent::LEAVE => "leave",
+        sdk::WifiEvent::AP => "ap",
+        sdk::WifiEvent::RENEW => "renew",
         _ => "unknown",
     }
 }

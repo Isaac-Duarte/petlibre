@@ -35,6 +35,9 @@ pub enum FlashError {
 pub struct Flash {
     bytes: RefCell<Vec<u8>>,
     file: Option<PathBuf>,
+    /// Erases by sector since this process opened the image, for the
+    /// statistics.
+    erases: RefCell<[u32; STORAGE_SECTORS as usize]>,
 }
 
 impl Flash {
@@ -43,6 +46,7 @@ impl Flash {
         Rc::new(Self {
             bytes: RefCell::new(vec![0xff; IMAGE_BYTES]),
             file: None,
+            erases: RefCell::new([0; STORAGE_SECTORS as usize]),
         })
     }
 
@@ -67,7 +71,13 @@ impl Flash {
         Ok(Rc::new(Self {
             bytes: RefCell::new(bytes),
             file: Some(path.to_owned()),
+            erases: RefCell::new([0; STORAGE_SECTORS as usize]),
         }))
+    }
+
+    /// Erases by sector since the image was opened.
+    pub(crate) fn erases(&self) -> [u32; STORAGE_SECTORS as usize] {
+        *self.erases.borrow()
     }
 
     /// Commit the image to its file; false on failure, which the store
@@ -149,6 +159,10 @@ impl SlotIo for Region {
             return false;
         };
         self.flash.bytes.borrow_mut()[range].fill(0xff);
+        let sector = usize::try_from(self.sectors.first + slot).unwrap_or(usize::MAX);
+        if let Some(count) = self.flash.erases.borrow_mut().get_mut(sector) {
+            *count += 1;
+        }
         self.flash.persist()
     }
 }

@@ -15,7 +15,9 @@
 //! stepped. Built only with the `conformance` feature, for tests.
 
 use wellfed_core::store::slot::crc32;
-use wellfed_proto::api::{Capabilities, Event, EventBody, Refusal, Source};
+use wellfed_proto::api::{
+    Capabilities, Event, EventBody, FeedOutcome, FeedReason, Refusal, Source, Stats, StatsSection,
+};
 
 use crate::feeder::{Feeder, NoFeeds, Platform};
 use wellfed_device_api::clients::{Label, Role};
@@ -385,6 +387,55 @@ pub fn a_feeder_without_a_feeding_owner_refuses_feeds(rig: &mut impl Rig) {
     );
 }
 
+/// Every platform serves the statistics: each section answers as itself,
+/// the counters follow what the loop saw (a feed's result, the boot's
+/// uptime), the ring's fill counts the boot event, and no lifetime figure is
+/// claimed, since nothing stores one.
+pub fn the_statistics_follow_the_loop(rig: &mut impl Rig) {
+    pass(rig, 0);
+    rig.write();
+    let fed = EventBody::Fed {
+        feed: 1,
+        requested: 3,
+        completed: 2,
+        outcome: FeedOutcome::Failed,
+        reason: FeedReason::NoFeedback,
+        by: Source::Feeder,
+    };
+    rig.feeder().record_outcome(0, fed);
+    rig.feeder().pass_took(900);
+    rig.write();
+
+    assert!(device(rig, 0, |device| device.capabilities()).contains(Capabilities::STATS));
+    for section in StatsSection::ALL {
+        let answered = device(rig, 61_000, |device| match device.stats(section, 61_000) {
+            Stats::Counters(counters) => {
+                assert_eq!(counters.boot.uptime_s, 61);
+                assert_eq!(
+                    (
+                        counters.boot.feeds,
+                        counters.boot.feeds_failed,
+                        counters.boot.portions
+                    ),
+                    (1, 1, 2)
+                );
+                assert_eq!((counters.lifetime, counters.resets), (None, None));
+                StatsSection::Counters
+            }
+            Stats::Memory(_) => StatsSection::Memory,
+            Stats::Flash(flash) => {
+                assert!(flash.events_kept >= 1, "the boot event: {flash:?}");
+                assert!(flash.events_capacity >= flash.events_kept, "{flash:?}");
+                assert_eq!(flash.lifetime, None);
+                StatsSection::Flash
+            }
+            Stats::Power(_) => StatsSection::Power,
+            Stats::Food(_) => StatsSection::Food,
+        });
+        assert_eq!(answered, section);
+    }
+}
+
 /// One test per check, each on a fresh rig from `$rig`.
 #[macro_export]
 macro_rules! conformance {
@@ -400,6 +451,7 @@ macro_rules! conformance {
             a_recorded_event_reads_back,
             status_reports_the_build_and_the_time,
             a_feeder_without_a_feeding_owner_refuses_feeds,
+            the_statistics_follow_the_loop,
         );
     };
     (@tests $rig:expr; $($check:ident),* $(,)?) => {

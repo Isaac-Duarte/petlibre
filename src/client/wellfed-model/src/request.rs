@@ -5,7 +5,8 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ClientRole, Generation, Hex, Settings, SettingsPatch, Status, UpdateRefusal, UpdateView,
+    ClientRole, Generation, Hex, Settings, SettingsPatch, Stats, StatsSection, Status,
+    UpdateRefusal, UpdateView,
 };
 
 /// One operation. Reads may be repeated freely; a write's request id makes
@@ -89,6 +90,10 @@ pub enum Op {
     /// Owners only; asking again moves the cursor.
     TailLog {
         after: Option<u32>,
+    },
+    /// One section of the feeder's statistics.
+    Stats {
+        section: StatsSection,
     },
 }
 
@@ -223,6 +228,7 @@ pub enum Answer {
     },
     Update(UpdateView),
     Time(TimeView),
+    Stats(Stats),
 }
 
 /// Why the feeder refused a request.

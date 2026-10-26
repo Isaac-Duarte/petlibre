@@ -142,6 +142,28 @@ fn the_session_driver_is_answered() {
     assert_eq!(support::session(&[&out[..len], &second[..second_len]]), 2);
 }
 
+/// Every statistics section at its widest leaves in one frame.
+#[test]
+fn every_stats_section_is_answered_within_a_frame() {
+    use wellfed_proto::api::{ClientMessage, Op, StatsSection};
+
+    let requests: Vec<Vec<u8>> = StatsSection::ALL
+        .iter()
+        .zip(1u8..)
+        .map(|(&section, id)| {
+            let mut out = [0; 64];
+            let request = ClientMessage::Request {
+                id: [id; 16],
+                op: Op::Stats { section },
+            };
+            let len = wellfed_proto::encode(&request, &mut out).unwrap();
+            out[..len].to_vec()
+        })
+        .collect();
+    let frames: Vec<&[u8]> = requests.iter().map(Vec::as_slice).collect();
+    assert_eq!(support::session(&frames), StatsSection::ALL.len());
+}
+
 /// Found by the `setup` fuzz target: a valid label, matching codes and a
 /// 255-byte SSID and passphrase overflowed the driver's own answer buffer.
 /// The feeder must refuse the oversized answer, not the driver panic.

@@ -6,6 +6,7 @@
 
 use super::recovery::Rescue;
 use super::request::proto_role;
+use super::samples::Samples;
 use super::{Phase, Server, proto_encode, slot_id};
 use crate::clients::{CLIENTS, Client, Label, Role};
 use crate::pairing::{self, Pairing};
@@ -232,6 +233,7 @@ impl Server {
         let transport = handshake.into_transport().map_err(|_| Reason::Noise)?;
         let memory = self.memory(&key);
         let slot = &mut self.slots[index];
+        let handshake_ms = now_ms.wrapping_sub(slot.since_ms);
         slot.since_ms = now_ms;
         slot.phase = Phase::Open {
             transport,
@@ -242,13 +244,14 @@ impl Server {
             pending: None,
             events: None,
             samples: false,
-            sample: None,
+            sample: Samples::EMPTY,
             log: None,
         };
         record(Record::Opened {
             slot: slot_id(index),
             role,
             client: fingerprint(&key),
+            handshake_ms,
         });
         Ok(())
     }

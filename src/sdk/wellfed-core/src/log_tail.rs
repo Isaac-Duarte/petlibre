@@ -56,7 +56,8 @@ pub struct LogTail<const N: usize> {
     head: AtomicU32,
     /// The stream position of the oldest line still whole.
     tail: AtomicU32,
-    /// The newest line's number, 0 before the first.
+    /// The newest line's number, 0 before the first. It is set before the
+    /// line is published, so it is never behind a line a reader has seen.
     last: AtomicU32,
     /// A writer is copying a line in.
     writing: AtomicBool,
@@ -132,8 +133,12 @@ impl<const N: usize> LogTail<N> {
             at = at.wrapping_add(1);
         }
 
-        self.head.store(at, Ordering::Release);
+        // The number before the head: a reader that sees this line through
+        // the head then sees a newest number at least its own, so its next
+        // read never takes the cursor for an earlier boot's and starts over
+        // from the oldest line, handing lines out twice.
         self.last.store(seq, Ordering::Release);
+        self.head.store(at, Ordering::Release);
         self.writing.store(false, Ordering::Release);
     }
 

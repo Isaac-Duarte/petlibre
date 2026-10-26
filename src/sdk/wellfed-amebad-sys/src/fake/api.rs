@@ -174,6 +174,11 @@ pub fn bank1_read(sector: u32, offset: u32, bytes: &mut [u8]) -> bool {
     true
 }
 
+/// The fake has no cache: the same bytes as `bank1_read`.
+pub fn bank1_read_uncached(sector: u32, offset: u32, bytes: &mut [u8]) -> bool {
+    bank1_read(sector, offset, bytes)
+}
+
 /// Bank 0's bytes, its first 8 from `bank0_marker`.
 pub fn bank0_read(offset: u32, bytes: &mut [u8]) -> bool {
     let start = offset as usize;

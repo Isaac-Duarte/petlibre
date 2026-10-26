@@ -768,6 +768,39 @@ pub fn bank1_read(sector: u32, offset: u32, bytes: &mut [u8]) -> bool {
     true
 }
 
+/// Cortex-M33 SCB `DCIMVAC`: invalidate the data-cache line holding an address.
+const DCIMVAC: usize = 0xe000_ef5c;
+/// The KM4 data-cache line.
+const DCACHE_LINE: u32 = 32;
+
+/// Read bank 1 as the cells hold it now, not as the data cache last saw
+/// it: invalidate every cache line over the span, then read. The flash
+/// window is never written through the cache, so its lines are never
+/// dirty and invalidating them loses nothing. A diagnostic read after a
+/// readback mismatch, to tell the cells from the read path.
+pub fn bank1_read_uncached(sector: u32, offset: u32, bytes: &mut [u8]) -> bool {
+    let Some(address) = bank1_span(sector, offset, bytes.len()) else {
+        return false;
+    };
+    let Ok(len) = u32::try_from(bytes.len()) else {
+        return false;
+    };
+    let base = k::WELLFED_SPI_FLASH_BASE + address;
+    let end = base + len;
+
+    let mut line = base & !(DCACHE_LINE - 1);
+    while line < end {
+        // SAFETY: the architectural SCB register; an invalidate by address
+        // of a clean, read-only flash-window line.
+        unsafe { ptr::write_volatile(DCIMVAC as *mut u32, line) };
+        line += DCACHE_LINE;
+    }
+    // SAFETY: barriers only, so the reads below miss the invalidated lines.
+    unsafe { core::arch::asm!("dsb sy", "isb sy", options(nostack, preserves_flags)) };
+
+    bank1_read(sector, offset, bytes)
+}
+
 /// Read bank 0 through the physical flash window, from either bank: the
 /// update path hashes the image there before giving way to it. Read only.
 pub fn bank0_read(offset: u32, bytes: &mut [u8]) -> bool {

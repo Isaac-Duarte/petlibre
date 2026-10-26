@@ -79,6 +79,10 @@ pub trait Flash {
     fn erase(&mut self, sector: u32) -> bool;
     fn program(&mut self, sector: u32, offset: u32, data: &[u8]) -> bool;
     fn read(&mut self, sector: u32, offset: u32, bytes: &mut [u8]) -> bool;
+    /// Read bank 1 past any cache, for the second read after a mismatch.
+    fn read_uncached(&mut self, sector: u32, offset: u32, bytes: &mut [u8]) -> bool {
+        self.read(sector, offset, bytes)
+    }
     /// Bank 0 by byte offset, from either bank.
     fn bank0(&mut self, offset: u32, bytes: &mut [u8]) -> bool;
     /// Clear bank 1's first marker byte, from bank 1 with bank 0 valid.
@@ -116,6 +120,9 @@ impl<H: Hooks> Flash for SdkFlash<H> {
     }
     fn read(&mut self, sector: u32, offset: u32, bytes: &mut [u8]) -> bool {
         sdk::bank1_read(sector, offset, bytes)
+    }
+    fn read_uncached(&mut self, sector: u32, offset: u32, bytes: &mut [u8]) -> bool {
+        sdk::bank1_read_uncached(sector, offset, bytes)
     }
     fn bank0(&mut self, offset: u32, bytes: &mut [u8]) -> bool {
         sdk::bank0_read(offset, bytes)
@@ -1201,7 +1208,8 @@ fn write_sector(flash: &mut impl Flash, sector: u32, data: &[u8]) -> Result<(), 
 }
 
 /// Describe the first differing word of a page that read back wrong, and
-/// read it once more: only a read, the install still stops.
+/// read it once more past the data cache (the first read filled its line):
+/// only a read, the install still stops.
 fn mismatch(flash: &mut impl Flash, mut fault: WriteFault, page: &[u8], read: &[u8]) -> WriteFault {
     let word = |bytes: &[u8], at: usize| {
         let mut out = [0u8; 4];
@@ -1217,7 +1225,7 @@ fn mismatch(flash: &mut impl Flash, mut fault: WriteFault, page: &[u8], read: &[
 
     let offset = fault.offset + u32::try_from(at).unwrap_or(0);
     let mut again = [0u8; 4];
-    fault.reread = if flash.read(fault.sector, offset, &mut again) {
+    fault.reread = if flash.read_uncached(fault.sector, offset, &mut again) {
         u32::from_be_bytes(again)
     } else {
         0

@@ -573,9 +573,9 @@ fn silent_peer_faults_the_hook_then_the_next_boot_skips() {
     assert_eq!(marker & 0x3ff, ATTEMPT_BIT);
     let fault = LeaseFault::decode(marker).expect("a recorded lease fault");
     assert_eq!(fault.stage, LeaseStage::Begin);
-    assert_eq!(fault.phase, FlashPhase::Parking.code());
-    assert_eq!(fault.fault, FlashFault::Ok.code());
-    assert_eq!(fault.reply, FlashReply::Failed.code());
+    assert_eq!(fault.phase, FlashPhase::Parking);
+    assert_eq!(fault.fault, FlashFault::Ok);
+    assert_eq!(fault.reply, FlashReply::Failed);
     assert!((32..=48).contains(&fault.elapsed_ms), "{fault:?}");
 
     let second = platform_boot(first.backup, first.storage, false, EXPECTED_ID);
@@ -604,14 +604,14 @@ fn the_runtime_takes_the_lease_fault_once_and_leaves_the_attempt_bits() {
 }
 
 #[test]
-fn a_lease_fault_report_alone_does_not_skip_the_hooks() {
-    // A fault field with no attempt bit (say, left by a write that ran
-    // without one) is a report: the skip rule reads the attempt bits only.
+fn a_lease_fault_round_trips_outside_the_attempt_bits() {
+    // The field leaves bits 9..0 to the attempt and update bits (the skip
+    // rule's mask is tested with arming, in the HAL's update tests).
     let fault = LeaseFault {
         stage: LeaseStage::Released,
-        phase: FlashPhase::Fault.code(),
-        fault: FlashFault::Output.code(),
-        reply: FlashReply::Failed.code(),
+        phase: FlashPhase::Fault,
+        fault: FlashFault::Output,
+        reply: FlashReply::Failed,
         elapsed_ms: 2000,
     };
     let marker = fault.encode();

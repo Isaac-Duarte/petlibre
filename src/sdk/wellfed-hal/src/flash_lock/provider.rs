@@ -13,6 +13,14 @@ use wellfed_core::flash_coord::{
     FlashCoord, FlashFault, FlashParty, FlashPhase, FlashReply, FlashToken,
 };
 
+// The lease-fault field gives each of these codes four bits.
+const _: () = assert!(
+    FlashPhase::Fault.code() < 16
+        && FlashFault::PeerLost.code() < 16
+        && FlashReply::Failed.code() < 16
+        && LeaseStage::Ticket.code() < 8
+);
+
 use crate::flash::hooks::HookTicket;
 use crate::flash::park::{self, Mmio, ParkToken};
 use crate::flash::peer::{HEARTBEAT_REGISTER, MARKER_REGISTER, PARK_CHANNEL};
@@ -90,14 +98,12 @@ const ELAPSED_MAX: u32 = 0x3f;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LeaseFault {
     pub stage: LeaseStage,
-    /// `FlashPhase::code`.
-    pub phase: u32,
-    /// `FlashFault::code`.
-    pub fault: u32,
-    /// `FlashReply::code`.
-    pub reply: u32,
-    /// Milliseconds from the lease's request to the failure, in 16 ms steps;
-    /// 1008 reads as "1008 or more".
+    pub phase: FlashPhase,
+    pub fault: FlashFault,
+    pub reply: FlashReply,
+    /// Milliseconds from this lease's request to the failure, in 16 ms
+    /// steps; 1008 means 1008 or more. Zero for a `Request` failure, which
+    /// has no request of its own.
     pub elapsed_ms: u32,
 }
 
@@ -112,10 +118,10 @@ impl LeaseFault {
             elapsed
         };
         LEASE_FAULT_FLAG
-            | (self.stage.code() & 7) << 28
-            | (self.phase & 0xf) << 24
-            | (self.fault & 0xf) << 20
-            | (self.reply & 0xf) << 16
+            | self.stage.code() << 28
+            | self.phase.code() << 24
+            | self.fault.code() << 20
+            | self.reply.code() << 16
             | elapsed << 10
     }
 
@@ -124,14 +130,19 @@ impl LeaseFault {
         if marker & LEASE_FAULT_FLAG == 0 {
             return None;
         }
-        let Some(stage) = LeaseStage::from_code((marker >> 28) & 7) else {
+        let (Some(stage), Some(phase), Some(fault), Some(reply)) = (
+            LeaseStage::from_code((marker >> 28) & 7),
+            FlashPhase::from_code((marker >> 24) & 0xf),
+            FlashFault::from_code((marker >> 20) & 0xf),
+            FlashReply::from_code((marker >> 16) & 0xf),
+        ) else {
             return None;
         };
         Some(Self {
             stage,
-            phase: (marker >> 24) & 0xf,
-            fault: (marker >> 20) & 0xf,
-            reply: (marker >> 16) & 0xf,
+            phase,
+            fault,
+            reply,
             elapsed_ms: ((marker >> 10) & ELAPSED_MAX) * ELAPSED_STEP_MS,
         })
     }
@@ -178,7 +189,8 @@ pub struct Provider {
     authority: u64,
     saved_systick: u32,
     parked_beat: u32,
-    /// When the current lease masked IRQs, in SysTimer ticks.
+    /// When the current lease's acquire masked IRQs (before its request),
+    /// in SysTimer ticks.
     masked_at: u32,
 
     // Report counters: leases completed, the slowest park and release
@@ -188,8 +200,8 @@ pub struct Provider {
     pub park_max: u32,
     pub release_max: u32,
     pub frozen: u64,
-    /// The longest any lease held IRQs masked, from masking to KM0's
-    /// release, in SysTimer ticks; and how many held them past
+    /// The longest any lease held IRQs masked, from the acquire's masking
+    /// (request and quiesce included) to KM0's release, in SysTimer ticks; and how many held them past
     /// [`LONG_LEASE_TICKS`].
     pub masked_max: u32,
     pub masked_long: u64,
@@ -241,13 +253,16 @@ impl Provider {
     fn fail(&mut self, stage: LeaseStage, reply: FlashReply) -> bool {
         if self.failure.is_none() {
             self.failure = Some((stage, reply));
-            let now = self.now();
+            let elapsed_ms = match stage {
+                LeaseStage::Request => 0,
+                _ => self.now().wrapping_sub(self.coord.requested_at),
+            };
             LeaseFault {
                 stage,
-                phase: self.coord.phase.code(),
-                fault: self.coord.fault.code(),
-                reply: reply.code(),
-                elapsed_ms: now.wrapping_sub(self.coord.requested_at),
+                phase: self.coord.phase,
+                fault: self.coord.fault,
+                reply,
+                elapsed_ms,
             }
             .record();
         }
@@ -270,6 +285,7 @@ impl Provider {
     /// against the 50 ms park budget and fault the hook.
     pub fn acquire<M: Mmio>(&mut self, ticket: &mut HookTicket) -> bool {
         sdk::disable_irq();
+        self.masked_at = sdk::systimer_ticks();
         let now = self.now();
         let id = self.coord.token.lease + 1;
         let reply = self
@@ -290,7 +306,6 @@ impl Provider {
         let systick = sdk::systick_ctrl();
         sdk::set_systick_ctrl(systick & !park::SYSTICK_CONTROL_BITS);
         let begin_at = sdk::systimer_ticks();
-        self.masked_at = begin_at;
         let ram_token = park_token(&token);
         // SAFETY: `ram_token` is a live local.
         let acked = unsafe {

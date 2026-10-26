@@ -11,6 +11,7 @@ use std::cell::{Cell, RefCell};
 use std::sync::{Mutex, MutexGuard};
 
 use ed25519_dalek::{Signer, SigningKey};
+use wellfed_core::flash_coord::{FlashFault, FlashPhase, FlashReply};
 use wellfed_core::ota::install::{IDLE_MS, Phase, Progress, Refused, Stop};
 use wellfed_core::ota::offer::{
     self, ImageKind, KeyError, KeyStatement, OfferError, Signed, StatementError, key_id,
@@ -21,7 +22,7 @@ use wellfed_core::store::update::{Bank0, Candidate, State, UpdateStore};
 use wellfed_hal::flash::park::{self, Mmio};
 use wellfed_hal::flash::peer::MARKER_REGISTER;
 use wellfed_hal::flash_lock::arming::{self, Arming, Event, Hooks, Poll, UPDATE_BIT};
-use wellfed_hal::flash_lock::provider::{ATTEMPT_BIT, Provider};
+use wellfed_hal::flash_lock::provider::{ATTEMPT_BIT, LeaseFault, LeaseStage, Provider};
 use wellfed_hal::interlock::{Held, INTERLOCK};
 use wellfed_hal::ota::mailbox::{self, Answer, Request};
 use wellfed_hal::ota::update::*;
@@ -85,6 +86,10 @@ struct TestFlash {
     fail_program: Option<usize>,
     /// Program this call's data with one bit cleared, so readback differs.
     corrupt_program: Option<usize>,
+    /// Return this read call's first byte with a bit flipped, as a stale
+    /// cache line would; the cells and an uncached read stay right.
+    stale_read: Option<usize>,
+    reads: usize,
     programs: usize,
     /// Bank 1's first 8 bytes before each program, and the store's state
     /// when the marker went in.
@@ -124,7 +129,16 @@ impl Flash for TestFlash {
         self.inner.program(sector, offset, data)
     }
     fn read(&mut self, sector: u32, offset: u32, bytes: &mut [u8]) -> bool {
-        self.inner.read(sector, offset, bytes)
+        let n = self.reads;
+        self.reads += 1;
+        let ok = self.inner.read(sector, offset, bytes);
+        if self.stale_read == Some(n) {
+            bytes[0] ^= 1;
+        }
+        ok
+    }
+    fn read_uncached(&mut self, sector: u32, offset: u32, bytes: &mut [u8]) -> bool {
+        self.inner.read_uncached(sector, offset, bytes)
     }
     fn bank0(&mut self, offset: u32, bytes: &mut [u8]) -> bool {
         self.inner.bank0(offset, bytes)
@@ -387,8 +401,8 @@ fn a_failed_program_or_readback_stops_the_install() {
         assert!(rig.marker_never_written());
 
         // The stop record names the sector, the step and, for a readback,
-        // the word: its first bit flipped, and still flipped on a second read,
-        // so the cells hold it rather than the read path.
+        // the word: its first bit flipped, and still flipped when read again
+        // past the cache, so the cells hold it rather than the read path.
         let write = rig.records.iter().find_map(|record| match record {
             Record::Stopped { write, .. } => *write,
             _ => None,
@@ -757,6 +771,34 @@ impl<const KM0: bool> Mmio for Core<KM0> {
 fn locate(address: u32) -> (usize, usize) {
     let core = usize::from(address & 0xffff_f000 != 0x4800_6000);
     (core, (((address & 0xfff) - 0x20) / 4) as usize)
+}
+
+#[test]
+fn a_lease_fault_report_is_not_an_attempt_to_the_skip_rule() {
+    let _guard = start(0);
+    let fault = LeaseFault {
+        stage: LeaseStage::Released,
+        phase: FlashPhase::Fault,
+        fault: FlashFault::Output,
+        reply: FlashReply::Failed,
+        elapsed_ms: 32,
+    }
+    .encode();
+
+    // The fault bits alone: the hooks arm.
+    fake::with(|h| h.backup[MARKER_REGISTER as usize] = fault | UPDATE_BIT);
+    assert!(matches!(arm(), Poll::Armed(_)));
+    arming::clear_attempt();
+
+    // With the attempt bit, the boot skips as before, keeping only the
+    // update bit.
+    let marker = fault | UPDATE_BIT | ATTEMPT_BIT;
+    fake::with(|h| h.backup[MARKER_REGISTER as usize] = marker);
+    assert!(matches!(arm(), Poll::Failed(Event::Skip { marker: m }) if m == marker));
+    assert_eq!(
+        fake::with(|h| h.backup[MARKER_REGISTER as usize]),
+        UPDATE_BIT
+    );
 }
 
 /// Arm the hooks with the KM0 peer answering through the real
@@ -1130,6 +1172,33 @@ fn confirming_raises_the_floor_only_for_the_activated_build() {
     let record = *store().record();
     assert_eq!((record.min_version, record.state), (9, State::None));
     assert_eq!(rig.stage.raise_floor(), Floor::Unchanged);
+}
+
+#[test]
+fn a_readback_that_only_the_cached_read_got_wrong_rereads_right() {
+    let _guard = start(0);
+    let mut rig = Rig::bench(0);
+    // Read 20 is sector 1's page 4 readback (one read per page program).
+    rig.flash.stale_read = Some(20);
+    let payload = image(LEN);
+    rig.offer(&manifest(3, &payload), None).unwrap();
+    let stopped = rig.push(&payload, None);
+    assert_eq!(stopped.stopped, Some(Stop::Write));
+
+    let write = rig.records.iter().find_map(|record| match record {
+        Record::Stopped { write, .. } => *write,
+        _ => None,
+    });
+    let write = write.expect("a write fault in the stop record");
+    assert_eq!(
+        (write.sector, write.step, write.offset),
+        (1, SectorStep::Readback, 1024)
+    );
+    assert_ne!(write.read, write.expected);
+    assert_eq!(
+        write.reread, write.expected,
+        "the uncached read sees the cells"
+    );
 }
 
 fn record_text(record: Record) -> String {

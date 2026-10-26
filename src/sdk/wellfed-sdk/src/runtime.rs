@@ -494,18 +494,34 @@ fn update_step() -> u32 {
 /// task's longest gap between checkpoints. A reset that cuts an install
 /// short leaves the last of these as the state just before it.
 fn log_leases() {
-    // SAFETY: only this task leases while the update stage writes, so no
-    // lease is in progress while it reads the counters (see `PROVIDER`).
-    let provider = unsafe { &*PROVIDER.get() };
+    // Copied with IRQs masked, through the raw pointer (the provider is
+    // never borrowed; see `PROVIDER`): a lease updates these counters in
+    // its release, which runs with IRQs masked, so with them masked here
+    // no update is half done and the u64s cannot tear on this core.
+    let provider = PROVIDER.get();
+    let (leases, park_max, release_max, masked_max, masked_long) = {
+        let _guard = sdk::IrqGuard::lock();
+        // SAFETY: a static's fields, read in place with no reference taken.
+        unsafe {
+            (
+                ptr::read_volatile(&raw const (*provider).leases),
+                ptr::read_volatile(&raw const (*provider).park_max),
+                ptr::read_volatile(&raw const (*provider).release_max),
+                ptr::read_volatile(&raw const (*provider).masked_max),
+                ptr::read_volatile(&raw const (*provider).masked_long),
+            )
+        }
+    };
+
     let mut report = startup::Report::new();
     if let Ok(line) = report.record(format_args!(
         "PLOTA1 leases count={} park_max={} release_max={} masked_max_ms={} masked_long={} \
          feed_gap_max_ms={}\r\n",
-        provider.leases,
-        provider.park_max,
-        provider.release_max,
-        ticks_ms(provider.masked_max),
-        provider.masked_long,
+        leases,
+        park_max,
+        release_max,
+        ticks_ms(masked_max),
+        masked_long,
         FEED_GAP_MAX_MS.load(Ordering::Relaxed),
     )) {
         sdk::log(line);
@@ -924,9 +940,9 @@ pub extern "C" fn wellfed_app_start() {
         if let Ok(line) = report.record(format_args!(
             "PLSUP1 lease_fault stage={} phase={} fault={} reply={} elapsed_ms={}\r\n",
             fault.stage.code(),
-            fault.phase,
-            fault.fault,
-            fault.reply,
+            fault.phase.code(),
+            fault.fault.code(),
+            fault.reply.code(),
             fault.elapsed_ms
         )) {
             sdk::log(line);

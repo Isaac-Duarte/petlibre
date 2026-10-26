@@ -49,6 +49,22 @@ impl FlashPhase {
     pub const fn code(self) -> u32 {
         self as u32
     }
+
+    /// The inverse of [`Self::code`], for a code read back from a register.
+    pub const fn from_code(code: u32) -> Option<Self> {
+        Some(match code {
+            0 => Self::Boot,
+            1 => Self::Idle,
+            2 => Self::Quiescing,
+            3 => Self::Parking,
+            4 => Self::Active,
+            5 => Self::Releasing,
+            6 => Self::Closing,
+            7 => Self::Closed,
+            8 => Self::Fault,
+            _ => return None,
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -70,6 +86,21 @@ impl FlashFault {
     pub const fn code(self) -> u32 {
         self as u32
     }
+
+    /// The inverse of [`Self::code`], for a code read back from a register.
+    pub const fn from_code(code: u32) -> Option<Self> {
+        Some(match code {
+            0 => Self::Ok,
+            1 => Self::Clock,
+            2 => Self::Timeout,
+            3 => Self::Output,
+            4 => Self::Order,
+            5 => Self::Exhausted,
+            6 => Self::Transport,
+            7 => Self::PeerLost,
+            _ => return None,
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -88,6 +119,19 @@ impl FlashReply {
     /// The variant's number, as records and reports print it.
     pub const fn code(self) -> u32 {
         self as u32
+    }
+
+    /// The inverse of [`Self::code`], for a code read back from a register.
+    pub const fn from_code(code: u32) -> Option<Self> {
+        Some(match code {
+            0 => Self::Accepted,
+            1 => Self::Duplicate,
+            2 => Self::Stale,
+            3 => Self::Busy,
+            4 => Self::Invalid,
+            5 => Self::Failed,
+            _ => return None,
+        })
     }
 }
 

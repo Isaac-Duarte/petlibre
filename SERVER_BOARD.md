@@ -114,6 +114,7 @@ wellfed-server ─► wellfed-service ─┬─► wellfed-mirror ─► wellfed
 ## Current status
 
 - **Done:** the first slice (FP18, Oct 24, host simulation): setup and login, adoption by invite, the mirror, settings, lock, history pages and the stream.
+- **Ready:** SV01–SV05.
 - **Next:** the foundations, in this order: SV02, SV03, SV04, SV05, SV01, SV06, SV07, SV08. They change no behavior.
 - **Then:** the command plane (SV20, SV21) and the public setup's accounts (SV30–SV32), then data, owner data and releases.
 - **Critical path to a feed from the web UI:** SV07 → SV20 → SV21. FW17 (feeds that survive a reboot) is done.
@@ -123,11 +124,11 @@ wellfed-server ─► wellfed-service ─┬─► wellfed-mirror ─► wellfed
 
 | Card | Status | Evidence | Prerequisites | Finish line |
 | --- | --- | --- | --- | --- |
-| **SV01 Server architecture record** | Planned | — | — | The [target architecture](#target-architecture) and the [decisions](#decisions-owner-october-26) move into the [API design](docs/api/README.md#crates): the crate map, the allowed dependencies, the "crate per runtime or dependency boundary" rule, the service returning `wellfed-api` bodies, migrations squashed until the first release, and the [two-path rule](#two-paths-one-feed). The dependency rules are enforced through cargo-deny `wrappers` or `cargo xtask check-repository`, so nothing above the store links sqlx and nothing below the server links axum. |
-| **SV02 Workspace dependencies** | Planned | — | — | Every server dependency comes from `[workspace.dependencies]` (finding 9); `make check-deps` passes with no new duplicate. |
-| **SV03 Store modules** | Planned | — | — | `wellfed-store` splits into a module per table group, with the conversion helpers (`millis`, `to_i64`, …) in one module. The pre-migration backup takes its time from the caller (finding 8). Migrations `0001` and `0002` squash into one (no release yet). Store tests pass unchanged in what they assert. |
-| **SV04 Routes and extractors** | Planned | — | — | `wellfed-server` has a route module per resource, matching `wellfed-api`'s modules, and typed extractors for `If-Match` (a `Generation`) and `Idempotency-Key` (required or optional per route) that document themselves in the OpenAPI. `openapi.json` changes only where the extractors make it more exact. |
-| **SV05 Server test kit** | Planned | — | — | `wellfed-server-testkit` holds what every server test builds: a temp store, a fixed `Clock` and a seeded `Random`, the simulator over TCP and an in-process HTTP client with cookies. Service and API tests split into a file per domain. |
+| **SV01 Server architecture record** | Ready | — | — | The [target architecture](#target-architecture) and the [decisions](#decisions-owner-october-26) move into the [API design](docs/api/README.md#crates): the crate map, the allowed dependencies, the "crate per runtime or dependency boundary" rule, the service returning `wellfed-api` bodies, migrations squashed until the first release, and the [two-path rule](#two-paths-one-feed). The dependency rules are enforced through cargo-deny `wrappers` or `cargo xtask check-repository`, so nothing above the store links sqlx and nothing below the server links axum. |
+| **SV02 Workspace dependencies** | Ready | — | — | Every server dependency comes from `[workspace.dependencies]` (finding 9); `make check-deps` passes with no new duplicate. |
+| **SV03 Store modules** | Ready | — | — | `wellfed-store` splits into a module per table group, with the conversion helpers (`millis`, `to_i64`, …) in one module. The pre-migration backup takes its time from the caller (finding 8). Migrations `0001` and `0002` squash into one (no release yet). Store tests pass unchanged in what they assert. |
+| **SV04 Routes and extractors** | Ready | — | — | `wellfed-server` has a route module per resource, matching `wellfed-api`'s modules, and typed extractors for `If-Match` (a `Generation`) and `Idempotency-Key` (required or optional per route) that document themselves in the OpenAPI. `openapi.json` changes only where the extractors make it more exact. |
+| **SV05 Server test kit** | Ready | — | — | `wellfed-server-testkit` holds what every server test builds: a temp store, a fixed `Clock` and a seeded `Random`, the simulator over TCP and an in-process HTTP client with cookies. Service and API tests split into a file per domain. |
 | **SV06 One clock** | Planned | — | SV03 | No server crate reads the wall clock outside `SystemClock`; the hub's epoch comes through `Clock` (finding 8). Clippy `disallowed_methods` on `Timestamp::now` and `SystemTime::now` in the server crates keeps it that way. |
 | **SV07 `wellfed-mirror`** | Planned | — | SV01, SV05 | The per-feeder tasks, ingest, the command channel and the hub move out of `wellfed-service` into `wellfed-mirror`, behind the surface the [target architecture](#target-architecture) names. The service keeps users and the use cases, and its error enum splits by domain. Every service and end-to-end test passes unchanged in what it asserts. |
 | **SV08 File size guard** | Planned | — | SV03, SV05, SV07 | `cargo xtask check-repository` refuses a file in `src/server/` or `src/client/` over 400 lines, or over 600 under `tests/`. At `bb244c8` ten files are over. SV03, SV05 and SV07 split the server's four (`wellfed-store/src/lib.rs` 767, `wellfed-service/tests/service.rs` 721, `feeder.rs` 480, `feeders.rs` 416); this card splits the client's six: `wellfed-client/tests/api.rs` 2666 and `tests/update.rs` 1181, `wellfed-model/src/convert.rs` 1300, `wellfed-client/src/api.rs` 594 and `src/connection.rs` 466, `wellfed-connect/src/lib.rs` 446. None is exempt when the card closes. |
@@ -194,6 +195,49 @@ wellfed-server ─► wellfed-service ─┬─► wellfed-mirror ─► wellfed
 | **SV63 Health and logs** | Planned | — | SV07 | `/health` stays unauthenticated liveness; an owner-only readiness view adds the store, each feeder's link and the jobs' last runs. Every log line from a feeder task carries the feeder, and every request a request id. Whether to expose Prometheus metrics is decided on the card. |
 | **SV64 Backups** | Planned | — | SV12 | A scheduled `VACUUM INTO` copy in the data directory, kept by count, with the key file's place documented beside it, answering the API design's open question. A restore test opens a backup and its feeder keys. |
 | **SV65 First real feeder** | Planned | — | SV07, SV20 | **Bench:** the server adopts the research unit, mirrors its history, changes settings and the lock, and keeps the history whole across a server restart, a feeder power cut and a Wi-Fi drop. Run under the owner's bench authorization, with the prior network and service state restored and recorded. |
+
+## Status at a glance
+
+✅ Done · 🚧 In progress · 🧪 Bench check · 🟢 Ready · ⬜ Planned. The cards above are authoritative.
+
+| Card | Status |
+| --- | --- |
+| SV01 Server architecture record | 🟢 Ready |
+| SV02 Workspace dependencies | 🟢 Ready |
+| SV03 Store modules | 🟢 Ready |
+| SV04 Routes and extractors | 🟢 Ready |
+| SV05 Server test kit | 🟢 Ready |
+| SV06 One clock | ⬜ Planned |
+| SV07 wellfed-mirror | ⬜ Planned |
+| SV08 File size guard | ⬜ Planned |
+| SV10 Projections beside the raw log | ⬜ Planned |
+| SV11 Samples, rollups and retention | ⬜ Planned |
+| SV12 Background jobs | ⬜ Planned |
+| SV13 Feed traces and statistics | ⬜ Planned |
+| SV14 Debug log | ⬜ Planned |
+| SV20 Command journal | ⬜ Planned |
+| SV21 Feed and cancel | ⬜ Planned |
+| SV22 Command lanes | ⬜ Planned |
+| SV23 Plans | ⬜ Planned |
+| SV24 App parity | ⬜ Planned |
+| SV25 The two-path rule | ⬜ Planned |
+| SV30 Users, roles and household | ⬜ Planned |
+| SV31 Phone tokens | ⬜ Planned |
+| SV32 Login limits and the proxy | ⬜ Planned |
+| SV33 Audit log | ⬜ Planned |
+| SV40 Pets and foods | ⬜ Planned |
+| SV41 Derived views | ⬜ Planned |
+| SV42 Export and import | ⬜ Planned |
+| SV50 wellfed-releases | ⬜ Planned |
+| SV51 Install | ⬜ Planned |
+| SV52 Stock backup and rollback | ⬜ Planned |
+| SV60 Configuration | ⬜ Planned |
+| SV61 Embedded web UI | ⬜ Planned |
+| SV62 Packaging | ⬜ Planned |
+| SV63 Health and logs | ⬜ Planned |
+| SV64 Backups | ⬜ Planned |
+| SV65 First real feeder | ⬜ Planned |
+| SV70 Alert rules | ⬜ Planned |
 
 ## Parked
 

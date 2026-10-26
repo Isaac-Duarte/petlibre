@@ -17,6 +17,7 @@ use core::fmt;
 
 use wellfed_hal::stopped;
 use wellfed_hal::{bringup, plaf103, sdk};
+use wellfed_sdk::Record;
 
 /// PB4..PB7 as SDK pin numbers (port B is pins 32..63).
 pub const PINS: [u32; 4] = plaf103::pins::BUTTONS;
@@ -30,23 +31,33 @@ pub const EVENT_CAP_MS: u32 = 1000;
 /// An idle record this often shows the lines are still being read.
 pub const IDLE_MS: u32 = 30_000;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// One `PLBTN1` line; levels are the port B input bits 4..7 in hex.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Record)]
+#[record(tag = "PLBTN1")]
 pub enum Record {
     /// Pins configured: their pad control words before and after, the
     /// direction bits (0 = input) and the first levels.
+    #[record("open")]
     Open {
+        #[record(with = Pads)]
         pads_before: [u32; 4],
+        #[record(with = Pads)]
         pads_after: [u32; 4],
         inputs: bool,
+        #[record(fmt = "02x")]
         levels: u32,
         stopped: bool,
     },
 
     /// One settled change, or one that hit `EVENT_CAP_MS` unsettled.
+    #[record("change")]
     Change {
         n: u32,
+        #[record(rename = "ms")]
         at_ms: u32,
+        #[record(fmt = "02x")]
         from: u32,
+        #[record(fmt = "02x")]
         to: u32,
         edges: u32,
         bounce_ms: u32,
@@ -54,69 +65,23 @@ pub enum Record {
         stopped: bool,
     },
 
+    #[record("idle")]
     Idle {
+        #[record(rename = "ms")]
         at_ms: u32,
+        #[record(fmt = "02x")]
         levels: u32,
         stopped: bool,
     },
 }
 
-impl fmt::Display for Record {
+/// Four pad control words, in hex.
+struct Pads([u32; 4]);
+
+impl fmt::Display for Pads {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        describe(*self, f)
-    }
-}
-
-/// `PLBTN1 …` body; levels are the port B input bits 4..7 in hex.
-pub fn describe(record: Record, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    let bit = u8::from;
-    match record {
-        Record::Open {
-            pads_before: b,
-            pads_after: a,
-            inputs,
-            levels,
-            stopped,
-        } => write!(
-            f,
-            "open pads_before={:08x},{:08x},{:08x},{:08x} pads_after={:08x},{:08x},{:08x},{:08x} inputs={} levels={levels:02x} stopped={}",
-            b[0],
-            b[1],
-            b[2],
-            b[3],
-            a[0],
-            a[1],
-            a[2],
-            a[3],
-            bit(inputs),
-            bit(stopped),
-        ),
-
-        Record::Change {
-            n,
-            at_ms,
-            from,
-            to,
-            edges,
-            bounce_ms,
-            settled,
-            stopped,
-        } => write!(
-            f,
-            "change n={n} ms={at_ms} from={from:02x} to={to:02x} edges={edges} bounce_ms={bounce_ms} settled={} stopped={}",
-            bit(settled),
-            bit(stopped),
-        ),
-
-        Record::Idle {
-            at_ms,
-            levels,
-            stopped,
-        } => write!(
-            f,
-            "idle ms={at_ms} levels={levels:02x} stopped={}",
-            bit(stopped)
-        ),
+        let [a, b, c, d] = self.0;
+        write!(f, "{a:08x},{b:08x},{c:08x},{d:08x}")
     }
 }
 

@@ -139,3 +139,47 @@ fn an_idle_record_follows_a_quiet_period() {
     assert_eq!(levels, RELEASED);
     assert!(stopped);
 }
+
+/// The `PLBTN1` bodies the bench parses, pinned as the hand-written
+/// formatter wrote them.
+#[test]
+fn records_keep_their_lines() {
+    let lines = [
+        (
+            Record::Open {
+                pads_before: [0x1, 0x22, 0x333, 0x4444],
+                pads_after: [0xa, 0xbb, 0xccc, 0xdddd],
+                inputs: true,
+                levels: 0xf,
+                stopped: true,
+            },
+            "open pads_before=00000001,00000022,00000333,00004444 \
+             pads_after=0000000a,000000bb,00000ccc,0000dddd inputs=1 levels=0f stopped=1",
+        ),
+        (
+            Record::Change {
+                n: 3,
+                at_ms: 1200,
+                from: 0xf0,
+                to: 0xe,
+                edges: 5,
+                bounce_ms: 4,
+                settled: true,
+                stopped: false,
+            },
+            "change n=3 ms=1200 from=f0 to=0e edges=5 bounce_ms=4 settled=1 stopped=0",
+        ),
+        (
+            Record::Idle {
+                at_ms: 30000,
+                levels: 0xf0,
+                stopped: true,
+            },
+            "idle ms=30000 levels=f0 stopped=1",
+        ),
+    ];
+
+    for (record, line) in lines {
+        assert_eq!(record.to_string(), line);
+    }
+}

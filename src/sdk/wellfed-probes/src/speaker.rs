@@ -1,6 +1,6 @@
 //! Speaker records as line bodies: the startup chime and tunes (`PLAUD1`,
 //! `wellfed_hal::audio`). The player itself is the HAL's; this only lets
-//! a firmware log its records through [`crate::log`].
+//! a firmware log its records through `wellfed_sdk::log`.
 
 use core::fmt;
 

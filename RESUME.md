@@ -8,9 +8,9 @@ This file is the handoff, not the history. Keep it to the current state, today's
 
 Reconfirm with the owner before any bench operation; this is the last recorded state, not a live observation.
 
-- **Bank 1:** `feeder` `d8d2f770…` (v224, `ar12-std-02`, confirmed, October 26): `master` at `b1c3084` (through AR12).
+- **Bank 1:** `feeder` `9243940c…` (v226, `fw58-boot-01`, confirmed on its first trial boot, October 26 about 2:40 am): FW58's firmware authoring attributes, built on `master` at `27f6a7e`. It replaced v225 (`ar12-restore-01`).
 - **Bank 0:** `feeder` `24673ae2…` (installed by stock 1.1.15 during `ar31-rt-01`, October 26): the full feeder; it installs updates over the device API, and a failed trial falls back to it. The UART full-flash backup from before the October 25 bank-0 install is indexed in the evidence file.
-- **Next manifest version:** 226; update floor (`min_version`) 224. **Feeder routing:** `network apply` rules in place (owner, October 25; nft table `wellfed_local`, removed with `sudo target/release/wellfed-stock network remove`). **Feed journal:** high water 22 (feed 21 completed 2 of 2 and feed 22 was cancelled on purpose in `ar12-std-02`; feeds 19 and 20 on AR10 and AR11 completed; feed 14 was interrupted on purpose and resolved uncertain).
+- **Next manifest version:** 227; the update floor was 224 before v225 and v226 confirmed, not reread since. **Feeder routing:** `network apply` rules in place (owner, October 25; nft table `wellfed_local`, removed with `sudo target/release/wellfed-stock network remove`). **Feed journal:** high water 22 (feed 21 completed 2 of 2 and feed 22 was cancelled on purpose in `ar12-std-02`; feeds 19 and 20 on AR10 and AR11 completed; feed 14 was interrupted on purpose and resolved uncertain).
 
 - **Client store:** one owner, the bench CLI's key (`private/wellfed-owner.json`).
 - **Bench:** feeder on (relay 1), UART relays 3 and 4 closed, hotspot up (found up on October 25 afternoon and left so), no server, no capture. Hopper empty. The logic analyzer may still be clipped at the motor.

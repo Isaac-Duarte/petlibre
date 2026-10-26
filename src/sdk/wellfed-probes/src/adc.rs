@@ -20,8 +20,8 @@ use wellfed_core::feed::sensor_inputs::SensorReading;
 
 use wellfed_hal::board::Board;
 use wellfed_hal::plaf103;
-use wellfed_hal::sdk;
 use wellfed_hal::stopped;
+use wellfed_hal::{sdk, startup};
 
 const DEADTIME_MS: u32 = 50;
 const LEASE_MS: u32 = 300;
@@ -121,7 +121,7 @@ pub fn log(record: Record) {
             ok,
         } => {
             // Two lines: one record exceeds the report buffer.
-            crate::log(format_args!(
+            startup::log(format_args!(
                 "PLADC1 clock function_before={:08x} clock_before={:08x} function_after={:08x} clock_after={:08x} status={}\r\n",
                 clock.function_before,
                 clock.clock_before,
@@ -129,7 +129,7 @@ pub fn log(record: Record) {
                 clock.clock_after,
                 pass(clock.verified()),
             ));
-            crate::log(format_args!(
+            startup::log(format_args!(
                 "PLADC1 open outputs={} efuse={} offset={} gain={} default_offset={} default_gain={} status={}\r\n",
                 bit(outputs),
                 Efuse(efuse),
@@ -151,7 +151,7 @@ pub fn log(record: Record) {
             current,
             battery,
             supply,
-        } => crate::log(format_args!(
+        } => startup::log(format_args!(
             "PLADC1 sample n={n} ticks={ticks} food={} outlet={} dc={} stopped={} current={} battery={} supply={}\r\n",
             bit(food),
             bit(outlet),
@@ -162,7 +162,7 @@ pub fn log(record: Record) {
             Values(supply),
         )),
 
-        Record::Error { n, ticks, stopped } => crate::log(format_args!(
+        Record::Error { n, ticks, stopped } => startup::log(format_args!(
             "PLADC1 error n={n} ticks={ticks} stopped={}\r\n",
             bit(stopped)
         )),

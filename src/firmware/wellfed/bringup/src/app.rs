@@ -1,4 +1,5 @@
-//! The firmware's start hook: the variant's, or the normal image's.
+//! The firmware's start hook: the variant's, or the normal image's. Each
+//! variant module defines its own, and only one links.
 //!
 //! The build's stack audit reads every module here whichever variant links,
 //! so each task's entry function and stack constant keeps a name of its own.
@@ -15,21 +16,6 @@ mod pulse;
 mod speaker;
 #[cfg(feature = "stall")]
 mod stall;
-
-#[cfg(feature = "adc")]
-use adc::start;
-#[cfg(feature = "buttons")]
-use buttons::start;
-#[cfg(feature = "optics")]
-use optics::start;
-#[cfg(feature = "pulse")]
-use pulse::start;
-#[cfg(feature = "speaker")]
-use speaker::start;
-#[cfg(feature = "stall")]
-use stall::start;
-
-wellfed_sdk::firmware!(start);
 
 /// Each variant is one image: two would start each other's tasks and carry
 /// only one variant's policies.
@@ -63,6 +49,7 @@ const _: () = {
     feature = "pulse",
     feature = "stall"
 )))]
-fn start() {
-    wellfed_sdk::startup_done(true);
+#[wellfed_sdk::start(runtime = wellfed_feeder_runtime)]
+fn start() -> wellfed_sdk::Startup {
+    wellfed_sdk::Startup::Done
 }

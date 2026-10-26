@@ -2,7 +2,7 @@
 //!
 //! Startup: stopped outputs, the synthetic core diagnostic and the indicator
 //! check, then the network join (the Wi-Fi probe, stepped by the
-//! diagnostic task). The firmware's own tasks start (`firmware!`) from
+//! diagnostic task). The firmware's own tasks start (`#[start]`) from
 //! either bank, then the service task: it samples power, confirms a healthy
 //! build with the feeder (bank 1 only), opens the settings writer, and runs
 //! the update stage (`ota::update`), which takes offers over the firmware's
@@ -31,10 +31,11 @@ use wellfed_hal::supervision::{self, config, crumb};
 use wellfed_hal::{cell::TaskCell, leds, net_status, power, rng, sdk, startup, stopped, trial};
 
 use crate::slot::Slot;
+use crate::tasks::Task;
 use crate::wifi::{Probe, Record};
 
 unsafe extern "C" {
-    /// The firmware's start hook, defined by `firmware!` in the firmware
+    /// The firmware's start hook, defined by `#[start]` in the firmware
     /// crate. A firmware that defines none does not link.
     fn wellfed_firmware_start();
 }
@@ -56,38 +57,50 @@ unsafe extern "Rust" {
     fn wellfed_store_step(provider: *mut Provider) -> u32;
 }
 
-/// Creates one of the firmware's tasks. `step` runs, then the task sleeps
-/// for the milliseconds it returned; zero ends the task. Firmware tasks
-/// start only in the normal role, after the startup checks passed, and come
-/// from the firmware's budget of [`FIRMWARE_TASKS`](crate::FIRMWARE_TASKS):
-/// past it, `spawn` refuses rather than take a runtime task's slot.
-///
-/// # Safety
-/// `step` must be sound to call from the new task with a null context, again
-/// and again, until it returns zero.
-pub unsafe fn spawn(
-    name: &'static CStr,
-    stack_words: u16,
-    priority: u32,
-    step: sdk::TaskStep,
-) -> bool {
+/// Creates one of the firmware's tasks, made by [`#[task]`](crate::task).
+/// Its step runs, then the task sleeps for the milliseconds it returned;
+/// zero ends the task. Firmware tasks start only in the normal role, after
+/// the startup checks passed, and come from the firmware's budget of
+/// [`FIRMWARE_TASKS`](crate::FIRMWARE_TASKS): past it, `spawn` refuses
+/// rather than take a runtime task's slot.
+pub fn spawn(task: Task) -> bool {
     if !crate::tasks::reserve() {
         sdk::log(c"PLFW1 error firmware_tasks=full\r\n");
         return false;
     }
 
-    // SAFETY: the caller's contract, with no context.
-    let created = unsafe { sdk::task_create(name, stack_words, priority, step, ptr::null_mut()) };
+    // SAFETY: the step is a safe function that ignores its context, so the
+    // new task may call it with none, as often as it likes.
+    let created = unsafe {
+        sdk::task_create(
+            task.name,
+            task.stack_words,
+            task.priority,
+            task.step,
+            ptr::null_mut(),
+        )
+    };
     if !created {
         crate::tasks::release();
     }
     created
 }
 
+/// What the start hook returned: the startup work that holds the KM0 flash
+/// handshake has ended, or a task reports it later with [`startup_done`].
+/// `Pending` reports nothing, so a task that already finished keeps its word.
+#[doc(hidden)]
+pub fn __started(startup: crate::Startup) {
+    if startup == crate::Startup::Done {
+        startup_done(true);
+    }
+}
+
 /// The firmware's startup work that holds the KM0 flash handshake (an
 /// optics or pulse probe) has ended, so another flash writer may
 /// bind it. The runtime does not confirm the build before this is reported.
-/// A firmware with no such work reports it from its start hook.
+/// A firmware with no such work returns `Startup::Done` from its start
+/// hook instead.
 pub fn startup_done(done: bool) {
     PROBE_DONE.store(done, Ordering::Release);
 }
@@ -941,7 +954,7 @@ unsafe extern "C" fn diagnostic_task(_: *mut c_void) -> u32 {
     log_rng(rng::start());
     // No MQTT session on either bank; requests, health and updates go over
     // the firmware's device API.
-    // SAFETY: every firmware defines the hook with `firmware!`; it runs
+    // SAFETY: every firmware defines the hook with `#[start]`; it runs
     // once, here, in this task.
     unsafe { wellfed_firmware_start() };
     start_service(startup::snapshot().bank());

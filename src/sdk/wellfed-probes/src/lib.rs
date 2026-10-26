@@ -21,20 +21,8 @@ pub mod pulse;
 pub mod speaker;
 pub mod supervision;
 
-use core::fmt;
-
+use wellfed_hal::sdk;
 use wellfed_hal::supervision::config::SYSTIMER_HZ;
-use wellfed_hal::{sdk, startup};
-
-/// Logs one record line, `PLxxx1 …\r\n`. A line longer than the report
-/// buffer is dropped rather than truncated, so a parser never sees half a
-/// record.
-pub fn log(line: fmt::Arguments<'_>) {
-    let mut report = startup::Report::new();
-    if let Ok(line) = report.record(line) {
-        sdk::log(line);
-    }
-}
 
 /// SYSTIMER ticks as milliseconds. At 32.768 kHz any u32 tick count fits.
 fn ticks_ms(ticks: u32) -> u32 {

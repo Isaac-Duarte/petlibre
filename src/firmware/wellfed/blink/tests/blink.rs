@@ -3,8 +3,9 @@
 //! first levels, and stops with every indicator LOW the moment outputs stop
 //! reading back stopped.
 
-use wellfed_fw_blink::blink::{Blinker, HALF_PERIOD_MS, LED, REPORTED, Record, Step};
-use wellfed_sdk::hal::leds::{self, Decision};
+use wellfed_fw_blink::blink::{Blinker, HALF_PERIOD_MS, LED, REPORTED, Record, Step, Stop};
+use wellfed_sdk::LogRecord;
+use wellfed_sdk::hal::leds::{self, Decision, Led};
 use wellfed_sdk::hal::plaf103;
 use wellfed_sdk::hal::sdk::fake;
 use wellfed_sdk::hal::stopped;
@@ -39,6 +40,7 @@ fn alternates_the_indicator_and_holds_each_level_half_a_period() {
     // Port A has no input readback, so each level is output-only.
     let expected: Vec<Record> = (1..=REPORTED)
         .map(|count| Record::Level {
+            led: LED,
             high: count % 2 == 1,
             decision: Decision::OutputOnly,
             count,
@@ -58,7 +60,54 @@ fn a_refused_request_stops_with_every_indicator_low() {
     fake::with(|h| h.output[0] &= !plaf103::pins::MOTOR_A_BIT);
     let step = blinker.step();
 
-    assert_eq!(step.record, Some(Record::Refused { high: false }));
+    assert_eq!(
+        step.record,
+        Some(Record::Stop {
+            led: LED,
+            high: false,
+            reason: Stop::Refused,
+        })
+    );
     assert_eq!(step.delay_ms, 0);
     assert!(!leds::observe(LED).latch_high);
+}
+
+/// The lines the bench reads, exactly as the hand-written formatter wrote
+/// them before the derive.
+#[test]
+fn records_keep_their_lines() {
+    let lines = [
+        (
+            Record::Level {
+                led: Led::Connection,
+                high: true,
+                decision: Decision::OutputOnly,
+                count: 1,
+            },
+            "level led=PA0 high=1 decision=output-only count=1",
+        ),
+        (
+            Record::Stop {
+                led: Led::Connection,
+                high: false,
+                reason: Stop::Refused,
+            },
+            "stop led=PA0 high=0 reason=refused",
+        ),
+        (
+            Record::Stop {
+                led: Led::Connection,
+                high: true,
+                reason: Stop::Unverified {
+                    decision: Decision::InputMismatch,
+                },
+            },
+            "stop led=PA0 high=1 reason=unverified decision=input-mismatch",
+        ),
+    ];
+
+    for (record, line) in lines {
+        assert_eq!(record.to_string(), line);
+    }
+    assert_eq!(Record::TAG, "PLBLK1");
 }

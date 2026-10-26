@@ -178,7 +178,7 @@ pub const JOURNAL: JournalConfig = JournalConfig {
 };
 
 #[cfg(target_os = "none")]
-pub use target::{Feeding, Record, describe};
+pub use target::{Feeding, Record};
 
 #[cfg(target_os = "none")]
 mod target {
@@ -248,139 +248,142 @@ mod target {
     /// The most pads a `pins` record lists, so the line fits a record.
     const PINS_LISTED: usize = 10;
 
-    pub fn describe(record: Record, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match record {
-            Record::Journal { error, created } => write!(
-                f,
-                "open journal={} created={}",
-                error.code(),
-                u8::from(created)
-            ),
-            Record::Refused => f.write_str("open refused=1"),
-            Record::Opened {
-                created,
-                high_water,
-            } => write!(
-                f,
-                "open created={} high_water={high_water}",
-                u8::from(created)
-            ),
-            Record::Status {
-                state,
-                fault,
-                supervisor,
-                stopped,
-                optics_off,
-            } => write!(
-                f,
-                "state={} fault={} supervisor={} stopped={} optics_off={}",
-                state.code(),
-                fault.code(),
-                supervisor.code(),
-                u8::from(stopped),
-                u8::from(optics_off)
-            ),
-            Record::Submitted {
-                feed,
-                portions,
-                result,
-            } => write!(
-                f,
-                "feed id={feed} portions={portions} submit={}",
-                result.code()
-            ),
-            Record::Fed {
-                result,
-                durability,
-                trace,
-            } => {
-                write!(
+    /// The body of a `PLOWN1` line.
+    impl core::fmt::Display for Record {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            match *self {
+                Record::Journal { error, created } => write!(
                     f,
-                    "fed id={} requested={} completed={} outcome={} reason={} durable={} drive_ms={} rising={} falling={} first_edge_ms=",
-                    result.id,
-                    result.requested,
-                    result.completed,
-                    result.outcome.code(),
-                    result.reason.code(),
-                    u8::from(durability == Durability::Durable),
-                    trace.drive_ms,
-                    trace.rising,
-                    trace.falling,
-                )?;
-                match trace.first_edge_ms {
-                    Some(ms) => write!(f, "{ms}")?,
-                    None => f.write_str("none")?,
-                }
-                write!(f, " current_max={} current_mean=", trace.current_max)?;
-                match trace.current_mean() {
-                    Some(mean) => write!(f, "{mean}")?,
-                    None => f.write_str("none")?,
-                }
-                write!(f, " samples={}", trace.current_samples)
-            }
-            Record::Edges { feed, trace } => {
-                write!(f, "edges id={feed} at=")?;
-                let mut logged = trace.edge_ms.iter().flatten().peekable();
-                if logged.peek().is_none() {
-                    return f.write_str("none");
-                }
-                for (index, &(ms, high)) in logged.enumerate() {
-                    if index != 0 {
-                        f.write_str(",")?;
+                    "open journal={} created={}",
+                    error.code(),
+                    u8::from(created)
+                ),
+                Record::Refused => f.write_str("open refused=1"),
+                Record::Opened {
+                    created,
+                    high_water,
+                } => write!(
+                    f,
+                    "open created={} high_water={high_water}",
+                    u8::from(created)
+                ),
+                Record::Status {
+                    state,
+                    fault,
+                    supervisor,
+                    stopped,
+                    optics_off,
+                } => write!(
+                    f,
+                    "state={} fault={} supervisor={} stopped={} optics_off={}",
+                    state.code(),
+                    fault.code(),
+                    supervisor.code(),
+                    u8::from(stopped),
+                    u8::from(optics_off)
+                ),
+                Record::Submitted {
+                    feed,
+                    portions,
+                    result,
+                } => write!(
+                    f,
+                    "feed id={feed} portions={portions} submit={}",
+                    result.code()
+                ),
+                Record::Fed {
+                    result,
+                    durability,
+                    trace,
+                } => {
+                    write!(
+                        f,
+                        "fed id={} requested={} completed={} outcome={} reason={} durable={} drive_ms={} rising={} falling={} first_edge_ms=",
+                        result.id,
+                        result.requested,
+                        result.completed,
+                        result.outcome.code(),
+                        result.reason.code(),
+                        u8::from(durability == Durability::Durable),
+                        trace.drive_ms,
+                        trace.rising,
+                        trace.falling,
+                    )?;
+                    match trace.first_edge_ms {
+                        Some(ms) => write!(f, "{ms}")?,
+                        None => f.write_str("none")?,
                     }
-                    write!(f, "{ms}{}", if high { 'H' } else { 'L' })?;
+                    write!(f, " current_max={} current_mean=", trace.current_max)?;
+                    match trace.current_mean() {
+                        Some(mean) => write!(f, "{mean}")?,
+                        None => f.write_str("none")?,
+                    }
+                    write!(f, " samples={}", trace.current_samples)
                 }
-                Ok(())
-            }
-            Record::Held { portions, held } => {
-                write!(f, "feed portions={portions} held={}", held.code())
-            }
-            Record::Joins(status) => write!(
-                f,
-                "interlock refused={} deferred={} forced={} waited_max_ms={} long_joins={} \
+                Record::Edges { feed, trace } => {
+                    write!(f, "edges id={feed} at=")?;
+                    let mut logged = trace.edge_ms.iter().flatten().peekable();
+                    if logged.peek().is_none() {
+                        return f.write_str("none");
+                    }
+                    for (index, &(ms, high)) in logged.enumerate() {
+                        if index != 0 {
+                            f.write_str(",")?;
+                        }
+                        write!(f, "{ms}{}", if high { 'H' } else { 'L' })?;
+                    }
+                    Ok(())
+                }
+                Record::Held { portions, held } => {
+                    write!(f, "feed portions={portions} held={}", held.code())
+                }
+                Record::Joins(status) => write!(
+                    f,
+                    "interlock refused={} deferred={} forced={} waited_max_ms={} long_joins={} \
                  writes_deferred={} writes_forced={} write_waited_max_ms={} feeds_delayed={}",
-                status.refused,
-                status.deferred,
-                status.forced,
-                status.waited_max_ms,
-                status.long_joins,
-                status.writes_deferred,
-                status.writes_forced,
-                status.write_waited_max_ms,
-                status.feeds_delayed
-            ),
-            Record::Pins { feed, pins } => {
-                let [start_a, start_b] = pins.start.unwrap_or_default();
-                let [changed_a, changed_b] = pins.changed;
-                write!(
-                    f,
-                    "pins id={feed} start={start_a:08x},{start_b:08x} changed={changed_a:08x},{changed_b:08x} toggles="
-                )?;
-                let toggles = pins
-                    .toggles
-                    .iter()
-                    .zip(['A', 'B'])
-                    .flat_map(|(port, name)| {
-                        (0..32).filter_map(move |pin| {
-                            let count = port[pin];
-                            (count != 0).then_some((name, pin, count))
-                        })
-                    });
-                let mut listed = 0;
-                for (name, pin, count) in toggles {
-                    if listed == PINS_LISTED {
-                        return f.write_str(",+");
+                    status.refused,
+                    status.deferred,
+                    status.forced,
+                    status.waited_max_ms,
+                    status.long_joins,
+                    status.writes_deferred,
+                    status.writes_forced,
+                    status.write_waited_max_ms,
+                    status.feeds_delayed
+                ),
+                Record::Pins { feed, pins } => {
+                    let [start_a, start_b] = pins.start.unwrap_or_default();
+                    let [changed_a, changed_b] = pins.changed;
+                    write!(
+                        f,
+                        "pins id={feed} start={start_a:08x},{start_b:08x} changed={changed_a:08x},{changed_b:08x} toggles="
+                    )?;
+                    let toggles = pins
+                        .toggles
+                        .iter()
+                        .zip(['A', 'B'])
+                        .flat_map(|(port, name)| {
+                            (0..32).filter_map(move |pin| {
+                                let count = port[pin];
+                                (count != 0).then_some((name, pin, count))
+                            })
+                        });
+                    let mut listed = 0;
+                    for (name, pin, count) in toggles {
+                        if listed == PINS_LISTED {
+                            return f.write_str(",+");
+                        }
+                        if listed != 0 {
+                            f.write_str(",")?;
+                        }
+                        write!(f, "{name}{pin}:{count}")?;
+                        listed += 1;
                     }
-                    if listed != 0 {
-                        f.write_str(",")?;
+                    if listed == 0 {
+                        f.write_str("none")?;
                     }
-                    write!(f, "{name}{pin}:{count}")?;
-                    listed += 1;
+                    Ok(())
                 }
-                if listed == 0 {
-                    f.write_str("none")?;
-                }
-                Ok(())
             }
         }
     }

@@ -2633,7 +2633,17 @@ version = "0.1.0"
 dependencies = [
  "wellfed-core",
  "wellfed-hal",
+ "wellfed-sdk-macros",
  "wellfed-session",
+]
+
+[[package]]
+name = "wellfed-sdk-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]

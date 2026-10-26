@@ -14,9 +14,59 @@
 //! The budget counts tasks started this boot; a firmware task that ends does
 //! not give its share back.
 
+use core::ffi::{CStr, c_void};
 use core::sync::atomic::{AtomicU8, Ordering};
 
 pub const FIRMWARE_TASKS: u8 = 4;
+
+/// A task the firmware can start with `wellfed_sdk::spawn`, made by
+/// [`#[task]`](crate::task). Its step is a safe function that ignores its
+/// context, so the runtime may call it with none, again and again, until it
+/// returns zero.
+#[derive(Clone, Copy, Debug)]
+pub struct Task {
+    pub(crate) name: &'static CStr,
+    pub(crate) stack_words: u16,
+    pub(crate) priority: u32,
+    pub(crate) step: extern "C" fn(*mut c_void) -> u32,
+}
+
+impl Task {
+    /// Only `#[task]` calls this: the stack audit reads a task's stack from
+    /// the attribute, and refuses a task made any other way.
+    #[doc(hidden)]
+    pub const fn __new(
+        name: &'static CStr,
+        stack_words: u16,
+        priority: u32,
+        step: extern "C" fn(*mut c_void) -> u32,
+    ) -> Self {
+        Self {
+            name,
+            stack_words,
+            priority,
+            step,
+        }
+    }
+
+    pub fn name(&self) -> &'static CStr {
+        self.name
+    }
+
+    pub fn stack_words(&self) -> u16 {
+        self.stack_words
+    }
+
+    pub fn priority(&self) -> u32 {
+        self.priority
+    }
+
+    /// Runs one step, as the task would, and returns its delay. For host
+    /// tests: on the device only the task itself steps it.
+    pub fn step(&self) -> u32 {
+        (self.step)(core::ptr::null_mut())
+    }
+}
 
 static STARTED: AtomicU8 = AtomicU8::new(0);
 

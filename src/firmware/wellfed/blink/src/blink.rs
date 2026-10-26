@@ -7,8 +7,7 @@
 //! (`leds::Decision::OutputOnly`). A refused request or a failed readback
 //! drives every indicator LOW and ends the task; the blinker never retries.
 
-use core::fmt;
-
+use wellfed_sdk::Record;
 use wellfed_sdk::hal::leds::{self, Decision, Led};
 
 /// The indicator the blinker drives.
@@ -18,44 +17,42 @@ pub const HALF_PERIOD_MS: u32 = 500;
 /// Levels reported after the first; later ones are silent unless one fails.
 pub const REPORTED: u32 = 4;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// One `PLBLK1` line.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Record)]
+#[record(tag = "PLBLK1")]
 pub enum Record {
     /// A level was verified and is now held.
+    #[record("level")]
     Level {
+        #[record(with = Led::name)]
+        led: Led,
         high: bool,
+        #[record(with = decision_name)]
         decision: Decision,
         count: u32,
     },
-    /// The request was refused (outputs not stopped, or directions drifted).
-    Refused { high: bool },
-    /// The settled readback did not accept the level.
-    Unverified { high: bool, decision: Decision },
+    /// The blinker drove every indicator LOW and ended.
+    #[record("stop")]
+    Stop {
+        #[record(with = Led::name)]
+        led: Led,
+        high: bool,
+        reason: Stop,
+    },
 }
 
-/// One record as the body of a `PLBLK1` line.
-pub fn describe(record: Record, f: &mut impl fmt::Write) -> fmt::Result {
-    let led = LED.name();
-    match record {
-        Record::Level {
-            high,
-            decision,
-            count,
-        } => write!(
-            f,
-            "level led={led} high={} decision={} count={count}",
-            u8::from(high),
-            decision_name(decision)
-        ),
-        Record::Refused { high } => {
-            write!(f, "stop led={led} high={} reason=refused", u8::from(high))
-        }
-        Record::Unverified { high, decision } => write!(
-            f,
-            "stop led={led} high={} reason=unverified decision={}",
-            u8::from(high),
-            decision_name(decision)
-        ),
-    }
+/// Why the blinker stopped.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Record)]
+pub enum Stop {
+    /// The request was refused (outputs not stopped, or directions drifted).
+    #[record("refused")]
+    Refused,
+    /// The settled readback did not accept the level.
+    #[record("unverified")]
+    Unverified {
+        #[record(with = decision_name)]
+        decision: Decision,
+    },
 }
 
 fn decision_name(decision: Decision) -> &'static str {
@@ -88,7 +85,7 @@ impl Blinker {
         let want = !self.high;
         if !self.settling {
             if !leds::request(LED, want) {
-                return stop(Record::Refused { high: want });
+                return stop(want, Stop::Refused);
             }
             self.settling = true;
             return Step {
@@ -100,16 +97,14 @@ impl Blinker {
         self.settling = false;
         let decision = leds::observe(LED).decision(want);
         if !matches!(decision, Decision::Verified | Decision::OutputOnly) {
-            return stop(Record::Unverified {
-                high: want,
-                decision,
-            });
+            return stop(want, Stop::Unverified { decision });
         }
 
         self.high = want;
         self.count = self.count.saturating_add(1);
         Step {
             record: (self.count <= REPORTED).then_some(Record::Level {
+                led: LED,
                 high: want,
                 decision,
                 count: self.count,
@@ -119,11 +114,15 @@ impl Blinker {
     }
 }
 
-/// Every indicator LOW, then end the task with `record`.
-fn stop(record: Record) -> Step {
+/// Every indicator LOW, then end the task with why.
+fn stop(high: bool, reason: Stop) -> Step {
     let _ = leds::all_low();
     Step {
-        record: Some(record),
+        record: Some(Record::Stop {
+            led: LED,
+            high,
+            reason,
+        }),
         delay_ms: 0,
     }
 }

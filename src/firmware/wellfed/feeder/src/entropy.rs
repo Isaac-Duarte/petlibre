@@ -68,31 +68,40 @@ pub enum Record {
     Finished,
 }
 
-pub fn describe(record: Record, f: &mut impl core::fmt::Write) -> core::fmt::Result {
-    match record {
-        Record::Start { source } => write!(f, "start src={source} samples={SAMPLES} line={LINE}"),
-        Record::Raw { source, seq, bytes } => {
-            let mut text = [0; base64::encoded_len(LINE)];
-            let text = base64::encode(&bytes, &mut text).ok_or(core::fmt::Error)?;
-            write!(f, "raw src={source} seq={seq} b64={text}")
-        }
-        Record::Done {
-            source,
-            samples,
-            missed,
-            failed_at,
-        } => {
-            write!(
-                f,
-                "done src={source} samples={samples} missed={missed} health="
-            )?;
-            match failed_at {
-                Some(at) => write!(f, "failed at={at}"),
-                None => f.write_str("passed"),
+/// The body of a `PLRNG1` line.
+impl core::fmt::Display for Record {
+    // Inline, so only the image that logs these records compiles them: the
+    // linker keeps a string section whole, so an unused formatter's strings
+    // would stay in every image.
+    #[inline]
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match *self {
+            Record::Start { source } => {
+                write!(f, "start src={source} samples={SAMPLES} line={LINE}")
             }
+            Record::Raw { source, seq, bytes } => {
+                let mut text = [0; base64::encoded_len(LINE)];
+                let text = base64::encode(&bytes, &mut text).ok_or(core::fmt::Error)?;
+                write!(f, "raw src={source} seq={seq} b64={text}")
+            }
+            Record::Done {
+                source,
+                samples,
+                missed,
+                failed_at,
+            } => {
+                write!(
+                    f,
+                    "done src={source} samples={samples} missed={missed} health="
+                )?;
+                match failed_at {
+                    Some(at) => write!(f, "failed at={at}"),
+                    None => f.write_str("passed"),
+                }
+            }
+            Record::GaveUp { source, samples } => write!(f, "error src={source} samples={samples}"),
+            Record::Finished => f.write_str("finished"),
         }
-        Record::GaveUp { source, samples } => write!(f, "error src={source} samples={samples}"),
-        Record::Finished => f.write_str("finished"),
     }
 }
 

@@ -95,6 +95,28 @@ impl Write for Report {
     }
 }
 
+/// Logs one record line, `PLxxx1 …\r\n`. A line longer than the report
+/// buffer is dropped rather than truncated, so a parser never sees half a
+/// record.
+pub fn log(line: fmt::Arguments<'_>) {
+    let mut report = Report::new();
+    if let Ok(line) = report.record(line) {
+        crate::sdk::log(line);
+    }
+}
+
+/// A record a task logs as one `PLxxx1 …` line: its `Display` is the body
+/// after the tag. `#[derive(Record)]` with `#[record(tag = "…")]` implements
+/// it.
+pub trait LogRecord: fmt::Display {
+    /// The line's tag, such as `PLBLK1`.
+    const TAG: &'static str;
+
+    /// Logs the whole line through [`log`]. The derive writes it with the
+    /// tag in the format string, so the line costs no extra argument.
+    fn log(&self);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

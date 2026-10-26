@@ -1,31 +1,23 @@
 //! The firmware's start hook and its loop task; the button service is the
 //! other of its two tasks.
 
-use core::ffi::c_void;
-
 use wellfed_feeder::feeder::{Feeder, Feeds};
 use wellfed_feeder::panel::BUTTONS;
 use wellfed_proto::api::{Refusal, Source};
-use wellfed_sdk::Slot;
-use wellfed_sdk::hal::{sdk, startup};
+use wellfed_sdk::hal::sdk;
+use wellfed_sdk::{Slot, Startup, log};
 
-use crate::feeding::{self, Feeding};
+use crate::feeding::Feeding;
 use crate::platform::Plaf103;
 
-wellfed_sdk::firmware!(start);
-
-fn start() {
+#[wellfed_sdk::start(runtime = wellfed_feeder_runtime)]
+fn start() -> Startup {
     // The feeding owner needs the ADC to itself (and the entropy
     // measurement samples it too), so the power monitor stays off it; the
     // owner publishes power health from its own captures.
     wellfed_sdk::claim_adc();
 
-    // Nothing here holds the KM0 flash handshake, so the runtime may confirm
-    // once it is otherwise healthy.
-    wellfed_sdk::startup_done(true);
-
-    // SAFETY: the step ignores its context and keeps its state in statics.
-    let created = unsafe { wellfed_sdk::spawn(c"wellfed-loop", LOOP_STACK_WORDS, 2, loop_task) };
+    let created = wellfed_sdk::spawn(loop_task);
     sdk::log(if created {
         c"PLPANEL1 task created=1\r\n"
     } else {
@@ -35,6 +27,11 @@ fn start() {
 
     #[cfg(feature = "gap-probe")]
     gap_probe::start();
+
+    // Nothing here holds the KM0 flash handshake, so the runtime may confirm
+    // once it is otherwise healthy. Nothing that reads this runs before the
+    // hook returns: the runtime's service task starts after it.
+    Startup::Done
 }
 
 /// The feeding owner's step, then the pass with a Noise operation and one
@@ -53,22 +50,6 @@ static FEEDING: Slot<Feeding> = Slot::new();
 #[cfg(feature = "entropy")]
 static CAPTURE: Slot<crate::entropy::Capture> = Slot::filled(crate::entropy::Capture::new());
 
-/// Writes one `PL…1` record line.
-fn log(args: core::fmt::Arguments<'_>) {
-    let mut report = startup::Report::new();
-    if let Ok(line) = report.record(args) {
-        sdk::log(line);
-    }
-}
-
-struct FeedingRecord(feeding::Record);
-
-impl core::fmt::Display for FeedingRecord {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        feeding::describe(self.0, f)
-    }
-}
-
 impl Feeds for Feeding {
     fn feeding(&self) -> bool {
         Feeding::feeding(self)
@@ -81,7 +62,7 @@ impl Feeds for Feeding {
     #[cfg(not(feature = "gap-probe"))]
     fn submit(&mut self, portions: u8, by: Source) -> Result<u32, Refusal> {
         Feeding::submit(self, portions, by, |record| {
-            log(format_args!("PLOWN1 {}\r\n", FeedingRecord(record)));
+            log(format_args!("PLOWN1 {record}\r\n"));
         })
     }
 
@@ -101,7 +82,8 @@ impl Feeds for Feeding {
     }
 }
 
-unsafe extern "C" fn loop_task(_: *mut c_void) -> u32 {
+#[wellfed_sdk::task(name = "wellfed-loop", stack = LOOP_STACK_WORDS, priority = 2)]
+fn loop_task() -> u32 {
     let (Some(mut feeder), Some(mut feeding)) =
         (FEEDER.enter(), FEEDING.enter_or_init(Feeding::default))
     else {
@@ -113,7 +95,7 @@ unsafe extern "C" fn loop_task(_: *mut c_void) -> u32 {
     #[cfg(feature = "owner-stall")]
     stall::step();
     let feed_delay = feeding.step(
-        |record| log(format_args!("PLOWN1 {}\r\n", FeedingRecord(record))),
+        |record| log(format_args!("PLOWN1 {record}\r\n")),
         |body| feeder.record_outcome(sdk::uptime_ms(), body),
     );
 
@@ -128,7 +110,7 @@ unsafe extern "C" fn loop_task(_: *mut c_void) -> u32 {
     #[cfg(feature = "entropy")]
     if let Some(mut capture) = CAPTURE.enter()
         && let Some(delay) = capture.step(|record| {
-            log(format_args!("PLRNG1 {}\r\n", Rng(record)));
+            log(format_args!("PLRNG1 {record}\r\n"));
         })
     {
         delay_ms = delay_ms.min(delay);
@@ -137,16 +119,6 @@ unsafe extern "C" fn loop_task(_: *mut c_void) -> u32 {
     #[cfg(feature = "gap-probe")]
     gap_probe::end_pass(delay_ms);
     delay_ms
-}
-
-#[cfg(feature = "entropy")]
-struct Rng(crate::entropy::Record);
-
-#[cfg(feature = "entropy")]
-impl core::fmt::Display for Rng {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        crate::entropy::describe(self.0, f)
-    }
 }
 
 /// The `owner-stall` variant: the loop stops stepping for a while, once each, so
@@ -195,12 +167,10 @@ mod stall {
 /// probe's atomics: not the owner, the board, flash or the watchdog.
 #[cfg(feature = "gap-probe")]
 mod gap_probe {
-    use core::ffi::c_void;
-
     use wellfed_sdk::Slot;
     use wellfed_sdk::hal::{net_status, sdk};
 
-    use crate::gaps::{self, PERIOD_MS, Probe, Windows};
+    use crate::gaps::{PERIOD_MS, Probe, Windows};
 
     /// The probe's step is a timer read and a few atomic updates.
     const PROBE_STACK_WORDS: u16 = 256;
@@ -212,18 +182,8 @@ mod gap_probe {
     /// The loop task's.
     static WINDOWS: Slot<Windows> = Slot::filled(Windows::new());
 
-    struct Line(gaps::Record);
-
-    impl core::fmt::Display for Line {
-        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-            gaps::describe(self.0, f)
-        }
-    }
-
     pub fn start() {
-        // SAFETY: the step ignores its context and keeps its state in statics.
-        let created =
-            unsafe { wellfed_sdk::spawn(c"wellfed-gap", PROBE_STACK_WORDS, 4, gap_task) };
+        let created = wellfed_sdk::spawn(gap_task);
         sdk::log(if created {
             c"PLGAP1 task created=1\r\n"
         } else {
@@ -244,12 +204,13 @@ mod gap_probe {
             &HIGH,
             net_status::read(),
             |record| {
-                super::log(format_args!("PLGAP1 {}\r\n", Line(record)));
+                wellfed_sdk::log(format_args!("PLGAP1 {record}\r\n"));
             },
         );
     }
 
-    unsafe extern "C" fn gap_task(_: *mut c_void) -> u32 {
+    #[wellfed_sdk::task(name = "wellfed-gap", stack = PROBE_STACK_WORDS, priority = 4)]
+    fn gap_task() -> u32 {
         HIGH.wake(sdk::systimer_ticks());
         PERIOD_MS
     }

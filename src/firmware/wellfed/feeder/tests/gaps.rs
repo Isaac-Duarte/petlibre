@@ -4,7 +4,7 @@
 //! record buffer whatever their values.
 
 use wellfed_fw_feeder::gaps::{
-    Net, OVER_MS, PERIOD_MS, Probe, Record, Task, WINDOW_MS, Window, Windows, describe,
+    Net, OVER_MS, PERIOD_MS, Probe, Record, Task, WINDOW_MS, Window, Windows,
 };
 use wellfed_sdk::hal::net_status::Status;
 use wellfed_sdk::hal::startup::Report;
@@ -38,9 +38,7 @@ fn status(generation: u32) -> Status {
 }
 
 fn text(record: Record) -> String {
-    let mut out = String::new();
-    describe(record, &mut out).unwrap();
-    out
+    record.to_string()
 }
 
 #[test]
@@ -193,15 +191,7 @@ fn the_longest_lines_fit_the_record_buffer() {
 
     for record in records {
         let mut report = Report::new();
-        let line = report.record(format_args!("PLGAP1 {}\r\n", Line(record)));
+        let line = report.record(format_args!("PLGAP1 {record}\r\n"));
         assert!(line.is_ok(), "{}", text(record));
-    }
-}
-
-struct Line(Record);
-
-impl std::fmt::Display for Line {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        describe(self.0, f)
     }
 }

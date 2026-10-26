@@ -16,7 +16,7 @@
 //! one window, but a sample that lands while the loop takes the window may
 //! split: its bucket in one window, its wake and maximum in the next.
 
-use core::fmt::{self, Write};
+use core::fmt;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use wellfed_core::named_enum;
@@ -214,28 +214,40 @@ pub enum Record {
 
 /// Formats a record as the `PLGAP1` line's body. Each line stays under the
 /// 192-byte record buffer whatever its values.
-pub fn describe(record: Record, f: &mut impl Write) -> fmt::Result {
-    match record {
-        Record::Task {
-            task,
-            now_ms,
-            span_ms,
-            window: w,
-            worst_ms,
-        } => write!(
-            f,
-            "{task} t={now_ms} w={span_ms} n={} max={} late={} p99={} over={}/{}/{} worst={worst_ms}",
-            w.wakes, w.max_gap_ms, w.max_late_ms, w.p99_late_ms, w.over[0], w.over[1], w.over[2],
-        ),
-        Record::Net { now_ms, net } => write!(
-            f,
-            "net t={now_ms} gen={} att={} lost={} dns={} rejoin={}",
-            net.generation,
-            net.attempt,
-            net.link_losses,
-            net.dns_losses,
-            u8::from(net.changed),
-        ),
+impl fmt::Display for Record {
+    // Inline, so only the image that logs these records compiles them: the
+    // linker keeps a string section whole, so an unused formatter's strings
+    // would stay in every image.
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            Record::Task {
+                task,
+                now_ms,
+                span_ms,
+                window: w,
+                worst_ms,
+            } => write!(
+                f,
+                "{task} t={now_ms} w={span_ms} n={} max={} late={} p99={} over={}/{}/{} worst={worst_ms}",
+                w.wakes,
+                w.max_gap_ms,
+                w.max_late_ms,
+                w.p99_late_ms,
+                w.over[0],
+                w.over[1],
+                w.over[2],
+            ),
+            Record::Net { now_ms, net } => write!(
+                f,
+                "net t={now_ms} gen={} att={} lost={} dns={} rejoin={}",
+                net.generation,
+                net.attempt,
+                net.link_losses,
+                net.dns_losses,
+                u8::from(net.changed),
+            ),
+        }
     }
 }
 

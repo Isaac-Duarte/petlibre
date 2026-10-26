@@ -6,8 +6,9 @@
 //! port faults on the stack limit, and the trial caught it, but only after
 //! an update. This audit catches it at build time instead.
 //!
-//! For each task created in the runtime or the firmware
-//! (`sdk::task_create(c"name", words, ...)` or `wellfed_sdk::spawn(...)`),
+//! For each task created in the runtime or its services
+//! (`sdk::task_create(c"name", words, ...)`) or declared by the firmware
+//! (`#[wellfed_sdk::task(name = "name", stack = WORDS, priority = N)] fn entry`),
 //! it walks the direct call graph from the task's entry function and
 //! sums the frames along the deepest path. Frames come from each function's
 //! prologue (`push`, `stmdb sp!`, `vpush`, `sub sp`), and a linker veneer
@@ -52,30 +53,43 @@ const FIRMWARE_TASKS: usize = 4;
 /// The text the audit reads its task table from.
 pub(crate) struct TaskSources {
     runtime: String,
-    /// The SDK services, then every Rust file of the firmware's `src/`, in
-    /// path order.
-    firmware: String,
+    /// The SDK services a firmware may start.
+    services: String,
+    /// Every Rust file of the firmware's `src/`, in path order.
+    own: String,
+}
+
+impl TaskSources {
+    /// The sources whose tasks count as the firmware's: its services', then
+    /// its own.
+    fn firmware(&self) -> String {
+        format!("{}\n{}", self.services, self.own)
+    }
 }
 
 pub(crate) fn task_sources(repo: &Repo, firmware: &Firmware) -> Result<TaskSources> {
-    let mut paths: Vec<std::path::PathBuf> = SERVICE_SOURCES
+    let services: Vec<std::path::PathBuf> = SERVICE_SOURCES
         .iter()
         .map(|source| repo.path(source))
         .collect();
     let mut own = Vec::new();
     rust_files(&repo.path(&format!("{}/src", firmware.dir())), &mut own)?;
     own.sort();
-    paths.extend(own);
 
+    Ok(TaskSources {
+        runtime: std::fs::read_to_string(repo.path(RUNTIME_SOURCE))?,
+        services: concatenated(&services)?,
+        own: concatenated(&own)?,
+    })
+}
+
+fn concatenated(paths: &[std::path::PathBuf]) -> Result<String> {
     let mut text = String::new();
     for path in paths {
         text.push_str(&std::fs::read_to_string(path)?);
         text.push('\n');
     }
-    Ok(TaskSources {
-        runtime: std::fs::read_to_string(repo.path(RUNTIME_SOURCE))?,
-        firmware: text,
-    })
+    Ok(text)
 }
 
 fn rust_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) -> Result<()> {
@@ -118,12 +132,21 @@ const PROVIDER_CALLBACKS: [&str; 5] = [
     "wellfed_amebad_flash_provider_fault",
 ];
 
-/// A task creation: name, stack words, entry, and the entry's turbofish if it
-/// names a generic instance.
+/// A task the runtime or a service creates: name, stack words, entry, and the
+/// entry's turbofish if it names a generic instance.
 static TASK: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r#"(?s)(?:task_create|spawn)\(\s*c"([\w-]+)",\s*(\w+),\s*\d+,\s*(\w+)(::<[^>]*>)?\s*[,)]"#,
-    )
+    Regex::new(r#"task_create\(\s*c"([\w-]+)",\s*(\w+),\s*\d+,\s*(\w+)(::<[^>]*>)?\s*[,)]"#)
+        .expect("stack audit pattern")
+});
+/// A firmware's task, as `#[task]` declares it: name, stack words and the
+/// entry, which keeps the function's name. Doc comments and other attributes
+/// may sit between the attribute and the function.
+static DECLARED: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(concat!(
+        r#"#\[\s*(?:(?:::)?\s*wellfed_sdk\s*::\s*)?task\s*\(\s*name\s*=\s*"([\w-]+)"\s*,"#,
+        r"\s*stack\s*=\s*(\w+)\s*,\s*priority\s*=\s*\d+\s*,?\s*\)\s*\]",
+        r"\s*(?:(?:#\[[^\]]*\]|///[^\n]*)\s*)*(?:pub(?:\([\w\s:]*\))?\s+)?fn\s+(\w+)\s*\(",
+    ))
     .expect("stack audit pattern")
 });
 static CONSTANT: LazyLock<Regex> =
@@ -138,9 +161,29 @@ static CALL: LazyLock<Regex> = LazyLock::new(|| {
 /// veneer's `bx ip` is not counted: its target comes from its name.
 static INDIRECT: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\tbl?x\t(?:r\d+|sb|sl|fp|ip)\b").expect("stack audit pattern"));
-/// Every task creation, whatever its shape: [`TASK`] must account for each.
-static TASK_SITE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"(?:task_create|spawn)\(\s*c""#).expect("stack audit pattern"));
+/// Every task creation or declaration, whatever its shape: [`TASK`] and
+/// [`DECLARED`] must account for each. A `Task` built by hand is one neither
+/// reads, so it is refused.
+static TASK_SITE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r#"task_create\(\s*c"|#\[\s*(?:(?:::)?\s*wellfed_sdk\s*::\s*)?task\s*\(|Task\s*::\s*__new\s*\("#,
+    )
+    .expect("stack audit pattern")
+});
+/// A firmware starting a task: `wellfed_sdk::spawn(entry)`, with the entry a
+/// task the firmware declares.
+static SPAWNED: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"wellfed_sdk\s*::\s*spawn\s*\(\s*(\w+)\s*\)").expect("stack audit pattern")
+});
+/// Any mention of `spawn` outside a comment: [`SPAWNED`] must account for
+/// each, so a renamed import or a task from elsewhere cannot start unread.
+static SPAWN_WORD: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\bspawn\b").expect("stack audit pattern"));
+/// Any mention of `task_create` outside a comment, whatever its arguments.
+static CREATE_WORD: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\btask_create\b").expect("stack audit pattern"));
+static LINE_COMMENT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"//[^\n]*").expect("stack audit pattern"));
 /// Half of an address built in a register: `movw r0, #51187` (low) then
 /// `movt r0, #3585` (high).
 static MOVE: LazyLock<Regex> =
@@ -187,19 +230,24 @@ fn tasks(source: &str) -> Result<BTreeMap<String, (String, u64)>> {
 
     let (sites, matched) = (
         TASK_SITE.find_iter(source).count(),
-        TASK.captures_iter(source).count(),
+        TASK.captures_iter(source).count() + DECLARED.captures_iter(source).count(),
     );
     if sites != matched {
         return refuse(format!(
             "{} task creations do not have the shape the stack audit reads \
-             (spawn(c\"name\", WORDS, priority, entry)): keep the priority a literal and \
-             the entry a plain function name",
+             (#[wellfed_sdk::task(name = \"name\", stack = WORDS, priority = N)] on a plain \
+             function, or the runtime's task_create(c\"name\", WORDS, priority, entry)): keep \
+             the arguments in that order, the priority a literal and the entry a plain \
+             function name",
             sites - matched.min(sites)
         ));
     }
 
     let mut found = BTreeMap::new();
-    for c in TASK.captures_iter(source) {
+    for c in TASK
+        .captures_iter(source)
+        .chain(DECLARED.captures_iter(source))
+    {
         let (task, entry) = (&c[1], &c[3]);
         if let Some(generic) = c.get(4) {
             return refuse(format!(
@@ -580,7 +628,7 @@ pub(crate) fn audit(elf: &Path, objdump: &Path, sources: &TaskSources) -> Result
     let firmware_tasks = firmware_tasks(sources, |entry| by_short.contains_key(entry))?;
 
     let mut rows = BTreeMap::new();
-    let source = format!("{}\n{}", sources.runtime, sources.firmware);
+    let source = format!("{}\n{}", sources.runtime, sources.firmware());
     for (entry, (task, stack)) in tasks(&source)? {
         let symbols = by_short.get(&entry).cloned().unwrap_or_default();
         let symbol = match &symbols[..] {
@@ -642,11 +690,57 @@ pub(crate) fn audit(elf: &Path, objdump: &Path, sources: &TaskSources) -> Result
     })
 }
 
+/// Every task the firmware starts is one it declares with `#[task]` in its
+/// own sources, where the audit reads its stack. A task declared in a
+/// library, behind a renamed attribute or inside `cfg_attr` would otherwise
+/// link with its stack unchecked, so starting one is refused; so is a `spawn`
+/// the audit cannot read, such as a renamed import.
+fn spawned_tasks_are_declared(own: &str) -> Result<()> {
+    let code = LINE_COMMENT.replace_all(own, "");
+    let declared: BTreeSet<&str> = DECLARED
+        .captures_iter(own)
+        .filter_map(|c| c.get(3).map(|entry| entry.as_str()))
+        .collect();
+
+    let spawned: Vec<String> = SPAWNED
+        .captures_iter(&code)
+        .map(|c| c[1].to_string())
+        .collect();
+    let mentions = SPAWN_WORD.find_iter(&code).count();
+    if mentions != spawned.len() {
+        return refuse(format!(
+            "{} uses of spawn are not wellfed_sdk::spawn(entry): start each task by that \
+             call, so the stack audit can read it",
+            mentions - spawned.len().min(mentions)
+        ));
+    }
+    if let Some(entry) = spawned
+        .iter()
+        .find(|entry| !declared.contains(entry.as_str()))
+    {
+        return refuse(format!(
+            "The firmware spawns {entry}, which no #[wellfed_sdk::task] in its own sources \
+             declares: declare the task in the firmware crate, so the stack audit reads its stack"
+        ));
+    }
+    Ok(())
+}
+
 /// The firmware's tasks that `linked` finds in the image, refused past its
 /// share: a firmware that takes a runtime task's slot leaves the build unable
-/// to save settings or see an update offer.
+/// to save settings or see an update offer. A firmware that creates a task
+/// itself, past `wellfed_sdk::spawn`, is refused too, since that task would
+/// not count against the share at run time.
 fn firmware_tasks(sources: &TaskSources, linked: impl Fn(&str) -> bool) -> Result<Vec<String>> {
-    let found: Vec<String> = tasks(&sources.firmware)?
+    if CREATE_WORD.is_match(&LINE_COMMENT.replace_all(&sources.own, "")) {
+        return refuse(
+            "The firmware creates a task with task_create: declare it with \
+             #[wellfed_sdk::task] and start it with wellfed_sdk::spawn",
+        );
+    }
+    spawned_tasks_are_declared(&sources.own)?;
+
+    let found: Vec<String> = tasks(&sources.firmware())?
         .into_iter()
         .filter(|(entry, _)| linked(entry))
         .map(|(_, (task, _))| task)
@@ -702,26 +796,95 @@ mod tests {
 
     #[test]
     fn only_linked_firmware_tasks_count_and_one_past_the_share_is_refused() {
-        let sources = |firmware: &str| TaskSources {
+        let sources = |own: &str| TaskSources {
             runtime: "sdk::task_create(c\"wellfed-net\", 1536, 2, net_task, ptr::null_mut());"
                 .into(),
-            firmware: firmware.into(),
+            services: "sdk::task_create(c\"wellfed-key\", 512, 3, key_task, ptr::null_mut());"
+                .into(),
+            own: own.into(),
         };
-        let four = "spawn(c\"fw-a\", 512, 2, a_task); spawn(c\"fw-b\", 512, 2, b_task); \
-                    spawn(c\"fw-c\", 512, 2, c_task); spawn(c\"fw-d\", 512, 2, d_task); \
-                    sdk::task_create(c\"wellfed-key\", 512, 3, key_task, ptr::null_mut());";
+        let four: String = ["a", "b", "c", "d"]
+            .map(|t| format!("#[wellfed_sdk::task(name = \"fw-{t}\", stack = 512, priority = 2)]\nfn {t}_task() -> u32 {{ 0 }}\n"))
+            .concat();
 
         let linked = |entry: &str| entry != "key_task";
         assert_eq!(
-            firmware_tasks(&sources(four), linked).unwrap(),
+            firmware_tasks(&sources(&four), linked).unwrap(),
             ["fw-a", "fw-b", "fw-c", "fw-d"],
             "an unused service links no task"
         );
 
-        let refused = firmware_tasks(&sources(four), |_| true)
+        let refused = firmware_tasks(&sources(&four), |_| true)
             .unwrap_err()
             .to_string();
         assert!(refused.contains("starts 5 tasks"), "{refused}");
+    }
+
+    /// A task whose declaration the audit cannot read would link with its
+    /// stack unchecked.
+    #[test]
+    fn a_task_started_but_not_declared_here_is_refused() {
+        let own = |text: &str| TaskSources {
+            runtime: String::new(),
+            services: String::new(),
+            own: text.into(),
+        };
+        let declared = "#[wellfed_sdk::task(name = \"fw-a\", stack = 512, priority = 2)]\n\
+                        fn a_task() -> u32 { 0 }\n";
+
+        let fine =
+            format!("{declared}// spawn in a comment is not a call\nwellfed_sdk::spawn(a_task);");
+        assert_eq!(firmware_tasks(&own(&fine), |_| true).unwrap(), ["fw-a"]);
+
+        for (shape, why) in [
+            (
+                "wellfed_sdk::spawn(wellfed_probes::x_task);",
+                "uses of spawn",
+            ),
+            ("wellfed_sdk::spawn(x_task);", "spawns x_task"),
+            (
+                "use wellfed_sdk::spawn as go;\ngo(a_task);",
+                "uses of spawn",
+            ),
+            (
+                "#[cfg_attr(feature = \"x\", wellfed_sdk::task(name = \"fw-x\", stack = 512, priority = 2))]\n\
+                 fn x_task() -> u32 { 0 }\nwellfed_sdk::spawn(x_task);",
+                "spawns x_task",
+            ),
+        ] {
+            let text = format!("{declared}{shape}");
+            let refused = firmware_tasks(&own(&text), |_| true)
+                .unwrap_err()
+                .to_string();
+            assert!(refused.contains(why), "{shape}: {refused}");
+        }
+    }
+
+    /// A task the firmware creates itself would pass the run-time budget.
+    #[test]
+    fn a_firmware_that_creates_a_task_itself_is_refused() {
+        let sources = TaskSources {
+            runtime: String::new(),
+            services: String::new(),
+            own: "unsafe { sdk::task_create(c\"fw-raw\", 512, 2, raw_task, ptr::null_mut()) };"
+                .into(),
+        };
+
+        let refused = firmware_tasks(&sources, |_| true).unwrap_err().to_string();
+        assert!(
+            refused.contains("creates a task with task_create"),
+            "{refused}"
+        );
+
+        let named = TaskSources {
+            own: "unsafe { sdk::task_create(name, 512, 2, raw_task, ptr::null_mut()) };".into(),
+            ..sources
+        };
+        let refused = firmware_tasks(&named, |_| true).unwrap_err().to_string();
+        assert!(
+            refused.contains("creates a task with task_create"),
+            "{refused}"
+        );
     }
 
     const LISTING: &str = "\
@@ -753,8 +916,15 @@ mod tests {
         let source = "const PROBE_STACK_WORDS: u16 = 2048;\n\
                       sdk::task_create(\n    c\"wellfed-optics\",\n    PROBE_STACK_WORDS,\n    3,\n    optics_task,\n\
                       let ok = sdk::task_create(c\"wellfed-wdg\", 512, 3, feeder_task, ptr::null_mut());\n\
-                      unsafe { wellfed_sdk::spawn(c\"wellfed-aud\", 1024, 2, audio_task) };";
+                      /// The chime.\n\
+                      #[wellfed_sdk::task(name = \"wellfed-aud\", stack = 1024, priority = 2)]\n\
+                      fn audio_task() -> u32 {\n\
+                      #[wellfed_sdk::task(\n    name = \"wellfed-loop\",\n    stack = PROBE_STACK_WORDS,\n    priority = 2,\n)]\n\
+                      /// The loop.\n\
+                      #[cfg(feature = \"x\")]\n\
+                      pub(crate) fn loop_task() -> u32 {";
         let expected: BTreeMap<String, (String, u64)> = [
+            ("loop_task".to_string(), ("wellfed-loop".to_string(), 8192)),
             (
                 "optics_task".to_string(),
                 ("wellfed-optics".to_string(), 8192),
@@ -775,13 +945,18 @@ mod tests {
         let refused = tasks(generic).unwrap_err().to_string();
         assert!(refused.contains("generic generic_step::<S>"), "{refused}");
 
-        let unknown = "wellfed_sdk::spawn(c\"wellfed-x\", ELSEWHERE_WORDS, 2, x_task);";
+        let unknown = "#[wellfed_sdk::task(name = \"wellfed-x\", stack = ELSEWHERE_WORDS, priority = 2)]\n\
+                       fn x_task() -> u32 {";
         let refused = tasks(unknown).unwrap_err().to_string();
         assert!(refused.contains("ELSEWHERE_WORDS"), "{refused}");
 
         for shape in [
-            "wellfed_sdk::spawn(c\"wellfed-x\", 512, PRIORITY, x_task);",
-            "wellfed_sdk::spawn(c\"wellfed-x\", 512, 2, tasks::run);",
+            "sdk::task_create(c\"wellfed-x\", 512, PRIORITY, x_task, ptr::null_mut());",
+            "sdk::task_create(c\"wellfed-x\", 512, 2, tasks::run, ptr::null_mut());",
+            "#[wellfed_sdk::task(name = \"wellfed-x\", stack = 512, priority = PRIORITY)]\nfn x_task() -> u32 {",
+            "#[wellfed_sdk::task(stack = 512, name = \"wellfed-x\", priority = 2)]\nfn x_task() -> u32 {",
+            "#[task(name = \"wellfed-x\", stack = 512, priority = 2)]\nstatic X: u32 = 0;",
+            "const X: Task = Task::__new(c\"wellfed-x\", 512, 2, x_task);",
         ] {
             let refused = tasks(shape).unwrap_err().to_string();
             assert!(refused.contains("1 task creations"), "{shape}: {refused}");

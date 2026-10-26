@@ -3,7 +3,7 @@
 //! the ADC follows the jitter source; a source that stops giving samples is
 //! given up, and the records format as the host parses them.
 
-use wellfed_fw_feeder::entropy::{Capture, LINE, LINES, Record, SAMPLES, Source, describe};
+use wellfed_fw_feeder::entropy::{Capture, LINE, LINES, Record, SAMPLES, Source};
 use wellfed_sdk::hal::sdk::fake;
 
 fn run(capture: &mut Capture) -> Vec<Record> {
@@ -13,9 +13,7 @@ fn run(capture: &mut Capture) -> Vec<Record> {
 }
 
 fn text(record: Record) -> String {
-    let mut out = String::new();
-    describe(record, &mut out).unwrap();
-    out
+    record.to_string()
 }
 
 #[test]

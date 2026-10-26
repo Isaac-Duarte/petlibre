@@ -3,11 +3,13 @@
 //! reads gestures from the one task that owns what the buttons do:
 //!
 //! ```ignore
-//! fn start() {
+//! #[wellfed_sdk::start(runtime = wellfed_feeder_runtime)]
+//! fn start() -> Startup {
 //!     wellfed_sdk::buttons::start(Config::BENCH);
+//!     Startup::Done
 //! }
 //! // In the owning task's step:
-//! while let Some(gesture) = wellfed_sdk::buttons::next() { … }
+//! while let Some(gesture) = wellfed_sdk::buttons::next() {}
 //! ```
 //!
 //! A firmware that never starts it links none of it, so the images that

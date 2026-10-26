@@ -15,16 +15,26 @@
 //! every PLAF103 firmware links it, so a firmware swap keeps the owner's
 //! data.
 //!
-//! A firmware is a crate that defines its start hook:
+//! A firmware is a crate that defines its start hook and its tasks:
 //!
 //! ```ignore
-//! use wellfed_feeder_runtime as _;
+//! use wellfed_sdk::{Slot, Startup};
 //!
-//! fn start() {
-//!     // Create the firmware's tasks with `wellfed_sdk::spawn`.
-//!     wellfed_sdk::startup_done(true);
+//! #[wellfed_sdk::start(runtime = wellfed_feeder_runtime)]
+//! fn start() -> Startup {
+//!     wellfed_sdk::spawn(blink_task);
+//!     Startup::Done
 //! }
-//! wellfed_sdk::firmware!(start);
+//!
+//! static BLINKER: Slot<Blinker> = Slot::new();
+//!
+//! #[wellfed_sdk::task(name = "wellfed-blink", stack = 1024, priority = 2)]
+//! fn blink_task() -> u32 {
+//!     let Some(mut blinker) = BLINKER.enter_or_init(Blinker::default) else {
+//!         return 0;
+//!     };
+//!     blinker.step()
+//! }
 //! ```
 //!
 //! Host builds test the Wi-Fi probe against the SDK fake.
@@ -44,27 +54,29 @@ pub mod wifi;
 
 #[cfg(target_os = "none")]
 pub use runtime::{
-    JournalSlots, SdkHooks, SdkStorage, claim_adc, flash_authority, request_reset, spawn,
-    startup_done, storage_armed, watchdog_open,
+    __started, JournalSlots, SdkHooks, SdkStorage, claim_adc, flash_authority, request_reset,
+    spawn, startup_done, storage_armed, watchdog_open,
 };
 pub use slot::{Slot, SlotGuard};
-pub use tasks::FIRMWARE_TASKS;
+pub use tasks::{FIRMWARE_TASKS, Task};
 
 /// The ports a firmware drives (indicators, audio, inputs). Startup,
 /// supervision, flash and updates stay the runtime's.
 pub use wellfed_hal as hal;
 
-/// Defines the firmware's start hook. The runtime calls `$start` once, in
-/// the normal role, from its startup task after the startup checks passed
-/// and the runtime's service task was created. `$start` creates the firmware's
-/// tasks and returns; it must not block.
-#[macro_export]
-macro_rules! firmware {
-    ($start:path) => {
-        #[cfg(target_os = "none")]
-        #[unsafe(no_mangle)]
-        extern "C" fn wellfed_firmware_start() {
-            $start();
-        }
-    };
+pub use wellfed_hal::startup::{LogRecord, log};
+pub use wellfed_sdk_macros::{Record, start, task};
+
+/// What the start hook returns: whether the firmware's startup work
+/// still holds the KM0 flash handshake (an optics or pulse probe). The
+/// runtime does not confirm the build, sample power or join Wi-Fi before
+/// that work ends.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Startup {
+    /// Nothing holds the handshake: the runtime may confirm once it is
+    /// otherwise healthy. Reported as the hook returns, so it overrides a
+    /// `startup_done(false)` one of its tasks made first.
+    Done,
+    /// A task holds it, and reports `startup_done` when it lets go.
+    Pending,
 }

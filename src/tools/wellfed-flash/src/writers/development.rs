@@ -305,8 +305,11 @@ pub fn plan(update: &Update, current: &[u8], other: Option<&[u8]>) -> Result<Dev
         Vec::new()
     };
 
+    // A finish from an erased marker sector stages that sector first, as a
+    // fresh update does: guaranteed here, not only implied by the images.
+    let marker_erased = update.interrupted && current[..SECTOR].iter().all(|b| *b == 0xff);
     require(
-        update.interrupted || !changed || offsets.first() == Some(&0),
+        (update.interrupted && !marker_erased) || !changed || offsets.first() == Some(&0),
         || DevelopmentError::MarkerNotFirst,
     )?;
 

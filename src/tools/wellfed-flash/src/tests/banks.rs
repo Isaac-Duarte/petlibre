@@ -353,7 +353,12 @@ fn an_erased_marker_finish_still_requires_bank1_unchanged() {
     let mut invalid = stopped.clone();
     invalid[START] = 0;
     let mut port = Fake::new(invalid);
-    assert!(develop(&root, &unit, &mut port, &finish, "t").is_err());
+    assert!(matches!(
+        develop(&root, &unit, &mut port, &finish, "t"),
+        Err(crate::Error::Development(
+            development::DevelopmentError::Bank1Invalid
+        ))
+    ));
     assert!(port.0.borrow().erased.is_empty());
 
     // Bank 1 changed after the plan pinned its first sector.
@@ -380,7 +385,12 @@ fn an_erased_marker_finish_still_requires_bank1_unchanged() {
         &root.join("private/t"),
         &mut |_, _| {},
     );
-    assert!(result.is_err());
+    assert!(matches!(
+        result,
+        Err(crate::Error::Development(
+            development::DevelopmentError::OtherBankChanged
+        ))
+    ));
     assert!(port.0.borrow().erased.is_empty());
 }
 

@@ -152,6 +152,23 @@ fn every_fault_stops_before_activation_on_bank_0() {
 }
 
 #[test]
+fn an_unwanted_chunk_after_a_sector_s_last_chunk_still_stops_in_order() {
+    // The first chunk at or past 3584 is the last of sector 0: a chunk one
+    // sector ahead would be the next one wanted by the time it lands.
+    let (address, identity) = simulator();
+    let mut device = Device::at(OWNER, identity, address);
+    let last = u32::try_from(SECTOR).unwrap() - 512;
+
+    let unwanted = push(
+        &mut device,
+        &Offer::new(2, 0x22),
+        Fault::Unwanted { at: last },
+    );
+    assert_eq!(stopped(unwanted), Some(UpdateStop::Order));
+    assert_eq!(state_on(&mut device, 0).phase, UpdatePhase::Idle);
+}
+
+#[test]
 fn a_cancel_after_a_give_way_lets_bank_0_take_another_manifest() {
     let (address, identity) = simulator();
     let mut device = Device::at(OWNER, identity, address);

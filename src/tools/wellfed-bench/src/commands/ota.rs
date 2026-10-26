@@ -321,8 +321,9 @@ pub struct OtaArgs {
     #[arg(long, conflicts_with = "mqtt")]
     pub downgrade: bool,
     /// Spoil the bench's own transfer, to see the feeder stop it before
-    /// activation: corrupt@N (flip byte N), unwanted@N (a chunk ahead of the
-    /// wanted ones after byte N), stall@N (nothing from byte N for 75 s),
+    /// activation: corrupt@N (flip byte N), unwanted@N (after byte N, the
+    /// first chunk two sectors ahead, before any more wanted ones), stall@N
+    /// (nothing from byte N for 75 s),
     /// drop@N (the connection drops after byte N; the install resumes), or
     /// give-way-only (stop once bank 1 gave way, to offer bank 0 another
     /// manifest next).

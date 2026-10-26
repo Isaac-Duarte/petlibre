@@ -291,8 +291,8 @@ pub enum Fault {
     Corrupt {
         at: u32,
     },
-    /// Once the chunk here is sent, send the next sector's first chunk
-    /// before it is wanted: the install stops in order.
+    /// Once the chunk here is sent, send the first chunk two sectors on,
+    /// and nothing else until it is answered: the install stops in order.
     Unwanted {
         at: u32,
     },
@@ -633,7 +633,8 @@ impl Device {
         let mut out: Vec<(RequestId, Sent, Instant)> = Vec::new();
         let mut written = 0;
         // The unwanted chunk, sent until the stage takes it (a full mailbox
-        // answers Busy), and the request it went under.
+        // answers Busy), and the request it went under. Until it is taken
+        // no wanted chunk goes, so the install cannot reach its offset.
         let mut unwanted: Option<(u32, Option<RequestId>)> = None;
         let mut cancelling: Option<Instant> = None;
 
@@ -662,7 +663,7 @@ impl Device {
                 }
                 unwanted = Some((ahead, Some(id)));
             }
-            while !lost {
+            while !lost && unwanted.is_none() {
                 let next = installer.poll();
                 let (sent, op) = match next {
                     Next::Send(sent, op) => (sent, op),
@@ -723,7 +724,11 @@ impl Device {
                 if let (Sent::Chunk(offset), Fault::Unwanted { at }) = (sent, fault)
                     && offset >= at
                 {
-                    let ahead = (offset / 4096 + 1) * 4096;
+                    // Two sectors on: the sector this chunk is in may
+                    // complete before the stage takes the fault, and then the
+                    // next sector's first chunk is the one it wants.
+                    let sector = wellfed_core::ota::SECTOR_BYTES;
+                    let ahead = (offset / sector + 2) * sector;
                     note(format!("Sending byte {ahead} before it is wanted"));
                     fault = Fault::None;
                     unwanted = Some((ahead, None));

@@ -6,48 +6,85 @@
 //! an unlocked panel, an unlocked Reset hold queues the key reset, and an
 //! unlocked Lock and Mic hold starts BLE setup mode.
 
+use std::sync::{Mutex, MutexGuard};
+
+use wellfed_feeder::feeder::owner::{Owner, POLL_MS, Record};
+use wellfed_feeder::feeder::setup;
+use wellfed_feeder::mailbox::SettingsView;
 use wellfed_feeder::pairing;
 use wellfed_feeder::panel::{Action, Event, Lock, Source};
 use wellfed_feeder_runtime::keys::{self, Change, KeyResult, Requested};
-use wellfed_fw_feeder::owner::{Inputs, Owner, POLL_MS, Record};
-use wellfed_fw_feeder::setup;
+use wellfed_fw_feeder::platform::{Driver, Plaf103};
 use wellfed_sdk::buttons::{Button, Buttons, Gesture};
 use wellfed_sdk::hal::leds::{self, Led};
-use wellfed_sdk::hal::plaf103;
 use wellfed_sdk::hal::sdk::{self, fake};
-use wellfed_sdk::hal::stopped;
+use wellfed_sdk::hal::{buttons, plaf103, settings, stopped};
 
-fn ready() -> Owner {
-    fake::reset_hardware();
-    assert!(stopped::initialize().verified());
-    assert!(leds::initialize());
-    Owner::default()
+/// The button queue, the settings and the key mailbox are process-wide.
+static SERIAL: Mutex<()> = Mutex::new(());
+
+/// The panel's owner on the board's platform.
+struct Rig {
+    _serial: MutexGuard<'static, ()>,
+    owner: Owner,
+    platform: Plaf103,
 }
 
-/// A step at `now_ms`, with whatever records it made.
+impl Rig {
+    fn lock(&self) -> Option<Lock> {
+        self.owner.lock()
+    }
+
+    fn reboot_due(&self, now_ms: u32) -> bool {
+        self.owner.reboot_due(now_ms)
+    }
+}
+
+fn ready() -> Rig {
+    let serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    fake::reset_hardware();
+    buttons::reset();
+    settings::reset();
+    keys::reset();
+    assert!(stopped::initialize().verified());
+    assert!(leds::initialize());
+    Rig {
+        _serial: serial,
+        owner: Owner::default(),
+        platform: Plaf103::new(),
+    }
+}
+
+/// A step at `now_ms` with `gestures` queued by the button service and the
+/// `lights` setting, with whatever records it made.
 fn step(
-    owner: &mut Owner,
+    rig: &mut Rig,
     now_ms: u32,
     gestures: &[Gesture],
     remote: Option<bool>,
     lights: bool,
-) -> (u32, Vec<Record>) {
+) -> (u32, Vec<Record<Driver>>) {
+    for &gesture in gestures {
+        buttons::inject(gesture);
+    }
+    settings::publish(SettingsView {
+        lights,
+        sound: true,
+        volume: 50,
+        generation: 1,
+        writable: true,
+    });
     let mut records = Vec::new();
-    let delay = owner.step(
-        Inputs {
-            now_ms,
-            gestures: gestures.iter().copied(),
-            remote,
-            lights,
-            identity: None,
-        },
-        |record| records.push(record),
-    );
+    let delay = rig
+        .owner
+        .step(&mut rig.platform, now_ms, remote, None, |record| {
+            records.push(record);
+        });
     (delay, records)
 }
 
 /// Steps from `now_ms` until the indicator settles, so it reads back.
-fn settle(owner: &mut Owner, now_ms: u32, lights: bool) -> u32 {
+fn settle(owner: &mut Rig, now_ms: u32, lights: bool) -> u32 {
     let (delay, _) = step(owner, now_ms, &[], None, lights);
     let now = now_ms + delay;
     let (delay, records) = step(owner, now, &[], None, lights);
@@ -184,7 +221,10 @@ fn a_refused_level_turns_the_indicator_off_for_the_boot() {
                 lock: Lock::Unlocked,
                 source: Source::Remote
             }),
-            Record::Indicator { decision: None },
+            Record::Indicator {
+                led: "PA4",
+                check: None
+            },
         ]
     );
     assert!(!lit());
@@ -204,9 +244,9 @@ fn a_refused_level_turns_the_indicator_off_for_the_boot() {
 
 #[test]
 fn records_read_as_uart_lines() {
-    let line = |record| {
+    let line = |record: Record<Driver>| {
         let mut text = String::new();
-        wellfed_fw_feeder::owner::describe(record, &mut text).unwrap();
+        wellfed_feeder::feeder::owner::describe(record, &mut text).unwrap();
         text
     };
     assert_eq!(
@@ -245,13 +285,13 @@ fn records_read_as_uart_lines() {
         "reset keys=queued"
     );
     assert_eq!(
-        line(Record::Indicator { decision: None }),
+        line(Record::Indicator {
+            led: "PA4",
+            check: None
+        }),
         "indicator led=PA4 stop=refused"
     );
 }
-
-/// Pairing and the key reset reach process-wide mailboxes.
-static KEYS: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn down(buttons: &[Button]) -> Gesture {
     Gesture::Down {
@@ -273,7 +313,7 @@ fn chord(buttons: &[Button]) -> Buttons {
 }
 
 /// An owner stepped once, then unlocked by a Lock hold.
-fn unlocked() -> (Owner, u32) {
+fn unlocked() -> (Rig, u32) {
     let mut owner = ready();
     let now = settle(&mut owner, 0, true);
     step(&mut owner, now, &[lock_hold()], None, true);
@@ -283,7 +323,6 @@ fn unlocked() -> (Owner, u32) {
 
 #[test]
 fn lock_then_dispense_held_opens_recovery_without_a_feed() {
-    let _guard = KEYS.lock().unwrap_or_else(|e| e.into_inner());
     let (mut owner, now) = unlocked();
 
     let gestures = [
@@ -309,7 +348,6 @@ fn lock_then_dispense_held_opens_recovery_without_a_feed() {
 
 #[test]
 fn a_locked_panel_refuses_recovery() {
-    let _guard = KEYS.lock().unwrap_or_else(|e| e.into_inner());
     let mut owner = ready();
     let now = settle(&mut owner, 0, true);
 
@@ -331,8 +369,6 @@ fn a_locked_panel_refuses_recovery() {
 
 #[test]
 fn an_unlocked_reset_hold_queues_the_key_reset() {
-    let _guard = KEYS.lock().unwrap_or_else(|e| e.into_inner());
-    keys::reset();
     let mut owner = ready();
     let now = settle(&mut owner, 0, true);
 

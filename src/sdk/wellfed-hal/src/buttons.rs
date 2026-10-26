@@ -145,6 +145,13 @@ pub fn next() -> Option<Gesture> {
     Gesture::unpack(word)
 }
 
+/// Tests only: queue `gesture` as the service would, for the reader.
+#[cfg(not(target_os = "none"))]
+#[doc(hidden)]
+pub fn inject(gesture: Gesture) {
+    publish(gesture);
+}
+
 /// Tests only: empty the queue.
 #[doc(hidden)]
 pub fn reset() {

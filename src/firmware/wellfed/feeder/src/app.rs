@@ -3,17 +3,14 @@
 
 use core::ffi::c_void;
 
-use wellfed_feeder::panel::{BUTTONS, Event, Source};
-use wellfed_feeder_runtime::panel;
-use wellfed_proto::api::{EventBody, Refusal, Source as EventSource};
+use wellfed_feeder::feeder::{Feeder, Feeds};
+use wellfed_feeder::panel::BUTTONS;
+use wellfed_proto::api::{Refusal, Source};
 use wellfed_sdk::Slot;
-use wellfed_sdk::hal::{sdk, settings, startup};
+use wellfed_sdk::hal::{sdk, startup};
 
-use crate::api::{self, Api};
 use crate::feeding::{self, Feeding};
-use crate::keys::{self, Identity};
-use crate::owner::{self, Inputs, Owner};
-use crate::setup;
+use crate::platform::Plaf103;
 
 wellfed_sdk::firmware!(start);
 
@@ -40,21 +37,16 @@ fn start() {
     gap_probe::start();
 }
 
-/// The step, a Noise operation and one formatted record; the build's stack
-/// audit checks the bound. A handshake operation's X25519 is the deepest
-/// path (3820 bytes). The device API took the bound to 4,552 bytes,
-/// just inside 6 KiB's margin, so the loop has 8 KiB: the feeding
-/// owner joins it next.
+/// The feeding owner's step, then the pass with a Noise operation and one
+/// formatted record; the build's stack audit checks the bound. A handshake
+/// operation's X25519 is the deepest path, about 5 KiB with the device API
+/// above it, inside 6 KiB's margin, so the loop has 8 KiB.
 const LOOP_STACK_WORDS: u16 = 2048;
 
-/// The loop task's; see `loop_task`. Built at compile time: it holds setup
-/// mode's state, which the loop's stack cannot afford to move.
-static OWNER: Slot<Owner> = Slot::filled(Owner::new());
-/// The loop task's.
-static IDENTITY: Slot<Identity> = Slot::new();
-/// The device API's session table is larger than the loop's stack, so it is
-/// built at compile time. The loop task's.
-static API: Slot<Api> = Slot::filled(Api::new());
+/// The loop task's: the product's loop on this board. Built at compile
+/// time: it holds the device API's session table and setup mode's state,
+/// which the loop's stack cannot afford to move.
+static FEEDER: Slot<Feeder<Plaf103>> = Slot::filled(Feeder::new(Plaf103::new()));
 /// The loop task's half of the feeding owner; the owner itself is
 /// `feeding`'s.
 static FEEDING: Slot<Feeding> = Slot::new();
@@ -69,22 +61,6 @@ fn log(args: core::fmt::Arguments<'_>) {
     }
 }
 
-struct Panel(owner::Record);
-
-impl core::fmt::Display for Panel {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        owner::describe(self.0, f)
-    }
-}
-
-struct Key(keys::Record);
-
-impl core::fmt::Display for Key {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        keys::describe(self.0, f)
-    }
-}
-
 struct FeedingRecord(feeding::Record);
 
 impl core::fmt::Display for FeedingRecord {
@@ -93,15 +69,7 @@ impl core::fmt::Display for FeedingRecord {
     }
 }
 
-struct ApiRecord(api::Record);
-
-impl core::fmt::Display for ApiRecord {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        api::describe(self.0, f)
-    }
-}
-
-impl api::Feeds for Feeding {
+impl Feeds for Feeding {
     fn feeding(&self) -> bool {
         Feeding::feeding(self)
     }
@@ -111,7 +79,7 @@ impl api::Feeds for Feeding {
     }
 
     #[cfg(not(feature = "gap-probe"))]
-    fn submit(&mut self, portions: u8, by: EventSource) -> Result<u32, Refusal> {
+    fn submit(&mut self, portions: u8, by: Source) -> Result<u32, Refusal> {
         Feeding::submit(self, portions, by, |record| {
             log(format_args!("PLOWN1 {}\r\n", FeedingRecord(record)));
         })
@@ -120,7 +88,7 @@ impl api::Feeds for Feeding {
     /// The scheduling measurement runs with nobody at the motor, so its
     /// image cannot start a feed: the owner stays at rest.
     #[cfg(feature = "gap-probe")]
-    fn submit(&mut self, _: u8, _: EventSource) -> Result<u32, Refusal> {
+    fn submit(&mut self, _: u8, _: Source) -> Result<u32, Refusal> {
         Err(Refusal::Unavailable)
     }
 
@@ -134,12 +102,9 @@ impl api::Feeds for Feeding {
 }
 
 unsafe extern "C" fn loop_task(_: *mut c_void) -> u32 {
-    let (Some(mut owner), Some(mut api), Some(mut identity), Some(mut feeding)) = (
-        OWNER.enter(),
-        API.enter(),
-        IDENTITY.enter_or_init(Identity::default),
-        FEEDING.enter_or_init(Feeding::default),
-    ) else {
+    let (Some(mut feeder), Some(mut feeding)) =
+        (FEEDER.enter(), FEEDING.enter_or_init(Feeding::default))
+    else {
         return 0;
     };
 
@@ -147,73 +112,15 @@ unsafe extern "C" fn loop_task(_: *mut c_void) -> u32 {
     gap_probe::LOOP.wake(sdk::systimer_ticks());
     #[cfg(feature = "owner-stall")]
     stall::step();
-    let feed_delay = feeding.step(|record| {
-        log(format_args!("PLOWN1 {}\r\n", FeedingRecord(record)));
-    });
-
-    if let Some(record) = identity.step() {
-        log(format_args!("PLID1 {}\r\n", Key(record)));
-    }
+    let feed_delay = feeding.step(
+        |record| log(format_args!("PLOWN1 {}\r\n", FeedingRecord(record))),
+        |body| feeder.record_outcome(sdk::uptime_ms(), body),
+    );
 
     let now_ms = sdk::uptime_ms();
-    let inputs = Inputs {
-        now_ms,
-        gestures: core::iter::from_fn(wellfed_sdk::buttons::next),
-        remote: panel::take(),
-        lights: settings::current().is_none_or(|view| view.lights),
-        identity: identity.keypair(),
-    };
-    let mut delay_ms = owner.step(inputs, |record| match record {
-        owner::Record::Setup(setup::Record::Ble(_)) => {
-            log(format_args!("PLBLE1 {}\r\n", Panel(record)));
-        }
-        owner::Record::Setup(setup::Record::Audio(_)) => {
-            log(format_args!("PLAUD1 {}\r\n", Panel(record)));
-        }
-        owner::Record::Setup(_) => log(format_args!("PLSET1 {}\r\n", Panel(record))),
-        owner::Record::Panel(Event::Changed { lock, source }) => {
-            // A client's change is recorded by the device API, with who made it.
-            if source != Source::Remote {
-                let by = match source {
-                    Source::Button => EventSource::Panel,
-                    _ => EventSource::Feeder,
-                };
-                api::record_event(EventBody::Lock {
-                    locked: lock.locked(),
-                    by,
-                });
-            }
-            log(format_args!("PLPANEL1 {}\r\n", Panel(record)));
-        }
-        _ => log(format_args!("PLPANEL1 {}\r\n", Panel(record))),
+    let mut delay_ms = feeder.pass(now_ms, &mut *feeding, |record| {
+        log(format_args!("{} {record}\r\n", record.tag()));
     });
-
-    if owner.reboot_due(now_ms) {
-        wellfed_sdk::request_reset();
-    }
-
-    // Requests read what the owner holds after this step.
-    if let Some(lock) = owner.lock() {
-        panel::publish(lock.locked());
-    }
-
-    let locked = owner.lock().map(wellfed_feeder::panel::Lock::locked);
-    let identity = identity.keypair();
-    let recovery = owner.take_recovery();
-    let signer = owner.take_signer();
-    let inputs = api::Inputs {
-        now_ms,
-        pairing: owner.pairing(),
-        identity,
-        locked,
-        recovery,
-        signer,
-        feeds: &mut *feeding,
-    };
-    let api_delay = api.step(inputs, |record| {
-        log(format_args!("PLAPI1 {}\r\n", ApiRecord(record)));
-    });
-    delay_ms = delay_ms.min(api_delay);
     if let Some(feed_delay) = feed_delay {
         delay_ms = delay_ms.min(feed_delay);
     }

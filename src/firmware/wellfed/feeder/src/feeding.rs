@@ -7,10 +7,11 @@
 //! runtime's watchdog rule is unchanged. At rest the owner holds the
 //! board, samples the inputs, and beats.
 //!
-//! A feed comes from the device API: the loop submits it under the next
-//! journal id, answers once the owner has reserved it, and when the owner
-//! reports its result, logs what the drive measured, records a `Fed` event
-//! and acknowledges it, which lets the owner take the next. One feed at a
+//! A feed comes from the device API (`wellfed_feeder::feeder::Feeds`): the
+//! loop submits it under the next journal id, answers once the owner has
+//! reserved it, and when the owner reports its result, logs what the drive
+//! measured, records a `Fed` event through the product's event recorder and
+//! acknowledges it, which lets the owner take the next. One feed at a
 //! time; a feed whose owner faulted without a durable result is recorded
 //! as uncertain. So is a feed a reset interrupted: the owner resolves its
 //! reservation when it opens, and the loop records that `Fed` event, by the
@@ -185,7 +186,7 @@ mod target {
     use wellfed_core::feed::storage::OwnerResult;
     use wellfed_core::store::feed_journal::{FeedJournal, JournalError};
     use wellfed_feeder::feed::{self, Durability};
-    use wellfed_proto::api::{Refusal, Source};
+    use wellfed_proto::api::{EventBody, Refusal, Source};
     use wellfed_sdk::hal::interlock::{self, Held, INTERLOCK};
     use wellfed_sdk::hal::owner::{
         FeedTrace, Owner, OwnerConfig, OwnerFault, OwnerState, OwnerStatus, Step, SubmitResult,
@@ -416,8 +417,13 @@ mod target {
     }
 
     impl Feeding {
-        /// One pass; the owner's delay while it runs.
-        pub fn step(&mut self, mut record: impl FnMut(Record)) -> Option<u32> {
+        /// One pass; the owner's delay while it runs. A feed's end goes to
+        /// the log (`record`) and its `Fed` event to `outcome`.
+        pub fn step(
+            &mut self,
+            mut record: impl FnMut(Record),
+            mut outcome: impl FnMut(EventBody),
+        ) -> Option<u32> {
             if !self.settled {
                 if !wellfed_sdk::storage_armed() {
                     return None;
@@ -463,7 +469,7 @@ mod target {
                 });
             }
 
-            self.follow(&owner, &status, &mut record);
+            self.follow(&owner, &status, &mut record, &mut outcome);
             self.release(&status, &mut record);
             delay
         }
@@ -498,9 +504,10 @@ mod target {
             owner: &Owner<Journal>,
             status: &OwnerStatus,
             record: &mut impl FnMut(Record),
+            outcome: &mut impl FnMut(EventBody),
         ) {
             let Some(current) = self.current.as_mut() else {
-                self.report_interrupted(owner, status, record);
+                self.report_interrupted(owner, status, record, outcome);
                 return;
             };
             let ours = status.result.id == current.feed;
@@ -547,7 +554,7 @@ mod target {
             }
             // The feed id fits the event: `submit` refused any that does not.
             let feed = u32::try_from(current.feed).unwrap_or(u32::MAX);
-            crate::api::record_outcome(feed::fed(feed, &result, durability, current.by));
+            outcome(feed::fed(feed, &result, durability, current.by));
             if status.state == OwnerState::Terminal {
                 owner.acknowledge(current.feed);
             }
@@ -562,6 +569,7 @@ mod target {
             owner: &Owner<Journal>,
             status: &OwnerStatus,
             record: &mut impl FnMut(Record),
+            outcome: &mut impl FnMut(EventBody),
         ) {
             let Some(feed) = self.interrupted else {
                 return;
@@ -584,7 +592,7 @@ mod target {
             // The journal holds the id under the high water `submit` checks.
             let number = u32::try_from(feed).unwrap_or(u32::MAX);
             let body = feed::fed(number, &status.result, Durability::Durable, Source::Feeder);
-            crate::api::record_outcome(body);
+            outcome(body);
         }
 
         /// Hand one feed to the owner on `by`'s behalf: the number its

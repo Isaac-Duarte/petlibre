@@ -4,14 +4,15 @@
 use std::sync::{Mutex, MutexGuard};
 
 use wellfed_core::store::slot::SlotIo;
-use wellfed_feeder::api::KeyChange;
+use wellfed_feeder::api::{Device, KeyChange};
+use wellfed_feeder::feeder::{Feeder, NoFeeds};
 use wellfed_feeder::mailbox::{SettingsFields, SettingsResult, SettingsView, WifiResult};
 use wellfed_feeder::store::clients::{Label, Role};
 use wellfed_feeder::store::net::{Credentials, NetStore};
 use wellfed_feeder_runtime::{keys, network};
-use wellfed_fw_feeder::api::{keys_request, settings_request, wifi_request};
 use wellfed_fw_feeder::feeding::{claim_outputs, writes_queued};
-use wellfed_sdk::hal::interlock::Interlock;
+use wellfed_fw_feeder::platform::Plaf103;
+use wellfed_sdk::hal::interlock::{INTERLOCK, Interlock};
 use wellfed_sdk::hal::sdk::fake;
 use wellfed_sdk::hal::settings;
 
@@ -39,10 +40,32 @@ impl SlotIo for FakeNet {
     }
 }
 
+/// The device API's view of the feeder on the board's platform, which
+/// reads the outputs' turn from the runtime's interlock.
+fn device<R>(call: impl FnOnce(&mut dyn Device) -> R) -> R {
+    let mut feeder = Box::new(Feeder::new(Plaf103::new()));
+    let mut feeds = NoFeeds;
+    let mut device = feeder.device(0, &mut feeds);
+    call(&mut device)
+}
+
+fn settings_request(change: SettingsFields) -> SettingsResult {
+    device(|device| device.settings(change))
+}
+
+fn wifi_request(change: Option<Option<Credentials>>) -> WifiResult {
+    device(|device| device.wifi(change))
+}
+
+fn keys_request(change: KeyChange) -> Option<u32> {
+    device(|device| device.keys(change))
+}
+
 /// The stores as the settings writer publishes them once open, writable.
 fn start() -> MutexGuard<'static, ()> {
     let guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     fake::reset_hardware();
+    INTERLOCK.reset();
     settings::reset();
     keys::reset();
     // SAFETY: the test holds `SERIAL` and runs no Wi-Fi task.
@@ -71,41 +94,34 @@ fn volume(volume: u8) -> SettingsFields {
 #[test]
 fn writes_during_a_feed_are_refused_busy_and_reads_still_answer() {
     let _guard = start();
-    let interlock = Interlock::new();
-    interlock.claim_feed(u32::MAX).unwrap();
+    INTERLOCK.claim_feed(u32::MAX).unwrap();
     let credentials = Credentials::new(b"net", b"password").unwrap();
     let revoke = KeyChange::Revoke { key: [7; 32] };
 
-    assert_eq!(
-        settings_request(&interlock, volume(7)),
-        SettingsResult::Busy
-    );
+    assert_eq!(settings_request(volume(7)), SettingsResult::Busy);
     assert!(matches!(
-        settings_request(&interlock, SettingsFields::default()),
+        settings_request(SettingsFields::default()),
         SettingsResult::Current { pending: false, .. }
     ));
-    assert_eq!(
-        wifi_request(&interlock, Some(Some(credentials))),
-        WifiResult::Busy
-    );
+    assert_eq!(wifi_request(Some(Some(credentials))), WifiResult::Busy);
     assert!(matches!(
-        wifi_request(&interlock, None),
+        wifi_request(None),
         WifiResult::Current { pending: false, .. }
     ));
-    assert_eq!(keys_request(&interlock, revoke), None);
+    assert_eq!(keys_request(revoke), None);
     // Nothing was queued for the writer.
     assert_eq!(settings::pending(), None);
     assert!(!network::saving());
     assert_eq!(keys::pending(), None);
 
     // At rest each is queued for the writer.
-    interlock.release_feed();
+    INTERLOCK.release_feed();
     assert!(matches!(
-        settings_request(&interlock, volume(7)),
+        settings_request(volume(7)),
         SettingsResult::Current { pending: true, .. }
     ));
     assert!(matches!(
-        wifi_request(&interlock, Some(Some(credentials))),
+        wifi_request(Some(Some(credentials))),
         WifiResult::Current { pending: true, .. }
     ));
     let enroll = KeyChange::Enroll {
@@ -113,7 +129,7 @@ fn writes_during_a_feed_are_refused_busy_and_reads_still_answer() {
         label: Label::new(b"phone").unwrap(),
         role: Role::Member,
     };
-    assert!(keys_request(&interlock, enroll).is_some());
+    assert!(keys_request(enroll).is_some());
 }
 
 /// A client's change queued just before a feed is written before the feed
@@ -124,27 +140,27 @@ fn a_change_queued_just_before_a_feed_goes_first() {
 
     use wellfed_sdk::hal::interlock::WRITE_WAIT_MS;
 
-    fn queue_settings(interlock: &Interlock) {
+    fn queue_settings() {
         assert!(matches!(
-            settings_request(interlock, volume(7)),
+            settings_request(volume(7)),
             SettingsResult::Current { pending: true, .. }
         ));
     }
-    fn queue_wifi(interlock: &Interlock) {
+    fn queue_wifi() {
         let credentials = Credentials::new(b"net", b"password").unwrap();
         assert!(matches!(
-            wifi_request(interlock, Some(Some(credentials))),
+            wifi_request(Some(Some(credentials))),
             WifiResult::Current { pending: true, .. }
         ));
     }
-    fn queue_revoke(interlock: &Interlock) {
-        assert!(keys_request(interlock, KeyChange::Revoke { key: [7; 32] }).is_some());
+    fn queue_revoke() {
+        assert!(keys_request(KeyChange::Revoke { key: [7; 32] }).is_some());
     }
 
     for queue in [queue_settings, queue_wifi, queue_revoke] {
         let _guard = start();
+        queue();
         let interlock = Interlock::new();
-        queue(&interlock);
         assert!(writes_queued());
 
         // The settings writer takes it on its next poll and finishes it.

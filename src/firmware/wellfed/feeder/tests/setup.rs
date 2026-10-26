@@ -13,6 +13,7 @@ use wellfed_client::setup::{
 use wellfed_core::ble_setup::{PREFIX, parse_prefix};
 use wellfed_core::buttons::{Button, Buttons, Gesture};
 use wellfed_core::tone::Tune;
+use wellfed_feeder::feeder::setup::{self, Ended, PROVE_MS, Setup};
 use wellfed_feeder::mailbox::SettingsView;
 use wellfed_feeder::pairing::{Config, Event, Pairing, Path, Refusal as PairRefusal};
 use wellfed_feeder::panel::Lock;
@@ -20,7 +21,7 @@ use wellfed_feeder::store::clients::Role;
 use wellfed_feeder::store::net::NetStore;
 use wellfed_feeder_runtime::keys::{self, Change, KeyResult};
 use wellfed_feeder_runtime::network;
-use wellfed_fw_feeder::setup::{Ended, PROVE_MS, Record, Setup};
+use wellfed_fw_feeder::platform::{Driver, Plaf103};
 use wellfed_proto::setup::{Enrolled, Refusal, Reply, WifiSaved};
 use wellfed_sdk::hal::power::{self, Monitor};
 use wellfed_sdk::hal::sdk::fake::{self, ble_record};
@@ -37,8 +38,11 @@ fn model(reply: Reply) -> wellfed_model::setup::Reply {
 /// The mailboxes are process-wide; the fake hardware is per thread.
 static SERIAL: Mutex<()> = Mutex::new(());
 
+type Record = setup::Record<Driver>;
+
 struct Bench {
     _serial: MutexGuard<'static, ()>,
+    platform: Plaf103,
     setup: Setup,
     pairing: Pairing,
     identity: Keypair,
@@ -63,9 +67,11 @@ impl Bench {
         assert_eq!(wellfed_sdk::hal::rng::start().result, Ok(()));
         publish(0, None);
 
+        let mut platform = Plaf103::new();
         let mut bench = Self {
             _serial: serial,
-            setup: Setup::new(0),
+            setup: Setup::new(&mut platform, 0),
+            platform,
             pairing: Pairing::new(Config::DEFAULT),
             identity: Keypair::from_secret([1; 32]),
             power: Monitor::default(),
@@ -76,7 +82,7 @@ impl Bench {
         bench.step(None);
         assert!(matches!(
             bench.records.as_slice(),
-            [Record::Ble(ble::Record::Ready { .. })]
+            [Record::Driver(Driver::Ble(ble::Record::Ready { .. }))]
         ));
         bench.records.clear();
         bench
@@ -91,6 +97,7 @@ impl Bench {
         let now = self.now();
         let records = &mut self.records;
         let delay = self.setup.step(
+            &mut self.platform,
             now,
             &mut self.pairing,
             event,
@@ -118,7 +125,7 @@ impl Bench {
         self.records
             .iter()
             .filter_map(|r| match r {
-                Record::Audio(audio::Record::Play { tune, .. }) => Some(*tune),
+                Record::Driver(Driver::Audio(audio::Record::Play { tune, .. })) => Some(*tune),
                 _ => None,
             })
             .collect()
@@ -322,7 +329,7 @@ fn a_proven_ask_enrolls_saves_the_wifi_and_reboots() {
     // Advertising stops, and the reboot comes once the reply had time.
     assert_eq!(fake::with(|h| h.ble_advertising), Advertising::Off);
     assert!(!bench.setup.reboot_due(bench.now()));
-    fake::with(|h| h.uptime_ms += wellfed_fw_feeder::setup::REBOOT_MS);
+    fake::with(|h| h.uptime_ms += setup::REBOOT_MS);
     assert!(bench.setup.reboot_due(bench.now()));
 }
 
@@ -353,7 +360,7 @@ fn an_unanswered_ask_is_refused_and_enrolls_nothing() {
         0,
         "the client may hang up first"
     );
-    fake::with(|h| h.uptime_ms += wellfed_fw_feeder::setup::LINGER_MS);
+    fake::with(|h| h.uptime_ms += setup::LINGER_MS);
     bench.step(None);
     assert_eq!(fake::with(|h| h.ble_disconnects), 1);
     assert!(!bench.setup.reboot_due(bench.now()), "setup mode stays");
@@ -404,9 +411,13 @@ fn a_foreign_first_message_drops_the_host() {
     bench.connect();
     write(&[0; 5]);
     bench.steps(3);
-    assert!(bench.records.contains(&Record::Ble(ble::Record::Drop {
-        reason: ble::DropReason::Protocol
-    })));
+    assert!(
+        bench
+            .records
+            .contains(&Record::Driver(Driver::Ble(ble::Record::Drop {
+                reason: ble::DropReason::Protocol
+            })))
+    );
 }
 
 #[test]
@@ -416,7 +427,7 @@ fn it_advertises_only_on_mains_and_reboots_when_idle() {
     bench.step(None);
     assert_eq!(fake::with(|h| h.ble_advertising), Advertising::Off);
 
-    fake::with(|h| h.uptime_ms += wellfed_fw_feeder::setup::IDLE_MS);
+    fake::with(|h| h.uptime_ms += setup::IDLE_MS);
     bench.step(None);
     assert!(
         bench
@@ -442,7 +453,7 @@ fn a_proven_ask_completes_even_if_the_client_leaves_and_returns() {
     bench.steps(3);
     assert!(!bench.records.contains(&Record::Session), "no new session");
     assert!(bench.records.contains(&Record::Fault {
-        fault: wellfed_fw_feeder::setup::Fault::Busy
+        fault: setup::Fault::Busy
     }));
 
     keys::finish(KeyResult::Done);

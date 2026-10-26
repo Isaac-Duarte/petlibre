@@ -1,24 +1,23 @@
 //! EXPERIMENTAL product firmware for the PLAF103 on the Wellfed SDK: the
-//! one `feeder` firmware every owner runs ([product architecture]). It is the
-//! PLAF103's glue between the SDK and the product policy in
-//! `wellfed-feeder`, and grows owner by owner.
+//! one `feeder` firmware every owner runs ([product architecture]). The
+//! product itself is `wellfed-feeder`'s loop (`wellfed_feeder::feeder`):
+//! the panel and its child lock, pairing and BLE setup mode, the device
+//! API with its sockets and mDNS, and the event recorder, one pass at a
+//! time. This crate is the PLAF103's wiring for it:
+//! - [`platform`]: the loop's `Platform` on this board: the lock indicator,
+//!   setup mode's BLE link and speaker, lwIP's sockets, and the runtime's
+//!   mailboxes, clock, interlock and update mailbox;
+//! - [`feeding`]: the feeding owner with this board's limits, which the loop
+//!   task steps before each pass and the device API reaches as the pass's
+//!   `Feeds`; it takes turns with the Wi-Fi task's joins (an association
+//!   stalls every task, so neither starts while the other runs);
+//! - the start hook and the loop task (`app`), beside the button service.
 //!
-//! So far it runs the panel: the button service and one loop task that keeps
-//! the child lock, shows it on the lock indicator, and takes signed
-//! lock changes from the network. The loop also holds the feeder's identity
-//! key pair and the pairing policy: a Reset hold clears the keys, and a Lock
-//! and Mic hold starts BLE setup mode, where a new owner's phone gives the
-//! feeder Wi-Fi and its key. The loop also serves the device API
-//! (`api`): Noise sessions over TCP, advertised over mDNS, with the
-//! event history and live samples. The loop also steps the feeding owner
-//! (`feeding`), which holds the motor and emitters stopped and supervised
-//! and runs the feeds the device API submits, taking turns with the Wi-Fi
-//! task's joins (an association stalls every task, so neither starts while
-//! the other runs). The `entropy` variant streams raw noise
-//! samples for the host's entropy estimate, the `owner-stall` variant stalls
-//! the loop on purpose, for the bench to watch the owner's beat lapse, and
-//! the `gap-probe` variant measures how long the loop and a priority-4 task
-//! wait across Wi-Fi rejoins (`gaps`), with feeds refused.
+//! The `entropy` variant streams raw noise samples for the host's entropy
+//! estimate, the `owner-stall` variant stalls the loop on purpose, for the
+//! bench to watch the owner's beat lapse, and the `gap-probe` variant
+//! measures how long the loop and a priority-4 task wait across Wi-Fi
+//! rejoins (`gaps`), with feeds refused.
 //!
 //! [product architecture]: ../../../../docs/firmware/product-architecture.md
 #![cfg_attr(target_os = "none", no_std)]
@@ -26,12 +25,9 @@
 #[cfg(all(target_os = "none", not(feature = "km4")))]
 compile_error!("wellfed-fw-feeder target builds are KM4-only");
 
-pub mod api;
 #[cfg(target_os = "none")]
 mod app;
 pub mod entropy;
 pub mod feeding;
 pub mod gaps;
-pub mod keys;
-pub mod owner;
-pub mod setup;
+pub mod platform;

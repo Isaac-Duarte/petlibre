@@ -720,12 +720,14 @@ impl<S: OwnerStorage> OwnerTask<S> {
                         Lost::Supervision => (OwnerFault::Hardware, FeedReason::Output),
                     };
                     (*this).fail(fault);
-                    // Lost sensors are held, not reset on: the owner runs
-                    // only on a confirmed build, so a reset would only meet
-                    // the same converter again, every few seconds. Held,
-                    // the feeder stays reachable and says why it cannot feed
-                    // until a restart; outputs are re-verified stopped on
-                    // every beat. A lost supervisor still resets.
+                    // Lost sensors are held, not reset on: a reset would
+                    // only meet the same converter again, every few
+                    // seconds. Held, the feeder stays reachable and says why
+                    // it cannot feed until a restart; outputs are
+                    // re-verified stopped on every beat. (A trial build's
+                    // faulted owner fails its proof of feeding, and the
+                    // runtime resets that one at once.) A lost supervisor
+                    // still resets.
                     (*this).held |= lost == Lost::Sensors;
                     if (*this).reserved
                         && ((*this).active_phase() || (*this).state == OwnerState::Reporting)

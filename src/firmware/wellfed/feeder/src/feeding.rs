@@ -603,9 +603,7 @@ mod target {
     };
     use wellfed_sdk::{JournalSlots, Slot};
 
-    use super::{
-        CONFIG, JOURNAL, Opened, PowerCycle, Proof, Record, Recovery, drive_figures,
-    };
+    use super::{CONFIG, JOURNAL, Opened, PowerCycle, Proof, Record, Recovery, drive_figures};
 
     type Journal = FeedJournal<JournalSlots>;
 
@@ -751,7 +749,9 @@ mod target {
         }
 
         /// The one restart a power cycle allows to recover lost sensors
-        /// (`Recovery`), through the restart every reboot takes.
+        /// (`Recovery`), through the deliberate restart every reboot takes,
+        /// which no reset storm counts. A held boot never gets here: its
+        /// owner stays closed.
         fn recover(&mut self, status: &OwnerStatus, now: u32, record: &mut impl FnMut(Record)) {
             use wellfed_sdk::hal::flash_lock::provider::BOOT_COUNT_REGISTER;
             use wellfed_sdk::hal::sdk;

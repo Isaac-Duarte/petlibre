@@ -5,6 +5,8 @@
 
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::atomic::AtomicBool;
+use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::thread::JoinHandle;
 
 use ed25519_dalek::{Signer, SigningKey};
 use wellfed_client::update::{Image, InstallError};
@@ -15,6 +17,7 @@ use wellfed_feeder_sim::flash::Flash;
 use wellfed_feeder_sim::harness::Running;
 use wellfed_model::{UpdatePhase, UpdateStop};
 use sha2::{Digest, Sha256};
+use tokio::sync::oneshot;
 
 use super::{Answer, Ask, Device, DeviceError, Fault};
 
@@ -25,30 +28,76 @@ fn bench() -> SigningKey {
     SigningKey::from_bytes(&BENCH)
 }
 
-/// The simulator on a thread of its own, in real time: its address and
-/// identity. It runs until the test process ends.
-fn simulator() -> (SocketAddr, [u8; 32]) {
-    let (send, started) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        runtime.block_on(tokio::task::LocalSet::new().run_until(async move {
-            let owner = *wellfed_session::noise::Keypair::from_secret(OWNER).public();
-            let sim = Running::start_with(
-                &Flash::memory(),
-                &Banks::new(),
-                Some(bench().verifying_key().to_bytes()),
-                Some(owner),
-                SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
-            )
-            .await;
-            send.send((sim.address, sim.identity)).unwrap();
-            std::future::pending::<()>().await;
-        }));
-    });
-    started.recv().unwrap()
+/// One simulator per process at a time: the update stage's mailbox and the
+/// interlock are process-wide statics, as on the feeder, and every boot
+/// resets them. Two simulators in one process (libtest's threads, or one
+/// left running after its test) take each other's requests and progress.
+static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
+
+/// The simulator on a thread of its own, in real time, holding the process
+/// to itself until dropped, which stops it.
+struct Simulator {
+    address: SocketAddr,
+    identity: [u8; 32],
+    quit: Option<oneshot::Sender<()>>,
+    thread: Option<JoinHandle<()>>,
+    _alone: MutexGuard<'static, ()>,
+}
+
+impl Simulator {
+    fn start() -> Self {
+        // A test that failed while holding it stopped its simulator first.
+        let alone = ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner);
+
+        let (send, started) = std::sync::mpsc::channel();
+        let (quit, quitting) = oneshot::channel();
+        let thread = std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            runtime.block_on(tokio::task::LocalSet::new().run_until(async move {
+                let owner = *wellfed_session::noise::Keypair::from_secret(OWNER).public();
+                let sim = Running::start_with(
+                    &Flash::memory(),
+                    &Banks::new(),
+                    Some(bench().verifying_key().to_bytes()),
+                    Some(owner),
+                    SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
+                )
+                .await;
+                send.send((sim.address, sim.identity)).unwrap();
+                let _ = quitting.await;
+                sim.stop().await;
+            }));
+        });
+        let (address, identity) = started.recv().unwrap();
+
+        Self {
+            address,
+            identity,
+            quit: Some(quit),
+            thread: Some(thread),
+            _alone: alone,
+        }
+    }
+
+    fn device(&self) -> Device {
+        Device::at(OWNER, self.identity, self.address)
+    }
+}
+
+impl Drop for Simulator {
+    fn drop(&mut self) {
+        // Stopped and joined before the lock goes, so the next test's
+        // simulator is alone with the statics.
+        if let Some(quit) = self.quit.take() {
+            let _ = quit.send(());
+        }
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
 }
 
 /// A signed image for build `build`.
@@ -118,8 +167,8 @@ fn stopped(result: Result<(), DeviceError>) -> Option<UpdateStop> {
 
 #[test]
 fn a_clean_push_and_a_dropped_one_both_activate() {
-    let (address, identity) = simulator();
-    let mut device = Device::at(OWNER, identity, address);
+    let sim = Simulator::start();
+    let mut device = sim.device();
 
     push(&mut device, &Offer::new(2, 0x22), Fault::None).unwrap();
     assert_eq!(state_on(&mut device, 1).min_version, 2);
@@ -130,8 +179,8 @@ fn a_clean_push_and_a_dropped_one_both_activate() {
 
 #[test]
 fn every_fault_stops_before_activation_on_bank_0() {
-    let (address, identity) = simulator();
-    let mut device = Device::at(OWNER, identity, address);
+    let sim = Simulator::start();
+    let mut device = sim.device();
 
     let corrupt = push(
         &mut device,
@@ -155,8 +204,8 @@ fn every_fault_stops_before_activation_on_bank_0() {
 fn an_unwanted_chunk_after_a_sector_s_last_chunk_still_stops_in_order() {
     // The first chunk at or past 3584 is the last of sector 0: a chunk one
     // sector ahead would be the next one wanted by the time it lands.
-    let (address, identity) = simulator();
-    let mut device = Device::at(OWNER, identity, address);
+    let sim = Simulator::start();
+    let mut device = sim.device();
     let last = u32::try_from(SECTOR).unwrap() - 512;
 
     let unwanted = push(
@@ -170,8 +219,8 @@ fn an_unwanted_chunk_after_a_sector_s_last_chunk_still_stops_in_order() {
 
 #[test]
 fn a_cancel_after_a_give_way_lets_bank_0_take_another_manifest() {
-    let (address, identity) = simulator();
-    let mut device = Device::at(OWNER, identity, address);
+    let sim = Simulator::start();
+    let mut device = sim.device();
 
     push(&mut device, &Offer::new(2, 0x22), Fault::GiveWayOnly).unwrap();
     state_on(&mut device, 0);

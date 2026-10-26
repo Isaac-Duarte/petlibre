@@ -38,11 +38,22 @@ fn summary(output: &Output) -> Value {
     serde_json::from_str(stdout.lines().last().unwrap()).unwrap()
 }
 
+/// Another process holding the bench, killed when the test ends, passed
+/// or not.
+struct Other(Child);
+
+impl Drop for Other {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
 /// Another process holding the bench under `root`.
-fn hold(root: &Path) -> Child {
-    let child = Command::new("sleep").arg("60").spawn().unwrap();
+fn hold(root: &Path) -> Other {
+    let child = Other(Command::new("sleep").arg("60").spawn().unwrap());
     let command = vec!["wellfed-bench".into(), "dump".into(), "d1".into()];
-    let holder = Holder::of(child.id(), command).unwrap();
+    let holder = Holder::of(child.0.id(), command).unwrap();
     write_json(&root.join(LEASE), &holder).unwrap();
     child
 }
@@ -50,7 +61,7 @@ fn hold(root: &Path) -> Child {
 #[test]
 fn a_device_command_refuses_a_held_bench_before_the_port() {
     let root = tempfile::tempdir().unwrap();
-    let mut other = hold(root.path());
+    let other = hold(root.path());
 
     let output = observe(root.path());
 
@@ -61,17 +72,15 @@ fn a_device_command_refuses_a_held_bench_before_the_port() {
     let error = summary["error"].as_str().unwrap();
     assert!(error.contains("The bench is held by pid"), "{error}");
     assert!(!root.path().join("private/observe-out").exists());
-
-    other.kill().unwrap();
-    other.wait().unwrap();
+    drop(other);
 }
 
 #[test]
 fn a_killed_runs_lease_is_reported_not_taken() {
     let root = tempfile::tempdir().unwrap();
     let mut other = hold(root.path());
-    other.kill().unwrap();
-    other.wait().unwrap();
+    other.0.kill().unwrap();
+    other.0.wait().unwrap();
 
     let output = observe(root.path());
 
@@ -103,7 +112,7 @@ fn a_child_of_the_holder_runs_on_its_lease_and_leaves_it() {
 #[test]
 fn an_offline_command_needs_no_lease() {
     let root = tempfile::tempdir().unwrap();
-    let mut other = hold(root.path());
+    let other = hold(root.path());
 
     let output = flash(
         root.path(),
@@ -111,6 +120,5 @@ fn an_offline_command_needs_no_lease() {
     );
 
     assert_eq!(output.status.code(), Some(0), "{output:?}");
-    other.kill().unwrap();
-    other.wait().unwrap();
+    drop(other);
 }

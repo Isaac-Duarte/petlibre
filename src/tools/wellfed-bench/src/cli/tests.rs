@@ -153,15 +153,27 @@ fn every_command_but_status_takes_the_lease() {
     }
 }
 
+/// Another tool's process, killed when the test ends, passed or not.
+struct Other(std::process::Child);
+
+impl Drop for Other {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
 /// A process other than this test, standing as another tool holding the
 /// bench under `root`.
-fn hold(root: &Path) -> std::process::Child {
-    let child = std::process::Command::new("sleep")
-        .arg("60")
-        .spawn()
-        .unwrap();
+fn hold(root: &Path) -> Other {
+    let child = Other(
+        std::process::Command::new("sleep")
+            .arg("60")
+            .spawn()
+            .unwrap(),
+    );
     let command = vec!["wellfed-bench".into(), "on".into()];
-    let holder = lease::Holder::of(child.id(), command).unwrap();
+    let holder = lease::Holder::of(child.0.id(), command).unwrap();
     wellfed_formats::private::write_json(&root.join(lease::LEASE), &holder).unwrap();
     child
 }
@@ -182,7 +194,7 @@ fn lease_error(result: anyhow::Result<u8>) -> lease::LeaseError {
 #[test]
 fn a_held_bench_refuses_a_command_before_it_opens_anything() {
     let root = tempfile::tempdir().unwrap();
-    let mut holder = hold(root.path());
+    let holder = hold(root.path());
 
     // There is no bench.json either: the lease refuses first.
     let refused = lease_error(run_in(root.path(), &["off"]));
@@ -191,17 +203,15 @@ fn a_held_bench_refuses_a_command_before_it_opens_anything() {
     let kept = lease_error(run_in(root.path(), &["status", "--break-lease"]));
     assert!(matches!(kept, lease::LeaseError::Live(_)), "{kept:?}");
     assert!(lease::inspect(root.path()).unwrap().is_some());
-
-    holder.kill().unwrap();
-    holder.wait().unwrap();
+    drop(holder);
 }
 
 #[test]
 fn a_killed_holder_is_reported_until_status_breaks_it() {
     let root = tempfile::tempdir().unwrap();
     let mut holder = hold(root.path());
-    holder.kill().unwrap();
-    holder.wait().unwrap();
+    holder.0.kill().unwrap();
+    holder.0.wait().unwrap();
 
     let refused = lease_error(run_in(root.path(), &["on"]));
     assert!(

@@ -64,11 +64,42 @@ async fn a_plain_server_takes_no_lease() {
     assert!(lease(dir.path()).is_none());
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_symlinked_config_keeps_the_lease_where_it_is_named() {
+    // A worktree's private/ linking the main checkout's config.
+    let (main, target, config) = configured();
+    let worktree = tempfile::tempdir().unwrap();
+    let link = worktree.path().join("server.json");
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+
+    let _service = common::start_mode(&link, true);
+    let http = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(3))
+        .build()
+        .unwrap();
+    common::ready(&config, &http).await;
+
+    assert!(lease(worktree.path()).is_some());
+    assert!(lease(main.path()).is_none());
+}
+
+/// Another process holding the bench, killed when the test ends, passed
+/// or not.
+struct Other(std::process::Child);
+
+impl Drop for Other {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
 #[test]
 fn a_trial_server_refuses_a_held_bench() {
     let (dir, path, _) = configured();
-    let mut other = Command::new("sleep").arg("60").spawn().unwrap();
-    let holder = Holder::of(other.id(), vec!["wellfed-bench".into(), "on".into()]).unwrap();
+    let other = Other(Command::new("sleep").arg("60").spawn().unwrap());
+    let holder = Holder::of(other.0.id(), vec!["wellfed-bench".into(), "on".into()]).unwrap();
     wellfed_formats::private::write_json(&dir.path().join("bench.lease"), &holder).unwrap();
 
     let output = Command::new(env!("CARGO_BIN_EXE_wellfed-stock"))
@@ -81,6 +112,4 @@ fn a_trial_server_refuses_a_held_bench() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("The bench is held by pid"), "{stderr}");
-    other.kill().unwrap();
-    other.wait().unwrap();
 }

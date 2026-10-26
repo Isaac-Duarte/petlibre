@@ -380,11 +380,16 @@ async fn terminated() -> std::io::Result<()> {
 /// the bench command that drives the feeder. Run by the bench (`itest`,
 /// `stock-ota`), `serve` descends from the holder and runs on its lease.
 fn bench_lease(config: &std::path::Path) -> Result<Lease> {
-    let path = config
+    // The directory the config is named in, not where a symlinked config
+    // points: a worktree whose `private/server.json` links to the main
+    // checkout's keeps its lease in its own `private/`, beside the bench
+    // that runs from it.
+    let absolute = std::path::absolute(config).with_context(|| format!("{}", config.display()))?;
+    let named = absolute.parent().context("config directory missing")?;
+    let directory = named
         .canonicalize()
-        .with_context(|| format!("{}", config.display()))?;
-    let directory = path.parent().context("config directory missing")?;
-    Lease::acquire_in(directory).context("bench lease")
+        .with_context(|| format!("{}", named.display()))?;
+    Lease::acquire_in(&directory).context("bench lease")
 }
 
 /// Whether `serve` may dispatch the stock-to-replacement install trial.
@@ -408,14 +413,15 @@ async fn serve(path: PathBuf, trial: OtaTrial) -> Result<()> {
         );
     }
 
-    let path = path.canonicalize()?;
-    let config = Arc::new(config::load(&path)?);
     // Taken before the API binds, so a trial cannot be asked of a server
-    // that does not hold the bench; held until the server stops.
+    // that does not hold the bench; held until the server stops. Found
+    // from the path as given, before the symlinks below are resolved.
     let _lease = match trial {
         OtaTrial::Enabled => Some(bench_lease(&path)?),
         OtaTrial::Disabled => None,
     };
+    let path = path.canonicalize()?;
+    let config = Arc::new(config::load(&path)?);
     let listener = tokio::net::TcpListener::bind(config.http_listen)
         .await
         .context("bind loopback HTTP API")?;

@@ -36,11 +36,18 @@ pub const SECTOR: u32 = 4096;
 /// Both OTA bank offsets in external flash.
 pub const BANKS: [u32; 2] = [0x6000, 0x18_6000];
 
+/// Why an emulation run stopped. Each module keeps its own refusals, so a
+/// caller or test can match the stage and check that refused.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    /// A pinned input, reviewed boundary or modeled-call expectation failed.
-    #[error("{0}")]
-    Refused(String),
+    /// A pinned input, reviewed boundary or mapping check of the factory
+    /// loader failed.
+    #[error(transparent)]
+    Factory(#[from] factory::Error),
+    /// A pinned input, scope or modeled-call expectation of the UART flash
+    /// helper failed.
+    #[error(transparent)]
+    Helper(#[from] helper::Error),
     /// The emulator itself failed (unmapped access, invalid instruction, …).
     #[error("Emulation failed: {0:?}")]
     Unicorn(unicorn_engine::uc_error),
@@ -53,15 +60,6 @@ impl From<unicorn_engine::uc_error> for Error {
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
-
-/// Refuse with `message` unless `condition` holds.
-pub fn require(condition: bool, message: impl Into<String>) -> Result<()> {
-    if condition {
-        Ok(())
-    } else {
-        Err(Error::Refused(message.into()))
-    }
-}
 
 pub(crate) fn word(data: &[u8], offset: usize) -> Option<u32> {
     let bytes = data.get(offset..offset.checked_add(4)?)?;

@@ -8,7 +8,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use wellfed_emu::factory::{Entry, execute, inputs, selected};
+use wellfed_emu::factory::{self, Entry, execute, inputs, selected};
 use wellfed_emu::{BANKS, Error};
 use wellfed_formats::canonical::sha256;
 use wellfed_formats::review::{FactoryRun, Stop};
@@ -135,7 +135,7 @@ fn an_unreviewed_flash_size_is_refused_before_execution() {
     let short = &f.flash[..f.flash.len() - 1];
     assert!(matches!(
         execute(short, &f.rom, Entry::Select),
-        Err(Error::Refused(_))
+        Err(Error::Factory(factory::Error::FlashSize { .. }))
     ));
 }
 

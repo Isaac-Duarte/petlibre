@@ -3,7 +3,8 @@
 use serde_json::{Value, json};
 
 use super::*;
-use crate::startup::{ADC_MARK, PASS};
+use crate::Error;
+use crate::startup::{ADC_MARK, Declaration, PASS, PolicyError, Probe};
 use crate::test_support::*;
 
 const POWER: &[u8] = b"PLPWR1 before_func=1201019a before_pad=00000000 after_func=1201019a after_pad=00000355 ext_a=e1c46e80,e1c46e00,e1c46e00,e1c46e00\n\r";
@@ -583,10 +584,10 @@ fn supply_channel_policy_requires_distinct_channels() {
     );
 
     a.f.set("startup_adc_policy", json!("fw14-adc-v1"));
-    let error = run(&a, (3480, 3500, 3490), battery)
-        .unwrap_err()
-        .to_string();
-    assert!(error.contains("ADC supply policy/artifact mismatch"));
+    assert_eq!(
+        policy_refusal(run(&a, (3480, 3500, 3490), battery)),
+        mismatch(Declaration::AdcSupply)
+    );
 
     a.f.image(&[&a.base[..], b" ", ADC_MARK].concat());
     assert_eq!(
@@ -601,30 +602,21 @@ fn policy_binding_both_ways() {
     let good = capture(&a.f.identity.clone(), Capture::default(), &good_line);
 
     a.f.set("startup_adc_policy", Value::Null);
-    assert!(
-        a.audit(&good)
-            .unwrap_err()
-            .to_string()
-            .contains("ADC policy required")
-    );
+    assert!(matches!(
+        a.audit(&good),
+        Err(Error::AdcPolicyRequired { declared: None })
+    ));
 
     a.f.set("startup_adc_policy", json!("fw14-adc-v1"));
     let base = a.base.clone();
     a.f.image(&base);
-    assert!(
-        a.audit(&good)
-            .unwrap_err()
-            .to_string()
-            .contains("ADC policy/artifact mismatch")
-    );
+    assert_eq!(policy_refusal(a.audit(&good)), mismatch(Declaration::Adc));
 
     a.f.set("startup_adc_policy", json!("fw14-adc-v3"));
-    assert!(
-        a.audit(&good)
-            .unwrap_err()
-            .to_string()
-            .contains("ADC policy required")
-    );
+    assert!(matches!(
+        a.audit(&good),
+        Err(Error::AdcPolicyRequired { declared: Some(policy) }) if policy == "fw14-adc-v3"
+    ));
 
     a.f.set("startup_adc_policy", json!("fw14-adc-v1"));
     a.f.set("startup_led_policy", Value::Null);
@@ -636,11 +628,9 @@ fn policy_binding_both_ways() {
         ]
         .concat(),
     );
-    assert!(
-        a.audit(&good)
-            .unwrap_err()
-            .to_string()
-            .contains("ADC probe requires the LED probe policy")
+    assert_eq!(
+        policy_refusal(a.audit(&good)),
+        PolicyError::RequiresLed { probe: Probe::Adc }
     );
 }
 

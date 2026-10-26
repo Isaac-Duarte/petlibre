@@ -5,6 +5,7 @@
 use serde_json::{Value, json};
 
 use super::*;
+use crate::Error;
 use crate::test_support::*;
 
 // The classifiers as the JSON they report, so cases assert on report fields.
@@ -522,7 +523,12 @@ fn clock_policy_binding_and_order() {
     // Downgrades: omitting the policy, or declaring an older one, is refused for a v3 image.
     for policy in [Value::Null, json!("before-km4-v1"), json!("before-km4-v2")] {
         f.set("startup_shared_pad_policy", policy);
-        assert!(f.error(60.0).contains("Shared-pad v3"));
+        assert!(matches!(
+            f.error(60.0),
+            Error::Policy(PolicyError::Mismatch {
+                declaration: Declaration::SharedPadV3
+            })
+        ));
     }
 
     f.set("startup_shared_pad_policy", Value::Null);
@@ -601,7 +607,10 @@ fn evidence_artifact_binding_and_window() {
     fs::write(f.path().join("image.bin"), &image).unwrap();
     f.manifest["inputs"]["source"] = json!("e".repeat(64));
     f.set("profile", json!("firstboot"));
-    assert!(f.error(60.0).contains("not source-bound"));
+    assert!(matches!(
+        f.error(60.0),
+        Error::Startup(StartupError::NotSourceBound)
+    ));
 }
 
 /// Builds signed with the update key, and variant builds, embed an identity
@@ -626,7 +635,10 @@ fn keyed_variant_builds_are_source_bound() {
 
     // The same sources without the variant are another build.
     f.set("variant", Value::Null);
-    assert!(f.error(60.0).contains("not source-bound"));
+    assert!(matches!(
+        f.error(60.0),
+        Error::Startup(StartupError::NotSourceBound)
+    ));
 }
 
 #[test]

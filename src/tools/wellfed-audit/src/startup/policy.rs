@@ -10,6 +10,91 @@ use wellfed_formats::manifest::BuildManifest;
 
 use super::*;
 
+/// A declared policy refused before any record is classified: unknown, at
+/// odds with the record formats in the image, or missing a probe it needs.
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+pub enum PolicyError {
+    /// The manifest names a version this audit does not know.
+    #[error("Unknown {policy}")]
+    Unknown { policy: Policy, declared: String },
+    /// The declaration and the image's record formats disagree.
+    #[error("{declaration}/artifact mismatch")]
+    Mismatch { declaration: Declaration },
+    /// The probe's records follow the LED probe's, so it needs that policy.
+    #[error("{probe} probe requires the LED probe policy")]
+    RequiresLed { probe: Probe },
+    #[error("Clock profile requires stopped-output reporting")]
+    ClockWithoutStopped,
+    #[error("Transport requires the keep policy")]
+    TransportWithoutKeep,
+    #[error("Motion and optics probes are exclusive")]
+    MotionWithOptics,
+    #[error("The trial test runs alone")]
+    TrialNotAlone,
+}
+
+crate::outcomes! {
+    /// A manifest's `startup_*_policy` field, as its unknown-version
+    /// refusal names it.
+    pub enum Policy {
+        Output => "startup output policy",
+        GpioClock => "GPIO clock policy",
+        Led => "startup LED policy",
+        GpioRouting => "GPIO routing policy",
+        SharedPad => "shared-pad policy",
+        Wifi => "Wi-Fi policy",
+        Transport => "transport policy",
+        Optics => "optics policy",
+        Motion => "motion policy",
+        Trial => "trial policy",
+        Adc => "ADC policy",
+        FlashHandshake => "flash handshake policy",
+    }
+}
+
+crate::outcomes! {
+    /// What a policy declares about the image, checked against its record
+    /// formats: the policy itself, or a format or plan within it.
+    pub enum Declaration {
+        Supervision => "Supervision policy",
+        Output => "Output policy",
+        GpioClock => "GPIO clock policy",
+        Led => "LED policy",
+        LedReadback => "LED readback format",
+        LedOutputOnly => "LED output-only policy",
+        GpioRouting => "GPIO routing policy",
+        GpioRoutingFormat => "GPIO routing format",
+        SharedPad => "Shared-pad policy",
+        SharedPadV3 => "Shared-pad v3 policy",
+        Wifi => "Wi-Fi policy",
+        WifiJoin => "Wi-Fi join policy",
+        WifiKeep => "Wi-Fi keep policy",
+        Transport => "Transport policy",
+        Optics => "Optics policy",
+        OpticsPlan => "Optics plan",
+        Motion => "Motion policy",
+        Trial => "Trial policy",
+        Adc => "ADC policy",
+        AdcSupply => "ADC supply policy",
+        FlashHandshake => "Flash handshake policy",
+        FlashPark => "Flash park policy",
+        FlashRead => "Flash read policy",
+        FlashWrite => "Flash write policy",
+        FlashJournal => "Flash journal policy",
+        FlashSettings => "Flash settings policy",
+    }
+}
+
+crate::outcomes! {
+    /// A probe that runs after the LED probe.
+    pub enum Probe {
+        Wifi => "Wi-Fi",
+        Optics => "Optics",
+        Motion => "Motion",
+        Adc => "ADC",
+    }
+}
+
 /// The probes a startup is classified under, once bound to the image.
 pub(super) struct Policies {
     pub(super) stopped: Stopped,
@@ -25,16 +110,31 @@ pub(super) struct Policies {
 fn version<T: Copy>(
     declared: Option<&str>,
     known: &[(&str, T)],
-    message: &str,
+    policy: Policy,
 ) -> Result<Option<T>> {
     let Some(declared) = declared else {
         return Ok(None);
     };
-    known
+    let (_, version) = known
         .iter()
         .find(|(name, _)| *name == declared)
-        .map(|(_, version)| Some(*version))
-        .ok_or_else(|| Error::Refused(message.into()))
+        .ok_or_else(|| PolicyError::Unknown {
+            policy,
+            declared: declared.into(),
+        })?;
+    Ok(Some(*version))
+}
+
+/// Refuse unless the declaration and the image agree.
+fn agree(agrees: bool, declaration: Declaration) -> Result<()> {
+    Ok(require(agrees, || PolicyError::Mismatch { declaration })?)
+}
+
+/// Refuse a probe declared without the LED probe it follows.
+fn after_led(declared: bool, led: bool, probe: Probe) -> Result<()> {
+    Ok(require(!declared || led, || PolicyError::RequiresLed {
+        probe,
+    })?)
 }
 
 impl Policies {
@@ -45,10 +145,7 @@ impl Policies {
 
         // No current build declares the probe, so its records mean the
         // image is not the build the manifest describes.
-        require(
-            !has(SUPERVISION_MARK),
-            "Supervision policy/artifact mismatch",
-        )?;
+        agree(!has(SUPERVISION_MARK), Declaration::Supervision)?;
 
         let stopped = bind_outputs(manifest, &has)?;
         let clock = bind_clock(manifest, &has, stopped)?;
@@ -73,11 +170,11 @@ fn bind_outputs(manifest: &BuildManifest, has: &dyn Fn(&[u8]) -> bool) -> Result
     let output = version(
         manifest.startup_output_policy.as_deref(),
         &[("stop-only", ())],
-        "Unknown startup output policy",
+        Policy::Output,
     )?;
-    require(
+    agree(
         output.is_some() == has(b"PLFW1 outputs pa="),
-        "Output policy/artifact mismatch",
+        Declaration::Output,
     )?;
 
     Ok(if output.is_some() {
@@ -95,16 +192,15 @@ fn bind_clock(
     let clock = version(
         manifest.startup_gpio_clock_policy.as_deref(),
         &[("explicit-enable-v1", ())],
-        "Unknown GPIO clock policy",
+        Policy::GpioClock,
     )?
     .is_some();
-    require(
-        !clock || stopped == Stopped::Required,
-        "Clock profile requires stopped-output reporting",
-    )?;
-    require(
+    require(!clock || stopped == Stopped::Required, || {
+        PolicyError::ClockWithoutStopped
+    })?;
+    agree(
         clock == has(b"PLCLK1 function_before="),
-        "GPIO clock policy/artifact mismatch",
+        Declaration::GpioClock,
     )?;
     Ok(clock)
 }
@@ -118,19 +214,16 @@ fn bind_led(manifest: &BuildManifest, has: &dyn Fn(&[u8]) -> bool) -> Result<Opt
             ("bounded-probe-v3", 3),
             ("low-only-v1", 4),
         ],
-        "Unknown startup LED policy",
+        Policy::Led,
     )?;
-    require(
-        led.is_some() == has(b"PLLED1 begin"),
-        "LED policy/artifact mismatch",
-    )?;
-    require(
+    agree(led.is_some() == has(b"PLLED1 begin"), Declaration::Led)?;
+    agree(
         matches!(led, Some(2..=4)) == has(b" highs="),
-        "LED readback format/artifact mismatch",
+        Declaration::LedReadback,
     )?;
-    require(
+    agree(
         (led == Some(3)) == has(b"PLLED1 begin output_only="),
-        "LED output-only policy/artifact mismatch",
+        Declaration::LedOutputOnly,
     )?;
     Ok(led)
 }
@@ -143,15 +236,15 @@ fn bind_routing(manifest: &BuildManifest, has: &dyn Fn(&[u8]) -> bool) -> Result
             ("read-only-v2", 2),
             ("read-only-v3", 3),
         ],
-        "Unknown GPIO routing policy",
+        Policy::GpioRouting,
     )?;
-    require(
+    agree(
         routing.is_some() == has(b"PLIO1 stage="),
-        "GPIO routing policy/artifact mismatch",
+        Declaration::GpioRouting,
     )?;
-    require(
+    agree(
         matches!(routing, Some(2 | 3)) == has(b" share_pad="),
-        "GPIO routing format/artifact mismatch",
+        Declaration::GpioRoutingFormat,
     )?;
     Ok(routing)
 }
@@ -164,17 +257,17 @@ fn bind_power(manifest: &BuildManifest, has: &dyn Fn(&[u8]) -> bool) -> Result<O
             ("before-km4-v2", 2),
             ("before-km4-v3", 3),
         ],
-        "Unknown shared-pad policy",
+        Policy::SharedPad,
     )?;
     // Review 06 and earlier print PLPWR1 after KM4 boot without declaring this policy.
-    require(
+    agree(
         power.is_none() || has(b"PLPWR1 before_func="),
-        "Shared-pad policy/artifact mismatch",
+        Declaration::SharedPad,
     )?;
     // Checked both ways: a before-KM4 v3 image cannot be audited without its policy.
-    require(
+    agree(
         (power == Some(3)) == (has(b"PLPWR1 before_func=") && has(POWER_V3_FORMAT)),
-        "Shared-pad v3 policy/artifact mismatch",
+        Declaration::SharedPadV3,
     )?;
     Ok(power)
 }
@@ -204,106 +297,79 @@ fn bind_unclassified(
             ("fw07-dns-v1", Wifi::Keep),
             ("wifi-gateway-v1", Wifi::Keep),
         ],
-        "Unknown Wi-Fi policy",
+        Policy::Wifi,
     )?;
-    require(
+    agree(
         (wifi == Some(Wifi::Scan)) == has(WIFI_MARK),
-        "Wi-Fi policy/artifact mismatch",
+        Declaration::Wifi,
     )?;
-    require(
+    agree(
         (wifi == Some(Wifi::Join)) == has(WIFI_JOIN_MARK),
-        "Wi-Fi join policy/artifact mismatch",
+        Declaration::WifiJoin,
     )?;
-    require(
+    agree(
         (wifi == Some(Wifi::Keep)) == has(WIFI_KEEP_MARK),
-        "Wi-Fi keep policy/artifact mismatch",
+        Declaration::WifiKeep,
     )?;
-    require(
-        wifi.is_none() || led,
-        "Wi-Fi probe requires the LED probe policy",
-    )?;
+    after_led(wifi.is_some(), led, Probe::Wifi)?;
 
     let transport = version(
         manifest.startup_transport_policy.as_deref(),
         &[("fw08-transport-v1", ())],
-        "Unknown transport policy",
+        Policy::Transport,
     )?
     .is_some();
-    require(
-        transport == has(TRANSPORT_MARK),
-        "Transport policy/artifact mismatch",
-    )?;
-    require(
-        !transport || wifi == Some(Wifi::Keep),
-        "Transport requires the keep policy",
-    )?;
+    agree(transport == has(TRANSPORT_MARK), Declaration::Transport)?;
+    require(!transport || wifi == Some(Wifi::Keep), || {
+        PolicyError::TransportWithoutKeep
+    })?;
 
     let optics = version(
         manifest.startup_optics_policy.as_deref(),
         &[("fw13-optics-v1", 1), ("fw13-optics-v2", 2)],
-        "Unknown optics policy",
+        Policy::Optics,
     )?;
-    require(
-        optics.is_some() == has(OPTICS_MARK),
-        "Optics policy/artifact mismatch",
-    )?;
-    require(
+    agree(optics.is_some() == has(OPTICS_MARK), Declaration::Optics)?;
+    agree(
         (optics == Some(2)) == has(&[OPTICS_MARK, b"1", OPTICS_PLAN2_MARK].concat()),
-        "Optics plan/artifact mismatch",
+        Declaration::OpticsPlan,
     )?;
-    require(
-        optics.is_none() || led,
-        "Optics probe requires the LED probe policy",
-    )?;
+    after_led(optics.is_some(), led, Probe::Optics)?;
 
     let motion = version(
         manifest.startup_motion_policy.as_deref(),
         &[("fw16-pulse-v1", ())],
-        "Unknown motion policy",
+        Policy::Motion,
     )?
     .is_some();
-    require(
-        motion == has(MOTION_MARK),
-        "Motion policy/artifact mismatch",
-    )?;
-    require(
-        !(motion && optics.is_some()),
-        "Motion and optics probes are exclusive",
-    )?;
-    require(!motion || led, "Motion probe requires the LED probe policy")?;
+    agree(motion == has(MOTION_MARK), Declaration::Motion)?;
+    require(!(motion && optics.is_some()), || {
+        PolicyError::MotionWithOptics
+    })?;
+    after_led(motion, led, Probe::Motion)?;
 
     let trial = version(
         manifest.startup_trial_policy.as_deref(),
         &[("fw11-reset-v1", ())],
-        "Unknown trial policy",
+        Policy::Trial,
     )?
     .is_some();
-    require(
-        trial == has(TRIAL_RESET_MARK),
-        "Trial policy/artifact mismatch",
-    )?;
-    require(
-        !(trial && (optics.is_some() || motion)),
-        "The trial test runs alone",
-    )?;
+    agree(trial == has(TRIAL_RESET_MARK), Declaration::Trial)?;
+    require(!(trial && (optics.is_some() || motion)), || {
+        PolicyError::TrialNotAlone
+    })?;
 
     let adc = version(
         manifest.startup_adc_policy.as_deref(),
         &[("fw14-adc-v1", 1), ("fw14-adc-v2", 2)],
-        "Unknown ADC policy",
+        Policy::Adc,
     )?;
-    require(
-        adc.is_some() == has(ADC_MARK),
-        "ADC policy/artifact mismatch",
-    )?;
-    require(
+    agree(adc.is_some() == has(ADC_MARK), Declaration::Adc)?;
+    agree(
         (adc == Some(2)) == has(ADC_SUPPLY_MARK),
-        "ADC supply policy/artifact mismatch",
+        Declaration::AdcSupply,
     )?;
-    require(
-        adc.is_none() || led,
-        "ADC probe requires the LED probe policy",
-    )
+    after_led(adc.is_some(), led, Probe::Adc)
 }
 
 fn bind_flash(
@@ -321,42 +387,30 @@ fn bind_flash(
             ("fw15-settings-v1", FlashPolicy::Settings),
             ("fw15-settings-v2", FlashPolicy::Settings),
         ],
-        "Unknown flash handshake policy",
+        Policy::FlashHandshake,
     )?;
-    require(
+    agree(
         flash.is_some() == has(FLASH_MARK),
-        "Flash handshake policy/artifact mismatch",
+        Declaration::FlashHandshake,
     )?;
 
     // Checked both ways: a park image cannot be audited as a hello-only build, nor the reverse.
-    for (policy, mark, message) in [
-        (
-            FlashPolicy::Park,
-            PARK_MARK,
-            "Flash park policy/artifact mismatch",
-        ),
-        (
-            FlashPolicy::Read,
-            READ_MARK,
-            "Flash read policy/artifact mismatch",
-        ),
-        (
-            FlashPolicy::Write,
-            WRITE_MARK,
-            "Flash write policy/artifact mismatch",
-        ),
+    for (policy, mark, declaration) in [
+        (FlashPolicy::Park, PARK_MARK, Declaration::FlashPark),
+        (FlashPolicy::Read, READ_MARK, Declaration::FlashRead),
+        (FlashPolicy::Write, WRITE_MARK, Declaration::FlashWrite),
         (
             FlashPolicy::Journal,
             JOURNAL_MARK,
-            "Flash journal policy/artifact mismatch",
+            Declaration::FlashJournal,
         ),
         (
             FlashPolicy::Settings,
             SETTINGS_MARK,
-            "Flash settings policy/artifact mismatch",
+            Declaration::FlashSettings,
         ),
     ] {
-        require((flash == Some(policy)) == has(mark), message)?;
+        agree((flash == Some(policy)) == has(mark), declaration)?;
     }
     Ok(flash)
 }

@@ -15,12 +15,70 @@ use std::fs;
 use std::path::Path;
 
 use wellfed_formats::canonical::sha256;
+use wellfed_formats::require;
 use wellfed_formats::review::{FactoryRun, MappingConfig, Stop};
 use unicorn_engine::{Arch, ArmCpuModel, Mode, Prot, RegisterARM, Unicorn};
 
-use crate::{
-    BASELINE, BASELINE_SHA256, Error, FLASH_BYTES, ROM, ROM_SHA256, Result, require, word,
-};
+use crate::{BASELINE, BASELINE_SHA256, FLASH_BYTES, ROM, ROM_SHA256, Result, word};
+
+/// A factory-loader run refused: a pinned input, a reviewed boundary or a
+/// mapping that disagrees with what the loader asked for.
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("Not the verified research-unit full backup")]
+    UnverifiedBaseline,
+    #[error("Unreviewed factory ROM input")]
+    UnreviewedRom,
+    /// The pinned input is read before any hash check; the I/O error is kept
+    /// in the message so the operator sees which file and why in one line.
+    #[error("Cannot read {name}: {error}")]
+    Read {
+        name: &'static str,
+        error: std::io::Error,
+    },
+    #[error("Unexpected selection outcome {stop:?} {result}")]
+    UnexpectedSelection { stop: Stop, result: u32 },
+    #[error("Expected exactly 8 MiB of flash")]
+    FlashSize { bytes: usize },
+    #[error("Loader did not reach a reviewed boundary")]
+    NoBoundary,
+    #[error("Candidate ROM mapping registers disagree with request")]
+    MappingRegisters,
+    #[error("Wrong mapping direction")]
+    MappingDirection,
+    #[error("Mapping escapes external flash")]
+    MappingEscapes,
+    #[error("Unexpected mapping index or virtual start")]
+    MappingRequest,
+    #[error("Unexpected factory-mapping instruction: {pc:#x}")]
+    UnreviewedInstruction { pc: u64 },
+    #[error("Out-of-range {quantity} in factory emulation")]
+    OutOfRange { quantity: Quantity },
+}
+
+/// The value a factory run could not represent in the width it needs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Quantity {
+    Index,
+    Size,
+    Offset,
+    Length,
+    Word,
+    Register,
+}
+
+impl std::fmt::Display for Quantity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Index => "index",
+            Self::Size => "size",
+            Self::Offset => "offset",
+            Self::Length => "length",
+            Self::Word => "word",
+            Self::Register => "register",
+        })
+    }
+}
 
 /// The modeled caller the bank check returns to.
 pub const EXIT: u32 = 0x8F000;
@@ -49,16 +107,15 @@ pub fn inputs(root: &Path) -> Result<(Vec<u8>, Vec<u8>)> {
     let baseline = read(root, BASELINE)?;
     require(
         baseline.len() == FLASH_BYTES && sha256(&baseline) == BASELINE_SHA256,
-        "Not the verified research-unit full backup",
+        || Error::UnverifiedBaseline,
     )?;
     let rom = read(root, ROM)?;
-    require(sha256(&rom) == ROM_SHA256, "Unreviewed factory ROM input")?;
+    require(sha256(&rom) == ROM_SHA256, || Error::UnreviewedRom)?;
     Ok((baseline, rom))
 }
 
-fn read(root: &Path, name: &str) -> Result<Vec<u8>> {
-    fs::read(root.join(name))
-        .map_err(|error| Error::Refused(format!("Cannot read {name}: {error}")))
+fn read(root: &Path, name: &'static str) -> Result<Vec<u8>> {
+    Ok(fs::read(root.join(name)).map_err(|error| Error::Read { name, error })?)
 }
 
 /// The selection's outcome by bank: `Some(0)`/`Some(1)`, or `None` when the
@@ -69,10 +126,7 @@ pub fn selected(flash: &[u8], rom: &[u8]) -> Result<Option<u8>> {
         (Stop::NoImage, _) => Ok(None),
         (Stop::Selected, 1) => Ok(Some(0)),
         (Stop::Selected, 2) => Ok(Some(1)),
-        _ => Err(Error::Refused(format!(
-            "Unexpected selection outcome {:?} {}",
-            run.stop, run.result
-        ))),
+        (stop, result) => Err(Error::UnexpectedSelection { stop, result }.into()),
     }
 }
 
@@ -93,15 +147,14 @@ struct State {
     /// The return address of the mapping call in progress, and its request.
     pending: Option<(u64, Request)>,
     outcome: Option<(Stop, u32)>,
-    error: Option<Error>,
+    error: Option<crate::Error>,
 }
 
 /// Run one loader entry on `flash` (the full 8 MiB image) with `rom`.
 pub fn execute(flash: &[u8], rom: &[u8], entry: Entry) -> Result<FactoryRun> {
-    require(
-        flash.len() == FLASH_BYTES,
-        "Expected exactly 8 MiB of flash",
-    )?;
+    require(flash.len() == FLASH_BYTES, || Error::FlashSize {
+        bytes: flash.len(),
+    })?;
     let mut uc = Unicorn::new_with_data(Arch::ARM, Mode::THUMB | Mode::MCLASS, State::default())?;
     uc.ctl_set_cpu_model(ArmCpuModel::CORTEX_M4 as i32)?;
 
@@ -144,9 +197,7 @@ pub fn execute(flash: &[u8], rom: &[u8], entry: Entry) -> Result<FactoryRun> {
     started?;
     let state = uc.get_data();
     let (Some((stop, result)), None) = (state.outcome, state.pending) else {
-        return Err(Error::Refused(
-            "Loader did not reach a reviewed boundary".into(),
-        ));
+        return Err(Error::NoBoundary.into());
     };
     let mut final_registers = [[0; 4]; 2];
     for (index, group) in final_registers.iter_mut().enumerate() {
@@ -167,32 +218,31 @@ fn step(uc: &mut Unicorn<State>, flash: &[u8], pc: u64) -> Result<()> {
     if let Some((back, request)) = uc.get_data().pending
         && pc == back
     {
-        let index = usize::try_from(request.index).map_err(|_| refused("index"))?;
+        let index = usize::try_from(request.index).map_err(|_| out_of_range(Quantity::Index))?;
         let set = registers(uc, index)?;
         require(
             set[1..] == [request.start, request.end, request.offset],
-            "Candidate ROM mapping registers disagree with request",
+            || Error::MappingRegisters,
         )?;
         require(
             u64::from(set[0] & 2) == u64::from(request.minus) * 2,
-            "Wrong mapping direction",
+            || Error::MappingDirection,
         )?;
 
         let offset = i64::from(request.offset);
         let physical = i64::from(request.start) + if request.minus != 0 { -offset } else { offset };
-        let end =
-            i64::from(FLASH_BASE) + i64::try_from(FLASH_BYTES).map_err(|_| refused("size"))?;
-        require(
-            (i64::from(FLASH_BASE)..end).contains(&physical),
-            "Mapping escapes external flash",
-        )?;
+        let end = i64::from(FLASH_BASE)
+            + i64::try_from(FLASH_BYTES).map_err(|_| out_of_range(Quantity::Size))?;
+        require((i64::from(FLASH_BASE)..end).contains(&physical), || {
+            Error::MappingEscapes
+        })?;
         let length = (i64::from(request.end) - i64::from(request.start) + 1)
             .min(0x20_0000)
             .min(end - physical)
             .max(0);
-        let from =
-            usize::try_from(physical - i64::from(FLASH_BASE)).map_err(|_| refused("offset"))?;
-        let length = usize::try_from(length).map_err(|_| refused("length"))?;
+        let from = usize::try_from(physical - i64::from(FLASH_BASE))
+            .map_err(|_| out_of_range(Quantity::Offset))?;
+        let length = usize::try_from(length).map_err(|_| out_of_range(Quantity::Length))?;
         uc.mem_write(u64::from(request.start), &flash[from..from + length])?;
 
         let state = uc.get_data_mut();
@@ -219,7 +269,7 @@ fn step(uc: &mut Unicorn<State>, flash: &[u8], pc: u64) -> Result<()> {
             };
             require(
                 request.index < 2 && [0x0C00_0000, 0x0E00_0000].contains(&request.start),
-                "Unexpected mapping index or virtual start",
+                || Error::MappingRequest,
             )?;
             let back = u64::from(reg(uc, RegisterARM::LR)? & !1);
             uc.get_data_mut().pending = Some((back, request));
@@ -234,9 +284,7 @@ fn step(uc: &mut Unicorn<State>, flash: &[u8], pc: u64) -> Result<()> {
                 uc.get_data_mut().outcome = Some((stop, result));
                 uc.emu_stop()?;
             } else if !reviewed(pc) {
-                return Err(Error::Refused(format!(
-                    "Unexpected factory-mapping instruction: {pc:#x}"
-                )));
+                return Err(Error::UnreviewedInstruction { pc }.into());
             }
         }
     }
@@ -262,7 +310,8 @@ fn reviewed(pc: u64) -> bool {
 }
 
 fn registers<D>(uc: &Unicorn<D>, index: usize) -> Result<[u32; 4]> {
-    let base = u64::from(RSIP) + 16 * u64::try_from(index).map_err(|_| refused("index"))?;
+    let base =
+        u64::from(RSIP) + 16 * u64::try_from(index).map_err(|_| out_of_range(Quantity::Index))?;
     let mut group = [0; 4];
     for (offset, value) in (0..).step_by(4).zip(group.iter_mut()) {
         *value = read32(uc, base + offset)?;
@@ -272,15 +321,15 @@ fn registers<D>(uc: &Unicorn<D>, index: usize) -> Result<[u32; 4]> {
 
 fn read32<D>(uc: &Unicorn<D>, address: u64) -> Result<u32> {
     let bytes = uc.mem_read_as_vec(address, 4)?;
-    word(&bytes, 0).ok_or_else(|| refused("word"))
+    word(&bytes, 0).ok_or_else(|| out_of_range(Quantity::Word))
 }
 
 fn reg<D>(uc: &Unicorn<D>, register: RegisterARM) -> Result<u32> {
-    u32::try_from(uc.reg_read(register)?).map_err(|_| refused("register"))
+    u32::try_from(uc.reg_read(register)?).map_err(|_| out_of_range(Quantity::Register))
 }
 
-fn refused(what: &str) -> Error {
-    Error::Refused(format!("Out-of-range {what} in factory emulation"))
+fn out_of_range(quantity: Quantity) -> crate::Error {
+    Error::OutOfRange { quantity }.into()
 }
 
 #[cfg(test)]
@@ -296,9 +345,9 @@ mod tests {
         flash[0x154..0x156].copy_from_slice(&0xE7FE_u16.to_le_bytes());
         let rom = vec![0; 0x10000];
 
-        let Err(Error::Refused(message)) = execute(&flash, &rom, Entry::Check(0)) else {
-            panic!("a spinning loader must be refused");
-        };
-        assert_eq!(message, "Loader did not reach a reviewed boundary");
+        assert!(matches!(
+            execute(&flash, &rom, Entry::Check(0)),
+            Err(crate::Error::Factory(Error::NoBoundary))
+        ));
     }
 }

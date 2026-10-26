@@ -550,8 +550,9 @@ fn classify_flash_read(
 
     let finished = arrival(d.end() - 1)?;
     let read_s = seconds(finished, arrival(s.end() - 1)?);
-    let end =
-        end.ok_or_else(|| Error::Refused("Flash read requires the capture end time".into()))?;
+    let end = end.ok_or(StartupError::NoEndTime {
+        transfer: Transfer::Read,
+    })?;
     let tail_s = seconds(end, finished);
     let read = report.read.get_or_insert_default();
     read.flash_read_seconds = Some(read_s);
@@ -744,8 +745,9 @@ fn classify_flash_write(
 
     let finished = arrival(d.end() - 1)?;
     let write_s = seconds(finished, arrival(s.end() - 1)?);
-    let end =
-        end.ok_or_else(|| Error::Refused("Flash write requires the capture end time".into()))?;
+    let end = end.ok_or(StartupError::NoEndTime {
+        transfer: Transfer::Write,
+    })?;
     let tail_s = seconds(end, finished);
     let write = report.write.get_or_insert_default();
     write.flash_write_seconds = Some(write_s);

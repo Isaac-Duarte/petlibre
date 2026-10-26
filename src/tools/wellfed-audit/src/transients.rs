@@ -26,10 +26,29 @@
 use std::fs;
 use std::path::Path;
 
+use wellfed_formats::require;
 use wellfed_formats::transients::{TransientMode, TransientsManifest};
 use serde::Serialize;
 
-use crate::{Error, Result, outcomes, require, round};
+use crate::{Result, outcomes, round};
+
+/// A transients capture refused before any cycle is checked.
+#[derive(Debug, thiserror::Error)]
+pub enum TransientsError {
+    #[error("Unsupported transients manifest")]
+    Schema { version: u32 },
+    #[error("Unsupported transients manifest")]
+    Samplerate,
+    /// A cycle file must be a plain name inside the capture directory.
+    #[error("Unsupported transients manifest")]
+    CycleFile { file: String },
+    #[error(
+        "Manifest needs distinct channels 0-7 for INA, INB, OUTA and OUTB, or for OUTA and OUTB alone"
+    )]
+    Channels,
+    #[error("{file} changed since capture")]
+    Changed { file: String },
+}
 
 const LINES: [&str; 4] = ["ina", "inb", "outa", "outb"];
 const LIMIT: &str = "Digital levels at the analyzer threshold (about 1.4 V for fx2lafw clones), sampled at the recorded \
@@ -293,12 +312,7 @@ impl TransientsReport {
 /// The probed lines' analyzer channels, distinct and each 0-7: all four
 /// driver lines, or OUTA and OUTB alone.
 fn probes(manifest: &TransientsManifest) -> Result<Probes> {
-    let refused = || {
-        Error::Refused(
-            "Manifest needs distinct channels 0-7 for INA, INB, OUTA and OUTB, or for OUTA and OUTB alone"
-                .into(),
-        )
-    };
+    let refused = || crate::Error::from(TransientsError::Channels);
     if manifest
         .channels
         .keys()
@@ -343,12 +357,11 @@ fn probes(manifest: &TransientsManifest) -> Result<Probes> {
 
 pub fn verify(capture: &Path) -> Result<TransientsReport> {
     let manifest: TransientsManifest = wellfed_formats::load(&capture.join("manifest.json"))?;
-    require(
-        manifest.schema_version == 1,
-        "Unsupported transients manifest",
-    )?;
+    require(manifest.schema_version == 1, || TransientsError::Schema {
+        version: manifest.schema_version,
+    })?;
     let probes = probes(&manifest)?;
-    require(manifest.samplerate > 0, "Unsupported transients manifest")?;
+    require(manifest.samplerate > 0, || TransientsError::Samplerate)?;
     let samplerate = manifest.samplerate as f64;
 
     let mut cycles = Vec::new();
@@ -356,13 +369,12 @@ pub fn verify(capture: &Path) -> Result<TransientsReport> {
         let file = entry.file.as_str();
         require(
             Path::new(file).components().count() == 1 && !file.is_empty(),
-            "Unsupported transients manifest",
+            || TransientsError::CycleFile { file: file.into() },
         )?;
         let data = fs::read(capture.join(file))?;
-        require(
-            entry.bytes == data.len() as u64,
-            format!("{file} changed since capture"),
-        )?;
+        require(entry.bytes == data.len() as u64, || {
+            TransientsError::Changed { file: file.into() }
+        })?;
 
         cycles.push(Cycle {
             file: file.into(),

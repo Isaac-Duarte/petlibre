@@ -4,6 +4,7 @@
 use serde_json::{Value, json};
 
 use super::*;
+use crate::Error;
 use crate::capture::Time;
 use crate::startup::tests::{CLOCK_LINE, OUTPUTS_LINE, POWER_V3_LINE, STAGES, boot};
 use crate::test_support::*;
@@ -439,10 +440,10 @@ fn flash_handshake_policy_binding_and_legacy() {
     let times = [0.0, 1.0, 11.0, 31.0];
 
     // Image carries the records but the manifest omits the policy.
-    let error = write(&mut f, &image, &chunks, &times)
-        .unwrap_err()
-        .to_string();
-    assert!(error.contains("Flash handshake policy/artifact mismatch"));
+    assert_eq!(
+        policy_refusal(write(&mut f, &image, &chunks, &times)),
+        mismatch(Declaration::FlashHandshake)
+    );
 
     f.set("startup_flash_handshake_policy", json!("fw06-hello-v1"));
     let report = write(&mut f, &image, &chunks, &times).unwrap();
@@ -470,24 +471,27 @@ fn flash_handshake_policy_binding_and_legacy() {
     assert_eq!(failed["flash_handshake_verified"], true);
 
     // Manifest declares the policy but the image lacks the records.
-    let error = write(&mut f, &legacy_image, &chunks, &times)
-        .unwrap_err()
-        .to_string();
-    assert!(error.contains("Flash handshake policy/artifact mismatch"));
+    assert_eq!(
+        policy_refusal(write(&mut f, &legacy_image, &chunks, &times)),
+        mismatch(Declaration::FlashHandshake)
+    );
 
     f.set("startup_flash_handshake_policy", json!("fw06-hello-v2"));
-    let error = write(&mut f, &image, &chunks, &times)
-        .unwrap_err()
-        .to_string();
-    assert!(error.contains("Unknown flash handshake policy"));
+    assert_eq!(
+        policy_refusal(write(&mut f, &image, &chunks, &times)),
+        PolicyError::Unknown {
+            policy: Policy::FlashHandshake,
+            declared: "fw06-hello-v2".into()
+        }
+    );
 
     f.set("startup_flash_handshake_policy", json!("fw06-hello-v1"));
     f.set("startup_led_policy", Value::Null);
     let bare = [format!("PLFW1 start build={id} ").as_bytes(), FLASH_MARK].concat();
-    let error = write(&mut f, &bare, &chunks, &times)
-        .unwrap_err()
-        .to_string();
-    assert!(error.contains("requires the LED probe policy"));
+    assert!(matches!(
+        write(&mut f, &bare, &chunks, &times),
+        Err(Error::Startup(StartupError::FlashWithoutLed))
+    ));
 }
 
 // Stage D (mediated read) and stage E (scratch-sector write).
@@ -950,40 +954,40 @@ fn read_policy_binding_both_ways() {
     let good = read_capture(&s.f.identity.clone(), 8.0, 30.0, 0.3);
     // A read image cannot be audited under another flash policy, or without one.
 
-    for (policy, message) in [
+    for (policy, refusal) in [
+        (json!("fw06-hello-v1"), mismatch(Declaration::FlashRead)),
+        (json!("fw06-park-v1"), mismatch(Declaration::FlashPark)),
+        (Value::Null, mismatch(Declaration::FlashHandshake)),
         (
-            json!("fw06-hello-v1"),
-            "Flash read policy/artifact mismatch",
+            json!("fw06-read-v2"),
+            PolicyError::Unknown {
+                policy: Policy::FlashHandshake,
+                declared: "fw06-read-v2".into(),
+            },
         ),
-        (json!("fw06-park-v1"), "Flash park policy/artifact mismatch"),
-        (Value::Null, "Flash handshake policy/artifact mismatch"),
-        (json!("fw06-read-v2"), "Unknown flash handshake policy"),
     ] {
         s.f.set("startup_flash_handshake_policy", policy);
-        assert!(
-            s.audit(&good).unwrap_err().to_string().contains(message),
-            "{message}"
-        );
+        assert_eq!(policy_refusal(s.audit(&good)), refusal);
     }
 
     // A hello-only or park image cannot be audited under the read policy.
     s.f.set("startup_flash_handshake_policy", json!("fw06-read-v1"));
-    for image in [s.base.clone(), [&s.base[..], b" ", PARK_MARK].concat()] {
+    for (image, declaration) in [
+        (s.base.clone(), Declaration::FlashRead),
+        (
+            [&s.base[..], b" ", PARK_MARK].concat(),
+            Declaration::FlashPark,
+        ),
+    ] {
         s.f.image(&image);
-        let error = s.audit(&good).unwrap_err().to_string();
-        assert!(
-            error.contains("Flash read policy/artifact mismatch")
-                || error.contains("Flash park policy/artifact mismatch")
-        );
+        assert_eq!(policy_refusal(s.audit(&good)), mismatch(declaration));
     }
 
     // The read policy still requires the HELLO record format.
     s.f.image(&[&replace(&s.base, FLASH_MARK, b"")[..], READ_MARK].concat());
-    assert!(
-        s.audit(&good)
-            .unwrap_err()
-            .to_string()
-            .contains("Flash handshake policy/artifact mismatch")
+    assert_eq!(
+        policy_refusal(s.audit(&good)),
+        mismatch(Declaration::FlashHandshake)
     );
 
     // The classifier needs the capture end for the clean tail.
@@ -1000,7 +1004,12 @@ fn read_policy_binding_both_ways() {
         None,
     )
     .unwrap_err();
-    assert!(error.to_string().contains("capture end time"));
+    assert!(matches!(
+        error,
+        Error::Startup(StartupError::NoEndTime {
+            transfer: Transfer::Read
+        })
+    ));
 }
 
 /// The flash records after the LED probe at the given times (per line), under `version`.
@@ -1451,47 +1460,45 @@ fn write_policy_binding_both_ways() {
     let good = write_capture(&s.f.identity.clone(), 10.0, 30.0, 0.3);
 
     // A write image cannot be audited under another flash policy, or without one.
-    for (policy, message) in [
+    for (policy, refusal) in [
+        (json!("fw06-hello-v1"), mismatch(Declaration::FlashWrite)),
+        (json!("fw06-park-v1"), mismatch(Declaration::FlashPark)),
+        (json!("fw06-read-v1"), mismatch(Declaration::FlashRead)),
+        (Value::Null, mismatch(Declaration::FlashHandshake)),
         (
-            json!("fw06-hello-v1"),
-            "Flash write policy/artifact mismatch",
+            json!("fw06-write-v2"),
+            PolicyError::Unknown {
+                policy: Policy::FlashHandshake,
+                declared: "fw06-write-v2".into(),
+            },
         ),
-        (json!("fw06-park-v1"), "Flash park policy/artifact mismatch"),
-        (json!("fw06-read-v1"), "Flash read policy/artifact mismatch"),
-        (Value::Null, "Flash handshake policy/artifact mismatch"),
-        (json!("fw06-write-v2"), "Unknown flash handshake policy"),
     ] {
         s.f.set("startup_flash_handshake_policy", policy);
-        assert!(
-            s.audit(&good).unwrap_err().to_string().contains(message),
-            "{message}"
-        );
+        assert_eq!(policy_refusal(s.audit(&good)), refusal);
     }
 
     // A hello-only, park or read image cannot be audited under the write policy.
     s.f.set("startup_flash_handshake_policy", json!("fw06-write-v1"));
-    for image in [
-        s.base.clone(),
-        [&s.base[..], b" ", PARK_MARK].concat(),
-        [&s.base[..], b" ", READ_MARK].concat(),
+    for (image, declaration) in [
+        (s.base.clone(), Declaration::FlashWrite),
+        (
+            [&s.base[..], b" ", PARK_MARK].concat(),
+            Declaration::FlashPark,
+        ),
+        (
+            [&s.base[..], b" ", READ_MARK].concat(),
+            Declaration::FlashRead,
+        ),
     ] {
         s.f.image(&image);
-        let error = s.audit(&good).unwrap_err().to_string();
-        assert!(
-            ["write", "park", "read"]
-                .iter()
-                .any(|k| error.contains(&format!("Flash {k} policy/artifact mismatch"))),
-            "{error}"
-        );
+        assert_eq!(policy_refusal(s.audit(&good)), mismatch(declaration));
     }
 
     // The write policy still requires the HELLO record format.
     s.f.image(&[&replace(&s.base, FLASH_MARK, b"")[..], WRITE_MARK].concat());
-    assert!(
-        s.audit(&good)
-            .unwrap_err()
-            .to_string()
-            .contains("Flash handshake policy/artifact mismatch")
+    assert_eq!(
+        policy_refusal(s.audit(&good)),
+        mismatch(Declaration::FlashHandshake)
     );
 
     // The classifier needs the capture end for the clean tail.
@@ -1508,5 +1515,10 @@ fn write_policy_binding_both_ways() {
         None,
     )
     .unwrap_err();
-    assert!(error.to_string().contains("capture end time"));
+    assert!(matches!(
+        error,
+        Error::Startup(StartupError::NoEndTime {
+            transfer: Transfer::Write
+        })
+    ));
 }

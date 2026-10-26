@@ -13,9 +13,59 @@
 use std::collections::VecDeque;
 
 use wellfed_formats::canonical::sha256;
+use wellfed_formats::require;
 use unicorn_engine::{Arch, ArmCpuModel, Mode, Prot, RegisterARM, Unicorn};
 
-use crate::{BANKS, Error, FLASH_BYTES, HELPER_SHA256, Result, SECTOR, require};
+use crate::{BANKS, FLASH_BYTES, HELPER_SHA256, Result, SECTOR};
+
+/// A helper session refused: an unpinned input, a scope outside one bank,
+/// or a ROM call the model does not expect. Any of these stops the session,
+/// as a real fault would.
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("Pinned helper required")]
+    UnpinnedHelper,
+    #[error("Synthetic snapshot must be 8 MiB")]
+    SnapshotSize { bytes: usize },
+    #[error("Synthetic scope must be one bank")]
+    ScopeBank { bank: u8 },
+    #[error("Synthetic erase/program scope must stay in its bank")]
+    ScopeSectors,
+    #[error("Helper produced no bounded response")]
+    NoResponse,
+    #[error("Helper waiting without an expected response")]
+    Waiting,
+    #[error("UART getc without supplied host input")]
+    NoHostInput,
+    #[error("UART transmit escaped helper RAM")]
+    TransmitEscapes { pointer: u32, length: u32 },
+    #[error("Unexpected status-read command or buffer")]
+    StatusRead { opcode: u32, length: u32 },
+    #[error("Unexpected UART-writable polling")]
+    WritablePolling,
+    #[error("Erase escapes allowed application sectors")]
+    EraseEscapes { offset: u32 },
+    #[error("Program escapes allowed application sectors")]
+    ProgramEscapes { offset: u32, length: u32 },
+    #[error("Program buffer outside helper RAM")]
+    ProgramBuffer { pointer: u32, length: u32 },
+    #[error("Memcpy escaped helper RAM")]
+    MemcpyEscapes,
+    #[error("Memset escaped helper RAM")]
+    MemsetEscapes,
+    #[error("Unexpected helper UART initialization")]
+    UartInitialization,
+    #[error("Unexpected OTF setup")]
+    OtfSetup,
+    #[error("Unexpected backup register")]
+    BackupRegister,
+    #[error(
+        "Unexpected helper destination (unreviewed flash/register operation forbidden): {pc:#x}"
+    )]
+    UnreviewedDestination { pc: u64 },
+    #[error("Out-of-range register")]
+    RegisterRange,
+}
 
 const FLASH_BASE: u64 = 0x0800_0000;
 const CODE: u64 = 0x8_2020;
@@ -51,7 +101,7 @@ struct State {
     status: Option<[u8; 3]>,
     calls: Vec<Call>,
     empty_polls: u32,
-    error: Option<Error>,
+    error: Option<crate::Error>,
 }
 
 pub struct Helper<'a> {
@@ -66,22 +116,21 @@ impl Helper<'_> {
     pub fn new(helper: &[u8], snapshot: &[u8], scope: Scope) -> Result<Self> {
         require(
             helper.len() == HELPER_BYTES && sha256(helper) == HELPER_SHA256,
-            "Pinned helper required",
+            || Error::UnpinnedHelper,
         )?;
-        require(
-            snapshot.len() == FLASH_BYTES,
-            "Synthetic snapshot must be 8 MiB",
-        )?;
+        require(snapshot.len() == FLASH_BYTES, || Error::SnapshotSize {
+            bytes: snapshot.len(),
+        })?;
         let start = *BANKS
             .get(usize::from(scope.bank))
-            .ok_or_else(|| Error::Refused("Synthetic scope must be one bank".into()))?;
+            .ok_or(Error::ScopeBank { bank: scope.bank })?;
         require(
             !scope.sectors.is_empty()
                 && scope
                     .sectors
                     .iter()
                     .all(|s| (start..start + BANK_BYTES).contains(s) && s % SECTOR == 0),
-            "Synthetic erase/program scope must stay in its bank",
+            || Error::ScopeSectors,
         )?;
 
         let state = State {
@@ -180,10 +229,9 @@ impl Helper<'_> {
             return Err(error);
         }
         ran?;
-        require(
-            !self.uc.get_data().outgoing.is_empty(),
-            "Helper produced no bounded response",
-        )
+        Ok(require(!self.uc.get_data().outgoing.is_empty(), || {
+            Error::NoResponse
+        })?)
     }
 }
 
@@ -208,16 +256,13 @@ fn call(uc: &mut Unicorn<State>, pc: u64) -> Result<()> {
             } else {
                 0
             };
-            require(
-                state.empty_polls < 100,
-                "Helper waiting without an expected response",
-            )?;
+            require(state.empty_polls < 100, || Error::Waiting)?;
             let ready = u32::from(!state.incoming.is_empty());
             ret(uc, ready)
         }
         0x6250 => {
             let byte = uc.get_data_mut().incoming.pop_front();
-            let byte = byte.ok_or_else(|| refused("UART getc without supplied host input"))?;
+            let byte = byte.ok_or(Error::NoHostInput)?;
             ret(uc, u32::from(byte))
         }
         0x6274 => {
@@ -226,39 +271,40 @@ fn call(uc: &mut Unicorn<State>, pc: u64) -> Result<()> {
         }
         0x628C => {
             let [pointer, length, _] = args;
-            require(
-                within(pointer, length) && length <= 1032,
-                "UART transmit escaped helper RAM",
-            )?;
+            require(within(pointer, length) && length <= 1032, || {
+                Error::TransmitEscapes { pointer, length }
+            })?;
             let data = uc.mem_read_as_vec(u64::from(pointer), length as usize)?;
             uc.get_data_mut().outgoing.extend(data);
             ret(uc, length)
         }
         0x1D1C => {
             let [opcode, length, pointer] = args;
-            let index = [0x05, 0x35, 0x15].iter().position(|&o| o == opcode);
-            let value = uc.get_data().status.zip(index).map(|(s, i)| s[i]);
-            let Some(value) = value.filter(|_| length == 1 && within(pointer, 1)) else {
-                return Err(refused("Unexpected status-read command or buffer"));
+            let codes = [0x05_u8, 0x35, 0x15];
+            let index = codes.iter().position(|&o| u32::from(o) == opcode);
+            let value = uc
+                .get_data()
+                .status
+                .zip(index)
+                .map(|(s, i)| (s[i], codes[i]));
+            let Some((value, code)) = value.filter(|_| length == 1 && within(pointer, 1)) else {
+                return Err(Error::StatusRead { opcode, length }.into());
             };
             uc.mem_write(u64::from(pointer), &[value])?;
-            let opcode = u8::try_from(opcode).map_err(|_| refused("opcode"))?;
-            uc.get_data_mut().calls.push(Call::ReadStatus { opcode });
+            uc.get_data_mut()
+                .calls
+                .push(Call::ReadStatus { opcode: code });
             ret(uc, 0)
         }
         0x6238 => {
-            require(
-                uc.get_data().status.is_some(),
-                "Unexpected UART-writable polling",
-            )?;
+            require(uc.get_data().status.is_some(), || Error::WritablePolling)?;
             ret(uc, 1)
         }
         0x2146 => {
             let [mode, offset, _] = args;
-            require(
-                mode == 2 && uc.get_data().sectors.contains(&offset),
-                "Erase escapes allowed application sectors",
-            )?;
+            require(mode == 2 && uc.get_data().sectors.contains(&offset), || {
+                Error::EraseEscapes { offset }
+            })?;
             uc.mem_write(FLASH_BASE + u64::from(offset), &[0xFF; SECTOR as usize])?;
             uc.get_data_mut().calls.push(Call::Erase { offset });
             ret(uc, 0)
@@ -269,9 +315,12 @@ fn call(uc: &mut Unicorn<State>, pc: u64) -> Result<()> {
                 length == 8
                     && uc.get_data().sectors.contains(&(offset / SECTOR * SECTOR))
                     && offset % SECTOR + length <= SECTOR,
-                "Program escapes allowed application sectors",
+                || Error::ProgramEscapes { offset, length },
             )?;
-            require(within(pointer, length), "Program buffer outside helper RAM")?;
+            require(within(pointer, length), || Error::ProgramBuffer {
+                pointer,
+                length,
+            })?;
             // NOR programming only clears bits.
             let address = FLASH_BASE + u64::from(offset);
             let existing = uc.mem_read_as_vec(address, 8)?;
@@ -288,7 +337,7 @@ fn call(uc: &mut Unicorn<State>, pc: u64) -> Result<()> {
             let [destination, source, length] = args;
             require(
                 length <= 4096 && within(destination, length) && within(source, length),
-                "Memcpy escaped helper RAM",
+                || Error::MemcpyEscapes,
             )?;
             let data = uc.mem_read_as_vec(u64::from(source), length as usize)?;
             uc.mem_write(u64::from(destination), &data)?;
@@ -296,36 +345,30 @@ fn call(uc: &mut Unicorn<State>, pc: u64) -> Result<()> {
         }
         0x66AC => {
             let [destination, value, length] = args;
-            require(
-                length <= 4096 && within(destination, length),
-                "Memset escaped helper RAM",
-            )?;
+            require(length <= 4096 && within(destination, length), || {
+                Error::MemsetEscapes
+            })?;
             let fill = vec![value.to_le_bytes()[0]; length as usize];
             uc.mem_write(u64::from(destination), &fill)?;
             ret(uc, destination)
         }
         0x61A0 => {
-            require(
-                args == [2, 0, 115_200],
-                "Unexpected helper UART initialization",
-            )?;
+            require(args == [2, 0, 115_200], || Error::UartInitialization)?;
             uc.mem_write(0x8_0660, &0x4000_8000u32.to_le_bytes())?;
             ret(uc, 0)
         }
         0x3594 => {
-            require(args[0] == 0, "Unexpected OTF setup")?;
+            require(args[0] == 0, || Error::OtfSetup)?;
             uc.mem_write(0x4800_0600, &[0; 4])?;
             ret(uc, 0)
         }
         0x1434 => {
-            require(args[0] == 0, "Unexpected backup register")?;
+            require(args[0] == 0, || Error::BackupRegister)?;
             ret(uc, 0)
         }
         // Diagnostic, delay, UART baud and busy models only.
         0x0474 | 0x14C2 | 0x1504 | 0x40B0 | 0x43D4 => ret(uc, 0),
-        _ => Err(Error::Refused(format!(
-            "Unexpected helper destination (unreviewed flash/register operation forbidden): {pc:#x}"
-        ))),
+        _ => Err(Error::UnreviewedDestination { pc }.into()),
     }
 }
 
@@ -344,9 +387,5 @@ fn within(pointer: u32, length: u32) -> bool {
 }
 
 fn reg(uc: &Unicorn<State>, register: RegisterARM) -> Result<u32> {
-    u32::try_from(uc.reg_read(register)?).map_err(|_| refused("Out-of-range register"))
-}
-
-fn refused(message: &str) -> Error {
-    Error::Refused(message.into())
+    Ok(u32::try_from(uc.reg_read(register)?).map_err(|_| Error::RegisterRange)?)
 }

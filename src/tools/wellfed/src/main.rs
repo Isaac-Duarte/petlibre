@@ -387,7 +387,9 @@ struct LogsArgs {
     #[command(flatten)]
     target: Target,
     /// Start after this line number of the feeder's current boot (default:
-    /// the oldest line its RAM tail keeps, a few KB).
+    /// the oldest line its RAM tail keeps, a few KB). Lines count from 1
+    /// each boot, and the feeder cannot tell an earlier boot's number below
+    /// this boot's newest from its own: after a restart, start without it.
     #[arg(long)]
     after: Option<u32>,
     /// Keep the session open and print new lines as the feeder logs them.
@@ -605,13 +607,18 @@ async fn logs_command(args: LogsArgs) -> Result<()> {
         Answer::Refused(refusal) => bail!("refused: {refusal:?}"),
         other => bail!("unexpected answer {other:?}"),
     }
-    // Without --follow, stop once the tail has been sent and is quiet.
+    // Without --follow, stop once the tail has been sent and is quiet, or
+    // after a bound: a feeder logging steadily is never quiet.
     let wait = if args.follow {
         Duration::from_secs(3600)
     } else {
         Duration::from_secs(2)
     };
+    let until = std::time::Instant::now() + LOGS_BOUND;
     loop {
+        if !args.follow && std::time::Instant::now() >= until {
+            return Ok(());
+        }
         let pushed = match connection.next(wait).await? {
             Some(pushed) => pushed,
             None if args.follow => continue,
@@ -621,16 +628,17 @@ async fn logs_command(args: LogsArgs) -> Result<()> {
             continue;
         };
         if batch.dropped > 0 {
-            eprintln!(
-                "({} lines dropped: the feeder logged faster than this session read)",
-                batch.dropped
-            );
+            eprintln!("({} lines not in the tail)", batch.dropped);
         }
         for line in batch.lines {
             println!("{line}");
         }
     }
 }
+
+/// How long `logs` without `--follow` reads: the whole tail is a few
+/// frames, sent within a second.
+const LOGS_BOUND: Duration = Duration::from_secs(10);
 
 /// Longer than any feed the owner's limits allow.
 const FEED_WAIT: Duration = Duration::from_secs(120);

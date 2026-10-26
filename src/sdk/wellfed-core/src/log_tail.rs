@@ -8,7 +8,8 @@
 //!   find another mid-copy is an interrupt that preempted it. That writer
 //!   drops its line (the UART still prints it) and counts it, rather than
 //!   wait for a writer that cannot run until it returns. A dropped line
-//!   still takes a number, so a reader sees the hole as dropped lines.
+//!   still takes a number, so a reader sees the hole as dropped lines,
+//!   but only once the next line is written: until then nothing shows it.
 //! - **Readers never block writers.** A reader copies a line, then checks
 //!   that the oldest line kept has not moved past it meanwhile (a seqlock);
 //!   if it has, it starts over from the new oldest line, a few times at
@@ -20,6 +21,7 @@
 //! Lines are numbered from 1 each boot (the ring is RAM, and nothing of it
 //! is written to flash). A cursor beyond the newest line can only come
 //! from an earlier boot, so a read starts again from the oldest line kept.
+//! One below it cannot be told from this boot's own, and is read as one.
 
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering, fence};
 
@@ -110,7 +112,10 @@ impl<const N: usize> LogTail<N> {
             tail = tail.wrapping_add(position(HEADER + usize::from(len)));
         }
         // Readers learn which lines are gone before a byte of them changes:
-        // a reader that sees an overwritten byte then sees this tail.
+        // a reader that sees an overwritten byte then sees this tail (the
+        // fence). The store itself is a release too, so a reader that
+        // acquires this tail also sees the head the last line published,
+        // and never reads a tail past its head.
         self.tail.store(tail, Ordering::Release);
         fence(Ordering::Release);
 

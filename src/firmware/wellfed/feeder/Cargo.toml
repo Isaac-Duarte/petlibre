@@ -21,7 +21,10 @@ km4 = [
     "wellfed-sdk/bluetooth",
     "wellfed-sdk/log-tail",
 ]
-# Stream raw noise samples for the host's entropy estimate.
+# Stream raw noise samples for the host's entropy estimate. It keeps the
+# log tail: the samples are taken between prints, and the copy after each
+# print (microseconds, under the scheduler suspension the print already
+# holds) is dwarfed by the print itself, so it does not shape the jitter.
 entropy = []
 # Stall the loop twice, for the bench to watch the owner's beat lapse.
 owner-stall = []

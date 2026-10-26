@@ -5,8 +5,8 @@
 //! peer and a 15-minute accept window. The build is bound to its frozen
 //! review's `ota_sha256` and held in memory once loaded, so changing the files
 //! afterwards cannot change what is served. A private lease beside the config
-//! records the random URL token and the served digest; trial dispatch
-//! requires that lease and a live listener.
+//! records the random URL token, the served digest and the build's identity;
+//! trial dispatch requires that lease and a live listener.
 use std::{
     convert::Infallible, future::Future, io::Read, net::Ipv4Addr, path::Path, sync::Arc,
     time::Duration,
@@ -72,6 +72,9 @@ pub struct Lease {
     pub expires_at: DateTime<Utc>,
     /// The served build's SHA-256, which the install command announces.
     pub sha256: String,
+    /// The served build's identity: its frozen manifest's startup identity,
+    /// 64 lowercase hex, as the build's device API reports it.
+    pub build: String,
 }
 
 impl Lease {
@@ -100,6 +103,34 @@ pub struct Build {
     image: Bytes,
     /// Recorded in the lease.
     sha256: String,
+    /// Recorded in the lease.
+    build: String,
+}
+
+/// The one field of the frozen build manifest the image server needs.
+#[derive(Deserialize)]
+struct StartupIdentity {
+    startup_identity: Option<String>,
+}
+
+/// The startup identity the review's frozen `build-manifest.json` records,
+/// bound to the review by its digest.
+fn build_identity(review: &Path, frozen: &ImageReview) -> Result<String> {
+    let raw = std::fs::read(review.join("build-manifest.json"))
+        .context("read the review's build-manifest.json")?;
+    ensure!(
+        frozen.manifest_sha256.as_deref() == Some(canonical::sha256(&raw).as_str()),
+        "build-manifest.json does not match its review"
+    );
+
+    let manifest: StartupIdentity =
+        serde_json::from_slice(&raw).context("parse build-manifest.json")?;
+    let id = manifest.startup_identity.unwrap_or_default();
+    ensure!(
+        id.len() == 64 && id.bytes().all(|b| b.is_ascii_hexdigit()),
+        "build-manifest.json has no 64-hex startup_identity"
+    );
+    Ok(id.to_ascii_lowercase())
 }
 
 /// Read at most `IMAGE_BYTES`.
@@ -134,10 +165,12 @@ impl Build {
             "image.bin does not match its review"
         );
         payload(&data)?;
+        let build = build_identity(review, &frozen)?;
 
         Ok(Self {
             image: Bytes::from(data),
             sha256,
+            build,
         })
     }
 }
@@ -293,6 +326,7 @@ pub async fn serve(
         peer,
         expires_at: Utc::now() + chrono::Duration::seconds(ACCEPT_WINDOW_SECONDS),
         sha256: build.sha256.clone(),
+        build: build.build.clone(),
     };
 
     let lease_path = Lease::path(config_path);
@@ -347,6 +381,7 @@ mod tests {
         let build = Build {
             image: Bytes::from_static(b"test-image"),
             sha256: String::new(),
+            build: String::new(),
         };
 
         let worker = tokio::spawn(run(listener, build, peer, token, std::future::pending()));
@@ -460,6 +495,7 @@ mod tests {
             peer: Ipv4Addr::new(10, 0, 0, 2),
             expires_at: Utc::now(),
             sha256: canonical::sha256(b"build"),
+            build: "ab".repeat(32),
         };
 
         storage::write_json(&Lease::path(&config), &lease).unwrap();
@@ -474,10 +510,14 @@ mod tests {
         drop(listener);
     }
 
-    /// A review directory holding `image` and a review naming `digest`.
-    fn review(image: &[u8], digest: &str, kind: &str) -> tempfile::TempDir {
+    /// A review directory holding `image`, a manifest naming `identity`, and
+    /// a review naming `digest` and that manifest.
+    fn review_of(image: &[u8], digest: &str, kind: &str, identity: &str) -> tempfile::TempDir {
         let directory = tempfile::tempdir().unwrap();
         std::fs::write(directory.path().join("image.bin"), image).unwrap();
+        let manifest = serde_json::json!({"startup_identity": identity, "profile": "firstboot"});
+        let manifest = serde_json::to_vec(&manifest).unwrap();
+        std::fs::write(directory.path().join("build-manifest.json"), &manifest).unwrap();
         let review = serde_json::json!({
             "schema_version": 1,
             "kind": "plaf103_development_image_review",
@@ -485,13 +525,17 @@ mod tests {
             "ota_sha256": digest,
             "payload_sha256": "",
             "payload_bytes": 0,
-            "manifest_sha256": null,
+            "manifest_sha256": canonical::sha256(&manifest),
             "review": {"stock_sha256": ""},
             "reviewer_sha256": "",
             "application_boot_verified": false,
         });
         storage::write_json(&directory.path().join("review.json"), &review).unwrap();
         directory
+    }
+
+    fn review(image: &[u8], digest: &str, kind: &str) -> tempfile::TempDir {
+        review_of(image, digest, kind, &"AB".repeat(32))
     }
 
     #[test]
@@ -504,6 +548,17 @@ mod tests {
         let build = Build::load(review(&image, &digest, "build").path()).unwrap();
         assert_eq!(build.image.as_ref(), image.as_slice());
         assert_eq!(build.sha256, digest);
+        assert_eq!(build.build, "ab".repeat(32));
+
+        assert!(Build::load(review_of(&image, &digest, "build", "").path()).is_err());
+        assert!(Build::load(review_of(&image, &digest, "build", &"g".repeat(64)).path()).is_err());
+        let tampered = review(&image, &digest, "build");
+        std::fs::write(
+            tampered.path().join("build-manifest.json"),
+            br#"{"startup_identity":"cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"}"#,
+        )
+        .unwrap();
+        assert!(Build::load(tampered.path()).is_err());
 
         let other = canonical::sha256(b"other");
         assert!(Build::load(review(&image, &other, "build").path()).is_err());

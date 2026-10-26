@@ -121,13 +121,20 @@ enum Action {
     },
 
     /// Close the latest submitted or uncertain trial on the replacement's
-    /// answer: the note says what answered over the device API, and when.
-    /// Never sends a device command.
+    /// answer: the build identity and bank its device API reported, and a
+    /// note of what answered, and when. Refused while stock still reports,
+    /// or for another build or bank. Never sends a device command.
     OtaTrialAnswered {
         #[arg(long, default_value = "private/server.json")]
         config: PathBuf,
         #[arg(long)]
         request_id: uuid::Uuid,
+        /// The build identity the device API reported (64 hex).
+        #[arg(long)]
+        build: String,
+        /// The bank the device API reported; the trial closes only on 0.
+        #[arg(long)]
+        bank: u8,
         #[arg(long)]
         note: String,
     },
@@ -287,13 +294,20 @@ async fn main() -> Result<()> {
         Action::OtaTrialAnswered {
             config,
             request_id,
+            build,
+            bank,
             note,
         } => {
             api_request(
                 config,
                 Method::POST,
                 "/api/ota/trial/answered",
-                Some(&ota::trial::ResolveInput { request_id, note }),
+                Some(&ota::trial::AnsweredInput {
+                    request_id,
+                    build: build.to_ascii_lowercase(),
+                    bank,
+                    note,
+                }),
             )
             .await?;
         }

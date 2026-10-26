@@ -139,6 +139,8 @@ fn commands() {
         download_reported: false,
         resolution_note: None,
         image_sha256: DIGEST.into(),
+        build: None,
+        stock_reported: false,
     };
     let upgrade = ota::trial::command(&trial, &config);
     assert_eq!(upgrade.topic, config.topic("service/sub"));

@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 
 use super::*;
 use wellfed_bench::device::{Answer, Ask, DeviceStatus, Intruder, Rebuffed};
-use wellfed_bench::server::LocalStatus;
+use wellfed_bench::server::{LocalStatus, TrialAnswer};
 
 use crate::{Fault, Rig};
 
@@ -69,7 +69,8 @@ struct StockFeeder {
     /// Stock runs (and reports once routed); false while a replacement does.
     on_stock: bool,
     /// The server refuses to close the trial on the replacement's answer.
-    answer_refused: bool,
+    /// How many answers the server refuses before closing the request.
+    answer_refusals: u32,
     actions: Vec<String>,
     notes: Vec<String>,
 }
@@ -105,7 +106,7 @@ impl StockFeeder {
             offered: false,
             served: None,
             on_stock: true,
-            answer_refused: false,
+            answer_refusals: 0,
             actions: Vec::new(),
             notes: Vec::new(),
         }
@@ -344,18 +345,23 @@ impl Rig for StockFeeder {
         Ok(())
     }
 
-    fn trial_answered(&mut self, request_id: &str, note: &str) -> Result<()> {
+    fn trial_answered(&mut self, answer: &TrialAnswer) -> Result<()> {
         let Some((id, phase)) = &mut self.trial else {
             panic!("no request to close")
         };
-        assert_eq!(id, request_id);
+        assert_eq!(*id, answer.request_id);
+        assert_eq!(answer.bank, 0);
+        assert_eq!(answer.build.len(), 64, "{}", answer.build);
         assert!(
-            note.contains("answered the device API from bank 0"),
-            "{note}"
+            answer.note.contains("answered the device API from bank 0"),
+            "{}",
+            answer.note
         );
-        if self.answer_refused {
+        if self.answer_refusals > 0 {
+            self.answer_refusals -= 1;
+            self.actions.push("answer refused".into());
             return Err(Error::Bench(
-                "POST /api/ota/trial/answered: 409 not the latest open trial".into(),
+                "POST /api/ota/trial/answered: 409 stock is still reporting".into(),
             ));
         }
         *phase = "replacement_healthy";
@@ -518,19 +524,48 @@ fn promote_lets_the_bank_0_build_install_itself_into_bank_1() {
 #[test]
 fn a_request_the_server_will_not_close_is_noted_and_the_run_goes_on() {
     let mut feeder = StockFeeder::new(Script::Installs);
-    feeder.answer_refused = true;
+    feeder.answer_refusals = u32::MAX;
     let reports = session(&mut feeder, true);
 
     assert_eq!(
         verdicts(&reports)[3..],
         [(DOWNLOAD, "pass"), (BANK0, "pass"), (PROMOTE, "pass")]
     );
-    assert_eq!(feeder.actions, ["offer on bank 0"]);
+    // Asked every 10 s across the server's telemetry window, then given up.
+    let refused = feeder
+        .actions
+        .iter()
+        .filter(|a| *a == "answer refused")
+        .count();
+    assert!((12..=13).contains(&refused), "{:?}", feeder.actions);
+    assert_eq!(feeder.actions.last().unwrap(), "offer on bank 0");
     assert!(
         feeder
             .notes
             .iter()
             .any(|n| n.contains("did not close the request"))
+    );
+}
+
+#[test]
+fn an_answer_refused_while_stock_s_telemetry_is_current_is_asked_again() {
+    let mut feeder = StockFeeder::new(Script::Installs);
+    feeder.answer_refusals = 2;
+    let reports = session(&mut feeder, true);
+
+    assert_eq!(verdicts(&reports)[4], (BANK0, "pass"));
+    assert_eq!(
+        feeder.actions,
+        [
+            "answer refused",
+            "answer refused",
+            "answered",
+            "offer on bank 0"
+        ]
+    );
+    assert_eq!(
+        feeder.trial.as_ref().map(|(_, phase)| *phase),
+        Some("replacement_healthy")
     );
 }
 

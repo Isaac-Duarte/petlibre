@@ -39,7 +39,7 @@ pub enum Request {
     ResolveTrial(ota::trial::ResolveInput, oneshot::Sender<TrialResult>),
     /// The operator's client saw the replacement answer the device API
     /// ([`Controller::replacement_answered`]).
-    TrialAnswered(ota::trial::ResolveInput, oneshot::Sender<TrialResult>),
+    TrialAnswered(ota::trial::AnsweredInput, oneshot::Sender<TrialResult>),
 }
 
 /// QoS 0, no retain, no offline session, and a new client on reconnect: a

@@ -80,6 +80,18 @@ pub struct TrialRecord {
     pub resolution_note: Option<String>,
     /// The digest the command announced, from the image server's lease.
     pub image_sha256: String,
+    /// The served build's identity (its frozen review's startup identity,
+    /// 64 lowercase hex), from the same lease. A trial closes on the
+    /// replacement's answer only when that answer names this build. `None`
+    /// in records written before it was kept: those never close that way.
+    #[serde(default)]
+    pub build: Option<String>,
+    /// Stock reported its version after the trial was submitted, so it was
+    /// still running then. A trial so marked never closes on a client's
+    /// word that the replacement answered: only fresh version evidence
+    /// resolves it.
+    #[serde(default)]
+    pub stock_reported: bool,
 }
 
 /// What a trial was asked with.

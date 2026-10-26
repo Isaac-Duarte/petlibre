@@ -30,6 +30,18 @@ pub struct ResolveInput {
     pub note: String,
 }
 
+/// What the operator's client saw: the trial's build answering its device
+/// API from `bank` (which must be 0) after the submission. `build` is the
+/// identity the API reported, 64 lowercase hex; the note is free text.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AnsweredInput {
+    pub request_id: Uuid,
+    pub build: String,
+    pub bank: u8,
+    pub note: String,
+}
+
 /// The stock `OTA_UPGRADE` command's own fields.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]

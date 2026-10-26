@@ -13,20 +13,28 @@ use wellfed_stock::{
     ota::{
         self,
         image::Lease,
-        trial::{Phase, ResolveInput},
+        trial::{AnsweredInput, Phase, ResolveInput},
     },
     protocol::{Message, Reply},
 };
 use serde_json::json;
 use uuid::Uuid;
 
-/// A live image-server lease for `token`, serving a build with digest `sha256`.
+/// The served build's identity, as its frozen manifest and its device API
+/// name it.
+fn served() -> String {
+    "cd".repeat(32)
+}
+
+/// A live image-server lease for `token`, serving [`served`] with digest
+/// `ab…`.
 fn lease(token: Uuid, now: DateTime<Utc>) -> Lease {
     Lease {
         token,
         peer: "10.0.0.2".parse().unwrap(),
         expires_at: now + Duration::minutes(15),
         sha256: "ab".repeat(32),
+        build: served(),
     }
 }
 
@@ -354,10 +362,12 @@ fn dispatch_requires_a_matching_unexpired_image_server_lease_and_fresh_power() {
     assert!(submit(&mut c, request, now).unwrap().1.is_some());
 }
 
-fn answered(id: Uuid) -> ResolveInput {
-    ResolveInput {
+fn answered(id: Uuid) -> AnsweredInput {
+    AnsweredInput {
         request_id: id,
-        note: "build 8a13e59efa15 answered the device API from bank 0".to_owned(),
+        build: served(),
+        bank: 0,
+        note: "build cdcdcdcdcdcd answered the device API from bank 0".to_owned(),
     }
 }
 
@@ -383,7 +393,7 @@ fn the_replacements_answer_closes_only_the_latest_open_install() {
         c.replacement_answered(answered(request.request_id), now),
         Err(Rejection::NotOpen)
     );
-    let blank = ResolveInput {
+    let blank = AnsweredInput {
         note: " ".into(),
         ..answered(request.request_id)
     };
@@ -398,6 +408,7 @@ fn the_replacements_answer_closes_only_the_latest_open_install() {
         .replacement_answered(answered(request.request_id), later)
         .unwrap();
     assert_eq!(record.phase, Phase::ReplacementHealthy);
+    assert_eq!(record.build, Some(served()));
     assert_eq!(
         record.resolution_note,
         Some(answered(request.request_id).note)
@@ -408,7 +419,7 @@ fn the_replacements_answer_closes_only_the_latest_open_install() {
         c.replacement_answered(answered(request.request_id), later),
         Ok(record)
     );
-    let other = ResolveInput {
+    let other = AnsweredInput {
         note: "something else".into(),
         ..answered(request.request_id)
     };
@@ -421,6 +432,97 @@ fn the_replacements_answer_closes_only_the_latest_open_install() {
     drop(c);
     let c = common::load(path).unwrap();
     assert_eq!(c.status.ota_trials[0].phase, Phase::ReplacementHealthy);
+}
+
+#[test]
+fn an_answer_is_refused_while_stock_still_reports() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = enabled(&dir);
+    let now = Utc::now();
+    let request = input();
+    submit(&mut c, request.clone(), now).unwrap();
+
+    // Stock's telemetry is current: it is the one running.
+    let later = now + Duration::seconds(200);
+    observe(
+        &mut c,
+        "heart",
+        json!({"cmd":"HEARTBEAT"}),
+        later - Duration::seconds(10),
+    );
+    assert_eq!(
+        c.replacement_answered(answered(request.request_id), later),
+        Err(Rejection::StockRunning)
+    );
+
+    // It dropped mid-download, came back on 1.1.15 and reported its
+    // version, then went quiet: the trial stays open for a resolution, even
+    // with its telemetry stale and the session gone.
+    c.disconnected(later).unwrap();
+    c.connected(later);
+    observe(
+        &mut c,
+        "event",
+        json!({"cmd":"ATTR_PUSH_EVENT","softwareVersion":"1.1.15","powerType":1}),
+        later + Duration::seconds(5),
+    );
+    c.disconnected(later + Duration::seconds(10)).unwrap();
+    assert!(c.status.ota_trials[0].stock_reported);
+    assert_eq!(
+        c.replacement_answered(answered(request.request_id), later + Duration::seconds(300)),
+        Err(Rejection::StockRunning)
+    );
+    assert_eq!(c.status.ota_trials[0].phase, Phase::Uncertain);
+
+    // Nor does a restart forget it.
+    drop(c);
+    let mut c = common::load(dir.path().join("ledger.json")).unwrap();
+    assert_eq!(
+        c.replacement_answered(answered(request.request_id), later + Duration::seconds(400)),
+        Err(Rejection::StockRunning)
+    );
+}
+
+#[test]
+fn an_answer_must_name_the_served_build_on_bank_0() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = enabled(&dir);
+    let now = Utc::now();
+    let request = input();
+    submit(&mut c, request.clone(), now).unwrap();
+    assert_eq!(c.status.ota_trials[0].build, Some(served()));
+    let later = now + Duration::seconds(200);
+
+    let other_build = AnsweredInput {
+        build: "ef".repeat(32),
+        ..answered(request.request_id)
+    };
+    assert_eq!(
+        c.replacement_answered(other_build, later),
+        Err(Rejection::WrongBuild)
+    );
+    let bank1 = AnsweredInput {
+        bank: 1,
+        ..answered(request.request_id)
+    };
+    assert_eq!(
+        c.replacement_answered(bank1, later),
+        Err(Rejection::WrongBuild)
+    );
+    assert_eq!(c.status.ota_trials[0].phase, Phase::Submitted);
+
+    // The right build closes it, once.
+    c.replacement_answered(answered(request.request_id), later)
+        .unwrap();
+    assert_eq!(c.status.ota_trials[0].phase, Phase::ReplacementHealthy);
+    let again = AnsweredInput {
+        build: "ef".repeat(32),
+        ..answered(request.request_id)
+    };
+    assert_eq!(
+        c.replacement_answered(again, later),
+        Err(Rejection::NotOpen)
+    );
 }
 
 #[test]

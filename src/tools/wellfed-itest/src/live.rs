@@ -30,7 +30,7 @@ use serde::de::IgnoredAny;
 use wellfed_bench::commands::Bench;
 use wellfed_bench::commands::ota::{self, OtaArgs, Staged, Target, Timing};
 use wellfed_bench::device::{Answer, Ask, Device, Intruder, Rebuffed};
-use wellfed_bench::server::{LocalStatus, TrialRequest, TrialResolve};
+use wellfed_bench::server::{LocalStatus, TrialAnswer, TrialRequest, TrialResolve};
 use wellfed_bench::suite::ItestArgs;
 use wellfed_bench::tools::{Capture, InstallJob, Installing};
 use wellfed_bench::{Error, Result, require, say};
@@ -565,10 +565,9 @@ impl Rig for LiveRig<'_> {
             .map_err(Error::from)
     }
 
-    fn trial_answered(&mut self, request_id: &str, note: &str) -> Result<()> {
-        let body = TrialResolve { request_id, note };
+    fn trial_answered(&mut self, answer: &TrialAnswer) -> Result<()> {
         self.api
-            .post::<IgnoredAny>("/api/ota/trial/answered", &body)
+            .post::<IgnoredAny>("/api/ota/trial/answered", answer)
             .map(|_| ())
             .map_err(Error::from)
     }

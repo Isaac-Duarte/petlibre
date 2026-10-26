@@ -29,7 +29,7 @@ use std::path::PathBuf;
 
 use wellfed_bench::commands::Bench;
 use wellfed_bench::commands::ota::{self, OtaArgs, Outcome, Staged, Target, Timing};
-use wellfed_bench::server::{STOCK_VERSION, TrialRequest};
+use wellfed_bench::server::{STOCK_VERSION, TrialAnswer, TrialRequest};
 use wellfed_bench::suite::{ItestArgs, StockOtaArgs};
 use wellfed_bench::{Error, Result, say};
 use wellfed_core::record::tag;
@@ -341,6 +341,11 @@ fn started(line: &str, build: &str) -> Result<()> {
     Ok(())
 }
 
+/// How long the bank-0 step asks the server to close the request: past the
+/// server's 90 s telemetry window, counted from when the build answered.
+const ANSWER_SECONDS: f64 = 120.0;
+const ANSWER_RETRY_SECONDS: f64 = 10.0;
+
 /// The build answers the device API from bank 0 while it waits for an
 /// update, which closes the server's install record: stock never reports
 /// after activating it. A record the server would not close is noted, not
@@ -365,17 +370,37 @@ fn bank0(ctx: &mut Ctx, build: &str, request_id: &str) -> Result<()> {
     )?;
     ctx.note(&format!("  {report}"));
 
-    let note = format!(
-        "stock-ota: build {} answered the device API from bank 0",
-        &build[..build.len().min(12)]
-    );
-    match ctx.rig.trial_answered(request_id, &note) {
-        Ok(()) => ctx.note("  The server closed the request: replacement healthy"),
-        Err(error) => ctx.note(&format!(
-            "  The server did not close the request ({error}); the next one waits for its resolution"
-        )),
+    // The device API's status named exactly this build and bank 0 (the
+    // check above); the server holds it to the build it served.
+    let answer = TrialAnswer {
+        request_id: request_id.to_string(),
+        build: build.to_string(),
+        bank: 0,
+        note: format!(
+            "stock-ota: build {} answered the device API from bank 0",
+            &build[..build.len().min(12)]
+        ),
+    };
+
+    // The server refuses while stock's last telemetry is still current (90 s
+    // after its last report, which may be just before it rebooted into the
+    // build), so a refusal is asked again until that window has surely passed.
+    let deadline = ctx.rig.clock() + ANSWER_SECONDS;
+    loop {
+        match ctx.rig.trial_answered(&answer) {
+            Ok(()) => {
+                ctx.note("  The server closed the request: replacement healthy");
+                return Ok(());
+            }
+            Err(error) if ctx.rig.clock() + ANSWER_RETRY_SECONDS > deadline => {
+                ctx.note(&format!(
+                    "  The server did not close the request ({error}); the next one waits for its resolution"
+                ));
+                return Ok(());
+            }
+            Err(_) => ctx.rig.wait(ANSWER_RETRY_SECONDS)?,
+        }
     }
-    Ok(())
 }
 
 /// Push the same build signed: bank 0 installs it into bank 1, and the trial

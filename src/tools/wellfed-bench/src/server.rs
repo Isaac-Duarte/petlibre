@@ -49,6 +49,17 @@ pub struct TrialResolve<'a> {
     pub note: &'a str,
 }
 
+/// The body of `POST /api/ota/trial/answered`: the build identity and bank
+/// the replacement's device API reported, which the server holds to the
+/// build its image server served, and a note of what answered.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TrialAnswer {
+    pub request_id: String,
+    pub build: String,
+    pub bank: u8,
+    pub note: String,
+}
+
 /// Why the feeder's device-API status does not show what a wait is for, yet.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum NotReady {

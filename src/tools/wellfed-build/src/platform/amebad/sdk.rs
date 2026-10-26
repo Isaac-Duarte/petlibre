@@ -152,8 +152,7 @@ fn unexpected_sdk_changes(sdk: &Path, profile: Profile) -> Result<Vec<String>> {
         let allowed = match code {
             "??" => {
                 untracked.contains(path)
-                    || (profile.has(Stage::Rust)
-                        && (path == WIFI_HEADER || path == BLE_SOURCE))
+                    || (profile.has(Stage::Rust) && (path == WIFI_HEADER || path == BLE_SOURCE))
             }
             " M" => {
                 managed.contains(path)

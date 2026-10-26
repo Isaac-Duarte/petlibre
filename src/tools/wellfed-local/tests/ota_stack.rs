@@ -45,6 +45,7 @@ async fn an_explicit_api_install_publishes_once_and_never_again() {
             peer: Ipv4Addr::new(10, 0, 0, 2),
             expires_at: Utc::now() + chrono::Duration::minutes(15),
             sha256: digest.clone(),
+            build: "cd".repeat(32),
         },
     )
     .unwrap();
@@ -238,24 +239,29 @@ async fn an_explicit_api_install_publishes_once_and_never_again() {
     );
     assert_eq!(status["ota_trials"].as_array().unwrap().len(), 1);
 
-    // The bench saw the build answer the device API: the trial closes, and
-    // stock is sent nothing more.
+    // A client's word that the build answered is refused while stock's own
+    // telemetry is current: stock is the one running. The trial stays open
+    // and stock is sent nothing more. (The controller's tests close it once
+    // stock has gone quiet, which takes longer than this test should.)
     let answered = http
         .post(format!(
             "http://{}/api/ota/trial/answered",
             config.http_listen
         ))
         .bearer_auth(&config.api_token)
-        .json(&ota::trial::ResolveInput {
+        .json(&ota::trial::AnsweredInput {
             request_id: request.request_id,
+            build: "cd".repeat(32),
+            bank: 0,
             note: "build answered the device API from bank 0".into(),
         })
         .send()
         .await
         .unwrap();
-    assert!(answered.status().is_success());
+    assert_eq!(answered.status(), reqwest::StatusCode::CONFLICT);
     let status = common::status(&config, &http).await;
-    assert_eq!(status["ota_trials"][0]["phase"], "replacement_healthy");
+    assert_eq!(status["ota_trials"][0]["phase"], "submitted");
+    assert_eq!(status["ota_trials"][0]["build"], "cd".repeat(32));
     assert_eq!(commands.load(Ordering::SeqCst), 1);
 
     worker.abort();

@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 use wellfed_bench::commands::ota::{self, Outcome, Staged, Target, Watch};
 use wellfed_bench::commands::{Bench, Image, OtaArgs};
 use wellfed_bench::device::{Answer, Ask, DeviceStatus, Intruder, Rebuffed};
-use wellfed_bench::server::{LocalStatus, TrialRequest};
+use wellfed_bench::server::{LocalStatus, TrialAnswer, TrialRequest};
 use wellfed_bench::suite::{ItestArgs, StockOtaArgs, Suite};
 use wellfed_bench::{Error, Result, require, say};
 use wellfed_formats::bench::VERIFICATION;
@@ -170,9 +170,9 @@ trait Rig {
     fn resolve_trial(&mut self, _request_id: &str, _note: &str) -> Result<()> {
         Err(Error::Bench("This rig resolves no stock trials".into()))
     }
-    /// `POST /api/ota/trial/answered`: the replacement answered the device
-    /// API after the trial, as `note` says; sends the device nothing.
-    fn trial_answered(&mut self, _request_id: &str, _note: &str) -> Result<()> {
+    /// `POST /api/ota/trial/answered`: `build` answered the device API from
+    /// `bank` after the trial, as `note` says; sends the device nothing.
+    fn trial_answered(&mut self, _answer: &TrialAnswer) -> Result<()> {
         Err(Error::Bench("This rig closes no stock trials".into()))
     }
 }

@@ -109,6 +109,12 @@ pub enum Rejection {
     ResolutionEvidence,
     #[error("only the latest submitted or uncertain trial closes on the replacement's answer")]
     NotOpen,
+    #[error(
+        "stock is still reporting (its telemetry is current, or it reported its version after the trial was submitted); resolve the trial from version evidence instead"
+    )]
+    StockRunning,
+    #[error("the answer must name the trial's served build on bank 0")]
+    WrongBuild,
 }
 
 pub struct Controller {
@@ -319,6 +325,7 @@ impl Controller {
             return Err(Rejection::ImageServer);
         };
         let image_sha256 = lease.sha256.clone();
+        let build = Some(lease.build.clone());
 
         let record = ota::trial::Record {
             sequence: self.ledger.ota_trials.len() + 1,
@@ -329,6 +336,8 @@ impl Controller {
             download_reported: false,
             resolution_note: None,
             image_sha256,
+            build,
+            stock_reported: false,
         };
 
         // Saved before the command is returned for publishing, so a crash
@@ -348,24 +357,29 @@ impl Controller {
         ))
     }
 
-    /// The operator's client saw the replacement build answer the device
-    /// API after `request`'s trial was submitted: the trial's evidence, as
-    /// stock never reports again after activating it. Only the latest trial
-    /// closes this way, while it is submitted or uncertain; the note records
-    /// what the client saw. Sends nothing, and a repeat of the same request
-    /// returns the closed record.
+    /// The operator's client saw the trial's build answer its device API
+    /// from bank 0 after the trial was submitted: the trial's evidence, as
+    /// stock never reports again after activating it. The answer must name
+    /// the build the image server served (recorded at submission) and bank
+    /// 0, and stock must not be demonstrably running: its telemetry is not
+    /// current, and it reported no version after the submission. Only the
+    /// latest trial closes this way, while it is submitted or uncertain; the
+    /// note records what the client saw. Sends nothing, and a repeat of the
+    /// same answer returns the closed record.
     pub fn replacement_answered(
         &mut self,
-        request: ota::trial::ResolveInput,
+        answer: ota::trial::AnsweredInput,
         now: DateTime<Utc>,
     ) -> std::result::Result<ota::trial::Record, Rejection> {
         if self.storage_failed {
             return Err(Rejection::Storage);
         }
-        if request.note.trim().is_empty() || request.note.len() > 512 {
+        if answer.note.trim().is_empty() || answer.note.len() > 512 {
             return Err(Rejection::Conflict);
         }
 
+        self.refresh(now);
+        let stock_online = self.status.device_online;
         let latest = self
             .ledger
             .ota_trials
@@ -375,22 +389,29 @@ impl Controller {
         let record = self
             .ledger
             .ota_trials
-            .get_mut(&request.request_id)
+            .get_mut(&answer.request_id)
             .ok_or(Rejection::Conflict)?;
         if record.phase == TrialPhase::ReplacementHealthy
-            && record.resolution_note.as_ref() == Some(&request.note)
+            && record.resolution_note.as_ref() == Some(&answer.note)
+            && record.build.as_deref() == Some(answer.build.as_str())
         {
             return Ok(record.clone());
         }
-        if latest != Some(request.request_id)
+        if latest != Some(answer.request_id)
             || !matches!(record.phase, TrialPhase::Submitted | TrialPhase::Uncertain)
             || now <= record.created_at
         {
             return Err(Rejection::NotOpen);
         }
+        if stock_online || record.stock_reported {
+            return Err(Rejection::StockRunning);
+        }
+        if answer.bank != 0 || record.build.as_deref() != Some(answer.build.as_str()) {
+            return Err(Rejection::WrongBuild);
+        }
 
         record.phase = TrialPhase::ReplacementHealthy;
-        record.resolution_note = Some(request.note);
+        record.resolution_note = Some(answer.note);
         record.updated_at = now;
         let result = record.clone();
 
@@ -552,6 +573,22 @@ impl Controller {
 
         let matched = message.request_id() == Some(trial.input.request_id);
         let mut changed = false;
+
+        // Stock reporting its own version after the submission was still
+        // running then, whatever the install did; the replacement speaks no
+        // MQTT, so only stock sends one.
+        if !trial.stock_reported
+            && now > trial.created_at
+            && message
+                .report
+                .software_version
+                .as_deref()
+                .is_some_and(|version| version != REPLACEMENT_VERSION)
+        {
+            trial.stock_reported = true;
+            trial.updated_at = now;
+            changed = true;
+        }
 
         if matched && matches!(message.cmd.as_str(), "OTA_PROGRESS" | "OTA_INFORM") {
             trial.download_reported = true;

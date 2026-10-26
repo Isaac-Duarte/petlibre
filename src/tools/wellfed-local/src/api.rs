@@ -152,12 +152,13 @@ async fn ota_trial_resolve(
     operation(state, |response| Request::ResolveTrial(input, response)).await
 }
 
-/// The operator's client saw the replacement answer the device API after
-/// the trial; its note says what answered. Sends the device nothing.
+/// The operator's client saw the trial's build answer the device API from
+/// bank 0 after the trial; it names that build and bank, and its note says
+/// what answered. Sends the device nothing.
 async fn ota_trial_answered(
     State(state): State<ApiState>,
     headers: HeaderMap,
-    Json(input): Json<ota::trial::ResolveInput>,
+    Json(input): Json<ota::trial::AnsweredInput>,
 ) -> Result<Json<ota::trial::Record>, ApiError> {
     authenticate(&headers, &state)?;
     operation(state, |response| Request::TrialAnswered(input, response)).await

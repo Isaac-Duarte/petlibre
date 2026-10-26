@@ -235,6 +235,155 @@ fn interrupted_mode_refuses_unknown_sector_content() {
     ));
 }
 
+/// A bank-0 update stopped between the marker sector's erase and its first
+/// program frame: that sector reads wholly erased and every other sector is
+/// still the source. The interrupted mode finishes it, staging the marker
+/// sector first and committing the marker last.
+#[test]
+fn interrupted_mode_finishes_a_stop_between_the_marker_erase_and_its_program() {
+    let installed = image(30000, 3);
+    let source = image(20000, 9);
+    let target = variant(&source, true);
+    let old0 = development::payload(&source, &BANK0).unwrap().to_vec();
+    let new0 = development::payload(&target, &BANK0).unwrap().to_vec();
+    let unit = unit(development::payload(&installed, &BANK1).unwrap());
+    let mut stopped = unit.flash.clone();
+    stopped[0x6000..0x6000 + old0.len()].copy_from_slice(&old0);
+    stopped[0x6000..0x6000 + SECTOR].fill(0xff);
+
+    let mut finish = update(Some(&source), &target, BANK0);
+    finish.interrupted = true;
+    let (_checkout, root) = private_root();
+    let mut port = Fake::new(stopped.clone());
+    develop(&root, &unit, &mut port, &finish, "finish").unwrap();
+
+    let helper = port.0.borrow();
+    assert_eq!(&helper.flash[0x6000..0x6000 + new0.len()], &new0[..]);
+    assert_eq!(
+        helper.erased[0], 0x6000,
+        "the marker sector is staged first"
+    );
+    assert_eq!(&helper.flash[START..START + 8], MARKER, "bank 1 untouched");
+    let mut outside = helper.flash.clone();
+    outside[0x6000..0x6000 + new0.len()].copy_from_slice(&stopped[0x6000..0x6000 + new0.len()]);
+    assert!(
+        outside == stopped,
+        "nothing outside bank 0's update changed"
+    );
+
+    // A plain update refuses it: bank 0 is no longer the source.
+    let plain = update(Some(&source), &target, BANK0);
+    let length = development::extent(Some(&source), &target, &BANK0).unwrap();
+    let current = stopped[0x6000..0x6000 + length].to_vec();
+    assert!(matches!(
+        development::images(&plain, &current),
+        Err(crate::Error::Development(
+            development::DevelopmentError::NotSource
+        ))
+    ));
+}
+
+#[test]
+fn an_erased_marker_sector_is_accepted_only_with_the_rest_exactly_the_source() {
+    let source = image(20000, 9);
+    let target = variant(&source, false);
+    let old0 = development::payload(&source, &BANK0).unwrap().to_vec();
+    let mut finish = update(Some(&source), &target, BANK0);
+    finish.interrupted = true;
+    let mut erased = old0.clone();
+    erased[..SECTOR].fill(0xff);
+    assert!(development::images(&finish, &erased).is_ok());
+
+    // One byte elsewhere differs from the source.
+    let mut drifted = erased.clone();
+    drifted[3 * SECTOR + 17] ^= 1;
+    assert!(matches!(
+        development::images(&finish, &drifted),
+        Err(crate::Error::Development(
+            development::DevelopmentError::UnknownSector { offset }
+        )) if offset == BANK0.start + 3 * SECTOR
+    ));
+
+    // Another sector erased too: not the state one stopped step leaves.
+    let mut two = erased.clone();
+    two[2 * SECTOR..3 * SECTOR].fill(0xff);
+    assert!(development::images(&finish, &two).is_err());
+
+    // A stray byte in the marker sector, or frames that are not the
+    // target's staged sector, are refused as before.
+    let (_, staged) = development::images(&update(Some(&source), &target, BANK0), &old0).unwrap();
+    let mut stray = erased.clone();
+    stray[100] = 0;
+    let mut foreign = erased.clone();
+    foreign[..1024].copy_from_slice(&noise(1024, 5));
+    let mut source_frames = erased.clone();
+    source_frames[..2048].copy_from_slice(&old0[..2048]);
+    for current in [stray, foreign, source_frames] {
+        assert!(matches!(
+            development::images(&finish, &current),
+            Err(crate::Error::Development(
+                development::DevelopmentError::MarkerNotStaged
+            ))
+        ));
+    }
+    // The staged sector's own first frames are still the staged sector's
+    // partial program, which the marker rule never accepted either.
+    let mut own = erased;
+    own[..1024].copy_from_slice(&staged[..1024]);
+    assert!(development::images(&finish, &own).is_err());
+}
+
+/// The erased-marker finish keeps the other bank's guards: bank 1 must be
+/// valid, and must not change between the plan and its execution.
+#[test]
+fn an_erased_marker_finish_still_requires_bank1_unchanged() {
+    let installed = image(30000, 3);
+    let source = image(20000, 9);
+    let target = variant(&source, false);
+    let old0 = development::payload(&source, &BANK0).unwrap().to_vec();
+    let unit = unit(development::payload(&installed, &BANK1).unwrap());
+    let mut stopped = unit.flash.clone();
+    stopped[0x6000..0x6000 + old0.len()].copy_from_slice(&old0);
+    stopped[0x6000..0x6000 + SECTOR].fill(0xff);
+    let mut finish = update(Some(&source), &target, BANK0);
+    finish.interrupted = true;
+
+    // Bank 1 invalid.
+    let (_checkout, root) = private_root();
+    let mut invalid = stopped.clone();
+    invalid[START] = 0;
+    let mut port = Fake::new(invalid);
+    assert!(develop(&root, &unit, &mut port, &finish, "t").is_err());
+    assert!(port.0.borrow().erased.is_empty());
+
+    // Bank 1 changed after the plan pinned its first sector.
+    let (_checkout, root) = private_root();
+    let mut port = Fake::new(stopped);
+    let length = development::extent(Some(&source), &target, &BANK0).unwrap();
+    let current = protocol::read_region(&mut port, 0x6000, length).unwrap();
+    let other = protocol::read_region(&mut port, BANK0.other.0, BANK0.other.1).unwrap();
+    let plan = development::plan(&finish, &current, Some(&other)).unwrap();
+    port.0.borrow_mut().flash[START + 100] ^= 1;
+    let mut acquire = acquire_for(BANK0, length);
+    let transaction = development::Transaction {
+        baseline: &unit.baseline,
+        update: &finish,
+        current: &current,
+        other: Some(&other),
+        reviewed: &plan,
+    };
+    let result = development::run(
+        &mut port,
+        &root,
+        &transaction,
+        &mut acquire,
+        &root.join("private/t"),
+        &mut |_, _| {},
+    );
+    assert!(result.is_err());
+    assert!(port.0.borrow().erased.is_empty());
+}
+
 #[test]
 fn bank0_update_keeps_bank1_valid_and_never_frames_outside_bank0() {
     let (_checkout, root) = private_root();

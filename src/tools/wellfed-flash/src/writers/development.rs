@@ -11,7 +11,9 @@
 //! every sector must equal its source, its staged target or erased flash.
 //! One sector may instead hold the staged target's first one to three program
 //! frames followed by erased flash, the only state a stopped program of an
-//! erased sector leaves.
+//! erased sector leaves. The one other state accepted is a stop between the
+//! marker sector's erase and its first frame: that sector wholly erased, and
+//! every other sector exactly the source's.
 
 use std::path::Path;
 
@@ -243,11 +245,30 @@ pub fn images(update: &Update, current: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
     union.extend_from_slice(&current[old.len()..]);
     let proposed = with_tail(&union);
     let staged = staged_of(&proposed);
+    let erased = [0xffu8; SECTOR];
+
+    // The first step's erase took and its program never started: the marker
+    // sector is wholly erased and every other sector is still exactly the
+    // source's. It is the staged-marker state before its first frame, so the
+    // plan stages the marker sector first and commits the marker last, as
+    // for a fresh update.
+    if current[..SECTOR] == erased {
+        let mismatch = (SECTOR..current.len())
+            .step_by(SECTOR)
+            .find(|at| current[*at..at + SECTOR] != union[*at..at + SECTOR]);
+        return match mismatch {
+            None => Ok((proposed, staged)),
+            Some(at) => Err(DevelopmentError::UnknownSector {
+                offset: layout.start + at,
+            }
+            .into()),
+        };
+    }
+
     require(current[..SECTOR] == staged[..SECTOR], || {
         DevelopmentError::MarkerNotStaged
     })?;
 
-    let erased = [0xffu8; SECTOR];
     let mut partial = 0;
     for at in (0..current.len()).step_by(SECTOR) {
         let (sector, want) = (&current[at..at + SECTOR], &staged[at..at + SECTOR]);

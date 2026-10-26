@@ -29,17 +29,19 @@ use wellfed_core::clock::wall::{Jump, Sync, SyncError, WallClock};
 use wellfed_core::ota::install::{Answer, Progress, Refused};
 use wellfed_core::store::slot::crc32;
 use wellfed_core::tone::Tune;
+use wellfed_device_api::clients::{CLIENTS, Client, Label, Role};
+use wellfed_device_api::mailbox::{
+    ClientChange, KeyResult, PlayResult, Requested, SettingsFields, SettingsResult, SettingsView,
+    WifiResult, WifiSource, WifiView,
+};
+use wellfed_device_api::wifi::Credentials;
 use wellfed_feeder::feeder::Platform;
 use wellfed_feeder::feeder::platform::{
     Accepted, BleDrop, BleStep, Boot, Check, Datagram, DriverStep, EventSlot, Link, Received,
 };
-use wellfed_feeder::mailbox::{
-    ClientChange, KeyResult, PlayResult, Requested, SettingsFields, SettingsResult, SettingsView,
-    WifiResult, WifiSource, WifiView,
-};
-use wellfed_feeder::store::clients::{CLIENTS, Client, ClientError, ClientStore, Label, Role};
+use wellfed_feeder::store::clients::{ClientError, ClientStore};
 use wellfed_feeder::store::events::{BODY_BYTES, EventLog, Read};
-use wellfed_feeder::store::net::{Credentials, NetStore};
+use wellfed_feeder::store::net::NetStore;
 use wellfed_feeder::store::settings::{Settings, SettingsStatus, SettingsStore};
 use wellfed_hal::interlock::INTERLOCK;
 use wellfed_hal::ota::mailbox::{self, Request};

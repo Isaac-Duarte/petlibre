@@ -10,7 +10,7 @@
 use wellfed_core::clock::wall::{Jump, Sync, SyncError};
 use wellfed_core::named_enum;
 
-use crate::store::clients::{ClientError, Label, Role};
+use crate::clients::{Label, Role};
 
 pub use wellfed_core::settings::{MAX_VOLUME, SettingsFields, SettingsResult, SettingsView};
 pub use wellfed_core::tone::PlayResult;
@@ -186,14 +186,20 @@ named_enum! {
     }
 }
 
-impl From<ClientError> for KeyResult {
-    fn from(error: ClientError) -> Self {
-        match error {
-            ClientError::NotWritable | ClientError::IdentitySet => Self::NotWritable,
-            ClientError::Full => Self::Full,
-            ClientError::Duplicate => Self::Duplicate,
-            ClientError::NotFound => Self::NotFound,
-            ClientError::Io => Self::Io,
-        }
+named_enum! {
+    /// The panel's child lock, which a `lock` request reads or sets.
+    pub enum Lock {
+        Locked = "locked",
+        Unlocked = "unlocked",
+    }
+}
+
+impl Lock {
+    pub const fn from_locked(locked: bool) -> Self {
+        if locked { Self::Locked } else { Self::Unlocked }
+    }
+
+    pub const fn locked(self) -> bool {
+        matches!(self, Self::Locked)
     }
 }

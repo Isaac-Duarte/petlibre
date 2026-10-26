@@ -3,7 +3,8 @@
 //! panel relocks on stock's timer, counted from the last release.
 
 use wellfed_core::buttons::{Button, Buttons, Gesture};
-use wellfed_feeder::panel::{Action, BUTTONS, Config, Event, Lock, Panel, Source};
+use wellfed_device_api::mailbox::Lock;
+use wellfed_feeder::panel::{Action, BUTTONS, Config, Event, Panel, Source};
 
 const RELOCK: u32 = Config::STOCK.relock_ms;
 

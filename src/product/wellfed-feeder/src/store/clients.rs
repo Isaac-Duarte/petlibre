@@ -33,7 +33,8 @@ use core::ffi::c_uint;
 use wellfed_core::store::slot::{
     DualSlot, Extent, Found, Layout, Pick, Prepare, SlotIo, get_u64, newest, put_u64, seal, target,
 };
-use wellfed_session::named_enum;
+use wellfed_device_api::clients::{CLIENTS, Client, LABEL_LEN, Label, Role};
+use wellfed_device_api::mailbox::KeyResult;
 
 pub const VERSION: u16 = 1;
 const LAYOUT: Layout = Layout {
@@ -41,9 +42,6 @@ const LAYOUT: Layout = Layout {
     version: VERSION,
     extent: Extent::Record,
 };
-/// Enrolled clients, apart from the four concurrent sessions.
-pub const CLIENTS: usize = 8;
-pub const LABEL_LEN: usize = 16;
 
 const GENERATION_AT: usize = 12;
 const IDENTITY_AT: usize = 20;
@@ -61,76 +59,6 @@ const ROLE_AT: usize = LABEL_AT + LABEL_LEN;
 const ENROLLED_AT: usize = 52;
 
 const _: () = assert!(ENROLLED_AT + 8 <= ENTRY_BYTES && RECORD_BYTES <= 4096);
-
-named_enum! {
-    /// What a client may do; the device API enforces it.
-    pub enum Role {
-        /// Everything, including inviting and revoking clients.
-        Owner = "owner",
-        /// Feeding and settings, but no client management.
-        Member = "member",
-        /// The optional server: history and release fetching.
-        Server = "server",
-        /// An owner's Ed25519 key for update signatures.
-        UpdateSigner = "update-signer",
-    }
-}
-
-impl Role {
-    const fn code(self) -> u8 {
-        match self {
-            Self::Owner => 1,
-            Self::Member => 2,
-            Self::Server => 3,
-            Self::UpdateSigner => 4,
-        }
-    }
-
-    const fn from_code(code: u8) -> Option<Self> {
-        match code {
-            1 => Some(Self::Owner),
-            2 => Some(Self::Member),
-            3 => Some(Self::Server),
-            4 => Some(Self::UpdateSigner),
-            _ => None,
-        }
-    }
-}
-
-/// A client's name as the owner sees it: 1-16 bytes, no NUL.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Label {
-    bytes: [u8; LABEL_LEN],
-    len: u8,
-}
-
-impl Label {
-    pub fn new(text: &[u8]) -> Option<Self> {
-        if text.is_empty() || text.len() > LABEL_LEN || text.contains(&0) {
-            return None;
-        }
-        let mut bytes = [0; LABEL_LEN];
-        bytes[..text.len()].copy_from_slice(text);
-        Some(Self {
-            bytes,
-            len: u8::try_from(text.len()).ok()?,
-        })
-    }
-
-    pub fn as_bytes(&self) -> &[u8] {
-        &self.bytes[..usize::from(self.len)]
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Client {
-    pub key: [u8; 32],
-    pub label: Label,
-    pub role: Role,
-    /// The store generation that enrolled it.
-    pub enrolled: u64,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ClientStatus {
     Unopened,
@@ -154,6 +82,18 @@ pub enum ClientError {
     IdentitySet,
     /// The write failed; the previous table stands in memory.
     Io,
+}
+
+impl From<ClientError> for KeyResult {
+    fn from(error: ClientError) -> Self {
+        match error {
+            ClientError::NotWritable | ClientError::IdentitySet => Self::NotWritable,
+            ClientError::Full => Self::Full,
+            ClientError::Duplicate => Self::Duplicate,
+            ClientError::NotFound => Self::NotFound,
+            ClientError::Io => Self::Io,
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -216,7 +156,8 @@ fn encode(generation: u64, table: &Table) -> [u8; RECORD_BYTES] {
     {
         let Some(client) = client else { continue };
         entry[..32].copy_from_slice(&client.key);
-        entry[LABEL_AT..ROLE_AT].copy_from_slice(&client.label.bytes);
+        let label = client.label.as_bytes();
+        entry[LABEL_AT..LABEL_AT + label.len()].copy_from_slice(label);
         entry[ROLE_AT] = client.role.code();
         put_u64::<ENROLLED_AT, _>(entry, client.enrolled);
     }
@@ -228,7 +169,7 @@ fn decode_entry(entry: &[u8; ENTRY_BYTES]) -> Result<Option<Client>, ()> {
     if entry.iter().all(|&b| b == 0) {
         return Ok(None);
     }
-    let role = Role::from_code(entry[ROLE_AT]).ok_or(())?;
+    let role = Role::from_byte(entry[ROLE_AT]).ok_or(())?;
     let label_len = entry[LABEL_AT..ROLE_AT]
         .iter()
         .position(|&b| b == 0)

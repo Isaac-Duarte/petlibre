@@ -7,7 +7,7 @@
 //! Until the owner's first step there is no lock, and every request is
 //! `unserved`.
 
-use crate::mailbox::{LockFields, LockResult};
+use wellfed_device_api::mailbox::{LockFields, LockResult};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct LockBox {

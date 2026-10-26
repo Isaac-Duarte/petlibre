@@ -1,5 +1,5 @@
 //! The device API in the loop. It owns the sockets and steps
-//! [`crate::api`]'s server once per pass:
+//! [`wellfed_device_api`]'s server once per pass:
 //! - the listener on [`PORT`] and up to [`SESSIONS`] connections, every
 //!   call non-blocking, so the loop never waits on a client;
 //! - the mDNS socket and the responder that advertises `_wellfed._tcp`
@@ -31,18 +31,18 @@ use super::events;
 use super::lock::LockBox;
 use super::owner::{self, POLL_MS};
 use super::platform::{Accepted, Boot, Datagram, Platform, Received};
-use crate::api::{
-    self as server, Device, EventRead, KeyChange, KeyOutcome, Pass, SESSIONS, Server, UpdateAnswer,
-    UpdateKeyChange, UpdateRequest,
-};
-use crate::mailbox::{
+use crate::store::events::Read;
+use crate::update as wire;
+use wellfed_device_api::mailbox::{
     ClientChange, KeyResult, LockFields, LockResult, PlayResult, Requested, SettingsFields,
     SettingsResult, TimeFields, TimeResult, WifiResult, WifiSource,
 };
-use crate::pairing::{self, Pairing};
-use crate::store::events::Read;
-use crate::store::net::Credentials;
-use crate::update as wire;
+use wellfed_device_api::pairing::{self, Pairing};
+use wellfed_device_api::wifi::Credentials;
+use wellfed_device_api::{
+    self as server, Device, EventRead, KeyChange, KeyOutcome, Pass, SESSIONS, Server, UpdateAnswer,
+    UpdateKeyChange, UpdateRequest,
+};
 
 /// A listener or mDNS socket that failed is opened again after this.
 const RETRY_MS: u32 = 2_000;

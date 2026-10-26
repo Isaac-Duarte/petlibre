@@ -2340,6 +2340,7 @@ dependencies = [
  "ed25519-dalek",
  "jiff",
  "wellfed-core",
+ "wellfed-device-api",
  "wellfed-feeder",
  "wellfed-model",
  "wellfed-proto",
@@ -2398,6 +2399,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "wellfed-device-api"
+version = "0.1.0"
+dependencies = [
+ "wellfed-core",
+ "wellfed-proto",
+ "wellfed-session",
+ "proptest",
+ "serde",
+]
+
+[[package]]
 name = "wellfed-emu"
 version = "0.1.0"
 dependencies = [
@@ -2411,11 +2423,10 @@ name = "wellfed-feeder"
 version = "0.1.0"
 dependencies = [
  "wellfed-core",
+ "wellfed-device-api",
  "wellfed-proto",
  "wellfed-session",
  "wellfed-testkit",
- "proptest",
- "serde",
 ]
 
 [[package]]
@@ -2423,6 +2434,7 @@ name = "wellfed-feeder-runtime"
 version = "0.1.0"
 dependencies = [
  "wellfed-core",
+ "wellfed-device-api",
  "wellfed-feeder",
  "wellfed-hal",
  "wellfed-sdk",
@@ -2440,6 +2452,7 @@ dependencies = [
  "wellfed-client",
  "wellfed-connect",
  "wellfed-core",
+ "wellfed-device-api",
  "wellfed-feeder",
  "wellfed-feeder-sim",
  "wellfed-formats",
@@ -2511,6 +2524,7 @@ version = "0.1.0"
 dependencies = [
  "wellfed-client",
  "wellfed-core",
+ "wellfed-device-api",
  "wellfed-feeder",
  "wellfed-feeder-runtime",
  "wellfed-model",

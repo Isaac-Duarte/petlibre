@@ -8,11 +8,12 @@
 
 use std::sync::{Mutex, MutexGuard};
 
+use wellfed_device_api::mailbox::Lock;
+use wellfed_device_api::mailbox::SettingsView;
+use wellfed_device_api::pairing;
 use wellfed_feeder::feeder::owner::{Owner, POLL_MS, Record};
 use wellfed_feeder::feeder::setup;
-use wellfed_feeder::mailbox::SettingsView;
-use wellfed_feeder::pairing;
-use wellfed_feeder::panel::{Action, Event, Lock, Source};
+use wellfed_feeder::panel::{Action, Event, Source};
 use wellfed_feeder_runtime::keys::{self, Change, KeyResult, Requested};
 use wellfed_fw_feeder::platform::{Driver, Plaf103};
 use wellfed_sdk::buttons::{Button, Buttons, Gesture};

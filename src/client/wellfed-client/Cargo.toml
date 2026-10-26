@@ -17,6 +17,7 @@ thiserror.workspace = true
 
 [dev-dependencies]
 ed25519-dalek = "2"
+wellfed-device-api.workspace = true
 wellfed-feeder.workspace = true
 wellfed-testkit.workspace = true
 sha2 = "0.10"

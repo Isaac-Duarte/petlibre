@@ -36,7 +36,7 @@ const BINDING_AT: usize = 20;
 /// unit, half a typical NOR part's 100 000-cycle rating.
 pub const WEAR_LIMIT: u64 = 100_000;
 
-pub use crate::mailbox::MAX_VOLUME;
+pub use wellfed_device_api::mailbox::MAX_VOLUME;
 pub const MIN_UTC_OFFSET: i16 = -12 * 60;
 pub const MAX_UTC_OFFSET: i16 = 14 * 60;
 

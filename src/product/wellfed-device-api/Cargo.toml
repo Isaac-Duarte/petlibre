@@ -1,0 +1,20 @@
+[package]
+license.workspace = true
+name = "wellfed-device-api"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "The feeder's side of the device API: the sans-IO session server, what its requests hand the feeder, pairing, the setup exchange and the client and Wi-Fi values"
+publish.workspace = true
+
+[dependencies]
+wellfed-core.workspace = true
+wellfed-proto.workspace = true
+wellfed-session.workspace = true
+serde = { version = "1.0.229", default-features = false }
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true

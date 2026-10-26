@@ -37,12 +37,12 @@
 //!
 //! [product architecture]: ../../../../docs/firmware/product-architecture.md#setup-and-pairing
 
-use crate::store::clients::Role;
+use crate::clients::Role;
 use wellfed_core::buttons::{Button, Buttons, Gesture};
 use wellfed_core::{deadline_passed, interval_valid, named_enum};
 use wellfed_session::setup_code::{Code, PRESSES};
 
-use crate::panel::Lock;
+use crate::mailbox::Lock;
 
 /// Invites outstanding at once.
 pub const INVITES: usize = 2;

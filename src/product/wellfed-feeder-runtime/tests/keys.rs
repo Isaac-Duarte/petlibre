@@ -3,7 +3,7 @@
 
 use std::sync::{Mutex, MutexGuard};
 
-use wellfed_feeder::store::clients::{Label, Role};
+use wellfed_device_api::clients::{Label, Role};
 use wellfed_feeder_runtime::keys::{self, Change, KeyResult, Requested};
 
 /// The module's state is process-wide.

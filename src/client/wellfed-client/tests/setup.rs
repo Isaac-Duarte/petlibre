@@ -1,11 +1,11 @@
 //! The client's setup session against the feeder's own responder
-//! (`wellfed_feeder::setup`), through framed bytes as BLE carries them: the
+//! (`wellfed_device_api::setup`), through framed bytes as BLE carries them: the
 //! feeder learns the client's key and label, the owner's code proves each
 //! side to the other, the Wi-Fi crosses only after the feeder's proof, and a
 //! relay in the middle gets neither an enrollment nor the passphrase.
 
 use wellfed_client::setup::{Ask, Credentials, Deframer, Error, Session, Step, frame};
-use wellfed_feeder::setup::{self as feeder, MAX_MESSAGE, Offer, Received, Responder};
+use wellfed_device_api::setup::{self as feeder, MAX_MESSAGE, Offer, Received, Responder};
 use wellfed_proto::setup::{Enrolled, Refusal, Reply, WifiSaved};
 use wellfed_session::noise::{self, Keypair};
 use wellfed_session::setup_code::{Button, Code};

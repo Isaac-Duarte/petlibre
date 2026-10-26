@@ -23,8 +23,9 @@
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
 use wellfed_core::store::slot::SlotIo;
-use wellfed_feeder::mailbox::{WifiResult, WifiSource, WifiView};
-use wellfed_feeder::store::net::{Credentials, NetStore};
+use wellfed_device_api::mailbox::{WifiResult, WifiSource, WifiView};
+use wellfed_device_api::wifi::Credentials;
+use wellfed_feeder::store::net::NetStore;
 
 use wellfed_hal::cell::TaskCell;
 use wellfed_hal::interlock::INTERLOCK;

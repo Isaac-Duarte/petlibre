@@ -8,7 +8,7 @@ use std::net::{Ipv4Addr, SocketAddr};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU8, Ordering};
 
-use wellfed_feeder::store::clients::{Label, Role};
+use wellfed_device_api::clients::{Label, Role};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpListener, TcpStream};

@@ -17,14 +17,14 @@
 use wellfed_core::store::slot::crc32;
 use wellfed_proto::api::{Capabilities, Event, EventBody, Refusal, Source};
 
-use crate::api::{Device, EventRead, KeyChange, KeyOutcome};
 use crate::feeder::{Feeder, NoFeeds, Platform};
-use crate::mailbox::{
+use wellfed_device_api::clients::{Label, Role};
+use wellfed_device_api::mailbox::{
     LockResult, SettingsFields, SettingsResult, SettingsView, TimeFields, TimeResult, WifiResult,
     WifiView,
 };
-use crate::store::clients::{Label, Role};
-use crate::store::net::Credentials;
+use wellfed_device_api::wifi::Credentials;
+use wellfed_device_api::{Device, EventRead, KeyChange, KeyOutcome};
 
 /// Writer turns a check waits for one result, at most.
 const TURNS: usize = 64;

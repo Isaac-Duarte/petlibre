@@ -15,13 +15,13 @@ use wellfed_core::ota::install::{Answer, Progress, Refused};
 use wellfed_core::tone::Tune;
 use wellfed_proto::api::{Capabilities, Power};
 
-use crate::mailbox::{
+use crate::store::events::{BODY_BYTES, Read};
+use wellfed_device_api::clients::{CLIENTS, Client};
+use wellfed_device_api::mailbox::{
     ClientChange, KeyResult, PlayResult, Requested, SettingsFields, SettingsResult, SettingsView,
     WifiResult, WifiSource,
 };
-use crate::store::clients::{CLIENTS, Client};
-use crate::store::events::{BODY_BYTES, Read};
-use crate::store::net::Credentials;
+use wellfed_device_api::wifi::Credentials;
 
 /// This boot's facts, for the `Boot` event and every status.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

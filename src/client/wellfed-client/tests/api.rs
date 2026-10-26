@@ -1,5 +1,5 @@
 //! The device API end to end on the host: `wellfed-client`'s sessions
-//! and connections against the feeder's `Server` (`wellfed-feeder::api`),
+//! and connections against the feeder's `Server` (`wellfed-device-api`),
 //! with a fake device standing in for the mailboxes and the settings
 //! writer. Each test moves bytes between the two by hand, so it controls
 //! every pass and, for a connection, the client's clock.
@@ -12,18 +12,18 @@ use wellfed_client::connection::{
 };
 use wellfed_core::buttons::{Button, Buttons, Gesture};
 use wellfed_core::tone::Tune;
-use wellfed_feeder::api::{
-    Device, EventRead, KeyChange, KeyOutcome, Pass, Reason, Record, SESSIONS, Server, UpdateAnswer,
-    UpdateKeyChange, UpdateRequest,
-};
-use wellfed_feeder::mailbox::{
+use wellfed_device_api::clients::{CLIENTS, Client, Label, Role};
+use wellfed_device_api::mailbox::Lock;
+use wellfed_device_api::mailbox::{
     LockResult, PlayResult, SettingsFields, SettingsResult, SettingsView, TimeFields, TimeResult,
     WifiResult, WifiSource, WifiView,
 };
-use wellfed_feeder::pairing::{Config, Event as PairingEvent, Pairing};
-use wellfed_feeder::panel::Lock;
-use wellfed_feeder::store::clients::{CLIENTS, Client, Label, Role};
-use wellfed_feeder::store::net::Credentials;
+use wellfed_device_api::pairing::{Config, Event as PairingEvent, Pairing};
+use wellfed_device_api::wifi::Credentials;
+use wellfed_device_api::{
+    Device, EventRead, KeyChange, KeyOutcome, Pass, Reason, Record, SESSIONS, Server, UpdateAnswer,
+    UpdateKeyChange, UpdateRequest,
+};
 use wellfed_model as model;
 use wellfed_model::{Answer, Generation, Hello, Joined, Op, OpenRefusal, SettingsPatch};
 use wellfed_proto::api::{
@@ -404,9 +404,9 @@ struct Rig {
     now: u32,
     feeding: bool,
     /// Pairing's decision on a recovery offer, for the next pass.
-    recovery: Option<wellfed_feeder::pairing::Event>,
+    recovery: Option<wellfed_device_api::pairing::Event>,
     /// Pairing's decision on an update-key offer, for the next pass.
-    signer: Option<wellfed_feeder::pairing::Event>,
+    signer: Option<wellfed_device_api::pairing::Event>,
     records: Vec<Record>,
     clients_generation: u32,
 }
@@ -1052,10 +1052,10 @@ fn an_idle_session_and_a_stalled_handshake_time_out() {
     let owner = open(&mut rig, OWNER);
     let stalled = rig.accept().unwrap();
 
-    rig.now += wellfed_feeder::api::HANDSHAKE_MS;
+    rig.now += wellfed_device_api::HANDSHAKE_MS;
     rig.pass();
     assert!(rig.server.closing(stalled));
-    rig.now += wellfed_feeder::api::IDLE_MS;
+    rig.now += wellfed_device_api::IDLE_MS;
     rig.pass();
     assert!(rig.server.closing(owner.slot));
 }
@@ -1076,7 +1076,7 @@ fn reboot_and_time_sync_reach_the_device() {
 
     let reboot = ask(&mut rig, &mut owner, 2, Op::Reboot);
     assert_eq!(reboot, Answer::Done { generation: None });
-    rig.now += wellfed_feeder::api::REBOOT_MS;
+    rig.now += wellfed_device_api::REBOOT_MS;
     rig.pass();
     assert!(rig.device.rebooted);
 }

@@ -33,11 +33,11 @@ use wellfed_session::noise::Keypair;
 
 pub use platform::Platform;
 
-use crate::api::{Device, Server};
-use crate::panel::Lock;
 use identity::Identity;
 use lock::LockBox;
 use owner::Owner;
+use wellfed_device_api::mailbox::Lock;
+use wellfed_device_api::{Device, Server};
 use platform::DriverRecord;
 use serve::{FeederDevice, Inputs, Serve};
 

@@ -10,9 +10,11 @@
 //! wrote them.
 
 use wellfed_core::feed::progress::BowlMode;
-use wellfed_feeder::store::clients::{Client, ClientStatus, ClientStore, Label, Role};
+use wellfed_device_api::clients::{Client, Label, Role};
+use wellfed_device_api::wifi::Credentials;
+use wellfed_feeder::store::clients::{ClientStatus, ClientStore};
 use wellfed_feeder::store::events::{BODY_BYTES, EventLog, Read, Record};
-use wellfed_feeder::store::net::{Credentials, NetStatus, NetStore};
+use wellfed_feeder::store::net::{NetStatus, NetStore};
 use wellfed_feeder::store::settings::{Settings, SettingsStatus, SettingsStore};
 use wellfed_testkit::journal_flash::FakeJournalFlash;
 

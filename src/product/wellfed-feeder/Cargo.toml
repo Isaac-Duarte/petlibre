@@ -4,7 +4,7 @@ name = "wellfed-feeder"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
-description = "The feeder's product policy, independent of hardware: the panel's child lock, pairing, the BLE setup session and the product's stores"
+description = "The feeder's product policy, independent of hardware: the panel's child lock, the loop pass and the product's stores"
 publish.workspace = true
 
 [features]
@@ -14,13 +14,12 @@ conformance = []
 
 [dependencies]
 wellfed-core.workspace = true
+wellfed-device-api.workspace = true
 wellfed-proto.workspace = true
 wellfed-session.workspace = true
-serde = { version = "1.0.229", default-features = false }
 
 [dev-dependencies]
 wellfed-testkit.workspace = true
-proptest.workspace = true
 
 [lints]
 workspace = true

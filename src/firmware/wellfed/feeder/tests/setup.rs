@@ -13,11 +13,11 @@ use wellfed_client::setup::{
 use wellfed_core::ble_setup::{PREFIX, parse_prefix};
 use wellfed_core::buttons::{Button, Buttons, Gesture};
 use wellfed_core::tone::Tune;
+use wellfed_device_api::clients::Role;
+use wellfed_device_api::mailbox::Lock;
+use wellfed_device_api::mailbox::SettingsView;
+use wellfed_device_api::pairing::{Config, Event, Pairing, Path, Refusal as PairRefusal};
 use wellfed_feeder::feeder::setup::{self, Ended, PROVE_MS, Setup};
-use wellfed_feeder::mailbox::SettingsView;
-use wellfed_feeder::pairing::{Config, Event, Pairing, Path, Refusal as PairRefusal};
-use wellfed_feeder::panel::Lock;
-use wellfed_feeder::store::clients::Role;
 use wellfed_feeder::store::net::NetStore;
 use wellfed_feeder_runtime::keys::{self, Change, KeyResult};
 use wellfed_feeder_runtime::network;
@@ -228,7 +228,7 @@ impl Bench {
 }
 
 /// What the settings writer would publish after opening or saving.
-fn publish(generation: u64, credentials: Option<wellfed_feeder::store::net::Credentials>) {
+fn publish(generation: u64, credentials: Option<wellfed_device_api::wifi::Credentials>) {
     use wellfed_core::store::slot::SlotIo;
 
     /// The credential sectors of the fake storage, read-only as the join

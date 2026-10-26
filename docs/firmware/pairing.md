@@ -144,7 +144,7 @@ All storage-region sectors are now named in one table, `wellfed_board_plaf103::s
 
 ## Pairing
 
-`wellfed-feeder::pairing` decides who may become a client. It returns an `Admit` event, which the firmware applies to the client store. There are four ways in:
+`wellfed_device_api::pairing` decides who may become a client. It returns an `Admit` event, which the firmware applies to the client store. There are four ways in:
 
 | Path | Who starts it | Confirmed by | Role |
 | --- | --- | --- | --- |
@@ -172,7 +172,7 @@ The timeouts are ours: stock pairs through the vendor cloud and has no equivalen
 The exchange and its refusals are in [Bluetooth](bluetooth.md#setup-exchange). The pieces:
 - **`wellfed-proto::setup`:** the request and replies (postcard), shared by the feeder and every client.
 - **`wellfed-session::setup_code`:** the owner's code and the press-by-press proof both sides run, bound to the handshake hash.
-- **`wellfed-feeder::setup::Responder`:** the feeder's side of Noise XX under its identity, returning the client's checked offer (its key and a label the client store accepts), then running the proof and returning the Wi-Fi from the client's last step, checked against the Wi-Fi store's rules.
+- **`wellfed_device_api::setup::Responder`:** the feeder's side of Noise XX under its identity, returning the client's checked offer (its key and a label the client store accepts), then running the proof and returning the Wi-Fi from the client's last step, checked against the Wi-Fi store's rules.
 - **`wellfed-client::setup::Session`:** the client's side, with the BLE framing. The owner's `wellfed setup` and the Android app share it.
 - **The loop (`wellfed_feeder::feeder::setup`, over the firmware's `Platform`):** starts the stack on the gesture, offers the key to pairing (`Pairing::setup`), which collects the code from the buttons, runs the proof, and once the client has proven it queues the enrollment in the keys mailbox, waits for its result (`keys::ticket` and `keys::outcome`), then queues the Wi-Fi (`network::save`) and waits for the writer. A client that leaves before the proof cancels its offer (`Pairing::cancel`), so the next press feeds again.
 - **Not at boot:** the product architecture first chose setup mode at boot, but every free KM0 backup register is taken, so a "setup next boot" flag has nowhere to live. The gesture starts the stack on the running feeder instead, and a reboot still ends it.

@@ -2,7 +2,7 @@
 //! once the shared slots are full a plain record is lost and counted, and
 //! the feed's `Fed` event still queues.
 
-use wellfed_feeder::api::Device;
+use wellfed_device_api::Device;
 use wellfed_feeder::feeder::{Feeder, NoFeeds};
 use wellfed_feeder_runtime::events::{self, QUEUE, RESERVED};
 use wellfed_fw_feeder::platform::Plaf103;

@@ -3,6 +3,8 @@
 
 use core::fmt;
 
+use wellfed_device_api::mailbox::Lock;
+use wellfed_device_api::mailbox::{LockFields, LockResult};
 use wellfed_feeder::feeder::Record;
 use wellfed_feeder::feeder::identity;
 use wellfed_feeder::feeder::lock::LockBox;
@@ -10,8 +12,6 @@ use wellfed_feeder::feeder::owner;
 use wellfed_feeder::feeder::platform::DriverRecord;
 use wellfed_feeder::feeder::serve;
 use wellfed_feeder::feeder::setup;
-use wellfed_feeder::mailbox::{LockFields, LockResult};
-use wellfed_feeder::panel::Lock;
 
 const READ: LockFields = LockFields { locked: None };
 

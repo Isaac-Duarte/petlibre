@@ -1,7 +1,7 @@
 //! The panel's owner, in the loop.
 //!
 //! Each step it reads the button service's gestures and a queued remote lock
-//! change, steps the pairing and lock policies ([`pairing`](crate::pairing)
+//! change, steps the pairing and lock policies ([`pairing`](wellfed_device_api::pairing)
 //! and [`panel`](crate::panel)) and shows the lock on its indicator. Pairing
 //! sees each gesture first and the panel gets only those it leaves, so a
 //! Dispense press that confirms a pairing, or that is part of setup's code,
@@ -25,9 +25,10 @@ use wellfed_session::noise::Keypair;
 use super::events;
 use super::platform::{Check, Platform};
 use super::setup::{self, Setup};
-use crate::mailbox::{ClientChange, Requested};
-use crate::pairing::{self, Pairing, Path, Refusal};
-use crate::panel::{Action, Config, Event, Lock, Panel, Source};
+use crate::panel::{Action, Config, Event, Panel, Source};
+use wellfed_device_api::mailbox::Lock;
+use wellfed_device_api::mailbox::{ClientChange, Requested};
+use wellfed_device_api::pairing::{self, Pairing, Path, Refusal};
 
 /// Between steps; a gesture waits at most this long in the queue.
 pub const POLL_MS: u32 = 20;

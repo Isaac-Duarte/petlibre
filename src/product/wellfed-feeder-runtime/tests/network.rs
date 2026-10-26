@@ -3,8 +3,9 @@
 
 use std::sync::Mutex;
 
-use wellfed_feeder::mailbox::{WifiResult, WifiSource};
-use wellfed_feeder::store::net::{Credentials, NetStore};
+use wellfed_device_api::mailbox::{WifiResult, WifiSource};
+use wellfed_device_api::wifi::Credentials;
+use wellfed_feeder::store::net::NetStore;
 use wellfed_feeder_runtime::network::*;
 use wellfed_hal::sdk::fake;
 

@@ -20,8 +20,8 @@
 
 use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 
-pub use wellfed_feeder::mailbox::{ClientChange as Change, KeyResult, Requested};
-use wellfed_feeder::store::clients::{CLIENTS as STORE_CLIENTS, Client, Role};
+use wellfed_device_api::clients::{CLIENTS as STORE_CLIENTS, Client, Role};
+pub use wellfed_device_api::mailbox::{ClientChange as Change, KeyResult, Requested};
 
 use wellfed_hal::cell::TaskCell;
 use wellfed_hal::ota::signers;

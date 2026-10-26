@@ -33,7 +33,7 @@ use core::fmt;
 use wellfed_core::named_enum;
 
 use wellfed_core::store::seed::{SeedStatus, SeedStore};
-use wellfed_feeder::mailbox::{SettingsFields, SettingsView};
+use wellfed_device_api::mailbox::{SettingsFields, SettingsView};
 use wellfed_feeder::store::clients::{ClientError, ClientStatus, ClientStore};
 use wellfed_feeder::store::events::EventLog;
 use wellfed_feeder::store::net::{NetStatus, NetStore};

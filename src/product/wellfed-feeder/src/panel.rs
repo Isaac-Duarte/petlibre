@@ -26,6 +26,7 @@
 
 use wellfed_core::buttons::{Button, Buttons, Config as ButtonsConfig, Gesture};
 use wellfed_core::{deadline_passed, interval_valid, named_enum};
+use wellfed_device_api::mailbox::Lock;
 
 /// The button service's thresholds for the panel: one hold, at stock's
 /// 5 s (100 visits of 50 ms).
@@ -53,23 +54,6 @@ impl Config {
 
     pub const fn valid(&self) -> bool {
         self.hold_level > 0 && interval_valid(self.relock_ms)
-    }
-}
-
-named_enum! {
-    pub enum Lock {
-        Locked = "locked",
-        Unlocked = "unlocked",
-    }
-}
-
-impl Lock {
-    pub const fn from_locked(locked: bool) -> Self {
-        if locked { Self::Locked } else { Self::Unlocked }
-    }
-
-    pub const fn locked(self) -> bool {
-        matches!(self, Self::Locked)
     }
 }
 

@@ -4,7 +4,7 @@
 //! Lock and Mic held on an unlocked panel start it (`pairing`). The loop
 //! then brings up the BLE stack, which a normal boot never starts, and
 //! advertises while the feeder is on mains, as stock does. Each connection
-//! runs [`crate::setup`]'s responder under the feeder's identity:
+//! runs [`wellfed_device_api::setup`]'s responder under the feeder's identity:
 //! 1. The client's ask arrives in the handshake's third message; pairing
 //!    turns it into a pending offer, and the client is told to have the
 //!    owner key its code in.
@@ -36,11 +36,11 @@ use wellfed_session::noise::Keypair;
 use wellfed_session::setup_code::Code;
 
 use super::platform::{BleDrop, BleLink, Platform};
-use crate::mailbox::{ClientChange, KeyResult, PlayResult, Requested, WifiResult};
-use crate::pairing::{self, Pairing, Path};
-use crate::setup::{self as session, MAX_MESSAGE, Offer, Received, Responder};
-use crate::store::clients::Role;
-use crate::store::net::Credentials;
+use wellfed_device_api::clients::Role;
+use wellfed_device_api::mailbox::{ClientChange, KeyResult, PlayResult, Requested, WifiResult};
+use wellfed_device_api::pairing::{self, Pairing, Path};
+use wellfed_device_api::setup::{self as session, MAX_MESSAGE, Offer, Received, Responder};
+use wellfed_device_api::wifi::Credentials;
 
 /// After `Done`, long enough for the reply to reach the client.
 pub const REBOOT_MS: u32 = 3_000;

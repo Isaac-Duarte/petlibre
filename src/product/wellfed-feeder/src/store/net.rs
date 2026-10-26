@@ -18,6 +18,7 @@ use wellfed_core::store::slot::{
     CRC_AT, DualSlot, Extent, Layout, Pick, Prepare, RECORD_BYTES, SlotIo, get_u64, newest,
     put_u64, seal, target,
 };
+use wellfed_device_api::wifi::{Credentials, MAX_PSK, MAX_SSID};
 
 pub const VERSION: u16 = 1;
 const LAYOUT: Layout = Layout {
@@ -26,48 +27,6 @@ const LAYOUT: Layout = Layout {
     extent: Extent::Record,
 };
 const GENERATION_AT: usize = 12;
-pub const MAX_SSID: usize = 32;
-/// WPA2 passphrases are 8-63 printable ASCII characters.
-pub const MIN_PSK: usize = 8;
-pub const MAX_PSK: usize = 63;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Credentials {
-    ssid: [u8; MAX_SSID],
-    ssid_len: u8,
-    psk: [u8; 64],
-    psk_len: u8,
-}
-
-impl Credentials {
-    /// A 1-32 byte SSID and an 8-63 character printable-ASCII passphrase.
-    pub fn new(ssid: &[u8], psk: &[u8]) -> Option<Self> {
-        if ssid.is_empty()
-            || ssid.len() > MAX_SSID
-            || !(MIN_PSK..=MAX_PSK).contains(&psk.len())
-            || !psk.iter().all(|b| (0x20..0x7f).contains(b))
-        {
-            return None;
-        }
-        let mut out = Self {
-            ssid: [0; MAX_SSID],
-            ssid_len: u8::try_from(ssid.len()).ok()?,
-            psk: [0; 64],
-            psk_len: u8::try_from(psk.len()).ok()?,
-        };
-        out.ssid[..ssid.len()].copy_from_slice(ssid);
-        out.psk[..psk.len()].copy_from_slice(psk);
-        Some(out)
-    }
-
-    pub fn ssid(&self) -> &[u8] {
-        &self.ssid[..usize::from(self.ssid_len)]
-    }
-
-    pub fn psk(&self) -> &[u8] {
-        &self.psk[..usize::from(self.psk_len)]
-    }
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NetStatus {
@@ -107,10 +66,12 @@ fn encode(generation: u64, credentials: Option<&Credentials>) -> [u8; RECORD_BYT
     let mut p = LAYOUT.record();
     put_u64::<GENERATION_AT, _>(&mut p, generation);
     if let Some(c) = credentials {
-        p[20] = c.ssid_len;
-        p[21] = c.psk_len;
-        p[22..22 + MAX_SSID].copy_from_slice(&c.ssid);
-        p[54..54 + 64].copy_from_slice(&c.psk);
+        // `Credentials::new` bounds both: 32 SSID bytes, 63 passphrase bytes.
+        let (ssid, psk) = (c.ssid(), c.psk());
+        p[20] = u8::try_from(ssid.len()).expect("an SSID is at most 32 bytes");
+        p[21] = u8::try_from(psk.len()).expect("a passphrase is at most 63 bytes");
+        p[22..22 + ssid.len()].copy_from_slice(ssid);
+        p[54..54 + psk.len()].copy_from_slice(psk);
     }
     seal(&mut p);
     p

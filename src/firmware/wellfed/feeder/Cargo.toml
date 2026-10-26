@@ -28,6 +28,7 @@ twin = []
 [dependencies]
 wellfed-feeder-runtime.workspace = true
 wellfed-core.workspace = true
+wellfed-device-api.workspace = true
 wellfed-feeder.workspace = true
 wellfed-proto.workspace = true
 wellfed-sdk.workspace = true

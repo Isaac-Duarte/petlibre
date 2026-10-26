@@ -14,18 +14,18 @@ use wellfed_core::buttons::Gesture;
 use wellfed_core::clock::wall::{Jump, Sync, SyncError};
 use wellfed_core::ota::install::{Answer, Progress, Refused};
 use wellfed_core::tone::Tune;
+use wellfed_device_api::clients::{CLIENTS, Client};
+use wellfed_device_api::mailbox::{
+    ClientChange, KeyResult, PlayResult, Requested, SettingsFields, SettingsResult, SettingsView,
+    WifiResult, WifiSource,
+};
+use wellfed_device_api::wifi::Credentials;
 use wellfed_feeder::feeder::Platform;
 use wellfed_feeder::feeder::platform::{
     Accepted, BleDrop, BleLink, BleStep, Boot, Check, Datagram, DriverRecord, DriverStep,
     EventSlot, Link, Received,
 };
-use wellfed_feeder::mailbox::{
-    ClientChange, KeyResult, PlayResult, Requested, SettingsFields, SettingsResult, SettingsView,
-    WifiResult, WifiSource,
-};
-use wellfed_feeder::store::clients::{CLIENTS, Client};
 use wellfed_feeder::store::events::{BODY_BYTES, Read};
-use wellfed_feeder::store::net::Credentials;
 use wellfed_feeder_runtime::{events, keys, network};
 use wellfed_proto::api::{Capabilities, Power};
 use wellfed_sdk::hal::audio::{self, Speaker};

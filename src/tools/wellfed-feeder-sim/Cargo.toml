@@ -14,6 +14,7 @@ wellfed-amebad-sys.workspace = true
 wellfed-board-plaf103.workspace = true
 wellfed-client.workspace = true
 wellfed-core.workspace = true
+wellfed-device-api.workspace = true
 wellfed-feeder.workspace = true
 wellfed-formats.workspace = true
 wellfed-hal.workspace = true

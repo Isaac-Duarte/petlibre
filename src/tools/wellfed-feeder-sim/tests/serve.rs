@@ -7,8 +7,9 @@ use std::time::Duration;
 
 use wellfed_client::api::Invite;
 use wellfed_connect::{Connection, Error as ConnectError, join};
-use wellfed_feeder::mailbox::KeyResult;
-use wellfed_feeder::panel::{Action, Event as PanelEvent, Lock, Source as PanelSource};
+use wellfed_device_api::mailbox::KeyResult;
+use wellfed_device_api::mailbox::Lock;
+use wellfed_feeder::panel::{Action, Event as PanelEvent, Source as PanelSource};
 use wellfed_feeder_sim::flash::Flash;
 use wellfed_feeder_sim::harness;
 use wellfed_feeder_sim::serve::Event;
@@ -617,7 +618,7 @@ fn the_keepalive_holds_a_quiet_session_past_the_idle_limit() {
 
         // The follower waits through the idle limit, keeping itself alive;
         // the quiet session sends nothing and is dropped.
-        let limit = Duration::from_millis(wellfed_feeder::api::IDLE_MS.into());
+        let limit = Duration::from_millis(wellfed_device_api::IDLE_MS.into());
         let wait = limit + Duration::from_secs(30);
         loop {
             match follower.next(wait).await {
@@ -681,7 +682,7 @@ fn a_session_polled_with_dropped_next_futures_stays_alive() {
         let mut follower = sim.open(OWNER).await.unwrap();
         follower.subscribe(None, false).await.unwrap();
 
-        let limit = Duration::from_millis(wellfed_feeder::api::IDLE_MS.into());
+        let limit = Duration::from_millis(wellfed_device_api::IDLE_MS.into());
         let until = tokio::time::Instant::now() + 2 * limit;
         let mut boots = 0;
         while tokio::time::Instant::now() < until {

@@ -6,22 +6,22 @@
 //! (`src/fuzz/`, which includes this file by path) share these drivers, so both
 //! check the same invariants: nothing panics, every frame the feeder writes
 //! fits its limit, and every message it seals decodes as the protocol says.
-//! This file therefore uses only the feeder's own dependencies.
+//! This file therefore uses only this crate's own dependencies.
 
 #![allow(dead_code, reason = "each consumer drives a subset")]
 
 use wellfed_core::tone::Tune;
-use wellfed_feeder::api::{
-    Device, EventRead, KeyChange, KeyOutcome, Pass, Record, SESSIONS, Server,
-};
-use wellfed_feeder::mailbox::{
+use wellfed_device_api::clients::{CLIENTS, Client, Label, Role};
+use wellfed_device_api::mailbox::{
     LockResult, PlayResult, SettingsFields, SettingsResult, SettingsView, TimeFields, TimeResult,
     WifiResult, WifiSource, WifiView,
 };
-use wellfed_feeder::pairing::{Config, Pairing};
-use wellfed_feeder::setup::{Received, Responder};
-use wellfed_feeder::store::clients::{CLIENTS, Client, Label, Role};
-use wellfed_feeder::store::net::Credentials;
+use wellfed_device_api::pairing::{Config, Pairing};
+use wellfed_device_api::setup::{Received, Responder};
+use wellfed_device_api::wifi::Credentials;
+use wellfed_device_api::{
+    Device, EventRead, KeyChange, KeyOutcome, Pass, Record, SESSIONS, Server,
+};
 use wellfed_proto::api::{
     self as proto, Capabilities, EventBody, FRAME_MAX, FeederMessage, Hello, MESSAGE_MAX, Open,
     PROLOGUE, PROTOCOL_MAJOR, Refusal, Status, Welcome,

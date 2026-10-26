@@ -12,7 +12,7 @@ use super::tail::{TailView, rx_view};
 use super::{Sources, history, inside, latest_capture, serial_sizes};
 use wellfed_formats::bench::now;
 use wellfed_formats::bench::progress::{
-    self, Current, FlashTool, HistoryEntry, Outcome, Progress, Step,
+    self, BenchCommand, Current, FlashTool, HistoryEntry, Outcome, Progress, Step,
 };
 use wellfed_formats::bench::{CAPTURES, VERIFICATION};
 
@@ -70,7 +70,7 @@ pub(crate) fn snapshot(sources: &Sources) -> Snapshot {
 #[cfg_attr(test, derive(ts_rs::TS))]
 struct CurrentView {
     pid: u32,
-    command: String,
+    command: BenchCommand,
     name: Option<String>,
     started: f64,
     finished: Option<f64>,
@@ -182,14 +182,14 @@ mod tests {
     use super::*;
     use crate::views::tests::{json, sources};
     use wellfed_formats::bench::STATUS_DIR;
-    use wellfed_formats::bench::progress::{CURRENT, Status};
+    use wellfed_formats::bench::progress::{BenchCommand, CURRENT, Status};
 
     #[test]
     fn a_dead_running_process_reads_as_ended_and_history_is_newest_first() {
         let (_tmp, sources) = sources();
         let mut status = Status::new(&sources.root, sources.root.join(STATUS_DIR));
         for name in ["one", "two"] {
-            status.begin("boot", Some(name), &[]).unwrap();
+            status.begin(BenchCommand::Boot, Some(name), &[]).unwrap();
             status.finish(0, None);
         }
 
@@ -219,7 +219,7 @@ mod tests {
 
         assert!(later.same_as(&first));
         later.history.push(HistoryEntry {
-            command: "boot".into(),
+            command: BenchCommand::Boot,
             name: None,
             started: 1.0,
             finished: None,
@@ -239,7 +239,9 @@ mod tests {
         fs::write(execute.join("serial-rx.bin"), [0u8; 5]).unwrap();
 
         let mut status = Status::new(&sources.root, sources.root.join(STATUS_DIR));
-        status.begin("flash-execute", Some("s"), &[]).unwrap();
+        status
+            .begin(BenchCommand::FlashExecute, Some("s"), &[])
+            .unwrap();
         status.transfer(Some(&execute), 100, 200);
 
         let view = json(snapshot(&sources));
@@ -261,7 +263,9 @@ mod tests {
         fs::write(dir.join("serial-rx.bin"), b"hello\r\n").unwrap();
 
         let mut status = Status::new(&sources.root, sources.root.join(STATUS_DIR));
-        status.begin("capture", Some("c"), &["capture"]).unwrap();
+        status
+            .begin(BenchCommand::Capture, Some("c"), &["capture"])
+            .unwrap();
         status.step("capture");
         status.capture(Some(&dir), 60.0);
 

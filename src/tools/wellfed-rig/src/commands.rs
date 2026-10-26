@@ -24,7 +24,7 @@ use serde::Deserialize;
 
 use crate::tools::{Analyzer, Observation, Observer, Tools};
 use crate::{Error, Result, now, require};
-use wellfed_formats::bench::progress::Status;
+use wellfed_formats::bench::progress::{BenchCommand, Status};
 use wellfed_formats::bench::{CAPTURES, Config, Paths, plain_name, relative};
 use wellfed_relay::{POWER, Relay, STRAP, UART};
 
@@ -1108,35 +1108,35 @@ struct Prepared<P> {
 }
 
 /// Labels for the overall-progress steps of each command.
-pub fn steps(command: &str) -> &'static [&'static str] {
+pub fn steps(command: BenchCommand) -> &'static [&'static str] {
     const READ_SMALL: &str = "wellfed-flash read small";
     match command {
-        "boot" => &["boot capture"],
-        "loader" => &["loader entry"],
-        "dump" => &["loader entry", READ_SMALL, "wellfed-flash read full"],
-        "flash-prepare" => &[
+        BenchCommand::Boot => &["boot capture"],
+        BenchCommand::Loader => &["loader entry"],
+        BenchCommand::Dump => &["loader entry", READ_SMALL, "wellfed-flash read full"],
+        BenchCommand::FlashPrepare => &[
             "loader entry",
             READ_SMALL,
             "wellfed-flash update inspect",
             "wellfed-flash update prepare",
         ],
-        "flash-execute" => &["wellfed-flash update execute", "boot capture"],
-        "give-way-prepare" => &[
+        BenchCommand::FlashExecute => &["wellfed-flash update execute", "boot capture"],
+        BenchCommand::GiveWayPrepare => &[
             "loader entry",
             READ_SMALL,
             "wellfed-flash give-way inspect",
             "wellfed-flash give-way prepare",
         ],
-        "give-way-execute" => &["wellfed-flash give-way execute", "boot capture"],
+        BenchCommand::GiveWayExecute => &["wellfed-flash give-way execute", "boot capture"],
         // With --fallback, the stock commands run the give-way steps instead.
-        "stock-prepare" => &[
+        BenchCommand::StockPrepare => &[
             "loader entry",
             READ_SMALL,
             "wellfed-flash read full",
             "wellfed-flash stock-recovery prepare",
         ],
-        "stock-execute" => &["wellfed-flash stock-recovery execute", "boot capture"],
-        "ota" => &[
+        BenchCommand::StockExecute => &["wellfed-flash stock-recovery execute", "boot capture"],
+        BenchCommand::Ota => &[
             ota::SIGN_STEP,
             ota::OFFER_STEP,
             ota::STAGES[0],
@@ -1145,7 +1145,14 @@ pub fn steps(command: &str) -> &'static [&'static str] {
             ota::STAGES[3],
             ota::HEALTH_STEP,
         ],
-        _ => &[],
+        // Steps of their own, set where they run, or none to show.
+        BenchCommand::Status
+        | BenchCommand::Off
+        | BenchCommand::On
+        | BenchCommand::Capture
+        | BenchCommand::Transients
+        | BenchCommand::Itest
+        | BenchCommand::StockOta => &[],
     }
 }
 

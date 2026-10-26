@@ -1,4 +1,4 @@
-import type { CatalogEntry, ScenarioStats, Snapshot } from "@wellfed/api";
+import type { BenchCommand, CatalogEntry, ScenarioStats, Snapshot } from "@wellfed/api";
 import { describe, expect, it } from "vitest";
 import {
   includes,
@@ -40,7 +40,7 @@ const options: RunOptions = {
   keepGoing: false,
 };
 
-function snapshot(outcome: "running" | "pass", command = "itest"): Snapshot {
+function snapshot(outcome: "running" | "pass", command: BenchCommand = "itest"): Snapshot {
   return {
     now: 1000,
     history: [],

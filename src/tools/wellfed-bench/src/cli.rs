@@ -17,7 +17,7 @@ use std::sync::atomic::Ordering;
 
 use clap::{Parser, Subcommand};
 use wellfed_formats::bench::catalog;
-use wellfed_formats::bench::progress::Status;
+use wellfed_formats::bench::progress::{BenchCommand, Status};
 use wellfed_formats::bench::{CONFIG, Config, STATUS_DIR};
 use wellfed_itest::{ItestArgs, StockOtaArgs};
 use wellfed_relay::Relay;
@@ -141,25 +141,25 @@ enum Command {
 }
 
 impl Command {
-    fn label(&self) -> &'static str {
+    fn label(&self) -> BenchCommand {
         match self {
-            Self::Status => "status",
-            Self::Off => "off",
-            Self::On => "on",
-            Self::Capture { .. } => "capture",
-            Self::Boot { .. } => "boot",
-            Self::Loader { .. } => "loader",
-            Self::Transients(_) => "transients",
-            Self::Dump { .. } => "dump",
-            Self::FlashPrepare(_) => "flash-prepare",
-            Self::FlashExecute(_) => "flash-execute",
-            Self::GiveWayPrepare(_) => "give-way-prepare",
-            Self::GiveWayExecute(_) => "give-way-execute",
-            Self::StockPrepare(_) => "stock-prepare",
-            Self::StockExecute(_) => "stock-execute",
-            Self::Ota(_) => "ota",
-            Self::Itest(_) => "itest",
-            Self::StockOta(_) => "stock-ota",
+            Self::Status => BenchCommand::Status,
+            Self::Off => BenchCommand::Off,
+            Self::On => BenchCommand::On,
+            Self::Capture { .. } => BenchCommand::Capture,
+            Self::Boot { .. } => BenchCommand::Boot,
+            Self::Loader { .. } => BenchCommand::Loader,
+            Self::Transients(_) => BenchCommand::Transients,
+            Self::Dump { .. } => BenchCommand::Dump,
+            Self::FlashPrepare(_) => BenchCommand::FlashPrepare,
+            Self::FlashExecute(_) => BenchCommand::FlashExecute,
+            Self::GiveWayPrepare(_) => BenchCommand::GiveWayPrepare,
+            Self::GiveWayExecute(_) => BenchCommand::GiveWayExecute,
+            Self::StockPrepare(_) => BenchCommand::StockPrepare,
+            Self::StockExecute(_) => BenchCommand::StockExecute,
+            Self::Ota(_) => BenchCommand::Ota,
+            Self::Itest(_) => BenchCommand::Itest,
+            Self::StockOta(_) => BenchCommand::StockOta,
         }
     }
 
@@ -349,10 +349,10 @@ fn record_start(
         Command::Itest(args) => wellfed_itest::itest_steps(args)?,
         Command::StockOta(args) => wellfed_itest::stock_ota_steps(args),
         Command::StockPrepare(args) if args.fallback.is_some() => {
-            commands::steps("give-way-prepare").to_vec()
+            commands::steps(BenchCommand::GiveWayPrepare).to_vec()
         }
         Command::StockExecute(args) if args.stock.fallback.is_some() => {
-            commands::steps("give-way-execute").to_vec()
+            commands::steps(BenchCommand::GiveWayExecute).to_vec()
         }
         _ => commands::steps(label).to_vec(),
     };

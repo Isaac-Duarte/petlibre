@@ -15,6 +15,8 @@ use clap::{Args, Parser, Subcommand};
 use serde::Serialize;
 use serde_json::Value;
 
+use wellfed_flash::error::ErrorKind;
+use wellfed_flash::evidence::report::SummaryStatus;
 use wellfed_flash::evidence::session::{Completion, Context, Outcome};
 use wellfed_flash::link::protocol::{Core, INTERRUPTED};
 use wellfed_flash::writers::{read, stock, update};
@@ -218,15 +220,15 @@ fn device(
 
 #[derive(Serialize)]
 struct Refusal {
-    status: &'static str,
-    error_type: &'static str,
+    status: SummaryStatus,
+    error_type: ErrorKind,
     error: String,
 }
 
 fn refused(error: &wellfed_flash::Error) -> (u8, Value) {
     eprintln!("Refused before serial access: {error}");
     let refusal = Refusal {
-        status: "refused",
+        status: SummaryStatus::Refused,
         error_type: error.kind(),
         error: error.to_string(),
     };

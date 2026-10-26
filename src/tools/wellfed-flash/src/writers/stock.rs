@@ -16,7 +16,7 @@ use serde_json::Value;
 
 use crate::error::{Result, refuse, require};
 use crate::evidence;
-use crate::evidence::report::{Session, Status, Transport};
+use crate::evidence::report::{Session, Status, SummaryStatus, Transport};
 use crate::evidence::session::{self, Completion, Context, Outcome, ReadResult, Saved, progress};
 use crate::link::protocol::{self, CAPACITY, HELPER_SHA256, Port, Transfer};
 use crate::link::sector::Baseline;
@@ -24,6 +24,7 @@ use crate::writers::recovery::{self, Plan};
 use crate::writers::update::Evidence;
 use wellfed_formats::canonical::{canonical, sha256};
 use wellfed_formats::flash_plan::{Kind, ToolHashes};
+use wellfed_formats::session::Mode;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum Phase {
@@ -79,7 +80,7 @@ fn prepare_inputs(context: &Context, args: &Args) -> Result<(Baseline, Vec<u8>, 
     let result = report.result.as_ref();
     require(
         report.status == Some(Status::Complete)
-            && report.mode.as_deref() == Some("read-full")
+            && report.mode == Some(Mode::ReadFull)
             && report.port.as_deref() == Some(evidence.port.as_str())
             && report.helper_sha256.as_deref() == Some(HELPER_SHA256)
             && report.helper_upload_attempted == Some(false)
@@ -128,7 +129,7 @@ fn comparable(reviewed: &Value) -> Result<Vec<u8>> {
 
 #[derive(Serialize)]
 struct Prepared<'a> {
-    status: &'static str,
+    status: SummaryStatus,
     operation: Kind,
     plan: &'a Path,
     plan_sha256: String,
@@ -143,7 +144,7 @@ pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
         let sha = session::write_plan(&context.root, &evidence.output, &expected)?;
         progress(&format!("Prepared bank-1 recovery plan SHA256: {sha}"));
         return Outcome::done(&Prepared {
-            status: "prepared",
+            status: SummaryStatus::Prepared,
             operation: Kind::StockRecovery,
             plan: &evidence.output,
             plan_sha256: sha,
@@ -317,7 +318,7 @@ fn execute(
 
 #[derive(Serialize)]
 struct Planned<'a> {
-    status: &'static str,
+    status: SummaryStatus,
     output: &'a Path,
     changed_sector_count: usize,
 }
@@ -349,7 +350,7 @@ pub fn plan_offline(
         plan.changed_sector_count
     ));
     Outcome::done(&Planned {
-        status: "planned",
+        status: SummaryStatus::Planned,
         output: &directory,
         changed_sector_count: plan.changed_sector_count,
     })

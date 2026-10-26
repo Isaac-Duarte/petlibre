@@ -2,6 +2,7 @@
 //! run against the modeled helper the way the CLI runs them.
 
 use super::*;
+use crate::evidence::report::SummaryStatus;
 
 #[test]
 fn development_update_matches_the_independent_wire_and_changes_only_its_sectors() {
@@ -23,7 +24,7 @@ fn development_update_matches_the_independent_wire_and_changes_only_its_sectors(
         )
         .unwrap();
 
-        assert_eq!(report.status, "verified_via_supplied_transports");
+        assert_eq!(report.status, SummaryStatus::VerifiedViaSuppliedTransports);
         let helper = port.0.borrow();
         let length = old.len().max(new.len());
         let current = &unit.flash[START..START + length];

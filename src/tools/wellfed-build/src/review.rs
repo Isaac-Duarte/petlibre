@@ -19,8 +19,8 @@ use wellfed_formats::canonical::{canonical_of, sha256};
 use wellfed_formats::manifest::BuildManifest;
 use wellfed_formats::private::{sync_directory, write_new};
 use wellfed_formats::review::{
-    BuildDetails, Details, FactoryRun, ImageKind, ImageReview, KIND, MappingCase, SCHEMA_VERSION,
-    Stop,
+    BuildDetails, Details, FactoryRun, ImageKind, ImageReview, MappingCase, ReviewKind,
+    SCHEMA_VERSION, Stop,
 };
 use wellfed_image::ota::{STOCK_SHA256, container, images};
 use wellfed_image::root::Root;
@@ -77,7 +77,7 @@ pub fn freeze(repo: &Repo, kind: ImageKind, build: &Path, output: &Path) -> Resu
     let payload = bank_payload(&image)?;
     let result = ImageReview {
         schema_version: SCHEMA_VERSION,
-        kind: KIND.into(),
+        kind: ReviewKind::Plaf103DevelopmentImage,
         image_kind: kind,
         ota_sha256: sha256(&image),
         payload_sha256: sha256(payload),

@@ -6,7 +6,7 @@
 use serde::Serialize;
 
 use crate::error::{Result, refuse, require};
-use crate::evidence::journal::{Event, Record};
+use crate::evidence::journal::{Boundary, Event, Record};
 use crate::link::protocol::{self, CAPACITY, Port};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -192,7 +192,7 @@ pub fn check_status(
     port: &mut dyn Port,
     start: usize,
     end: usize,
-    boundary: &'static str,
+    boundary: Boundary,
     record: &mut Record,
 ) -> Result<Assessment> {
     let first = read_status_registers(port)?;

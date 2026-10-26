@@ -20,7 +20,12 @@ export type Step = { label: string, state: StepState,
  */
 started?: number | null, finished?: number | null, };
 
-export type Progress = { done: number, total: number, unit: string, 
+/**
+ * What a progress count counts.
+ */
+export type Unit = "bytes" | "sectors";
+
+export type Progress = { done: number, total: number, unit: Unit, 
 /**
  * Rate baseline: when and at which count this count series began.
  */
@@ -28,7 +33,14 @@ since: number, since_done: number, at: number, };
 
 export type FlashTool = { path: string, sha256: string, };
 
-export type HistoryEntry = { command: string, name: string | null, started: number, finished: number | null, outcome: Outcome, error: string | null, next?: string | null, };
+/**
+ * The bench command a progress record belongs to, by its CLI name. A
+ * history line naming a command this bench no longer has does not read,
+ * and the page skips it.
+ */
+export type BenchCommand = "status" | "off" | "on" | "capture" | "boot" | "loader" | "transients" | "dump" | "flash-prepare" | "flash-execute" | "give-way-prepare" | "give-way-execute" | "stock-prepare" | "stock-execute" | "ota" | "itest" | "stock-ota";
+
+export type HistoryEntry = { command: BenchCommand, name: string | null, started: number, finished: number | null, outcome: Outcome, error: string | null, next?: string | null, };
 
 export type RelayState = { on: boolean, at: number, };
 
@@ -110,7 +122,7 @@ qa: QaView | null, };
  * `current.json` as the page reads it: a dead process's `running` record
  * shows as `ended`, and capture and transfer carry what has arrived so far.
  */
-export type CurrentView = { pid: number, command: string, name: string | null, started: number, finished: number | null, outcome: Outcome, error: string | null, steps: Array<Step>, progress: Progress | null, capture: CaptureView | null, transfer: TransferView | null, relay: { [key in string]: boolean }, lines: Array<string>, next: string | null, flash_tool: FlashTool | null, 
+export type CurrentView = { pid: number, command: BenchCommand, name: string | null, started: number, finished: number | null, outcome: Outcome, error: string | null, steps: Array<Step>, progress: Progress | null, capture: CaptureView | null, transfer: TransferView | null, relay: { [key in string]: boolean }, lines: Array<string>, next: string | null, flash_tool: FlashTool | null, 
 /**
  * The recording process still exists.
  */
@@ -193,11 +205,17 @@ unreadable: number, };
  */
 export type Sessions = { sessions: Array<SessionRow>, };
 
+/**
+ * The evidence parts a session name can have, in the order a session
+ * makes them.
+ */
+export type Part = "loader" | "bounded" | "full" | "inspect" | "plan" | "execute" | "boot";
+
 export type SessionRow = { name: string, modified: number, 
 /**
- * Evidence kinds found, from [`PARTS`].
+ * The evidence parts found.
  */
-parts: Array<string>, 
+parts: Array<Part>, 
 /**
  * The furthest part's state, in the report's own words (`read complete`).
  */
@@ -212,7 +230,7 @@ export type SessionView = { name: string, parts: Array<PartView>,
  */
 next: string | null, };
 
-export type PartView = { kind: string, path: string, modified: number | null, 
+export type PartView = { kind: Part, path: string, modified: number | null, 
 /**
  * Execute only: the serial bytes it exchanged.
  */
@@ -237,7 +255,7 @@ config: string, config_ok: boolean, ports: Ports, relays: { [key in string]: Rel
 /**
  * The command a live bench process is running.
  */
-busy: string | null, };
+busy: BenchCommand | null, };
 
 /**
  * Whether each configured path exists, or why the config does not read.

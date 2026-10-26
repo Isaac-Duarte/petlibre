@@ -13,12 +13,22 @@ use serde::{Deserialize, Serialize};
 use crate::audit::{LayoutAudit, Main, PinmapAudit};
 
 pub const SCHEMA_VERSION: u32 = 1;
-pub const KIND: &str = "plaf103_development_image_review";
+/// What a `review.json` is. One kind today; any other reads as
+/// [`ReviewKind::Unsupported`], which the reader refuses by name rather than
+/// failing to parse the file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ReviewKind {
+    #[serde(rename = "plaf103_development_image_review")]
+    Plaf103DevelopmentImage,
+    /// Never written.
+    #[serde(other, skip_serializing)]
+    Unsupported,
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ImageReview {
     pub schema_version: u32,
-    pub kind: String,
+    pub kind: ReviewKind,
     pub image_kind: ImageKind,
     pub ota_sha256: String,
     pub payload_sha256: String,
@@ -116,4 +126,21 @@ pub struct MappingConfig {
     pub minus: u32,
     pub offset: u32,
     pub registers: [u32; 4],
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Reviews are hashed by their bytes, so the kind writes exactly the
+    /// word the Python reviewer wrote; any other reads as unsupported.
+    #[test]
+    fn the_review_kind_keeps_its_word() {
+        assert_eq!(
+            serde_json::to_value(ReviewKind::Plaf103DevelopmentImage).unwrap(),
+            "plaf103_development_image_review"
+        );
+        let other: ReviewKind = serde_json::from_value("plaf104_review".into()).unwrap();
+        assert_eq!(other, ReviewKind::Unsupported);
+    }
 }

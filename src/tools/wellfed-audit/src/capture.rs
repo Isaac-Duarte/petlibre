@@ -11,6 +11,8 @@ use std::path::Path;
 
 use chrono::{DateTime, FixedOffset};
 use wellfed_formats::capture::{Direction, SerialEvent};
+use wellfed_formats::session::{Lifecycle, Status};
+use serde::Deserialize;
 use serde_json::Value;
 
 use crate::{Error, Result, digest, require};
@@ -47,9 +49,12 @@ pub(crate) struct Capture {
     /// capture before anything is read from it.
     pub(crate) events: Vec<SerialEvent>,
     /// The session's finalized `report.json`. Its shape belongs to the bench
-    /// session that writes it; only the status, mode, end time and stream
-    /// hashes are read here.
+    /// session that writes it; its end time and stream hashes, under the
+    /// keys old and new reports use, are read here.
     pub(crate) metadata: Value,
+    /// Its status and mode. A status the flash client does not write
+    /// reads as none, which the checks that need one refuse.
+    pub(crate) lifecycle: Lifecycle,
 }
 
 impl Capture {
@@ -68,13 +73,15 @@ impl Capture {
                 })
             })
             .collect::<Result<_>>()?;
-        let metadata = serde_json::from_slice(&fs::read(directory.join("report.json"))?)?;
+        let metadata: Value = serde_json::from_slice(&fs::read(directory.join("report.json"))?)?;
+        let lifecycle = Lifecycle::deserialize(&metadata).unwrap_or_default();
 
         Ok(Self {
             rx,
             tx,
             events,
             metadata,
+            lifecycle,
         })
     }
 
@@ -96,7 +103,10 @@ impl Capture {
     /// in time order.
     pub(crate) fn validate(&self) -> Result<()> {
         let metadata = &self.metadata;
-        require(metadata["status"] == "complete", "Capture must be complete")?;
+        require(
+            self.lifecycle.status == Some(Status::Complete),
+            "Capture must be complete",
+        )?;
 
         for (direction, data) in [("rx", &self.rx), ("tx", &self.tx)] {
             let hashes: Vec<&Value> = [

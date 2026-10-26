@@ -14,30 +14,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{Error, Result};
 use crate::evidence::{self, utc};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Status {
-    Prepared,
-    Running,
-    /// A read or inspection finished.
-    Complete,
-    /// A read stopped (the Python reader's name for it).
-    Failed,
-    /// A write session stopped.
-    Stopped,
-    /// A write session's transaction verified.
-    Verified,
-}
-
-/// How a session reached the helper. Evidence from one never continues the
-/// other; Python reports name none and are serial.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Transport {
-    #[default]
-    Serial,
-    Emulator,
-}
+pub use wellfed_formats::session::{Status, Transport};
 
 /// Hashes of the finished serial streams, once a session closes.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -138,4 +115,19 @@ impl<D: Serialize> Session<D> {
         let saved = self.save();
         (self.report.into_inner(), saved)
     }
+}
+
+/// The status a command's summary (stdout) or terminal report names; not a
+/// session's lifecycle ([`Status`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SummaryStatus {
+    /// Refused before the port opened.
+    Refused,
+    /// A plan was written for review; nothing was sent.
+    Planned,
+    Prepared,
+    Stopped,
+    /// Every sector and the marker read back over the transports given.
+    VerifiedViaSuppliedTransports,
 }

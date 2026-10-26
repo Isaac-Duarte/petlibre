@@ -20,6 +20,7 @@ use std::path::Path;
 use std::sync::LazyLock;
 
 use wellfed_formats::manifest::BuildManifest;
+use wellfed_formats::session::Mode;
 use regex::bytes::{Captures, Match, Regex};
 use serde::Serialize;
 
@@ -806,7 +807,7 @@ pub(crate) fn load(capture: &Path, manifest_path: &Path, image_path: &Path) -> R
     let capture = Capture::load(capture)?;
     capture.validate()?;
     require(
-        capture.tx.is_empty() && capture.metadata["mode"] == "observe",
+        capture.tx.is_empty() && capture.lifecycle.mode == Some(Mode::Observe),
         "Receive-only observation required",
     )?;
 

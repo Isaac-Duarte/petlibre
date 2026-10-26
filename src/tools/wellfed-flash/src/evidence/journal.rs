@@ -4,6 +4,7 @@
 //! `src/tools/flash/recovery-transaction.py`, whose journals still read. Every entry is fsynced before the operation it
 //! announces. A stopped journal is evidence only: nothing resumes from it.
 
+use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
@@ -12,7 +13,8 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use serde_json::{Map, Value};
 
-use crate::error::{Result, refuse, require};
+use crate::error::{ErrorKind, Result, refuse, require};
+use crate::evidence::report::SummaryStatus;
 use crate::evidence::{Root, sync_directory, utc};
 use crate::link::status::Assessment;
 use wellfed_formats::canonical::{canonical, canonical_of, sha256};
@@ -25,6 +27,61 @@ const MUTATIONS: [&str; 3] = [
     "marker_commit_intent",
 ];
 const ZERO: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+
+/// Which image a region or guard check compared against, as the Python
+/// journal names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Phase {
+    /// What the region held before the transaction.
+    Preimage,
+    /// Every sector written, the marker not yet.
+    Staged,
+    Final,
+    MarkerCommit,
+}
+
+/// Refusals name the phase in its journal word.
+impl fmt::Display for Phase {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Preimage => "preimage",
+            Self::Staged => "staged",
+            Self::Final => "final",
+            Self::MarkerCommit => "marker_commit",
+        })
+    }
+}
+
+/// The step a flash status check guards.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Boundary {
+    BeforeErase,
+    BeforeProgram,
+    BeforeMarkerCommit,
+    BeforeGiveWay,
+    /// A read-only inspection: nothing is written after it.
+    Inspection,
+}
+
+impl Boundary {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::BeforeErase => "before_erase",
+            Self::BeforeProgram => "before_program",
+            Self::BeforeMarkerCommit => "before_marker_commit",
+            Self::BeforeGiveWay => "before_give_way",
+            Self::Inspection => "inspection",
+        }
+    }
+}
+
+impl fmt::Display for Boundary {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
 
 /// Every event a transaction records, named as the Python journal names it.
 ///
@@ -51,26 +108,26 @@ pub enum Event {
     },
 
     RegionVerified {
-        phase: &'static str,
+        phase: Phase,
         sha256: String,
         bytes: usize,
     },
     GuardsVerified {
-        phase: &'static str,
+        phase: Phase,
     },
     InitialSnapshotVerified {
         sha256: String,
     },
 
     FlashStatusUnstable {
-        boundary: &'static str,
+        boundary: Boundary,
         start: usize,
         end_exclusive: usize,
         first: [u8; 3],
         second: [u8; 3],
     },
     FlashStatusChecked {
-        boundary: &'static str,
+        boundary: Boundary,
         registers: [u8; 3],
         assessment: Assessment,
     },
@@ -144,10 +201,10 @@ pub enum Event {
     /// A sector or marker step stopped; the transaction's own stop follows.
     Stopped {
         mutation_possible: bool,
-        error_type: &'static str,
+        error_type: ErrorKind,
     },
     TransactionStopped {
-        error_type: &'static str,
+        error_type: ErrorKind,
         mutation_possible: bool,
     },
 }
@@ -157,7 +214,7 @@ pub enum Event {
 pub struct At {
     pub offset: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub phase: Option<&'static str>,
+    pub phase: Option<Phase>,
     #[serde(flatten)]
     pub event: Event,
 }
@@ -189,8 +246,8 @@ struct Headed<'a, T> {
 
 #[derive(Serialize)]
 struct StopReport<'a> {
-    status: &'static str,
-    error_type: &'static str,
+    status: SummaryStatus,
+    error_type: ErrorKind,
     mutation_possible: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     transaction_id: Option<&'a str>,
@@ -314,7 +371,7 @@ impl Journal {
         }
 
         let _ = self.save_report(&StopReport {
-            status: "stopped",
+            status: SummaryStatus::Stopped,
             error_type: error.kind(),
             mutation_possible: possible,
             transaction_id,

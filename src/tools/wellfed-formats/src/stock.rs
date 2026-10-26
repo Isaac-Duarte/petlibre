@@ -39,12 +39,40 @@ pub struct StockStatus {
     pub ota_trials: Vec<TrialRecord>,
 }
 
+/// Which stock OTA message a report came in, by its `cmd`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OtaCommand {
+    #[serde(rename = "OTA_UPGRADE")]
+    Upgrade,
+    #[serde(rename = "OTA_PROGRESS")]
+    Progress,
+    #[serde(rename = "OTA_INFORM")]
+    Inform,
+}
+
+impl OtaCommand {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Upgrade => "OTA_UPGRADE",
+            Self::Progress => "OTA_PROGRESS",
+            Self::Inform => "OTA_INFORM",
+        }
+    }
+
+    /// The command a stock message's `cmd` names, if it is an OTA report.
+    pub fn from_cmd(cmd: &str) -> Option<Self> {
+        [Self::Upgrade, Self::Progress, Self::Inform]
+            .into_iter()
+            .find(|command| command.as_str() == cmd)
+    }
+}
+
 /// A stock `OTA_UPGRADE`, `OTA_PROGRESS` or `OTA_INFORM` report.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OtaReport {
     /// Tells repeated reports apart.
     pub received_at: DateTime<Utc>,
-    pub command: String,
+    pub command: OtaCommand,
     pub message_id: Option<String>,
     pub phase: Option<String>,
     pub state: Option<u8>,
@@ -55,7 +83,7 @@ pub struct OtaReport {
 
 impl fmt::Display for OtaReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "stock {}", self.command)?;
+        write!(f, "stock {}", self.command.as_str())?;
         if let Some(phase) = &self.phase {
             write!(f, " phase {phase}")?;
         }
@@ -168,6 +196,19 @@ impl ImageLease {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn ota_commands_keep_stock_s_words() {
+        for command in [
+            OtaCommand::Upgrade,
+            OtaCommand::Progress,
+            OtaCommand::Inform,
+        ] {
+            assert_eq!(serde_json::to_value(command).unwrap(), command.as_str());
+            assert_eq!(OtaCommand::from_cmd(command.as_str()), Some(command));
+        }
+        assert_eq!(OtaCommand::from_cmd("OTA_START"), None);
+    }
 
     #[test]
     fn a_document_from_an_older_server_still_reads() {

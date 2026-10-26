@@ -605,7 +605,7 @@ fn prepare_records_the_matching_execute_line() {
     rig.bench.status = Status::new(&rig.bench.root, rig.bench.root.join("status"));
     rig.bench
         .status
-        .begin("flash-prepare", Some("unit"), &[])
+        .begin(BenchCommand::FlashPrepare, Some("unit"), &[])
         .unwrap();
     fs::create_dir_all(rig.bench.root.join(VERIFICATION)).unwrap();
 
@@ -1341,7 +1341,7 @@ fn ota_passes_across_segments_and_records_steps() {
     rig.bench.status = Status::new(&rig.bench.root, rig.bench.root.join("status"));
     rig.bench
         .status
-        .begin("ota", Some("unit"), steps("ota"))
+        .begin(BenchCommand::Ota, Some("unit"), steps(BenchCommand::Ota))
         .unwrap();
     let args = plain_review(&rig);
     {
@@ -1464,7 +1464,7 @@ fn with_status(rig: &mut Rig, source: Source) {
     rig.bench.status = Status::new(&rig.bench.root, rig.bench.root.join("status"));
     rig.bench
         .status
-        .begin("ota", Some("unit"), &ota::steps(source))
+        .begin(BenchCommand::Ota, Some("unit"), &ota::steps(source))
         .unwrap();
 }
 

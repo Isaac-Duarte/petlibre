@@ -69,12 +69,12 @@ fn a_failed_check_fails_with_its_items() {
     assert_eq!(
         fields.qa_failed_items,
         vec![FailedItem {
-            stage: "buttons".into(),
+            stage: Check::Buttons,
             item: "press=reset".into(),
             reason: "timeout".into(),
         }]
     );
-    assert_eq!(fields.qa_checks[0], ("optics".into(), Some(Verdict::Fail)));
+    assert_eq!(fields.qa_checks[0], (Check::Optics, Some(Verdict::Fail)));
 }
 
 #[test]

@@ -42,7 +42,10 @@ fn stock_ota_takes_a_name_its_firmware_and_no_promote() {
     };
     assert_eq!(args.name, "poc-01");
     assert!(args.no_promote && !args.power);
-    assert_eq!(cli.command.as_ref().map(Command::label), Some("stock-ota"));
+    assert_eq!(
+        cli.command.as_ref().map(Command::label),
+        Some(BenchCommand::StockOta)
+    );
 
     assert!(Cli::try_parse_from(["wellfed-bench", "stock-ota"]).is_err());
 }

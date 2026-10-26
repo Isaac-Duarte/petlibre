@@ -29,6 +29,7 @@ pub mod owner;
 pub mod private;
 pub mod qa;
 pub mod review;
+pub mod session;
 pub mod stock;
 pub mod transients;
 

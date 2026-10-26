@@ -24,7 +24,7 @@ use hyper_util::rt::{TokioIo, TokioTimer};
 use wellfed_formats::{
     canonical,
     manifest::BuildManifest,
-    review::{ImageKind, ImageReview},
+    review::{ImageKind, ImageReview, ReviewKind},
 };
 use tokio::{net::TcpListener, task::JoinSet};
 use uuid::Uuid;
@@ -125,6 +125,10 @@ impl Build {
     pub fn load(review: &Path) -> Result<Self> {
         let frozen: ImageReview =
             wellfed_formats::load(&review.join("review.json")).context("read review.json")?;
+        ensure!(
+            frozen.kind == ReviewKind::Plaf103DevelopmentImage,
+            "unsupported frozen review"
+        );
         ensure!(
             frozen.image_kind == ImageKind::Build,
             "review is not of a replacement build"

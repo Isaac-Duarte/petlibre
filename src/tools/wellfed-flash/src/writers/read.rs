@@ -18,6 +18,7 @@ use crate::link::protocol::{
 };
 use crate::link::status::{self, Assessment};
 use wellfed_formats::canonical::sha256;
+use wellfed_formats::session::Mode as ReportMode;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum Mode {
@@ -35,13 +36,13 @@ pub enum Mode {
 
 impl Mode {
     /// The report's `mode`, as the Python reader names it.
-    pub fn name(self) -> &'static str {
+    pub fn report(self) -> ReportMode {
         match self {
-            Self::Observe => "observe",
-            Self::InspectRom => "inspect-rom",
-            Self::Small => "read-small",
-            Self::Full => "read-full",
-            Self::Status => "read-status",
+            Self::Observe => ReportMode::Observe,
+            Self::InspectRom => ReportMode::InspectRom,
+            Self::Small => ReportMode::ReadSmall,
+            Self::Full => ReportMode::ReadFull,
+            Self::Status => ReportMode::ReadStatus,
         }
     }
 }
@@ -91,7 +92,7 @@ pub enum Reading {
 /// The reader's report fields beyond the shared lifecycle.
 #[derive(Debug, Serialize)]
 struct Details {
-    mode: &'static str,
+    mode: ReportMode,
     port: String,
     baud: u32,
     format: &'static str,
@@ -119,7 +120,7 @@ struct Details {
 #[derive(Serialize)]
 struct Summary<'a> {
     status: Status,
-    mode: &'static str,
+    mode: ReportMode,
     output: &'a Path,
     result: Option<Reading>,
     error: Option<String>,
@@ -216,7 +217,7 @@ pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
     let report = Session::open(
         directory.join("report.json"),
         Details {
-            mode: args.mode.name(),
+            mode: args.mode.report(),
             port: args.port.clone(),
             baud: 115200,
             format: "8N1",
@@ -247,7 +248,7 @@ pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
 
         progress(&format!(
             "Recording {} in {}",
-            args.mode.name(),
+            args.mode.report(),
             directory.display()
         ));
 
@@ -321,7 +322,7 @@ pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
 
     let summary = Summary {
         status: report.status,
-        mode: args.mode.name(),
+        mode: args.mode.report(),
         output: &directory,
         result: report.details.result,
         error: report.error,

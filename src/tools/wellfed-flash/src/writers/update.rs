@@ -14,9 +14,11 @@ use serde::Serialize;
 use serde::de::IgnoredAny;
 
 use crate::error::{Result, refuse, require};
-use crate::evidence::journal::Event;
-use crate::evidence::report::{Session, Status, Transport};
-use crate::evidence::session::{self, Completion, Context, Outcome, Region, Saved, progress};
+use crate::evidence::journal::{Boundary, Event};
+use crate::evidence::report::{Session, Status, SummaryStatus, Transport};
+use crate::evidence::session::{
+    self, Completion, Context, Outcome, Region, Saved, StatusEvent, progress,
+};
 use crate::link::protocol::{CAPACITY, Port, SECTOR};
 use crate::link::sector::{self, Baseline};
 use crate::link::status;
@@ -27,6 +29,7 @@ use wellfed_formats::canonical::{canonical_of, sha256};
 use wellfed_formats::flash_plan::{
     DevelopmentPlan, GiveWayBindings, GiveWayPlan, Kind, Reviewed, UpdateBindings,
 };
+use wellfed_formats::session::Mode as ReportMode;
 use wellfed_image::review::{Frozen, frozen};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
@@ -40,11 +43,11 @@ pub enum Mode {
 }
 
 impl Mode {
-    fn name(self) -> &'static str {
+    fn report(self) -> ReportMode {
         match self {
-            Self::Inspect => "inspect",
-            Self::Prepare => "prepare",
-            Self::Execute => "execute",
+            Self::Inspect => ReportMode::Inspect,
+            Self::Prepare => ReportMode::Prepare,
+            Self::Execute => ReportMode::Execute,
         }
     }
 }
@@ -118,7 +121,7 @@ struct Execution<B, P> {
 /// An update or give-way session report's fields beyond the lifecycle.
 #[derive(Serialize)]
 struct Details<'a, B> {
-    mode: &'static str,
+    mode: ReportMode,
     bindings: &'a B,
     helper_upload_attempted: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -139,7 +142,7 @@ struct Details<'a, B> {
 impl<'a, B> Details<'a, B> {
     fn new(context: &Context, mode: Mode, bindings: &'a B) -> Self {
         Self {
-            mode: mode.name(),
+            mode: mode.report(),
             bindings,
             helper_upload_attempted: false,
             baud: None,
@@ -158,7 +161,7 @@ impl<'a, B> Details<'a, B> {
 #[derive(Serialize)]
 struct Summary<'a> {
     status: Status,
-    mode: &'static str,
+    mode: ReportMode,
     output: &'a Path,
     result: Option<development::Verified>,
     error: Option<String>,
@@ -166,7 +169,7 @@ struct Summary<'a> {
 
 #[derive(Serialize)]
 struct Prepared<'a> {
-    status: &'static str,
+    status: SummaryStatus,
     plan: &'a Path,
     plan_sha256: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -257,7 +260,7 @@ fn status_permitted(report: &Saved<IgnoredAny>) -> Result<()> {
     require(
         checks.is_some_and(|c| {
             c.len() == 1
-                && c[0].event.as_deref() == Some("flash_status_checked")
+                && c[0].event == Some(StatusEvent::FlashStatusChecked)
                 && c[0]
                     .assessment
                     .as_ref()
@@ -312,7 +315,7 @@ pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
         let sha = session::write_plan(&context.root, &args.evidence.output, &reviewed)?;
         progress(&format!("Prepared development plan SHA256: {sha}"));
         return Outcome::done(&Prepared {
-            status: "prepared",
+            status: SummaryStatus::Prepared,
             plan: &args.evidence.output,
             plan_sha256: sha,
             erase_sectors: Some(reviewed.operation_plan.erase_sectors),
@@ -380,7 +383,7 @@ fn session_run(
 
         progress(&format!(
             "Development {} of bank {}; region {} bytes; no full-flash scans",
-            args.mode.name(),
+            args.mode.report(),
             loaded.layout.bank,
             extents[2].1
         ));
@@ -434,7 +437,7 @@ fn session_run(
                     &mut port,
                     loaded.layout.start,
                     loaded.layout.start + acquired.application.len(),
-                    "inspection",
+                    Boundary::Inspection,
                     &mut record,
                 )?;
                 Ok(None)
@@ -600,7 +603,7 @@ pub fn give_way(context: &Context, args: &GiveWayArgs) -> Result<Outcome> {
         let sha = session::write_plan(&context.root, &args.evidence.output, &reviewed)?;
         progress(&format!("Prepared give-way plan SHA256: {sha}"));
         return Outcome::done(&Prepared {
-            status: "prepared",
+            status: SummaryStatus::Prepared,
             plan: &args.evidence.output,
             plan_sha256: sha,
             erase_sectors: None,
@@ -684,7 +687,7 @@ fn give_way_session(
                     &mut port,
                     sector::START,
                     sector::START + 1024,
-                    "inspection",
+                    Boundary::Inspection,
                     &mut record,
                 )?;
                 Ok(None)
@@ -769,7 +772,7 @@ mod tests {
         );
 
         let verified = development::Verified {
-            status: "verified_via_supplied_transports",
+            status: SummaryStatus::VerifiedViaSuppliedTransports,
             region_sha256: Some("r".into()),
             erase_sectors: Some(2),
             after_sha256: None,
@@ -816,7 +819,7 @@ mod tests {
         .unwrap();
         report.edit(|r| {
             r.details.status_checks.push(Event::FlashStatusUnstable {
-                boundary: "inspection",
+                boundary: Boundary::Inspection,
                 start: 1,
                 end_exclusive: 2,
                 first: [0, 0, 0],

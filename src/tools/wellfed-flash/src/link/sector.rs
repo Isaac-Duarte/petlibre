@@ -9,7 +9,7 @@ use std::sync::Arc;
 use serde::Serialize;
 
 use crate::error::{Result, refuse, require};
-use crate::evidence::journal::{At, Event, Located, Record};
+use crate::evidence::journal::{At, Boundary, Event, Located, Phase, Record};
 use crate::link::protocol::{self, ACK, CAPACITY, EOT, Port, SECTOR};
 use crate::link::status;
 use wellfed_formats::canonical::sha256;
@@ -232,7 +232,13 @@ pub fn restore_sector(
         record(Event::BeforeVerified {
             sha256: expected_before.to_string(),
         })?;
-        status::check_status(port, offset, offset + SECTOR, "before_erase", &mut record)?;
+        status::check_status(
+            port,
+            offset,
+            offset + SECTOR,
+            Boundary::BeforeErase,
+            &mut record,
+        )?;
         record(Event::EraseIntent {
             bytes: SECTOR,
             after_sha256: Some(after.clone()),
@@ -247,7 +253,13 @@ pub fn restore_sector(
         )?;
         record(Event::EraseReadbackVerified {})?;
 
-        status::check_status(port, offset, offset + SECTOR, "before_program", &mut record)?;
+        status::check_status(
+            port,
+            offset,
+            offset + SECTOR,
+            Boundary::BeforeProgram,
+            &mut record,
+        )?;
         program_packets(port, &frames, &mut record)?;
         require(
             read_sector(port, offset)? == payload,
@@ -305,7 +317,7 @@ pub fn commit_marker(
     let mut record = |event: Event| {
         journal(At {
             offset: START,
-            phase: Some("marker_commit"),
+            phase: Some(Phase::MarkerCommit),
             event,
         })
     };
@@ -336,7 +348,7 @@ pub fn commit_marker(
             port,
             START,
             START + 1024,
-            "before_marker_commit",
+            Boundary::BeforeMarkerCommit,
             &mut record,
         )?;
 

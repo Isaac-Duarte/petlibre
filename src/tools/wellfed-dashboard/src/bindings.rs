@@ -11,7 +11,7 @@ use ts_rs::{Config, TS};
 
 use wellfed_formats::bench::catalog::{CatalogEntry, Requirement, Tier};
 use wellfed_formats::bench::progress::{
-    FlashTool, HistoryEntry, Outcome, Progress, RelayState, Step, StepState,
+    BenchCommand, FlashTool, HistoryEntry, Outcome, Progress, RelayState, Step, StepState, Unit,
 };
 use wellfed_formats::bench::run::{Evidence, RunRecord, ScenarioRecord, ScenarioVerdict};
 
@@ -31,8 +31,10 @@ fn generated() -> String {
         decl::<Outcome>(&cfg),
         decl::<StepState>(&cfg),
         decl::<Step>(&cfg),
+        decl::<Unit>(&cfg),
         decl::<Progress>(&cfg),
         decl::<FlashTool>(&cfg),
+        decl::<BenchCommand>(&cfg),
         decl::<HistoryEntry>(&cfg),
         decl::<RelayState>(&cfg),
         decl::<Tier>(&cfg),

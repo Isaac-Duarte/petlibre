@@ -16,6 +16,7 @@ use crate::link::protocol::{self, HELPER_SHA256, Port, ROM_SHA256, Transfer};
 use crate::link::sector::Baseline;
 use wellfed_formats::canonical::{canonical, canonical_of, sha256};
 use wellfed_formats::flash_plan::ToolHashes;
+use wellfed_formats::session::Mode;
 
 pub const DEFAULT_HELPER: &str =
     "private/upstream/ameba-rtos-d/tools/AmebaD/Image_Tool/imgtool_flashloader_amebad.bin";
@@ -193,7 +194,7 @@ pub fn progress(line: &str) {
 #[serde(default)]
 pub(crate) struct Saved<R> {
     pub status: Option<Status>,
-    pub mode: Option<String>,
+    pub mode: Option<Mode>,
     pub transport: Transport,
     pub port: Option<String>,
     pub helper_sha256: Option<String>,
@@ -210,8 +211,8 @@ pub(crate) struct Saved<R> {
 }
 
 impl<R> Saved<R> {
-    fn is(&self, status: Status, mode: &str) -> bool {
-        self.status == Some(status) && self.mode.as_deref() == Some(mode)
+    fn is(&self, status: Status, mode: Mode) -> bool {
+        self.status == Some(status) && self.mode == Some(mode)
     }
 }
 
@@ -253,8 +254,19 @@ pub(crate) struct Observed {
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 pub(crate) struct StatusCheck {
-    pub event: Option<String>,
+    pub event: Option<StatusEvent>,
     pub assessment: Option<CheckedAssessment>,
+}
+
+/// Which status event an inspection recorded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum StatusEvent {
+    FlashStatusChecked,
+    FlashStatusUnstable,
+    /// Any other event: the check that needs a checked status refuses it.
+    #[serde(other)]
+    Other,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -298,7 +310,7 @@ pub fn validate_rom_report(context: &Context, path: &Path) -> Result<Vec<u8>> {
     context.same_transport(report.transport)?;
     let result = report.result.as_ref();
     require(
-        report.is(Status::Complete, "inspect-rom")
+        report.is(Status::Complete, Mode::InspectRom)
             && result.is_some_and(|r| r.returned_to_km4 == Some(true)),
         "Successful ROM inspection required",
     )?;
@@ -330,7 +342,7 @@ pub fn validate_rom_report(context: &Context, path: &Path) -> Result<Vec<u8>> {
 }
 
 fn bounded_read(report: &Saved<ReadResult>, port: &str) -> bool {
-    report.is(Status::Complete, "read-small")
+    report.is(Status::Complete, Mode::ReadSmall)
         && report.port.as_deref() == Some(port)
         && report.helper_sha256.as_deref() == Some(HELPER_SHA256)
         && report.helper_upload_completed == Some(true)
@@ -537,7 +549,7 @@ pub(crate) fn inspection(
         None => canonical(&Value::Null)?,
     };
     require(
-        report.is(Status::Complete, "inspect")
+        report.is(Status::Complete, Mode::Inspect)
             && recorded == canonical_of(bindings)?
             && report.helper_upload_attempted == Some(false),
         "Fresh matching inspection required",

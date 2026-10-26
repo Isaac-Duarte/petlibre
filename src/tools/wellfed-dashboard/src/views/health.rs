@@ -9,7 +9,7 @@ use wellfed_core::record::{Event, Record, Tag};
 use serde::Serialize;
 
 use super::{Sources, captures_by_age, modified, printable, read};
-use wellfed_formats::bench::progress::{self, RELAYS, RelayState};
+use wellfed_formats::bench::progress::{self, BenchCommand, RELAYS, RelayState};
 use wellfed_formats::bench::relative;
 use wellfed_formats::bench::{CONFIG, Config};
 use wellfed_formats::canonical::sha256;
@@ -31,7 +31,7 @@ pub(crate) struct HealthView {
     flash_tool: FlashToolView,
     installed: Option<Installed>,
     /// The command a live bench process is running.
-    busy: Option<String>,
+    busy: Option<BenchCommand>,
 }
 
 /// Whether each configured path exists, or why the config does not read.
@@ -209,7 +209,7 @@ mod tests {
     use super::*;
     use crate::views::tests::{json, sources};
     use wellfed_formats::bench::CAPTURES;
-    use wellfed_formats::bench::progress::Status;
+    use wellfed_formats::bench::progress::{BenchCommand, Status};
 
     #[test]
     fn health_reads_the_last_banner() {
@@ -256,7 +256,7 @@ mod tests {
         .unwrap();
         fs::write(&sources.flash_bin, b"tool").unwrap();
         let mut status = Status::new(&sources.root, sources.status());
-        status.begin("on", None, &[]).unwrap();
+        status.begin(BenchCommand::On, None, &[]).unwrap();
         status.relay(1, true);
         status.finish(0, None);
 

@@ -13,6 +13,7 @@ use serde_json::Value;
 
 use crate::error::{Result, refuse, require};
 use crate::evidence::journal::{Event, Journal};
+use crate::evidence::report::SummaryStatus;
 use crate::evidence::{Root, utc};
 use crate::link::protocol::{CAPACITY, Port, SECTOR};
 use crate::link::sector::{self, Baseline, END, MarkerCommit, Restored, START};
@@ -243,7 +244,7 @@ pub type Snapshot<'a> = dyn FnMut(&mut dyn Port) -> Result<Vec<u8>> + 'a;
 /// The report a verified recovery saves beside its journal.
 #[derive(Debug, Clone, Serialize)]
 pub struct Recovered {
-    pub status: &'static str,
+    pub status: SummaryStatus,
     pub transaction_id: String,
     pub sectors: Vec<Restored>,
     /// `null` for a plan with nothing to restore.
@@ -357,7 +358,7 @@ pub fn run_transaction(
         })?;
 
         let report = Recovered {
-            status: "verified_via_supplied_transports",
+            status: SummaryStatus::VerifiedViaSuppliedTransports,
             transaction_id: transaction.clone(),
             sectors: results,
             marker_commit: marker,

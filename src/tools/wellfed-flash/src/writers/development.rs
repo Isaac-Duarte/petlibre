@@ -19,7 +19,8 @@ use serde::Serialize;
 
 use crate::error::{Result, refuse, require};
 use crate::evidence::Root;
-use crate::evidence::journal::{At, Event, Journal};
+use crate::evidence::journal::{At, Boundary, Event, Journal, Phase};
+use crate::evidence::report::SummaryStatus;
 use crate::link::protocol::{Port, SECTOR};
 use crate::link::sector::{self, Baseline};
 use crate::link::status;
@@ -318,7 +319,7 @@ fn same(a: &impl Serialize, b: &impl Serialize) -> Result<bool> {
 /// The report a verified transaction saves beside its journal.
 #[derive(Debug, Clone, Serialize)]
 pub struct Verified {
-    pub status: &'static str,
+    pub status: SummaryStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub region_sha256: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -393,28 +394,27 @@ pub fn run(
 
         // Every acquisition re-checks the factory region and the other bank's
         // guard, not only the application region being written.
-        let mut check =
-            |port: &mut dyn Port, journal: &mut Journal, want: &[u8], phase: &'static str| {
-                let acquired = acquire(port)?;
-                guards(
-                    baseline,
-                    &acquired.factory,
-                    &acquired.other,
-                    &layout,
-                    expected.other_bank_sha256.as_deref(),
-                )?;
-                require(
-                    acquired.application == want,
-                    format!("{phase} application region differs"),
-                )?;
-                journal.append(&Event::RegionVerified {
-                    phase,
-                    sha256: sha256(want),
-                    bytes: want.len(),
-                })
-            };
+        let mut check = |port: &mut dyn Port, journal: &mut Journal, want: &[u8], phase: Phase| {
+            let acquired = acquire(port)?;
+            guards(
+                baseline,
+                &acquired.factory,
+                &acquired.other,
+                &layout,
+                expected.other_bank_sha256.as_deref(),
+            )?;
+            require(
+                acquired.application == want,
+                format!("{phase} application region differs"),
+            )?;
+            journal.append(&Event::RegionVerified {
+                phase,
+                sha256: sha256(want),
+                bytes: want.len(),
+            })
+        };
 
-        check(port, &mut journal, current, "preimage")?;
+        check(port, &mut journal, current, Phase::Preimage)?;
 
         for (number, (offset, data, frames)) in sectors.iter().enumerate() {
             let offset = *offset;
@@ -432,7 +432,13 @@ pub fn run(
                 })
             };
 
-            status::check_status(port, offset, offset + SECTOR, "before_erase", &mut record)?;
+            status::check_status(
+                port,
+                offset,
+                offset + SECTOR,
+                Boundary::BeforeErase,
+                &mut record,
+            )?;
             record(Event::EraseIntent {
                 bytes: SECTOR,
                 after_sha256: None,
@@ -445,7 +451,13 @@ pub fn run(
             )?;
             record(Event::EraseVerified {})?;
 
-            status::check_status(port, offset, offset + SECTOR, "before_program", &mut record)?;
+            status::check_status(
+                port,
+                offset,
+                offset + SECTOR,
+                Boundary::BeforeProgram,
+                &mut record,
+            )?;
             sector::program_packets(port, frames, &mut record)?;
             require(
                 sector::read_sector(port, offset)? == *data,
@@ -461,7 +473,7 @@ pub fn run(
         // The marker goes last, after every sector reads back staged. Interrupted
         // runs commit even when no sector is left to stage.
         if !sectors.is_empty() || update.interrupted {
-            check(port, &mut journal, &staged, "staged")?;
+            check(port, &mut journal, &staged, Phase::Staged)?;
             require(
                 sector::read_sector(port, start)? == staged[..SECTOR],
                 "Marker sector drift",
@@ -470,7 +482,7 @@ pub fn run(
             let mut record = |event: Event| {
                 journal.append(&At {
                     offset: start,
-                    phase: Some("marker_commit"),
+                    phase: Some(Phase::MarkerCommit),
                     event,
                 })
             };
@@ -479,7 +491,7 @@ pub fn run(
                 port,
                 start,
                 start + 1024,
-                "before_marker_commit",
+                Boundary::BeforeMarkerCommit,
                 &mut record,
             )?;
             record(Event::DevelopmentCommitIntent {
@@ -491,7 +503,7 @@ pub fn run(
                 "Committed marker readback differs",
             )?;
 
-            check(port, &mut journal, &proposed, "final")?;
+            check(port, &mut journal, &proposed, Phase::Final)?;
             journal.append(&Event::DevelopmentCommitVerified {
                 sha256: sha256(&proposed),
             })?;
@@ -503,7 +515,7 @@ pub fn run(
         })?;
 
         let report = Verified {
-            status: "verified_via_supplied_transports",
+            status: SummaryStatus::VerifiedViaSuppliedTransports,
             region_sha256: Some(sha256(&proposed)),
             erase_sectors: Some(sectors.len()),
             after_sha256: None,
@@ -600,32 +612,31 @@ pub fn run_give_way(
         journal.append(&Event::GiveWayStart {
             plan: expected.clone(),
         })?;
-        let mut check =
-            |port: &mut dyn Port, journal: &mut Journal, want: &[u8], phase: &'static str| {
-                let [factory, region, first] = acquire(port)?;
-                require(
-                    factory == baseline.bytes()[..FACTORY.1],
-                    format!("{phase}: factory region differs"),
-                )?;
-                require(
-                    region == bank0,
-                    format!("{phase}: bank 0 differs from the reviewed fallback"),
-                )?;
-                require(
-                    first == want,
-                    format!("{phase}: bank 1's first sector differs"),
-                )?;
-                journal.append(&Event::GuardsVerified { phase })
-            };
+        let mut check = |port: &mut dyn Port, journal: &mut Journal, want: &[u8], phase: Phase| {
+            let [factory, region, first] = acquire(port)?;
+            require(
+                factory == baseline.bytes()[..FACTORY.1],
+                format!("{phase}: factory region differs"),
+            )?;
+            require(
+                region == bank0,
+                format!("{phase}: bank 0 differs from the reviewed fallback"),
+            )?;
+            require(
+                first == want,
+                format!("{phase}: bank 1's first sector differs"),
+            )?;
+            journal.append(&Event::GuardsVerified { phase })
+        };
 
-        check(port, &mut journal, bank1_sector, "preimage")?;
+        check(port, &mut journal, bank1_sector, Phase::Preimage)?;
 
         let mut record = |event: Event| journal.append(&event);
         status::check_status(
             port,
             sector::START,
             sector::START + 1024,
-            "before_give_way",
+            Boundary::BeforeGiveWay,
             &mut record,
         )?;
         record(Event::GiveWayIntent {
@@ -638,13 +649,13 @@ pub fn run_give_way(
             "Bank 1 first-sector readback differs",
         )?;
 
-        check(port, &mut journal, &after, "final")?;
+        check(port, &mut journal, &after, Phase::Final)?;
         journal.append(&Event::GiveWayVerified {
             after_sha256: sha256(&after),
         })?;
 
         let report = Verified {
-            status: "verified_via_supplied_transports",
+            status: SummaryStatus::VerifiedViaSuppliedTransports,
             region_sha256: None,
             erase_sectors: None,
             after_sha256: Some(sha256(&after)),

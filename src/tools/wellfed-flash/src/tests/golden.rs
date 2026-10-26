@@ -9,6 +9,8 @@
 use serde_json::{Value, json};
 
 use super::*;
+use crate::error::ErrorKind;
+use crate::evidence::journal::{Boundary, Phase};
 use crate::writers::development::{given_way, images, payload};
 use wellfed_formats::canonical::{canonical, canonical_of};
 
@@ -465,9 +467,9 @@ fn journal_events_keep_their_fields() {
         (
             at(
                 START,
-                Some("marker_commit"),
+                Some(Phase::MarkerCommit),
                 Event::FlashStatusChecked {
-                    boundary: "before_marker_commit",
+                    boundary: Boundary::BeforeMarkerCommit,
                     registers: [0, 2, 0],
                     assessment: assessment.clone(),
                 },
@@ -481,7 +483,7 @@ fn journal_events_keep_their_fields() {
                 START,
                 None,
                 Event::FlashStatusUnstable {
-                    boundary: "before_erase",
+                    boundary: Boundary::BeforeErase,
                     start: START,
                     end_exclusive: START + SECTOR,
                     first: [1, 2, 3],
@@ -522,7 +524,7 @@ fn journal_events_keep_their_fields() {
         (
             at(
                 START,
-                Some("marker_commit"),
+                Some(Phase::MarkerCommit),
                 Event::ProgramPacketIntent {
                     sequence: 1,
                     frame_sha256: hash("frame"),
@@ -538,7 +540,7 @@ fn journal_events_keep_their_fields() {
         (
             at(
                 START,
-                Some("marker_commit"),
+                Some(Phase::MarkerCommit),
                 Event::DevelopmentCommitIntent {
                     target_region_sha256: hash("target"),
                 },
@@ -586,7 +588,7 @@ fn journal_events_keep_their_fields() {
                 None,
                 Event::Stopped {
                     mutation_possible: true,
-                    error_type: "io",
+                    error_type: ErrorKind::Io,
                 },
             ),
             json!({"event": "stopped", "offset": START, "mutation_possible": true,
@@ -594,19 +596,21 @@ fn journal_events_keep_their_fields() {
         ),
         (
             plain(Event::TransactionStopped {
-                error_type: "refused",
+                error_type: ErrorKind::Refused,
                 mutation_possible: false,
             }),
             json!({"event": "transaction_stopped", "error_type": "refused",
                    "mutation_possible": false}),
         ),
         (
-            plain(Event::GuardsVerified { phase: "final" }),
+            plain(Event::GuardsVerified {
+                phase: Phase::Final,
+            }),
             json!({"event": "guards_verified", "phase": "final"}),
         ),
         (
             plain(Event::RegionVerified {
-                phase: "preimage",
+                phase: Phase::Preimage,
                 sha256: hash("region"),
                 bytes: SECTOR,
             }),
@@ -618,4 +622,30 @@ fn journal_events_keep_their_fields() {
     for (typed, legacy) in cases {
         same(&typed, &legacy);
     }
+}
+
+/// Refusals and reports print these words; the journal serializes them.
+/// The two must stay the same word.
+#[test]
+fn journal_words_print_as_they_serialize() {
+    fn same<T: serde::Serialize + std::fmt::Display>(values: &[T]) {
+        for value in values {
+            assert_eq!(serde_json::to_value(value).unwrap(), value.to_string());
+        }
+    }
+
+    same(&[
+        Phase::Preimage,
+        Phase::Staged,
+        Phase::Final,
+        Phase::MarkerCommit,
+    ]);
+    same(&[
+        Boundary::BeforeErase,
+        Boundary::BeforeProgram,
+        Boundary::BeforeMarkerCommit,
+        Boundary::BeforeGiveWay,
+        Boundary::Inspection,
+    ]);
+    same(&[ErrorKind::Refused, ErrorKind::Io, ErrorKind::Json]);
 }

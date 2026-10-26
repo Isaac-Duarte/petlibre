@@ -1,6 +1,6 @@
 //! Bounded observations of stock OTA reports. This module sends no commands.
 use chrono::{DateTime, Utc};
-pub use wellfed_formats::stock::OtaReport;
+pub use wellfed_formats::stock::{OtaCommand, OtaReport};
 
 use crate::protocol::Message;
 
@@ -17,17 +17,12 @@ fn token(value: &str, limit: usize) -> Option<String> {
 
 /// The report a stock message carries, if it is an OTA report.
 pub fn from_message(message: &Message, now: DateTime<Utc>) -> Option<OtaReport> {
-    if !matches!(
-        message.cmd.as_str(),
-        "OTA_UPGRADE" | "OTA_PROGRESS" | "OTA_INFORM"
-    ) {
-        return None;
-    }
+    let command = OtaCommand::from_cmd(&message.cmd)?;
 
     let report = &message.report;
     Some(OtaReport {
         received_at: now,
-        command: message.cmd.clone(),
+        command,
         message_id: message.msg_id.as_deref().and_then(|id| token(id, 64)),
         phase: report.phase.as_deref().and_then(|phase| token(phase, 32)),
         state: report.state,

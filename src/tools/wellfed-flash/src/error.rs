@@ -3,6 +3,7 @@
 //! A refusal, an I/O error and malformed JSON all end a session the same
 //! way: terminally, with no retry, resume or fallback.
 
+use std::fmt;
 use std::io;
 
 /// Every stop is terminal: nothing in this crate retries, resumes or falls
@@ -39,13 +40,31 @@ impl From<wellfed_image::Error> for Error {
     }
 }
 
+/// The short kind of an [`Error`] that journals and stop reports record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ErrorKind {
+    Refused,
+    Io,
+    Json,
+}
+
+impl fmt::Display for ErrorKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Refused => "refused",
+            Self::Io => "io",
+            Self::Json => "json",
+        })
+    }
+}
+
 impl Error {
-    /// The short kind recorded in journals and stop reports.
-    pub fn kind(&self) -> &'static str {
+    pub fn kind(&self) -> ErrorKind {
         match self {
-            Self::Refused(_) => "refused",
-            Self::Io(_) => "io",
-            Self::Json(_) => "json",
+            Self::Refused(_) => ErrorKind::Refused,
+            Self::Io(_) => ErrorKind::Io,
+            Self::Json(_) => ErrorKind::Json,
         }
     }
 }

@@ -55,7 +55,7 @@ impl Serialize for QaOutcome {
 /// A guided item that failed, as the firmware recorded it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct FailedItem {
-    pub stage: String,
+    pub stage: Check,
     /// `press=reset`, `led=PA2` or `tune=test`.
     pub item: String,
     pub reason: String,
@@ -66,7 +66,7 @@ pub struct FailedItem {
 pub struct QaFields {
     /// Each check's verdict from its `check` line, in sequence order;
     /// `None` for a check that never reported one.
-    pub qa_checks: Vec<(String, Option<Verdict>)>,
+    pub qa_checks: Vec<(Check, Option<Verdict>)>,
     pub qa_failed_items: Vec<FailedItem>,
     pub qa_prompts: usize,
     /// Why the sequence was refused, for a `qa_sequence` outcome.
@@ -78,10 +78,7 @@ pub struct QaFields {
 /// to (`Pass`, `Fail` or `Sequence`).
 pub(crate) fn classify(rx: &[u8]) -> (QaOutcome, QaFields) {
     let mut fields = QaFields {
-        qa_checks: Check::ALL
-            .iter()
-            .map(|c| (c.as_str().to_string(), None))
-            .collect(),
+        qa_checks: Check::ALL.iter().map(|&check| (check, None)).collect(),
         ..QaFields::default()
     };
     match grade(rx, &mut fields) {
@@ -131,7 +128,7 @@ fn grade(rx: &[u8], fields: &mut QaFields) -> std::result::Result<QaOutcome, &'s
             } => {
                 if let Some(reason) = failure {
                     fields.qa_failed_items.push(FailedItem {
-                        stage: check.as_str().to_string(),
+                        stage: check,
                         item: item.to_string(),
                         reason,
                     });

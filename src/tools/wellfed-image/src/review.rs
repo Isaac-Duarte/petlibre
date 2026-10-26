@@ -13,7 +13,7 @@ use crate::root::Root;
 use wellfed_formats::canonical::sha256;
 use wellfed_formats::lock::SdkLock;
 use wellfed_formats::manifest::BuildManifest;
-use wellfed_formats::review::{BuildDetails, Details, ImageKind, ImageReview, KIND};
+use wellfed_formats::review::{BuildDetails, Details, ImageKind, ImageReview, ReviewKind};
 
 pub struct Frozen {
     pub image: Vec<u8>,
@@ -28,7 +28,7 @@ pub fn frozen(root: &Root, directory: &Path, layout: &Layout) -> Result<Frozen> 
     let raw = root.private_file(&directory.join("review.json"))?;
     let review: ImageReview = serde_json::from_slice(&raw)?;
     require(
-        review.schema_version == 1 && review.kind == KIND,
+        review.schema_version == 1 && review.kind == ReviewKind::Plaf103DevelopmentImage,
         "Unsupported frozen review",
     )?;
 

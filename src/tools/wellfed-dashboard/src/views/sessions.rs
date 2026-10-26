@@ -6,6 +6,7 @@ use std::fs;
 use std::path::Path;
 
 use wellfed_formats::canonical::sha256;
+use wellfed_formats::session::{Lifecycle, Status};
 use serde::Serialize;
 use serde_json::{Map, Value};
 
@@ -15,21 +16,61 @@ use wellfed_formats::bench::{CAPTURES, FLASH_BACKUPS, Paths, VERIFICATION, plain
 
 const SESSIONS_SHOWN: usize = 40;
 
-/// Evidence parts a session name can have, as (kind, suffix, folder).
-const PARTS: [(&str, &str, &str); 7] = [
-    ("loader", "-loader", CAPTURES),
-    ("bounded", "-bounded", FLASH_BACKUPS),
-    ("full", "-full", FLASH_BACKUPS),
-    ("inspect", "-inspect", VERIFICATION),
-    ("plan", "-plan.json", VERIFICATION),
-    ("execute", "-execute", VERIFICATION),
-    ("boot", "-boot", CAPTURES),
-];
+/// The evidence parts a session name can have, in the order a session
+/// makes them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "lowercase")]
+enum Part {
+    Loader,
+    Bounded,
+    Full,
+    Inspect,
+    Plan,
+    Execute,
+    Boot,
+}
 
-fn report_status(path: &Path) -> Option<String> {
-    read::<Value>(&path.join("report.json"))?["status"]
-        .as_str()
-        .map(str::to_string)
+impl Part {
+    const ALL: [Self; 7] = [
+        Self::Loader,
+        Self::Bounded,
+        Self::Full,
+        Self::Inspect,
+        Self::Plan,
+        Self::Execute,
+        Self::Boot,
+    ];
+
+    /// The part's file or folder name after the session's, and the folder
+    /// it is in.
+    fn place(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Loader => ("-loader", CAPTURES),
+            Self::Bounded => ("-bounded", FLASH_BACKUPS),
+            Self::Full => ("-full", FLASH_BACKUPS),
+            Self::Inspect => ("-inspect", VERIFICATION),
+            Self::Plan => ("-plan.json", VERIFICATION),
+            Self::Execute => ("-execute", VERIFICATION),
+            Self::Boot => ("-boot", CAPTURES),
+        }
+    }
+
+    fn path(self, paths: &Paths) -> &Path {
+        match self {
+            Self::Loader => &paths.loader,
+            Self::Bounded => &paths.bounded,
+            Self::Full => &paths.full,
+            Self::Inspect => &paths.inspect,
+            Self::Plan => &paths.plan,
+            Self::Execute => &paths.execute,
+            Self::Boot => &paths.boot,
+        }
+    }
+}
+
+fn report_status(path: &Path) -> Option<Status> {
+    read::<Lifecycle>(&path.join("report.json"))?.status
 }
 
 /// `/api/sessions`: recent session names with the evidence each one has.
@@ -44,16 +85,17 @@ pub(crate) struct Sessions {
 struct SessionRow {
     name: String,
     modified: f64,
-    /// Evidence kinds found, from [`PARTS`].
-    parts: Vec<&'static str>,
+    /// The evidence parts found.
+    parts: Vec<Part>,
     /// The furthest part's state, in the report's own words (`read complete`).
     outcome: String,
 }
 
 pub(crate) fn sessions(sources: &Sources) -> Sessions {
     let root = &sources.root;
-    let mut found: BTreeMap<String, (f64, Vec<&'static str>)> = BTreeMap::new();
-    for (kind, suffix, folder) in PARTS {
+    let mut found: BTreeMap<String, (f64, Vec<Part>)> = BTreeMap::new();
+    for part in Part::ALL {
+        let (suffix, folder) = part.place();
         for entry in fs::read_dir(root.join(folder))
             .into_iter()
             .flatten()
@@ -68,7 +110,7 @@ pub(crate) fn sessions(sources: &Sources) -> Sessions {
             }
             let session = found.entry(name.to_string()).or_default();
             session.0 = session.0.max(modified(&entry.path()).unwrap_or(0.0));
-            session.1.push(kind);
+            session.1.push(part);
         }
     }
 
@@ -84,16 +126,15 @@ pub(crate) fn sessions(sources: &Sources) -> Sessions {
         .into_iter()
         .map(|(name, (modified, parts))| {
             let p = Paths::new(root, &name);
-            let outcome = if parts.contains(&"execute") {
+            let outcome = if parts.contains(&Part::Execute) {
                 match report_status(&p.execute) {
-                    Some(status) if status == "running" && live.as_deref() != Some(&name) => {
-                        "ended".into()
-                    }
-                    status => status.unwrap_or_else(|| "unknown".into()),
+                    Some(Status::Running) if live.as_deref() != Some(&name) => "ended".into(),
+                    Some(status) => status.to_string(),
+                    None => "unknown".into(),
                 }
-            } else if parts.contains(&"plan") {
+            } else if parts.contains(&Part::Plan) {
                 "prepared".into()
-            } else if parts.contains(&"full") {
+            } else if parts.contains(&Part::Full) {
                 report_status(&p.full).map_or_else(|| "unknown".into(), |s| format!("read {s}"))
             } else {
                 "started".into()
@@ -174,7 +215,7 @@ pub(crate) struct SessionView {
 #[derive(Debug, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 struct PartView {
-    kind: &'static str,
+    kind: Part,
     path: String,
     modified: Option<f64>,
     #[serde(flatten)]
@@ -205,37 +246,30 @@ pub(crate) fn session(sources: &Sources, name: &str) -> Option<SessionView> {
     let root = &sources.root;
     let p = Paths::new(root, name);
 
-    let parts: Vec<PartView> = [
-        ("loader", &p.loader),
-        ("bounded", &p.bounded),
-        ("full", &p.full),
-        ("inspect", &p.inspect),
-        ("plan", &p.plan),
-        ("execute", &p.execute),
-        ("boot", &p.boot),
-    ]
-    .into_iter()
-    .filter(|(_, path)| path.exists())
-    .map(|(kind, path)| {
-        let detail = if kind == "plan" {
-            PartDetail::Plan(plan_summary(path))
-        } else {
-            PartDetail::Report(report_summary(path))
-        };
-        let serial = (kind == "execute").then(|| {
-            let (tx, rx) = serial_sizes(path);
-            Serial { tx, rx }
-        });
+    let parts: Vec<PartView> = Part::ALL
+        .into_iter()
+        .map(|kind| (kind, kind.path(&p)))
+        .filter(|(_, path)| path.exists())
+        .map(|(kind, path)| {
+            let detail = if kind == Part::Plan {
+                PartDetail::Plan(plan_summary(path))
+            } else {
+                PartDetail::Report(report_summary(path))
+            };
+            let serial = (kind == Part::Execute).then(|| {
+                let (tx, rx) = serial_sizes(path);
+                Serial { tx, rx }
+            });
 
-        PartView {
-            kind,
-            path: relative(root, path),
-            modified: modified(path),
-            detail,
-            serial,
-        }
-    })
-    .collect();
+            PartView {
+                kind,
+                path: relative(root, path),
+                modified: modified(path),
+                detail,
+                serial,
+            }
+        })
+        .collect();
 
     if parts.is_empty() {
         return None;
@@ -259,6 +293,7 @@ pub(super) fn bindings(cfg: &ts_rs::Config) -> Vec<String> {
     use crate::bindings::decl;
     vec![
         decl::<Sessions>(cfg),
+        decl::<Part>(cfg),
         decl::<SessionRow>(cfg),
         decl::<SessionView>(cfg),
         decl::<PartView>(cfg),
@@ -273,7 +308,7 @@ mod tests {
 
     use super::*;
     use crate::views::tests::{json, sources};
-    use wellfed_formats::bench::progress::Status;
+    use wellfed_formats::bench::progress::{BenchCommand, Status};
 
     #[test]
     fn a_running_report_reads_as_ended_unless_its_command_is_live() {
@@ -284,7 +319,9 @@ mod tests {
         assert_eq!(json(sessions(&sources))["sessions"][0]["outcome"], "ended");
 
         let mut status = Status::new(&sources.root, sources.status());
-        status.begin("flash-execute", Some("s2"), &[]).unwrap();
+        status
+            .begin(BenchCommand::FlashExecute, Some("s2"), &[])
+            .unwrap();
         assert_eq!(
             json(sessions(&sources))["sessions"][0]["outcome"],
             "running"
@@ -310,7 +347,9 @@ mod tests {
         fs::write(&p.plan, plan).unwrap();
 
         let mut status = Status::new(&sources.root, sources.status());
-        status.begin("flash-prepare", Some("s1"), &[]).unwrap();
+        status
+            .begin(BenchCommand::FlashPrepare, Some("s1"), &[])
+            .unwrap();
         status.next("wellfed-bench flash-execute s1 …".into());
         status.finish(0, None);
 

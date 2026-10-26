@@ -21,6 +21,7 @@ use crate::device::{Answer, Ask, Device, DeviceStatus, Fault};
 use crate::{Error, Result, interrupted, require};
 use wellfed_formats::bench::progress::{FlashTool, Status};
 use wellfed_formats::bench::relative;
+use wellfed_formats::session::Status as SessionStatus;
 use wellfed_signing::CONTAINER_HEADER;
 
 /// How long a receive-only capture may take to hold the UART port.
@@ -223,7 +224,7 @@ pub struct Observation {
 #[derive(Deserialize)]
 struct ObserveReport {
     #[serde(default)]
-    status: Option<String>,
+    status: Option<SessionStatus>,
     #[serde(default)]
     result: Option<Observation>,
 }
@@ -449,7 +450,7 @@ impl Tools for Processes {
                 ));
             }
             let running = observe_report(output)
-                .is_ok_and(|report| report.status.as_deref() == Some("running"));
+                .is_ok_and(|report| report.status == Some(SessionStatus::Running));
             if running {
                 return Ok(Box::new(observer));
             }
@@ -733,6 +734,8 @@ mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
 
+    use wellfed_formats::bench::progress::BenchCommand;
+
     /// Held by every test that writes or runs a child: a script being
     /// written while another test forks can fail to exec with ETXTBSY.
     fn serial() -> std::sync::MutexGuard<'static, ()> {
@@ -766,7 +769,7 @@ mod tests {
             device: None,
         };
         let mut status = Status::new(tmp.path(), tmp.path().join("status"));
-        status.begin("dump", Some("unit"), &[]).unwrap();
+        status.begin(BenchCommand::Dump, Some("unit"), &[]).unwrap();
 
         let code = tools
             .flash(&["read".into(), "full".into()], &mut status)
@@ -927,7 +930,7 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
             device: None,
         };
         let mut status = Status::new(tmp.path(), tmp.path().join("status"));
-        status.begin("ota", Some("unit"), &[]).unwrap();
+        status.begin(BenchCommand::Ota, Some("unit"), &[]).unwrap();
 
         assert_eq!(
             tools

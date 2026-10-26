@@ -39,6 +39,41 @@ pub enum Outcome {
     Ended,
 }
 
+/// The bench command a progress record belongs to, by its CLI name. A
+/// history line naming a command this bench no longer has does not read,
+/// and the page skips it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[serde(rename_all = "kebab-case")]
+pub enum BenchCommand {
+    Status,
+    Off,
+    On,
+    Capture,
+    Boot,
+    Loader,
+    Transients,
+    Dump,
+    FlashPrepare,
+    FlashExecute,
+    GiveWayPrepare,
+    GiveWayExecute,
+    StockPrepare,
+    StockExecute,
+    Ota,
+    Itest,
+    StockOta,
+}
+
+/// What a progress count counts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[serde(rename_all = "lowercase")]
+pub enum Unit {
+    Bytes,
+    Sectors,
+}
+
 /// Where one of a command's steps stands; the page colours its rows by it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -57,12 +92,12 @@ impl StepState {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct Current {
     #[serde(default)]
     pub pid: u32,
-    pub command: String,
+    pub command: BenchCommand,
     #[serde(default)]
     pub name: Option<String>,
     pub started: f64,
@@ -134,7 +169,7 @@ impl Step {
 pub struct Progress {
     pub done: u64,
     pub total: u64,
-    pub unit: String,
+    pub unit: Unit,
     /// Rate baseline: when and at which count this count series began.
     pub since: f64,
     pub since_done: u64,
@@ -171,7 +206,7 @@ pub struct FlashTool {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct HistoryEntry {
-    pub command: String,
+    pub command: BenchCommand,
     #[serde(default)]
     pub name: Option<String>,
     pub started: f64,
@@ -223,15 +258,28 @@ impl Status {
         }
     }
 
-    pub fn begin(&mut self, command: &str, name: Option<&str>, steps: &[&str]) -> Result<()> {
+    pub fn begin(
+        &mut self,
+        command: BenchCommand,
+        name: Option<&str>,
+        steps: &[&str],
+    ) -> Result<()> {
         self.state = Some(Current {
             pid: std::process::id(),
-            command: command.into(),
+            command,
             name: name.map(Into::into),
             started: now(),
+            finished: None,
             outcome: Outcome::Running,
+            error: None,
             steps: steps.iter().map(|label| Step::pending(label)).collect(),
-            ..Current::default()
+            progress: None,
+            capture: None,
+            transfer: None,
+            relay: BTreeMap::new(),
+            lines: Vec::new(),
+            next: None,
+            flash_tool: None,
         });
 
         if let Some(directory) = &self.directory {
@@ -315,7 +363,7 @@ impl Status {
             state.progress = Some(Progress {
                 done,
                 total,
-                unit: unit.into(),
+                unit,
                 since,
                 since_done,
                 at,
@@ -410,7 +458,7 @@ impl Status {
         state.transfer = None;
 
         let entry = HistoryEntry {
-            command: state.command.clone(),
+            command: state.command,
             name: state.name.clone(),
             started: state.started,
             finished: state.finished,
@@ -479,7 +527,7 @@ fn replace(path: &Path, data: &[u8]) -> std::io::Result<()> {
 
 /// `Read N/M bytes`, `Verified changed sectors: N/M` or the over-the-air
 /// loop's `Written sectors: N/M` in a tool's output.
-fn progress_count(text: &str) -> Option<(u64, u64, &'static str)> {
+fn progress_count(text: &str) -> Option<(u64, u64, Unit)> {
     fn pair(text: &str) -> Option<(u64, u64)> {
         let (done, rest) = text.split_once('/')?;
         let digits = rest
@@ -492,12 +540,12 @@ fn progress_count(text: &str) -> Option<(u64, u64, &'static str)> {
         let rest = &text[at + 5..];
         let (counts, tail) = rest.split_once(' ')?;
         if tail.starts_with("bytes") {
-            return pair(counts).map(|(d, t)| (d, t, "bytes"));
+            return pair(counts).map(|(d, t)| (d, t, Unit::Bytes));
         }
     }
     for prefix in ["Verified changed sectors: ", "Written sectors: "] {
         if let Some(at) = text.find(prefix) {
-            return pair(&text[at + prefix.len()..]).map(|(d, t)| (d, t, "sectors"));
+            return pair(&text[at + prefix.len()..]).map(|(d, t)| (d, t, Unit::Sectors));
         }
     }
     None
@@ -513,7 +561,7 @@ mod tests {
         let mut status = Status::new(tmp.path(), tmp.path().to_path_buf());
         status
             .begin(
-                "dump",
+                BenchCommand::Dump,
                 Some("unit"),
                 &["loader entry", "wellfed-flash read full"],
             )
@@ -554,8 +602,8 @@ mod tests {
         let history = fs::read_to_string(tmp.path().join(HISTORY)).unwrap();
         let entry: HistoryEntry = serde_json::from_str(history.trim()).unwrap();
         assert_eq!(
-            (entry.command.as_str(), entry.outcome),
-            ("dump", Outcome::Stopped)
+            (entry.command, entry.outcome),
+            (BenchCommand::Dump, Outcome::Stopped)
         );
         assert_eq!(entry.error.as_deref(), Some("Observer failed"));
 
@@ -566,7 +614,7 @@ mod tests {
     #[test]
     fn disabled_status_writes_nothing() {
         let mut status = Status::disabled();
-        status.begin("boot", Some("unit"), &[]).unwrap();
+        status.begin(BenchCommand::Boot, Some("unit"), &[]).unwrap();
         status.line("Read 1/2 bytes");
         status.finish(0, None);
 
@@ -577,15 +625,15 @@ mod tests {
     fn progress_counts_parse_both_tools_forms() {
         assert_eq!(
             progress_count("Read 4096/8388608 bytes"),
-            Some((4096, 8388608, "bytes"))
+            Some((4096, 8388608, Unit::Bytes))
         );
         assert_eq!(
             progress_count("Verified changed sectors: 3/19"),
-            Some((3, 19, "sectors"))
+            Some((3, 19, Unit::Sectors))
         );
         assert_eq!(
             progress_count("Written sectors: 16/164"),
-            Some((16, 164, "sectors"))
+            Some((16, 164, Unit::Sectors))
         );
         assert_eq!(progress_count("Read the ROM"), None);
         assert_eq!(progress_count("Region acquisition 1 complete"), None);
@@ -596,7 +644,11 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let mut status = Status::new(tmp.path(), tmp.path().join("status"));
         status
-            .begin("itest", Some("run1"), &["ota-update", "requests"])
+            .begin(
+                BenchCommand::Itest,
+                Some("run1"),
+                &["ota-update", "requests"],
+            )
             .unwrap();
         status.fix_steps();
 

@@ -165,6 +165,24 @@ static rtw_result_t wellfed_scan_result(rtw_scan_handler_result_t *result)
     return RTW_SUCCESS;
 }
 
+/* Leave for an intentional restart, then never join again. The
+ * disconnect sends the access point a (protected) deauthentication from the
+ * driver's command thread; wait, bounded, until the driver reports the
+ * association gone, so it has left before the reset. The watchdog feeder
+ * has already stopped: if anything here hangs, the reset comes all the same. */
+static void wellfed_leave_for_restart(unsigned int attempt)
+{
+    TickType_t begin = xTaskGetTickCount();
+    LwIP_DHCP(0, DHCP_STOP);
+    LwIP_ReleaseIP(0);
+    int result = wifi_disconnect();
+    while (wifi_is_connected_to_ap() == RTW_SUCCESS && wellfed_ms(begin) < WELLFED_LEAVE_WAIT_MS) {
+        vTaskDelay(WELLFED_POLL_MS / portTICK_PERIOD_MS);
+    }
+    wellfed_event(WELLFED_EV_LEAVE, attempt, result, wifi_is_connected_to_ap() == RTW_SUCCESS,
+                   wellfed_ms(begin));
+}
+
 /* One join attempt: scan, connect, DHCP. 1 when an address was assigned. */
 static int wellfed_join_once(unsigned int attempt)
 {
@@ -179,7 +197,9 @@ static int wellfed_join_once(unsigned int attempt)
         result = RTW_TIMEOUT;
     }
     wellfed_event(WELLFED_EV_SCAN, attempt, result, wellfed_found, wellfed_ms(begin));
-    if (result != RTW_SUCCESS || !wellfed_found) {
+    /* A restart asked for during the scan (up to 10 s): no new association,
+     * which the access point would hold against the next boot. */
+    if (result != RTW_SUCCESS || !wellfed_found || wellfed_wifi_restarting()) {
         return 0;
     }
     begin = xTaskGetTickCount();
@@ -189,6 +209,11 @@ static int wellfed_join_once(unsigned int attempt)
     /* The event's value names the credentials' source, never the credentials. */
     wellfed_event(WELLFED_EV_CONNECT, attempt, result, wellfed_creds.source, wellfed_ms(begin));
     if (result != RTW_SUCCESS) {
+        return 0;
+    }
+    /* Asked for while it associated: leave the fresh association at once. */
+    if (wellfed_wifi_restarting()) {
+        wellfed_leave_for_restart(attempt);
         return 0;
     }
     begin = xTaskGetTickCount();
@@ -340,24 +365,6 @@ static int wellfed_watch(unsigned int attempt, unsigned int *backoff)
             vTaskDelay(WELLFED_POLL_MS / portTICK_PERIOD_MS);
         }
     }
-}
-
-/* Leave for an intentional restart, then never join again. The
- * disconnect sends the access point a (protected) deauthentication from the
- * driver's command thread; wait, bounded, until the driver reports the
- * association gone, so it has left before the reset. The watchdog feeder
- * has already stopped: if anything here hangs, the reset comes all the same. */
-static void wellfed_leave_for_restart(unsigned int attempt)
-{
-    TickType_t begin = xTaskGetTickCount();
-    LwIP_DHCP(0, DHCP_STOP);
-    LwIP_ReleaseIP(0);
-    int result = wifi_disconnect();
-    while (wifi_is_connected_to_ap() == RTW_SUCCESS && wellfed_ms(begin) < WELLFED_LEAVE_WAIT_MS) {
-        vTaskDelay(WELLFED_POLL_MS / portTICK_PERIOD_MS);
-    }
-    wellfed_event(WELLFED_EV_LEAVE, attempt, result, wifi_is_connected_to_ap() == RTW_SUCCESS,
-                   wellfed_ms(begin));
 }
 
 static void wellfed_park(void)

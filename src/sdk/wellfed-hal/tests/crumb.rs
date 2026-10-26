@@ -5,7 +5,7 @@ use std::sync::{Mutex, MutexGuard};
 
 use wellfed_hal::sdk::fake;
 use wellfed_hal::supervision::crumb::{
-    self, Crumb, REGISTER, SINCE_STEP_MS, SPIN_MS, Stall, wellfed_tick_hook,
+    self, Crumb, Feeder, REGISTER, SINCE_STEP_MS, SPIN_MS, Scheduler, Stall, wellfed_tick_hook,
 };
 
 /// The crumb's counters are process-wide.
@@ -36,12 +36,12 @@ fn ticks(name: &core::ffi::CStr, count: u32) {
 #[test]
 fn a_crumb_round_trips_through_its_register_word() {
     for crumb in [
-        Crumb::new(b"wellfed_wifi", false, false, 3_968),
-        Crumb::new(b"wellfed-wdg", true, true, 0),
-        Crumb::new(b"wellfed", false, false, 128),
-        Crumb::new(b"IDLE", false, false, 5_300),
-        Crumb::new(b"Tmr Svc", true, false, 250),
-        Crumb::new(b"", false, false, 0),
+        Crumb::new(b"wellfed_wifi", Scheduler::Running, Feeder::Feeding, 3_968),
+        Crumb::new(b"wellfed-wdg", Scheduler::Suspended, Feeder::Stopping, 0),
+        Crumb::new(b"wellfed", Scheduler::Running, Feeder::Feeding, 128),
+        Crumb::new(b"IDLE", Scheduler::Running, Feeder::Feeding, 5_300),
+        Crumb::new(b"Tmr Svc", Scheduler::Suspended, Feeder::Feeding, 250),
+        Crumb::new(b"", Scheduler::Running, Feeder::Feeding, 0),
     ] {
         assert_eq!(Crumb::decode(crumb.encode()), Some(crumb), "{crumb:?}");
     }
@@ -49,31 +49,37 @@ fn a_crumb_round_trips_through_its_register_word() {
 
 #[test]
 fn the_name_keeps_three_characters_after_the_shared_prefix() {
-    let wifi = Crumb::new(b"wellfed_wifi", false, false, 0);
+    let wifi = Crumb::new(b"wellfed_wifi", Scheduler::Running, Feeder::Feeding, 0);
     assert!(wifi.prefixed);
     assert_eq!(&wifi.name, b"_wi");
 
     // Vendor tasks keep their first characters, folded to lower case; a
     // space ends the name.
-    let timer = Crumb::new(b"Tmr Svc", false, false, 0);
+    let timer = Crumb::new(b"Tmr Svc", Scheduler::Running, Feeder::Feeding, 0);
     assert!(!timer.prefixed);
     assert_eq!(&timer.name, b"tmr");
-    assert_eq!(&Crumb::new(b"A B", false, false, 0).name, b"a\0\0");
+    assert_eq!(
+        &Crumb::new(b"A B", Scheduler::Running, Feeder::Feeding, 0).name,
+        b"a\0\0"
+    );
 
     // The diagnostic task is the prefix alone.
-    let diagnostic = Crumb::new(b"wellfed", false, false, 0);
+    let diagnostic = Crumb::new(b"wellfed", Scheduler::Running, Feeder::Feeding, 0);
     assert!(diagnostic.prefixed);
     assert_eq!(diagnostic.name, [0; 3]);
 }
 
 #[test]
 fn since_is_kept_in_steps_and_saturates_past_the_longest_expiry() {
-    assert_eq!(Crumb::new(b"x", false, false, 127).since_ms, 0);
     assert_eq!(
-        Crumb::new(b"x", false, false, 3_999).since_ms,
+        Crumb::new(b"x", Scheduler::Running, Feeder::Feeding, 127).since_ms,
+        0
+    );
+    assert_eq!(
+        Crumb::new(b"x", Scheduler::Running, Feeder::Feeding, 3_999).since_ms,
         31 * SINCE_STEP_MS
     );
-    let longest = Crumb::new(b"x", false, false, u32::MAX).since_ms;
+    let longest = Crumb::new(b"x", Scheduler::Running, Feeder::Feeding, u32::MAX).since_ms;
     assert_eq!(longest, 63 * SINCE_STEP_MS);
     assert!(longest > 5_300, "past the watchdog's longest expiry");
 }
@@ -83,7 +89,7 @@ fn zero_and_stray_values_are_no_crumb() {
     // A cold boot clears the backup registers.
     assert_eq!(Crumb::decode(0), None);
 
-    let word = Crumb::new(b"wellfed-svc", false, false, 1_000).encode();
+    let word = Crumb::new(b"wellfed-svc", Scheduler::Running, Feeder::Feeding, 1_000).encode();
     // A wrong tag, or any flipped bit the check covers.
     assert_eq!(Crumb::decode(word & !(1 << 31)), None);
     for bit in 2..29 {
@@ -96,7 +102,7 @@ fn zero_and_stray_values_are_no_crumb() {
 #[test]
 fn the_crumb_tells_a_spin_from_masked_interrupts_and_a_deliberate_stop() {
     // The tick ran on long after the feeder last did: a task kept the CPU.
-    let spin = Crumb::new(b"wellfed_wifi", false, false, 3_968);
+    let spin = Crumb::new(b"wellfed_wifi", Scheduler::Running, Feeder::Feeding, 3_968);
     assert_eq!(spin.stall(), Stall::Spin);
     assert_eq!(
         spin.to_string(),
@@ -104,27 +110,30 @@ fn the_crumb_tells_a_spin_from_masked_interrupts_and_a_deliberate_stop() {
     );
 
     // The tick stopped inside a feed period: interrupts were masked.
-    let masked = Crumb::new(b"TCP_IP", false, false, 200);
+    let masked = Crumb::new(b"TCP_IP", Scheduler::Running, Feeder::Feeding, 200);
     assert_eq!(masked.stall(), Stall::Masked);
     assert_eq!(
         masked.to_string(),
         "kind=masked task=tcp since_ms=128 suspended=0"
     );
     assert_eq!(
-        Crumb::new(b"x", false, false, SPIN_MS - 1).stall(),
+        Crumb::new(b"x", Scheduler::Running, Feeder::Feeding, SPIN_MS - 1).stall(),
         Stall::Masked
     );
-    assert_eq!(Crumb::new(b"x", false, false, SPIN_MS).stall(), Stall::Spin);
+    assert_eq!(
+        Crumb::new(b"x", Scheduler::Running, Feeder::Feeding, SPIN_MS).stall(),
+        Stall::Spin
+    );
 
     // The feeder stopped on purpose: whatever ran after, the reset is its own.
-    let stopped = Crumb::new(b"IDLE", false, true, 3_968);
+    let stopped = Crumb::new(b"IDLE", Scheduler::Running, Feeder::Stopping, 3_968);
     assert_eq!(stopped.stall(), Stall::Stopped);
     assert_eq!(
         stopped.to_string(),
         "kind=stopped task=idl since_ms=3968 suspended=0"
     );
 
-    let nameless = Crumb::new(b"", true, false, 0);
+    let nameless = Crumb::new(b"", Scheduler::Suspended, Feeder::Feeding, 0);
     assert_eq!(
         nameless.to_string(),
         "kind=masked task=none since_ms=0 suspended=1"
@@ -140,7 +149,11 @@ fn the_tick_hook_counts_ticks_since_the_feeder_ran() {
     ticks(c"wellfed_wifi", 3_000);
     let crumb = Crumb::decode(register()).expect("the hook leaves a crumb");
     assert_eq!(&crumb.name, b"_wi");
-    assert!(crumb.prefixed && !crumb.suspended && !crumb.stopping);
+    assert!(crumb.prefixed);
+    assert_eq!(
+        (crumb.scheduler, crumb.feeder),
+        (Scheduler::Running, Feeder::Feeding)
+    );
     assert_eq!(crumb.since_ms, 3_000 / SINCE_STEP_MS * SINCE_STEP_MS);
     assert_eq!(crumb.stall(), Stall::Spin);
 
@@ -148,7 +161,7 @@ fn the_tick_hook_counts_ticks_since_the_feeder_ran() {
     crumb::fed();
     tick(c"IDLE", true);
     let crumb = Crumb::decode(register()).expect("the hook leaves a crumb");
-    assert_eq!((crumb.since_ms, crumb.suspended), (0, true));
+    assert_eq!((crumb.since_ms, crumb.scheduler), (0, Scheduler::Suspended));
     assert_eq!(crumb.stall(), Stall::Masked);
 }
 
@@ -156,12 +169,12 @@ fn the_tick_hook_counts_ticks_since_the_feeder_ran() {
 fn a_deliberate_stop_marks_every_later_tick() {
     let _guard = start();
     tick(c"wellfed-svc", false);
-    assert!(!Crumb::decode(register()).is_some_and(|c| c.stopping));
+    assert!(!Crumb::decode(register()).is_some_and(|c| c.feeder == Feeder::Stopping));
 
     crumb::stopping();
     ticks(c"IDLE", 4_000);
     let crumb = Crumb::decode(register()).expect("the hook leaves a crumb");
-    assert!(crumb.stopping);
+    assert_eq!(crumb.feeder, Feeder::Stopping);
     assert_eq!(crumb.stall(), Stall::Stopped);
 }
 
@@ -209,4 +222,19 @@ fn the_other_backup_registers_are_left_alone() {
     for index in (0..8).filter(|&i| i != REGISTER as usize) {
         assert_eq!(after[index], before[index], "register {index}");
     }
+}
+
+#[test]
+fn a_supervision_stop_marks_the_crumb_and_leaves_the_network() {
+    let _guard = start();
+    wellfed_hal::link::reset();
+    assert_eq!(wellfed_hal::link::wellfed_wifi_restarting(), 0);
+
+    wellfed_hal::supervision::stopping();
+
+    assert_eq!(wellfed_hal::link::wellfed_wifi_restarting(), 1);
+    tick(c"IDLE", false);
+    let crumb = Crumb::decode(register()).expect("the hook leaves a crumb");
+    assert_eq!(crumb.feeder, Feeder::Stopping);
+    wellfed_hal::link::reset();
 }

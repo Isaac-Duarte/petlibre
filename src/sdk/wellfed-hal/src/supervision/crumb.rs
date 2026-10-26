@@ -69,6 +69,25 @@ static SINCE_TICKS: AtomicU32 = AtomicU32::new(0);
 /// The feeder stopped feeding on purpose; set once, cleared by the reset.
 static STOPPING: AtomicBool = AtomicBool::new(false);
 
+/// The FreeRTOS scheduler at the tick.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Scheduler {
+    #[default]
+    Running,
+    /// Suspended (`vTaskSuspendAll`): the tick hook still runs, no task
+    /// switches.
+    Suspended,
+}
+
+/// The watchdog feeder at the tick.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Feeder {
+    #[default]
+    Feeding,
+    /// Stopped feeding on purpose; the reset that follows is its own.
+    Stopping,
+}
+
 /// What the last tick before a reset saw.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Crumb {
@@ -76,10 +95,8 @@ pub struct Crumb {
     /// [`PREFIX`] when `prefixed`; lowercase ASCII, zero-padded.
     pub name: [u8; NAME_LEN],
     pub prefixed: bool,
-    /// The scheduler was suspended.
-    pub suspended: bool,
-    /// The feeder had stopped feeding on purpose.
-    pub stopping: bool,
+    pub scheduler: Scheduler,
+    pub feeder: Feeder,
     /// Since the feeder task last ran, in [`SINCE_STEP_MS`] steps; the
     /// largest step means that long or longer.
     pub since_ms: u32,
@@ -131,7 +148,7 @@ const fn check(word: u32) -> u32 {
 
 impl Crumb {
     /// The crumb for a task named `name` (its bytes up to the terminator).
-    pub fn new(name: &[u8], suspended: bool, stopping: bool, since_ms: u32) -> Self {
+    pub fn new(name: &[u8], scheduler: Scheduler, feeder: Feeder, since_ms: u32) -> Self {
         let (prefixed, rest) = match name.strip_prefix(PREFIX) {
             Some(rest) => (true, rest),
             None => (false, name),
@@ -146,8 +163,8 @@ impl Crumb {
         Self {
             name: kept,
             prefixed,
-            suspended,
-            stopping,
+            scheduler,
+            feeder,
             since_ms: (since_ms / SINCE_STEP_MS).min(SINCE_MAX) * SINCE_STEP_MS,
         }
     }
@@ -160,8 +177,8 @@ impl Crumb {
         }
         for (set, bit) in [
             (self.prefixed, PREFIXED_BIT),
-            (self.suspended, SUSPENDED_BIT),
-            (self.stopping, STOPPING_BIT),
+            (self.scheduler == Scheduler::Suspended, SUSPENDED_BIT),
+            (self.feeder == Feeder::Stopping, STOPPING_BIT),
         ] {
             if set {
                 word |= bit;
@@ -191,14 +208,22 @@ impl Crumb {
         Some(Self {
             name,
             prefixed: word & PREFIXED_BIT != 0,
-            suspended: word & SUSPENDED_BIT != 0,
-            stopping: word & STOPPING_BIT != 0,
+            scheduler: if word & SUSPENDED_BIT != 0 {
+                Scheduler::Suspended
+            } else {
+                Scheduler::Running
+            },
+            feeder: if word & STOPPING_BIT != 0 {
+                Feeder::Stopping
+            } else {
+                Feeder::Feeding
+            },
             since_ms: ((word >> SINCE_SHIFT) & SINCE_MAX) * SINCE_STEP_MS,
         })
     }
 
     pub fn stall(&self) -> Stall {
-        if self.stopping {
+        if self.feeder == Feeder::Stopping {
             Stall::Stopped
         } else if self.since_ms >= SPIN_MS {
             Stall::Spin
@@ -227,7 +252,7 @@ impl core::fmt::Display for Crumb {
             f,
             " since_ms={} suspended={}",
             self.since_ms,
-            u8::from(self.suspended)
+            u8::from(self.scheduler == Scheduler::Suspended)
         )
     }
 }
@@ -291,8 +316,16 @@ pub unsafe extern "C" fn wellfed_tick_hook(name: *const u8, suspended: i32) {
 
     let crumb = Crumb::new(
         &bytes[..len],
-        suspended != 0,
-        STOPPING.load(Ordering::Relaxed),
+        if suspended != 0 {
+            Scheduler::Suspended
+        } else {
+            Scheduler::Running
+        },
+        if STOPPING.load(Ordering::Relaxed) {
+            Feeder::Stopping
+        } else {
+            Feeder::Feeding
+        },
         ticks.saturating_mul(TICK_MS),
     );
     sdk::backup_write(REGISTER, crumb.encode());

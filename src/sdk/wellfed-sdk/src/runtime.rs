@@ -25,13 +25,10 @@ use wellfed_hal::flash_lock::provider::{LeaseFault, Provider};
 use wellfed_hal::ota::confirm::{self, Confirm, HookedStorage};
 use wellfed_hal::ota::update::{self as update, Floor, SdkFlash, StoreSlots, Update};
 use wellfed_hal::supervision::beat;
-use wellfed_hal::supervision::config;
-use wellfed_hal::supervision::crumb;
 use wellfed_hal::supervision::supervise::{self, LIVENESS_MS, Startup};
 use wellfed_hal::supervision::watchdog::Watchdog;
-use wellfed_hal::{
-    cell::TaskCell, leds, link, net_status, power, rng, sdk, startup, stopped, trial,
-};
+use wellfed_hal::supervision::{self, config, crumb};
+use wellfed_hal::{cell::TaskCell, leds, net_status, power, rng, sdk, startup, stopped, trial};
 
 use crate::slot::Slot;
 use crate::wifi::{Probe, Record};
@@ -103,11 +100,11 @@ pub fn request_reset() {
 }
 
 /// Every intentional restart: stop feeding the watchdog, and have the
-/// Wi-Fi task leave the network meanwhile, so the access point drops the
-/// association rather than reject the next boot's (`link`). The feeding
-/// stops at once either way: a leave that hangs cannot hold the reset.
+/// Wi-Fi task leave the network meanwhile (`supervision::stopping`). The
+/// feeding stops at once either way: a leave that hangs cannot hold the
+/// reset.
 fn restart() {
-    link::leave_for_restart();
+    supervision::stopping();
     RESTART.store(true, Ordering::Release);
 }
 
@@ -328,7 +325,9 @@ unsafe extern "C" fn feeder_task(_: *mut c_void) -> u32 {
         owner: beat::read(),
     };
     if RESTART.load(Ordering::Acquire) || !supervise::feed(&inputs) {
-        crumb::stopping();
+        // A supervision stop (a trial's deadline, a hung task) resets as
+        // surely as a restart, so it leaves the network too.
+        supervision::stopping();
         if !STOPPED.swap(true, Ordering::Relaxed) {
             // The owner's beat age, gap and supervision; zeros with no owner.
             let (owner_age, owner_gap, supervised) = inputs.owner.map_or((0, 0, false), |b| {
@@ -363,7 +362,7 @@ unsafe extern "C" fn feeder_task(_: *mut c_void) -> u32 {
             if watchdog.checkpoint(u64::from(progress)) {
                 FED_MS.store(now, Ordering::Relaxed);
             } else if !STOPPED.swap(true, Ordering::Relaxed) {
-                crumb::stopping();
+                supervision::stopping();
                 // A refused checkpoint latches (a gap past the progress
                 // limit, an altered register, a clock fault): the hardware
                 // is never refreshed again and resets the platform within

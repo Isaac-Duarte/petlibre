@@ -26,21 +26,23 @@ A card never relaxes the feeding-safety rules: every feed goes through the devic
 | App path | Server first when one is configured, direct to the feeder as a fallback (see [two paths](#two-paths-one-feed)) |
 | Migrations | Squash freely until the first server release; append-only from then on |
 | Roles | Owner, member and viewer (read-only). A login or token may carry an expiry, for a pet sitter |
+| Direct keys | Only an owner's or member's phone holds a feeder key of its own. A viewer and an account with an expiry reach the feeders through the server only. Deleting or demoting an account revokes its phones' keys on every feeder, or reports the feeders it could not reach (SV24) |
 | Releases | Fetched from GitHub releases, or uploaded by the owner; both verified the same way |
 | Notifications | Through the Android app's push, later. The server decides what is an alert; the app delivers it |
 | Backups | Separate from export: SQLite copies with the key file for restore, export for moving servers and analysis |
 | Derived views | Computed from the server's own history, in the service; no crate shared with the app |
 | Time zone | One per household; the server syncs every feeder's clock to it |
 | CLI | Speaks both: the device API as today, and the server API under `wellfed server` (SV34). One path per command, never a fallback between them |
-| File size | 400 lines per file, 600 under `tests/`, in `src/server/` and `src/client/` (SV08) |
+| File size | 400 lines per file, 600 under `tests/`, in `src/server/` (SV08) and `src/client/` (SV19) |
 | Service types | The service keeps returning `wellfed-api` bodies until a second API version exists |
 | Packaging | A static binary with a systemd unit, and a container image |
+| Metrics | No Prometheus endpoint for now: the readiness view and per-feeder logs (SV63) cover a household. Parked |
 
 ### Two paths, one feed
 
-Most owners will run a server, so the app talks to it whenever it is reachable: remote access works, and the audit log names the person. Each phone still keeps its own key on every feeder, and uses it on the LAN when the server is down, for reads and new intents only. The danger is a retry that crosses paths: the server and the phone send different device request ids, so a feed sent directly that timed out, then retried through the server, could feed twice. So an uncertain write never switches path. It is retried on its own path with its own key, or resolved from the feeder's history (a feed by its `Fed` event), never resent on the other.
+Most owners will run a server, so the app talks to it whenever it is reachable: remote access works, and the audit log names the person. Each owner's or member's phone still keeps its own key on every feeder, and uses it on the LAN when the server is down, for reads and new intents only. The danger is a retry that crosses paths: the server and the phone send different device request ids, so a feed sent directly that timed out, then retried through the server, could feed twice. So an uncertain write never switches path. It is retried on its own path with its own key, or resolved from the feeder's history (a feed by its `Fed` event), never resent on the other.
 
-This costs the server an operation for everything the app does (SV24), and the feeder a client slot per phone (8 slots: the server, the CLI and up to six phones).
+This costs the server an operation for everything the app does (SV24), and the feeder a client slot per phone (8 slots: the server, the CLI and up to six phones). A phone with an expiring or read-only account holds no key, so the server alone enforces its limits.
 
 ## What the server has to carry
 
@@ -119,11 +121,11 @@ wellfed (the CLI) ─► wellfed-server-client ─► wellfed-api
 ## Current status
 
 - **Done:** the first slice (FP18, Oct 24, host simulation): setup and login, adoption by invite, the mirror, settings, lock, history pages and the stream.
-- **Ready:** SV01–SV05.
-- **Next:** the foundations, in this order: SV02, SV03, SV04, SV05, SV01, SV06, SV07, SV08. They change no behavior.
+- **Ready:** SV01–SV05, SV09.
+- **Next:** SV09 first, so the current server meets the research unit before the foundations reshape it; then the foundations, in this order: SV01, SV02, SV03, SV04, SV05, SV06, SV07, SV08. They change no behavior. SV19 runs when no firmware run is editing `src/client/`.
 - **Then:** the command plane (SV20, SV21) and the public setup's accounts (SV30–SV32), the CLI on the server API (SV34), then data, owner data and releases.
 - **Critical path to a feed from the web UI:** SV07 → SV20 → SV21. FW17 (feeds that survive a reboot) is done.
-- **Waiting on firmware:** SV13 (FW54, FW55), SV14 (FW56 on hardware), SV23 (FP03), SV52 (FW42, FW43).
+- **Waiting on firmware:** SV13 (FW54, FW55), SV23 (FP03), SV52 (FW42, FW43).
 
 ## Foundations
 
@@ -133,10 +135,12 @@ wellfed (the CLI) ─► wellfed-server-client ─► wellfed-api
 | **SV02 Workspace dependencies** | Ready | — | — | Every server dependency comes from `[workspace.dependencies]` (finding 9); `make check-deps` passes with no new duplicate. |
 | **SV03 Store modules** | Ready | — | — | `wellfed-store` splits into a module per table group, with the conversion helpers (`millis`, `to_i64`, …) in one module. The pre-migration backup takes its time from the caller (finding 8). Migrations `0001` and `0002` squash into one (no release yet). Store tests pass unchanged in what they assert. |
 | **SV04 Routes and extractors** | Ready | — | — | `wellfed-server` has a route module per resource, matching `wellfed-api`'s modules, and typed extractors for `If-Match` (a `Generation`) and `Idempotency-Key` (required or optional per route) that document themselves in the OpenAPI. `openapi.json` changes only where the extractors make it more exact. |
-| **SV05 Server test kit** | Ready | — | — | `wellfed-server-testkit` holds what every server test builds: a temp store, a fixed `Clock` and a seeded `Random`, the simulator over TCP and an in-process HTTP client with cookies. Service and API tests split into a file per domain. |
+| **SV05 Server test kit** | Ready | — | — | `wellfed-server-testkit` holds what every server test builds: a temp store, a fixed `Clock` and a seeded `Random`, the simulator over TCP, and the server run in process. HTTP goes through `src/client/wellfed-server-client`, created here: a typed client over `wellfed-api` with a cookie or a token, which the CLI uses later (SV34), so the tests and the CLI cannot disagree with the routes. Service and API tests split into a file per domain. |
 | **SV06 One clock** | Planned | — | SV03 | No server crate reads the wall clock outside `SystemClock`; the hub's epoch comes through `Clock` (finding 8). Clippy `disallowed_methods` on `Timestamp::now` and `SystemTime::now` in the server crates keeps it that way. |
-| **SV07 `wellfed-mirror`** | Planned | — | SV01, SV05 | The per-feeder tasks, ingest, the command channel and the hub move out of `wellfed-service` into `wellfed-mirror`, behind the surface the [target architecture](#target-architecture) names. The service keeps users and the use cases, and its error enum splits by domain. Every service and end-to-end test passes unchanged in what it asserts. |
-| **SV08 File size guard** | Planned | — | SV03, SV05, SV07 | `cargo xtask check-repository` refuses a file in `src/server/` or `src/client/` over 400 lines, or over 600 under `tests/`. At `bb244c8` ten files are over. SV03, SV05 and SV07 split the server's four (`wellfed-store/src/lib.rs` 767, `wellfed-service/tests/service.rs` 721, `feeder.rs` 480, `feeders.rs` 416); this card splits the client's six: `wellfed-client/tests/api.rs` 2666 and `tests/update.rs` 1181, `wellfed-model/src/convert.rs` 1300, `wellfed-client/src/api.rs` 594 and `src/connection.rs` 466, `wellfed-connect/src/lib.rs` 446. None is exempt when the card closes. |
+| **SV07 `wellfed-mirror`** | Planned | — | SV01, SV05, SV09 | The per-feeder tasks, ingest, the command channel and the hub move out of `wellfed-service` into `wellfed-mirror`, behind the surface the [target architecture](#target-architecture) names. The command surface is final here: `ask` for a short command, and a handle for a long operation that yields between its steps, both served one at a time for now, so SV22 changes only what is behind them. SV09's findings shape the reconnect and link state. The service keeps users and the use cases, and its error enum splits by domain. Every service and end-to-end test passes unchanged in what it asserts. |
+| **SV08 File size guard** | Planned | — | SV03, SV05, SV07 | `cargo xtask check-repository` refuses a file in `src/server/` over 400 lines, or over 600 under `tests/`. SV03, SV05 and SV07 split the server's four that are over at `bb244c8` (`wellfed-store/src/lib.rs` 767, `wellfed-service/tests/service.rs` 721, `feeder.rs` 480, `feeders.rs` 416); none is exempt when the card closes. SV19 extends the guard to `src/client/`. |
+| **SV09 Current server on the bench** | Ready | — | — | **Bench**, before the foundations: today's server adopts the research unit by invite, mirrors its history, changes settings and the lock, and keeps the history whole across a server restart, a feeder power cut and a Wi-Fi drop. No motion. Findings on reconnect, discovery, cursor sync and one command at a time are recorded here and feed SV07 and SV22. Run under the owner's bench authorization, with the prior network and service state restored and recorded. |
+| **SV19 Client file splits** | Planned | — | SV08 | The guard covers `src/client/` too. The six client files over at `bb244c8` split: `wellfed-client/tests/api.rs` 2666 and `tests/update.rs` 1181, `wellfed-model/src/convert.rs` 1300, `wellfed-client/src/api.rs` 594 and `src/connection.rs` 466, `wellfed-connect/src/lib.rs` 446. Runs only while no firmware run edits `src/client/`, since the firmware cards change these files too. None is exempt when the card closes. |
 
 ## Command plane
 
@@ -144,20 +148,20 @@ wellfed (the CLI) ─► wellfed-server-client ─► wellfed-api
 | --- | --- | --- | --- | --- |
 | **SV20 Command journal** | Planned | — | SV07 | Every write through the server is recorded before it is sent: key, user, feeder, kind, device request id, and its state (sent, answered, unknown) with the outcome (finding 6). A retry with the same key reads the journal first, so it never needs the feeder's ring to have kept the id. The journal feeds the audit log (SV33), the UI's uncertain state and the app's path rule. Tests: a retry after the feeder's ring has moved returns the first answer; a server restart between send and answer leaves the write unknown, never failed. |
 | **SV21 Feed and cancel** | Planned | — | SV20 | `POST /feeders/{id}/feed` requires `Idempotency-Key`. Its answer names the feed number; the `Fed` event is correlated to it, and the result reaches the stream. `POST /feeders/{id}/feeds/{feed}/cancel`. Tests against the simulator: a double submit, a retry after a dropped answer, a server restart mid-feed, a cut session and a feeder reboot mid-feed each end with exactly one feed. |
-| **SV22 Command lanes** | Planned | — | SV07 | The feeder task keeps short commands (status, settings, lock, feed) apart from long operations (install chunks, trace and stats paging; finding 5), so a long operation yields between its steps and a feed or a status read waits at most one step. Either `wellfed-connect` pipelines requests over the client's pending list, or the task interleaves; the card first checks what the feeder serves per client per pass. |
-| **SV23 Plans** | Planned | — | SV20, FP03 | `GET`/`PUT /feeders/{id}/plans` with `If-Match`, read from the feeder as settings are; a stale write gets `412` with the current plans. The next meal on `GET /feeders/{id}`, computed with `jiff` in the household zone across DST. |
-| **SV24 App parity** | Planned | — | SV20 | Every operation the app makes has a server route through the journal: `GET /feeders/{id}/clients` and revoke, an invite for another client (a phone joining a feeder through the server), Wi-Fi, reboot, and removing a feeder from the server (revoking its own key first, or saying it could not). A test checks the app's operation list against the routes, so a new device op without a route fails. |
+| **SV22 Command lanes** | Planned | — | SV07 | The feeder task keeps short commands (status, settings, lock, feed) apart from long operations (install chunks, trace and stats paging; finding 5), so a long operation yields between its steps and a feed or a status read waits at most one step. Either `wellfed-connect` pipelines requests over the client's pending list, or the task interleaves; the card first checks what the feeder serves per client per pass. Only the inside of SV07's `ask` and long-operation handle changes. |
+| **SV23 Plans** | Planned | — | SV20, FP03 | `GET`/`PUT /feeders/{id}/plans` with `If-Match`, read from the feeder as settings are; a stale write gets `412` with the current plans. The next meal on `GET /feeders/{id}`, computed with `jiff` in the household zone across DST. A test crosses a DST change with the server stopped and the simulated feeder still serves each meal at its local time, from the zone rule SV30 set. |
+| **SV24 App parity and phone keys** | Planned | — | SV20, SV30 | Every operation the app makes has a server route through the journal: `GET /feeders/{id}/clients` and revoke, an invite for another client (a phone joining a feeder through the server), Wi-Fi, reboot, and removing a feeder from the server (revoking its own key first, or saying it could not). An exhaustive match over `wellfed_model::request::Op` maps each device operation to its route or to a stated reason it has none, so a new operation without one fails to compile. Phone keys follow the [direct-key decision](#decisions-owner-october-26): the server issues an invite only for an owner's or member's phone and records which account it belongs to; deleting an account, demoting it to viewer or giving it an expiry revokes those keys on every feeder, and a feeder it cannot reach is reported and retried on reconnect until the revoke lands. A client the server did not invite is listed as unowned for the owner to keep or revoke. Tests cover each of those against the simulator. |
 | **SV25 The two-path rule** | Planned | — | SV20, SV21 | The [two-path rule](#two-paths-one-feed) is in the API design and the device API doc, and the server's half is enforced: a write's answer says whether its outcome is known, an uncertain feed's resolution is readable by key (from its `Fed` event), and the stream reports it, so the app can resolve a feed it lost on either path without resending it. The app's half is FP19's. |
 
 ## Accounts and security
 
 | Card | Status | Evidence | Prerequisites | Finish line |
 | --- | --- | --- | --- | --- |
-| **SV30 Users, roles and household** | Planned | — | SV04, SV07 | `/users`: owners create, change roles and delete, never the last owner. `Role` gains `Viewer` (status and history, no writes), checked in the auth extractors. A user may carry an expiry, after which their sessions and tokens stop. `/household`: name, units, time format and the IANA zone the feeders' clocks sync to (finding 8). Deleting a user ends their sessions and tokens. |
+| **SV30 Users, roles and household** | Planned | — | SV04, SV07 | `/users`: owners create, change roles and delete, never the last owner. `Role` gains `Viewer` (status and history, no writes), checked in the auth extractors. A user may carry an expiry, after which their sessions and tokens stop. `/household`: name, units, time format and the IANA zone (finding 8). Each feeder gets the zone as its POSIX rule in its time settings, converted from the IANA zone, so its clock and plans keep DST with the server down; a zone POSIX cannot express is refused by name. Deleting a user ends their sessions and tokens; their phones' feeder keys are SV24's. |
 | **SV31 Phone tokens** | Planned | — | SV30 | `/tokens`: a bearer token shown once and stored hashed, named for its user and device, with its last use and an optional expiry. The auth extractor takes a cookie or a token; token-authenticated writes skip the `Origin` check only cookies need. |
 | **SV32 Login limits and the proxy** | Planned | — | SV30, SV60 | Failed logins are limited per name and per address. The scheme (`Secure` cookies) and the client's address come from a configured trusted proxy only. A flood of logins neither locks out the owner's other sessions nor exhausts memory. The public setup is documented: a reverse proxy terminating HTTPS (Caddy as the example), the trusted-proxy setting, and what a member's phone needs. |
 | **SV33 Audit log** | Planned | — | SV20, SV30 | `GET /audit?after=&limit=` from the command journal and account changes: who did what, when, through which token, with the outcome. |
-| **SV34 The CLI on the server API** | Planned | — | SV04, SV31 | `wellfed server …` speaks the server API: `login` (a token from SV31, kept beside the CLI's feeder keys, mode 0600), `logout`, and the device commands' verbs over the server (`feeders`, `status`, `settings`, `lock`, `feed`, `cancel-feed`, `events`, `clients`, `revoke`, `reboot`), plus what only the server has (`users`, `tokens`, `releases`, `install`, `export`) as each card lands. It goes through `wellfed-server-client`, a typed client over `wellfed-api` that the server's end-to-end tests use too, so the CLI and the tests cannot disagree with the routes. A command takes one path: an uncertain write prints its key and the command that resolves it, and is never resent over the device API. The CLI's `main.rs` splits into a module per command group on the way. |
+| **SV34 The CLI on the server API** | Planned | — | SV04, SV05, SV31 | `wellfed server …` speaks the server API: `login` (a token from SV31, kept beside the CLI's feeder keys, mode 0600), `logout`, and the device commands' verbs over the server (`feeders`, `status`, `settings`, `lock`, `feed`, `cancel-feed`, `events`, `clients`, `revoke`, `reboot`), plus what only the server has (`users`, `tokens`, `releases`, `install`, `export`) as each card lands. It goes through SV05's `wellfed-server-client`, the client the server's tests already use. A command takes one path: an uncertain write prints its key and the command that resolves it, and is never resent over the device API. The CLI's `main.rs` splits into a module per command group on the way. |
 
 ## Data plane
 
@@ -167,7 +171,7 @@ wellfed (the CLI) ─► wellfed-server-client ─► wellfed-api
 | **SV11 Samples, rollups and retention** | Planned | — | SV10, SV12 | Samples carry a numeric value beside the raw bytes, written in small batches. Hourly rollups (count, min, max, mean) are kept incrementally. `GET /feeders/{id}/samples?metric=&from=&to=&resolution=raw\|hour`, and the owner's raw retention keeps rollups past it. A month of five feeders' samples queries quickly in a test, with the figures recorded. |
 | **SV12 Background jobs** | Planned | — | SV07 | One supervisor in the binary runs typed jobs on the cancellation tree: retention, rollup catch-up, expired sessions and users, and backups (SV64). Each job records its last run and result, runs at most once at a time, and runs on a virtual clock in tests (finding 7). |
 | **SV13 Feed traces and statistics** | Planned | — | SV10, SV22, FW54, FW55 | After each `Fed` event the mirror fetches that feed's trace and stores it with the feed; the stats pages are read and kept as samples. Both run on the long-operation lane, never ahead of a feed or a status read. Serves FP22's device page. |
-| **SV14 Debug log** | Planned | — | SV07, FW56 | The owner can follow a feeder's debug log through the stream. Whether any of it is stored is decided on the card. |
+| **SV14 Debug log** | Planned | — | SV07 | The owner can follow a feeder's debug log through the stream. Whether any of it is stored is decided on the card. |
 
 ## Owner data and derived views
 
@@ -198,9 +202,9 @@ wellfed (the CLI) ─► wellfed-server-client ─► wellfed-api
 | **SV60 Configuration** | Planned | — | SV04 | A typed config file in the data directory for everything that is not a secret or a household setting: listen address, host names, label, discovery, retention, trusted proxies, whether releases are fetched. The sealing key stays in its own file. Flags override the file, and a bad file is a typed error naming the field. |
 | **SV61 Embedded web UI** | Planned | — | SV04, FP21 | `wellfed-server` serves the SvelteKit build embedded with `rust-embed`, with cache headers by content hash and a Content Security Policy, from the same origin as `/api/v1`. The Playwright suite runs against the real binary. |
 | **SV62 Packaging** | Planned | — | SV60 | One static binary per target in the GitHub releases with an example systemd unit, and a container image. The image's docs ask for host networking for mDNS discovery; on a bridged network it adopts and reconnects by address with `--no-discovery`. A release check starts each fresh and adopts the simulator. |
-| **SV63 Health and logs** | Planned | — | SV07 | `/health` stays unauthenticated liveness; an owner-only readiness view adds the store, each feeder's link and the jobs' last runs. Every log line from a feeder task carries the feeder, and every request a request id. Whether to expose Prometheus metrics is decided on the card. |
+| **SV63 Health and logs** | Planned | — | SV07 | `/health` stays unauthenticated liveness; an owner-only readiness view adds the store, each feeder's link and the jobs' last runs. Every log line from a feeder task carries the feeder, and every request a request id. No Prometheus endpoint ([decision](#decisions-owner-october-26)). |
 | **SV64 Backups** | Planned | — | SV12 | A scheduled `VACUUM INTO` copy in the data directory, kept by count, with the key file's place documented beside it, answering the API design's open question. A restore test opens a backup and its feeder keys. |
-| **SV65 First real feeder** | Planned | — | SV07, SV20 | **Bench:** the server adopts the research unit, mirrors its history, changes settings and the lock, and keeps the history whole across a server restart, a feeder power cut and a Wi-Fi drop. Run under the owner's bench authorization, with the prior network and service state restored and recorded. |
+| **SV65 Real feeder on the restructured server** | Planned | — | SV09, SV07, SV21 | **Bench:** SV09's run repeated on the restructured server, plus a feed through the server API with a dropped answer and a retry that ends with one feed. The feed is motor motion, so it needs the owner's explicit go-ahead for that run. Run under the owner's bench authorization, with the prior network and service state restored and recorded. |
 
 ## Status at a glance
 
@@ -216,16 +220,18 @@ wellfed (the CLI) ─► wellfed-server-client ─► wellfed-api
 | SV06 One clock | ⬜ Planned |
 | SV07 wellfed-mirror | ⬜ Planned |
 | SV08 File size guard | ⬜ Planned |
+| SV09 Current server on the bench | 🟢 Ready |
 | SV10 Projections beside the raw log | ⬜ Planned |
 | SV11 Samples, rollups and retention | ⬜ Planned |
 | SV12 Background jobs | ⬜ Planned |
 | SV13 Feed traces and statistics | ⬜ Planned |
 | SV14 Debug log | ⬜ Planned |
+| SV19 Client file splits | ⬜ Planned |
 | SV20 Command journal | ⬜ Planned |
 | SV21 Feed and cancel | ⬜ Planned |
 | SV22 Command lanes | ⬜ Planned |
 | SV23 Plans | ⬜ Planned |
-| SV24 App parity | ⬜ Planned |
+| SV24 App parity and phone keys | ⬜ Planned |
 | SV25 The two-path rule | ⬜ Planned |
 | SV30 Users, roles and household | ⬜ Planned |
 | SV31 Phone tokens | ⬜ Planned |
@@ -243,14 +249,11 @@ wellfed (the CLI) ─► wellfed-server-client ─► wellfed-api
 | SV62 Packaging | ⬜ Planned |
 | SV63 Health and logs | ⬜ Planned |
 | SV64 Backups | ⬜ Planned |
-| SV65 First real feeder | ⬜ Planned |
+| SV65 Real feeder on the restructured server | ⬜ Planned |
 | SV70 Alert rules | ⬜ Planned |
 
 ## Parked
 
 - **Home Assistant over MQTT discovery** through the server (FP16, paused October 23). The hub is the seam; nothing here should assume it.
 - **Remote access** beyond the documented reverse proxy: the owner's VPN.
-
-## Open questions for the owner
-
-- Whether the server exposes Prometheus metrics (SV63).
+- **Prometheus metrics** (SV63): not for a household server for now.

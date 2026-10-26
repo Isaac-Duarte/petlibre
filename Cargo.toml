@@ -30,7 +30,6 @@ wellfed-proto = { path = "src/product/wellfed-proto" }
 wellfed-session = { path = "src/sdk/wellfed-session" }
 wellfed-probes = { path = "src/sdk/wellfed-probes" }
 wellfed-sdk = { path = "src/sdk/wellfed-sdk" }
-wellfed-sdk-c = { path = "src/sdk/wellfed-sdk-c" }
 wellfed-feeder = { path = "src/product/wellfed-feeder" }
 wellfed-feeder-runtime = { path = "src/product/wellfed-feeder-runtime" }
 wellfed-client = { path = "src/client/wellfed-client" }

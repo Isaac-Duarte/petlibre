@@ -37,7 +37,7 @@ baseline bringup device firstboot: $(BUILD)
 	$(BUILD) build --profile $@ $(DEVICE_ARG) --firmware $(FIRMWARE) $(VARIANT_ARG)
 
 test:
-	cargo test --locked -p wellfed-session -p wellfed-core -p wellfed-hal-common -p wellfed-hal -p wellfed-sdk -p wellfed-sdk-c -p wellfed-probes \
+	cargo test --locked -p wellfed-session -p wellfed-core -p wellfed-hal-common -p wellfed-hal -p wellfed-sdk -p wellfed-probes \
 		-p wellfed-fw-qa -p wellfed-fw-bringup \
 		-p wellfed-fw-blink -p wellfed-fw-feeder -p wellfed-feeder -p wellfed-feeder-runtime -p wellfed-board-plaf103
 

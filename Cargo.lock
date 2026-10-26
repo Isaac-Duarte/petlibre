@@ -2619,16 +2619,7 @@ version = "0.1.0"
 dependencies = [
  "wellfed-core",
  "wellfed-hal",
- "wellfed-sdk-c",
  "wellfed-session",
-]
-
-[[package]]
-name = "wellfed-sdk-c"
-version = "0.1.0"
-dependencies = [
- "wellfed-amebad-sys",
- "wellfed-hal-common",
 ]
 
 [[package]]

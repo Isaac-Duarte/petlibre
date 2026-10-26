@@ -8,6 +8,11 @@ description = "Experimental PLAF103 AmebaD routines both cores link: flash park,
 publish.workspace = true
 build = "build.rs"
 
+# The KM0 image links the staticlib; KM4 firmwares link the rlib through
+# wellfed-hal.
+[lib]
+crate-type = ["staticlib", "rlib"]
+
 [features]
 # Select the core whose exported routines and MMIO owner encoding apply.
 km0 = ["wellfed-amebad-sys/km0"]

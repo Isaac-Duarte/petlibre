@@ -9,7 +9,7 @@ publish.workspace = true
 
 [features]
 # KM4 target builds with the pinned SDK bindings.
-km4 = ["wellfed-hal/km4", "wellfed-hal/sdk", "wellfed-sdk-c/km4"]
+km4 = ["wellfed-hal/km4", "wellfed-hal/sdk"]
 # Trial test: a candidate whose startup fails on a determined error.
 # Only the bring-up firmware's `fail` variant sets it.
 trial-fail = []
@@ -18,7 +18,6 @@ trial-fail = []
 bluetooth = ["wellfed-hal/bluetooth"]
 
 [dependencies]
-wellfed-sdk-c.workspace = true
 wellfed-hal.workspace = true
 wellfed-core.workspace = true
 wellfed-session.workspace = true

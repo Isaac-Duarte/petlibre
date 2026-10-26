@@ -10,7 +10,7 @@ Stock 1.1.15 can install the replacement over its own updater, with no UART writ
 | --- | --- |
 | `wellfed-session` | `no_std` session layer the feeder and its clients share: Noise handshakes and transport, HMAC, the setup code, length-prefixed frames, and strict hex and base64 |
 | `wellfed-core` | `no_std` controller, portion accounting, sensor qualification, ADC scaling, motor gate, feedback queue, monotonic clock, flash authority, and the SDK's stores (journal, seed, update store) over the shared record layer |
-| `wellfed-hal-common` | The routines both cores link: RAM parking, SDK flash hooks, the KM0 park peer, and the OTA boot-trial step. The KM0 image contains only this crate |
+| `wellfed-hal-common` | The routines both cores link: RAM parking, SDK flash hooks, the KM0 park peer, the OTA boot-trial step and the panic handler. The KM0 image contains only this crate |
 | `wellfed-hal` | KM4 ports: GPIO/ADC board port, interrupt/timer supervision, watchdog, FreeRTOS owner, flash lease provider, the update stage, build-bound startup reports, stopped outputs, and LED diagnostics. It re-exports the common crate's `flash` and `trial` |
 | `wellfed-sdk` | The KM4 runtime every firmware runs inside: the `wellfed_app_start` entry, stopped-output startup and the synthetic diagnostic, the Wi-Fi join, the watchdog feeder, FW11 confirmation, the settings writer's turn (the writer itself is the product's, `wellfed_store_step`), and the update stage that takes offers through a firmware's device API, with the owners' update keys the writer publishes (`ota::signers`). A firmware defines its start hook with `firmware!` and creates its tasks with `spawn`. No SDK crate depends on a product crate (`deny.toml` bans it) |
 | `wellfed-probes` | The bench probes, once for every firmware that runs them: optics (FW13), buttons (FW20), power inputs (FW14), the motor pulse (FW16), the speaker records, and the retired supervision probe, kept for its host tests |
@@ -23,7 +23,6 @@ Stock 1.1.15 can install the replacement over its own updater, with no UART writ
 | `wellfed-fw-blink` (`src/firmware/wellfed/blink`) | The minimal firmware: one task blinks the connection indicator. The [firmware guide](../../src/firmware/wellfed/README.md) covers writing one |
 | `wellfed-amebad-sys` | Bindgen-backed KM4 calls into the pinned AmebaD SDK, and the deterministic host fake SDK used by tests and the simulator |
 | `wellfed-board-plaf103` | The PLAF103 board: every pin and ADC channel the ports use, the storage region and its sector map |
-| `wellfed-sdk-c` | The KM0 archive, and the panic handler every firmware archive links |
 | `wellfed-testkit`, `wellfed-sim` | Fake NOR journal storage, and the virtual feeder: the owner under the PLAF103's feeding limits against the mechanism the bench measured ([development guide](../development/README.md#work-on-a-component)) |
 
 Minimal C hooks call the Rust entrypoint. The SDK still supplies startup, FreeRTOS, radio code, linker scripts, and image packaging. KM0 and KM4 are built separately. Header-derived bindings are generated for SDK-backed KM4 builds; host tests use fake bindings.

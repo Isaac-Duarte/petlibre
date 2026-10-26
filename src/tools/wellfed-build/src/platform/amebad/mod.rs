@@ -86,7 +86,7 @@ impl Core {
         }
     }
 
-    /// The core's feature in its archive crate: `wellfed-sdk-c` for KM0,
+    /// The core's feature in its archive crate: `wellfed-hal-common` for KM0,
     /// the firmware for KM4.
     pub(crate) fn feature(self) -> &'static str {
         match self {
@@ -192,7 +192,7 @@ fn cargo_environment(
 }
 
 /// Cross-compile one firmware archive per core and stage it beside the SDK:
-/// KM0's from `wellfed-sdk-c`, KM4's from the firmware crate, which links
+/// KM0's from `wellfed-hal-common`, KM4's from the firmware crate, which links
 /// the SDK runtime, with the variant's feature.
 fn build_rust(
     repo: &Repo,
@@ -207,8 +207,8 @@ fn build_rust(
     for core in Core::BOTH {
         let (package, archive) = match core {
             Core::Lp => (
-                "wellfed-sdk-c".to_string(),
-                "libwellfed_sdk_c.a".to_string(),
+                "wellfed-hal-common".to_string(),
+                "libwellfed_hal_common.a".to_string(),
             ),
             Core::Hp => (firmware.package(), firmware.archive()),
         };

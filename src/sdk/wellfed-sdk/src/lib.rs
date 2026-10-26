@@ -53,8 +53,6 @@ pub use tasks::FIRMWARE_TASKS;
 /// The ports a firmware drives (indicators, audio, inputs). Startup,
 /// supervision, flash and updates stay the runtime's.
 pub use wellfed_hal as hal;
-// Every firmware archive carries the panic handler.
-use wellfed_sdk_c as _;
 
 /// Defines the firmware's start hook. The runtime calls `$start` once, in
 /// the normal role, from its startup task after the startup checks passed

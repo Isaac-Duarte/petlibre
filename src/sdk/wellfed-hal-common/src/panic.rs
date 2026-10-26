@@ -1,18 +1,6 @@
-//! The KM0 archive and the firmware panic handler.
-//!
-//! Built with `km0`, this crate is the KM0 image's archive. Built with `km4`,
-//! it supplies the panic handler every KM4 firmware links through
-//! `wellfed-sdk`. The C ports call the HAL's `wellfed_*` exports, not this
-//! crate's.
-#![cfg_attr(target_os = "none", no_std)]
+//! The panic handler every firmware archive links: the KM0 archive is this
+//! crate, and every KM4 firmware reaches it through `wellfed-hal`.
 
-// The KM0 archive's C symbols (RAM park, SDK hooks, trial step) come from
-// the common crate. A KM4 archive is the firmware crate, which links this
-// one through wellfed-sdk for the panic handler.
-#[cfg(feature = "km0")]
-pub use wellfed_hal_common;
-
-#[cfg(target_os = "none")]
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo<'_>) -> ! {
     // KM4 owns the motor and infrared GPIO: mask interrupts and request motor

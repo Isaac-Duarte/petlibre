@@ -53,7 +53,7 @@ pub(crate) fn feeder(root: &Path) -> FeederView {
     let address = api.address.to_string();
 
     match api.get::<LocalStatus>("/api/status", Auth::Token) {
-        Ok(status) => view(address, status),
+        Ok(status) => view(address, &status),
         Err(error) => FeederView::Down {
             address,
             error: error.to_string(),
@@ -61,7 +61,7 @@ pub(crate) fn feeder(root: &Path) -> FeederView {
     }
 }
 
-fn view(address: String, status: LocalStatus) -> FeederView {
+fn view(address: String, status: &LocalStatus) -> FeederView {
     FeederView::Up {
         address,
         broker_connected: status.broker_connected,
@@ -128,7 +128,7 @@ mod tests {
         }))
         .unwrap();
 
-        let view = serde_json::to_value(view("127.0.0.1:8080".into(), status)).unwrap();
+        let view = serde_json::to_value(view("127.0.0.1:8080".into(), &status)).unwrap();
 
         assert_eq!(view["server"], "up");
         assert_eq!(view["broker_connected"], true);

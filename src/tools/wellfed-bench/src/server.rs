@@ -1,35 +1,29 @@
 //! What the bench reads from and sends to `wellfed-local`: its status
-//! document (`GET /api/status`) and the stock trial bodies. The
-//! server relays no requests (they go over the device API, `crate::device`)
-//! and only bank 0's recovery role reports health over MQTT.
+//! document (`GET /api/status`) and the stock trial bodies. The server
+//! relays no requests (they go over the device API, `crate::device`) and
+//! hears nothing from the replacement firmware, which speaks no MQTT.
 //!
 //! The document's type is `wellfed-local`'s own (`wellfed_formats::local`),
 //! and strict where the server is: a trial record with a field or phase the
 //! bench does not know fails the whole read, which stops the wait that
 //! needed it rather than guessing. Both are built from this repository, so
 //! a mismatch means rebuild one.
-//!
-//! Health inside it is the firmware's own JSON, relayed by the server
-//! unchanged and typed as far as the bench checks it
-//! ([`wellfed_formats::bench::health`], which the page shares).
 
 use std::fmt::Display;
 use std::ops::Deref;
 
-use wellfed_formats::bench::health::Health;
-use wellfed_formats::local::{Replacement, TrialRecord};
+use wellfed_formats::local::TrialRecord;
 use wellfed_model::WifiSource;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// A `wellfed-local` status document, with the replacement's health read
-/// as far as the bench checks it.
+/// A `wellfed-local` status document.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(transparent)]
-pub struct LocalStatus(pub wellfed_formats::local::LocalStatus<Health>);
+pub struct LocalStatus(pub wellfed_formats::local::LocalStatus);
 
 impl Deref for LocalStatus {
-    type Target = wellfed_formats::local::LocalStatus<Health>;
+    type Target = wellfed_formats::local::LocalStatus;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -46,29 +40,18 @@ pub struct TrialRequest {
 }
 
 /// `POST /api/ota/trial/resolve`: close a failed or uncertain trial from the
-/// server's own evidence; sends the device nothing.
+/// server's own evidence; and `POST /api/ota/trial/answered`: close it on
+/// the replacement's device-API answer, which the note describes. Neither
+/// sends the device anything.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct TrialResolve<'a> {
     pub request_id: &'a str,
     pub note: &'a str,
 }
 
-/// Why a status document does not show what a wait is for, yet.
+/// Why the feeder's device-API status does not show what a wait is for, yet.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum NotReady {
-    #[error("the server has no replacement-firmware role")]
-    NoRole,
-    #[error("no health received yet")]
-    NoHealth,
-    #[error("health reports the firmware offline")]
-    Offline,
-    #[error("health is stale (age {} ms)", shown(.0))]
-    Stale(Option<i64>),
-    /// The first 12 digits of the build health reports.
-    #[error("health reports build {0}")]
-    Build(String),
-    #[error("health reports bank {}", shown(.0))]
-    Bank(Option<u64>),
     /// The first 12 digits of the build the device API reports.
     #[error("the feeder reports build {0}")]
     Running(String),
@@ -107,10 +90,6 @@ fn shown<T: Display>(value: &Option<T>) -> String {
 }
 
 impl LocalStatus {
-    pub(crate) fn replacement(&self) -> Result<&Replacement<Health>, NotReady> {
-        self.replacement.as_ref().ok_or(NotReady::NoRole)
-    }
-
     /// Stock 1.1.15 is online, freshly reported and on its adapter: what the
     /// server's trial gate also requires before asking it to install.
     pub fn stock_ready(&self) -> Result<String, StockNotReady> {
@@ -142,34 +121,5 @@ impl LocalStatus {
         self.ota_trials
             .iter()
             .find(|trial| trial.input.request_id.to_string() == request_id)
-    }
-
-    /// The health the server holds, when it is online and fresh.
-    pub fn fresh_health(&self) -> Result<&Health, NotReady> {
-        let replacement = self.replacement()?;
-        let health = replacement.health.as_ref().ok_or(NotReady::NoHealth)?;
-        if !replacement.online {
-            return Err(NotReady::Offline);
-        }
-        if replacement.stale {
-            return Err(NotReady::Stale(replacement.age_ms));
-        }
-        Ok(health)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    const NEW: &str = "8a13e59efa15e56b5f5e32825909dc45e381a2027abc65d8de6658c40b302447";
-    #[test]
-    fn a_document_without_freshness_is_stale() {
-        let status: LocalStatus = serde_json::from_value(
-            json!({"replacement": {"health": {"build": NEW}, "online": true}}),
-        )
-        .unwrap();
-        assert_eq!(status.fresh_health().unwrap_err(), NotReady::Stale(None));
     }
 }

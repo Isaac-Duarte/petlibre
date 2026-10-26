@@ -1,13 +1,12 @@
-//! Shared fixtures: a synthetic stock configuration, and the controller
-//! with a placeholder health type, since these tests have no replacement
-//! firmware beside stock.
+//! Shared fixtures: a synthetic stock configuration and the controller
+//! over it.
 
 #![allow(dead_code)]
 use std::path::PathBuf;
 
 use wellfed_stock::{build_info::Build, config::Config};
 
-pub type Controller = wellfed_stock::controller::Controller<serde_json::Value>;
+pub use wellfed_stock::controller::Controller;
 
 /// The identity a test build reports.
 pub const BUILD: Build = Build {

@@ -36,13 +36,13 @@
 //! The firmware reaches the rest of the feeder through [`Device`], and the
 //! host tests through a fake of it.
 
+use crate::mailbox::{
+    LockResult, PlayResult, SettingsFields, SettingsResult, TimeFields, TimeResult, WifiResult,
+};
 use crate::store::clients::{CLIENTS, Client, Label, Role};
 use crate::store::net::Credentials;
 use wellfed_core::ota::offer::{KeyId, key_id};
 use wellfed_core::tone::Tune as CoreTune;
-use wellfed_core::transport::{
-    LockResult, PlayResult, SettingsFields, SettingsResult, TimeFields, TimeResult, WifiResult,
-};
 use wellfed_core::{deadline_passed, named_enum};
 use wellfed_proto::api::{
     self as proto, Capabilities, ClientMessage, Clients, EventBody, FRAME_MAX, FeederMessage,
@@ -2209,7 +2209,7 @@ impl From<Op<'_>> for Action {
             Op::PutSettings { base, changes } => {
                 if changes
                     .volume
-                    .is_some_and(|v| v > wellfed_core::transport::MAX_VOLUME)
+                    .is_some_and(|v| v > crate::mailbox::MAX_VOLUME)
                 {
                     return Self::Invalid;
                 }

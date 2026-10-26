@@ -58,7 +58,7 @@ unsafe extern "C" fn qa_task(_: *mut c_void) -> u32 {
     step.delay_ms
 }
 
-/// Above the diagnostic and transport tasks, so their logging cannot hold
+/// Above the diagnostic tasks, so their logging cannot hold
 /// off the owner lease the supervisor enforces while optics runs.
 fn start_qa() {
     // SAFETY: the step ignores its context and keeps its state in statics.

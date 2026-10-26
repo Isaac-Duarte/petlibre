@@ -23,7 +23,7 @@ Rustup and Cargo download dependencies on initial setup. Check targets do not in
 | `check-deps` | cargo-deny: licenses, advisories, duplicate versions and sources ([deny.toml](../../deny.toml)), then the fuzz crate's lockfile under [its own policy](../../src/fuzz/deny.toml) |
 | `check-cross` | SDK-independent KM0/KM4 FFI static libraries |
 | `check-virtual-feeder` | The `wellfed-sim` worker and harness: deterministic feeding, faults, journal cuts, and restart scenarios (also part of `check-rust`) |
-| `check-docs` | Local Markdown links, repository portability checks, no Python under `src/`, and the FW08 transport isolation rule |
+| `check-docs` | Local Markdown links, repository portability checks, no Python under `src/`, and the source rules (raw output writers, card ids) |
 | `check-fixtures` | Explicit optional binary/SDK evidence suite; missing inputs or skips fail |
 | `check` | All contributor checks except optional fixture validation |
 
@@ -48,8 +48,7 @@ cargo xtask fuzz api-connection --seconds 60
 | `proto-decode` | Every device protocol and setup message type, decoded and re-encoded |
 | `noise-responder` | The first handshake message of each Noise pattern, into any payload buffer |
 | `setup` | BLE setup messages to the feeder's responder, and a genuine client's request, code proof and Wi-Fi |
-| `ota-manifest` | The update manifest, the `ota/get` and `ota/data` messages, and chunks to the bank-1 writer |
-| `mqtt` | A broker's byte stream into the MQTT codec and its session |
+| `ota-manifest` | The version 2 update manifest an offer carries, and chunks to the bank-1 writer |
 
 `--seconds` defaults to 60. The command runs the pinned toolchain with `RUSTC_BOOTSTRAP=1` for libFuzzer's unstable compiler flags, so no nightly toolchain is needed. Builds, grown corpora and crash inputs stay in ignored `src/fuzz/target/`, `src/fuzz/corpus/` and `src/fuzz/artifacts/`; on disk a target is named with underscores (`api_connection`), as `src/fuzz/Cargo.toml` lists it. A crash is a bug in the parser: replay it with `cargo xtask fuzz <target> --replay src/fuzz/artifacts/<target_name>/<file>`, fix it, and add the input as a regression test beside the property that should have caught it. The device API and setup targets share their drivers with the property tests ([support](../../src/product/wellfed-feeder/tests/support/mod.rs)).
 

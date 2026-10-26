@@ -16,7 +16,7 @@ use wellfed_board_plaf103::{STORAGE_OFFSET, STORAGE_SECTORS};
 
 use super::{
     AUDIO_PAGE_SAMPLES, FlashMmuEntry, GpioRouting, Irq, Isr, LpClock, SECTOR_BYTES, SYSTICK_CTRL,
-    Systick, TaskStep, TcpRecv, TransportConfig, WifiEvent, WifiPoll,
+    Systick, TaskStep, WifiEvent, WifiPoll,
 };
 use super::{Accepted, ApiRecv, Datagram};
 #[cfg(feature = "bluetooth")]
@@ -1043,65 +1043,8 @@ pub fn wifi_event(seq: u32) -> WifiPoll {
     }
 }
 
-#[repr(C)]
-struct RawTransportConfig {
-    broker: u32,
-    port: u32,
-    client_id: *const core::ffi::c_char,
-    username: *const core::ffi::c_char,
-    password: *const core::ffi::c_char,
-    password_len: u32,
-    namespace: *const core::ffi::c_char,
-    /// 64 lowercase hex characters, or empty without a key.
-    request_key: *const core::ffi::c_char,
-}
-
 unsafe extern "C" {
-    fn wellfed_transport_config(out: *mut RawTransportConfig);
-    fn wellfed_entropy(out: *mut [u32; 4]);
-    fn wellfed_tcp_connect(ip: u32, port: u32, timeout_ms: u32) -> i32;
-    fn wellfed_tcp_send(socket: i32, data: *const u8, length: u32) -> i32;
-    fn wellfed_tcp_recv(socket: i32, buffer: *mut u8, length: u32, timeout_ms: u32) -> i32;
     fn wellfed_tcp_close(socket: i32);
-    fn wellfed_tcp_listen(port: u32) -> i32;
-    fn wellfed_tcp_accept(listener: i32, timeout_ms: u32) -> i32;
-}
-
-/// The broker settings compiled into this image; `None` when a string field
-/// is not UTF-8 (the build validates them, so that is a build defect).
-pub fn transport_config() -> Option<TransportConfig> {
-    let mut raw = RawTransportConfig {
-        broker: 0,
-        port: 0,
-        client_id: ptr::null(),
-        username: ptr::null(),
-        password: ptr::null(),
-        password_len: 0,
-        namespace: ptr::null(),
-        request_key: ptr::null(),
-    };
-
-    // SAFETY: the C shim in `example_entry.c`; any buffer is live for the call.
-    unsafe { wellfed_transport_config(&mut raw) };
-
-    // SAFETY: the shim returns pointers to NUL-terminated string literals.
-    let text = |p: *const core::ffi::c_char| unsafe { CStr::from_ptr(p) }.to_str().ok();
-    Some(TransportConfig {
-        broker: raw.broker,
-        port: u16::try_from(raw.port).ok()?,
-        client_id: text(raw.client_id)?,
-        username: text(raw.username)?,
-        // SAFETY: a string literal of exactly `password_len` bytes.
-        password: unsafe {
-            core::slice::from_raw_parts(raw.password.cast(), raw.password_len as usize)
-        },
-        namespace: text(raw.namespace)?,
-        // The build writes 64 hex characters or nothing; anything else is a defect.
-        request_key: match text(raw.request_key)? {
-            "" => None,
-            key => Some(wellfed_session::hex::decode_array(key.as_bytes())?),
-        },
-    })
 }
 
 unsafe extern "C" {
@@ -1161,57 +1104,9 @@ pub fn audio_close() {
     unsafe { wellfed_audio_close() }
 }
 
-/// Inputs for a session's request nonce: the ROM generator and timer values
-/// at the moment of a connect (`wellfed_entropy` in `example_entry.c`).
-/// Not a vetted RNG; the nonce only has to differ between sessions.
-pub fn entropy() -> [u32; 4] {
-    let mut out = [0; 4];
-    // SAFETY: the C shim in `example_entry.c`; any buffer is live for the call.
-    unsafe { wellfed_entropy(&mut out) };
-    out
-}
-
-/// A connected TCP socket, or `None` after `timeout_ms`.
-pub fn tcp_connect(ip: u32, port: u16, timeout_ms: u32) -> Option<i32> {
-    // SAFETY: the C shim in `example_entry.c`; any buffer is live for the call.
-    let socket = unsafe { wellfed_tcp_connect(ip, u32::from(port), timeout_ms) };
-    (socket >= 0).then_some(socket)
-}
-
-/// Send all of `data`; false on error or a stalled peer.
-#[must_use]
-pub fn tcp_send(socket: i32, data: &[u8]) -> bool {
-    // SAFETY: the C shim in `example_entry.c`; any buffer is live for the call.
-    unsafe { wellfed_tcp_send(socket, data.as_ptr(), data.len() as u32) == 0 }
-}
-
-pub fn tcp_recv(socket: i32, buffer: &mut [u8], timeout_ms: u32) -> TcpRecv {
-    // SAFETY: the C shim in `example_entry.c`; any buffer is live for the call.
-    match unsafe { wellfed_tcp_recv(socket, buffer.as_mut_ptr(), buffer.len() as u32, timeout_ms) }
-    {
-        0 => TcpRecv::Timeout,
-        n if n > 0 => TcpRecv::Data(n as usize),
-        _ => TcpRecv::Closed,
-    }
-}
-
 pub fn tcp_close(socket: i32) {
     // SAFETY: the C shim in `example_entry.c`; any buffer is live for the call.
     unsafe { wellfed_tcp_close(socket) }
-}
-
-/// A listening socket on `port`, or `None`.
-pub fn tcp_listen(port: u16) -> Option<i32> {
-    // SAFETY: the C shim in `example_entry.c`; any buffer is live for the call.
-    let socket = unsafe { wellfed_tcp_listen(u32::from(port)) };
-    (socket >= 0).then_some(socket)
-}
-
-/// A connection accepted within `timeout_ms`, or `None`.
-pub fn tcp_accept(listener: i32, timeout_ms: u32) -> Option<i32> {
-    // SAFETY: the C shim in `example_entry.c`; any buffer is live for the call.
-    let socket = unsafe { wellfed_tcp_accept(listener, timeout_ms) };
-    (socket >= 0).then_some(socket)
 }
 
 unsafe extern "C" {

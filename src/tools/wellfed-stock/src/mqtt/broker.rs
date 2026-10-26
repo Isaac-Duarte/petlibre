@@ -3,9 +3,8 @@
 //! The broker itself listens only on an ephemeral loopback port. The
 //! configured feeder-facing address is served by `compat`, which normalizes
 //! the stock firmware's first CONNECT and relays it. `DeviceAuth` admits
-//! stock's two fixed identities (the stock device and the server), each to
-//! only an allowlist of stock topics, and then whatever extra [`Roles`] the
-//! caller passes, in their own namespace. Retained messages, persistent
+//! only stock's two fixed identities (the stock device and the server),
+//! each to only an allowlist of stock topics. Retained messages, persistent
 //! sessions and offline queues are disabled, so no command can wait for a
 //! later connection.
 
@@ -25,48 +24,12 @@ use subtle::ConstantTimeEq;
 
 use crate::{config::Config, mqtt::compat};
 
-/// Logins and topics the broker admits beside stock's: the caller's own
-/// roles, in a namespace disjoint from stock's `dl/PLAF103/…`, so a grant
-/// here never widens what the stock device or the server reach there.
-/// `()` adds none.
-pub trait Roles: Send + Sync + 'static {
-    /// The user a login is admitted as, when it is one of these roles. Asked
-    /// only after the login matched neither stock identity, and a role named
-    /// as one (`device` or `server`) is refused: it would gain stock's grants.
-    fn authenticate(
-        &self,
-        client_id: &str,
-        username: &str,
-        password: &[u8],
-    ) -> Option<&'static str>;
-    fn publish_allowed(&self, user: Option<&str>, topic: &str) -> bool;
-    fn subscribe_allowed(&self, user: Option<&str>, topic: &str) -> bool;
-}
-
-impl Roles for () {
-    fn authenticate(&self, _: &str, _: &str, _: &[u8]) -> Option<&'static str> {
-        None
-    }
-
-    fn publish_allowed(&self, _: Option<&str>, _: &str) -> bool {
-        false
-    }
-
-    fn subscribe_allowed(&self, _: Option<&str>, _: &str) -> bool {
-        false
-    }
-}
-
-struct DeviceAuth<R> {
+struct DeviceAuth {
     config: Config,
-    roles: R,
 }
 
-/// The users stock's allowlists grant, which only stock's own logins carry.
-const STOCK_USERS: [&str; 2] = ["device", "server"];
-
-impl<R: Roles> DeviceAuth<R> {
-    /// The user a login is admitted as: a stock identity first, then a role.
+impl DeviceAuth {
+    /// The user a login is admitted as: one of stock's two identities.
     fn login(&self, client_id: &str, username: &str, password: &[u8]) -> Option<&'static str> {
         let config = &self.config;
         let device = client_id == config.device_client_id
@@ -81,16 +44,14 @@ impl<R: Roles> DeviceAuth<R> {
         } else if server {
             Some("server")
         } else {
-            self.roles
-                .authenticate(client_id, username, password)
-                .filter(|user| !STOCK_USERS.contains(user))
+            None
         }
     }
 }
 
 type AuthFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
-impl<R: Roles> AuthProvider for DeviceAuth<R> {
+impl AuthProvider for DeviceAuth {
     fn authenticate<'a>(
         &'a self,
         connect: &'a ConnectPacket,
@@ -112,8 +73,7 @@ impl<R: Roles> AuthProvider for DeviceAuth<R> {
         user: Option<&'a str>,
         topic: &'a str,
     ) -> AuthFuture<'a, bool> {
-        let allowed =
-            publish_allowed(&self.config, user, topic) || self.roles.publish_allowed(user, topic);
+        let allowed = publish_allowed(&self.config, user, topic);
         Box::pin(async move { allowed })
     }
 
@@ -123,8 +83,7 @@ impl<R: Roles> AuthProvider for DeviceAuth<R> {
         user: Option<&'a str>,
         topic: &'a str,
     ) -> AuthFuture<'a, bool> {
-        let allowed = subscribe_allowed(&self.config, user, topic)
-            || self.roles.subscribe_allowed(user, topic);
+        let allowed = subscribe_allowed(&self.config, user, topic);
         Box::pin(async move { allowed })
     }
 }
@@ -182,7 +141,7 @@ pub fn subscribe_allowed(config: &Config, user: Option<&str>, topic: &str) -> bo
     }
 }
 
-pub async fn run(config: Config, roles: impl Roles) -> Result<()> {
+pub async fn run(config: Config) -> Result<()> {
     let listener = tokio::net::TcpListener::bind(config.mqtt_listen).await?;
 
     let settings = BrokerConfig {
@@ -212,7 +171,7 @@ pub async fn run(config: Config, roles: impl Roles) -> Result<()> {
     // any clients. DeviceAuth rejects anonymous clients and scopes every topic.
     let mut broker = MqttBroker::with_config(settings)
         .await?
-        .with_auth_provider(Arc::new(DeviceAuth { config, roles }));
+        .with_auth_provider(Arc::new(DeviceAuth { config }));
 
     let broker_address = broker
         .local_addr()
@@ -277,42 +236,12 @@ mod tests {
         assert!(!subscribe_allowed(&c, server, "#"));
     }
 
-    /// A role that admits every login under a fixed name.
-    struct Named(&'static str);
-
-    impl Roles for Named {
-        fn authenticate(&self, _: &str, _: &str, _: &[u8]) -> Option<&'static str> {
-            Some(self.0)
-        }
-
-        fn publish_allowed(&self, _: Option<&str>, _: &str) -> bool {
-            false
-        }
-
-        fn subscribe_allowed(&self, _: Option<&str>, _: &str) -> bool {
-            false
-        }
-    }
-
     #[test]
-    fn a_role_can_never_log_in_as_a_stock_identity() {
-        let login = |name| {
-            let auth = DeviceAuth {
-                config: config(),
-                roles: Named(name),
-            };
-            auth.login("intruder", "intruder", b"anything")
-        };
+    fn only_stock_identities_log_in() {
+        let auth = DeviceAuth { config: config() };
 
-        assert_eq!(login("device"), None);
-        assert_eq!(login("server"), None);
-        assert_eq!(login("firmware"), Some("firmware"));
-
-        let stock = DeviceAuth {
-            config: config(),
-            roles: (),
-        };
-        assert_eq!(stock.login("AF_TEST", "dev", b"pw"), Some("device"));
-        assert_eq!(stock.login("AF_TEST", "dev", b"wrong"), None);
+        assert_eq!(auth.login("AF_TEST", "dev", b"pw"), Some("device"));
+        assert_eq!(auth.login("AF_TEST", "dev", b"wrong"), None);
+        assert_eq!(auth.login("intruder", "intruder", b"anything"), None);
     }
 }

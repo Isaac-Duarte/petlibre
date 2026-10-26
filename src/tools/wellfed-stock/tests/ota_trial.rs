@@ -1,5 +1,6 @@
 //! Install-trial rules in the controller, without a broker: dispatch guards,
-//! journal-before-publish with no replay, closing on replacement health, and
+//! journal-before-publish with no replay, closing on the replacement's
+//! device-API answer, and
 //! evidence-based resolution of uncertain or failed trials.
 
 mod common;
@@ -353,26 +354,68 @@ fn dispatch_requires_a_matching_unexpired_image_server_lease_and_fresh_power() {
     assert!(submit(&mut c, request, now).unwrap().1.is_some());
 }
 
+fn answered(id: Uuid) -> ResolveInput {
+    ResolveInput {
+        request_id: id,
+        note: "build 8a13e59efa15 answered the device API from bank 0".to_owned(),
+    }
+}
+
 #[test]
-fn replacement_health_closes_only_an_open_install() {
+fn the_replacements_answer_closes_only_the_latest_open_install() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("ledger.json");
     let mut c = enabled(&dir);
     let now = Utc::now();
+    let request = input();
 
-    // Health with no trial changes nothing.
-    c.replacement_healthy(now).unwrap();
-    assert!(c.status.ota_trials.is_empty());
+    // No trial with that ID.
+    assert_eq!(
+        c.replacement_answered(answered(request.request_id), now),
+        Err(Rejection::Conflict)
+    );
 
-    submit(&mut c, input(), now).unwrap();
+    submit(&mut c, request.clone(), now).unwrap();
 
-    // Health stamped at the submission itself proves nothing.
-    c.replacement_healthy(now).unwrap();
+    // An answer stamped at the submission itself proves nothing, and a
+    // blank note is refused.
+    assert_eq!(
+        c.replacement_answered(answered(request.request_id), now),
+        Err(Rejection::NotOpen)
+    );
+    let blank = ResolveInput {
+        note: " ".into(),
+        ..answered(request.request_id)
+    };
+    assert_eq!(
+        c.replacement_answered(blank, now + Duration::seconds(200)),
+        Err(Rejection::Conflict)
+    );
     assert_eq!(c.status.ota_trials[0].phase, Phase::Submitted);
 
     let later = now + Duration::seconds(200);
-    c.replacement_healthy(later).unwrap();
-    assert_eq!(c.status.ota_trials[0].phase, Phase::ReplacementHealthy);
+    let record = c
+        .replacement_answered(answered(request.request_id), later)
+        .unwrap();
+    assert_eq!(record.phase, Phase::ReplacementHealthy);
+    assert_eq!(
+        record.resolution_note,
+        Some(answered(request.request_id).note)
+    );
+
+    // A repeat returns the closed record; a different note is refused.
+    assert_eq!(
+        c.replacement_answered(answered(request.request_id), later),
+        Ok(record)
+    );
+    let other = ResolveInput {
+        note: "something else".into(),
+        ..answered(request.request_id)
+    };
+    assert_eq!(
+        c.replacement_answered(other, later),
+        Err(Rejection::NotOpen)
+    );
 
     // Persisted, and a restart does not reopen it.
     drop(c);
@@ -381,18 +424,41 @@ fn replacement_health_closes_only_an_open_install() {
 }
 
 #[test]
-fn an_uncertain_install_still_closes_on_health() {
+fn an_uncertain_install_still_closes_on_the_answer() {
     let dir = tempfile::tempdir().unwrap();
     let mut c = enabled(&dir);
     let now = Utc::now();
-    submit(&mut c, input(), now).unwrap();
+    let request = input();
+    submit(&mut c, request.clone(), now).unwrap();
 
     // Stock's own session ends when it reboots into the new bank.
     c.disconnected(now + Duration::seconds(100)).unwrap();
     assert_eq!(c.status.ota_trials[0].phase, Phase::Uncertain);
 
-    c.replacement_healthy(now + Duration::seconds(200)).unwrap();
+    c.replacement_answered(answered(request.request_id), now + Duration::seconds(200))
+        .unwrap();
     assert_eq!(c.status.ota_trials[0].phase, Phase::ReplacementHealthy);
+}
+
+#[test]
+fn a_failed_install_does_not_close_on_an_answer() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = enabled(&dir);
+    let now = Utc::now();
+    let request = input();
+    submit(&mut c, request.clone(), now).unwrap();
+    observe(
+        &mut c,
+        "service",
+        json!({"cmd":"OTA_UPGRADE","msgId":request.request_id,"phase":"precheck","errCode":1101}),
+        now + Duration::seconds(5),
+    );
+    assert_eq!(c.status.ota_trials[0].phase, Phase::ReportedError);
+
+    assert_eq!(
+        c.replacement_answered(answered(request.request_id), now + Duration::seconds(200)),
+        Err(Rejection::NotOpen)
+    );
 }
 
 #[test]

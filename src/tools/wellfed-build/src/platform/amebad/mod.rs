@@ -38,10 +38,9 @@ pub const PROJECT: &str = "project/realtek_amebaD_va0_example/GCC-RELEASE";
 
 const SDK_LOCK: &str = "src/firmware/vendor/sdk.lock.json";
 pub(crate) const TOOL_LOCK: &str = "src/firmware/vendor/probe/toolchain.lock.json";
-/// The application entry's generated-header inputs: read from ignored
-/// private files; only their hashes reach the manifest.
+/// The application entry's generated-header input: read from an ignored
+/// private file; only its hash reaches the manifest.
 pub(crate) const WIFI_CREDENTIALS: &str = "private/hotspot.json";
-pub(crate) const TRANSPORT_CREDENTIALS: &str = "private/fw-mqtt.json";
 
 /// The AmebaD's two cores. The SDK names their projects `lp` and `hp`; the
 /// manifest and audits call them KM0 and KM4.
@@ -140,8 +139,8 @@ pub(crate) fn archives(recorded: &[(String, PathBuf)]) -> Result<Vec<(Core, Path
 /// mains and the BLE peripheral, as checkout paths.
 #[derive(Debug, Clone)]
 pub(crate) struct Amebad {
-    /// The SDK `example_entry.c` replacement; it includes both credential
-    /// headers.
+    /// The SDK `example_entry.c` replacement; it includes the Wi-Fi
+    /// credential header.
     pub(crate) entry: PathBuf,
     pub(crate) mains: [(Core, PathBuf); 2],
     /// Staged beside the entry for a Bluetooth firmware ([`sdk`]).
@@ -655,9 +654,9 @@ impl Amebad {
     ) -> Result<Vec<PathBuf>> {
         let mut paths = vec![repo.path(SDK_LOCK), repo.path(TOOL_LOCK)];
         if profile.has(Stage::Rust) {
-            // The entry includes both generated credential headers.
+            // The entry includes the generated Wi-Fi header.
             paths.push(self.entry.clone());
-            paths.extend([WIFI_CREDENTIALS, TRANSPORT_CREDENTIALS].map(|p| repo.path(p)));
+            paths.push(repo.path(WIFI_CREDENTIALS));
             paths.extend(self.bluetooth_source(firmware)?.map(Path::to_path_buf));
         }
         if profile.has(Stage::Firstboot) {

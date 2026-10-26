@@ -10,7 +10,6 @@ use std::path::PathBuf;
 use ts_rs::{Config, TS};
 
 use wellfed_formats::bench::catalog::{CatalogEntry, Requirement, Tier};
-use wellfed_formats::bench::health::{Clock, Health, HealthRole, Transport, Wifi};
 use wellfed_formats::bench::progress::{
     FlashTool, HistoryEntry, Outcome, Progress, RelayState, Step, StepState,
 };
@@ -43,11 +42,6 @@ fn generated() -> String {
         decl::<ScenarioVerdict>(&cfg),
         decl::<ScenarioRecord>(&cfg),
         decl::<RunRecord>(&cfg),
-        decl::<Clock>(&cfg),
-        decl::<Wifi>(&cfg),
-        decl::<Transport>(&cfg),
-        decl::<HealthRole>(&cfg),
-        decl::<Health>(&cfg),
     ];
     decls.extend(super::views::bindings(&cfg));
     decls.extend(super::runs::bindings(&cfg));

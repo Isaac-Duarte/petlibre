@@ -8,9 +8,10 @@
 //! it is not running from) and invalidates bank 1 ([stock OTA requirements]).
 //! The factory loader then boots the build from bank 0, which answers the
 //! device API (and feeds) while it waits for an update; the promoted build
-//! on bank 1 is confirmed over the device API. The server's ledger hears no
-//! health from it (the build opens no MQTT session), so it closes the
-//! request by its own window rather than on that health.
+//! on bank 1 is confirmed over the device API. Stock reports nothing once it
+//! has activated the build, and the build speaks no MQTT, so once its
+//! device-API status names the build on bank 0 the run tells the server,
+//! which closes the request as `replacement_healthy`.
 //!
 //! The request goes out once and is never resent: a rejected stock precheck
 //! can erase the stock OTA status sector, and an uncertain one may still be
@@ -83,7 +84,6 @@ fn ota_args(args: &StockOtaArgs) -> OtaArgs {
         version: None,
         minutes: INSTALL_SECONDS / 60.0,
         attended_motion: false,
-        mqtt: false,
         downgrade: false,
         fault: None,
         cancel: false,
@@ -114,7 +114,7 @@ fn rig_args(args: &StockOtaArgs) -> ItestArgs {
 
 /// `itest` scenario `stock-roundtrip`: from the confirmed baseline to stock
 /// 1.1.15 over our own signed update, then back over stock's updater
-/// and the bank-0 recovery role's promotion. It ends where it began:
+/// and bank 0's promotion. It ends where it began:
 /// the baseline confirmed on bank 1, `serve` answering. Bank 0 then holds
 /// the baseline too, written by stock.
 pub(super) fn roundtrip(ctx: &mut Ctx) -> Result<()> {
@@ -166,7 +166,7 @@ pub(super) fn roundtrip(ctx: &mut Ctx) -> Result<()> {
     let request_id = uuid::Uuid::new_v4().to_string();
     request(ctx, &staged, &request_id)?;
     install(ctx, &staged.build, &request_id)?;
-    bank0(ctx, &staged.build)?;
+    bank0(ctx, &staged.build, &request_id)?;
     promote(ctx, &staged)?;
     ctx.rig.offer(None, Fault::None)?;
 
@@ -198,7 +198,7 @@ fn run(ctx: &mut Ctx, args: &StockOtaArgs, staged: &Staged) -> (Vec<Report>, Opt
             SETTLE => settle(ctx),
             REQUEST => request(ctx, staged, &request_id),
             DOWNLOAD => install(ctx, &staged.build, &request_id),
-            BANK0 => bank0(ctx, &staged.build),
+            BANK0 => bank0(ctx, &staged.build, &request_id),
             _ => promote(ctx, staged),
         };
         let seconds = ctx.rig.clock() - begun;
@@ -342,9 +342,11 @@ fn started(line: &str, build: &str) -> Result<()> {
 }
 
 /// The build answers the device API from bank 0 while it waits for an
-/// update. The server's install record stays open until its window closes
-/// it: the build sends it no health.
-fn bank0(ctx: &mut Ctx, build: &str) -> Result<()> {
+/// update, which closes the server's install record: stock never reports
+/// after activating it. A record the server would not close is noted, not
+/// failed: the feeder is where it should be, and the next request waits for
+/// the record's resolution instead.
+fn bank0(ctx: &mut Ctx, build: &str, request_id: &str) -> Result<()> {
     let report = ctx.until_device(
         "status from the build on bank 0",
         HEALTH_SECONDS,
@@ -362,6 +364,17 @@ fn bank0(ctx: &mut Ctx, build: &str) -> Result<()> {
         },
     )?;
     ctx.note(&format!("  {report}"));
+
+    let note = format!(
+        "stock-ota: build {} answered the device API from bank 0",
+        &build[..build.len().min(12)]
+    );
+    match ctx.rig.trial_answered(request_id, &note) {
+        Ok(()) => ctx.note("  The server closed the request: replacement healthy"),
+        Err(error) => ctx.note(&format!(
+            "  The server did not close the request ({error}); the next one waits for its resolution"
+        )),
+    }
     Ok(())
 }
 

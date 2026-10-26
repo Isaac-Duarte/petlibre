@@ -8,7 +8,7 @@ use std::fmt;
 use wellfed_core::ota::install::Stop;
 use wellfed_core::record::{Record, tag};
 use wellfed_hal::ota::{confirm, update};
-use wellfed_hal::{audio, ble, stream, transport};
+use wellfed_hal::{audio, ble};
 
 struct Body<F>(F);
 
@@ -24,29 +24,6 @@ fn line(tag: &str, body: impl Fn(&mut fmt::Formatter<'_>) -> fmt::Result) -> Str
 
 fn read(line: &str) -> Record<'_> {
     Record::parse(line).unwrap_or_else(|| panic!("no record in {line:?}"))
-}
-
-#[test]
-fn transport_records_carry_what_the_suite_asserts() {
-    let ignored = line(tag::TRANSPORT, |f| {
-        transport::describe(transport::Record::Ignored, f)
-    });
-    assert!(read(&ignored).is(tag::TRANSPORT, &[("ignored", "1")]));
-
-    let ready = line(tag::TRANSPORT, |f| {
-        transport::describe(transport::Record::Ready { ms: 3 }, f)
-    });
-    assert_eq!(read(&ready).first, "ready");
-
-    let closed = line(tag::TRANSPORT, |f| {
-        transport::describe(
-            transport::Record::Closed {
-                reason: transport::CloseReason::ReplyTimeout,
-            },
-            f,
-        )
-    });
-    assert!(read(&closed).is(tag::TRANSPORT, &[("reason", "reply_timeout")]));
 }
 
 /// An update record's line, under the tag the stage gives it.
@@ -162,38 +139,12 @@ fn displayed<T: fmt::Display + Copy>(
 #[test]
 fn stage_and_reason_words_are_unchanged() {
     assert_eq!(
-        words(transport::CloseReason::ALL, transport::CloseReason::as_str),
-        [
-            "wifi",
-            "closed",
-            "send",
-            "refused",
-            "subscribe_refused",
-            "protocol_too_long",
-            "protocol_malformed",
-            "protocol_unexpected",
-            "out_of_order",
-            "reply_timeout",
-            "silence",
-            "foreign_topic",
-            "health_format"
-        ]
-    );
-    assert_eq!(
         displayed(confirm::ErrorStage::ALL, confirm::ErrorStage::as_str),
         ["read", "write", "floor"]
     );
     assert_eq!(
         displayed(audio::ErrorStage::ALL, audio::ErrorStage::as_str),
         ["open"]
-    );
-    assert_eq!(
-        displayed(stream::ErrorStage::ALL, stream::ErrorStage::as_str),
-        ["open"]
-    );
-    assert_eq!(
-        displayed(stream::EndReason::ALL, stream::EndReason::as_str),
-        ["closed", "stall"]
     );
     assert_eq!(
         displayed(ble::FailStage::ALL, ble::FailStage::as_str),
@@ -249,17 +200,6 @@ fn stage_and_reason_records_format_as_before() {
             "error stage=hash",
         ),
         (
-            text(|f| {
-                transport::describe(
-                    transport::Record::Closed {
-                        reason: transport::CloseReason::SubscribeRefused,
-                    },
-                    f,
-                )
-            }),
-            "closed reason=subscribe_refused",
-        ),
-        (
             text(|f| update::describe(update::Record::GiveWayRefused, f)),
             "error stage=give_way",
         ),
@@ -284,20 +224,6 @@ fn stage_and_reason_records_format_as_before() {
                 )
             }),
             "error stage=open",
-        ),
-        (
-            text(|f| {
-                stream::describe(
-                    stream::Record::Done {
-                        bytes: 4,
-                        ms: 5,
-                        underruns: 6,
-                        reason: stream::EndReason::Stall,
-                    },
-                    f,
-                )
-            }),
-            "done bytes=4 ms=5 underruns=6 reason=stall",
         ),
     ];
     for (got, expected) in cases {

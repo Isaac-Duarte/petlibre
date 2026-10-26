@@ -26,8 +26,8 @@ use core::fmt;
 
 use wellfed_core::named_enum;
 use wellfed_core::tone::Tune;
-use wellfed_core::transport::PlayResult;
 use wellfed_probes::{adc, buttons, optics};
+use wellfed_sdk::hal::audio::PlayResult;
 use wellfed_sdk::hal::flash::park::Mmio;
 use wellfed_sdk::hal::leds::{self, Led};
 use wellfed_sdk::hal::{audio, sdk};

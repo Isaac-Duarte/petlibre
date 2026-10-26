@@ -36,7 +36,7 @@ Static analysis and offline emulation of the stock 1.1.15 panel handlers (Octobe
 **Replacement (FP11, physical on October 23 with the owner pressing; host-tested):** `wellfed-feeder`'s `panel` keeps these rules over the SDK button service's gestures, with one 5 s hold threshold, and the `feeder` firmware shows the lock on PA4. Choices where stock is unknown or differs:
 - The panel starts locked at every boot, so an unattended reboot never leaves Dispense live.
 - Any gesture, Lock included, restarts the relock, and a button still held holds it off until its release. Stock counts only Mic, Reset and Dispense.
-- A signed `lock` request locks or unlocks from the network ([local transport](../../../firmware/local-transport.md#child-lock-fp11)). A remote unlock relocks on the same 30 s timer.
+- A `SetLock` request over the [device API](../../../firmware/device-api.md) locks or unlocks from the network (the deleted MQTT transport's signed `lock` request did before it, [local transport](../../../firmware/local-transport.md#child-lock-fp11)). A remote unlock relocks on the same 30 s timer.
 - `disableHardwareButton` and its recovery sequence are not implemented; FP15 owns resets.
 
 ## Bluetooth LE

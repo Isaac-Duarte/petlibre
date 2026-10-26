@@ -1,18 +1,14 @@
-//! The health snapshot, built from data the firmware already has. This
-//! is the transport's only view of the rest of the firmware: it reads, and
-//! returns a plain value.
+//! Startup facts the device API's status reports: the bank this build runs
+//! from, the reset cause and KM0's boot count, read once.
 
-use wellfed_core::transport::{Health, Loss, Outputs, Role};
-
-use crate::{clock, net_status, network, power, sdk, startup, stopped};
+use crate::{sdk, startup};
 
 /// KM0 user backup register 4: the peer's boot count in bits 0-15; bits
 /// 16-31 are the trial's state, which a raw read reported as the count.
 const BOOT_COUNT_REGISTER: u32 = 4;
 const BOOT_COUNT_MASK: u32 = 0xFFFF;
-const FAULT_STOPPED_READBACK: u32 = 1 << 2;
 
-/// Startup facts read once, when the transport task starts.
+/// Startup facts read once, when the device API starts.
 #[derive(Clone, Copy, Debug)]
 pub struct Boot {
     pub bank: u8,
@@ -27,64 +23,5 @@ impl Boot {
             reset_flags: snapshot.reset,
             boot_count: sdk::backup_read(BOOT_COUNT_REGISTER) & BOOT_COUNT_MASK,
         }
-    }
-}
-
-/// The transport's own counters, supplied by it.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct Link {
-    pub seq: u32,
-    pub connects: u32,
-    pub last_error: Option<&'static str>,
-}
-
-/// The will (`online` false) is built at connect, so it carries no clock or
-/// power reading, which would be stale by the time the broker sends it.
-pub fn snapshot(boot: Boot, link: Link, online: bool, role: Role) -> Health {
-    let wifi = net_status::read();
-    let (clock, clock_syncs) = if online { clock::health() } else { (None, 0) };
-    let observed = stopped::observe();
-    let outputs = if observed.verified() {
-        Outputs::Stopped
-    } else if observed.sensing() {
-        Outputs::Sensing
-    } else {
-        Outputs::Unverified
-    };
-
-    Health {
-        online,
-        seq: link.seq,
-        uptime_ms: sdk::uptime_ms(),
-        build: startup::BUILD_ID,
-        bank: boot.bank,
-        reset_flags: boot.reset_flags,
-        boot_count: boot.boot_count,
-        outputs,
-        faults: if outputs != Outputs::Unverified {
-            0
-        } else {
-            FAULT_STOPPED_READBACK
-        },
-        rssi: wifi.rssi,
-        wifi_attempt: wifi.attempt,
-        link_losses: wifi.link_losses,
-        dns_losses: wifi.check_losses,
-        last_loss: match wifi.last_loss {
-            1 => Loss::Link,
-            2 => Loss::Dns,
-            _ => Loss::None,
-        },
-        connects: link.connects,
-        wifi_source: network::source(),
-        last_error: link.last_error,
-        clock,
-        clock_syncs,
-        power: if online {
-            power::health(sdk::uptime_ms())
-        } else {
-            None
-        },
-        role,
     }
 }

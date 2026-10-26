@@ -1,6 +1,5 @@
-//! The child processes the bench chains: `wellfed-flash`, `wellfed-local`
-//! (offering an update to a build still on MQTT), `wellfed-build` (the
-//! build and review for `ota --build`), and `sigrok-cli`; and the device API
+//! The child processes the bench chains: `wellfed-flash`, `wellfed-build`
+//! (the build and review for `ota --build`), and `sigrok-cli`; and the device API
 //! sessions that push an update ([`Tools::install`]) and check its result.
 //!
 //! `wellfed-flash` runs as its own process, never linked in. Its plans bind
@@ -33,9 +32,6 @@ pub trait Tools {
     /// Run one `wellfed-flash` command to completion, echoing and recording
     /// its output; returns its exit status (0 complete, 1 stopped, 2 refused).
     fn flash(&mut self, args: &[String], status: &mut Status) -> Result<i32>;
-    /// Run one `wellfed-local` command the same way; it never starts the
-    /// server, which must already be running for an offer.
-    fn local(&mut self, args: &[String], status: &mut Status) -> Result<i32>;
     /// The feeder's status over the device API, as the owner key file at
     /// `keys` (root-relative); `config` is the server config whose hotspot
     /// fields find the feeder when mDNS does not.
@@ -418,20 +414,6 @@ fn stream_both(mut command: Command, status: &mut Status) -> Result<i32> {
 }
 
 impl Processes {
-    fn local_command(&self) -> Result<Command> {
-        require(
-            self.local_bin.is_file(),
-            format!(
-                "{} not found; build it with cargo build -p wellfed-local or pass --local-bin",
-                self.local_bin.display()
-            ),
-        )?;
-        // Its paths are root-relative under private/.
-        let mut command = Command::new(&self.local_bin);
-        command.current_dir(&self.root);
-        Ok(command)
-    }
-
     fn build_command(&self) -> Result<Command> {
         require(
             self.build_bin.is_file(),
@@ -487,12 +469,6 @@ impl Tools for Processes {
 
     fn flash(&mut self, args: &[String], status: &mut Status) -> Result<i32> {
         let mut command = self.flash_command()?;
-        command.args(args);
-        stream(command, status)
-    }
-
-    fn local(&mut self, args: &[String], status: &mut Status) -> Result<i32> {
-        let mut command = self.local_command()?;
         command.args(args);
         stream(command, status)
     }
@@ -849,36 +825,6 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
             .unwrap();
 
         assert!(error.to_string().contains("exited before holding the port"));
-    }
-
-    #[test]
-    fn local_runs_from_the_root_and_returns_the_exit_status() {
-        let _serial = serial();
-        let tmp = tempfile::tempdir().unwrap();
-        let script = tmp.path().join("fake-local");
-        fs::write(&script, "echo \"$1 in $(pwd)\"; exit 3\n").unwrap();
-        let mut tools = Processes {
-            root: tmp.path().into(),
-            flash_bin: tmp.path().join("absent"),
-            local_bin: "/bin/sh".into(),
-            build_bin: tmp.path().join("absent"),
-            device: None,
-        };
-        let mut status = Status::new(tmp.path(), tmp.path().join("status"));
-        status.begin("ota", Some("unit"), &[]).unwrap();
-
-        let args = [script.display().to_string(), "ota-offer".into()];
-        let code = tools.local(&args, &mut status).unwrap();
-
-        assert_eq!(code, 3);
-        let root = tmp.path().canonicalize().unwrap();
-        assert_eq!(
-            status.state().unwrap().lines.last().unwrap(),
-            &format!("ota-offer in {}", root.display())
-        );
-        tools.local_bin = tmp.path().join("absent");
-        let error = tools.local(&[], &mut Status::disabled()).unwrap_err();
-        assert!(error.to_string().contains("--local-bin"));
     }
 
     /// A chain over a stand-in observe that records one line per segment

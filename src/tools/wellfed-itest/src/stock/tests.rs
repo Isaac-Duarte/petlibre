@@ -68,6 +68,8 @@ struct StockFeeder {
     served: Option<PathBuf>,
     /// Stock runs (and reports once routed); false while a replacement does.
     on_stock: bool,
+    /// The server refuses to close the trial on the replacement's answer.
+    answer_refused: bool,
     actions: Vec<String>,
     notes: Vec<String>,
 }
@@ -103,6 +105,7 @@ impl StockFeeder {
             offered: false,
             served: None,
             on_stock: true,
+            answer_refused: false,
             actions: Vec::new(),
             notes: Vec::new(),
         }
@@ -275,8 +278,6 @@ impl Rig for StockFeeder {
             .chain(earlier)
             .map(|(id, phase)| record(&id, phase, !self.reports.is_empty()))
             .collect();
-        // No replacement build sends the server health any more.
-        let replacement = json!({"online": false, "stale": true});
         Ok(serde_json::from_value(json!({
             "device_online": self.stock_online,
             "attributes": {"softwareVersion": self.version, "powerType": 1},
@@ -284,7 +285,6 @@ impl Rig for StockFeeder {
             "ota_trial_enabled": true,
             "ota_trials": trials,
             "ota_reports": self.reports,
-            "replacement": replacement,
         }))?)
     }
 
@@ -341,6 +341,25 @@ impl Rig for StockFeeder {
         }
         *phase = "not_installed";
         self.actions.push("resolved".into());
+        Ok(())
+    }
+
+    fn trial_answered(&mut self, request_id: &str, note: &str) -> Result<()> {
+        let Some((id, phase)) = &mut self.trial else {
+            panic!("no request to close")
+        };
+        assert_eq!(id, request_id);
+        assert!(
+            note.contains("answered the device API from bank 0"),
+            "{note}"
+        );
+        if self.answer_refused {
+            return Err(Error::Bench(
+                "POST /api/ota/trial/answered: 409 not the latest open trial".into(),
+            ));
+        }
+        *phase = "replacement_healthy";
+        self.actions.push("answered".into());
         Ok(())
     }
 
@@ -487,9 +506,32 @@ fn promote_lets_the_bank_0_build_install_itself_into_bank_1() {
             (PROMOTE, "pass")
         ]
     );
-    // Pushed once the build answered from bank 0.
-    assert_eq!(feeder.actions, ["offer on bank 0"]);
+    // The request closed, then the push, once the build answered from bank 0.
+    assert_eq!(feeder.actions, ["answered", "offer on bank 0"]);
     assert!(feeder.offered);
+    assert_eq!(
+        feeder.trial.as_ref().map(|(_, phase)| *phase),
+        Some("replacement_healthy")
+    );
+}
+
+#[test]
+fn a_request_the_server_will_not_close_is_noted_and_the_run_goes_on() {
+    let mut feeder = StockFeeder::new(Script::Installs);
+    feeder.answer_refused = true;
+    let reports = session(&mut feeder, true);
+
+    assert_eq!(
+        verdicts(&reports)[3..],
+        [(DOWNLOAD, "pass"), (BANK0, "pass"), (PROMOTE, "pass")]
+    );
+    assert_eq!(feeder.actions, ["offer on bank 0"]);
+    assert!(
+        feeder
+            .notes
+            .iter()
+            .any(|n| n.contains("did not close the request"))
+    );
 }
 
 #[test]
@@ -631,7 +673,7 @@ fn an_earlier_failed_request_is_resolved_before_stock_is_asked_again() {
             (BANK0, "pass")
         ]
     );
-    assert_eq!(feeder.actions, ["resolved"]);
+    assert_eq!(feeder.actions, ["resolved", "answered"]);
     // One "not yet" line, however many polls it took.
     assert_eq!(
         feeder
@@ -688,6 +730,7 @@ fn the_round_trip_goes_to_stock_and_back_to_the_confirmed_baseline() {
             "offer stock",
             "clear",
             "server StockTrial",
+            "answered",
             "offer on bank 0",
             "clear",
             "server Serve"

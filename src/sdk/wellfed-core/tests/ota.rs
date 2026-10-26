@@ -1,22 +1,14 @@
-//! Tests for the update logic: signed manifest parsing (with an
-//! RFC 8032 vector), the bank-1 sector writer, the boot-trial decision,
-//! confirmation records and the delivery messages.
+//! Tests for the update logic: an RFC 8032 vector for the signature
+//! scheme, the bank-1 sector writer, the boot-trial decision and
+//! confirmation records.
 //!
 //! The writer must withhold the marker until commit and refuse to commit
 //! after any order, marker, readback or hash failure, so an incomplete image
 //! can never be activated (design: docs/firmware/ota-design.md).
 
-use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
+use ed25519_dalek::VerifyingKey;
 use wellfed_core::ota::*;
 use sha2::{Digest, Sha256};
-
-const SEED: [u8; 32] = [7; 32];
-
-fn key() -> (SigningKey, [u8; 32]) {
-    let signing = SigningKey::from_bytes(&SEED);
-    let public = signing.verifying_key().to_bytes();
-    (signing, public)
-}
 
 fn image(len: usize) -> Vec<u8> {
     let mut out: Vec<u8> = (0..len).map(|i| (i * 31 % 251) as u8).collect();
@@ -24,28 +16,15 @@ fn image(len: usize) -> Vec<u8> {
     out
 }
 
-fn manifest_bytes(signing: &SigningKey, version: u32, payload: &[u8], bank: u32) -> Vec<u8> {
-    let mut body = Vec::new();
-    body.extend_from_slice(&MAGIC);
-    body.extend_from_slice(&version.to_le_bytes());
-    body.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-    body.extend_from_slice(&bank.to_le_bytes());
-    body.extend_from_slice(&Sha256::digest(payload));
-    body.extend_from_slice(&[0xab; 32]);
-
-    assert_eq!(body.len(), MANIFEST_BODY);
-    let signature = signing.sign(&body).to_bytes();
-    body.extend_from_slice(&signature);
-    body
-}
-
-#[test]
-fn manifest_body_matches_the_parser() {
-    let (signing, public) = key();
-    let payload = image(SECTOR);
-    let bytes = manifest_bytes(&signing, 3, &payload, 1);
-    let parsed = parse_manifest(&bytes, &public, 0).unwrap();
-    assert_eq!(manifest_body(&parsed).as_slice(), &bytes[..MANIFEST_BODY]);
+/// The manifest an offer for `payload` names, as the offer check admits it.
+fn manifest(version: u32, payload: &[u8]) -> Manifest {
+    Manifest {
+        version,
+        image_len: u32::try_from(payload.len()).unwrap(),
+        target_bank: 1,
+        image_sha256: Sha256::digest(payload).into(),
+        build_id: [0xab; 32],
+    }
 }
 
 #[test]
@@ -72,83 +51,22 @@ fn hex<const N: usize>(s: &str) -> [u8; N] {
 }
 
 #[test]
-fn manifest_needs_signature_bank_one_size_and_a_newer_version() {
-    let (signing, public) = key();
-    let payload = image(3 * SECTOR + 100);
-    let good = manifest_bytes(&signing, 5, &payload, 1);
-    let m = parse_manifest(&good, &public, 4).unwrap();
-    assert_eq!(
-        (m.version, m.image_len, m.target_bank),
-        (5, payload.len() as u32, 1)
-    );
-    assert_eq!(
-        m.image_sha256.as_slice(),
-        Sha256::digest(&payload).as_slice()
-    );
-
-    assert_eq!(
-        parse_manifest(&good, &public, 5),
-        Err(ManifestError::Downgrade)
-    );
-    assert_eq!(
-        parse_manifest(&good[1..], &public, 0),
-        Err(ManifestError::Length)
-    );
-
-    let mut tampered = good.clone();
-    tampered[12] ^= 1;
-    assert_eq!(
-        parse_manifest(&tampered, &public, 0),
-        Err(ManifestError::Signature)
-    );
-
-    let other = SigningKey::from_bytes(&[9; 32]).verifying_key().to_bytes();
-    assert_eq!(
-        parse_manifest(&good, &other, 0),
-        Err(ManifestError::Signature)
-    );
-
-    let mut magic = good.clone();
-    magic[0] = b'X';
-    assert_eq!(
-        parse_manifest(&magic, &public, 0),
-        Err(ManifestError::Magic)
-    );
-
-    assert_eq!(
-        parse_manifest(&manifest_bytes(&signing, 5, &payload, 0), &public, 0),
-        Err(ManifestError::Bank)
-    );
-    assert_eq!(
-        parse_manifest(&manifest_bytes(&signing, 5, &payload[..100], 1), &public, 0),
-        Err(ManifestError::Size)
-    );
-
-    let big = image(BANK1_BYTES as usize + 1);
-    assert_eq!(
-        parse_manifest(&manifest_bytes(&signing, 5, &big, 1), &public, 0),
-        Err(ManifestError::Size)
-    );
-}
-
-#[test]
 fn a_header_claims_its_version_without_a_signature() {
-    let (signing, _) = key();
-    let mut bytes = manifest_bytes(&signing, 13, &image(SECTOR), 1);
-    assert_eq!(claimed_version(&bytes), Some(13));
-
-    bytes[MANIFEST_BODY..].fill(0);
-    assert_eq!(claimed_version(&bytes), Some(13));
-    assert_eq!(claimed_version(&bytes[..100]), None);
-    bytes[0] = b'X';
-    assert_eq!(claimed_version(&bytes), None);
-
-    // A version 2 manifest keeps its version in the same place.
-    let mut v2 = vec![0; wellfed_core::ota::offer::MANIFEST_LEN];
-    v2[..8].copy_from_slice(&wellfed_core::ota::offer::MAGIC);
+    // A version 2 manifest keeps its version at byte 8.
+    let mut v2 = vec![0; offer::MANIFEST_LEN];
+    v2[..8].copy_from_slice(&offer::MAGIC);
     v2[8..12].copy_from_slice(&14u32.to_le_bytes());
     assert_eq!(claimed_version(&v2), Some(14));
     assert_eq!(claimed_version(&v2[..100]), None);
+    v2[0] = b'X';
+    assert_eq!(claimed_version(&v2), None);
+
+    // So does a retired version 1 manifest a signer finds on disk.
+    let mut v1 = vec![0; 148];
+    v1[..8].copy_from_slice(b"PLOTA1\0\0");
+    v1[8..12].copy_from_slice(&13u32.to_le_bytes());
+    assert_eq!(claimed_version(&v1), Some(13));
+    assert_eq!(claimed_version(&v1[..147]), None);
 }
 
 /// Drive a writer to completion; `flash` models bank 1 (offset 0 = BANK1_OFFSET).
@@ -184,10 +102,9 @@ fn write_all(
 
 #[test]
 fn writer_stages_every_sector_with_the_marker_withheld_until_commit() {
-    let (signing, public) = key();
     for chunk in [512, 1024, SECTOR] {
         let payload = image(3 * SECTOR + 100);
-        let m = parse_manifest(&manifest_bytes(&signing, 2, &payload, 1), &public, 1).unwrap();
+        let m = manifest(2, &payload);
         let mut w = Writer::new(m, chunk).unwrap();
         let mut flash = Vec::new();
         write_all(&mut w, &payload, &mut flash, None).unwrap();
@@ -198,28 +115,15 @@ fn writer_stages_every_sector_with_the_marker_withheld_until_commit() {
         assert_eq!(w.commit(), Ok((BANK1_OFFSET, MARKER)));
     }
 
-    assert!(
-        Writer::new(
-            parse_manifest(&manifest_bytes(&signing, 2, &image(SECTOR), 1), &public, 1).unwrap(),
-            3000
-        )
-        .is_none()
-    );
+    assert!(Writer::new(manifest(2, &image(SECTOR)), 3000).is_none());
     // More chunks per sector than the received bitmap tracks.
-    assert!(
-        Writer::new(
-            parse_manifest(&manifest_bytes(&signing, 2, &image(SECTOR), 1), &public, 1).unwrap(),
-            64
-        )
-        .is_none()
-    );
+    assert!(Writer::new(manifest(2, &image(SECTOR)), 64).is_none());
 }
 
 #[test]
 fn writer_refuses_disorder_bad_markers_readback_and_hash_and_never_commits() {
-    let (signing, public) = key();
     let payload = image(2 * SECTOR + 10);
-    let m = parse_manifest(&manifest_bytes(&signing, 2, &payload, 1), &public, 1).unwrap();
+    let m = manifest(2, &payload);
 
     // Only the staged sector's chunks, each once.
     let mut w = Writer::new(m, 1024).unwrap();
@@ -298,171 +202,13 @@ fn confirmation_names_exactly_one_image() {
     assert_eq!(confirmed(&bad, &sha), None);
 }
 
-#[test]
-fn delivery_messages_round_trip_and_reject_malformed() {
-    let get = encode_get(Part::Chunk, 4096, 1024);
-    assert_eq!(decode_get(&get), Some((Part::Chunk, 4096, 1024)));
-    assert_eq!(
-        decode_get(&encode_get(Part::Manifest, 0, 0)),
-        Some((Part::Manifest, 0, 0))
-    );
-
-    assert_eq!(decode_get(&get[..8]), None);
-    let mut bad = get;
-    bad[0] = 9;
-    assert_eq!(decode_get(&bad), None);
-
-    let mut data = encode_data_header(Part::Chunk, Status::Ok, 4096, 3).to_vec();
-    data.extend_from_slice(&[1, 2, 3]);
-    assert_eq!(
-        decode_data(&data),
-        Some(Data {
-            part: Part::Chunk,
-            status: Status::Ok,
-            offset: 4096,
-            bytes: &[1, 2, 3]
-        })
-    );
-
-    // A declared length that disagrees with the body is refused.
-    assert_eq!(decode_data(&data[..data.len() - 1]), None);
-
-    let refused = encode_data_header(Part::Chunk, Status::Range, 0, 0);
-    assert_eq!(decode_data(&refused).map(|d| d.status), Some(Status::Range));
-    let mut refused_with_body = encode_data_header(Part::Chunk, Status::NoOffer, 0, 1).to_vec();
-    refused_with_body.push(0);
-    assert_eq!(decode_data(&refused_with_body), None);
-    assert_eq!(decode_data(&[0; 3]), None);
-}
-
 /// Bounded properties of what an update server, or anyone posing as one,
-/// can send: manifests, delivery messages and chunks.
+/// can send: the chunks of an admitted offer.
 mod properties {
     use super::*;
     use proptest::prelude::*;
 
-    fn signed(signing: &SigningKey, manifest: &Manifest) -> Vec<u8> {
-        let mut bytes = manifest_body(manifest).to_vec();
-        bytes.extend_from_slice(&signing.sign(&bytes).to_bytes());
-        bytes
-    }
-
-    fn manifest() -> impl Strategy<Value = Manifest> {
-        (
-            any::<u32>(),
-            prop_oneof![any::<u32>(), SECTOR_BYTES - 1..=BANK1_BYTES + 1],
-            prop_oneof![Just(1u32), any::<u32>()],
-            any::<[u8; 32]>(),
-            any::<[u8; 32]>(),
-        )
-            .prop_map(
-                |(version, image_len, target_bank, image_sha256, build_id)| Manifest {
-                    version,
-                    image_len,
-                    target_bank,
-                    image_sha256,
-                    build_id,
-                },
-            )
-    }
-
-    fn part() -> impl Strategy<Value = Part> {
-        prop_oneof![Just(Part::Manifest), Just(Part::Chunk)]
-    }
-
-    fn status() -> impl Strategy<Value = Status> {
-        prop_oneof![Just(Status::Ok), Just(Status::NoOffer), Just(Status::Range)]
-    }
-
     proptest! {
-        /// Unsigned bytes, magic or not, never parse.
-        #[test]
-        fn unsigned_manifests_never_parse(
-            magic in any::<bool>(),
-            mut bytes in prop_oneof![
-                proptest::collection::vec(any::<u8>(), 0..2 * MANIFEST_LEN),
-                proptest::collection::vec(any::<u8>(), MANIFEST_LEN),
-            ],
-            installed in any::<u32>(),
-        ) {
-            if magic && bytes.len() >= MAGIC.len() {
-                bytes[..MAGIC.len()].copy_from_slice(&MAGIC);
-            }
-            let (_, public) = key();
-            prop_assert!(parse_manifest(&bytes, &public, installed).is_err());
-        }
-
-        /// A signed manifest parses back to itself exactly when it targets
-        /// bank 1, fits it and is newer; otherwise it names why not.
-        #[test]
-        fn signed_manifests_round_trip_or_name_the_refusal(
-            manifest in manifest(),
-            installed in any::<u32>(),
-        ) {
-            let (signing, public) = key();
-            let expected = if manifest.target_bank != 1 {
-                Err(ManifestError::Bank)
-            } else if !(SECTOR_BYTES..=BANK1_BYTES).contains(&manifest.image_len) {
-                Err(ManifestError::Size)
-            } else if manifest.version <= installed {
-                Err(ManifestError::Downgrade)
-            } else {
-                Ok(manifest)
-            };
-            prop_assert_eq!(parse_manifest(&signed(&signing, &manifest), &public, installed), expected);
-        }
-
-        /// One flipped bit anywhere in a signed manifest is refused.
-        #[test]
-        fn a_flipped_manifest_bit_is_refused(
-            manifest in manifest(),
-            bit in 0..MANIFEST_LEN * 8,
-        ) {
-            let (signing, public) = key();
-            let mut bytes = signed(&signing, &manifest);
-            bytes[bit / 8] ^= 1 << (bit % 8);
-            let refusal = parse_manifest(&bytes, &public, 0);
-            prop_assert!(
-                matches!(refusal, Err(ManifestError::Magic | ManifestError::Signature)),
-                "{refusal:?}"
-            );
-        }
-
-        #[test]
-        fn delivery_messages_round_trip(
-            part in part(),
-            status in status(),
-            offset in any::<u32>(),
-            len in any::<u32>(),
-            body in proptest::collection::vec(any::<u8>(), 0..=MAX_CHUNK as usize),
-        ) {
-            prop_assert_eq!(decode_get(&encode_get(part, offset, len)), Some((part, offset, len)));
-
-            let body = if status == Status::Ok { body } else { Vec::new() };
-            let mut bytes = encode_data_header(part, status, offset, u32::try_from(body.len()).unwrap()).to_vec();
-            bytes.extend_from_slice(&body);
-            prop_assert_eq!(
-                decode_data(&bytes),
-                Some(Data { part, status, offset, bytes: &body })
-            );
-        }
-
-        /// Arbitrary delivery bytes decode only when their declared length
-        /// is exactly what follows the header.
-        #[test]
-        fn delivery_decoders_survive_any_bytes(
-            bytes in proptest::collection::vec(any::<u8>(), 0..64),
-        ) {
-            if let Some((part, offset, len)) = decode_get(&bytes) {
-                let encoded = encode_get(part, offset, len);
-                prop_assert_eq!(encoded.as_slice(), bytes.as_slice());
-            }
-            if let Some(data) = decode_data(&bytes) {
-                prop_assert_eq!(data.bytes.len(), bytes.len() - DATA_HEADER);
-                prop_assert!(data.status == Status::Ok || data.bytes.is_empty());
-            }
-        }
-
         /// Any image, chunked any way the bitmap tracks, its chunks arriving
         /// in any order within a sector, lands intact with the marker
         /// withheld until commit.

@@ -13,7 +13,7 @@ use wellfed_client::setup::{
 use wellfed_core::ble_setup::{PREFIX, parse_prefix};
 use wellfed_core::buttons::{Button, Buttons, Gesture};
 use wellfed_core::tone::Tune;
-use wellfed_core::transport::SettingsView;
+use wellfed_feeder::mailbox::SettingsView;
 use wellfed_feeder::pairing::{Config, Event, Pairing, Path, Refusal as PairRefusal};
 use wellfed_feeder::panel::Lock;
 use wellfed_feeder::store::clients::Role;

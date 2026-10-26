@@ -107,8 +107,6 @@ struct Calls {
     results: VecDeque<Observation>,
     analyzer_code: i32,
     sigrok: bool,
-    local: Vec<Vec<String>>,
-    local_codes: VecDeque<i32>,
     /// UART bytes each capture records, in order.
     rx: VecDeque<Vec<u8>>,
     /// Each capture's serial-events.jsonl, in order; none when empty.
@@ -257,13 +255,6 @@ impl Tools for FakeTools {
         }
         let result = calls.install_results.pop_front();
         Ok(Box::new(FakeInstalling(result)))
-    }
-
-    fn local(&mut self, args: &[String], _: &mut Status) -> Result<i32> {
-        let mut calls = self.0.borrow_mut();
-        calls.local.push(args.to_vec());
-        calls.ran.push(format!("local {}", args.join(" ")));
-        Ok(calls.local_codes.pop_front().unwrap_or(0))
     }
 
     fn cancel_update(&mut self, keys: &Path, _config: &Path) -> Result<Answer> {
@@ -1047,7 +1038,6 @@ fn ota_review(rig: &Rig, manifest: Value) -> OtaArgs {
         version: None,
         minutes: 20.0,
         attended_motion: false,
-        mqtt: false,
         downgrade: false,
         fault: None,
         cancel: false,
@@ -1120,7 +1110,6 @@ fn ota_signs_one_above_the_highest_signed_version_then_offers() {
     );
     assert_eq!(job.downgrade, None);
     assert_eq!(job.keys, Path::new("private/wellfed-owner.json"));
-    assert!(calls.local.is_empty(), "no MQTT offer");
     drop(calls);
     assert!(rig.board.log().is_empty(), "no relay change");
 }
@@ -1198,7 +1187,7 @@ fn ota_cancel_sends_one_cancel_and_nothing_else() {
 
     let calls = rig.tools.0.borrow();
     assert_eq!(calls.ran, [format!("cancel {}", args.keys.display())]);
-    assert!(calls.installs.is_empty() && calls.local.is_empty());
+    assert!(calls.installs.is_empty());
     drop(calls);
 
     rig.tools.0.borrow_mut().cancel_answer = Some(Answer::Unexpected);
@@ -1348,24 +1337,6 @@ fn a_refused_offer_ends_the_run_before_any_activation() {
 }
 
 #[test]
-fn the_mqtt_path_signs_version_1_and_offers_through_wellfed_local() {
-    let mut rig = rig();
-    let mut args = plain_review(&rig);
-    args.mqtt = true;
-    rig.tools.0.borrow_mut().local_codes.extend([1]);
-
-    assert_eq!(rig.bench.ota(&args).unwrap(), 1);
-    let calls = rig.tools.0.borrow();
-    let [offer] = &calls.local[..] else {
-        panic!("{:?}", calls.local)
-    };
-    assert_eq!(offer[0], "ota-offer");
-    assert!(calls.installs.is_empty());
-    let bytes = fs::read(rig.bench.root.join(VERIFICATION).join("unit-v1.manifest")).unwrap();
-    assert_eq!(&bytes[..8], wellfed_core::ota::MAGIC);
-}
-
-#[test]
 fn ota_passes_across_segments_and_records_steps() {
     let mut rig = rig();
     rig.bench.status = Status::new(&rig.bench.root, rig.bench.root.join("status"));
@@ -1480,7 +1451,6 @@ fn build_args() -> OtaArgs {
         version: None,
         minutes: 20.0,
         attended_motion: false,
-        mqtt: false,
         downgrade: false,
         fault: None,
         cancel: false,
@@ -1495,7 +1465,7 @@ fn with_status(rig: &mut Rig, source: Source) {
     rig.bench.status = Status::new(&rig.bench.root, rig.bench.root.join("status"));
     rig.bench
         .status
-        .begin("ota", Some("unit"), &ota::steps(source, false))
+        .begin("ota", Some("unit"), &ota::steps(source))
         .unwrap();
 }
 
@@ -1668,7 +1638,7 @@ fn a_failed_build_or_review_stops_before_offering() {
 
         let calls = rig.tools.0.borrow();
         assert_eq!(calls.builds.len(), codes.len());
-        assert!(calls.local.is_empty() && calls.queries.is_empty());
+        assert!(calls.queries.is_empty());
         drop(calls);
         assert!(captured(&rig).is_empty());
         let lines = recorded(&rig);

@@ -11,12 +11,12 @@
 #![allow(dead_code, reason = "each consumer drives a subset")]
 
 use wellfed_core::tone::Tune;
-use wellfed_core::transport::{
-    LockResult, PlayResult, SettingsFields, SettingsResult, SettingsView, TimeFields, TimeResult,
-    WifiResult, WifiSource, WifiView,
-};
 use wellfed_feeder::api::{
     Device, EventRead, KeyChange, KeyOutcome, Pass, Record, SESSIONS, Server,
+};
+use wellfed_feeder::mailbox::{
+    LockResult, PlayResult, SettingsFields, SettingsResult, SettingsView, TimeFields, TimeResult,
+    WifiResult, WifiSource, WifiView,
 };
 use wellfed_feeder::pairing::{Config, Pairing};
 use wellfed_feeder::setup::{Received, Responder};

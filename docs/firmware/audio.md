@@ -36,18 +36,15 @@ From the stock KM4 image (`DL_AUDIO`, `audio_play_http_file`):
   - **Startup:** the startup chime plays once the settings are loaded, unless `sound` is off.
 - **Feeding:** audio is independent of it. The task touches only the codec, its DMA and PB23, never the motor, the emitters or flash.
 
-## Transport
+## Requests
 
-A signed `{"op":"play","tune":"<name>"}` queues a tune (see [local transport](local-transport.md#speaker-fw24)). An unknown tune is malformed. Replies:
-- `"ok":true,"tune":…` when the tune is queued;
-- `error: muted` when the `sound` setting is off;
-- `error: busy` while another tune plays or the settings are not loaded yet.
+A tune is queued only through `audio::request`, which answers `Started`, `Muted` (the `sound` setting is off) or `Busy` (another tune plays, or the settings are not loaded yet). The device API's `Play` request carries a tune; the `feeder` firmware does not serve it yet, since it steps the speaker only in setup mode. Under the deleted MQTT transport a signed `{"op":"play","tune":"<name>"}` reached the same call ([local transport](local-transport.md#speaker-fw24)), and the evidence below ran on that.
 
-The transport reaches only `audio::request` (`cargo xtask check-repository` pins it).
+## Speaker firmware
 
-## Speaker firmware (network audio)
+`wellfed-build build --profile firstboot --firmware speaker` (or `wellfed-bench ota NAME --build --firmware speaker`) builds the `speaker` firmware: the tune task, which plays the startup chime. Motion is untouched, and OTA, recovery and confirmation work as in every firmware.
 
-`wellfed-build build --profile firstboot --firmware speaker` (or `wellfed-bench ota NAME --build --firmware speaker`) builds the `speaker` firmware: the tune task and a stream task (`wellfed-hal/src/stream.rs`, task `wellfed-spk`). Until the firmware split this was the reference firmware's `speaker` variant; the evidence below ran on that. Motion is untouched, and OTA, recovery and confirmation work as in every firmware.
+**Network audio stream (deleted October 25, 2026; in Git history).** The firmware also ran a stream task (`wellfed-hal/src/stream.rs`, task `wellfed-spk`). Its only key was the FW08 request key, which went with the broker credentials, and its only client, `wellfed-local speak`, was removed with FW51, so the stream went too. What it did, as the reference firmware's `speaker` variant:
 - **Handshake:** the task listens on TCP 7700, one client at a time. It sends a `PLSPK1` hello with a fresh challenge, and the client answers with a header (sample rate 8, 16, 32 or 48 kHz) and an HMAC under the FW08 request key (`wellfed-core/src/speaker_stream.rs`). The feeder replies with one status byte: `ok`, `unauthenticated`, `bad_header`, `busy` or `muted`. An image without a request key refuses every stream.
 - **Stream:**
   - After `ok`, the connection is raw 16-bit little-endian mono PCM.
@@ -85,7 +82,7 @@ The task logs these `PLAUD1` lines:
 **Host:**
 - **Tones:** pitch, the volume scale, silence at volume 0, quiet note edges and tune bounds.
 - **Speaker task:** against a fake codec ring, the chime waits for the settings, mute is honored, the amplifier is on only while the codec is open, a failed open frees the slot, and a stalled ring still closes.
-- **Requests:** `play` parsing and signing on the device and on the server.
+- **Requests:** `play` parsing and signing on the device and on the server (MQTT era).
 
 **Remaining:**
 - **Stored clips:** playing them needs a read-only FAT reader and the SDK's Helix AAC decoder, and a 44.1 kHz codec setup;

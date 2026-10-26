@@ -1,6 +1,6 @@
 //! The firmware's one random generator, for every key and nonce.
 //!
-//! [`start`] runs once in the startup task, before the transport, the power
+//! [`start`] runs once in the startup task, before the device API, the power
 //! monitor or the firmware can touch the ADC. It fills a health-tested pool
 //! from the internal supply channel's low byte at the claim the bench
 //! measured ([`CLAIM_EIGHTHS`], 1 bit against 1.44 measured), mixes in

@@ -66,18 +66,17 @@ pub const LEDGER_FILE: &str = "stock-ledger.json";
 /// never read: an operator archives it after checking no trial in it is open.
 pub const RETIRED_LEDGER_FILE: &str = "feed-ledger.json";
 
-/// The status document `GET /api/status` serves. `H` is the replacement
-/// firmware's health, which the session's companion fills in.
-pub type Status<H> = LocalStatus<H>;
+/// The status document `GET /api/status` serves.
+pub type Status = LocalStatus;
 
-fn reported_version<H>(status: &Status<H>) -> Option<&str> {
+fn reported_version(status: &Status) -> Option<&str> {
     status
         .attributes
         .get("softwareVersion")
         .and_then(Value::as_str)
 }
 
-fn power_type<H>(status: &Status<H>) -> Option<u64> {
+fn power_type(status: &Status) -> Option<u64> {
     status.attributes.get("powerType").and_then(Value::as_u64)
 }
 
@@ -108,11 +107,13 @@ pub enum Rejection {
         "resolution needs the latest uncertain/failed trial, 20 minutes since submission, 10 quiet connected minutes without OTA reports and a fresh source- or target-version report"
     )]
     ResolutionEvidence,
+    #[error("only the latest submitted or uncertain trial closes on the replacement's answer")]
+    NotOpen,
 }
 
-pub struct Controller<H> {
+pub struct Controller {
     pub config: Config,
-    pub status: Status<H>,
+    pub status: Status,
     path: PathBuf,
     ledger: Ledger,
     storage_failed: bool,
@@ -121,7 +122,7 @@ pub struct Controller<H> {
     _lease: fs::File,
 }
 
-impl<H> Controller<H> {
+impl Controller {
     pub fn load(config: Config, path: PathBuf, build: Build) -> Result<Self> {
         let retired = path.with_file_name(RETIRED_LEDGER_FILE);
         ensure!(
@@ -347,30 +348,58 @@ impl<H> Controller<H> {
         ))
     }
 
-    /// The replacement firmware published online health. If the latest trial
-    /// is a replacement install still open, that health is its evidence:
-    /// stock never reports again after activating it. Health from before
-    /// the submission (a build already running) proves nothing.
-    pub fn replacement_healthy(&mut self, now: DateTime<Utc>) -> Result<()> {
-        let Some(trial) = self
-            .ledger
-            .ota_trials
-            .values_mut()
-            .max_by_key(|r| r.sequence)
-        else {
-            return Ok(());
-        };
-        if !matches!(trial.phase, TrialPhase::Submitted | TrialPhase::Uncertain)
-            || now <= trial.created_at
-        {
-            return Ok(());
+    /// The operator's client saw the replacement build answer the device
+    /// API after `request`'s trial was submitted: the trial's evidence, as
+    /// stock never reports again after activating it. Only the latest trial
+    /// closes this way, while it is submitted or uncertain; the note records
+    /// what the client saw. Sends nothing, and a repeat of the same request
+    /// returns the closed record.
+    pub fn replacement_answered(
+        &mut self,
+        request: ota::trial::ResolveInput,
+        now: DateTime<Utc>,
+    ) -> std::result::Result<ota::trial::Record, Rejection> {
+        if self.storage_failed {
+            return Err(Rejection::Storage);
+        }
+        if request.note.trim().is_empty() || request.note.len() > 512 {
+            return Err(Rejection::Conflict);
         }
 
-        trial.phase = TrialPhase::ReplacementHealthy;
-        trial.updated_at = now;
-        self.save()?;
+        let latest = self
+            .ledger
+            .ota_trials
+            .values()
+            .max_by_key(|r| r.sequence)
+            .map(|r| r.input.request_id);
+        let record = self
+            .ledger
+            .ota_trials
+            .get_mut(&request.request_id)
+            .ok_or(Rejection::Conflict)?;
+        if record.phase == TrialPhase::ReplacementHealthy
+            && record.resolution_note.as_ref() == Some(&request.note)
+        {
+            return Ok(record.clone());
+        }
+        if latest != Some(request.request_id)
+            || !matches!(record.phase, TrialPhase::Submitted | TrialPhase::Uncertain)
+            || now <= record.created_at
+        {
+            return Err(Rejection::NotOpen);
+        }
+
+        record.phase = TrialPhase::ReplacementHealthy;
+        record.resolution_note = Some(request.note);
+        record.updated_at = now;
+        let result = record.clone();
+
+        if self.save().is_err() {
+            self.storage_failed = true;
+            return Err(Rejection::Storage);
+        }
         self.refresh(now);
-        Ok(())
+        Ok(result)
     }
 
     /// Close the latest uncertain or failed trial from fresh version evidence.

@@ -1,7 +1,7 @@
 //! The device settings writer, normal role. It opens the store in
-//! storage sectors 2 and 3, publishes it for the transport
+//! storage sectors 2 and 3, publishes it for the device API
 //! (`wellfed_hal::settings`), arms the flash-lock hooks once as the
-//! confirmation does, and then saves each signed change the transport queues.
+//! confirmation does, and then saves each change the device API queues.
 //! Each save sets the arming attempt marker and clears it after, so a hang
 //! inside a save resets at most once per power cycle.
 //!
@@ -32,7 +32,7 @@ use core::fmt;
 use wellfed_core::named_enum;
 
 use wellfed_core::store::seed::{SeedStatus, SeedStore};
-use wellfed_core::transport::{SettingsFields, SettingsView};
+use wellfed_feeder::mailbox::{SettingsFields, SettingsView};
 use wellfed_feeder::store::clients::{ClientError, ClientStatus, ClientStore};
 use wellfed_feeder::store::events::EventLog;
 use wellfed_feeder::store::net::{NetStatus, NetStore};

@@ -1,13 +1,12 @@
 //! The relay bench's files: its config, the evidence layout of a session,
-//! the progress document its page follows, the integration suite's run
-//! records and catalog, and the firmware health both check.
+//! the progress document its page follows, and the integration suite's run
+//! records and catalog.
 //!
 //! The bench and the suite write these; the page (`wellfed-dashboard`) only
 //! reads them, and links neither the relay nor the flash client, so the
 //! shapes they share live here.
 
 pub mod catalog;
-pub mod health;
 pub mod progress;
 pub mod run;
 

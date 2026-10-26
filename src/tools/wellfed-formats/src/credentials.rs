@@ -1,28 +1,8 @@
-//! The private credential and key files the firmware build embeds:
-//! `wellfed-local` writes the credentials and `wellfed-build keygen` the
-//! update key; `wellfed-build` turns them into headers.
-
-use std::net::Ipv4Addr;
+//! The private credential and key files the firmware build embeds: the
+//! hotspot's Wi-Fi credentials and the update key `wellfed-build keygen`
+//! writes; `wellfed-build` turns them into headers.
 
 use serde::{Deserialize, Serialize};
-
-/// The replacement firmware's broker credential, as
-/// `wellfed-local firmware-credential` writes it.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct FirmwareCredential {
-    pub version: u32,
-    pub broker: Ipv4Addr,
-    pub port: u16,
-    pub device_id: String,
-    pub client_id: String,
-    pub username: String,
-    pub password: String,
-    pub namespace: String,
-    /// Request-signing key, added by `firmware-request-key`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub request_key: Option<String>,
-}
 
 /// The development Wi-Fi network the first-boot image joins.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]

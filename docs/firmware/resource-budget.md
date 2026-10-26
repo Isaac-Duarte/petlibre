@@ -5,7 +5,7 @@ Status: physical (October 23, 2026), nothing run by the owner. **FW47's actual f
 ## What was linked
 
 The `feeder` image as of FW44:
-- **Runtime:** startup checks, supervision, settings writer, MQTT transport, update offer check.
+- **Runtime:** startup checks, supervision, settings writer, the update stage.
 - **Panel:** the button service and the child lock (FP11).
 - **Noise:** `wellfed-session::noise`, XX and KK over 25519, ChaChaPoly and SHA-256, checked byte for byte against `snow` on the host.
 - **Session table:** four clients, each with its Noise state, a 1 KiB receive and a 1 KiB send buffer, and a ring of 32 request IDs (`feeder/src/budget.rs`). The loop drives two of them through every handshake at boot.
@@ -93,7 +93,7 @@ Transport messages are cheap: about 0.9 ms to seal or open a kilobyte.
 
 ## Clients, request IDs and buffers
 
-- **Client limit: 4.** lwIP allows 10 TCP connections and 5 listeners (`lwipopts.h`). The MQTT transport (until FW47 removes it), an OTA download, a speaker stream and the API listener each hold one. Four clients leaves room to refuse a fifth.
+- **Client limit: 4.** lwIP allows 10 TCP connections and 5 listeners (`lwipopts.h`). An update download and the API listener each hold one (the MQTT transport and the speaker stream, which held one each, are deleted). Four clients leaves room to refuse a fifth.
 - **Request-ID ring: 32 per client** (512 B). A client retries a lost answer within seconds, and 32 outstanding or recent requests cover any realistic burst; a feed's ID also goes into its journal reservation (FW17), so the ring is not what stops a double feed.
 - **Frame: 1 KiB.** That covers every planned request and event batch; firmware images move in chunks through FW48.
 

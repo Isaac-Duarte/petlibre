@@ -1,18 +1,18 @@
-//! `/api/feeder`: the feeder as `wellfed-local serve` last heard it.
+//! `/api/feeder`: stock as `wellfed-local serve` last heard it.
 //!
 //! The page asks the server, never the feeder: one `GET /api/status` on the
 //! server's loopback API, with the token from `private/server.json`. That
 //! read changes nothing, so it is safe beside a running bench command or
 //! integration run. A server that is down or not configured is a state the
-//! page shows, not an error.
+//! page shows, not an error. The server hears only stock: the replacement
+//! firmware speaks no MQTT, and answers its device API instead.
 
 use std::path::Path;
 use std::time::Duration;
 
-use chrono::SecondsFormat;
 use serde::Serialize;
+use serde_json::Value;
 
-use wellfed_formats::bench::health::Health;
 use wellfed_formats::local::LocalStatus;
 use wellfed_formats::local::{SERVER_CONFIG, ServerConfig};
 use wellfed_local_api::{Auth, LocalApi};
@@ -30,22 +30,13 @@ pub(crate) enum FeederView {
     Down { address: String, error: String },
     Up {
         address: String,
+        /// The server's own session with its broker.
         broker_connected: bool,
-        /// `None` when the server has no replacement-firmware role.
-        replacement: Option<Box<ReplacementView>>,
+        /// Stock's telemetry is current.
+        stock_online: bool,
+        /// The version stock last reported, as it sent it.
+        stock_version: Option<String>,
     },
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
-pub(crate) struct ReplacementView {
-    online: bool,
-    stale: bool,
-    /// The health message's age when the server answered.
-    age_ms: Option<i64>,
-    /// RFC 3339; a new value means a new transport session.
-    received_at: Option<String>,
-    health: Option<Health>,
 }
 
 pub(crate) fn feeder(root: &Path) -> FeederView {
@@ -61,7 +52,7 @@ pub(crate) fn feeder(root: &Path) -> FeederView {
     let api = LocalApi::new(&config, TIMEOUT);
     let address = api.address.to_string();
 
-    match api.get::<LocalStatus<Health>>("/api/status", Auth::Token) {
+    match api.get::<LocalStatus>("/api/status", Auth::Token) {
         Ok(status) => view(address, status),
         Err(error) => FeederView::Down {
             address,
@@ -70,24 +61,16 @@ pub(crate) fn feeder(root: &Path) -> FeederView {
     }
 }
 
-fn view(address: String, status: LocalStatus<Health>) -> FeederView {
-    let replacement = status.replacement.map(|r| {
-        Box::new(ReplacementView {
-            online: r.online,
-            stale: r.stale,
-            age_ms: r.age_ms,
-            // As the server wrote it.
-            received_at: r
-                .received_at
-                .map(|at| at.to_rfc3339_opts(SecondsFormat::AutoSi, true)),
-            health: r.health,
-        })
-    });
-
+fn view(address: String, status: LocalStatus) -> FeederView {
     FeederView::Up {
         address,
         broker_connected: status.broker_connected,
-        replacement,
+        stock_online: status.device_online,
+        stock_version: status
+            .attributes
+            .get("softwareVersion")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
     }
 }
 
@@ -95,7 +78,7 @@ fn view(address: String, status: LocalStatus<Health>) -> FeederView {
 #[cfg(test)]
 pub(super) fn bindings(cfg: &ts_rs::Config) -> Vec<String> {
     use super::bindings::decl;
-    vec![decl::<ReplacementView>(cfg), decl::<FeederView>(cfg)]
+    vec![decl::<FeederView>(cfg)]
 }
 
 #[cfg(test)]
@@ -137,20 +120,11 @@ mod tests {
     }
 
     #[test]
-    fn status_shows_health() {
-        let status: LocalStatus<Health> = serde_json::from_value(json!({
+    fn status_shows_stock() {
+        let status: LocalStatus = serde_json::from_value(json!({
             "broker_connected": true,
-            "replacement": {
-                "online": true,
-                "stale": false,
-                "age_ms": 1200,
-                "received_at": "2026-10-22T10:00:00Z",
-                "health": {
-                    "build": "4d37c21a00", "bank": 1, "seq": 7, "faults": [],
-                    "clock": { "syncs": 2, "unix_ms": 1792000000000i64 },
-                    "wifi": { "source": "build" }, "transport": { "connects": 1 }
-                }
-            }
+            "device_online": true,
+            "attributes": { "softwareVersion": "1.1.15", "powerType": 1 },
         }))
         .unwrap();
 
@@ -158,9 +132,7 @@ mod tests {
 
         assert_eq!(view["server"], "up");
         assert_eq!(view["broker_connected"], true);
-        let replacement = &view["replacement"];
-        assert_eq!(replacement["health"]["bank"], 1);
-        assert_eq!(replacement["health"]["wifi"]["source"], "build");
-        assert_eq!(replacement["received_at"], "2026-10-22T10:00:00Z");
+        assert_eq!(view["stock_online"], true);
+        assert_eq!(view["stock_version"], "1.1.15");
     }
 }

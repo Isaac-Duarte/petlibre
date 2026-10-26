@@ -152,8 +152,8 @@ pub fn build(repo: &Repo, request: &Request, toolchain: &Path) -> Result<PathBuf
         startup_gpio_clock_policy: when(rust_build, "explicit-enable-v1"),
         startup_flash_handshake_policy: None,
         startup_wifi_policy: when(firstboot, "wifi-gateway-v1"),
-        // No build opens an MQTT session any more: health, requests and
-        // updates go over the firmware's device API.
+        // No build opens an MQTT session: status, requests and updates go
+        // over the firmware's device API.
         startup_transport_policy: None,
         // Updates over the device API, checked against the built-in key.
         startup_update_policy: ota_key.as_ref().map(|_| "device-api-v1".into()),

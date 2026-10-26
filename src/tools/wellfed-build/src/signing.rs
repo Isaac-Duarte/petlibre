@@ -11,7 +11,7 @@
 //! profile against the SDK lock, the manifest's `OTA_All.bin`, and the
 //! recorded audits. It also requires the image to carry the manifest's
 //! startup identity as text. The build ID and the motion policy come from
-//! that verified manifest, never from the caller, and [`Frozen::sign`]
+//! that verified manifest, never from the caller, and [`Frozen::offer`]
 //! refuses a motion image unless the caller names the exact policy it is
 //! attending.
 //!
@@ -19,11 +19,9 @@
 //! A public release needs an offline release key that never sits in a
 //! checkout; this tool does not create or hold one.
 //!
-//! The manifest bytes are `wellfed-core::ota`'s formats, which the firmware
-//! verifies: tests pin them byte for byte. Version 2
-//! (`wellfed_core::ota::offer`) is what the device API takes: it names its
-//! key and its image kind. Version 1 stays only for builds that still fetch
-//! updates over MQTT, until that path is deleted.
+//! The manifest bytes are `wellfed_core::ota::offer`'s version 2 format,
+//! which the firmware verifies and the device API takes: it names its key
+//! and its image kind.
 //!
 //! A statement binds what it allows: a downgrade names the feeder's identity
 //! key, the exact manifest and the floor it was made at; a key statement
@@ -34,7 +32,7 @@ use std::path::Path;
 
 use ed25519_dalek::{Signer, SigningKey};
 use wellfed_core::ota::offer::{self, ImageKind as OfferKind, KeyId, Signed};
-use wellfed_core::ota::{self, MANIFEST_LEN, MARKER, Manifest};
+use wellfed_core::ota::{self, MARKER, Manifest};
 use wellfed_flash::evidence::review::frozen;
 use wellfed_flash::evidence::{Root, write_new};
 use wellfed_flash::writers::development::BANK1;
@@ -214,13 +212,6 @@ impl Frozen {
             .filter(|p| !p.is_empty())
     }
 
-    /// Sign this image as `version` in the version 1 format that builds
-    /// still on MQTT fetch; the result is exactly what they parse.
-    pub fn sign(&self, key: &Key, version: u32, motion: Motion) -> Result<[u8; MANIFEST_LEN]> {
-        self.attended(motion)?;
-        manifest(&key.0, &self.image, version, self.build_id)
-    }
-
     /// Sign this image as `version` for the device API: a version 2
     /// manifest naming `key` and the image's kind.
     pub fn offer(
@@ -262,22 +253,6 @@ impl Frozen {
         }
         Ok(())
     }
-}
-
-/// Sign `container`'s bank contents in `wellfed-core::ota`'s version 1
-/// format.
-fn manifest(
-    key: &SigningKey,
-    container: &[u8],
-    version: u32,
-    build_id: [u8; 32],
-) -> Result<[u8; MANIFEST_LEN]> {
-    let manifest = bank_manifest(container, version, build_id)?;
-    let body = ota::manifest_body(&manifest);
-    let mut out = [0u8; MANIFEST_LEN];
-    out[..body.len()].copy_from_slice(&body);
-    out[body.len()..].copy_from_slice(&key.sign(&body).to_bytes());
-    Ok(out)
 }
 
 /// The manifest fields of `container`'s bank contents, refusing what the
@@ -326,7 +301,7 @@ fn contains(haystack: &[u8], needle: &[u8]) -> bool {
 mod tests {
     use std::fs;
 
-    use wellfed_core::ota::{ManifestError, SECTOR};
+    use wellfed_core::ota::SECTOR;
     use serde_json::json;
 
     use super::*;
@@ -340,19 +315,6 @@ mod tests {
         payload[..8].copy_from_slice(&MARKER);
         image.extend(payload);
         image
-    }
-
-    /// What `wellfed-local ota-sign` wrote for these inputs before signing
-    /// moved here; the firmware verifies these bytes, so they never change.
-    const GOLDEN: &str = "504c4f5441310000070000002c21000001000000bf4259250978564e89539ff7aa5f9ca70b8a6a2a1a332c7ac525a1e1ae8480c1abababababababababababababababababababababababababababababababab15161bed48be30e55ebb3b0b76bd533fce5dc04d2b82bd7615865a06de8699753f082841869bb398becaa1f251e4313c4b500ba5b7045ac05228df7ab3681509";
-
-    #[test]
-    fn manifest_bytes_match_the_former_signer() {
-        let key = SigningKey::from_bytes(&[7; 32]);
-        let image = container(2 * SECTOR + 300, |i| (i * 7 % 251) as u8);
-
-        let signed = manifest(&key, &image, 7, [0xab; 32]).unwrap();
-        assert_eq!(hex::encode(&signed), GOLDEN);
     }
 
     /// A checkout with `private/`, and a frozen build review of `image`
@@ -390,20 +352,22 @@ mod tests {
             (frozen.kind(), frozen.build_id()),
             (ImageKind::Build, BUILD.into())
         );
-        let signed = frozen.sign(&key, 9, Motion::Refused).unwrap();
+        let signed = frozen.offer(&key, 9, Motion::Refused).unwrap();
 
-        let parsed = ota::parse_manifest(&signed, &key.public(), 8).unwrap();
+        let parsed = offer::parse_manifest(&signed).unwrap();
         assert_eq!(
             (
-                parsed.version,
-                parsed.image_len as usize,
-                hex::encode(&parsed.build_id)
+                parsed.manifest.version,
+                parsed.manifest.image_len as usize,
+                hex::encode(&parsed.manifest.build_id),
+                parsed.key_id
             ),
-            (9, image.len() - CONTAINER_HEADER, BUILD.to_string())
-        );
-        assert_eq!(
-            ota::parse_manifest(&signed, &key.public(), 9),
-            Err(ManifestError::Downgrade)
+            (
+                9,
+                image.len() - CONTAINER_HEADER,
+                BUILD.to_string(),
+                key.id()
+            )
         );
 
         use std::os::unix::fs::PermissionsExt;
@@ -490,13 +454,13 @@ mod tests {
 
     #[test]
     fn signing_refuses_images_the_firmware_would_refuse() {
-        let key = SigningKey::from_bytes(&[1; 32]);
         let mut no_marker = container(SECTOR, |_| 0);
         no_marker[CONTAINER_HEADER] = b'0';
-        assert!(manifest(&key, &no_marker, 1, [0; 32]).is_err());
-        assert!(manifest(&key, &container(100, |_| 0), 1, [0; 32]).is_err());
+        assert!(bank_manifest(&no_marker, 1, [0; 32]).is_err());
+        assert!(bank_manifest(&container(100, |_| 0), 1, [0; 32]).is_err());
         let large = container(ota::BANK1_BYTES as usize + 1, |_| 0);
-        assert!(manifest(&key, &large, 1, [0; 32]).is_err());
+        assert!(bank_manifest(&large, 1, [0; 32]).is_err());
+        assert!(bank_manifest(&container(SECTOR, |_| 0), 1, [0; 32]).is_ok());
     }
 
     fn refusal(checkout: &Path, review: &Path) -> String {
@@ -552,12 +516,12 @@ mod tests {
         assert_eq!(frozen.motion_policy(), Some("fw16-pulse-v1"));
 
         for motion in [Motion::Refused, Motion::Attended("fw16-other-v1")] {
-            let error = frozen.sign(&key, 1, motion).unwrap_err().to_string();
+            let error = frozen.offer(&key, 1, motion).unwrap_err().to_string();
             assert!(error.contains("drives the motor"), "{error}");
         }
         assert!(
             frozen
-                .sign(&key, 1, Motion::Attended("fw16-pulse-v1"))
+                .offer(&key, 1, Motion::Attended("fw16-pulse-v1"))
                 .is_ok()
         );
     }
@@ -598,6 +562,6 @@ mod tests {
             (ImageKind::Stock, frozen_review.payload_sha256)
         );
         let key = Key(SigningKey::from_bytes(&[4; 32]));
-        assert!(frozen.sign(&key, 1, Motion::Refused).is_ok());
+        assert!(frozen.offer(&key, 1, Motion::Refused).is_ok());
     }
 }

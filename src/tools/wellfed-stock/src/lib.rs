@@ -2,12 +2,8 @@
 //! rolling back to it need (docs/development/tools-roadmap.md): its MQTT
 //! protocol, the broker it connects to, the setup frame, the image server it
 //! downloads a replacement from, and the ledger that sends each install
-//! command at most once.
-//!
-//! The replacement firmware's MQTT transport is not stock and is not here.
-//! Until it is deleted it shares the server's broker and MQTT session, so
-//! `mqtt::broker::Roles` and `mqtt::Companion` let the caller add it beside
-//! stock without this crate knowing its topics.
+//! command at most once. The replacement firmware speaks no MQTT; its
+//! updates and status go over its device API.
 
 #![forbid(unsafe_code)]
 #![warn(clippy::print_stdout)]

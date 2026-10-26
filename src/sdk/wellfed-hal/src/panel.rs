@@ -1,4 +1,4 @@
-//! The panel's child lock between the transport and the task that owns
+//! The panel's child lock between the device API and the task that owns
 //! the panel.
 //!
 //! The lock itself is firmware policy (`wellfed-feeder`); this module only
@@ -11,7 +11,7 @@
 
 use core::sync::atomic::{AtomicU8, Ordering};
 
-use wellfed_core::transport::{LockFields, LockResult};
+use wellfed_feeder::mailbox::{LockFields, LockResult};
 
 const UNSERVED: u8 = 0;
 const LOCKED: u8 = 1;
@@ -43,7 +43,7 @@ pub fn take() -> Option<bool> {
     }
 }
 
-/// The transport's half: read the lock, or queue a change for the owner.
+/// The device API's half: read the lock, or queue a change for the owner.
 pub fn request(fields: LockFields) -> LockResult {
     let locked = match STATE.load(Ordering::Acquire) {
         LOCKED => true,

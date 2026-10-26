@@ -9,7 +9,7 @@ use wellfed_sdk::hal::sdk;
 
 wellfed_sdk::firmware!(start);
 
-/// Above the diagnostic and transport tasks, so their logging cannot hold
+/// Above the diagnostic tasks, so their logging cannot hold
 /// off the owner lease the supervisor enforces.
 fn start() {
     // SAFETY: the step ignores its context and keeps its state in statics.

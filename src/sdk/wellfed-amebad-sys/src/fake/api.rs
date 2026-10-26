@@ -725,30 +725,6 @@ pub fn current_task() -> usize {
     TASK.with(|task| *task)
 }
 
-/// Fixed synthetic broker settings.
-pub fn transport_config() -> Option<TransportConfig> {
-    Some(FAKE_TRANSPORT)
-}
-
-pub const FAKE_TRANSPORT: TransportConfig = TransportConfig {
-    broker: 0x0a2a_6701,
-    port: 1883,
-    client_id: "wellfed-fw-dev1",
-    username: "wellfed-fw",
-    password: b"0123456789abcdef0123456789abcdef",
-    namespace: "wellfed/1/dev1/",
-    request_key: Some(FAKE_REQUEST_KEY),
-};
-
-pub const FAKE_REQUEST_KEY: [u8; 32] = [0x42; 32];
-
-/// Distinct on every call, like the board's connect-time inputs.
-pub fn entropy() -> [u32; 4] {
-    static CALLS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
-    let call = CALLS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-    [call, uptime_ms(), systimer_ticks(), 0x5eed]
-}
-
 pub fn audio_open(rate_hz: u32) -> bool {
     with(|h| {
         if h.audio_open || h.audio_open_fails || ![8000, 16000, 32000, 48000].contains(&rate_hz) {
@@ -807,62 +783,8 @@ pub fn audio_close() {
     });
 }
 
-pub fn tcp_connect(_ip: u32, _port: u16, timeout_ms: u32) -> Option<i32> {
-    with(|h| {
-        let result = h.tcp_connects.pop_front().flatten();
-        if result.is_none() {
-            h.uptime_ms = h.uptime_ms.wrapping_add(timeout_ms);
-        }
-        result
-    })
-}
-
-#[must_use]
-pub fn tcp_send(socket: i32, data: &[u8]) -> bool {
-    with(|h| {
-        if h.tcp_send_fails {
-            return false;
-        }
-        h.tcp_tx.push((socket, data.to_vec()));
-        true
-    })
-}
-
-pub fn tcp_recv(_socket: i32, buffer: &mut [u8], timeout_ms: u32) -> TcpRecv {
-    with(|h| match h.tcp_rx.pop_front() {
-        None | Some(TcpRecvScript::Timeout) => {
-            h.uptime_ms = h.uptime_ms.wrapping_add(timeout_ms);
-            TcpRecv::Timeout
-        }
-        Some(TcpRecvScript::Closed) => TcpRecv::Closed,
-        Some(TcpRecvScript::Data(mut data)) => {
-            let n = data.len().min(buffer.len());
-            buffer[..n].copy_from_slice(&data[..n]);
-            if n < data.len() {
-                h.tcp_rx.push_front(TcpRecvScript::Data(data.split_off(n)));
-            }
-            TcpRecv::Data(n)
-        }
-    })
-}
-
 pub fn tcp_close(socket: i32) {
     with(|h| h.tcp_closed.push(socket));
-}
-
-pub fn tcp_listen(_port: u16) -> Option<i32> {
-    with(|h| (!h.tcp_listen_fails).then_some(100))
-}
-
-/// Takes the next scripted connection; otherwise the wait passes.
-pub fn tcp_accept(_listener: i32, timeout_ms: u32) -> Option<i32> {
-    with(|h| {
-        let socket = h.tcp_accepts.pop_front();
-        if socket.is_none() {
-            h.uptime_ms = h.uptime_ms.wrapping_add(timeout_ms);
-        }
-        socket
-    })
 }
 
 pub fn uptime_ms() -> u32 {

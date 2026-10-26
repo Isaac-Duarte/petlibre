@@ -32,7 +32,7 @@
 use ed25519_dalek::{Signature, VerifyingKey};
 use sha2::{Digest, Sha256};
 
-use super::{BANK1_BYTES, MAGIC as V1_MAGIC, Manifest, SECTOR_BYTES};
+use super::{BANK1_BYTES, Manifest, RETIRED_MAGIC, SECTOR_BYTES};
 
 pub const MAGIC: [u8; 8] = *b"PLOTA2\0\0";
 pub const KEY_ADD_MAGIC: [u8; 8] = *b"PLKEY1\0\0";
@@ -320,7 +320,7 @@ fn verify(key: &[u8; 32], body: &[u8], signature: &[u8]) -> bool {
 /// The manifest's fields, without checking its signature: for a client
 /// showing what it holds, and the first step of [`admit_offer`].
 pub fn parse_manifest(bytes: &[u8]) -> Result<Signed, OfferError> {
-    if bytes.len() >= 8 && bytes[..8] == V1_MAGIC {
+    if bytes.len() >= 8 && bytes[..8] == RETIRED_MAGIC {
         return Err(OfferError::Version);
     }
     if bytes.len() != MANIFEST_LEN {

@@ -6,11 +6,6 @@
 //! session; while disconnected, requests are still answered but no command
 //! is queued.
 //!
-//! The replacement firmware's transport shares this one session until it is
-//! deleted: a [`Companion`] adds its topics to the subscription, takes the
-//! publishes on them and fills its part of the status, without this module
-//! knowing its topics.
-//!
 //! The broker this client and the feeder connect to is `broker`, with
 //! `compat` normalizing the stock firmware's CONNECT in front of it.
 
@@ -21,7 +16,7 @@ use std::{sync::Arc, time::Duration};
 
 use anyhow::{Result, ensure};
 use chrono::Utc;
-use rumqttc::{AsyncClient, Event, MqttOptions, Packet, Publish, QoS, SubscribeFilter};
+use rumqttc::{AsyncClient, Event, MqttOptions, Packet, Publish, QoS};
 use tokio::sync::{mpsc, oneshot, watch};
 use tracing::{info, warn};
 
@@ -34,52 +29,17 @@ use crate::{
 
 pub type TrialResult = std::result::Result<ota::trial::Record, Rejection>;
 
-/// An API request; `X` is the companion's own.
-pub enum Request<X> {
+/// An API request.
+pub enum Request {
     OtaTrial(
         ota::trial::Input,
         Option<ota::image::Lease>,
         oneshot::Sender<TrialResult>,
     ),
     ResolveTrial(ota::trial::ResolveInput, oneshot::Sender<TrialResult>),
-    Companion(X),
-}
-
-/// What shares the session beside stock: its own topics, outside stock's
-/// namespace, and its own requests, which never send stock a command.
-pub trait Companion: Send + 'static {
-    /// The health it reports in the status document.
-    type Health: Clone + Send + Sync + 'static;
-    type Request: Send + 'static;
-
-    /// Its topics, subscribed in the session's one SUBSCRIBE beside stock's.
-    fn filters(&self) -> Vec<SubscribeFilter>;
-
-    /// Take a publish on its own topics, answering on `client`; false leaves
-    /// the publish to stock. It reaches the ledger only through `evidence`.
-    fn incoming(
-        &mut self,
-        client: &AsyncClient,
-        publish: &Publish,
-        evidence: Evidence<'_, Self::Health>,
-    ) -> bool;
-
-    /// Fill its part of the status the API serves.
-    fn status(&self, status: &mut Status<Self::Health>);
-
-    /// Answer one of its requests. Called with or without a broker session.
-    fn request(&mut self, request: Self::Request);
-}
-
-/// What a companion may tell the ledger: only the evidence rules that take
-/// its word, never a command or a trial of its own.
-pub struct Evidence<'a, H>(&'a mut Controller<H>);
-
-impl<H> Evidence<'_, H> {
-    /// The replacement published online health ([`Controller::replacement_healthy`]).
-    pub fn replacement_healthy(self, now: chrono::DateTime<Utc>) -> Result<()> {
-        self.0.replacement_healthy(now)
-    }
+    /// The operator's client saw the replacement answer the device API
+    /// ([`Controller::replacement_answered`]).
+    TrialAnswered(ota::trial::ResolveInput, oneshot::Sender<TrialResult>),
 }
 
 /// QoS 0, no retain, no offline session, and a new client on reconnect: a
@@ -95,31 +55,21 @@ fn publish(client: &AsyncClient, reply: Reply) -> Result<()> {
 }
 
 /// The actor's state that outlives one broker connection.
-struct Actor<C: Companion> {
+struct Actor {
     config: Arc<Config>,
-    controller: Controller<C::Health>,
-    status: watch::Sender<Status<C::Health>>,
-    /// Survives reconnects with the actor.
-    companion: C,
+    controller: Controller,
+    status: watch::Sender<Status>,
 }
 
-impl<C: Companion> Actor<C> {
-    /// The controller's status plus the companion's part.
+impl Actor {
     fn publish_status(&self) {
-        let mut value = self.controller.status.clone();
-        self.companion.status(&mut value);
-        self.status.send_replace(value);
+        self.status.send_replace(self.controller.status.clone());
     }
 
-    /// One SUBSCRIBE, so one SUBACK starts the session.
     async fn subscribe(&self, client: &AsyncClient) -> Result<()> {
-        let mut filters = vec![SubscribeFilter::new(
-            self.config.topic("+/post"),
-            QoS::AtLeastOnce,
-        )];
-        filters.extend(self.companion.filters());
-
-        client.subscribe_many(filters).await?;
+        client
+            .subscribe(self.config.topic("+/post"), QoS::AtLeastOnce)
+            .await?;
         info!("local MQTT server connected");
         Ok(())
     }
@@ -148,13 +98,6 @@ impl<C: Companion> Actor<C> {
     fn incoming(&mut self, client: &AsyncClient, publish: &Publish) -> Result<()> {
         if publish.retain {
             warn!("ignored retained device message");
-            return Ok(());
-        }
-
-        if self
-            .companion
-            .incoming(client, publish, Evidence(&mut self.controller))
-        {
             return Ok(());
         }
 
@@ -203,7 +146,7 @@ impl<C: Companion> Actor<C> {
         Ok(Ok(record))
     }
 
-    fn request(&mut self, client: &AsyncClient, request: Request<C::Request>) -> Result<()> {
+    fn request(&mut self, client: &AsyncClient, request: Request) -> Result<()> {
         let now = Utc::now();
         match request {
             Request::OtaTrial(input, lease, response) => {
@@ -234,7 +177,7 @@ impl<C: Companion> Actor<C> {
 
     /// Requests that send nothing, or (while disconnected) are refused or
     /// recorded without a command: nothing accumulates for a later session.
-    fn request_without_device(&mut self, request: Request<C::Request>) {
+    fn request_without_device(&mut self, request: Request) {
         let now = Utc::now();
         match request {
             Request::OtaTrial(input, lease, response) => {
@@ -248,15 +191,15 @@ impl<C: Companion> Actor<C> {
             Request::ResolveTrial(input, response) => {
                 let _ = response.send(self.controller.resolve_trial(input, now));
             }
-            Request::Companion(request) => self.companion.request(request),
+
+            Request::TrialAnswered(input, response) => {
+                let _ = response.send(self.controller.replacement_answered(input, now));
+            }
         }
     }
 
     /// One broker connection, until it drops or the request channel closes.
-    async fn session(
-        &mut self,
-        requests: &mut mpsc::Receiver<Request<C::Request>>,
-    ) -> Result<Session> {
+    async fn session(&mut self, requests: &mut mpsc::Receiver<Request>) -> Result<Session> {
         let config = &self.config;
         let mut options = MqttOptions::new(
             config.server_client_id(),
@@ -298,10 +241,7 @@ impl<C: Companion> Actor<C> {
 
     /// Serve API requests between connections without accumulating commands
     /// for a future session; the controller refuses a new trial while offline.
-    async fn between_sessions(
-        &mut self,
-        requests: &mut mpsc::Receiver<Request<C::Request>>,
-    ) -> Session {
+    async fn between_sessions(&mut self, requests: &mut mpsc::Receiver<Request>) -> Session {
         let delay = tokio::time::sleep(Duration::from_secs(2));
         tokio::pin!(delay);
         loop {
@@ -323,18 +263,16 @@ enum Session {
     Closed,
 }
 
-pub async fn run<C: Companion>(
+pub async fn run(
     config: Arc<Config>,
-    controller: Controller<C::Health>,
-    mut requests: mpsc::Receiver<Request<C::Request>>,
-    status: watch::Sender<Status<C::Health>>,
-    companion: C,
+    controller: Controller,
+    mut requests: mpsc::Receiver<Request>,
+    status: watch::Sender<Status>,
 ) -> Result<()> {
     let mut actor = Actor {
         config,
         controller,
         status,
-        companion,
     };
 
     loop {

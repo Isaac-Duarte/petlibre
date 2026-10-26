@@ -13,7 +13,6 @@ publish.workspace = true
 [dependencies]
 anyhow = { workspace = true, optional = true }
 axum = { workspace = true, optional = true }
-chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 clap = { workspace = true, optional = true }
 ctrlc = { workspace = true, optional = true }
 futures-util = { version = "0.3", default-features = false, optional = true }
@@ -27,6 +26,7 @@ thiserror.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "net", "time", "macros"], optional = true }
 
 [dev-dependencies]
+chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 wellfed-formats = { workspace = true, features = ["ts"] }
 tempfile.workspace = true
 tower = { version = "0.5", features = ["util"] }

@@ -20,8 +20,7 @@ use wellfed_board_plaf103::pins::{self, IR_PA_BIT, IR_PB_BIT, MOTOR_MASK};
 
 use super::{
     AUDIO_PAGE_SAMPLES, AUDIO_PAGES, Advertising, BleEvent, BlePoll, BleService, BleStats,
-    GpioRouting, Irq, Isr, LpClock, SECTOR_BYTES, Systick, TaskStep, TcpRecv, TransportConfig,
-    WifiEvent, WifiPoll,
+    GpioRouting, Irq, Isr, LpClock, SECTOR_BYTES, Systick, TaskStep, WifiEvent, WifiPoll,
 };
 
 pub const GPIOA_IRQ: usize = 4;
@@ -42,14 +41,6 @@ pub struct TimerRegisters {
     pub dier: u32,
     pub arr: u32,
     pub sr: u32,
-}
-
-/// One scripted `tcp_recv` result.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum TcpRecvScript {
-    Data(Vec<u8>),
-    Timeout,
-    Closed,
 }
 
 #[derive(Clone)]
@@ -85,17 +76,12 @@ pub struct Hardware {
     /// Internal channel 10: the chip's own supply measurement.
     pub supply_adc: u16,
 
-    /// TCP script: each connect takes the next result (default: refused).
-    pub tcp_connects: VecDeque<Option<i32>>,
-    /// Each receive takes the next item; an empty queue is a timeout.
-    pub tcp_rx: VecDeque<TcpRecvScript>,
-    /// Every send, in order, with its socket.
-    pub tcp_tx: Vec<(i32, Vec<u8>)>,
+    /// Every socket closed, in order.
     pub tcp_closed: Vec<i32>,
+    /// Every send fails.
     pub tcp_send_fails: bool,
+    /// Every listener fails to open.
     pub tcp_listen_fails: bool,
-    /// Connections `tcp_accept` hands out, in order.
-    pub tcp_accepts: VecDeque<i32>,
     /// Device API sockets: connections waiting to be accepted, the
     /// bytes each has for the feeder, what the feeder sent on each, the
     /// peers that closed, and how much one send may take.
@@ -255,13 +241,9 @@ impl Default for Hardware {
             battery_adc: 2800,
             supply_adc: 3000,
 
-            tcp_connects: VecDeque::new(),
-            tcp_rx: VecDeque::new(),
-            tcp_tx: Vec::new(),
             tcp_closed: Vec::new(),
             tcp_send_fails: false,
             tcp_listen_fails: false,
-            tcp_accepts: VecDeque::new(),
             api_waiting: VecDeque::new(),
             api_rx: std::collections::BTreeMap::new(),
             api_tx: std::collections::BTreeMap::new(),

@@ -7,12 +7,8 @@
 //! waits for the ring to drain and closes everything again. The slot stays
 //! taken until then, so a second request is `busy`, never queued behind. The
 //! `sound` setting mutes requests and its `volume` sets loudness.
-//! Nothing here touches the motor, the emitters or flash, and the transport
-//! only reaches [`request`].
-//!
-//! The speaker variant's network stream (`stream.rs`) shares the output: it
-//! takes the same slot with [`claim_stream`], so a tune and a stream never
-//! open the codec together.
+//! Nothing here touches the motor, the emitters or flash, and the device
+//! API only reaches [`request`].
 
 use core::fmt;
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
@@ -20,7 +16,7 @@ use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use wellfed_core::deadline_passed;
 use wellfed_core::named_enum;
 use wellfed_core::tone::{Player, SAMPLE_RATE, Tune};
-use wellfed_core::transport::PlayResult;
+pub use wellfed_feeder::mailbox::PlayResult;
 
 use crate::sdk;
 use crate::settings;
@@ -39,22 +35,10 @@ const DRAIN_MS: u32 = 400;
 const LATE_MS: u32 = 1000;
 
 const EMPTY: u8 = 0;
-/// The slot while a network stream holds the output.
-const STREAM: u8 = u8::MAX;
 
-/// `EMPTY`, `STREAM`, or the queued or playing tune's code + 1.
+/// `EMPTY`, or the queued or playing tune's code + 1.
 static SLOT: AtomicU8 = AtomicU8::new(EMPTY);
 static AMP_READY: AtomicBool = AtomicBool::new(false);
-
-/// Take the output for a stream; false while a tune is queued or playing.
-pub fn claim_stream() -> bool {
-    SLOT.compare_exchange(EMPTY, STREAM, Ordering::AcqRel, Ordering::Acquire)
-        .is_ok()
-}
-
-pub fn release_stream() {
-    let _ = SLOT.compare_exchange(STREAM, EMPTY, Ordering::AcqRel, Ordering::Acquire);
-}
 
 /// Open the codec at `rate_hz`, then enable the amplifier; false (amplifier
 /// off) when the codec would not open.
@@ -80,7 +64,7 @@ pub fn close_output() {
     sdk::audio_close();
 }
 
-/// The transport's half: queue `tune` unless muted or busy.
+/// The device API's half: queue `tune` unless muted or busy.
 pub fn request(tune: Tune) -> PlayResult {
     let Some(view) = settings::current() else {
         return PlayResult::Busy;

@@ -20,13 +20,13 @@ use wellfed_core::mdns::{self, Destination, Responder};
 use wellfed_core::ota::install::Phase;
 use wellfed_core::ota::offer::{KeyStatement, key_id};
 use wellfed_core::tone::Tune;
-use wellfed_core::transport::{
-    LockFields, LockResult, PlayResult, SettingsFields, SettingsResult, TimeFields, TimeResult,
-    WifiResult, WifiSource,
-};
 use wellfed_feeder::api::{
     self as server, Device, EventRead, KeyChange, KeyOutcome, Pass, SESSIONS, Server, UpdateAnswer,
     UpdateKeyChange, UpdateRequest,
+};
+use wellfed_feeder::mailbox::{
+    LockFields, LockResult, PlayResult, SettingsFields, SettingsResult, TimeFields, TimeResult,
+    WifiResult, WifiSource,
 };
 use wellfed_feeder::pairing::{self, Pairing};
 use wellfed_feeder::store::events::{BODY_BYTES, Read};

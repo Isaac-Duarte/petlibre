@@ -1,6 +1,6 @@
 # FW21 wall clock and missed-time policy
 
-Status: implemented and host-tested (`wellfed-core/src/clock/wall.rs`, `wellfed-hal/src/clock.rs`, the server's `replacement/mod.rs`). Hardware evidence is recorded on the [board](../../FIRMWARE_BOARD.md).
+Status: implemented and host-tested (`wellfed-core/src/clock/wall.rs`, `wellfed-hal/src/clock.rs`). Hardware evidence is recorded on the [board](../../FIRMWARE_BOARD.md). The sync now arrives as the device API's `TimeSync` request inside a client's Noise session ([device API](device-api.md)); the FW08 `time` request below, its signing and its health report are the MQTT era's, deleted with that transport (in Git history).
 
 ## Source of time
 
@@ -14,7 +14,7 @@ The feeder has no route to the internet, and the bench host's firewall allows on
 - **When:** only to firmware whose health has a `clock` object (pre-FW21 builds never get one). The server sends it when health shows the clock unsynced (at most once a minute) and every 10 minutes after a sync.
 - **Reply:** `{"id":…,"op":"time","ok":true,"jump_ms":N|null}`, or `ok:false` with `error` (`time`, `offset` or `next_change`) for a refused sync. The UART logs `PLTIM1 sync ok=1 kind=first|step|jump delta_ms=N offset_s=N next_change_s=N` or `PLTIM1 sync ok=0 error=…`.
 
-The request parser accepts integers only for `op:"time"`, and only exactly the four fields, at most 15 digits each (plus `seq` on a signed request). Setting the clock is the one thing a request may change, and only with a valid signature. `cargo xtask check-repository` lets the KM4 transport name `clock::sync` and nothing else new.
+The request parser accepts integers only for `op:"time"`, and only exactly the four fields, at most 15 digits each (plus `seq` on a signed request). Setting the clock is the one thing a request may change, and only with a valid signature. `cargo xtask check-repository` let the KM4 transport name `clock::sync` and nothing else new.
 
 ## The clock
 
@@ -23,7 +23,7 @@ The request parser accepts integers only for `op:"time"`, and only exactly the f
 - **Refused syncs** leave the clock unchanged: a time before 2026 or after 2099, an offset outside −12 h to +14 h, or a next change that is not in the future.
 - **Jumps:** a sync within 2 s of the running estimate is a step; anything else is a jump, logged with its signed size.
 
-Health reports `"clock":{"syncs":N,"unix_ms":…,"offset_s":…,"uncertainty_ms":…}` while valid and `"clock":{"syncs":N}` otherwise. The health payload limit went from 512 to 576 bytes on both sides to fit it (now 704 with the request nonce and FW14's `power`; see [health message](local-transport.md#health-message)).
+Health reported `"clock":{"syncs":N,"unix_ms":…,"offset_s":…,"uncertainty_ms":…}` while valid and `"clock":{"syncs":N}` otherwise; the device API's status carries the reading as `clock_ms`. The health payload limit went from 512 to 576 bytes on both sides to fit it (now 704 with the request nonce and FW14's `power`; see [health message](local-transport.md#health-message)).
 
 ## Missed-meal rule (for FP03)
 
@@ -41,4 +41,4 @@ So a forward jump, a restart or a long unsynced spell runs only occurrences that
 
 ## Trust
 
-The channel is plaintext MQTT on the WPA2 hotspot (FW08). A `time` request must therefore be signed with the per-device request key and name the current session's nonce ([authenticated requests](local-transport.md#authenticated-requests)), and an unsigned one is refused (physical, October 22). The time itself is still visible to anyone on the hotspot, which reveals nothing.
+The FW08 channel was plaintext MQTT on the WPA2 hotspot, so a `time` request had to be signed with the per-device request key and name the current session's nonce ([authenticated requests](local-transport.md#authenticated-requests)), and an unsigned one was refused (physical, October 22). The device API's session now carries the sync encrypted, from an enrolled client. The time itself was visible to anyone on the hotspot, which reveals nothing.

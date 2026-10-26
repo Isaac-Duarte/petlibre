@@ -23,7 +23,7 @@
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
 use wellfed_core::store::slot::SlotIo;
-use wellfed_core::transport::{WifiResult, WifiSource, WifiView};
+use wellfed_feeder::mailbox::{WifiResult, WifiSource, WifiView};
 use wellfed_feeder::store::net::{Credentials, NetStore};
 
 use crate::cell::TaskCell;
@@ -49,7 +49,7 @@ pub fn choose(stored: bool, failures: u32, joined_once: bool) -> WifiSource {
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 enum Hand {
-    /// Free for the transport to claim.
+    /// Free for the device API to claim.
     Empty = 0,
     /// The claimant is writing the change.
     Filling = 1,

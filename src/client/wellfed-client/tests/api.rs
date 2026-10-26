@@ -12,13 +12,13 @@ use wellfed_client::connection::{
 };
 use wellfed_core::buttons::{Button, Buttons, Gesture};
 use wellfed_core::tone::Tune;
-use wellfed_core::transport::{
-    LockResult, PlayResult, SettingsFields, SettingsResult, SettingsView, TimeFields, TimeResult,
-    WifiResult, WifiSource, WifiView,
-};
 use wellfed_feeder::api::{
     Device, EventRead, KeyChange, KeyOutcome, Pass, Reason, Record, SESSIONS, Server, UpdateAnswer,
     UpdateKeyChange, UpdateRequest,
+};
+use wellfed_feeder::mailbox::{
+    LockResult, PlayResult, SettingsFields, SettingsResult, SettingsView, TimeFields, TimeResult,
+    WifiResult, WifiSource, WifiView,
 };
 use wellfed_feeder::pairing::{Config, Event as PairingEvent, Pairing};
 use wellfed_feeder::panel::Lock;

@@ -1,23 +1,27 @@
-//! The update path's parsers: any bytes as a manifest, as `ota/get` and
-//! `ota/data` messages, and as chunks to a writer.
+//! The update path's parsers: any bytes as a version 2 manifest an offer
+//! carries, and as chunks to a writer.
 #![no_main]
 
-use wellfed_core::ota::{
-    MANIFEST_LEN, Manifest, Writer, decode_data, decode_get, encode_get, parse_manifest,
-};
+use wellfed_core::ota::offer::{self, Context, KeyRing};
+use wellfed_core::ota::{Manifest, Writer};
 
 libfuzzer_sys::fuzz_target!(|data: &[u8]| {
-    // No signer holds this key's secret, so nothing may parse.
-    assert!(parse_manifest(data, &[0x5a; 32], 0).is_err());
-    if let Some(head) = data.get(..MANIFEST_LEN) {
-        assert!(parse_manifest(head, &[0x5a; 32], 0).is_err());
-    }
-
-    if let Some((part, offset, len)) = decode_get(data) {
-        assert_eq!(encode_get(part, offset, len).as_slice(), data);
-    }
-    if let Some(chunk) = decode_data(data) {
-        assert_eq!(chunk.bytes.len() + 10, data.len());
+    // No signer holds this key's secret, so nothing may be admitted.
+    let built_in = [[0x5a; 32]];
+    let context = Context {
+        ring: KeyRing {
+            built_in: &built_in,
+            added: None,
+            enrolled: &[],
+            revoked: &[],
+        },
+        floor: 0,
+        device: [0; 32],
+        running: None,
+    };
+    assert!(offer::admit_offer(data, None, &context).is_err());
+    if let Some(head) = data.get(..offer::MANIFEST_LEN) {
+        assert!(offer::admit_offer(head, None, &context).is_err());
     }
 
     // Chunks: each piece's first two bytes pick its offset on the grid.

@@ -4,9 +4,9 @@
 //! saved input.
 //!
 //! `check-repository` checks local documentation links, portable repository
-//! inputs, that no Python returns under `src/`, and the transport
-//! isolation rule. It is a maintenance check, not a secret
-//! scanner or a licensing audit.
+//! inputs, that no Python returns under `src/`, and the source rules (raw
+//! output writers only through the HAL's owners, no board card ids). It is
+//! a maintenance check, not a secret scanner or a licensing audit.
 
 #![forbid(unsafe_code)]
 
@@ -30,7 +30,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Task {
-    /// Documentation links, tool dependencies, portable inputs, transport isolation.
+    /// Documentation links, tool dependencies, portable inputs, source rules.
     CheckRepository,
     /// One bounded libFuzzer run of a network-parser target (needs cargo-fuzz).
     Fuzz {

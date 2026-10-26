@@ -15,7 +15,7 @@ use wellfed_core::ota::install::{IDLE_MS, Phase, Progress, Refused, Stop};
 use wellfed_core::ota::offer::{
     self, ImageKind, KeyError, KeyStatement, OfferError, Signed, StatementError, key_id,
 };
-use wellfed_core::ota::{self as core_ota, MARKER, MAX_CHUNK, Manifest, SECTOR};
+use wellfed_core::ota::{MARKER, MAX_CHUNK, Manifest, SECTOR};
 use wellfed_core::store::slot::SlotIo;
 use wellfed_core::store::update::{Bank0, Candidate, State, UpdateStore};
 use wellfed_hal::flash::park::{self, Mmio};
@@ -600,8 +600,8 @@ fn without_a_built_in_key_or_with_another_signer_nothing_installs() {
 
     // A version 1 manifest is the wrong length for the mailbox, and a
     // version 1 magic is refused by the check.
-    let mut v1 = vec![0; core_ota::MANIFEST_LEN];
-    v1[..8].copy_from_slice(&core_ota::MAGIC);
+    let mut v1 = vec![0; 148];
+    v1[..8].copy_from_slice(b"PLOTA1\0\0");
     assert_eq!(
         Request::offer(&v1, None, DEVICE),
         Err(Refused::Offer(OfferError::Length))

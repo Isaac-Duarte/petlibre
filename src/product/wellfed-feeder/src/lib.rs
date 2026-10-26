@@ -8,6 +8,7 @@
 
 pub mod api;
 pub mod feed;
+pub mod mailbox;
 pub mod pairing;
 pub mod panel;
 pub mod setup;

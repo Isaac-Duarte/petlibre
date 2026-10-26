@@ -84,9 +84,8 @@ enum Command {
         #[arg(long, default_value = signing::KEY_PATH)]
         output: PathBuf,
     },
-    /// Sign a frozen review's image as an update manifest, refusing an
-    /// image that differs from its review: version 2 for the device API,
-    /// or version 1 for builds that still fetch updates over MQTT.
+    /// Sign a frozen review's image as a version 2 update manifest for the
+    /// device API, refusing an image that differs from its review.
     Sign {
         #[arg(long, default_value = signing::KEY_PATH)]
         key: PathBuf,
@@ -104,9 +103,6 @@ enum Command {
         /// New file for the signed manifest.
         #[arg(long)]
         output: PathBuf,
-        /// The manifest format.
-        #[arg(long, value_enum, default_value_t = Format::Device)]
-        format: Format,
     },
     /// Sign a downgrade statement: the feeder with this identity key may
     /// install this version 2 manifest while its floor is `floor`. Stock
@@ -145,15 +141,6 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
-}
-
-/// Which manifest `sign` writes.
-#[derive(Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
-enum Format {
-    /// Version 2, which the device API takes.
-    Device,
-    /// Version 1, for builds still fetching updates over MQTT.
-    Mqtt,
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -276,7 +263,6 @@ fn run(command: Command) -> Result<()> {
             version,
             attended_motion,
             output,
-            format,
         } => {
             let motion = attended_motion
                 .as_deref()
@@ -284,10 +270,7 @@ fn run(command: Command) -> Result<()> {
             let (key, output) = (repo.root.join(key), repo.root.join(output));
             let frozen = Frozen::open(&repo.root, &repo.root.join(review))?;
             let key = Key::load(&key)?;
-            let manifest = match format {
-                Format::Device => frozen.offer(&key, version, motion)?.to_vec(),
-                Format::Mqtt => frozen.sign(&key, version, motion)?.to_vec(),
-            };
+            let manifest = frozen.offer(&key, version, motion)?;
             wellfed_flash::evidence::write_new(&output, &manifest)?;
             println!(
                 "Signed version {version} of build {} in {}",

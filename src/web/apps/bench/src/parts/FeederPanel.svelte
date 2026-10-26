@@ -1,16 +1,11 @@
 <script lang="ts">
-  // The feeder as the local server last heard it. The page never asks the
-  // feeder itself; this is the server's health record.
-  import { Badge, Command, Empty, Kv, LiveDot, Panel, clockTime, shortHash, CopyButton } from "@wellfed/ui";
+  // Stock as the local server last heard it. The page never asks the feeder
+  // itself; the replacement firmware speaks no MQTT, so the server hears
+  // only stock, while it installs a replacement or after a rollback.
+  import { Command, Empty, Kv, LiveDot, Panel } from "@wellfed/ui";
   import { app } from "../lib/bench.svelte";
 
   const feeder = $derived(app.feeder);
-
-  function ageText(ms: number | null): string {
-    if (ms === null) return "no health yet";
-    const s = Math.round(ms / 1000);
-    return s < 90 ? `${s} s ago` : `${Math.round(s / 60)} min ago`;
-  }
 </script>
 
 <Panel title="Feeder">
@@ -22,7 +17,7 @@
     <Empty title="Asking the local server" />
   {:else if feeder.server === "unconfigured"}
     <Empty title="No local server configured">
-      The page reads the feeder through <code>wellfed-local serve</code>, configured in
+      The page reads stock through <code>wellfed-local serve</code>, configured in
       <code>{feeder.config}</code>.
     </Empty>
   {:else if feeder.server === "down"}
@@ -31,56 +26,22 @@
       <span class="headline">Server not running</span>
     </div>
     <p class="hint">
-      Nothing answers on <code>{feeder.address}</code>. An integration run starts its own server; to watch the feeder
-      outside one:
+      Nothing answers on <code>{feeder.address}</code>. An integration run starts its own server; to watch stock outside
+      one:
     </p>
     <Command command="wellfed-local serve --config private/server.json" />
-  {:else if !feeder.replacement}
-    <Empty title="Server up, no replacement-firmware role"
-      >This server does not track the replacement firmware's health.</Empty
-    >
   {:else}
-    {@const r = feeder.replacement}
-    {@const h = r.health}
-    {@const tone = r.online && !r.stale ? "pass" : r.online ? "warn" : "fail"}
     <div class="state">
-      <LiveDot {tone} pulse={tone === "pass"} />
-      <span class="headline">{r.online ? (r.stale ? "Online, health stale" : "Online") : "Offline"}</span>
-      <span class="age">{ageText(r.age_ms)}</span>
+      <LiveDot tone={feeder.stock_online ? "pass" : "muted"} pulse={feeder.stock_online} />
+      <span class="headline">{feeder.stock_online ? "Stock online" : "No stock telemetry"}</span>
     </div>
-
-    {#if h}
-      <div class="build">
-        <span class="label">Build</span>
-        <code class="hash" title={h.build}>{shortHash(h.build, 16)}</code>
-        <CopyButton text={h.build} label="Copy ID" />
-      </div>
-
-      {#if h.faults.length}
-        <ul class="faults" aria-label="Faults">
-          {#each h.faults as fault (fault)}<li><Badge tone="fail" label={fault} /></li>{/each}
-        </ul>
-      {/if}
-
-      <Kv
-        entries={[
-          ["Bank", h.bank],
-          ["Health sequence", h.seq],
-          ["Faults", h.faults.length ? h.faults.length : "none"],
-          ["Wi-Fi credentials", h.wifi.source],
-          ["Transport connects", h.transport.connects],
-          [
-            "Clock",
-            h.clock
-              ? h.clock.unix_ms
-                ? `${clockTime(h.clock.unix_ms / 1000)}, ${h.clock.syncs} syncs`
-                : "not set"
-              : "not reported",
-          ],
-          ["Broker", feeder.broker_connected ? "connected" : "not connected"],
-        ]}
-      />
-    {/if}
+    <p class="hint">The replacement firmware answers its device API, not this server.</p>
+    <Kv
+      entries={[
+        ["Stock version", feeder.stock_version ?? "not reported"],
+        ["Broker", feeder.broker_connected ? "connected" : "not connected"],
+      ]}
+    />
   {/if}
 </Panel>
 
@@ -94,40 +55,9 @@
     font-size: var(--text-md);
     font-weight: 600;
   }
-  .age {
-    margin-left: auto;
-    color: var(--color-text-muted);
-    font-size: var(--text-sm);
-  }
   .hint {
     color: var(--color-text-muted);
     font-size: var(--text-sm);
     margin: var(--space-2) 0 var(--space-3);
-  }
-  .build {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    margin: var(--space-4) 0;
-    padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
-    background: var(--color-sunken);
-    border-radius: var(--radius-control);
-  }
-  .build .label {
-    color: var(--color-text-muted);
-    font-size: var(--text-sm);
-  }
-  .hash {
-    font-size: var(--text-md);
-    letter-spacing: 0.02em;
-    margin-right: auto;
-  }
-  .faults {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    margin: 0 0 var(--space-3);
-    padding: 0;
-    list-style: none;
   }
 </style>

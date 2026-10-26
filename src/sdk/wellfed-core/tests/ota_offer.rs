@@ -9,7 +9,7 @@
 
 use ed25519_dalek::{Signer, SigningKey};
 use wellfed_core::ota::offer::*;
-use wellfed_core::ota::{self, BANK1_BYTES, MARKER, Manifest, SECTOR, SECTOR_BYTES, image};
+use wellfed_core::ota::{BANK1_BYTES, MARKER, Manifest, SECTOR, SECTOR_BYTES, image};
 use proptest::prelude::*;
 
 const DEVICE: [u8; 32] = [0xd0; 32];
@@ -197,8 +197,9 @@ fn version_one_bank_size_kind_and_the_running_build_are_refused() {
     let built_in = [public(&k.bench)];
     let ctx = context(&built_in, &[], &[], 0);
 
-    let mut v1 = vec![0; ota::MANIFEST_LEN];
-    v1[..8].copy_from_slice(&ota::MAGIC);
+    // The retired version 1 manifest: 148 bytes behind its own magic.
+    let mut v1 = vec![0; 148];
+    v1[..8].copy_from_slice(b"PLOTA1\0\0");
     assert_eq!(admit_offer(&v1, None, &ctx), Err(OfferError::Version));
     assert_eq!(
         admit_offer(&[0; MANIFEST_LEN - 1], None, &ctx),

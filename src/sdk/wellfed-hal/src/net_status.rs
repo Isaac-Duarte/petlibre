@@ -22,7 +22,7 @@ static CHECK_LOSSES: AtomicU32 = AtomicU32::new(0);
 static LAST_LOSS: AtomicU32 = AtomicU32::new(0);
 /// [`wellfed_core::liveness::Liveness::live`] of the current join.
 static LIVE: AtomicBool = AtomicBool::new(false);
-/// Bumped at every join and loss: a transport opened in an older generation
+/// Bumped at every join and loss: a connection opened in an older generation
 /// rides on a link that has since gone away.
 static GENERATION: AtomicU32 = AtomicU32::new(0);
 

@@ -1,7 +1,7 @@
 //! The firmware's UART records, as the host tools read them back.
 //!
 //! Every subsystem reports on the UART as `PL<tag><n> <first> key=value …`
-//! lines (`PLMQT1 request op=ping ok=1`). SDK output shares the port, so a
+//! lines (`PLBLE1 request op=wifi ok=1`). SDK output shares the port, so a
 //! record can start mid-line or follow another one on the same line. The
 //! firmware writes the bodies with `core::fmt` (each module's `describe`);
 //! the bench reads them with this parser, and `wellfed-hal`'s record
@@ -18,11 +18,9 @@ pub mod tag {
     pub const CONFIRM: &str = "PLCNF1";
     /// Offer check: `offer=1 same=1`, `give_way=1 version=…`.
     pub const WATCH: &str = "PLWCH1";
-    /// Recovery-role updater: `manifest`, `progress sectors=N/T`,
+    /// Bank 0's update stage: `manifest`, `progress sectors=N/T`,
     /// `activated`, `error stage=…`.
     pub const UPDATE: &str = "PLOTA1";
-    /// Health transport: `connect`, `ready`, `request op=… ok=…`, `closed`.
-    pub const TRANSPORT: &str = "PLMQT1";
     /// Settings writer: `saved generation=…`, `net saved stored=…`.
     pub const SETTINGS: &str = "PLCFG1";
     /// Wall clock: `sync ok=…`.
@@ -34,7 +32,7 @@ pub mod tag {
     pub const PANIC: &str = "PLPNC1";
 }
 
-/// One record: its tag (`PLMQT1`), first word, and `key=value` fields.
+/// One record: its tag (`PLCFG1`), first word, and `key=value` fields.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Record<'a> {
     pub tag: &'a str,
@@ -43,7 +41,7 @@ pub struct Record<'a> {
 }
 
 /// The length of the tag starting `text`, with its space: `PL`, two to four
-/// uppercase letters, a digit, then a space (`PLFW1 `, `PLMQT1 `).
+/// uppercase letters, a digit, then a space (`PLFW1 `, `PLCFG1 `).
 fn tag_len(text: &str) -> Option<usize> {
     let bytes = text.as_bytes();
     if !bytes.starts_with(b"PL") {

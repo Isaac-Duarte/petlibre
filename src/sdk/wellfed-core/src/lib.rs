@@ -26,10 +26,8 @@ pub mod mdns;
 pub mod ota;
 pub mod record;
 pub mod rng;
-pub mod speaker_stream;
 pub mod store;
 pub mod tone;
-pub mod transport;
 
 /// Distances at or beyond this are ambiguous for wrapping millisecond clocks.
 pub const HALF_RANGE: u32 = 0x8000_0000;

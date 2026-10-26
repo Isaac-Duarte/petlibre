@@ -13,40 +13,6 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
-/// No-dispense rule: network-facing transport code may name only these
-/// paths (full matches), so nothing reachable from the network can touch
-/// feeding, outputs, settings, flash or updates. Paths whose first segment is
-/// capitalized (types, enum variants, Self) are local and always allowed.
-const TRANSPORT_ISOLATION: [(&str, &[&str]); 2] = [
-    (
-        "src/sdk/wellfed-core/src/transport.rs",
-        &[r"core::(fmt|str)(::\w+)*", r"fmt::\w+"],
-    ),
-    (
-        "src/sdk/wellfed-hal/src/transport.rs",
-        &[
-            r"core::fmt::Write",
-            r"core::str::from_utf8",
-            r"core::fmt::(Result|Formatter|Display)",
-            r"wellfed_core::transport(::\w+)?",
-            r"mqtt::\w+(::\w+)?",
-            r"crate::health(::(Boot|Link|self))?",
-            r"health::(snapshot|Link|Boot)(::default)?",
-            r"crate::net_status",
-            r"net_status::read",
-            // The transport carries health only: requests go over
-            // the device API, so it reaches no mailbox at all.
-            r"crate::sdk(::(TcpRecv|TransportConfig|self))?",
-            r"sdk::(tcp_connect|tcp_send|tcp_recv|tcp_close|uptime_ms|TcpRecv|TransportConfig)",
-        ],
-    ),
-];
-
-// Primitive paths such as `u32::MAX` name no module, so they never count as a reach.
-const PRIMITIVES: [&str; 13] = [
-    "u8", "u16", "u32", "u64", "usize", "i8", "i16", "i32", "i64", "isize", "bool", "char", "str",
-];
-
 // Top-level directories that hold local inputs or agent state.
 const UNPUBLISHED: [&str; 6] = ["private", ".venv", "target", ".aws", ".codex", ".agents"];
 const EVIDENCE: [&str; 5] = ["bin", "pcap", "pcapng", "img", "apk"];
@@ -69,14 +35,6 @@ macro_rules! regex {
             LazyLock::new(|| Regex::new($pattern).expect("check pattern"));
     };
 }
-
-regex!(PATH, r"\b([A-Za-z_]\w*(?:::\w+)+)");
-regex!(USE_GROUP, r"\buse\s+([\w:]+)::\{([^}]*)\}");
-regex!(
-    FORBIDDEN,
-    r"\b(?:unsafe|extern|mod|include!|static\s+mut)\b"
-);
-regex!(GLOB, r"\buse\s+[^;]*\*");
 
 regex!(USER_PATH, r"/(?:home|Users|mnt|media)/[A-Za-z0-9_.-]+/");
 regex!(DATED, r#"private/[^\s"']*202610\d{2}"#);
@@ -141,7 +99,6 @@ pub(crate) fn check(root: &Path) -> io::Result<Summary> {
         check_file(&root, name, &mut summary);
     }
 
-    transport_isolation(&root, &mut summary.errors);
     Ok(summary)
 }
 
@@ -298,69 +255,6 @@ fn raw_outputs(name: &str, source: &str, errors: &mut Vec<String>) {
     }
 }
 
-pub(crate) fn transport_isolation(root: &Path, errors: &mut Vec<String>) {
-    for (name, allowed) in TRANSPORT_ISOLATION {
-        let Ok(source) = fs::read_to_string(root.join(name)) else {
-            errors.push(format!("{name}: transport isolation target missing"));
-            continue;
-        };
-        isolation(name, &source, allowed, errors);
-    }
-}
-
-fn isolation(name: &str, source: &str, allowed: &[&str], errors: &mut Vec<String>) {
-    let rules: Vec<Regex> = allowed
-        .iter()
-        .map(|r| Regex::new(&format!("^(?:{r})$")).expect("rule"))
-        .collect();
-
-    // Code only: comments may name other modules.
-    let code: String = source
-        .lines()
-        .map(|line| line.split("//").next().unwrap_or(""))
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    if FORBIDDEN.is_match(&code) {
-        errors.push(format!(
-            "{name}: transport code may not declare modules, externs, unsafe or mutable statics"
-        ));
-    }
-    if GLOB.is_match(&code) {
-        errors.push(format!("{name}: transport code may not glob-import"));
-    }
-
-    let mut paths = Vec::new();
-    for capture in USE_GROUP.captures_iter(&code) {
-        let base = &capture[1];
-        for item in capture[2].split(',') {
-            let item = item.trim().split(" as ").next().unwrap_or("").trim();
-            if !item.is_empty() {
-                paths.push(if item == "self" {
-                    base.to_string()
-                } else {
-                    format!("{base}::{item}")
-                });
-            }
-        }
-    }
-
-    // Grouped imports were expanded above; drop them so their fragments are
-    // not matched again as bare paths.
-    let rest = USE_GROUP.replace_all(&code, "");
-    paths.extend(PATH.captures_iter(&rest).map(|c| c[1].to_string()));
-
-    for found in paths {
-        let first = found.split("::").next().unwrap_or("");
-        if found.starts_with(|c: char| c.is_uppercase()) || PRIMITIVES.contains(&first) {
-            continue;
-        }
-        if !rules.iter().any(|rule| rule.is_match(&found)) {
-            errors.push(format!("{name}: transport code reaches {found}"));
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -372,44 +266,6 @@ mod tests {
         for skipped in ["https://example.com/x", "mailto:x@y", "#anchor", "//host/x"] {
             assert_eq!(local_path(skipped), None, "{skipped}");
         }
-    }
-
-    #[test]
-    fn transport_isolation_rules() {
-        let allowed = &[r"core::(fmt|str)(::\w+)*", r"fmt::\w+"];
-        let mut errors = Vec::new();
-
-        isolation(
-            "t.rs",
-            "use core::fmt::{self, Write};\nfn f(x: u8) -> Result<(), fmt::Error> { Ok(()) } // crate::flash::erase\n",
-            allowed,
-            &mut errors,
-        );
-        assert!(errors.is_empty(), "{errors:?}");
-
-        isolation(
-            "t.rs",
-            "use crate::flash;\nfn f() { crate::feed::start(); }\n",
-            allowed,
-            &mut errors,
-        );
-
-        assert_eq!(
-            errors,
-            [
-                "t.rs: transport code reaches crate::flash",
-                "t.rs: transport code reaches crate::feed::start"
-            ]
-        );
-
-        let mut errors = Vec::new();
-        isolation(
-            "t.rs",
-            "unsafe fn f() {}\nuse core::fmt::*;\n",
-            allowed,
-            &mut errors,
-        );
-        assert_eq!(errors.len(), 2);
     }
 
     #[test]

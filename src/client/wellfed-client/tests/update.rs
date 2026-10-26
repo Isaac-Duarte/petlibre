@@ -18,15 +18,15 @@ use wellfed_core::ota::install::{Install, Phase, Progress, Refused, Stop, Taken}
 use wellfed_core::ota::offer::{
     self, Context, ImageKind, KeyRing, Signed, admit_offer, key_id, manifest_digest,
 };
-use wellfed_core::ota::{self, BANK1_OFFSET, MARKER, Manifest, SECTOR};
+use wellfed_core::ota::{BANK1_OFFSET, MARKER, Manifest, SECTOR};
 use wellfed_core::store::update::{Candidate, State, UpdateStore};
 use wellfed_core::tone::Tune;
-use wellfed_core::transport::{
-    LockResult, PlayResult, SettingsFields, SettingsResult, SettingsView, TimeFields, TimeResult,
-    WifiResult, WifiSource, WifiView,
-};
 use wellfed_feeder::api::{
     Device, EventRead, KeyChange, KeyOutcome, Pass, Server, UpdateAnswer, UpdateRequest,
+};
+use wellfed_feeder::mailbox::{
+    LockResult, PlayResult, SettingsFields, SettingsResult, SettingsView, TimeFields, TimeResult,
+    WifiResult, WifiSource, WifiView,
 };
 use wellfed_feeder::pairing::{Config, Pairing};
 use wellfed_feeder::store::clients::{CLIENTS, Client, Label, Role};
@@ -1116,8 +1116,9 @@ fn an_unknown_key_and_a_version_1_manifest_are_refused() {
         )))
     );
 
-    let mut v1 = vec![0; ota::MANIFEST_LEN];
-    v1[..8].copy_from_slice(&ota::MAGIC);
+    // The retired version 1 manifest: 148 bytes behind its own magic.
+    let mut v1 = vec![0; 148];
+    v1[..8].copy_from_slice(b"PLOTA1\0\0");
     let image = Image {
         manifest: &v1,
         downgrade: None,

@@ -64,8 +64,8 @@ pub enum Stage {
     Rust,
     /// Uses the device's stock-derived OTA bank addresses and pad table.
     Stock,
-    /// Stages the UART-only first-boot mains; the image joins Wi-Fi, the
-    /// transport and updates, and carries the firmware's policies.
+    /// Stages the UART-only first-boot mains; the image joins Wi-Fi, takes
+    /// updates, and carries the firmware's policies.
     Firstboot,
 }
 

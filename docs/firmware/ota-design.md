@@ -1,6 +1,6 @@
 # FW10/FW11 over-the-air update design
 
-**Status (October 25, 2026): updates over the device API, host-tested.** Offers, downloads and key changes now go over the [device API](device-api.md) behind `Capabilities::UPDATE`, and both banks run the `feeder` build: bank 0 is the fallback a failed update lands on, and it feeds. No build opens an MQTT session. The bench and the simulator drive the same client steps (`wellfed_client::update`). Not yet on hardware: the first install of this bank-0 build is a UART install, then the no-motion round trip in the [bench procedure](#bench-procedure). The sections from [Updates over the device API](#updates-over-the-device-api) to [Storage-format rule](#storage-format-rule) describe it; the rest of this page is the history it builds on, the MQTT-era updater included.
+**Status (October 25, 2026): updates over the device API, host-tested.** Offers, downloads and key changes now go over the [device API](device-api.md) behind `Capabilities::UPDATE`, and both banks run the `feeder` build: bank 0 is the fallback a failed update lands on, and it feeds. No build opens an MQTT session. The bench and the simulator drive the same client steps (`wellfed_client::update`). Not yet on hardware: the first install of this bank-0 build is a UART install, then the no-motion round trip in the [bench procedure](#bench-procedure). The sections from [Updates over the device API](#updates-over-the-device-api) to [Storage-format rule](#storage-format-rule) describe it; the rest of this page is the history it builds on, the MQTT-era updater included. That updater's code, the broker offers, the version 1 manifest and its signer, and the broker credentials in the build are deleted (in Git history); only stock 1.1.15 still speaks MQTT, to `wellfed-local`'s stock broker.
 
 ## Updates over the device API
 
@@ -23,7 +23,7 @@
 
 ## Keys and anti-rollback
 
-**Manifest version 2** (`wellfed_core::ota::offer`): `PLOTA2\0\0`, version, image length, target bank, image kind (1 replacement, 2 stock) and three zero bytes, the signing key's id (the first 8 bytes of SHA-256 over its public key), the image's SHA-256 and the build ID: 96 bytes, then the Ed25519 signature. Version 1 is refused by the new check; it stays only for builds still on MQTT.
+**Manifest version 2** (`wellfed_core::ota::offer`): `PLOTA2\0\0`, version, image length, target bank, image kind (1 replacement, 2 stock) and three zero bytes, the signing key's id (the first 8 bytes of SHA-256 over its public key), the image's SHA-256 and the build ID: 96 bytes, then the Ed25519 signature. Version 1 (`PLOTA1`, the MQTT era's) is deleted; an offer carrying its magic is refused as the wrong version, and the bench still reads the versions of the ones on disk when it picks the next.
 
 **Trusted keys:** the key built into the firmware (the bench key, `WELLFED_OTA_PUBLIC_KEY`); the release slot, empty in the build and filled once by a `PLKEY1` statement a built-in key signed (`UpdateKeyStatement`), so a release key arrives without reinstalling bank 0; and owners' update keys, enrolled over the device API (`EnrollUpdateKey`) only once someone presses Dispense at the feeder, and removed like any client. A `PLREV1` statement retires any key id for good. Built-in keys and the release slot's key sign key statements, so retiring the bench key leaves rotation to the release key; an owner's key never signs one, and a retired key signs nothing. The bench key stays in `private/ota-key.json`, bench only; an offline release key is required before any public release.
 
@@ -31,7 +31,7 @@
 
 **The update store** (`wellfed_core::store::update`, storage sectors 25–26): one 256-byte record A/B, newest valid wins, holding the floor, the candidate (pending, then activated), the release slot's key, up to four retired ids and bank 0's recorded image. A record that would lower the floor or forget a retired id is never written; a torn write leaves the older, consistent record. It is not the confirmation sector, which is erased before each write. The factory reset leaves it alone.
 
-Signing: `wellfed-build sign` (version 2 by default, `--format mqtt` for version 1), `downgrade`, `revoke` and `add-key`, all with the bench key.
+Signing: `wellfed-build sign` (version 2), `downgrade`, `revoke` and `add-key`, all with the bench key.
 
 ## Storage-format rule
 
@@ -150,20 +150,20 @@ Candidate algorithm: Ed25519, verified in `wellfed-core` (`no_std`), with the SH
 
 ## Transfer
 
-The recovery image pulls; it is never pushed:
+MQTT era, deleted: updates now go over the device API, where the client pushes the chunks bank 0 asks for ([above](#updates-over-the-device-api)). The recovery image pulled; it was never pushed:
 - It publishes `ota/get {offset, length}` on its own namespace, and the server answers `ota/data` with that chunk.
-- Chunks are at most 512 bytes, so an answer fits the FW08 codec's existing 640-byte packet bound with its topic, leaving the running transport's buffers unchanged. A compile-time assert keeps it that way.
+- Chunks were at most 512 bytes, so an answer fit the FW08 codec's 640-byte packet bound with its topic. The device API's download keeps the 512-byte chunk (`wellfed_core::ota::MAX_CHUNK`), which divides a sector.
 - The writer stages a whole sector in RAM, then the port erases, programs and reads it back in one lease.
 - The current sector's chunks are asked for together. A missing or late chunk is re-requested a bounded number of times, then the attempt fails into step 4's safe state.
 
-The server-side broker ACL gains these two topics for the firmware role only.
+The server-side broker ACL gave these two topics to the firmware role only.
 
 ## What can be built and tested offline
 
 - **Core (done):** `wellfed-core::ota`, using `ed25519-dalek` and `sha2` with default features off, so it stays `no_std`. It holds manifest parsing and signature verification, the bank-1 sector writer, the trial decision and the confirmation record. The manifest refuses tampering, the wrong key, a bank other than 1, a size outside one sector to 0x150000, and downgrades. The writer withholds the marker until every sector reads back and the whole-image SHA-256 matches, and it refuses out-of-order chunks, a missing marker, failed readback, corruption and truncation. Host tests include RFC 8032 test 1.
 - **Fakes:** the bank-role decision and the KM0 trial counter, against the fake SDK.
 - **Emulation (done):** `every_ota_step_and_marker_cut_keeps_a_bootable_bank` in `src/tools/wellfed-emu/tests/factory.rs` (formerly `emulate-ota-markers.py`, ported October 23, 2026, and rerun on stock) hands each modeled flash state to the factory loader's own selection code. The states are every step above, a bank-1 marker cut after each of its 8 bytes, and erased or staged bodies. It passed all 14 states for both stock and the replacement build. Only the forbidden step, giving way with no valid recovery in bank 0, leaves nothing to boot. Any single cleared bit in bank 1's marker gives way to bank 0.
-- **Server:** manifest signing (done: `wellfed-build keygen` and `sign`, which signs only a frozen review and round-trips through the firmware's own parser in a test; the key is the bench key, and a public release needs an offline release key first). Delivery is done too: `ota-offer`, the broker ACL and the server's answers. A loopback test has the firmware's own codec, parser and writer pull a signed image through the real broker and server.
+- **Server:** manifest signing (done: `wellfed-build keygen` and `sign`, which signs only a frozen review and passes the firmware's own offer check in a test; the key is the bench key, and a public release needs an offline release key first). Delivery is the device API's (`wellfed_client::update`); the MQTT delivery (`ota-offer`, the broker ACL and the server's answers) is deleted.
 
 ## Hardware stages (owner-reviewed)
 

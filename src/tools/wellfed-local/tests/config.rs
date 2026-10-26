@@ -1,10 +1,9 @@
-//! `init` and `firmware-credential` run as the real
-//! binary on the synthetic example inputs: they write private (0600) files
-//! and refuse to replace any secret.
+//! `init` runs as the real binary on the synthetic example inputs: it
+//! writes a private (0600) file and refuses to replace it.
 
 use std::{fs, process::Command};
 
-use wellfed_local::config::Config;
+use wellfed_local::config;
 use tempfile::TempDir;
 
 fn inputs(dir: &TempDir) -> Vec<String> {
@@ -46,7 +45,7 @@ fn imports_explicit_settings_with_utc_default_and_private_permissions() {
     assert!(result.status.success(), "{:?}", result.stderr);
 
     let path = dir.path().join("server.json");
-    let config = Config::load(&path).unwrap();
+    let config = config::load(&path).unwrap();
     assert_eq!(config.timezone, chrono_tz::UTC);
     assert_eq!(config.mqtt_listen.to_string(), "127.0.0.1:18883");
     assert_eq!(config.hotspot_interface, "test_wifi");
@@ -73,7 +72,7 @@ fn accepts_an_explicit_iana_timezone_and_refuses_to_replace_configuration() {
 
     let path = dir.path().join("server.json");
     assert_eq!(
-        Config::load(&path).unwrap().timezone,
+        config::load(&path).unwrap().timezone,
         chrono_tz::Europe::Paris
     );
 
@@ -113,181 +112,27 @@ fn missing_inputs_or_invalid_network_settings_do_not_write_configuration() {
     }
 }
 
+/// A configuration written while the replacement firmware had a broker role
+/// still loads as stock's, with the role ignored and the file untouched.
 #[test]
-fn firmware_credential_adds_one_role_writes_a_private_file_and_never_rotates() {
+fn a_configuration_with_the_retired_firmware_role_still_loads() {
     let dir = TempDir::new().unwrap();
     assert!(init(&inputs(&dir)).status.success());
-    let config_path = dir.path().join("server.json");
-    let before = Config::load(&config_path).unwrap();
-    assert!(before.firmware.is_none());
+    let path = dir.path().join("server.json");
 
-    // A stock-only configuration has no firmware key at all.
-    let raw: serde_json::Value = serde_json::from_slice(&fs::read(&config_path).unwrap()).unwrap();
-    assert!(raw.get("firmware").is_none());
+    let mut raw: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    raw["firmware"] = serde_json::json!({
+        "client_id": "wellfed-fw-SYNTHETIC_FEEDER", "username": "wellfed-fw",
+        "password": "a".repeat(64), "request_key": "5a".repeat(32),
+    });
+    fs::write(&path, serde_json::to_vec(&raw).unwrap()).unwrap();
+    let written = fs::read(&path).unwrap();
 
-    let output = dir.path().join("fw-mqtt.json");
-    let args = |out: &std::path::Path| -> Vec<String> {
-        vec![
-            "firmware-credential".into(),
-            "--config".into(),
-            config_path.display().to_string(),
-            "--output".into(),
-            out.display().to_string(),
-        ]
-    };
+    let config = config::load(&path).unwrap();
+    assert_eq!(config.device_id, "SYNTHETIC_FEEDER");
+    assert_eq!(fs::read(&path).unwrap(), written);
 
-    assert!(init(&args(&output)).status.success());
-    let config = Config::load(&config_path).unwrap();
-    let firmware = config.firmware.as_ref().unwrap();
-    assert_eq!(
-        firmware.client_id,
-        format!("wellfed-fw-{}", config.device_id)
-    );
-    assert_eq!(firmware.username, "wellfed-fw");
-    assert_eq!(firmware.password.len(), 64);
-
-    let credential: serde_json::Value =
-        serde_json::from_slice(&fs::read(&output).unwrap()).unwrap();
-    assert_eq!(credential["version"], 1);
-    assert_eq!(credential["broker"], "127.0.0.1");
-    assert_eq!(credential["port"], 18883);
-    assert_eq!(credential["device_id"], config.device_id.as_str());
-    assert_eq!(credential["client_id"], firmware.client_id.as_str());
-    assert_eq!(credential["username"], "wellfed-fw");
-    assert_eq!(credential["password"], firmware.password.as_str());
-    assert_eq!(
-        credential["namespace"],
-        format!("wellfed/1/{}/", config.device_id).as_str()
-    );
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        assert_eq!(
-            fs::metadata(&output).unwrap().permissions().mode() & 0o777,
-            0o600
-        );
-    }
-
-    // The stock role and its secrets are untouched.
-    assert_eq!(config.device_password, before.device_password);
-    assert_eq!(config.server_password, before.server_password);
-
-    // A second run refuses, whether or not the output exists, and changes nothing.
-    let saved = fs::read(&config_path).unwrap();
-    assert!(!init(&args(&output)).status.success());
-    assert!(!init(&args(&dir.path().join("other.json"))).status.success());
-    assert!(!dir.path().join("other.json").exists());
-    assert_eq!(fs::read(&config_path).unwrap(), saved);
-}
-
-#[test]
-fn firmware_credential_refuses_an_existing_output_without_touching_the_config() {
-    let dir = TempDir::new().unwrap();
-    assert!(init(&inputs(&dir)).status.success());
-    let config_path = dir.path().join("server.json");
-    let output = dir.path().join("fw-mqtt.json");
-    fs::write(&output, "keep").unwrap();
-
-    let saved = fs::read(&config_path).unwrap();
-    let result = init(&[
-        "firmware-credential".into(),
-        "--config".into(),
-        config_path.display().to_string(),
-        "--output".into(),
-        output.display().to_string(),
-    ]);
-
-    assert!(!result.status.success());
-    assert_eq!(fs::read(&output).unwrap(), b"keep");
-    assert_eq!(fs::read(&config_path).unwrap(), saved);
-}
-
-#[test]
-fn an_invalid_firmware_section_is_refused() {
-    let mut config = {
-        let dir = TempDir::new().unwrap();
-        assert!(init(&inputs(&dir)).status.success());
-        Config::load(&dir.path().join("server.json")).unwrap()
-    };
-
-    let good = wellfed_local::config::FirmwareConfig {
-        client_id: config.firmware_client_id(),
-        username: "wellfed-fw".into(),
-        password: "a".repeat(64),
-        request_key: None,
-    };
-
-    config.firmware = Some(good.clone());
-    assert!(config.validate().is_ok());
-
-    for (client_id, username, password) in [
-        (
-            "wellfed-fw-other".to_owned(),
-            good.username.clone(),
-            good.password.clone(),
-        ),
-        (
-            good.client_id.clone(),
-            "device".to_owned(),
-            good.password.clone(),
-        ),
-        (
-            good.client_id.clone(),
-            good.username.clone(),
-            "short".to_owned(),
-        ),
-        (
-            good.client_id.clone(),
-            good.username.clone(),
-            "g".repeat(64),
-        ),
-    ] {
-        config.firmware = Some(wellfed_local::config::FirmwareConfig {
-            client_id,
-            username,
-            password,
-            request_key: None,
-        });
-        assert!(config.validate().is_err());
-    }
-}
-
-/// A configuration with a firmware role and its credential file, in `dir`.
-fn with_firmware_role(dir: &TempDir) -> (std::path::PathBuf, std::path::PathBuf) {
-    assert!(init(&inputs(dir)).status.success());
-    let config = dir.path().join("server.json");
-    let credential = dir.path().join("fw-mqtt.json");
-    assert!(
-        init(&[
-            "firmware-credential".into(),
-            "--config".into(),
-            config.display().to_string(),
-            "--output".into(),
-            credential.display().to_string(),
-        ])
-        .status
-        .success()
-    );
-    (config, credential)
-}
-
-/// Requests are no longer signed, but configurations written with the old
-/// request key still load (the format denies unknown fields) until the
-/// broker credentials go.
-#[test]
-fn a_configuration_with_the_retired_request_key_still_loads() {
-    let dir = TempDir::new().unwrap();
-    let (config_path, credential_path) = with_firmware_role(&dir);
-    let mut config = Config::load(&config_path).unwrap();
-    config.firmware.as_mut().unwrap().request_key = Some("5a".repeat(32));
-    wellfed_stock::storage::write_json(&config_path, &config).unwrap();
-
-    let loaded = Config::load(&config_path).unwrap();
-    assert_eq!(loaded.firmware.unwrap().request_key, Some("5a".repeat(32)));
-    let mut credential: serde_json::Value =
-        serde_json::from_slice(&fs::read(&credential_path).unwrap()).unwrap();
-    credential["request_key"] = serde_json::json!("5a".repeat(32));
-    serde_json::from_value::<wellfed_formats::credentials::FirmwareCredential>(credential)
-        .unwrap();
+    raw["other"] = serde_json::json!(1);
+    fs::write(&path, serde_json::to_vec(&raw).unwrap()).unwrap();
+    assert!(config::load(&path).is_err());
 }

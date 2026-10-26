@@ -1,8 +1,8 @@
 //! `wellfed-local` command line.
 //!
-//! `serve` runs the server: the MQTT broker as a child process of this
-//! binary, the stock install path and the replacement firmware's transport,
-//! and the loopback HTTP API. Most
+//! `serve` runs the server: the MQTT broker stock connects to, as a child
+//! process of this binary, the stock install path, and the loopback HTTP
+//! API. Most
 //! other subcommands are clients of that API and read the bearer token from
 //! the private configuration, so the token never appears in shell arguments.
 //! Starting the service redirects no traffic; `network apply` is the separate,
@@ -18,9 +18,7 @@ use clap::{Parser, Subcommand};
 use wellfed_local::{
     api::{self, ApiState},
     build_info::{self, BUILD},
-    config::{self, Config},
-    neighbour, network,
-    replacement::{self, session},
+    config, neighbour, network,
 };
 use wellfed_stock::{
     controller::{self, Controller},
@@ -38,7 +36,7 @@ use tracing::info;
 #[derive(Parser)]
 #[command(
     version,
-    about = "The bench's local PLAF103 server: stock installs and the replacement transport"
+    about = "The bench's local PLAF103 server: stock's broker and its install trials"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -122,27 +120,16 @@ enum Action {
         note: String,
     },
 
-    /// Add the replacement-firmware broker role to a stopped server's config and
-    /// write the firmware build's private credential file; never rotates one.
-    FirmwareCredential {
+    /// Close the latest submitted or uncertain trial on the replacement's
+    /// answer: the note says what answered over the device API, and when.
+    /// Never sends a device command.
+    OtaTrialAnswered {
         #[arg(long, default_value = "private/server.json")]
         config: PathBuf,
-        #[arg(long, default_value = "private/fw-mqtt.json")]
-        output: PathBuf,
-    },
-
-    /// Offer a signed replacement update to the running server, or
-    /// clear the offer. Paths are relative and under private/; nothing is
-    /// sent to the firmware until it asks.
-    OtaOffer {
-        #[arg(long, default_value = "private/server.json")]
-        config: PathBuf,
-        #[arg(long, requires = "image", conflicts_with = "clear")]
-        manifest: Option<String>,
-        #[arg(long, requires = "manifest", conflicts_with = "clear")]
-        image: Option<String>,
         #[arg(long)]
-        clear: bool,
+        request_id: uuid::Uuid,
+        #[arg(long)]
+        note: String,
     },
 
     /// Point a stock feeder in setup mode at a network and this
@@ -221,10 +208,7 @@ async fn main() -> Result<()> {
             );
         }
 
-        Action::Broker { config } => {
-            let config = Config::load(&config)?;
-            broker::run(config.stock.clone(), replacement::broker::Firmware(config)).await?
-        }
+        Action::Broker { config } => broker::run(config::load(&config)?).await?,
         Action::Serve {
             config,
             enable_ota_trial,
@@ -240,7 +224,7 @@ async fn main() -> Result<()> {
             to,
         } => {
             use wellfed_stock::setup::{Setup, send};
-            let broker = broker.unwrap_or(Config::load(&config)?.mqtt_listen);
+            let broker = broker.unwrap_or(config::load(&config)?.mqtt_listen);
             println!("Passphrase for {ssid} (read from stdin):");
             let mut password = String::new();
             std::io::stdin().read_line(&mut password)?;
@@ -266,7 +250,7 @@ async fn main() -> Result<()> {
             peer,
         } => {
             let path = config.canonicalize()?;
-            let config = Config::load(&path)?;
+            let config = config::load(&path)?;
             let peer = match peer {
                 Some(peer) => peer,
                 None => match neighbour::discover(&config)? {
@@ -283,7 +267,7 @@ async fn main() -> Result<()> {
                     _ = terminated() => {},
                 }
             };
-            ota::image::serve(config.stock, &path, &directory, peer, stop).await?;
+            ota::image::serve(config, &path, &directory, peer, stop).await?;
         }
 
         Action::OtaTrialResolve {
@@ -295,6 +279,20 @@ async fn main() -> Result<()> {
                 config,
                 Method::POST,
                 "/api/ota/trial/resolve",
+                Some(&ota::trial::ResolveInput { request_id, note }),
+            )
+            .await?;
+        }
+
+        Action::OtaTrialAnswered {
+            config,
+            request_id,
+            note,
+        } => {
+            api_request(
+                config,
+                Method::POST,
+                "/api/ota/trial/answered",
                 Some(&ota::trial::ResolveInput { request_id, note }),
             )
             .await?;
@@ -317,37 +315,9 @@ async fn main() -> Result<()> {
             .await?;
         }
 
-        Action::FirmwareCredential { config, output } => {
-            config::add_firmware_credential(&config, &output)?;
-            println!(
-                "Added the replacement-firmware role to {} and wrote {}. Restart serve to use it.",
-                config.display(),
-                output.display()
-            );
-        }
-
-        Action::OtaOffer {
-            config,
-            manifest,
-            image,
-            clear,
-        } => {
-            anyhow::ensure!(
-                clear || manifest.is_some(),
-                "give --manifest and --image, or --clear"
-            );
-            api_request(
-                config,
-                Method::POST,
-                "/api/replacement/ota/offer",
-                Some(&api::OfferInput { manifest, image }),
-            )
-            .await?;
-        }
-
         Action::Network { action } => match action {
             NetworkAction::Apply { config } => {
-                network::apply(&Config::load(&config)?.stock)?;
+                network::apply(&config::load(&config)?)?;
                 println!(
                     "Test-feeder MQTT redirected locally; its forwarded WAN traffic is blocked."
                 );
@@ -357,7 +327,7 @@ async fn main() -> Result<()> {
                 println!("Local broker routing removed; prior hotspot forwarding remains.");
             }
             NetworkAction::Preview { config } => {
-                println!("{}", network::rules(&Config::load(&config)?.stock)?)
+                println!("{}", network::rules(&config::load(&config)?)?)
             }
         },
     }
@@ -393,13 +363,13 @@ async fn serve(path: PathBuf, enable_ota_trial: bool) -> Result<()> {
     }
 
     let path = path.canonicalize()?;
-    let config = Arc::new(Config::load(&path)?);
+    let config = Arc::new(config::load(&path)?);
     let listener = tokio::net::TcpListener::bind(config.http_listen)
         .await
         .context("bind loopback HTTP API")?;
 
     let mut controller = Controller::load(
-        config.stock.clone(),
+        (*config).clone(),
         path.parent()
             .context("config directory missing")?
             .join(controller::LEDGER_FILE),
@@ -421,13 +391,7 @@ async fn serve(path: PathBuf, enable_ota_trial: bool) -> Result<()> {
     let (requests, receiver) = mpsc::channel(16);
     let (status, status_rx) = watch::channel(controller.status.clone());
     let (shutdown, mut shutdown_rx) = watch::channel(false);
-    let mut worker = tokio::spawn(mqtt::run(
-        Arc::new(config.stock.clone()),
-        controller,
-        receiver,
-        status,
-        session::Firmware::new(config.clone()),
-    ));
+    let mut worker = tokio::spawn(mqtt::run(config.clone(), controller, receiver, status));
 
     let app = api::router(ApiState {
         token: Arc::from(config.api_token.as_str()),
@@ -476,7 +440,7 @@ async fn api_request(
     route: &str,
     body: Option<&impl Serialize>,
 ) -> Result<()> {
-    let config = Config::load(&path)?;
+    let config = config::load(&path)?;
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .no_proxy()

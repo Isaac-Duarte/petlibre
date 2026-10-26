@@ -1,8 +1,8 @@
-//! Power inputs for health: the battery pack on ADC channel 5 and the
+//! Power inputs for the device API's status: the battery pack on ADC channel 5 and the
 //! adapter on PA19, sampled every `SAMPLE_MS` by the runtime's power task,
 //! or, when a feeding owner holds the ADC, by the owner's own captures.
 //!
-//! Health reports a sample only while it is fresh (`STALE_MS`), so a stalled
+//! The status reports a sample only while it is fresh (`STALE_MS`), so a stalled
 //! task, a failed conversion or an ADC the monitor never opened all read as
 //! unknown rather than as the last value. The pack voltage is the pin's
 //! stock-scaled millivolts through the board divider, measured at 2.058 and
@@ -11,7 +11,6 @@
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use wellfed_core::adc_scale::{AdcCalibration, SAMPLES};
-use wellfed_core::transport::PowerHealth;
 
 use crate::{adc, sdk};
 
@@ -27,6 +26,17 @@ const BATTERY_CHANNEL: u32 = crate::plaf103::pins::ADC_BATTERY;
 const ADAPTER_PIN: u32 = crate::plaf103::pins::ADAPTER;
 /// Polls per conversion; a conversion takes well under 1 ms.
 const ADC_POLLS: u32 = 10_000;
+
+/// A fresh power sample, as the device API's status reports it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PowerHealth {
+    /// PA19: the adapter is connected.
+    pub adapter: bool,
+    /// The pack voltage, `None` when no pack is fitted.
+    pub battery_mv: Option<u32>,
+    /// Milliseconds since the sample was taken.
+    pub age_ms: u32,
+}
 
 /// Bit 31: a sample is held; bit 30: the adapter; bits 0..16: pin millivolts.
 static SAMPLE: AtomicU32 = AtomicU32::new(0);

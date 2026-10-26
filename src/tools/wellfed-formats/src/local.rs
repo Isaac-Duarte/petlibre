@@ -1,12 +1,9 @@
 //! `wellfed-local`'s status document (`GET /api/status`), which the bench
 //! reads to follow stock and its install trials.
 //!
-//! The replacement firmware's health inside it is the firmware's own JSON,
-//! which the server relays as sent: each side types it as it needs (`H`),
-//! the server keeping every field and the bench only what it checks. The
-//! trial records are the server's persisted ledger entries, so they refuse
-//! fields they do not know; the rest of the document defaults what is
-//! absent.
+//! The trial records are the server's persisted ledger entries, so they
+//! refuse fields they do not know; the rest of the document defaults what
+//! is absent and ignores what it does not know.
 
 use std::fmt;
 
@@ -15,10 +12,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use uuid::Uuid;
 
-/// The server's view of stock and of the replacement firmware.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// The server's view of stock.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
-pub struct LocalStatus<H> {
+pub struct LocalStatus {
     /// The feeder's MQTT session reaches the server's broker.
     pub broker_connected: bool,
     /// Stock telemetry is current.
@@ -38,56 +35,6 @@ pub struct LocalStatus<H> {
     pub ota_trial_enabled: bool,
     /// Newest first.
     pub ota_trials: Vec<TrialRecord>,
-    /// `None` when the server has no replacement-firmware role.
-    pub replacement: Option<Replacement<H>>,
-}
-
-impl<H> Default for LocalStatus<H> {
-    fn default() -> Self {
-        Self {
-            broker_connected: false,
-            device_online: false,
-            last_seen: None,
-            clock_offset_seconds: None,
-            attributes: Map::new(),
-            version_reported_at: None,
-            power_reported_at: None,
-            build_commit: String::new(),
-            build_clean: false,
-            ota_reports: Vec::new(),
-            ota_trial_enabled: false,
-            ota_trials: Vec::new(),
-            replacement: None,
-        }
-    }
-}
-
-/// The replacement firmware's latest health, as the server holds it.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct Replacement<H> {
-    pub health: Option<H>,
-    /// Each transport session's first health gives a new one.
-    pub received_at: Option<DateTime<Utc>>,
-    pub age_ms: Option<i64>,
-    pub online: bool,
-    pub stale: bool,
-    /// Health messages the server refused.
-    pub rejected: u64,
-}
-
-/// No health, or a document without `stale`, is never fresh.
-impl<H> Default for Replacement<H> {
-    fn default() -> Self {
-        Self {
-            health: None,
-            received_at: None,
-            age_ms: None,
-            online: false,
-            stale: true,
-            rejected: 0,
-        }
-    }
 }
 
 /// A stock `OTA_UPGRADE`, `OTA_PROGRESS` or `OTA_INFORM` report.
@@ -154,9 +101,10 @@ pub enum TrialPhase {
     /// Operator-resolved after a quiet period with the source version still
     /// freshly reported. Never sends a command.
     NotInstalled,
-    /// A replacement install whose firmware then published online health on
-    /// its own role. Stock reports nothing once it has activated the
-    /// replacement, so this, not a version report, closes the trial.
+    /// A replacement install whose build then answered the device API from
+    /// bank 0, as the operator's client checked and reported it. Stock
+    /// reports nothing once it has activated the replacement, so this, not
+    /// a version report, closes the trial.
     ReplacementHealthy,
 }
 
@@ -178,10 +126,12 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn a_document_without_freshness_is_stale() {
-        let status: LocalStatus<Value> =
-            serde_json::from_value(json!({"replacement": {"health": {}, "online": true}})).unwrap();
-        assert!(status.replacement.unwrap().stale);
+    fn a_document_from_an_older_server_still_reads() {
+        // Servers before the replacement's broker was deleted also sent its
+        // health; the field is ignored.
+        let status: LocalStatus =
+            serde_json::from_value(json!({"device_online": true, "replacement": null})).unwrap();
+        assert!(status.device_online);
     }
 
     #[test]

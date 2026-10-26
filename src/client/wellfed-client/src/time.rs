@@ -30,7 +30,7 @@ pub fn sync(now: Timestamp, zone: &TimeZone) -> TimeSync {
 mod tests {
     use super::*;
 
-    /// The same case `wellfed-local` pinned for the MQTT request.
+    /// The case the server's former time request pinned.
     #[test]
     fn denver_carries_its_next_change_and_utc_none() {
         let now = Timestamp::from_millisecond(1_792_674_000_000).unwrap();

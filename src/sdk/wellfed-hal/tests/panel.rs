@@ -1,7 +1,7 @@
 //! The panel-lock mailbox: unserved until an owner publishes, one queued
 //! change at a time, and a read that reports whether a change is pending.
 
-use wellfed_core::transport::{LockFields, LockResult};
+use wellfed_feeder::mailbox::{LockFields, LockResult};
 use wellfed_hal::panel;
 
 const READ: LockFields = LockFields { locked: None };

@@ -2,8 +2,8 @@
 //!
 //! KM0 counts this image's boots until a record in storage sector
 //! `trial::CONFIRM_SECTOR` names its build identity (`trial.rs`). Once the
-//! image has stayed healthy for `HEALTHY_MS` (the glue's test: transport
-//! ready, outputs verified stopped, startup probes finished), this arms the
+//! image has stayed healthy for `HEALTHY_MS` (the glue's test: the network
+//! check passed, outputs verified stopped, startup probes finished), this arms the
 //! flash-lock hooks like the updater (`arming.rs`), raises the update
 //! store's floor to its version if bank 0 activated it (`ota::update`),
 //! then erases the sector, programs the record and reads it back. It holds

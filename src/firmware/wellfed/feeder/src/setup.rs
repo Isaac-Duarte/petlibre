@@ -30,7 +30,7 @@ use core::fmt;
 
 use wellfed_core::named_enum;
 use wellfed_core::tone::Tune;
-use wellfed_core::transport::{PlayResult, WifiResult};
+use wellfed_feeder::mailbox::{PlayResult, WifiResult};
 use wellfed_feeder::pairing::{self, Pairing, Path};
 use wellfed_feeder::setup::{self as session, MAX_MESSAGE, Offer, Received, Responder};
 use wellfed_feeder::store::clients::Role;

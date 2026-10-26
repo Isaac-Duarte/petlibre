@@ -2245,7 +2245,6 @@ dependencies = [
  "bindgen 0.72.1",
  "cortex-m",
  "wellfed-board-plaf103",
- "wellfed-session",
 ]
 
 [[package]]
@@ -2608,15 +2607,12 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "clap",
- "ed25519-dalek",
- "wellfed-core",
  "wellfed-formats",
  "wellfed-stock",
  "reqwest",
  "rumqttc",
  "serde",
  "serde_json",
- "sha2 0.11.1",
  "subtle",
  "tempfile",
  "tokio",

@@ -45,8 +45,8 @@ use scenarios::{DeviceState, SCENARIOS, Scenario};
 /// How often waits look at the UART and the server again.
 const POLL_SECONDS: f64 = 1.0;
 const STATUS_POLL_SECONDS: f64 = 5.0;
-/// The recovery role publishes health every 30 s and the server calls it
-/// stale after 75 s; three periods covers a reconnect.
+/// A build that just started on bank 0 joins the hotspot and answers the
+/// device API well within this, a reconnect included.
 const HEALTH_SECONDS: f64 = 120.0;
 /// A booted feeder joins the hotspot and serves the device API well within
 /// this; so does one whose session was dropped by a bounce.
@@ -142,7 +142,7 @@ trait Rig {
     fn intrude(&mut self, intruder: Intruder) -> Result<Rebuffed>;
     /// The host's wall clock, Unix milliseconds: what a clock sync sends.
     fn unix_ms(&self) -> i64;
-    /// `GET /api/status`: stock's reports and the recovery role's health.
+    /// `GET /api/status`: stock's reports and the install trials.
     fn status(&mut self) -> Result<LocalStatus>;
     fn hotspot(&mut self, up: bool) -> Result<()>;
     /// Cut the feeder's supply, wait, restore it: a cold boot.
@@ -169,6 +169,11 @@ trait Rig {
     /// `POST /api/ota/trial/resolve`; refused until the server's evidence allows it.
     fn resolve_trial(&mut self, _request_id: &str, _note: &str) -> Result<()> {
         Err(Error::Bench("This rig resolves no stock trials".into()))
+    }
+    /// `POST /api/ota/trial/answered`: the replacement answered the device
+    /// API after the trial, as `note` says; sends the device nothing.
+    fn trial_answered(&mut self, _request_id: &str, _note: &str) -> Result<()> {
+        Err(Error::Bench("This rig closes no stock trials".into()))
     }
 }
 
@@ -520,7 +525,6 @@ impl<'r> Ctx<'r> {
             version: None,
             minutes: INSTALL_SECONDS / 60.0,
             attended_motion: false,
-            mqtt: false,
             downgrade: false,
             fault: None,
             cancel: false,
@@ -566,8 +570,8 @@ impl<'r> Ctx<'r> {
         result
     }
 
-    /// The feeder looks hung or bricked: no record for [`SILENT_SECONDS`],
-    /// no device API answer and no fresh recovery-role health.
+    /// The feeder looks hung or bricked: no record for [`SILENT_SECONDS`]
+    /// and no device API answer.
     fn silent(&mut self) -> Option<Silent> {
         if let Some(found) = self.went_silent.take() {
             return Some(found);
@@ -579,14 +583,10 @@ impl<'r> Ctx<'r> {
         if now - last.max(self.heard) < SILENT_SECONDS {
             return None;
         }
-        let answers = self.rig.device(&Ask::Status).is_ok()
-            || self
-                .rig
-                .status()
-                .is_ok_and(|status| status.fresh_health().is_ok());
+        let answers = self.rig.device(&Ask::Status).is_ok();
         (!answers).then(|| {
             Silent(format!(
-                "no UART record, device API answer or fresh health for {SILENT_SECONDS:.0} s"
+                "no UART record or device API answer for {SILENT_SECONDS:.0} s"
             ))
         })
     }

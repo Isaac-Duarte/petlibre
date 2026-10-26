@@ -16,9 +16,8 @@
  * file; neither is ever logged here. Nothing registers fast connect or
  * calls rtw_efuse_boot_write.
  *
- * Blocking TCP helpers for the Rust transport client, and the broker
- * settings from a second generated header. The client and its protocol are
- * Rust (wellfed-core transport); nothing here parses network data.
+ * Non-blocking socket helpers for the Rust device API; its protocol is Rust
+ * (wellfed-feeder), and nothing here parses network data.
  */
 #include "FreeRTOS.h"
 #include "task.h"
@@ -30,7 +29,6 @@
 #include "lwip/sockets.h"
 #include <platform/platform_stdlib.h>
 #include "wellfed_wifi_credentials.h"
-#include "wellfed_transport_credentials.h"
 #include "rl6548.h"
 
 void wellfed_app_start(void);
@@ -387,44 +385,6 @@ int wellfed_wifi_event(unsigned int seq, struct wellfed_wifi_event *out)
     return status;
 }
 
-/* Broker settings; shared with Rust (`sdk::TransportConfig`). */
-struct wellfed_transport_config {
-    unsigned int broker; /* IPv4, host order */
-    unsigned int port;
-    const char *client_id;
-    const char *username;
-    const char *password;
-    unsigned int password_len;
-    const char *namespace_;
-    const char *request_key; /* 64 lowercase hex characters, or "" */
-};
-
-void wellfed_transport_config(struct wellfed_transport_config *out)
-{
-    out->broker = WELLFED_MQTT_BROKER;
-    out->port = WELLFED_MQTT_PORT;
-    out->client_id = WELLFED_MQTT_CLIENT_ID;
-    out->username = WELLFED_MQTT_USERNAME;
-    out->password = WELLFED_MQTT_PASSWORD;
-    out->password_len = sizeof(WELLFED_MQTT_PASSWORD) - 1;
-    out->namespace_ = WELLFED_MQTT_NAMESPACE;
-    out->request_key = WELLFED_MQTT_REQUEST_KEY;
-}
-
-u32 Rand(void); /* ROM (swlib/string/rand.h): a seeded software generator */
-
-/* Inputs for a session's request nonce (wellfed-core request_auth): the ROM
- * generator, the CPU-rate SysTick count and the tick count at the moment of a
- * connect, whose timing varies with the network. Not a vetted RNG; the nonce
- * only has to differ between sessions. */
-void wellfed_entropy(unsigned int out[4])
-{
-    out[0] = Rand();
-    out[1] = *(volatile unsigned int *)0xE000E018; /* SysTick current value */
-    out[2] = xTaskGetTickCount();
-    out[3] = Rand();
-}
-
 /* A pending socket error, cleared by reading it. */
 static int wellfed_socket_error(int s)
 {
@@ -454,115 +414,9 @@ static int wellfed_ready(int s, int write)
     return lwip_select(s + 1, write ? NULL : &ready, write ? &ready : NULL, &failed, &now) != 0;
 }
 
-/* Connect within `timeout_ms`: a socket, or -1. */
-int wellfed_tcp_connect(unsigned int ip, unsigned int port, unsigned int timeout_ms)
-{
-    int s = lwip_socket(AF_INET, SOCK_STREAM, 0);
-    if (s < 0) {
-        return -1;
-    }
-    struct sockaddr_in to;
-    memset(&to, 0, sizeof(to));
-    to.sin_family = AF_INET;
-    to.sin_port = lwip_htons((u16_t)port);
-    to.sin_addr.s_addr = lwip_htonl(ip);
-    int flags = lwip_fcntl(s, F_GETFL, 0);
-    lwip_fcntl(s, F_SETFL, flags | O_NONBLOCK);
-    int connected = lwip_connect(s, (struct sockaddr *)&to, sizeof(to)) == 0;
-    if (!connected) {
-        fd_set writable;
-        FD_ZERO(&writable);
-        FD_SET(s, &writable);
-        struct timeval wait = {timeout_ms / 1000, (timeout_ms % 1000) * 1000};
-        connected = lwip_select(s + 1, NULL, &writable, NULL, &wait) == 1 && wellfed_socket_error(s) == 0;
-    }
-    if (!connected) {
-        lwip_close(s);
-        return -1;
-    }
-    lwip_fcntl(s, F_SETFL, flags);
-    int send_timeout = 3000;
-    lwip_setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, &send_timeout, sizeof(send_timeout));
-    return s;
-}
-
-/* Send all of `data`: 0, or -1 on error or a stalled peer. */
-int wellfed_tcp_send(int s, const void *data, unsigned int length)
-{
-    const char *at = data;
-    while (length > 0) {
-        int sent = lwip_send(s, at, length, 0);
-        if (sent <= 0) {
-            return -1;
-        }
-        at += sent;
-        length -= (unsigned int)sent;
-    }
-    return 0;
-}
-
-/* Bytes received, 0 when `timeout_ms` passed with none, -1 when closed. */
-int wellfed_tcp_recv(int s, void *buffer, unsigned int length, unsigned int timeout_ms)
-{
-    int timeout = (int)timeout_ms;
-    lwip_setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
-    int got = lwip_recv(s, buffer, length, 0);
-    if (got > 0) {
-        return got;
-    }
-    if (got < 0) {
-        int error = wellfed_socket_error(s);
-        if (error == EAGAIN || error == EWOULDBLOCK) {
-            return 0;
-        }
-    }
-    return -1;
-}
-
 void wellfed_tcp_close(int s)
 {
     lwip_close(s);
-}
-
-/* The speaker variant's listener (wellfed-hal stream.rs): a socket on
- * `port` for every local address, or -1. */
-int wellfed_tcp_listen(unsigned int port)
-{
-    int s = lwip_socket(AF_INET, SOCK_STREAM, 0);
-    if (s < 0) {
-        return -1;
-    }
-    int reuse = 1;
-    lwip_setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
-    struct sockaddr_in at;
-    memset(&at, 0, sizeof(at));
-    at.sin_family = AF_INET;
-    at.sin_port = lwip_htons((u16_t)port);
-    at.sin_addr.s_addr = lwip_htonl(INADDR_ANY);
-    if (lwip_bind(s, (struct sockaddr *)&at, sizeof(at)) != 0 || lwip_listen(s, 1) != 0) {
-        lwip_close(s);
-        return -1;
-    }
-    return s;
-}
-
-/* One connection within `timeout_ms`: a socket, or -1. */
-int wellfed_tcp_accept(int listener, unsigned int timeout_ms)
-{
-    fd_set readable;
-    FD_ZERO(&readable);
-    FD_SET(listener, &readable);
-    struct timeval wait = {timeout_ms / 1000, (timeout_ms % 1000) * 1000};
-    if (lwip_select(listener + 1, &readable, NULL, NULL, &wait) != 1) {
-        return -1;
-    }
-    int s = lwip_accept(listener, NULL, NULL);
-    if (s < 0) {
-        return -1;
-    }
-    int send_timeout = 3000;
-    lwip_setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, &send_timeout, sizeof(send_timeout));
-    return s;
 }
 
 /* The device API's sockets. The loop task serves every client and

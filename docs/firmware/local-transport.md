@@ -2,7 +2,7 @@
 
 Status: Done. Stages A (offline), B and C (bench) passed; the carried items are on the board. Choices marked **decision** are this design's; changes made while building are noted where they apply.
 
-**Since October 25: no build opens a session.** Every request (settings, Wi-Fi, lock, play, time) went to the [device API](device-api.md) with FW47, and updates followed ([OTA design](ota-design.md#updates-over-the-device-api)): bank 0 runs the feeder and reports nothing here. The transport's code and the broker credentials remain in the build until AR6 deletes them; the broker serves stock. This page is history.
+**Deleted (October 25, 2026).** Every request (settings, Wi-Fi, lock, play, time) went to the [device API](device-api.md) with FW47, and updates followed ([OTA design](ota-design.md#updates-over-the-device-api)): bank 0 runs the feeder and reports nothing here. The transport's code, the broker credentials in the build, the request key and the server's firmware role are deleted (October 25, in Git history); the broker serves only stock. This page is history.
 
 ## Goal and non-goals
 

@@ -38,7 +38,6 @@ pub mod network;
 pub mod panel;
 pub mod rng;
 pub mod settings;
-pub mod stream;
 
 pub mod flash_lock;
 pub mod health;
@@ -48,4 +47,3 @@ pub mod ota;
 pub mod owner;
 pub mod power;
 pub mod supervision;
-pub mod transport;

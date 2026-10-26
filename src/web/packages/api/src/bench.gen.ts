@@ -75,43 +75,6 @@ silent: string | null,
  */
 captures: Array<string>, };
 
-export type Clock = { syncs: number, 
-/**
- * Absent until the clock is set.
- */
-unix_ms: number | null, };
-
-export type Wifi = { 
-/**
- * Which credentials joined this boot: `build`, `stored` or `fallback`.
- */
-source: string | null, };
-
-export type Transport = { connects: number, };
-
-/**
- * Who reports health, when it is not the normal role.
- */
-export type HealthRole = "recovery";
-
-/**
- * The firmware's health message.
- */
-export type Health = { 
-/**
- * The startup identity, hex in either case.
- */
-build: string, bank: number | null, seq: number | null, outputs: string | null, faults: Array<string>, 
-/**
- * Absent from builds without the wall clock.
- */
-clock: Clock | null, wifi: Wifi, transport: Transport, 
-/**
- * Only the bank-0 recovery role reports one, while it waits for an
- * update.
- */
-role: HealthRole | null, };
-
 /**
  * A file's size, modification time and printable tail: a capture's
  * serial-rx.bin or a run's server log.
@@ -367,18 +330,16 @@ silent: string | null,
  */
 captures: Array<string>, };
 
-export type ReplacementView = { online: boolean, stale: boolean, 
+export type FeederView = { "server": "unconfigured", config: string, error: string, } | { "server": "down", address: string, error: string, } | { "server": "up", address: string, 
 /**
- * The health message's age when the server answered.
+ * The server's own session with its broker.
  */
-age_ms: number | null, 
+broker_connected: boolean, 
 /**
- * RFC 3339; a new value means a new transport session.
+ * Stock's telemetry is current.
  */
-received_at: string | null, health: Health | null, };
-
-export type FeederView = { "server": "unconfigured", config: string, error: string, } | { "server": "down", address: string, error: string, } | { "server": "up", address: string, broker_connected: boolean, 
+stock_online: boolean, 
 /**
- * `None` when the server has no replacement-firmware role.
+ * The version stock last reported, as it sent it.
  */
-replacement: ReplacementView | null, };
+stock_version: string | null, };

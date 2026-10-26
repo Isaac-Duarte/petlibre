@@ -1,7 +1,8 @@
 //! End-to-end install-trial test against the real server, a simulated stock
 //! device over MQTT and a placeholder image-server lease. The install must be
-//! published exactly once, a repeated request ID must not resend it, and no
-//! second trial may start while it is open.
+//! published exactly once, a repeated request ID must not resend it, no
+//! second trial may start while it is open, and the replacement's
+//! device-API answer closes it without another command.
 
 mod common;
 
@@ -236,6 +237,26 @@ async fn an_explicit_api_install_publishes_once_and_never_again() {
             })
     );
     assert_eq!(status["ota_trials"].as_array().unwrap().len(), 1);
+
+    // The bench saw the build answer the device API: the trial closes, and
+    // stock is sent nothing more.
+    let answered = http
+        .post(format!(
+            "http://{}/api/ota/trial/answered",
+            config.http_listen
+        ))
+        .bearer_auth(&config.api_token)
+        .json(&ota::trial::ResolveInput {
+            request_id: request.request_id,
+            note: "build answered the device API from bank 0".into(),
+        })
+        .send()
+        .await
+        .unwrap();
+    assert!(answered.status().is_success());
+    let status = common::status(&config, &http).await;
+    assert_eq!(status["ota_trials"][0]["phase"], "replacement_healthy");
+    assert_eq!(commands.load(Ordering::SeqCst), 1);
 
     worker.abort();
     drop(service);

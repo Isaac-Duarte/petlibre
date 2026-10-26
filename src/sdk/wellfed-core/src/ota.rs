@@ -1,8 +1,6 @@
-//! Update logic (design: docs/firmware/ota-design.md): the signed
-//! manifest, the bank-1 sector writer and the boot-trial decision. Offers
-//! over the device API use [`offer`]'s version 2 manifest; the version 1
-//! format and its MQTT delivery below stay only for builds that still
-//! fetch updates over the broker.
+//! Update logic (design: docs/firmware/ota-design.md): the manifest's
+//! fields, the bank-1 sector writer and the boot-trial decision. Offers over
+//! the device API carry [`offer`]'s signed version 2 manifest.
 //!
 //! Sans-IO. The board port fetches chunks, runs each erase/program/readback
 //! inside a flash lease and writes the marker last; this module only decides
@@ -12,13 +10,13 @@ pub mod image;
 pub mod install;
 pub mod offer;
 
-use ed25519_dalek::{Signature, VerifyingKey};
 use sha2::{Digest, Sha256};
 
-pub const MAGIC: [u8; 8] = *b"PLOTA1\0\0";
-/// magic, version, image length, target bank (u32), image SHA-256, build ID.
-pub const MANIFEST_BODY: usize = 8 + 4 + 4 + 4 + 32 + 32;
-pub const MANIFEST_LEN: usize = MANIFEST_BODY + 64;
+/// The retired version 1 manifest (148 bytes), which builds fetching
+/// updates over MQTT took. An offer refuses its magic, and a signer still
+/// reads the versions of the ones on disk.
+pub(crate) const RETIRED_MAGIC: [u8; 8] = *b"PLOTA1\0\0";
+const RETIRED_LEN: usize = 148;
 
 /// One NOR erase sector, as flash offsets measure it and as buffers do.
 pub const SECTOR_BYTES: u32 = 0x1000;
@@ -39,85 +37,16 @@ pub struct Manifest {
     pub build_id: [u8; 32],
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ManifestError {
-    Length,
-    Magic,
-    Signature,
-    Bank,
-    Size,
-    Downgrade,
-}
-
-/// The signed part of a manifest, as `parse_manifest` reads it. The signer
-/// (the owner's server tool) appends the 64-byte Ed25519 signature.
-pub fn manifest_body(manifest: &Manifest) -> [u8; MANIFEST_BODY] {
-    let mut out = [0u8; MANIFEST_BODY];
-    out[..8].copy_from_slice(&MAGIC);
-    out[8..12].copy_from_slice(&manifest.version.to_le_bytes());
-    out[12..16].copy_from_slice(&manifest.image_len.to_le_bytes());
-    out[16..20].copy_from_slice(&manifest.target_bank.to_le_bytes());
-    out[20..52].copy_from_slice(&manifest.image_sha256);
-    out[52..84].copy_from_slice(&manifest.build_id);
-    out
-}
-
 fn u32_at(bytes: &[u8], at: usize) -> u32 {
     u32::from_le_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]])
 }
 
-/// Accept a manifest only if it is signed by `key`, targets bank 1, fits
-/// the reviewed bound, and is newer than `installed_version`.
-pub fn parse_manifest(
-    bytes: &[u8],
-    key: &[u8; 32],
-    installed_version: u32,
-) -> Result<Manifest, ManifestError> {
-    if bytes.len() != MANIFEST_LEN {
-        return Err(ManifestError::Length);
-    }
-    if bytes[..8] != MAGIC {
-        return Err(ManifestError::Magic);
-    }
-
-    let key = VerifyingKey::from_bytes(key).map_err(|_| ManifestError::Signature)?;
-    let mut signature = [0u8; 64];
-    signature.copy_from_slice(&bytes[MANIFEST_BODY..]);
-    key.verify_strict(&bytes[..MANIFEST_BODY], &Signature::from_bytes(&signature))
-        .map_err(|_| ManifestError::Signature)?;
-
-    let mut image_sha256 = [0u8; 32];
-    image_sha256.copy_from_slice(&bytes[20..52]);
-    let mut build_id = [0u8; 32];
-    build_id.copy_from_slice(&bytes[52..84]);
-    let manifest = Manifest {
-        version: u32_at(bytes, 8),
-        image_len: u32_at(bytes, 12),
-        target_bank: u32_at(bytes, 16),
-        image_sha256,
-        build_id,
-    };
-
-    if manifest.target_bank != 1 {
-        return Err(ManifestError::Bank);
-    }
-    if manifest.image_len < SECTOR_BYTES || manifest.image_len > BANK1_BYTES {
-        return Err(ManifestError::Size);
-    }
-    if manifest.version <= installed_version {
-        return Err(ManifestError::Downgrade);
-    }
-
-    Ok(manifest)
-}
-
 /// The version a manifest's header claims, unverified: `None` unless it has
-/// a version 1 or version 2 manifest's length and magic (both keep the
-/// version at byte 8). For a signer picking the next version above the ones
-/// it already signed; a feeder only trusts `parse_manifest` or
-/// `offer::admit_offer`.
+/// a version 2 or retired version 1 manifest's length and magic (both keep
+/// the version at byte 8). For a signer picking the next version above the
+/// ones it already signed; a feeder only trusts `offer::admit_offer`.
 pub fn claimed_version(bytes: &[u8]) -> Option<u32> {
-    let v1 = bytes.len() == MANIFEST_LEN && bytes[..8] == MAGIC;
+    let v1 = bytes.len() == RETIRED_LEN && bytes[..8] == RETIRED_MAGIC;
     let v2 = bytes.len() == offer::MANIFEST_LEN && bytes[..8] == offer::MAGIC;
     (v1 || v2).then(|| u32_at(bytes, 8))
 }
@@ -371,107 +300,8 @@ pub fn confirmed(record: &[u8], image_sha256: &[u8; 32]) -> Option<u32> {
         .then(|| u32_at(record, 36))
 }
 
-/// Delivery over the local transport: the updater pulls the manifest, then
-/// the image in chunks, on `ota/get`; the server answers on `ota/data`.
-/// 512 so a chunk answer fits the codec's existing packet bound with the
-/// topic: no change to the running transport's buffers. Divides a sector.
+/// The largest chunk the device API's update download asks for; it
+/// divides a sector, so a sector is always whole chunks.
 pub const MAX_CHUNK: u32 = 512;
-pub const GET_LEN: usize = 9;
-pub const DATA_HEADER: usize = 10;
-/// Room for `wellfed/1/<device id>/ota/data`.
-pub const TOPIC_BUDGET: usize = 96;
 
-// A chunk answer's publish: a header byte, up to four remaining-length bytes,
-// the topic's length prefix, the topic, then the data header and chunk.
-const _: () = assert!(
-    5 + 2 + TOPIC_BUDGET + DATA_HEADER + MAX_CHUNK as usize <= crate::transport::MAX_PACKET
-        && SECTOR.is_multiple_of(MAX_CHUNK as usize)
-);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Part {
-    Manifest,
-    Chunk,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Status {
-    Ok,
-    /// The server has no offer loaded.
-    NoOffer,
-    /// The requested range is outside the offered image or over `MAX_CHUNK`.
-    Range,
-}
-
-/// `ota/get`: part, offset and length (both zero for the manifest).
-pub fn encode_get(part: Part, offset: u32, len: u32) -> [u8; GET_LEN] {
-    let mut out = [0u8; GET_LEN];
-    out[0] = match part {
-        Part::Manifest => 0,
-        Part::Chunk => 1,
-    };
-    out[1..5].copy_from_slice(&offset.to_le_bytes());
-    out[5..9].copy_from_slice(&len.to_le_bytes());
-    out
-}
-
-pub fn decode_get(bytes: &[u8]) -> Option<(Part, u32, u32)> {
-    if bytes.len() != GET_LEN {
-        return None;
-    }
-    let part = match bytes[0] {
-        0 => Part::Manifest,
-        1 => Part::Chunk,
-        _ => return None,
-    };
-    Some((part, u32_at(bytes, 1), u32_at(bytes, 5)))
-}
-
-/// The fixed header of an `ota/data` answer; the data bytes follow it.
-pub fn encode_data_header(part: Part, status: Status, offset: u32, len: u32) -> [u8; DATA_HEADER] {
-    let mut out = [0u8; DATA_HEADER];
-    out[0] = matches!(part, Part::Chunk) as u8;
-    out[1] = match status {
-        Status::Ok => 0,
-        Status::NoOffer => 1,
-        Status::Range => 2,
-    };
-    out[2..6].copy_from_slice(&offset.to_le_bytes());
-    out[6..10].copy_from_slice(&len.to_le_bytes());
-    out
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Data<'a> {
-    pub part: Part,
-    pub status: Status,
-    pub offset: u32,
-    pub bytes: &'a [u8],
-}
-
-/// Accept an `ota/data` answer only if its declared length matches.
-pub fn decode_data(bytes: &[u8]) -> Option<Data<'_>> {
-    if bytes.len() < DATA_HEADER {
-        return None;
-    }
-    let part = match bytes[0] {
-        0 => Part::Manifest,
-        1 => Part::Chunk,
-        _ => return None,
-    };
-    let status = match bytes[1] {
-        0 => Status::Ok,
-        1 => Status::NoOffer,
-        2 => Status::Range,
-        _ => return None,
-    };
-
-    let len = u32_at(bytes, 6) as usize;
-    let body = &bytes[DATA_HEADER..];
-    (body.len() == len && (status == Status::Ok || len == 0)).then_some(Data {
-        part,
-        status,
-        offset: u32_at(bytes, 2),
-        bytes: body,
-    })
-}
+const _: () = assert!(SECTOR.is_multiple_of(MAX_CHUNK as usize));

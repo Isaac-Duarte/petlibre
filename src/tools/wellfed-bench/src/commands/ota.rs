@@ -7,10 +7,6 @@
 //! then check that the device API reports the new build on bank 1. Each
 //! phase is timed for the timing record.
 //!
-//! `--mqtt` keeps the old path for a build still on the unit that fetches
-//! updates over MQTT: a version 1 manifest offered with `wellfed-local` to
-//! the server that is already running.
-//!
 //! A review of the original stock image (`image_kind: stock`) installs the
 //! same way, through the replacement's own signed update, with a downgrade
 //! statement the bench signs for the feeder's identity and floor: its
@@ -53,10 +49,8 @@ const SEGMENT_SECONDS: f64 = 60.0;
 
 /// The in-process signing step's status label.
 pub(crate) const SIGN_STEP: &str = "sign";
-/// The offer's status label: over the device API, or `wellfed-local`'s
-/// for `--mqtt`.
+/// The offer's status label: the push over the device API.
 pub(crate) const OFFER_STEP: &str = "offer";
-pub(crate) const MQTT_OFFER_STEP: &str = "wellfed-local ota-offer";
 /// Status steps after signing and the offer, in order.
 pub(crate) const STAGES: [&str; 4] = ["give way", "download", "new build boot", "confirm"];
 /// Status steps of `--build`, before signing.
@@ -83,15 +77,14 @@ pub enum Source {
 /// `ota --cancel`'s one step.
 pub const CANCEL_STEP: &str = "cancel";
 
-pub fn steps(source: Source, mqtt: bool) -> Vec<&'static str> {
+pub fn steps(source: Source) -> Vec<&'static str> {
     let built: &[&str] = match source {
         Source::Build => &BUILD_STEPS,
         Source::Review => &[],
     };
-    let offer = if mqtt { MQTT_OFFER_STEP } else { OFFER_STEP };
     built
         .iter()
-        .chain(&[SIGN_STEP, offer])
+        .chain(&[SIGN_STEP, OFFER_STEP])
         .chain(&STAGES)
         .chain(&[HEALTH_STEP])
         .copied()
@@ -310,15 +303,10 @@ pub struct OtaArgs {
     /// Allow a review whose manifest names a motion policy (owner present).
     #[arg(long)]
     pub attended_motion: bool,
-    /// Offer a version 1 manifest through `wellfed-local` to a build still
-    /// on the unit that fetches updates over MQTT, instead of pushing it
-    /// over the device API.
-    #[arg(long)]
-    pub mqtt: bool,
     /// Sign a downgrade statement for the feeder's identity and floor with
     /// the bench key, so a version at or below the floor installs. Stock
     /// always gets one.
-    #[arg(long, conflicts_with = "mqtt")]
+    #[arg(long)]
     pub downgrade: bool,
     /// Spoil the bench's own transfer, to see the feeder stop it before
     /// activation: corrupt@N (flip byte N), unwanted@N (after byte N, the
@@ -327,12 +315,12 @@ pub struct OtaArgs {
     /// drop@N (the connection drops after byte N; the install resumes), or
     /// give-way-only (stop once bank 1 gave way, to offer bank 0 another
     /// manifest next).
-    #[arg(long, value_parser = parse_fault, conflicts_with = "mqtt")]
+    #[arg(long, value_parser = parse_fault)]
     pub fault: Option<Fault>,
     /// Only cancel: stop any install and forget the candidate bank 0 holds
     /// (a give-way's pending offer, or a stopped install's), so it takes
     /// another manifest. Bank 1 is left as it is, or invalid.
-    #[arg(long, conflicts_with_all = ["review", "build", "mqtt", "fault", "downgrade"])]
+    #[arg(long, conflicts_with_all = ["review", "build", "fault", "downgrade"])]
     pub cancel: bool,
 }
 
@@ -802,8 +790,7 @@ impl Timing {
     }
 }
 
-/// A signed update ready to offer: root-relative paths under private/, as
-/// the server's offer takes them.
+/// A signed update ready to offer: root-relative paths under private/.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Staged {
     pub build: String,
@@ -840,20 +827,7 @@ fn is_build_id(text: &str) -> bool {
 }
 
 impl Bench {
-    /// Run one `wellfed-local` command; its exit status. An interrupt
-    /// during it stops the sequence.
-    fn local(&mut self, args: &[String]) -> Result<i32> {
-        say!("+ wellfed-local {}", args.join(" "));
-        self.status.step(&format!("wellfed-local {}", args[0]));
-        let code = self.tools.local(args, &mut self.status)?;
-
-        if crate::interrupted() {
-            return Err(Error::Interrupted);
-        }
-        Ok(code)
-    }
-
-    /// A root-relative path under private/, as `wellfed-local ota-offer` requires.
+    /// A root-relative path under private/, as the install job takes it.
     fn private_arg(&self, path: &Path) -> Result<String> {
         let Some(relative) = path
             .strip_prefix(&self.root)
@@ -987,9 +961,6 @@ impl Bench {
         let Some(staged) = self.ota_stage(args, timing)? else {
             return Ok(1);
         };
-        if args.mqtt {
-            return self.ota_mqtt(args, &staged, timing);
-        }
 
         let job = InstallJob {
             keys: args.keys.clone(),
@@ -1050,44 +1021,15 @@ impl Bench {
         }
     }
 
-    /// The old path: a version 1 manifest offered through `wellfed-local`.
-    fn ota_mqtt(&mut self, args: &OtaArgs, staged: &Staged, timing: &mut Timing) -> Result<u8> {
-        let offering = Instant::now();
-        let offer = [
-            "ota-offer",
-            "--manifest",
-            &staged.manifest,
-            "--image",
-            &staged.image,
-        ];
-        let offered = self.local(&offer.map(String::from))?;
-        timing.sign_offer =
-            Some(timing.sign_offer.unwrap_or(0.0) + offering.elapsed().as_secs_f64());
-        if offered != 0 {
-            say!(
-                "Offer failed; nothing captured. wellfed-local serve and the hotspot must already be up: the bench never starts them."
-            );
-            return Ok(1);
-        }
-
-        say!(
-            "Offered version {}; watching the UART for up to {} min",
-            staged.version,
-            args.minutes
-        );
-        self.ota_watch(args, staged, timing, None)?;
-        self.ota_after(args, staged, timing)
-    }
-
     /// After a confirmed outcome: the device API's view of the new build.
     fn ota_after(&mut self, args: &OtaArgs, staged: &Staged, timing: &mut Timing) -> Result<u8> {
         if staged.target == Target::Stock {
             say!("Stock serves no device API; no status to check");
             return Ok(0);
         }
-        // Only the product firmware reports anything after its
-        // trial: the bring-up firmwares open no MQTT session and serve no
-        // API, so their UART confirmation is the whole check.
+        // Only the product firmware reports anything after its trial: the
+        // bring-up firmwares serve no device API, so their UART
+        // confirmation is the whole check.
         let described = self.root.join(&staged.review).join("build-manifest.json");
         let manifest: wellfed_formats::manifest::BuildManifest =
             wellfed_formats::load(&described).map_err(|error| {
@@ -1152,7 +1094,7 @@ impl Bench {
             }
         };
 
-        self.ota_sign(plan, &frozen, motion, target, args.mqtt, timing)
+        self.ota_sign(plan, &frozen, motion, target, timing)
             .map(Some)
     }
 
@@ -1217,7 +1159,6 @@ impl Bench {
         frozen: &Frozen,
         motion: Motion,
         target: Target,
-        mqtt: bool,
         timing: &mut Timing,
     ) -> Result<Staged> {
         let image_arg = self.private_arg(&self.root.join(&plan.review).join("image.bin"))?;
@@ -1233,13 +1174,7 @@ impl Bench {
             source,
         };
         let key = Key::load(&self.root.join(KEY_PATH)).map_err(refused)?;
-        // Version 1 only for a build still fetching over MQTT.
-        let manifest = if mqtt {
-            frozen.sign(&key, plan.version, motion).map(|m| m.to_vec())
-        } else {
-            frozen.offer(&key, plan.version, motion).map(|m| m.to_vec())
-        }
-        .map_err(refused)?;
+        let manifest = frozen.offer(&key, plan.version, motion).map_err(refused)?;
         write_new(&plan.signed, &manifest).map_err(|source| Error::Signing {
             review: plan.review.clone(),
             source: source.into(),

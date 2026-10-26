@@ -9,7 +9,7 @@ Each finding is labeled **physical** (observed on the research unit), **static**
 **Physical (October 23, 2026, research unit):**
 - **`fw40-stock-ota-05`:** stock 1.1.15 installed a replacement build through its own MQTT-triggered HTTP updater, with no UART write. It downloaded the image in about 40 s, checked its byte-sum and wrote it to bank 0. The loader then booted the build from bank 0.
 - **`fw40-stock-ota-06-promote`:** the build's bank-0 recovery role installed the same build, signed, into bank 1, where it confirmed.
-- **`fw40-stock-ota-07`:** the whole sequence in one command, with a fresh build: install, recovery-role health from bank 0, and promotion to bank 1.
+- **`fw40-stock-ota-07`:** the whole sequence in one command, with a fresh build: install, recovery-role health from bank 0 (the MQTT era's), and promotion to bank 1.
 - **`fw41-roundtrip-01`:** to stock over our updater and back over stock's, with no UART write and nobody at the bench.
 - **Tool:** `wellfed-bench stock-ota` runs this whole sequence ([bench](../devices/plaf103/bench.md#stock-to-a-replacement-stock-ota)). The image contract is in [stock OTA requirements](../devices/plaf103/stock/ota-requirements.md).
 

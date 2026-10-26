@@ -32,10 +32,9 @@ Major version 1 is frozen: every client lives in this repository, and the event 
 ## What went away
 
 - **The MQTT offer watch, bank 0's updater and its recovery-role health** (October 25): offers ride the device API, and bank 0 runs the feeder. No build opens an MQTT session; the broker stays for stock.
-
 - **Requests over MQTT.** The firmware's request parser, its reply writers, request signing (`request_auth`) and the health nonce are deleted. The normal role starts no `wellfed-net` task.
 - **Confirmation.** FW11 confirmed a trial once the MQTT session was ready. It now confirms on a live link: associated, leased, and its gateway answering (or never having answered this join); no internet is involved ([link liveness](startup-diagnostics.md#link-liveness-without-internet-dns), October 25; until then a DNS lookup of `example.com`). Since offers moved to the API, a build that confirms takes its next offer over the same API.
-- **Kept until AR6:** the HAL's MQTT transport code and the broker credentials in the build (with the now unused request key, so existing private files still parse). Nothing starts the transport.
+- **The MQTT transport itself** (October 25): the core's MQTT codec and health writer (`wellfed_core::transport`; the request and reply types the API fills moved to `wellfed_feeder::mailbox`), the HAL's transport task, the broker credentials and request key as a build input (`private/fw-mqtt.json`, which the builder no longer reads), the version 1 manifest and the server's replacement broker role. The speaker firmware's network audio stream went with the request key, its only key and a feature with no client since `wellfed-local speak` was removed. The startup audit still requires no transport policy and no `PLMQT1` start record. A stock-to-replacement install now closes on the bench's device-API check of the new build on bank 0 (`POST /api/ota/trial/answered`), not on its MQTT health.
 
 ## Resources
 

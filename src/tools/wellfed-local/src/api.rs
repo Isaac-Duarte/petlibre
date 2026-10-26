@@ -19,19 +19,15 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use subtle::ConstantTimeEq;
 use tokio::sync::{mpsc, oneshot, watch};
 
 use wellfed_stock::{controller::Rejection, ota};
 
-use crate::{
-    build_info::BUILD,
-    replacement::{
-        Status,
-        session::{Request, SetOffer},
-    },
-};
+use wellfed_stock::{controller::Status, mqtt::Request};
+
+use crate::build_info::BUILD;
 
 #[derive(Clone)]
 pub struct ApiState {
@@ -156,6 +152,17 @@ async fn ota_trial_resolve(
     operation(state, |response| Request::ResolveTrial(input, response)).await
 }
 
+/// The operator's client saw the replacement answer the device API after
+/// the trial; its note says what answered. Sends the device nothing.
+async fn ota_trial_answered(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Json(input): Json<ota::trial::ResolveInput>,
+) -> Result<Json<ota::trial::Record>, ApiError> {
+    authenticate(&headers, &state)?;
+    operation(state, |response| Request::TrialAnswered(input, response)).await
+}
+
 /// `/health`: which build is serving, without authentication.
 #[derive(Debug, PartialEq, Serialize)]
 struct ServiceInfo {
@@ -180,100 +187,9 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/status", get(status))
         .route("/api/ota/trial", post(ota_trial_request))
         .route("/api/ota/trial/resolve", post(ota_trial_resolve))
-        .route("/api/replacement/ota/offer", post(replacement_ota_offer))
+        .route("/api/ota/trial/answered", post(ota_trial_answered))
         .layer(DefaultBodyLimit::max(4096))
         .with_state(state)
-}
-
-/// `/api/replacement/ota/offer`'s body.
-#[derive(Debug, Deserialize, Serialize)]
-pub struct OfferInput {
-    /// Both relative paths under `private/`; absent to clear the offer.
-    pub manifest: Option<String>,
-    pub image: Option<String>,
-}
-
-/// The offer now loaded, or `None` once cleared.
-#[derive(Debug, PartialEq, Serialize)]
-struct Offered {
-    offer: Option<OfferSummary>,
-}
-
-#[derive(Debug, PartialEq, Serialize)]
-struct OfferSummary {
-    bytes: usize,
-    version: u32,
-}
-
-fn private_path(name: &str) -> Option<std::path::PathBuf> {
-    let path = std::path::Path::new(name);
-    let clean = path.is_relative()
-        && path.starts_with("private")
-        && path
-            .components()
-            .all(|c| matches!(c, std::path::Component::Normal(_)));
-    clean.then(|| path.to_path_buf())
-}
-
-/// Load or clear the replacement-firmware update the server will answer
-/// `ota/get` from. The files are read from `private/`; the firmware verifies
-/// the signature, the server only checks the image matches its manifest.
-async fn replacement_ota_offer(
-    State(state): State<ApiState>,
-    headers: HeaderMap,
-    Json(input): Json<OfferInput>,
-) -> Result<Json<Offered>, ApiError> {
-    authenticate(&headers, &state)?;
-    let bad = |message: String| ApiError::new(StatusCode::BAD_REQUEST, message);
-
-    let offer = match (input.manifest.as_deref(), input.image.as_deref()) {
-        (None, None) => None,
-        (Some(manifest), Some(image)) => {
-            let (Some(manifest), Some(image)) = (private_path(manifest), private_path(image))
-            else {
-                return Err(bad("paths must be relative and under private/".into()));
-            };
-            let read = |p: &std::path::Path| {
-                std::fs::read(p).map_err(|e| bad(format!("{}: {e}", p.display())))
-            };
-            Some(
-                crate::ota::firmware::Offer::new(&read(&manifest)?, &read(&image)?)
-                    .map_err(|e| bad(e.to_string()))?,
-            )
-        }
-        _ => {
-            return Err(bad(
-                "give both manifest and image, or neither to clear".into()
-            ));
-        }
-    };
-
-    let summary = offer.as_ref().map(|o| OfferSummary {
-        bytes: o.payload.len(),
-        version: o.version,
-    });
-
-    let (send, receive) = oneshot::channel();
-    let unavailable = || ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "server busy");
-
-    state
-        .requests
-        .try_send(Request::Companion(SetOffer(offer, send)))
-        .map_err(|_| unavailable())?;
-
-    let configured = tokio::time::timeout(Duration::from_secs(5), receive)
-        .await
-        .map_err(|_| unavailable())?
-        .map_err(|_| unavailable())?;
-
-    if !configured {
-        return Err(ApiError::new(
-            StatusCode::NOT_FOUND,
-            "no replacement-firmware role configured",
-        ));
-    }
-
-    Ok(Json(Offered { offer: summary }))
 }
 
 #[cfg(test)]
@@ -296,16 +212,6 @@ mod tests {
             }),
             r#"{"build_clean":true,"build_commit":"abc","service":"wellfed-local","version":"0.1.0"}"#
         );
-        assert_eq!(
-            body(&Offered {
-                offer: Some(OfferSummary {
-                    bytes: 4096,
-                    version: 7,
-                }),
-            }),
-            r#"{"offer":{"bytes":4096,"version":7}}"#
-        );
-        assert_eq!(body(&Offered { offer: None }), r#"{"offer":null}"#);
         assert_eq!(body(&ErrorBody { error: "x" }), r#"{"error":"x"}"#);
     }
 }

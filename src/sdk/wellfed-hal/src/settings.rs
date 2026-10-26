@@ -1,11 +1,11 @@
-//! The device settings as the transport sees them. The settings writer
-//! (firstboot `settings.rs`) publishes what NOR holds; a signed `settings`
-//! request queues one change for it. Nothing here touches flash, so the
-//! transport may call it (see `cargo xtask check-repository`).
+//! The device settings as the device API sees them. The settings writer
+//! (`wellfed-sdk`'s `settings.rs`) publishes what NOR holds; a settings
+//! write from an owner's session queues one change for it. Nothing here
+//! touches flash, so the API's loop may call it.
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use wellfed_core::transport::{SettingsFields, SettingsResult, SettingsView};
+pub use wellfed_feeder::mailbox::{SettingsFields, SettingsResult, SettingsView};
 
 const LOADED: u32 = 1 << 31;
 const WRITABLE: u32 = 1 << 30;
@@ -36,7 +36,7 @@ pub fn current() -> Option<SettingsView> {
     })
 }
 
-/// The transport's half: read, or queue one change for the writer.
+/// The device API's half: read, or queue one change for the writer.
 pub fn request(fields: SettingsFields) -> SettingsResult {
     let Some(view) = current() else {
         return SettingsResult::Busy;

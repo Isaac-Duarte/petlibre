@@ -1,7 +1,5 @@
 //! EXPERIMENTAL bring-up firmware for the PLAF103 on the Wellfed SDK:
-//! the startup chime and requested tunes (`wellfed_hal::audio`), and the
-//! signed network audio stream `wellfed-local speak` plays
-//! (`wellfed_hal::stream`).
+//! the startup chime and the tune player (`wellfed_hal::audio`).
 #![cfg_attr(target_os = "none", no_std)]
 
 #[cfg(all(target_os = "none", not(feature = "km4")))]

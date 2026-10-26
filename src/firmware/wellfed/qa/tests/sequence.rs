@@ -8,7 +8,6 @@
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use wellfed_core::transport::SettingsView;
 use wellfed_fw_qa::sequence::{
     ANSWER_MS, Button, Check, Fault, Item, Line, NO, POWER_SAMPLES, Probes, Qa, Record, Results,
     YES,
@@ -19,6 +18,7 @@ use wellfed_sdk::hal::board::MOTOR_MASK;
 use wellfed_sdk::hal::flash::park::Mmio;
 use wellfed_sdk::hal::leds::{self, Led};
 use wellfed_sdk::hal::sdk::fake;
+use wellfed_sdk::hal::settings::SettingsView;
 use wellfed_sdk::hal::{audio, settings, stopped};
 
 /// A KM0-side view of the IPC registers: `hello` refuses, as it would with

@@ -18,12 +18,12 @@ use wellfed_core::ota::install::Phase;
 use wellfed_core::ota::offer::{KeyStatement, key_id};
 use wellfed_core::store::slot::crc32;
 use wellfed_core::tone::Tune;
-use wellfed_core::transport::{
-    LockResult, PlayResult, SettingsFields, SettingsResult, SettingsView, TimeFields, TimeResult,
-    WifiResult, WifiSource, WifiView,
-};
 use wellfed_feeder::api::{
     Device, EventRead, KeyChange, KeyOutcome, UpdateAnswer, UpdateKeyChange, UpdateRequest,
+};
+use wellfed_feeder::mailbox::{
+    LockResult, PlayResult, SettingsFields, SettingsResult, SettingsView, TimeFields, TimeResult,
+    WifiResult, WifiSource, WifiView,
 };
 use wellfed_feeder::store::clients::{CLIENTS, Client, ClientError, ClientStore, Label, Role};
 use wellfed_feeder::store::events::{BODY_BYTES, EventLog, Read};

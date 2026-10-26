@@ -1,13 +1,21 @@
-//! The KM4 wall clock ([`wellfed_core::clock::wall`]). The transport's
-//! `time` request is its only writer; health reads it. One instance, copied
-//! in and out with interrupts masked.
+//! The KM4 wall clock ([`wellfed_core::clock::wall`]). The device API's
+//! `time` request is its only writer; the API's status and event stamps
+//! read it. One instance, copied in and out with interrupts masked.
 
 use wellfed_core::clock::wall::{Jump, Sync as ClockSync, SyncError, WallClock};
-use wellfed_core::transport::{ClockHealth, TimeFields, TimeResult};
+use wellfed_feeder::mailbox::{TimeFields, TimeResult};
 
 use crate::cell::TaskCell;
 use crate::sdk::{self, IrqGuard};
 use crate::startup;
+
+/// A valid wall-clock reading.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ClockHealth {
+    pub unix_ms: u64,
+    pub offset_s: i32,
+    pub uncertainty_ms: u64,
+}
 
 /// Every access is a short copy or update under `IrqGuard`.
 static CLOCK: TaskCell<WallClock> = TaskCell::new(WallClock::new());
@@ -63,7 +71,7 @@ fn name(error: SyncError) -> &'static str {
     }
 }
 
-/// The current reading for health, `None` while invalid, and the sync count.
+/// The current reading, `None` while invalid, and the sync count.
 pub fn health() -> (Option<ClockHealth>, u32) {
     let now = sdk::uptime_ms();
     let clock = {

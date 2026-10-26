@@ -51,7 +51,7 @@ The loader offers none of its own. An image with a valid marker that crashes aft
 - **Firmware-driven fallback (design, for FW11):** bank 0 holds a confirmed known-good replacement image. A new candidate in bank 1 starts unconfirmed:
   - **Count:** early on every boot, before KM4 starts, KM0 counts unconfirmed boots in a backup register. Backup registers survive the watchdog reset but not power loss, so a power cut only restarts the count.
   - **Give way:** after a bound (for example three), KM0 clears the first byte of bank 1's marker, one page program before any other core runs, and resets. The loader then boots bank 0.
-  - **Confirm:** the candidate confirms itself only after its startup report, stopped outputs, Wi-Fi and the local transport are healthy.
+  - **Confirm:** the candidate confirms itself only after its startup report, stopped outputs and Wi-Fi (DHCP, then a DNS lookup) are healthy.
 
   Limits: this only helps if the candidate's KM0 code works. A broken KM0 or a broken factory configuration still needs UART. The FW05 watchdog is what turns a KM4 hang into a counted reset.
 

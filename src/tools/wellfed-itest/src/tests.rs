@@ -626,13 +626,10 @@ impl Rig for Feeder {
         1_792_670_400_000 + (self.now * 1000.0) as i64
     }
 
-    /// Only bank 0's recovery role reports health here, and no scenario
-    /// leaves the scripted feeder there.
+    /// The server hears nothing from the replacement firmware.
     fn status(&mut self) -> Result<LocalStatus> {
         self.deliver();
-        Ok(serde_json::from_value(
-            json!({"replacement": {"online": false, "stale": true}}),
-        )?)
+        Ok(LocalStatus::default())
     }
 
     fn hotspot(&mut self, up: bool) -> Result<()> {

@@ -27,10 +27,8 @@ pub(crate) enum Target {
     NoiseResponder,
     /// BLE setup, the feeder's responder and the code proof.
     Setup,
-    /// The update manifest, delivery messages and the bank-1 writer.
+    /// The update manifest an offer carries, and the bank-1 writer.
     OtaManifest,
-    /// The MQTT transport codec and its session.
-    Mqtt,
 }
 
 impl Target {
@@ -42,7 +40,6 @@ impl Target {
             Self::NoiseResponder => "noise_responder",
             Self::Setup => "setup",
             Self::OtaManifest => "ota_manifest",
-            Self::Mqtt => "mqtt",
         }
     }
 }

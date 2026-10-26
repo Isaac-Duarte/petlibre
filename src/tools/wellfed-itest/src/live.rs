@@ -564,4 +564,12 @@ impl Rig for LiveRig<'_> {
             .map(|_| ())
             .map_err(Error::from)
     }
+
+    fn trial_answered(&mut self, request_id: &str, note: &str) -> Result<()> {
+        let body = TrialResolve { request_id, note };
+        self.api
+            .post::<IgnoredAny>("/api/ota/trial/answered", &body)
+            .map(|_| ())
+            .map_err(Error::from)
+    }
 }

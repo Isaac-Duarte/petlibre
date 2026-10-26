@@ -4,11 +4,11 @@ use wellfed_core::record::{Record, tag};
 
 #[test]
 fn records_parse_after_sdk_noise() {
-    let record = Record::parse("[sdk] x PLMQT1 request op=ping ok=1\r").unwrap();
-    assert_eq!((record.tag, record.first), (tag::TRANSPORT, "request"));
-    assert!(record.is(tag::TRANSPORT, &[("op", "ping"), ("ok", "1")]));
-    assert!(!record.is(tag::TRANSPORT, &[("ok", "0")]));
-    assert_eq!(record.body(), "request op=ping ok=1");
+    let record = Record::parse("[sdk] x PLBLE1 request op=wifi ok=1\r").unwrap();
+    assert_eq!((record.tag, record.first), (tag::BLE, "request"));
+    assert!(record.is(tag::BLE, &[("op", "wifi"), ("ok", "1")]));
+    assert!(!record.is(tag::BLE, &[("ok", "0")]));
+    assert_eq!(record.body(), "request op=wifi ok=1");
 
     let start = Record::parse("PLFW1 start build=ab bank=1").unwrap();
     assert_eq!(start.tag, tag::START);
@@ -20,7 +20,7 @@ fn records_parse_after_sdk_noise() {
 
     for noise in [
         "PLAIN text",
-        "PLMQT1request",
+        "PLBLE1request",
         "PLX1 short",
         "PLABCDE1 long",
         "nothing",

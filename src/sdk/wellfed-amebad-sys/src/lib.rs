@@ -224,31 +224,6 @@ pub struct BleStats {
     pub connected: u32,
 }
 
-/// Broker settings, from the generated credentials header the build
-/// writes into the SDK worktree (`example_entry.c`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct TransportConfig {
-    /// IPv4, host order.
-    pub broker: u32,
-    pub port: u16,
-    pub client_id: &'static str,
-    pub username: &'static str,
-    pub password: &'static [u8],
-    /// Topic prefix, ending in `/`.
-    pub namespace: &'static str,
-    /// The key that signs server requests, when the image has one.
-    pub request_key: Option<[u8; 32]>,
-}
-
-/// `tcp_recv` outcome.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TcpRecv {
-    Data(usize),
-    Timeout,
-    /// The peer closed the connection, or the socket failed.
-    Closed,
-}
-
 /// What a non-blocking device API receive found.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ApiRecv {

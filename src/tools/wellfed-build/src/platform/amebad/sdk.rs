@@ -17,15 +17,19 @@ use wellfed_formats::lock::SdkLock;
 use regex::Regex;
 
 use super::audit::{hooks, pinmap};
-use super::credentials::{transport_header, wifi_header};
-use super::{Amebad, Core, PROJECT, TRANSPORT_CREDENTIALS, WIFI_CREDENTIALS, source, toolchains};
+use super::credentials::wifi_header;
+use super::{Amebad, Core, PROJECT, WIFI_CREDENTIALS, source, toolchains};
 use crate::device::StockPaths;
 use crate::platform::Job;
 use crate::{Error, Profile, Repo, Result, Stage, digest, git, require, revision, run};
 
 const PLATFORM_OPTS: &str = "project/realtek_amebaD_va0_example/inc/inc_hp/platform_opts.h";
 const WIFI_HEADER: &str = "component/common/example/wellfed_wifi_credentials.h";
-const TRANSPORT_HEADER: &str = "component/common/example/wellfed_transport_credentials.h";
+/// The broker credentials' header, which builders from before the
+/// replacement's MQTT transport was deleted wrote into the SDK worktree.
+/// Nothing includes it any more, and it holds the broker password in
+/// cleartext, so a worktree that still has it loses it before the check.
+const RETIRED_TRANSPORT_HEADER: &str = "component/common/example/wellfed_transport_credentials.h";
 const OTA_HEADER: &str = "component/soc/realtek/amebad/fwlib/include/rtl8721d_ota.h";
 const PINMAP: &str = "component/soc/realtek/amebad/fwlib/usrcfg/rtl8721dlp_pinmapcfg.c";
 const UTILITIES_MAKEFILE: &str = "project_hp/asdk/make/utilities_example/Makefile";
@@ -149,7 +153,7 @@ fn unexpected_sdk_changes(sdk: &Path, profile: Profile) -> Result<Vec<String>> {
             "??" => {
                 untracked.contains(path)
                     || (profile.has(Stage::Rust)
-                        && (path == WIFI_HEADER || path == TRANSPORT_HEADER || path == BLE_SOURCE))
+                        && (path == WIFI_HEADER || path == BLE_SOURCE))
             }
             " M" => {
                 managed.contains(path)
@@ -242,6 +246,17 @@ fn remove_file(path: &Path) -> Result<()> {
         Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error.into()),
         _ => Ok(()),
     }
+}
+
+/// Deletes the retired broker credentials' header, if an older builder left
+/// it. Only a regular file is removed; anything else there is left for the
+/// worktree check to name.
+fn remove_retired_header(sdk: &Path) -> Result<()> {
+    let header = sdk.join(RETIRED_TRANSPORT_HEADER);
+    if fs::symlink_metadata(&header).is_ok_and(|m| m.file_type().is_file()) {
+        remove_file(&header)?;
+    }
+    Ok(())
 }
 
 fn remove_objects(directory: &Path, name: &str) -> Result<()> {
@@ -343,6 +358,7 @@ fn worktree(repo: &Repo, output: &Path, profile: Profile, lock: &SdkLock) -> Res
         revision(&sdk)? == lock.sdk.revision,
         "Build worktree has an unexpected SDK revision",
     )?;
+    remove_retired_header(&sdk)?;
     check_sdk_worktree(&sdk, profile)?;
 
     // Both cores use the same verified toolchain, rather than downloading copies.
@@ -459,16 +475,6 @@ fn rust_overlays(
         wifi_header(&fs::read(&wifi)?)?.as_bytes(),
     )?;
     staged(&wifi, &wifi, "Wi-Fi credentials changed while staging")?;
-    let transport = repo.path(TRANSPORT_CREDENTIALS);
-    write_if_changed(
-        &sdk.join(TRANSPORT_HEADER),
-        transport_header(&fs::read(&transport)?)?.as_bytes(),
-    )?;
-    staged(
-        &transport,
-        &transport,
-        "Transport credentials changed while staging",
-    )?;
     Ok(())
 }
 
@@ -703,6 +709,24 @@ mod tests {
 
     fn changes(sdk: &Sdk, profile: Profile) -> Vec<String> {
         unexpected_sdk_changes(&sdk.path, profile).unwrap()
+    }
+
+    #[test]
+    fn the_retired_credentials_header_is_deleted_not_tolerated() {
+        let sdk = sdk();
+        let header = sdk.path.join(RETIRED_TRANSPORT_HEADER);
+        fs::create_dir_all(header.parent().unwrap()).unwrap();
+        fs::write(&header, "#define PASSWORD \"secret\"\n").unwrap();
+        assert_eq!(
+            changes(&sdk, Profile::Firstboot),
+            vec![format!("?? {RETIRED_TRANSPORT_HEADER}")]
+        );
+
+        remove_retired_header(&sdk.path).unwrap();
+
+        assert!(!header.exists());
+        assert_eq!(changes(&sdk, Profile::Firstboot), Vec::<String>::new());
+        remove_retired_header(&sdk.path).unwrap();
     }
 
     #[test]

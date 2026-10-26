@@ -13,7 +13,7 @@ use wellfed_rig::device::{Answer, Ask, DeviceError, DeviceStatus, Intruder, Rebu
 use wellfed_rig::server::{StockStatus, TrialAnswer};
 use wellfed_rig::tools::PushError;
 
-use crate::{Error, Fault, Rig};
+use crate::{Error, Fault, Hotspot, Rig};
 
 /// The server's refusal of a `POST` to `path`, as `wellfed-stock` sends it.
 fn conflict(path: &str, body: &str) -> Error {
@@ -303,7 +303,7 @@ impl Rig for StockFeeder {
         }))?)
     }
 
-    fn hotspot(&mut self, _up: bool) -> Result<()> {
+    fn hotspot(&mut self, _hotspot: Hotspot) -> Result<()> {
         unreachable!()
     }
 
@@ -325,13 +325,13 @@ impl Rig for StockFeeder {
         Ok(std::mem::take(&mut self.uart))
     }
 
-    fn wait(&mut self, seconds: f64) -> Result<()> {
-        self.now += seconds;
+    fn wait(&mut self, span: Duration) -> Result<()> {
+        self.now += span.as_secs_f64();
         Ok(())
     }
 
-    fn clock(&self) -> f64 {
-        self.now
+    fn clock(&self) -> Duration {
+        Duration::from_secs_f64(self.now)
     }
 
     fn note(&mut self, text: &str) {
@@ -703,7 +703,7 @@ fn session_reports(reports: &[(&'static str, Verdict)]) -> Vec<Report> {
         .map(|(scenario, verdict)| Report {
             scenario,
             verdict: verdict.clone(),
-            seconds: 0.0,
+            took: Duration::ZERO,
         })
         .collect()
 }

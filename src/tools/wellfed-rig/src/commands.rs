@@ -13,7 +13,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use clap::{Args, ValueEnum};
 use wellfed_formats::canonical::sha256;
@@ -23,17 +23,19 @@ use wellfed_formats::transients::{self, TransientCycle, TransientsManifest};
 use serde::Deserialize;
 
 use crate::tools::{Analyzer, Observation, Observer, Tools};
-use crate::{Error, Result, now};
+use crate::{Cancel, Error, Result};
 use wellfed_formats::bench::progress::{BenchCommand, Status};
 use wellfed_formats::bench::{CAPTURES, Config, Paths, plain_name, relative};
 use wellfed_formats::require;
-use wellfed_relay::{POWER, Relay, STRAP, UART};
+use wellfed_relay::{POWER, Relay, STRAP, Switch, UART};
 
 pub mod ota;
 pub use ota::{Firmware, Image, OtaArgs, Variant};
 
-const STRAP_SECONDS: f64 = 2.0;
-const LOADER_SECONDS: f64 = 5.0;
+/// How long the strap holds feeder TX low across a power-on.
+const STRAP_HOLD: Duration = Duration::from_secs(2);
+/// The capture that confirms a loader entry.
+const LOADER_CAPTURE: Duration = Duration::from_secs(5);
 /// A ROM loader answers the strap with a run of NAKs at least this long.
 const LOADER_NAK_RUN: u64 = 8;
 
@@ -42,7 +44,7 @@ const FRAME_TX_BYTES: u64 = 1056;
 /// Logic analyzer (sigrok fx2lafw, 8 channels). Capture starts this long
 /// before power-on so the unpowered state is recorded first; the first open
 /// also uploads the analyzer's firmware, which takes about a second.
-const ANALYZER_ARMING_SECONDS: f64 = 3.0;
+const ANALYZER_ARMING: Duration = Duration::from_secs(3);
 const ANALYZER_DRIVER_CHANNELS: [(&str, u8); 4] =
     [("ina", 0), ("inb", 1), ("outa", 2), ("outb", 3)];
 const ANALYZER_OUTPUT_CHANNELS: [(&str, u8); 2] = [("outa", 2), ("outb", 3)];
@@ -66,6 +68,9 @@ pub enum CommandsError {
     LoaderNotConfirmed { capture: String },
     #[error("Need cycles >= 1 and a capture longer than arming")]
     TransientBounds,
+    /// A length on the command line that no wait can take.
+    #[error("{flag} {value} must be a finite, non-negative number")]
+    BadLength { flag: &'static str, value: f64 },
     #[error("{tool} not found; install it before a transient session")]
     ToolMissing { tool: &'static str },
     #[error("Analyzer exited before power-on: {stderr:?}")]
@@ -247,10 +252,44 @@ pub struct Bench {
     pub relay: Relay,
     pub status: Status,
     pub tools: Box<dyn Tools>,
-    /// Interruptible in production; instant in tests.
-    pub sleep: fn(f64) -> Result<()>,
-    pub off_seconds: f64,
+    /// The operator's interrupt, which every wait of a sequence ends on.
+    pub cancel: Cancel,
+    /// Interruptible in production ([`crate::sleep`]); instant in tests.
+    pub sleep: fn(&Cancel, Duration) -> Result<()>,
+    /// How long the feeder stays off before a cold boot.
+    pub off_time: Duration,
     pub uart_when_off: UartWhenOff,
+}
+
+/// Whether the owner is watching, which a build that drives the motor
+/// after boot needs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Attendance {
+    Attended,
+    Unattended,
+}
+
+impl Attendance {
+    /// `--attended-motion`, as the command line gives it.
+    pub fn from_flag(attended_motion: bool) -> Self {
+        if attended_motion {
+            Self::Attended
+        } else {
+            Self::Unattended
+        }
+    }
+}
+
+/// A length the command line gives in seconds, refused unless it is one a
+/// wait can take: finite and not negative.
+pub fn seconds_arg(flag: &'static str, value: f64) -> Result<Duration> {
+    Duration::try_from_secs_f64(value).map_err(|_| CommandsError::BadLength { flag, value }.into())
+}
+
+/// As [`seconds_arg`], for a length given in minutes.
+pub fn minutes_arg(flag: &'static str, value: f64) -> Result<Duration> {
+    Duration::try_from_secs_f64(value * 60.0)
+        .map_err(|_| CommandsError::BadLength { flag, value }.into())
 }
 
 impl Bench {
@@ -258,9 +297,15 @@ impl Bench {
         relative(&self.root, path)
     }
 
-    pub fn set(&mut self, channel: u8, on: bool) -> Result<()> {
-        self.relay.set(channel, on)?;
-        self.status.relay(channel, on);
+    /// Wait `span` unless the operator interrupts first.
+    pub fn pause(&self, span: Duration) -> Result<()> {
+        (self.sleep)(&self.cancel, span)
+    }
+
+    pub fn set(&mut self, channel: u8, switch: Switch) -> Result<()> {
+        self.relay.set(channel, switch)?;
+        // The page records the state the relay acknowledged.
+        self.status.relay(channel, switch.is_on());
         Ok(())
     }
 
@@ -273,11 +318,11 @@ impl Bench {
     /// Release the strap and cut power, then isolate the UART, with no wait:
     /// safe in cleanup paths.
     pub fn cut_power(&mut self) -> Result<()> {
-        self.set(STRAP, false)?;
-        self.set(POWER, false)?;
+        self.set(STRAP, Switch::Off)?;
+        self.set(POWER, Switch::Off)?;
         if self.uart_when_off == UartWhenOff::Isolated {
             for channel in UART {
-                self.set(channel, false)?;
+                self.set(channel, Switch::Off)?;
             }
         }
         Ok(())
@@ -287,19 +332,19 @@ impl Bench {
     /// switching time before the supply, so the ROM's first bytes are kept.
     pub fn power_on(&mut self) -> Result<()> {
         self.connect_uart()?;
-        self.set(POWER, true)
+        self.set(POWER, Switch::On)
     }
 
     fn connect_uart(&mut self) -> Result<()> {
         for channel in UART {
-            self.set(channel, true)?;
+            self.set(channel, Switch::On)?;
         }
         Ok(())
     }
 
-    fn power_off(&mut self, seconds: f64) -> Result<()> {
+    fn power_off(&mut self, wait: Duration) -> Result<()> {
         self.cut_power()?;
-        (self.sleep)(seconds)
+        self.pause(wait)
     }
 
     /// Captures never reuse a directory; refuse before any relay change.
@@ -312,11 +357,9 @@ impl Bench {
         })
     }
 
-    fn start_observer(&mut self, output: &Path, seconds: f64) -> Result<Box<dyn Observer>> {
-        let observer = self
-            .tools
-            .observe(&self.config.uart_port, output, seconds)?;
-        self.status.capture(Some(output), seconds);
+    fn start_observer(&mut self, output: &Path, length: Duration) -> Result<Box<dyn Observer>> {
+        let observer = self.tools.observe(&self.config.uart_port, output, length)?;
+        self.status.capture(Some(output), length.as_secs_f64());
         Ok(observer)
     }
 
@@ -334,7 +377,7 @@ impl Bench {
             .step(&format!("wellfed-flash {} {}", args[0], args[1]));
         let code = self.tools.flash(args, &mut self.status)?;
 
-        if crate::interrupted() {
+        if self.cancel.is_cancelled() {
             return Err(Error::Interrupted);
         }
         Ok(code)
@@ -367,7 +410,7 @@ impl Bench {
     }
 
     pub fn on(&mut self) -> Result<u8> {
-        self.set(STRAP, false)?;
+        self.set(STRAP, Switch::Off)?;
         self.power_on()?;
         Ok(0)
     }
@@ -379,24 +422,24 @@ impl Bench {
 
     /// Record the running feeder without touching power. A powered feeder's
     /// UART is connected first; an unpowered one's stays isolated.
-    pub fn capture(&mut self, name: &str, seconds: f64) -> Result<u8> {
+    pub fn capture(&mut self, name: &str, length: Duration) -> Result<u8> {
         let output = self.root.join(CAPTURES).join(name);
         self.fresh(&output)?;
         if self.get(POWER)? {
             self.connect_uart()?;
         }
-        let mut observer = self.start_observer(&output, seconds)?;
+        let mut observer = self.start_observer(&output, length)?;
         let result = self.finish_observer(observer.as_mut())?;
         say!("Captured {} bytes in {}", result.bytes, self.rel(&output));
         Ok(0)
     }
 
     /// Cold boot into the installed application while recording it from the start.
-    pub fn boot(&mut self, output: &Path, seconds: f64) -> Result<Observation> {
+    pub fn boot(&mut self, output: &Path, length: Duration) -> Result<Observation> {
         self.status.step("boot capture");
         self.fresh(output)?;
-        self.power_off(self.off_seconds)?;
-        let mut observer = self.start_observer(output, seconds)?;
+        self.power_off(self.off_time)?;
+        let mut observer = self.start_observer(output, length)?;
         if let Err(error) = self.power_on() {
             observer.kill();
             return Err(error);
@@ -424,16 +467,16 @@ impl Bench {
     pub fn loader(&mut self, output: &Path) -> Result<Observation> {
         self.status.step("loader entry");
         self.fresh(output)?;
-        self.power_off(self.off_seconds)?;
-        let mut observer = self.start_observer(output, LOADER_SECONDS)?;
+        self.power_off(self.off_time)?;
+        let mut observer = self.start_observer(output, LOADER_CAPTURE)?;
 
         // A failed entry kills the observer and tries to cut power rather
         // than leave the feeder strapped or half in the loader.
         let entered = (|| {
-            self.set(STRAP, true)?;
+            self.set(STRAP, Switch::On)?;
             self.power_on()?;
-            (self.sleep)(STRAP_SECONDS)?;
-            self.set(STRAP, false)?;
+            self.pause(STRAP_HOLD)?;
+            self.set(STRAP, Switch::Off)?;
             let result = self.finish_observer(observer.as_mut())?;
             require(
                 result.download_banner_seen
@@ -478,9 +521,10 @@ impl Bench {
         let out = self.root.join(CAPTURES).join(&args.name);
         self.fresh(&out)?;
         require(
-            args.cycles >= 1 && args.seconds > ANALYZER_ARMING_SECONDS,
+            args.cycles >= 1 && args.seconds > ANALYZER_ARMING.as_secs_f64(),
             || CommandsError::TransientBounds,
         )?;
+        let length = seconds_arg("--seconds", args.seconds)?;
         require(self.tools.sigrok_available(), || {
             CommandsError::ToolMissing { tool: "sigrok-cli" }
         })?;
@@ -505,14 +549,14 @@ impl Bench {
             },
             samplerate: args.samplerate,
             seconds: args.seconds,
-            arming_seconds: ANALYZER_ARMING_SECONDS,
+            arming_seconds: ANALYZER_ARMING.as_secs_f64(),
             channels: channels.into_iter().map(|(k, v)| (k, v.into())).collect(),
             cycles: Vec::new(),
         };
 
         // Power off whether or not the cycles succeeded, then report the
         // cycles' failure ahead of the power-off's.
-        let session = self.transient_cycles(args, &out, &mut manifest);
+        let session = self.transient_cycles(args, length, &out, &mut manifest);
         let cut = self.cut_power();
         session?;
         cut?;
@@ -527,19 +571,20 @@ impl Bench {
     fn transient_cycles(
         &mut self,
         args: &TransientArgs,
+        length: Duration,
         out: &Path,
         manifest: &mut TransientsManifest,
     ) -> Result<()> {
         for n in 1..=args.cycles {
             self.status.step(&format!("cycle {n}/{}", args.cycles));
-            self.power_off(self.off_seconds)?;
+            self.power_off(self.off_time)?;
             let name = format!("cycle-{n:03}.bin");
-            let started = now();
+            let started = Instant::now();
 
-            let mut analyzer =
-                self.tools
-                    .analyzer(&out.join(&name), args.seconds, args.samplerate)?;
-            let cycle = self.transient_cycle(args, analyzer.as_mut());
+            let mut analyzer = self
+                .tools
+                .analyzer(&out.join(&name), length, args.samplerate)?;
+            let cycle = self.transient_cycle(args, length, analyzer.as_mut());
             if cycle.is_err() {
                 analyzer.kill();
             }
@@ -551,7 +596,9 @@ impl Bench {
             manifest.cycles.push(TransientCycle {
                 file: name,
                 bytes,
-                power_on_after_launch_s: ((powered - started) * 1000.0).round() / 1000.0,
+                power_on_after_launch_s: (powered.duration_since(started).as_secs_f64() * 1000.0)
+                    .round()
+                    / 1000.0,
             });
             fs::write(
                 out.join("manifest.json"),
@@ -566,9 +613,10 @@ impl Bench {
     fn transient_cycle(
         &mut self,
         args: &TransientArgs,
+        length: Duration,
         analyzer: &mut dyn Analyzer,
-    ) -> Result<f64> {
-        (self.sleep)(ANALYZER_ARMING_SECONDS)?;
+    ) -> Result<Instant> {
+        self.pause(ANALYZER_ARMING)?;
         if !analyzer.running() {
             return Err(CommandsError::AnalyzerExited {
                 stderr: analyzer.stderr(),
@@ -576,21 +624,21 @@ impl Bench {
             .into());
         }
 
-        let powered = now();
+        let powered = Instant::now();
         if args.mode == TransientMode::Loader {
-            self.set(STRAP, true)?;
+            self.set(STRAP, Switch::On)?;
             self.power_on()?;
-            (self.sleep)(STRAP_SECONDS)?;
-            self.set(STRAP, false)?;
+            self.pause(STRAP_HOLD)?;
+            self.set(STRAP, Switch::Off)?;
         } else {
             self.power_on()?;
         }
 
-        let code = analyzer.wait(Duration::from_secs_f64(args.seconds + 30.0))?;
+        let code = analyzer.wait(length + Duration::from_secs(30))?;
         let Some(code) = code else {
             return Err(CommandsError::AnalyzerTimeout.into());
         };
-        self.power_off(0.0)?;
+        self.power_off(Duration::ZERO)?;
         require(code == 0, || CommandsError::AnalyzerFailed {
             stderr: analyzer.stderr(),
         })?;
@@ -709,11 +757,11 @@ impl Bench {
                 error,
             }
         })?;
-        self.attended_motion(&manifest, args.attended_motion)
+        self.attended_motion(&manifest, Attendance::from_flag(args.attended_motion))
     }
 
-    /// Refuse a build manifest naming a motion policy unless `allowed`.
-    fn attended_motion(&self, manifest: &BuildManifest, allowed: bool) -> Result<()> {
+    /// Refuse a build manifest naming a motion policy unless attended.
+    fn attended_motion(&self, manifest: &BuildManifest, attendance: Attendance) -> Result<()> {
         let Some(policy) = manifest
             .startup_motion_policy
             .as_deref()
@@ -722,8 +770,10 @@ impl Bench {
             return Ok(());
         };
 
-        require(allowed, || CommandsError::MotionNotAttended {
-            policy: policy.into(),
+        require(attendance == Attendance::Attended, || {
+            CommandsError::MotionNotAttended {
+                policy: policy.into(),
+            }
         })?;
         say!("Attended motion image ({policy}): the motor will move after boot");
         Ok(())
@@ -785,6 +835,7 @@ impl Bench {
 
     /// Execute a reviewed plan in the still-powered helper session, then boot.
     pub fn flash_execute(&mut self, args: &ExecuteArgs) -> Result<u8> {
+        let boot = seconds_arg("--boot-seconds", args.boot_seconds)?;
         let p = Paths::new(&self.root, &args.update.name);
         self.require_attended_motion(&args.update)?;
         let update = self.update_args(&args.update, &p)?;
@@ -823,7 +874,7 @@ impl Bench {
         }
 
         self.status.transfer(None, 0, 0);
-        self.boot(&p.boot, args.boot_seconds)?;
+        self.boot(&p.boot, boot)?;
         Ok(0)
     }
 
@@ -895,6 +946,7 @@ impl Bench {
 
     /// Execute a reviewed give-way in the still-powered helper session, then boot.
     pub fn give_way_execute(&mut self, args: &GiveWayExecuteArgs) -> Result<u8> {
+        let boot = seconds_arg("--boot-seconds", args.boot_seconds)?;
         let p = Paths::new(&self.root, &args.give_way.name);
         require(p.plan.is_file() && !p.execute.exists(), || {
             CommandsError::PlanRequired
@@ -921,7 +973,7 @@ impl Bench {
             return Ok(1);
         }
 
-        self.boot(&p.boot, args.boot_seconds)?;
+        self.boot(&p.boot, boot)?;
         Ok(0)
     }
 
@@ -1014,6 +1066,7 @@ impl Bench {
     /// recovery, single-use in the still-powered helper session, then a boot
     /// that must show stock's banner. The capture holds the unit's secrets.
     pub fn stock_execute(&mut self, args: &StockExecuteArgs) -> Result<u8> {
+        let boot = seconds_arg("--boot-seconds", args.boot_seconds)?;
         let name = &args.stock.name;
         if let Some(fallback) = &args.stock.fallback {
             let give_way = GiveWayExecuteArgs {
@@ -1059,7 +1112,7 @@ impl Bench {
             return Ok(1);
         }
 
-        let seen = self.boot(&p.boot, args.boot_seconds)?;
+        let seen = self.boot(&p.boot, boot)?;
         require(seen.stock_startup_markers > 0, || {
             CommandsError::NoStockBanner
         })?;

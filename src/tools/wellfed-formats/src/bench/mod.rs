@@ -6,6 +6,7 @@
 //! reads them, and links neither the relay nor the flash client, so the
 //! shapes they share live here.
 
+pub mod cancel;
 pub mod catalog;
 pub mod progress;
 pub mod run;
@@ -14,6 +15,8 @@ use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 
 use serde::Deserialize;
+
+pub use cancel::Cancel;
 
 /// Root-relative: the bench config.
 pub const CONFIG: &str = "private/bench.json";

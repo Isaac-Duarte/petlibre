@@ -29,14 +29,15 @@ pub mod commands;
 pub mod device;
 pub mod server;
 pub mod tools;
+mod wait;
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
 
-/// Set by the operator's Ctrl-C; checked by every wait, so a sequence stops
-/// (with its power-off cleanup) instead of running on.
-pub static INTERRUPTED: AtomicBool = AtomicBool::new(false);
+/// The operator's interrupt: `wellfed-bench` makes one and hands it to
+/// every wait, so a sequence stops (with its power-off cleanup) instead of
+/// running on.
+pub use wellfed_formats::bench::Cancel;
+pub use wait::{Waited, sleep, wait_child};
 
 /// Everything a bench sequence stops on. A refusal or stop condition is a
 /// variant of the module that makes it, whose `Display` is what the
@@ -103,24 +104,3 @@ pub fn load<T: serde::de::DeserializeOwned>(root: &Path, relative: &Path) -> Res
         error,
     })
 }
-
-pub fn interrupted() -> bool {
-    INTERRUPTED.load(Ordering::SeqCst)
-}
-
-/// Sleep in short slices so an interrupt ends the wait promptly.
-pub fn sleep(seconds: f64) -> Result<()> {
-    let end = Instant::now() + Duration::from_secs_f64(seconds.max(0.0));
-    loop {
-        if interrupted() {
-            return Err(Error::Interrupted);
-        }
-        let left = end.saturating_duration_since(Instant::now());
-        if left.is_zero() {
-            return Ok(());
-        }
-        std::thread::sleep(left.min(Duration::from_millis(50)));
-    }
-}
-
-pub(crate) use wellfed_formats::bench::now;

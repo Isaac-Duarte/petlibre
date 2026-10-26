@@ -11,7 +11,7 @@
 //! everything in [`LiveRig::restore`], which `Drop` also runs.
 //!
 //! The UART is held by back-to-back receive-only `wellfed-flash read
-//! observe` segments of [`SEGMENT_SECONDS`]. The capture writer flushes each
+//! observe` segments of [`SEGMENT`]. The capture writer flushes each
 //! received chunk, so the growing `serial-rx.bin` is read while the segment
 //! runs. The chain runs on its own thread ([`Capture`]), so the port stays
 //! held while the suite blocks on a build.
@@ -33,16 +33,16 @@ use wellfed_formats::bench::progress::StepState;
 use wellfed_formats::bench::{CAPTURES, VERIFICATION};
 use wellfed_formats::require;
 use wellfed_formats::stock::{ImageLease, ServerConfig};
-use wellfed_relay::{POWER, STRAP};
+use wellfed_relay::{POWER, STRAP, Switch};
 use wellfed_rig::commands::Bench;
 use wellfed_rig::commands::ota::{self, OtaArgs, Staged, Target, Timing};
 use wellfed_rig::device::{Answer, Ask, Device, Intruder, Rebuffed};
-use wellfed_rig::say;
 use wellfed_rig::server::{StockStatus, TrialAnswer, TrialRequest, TrialResolve};
 use wellfed_rig::tools::{Capture, CaptureFailure, InstallJob, Installing, PushError};
+use wellfed_rig::{Waited, say, wait_child};
 use wellfed_stock_api::{Auth, StockApi};
 
-use super::{Error, Fault, Result, Rig, Server};
+use super::{Error, Fault, Hotspot, Result, Rig, Server};
 
 /// Why the live rig could not set the bench up or keep it running.
 #[derive(Debug, thiserror::Error)]
@@ -72,7 +72,7 @@ pub enum LiveError {
         status: std::process::ExitStatus,
         log: String,
     },
-    #[error("{what} did not become ready in {:.0} s", START_SECONDS)]
+    #[error("{what} did not become ready in {:.0} s", START_WAIT.as_secs_f64())]
     ChildTimeout { what: &'static str },
     #[error("A power cycle needs --power")]
     NoPower,
@@ -85,14 +85,14 @@ pub enum LiveError {
 }
 
 /// The observer's own limit for one capture.
-const SEGMENT_SECONDS: f64 = 180.0;
-const START_SECONDS: f64 = 20.0;
-const STOP_SECONDS: f64 = 10.0;
+const SEGMENT: Duration = Duration::from_secs(180);
+const START_WAIT: Duration = Duration::from_secs(20);
+const STOP_WAIT: Duration = Duration::from_secs(10);
 const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// `private/hotspot.json` (`--hotspot`).
 #[derive(Deserialize)]
-struct Hotspot {
+struct HotspotFile {
     /// The NetworkManager connection that serves the feeder's network.
     connection: String,
 }
@@ -122,8 +122,8 @@ pub(super) struct LiveRig<'b> {
     mqtt: SocketAddr,
     connection: String,
     /// The hotspot's state before the run; `None` until recorded.
-    hotspot_was_up: Option<bool>,
-    hotspot_up: bool,
+    hotspot_was: Option<Hotspot>,
+    hotspot_now: Hotspot,
     power: bool,
     power_was_on: Option<bool>,
     children: Children,
@@ -144,7 +144,7 @@ impl<'b> LiveRig<'b> {
         let root = bench.root.clone();
         let name = args.name().to_string();
         let config: ServerConfig = wellfed_rig::load(&root, &args.config)?;
-        let hotspot: Hotspot = wellfed_rig::load(&root, &args.hotspot)?;
+        let hotspot: HotspotFile = wellfed_rig::load(&root, &args.hotspot)?;
         require(!hotspot.connection.is_empty(), || LiveError::NoConnection {
             hotspot: args.hotspot.clone(),
         })?;
@@ -160,8 +160,8 @@ impl<'b> LiveRig<'b> {
             pushing: None,
             mqtt: config.mqtt_listen,
             connection: hotspot.connection,
-            hotspot_was_up: None,
-            hotspot_up: false,
+            hotspot_was: None,
+            hotspot_now: Hotspot::Down,
             power: args.power,
             power_was_on: None,
             children: Children::default(),
@@ -198,12 +198,15 @@ impl<'b> LiveRig<'b> {
     /// Bring the bench to its test state: hotspot up, feeder powered (with
     /// `--power`), the UART held and `server` answering.
     pub(super) fn start(&mut self, server: Server) -> Result<()> {
-        let up = self.hotspot_active()?;
-        self.hotspot_was_up = Some(up);
-        if up {
-            self.hotspot_up = true;
+        let was = if self.hotspot_active()? {
+            Hotspot::Up
         } else {
-            self.hotspot(true)?;
+            Hotspot::Down
+        };
+        self.hotspot_was = Some(was);
+        match was {
+            Hotspot::Up => self.hotspot_now = Hotspot::Up,
+            Hotspot::Down => self.hotspot(Hotspot::Up)?,
         }
 
         if self.power {
@@ -211,7 +214,7 @@ impl<'b> LiveRig<'b> {
             self.power_was_on = Some(on);
             if !on {
                 self.note("Feeder supply was off; switching it on");
-                self.bench.set(STRAP, false)?;
+                self.bench.set(STRAP, Switch::Off)?;
             }
             // Also connects a powered feeder's UART, which may be isolated.
             self.bench.power_on()?;
@@ -223,7 +226,7 @@ impl<'b> LiveRig<'b> {
         self.capture = Some(
             self.bench
                 .tools
-                .capture(&port, SEGMENT_SECONDS, Box::new(segment))?,
+                .capture(&port, SEGMENT, Box::new(segment))?,
         );
         self.uart()?;
         self.server(server)
@@ -274,34 +277,35 @@ impl<'b> LiveRig<'b> {
         &self,
         child: &mut Child,
         what: &'static str,
-        ready: impl Fn() -> bool,
+        ready: impl FnMut() -> bool,
     ) -> Result<()> {
-        let deadline = Instant::now() + Duration::from_secs_f64(START_SECONDS);
-        while Instant::now() < deadline {
-            if wellfed_rig::interrupted() {
-                return Err(wellfed_rig::Error::Interrupted.into());
+        let waited = wait_child(
+            child,
+            &[&self.bench.cancel],
+            Some(Instant::now() + START_WAIT),
+            Duration::from_millis(200),
+            ready,
+        )?;
+        // A child still running is left for `stop_servers`, which the
+        // restore runs whatever happened here.
+        match waited {
+            Waited::Ready => Ok(()),
+            Waited::Cancelled => Err(wellfed_rig::Error::Interrupted.into()),
+            Waited::Exited(status) => Err(LiveError::ChildExited {
+                what,
+                status,
+                log: self.bench.rel(&self.server_log),
             }
-            if let Some(status) = child.try_wait()? {
-                return Err(LiveError::ChildExited {
-                    what,
-                    status,
-                    log: self.bench.rel(&self.server_log),
-                }
-                .into());
-            }
-            if ready() {
-                return Ok(());
-            }
-            std::thread::sleep(Duration::from_millis(200));
+            .into()),
+            Waited::TimedOut => Err(LiveError::ChildTimeout { what }.into()),
         }
-        Err(LiveError::ChildTimeout { what }.into())
     }
 
-    /// `serve`; with `trial`, `--enable-ota-trial`, which refuses a binary
-    /// not built from a clean commit.
-    fn start_serve(&mut self, trial: bool) -> Result<()> {
+    /// `serve`; as [`Server::StockTrial`], `--enable-ota-trial`, which
+    /// refuses a binary not built from a clean commit.
+    fn start_serve(&mut self, server: &Server) -> Result<()> {
         let mut args = vec!["serve", "--config", &self.config_arg];
-        if trial {
+        if *server == Server::StockTrial {
             args.push("--enable-ota-trial");
         }
         let mut child = self.spawn(&self.stock_bin(), &args)?;
@@ -315,21 +319,24 @@ impl<'b> LiveRig<'b> {
     }
 
     /// SIGTERM, which `serve` handles by stopping its broker child too; a
-    /// kill if it is still running after [`STOP_SECONDS`].
+    /// kill if it is still running after [`STOP_WAIT`].
     fn stop(child: Option<Child>) {
         let Some(mut child) = child else { return };
         let pid = rustix::process::Pid::from_child(&child);
         let _ = rustix::process::kill_process(pid, rustix::process::Signal::TERM);
 
-        let deadline = Instant::now() + Duration::from_secs_f64(STOP_SECONDS);
-        while Instant::now() < deadline {
-            if matches!(child.try_wait(), Ok(Some(_))) {
-                return;
-            }
-            std::thread::sleep(Duration::from_millis(100));
+        // Cleanup, often after an interrupt: no handle cancels this wait.
+        let waited = wait_child(
+            &mut child,
+            &[],
+            Some(Instant::now() + STOP_WAIT),
+            Duration::from_millis(100),
+            || false,
+        );
+        if !matches!(waited, Ok(Waited::Exited(_))) {
+            let _ = child.kill();
+            let _ = child.wait();
         }
-        let _ = child.kill();
-        let _ = child.wait();
     }
 
     fn stop_servers(&mut self) {
@@ -360,8 +367,8 @@ impl<'b> LiveRig<'b> {
             capture.stop();
         }
         self.bench.status.capture(None, 0.0);
-        if let Some(was) = self.hotspot_was_up
-            && was != self.hotspot_up
+        if let Some(was) = self.hotspot_was
+            && was != self.hotspot_now
             && let Err(error) = self.hotspot(was)
         {
             eprintln!("Could not restore the hotspot {}: {error}", self.connection);
@@ -398,10 +405,7 @@ impl Rig for LiveRig<'_> {
         };
         self.note(&format!("  Server: {label}"));
 
-        match server {
-            Server::Serve => self.start_serve(false),
-            Server::StockTrial => self.start_serve(true),
-        }
+        self.start_serve(&server)
     }
 
     fn offer(&mut self, staged: Option<&Staged>, fault: Fault) -> Result<()> {
@@ -468,8 +472,8 @@ impl Rig for LiveRig<'_> {
         Ok(self.api.get("/api/status", Auth::Token)?)
     }
 
-    fn hotspot(&mut self, up: bool) -> Result<()> {
-        let verb = if up { "up" } else { "down" };
+    fn hotspot(&mut self, hotspot: Hotspot) -> Result<()> {
+        let verb = hotspot.verb();
         self.note(&format!("  nmcli connection {verb} {}", self.connection));
         let output = Command::new("nmcli")
             .args(["connection", verb, &self.connection])
@@ -480,7 +484,7 @@ impl Rig for LiveRig<'_> {
             verb,
             stderr: String::from_utf8_lossy(&output.stderr).trim().into(),
         })?;
-        self.hotspot_up = up;
+        self.hotspot_now = hotspot;
         Ok(())
     }
 
@@ -488,7 +492,7 @@ impl Rig for LiveRig<'_> {
         require(self.power, || LiveError::NoPower)?;
         self.note("  Cold boot: supply off, then on");
         self.bench.cut_power()?;
-        (self.bench.sleep)(self.bench.off_seconds)?;
+        self.bench.pause(self.bench.off_time)?;
         Ok(self.bench.power_on()?)
     }
 
@@ -500,7 +504,9 @@ impl Rig for LiveRig<'_> {
         }
         for segment in segments.iter().skip(self.captures.len()) {
             self.captures.push(self.bench.rel(segment));
-            self.bench.status.capture(Some(segment), SEGMENT_SECONDS);
+            self.bench
+                .status
+                .capture(Some(segment), SEGMENT.as_secs_f64());
         }
 
         let mut bytes = Vec::new();
@@ -521,12 +527,12 @@ impl Rig for LiveRig<'_> {
         Ok(bytes)
     }
 
-    fn wait(&mut self, seconds: f64) -> Result<()> {
-        Ok((self.bench.sleep)(seconds)?)
+    fn wait(&mut self, span: Duration) -> Result<()> {
+        Ok(self.bench.pause(span)?)
     }
 
-    fn clock(&self) -> f64 {
-        self.started.elapsed().as_secs_f64()
+    fn clock(&self) -> Duration {
+        self.started.elapsed()
     }
 
     fn note(&mut self, text: &str) {

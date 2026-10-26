@@ -26,6 +26,7 @@
 //! [stock OTA requirements]: ../../../../docs/devices/plaf103/stock/ota-requirements.md
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use crate::args::{ItestArgs, StockOtaArgs};
 use wellfed_core::ota::install::StopStage;
@@ -41,8 +42,8 @@ use wellfed_rig::server::{STOCK_VERSION, TrialAnswer, TrialRequest};
 
 use super::log::events;
 use super::{
-    Ctx, Fault, HEALTH_SECONDS, INSTALL_SECONDS, Report, Result, STATUS_POLL_SECONDS,
-    STATUS_SECONDS, Server, Silent, Verdict, live, short,
+    Ctx, Fault, HEALTH_WAIT, INSTALL_WAIT, Report, Result, STATUS_POLL, STATUS_WAIT, Server,
+    Silent, Verdict, live, short,
 };
 
 /// Why the trip through stock, or a `stock-ota` stage, stopped. Stock is
@@ -69,7 +70,7 @@ pub enum StockError {
         report.as_ref().map_or_else(|| "no report".into(), ToString::to_string)
     )]
     InstallRefused { report: Option<OtaReport> },
-    #[error("The build did not start within {:.0} min", INSTALL_SECONDS / 60.0)]
+    #[error("The build did not start within {:.0} min", INSTALL_WAIT.as_secs_f64() / 60.0)]
     NotStarted,
     #[error("Unreadable startup record")]
     UnreadableStart,
@@ -89,17 +90,20 @@ pub enum StockError {
     PromotionFailed { stage: StopStage },
     #[error("The promotion's attempt reset; bank 0 will not retry until a cold boot")]
     PromotionSkipped,
-    #[error("The server did not resolve {id} within {:.0} min", SETTLE_SECONDS / 60.0)]
+    #[error(
+        "The server did not resolve {id} within {:.0} min",
+        SETTLE_WAIT.as_secs_f64() / 60.0
+    )]
     Unresolved { id: String },
 }
 
 /// Stock joins the hotspot, connects and reports its attributes within a
 /// minute or two of power; allow a slow join.
-const STOCK_SECONDS: f64 = 5.0 * 60.0;
+const STOCK_WAIT: Duration = Duration::from_secs(5 * 60);
 /// The server's resolution window (20 min after the request, 10 quiet
 /// connected minutes) plus margin.
-const SETTLE_SECONDS: f64 = 25.0 * 60.0;
-const SETTLE_POLL_SECONDS: f64 = 30.0;
+const SETTLE_WAIT: Duration = Duration::from_secs(25 * 60);
+const SETTLE_POLL: Duration = Duration::from_secs(30);
 
 /// The run's stages, in order: its status steps and record entries.
 const READY: &str = "stock-ready";
@@ -131,7 +135,7 @@ fn ota_args(args: &StockOtaArgs) -> OtaArgs {
         config: args.config.clone(),
         keys: args.keys.clone(),
         version: None,
-        minutes: INSTALL_SECONDS / 60.0,
+        minutes: INSTALL_WAIT.as_secs_f64() / 60.0,
         attended_motion: false,
         downgrade: false,
         fault: None,
@@ -181,7 +185,7 @@ pub(super) fn roundtrip(ctx: &mut Ctx) -> Result<()> {
     ctx.rig.offer(Some(&stock), Fault::None)?;
     ctx.note("  Offered stock with a downgrade statement; bank 0 installs it into bank 1");
     let outcome =
-        ctx.offline(|ctx| ctx.watch_as(&stock.build, Target::Stock, since, INSTALL_SECONDS))?;
+        ctx.offline(|ctx| ctx.watch_as(&stock.build, Target::Stock, since, INSTALL_WAIT))?;
     if outcome != Outcome::Passed {
         return Err(StockError::StockNotStarted { outcome }.into());
     }
@@ -207,7 +211,7 @@ pub(super) fn roundtrip(ctx: &mut Ctx) -> Result<()> {
     ctx.rig.offer(None, Fault::None)?;
 
     ctx.rig.server(Server::Serve)?;
-    ctx.reachable(STATUS_SECONDS).map(|_| ())
+    ctx.reachable(STATUS_WAIT).map(|_| ())
 }
 
 /// Run the stages in order; the first failure skips the rest.
@@ -222,7 +226,7 @@ fn run(ctx: &mut Ctx, args: &StockOtaArgs, staged: &Staged) -> (Vec<Report>, Opt
             reports.push(Report {
                 scenario: name,
                 verdict: Verdict::Skip(reason.clone()),
-                seconds: 0.0,
+                took: Duration::ZERO,
             });
             continue;
         }
@@ -237,7 +241,7 @@ fn run(ctx: &mut Ctx, args: &StockOtaArgs, staged: &Staged) -> (Vec<Report>, Opt
             BANK0 => bank0(ctx, &staged.build, &request_id),
             _ => promote(ctx, staged),
         };
-        let seconds = ctx.rig.clock() - begun;
+        let took = ctx.rig.clock().saturating_sub(begun);
 
         let verdict = match result {
             Ok(()) => Verdict::Pass,
@@ -258,7 +262,7 @@ fn run(ctx: &mut Ctx, args: &StockOtaArgs, staged: &Staged) -> (Vec<Report>, Opt
         reports.push(Report {
             scenario: name,
             verdict,
-            seconds,
+            took,
         });
     }
 
@@ -270,7 +274,7 @@ fn run(ctx: &mut Ctx, args: &StockOtaArgs, staged: &Staged) -> (Vec<Report>, Opt
 fn ready(ctx: &mut Ctx) -> Result<()> {
     ctx.note("- Waiting for stock to report to this server");
     let report = ctx.offline(|ctx| {
-        ctx.until_status(&format!("stock {STOCK_VERSION}"), STOCK_SECONDS, |status| {
+        ctx.until_status(&format!("stock {STOCK_VERSION}"), STOCK_WAIT, |status| {
             Ok(status.stock_ready()?)
         })
     })?;
@@ -297,7 +301,7 @@ fn request(ctx: &mut Ctx, staged: &Staged, request_id: &str) -> Result<()> {
 /// Stock's own reports and the server's ledger say how far it got.
 fn install(ctx: &mut Ctx, build: &str, request_id: &str) -> Result<()> {
     let since = ctx.mark()?;
-    let deadline = ctx.rig.clock() + INSTALL_SECONDS;
+    let deadline = ctx.rig.clock() + INSTALL_WAIT;
     // The server keeps only the latest reports; each has its receipt time.
     let mut noted: Vec<OtaReport> = Vec::new();
 
@@ -337,7 +341,7 @@ fn install(ctx: &mut Ctx, build: &str, request_id: &str) -> Result<()> {
             if ctx.rig.clock() >= deadline {
                 return Err(StockError::NotStarted.into());
             }
-            ctx.rig.wait(STATUS_POLL_SECONDS)?;
+            ctx.rig.wait(STATUS_POLL)?;
         }
     })
 }
@@ -372,8 +376,8 @@ fn started(line: &str, build: &str) -> Result<()> {
 
 /// How long the bank-0 step asks the server to close the request: past the
 /// server's 90 s telemetry window, counted from when the build answered.
-const ANSWER_SECONDS: f64 = 120.0;
-const ANSWER_RETRY_SECONDS: f64 = 10.0;
+const ANSWER_WAIT: Duration = Duration::from_secs(120);
+const ANSWER_RETRY: Duration = Duration::from_secs(10);
 
 /// The build answers the device API from bank 0 while it waits for an
 /// update, which closes the server's install record: stock never reports
@@ -381,25 +385,21 @@ const ANSWER_RETRY_SECONDS: f64 = 10.0;
 /// failed: the feeder is where it should be, and the next request waits for
 /// the record's resolution instead.
 fn bank0(ctx: &mut Ctx, build: &str, request_id: &str) -> Result<()> {
-    let report = ctx.until_device(
-        "status from the build on bank 0",
-        HEALTH_SECONDS,
-        |status| {
-            if status.build != build {
-                return Err(StockError::OtherBuild {
-                    build: status.build.clone(),
-                }
-                .into());
+    let report = ctx.until_device("status from the build on bank 0", HEALTH_WAIT, |status| {
+        if status.build != build {
+            return Err(StockError::OtherBuild {
+                build: status.build.clone(),
             }
-            if status.bank != 0 {
-                return Err(StockError::OtherBank { bank: status.bank }.into());
-            }
-            Ok(format!(
-                "Status: build {} on bank 0",
-                &build[..build.len().min(12)]
-            ))
-        },
-    )?;
+            .into());
+        }
+        if status.bank != 0 {
+            return Err(StockError::OtherBank { bank: status.bank }.into());
+        }
+        Ok(format!(
+            "Status: build {} on bank 0",
+            &build[..build.len().min(12)]
+        ))
+    })?;
     ctx.note(&format!("  {report}"));
 
     // The device API's status named exactly this build and bank 0 (the
@@ -417,20 +417,20 @@ fn bank0(ctx: &mut Ctx, build: &str, request_id: &str) -> Result<()> {
     // The server refuses while stock's last telemetry is still current (90 s
     // after its last report, which may be just before it rebooted into the
     // build), so a refusal is asked again until that window has surely passed.
-    let deadline = ctx.rig.clock() + ANSWER_SECONDS;
+    let deadline = ctx.rig.clock() + ANSWER_WAIT;
     loop {
         match ctx.rig.trial_answered(&answer) {
             Ok(()) => {
                 ctx.note("  The server closed the request: replacement healthy");
                 return Ok(());
             }
-            Err(error) if ctx.rig.clock() + ANSWER_RETRY_SECONDS > deadline => {
+            Err(error) if ctx.rig.clock() + ANSWER_RETRY > deadline => {
                 ctx.note(&format!(
                     "  The server did not close the request ({error}); the next one waits for its resolution"
                 ));
                 return Ok(());
             }
-            Err(_) => ctx.rig.wait(ANSWER_RETRY_SECONDS)?,
+            Err(_) => ctx.rig.wait(ANSWER_RETRY)?,
         }
     }
 }
@@ -446,7 +446,7 @@ fn promote(ctx: &mut Ctx, staged: &Staged) -> Result<()> {
     ));
 
     let build = &staged.build;
-    match ctx.watch(build, since, INSTALL_SECONDS)? {
+    match ctx.watch(build, since, INSTALL_WAIT)? {
         Outcome::Passed => {}
         Outcome::FellBack { boot } => {
             return Err(StockError::PromotionFellBack { boot }.into());
@@ -481,7 +481,7 @@ fn settle(ctx: &mut Ctx) -> Result<()> {
     ));
 
     let note = format!("stock-ota: stock still reports {STOCK_VERSION} after the request");
-    let deadline = ctx.rig.clock() + SETTLE_SECONDS;
+    let deadline = ctx.rig.clock() + SETTLE_WAIT;
     let mut last = String::new();
     ctx.offline(|ctx| {
         loop {
@@ -502,7 +502,7 @@ fn settle(ctx: &mut Ctx) -> Result<()> {
             if ctx.rig.clock() >= deadline {
                 return Err(StockError::Unresolved { id: id.clone() }.into());
             }
-            ctx.rig.wait(SETTLE_POLL_SECONDS)?;
+            ctx.rig.wait(SETTLE_POLL)?;
         }
     })
 }
@@ -550,7 +550,7 @@ pub(super) fn stock_ota(bench: &mut Bench, args: &StockOtaArgs, stock_bin: PathB
         say!(
             "  {:<14} {verdict:<5} {:>9}  {reason}",
             report.scenario,
-            ota::duration(report.seconds)
+            ota::duration(report.took)
         );
     }
     if let Some(line) = recovery(&reports) {

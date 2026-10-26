@@ -13,6 +13,8 @@
 //! The feeds move the motor unattended (`--feeds`), so the hopper may be
 //! empty: the rotor's marks count the portions whether or not food falls.
 
+use std::time::Duration;
+
 use wellfed_core::feed::controller::FeedReason;
 use wellfed_core::feed::owner::OwnerState;
 use wellfed_core::feed::storage::OwnerOutcome;
@@ -22,7 +24,7 @@ use wellfed_model::{Refusal, Settings, SettingsPatch};
 use wellfed_rig::device::{Answer, Ask};
 
 use super::log::events;
-use super::scenarios::{RECORD_SECONDS, changes_to, read_settings, set_settings};
+use super::scenarios::{RECORD_WAIT, changes_to, read_settings, set_settings};
 use super::{Ctx, Error, Result, compact};
 
 /// Why `feed-writes` failed. A feed that may still be running is its own
@@ -101,14 +103,14 @@ fn failed_first(failure: Option<&Error>) -> String {
 const PORTIONS: u8 = 2;
 /// From the reservation to the motor driving: the optics and the
 /// supervisor come up first.
-const PREPARE_SECONDS: f64 = 30.0;
+const PREPARE_WAIT: Duration = Duration::from_secs(30);
 /// About 9 s a portion on the bench, well inside the owner's own cap.
-const FEED_SECONDS: f64 = 90.0;
+const FEED_WAIT: Duration = Duration::from_secs(90);
 /// Into the drive before the cancel: before the first portion's mark,
 /// about 7.8 s in on the bench.
-const CANCEL_AFTER_SECONDS: f64 = 2.0;
+const CANCEL_AFTER: Duration = Duration::from_secs(2);
 /// From a cancel, or a result, to the owner's next record.
-const STOP_SECONDS: f64 = 10.0;
+const STOP_WAIT: Duration = Duration::from_secs(10);
 
 /// A feed the owner may still be running: its id, and the UART mark from
 /// before it was asked for, where its result is looked for.
@@ -187,10 +189,10 @@ fn settle(ctx: &mut Ctx, running: Issued) -> Result<usize> {
     let fed = ctx.expect(
         &format!("PLOWN1 fed id={}", running.feed),
         running.since,
-        FEED_SECONDS + STOP_SECONDS,
+        FEED_WAIT + STOP_WAIT,
         |e| fed_of(e, running.feed).is_some(),
     )?;
-    ctx.expect("the owner at rest", fed, STOP_SECONDS, |e| {
+    ctx.expect("the owner at rest", fed, STOP_WAIT, |e| {
         owner_state(e, OwnerState::Idle)
     })?;
     Ok(fed)
@@ -209,7 +211,7 @@ fn writes_during_feed(
         ..SettingsPatch::default()
     };
     let (feed, start) = start_feed(ctx, issued)?;
-    ctx.expect("the motor driving", start, PREPARE_SECONDS, |e| {
+    ctx.expect("the motor driving", start, PREPARE_WAIT, |e| {
         owner_state(e, OwnerState::Feeding)
     })?;
 
@@ -324,10 +326,10 @@ fn cancel_during_feed(ctx: &mut Ctx, issued: &mut Option<Issued>) -> Result<()> 
     held_status(ctx)?;
 
     let (feed, start) = start_feed(ctx, issued)?;
-    ctx.expect("the motor driving", start, PREPARE_SECONDS, |e| {
+    ctx.expect("the motor driving", start, PREPARE_WAIT, |e| {
         owner_state(e, OwnerState::Feeding)
     })?;
-    ctx.idle(CANCEL_AFTER_SECONDS)?;
+    ctx.idle(CANCEL_AFTER)?;
     let since = ctx.mark()?;
     let cancel = ctx.ask_held(&Ask::CancelFeed { feed })?;
     ctx.note(&format!(
@@ -380,7 +382,8 @@ fn start_feed(ctx: &mut Ctx, issued: &mut Option<Issued>) -> Result<(u32, usize)
                 // unlogged: nothing tells when the outputs are free.
                 ctx.halted = Some(format!(
                     "a feed request failed ({error}) and no feed record followed within \
-                     {RECORD_SECONDS:.0} s; nothing was restored"
+                     {:.0} s; nothing was restored",
+                    RECORD_WAIT.as_secs_f64()
                 ));
             }
             return Err(FeedsError::Uncertain {
@@ -395,19 +398,16 @@ fn start_feed(ctx: &mut Ctx, issued: &mut Option<Issued>) -> Result<(u32, usize)
     *issued = Some(Issued { feed, since });
     ctx.note(&format!("  Feed {feed}: {PORTIONS} portions"));
 
-    let start = ctx.expect(
-        &format!("PLOWN1 feed id={feed}"),
-        since,
-        RECORD_SECONDS,
-        |e| submitted(e) == Some(u64::from(feed)),
-    )?;
+    let start = ctx.expect(&format!("PLOWN1 feed id={feed}"), since, RECORD_WAIT, |e| {
+        submitted(e) == Some(u64::from(feed))
+    })?;
     Ok((feed, start))
 }
 
 /// The feed the owner took since `since` without the suite hearing its
 /// answer, if its record shows one.
 fn taken(ctx: &mut Ctx, since: usize) -> Result<Option<u32>> {
-    let found = ctx.expect("PLOWN1 feed id=", since, RECORD_SECONDS, |e| {
+    let found = ctx.expect("PLOWN1 feed id=", since, RECORD_WAIT, |e| {
         submitted(e).is_some()
     });
     let mark = match found {

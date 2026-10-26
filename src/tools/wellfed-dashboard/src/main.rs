@@ -9,15 +9,12 @@
 
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::Context as _;
 use clap::Parser;
 
 use wellfed_dashboard::Listen;
-
-/// Set by the operator's Ctrl+C; the page's streams and server stop on it.
-static STOP: AtomicBool = AtomicBool::new(false);
+use wellfed_formats::bench::Cancel;
 
 #[derive(Parser)]
 #[command(
@@ -44,9 +41,12 @@ struct Cli {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    let _ = ctrlc::set_handler(|| STOP.store(true, Ordering::SeqCst));
+    // The operator's Ctrl+C; the page's streams and server stop on it.
+    let stop = Cancel::new();
+    let interrupt = stop.clone();
+    let _ = ctrlc::set_handler(move || interrupt.cancel());
 
-    match run(cli) {
+    match run(cli, stop) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("Stopped: {error:#}");
@@ -55,7 +55,7 @@ fn main() -> ExitCode {
     }
 }
 
-fn run(cli: Cli) -> anyhow::Result<()> {
+fn run(cli: Cli, stop: Cancel) -> anyhow::Result<()> {
     let root = cli
         .root
         .canonicalize()
@@ -63,7 +63,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
     let flash_bin = cli.flash_bin.unwrap_or_else(default_flash_bin);
 
     let listen = Listen::new(&cli.listen, cli.ui_port)?;
-    let page = wellfed_dashboard::start(root, flash_bin, &listen, &STOP)?;
+    let page = wellfed_dashboard::start(root, flash_bin, &listen, stop)?;
     println!("Bench page on {} (Ctrl+C to stop)", listen.url());
 
     page.join()

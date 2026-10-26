@@ -13,7 +13,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::sync::atomic::Ordering;
+use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 use wellfed_formats::bench::catalog;
@@ -21,10 +21,10 @@ use wellfed_formats::bench::progress::{BenchCommand, Status};
 use wellfed_formats::bench::{CONFIG, Config, STATUS_DIR};
 use wellfed_itest::{ItestArgs, StockOtaArgs};
 use wellfed_relay::Relay;
-use wellfed_rig::INTERRUPTED;
+use wellfed_rig::Cancel;
 use wellfed_rig::commands::{
     self, Bench, ExecuteArgs, GiveWayArgs, GiveWayExecuteArgs, OtaArgs, StockArgs,
-    StockExecuteArgs, TransientArgs, UartWhenOff, UpdateArgs, check_name,
+    StockExecuteArgs, TransientArgs, UartWhenOff, UpdateArgs, check_name, seconds_arg,
 };
 use wellfed_rig::tools::{Processes, default_build_bin, default_flash_bin, default_stock_bin};
 
@@ -195,11 +195,13 @@ pub(crate) fn main() -> ExitCode {
 
     // An interrupt stops the running sequence, through its power-off cleanup.
     // wellfed-flash children get the terminal's interrupt too, and stop themselves.
-    let _ = ctrlc::set_handler(|| INTERRUPTED.store(true, Ordering::SeqCst));
+    let cancel = Cancel::new();
+    let interrupt = cancel.clone();
+    let _ = ctrlc::set_handler(move || interrupt.cancel());
     // Evidence and status are private.
     rustix::process::umask(rustix::fs::Mode::from_raw_mode(0o077));
 
-    match run(cli) {
+    match run(cli, &cancel) {
         Ok(code) => ExitCode::from(code),
         Err(error) => {
             eprintln!("Stopped: {error}");
@@ -208,7 +210,7 @@ pub(crate) fn main() -> ExitCode {
     }
 }
 
-fn run(cli: Cli) -> anyhow::Result<u8> {
+fn run(cli: Cli, cancel: &Cancel) -> anyhow::Result<u8> {
     let root = cli
         .root
         .canonicalize()
@@ -218,6 +220,7 @@ fn run(cli: Cli) -> anyhow::Result<u8> {
         cli.flash_bin.unwrap_or_else(default_flash_bin),
         cli.stock_bin.unwrap_or_else(default_stock_bin),
         cli.build_bin.unwrap_or_else(default_build_bin),
+        cancel.clone(),
     );
 
     // The catalog needs no bench.
@@ -236,6 +239,7 @@ fn run(cli: Cli) -> anyhow::Result<u8> {
             &tools.flash_bin,
             &cli.listen,
             cli.ui_port,
+            cancel,
         )?)
     } else {
         None
@@ -255,7 +259,15 @@ fn run(cli: Cli) -> anyhow::Result<u8> {
     let status_dir = root.join(STATUS_DIR);
 
     let stock_bin = tools.stock_bin.clone();
-    let mut bench = open_bench(root, tools, &command, cli.off_seconds, cli.uart_when_off)?;
+    let off_time = seconds_arg("--off-seconds", cli.off_seconds)?;
+    let mut bench = open_bench(
+        root,
+        tools,
+        &command,
+        cancel.clone(),
+        off_time,
+        cli.uart_when_off,
+    )?;
     // `status` only reads, so it leaves no status record behind.
     if !matches!(command, Command::Status) {
         record_start(&mut bench, &command, status_dir)?;
@@ -277,13 +289,14 @@ fn start_page(
     flash_bin: &Path,
     listen: &str,
     port: u16,
+    cancel: &Cancel,
 ) -> anyhow::Result<std::thread::JoinHandle<()>> {
     let listen = wellfed_dashboard::Listen::new(listen, port)?;
     let handle = wellfed_dashboard::start(
         root.to_path_buf(),
         flash_bin.to_path_buf(),
         &listen,
-        &INTERRUPTED,
+        cancel.clone(),
     )?;
     wellfed_rig::say!("Bench page on {} (Ctrl+C to stop)", listen.url());
     Ok(handle)
@@ -296,6 +309,7 @@ fn start_page(
     _flash_bin: &Path,
     _listen: &str,
     _port: u16,
+    _cancel: &Cancel,
 ) -> anyhow::Result<std::thread::JoinHandle<()>> {
     anyhow::bail!(
         "wellfed-bench was built without the web page; run `make ui`, then build it with \
@@ -309,7 +323,8 @@ fn open_bench(
     root: PathBuf,
     tools: Processes,
     command: &Command,
-    off_seconds: f64,
+    cancel: Cancel,
+    off_time: Duration,
     uart_when_off: UartWhenOff,
 ) -> wellfed_rig::Result<Bench> {
     let config: Config = wellfed_rig::load(&root, Path::new(CONFIG))?;
@@ -328,8 +343,9 @@ fn open_bench(
         relay,
         status: Status::disabled(),
         tools: Box::new(tools),
+        cancel,
         sleep: wellfed_rig::sleep,
-        off_seconds,
+        off_time,
         uart_when_off,
     })
 }
@@ -380,10 +396,14 @@ fn dispatch(
         Command::Off => bench.off(),
         Command::On => bench.on(),
         Command::Capture { name, seconds } => {
-            bench.status.step("capture");
-            bench.capture(name, *seconds)
+            seconds_arg("--seconds", *seconds).and_then(|length| {
+                bench.status.step("capture");
+                bench.capture(name, length)
+            })
         }
-        Command::Boot { name, seconds } => bench.boot(&captures.join(name), *seconds).map(|_| 0),
+        Command::Boot { name, seconds } => seconds_arg("--seconds", *seconds)
+            .and_then(|length| bench.boot(&captures.join(name), length))
+            .map(|_| 0),
         Command::Loader { name } => bench.loader(&captures.join(name)).map(|_| 0),
         Command::Transients(args) => bench.transients(args),
         Command::Dump { name } => bench.dump(name),

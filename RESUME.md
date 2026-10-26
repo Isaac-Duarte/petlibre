@@ -8,9 +8,9 @@ This file is the handoff, not the history. Keep it to the current state, today's
 
 Reconfirm with the owner before any bench operation; this is the last recorded state, not a live observation.
 
-- **Bank 1:** `feeder` `2661f365…` (v198, `ar18-01`, confirmed, October 25): `master` at `052cb6e` (through AR18 and AR8), installed over the device API with the hotspot forwarding dropped; only gateway liveness logged. Five cold boots (`ar-boot-20261025-01`…`05`) came up on bank 1 with the owner idle and unfaulted; the pre-epoch event ring kept epoch 0.
-- **Bank 0:** `feeder` R0 `693db48f…` (UART, `ar21-bank0-20261025-02`, October 25, review `ar21-r0-review`): since AR7 it runs the full feeder and installs updates over the device API; a failed trial falls back to it and it feeds. A full-flash backup from before the install is indexed in the evidence file.
-- **Next manifest version:** 199; update floor (`min_version`) 198. **Feed journal:** high water 18 (feed 14 was interrupted on purpose and resolved uncertain).
+- **Bank 1:** `feeder` `2dfc81c9…` (v201, promoted by `ar6-rt-01`, confirmed, October 25): `master` at `61a1573` (through AR6). Stock 1.1.15 ran on bank 1 during the round trip (v200).
+- **Bank 0:** `feeder` `2dfc81c9…` (installed by stock 1.1.15 during `ar6-rt-01`, October 25): the full feeder; it installs updates over the device API, and a failed trial falls back to it. The UART full-flash backup from before the October 25 bank-0 install is indexed in the evidence file.
+- **Next manifest version:** 202; update floor (`min_version`) 201. **Feeder routing:** `wellfed-local network apply` rules in place (owner, October 25). **Feed journal:** high water 18 (feed 14 was interrupted on purpose and resolved uncertain).
 
 - **Client store:** one owner, the bench CLI's key (`private/wellfed-owner.json`).
 - **Bench:** feeder on (relay 1), UART relays 3 and 4 closed, hotspot up (found up on October 25 afternoon and left so), no server, no capture. Hopper empty. The logic analyzer may still be clipped at the motor.

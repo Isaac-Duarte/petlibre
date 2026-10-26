@@ -186,6 +186,7 @@ const fn refusal_name(refusal: Refusal) -> &'static str {
         Refusal::Unavailable => "unavailable",
         Refusal::Invalid => "invalid",
         Refusal::NotWritable => "not-writable",
+        Refusal::Unverified => "unverified",
         Refusal::Forbidden
         | Refusal::Stale { .. }
         | Refusal::Full

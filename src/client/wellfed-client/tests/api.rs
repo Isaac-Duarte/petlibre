@@ -352,7 +352,8 @@ impl Device for Fake {
             .union(Capabilities::READINESS)
             .union(Capabilities::TIME)
             .union(Capabilities::STATS)
-            .union(Capabilities::TRACES);
+            .union(Capabilities::TRACES)
+            .union(Capabilities::CALIBRATION);
         if self.update {
             capabilities = capabilities.union(Capabilities::UPDATE);
         }
@@ -403,6 +404,12 @@ impl Device for Fake {
                 capacity: 8,
                 last: self.trace.as_ref().map(|(summary, ..)| *summary),
                 ..proto::FeedStats::default()
+            }),
+            StatsSection::Portions => Stats::Portions(proto::Portions {
+                portions: 3,
+                portion_mg: Some(9_800),
+                delivered_mg: Some(29_400),
+                ..proto::Portions::default()
             }),
         }
     }
@@ -1770,6 +1777,7 @@ fn a_connection_names_the_epoch_and_answers_each_request_once() {
                 stats: true,
                 readiness: true,
                 traces: true,
+                calibration: true,
             },
             EPOCH
         )
@@ -2069,6 +2077,10 @@ fn every_statistics_section_answers_a_session_that_claims_the_bit() {
                 assert_eq!((feeds.kept, feeds.capacity), (1, 8));
                 model::StatsSection::Feeds
             }
+            model::Stats::Portions(portions) => {
+                assert_eq!(portions.delivered_mg, Some(29_400));
+                model::StatsSection::Portions
+            }
         };
         assert_eq!(answered, section);
     }
@@ -2196,6 +2208,45 @@ fn a_trace_is_read_a_page_at_a_time_with_both_bits() {
                 }]
             ),
             "{claimed:?}: {:?}",
+            old.events
+        );
+    }
+}
+
+/// The calibration ops and the portions section need their own bit: a
+/// feeder that predates them could not decode the request.
+#[test]
+fn calibration_needs_its_bit_on_both_sides() {
+    let mut rig = Rig::new();
+    let hello = Hello {
+        major: 1,
+        capabilities: model::Capabilities {
+            calibration: false,
+            ..model::Capabilities::KNOWN
+        },
+    };
+    let mut old = live_with(&mut rig, OWNER, hello);
+    drive(&mut rig, &mut old, |live| {
+        live.connection.opened().is_some()
+    })
+    .unwrap();
+    let portions = model::Op::Stats {
+        section: model::StatsSection::Portions,
+    };
+    for (id, op) in (1..).zip([model::Op::GetCalibration, portions]) {
+        let now = old.now(&rig);
+        old.events.clear();
+        old.connection.request(now, [id; 16], &op).unwrap();
+        drive(&mut rig, &mut old, |live| !live.events.is_empty()).unwrap();
+        assert!(
+            matches!(
+                &old.events[..],
+                [Event::Answer {
+                    answer: Answer::Refused(model::Refusal::Unavailable),
+                    ..
+                }]
+            ),
+            "{op:?}: {:?}",
             old.events
         );
     }
@@ -2360,6 +2411,7 @@ fn only_an_owner_s_session_with_the_update_bit_may_update() {
             stats: true,
             readiness: true,
             traces: true,
+            calibration: false,
         },
     };
     let slot = rig.accept().unwrap();

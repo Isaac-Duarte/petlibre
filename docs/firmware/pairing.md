@@ -129,7 +129,8 @@ All storage-region sectors are now named in one table, `wellfed_board_plaf103::s
 | 27–28 | Time settings: the zone's rule and the NTP server (FW46, [clock](clock.md#time-settings)) |
 | 29–31 | Per-feed trace ring: the last 8 to 12 feeds' traces (FW55, [device API](device-api.md#feed-traces)) |
 | 32–33 | Lifetime statistics (FW62, [device API](device-api.md#statistics)); the region grew to 48 sectors, 0x340000–0x370000, on October 26 |
-| 34–47 | Free (planned for plans, FP03) |
+| 34–35 | Portion calibration ([calibration](calibration.md#storage)) |
+| 36–47 | Free (planned for plans, FP03) |
 
 ## Clients
 

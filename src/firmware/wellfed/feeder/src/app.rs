@@ -2,7 +2,7 @@
 //! other of its two tasks.
 
 use wellfed_core::clock::wall::Restart;
-use wellfed_feeder::feeder::{Feeder, Feeds};
+use wellfed_feeder::feeder::{Feeder, Feeds, Marks};
 use wellfed_feeder::panel::BUTTONS;
 use wellfed_feeder::stats::reset_cause;
 use wellfed_proto::api::{Blocked, EventBody, Refusal, ResetCause, Source, TraceSummary};
@@ -106,6 +106,10 @@ impl Feeds for Feeding {
 
     fn food(&self) -> Option<bool> {
         Feeding::food(self)
+    }
+
+    fn marks(&self) -> Option<Marks> {
+        Feeding::marks(self)
     }
 }
 

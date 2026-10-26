@@ -29,6 +29,7 @@ fn storage_region_and_sector_map_are_pinned() {
     assert_eq!(storage::TIME, at(27, 2));
     assert_eq!(storage::TRACES, at(29, 3));
     assert_eq!(storage::STATS, at(32, 2));
+    assert_eq!(storage::CALIBRATION, at(34, 2));
 
     assert_eq!(
         storage::ALL,
@@ -45,6 +46,7 @@ fn storage_region_and_sector_map_are_pinned() {
             storage::TIME,
             storage::TRACES,
             storage::STATS,
+            storage::CALIBRATION,
         ]
     );
 }

@@ -35,13 +35,13 @@ pub use event::{
     MetricKind, Pushed, Sample, SampleValue, Source,
 };
 pub use request::{
-    Answer, Client, Invite, NtpResult, NtpServer, Op, Refusal, TimeChanges, TimeSource, TimeSync,
-    TimeView, Tune, Wifi,
+    Answer, Bowl, Calibration, CalibrationView, Client, Invite, NtpResult, NtpServer, Op, Phase,
+    Refusal, TimeChanges, TimeSource, TimeSync, TimeView, Tune, Wifi,
 };
 pub use session::{Capabilities, Hello, Joined, OpenRefusal};
 pub use stats::{
-    Counters, Counts, Erases, FeedStats, Flash, Food, Memory, PowerStats, ResetCause, Resets,
-    Stats, StatsSection, TaskStack,
+    Counters, Counts, Erases, FeedStats, Flash, Food, Memory, Portions, PowerStats, ResetCause,
+    Resets, Stats, StatsSection, TaskStack,
 };
 pub use status::{Blocked, Power, Readiness, Settings, SettingsPatch, Status, WifiSource};
 pub use trace::{CurrentUnit, Malformed, Trace, TraceEntry, TraceMotor, TracePage, TraceSummary};

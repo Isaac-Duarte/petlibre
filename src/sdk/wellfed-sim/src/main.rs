@@ -25,7 +25,7 @@ use clap::Parser;
 
 use wellfed_core::feed::controller::FeedRequest;
 use wellfed_core::feed::progress::{BowlMode, Direction};
-use wellfed_core::feed::storage::{OwnerRecovery, OwnerResult, OwnerStorage};
+use wellfed_core::feed::storage::{OwnerRecovery, OwnerResult, OwnerStorage, RotorPhase};
 use wellfed_core::flash_coord::{FlashCoord, FlashParty, FlashReply, FlashToken};
 use wellfed_core::store::feed_journal::{FeedJournal, JournalConfig, JournalError};
 use wellfed_core::store::slot::SlotIo;
@@ -415,6 +415,11 @@ impl OwnerStorage for SimStorage {
         storage_end(result.is_some());
         result
     }
+
+    fn last_result(&self) -> Option<OwnerResult> {
+        // SAFETY: as for `recover`; a read of the journal's view, no flash.
+        unsafe { (*w()).journal.last_result() }
+    }
 }
 
 fn current(response: u64) -> Status {
@@ -440,6 +445,8 @@ fn current(response: u64) -> Status {
             stopped: s.stopped,
             optics_off: s.optics_off,
             phase_known: s.phase_known,
+            at_mark: s.phase == RotorPhase::AtMark,
+            homed: s.trace.homed_ms.is_some(),
             high_water_id: if opened {
                 view.recovery.high_water_id
             } else {

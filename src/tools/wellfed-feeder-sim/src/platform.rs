@@ -36,8 +36,9 @@ use wellfed_core::store::slot::crc32;
 use wellfed_core::tone::Tune;
 use wellfed_device_api::clients::{CLIENTS, Client, Label, Role};
 use wellfed_device_api::mailbox::{
-    ClientChange, KeyResult, PlayResult, Requested, SettingsFields, SettingsResult, SettingsView,
-    TimeSettings, TimeSettingsResult, TimeSettingsView, WifiResult, WifiSource, WifiView,
+    Calibration, CalibrationResult, CalibrationView, ClientChange, KeyResult, PlayResult,
+    Requested, SettingsFields, SettingsResult, SettingsView, TimeSettings, TimeSettingsResult,
+    TimeSettingsView, WifiResult, WifiSource, WifiView,
 };
 use wellfed_device_api::wifi::Credentials;
 use wellfed_feeder::feeder::Platform;
@@ -46,6 +47,7 @@ use wellfed_feeder::feeder::platform::{
     Received, TaskCount, TaskStack, TraceRead, TracesFill,
 };
 use wellfed_feeder::stats::{SAVE_MS, TOTAL_SECTORS, Totals, reset_cause};
+use wellfed_feeder::store::calibration::CalibrationStore;
 use wellfed_feeder::store::clients::{ClientError, ClientStore};
 use wellfed_feeder::store::events::{BODY_BYTES, EventLog, Read};
 use wellfed_feeder::store::net::NetStore;
@@ -138,6 +140,8 @@ pub struct SimPlatform {
     stats_base: Totals,
     counts: Counts,
     stats_due: Instant,
+    calibration: CalibrationStore<Region>,
+    calibration_pending: Option<Calibration>,
     /// The NTP exchange's socket, on an ephemeral loopback-reachable port.
     ntp: Option<std::net::UdpSocket>,
     clients: ClientStore<Region>,
@@ -207,6 +211,8 @@ impl SimPlatform {
         let mut stats_base = stats.totals;
         // The simulator's boots carry no reset flags: each is a power-on.
         stats_base.count_boot(reset_cause(0));
+        let mut calibration = CalibrationStore::default();
+        calibration.open(Region::new(flash, storage::CALIBRATION));
         let mut clients = ClientStore::default();
         clients.open(Region::new(flash, storage::CLIENTS));
         if clients.identity().is_none() {
@@ -247,6 +253,8 @@ impl SimPlatform {
             stats_base,
             counts: Counts::default(),
             stats_due: Instant::now() + Duration::from_millis(u64::from(SAVE_MS)),
+            calibration,
+            calibration_pending: None,
             ntp: None,
             clients,
             clients_generation: 1,
@@ -399,6 +407,9 @@ impl SimPlatform {
             self.time.save(&settings);
         }
         self.save_stats(false);
+        if let Some(change) = self.calibration_pending.take() {
+            self.calibration.save(&change);
+        }
 
         let (ticket, change) = self.keys_pending.take()?;
         let result = match change {
@@ -473,6 +484,14 @@ impl SimPlatform {
         }
     }
 
+    fn calibration_view(&self) -> CalibrationView {
+        CalibrationView {
+            calibration: self.calibration.calibration,
+            generation: u32::try_from(self.calibration.generation).unwrap_or(u32::MAX),
+            writable: self.calibration.writable(),
+        }
+    }
+
     /// This boot's log tail, which the simulator's records go into.
     pub(crate) fn log_tail(&self) -> Rc<LogTail<LOG_TAIL_BYTES>> {
         Rc::clone(&self.log)
@@ -521,6 +540,7 @@ impl Platform for SimPlatform {
             .union(Capabilities::LOG)
             .union(Capabilities::STATS)
             .union(Capabilities::TRACES)
+            .union(Capabilities::CALIBRATION)
     }
 
     fn reset(&mut self) {
@@ -594,6 +614,28 @@ impl Platform for SimPlatform {
         }
         self.time_pending = Some(settings);
         TimeSettingsResult::Current {
+            view,
+            pending: true,
+        }
+    }
+
+    fn calibration(&mut self) -> CalibrationResult {
+        CalibrationResult::Current {
+            view: self.calibration_view(),
+            pending: self.calibration_pending.is_some(),
+        }
+    }
+
+    fn calibration_change(&mut self, change: Calibration) -> CalibrationResult {
+        let view = self.calibration_view();
+        if !view.writable {
+            return CalibrationResult::ReadOnly;
+        }
+        if self.calibration_pending.is_some() {
+            return CalibrationResult::Busy;
+        }
+        self.calibration_pending = Some(change);
+        CalibrationResult::Current {
             view,
             pending: true,
         }

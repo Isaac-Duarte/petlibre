@@ -19,8 +19,8 @@ use wellfed_core::store::slot::SlotIo;
 use wellfed_core::tone::Tune;
 use wellfed_device_api::clients::{CLIENTS, Client};
 use wellfed_device_api::mailbox::{
-    ClientChange, KeyResult, PlayResult, Requested, SettingsFields, SettingsResult, SettingsView,
-    TimeSettings, TimeSettingsResult, WifiResult, WifiSource,
+    Calibration, CalibrationResult, ClientChange, KeyResult, PlayResult, Requested, SettingsFields,
+    SettingsResult, SettingsView, TimeSettings, TimeSettingsResult, WifiResult, WifiSource,
 };
 use wellfed_device_api::wifi::Credentials;
 use wellfed_feeder::feeder::Platform;
@@ -31,7 +31,7 @@ use wellfed_feeder::feeder::platform::{
 use wellfed_feeder::stats::Totals;
 use wellfed_feeder::store;
 use wellfed_feeder::store::events::{BODY_BYTES, Read};
-use wellfed_feeder_runtime::{events, keys, network, stats, time, traces};
+use wellfed_feeder_runtime::{calibration, events, keys, network, stats, time, traces};
 use wellfed_proto::api::{Capabilities, Counts, Erases, FLASH_SECTORS, Power, Refusal, TASKS_MAX};
 use wellfed_proto::trace::PAGE_MAX;
 use wellfed_sdk::hal::audio::{self, Speaker};
@@ -150,6 +150,7 @@ impl Platform for Plaf103 {
             .union(Capabilities::STATS)
             .union(Capabilities::READINESS)
             .union(Capabilities::TRACES)
+            .union(Capabilities::CALIBRATION)
     }
 
     fn reset(&mut self) {
@@ -262,6 +263,14 @@ impl Platform for Plaf103 {
 
     fn time_settings_change(&mut self, settings: TimeSettings) -> TimeSettingsResult {
         time::change(settings)
+    }
+
+    fn calibration(&mut self) -> CalibrationResult {
+        calibration::current()
+    }
+
+    fn calibration_change(&mut self, change: Calibration) -> CalibrationResult {
+        calibration::change(change)
     }
 
     fn queue_event(&mut self, at: Option<u32>, body: [u8; BODY_BYTES], slot: EventSlot) -> bool {

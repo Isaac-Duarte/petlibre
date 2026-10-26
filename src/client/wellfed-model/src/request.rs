@@ -101,6 +101,52 @@ pub enum Op {
         feed: u32,
         offset: u16,
     },
+    /// The portion calibration and where the rotor rests.
+    GetCalibration,
+    /// Store `calibration` if the calibration is still at `base`. Owners
+    /// only. A bowl mode the feeder has not verified is refused
+    /// [`Refusal::Unverified`], a portion weight outside 1-50 g `Invalid`.
+    PutCalibration {
+        base: Generation,
+        calibration: Calibration,
+    },
+}
+
+/// What the owner measured, as the feeder keeps it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Calibration {
+    /// The mean weight of one portion in milligrams, `None` until measured.
+    pub portion_mg: Option<u32>,
+    pub bowl: Bowl,
+}
+
+/// The bowl mode a feeder runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Bowl {
+    Single,
+    Double,
+}
+
+/// Where the rotor rests between feeds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Phase {
+    /// Just past a mark, where a completed feed stops.
+    AtMark,
+    /// Between two marks: the next feed homes it first, and may drop part
+    /// of a compartment more than it credits.
+    Unknown,
+}
+
+/// The calibration as the feeder holds it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CalibrationView {
+    pub generation: Generation,
+    pub writable: bool,
+    pub calibration: Calibration,
+    /// `None` from a feeder with no feeding owner, or before it opens.
+    pub phase: Option<Phase>,
 }
 
 /// A change to the time settings; `None` leaves a field as it is.
@@ -236,6 +282,7 @@ pub enum Answer {
     Time(TimeView),
     Stats(Stats),
     FeedTrace(TracePage),
+    Calibration(CalibrationView),
 }
 
 /// Why the feeder refused a request.
@@ -267,6 +314,8 @@ pub enum Refusal {
     /// feeder restarts.
     Fault,
     Update(UpdateRefusal),
+    /// A bowl mode this feeder has not verified on hardware.
+    Unverified,
 }
 
 /// One enrolled client.

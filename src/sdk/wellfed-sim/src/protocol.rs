@@ -465,6 +465,11 @@ pub struct Status {
     pub stopped: bool,
     pub optics_off: bool,
     pub phase_known: bool,
+    /// The rotor rests at a mark, as far as the owner knows; the next feed
+    /// homes it otherwise.
+    pub at_mark: bool,
+    /// The last feed reached a homing mark, uncredited.
+    pub homed: bool,
     pub high_water_id: u64,
     pub pending: bool,
     pub journal_error: u32,

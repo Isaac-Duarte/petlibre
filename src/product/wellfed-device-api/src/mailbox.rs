@@ -151,6 +151,61 @@ pub enum TimeSettingsResult {
     Unserved,
 }
 
+pub use wellfed_proto::api::{PORTION_MG_MAX, PORTION_MG_MIN};
+
+/// The portion calibration as the feeder stores it: what the owner
+/// weighed. The bowl mode is the build's, not stored.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Calibration {
+    /// The mean weight of one portion, `None` until measured.
+    pub portion_mg: Option<u32>,
+}
+
+impl Calibration {
+    /// Whether a portion weight is inside the documented limits.
+    pub const fn valid(&self) -> bool {
+        match self.portion_mg {
+            None => true,
+            Some(mg) => mg >= PORTION_MG_MIN && mg <= PORTION_MG_MAX,
+        }
+    }
+
+    /// A checksum of the calibration, so a pending write can tell whether
+    /// the store now holds what it asked for.
+    pub fn digest(&self) -> u32 {
+        let mut bytes = [0; 5];
+        if let Some(mg) = self.portion_mg {
+            bytes[0] = 1;
+            bytes[1..].copy_from_slice(&mg.to_le_bytes());
+        }
+        wellfed_core::store::slot::crc32(&bytes)
+    }
+}
+
+/// The calibration as the writer last published it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CalibrationView {
+    pub calibration: Calibration,
+    pub generation: u32,
+    pub writable: bool,
+}
+
+/// How a calibration request ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CalibrationResult {
+    /// The current calibration; `pending` once a change is queued for the
+    /// writer.
+    Current {
+        view: CalibrationView,
+        pending: bool,
+    },
+    /// A change is already queued, or the store is still loading.
+    Busy,
+    ReadOnly,
+    /// This firmware keeps no calibration.
+    Unserved,
+}
+
 /// What the last NTP exchange came to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NtpResult {

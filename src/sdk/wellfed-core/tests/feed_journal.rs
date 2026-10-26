@@ -13,7 +13,9 @@
 
 use wellfed_core::feed::controller::{FeedReason, FeedRequest};
 use wellfed_core::feed::progress::{BowlMode, Direction};
-use wellfed_core::feed::storage::{OwnerOutcome, OwnerRecovery, OwnerResult, OwnerStorage};
+use wellfed_core::feed::storage::{
+    OwnerOutcome, OwnerRecovery, OwnerResult, OwnerStorage, RotorPhase,
+};
 use wellfed_core::store::feed_journal::{FeedJournal, JournalConfig, JournalError};
 use wellfed_core::store::slot::{RECORD_BYTES, SlotIo};
 use wellfed_testkit::journal_flash::{FakeJournalFlash, FlashIo, UNIT};
@@ -37,6 +39,7 @@ fn request(j: &FeedJournal<FlashIo>, id: u64) -> FeedRequest {
         direction: j.view.recovery.direction,
         credit_next_event: j.view.recovery.credit_next_event,
         phase_known: j.view.recovery.phase_known,
+        homing: false,
     }
 }
 
@@ -893,4 +896,69 @@ fn a_corrupted_result_beside_its_own_reservation_resolves_that_feed_again() {
     assert!(j.resolve().is_some());
     assert_resolved(&j, 3);
     assert!(!reserve(&mut j, 42) && reserve(&mut j, 43));
+}
+
+/// The rotor's phase is never stored: it follows from the last result, so
+/// the record layout stays as an older build reads it.
+#[test]
+fn the_last_result_gives_the_rotor_phase() {
+    let mut f = FakeJournalFlash::default();
+    let mut j = create(&mut f, false);
+    assert_eq!(j.last_result(), None, "genesis holds no result");
+
+    let phase = |j: &FeedJournal<FlashIo>| {
+        j.last_result().map_or(RotorPhase::Unknown, |result| {
+            RotorPhase::after(RotorPhase::Unknown, &result)
+        })
+    };
+    assert!(reserve(&mut j, 1));
+    assert_eq!(j.last_result(), None, "a pending reservation is no result");
+    assert!(finish(&mut j, true, true));
+    assert_eq!(phase(&j), RotorPhase::AtMark);
+
+    assert!(reserve(&mut j, 2) && finish(&mut j, false, true));
+    assert_eq!(phase(&j), RotorPhase::Unknown);
+
+    // Reopened, the journal says the same, with no new field on flash.
+    let config = j.config;
+    assert_eq!(reopen(&mut f, &mut j, &config), JournalError::Ok);
+    assert_eq!(phase(&j), RotorPhase::Unknown);
+    assert!(reserve(&mut j, 3));
+    assert_eq!(reopen(&mut f, &mut j, &config), JournalError::Ok);
+    assert_eq!(
+        j.resolve().map(|r| r.outcome),
+        Some(OwnerOutcome::Uncertain)
+    );
+    assert_eq!(phase(&j), RotorPhase::Unknown);
+}
+
+#[test]
+fn a_feed_that_never_moved_keeps_the_phase() {
+    let moved = |outcome, motion_possible| OwnerResult {
+        outcome,
+        motion_possible,
+        ..OwnerResult::default()
+    };
+    let at = RotorPhase::AtMark;
+    let unknown = RotorPhase::Unknown;
+
+    assert_eq!(
+        RotorPhase::after(unknown, &moved(OwnerOutcome::Done, true)),
+        at
+    );
+    assert_eq!(
+        RotorPhase::after(at, &moved(OwnerOutcome::Expired, false)),
+        at
+    );
+    assert_eq!(
+        RotorPhase::after(unknown, &moved(OwnerOutcome::Failed, false)),
+        unknown
+    );
+    for outcome in [
+        OwnerOutcome::Cancelled,
+        OwnerOutcome::Failed,
+        OwnerOutcome::Uncertain,
+    ] {
+        assert_eq!(RotorPhase::after(at, &moved(outcome, true)), unknown);
+    }
 }

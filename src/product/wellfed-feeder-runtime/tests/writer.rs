@@ -1157,3 +1157,65 @@ fn the_totals_are_saved_only_while_armed_and_never_retried() {
     sdk::delay_ms(SAVE_MS);
     idle(&mut writer, &mut provider, 3);
 }
+
+#[test]
+fn a_calibration_is_saved_inside_a_marked_attempt_and_published() {
+    use wellfed_device_api::mailbox::{Calibration, CalibrationResult};
+    use wellfed_feeder_runtime::calibration;
+
+    let (_guard, mut writer, mut provider) = start();
+    calibration::reset();
+    assert_eq!(
+        calibration::current(),
+        CalibrationResult::Busy,
+        "not opened yet"
+    );
+    open_all(&mut writer, &mut provider);
+    step(&mut writer, &mut provider); // the stats store's early save
+    let CalibrationResult::Current { view, pending } = calibration::current() else {
+        panic!("the store is published");
+    };
+    assert_eq!(
+        (view.calibration, view.generation, pending, view.writable),
+        (Calibration::default(), 0, false, true)
+    );
+
+    let measured = Calibration {
+        portion_mg: Some(9_800),
+    };
+    assert!(matches!(
+        calibration::change(measured),
+        CalibrationResult::Current { pending: true, .. }
+    ));
+    assert_eq!(calibration::change(measured), CalibrationResult::Busy);
+    ATTEMPT_SEEN.with(|s| s.set(false));
+    let saved = Record::CalibrationSaved {
+        generation: 1,
+        portion_mg: Some(9_800),
+    };
+    assert_eq!(step(&mut writer, &mut provider), Some(saved));
+    assert!(ATTEMPT_SEEN.with(Cell::get));
+    assert_eq!(sdk::backup_read(MARKER_REGISTER), 0);
+
+    // The same value again writes nothing.
+    assert!(matches!(
+        calibration::change(measured),
+        CalibrationResult::Current { pending: true, .. }
+    ));
+    ATTEMPT_SEEN.with(|s| s.set(false));
+    assert_eq!(step(&mut writer, &mut provider), Some(saved));
+    assert!(!ATTEMPT_SEEN.with(Cell::get));
+
+    // The next boot reads it back.
+    calibration::reset();
+    let mut writer = Writer::default();
+    step(&mut writer, &mut provider);
+    let CalibrationResult::Current { view, .. } = calibration::current() else {
+        panic!("the store is published");
+    };
+    assert_eq!((view.calibration, view.generation), (measured, 1));
+
+    let mut text = String::new();
+    writer::describe(saved, &mut text).unwrap();
+    assert_eq!(text, "calibration saved generation=1 portion_mg=9800");
+}

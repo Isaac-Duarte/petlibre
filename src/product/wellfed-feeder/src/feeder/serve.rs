@@ -46,9 +46,9 @@ use crate::stats::Keeper;
 use crate::store::events::Read;
 use crate::update as wire;
 use wellfed_device_api::mailbox::{
-    ClientChange, KeyResult, LockFields, LockResult, NtpResult, Origin, PlayResult, Requested,
-    SettingsFields, SettingsResult, TimeFields, TimeResult, TimeSettings, TimeSettingsResult,
-    TimeState, WifiResult, WifiSource,
+    Calibration, CalibrationResult, ClientChange, KeyResult, LockFields, LockResult, NtpResult,
+    Origin, PlayResult, Requested, SettingsFields, SettingsResult, TimeFields, TimeResult,
+    TimeSettings, TimeSettingsResult, TimeState, WifiResult, WifiSource,
 };
 use wellfed_device_api::pairing::{self, Pairing};
 use wellfed_device_api::wifi::Credentials;
@@ -739,6 +739,18 @@ impl<P: Platform, F: Feeds> Device for FeederDevice<'_, P, F> {
         }
     }
 
+    fn calibration(&mut self, change: Option<Calibration>) -> CalibrationResult {
+        match change {
+            None => self.platform.calibration(),
+            Some(_) if self.platform.outputs_claimed() => CalibrationResult::Busy,
+            Some(calibration) => self.platform.calibration_change(calibration),
+        }
+    }
+
+    fn phase(&self) -> Option<proto::Phase> {
+        self.feeds.marks().map(|marks| marks.phase)
+    }
+
     fn time_state(&mut self, now_ms: u32) -> Option<TimeState> {
         Some(TimeState {
             clock: self.platform.clock_state(now_ms),
@@ -874,6 +886,13 @@ impl<P: Platform, F: Feeds> Device for FeederDevice<'_, P, F> {
             StatsSection::Power => Stats::Power(self.stats.power_stats()),
             StatsSection::Food => Stats::Food(self.stats.food_stats()),
             StatsSection::Feeds => Stats::Feeds(self.stats.feed_stats(self.platform.traces_fill())),
+            StatsSection::Portions => {
+                let portion_mg = match self.platform.calibration() {
+                    CalibrationResult::Current { view, .. } => view.calibration.portion_mg,
+                    _ => None,
+                };
+                Stats::Portions(self.stats.portions_stats(self.feeds.marks(), portion_mg))
+            }
         }
     }
 

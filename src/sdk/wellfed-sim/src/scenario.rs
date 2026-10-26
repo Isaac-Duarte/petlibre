@@ -112,6 +112,8 @@ pub struct Expectation {
     pub outcome: Option<Outcome>,
     pub pending: Option<bool>,
     pub phase_known: Option<bool>,
+    pub at_mark: Option<bool>,
+    pub homed: Option<bool>,
     pub reason: Option<Reason>,
     pub response: Option<u64>,
     pub state: Option<State>,

@@ -1,0 +1,91 @@
+{
+  "version": 2,
+  "name": "phase-homing",
+  "profile": "single",
+  "end_ms": 34000,
+  "actions": [
+    {
+      "at_ms": 100,
+      "op": "submit",
+      "args": [
+        1,
+        1
+      ]
+    },
+    {
+      "at_ms": 10000,
+      "op": "expect",
+      "values": {
+        "state": "terminal",
+        "outcome": "done",
+        "completed": 1,
+        "at_mark": true,
+        "homed": false
+      }
+    },
+    {
+      "at_ms": 10001,
+      "op": "ack",
+      "args": [
+        1
+      ]
+    },
+    {
+      "at_ms": 10100,
+      "op": "submit",
+      "args": [
+        2,
+        1
+      ]
+    },
+    {
+      "at_ms": 15300,
+      "op": "power_cut",
+      "args": []
+    },
+    {
+      "at_ms": 15301,
+      "op": "boot",
+      "args": []
+    },
+    {
+      "at_ms": 15302,
+      "op": "expect",
+      "values": {
+        "state": "terminal",
+        "outcome": "uncertain",
+        "id": 2,
+        "motor": 0,
+        "at_mark": false
+      }
+    },
+    {
+      "at_ms": 15303,
+      "op": "ack",
+      "args": [
+        2
+      ]
+    },
+    {
+      "at_ms": 15400,
+      "op": "submit",
+      "args": [
+        3,
+        1
+      ]
+    },
+    {
+      "at_ms": 30000,
+      "op": "expect",
+      "values": {
+        "state": "terminal",
+        "id": 3,
+        "outcome": "done",
+        "completed": 1,
+        "homed": true,
+        "at_mark": true,
+        "motor": 0
+      }
+    }
+  ]
+}

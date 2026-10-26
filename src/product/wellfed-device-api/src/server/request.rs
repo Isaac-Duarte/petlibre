@@ -6,15 +6,15 @@ use super::memory::Remembered;
 use super::{Phase, Server, Waiting, slot_id};
 use crate::clients::{Label, Role};
 use crate::mailbox::{
-    LockResult, NtpServer, Origin, PlayResult, SettingsFields, SettingsResult, TimeFields,
-    TimeResult, TimeSettingsResult, WifiResult, Zone,
+    Calibration, CalibrationResult, LockResult, NtpServer, Origin, PlayResult, SettingsFields,
+    SettingsResult, TimeFields, TimeResult, TimeSettingsResult, WifiResult, Zone,
 };
 use crate::pairing::{self, Pairing};
 use crate::wifi::Credentials;
 use crate::{Device, KeyChange, REBOOT_MS, Record, UpdateRequest};
 use wellfed_core::tone::Tune as CoreTune;
 use wellfed_proto::api::{
-    self as proto, Capabilities, ClientMessage, EventBody, Op, Readiness, Refusal, RequestId,
+    self as proto, Bowl, Capabilities, ClientMessage, EventBody, Op, Readiness, Refusal, RequestId,
     Source, StatsSection, Tune, UPDATE_CHUNK_MAX, UpdateRefusal, UpdateView,
 };
 
@@ -163,6 +163,26 @@ impl Server {
             },
             Action::PutTime { base, zone, ntp } => match put_time(base, zone, ntp, device) {
                 Ok(digest) => return self.wait(index, id, action, Waiting::Time { digest }),
+                Err(refusal) => Reply::Refused(refusal),
+            },
+            Action::GetCalibration => match device.calibration(None) {
+                CalibrationResult::Current { .. } => Reply::Calibration,
+                CalibrationResult::Busy => Reply::Refused(Refusal::Busy),
+                CalibrationResult::ReadOnly | CalibrationResult::Unserved => {
+                    Reply::Refused(Refusal::Unavailable)
+                }
+            },
+            // A build runs the one bowl mode it was verified for: another
+            // would turn the rotor a way no bench run has checked.
+            Action::PutCalibration { bowl, .. } if bowl != device.bowl() => {
+                Reply::Refused(Refusal::Unverified)
+            }
+            Action::PutCalibration {
+                base, calibration, ..
+            } => match put_calibration(base, calibration, device) {
+                Ok(digest) => {
+                    return self.wait(index, id, action, Waiting::Calibration { digest });
+                }
                 Err(refusal) => Reply::Refused(refusal),
             },
             Action::Invalid => Reply::Refused(Refusal::Invalid),
@@ -373,6 +393,35 @@ fn put_time<D: Device>(
     }
 }
 
+/// Queue `calibration` if the store is still at `base`; the digest of what
+/// was asked for.
+fn put_calibration<D: Device>(
+    base: u32,
+    calibration: Calibration,
+    device: &mut D,
+) -> Result<u32, Refusal> {
+    let view = match device.calibration(None) {
+        CalibrationResult::Current { pending: true, .. } | CalibrationResult::Busy => {
+            return Err(Refusal::Busy);
+        }
+        CalibrationResult::ReadOnly => return Err(Refusal::NotWritable),
+        CalibrationResult::Unserved => return Err(Refusal::Unavailable),
+        CalibrationResult::Current { view, .. } => view,
+    };
+    if view.generation != base {
+        return Err(Refusal::Stale {
+            current: view.generation,
+        });
+    }
+
+    match device.calibration(Some(calibration)) {
+        CalibrationResult::Current { pending: true, .. } => Ok(calibration.digest()),
+        CalibrationResult::Current { .. } | CalibrationResult::Busy => Err(Refusal::Busy),
+        CalibrationResult::ReadOnly => Err(Refusal::NotWritable),
+        CalibrationResult::Unserved => Err(Refusal::Unavailable),
+    }
+}
+
 /// An owner's sync may step the clock; anyone else's only narrows it.
 const fn origin(role: Role) -> Origin {
     match role {
@@ -399,6 +448,7 @@ const fn allowed(role: Role, action: Action) -> bool {
                 | Action::EnrollUpdateKey { .. }
                 | Action::UpdateKeyStatement
                 | Action::PutTime { .. }
+                | Action::PutCalibration { .. }
                 | Action::TailLog { .. }
                 | Action::Stats {
                     section: StatsSection::Memory,
@@ -500,6 +550,12 @@ pub(super) enum Action {
         feed: u32,
         offset: u16,
     },
+    GetCalibration,
+    PutCalibration {
+        base: u32,
+        calibration: Calibration,
+        bowl: Bowl,
+    },
     /// A field failed the stores' checks before anything ran.
     Invalid,
 }
@@ -595,6 +651,21 @@ impl From<Op<'_>> for Action {
             Op::TailLog { after } => Self::TailLog { after },
             Op::Stats { section } => Self::Stats { section },
             Op::FeedTrace { feed, offset } => Self::FeedTrace { feed, offset },
+            Op::GetCalibration => Self::GetCalibration,
+            Op::PutCalibration { base, calibration } => {
+                let bowl = calibration.bowl;
+                let calibration = Calibration {
+                    portion_mg: calibration.portion_mg,
+                };
+                if !calibration.valid() {
+                    return Self::Invalid;
+                }
+                Self::PutCalibration {
+                    base,
+                    calibration,
+                    bowl,
+                }
+            }
         }
     }
 }
@@ -617,6 +688,7 @@ impl Action {
                 | Self::TailLog { .. }
                 | Self::Stats { .. }
                 | Self::FeedTrace { .. }
+                | Self::GetCalibration
         )
     }
 
@@ -646,6 +718,8 @@ impl Action {
             Self::TailLog { .. } => "tail-log",
             Self::Stats { .. } => "stats",
             Self::FeedTrace { .. } => "feed-trace",
+            Self::GetCalibration => "get-calibration",
+            Self::PutCalibration { .. } => "put-calibration",
             Self::Invalid => "invalid",
         }
     }
@@ -671,6 +745,8 @@ pub(super) enum Reply {
         feed: u32,
         offset: u16,
     },
+    /// The calibration view, read when the answer is sealed.
+    Calibration,
 }
 
 fn saturate(jump_ms: i64) -> i32 {
@@ -695,6 +771,7 @@ impl Name for Reply {
             Self::Time => "time",
             Self::Stats(_) => "stats",
             Self::FeedTrace { .. } => "feed-trace",
+            Self::Calibration => "calibration",
             Self::Refused(refusal) => match refusal {
                 Refusal::Forbidden => "forbidden",
                 Refusal::Stale { .. } => "stale",
@@ -707,6 +784,7 @@ impl Name for Reply {
                 Refusal::Muted => "muted",
                 Refusal::Time => "time",
                 Refusal::Fault => "fault",
+                Refusal::Unverified => "unverified",
                 Refusal::Update(refusal) => update_refusal(*refusal),
             },
         }

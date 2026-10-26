@@ -10,12 +10,13 @@ use wellfed_proto::api as proto;
 use wellfed_proto::setup as proto_setup;
 
 use crate::{
-    Answer, Blocked, Capabilities, Client, ClientRole, Counters, Counts, EnrollPath, Erases, Event,
-    EventBody, FeedOutcome, FeedReason, Flash, Food, Generation, Hello, Hex, Invite, Joined,
-    LogLines, Memory, NtpResult, NtpServer, Op, OpenRefusal, Power, PowerStats, Readiness, Refusal,
-    ResetCause, Resets, Sample, SampleValue, Settings, SettingsPatch, Source, Stats, StatsSection,
-    Status, TaskStack, TimeSource, TimeSync, TimeView, Tune, UpdatePhase, UpdateRefusal,
-    UpdateStop, UpdateView, WifiSource, setup,
+    Answer, Blocked, Bowl, Calibration, CalibrationView, Capabilities, Client, ClientRole,
+    Counters, Counts, EnrollPath, Erases, Event, EventBody, FeedOutcome, FeedReason, Flash, Food,
+    Generation, Hello, Hex, Invite, Joined, LogLines, Memory, NtpResult, NtpServer, Op,
+    OpenRefusal, Phase, Portions, Power, PowerStats, Readiness, Refusal, ResetCause, Resets,
+    Sample, SampleValue, Settings, SettingsPatch, Source, Stats, StatsSection, Status, TaskStack,
+    TimeSource, TimeSync, TimeView, Tune, UpdatePhase, UpdateRefusal, UpdateStop, UpdateView,
+    WifiSource, setup,
 };
 use crate::{
     CurrentUnit, FeedStats, Malformed, Trace, TraceEntry, TraceMotor, TracePage, TraceSummary,
@@ -534,6 +535,7 @@ impl From<proto::Outcome<'_>> for Answer {
             proto::Outcome::Time(view) => Self::Time(view.into()),
             proto::Outcome::Stats(stats) => Self::Stats(stats.into()),
             proto::Outcome::FeedTrace(page) => Self::FeedTrace(page.into()),
+            proto::Outcome::Calibration(view) => Self::Calibration(view.into()),
         }
     }
 }
@@ -663,6 +665,53 @@ impl From<StatsSection> for proto::StatsSection {
             StatsSection::Power => Self::Power,
             StatsSection::Food => Self::Food,
             StatsSection::Feeds => Self::Feeds,
+            StatsSection::Portions => Self::Portions,
+        }
+    }
+}
+
+impl From<proto::CalibrationView> for CalibrationView {
+    fn from(view: proto::CalibrationView) -> Self {
+        let proto::CalibrationView {
+            generation,
+            writable,
+            calibration,
+            phase,
+        } = view;
+        Self {
+            generation: Generation(generation),
+            writable,
+            calibration: calibration.into(),
+            phase: phase.map(|phase| match phase {
+                proto::Phase::AtMark => Phase::AtMark,
+                proto::Phase::Unknown => Phase::Unknown,
+            }),
+        }
+    }
+}
+
+impl From<proto::Calibration> for Calibration {
+    fn from(calibration: proto::Calibration) -> Self {
+        let proto::Calibration { portion_mg, bowl } = calibration;
+        Self {
+            portion_mg,
+            bowl: match bowl {
+                proto::Bowl::Single => Bowl::Single,
+                proto::Bowl::Double => Bowl::Double,
+            },
+        }
+    }
+}
+
+impl From<Calibration> for proto::Calibration {
+    fn from(calibration: Calibration) -> Self {
+        let Calibration { portion_mg, bowl } = calibration;
+        Self {
+            portion_mg,
+            bowl: match bowl {
+                Bowl::Single => proto::Bowl::Single,
+                Bowl::Double => proto::Bowl::Double,
+            },
         }
     }
 }
@@ -760,6 +809,19 @@ impl From<proto::Stats<'_>> for Stats {
                 capacity,
                 unsaved,
                 last: last.map(TraceSummary::from),
+            }),
+            proto::Stats::Portions(proto::Portions {
+                portions,
+                homed,
+                outlet_breaks,
+                portion_mg,
+                delivered_mg,
+            }) => Self::Portions(Portions {
+                portions,
+                homed,
+                outlet_breaks,
+                portion_mg,
+                delivered_mg,
             }),
         }
     }
@@ -1011,6 +1073,7 @@ impl From<proto::Refusal> for Refusal {
             proto::Refusal::Time => Self::Time,
             proto::Refusal::Fault => Self::Fault,
             proto::Refusal::Update(refusal) => Self::Update(refusal.into()),
+            proto::Refusal::Unverified => Self::Unverified,
         }
     }
 }
@@ -1078,6 +1141,11 @@ impl Op {
                 feed: *feed,
                 offset: *offset,
             },
+            Self::GetCalibration => proto::Op::GetCalibration,
+            Self::PutCalibration { base, calibration } => proto::Op::PutCalibration {
+                base: base.0,
+                calibration: (*calibration).into(),
+            },
         }
     }
 }
@@ -1137,6 +1205,7 @@ impl From<proto::Capabilities> for Capabilities {
             stats: bits.contains(proto::Capabilities::STATS),
             readiness: bits.contains(proto::Capabilities::READINESS),
             traces: bits.contains(proto::Capabilities::TRACES),
+            calibration: bits.contains(proto::Capabilities::CALIBRATION),
         }
     }
 }
@@ -1151,6 +1220,7 @@ impl From<Capabilities> for proto::Capabilities {
             stats,
             readiness,
             traces,
+            calibration,
         } = capabilities;
         let mut bits = proto::Capabilities::V1.0;
         if feed {
@@ -1173,6 +1243,9 @@ impl From<Capabilities> for proto::Capabilities {
         }
         if traces {
             bits |= proto::Capabilities::TRACES.0;
+        }
+        if calibration {
+            bits |= proto::Capabilities::CALIBRATION.0;
         }
         Self(bits)
     }

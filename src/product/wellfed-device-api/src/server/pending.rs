@@ -8,7 +8,8 @@ use super::request::{Action, Name, Reply};
 use super::{Pending, Phase, Server, Waiting, slot_id};
 use crate::clients::Role;
 use crate::mailbox::{
-    NtpResult, NtpServer, Origin, SettingsFields, SettingsResult, TimeSettingsResult, WifiResult,
+    CalibrationResult, NtpResult, NtpServer, Origin, SettingsFields, SettingsResult,
+    TimeSettingsResult, WifiResult,
 };
 use crate::pairing::{self, Path};
 use crate::{Device, KeyChange, KeyOutcome, Reason, Record, UpdateAnswer, UpdateKeyChange};
@@ -96,6 +97,22 @@ impl Server {
                     return Ok(None);
                 }
                 TimeSettingsResult::ReadOnly | TimeSettingsResult::Unserved => {
+                    Reply::Refused(Refusal::NotWritable)
+                }
+            },
+            // No event either: a calibration has its own generation.
+            Waiting::Calibration { digest } => match device.calibration(None) {
+                CalibrationResult::Current {
+                    view,
+                    pending: false,
+                } if view.calibration.digest() == digest => Reply::Done(Some(view.generation)),
+                CalibrationResult::Current { pending: false, .. } => {
+                    Reply::Refused(Refusal::NotWritable)
+                }
+                CalibrationResult::Current { pending: true, .. } | CalibrationResult::Busy => {
+                    return Ok(None);
+                }
+                CalibrationResult::ReadOnly | CalibrationResult::Unserved => {
                     Reply::Refused(Refusal::NotWritable)
                 }
             },
@@ -256,6 +273,20 @@ impl Server {
                     })
                 }
                 None => Outcome::Refused(Refusal::Unavailable),
+            },
+            Reply::Calibration => match device.calibration(None) {
+                CalibrationResult::Current { view, .. } => {
+                    Outcome::Calibration(proto::CalibrationView {
+                        generation: view.generation,
+                        writable: view.writable,
+                        calibration: proto::Calibration {
+                            portion_mg: view.calibration.portion_mg,
+                            bowl: device.bowl(),
+                        },
+                        phase: device.phase(),
+                    })
+                }
+                _ => Outcome::Refused(Refusal::Unavailable),
             },
             Reply::Stats(section) => {
                 let message = FeederMessage::Response {

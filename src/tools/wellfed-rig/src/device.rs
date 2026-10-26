@@ -218,7 +218,8 @@ impl Answer {
             | Model::Invite(_)
             | Model::Time(_)
             | Model::Stats(_)
-            | Model::FeedTrace(_) => Self::Unexpected,
+            | Model::FeedTrace(_)
+            | Model::Calibration(_) => Self::Unexpected,
         }
     }
 }

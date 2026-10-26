@@ -1,6 +1,6 @@
 //! The on-flash bytes of every record the product's stores write, pinned:
 //! settings, Wi-Fi credentials and their clear, the client table, the time
-//! settings and the event ring's records. These are the layouts deployed feeders hold, so a
+//! settings, the portion calibration and the event ring's records. These are the layouts deployed feeders hold, so a
 //! change to the shared slot layer must leave every byte where it was. The
 //! units are larger than the records so the bytes after each record are
 //! pinned erased too.
@@ -11,8 +11,9 @@
 
 use wellfed_core::feed::progress::BowlMode;
 use wellfed_device_api::clients::{Client, Label, Role};
-use wellfed_device_api::mailbox::{NtpServer, TimeSettings, Zone};
+use wellfed_device_api::mailbox::{Calibration, NtpServer, TimeSettings, Zone};
 use wellfed_device_api::wifi::Credentials;
+use wellfed_feeder::store::calibration::{CalibrationStatus, CalibrationStore};
 use wellfed_feeder::store::clients::{ClientStatus, ClientStore};
 use wellfed_feeder::store::events::{BODY_BYTES, EventLog, Read, Record};
 use wellfed_feeder::store::net::{NetStatus, NetStore};
@@ -135,6 +136,45 @@ fn time_store_reads_the_pinned_records() {
         assert_eq!(
             (s.generation, s.slot, s.settings),
             (generation, slot as u32, settings)
+        );
+    }
+}
+
+/// A measured weight, then the weight cleared.
+const CALIBRATIONS: [Calibration; 2] = [
+    Calibration {
+        portion_mg: Some(9_800),
+    },
+    Calibration { portion_mg: None },
+];
+
+#[test]
+fn calibration_records() {
+    let mut f = FakeJournalFlash::with_unit(512);
+    let mut s = CalibrationStore::default();
+    // SAFETY: the fake flash outlives the store.
+    unsafe { s.open(f.io()) };
+
+    let [weighed, cleared] = CALIBRATIONS;
+    assert!(s.save(&weighed));
+    pinned("weighed", &f, 0, 128, WEIGHED);
+    assert!(s.save(&cleared));
+    pinned("cleared", &f, 1, 128, CLEARED);
+}
+
+#[test]
+fn calibration_store_reads_the_pinned_records() {
+    let [weighed, cleared] = CALIBRATIONS;
+    for (record, slot, generation, calibration) in
+        [(WEIGHED, 0, 1, weighed), (CLEARED, 1, 2, cleared)]
+    {
+        let mut f = flash(512, &[(slot, record)]);
+        let mut s = CalibrationStore::default();
+        // SAFETY: the fake flash outlives the store.
+        assert_eq!(unsafe { s.open(f.io()) }, CalibrationStatus::Loaded);
+        assert_eq!(
+            (s.generation, s.slot, s.calibration),
+            (generation, slot as u32, calibration)
         );
     }
 }
@@ -458,4 +498,20 @@ const TIME_DEFAULTS: &[&str] = &[
     "0000000000000000000000000000000000000000000000000000000000000000",
     "0000000000000000000000000000000000000000000000000000000000000000",
     "0000000000000000000000000000000000000000000000008228174a434d4954",
+];
+
+/// A portion weighed at 9.8 g.
+const WEIGHED: &[&str] = &[
+    "504c4643414c3031010080000100000000000000482600000000000000000000",
+    "0000000000000000000000000000000000000000000000000000000000000000",
+    "0000000000000000000000000000000000000000000000000000000000000000",
+    "0000000000000000000000000000000000000000000000007613cdb6434d4954",
+];
+
+/// The weight cleared.
+const CLEARED: &[&str] = &[
+    "504c4643414c3031010080000200000000000000000000000000000000000000",
+    "0000000000000000000000000000000000000000000000000000000000000000",
+    "0000000000000000000000000000000000000000000000000000000000000000",
+    "00000000000000000000000000000000000000000000000058f10112434d4954",
 ];

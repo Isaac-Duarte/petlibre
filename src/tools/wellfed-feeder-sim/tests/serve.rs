@@ -16,9 +16,9 @@ use wellfed_feeder_sim::harness;
 use wellfed_feeder_sim::serve::Event;
 use wellfed_feeder_sim::sim::Record;
 use wellfed_model::{
-    Answer, ClientRole, EventBody, Generation, Joined, MetricKind, NtpResult, NtpServer, Op,
-    Pushed, Refusal, SampleValue, SettingsPatch, Source, Stats, StatsSection, Status, TimeChanges,
-    TimeSource, TimeSync, Wifi,
+    Answer, Bowl, Calibration, CalibrationView, ClientRole, EventBody, Generation, Joined,
+    MetricKind, NtpResult, NtpServer, Op, Pushed, Refusal, SampleValue, SettingsPatch, Source,
+    Stats, StatsSection, Status, TimeChanges, TimeSource, TimeSync, Wifi,
 };
 use wellfed_proto::api::RequestId;
 use wellfed_session::noise::Keypair;
@@ -994,6 +994,10 @@ fn an_owner_reads_the_statistics_and_their_live_metrics() {
                 Stats::Feeds(feeds) => {
                     assert_eq!((feeds.traced, feeds.kept, feeds.capacity), (0, 0, 8));
                 }
+                Stats::Portions(portions) => {
+                    assert_eq!(portions.portions, 0);
+                    assert_eq!((portions.portion_mg, portions.delivered_mg), (None, None));
+                }
                 Stats::Memory(_) | Stats::Power(_) | Stats::Food(_) => {}
             }
         }
@@ -1020,6 +1024,92 @@ fn an_owner_reads_the_statistics_and_their_live_metrics() {
         for kind in MetricKind::ALL {
             assert!(kinds.contains(&kind), "{kind:?} in {kinds:?}");
         }
+        sim.stop().await;
+    });
+}
+
+async fn calibration(sim: &mut Running, owner: &mut Connection) -> CalibrationView {
+    let answer = owner.ask(sim.id(), &Op::GetCalibration).await.unwrap();
+    let Answer::Calibration(view) = answer else {
+        panic!("the calibration: {answer:?}");
+    };
+    view
+}
+
+/// The owner enters a measured weight; it is stored across a restart and
+/// weighs the portions statistics. A double bowl, a weight outside the
+/// limits and a member are refused, and nothing changes.
+#[test]
+fn an_owner_stores_the_portion_weight_and_only_the_verified_bowl() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("flash.bin");
+    local(async {
+        let flash = Flash::file(&path).unwrap();
+        let mut sim = Running::start(&flash, true).await;
+        let mut owner = sim.open(OWNER).await.unwrap();
+        assert!(owner.capabilities().calibration);
+
+        let before = calibration(&mut sim, &mut owner).await;
+        assert_eq!(before.generation, Generation(0));
+        assert_eq!(
+            before.calibration,
+            Calibration {
+                portion_mg: None,
+                bowl: Bowl::Single
+            }
+        );
+        assert_eq!(before.phase, None, "the simulator has no feeding owner");
+
+        let put = |portion_mg, bowl, base| Op::PutCalibration {
+            base: Generation(base),
+            calibration: Calibration { portion_mg, bowl },
+        };
+        let double = owner
+            .ask(sim.id(), &put(Some(9_800), Bowl::Double, 0))
+            .await;
+        assert_eq!(double.unwrap(), Answer::Refused(Refusal::Unverified));
+        for out_of_range in [999, 50_001] {
+            let answer = owner
+                .ask(sim.id(), &put(Some(out_of_range), Bowl::Single, 0))
+                .await;
+            assert_eq!(answer.unwrap(), Answer::Refused(Refusal::Invalid));
+        }
+        let stored = owner
+            .ask(sim.id(), &put(Some(9_800), Bowl::Single, 0))
+            .await;
+        assert_eq!(
+            stored.unwrap(),
+            Answer::Done {
+                generation: Some(Generation(1))
+            }
+        );
+        let stale = owner.ask(sim.id(), &put(None, Bowl::Single, 0)).await;
+        assert_eq!(
+            stale.unwrap(),
+            Answer::Refused(Refusal::Stale {
+                current: Generation(1)
+            })
+        );
+
+        let section = Op::Stats {
+            section: StatsSection::Portions,
+        };
+        let Answer::Stats(Stats::Portions(portions)) = owner.ask(sim.id(), &section).await.unwrap()
+        else {
+            panic!("the portions section");
+        };
+        assert_eq!(portions.portion_mg, Some(9_800));
+        assert_eq!(portions.delivered_mg, Some(0), "no portion credited yet");
+        drop(owner);
+        sim.stop().await;
+        drop(flash);
+
+        let flash = Flash::file(&path).unwrap();
+        let mut sim = Running::start(&flash, false).await;
+        let mut owner = sim.open(OWNER).await.unwrap();
+        let after = calibration(&mut sim, &mut owner).await;
+        assert_eq!(after.generation, Generation(1));
+        assert_eq!(after.calibration.portion_mg, Some(9_800));
         sim.stop().await;
     });
 }

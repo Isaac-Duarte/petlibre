@@ -74,6 +74,7 @@ fn begin_mode(mode: BowlMode, now: u32) -> Fixture {
         direction: Direction::D0,
         credit_next_event: true,
         phase_known: true,
+        homing: false,
     };
     assert_eq!(
         f.controller.start(&request, now, &f.sample),

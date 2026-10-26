@@ -104,6 +104,11 @@ impl Capabilities {
     /// [`Self::STATS`] (both bits are needed): a feeder that serves the
     /// statistics but predates traces could not decode the op.
     pub const TRACES: Self = Self(64);
+    /// Portion calibration: [`Op::GetCalibration`] and
+    /// [`Op::PutCalibration`] with [`Outcome::Calibration`] and
+    /// [`Refusal::Unverified`], and the [`StatsSection::Portions`]
+    /// statistics.
+    pub const CALIBRATION: Self = Self(256);
     /// Every bit this crate defines: what a current client claims. A
     /// session then runs on the bits both sides claim, so a client adapts
     /// to whatever feeder it meets, however old.
@@ -114,7 +119,8 @@ impl Capabilities {
             | Self::TIME.0
             | Self::STATS.0
             | Self::LOG.0
-            | Self::TRACES.0,
+            | Self::TRACES.0
+            | Self::CALIBRATION.0,
     );
 
     pub const fn union(self, other: Self) -> Self {
@@ -318,6 +324,60 @@ pub enum Op<'a> {
         feed: u32,
         offset: u16,
     },
+    /// The portion calibration and where the rotor rests, answered
+    /// [`Outcome::Calibration`].
+    GetCalibration,
+    /// Store `calibration` if the calibration is still at `base`
+    /// generation, answered `Done` once the store holds it. Owner sessions
+    /// only. A bowl mode this feeder has not verified is refused
+    /// [`Refusal::Unverified`], and a portion weight outside
+    /// [`PORTION_MG_MIN`]..=[`PORTION_MG_MAX`] `Invalid`.
+    PutCalibration {
+        base: u32,
+        calibration: Calibration,
+    },
+}
+
+/// The lightest portion a calibration may store: well under any dry-food
+/// compartment's load.
+pub const PORTION_MG_MIN: u32 = 1_000;
+/// The heaviest: well over what one compartment of the PLAF103's rotor holds.
+pub const PORTION_MG_MAX: u32 = 50_000;
+
+/// What the owner measured, as the feeder keeps it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Calibration {
+    /// The mean weight of one portion, `None` until measured.
+    pub portion_mg: Option<u32>,
+    /// The bowl mode the feeder runs.
+    pub bowl: Bowl,
+}
+
+/// A single bowl turns one way and drops every compartment into one bowl;
+/// a double bowl alternates directions between two.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Bowl {
+    Single,
+    Double,
+}
+
+/// Where the rotor rests between feeds, as the feeding owner knows it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Phase {
+    /// Just past a mark, where a completed feed stops.
+    AtMark,
+    /// Anywhere between two marks: the next feed homes it first.
+    Unknown,
+}
+
+/// [`Op::GetCalibration`]'s answer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CalibrationView {
+    pub generation: u32,
+    pub writable: bool,
+    pub calibration: Calibration,
+    /// `None` from a feeder with no feeding owner, or before it opens.
+    pub phase: Option<Phase>,
 }
 
 /// The largest [`Op::UpdateChunk`]: an eighth of a flash sector, which
@@ -342,6 +402,7 @@ impl Op<'_> {
                 | Self::TailLog { .. }
                 | Self::Stats { .. }
                 | Self::FeedTrace { .. }
+                | Self::GetCalibration
         )
     }
 
@@ -360,6 +421,7 @@ impl Op<'_> {
             | Self::UpdateKeyStatement { .. } => Capabilities::UPDATE,
             Self::GetTime | Self::PutTime { .. } => Capabilities::TIME,
             Self::TailLog { .. } => Capabilities::LOG,
+            Self::GetCalibration | Self::PutCalibration { .. } => Capabilities::CALIBRATION,
             Self::Status
             | Self::GetSettings
             | Self::PutSettings { .. }
@@ -549,6 +611,8 @@ pub enum Outcome<'a> {
     /// One page of the trace [`Op::FeedTrace`] asked for.
     #[serde(borrow)]
     FeedTrace(TracePage<'a>),
+    /// The calibration, after [`Op::GetCalibration`].
+    Calibration(CalibrationView),
 }
 
 /// Whether the feeder can start a feed now. One decision, which both
@@ -645,6 +709,8 @@ pub enum Refusal {
     Fault,
     /// An update op was refused: why.
     Update(UpdateRefusal),
+    /// A bowl mode this feeder has not verified on hardware.
+    Unverified,
 }
 
 /// Where an update stands. The install itself does not depend on the
@@ -1031,16 +1097,18 @@ pub enum StatsSection {
     Food,
     /// This boot's feeds as their traces measured them.
     Feeds,
+    Portions,
 }
 
 impl StatsSection {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Counters,
         Self::Memory,
         Self::Flash,
         Self::Power,
         Self::Food,
         Self::Feeds,
+        Self::Portions,
     ];
 
     /// The bits both sides must claim before this section is served.
@@ -1050,6 +1118,7 @@ impl StatsSection {
                 Capabilities::STATS
             }
             Self::Feeds => Capabilities::STATS.union(Capabilities::TRACES),
+            Self::Portions => Capabilities::CALIBRATION,
         }
     }
 }
@@ -1064,6 +1133,7 @@ pub enum Stats<'a> {
     Power(PowerStats),
     Food(Food),
     Feeds(FeedStats),
+    Portions(Portions),
 }
 
 /// What the feeder counts, since this boot and over its life.
@@ -1301,6 +1371,26 @@ pub struct FeedStats {
     pub last: Option<TraceSummary>,
 }
 
+/// The portions since this boot: what the feedback sensor credited, what
+/// the outlet beam saw, and what they weigh by the calibration.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Portions {
+    /// Portions credited, one a mark (as [`Counts::portions`]).
+    pub portions: u32,
+    /// Feeds that began with a homing mark, uncredited: each may have
+    /// dropped part of a compartment more than it credited.
+    pub homed: u32,
+    /// Times the outlet beam was seen broken during feeds, sampled every
+    /// 10 ms: a cross-check on the credited portions, and a lower bound
+    /// (shorter passages fall between samples).
+    pub outlet_breaks: u32,
+    /// The calibration's weight of one portion, `None` before it is set.
+    pub portion_mg: Option<u32>,
+    /// `portions` times `portion_mg`: what was delivered by the
+    /// calibration, never what the pet ate.
+    pub delivered_mg: Option<u64>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1442,7 +1532,7 @@ mod tests {
     }
 
     /// Every section at its widest: each field at its largest encoding.
-    fn largest_stats() -> [Stats<'static>; 6] {
+    fn largest_stats() -> [Stats<'static>; 7] {
         let counts = Counts {
             uptime_s: u32::MAX,
             feeds: u32::MAX,
@@ -1523,6 +1613,13 @@ mod tests {
                 capacity: u32::MAX,
                 unsaved: u32::MAX,
                 last: Some(largest_summary()),
+            }),
+            Stats::Portions(Portions {
+                portions: u32::MAX,
+                homed: u32::MAX,
+                outlet_breaks: u32::MAX,
+                portion_mg: Some(u32::MAX),
+                delivered_mg: Some(u64::MAX),
             }),
         ]
     }

@@ -58,6 +58,7 @@ fn request(j: &FeedJournal<FlashIo>, id: u64, portions: u16) -> FeedRequest {
         direction: j.view.recovery.direction,
         credit_next_event: j.view.recovery.credit_next_event,
         phase_known: j.view.recovery.phase_known,
+        homing: false,
     }
 }
 

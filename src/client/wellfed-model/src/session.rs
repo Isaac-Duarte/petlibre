@@ -30,6 +30,9 @@ pub struct Capabilities {
     /// Per-feed traces: the `FeedTrace` op and the statistics' feeds
     /// section. Shared only with the statistics: the wire needs both bits.
     pub traces: bool,
+    /// Portion calibration: `GetCalibration`, `PutCalibration`, the
+    /// `Calibration` answer and the portions statistics.
+    pub calibration: bool,
 }
 
 impl Capabilities {
@@ -42,6 +45,7 @@ impl Capabilities {
         stats: false,
         readiness: false,
         traces: false,
+        calibration: false,
     };
     /// Every feature this crate knows: what a current client claims.
     pub const KNOWN: Self = Self {
@@ -52,6 +56,7 @@ impl Capabilities {
         stats: true,
         readiness: true,
         traces: true,
+        calibration: true,
     };
 
     /// The features both `self` and `other` claim.
@@ -65,6 +70,7 @@ impl Capabilities {
             stats: self.stats && other.stats,
             readiness: self.readiness && other.readiness,
             traces: self.traces && other.traces,
+            calibration: self.calibration && other.calibration,
         }
     }
 }

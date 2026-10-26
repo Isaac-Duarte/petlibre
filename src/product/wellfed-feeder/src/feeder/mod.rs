@@ -33,7 +33,7 @@ pub mod time;
 
 use core::fmt;
 
-use wellfed_proto::api::{Blocked, EventBody, Readiness, Refusal, Source, TraceSummary};
+use wellfed_proto::api::{Blocked, EventBody, Phase, Readiness, Refusal, Source, TraceSummary};
 use wellfed_session::noise::Keypair;
 
 pub use platform::Platform;
@@ -68,6 +68,21 @@ pub trait Feeds {
     fn food(&self) -> Option<bool> {
         None
     }
+    /// Where the rotor rests and what the feeds' marks and outlet beam
+    /// counted this boot, once the owner has opened.
+    fn marks(&self) -> Option<Marks> {
+        None
+    }
+}
+
+/// The rotor's phase and this boot's mark counts, from the feeding owner.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Marks {
+    pub phase: Phase,
+    /// Feeds that began with a homing mark, uncredited.
+    pub homed: u32,
+    /// Outlet-beam breaks seen during feeds.
+    pub outlet_breaks: u32,
 }
 
 /// A feeder with no feeding owner: every feed is refused before it

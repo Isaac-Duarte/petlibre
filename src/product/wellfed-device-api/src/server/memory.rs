@@ -78,7 +78,8 @@ pub(super) fn remembered(reply: Reply) -> Remembered {
         | Reply::Clients
         | Reply::Time
         | Reply::Stats(_)
-        | Reply::FeedTrace { .. } => Remembered::Done(None),
+        | Reply::FeedTrace { .. }
+        | Reply::Calibration => Remembered::Done(None),
     }
 }
 

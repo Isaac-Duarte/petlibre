@@ -390,6 +390,8 @@ impl<'a> Simulation<'a> {
             outcome: status.outcome,
             pending: status.pending,
             phase_known: status.phase_known,
+            at_mark: status.at_mark,
+            homed: status.homed,
             reason: status.reason,
             response: status.response,
             state: status.state,

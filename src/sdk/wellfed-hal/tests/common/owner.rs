@@ -79,6 +79,9 @@ pub struct Fixture {
     pub authority: FlashCoord,
     pub disk: OwnerRecovery,
     pub saved_result: OwnerResult,
+    /// The last result storage holds, for the phase at boot: a completed
+    /// feed unless a test says otherwise.
+    pub last_result: Option<OwnerResult>,
 
     pub recover_calls: u32,
     pub reserve_calls: u32,
@@ -111,6 +114,11 @@ impl Fixture {
             authority: FlashCoord::default(),
             disk,
             saved_result: OwnerResult::default(),
+            last_result: Some(OwnerResult {
+                outcome: OwnerOutcome::Done,
+                motion_possible: true,
+                ..OwnerResult::default()
+            }),
 
             recover_calls: 0,
             reserve_calls: 0,
@@ -267,6 +275,16 @@ impl OwnerStorage for FixtureStorage {
         // SAFETY: as the type says.
         unsafe { resolve(self.0) }
     }
+
+    fn last_result(&self) -> Option<OwnerResult> {
+        // SAFETY: as the type says.
+        unsafe {
+            if (*self.0).use_journal {
+                return (*self.0).journal.last_result();
+            }
+            (*self.0).last_result
+        }
+    }
 }
 
 unsafe fn recover(f: *mut Fixture, value: &mut OwnerRecovery) -> bool {
@@ -346,6 +364,7 @@ unsafe fn finish_record(f: *mut Fixture, result: &OwnerResult, phase: &OwnerReco
             return false;
         }
         (*f).saved_result = *result;
+        (*f).last_result = Some(*result);
         (*f).disk = *phase;
         true
     }
@@ -377,6 +396,7 @@ unsafe fn resolve(f: *mut Fixture) -> Option<OwnerResult> {
         };
         (*f).disk.pending_request = false;
         (*f).saved_result = result;
+        (*f).last_result = Some(result);
         Some(result)
     }
 }

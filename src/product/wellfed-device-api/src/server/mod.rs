@@ -58,6 +58,10 @@ enum Waiting {
     Time {
         digest: u32,
     },
+    /// As for the time settings: the digest of the calibration asked for.
+    Calibration {
+        digest: u32,
+    },
     Keys {
         ticket: u32,
         revoked: [u8; 32],

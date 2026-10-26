@@ -22,8 +22,8 @@ use crate::stats::Totals;
 use crate::store::events::{BODY_BYTES, Read};
 use wellfed_device_api::clients::{CLIENTS, Client};
 use wellfed_device_api::mailbox::{
-    ClientChange, KeyResult, PlayResult, Requested, SettingsFields, SettingsResult, SettingsView,
-    TimeSettings, TimeSettingsResult, WifiResult, WifiSource,
+    Calibration, CalibrationResult, ClientChange, KeyResult, PlayResult, Requested, SettingsFields,
+    SettingsResult, SettingsView, TimeSettings, TimeSettingsResult, WifiResult, WifiSource,
 };
 use wellfed_device_api::wifi::Credentials;
 
@@ -301,6 +301,10 @@ pub trait Platform {
     fn time_settings(&mut self) -> TimeSettingsResult;
     /// Queue the whole new time settings for the writer.
     fn time_settings_change(&mut self, settings: TimeSettings) -> TimeSettingsResult;
+    /// The portion calibration as the writer last published it.
+    fn calibration(&mut self) -> CalibrationResult;
+    /// Queue the whole new calibration for the writer.
+    fn calibration_change(&mut self, calibration: Calibration) -> CalibrationResult;
 
     // ---- The event history.
 

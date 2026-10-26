@@ -703,6 +703,68 @@ fn messages() -> Vec<Fixture> {
             })))),
             feeder,
         ),
+        (
+            "hello-calibration",
+            entry(&Hello {
+                major: 1,
+                capabilities: Capabilities::FEED
+                    .union(Capabilities::STATS)
+                    .union(Capabilities::CALIBRATION),
+            }),
+            |b| decode::<Hello>(b).is_ok(),
+        ),
+        (
+            "op-get-calibration",
+            entry(&request(Op::GetCalibration)),
+            client,
+        ),
+        (
+            "op-put-calibration",
+            entry(&request(Op::PutCalibration {
+                base: 2,
+                calibration: Calibration {
+                    portion_mg: Some(9_800),
+                    bowl: Bowl::Single,
+                },
+            })),
+            client,
+        ),
+        (
+            "outcome-calibration",
+            entry(&response(Outcome::Calibration(CalibrationView {
+                generation: 3,
+                writable: true,
+                calibration: Calibration {
+                    portion_mg: Some(9_800),
+                    bowl: Bowl::Single,
+                },
+                phase: Some(Phase::Unknown),
+            }))),
+            feeder,
+        ),
+        (
+            "refused-unverified",
+            entry(&response(Outcome::Refused(Refusal::Unverified))),
+            feeder,
+        ),
+        (
+            "op-stats-portions",
+            entry(&request(Op::Stats {
+                section: StatsSection::Portions,
+            })),
+            client,
+        ),
+        (
+            "outcome-stats-portions",
+            entry(&response(Outcome::Stats(Stats::Portions(Portions {
+                portions: 12,
+                homed: 1,
+                outlet_breaks: 9,
+                portion_mg: Some(9_800),
+                delivered_mg: Some(117_600),
+            })))),
+            feeder,
+        ),
     ]
 }
 

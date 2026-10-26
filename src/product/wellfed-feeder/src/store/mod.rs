@@ -1,6 +1,6 @@
 //! The product's records on NOR: device settings, Wi-Fi credentials, the
-//! client keys, the time settings and the lifetime statistics, each a
-//! dual-slot store (`wellfed_core::store::slot`: two
+//! client keys, the time settings, the lifetime statistics and the portion
+//! calibration, each a dual-slot store (`wellfed_core::store::slot`: two
 //! alternating erase units under one torn-write rule, with the store's own
 //! fields and recovery policy), and the event history and the per-feed
 //! traces, each in a ring of units ([`events`], [`traces`]). Each keeps its
@@ -11,6 +11,7 @@
 //! marker, and a torn one simply fails its checksum and is skipped, so it
 //! shares only the slot layer's I/O trait, checksum and field helpers.
 
+pub mod calibration;
 pub mod clients;
 pub mod events;
 pub mod net;

@@ -30,7 +30,7 @@ use wellfed_core::feed::controller::{FeedController, FeedReason, FeedRequest};
 use wellfed_core::feed::observe::Observation;
 use wellfed_core::feed::progress::BowlMode;
 use wellfed_core::feed::sensor_inputs::SensorInputs;
-use wellfed_core::feed::storage::{OwnerRecovery, OwnerResult, OwnerStorage};
+use wellfed_core::feed::storage::{OwnerRecovery, OwnerResult, OwnerStorage, RotorPhase};
 use wellfed_core::flash_coord::{FlashFault, FlashPhase};
 
 use crate::board::{self, Board};
@@ -99,6 +99,10 @@ pub struct FeedTrace {
     pub edge_ms: [Option<(u32, bool)>; EDGE_LOG],
     /// Every pad that changed while capture was on.
     pub pins: PinWatch,
+    /// From the drive's start to the homing mark, when the feed started
+    /// with the rotor's phase unknown and reached a mark inside the
+    /// inhibit window ([`FeedRequest::homing`]).
+    pub homed_ms: Option<u32>,
 }
 
 impl FeedTrace {
@@ -117,6 +121,8 @@ pub struct OwnerStatus {
     pub result: OwnerResult,
     pub high_water_id: u64,
     pub phase_known: bool,
+    /// Where the rotor rests: the next feed homes it while unknown.
+    pub phase: RotorPhase,
     pub intent_reserved: bool,
     pub result_durable: bool,
     pub stopped: bool,
@@ -198,6 +204,8 @@ pub struct OwnerTask<S> {
     pub controller: FeedController,
 
     pub recovery: OwnerRecovery,
+    /// Where the rotor rests between feeds.
+    pub phase: RotorPhase,
     pub request: FeedRequest,
     pub result: OwnerResult,
     pub trace: FeedTrace,
@@ -249,6 +257,7 @@ impl<S> Default for OwnerTask<S> {
             sensors: SensorInputs::default(),
             controller: FeedController::default(),
             recovery: OwnerRecovery::default(),
+            phase: RotorPhase::default(),
             request: FeedRequest::default(),
             result: OwnerResult::default(),
             trace: FeedTrace::default(),

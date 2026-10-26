@@ -4,8 +4,8 @@
 
 use crate::clients::{Label, Role};
 use crate::mailbox::{
-    LockResult, Origin, PlayResult, SettingsFields, SettingsResult, TimeFields, TimeResult,
-    TimeSettings, TimeSettingsResult, TimeState, WifiResult,
+    Calibration, CalibrationResult, LockResult, Origin, PlayResult, SettingsFields, SettingsResult,
+    TimeFields, TimeResult, TimeSettings, TimeSettingsResult, TimeState, WifiResult,
 };
 use crate::wifi::Credentials;
 use wellfed_core::log_tail::Batch as LogBatch;
@@ -13,8 +13,8 @@ use wellfed_core::named_enum;
 use wellfed_core::ota::offer::KeyId;
 use wellfed_core::tone::Tune as CoreTune;
 use wellfed_proto::api::{
-    self as proto, Blocked, Capabilities, EventBody, Readiness, Refusal, Source, Stats,
-    StatsSection, Status, TracePage, UpdateView,
+    self as proto, Blocked, Bowl, Capabilities, EventBody, Phase, Readiness, Refusal, Source,
+    Stats, StatsSection, Status, TracePage, UpdateView,
 };
 
 /// The rest of the feeder, as the server needs it. Every call returns at
@@ -112,6 +112,22 @@ pub trait Device {
     }
     /// The clock and the NTP exchange now.
     fn time_state(&mut self, _now_ms: u32) -> Option<TimeState> {
+        None
+    }
+    /// The portion calibration; with `Some`, the whole new calibration
+    /// queued for the writer. A device without
+    /// [`Capabilities::CALIBRATION`] keeps none.
+    fn calibration(&mut self, _change: Option<Calibration>) -> CalibrationResult {
+        CalibrationResult::Unserved
+    }
+    /// The bowl mode this build runs: the only one a calibration may name,
+    /// since a build runs only the mode it was verified for.
+    fn bowl(&self) -> Bowl {
+        Bowl::Single
+    }
+    /// Where the rotor rests, once the feeding owner knows; `None` from a
+    /// device with no owner.
+    fn phase(&self) -> Option<Phase> {
         None
     }
     /// The logged lines after line `after` (`None`: from the oldest kept)

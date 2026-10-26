@@ -93,12 +93,16 @@ enum Command {
     CancelFeed(CancelFeedArgs),
     /// Restart the feeder.
     Reboot(Target),
-    /// The feeder's statistics: counters, memory, flash, power, food and
-    /// feeds.
+    /// The feeder's statistics: counters, memory, flash, power, food, feeds
+    /// and portions.
     Stats(StatsArgs),
     /// What one feed's drive measured: its current, marks, beams, battery
     /// and motor commands over time, from the feeder's RAM or its storage.
     Trace(TraceArgs),
+    /// Read the portion calibration and where the rotor rests, or store
+    /// what a portion weighs, from a scale's reading of counted portions
+    /// (docs/firmware/calibration.md).
+    Calibrate(CalibrateArgs),
     /// Become an owner again through the feeder's recovery window.
     Recover(RecoverArgs),
     /// Install the replacement on a feeder running stock 1.1.15: point stock
@@ -153,6 +157,7 @@ fn main() -> Result<()> {
             &Op::CancelFeed { feed: args.feed },
         )),
         Command::Reboot(target) => runtime.block_on(ask_and_print(&target, &Op::Reboot)),
+        Command::Calibrate(args) => runtime.block_on(calibrate_command(args)),
         Command::Stats(args) => runtime.block_on(stats_command(args)),
         Command::Trace(args) => runtime.block_on(trace_command(args)),
         Command::Recover(args) => runtime.block_on(recover_command(args)),
@@ -450,6 +455,7 @@ enum Section {
     Power,
     Food,
     Feeds,
+    Portions,
 }
 
 impl Section {
@@ -461,6 +467,7 @@ impl Section {
             Self::Power => StatsSection::Power,
             Self::Food => StatsSection::Food,
             Self::Feeds => StatsSection::Feeds,
+            Self::Portions => StatsSection::Portions,
         }
     }
 }
@@ -474,6 +481,52 @@ struct TraceArgs {
     /// The whole trace as JSON, instead of a summary and one line an entry.
     #[arg(long)]
     json: bool,
+}
+
+#[derive(Args)]
+struct CalibrateArgs {
+    #[command(flatten)]
+    target: Target,
+    /// What the counted portions weighed together, in grams (`98.4`): the
+    /// scale's reading of the bowl, less the empty bowl.
+    #[arg(long, value_parser = parse_grams, requires = "portions")]
+    weighed: Option<u32>,
+    /// How many portions that food is: the `completed` counts of the feeds
+    /// that dropped it.
+    #[arg(long, requires = "weighed")]
+    portions: Option<u32>,
+    /// One portion's weight in grams, when already known.
+    #[arg(long, value_parser = parse_grams, conflicts_with_all = ["weighed", "clear"])]
+    portion: Option<u32>,
+    /// Forget the stored weight.
+    #[arg(long, conflicts_with = "weighed")]
+    clear: bool,
+}
+
+/// Grams with up to three decimals, as milligrams.
+fn parse_grams(text: &str) -> Result<u32, String> {
+    let invalid = || format!("{text:?} is not a weight in grams (like 9.8)");
+    let (whole, fraction) = text.split_once('.').unwrap_or((text, ""));
+    if whole.is_empty() || fraction.len() > 3 || !fraction.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(invalid());
+    }
+    let whole: u32 = whole.parse().map_err(|_| invalid())?;
+    let padded = format!("{fraction:0<3}");
+    let fraction: u32 = padded.parse().map_err(|_| invalid())?;
+    whole
+        .checked_mul(1000)
+        .and_then(|mg| mg.checked_add(fraction))
+        .ok_or_else(invalid)
+}
+
+/// The mean of `portions` portions that weighed `weighed_mg` together,
+/// rounded to the milligram.
+fn mean_mg(weighed_mg: u32, portions: u32) -> Result<u32> {
+    if portions == 0 {
+        bail!("--portions must count at least one portion");
+    }
+    let mean = (u64::from(weighed_mg) + u64::from(portions) / 2) / u64::from(portions);
+    Ok(u32::try_from(mean)?)
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -603,10 +656,12 @@ async fn stats_command(args: StatsArgs) -> Result<()> {
         bail!("this feeder's build serves no statistics; update it first");
     }
     let sections: Vec<StatsSection> = if args.section.is_empty() {
-        let traces = connection.capabilities().traces;
+        // A feeder that predates a section is not asked for it.
+        let capabilities = connection.capabilities();
         StatsSection::ALL
             .into_iter()
-            .filter(|&section| section != StatsSection::Feeds || traces)
+            .filter(|&section| section != StatsSection::Feeds || capabilities.traces)
+            .filter(|&section| section != StatsSection::Portions || capabilities.calibration)
             .collect()
     } else {
         args.section.iter().map(|section| section.model()).collect()
@@ -641,6 +696,50 @@ async fn trace_command(args: TraceArgs) -> Result<()> {
     }
     print!("{}", trace::Text(&trace));
     Ok(())
+}
+
+async fn calibrate_command(args: CalibrateArgs) -> Result<()> {
+    let portion_mg = match (args.weighed, args.portions, args.portion, args.clear) {
+        (Some(weighed), Some(portions), None, false) => Some(Some(mean_mg(weighed, portions)?)),
+        (None, None, Some(portion), false) => Some(Some(portion)),
+        (None, None, None, true) => Some(None),
+        _ => None,
+    };
+
+    let (_, _, mut connection) = connect(&args.target).await?;
+    // An op the feeder predates would end the session rather than be
+    // refused, so ask only a feeder that claims the calibration.
+    if !connection.capabilities().calibration {
+        bail!("this feeder's build keeps no calibration; update it first");
+    }
+    let Answer::Calibration(view) = connection.ask(&Op::GetCalibration).await? else {
+        bail!("the feeder did not return its calibration");
+    };
+    let Some(portion_mg) = portion_mg else {
+        print_json(&view)?;
+        let portions = Op::Stats {
+            section: StatsSection::Portions,
+        };
+        return print_answer(&connection.ask(&portions).await?);
+    };
+
+    if let Some(mg) = portion_mg {
+        eprintln!("One portion: {mg} mg.");
+    }
+    let calibration = model::Calibration {
+        portion_mg,
+        ..view.calibration
+    };
+    let answer = connection
+        .ask(&Op::PutCalibration {
+            base: view.generation,
+            calibration,
+        })
+        .await?;
+    if answer == Answer::Refused(model::Refusal::Invalid) {
+        bail!("refused: a portion must weigh 1-50 g");
+    }
+    print_answer(&answer)
 }
 
 async fn time_command(args: TimeArgs) -> Result<()> {
@@ -981,6 +1080,19 @@ mod tests {
         // Resuming on bank 0 sends no frame.
         let resumed = [&install[..6], &["--from-bank0", "--ssid", "Home"]].concat();
         assert!(Cli::try_parse_from(resumed).is_err());
+    }
+
+    #[test]
+    fn grams_parse_to_milligrams() {
+        assert_eq!(parse_grams("9.8"), Ok(9_800));
+        assert_eq!(parse_grams("98.425"), Ok(98_425));
+        assert_eq!(parse_grams("12"), Ok(12_000));
+        for bad in ["", ".5", "9.8765", "9,8", "-1", "1e3", "9.x"] {
+            assert!(parse_grams(bad).is_err(), "{bad}");
+        }
+        assert_eq!(mean_mg(98_400, 10).unwrap(), 9_840);
+        assert_eq!(mean_mg(10_000, 3).unwrap(), 3_333);
+        assert!(mean_mg(1_000, 0).is_err());
     }
 
     #[test]

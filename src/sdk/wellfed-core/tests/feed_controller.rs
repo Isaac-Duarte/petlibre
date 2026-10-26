@@ -55,6 +55,7 @@ fn request(id: u64, portions: u16, mode: BowlMode, direction: Direction) -> Feed
         direction,
         credit_next_event: true,
         phase_known: true,
+        homing: false,
     }
 }
 
@@ -845,11 +846,23 @@ fn jammed_feed(portions: u16, jam: i64, stalls: u8) -> (FeedController, i64) {
 /// higher positions and `Drive1` toward lower ones, and the jam stalls the
 /// request's own direction at `jam`.
 fn jammed(limits: &FeedLimits, r: &FeedRequest, jam: i64, stalls: u8) -> (FeedController, i64) {
+    jammed_from(limits, r, 0, jam, stalls)
+}
+
+/// As `jammed`, with the rotor starting at `start` rather than just past a
+/// rise: where an interrupted feed left it.
+fn jammed_from(
+    limits: &FeedLimits,
+    r: &FeedRequest,
+    start: i64,
+    jam: i64,
+    stalls: u8,
+) -> (FeedController, i64) {
     let mut controller = FeedController::new(limits, 0).unwrap();
     assert_eq!(controller.start(r, 0, &HEALTHY), FeedStartResult::Accepted);
     let forward = MotorCommand::drive(r.direction);
 
-    let (mut position, mut stalls) = (0_i64, stalls);
+    let (mut position, mut stalls) = (start, stalls);
     let mut last = controller.motor;
     for now in 1..120_000 {
         let motor = controller.motor;
@@ -958,4 +971,123 @@ fn a_freed_jam_in_a_double_bowl_d1_credits_each_fall_once() {
             );
         }
     }
+}
+
+fn begin_homing(settings: &FeedLimits, portions: u16) -> Fixture {
+    let mut f = Fixture {
+        controller: FeedController::new(settings, 0).unwrap(),
+        sample: HEALTHY,
+        now: 0,
+    };
+    let r = FeedRequest {
+        homing: true,
+        ..request(1, portions, BowlMode::Single, Direction::D0)
+    };
+    assert_eq!(
+        f.controller.start(&r, 0, &f.sample),
+        FeedStartResult::Accepted
+    );
+    f
+}
+
+#[test]
+fn a_homing_mark_inside_the_inhibit_is_never_credited() {
+    let mut f = begin_homing(&LIMITS, 1);
+    f.advance(2);
+    f.edge(false);
+    f.edge(true);
+    assert_eq!(f.controller.progress.completed, 0);
+    assert_eq!(f.controller.homed_ms, Some(2));
+    assert!(!f.controller.homing);
+
+    // The portion counts from the homing mark: a mark inside the inhibit
+    // after it is ignored, the next past it completes the request.
+    f.advance(4);
+    f.edge(true);
+    assert_eq!(f.controller.progress.completed, 0);
+    f.advance(1);
+    f.edge(true);
+    assert_eq!(f.controller.state, FeedState::Complete);
+    assert_eq!(f.controller.progress.completed, 1);
+    assert_eq!(f.controller.homed_ms, Some(2));
+}
+
+#[test]
+fn a_first_mark_past_the_inhibit_is_credited_and_ends_homing() {
+    let mut f = begin_homing(&LIMITS, 2);
+    f.advance(6);
+    f.edge(true);
+    assert_eq!(f.controller.progress.completed, 1);
+    assert!(!f.controller.homing);
+
+    // At a mark now: one inside the next inhibit window is ignored.
+    f.advance(2);
+    f.edge(true);
+    assert_eq!(f.controller.progress.completed, 1);
+    assert_eq!(f.controller.homed_ms, None);
+}
+
+#[test]
+fn homing_extends_the_deadline_by_one_inhibit_window() {
+    let settings = FeedLimits {
+        max_duration_ms: 1000,
+        ..LIMITS
+    };
+    let f = begin_homing(&settings, 2);
+    assert_eq!(f.controller.deadline_ms, 2 * 120 + 5);
+    // Never past the longest request.
+    let f = begin_homing(&LIMITS, 1);
+    assert_eq!(f.controller.deadline_ms, 120);
+
+    // Without homing, a mark inside the inhibit is ignored and records nothing.
+    let mut plain = begin_with(&settings, BowlMode::Single, Direction::D0, 2, 0);
+    assert_eq!(plain.controller.deadline_ms, 2 * 120);
+    plain.advance(2);
+    plain.edge(true);
+    assert_eq!(plain.controller.homed_ms, None);
+    assert_eq!(plain.controller.progress.completed, 0);
+}
+
+#[test]
+fn a_double_bowl_never_homes() {
+    let mut c = FeedController::new(&LIMITS, 0).unwrap();
+    let r = FeedRequest {
+        homing: true,
+        ..request(1, 1, BowlMode::Double, Direction::D0)
+    };
+    assert_eq!(c.start(&r, 0, &HEALTHY), FeedStartResult::RejectRequest);
+}
+
+/// A feed from an unknown phase that jams before its homing mark backs off
+/// and drives on as any feed does; the mark it then reaches inside the
+/// inhibit window still homes it, uncredited, and its one portion is the
+/// next mark.
+#[test]
+fn a_jam_before_the_homing_mark_still_homes_on_it() {
+    let r = FeedRequest {
+        homing: true,
+        ..request(1, 1, BowlMode::Single, Direction::D0)
+    };
+    // 3 s of drive short of a mark, jammed 0.5 s in, for one reversal.
+    let start = PERIOD - 3000;
+    let (controller, position) = jammed_from(&PLAF103, &r, start, start + 500, 1);
+
+    assert_eq!(controller.reverse_attempts, 1);
+    assert_eq!(
+        (controller.state, controller.reason),
+        (FeedState::Complete, FeedReason::Done)
+    );
+    assert_eq!(controller.progress.completed, 1);
+    // 3 s of travel plus the 2.5 s backing off cost: past the bare
+    // inhibit, inside it once the reversal's cost is added back.
+    let homed = controller.homed_ms.expect("the first mark homed it");
+    assert!(
+        (PLAF103.feedback_inhibit_ms..PLAF103.feedback_inhibit_ms + 1000).contains(&homed),
+        "homed at {homed} ms"
+    );
+    // Stopped on the mark after the homing one, not the homing mark.
+    assert!(
+        (2 * PERIOD..2 * PERIOD + 50).contains(&position),
+        "stopped at {position}"
+    );
 }

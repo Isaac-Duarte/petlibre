@@ -16,9 +16,10 @@
 
 use wellfed_proto::api::{
     self as proto, Counters, Counts, CurrentUnit, EventBody, FLASH_SECTORS, FeedOutcome, FeedStats,
-    Food, Metric, POWER_HISTORY, Power, PowerStats, ResetCause, Resets, TraceSummary,
+    Food, Metric, POWER_HISTORY, Portions, Power, PowerStats, ResetCause, Resets, TraceSummary,
 };
 
+use crate::feeder::Marks;
 use crate::feeder::platform::{Link, TracesFill};
 
 /// One point of the battery's history.
@@ -654,6 +655,23 @@ impl Keeper {
             battery_max_mv: supply.max_mv,
             battery_mv: supply.history,
             period_s: HISTORY_MS / 1000,
+        }
+    }
+
+    /// The portions section: the credited portions, the owner's mark
+    /// counts, and their weight by `portion_mg`, the calibration's.
+    pub fn portions_stats(&self, marks: Option<Marks>, portion_mg: Option<u32>) -> Portions {
+        let marks = marks.unwrap_or(Marks {
+            phase: proto::Phase::Unknown,
+            homed: 0,
+            outlet_breaks: 0,
+        });
+        Portions {
+            portions: self.portions,
+            homed: marks.homed,
+            outlet_breaks: marks.outlet_breaks,
+            portion_mg,
+            delivered_mg: portion_mg.map(|mg| u64::from(mg) * u64::from(self.portions)),
         }
     }
 

@@ -8,7 +8,7 @@ use wellfed_core::feed::controller::{
 use wellfed_core::feed::observe::{Beams, Observation};
 use wellfed_core::feed::progress::{BowlMode, Direction};
 use wellfed_core::feed::sensor_inputs::{SensorInputs, SensorReading};
-use wellfed_core::feed::storage::{OwnerOutcome, OwnerResult, OwnerStorage};
+use wellfed_core::feed::storage::{OwnerOutcome, OwnerResult, OwnerStorage, RotorPhase};
 use wellfed_core::flash_coord::{FlashCoord, FlashFault, FlashPhase};
 
 use crate::board::{self, Board, CaptureFault};
@@ -84,6 +84,7 @@ impl<S: OwnerStorage> OwnerTask<S> {
             result: self.result,
             high_water_id: self.recovery.high_water_id,
             phase_known: self.recovery.phase_known,
+            phase: self.phase,
             intent_reserved: self.reserved,
             result_durable: self.result_durable,
             stopped: s.stopped,
@@ -162,6 +163,9 @@ impl<S: OwnerStorage> OwnerTask<S> {
             for (logged, edge) in self.trace.edge_ms.iter_mut().zip(edges.log) {
                 *logged = edge.map(|(edge, high)| (since(edge), high));
             }
+        }
+        if self.controller.last_request_id == self.request.id {
+            self.trace.homed_ms = self.controller.homed_ms;
         }
         self.result.outcome = outcome;
         self.result.reason = reason;
@@ -310,6 +314,7 @@ impl<S: OwnerStorage> OwnerTask<S> {
             .is_some_and(|storage| storage.finish(&result, &next))
         {
             self.recovery = next;
+            self.phase = self.phase_after(&result);
             self.result_durable = true;
             self.state = if self.fault == OwnerFault::Ok {
                 OwnerState::Terminal
@@ -369,6 +374,14 @@ impl<S: OwnerStorage> OwnerTask<S> {
         if c.bowl_mode == BowlMode::Single {
             self.recovery.phase_known = true;
         }
+        // The journal's last result says where the last drive left the
+        // rotor. Before the first, nothing does: the phase stays unknown,
+        // as after a result that never moved it.
+        let last = self
+            .storage
+            .as_ref()
+            .and_then(|storage| storage.last_result());
+        self.phase = self.phase_after(&last.unwrap_or_default());
 
         let high_water = self.recovery.high_water_id;
         self.shared(|shared| shared.last_submitted_id = high_water);
@@ -382,6 +395,16 @@ impl<S: OwnerStorage> OwnerTask<S> {
             }
         };
         true
+    }
+
+    /// The rotor's phase after `result`. A double bowl's is the journal's
+    /// own; a single bowl's follows from how the feed ended.
+    fn phase_after(&self, result: &OwnerResult) -> RotorPhase {
+        match self.config.bowl_mode {
+            BowlMode::Double if self.recovery.phase_known => RotorPhase::AtMark,
+            BowlMode::Double => RotorPhase::Unknown,
+            BowlMode::Single => RotorPhase::after(self.phase, result),
+        }
     }
 
     /// Read the journal's recovery state: false when it is unreadable or
@@ -437,6 +460,8 @@ impl<S: OwnerStorage> OwnerTask<S> {
                 direction: self.recovery.direction,
                 credit_next_event: self.recovery.credit_next_event,
                 phase_known: self.recovery.phase_known,
+                homing: self.config.bowl_mode == BowlMode::Single
+                    && self.phase == RotorPhase::Unknown,
             };
             self.queued_at = mailbox.queued_at;
 

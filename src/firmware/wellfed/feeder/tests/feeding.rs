@@ -297,4 +297,54 @@ fn owner_records_decode_for_the_bench() {
         })),
     );
     decodes(Record::Refused, None);
+    decodes(
+        Record::Marks {
+            feed: 12,
+            homed_ms: Some(3_990),
+            outlet_breaks: 4,
+            phase: wellfed_core::feed::storage::RotorPhase::AtMark,
+        },
+        None,
+    );
+}
+
+/// The marks record says what a feed's marks and outlet beam showed, for
+/// the owner's calibration runs.
+#[test]
+fn a_feeds_marks_and_outlet_breaks_are_logged() {
+    use wellfed_core::feed::storage::RotorPhase;
+    use wellfed_fw_feeder::feeding::{Record, outlet_breaks};
+    use wellfed_sdk::hal::supervision::events::PinWatch;
+
+    let marks = Record::Marks {
+        feed: 7,
+        homed_ms: None,
+        outlet_breaks: 3,
+        phase: RotorPhase::Unknown,
+    };
+    assert_eq!(
+        marks.to_string(),
+        "marks id=7 homed_ms=none outlet_breaks=3 phase=unknown"
+    );
+    let homed = Record::Marks {
+        feed: 8,
+        homed_ms: Some(3_990),
+        outlet_breaks: 0,
+        phase: RotorPhase::AtMark,
+    };
+    assert_eq!(
+        homed.to_string(),
+        "marks id=8 homed_ms=3990 outlet_breaks=0 phase=at_mark"
+    );
+
+    // Each break is two changes of PA16; one cut at either end counts.
+    let mut pins = PinWatch::default();
+    assert_eq!(outlet_breaks(&pins), 0);
+    pins.toggles[0][16] = 8;
+    assert_eq!(outlet_breaks(&pins), 4);
+    pins.toggles[0][16] = 7;
+    assert_eq!(outlet_breaks(&pins), 4);
+    pins.toggles[0][17] = 9;
+    pins.toggles[1][16] = 9;
+    assert_eq!(outlet_breaks(&pins), 4, "only port A's pad 16");
 }

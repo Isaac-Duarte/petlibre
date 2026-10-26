@@ -40,7 +40,7 @@ The core diagnostic uses synthetic inputs and memory-only motor outputs. Separat
 
 | Area | Present | Hardware/integration work remaining |
 | --- | --- | --- |
-| Manual feeding and single/double bowls | Host-tested controller, direction/portion accounting, bounded recovery | Mechanical phase, bowl mapping, measured portions, jams, verified stops |
+| Manual feeding and single/double bowls | Host-tested controller, direction/portion accounting, bounded recovery; the rotor's phase from the journal and a homing mark after an interrupted feed, the single bowl as the only verified mode, and a stored portion weight ([calibration](calibration.md), simulation) | Measured portions, the phase cases on hardware, jams, verified stops |
 | Inputs and power | Host-tested filtering, stale/invalid-input rejection, ADC scaling | Calibration, optical timing/polarity, current limits, battery/brownout behavior |
 | Request persistence | Host-tested journal and owner integration | Physical flash provider, durable writes, power cuts |
 | Runtime reliability | Host-tested leases, ISR supervision, watchdog, and flash coordination | Real timing, reset/sleep behavior, sustained runs and complete flash mediation |

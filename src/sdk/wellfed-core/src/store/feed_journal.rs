@@ -674,4 +674,9 @@ impl<I: SlotIo> OwnerStorage for FeedJournal<I> {
     fn resolve(&mut self) -> Option<OwnerResult> {
         FeedJournal::resolve(self)
     }
+
+    fn last_result(&self) -> Option<OwnerResult> {
+        let view = self.read()?;
+        (view.has_result && !view.recovery.pending_request).then_some(view.result)
+    }
 }

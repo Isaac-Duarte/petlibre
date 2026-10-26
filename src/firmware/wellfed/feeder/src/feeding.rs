@@ -53,6 +53,14 @@
 //! drive figures, for the settings writer to store once the outputs are
 //! stopped.
 //!
+//! The rotor's phase is the owner's ([`RotorPhase`]): a feed from an
+//! unknown phase homes on its first mark, uncredited, and the loop counts
+//! those homing feeds and the outlet beam's breaks for the portions
+//! statistics (`PLOWN1 marks`), so delivered food can be estimated apart
+//! from the requested count ([calibration]).
+//!
+//! [calibration]: ../../../../../docs/firmware/calibration.md
+//!
 //! While a feed is driven the loop steps the owner before each pass and,
 //! when the pass ran a handshake operation (a client opening a session),
 //! again at once after it, so the owner's observations stay
@@ -69,7 +77,7 @@
 use wellfed_core::feed::controller::FeedLimits;
 use wellfed_core::feed::progress::BowlMode;
 use wellfed_core::feed::sensor_inputs::SensorLimits;
-use wellfed_core::feed::storage::OwnerResult;
+use wellfed_core::feed::storage::{OwnerResult, RotorPhase};
 use wellfed_core::store::feed_journal::{JournalConfig, JournalError};
 use wellfed_feeder::feed::Durability;
 use wellfed_proto::api::Refusal;
@@ -418,6 +426,14 @@ pub enum Record {
     Held { portions: u8, held: Held },
     /// Joins waited for the outputs, or went ahead past a feed's bound.
     Joins(interlock::Status),
+    /// What the feed's marks and the outlet beam showed: how far into the
+    /// drive a homing mark came, the beam's breaks, and the phase after.
+    Marks {
+        feed: u64,
+        homed_ms: Option<u32>,
+        outlet_breaks: u32,
+        phase: RotorPhase,
+    },
     /// While the feed was in flight: the longest gap between two owner
     /// steps, and the handshake operations the loop ran.
     Steps {
@@ -432,6 +448,16 @@ pub enum Record {
 
 /// The most pads a `pins` record lists, so the line fits a record.
 const PINS_LISTED: usize = 10;
+
+/// The outlet beam's breaks in a feed's pin watch: each break is two
+/// changes of PA16, a half-seen one at either end counts whole. Sampled on
+/// the 10 ms supervision tick, so a shorter passage can fall between two
+/// samples: a lower bound.
+pub fn outlet_breaks(pins: &PinWatch) -> u32 {
+    let outlet = usize::try_from(wellfed_sdk::hal::plaf103::pins::OUTLET).unwrap_or(usize::MAX);
+    let toggles = pins.toggles[0].get(outlet).copied().unwrap_or(0);
+    u32::from(toggles).div_ceil(2)
+}
 
 /// The body of a `PLOWN1` line.
 impl core::fmt::Display for Record {
@@ -523,6 +549,23 @@ impl core::fmt::Display for Record {
                 }
                 Ok(())
             }
+            Record::Marks {
+                feed,
+                homed_ms,
+                outlet_breaks,
+                phase,
+            } => {
+                write!(f, "marks id={feed} homed_ms=")?;
+                match homed_ms {
+                    Some(ms) => write!(f, "{ms}")?,
+                    None => f.write_str("none")?,
+                }
+                let phase = match phase {
+                    RotorPhase::AtMark => "at_mark",
+                    RotorPhase::Unknown => "unknown",
+                };
+                write!(f, " outlet_breaks={outlet_breaks} phase={phase}")
+            }
             Record::Steps {
                 feed,
                 max_gap_ms,
@@ -592,11 +635,12 @@ pub use target::Feeding;
 #[cfg(target_os = "none")]
 mod target {
     use wellfed_core::feed::progress::Direction;
-    use wellfed_core::feed::storage::OwnerResult;
+    use wellfed_core::feed::storage::{OwnerResult, RotorPhase};
     use wellfed_core::store::feed_journal::{FeedJournal, JournalError};
     use wellfed_feeder::feed::{self, Durability};
+    use wellfed_feeder::feeder::Marks;
     use wellfed_feeder_runtime::traces;
-    use wellfed_proto::api::{Blocked, EventBody, Refusal, Source, TraceSummary};
+    use wellfed_proto::api::{Blocked, EventBody, Phase, Refusal, Source, TraceSummary};
     use wellfed_sdk::hal::interlock::{self, INTERLOCK, Turn};
     use wellfed_sdk::hal::owner::{
         Owner, OwnerConfig, OwnerFault, OwnerState, OwnerStatus, Step, SubmitResult,
@@ -653,6 +697,10 @@ mod target {
         proof: Proof,
         /// When to restart to recover lost sensors.
         recovery: Recovery,
+        /// Feeds this boot that began with a homing mark.
+        homed: u32,
+        /// Outlet-beam breaks this boot's feeds saw.
+        outlet_breaks: u32,
     }
 
     impl Feeding {
@@ -850,6 +898,17 @@ mod target {
                 feed: result.id,
                 max_gap_ms: current.max_gap_ms,
                 handshakes: current.handshakes,
+            });
+            let outlet_breaks = super::outlet_breaks(&status.trace.pins);
+            if status.trace.homed_ms.is_some() {
+                self.homed = self.homed.saturating_add(1);
+            }
+            self.outlet_breaks = self.outlet_breaks.saturating_add(outlet_breaks);
+            record(Record::Marks {
+                feed: result.id,
+                homed_ms: status.trace.homed_ms,
+                outlet_breaks,
+                phase: status.phase,
             });
             if status.trace.pins.start.is_some() {
                 record(Record::Pins {
@@ -1062,6 +1121,23 @@ mod target {
         /// were on.
         pub fn food(&self) -> Option<bool> {
             OWNER.enter()?.status().food
+        }
+
+        /// Where the rotor rests, and this boot's homing feeds and outlet
+        /// breaks, once the owner has opened.
+        pub fn marks(&self) -> Option<Marks> {
+            let owner = OWNER
+                .enter()
+                .filter(|_| self.settled && !self.journal_failed)?;
+            let phase = match owner.status().phase {
+                RotorPhase::AtMark => Phase::AtMark,
+                RotorPhase::Unknown => Phase::Unknown,
+            };
+            Some(Marks {
+                phase,
+                homed: self.homed,
+                outlet_breaks: self.outlet_breaks,
+            })
         }
 
         /// A feed is queued or runs: no install starts.

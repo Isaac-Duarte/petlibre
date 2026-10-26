@@ -236,6 +236,108 @@ fn interruption_invalidates_double_bowl_phase() {
     );
 }
 
+/// A cancelled drive leaves the rotor between marks. Stopped about 5.1 s
+/// past one, the next mark's rise comes 4 s into the next feed, inside the
+/// 5 s inhibit: the homing mark, never credited. The portion is the
+/// compartment after it, about 13 s from the drive's start, past the 12 s a
+/// portion allows from a mark: the homing window extends the deadline.
+#[test]
+fn a_feed_after_a_cancel_homes_the_rotor_then_counts_from_the_mark() {
+    let report = passing(
+        vec![
+            expect(SUBMIT, json!({"at_mark": false})),
+            act(SUBMIT, "submit", &[1, 1]),
+            expect(ONE_PORTION, json!({"outcome": "done", "at_mark": true})),
+            act(ONE_PORTION + 1, "ack", &[1]),
+            act(ONE_PORTION + 100, "submit", &[2, 1]),
+            act(ONE_PORTION + 5300, "cancel", &[2]),
+            expect(
+                ONE_PORTION + 5400,
+                json!({"outcome": "cancelled", "durable": true, "at_mark": false, "motor": 0}),
+            ),
+            act(ONE_PORTION + 5401, "ack", &[2]),
+            act(ONE_PORTION + 5500, "submit", &[3, 1]),
+            expect(
+                ONE_PORTION + 5500 + 14_000,
+                json!({"state": "terminal", "id": 3, "outcome": "done", "completed": 1,
+                       "homed": true, "at_mark": true}),
+            ),
+        ],
+        ONE_PORTION + 5500 + 14_000,
+        "single",
+    );
+
+    let drives: Vec<u64> = events(&report, "outputs")
+        .filter(|e| e["motor"] == 1)
+        .filter_map(|e| e["at_ms"].as_u64())
+        .collect();
+    let stop = events(&report, "outputs")
+        .filter(|e| e["motor"] == 0)
+        .filter_map(|e| e["at_ms"].as_u64())
+        .find(|&at| at > drives[2])
+        .unwrap();
+    let took = stop - drives[2];
+    assert!(
+        took > 12_000 && took < 14_000,
+        "the homed feed drove {took} ms"
+    );
+}
+
+/// A short cancelled drive leaves the next mark past the inhibit: it is
+/// credited as stock credits it, with no homing mark.
+#[test]
+fn a_mark_past_the_inhibit_is_credited_even_while_homing() {
+    passing(
+        vec![
+            act(SUBMIT, "submit", &[1, 1]),
+            act(2000, "cancel", &[1]),
+            expect(2100, json!({"outcome": "cancelled", "at_mark": false})),
+            act(2101, "ack", &[1]),
+            act(2200, "submit", &[2, 1]),
+            expect(
+                2200 + ONE_PORTION,
+                json!({"state": "terminal", "outcome": "done", "completed": 1,
+                       "homed": false, "at_mark": true}),
+            ),
+        ],
+        2200 + ONE_PORTION,
+        "single",
+    );
+}
+
+/// The phase follows the journal's last result across a reboot: a
+/// completed feed leaves the rotor at a mark, a feed a power cut
+/// interrupted resolves uncertain and leaves it unknown, and the next
+/// completed feed sets it again.
+#[test]
+fn the_phase_after_a_reboot_follows_the_journal() {
+    passing(
+        vec![
+            act(SUBMIT, "submit", &[1, 1]),
+            expect(ONE_PORTION, json!({"outcome": "done", "at_mark": true})),
+            act(ONE_PORTION + 1, "ack", &[1]),
+            act(ONE_PORTION + 100, "power_cut", &[]),
+            act(ONE_PORTION + 101, "boot", &[]),
+            expect(ONE_PORTION + 200, json!({"state": "idle", "at_mark": true})),
+            act(ONE_PORTION + 300, "submit", &[2, 1]),
+            act(ONE_PORTION + 3000, "power_cut", &[]),
+            act(ONE_PORTION + 3001, "boot", &[]),
+            expect(
+                ONE_PORTION + 3002,
+                json!({"outcome": "uncertain", "at_mark": false}),
+            ),
+            act(ONE_PORTION + 3003, "ack", &[2]),
+            act(ONE_PORTION + 3100, "submit", &[3, 1]),
+            expect(
+                ONE_PORTION + 3100 + 14_000,
+                json!({"state": "terminal", "id": 3, "outcome": "done", "at_mark": true}),
+            ),
+        ],
+        ONE_PORTION + 3100 + 14_000,
+        "single",
+    );
+}
+
 #[test]
 fn faults_stop_and_finish_without_success() {
     // Each checked before a hardware fault's watchdog reset, which follows

@@ -16,7 +16,8 @@
 //!
 //! It keeps the time settings too (sectors 27 and 28,
 //! `wellfed_feeder::store::time`): the owner's zone and the NTP server,
-//! published for the loop ([`time`]).
+//! published for the loop ([`time`]), and the portion calibration (sectors
+//! 29 and 30, `wellfed_feeder::store::calibration`, [`calibration`]).
 //!
 //! It also keeps the event history (sectors 13-24,
 //! `wellfed_feeder::store::events`). It appends the records the loop queues
@@ -54,6 +55,7 @@ use wellfed_core::named_enum;
 use wellfed_core::store::seed::{SeedStatus, SeedStore};
 use wellfed_device_api::mailbox::{SettingsFields, SettingsView};
 use wellfed_feeder::stats::{SAVE_MS, TOTAL_SECTORS, Totals, reset_cause};
+use wellfed_feeder::store::calibration::CalibrationStore;
 use wellfed_feeder::store::clients::{ClientError, ClientStatus, ClientStore};
 use wellfed_feeder::store::events::EventLog;
 use wellfed_feeder::store::net::{NetStatus, NetStore};
@@ -71,6 +73,7 @@ use wellfed_sdk::storage::{
     SETTINGS_BINDING, Slots, TRACES_BASE, TRACES_UNITS,
 };
 
+use crate::calibration::{self, CALIBRATION_BASE};
 use crate::events;
 pub use crate::keys::KeyResult;
 use crate::keys::{self, Change};
@@ -179,6 +182,14 @@ pub enum Record {
         early: u8,
     },
     StatsError {
+        stage: ErrorStage,
+    },
+    /// The portion calibration (sectors 34 and 35).
+    CalibrationSaved {
+        generation: u64,
+        portion_mg: Option<u32>,
+    },
+    CalibrationError {
         stage: ErrorStage,
     },
     /// The stored seed and the client store.
@@ -302,6 +313,17 @@ pub fn describe(record: Record, f: &mut impl fmt::Write) -> fmt::Result {
             write!(f, "stats saved generation={generation} early={early}")
         }
         Record::StatsError { stage } => write!(f, "stats error stage={stage}"),
+        Record::CalibrationSaved {
+            generation,
+            portion_mg,
+        } => {
+            write!(f, "calibration saved generation={generation} portion_mg=")?;
+            match portion_mg {
+                Some(mg) => write!(f, "{mg}"),
+                None => f.write_str("none"),
+            }
+        }
+        Record::CalibrationError { stage } => write!(f, "calibration error stage={stage}"),
         Record::Keys {
             seed,
             mixed,
@@ -425,6 +447,9 @@ pub struct Writer<F> {
     time: TimeStore<Slots<F, TIME_BASE>>,
     /// The time store's open record, logged on a later step.
     time_opened: bool,
+    /// Opened with the others; its status shows in the device API's
+    /// calibration view (writable, generation) rather than a record.
+    calibration: CalibrationStore<Slots<F, CALIBRATION_BASE>>,
     armed: bool,
     seed: SeedStore<Slots<F, SEED_BASE>>,
     clients: ClientStore<Slots<F, CLIENTS_BASE>>,
@@ -458,6 +483,7 @@ impl<F> Default for Writer<F> {
             net_opened: false,
             time: TimeStore::default(),
             time_opened: false,
+            calibration: CalibrationStore::default(),
             armed: false,
             seed: SeedStore::default(),
             clients: ClientStore::default(),
@@ -509,6 +535,38 @@ impl<F: FlashOps> Writer<F> {
             WriteStep::Go(_) => Some(WriteHeld),
             WriteStep::Wait => None,
         }
+    }
+
+    /// Save a queued calibration: the record, or `None` while a feed holds
+    /// the outputs (the change stays queued).
+    fn save_calibration<H: Hooks>(
+        &mut self,
+        change: &wellfed_device_api::mailbox::Calibration,
+    ) -> Option<Record> {
+        let saved = |store: &CalibrationStore<_>| Record::CalibrationSaved {
+            generation: store.generation,
+            portion_mg: store.calibration.portion_mg,
+        };
+        if self.stage == Stage::Serve || !H::armed() {
+            return Some(Record::CalibrationError {
+                stage: ErrorStage::Unarmed,
+            });
+        }
+        if *change == self.calibration.calibration && self.calibration.generation != 0 {
+            return Some(saved(&self.calibration));
+        }
+
+        let _turn = self.take_turn()?;
+        arming::set_attempt();
+        let ok = self.calibration.save(change);
+        arming::clear_attempt();
+        Some(if ok {
+            saved(&self.calibration)
+        } else {
+            Record::CalibrationError {
+                stage: ErrorStage::Save,
+            }
+        })
     }
 
     /// The step while a write waits for its turn: the event ring's readers
@@ -816,6 +874,7 @@ impl<F: FlashOps> Writer<F> {
         });
         network::publish(&self.net, self.armed);
         time::publish(&self.time, self.armed);
+        calibration::publish(&self.calibration, self.armed);
     }
 
     /// One task iteration.
@@ -829,6 +888,7 @@ impl<F: FlashOps> Writer<F> {
                 let status = self.store.open(Slots::new(), SETTINGS_BINDING);
                 self.net.open(Slots::new());
                 self.time.open(Slots::new());
+                self.calibration.open(Slots::new());
                 self.armed = H::armed();
                 self.stage = if self.armed { Stage::Idle } else { Stage::Arm };
                 self.publish();
@@ -1000,6 +1060,15 @@ impl<F: FlashOps> Writer<F> {
                     };
                     self.publish();
                     time::finish();
+                    return next(POLL_MS, Some(record));
+                }
+                if let Some(change) = calibration::pending() {
+                    let record = self.save_calibration::<H>(&change);
+                    let Some(record) = record else {
+                        return self.waiting();
+                    };
+                    self.publish();
+                    calibration::finish();
                     return next(POLL_MS, Some(record));
                 }
                 let Some(fields) = settings::pending() else {

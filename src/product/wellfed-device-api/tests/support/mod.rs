@@ -15,9 +15,9 @@ use wellfed_core::log_tail::{Batch as LogBatch, LogTail};
 use wellfed_core::tone::Tune;
 use wellfed_device_api::clients::{CLIENTS, Client, Label, Role};
 use wellfed_device_api::mailbox::{
-    LockResult, Origin, PlayResult, SettingsFields, SettingsResult, SettingsView, TimeFields,
-    TimeResult, TimeSettings, TimeSettingsResult, TimeSettingsView, TimeState, WifiResult,
-    WifiSource, WifiView,
+    Calibration, CalibrationResult, CalibrationView, LockResult, Origin, PlayResult,
+    SettingsFields, SettingsResult, SettingsView, TimeFields, TimeResult, TimeSettings,
+    TimeSettingsResult, TimeSettingsView, TimeState, WifiResult, WifiSource, WifiView,
 };
 use wellfed_device_api::pairing::{Config, Pairing};
 use wellfed_device_api::setup::{Received, Responder};
@@ -50,6 +50,7 @@ struct Fake {
     feeds: u32,
     events: Vec<proto::Event>,
     time: TimeSettingsView,
+    calibration: CalibrationView,
     clock: WallClock,
     /// A line every pass, so a tailing session always has more to read.
     log: LogTail<1024>,
@@ -134,6 +135,13 @@ fn widest(section: StatsSection) -> Stats<'static> {
             capacity: u32::MAX,
             unsaved: u32::MAX,
             last: Some(widest_summary()),
+        }),
+        StatsSection::Portions => Stats::Portions(proto::Portions {
+            portions: u32::MAX,
+            homed: u32::MAX,
+            outlet_breaks: u32::MAX,
+            portion_mg: Some(u32::MAX),
+            delivered_mg: Some(u64::MAX),
         }),
     }
 }
@@ -251,6 +259,22 @@ impl Device for Fake {
         }
     }
 
+    fn calibration(&mut self, change: Option<Calibration>) -> CalibrationResult {
+        if let Some(calibration) = change {
+            self.calibration.calibration = calibration;
+            self.calibration.generation += 1;
+        }
+        self.calibration.writable = true;
+        CalibrationResult::Current {
+            view: self.calibration,
+            pending: false,
+        }
+    }
+
+    fn phase(&self) -> Option<proto::Phase> {
+        Some(proto::Phase::Unknown)
+    }
+
     fn time_state(&mut self, now_ms: u32) -> Option<TimeState> {
         Some(TimeState {
             clock: self.clock.state(now_ms),
@@ -274,6 +298,7 @@ impl Device for Fake {
             .union(Capabilities::STATS)
             .union(Capabilities::LOG)
             .union(Capabilities::TRACES)
+            .union(Capabilities::CALIBRATION)
     }
 
     fn stats(&mut self, section: StatsSection, _now_ms: u32) -> Stats<'_> {

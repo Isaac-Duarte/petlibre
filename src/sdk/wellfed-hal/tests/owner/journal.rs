@@ -4,7 +4,7 @@
 use crate::common::motor_pins;
 use crate::common::owner::*;
 use wellfed_core::feed::progress::{BowlMode, Direction};
-use wellfed_core::feed::storage::{OwnerOutcome, OwnerRecovery};
+use wellfed_core::feed::storage::{OwnerOutcome, OwnerRecovery, RotorPhase};
 use wellfed_core::store::feed_journal::{JournalConfig, JournalError};
 use wellfed_core::store::slot::RECORD_BYTES;
 use wellfed_hal::board::MOTOR_MASK;
@@ -59,6 +59,42 @@ fn journal_success_and_reboot_preserve_ids() {
     restart_with_journal(&mut f);
     assert!(f.status().state == OwnerState::Idle && !f.status().phase_known);
     assert_eq!(f.owner.submit(3, 1), SubmitResult::RejectPhase);
+    f.stop();
+}
+
+/// A single bowl's phase is never stored: the owner reads it from the
+/// journal's last result, and a feed from an unknown phase homes.
+#[test]
+fn the_rotor_phase_follows_each_feed_and_the_journal() {
+    let mut f = boot_with_journal(false);
+    assert_eq!(f.status().phase, RotorPhase::Unknown, "nothing says where");
+    assert!(f.status().phase_known, "a single bowl's journal phase");
+
+    f.start_feed();
+    assert!(f.task().request.homing);
+    f.complete();
+    assert_eq!(f.status().phase, RotorPhase::AtMark);
+    assert!(f.owner.acknowledge(1));
+    f.advance(1);
+
+    assert_eq!(f.owner.submit(2, 1), SubmitResult::Enqueued);
+    f.advance(6);
+    assert_eq!(f.status().state, OwnerState::Feeding);
+    assert!(!f.task().request.homing);
+    assert!(f.owner.cancel(2));
+    f.step();
+    assert!(f.status().result_durable && f.status().result.motion_possible);
+    assert_eq!(f.status().phase, RotorPhase::Unknown);
+    f.stop();
+
+    // The journal held no phase, and the format is unchanged; the reboot
+    // reads it from the cancelled result.
+    restart_with_journal(&mut f);
+    assert_eq!(f.status().state, OwnerState::Idle);
+    assert_eq!(f.status().phase, RotorPhase::Unknown);
+    assert_eq!(f.owner.submit(3, 1), SubmitResult::Enqueued);
+    f.step();
+    assert!(f.task().request.homing);
     f.stop();
 }
 

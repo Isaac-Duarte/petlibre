@@ -15,16 +15,18 @@ pub enum StatsSection {
     Food,
     /// This boot's feeds as their traces measured them.
     Feeds,
+    Portions,
 }
 
 impl StatsSection {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Counters,
         Self::Memory,
         Self::Flash,
         Self::Power,
         Self::Food,
         Self::Feeds,
+        Self::Portions,
     ];
 }
 
@@ -38,6 +40,7 @@ pub enum Stats {
     Power(PowerStats),
     Food(Food),
     Feeds(FeedStats),
+    Portions(Portions),
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -134,6 +137,21 @@ pub struct PowerStats {
     /// The battery at the end of each period, oldest first.
     pub battery_mv: Vec<Option<u16>>,
     pub period_s: u32,
+}
+
+/// The portions since this boot, and what they weigh by the calibration.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Portions {
+    /// Credited by the feedback sensor, one a mark.
+    pub portions: u32,
+    /// Feeds that began with an uncredited homing mark.
+    pub homed: u32,
+    /// Outlet-beam breaks seen during feeds: a lower bound, sampled every
+    /// 10 ms.
+    pub outlet_breaks: u32,
+    pub portion_mg: Option<u32>,
+    /// What was delivered by the calibration, never what the pet ate.
+    pub delivered_mg: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

@@ -139,11 +139,30 @@ pub mod storage {
         first: 32,
         count: 2,
     };
+    /// The portion calibration: what one portion weighs. Sectors no
+    /// earlier build allocated, so a build that predates the store never
+    /// touches them.
+    pub const CALIBRATION: Sectors = Sectors {
+        first: 34,
+        count: 2,
+    };
 
-    /// Every allocation, in region order; sectors 34-47 are free (planned
+    /// Every allocation, in region order; sectors 36-47 are free (planned
     /// for feeding plans).
-    pub const ALL: [Sectors; 12] = [
-        JOURNAL, SETTINGS, CONFIRM, NET, SEED, CLIENTS, PLANS, EVENTS, UPDATE, TIME, TRACES, STATS,
+    pub const ALL: [Sectors; 13] = [
+        JOURNAL,
+        SETTINGS,
+        CONFIRM,
+        NET,
+        SEED,
+        CLIENTS,
+        PLANS,
+        EVENTS,
+        UPDATE,
+        TIME,
+        TRACES,
+        STATS,
+        CALIBRATION,
     ];
 
     const fn disjoint_and_inside() -> bool {

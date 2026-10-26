@@ -8,7 +8,7 @@ use std::sync::{Mutex, MutexGuard};
 use wellfed_feeder::conformance::Rig;
 use wellfed_feeder::feeder::Feeder;
 use wellfed_feeder_runtime::writer::Writer;
-use wellfed_feeder_runtime::{events, keys, network, time, traces};
+use wellfed_feeder_runtime::{calibration, events, keys, network, time, traces};
 use wellfed_fw_feeder::platform::Plaf103;
 use wellfed_sdk::hal::flash::park::Mmio;
 use wellfed_sdk::hal::flash_lock::arming::Hooks;
@@ -103,6 +103,7 @@ impl FirmwareRig {
         events::reset();
         time::reset();
         traces::reset();
+        calibration::reset();
         clock::reset();
         mailbox::reset();
         INTERLOCK.reset();

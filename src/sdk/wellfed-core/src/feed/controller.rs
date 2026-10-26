@@ -24,6 +24,16 @@
 //! ends `FeedbackTimeout` (no edge of either level for `mark_gap_ms` of
 //! drive, or no portion within the feedback timeout) or `Sensor` (the mark
 //! input LOW for `mark_low_ms` of drive, longer than any mark lasts).
+//! A single bowl's request can start with the rotor's phase unknown
+//! ([`FeedRequest::homing`]): an earlier drive stopped between two marks.
+//! The first mark the rotor reaches inside the inhibit window is then a
+//! homing mark: it shows where the rotor is and is never credited, since
+//! less than the inhibit's share of a compartment moved before it. A first
+//! mark past the window is credited as stock credits it. Either way the
+//! request may run one inhibit window longer than its portions allow. A
+//! reversal before the homing mark widens its window by what backing off
+//! cost, as it lengthens the deadline, since that time moved the rotor
+//! nowhere.
 
 use crate::feed::progress::{BowlMode, Direction, FeedProgress, ProgressResult};
 use crate::{HALF_RANGE, interval_valid};
@@ -227,6 +237,9 @@ pub struct FeedRequest {
     pub credit_next_event: bool,
     /// Required for DOUBLE_BOWL; neither reset nor reboot establishes phase.
     pub phase_known: bool,
+    /// SINGLE_BOWL only: the rotor may rest between marks, so the first
+    /// mark inside the inhibit window homes it, uncredited.
+    pub homing: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -304,6 +317,11 @@ pub struct FeedController {
     /// The next forward boundary is one the rotor already crossed before it
     /// backed off: crossed again, it is no new portion.
     pub skip_boundary: bool,
+    /// From `started_at`: when the homing mark came, once it has. Only a
+    /// [`FeedRequest::homing`] request has one.
+    pub homed_ms: Option<u32>,
+    /// The request is still looking for its homing mark.
+    pub homing: bool,
 
     pub reverse_attempts: u8,
     /// Consecutive polls over the current limit past the surge window; a
@@ -450,6 +468,7 @@ impl FeedController {
         let progress = if request.portions > self.limits.max_portions
             || (request.mode == BowlMode::Single && request.direction != Direction::D0)
             || (request.mode == BowlMode::Double && !request.phase_known)
+            || (request.mode == BowlMode::Double && request.homing)
         {
             None
         } else {
@@ -471,9 +490,19 @@ impl FeedController {
         self.progress = progress;
         self.last_request_id = request.id;
         self.started_at = now_ms;
+        // A homing mark can cost up to one inhibit window of drive before
+        // the first credited portion starts.
+        let homing_ms = if request.homing {
+            self.limits.feedback_inhibit_ms
+        } else {
+            0
+        };
         self.deadline_ms = u32::from(request.portions)
             .saturating_mul(self.limits.portion_ms)
+            .saturating_add(homing_ms)
             .min(self.limits.max_duration_ms);
+        self.homing = request.homing;
+        self.homed_ms = None;
         self.last_update_at = now_ms;
         self.last_feedback_at = now_ms;
         self.inhibit_at = now_ms;
@@ -631,9 +660,25 @@ impl FeedController {
             return;
         }
         let inhibition = captured_at_ms.wrapping_sub(self.inhibit_at);
-        if !boundary || inhibition >= HALF_RANGE || inhibition < self.limits.feedback_inhibit_ms {
+        if !boundary || inhibition >= HALF_RANGE {
             return;
         }
+        // Backing off costs drive time without travel, so while homing the
+        // window grows by what the reversals cost: it still bounds how far
+        // the rotor went, not how long it took.
+        let window = if self.homing {
+            self.limits
+                .feedback_inhibit_ms
+                .saturating_add(self.feedback_grace_ms)
+        } else {
+            self.limits.feedback_inhibit_ms
+        };
+        if inhibition < window {
+            self.home(captured_at_ms);
+            return;
+        }
+        // A first mark past the window is credited, and the phase is known.
+        self.homing = false;
 
         self.last_feedback_at = captured_at_ms;
         self.feedback_grace_ms = 0;
@@ -651,6 +696,20 @@ impl FeedController {
                 self.drive_changed(now_ms);
             }
         }
+    }
+
+    /// A mark inside the inhibit window: while homing, the rotor reached its
+    /// first mark from wherever it rested. The portion count starts here,
+    /// as it would from a drive's start at a mark. Otherwise it is ignored.
+    fn home(&mut self, captured_at_ms: u32) {
+        if !self.homing {
+            return;
+        }
+        self.homing = false;
+        self.homed_ms = Some(captured_at_ms.wrapping_sub(self.started_at));
+        self.last_feedback_at = captured_at_ms;
+        self.feedback_grace_ms = 0;
+        self.inhibit_at = captured_at_ms;
     }
 
     /// External input/output failures latch a fault only for an active request.

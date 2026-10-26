@@ -23,8 +23,9 @@ use wellfed_proto::api::{
 use crate::feeder::{Feeder, Feeds, NoFeeds, Platform};
 use wellfed_device_api::clients::{Label, Role};
 use wellfed_device_api::mailbox::{
-    LockResult, NtpServer, Origin, SettingsFields, SettingsResult, SettingsView, TimeFields,
-    TimeResult, TimeSettings, TimeSettingsResult, TimeSettingsView, WifiResult, WifiView, Zone,
+    Calibration, CalibrationResult, LockResult, NtpServer, Origin, SettingsFields, SettingsResult,
+    SettingsView, TimeFields, TimeResult, TimeSettings, TimeSettingsResult, TimeSettingsView,
+    WifiResult, WifiView, Zone,
 };
 use wellfed_device_api::wifi::Credentials;
 use wellfed_device_api::{Device, EventRead, KeyChange, KeyOutcome};
@@ -331,6 +332,60 @@ pub fn time_settings_land_and_set_the_zone(rig: &mut impl Rig) {
     rig.claim_outputs(false);
 }
 
+fn calibration(rig: &mut impl Rig, change: Option<Calibration>) -> CalibrationResult {
+    device(rig, 0, |device| device.calibration(change))
+}
+
+/// The calibration starts with nothing measured, a weight lands on the
+/// writer's turn and weighs the portions statistics, and none is queued
+/// while the outputs are claimed.
+pub fn a_calibration_lands_and_weighs_the_portions(rig: &mut impl Rig) {
+    let CalibrationResult::Current {
+        view: before,
+        pending: false,
+    } = calibration(rig, None)
+    else {
+        panic!("the calibration with nothing queued");
+    };
+    assert!(before.writable, "the store opened writable");
+    assert_eq!(before.calibration, Calibration::default());
+    assert!(device(rig, 0, |device| device.capabilities()).contains(Capabilities::CALIBRATION));
+
+    let weighed = Calibration {
+        portion_mg: Some(9_800),
+    };
+    assert!(matches!(
+        calibration(rig, Some(weighed)),
+        CalibrationResult::Current { pending: true, .. }
+    ));
+    assert_eq!(calibration(rig, Some(weighed)), CalibrationResult::Busy);
+    rig.write();
+    let CalibrationResult::Current {
+        view: after,
+        pending: false,
+    } = calibration(rig, None)
+    else {
+        panic!("the calibration after the writer's turn");
+    };
+    assert_eq!(after.calibration, weighed);
+    assert_eq!(after.generation, before.generation + 1);
+
+    let portions = device(rig, 0, |device| {
+        match device.stats(StatsSection::Portions, 0) {
+            Stats::Portions(portions) => portions,
+            other => panic!("the portions section: {other:?}"),
+        }
+    });
+    assert_eq!(portions.portion_mg, Some(9_800));
+
+    rig.claim_outputs(true);
+    assert_eq!(
+        calibration(rig, Some(Calibration::default())),
+        CalibrationResult::Busy
+    );
+    rig.claim_outputs(false);
+}
+
 /// A recorded event reads back from the ring, after the boot's, under the
 /// ring's epoch.
 pub fn a_recorded_event_reads_back(rig: &mut impl Rig) {
@@ -448,6 +503,14 @@ pub fn the_statistics_follow_the_loop(rig: &mut impl Rig) {
             Stats::Feeds(feeds) => {
                 assert_eq!((feeds.traced, feeds.last), (0, None));
                 StatsSection::Feeds
+            }
+            Stats::Portions(portions) => {
+                assert_eq!(portions.portions, 2, "the credited portions");
+                assert_eq!(
+                    portions.delivered_mg,
+                    portions.portion_mg.map(|mg| u64::from(mg) * 2)
+                );
+                StatsSection::Portions
             }
         });
         assert_eq!(answered, section);
@@ -581,6 +644,7 @@ macro_rules! conformance {
             the_lock_follows_the_panel_owner,
             a_time_sync_sets_the_clock,
             time_settings_land_and_set_the_zone,
+            a_calibration_lands_and_weighs_the_portions,
             a_recorded_event_reads_back,
             status_reports_the_build_and_the_time,
             a_feeder_without_a_feeding_owner_refuses_feeds,

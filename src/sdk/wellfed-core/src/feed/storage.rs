@@ -70,6 +70,40 @@ pub struct OwnerResult {
     pub motion_possible: bool,
 }
 
+/// Where a single bowl's rotor rests between feeds. A drive that ends on a
+/// credited portion stops a few milliseconds past a mark; any other drive
+/// may stop anywhere between two. Never stored: the feed journal's last
+/// result says which ([`Self::after`]), so the journal's format is
+/// unchanged.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u32)]
+pub enum RotorPhase {
+    /// Unknown until a drive ends at a mark: the next feed homes it.
+    #[default]
+    Unknown = 0,
+    AtMark = 1,
+}
+
+impl RotorPhase {
+    /// The variant's number, as records and reports print it.
+    pub const fn code(self) -> u32 {
+        self as u32
+    }
+
+    /// The phase after a feed that ended in `result`, the phase before it
+    /// being `before`: a completed feed stopped at its last portion's mark,
+    /// a feed that never moved left the rotor where it was, and any other
+    /// ending (cancelled, failed or uncertain after motion) may have
+    /// stopped it anywhere.
+    pub const fn after(before: Self, result: &OwnerResult) -> Self {
+        match result.outcome {
+            OwnerOutcome::Done => Self::AtMark,
+            _ if !result.motion_possible => before,
+            _ => Self::Unknown,
+        }
+    }
+}
+
 /// Mandatory durable boundary, called with interrupts enabled and outputs off.
 /// A true return means the transaction survives reset. No automatic retries.
 /// Payloads are API values, never a native-struct on-flash format.
@@ -87,4 +121,7 @@ pub trait OwnerStorage {
     /// mark: the result, once durable. `recover` then reports the phase
     /// after it. Only a reservation recovered at boot can be resolved.
     fn resolve(&mut self) -> Option<OwnerResult>;
+    /// The last result the journal holds, `None` before the first: what
+    /// the rotor's phase at boot follows from ([`RotorPhase::after`]).
+    fn last_result(&self) -> Option<OwnerResult>;
 }

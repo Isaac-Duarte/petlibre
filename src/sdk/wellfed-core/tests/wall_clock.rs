@@ -325,6 +325,31 @@ fn the_rate_is_learned_from_owner_syncs_and_the_clock_holds_for_a_day() {
     assert_eq!(clock.read(slow(truth)), None);
 }
 
+/// The final review's scenario: after a cold boot an attacker's NTP answer
+/// sets the clock 100 s behind, and an owner's sync six hours later falls
+/// inside its interval. Measured from the attacker's fix that sync would
+/// teach +4,630 ppm with a 1,500 ppm bound, and 20 h on the clock would be
+/// 333 s off while claiming 109 s. A free NTP set is no baseline: the
+/// owner's sync becomes it, and the clock stays honest or expires.
+#[test]
+fn an_attackers_boot_fix_is_no_baseline_for_an_owners_rate() {
+    let mut clock = WallClock::default();
+    clock.fix(0, ntp(NOON - 100_000, 20)).unwrap();
+
+    let six = 6 * HOUR_MS;
+    clock
+        .sync(six, sync(NOON + u64::from(six)), Origin::Owner)
+        .unwrap();
+    assert!(!clock.state(six).learned);
+
+    for hours in [6u32, 12, 20] {
+        let now = six + hours * HOUR_MS;
+        if let Some(reading) = clock.read(now) {
+            honest(reading, NOON + u64::from(now), &format!("+{hours} h"));
+        }
+    }
+}
+
 #[test]
 fn ntp_alone_never_learns_a_rate_and_an_owner_sync_does() {
     let mut clock = WallClock::default();
@@ -350,8 +375,13 @@ fn ntp_alone_never_learns_a_rate_and_an_owner_sync_does() {
     }
     assert!((3..=4).contains(&resets), "{resets} re-sets");
 
-    // An owner's sync measures the rate from the first NTP fix.
-    let truth = 80 * step + 60_000;
+    // An owner's sync is the baseline, and the next one measures the rate.
+    let first = 80 * step + 60_000;
+    clock
+        .fix(slow(first), fix(NOON + first, 20, Origin::Owner))
+        .unwrap();
+    assert!(!clock.state(slow(first)).learned);
+    let truth = first + 2 * u64::from(HOUR_MS);
     clock
         .fix(slow(truth), fix(NOON + truth, 20, Origin::Owner))
         .unwrap();

@@ -10,11 +10,11 @@
 //! fix sets: an owner's sync, or any fix while the clock is invalid (the
 //! first, or after expiry). From the anchor the true time lies within the
 //! anchor's error plus the rate bound times the time since: [`UNLEARNED_PPM`]
-//! before a rate is learned, and once two trusted fixes far enough apart
+//! before a rate is learned, and once two owners' syncs far enough apart
 //! measure the rate to within [`LEARN_MAX_PPM`], the correction applies and
 //! the bound drops to [`LEARNED_FLOOR_PPM`], or to how far successive
-//! measurements disagree if that is more. The rate is learned from trusted
-//! fixes only, so a spoofed answer cannot poison it: a rate measured from
+//! measurements disagree if that is more. The rate is learned from owners'
+//! syncs only, so a spoofed answer cannot poison it: a rate measured from
 //! fixes that only had to fall inside the trusted interval could be off by
 //! that interval's width over the span, which is the unlearned bound again,
 //! so it could move the reading but never tighten the bound.
@@ -282,7 +282,7 @@ pub struct WallClock {
     /// Where the clock reads: the trusted fix, or an untrusted fix's
     /// overlap with the trusted interval. Its own error is never reported.
     centre: Option<Anchor>,
-    /// The first trusted fix since the rate was last forgotten: the rate
+    /// The first owner's fix since the rate was last forgotten: the rate
     /// is measured across it.
     base: Option<Anchor>,
     rate_ppb: i32,
@@ -386,14 +386,14 @@ impl WallClock {
 
         let jump = match (self.current(now), fix.origin) {
             // Nothing valid to weigh it against: any fix inside the expired
-            // interval, if there is one, is trusted. An NTP answer that only
-            // had to fall inside that interval measures no rate: it could
-            // sit anywhere in it, which is the unlearned bound again, and
-            // an answerer teaching a rate at each expiry would walk the
-            // clock further every time while it claimed the learned bound.
-            (None, _) => {
+            // interval, if there is one, is trusted. Only an owner's sets a
+            // rate's baseline or measures one: an NTP or client answer could
+            // sit anywhere it was allowed (anywhere at all with no anchor),
+            // and a rate measured from it to an owner's later sync would
+            // carry that error with the learned bound's confidence.
+            (None, origin) => {
                 self.trusted(point);
-                if expired.is_none() {
+                if origin == Origin::Owner {
                     self.learn(point);
                 }
                 Jump::First

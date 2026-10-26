@@ -10,6 +10,8 @@
 use std::fmt;
 use std::io;
 
+use wellfed_formats::bench::lease::LeaseError;
+
 use crate::evidence::{journal, session};
 use crate::link::{protocol, sector, status};
 use crate::writers::{development, read, recovery, stock, update};
@@ -44,6 +46,9 @@ pub enum Error {
     /// Canonical JSON and private-file formats.
     #[error(transparent)]
     Formats(#[from] wellfed_formats::Error),
+    /// Another tool holds the bench, or a killed run left its lease.
+    #[error(transparent)]
+    Lease(#[from] wellfed_formats::bench::lease::LeaseError),
     #[error("{0}")]
     Io(#[from] io::Error),
     #[error("{0}")]
@@ -81,6 +86,9 @@ impl Error {
             Self::Image(wellfed_image::Error::Json(_)) => ErrorKind::Json,
             Self::Formats(wellfed_formats::Error::Io(_)) => ErrorKind::Io,
             Self::Formats(wellfed_formats::Error::Json(_)) => ErrorKind::Json,
+            Self::Lease(
+                LeaseError::Io(_) | LeaseError::Formats(wellfed_formats::Error::Io(_)),
+            ) => ErrorKind::Io,
 
             Self::Image(
                 wellfed_image::Error::Ota(_)
@@ -89,6 +97,7 @@ impl Error {
                 | wellfed_image::Error::Review(_),
             )
             | Self::Formats(wellfed_formats::Error::NotInteger)
+            | Self::Lease(_)
             | Self::Protocol(_)
             | Self::Sector(_)
             | Self::Status(_)

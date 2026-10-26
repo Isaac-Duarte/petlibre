@@ -4,8 +4,10 @@
 //! a command.
 //!
 //! Every subcommand except `status` is a physical bench operation. All but
-//! `status` record their steps under `private/bench-status`, which the page
-//! reads.
+//! `status` hold the bench lease (`private/bench.lease`) while they run and
+//! record their steps under `private/bench-status`, which the page reads;
+//! `status` reports the lease, and with `--break-lease` frees one a killed
+//! run left.
 //!
 //! The rig's sequences (`wellfed-rig`) and the integration suite's commands
 //! (`itest`, `stock-ota`, `wellfed-itest`) run in this one process, so a
@@ -17,6 +19,7 @@ use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 use wellfed_formats::bench::catalog;
+use wellfed_formats::bench::lease::{self, Lease, Liveness};
 use wellfed_formats::bench::progress::{BenchCommand, Status};
 use wellfed_formats::bench::{CONFIG, Config, STATUS_DIR};
 use wellfed_itest::{ItestArgs, StockOtaArgs};
@@ -75,8 +78,13 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Show relay states and port presence.
-    Status,
+    /// Show the bench lease, relay states and port presence.
+    Status {
+        /// First free a bench whose lease outlived its holder (a killed
+        /// run); a live holder's lease is never broken.
+        #[arg(long)]
+        break_lease: bool,
+    },
     /// Release the strap and cut feeder power.
     Off,
     /// Power the feeder without the strap or a capture.
@@ -140,10 +148,20 @@ enum Command {
     StockOta(StockOtaArgs),
 }
 
+/// What a command does with the bench lease (`private/bench.lease`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LeaseUse {
+    /// Holds it for the whole run: the command drives the relays, the UART,
+    /// the hotspot, an over-the-air install or a flash write.
+    Take,
+    /// Shows who holds it, and frees a stale one only when asked.
+    Report,
+}
+
 impl Command {
     fn label(&self) -> BenchCommand {
         match self {
-            Self::Status => BenchCommand::Status,
+            Self::Status { .. } => BenchCommand::Status,
             Self::Off => BenchCommand::Off,
             Self::On => BenchCommand::On,
             Self::Capture { .. } => BenchCommand::Capture,
@@ -165,7 +183,7 @@ impl Command {
 
     fn name(&self) -> Option<&str> {
         match self {
-            Self::Status | Self::Off | Self::On => None,
+            Self::Status { .. } | Self::Off | Self::On => None,
             Self::Capture { name, .. }
             | Self::Boot { name, .. }
             | Self::Loader { name }
@@ -180,6 +198,15 @@ impl Command {
             Self::Ota(args) => Some(&args.name),
             Self::Itest(args) => args.name.as_deref(),
             Self::StockOta(args) => Some(&args.name),
+        }
+    }
+
+    /// Whether the command takes the bench lease: every command but
+    /// `status`, which only reads (the relay states, and the lease itself).
+    fn lease(&self) -> LeaseUse {
+        match self {
+            Self::Status { .. } => LeaseUse::Report,
+            _ => LeaseUse::Take,
         }
     }
 
@@ -233,6 +260,15 @@ fn run(cli: Cli, cancel: &Cancel) -> anyhow::Result<u8> {
         return Ok(0);
     }
 
+    // Taken before the page binds or anything opens, so a second tool is
+    // refused before it touches the bench; held until this function
+    // returns, and the `wellfed-flash` children run on it. The page alone
+    // only reads.
+    let _lease = match cli.command.as_ref().map(Command::lease) {
+        Some(LeaseUse::Take) => Some(Lease::acquire(&root)?),
+        Some(LeaseUse::Report) | None => None,
+    };
+
     let page = if cli.ui {
         Some(start_page(
             &root,
@@ -256,6 +292,10 @@ fn run(cli: Cli, cancel: &Cancel) -> anyhow::Result<u8> {
         check_name(name)?;
     }
 
+    if let Command::Status { break_lease } = &command {
+        report_lease(&root, *break_lease)?;
+    }
+
     let status_dir = root.join(STATUS_DIR);
 
     let stock_bin = tools.stock_bin.clone();
@@ -269,7 +309,7 @@ fn run(cli: Cli, cancel: &Cancel) -> anyhow::Result<u8> {
         cli.uart_when_off,
     )?;
     // `status` only reads, so it leaves no status record behind.
-    if !matches!(command, Command::Status) {
+    if !matches!(command, Command::Status { .. }) {
         record_start(&mut bench, &command, status_dir)?;
     }
 
@@ -280,6 +320,32 @@ fn run(cli: Cli, cancel: &Cancel) -> anyhow::Result<u8> {
     };
     bench.status.finish(code, error);
     Ok(result?)
+}
+
+/// `status`'s first line: who holds the bench. With `--break-lease`, a lease
+/// whose holder is gone is removed first; anything else refuses. Printed
+/// before the relay board opens, so it shows even while a run holds the
+/// board's port.
+fn report_lease(root: &Path, break_lease: bool) -> anyhow::Result<()> {
+    if break_lease {
+        let holder = lease::break_stale(root)?;
+        wellfed_rig::say!("Lease: broke the stale lease of {holder}");
+    }
+
+    match lease::inspect(root) {
+        Ok(None) => wellfed_rig::say!("Lease: free"),
+        Ok(Some((holder, Liveness::Alive))) => wellfed_rig::say!("Lease: held by {holder}"),
+        Ok(Some((holder, Liveness::Unknown))) => {
+            wellfed_rig::say!("Lease: held by {holder}, on another host");
+        }
+        Ok(Some((holder, Liveness::Gone))) => wellfed_rig::say!(
+            "Lease: left by {holder}, which is gone (a killed run?); check the relays below, \
+             then `status --break-lease` frees the bench"
+        ),
+        // An unreadable lease is reported; the relays are still worth showing.
+        Err(error) => wellfed_rig::say!("Lease: {error}"),
+    }
+    Ok(())
 }
 
 /// Bind the progress page, so a busy port refuses before any bench command.
@@ -392,7 +458,7 @@ fn dispatch(
 ) -> wellfed_itest::Result<u8> {
     let captures = bench.root.join(wellfed_formats::bench::CAPTURES);
     let ran = match command {
-        Command::Status => bench.status_report(),
+        Command::Status { .. } => bench.status_report(),
         Command::Off => bench.off(),
         Command::On => bench.on(),
         Command::Capture { name, seconds } => {

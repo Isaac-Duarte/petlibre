@@ -130,3 +130,98 @@ fn ota_refuses_motion_and_mixed_sources() {
         assert!(ota(extra).is_err(), "{extra:?}");
     }
 }
+
+#[test]
+fn every_command_but_status_takes_the_lease() {
+    let parse = |argv: &[&str]| {
+        let cli = Cli::try_parse_from(["wellfed-bench"].iter().chain(argv)).unwrap();
+        cli.command.unwrap().lease()
+    };
+
+    assert_eq!(parse(&["status"]), LeaseUse::Report);
+    assert_eq!(parse(&["status", "--break-lease"]), LeaseUse::Report);
+    for argv in [
+        &["off"][..],
+        &["on"],
+        &["capture", "c1"],
+        &["dump", "d1"],
+        &["ota", "o1", "--build"],
+        &["itest", "i1"],
+        &["stock-ota", "s1"],
+    ] {
+        assert_eq!(parse(argv), LeaseUse::Take, "{argv:?}");
+    }
+}
+
+/// A process other than this test, standing as another tool holding the
+/// bench under `root`.
+fn hold(root: &Path) -> std::process::Child {
+    let child = std::process::Command::new("sleep")
+        .arg("60")
+        .spawn()
+        .unwrap();
+    let command = vec!["wellfed-bench".into(), "on".into()];
+    let holder = lease::Holder::of(child.id(), command).unwrap();
+    wellfed_formats::private::write_json(&root.join(lease::LEASE), &holder).unwrap();
+    child
+}
+
+fn run_in(root: &Path, argv: &[&str]) -> anyhow::Result<u8> {
+    let root = root.display().to_string();
+    let head = ["wellfed-bench", "--root", &root];
+    run(
+        Cli::try_parse_from(head.iter().chain(argv)).unwrap(),
+        &Cancel::new(),
+    )
+}
+
+fn lease_error(result: anyhow::Result<u8>) -> lease::LeaseError {
+    result.unwrap_err().downcast().unwrap()
+}
+
+#[test]
+fn a_held_bench_refuses_a_command_before_it_opens_anything() {
+    let root = tempfile::tempdir().unwrap();
+    let mut holder = hold(root.path());
+
+    // There is no bench.json either: the lease refuses first.
+    let refused = lease_error(run_in(root.path(), &["off"]));
+    assert!(matches!(refused, lease::LeaseError::Held(_)), "{refused:?}");
+
+    let kept = lease_error(run_in(root.path(), &["status", "--break-lease"]));
+    assert!(matches!(kept, lease::LeaseError::Live(_)), "{kept:?}");
+    assert!(lease::inspect(root.path()).unwrap().is_some());
+
+    holder.kill().unwrap();
+    holder.wait().unwrap();
+}
+
+#[test]
+fn a_killed_holder_is_reported_until_status_breaks_it() {
+    let root = tempfile::tempdir().unwrap();
+    let mut holder = hold(root.path());
+    holder.kill().unwrap();
+    holder.wait().unwrap();
+
+    let refused = lease_error(run_in(root.path(), &["on"]));
+    assert!(
+        matches!(refused, lease::LeaseError::Stale(_)),
+        "{refused:?}"
+    );
+
+    // Breaking frees the bench; the status itself then stops on the
+    // missing bench.json, before any relay.
+    assert!(run_in(root.path(), &["status", "--break-lease"]).is_err());
+    assert!(lease::inspect(root.path()).unwrap().is_none());
+}
+
+#[test]
+fn a_command_frees_the_lease_it_took_when_it_stops() {
+    let root = tempfile::tempdir().unwrap();
+
+    // Taken, then the missing bench.json stops the command.
+    assert!(run_in(root.path(), &["off"]).is_err());
+
+    assert!(root.path().join("private/bench.lease.lock").is_file());
+    assert!(lease::inspect(root.path()).unwrap().is_none());
+}

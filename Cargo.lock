@@ -2287,6 +2287,7 @@ dependencies = [
  "wellfed-relay",
  "wellfed-rig",
  "rustix",
+ "tempfile",
 ]
 
 [[package]]

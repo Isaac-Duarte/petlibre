@@ -14,6 +14,7 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
+use wellfed_formats::bench::lease::Lease;
 use wellfed_stock::{
     api::{self, ApiState},
     build_info::{self, BUILD},
@@ -238,6 +239,7 @@ async fn main() -> Result<()> {
             to,
         } => {
             use wellfed_stock::setup::{Setup, send};
+            let _lease = bench_lease()?;
             let broker = broker.unwrap_or(config::load(&config)?.mqtt_listen);
             println!("Passphrase for {ssid} (read from stdin):");
             let mut password = String::new();
@@ -324,6 +326,7 @@ async fn main() -> Result<()> {
             request_id,
             server_token,
         } => {
+            let _lease = bench_lease()?;
             api_request(
                 config,
                 Method::POST,
@@ -367,6 +370,14 @@ async fn terminated() -> std::io::Result<()> {
     }
     #[cfg(not(unix))]
     std::future::pending().await
+}
+
+/// The bench lease under the checkout this runs from, for a command that
+/// sends the feeder something (an install request, a setup frame). The
+/// services (`serve`, `broker`, `ota-images`) take none: they only answer,
+/// and run beside the bench command that drives the feeder.
+fn bench_lease() -> Result<Lease> {
+    Lease::acquire(std::path::Path::new(".")).context("bench lease")
 }
 
 /// Whether `serve` may dispatch the stock-to-replacement install trial.

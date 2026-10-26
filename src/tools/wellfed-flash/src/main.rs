@@ -17,9 +17,10 @@ use serde_json::Value;
 
 use wellfed_flash::error::ErrorKind;
 use wellfed_flash::evidence::report::SummaryStatus;
-use wellfed_flash::evidence::session::{Completion, Context, Outcome};
+use wellfed_flash::evidence::session::{Completion, Context, EMULATOR, Outcome};
 use wellfed_flash::link::protocol::{Core, INTERRUPTED};
 use wellfed_flash::writers::{read, stock, update};
+use wellfed_formats::bench::lease::Lease;
 
 #[derive(Parser)]
 #[command(
@@ -76,6 +77,38 @@ enum Command {
 
     /// Offline: check a transaction journal's hash chain; never resumes it.
     InspectJournal { journal: PathBuf },
+}
+
+/// Whether a command opens the feeder's serial port.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Port {
+    /// A device session: it holds the bench lease while it runs.
+    Opens,
+    /// Works on files only; the bench may be anyone's.
+    Offline,
+}
+
+impl Command {
+    fn port(&self) -> Port {
+        match self {
+            Self::Read(_) | Self::Update(_) | Self::GiveWay(_) | Self::StockRecovery(_) => {
+                Port::Opens
+            }
+            Self::PlanStockRecovery { .. }
+            | Self::DecodeStatus { .. }
+            | Self::InspectJournal { .. } => Port::Offline,
+        }
+    }
+}
+
+/// The bench lease for a device command: taken here when run by hand,
+/// joined when `wellfed-bench` (an ancestor) holds it. An emulated helper
+/// is not the bench, so the offline tests that serve one take none.
+fn lease(root: &Path, port: Port) -> wellfed_flash::Result<Option<Lease>> {
+    if port == Port::Offline || std::env::var_os(EMULATOR).is_some() {
+        return Ok(None);
+    }
+    Ok(Some(Lease::acquire(root)?))
 }
 
 /// Why a decimal or `0x` hex argument did not parse; clap shows it.
@@ -264,6 +297,17 @@ fn main() -> ExitCode {
     // An operator interrupt stops the session terminally and records it.
     let _ = ctrlc::set_handler(|| INTERRUPTED.store(true, Ordering::SeqCst));
     let root = cli.root.as_path();
+
+    // Held until the summary is printed; a refusal here is before any
+    // serial access, like every other refusal.
+    let _lease = match lease(root, cli.command.port()) {
+        Ok(lease) => lease,
+        Err(error) => {
+            let (code, summary) = refused(&error);
+            println!("{summary}");
+            return ExitCode::from(code);
+        }
+    };
 
     let (code, summary) = match cli.command {
         Command::Read(args) => device(root, |context| {

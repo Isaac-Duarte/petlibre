@@ -18,6 +18,9 @@ wellfed-relay = { path = "../wellfed-relay" }
 wellfed-rig = { path = "../wellfed-rig" }
 rustix = { version = "1", features = ["fs", "process"] }
 
+[dev-dependencies]
+tempfile.workspace = true
+
 [features]
 # The read-only page (`--ui`), served by wellfed-dashboard. Build
 # src/web/apps/bench/dist first (`make ui`); the page embeds it.

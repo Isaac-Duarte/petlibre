@@ -42,6 +42,8 @@ Progress goes to stderr. Stdout carries exactly one JSON object: `status`, the o
 | 1 | Stopped after the port opened: inspect the report and journal; nothing was retried |
 | 2 | Refused before any serial access: no port opened, and no output directory was created unless the error says otherwise |
 
+A command that opens the serial port first takes the [bench lease](../devices/plaf103/bench.md#bench-lease) under `--root`, or runs on its parent's when `wellfed-bench` started it; another holder, or a lease a killed run left, is a refusal (exit 2) that names the holder. The offline commands take none.
+
 Ctrl-C stops a session terminally and records the stop: it is checked before every transmission, so no frame follows the interrupt. A final report that cannot be saved after the port opened is a stop (exit 1, `report_error`), never a refusal.
 
 ## Verification

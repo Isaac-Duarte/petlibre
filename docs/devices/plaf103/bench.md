@@ -41,7 +41,7 @@ The relay board also enumerates as a USB serial port and can take the name the U
 
 | Command | Effect |
 | --- | --- |
-| `status` | Relay states and port presence |
+| `status` | The [bench lease](#bench-lease), relay states and port presence; `--break-lease` first frees a lease a killed run left |
 | `on`, `off` | Power the feeder with the strap released, or release the strap and cut power |
 | `capture NAME` | Receive-only recording of the running feeder; power is untouched |
 | `boot NAME` | Power off, start a receive-only capture, confirm it holds the port, then power on |
@@ -63,6 +63,26 @@ Session evidence goes to new directories under `private/captures/`, `private/fla
 Ctrl+C stops the running sequence: the `wellfed-flash` child stops itself terminally and records it, and the bench runs the same cleanup as for any stop (the loader and transient sequences power off, and the demo turns the spares off).
 
 Stock recovery keeps its own commands. Use `loader` to enter the ROM, then run `wellfed-flash stock-recovery` directly.
+
+## Bench lease
+
+One tool drives the bench at a time. Every `wellfed-bench` command except `status` (and `itest --list`), every `wellfed-flash` command that opens the serial port (`read`, `update`, `give-way`, `stock-recovery`), and `wellfed-stock ota-trial` and `setup-send` take the lease `private/bench.lease` before they touch anything, and remove it when they end, on a stop or Ctrl+C as on success. It names the holder: its pid, its start time and boot (so a reused pid is not mistaken for it), its host, its command line and when it started. A second tool is refused with that holder named, before it opens a port or switches a relay:
+
+```
+Stopped: The bench is held by pid 81234 (`wellfed-bench dump fw-01`, since 2026-10-26 12:00:00 UTC on bench); wait for it to finish or stop it
+```
+
+**Chained tools.** A process descended from the holder runs on the holder's lease and leaves it in place, so the `wellfed-flash` children the bench starts (captures, reads, updates) never wait on their own parent. Run by hand, `wellfed-flash` takes the lease itself, so a hand-run read cannot open the UART under a running bench command. The services take none: `wellfed-stock serve`, `broker` and `ota-images` only answer the feeder, and run beside the bench command that drives it (`ota` beside an operator's `serve`). The progress page, alone or as `--ui`, only reads and takes none; with a command, the command holds it. The offline `wellfed-flash` commands (`plan-stock-recovery`, `decode-status`, `inspect-journal`) and an emulated helper (`WELLFED_FLASH_EMULATOR`, the host tests) take none.
+
+**A killed run.** A run killed outright (SIGKILL, a closed terminal) cannot remove its lease, and may have left relays on, a capture running or an update half done. The next tool refuses rather than take the bench over:
+
+```
+Stopped: The bench lease of pid 81234 (…) outlived its process: that run was killed and may have left relays on or an update half done. Check `wellfed-bench status`, then free the bench with `wellfed-bench status --break-lease`
+```
+
+`status` shows the lease first (free, held, or left by a process that is gone) and then the relays, without taking it. `status --break-lease` removes a lease only when its holder is gone, then shows the relays as usual; a live holder's lease, one written on another host, and a file that is not a lease are never broken (remove the last two by hand once the bench is idle). A `wellfed-flash` child the killed bench had started may still be running on its own; it no longer counts as the bench's, so look for it (`pgrep -a wellfed-flash`) before breaking.
+
+Taking, breaking and releasing run under an advisory lock on `private/bench.lease.lock`, which the kernel drops with the process, so two tools racing for a free or stale lease cannot both win. The lease itself is replaced atomically, so `status` never reads it torn. The lease and its rules are `wellfed_formats::bench::lease`.
 
 ## Over-the-air iteration (FW12)
 

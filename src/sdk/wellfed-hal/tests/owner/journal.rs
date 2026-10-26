@@ -245,24 +245,32 @@ fn a_power_cut_at_any_journal_write_of_a_feed_resolves_at_the_next_boot() {
         let (_, _, ()) = boot_on(flash, false, -1, move |f| {
             let s = f.status();
             assert!(s.stopped && s.optics_off && f.reserve_calls == 0);
-            if s.fault != OwnerFault::Ok {
-                // A torn reservation beside an idle record is ambiguous, and
-                // faults closed: nothing says which ID it would have held.
-                assert!(cut < reserving && f.journal.error == JournalError::Corrupt);
-                assert!(s.state == OwnerState::Fault && s.fault == OwnerFault::Recovery);
-                return;
-            }
-            match s.state {
-                // Cut before the reservation committed: the feed never ran.
-                OwnerState::Idle if s.high_water_id == 0 => {}
+            assert_eq!(
+                s.fault,
+                OwnerFault::Ok,
+                "cut {cut}: no cut faults the owner"
+            );
+            let next = match s.state {
+                // Cut before the reservation's first byte: the feed never ran.
+                OwnerState::Idle if s.high_water_id == 0 => 1,
                 // Cut after the result committed.
                 OwnerState::Idle => {
                     let result = f.journal.view.result;
                     assert!(s.high_water_id == 1 && result.outcome == OwnerOutcome::Done);
+                    2
                 }
-                OwnerState::Terminal => assert_uncertain(f, 1),
+                // The reservation, cut or committed, or its result cut: the
+                // feed's ID resolves as uncertain and is never reused.
+                OwnerState::Terminal => {
+                    assert_uncertain(f, 1);
+                    assert!(f.owner.acknowledge(1));
+                    f.step();
+                    2
+                }
                 state => panic!("cut {cut}: {state:?}"),
-            }
+            };
+            assert_eq!(f.status().state, OwnerState::Idle, "cut {cut}");
+            assert_eq!(f.owner.submit(next, 1), SubmitResult::Enqueued, "cut {cut}");
         });
     }
 }

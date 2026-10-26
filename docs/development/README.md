@@ -22,7 +22,7 @@ Rustup and Cargo download dependencies on initial setup. Check targets do not in
 | `check-rust` | Formatting, Clippy with warnings denied, workspace host tests under cargo-nextest, doctests |
 | `check-deps` | cargo-deny: licenses, advisories, duplicate versions and sources ([deny.toml](../../deny.toml)), then the fuzz crate's lockfile under [its own policy](../../src/fuzz/deny.toml) |
 | `check-cross` | SDK-independent KM0/KM4 FFI static libraries |
-| `check-virtual-feeder` | The `wellfed-sim` worker and harness: deterministic feeding, faults, journal cuts, and restart scenarios (also part of `check-rust`) |
+| `check-virtual-feeder` | The `wellfed-sim` worker and harness: deterministic feeding against the measured mechanism, faults, journal cuts, restarts, and the liveness invariants (also part of `check-rust`) |
 | `check-docs` | Local Markdown links, repository portability checks, no Python under `src/`, and the source rules (raw output writers, card ids) |
 | `check-fixtures` | Explicit optional binary/SDK evidence suite; missing inputs or skips fail |
 | `check` | All contributor checks except optional fixture validation |
@@ -61,7 +61,9 @@ make -C src/firmware/vendor test
 make check-virtual-feeder
 ```
 
-The simulator connects the real Rust owner/controller/ports to fake SDK inputs and NOR storage. It covers command IDs, sensor faults, blocked outlet, missing feedback, watchdog stalls, and interrupted journal writes. It does not model all electrical behavior. Example scenarios are in [src/firmware/vendor/sim/scenarios](../../src/firmware/vendor/sim/scenarios); run one with `cargo run -p wellfed-sim --bin virtual-feeder -- --scenario FILE --report NEW-FILE`.
+The simulator connects the real Rust owner/controller/ports to fake SDK inputs and NOR storage, under the PLAF103 firmware's feeding limits (`wellfed_sim::plaf103`, which the firmware's tests hold equal to `feeding::CONFIG`). Its plant (`wellfed_sim::plant`) is the mechanism the FW16 feeds measured ([motor pulse](../firmware/motor-pulse.md)): PA18 rests HIGH and reads LOW for about 1.19 s at each mark, a portion's rise about 9.07 s of drive after the last, the start-up surge one poll over the current limit, and the motor current while driving; a scenario's `plant` object changes the seed, the jitter, the rates of missed and bouncing edges, or the period (with food, about 9.8 s). The rotor keeps its position across stops, power cuts and restarts. The worker also stands in for the loop's claim on the outputs and for a background store writer that takes the write turn and a real flash lease (`write`).
+
+It covers command IDs, sensor faults, blocked outlet, missing and bouncing feedback, watchdog stalls, interrupted journal writes, and two liveness invariants: after a power cut anywhere (each journal mutation of a reservation, result or resolution, and moments through a feed), a new feed ID is accepted and completes; and a feed completes, and every store write lands, with writes before, during and after it. Simulation evidence, not hardware reliability: it does not model all electrical behavior, and a double bowl's mechanism is unmeasured (its scenarios set their own marks). Example scenarios are in [src/firmware/vendor/sim/scenarios](../../src/firmware/vendor/sim/scenarios); run one with `cargo run -p wellfed-sim --bin virtual-feeder -- --scenario FILE --report NEW-FILE`.
 
 The repository is self-contained: SDK/toolchain copies and fixtures resolve locally. Original research documents/tools/history are retained in ignored `private/research-archive/`; see [provenance](provenance.md). Historical evidence paths are records, not instructions to access another checkout.
 

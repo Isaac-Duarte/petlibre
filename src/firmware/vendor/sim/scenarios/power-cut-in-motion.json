@@ -1,12 +1,11 @@
 {
-  "version": 1,
+  "version": 2,
   "name": "power-cut-in-motion",
   "profile": "single",
-  "feedback_period_ms": 10,
-  "end_ms": 15,
+  "end_ms": 3200,
   "actions": [
     {
-      "at_ms": 1,
+      "at_ms": 100,
       "op": "submit",
       "args": [
         1,
@@ -14,17 +13,17 @@
       ]
     },
     {
-      "at_ms": 8,
+      "at_ms": 3000,
       "op": "power_cut",
       "args": []
     },
     {
-      "at_ms": 9,
+      "at_ms": 3001,
       "op": "boot",
       "args": []
     },
     {
-      "at_ms": 10,
+      "at_ms": 3002,
       "op": "expect",
       "values": {
         "state": "terminal",
@@ -38,14 +37,14 @@
       }
     },
     {
-      "at_ms": 11,
+      "at_ms": 3010,
       "op": "ack",
       "args": [
         1
       ]
     },
     {
-      "at_ms": 12,
+      "at_ms": 3100,
       "op": "expect",
       "values": {
         "state": "idle",
@@ -53,7 +52,7 @@
       }
     },
     {
-      "at_ms": 13,
+      "at_ms": 3101,
       "op": "submit",
       "args": [
         1,
@@ -61,7 +60,7 @@
       ]
     },
     {
-      "at_ms": 13,
+      "at_ms": 3101,
       "op": "expect",
       "values": {
         "submission": "reject_id",

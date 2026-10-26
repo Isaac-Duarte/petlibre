@@ -1,12 +1,11 @@
 {
-  "version": 1,
+  "version": 2,
   "name": "blocked-outlet",
   "profile": "single",
-  "feedback_period_ms": 10,
-  "end_ms": 35,
+  "end_ms": 5100,
   "actions": [
     {
-      "at_ms": 1,
+      "at_ms": 100,
       "op": "submit",
       "args": [
         1,
@@ -14,14 +13,14 @@
       ]
     },
     {
-      "at_ms": 8,
+      "at_ms": 3000,
       "op": "inputs",
       "args": [
         4
       ]
     },
     {
-      "at_ms": 30,
+      "at_ms": 5000,
       "op": "expect",
       "values": {
         "reason": "outlet",

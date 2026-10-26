@@ -1,9 +1,8 @@
 {
-  "version": 1,
+  "version": 2,
   "name": "torn-completion",
   "profile": "single",
-  "feedback_period_ms": 10,
-  "end_ms": 32,
+  "end_ms": 11200,
   "actions": [
     {
       "at_ms": 0,
@@ -14,7 +13,7 @@
       ]
     },
     {
-      "at_ms": 1,
+      "at_ms": 100,
       "op": "submit",
       "args": [
         1,
@@ -22,19 +21,19 @@
       ]
     },
     {
-      "at_ms": 25,
+      "at_ms": 11000,
       "op": "expect",
       "values": {
         "online": false
       }
     },
     {
-      "at_ms": 26,
+      "at_ms": 11001,
       "op": "boot",
       "args": []
     },
     {
-      "at_ms": 27,
+      "at_ms": 11002,
       "op": "expect",
       "values": {
         "state": "terminal",
@@ -48,14 +47,14 @@
       }
     },
     {
-      "at_ms": 28,
+      "at_ms": 11010,
       "op": "ack",
       "args": [
         1
       ]
     },
     {
-      "at_ms": 29,
+      "at_ms": 11100,
       "op": "expect",
       "values": {
         "state": "idle",
@@ -63,7 +62,7 @@
       }
     },
     {
-      "at_ms": 30,
+      "at_ms": 11101,
       "op": "submit",
       "args": [
         1,
@@ -71,7 +70,7 @@
       ]
     },
     {
-      "at_ms": 30,
+      "at_ms": 11101,
       "op": "expect",
       "values": {
         "submission": "reject_id",

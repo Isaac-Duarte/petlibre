@@ -1,13 +1,18 @@
 //! Virtual feeder worker: runs the real owner, board, events and watchdog
-//! ports on the fake SDK with a file-backed synthetic journal. The world
-//! stands in for the runtime's watchdog feeder too: it feeds the hardware
-//! watchdog by the runtime's own rule, from the owner's beat.
+//! ports on the fake SDK with a file-backed synthetic journal, under the
+//! PLAF103 firmware's feeding limits, against the measured mechanism
+//! (`wellfed_sim::plant`). The world stands in for what the firmware runs
+//! beside the owner: the runtime's watchdog feeder, which feeds the
+//! hardware watchdog by the runtime's own rule from the owner's beat; the
+//! loop's claim on the outputs around each feed; and a store writer that
+//! takes its write turn and a real flash lease for each write.
 //!
 //! Usage: `virtual-feeder-worker JOURNAL PROFILE provision|recover`. Reads one
 //! JSON [`Command`] per line on stdin and writes JSON-lines [`Event`]s on
 //! stdout (the protocol in `wellfed_sim::protocol`); a power cut persists the
 //! journal image and exits with status 75. Driven by the `virtual-feeder`
-//! harness in this crate; the synthetic profile is not hardware calibration.
+//! harness in this crate. The plant is the bench's measurements, not a
+//! characterization of the mechanism.
 
 use core::ffi::{c_uint, c_void};
 use core::ptr;
@@ -18,84 +23,65 @@ use std::process::exit;
 
 use clap::Parser;
 
-use wellfed_core::feed::controller::{FeedLimits, FeedRequest};
+use wellfed_core::feed::controller::FeedRequest;
 use wellfed_core::feed::progress::{BowlMode, Direction};
-use wellfed_core::feed::sensor_inputs::SensorLimits;
 use wellfed_core::feed::storage::{OwnerRecovery, OwnerResult, OwnerStorage};
-use wellfed_core::flash_coord::{FlashCoord, FlashLimits, FlashReply};
+use wellfed_core::flash_coord::{FlashCoord, FlashParty, FlashReply, FlashToken};
 use wellfed_core::store::feed_journal::{FeedJournal, JournalConfig, JournalError};
 use wellfed_core::store::slot::SlotIo;
-use wellfed_hal::owner::{Owner, OwnerConfig};
+use wellfed_hal::interlock::{INTERLOCK, WRITER_POLL_MS, WriteStep, WriteTurn};
+use wellfed_hal::owner::{Owner, OwnerConfig, OwnerState, Step};
 use wellfed_hal::sdk::fake;
 use wellfed_hal::stopped;
 use wellfed_hal::supervision::beat;
-use wellfed_hal::supervision::events::EventsConfig;
+use wellfed_hal::supervision::config::{FLASH_LIMITS, SYSTIMER_HZ, WATCHDOG};
 use wellfed_hal::supervision::supervise::{self, Inputs, Startup};
-use wellfed_hal::supervision::watchdog::{Watchdog, WatchdogConfig};
+use wellfed_hal::supervision::watchdog::Watchdog;
+use wellfed_sim::plaf103::{self, FEED_BOUND_MS};
+use wellfed_sim::plant::{Flip, Plant, PlantConfig, Turn};
 use wellfed_sim::protocol::{
     Code, Command, Event, Fault, IoOperation, IoStage, Journal, Outcome, Profile, Reason, State,
-    Status, StoragePhase, WorkerArgs,
+    Status, StoragePhase, Submission, WorkerArgs,
 };
 use wellfed_testkit::journal_flash::{FakeJournalFlash, FlashIo, UNIT};
 
-/// The hardware watchdog the world feeds, scaled with the profile: a
-/// 126 ms expiry over the owner's 50 ms gap.
-const WATCHDOG: WatchdogConfig = WatchdogConfig {
-    systimer_hz: 32_000,
-    clock_min_hz: 32_000,
-    clock_max_hz: 32_000,
-    min_refresh_ms: 1,
-    max_progress_gap_ms: 50,
-    max_expiry_ms: 126,
-    count_id: 5,
-    divisor: 63,
-};
+/// The flash authority's and its peer's boot sessions.
+const SESSION: u64 = 17;
+const PEER: u64 = 29;
 
-/// Synthetic profile copied from the owner tests; not hardware calibration.
-fn config() -> OwnerConfig {
-    OwnerConfig {
-        feed: FeedLimits {
-            feedback_inhibit_ms: 5,
-            feedback_timeout_ms: 30,
-            direction_pause_ms: 3,
-            reverse_ms: 3,
-            max_duration_ms: 120,
-            portion_ms: 120,
-            max_observation_gap_ms: 4,
-            current_limit_ma: 300,
-            max_portions: 3,
-            max_reverse_attempts: 0,
-        },
+/// How long a background write holds the flash: one sector erase, which
+/// the bench measured at 27-35 ms.
+const LEASE_MS: u64 = 30;
 
-        sensors: SensorLimits {
-            optical_settle_ms: 2,
-            food_empty_delay_ms: 5,
-            outlet_block_delay_ms: 5,
-            power_settle_ms: 2,
-            max_observation_gap_ms: 4,
-            max_age_ms: 2,
-            battery_min_scaled: 1650,
-        },
+/// The longest command line: a plant's parameters fit.
+const MAX_LINE: usize = 1024;
 
-        events: EventsConfig {
-            ticks_per_second: 32_000,
-            timer_period_ms: 2,
-            max_feedback_age_ms: 2,
-            feedback_capacity: 8,
-        },
+/// The feedback input, PA18.
+const FEEDBACK: u32 = 1 << 18;
 
-        max_progress_gap_ms: 50,
-        idle_gap_ms: 50,
+/// The background store writer: what the settings writer's stores, the
+/// event ring and the update stage do in the firmware's service task, one
+/// store write at a time, each under the write turn and a flash lease.
+#[derive(Default)]
+struct Writer {
+    /// A write waits for its turn.
+    queued: bool,
+    /// Writes still to queue, every `interval_ms`, the next at `next_ms`.
+    remaining: u32,
+    interval_ms: u64,
+    next_ms: u64,
+    /// When the writer next asks for its turn.
+    poll_ms: u64,
+    turn: WriteTurn,
+    /// The lease being held, and when its erase ends.
+    lease: Option<(FlashToken, u64)>,
+    request: u64,
+    done: u32,
+}
 
-        bowl_mode: BowlMode::Single,
-        sample_period_ms: 1,
-        prepare_timeout_ms: 20,
-        optics_max_on_ms: 140,
-        motor_deadtime_ms: 2,
-        motor_lease_ms: 12,
-        adc_poll_limit: 8,
-        wake_lock_id: 16,
-        flash: ptr::null_mut(),
+impl Writer {
+    fn waiting(&self) -> u32 {
+        u32::from(self.queued || self.lease.is_some()) + self.remaining
     }
 }
 
@@ -115,12 +101,18 @@ struct World {
     opened: bool,
     run_owner: bool,
     run_timer: bool,
+    /// When the loop next steps the owner, at the delay its last step asked.
+    step_ms: u64,
 
-    // Synthetic feedback plant: toggles the feedback edge every `auto_period` ms of drive.
-    auto_period: u32,
-    plant_ms: u32,
+    plant: Plant,
+    jammed: bool,
+    /// The current channel held by a `current` command.
+    held_current: Option<u16>,
+    /// Milliseconds the motor has driven one way, from the drive's start.
+    drive_ms: u64,
     previous_motor: u32,
-    feedback_high: bool,
+
+    writer: Writer,
 
     // Power-cut injection: cut after `cut_remaining` more mutations in storage phase
     // `cut_phase` (or at that phase's start when the count is already zero).
@@ -132,6 +124,8 @@ struct World {
     // Last reported outputs, so the hook only prints changes.
     observed_motor: u32,
     observed_optics: u32,
+    /// The last status reported, so steps of time report only changes.
+    reported: Option<Status>,
 }
 
 static mut WORLD: *mut World = ptr::null_mut();
@@ -162,6 +156,16 @@ fn emit(event: &Event) {
     }
 }
 
+fn now() -> u64 {
+    // SAFETY: see `w`.
+    unsafe { (*w()).device_ms }
+}
+
+/// The device clock as the flash authority and the interlock read it.
+fn now_ms() -> u32 {
+    fake::with(|h| h.uptime_ms)
+}
+
 /// The harness's name for an owner code; a code it does not know is a
 /// protocol mismatch, not something to report as a number.
 fn code<C: Code>(index: u32) -> C {
@@ -181,6 +185,10 @@ fn motor() -> u32 {
 fn optics() -> u32 {
     let (a, b) = fake::with(|h| (h.output[0], h.output[1]));
     ((a >> 15) & 1) | (((b >> 3) & 1) << 1)
+}
+
+fn outputs_stopped() -> bool {
+    motor() == 0 && optics() == 0
 }
 
 fn outputs() {
@@ -226,6 +234,7 @@ fn cut() -> ! {
             device_ms: (*w()).device_ms,
             phase: (*w()).active_phase,
             mutations: (*flash_ptr()).mutations,
+            rotor_ms: (*w()).plant.position_ms(),
         });
     }
 
@@ -257,10 +266,8 @@ fn io_event(
     size: usize,
     ok: bool,
 ) {
-    // SAFETY: see `w`.
-    let device_ms = unsafe { (*w()).device_ms };
     emit(&Event::JournalIo {
-        device_ms,
+        device_ms: now(),
         operation,
         stage,
         slot,
@@ -312,7 +319,7 @@ impl SlotIo for SimIo {
         // Journal writes must only happen with the motor and optics off; the
         // worker fails loudly if the owner ever programs or erases flash
         // while either is on.
-        assert!(motor() == 0 && optics() == 0);
+        assert!(outputs_stopped());
         let size = bytes.len();
         io_event(
             IoOperation::Program,
@@ -332,7 +339,7 @@ impl SlotIo for SimIo {
             return base().erase(slot);
         }
 
-        assert!(motor() == 0 && optics() == 0);
+        assert!(outputs_stopped());
         io_event(IoOperation::Erase, IoStage::Begin, slot, 0, UNIT, false);
         let ok = base().erase(slot);
         io_event(IoOperation::Erase, IoStage::End, slot, 0, UNIT, ok);
@@ -340,9 +347,9 @@ impl SlotIo for SimIo {
     }
 }
 
-/// The `cut` command can only target reserve or finish.
+/// The `cut` command can only target a phase that writes.
 fn storage_begin(phase: StoragePhase) {
-    assert!(motor() == 0 && optics() == 0);
+    assert!(outputs_stopped());
     // SAFETY: see `w`.
     unsafe {
         let world = w();
@@ -409,9 +416,9 @@ impl OwnerStorage for SimStorage {
     }
 }
 
-fn status(response: u64) {
+fn current(response: u64) -> Status {
     // SAFETY: see `w`.
-    let status = unsafe {
+    unsafe {
         let world = w();
         let s = (*world).owner.status();
         let opened = (*world).opened;
@@ -442,20 +449,213 @@ fn status(response: u64) {
             motor: motor(),
             optics: optics(),
             watchdog_resets: fake::with(|h| h.watchdog_reset_requests),
+            rotor_ms: (*world).plant.position_ms(),
+            writes_done: (*world).writer.done,
+            writes_waiting: (*world).writer.waiting(),
         }
-    };
+    }
+}
 
+/// The status that ends a command.
+fn status(response: u64) {
+    let status = current(response);
+    // SAFETY: see `w`.
+    unsafe { (*w()).reported = Some(status) };
     emit(&Event::Status(status));
 }
 
+/// A step of time inside a command: report the status if it changed.
+fn changes() {
+    let status = current(0);
+    // SAFETY: see `w`.
+    unsafe {
+        let world = w();
+        if (*world).reported.is_some_and(|last| last.same_as(&status)) {
+            return;
+        }
+        (*world).reported = Some(status);
+    }
+    emit(&Event::Changed(status));
+}
+
+fn watchdog_reset() -> bool {
+    fake::with(|h| h.watchdog_reset_requests) > 0
+}
+
+/// SYSTIMER ticks in the millisecond ending at `ms`, at the measured
+/// 32 768 Hz.
+fn ticks(ms: u64) -> u32 {
+    let at = |ms: u64| ms * u64::from(SYSTIMER_HZ) / 1000;
+    u32::try_from(at(ms) - at(ms - 1)).expect("33 ticks a millisecond at most")
+}
+
+/// One millisecond, and everything that runs beside the loop.
 fn tick() {
     // SAFETY: see `w`.
-    let run_timer = unsafe {
+    let (ms, run_timer) = unsafe {
         (*w()).device_ms += 1;
-        (*w()).run_timer
+        ((*w()).device_ms, (*w()).run_timer)
     };
     fake::with(|h| h.uptime_ms = h.uptime_ms.wrapping_add(1));
-    fake::advance(32, run_timer);
+    fake::advance(ticks(ms), run_timer);
+
+    turn_rotor();
+    write_step();
+    feed_watchdog();
+}
+
+/// PA18 to `flip`'s level, interrupting only if the capture sees it.
+fn feedback(flip: Flip) {
+    if flip.captured {
+        fake::edge(flip.high);
+    } else {
+        fake::with(|h| {
+            if flip.high {
+                h.input[0] |= FEEDBACK;
+            } else {
+                h.input[0] &= !FEEDBACK;
+            }
+        });
+    }
+    emit(&Event::Feedback {
+        device_ms: now(),
+        high: flip.high,
+        captured: flip.captured,
+    });
+}
+
+/// The motor's last millisecond: the rotor turns while it drives (unless
+/// jammed), and the current channel reads its surge, its load or rest.
+fn turn_rotor() {
+    let m = motor();
+    let driving = matches!(m, 1 | 2);
+    // SAFETY: see `w`.
+    let flips = unsafe {
+        let world = w();
+        if !driving || m != (*world).previous_motor {
+            (*world).drive_ms = 0;
+        }
+        (*world).previous_motor = m;
+        if driving {
+            (*world).drive_ms += 1;
+        }
+
+        let c = *(*world).plant.config();
+        let reading = if !driving {
+            c.idle_adc
+        } else if (*world).drive_ms <= u64::from(c.surge_ms) {
+            c.surge_adc
+        } else {
+            c.drive_adc
+        };
+        let reading = (*world).held_current.unwrap_or(reading);
+        fake::with(|h| h.current_adc = reading);
+
+        // Drive0 turns the rotor forward, Drive1 back.
+        let turn = if m == 1 { Turn::Forward } else { Turn::Back };
+        if driving && !(*world).jammed {
+            (*world).plant.drive(turn)
+        } else {
+            Vec::new()
+        }
+    };
+    for flip in flips {
+        feedback(flip);
+    }
+}
+
+/// The background writer's millisecond: queue the next write when due,
+/// ask for the write turn at its poll, and run a granted write's lease.
+fn write_step() {
+    let ms = now();
+    // SAFETY: see `w`.
+    unsafe {
+        let writer = &raw mut (*w()).writer;
+        if !(*writer).queued
+            && (*writer).lease.is_none()
+            && (*writer).remaining > 0
+            && ms >= (*writer).next_ms
+        {
+            (*writer).queued = true;
+            (*writer).remaining -= 1;
+            (*writer).next_ms = ms + (*writer).interval_ms;
+            (*writer).poll_ms = ms;
+        }
+
+        if let Some((token, ends)) = (*writer).lease {
+            if ms >= ends {
+                release_lease(&token);
+            }
+            return;
+        }
+        if !(*writer).queued || ms < (*writer).poll_ms {
+            return;
+        }
+        match (*writer).turn.begin(&INTERLOCK, now_ms(), outputs_stopped) {
+            WriteStep::Go(_) => take_lease(ms),
+            WriteStep::Wait => (*writer).poll_ms = ms + u64::from(WRITER_POLL_MS),
+        }
+    }
+}
+
+/// A store write's lease: requested, quiesced with the outputs read
+/// stopped, parked by the peer, then held for the erase.
+fn take_lease(ms: u64) {
+    let now = now_ms();
+    let inactive = outputs_stopped();
+    // SAFETY: see `w`.
+    unsafe {
+        let world = w();
+        (*world).writer.request += 1;
+        let authority = &raw mut (*world).authority;
+        let id = (*world).writer.request;
+        let granted =
+            (*authority).request(FlashParty::Local, SESSION, id, now) == FlashReply::Accepted && {
+                let token = (*authority).token;
+                (*authority).quiesced(&token, inactive, now) == FlashReply::Accepted
+                    && (*authority).parked(&token, FlashParty::Peer, now) == FlashReply::Accepted
+            };
+        emit(&Event::Lease {
+            device_ms: ms,
+            active: true,
+        });
+        if granted {
+            (*world).writer.lease = Some(((*authority).token, ms + LEASE_MS));
+        } else {
+            end_write(false);
+        }
+    }
+}
+
+fn release_lease(token: &FlashToken) {
+    let now = now_ms();
+    let inactive = outputs_stopped();
+    // SAFETY: see `w`.
+    let ok = unsafe {
+        let authority = &raw mut (*w()).authority;
+        (*authority).complete(token, FlashParty::Local, now) == FlashReply::Accepted
+            && (*authority).released(token, FlashParty::Peer, inactive, now) == FlashReply::Accepted
+    };
+    end_write(ok);
+}
+
+/// The write is over: the turn goes back, and a write that failed its
+/// lease is not counted done (the authority's fault shows in the owner).
+fn end_write(ok: bool) {
+    INTERLOCK.end_write();
+    // SAFETY: see `w`.
+    unsafe {
+        let writer = &raw mut (*w()).writer;
+        (*writer).lease = None;
+        (*writer).queued = false;
+        if ok {
+            (*writer).done += 1;
+        }
+    }
+    emit(&Event::Lease {
+        device_ms: now(),
+        active: false,
+    });
 }
 
 /// The runtime's watchdog feeder, once the role has started: feed while
@@ -464,7 +664,7 @@ fn tick() {
 fn feed_watchdog() {
     let outputs = stopped::observe();
     let inputs = Inputs {
-        now_ms: fake::with(|h| h.uptime_ms),
+        now_ms: now_ms(),
         startup: Startup::Started,
         tasks_alive: true,
         outputs_ok: outputs.verified() || outputs.sensing(),
@@ -483,35 +683,85 @@ fn feed_watchdog() {
     }
 }
 
+/// The loop's turn: the owner's step when its delay is up, then, as the
+/// firmware's loop does, the outputs' claim handed back once the owner
+/// rests with its outputs stopped.
 fn poll() {
-    let m = motor();
     // SAFETY: see `w`.
     unsafe {
         let world = w();
-        if m == 0 || m == 3 || m != (*world).previous_motor {
-            (*world).plant_ms = 0;
+        let due = (*world).device_ms >= (*world).step_ms;
+        if (*world).run_owner
+            && (*world).owner.running()
+            && due
+            && let Step::Wait(ms) = (*world).owner.step()
+        {
+            (*world).step_ms = (*world).device_ms + u64::from(ms);
         }
 
-        if m != 0 && m != 3 && (*world).auto_period != 0 {
-            (*world).plant_ms += 1;
-            if (*world).plant_ms >= (*world).auto_period {
-                (*world).plant_ms = 0;
-                (*world).feedback_high = !(*world).feedback_high;
-                let high = (*world).feedback_high;
-                fake::edge(high);
-                emit(&Event::Feedback {
-                    device_ms: (*world).device_ms,
-                    high,
-                });
-            }
-        }
-
-        (*world).previous_motor = m;
-        if (*world).run_owner && (*world).owner.running() {
-            (*world).owner.step();
+        let s = (*world).owner.status();
+        let resting = matches!(
+            s.state,
+            OwnerState::Starting
+                | OwnerState::Idle
+                | OwnerState::Terminal
+                | OwnerState::Fault
+                | OwnerState::Stopped
+        );
+        if resting && s.stopped && s.optics_off {
+            INTERLOCK.release_feed();
         }
     }
-    feed_watchdog();
+}
+
+/// Ticks and polls, as the loop runs between commands.
+fn run(ms: u32) {
+    for _ in 0..ms {
+        tick();
+        // The harness restarts the worker on the reset's own millisecond.
+        if watchdog_reset() {
+            return;
+        }
+        poll();
+        changes();
+    }
+}
+
+/// A feed, as the firmware's loop submits it: claim the outputs first,
+/// letting a queued or running store write go first (time passes for the
+/// writer meanwhile, not for the loop), then hand it to the owner.
+fn submit(id: u64, portions: u16) -> Submission {
+    let claimed = INTERLOCK.claim_feed_after_writes(
+        FEED_BOUND_MS,
+        // SAFETY: see `w`.
+        || unsafe { (*w()).writer.queued || (*w()).writer.lease.is_some() },
+        now_ms,
+        |ms| {
+            for _ in 0..ms {
+                tick();
+                changes();
+            }
+        },
+    );
+    if claimed.is_err() {
+        return Submission::RejectHeld;
+    }
+    // SAFETY: see `w`.
+    let result = unsafe { (*w()).owner.submit(id, portions) };
+    code(result.code())
+}
+
+/// PA18 to the plant's level, without an interrupt: where the rotor rests.
+fn place_rotor() {
+    // SAFETY: see `w`.
+    let high = unsafe { (*w()).plant.level() };
+    fake::with(|h| {
+        if high {
+            h.input[0] |= FEEDBACK;
+        } else {
+            h.input[0] &= !FEEDBACK;
+        }
+    });
 }
 
 fn open_disk(path: &Path, provision: bool) -> File {
@@ -559,10 +809,13 @@ fn main() {
         opened: false,
         run_owner: true,
         run_timer: true,
-        auto_period: 10,
-        plant_ms: 0,
+        step_ms: 0,
+        plant: Plant::new(PlantConfig::default(), 0),
+        jammed: false,
+        held_current: None,
+        drive_ms: 0,
         previous_motor: 0,
-        feedback_high: false,
+        writer: Writer::default(),
         cut_phase: StoragePhase::None,
         active_phase: StoragePhase::None,
         phase_start_mutations: 0,
@@ -570,6 +823,7 @@ fn main() {
         // Out of range, so the first output hook always reports.
         observed_motor: 99,
         observed_optics: 99,
+        reported: None,
     }));
 
     // SAFETY: the world is leaked for the process lifetime; single-threaded.
@@ -579,7 +833,7 @@ fn main() {
         let jc = JournalConfig {
             binding: 17,
             mode,
-            max_portions: 3,
+            max_portions: plaf103::MAX_PORTIONS,
         };
 
         if provision {
@@ -594,35 +848,29 @@ fn main() {
 
         fake::reset_hardware();
         fake::with(|h| h.output_hook = Some(outputs));
+        place_rotor();
 
-        let limits = FlashLimits {
-            // The whole lease must fit inside the 50 ms watchdog progress gap.
-            quiesce_ms: 10,
-            park_ms: 10,
-            active_ms: 20,
-            release_ms: 10,
-            total_ms: 40,
-        };
         (*world).authority =
-            FlashCoord::new(&limits, 17, 0).expect("the simulated limits are valid");
+            FlashCoord::new(&FLASH_LIMITS, SESSION, 0).expect("the flash limits are valid");
         assert_eq!(
-            (*world).authority.ready(17, 29, true, 0),
+            (*world).authority.ready(SESSION, PEER, true, 0),
             FlashReply::Accepted
         );
 
         let c = OwnerConfig {
             bowl_mode: mode,
             flash: &raw mut (*world).authority,
-            ..config()
+            ..plaf103::OWNER
         };
 
         if !(*world).watchdog.open(&WATCHDOG) {
             fail("Watchdog open failed");
         }
+        // The owner's first step, which recovers the journal, is the first
+        // poll's, so a scenario can cut that recovery's writes.
         if !(*world).owner.open(&c, SimStorage) {
             fail("Owner open failed");
         }
-        (*world).owner.step();
     }
     status(0);
 
@@ -637,7 +885,7 @@ fn main() {
             Err(_) => fail("Worker input failed"),
         }
 
-        if !line.ends_with('\n') || line.len() > 255 {
+        if !line.ends_with('\n') || line.len() > MAX_LINE {
             fail("Overlong worker command");
         }
 
@@ -661,34 +909,45 @@ unsafe fn execute(world: *mut World, command: Command) -> u64 {
         match command {
             Command::Submit {
                 args: (id, portions),
-            } => return (*world).owner.submit(id, portions).code().into(),
+            } => return submit(id, portions).index(),
             Command::Cancel { args: [id] } => return (*world).owner.cancel(id).into(),
             Command::Ack { args: [id] } => return (*world).owner.acknowledge(id).into(),
 
             Command::Tick { .. } => tick(),
             Command::Poll { .. } => poll(),
+            Command::Run { args: [ms] } => run(ms.0),
 
             Command::Cut {
                 args: (phase, mutations),
             } => {
-                (*world).cut_phase = StoragePhase::from_index(phase.0.into())
-                    .unwrap_or_else(|| fail("Invalid cut phase"));
+                (*world).cut_phase = phase.0;
                 (*world).cut_remaining = mutations.0.into();
             }
             Command::PowerCut { .. } => cut(),
-            Command::Auto { args: [period] } => {
-                (*world).auto_period = period.0;
-                (*world).plant_ms = 0;
+            Command::Plant {
+                args: (plant, position),
+            } => {
+                (*world).plant = Plant::new(plant.0, position);
+                place_rotor();
             }
-            Command::Edge { args: [high] } => {
-                (*world).feedback_high = high.0;
-                fake::edge(high.0);
+            Command::Jam { args: [jammed] } => (*world).jammed = jammed.0,
+            Command::Edge { args: [high] } => feedback(Flip {
+                high: high.0,
+                captured: true,
+            }),
+            Command::Write {
+                args: (count, interval),
+            } => {
+                let writer = &raw mut (*world).writer;
+                (*writer).remaining += count.0;
+                (*writer).interval_ms = interval.0.into();
+                (*writer).next_ms = (*world).device_ms;
             }
 
             Command::Owner { args: [run] } => (*world).run_owner = run.0,
             Command::Timer { args: [run] } => (*world).run_timer = run.0,
             Command::AdcStuck { args: [stuck] } => fake::with(|h| h.stuck = stuck.0),
-            Command::Current { args: [level] } => fake::with(|h| h.current_adc = level.0),
+            Command::Current { args: [level] } => (*world).held_current = Some(level.0),
             Command::Battery { args: [level] } => fake::with(|h| h.battery_adc = level.0),
 
             Command::Inputs { args: [bits] } => fake::with(|h| {

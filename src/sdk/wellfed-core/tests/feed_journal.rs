@@ -7,7 +7,9 @@
 //! The invariant under test: after any cut or failure, reopening yields the
 //! committed state, an unresolved pending intent, or `CORRUPT`, never an idle
 //! journal that has forgotten a reserved request ID. A cut result or
-//! resolution always yields the pending intent or the committed result.
+//! resolution always yields the pending intent or the committed result, and
+//! a cut reservation the committed state or a pending intent: no cut ever
+//! faults the journal.
 
 use wellfed_core::feed::controller::{FeedReason, FeedRequest};
 use wellfed_core::feed::progress::{BowlMode, Direction};
@@ -269,9 +271,16 @@ fn corruption_and_binding() {
                 f.bytes[slot][byte] ^= 1 << bit;
                 let e = reopen(&mut f, &mut j, &CONFIG);
                 if e == JournalError::Ok {
-                    // Only safe fallback is an unresolved intent, never idle.
-                    assert!(j.view.recovery.pending_request && j.view.recovery.high_water_id == 41);
-                    assert!(!reserve(&mut j, 42) && !finish(&mut j, true, true));
+                    // Only safe fallback is an unresolved intent, never idle:
+                    // the result's own reservation (a flip in the result), or
+                    // the next one (a flip in the older reservation, beside
+                    // the result at rest).
+                    let high = j.view.recovery.high_water_id;
+                    assert!(
+                        j.view.recovery.pending_request
+                            && (high == 41 || (slot == 1 && high == 42))
+                    );
+                    assert!(!reserve(&mut j, 43) && !finish(&mut j, true, true));
                 } else {
                     assert_eq!(e, JournalError::Corrupt);
                 }
@@ -355,28 +364,36 @@ fn byte_cuts(completing: bool, reused: bool, unit: usize) {
             assert_eq!(f.mutations, writes);
         }
 
-        let e = reopen(&mut f, &mut j, &CONFIG);
-        if e == JournalError::Ok {
+        // A cut result leaves the reservation pending, to be resolved at the
+        // next boot; a cut reservation leaves the record at rest (an erase
+        // that found its unit erased) or stands as the next reservation.
+        assert_eq!(
+            reopen(&mut f, &mut j, &CONFIG),
+            JournalError::Ok,
+            "cut {cut}"
+        );
+        let rest = if reused { 9 } else { 0 };
+        let high = j.view.recovery.high_water_id;
+        let stand_in = !completing && j.view.recovery.pending_request && high != 42;
+        assert!(high == 42 || (!completing && (high == rest || (stand_in && high == rest + 1))));
+        if completing {
             assert!(
-                j.view.recovery.high_water_id == 42
-                    || (!completing && j.view.recovery.high_water_id == if reused { 9 } else { 0 })
+                j.view.recovery.pending_request
+                    || (j.view.has_result && j.view.result.outcome == OwnerOutcome::Done)
             );
-            if completing {
-                assert!(
-                    j.view.recovery.pending_request
-                        || (j.view.has_result && j.view.result.outcome == OwnerOutcome::Done)
-                );
-            }
-            if succeeded {
-                assert!(
-                    j.view.recovery.high_water_id == 42
-                        && j.view.recovery.pending_request != completing
-                );
-            }
-        } else {
-            // Only a torn reservation is ambiguous: a torn result leaves the
-            // reservation pending, to be resolved at the next boot.
-            assert!(!succeeded && !completing && e == JournalError::Corrupt);
+        }
+        if succeeded {
+            assert!(high == 42 && j.view.recovery.pending_request != completing);
+        }
+        if stand_in {
+            assert_eq!(high, rest + 1, "the next ID, which the loop reserves");
+            assert!(!reserve(&mut j, 43) && !finish(&mut j, true, true));
+            let resolved = j.resolve().expect("the stand-in resolves");
+            assert_eq!(resolved.outcome, OwnerOutcome::Uncertain);
+            assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::Ok);
+            assert!(j.view.has_result && !j.view.recovery.pending_request);
+            assert_eq!(j.view.recovery.high_water_id, rest + 1);
+            assert!(reserve(&mut j, rest + 2));
         }
     }
 }
@@ -750,13 +767,112 @@ fn a_torn_record_beside_a_pending_one_resolves_but_a_foreign_one_faults() {
     f.bytes[0][200] = 0;
     assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::Corrupt);
 
-    // Beside an idle record, a torn one may be a newer reservation.
+    // Beside a record at rest, a torn one is the next reservation, cut or
+    // decayed: it resolves as uncertain under the next ID.
     let mut original = FakeJournalFlash::default();
     let mut j = create(&mut original, false);
     assert!(reserve(&mut j, 9) && finish(&mut j, true, true));
     let mut f = original.clone();
     f.bytes[1][40] |= 0x80;
-    assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::Corrupt);
+    let mut j = rebooted(&mut f, &CONFIG);
+    assert_eq!(j.view.recovery.high_water_id, 10);
+    let resolved = j.resolve().unwrap();
+    assert_eq!(
+        resolved,
+        OwnerResult {
+            id: 10,
+            requested: CONFIG.max_portions,
+            completed: 0,
+            outcome: OwnerOutcome::Uncertain,
+            reason: FeedReason::None,
+            motion_possible: true,
+        }
+    );
+    assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::Ok);
+    assert!(j.view.has_result && j.view.recovery.high_water_id == 10);
+    assert!(!reserve(&mut j, 10) && reserve(&mut j, 11));
+
+    // A double bowl whose phase is unknown makes no reservation, so a cut
+    // write beside it is not the journal's.
+    let mut original = FakeJournalFlash::default();
+    let mut j = create(&mut original, true);
+    let dual = j.config;
+    assert!(reserve(&mut j, 9) && finish(&mut j, false, true));
+    assert!(!j.view.recovery.phase_known);
+    let mut f = original.clone();
+    f.bytes[1][40] |= 0x80;
+    assert_eq!(reopen(&mut f, &mut j, &dual), JournalError::Corrupt);
+}
+
+/// A reservation cut beside a record at rest is resolved in two writes, the
+/// reservation and then its result: a cut in either leaves the same
+/// reservation, or its result, and it resolves once.
+#[test]
+fn a_cut_reservation_resolves_through_any_cut() {
+    for unit in UNITS {
+        for reused in [false, true] {
+            let mut original = FakeJournalFlash::default();
+            let mut j = create_unit(&mut original, false, unit);
+            if reused {
+                assert!(reserve(&mut j, 9) && finish(&mut j, true, true));
+            }
+            let rest = j.view.recovery.high_water_id;
+            // Cut halfway through the reservation's record.
+            original.budget = (unit + RECORD_BYTES / 2) as i64;
+            assert!(!reserve(&mut j, rest + 1));
+            let booted = rebooted(&mut original, &CONFIG);
+
+            let total = {
+                let mut f = original.clone();
+                let mut j = booted;
+                bind(&mut j, &mut f);
+                let start = f.mutations;
+                assert!(j.resolve().is_some());
+                i64::from(f.mutations - start)
+            };
+            assert_eq!(total, 2 * (unit + RECORD_BYTES) as i64);
+
+            let edge = 2 * RECORD_BYTES as i64;
+            let unit = unit as i64;
+            let near = |cut: i64, at: i64| (at - edge..=at + edge).contains(&cut);
+            let cuts = (0..=total)
+                .filter(|&cut| near(cut, 0) || near(cut, unit) || near(cut, total / 2 + unit));
+            for cut in cuts.chain((0..=total).step_by(61)) {
+                let mut f = original.clone();
+                let mut j = booted;
+                f.budget = cut;
+                bind(&mut j, &mut f);
+                let resolved = j.resolve();
+
+                assert_eq!(
+                    reopen(&mut f, &mut j, &CONFIG),
+                    JournalError::Ok,
+                    "cut {cut}"
+                );
+                if j.view.recovery.high_water_id == rest {
+                    // Cut late in the erase, or before the first byte: the
+                    // unit reads erased, as the reservation's own erase
+                    // would have left it, and the feeder is where it was
+                    // before the reservation began.
+                    assert!(cut <= unit, "cut {cut}");
+                    assert!(!j.view.recovery.pending_request && reserve(&mut j, rest + 1));
+                    continue;
+                }
+                assert_eq!(j.view.recovery.high_water_id, rest + 1, "cut {cut}");
+                if j.view.recovery.pending_request {
+                    assert!(resolved.is_none());
+                    assert!(j.resolve().is_some());
+                    assert_eq!(reopen(&mut f, &mut j, &CONFIG), JournalError::Ok);
+                }
+                let v = j.read().unwrap();
+                assert!(v.has_result && !v.recovery.pending_request);
+                assert_eq!(v.result.outcome, OwnerOutcome::Uncertain);
+                assert_eq!(v.result.requested, CONFIG.max_portions);
+                assert!(j.resolve().is_none() && !reserve(&mut j, rest + 1));
+                assert!(reserve(&mut j, rest + 2));
+            }
+        }
+    }
 }
 
 /// The cost of reading a checksum failure beside a pending reservation as

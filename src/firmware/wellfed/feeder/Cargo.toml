@@ -37,6 +37,8 @@ wellfed-session.workspace = true
 wellfed-feeder = { workspace = true, features = ["conformance"] }
 wellfed-client.workspace = true
 wellfed-model.workspace = true
+# The virtual feeder copies the feeding limits; a test holds them equal.
+wellfed-sim.workspace = true
 
 [lints]
 workspace = true

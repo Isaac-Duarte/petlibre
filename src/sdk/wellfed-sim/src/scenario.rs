@@ -1,17 +1,22 @@
-//! Scenario files: timed worker commands, reboots and status expectations.
+//! Scenario files: the plant, timed worker commands, reboots and status
+//! expectations.
 //!
 //! A scenario is checked fully before any worker starts. Each step keeps
-//! its raw JSON because the report quotes actions exactly as written.
+//! its raw JSON because the report quotes actions exactly as written. The
+//! plant defaults to the measured mechanism; a scenario changes only what
+//! it tests (the seed, misses, bounces, the period with food).
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::protocol::{
-    Bounded, Command, Fault, Outcome, Period, Profile, Reason, State, Submission,
-};
+use crate::plant::PlantConfig;
+use crate::protocol::{Command, Fault, Outcome, Plant, Profile, Reason, State, Submission};
 use crate::{HarnessError, Result, require};
 
+pub const VERSION: u64 = 2;
 const MAX_ACTIONS: usize = 10_000;
+/// Ten minutes: the longest feed the limits allow, and then some.
+pub const MAX_END_MS: u64 = 600_000;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -20,14 +25,14 @@ struct Fields {
     name: String,
     #[serde(default)]
     profile: Profile,
-    #[serde(default = "default_period")]
-    feedback_period_ms: Period,
+    #[serde(default = "default_plant")]
+    plant: Plant,
     end_ms: u64,
     actions: Vec<Step>,
 }
 
-fn default_period() -> Period {
-    Bounded(10)
+fn default_plant() -> Plant {
+    Plant(PlantConfig::default())
 }
 
 /// A validated scenario, with its defaults filled in.
@@ -35,7 +40,7 @@ fn default_period() -> Period {
 pub struct Scenario {
     pub name: String,
     pub profile: Profile,
-    pub feedback_period_ms: Period,
+    pub plant: PlantConfig,
     pub end_ms: u64,
     pub steps: Vec<Step>,
 }
@@ -115,6 +120,8 @@ pub struct Expectation {
     pub supervisor_fault: Option<u32>,
     pub watchdog_fault: Option<u32>,
     pub watchdog_resets: Option<u32>,
+    pub writes_done: Option<u32>,
+    pub writes_waiting: Option<u32>,
 }
 
 impl Expectation {
@@ -132,12 +139,12 @@ impl Scenario {
     pub fn from_value(raw: &Value) -> Result<Self> {
         let fields = Fields::deserialize(raw).map_err(HarnessError::Scenario)?;
 
-        require(fields.version == 1, "Scenario version must be 1")?;
+        require(fields.version == VERSION, "Scenario version must be 2")?;
         require(
             (1..=100).contains(&fields.name.chars().count()),
             "Scenario needs a name of 1..100 characters",
         )?;
-        require(fields.end_ms <= 10_000, "end_ms must be 0..10000")?;
+        require(fields.end_ms <= MAX_END_MS, "end_ms must be 0..600000")?;
         require(
             fields.actions.len() <= MAX_ACTIONS,
             "actions must be a list with at most 10000 entries",
@@ -151,11 +158,16 @@ impl Scenario {
             )?;
             previous = step.at_ms;
 
-            // The harness ticks and polls the worker itself.
+            // The harness steps the worker and places its rotor itself.
             require(
                 !matches!(
                     step.action,
-                    Action::Command(Command::Tick { .. } | Command::Poll { .. })
+                    Action::Command(
+                        Command::Tick { .. }
+                            | Command::Poll { .. }
+                            | Command::Run { .. }
+                            | Command::Plant { .. }
+                    )
                 ),
                 "Unknown action",
             )?;
@@ -178,7 +190,7 @@ impl Scenario {
         Ok(Self {
             name: fields.name,
             profile: fields.profile,
-            feedback_period_ms: fields.feedback_period_ms,
+            plant: fields.plant.0,
             end_ms: fields.end_ms,
             steps: fields.actions,
         })

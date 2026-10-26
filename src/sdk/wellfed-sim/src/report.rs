@@ -5,47 +5,11 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use wellfed_formats::canonical::{self, sha256};
+use wellfed_formats::canonical::sha256;
 use serde::Serialize;
 use serde_json::Value;
 
 use crate::protocol::{Event, Fault, Outcome, Profile, Reason, State, StoragePhase, Submission};
-
-/// Python's default `json.dumps(value, sort_keys=True)`, for the scenario hash
-/// the earlier reports carry. Unlike canonical form it keeps the default
-/// `", "` and `": "` separators.
-pub(crate) fn python_dumps(value: &Value, out: &mut Vec<u8>) {
-    match value {
-        Value::Array(items) => {
-            out.push(b'[');
-            for (i, item) in items.iter().enumerate() {
-                if i > 0 {
-                    out.extend_from_slice(b", ");
-                }
-                python_dumps(item, out);
-            }
-            out.push(b']');
-        }
-
-        Value::Object(map) => {
-            let mut keys: Vec<&String> = map.keys().collect();
-            keys.sort();
-            out.push(b'{');
-            for (i, key) in keys.into_iter().enumerate() {
-                if i > 0 {
-                    out.extend_from_slice(b", ");
-                }
-                canonical::string(key, out);
-                out.extend_from_slice(b": ");
-                python_dumps(&map[key], out);
-            }
-            out.push(b'}');
-        }
-
-        Value::String(text) => canonical::string(text, out),
-        other => out.extend_from_slice(other.to_string().as_bytes()),
-    }
-}
 
 /// Hashes of the worker and of every source that shapes it.
 #[derive(Debug, Serialize)]
@@ -147,7 +111,8 @@ pub(crate) struct Enums {
 /// What a passing report does not establish.
 #[derive(Debug, Serialize)]
 pub(crate) struct Limits {
-    pub(crate) synthetic_hardware_and_timing: bool,
+    pub(crate) synthetic_hardware: bool,
+    pub(crate) plant_from_bench_measurements: bool,
     pub(crate) physical_reliability_verified: bool,
     pub(crate) full_boot_or_rtos_emulated: bool,
     pub(crate) real_flash_provider: bool,
@@ -168,19 +133,4 @@ pub struct Report {
     pub(crate) events: Vec<Entry>,
     pub(crate) assertions: Vec<Assertion>,
     pub passed: bool,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn python_dumps_matches_the_default_separators() {
-        let mut out = Vec::new();
-        python_dumps(
-            &serde_json::json!({"b": [1, true, null], "a": "é"}),
-            &mut out,
-        );
-        assert_eq!(out, b"{\"a\": \"\\u00e9\", \"b\": [1, true, null]}");
-    }
 }

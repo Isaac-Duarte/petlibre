@@ -1,9 +1,15 @@
-//! End-to-end replacement Rust behavior on synthetic hardware and persistent NOR.
+//! End-to-end replacement Rust behavior on synthetic hardware and persistent
+//! NOR, under the PLAF103 firmware's feeding limits and the measured plant.
 //!
 //! Each test runs the real `virtual-feeder-worker` through the harness, so
 //! besides its own expectations every run also checks the safety invariants
 //! (reservation before drive, valid motor pair, inactive outputs when
-//! durable). This is simulation evidence, not hardware reliability.
+//! durable, no flash lease while driving). This is simulation evidence, not
+//! hardware reliability.
+//!
+//! Times are the firmware's: a feed submitted at 100 ms starts driving
+//! about 120 ms later (the emitters' settling), and each portion is a mark
+//! about 9 s of drive apart, so a one-portion feed is over by 10 s.
 
 use std::path::{Path, PathBuf};
 use std::process::Command as Process;
@@ -13,6 +19,18 @@ use serde_json::{Value, json};
 use wellfed_sim::protocol::{Adc, Command, Journal, Profile};
 use wellfed_sim::scenario::Scenario;
 use wellfed_sim::{Worker, run_scenario};
+
+/// When the tests submit their first feed, and when one portion is done.
+const SUBMIT: u64 = 100;
+const ONE_PORTION: u64 = 10_000;
+const THREE_PORTIONS: u64 = 30_000;
+
+/// A double bowl's mechanism was never measured, and the owner credits it a
+/// portion on every second mark: its scenarios put the marks 5.5 s apart, so
+/// two fit the PLAF103's 12 s a portion.
+fn double_plant() -> Value {
+    json!({"period_ms": 5500, "low_ms": 600})
+}
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -33,9 +51,18 @@ fn expect(at: u64, values: Value) -> Value {
     json!({"at_ms": at, "op": "expect", "values": values})
 }
 
-fn scenario(actions: Vec<Value>, end: u64, profile: &str, feedback: u64) -> Value {
-    json!({"version": 1, "name": "integration", "profile": profile,
-           "feedback_period_ms": feedback, "end_ms": end, "actions": actions})
+fn scenario(actions: Vec<Value>, end: u64, profile: &str) -> Value {
+    let plant = if profile == "double" {
+        double_plant()
+    } else {
+        json!({})
+    };
+    with_plant(actions, end, profile, plant)
+}
+
+fn with_plant(actions: Vec<Value>, end: u64, profile: &str, plant: Value) -> Value {
+    json!({"version": 2, "name": "integration", "profile": profile, "plant": plant,
+           "end_ms": end, "actions": actions})
 }
 
 fn run(scenario: &Value) -> Result<Value, wellfed_sim::HarnessError> {
@@ -43,8 +70,8 @@ fn run(scenario: &Value) -> Result<Value, wellfed_sim::HarnessError> {
     Ok(serde_json::to_value(report).unwrap())
 }
 
-fn passing(actions: Vec<Value>, end: u64, profile: &str, feedback: u64) -> Value {
-    let report = run(&scenario(actions, end, profile, feedback)).unwrap();
+fn checked(scenario: &Value) -> Value {
+    let report = run(scenario).unwrap();
 
     let failed: Vec<&Value> = report["assertions"]
         .as_array()
@@ -57,6 +84,10 @@ fn passing(actions: Vec<Value>, end: u64, profile: &str, feedback: u64) -> Value
     report
 }
 
+fn passing(actions: Vec<Value>, end: u64, profile: &str) -> Value {
+    checked(&scenario(actions, end, profile))
+}
+
 fn events<'r>(report: &'r Value, kind: &str) -> impl Iterator<Item = &'r Value> + use<'r> {
     let kind = kind.to_string();
     report["events"]
@@ -64,6 +95,20 @@ fn events<'r>(report: &'r Value, kind: &str) -> impl Iterator<Item = &'r Value> 
         .unwrap()
         .iter()
         .filter(move |e| e["event"] == kind.as_str())
+}
+
+/// Every status the worker reported: those that end a command and those
+/// that changed while time stepped.
+fn statuses(report: &Value) -> impl Iterator<Item = &Value> {
+    report["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| e["event"] == "status" || e["event"] == "changed")
+}
+
+fn last_status(report: &Value) -> &Value {
+    statuses(report).last().expect("the worker reported")
 }
 
 /// A drive on the boot after a power cut or reset.
@@ -76,17 +121,16 @@ fn single_and_double_bowl_complete_through_real_journal() {
     for profile in ["single", "double"] {
         let report = passing(
             vec![
-                act(1, "submit", &[1, 3]),
-                expect(1, json!({"submission": "enqueued"})),
+                act(SUBMIT, "submit", &[1, 3]),
+                expect(SUBMIT, json!({"submission": "enqueued"})),
                 expect(
-                    90,
+                    40_000,
                     json!({"state": "terminal", "completed": 3, "outcome": "done", "durable": true,
-                                  "motor": 0, "optics": 0, "pending": false, "high_water_id": 1}),
+                           "motor": 0, "optics": 0, "pending": false, "high_water_id": 1}),
                 ),
             ],
-            95,
+            40_100,
             profile,
-            10,
         );
 
         let drives: Vec<u64> = events(&report, "outputs")
@@ -99,39 +143,77 @@ fn single_and_double_bowl_complete_through_real_journal() {
     }
 }
 
+/// The plant's edges come where the bench saw them: a portion on each
+/// mark's rise, about 9.07 s of drive apart, each mark about 1.19 s LOW.
+#[test]
+fn a_feed_meets_the_marks_where_the_bench_saw_them() {
+    let report = passing(
+        vec![
+            act(SUBMIT, "submit", &[1, 3]),
+            expect(
+                THREE_PORTIONS,
+                json!({"state": "terminal", "completed": 3, "outcome": "done"}),
+            ),
+        ],
+        THREE_PORTIONS,
+        "single",
+    );
+
+    let start = events(&report, "outputs")
+        .find(|e| e["motor"] == 1)
+        .and_then(|e| e["at_ms"].as_u64())
+        .unwrap();
+    let edges: Vec<(u64, bool)> = events(&report, "feedback")
+        .map(|e| (e["at_ms"].as_u64().unwrap() - start, e["high"] == true))
+        .collect();
+    let bench = [7840, 9037, 16970, 18156, 26047, 27221];
+    assert_eq!(edges.len(), bench.len(), "{edges:?}");
+    for ((at, high), (index, want)) in edges.iter().zip(bench.iter().enumerate()) {
+        assert_eq!(*high, index % 2 == 1);
+        assert!(at.abs_diff(*want) <= 100, "{at} for {want}");
+    }
+
+    // The motor stops at the third rise, within one sample period.
+    let stop = events(&report, "outputs")
+        .filter(|e| e["motor"] == 0)
+        .filter_map(|e| e["at_ms"].as_u64())
+        .find(|&at| at > start)
+        .unwrap();
+    assert!(stop - start - edges[5].0 <= 40, "stopped {stop}");
+}
+
 #[test]
 fn mailbox_ids_acknowledgement_and_next_request() {
     passing(
         vec![
-            act(0, "submit", &[0, 1]),
-            expect(0, json!({"submission": "reject_id"})),
-            act(0, "submit", &[1, 0]),
-            expect(0, json!({"submission": "reject_request"})),
-            act(1, "submit", &[1, 1]),
-            act(2, "submit", &[2, 1]),
-            expect(2, json!({"submission": "reject_busy"})),
-            act(8, "cancel", &[99]),
-            expect(8, json!({"response": 0})),
-            act(25, "ack", &[99]),
-            expect(25, json!({"response": 0})),
+            act(50, "submit", &[0, 1]),
+            expect(50, json!({"submission": "reject_id"})),
+            act(50, "submit", &[1, 0]),
+            expect(50, json!({"submission": "reject_request"})),
+            act(SUBMIT, "submit", &[1, 1]),
+            act(SUBMIT + 1, "submit", &[2, 1]),
+            expect(SUBMIT + 1, json!({"submission": "reject_busy"})),
+            act(3000, "cancel", &[99]),
+            expect(3000, json!({"response": 0})),
+            act(5000, "ack", &[99]),
+            expect(5000, json!({"response": 0})),
             expect(
-                26,
+                ONE_PORTION,
                 json!({"state": "terminal", "durable": true, "completed": 1}),
             ),
-            act(27, "ack", &[1]),
-            expect(28, json!({"state": "idle"})),
-            act(28, "submit", &[1, 1]),
-            expect(28, json!({"submission": "reject_id"})),
-            act(29, "submit", &[2, 1]),
-            expect(29, json!({"submission": "enqueued"})),
+            act(ONE_PORTION + 1, "ack", &[1]),
+            expect(ONE_PORTION + 50, json!({"state": "idle"})),
+            act(ONE_PORTION + 50, "submit", &[1, 1]),
+            expect(ONE_PORTION + 50, json!({"submission": "reject_id"})),
+            act(ONE_PORTION + 51, "submit", &[2, 1]),
+            expect(ONE_PORTION + 51, json!({"submission": "enqueued"})),
             expect(
-                70,
+                2 * ONE_PORTION + 100,
                 json!({"state": "terminal", "id": 2, "completed": 1, "durable": true}),
             ),
         ],
-        80,
+        2 * ONE_PORTION + 200,
         "single",
-        10,
     );
 }
 
@@ -139,142 +221,186 @@ fn mailbox_ids_acknowledgement_and_next_request() {
 fn interruption_invalidates_double_bowl_phase() {
     passing(
         vec![
-            act(1, "submit", &[1, 3]),
-            act(8, "cancel", &[1]),
+            act(SUBMIT, "submit", &[1, 3]),
+            act(3000, "cancel", &[1]),
             expect(
-                20,
+                3100,
                 json!({"outcome": "cancelled", "durable": true, "phase_known": false, "motor": 0}),
             ),
-            act(21, "ack", &[1]),
-            act(22, "submit", &[2, 1]),
-            expect(22, json!({"submission": "reject_phase"})),
+            act(3101, "ack", &[1]),
+            act(3200, "submit", &[2, 1]),
+            expect(3200, json!({"submission": "reject_phase"})),
         ],
-        25,
+        3300,
         "double",
-        10,
     );
 }
 
 #[test]
 fn faults_stop_and_finish_without_success() {
-    let cases: Vec<(&str, Vec<Value>, Value)> = vec![
+    // Each checked before a hardware fault's watchdog reset, which follows
+    // once the faulted owner's beat lapses.
+    let cases: Vec<(&str, Vec<Value>, u64, Value)> = vec![
         (
             "missing",
-            vec![act(8, "auto", &[0])],
+            vec![act(3000, "jam", &[1])],
+            16_000,
             json!({"reason": "feedback_timeout"}),
         ),
         (
             "outlet",
-            vec![act(8, "inputs", &[4])],
+            vec![act(3000, "inputs", &[4])],
+            5000,
             json!({"reason": "outlet"}),
         ),
         (
             "current",
-            vec![act(8, "current", &[4095])],
+            vec![act(3000, "current", &[4095])],
+            5000,
             json!({"reason": "overcurrent"}),
         ),
         (
             "power",
-            vec![act(8, "inputs", &[1]), act(8, "battery", &[0])],
+            vec![act(3000, "inputs", &[1]), act(3000, "battery", &[0])],
+            5000,
             json!({"reason": "power"}),
         ),
         (
             "adc",
-            vec![act(8, "adc_stuck", &[1])],
+            vec![act(3000, "adc_stuck", &[1])],
+            5000,
             json!({"state": "fault", "fault": "hardware"}),
         ),
         (
             "timer",
-            vec![act(8, "timer", &[0])],
+            vec![act(3000, "timer", &[0])],
+            5000,
             json!({"state": "fault", "fault": "hardware"}),
         ),
     ];
 
-    for (name, faults, expected) in cases {
+    for (name, faults, at, expected) in cases {
         let mut values = json!({"durable": true, "motor": 0, "optics": 0, "completed": 0});
         values
             .as_object_mut()
             .unwrap()
             .extend(expected.as_object().unwrap().clone());
 
-        let mut actions = vec![act(1, "submit", &[1, 3])];
+        let mut actions = vec![act(SUBMIT, "submit", &[1, 3])];
         actions.extend(faults);
-        actions.push(expect(50, values));
+        actions.push(expect(at, values));
 
-        let report = passing(actions, 55, "single", 10);
-        assert!(
-            !events(&report, "status").any(|e| e["outcome"] == 1),
-            "{name}"
-        );
+        let report = passing(actions, at + 100, "single");
+        assert!(!statuses(&report).any(|e| e["outcome"] == 1), "{name}");
     }
 }
 
+/// The supervisor stops the motor within its 200 ms lease; the world's
+/// feeder feeds the watchdog until the owner's beat is a gap (1 s while
+/// outputs may move) old, and the 4 s expiry then resets the board. The
+/// next boot resolves the interrupted feed as uncertain.
 #[test]
-/// The timer stops the motor within its lease; the world's feeder feeds the
-/// watchdog until the owner's beat is a gap (50 ms) old, and the 126 ms
-/// expiry then resets the board about 184 ms in. The next boot resolves the
-/// interrupted feed as uncertain.
 fn stalled_owner_independent_timer_and_watchdog_reset() {
     let report = passing(
         vec![
-            act(1, "submit", &[1, 3]),
-            act(8, "owner", &[0]),
-            expect(25, json!({"motor": 0, "optics": 0})),
-            expect(150, json!({"boots": 1, "motor": 0})),
+            act(SUBMIT, "submit", &[1, 3]),
+            act(3000, "owner", &[0]),
+            expect(3300, json!({"motor": 0})),
+            expect(6000, json!({"boots": 1, "motor": 0})),
             expect(
-                200,
+                10_000,
                 json!({"boots": 2, "state": "terminal", "fault": "ok", "outcome": "uncertain",
                        "durable": true, "pending": false, "motor": 0}),
             ),
         ],
-        205,
+        10_100,
         "single",
-        10,
     );
 
-    assert_eq!(events(&report, "watchdog_reset_requested").count(), 1);
+    let reset = events(&report, "watchdog_reset_requested")
+        .map(|e| e["at_ms"].as_u64().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(reset.len(), 1);
+    // The beat's 1 s gap, then an expiry between the watchdog's bounds.
+    assert!((3000 + 1000 + 2426..=3000 + 1000 + 5460).contains(&reset[0]));
 }
 
 #[test]
 fn reboot_after_completion_rejects_replay_and_accepts_new_id() {
     passing(
         vec![
-            act(1, "submit", &[10, 1]),
-            expect(25, json!({"durable": true, "completed": 1})),
-            act(26, "power_cut", &[]),
-            expect(26, json!({"online": false})),
-            act(27, "boot", &[]),
+            act(SUBMIT, "submit", &[10, 1]),
+            expect(ONE_PORTION, json!({"durable": true, "completed": 1})),
+            act(ONE_PORTION + 1, "power_cut", &[]),
+            expect(ONE_PORTION + 1, json!({"online": false})),
+            act(ONE_PORTION + 2, "boot", &[]),
             expect(
-                27,
+                ONE_PORTION + 3,
                 json!({"state": "idle", "high_water_id": 10, "pending": false}),
             ),
-            act(28, "submit", &[10, 1]),
-            expect(28, json!({"submission": "reject_id"})),
-            act(29, "submit", &[11, 1]),
-            expect(29, json!({"submission": "enqueued"})),
-            expect(60, json!({"durable": true, "completed": 1, "id": 11})),
+            act(ONE_PORTION + 10, "submit", &[10, 1]),
+            expect(ONE_PORTION + 10, json!({"submission": "reject_id"})),
+            act(ONE_PORTION + 11, "submit", &[11, 1]),
+            expect(ONE_PORTION + 11, json!({"submission": "enqueued"})),
+            expect(
+                2 * ONE_PORTION + 100,
+                json!({"durable": true, "completed": 1, "id": 11}),
+            ),
         ],
-        80,
+        2 * ONE_PORTION + 200,
         "single",
-        10,
     );
+}
+
+/// The rotor keeps its place through a power cut: the next feed starts
+/// where the cut one stopped, so its first mark comes that much sooner.
+#[test]
+fn the_rotor_keeps_its_place_through_a_power_cut() {
+    let report = passing(
+        vec![
+            act(SUBMIT, "submit", &[1, 1]),
+            act(3000, "power_cut", &[]),
+            act(3001, "boot", &[]),
+            act(3100, "ack", &[1]),
+            act(3200, "submit", &[2, 1]),
+            expect(
+                3200 + ONE_PORTION,
+                json!({"state": "terminal", "outcome": "done", "id": 2, "completed": 1}),
+            ),
+        ],
+        3200 + ONE_PORTION,
+        "single",
+    );
+
+    let drives: Vec<u64> = events(&report, "outputs")
+        .filter(|e| e["motor"] == 1)
+        .filter_map(|e| e["at_ms"].as_u64())
+        .collect();
+    let rise = events(&report, "feedback")
+        .find(|e| e["high"] == true)
+        .and_then(|e| e["at_ms"].as_u64())
+        .unwrap();
+    // The first feed drove about 2.78 s; the second meets the rise that
+    // much sooner than a feed from rest would.
+    let driven = 3000 - drives[0];
+    let into = rise - drives[1];
+    assert!(into.abs_diff(9037 - driven) <= 100, "{into} after {driven}");
 }
 
 #[test]
 fn power_cut_before_reservation_does_not_consume_id() {
     passing(
         vec![
-            act(1, "submit", &[1, 1]),
-            act(1, "power_cut", &[]),
-            act(2, "boot", &[]),
-            expect(2, json!({"state": "idle", "high_water_id": 0})),
-            act(3, "submit", &[1, 1]),
-            expect(3, json!({"submission": "enqueued"})),
-            expect(30, json!({"completed": 1, "durable": true})),
+            act(SUBMIT, "submit", &[1, 1]),
+            act(SUBMIT, "power_cut", &[]),
+            act(SUBMIT + 1, "boot", &[]),
+            expect(SUBMIT + 2, json!({"state": "idle", "high_water_id": 0})),
+            act(SUBMIT + 10, "submit", &[1, 1]),
+            expect(SUBMIT + 10, json!({"submission": "enqueued"})),
+            expect(ONE_PORTION + 100, json!({"completed": 1, "durable": true})),
         ],
-        35,
+        ONE_PORTION + 200,
         "single",
-        10,
     );
 }
 
@@ -282,26 +408,25 @@ fn power_cut_before_reservation_does_not_consume_id() {
 fn power_cut_during_motion_resolves_as_uncertain_and_is_never_retried() {
     let report = passing(
         vec![
-            act(1, "submit", &[1, 3]),
-            expect(8, json!({"state": "feeding", "motor": 1})),
-            act(8, "power_cut", &[]),
-            act(9, "boot", &[]),
+            act(SUBMIT, "submit", &[1, 3]),
+            expect(3000, json!({"state": "feeding", "motor": 1})),
+            act(3000, "power_cut", &[]),
+            act(3001, "boot", &[]),
             expect(
-                9,
+                3002,
                 json!({"state": "terminal", "fault": "ok", "id": 1, "outcome": "uncertain",
                        "completed": 0, "durable": true, "pending": false, "high_water_id": 1}),
             ),
-            act(10, "submit", &[2, 1]),
-            expect(10, json!({"submission": "reject_busy"})),
-            act(11, "ack", &[1]),
-            expect(12, json!({"state": "idle", "high_water_id": 1})),
-            act(13, "submit", &[1, 1]),
-            expect(13, json!({"submission": "reject_id"})),
-            expect(30, json!({"motor": 0, "optics": 0, "state": "idle"})),
+            act(3010, "submit", &[2, 1]),
+            expect(3010, json!({"submission": "reject_busy"})),
+            act(3011, "ack", &[1]),
+            expect(3100, json!({"state": "idle", "high_water_id": 1})),
+            act(3101, "submit", &[1, 1]),
+            expect(3101, json!({"submission": "reject_id"})),
+            expect(20_000, json!({"motor": 0, "optics": 0, "state": "idle"})),
         ],
-        35,
+        20_100,
         "single",
-        10,
     );
 
     assert!(!drove_after_reboot(&report));
@@ -311,18 +436,16 @@ fn power_cut_during_motion_resolves_as_uncertain_and_is_never_retried() {
 fn byte_cuts_at_erase_body_and_commit_boundaries() {
     for phase in [1, 2] {
         for byte in [0, 1, 256, 257, 270, 380, 381, 383, 384] {
-            // A committed reservation, or one whose result was cut, resolves
-            // as uncertain; a committed completion is idle; a torn
-            // reservation beside the idle record is ambiguous and faults.
+            // A reservation cut before its first byte leaves the journal at
+            // rest; any later cut of it, a committed one, or one whose result
+            // was cut, resolves as uncertain; a committed completion is idle.
             let expected = if phase == 1 && byte <= 256 {
                 json!({"state": "idle", "high_water_id": 0})
-            } else if phase == 1 && byte < 384 {
-                json!({"state": "fault", "fault": "recovery"})
             } else if phase == 2 && byte == 384 {
                 json!({"state": "idle", "high_water_id": 1, "pending": false})
             } else {
                 json!({"state": "terminal", "outcome": "uncertain", "durable": true,
-                       "pending": false, "high_water_id": 1})
+                       "pending": false, "high_water_id": 1, "fault": "ok"})
             };
 
             let mut values = json!({"motor": 0, "optics": 0});
@@ -334,14 +457,13 @@ fn byte_cuts_at_erase_body_and_commit_boundaries() {
             let report = passing(
                 vec![
                     act(0, "cut", &[phase, byte]),
-                    act(1, "submit", &[1, 1]),
-                    expect(25, json!({"online": false})),
-                    act(26, "boot", &[]),
-                    expect(26, values),
+                    act(SUBMIT, "submit", &[1, 1]),
+                    expect(ONE_PORTION + 1000, json!({"online": false})),
+                    act(ONE_PORTION + 1001, "boot", &[]),
+                    expect(ONE_PORTION + 1002, values),
                 ],
-                30,
+                ONE_PORTION + 1100,
                 "single",
-                10,
             );
 
             assert_eq!(events(&report, "power_cut").count(), 1, "{phase} {byte}");
@@ -351,48 +473,334 @@ fn byte_cuts_at_erase_body_and_commit_boundaries() {
 }
 
 #[test]
-fn explicit_feedback_replaces_automatic_plant() {
+fn explicit_feedback_replaces_the_plant() {
     let report = passing(
         vec![
-            act(1, "submit", &[1, 1]),
-            act(15, "edge", &[1]),
+            act(SUBMIT, "submit", &[1, 1]),
+            act(SUBMIT, "jam", &[1]),
+            act(6000, "edge", &[0]),
+            act(6100, "edge", &[1]),
             expect(
-                25,
+                6200,
                 json!({"state": "terminal", "completed": 1, "durable": true}),
             ),
         ],
-        30,
+        6300,
         "single",
-        0,
     );
-    assert_eq!(events(&report, "feedback").count(), 0);
+    assert_eq!(events(&report, "feedback").count(), 2);
 }
 
 #[test]
 fn identical_scenarios_have_identical_reports() {
-    let data = scenario(
+    let data = with_plant(
         vec![
-            act(1, "submit", &[1, 1]),
-            expect(30, json!({"completed": 1})),
+            act(SUBMIT, "submit", &[1, 2]),
+            act(SUBMIT, "write", &[3, 4000]),
+            expect(2 * ONE_PORTION, json!({"completed": 2})),
         ],
-        35,
+        2 * ONE_PORTION,
         "single",
-        10,
+        json!({"seed": 9, "double_permille": 200}),
     );
     assert_eq!(run(&data).unwrap(), run(&data).unwrap());
 }
 
+/// The start-up surge reads over the limit on the one poll it lasts, which
+/// the controller's two-poll rule tolerates; a surge that lasted two polls
+/// would stop every feed.
+#[test]
+fn the_start_up_surge_is_tolerated_for_the_one_poll_it_lasts() {
+    let feed = vec![
+        act(SUBMIT, "submit", &[1, 1]),
+        expect(ONE_PORTION, json!({"state": "terminal"})),
+    ];
+
+    let report = checked(&scenario(feed.clone(), ONE_PORTION, "single"));
+    assert_eq!(last_status(&report)["outcome"], 1, "done");
+
+    let long = with_plant(feed, ONE_PORTION, "single", json!({"surge_ms": 45}));
+    let report = checked(&long);
+    let status = last_status(&report);
+    assert_eq!(status["outcome"], 4, "failed");
+    assert_eq!(status["reason"], 10, "overcurrent");
+}
+
+/// The capture missing an edge never feeds extra: a missed rise leaves its
+/// portion uncredited, and the drive then outlasts the feedback timeout.
+#[test]
+fn a_missed_mark_fails_the_feed_and_never_overfeeds() {
+    let report = checked(&with_plant(
+        vec![
+            act(SUBMIT, "submit", &[1, 3]),
+            expect(
+                THREE_PORTIONS,
+                json!({"state": "terminal", "outcome": "failed", "reason": "feedback_timeout",
+                       "durable": true, "motor": 0}),
+            ),
+        ],
+        THREE_PORTIONS,
+        "single",
+        json!({"missed_permille": 1000}),
+    ));
+    assert_eq!(last_status(&report)["completed"], 0);
+    assert!(events(&report, "feedback").all(|e| e["captured"] == false));
+
+    // With some marks missed, every feed still credits at most what it
+    // asked for, and stops.
+    for seed in 0..8 {
+        let report = checked(&with_plant(
+            vec![
+                act(SUBMIT, "submit", &[1, 3]),
+                expect(
+                    40_000,
+                    json!({"state": "terminal", "durable": true, "motor": 0}),
+                ),
+            ],
+            40_000,
+            "single",
+            json!({"seed": seed, "missed_permille": 150}),
+        ));
+        let status = last_status(&report);
+        assert!(status["completed"].as_u64().unwrap() <= 3);
+        if status["outcome"] != 1 {
+            assert_eq!(status["reason"], 6, "seed {seed}: no feedback");
+        }
+    }
+}
+
+/// Bouncing edges never count twice: the inhibit after each credited edge
+/// outlasts any bounce, so a feed credits one portion a mark and completes.
+#[test]
+fn bouncing_edges_credit_one_portion_a_mark() {
+    for seed in 0..4 {
+        let report = checked(&with_plant(
+            vec![
+                act(SUBMIT, "submit", &[1, 3]),
+                expect(
+                    THREE_PORTIONS,
+                    json!({"state": "terminal", "outcome": "done", "completed": 3}),
+                ),
+                act(THREE_PORTIONS + 1, "ack", &[1]),
+                act(THREE_PORTIONS + 100, "submit", &[2, 3]),
+                expect(
+                    2 * THREE_PORTIONS + 100,
+                    json!({"state": "terminal", "outcome": "done", "completed": 3, "id": 2}),
+                ),
+            ],
+            2 * THREE_PORTIONS + 100,
+            "single",
+            json!({"seed": seed, "double_permille": 1000, "period_jitter_ms": 50}),
+        ));
+
+        // Each mark crossed passes once; a feed never stops short by more
+        // than a mark's LOW (a credit on a fall's bounce).
+        let rises = events(&report, "feedback")
+            .filter(|e| e["high"] == true)
+            .count();
+        assert!(rises >= 6, "seed {seed}: {rises}");
+    }
+}
+
+/// With food the marks come later and stay LOW longer (about 9.8 s apart and
+/// 1.38 s LOW on the bench): still inside 12 s a portion and the 15 s
+/// feedback timeout.
+#[test]
+fn a_feed_with_food_completes_inside_the_limits() {
+    checked(&with_plant(
+        vec![
+            act(SUBMIT, "submit", &[1, 3]),
+            expect(
+                THREE_PORTIONS + 3000,
+                json!({"state": "terminal", "outcome": "done", "completed": 3}),
+            ),
+        ],
+        THREE_PORTIONS + 3000,
+        "single",
+        json!({"period_ms": 9820, "low_ms": 1380}),
+    ));
+}
+
+/// Liveness: wherever power is cut (any journal mutation of a reservation,
+/// a result or a resolution, or any moment of a feed), the next boot comes
+/// up able to feed: it resolves what the cut left, and a new feed ID is
+/// accepted and completes. Nothing is retried: a feed whose ID was resolved
+/// never drives again.
+#[test]
+fn after_any_cut_a_new_feed_id_is_eventually_accepted() {
+    // Each cut: the actions up to the last boot, and that boot's time.
+    let mut cuts: Vec<(String, Vec<Value>, u64)> = Vec::new();
+    // Every mutation near a write's start, its erase's end and its record's
+    // end, and a stride through the rest.
+    let sample = |total: u64| {
+        (0..=total).filter(move |&m| {
+            let into = m % 384;
+            into <= 4 || into.abs_diff(256) <= 4 || into >= 380 || m % 17 == 0
+        })
+    };
+
+    // A reservation or a result, at every boundary of its erase and record.
+    // A reservation's or a result's write: the erase, then the record.
+    let write = (256 + 128) as u64;
+    for phase in [1, 2] {
+        for mutations in sample(write) {
+            cuts.push((
+                format!("phase {phase} mutation {mutations}"),
+                vec![
+                    act(0, "cut", &[phase, mutations]),
+                    act(SUBMIT, "submit", &[1, 1]),
+                ],
+                ONE_PORTION + 1000,
+            ));
+        }
+    }
+
+    // A resolution: of a feed cut mid-drive (one record), and of a
+    // reservation cut mid-record (its stand-in, then the result).
+    for (first, total) in [
+        (act(3000, "power_cut", &[]), write),
+        (act(0, "cut", &[1, 300]), 2 * write),
+    ] {
+        for mutations in sample(total) {
+            let mut actions = vec![first.clone(), act(SUBMIT, "submit", &[1, 1])];
+            actions.sort_by_key(|action| action["at_ms"].as_u64());
+            actions.push(act(4000, "boot", &[]));
+            actions.push(act(4000, "cut", &[4, mutations]));
+            cuts.push((format!("resolve mutation {mutations}"), actions, 5000));
+        }
+    }
+
+    // A moment of the feed: queued, preparing, the drive's start, a mark,
+    // its rise, the stop, the result's write.
+    for at in [
+        SUBMIT,
+        SUBMIT + 1,
+        SUBMIT + 20,
+        SUBMIT + 121,
+        SUBMIT + 125,
+        8200,
+        9100,
+        9330,
+        9340,
+        9345,
+        9350,
+        9360,
+    ] {
+        cuts.push((
+            format!("power cut at {at}"),
+            vec![act(SUBMIT, "submit", &[1, 1]), act(at, "power_cut", &[])],
+            ONE_PORTION + 1000,
+        ));
+    }
+
+    let cases: Vec<_> = cuts.into_iter().collect();
+    let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+    let chunk = cases.len().div_ceil(threads);
+    std::thread::scope(|scope| {
+        for part in cases.chunks(chunk) {
+            scope.spawn(move || {
+                for (name, actions, boot) in part {
+                    a_feed_is_accepted_after(name, actions.clone(), *boot);
+                }
+            });
+        }
+    });
+}
+
+/// After `actions` (which end with power off, or a boot that cut again),
+/// a boot at `boot` reports what the cut left and then takes a new ID.
+fn a_feed_is_accepted_after(name: &str, mut actions: Vec<Value>, boot: u64) {
+    // Whichever ID is next: a feed the cut resolved is acknowledged first
+    // and refuses its own ID; a feed the cut lost takes ID 1 again.
+    let next = boot + 100;
+    actions.extend([
+        act(boot, "boot", &[]),
+        act(next, "ack", &[1]),
+        act(next + 50, "submit", &[1, 1]),
+        act(next + 50, "submit", &[2, 1]),
+    ]);
+    let end = next + ONE_PORTION + 500;
+    actions.push(expect(end, json!({"online": true})));
+
+    let report = checked(&scenario(actions, end, "single"));
+    let status = last_status(&report);
+    let id = status["id"].as_u64().unwrap();
+    assert!(
+        status["state"] == 6 && status["outcome"] == 1 && status["durable"] == true,
+        "{name}: {status}"
+    );
+    assert!(
+        (1..=2).contains(&id) && status["high_water_id"] == id,
+        "{name}: {status}"
+    );
+    assert_eq!(status["completed"], 1, "{name}");
+
+    // The last boot never faulted, and a resolved ID never drove again.
+    let last = events(&report, "power_cut").count() as u64 + 1;
+    let after: Vec<&Value> = statuses(&report).filter(|e| e["boot"] == last).collect();
+    assert!(after.iter().all(|e| e["fault"] == 0), "{name}");
+    if after.iter().any(|e| e["outcome"] == 5) {
+        assert_eq!(id, 2, "{name}: an uncertain feed's ID is skipped");
+    }
+}
+
+/// Liveness: store writes through a feed (the settings writer's stores, the
+/// event ring, the update stage) never break it: a write that comes during
+/// the feed waits for the outputs' release, and a feed that finds a write
+/// queued or running waits for it, then completes; every write lands.
+#[test]
+fn a_feed_completes_under_background_flash_writes() {
+    for (writes, every, start) in [
+        // Writes before, during and after a feed.
+        (10, 1500, 0),
+        // A burst queued just before the feed.
+        (5, 0, SUBMIT - 1),
+        // One the feed finds holding the flash.
+        (1, 0, SUBMIT - 10),
+        // Writes through the emitters' settling and the drive's start.
+        (10, 25, SUBMIT + 1),
+    ] {
+        let mut actions = vec![
+            act(start, "write", &[writes, every]),
+            act(SUBMIT, "submit", &[1, 3]),
+            expect(SUBMIT, json!({"submission": "enqueued"})),
+        ];
+        actions.sort_by_key(|action| action["at_ms"].as_u64());
+        let report = passing(
+            [
+                actions,
+                vec![expect(
+                    50_000,
+                    json!({"state": "terminal", "outcome": "done", "completed": 3,
+                           "durable": true, "writes_done": writes, "writes_waiting": 0}),
+                )],
+            ]
+            .concat(),
+            50_000,
+            "single",
+        );
+
+        let leases = events(&report, "lease")
+            .filter(|e| e["active"] == true)
+            .count() as u64;
+        assert_eq!(leases, writes);
+    }
+}
+
 #[test]
 fn invalid_scenarios_rejected_before_worker_launch() {
-    let base = scenario(vec![expect(1, json!({"online": true}))], 80, "single", 10);
+    let base = scenario(vec![expect(1, json!({"online": true}))], 80, "single");
     let mut bad = Vec::new();
 
     // Each top-level field invalid.
     for (key, value) in [
-        ("version", json!(2)),
-        ("end_ms", json!(10001)),
+        ("version", json!(1)),
+        ("end_ms", json!(600_001)),
         ("profile", json!("stock")),
-        ("feedback_period_ms", json!(true)),
+        ("plant", json!(true)),
+        ("plant", json!({"low_ms": 3, "low_jitter_ms": 0})),
+        ("plant", json!({"teeth": 3})),
+        ("feedback_period_ms", json!(10)),
         ("actions", json!([])),
     ] {
         let mut item = base.clone();
@@ -411,6 +819,11 @@ fn invalid_scenarios_rejected_before_worker_launch() {
         expect(1, json!({"state": "made_up"})),
         expect(1, json!({})),
         act(1, "tick", &[]),
+        act(1, "run", &[10]),
+        json!({"at_ms": 1, "op": "plant", "args": [{}, 0]}),
+        act(1, "auto", &[10]),
+        act(1, "cut", &[3, 0]),
+        act(1, "write", &[0, 10]),
         act(1, "status", &[1]),
         json!({"at_ms": 1, "op": "expect", "values": {"online": true}, "args": []}),
         json!({"at_ms": 1, "op": "status", "args": [], "values": {"online": true}}),
@@ -426,7 +839,6 @@ fn invalid_scenarios_rejected_before_worker_launch() {
         vec![act(2, "status", &[]), expect(1, json!({"online": true}))],
         80,
         "single",
-        10,
     ));
 
     for item in bad {
@@ -457,7 +869,6 @@ fn invalid_worker_commands_and_unexpected_exit() {
         ],
         80,
         "single",
-        10,
     );
 
     assert!(run(&unpowered).is_err());
@@ -487,7 +898,7 @@ fn cli_exit_codes_report_creation_and_no_overwrite() {
 
     std::fs::write(
         &data,
-        scenario(vec![expect(1, json!({"online": true}))], 2, "single", 10).to_string(),
+        scenario(vec![expect(1, json!({"online": true}))], 2, "single").to_string(),
     )
     .unwrap();
     assert_eq!(cli(&report), Some(0));
@@ -499,7 +910,7 @@ fn cli_exit_codes_report_creation_and_no_overwrite() {
 
     std::fs::write(
         &data,
-        scenario(vec![expect(1, json!({"completed": 1}))], 2, "single", 10).to_string(),
+        scenario(vec![expect(1, json!({"completed": 1}))], 2, "single").to_string(),
     )
     .unwrap();
     assert_eq!(cli(&scratch.path().join("failure.json")), Some(1));

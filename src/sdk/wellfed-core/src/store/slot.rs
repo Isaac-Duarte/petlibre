@@ -46,10 +46,11 @@
 //!   `Erased`); anything else is corrupt, and a newer format version
 //!   read-only, until an explicit reset.
 //! - **The feed journal** may never forget a reservation. Two valid records
-//!   must be consecutive; one valid record stands beside an erased unit, or,
-//!   when it is a pending reservation, beside a cut write (`Partial`,
-//!   `Unmarked` or `Torn`), which resolves it again. Anything else,
-//!   including a newer format version, is corrupt.
+//!   must be consecutive; one valid record stands beside an erased unit, or
+//!   beside a cut write (`Partial`, `Unmarked` or `Torn`): a pending
+//!   reservation is resolved again, and beside a record at rest the cut
+//!   write is the next reservation, resolved as uncertain under the next
+//!   ID. Anything else, including a newer format version, is corrupt.
 //!
 //! The journal and settings read the whole unit ([`Extent::Unit`]): written
 //! bytes after the record make the unit invalid, so unrelated data is never

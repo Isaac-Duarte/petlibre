@@ -2517,6 +2517,7 @@ dependencies = [
  "wellfed-proto",
  "wellfed-sdk",
  "wellfed-session",
+ "wellfed-sim",
 ]
 
 [[package]]

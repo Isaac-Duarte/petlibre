@@ -79,7 +79,7 @@ Each feed logs, in order: `PLOWN1 feed id= portions= submit=0`, the state change
 `PLOWN1 fed id= requested= completed= outcome= reason= durable= drive_ms= rising= falling= first_edge_ms= current_max= current_mean= samples=`,
 which counts every PA18 edge while capture was on, qualified or not. Outcomes: 1 done, 2 cancelled, 3 expired, 4 failed, 5 uncertain (an interrupted feed, resolved at the next boot); reasons are `FeedReason` codes (0 none, 6 no feedback, 5 timeout, 10 overcurrent, 9 outlet, 12 output).
 
-**A power cut or reset mid-feed** leaves the journal's reservation pending. The next boot resolves it: the owner writes an uncertain result for it to the journal (outcome 5, `completed=0`, the same id), sits Terminal until the loop has logged `PLOWN1 fed id=N … outcome=5 … durable=1` and recorded a `Fed` event with outcome `Uncertain` (by the feeder), then goes Idle. The feed is never retried and its id is never used again; the next feed takes the id after it. A power cut during the resolution's own journal write leaves the reservation pending, so the boot after resolves it, once. A cut while the reservation itself is being written (a few milliseconds before the motor may start) can still leave an ambiguous record, which faults the owner closed (`fault=2`, recovery), as does a journal that does not decode.
+**A power cut or reset mid-feed** leaves the journal's reservation pending. The next boot resolves it: the owner writes an uncertain result for it to the journal (outcome 5, `completed=0`, the same id), sits Terminal until the loop has logged `PLOWN1 fed id=N … outcome=5 … durable=1` and recorded a `Fed` event with outcome `Uncertain` (by the feeder), then goes Idle. The feed is never retried and its id is never used again; the next feed takes the id after it. A power cut during the resolution's own journal write leaves the reservation pending, so the boot after resolves it, once. A cut while the reservation itself is being written (a few milliseconds before the motor may start) leaves a cut record beside the one at rest; the journal can only have been writing the next reservation there, so the next boot resolves it the same way, as uncertain under the next id, which is never used again. A journal that does not decode still faults the owner closed (`fault=2`, recovery).
 
 ### Procedure (owner present)
 
@@ -142,6 +142,8 @@ PLOWN1 edges id=9 at=7840L,9037H,16970L,18156H,26047L,27221H
 ```
 
   9.1 s a portion, the stop 20 ms after the third rise, and the owner's tape mark on the rotor back at its start: three marks a turn.
+
+These marks, the start-up surge and the driving current are the virtual feeder's plant (`wellfed_sim::plant`), which runs the owner under these limits ([development guide](../development/README.md#work-on-a-component)).
 
 Left for FW16: cancellation during motion, the motor lease under a stalled loop during a feed, and a failed stop.
 

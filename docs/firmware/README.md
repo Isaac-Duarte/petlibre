@@ -24,7 +24,7 @@ Stock 1.1.15 can install the replacement over its own updater, with no UART writ
 | `wellfed-amebad-sys` | Bindgen-backed KM4 calls into the pinned AmebaD SDK, and the deterministic host fake SDK used by tests and the simulator |
 | `wellfed-board-plaf103` | The PLAF103 board: every pin and ADC channel the ports use, the storage region and its sector map |
 | `wellfed-sdk-c` | The KM0 archive, and the panic handler every firmware archive links |
-| `wellfed-testkit`, `wellfed-sim` | Fake NOR journal storage and deterministic host worker |
+| `wellfed-testkit`, `wellfed-sim` | Fake NOR journal storage, and the virtual feeder: the owner under the PLAF103's feeding limits against the mechanism the bench measured ([development guide](../development/README.md#work-on-a-component)) |
 
 Minimal C hooks call the Rust entrypoint. The SDK still supplies startup, FreeRTOS, radio code, linker scripts, and image packaging. KM0 and KM4 are built separately. Header-derived bindings are generated for SDK-backed KM4 builds; host tests use fake bindings.
 

@@ -15,7 +15,8 @@ use crate::{HarnessError, Result};
 
 /// How long the worker may take to answer one command.
 pub(crate) const RESPONSE: Duration = Duration::from_secs(5);
-const MAX_RESPONSE_BYTES: usize = 65536;
+/// Bounds on one response: a `run` of `RUN_MAX_MS` reports every change.
+const MAX_RESPONSE_BYTES: usize = 1 << 20;
 const MAX_EVENTS: usize = 10000;
 
 /// One worker process: a bounded request/response transport, with stderr

@@ -44,6 +44,7 @@ wellfed-formats = { path = "src/tools/wellfed-formats" }
 wellfed-stock = { path = "src/tools/wellfed-stock" }
 wellfed-emu = { path = "src/tools/wellfed-emu" }
 wellfed-testkit = { path = "src/sdk/wellfed-testkit" }
+wellfed-sim = { path = "src/sdk/wellfed-sim" }
 # Host tools.
 anyhow = "1.0.104"
 axum = "0.8.9"

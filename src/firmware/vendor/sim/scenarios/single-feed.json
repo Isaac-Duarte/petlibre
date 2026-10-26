@@ -1,12 +1,11 @@
 {
-  "version": 1,
+  "version": 2,
   "name": "single-feed",
   "profile": "single",
-  "feedback_period_ms": 10,
-  "end_ms": 35,
+  "end_ms": 10100,
   "actions": [
     {
-      "at_ms": 1,
+      "at_ms": 100,
       "op": "submit",
       "args": [
         1,
@@ -14,7 +13,7 @@
       ]
     },
     {
-      "at_ms": 30,
+      "at_ms": 10000,
       "op": "expect",
       "values": {
         "state": "terminal",

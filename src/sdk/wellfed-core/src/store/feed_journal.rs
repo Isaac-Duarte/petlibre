@@ -17,6 +17,12 @@
 //! later fails its checksum beside its own reservation reads as that
 //! reservation, so the next boot resolves the feed again (an uncertain
 //! result after its first), never as a new feed.
+//!
+//! A cut write beside a record at rest can only be the next reservation,
+//! cut short or since decayed. It is resolved the same way, as uncertain
+//! under the ID after the high water, so a power cut anywhere in a
+//! reservation's write never faults the journal and never lets its ID be
+//! reused: the reservation is written first, then its result.
 
 use core::ffi::c_uint;
 
@@ -95,6 +101,10 @@ pub struct FeedJournal<I> {
     pub slot: c_uint,
     pub opened: bool,
     pub reserved_here: bool,
+    /// The pending reservation in `view` is not on flash: `open` found a
+    /// cut write beside a record at rest ([`Self::cut_reservation`]), and
+    /// `resolve` writes the reservation before its result.
+    unwritten: bool,
 }
 
 impl<I> Default for FeedJournal<I> {
@@ -107,6 +117,7 @@ impl<I> Default for FeedJournal<I> {
             slot: 0,
             opened: false,
             reserved_here: false,
+            unwritten: false,
         }
     }
 }
@@ -353,18 +364,31 @@ impl<I: SlotIo> FeedJournal<I> {
                 (slot, newer)
             }
             (Found::Valid(view), other) | (other, Found::Valid(view)) => {
-                // Falling back to idle could forget a newer, ambiguous
-                // reservation. Beside a pending one, the other unit holds an
-                // older record or that reservation's own result, which a cut
-                // erase or program leaves partial, unmarked or torn: the
-                // reservation stands, to be finished or resolved again. A
-                // record that checks but does not decode is never a cut's,
-                // and faults whatever it sits beside.
+                // Beside a pending reservation, the other unit holds an older
+                // record or that reservation's own result, which a cut erase
+                // or program leaves partial, unmarked or torn: the
+                // reservation stands, to be finished or resolved again.
+                // Beside a record at rest, it is the next reservation, cut
+                // or decayed: see `unwritten`. A record that checks but does
+                // not decode is never a cut's, and faults whatever it sits
+                // beside.
                 let cut = matches!(other, Found::Partial | Found::Unmarked | Found::Torn);
-                if other == Found::Invalid || (cut && !view.recovery.pending_request) {
+                if other == Found::Invalid {
                     return self.fail(JournalError::Corrupt);
                 }
-                (c_uint::from(!a.is_valid()), view)
+                let slot = c_uint::from(!a.is_valid());
+                if cut && !view.recovery.pending_request {
+                    let Some(intent) = self.cut_reservation(&view) else {
+                        return self.fail(JournalError::Corrupt);
+                    };
+                    self.slot = slot;
+                    self.view = intent;
+                    self.unwritten = true;
+                    self.opened = true;
+                    self.error = JournalError::Ok;
+                    return self.error;
+                }
+                (slot, view)
             }
             _ => return self.fail(JournalError::Corrupt),
         };
@@ -374,6 +398,41 @@ impl<I: SlotIo> FeedJournal<I> {
         self.opened = true;
         self.error = JournalError::Ok;
         self.error
+    }
+
+    /// The reservation a cut write beside `rest`, a record at rest, stands
+    /// for. The unit after a record at rest is written next only by a
+    /// reservation, so the cut write is that reservation cut short, or
+    /// committed and since decayed: the feed may have been handed out (the
+    /// device API answers with its ID before the reservation lands) or may
+    /// have moved. Either way it resolves as uncertain, under the ID after
+    /// the high water, which is the one the loop always reserves next, so
+    /// the ID is never reused and the feed never retried. The request's
+    /// size is lost with the record; it stands as the most a feed may ask.
+    ///
+    /// `None` where no reservation can follow `rest` (a double bowl whose
+    /// phase is unknown, a worn or exhausted journal): the cut write is
+    /// then not this journal's, and the journal is corrupt.
+    fn cut_reservation(&self, rest: &JournalView) -> Option<JournalView> {
+        let phase = self.config.mode != BowlMode::Double || rest.recovery.phase_known;
+        if !phase || rest.sequence >= WEAR_LIMIT {
+            return None;
+        }
+        let id = rest.recovery.high_water_id.checked_add(1)?;
+        Some(JournalView {
+            sequence: rest.sequence + 1,
+            recovery: OwnerRecovery {
+                high_water_id: id,
+                pending_request: true,
+                ..rest.recovery
+            },
+            result: OwnerResult {
+                id,
+                requested: self.config.max_portions,
+                ..OwnerResult::default()
+            },
+            has_result: false,
+        })
     }
 
     /// Write `next` to unit `slot` by the torn-write rule, which every
@@ -521,6 +580,16 @@ impl<I: SlotIo> FeedJournal<I> {
     pub fn resolve(&mut self) -> Option<OwnerResult> {
         if !self.opened || self.reserved_here || !self.view.recovery.pending_request {
             return None;
+        }
+        // A cut reservation is written over its cut unit first, so the
+        // result can replace the record at rest: a cut of either write
+        // reads as this same reservation again.
+        if self.unwritten {
+            let intent = self.view;
+            if !self.write_record(1 - self.slot, &intent, Prepare::Erase) {
+                return None;
+            }
+            self.unwritten = false;
         }
 
         let mut next = JournalView {

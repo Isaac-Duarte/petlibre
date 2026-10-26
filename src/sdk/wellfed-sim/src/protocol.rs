@@ -12,6 +12,8 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::plant::PlantConfig;
+
 /// An owner status code: its index on the wire, its name in scenarios.
 pub trait Code: Copy + 'static {
     /// Every code, in index order.
@@ -92,7 +94,10 @@ codes!(Reason {
 });
 
 codes!(
-    /// The owner's answer to a `submit`, carried in the status `response`.
+    /// The owner's answer to a `submit`, carried in the status `response`;
+    /// `RejectHeld` is the loop's own, when its claim on the outputs was
+    /// refused (a store write still ran past the claim's wait) and the owner
+    /// never saw the feed.
     Submission {
         Enqueued,
         RejectBusy,
@@ -100,6 +105,7 @@ codes!(
         RejectRequest,
         RejectPhase,
         RejectStopped,
+        RejectHeld,
     }
 );
 
@@ -230,8 +236,57 @@ impl From<Flag> for u8 {
     }
 }
 
-/// Feedback edge period of the synthetic plant, in ms; 0 turns it off.
-pub type Period = Bounded<0, 100_000>;
+/// The most milliseconds one `run` steps: its events stay inside the
+/// transport's bounds.
+pub const RUN_MAX_MS: u32 = 1000;
+
+/// The storage phase a `cut` targets: reserve, finish or resolve (recover
+/// writes nothing).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "u32", into = "u32")]
+pub struct CutPhase(pub StoragePhase);
+
+impl TryFrom<u32> for CutPhase {
+    type Error = String;
+
+    fn try_from(value: u32) -> Result<Self, String> {
+        match StoragePhase::from_index(value.into()) {
+            Some(
+                phase @ (StoragePhase::Reserve | StoragePhase::Finish | StoragePhase::Resolve),
+            ) => Ok(Self(phase)),
+            _ => Err(format!("{value} is not a phase that writes")),
+        }
+    }
+}
+
+impl From<CutPhase> for u32 {
+    fn from(value: CutPhase) -> Self {
+        u32::try_from(value.0.index()).unwrap_or(u32::MAX)
+    }
+}
+
+/// A plant's parameters, refused unless its transitions come in order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "PlantConfig", into = "PlantConfig")]
+pub struct Plant(pub PlantConfig);
+
+impl TryFrom<PlantConfig> for Plant {
+    type Error = &'static str;
+
+    fn try_from(config: PlantConfig) -> Result<Self, &'static str> {
+        if config.valid() {
+            Ok(Self(config))
+        } else {
+            Err("the plant's transitions overlap")
+        }
+    }
+}
+
+impl From<Plant> for PlantConfig {
+    fn from(value: Plant) -> Self {
+        value.0
+    }
+}
 
 /// One worker command, `{"op": .., "args": [..]}`. Scenario actions use the
 /// same shape, so commands without arguments still accept an empty `args`.
@@ -249,33 +304,53 @@ pub enum Command {
         args: [u64; 1],
     },
 
-    /// Advance the device clock by one millisecond.
+    /// Advance the device clock by one millisecond, and what moves with
+    /// it: the timer, the rotor, the background writer, the watchdog feeder.
     Tick {
         #[serde(default)]
         args: [u64; 0],
     },
-    /// Step the synthetic plant and run the owner task once.
+    /// The loop's turn: the owner's step when it is due, then the outputs'
+    /// release once it rests.
     Poll {
         #[serde(default)]
         args: [u64; 0],
     },
+    /// This many ticks, each followed by a poll; stops early after a tick
+    /// that requests a watchdog reset.
+    Run {
+        args: [Bounded<1, RUN_MAX_MS>; 1],
+    },
 
     /// Cut power after this many flash mutations in storage phase 1
-    /// (reserve) or 2 (finish).
+    /// (reserve), 2 (finish) or 4 (resolve).
     Cut {
-        args: (Bounded<1, 2>, Bounded<0, 100_000>),
+        args: (CutPhase, Bounded<0, 100_000>),
     },
     PowerCut {
         #[serde(default)]
         args: [u64; 0],
     },
 
-    Auto {
-        args: [Period; 1],
+    /// The rotor and its feedback, at a position in ms of drive.
+    Plant {
+        args: (Plant, i64),
     },
+    /// The rotor stops turning (or turns again) while the motor drives: no
+    /// mark passes, and the current does not show it.
+    Jam {
+        args: [Flag; 1],
+    },
+    /// Drive PA18 to this level, interrupting as an edge does.
     Edge {
         args: [Flag; 1],
     },
+    /// Queue this many store writes for the background writer, one every
+    /// so many ms, the first at once.
+    Write {
+        args: (Bounded<1, 100>, Bounded<0, 600_000>),
+    },
+    /// Whether the loop steps the owner.
     Owner {
         args: [Flag; 1],
     },
@@ -285,6 +360,8 @@ pub enum Command {
     AdcStuck {
         args: [Flag; 1],
     },
+    /// Hold the current channel at this reading, as a jam would, in place
+    /// of the plant's.
     Current {
         args: [Adc; 1],
     },
@@ -345,6 +422,26 @@ pub struct Status {
     pub motor: u32,
     pub optics: u32,
     pub watchdog_resets: u32,
+    /// The rotor's position, in ms of drive (back on `Drive1`).
+    pub rotor_ms: i64,
+    /// Store writes the background writer finished, and those still queued
+    /// or not yet due.
+    pub writes_done: u32,
+    pub writes_waiting: u32,
+}
+
+impl Status {
+    /// The same status, but for the clock and what moves with every
+    /// millisecond of drive: what a `run` reports a change of.
+    pub fn same_as(&self, other: &Self) -> bool {
+        let still = |s: &Self| Self {
+            device_ms: 0,
+            response: 0,
+            rotor_ms: 0,
+            ..*s
+        };
+        still(self) == still(other)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -368,6 +465,9 @@ pub enum IoStage {
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum Event {
     Status(Status),
+    /// The status changed during a command that steps time (`run`, or a
+    /// claim waiting for a write).
+    Changed(Status),
     Outputs {
         device_ms: u64,
         motor: u32,
@@ -385,15 +485,24 @@ pub enum Event {
         mutations: u32,
         ok: bool,
     },
+    /// PA18 changed: by the plant, or an `edge` command.
     Feedback {
         device_ms: u64,
         high: bool,
+        /// Whether its interrupt came.
+        captured: bool,
+    },
+    /// A background store write's flash lease began or ended.
+    Lease {
+        device_ms: u64,
+        active: bool,
     },
     PowerCut {
         device_ms: u64,
         #[serde(with = "index")]
         phase: StoragePhase,
         mutations: u32,
+        rotor_ms: i64,
     },
     JournalIo {
         device_ms: u64,
@@ -404,6 +513,22 @@ pub enum Event {
         bytes: usize,
         ok: bool,
     },
+}
+
+impl Event {
+    /// The worker's clock when it happened.
+    pub fn device_ms(&self) -> u64 {
+        match *self {
+            Self::Status(status) | Self::Changed(status) => status.device_ms,
+            Self::Outputs { device_ms, .. }
+            | Self::StorageBegin { device_ms, .. }
+            | Self::StorageEnd { device_ms, .. }
+            | Self::Feedback { device_ms, .. }
+            | Self::Lease { device_ms, .. }
+            | Self::PowerCut { device_ms, .. }
+            | Self::JournalIo { device_ms, .. } => device_ms,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -433,17 +558,40 @@ mod tests {
             parse(r#"{"op":"status"}"#).unwrap(),
             Command::Status { args: [] }
         );
+        assert_eq!(
+            parse(r#"{"op":"plant","args":[{"seed":3},9074]}"#).unwrap(),
+            Command::Plant {
+                args: (
+                    Plant(PlantConfig {
+                        seed: 3,
+                        ..PlantConfig::default()
+                    }),
+                    9074
+                )
+            }
+        );
+        assert_eq!(
+            parse(r#"{"op":"cut","args":[4,0]}"#).unwrap(),
+            Command::Cut {
+                args: (CutPhase(StoragePhase::Resolve), Bounded(0))
+            }
+        );
 
         for bad in [
             r#"{"op":"current","args":[4096]}"#,
             r#"{"op":"cut","args":[3,0]}"#,
+            r#"{"op":"cut","args":[5,0]}"#,
+            r#"{"op":"run","args":[0]}"#,
+            r#"{"op":"run","args":[1001]}"#,
+            r#"{"op":"plant","args":[{"low_ms":3,"low_jitter_ms":0},0]}"#,
+            r#"{"op":"plant","args":[{"color":1},0]}"#,
             r#"{"op":"edge","args":[2]}"#,
             r#"{"op":"submit","args":[1,65536]}"#,
             r#"{"op":"submit","args":[1]}"#,
             r#"{"op":"status","args":[1]}"#,
-            r#"{"op":"auto","args":[true]}"#,
-            r#"{"op":"auto","args":[1.0]}"#,
-            r#"{"op":"auto"}"#,
+            r#"{"op":"run","args":[true]}"#,
+            r#"{"op":"run","args":[1.0]}"#,
+            r#"{"op":"run"}"#,
             r#"{"op":"stop","values":{}}"#,
             r#"{"op":"shell","args":[]}"#,
         ] {

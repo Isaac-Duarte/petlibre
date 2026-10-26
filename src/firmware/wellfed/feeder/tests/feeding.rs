@@ -11,6 +11,18 @@ fn the_owner_accepts_the_configuration() {
     assert!(CONFIG.lease_fits(&FLASH_LIMITS));
 }
 
+/// The virtual feeder runs its owner under these limits against the
+/// measured mechanism; it cannot link this crate, so it keeps a copy.
+#[test]
+fn the_virtual_feeder_runs_these_limits() {
+    use wellfed_fw_feeder::feeding::FEED_BOUND_MS;
+    use wellfed_sim::plaf103;
+
+    assert_eq!(format!("{:?}", plaf103::OWNER), format!("{CONFIG:?}"));
+    assert_eq!(plaf103::MAX_PORTIONS, MAX_PORTIONS);
+    assert_eq!(plaf103::FEED_BOUND_MS, FEED_BOUND_MS);
+}
+
 #[test]
 fn the_journal_matches_the_owner() {
     assert_eq!(JOURNAL.mode, CONFIG.bowl_mode);

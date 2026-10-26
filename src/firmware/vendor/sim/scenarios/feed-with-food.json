@@ -1,0 +1,30 @@
+{
+  "version": 2,
+  "name": "feed-with-food",
+  "profile": "single",
+  "plant": {
+    "period_ms": 9820,
+    "low_ms": 1380
+  },
+  "end_ms": 33100,
+  "actions": [
+    {
+      "at_ms": 100,
+      "op": "submit",
+      "args": [
+        1,
+        3
+      ]
+    },
+    {
+      "at_ms": 33000,
+      "op": "expect",
+      "values": {
+        "state": "terminal",
+        "outcome": "done",
+        "completed": 3,
+        "durable": true
+      }
+    }
+  ]
+}

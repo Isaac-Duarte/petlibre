@@ -2,30 +2,35 @@
 //! device or network access.
 //!
 //! The harness boots `virtual-feeder-worker` (the real owner on the fake SDK
-//! with a file-backed journal), steps it one millisecond at a time through a
-//! scenario's actions, and checks every event against the safety invariants:
-//! a durable reservation before any drive, no invalid motor pair, and outputs
-//! inactive whenever a result is durable. Power cuts and watchdog resets
-//! restart the worker on the same journal image.
+//! with a file-backed journal, under the PLAF103 firmware's feeding limits,
+//! against the measured mechanism in [`plant`]), steps it through a
+//! scenario's actions millisecond by millisecond, batching the milliseconds
+//! between actions into `run`s, and checks every event against the safety
+//! invariants: a durable reservation before any drive, no invalid motor
+//! pair, outputs inactive whenever a result is durable, and no flash lease
+//! while the motor drives. Power cuts and watchdog resets restart the worker
+//! on the same journal image, with the rotor where it stopped.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use wellfed_formats::canonical::sha256;
+use wellfed_formats::canonical::{canonical, sha256};
 use serde::Serialize;
 use serde_json::Value;
 
+pub mod plaf103;
+pub mod plant;
 pub mod protocol;
 mod report;
 pub mod scenario;
 mod worker;
 
 use protocol::{
-    Code, Command, Event, Fault, Journal, MOTORS, Outcome, Reason, State, Status, StoragePhase,
-    Submission,
+    Bounded, Code, Command, Event, Fault, Journal, MOTORS, Outcome, Plant, RUN_MAX_MS, Reason,
+    State, Status, StoragePhase, Submission,
 };
 pub use report::Report;
-use report::{Assertion, Entry, Enums, Limits, Logged, Note, identities, python_dumps};
+use report::{Assertion, Entry, Enums, Limits, Logged, Note, identities};
 use scenario::{Action, Expectation, Scenario};
 use worker::RESPONSE;
 pub use worker::Worker;
@@ -38,6 +43,8 @@ const POWER_CUT_EXIT: i32 = 75;
 pub enum HarnessError {
     #[error("Invalid scenario: {0}")]
     Scenario(serde_json::Error),
+    #[error("Scenario cannot be hashed: {0}")]
+    Hash(wellfed_formats::Error),
     #[error("{0}")]
     Invalid(&'static str),
     #[error("{0}")]
@@ -82,8 +89,13 @@ pub struct Simulation<'a> {
     image: PathBuf,
     worker: Option<Worker>,
 
+    /// The harness's clock: the scenario's milliseconds.
     now: u64,
     boots: u64,
+    /// The harness's clock when this boot's worker started at its 0.
+    base_ms: u64,
+    /// The rotor's position, which outlives every worker.
+    rotor_ms: i64,
 
     latest: Status,
     last_submission: Option<Submission>,
@@ -96,9 +108,13 @@ pub struct Simulation<'a> {
     // `stopped`: this boot has requested STOP. Startup clears the motor latches
     // while the pins are still inputs, so LOW/LOW before the first STOP is the
     // driver's standby, not an invalid request.
+    // `driving` and `lease`: the motor drives; a store write holds the flash.
     armed: bool,
     reserved: bool,
     stopped: bool,
+    driving: bool,
+    outputs_off: bool,
+    lease: bool,
     phase: StoragePhase,
 }
 
@@ -117,6 +133,8 @@ impl<'a> Simulation<'a> {
             worker: None,
             now: 0,
             boots: 0,
+            base_ms: 0,
+            rotor_ms: 0,
             latest: Status::default(),
             last_submission: None,
             events: Vec::new(),
@@ -124,20 +142,31 @@ impl<'a> Simulation<'a> {
             armed: false,
             reserved: false,
             stopped: false,
+            driving: false,
+            outputs_off: true,
+            lease: false,
             phase: StoragePhase::None,
         })
     }
 
-    fn record(&mut self, event: Logged) {
+    fn record(&mut self, at_ms: u64, event: Logged) {
         self.events.push(Entry {
-            at_ms: self.now,
+            at_ms,
             boot: self.boots,
             event,
         });
     }
 
     fn note(&mut self, note: Note) {
-        self.record(Logged::Harness(note));
+        self.record(self.now, Logged::Harness(note));
+    }
+
+    /// The worker's current millisecond on the harness's clock, while it
+    /// runs.
+    fn clock(&self) -> Option<u64> {
+        self.worker
+            .as_ref()
+            .map(|_| self.base_ms + self.latest.device_ms)
     }
 
     fn check(&mut self, label: impl Into<String>, passed: bool, actual: Value, expected: Value) {
@@ -158,7 +187,7 @@ impl<'a> Simulation<'a> {
         let mut reset = false;
 
         for event in events {
-            self.record(Logged::Worker(event));
+            self.record(self.base_ms + event.device_ms(), Logged::Worker(event));
             match event {
                 Event::StorageBegin { phase, .. } => {
                     self.phase = phase;
@@ -177,15 +206,25 @@ impl<'a> Simulation<'a> {
                     self.phase = StoragePhase::None;
                 }
 
-                Event::Outputs { motor, .. } => {
-                    if matches!(motor, 1 | 2) {
+                Event::Outputs { motor, optics, .. } => {
+                    self.driving = matches!(motor, 1 | 2);
+                    self.outputs_off = motor == 0 && optics == 0;
+                    if self.driving {
                         self.invariant("reservation_before_drive", self.reserved);
+                        self.invariant("no_lease_while_driving", !self.lease);
                     }
                     self.stopped |= motor == 0;
                     self.invariant("valid_motor_pair", motor != 3 || !self.stopped);
                 }
 
-                Event::Status(status) => {
+                Event::Lease { active, .. } => {
+                    self.lease = active;
+                    if active {
+                        self.invariant("no_lease_while_driving", self.outputs_off);
+                    }
+                }
+
+                Event::Status(status) | Event::Changed(status) => {
                     self.latest = status;
                     if status.durable {
                         let inactive = status.motor == 0
@@ -195,16 +234,21 @@ impl<'a> Simulation<'a> {
                             && !status.pending;
                         self.invariant("durable_result_after_inactive_outputs", inactive);
                     }
+                    self.rotor_ms = status.rotor_ms;
                     // Applied after this batch, as a reboot on the same journal.
                     reset = status.watchdog_resets > 0;
                 }
 
-                Event::PowerCut { .. } => self.power_cut()?,
+                Event::PowerCut { rotor_ms, .. } => {
+                    self.rotor_ms = rotor_ms;
+                    self.power_cut()?;
+                }
                 Event::Feedback { .. } | Event::JournalIo { .. } => {}
             }
         }
 
-        if reset && self.worker.is_some() {
+        if reset && let Some(clock) = self.clock() {
+            self.now = clock;
             self.note(Note::WatchdogResetRequested);
             self.offline();
             self.boot()?;
@@ -214,6 +258,9 @@ impl<'a> Simulation<'a> {
     }
 
     fn power_cut(&mut self) -> Result<()> {
+        if let Some(clock) = self.clock() {
+            self.now = self.now.max(clock);
+        }
         let worker = self.worker.as_mut().filter(|_| self.armed);
         let Some(worker) = worker else {
             return Err(HarnessError::Invalid("Unexpected worker power cut"));
@@ -243,6 +290,9 @@ impl<'a> Simulation<'a> {
         self.armed = false;
         self.reserved = false;
         self.stopped = false;
+        self.driving = false;
+        self.outputs_off = true;
+        self.lease = false;
         self.phase = StoragePhase::None;
     }
 
@@ -254,6 +304,8 @@ impl<'a> Simulation<'a> {
 
         self.boots += 1;
         self.last_submission = None;
+        self.base_ms = self.now;
+        self.latest = Status::default();
 
         // Only the first boot provisions; later boots recover from the journal.
         let journal = if self.boots == 1 {
@@ -268,10 +320,16 @@ impl<'a> Simulation<'a> {
         let first = worker.read();
         self.worker = Some(worker);
         self.note(Note::Boot { profile });
+        // The new worker's rotor is a default one until it is placed where
+        // the last boot left it.
+        let rotor = self.rotor_ms;
         self.consume(first?)?;
+        self.rotor_ms = rotor;
 
-        let period = self.scenario.feedback_period_ms;
-        self.send(&Command::Auto { args: [period] })
+        let plant = Plant(self.scenario.plant);
+        self.send(&Command::Plant {
+            args: (plant, rotor),
+        })
     }
 
     fn send(&mut self, command: &Command) -> Result<()> {
@@ -340,6 +398,8 @@ impl<'a> Simulation<'a> {
             supervisor_fault: status.supervisor_fault,
             watchdog_fault: status.watchdog_fault,
             watchdog_resets: status.watchdog_resets,
+            writes_done: status.writes_done,
+            writes_waiting: status.writes_waiting,
         );
 
         Ok(())
@@ -351,12 +411,11 @@ impl<'a> Simulation<'a> {
         self.offline();
         result?;
 
-        let mut scenario_text = Vec::new();
-        python_dumps(self.raw, &mut scenario_text);
+        let scenario_text = canonical(self.raw).map_err(HarnessError::Hash)?;
         let passed = self.assertions.iter().all(|a| a.passed);
 
         Ok(Report {
-            version: 1,
+            version: 2,
             name: self.scenario.name,
             profile: self.scenario.profile,
             scenario_sha256: sha256(&scenario_text),
@@ -371,7 +430,8 @@ impl<'a> Simulation<'a> {
                 motor: MOTORS,
             },
             limits: Limits {
-                synthetic_hardware_and_timing: true,
+                synthetic_hardware: true,
+                plant_from_bench_measurements: true,
                 physical_reliability_verified: false,
                 full_boot_or_rtos_emulated: false,
                 real_flash_provider: false,
@@ -383,6 +443,39 @@ impl<'a> Simulation<'a> {
         })
     }
 
+    /// Bring the worker to millisecond `at`, ticked but not yet polled, for
+    /// that millisecond's actions: every millisecond before it is ticked and
+    /// polled. A worker already past it (a feed's claim waited for a write)
+    /// stays where it is; time passes without one while the power is off.
+    fn advance(&mut self, at: u64) -> Result<()> {
+        loop {
+            let Some(clock) = self.clock() else {
+                self.now = self.now.max(at);
+                return Ok(());
+            };
+            self.now = clock;
+            if clock >= at {
+                return Ok(());
+            }
+            if clock + 1 == at {
+                self.send(&Command::TICK)?;
+                continue;
+            }
+
+            let ms = (at - clock - 1).min(u64::from(RUN_MAX_MS));
+            let ms = u32::try_from(ms).expect("at most RUN_MAX_MS");
+            let boots = self.boots;
+            self.send(&Command::Run {
+                args: [Bounded(ms)],
+            })?;
+            // A watchdog reset restarted the worker on the reset's own
+            // millisecond, which still needs its poll.
+            if self.boots != boots && self.clock().is_some_and(|clock| clock < at) {
+                self.send(&Command::POLL)?;
+            }
+        }
+    }
+
     fn steps(&mut self) -> Result<()> {
         self.boot()?;
 
@@ -390,13 +483,9 @@ impl<'a> Simulation<'a> {
         let mut next = steps.into_iter().peekable();
 
         // Each millisecond: tick, apply that millisecond's actions, then poll.
-        for now in 0..=self.scenario.end_ms {
-            self.now = now;
-            if now > 0 && self.worker.is_some() {
-                self.send(&Command::TICK)?;
-            }
-
-            while let Some(step) = next.next_if(|s| s.at_ms == now) {
+        while let Some(at) = next.peek().map(|step| step.at_ms) {
+            self.advance(at)?;
+            while let Some(step) = next.next_if(|s| s.at_ms == at) {
                 self.note(Note::Action { action: step.raw });
                 match &step.action {
                     Action::Expect { values } => self.expect(values)?,
@@ -404,12 +493,19 @@ impl<'a> Simulation<'a> {
                     Action::Command(command) => self.send(command)?,
                 }
             }
-
             if self.worker.is_some() {
                 self.send(&Command::POLL)?;
             }
         }
 
+        let end = self.scenario.end_ms;
+        if self.clock().is_some_and(|clock| clock < end) {
+            self.advance(end)?;
+            if self.worker.is_some() {
+                self.send(&Command::POLL)?;
+            }
+        }
+        self.now = self.clock().unwrap_or(self.now).max(end);
         Ok(())
     }
 }

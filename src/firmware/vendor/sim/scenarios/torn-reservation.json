@@ -1,0 +1,91 @@
+{
+  "version": 2,
+  "name": "torn-reservation",
+  "profile": "single",
+  "end_ms": 11600,
+  "actions": [
+    {
+      "at_ms": 0,
+      "op": "cut",
+      "args": [
+        1,
+        300
+      ]
+    },
+    {
+      "at_ms": 100,
+      "op": "submit",
+      "args": [
+        1,
+        1
+      ]
+    },
+    {
+      "at_ms": 1000,
+      "op": "expect",
+      "values": {
+        "online": false
+      }
+    },
+    {
+      "at_ms": 1001,
+      "op": "boot",
+      "args": []
+    },
+    {
+      "at_ms": 1002,
+      "op": "expect",
+      "values": {
+        "state": "terminal",
+        "fault": "ok",
+        "pending": false,
+        "motor": 0,
+        "outcome": "uncertain",
+        "durable": true,
+        "id": 1,
+        "high_water_id": 1
+      }
+    },
+    {
+      "at_ms": 1010,
+      "op": "ack",
+      "args": [
+        1
+      ]
+    },
+    {
+      "at_ms": 1100,
+      "op": "expect",
+      "values": {
+        "state": "idle",
+        "high_water_id": 1
+      }
+    },
+    {
+      "at_ms": 1101,
+      "op": "submit",
+      "args": [
+        2,
+        1
+      ]
+    },
+    {
+      "at_ms": 1101,
+      "op": "expect",
+      "values": {
+        "submission": "enqueued"
+      }
+    },
+    {
+      "at_ms": 11500,
+      "op": "expect",
+      "values": {
+        "state": "terminal",
+        "outcome": "done",
+        "id": 2,
+        "completed": 1,
+        "durable": true
+      }
+    }
+  ]
+}

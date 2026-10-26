@@ -1,12 +1,11 @@
 {
-  "version": 1,
+  "version": 2,
   "name": "watchdog-reset",
   "profile": "single",
-  "feedback_period_ms": 10,
-  "end_ms": 205,
+  "end_ms": 10200,
   "actions": [
     {
-      "at_ms": 1,
+      "at_ms": 100,
       "op": "submit",
       "args": [
         1,
@@ -14,22 +13,21 @@
       ]
     },
     {
-      "at_ms": 8,
+      "at_ms": 3000,
       "op": "owner",
       "args": [
         0
       ]
     },
     {
-      "at_ms": 25,
+      "at_ms": 3300,
       "op": "expect",
       "values": {
-        "motor": 0,
-        "optics": 0
+        "motor": 0
       }
     },
     {
-      "at_ms": 150,
+      "at_ms": 6000,
       "op": "expect",
       "values": {
         "boots": 1,
@@ -37,13 +35,14 @@
       }
     },
     {
-      "at_ms": 200,
+      "at_ms": 10000,
       "op": "expect",
       "values": {
         "boots": 2,
         "state": "terminal",
         "fault": "ok",
         "pending": false,
+        "motor": 0,
         "outcome": "uncertain",
         "durable": true,
         "id": 1,
@@ -51,14 +50,14 @@
       }
     },
     {
-      "at_ms": 201,
+      "at_ms": 10010,
       "op": "ack",
       "args": [
         1
       ]
     },
     {
-      "at_ms": 202,
+      "at_ms": 10100,
       "op": "expect",
       "values": {
         "state": "idle",
@@ -66,7 +65,7 @@
       }
     },
     {
-      "at_ms": 203,
+      "at_ms": 10101,
       "op": "submit",
       "args": [
         1,
@@ -74,7 +73,7 @@
       ]
     },
     {
-      "at_ms": 203,
+      "at_ms": 10101,
       "op": "expect",
       "values": {
         "submission": "reject_id",

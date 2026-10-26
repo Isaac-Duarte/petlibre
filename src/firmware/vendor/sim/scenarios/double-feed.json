@@ -1,12 +1,15 @@
 {
-  "version": 1,
+  "version": 2,
   "name": "double-feed",
   "profile": "double",
-  "feedback_period_ms": 10,
-  "end_ms": 95,
+  "plant": {
+    "period_ms": 5500,
+    "low_ms": 600
+  },
+  "end_ms": 40100,
   "actions": [
     {
-      "at_ms": 1,
+      "at_ms": 100,
       "op": "submit",
       "args": [
         1,
@@ -14,7 +17,7 @@
       ]
     },
     {
-      "at_ms": 90,
+      "at_ms": 40000,
       "op": "expect",
       "values": {
         "state": "terminal",

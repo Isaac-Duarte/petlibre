@@ -84,6 +84,11 @@ const _: () = assert!(
 
 const _: () = assert!(k::WELLFED_BIT_SWD_PMUX == super::SWD_PMUX_BIT);
 
+const _: () = assert!(
+    k::WELLFED_PAD_SHUTDOWN | k::WELLFED_PAD_FUNCTION_MASK == super::PAD_GPIO_CLEAR
+        && k::WELLFED_PINMUX_GPIO == 0
+);
+
 /// LP `REG_SWD_PMUX_EN`.
 pub fn swd_pinmux() -> u32 {
     // SAFETY: a fixed register in the pinned SDK memory map.
@@ -275,6 +280,55 @@ pub unsafe fn gpio_init(pin: u32, output: bool) {
     };
     // SAFETY: the pinned SDK routine, writing only through a live local.
     unsafe { raw::GPIO_Init(&mut settings) }
+}
+
+/// Make every pin in `mask` a GPIO output in one direction-register write,
+/// so they all start driving their data latches at the same instant.
+///
+/// The ROM's `GPIO_Init` for an output does, per pin, `Pinmux_Config(pin,
+/// GPIO)` (clears the pad's shutdown bit and function field),
+/// `GPIO_INTMode(pin, DISABLE)` (clears the pin's `INT_EN` bit) and
+/// `GPIO_Direction(pin, OUT)` (sets its `DDR` bit). This does the same, but
+/// the pad and interrupt writes for every pin come first and the direction
+/// bits are set together last. The data register holds what was written
+/// while a pin is an input, so a caller that preloads the latches gets
+/// exactly those levels the moment the pins become outputs, whatever the
+/// undriven pads read before. The pad and interrupt writes cannot drive a
+/// pin that is still an input; for a pin that is already a GPIO output they
+/// write the values the register already holds.
+///
+/// # Safety
+/// The caller owns every pin it writes or reconfigures. The motor pins
+/// ([`MOTOR_MASK`](wellfed_board_plaf103::pins::MOTOR_MASK)) belong to the HAL's board and
+/// stopped-output owners, every other output to the port that drives it.
+pub unsafe fn gpio_enable_outputs(port: u32, mask: u32) {
+    assert!(port < 2);
+    let _guard = super::IrqGuard::lock();
+    let gpio = (k::WELLFED_GPIOA_BASE + port * 0x400) as usize as *mut raw::GPIO_TypeDef;
+    let mux = k::WELLFED_PINMUX_BASE as usize as *mut raw::PINMUX_TypeDef;
+
+    let mut pins = mask;
+    while pins != 0 {
+        let pin = (port << 5 | pins.trailing_zeros()) as usize;
+        pins &= pins - 1;
+        // SAFETY: the pin's pad-control register in the pinned SDK memory
+        // map (`pin` < 64); the caller owns the pin.
+        unsafe {
+            let pad = ptr::addr_of_mut!((*mux).PADCTR[pin]);
+            ptr::write_volatile(pad, ptr::read_volatile(pad) & !super::PAD_GPIO_CLEAR);
+        }
+    }
+
+    // SAFETY: the port's interrupt-enable and direction registers in the
+    // pinned SDK memory map; interrupts are masked, and the caller owns
+    // every pin in `mask`, so only those bits change.
+    unsafe {
+        let enable = ptr::addr_of_mut!((*gpio).INT_EN);
+        ptr::write_volatile(enable, ptr::read_volatile(enable) & !mask);
+        let direction = ptr::addr_of_mut!((*gpio).PORT[0].DDR);
+        ptr::write_volatile(direction, ptr::read_volatile(direction) | mask);
+    }
+    cortex_m::asm::dsb();
 }
 
 /// # Safety

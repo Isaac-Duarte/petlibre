@@ -24,6 +24,10 @@ pub const ADC_ENABLE_BIT: u32 = 1 << 8;
 /// `REG_SWD_PMUX_EN` bit 0 (reset 1): the SWD function holds PA27 and PB3
 /// (SWD_CLK). While set, GPIO writes to PB3 do not reach the pad.
 pub const SWD_PMUX_BIT: u32 = 1;
+/// The pad-control bits the ROM's `Pinmux_Config` rewrites to select GPIO:
+/// the pad shutdown bit (15) and the function field (bits 0–4, GPIO is 0).
+/// Checked against SDK constants in target builds.
+pub const PAD_GPIO_CLEAR: u32 = 1 << 15 | 0x1f;
 
 /// The architectural SysTick control and status register (CTRL).
 pub const SYSTICK_CTRL: u32 = 0xe000_e010;

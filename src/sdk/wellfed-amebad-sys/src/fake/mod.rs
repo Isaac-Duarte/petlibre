@@ -56,7 +56,12 @@ pub struct Hardware {
     /// Writes to the two LP enable registers are ignored.
     pub blocked_gpio_clock: bool,
 
+    /// The data latches (`DR`), which hold what was written whether or not
+    /// the pin is an output.
     pub output: [u32; 2],
+    /// The level each pad sits at while it is not an output: what an
+    /// external pull, the circuit behind it or a probe's bias holds it at.
+    /// The motor driver reads this on an input the MCU does not drive.
     pub input: [u32; 2],
     pub direction: [u32; 2],
 
@@ -105,8 +110,10 @@ pub struct Hardware {
     /// Milliseconds; a timed-out receive advances it by its timeout.
     pub uptime_ms: u32,
 
+    /// Run after every port write.
     pub output_hook: Option<fn()>,
-    pub gpio_init_hook: Option<fn()>,
+    /// Run after every direction change (`gpio_init`, `gpio_enable_outputs`).
+    pub direction_hook: Option<fn()>,
     pub blocked_gpio_write: [u32; 2],
     pub readback_override_mask: [u32; 2],
     pub readback_override: [u32; 2],
@@ -275,7 +282,7 @@ impl Default for Hardware {
             wifi_ring: 16,
 
             output_hook: None,
-            gpio_init_hook: None,
+            direction_hook: None,
             blocked_gpio_write: [0; 2],
             readback_override_mask: [0; 2],
             readback_override: [0; 2],

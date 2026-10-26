@@ -57,11 +57,31 @@ Logic analyzer at 2 MHz, `--probes outputs`: D2 and D3 on the legs of the motor'
 | `check-03`, `boot-50` | `feeder` v154 (`e5b5c1dd…`) | 51 boots | 98–111 ms standby, then straight to brake. No differing read after the first millisecond in any cycle |
 | `loader-50` | ROM loader | 50 entries | Standby (both HIGH) throughout |
 
-**The 105 µs pulse was a real drive at every boot (physical; cause by static analysis).** Stopped startup preloaded both latches HIGH, then enabled the two pins as outputs one `gpio_init` call at a time, so PA13 drove HIGH while PA14 still read LOW through the driver's pull-down. The motor's winding joins the two leads, so one cannot sit at 5 V while the other is at 0 V unless the driver holds it there. Startup now enables both pins LOW (standby) and writes STOP to both in one port write (`stopped::enable_motor_stopped`); a host test fails on the old order. The pulse is absent from all 51 boots since.
+**The 105 µs pulse was a real drive at every boot (physical; cause by static analysis).** Stopped startup preloaded both latches HIGH, then enabled the two pins as outputs one `gpio_init` call at a time, so PA13 drove HIGH while PA14 still read LOW through the driver's pull-down. The motor's winding joins the two leads, so one cannot sit at 5 V while the other is at 0 V unless the driver holds it there. Startup then enabled both pins LOW (standby) and wrote STOP to both in one port write; the pulse was absent from all 51 boots, but that fix still enabled one pin per call and only moved the assumption: it holds while the undriven inputs read LOW, which the next section shows they need not.
 
 **Power-on flicker (physical; not attributable to our code).** Within the first ~0.3 ms after the relay closes, the two outputs read differently for 0.5–11.5 µs in 39 of 50 boots, and for up to 110 µs in the loader, where no application code runs and the inputs read 0 V on a meter. The supply and the relay contacts are still settling then.
 
 **Limit of outputs-only captures.** Before power-on, with the board unpowered and still discharging after the previous loader cycle (2 s off), the two leads read differently for up to 39 ms. They are joined by the winding and nothing powers the driver, so this is the analyzer's two channels resolving one common level near their threshold differently. A differing read is therefore proof of drive only when the levels are firm. The power-on flicker happens during that kind of ramp, so the outputs alone cannot call it drive or noise; the inputs, which are always driven or pulled down, can.
+
+### Startup transients at the inputs (October 26)
+
+Logic analyzer at 2 MHz, `--probes driver`: D0 on INA (pin 2), D1 on INB (pin 3), D2 and D3 on the outputs. `feeder` v232 from master, 50 relay boots (`fw30-inputs-20261026-02`; cycle 001 truncated) and three loader entries (`fw30-inputs-loader-20261026-02`, aborted by an analyzer USB timeout). Every complete boot showed the same sequence (physical):
+
+| After the inputs rise | INA, INB | Lasting | What it is |
+| --- | --- | --- | --- |
+| 0 | LOW, LOW → HIGH, HIGH | INA first by 0.5–9 µs (once 30 µs, falling back once) | Power-on, undriven: the loader entries show the same rise and skew with no application code |
+| 97–105 ms | HIGH, LOW | 104.5–105.5 µs, OUTB HIGH | Drive, from stopped startup's first `gpio_init` |
+| +105 µs | LOW, LOW | 1.5–2 µs | Both pins enabled LOW, before the STOP write |
+| then | HIGH, HIGH | until the board opens | Brake |
+| 925–937 ms | LOW, LOW | 220–228 µs | Coast as the board opens, then brake again |
+
+**The undriven inputs read HIGH with the hooks on them (physical).** They read LOW before power-on and HIGH from the moment the board powers, in the loader as well, where a meter without the analyzer read 0 V. The likeliest reading is the analyzer's input bias overcoming the 150 kΩ pull-downs once the driver's supply clamps release; the outputs reading LOW (brake) in the loader suggests the driver acts on that level. The power-on skew between the two lines is not our code: nothing of ours runs then.
+
+**The 105 µs drive is the first enable, not a second one (static analysis against the capture).** Stopped startup wrote both latches LOW (no effect on inputs), then `gpio_init(PA13)` drove one input LOW against the other's undriven HIGH for the length of the ROM call, then `gpio_init(PA14)` drove the other LOW (the 1.5–2 µs LOW, LOW), then one port write made both HIGH. The ~100 ms before it is boot to application start, as in October 24's 98–111 ms. The second call of the same routine, as the board opens, takes the pins from brake through a LOW, LOW coast for two ROM calls (the 220–228 µs). It was INB that fell first, so PA13 drives INB here if the hooks are on the pins the session names; that is opposite to the stock-derived mapping and needs the hook wiring checked before it counts as the polarity check.
+
+**The fix makes the enable independent of the undriven level.** The ROM's `GPIO_Init` for an output is, per pin, `Pinmux_Config` (pad function GPIO, pad shutdown cleared), `GPIO_INTMode` disable and a `DDR` bit set (static analysis of the SDK's ROM image; it sets no pull for an output, and the pinmap sets PA13 and PA14 to no pull). `stopped::enable_motor_stopped` now writes both latches HIGH, which the data register holds while the pins are inputs (as the October 24 boot pulse showed), and then calls `gpio_enable_outputs`, which does the same pad and interrupt writes and then sets both direction bits in one register write. The driver goes from whatever its undriven inputs read straight to brake. When the pins are already outputs, as the board opens, the latch write is the only change, so there is no coast. Host tests run stopped startup and the board opening with undriven inputs LOW and HIGH and sample the driver's inputs after every register write; the previous order fails with HIGH (`motor driven: 0x4000`) and with the coast, and the new one passes both.
+
+**Bench check (open).** With the inputs probed: five loader entries (`--mode loader --off-seconds 10`) to record the undriven level and the power-on skew with no firmware running, then 50 boots of the fixed build. Pass: INA = INB at every sample after the MCU rail is up, with a single LOW-or-HIGH to HIGH, HIGH step at application start and no LOW, LOW interval when the board opens. The power-on skew, if present in the loader too, belongs to the probe and the supply ramp; measure the undriven input voltage with the meter while the analyzer is attached to settle which.
 
 ## Emitter test points
 
@@ -80,7 +100,7 @@ The food emitter's OFF state is therefore confirmed electrically: TP20 at 3.3 V,
 ## Remaining for FW30
 
 1. **Outlet emitter OFF level (PB3):** done (CON2 white wire, above). Emitter current for both emitters remains: the voltage across each emitter's series resistor with a meter, or a supply-current meter.
-2. **Transients:** the boot pulse is fixed and the outputs are clean after the first millisecond ([above](#startup-transients-at-the-motor-october-24)). Left: the power-on flicker, with all four lines probed (micro IC hooks on pins 2, 3, 8 and 5), and resets. Use `--off-seconds 10` for loader sessions so the board has discharged before each capture starts. The procedure:
+2. **Transients:** with the inputs probed, the boot pulse returned against undriven inputs that read HIGH; the enable no longer depends on that level, and the fixed build's bench check is open ([inputs](#startup-transients-at-the-inputs-october-26)). Left besides: the power-on skew in the loader, the hook wiring behind the PA13-to-INB reading, and resets. Use `--off-seconds 10` for loader sessions so the board has discharged before each capture starts. The procedure:
    1. Install `sigrok-cli` and the `fx2lafw` firmware (Arch: `sigrok-firmware-fx2lafw`); without it the clone enumerates but cannot open.
    2. Wire D0 to INA (pin 2), D1 to INB (pin 3), D2 to OUTA (pin 8), D3 to OUTB (pin 5), and analyzer GND to board GND. Check the analyzer's input rating before connecting the 5 V outputs.
    3. Run `wellfed-bench transients NAME --cycles 50` and `--mode loader`.

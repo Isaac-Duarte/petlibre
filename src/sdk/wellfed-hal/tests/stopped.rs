@@ -3,7 +3,7 @@
 //! blocked write, lost direction, stuck SWD release or later pin drift never
 //! reports stopped.
 
-use wellfed_hal::board::MOTOR_MASK;
+use wellfed_hal::board::{Board, MOTOR_MASK};
 use wellfed_hal::plaf103;
 use wellfed_hal::sdk::{self, fake};
 use wellfed_hal::stopped::{self, PA_MASK, PB_MASK};
@@ -19,34 +19,102 @@ fn check_preloaded() {
     check_never_driven();
 }
 
-/// What the driver sees on each motor input: the latch while the pin is an
-/// output, otherwise LOW through the driver's pull-down. Equal is standby or
-/// brake; unequal is drive.
+/// The levels an undriven motor input can sit at: LOW through the driver's
+/// pull-down, or HIGH, as with a logic analyzer's input bias on the line.
+const UNDRIVEN: [u32; 2] = [0, MOTOR_MASK];
+
+std::thread_local! {
+    /// Set once the driver has seen STOP (both inputs HIGH) from outputs.
+    static BRAKED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// What the driver sees on its two inputs: the latch while a pin is an
+/// output, otherwise the pad's undriven level.
+fn driver_inputs(h: &fake::Hardware) -> u32 {
+    ((h.output[0] & h.direction[0]) | (h.input[0] & !h.direction[0])) & MOTOR_MASK
+}
+
+/// One sample of the driver's inputs after a register write. Equal is
+/// standby, coast or brake; unequal is drive. Once both pins drive STOP,
+/// no later write may leave it: the board opening from STOP would
+/// otherwise coast the motor through LOW, LOW.
 fn check_never_driven() {
     fake::with(|h| {
-        let seen = h.output[0] & h.direction[0] & MOTOR_MASK;
+        let seen = driver_inputs(h);
         assert!(seen == 0 || seen == MOTOR_MASK, "motor driven: {seen:#x}");
+
+        let stopped = h.direction[0] & MOTOR_MASK == MOTOR_MASK && seen == MOTOR_MASK;
+        assert!(stopped || !BRAKED.get(), "left STOP: {seen:#x}");
+        BRAKED.set(stopped);
+    });
+}
+
+fn sample_every_write(undriven: u32) {
+    BRAKED.set(false);
+    fake::with(|h| {
+        h.input[0] = (h.input[0] & !MOTOR_MASK) | undriven;
+        h.direction_hook = Some(check_never_driven);
+        h.output_hook = Some(check_never_driven);
     });
 }
 
 #[test]
-fn startup_reaches_stop_through_standby_only() {
-    for (latch, direction) in [
-        (0, 0),
-        (MOTOR_MASK, 0),
-        (MOTOR_MASK, MOTOR_MASK),
-        (0, MOTOR_MASK),
-    ] {
-        fake::reset_hardware();
-        fake::with(|h| {
-            h.output[0] = latch;
-            h.direction[0] = direction;
-            h.gpio_init_hook = Some(check_never_driven);
-            h.output_hook = Some(check_never_driven);
-        });
+fn startup_reaches_stop_without_drive() {
+    for undriven in UNDRIVEN {
+        for (latch, direction) in [
+            (0, 0),
+            (MOTOR_MASK, 0),
+            (MOTOR_MASK, MOTOR_MASK),
+            (0, MOTOR_MASK),
+        ] {
+            fake::reset_hardware();
+            fake::with(|h| {
+                h.output[0] = latch;
+                h.direction[0] = direction;
+            });
+            sample_every_write(undriven);
 
-        assert!(stopped::initialize().verified());
+            assert!(stopped::initialize().verified());
+            assert!(BRAKED.get());
+        }
     }
+}
+
+#[test]
+fn board_open_holds_stop_whatever_undriven_inputs_read() {
+    for undriven in UNDRIVEN {
+        // From reset, and from the STOP stopped startup leaves.
+        for after_startup in [false, true] {
+            fake::reset_hardware();
+            sample_every_write(undriven);
+            if after_startup {
+                assert!(stopped::initialize().verified());
+            }
+
+            let board = Box::<Board>::default();
+            assert!(board.open_outputs(3, 10, 0));
+            assert!(BRAKED.get());
+            board.close();
+        }
+    }
+}
+
+#[test]
+fn motor_enable_selects_gpio_on_the_pad() {
+    fake::reset_hardware();
+    fake::with(|h| {
+        for pin in [plaf103::pins::MOTOR_A, plaf103::pins::MOTOR_B] {
+            h.pad_control[pin as usize] = 0x8000 | 0x0207;
+        }
+    });
+
+    assert!(stopped::initialize().verified());
+
+    fake::with(|h| {
+        for pin in [plaf103::pins::MOTOR_A, plaf103::pins::MOTOR_B] {
+            assert_eq!(h.pad_control[pin as usize], 0x0200);
+        }
+    });
 }
 
 #[test]
@@ -83,7 +151,7 @@ fn latches_precede_every_output_enable_and_other_pins_are_preserved() {
     fake::with(|h| {
         h.output = [!MOTOR_MASK, u32::MAX];
         h.direction = [1 << 2, 1 << 22];
-        h.gpio_init_hook = Some(check_preloaded);
+        h.direction_hook = Some(check_preloaded);
     });
 
     let result = stopped::initialize();

@@ -52,7 +52,7 @@ fn preloads_before_enabling_indicators_and_preserves_other_pins() {
     fake::with(|h| {
         h.output[0] |= leds::PA_MASK | (1 << 9);
         h.output[1] |= leds::PB_MASK | (1 << 10);
-        h.gpio_init_hook = Some(|| {
+        h.direction_hook = Some(|| {
             fake::with(|h| {
                 assert_eq!(h.output[0] & leds::PA_MASK, 0);
                 assert_eq!(h.output[1] & leds::PB_MASK, 0);

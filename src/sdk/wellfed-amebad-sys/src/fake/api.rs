@@ -334,7 +334,28 @@ pub unsafe fn gpio_init(pin: u32, output: bool) {
         } else {
             h.direction[port] &= !mask;
         }
-        h.gpio_init_hook
+        h.direction_hook
+    });
+    if let Some(hook) = hook {
+        hook();
+    }
+}
+
+/// # Safety
+/// The caller owns every pin it writes or reconfigures. The motor pins
+/// ([`MOTOR_MASK`](wellfed_board_plaf103::pins::MOTOR_MASK)) belong to the HAL's board and
+/// stopped-output owners, every other output to the port that drives it.
+pub unsafe fn gpio_enable_outputs(port: u32, mask: u32) {
+    let hook = with(|h| {
+        assert!(port < 2);
+        let mut pins = mask;
+        while pins != 0 {
+            let pin = (port << 5 | pins.trailing_zeros()) as usize;
+            pins &= pins - 1;
+            h.pad_control[pin] &= !crate::PAD_GPIO_CLEAR;
+        }
+        h.direction[port as usize] |= mask;
+        h.direction_hook
     });
     if let Some(hook) = hook {
         hook();

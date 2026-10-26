@@ -88,31 +88,31 @@ pub fn observe() -> Snapshot {
     }
 }
 
-/// Enable both motor pins as outputs and request STOP, without the driver
-/// ever seeing its inputs differ.
+/// Enable both motor pins as outputs at STOP, without the driver ever seeing
+/// its inputs differ, whatever its undriven inputs read.
 ///
-/// `gpio_init` enables one pin per call, and an undriven input reads LOW
-/// through the driver's pull-down. With the latches preloaded HIGH, the first
-/// enabled pin drove HIGH against the other's LOW: forward drive for one call,
-/// measured as a 105 µs pulse across the motor at every boot. Enabling both
-/// LOW (standby, which the pull-downs already hold) and then writing STOP to
-/// both in one port write goes from standby straight to brake. From brake,
-/// the LOW write is a coast, still with equal inputs.
+/// Neither undriven level is safe to assume. `gpio_init` enables one pin per
+/// call, so whichever level the first pin drives, the driver sees it against
+/// the other's undriven level for one call: about 105 µs of drive, measured
+/// at the motor with the latches preloaded HIGH against inputs at their
+/// pull-down's LOW, and on the inputs with the latches preloaded LOW against
+/// inputs that read HIGH (with the analyzer's hooks on them). So both latches go HIGH
+/// first, which the data register holds while the pins are still inputs, and
+/// one direction write then makes both outputs at once: the driver goes from
+/// whatever it saw straight to brake. When both are already outputs (the
+/// board opening after stopped startup), the latch write is the whole change,
+/// one port write, so the motor never passes through coast.
 pub(crate) fn enable_motor_stopped() {
-    use crate::plaf103::pins::{MOTOR_A, MOTOR_B};
-
     // SAFETY: the motor pins, which this module and the board own: called at
     // startup and as the board opens, before its gate can drive them.
     unsafe {
-        sdk::gpio_port_write(0, MOTOR_MASK, 0);
-        sdk::gpio_init(MOTOR_A, true);
-        sdk::gpio_init(MOTOR_B, true);
         sdk::gpio_port_write(0, MOTOR_MASK, MOTOR_MASK);
+        sdk::gpio_enable_outputs(0, MOTOR_MASK);
     }
 }
 
 /// Preload the infrared latches LOW before enabling their outputs, and bring
-/// the motor pair to STOP through standby only.
+/// the motor pair to STOP with both pins enabled together.
 pub fn initialize() -> Snapshot {
     let _guard = IrqGuard::lock();
     let clock = sdk::gpio_clock_enable();

@@ -1,21 +1,23 @@
-//! Private evidence: where inputs and outputs may live, how they are written,
-//! and the recording port every serial session goes through. Its submodules
-//! are the records built on that: session reports, transaction journals and
-//! the frozen image reviews a writer consumes.
+//! Private evidence: how session outputs are written, and the recording port
+//! every serial session goes through. Its submodules are the records built
+//! on that: session reports and transaction journals. Where inputs and
+//! outputs may live is `wellfed_image::root`, and the frozen reviews a
+//! writer consumes are `wellfed_image::review`.
 
 pub mod journal;
 pub mod report;
-pub mod review;
 pub mod session;
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
-use std::path::{Path, PathBuf};
+use std::os::unix::fs::OpenOptionsExt;
+use std::path::Path;
 
+pub(crate) use wellfed_formats::private::{sync_directory, write_new};
+pub(crate) use wellfed_image::root::Root;
 use serde::Serialize;
 
-use crate::error::{Result, require};
+use crate::error::Result;
 use crate::evidence::report::Streams;
 use crate::link::protocol::Port;
 use wellfed_formats::canonical::sha256;
@@ -29,118 +31,6 @@ pub fn utc() -> String {
     } else {
         now.format("%Y-%m-%dT%H:%M:%S%.6f+00:00").to_string()
     }
-}
-
-/// The repository checkout whose ignored `private/` holds every input and
-/// output of a device session.
-#[derive(Debug, Clone)]
-pub struct Root {
-    root: PathBuf,
-    private: PathBuf,
-}
-
-impl Root {
-    pub fn new(root: &Path) -> Result<Self> {
-        let root = root.canonicalize()?;
-        let private = root.join("private");
-        require(
-            private.is_dir(),
-            format!("{} has no private/ evidence directory", root.display()),
-        )?;
-        Ok(Self {
-            private: private.canonicalize()?,
-            root,
-        })
-    }
-
-    pub fn path(&self) -> &Path {
-        &self.root
-    }
-
-    pub fn join(&self, path: impl AsRef<Path>) -> PathBuf {
-        self.root.join(path)
-    }
-
-    /// Whether `path` resolves inside `private/`; a missing path is judged by
-    /// its nearest existing ancestor.
-    pub fn is_private(&self, path: &Path) -> bool {
-        let absolute = if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            std::env::current_dir()
-                .map(|cwd| cwd.join(path))
-                .unwrap_or_else(|_| path.to_path_buf())
-        };
-
-        // Python's non-strict `resolve()`: walk the components, resolving
-        // symlinks wherever the path so far exists, and `..` lexically
-        // where it does not.
-        let mut full = PathBuf::new();
-        for part in absolute.components() {
-            match part {
-                std::path::Component::ParentDir => {
-                    full.pop();
-                }
-                std::path::Component::CurDir => {}
-                other => full.push(other),
-            }
-            if let Ok(resolved) = full.canonicalize() {
-                full = resolved;
-            }
-        }
-        full.starts_with(&self.private)
-    }
-
-    /// A regular private input file.
-    pub fn private_file(&self, path: &Path) -> Result<Vec<u8>> {
-        require(
-            self.is_private(path) && path.is_file(),
-            "Regular private input required",
-        )?;
-        Ok(fs::read(path)?)
-    }
-
-    /// A new private output directory.
-    pub fn output_directory(&self, path: &Path) -> Result<PathBuf> {
-        require(
-            !path.is_symlink() && self.is_private(path),
-            "Output must be a new private directory",
-        )?;
-
-        fs::DirBuilder::new()
-            .recursive(false)
-            .mode(0o700)
-            .create(path)
-            .or_else(|error| {
-                // Python's mkdir(parents=True) for the reader outputs.
-                if error.kind() == io::ErrorKind::NotFound {
-                    fs::DirBuilder::new()
-                        .recursive(true)
-                        .mode(0o700)
-                        .create(path)
-                } else {
-                    Err(error)
-                }
-            })?;
-        Ok(std::path::absolute(path)?)
-    }
-}
-
-pub fn sync_directory(path: &Path) -> Result<()> {
-    File::open(path)?.sync_all()?;
-    Ok(())
-}
-
-/// Create `path` exclusively, write it in full and fsync it.
-pub fn write_new(path: &Path, data: &[u8]) -> Result<()> {
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(path)?;
-    file.write_all(data)?;
-    file.sync_all()?;
-    Ok(())
 }
 
 /// Rewrite a session report in place (its last state is what matters).

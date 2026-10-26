@@ -2,8 +2,9 @@
 //!
 //! Every file is created mode 0600 on Unix. [`write_json`] replaces a file
 //! atomically (temporary file, fsync, rename, directory fsync), so a crash
-//! leaves the old or the new contents, never a torn file. New secrets come
-//! from [`random`].
+//! leaves the old or the new contents, never a torn file. [`write_new`]
+//! writes evidence that must never replace anything: it refuses a path that
+//! exists. New secrets come from [`random`].
 
 use std::fs;
 use std::io::{Read, Write};
@@ -22,6 +23,28 @@ pub fn random<const N: usize>(source: &Path) -> Result<[u8; N]> {
     let mut bytes = [0u8; N];
     fs::File::open(source)?.read_exact(&mut bytes)?;
     Ok(bytes)
+}
+
+/// Create `path` exclusively, write it in full and fsync it.
+pub fn write_new(path: &Path, data: &[u8]) -> Result<()> {
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+
+    let mut file = options.open(path)?;
+    file.write_all(data)?;
+    file.sync_all()?;
+    Ok(())
+}
+
+/// Fsync a directory, so the entries just created in it are durable.
+pub fn sync_directory(path: &Path) -> Result<()> {
+    fs::File::open(path)?.sync_all()?;
+    Ok(())
 }
 
 /// Atomically replace a private file, syncing data before committing it.

@@ -1,5 +1,5 @@
 //! Synthetic images and frozen reviews for host tests, here and in the
-//! crates that verify reviews through [`crate::evidence::review::frozen`]
+//! crates that verify reviews through [`crate::review::frozen`]
 //! (the `fixtures` feature). Nothing here is a boot candidate: the images
 //! are structurally valid containers with patterned bodies.
 
@@ -72,7 +72,7 @@ fn write(path: &Path, data: &[u8]) -> io::Result<()> {
 }
 
 /// Freeze `image` in `directory` as a first-boot build review that
-/// [`crate::evidence::review::frozen`] accepts, writing the SDK lock it
+/// [`crate::review::frozen`] accepts, writing the SDK lock it
 /// checks into `checkout`. `fields` (an object) is merged into the build
 /// manifest. Returns the review and the manifest as written.
 pub fn freeze_build(

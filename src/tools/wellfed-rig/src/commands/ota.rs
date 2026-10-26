@@ -27,16 +27,16 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use clap::Args;
-/// The bench's signing key file, which also signs stock's downgrade
-/// statements; re-exported so the suite need not link the builder.
-pub use wellfed_build::signing::KEY_PATH;
-use wellfed_build::signing::{Frozen, Key, Motion};
 use wellfed_core::ota;
 use wellfed_core::record::{Record, tag};
-use wellfed_flash::evidence::write_new;
 use wellfed_formats::capture::arrival;
 use wellfed_formats::manifest::BuildManifest;
+use wellfed_formats::private::write_new;
 use wellfed_formats::review::ImageKind;
+/// The bench's signing key file, which also signs stock's downgrade
+/// statements; re-exported so the suite need not link `wellfed-signing`.
+pub use wellfed_signing::KEY_PATH;
+use wellfed_signing::{Frozen, Key, Motion};
 
 use super::Bench;
 use crate::device::{DeviceStatus, Fault};
@@ -166,7 +166,7 @@ impl Firmware {
 const BRINGUP: &str = "bringup";
 
 /// `--firmware`'s parser, with a reason for the motor firmware.
-pub(crate) fn parse_firmware(text: &str) -> std::result::Result<Firmware, String> {
+pub fn parse_firmware(text: &str) -> std::result::Result<Firmware, String> {
     if text == "motor" {
         return Err(format!("motor {MOTION_MANUAL}"));
     }
@@ -224,7 +224,7 @@ impl Variant {
 }
 
 /// `--variant`'s parser, with a reason for the motion variant.
-pub(crate) fn parse_variant(text: &str) -> std::result::Result<Variant, String> {
+pub fn parse_variant(text: &str) -> std::result::Result<Variant, String> {
     match text {
         "stall" => Ok(Variant::Stall),
         "fail" => Ok(Variant::Fail),

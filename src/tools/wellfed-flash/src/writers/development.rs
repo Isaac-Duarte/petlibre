@@ -25,6 +25,7 @@ use crate::link::sector::{self, Baseline};
 use crate::link::status;
 use wellfed_formats::canonical::{canonical_of, sha256};
 use wellfed_formats::flash_plan::{DevelopmentPlan, GiveWayPlan, Kind, PlannedSector, Region};
+pub(crate) use wellfed_image::bank::{BANK0, Layout, layout, payload};
 
 /// One program packet's payload; a sector takes four.
 pub const FRAME: usize = 1024;
@@ -34,55 +35,6 @@ pub const FACTORY: (usize, usize) = (0, 0x6000);
 /// Bank 1 has priority, so clearing its marker is how bank 0 gets to boot;
 /// see docs/firmware/bank-policy.md.
 pub const MARKER: &[u8; 8] = b"81958711";
-
-/// One bank's region, and the other bank's first sector read as a guard.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Layout {
-    pub kind: Kind,
-    pub bank: u8,
-    pub start: usize,
-    pub end: usize,
-    pub other: (usize, usize),
-}
-
-pub const BANK1: Layout = Layout {
-    kind: Kind::Bank1Update,
-    bank: 1,
-    start: sector::START,
-    end: sector::END,
-    other: (0x6000, SECTOR),
-};
-
-/// Bank 0 keeps the reviewed stock footprint (0x150000), like bank 1.
-pub const BANK0: Layout = Layout {
-    kind: Kind::Bank0Update,
-    bank: 0,
-    start: 0x6000,
-    end: 0x156000,
-    other: (sector::START, SECTOR),
-};
-
-pub fn layout(bank: u8) -> Result<Layout> {
-    match bank {
-        0 => Ok(BANK0),
-        1 => Ok(BANK1),
-        _ => refuse("Unknown bank"),
-    }
-}
-
-/// The aligned application payload of a complete OTA image for this bank.
-pub fn payload<'a>(image: &'a [u8], layout: &Layout) -> Result<&'a [u8]> {
-    let data = crate::ota::container(image)?;
-    require(
-        !data.is_empty() && data.len() <= layout.end - layout.start && data.len() % SECTOR == 0,
-        format!(
-            "Development image exceeds aligned bank-{} footprint",
-            layout.bank
-        ),
-    )?;
-    crate::ota::images(data)?;
-    Ok(data)
-}
 
 /// The acquired application extent. Without a source (bank 0 only) it covers
 /// the target alone.

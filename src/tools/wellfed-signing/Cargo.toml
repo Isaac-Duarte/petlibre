@@ -1,0 +1,24 @@
+[package]
+license.workspace = true
+name = "wellfed-signing"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "Update signing, only ever of a frozen review: the bench key, version 2 manifests for the device API, and the downgrade and key statements"
+publish.workspace = true
+
+[dependencies]
+ed25519-dalek = "2"
+wellfed-core.workspace = true
+wellfed-formats.workspace = true
+wellfed-image.workspace = true
+serde_json.workspace = true
+sha2 = "0.11"
+thiserror.workspace = true
+
+[dev-dependencies]
+wellfed-image = { workspace = true, features = ["fixtures"] }
+tempfile.workspace = true
+
+[lints]
+workspace = true

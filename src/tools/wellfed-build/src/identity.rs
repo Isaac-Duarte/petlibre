@@ -25,13 +25,14 @@ use crate::{
 const SDK_CRATES: [&str; 2] = ["src/sdk", "src/product"];
 
 /// The builder's own sources (its fixture tests are not), plus the
-/// wellfed-flash modules whose OTA container and region checks the layout
-/// and park audits share.
+/// wellfed-image modules whose OTA container and region checks the layout
+/// and park audits share. The update key a build embeds is bound by its
+/// value, so where `wellfed-signing` keeps the key file is not an input.
 const BUILDER_SOURCES: &str = "src/tools/wellfed-build/src";
 const BUILDER_SHARED: [&str; 3] = [
     "src/tools/wellfed-build/Cargo.toml",
-    "src/tools/wellfed-flash/src/ota.rs",
-    "src/tools/wellfed-flash/src/error.rs",
+    "src/tools/wellfed-image/src/ota.rs",
+    "src/tools/wellfed-image/src/error.rs",
 ];
 
 /// Tracked plus untracked, non-ignored files below the root-relative
@@ -131,7 +132,7 @@ pub fn current_inputs(
 /// without a key file.
 pub(crate) fn ota_public_key(repo: &Repo, profile: Profile) -> Result<Option<String>> {
     // Only the key's public half reaches the build, the identity and the manifest.
-    let path = repo.path(crate::signing::KEY_PATH);
+    let path = repo.path(wellfed_signing::KEY_PATH);
     if !profile.has(Stage::Firstboot) || !path.is_file() {
         return Ok(None);
     }

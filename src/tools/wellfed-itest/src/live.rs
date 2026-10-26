@@ -27,17 +27,17 @@ use std::time::{Duration, Instant};
 use serde::Deserialize;
 use serde::de::IgnoredAny;
 
-use wellfed_bench::commands::Bench;
-use wellfed_bench::commands::ota::{self, OtaArgs, Staged, Target, Timing};
-use wellfed_bench::device::{Answer, Ask, Device, Intruder, Rebuffed};
-use wellfed_bench::server::{StockStatus, TrialAnswer, TrialRequest, TrialResolve};
-use wellfed_bench::suite::ItestArgs;
-use wellfed_bench::tools::{Capture, InstallJob, Installing};
-use wellfed_bench::{Error, Result, require, say};
+use crate::args::ItestArgs;
 use wellfed_formats::bench::progress::StepState;
 use wellfed_formats::bench::{CAPTURES, VERIFICATION};
 use wellfed_formats::stock::{ImageLease, ServerConfig};
 use wellfed_relay::{POWER, STRAP};
+use wellfed_rig::commands::Bench;
+use wellfed_rig::commands::ota::{self, OtaArgs, Staged, Target, Timing};
+use wellfed_rig::device::{Answer, Ask, Device, Intruder, Rebuffed};
+use wellfed_rig::server::{StockStatus, TrialAnswer, TrialRequest, TrialResolve};
+use wellfed_rig::tools::{Capture, InstallJob, Installing};
+use wellfed_rig::{Error, Result, require, say};
 use wellfed_stock_api::{Auth, StockApi};
 
 use super::{Fault, Rig, Server};
@@ -101,8 +101,8 @@ impl<'b> LiveRig<'b> {
     pub(super) fn open(bench: &'b mut Bench, args: &ItestArgs, stock_bin: PathBuf) -> Result<Self> {
         let root = bench.root.clone();
         let name = args.name().to_string();
-        let config: ServerConfig = wellfed_bench::load(&root, &args.config)?;
-        let hotspot: Hotspot = wellfed_bench::load(&root, &args.hotspot)?;
+        let config: ServerConfig = wellfed_rig::load(&root, &args.config)?;
+        let hotspot: Hotspot = wellfed_rig::load(&root, &args.hotspot)?;
         require(
             !hotspot.connection.is_empty(),
             format!("{} has no connection", args.hotspot.display()),
@@ -240,7 +240,7 @@ impl<'b> LiveRig<'b> {
     fn until_ready(&self, child: &mut Child, what: &str, ready: impl Fn() -> bool) -> Result<()> {
         let deadline = Instant::now() + Duration::from_secs_f64(START_SECONDS);
         while Instant::now() < deadline {
-            if wellfed_bench::interrupted() {
+            if wellfed_rig::interrupted() {
                 return Err(Error::Interrupted);
             }
             if let Some(status) = child.try_wait()? {
@@ -348,7 +348,7 @@ impl Rig for LiveRig<'_> {
     }
 
     fn review_build(&mut self, review: &Path) -> Result<String> {
-        let manifest = wellfed_bench::load(&self.bench.root, &review.join("build-manifest.json"))?;
+        let manifest = wellfed_rig::load(&self.bench.root, &review.join("build-manifest.json"))?;
         ota::build_id(&manifest)
     }
 

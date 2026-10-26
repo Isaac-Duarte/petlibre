@@ -1,7 +1,31 @@
 //! Frozen image reviews: what binds a review to its image, manifest and
 //! required audits.
 
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use serde_json::{Value, json};
+
 use super::*;
+use crate::bank::BANK1;
+use crate::fixtures::{synthetic_payload, wrap};
+
+/// A checkout with an empty `private/`.
+fn private_root() -> (tempfile::TempDir, Root) {
+    let checkout = tempfile::tempdir().unwrap();
+    fs::create_dir(checkout.path().join("private")).unwrap();
+    let root = Root::new(checkout.path()).unwrap();
+    (checkout, root)
+}
+
+fn image(km4: usize, seed: u8) -> Vec<u8> {
+    wrap(&synthetic_payload(9000, km4, seed))
+}
+
+fn write(path: &Path, data: &[u8]) {
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, data).unwrap();
+}
 
 /// A frozen review of a firstboot build, and the checkout around it.
 fn frozen_build(checkout: &Path, image: &[u8]) -> (PathBuf, Value, Value) {
@@ -17,10 +41,10 @@ fn frozen_reviews_bind_image_manifest_and_required_audits() {
     let image = image(30000, 3);
     let (directory, review, _) = frozen_build(checkout.path(), &image);
 
-    let frozen = crate::evidence::review::frozen(&root, &directory, &BANK1).unwrap();
-    assert_eq!(frozen.image, image);
+    let accepted = frozen(&root, &directory, &BANK1).unwrap();
+    assert_eq!(accepted.image, image);
 
-    let refused = || crate::evidence::review::frozen(&root, &directory, &BANK1).is_err();
+    let refused = || frozen(&root, &directory, &BANK1).is_err();
 
     // A changed image byte.
     let mut changed = image.clone();
@@ -75,14 +99,11 @@ fn reviews_of_builds_before_device_names_still_read() {
         }
         object.insert("profile".into(), json!(profile));
         let raw = changed.to_string();
-        let mut frozen = review.clone();
-        frozen["manifest_sha256"] = json!(sha256(raw.as_bytes()));
+        let mut bound = review.clone();
+        bound["manifest_sha256"] = json!(sha256(raw.as_bytes()));
         write(&directory.join("build-manifest.json"), raw.as_bytes());
-        write(
-            &directory.join("review.json"),
-            frozen.to_string().as_bytes(),
-        );
-        crate::evidence::review::frozen(&root, &directory, &BANK1).is_ok()
+        write(&directory.join("review.json"), bound.to_string().as_bytes());
+        frozen(&root, &directory, &BANK1).is_ok()
     };
 
     assert!(freeze(None, "plaf103-firstboot"));

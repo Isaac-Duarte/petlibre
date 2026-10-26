@@ -1,7 +1,7 @@
 //! Real-device integration suite (`wellfed-bench itest`): named scenarios run
 //! against the feeder on the bench, never from `cargo test` or `make check`.
-//! `wellfed-bench` parses its command line and hands it to the
-//! `wellfed-itest` binary, which runs it through [`Linked`].
+//! `wellfed-bench` links it and runs [`itest`] and [`stock_ota`] on its own
+//! rig (`wellfed-rig`), in its own process.
 //!
 //! Builds reach the feeder over the air, which takes minutes where a UART
 //! flash takes a supervised loader session. The UART stays attached,
@@ -19,18 +19,19 @@
 
 use std::path::{Path, PathBuf};
 
-use wellfed_bench::commands::ota::{self, Outcome, Staged, Target, Watch};
-use wellfed_bench::commands::{Bench, Image, OtaArgs};
-use wellfed_bench::device::{Answer, Ask, DeviceStatus, Intruder, Rebuffed};
-use wellfed_bench::server::{StockStatus, TrialAnswer, TrialRequest};
-use wellfed_bench::suite::{ItestArgs, StockOtaArgs, Suite};
-use wellfed_bench::{Error, Result, require, say};
+pub use args::{ItestArgs, StockOtaArgs};
 use wellfed_formats::bench::VERIFICATION;
 use wellfed_formats::bench::catalog::Need;
 use wellfed_formats::bench::progress::StepState;
 use wellfed_formats::bench::run::{Evidence, RunRecord, SUFFIX, ScenarioRecord, ScenarioVerdict};
+use wellfed_rig::commands::ota::{self, Outcome, Staged, Target, Watch};
+use wellfed_rig::commands::{Bench, Image, OtaArgs};
+use wellfed_rig::device::{Answer, Ask, DeviceStatus, Intruder, Rebuffed};
+use wellfed_rig::server::{StockStatus, TrialAnswer, TrialRequest};
+use wellfed_rig::{Error, Result, require, say};
 use serde::Serialize;
 
+mod args;
 mod feeds;
 mod live;
 mod log;
@@ -80,8 +81,8 @@ enum Fault {
 
 impl Fault {
     /// The bench's own fault, as [`crate::device::Device::install`] takes it.
-    fn device(self) -> wellfed_bench::device::Fault {
-        use wellfed_bench::device::Fault as D;
+    fn device(self) -> wellfed_rig::device::Fault {
+        use wellfed_rig::device::Fault as D;
         match self {
             Self::None => D::None,
             Self::Corrupt => D::Corrupt { at: 8192 },
@@ -482,7 +483,7 @@ impl<'r> Ctx<'r> {
     /// The trial firmware's fail variant signed at the next version:
     /// built once, then re-signed from its review.
     fn failing(&mut self, label: &str) -> Result<Staged> {
-        self.image(label, Image::trial(wellfed_bench::commands::Variant::Fail))
+        self.image(label, Image::trial(wellfed_rig::commands::Variant::Fail))
     }
 
     /// `image` signed at the next version: built (or found by the review
@@ -518,7 +519,7 @@ impl<'r> Ctx<'r> {
             rebuild: build && self.args.rebuild,
             // The suite talks to the device API, which only the
             // product firmware serves.
-            firmware: build.then_some(wellfed_bench::commands::Firmware::Feeder),
+            firmware: build.then_some(wellfed_rig::commands::Firmware::Feeder),
             variant: None,
             config: self.args.config.clone(),
             keys: self.args.keys.clone(),
@@ -827,30 +828,25 @@ fn recovery_hint(name: &str, baseline: Option<&Baseline>) -> Vec<String> {
     ]
 }
 
-/// The suite, linked into the `wellfed-itest` binary.
-pub struct Linked;
+/// The scenarios an `itest` run takes on: its status steps.
+pub fn itest_steps(args: &ItestArgs) -> Result<Vec<&'static str>> {
+    steps(args)
+}
 
-impl Suite for Linked {
-    fn itest_steps(&self, args: &ItestArgs) -> Result<Vec<&'static str>> {
-        steps(args)
-    }
+/// The stages a `stock-ota` run takes on: its status steps.
+pub fn stock_ota_steps(args: &StockOtaArgs) -> Vec<&'static str> {
+    stock::steps(args)
+}
 
-    fn stock_ota_steps(&self, args: &StockOtaArgs) -> Vec<&'static str> {
-        stock::steps(args)
-    }
-
-    fn itest(&self, bench: &mut Bench, args: &ItestArgs, stock_bin: PathBuf) -> Result<u8> {
-        itest(bench, args, stock_bin)
-    }
-
-    fn stock_ota(&self, bench: &mut Bench, args: &StockOtaArgs, stock_bin: PathBuf) -> Result<u8> {
-        stock::stock_ota(bench, args, stock_bin)
-    }
+/// Install a replacement from stock over stock's own updater, restore the
+/// bench, then print and record the outcome.
+pub fn stock_ota(bench: &mut Bench, args: &StockOtaArgs, stock_bin: PathBuf) -> Result<u8> {
+    stock::stock_ota(bench, args, stock_bin)
 }
 
 /// Run the selected scenarios on the live bench, restore it, then print
 /// and record the verdicts.
-fn itest(bench: &mut Bench, args: &ItestArgs, stock_bin: PathBuf) -> Result<u8> {
+pub fn itest(bench: &mut Bench, args: &ItestArgs, stock_bin: PathBuf) -> Result<u8> {
     let scenarios = select(args)?;
     let name = args.name().to_string();
     let record = bench

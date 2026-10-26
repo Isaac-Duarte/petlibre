@@ -1,34 +1,14 @@
 //! The integration suite's command line: `itest` and `stock-ota`, which
-//! `wellfed-bench` parses and `wellfed-itest` runs.
-//!
-//! The suite drives the bench through this crate's rig, so it cannot be
-//! linked into this crate's own binary. `wellfed-bench` parses the whole
-//! command line (so its help and its refusals are its own), then hands a
-//! suite command to `wellfed-itest`, which takes the same arguments and
-//! runs it through [`Suite`] (see [`crate::cli`]).
+//! `wellfed-bench` parses beside its own commands and runs through this
+//! crate.
 
 use std::path::PathBuf;
 
 use clap::Args;
 use wellfed_formats::bench::catalog::Tier;
 use wellfed_formats::stock::SERVER_CONFIG;
-
-use crate::Result;
-use crate::commands::Bench;
-use crate::commands::ota::{Firmware, Variant, parse_firmware, parse_variant};
-use crate::device::OWNER_KEYS;
-
-/// What runs the suite's commands, when it is linked in.
-pub trait Suite {
-    /// The scenarios a run takes on: its status steps.
-    fn itest_steps(&self, args: &ItestArgs) -> Result<Vec<&'static str>>;
-    /// The stages a `stock-ota` run takes on: its status steps.
-    fn stock_ota_steps(&self, args: &StockOtaArgs) -> Vec<&'static str>;
-    /// Run the selected scenarios on the live bench, restore it, then print
-    /// and record the verdicts.
-    fn itest(&self, bench: &mut Bench, args: &ItestArgs, stock_bin: PathBuf) -> Result<u8>;
-    fn stock_ota(&self, bench: &mut Bench, args: &StockOtaArgs, stock_bin: PathBuf) -> Result<u8>;
-}
+use wellfed_rig::commands::ota::{Firmware, Variant, parse_firmware, parse_variant};
+use wellfed_rig::device::OWNER_KEYS;
 
 #[derive(Debug, Clone, Args)]
 pub struct ItestArgs {

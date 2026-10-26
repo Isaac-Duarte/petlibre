@@ -7,9 +7,9 @@
 
 use std::path::Path;
 
+use crate::bank::{Layout, payload};
 use crate::error::{Result, refuse, require};
-use crate::evidence::Root;
-use crate::writers::development::{Layout, payload};
+use crate::root::Root;
 use wellfed_formats::canonical::sha256;
 use wellfed_formats::lock::SdkLock;
 use wellfed_formats::manifest::BuildManifest;
@@ -120,3 +120,6 @@ fn build(
     )?;
     Ok(m)
 }
+
+#[cfg(test)]
+mod tests;

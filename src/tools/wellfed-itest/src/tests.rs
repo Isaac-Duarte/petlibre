@@ -8,7 +8,7 @@ use serde_json::json;
 
 use super::log::{Log, Record};
 use super::*;
-use wellfed_bench::commands::ota::Variant;
+use wellfed_rig::commands::ota::Variant;
 
 const GOOD: &str = "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90";
 const FAILING: &str = "f00df00df00df00df00df00df00df00df00df00df00df00df00df00df00df00d";

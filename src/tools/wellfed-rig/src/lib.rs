@@ -1,5 +1,6 @@
-//! Relay bench for the PLAF103 research unit: the `wellfed-bench` binary
-//! and its operator sequences.
+//! The PLAF103 bench's rig: the operator sequences `wellfed-bench` runs,
+//! and the power, capture, server and device API steps the integration
+//! suite (`wellfed-itest`) builds its scenarios from.
 //!
 //! Relay 1 switches the feeder's USB 5V and relay 2 holds feeder TX to GND
 //! through the 4.7 kΩ strap (`wellfed-relay`). Serial work is delegated
@@ -9,9 +10,8 @@
 //! and evidence paths come from the ignored `private/bench.json`; see
 //! docs/devices/plaf103/bench.md.
 //!
-//! The integration suite (`wellfed-itest`) runs on this crate's rig; the
-//! read-only page (`wellfed-dashboard`) reads the progress this crate
-//! records, and `--ui` serves it.
+//! The read-only page (`wellfed-dashboard`) reads the progress this crate
+//! records, and `wellfed-bench --ui` serves it.
 
 #![forbid(unsafe_code)]
 
@@ -25,15 +25,10 @@ macro_rules! say {
     }};
 }
 
-pub mod cli;
 pub mod commands;
 pub mod device;
 pub mod server;
-pub mod suite;
 pub mod tools;
-
-#[cfg(test)]
-mod fingerprint;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -64,7 +59,7 @@ pub enum Error {
     Signing {
         review: PathBuf,
         #[source]
-        source: wellfed_build::Error,
+        source: wellfed_signing::Error,
     },
     /// The server's status does not show what a wait is for, yet.
     #[error(transparent)]
@@ -89,14 +84,6 @@ pub enum Error {
     /// A progress or evidence file could not be written or read.
     #[error(transparent)]
     Formats(#[from] wellfed_formats::Error),
-    /// The command line went to the wrong binary, or the suite's is missing
-    /// or stale.
-    #[error(transparent)]
-    Route(#[from] cli::Refusal),
-    /// The page could not take its address.
-    #[cfg(feature = "ui")]
-    #[error(transparent)]
-    Page(#[from] wellfed_dashboard::Error),
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -137,7 +124,3 @@ pub fn sleep(seconds: f64) -> Result<()> {
 }
 
 pub(crate) use wellfed_formats::bench::now;
-
-/// One hash over the sources both bench binaries are built from (`build.rs`):
-/// `wellfed-itest` runs a hand-off only from a bench with the same one.
-pub(crate) const BUILD_FINGERPRINT: &str = env!("WELLFED_BENCH_FINGERPRINT");

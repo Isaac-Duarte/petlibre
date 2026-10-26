@@ -6,8 +6,8 @@ Where each host tool is going as the product platform lands, decided October 24,
 
 | Tool | Lines | Fate |
 | --- | ---: | --- |
-| `wellfed-flash` | 8.2k | Stays: the audited UART writer, always run as its own process |
-| `wellfed-build` | 7.3k | Stays, and gains `keygen` and `sign` for update signing |
+| `wellfed-flash` | 8.2k | Stays: the audited UART writer, always run as its own process. What other crates checked through it moved to `wellfed-image` (Oct 26), so no crate links it |
+| `wellfed-build` | 7.3k | Stays, with `keygen` and `sign` for update signing over `wellfed-signing`, which the bench links instead of the builder (Oct 26) |
 | `wellfed-audit`, `wellfed-emu`, `wellfed-formats`, `xtask` | 10.8k | Stay |
 | `wellfed-bench` | 15k | Split into single-purpose crates (`wellfed-relay`, `wellfed-bench`, `wellfed-itest`, `wellfed-dashboard`, Oct 25); stays dev-only |
 | `wellfed-stock` | 6.4k | Stays: the stock 1.1.15 protocol, its broker, the setup frame, the image server and the install-trial ledger, and the bench's server binary over them (`serve`, `ota-images`, the trial commands, `init`, `setup-send`, `network`) ([stock server](stock-server.md)) |
@@ -41,24 +41,29 @@ wellfed          CLI            the owner's command line: pair, feed, plans, set
                                  offer an update, install from stock, roll back (FP02)
 wellfed-server   binary         the owner's server, its web UI, and installs
 wellfed-build    CLI            builds, reviews, and update signing (keygen, sign)
+wellfed-signing  lib            update signing behind a frozen review, for the builder's
+                                 commands, the bench and, later, the server's installs
+wellfed-image    lib            the OTA image, the banks and frozen reviews, as every tool
+                                 checks them
 wellfed-flash    CLI            unchanged; every bench write still goes through it as a process
 ```
 
 ## The bench, split
 
-The bench's modules fell into separate jobs with one-way dependencies, and each is now its own crate (October 25, 2026):
+The bench's modules fell into separate jobs with one-way dependencies, and each is now its own crate (October 25, 2026; the rig came out of the bench on October 26):
 
 | Crate | Holds | Depends on |
 | --- | --- | --- |
 | `wellfed-relay` | The SH-UR04A relay board driver: power, the loader strap and the UART lines | Nothing first-party |
-| `wellfed-bench` | The binary and the operator sequences: power, loader, boot, capture, dump, the UART update and recovery chains, transients, the OTA loop; the command line, including the suite's arguments | `wellfed-relay`, `wellfed-formats`, `wellfed-client`, `wellfed-build` (library), `wellfed-flash` (as a process for every read and write; as a library for the review verification signing does), `wellfed-dashboard` (with `ui`) |
-| `wellfed-itest` | The integration suite: scenarios, the live and scripted rigs, `stock-ota`; its binary runs the suite's commands | `wellfed-bench`'s rig, `wellfed-relay`, `wellfed-formats` |
+| `wellfed-rig` | The operator sequences: power, loader, boot, capture, dump, the UART update and recovery chains, transients, the OTA loop, and the device API and server steps the suite builds on | `wellfed-relay`, `wellfed-formats`, `wellfed-client`, `wellfed-signing`, `wellfed-build` and `wellfed-flash` (each as a process: every build, every read and write) |
+| `wellfed-itest` | The integration suite: scenarios, the live and scripted rigs, `stock-ota`, and their arguments | `wellfed-rig`, `wellfed-relay`, `wellfed-formats` |
+| `wellfed-bench` | The binary: the command line over the rig's sequences and the suite, one process | `wellfed-rig`, `wellfed-itest`, `wellfed-dashboard` (with `ui`) |
 | `wellfed-dashboard` | The read-only progress page and its embedded web app; its binary serves the page alone | `wellfed-formats`, `wellfed-stock-api` (the loopback client of the stock server's API, which links no relay or flash code) |
 
 - **Shared files live in `wellfed-formats`** (`bench`): the progress document (`current.json`) and its writer, the run record (`NAME-itest.json`), the bench config, the session evidence layout, and the suite's scenario catalog, since one crate writes each and another reads it ([conventions](../../AGENTS.md#rust-conventions)). So do the stock server's config, status document and image lease (`stock`). The one loopback exchange the suite and the page both make with that server is its own crate, `wellfed-stock-api`, which links no relay or flash code.
 - **The page's read-only rule is structural:** `wellfed-dashboard` links neither the relay driver, the flash client nor the server; it reports the flash client by hashing its file. `make check-deps` enforces the first two (cargo-deny bans with wrappers, [Rust standard](rust.md#dependencies)). The server holds because no crate depends on `wellfed-stock`: cargo-deny cannot ban every dependent without banning the crate itself, so `cargo xtask check-repository` refuses a manifest under `src/` that names it.
 - **`wellfed-flash` stays a child process** for every read and write. It is the audited writer with its own journals, reports and no-retry stops, and a fault in the bench must never take a write down with it.
-- **The `wellfed-bench` binary keeps its commands and flags.** `--ui` links the dashboard. `itest` and `stock-ota` are parsed by the bench, then handed with the same arguments to the `wellfed-itest` binary (an `exec`, so the run, its interrupt and its exit status are the command's own): the suite links the bench's library, so the bench's binary cannot link the suite without a dependency cycle. Both binaries carry one build fingerprint, a hash over the sources of every first-party crate they link; the bench passes its own at the hand-off and the suite refuses a different one, so a stale `wellfed-itest` never runs old relay or cleanup code.
+- **The `wellfed-bench` binary keeps its commands and flags.** `--ui` links the dashboard. The suite links the rig, not the bench, so the bench links the suite and runs `itest` and `stock-ota` in its own process. Until October 26 the suite linked the bench's library, so the bench `exec`ed a second binary, `wellfed-itest`, guarded by a build fingerprint against a stale one; one binary needs neither.
 
 ## Stages
 

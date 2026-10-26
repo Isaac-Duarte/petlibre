@@ -16,9 +16,9 @@ use wellfed_build::catalog::Catalog;
 use wellfed_build::identity::{SourceId, current_inputs, source_id};
 use wellfed_build::image::{Request, audit_build, build};
 use wellfed_build::review::freeze;
-use wellfed_build::signing::{self, Frozen, Key, Motion};
 use wellfed_build::{Device, Firmware, Profile, Repo, Result, Variant};
 use wellfed_formats::review::ImageKind;
+use wellfed_signing::{self as signing, Frozen, Key, Motion};
 
 #[derive(Parser)]
 #[command(about = "Build firmware images locally, without connecting to the feeder")]
@@ -271,7 +271,7 @@ fn run(command: Command) -> Result<()> {
             let frozen = Frozen::open(&repo.root, &repo.root.join(review))?;
             let key = Key::load(&key)?;
             let manifest = frozen.offer(&key, version, motion)?;
-            wellfed_flash::evidence::write_new(&output, &manifest)?;
+            wellfed_formats::private::write_new(&output, &manifest)?;
             println!(
                 "Signed version {version} of build {} in {}",
                 frozen.build_id(),
@@ -292,7 +292,7 @@ fn run(command: Command) -> Result<()> {
             let key = Key::load(&repo.root.join(key))?;
             let statement = key.downgrade(&manifest, &device, floor)?;
             let output = repo.root.join(output);
-            wellfed_flash::evidence::write_new(&output, &statement)?;
+            wellfed_formats::private::write_new(&output, &statement)?;
             println!(
                 "Signed a downgrade at floor {floor} in {}",
                 output.display()
@@ -308,7 +308,7 @@ fn run(command: Command) -> Result<()> {
             })?;
             let statement = Key::load(&repo.root.join(key))?.revoke(&id);
             let output = repo.root.join(output);
-            wellfed_flash::evidence::write_new(&output, &statement)?;
+            wellfed_formats::private::write_new(&output, &statement)?;
             println!("Signed the retirement of {key_id} in {}", output.display());
         }
         Command::AddKey {
@@ -321,7 +321,7 @@ fn run(command: Command) -> Result<()> {
             })?;
             let statement = Key::load(&repo.root.join(key))?.add_key(&added);
             let output = repo.root.join(output);
-            wellfed_flash::evidence::write_new(&output, &statement)?;
+            wellfed_formats::private::write_new(&output, &statement)?;
             println!(
                 "Signed adding key id {} in {}",
                 wellfed_formats::hex::encode(&wellfed_core::ota::offer::key_id(&added)),

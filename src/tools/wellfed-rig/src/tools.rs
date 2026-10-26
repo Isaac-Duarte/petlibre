@@ -19,9 +19,9 @@ use serde::Deserialize;
 
 use crate::device::{Answer, Ask, Device, DeviceStatus, Fault};
 use crate::{Error, Result, interrupted, require};
-use wellfed_build::signing::CONTAINER_HEADER;
 use wellfed_formats::bench::progress::{FlashTool, Status};
 use wellfed_formats::bench::relative;
+use wellfed_signing::CONTAINER_HEADER;
 
 /// How long a receive-only capture may take to hold the UART port.
 const OBSERVER_START: Duration = Duration::from_secs(10);
@@ -113,7 +113,7 @@ impl Pushing {
         let mut device = Device::open(root, &job.keys, &job.config)?;
         let downgrade = match &job.downgrade {
             Some(key) => Some(
-                wellfed_build::signing::Key::load(&root.join(key))
+                wellfed_signing::Key::load(&root.join(key))
                     .map_err(|source| Error::Bench(format!("{}: {source}", key.display())))?,
             ),
             None => None,
@@ -290,11 +290,6 @@ pub fn default_flash_bin() -> PathBuf {
 /// `wellfed-stock` beside this executable.
 pub fn default_stock_bin() -> PathBuf {
     beside_this("wellfed-stock")
-}
-
-/// `wellfed-itest` beside this executable: the suite's commands run there.
-pub(crate) fn default_itest_bin() -> PathBuf {
-    beside_this("wellfed-itest")
 }
 
 /// `wellfed-build` beside this executable.

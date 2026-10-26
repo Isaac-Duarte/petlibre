@@ -1,13 +1,14 @@
 //! Bench sequences. Each one either completes, or stops without retry and
 //! says what state it left the feeder in.
 //!
-//! [`crate::cli`] dispatches each subcommand to a [`Bench`] method. Bench only
-//! switches relays and orders steps; serial reads, inspections, plans and
-//! writes go through [`Tools`] as separate `wellfed-flash` runs (and the
-//! over-the-air loop's build and review as `wellfed-build` runs; it signs
-//! by linking `wellfed-build` and offers over the device API). Evidence
-//! directories are never reused, and an execute refuses once its output
-//! exists, so each prepared plan runs at most once.
+//! `wellfed-bench`'s command line dispatches each subcommand to a [`Bench`]
+//! method. Bench only switches relays and orders steps; serial reads,
+//! inspections, plans and writes go through [`Tools`] as separate
+//! `wellfed-flash` runs (and the over-the-air loop's build and review as
+//! `wellfed-build` runs; it signs through `wellfed-signing` and offers
+//! over the device API). Evidence directories are never reused, and an
+//! execute refuses once its output exists, so each prepared plan runs at
+//! most once.
 
 use std::collections::BTreeMap;
 use std::fs;

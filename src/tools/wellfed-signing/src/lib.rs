@@ -1,12 +1,13 @@
 //! Update signing, only ever of a frozen review: `wellfed-build keygen`
 //! and `wellfed-build sign`, and the statements the device API's update
-//! path takes (`downgrade`, `revoke`, `add-key`).
+//! path takes (`downgrade`, `revoke`, `add-key`). The bench links it to sign
+//! its offers without linking the builder.
 //!
 //! The firmware accepts any image whose manifest the embedded key signed,
 //! so the signer is the last place a reviewed build can be swapped for an
 //! unreviewed one. [`Frozen::open`] therefore verifies a review directory
 //! exactly as `wellfed-flash` does before it installs one
-//! (`wellfed_flash::evidence::review::frozen`): the image, payload and
+//! (`wellfed_image::review::frozen`): the image, payload and
 //! manifest hashes, the pinned stock hash for a stock review, the first-boot
 //! profile against the SDK lock, the manifest's `OTA_All.bin`, and the
 //! recorded audits. It also requires the image to carry the manifest's
@@ -28,22 +29,28 @@
 //! names the key it retires or adds. Only a key built into the firmware may
 //! sign a key statement, and the bench key is the only one built in.
 
+#![forbid(unsafe_code)]
+
 use std::path::Path;
 
 use ed25519_dalek::{Signer, SigningKey};
 use wellfed_core::ota::offer::{self, ImageKind as OfferKind, KeyId, Signed};
 use wellfed_core::ota::{self, MARKER, Manifest};
-use wellfed_flash::evidence::review::frozen;
-use wellfed_flash::evidence::{Root, write_new};
-use wellfed_flash::writers::development::BANK1;
 use wellfed_formats::credentials::{KeyScope, OtaKeyFile};
 use wellfed_formats::hex;
 use wellfed_formats::manifest::BuildManifest;
+use wellfed_formats::private::write_new;
 use wellfed_formats::private::{SYSTEM_RANDOM, random};
 use wellfed_formats::review::ImageKind;
+use wellfed_image::bank::BANK1;
+use wellfed_image::review::frozen;
+use wellfed_image::root::Root;
 use sha2::{Digest, Sha256};
 
-use crate::{Error, Result, require};
+mod error;
+
+use error::require;
+pub use error::{Error, Result};
 
 /// The bench key's root-relative path. Firmware builds embed its public half.
 pub const KEY_PATH: &str = "private/ota-key.json";
@@ -324,12 +331,12 @@ mod tests {
         let review = checkout.path().join("private/review");
         let fields = json!({"startup_identity": BUILD, "startup_motion_policy": motion,
                             "firmware": "feeder"});
-        wellfed_flash::fixtures::freeze_build(checkout.path(), &review, image, &fields).unwrap();
+        wellfed_image::fixtures::freeze_build(checkout.path(), &review, image, &fields).unwrap();
         (checkout, review)
     }
 
     fn build_image() -> Vec<u8> {
-        wellfed_flash::fixtures::image_carrying(
+        wellfed_image::fixtures::image_carrying(
             format!("PLFW1 start build={BUILD} bank=").as_bytes(),
         )
     }
@@ -483,7 +490,7 @@ mod tests {
         fs::write(review.join("review.json"), &described).unwrap();
 
         // A swapped image: a valid container with the same identity.
-        let other = wellfed_flash::fixtures::image_carrying(
+        let other = wellfed_image::fixtures::image_carrying(
             format!("PLFW1 start build={BUILD} bank=1").as_bytes(),
         );
         fs::write(review.join("image.bin"), &other).unwrap();
@@ -503,7 +510,7 @@ mod tests {
 
     #[test]
     fn a_review_of_an_image_without_its_identity_is_refused() {
-        let image = wellfed_flash::fixtures::image_carrying(b"no identity here");
+        let image = wellfed_image::fixtures::image_carrying(b"no identity here");
         let (checkout, review) = freeze(&image, None);
         assert!(refusal(checkout.path(), &review).contains("identity"));
     }
@@ -543,25 +550,5 @@ mod tests {
 
         let error = refusal(checkout.path(), &review);
         assert!(error.contains("Only original stock"), "{error}");
-    }
-
-    /// The pinned stock image, frozen by `wellfed-build review stock`, is
-    /// named by its payload hash. Needs the private stock image.
-    #[test]
-    #[ignore = "needs the pinned stock image under private/"]
-    fn the_pinned_stock_review_is_named_by_its_payload_hash() {
-        let repo = crate::Repo::here().unwrap();
-        let scratch = tempfile::tempdir_in(repo.private()).unwrap();
-        let output = scratch.path().join("stock");
-        let frozen_review =
-            crate::review::freeze(&repo, ImageKind::Stock, Path::new("unused"), &output).unwrap();
-
-        let frozen = Frozen::open(&repo.root, &output).unwrap();
-        assert_eq!(
-            (frozen.kind(), frozen.build_id()),
-            (ImageKind::Stock, frozen_review.payload_sha256)
-        );
-        let key = Key(SigningKey::from_bytes(&[4; 32]));
-        assert!(frozen.offer(&key, 1, Motion::Refused).is_ok());
     }
 }

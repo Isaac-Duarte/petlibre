@@ -346,7 +346,7 @@ struct Rig {
 fn rig() -> Rig {
     let tmp = tempfile::tempdir().unwrap();
     fs::create_dir(tmp.path().join("private")).unwrap();
-    wellfed_build::signing::keygen(&tmp.path().join(wellfed_build::signing::KEY_PATH)).unwrap();
+    wellfed_signing::keygen(&tmp.path().join(wellfed_signing::KEY_PATH)).unwrap();
     let board = FakeBoard::default();
     let tools = FakeTools::default();
     {
@@ -983,10 +983,10 @@ const BUILD: &str = "8a13e59efa15e56b5f5e32825909dc45e381a2027abc65d8de6658c40b3
 /// image carrying the build's identity, the build manifest with `manifest`'s
 /// fields, and a review.json binding both.
 fn freeze(root: &Path, review: &Path, manifest: &Value) {
-    let image = wellfed_flash::fixtures::image_carrying(
+    let image = wellfed_image::fixtures::image_carrying(
         format!("PLFW1 start build={BUILD} bank=").as_bytes(),
     );
-    wellfed_flash::fixtures::freeze_build(root, review, &image, manifest).unwrap();
+    wellfed_image::fixtures::freeze_build(root, review, &image, manifest).unwrap();
 }
 
 /// A version 2 manifest the bench key signed, through the firmware's
@@ -995,8 +995,7 @@ fn freeze(root: &Path, review: &Path, manifest: &Value) {
 fn signed_by_bench(rig: &Rig, file: &str) -> wellfed_core::ota::Manifest {
     use wellfed_core::ota::offer::{Context, KeyRing, admit_offer};
     let key =
-        wellfed_build::signing::Key::load(&rig.bench.root.join(wellfed_build::signing::KEY_PATH))
-            .unwrap();
+        wellfed_signing::Key::load(&rig.bench.root.join(wellfed_signing::KEY_PATH)).unwrap();
     let bytes = fs::read(rig.bench.root.join(VERIFICATION).join(file)).unwrap();
     let built_in = [key.public()];
     let context = Context {
@@ -1158,7 +1157,7 @@ fn ota_installs_the_pinned_stock_review_by_its_payload_hash_without_health() {
     // Stock always needs the owner's downgrade statement.
     assert_eq!(
         job.downgrade.as_deref(),
-        Some(Path::new(wellfed_build::signing::KEY_PATH))
+        Some(Path::new(wellfed_signing::KEY_PATH))
     );
     assert!(calls.queries.is_empty(), "stock has no status to poll");
 }
@@ -1273,7 +1272,7 @@ fn ota_refuses_a_directory_that_is_not_a_frozen_review() {
 
     // An image swapped after the freeze.
     fs::write(review.join("review.json"), described).unwrap();
-    let other = wellfed_flash::fixtures::image_carrying(
+    let other = wellfed_image::fixtures::image_carrying(
         format!("PLFW1 start build={BUILD} bank=1").as_bytes(),
     );
     fs::write(review.join("image.bin"), other).unwrap();

@@ -81,7 +81,7 @@ The payload follows at byte 32. The checksum includes image headers and padding,
 
 The stock descriptor parser `0x0e02a2b0` checks the first **three** identifier bytes against `OTA`, copies each 24-byte descriptor and replaces its destination with the selected bank's address. It does not provide the same exact-format guarantees as our parser. In particular, the recovered descriptor loop does not establish a safe general maximum count. Keep the reviewed single-entry profile; do not infer support for arbitrary multi-image packages, sizes or flash destinations.
 
-**Static analysis, U06:** [our OTA parser](../../../../src/tools/wellfed-flash/src/ota.rs) deliberately admits a narrower format. It requires the entire eight-word profile above, exact payload length through EOF and the correct byte-sum. Its inner-image profile is:
+**Static analysis, U06:** [our OTA parser](../../../../src/tools/wellfed-image/src/ota.rs) deliberately admits a narrower format. It requires the entire eight-word profile above, exact payload length through EOF and the correct byte-sum. Its inner-image profile is:
 
 | Order | Region | Runtime body address |
 | --- | --- | --- |
@@ -116,6 +116,6 @@ An OTA package contains application-bank material, not a complete device backup.
 | U03 | Static analysis | URL parser `0x0e01b274`, directly disassembled splitter `0x0e01afa4`, TCP connect `0x0e02ad84`, HTTP response parser `0x0e02aa8c` |
 | U04 | Static analysis | HTTP orchestrator `0x0e02b1f4`, header receiver `0x0e02ae34`, descriptor parser `0x0e02a2b0`, writer `0x0e02af04`, byte-sum checker `0x0e02a580`; OTA task `0x0e0277d0` |
 | U05 | Static analysis; earlier simulation and physical observations separately scoped | Activation `0x0e02a648`, active-bank selection `0x0e02a1d4`, [factory tests](../../../../src/tools/wellfed-emu/tests/factory.rs), [bank policy](../../../firmware/bank-policy.md) |
-| U06 | Static analysis of our tooling | [Container/inner-image parser](../../../../src/tools/wellfed-flash/src/ota.rs), [layout audit](../../../../src/tools/wellfed-build/src/platform/amebad/audit/layout.rs), [layout profile](../../../../src/firmware/devices/plaf103/layout.json) |
+| U06 | Static analysis of our tooling | [Container/inner-image parser](../../../../src/tools/wellfed-image/src/ota.rs), [layout audit](../../../../src/tools/wellfed-build/src/platform/amebad/audit/layout.rs), [layout profile](../../../../src/firmware/devices/plaf103/layout.json) |
 | U07 | Earlier physical observations; not repeated | Private stock OTA trial/probe records and manifests, [UART recovery scope](../recovery.md) |
 | U08 | Static analysis | Request handler `0x0e016ba0`, rejection `0x0e0193a0`, cleanup `0x0e018b48`, sector erase `0x0e0113d0` |

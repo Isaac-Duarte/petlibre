@@ -8,9 +8,10 @@ Where each tool is going is in the [tools roadmap](../../docs/development/tools-
 
 | Crate | Device | Purpose |
 | --- | --- | --- |
-| [wellfed-flash](wellfed-flash) | yes | The UART flash client: restricted reads, region-scoped development updates, give-ways and original-stock recovery, each inspect → prepare → execute ([guide](../../docs/development/rust-flash.md)) |
-| [wellfed-bench](wellfed-bench) | yes | The relay bench: power and loader strap, chained `wellfed-flash` sessions, the over-the-air loop, and the read-only progress page beside a command with `--features ui` ([guide](../../docs/devices/plaf103/bench.md)); hands `itest` and `stock-ota` to `wellfed-itest` |
-| [wellfed-itest](wellfed-itest) | yes | The real-device integration suite (`wellfed-bench itest`) and the stock-to-replacement install (`stock-ota`), run on the bench's rig ([integration suite](../../docs/devices/plaf103/bench.md#integration-suite)) |
+| [wellfed-flash](wellfed-flash) | yes | The UART flash client: restricted reads, region-scoped development updates, give-ways and original-stock recovery, each inspect → prepare → execute ([guide](../../docs/development/rust-flash.md)). No crate links it: every read and write runs it as a process |
+| [wellfed-bench](wellfed-bench) | yes | The relay bench's binary: power and loader strap, chained `wellfed-flash` sessions, the over-the-air loop, the integration suite's `itest` and `stock-ota`, and the read-only progress page beside a command with `--features ui` ([guide](../../docs/devices/plaf103/bench.md)) |
+| [wellfed-rig](wellfed-rig) | yes | The bench's operator sequences and the power, capture, server and device API steps the suite builds on; the bench's command line runs them |
+| [wellfed-itest](wellfed-itest) | yes | The real-device integration suite (`wellfed-bench itest`) and the stock-to-replacement install (`stock-ota`), run on the rig ([integration suite](../../docs/devices/plaf103/bench.md#integration-suite)) |
 | [wellfed-relay](wellfed-relay) | yes | The SH-UR04A relay board driver: feeder power, the loader strap and the UART lines |
 | [wellfed-stock-api](wellfed-stock-api) | no (network) | The blocking loopback client of `wellfed-stock serve`'s HTTP API that the suite and the page share; links nothing of the server |
 | [wellfed-dashboard](wellfed-dashboard) | no | The bench's read-only progress page, alone (`src/scripts/bench-dashboard`) or under `wellfed-bench --ui`; links no relay or flash code |
@@ -20,6 +21,8 @@ Where each tool is going is in the [tools roadmap](../../docs/development/tools-
 | [wellfed-build](wellfed-build) | no | SDK firmware builds, their linked-image audits, `review`, which freezes a reviewed build or the stock OTA for `wellfed-flash`, and `keygen`/`sign`, which sign a frozen review as an update ([firmware builds](../../docs/development/firmware-builds.md), [development updates](../../docs/development/uart-development.md)) |
 | [wellfed-audit](wellfed-audit) | no | Offline audits of finalized receive-only captures (startup, ADC samples, driver transients) and full-flash backup comparison |
 | [wellfed-emu](wellfed-emu) | no | The vendor factory loader (mapping and bank selection) and UART flash helper, executed under Unicorn on supplied state: the review's mapping check, the OTA marker fixtures, and `wellfed-flash`'s emulated sessions |
+| [wellfed-signing](wellfed-signing) | no | Update signing, only ever of a frozen review: the bench key, version 2 manifests for the device API, and the downgrade and key statements; `wellfed-build keygen`/`sign` and the bench's offers use it |
+| [wellfed-image](wellfed-image) | no | The OTA image as every tool checks it: the container and core images, the two banks' layouts, the `private/` evidence root and frozen image reviews; what the builder, the signer and the audits share with `wellfed-flash` without linking it |
 | [wellfed-formats](wellfed-formats) | no | The files these tools pass to each other (build manifest, frozen review, stock layout, locks, captures, credentials and keys, flash plans, the bench's config, progress document, run records and suite catalog), typed once, and the private-file writer |
 | [xtask](xtask) | no | `cargo xtask check-repository`: documentation links, portability, no Python under `src/`, transport isolation; `cargo xtask fuzz <target>`: one bounded cargo-fuzz run ([fuzzing](../../docs/development/README.md#fuzzing)) |
 

@@ -16,7 +16,6 @@ use serde::de::IgnoredAny;
 use crate::error::{Result, refuse, require};
 use crate::evidence::journal::Event;
 use crate::evidence::report::{Session, Status, Transport};
-use crate::evidence::review::{Frozen, frozen};
 use crate::evidence::session::{self, Completion, Context, Outcome, Region, Saved, progress};
 use crate::link::protocol::{CAPACITY, Port, SECTOR};
 use crate::link::sector::{self, Baseline};
@@ -28,6 +27,7 @@ use wellfed_formats::canonical::{canonical_of, sha256};
 use wellfed_formats::flash_plan::{
     DevelopmentPlan, GiveWayBindings, GiveWayPlan, Kind, Reviewed, UpdateBindings,
 };
+use wellfed_image::review::{Frozen, frozen};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum Mode {

@@ -44,7 +44,7 @@ check-fixtures:
 	cargo test --locked -p wellfed-emu -p wellfed-flash -- --ignored
 	cargo test --locked -p wellfed-audit --lib -- --ignored
 	cargo test --locked -p wellfed-build -- --ignored
-	cargo test --locked -p wellfed-bench --lib -- --ignored
+	cargo test --locked -p wellfed-rig --lib -- --ignored
 
 # The optional web page. Node and pnpm are needed only here, never by `check`.
 ui:
@@ -53,9 +53,9 @@ ui:
 
 # The end-to-end tests serve a synthetic private/ tree from a temporary
 # directory; they never read this checkout's evidence or open a port to hardware.
-# The page's crate and the two binaries that serve it with `--ui` are linted
+# The page's crate and the bench, which serves it with `--ui`, are linted
 # and tested with it built in, the production lints included.
-PAGE_CRATES = -p wellfed-dashboard -p wellfed-bench -p wellfed-itest
+PAGE_CRATES = -p wellfed-dashboard -p wellfed-bench
 check-web: ui
 	pnpm -C src/web check
 	pnpm -C src/web test

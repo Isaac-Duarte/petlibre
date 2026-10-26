@@ -13,12 +13,12 @@
 //! The feeds move the motor unattended (`--feeds`), so the hopper may be
 //! empty: the rotor's marks count the portions whether or not food falls.
 
-use wellfed_bench::device::{Answer, Ask};
-use wellfed_bench::{Error, Result, require};
 use wellfed_core::feed::controller::FeedReason;
 use wellfed_core::feed::storage::OwnerOutcome;
 use wellfed_core::record::tag;
 use wellfed_model::{Refusal, Settings, SettingsPatch};
+use wellfed_rig::device::{Answer, Ask};
+use wellfed_rig::{Error, Result, require};
 
 use super::log::Record;
 use super::scenarios::{RECORD_SECONDS, changes_to, read_settings, set_settings};

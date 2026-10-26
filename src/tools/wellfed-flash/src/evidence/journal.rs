@@ -296,7 +296,7 @@ impl Journal {
         data.push(b'\n');
 
         crate::evidence::write_new(&self.output.join("report.json"), &data)?;
-        sync_directory(&self.output)
+        Ok(sync_directory(&self.output)?)
     }
 
     /// Record a stop and its report. The first failure stays the caller's

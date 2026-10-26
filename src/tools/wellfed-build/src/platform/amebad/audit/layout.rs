@@ -7,9 +7,9 @@
 use std::fs;
 use std::path::Path;
 
-use wellfed_flash::ota::{STOCK_SHA256, container, images};
 use wellfed_formats::audit::{LayoutAudit, LayoutChecks, LayoutRegion, Placement};
 use wellfed_formats::layout::{Hex, Layout};
+use wellfed_image::ota::{STOCK_SHA256, container, images};
 
 use super::word;
 use crate::{Result, require, sha256};

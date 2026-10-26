@@ -9,7 +9,7 @@ publish.workspace = true
 
 [dependencies]
 clap.workspace = true
-wellfed-bench = { path = "../wellfed-bench" }
+wellfed-rig = { path = "../wellfed-rig" }
 wellfed-core.workspace = true
 wellfed-formats.workspace = true
 wellfed-stock-api = { path = "../wellfed-stock-api" }
@@ -22,10 +22,6 @@ uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
 tempfile.workspace = true
-
-[features]
-# `--ui` beside a run, as `wellfed-bench --ui` offers it.
-ui = ["wellfed-bench/ui"]
 
 [lints]
 workspace = true

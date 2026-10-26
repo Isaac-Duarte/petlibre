@@ -13,14 +13,15 @@ use crate::evidence::journal::{At, Event, Located, Record};
 use crate::link::protocol::{self, ACK, CAPACITY, EOT, Port, SECTOR};
 use crate::link::status;
 use wellfed_formats::canonical::sha256;
+use wellfed_image::bank::BANK1;
 
 /// The research unit's original full-flash backup.
 pub const BASELINE_SHA256: &str =
     "2751e6c870af7312fe1ff0039831ac5799fb215d629d85af8720b6e50a7479bc";
 
 /// Bank 1, the factory loader's preferred bank.
-pub const START: usize = 0x186000;
-pub const END: usize = 0x2D6000;
+pub const START: usize = BANK1.start;
+pub const END: usize = BANK1.end;
 
 /// Flash addresses as the helper's program frames name them.
 pub const FLASH_BASE: u32 = 0x0800_0000;

@@ -10,10 +10,7 @@
 
 pub mod error;
 pub mod evidence;
-#[cfg(any(test, feature = "fixtures"))]
-pub mod fixtures;
 pub mod link;
-pub mod ota;
 pub mod writers;
 
 #[cfg(test)]

@@ -30,7 +30,10 @@ pub enum Error {
     Layout(Box<Error>),
     /// The OTA container or region checks shared with the flash client.
     #[error(transparent)]
-    Ota(#[from] wellfed_flash::Error),
+    Ota(#[from] wellfed_image::Error),
+    /// Signing refused the key, the review or the statement.
+    #[error(transparent)]
+    Signing(#[from] wellfed_signing::Error),
     /// The factory-loader emulation refused the image or failed.
     #[error(transparent)]
     Emulation(#[from] wellfed_emu::Error),

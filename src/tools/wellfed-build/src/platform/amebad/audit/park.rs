@@ -11,8 +11,8 @@ use std::fs;
 use std::path::Path;
 use std::sync::LazyLock;
 
-use wellfed_flash::ota::{container, images};
 use wellfed_formats::audit::{Leaf, ParkAudit, ParkFunction, ParkImage};
+use wellfed_image::ota::{container, images};
 use regex::Regex;
 
 use super::packaged;

@@ -7,14 +7,10 @@
 //! `status` record their steps under `private/bench-status`, which the page
 //! reads.
 //!
-//! Two binaries share this command line. `wellfed-bench` runs everything but
-//! the suite's commands (`itest`, `stock-ota`), which it hands, with the
-//! arguments it was given, to `wellfed-itest`: the suite links this crate,
-//! so this crate's binary cannot link the suite. `wellfed-itest` runs only
-//! those two.
+//! The rig's sequences (`wellfed-rig`) and the integration suite's commands
+//! (`itest`, `stock-ota`, `wellfed-itest`) run in this one process, so a
+//! run, its interrupt and its exit status are the command's own.
 
-use std::ffi::OsString;
-use std::os::unix::process::CommandExt as _;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::atomic::Ordering;
@@ -23,17 +19,14 @@ use clap::{Parser, Subcommand};
 use wellfed_formats::bench::catalog;
 use wellfed_formats::bench::progress::Status;
 use wellfed_formats::bench::{CONFIG, Config, STATUS_DIR};
+use wellfed_itest::{ItestArgs, StockOtaArgs};
 use wellfed_relay::Relay;
-
-use crate::commands::{
+use wellfed_rig::INTERRUPTED;
+use wellfed_rig::commands::{
     self, Bench, ExecuteArgs, GiveWayArgs, GiveWayExecuteArgs, OtaArgs, StockArgs,
     StockExecuteArgs, TransientArgs, UartWhenOff, UpdateArgs, check_name,
 };
-use crate::suite::{ItestArgs, StockOtaArgs, Suite};
-use crate::tools::{
-    Processes, default_build_bin, default_flash_bin, default_itest_bin, default_stock_bin,
-};
-use crate::{Error, INTERRUPTED};
+use wellfed_rig::tools::{Processes, default_build_bin, default_flash_bin, default_stock_bin};
 
 #[derive(Parser)]
 #[command(
@@ -190,16 +183,14 @@ impl Command {
         }
     }
 
-    /// One of the suite's commands, which `wellfed-itest` runs.
+    /// One of the integration suite's commands.
     fn suite(&self) -> bool {
         matches!(self, Self::Itest(_) | Self::StockOta(_))
     }
 }
 
-/// Parse the command line and run it. With `suite` linked in (the
-/// `wellfed-itest` binary), only the suite's commands run; without it
-/// (`wellfed-bench`), those are handed to `wellfed-itest`.
-pub fn main(suite: Option<&dyn Suite>) -> ExitCode {
+/// Parse the command line and run it.
+pub(crate) fn main() -> ExitCode {
     let cli = Cli::parse();
 
     // An interrupt stops the running sequence, through its power-off cleanup.
@@ -208,7 +199,7 @@ pub fn main(suite: Option<&dyn Suite>) -> ExitCode {
     // Evidence and status are private.
     rustix::process::umask(rustix::fs::Mode::from_raw_mode(0o077));
 
-    match run(cli, suite) {
+    match run(cli) {
         Ok(code) => ExitCode::from(code),
         Err(error) => {
             eprintln!("Stopped: {error}");
@@ -217,11 +208,11 @@ pub fn main(suite: Option<&dyn Suite>) -> ExitCode {
     }
 }
 
-fn run(cli: Cli, suite: Option<&dyn Suite>) -> crate::Result<u8> {
+fn run(cli: Cli) -> anyhow::Result<u8> {
     let root = cli
         .root
         .canonicalize()
-        .map_err(|error| Error::Bench(format!("--root {}: {error}", cli.root.display())))?;
+        .map_err(|error| anyhow::anyhow!("--root {}: {error}", cli.root.display()))?;
     let tools = Processes::new(
         root.clone(),
         cli.flash_bin.unwrap_or_else(default_flash_bin),
@@ -229,33 +220,18 @@ fn run(cli: Cli, suite: Option<&dyn Suite>) -> crate::Result<u8> {
         cli.build_bin.unwrap_or_else(default_build_bin),
     );
 
-    let itest_bin = default_itest_bin();
-    let handed = std::env::var(FINGERPRINT_VAR).ok();
-    let binary = if suite.is_some() {
-        Binary::Itest {
-            handed: handed.as_deref(),
+    // The catalog needs no bench.
+    if let Some(Command::Itest(args)) = &cli.command
+        && args.list
+    {
+        for line in catalog::listing() {
+            wellfed_rig::say!("{line}");
         }
-    } else {
-        Binary::Bench {
-            itest_bin: &itest_bin,
-            itest_built: itest_bin.is_file(),
-        }
-    };
-    match route(binary, cli.command.as_ref(), crate::BUILD_FINGERPRINT) {
-        Route::List => {
-            for line in catalog::listing() {
-                crate::say!("{line}");
-            }
-            return Ok(0);
-        }
-        Route::HandOff => return Err(hand_to_suite(&itest_bin)),
-        Route::Refuse(refusal) => return Err(refusal.into()),
-        Route::Run => {}
+        return Ok(0);
     }
 
     let page = if cli.ui {
         Some(start_page(
-            suite.is_some(),
             &root,
             &tools.flash_bin,
             &cli.listen,
@@ -282,118 +258,26 @@ fn run(cli: Cli, suite: Option<&dyn Suite>) -> crate::Result<u8> {
     let mut bench = open_bench(root, tools, &command, cli.off_seconds, cli.uart_when_off)?;
     // `status` only reads, so it leaves no status record behind.
     if !matches!(command, Command::Status) {
-        record_start(&mut bench, &command, status_dir, suite)?;
+        record_start(&mut bench, &command, status_dir)?;
     }
 
-    let result = dispatch(&mut bench, &command, stock_bin, suite);
+    let result = dispatch(&mut bench, &command, stock_bin);
     let (code, error) = match &result {
         Ok(code) => (*code, None),
         Err(error) => (1, Some(error.to_string())),
     };
     bench.status.finish(code, error);
-    result
-}
-
-/// The variable the bench sets at a hand-off to its [`crate::BUILD_FINGERPRINT`].
-const FINGERPRINT_VAR: &str = "WELLFED_BENCH_FINGERPRINT";
-
-/// Both binaries' builds, as a refusal tells the operator to make them.
-const REBUILD: &str = "cargo build --locked --release -p wellfed-bench -p wellfed-itest \
-     (with --features ui for --ui)";
-
-/// Which binary parsed the command line, and what it knows of the other.
-#[derive(Debug, Clone, Copy)]
-enum Binary<'a> {
-    /// `wellfed-bench`, and the `wellfed-itest` it would hand the suite to.
-    Bench {
-        itest_bin: &'a Path,
-        itest_built: bool,
-    },
-    /// `wellfed-itest`, with the fingerprint a handing bench passed, if any.
-    Itest { handed: Option<&'a str> },
-}
-
-/// What a binary does with its command line.
-#[derive(Debug, PartialEq, Eq)]
-enum Route {
-    /// `itest --list`, which needs no bench.
-    List,
-    /// Replace this process with `wellfed-itest`.
-    HandOff,
-    Refuse(Refusal),
-    Run,
-}
-
-/// Why a binary will not run a command line.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum Refusal {
-    #[error("{0} not found; build both binaries with {REBUILD}")]
-    ItestMissing(PathBuf),
-    #[error(
-        "wellfed-itest runs only itest and stock-ota; the bench's other commands and the page \
-         alone are wellfed-bench's"
-    )]
-    NotSuite,
-    /// The handing bench was built from other sources: this suite would run
-    /// another version of the relay and cleanup code than the bench's.
-    #[error(
-        "wellfed-itest was built from other sources than the wellfed-bench that handed it \
-         this command; rebuild both with {REBUILD}"
-    )]
-    Stale,
-}
-
-/// Decide, from the parsed command line alone, whether this binary runs it,
-/// hands it to `wellfed-itest`, or refuses it. `own` is this build's
-/// fingerprint.
-fn route(binary: Binary<'_>, command: Option<&Command>, own: &str) -> Route {
-    if let Some(Command::Itest(args)) = command
-        && args.list
-    {
-        return Route::List;
-    }
-    let suite = command.is_some_and(Command::suite);
-
-    match binary {
-        Binary::Bench { .. } if !suite => Route::Run,
-        Binary::Bench {
-            itest_bin,
-            itest_built: false,
-        } => Route::Refuse(Refusal::ItestMissing(itest_bin.to_path_buf())),
-        Binary::Bench { .. } => Route::HandOff,
-        Binary::Itest { .. } if !suite => Route::Refuse(Refusal::NotSuite),
-        Binary::Itest {
-            handed: Some(handed),
-        } if handed != own => Route::Refuse(Refusal::Stale),
-        Binary::Itest { .. } => Route::Run,
-    }
-}
-
-/// Replace this process with `wellfed-itest`, given the same arguments and
-/// this build's fingerprint, so the suite's run, its interrupt and its exit
-/// status are the command's own. Returns only if that fails.
-fn hand_to_suite(itest_bin: &Path) -> Error {
-    let mut args = std::env::args_os();
-    let name = args
-        .next()
-        .unwrap_or_else(|| OsString::from("wellfed-bench"));
-    let error = std::process::Command::new(itest_bin)
-        .arg0(name)
-        .args(args)
-        .env(FINGERPRINT_VAR, crate::BUILD_FINGERPRINT)
-        .exec();
-    Error::Bench(format!("{}: {error}", itest_bin.display()))
+    Ok(result?)
 }
 
 /// Bind the progress page, so a busy port refuses before any bench command.
 #[cfg(feature = "ui")]
 fn start_page(
-    _suite: bool,
     root: &Path,
     flash_bin: &Path,
     listen: &str,
     port: u16,
-) -> crate::Result<std::thread::JoinHandle<()>> {
+) -> anyhow::Result<std::thread::JoinHandle<()>> {
     let listen = wellfed_dashboard::Listen::new(listen, port)?;
     let handle = wellfed_dashboard::start(
         root.to_path_buf(),
@@ -401,30 +285,22 @@ fn start_page(
         &listen,
         &INTERRUPTED,
     )?;
-    crate::say!("Bench page on {} (Ctrl+C to stop)", listen.url());
+    wellfed_rig::say!("Bench page on {} (Ctrl+C to stop)", listen.url());
     Ok(handle)
 }
 
 /// Without the web app built in, `--ui` refuses before any bench command.
-/// `suite`: this is `wellfed-itest`, which a bench built with the page may
-/// have handed `--ui`, so the refusal names it.
 #[cfg(not(feature = "ui"))]
 fn start_page(
-    suite: bool,
     _root: &Path,
     _flash_bin: &Path,
     _listen: &str,
     _port: u16,
-) -> crate::Result<std::thread::JoinHandle<()>> {
-    let binary = if suite {
-        "wellfed-itest"
-    } else {
-        "wellfed-bench"
-    };
-    Err(Error::Bench(format!(
-        "{binary} was built without the web page; run `make ui`, then build it with \
-         `--features ui`: {REBUILD}"
-    )))
+) -> anyhow::Result<std::thread::JoinHandle<()>> {
+    anyhow::bail!(
+        "wellfed-bench was built without the web page; run `make ui`, then build it with \
+         `cargo build --locked --release -p wellfed-bench --features ui`"
+    )
 }
 
 /// The bench a command runs on: its config, the relay board when the
@@ -435,8 +311,8 @@ fn open_bench(
     command: &Command,
     off_seconds: f64,
     uart_when_off: UartWhenOff,
-) -> crate::Result<Bench> {
-    let config: Config = crate::load(&root, Path::new(CONFIG))?;
+) -> wellfed_rig::Result<Bench> {
+    let config: Config = wellfed_rig::load(&root, Path::new(CONFIG))?;
     // The over-the-air loop only captures, so it leaves the relay board free;
     // the integration suite holds it only for --power's cold boots.
     let relay = match command {
@@ -452,7 +328,7 @@ fn open_bench(
         relay,
         status: Status::disabled(),
         tools: Box::new(tools),
-        sleep: crate::sleep,
+        sleep: wellfed_rig::sleep,
         off_seconds,
         uart_when_off,
     })
@@ -464,15 +340,14 @@ fn record_start(
     bench: &mut Bench,
     command: &Command,
     status_dir: PathBuf,
-    suite: Option<&dyn Suite>,
-) -> crate::Result<()> {
+) -> wellfed_rig::Result<()> {
     let label = command.label();
     let steps: Vec<&str> = match command {
         Command::Capture { .. } => vec!["capture"],
         Command::Ota(args) if args.cancel => vec![commands::ota::CANCEL_STEP],
         Command::Ota(args) => commands::ota::steps(args.source()),
-        Command::Itest(args) => suite_of(suite)?.itest_steps(args)?,
-        Command::StockOta(args) => suite_of(suite)?.stock_ota_steps(args),
+        Command::Itest(args) => wellfed_itest::itest_steps(args)?,
+        Command::StockOta(args) => wellfed_itest::stock_ota_steps(args),
         Command::StockPrepare(args) if args.fallback.is_some() => {
             commands::steps("give-way-prepare").to_vec()
         }
@@ -493,12 +368,7 @@ fn record_start(
     Ok(())
 }
 
-fn dispatch(
-    bench: &mut Bench,
-    command: &Command,
-    stock_bin: PathBuf,
-    suite: Option<&dyn Suite>,
-) -> crate::Result<u8> {
+fn dispatch(bench: &mut Bench, command: &Command, stock_bin: PathBuf) -> wellfed_rig::Result<u8> {
     let captures = bench.root.join(wellfed_formats::bench::CAPTURES);
     match command {
         Command::Status => bench.status_report(),
@@ -519,15 +389,9 @@ fn dispatch(
         Command::StockPrepare(args) => bench.stock_prepare(args),
         Command::StockExecute(args) => bench.stock_execute(args),
         Command::Ota(args) => bench.ota(args),
-        Command::Itest(args) => suite_of(suite)?.itest(bench, args, stock_bin),
-        Command::StockOta(args) => suite_of(suite)?.stock_ota(bench, args, stock_bin),
+        Command::Itest(args) => wellfed_itest::itest(bench, args, stock_bin),
+        Command::StockOta(args) => wellfed_itest::stock_ota(bench, args, stock_bin),
     }
-}
-
-/// The linked suite; `run` hands the suite's commands on before any bench
-/// opens when there is none, so this refusal is never reached.
-fn suite_of(suite: Option<&dyn Suite>) -> crate::Result<&dyn Suite> {
-    suite.ok_or_else(|| Error::Bench("This binary does not link the integration suite".into()))
 }
 
 #[cfg(test)]

@@ -15,14 +15,15 @@ use std::path::{Path, PathBuf};
 
 use wellfed_emu::BANKS;
 use wellfed_emu::factory::{self, Entry};
-use wellfed_flash::evidence::{Root, sync_directory, write_new};
-use wellfed_flash::ota::{STOCK_SHA256, container, images};
 use wellfed_formats::canonical::{canonical_of, sha256};
 use wellfed_formats::manifest::BuildManifest;
+use wellfed_formats::private::{sync_directory, write_new};
 use wellfed_formats::review::{
     BuildDetails, Details, FactoryRun, ImageKind, ImageReview, KIND, MappingCase, SCHEMA_VERSION,
     Stop,
 };
+use wellfed_image::ota::{STOCK_SHA256, container, images};
+use wellfed_image::root::Root;
 
 use crate::identity::current_inputs;
 use crate::image::audit_build;

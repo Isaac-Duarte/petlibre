@@ -11,7 +11,7 @@ publish.workspace = true
 anyhow.workspace = true
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
 clap.workspace = true
-wellfed-flash = { path = "../wellfed-flash" }
+wellfed-image.workspace = true
 wellfed-formats.workspace = true
 regex = "1"
 serde.workspace = true

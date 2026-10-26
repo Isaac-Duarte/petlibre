@@ -15,8 +15,8 @@ use std::io::Read;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
-use wellfed_flash::ota;
 use wellfed_formats::layout::{Hex, Layout};
+use wellfed_image::ota;
 use serde::Serialize;
 
 use crate::{Error, Result, digest, require};

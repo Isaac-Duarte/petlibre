@@ -4,48 +4,19 @@ name = "wellfed-bench"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
-description = "Relay bench for the PLAF103 research unit: feeder power, the loader strap, chained wellfed-flash sessions and the over-the-air loop"
+description = "Relay bench for the PLAF103 research unit: the command line over the rig's sequences and the integration suite, and the read-only progress page beside them"
 publish.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 clap.workspace = true
 ctrlc.workspace = true
-jiff = "0.2.38"
-mdns-sd = "0.21.6"
-wellfed-build = { path = "../wellfed-build" }
-wellfed-client.workspace = true
-wellfed-core.workspace = true
 wellfed-dashboard = { path = "../wellfed-dashboard", optional = true }
-# Linked for the review verification signing does; every flash write still
-# goes through the wellfed-flash binary as a child process.
-wellfed-flash = { path = "../wellfed-flash" }
-wellfed-formats = { workspace = true, features = ["clap"] }
-wellfed-stock-api = { path = "../wellfed-stock-api" }
-wellfed-model.workspace = true
-wellfed-proto.workspace = true
-wellfed-relay = { path = "../wellfed-relay" }
-wellfed-session.workspace = true
-rustix = { version = "1", features = ["fs", "process"] }
-serde.workspace = true
-serde_json.workspace = true
-serialport.workspace = true
-thiserror.workspace = true
-uuid = { workspace = true, features = ["v4"] }
-
-[build-dependencies]
 wellfed-formats.workspace = true
-
-[dev-dependencies]
-ed25519-dalek = "2"
-# Device::install's push, faults included, against the simulator over TCP.
-wellfed-feeder-sim = { path = "../wellfed-feeder-sim", features = ["harness"] }
-wellfed-flash = { path = "../wellfed-flash", features = ["fixtures"] }
-sha2 = "0.10"
-tokio = { workspace = true, features = ["rt", "net", "sync", "time"] }
-wellfed-relay = { path = "../wellfed-relay", features = ["fake"] }
-tempfile.workspace = true
+wellfed-itest = { path = "../wellfed-itest" }
+wellfed-relay = { path = "../wellfed-relay" }
+wellfed-rig = { path = "../wellfed-rig" }
+rustix = { version = "1", features = ["fs", "process"] }
 
 [features]
 # The read-only page (`--ui`), served by wellfed-dashboard. Build

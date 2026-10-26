@@ -33,6 +33,10 @@ const BRINGUP: [&str; 2] = ["src/firmware/wellfed/", "src/sdk/wellfed-probes/src
 /// its suite and the page speak its loopback API through `wellfed-stock-api`.
 /// cargo-deny cannot ban every dependent without banning the crate itself.
 const STOCK_SERVER: &str = "src/tools/wellfed-stock/Cargo.toml";
+/// The flash client's crate, the audited UART writer: every read and write
+/// runs it as its own process, so a fault elsewhere never takes a write down
+/// with it. What other crates check of images and reviews is `wellfed-image`.
+const FLASH_CLIENT: &str = "src/tools/wellfed-flash/Cargo.toml";
 /// Sources under `src/` that must not cite a board card.
 const CARD_FREE: [&str; 6] = ["rs", "c", "h", "toml", "md", "ts"];
 
@@ -56,8 +60,17 @@ regex!(
     r"(\bbringup::)?\b(gpio_init|gpio_port_write|gpio_write_bit|wdg_init|wdg_cmd|wdg_refresh|storage_erase|storage_program|bank1_erase|bank1_program|bank1_give_way)\b"
 );
 regex!(BRINGUP_NAME, r"\bbringup\b");
-// A manifest line depending on the stock server's crate (not its API client).
-regex!(STOCK_DEPENDENCY, r"(?m)^\s*wellfed-stock\s*[=.]");
+// A manifest line depending on the stock server's crate (not its API client):
+// as a key, as a `[dependencies.…]` table, or renamed through `package`.
+regex!(
+    STOCK_DEPENDENCY,
+    r#"(?m)^\s*(?:wellfed-stock\s*[=.]|\[[^\]#]*\.wellfed-stock\s*\]|[^#\n]*\bpackage\s*=\s*"wellfed-stock")"#
+);
+// The same for the flash client's crate.
+regex!(
+    FLASH_DEPENDENCY,
+    r#"(?m)^\s*(?:wellfed-flash\s*[=.]|\[[^\]#]*\.wellfed-flash\s*\]|[^#\n]*\bpackage\s*=\s*"wellfed-flash")"#
+);
 
 regex!(LINK, r"\]\(([^)]+)\)");
 regex!(SCHEME, r"^[A-Za-z][A-Za-z0-9+.-]*:");
@@ -166,14 +179,17 @@ fn check_file(root: &Path, name: &str, summary: &mut Summary) {
     if extension == "rs" {
         raw_outputs(name, &content, &mut summary.errors);
     }
-    if first == "src"
-        && relative.file_name().is_some_and(|f| f == "Cargo.toml")
-        && name != STOCK_SERVER
-        && STOCK_DEPENDENCY.is_match(&content)
-    {
-        summary.errors.push(format!(
-            "{name}: links the stock server; run wellfed-stock and use wellfed-stock-api"
-        ));
+    if first == "src" && relative.file_name().is_some_and(|f| f == "Cargo.toml") {
+        if name != STOCK_SERVER && STOCK_DEPENDENCY.is_match(&content) {
+            summary.errors.push(format!(
+                "{name}: links the stock server; run wellfed-stock and use wellfed-stock-api"
+            ));
+        }
+        if name != FLASH_CLIENT && FLASH_DEPENDENCY.is_match(&content) {
+            summary.errors.push(format!(
+                "{name}: links the flash client; run wellfed-flash as a process and use wellfed-image"
+            ));
+        }
     }
 
     if extension == "md" {
@@ -376,6 +392,12 @@ mod tests {
             "[dependencies]\nwellfed-stock-api = { path = \"../wellfed-stock-api\" }\n",
         )
         .unwrap();
+        fs::create_dir_all(root.join("src/tools/auditor")).unwrap();
+        fs::write(
+            root.join("src/tools/auditor/Cargo.toml"),
+            "[dependencies]\nwellfed-image.workspace = true\n\n[dev-dependencies]\nwellfed-flash = { path = \"../wellfed-flash\" }\n",
+        )
+        .unwrap();
         for name in [
             "README.md",
             "private/x.json",
@@ -385,6 +407,7 @@ mod tests {
             "src/tools/c.rs",
             "src/tools/page/Cargo.toml",
             "src/tools/client/Cargo.toml",
+            "src/tools/auditor/Cargo.toml",
         ] {
             check_file(&root, name, &mut summary);
         }
@@ -399,7 +422,34 @@ mod tests {
                 "src/tools/a.py: first-party tools are Rust; no Python sources under src/",
                 "src/tools/b.rs: cites a board card; state the constraint instead",
                 "src/tools/page/Cargo.toml: links the stock server; run wellfed-stock and use wellfed-stock-api",
+                "src/tools/auditor/Cargo.toml: links the flash client; run wellfed-flash as a process and use wellfed-image",
             ]
         );
+    }
+
+    #[test]
+    fn process_only_crates_are_found_in_every_manifest_form() {
+        for manifest in [
+            "wellfed-flash.workspace = true",
+            "[dev-dependencies.wellfed-flash]\npath = \"../wellfed-flash\"",
+            "writer = { package = \"wellfed-flash\", path = \"../wellfed-flash\" }",
+        ] {
+            assert!(FLASH_DEPENDENCY.is_match(manifest), "{manifest}");
+        }
+        for manifest in [
+            "wellfed-image.workspace = true",
+            "# wellfed-flash = { path = \"../wellfed-flash\" }",
+            "description = \"runs wellfed-flash as a process\"",
+        ] {
+            assert!(!FLASH_DEPENDENCY.is_match(manifest), "{manifest}");
+        }
+
+        assert!(STOCK_DEPENDENCY.is_match("[dependencies.wellfed-stock]"));
+        for manifest in [
+            "[dependencies.wellfed-stock-api]",
+            "api = { package = \"wellfed-stock-api\", path = \"x\" }",
+        ] {
+            assert!(!STOCK_DEPENDENCY.is_match(manifest), "{manifest}");
+        }
     }
 }

@@ -6,9 +6,9 @@ use std::fs;
 use std::path::Path;
 use std::sync::LazyLock;
 
-use wellfed_flash::ota::Image;
 use wellfed_formats::audit::PackagedText;
 use wellfed_formats::layout::Hex;
+use wellfed_image::ota::Image;
 use regex::Regex;
 
 use super::{index, parse_hex, refuse, tool};

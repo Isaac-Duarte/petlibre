@@ -432,7 +432,7 @@ pub fn reviewed_plan(
 /// Keep the reviewed plan beside the session it authorizes.
 pub fn keep_plan(directory: &Path, raw: &[u8]) -> Result<()> {
     evidence::write_new(&directory.join("reviewed-plan.json"), raw)?;
-    evidence::sync_directory(directory)
+    Ok(evidence::sync_directory(directory)?)
 }
 
 /// One region transfer as a session report records it.

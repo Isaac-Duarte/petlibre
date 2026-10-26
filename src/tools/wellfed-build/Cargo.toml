@@ -10,11 +10,11 @@ publish.workspace = true
 [dependencies]
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
 clap.workspace = true
-ed25519-dalek = "2"
 wellfed-core.workspace = true
-wellfed-flash = { version = "0.1.0", path = "../wellfed-flash" }
 wellfed-emu.workspace = true
 wellfed-formats.workspace = true
+wellfed-image.workspace = true
+wellfed-signing.workspace = true
 regex = "1"
 rustix = { version = "1", features = ["process", "fs"] }
 serde.workspace = true
@@ -25,7 +25,7 @@ thiserror.workspace = true
 toml = { version = "1", default-features = false, features = ["parse", "serde", "std"] }
 
 [dev-dependencies]
-wellfed-flash = { version = "0.1.0", path = "../wellfed-flash", features = ["fixtures"] }
+wellfed-image = { workspace = true, features = ["fixtures"] }
 
 [lints]
 workspace = true

@@ -44,6 +44,8 @@ wellfed-service = { path = "src/server/wellfed-service" }
 wellfed-formats = { path = "src/tools/wellfed-formats" }
 wellfed-stock = { path = "src/tools/wellfed-stock" }
 wellfed-emu = { path = "src/tools/wellfed-emu" }
+wellfed-image = { path = "src/tools/wellfed-image" }
+wellfed-signing = { path = "src/tools/wellfed-signing" }
 wellfed-testkit = { path = "src/sdk/wellfed-testkit" }
 wellfed-sim = { path = "src/sdk/wellfed-sim" }
 # Host tools.

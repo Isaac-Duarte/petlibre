@@ -1,0 +1,25 @@
+[package]
+license.workspace = true
+name = "wellfed-image"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "The PLAF103 OTA image as every host tool reads it: its container and core images, the two banks' layouts, the private/ evidence root and frozen image reviews"
+publish.workspace = true
+
+[dependencies]
+wellfed-core.workspace = true
+wellfed-formats.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[features]
+# Synthetic images and frozen reviews for other crates' host tests.
+fixtures = []
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -46,7 +46,7 @@ pub enum Error {
     Uncovered(usize),
     /// The pinned stock OTA reference failed its container checks.
     #[error(transparent)]
-    Reference(#[from] wellfed_flash::Error),
+    Reference(#[from] wellfed_image::Error),
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]

@@ -17,16 +17,16 @@ use serde_json::{Value, json};
 use crate::evidence::Root;
 use crate::evidence::journal::Receipt;
 use crate::evidence::session::{Context, Pin};
-use crate::fixtures::{synthetic_payload, wrap};
 use crate::link::protocol::{self, ACK, CAPACITY, EOT, NAK, Port, SECTOR, STX};
 use crate::link::sector::{self, Baseline, START};
-use crate::writers::development::{self, Acquired, BANK0, BANK1, Layout, MARKER, Update};
+use crate::writers::development::{self, Acquired, BANK0, Layout, MARKER, Update};
 use wellfed_formats::canonical::sha256;
+use wellfed_image::bank::BANK1;
+use wellfed_image::fixtures::{synthetic_payload, wrap};
 
 mod banks;
 mod golden;
 mod recovery;
-mod review;
 mod update;
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
@@ -405,7 +405,7 @@ fn image(km4: usize, seed: u8) -> Vec<u8> {
 /// A variant differing in two sectors, optionally one sector larger.
 fn variant(image: &[u8], grow: bool) -> Vec<u8> {
     let mut payload = development::payload(image, &BANK1).unwrap().to_vec();
-    let split = crate::ota::images(&payload).unwrap()[2].payload_header_offset;
+    let split = wellfed_image::ota::images(&payload).unwrap()[2].payload_header_offset;
     payload[split + 4096 + 53] ^= 1;
     payload[split + 8192 + 71] ^= 1;
 

@@ -28,6 +28,17 @@ impl From<wellfed_formats::Error> for Error {
     }
 }
 
+/// The image, bank and review checks keep their message and kind.
+impl From<wellfed_image::Error> for Error {
+    fn from(error: wellfed_image::Error) -> Self {
+        match error {
+            wellfed_image::Error::Refused(message) => Self::Refused(message),
+            wellfed_image::Error::Io(error) => Self::Io(error),
+            wellfed_image::Error::Json(error) => Self::Json(error),
+        }
+    }
+}
+
 impl Error {
     /// The short kind recorded in journals and stop reports.
     pub fn kind(&self) -> &'static str {

@@ -2,14 +2,14 @@
 
 `wellfed-bench` ([src/tools/wellfed-bench](../../../src/tools/wellfed-bench)) powers the feeder, enters the ROM loader and chains the [Rust UART flash client](../../development/rust-flash.md). It adds power and strap control only. Serial reads, inspections, plans and writes run as separate `wellfed-flash` processes, so their pinned checks, plan hashes and no-retry stops apply unchanged. Running it is a physical bench operation; build and check targets never call it.
 
-Build the binaries together; the bench runs the `wellfed-flash` beside itself unless `--flash-bin` names another, and hands `itest` and `stock-ota` (with the same arguments) to the `wellfed-itest` beside itself, which runs the stock server, the `wellfed-stock` beside it unless `--stock-bin` names another ([stock server](../../development/stock-server.md)):
+Build the binaries together; the bench runs the `wellfed-flash` beside itself unless `--flash-bin` names another, and its `itest` and `stock-ota` run the stock server, the `wellfed-stock` beside it unless `--stock-bin` names another ([stock server](../../development/stock-server.md)):
 
 ```sh
-cargo build --locked --release -p wellfed-bench -p wellfed-itest -p wellfed-flash -p wellfed-stock
+cargo build --locked --release -p wellfed-bench -p wellfed-flash -p wellfed-stock
 target/release/wellfed-bench status
 ```
 
-The bench is four crates with one-way dependencies: `wellfed-relay` (the relay board driver), `wellfed-bench` (the binary and the operator sequences), `wellfed-itest` (the integration suite, on the bench's rig) and `wellfed-dashboard` (the read-only page, which links neither the relay driver nor the flash client). The files they share (the bench config, the progress document, the run records and the suite's catalog) are typed in `wellfed-formats`. `wellfed-bench` links `wellfed-flash` only for the review verification signing does; every flash read and write runs as a `wellfed-flash` process.
+The bench is five crates with one-way dependencies: `wellfed-relay` (the relay board driver), `wellfed-rig` (the operator sequences and the steps the suite builds on), `wellfed-itest` (the integration suite, on the rig), `wellfed-dashboard` (the read-only page, which links neither the relay driver nor the flash client) and `wellfed-bench` (the command line over all of them, one binary). The files they share (the bench config, the progress document, the run records and the suite's catalog) are typed in `wellfed-formats`. The rig signs offers through `wellfed-signing`; every build runs as a `wellfed-build` process and every flash read and write as a `wellfed-flash` process.
 
 Run it from the repository root, or pass `--root`. A plan binds the SHA-256 of the `wellfed-flash` binary that prepared it, so do not rebuild between `flash-prepare` and `flash-execute`. The bench never links the flash client in, so rebuilding the bench alone does not affect a plan.
 
@@ -107,7 +107,7 @@ After a fallback, bank 0 refuses the manifest that failed its trial: sign a new 
 
 `itest` runs named real-device scenarios against the feeder on the bench. It is a bench command, not a test target: `cargo test` and `make check` never reach it. Builds go in over the air. The UART stays attached, receive-only, for the whole run. It is what the scenarios assert on, it is the evidence, and it is the way back when the feeder stops answering.
 
-The suite is the `wellfed-itest` crate. `wellfed-bench itest` and `stock-ota` parse their arguments as the bench always did, then hand them unchanged to the `wellfed-itest` binary beside it, which runs the scenarios on the bench's rig; `--list` answers without it. The two must come from the same build: both carry a fingerprint of the sources they link, and `wellfed-itest` refuses a hand-off from a bench with another, naming the command that rebuilds both. A missing `wellfed-itest`, or one built without `--features ui` when `--ui` was asked for, is refused the same way, before anything opens. The scenario catalog the page and `--list` show is typed in `wellfed-formats`.
+The suite is the `wellfed-itest` crate, which `wellfed-bench` links: `itest` and `stock-ota` run the scenarios on the rig in the bench's own process, so the run, its interrupt and its exit status are the command's. `--list` answers before anything opens. The scenario catalog the page and `--list` show is typed in `wellfed-formats`.
 
 ```sh
 cargo build --release --bins --examples
@@ -288,13 +288,13 @@ The fields match what the Python bench wrote, so older history still shows.
 
 `--ui` serves a read-only page on `http://127.0.0.1:8780/`:
 - `wellfed-bench --ui` alone runs until Ctrl+C, as does `wellfed-dashboard` (what `src/scripts/bench-dashboard` builds and runs, with the same `--listen` and `--ui-port`).
-- `wellfed-bench --ui flash-execute …` serves it while that command runs; `wellfed-bench --ui itest …` has `wellfed-itest` serve it.
+- `wellfed-bench --ui flash-execute …` serves it while that command runs, `itest` included.
 
 **Building it.** The page is optional. It is a Svelte app in `src/web/apps/bench`, which the binary embeds only when built with the `ui` feature:
 
 ```
 make ui                                   # pnpm in src/web/: builds src/web/apps/bench/dist
-cargo build --locked --release -p wellfed-bench -p wellfed-itest -p wellfed-dashboard --features ui
+cargo build --locked --release -p wellfed-bench -p wellfed-dashboard --features ui
 ```
 
 A binary built without the feature refuses `--ui` before any bench command runs. Node and pnpm are needed only for `make ui` and `make check-web`, never for `make check`. The page's TypeScript types (`src/web/packages/api/src/bench.gen.ts`) are generated from the Rust views, and a test in `make check` fails when they are stale (`UPDATE_BINDINGS=1 cargo test -p wellfed-dashboard bindings` rewrites them).

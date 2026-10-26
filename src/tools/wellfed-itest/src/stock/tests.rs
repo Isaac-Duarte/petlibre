@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 use serde_json::{Value, json};
 
 use super::*;
-use wellfed_bench::device::{Answer, Ask, DeviceStatus, Intruder, Rebuffed};
-use wellfed_bench::server::{StockStatus, TrialAnswer};
+use wellfed_rig::device::{Answer, Ask, DeviceStatus, Intruder, Rebuffed};
+use wellfed_rig::server::{StockStatus, TrialAnswer};
 
 use crate::{Fault, Rig};
 
@@ -173,9 +173,9 @@ impl Rig for StockFeeder {
         Ok(Some(Staged {
             build: if stock { STOCK } else { BUILD }.into(),
             target: if stock {
-                wellfed_bench::commands::ota::Target::Stock
+                wellfed_rig::commands::ota::Target::Stock
             } else {
-                wellfed_bench::commands::ota::Target::Replacement
+                wellfed_rig::commands::ota::Target::Replacement
             },
             version: 73,
             image: review.join("image.bin").display().to_string(),
@@ -203,7 +203,7 @@ impl Rig for StockFeeder {
         };
         // A stock offer: our running build installs it into bank 1, then
         // stock prints its banner and, once routed, reports.
-        if staged.target == wellfed_bench::commands::ota::Target::Stock {
+        if staged.target == wellfed_rig::commands::ota::Target::Stock {
             self.actions.push("offer stock".into());
             self.line(10.0, "PLOTA1 manifest version=73 bytes=1376256");
             self.line(40.0, "PLOTA1 activated version=73 sectors=336");
@@ -432,7 +432,7 @@ fn args(promote: bool) -> StockOtaArgs {
 fn staged() -> Staged {
     Staged {
         build: BUILD.into(),
-        target: wellfed_bench::commands::ota::Target::Replacement,
+        target: wellfed_rig::commands::ota::Target::Replacement,
         version: 72,
         review: PathBuf::from("private/verification/poc1-review"),
         manifest: "private/verification/poc1-v72.manifest".into(),

@@ -14,11 +14,11 @@ use wellfed_model::{OpenRefusal, Refusal, Settings, SettingsPatch, WifiSource};
 
 use std::ops::Deref;
 
-use wellfed_bench::commands::ota::Outcome;
-use wellfed_bench::device::{Answer, Ask, Credentials, DeviceStatus, Intruder, Rebuffed};
-use wellfed_bench::server::NotReady;
-use wellfed_bench::{Error, Result, require};
 use wellfed_formats::bench::catalog;
+use wellfed_rig::commands::ota::Outcome;
+use wellfed_rig::device::{Answer, Ask, Credentials, DeviceStatus, Intruder, Rebuffed};
+use wellfed_rig::server::NotReady;
+use wellfed_rig::{Error, Result, require};
 
 use super::log::Record;
 use super::{Baseline, Ctx, Fault, INSTALL_SECONDS, STATUS_SECONDS, compact};
@@ -563,9 +563,9 @@ fn ota_power_cuts(ctx: &mut Ctx) -> Result<()> {
     // has not; the baseline goes back on afterwards, pushed to the twin.
     let twin = ctx.image(
         "cut-twin",
-        wellfed_bench::commands::Image {
-            firmware: wellfed_bench::commands::Firmware::Feeder,
-            variant: Some(wellfed_bench::commands::Variant::Twin),
+        wellfed_rig::commands::Image {
+            firmware: wellfed_rig::commands::Firmware::Feeder,
+            variant: Some(wellfed_rig::commands::Variant::Twin),
         },
     )?;
     let restore = ctx.resign("cut-restore")?;

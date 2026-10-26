@@ -27,16 +27,16 @@
 
 use std::path::PathBuf;
 
-use wellfed_bench::commands::Bench;
-use wellfed_bench::commands::ota::{self, OtaArgs, Outcome, Staged, Target, Timing};
-use wellfed_bench::server::{STOCK_VERSION, TrialAnswer, TrialRequest};
-use wellfed_bench::suite::{ItestArgs, StockOtaArgs};
-use wellfed_bench::{Error, Result, say};
+use crate::args::{ItestArgs, StockOtaArgs};
 use wellfed_core::record::tag;
 use wellfed_formats::bench::progress::StepState;
 use wellfed_formats::bench::run::SUFFIX;
 use wellfed_formats::bench::{VERIFICATION, catalog::Tier};
 use wellfed_formats::stock::{OtaReport, TrialPhase};
+use wellfed_rig::commands::Bench;
+use wellfed_rig::commands::ota::{self, OtaArgs, Outcome, Staged, Target, Timing};
+use wellfed_rig::server::{STOCK_VERSION, TrialAnswer, TrialRequest};
+use wellfed_rig::{Error, Result, say};
 
 use super::log::Record;
 use super::{

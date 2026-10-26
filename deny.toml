@@ -53,21 +53,22 @@ multiple-versions = "warn"
 wildcards = "deny"
 allow-wildcard-paths = true
 # The bench's hardware edge is linked only where it belongs, so the read-only
-# page (wellfed-dashboard) cannot switch a relay or write flash: the relay
-# driver only from the bench and its suite, the flash client only from the
-# crates that verify its plans or reviews, and the builder (which links the
-# flash client) only from the bench.
+# page (wellfed-dashboard) cannot switch a relay: the relay driver only from
+# the bench, its rig and its suite, and the builder (which links the
+# factory-loader emulator) only from the rig's tests; the rig signs through
+# wellfed-signing. No crate links the flash client at all, which
+# cargo-deny cannot express without banning the crate itself, so
+# `cargo xtask check-repository` refuses a manifest under src/ that names it.
 deny = [
-    { crate = "wellfed-relay", wrappers = ["wellfed-bench", "wellfed-itest"], reason = "the relay board is driven only by the bench and its suite" },
-    { crate = "wellfed-flash", wrappers = ["wellfed-audit", "wellfed-bench", "wellfed-build"], reason = "flash writes run only as a wellfed-flash process; these link it to verify plans and reviews" },
-    { crate = "wellfed-build", wrappers = ["wellfed-bench"], reason = "it links wellfed-flash" },
+    { crate = "wellfed-relay", wrappers = ["wellfed-bench", "wellfed-itest", "wellfed-rig"], reason = "the relay board is driven only by the bench, its rig and its suite" },
+    { crate = "wellfed-build", wrappers = ["wellfed-rig"], reason = "the builder runs as its own process; only the rig's tests link it, to freeze a stock review" },
     # The SDK (src/sdk) depends on no product crate: product policy and
     # schema reach the firmware above it. The feeder's stores reach the SDK
     # runtime only through the runtime crate every firmware links.
     { crate = "wellfed-feeder", wrappers = ["wellfed-feeder-runtime", "wellfed-fw-feeder", "wellfed-feeder-sim", "wellfed-client"], reason = "product policy sits above the SDK: only the product runtime, the feeder firmware, the simulator and the client's tests link it" },
     { crate = "wellfed-device-api", wrappers = ["wellfed-feeder", "wellfed-feeder-runtime", "wellfed-fw-feeder", "wellfed-feeder-sim", "wellfed-client"], reason = "the feeder's side of the device API is product code: the feeder's policy, its runtime and firmware, the simulator and the client's tests link it" },
     { crate = "wellfed-feeder-runtime", wrappers = ["wellfed-fw-blink", "wellfed-fw-bringup", "wellfed-fw-feeder", "wellfed-fw-qa"], reason = "the feeder's stores on the SDK runtime are linked by firmwares, never by the SDK" },
-    { crate = "wellfed-proto", wrappers = ["wellfed", "wellfed-bench", "wellfed-client", "wellfed-connect", "wellfed-device-api", "wellfed-feeder", "wellfed-feeder-sim", "wellfed-fw-feeder", "wellfed-model", "wellfed-service"], reason = "the device API's wire types are product schema; the SDK takes none" },
+    { crate = "wellfed-proto", wrappers = ["wellfed", "wellfed-client", "wellfed-connect", "wellfed-device-api", "wellfed-feeder", "wellfed-feeder-sim", "wellfed-fw-feeder", "wellfed-model", "wellfed-rig", "wellfed-service"], reason = "the device API's wire types are product schema; the SDK takes none" },
 ]
 
 [sources]

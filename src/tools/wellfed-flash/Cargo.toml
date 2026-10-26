@@ -12,6 +12,7 @@ chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 clap.workspace = true
 ctrlc.workspace = true
 wellfed-formats.workspace = true
+wellfed-image.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serialport.workspace = true
@@ -19,12 +20,9 @@ sha2 = "0.11"
 thiserror.workspace = true
 uuid = { workspace = true, features = ["v4"] }
 
-[features]
-# Synthetic images and frozen reviews for other crates' host tests.
-fixtures = []
-
 [dev-dependencies]
 wellfed-emu.workspace = true
+wellfed-image = { workspace = true, features = ["fixtures"] }
 tempfile.workspace = true
 
 [lints]

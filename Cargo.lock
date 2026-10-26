@@ -2265,8 +2265,8 @@ dependencies = [
  "anyhow",
  "chrono",
  "clap",
- "wellfed-flash",
  "wellfed-formats",
+ "wellfed-image",
  "regex",
  "serde",
  "serde_json",
@@ -2279,33 +2279,14 @@ name = "wellfed-bench"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "chrono",
  "clap",
  "ctrlc",
- "ed25519-dalek",
- "jiff",
- "mdns-sd",
- "wellfed-build",
- "wellfed-client",
- "wellfed-core",
  "wellfed-dashboard",
- "wellfed-feeder-sim",
- "wellfed-flash",
  "wellfed-formats",
- "wellfed-model",
- "wellfed-proto",
+ "wellfed-itest",
  "wellfed-relay",
- "wellfed-session",
- "wellfed-stock-api",
+ "wellfed-rig",
  "rustix",
- "serde",
- "serde_json",
- "serialport",
- "sha2 0.10.9",
- "tempfile",
- "thiserror",
- "tokio",
- "uuid",
 ]
 
 [[package]]
@@ -2318,11 +2299,11 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "clap",
- "ed25519-dalek",
  "wellfed-core",
  "wellfed-emu",
- "wellfed-flash",
  "wellfed-formats",
+ "wellfed-image",
+ "wellfed-signing",
  "regex",
  "rustix",
  "serde",
@@ -2476,6 +2457,7 @@ dependencies = [
  "ctrlc",
  "wellfed-emu",
  "wellfed-formats",
+ "wellfed-image",
  "serde",
  "serde_json",
  "serialport",
@@ -2570,15 +2552,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "wellfed-image"
+version = "0.1.0"
+dependencies = [
+ "wellfed-core",
+ "wellfed-formats",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "wellfed-itest"
 version = "0.1.0"
 dependencies = [
  "clap",
- "wellfed-bench",
  "wellfed-core",
  "wellfed-formats",
  "wellfed-model",
  "wellfed-relay",
+ "wellfed-rig",
  "wellfed-stock-api",
  "rustix",
  "serde",
@@ -2625,6 +2619,36 @@ version = "0.1.0"
 dependencies = [
  "serialport",
  "thiserror",
+]
+
+[[package]]
+name = "wellfed-rig"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "ed25519-dalek",
+ "jiff",
+ "mdns-sd",
+ "wellfed-build",
+ "wellfed-client",
+ "wellfed-core",
+ "wellfed-feeder-sim",
+ "wellfed-formats",
+ "wellfed-image",
+ "wellfed-model",
+ "wellfed-proto",
+ "wellfed-relay",
+ "wellfed-session",
+ "wellfed-signing",
+ "wellfed-stock-api",
+ "serde",
+ "serde_json",
+ "serialport",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -2715,6 +2739,20 @@ dependencies = [
  "sha2 0.10.9",
  "snow",
  "x25519-dalek",
+]
+
+[[package]]
+name = "wellfed-signing"
+version = "0.1.0"
+dependencies = [
+ "ed25519-dalek",
+ "wellfed-core",
+ "wellfed-formats",
+ "wellfed-image",
+ "serde_json",
+ "sha2 0.11.1",
+ "tempfile",
+ "thiserror",
 ]
 
 [[package]]

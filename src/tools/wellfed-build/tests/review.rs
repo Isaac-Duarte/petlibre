@@ -12,10 +12,11 @@ use std::path::PathBuf;
 use wellfed_build::Repo;
 use wellfed_build::review::{bank_payload, freeze, mapping_cases};
 use wellfed_emu::factory;
-use wellfed_flash::evidence::Root;
-use wellfed_flash::writers::development::BANK1;
 use wellfed_formats::manifest::BuildManifest;
 use wellfed_formats::review::{Details, ImageKind};
+use wellfed_image::bank::BANK1;
+use wellfed_image::root::Root;
+use wellfed_signing::{Frozen, Key, Motion};
 
 fn repo() -> Repo {
     let root = std::env::var_os("WELLFED_FIXTURE_ROOT")
@@ -45,7 +46,7 @@ fn a_reviewed_build_is_frozen_and_accepted_by_the_flash_client() {
         .collect();
     assert_eq!(banks, [0, 1]);
     let root = Root::new(&repo.root).unwrap();
-    let frozen = wellfed_flash::evidence::review::frozen(&root, &output, &BANK1).unwrap();
+    let frozen = wellfed_image::review::frozen(&root, &output, &BANK1).unwrap();
     assert_eq!(frozen.image, fs::read(output.join("image.bin")).unwrap());
 
     // A second freeze into the same directory is refused.
@@ -59,10 +60,22 @@ fn stock_is_frozen_by_hash_and_accepted_by_the_flash_client() {
     let scratch = tempfile::tempdir_in(repo.root.join("private")).unwrap();
     let output = scratch.path().join("stock");
 
-    freeze(&repo, ImageKind::Stock, &PathBuf::new(), &output).unwrap();
+    let review = freeze(&repo, ImageKind::Stock, &PathBuf::new(), &output).unwrap();
 
     let root = Root::new(&repo.root).unwrap();
-    assert!(wellfed_flash::evidence::review::frozen(&root, &output, &BANK1).is_ok());
+    assert!(wellfed_image::review::frozen(&root, &output, &BANK1).is_ok());
+
+    // The signer names stock by its payload hash, which no build's identity
+    // can equal.
+    let frozen = Frozen::open(&repo.root, &output).unwrap();
+    assert_eq!(
+        (frozen.kind(), frozen.build_id()),
+        (ImageKind::Stock, review.payload_sha256)
+    );
+    let key_path = scratch.path().join("ota-key.json");
+    wellfed_signing::keygen(&key_path).unwrap();
+    let key = Key::load(&key_path).unwrap();
+    assert!(frozen.offer(&key, 1, Motion::Refused).is_ok());
 }
 
 /// The actual factory loader accepts the first-boot build in either bank of

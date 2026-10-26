@@ -49,7 +49,7 @@ use serde::{Deserialize, Serialize};
 use crate::server::NotReady;
 
 /// The owner key file the bench opens sessions with (root-relative).
-pub(crate) const OWNER_KEYS: &str = "private/wellfed-owner.json";
+pub const OWNER_KEYS: &str = "private/wellfed-owner.json";
 
 /// mDNS answers on a LAN arrive within a second or two.
 const DISCOVERY: Duration = Duration::from_secs(4);

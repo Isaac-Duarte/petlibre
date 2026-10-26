@@ -27,7 +27,13 @@ pub const CONFIG: OwnerConfig = OwnerConfig {
         max_duration_ms: 120,
         portion_ms: 120,
         max_observation_gap_ms: 4,
+        // Past the longest feed: the fake's PA18 rests LOW, and the tests
+        // that time these set their own.
+        mark_gap_ms: 1000,
+        mark_low_ms: 1000,
         current_limit_ma: 300,
+        current_max_ma: 1000,
+        surge_ms: 0,
         max_portions: 3,
         max_reverse_attempts: 0,
     },

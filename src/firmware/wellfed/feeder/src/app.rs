@@ -89,6 +89,10 @@ impl Feeds for Feeding {
     fn cancel(&self, feed: u32) -> bool {
         Feeding::cancel(self, feed)
     }
+
+    fn food(&self) -> Option<bool> {
+        Feeding::food(self)
+    }
 }
 
 #[wellfed_sdk::task(name = "wellfed-loop", stack = LOOP_STACK_WORDS, priority = 2)]
@@ -105,6 +109,8 @@ fn loop_task() -> u32 {
     stall::step();
     #[cfg(any(feature = "feed-stall", feature = "stop-fail"))]
     inject::step(&feeding);
+    #[cfg(any(feature = "feed-jam", feature = "sensor-fault"))]
+    show_faults::step(&feeding);
     let began = sdk::systimer_ticks();
     let mut feed_delay = feeding.step(
         |record| log(format_args!("PLOWN1 {record}\r\n")),
@@ -313,6 +319,71 @@ mod inject {
                 u8::from(hold.lifted),
                 hold.skipped
             ));
+        }
+    }
+}
+
+/// The `feed-jam` and `sensor-fault` variants: each feed shown its jam or
+/// sensor fault, chosen by `feed_faults::Planner`, before the owner's step,
+/// so the owner's next capture already reads it. Every boot is armed, so
+/// the image goes back out after the run.
+#[cfg(any(feature = "feed-jam", feature = "sensor-fault"))]
+mod show_faults {
+    use wellfed_sdk::hal::feed_faults::{self, Injected};
+    use wellfed_sdk::hal::sdk;
+    use wellfed_sdk::{Slot, log};
+
+    use crate::feed_faults::{Action, Case, Family, Planner};
+    use crate::feeding::Feeding;
+
+    #[cfg(all(feature = "feed-jam", feature = "sensor-fault"))]
+    compile_error!("feed-jam and sensor-fault are separate variants");
+
+    #[cfg(feature = "feed-jam")]
+    const FAMILY: Family = Family::Jam;
+    #[cfg(feature = "sensor-fault")]
+    const FAMILY: Family = Family::Sensor;
+
+    /// The loop task's.
+    static PLANNER: Slot<Planner> = Slot::filled(Planner::new(FAMILY));
+
+    const fn injected(case: Case) -> Injected {
+        match case {
+            Case::JamFrees => Injected::JamFrees,
+            Case::JamHolds => Injected::JamHolds,
+            Case::MarkStuckLow => Injected::MarkStuckLow,
+            Case::MarksMissing => Injected::MarksMissing,
+            Case::OutletBlocked => Injected::OutletBlocked,
+            Case::AdcLost => Injected::AdcFails,
+        }
+    }
+
+    pub fn step(feeding: &Feeding) {
+        let Some(mut planner) = PLANNER.enter() else {
+            return;
+        };
+        match planner.step(feeding.phase(), sdk::uptime_ms()) {
+            Some(Action::Arm { feed, case }) => {
+                let fault = injected(case);
+                feed_faults::arm(fault);
+                log(format_args!(
+                    "PLINJ1 show id={feed} fault={}\r\n",
+                    fault.code()
+                ));
+            }
+            Some(Action::Clear { feed }) => {
+                // What the fault changed, before clearing the counts with it.
+                let counts = feed_faults::counts();
+                let left = feed_faults::armed();
+                feed_faults::arm(Injected::None);
+                log(format_args!(
+                    "PLINJ1 clear id={feed} armed={} readings={} edges={}\r\n",
+                    left.code(),
+                    counts.readings,
+                    counts.edges
+                ));
+            }
+            None => {}
         }
     }
 }

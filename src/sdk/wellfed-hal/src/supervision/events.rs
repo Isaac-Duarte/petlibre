@@ -675,6 +675,11 @@ impl EventsState {
             return;
         }
 
+        #[cfg(feature = "feed-faults")]
+        if pending == FEEDBACK_MASK && crate::feed_faults::drop_edge() {
+            return;
+        }
+
         if pending & !FEEDBACK_MASK != 0 {
             self.fail(EventsFault::Resource);
             sdk::irq_disable(Irq::GpioA);

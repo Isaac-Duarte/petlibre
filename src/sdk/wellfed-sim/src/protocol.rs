@@ -66,6 +66,7 @@ codes!(Fault {
     Hardware,
     Watchdog,
     Flash,
+    Sensor,
 });
 
 codes!(Outcome {
@@ -240,6 +241,41 @@ impl From<Flag> for u8 {
 /// transport's bounds.
 pub const RUN_MAX_MS: u32 = 1000;
 
+/// What the `wedge` command puts in the rotor: 0 nothing, 1 a wedge the
+/// first reversal frees, 2 one that stalls every forward drive however
+/// often the rotor backs off it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "u8", into = "u8")]
+pub enum Wedge {
+    #[default]
+    Clear,
+    Frees,
+    Holds,
+}
+
+impl TryFrom<u8> for Wedge {
+    type Error = String;
+
+    fn try_from(value: u8) -> Result<Self, String> {
+        match value {
+            0 => Ok(Self::Clear),
+            1 => Ok(Self::Frees),
+            2 => Ok(Self::Holds),
+            _ => Err(format!("wedge {value} is not 0, 1 or 2")),
+        }
+    }
+}
+
+impl From<Wedge> for u8 {
+    fn from(value: Wedge) -> Self {
+        match value {
+            Wedge::Clear => 0,
+            Wedge::Frees => 1,
+            Wedge::Holds => 2,
+        }
+    }
+}
+
 /// The storage phase a `cut` targets: reserve, finish or resolve (recover
 /// writes nothing).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -340,6 +376,11 @@ pub enum Command {
     /// mark passes, and the current does not show it.
     Jam {
         args: [Flag; 1],
+    },
+    /// Something wedged in the rotor: forward drive stalls it and reads the
+    /// plant's stall current, while driving back turns it freely.
+    Wedge {
+        args: [Wedge; 1],
     },
     /// Drive PA18 to this level, interrupting as an edge does.
     Edge {
@@ -567,6 +608,12 @@ mod tests {
             Command::Status { args: [] }
         );
         assert_eq!(
+            parse(r#"{"op":"wedge","args":[2]}"#).unwrap(),
+            Command::Wedge {
+                args: [Wedge::Holds]
+            }
+        );
+        assert_eq!(
             parse(r#"{"op":"plant","args":[{"seed":3},9074]}"#).unwrap(),
             Command::Plant {
                 args: (
@@ -594,6 +641,7 @@ mod tests {
             r#"{"op":"plant","args":[{"low_ms":3,"low_jitter_ms":0},0]}"#,
             r#"{"op":"plant","args":[{"color":1},0]}"#,
             r#"{"op":"edge","args":[2]}"#,
+            r#"{"op":"wedge","args":[3]}"#,
             r#"{"op":"submit","args":[1,65536]}"#,
             r#"{"op":"submit","args":[1]}"#,
             r#"{"op":"status","args":[1]}"#,

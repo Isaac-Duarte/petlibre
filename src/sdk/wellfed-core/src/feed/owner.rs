@@ -52,6 +52,9 @@ pub enum OwnerFault {
     /// The owner's own beat fell overdue: a step blocked past its gap.
     Progress = 5,
     Flash = 6,
+    /// The sensors could not be read (an ADC conversion that never
+    /// completed): held until a restart, with the outputs stopped.
+    Sensor = 7,
 }
 
 impl OwnerFault {
@@ -70,6 +73,7 @@ impl OwnerFault {
             4 => Some(Self::Hardware),
             5 => Some(Self::Progress),
             6 => Some(Self::Flash),
+            7 => Some(Self::Sensor),
             _ => None,
         }
     }

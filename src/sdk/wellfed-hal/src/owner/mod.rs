@@ -26,7 +26,7 @@ use core::cell::UnsafeCell;
 use core::ptr;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use wellfed_core::feed::controller::{FeedController, FeedRequest};
+use wellfed_core::feed::controller::{FeedController, FeedReason, FeedRequest};
 use wellfed_core::feed::observe::Observation;
 use wellfed_core::feed::progress::BowlMode;
 use wellfed_core::feed::sensor_inputs::SensorInputs;
@@ -92,6 +92,8 @@ pub struct FeedTrace {
     pub current_max: u32,
     pub current_sum: u32,
     pub current_samples: u16,
+    /// Times the drive backed off a jam.
+    pub reversals: u8,
     /// Each logged edge, from the drive's start (0 if it predates it), and
     /// the level after it.
     pub edge_ms: [Option<(u32, bool)>; EDGE_LOG],
@@ -120,6 +122,9 @@ pub struct OwnerStatus {
     pub stopped: bool,
     pub optics_off: bool,
     pub trace: FeedTrace,
+    /// The food beam's latest qualified reading (`true` with food), kept
+    /// after the emitters go off; `None` until a feed has lit them.
+    pub food: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -218,11 +223,17 @@ pub struct OwnerTask<S> {
     pub optics_started: bool,
     pub result_durable: bool,
 
-    /// Initialization failed after the beat began (SETUP or RECOVERY). The
-    /// fault stays latched; the owner beats only while each iteration
-    /// re-verifies STOP and infrared OFF, so a determined failure does not
-    /// reset-loop while a hang or output loss still resets.
-    pub init_failed: bool,
+    /// A determined failure the owner holds rather than resets on:
+    /// initialization (SETUP or RECOVERY) after the beat began, or a sensor
+    /// read (SENSOR). The fault stays latched; the owner beats only while
+    /// each iteration re-verifies STOP and infrared OFF, so a determined
+    /// failure does not reset-loop while a hang or output loss still resets.
+    pub held: bool,
+    /// Why the request being prepared could not start yet: what it expires
+    /// with if it never does.
+    pub blocked_by: FeedReason,
+    /// The food beam's latest qualified reading.
+    pub food: Option<bool>,
 
     /// The owner's other parts, set by `open`.
     shared: *mut Shared,
@@ -255,7 +266,9 @@ impl<S> Default for OwnerTask<S> {
             finish_attempted: false,
             optics_started: false,
             result_durable: false,
-            init_failed: false,
+            held: false,
+            blocked_by: FeedReason::None,
+            food: None,
             shared: ptr::null_mut(),
             board: ptr::null(),
             events: ptr::null(),

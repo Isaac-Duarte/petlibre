@@ -224,9 +224,9 @@ fn owner_codes_round_trip() {
         assert_eq!(state.code(), code);
     }
     assert_eq!(OwnerState::from_code(9), None);
-    for code in 0..7 {
+    for code in 0..8 {
         let fault = OwnerFault::from_code(code).unwrap();
         assert_eq!(fault.code(), code);
     }
-    assert_eq!(OwnerFault::from_code(7), None);
+    assert_eq!(OwnerFault::from_code(8), None);
 }

@@ -239,13 +239,19 @@ fn interruption_invalidates_double_bowl_phase() {
 #[test]
 fn faults_stop_and_finish_without_success() {
     // Each checked before a hardware fault's watchdog reset, which follows
-    // once the faulted owner's beat lapses.
+    // once the faulted owner's beat lapses; lost sensors are held instead.
     let cases: Vec<(&str, Vec<Value>, u64, Value)> = vec![
         (
             "missing",
             vec![act(3000, "jam", &[1])],
             16_000,
             json!({"reason": "feedback_timeout"}),
+        ),
+        (
+            "wedged",
+            vec![act(3000, "wedge", &[2])],
+            16_000,
+            json!({"reason": "overcurrent"}),
         ),
         (
             "outlet",
@@ -269,7 +275,7 @@ fn faults_stop_and_finish_without_success() {
             "adc",
             vec![act(3000, "adc_stuck", &[1])],
             5000,
-            json!({"state": "fault", "fault": "hardware"}),
+            json!({"state": "fault", "fault": "sensor", "reason": "sensor"}),
         ),
         (
             "timer",
@@ -675,24 +681,190 @@ fn identical_scenarios_have_identical_reports() {
     assert_eq!(run(&data).unwrap(), run(&data).unwrap());
 }
 
-/// The start-up surge reads over the limit on the one poll it lasts, which
-/// the controller's two-poll rule tolerates; a surge that lasted two polls
-/// would stop every feed.
+/// The start-up surge reads over the limit for a poll or two, inside the
+/// 150 ms after a change of drive that counts toward no jam; one that
+/// outlasted the window would read as a jam both ways.
 #[test]
-fn the_start_up_surge_is_tolerated_for_the_one_poll_it_lasts() {
+fn the_start_up_surge_is_tolerated_inside_its_window() {
     let feed = vec![
         act(SUBMIT, "submit", &[1, 1]),
         expect(ONE_PORTION, json!({"state": "terminal"})),
     ];
 
-    let report = checked(&scenario(feed.clone(), ONE_PORTION, "single"));
-    assert_eq!(last_status(&report)["outcome"], 1, "done");
+    for surge in [20, 140] {
+        let plant = json!({ "surge_ms": surge });
+        let report = checked(&with_plant(feed.clone(), ONE_PORTION, "single", plant));
+        assert_eq!(last_status(&report)["outcome"], 1, "done with {surge} ms");
+    }
 
-    let long = with_plant(feed, ONE_PORTION, "single", json!({"surge_ms": 45}));
+    let long = with_plant(feed, ONE_PORTION, "single", json!({"surge_ms": 400}));
     let report = checked(&long);
     let status = last_status(&report);
     assert_eq!(status["outcome"], 4, "failed");
     assert_eq!(status["reason"], 10, "overcurrent");
+    assert_eq!(
+        drives(&report, 2),
+        1,
+        "backed off once, and over the limit both ways"
+    );
+}
+
+/// How many separate drives `motor` (1 forward, 2 back) the outputs showed.
+fn drives(report: &Value, motor: u64) -> usize {
+    events(report, "outputs")
+        .filter(|e| e["motor"] == motor)
+        .count()
+}
+
+/// A wedge the first reversal frees: the drive backs off once, then
+/// completes the portion, its deadline lengthened by what backing off cost.
+#[test]
+fn a_jam_the_first_reversal_frees_lets_the_feed_complete() {
+    let report = passing(
+        vec![
+            act(SUBMIT, "submit", &[1, 1]),
+            act(4000, "wedge", &[1]),
+            expect(
+                ONE_PORTION + 3000,
+                json!({"state": "terminal", "outcome": "done", "completed": 1, "durable": true,
+                       "motor": 0, "optics": 0}),
+            ),
+        ],
+        ONE_PORTION + 3100,
+        "single",
+    );
+    assert_eq!(drives(&report, 2), 1);
+    assert_eq!(drives(&report, 1), 2, "forward, then forward again");
+}
+
+/// A wedge no reversal frees: three reversals, as stock makes, then the
+/// feed ends failed `Overcurrent`, stopped, and is not started again. The
+/// whole drive stays inside the deadline the reversals lengthened.
+#[test]
+fn a_jam_that_holds_ends_the_feed_after_three_reversals() {
+    let report = passing(
+        vec![
+            act(SUBMIT, "submit", &[1, 3]),
+            act(3000, "wedge", &[2]),
+            expect(
+                12_000,
+                json!({"state": "terminal", "outcome": "failed", "reason": "overcurrent",
+                       "completed": 0, "durable": true, "motor": 0, "optics": 0}),
+            ),
+            act(12_001, "ack", &[1]),
+            expect(30_000, json!({"state": "idle", "motor": 0})),
+        ],
+        30_100,
+        "single",
+    );
+    assert_eq!(drives(&report, 2), 3);
+    assert_eq!(drives(&report, 1), 4);
+}
+
+/// Marks that stop coming (the rotor jammed with no current to show it, or
+/// the sensor lost): no reversal, since nothing says which, and the feed
+/// ends `FeedbackTimeout` once no edge came for 11 s of drive, before its
+/// 12 s deadline.
+#[test]
+fn lost_marks_end_the_feed_without_a_reversal() {
+    let report = passing(
+        vec![
+            act(SUBMIT, "submit", &[1, 1]),
+            act(SUBMIT, "jam", &[1]),
+            expect(11_000, json!({"state": "feeding"})),
+            expect(
+                11_500,
+                json!({"state": "terminal", "outcome": "failed", "reason": "feedback_timeout",
+                       "durable": true, "motor": 0}),
+            ),
+        ],
+        11_600,
+        "single",
+    );
+    assert_eq!(drives(&report, 2), 0);
+}
+
+/// The mark input held LOW past any mark (4 s; a mark reads LOW for about
+/// 1.2 s) is a sensor fault, not a portion.
+#[test]
+fn a_mark_input_stuck_low_is_a_sensor_fault() {
+    let report = passing(
+        vec![
+            act(SUBMIT, "submit", &[1, 3]),
+            act(SUBMIT, "jam", &[1]),
+            act(1000, "edge", &[0]),
+            expect(4900, json!({"state": "feeding"})),
+            expect(
+                5100,
+                json!({"state": "terminal", "outcome": "failed", "reason": "sensor",
+                       "completed": 0, "durable": true, "motor": 0}),
+            ),
+        ],
+        5200,
+        "single",
+    );
+    assert_eq!(drives(&report, 2), 0);
+}
+
+/// An outlet blocked before the feed: the motor never starts, and the feed
+/// fails naming the outlet (stock ends such a feed too).
+#[test]
+fn a_blocked_outlet_fails_the_feed_before_any_motion() {
+    let report = passing(
+        vec![
+            act(50, "inputs", &[4]),
+            act(SUBMIT, "submit", &[1, 1]),
+            expect(
+                2500,
+                json!({"state": "terminal", "outcome": "failed", "reason": "outlet",
+                       "durable": true, "motor": 0, "optics": 0}),
+            ),
+        ],
+        2600,
+        "single",
+    );
+    assert_eq!(drives(&report, 1), 0);
+}
+
+/// Lost sensors are held, not reset on: at rest, or after the feed they
+/// ended was recorded, the owner keeps its fault with the outputs stopped
+/// and the watchdog fed, refusing feeds until a restart. A reset would only
+/// meet the same converter again.
+#[test]
+fn lost_sensors_are_held_without_a_reset() {
+    passing(
+        vec![
+            act(3000, "adc_stuck", &[1]),
+            expect(3100, json!({"state": "fault", "fault": "sensor"})),
+            act(4000, "submit", &[1, 1]),
+            expect(4000, json!({"submission": "reject_stopped"})),
+            expect(
+                40_000,
+                json!({"state": "fault", "fault": "sensor", "stopped": true, "optics_off": true,
+                       "watchdog_resets": 0, "boots": 1, "online": true}),
+            ),
+        ],
+        40_100,
+        "single",
+    );
+
+    passing(
+        vec![
+            act(SUBMIT, "submit", &[1, 1]),
+            act(3000, "adc_stuck", &[1]),
+            expect(
+                3200,
+                json!({"state": "fault", "fault": "sensor", "outcome": "failed",
+                       "reason": "sensor", "durable": true, "motor": 0}),
+            ),
+            expect(
+                40_000,
+                json!({"state": "fault", "watchdog_resets": 0, "boots": 1, "motor": 0}),
+            ),
+        ],
+        40_100,
+        "single",
+    );
 }
 
 /// The capture missing an edge never feeds extra: a missed rise leaves its

@@ -78,7 +78,11 @@ pub const FEED: FeedLimits = FeedLimits {
     max_duration_ms: 10_000,
     portion_ms: 10_000,
     max_observation_gap_ms: 100,
+    mark_gap_ms: 3000,
+    mark_low_ms: 3000,
     current_limit_ma: 300,
+    current_max_ma: 1000,
+    surge_ms: 0,
     max_portions: 1,
     max_reverse_attempts: 0,
 };

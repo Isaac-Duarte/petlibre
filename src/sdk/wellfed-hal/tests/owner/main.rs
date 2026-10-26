@@ -7,3 +7,4 @@ mod beat;
 mod flash;
 mod journal;
 mod lifecycle;
+mod sensors;

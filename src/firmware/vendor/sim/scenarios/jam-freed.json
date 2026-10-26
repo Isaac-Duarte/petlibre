@@ -1,0 +1,34 @@
+{
+  "version": 2,
+  "name": "jam-freed",
+  "profile": "single",
+  "end_ms": 13100,
+  "actions": [
+    {
+      "at_ms": 100,
+      "op": "submit",
+      "args": [
+        1,
+        1
+      ]
+    },
+    {
+      "at_ms": 4000,
+      "op": "wedge",
+      "args": [
+        1
+      ]
+    },
+    {
+      "at_ms": 13000,
+      "op": "expect",
+      "values": {
+        "state": "terminal",
+        "outcome": "done",
+        "completed": 1,
+        "durable": true,
+        "motor": 0
+      }
+    }
+  ]
+}

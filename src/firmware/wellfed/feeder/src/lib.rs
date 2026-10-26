@@ -20,7 +20,9 @@
 //! rejoins (`gaps`), with feeds refused. The `feed-stall` and `stop-fail`
 //! variants inject a stalled loop or a stop that does not take into each
 //! feed's drive (`faults`), for the bench to show the supervision that
-//! ends a drive without them.
+//! ends a drive without them. The `feed-jam` and `sensor-fault` variants
+//! show each feed a jam or a failed sensor (`feed_faults`), for the bench
+//! to show the reversals, stops and holds that answer them.
 //!
 //! [product architecture]: ../../../../docs/firmware/product-architecture.md
 #![cfg_attr(target_os = "none", no_std)]
@@ -31,8 +33,16 @@ compile_error!("wellfed-fw-feeder target builds are KM4-only");
 #[cfg(target_os = "none")]
 mod app;
 pub mod entropy;
-#[cfg(any(test, feature = "feed-stall", feature = "stop-fail"))]
+#[cfg(any(
+    test,
+    feature = "feed-stall",
+    feature = "stop-fail",
+    feature = "feed-jam",
+    feature = "sensor-fault"
+))]
 pub mod faults;
+#[cfg(any(test, feature = "feed-jam", feature = "sensor-fault"))]
+pub mod feed_faults;
 pub mod feeding;
 pub mod gaps;
 pub mod platform;

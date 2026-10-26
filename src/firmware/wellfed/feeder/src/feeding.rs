@@ -25,11 +25,14 @@
 //! reservation when it opens, and the loop records that `Fed` event, by the
 //! feeder, before the owner takes a feed.
 //!
-//! The limits are provisional. The timing ones come from the first pulse
-//! and the optics probe (a 200 ms motor lease, 10 ms supervision timer,
-//! stock's 100 ms sensor settling); the feed ones (duration, reverse,
-//! current) are placeholders until measured feeds replace them. With no
-//! confirmed feedback edge a drive stops after `feedback_timeout_ms`.
+//! The timing limits come from the first pulse and the optics probe (a
+//! 200 ms motor lease, 10 ms supervision timer, stock's 100 ms sensor
+//! settling); the feed ones from the measured feeds (marks, portions,
+//! current in raw scaled counts) and stock (the jam limit and its three
+//! reversals). With no confirmed feedback edge a drive stops after
+//! `feedback_timeout_ms`, and with no edge at all after `mark_gap_ms`; a
+//! jam backs off at most `max_reverse_attempts` times, then ends the feed.
+//! None of them restarts a feed.
 //!
 //! Feeds and Wi-Fi joins take turns (`wellfed_hal::interlock`): an
 //! association holds every task for up to 0.72 s, longer than the beat
@@ -95,16 +98,33 @@ pub const CONFIG: OwnerConfig = OwnerConfig {
         feedback_inhibit_ms: 5000,
         // Half again a portion with food; stock waits about 30 s.
         feedback_timeout_ms: 15_000,
+        // A jam backs off 1 s (about 13 degrees of rotor, a ninth of a
+        // compartment), stops 0.5 s, and drives on, three times at most as
+        // stock does; each costs 2.5 s of deadline and feedback window.
         direction_pause_ms: 500,
-        reverse_ms: 500,
+        reverse_ms: 1000,
         // A feed's average must stay within 12 s a portion, and every gap
         // within the feedback timeout; the cap covers the largest request.
         max_duration_ms: 12_000 * MAX_PORTIONS as u32,
         portion_ms: 12_000,
         max_observation_gap_ms: 100,
+        // A turning rotor shows an edge at least every 8.5 s (a mark's fall
+        // 7.8-8.4 s after the last rise, empty or with food), and reads LOW
+        // for 1.2-1.4 s at a mark.
+        mark_gap_ms: 11_000,
+        mark_low_ms: 4000,
+        // Scaled counts (stock's unit; milliamps need a reference): a drive
+        // reads a mean of 59-64 and peaks of 164-168 empty, a mean of 82-87
+        // with food, and 15-16 stopped. Stock reverses over 300. A start-up
+        // surge read 333 on one poll at 17 ms and up to 447 at 10 ms
+        // polling; the 150 ms after each change of drive (50 ms of it the
+        // driver's deadtime) count toward no jam, and only a reading past
+        // twice the highest surge stops at once.
         current_limit_ma: 300,
+        current_max_ma: 1000,
+        surge_ms: 150,
         max_portions: MAX_PORTIONS,
-        max_reverse_attempts: 0,
+        max_reverse_attempts: 3,
     },
     // Stock: 100 ticks of settling after enable, about 1 s of bad samples
     // before a bad state.
@@ -415,7 +435,11 @@ impl core::fmt::Display for Record {
                     Some(mean) => write!(f, "{mean}")?,
                     None => f.write_str("none")?,
                 }
-                write!(f, " samples={}", trace.current_samples)
+                write!(
+                    f,
+                    " samples={} reversals={}",
+                    trace.current_samples, trace.reversals
+                )
             }
             Record::Edges { feed, trace } => {
                 write!(f, "edges id={feed} at=")?;
@@ -871,6 +895,22 @@ mod target {
             })
         }
 
+        /// The feed the owner has, from its queueing until its result, for
+        /// the jam and sensor-fault variants.
+        #[cfg(any(feature = "feed-jam", feature = "sensor-fault"))]
+        pub fn phase(&self) -> Option<crate::feed_faults::Phase> {
+            let status = OWNER.enter()?.status();
+            matches!(
+                status.state,
+                OwnerState::Queued | OwnerState::Preparing | OwnerState::Feeding
+            )
+            .then_some(crate::feed_faults::Phase {
+                feed: status.result.id,
+                portions: status.result.requested,
+                driving: status.state == OwnerState::Feeding,
+            })
+        }
+
         /// The pass ran a handshake operation during the feed in flight.
         pub fn handshook(&mut self) {
             if let Some(current) = self.current.as_mut() {
@@ -918,6 +958,12 @@ mod target {
                 Turn::Joining | Turn::FeedingJoinWaits => Some(Blocked::Joining),
                 Turn::Free | Turn::Feeding => None,
             }
+        }
+
+        /// The food beam's latest reading, taken while a feed's emitters
+        /// were on.
+        pub fn food(&self) -> Option<bool> {
+            OWNER.enter()?.status().food
         }
 
         /// A feed is queued or runs: no install starts.

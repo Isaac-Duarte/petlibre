@@ -47,6 +47,16 @@ pub struct SensorsOpen {
     pub ok: bool,
 }
 
+/// Why [`Board::capture`] read nothing usable.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CaptureFault {
+    /// The board is closed or faulted, or its sensors never opened: the
+    /// fault, if any, is the one that faulted it.
+    Board,
+    /// An ADC conversion never completed: the sensors are lost.
+    Adc,
+}
+
 /// The board's state, as [`Board::view`] copies it out.
 #[derive(Clone, Copy, Debug)]
 pub struct BoardState {
@@ -303,9 +313,12 @@ impl BoardState {
             return None;
         }
         let pins = sdk::gpio_port_read(GPIO_PORT_A, SENSOR_MASK | bit(FEEDBACK));
+        #[cfg(feature = "feed-faults")]
+        let pins = crate::feed_faults::gpio(pins);
         reading.gpio_valid = true;
         reading.food_high = pins & bit(FOOD) != 0;
         reading.outlet_high = pins & bit(OUTLET) != 0;
+        reading.feedback_high = pins & bit(FEEDBACK) != 0;
         reading.dc_present = pins & bit(ADAPTER) != 0;
         reading.optics_enabled = self.optics_enabled && optics_are(true, true);
         Some(pins)
@@ -491,24 +504,39 @@ impl Board {
     /// Exclusive ADC ownership required. Polls are bounded per conversion,
     /// with interrupts enabled. Timestamp at acquisition START, so its
     /// execution time counts toward age.
-    pub fn capture(&self, reading: &mut SensorReading) -> bool {
-        let limit = self.with(|state| {
+    ///
+    /// A conversion that never completes trips the board: a drive whose
+    /// current cannot be read is unsupervised. The poll bound counts
+    /// readiness checks, not time, so preemption cannot use it up: only a
+    /// converter that stopped converting fails it.
+    pub fn capture(&self, reading: &mut SensorReading) -> Result<(), CaptureFault> {
+        let state = self.with(|state| {
             state.capture_gpio(reading)?;
-            Some(state.adc_poll_limit)
+            Some((state.adc_poll_limit, state.motor.applied))
         });
-        let Ok(Some(limit)) = limit else {
-            return false;
+        let Ok(Some((limit, applied))) = state else {
+            return Err(CaptureFault::Board);
         };
 
-        reading.current_adc_valid = adc::convert(ADC_CURRENT, limit, &mut reading.current);
+        #[cfg(feature = "feed-faults")]
+        let converts = !crate::feed_faults::adc_fails();
+        #[cfg(not(feature = "feed-faults"))]
+        let converts = true;
+        reading.current_adc_valid =
+            converts && adc::convert(ADC_CURRENT, limit, &mut reading.current);
         if reading.current_adc_valid {
             reading.battery_adc_valid = adc::convert(ADC_BATTERY, limit, &mut reading.battery);
         }
         if !reading.current_adc_valid || !reading.battery_adc_valid {
             let _ = self.with(BoardState::trip_now);
-            return false;
+            return Err(CaptureFault::Adc);
         }
-        true
+
+        #[cfg(feature = "feed-faults")]
+        crate::feed_faults::current(applied, &mut reading.current);
+        #[cfg(not(feature = "feed-faults"))]
+        let _ = applied;
+        Ok(())
     }
 
     /// GPIO only: PA16/PA17/PA19 and the emitter state, both ADC channels

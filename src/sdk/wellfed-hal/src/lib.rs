@@ -39,6 +39,10 @@ pub mod settings;
 // product image.
 #[cfg(feature = "stop-fail")]
 pub mod inject;
+// The `feed-jam` and `sensor-fault` bench variants' jams and sensor
+// faults; never in a product image.
+#[cfg(feature = "feed-faults")]
+pub mod feed_faults;
 
 pub mod flash_lock;
 pub mod health;

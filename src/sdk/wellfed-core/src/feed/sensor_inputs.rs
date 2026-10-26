@@ -27,6 +27,8 @@ pub struct SensorReading {
     pub optics_enabled: bool,
     pub food_high: bool,
     pub outlet_high: bool,
+    /// The feedback input's level, read in the same port access.
+    pub feedback_high: bool,
     pub dc_present: bool,
     pub current_adc_valid: bool,
     pub battery_adc_valid: bool,
@@ -86,6 +88,8 @@ pub struct SensorInputs {
     pub power_settled: bool,
     pub current_valid: bool,
     pub battery_valid: bool,
+    /// The feedback input read LOW in the last valid acquisition.
+    pub feedback_low: bool,
 }
 
 impl SensorInputs {
@@ -129,6 +133,7 @@ impl SensorInputs {
         self.current_valid = false;
         self.battery_valid = false;
         self.gpio_valid = false;
+        self.feedback_low = false;
         self.current_scaled = 0;
         self.battery_scaled = 0;
 
@@ -155,6 +160,7 @@ impl SensorInputs {
             self.reset_power();
             return;
         }
+        self.feedback_low = !reading.feedback_high;
 
         if !self.power_known || self.dc_present != reading.dc_present {
             self.power_known = true;
@@ -217,6 +223,13 @@ impl SensorInputs {
             current_ma: self.current_scaled,
             feedback_edge: gpio && feedback_edge,
             feedback_high,
+            mark_low: gpio && self.feedback_low,
         }
+    }
+
+    /// The food beam's qualified reading: `Some(true)` with food in front of
+    /// it. Known only while the emitters are on and settled.
+    pub fn food_present(&self) -> Option<bool> {
+        self.food.known.then_some(self.food.good)
     }
 }

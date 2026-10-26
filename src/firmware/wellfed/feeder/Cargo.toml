@@ -40,6 +40,14 @@ stop-fail = ["wellfed-sdk/stop-fail"]
 # A feeding owner that cannot open (its journal reads as failed, untouched):
 # its trial must not confirm, and falls back to bank 0.
 owner-fail = []
+# Show each feed a jam, 2 s into its drive: one the first reversal frees
+# for a 1-portion feed, one no reversal frees for 2, the mark input stuck
+# LOW for 3.
+feed-jam = ["wellfed-sdk/feed-faults"]
+# Show each feed a sensor fault: the marks lost from the drive's start for
+# a 1-portion feed, the outlet blocked before it starts for 2, the ADC lost
+# 2 s into its drive for 3.
+sensor-fault = ["wellfed-sdk/feed-faults"]
 # Nothing but another build identity: installed after the feeder, it goes
 # through a trial and still serves the device API.
 twin = []
@@ -88,6 +96,12 @@ summary = "Cancels each feed 2 s into its drive with STOP writes held so the sto
 
 [package.metadata.wellfed.variants.owner-fail]
 summary = "The feeding owner never opens (its journal reads as failed, and is left untouched), so the build's trial never confirms: each trial boot stops at once and KM0 counts it, then gives way to bank 0"
+
+[package.metadata.wellfed.variants.feed-jam]
+summary = "Shows each feed a jam on the current channel, 2 s into its drive: for one portion a jam the first reversal frees (the feed completes after one reversal), for two one no reversal frees (three reversals, then failed overcurrent), for three the mark input stuck LOW (failed sensor after 4 s); the motor really turns, hopper empty"
+
+[package.metadata.wellfed.variants.sensor-fault]
+summary = "Shows each feed a sensor fault: for one portion the marks lost from the drive's start (failed no-feedback after 11 s), for two the outlet blocked before it starts (failed outlet, no motion), for three the ADC lost 2 s into its drive (failed sensor, then the owner holds the fault until a restart)"
 
 [package.metadata.wellfed.variants.twin]
 summary = "The feeder unchanged under another build identity, so the bench's drills can install a build that goes through a trial and still serves the device API"

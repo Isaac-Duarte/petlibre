@@ -73,6 +73,7 @@ const IDLE: FeedSample = FeedSample {
     current_ma: 0,
     feedback_edge: false,
     feedback_high: false,
+    mark_low: false,
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

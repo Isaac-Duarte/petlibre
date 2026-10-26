@@ -21,7 +21,11 @@ const LIMITS: FeedLimits = FeedLimits {
     max_duration_ms: 120,
     portion_ms: 120,
     max_observation_gap_ms: 2,
+    mark_gap_ms: 1000,
+    mark_low_ms: 1000,
     current_limit_ma: 300,
+    current_max_ma: 1000,
+    surge_ms: 0,
     max_portions: 50,
     max_reverse_attempts: 2,
 };
@@ -34,6 +38,7 @@ const HEALTHY: FeedSample = FeedSample {
     current_ma: 100,
     feedback_edge: false,
     feedback_high: false,
+    mark_low: false,
 };
 
 struct Fixture {
@@ -275,9 +280,14 @@ fn reverse_attempts_are_bounded() {
     f.edge(true);
     assert_eq!(f.controller.progress.completed, 0);
 
+    // Backed off for `reverse_ms`, then stopped for the pause, then forward.
     f.sample.current_ma = 100;
     f.advance(3);
+    assert_eq!(f.controller.state, FeedState::DirectionPause);
+    assert_eq!(f.controller.motor, MotorCommand::Stop);
+    f.advance(3);
     assert_eq!(f.controller.motor, MotorCommand::Drive0);
+    assert_eq!(f.controller.inhibit_at, f.now);
 
     f.advance(4);
     f.edge(true);
@@ -290,12 +300,206 @@ fn reverse_attempts_are_bounded() {
     f.advance(OVERCURRENT_POLLS.into());
     assert_eq!(f.controller.reverse_attempts, 2);
     f.sample.current_ma = 100;
-    f.advance(3);
+    f.advance(6);
+    assert_eq!(f.controller.state, FeedState::Running);
 
     f.sample.current_ma = 301;
     f.advance(OVERCURRENT_POLLS.into());
     f.expect_fault(FeedReason::Overcurrent);
     assert_eq!(f.controller.reverse_attempts, 2);
+}
+
+#[test]
+fn the_surge_window_counts_toward_no_jam_but_the_ceiling_stops_at_once() {
+    let settings = FeedLimits {
+        surge_ms: 2,
+        ..LIMITS
+    };
+    let mut f = begin_with(&settings, BowlMode::Single, Direction::D0, 3, 0);
+
+    // Under the ceiling: the window's poll counts for nothing, the two
+    // after it are a jam.
+    f.sample.current_ma = 999;
+    f.advance(1);
+    assert!(f.controller.state == FeedState::Running && f.controller.over_limit == 0);
+    f.advance(2);
+    assert_eq!(f.controller.state, FeedState::Reversing);
+
+    // Backing off is a change of drive: its own window.
+    f.advance(1);
+    assert!(f.controller.state == FeedState::Reversing && f.controller.over_limit == 0);
+
+    // Over the ceiling, inside a window: stopped, with no reversal.
+    let mut f = begin_with(&settings, BowlMode::Single, Direction::D0, 3, 0);
+    f.sample.current_ma = 1001;
+    f.advance(1);
+    f.expect_fault(FeedReason::Overcurrent);
+    assert_eq!(f.controller.reverse_attempts, 0);
+}
+
+#[test]
+fn a_reversal_extends_the_deadline_and_the_feedback_window_by_its_cost() {
+    // One portion: a 20 ms deadline; each reversal costs 3 + 3 + 3 = 9.
+    let settings = FeedLimits {
+        portion_ms: 20,
+        ..LIMITS
+    };
+    assert_eq!(settings.reversal_ms(), 9);
+    let mut f = begin_with(&settings, BowlMode::Single, Direction::D0, 1, 0);
+    f.sample.current_ma = 301;
+    f.advance(OVERCURRENT_POLLS.into());
+    assert_eq!(f.controller.deadline_ms, 29);
+    f.sample.current_ma = 100;
+    f.advance(26);
+    assert_eq!(f.controller.state, FeedState::Running);
+    f.advance(1);
+    f.expect_fault(FeedReason::TotalTimeout);
+
+    // Never past the cap: two reversals would make it 38.
+    let settings = FeedLimits {
+        portion_ms: 20,
+        max_duration_ms: 30,
+        ..LIMITS
+    };
+    let mut f = begin_with(&settings, BowlMode::Single, Direction::D0, 1, 0);
+    for _ in 0..2 {
+        f.sample.current_ma = 301;
+        f.advance(OVERCURRENT_POLLS.into());
+        f.sample.current_ma = 100;
+        f.advance(6);
+    }
+    assert_eq!(f.controller.deadline_ms, 30);
+
+    // The feedback window grows the same way, until a portion is credited.
+    let mut f = begin(BowlMode::Single, Direction::D0, 3);
+    f.sample.current_ma = 301;
+    f.advance(OVERCURRENT_POLLS.into());
+    f.sample.current_ma = 100;
+    f.advance(36);
+    assert_eq!(f.controller.state, FeedState::Running);
+    f.advance(1);
+    f.expect_fault(FeedReason::FeedbackTimeout);
+
+    let mut f = begin(BowlMode::Single, Direction::D0, 3);
+    f.sample.current_ma = 301;
+    f.advance(OVERCURRENT_POLLS.into());
+    f.sample.current_ma = 100;
+    f.advance(11);
+    f.edge(true);
+    assert_eq!(f.controller.progress.completed, 1);
+    assert_eq!(f.controller.feedback_grace_ms, 0);
+}
+
+#[test]
+fn a_drive_with_no_edge_for_the_mark_gap_has_lost_its_feedback() {
+    let settings = FeedLimits {
+        mark_gap_ms: 10,
+        ..LIMITS
+    };
+    let mut f = begin_with(&settings, BowlMode::Single, Direction::D0, 3, 0);
+
+    // A fall is no portion, but shows the rotor turning.
+    f.advance(9);
+    f.edge(false);
+    assert_eq!(f.controller.progress.completed, 0);
+    f.advance(9);
+    assert_eq!(f.controller.state, FeedState::Running);
+    f.advance(1);
+    f.expect_fault(FeedReason::FeedbackTimeout);
+
+    // Backing off and pausing do not count: the gap starts again with the
+    // drive.
+    let mut f = begin_with(&settings, BowlMode::Single, Direction::D0, 3, 0);
+    f.advance(7);
+    f.sample.current_ma = 301;
+    f.advance(OVERCURRENT_POLLS.into());
+    f.sample.current_ma = 100;
+    f.advance(6);
+    assert!(f.controller.state == FeedState::Running && f.controller.edge_at == 15);
+    f.advance(9);
+    assert_eq!(f.controller.state, FeedState::Running);
+    f.advance(1);
+    f.expect_fault(FeedReason::FeedbackTimeout);
+}
+
+#[test]
+fn a_mark_input_low_past_any_mark_is_a_sensor_fault() {
+    let settings = FeedLimits {
+        mark_low_ms: 5,
+        ..LIMITS
+    };
+    let mut f = begin_with(&settings, BowlMode::Single, Direction::D0, 3, 0);
+
+    // A mark's LOW, then HIGH again: nothing.
+    f.sample.mark_low = true;
+    f.advance(5);
+    f.sample.mark_low = false;
+    f.advance(1);
+    f.sample.mark_low = true;
+    f.advance(5);
+    assert_eq!(f.controller.state, FeedState::Running);
+    f.advance(1);
+    f.expect_fault(FeedReason::Sensor);
+
+    // Only forward drive counts: a reversal starts the run again.
+    let mut f = begin_with(&settings, BowlMode::Single, Direction::D0, 3, 0);
+    f.sample.mark_low = true;
+    f.sample.current_ma = 301;
+    f.advance(OVERCURRENT_POLLS.into());
+    f.sample.current_ma = 100;
+    f.advance(6);
+    assert_eq!(f.controller.state, FeedState::Running);
+    f.advance(5);
+    assert_eq!(f.controller.state, FeedState::Running);
+    f.advance(1);
+    f.expect_fault(FeedReason::Sensor);
+}
+
+#[test]
+fn a_refused_start_names_its_input() {
+    let controller = FeedController::new(&LIMITS, 0).unwrap();
+    assert_eq!(controller.input_refusal(&HEALTHY), FeedReason::None);
+
+    let cases = [
+        (
+            FeedSample {
+                outlet_clear: false,
+                ..HEALTHY
+            },
+            FeedReason::Outlet,
+        ),
+        (
+            FeedSample {
+                power_healthy: false,
+                ..HEALTHY
+            },
+            FeedReason::Power,
+        ),
+        (
+            FeedSample {
+                optical_valid: false,
+                ..HEALTHY
+            },
+            FeedReason::Sensor,
+        ),
+        // Over the limit with the motor stopped: only a bad reading shows it.
+        (
+            FeedSample {
+                current_ma: 301,
+                ..HEALTHY
+            },
+            FeedReason::Sensor,
+        ),
+    ];
+    for (sample, reason) in cases {
+        assert_eq!(controller.input_refusal(&sample), reason);
+        let mut controller = controller;
+        let r = request(1, 1, BowlMode::Single, Direction::D0);
+        assert_eq!(
+            controller.start(&r, 0, &sample),
+            FeedStartResult::RejectInput
+        );
+    }
 }
 
 #[test]
@@ -317,11 +521,12 @@ fn one_poll_over_the_limit_is_a_surge_not_a_jam() {
 }
 
 #[test]
-fn persistent_overcurrent_does_not_resume_forward() {
+fn overcurrent_while_backing_off_ends_the_feed() {
     let mut f = begin(BowlMode::Single, Direction::D0, 3);
     f.sample.current_ma = 301;
     f.advance(OVERCURRENT_POLLS.into());
-    f.advance(3);
+    assert_eq!(f.controller.state, FeedState::Reversing);
+    f.advance(OVERCURRENT_POLLS.into());
     f.expect_fault(FeedReason::Overcurrent);
     assert_eq!(f.controller.reverse_attempts, 1);
 }
@@ -449,6 +654,34 @@ fn invalid_configuration_and_requests() {
         .is_none()
     );
 
+    // A ceiling at or under the jam limit, a surge window that would hide a
+    // jam while backing off or paused, and a mark limit of zero.
+    for limits in [
+        FeedLimits {
+            current_max_ma: LIMITS.current_limit_ma,
+            ..LIMITS
+        },
+        FeedLimits {
+            surge_ms: LIMITS.reverse_ms,
+            ..LIMITS
+        },
+        FeedLimits {
+            reverse_ms: 5,
+            surge_ms: LIMITS.direction_pause_ms,
+            ..LIMITS
+        },
+        FeedLimits {
+            mark_gap_ms: 0,
+            ..LIMITS
+        },
+        FeedLimits {
+            mark_low_ms: 0,
+            ..LIMITS
+        },
+    ] {
+        assert!(FeedController::new(&limits, 0).is_none(), "{limits:?}");
+    }
+
     let mut controller = FeedController::new(&LIMITS, 0).unwrap();
     let mut r = request(1, 0, BowlMode::Single, Direction::D0);
     assert_eq!(
@@ -524,17 +757,20 @@ fn pause_completion_cannot_consume_old_edges() {
 }
 
 #[test]
-fn reversals_do_not_extend_feedback_deadline() {
+fn reversals_extend_the_feedback_window_only_as_far_as_their_bound() {
+    // Both reversals, then nothing: the window is the timeout plus their
+    // cost, and no more reversal can stretch it.
     let mut f = begin(BowlMode::Single, Direction::D0, 2);
-    f.sample.current_ma = 301;
-    f.advance(OVERCURRENT_POLLS.into());
-    f.sample.current_ma = 100;
-    f.advance(3);
-    f.sample.current_ma = 301;
-    f.advance(OVERCURRENT_POLLS.into());
-    f.sample.current_ma = 100;
-    f.advance(25);
-
+    for _ in 0..2 {
+        f.sample.current_ma = 301;
+        f.advance(OVERCURRENT_POLLS.into());
+        f.sample.current_ma = 100;
+        f.advance(6);
+    }
+    let window = LIMITS.feedback_timeout_ms + 2 * LIMITS.reversal_ms();
+    f.advance(window - f.now - 1);
+    assert_eq!(f.controller.state, FeedState::Running);
+    f.advance(1);
     f.expect_fault(FeedReason::FeedbackTimeout);
 }
 

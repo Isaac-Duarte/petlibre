@@ -35,6 +35,7 @@ const HEALTHY: FeedSample = FeedSample {
     current_ma: 100,
     feedback_edge: false,
     feedback_high: false,
+    mark_low: false,
 };
 
 const LIMITS: FeedLimits = FeedLimits {
@@ -45,7 +46,11 @@ const LIMITS: FeedLimits = FeedLimits {
     max_duration_ms: 120,
     portion_ms: 120,
     max_observation_gap_ms: 4,
+    mark_gap_ms: 1000,
+    mark_low_ms: 1000,
     current_limit_ma: 300,
+    current_max_ma: 1000,
+    surge_ms: 0,
     max_portions: 1,
     max_reverse_attempts: 2,
 };

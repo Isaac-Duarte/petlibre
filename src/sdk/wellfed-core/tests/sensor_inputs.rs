@@ -288,7 +288,11 @@ const FEED_LIMITS: FeedLimits = FeedLimits {
     max_duration_ms: 120,
     portion_ms: 120,
     max_observation_gap_ms: 2,
+    mark_gap_ms: 1000,
+    mark_low_ms: 1000,
     current_limit_ma: 300,
+    current_max_ma: 1000,
+    surge_ms: 0,
     max_portions: 5,
     max_reverse_attempts: 1,
 };
@@ -351,4 +355,40 @@ fn optical_loss_and_power_change_stop_an_active_feed() {
             }
         );
     }
+}
+
+#[test]
+fn the_mark_input_level_reaches_the_sample_only_from_a_valid_read() {
+    let mut f = begin(0);
+    assert!(f.snapshot().mark_low, "the fixture's PA18 reads LOW");
+
+    f.raw.feedback_high = true;
+    f.advance(1);
+    assert!(!f.snapshot().mark_low);
+
+    // A failed read shows no level: nothing to time a stuck input by.
+    f.raw.feedback_high = false;
+    f.raw.gpio_valid = false;
+    f.advance(1);
+    assert!(!f.snapshot().mark_low);
+}
+
+#[test]
+fn the_food_reading_is_known_only_while_the_emitters_qualify_it() {
+    // The fixture's food receiver reads LOW: food in front of the beam.
+    let mut f = begin(0);
+    assert_eq!(f.inputs.food_present(), None, "settling");
+    f.advance(LIMITS.optical_settle_ms);
+    assert_eq!(f.inputs.food_present(), Some(true));
+
+    // Empty only after the filter's delay of steady HIGH readings.
+    f.raw.food_high = true;
+    f.advance(LIMITS.food_empty_delay_ms);
+    assert_eq!(f.inputs.food_present(), Some(true));
+    f.advance(1);
+    assert_eq!(f.inputs.food_present(), Some(false));
+
+    f.raw.optics_enabled = false;
+    f.advance(1);
+    assert_eq!(f.inputs.food_present(), None);
 }

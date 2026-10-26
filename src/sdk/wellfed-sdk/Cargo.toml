@@ -16,6 +16,10 @@ trial-fail = []
 # A motor STOP that does not take, on demand (`hal::inject`). Only the
 # feeder's `stop-fail` variant sets it.
 stop-fail = ["wellfed-hal/stop-fail"]
+# Jams and sensor faults shown to the board's input capture
+# (`hal::feed_faults`). Only the feeder's `feed-jam` and `sensor-fault`
+# variants set it.
+feed-faults = ["wellfed-hal/feed-faults"]
 # The BLE peripheral. A firmware enables it with `bluetooth = true`
 # in its metadata, which links the device's BLE source.
 bluetooth = ["wellfed-hal/bluetooth"]

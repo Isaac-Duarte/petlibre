@@ -27,7 +27,11 @@ const LIMITS: FeedLimits = FeedLimits {
     max_duration_ms: 120,
     portion_ms: 120,
     max_observation_gap_ms: 4,
+    mark_gap_ms: 1000,
+    mark_low_ms: 1000,
     current_limit_ma: 300,
+    current_max_ma: 1000,
+    surge_ms: 0,
     max_portions: 5,
     max_reverse_attempts: 2,
 };
@@ -321,12 +325,18 @@ fn reverse_completion_cannot_consume_old_edges() {
     f.sample.current_ma = 100;
     f.drive.applied = MotorCommand::Drive1;
     f.drive.applied_at = 5;
-    f.advance(2);
+    f.advance(3);
+    assert!(f.controller.state == FeedState::DirectionPause && f.events.count == 0);
 
-    assert!(f.events.push(7, true));
-    assert!(f.process(7));
+    // Backed off, then stopped: the edge in the batch that resumes the
+    // drive belongs to the pause, not to the drive after it.
+    f.drive.applied = MotorCommand::Stop;
+    f.drive.applied_at = 7;
+    f.advance(2);
+    assert!(f.events.push(10, true));
+    assert!(f.process(10));
     assert!(f.controller.state == FeedState::Running && f.controller.progress.completed == 0);
-    assert!(f.controller.inhibit_at == 7 && f.events.count == 0);
+    assert!(f.controller.inhibit_at == 10 && f.events.count == 0);
 }
 
 #[test]

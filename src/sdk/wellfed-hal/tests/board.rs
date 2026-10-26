@@ -9,7 +9,7 @@ use common::*;
 use wellfed_core::feed::controller::MotorCommand;
 use wellfed_core::feed::sensor_inputs::SensorReading;
 use wellfed_core::flash_coord::{FlashFault, FlashParty, FlashReply};
-use wellfed_hal::board::{Board, MOTOR_MASK};
+use wellfed_hal::board::{Board, CaptureFault, MOTOR_MASK};
 use wellfed_hal::sdk::{self, fake};
 
 #[test]
@@ -21,7 +21,7 @@ fn startup_capture_and_stop() {
     assert!(board.optics(true));
 
     let mut reading = SensorReading::default();
-    assert!(board.capture(&mut reading));
+    assert_eq!(board.capture(&mut reading), Ok(()));
     assert!(reading.gpio_valid && reading.dc_present && reading.outlet_high && !reading.food_high);
     assert!(reading.optics_enabled && reading.current_adc_valid && reading.battery_adc_valid);
     assert!(hw(|h| h.reads) == 32 && reading.current[15] == 500 && reading.battery[15] == 2800);
@@ -43,7 +43,7 @@ fn adc_timeout_cancels_pending_drive() {
     assert!(board.motor(MotorCommand::Drive0, 0));
     hw(|h| h.stuck = true);
     let mut reading = SensorReading::default();
-    assert!(!board.capture(&mut reading));
+    assert_eq!(board.capture(&mut reading), Err(CaptureFault::Adc));
 
     assert!(board.view().faulted && !hw(|h| h.trigger) && hw(|h| h.reads) == 0);
     assert!(hw(|h| h.polls) == 8 && hw(|h| h.clears) == 2);
@@ -226,7 +226,8 @@ fn outputs_only_open_leaves_sensors_and_adc_untouched() {
     // A failing efuse would refuse a full open: neither it nor the ADC is touched.
     assert!(!hw(|h| h.adc_enabled));
     let mut reading = SensorReading::default();
-    assert!(!board.capture(&mut reading) && !reading.gpio_valid && hw(|h| h.polls) == 0);
+    assert_eq!(board.capture(&mut reading), Err(CaptureFault::Board));
+    assert!(!reading.gpio_valid && hw(|h| h.polls) == 0);
     assert!(board.motor_tick(3) && motor_pins() == MOTOR_MASK);
 
     board.close();

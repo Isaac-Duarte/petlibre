@@ -55,6 +55,9 @@ pub struct PlantConfig {
     pub drive_adc: u16,
     pub ripple_adc: u16,
     pub idle_adc: u16,
+    /// The current channel while a wedge stalls the motor: not measured
+    /// (no real jam yet); 1000 scales to about 620, twice the jam limit.
+    pub stall_adc: u16,
 }
 
 impl Default for PlantConfig {
@@ -80,6 +83,7 @@ impl Default for PlantConfig {
             drive_adc: 280,
             ripple_adc: 170,
             idle_adc: 16,
+            stall_adc: 1000,
         }
     }
 }

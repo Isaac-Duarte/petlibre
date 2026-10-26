@@ -227,7 +227,7 @@ impl Probe {
         let mut reading = SensorReading::default();
         let begin = sdk::systimer_ticks();
         let mut supply = [0u16; SAMPLES];
-        let ok = self.board.capture(&mut reading)
+        let ok = self.board.capture(&mut reading).is_ok()
             && self
                 .board
                 .sample_channel(plaf103::pins::ADC_SUPPLY, &mut supply);

@@ -60,7 +60,11 @@ fn run_pipeline() -> Option<()> {
         max_duration_ms: 120,
         portion_ms: 120,
         max_observation_gap_ms: 2,
+        mark_gap_ms: 1000,
+        mark_low_ms: 1000,
         current_limit_ma: 300,
+        current_max_ma: 4000,
+        surge_ms: 0,
         max_portions: 1,
         max_reverse_attempts: 0,
     };

@@ -41,7 +41,7 @@ use wellfed_sim::plaf103::{self, FEED_BOUND_MS};
 use wellfed_sim::plant::{Flip, Plant, PlantConfig, Turn};
 use wellfed_sim::protocol::{
     Code, Command, Event, Fault, IoOperation, IoStage, Journal, Outcome, Profile, Reason, State,
-    Status, StoragePhase, Submission, WorkerArgs,
+    Status, StoragePhase, Submission, Wedge, WorkerArgs,
 };
 use wellfed_testkit::journal_flash::{FakeJournalFlash, FlashIo, UNIT};
 
@@ -106,6 +106,7 @@ struct World {
 
     plant: Plant,
     jammed: bool,
+    wedge: Wedge,
     /// The current channel held by a `current` command.
     held_current: Option<u16>,
     /// Milliseconds the motor has driven one way, from the drive's start.
@@ -525,7 +526,8 @@ fn feedback(flip: Flip) {
 }
 
 /// The motor's last millisecond: the rotor turns while it drives (unless
-/// jammed), and the current channel reads its surge, its load or rest.
+/// jammed, or wedged going forward), and the current channel reads its
+/// surge, its load, a stall or rest.
 fn turn_rotor() {
     let m = motor();
     let driving = matches!(m, 1 | 2);
@@ -540,9 +542,17 @@ fn turn_rotor() {
             (*world).drive_ms += 1;
         }
 
+        // Driving back turns the rotor off a wedge, which may free it.
+        if m == 2 && (*world).wedge == Wedge::Frees {
+            (*world).wedge = Wedge::Clear;
+        }
+        let stalled = m == 1 && (*world).wedge != Wedge::Clear;
+
         let c = *(*world).plant.config();
         let reading = if !driving {
             c.idle_adc
+        } else if stalled {
+            c.stall_adc
         } else if (*world).drive_ms <= u64::from(c.surge_ms) {
             c.surge_adc
         } else {
@@ -553,7 +563,7 @@ fn turn_rotor() {
 
         // Drive0 turns the rotor forward, Drive1 back.
         let turn = if m == 1 { Turn::Forward } else { Turn::Back };
-        if driving && !(*world).jammed {
+        if driving && !(*world).jammed && !stalled {
             (*world).plant.drive(turn)
         } else {
             Vec::new()
@@ -812,6 +822,7 @@ fn main() {
         step_ms: 0,
         plant: Plant::new(PlantConfig::default(), 0),
         jammed: false,
+        wedge: Wedge::Clear,
         held_current: None,
         drive_ms: 0,
         previous_motor: 0,
@@ -931,6 +942,7 @@ unsafe fn execute(world: *mut World, command: Command) -> u64 {
                 place_rotor();
             }
             Command::Jam { args: [jammed] } => (*world).jammed = jammed.0,
+            Command::Wedge { args: [wedge] } => (*world).wedge = wedge,
             Command::Edge { args: [high] } => feedback(Flip {
                 high: high.0,
                 captured: true,

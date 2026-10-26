@@ -18,6 +18,10 @@ bluetooth = ["wellfed-amebad-sys/bluetooth"]
 # Motor STOP writes that do not take while a hold is armed (`inject`).
 # Only the feeder's `stop-fail` bench variant sets it.
 stop-fail = []
+# Jams and sensor faults shown to the board's input capture while armed
+# (`feed_faults`). Only the feeder's `feed-jam` and `sensor-fault` bench
+# variants set it.
+feed-faults = []
 # The RAM log tail beside the UART log.
 log-tail = ["wellfed-amebad-sys/log-tail"]
 
@@ -43,3 +47,9 @@ workspace = true
 [[test]]
 name = "inject"
 required-features = ["stop-fail"]
+
+# The injected jams and sensor faults, over the owner; `make check-rust`
+# runs it with the feature.
+[[test]]
+name = "feed_faults"
+required-features = ["feed-faults"]

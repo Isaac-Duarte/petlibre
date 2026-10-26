@@ -11,13 +11,23 @@ use wellfed_core::feed::sensor_inputs::{SensorInputs, SensorReading};
 use wellfed_core::feed::storage::{OwnerOutcome, OwnerResult, OwnerStorage};
 use wellfed_core::flash_coord::{FlashCoord, FlashFault, FlashPhase};
 
-use crate::board::{self, Board};
+use crate::board::{self, Board, CaptureFault};
 use crate::power;
 use crate::sdk::{self, IrqGuard};
 use crate::supervision::beat;
 use crate::supervision::events::{Events, EventsSnapshot};
 
 use super::{FeedTrace, OwnerFault, OwnerState, OwnerStatus, OwnerTask, Shared};
+
+/// Why an acquisition gave the owner nothing to act on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Lost {
+    /// An ADC conversion never completed.
+    Sensors,
+    /// The supervisor's clock or processing failed, or the board was
+    /// already faulted by something else.
+    Supervision,
+}
 
 impl<S: OwnerStorage> OwnerTask<S> {
     /// The shared half, inside `IrqGuard`; the borrow ends with `f`, which
@@ -79,6 +89,7 @@ impl<S: OwnerStorage> OwnerTask<S> {
             stopped: s.stopped,
             optics_off: s.optics_off,
             trace: self.trace,
+            food: self.food,
             ..OwnerStatus::default()
         };
 
@@ -154,8 +165,14 @@ impl<S: OwnerStorage> OwnerTask<S> {
         }
         self.result.outcome = outcome;
         self.result.reason = reason;
-        self.result.completed = if self.controller.last_request_id == self.request.id {
+        let ours = self.controller.last_request_id == self.request.id;
+        self.result.completed = if ours {
             self.controller.progress.completed
+        } else {
+            0
+        };
+        self.trace.reversals = if ours {
+            self.controller.reverse_attempts
         } else {
             0
         };
@@ -321,7 +338,7 @@ impl<S: OwnerStorage> OwnerTask<S> {
             && unsafe { self.events().open(board, &c.events) };
         if !opened {
             self.fail(OwnerFault::Setup);
-            self.init_failed = true;
+            self.held = true;
             return false;
         }
 
@@ -333,7 +350,7 @@ impl<S: OwnerStorage> OwnerTask<S> {
         let sensors = SensorInputs::new(&c.sensors, &board.view().calibration);
         let (Some(controller), Some(sensors)) = (controller, sensors) else {
             self.fail(OwnerFault::Setup);
-            self.init_failed = true;
+            self.held = true;
             return false;
         };
         self.controller = controller;
@@ -395,7 +412,7 @@ impl<S: OwnerStorage> OwnerTask<S> {
     fn recovery_failed(&mut self) -> bool {
         self.fail(OwnerFault::Recovery);
         self.recovery.phase_known = false;
-        self.init_failed = true;
+        self.held = true;
         false
     }
 
@@ -427,6 +444,7 @@ impl<S: OwnerStorage> OwnerTask<S> {
             self.finish_attempted = false;
             self.result_durable = false;
             self.optics_started = false;
+            self.blocked_by = FeedReason::None;
             self.trace = FeedTrace::default();
             self.drive_at = None;
             self.observation = None;
@@ -468,14 +486,18 @@ impl<S: OwnerStorage> OwnerTask<S> {
         }
     }
 
-    fn acquire(&mut self) -> bool {
+    fn acquire(&mut self) -> Result<(), Lost> {
         let Some(started) = self.events().now_ms() else {
-            return false;
+            return Err(Lost::Supervision);
         };
         let uptime = sdk::uptime_ms();
         let mut raw = SensorReading::default();
-        let valid = self.board().capture(&mut raw);
+        let captured = self.board().capture(&mut raw);
+        let valid = captured.is_ok();
         self.sensors.update(started, valid.then_some(&raw));
+        if let Some(present) = self.sensors.food_present() {
+            self.food = Some(present);
+        }
         if self.drive_at.is_some() && self.sensors.current_valid {
             let current = self.sensors.current_scaled;
             let trace = &mut self.trace;
@@ -494,13 +516,23 @@ impl<S: OwnerStorage> OwnerTask<S> {
         }
 
         let active = self.active_phase();
+        let lost = match captured {
+            Ok(()) => None,
+            Err(CaptureFault::Adc) => Some(Lost::Sensors),
+            Err(CaptureFault::Board) => Some(Lost::Supervision),
+        };
+
         // Cancellation has priority over feedback captured during acquisition.
         let observed = if active && self.cancelled() {
             self.controller.cancel(self.request.id);
             self.reporting(OwnerOutcome::Cancelled, FeedReason::Cancelled);
-            valid
+            lost.map_or(Ok(()), Err)
+        } else if let Some(lost) = lost {
+            Err(lost)
+        } else if self.events().observe(&mut self.controller, &self.sensors) {
+            Ok(())
         } else {
-            valid && self.events().observe(&mut self.controller, &self.sensors)
+            Err(Lost::Supervision)
         };
 
         if active {
@@ -540,12 +572,22 @@ impl<S: OwnerStorage> OwnerTask<S> {
             return;
         }
 
+        // An input that kept it from starting (a blocked outlet, a sensor,
+        // power) fails it with that reason, before any motion; otherwise it
+        // only ran out of time. The journal holds an expired feed to
+        // `TotalTimeout`, so a reason of its own needs the failed outcome.
         if s.now_ms.wrapping_sub(self.queued_at) >= self.config.prepare_timeout_ms {
-            self.reporting(OwnerOutcome::Expired, FeedReason::TotalTimeout);
+            match self.blocked_by {
+                FeedReason::None => self.reporting(OwnerOutcome::Expired, FeedReason::TotalTimeout),
+                reason => self.reporting(OwnerOutcome::Failed, reason),
+            }
             return;
         }
 
+        // Held off by a lease or the supervisor, not by an input: an input
+        // seen before no longer says why it has not started.
         if !self.flash_ready() || !s.timer_ready || !s.owner_ready {
+            self.blocked_by = FeedReason::None;
             return;
         }
 
@@ -575,6 +617,9 @@ impl<S: OwnerStorage> OwnerTask<S> {
                 self.fail(OwnerFault::Hardware);
                 let reason = self.controller.reason;
                 self.reporting(OwnerOutcome::Failed, reason);
+            } else if result == FeedStartResult::RejectInput {
+                let sample = self.sensors.sample(s.now_ms, false, false);
+                self.blocked_by = self.controller.input_refusal(&sample);
             }
         }
     }
@@ -596,11 +641,11 @@ impl<S: OwnerStorage> OwnerTask<S> {
         true
     }
 
-    /// Terminal stopped fault after a determined initialization failure: no
-    /// request is ever taken, and the owner beats only after `quiet`
-    /// verified STOP and infrared OFF in this same iteration. The gap still
-    /// applies, so a hang before or during this state resets.
-    fn hold_init_fault(&mut self) {
+    /// Terminal stopped fault after a determined failure (initialization,
+    /// or lost sensors): no request is ever taken, and the owner beats only
+    /// after `quiet` verified STOP and infrared OFF in this same iteration.
+    /// The gap still applies, so a hang before or during this state resets.
+    fn hold_fault(&mut self) {
         let mut s = EventsSnapshot::default();
         self.snapshot(&mut s);
         // Gate state alone is not enough here: also read back the pins.
@@ -667,14 +712,39 @@ impl<S: OwnerStorage> OwnerTask<S> {
             if !(*this).flash().outputs_blocked()
                 && ((*this).state == OwnerState::Idle || (*this).active_phase())
             {
-                acquired = (*this).acquire();
-                if !acquired {
-                    (*this).fail(OwnerFault::Hardware);
+                let result = (*this).acquire();
+                acquired = result.is_ok();
+                if let Err(lost) = result {
+                    let (fault, reason) = match lost {
+                        Lost::Sensors => (OwnerFault::Sensor, FeedReason::Sensor),
+                        Lost::Supervision => (OwnerFault::Hardware, FeedReason::Output),
+                    };
+                    (*this).fail(fault);
+                    // Lost sensors are held, not reset on: the owner runs
+                    // only on a confirmed build, so a reset would only meet
+                    // the same converter again, every few seconds. Held,
+                    // the feeder stays reachable and says why it cannot feed
+                    // until a restart; outputs are re-verified stopped on
+                    // every beat. A lost supervisor still resets.
+                    (*this).held |= lost == Lost::Sensors;
                     if (*this).reserved
                         && ((*this).active_phase() || (*this).state == OwnerState::Reporting)
                     {
-                        (*this).controller.trip(FeedReason::Output);
-                        let reason = (*this).controller.reason;
+                        // The supervisor may already have tripped it with
+                        // its own reason, which it keeps. A request that
+                        // ended otherwise (cancelled in this acquisition)
+                        // fails with the loss: the journal holds a failed
+                        // result to a fault's reason.
+                        let reason = if (*this).controller.trip(reason) {
+                            reason
+                        } else {
+                            match (*this).controller.reason {
+                                FeedReason::None | FeedReason::Done | FeedReason::Cancelled => {
+                                    reason
+                                }
+                                tripped => tripped,
+                            }
+                        };
                         (*this).reporting(OwnerOutcome::Failed, reason);
                     } else {
                         (*this).state = OwnerState::Fault;
@@ -733,8 +803,8 @@ impl<S: OwnerStorage> OwnerTask<S> {
 
             if (*this).state == OwnerState::Fault {
                 let quiet = (*this).quiet();
-                if quiet && (*this).init_failed {
-                    (*this).hold_init_fault();
+                if quiet && (*this).held {
+                    (*this).hold_fault();
                 }
             }
 

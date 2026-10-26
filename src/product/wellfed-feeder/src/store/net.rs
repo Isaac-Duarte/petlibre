@@ -1,9 +1,10 @@
 //! Wi-Fi credentials stored on NOR, set without a rebuild.
 //!
 //! A 128-byte record in the dual-slot store
-//! (`wellfed_core::store::slot`), as the settings are: magic `PLFNET01`, version, record size, generation, SSID length,
-//! passphrase length, SSID (32 bytes), passphrase (64 bytes), zero padding,
-//! CRC-32/ISO-HDLC of bytes 0..120 at 120 and the `CMIT` commit marker at 124.
+//! (`wellfed_core::store::slot`), as the settings are: magic `PLFNET01`,
+//! version, record size, generation, SSID length, passphrase length, SSID
+//! (32 bytes), passphrase (64 bytes), zero padding, CRC-32/ISO-HDLC of bytes
+//! 0..120 at 120 and the `CMIT` commit marker at 124.
 //! A record with an empty SSID means "use the build's credentials", so a
 //! clear keeps the generation rising. The newest valid record wins; a torn or
 //! invalid newer slot falls back to the older one. The two sectors belong to

@@ -167,13 +167,6 @@ pub enum Found<V> {
 }
 
 impl<V> Found<V> {
-    pub const fn valid(&self) -> Option<&V> {
-        match self {
-            Self::Valid(value) => Some(value),
-            _ => None,
-        }
-    }
-
     pub const fn is_valid(&self) -> bool {
         matches!(self, Self::Valid(_))
     }

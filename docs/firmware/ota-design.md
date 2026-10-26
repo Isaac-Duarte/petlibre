@@ -131,6 +131,14 @@ Physical (October 22), over the air:
 2. The fixed build confirmed after 30 s healthy (`PLCNF1 confirmed=1 healthy_ms=30000`).
 3. On the next cold boot KM0 reported `PLTRL1 confirmed=1`.
 
+**Resets that left no line (October 25, static analysis and host tests).** Two paths could reset the board without writing anything first:
+- **A failed flash lease.** The hook halts in RAM with IRQs masked, so nothing reaches the UART before the watchdog resets the board. The provider now writes the failure into the attempt register's top bits (bits 31–10; the attempt and update bits keep 9–0), and backup registers survive a watchdog reset. The next boot reports it before anything arms: `PLSUP1 lease_fault stage=<LeaseStage> phase=<FlashPhase> fault=<FlashFault> reply=<FlashReply> elapsed_ms=<from the request, 16 ms steps, 1008 = or more>`, then clears those bits. The skip rule still reads only the attempt bits.
+- **A refused watchdog checkpoint.** A gap over the 1 s progress limit, an altered register or a clock fault latches, and the hardware is never refreshed again. The feeder now logs `PLSUP1 stop watchdog_fault=<WatchdogFault> gap_ms=… fed_ms=… ms=…` once.
+
+A sector write that fails stops the install with `PLOTA1 error stage=write sector=<bank-1 sector> step=erase|program|read|readback offset=<byte> expected=<word> read=<word> reread=<word> erase_ms=…`. On a readback mismatch, the record holds the first differing word as programmed, as read back, and as read a second time with no write in between. A 0 bit where a 1 was programmed means the erase did not finish. A word that reads `ffffffff` means the program did not take. A second read that matches means the cells are right and the read path is at fault. The install still stops: nothing is rewritten.
+
+During an install, each `PLOTA1 progress` line is followed by `PLOTA1 leases count=… park_max=… release_max=… masked_max_ms=… masked_long=… feed_gap_max_ms=…`: the leases so far, the slowest KM0 park and release exchanges (32 768 Hz ticks), the longest time IRQs were held masked and how many leases held them past 100 ms, and the feeder task's longest gap between checkpoints on the system timer. A lease's acquire now masks IRQs before it reads the lease clock. Before this change, a preemption of 50 ms or more between the request and the park counted against the park budget and halted the board (host-tested).
+
 Caution, observed (MQTT era): while an offer stayed loaded, a candidate that kept failing was re-downloaded after every fallback, so the server then served each offer to completion only once. The device API's client pushes each offer once and never on its own again.
 
 The original design:

@@ -367,7 +367,10 @@ fn a_flipped_byte_stops_at_the_hash_and_never_writes_the_marker() {
     assert!(rig.marker_never_written());
     assert!(!mailbox::installing(), "the lease is released");
     assert!(!arming::update_attempted());
-    assert!(rig.records.contains(&Record::Stopped { stop: Stop::Hash }));
+    assert!(rig.records.contains(&Record::Stopped {
+        stop: Stop::Hash,
+        write: None
+    }));
 }
 
 #[test]
@@ -382,6 +385,33 @@ fn a_failed_program_or_readback_stops_the_install() {
         let stopped = rig.push(&payload, None);
         assert_eq!(stopped.stopped, Some(Stop::Write), "{fail:?} {corrupt:?}");
         assert!(rig.marker_never_written());
+
+        // The stop record names the sector, the step and, for a readback,
+        // the word: its first bit flipped, and still flipped on a second read,
+        // so the cells hold it rather than the read path.
+        let write = rig.records.iter().find_map(|record| match record {
+            Record::Stopped { write, .. } => *write,
+            _ => None,
+        });
+        let write = write.expect("a write fault in the stop record");
+        if fail.is_some() {
+            assert_eq!(
+                (write.sector, write.step, write.offset),
+                (0, SectorStep::Program, 768)
+            );
+        } else {
+            assert_eq!(
+                (write.sector, write.step, write.offset),
+                (1, SectorStep::Readback, 1024)
+            );
+            assert_eq!(write.expected ^ write.read, 1 << 24, "{write:?}");
+            assert_eq!(write.reread, write.read);
+        }
+        let line = record_text(Record::Stopped {
+            stop: Stop::Write,
+            write: Some(write),
+        });
+        assert!(line.starts_with("error stage=write sector="), "{line}");
     }
 }
 
@@ -1100,4 +1130,10 @@ fn confirming_raises_the_floor_only_for_the_activated_build() {
     let record = *store().record();
     assert_eq!((record.min_version, record.state), (9, State::None));
     assert_eq!(rig.stage.raise_floor(), Floor::Unchanged);
+}
+
+fn record_text(record: Record) -> String {
+    let mut text = String::new();
+    describe(record, &mut text).unwrap();
+    text
 }

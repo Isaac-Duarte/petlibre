@@ -21,7 +21,7 @@ use wellfed_core::{deadline_passed, until};
 use wellfed_hal::flash::hooks::{self, HookProvider, HookTicket};
 use wellfed_hal::flash::park::Hardware;
 use wellfed_hal::flash_lock::arming::Hooks;
-use wellfed_hal::flash_lock::provider::Provider;
+use wellfed_hal::flash_lock::provider::{LeaseFault, Provider};
 use wellfed_hal::ota::confirm::{self, Confirm, HookedStorage};
 use wellfed_hal::ota::update::{self as update, Floor, SdkFlash, StoreSlots, Update};
 use wellfed_hal::supervision::beat;
@@ -325,12 +325,53 @@ unsafe extern "C" fn feeder_task(_: *mut c_void) -> u32 {
     {
         if let Some(mut watchdog) = WATCHDOG.enter() {
             let progress = PROGRESS.fetch_add(1, Ordering::Relaxed) + 1;
+            let gap = feed_gap();
             if watchdog.checkpoint(u64::from(progress)) {
                 FED_MS.store(now, Ordering::Relaxed);
+            } else if !STOPPED.swap(true, Ordering::Relaxed) {
+                // A refused checkpoint latches (a gap past the progress
+                // limit, an altered register, a clock fault): the hardware
+                // is never refreshed again and resets the platform within
+                // its expiry. Say so once, with the gap that led to it.
+                let mut report = startup::Report::new();
+                if let Ok(line) = report.record(format_args!(
+                    "PLSUP1 stop watchdog_fault={} gap_ms={} fed_ms={} ms={}\r\n",
+                    watchdog.fault.code(),
+                    gap,
+                    FED_MS.load(Ordering::Relaxed),
+                    now
+                )) {
+                    sdk::log(line);
+                }
             }
         }
     }
     FEED_MS
+}
+
+/// The feeder task's last checkpoint attempt and the longest gap between
+/// two, on the system timer: the FreeRTOS tick stops during every flash
+/// lease, so uptime would hide the time the watchdog's progress limit
+/// counts.
+static FEED_AT_TICKS: AtomicU32 = AtomicU32::new(0);
+static FEED_GAP_MAX_MS: AtomicU32 = AtomicU32::new(0);
+
+/// The gap since the previous checkpoint attempt, in milliseconds (zero
+/// for the first), and the longest one so far.
+fn feed_gap() -> u32 {
+    let ticks = sdk::systimer_ticks();
+    let last = FEED_AT_TICKS.swap(ticks, Ordering::Relaxed);
+    if last == 0 {
+        return 0;
+    }
+    let gap = ticks_ms(ticks.wrapping_sub(last));
+    FEED_GAP_MAX_MS.fetch_max(gap, Ordering::Relaxed);
+    gap
+}
+
+fn ticks_ms(ticks: u32) -> u32 {
+    let ms = u64::from(ticks) * 1000 / u64::from(config::SYSTIMER_HZ);
+    u32::try_from(ms).unwrap_or(u32::MAX)
 }
 
 /// The service task's confirmation stage; see `confirm_step`.
@@ -435,6 +476,9 @@ fn update_step() -> u32 {
         if let Ok(line) = report.record(format_args!("{}\r\n", UpdateLine(record))) {
             sdk::log(line);
         }
+        if matches!(record, update::Record::Progress { .. }) {
+            log_leases();
+        }
     }
     if step.restart {
         RESTART.store(true, Ordering::Release);
@@ -442,6 +486,30 @@ fn update_step() -> u32 {
         return 0;
     }
     step.delay_ms
+}
+
+/// The install's heartbeat, beside each progress record: the flash leases
+/// so far and their slowest exchanges (32 768 Hz ticks), the longest any
+/// held IRQs masked and how many held them past 100 ms, and the feeder
+/// task's longest gap between checkpoints. A reset that cuts an install
+/// short leaves the last of these as the state just before it.
+fn log_leases() {
+    // SAFETY: only this task leases while the update stage writes, so no
+    // lease is in progress while it reads the counters (see `PROVIDER`).
+    let provider = unsafe { &*PROVIDER.get() };
+    let mut report = startup::Report::new();
+    if let Ok(line) = report.record(format_args!(
+        "PLOTA1 leases count={} park_max={} release_max={} masked_max_ms={} masked_long={} \
+         feed_gap_max_ms={}\r\n",
+        provider.leases,
+        provider.park_max,
+        provider.release_max,
+        ticks_ms(provider.masked_max),
+        provider.masked_long,
+        FEED_GAP_MAX_MS.load(Ordering::Relaxed),
+    )) {
+        sdk::log(line);
+    }
 }
 
 /// The runtime's record storage: the SDK wrappers, refused unless the
@@ -850,6 +918,20 @@ unsafe extern "C" fn diagnostic_task(_: *mut c_void) -> u32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn wellfed_app_start() {
     let snapshot = stopped::initialize();
+    // Before anything arms or writes the marker register's attempt bits.
+    if let Some(fault) = LeaseFault::take() {
+        let mut report = startup::Report::new();
+        if let Ok(line) = report.record(format_args!(
+            "PLSUP1 lease_fault stage={} phase={} fault={} reply={} elapsed_ms={}\r\n",
+            fault.stage.code(),
+            fault.phase,
+            fault.fault,
+            fault.reply,
+            fault.elapsed_ms
+        )) {
+            sdk::log(line);
+        }
+    }
     // Supervise from the first scheduled step, so a startup fault or
     // hang is a reset KM0 can count.
     // SAFETY: the step takes no context and keeps its state in statics.

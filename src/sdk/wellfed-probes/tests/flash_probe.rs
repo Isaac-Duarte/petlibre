@@ -9,6 +9,8 @@
 
 use std::cell::{Cell, RefCell};
 
+use std::ffi::c_void;
+
 use wellfed_core::flash_coord::{FlashFault, FlashPhase, FlashReply};
 use wellfed_feeder::store::settings::{SettingsStatus, SlotState};
 use wellfed_hal::bringup;
@@ -19,8 +21,8 @@ use wellfed_hal::flash::park::{
 use wellfed_hal::flash::peer::{
     BACKUP_BASE, MARKER_REGISTER, PARK_CHANNEL, PARK_TICK_LIMIT, Peer,
 };
-use wellfed_hal::flash_lock::provider::{ATTEMPT_BIT, LeaseStage, Provider};
-use wellfed_hal::sdk::{self, fake};
+use wellfed_hal::flash_lock::provider::{ATTEMPT_BIT, LeaseFault, LeaseStage, Provider};
+use wellfed_hal::sdk::{self, Irq, fake};
 use wellfed_hal::stopped;
 use wellfed_probes::flash::{EXPECTED_ID, FlashOps, Probe, Record, STRESS_SAVES};
 
@@ -44,6 +46,43 @@ thread_local! {
     static CUT: Cell<Option<u32>> = const { Cell::new(None) };
     /// Power is gone: flash calls have no effect and fail.
     static POWER_LOST: Cell<bool> = const { Cell::new(false) };
+    /// Leases left before one whose acquire an interrupt preempts, and for
+    /// how many SYSTIMER ticks it holds the writer off.
+    static PREEMPT: Cell<Option<(u32, u32)>> = const { Cell::new(None) };
+    static PREEMPT_TICKS: Cell<u32> = const { Cell::new(0) };
+}
+
+/// The preempting interrupt (or the higher-priority task it wakes): time
+/// passes before the writer runs again.
+unsafe extern "C" fn preempt_isr(_: *mut c_void) -> u32 {
+    fake::advance(PREEMPT_TICKS.with(Cell::get), false);
+    0
+}
+
+/// Raise the preempting interrupt just before this lease's acquire, so it
+/// is taken at the first point the acquire runs with IRQs enabled.
+fn preempt_now() {
+    let hit = PREEMPT.with(|c| match c.get() {
+        Some((0, ticks)) => {
+            c.set(None);
+            Some(ticks)
+        }
+        Some((n, ticks)) => {
+            c.set(Some((n - 1, ticks)));
+            None
+        }
+        None => None,
+    });
+    let Some(ticks) = hit else { return };
+
+    PREEMPT_TICKS.with(|c| c.set(ticks));
+    assert!(sdk::irq_register(Irq::Timer2, preempt_isr, 4));
+    // Pending while masked, then unmasked without delivery: the line is
+    // taken the next time anything unmasks.
+    fake::with(|h| h.interrupts = 1);
+    sdk::irq_enable(Irq::Timer2, 4);
+    fake::irq(fake::TIMER2_IRQ);
+    fake::with(|h| h.interrupts = 0);
 }
 
 fn km0<R>(f: impl FnOnce(&mut Km0) -> R) -> R {
@@ -176,6 +215,7 @@ fn leased<R>(op: impl FnOnce() -> R) -> R {
     // SAFETY: the provider is live; the probe does not hold it across this.
     let p = unsafe { &mut *provider };
 
+    preempt_now();
     if !p.acquire::<Core<false>>(&mut ticket) {
         std::panic::panic_any(HookFault);
     }
@@ -280,6 +320,24 @@ fn platform_boot_cut(
     id: [u8; 3],
     cut: Option<u32>,
 ) -> Boot {
+    platform_boot_with(backup, storage, deaf, id, cut, None)
+}
+
+/// A boot whose lease number `lease` (0 first) is preempted for `ms`
+/// inside its acquire.
+fn platform_boot_preempted(lease: u32, ms: u32) -> Boot {
+    let preempt = Some((lease, ms * 32_768 / 1000));
+    platform_boot_with([0; 8], blank(), false, EXPECTED_ID, None, preempt)
+}
+
+fn platform_boot_with(
+    backup: [u32; 8],
+    storage: Vec<u8>,
+    deaf: bool,
+    id: [u8; 3],
+    cut: Option<u32>,
+    preempt: Option<(u32, u32)>,
+) -> Boot {
     std::thread::spawn(move || {
         fake::reset_hardware();
         fake::with(|h| {
@@ -299,6 +357,7 @@ fn platform_boot_cut(
         READ_ID.with(|c| c.set(id));
         fake::with(|h| h.storage = storage);
         CUT.with(|c| c.set(cut));
+        PREEMPT.with(|c| c.set(preempt));
         POWER_LOST.with(|p| p.set(false));
 
         let mut probe = Box::<Probe<Hooks>>::default();
@@ -506,16 +565,85 @@ fn silent_peer_faults_the_hook_then_the_next_boot_skips() {
         first.provider.failure,
         Some((LeaseStage::Begin, FlashReply::Failed))
     );
-    assert_eq!(first.backup[MARKER_REGISTER as usize], ATTEMPT_BIT);
+
+    // The halt left its description beside the attempt bit, for the boot
+    // after the reset: KM0 never acknowledged the park within the exchange's
+    // 40 ms, with the lease in its parking phase.
+    let marker = first.backup[MARKER_REGISTER as usize];
+    assert_eq!(marker & 0x3ff, ATTEMPT_BIT);
+    let fault = LeaseFault::decode(marker).expect("a recorded lease fault");
+    assert_eq!(fault.stage, LeaseStage::Begin);
+    assert_eq!(fault.phase, FlashPhase::Parking.code());
+    assert_eq!(fault.fault, FlashFault::Ok.code());
+    assert_eq!(fault.reply, FlashReply::Failed.code());
+    assert!((32..=48).contains(&fault.elapsed_ms), "{fault:?}");
 
     let second = platform_boot(first.backup, first.storage, false, EXPECTED_ID);
-    assert_eq!(
-        second.records.last(),
-        Some(&Record::Skip {
-            marker: ATTEMPT_BIT
-        })
-    );
+    assert_eq!(second.records.last(), Some(&Record::Skip { marker }));
     assert_eq!(second.backup[MARKER_REGISTER as usize], 0);
+}
+
+#[test]
+fn the_runtime_takes_the_lease_fault_once_and_leaves_the_attempt_bits() {
+    let first = platform_boot([0; 8], blank(), true, EXPECTED_ID);
+    let marker = first.backup[MARKER_REGISTER as usize];
+
+    let (fault, left, again) = std::thread::spawn(move || {
+        fake::reset_hardware();
+        fake::with(|h| h.backup[MARKER_REGISTER as usize] = marker);
+        let fault = LeaseFault::take();
+        let left = fake::with(|h| h.backup[MARKER_REGISTER as usize]);
+        (fault, left, LeaseFault::take())
+    })
+    .join()
+    .unwrap();
+
+    assert_eq!(fault.map(|f| f.stage), Some(LeaseStage::Begin));
+    assert_eq!(left, ATTEMPT_BIT, "the attempt bit still decides the skip");
+    assert_eq!(again, None, "reported once");
+}
+
+#[test]
+fn a_lease_fault_report_alone_does_not_skip_the_hooks() {
+    // A fault field with no attempt bit (say, left by a write that ran
+    // without one) is a report: the skip rule reads the attempt bits only.
+    let fault = LeaseFault {
+        stage: LeaseStage::Released,
+        phase: FlashPhase::Fault.code(),
+        fault: FlashFault::Output.code(),
+        reply: FlashReply::Failed.code(),
+        elapsed_ms: 2000,
+    };
+    let marker = fault.encode();
+    assert_eq!(marker & 0x3ff, 0);
+    assert_eq!(
+        LeaseFault::decode(marker),
+        Some(LeaseFault {
+            elapsed_ms: 1008,
+            ..fault
+        }),
+        "the elapsed field saturates"
+    );
+    assert_eq!(LeaseFault::decode(ATTEMPT_BIT), None);
+}
+
+#[test]
+fn a_preemption_inside_acquire_does_not_fault_the_lease() {
+    // 60 ms is past the 50 ms park budget. The acquire masks IRQs before
+    // it reads the lease clock, so the interrupt waits until the lease ends
+    // and is taken there; the boot completes with no hook fault.
+    for lease in [0, 1, 7] {
+        let boot = platform_boot_preempted(lease, 60);
+        assert!(!boot.faulted, "lease {lease}: {:?}", boot.provider.failure);
+        assert_eq!(boot.provider.failure, None);
+        assert_eq!(boot.backup[MARKER_REGISTER as usize], 0);
+        assert_eq!(
+            boot.records.last(),
+            platform_boot([0; 8], blank(), false, EXPECTED_ID)
+                .records
+                .last()
+        );
+    }
 }
 
 #[test]

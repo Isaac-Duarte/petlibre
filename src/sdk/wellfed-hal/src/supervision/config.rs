@@ -27,9 +27,11 @@ pub const WATCHDOG: WatchdogConfig = WatchdogConfig {
     count_id: 11,
 };
 
-/// One mediated flash lease. `active_ms` covers a 4 KiB sector erase on a
-/// typical part; block and chip erases do not fit and must stay unlinked.
-/// The real part and its erase time are still to be measured.
+/// One mediated flash lease. `active_ms` covers a 4 KiB sector erase: the
+/// PLAF103's GD25Q64ESIG (-40 to 85 C grade) specifies 45 ms typical and
+/// 300 ms maximum, and a page program 2.4 ms maximum; the bench measured
+/// 27-35 ms erases on the scratch sector. Block and chip erases do not fit
+/// and must stay unlinked.
 pub const FLASH_LIMITS: FlashLimits = FlashLimits {
     quiesce_ms: 100,
     park_ms: 50,

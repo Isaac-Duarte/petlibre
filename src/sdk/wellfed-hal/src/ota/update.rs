@@ -228,6 +228,8 @@ pub enum Record {
     },
     Stopped {
         stop: Stop,
+        /// Which sector write failed, and how, when `stop` is `Write`.
+        write: Option<WriteFault>,
     },
     Key {
         statement: KeyStatement,
@@ -241,6 +243,62 @@ impl Record {
             Self::Offer { .. } | Self::GaveWay { .. } | Self::GiveWayRefused => "PLWCH1",
             _ => "PLOTA1",
         }
+    }
+}
+
+/// The step of a sector write that failed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SectorStep {
+    Erase,
+    Program,
+    Read,
+    /// A page read back different from what was programmed.
+    Readback,
+}
+
+impl SectorStep {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Erase => "erase",
+            Self::Program => "program",
+            Self::Read => "read",
+            Self::Readback => "readback",
+        }
+    }
+}
+
+/// A failed sector write, for the stop record. At a readback mismatch, the
+/// first differing 32-bit word as programmed, as read back, and as read
+/// again (no write in between): bits read 0 where 1 was programmed point at
+/// an incomplete erase, 0xffffffff at a program that did not take, and a
+/// second read that matches at the read path rather than the cells.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WriteFault {
+    /// Bank-1 sector.
+    pub sector: u32,
+    pub step: SectorStep,
+    /// Byte offset in the sector of the failed page or word.
+    pub offset: u32,
+    pub expected: u32,
+    pub read: u32,
+    pub reread: u32,
+    /// The sector's erase, lease included, on the system timer.
+    pub erase_ms: u32,
+}
+
+impl fmt::Display for WriteFault {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "sector={} step={} offset={} expected={:08x} read={:08x} reread={:08x} erase_ms={}",
+            self.sector,
+            self.step.name(),
+            self.offset,
+            self.expected,
+            self.read,
+            self.reread,
+            self.erase_ms
+        )
     }
 }
 
@@ -315,7 +373,13 @@ pub fn describe(record: Record, f: &mut impl fmt::Write) -> fmt::Result {
             f,
             "activated version={version} bytes={bytes} sectors={sectors}"
         ),
-        Record::Stopped { stop } => write!(f, "error stage={}", stage(stop)),
+        Record::Stopped { stop, write } => {
+            write!(f, "error stage={}", stage(stop))?;
+            match write {
+                Some(fault) => write!(f, " {fault}"),
+                None => Ok(()),
+            }
+        }
         Record::Key { statement } => match statement {
             KeyStatement::Revoke(id) => {
                 write!(f, "key retired={}", wellfed_session::hex::Lower(&id))
@@ -439,6 +503,8 @@ pub struct Update<I> {
     holding: bool,
     install: Option<Install>,
     stopped: Option<Stop>,
+    /// The last failed sector write, for the stop record.
+    write_fault: Option<WriteFault>,
     sectors: u32,
 }
 
@@ -461,6 +527,7 @@ impl<I: SlotIo + Clone> Update<I> {
             holding: false,
             install: None,
             stopped: None,
+            write_fault: None,
             sectors: 0,
         }
     }
@@ -884,7 +951,8 @@ impl<I: SlotIo + Clone> Update<I> {
         arming::set_update_attempt(false);
         mailbox::drop_chunks();
         mailbox::release();
-        Record::Stopped { stop }
+        let write = self.write_fault.take().filter(|_| stop == Stop::Write);
+        Record::Stopped { stop, write }
     }
 
     fn install_step(&mut self, flash: &mut impl Flash, now: u32) -> Step {
@@ -898,9 +966,10 @@ impl<I: SlotIo + Clone> Update<I> {
 
         let mut outcome = None;
         let leased = mailbox::installing();
+        let fault = &mut self.write_fault;
         let took = mailbox::take_chunk(|offset, data| {
             outcome = Some(if leased {
-                take(install, flash, offset, data, now)
+                take(install, flash, offset, data, now, fault)
             } else {
                 Err(Stop::Cancelled)
             });
@@ -1074,21 +1143,38 @@ fn take(
     offset: u32,
     data: &[u8],
     now: u32,
+    fault: &mut Option<WriteFault>,
 ) -> Result<bool, Stop> {
     let Taken::Program(program) = install.chunk(offset, data, now)? else {
         return Ok(false);
     };
     let sector = (program.offset - BANK1_OFFSET) / SECTOR_BYTES;
-    let ok = under_marker(|| write_sector(flash, sector, program.data));
-    install.programmed(ok)?;
+    let written = under_marker(|| write_sector(flash, sector, program.data));
+    *fault = written.err();
+    install.programmed(written.is_ok())?;
     Ok(true)
 }
 
 /// Erase one sector, program it page by page and read every page back.
 /// A short last page is padded with erased bytes to the 4-byte program unit.
-fn write_sector(flash: &mut impl Flash, sector: u32, data: &[u8]) -> bool {
-    if data.len() > SECTOR || !flash.erase(sector) {
-        return false;
+fn write_sector(flash: &mut impl Flash, sector: u32, data: &[u8]) -> Result<(), WriteFault> {
+    let mut fault = WriteFault {
+        sector,
+        step: SectorStep::Erase,
+        offset: 0,
+        expected: 0,
+        read: 0,
+        reread: 0,
+        erase_ms: 0,
+    };
+    let started = sdk::systimer_ticks();
+    let erased = data.len() <= SECTOR && flash.erase(sector);
+    let ticks = u64::from(sdk::systimer_ticks().wrapping_sub(started));
+    fault.erase_ms =
+        u32::try_from(ticks * 1000 / u64::from(crate::supervision::config::SYSTIMER_HZ))
+            .unwrap_or(u32::MAX);
+    if !erased {
+        return Err(fault);
     }
 
     let mut page = [u8::MAX; PIECE];
@@ -1097,12 +1183,47 @@ fn write_sector(flash: &mut impl Flash, sector: u32, data: &[u8]) -> bool {
         let padded = piece.len().next_multiple_of(4);
         page[..padded].fill(u8::MAX);
         page[..piece.len()].copy_from_slice(piece);
-        if !flash.program(sector, offset, &page[..padded])
-            || !flash.read(sector, offset, &mut readback[..padded])
-            || readback[..padded] != page[..padded]
-        {
-            return false;
+        fault.offset = offset;
+        if !flash.program(sector, offset, &page[..padded]) {
+            fault.step = SectorStep::Program;
+            return Err(fault);
+        }
+        if !flash.read(sector, offset, &mut readback[..padded]) {
+            fault.step = SectorStep::Read;
+            return Err(fault);
+        }
+        if readback[..padded] != page[..padded] {
+            fault.step = SectorStep::Readback;
+            return Err(mismatch(flash, fault, &page[..padded], &readback[..padded]));
         }
     }
-    true
+    Ok(())
+}
+
+/// Describe the first differing word of a page that read back wrong, and
+/// read it once more: only a read, the install still stops.
+fn mismatch(flash: &mut impl Flash, mut fault: WriteFault, page: &[u8], read: &[u8]) -> WriteFault {
+    let word = |bytes: &[u8], at: usize| {
+        let mut out = [0u8; 4];
+        out.copy_from_slice(&bytes[at..at + 4]);
+        u32::from_be_bytes(out)
+    };
+    let Some(at) = (0..page.len())
+        .step_by(4)
+        .find(|&at| page[at..at + 4] != read[at..at + 4])
+    else {
+        return fault;
+    };
+
+    let offset = fault.offset + u32::try_from(at).unwrap_or(0);
+    let mut again = [0u8; 4];
+    fault.reread = if flash.read(fault.sector, offset, &mut again) {
+        u32::from_be_bytes(again)
+    } else {
+        0
+    };
+    fault.offset = offset;
+    fault.expected = word(page, at);
+    fault.read = word(read, at);
+    fault
 }

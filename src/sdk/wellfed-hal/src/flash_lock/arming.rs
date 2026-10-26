@@ -20,7 +20,9 @@ use wellfed_core::flash_coord::{FlashCoord, FlashReply};
 
 use crate::flash::park::{self, Mmio, Reply};
 use crate::flash::peer::MARKER_REGISTER;
-use crate::flash_lock::provider::{ATTEMPT_BIT, BOOT_COUNT_REGISTER, Provider, READY_TIMEOUT_MS};
+use crate::flash_lock::provider::{
+    ATTEMPT_BIT, BOOT_COUNT_REGISTER, LEASE_FAULT_MASK, Provider, READY_TIMEOUT_MS,
+};
 use crate::sdk;
 use crate::stopped;
 use crate::supervision::config::{FLASH_LIMITS, SYSTIMER_HZ};
@@ -142,8 +144,10 @@ impl Arming {
             }
 
             Stage::Arm => {
+                // A failed lease's description (`LeaseFault`) is a report,
+                // not an attempt: the attempt bit decides, as before.
                 let marker = sdk::backup_read(MARKER_REGISTER);
-                if marker & !UPDATE_BIT != 0 {
+                if marker & !(UPDATE_BIT | LEASE_FAULT_MASK) != 0 {
                     sdk::backup_write(MARKER_REGISTER, marker & UPDATE_BIT);
                     return self.fail(Event::Skip { marker });
                 }

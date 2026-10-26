@@ -15,7 +15,7 @@ use wellfed_core::flash_coord::{
 
 use crate::flash::hooks::HookTicket;
 use crate::flash::park::{self, Mmio, ParkToken};
-use crate::flash::peer::{HEARTBEAT_REGISTER, PARK_CHANNEL};
+use crate::flash::peer::{HEARTBEAT_REGISTER, MARKER_REGISTER, PARK_CHANNEL};
 use crate::sdk;
 use crate::stopped;
 use crate::supervision::config::SYSTIMER_HZ;
@@ -54,6 +54,110 @@ impl LeaseStage {
     /// The variant's number, as records and reports print it.
     pub const fn code(self) -> u32 {
         self as u32
+    }
+
+    /// The inverse of [`Self::code`], for a code read back from a register.
+    pub const fn from_code(code: u32) -> Option<Self> {
+        Some(match code {
+            0 => Self::Request,
+            1 => Self::Quiesce,
+            2 => Self::Begin,
+            3 => Self::Parked,
+            4 => Self::Complete,
+            5 => Self::End,
+            6 => Self::Released,
+            7 => Self::Ticket,
+            _ => return None,
+        })
+    }
+}
+
+/// The marker register's bits above the attempt and update bits, where a
+/// failed lease leaves its description for the boot after the reset. A
+/// failed lease halts in RAM with IRQs masked until the watchdog resets
+/// the platform: nothing reaches the UART, and the provider's RAM is gone
+/// by the next boot. Backup registers survive the watchdog reset (power
+/// loss clears them), so the next boot reports it ([`LeaseFault::take`]).
+pub const LEASE_FAULT_MASK: u32 = 0xffff_fc00;
+const LEASE_FAULT_FLAG: u32 = 1 << 31;
+/// The elapsed field counts this many milliseconds a step, saturating.
+const ELAPSED_STEP_MS: u32 = 16;
+const ELAPSED_MAX: u32 = 0x3f;
+
+/// A failed lease as the marker register carries it across the reset:
+/// where it failed, the coordinator's phase, fault and reply then, and how
+/// long after the lease's request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LeaseFault {
+    pub stage: LeaseStage,
+    /// `FlashPhase::code`.
+    pub phase: u32,
+    /// `FlashFault::code`.
+    pub fault: u32,
+    /// `FlashReply::code`.
+    pub reply: u32,
+    /// Milliseconds from the lease's request to the failure, in 16 ms steps;
+    /// 1008 reads as "1008 or more".
+    pub elapsed_ms: u32,
+}
+
+impl LeaseFault {
+    /// The register field: flag 31, stage 30..28, phase 27..24, fault
+    /// 23..20, reply 19..16, elapsed 15..10. Bits 9..0 stay the marker's.
+    pub const fn encode(self) -> u32 {
+        let elapsed = self.elapsed_ms / ELAPSED_STEP_MS;
+        let elapsed = if elapsed > ELAPSED_MAX {
+            ELAPSED_MAX
+        } else {
+            elapsed
+        };
+        LEASE_FAULT_FLAG
+            | (self.stage.code() & 7) << 28
+            | (self.phase & 0xf) << 24
+            | (self.fault & 0xf) << 20
+            | (self.reply & 0xf) << 16
+            | elapsed << 10
+    }
+
+    /// The fault a marker value carries, if any.
+    pub const fn decode(marker: u32) -> Option<Self> {
+        if marker & LEASE_FAULT_FLAG == 0 {
+            return None;
+        }
+        let Some(stage) = LeaseStage::from_code((marker >> 28) & 7) else {
+            return None;
+        };
+        Some(Self {
+            stage,
+            phase: (marker >> 24) & 0xf,
+            fault: (marker >> 20) & 0xf,
+            reply: (marker >> 16) & 0xf,
+            elapsed_ms: ((marker >> 10) & ELAPSED_MAX) * ELAPSED_STEP_MS,
+        })
+    }
+
+    /// Leave this fault in the marker register, keeping its other bits.
+    /// Only the first failure of a boot is kept, as in [`Provider::failure`].
+    fn record(self) {
+        let marker = sdk::backup_read(MARKER_REGISTER);
+        if marker & LEASE_FAULT_FLAG == 0 {
+            sdk::backup_write(
+                MARKER_REGISTER,
+                (marker & !LEASE_FAULT_MASK) | self.encode(),
+            );
+        }
+    }
+
+    /// The fault the last boot left, cleared from the register so it is
+    /// reported once. Called at startup, before anything arms or writes the
+    /// marker's other bits; it leaves those bits as they are.
+    pub fn take() -> Option<Self> {
+        let marker = sdk::backup_read(MARKER_REGISTER);
+        if marker & LEASE_FAULT_MASK == 0 {
+            return None;
+        }
+        sdk::backup_write(MARKER_REGISTER, marker & !LEASE_FAULT_MASK);
+        Self::decode(marker)
     }
 }
 
@@ -135,7 +239,18 @@ impl Provider {
     }
 
     fn fail(&mut self, stage: LeaseStage, reply: FlashReply) -> bool {
-        self.failure.get_or_insert((stage, reply));
+        if self.failure.is_none() {
+            self.failure = Some((stage, reply));
+            let now = self.now();
+            LeaseFault {
+                stage,
+                phase: self.coord.phase.code(),
+                fault: self.coord.fault.code(),
+                reply: reply.code(),
+                elapsed_ms: now.wrapping_sub(self.coord.requested_at),
+            }
+            .record();
+        }
         false
     }
 
@@ -144,11 +259,17 @@ impl Provider {
         self.coord.phase == FlashPhase::Idle && self.coord.fault == FlashFault::Ok
     }
 
-    /// Hook `acquire`, task context with IRQs enabled: reserve the lease,
-    /// verify stopped outputs, mask IRQs, stop SysTick and park KM0 in RAM.
+    /// Hook `acquire`, task context with IRQs enabled: mask IRQs, reserve
+    /// the lease, verify stopped outputs, stop SysTick and park KM0 in RAM.
     /// Returns true with IRQs masked and SysTick stopped. A false return is a
     /// hook fault, which halts in RAM.
+    ///
+    /// IRQs are masked before the lease's clock is read: each phase's
+    /// deadline runs from it, so a preemption between the request and the
+    /// park (an interrupt, or a higher-priority task it wakes) would count
+    /// against the 50 ms park budget and fault the hook.
     pub fn acquire<M: Mmio>(&mut self, ticket: &mut HookTicket) -> bool {
+        sdk::disable_irq();
         let now = self.now();
         let id = self.coord.token.lease + 1;
         let reply = self
@@ -166,7 +287,6 @@ impl Provider {
             return self.fail(LeaseStage::Quiesce, reply);
         }
 
-        sdk::disable_irq();
         let systick = sdk::systick_ctrl();
         sdk::set_systick_ctrl(systick & !park::SYSTICK_CONTROL_BITS);
         let begin_at = sdk::systimer_ticks();

@@ -71,7 +71,7 @@ fn update_records_carry_what_the_ota_watch_reads() {
         Stop::Activate,
         Stop::Store,
     ] {
-        let error = update_line(update::Record::Stopped { stop });
+        let error = update_line(update::Record::Stopped { stop, write: None });
         let error = read(&error);
         assert!(error.is(tag::UPDATE, &[]));
         assert_eq!(error.first, "error");
@@ -189,6 +189,7 @@ fn stage_and_reason_records_format_as_before() {
                 update::describe(
                     update::Record::Stopped {
                         stop: Stop::Activate,
+                        write: None,
                     },
                     f,
                 )
@@ -196,7 +197,15 @@ fn stage_and_reason_records_format_as_before() {
             "error stage=marker",
         ),
         (
-            text(|f| update::describe(update::Record::Stopped { stop: Stop::Hash }, f)),
+            text(|f| {
+                update::describe(
+                    update::Record::Stopped {
+                        stop: Stop::Hash,
+                        write: None,
+                    },
+                    f,
+                )
+            }),
             "error stage=hash",
         ),
         (

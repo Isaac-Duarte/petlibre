@@ -10,13 +10,13 @@
 //!
 //! **Spun or masked.** While interrupts run the tick keeps counting, so
 //! `since` climbs past the feeder's 250 ms period to the watchdog's expiry
-//! (at least 2.4 s at the clock's bounds, about 4.0 s measured): a task spun, or held the scheduler suspended
-//! (`suspended`), and the task named is the one that kept the CPU. Once
-//! interrupts are masked the tick stops too, and the register keeps the
-//! value from just before: `since` inside a feed period or so, and the task
-//! named is the one that masked them. A boot where the feeder stopped on
-//! purpose (a restart, or a supervision decision it printed) says so
-//! (`stopping`).
+//! (at least 2.4 s at the clock's bounds, about 4.0 s measured): a task
+//! spun, or held the scheduler suspended (`suspended`), and the task named
+//! is the one that kept the CPU. Once interrupts are masked the tick stops
+//! too, and the register keeps the value from just before: `since` inside a
+//! feed period or so, and the task named is the one that masked them. A
+//! boot where the feeder stopped on purpose (a restart, or a supervision
+//! decision it printed) says so (`stopping`).
 //!
 //! **Register 2.** The SDK leaves backup registers 1–5 to the application,
 //! and the rest are taken: 1 holds the flash attempt and update bits with

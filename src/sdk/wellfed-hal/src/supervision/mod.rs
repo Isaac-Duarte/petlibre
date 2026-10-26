@@ -10,10 +10,12 @@ pub mod events;
 pub mod supervise;
 pub mod watchdog;
 
+use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+
 /// The watchdog feeder stops feeding for good (an intentional restart, a
 /// refused checkpoint, or a supervision stop that outlasted the progress
-/// gap: [`supervised`]), so a reset follows within the watchdog's expiry. The breadcrumb records that the
-/// reset is the feeder's own, and the Wi-Fi task leaves the network
+/// gap: [`supervised`]), so a reset follows within the watchdog's expiry.
+/// The breadcrumb records that the reset is the feeder's own, and the Wi-Fi task leaves the network
 /// meanwhile, so the access point does not reject the next boot's
 /// association with status 30. Idempotent; nothing here waits.
 pub fn stopping() {
@@ -32,16 +34,14 @@ pub fn stop_certain(since_ms: u32, now_ms: u32, gap_ms: u32) -> bool {
 }
 
 /// The feeder task's open supervision stop: when it began, while one runs.
-static STOP_SINCE: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
-static STOP_OPEN: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+static STOP_SINCE: AtomicU32 = AtomicU32::new(0);
+static STOP_OPEN: AtomicBool = AtomicBool::new(false);
 
 /// One feeder pass's `supervise::feed` answer at uptime `now_ms`. A stop
 /// that has lasted the watchdog's progress gap is certain to reset, and
 /// only then calls [`stopping`]: a transient false must not take the
 /// network down for a board that stays up. Feeder task only.
 pub fn supervised(feeding: bool, now_ms: u32) {
-    use core::sync::atomic::Ordering;
-
     if feeding {
         STOP_OPEN.store(false, Ordering::Relaxed);
         return;
@@ -58,5 +58,5 @@ pub fn supervised(feeding: bool, now_ms: u32) {
 /// Host tests only: no stop open.
 #[cfg(not(target_os = "none"))]
 pub fn reset() {
-    STOP_OPEN.store(false, core::sync::atomic::Ordering::Relaxed);
+    STOP_OPEN.store(false, Ordering::Relaxed);
 }

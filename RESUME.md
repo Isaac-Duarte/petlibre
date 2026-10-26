@@ -10,11 +10,11 @@ Reconfirm with the owner before any bench operation; this is the last recorded s
 
 - **Bank 1:** `feeder` v173 `1afb2b4d…` (`ar25-install-20261025-01`, confirmed, October 25): `master` at `222511b` (adds AR25 to v172's AR3, AR4, AR5, AR9, AR22, AR24): `master` at `545d18c` (AR1, AR2+AR13, AR15, AR19). Five cold boots (`ar-boot-20261025-01`…`05`) came up on bank 1 with the owner idle and unfaulted; the pre-epoch event ring kept epoch 0.
 - **Bank 0:** `feeder` `262a9f37…` (UART, `bank0-diag-01`, October 24): its recovery role only; it never feeds.
-- **Next manifest version:** 174. **Feed journal:** high water 16 (feed 14 was interrupted on purpose and resolved uncertain).
+- **Next manifest version:** 174. **Feed journal:** high water 18 (feed 14 was interrupted on purpose and resolved uncertain).
 
 - **Client store:** one owner, the bench CLI's key (`private/wellfed-owner.json`).
 - **Bench:** feeder on (relay 1), UART relays 3 and 4 closed, hotspot up (found up on October 25 afternoon and left so), no server, no capture. Hopper empty. The logic analyzer may still be clipped at the motor.
-- **Next (FW16):** cancellation during motion, the motor lease under a stalled loop during a feed, and a failed stop; then FW17 ([procedure](docs/firmware/motor-pulse.md#feeds-through-the-owner)).
+- **Next (FW16):** the motor lease under a stalled loop during a feed, and a failed stop; then FW17. Cancellation during motion passed on October 25 (`feedwrites-20261025-01`, v173: feed 18 cancelled 2 s into the drive, `outcome=2 reason=2`, 0/2 portions, outputs stopped) ([procedure](docs/firmware/motor-pulse.md#feeds-through-the-owner)).
 - **A power cut during a feed is safe since v172 (AR24):** the next boot resolves the feed as uncertain and the owner opens; the feed is never re-run.
 
 ## Today (October 25): FW16 feeding through the owner

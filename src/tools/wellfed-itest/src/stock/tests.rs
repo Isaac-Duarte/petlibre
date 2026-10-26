@@ -259,6 +259,7 @@ impl Rig for StockFeeder {
             clock_ms: None,
             settings_generation: 1,
             wifi_generation: 1,
+            locked: None,
         }))
     }
 

@@ -70,13 +70,14 @@ const fn same(a: &str, b: &str) -> bool {
 }
 
 /// The scenarios in catalog order; a test holds the two orders together.
-pub(super) const SCENARIOS: [Scenario; 10] = [
+pub(super) const SCENARIOS: [Scenario; 11] = [
     Scenario::new("ota-update", ota_update),
     Scenario::new("requests", requests),
     Scenario::new("request-auth", request_auth),
     Scenario::new("settings-persist", settings_persist),
     Scenario::new("wifi-fallback", wifi_fallback),
     Scenario::new("network-bounce", network_bounce),
+    Scenario::new("feed-writes", super::feeds::feed_writes),
     Scenario::new("ota-recovery", ota_recovery),
     Scenario::new("ota-power-cuts", ota_power_cuts),
     Scenario::new("stock-roundtrip", super::stock::roundtrip),
@@ -97,7 +98,7 @@ const FALLBACK_SECONDS: f64 = 8.0 * 60.0;
 /// The confirmed build checks for an offer once a minute.
 const OFFER_CHECK_SECONDS: f64 = 150.0;
 /// How long a record may trail the answer it logs.
-const RECORD_SECONDS: f64 = 10.0;
+pub(super) const RECORD_SECONDS: f64 = 10.0;
 /// The power cut lands once this many sectors are written: well inside the
 /// image, past the first progress record.
 const CUT_SECTORS: u32 = 48;
@@ -197,7 +198,7 @@ fn clock_synced(status: &DeviceStatus, now_ms: i64) -> Result<String> {
     ))
 }
 
-fn read_settings(ctx: &mut Ctx) -> Result<Settings> {
+pub(super) fn read_settings(ctx: &mut Ctx) -> Result<Settings> {
     let settings = match ctx.ask(&Ask::GetSettings)? {
         Answer::Settings(settings) => settings,
         other => {
@@ -215,7 +216,7 @@ fn read_settings(ctx: &mut Ctx) -> Result<Settings> {
 }
 
 /// The change that sets every setting back to `settings`.
-fn changes_to(settings: &Settings) -> SettingsPatch {
+pub(super) fn changes_to(settings: &Settings) -> SettingsPatch {
     SettingsPatch {
         lights: Some(settings.lights),
         sound: Some(settings.sound),
@@ -232,7 +233,7 @@ fn shows(settings: &Settings, change: SettingsPatch) -> bool {
 
 /// Change settings against the generation just read, see the writer save a
 /// newer one, and read the change back; the generation it was made from.
-fn set_settings(ctx: &mut Ctx, change: SettingsPatch) -> Result<u32> {
+pub(super) fn set_settings(ctx: &mut Ctx, change: SettingsPatch) -> Result<u32> {
     let base = read_settings(ctx)?.generation.0;
     let since = ctx.mark()?;
 

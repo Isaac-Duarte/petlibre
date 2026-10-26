@@ -1315,6 +1315,7 @@ fn device_status(build: &str, bank: u8) -> DeviceStatus {
         clock_ms: Some(1_792_674_000_000),
         settings_generation: 2,
         wifi_generation: 1,
+        locked: Some(false),
     }
 }
 

@@ -98,6 +98,7 @@ fn rig_args(args: &StockOtaArgs) -> ItestArgs {
         list: false,
         power: args.power,
         destructive: false,
+        feeds: false,
         stock: None,
         keep_going: false,
         rebuild: false,

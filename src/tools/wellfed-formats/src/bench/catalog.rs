@@ -28,6 +28,7 @@ pub enum Need {
     Build,
     Destructive,
     Stock,
+    Feeds,
 }
 
 impl Need {
@@ -37,6 +38,7 @@ impl Need {
             Self::Build => "--build",
             Self::Destructive => "--destructive",
             Self::Stock => "--stock",
+            Self::Feeds => "--feeds",
         }
     }
 
@@ -48,6 +50,7 @@ impl Need {
             Self::Stock => {
                 "it leaves the replacement for stock and back, through the feeder routing"
             }
+            Self::Feeds => "it moves the motor; the hopper may be empty",
         }
     }
 }
@@ -66,7 +69,7 @@ pub struct Scenario {
 }
 
 /// The whole suite, in run order.
-pub const SCENARIOS: [Scenario; 10] = [
+pub const SCENARIOS: [Scenario; 11] = [
     Scenario {
         name: "ota-update",
         about: "install the build under test over the air and see it confirm",
@@ -107,6 +110,13 @@ pub const SCENARIOS: [Scenario; 10] = [
         about: "the hotspot goes down and up; the feeder rejoins and the device API answers again",
         tier: Tier::Standard,
         needs: &[],
+        baseline: false,
+    },
+    Scenario {
+        name: "feed-writes",
+        about: "settings, lock and clock writes from a session held across a feed: no store write until it ends Done, a cancel stops the next",
+        tier: Tier::Standard,
+        needs: &[Need::Feeds],
         baseline: false,
     },
     Scenario {

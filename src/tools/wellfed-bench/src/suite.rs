@@ -61,6 +61,10 @@ pub struct ItestArgs {
     /// from them over the air; if it does not, recovery is a UART flash.
     #[arg(long, requires = "power")]
     pub destructive: bool,
+    /// Allow feeds through the device API (`feed-writes`): they move the
+    /// motor, and run unattended, so the hopper may be empty.
+    #[arg(long)]
+    pub feeds: bool,
     /// Allow the round trip to stock and back (`stock-roundtrip`), installing
     /// this frozen stock review (the pinned 1.1.15). Stock reaches the server
     /// only through `sudo wellfed-local network apply`, which the operator

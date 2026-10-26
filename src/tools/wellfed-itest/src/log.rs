@@ -62,6 +62,21 @@ impl Log {
             .sum()
     }
 
+    /// The records at or after `since` and before `until` that match.
+    pub(super) fn between(
+        &self,
+        since: usize,
+        until: usize,
+        matches: impl Fn(&Record) -> bool,
+    ) -> Vec<String> {
+        let until = until.min(self.lines.len());
+        self.lines[since.min(until)..until]
+            .iter()
+            .filter(|line| Record::all(&line.text).any(|r| matches(&r)))
+            .map(|line| line.text.clone())
+            .collect()
+    }
+
     /// When the last record of any kind arrived.
     pub(super) fn last_record_at(&self) -> Option<f64> {
         self.lines

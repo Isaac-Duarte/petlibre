@@ -436,6 +436,18 @@ impl Rig for LiveRig<'_> {
         Ok(self.device.ask(ask)?)
     }
 
+    fn hold(&mut self) -> Result<()> {
+        Ok(self.device.hold()?)
+    }
+
+    fn held(&mut self, ask: &Ask) -> Result<Answer> {
+        Ok(self.device.ask_held(ask)?)
+    }
+
+    fn release(&mut self) {
+        self.device.release();
+    }
+
     fn intrude(&mut self, intruder: Intruder) -> Result<Rebuffed> {
         Ok(self.device.intrude(intruder)?)
     }

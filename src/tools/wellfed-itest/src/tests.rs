@@ -29,6 +29,18 @@ enum Event {
     Recovery,
 }
 
+/// A feed under way: the motor drives from `start` until `end`.
+#[derive(Debug, Clone, Copy)]
+struct Feeding {
+    id: u32,
+    portions: u8,
+    start: f64,
+    end: f64,
+}
+
+/// About 9 s a portion, as on the bench.
+const PORTION_SECONDS: f64 = 9.0;
+
 /// A feeder that answers the way the hardware did in the update and settings drills.
 struct Feeder {
     now: f64,
@@ -58,6 +70,11 @@ struct Feeder {
     /// The last install's start and build, so a power cut can land in it.
     installing: Option<(f64, String)>,
     server: String,
+    locked: bool,
+    /// The second owner session is open.
+    held: bool,
+    feeding: Option<Feeding>,
+    next_feed: u32,
     actions: Vec<String>,
     notes: Vec<String>,
 
@@ -67,6 +84,10 @@ struct Feeder {
     settings_lost_on_boot: bool,
     /// A hotspot bounce changes the volume, which nothing in it checks.
     volume_drifts: bool,
+    /// A settings change during a feed is saved at once.
+    saves_during_feed: bool,
+    /// A cancel is answered but the feed runs on.
+    ignores_cancel: bool,
 }
 
 impl Feeder {
@@ -94,12 +115,18 @@ impl Feeder {
             fallback_at: None,
             installing: None,
             server: "serve".into(),
+            locked: false,
+            held: false,
+            feeding: None,
+            next_feed: 12,
             actions: Vec::new(),
             notes: Vec::new(),
             silent: false,
             admits_strangers: false,
             volume_drifts: false,
             settings_lost_on_boot: false,
+            saves_during_feed: false,
+            ignores_cancel: false,
         }
     }
 
@@ -113,7 +140,7 @@ impl Feeder {
         self.at(delay, Event::Line(text.into()));
     }
 
-    fn release(&mut self) {
+    fn deliver(&mut self) {
         let now = self.now;
         let (due, later): (Vec<_>, Vec<_>) = self.pending.drain(..).partition(|(at, _)| *at <= now);
         self.pending = later;
@@ -213,7 +240,163 @@ impl Feeder {
                 .then(|| u64::try_from(self.unix_ms() - 300).unwrap()),
             settings_generation: self.generation,
             wifi_generation: self.wifi_generation,
+            locked: Some(self.locked),
         }
+    }
+
+    /// The feed whose outputs are claimed now.
+    fn feeding(&self) -> Option<Feeding> {
+        self.feeding.filter(|feed| self.now < feed.end)
+    }
+
+    /// The owner's records for feed `id`, from its reservation to Idle.
+    fn feed(&mut self, portions: u8) -> u32 {
+        let id = self.next_feed;
+        self.next_feed += 1;
+        let drive = PORTION_SECONDS * f64::from(portions);
+        self.line(
+            0.1,
+            &format!("PLOWN1 feed id={id} portions={portions} submit=0"),
+        );
+        self.line(
+            0.2,
+            "PLOWN1 state=3 fault=0 supervisor=0 stopped=1 optics_off=0",
+        );
+        self.line(
+            2.0,
+            "PLOWN1 state=4 fault=0 supervisor=0 stopped=0 optics_off=0",
+        );
+        self.finish(2.0 + drive, id, portions, portions, 1, 1);
+        self.feeding = Some(Feeding {
+            id,
+            portions,
+            start: self.now + 2.0,
+            end: self.now + 2.0 + drive + 0.02,
+        });
+        id
+    }
+
+    fn finish(
+        &mut self,
+        delay: f64,
+        id: u32,
+        requested: u8,
+        completed: u8,
+        outcome: u8,
+        reason: u8,
+    ) {
+        self.line(
+            delay,
+            "PLOWN1 state=6 fault=0 supervisor=0 stopped=1 optics_off=1",
+        );
+        self.line(
+            delay + 0.01,
+            &format!(
+                "PLOWN1 fed id={id} requested={requested} completed={completed} outcome={outcome} \
+                 reason={reason} durable=1 drive_ms=9000 rising={completed} falling={completed} \
+                 first_edge_ms=7840 current_max=168 current_mean=59 samples=300"
+            ),
+        );
+        self.line(
+            delay + 0.02,
+            "PLOWN1 state=1 fault=0 supervisor=0 stopped=1 optics_off=1",
+        );
+    }
+
+    /// Stop the running feed now, with the portions its marks counted.
+    fn cancel(&mut self, feed: Feeding) {
+        let now = self.now;
+        self.pending.retain(|(at, event)| {
+            !(*at >= now && matches!(event, Event::Line(text) if text.starts_with("PLOWN1")))
+        });
+        let done = ((now - feed.start).max(0.0) / PORTION_SECONDS) as u8;
+        self.finish(0.2, feed.id, feed.portions, done, 2, 2);
+        self.feeding = Some(Feeding {
+            end: now + 0.22,
+            ..feed
+        });
+    }
+
+    /// The device API's answer on either session.
+    fn answer(&mut self, ask: &Ask) -> Result<Answer> {
+        if self.silent || !self.online || self.now < self.ready_at {
+            return Err(Error::Bench("the feeder did not answer".into()));
+        }
+        self.logged(ask.name());
+        Ok(match ask {
+            Ask::Status => Answer::Status(self.device_status()),
+            Ask::GetSettings => Answer::Settings(self.settings()),
+            Ask::PutSettings { base, .. } if *base != self.generation => {
+                Answer::Refused(Refusal::Stale {
+                    current: Generation(self.generation),
+                })
+            }
+            Ask::PutWifi { base, .. } if *base != self.wifi_generation => {
+                Answer::Refused(Refusal::Stale {
+                    current: Generation(self.wifi_generation),
+                })
+            }
+            Ask::PutSettings { .. } if self.feeding().is_some() && !self.saves_during_feed => {
+                Answer::Refused(Refusal::Busy)
+            }
+            Ask::PutSettings { changes, .. } => {
+                if let Some(on) = changes.lights {
+                    self.lights = on;
+                }
+                if let Some(on) = changes.sound {
+                    self.sound = on;
+                }
+                if let Some(volume) = changes.volume {
+                    self.volume = volume;
+                }
+                self.generation += 1;
+                let saved = format!(
+                    "PLCFG1 saved generation={} lights={} sound={} volume={}",
+                    self.generation,
+                    u8::from(self.lights),
+                    u8::from(self.sound),
+                    self.volume
+                );
+                self.line(1.0, &saved);
+                Answer::Done {
+                    generation: Some(self.generation),
+                }
+            }
+            Ask::PutWifi { wifi, .. } => {
+                self.stored = wifi.is_some();
+                self.wifi_generation += 1;
+                let saved = format!(
+                    "PLCFG1 net saved generation={} stored={}",
+                    self.wifi_generation,
+                    u8::from(self.stored)
+                );
+                self.line(1.0, &saved);
+                Answer::Done {
+                    generation: Some(self.wifi_generation),
+                }
+            }
+            Ask::SyncClock => {
+                self.synced = true;
+                Answer::Done { generation: None }
+            }
+            Ask::SetLock { locked } => {
+                self.locked = *locked;
+                Answer::Done { generation: None }
+            }
+            Ask::Feed { .. } if self.feeding().is_some() => Answer::Refused(Refusal::Busy),
+            Ask::Feed { portions } => Answer::Feeding {
+                feed: self.feed(*portions),
+            },
+            Ask::CancelFeed { feed } => match self.feeding() {
+                Some(running) if running.id == *feed => {
+                    if !self.ignores_cancel {
+                        self.cancel(running);
+                    }
+                    Answer::Done { generation: None }
+                }
+                _ => Answer::Refused(Refusal::NotFound),
+            },
+        })
     }
 
     /// A request record, as the firmware logs one after answering.
@@ -356,72 +539,36 @@ impl Rig for Feeder {
     }
 
     fn device(&mut self, ask: &Ask) -> Result<Answer> {
-        self.release();
+        self.deliver();
         self.actions.push(format!("ask {}", ask.name()));
-        if self.silent || !self.online || self.now < self.ready_at {
-            return Err(Error::Bench("the feeder did not answer".into()));
+        self.answer(ask)
+    }
+
+    fn hold(&mut self) -> Result<()> {
+        self.deliver();
+        self.actions.push("hold".into());
+        // No handshake while a feed holds the outputs.
+        if self.feeding().is_some() {
+            return Err(Error::Bench(
+                "the feeder did not answer the handshake".into(),
+            ));
         }
-        self.logged(match ask {
-            Ask::Status => "status",
-            Ask::GetSettings => "get-settings",
-            Ask::PutSettings { .. } => "put-settings",
-            Ask::PutWifi { .. } => "put-wifi",
-            Ask::SyncClock => "time-sync",
-        });
-        Ok(match ask {
-            Ask::Status => Answer::Status(self.device_status()),
-            Ask::GetSettings => Answer::Settings(self.settings()),
-            Ask::PutSettings { base, .. } if *base != self.generation => {
-                Answer::Refused(Refusal::Stale {
-                    current: Generation(self.generation),
-                })
-            }
-            Ask::PutWifi { base, .. } if *base != self.wifi_generation => {
-                Answer::Refused(Refusal::Stale {
-                    current: Generation(self.wifi_generation),
-                })
-            }
-            Ask::PutSettings { changes, .. } => {
-                if let Some(on) = changes.lights {
-                    self.lights = on;
-                }
-                if let Some(on) = changes.sound {
-                    self.sound = on;
-                }
-                if let Some(volume) = changes.volume {
-                    self.volume = volume;
-                }
-                self.generation += 1;
-                let saved = format!(
-                    "PLCFG1 saved generation={} lights={} sound={} volume={}",
-                    self.generation,
-                    u8::from(self.lights),
-                    u8::from(self.sound),
-                    self.volume
-                );
-                self.line(1.0, &saved);
-                Answer::Done {
-                    generation: Some(self.generation),
-                }
-            }
-            Ask::PutWifi { wifi, .. } => {
-                self.stored = wifi.is_some();
-                self.wifi_generation += 1;
-                let saved = format!(
-                    "PLCFG1 net saved generation={} stored={}",
-                    self.wifi_generation,
-                    u8::from(self.stored)
-                );
-                self.line(1.0, &saved);
-                Answer::Done {
-                    generation: Some(self.wifi_generation),
-                }
-            }
-            Ask::SyncClock => {
-                self.synced = true;
-                Answer::Done { generation: None }
-            }
-        })
+        self.held = true;
+        Ok(())
+    }
+
+    fn held(&mut self, ask: &Ask) -> Result<Answer> {
+        self.deliver();
+        self.actions.push(format!("held {}", ask.name()));
+        if !self.held {
+            return Err(Error::Bench("no held session is open".into()));
+        }
+        self.answer(ask)
+    }
+
+    fn release(&mut self) {
+        self.actions.push("release".into());
+        self.held = false;
     }
 
     fn unix_ms(&self) -> i64 {
@@ -432,7 +579,7 @@ impl Rig for Feeder {
     /// Only bank 0's recovery role reports health here, and no scenario
     /// leaves the scripted feeder there.
     fn status(&mut self) -> Result<LocalStatus> {
-        self.release();
+        self.deliver();
         Ok(serde_json::from_value(
             json!({"replacement": {"online": false, "stale": true}}),
         )?)
@@ -492,7 +639,7 @@ impl Rig for Feeder {
     }
 
     fn uart(&mut self) -> Result<Vec<u8>> {
-        self.release();
+        self.deliver();
         Ok(std::mem::take(&mut self.uart))
     }
 
@@ -549,6 +696,7 @@ fn the_full_suite_passes_on_a_well_behaved_feeder() {
         "--build",
         "--power",
         "--destructive",
+        "--feeds",
         "--tier",
         "soak",
         "--soak-minutes",
@@ -577,6 +725,7 @@ fn the_full_suite_passes_on_a_well_behaved_feeder() {
         (true, true, 40)
     );
     assert!(!feeder.stored);
+    assert!(!feeder.locked && !feeder.held);
     assert_eq!(feeder.server, "serve");
     assert!(feeder.offered.is_none());
     // The baseline's clock was set, and only the scripted strangers knocked.
@@ -605,12 +754,14 @@ fn without_power_or_build_those_scenarios_are_skipped_not_passed() {
             ("settings-persist", "skip"),
             ("wifi-fallback", "skip"),
             ("network-bounce", "pass"),
+            ("feed-writes", "skip"),
             ("ota-recovery", "skip"),
             ("ota-power-cuts", "skip"),
             ("stock-roundtrip", "skip"),
         ]
     );
     assert!(!feeder.actions.iter().any(|a| a == "power cycle"));
+    assert!(!feeder.actions.iter().any(|a| a.ends_with(" feed")));
 }
 
 #[test]
@@ -874,4 +1025,94 @@ fn the_scenarios_run_in_catalog_order() {
         .collect();
 
     assert_eq!(names, catalog);
+}
+
+fn feed_writes(feeder: &mut Feeder) -> Report {
+    let (reports, silent) = suite(
+        feeder,
+        &["--review", "r", "--feeds", "--only", "feed-writes"],
+    );
+    assert!(silent.is_none());
+    assert_eq!(reports[0].verdict, Verdict::Pass);
+    reports[1].clone()
+}
+
+#[test]
+fn feed_writes_holds_a_session_across_the_feeds_and_puts_everything_back() {
+    let mut feeder = Feeder::new(GOOD);
+    let report = feed_writes(&mut feeder);
+
+    assert_eq!(report.verdict, Verdict::Pass, "{:#?}", feeder.notes);
+    // The held session opened before the first feed and carried every
+    // write made during one.
+    let at = |action: &str| feeder.actions.iter().position(|a| a == action).unwrap();
+    assert!(at("hold") < at("ask feed"));
+    for action in [
+        "held put-settings",
+        "held set-lock",
+        "held time-sync",
+        "held cancel-feed",
+    ] {
+        assert!(at(action) > at("ask feed"), "{action}");
+    }
+    assert!(at("release") > at("held cancel-feed"));
+    assert!(
+        feeder
+            .notes
+            .iter()
+            .any(|n| n.contains("settings change during feed 12") && n.contains("busy")),
+        "{:#?}",
+        feeder.notes
+    );
+    assert!(
+        feeder
+            .notes
+            .iter()
+            .any(|n| n.contains("Feed 13 cancelled with 0/2"))
+    );
+
+    // The change went through after the feed, and everything came back.
+    assert_eq!(
+        (feeder.lights, feeder.locked, feeder.held),
+        (true, false, false)
+    );
+    assert_eq!(feeder.generation, 2981);
+}
+
+#[test]
+fn a_settings_save_during_a_feed_fails_feed_writes_and_is_put_back() {
+    let mut feeder = Feeder::new(GOOD);
+    feeder.saves_during_feed = true;
+    let Verdict::Fail(reason) = feed_writes(&mut feeder).verdict else {
+        panic!("{:#?}", feeder.notes);
+    };
+
+    assert!(
+        reason.starts_with("Store writes during feed 12: [sdk] PLCFG1 saved"),
+        "{reason}"
+    );
+    assert!(feeder.lights && !feeder.locked);
+}
+
+#[test]
+fn a_cancel_that_leaves_the_feed_running_fails_feed_writes() {
+    let mut feeder = Feeder::new(GOOD);
+    feeder.ignores_cancel = true;
+    let Verdict::Fail(reason) = feed_writes(&mut feeder).verdict else {
+        panic!("{:#?}", feeder.notes);
+    };
+
+    assert!(reason.starts_with("Feed 13 was not cancelled"), "{reason}");
+    assert!(!feeder.held);
+}
+
+#[test]
+fn a_feeder_that_restarts_during_a_feed_fails_feed_writes() {
+    let mut feeder = Feeder::new(GOOD);
+    feeder.line(5.0, "PLFW1 start build=a1b2 bank=1 reset=0x8 mmu=1");
+    let Verdict::Fail(reason) = feed_writes(&mut feeder).verdict else {
+        panic!("{:#?}", feeder.notes);
+    };
+
+    assert!(reason.starts_with("The feeder restarted"), "{reason}");
 }

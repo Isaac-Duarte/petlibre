@@ -16,6 +16,7 @@
     power: false,
     build: false,
     destructive: false,
+    feeds: false,
     keepGoing: false,
   });
 
@@ -84,6 +85,9 @@
       <label><input type="checkbox" bind:checked={options.power} /> <code>--power</code> cold boots</label>
       <label
         ><input type="checkbox" bind:checked={options.destructive} /> <code>--destructive</code> power cuts mid-update</label
+      >
+      <label
+        ><input type="checkbox" bind:checked={options.feeds} /> <code>--feeds</code> unattended feeds (the motor moves)</label
       >
       <label><input type="checkbox" bind:checked={options.keepGoing} /> <code>--keep-going</code> past a failure</label>
     </fieldset>

@@ -36,6 +36,7 @@ const options: RunOptions = {
   power: false,
   build: false,
   destructive: false,
+  feeds: false,
   keepGoing: false,
 };
 
@@ -113,6 +114,9 @@ describe("run builder", () => {
     );
     expect(itestCommand({ ...options, only: ["requests", "soak"], build: true })).toBe(
       "wellfed-bench --ui itest itest-20261022-15 --only requests,soak --build",
+    );
+    expect(itestCommand({ ...options, only: ["feed-writes"], feeds: true })).toBe(
+      "wellfed-bench --ui itest itest-20261022-15 --only feed-writes --feeds",
     );
   });
 

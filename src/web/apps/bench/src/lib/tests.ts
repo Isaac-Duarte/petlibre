@@ -58,6 +58,7 @@ export interface RunOptions {
   power: boolean;
   build: boolean;
   destructive: boolean;
+  feeds: boolean;
   keepGoing: boolean;
 }
 
@@ -72,6 +73,7 @@ export function itestCommand(options: RunOptions): string {
   if (options.build) parts.push("--build");
   if (options.power) parts.push("--power");
   if (options.destructive) parts.push("--destructive");
+  if (options.feeds) parts.push("--feeds");
   if (options.keepGoing) parts.push("--keep-going");
   return parts.join(" ");
 }
@@ -103,6 +105,7 @@ export function missingFlags(entry: CatalogEntry, options: RunOptions): string[]
     "--power": options.power,
     "--build": options.build,
     "--destructive": options.destructive,
+    "--feeds": options.feeds,
   };
   return entry.needs.map((need) => need.flag).filter((flag) => !on[flag]);
 }

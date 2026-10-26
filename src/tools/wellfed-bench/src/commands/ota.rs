@@ -84,7 +84,8 @@ const MOTION_MANUAL: &str = "drives the motor; motion builds stay manual (build 
 
 /// A firmware `--build` may make (`src/firmware/wellfed/<name>`): none
 /// moves anything at startup, and `feeder` drives the motor only for an
-/// authenticated feed request, which the bench never sends. The motor
+/// authenticated feed request, which the bench sends only in the
+/// suite's `feed-writes` scenario under `--feeds`. The motor
 /// firmware is refused here: motion builds stay a manual, attended step.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Firmware {

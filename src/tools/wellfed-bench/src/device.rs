@@ -14,6 +14,10 @@
 //! arrive. The address and the session are kept between requests; a request
 //! on a kept session that fails is sent once more on a fresh one under the
 //! same id, which the feeder answers without running a write twice.
+//!
+//! A second, held session ([`Device::hold`]) is never reopened: the feeder
+//! admits no handshake while a feed holds its outputs, so only a session
+//! opened before the feed can reach it during one.
 
 use std::fmt;
 use std::io::{ErrorKind, Read, Write};
@@ -78,6 +82,8 @@ pub enum DeviceError {
     Unwelcome,
     #[error("the feeder's message does not decode")]
     Decode,
+    #[error("no held session is open")]
+    NotHeld,
     #[error("time zone {0:?}: {1}")]
     Zone(String, jiff::Error),
     #[error(transparent)]
@@ -103,6 +109,18 @@ pub enum Ask {
     /// The host's wall clock and the server config's time zone, read when
     /// the request goes out.
     SyncClock,
+    /// The panel's child lock.
+    SetLock {
+        locked: bool,
+    },
+    /// Moves the motor: only a scenario the operator allowed feeds sends it.
+    Feed {
+        portions: u8,
+    },
+    /// Stop the feed a [`Answer::Feeding`] named.
+    CancelFeed {
+        feed: u32,
+    },
 }
 
 impl Ask {
@@ -113,6 +131,9 @@ impl Ask {
             Self::PutSettings { .. } => "put-settings",
             Self::PutWifi { .. } => "put-wifi",
             Self::SyncClock => "time-sync",
+            Self::SetLock { .. } => "set-lock",
+            Self::Feed { .. } => "feed",
+            Self::CancelFeed { .. } => "cancel-feed",
         }
     }
 }
@@ -140,7 +161,11 @@ pub enum Answer {
     Status(DeviceStatus),
     Settings(Settings),
     Refused(Refusal),
-    /// An answer no [`Ask`] expects (clients, an invite, a feed).
+    /// The feed is reserved under `feed` and runs now.
+    Feeding {
+        feed: u32,
+    },
+    /// An answer no [`Ask`] expects (clients, an invite).
     Unexpected,
 }
 
@@ -154,7 +179,8 @@ impl Answer {
             Model::Status(status) => Self::Status(DeviceStatus::of(&status)),
             Model::Settings(settings) => Self::Settings(settings),
             Model::Refused(refusal) => Self::Refused(refusal),
-            Model::Clients(_) | Model::Invite(_) | Model::Feeding { .. } => Self::Unexpected,
+            Model::Feeding { feed } => Self::Feeding { feed },
+            Model::Clients(_) | Model::Invite(_) => Self::Unexpected,
         }
     }
 }
@@ -175,6 +201,8 @@ pub struct DeviceStatus {
     pub clock_ms: Option<u64>,
     pub settings_generation: u32,
     pub wifi_generation: u32,
+    /// The panel's child lock; `None` before it is known.
+    pub locked: Option<bool>,
 }
 
 impl DeviceStatus {
@@ -191,6 +219,7 @@ impl DeviceStatus {
                 .and_then(|clock| u64::try_from(clock.as_millisecond()).ok()),
             settings_generation: status.settings_generation.0,
             wifi_generation: status.wifi_generation.0,
+            locked: status.locked,
         }
     }
 
@@ -279,6 +308,8 @@ pub struct Device {
     zone: jiff::tz::TimeZone,
     address: Option<SocketAddr>,
     connection: Option<Connection>,
+    /// [`Self::hold`]'s session, apart from `connection`.
+    held: Option<Connection>,
 }
 
 fn random<const N: usize>() -> Result<[u8; N], DeviceError> {
@@ -316,6 +347,7 @@ impl Device {
             zone,
             address: None,
             connection: None,
+            held: None,
         })
     }
 
@@ -328,6 +360,28 @@ impl Device {
             Err(_) if reused => self.exchange(id, ask),
             other => other,
         }
+    }
+
+    /// Open a second session now and keep it for [`Self::ask_held`],
+    /// replacing any held before.
+    pub fn hold(&mut self) -> Result<(), DeviceError> {
+        self.held = None;
+        self.held = Some(self.connect()?);
+        Ok(())
+    }
+
+    /// One request on the held session. A failure closes it rather than
+    /// open another, so every answer comes from the session held before.
+    pub fn ask_held(&mut self, ask: &Ask) -> Result<Answer, DeviceError> {
+        let mut connection = self.held.take().ok_or(DeviceError::NotHeld)?;
+        let answer = self.send(&mut connection, random()?, ask)?;
+        self.held = Some(connection);
+        Ok(answer)
+    }
+
+    /// Close the held session.
+    pub fn release(&mut self) {
+        self.held = None;
     }
 
     fn exchange(&mut self, id: RequestId, ask: &Ask) -> Result<Answer, DeviceError> {
@@ -364,6 +418,11 @@ impl Device {
                 jiff::Timestamp::now(),
                 &self.zone,
             )),
+            Ask::SetLock { locked } => Op::SetLock { locked: *locked },
+            Ask::Feed { portions } => Op::Feed {
+                portions: *portions,
+            },
+            Ask::CancelFeed { feed } => Op::CancelFeed { feed: *feed },
         };
         let bytes = connection.session.request(id, &op)?;
         connection.stream.write_all(&bytes)?;
@@ -609,6 +668,7 @@ mod tests {
             clock_ms: None,
             settings_generation: 3,
             wifi_generation: 1,
+            locked: Some(false),
         };
         assert_eq!(
             status.matches("8a13e59efa15e56b").unwrap(),

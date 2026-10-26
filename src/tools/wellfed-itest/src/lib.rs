@@ -31,6 +31,7 @@ use wellfed_formats::bench::progress::StepState;
 use wellfed_formats::bench::run::{Evidence, RunRecord, SUFFIX, ScenarioRecord, ScenarioVerdict};
 use serde::Serialize;
 
+mod feeds;
 mod live;
 mod log;
 mod scenarios;
@@ -63,6 +64,7 @@ fn met(need: Need, args: &ItestArgs) -> bool {
         Need::Build => args.build,
         Need::Destructive => args.destructive,
         Need::Stock => args.stock.is_some(),
+        Need::Feeds => args.feeds,
     }
 }
 
@@ -119,6 +121,18 @@ trait Rig {
     fn offer(&mut self, staged: Option<&Staged>) -> Result<()>;
     /// One device API request as the owner's key.
     fn device(&mut self, ask: &Ask) -> Result<Answer>;
+    /// Open a second owner session now and hold it: the feeder admits no
+    /// handshake during a feed, so only a session opened before one reaches
+    /// the feeder while it runs.
+    fn hold(&mut self) -> Result<()> {
+        Err(Error::Bench("This rig holds no second session".into()))
+    }
+    /// One request on the held session, never reopened.
+    fn held(&mut self, _ask: &Ask) -> Result<Answer> {
+        Err(Error::Bench("This rig holds no second session".into()))
+    }
+    /// Close the held session.
+    fn release(&mut self) {}
     /// A connection the feeder must not let in, and how it met it.
     fn intrude(&mut self, intruder: Intruder) -> Result<Rebuffed>;
     /// The host's wall clock, Unix milliseconds: what a clock sync sends.
@@ -275,6 +289,12 @@ impl<'r> Ctx<'r> {
     fn ask(&mut self, ask: &Ask) -> Result<Answer> {
         self.pull()?;
         self.rig.device(ask)
+    }
+
+    /// One request on the held session, with the UART drained first.
+    fn ask_held(&mut self, ask: &Ask) -> Result<Answer> {
+        self.pull()?;
+        self.rig.held(ask)
     }
 
     /// The feeder's status over the device API, now.

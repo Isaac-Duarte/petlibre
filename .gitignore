@@ -24,3 +24,5 @@ node_modules/
 /.claude/worktrees/
 /src/web/**/.svelte-kit/
 /src/web/apps/site/build/
+.claude/
+skills-lock.json

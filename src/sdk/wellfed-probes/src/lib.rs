@@ -6,15 +6,15 @@
 //! that steps it (the build's stack audit finds tasks only in the firmware's
 //! own sources). Each probe reads back stopped motor outputs; only the motor
 //! pulse probe ever drives the motor, and only the `motor` firmware runs it.
-//! The flash and supervision probes are retained for their host tests; no
-//! firmware links them, and the startup audit refuses an image that does.
+//! The supervision probe is retained for its host tests; no firmware links
+//! it. The settings store's stress probe lives with the store it stresses
+//! (`wellfed-feeder-runtime`).
 //!
 //! Host builds test the probes against the SDK fake.
 #![cfg_attr(target_os = "none", no_std)]
 
 pub mod adc;
 pub mod buttons;
-pub mod flash;
 pub mod optics;
 pub mod pulse;
 pub mod speaker;

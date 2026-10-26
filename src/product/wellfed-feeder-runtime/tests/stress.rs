@@ -13,6 +13,7 @@ use std::ffi::c_void;
 
 use wellfed_core::flash_coord::{FlashFault, FlashPhase, FlashReply};
 use wellfed_feeder::store::settings::{SettingsStatus, SlotState};
+use wellfed_feeder_runtime::stress::{EXPECTED_ID, FlashOps, Probe, Record, STRESS_SAVES};
 use wellfed_hal::bringup;
 use wellfed_hal::flash::hooks::HookTicket;
 use wellfed_hal::flash::park::{
@@ -24,7 +25,6 @@ use wellfed_hal::flash::peer::{
 use wellfed_hal::flash_lock::provider::{ATTEMPT_BIT, LeaseFault, LeaseStage, Provider};
 use wellfed_hal::sdk::{self, Irq, fake};
 use wellfed_hal::stopped;
-use wellfed_probes::flash::{EXPECTED_ID, FlashOps, Probe, Record, STRESS_SAVES};
 
 #[derive(Default)]
 struct Km0 {

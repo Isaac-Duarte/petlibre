@@ -25,9 +25,10 @@ use wellfed_hal::flash_lock::arming::{self, Arming, Event, Hooks, Poll, UPDATE_B
 use wellfed_hal::flash_lock::provider::{ATTEMPT_BIT, LeaseFault, LeaseStage, Provider};
 use wellfed_hal::interlock::{Held, INTERLOCK};
 use wellfed_hal::ota::mailbox::{self, Answer, Request};
+use wellfed_hal::ota::signers;
 use wellfed_hal::ota::update::*;
 use wellfed_hal::sdk::fake;
-use wellfed_hal::{keys, stopped};
+use wellfed_hal::stopped;
 use sha2::{Digest, Sha256};
 
 /// The mailbox and the update bit are process-wide.
@@ -239,7 +240,7 @@ fn start(bank: u8) -> MutexGuard<'static, ()> {
     let guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     fake::reset_hardware();
     mailbox::reset();
-    keys::reset();
+    signers::reset();
     ARMED.with(|a| a.set(true));
     STORE_FAILS.with(|f| f.set(false));
     INTERLOCK.reset();
@@ -931,15 +932,7 @@ fn a_retired_key_signs_nothing_more() {
 fn an_owner_s_enrolled_key_signs_an_offer() {
     let _guard = start(0);
     let owner = SigningKey::from_bytes(&[0x0e; 32]);
-    keys::publish_clients(
-        [wellfed_feeder::store::clients::Client {
-            key: owner.verifying_key().to_bytes(),
-            label: wellfed_feeder::store::clients::Label::new(b"laptop").unwrap(),
-            role: wellfed_feeder::store::clients::Role::UpdateSigner,
-            enrolled: 1,
-        }]
-        .into_iter(),
-    );
+    signers::publish([owner.verifying_key().to_bytes()].into_iter());
     let mut rig = Rig::bench(0);
     let payload = image(LEN);
     let signed = manifest_for(&owner, 3, &payload, 0x22, ImageKind::Replacement);
@@ -1115,15 +1108,7 @@ fn bank_1_never_gives_way_for_a_downgrade_bank_0_could_not_check() {
     // bank 0's record does not name.
     let _guard = start(1);
     let owner = SigningKey::from_bytes(&[0x0e; 32]);
-    keys::publish_clients(
-        [wellfed_feeder::store::clients::Client {
-            key: owner.verifying_key().to_bytes(),
-            label: wellfed_feeder::store::clients::Label::new(b"laptop").unwrap(),
-            role: wellfed_feeder::store::clients::Role::UpdateSigner,
-            enrolled: 1,
-        }]
-        .into_iter(),
-    );
+    signers::publish([owner.verifying_key().to_bytes()].into_iter());
     let bank0 = Bank0 {
         key: Some([0x99; 8]),
         ..recorded_bank0()

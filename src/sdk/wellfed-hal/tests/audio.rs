@@ -5,8 +5,9 @@
 
 use std::sync::{Mutex, MutexGuard};
 
+use wellfed_core::settings::SettingsView;
+use wellfed_core::tone::PlayResult;
 use wellfed_core::tone::Tune;
-use wellfed_feeder::mailbox::{PlayResult, SettingsView};
 use wellfed_hal::audio::{self, AMP_PIN, Record, Speaker};
 use wellfed_hal::sdk::fake;
 use wellfed_hal::settings;

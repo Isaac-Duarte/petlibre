@@ -1,4 +1,5 @@
-//! The device settings writer, normal role. It opens the store in
+//! The device settings writer, normal role, in the SDK runtime's service
+//! task (`wellfed_store_step`). It opens the store in
 //! storage sectors 2 and 3, publishes it for the device API
 //! (`wellfed_hal::settings`), arms the flash-lock hooks once as the
 //! confirmation does, and then saves each change the device API queues.
@@ -10,12 +11,12 @@
 //! opens the identity and client store (sectors 9 and 10), creating the
 //! feeder's identity secret on the first boot that has a generator. It
 //! publishes the identity for the loop task and applies the client changes
-//! the loop queues (`wellfed_hal::keys`): enrollments, revocations and the
+//! the loop queues ([`keys`]): enrollments, revocations and the
 //! Reset, which forgets every client and draws a new identity.
 //!
 //! It also keeps the event history (sectors 13-24,
 //! `wellfed_feeder::store::events`). It appends the records the loop queues
-//! and answers the device API's reads (`wellfed_hal::events`), polling
+//! and answers the device API's reads ([`events`]), polling
 //! faster while either waits, so a reconnecting client catches up in
 //! seconds.
 //!
@@ -41,15 +42,16 @@ use wellfed_hal::flash::park::Mmio;
 use wellfed_hal::flash_lock::arming::{self, Arming, Hooks, Poll};
 use wellfed_hal::flash_lock::provider::Provider;
 use wellfed_hal::interlock::{INTERLOCK, WRITER_POLL_MS, WriteStep, WriteTurn};
-pub use wellfed_hal::keys::KeyResult;
-use wellfed_hal::keys::{self, Change};
-use wellfed_hal::network::{self, NET_BASE};
-use wellfed_hal::{events, rng, sdk, settings};
-
-use crate::storage::{
+use wellfed_hal::{rng, sdk, settings};
+use wellfed_sdk::storage::{
     CLIENTS_BASE, EVENTS_BASE, EVENTS_UNITS, FlashOps, Region, SEED_BASE, SETTINGS_BASE,
     SETTINGS_BINDING, Slots,
 };
+
+use crate::events;
+pub use crate::keys::KeyResult;
+use crate::keys::{self, Change};
+use crate::network::{self, NET_BASE};
 
 pub const POLL_MS: u32 = 200;
 /// While events wait to be written or read.
@@ -706,4 +708,45 @@ impl<F: FlashOps> Writer<F> {
             }
         }
     }
+}
+
+/// The service task's settings stage; only `wellfed_store_step` enters it.
+#[cfg(target_os = "none")]
+static WRITER: wellfed_sdk::Slot<Writer<wellfed_sdk::SdkStorage>> = wellfed_sdk::Slot::new();
+
+#[cfg(target_os = "none")]
+struct Line(Record);
+
+#[cfg(target_os = "none")]
+impl fmt::Display for Line {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        describe(self.0, f)
+    }
+}
+
+/// The SDK runtime's settings stage: one writer step, logged as a `PLCFG1`
+/// record; the delay to the next, 0 to end.
+///
+/// # Safety
+/// Called only from the service task, with the runtime's fixed provider,
+/// never otherwise borrowed.
+#[cfg(target_os = "none")]
+#[unsafe(no_mangle)]
+pub unsafe fn wellfed_store_step(provider: *mut Provider) -> u32 {
+    use wellfed_hal::flash::park::Hardware;
+    use wellfed_hal::startup;
+
+    let Some(mut writer) = WRITER.enter_or_init(Default::default) else {
+        return 0;
+    };
+    // SAFETY: the caller's contract.
+    let step = unsafe { writer.step::<Hardware, wellfed_sdk::SdkHooks>(provider) };
+
+    if let Some(record) = step.record {
+        let mut report = startup::Report::new();
+        if let Ok(line) = report.record(format_args!("PLCFG1 {}\r\n", Line(record))) {
+            sdk::log(line);
+        }
+    }
+    step.delay_ms
 }

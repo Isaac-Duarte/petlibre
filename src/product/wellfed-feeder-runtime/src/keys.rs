@@ -23,8 +23,9 @@ use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 use wellfed_core::named_enum;
 use wellfed_feeder::store::clients::{CLIENTS as STORE_CLIENTS, Client, ClientError, Label, Role};
 
-use crate::cell::TaskCell;
-use crate::sdk;
+use wellfed_hal::cell::TaskCell;
+use wellfed_hal::ota::signers;
+use wellfed_hal::sdk;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Change {
@@ -195,12 +196,19 @@ static CLIENTS: TaskCell<[Option<Client>; STORE_CLIENTS]> = TaskCell::new([None;
 static CLIENTS_GENERATION: AtomicU32 = AtomicU32::new(0);
 
 /// The writer's half: the clients the store now holds, after it loads and
-/// after every change.
+/// after every change. Their update keys go to the update stage too.
 pub fn publish_clients(clients: impl Iterator<Item = Client>) {
     let mut table = [None; STORE_CLIENTS];
     for (slot, client) in table.iter_mut().zip(clients) {
         *slot = Some(client);
     }
+    signers::publish(
+        table
+            .iter()
+            .flatten()
+            .filter(|client| client.role == Role::UpdateSigner)
+            .map(|client| client.key),
+    );
     sdk::unscheduled(|| {
         // SAFETY: as in `publish_identity`.
         unsafe { *CLIENTS.get() = table };

@@ -21,8 +21,11 @@ const TEXT: [&str; 10] = [
 ];
 /// Product code, which reaches the motor pins, the watchdog and flash only
 /// through the HAL's owners: it may name neither the raw writers nor the
-/// `bringup` module that re-exports them.
+/// `bringup` module that re-exports them. A product crate's tests may: they
+/// write the SDK fake's flash to set up what a store reads.
 const PRODUCT: [&str; 2] = ["src/firmware/wellfed/feeder/src/", "src/product/"];
+/// Under a product root, the test sources the rule leaves out.
+const PRODUCT_TESTS: &str = "/tests/";
 /// Bring-up code, which may take the raw writers, but only as `bringup::…`,
 /// so the one door stays visible at every call.
 const BRINGUP: [&str; 2] = ["src/firmware/wellfed/", "src/sdk/wellfed-probes/src/"];
@@ -227,7 +230,10 @@ fn normalize(path: &Path) -> PathBuf {
 /// Product code names no raw writer and no `bringup`; bring-up code names a
 /// raw writer only through `bringup::`. Comments are not code.
 fn raw_outputs(name: &str, source: &str, errors: &mut Vec<String>) {
-    let product = PRODUCT.iter().any(|root| name.starts_with(root));
+    let product = PRODUCT.iter().any(|root| {
+        name.strip_prefix(root)
+            .is_some_and(|rest| !rest.contains(PRODUCT_TESTS))
+    });
     let bringup = !product && BRINGUP.iter().any(|root| name.starts_with(root));
     if !product && !bringup {
         return;
@@ -294,6 +300,16 @@ mod tests {
             "unsafe { sdk::gpio_port_write(0, 0, 0) };\n",
             &mut errors,
         );
+        raw_outputs(
+            "src/product/wellfed-feeder-runtime/tests/writer.rs",
+            "unsafe { sdk::storage_erase(sector) };\n",
+            &mut errors,
+        );
+        raw_outputs(
+            "src/product/wellfed-feeder-runtime/src/writer.rs",
+            "unsafe { sdk::storage_erase(sector) };\n",
+            &mut errors,
+        );
 
         assert_eq!(
             errors,
@@ -301,6 +317,7 @@ mod tests {
                 "src/firmware/wellfed/feeder/src/app.rs: product code may not call gpio_port_write; use the HAL's owner",
                 "src/firmware/wellfed/feeder/src/app.rs: product code may not use the bringup module",
                 "src/sdk/wellfed-probes/src/buttons.rs: bring-up code calls wdg_refresh only as bringup::wdg_refresh",
+                "src/product/wellfed-feeder-runtime/src/writer.rs: product code may not call storage_erase; use the HAL's owner",
             ]
         );
     }

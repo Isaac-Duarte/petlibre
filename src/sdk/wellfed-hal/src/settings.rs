@@ -5,7 +5,7 @@
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
-pub use wellfed_feeder::mailbox::{SettingsFields, SettingsResult, SettingsView};
+pub use wellfed_core::settings::{SettingsFields, SettingsResult, SettingsView};
 
 const LOADED: u32 = 1 << 31;
 const WRITABLE: u32 = 1 << 30;

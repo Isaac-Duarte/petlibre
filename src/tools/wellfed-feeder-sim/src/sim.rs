@@ -29,6 +29,7 @@ use wellfed_core::store::update::{State, UpdateStore};
 use wellfed_feeder::api::{self as server, Pass, Server};
 use wellfed_feeder::pairing::{self, Pairing, Path, Refusal};
 use wellfed_feeder::panel::{self, Action, Config, Lock, Panel, Source};
+use wellfed_feeder::store::clients::Role;
 use wellfed_hal::ota::mailbox;
 use wellfed_hal::ota::update::{self as update, Floor, Update};
 use wellfed_proto::api::{EventBody, Metric, Sample, Source as EventSource};
@@ -314,7 +315,13 @@ impl Sim {
             .clients_changed(generation, |r| record(Record::Server(r)));
         // The update stage reads the owners' update keys where the
         // firmware's settings writer publishes them.
-        wellfed_hal::keys::publish_clients(table.into_iter().flatten());
+        wellfed_hal::ota::signers::publish(
+            table
+                .iter()
+                .flatten()
+                .filter(|client| client.role == Role::UpdateSigner)
+                .map(|client| client.key),
+        );
     }
 
     fn samples(&mut self, now_ms: u32) {

@@ -44,13 +44,12 @@ use wellfed_core::ota::offer::{
 use wellfed_core::ota::{BANK1_OFFSET, MARKER, SECTOR, SECTOR_BYTES, image};
 use wellfed_core::store::slot::SlotIo;
 use wellfed_core::store::update::{Bank0, Candidate, State, UpdateStatus, UpdateStore};
-use wellfed_feeder::store::clients::{CLIENTS, Client, Role};
 use sha2::{Digest, Sha256};
 
 use crate::flash_lock::arming::{self, Hooks};
 use crate::interlock::{INTERLOCK, WRITER_POLL_MS, WriteStep, WriteTurn};
-use crate::keys;
 use crate::ota::mailbox::{self, Answer, Request};
+use crate::ota::signers;
 use crate::sdk;
 
 /// Between steps with nothing to do.
@@ -768,7 +767,7 @@ impl<I: SlotIo + Clone> Update<I> {
             Some(key) => core::slice::from_ref(key),
             None => &[],
         };
-        let enrolled = enrolled();
+        let enrolled = signers::read();
         let (keys, count) = &enrolled;
         let context = Context {
             ring: self.ring(built_in, &keys[..*count]),
@@ -791,7 +790,8 @@ impl<I: SlotIo + Clone> Update<I> {
     /// Bank 1: bank 0 must hold a valid marker and exactly the image it
     /// recorded, and must find the key that signed the offer; the image
     /// check runs over the next steps. Both banks read the same store and
-    /// client table, so only a built-in key can differ between them.
+    /// owners' update keys (`signers`), so only a built-in key can differ
+    /// between them.
     fn check_bank0(&mut self, admitted: Admitted, flash: &mut impl Flash, version: u32) -> Step {
         let mut marker = [0u8; 8];
         let valid = flash.bank0(0, &mut marker) && marker == MARKER;
@@ -1114,23 +1114,6 @@ fn under_marker<T>(write: impl FnOnce() -> T) -> T {
     let out = write();
     arming::clear_attempt();
     out
-}
-
-/// The owners' enrolled update keys, as the settings writer last
-/// published the client table.
-fn enrolled() -> ([[u8; 32]; CLIENTS], usize) {
-    let mut table: [Option<Client>; CLIENTS] = [None; CLIENTS];
-    let mut keys = [[0u8; 32]; CLIENTS];
-    let mut count = 0;
-    if keys::clients_since(0, &mut table).is_some() {
-        for client in table.iter().flatten() {
-            if client.role == Role::UpdateSigner {
-                keys[count] = client.key;
-                count += 1;
-            }
-        }
-    }
-    (keys, count)
 }
 
 fn candidate(admitted: &Admitted) -> Candidate {

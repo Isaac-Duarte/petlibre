@@ -6,8 +6,8 @@
 //! probe it ran since. The decision is [`Liveness`], host-tested in
 //! `wellfed-core`; this module only carries one join's machine between
 //! calls and publishes whether the link is live to [`net_status`], which
-//! trial confirmation and the broker session read. A successful join
-//! (`wellfed_wifi_outcome`) starts a new machine.
+//! trial confirmation reads. A successful join (the join outcome the C task
+//! reports, `wellfed_wifi_outcome`) starts a new machine.
 
 use wellfed_core::liveness::{Liveness, Probe};
 
@@ -22,7 +22,7 @@ static WATCH: TaskCell<Liveness> = TaskCell::new(Liveness::new());
 ///
 /// # Safety
 /// Called only from the Wi-Fi task, which owns `WATCH`.
-pub(crate) unsafe fn joined() {
+pub unsafe fn joined() {
     // SAFETY: the caller's contract makes this the only reference to `WATCH`.
     unsafe { *WATCH.get() = Liveness::new() };
     net_status::set_live(false);

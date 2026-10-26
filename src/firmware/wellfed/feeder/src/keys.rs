@@ -12,7 +12,7 @@
 
 use core::fmt;
 
-use wellfed_sdk::hal::keys;
+use wellfed_feeder_runtime::keys;
 use wellfed_session::hex;
 use wellfed_session::noise::Keypair;
 

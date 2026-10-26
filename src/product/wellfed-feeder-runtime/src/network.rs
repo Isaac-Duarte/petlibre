@@ -16,7 +16,7 @@
 //!   while a feed holds the outputs, and the outcome ends it, so no feed
 //!   starts while the attempt scans, associates or waits for DHCP.
 //!
-//! [`interlock`]: crate::interlock
+//! [`interlock`]: wellfed_hal::interlock
 //!
 //! Nothing here writes flash.
 
@@ -26,12 +26,12 @@ use wellfed_core::store::slot::SlotIo;
 use wellfed_feeder::mailbox::{WifiResult, WifiSource, WifiView};
 use wellfed_feeder::store::net::{Credentials, NetStore};
 
-use crate::cell::TaskCell;
-use crate::interlock::INTERLOCK;
-use crate::{link, sdk};
+use wellfed_hal::cell::TaskCell;
+use wellfed_hal::interlock::INTERLOCK;
+use wellfed_hal::{link, sdk};
 
 /// The credential slots within the storage region (`0x345000`).
-pub const NET_BASE: u32 = crate::plaf103::storage::NET.first;
+pub const NET_BASE: u32 = wellfed_hal::plaf103::storage::NET.first;
 /// Consecutive failed joins before the build's credentials take over.
 pub const FALLBACK_AFTER: u32 = 5;
 

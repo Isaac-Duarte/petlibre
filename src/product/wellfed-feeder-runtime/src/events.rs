@@ -24,8 +24,8 @@
 
 use wellfed_feeder::store::events::{BODY_BYTES, Read};
 
-use crate::cell::TaskCell;
-use crate::sdk;
+use wellfed_hal::cell::TaskCell;
+use wellfed_hal::sdk;
 
 /// Records the loop may queue before the writer takes them.
 pub const QUEUE: usize = 16;

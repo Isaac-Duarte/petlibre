@@ -13,7 +13,7 @@
 use std::rc::Rc;
 
 use wellfed_board_plaf103::storage;
-use wellfed_core::clock::wall::{Jump, Sync, SyncError, WallClock};
+use wellfed_core::clock::wall::WallClock;
 use wellfed_core::ota::install::Phase;
 use wellfed_core::ota::offer::{KeyStatement, key_id};
 use wellfed_core::store::slot::crc32;
@@ -421,21 +421,7 @@ impl Device for SimDevice {
     }
 
     fn time_sync(&mut self, fields: TimeFields) -> TimeResult {
-        let sync = Sync {
-            unix_ms: fields.unix_ms,
-            offset_s: fields.offset_s,
-            next_change_s: fields.next_change_s,
-            next_offset_s: fields.next_offset_s,
-        };
-        match self.clock.sync(self.now_ms, sync) {
-            Ok(Jump::First) => TimeResult::Synced { jump_ms: None },
-            Ok(Jump::Step(delta) | Jump::Jumped(delta)) => TimeResult::Synced {
-                jump_ms: Some(delta),
-            },
-            Err(SyncError::Time) => TimeResult::Refused("time"),
-            Err(SyncError::Offset) => TimeResult::Refused("offset"),
-            Err(SyncError::NextChange) => TimeResult::Refused("next_change"),
-        }
+        TimeResult::from_sync(self.clock.sync(self.now_ms, fields.sync()))
     }
 
     fn keys(&mut self, change: KeyChange) -> Option<u32> {

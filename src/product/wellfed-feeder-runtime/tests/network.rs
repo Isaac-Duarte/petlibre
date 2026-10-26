@@ -5,7 +5,7 @@ use std::sync::Mutex;
 
 use wellfed_feeder::mailbox::{WifiResult, WifiSource};
 use wellfed_feeder::store::net::{Credentials, NetStore};
-use wellfed_hal::network::*;
+use wellfed_feeder_runtime::network::*;
 use wellfed_hal::sdk::fake;
 
 /// The module's state is process-wide.
@@ -210,4 +210,27 @@ fn an_attempt_holds_the_join_turn_from_select_to_outcome() {
     outcome(0);
     assert_eq!(INTERLOCK.turn(), Turn::Free);
     forget();
+}
+
+#[test]
+fn only_a_successful_join_restarts_the_link_watch() {
+    use wellfed_hal::link::wellfed_wifi_watch;
+    use wellfed_hal::net_status;
+
+    let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    fake::reset_hardware();
+    net_status::reset();
+    forget();
+    // SAFETY: the test is the only Wi-Fi task, between a join and its leave.
+    let watch = |probe| unsafe { wellfed_wifi_watch(1, 1, probe) };
+
+    outcome(1);
+    watch(0);
+    watch(1);
+    assert!(net_status::read().live, "settled once the gateway answers");
+
+    outcome(0);
+    assert!(net_status::read().live, "a failed attempt leaves the watch");
+    outcome(1);
+    assert!(!net_status::read().live, "a new join watches from scratch");
 }

@@ -15,8 +15,8 @@ use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use wellfed_core::deadline_passed;
 use wellfed_core::named_enum;
+pub use wellfed_core::tone::PlayResult;
 use wellfed_core::tone::{Player, SAMPLE_RATE, Tune};
-pub use wellfed_feeder::mailbox::PlayResult;
 
 use crate::sdk;
 use crate::settings;

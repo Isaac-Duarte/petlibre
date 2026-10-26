@@ -13,12 +13,13 @@ crate-type = ["staticlib", "rlib"]
 
 [features]
 # KM4 target builds with the pinned SDK bindings.
-km4 = ["wellfed-sdk/km4"]
+km4 = ["wellfed-sdk/km4", "wellfed-feeder-runtime/km4"]
 # The variants declared below; only `wellfed-build --variant` sets one.
 stall = []
 fail = ["wellfed-sdk/trial-fail"]
 
 [dependencies]
+wellfed-feeder-runtime.workspace = true
 wellfed-sdk.workspace = true
 
 [lints]

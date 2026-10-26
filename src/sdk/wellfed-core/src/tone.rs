@@ -353,3 +353,14 @@ mod tests {
         assert!(samples[rest].iter().all(|&s| s == 0));
     }
 }
+
+/// How a `play` request ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlayResult {
+    /// Queued for the speaker.
+    Started,
+    /// The `sound` setting is off.
+    Muted,
+    /// Settings not loaded yet, or a tune is playing.
+    Busy,
+}

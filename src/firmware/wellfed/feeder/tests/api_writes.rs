@@ -8,11 +8,12 @@ use wellfed_feeder::api::KeyChange;
 use wellfed_feeder::mailbox::{SettingsFields, SettingsResult, SettingsView, WifiResult};
 use wellfed_feeder::store::clients::{Label, Role};
 use wellfed_feeder::store::net::{Credentials, NetStore};
+use wellfed_feeder_runtime::{keys, network};
 use wellfed_fw_feeder::api::{keys_request, settings_request, wifi_request};
 use wellfed_fw_feeder::feeding::{claim_outputs, writes_queued};
 use wellfed_sdk::hal::interlock::Interlock;
 use wellfed_sdk::hal::sdk::fake;
-use wellfed_sdk::hal::{keys, network, settings};
+use wellfed_sdk::hal::settings;
 
 /// The mailboxes are process-wide.
 static SERIAL: Mutex<()> = Mutex::new(());

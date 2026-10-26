@@ -4,9 +4,8 @@
 use std::sync::{Mutex, MutexGuard};
 
 use wellfed_core::liveness::{Cause, PROBE_PERIOD_MS, Verdict};
-use wellfed_hal::link::wellfed_wifi_watch;
+use wellfed_hal::link::{self, wellfed_wifi_watch};
 use wellfed_hal::net_status;
-use wellfed_hal::network::{wellfed_wifi_outcome, reset};
 use wellfed_hal::sdk::{WifiEvent, fake};
 
 /// `net_status` and the watch are process-wide.
@@ -21,14 +20,13 @@ fn start() -> MutexGuard<'static, ()> {
     let guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     fake::reset_hardware();
     net_status::reset();
-    // SAFETY: the test is the only Wi-Fi task.
-    unsafe { reset() };
     guard
 }
 
+/// A join got its address, as the join outcome reports it.
 fn joined() {
-    // SAFETY: the test is the only Wi-Fi task, and no select is running.
-    unsafe { wellfed_wifi_outcome(1) };
+    // SAFETY: the test is the only Wi-Fi task, between watches.
+    unsafe { link::joined() };
 }
 
 fn watch(associated: bool, leased: bool, probe: i32) -> Verdict {
@@ -103,10 +101,8 @@ fn every_join_starts_a_fresh_watch() {
     assert_eq!(watch(true, true, ANSWERED), Verdict::Settled);
     assert_eq!(watch(false, true, NONE), Verdict::Leave(Cause::Link));
 
-    // A failed attempt changes nothing; the next success starts over, and
-    // probes at once rather than a period after the last join's probe.
-    // SAFETY: the test is the only Wi-Fi task, and no select is running.
-    unsafe { wellfed_wifi_outcome(0) };
+    // The next success starts over, and probes at once rather than a
+    // period after the last join's probe.
     joined();
     assert!(!net_status::read().live);
     assert_eq!(watch(true, true, NONE), Verdict::Probe);

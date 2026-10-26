@@ -2419,6 +2419,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "wellfed-feeder-runtime"
+version = "0.1.0"
+dependencies = [
+ "wellfed-core",
+ "wellfed-feeder",
+ "wellfed-hal",
+ "wellfed-sdk",
+]
+
+[[package]]
 name = "wellfed-feeder-sim"
 version = "0.1.0"
 dependencies = [
@@ -2482,6 +2492,7 @@ dependencies = [
 name = "wellfed-fw-adc"
 version = "0.1.0"
 dependencies = [
+ "wellfed-feeder-runtime",
  "wellfed-probes",
  "wellfed-sdk",
 ]
@@ -2490,6 +2501,7 @@ dependencies = [
 name = "wellfed-fw-blink"
 version = "0.1.0"
 dependencies = [
+ "wellfed-feeder-runtime",
  "wellfed-sdk",
 ]
 
@@ -2497,6 +2509,7 @@ dependencies = [
 name = "wellfed-fw-buttons"
 version = "0.1.0"
 dependencies = [
+ "wellfed-feeder-runtime",
  "wellfed-probes",
  "wellfed-sdk",
 ]
@@ -2508,6 +2521,7 @@ dependencies = [
  "wellfed-client",
  "wellfed-core",
  "wellfed-feeder",
+ "wellfed-feeder-runtime",
  "wellfed-model",
  "wellfed-proto",
  "wellfed-sdk",
@@ -2518,6 +2532,7 @@ dependencies = [
 name = "wellfed-fw-motor"
 version = "0.1.0"
 dependencies = [
+ "wellfed-feeder-runtime",
  "wellfed-probes",
  "wellfed-sdk",
 ]
@@ -2526,6 +2541,7 @@ dependencies = [
 name = "wellfed-fw-optics"
 version = "0.1.0"
 dependencies = [
+ "wellfed-feeder-runtime",
  "wellfed-probes",
  "wellfed-sdk",
 ]
@@ -2535,6 +2551,7 @@ name = "wellfed-fw-qa"
 version = "0.1.0"
 dependencies = [
  "wellfed-core",
+ "wellfed-feeder-runtime",
  "wellfed-probes",
  "wellfed-sdk",
 ]
@@ -2543,6 +2560,7 @@ dependencies = [
 name = "wellfed-fw-speaker"
 version = "0.1.0"
 dependencies = [
+ "wellfed-feeder-runtime",
  "wellfed-probes",
  "wellfed-sdk",
 ]
@@ -2551,6 +2569,7 @@ dependencies = [
 name = "wellfed-fw-trial"
 version = "0.1.0"
 dependencies = [
+ "wellfed-feeder-runtime",
  "wellfed-sdk",
 ]
 
@@ -2562,7 +2581,6 @@ dependencies = [
  "wellfed-amebad-sys",
  "wellfed-board-plaf103",
  "wellfed-core",
- "wellfed-feeder",
  "wellfed-hal-common",
  "wellfed-session",
  "wellfed-testkit",
@@ -2648,7 +2666,6 @@ name = "wellfed-probes"
 version = "0.1.0"
 dependencies = [
  "wellfed-core",
- "wellfed-feeder",
  "wellfed-hal",
  "wellfed-sdk",
 ]
@@ -2677,7 +2694,6 @@ name = "wellfed-sdk"
 version = "0.1.0"
 dependencies = [
  "wellfed-core",
- "wellfed-feeder",
  "wellfed-hal",
  "wellfed-sdk-c",
  "wellfed-session",

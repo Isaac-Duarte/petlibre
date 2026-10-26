@@ -3,7 +3,6 @@
 //! read it. One instance, copied in and out with interrupts masked.
 
 use wellfed_core::clock::wall::{Jump, Sync as ClockSync, SyncError, WallClock};
-use wellfed_feeder::mailbox::{TimeFields, TimeResult};
 
 use crate::cell::TaskCell;
 use crate::sdk::{self, IrqGuard};
@@ -21,14 +20,8 @@ pub struct ClockHealth {
 static CLOCK: TaskCell<WallClock> = TaskCell::new(WallClock::new());
 
 /// Adopt a sync from the server and log it as a `PLTIM1` record.
-pub fn sync(fields: TimeFields) -> TimeResult {
+pub fn sync(sync: ClockSync) -> Result<Jump, SyncError> {
     let now = sdk::uptime_ms();
-    let sync = ClockSync {
-        unix_ms: fields.unix_ms,
-        offset_s: fields.offset_s,
-        next_change_s: fields.next_change_s,
-        next_offset_s: fields.next_offset_s,
-    };
     let result = {
         let _guard = IrqGuard::lock();
         // SAFETY: interrupts are masked, so this is the only reference.
@@ -45,7 +38,7 @@ pub fn sync(fields: TimeFields) -> TimeResult {
             };
             report.record(format_args!(
                 "PLTIM1 sync ok=1 kind={kind} delta_ms={delta} offset_s={} next_change_s={}\r\n",
-                fields.offset_s, fields.next_change_s
+                sync.offset_s, sync.next_change_s
             ))
         }
         Err(error) => report.record(format_args!("PLTIM1 sync ok=0 error={}\r\n", name(error))),
@@ -53,14 +46,7 @@ pub fn sync(fields: TimeFields) -> TimeResult {
     if let Ok(line) = line {
         sdk::log(line);
     }
-
-    match result {
-        Ok(Jump::First) => TimeResult::Synced { jump_ms: None },
-        Ok(Jump::Step(delta) | Jump::Jumped(delta)) => TimeResult::Synced {
-            jump_ms: Some(delta),
-        },
-        Err(error) => TimeResult::Refused(name(error)),
-    }
+    result
 }
 
 fn name(error: SyncError) -> &'static str {

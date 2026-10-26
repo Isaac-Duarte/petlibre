@@ -35,11 +35,12 @@ use wellfed_feeder::pairing::{self, Pairing, Path};
 use wellfed_feeder::setup::{self as session, MAX_MESSAGE, Offer, Received, Responder};
 use wellfed_feeder::store::clients::Role;
 use wellfed_feeder::store::net::Credentials;
+use wellfed_feeder_runtime::keys::{self, Change, KeyResult, Requested};
+use wellfed_feeder_runtime::network;
 use wellfed_proto::setup::{Enrolled, Refusal, Reply, WifiSaved};
 use wellfed_sdk::hal::audio::{self, Speaker};
 use wellfed_sdk::hal::ble::{self, BleSetup, DropReason, Link};
-use wellfed_sdk::hal::keys::{self, Change, KeyResult, Requested};
-use wellfed_sdk::hal::{network, power, rng};
+use wellfed_sdk::hal::{power, rng};
 use wellfed_session::noise::Keypair;
 use wellfed_session::setup_code::Code;
 

@@ -4,9 +4,10 @@
 use core::ffi::c_void;
 
 use wellfed_feeder::panel::{BUTTONS, Event, Source};
+use wellfed_feeder_runtime::panel;
 use wellfed_proto::api::{EventBody, Refusal, Source as EventSource};
 use wellfed_sdk::Slot;
-use wellfed_sdk::hal::{panel, sdk, settings, startup};
+use wellfed_sdk::hal::{sdk, settings, startup};
 
 use crate::api::{self, Api};
 use crate::feeding::{self, Feeding};

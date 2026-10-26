@@ -31,11 +31,7 @@ pub mod bringup;
 pub mod buttons;
 pub mod clock;
 pub mod entropy;
-pub mod events;
-pub mod keys;
 pub mod link;
-pub mod network;
-pub mod panel;
 pub mod rng;
 pub mod settings;
 

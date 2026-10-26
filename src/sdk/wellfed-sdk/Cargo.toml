@@ -21,7 +21,6 @@ bluetooth = ["wellfed-hal/bluetooth"]
 wellfed-sdk-c.workspace = true
 wellfed-hal.workspace = true
 wellfed-core.workspace = true
-wellfed-feeder.workspace = true
 wellfed-session.workspace = true
 
 [lints]

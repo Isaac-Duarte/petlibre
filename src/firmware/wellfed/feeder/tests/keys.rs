@@ -1,8 +1,8 @@
 //! The identity in the loop: the public key derived from what the
 //! settings writer publishes, once per generation, logged by fingerprint.
 
+use wellfed_feeder_runtime::keys;
 use wellfed_fw_feeder::keys::{Identity, Record, describe};
-use wellfed_sdk::hal::keys;
 
 /// RFC 7748 section 6.1: Alice's private and public keys.
 const SECRET: &str = "77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a";

@@ -2,7 +2,7 @@
 //! change at a time, and a read that reports whether a change is pending.
 
 use wellfed_feeder::mailbox::{LockFields, LockResult};
-use wellfed_hal::panel;
+use wellfed_feeder_runtime::panel;
 
 const READ: LockFields = LockFields { locked: None };
 

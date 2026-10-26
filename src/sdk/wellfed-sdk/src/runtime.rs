@@ -39,6 +39,21 @@ unsafe extern "C" {
     fn wellfed_firmware_start();
 }
 
+unsafe extern "Rust" {
+    /// One step of the settings writer, which owns the device's record
+    /// stores (settings, Wi-Fi, keys, events): it arms the flash hooks with
+    /// `provider` (through [`SdkHooks`]) the first time the build is
+    /// unarmed, logs its own `PLCFG1` records, and returns the delay to its
+    /// next step, 0 to end. The store schema is the product's, so the
+    /// product's runtime crate defines it and every firmware links that
+    /// crate; a firmware that links none does not link.
+    ///
+    /// # Safety
+    /// Called only from the service task; `provider` is the runtime's fixed
+    /// provider, never borrowed.
+    fn wellfed_store_step(provider: *mut Provider) -> u32;
+}
+
 /// Creates one of the firmware's tasks. `step` runs, then the task sleeps
 /// for the milliseconds it returned; zero ends the task. Firmware tasks
 /// start only in the normal role, after the startup checks passed, and come
@@ -211,7 +226,8 @@ unsafe extern "C" fn hook_peer(_context: *mut c_void, _status: u32, _channel: u3
     false
 }
 
-struct SdkHooks;
+/// The SDK flash-lock hooks, as the runtime installs and arms them.
+pub struct SdkHooks;
 
 impl Hooks for SdkHooks {
     fn watchdog() -> bool {
@@ -575,37 +591,19 @@ impl crate::storage::FlashOps for SdkStorage {
     }
 }
 
-/// The service task's settings stage; see `settings_step`.
-static SETTINGS: Slot<crate::settings::Writer<SdkStorage>> = Slot::new();
 static SETTINGS_RUNNING: AtomicBool = AtomicBool::new(false);
 
-struct SettingsLine(crate::settings::Record);
-
-impl core::fmt::Display for SettingsLine {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        crate::settings::describe(self.0, f)
-    }
-}
-
-/// Load the device settings, arm the hooks, then save signed changes.
+/// Load the device settings, arm the hooks, then save signed changes: one
+/// step of the store writer the firmware links (`wellfed_store_step`).
 fn settings_step() -> u32 {
-    let Some(mut writer) = SETTINGS.enter_or_init(Default::default) else {
-        return 0;
-    };
     let provider = PROVIDER.get();
-    // SAFETY: the provider is a static, never borrowed (see `PROVIDER`).
-    let step = unsafe { writer.step::<Hardware, SdkHooks>(provider) };
-
-    if let Some(record) = step.record {
-        let mut report = startup::Report::new();
-        if let Ok(line) = report.record(format_args!("PLCFG1 {}\r\n", SettingsLine(record))) {
-            sdk::log(line);
-        }
-    }
-    if step.delay_ms == 0 {
+    // SAFETY: the provider is a static, never borrowed (see `PROVIDER`),
+    // and only this task steps the writer.
+    let delay_ms = unsafe { wellfed_store_step(provider) };
+    if delay_ms == 0 {
         SETTINGS_RUNNING.store(false, Ordering::Release);
     }
-    step.delay_ms
+    delay_ms
 }
 
 /// Starts the settings stage in the service task, which steps it from its

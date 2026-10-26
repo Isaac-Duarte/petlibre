@@ -141,7 +141,8 @@ pub fn claim_outputs(
 /// which takes its write turn only on its next poll: a claim lets it go
 /// first, so the client hears its answer before the feed rather than after.
 pub fn writes_queued() -> bool {
-    use wellfed_sdk::hal::{keys, network, settings};
+    use wellfed_feeder_runtime::{keys, network};
+    use wellfed_sdk::hal::settings;
     settings::pending().is_some() || network::saving() || keys::queued()
 }
 

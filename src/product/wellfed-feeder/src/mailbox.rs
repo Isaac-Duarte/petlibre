@@ -3,22 +3,14 @@
 //! Wi-Fi credentials. The owner tasks fill these from their own state; the
 //! device API only formats them.
 //!
-//! Sans-IO and allocation-free, like the rest of the crate.
+//! Sans-IO and allocation-free, like the rest of the crate. The settings'
+//! and a tune's types are the SDK's: its settings mailbox and speaker carry
+//! them for every firmware.
 
-/// The fields of a `settings` request; none present reads the settings.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct SettingsFields {
-    pub lights: Option<bool>,
-    pub sound: Option<bool>,
-    pub volume: Option<u8>,
-}
+use wellfed_core::clock::wall::{Jump, Sync, SyncError};
 
-impl SettingsFields {
-    /// Whether the request changes anything (and so must be signed).
-    pub fn changes(&self) -> bool {
-        self.lights.is_some() || self.sound.is_some() || self.volume.is_some()
-    }
-}
+pub use wellfed_core::settings::{MAX_VOLUME, SettingsFields, SettingsResult, SettingsView};
+pub use wellfed_core::tone::PlayResult;
 
 /// The fields of a `lock` request; none present reads the lock.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -32,9 +24,6 @@ impl LockFields {
         self.locked.is_some()
     }
 }
-
-/// Largest `volume` a `settings` request may set, and the store accepts.
-pub const MAX_VOLUME: u8 = 100;
 
 /// The fields of a `time` request, as sent (validated by the clock).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -53,38 +42,31 @@ pub enum TimeResult {
     Refused(&'static str),
 }
 
-/// The settings as a `settings` reply reports them.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct SettingsView {
-    pub lights: bool,
-    pub sound: bool,
-    pub volume: u8,
-    /// The stored record's generation; 0 for defaults never saved.
-    pub generation: u32,
-    /// Whether NOR holds a record this firmware can update.
-    pub writable: bool,
+impl TimeFields {
+    /// The sync the wall clock checks and adopts.
+    pub const fn sync(self) -> Sync {
+        Sync {
+            unix_ms: self.unix_ms,
+            offset_s: self.offset_s,
+            next_change_s: self.next_change_s,
+            next_offset_s: self.next_offset_s,
+        }
+    }
 }
 
-/// How a `settings` request ended.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SettingsResult {
-    /// The current settings; `pending` once a change is queued for the writer.
-    Current { view: SettingsView, pending: bool },
-    /// Not loaded yet, or a change already pending.
-    Busy,
-    /// The store cannot be written (corrupt, newer schema, worn or unarmed).
-    ReadOnly,
-}
-
-/// How a `play` request ended.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PlayResult {
-    /// Queued for the speaker.
-    Started,
-    /// The `sound` setting is off.
-    Muted,
-    /// Settings not loaded yet, or a tune is playing.
-    Busy,
+impl TimeResult {
+    /// How the wall clock took a sync, as the reply reports it.
+    pub const fn from_sync(result: Result<Jump, SyncError>) -> Self {
+        match result {
+            Ok(Jump::First) => Self::Synced { jump_ms: None },
+            Ok(Jump::Step(delta) | Jump::Jumped(delta)) => Self::Synced {
+                jump_ms: Some(delta),
+            },
+            Err(SyncError::Time) => Self::Refused("time"),
+            Err(SyncError::Offset) => Self::Refused("offset"),
+            Err(SyncError::NextChange) => Self::Refused("next_change"),
+        }
+    }
 }
 
 /// How a `lock` request ended.

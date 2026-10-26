@@ -4,7 +4,7 @@
 use std::sync::{Mutex, MutexGuard};
 
 use wellfed_feeder::store::clients::{Label, Role};
-use wellfed_hal::keys::{self, Change, KeyResult, Requested};
+use wellfed_feeder_runtime::keys::{self, Change, KeyResult, Requested};
 
 /// The module's state is process-wide.
 static SERIAL: Mutex<()> = Mutex::new(());

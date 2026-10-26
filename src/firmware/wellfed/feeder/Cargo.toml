@@ -14,7 +14,7 @@ crate-type = ["staticlib", "rlib"]
 [features]
 # KM4 target builds with the pinned SDK bindings and the BLE peripheral,
 # which the product image always links and starts only in setup mode.
-km4 = ["wellfed-sdk/km4", "wellfed-sdk/bluetooth"]
+km4 = ["wellfed-sdk/km4", "wellfed-feeder-runtime/km4", "wellfed-sdk/bluetooth"]
 # Stream raw noise samples for the host's entropy estimate.
 entropy = []
 # Stall the loop twice, for the bench to watch the owner's beat lapse.
@@ -26,6 +26,7 @@ gap-probe = []
 twin = []
 
 [dependencies]
+wellfed-feeder-runtime.workspace = true
 wellfed-core.workspace = true
 wellfed-feeder.workspace = true
 wellfed-proto.workspace = true

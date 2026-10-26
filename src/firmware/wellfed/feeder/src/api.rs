@@ -32,16 +32,17 @@ use wellfed_feeder::pairing::{self, Pairing};
 use wellfed_feeder::store::events::{BODY_BYTES, Read};
 use wellfed_feeder::store::net::Credentials;
 use wellfed_feeder::update as wire;
+use wellfed_feeder_runtime::keys::{self, Change, KeyResult, Requested};
+use wellfed_feeder_runtime::{events, network, panel};
 use wellfed_proto::api::{
     self as proto, Capabilities, EventBody, Metric, PORT, Refusal, Sample, Source, Status,
     UpdateRefusal, UpdateView,
 };
 use wellfed_sdk::hal::health::Boot;
 use wellfed_sdk::hal::interlock::{INTERLOCK, Interlock};
-use wellfed_sdk::hal::keys::{self, Change, KeyResult, Requested};
 use wellfed_sdk::hal::ota::mailbox::{self, Answer, Request};
 use wellfed_sdk::hal::sdk::{self, Accepted, ApiRecv, Datagram};
-use wellfed_sdk::hal::{clock, events, net_status, network, panel, power, rng, settings, startup};
+use wellfed_sdk::hal::{clock, net_status, power, rng, settings, startup};
 use wellfed_session::noise::Keypair;
 
 /// A listener or mDNS socket that failed is opened again after this.
@@ -601,7 +602,7 @@ impl<F: Feeds> Device for Feeder<'_, F> {
     }
 
     fn time_sync(&mut self, fields: TimeFields) -> TimeResult {
-        clock::sync(fields)
+        TimeResult::from_sync(clock::sync(fields.sync()))
     }
 
     fn keys(&mut self, change: KeyChange) -> Option<u32> {

@@ -61,9 +61,12 @@ deny = [
     { crate = "wellfed-relay", wrappers = ["wellfed-bench", "wellfed-itest"], reason = "the relay board is driven only by the bench and its suite" },
     { crate = "wellfed-flash", wrappers = ["wellfed-audit", "wellfed-bench", "wellfed-build"], reason = "flash writes run only as a wellfed-flash process; these link it to verify plans and reviews" },
     { crate = "wellfed-build", wrappers = ["wellfed-bench"], reason = "it links wellfed-flash" },
-    # Product policy reaches the SDK only where the product's stores are read
-    # today; no further SDK crate may take it on.
-    { crate = "wellfed-feeder", wrappers = ["wellfed-hal", "wellfed-sdk", "wellfed-probes", "wellfed-fw-feeder", "wellfed-feeder-sim", "wellfed-client"], reason = "product policy is linked only by its current dependents; the SDK takes no new product dependency" },
+    # The SDK (src/sdk) depends on no product crate: product policy and
+    # schema reach the firmware above it. The feeder's stores reach the SDK
+    # runtime only through the runtime crate every firmware links.
+    { crate = "wellfed-feeder", wrappers = ["wellfed-feeder-runtime", "wellfed-fw-feeder", "wellfed-feeder-sim", "wellfed-client"], reason = "product policy sits above the SDK: only the product runtime, the feeder firmware, the simulator and the client's tests link it" },
+    { crate = "wellfed-feeder-runtime", wrappers = ["wellfed-fw-adc", "wellfed-fw-blink", "wellfed-fw-buttons", "wellfed-fw-feeder", "wellfed-fw-motor", "wellfed-fw-optics", "wellfed-fw-qa", "wellfed-fw-speaker", "wellfed-fw-trial"], reason = "the feeder's stores on the SDK runtime are linked by firmwares, never by the SDK" },
+    { crate = "wellfed-proto", wrappers = ["wellfed", "wellfed-bench", "wellfed-client", "wellfed-connect", "wellfed-feeder", "wellfed-feeder-sim", "wellfed-fw-feeder", "wellfed-model", "wellfed-service"], reason = "the device API's wire types are product schema; the SDK takes none" },
 ]
 
 [sources]

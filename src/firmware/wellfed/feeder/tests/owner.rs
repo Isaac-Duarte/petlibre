@@ -8,10 +8,10 @@
 
 use wellfed_feeder::pairing;
 use wellfed_feeder::panel::{Action, Event, Lock, Source};
+use wellfed_feeder_runtime::keys::{self, Change, KeyResult, Requested};
 use wellfed_fw_feeder::owner::{Inputs, Owner, POLL_MS, Record};
 use wellfed_fw_feeder::setup;
 use wellfed_sdk::buttons::{Button, Buttons, Gesture};
-use wellfed_sdk::hal::keys::{self, Change, KeyResult, Requested};
 use wellfed_sdk::hal::leds::{self, Led};
 use wellfed_sdk::hal::plaf103;
 use wellfed_sdk::hal::sdk::{self, fake};

@@ -1,0 +1,21 @@
+[package]
+license.workspace = true
+name = "wellfed-feeder-runtime"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "The feeder's record stores on the Wellfed SDK runtime: the settings writer, its mailboxes with the loop, and the Wi-Fi join's stored credentials, which every PLAF103 firmware links"
+publish.workspace = true
+
+[features]
+# KM4 target builds with the pinned SDK bindings.
+km4 = ["wellfed-sdk/km4", "wellfed-hal/km4", "wellfed-hal/sdk"]
+
+[dependencies]
+wellfed-core.workspace = true
+wellfed-feeder.workspace = true
+wellfed-hal.workspace = true
+wellfed-sdk.workspace = true
+
+[lints]
+workspace = true

@@ -31,7 +31,7 @@ A card never relaxes the feeding-safety rules: every feed goes through the devic
 | Backups | Separate from export: SQLite copies with the key file for restore, export for moving servers and analysis |
 | Derived views | Computed from the server's own history, in the service; no crate shared with the app |
 | Time zone | One per household; the server syncs every feeder's clock to it |
-| CLI | Device API only; it never speaks the server's HTTP API |
+| CLI | Speaks both: the device API as today, and the server API under `wellfed server` (SV34). One path per command, never a fallback between them |
 | File size | 400 lines per file, 600 under `tests/`, in `src/server/` and `src/client/` (SV08) |
 | Service types | The service keeps returning `wellfed-api` bodies until a second API version exists |
 | Packaging | A static binary with a systemd unit, and a container image |
@@ -53,6 +53,7 @@ This costs the server an operation for everything the app does (SV24), and the f
 | Derived views | Food remaining and refill estimate, intake against pet targets, feeding anomalies, hardware health | [Data](docs/firmware/product-architecture.md#data) |
 | Owner data | Household (name, units, time format, zone), pets (weight log, target), foods (kcal per gram, bag size) | API design |
 | Accounts | Owner, member and viewer; phone tokens; expiring access; login limits; the proxy setup; audit | API design, decisions |
+| The CLI | The server API beside the device API, for scripting and owners at a terminal | Decisions |
 | Alerts | Missed or uncertain feeds, an empty hopper, a feeder offline, delivered by the app later | Decisions |
 | Releases | Fetched or uploaded releases, verified; owner-approved install with progress; the stock backup and rollback | FW42, FW43, FW48 |
 | Data | Export and import, backups | API design |
@@ -95,6 +96,7 @@ src/server/wellfed-service   the use cases: accounts, household, commands and th
                               derived views, alerts, audit, export
 src/server/wellfed-server    the binary: config, axum routers per resource, auth, SSE, jobs, the embedded web UI
 src/server/wellfed-server-testkit  a temp store, fixed clock and random, the simulator harness, an HTTP client
+src/client/wellfed-server-client  a typed Rust client of the HTTP API over wellfed-api: the CLI and the server's own tests
 ```
 
 Allowed dependencies (each arrow means "may depend on"):
@@ -104,6 +106,9 @@ wellfed-server ─► wellfed-service ─┬─► wellfed-mirror ─► wellfed
        │                             │          └─► wellfed-connect ─► wellfed-client
        │                             └─► wellfed-releases ─► wellfed-client (Installer), a release verifier
        └─► wellfed-api, wellfed-store (to open it)
+
+wellfed (the CLI) ─► wellfed-server-client ─► wellfed-api
+          └─► wellfed-connect (the device API, as today)
 ```
 
 - **`wellfed-mirror`** owns every task that holds a feeder session. Its surface is small: start and stop a feeder, its link state, `ask` (one answer or unknown), a long-operation lane, and the hub. The service never sees a socket; the mirror never sees a user.
@@ -116,7 +121,7 @@ wellfed-server ─► wellfed-service ─┬─► wellfed-mirror ─► wellfed
 - **Done:** the first slice (FP18, Oct 24, host simulation): setup and login, adoption by invite, the mirror, settings, lock, history pages and the stream.
 - **Ready:** SV01–SV05.
 - **Next:** the foundations, in this order: SV02, SV03, SV04, SV05, SV01, SV06, SV07, SV08. They change no behavior.
-- **Then:** the command plane (SV20, SV21) and the public setup's accounts (SV30–SV32), then data, owner data and releases.
+- **Then:** the command plane (SV20, SV21) and the public setup's accounts (SV30–SV32), the CLI on the server API (SV34), then data, owner data and releases.
 - **Critical path to a feed from the web UI:** SV07 → SV20 → SV21. FW17 (feeds that survive a reboot) is done.
 - **Waiting on firmware:** SV13 (FW54, FW55), SV14 (FW56 on hardware), SV23 (FP03), SV52 (FW42, FW43).
 
@@ -152,6 +157,7 @@ wellfed-server ─► wellfed-service ─┬─► wellfed-mirror ─► wellfed
 | **SV31 Phone tokens** | Planned | — | SV30 | `/tokens`: a bearer token shown once and stored hashed, named for its user and device, with its last use and an optional expiry. The auth extractor takes a cookie or a token; token-authenticated writes skip the `Origin` check only cookies need. |
 | **SV32 Login limits and the proxy** | Planned | — | SV30, SV60 | Failed logins are limited per name and per address. The scheme (`Secure` cookies) and the client's address come from a configured trusted proxy only. A flood of logins neither locks out the owner's other sessions nor exhausts memory. The public setup is documented: a reverse proxy terminating HTTPS (Caddy as the example), the trusted-proxy setting, and what a member's phone needs. |
 | **SV33 Audit log** | Planned | — | SV20, SV30 | `GET /audit?after=&limit=` from the command journal and account changes: who did what, when, through which token, with the outcome. |
+| **SV34 The CLI on the server API** | Planned | — | SV04, SV31 | `wellfed server …` speaks the server API: `login` (a token from SV31, kept beside the CLI's feeder keys, mode 0600), `logout`, and the device commands' verbs over the server (`feeders`, `status`, `settings`, `lock`, `feed`, `cancel-feed`, `events`, `clients`, `revoke`, `reboot`), plus what only the server has (`users`, `tokens`, `releases`, `install`, `export`) as each card lands. It goes through `wellfed-server-client`, a typed client over `wellfed-api` that the server's end-to-end tests use too, so the CLI and the tests cannot disagree with the routes. A command takes one path: an uncertain write prints its key and the command that resolves it, and is never resent over the device API. The CLI's `main.rs` splits into a module per command group on the way. |
 
 ## Data plane
 
@@ -225,6 +231,7 @@ wellfed-server ─► wellfed-service ─┬─► wellfed-mirror ─► wellfed
 | SV31 Phone tokens | ⬜ Planned |
 | SV32 Login limits and the proxy | ⬜ Planned |
 | SV33 Audit log | ⬜ Planned |
+| SV34 The CLI on the server API | ⬜ Planned |
 | SV40 Pets and foods | ⬜ Planned |
 | SV41 Derived views | ⬜ Planned |
 | SV42 Export and import | ⬜ Planned |
@@ -242,7 +249,6 @@ wellfed-server ─► wellfed-service ─┬─► wellfed-mirror ─► wellfed
 ## Parked
 
 - **Home Assistant over MQTT discovery** through the server (FP16, paused October 23). The hub is the seam; nothing here should assume it.
-- **A server mode for the CLI:** not planned; the CLI stays on the device API.
 - **Remote access** beyond the documented reverse proxy: the owner's VPN.
 
 ## Open questions for the owner

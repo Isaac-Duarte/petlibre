@@ -254,12 +254,8 @@ pub fn upload_frame(helper: &[u8], index: usize) -> Result<Vec<u8>> {
     Ok(frame(number, HELPER_ADDRESS + at, &payload))
 }
 
-fn seconds(value: f64) -> Duration {
-    Duration::from_secs_f64(value)
-}
-
-pub fn exact_read(port: &mut dyn Port, count: usize, timeout: f64) -> Result<Vec<u8>> {
-    let deadline = Instant::now() + seconds(timeout);
+pub fn exact_read(port: &mut dyn Port, count: usize, timeout: Duration) -> Result<Vec<u8>> {
+    let deadline = Instant::now() + timeout;
     let mut data = vec![0; count];
     let mut filled = 0;
     while filled < count {
@@ -283,7 +279,7 @@ pub fn send(port: &mut dyn Port, data: &[u8]) -> Result<()> {
 }
 
 pub fn expect(port: &mut dyn Port, value: u8) -> Result<()> {
-    let actual = exact_read(port, 1, 3.0)?[0];
+    let actual = exact_read(port, 1, Duration::from_secs(3))?[0];
     require(actual == value, || {
         ProtocolError::UnexpectedByte {
             actual,
@@ -294,8 +290,8 @@ pub fn expect(port: &mut dyn Port, value: u8) -> Result<()> {
 }
 
 /// Require consecutive NAKs; any preceding banner stays in the transport log.
-pub fn wait_naks(port: &mut dyn Port, count: usize, timeout: f64) -> Result<()> {
-    let deadline = Instant::now() + seconds(timeout);
+pub fn wait_naks(port: &mut dyn Port, count: usize, timeout: Duration) -> Result<()> {
+    let deadline = Instant::now() + timeout;
     let mut seen = 0;
     let mut byte = [0u8; 1];
     while seen < count {
@@ -313,7 +309,7 @@ pub fn wait_naks(port: &mut dyn Port, count: usize, timeout: f64) -> Result<()> 
 pub fn drain_naks(port: &mut dyn Port, before: Pending) -> Result<()> {
     let pending = port.in_waiting()?;
     if pending > 0 {
-        let data = exact_read(port, pending, 1.0)?;
+        let data = exact_read(port, pending, Duration::from_secs(1))?;
         require(data.iter().all(|byte| *byte == NAK), || {
             ProtocolError::UnexpectedOutput(before)
         })?;
@@ -323,19 +319,19 @@ pub fn drain_naks(port: &mut dyn Port, before: Pending) -> Result<()> {
 
 /// Helper idle-ready: fresh NAKs, then nothing else buffered.
 pub fn command_ready(port: &mut dyn Port) -> Result<()> {
-    wait_naks(port, 3, 5.0)?;
+    wait_naks(port, 3, Duration::from_secs(5))?;
     drain_naks(port, Pending::Command)
 }
 
 /// One request; only already-in-flight NAKs may precede its ACK.
 pub fn baudcheck(port: &mut dyn Port) -> Result<()> {
     send(port, &[0x07])?;
-    let deadline = Instant::now() + seconds(3.0);
+    let deadline = Instant::now() + Duration::from_secs(3);
     loop {
         require(Instant::now() < deadline, || {
             ProtocolError::BaudcheckDeadline
         })?;
-        match exact_read(port, 1, 1.0)?[0] {
+        match exact_read(port, 1, Duration::from_secs(1))?[0] {
             ACK => return Ok(()),
             NAK => {}
             byte => return Err(ProtocolError::BaudcheckResponse { byte }.into()),
@@ -346,7 +342,7 @@ pub fn baudcheck(port: &mut dyn Port) -> Result<()> {
 /// Upload the pinned helper to an already-observed ROM loader.
 pub fn upload_helper(port: &mut dyn Port, helper: &[u8]) -> Result<()> {
     pinned_helper(helper)?;
-    wait_naks(port, 3, 5.0)?;
+    wait_naks(port, 3, Duration::from_secs(5))?;
     drain_naks(port, Pending::Upload)?;
     baudcheck(port)?;
 
@@ -357,7 +353,7 @@ pub fn upload_helper(port: &mut dyn Port, helper: &[u8]) -> Result<()> {
 
     send(port, &[EOT])?;
     expect(port, ACK)?;
-    wait_naks(port, 3, 5.0)
+    wait_naks(port, 3, Duration::from_secs(5))
 }
 
 /// A completed read as reports record it.
@@ -381,7 +377,7 @@ pub fn receive_flash(
     mut progress: Option<&mut dyn FnMut(usize, usize)>,
 ) -> Result<Transfer> {
     let request = read_request(offset, length)?;
-    wait_naks(port, 3, 5.0)?;
+    wait_naks(port, 3, Duration::from_secs(5))?;
     drain_naks(port, Pending::Read)?;
     send(port, &request)?;
 
@@ -389,19 +385,23 @@ pub fn receive_flash(
     let mut sequence: usize = 1;
     let mut previous: Option<Vec<u8>> = None;
     let mut duplicates = 0;
-    let deadline = Instant::now() + seconds(30.0 + length as f64 / 4000.0);
+    // 30 s plus 1/4000 s per byte for the whole read; read_request
+    // has already bounded the length by the 8 MiB capacity.
+    let per_byte =
+        Duration::from_micros(250).saturating_mul(u32::try_from(length).unwrap_or(u32::MAX));
+    let deadline = Instant::now() + Duration::from_secs(30) + per_byte;
 
     loop {
         require(Instant::now() < deadline, || ProtocolError::ReadDeadline)?;
         interrupted()?;
-        let control = exact_read(port, 1, 5.0)?[0];
+        let control = exact_read(port, 1, Duration::from_secs(5))?[0];
         if control == EOT {
             require(total == length, || ProtocolError::PrematureEot {
                 received: total,
                 length,
             })?;
             send(port, &[ACK])?;
-            wait_naks(port, 3, 5.0)?;
+            wait_naks(port, 3, Duration::from_secs(5))?;
             return Ok(Transfer {
                 bytes: total,
                 packets: total / 1024,
@@ -411,7 +411,7 @@ pub fn receive_flash(
 
         require(control == STX, || ProtocolError::ReadControl { control })?;
 
-        let frame = exact_read(port, 1027, 3.0)?;
+        let frame = exact_read(port, 1027, Duration::from_secs(3))?;
         let (number, complement) = (frame[0], frame[1]);
         let payload = &frame[2..1026];
         require(number ^ complement == 0xff, || {
@@ -465,8 +465,8 @@ pub fn read_region(port: &mut dyn Port, offset: usize, length: usize) -> Result<
     Ok(output)
 }
 
-pub fn collect(port: &mut dyn Port, timeout: f64) -> Result<Vec<u8>> {
-    let deadline = Instant::now() + seconds(timeout);
+pub fn collect(port: &mut dyn Port, timeout: Duration) -> Result<Vec<u8>> {
+    let deadline = Instant::now() + timeout;
     let mut result = Vec::new();
     let mut buffer = [0u8; 4096];
     while Instant::now() < deadline {
@@ -517,19 +517,27 @@ pub struct Observation {
     pub limit: &'static str,
 }
 
-/// The bounded receive-only window, checked before the port opens and again
-/// before observing.
-pub fn observation_window(seconds: f64) -> Result<(), ProtocolError> {
+/// The bounded receive-only window, checked before the port opens. The range
+/// is checked on the operator's fractional seconds before they become a span,
+/// so rounding to whole nanoseconds can never admit a value just outside it.
+pub fn observation_window(seconds: f64) -> Result<Duration, ProtocolError> {
     require((1.0..=180.0).contains(&seconds), || {
         ProtocolError::ObservationWindow { seconds }
-    })
+    })?;
+    Duration::try_from_secs_f64(seconds).map_err(|_| ProtocolError::ObservationWindow { seconds })
 }
 
 /// Receive only: NAKs are observations, never an automatic loader assertion.
-pub fn observe(port: &mut dyn Port, seconds: f64) -> Result<Observation> {
-    observation_window(seconds)?;
+/// The window is checked again here, after the port opens.
+pub fn observe(port: &mut dyn Port, window: Duration) -> Result<Observation> {
+    require(
+        (Duration::from_secs(1)..=Duration::from_secs(180)).contains(&window),
+        || ProtocolError::ObservationWindow {
+            seconds: window.as_secs_f64(),
+        },
+    )?;
 
-    let data = collect(port, seconds)?;
+    let data = collect(port, window)?;
     let longest = data
         .split(|byte| *byte != NAK)
         .map(<[u8]>::len)
@@ -559,11 +567,11 @@ fn rom_command(command: &[u8]) -> bool {
                 .all(|b| b.is_ascii_digit() || (b'A'..=b'F').contains(b)))
 }
 
-pub fn console_query(port: &mut dyn Port, command: &[u8], seconds: f64) -> Result<Vec<u8>> {
+pub fn console_query(port: &mut dyn Port, command: &[u8], window: Duration) -> Result<Vec<u8>> {
     require(rom_command(command), || ProtocolError::ConsoleCommand)?;
 
     send(port, command)?;
-    let reply = collect(port, seconds)?;
+    let reply = collect(port, window)?;
     require(
         !FAULTS
             .iter()
@@ -665,18 +673,18 @@ pub fn inspect_rom(
     candidates: &[(String, Vec<u8>)],
     start: Core,
 ) -> Result<RomInspection> {
-    let initial = collect(port, 0.5)?;
+    let initial = collect(port, Duration::from_millis(500))?;
     require(!contains(&initial, b"Hard Fault"), || {
         ProtocolError::PreexistingFault
     })?;
 
     if start == Core::Km4 {
-        let high = console_query(port, b"?\r\n", 1.0)?;
+        let high = console_query(port, b"?\r\n", Duration::from_secs(1))?;
         require(is_km4_help(&high), || ProtocolError::Km4Table)?;
-        console_query(port, b">>\r\n", 0.5)?;
+        console_query(port, b">>\r\n", Duration::from_millis(500))?;
     }
 
-    let low = console_query(port, b"?\r\n", 1.0)?;
+    let low = console_query(port, b"?\r\n", Duration::from_secs(1))?;
     require(is_km0_help(&low), || ProtocolError::Km0Table)?;
 
     let mut samples = Vec::new();
@@ -684,7 +692,7 @@ pub fn inspect_rom(
 
     for address in rom_sample_addresses() {
         let command = format!("DW {address:08X}\r\n");
-        let response = console_query(port, command.as_bytes(), 0.25)?;
+        let response = console_query(port, command.as_bytes(), Duration::from_millis(250))?;
         let values = dumped_words(&response, address);
         require(values.len() == 1, || ProtocolError::RomWordCount {
             address,
@@ -704,8 +712,8 @@ pub fn inspect_rom(
         });
     }
 
-    console_query(port, b">>\r\n", 0.5)?;
-    let high = console_query(port, b"?\r\n", 1.0)?;
+    console_query(port, b">>\r\n", Duration::from_millis(500))?;
+    let high = console_query(port, b"?\r\n", Duration::from_secs(1))?;
     require(is_km4_help(&high), || ProtocolError::Km4Return)?;
 
     Ok(RomInspection {

@@ -3,6 +3,8 @@
 //! Port of `src/tools/flash/flash-status.py`. Only the 05/35/15 one-byte status
 //! reads exist; there is no status write, WREN, erase, resume or reset.
 
+use std::time::Duration;
+
 use serde::Serialize;
 
 use crate::error::Result;
@@ -209,7 +211,7 @@ pub fn read_status_registers(port: &mut dyn Port) -> Result<[u8; 3]> {
         protocol::command_ready(port)?;
         protocol::send(port, &[0x21, opcode, 1])?;
         protocol::expect(port, 0x21)?;
-        *value = protocol::exact_read(port, 1, 3.0)?[0];
+        *value = protocol::exact_read(port, 1, Duration::from_secs(3))?[0];
     }
     Ok(values)
 }
